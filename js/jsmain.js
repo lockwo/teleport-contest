@@ -17,7 +17,7 @@ import { parseNethackrc } from './options.js';
 import { flush_screen } from './display.js';
 import { GameDisplay } from './game_display.js';
 import { PICK_RIGID, ROLE_NONE } from './const.js';
-import { ATR_INVERSE, CLR_GRAY } from './terminal.js';
+import { ATR_INVERSE, NO_COLOR } from './terminal.js';
 import {
     aligns, apply_selection, first_valid_align, genders, ok_align, ok_gend,
     ok_race, pick_align, races, random_player_selection, rigid_role_checks,
@@ -175,13 +175,13 @@ export class NethackGame {
         const disp = game.nhDisplay;
         if (!disp?.clearScreen) return;
         disp.clearScreen();
-        if (topLine) disp.putstr(0, 0, topLine, CLR_GRAY);
-        disp.putstr(0, 4, 'NetHack, Copyright 1985-2026', CLR_GRAY);
-        disp.putstr(9, 5, 'By Stichting Mathematisch Centrum and M. Stephenson.', CLR_GRAY);
-        disp.putstr(9, 6, 'Version 5.0.0 MacOS, built May  2 2026 12:00:00.', CLR_GRAY);
-        disp.putstr(9, 7, 'See license for details.', CLR_GRAY);
-        const prompt = `Who are you?${name ? ' ' + name : ''}`;
-        disp.putstr(0, 12, prompt, CLR_GRAY);
+        if (topLine) disp.putstr(0, 0, topLine, NO_COLOR);
+        disp.putstr(0, 4, 'NetHack, Copyright 1985-2026', NO_COLOR);
+        disp.putstr(9, 5, 'By Stichting Mathematisch Centrum and M. Stephenson.', NO_COLOR);
+        disp.putstr(9, 6, 'Version 5.0.0 MacOS, built May  2 2026 12:00:00.', NO_COLOR);
+        disp.putstr(9, 7, 'See license for details.', NO_COLOR);
+        const prompt = `Who are you? ${name || ''}`;
+        disp.putstr(0, 12, prompt, NO_COLOR);
         if (topLine) disp.setCursor(Math.min(topLine.length, 79), 0);
         else disp.setCursor(Math.min(prompt.length, 79), 12);
     }
@@ -196,13 +196,13 @@ export class NethackGame {
         const race = races[sel.race]?.adj || 'human';
         const gender = genders[sel.gender]?.adj || 'male';
         const align = aligns[sel.align]?.adj || 'neutral';
-        disp.putstr(col, 0, 'Is this ok? [ynaq]', CLR_GRAY, ATR_INVERSE);
-        disp.putstr(col, 2, `${game.plname || 'Hero'} the ${align} ${gender} ${race} ${role}`, CLR_GRAY);
-        disp.putstr(col, 4, 'y * Yes; start game', CLR_GRAY);
-        disp.putstr(col, 5, 'n - No; choose role again', CLR_GRAY);
-        disp.putstr(col, 6, 'a - Not yet; choose another name', CLR_GRAY);
-        disp.putstr(col, 7, 'q - Quit', CLR_GRAY);
-        disp.putstr(col, 8, '(end)', CLR_GRAY);
+        disp.putstr(col, 0, 'Is this ok? [ynaq]', NO_COLOR, ATR_INVERSE);
+        disp.putstr(col, 2, `${game.plname || 'Hero'} the ${align} ${gender} ${race} ${role}`, NO_COLOR);
+        disp.putstr(col, 4, 'y * Yes; start game', NO_COLOR);
+        disp.putstr(col, 5, 'n - No; choose role again', NO_COLOR);
+        disp.putstr(col, 6, 'a - Not yet; choose another name', NO_COLOR);
+        disp.putstr(col, 7, 'q - Quit', NO_COLOR);
+        disp.putstr(col, 8, '(end)', NO_COLOR);
         disp.setCursor(col + 6, 8);
     }
 
@@ -210,14 +210,14 @@ export class NethackGame {
         const disp = game.nhDisplay;
         if (!disp?.putstr) return;
         disp.clearScreen();
-        disp.putstr(1, 0, prompt, CLR_GRAY, ATR_INVERSE);
+        disp.putstr(1, 0, prompt, NO_COLOR, ATR_INVERSE);
         const desc = [
             sel.role >= 0 ? roleName(sel.role, sel.gender === 1) : '<role>',
             sel.race >= 0 ? `<${races[sel.race].noun}>` : '<race>',
             sel.gender >= 0 ? genders[sel.gender].adj : '<gender>',
             sel.align >= 0 ? aligns[sel.align].adj : '<alignment>',
         ].join(' ');
-        disp.putstr(1, 2, desc, CLR_GRAY);
+        disp.putstr(1, 2, desc, NO_COLOR);
         disp.setCursor(Math.min(prompt.length + 1, 79), 0);
     }
 

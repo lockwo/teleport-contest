@@ -120,26 +120,30 @@ async function main() {
 
     if (commit && accept) {
         // The porter committed inside the worktree (run-porter.mjs runs
-        // `git commit` after the agent finishes). The earlier version of
-        // this code diffed against the worktree's own HEAD — which is the
-        // porter's commit — and saw an empty diff, so the merge was a
-        // silent no-op.
+        // `git commit` after the agent finishes). We want the diff
+        // representing **just the porter's own changes** — not the
+        // differences between main and worktree, because main may have
+        // advanced since the worktree was created (other porters merged,
+        // unrelated infrastructure commits, etc.). Diffing base..tip
+        // would incorrectly flag those forward-main changes as
+        // "deletions" from the porter's perspective.
         //
-        // Correct approach: compute the diff between main's current HEAD
-        // and the worktree's HEAD. That's exactly what the porter changed.
-        // We restrict to js/ for safety; the porter contract forbids
-        // touching anything else.
-        const base = sh('git rev-parse HEAD');               // main's HEAD on the orchestrator side
-        const tip  = sh(`git -C "${worktree}" rev-parse HEAD`); // porter's commit in the worktree
-        if (base === tip) {
-            console.log('(worktree has no commits beyond main — nothing to merge)');
+        // Correct: HEAD~1..HEAD in the worktree captures exactly what
+        // the porter touched (run-porter.mjs always makes a single
+        // commit). We still rebase those changes onto current main by
+        // copying the files from the worktree (which has the porter's
+        // edits on top of an older main).
+        const tip  = sh(`git -C "${worktree}" rev-parse HEAD`);
+        let parent;
+        try { parent = sh(`git -C "${worktree}" rev-parse HEAD~1`); }
+        catch { parent = ''; }
+        if (!parent || parent === tip) {
+            console.log('(worktree has no porter commit — nothing to merge)');
             return;
         }
-        // List the files the porter changed. --diff-filter=ACMRT keeps
-        // added/copied/modified/renamed/type-changed entries; D would mean
-        // a delete, which we apply by removing the file on main.
-        const changedAcMrt = sh(`git -C "${worktree}" diff --name-only --diff-filter=ACMRT ${base} ${tip}`).split('\n').filter(Boolean);
-        const deletedD    = sh(`git -C "${worktree}" diff --name-only --diff-filter=D     ${base} ${tip}`).split('\n').filter(Boolean);
+        // List ONLY the files the porter's commit touched.
+        const changedAcMrt = sh(`git -C "${worktree}" diff --name-only --diff-filter=ACMRT ${parent} ${tip}`).split('\n').filter(Boolean);
+        const deletedD    = sh(`git -C "${worktree}" diff --name-only --diff-filter=D     ${parent} ${tip}`).split('\n').filter(Boolean);
         const all = [...new Set([...changedAcMrt, ...deletedD])];
         if (all.length === 0) {
             console.log('(porter commit produced no file changes against main — nothing to merge)');

@@ -3,6 +3,7 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rne } from './rng.js';
+import { addinv as invent_addinv } from './invent.js';
 import {
     ARMOR_CLASS,
     COIN_CLASS,
@@ -133,11 +134,7 @@ export function trquan(trop) {
 }
 
 function addinv(obj) {
-    if (!game.invent)
-        game.invent = [];
-    game.invent.push(obj);
-    obj.where = 'invent';
-    return obj;
+    return invent_addinv(obj);
 }
 
 function ini_inv_obj_substitution(trop, obj) {

@@ -9,6 +9,7 @@ import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { newsym, flush_screen, pline } from './display.js';
 import { vision_recalc } from './vision.js';
+import { ddoinv, dismiss_invent_screen, dolook } from './invent.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          IS_WALL, IS_OBSTRUCTED } from './const.js';
 
@@ -42,7 +43,15 @@ export async function rhack(key) {
 
     const ch = String.fromCharCode(key);
 
-    if (isMovementKey(ch)) {
+    if (ch === '\x1b' && await dismiss_invent_screen()) {
+        game.context.move = 0;
+    } else if (ch === 'i') {
+        ddoinv();
+        game.context.move = 0;
+    } else if (ch === ':') {
+        await dolook();
+        game.context.move = 0;
+    } else if (isMovementKey(ch)) {
         await domove(DIR_DX[ch], DIR_DY[ch]);
         game.context.move = 1;
     } else {

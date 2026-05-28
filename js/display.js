@@ -280,6 +280,11 @@ function _buildScreenOutput() {
 
 // ── flush_screen ──
 export async function flush_screen(mode) {
+    if (game._modal_screen) return;
+    if (game._freeze_screen_once) {
+        delete game._freeze_screen_once;
+        return;
+    }
     _buildScreenOutput();
 }
 
