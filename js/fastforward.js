@@ -9,16 +9,29 @@ import { init_dungeons } from "./dungeon.js";
 import { game } from "./gstate.js";
 import { somexyspace } from "./mkroom.js";
 import { makemon } from "./makemon.js";
+import { ROLE_PRIEST, randrole, roles } from "./role.js";
+
+function initrole_name() {
+    if (Number.isInteger(game.initrole) && game.initrole >= 0)
+        return roles[game.initrole]?.name?.m?.toLowerCase() || '';
+    return String(game.initrole || '').toLowerCase();
+}
 
 function fastforward_role_init() {
-    const role = String(game.initrole || '').toLowerCase();
+    const role = initrole_name();
     if (role === 'wizard' || role === 'archeologist')
         rn2(100);
+    if (game.initrole === ROLE_PRIEST || role === 'priest') {
+        let pantheon;
+        do {
+            pantheon = randrole(false);
+        } while (pantheon === ROLE_PRIEST);
+    }
 }
 
 function fastforward_newpw() {
-    const role = String(game.initrole || '').toLowerCase();
-    if (role === 'wizard')
+    const role = initrole_name();
+    if (role === 'wizard' || role === 'priest')
         rnd(3);
     else if (role === 'monk')
         rnd(2);
@@ -139,7 +152,7 @@ export function fastforward_pre_mklev() {
         fastforward_legacy_dungeon_seed8000();
     else
         init_dungeons();
-    if (!legacy_startup)
+    if (!legacy_startup || game._startup_selected_character)
         fastforward_newpw();
     // u_init_misc
     rn2(10);

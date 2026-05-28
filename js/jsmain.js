@@ -16,6 +16,51 @@ import { newgame, moveloop_core } from './allmain.js';
 import { parseNethackrc } from './options.js';
 import { flush_screen } from './display.js';
 import { GameDisplay } from './game_display.js';
+import { PICK_RIGID, ROLE_NONE } from './const.js';
+import { ATR_INVERSE, CLR_GRAY } from './terminal.js';
+import {
+    aligns, apply_selection, first_valid_align, genders, ok_align, ok_gend,
+    ok_race, pick_align, races, random_player_selection, rigid_role_checks,
+    roleName, roles, selectionIsComplete, str2align, str2gend, str2race, str2role,
+} from './role.js';
+
+function initialSelectionFromOptions(opts) {
+    return {
+        role: str2role(opts.role),
+        race: str2race(opts.race),
+        gender: str2gend(opts.gender),
+        align: str2align(opts.align),
+    };
+}
+
+function roleKey(ch) {
+    const c = ch.toLowerCase();
+    const map = {
+        a: 0, b: 1, c: 2, h: 3, k: 4, m: 5, p: 6,
+        r: 7, R: 8, s: 9, t: 10, v: 11, w: 12,
+    };
+    return Object.prototype.hasOwnProperty.call(map, ch) ? map[ch] : map[c];
+}
+
+function raceKey(ch) {
+    return { h: 0, e: 1, d: 2, g: 3, o: 4 }[ch.toLowerCase()];
+}
+
+function genderKey(ch) {
+    return { m: 0, f: 1 }[ch.toLowerCase()];
+}
+
+function alignKey(ch) {
+    return { l: 0, n: 1, c: 2 }[ch.toLowerCase()];
+}
+
+function keyChar(code) {
+    return String.fromCharCode(code);
+}
+
+function pickAlignIfRigid(sel) {
+    return pick_align(sel.role, sel.race, sel.gender, PICK_RIGID);
+}
 
 // ── NethackGame ──
 // Wraps a single game session with replay infrastructure.
@@ -87,10 +132,14 @@ export class NethackGame {
 
         // Parse nethackrc
         const opts = parseNethackrc(this._nethackrc);
-        g.plname = opts.name || 'Hero';
+        g.plname = opts.name || '';
         g.flags = { verbose: true, ...opts.flags };
         g.iflags = { ...opts.iflags };
-        g.initrole = opts.role;
+        const optsel = initialSelectionFromOptions(opts);
+        g.initrole = optsel.role;
+        g.initrace = optsel.race;
+        g.initgend = optsel.gender;
+        g.initalign = optsel.align;
         if (opts.preferred_pet) g.preferred_pet = opts.preferred_pet;
         if (opts.tutorial_set) g.tutorial_set_in_config = true;
 
@@ -99,10 +148,6 @@ export class NethackGame {
         g.context = { move: 0 };
         g.program_state = {};
         g.moves = 1;
-
-        // TODO: Map role/race/gender/align from opts to role data
-        g.urole = { name: { m: 'Rambler', f: 'Rambler' } };
-        g.urace = { adj: 'human' };
 
         // Initialize PRNG
         initRng(this._seed);
@@ -117,8 +162,216 @@ export class NethackGame {
         // Install capture hook
         this._installCaptureHook();
 
+        // C prompts for a name before role/race selection when OPTIONS
+        // does not supply one.  That selection can consume RNG before
+        // o_init/newgame startup begins.
+        await this._startupCharacterSelection(optsel);
+
         // Run game startup
         await newgame();
+    }
+
+    _renderStartupScreen(name = game.plname || '', topLine = '') {
+        const disp = game.nhDisplay;
+        if (!disp?.clearScreen) return;
+        disp.clearScreen();
+        if (topLine) disp.putstr(0, 0, topLine, CLR_GRAY);
+        disp.putstr(0, 4, 'NetHack, Copyright 1985-2026', CLR_GRAY);
+        disp.putstr(9, 5, 'By Stichting Mathematisch Centrum and M. Stephenson.', CLR_GRAY);
+        disp.putstr(9, 6, 'Version 5.0.0 MacOS, built May  2 2026 12:00:00.', CLR_GRAY);
+        disp.putstr(9, 7, 'See license for details.', CLR_GRAY);
+        const prompt = `Who are you?${name ? ' ' + name : ''}`;
+        disp.putstr(0, 12, prompt, CLR_GRAY);
+        if (topLine) disp.setCursor(Math.min(topLine.length, 79), 0);
+        else disp.setCursor(Math.min(prompt.length, 79), 12);
+    }
+
+    _renderSelectionOk(sel) {
+        const disp = game.nhDisplay;
+        if (!disp?.putstr) return;
+        this._renderStartupScreen(game.plname || '');
+        const col = 41;
+        const female = sel.gender === 1;
+        const role = roleName(sel.role, female);
+        const race = races[sel.race]?.adj || 'human';
+        const gender = genders[sel.gender]?.adj || 'male';
+        const align = aligns[sel.align]?.adj || 'neutral';
+        disp.putstr(col, 0, 'Is this ok? [ynaq]', CLR_GRAY, ATR_INVERSE);
+        disp.putstr(col, 2, `${game.plname || 'Hero'} the ${align} ${gender} ${race} ${role}`, CLR_GRAY);
+        disp.putstr(col, 4, 'y * Yes; start game', CLR_GRAY);
+        disp.putstr(col, 5, 'n - No; choose role again', CLR_GRAY);
+        disp.putstr(col, 6, 'a - Not yet; choose another name', CLR_GRAY);
+        disp.putstr(col, 7, 'q - Quit', CLR_GRAY);
+        disp.putstr(col, 8, '(end)', CLR_GRAY);
+        disp.setCursor(col + 6, 8);
+    }
+
+    _renderRolePrompt(sel, prompt) {
+        const disp = game.nhDisplay;
+        if (!disp?.putstr) return;
+        disp.clearScreen();
+        disp.putstr(1, 0, prompt, CLR_GRAY, ATR_INVERSE);
+        const desc = [
+            sel.role >= 0 ? roleName(sel.role, sel.gender === 1) : '<role>',
+            sel.race >= 0 ? `<${races[sel.race].noun}>` : '<race>',
+            sel.gender >= 0 ? genders[sel.gender].adj : '<gender>',
+            sel.align >= 0 ? aligns[sel.align].adj : '<alignment>',
+        ].join(' ');
+        disp.putstr(1, 2, desc, CLR_GRAY);
+        disp.setCursor(Math.min(prompt.length + 1, 79), 0);
+    }
+
+    async _readPromptKey() {
+        return keyChar(await nhgetch());
+    }
+
+    async _promptForName() {
+        let name = '';
+        this._renderStartupScreen(name);
+        for (;;) {
+            const code = await nhgetch();
+            if (code === 13 || code === 10) break;
+            if (code === 8 || code === 127) {
+                name = name.slice(0, -1);
+            } else if (code >= 32 && code < 127) {
+                name += String.fromCharCode(code);
+            }
+            this._renderStartupScreen(name);
+        }
+        game.plname = name || 'Hero';
+    }
+
+    _nextManualPrompt(sel) {
+        if (sel.role < 0) return 'role';
+        if (sel.race < 0) return 'race';
+        if (sel.gender < 0) return 'gender';
+        if (sel.align < 0) return 'align';
+        return 'ok';
+    }
+
+    _renderManualPrompt(sel) {
+        const prompt = this._nextManualPrompt(sel);
+        if (prompt === 'ok') {
+            this._renderSelectionOk(sel);
+        } else if (prompt === 'role') {
+            this._renderRolePrompt(sel, 'Pick a role or profession');
+        } else if (prompt === 'race') {
+            this._renderRolePrompt(sel, 'Pick a race or species');
+        } else if (prompt === 'gender') {
+            this._renderRolePrompt(sel, 'Pick a gender or sex');
+        } else {
+            this._renderRolePrompt(sel, 'Pick an alignment or creed');
+        }
+    }
+
+    _completeDeterministicTail(sel) {
+        if (sel.role >= 0 && sel.race >= 0 && sel.gender >= 0 && sel.align < 0) {
+            const a = first_valid_align(sel.role, sel.race, sel.gender);
+            if (a >= 0) sel.align = a;
+        }
+    }
+
+    async _manualCharacterSelection(sel) {
+        this._renderManualPrompt(sel);
+        for (;;) {
+            const ch = await this._readPromptKey();
+            const prompt = this._nextManualPrompt(sel);
+            const lower = ch.toLowerCase();
+
+            if (prompt === 'ok') {
+                if (lower === 'y' || ch === '\r' || ch === '\n') return true;
+                if (lower === 'n') {
+                    sel.role = sel.race = sel.gender = sel.align = ROLE_NONE;
+                } else if (lower === 'a') {
+                    await this._promptForName();
+                } else if (lower === 'q') {
+                    return false;
+                }
+                this._renderManualPrompt(sel);
+                continue;
+            }
+
+            if (prompt === 'role') {
+                const role = roleKey(ch);
+                if (role !== undefined) {
+                    sel.role = role;
+                    rigid_role_checks(sel);
+                }
+            } else if (prompt === 'race') {
+                const race = raceKey(ch);
+                if (race !== undefined && ok_race(sel.role, race, sel.gender, sel.align)) {
+                    sel.race = race;
+                    if (sel.align === ROLE_NONE && sel.gender === ROLE_NONE)
+                        sel.align = pickAlignIfRigid(sel);
+                }
+            } else if (prompt === 'gender') {
+                const gender = genderKey(ch);
+                if (gender !== undefined && ok_gend(sel.role, sel.race, gender, sel.align))
+                    sel.gender = gender;
+            } else if (prompt === 'align') {
+                const align = alignKey(ch);
+                if (align !== undefined && ok_align(sel.role, sel.race, sel.gender, align))
+                    sel.align = align;
+            }
+
+            this._completeDeterministicTail(sel);
+            this._renderManualPrompt(sel);
+        }
+    }
+
+    async _startupCharacterSelection(optsel) {
+        if (!game.plname && selectionIsComplete(optsel)) {
+            game.plname = 'Hero';
+            apply_selection(optsel);
+            return;
+        }
+
+        if (!game.plname)
+            await this._promptForName();
+
+        const sel = { ...optsel };
+        if (selectionIsComplete(sel)) {
+            apply_selection(sel);
+            return;
+        }
+
+        this._renderStartupScreen(
+            game.plname || '',
+            "Shall I pick character's race, role, gender and alignment for you? [ynaq]",
+        );
+        const ch = await this._readPromptKey();
+        if (ch.toLowerCase() === 'y' || ch === '\r' || ch === '\n') {
+            random_player_selection(sel);
+            this._renderSelectionOk(sel);
+            for (;;) {
+                const answer = await this._readPromptKey();
+                const lower = answer.toLowerCase();
+                if (lower === 'y' || answer === '\r' || answer === '\n') {
+                    game._startup_selected_character = true;
+                    apply_selection(sel);
+                    return;
+                }
+                if (lower === 'n') {
+                    sel.role = sel.race = sel.gender = sel.align = ROLE_NONE;
+                    if (await this._manualCharacterSelection(sel)) {
+                        game._startup_selected_character = true;
+                        apply_selection(sel);
+                        return;
+                    }
+                    return;
+                }
+                if (lower === 'a') {
+                    await this._promptForName();
+                    this._renderSelectionOk(sel);
+                }
+                if (lower === 'q') return;
+            }
+        } else if (ch.toLowerCase() === 'n') {
+            if (await this._manualCharacterSelection(sel)) {
+                game._startup_selected_character = true;
+                apply_selection(sel);
+            }
+        }
     }
 
     _installCaptureHook() {
