@@ -111,7 +111,7 @@ function newmonhp_for_pet(pettype) {
 }
 
 function peace_minded_pet() {
-    const record = game.u?.ualign?.record ?? 10;
+    const record = game.u?.ualign?.record ?? 0;
     if (rn2(16 + Math.max(record, -15)))
         rn2(2);
 }
