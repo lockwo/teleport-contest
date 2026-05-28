@@ -55,6 +55,67 @@ function enclosingFunction(manifest, cFile, lineNum) {
     return best;
 }
 
+// Build a "file-port" task: port the entire C file to JS, function by
+// function. Used by bulk-port.mjs for whole-file transpilation in
+// parallel — cheaper per-line than divergence-driven fixes once a file
+// is on the critical path.
+//
+// `cFile` is interpreted relative to nethack-c/upstream/src/ by default,
+// but can also be a path like `win/tty/topl.c` for files outside src/.
+export function buildFilePortTask(cFile, { includeHeaders = true } = {}) {
+    const m = loadManifest();
+    // Find the C file: try src/, then upstream root for explicit paths.
+    let cPath = join(UPSTREAM_SRC, cFile);
+    if (!existsSync(cPath)) {
+        const altPath = join(REPO_ROOT, 'nethack-c/upstream', cFile);
+        if (existsSync(altPath)) cPath = altPath;
+        else throw new Error(`C source missing: ${cFile} (tried ${UPSTREAM_SRC}/${cFile} and nethack-c/upstream/${cFile})`);
+    }
+    // Manifest only covers src/*.c. For files outside src/ we build a
+    // minimal port record on the fly.
+    const port = m.ports[cFile] || {
+        c_file: `nethack-c/upstream/${cFile.startsWith('src/') || !cFile.includes('/') ? `src/${cFile.replace(/^src\//, '')}` : cFile}`,
+        js_file: `js/${cFile.split('/').pop().replace(/\.c$/, '.js')}`,
+        status: 'unported',
+        n_functions: 0,
+        functions: [],
+        includes: [],
+    };
+    const cText = readFileSync(cPath, 'utf8');
+    const jsFile = port.js_file;
+    const js = loadJsFile(jsFile);
+
+    // Pull in headers the C file #includes (limited to the ones in
+    // nethack-c/upstream/include/ — system headers are not useful).
+    const headerTexts = {};
+    if (includeHeaders) {
+        const includeDir = join(REPO_ROOT, 'nethack-c/upstream/include');
+        for (const inc of port.includes || []) {
+            const hPath = join(includeDir, inc);
+            if (existsSync(hPath)) {
+                const t = readFileSync(hPath, 'utf8');
+                if (t.length < 200_000) headerTexts[inc] = t;
+            }
+        }
+    }
+
+    return {
+        kind: 'file-port',
+        c_file: cFile,
+        c_path: `nethack-c/upstream/src/${cFile}`,
+        c_lines: cText.split('\n').length,
+        c_text: cText,
+        headers: headerTexts,
+        target_js_file: jsFile,
+        target_js_exists: js.exists,
+        target_js_text: js.text,
+        target_js_size_bytes: js.text ? js.text.length : 0,
+        manifest_port_status: port.status,
+        n_functions: port.n_functions,
+        functions: port.functions,
+    };
+}
+
 function loadJsFile(jsFile) {
     const path = join(REPO_ROOT, jsFile);
     if (!existsSync(path)) return { path, exists: false, text: null };
@@ -106,6 +167,7 @@ export function renderPorterPrompt(task) {
     if (task.kind === 'unmappable') {
         return `Triage produced no actionable C location for session ${task.session}.\nReason: ${task.reason}\n\nThis task should be re-triaged manually.`;
     }
+    if (task.kind === 'file-port') return renderFilePortPrompt(task);
 
     const parts = [];
     parts.push(`# Porter Task: ${task.c_caller.fn} (${task.c_caller.file}:${task.c_caller.line})\n`);
@@ -176,6 +238,84 @@ export function renderPorterPrompt(task) {
             }
         }
     } catch (_) { /* missing or empty — skip */ }
+
+    return parts.join('\n');
+}
+
+// Render a file-port task — the porter's job is to transpile the entire
+// C file to JS, preserving function-by-function correspondence. Score
+// gate is the same as the divergence-driven porter: improve some
+// session, regress none.
+function renderFilePortPrompt(task) {
+    const parts = [];
+    parts.push(`# Porter Task: full-file port of \`${task.c_file}\`\n`);
+    parts.push(`## What this is`);
+    parts.push(`This is a **whole-file transpilation** task, not a divergence fix. Your job is to produce a JavaScript port of the entire C file \`${task.c_path}\` (${task.c_lines.toLocaleString()} lines, ${task.n_functions} functions) by translating it function-by-function into \`${task.target_js_file}\`.`);
+    parts.push('');
+    parts.push(`The point of doing this at file granularity rather than per-divergence: NetHack's call graph has many functions that *call* unported code. If only one function lands in JS at a time, callers fall straight off the cliff. A coherent whole-file port keeps internal calls inside the JS world and unblocks downstream RNG and screen progress all at once.`);
+    parts.push('');
+    parts.push(`## Acceptance criteria (mechanical — a merge gate runs after you finish)`);
+    parts.push(`1. \`bash frozen/score.sh\` must show **strictly more matched RNG calls or screens** than before. Even one extra RNG call is acceptance-worthy.`);
+    parts.push(`2. **Zero regressions on any session.** If even one session loses a single screen or RNG match, the merge gate rejects. Verify locally.`);
+    parts.push(`3. Write the JS to **\`${task.target_js_file}\`** (overwriting if it exists). Keep one JS function per C function, with the same name. This is load-bearing for the Phase 2 diff penalty — when upstream changes a C function, our porter has a 1:1 mapping to find the JS counterpart.`);
+    parts.push(`4. Do not modify any frozen file (\`js/isaac64.js\`, \`js/terminal.js\`, \`js/storage.js\`).`);
+    parts.push(`5. Do not modify \`swarm/\` or \`frozen/\` directories.`);
+    parts.push(`6. If your port needs symbols from other unported C files, **stub them inline at the top of \`${task.target_js_file}\`** with TODO comments — do NOT create or modify other JS files. The next porter will fill those in.`);
+    parts.push(`7. Strongly prefer to import shared infrastructure from existing JS rather than reinvent it: \`./rng.js\` for PRNG (rn2/rnd/d/rne/rnz), \`./gstate.js\` for the global game state, \`./hacklib.js\` for hacklib helpers.`);
+    parts.push('');
+    parts.push(`## C source (${task.c_path}, ${task.c_lines.toLocaleString()} lines)`);
+    parts.push('```c');
+    parts.push(task.c_text);
+    parts.push('```');
+    parts.push('');
+
+    if (Object.keys(task.headers || {}).length) {
+        parts.push(`## Headers this file #includes (for reference)`);
+        for (const [name, text] of Object.entries(task.headers)) {
+            if (!/extern\.h|decl\.h|hack\.h|monst\.h|obj\.h|rm\.h|you\.h|dungeon\.h|context\.h|trap\.h|color\.h/.test(name) && text.length > 30_000) continue;
+            parts.push(`\n### \`include/${name}\` (${text.split('\n').length} lines)`);
+            parts.push('```c');
+            parts.push(text.slice(0, 30_000));
+            if (text.length > 30_000) parts.push('... [truncated]');
+            parts.push('```');
+        }
+        parts.push('');
+    }
+
+    parts.push(`## Existing \`${task.target_js_file}\``);
+    if (task.target_js_exists) {
+        parts.push(`Existing file is ${task.target_js_size_bytes} bytes. **Read it before overwriting** — your port must preserve whatever the existing file does correctly (it may be from a prior partial port or from the skeleton).`);
+        parts.push('');
+        parts.push('```js');
+        parts.push(task.target_js_text);
+        parts.push('```');
+    } else {
+        parts.push(`Does not exist — create it.`);
+    }
+    parts.push('');
+
+    parts.push(`## How to verify`);
+    parts.push('```bash');
+    parts.push(`bash frozen/score.sh    # full 44-session regression check`);
+    parts.push(`node swarm/bin/orchestrator.mjs learn  # see swarm-wide stats`);
+    parts.push('```');
+    parts.push('');
+    parts.push(`When you finish, end your reply with a one-paragraph summary stating which C functions you ported, before/after RNG and screen totals (from \`bash frozen/score.sh\`), and any sessions that regressed.`);
+
+    // Splice in cross-swarm learnings just like the divergence porter prompt.
+    try {
+        const learningsPath = join(SWARM_ROOT, 'state/learnings.md');
+        if (existsSync(learningsPath)) {
+            const text = readFileSync(learningsPath, 'utf8').trim();
+            if (text) {
+                parts.push('');
+                parts.push('## Cross-swarm learnings (auto-distilled, refreshed periodically)');
+                parts.push(text);
+                parts.push('');
+                parts.push('**Use these patterns to inform your approach.**');
+            }
+        }
+    } catch (_) {}
 
     return parts.join('\n');
 }

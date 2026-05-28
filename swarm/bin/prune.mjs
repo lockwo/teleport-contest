@@ -13,9 +13,14 @@
 //   node swarm/bin/prune.mjs --everything    # remove ALL porter/ worktrees regardless of activity
 
 import { execSync } from 'child_process';
-import { readdirSync, existsSync, rmSync } from 'fs';
+import { readdirSync, existsSync, rmSync, statSync } from 'fs';
 import { join } from 'path';
 import { REPO_ROOT } from '../lib/state.mjs';
+
+// Worktrees touched within this window are NEVER pruned, even if no
+// matching process is found — protects against races where a CLI is
+// briefly between forks / between agent steps when prune runs.
+const RECENT_ACTIVITY_MIN = 45;
 
 function sh(cmd, opts = {}) {
     try { return execSync(cmd, { cwd: REPO_ROOT, encoding: 'utf8', ...opts }).trim(); }
@@ -23,10 +28,14 @@ function sh(cmd, opts = {}) {
 }
 
 function activePorterPaths() {
-    // Each live run-porter.mjs subprocess passes the worktree as --add-dir
-    // (claude) or -C (codex). Walk ps output and extract them.
+    // Each live run-porter.mjs (or bulk-port.mjs) subprocess passes the
+    // worktree as --add-dir (claude) or -C (codex). Walk ps output and
+    // extract them. Also treat any worktree owned by a live run-loop /
+    // bulk-port / run-porter process as active (in case the CLI is
+    // momentarily between forks).
     const ps = sh('ps -ax -o args=');
     const set = new Set();
+    const orchestratorRunning = /run-loop\.mjs|bulk-port\.mjs|run-porter\.mjs/.test(ps);
     for (const line of ps.split('\n')) {
         if (!/run-porter\.mjs|claude -p|codex exec/.test(line)) continue;
         const addDir = line.match(/--add-dir\s+(\S+)/);
@@ -34,7 +43,21 @@ function activePorterPaths() {
         if (addDir) set.add(addDir[1]);
         if (cdir) set.add(cdir[1]);
     }
-    return set;
+    return { paths: set, orchestratorRunning };
+}
+
+function recentlyActive(wtPath) {
+    try {
+        // Check the worktree dir itself + any common file the porter writes.
+        const candidates = [wtPath, join(wtPath, 'js'), join(wtPath, '.git')];
+        for (const p of candidates) {
+            if (existsSync(p)) {
+                const ageMs = Date.now() - statSync(p).mtimeMs;
+                if (ageMs < RECENT_ACTIVITY_MIN * 60_000) return true;
+            }
+        }
+    } catch (_) {}
+    return false;
 }
 
 function listWorktrees() {
@@ -69,7 +92,7 @@ function main() {
     const apply = args.includes('--apply') || args.includes('--force');
     const everything = args.includes('--everything');
 
-    const live = activePorterPaths();
+    const { paths: live, orchestratorRunning } = activePorterPaths();
     const wts = listWorktrees().filter(isPorterWorktree);
 
     if (wts.length === 0) {
@@ -77,13 +100,21 @@ function main() {
         return;
     }
 
+    if (orchestratorRunning && !everything) {
+        console.log('[prune] orchestrator (run-loop/bulk-port/run-porter) is running — being conservative.');
+    }
+
     console.log(`Found ${wts.length} porter worktree(s):`);
     const toPrune = [];
     for (const wt of wts) {
-        const isLive = live.has(wt.path);
-        const status = everything ? 'PRUNE (everything mode)'
-                      : isLive ? 'KEEP (active)'
-                      : 'PRUNE (stale)';
+        const isLive   = live.has(wt.path);
+        const isRecent = recentlyActive(wt.path);
+        let status;
+        if (everything) status = 'PRUNE (everything mode)';
+        else if (isLive) status = 'KEEP (active CLI)';
+        else if (isRecent) status = `KEEP (modified < ${RECENT_ACTIVITY_MIN}min ago)`;
+        else if (orchestratorRunning) status = 'KEEP (orchestrator alive; race-safe)';
+        else status = 'PRUNE (stale)';
         console.log(`  [${status}] ${wt.path} (${wt.branch || '?'})`);
         if (status.startsWith('PRUNE')) toPrune.push(wt);
     }
