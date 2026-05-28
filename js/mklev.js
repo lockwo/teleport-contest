@@ -14,6 +14,17 @@ import { filler_region, lspo_map, fill_special_room } from './sp_lev.js';
 import { somex, somey, somexyspace, occupied } from './mkroom.js';
 import { makemon as make_monster } from './makemon.js';
 import {
+    RANDOM_CLASS, WEAPON_CLASS, ARMOR_CLASS, RING_CLASS, FOOD_CLASS,
+    SCROLL_CLASS, POTION_CLASS, TOOL_CLASS, GEM_CLASS, SPBOOK_no_NOVEL,
+    ARROW, DART, BOULDER, GOLD_PIECE, ROCK, KELP_FROND,
+    SCR_TELEPORTATION, BELL, CORPSE, STATUE, POT_HEALING,
+    POT_EXTRA_HEALING, POT_SPEED, POT_GAIN_ENERGY, SCR_ENCHANT_WEAPON,
+    SCR_ENCHANT_ARMOR, SCR_CONFUSE_MONSTER, SCR_SCARE_MONSTER,
+    WAN_DIGGING, SPE_HEALING, LARGE_BOX, CHEST, FOOD_RATION,
+    CRAM_RATION, LEMBAS_WAFER,
+    mkobj, mkobj_at, mksobj, mksobj_at, mkgold, curse,
+} from './mkobj.js';
+import {
     COLNO, ROWNO, STONE, ROOM, CORR, DOOR, STAIRS,
     HWALL, VWALL, TLCORNER, TRCORNER, BLCORNER, BRCORNER,
     CROSSWALL, TUWALL, TDWALL, TLWALL, TRWALL,
@@ -28,42 +39,6 @@ import {
     LR_UPTELE,
 } from './const.js';
 
-// Object/class constants (normally from objects.js, not in contest template)
-const RANDOM_CLASS = 0;
-const WEAPON_CLASS = 1;
-const ARMOR_CLASS = 2;
-const RING_CLASS = 3;
-const FOOD_CLASS = 7;
-const SCROLL_CLASS = 8;
-const POTION_CLASS = 9;
-const TOOL_CLASS = 12;
-const GEM_CLASS = 14;
-const BOULDER = 465;
-const GOLD_PIECE = 466;
-const ROCK = 467;
-const KELP_FROND = 172;
-const SCR_TELEPORTATION = 287;
-const BELL = 358;
-const CORPSE = 471;
-const STATUE = 472;
-const SPBOOK_no_NOVEL = 11;
-
-// Supply chest items
-const POT_HEALING = 235;
-const POT_EXTRA_HEALING = 236;
-const POT_SPEED = 245;
-const POT_GAIN_ENERGY = 250;
-const SCR_ENCHANT_WEAPON = 275;
-const SCR_ENCHANT_ARMOR = 276;
-const SCR_CONFUSE_MONSTER = 278;
-const SCR_SCARE_MONSTER = 279;
-const WAN_DIGGING = 305;
-const SPE_HEALING = 327;
-const LARGE_BOX = 214;
-const CHEST = 215;
-const FOOD_RATION = 143;
-const CRAM_RATION = 145;
-const LEMBAS_WAFER = 146;
 const DUST = 3;
 const MARK = 6;
 
@@ -193,83 +168,9 @@ function level_difficulty() {
 }
 
 // ============================================================
-// Stub functions for object/monster/trap creation
-// These consume the exact RNG calls that C makes.
+// Stub functions for monster/trap/engraving creation.
+// Object creation lives in mkobj.js.
 // ============================================================
-
-let _nextObjId = 1;
-
-// C ref: mkobj.c next_ident — rnd(2) for item identification
-function next_ident() { rnd(2); }
-
-// C ref: mkobj.c blessorcurse — rn2(4) BUC selection
-function blessorcurse(otmp) {
-    const r = rn2(4);
-    if (otmp) {
-        otmp.cursed = (r === 0);
-        otmp.blessed = false;
-    }
-}
-
-// C ref: mkobj.c mksobj — create a specific object
-// Minimal stub: consumes RNG for next_ident + type-specific init
-function mksobj(otyp, init, artif) {
-    const otmp = { otyp, ox: 0, oy: 0, quan: 1, owt: 1, cursed: false, blessed: false, olocked: false, spe: 0 };
-    next_ident();
-    if (init) {
-        mksobj_init(otmp, otyp);
-    }
-    return otmp;
-}
-
-// C ref: mkobj.c mksobj initialization RNG consumption
-// This varies by object class. For the contest, we need enough to match
-// the session's RNG pattern for objects created during mklev.
-function mksobj_init(otmp, otyp) {
-    // For BOULDER, GOLD_PIECE: no extra init RNG
-    // For scrolls: blessorcurse
-    // For potions: blessorcurse
-    // For general objects: varies
-    // We just do blessorcurse for scrolls/potions
-    if (otyp >= 270 && otyp < 300) { // scrolls
-        blessorcurse(otmp);
-    } else if (otyp >= 230 && otyp < 270) { // potions
-        blessorcurse(otmp);
-    }
-}
-
-function mksobj_at(otyp, x, y, init, artif) {
-    return mksobj(otyp, init, artif);
-}
-
-function mkobj(oclass, artif) {
-    // Class-based random object creation
-    // For contest, just consume the right RNG
-    return mksobj(0, false, artif);
-}
-
-function mkobj_at(oclass, x, y, artif) {
-    return mkobj(oclass, artif);
-}
-
-function mkgold(amount, x, y) {
-    // C ref: mkobj.c mkgold()
-    if (amount <= 0) {
-        // C ref: mkobj.c:2008-2010
-        const depthVal = depth_of_level(game.u?.uz);
-        const mul = rnd(Math.trunc(30 / Math.max(12 - depthVal, 2)));
-        amount = 1 + rnd(level_difficulty() + 2) * mul;
-    }
-    // mksobj_at(GOLD_PIECE) calls next_ident
-    next_ident();
-}
-
-function place_object(otmp, x, y) { /* stub */ }
-function dealloc_obj(otmp) { /* stub */ }
-function curse(otmp) { if (otmp) otmp.cursed = true; }
-function weight(otmp) { return otmp?.owt || 1; }
-function add_to_container(container, otmp) { /* stub */ }
-function sobj_at(otyp, x, y) { return false; }
 
 // set_corpsenm stub
 function set_corpsenm(otmp, pm) { /* stub */ }
@@ -1753,8 +1654,8 @@ function mktrap_victim(trap) {
     const x = trap.tx, y = trap.ty;
     // Object based on trap type
     switch (kind) {
-    case ARROW_TRAP: mksobj(349, true, false); break; // ARROW
-    case DART_TRAP: mksobj(353, true, false); break; // DART
+    case ARROW_TRAP: mksobj(ARROW, true, false); break;
+    case DART_TRAP: mksobj(DART, true, false); break;
     case ROCKTRAP: mksobj(ROCK, true, false); break;
     default: break;
     }
