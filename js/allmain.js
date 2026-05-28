@@ -7,6 +7,7 @@
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
+import { makedog } from './dog.js';
 import { rhack } from './cmd.js';
 import { docrt, cls, bot, flush_screen, pline } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals } from './vision.js';
@@ -42,6 +43,10 @@ export async function newgame() {
     // These create objects/monsters that don't affect terrain display
     await fastforward_fill_mineralize();
 
+    // C ref: dog.c makedog() - create the starting pet after level fill.
+    u_on_upstairs();
+    makedog();
+
     // Fast-forward through post-mklev startup RNG calls.
     // Covers: u_init_role, ini_inv, attributes, moveloop_preamble.
     fastforward_post_mklev();
@@ -61,10 +66,6 @@ export async function newgame() {
     g.urace = { adj: 'human' };
     g.flags.female = true;
     g.plname = g.plname || 'Contestant';
-
-    // C ref: allmain.c newgame() → u_on_upstairs()
-    // Places hero on upstair, or special stair, or random room position.
-    u_on_upstairs();
 
     // Initial display
     init_vision_globals();
