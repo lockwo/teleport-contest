@@ -10,7 +10,7 @@ import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { init_rect, rnd_rect, get_rect, split_rects } from './rect.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { filler_region, lspo_map } from './sp_lev.js';
+import { filler_region, lspo_map, fill_special_room } from './sp_lev.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, DOOR, STAIRS,
     HWALL, VWALL, TLCORNER, TRCORNER, BLCORNER, BRCORNER,
@@ -503,7 +503,8 @@ async function makelevel() {
             g.level.flags.has_vault = true;
             const vaultRoom = g.level.rooms[g.level.nroom - 1];
             if (vaultRoom) vaultRoom.needfill = FILL_NORMAL;
-            if (!is_branchlev()) rn2(3);
+            fill_special_room(vaultRoom);       // C ref: mklev.c:1330
+            if (!is_branchlev()) rn2(3);        // mk_knox_portal rn2(3)
             if (!rn2(3)) await makeniche(TELEP_TRAP);
         } else if (rnd_rect()) {
             // Fallback vault attempt — simplified

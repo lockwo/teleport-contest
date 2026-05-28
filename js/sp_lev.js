@@ -10,6 +10,7 @@ import {
     IRONBARS, POOL, MOAT, WATER, LAVAPOOL, TREE, FOUNTAIN, THRONE,
     ALTAR, ICE, MAX_TYPE, INVALID_TYPE, NO_ROOM,
     OROOM, THEMEROOM, ROOMOFFSET, isok, IS_DOOR,
+    VAULT, SHOPBASE, FILL_NONE, FILL_NORMAL,
 } from './const.js';
 
 const gx = { xstart: 1, xsize: COLNO - 1, x_maze_max: COLNO - 1 };
@@ -280,6 +281,48 @@ function themeroom_fill(croom) {
     }
     if (pick?.name === 'Ghost of an Adventurer') {
         create_ghost_of_adventurer(croom);
+    }
+}
+
+// C ref: sp_lev.c fill_special_room() — fills vaults, zoos, shops, etc.
+export function fill_special_room(croom) {
+    if (!croom) return;
+
+    for (let i = 0; i < (croom.nsubrooms || 0); i++) {
+        fill_special_room(croom.sbrooms?.[i]);
+    }
+
+    if (croom.rtype === OROOM || croom.rtype === THEMEROOM
+        || croom.needfill === FILL_NONE)
+        return;
+
+    if (croom.needfill === FILL_NORMAL) {
+        if (croom.rtype >= SHOPBASE) {
+            // stock_room: not yet implemented, skip
+            return;
+        }
+
+        switch (croom.rtype) {
+        case VAULT: {
+            const d = Math.abs(depth_of_level(game.u?.uz));
+            for (let x = croom.lx; x <= croom.hx; x++) {
+                for (let y = croom.ly; y <= croom.hy; y++) {
+                    rn2(d * 100);  // rn1(d*100, 51) → rn2(d*100)
+                    rnd(2);        // mkgold → mksobj → next_ident
+                }
+            }
+            break;
+        }
+        default:
+            // ZOO, COURT, BEEHIVE, etc. → fill_zoo (not yet ported)
+            break;
+        }
+    }
+
+    switch (croom.rtype) {
+    case VAULT:
+        if (game.level?.flags) game.level.flags.has_vault = true;
+        break;
     }
 }
 
