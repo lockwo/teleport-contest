@@ -1806,12 +1806,16 @@ export async function fill_ordinary_room(croom, bonus_items) {
     let skip_chests = false;
     if (bonus_items && somexyspace(croom, pos)) {
         const branchp = is_branchlev();
-        const oracle_dlevel = g.oracle_level?.dlevel ?? 5;
-        if (branchp) {
+        const uz = g.u?.uz ?? { dnum: 0, dlevel: 1 };
+        const mines_dnum = g.mines_dnum;
+        const oracle_level = g.oracle_level ?? { dnum: 0, dlevel: 5 };
+        const uz_branch = Number.isInteger(branchp?.id) ? branchp : null;
+        if (uz_branch && uz.dnum !== mines_dnum
+            && (uz_branch.end1?.dnum === mines_dnum || uz_branch.end2?.dnum === mines_dnum)) {
             // Mines entrance bonus food
             mksobj_at((rn2(5) < 3) ? FOOD_RATION : rn2(2) ? CRAM_RATION : LEMBAS_WAFER,
                 pos.x, pos.y, true, false);
-        } else if (g.u?.uz?.dnum === 0 && (g.u?.uz?.dlevel ?? 1) < oracle_dlevel && rn2(3)) {
+        } else if (uz.dnum === oracle_level.dnum && uz.dlevel < oracle_level.dlevel && rn2(3)) {
             // Supply chest
             const supply_chest = mksobj_at(rn2(3) ? CHEST : LARGE_BOX, pos.x, pos.y, false, false);
             if (supply_chest) {
