@@ -119,31 +119,68 @@ async function main() {
     console.log(accept ? '\nDECISION: ACCEPT' : '\nDECISION: REJECT');
 
     if (commit && accept) {
-        // Snapshot the JS edits from the worktree and apply to main repo.
-        // Simplest path: copy modified files; commit on main with porter
-        // metadata. We don't do a git merge to keep history linear.
-        const changes = sh(`git -C "${worktree}" diff --name-only HEAD`).split('\n').filter(Boolean);
-        const staged  = sh(`git -C "${worktree}" diff --name-only --cached`).split('\n').filter(Boolean);
-        const newFiles = sh(`git -C "${worktree}" status --porcelain`).split('\n')
-            .filter(l => l.startsWith('?? ')).map(l => l.slice(3));
-        const all = [...new Set([...changes, ...staged, ...newFiles])];
-        if (all.length === 0) { console.log('(no files to copy from worktree — nothing committed)'); return; }
-        for (const f of all) {
+        // The porter committed inside the worktree (run-porter.mjs runs
+        // `git commit` after the agent finishes). The earlier version of
+        // this code diffed against the worktree's own HEAD — which is the
+        // porter's commit — and saw an empty diff, so the merge was a
+        // silent no-op.
+        //
+        // Correct approach: compute the diff between main's current HEAD
+        // and the worktree's HEAD. That's exactly what the porter changed.
+        // We restrict to js/ for safety; the porter contract forbids
+        // touching anything else.
+        const base = sh('git rev-parse HEAD');               // main's HEAD on the orchestrator side
+        const tip  = sh(`git -C "${worktree}" rev-parse HEAD`); // porter's commit in the worktree
+        if (base === tip) {
+            console.log('(worktree has no commits beyond main — nothing to merge)');
+            return;
+        }
+        // List the files the porter changed. --diff-filter=ACMRT keeps
+        // added/copied/modified/renamed/type-changed entries; D would mean
+        // a delete, which we apply by removing the file on main.
+        const changedAcMrt = sh(`git -C "${worktree}" diff --name-only --diff-filter=ACMRT ${base} ${tip}`).split('\n').filter(Boolean);
+        const deletedD    = sh(`git -C "${worktree}" diff --name-only --diff-filter=D     ${base} ${tip}`).split('\n').filter(Boolean);
+        const all = [...new Set([...changedAcMrt, ...deletedD])];
+        if (all.length === 0) {
+            console.log('(porter commit produced no file changes against main — nothing to merge)');
+            return;
+        }
+        // Safety: refuse to merge changes outside js/ (and a small allowlist).
+        const ALLOWED = (p) => p.startsWith('js/') || p === 'package.json' || p === 'index.html';
+        const FORBIDDEN_FROZEN = new Set(['js/isaac64.js', 'js/terminal.js', 'js/storage.js']);
+        const outOfScope = all.filter(p => !ALLOWED(p) || FORBIDDEN_FROZEN.has(p));
+        if (outOfScope.length) {
+            console.log(`REJECT (post-verify safety): porter touched files outside js/ or modified a frozen file: ${outOfScope.join(', ')}`);
+            emit('merge_safety_reject', { worktree, out_of_scope: outOfScope });
+            return;
+        }
+        for (const f of changedAcMrt) {
             const src = join(worktree, f);
             const dst = join(REPO_ROOT, f);
-            if (existsSync(src)) {
-                const content = readFileSync(src);
-                writeFileSync(dst, content);
-                console.log(`  copied ${f}`);
+            const content = readFileSync(src);
+            writeFileSync(dst, content);
+            console.log(`  copied ${f}`);
+        }
+        for (const f of deletedD) {
+            const dst = join(REPO_ROOT, f);
+            if (existsSync(dst)) {
+                try { execSync(`git rm -- '${f.replace(/'/g, "'\\''")}'`, { cwd: REPO_ROOT, stdio: 'pipe' }); } catch (_) {}
+                console.log(`  removed ${f}`);
             }
         }
-        // Stage and commit on main repo
-        sh(`git add ${all.map(f => `'${f}'`).join(' ')}`);
+        sh(`git add -- ${all.map(f => `'${f.replace(/'/g, "'\\''")}'`).join(' ')}`);
+        // Bail if staging produced no diff (paranoid; should not happen if files copied).
+        const stagedDiff = sh('git diff --cached --shortstat');
+        if (!stagedDiff) {
+            console.log('(post-copy diff is empty — nothing to commit, aborting merge)');
+            emit('merge_empty_diff', { worktree });
+            return;
+        }
         const msg = `porter: ${targetSession || 'merge from worktree'} (screens +${d.screensDelta}, rng +${d.rngDelta})`;
         sh(`git commit -m '${msg.replace(/'/g, "'\\''")}'`);
         const commitSha = sh('git rev-parse HEAD').slice(0, 7);
-        console.log(`\n  committed: ${msg} (${commitSha})`);
-        emit('merge_commit', { commit_sha: commitSha, message: msg, target_session: targetSession || null, screens_delta: d.screensDelta, rng_delta: d.rngDelta });
+        console.log(`\n  committed: ${msg} (${commitSha}) — ${stagedDiff.trim()}`);
+        emit('merge_commit', { commit_sha: commitSha, message: msg, target_session: targetSession || null, screens_delta: d.screensDelta, rng_delta: d.rngDelta, files: all });
 
         // Promote latest + record run
         writeFileSync(LATEST_PATH, JSON.stringify(next));
