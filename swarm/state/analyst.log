@@ -1,0 +1,2 @@
+[analyst-daemon] starting; interval=300s min-events=4 provider=claude
+[analyst-daemon] journal start: 4 lines

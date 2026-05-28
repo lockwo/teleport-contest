@@ -221,6 +221,13 @@ function runAnalyst(provider) {
 async function main() {
     const opts = parseArgs();
     console.log(`run-loop: iterations=${opts.iterations} providers=${opts.providers.join(',')} push=${opts.push} analyst-every=${opts.analystEvery}`);
+
+    // Auto-prune stale worktrees from prior killed loops so we start clean.
+    try {
+        const r = spawnSync('node', [join(SWARM_ROOT, 'bin/prune.mjs'), '--apply'], { cwd: REPO_ROOT, stdio: 'inherit' });
+        if (r.status !== 0) console.log('[run-loop] prune exited nonzero — continuing');
+    } catch (_) { /* prune absent or failed — continue */ }
+
     let winnersSinceAnalyst = 0;
     for (let i = 0; i < opts.iterations; i++) {
         const ok = await oneIteration(i, opts);
