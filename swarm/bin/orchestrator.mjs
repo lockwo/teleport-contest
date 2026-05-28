@@ -90,6 +90,9 @@ function main() {
         case 'analyst':
             delegate([join(SWARM_ROOT, 'bin/analyst.mjs'), ...rest]);
             break;
+        case 'analyst-daemon':
+            delegate([join(SWARM_ROOT, 'bin/analyst-daemon.mjs'), ...rest]);
+            break;
         case 'status':
         case undefined:
             status();
