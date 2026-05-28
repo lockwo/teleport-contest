@@ -13,6 +13,7 @@ import { depth as depth_of_level } from './hacklib.js';
 import { filler_region, lspo_map, fill_special_room, themeroom_fill } from './sp_lev.js';
 import { somex, somey, somexyspace, occupied } from './mkroom.js';
 import { makemon as make_monster, rndmonst } from './makemon.js';
+import { make_engr_at, random_engraving, wipe_engr_at } from './engrave.js';
 import {
     RANDOM_CLASS, WEAPON_CLASS, ARMOR_CLASS, RING_CLASS, FOOD_CLASS,
     SCROLL_CLASS, POTION_CLASS, TOOL_CLASS, GEM_CLASS, SPBOOK_no_NOVEL,
@@ -38,10 +39,8 @@ import {
     A_LAWFUL, Align2amask,
     LR_UPTELE,
     CORPSTAT_INIT, CORPSTAT_SPE_VAL,
+    DUST, MARK,
 } from './const.js';
-
-const DUST = 3;
-const MARK = 6;
 
 const XLIM = 4;
 const YLIM = 3;
@@ -81,6 +80,12 @@ const TRAPPED_CHEST = 25;
 
 function is_hole(t) { return t === HOLE || t === TRAPDOOR; }
 function is_pit(t) { return t === PIT || t === SPIKED_PIT; }
+
+const trap_engravings = {
+    [TRAPDOOR]: 'Vlad was here',
+    [TELEP_TRAP]: 'ad aerarium',
+    [LEVEL_TELEP]: 'ad aerarium',
+};
 
 // Stairway list management
 function stairway_add(x, y, up, isladder, dest) {
@@ -222,29 +227,9 @@ async function maketrap(x, y, typ) {
     return trap;
 }
 
-// engrave stubs
-function make_engr_at(x, y, text, pristine, epoch, engr_type) { /* stub */ }
-function wipe_engr_at(x, y, cnt, perm) { /* stub */ }
 function make_grave(x, y, text) {
     const loc = game.level?.at(x, y);
     if (loc) loc.typ = GRAVE;
-}
-
-// random_engraving stub — consumes rn2 for text selection
-function random_engraving() {
-    // C: reads from engrave data file, consumes rn2 for selection
-    const idx = rn2(48); // approximate: rn2(num_engravings)
-    return { text: 'placeholder', pristine: 'placeholder' };
-}
-
-// wipeout_text stub — consumes rn2 for character corruption
-function wipeout_text(text) {
-    for (let i = 0; i < text.length; i++) {
-        if (text[i] !== ' ') {
-            rn2(1 + 27 / (text.length - i));
-        }
-    }
-    return text;
 }
 
 // in_rooms stub
@@ -1481,7 +1466,15 @@ async function makeniche(trap_type) {
             if (trap_type) {
                 let actualTrap = trap_type;
                 if (is_hole(actualTrap)) actualTrap = ROCKTRAP;
-                await maketrap(xx, yy + dy, actualTrap);
+                const ttmp = await maketrap(xx, yy + dy, actualTrap);
+                if (ttmp) {
+                    if (actualTrap !== ROCKTRAP) ttmp.once = true;
+                    const trapText = trap_engravings[actualTrap];
+                    if (trapText) {
+                        make_engr_at(xx, yy - dy, trapText, null, 0, DUST);
+                        wipe_engr_at(xx, yy - dy, 5, false);
+                    }
+                }
             }
             dosdoor(xx, yy, aroom, SDOOR);
         } else {
@@ -1893,12 +1886,14 @@ export async function fill_ordinary_room(croom, bonus_items) {
     // Graffiti
     const depth = g.u?.uz?.dlevel ?? 1;
     if (!rn2(27 + 3 * Math.abs(depth))) {
-        const { text: engrText } = random_engraving();
+        const { text: engrText, pristine } = random_engraving();
         if (engrText) {
             do {
                 somexyspace(croom, pos);
                 if (g.level?.at(pos.x, pos.y)?.typ === ROOM) break;
             } while (!rn2(40));
+            if (g.level?.at(pos.x, pos.y)?.typ === ROOM)
+                make_engr_at(pos.x, pos.y, engrText, pristine, 0, MARK);
         }
     }
     // Random objects
