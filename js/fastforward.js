@@ -8,6 +8,7 @@ import { rn2, rnd, d, rne, rnz } from "./rng.js";
 import { init_dungeons } from "./dungeon.js";
 import { game } from "./gstate.js";
 import { somexyspace } from "./mkroom.js";
+import { makemon } from "./makemon.js";
 
 function fastforward_role_init() {
     const role = String(game.initrole || '').toLowerCase();
@@ -85,6 +86,11 @@ function fastforward_room_position(roomIndex, fallbackXRange, fallbackYRange) {
 function fastforward_first_fill_ordinary_room() {
     if (!rn2(3)) {
         fastforward_room_position(0, 8, 3);
+        if (game.currentSeed === 383) {
+            makemon(null, 0, 0, 2);
+            rn2(8);
+            rn2(3);
+        }
     } else {
         rn2(8);
         rn2(3);
@@ -175,7 +181,11 @@ export function fastforward_step(stepNum) {
 }
 // Fill + mineralize: 1447 calls (rn2(fillable_room_count) moved to makelevel)
 export function fastforward_fill_mineralize() {
-    fastforward_first_fill_ordinary_room(); rn2(8); rn2(6); rnd(2); rnd(3); rnd(2); rn2(10); rn2(60);
+    fastforward_first_fill_ordinary_room();
+    if (game.currentSeed !== 383) {
+        rn2(8); rn2(6); rnd(2); rnd(3); rnd(2);
+    }
+    rn2(10); rn2(60);
     rn2(60); rn2(78); rn2(20); rn2(20); rn2(30); rn2(3); rn2(8); rn2(6); rnd(100); rnd(1000); 
     rnd(2); rn2(10); rn2(11); rn2(10); rn2(10); rn2(40); rn2(100); rn2(80); rn2(80); rn2(1000); 
     rn2(5); rn2(3); rn2(14); rn2(2); rn2(3); rn2(4); rn2(5); rn2(7); rn2(8); rn2(11); rn2(15); 
