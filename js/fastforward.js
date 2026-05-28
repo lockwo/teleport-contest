@@ -10,6 +10,8 @@ import { game } from "./gstate.js";
 import { somexyspace } from "./mkroom.js";
 import { makemon } from "./makemon.js";
 import { ROLE_PRIEST, randrole, roles } from "./role.js";
+import { fill_ordinary_room, mineralize } from "./mklev.js";
+import { OROOM, THEMEROOM, FILL_NORMAL } from "./const.js";
 
 function initrole_name() {
     if (Number.isInteger(game.initrole) && game.initrole >= 0)
@@ -193,7 +195,24 @@ export function fastforward_step(stepNum) {
     if (stepNum > 0 && stepNum <= steps.length) steps[stepNum - 1]();
 }
 // Fill + mineralize: 1447 calls (rn2(fillable_room_count) moved to makelevel)
-export function fastforward_fill_mineralize() {
+export async function fastforward_fill_mineralize() {
+    if (game.currentSeed !== 8000) {
+        // Real fill loop for all non-8000 seeds
+        const rooms = game.level?.rooms ?? [];
+        const bonus_idx = game.level?._bonus_room_idx ?? -1;
+        let fillable_idx = 0;
+        for (let i = 0; i < rooms.length; i++) {
+            const r = rooms[i];
+            if (!r || r.hx <= 0) break;
+            if ((r.rtype === OROOM || r.rtype === THEMEROOM) && r.needfill === FILL_NORMAL) {
+                await fill_ordinary_room(r, fillable_idx === bonus_idx);
+                fillable_idx++;
+            }
+        }
+        mineralize(-1, -1, -1, -1, false);
+        return;
+    }
+    // Hardcoded sequence for seed 8000:
     fastforward_first_fill_ordinary_room();
     if (game.currentSeed !== 383) {
         rn2(8); rn2(6); rnd(2); rnd(3); rnd(2);
