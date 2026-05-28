@@ -10,6 +10,7 @@ import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { init_rect, rnd_rect, get_rect, split_rects } from './rect.js';
 import { depth as depth_of_level } from './hacklib.js';
+import { filler_region, lspo_map } from './sp_lev.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, DOOR, STAIRS,
     HWALL, VWALL, TLCORNER, TRCORNER, BLCORNER, BRCORNER,
@@ -595,6 +596,241 @@ const THEMEROOM_META = [
     { name: 'Twin businesses', frequency: 1, mindiff: 4 },
 ];
 
+const THEMEROOM_MAPS = {
+    'L-shaped': {
+        filler: [1, 1],
+        map: `-----xxx
+|...|xxx
+|...|xxx
+|...----
+|......|
+|......|
+|......|
+--------`,
+    },
+    'L-shaped, rot 1': {
+        filler: [5, 1],
+        map: `xxx-----
+xxx|...|
+xxx|...|
+----...|
+|......|
+|......|
+|......|
+--------`,
+    },
+    'L-shaped, rot 2': {
+        filler: [1, 1],
+        map: `--------
+|......|
+|......|
+|......|
+----...|
+xxx|...|
+xxx|...|
+xxx-----`,
+    },
+    'L-shaped, rot 3': {
+        filler: [1, 1],
+        map: `--------
+|......|
+|......|
+|......|
+|...----
+|...|xxx
+|...|xxx
+-----xxx`,
+    },
+    'Blocked center': {
+        filler: [1, 1],
+        map: `-----------
+|.........|
+|.........|
+|.........|
+|...LLL...|
+|...LLL...|
+|...LLL...|
+|.........|
+|.........|
+|.........|
+-----------`,
+    },
+    'Circular, small': {
+        filler: [3, 3],
+        map: `xx---xx
+x--.--x
+--...--
+|.....|
+--...--
+x--.--x
+xx---xx`,
+    },
+    'Circular, medium': {
+        filler: [4, 4],
+        map: `xx-----xx
+x--...--x
+--.....--
+|.......|
+|.......|
+|.......|
+--.....--
+x--...--x
+xx-----xx`,
+    },
+    'Circular, big': {
+        filler: [5, 5],
+        map: `xxx-----xxx
+x---...---x
+x-.......-x
+--.......--
+|.........|
+|.........|
+|.........|
+--.......--
+x-.......-x
+x---...---x
+xxx-----xxx`,
+    },
+    'T-shaped': {
+        filler: [5, 5],
+        map: `xxx-----xxx
+xxx|...|xxx
+xxx|...|xxx
+----...----
+|.........|
+|.........|
+|.........|
+-----------`,
+    },
+    'T-shaped, rot 1': {
+        filler: [2, 2],
+        map: `-----xxx
+|...|xxx
+|...|xxx
+|...----
+|......|
+|......|
+|......|
+|......|
+|...----
+|...|xxx
+|...|xxx
+-----xxx`,
+    },
+    'T-shaped, rot 2': {
+        filler: [2, 2],
+        map: `-----------
+|.........|
+|.........|
+|.........|
+----...----
+xxx|...|xxx
+xxx|...|xxx
+xxx-----xxx`,
+    },
+    'T-shaped, rot 3': {
+        filler: [5, 5],
+        map: `xxx-----
+xxx|...|
+xxx|...|
+----...|
+|......|
+|......|
+|......|
+----...|
+xxx|...|
+xxx|...|
+xxx-----`,
+    },
+    'S-shaped': {
+        filler: [2, 2],
+        map: `-----xxx
+|...|xxx
+|...|xxx
+|...----
+|......|
+|......|
+|......|
+----...|
+xxx|...|
+xxx|...|
+xxx-----`,
+    },
+    'S-shaped, rot 1': {
+        filler: [5, 5],
+        map: `xxx--------
+xxx|......|
+xxx|......|
+----......|
+|......----
+|......|xxx
+|......|xxx
+--------xxx`,
+    },
+    'Z-shaped': {
+        filler: [5, 5],
+        map: `xxx-----
+xxx|...|
+xxx|...|
+----...|
+|......|
+|......|
+|......|
+|...----
+|...|xxx
+|...|xxx
+-----xxx`,
+    },
+    'Z-shaped, rot 1': {
+        filler: [2, 2],
+        map: `--------xxx
+|......|xxx
+|......|xxx
+|......----
+----......|
+xxx|......|
+xxx|......|
+xxx--------`,
+    },
+    'Cross': {
+        filler: [6, 6],
+        map: `xxx-----xxx
+xxx|...|xxx
+xxx|...|xxx
+----...----
+|.........|
+|.........|
+|.........|
+----...----
+xxx|...|xxx
+xxx|...|xxx
+xxx-----xxx`,
+    },
+    'Four-leaf clover': {
+        filler: [6, 6],
+        map: `-----x-----
+|...|x|...|
+|...---...|
+|.........|
+---.....---
+xx|.....|xx
+---.....---
+|.........|
+|...---...|
+|...|x|...|
+-----x-----`,
+    },
+    'Water-surrounded vault': {
+        filler: null,
+        map: `}}}}}}
+}----}
+}|..|}
+}|..|}
+}----}
+}}}}}}`,
+    },
+};
+
 function is_themeroom_eligible(room, difficulty) {
     if (room.mindiff != null && difficulty < room.mindiff) return false;
     if (room.maxdiff != null && difficulty > room.maxdiff) return false;
@@ -616,6 +852,16 @@ async function themerooms_generate(difficulty) {
         }
     }
     if (!pick) return false;
+    const mapSpec = THEMEROOM_MAPS[pick.name];
+    if (mapSpec) {
+        const placed = lspo_map({
+            map: mapSpec.map,
+            contents: mapSpec.filler
+                ? () => filler_region(mapSpec.filler[0], mapSpec.filler[1])
+                : null,
+        });
+        return !!placed && !game.themeroom_failed;
+    }
     // For 'ordinary' rooms, create a standard room
     // For themed rooms with dynamic dimensions, consume those rn2 calls first
     const chance = 100;
