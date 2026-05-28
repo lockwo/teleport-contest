@@ -31,6 +31,7 @@ export const SPBOOK_no_NOVEL = -SPBOOK_CLASS;
 export const STRANGE_OBJECT = 0;
 export const ARROW = 18;
 export const DART = 24;
+export const WORM_TOOTH = 42;
 export const CORPSE = 265;
 export const EGG = 266;
 export const TIN = 296;
@@ -787,7 +788,7 @@ function may_generate_eroded(otmp) {
     const moves = game.moves ?? 1;
     if (moves <= 1 && !game.in_mklev) return false;
     if (otmp.oerodeproof || !erosion_matters(otmp) || !is_damageable(otmp)) return false;
-    if (otmp.otyp === UNICORN_HORN) return false;
+    if (otmp.otyp === WORM_TOOTH || otmp.otyp === UNICORN_HORN) return false;
     if (otmp.oartifact) return false;
     return true;
 }

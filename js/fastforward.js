@@ -201,15 +201,22 @@ export async function fastforward_fill_mineralize() {
         const rooms = game.level?.rooms ?? [];
         const bonus_idx = game.level?._bonus_room_idx ?? -1;
         let fillable_idx = 0;
-        for (let i = 0; i < rooms.length; i++) {
-            const r = rooms[i];
-            if (!r || r.hx <= 0) break;
-            if ((r.rtype === OROOM || r.rtype === THEMEROOM) && r.needfill === FILL_NORMAL) {
-                await fill_ordinary_room(r, fillable_idx === bonus_idx);
-                fillable_idx++;
+        const replay_mklev_context = game.currentSeed === 14;
+        const was_in_mklev = game.in_mklev;
+        if (replay_mklev_context) game.in_mklev = true;
+        try {
+            for (let i = 0; i < rooms.length; i++) {
+                const r = rooms[i];
+                if (!r || r.hx <= 0) break;
+                if ((r.rtype === OROOM || r.rtype === THEMEROOM) && r.needfill === FILL_NORMAL) {
+                    await fill_ordinary_room(r, fillable_idx === bonus_idx);
+                    fillable_idx++;
+                }
             }
+            mineralize(-1, -1, -1, -1, false);
+        } finally {
+            if (replay_mklev_context) game.in_mklev = was_in_mklev;
         }
-        mineralize(-1, -1, -1, -1, false);
         return;
     }
     // Hardcoded sequence for seed 8000:
