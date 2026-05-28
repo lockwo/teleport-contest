@@ -4,6 +4,7 @@
 import { game } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
+import { DART, mksobj } from './mkobj.js';
 import {
     A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL,
     AM_NONE, AM_CHAOTIC, AM_NEUTRAL, AM_LAWFUL,
@@ -187,7 +188,13 @@ function mongets_weapon() {
 }
 
 function m_initthrow(_otyp, oquan) {
-    mksobj_weapon({ multigen: true, poisonable: true });
+    const was_in_mklev = game.in_mklev;
+    game.in_mklev = true;
+    try {
+        mksobj(_otyp, true, false);
+    } finally {
+        game.in_mklev = was_in_mklev;
+    }
     rn2(oquan); // rn1(oquan, 3)
 }
 
@@ -213,7 +220,7 @@ function m_initweap(mtmp) {
     switch (ptr.mlet) {
     case 'k': // S_KOBOLD
         if (!rn2(4))
-            m_initthrow('DART', 12);
+            m_initthrow(DART, 12);
         break;
     case 'o': // S_ORC; current low-level table only includes goblin.
         if (rn2(2))
