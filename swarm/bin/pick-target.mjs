@@ -71,26 +71,45 @@ function buildLeverageMap() {
     return m;
 }
 
-// Build a cooldown multiplier per session from the journal: count
-// iteration_start events targeting each session within the last
-// COOLDOWN_WINDOW iterations and check if any were winners.
+// Build a cooldown multiplier per session from the journal. Cooldown
+// applies at the **divergence-site** level, not the session level:
+// place_level (dungeon.c:687) blocks 20 sessions, but they're all
+// blocked by the *same* underlying bug — one failed attempt on
+// seed0012 should deprioritise ALL place_level victims, forcing the
+// swarm to rotate to a different divergence site (role_init etc.) on
+// the next iteration.
+//
+// Returns a Map<session, multiplier>.
+function siteKey(c) { return c ? `${c.file}:${c.line}` : null; }
+
 function buildCooldownMap() {
     const events = readAll();
     const iters = events.filter(e => e.event === 'iteration_start');
     const winners = new Set(events.filter(e => e.event === 'iteration_winner').map(e => `${e.iter}::${e.target_session}`));
+
     const recent = iters.slice(-COOLDOWN_WINDOW);
-    const attemptCount = new Map();
-    const recentWinsBySession = new Map();
+    const attemptsBySite = new Map();
+    const winsBySite = new Map();
     for (const e of recent) {
-        attemptCount.set(e.target_session, (attemptCount.get(e.target_session) || 0) + 1);
+        const k = siteKey(e.c_caller);
+        if (!k) continue;
+        attemptsBySite.set(k, (attemptsBySite.get(k) || 0) + 1);
         if (winners.has(`${e.iter}::${e.target_session}`)) {
-            recentWinsBySession.set(e.target_session, (recentWinsBySession.get(e.target_session) || 0) + 1);
+            winsBySite.set(k, (winsBySite.get(k) || 0) + 1);
         }
     }
+
+    // Map each session to its site's multiplier. Sessions whose
+    // divergence site is in cooldown get penalised.
+    const sessionToSite = new Map();
+    for (const e of iters) sessionToSite.set(e.target_session, siteKey(e.c_caller));
+
     const m = new Map();
-    for (const [session, count] of attemptCount) {
-        const won = recentWinsBySession.get(session) || 0;
-        if (count >= COOLDOWN_THRESHOLD && won === 0) m.set(session, COOLDOWN_PENALTY);
+    for (const [session, site] of sessionToSite) {
+        if (!site) { m.set(session, 1.0); continue; }
+        const att = attemptsBySite.get(site) || 0;
+        const won = winsBySite.get(site) || 0;
+        if (att >= COOLDOWN_THRESHOLD && won === 0) m.set(session, COOLDOWN_PENALTY);
         else m.set(session, 1.0);
     }
     return m;

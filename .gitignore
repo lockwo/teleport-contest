@@ -10,3 +10,4 @@ swarm/worktrees/
 swarm/state/porter-runs/
 swarm/state/state.json
 swarm/state/latest.json
+swarm/state/*.log
