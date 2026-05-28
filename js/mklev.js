@@ -11,6 +11,7 @@ import { rn2, rnd, rn1 } from './rng.js';
 import { init_rect, rnd_rect, get_rect, split_rects } from './rect.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { filler_region, lspo_map, fill_special_room } from './sp_lev.js';
+import { somex, somey, somexyspace, occupied } from './mkroom.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, DOOR, STAIRS,
     HWALL, VWALL, TLCORNER, TRCORNER, BLCORNER, BRCORNER,
@@ -1425,49 +1426,6 @@ function makecorridors() {
             join(a, b, true);
         }
     }
-}
-
-// ============================================================
-// Room helper functions
-// ============================================================
-
-function somex(croom) { return rn1(croom.hx - croom.lx + 1, croom.lx); }
-function somey(croom) { return rn1(croom.hy - croom.ly + 1, croom.ly); }
-
-function somexy(croom, c) {
-    if (!croom.nsubrooms) {
-        c.x = somex(croom);
-        c.y = somey(croom);
-        return true;
-    }
-    let try_cnt = 0;
-    while (try_cnt++ < 100) {
-        c.x = somex(croom);
-        c.y = somey(croom);
-        const loc = game.level.at(c.x, c.y);
-        if (loc && IS_WALL(loc.typ)) continue;
-        return true;
-    }
-    return false;
-}
-
-function occupied(x, y) {
-    const loc = game.level.at(x, y);
-    if (!loc) return false;
-    return !!(IS_FURNITURE(loc.typ) || loc.typ === LAVAPOOL || IS_POOL(loc.typ));
-}
-
-function somexyspace(croom, c) {
-    let trycnt = 0;
-    let okay;
-    do {
-        okay = somexy(croom, c) && isok(c.x, c.y) && !occupied(c.x, c.y);
-        if (okay) {
-            const loc = game.level.at(c.x, c.y);
-            okay = loc && (loc.typ === ROOM || loc.typ === CORR || loc.typ === ICE);
-        }
-    } while (trycnt++ < 100 && !okay);
-    return okay;
 }
 
 // ============================================================
