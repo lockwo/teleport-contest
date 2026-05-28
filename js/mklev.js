@@ -37,7 +37,7 @@ import {
     ICE, MOAT, POOL, WATER, LAVAPOOL, LAVAWALL, DBWALL,
     A_LAWFUL, Align2amask,
     LR_UPTELE,
-    CORPSTAT_INIT,
+    CORPSTAT_INIT, CORPSTAT_SPE_VAL,
 } from './const.js';
 
 const DUST = 3;
@@ -56,26 +56,28 @@ const TRAPNUM = 26;
 const ARROW_TRAP = 1;
 const DART_TRAP = 2;
 const ROCKTRAP = 3;
-const SLP_GAS_TRAP = 6;
+const SQKY_BOARD = 4;
+const BEAR_TRAP = 5;
+const LANDMINE = 6;
 const ROLLING_BOULDER_TRAP = 7;
-const RUST_TRAP = 4;
-const SQKY_BOARD = 5;
-const FIRE_TRAP = 8;
-const PIT = 9;
-const SPIKED_PIT = 10;
-const HOLE = 11;
+const SLP_GAS_TRAP = 8;
+const RUST_TRAP = 9;
+const FIRE_TRAP = 10;
+const PIT = 11;
+const SPIKED_PIT = 12;
+const HOLE = 13;
 const TRAPDOOR = 14;
 const TELEP_TRAP = 15;
 const LEVEL_TELEP = 16;
-const WEB = 17;
-const STATUE_TRAP = 18;
-const MAGIC_TRAP = 19;
-const LANDMINE = 20;
-const POLY_TRAP = 21;
-const VIBRATING_SQUARE = 22;
-const TRAPPED_DOOR = 23;
-const TRAPPED_CHEST = 24;
-const MAGIC_PORTAL = 25;
+const MAGIC_PORTAL = 17;
+const WEB = 18;
+const STATUE_TRAP = 19;
+const MAGIC_TRAP = 20;
+const ANTI_MAGIC = 21;
+const POLY_TRAP = 22;
+const VIBRATING_SQUARE = 23;
+const TRAPPED_DOOR = 24;
+const TRAPPED_CHEST = 25;
 
 function is_hole(t) { return t === HOLE || t === TRAPDOOR; }
 function is_pit(t) { return t === PIT || t === SPIKED_PIT; }
@@ -178,20 +180,13 @@ function set_corpsenm(otmp, pm) { /* stub */ }
 
 // mkcorpstat stub
 function mkcorpstat(objtyp, mtmp, pm, x, y, flags) {
-    // C ref: mkcorpstat calls mksobj(objtyp) then set_corpsenm.
-    if (game.currentSeed !== 2600) {
-        const otmp = mksobj(objtyp, false, false);
-        if (pm === null) rndmonnum();
-        return otmp;
-    }
     const init = !!(flags & CORPSTAT_INIT);
-    const otmp = mksobj(objtyp, init, false);
-    if (pm == null && !init) {
-        // rndmonnum — pick random monster
-        rndmonnum();
-    } else if (pm != null) {
+    const otmp = (x === 0 && y === 0)
+        ? mksobj(objtyp, init, false)
+        : mksobj_at(objtyp, x, y, init, false);
+    otmp.spe = flags & CORPSTAT_SPE_VAL;
+    if (pm != null)
         otmp.corpsenm = pm;
-    }
     return otmp;
 }
 
@@ -205,10 +200,24 @@ async function makemon(mdat, x, y, mmflags) {
 }
 
 // maketrap stub
+function choose_trapnote(ttmp) {
+    const used = new Set();
+    for (const trap of game.level?.traps ?? []) {
+        if (trap !== ttmp && trap.ttyp === SQKY_BOARD && Number.isInteger(trap.tnote))
+            used.add(trap.tnote);
+    }
+    const picks = [];
+    for (let k = 0; k < 12; k++)
+        if (!used.has(k)) picks.push(k);
+    return picks.length ? picks[rn2(picks.length)] : rn2(12);
+}
+
 async function maketrap(x, y, typ) {
     const trap = { ttyp: typ, tx: x, ty: y, tseen: false, once: false, launch: { x: 0, y: 0 } };
     if (!game.level) return trap;
     if (!game.level.traps) game.level.traps = [];
+    if (typ === SQKY_BOARD)
+        trap.tnote = choose_trapnote(trap);
     game.level.traps.push(trap);
     return trap;
 }

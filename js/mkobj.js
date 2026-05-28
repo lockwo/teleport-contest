@@ -1098,7 +1098,9 @@ function mksobj_init(otmp, artif) {
     case ROCK_CLASS:
         if (otmp.otyp === STATUE) {
             otmp.corpsenm = rndmonnum();
-            if (rn2(Math.trunc(level_difficulty() / 2) + 10) > 10)
+            const ptr = monster_by_pmidx(otmp.corpsenm);
+            if (ptr?.verysmall !== true
+                && rn2(Math.trunc(level_difficulty() / 2) + 10) > 10)
                 add_to_container(otmp, mkobj(SPBOOK_no_NOVEL, false));
         }
         break;
