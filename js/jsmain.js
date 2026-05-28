@@ -90,6 +90,7 @@ export class NethackGame {
         g.plname = opts.name || 'Hero';
         g.flags = { verbose: true, ...opts.flags };
         g.iflags = { ...opts.iflags };
+        g.initrole = opts.role;
         if (opts.preferred_pet) g.preferred_pet = opts.preferred_pet;
         if (opts.tutorial_set) g.tutorial_set_in_config = true;
 
@@ -218,4 +219,3 @@ export async function runSegment(input) {
 
     return nhGame;
 }
-

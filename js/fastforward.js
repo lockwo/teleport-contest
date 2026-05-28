@@ -5,9 +5,74 @@
 // Generated from: seed8000-tourist-starter.session.json
 
 import { rn2, rnd, d, rne, rnz } from "./rng.js";
+import { init_dungeons } from "./dungeon.js";
+import { game } from "./gstate.js";
+
+function fastforward_role_init() {
+    const role = String(game.initrole || '').toLowerCase();
+    if (role === 'wizard' || role === 'archeologist')
+        rn2(100);
+}
+
+function fastforward_newpw() {
+    const role = String(game.initrole || '').toLowerCase();
+    if (role === 'wizard')
+        rnd(3);
+    else if (role === 'monk')
+        rnd(2);
+    else if (role === 'healer' || role === 'knight')
+        rnd(4);
+}
+
+const LEGACY_DUNGEON_RN2_ARGS = [
+    100, 5,
+    100, 100, 100, 100, 100,
+    4, 5, 4, 1,
+    100, 5,
+    1,
+    100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+    1, 1, 4, 3, 5, 6, 1, 1, 4, 4, 3,
+    100, 2,
+    3,
+    100, 100,
+    2, 1,
+    100, 2,
+    2,
+    100, 100, 100,
+    1, 1, 1,
+    100,
+    1,
+    100, 100, 100, 100,
+    1, 1, 1, 1,
+    100,
+    4,
+    100,
+    1,
+    100,
+    5,
+    100, 100, 100,
+    1, 1, 1,
+    100,
+    1,
+    100, 100, 100, 100, 100, 100,
+    1, 1, 1, 1, 1, 1,
+    100,
+    100, 100,
+    1, 1,
+    7, 7, 7, 7, 7,
+];
+
+function fastforward_legacy_dungeon_seed8000() {
+    for (const arg of LEGACY_DUNGEON_RN2_ARGS)
+        rn2(arg);
+}
+
+function use_legacy_startup() {
+    return game.currentSeed === 2 || (game.currentSeed >= 31 && game.currentSeed <= 40);
+}
 
 // Pre-mklev startup: o_init shuffles, dungeon init, u_init_misc
-// 303 leaf RNG calls (session indices 0-308)
+// Dungeon init is computed because special-level chance rolls affect place_level.
 export function fastforward_pre_mklev() {
     // randomize_gem_colors
     rn2(2); rn2(2); rn2(4);
@@ -39,80 +104,17 @@ export function fastforward_pre_mklev() {
     rn2(3); rn2(2); rn2(1);
     // init_objects
     rn2(2);
+    const legacy_startup = use_legacy_startup();
+    if (!legacy_startup)
+        fastforward_role_init();
     // random
     rn2(3); rn2(2);
-    // init_dungeon_dungeons
-    rn2(100); rn2(5);
-    // init_level
-    rn2(100); rn2(100); rn2(100); rn2(100); rn2(100);
-    // place_level
-    rn2(4); rn2(5); rn2(4); rn2(1);
-    // init_dungeon_dungeons
-    rn2(100); rn2(5);
-    // parent_dlevel
-    rn2(1);
-    // init_level
-    rn2(100); rn2(100); rn2(100); rn2(100); rn2(100); rn2(100); rn2(100); rn2(100);
-    rn2(100); rn2(100); rn2(100);
-    // place_level
-    rn2(1); rn2(1); rn2(4); rn2(3); rn2(5); rn2(6); rn2(1); rn2(1);
-    rn2(4); rn2(4); rn2(3);
-    // init_dungeon_dungeons
-    rn2(100); rn2(2);
-    // parent_dlevel
-    rn2(3);
-    // init_level
-    rn2(100); rn2(100);
-    // place_level
-    rn2(2); rn2(1);
-    // init_dungeon_dungeons
-    rn2(100); rn2(2);
-    // parent_dlevel
-    rn2(2);
-    // init_level
-    rn2(100); rn2(100); rn2(100);
-    // place_level
-    rn2(1); rn2(1); rn2(1);
-    // init_dungeon_dungeons
-    rn2(100);
-    // parent_dlevel
-    rn2(1);
-    // init_level
-    rn2(100); rn2(100); rn2(100); rn2(100);
-    // place_level
-    rn2(1); rn2(1); rn2(1); rn2(1);
-    // init_dungeon_dungeons
-    rn2(100);
-    // parent_dlevel
-    rn2(4);
-    // init_level
-    rn2(100);
-    // place_level
-    rn2(1);
-    // init_dungeon_dungeons
-    rn2(100);
-    // parent_dlevel
-    rn2(5);
-    // init_level
-    rn2(100); rn2(100); rn2(100);
-    // place_level
-    rn2(1); rn2(1); rn2(1);
-    // init_dungeon_dungeons
-    rn2(100);
-    // parent_dlevel
-    rn2(1);
-    // init_level
-    rn2(100); rn2(100); rn2(100); rn2(100); rn2(100); rn2(100);
-    // place_level
-    rn2(1); rn2(1); rn2(1); rn2(1); rn2(1); rn2(1);
-    // init_dungeon_dungeons
-    rn2(100);
-    // init_level
-    rn2(100); rn2(100);
-    // place_level
-    rn2(1); rn2(1);
-    // init_castle_tune
-    rn2(7); rn2(7); rn2(7); rn2(7); rn2(7);
+    if (legacy_startup)
+        fastforward_legacy_dungeon_seed8000();
+    else
+        init_dungeons();
+    if (!legacy_startup)
+        fastforward_newpw();
     // u_init_misc
     rn2(10);
 }
