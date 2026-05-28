@@ -213,12 +213,10 @@ export async function fastforward_fill_mineralize() {
                     fillable_idx++;
                 }
             }
-            if (game.currentSeed === 2600) {
-                for (let i = 0; i < rooms.length; i++) {
-                    const r = rooms[i];
-                    if (!r || r.hx <= 0) break;
-                    fill_special_room(r);
-                }
+            for (let i = 0; i < rooms.length; i++) {
+                const r = rooms[i];
+                if (!r || r.hx <= 0) break;
+                fill_special_room(r);
             }
             mineralize(-1, -1, -1, -1, false);
         } finally {
