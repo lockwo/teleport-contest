@@ -397,8 +397,22 @@ async function makelevel() {
             fill_special_room(vaultRoom);       // C ref: mklev.c:1330
             if (!is_branchlev()) rn2(3);        // mk_knox_portal rn2(3)
             if (!rn2(3)) await makeniche(TELEP_TRAP);
-        } else if (rnd_rect()) {
-            // Fallback vault attempt — simplified
+        } else if (rnd_rect() && create_vault()) {
+            // C ref: mklev.c:1334 — fallback vault attempt with fresh rnd_rect
+            g.vault_x = g.level.rooms[g.level.nroom]?.lx ?? -1;
+            g.vault_y = g.level.rooms[g.level.nroom]?.ly ?? -1;
+            const vx2 = { v: g.vault_x }, vy2 = { v: g.vault_y };
+            if (check_room(vx2, vw, vy2, vh, true)) {
+                add_room(vx2.v, vy2.v, vx2.v + vw.v, vy2.v + vh.v, true, VAULT, false);
+                g.level.flags.has_vault = true;
+                const vaultRoom2 = g.level.rooms[g.level.nroom - 1];
+                if (vaultRoom2) vaultRoom2.needfill = FILL_NORMAL;
+                fill_special_room(vaultRoom2);
+                if (!is_branchlev()) rn2(3);
+                if (!rn2(3)) await makeniche(TELEP_TRAP);
+            } else {
+                if (g.level.rooms[g.level.nroom]) g.level.rooms[g.level.nroom].hx = -1;
+            }
         }
     }
 
