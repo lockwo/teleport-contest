@@ -57,7 +57,7 @@ All wrapped under `node swarm/bin/orchestrator.mjs <subcommand>`:
 ## Recursive learning
 
 Every porter spawn, completion, and verify decision lands in
-`swarm/state/journal.jsonl`. Two consumers use it:
+`swarm/state/journal.jsonl`. Three consumers use it:
 
 - `node swarm/bin/orchestrator.mjs learn` prints aggregates: provider
   accept rates, median elapsed time, reject-reason histogram, per-caller
@@ -66,12 +66,37 @@ Every porter spawn, completion, and verify decision lands in
   "**Prior attempts on this target**" block into the prompt for every
   new porter — listing recent agents' decisions and summaries on the
   same session, so a fresh porter doesn't repeat a failed approach.
+- The **analyst** (`swarm/bin/analyst.mjs`) is an LLM Agent that reads
+  the journal + recent porter diffs + score history + divergence
+  histogram, and writes a distilled
+  [`swarm/state/learnings.md`](state/learnings.md) with headline
+  insights, per-provider patterns, per-target patterns, and recommended
+  next targets. That file is spliced into every porter prompt alongside
+  the prior-attempts block.
 
-This is the basic recursive-improvement substrate. A future "analyst"
-agent can periodically read journal + per-porter diffs and write a
-distilled `swarm/state/learnings.md` that gets spliced into prompts
-alongside the prior-attempts block — but that's optional; the raw
-prior-attempts feed already closes the loop for per-target learning.
+The analyst auto-fires from `run-loop.mjs` every N winning iterations
+(default N=5, configurable via `--analyst-every=N`). It can also be
+invoked manually:
+
+```bash
+node swarm/bin/orchestrator.mjs analyst                # default claude
+node swarm/bin/orchestrator.mjs analyst --provider=codex
+node swarm/bin/orchestrator.mjs analyst --dry-run      # print the prompt, don't call
+```
+
+The full feedback loop:
+
+```
+porter agents → journal.jsonl + porter-runs/*.diff
+              ↓
+           analyst LLM (reads it all)
+              ↓
+           learnings.md  +  prior-attempts blocks
+              ↓
+         next porter prompt
+              ↓
+            (back to top)
+```
 
 ## Conventions for porter work
 

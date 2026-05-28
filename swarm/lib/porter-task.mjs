@@ -161,5 +161,21 @@ export function renderPorterPrompt(task) {
         }
     } catch (_) { /* learn.mjs missing or journal empty — skip */ }
 
+    // Learnings: the analyst-distilled patterns across all prior swarm
+    // activity. Splices in when swarm/state/learnings.md exists.
+    try {
+        const learningsPath = join(SWARM_ROOT, 'state/learnings.md');
+        if (existsSync(learningsPath)) {
+            const text = readFileSync(learningsPath, 'utf8').trim();
+            if (text) {
+                parts.push('');
+                parts.push('## Cross-swarm learnings (auto-distilled, refreshed periodically)');
+                parts.push(text);
+                parts.push('');
+                parts.push('**Use these patterns to inform your approach. If a section recommends a specific tactic, default to it unless you have a concrete reason to deviate.**');
+            }
+        }
+    } catch (_) { /* missing or empty — skip */ }
+
     return parts.join('\n');
 }

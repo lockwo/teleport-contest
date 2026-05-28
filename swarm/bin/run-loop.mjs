@@ -46,6 +46,9 @@ function parseArgs() {
         push:       !args.includes('--no-push'),
         target:     v('target', null),
         promoteBaseline: args.includes('--promote-baseline'),
+        analystEvery: parseInt(v('analyst-every', '5'), 10),
+        analystProvider: v('analyst-provider', 'claude'),
+        noAnalyst: args.includes('--no-analyst'),
     };
 }
 
@@ -204,15 +207,39 @@ async function oneIteration(iIdx, opts) {
     return true;
 }
 
+function runAnalyst(provider) {
+    console.log(`\n[analyst] refreshing swarm/state/learnings.md via ${provider} …`);
+    const child = spawnSync('node', [
+        join(SWARM_ROOT, 'bin/analyst.mjs'),
+        `--provider=${provider}`,
+        '--min-events=1',
+    ], { cwd: REPO_ROOT, stdio: 'inherit' });
+    if (child.status !== 0) console.log(`[analyst] exited with ${child.status} — continuing.`);
+    emit('analyst_run', { provider, exit_code: child.status });
+}
+
 async function main() {
     const opts = parseArgs();
-    console.log(`run-loop: iterations=${opts.iterations} providers=${opts.providers.join(',')} push=${opts.push}`);
+    console.log(`run-loop: iterations=${opts.iterations} providers=${opts.providers.join(',')} push=${opts.push} analyst-every=${opts.analystEvery}`);
+    let winnersSinceAnalyst = 0;
     for (let i = 0; i < opts.iterations; i++) {
         const ok = await oneIteration(i, opts);
+        if (ok) winnersSinceAnalyst++;
+        // Run the analyst after every N winners (or at iteration boundary
+        // if --analyst-every=1). Skip if --no-analyst.
+        if (!opts.noAnalyst && winnersSinceAnalyst >= opts.analystEvery) {
+            runAnalyst(opts.analystProvider);
+            winnersSinceAnalyst = 0;
+        }
         if (!ok && i === 0 && !opts.target) {
             console.log('Stopping early — first iteration produced no merge.');
             break;
         }
+    }
+    // Always run the analyst at the end of a multi-iteration session so
+    // the learnings.md reflects the final state.
+    if (!opts.noAnalyst && opts.iterations > 1 && winnersSinceAnalyst > 0) {
+        runAnalyst(opts.analystProvider);
     }
     console.log('\n— final status —');
     spawnSync('node', [join(SWARM_ROOT, 'bin/orchestrator.mjs'), 'status'], { stdio: 'inherit', cwd: REPO_ROOT });
