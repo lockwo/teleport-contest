@@ -1,2 +1,12 @@
 node_modules/
 .cache/
+
+# Claude Code local session metadata (per-developer)
+.claude/
+
+# Swarm worktrees and porter run logs — ephemeral, regenerated per run.
+# The scripts under swarm/bin/ ARE versioned; only ephemeral output is ignored.
+swarm/worktrees/
+swarm/state/porter-runs/
+swarm/state/state.json
+swarm/state/latest.json
