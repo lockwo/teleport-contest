@@ -30,8 +30,8 @@ const ALIGNWEIGHT = 5;
 const RNDMONST_LOW_LEVEL = Object.freeze([
     { pmidx: 12, name: 'jackal', mlet: 'd', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 3, mresists: 0, gender: 'random' },
     { pmidx: 13, name: 'fox', mlet: 'd', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 1, mresists: 0, gender: 'random' },
-    { pmidx: 59, name: 'kobold', mlet: 'k', mlevel: 0, difficulty: 1, maligntyp: -2, geno: 1, mresists: 0, gender: 'random' },
-    { pmidx: 70, name: 'goblin', mlet: 'o', mlevel: 0, difficulty: 1, maligntyp: -3, geno: 2, mresists: 0, gender: 'random' },
+    { pmidx: 59, name: 'kobold', mlet: 'k', mlevel: 0, difficulty: 1, maligntyp: -2, geno: 1, mresists: 0, gender: 'random', armed: true },
+    { pmidx: 70, name: 'goblin', mlet: 'o', mlevel: 0, difficulty: 1, maligntyp: -3, geno: 2, mresists: 0, gender: 'random', armed: true },
     { pmidx: 88, name: 'sewer rat', mlet: 'r', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 1, mresists: 0, gender: 'random' },
     { pmidx: 116, name: 'grid bug', mlet: 'x', mlevel: 0, difficulty: 1, maligntyp: 0, geno: G_NOCORPSE | 3, mresists: 0, gender: 'random' },
     { pmidx: 158, name: 'lichen', mlet: 'F', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 4, mresists: 0, gender: 'neuter' },
@@ -153,6 +153,44 @@ function next_ident() {
     return rnd(2);
 }
 
+function rne(x) {
+    const utmp = (game.u?.ulevel || 1) < 15 ? 5 : Math.trunc((game.u?.ulevel || 1) / 3);
+    let tmp = 1;
+    while (tmp < utmp && !rn2(x))
+        tmp++;
+    return tmp;
+}
+
+function blessorcurse(chance) {
+    if (!rn2(chance))
+        rn2(2);
+}
+
+function mksobj_weapon({ multigen = false, poisonable = false } = {}) {
+    next_ident();
+    if (multigen)
+        rn2(6); // rn1(6, 6), quantity is overwritten by m_initthrow().
+    if (!rn2(11)) {
+        rne(3);
+        rn2(2);
+    } else if (!rn2(10)) {
+        rne(3);
+    } else {
+        blessorcurse(10);
+    }
+    if (poisonable)
+        rn2(100);
+}
+
+function mongets_weapon() {
+    mksobj_weapon();
+}
+
+function m_initthrow(_otyp, oquan) {
+    mksobj_weapon({ multigen: true, poisonable: true });
+    rn2(oquan); // rn1(oquan, 3)
+}
+
 export function newmonhp(ptr) {
     if (!ptr) return 0;
     if (ptr.mlevel <= 0) return rnd(4);
@@ -168,16 +206,40 @@ function m_initinv(ptr) {
     rn2(100);
 }
 
+function m_initweap(mtmp) {
+    const ptr = mtmp?.data;
+    if (!ptr || Is_rogue_level(game.u?.uz)) return;
+
+    switch (ptr.mlet) {
+    case 'k': // S_KOBOLD
+        if (!rn2(4))
+            m_initthrow('DART', 12);
+        break;
+    case 'o': // S_ORC; current low-level table only includes goblin.
+        if (rn2(2))
+            mongets_weapon();
+        break;
+    default:
+        break;
+    }
+
+    if (mtmp.m_lev > rn2(75))
+        mongets_weapon();
+}
+
 export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     const ptr = mdat ?? rndmonst();
     if (!ptr) return null;
 
     const mtmp = { data: ptr, mx: x, my: y, mmflags };
     mtmp.m_id = next_ident();
+    mtmp.m_lev = ptr.mlevel;
     mtmp.mhp = newmonhp(ptr);
     if (ptr.gender === 'random')
         mtmp.female = rn2(2);
 
+    if (ptr.armed)
+        m_initweap(mtmp);
     m_initinv(ptr);
     rn2(100); // saddle chance, checked before domestic/can_saddle predicates.
     return mtmp;
