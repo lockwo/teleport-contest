@@ -153,9 +153,9 @@ export function fastforward_step(stepNum) {
     ];
     if (stepNum > 0 && stepNum <= steps.length) steps[stepNum - 1]();
 }
-// Fill + mineralize: 1448 calls
+// Fill + mineralize: 1447 calls (rn2(fillable_room_count) moved to makelevel)
 export function fastforward_fill_mineralize() {
-    rn2(8); rn2(3); rn2(8); rn2(3); rn2(8); rn2(6); rnd(2); rnd(3); rnd(2); rn2(10); rn2(60); 
+    rn2(3); rn2(8); rn2(3); rn2(8); rn2(6); rnd(2); rnd(3); rnd(2); rn2(10); rn2(60);
     rn2(60); rn2(78); rn2(20); rn2(20); rn2(30); rn2(3); rn2(8); rn2(6); rnd(100); rnd(1000); 
     rnd(2); rn2(10); rn2(11); rn2(10); rn2(10); rn2(40); rn2(100); rn2(80); rn2(80); rn2(1000); 
     rn2(5); rn2(3); rn2(14); rn2(2); rn2(3); rn2(4); rn2(5); rn2(7); rn2(8); rn2(11); rn2(15); 

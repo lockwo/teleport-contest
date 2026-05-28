@@ -514,6 +514,21 @@ async function makelevel() {
         place_branch(branchp);
     }
 
+    // C ref: mklev.c:1392-1402 — choose which fillable room gets bonus items
+    // This rn2(fillable_room_count) call must happen here regardless of whether
+    // fill_ordinary_room is called immediately or deferred to fastforward.
+    {
+        let fillable_room_count = 0;
+        for (let i = 0; i < (g.level.rooms?.length ?? 0); i++) {
+            const croom = g.level.rooms[i];
+            if (!croom || croom.hx <= 0) break;
+            if ((croom.rtype === OROOM || croom.rtype === THEMEROOM)
+                && croom.needfill === FILL_NORMAL)
+                fillable_room_count++;
+        }
+        if (fillable_room_count > 0) rn2(fillable_room_count);
+    }
+
     // Fill rooms + mineralize: consumed by fastforward_fill_mineralize
     // Called externally from allmain.js after mklev structural phase
 }
