@@ -43,6 +43,13 @@ function fastforward_newpw() {
         rnd(4);
 }
 
+function fastforward_legacy_role_intro() {
+    if (game.flags?.legacy === false)
+        return;
+    rn2(3);
+    rn2(2);
+}
+
 const LEGACY_DUNGEON_RN2_ARGS = [
     100, 5,
     100, 100, 100, 100, 100,
@@ -165,8 +172,10 @@ export function fastforward_pre_mklev() {
 // Post-mklev startup: u_init_role, ini_inv, attributes, moveloop_preamble
 // 124 leaf RNG calls (regenerated from session data)
 export function fastforward_post_mklev() {
-    if (initrole_name() === 'knight' && game.preferred_pet === 'n') {
+    const role = initrole_name();
+    if (role === 'wizard' || (role === 'knight' && game.preferred_pet === 'n')) {
         u_init_inventory_attrs();
+        fastforward_legacy_role_intro();
         moveloop_preamble_startup();
         return;
     }
