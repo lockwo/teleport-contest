@@ -23,7 +23,7 @@ import {
     SCR_ENCHANT_ARMOR, SCR_CONFUSE_MONSTER, SCR_SCARE_MONSTER,
     WAN_DIGGING, SPE_HEALING, LARGE_BOX, CHEST, FOOD_RATION,
     CRAM_RATION, LEMBAS_WAFER,
-    mkobj, mkobj_at, mksobj, mksobj_at, mkgold, curse,
+    mkobj, mkobj_at, mksobj, mksobj_at, mkcorpstat, mkgold, curse,
 } from './mkobj.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, DOOR, STAIRS,
@@ -38,7 +38,6 @@ import {
     ICE, MOAT, POOL, WATER, LAVAPOOL, LAVAWALL, DBWALL,
     A_LAWFUL, Align2amask,
     LR_UPTELE,
-    CORPSTAT_INIT, CORPSTAT_SPE_VAL,
     DUST, MARK,
 } from './const.js';
 
@@ -179,21 +178,6 @@ function level_difficulty() {
 // Stub functions for monster/trap/engraving creation.
 // Object creation lives in mkobj.js.
 // ============================================================
-
-// set_corpsenm stub
-function set_corpsenm(otmp, pm) { /* stub */ }
-
-// mkcorpstat stub
-function mkcorpstat(objtyp, mtmp, pm, x, y, flags) {
-    const init = !!(flags & CORPSTAT_INIT);
-    const otmp = (x === 0 && y === 0)
-        ? mksobj(objtyp, init, false)
-        : mksobj_at(objtyp, x, y, init, false);
-    otmp.spe = flags & CORPSTAT_SPE_VAL;
-    if (pm != null)
-        otmp.corpsenm = pm;
-    return otmp;
-}
 
 function rndmonnum() {
     return rndmonst()?.pmidx ?? 0;
@@ -1694,7 +1678,7 @@ function mktrap_victim(trap) {
     } while (!rn2(5));
     // Victim type
     const PM_ELF = 18, PM_DWARF = 19, PM_ORC = 20, PM_GNOME = 21, PM_HUMAN = 22;
-    const PM_ARCHEOLOGIST = 305, PM_WIZARD = 321;
+    const PM_ARCHEOLOGIST = 338, PM_WIZARD = 350;
     let victim_mnum;
     switch (rn2(15)) {
     case 0:

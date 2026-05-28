@@ -2,11 +2,14 @@
 // C refs: mkobj.c, objects.h, o_init.c object probability setup.
 
 import { game } from './gstate.js';
-import { rn2, rnd, rn1, pushRngLogEntry } from './rng.js';
+import { rn2, rnd, rn1, rnz, pushRngLogEntry } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import {
     Is_rogue_level, GEHENNOM,
     CORPSTAT_FEMALE, CORPSTAT_MALE, CORPSTAT_NEUTER,
+    CORPSTAT_INIT, CORPSTAT_SPE_VAL,
+    ROT_AGE, TAINT_AGE, TROLL_REVIVE_CHANCE,
+    TIMER_OBJECT, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON,
 } from './const.js';
 import { rndmonst_adj, monster_by_pmidx } from './makemon.js';
 
@@ -156,6 +159,16 @@ const GLASS = 19;
 const GEMSTONE = 20;
 const MINERAL = 21;
 const NODIR = 1;
+const NON_PM = -1;
+
+const PM_LICHEN = 158;
+const PM_LICHEN_ALT = 162;
+const PM_LIZARD = 333;
+const PM_DEATH = 318;
+const PM_PESTILENCE = 319;
+const PM_FAMINE = 320;
+const PM_ARCHEOLOGIST = 338;
+const PM_WIZARD = 350;
 
 // [otyp, enum-name, object-class, base oc_prob, flags, material, oc_dir, name]
 const OBJECT_DATA = [
@@ -850,6 +863,109 @@ function mkcorpstat_spe(corpsenm) {
     return rn2(2) ? CORPSTAT_FEMALE : CORPSTAT_MALE;
 }
 
+function corpse_mon_name(corpsenm) {
+    return monster_by_pmidx(corpsenm)?.name ?? '';
+}
+
+function is_lizard_or_lichen(corpsenm) {
+    const name = corpse_mon_name(corpsenm);
+    return name === 'lizard' || name === 'lichen'
+        || corpsenm === PM_LICHEN || corpsenm === PM_LICHEN_ALT
+        || corpsenm === PM_LIZARD;
+}
+
+function is_rider_pm(corpsenm) {
+    const name = corpse_mon_name(corpsenm);
+    return name === 'Death' || name === 'Pestilence' || name === 'Famine'
+        || corpsenm === PM_DEATH || corpsenm === PM_PESTILENCE
+        || corpsenm === PM_FAMINE;
+}
+
+function is_troll_pm(corpsenm) {
+    const ptr = monster_by_pmidx(corpsenm);
+    return ptr?.mlet === 'T' || /\btroll\b/.test(ptr?.name ?? '');
+}
+
+function zombie_form_pm(corpsenm) {
+    const ptr = monster_by_pmidx(corpsenm);
+    if (!ptr) {
+        if (corpsenm >= PM_ARCHEOLOGIST && corpsenm <= PM_WIZARD)
+            return 0;
+        return NON_PM;
+    }
+    switch (ptr.mlet) {
+    case 'k':
+    case 'o':
+    case 'G':
+    case '@':
+    case 'K':
+        return 0;
+    case 'h':
+        return ptr.name === 'dwarf' ? 0 : NON_PM;
+    default:
+        return NON_PM;
+    }
+}
+
+function special_corpse(corpsenm) {
+    return is_lizard_or_lichen(corpsenm)
+        || is_troll_pm(corpsenm)
+        || is_rider_pm(corpsenm);
+}
+
+function start_timer(when, kind, action, obj) {
+    if (obj && kind === TIMER_OBJECT) {
+        obj.timed = true;
+        obj.timer = { when, kind, action };
+    }
+    return true;
+}
+
+function obj_stop_timers(obj) {
+    if (!obj) return;
+    obj.timed = false;
+    delete obj.timer;
+}
+
+function rider_revival_time(body, retry = false) {
+    const minturn = retry ? 3 : body.corpsenm === PM_DEATH ? 6 : 12;
+    for (let when = minturn; when < 67; when++) {
+        if (!rn2(3))
+            return when;
+    }
+    return 67;
+}
+
+export function start_corpse_timeout(body) {
+    if (!body || is_lizard_or_lichen(body.corpsenm))
+        return;
+
+    let action = ROT_CORPSE;
+    const rot_adjust = game.in_mklev ? 25 : 10;
+    const age = Math.max(game.moves ?? 1, 1) - (body.age ?? 0);
+    let when = age > ROT_AGE ? rot_adjust : ROT_AGE - age;
+    when += rnz(rot_adjust) - rot_adjust;
+
+    if (is_rider_pm(body.corpsenm)) {
+        action = REVIVE_MON;
+        when = rider_revival_time(body, false);
+    } else if (is_troll_pm(body.corpsenm)) {
+        for (let reviveAge = 2; reviveAge <= TAINT_AGE; reviveAge++) {
+            if (!rn2(TROLL_REVIVE_CHANCE)) {
+                action = REVIVE_MON;
+                when = reviveAge;
+                break;
+            }
+        }
+    } else if ((game.gz?.zombify || game.zombify)
+        && zombie_form_pm(body.corpsenm) !== NON_PM && !body.norevive) {
+        action = ZOMBIFY_MON;
+        when = rn1(15, 5);
+    }
+
+    start_timer(when, TIMER_OBJECT, action, body);
+}
+
 export function weight(otmp) {
     if (!otmp) return 0;
     const obj = objects[otmp.otyp];
@@ -1145,6 +1261,8 @@ export function mksobj(otyp, init = true, artif = false) {
     default:
         break;
     }
+    if (otmp.otyp === CORPSE && otmp.corpsenm != null)
+        start_corpse_timeout(otmp);
     otmp.owt = weight(otmp);
     return otmp;
 }
@@ -1178,6 +1296,33 @@ export function mkobj(oclass = RANDOM_CLASS, artif = false) {
 export function mkobj_at(oclass, x, y, artif = false) {
     const otmp = mkobj(oclass, artif);
     place_object(otmp, x, y);
+    return otmp;
+}
+
+export function mkcorpstat(objtype, mtmp, pm, x, y, corpstatflags = 0) {
+    const init = !!(corpstatflags & CORPSTAT_INIT);
+    const otmp = (x === 0 && y === 0)
+        ? mksobj(objtype, init, false)
+        : mksobj_at(objtype, x, y, init, false);
+
+    otmp.spe = corpstatflags & CORPSTAT_SPE_VAL;
+    otmp.norevive = !!game.mkcorpstat_norevive;
+
+    if (mtmp && pm == null)
+        pm = mtmp.data?.pmidx ?? mtmp.mnum ?? null;
+
+    if (pm != null) {
+        const old_corpsenm = otmp.corpsenm;
+        otmp.corpsenm = typeof pm === 'number' ? pm : pm.pmidx;
+        otmp.owt = weight(otmp);
+        if (otmp.otyp === CORPSE
+            && ((game.gz?.zombify || game.zombify)
+                || special_corpse(old_corpsenm)
+                || special_corpse(otmp.corpsenm))) {
+            obj_stop_timers(otmp);
+            start_corpse_timeout(otmp);
+        }
+    }
     return otmp;
 }
 
