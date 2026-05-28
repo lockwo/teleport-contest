@@ -49,6 +49,7 @@ function parseArgs() {
         analystEvery: parseInt(v('analyst-every', '5'), 10),
         analystProvider: v('analyst-provider', 'claude'),
         noAnalyst: args.includes('--no-analyst'),
+        porterTimeoutMin: parseInt(v('porter-timeout-min', '25'), 10),
     };
 }
 
@@ -62,7 +63,7 @@ function pickTask(forcedTargetPath) {
     return arr[0];
 }
 
-function spawnPorter(provider, label, taskJSON) {
+function spawnPorter(provider, label, taskJSON, timeoutMin) {
     const taskFile = join(SWARM_ROOT, `state/porter-runs/.task-${label}-${Date.now()}.json`);
     mkdirSync(join(SWARM_ROOT, 'state/porter-runs'), { recursive: true });
     writeFileSync(taskFile, taskJSON);
@@ -73,6 +74,7 @@ function spawnPorter(provider, label, taskJSON) {
             `--provider=${provider}`,
             `--label=${label}`,
             `--task-file=${taskFile}`,
+            `--timeout-min=${timeoutMin}`,
         ], { cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 
         const out = [];
@@ -153,9 +155,9 @@ async function oneIteration(iIdx, opts) {
 
     const taskJSON = JSON.stringify(task);
 
-    console.log(`Spawning ${opts.providers.length} porter(s): ${opts.providers.join(', ')}`);
+    console.log(`Spawning ${opts.providers.length} porter(s): ${opts.providers.join(', ')} (timeout=${opts.porterTimeoutMin}min each)`);
     const labels = opts.providers.map((p, i) => `${p}-${i}-iter${iIdx + 1}`);
-    const results = await Promise.all(opts.providers.map((p, i) => spawnPorter(p, labels[i], taskJSON)));
+    const results = await Promise.all(opts.providers.map((p, i) => spawnPorter(p, labels[i], taskJSON, opts.porterTimeoutMin)));
 
     const live = results.filter(r => r.wtPath && existsSync(r.wtPath));
     if (live.length === 0) {

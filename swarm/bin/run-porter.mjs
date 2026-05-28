@@ -97,7 +97,7 @@ function removeWorktreeIfClean(wtPath) {
     } catch (_) {}
 }
 
-async function runProvider(provider, wtPath, promptText, runRecordPath) {
+async function runProvider(provider, wtPath, promptText, runRecordPath, timeoutMs) {
     return new Promise((resolve, reject) => {
         let cmd, args, env = { ...process.env };
 
@@ -129,17 +129,27 @@ async function runProvider(provider, wtPath, promptText, runRecordPath) {
         }
 
         const logPath = runRecordPath.replace(/\.json$/, '.log');
-        const log = readFileSync ? null : null; // placeholder; using append below
         const proc = spawn(cmd, args, { cwd: wtPath, env, stdio: ['ignore', 'pipe', 'pipe'] });
         const chunks = [];
         const errChunks = [];
+        let timedOut = false;
         proc.stdout.on('data', (b) => { chunks.push(b); process.stdout.write(b); });
         proc.stderr.on('data', (b) => { errChunks.push(b); process.stderr.write(b); });
+
+        const timer = setTimeout(() => {
+            timedOut = true;
+            console.error(`[run-porter] timeout after ${timeoutMs / 1000}s — killing ${provider}`);
+            try { proc.kill('SIGTERM'); } catch {}
+            setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 5000);
+        }, timeoutMs);
+
         proc.on('close', (code) => {
+            clearTimeout(timer);
             const out = Buffer.concat(chunks).toString('utf8');
             const err = Buffer.concat(errChunks).toString('utf8');
-            writeFileSync(logPath, `--- STDOUT ---\n${out}\n--- STDERR ---\n${err}\n--- EXIT ---\n${code}\n`);
-            resolve({ exitCode: code, stdout: out, stderr: err });
+            const note = timedOut ? `[killed by run-porter after ${timeoutMs / 1000}s timeout]\n` : '';
+            writeFileSync(logPath, `--- STDOUT ---\n${out}\n--- STDERR ---\n${err}\n--- EXIT ---\n${code}\n${note}`);
+            resolve({ exitCode: timedOut ? 124 : code, stdout: out, stderr: err, timedOut });
         });
         proc.on('error', reject);
     });
@@ -149,6 +159,8 @@ async function main() {
     const args = process.argv.slice(2);
     const provider = (args.find(a => a.startsWith('--provider=')) || '--provider=claude').split('=')[1];
     const label    = (args.find(a => a.startsWith('--label=')) || `--label=${provider}`).split('=')[1];
+    const timeoutMin = Number((args.find(a => a.startsWith('--timeout-min=')) || '--timeout-min=25').split('=')[1]);
+    const timeoutMs = timeoutMin * 60 * 1000;
 
     const task = readTask(args);
     mkdirSync(RUNS_DIR, { recursive: true });
@@ -158,13 +170,13 @@ async function main() {
 
     const prompt = buildPrompt(task);
     const t0 = Date.now();
-    console.error(`[run-porter] provider=${provider} label=${label} wt=${wtPath} branch=${branch}`);
+    console.error(`[run-porter] provider=${provider} label=${label} wt=${wtPath} branch=${branch} timeout=${timeoutMin}min`);
 
-    emit('porter_spawn', { label, provider, wt_path: wtPath, branch, target_session: task.session, c_caller: task.c_caller || null });
+    emit('porter_spawn', { label, provider, wt_path: wtPath, branch, target_session: task.session, c_caller: task.c_caller || null, timeout_min: timeoutMin });
 
     let result;
     try {
-        result = await runProvider(provider, wtPath, prompt, runRecordPath);
+        result = await runProvider(provider, wtPath, prompt, runRecordPath, timeoutMs);
     } catch (e) {
         console.error('[run-porter] launch error:', e.message);
         emit('porter_complete', { label, provider, wt_path: wtPath, target_session: task.session, exit_code: -1, error: e.message, files_touched: [], diff_lines: 0 });
