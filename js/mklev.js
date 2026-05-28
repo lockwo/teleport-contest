@@ -1726,13 +1726,19 @@ async function mktrap_room(croom) {
     const trap = await maketrap(pos.x, pos.y, kind);
     kind = trap ? trap.ttyp : NO_TRAP;
     const lvl = game.u?.uz?.dlevel ?? 1;
-    if (game.in_mklev && kind !== NO_TRAP
-        && lvl <= rnd(4)
-        && kind !== SQKY_BOARD && kind !== RUST_TRAP
-        && !(kind === ROLLING_BOULDER_TRAP && trap.launch?.x === trap.tx && trap.launch?.y === trap.ty)
-        && !is_pit(kind) && (kind < HOLE || kind === MAGIC_TRAP)) {
-        if (kind === LANDMINE) { trap.ttyp = PIT; trap.tseen = true; }
-        mktrap_victim(trap);
+    const was_in_mklev = game.in_mklev;
+    game.in_mklev = true;
+    try {
+        if (kind !== NO_TRAP
+            && lvl <= rnd(4)
+            && kind !== SQKY_BOARD && kind !== RUST_TRAP
+            && !(kind === ROLLING_BOULDER_TRAP && trap.launch?.x === trap.tx && trap.launch?.y === trap.ty)
+            && !is_pit(kind) && (kind < HOLE || kind === MAGIC_TRAP)) {
+            if (kind === LANDMINE) { trap.ttyp = PIT; trap.tseen = true; }
+            mktrap_victim(trap);
+        }
+    } finally {
+        game.in_mklev = was_in_mklev;
     }
 }
 
