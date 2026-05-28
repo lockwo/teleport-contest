@@ -5,6 +5,7 @@ import { game } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { Is_rogue_level, GEHENNOM } from './const.js';
+import { rndmonst_adj } from './makemon.js';
 
 export const RANDOM_CLASS = 0;
 export const ILLOBJ_CLASS = 1;
@@ -828,13 +829,11 @@ function mkobj_erosions(otmp) {
 }
 
 function rndmonnum() {
-    rn2(398);
-    return 0;
+    return rndmonst_adj(0, 0)?.pmidx ?? 0;
 }
 
-function rndmonnum_adj(_minadj = 0, _maxadj = 0) {
-    rn2(398);
-    return 0;
+function rndmonnum_adj(minadj = 0, maxadj = 0) {
+    return rndmonst_adj(minadj, maxadj)?.pmidx ?? 0;
 }
 
 export function weight(otmp) {
@@ -1112,13 +1111,6 @@ export function mksobj(otyp, init = true, artif = false) {
     if (init) mksobj_init(otmp, artif);
 
     switch ((otmp.oclass === POTION_CLASS && otmp.otyp !== POT_OIL) ? POT_WATER : otmp.otyp) {
-    case CORPSE:
-        if (otmp.corpsenm == null) otmp.corpsenm = rndmonnum();
-        break;
-    case STATUE:
-    case FIGURINE:
-        if (otmp.corpsenm == null) otmp.corpsenm = rndmonnum();
-        break;
     case POT_OIL:
         otmp.age = 400;
         break;

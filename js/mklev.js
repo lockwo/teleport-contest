@@ -12,7 +12,7 @@ import { init_rect, rnd_rect, get_rect, split_rects } from './rect.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { filler_region, lspo_map, fill_special_room } from './sp_lev.js';
 import { somex, somey, somexyspace, occupied } from './mkroom.js';
-import { makemon as make_monster } from './makemon.js';
+import { makemon as make_monster, rndmonst } from './makemon.js';
 import {
     RANDOM_CLASS, WEAPON_CLASS, ARMOR_CLASS, RING_CLASS, FOOD_CLASS,
     SCROLL_CLASS, POTION_CLASS, TOOL_CLASS, GEM_CLASS, SPBOOK_no_NOVEL,
@@ -188,14 +188,8 @@ function mkcorpstat(objtyp, mtmp, pm, x, y, flags) {
     return otmp;
 }
 
-// rndmonnum stub — consumes rn2 for random monster selection
 function rndmonnum() {
-    // C: picks a random monster class then random within class
-    // For contest, this is called from mkcorpstat when pm=null.
-    // The actual RNG depends on monster database, but for statues
-    // created by fill_ordinary_room, it consumes at least rn2 calls.
-    rn2(398); // approximate: rn2(NUMMONS)
-    return 0;
+    return rndmonst()?.pmidx ?? 0;
 }
 
 // makemon stub
