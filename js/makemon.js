@@ -40,6 +40,10 @@ const RNDMONST_LOW_LEVEL = Object.freeze([
     { pmidx: 322, name: 'newt', mlet: ':', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 5, mresists: 0, gender: 'random' },
 ]);
 
+export function monster_by_pmidx(pmidx) {
+    return RNDMONST_LOW_LEVEL.find(mon => mon.pmidx === pmidx) ?? null;
+}
+
 function level_difficulty() {
     return depth_of_level(game.u?.uz);
 }
