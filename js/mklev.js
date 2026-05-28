@@ -1933,7 +1933,6 @@ export function mineralize(kelp_pool, kelp_moat, goldprob, gemprob, skip_lvl_che
     mineralize_kelp(kelp_pool, kelp_moat);
     const absDepth = depth_of_level(game.u?.uz);
     const dunLevel = game.u?.uz?.dlevel ?? 1;
-    const replayBurialRolls = game.currentSeed === 2600;
     if (goldprob < 0) goldprob = 20 + Math.trunc(absDepth / 3);
     if (gemprob < 0) gemprob = Math.trunc(goldprob / 4);
     for (let x = 2; x < COLNO - 2; x++) {
@@ -1951,13 +1950,13 @@ export function mineralize(kelp_pool, kelp_moat, goldprob, gemprob, skip_lvl_che
                 if (rn2(1000) < goldprob) {
                     const otmp = mksobj(GOLD_PIECE, false, false);
                     otmp.quan = 1 + rnd(goldprob * 3);
-                    if (replayBurialRolls) rn2(3);
+                    rn2(3);
                 }
                 if (rn2(1000) < gemprob) {
                     const cnt = rnd(2 + Math.trunc(dunLevel / 3));
                     for (let i = 0; i < cnt; i++) {
                         const otmp = mkobj(GEM_CLASS, false);
-                        if (replayBurialRolls && otmp?.otyp !== ROCK) rn2(3);
+                        if (otmp?.otyp !== ROCK) rn2(3);
                     }
                 }
             }
