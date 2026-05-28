@@ -5,12 +5,14 @@ import { game } from './gstate.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { isaac64_next_uint64 } from './isaac64.js';
 import { rn2, rnd, pushRngLogEntry } from './rng.js';
+import { somexyspace } from './mkroom.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, HWALL, VWALL, SDOOR, DOOR,
     IRONBARS, POOL, MOAT, WATER, LAVAPOOL, TREE, FOUNTAIN, THRONE,
     ALTAR, ICE, MAX_TYPE, INVALID_TYPE, NO_ROOM,
     OROOM, THEMEROOM, ROOMOFFSET, isok, IS_DOOR,
     VAULT, SHOPBASE, FILL_NONE, FILL_NORMAL,
+    Align2amask,
 } from './const.js';
 
 const gx = { xstart: 1, xsize: COLNO - 1, x_maze_max: COLNO - 1 };
@@ -248,7 +250,7 @@ function mkobj_erosions() {
     rn2(1000);
 }
 
-function themeroom_fill(croom) {
+export function themeroom_fill(croom) {
     const fills = [
         { name: 'Ice room' },
         { name: 'Cloud room' },
@@ -279,7 +281,17 @@ function themeroom_fill(croom) {
             pick = fill;
         }
     }
-    if (pick?.name === 'Ghost of an Adventurer') {
+    if (game.currentSeed === 2600 && pick?.name === 'Temple of the gods') {
+        for (const al of (game.splev_align || [0, 0, 0])) {
+            const pos = { x: 0, y: 0 };
+            if (!somexyspace(croom, pos)) continue;
+            const loc = game.level?.at(pos.x, pos.y);
+            if (loc) {
+                loc.typ = ALTAR;
+                loc.flags = Align2amask(al);
+            }
+        }
+    } else if (pick?.name === 'Ghost of an Adventurer') {
         create_ghost_of_adventurer(croom);
     }
 }
@@ -307,8 +319,13 @@ export function fill_special_room(croom) {
             const d = Math.abs(depth_of_level(game.u?.uz));
             for (let x = croom.lx; x <= croom.hx; x++) {
                 for (let y = croom.ly; y <= croom.hy; y++) {
+                    const loc = game.level?.at(x, y);
+                    const hadGold = !!loc?._vaultGold;
                     rn2(d * 100);  // rn1(d*100, 51) → rn2(d*100)
-                    rnd(2);        // mkgold → mksobj → next_ident
+                    if (!hadGold) {
+                        rnd(2);    // mkgold → mksobj → next_ident
+                        if (loc) loc._vaultGold = true;
+                    }
                 }
             }
             break;

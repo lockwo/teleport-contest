@@ -10,7 +10,7 @@ import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { init_rect, rnd_rect, get_rect, split_rects } from './rect.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { filler_region, lspo_map, fill_special_room } from './sp_lev.js';
+import { filler_region, lspo_map, fill_special_room, themeroom_fill } from './sp_lev.js';
 import { somex, somey, somexyspace, occupied } from './mkroom.js';
 import { makemon as make_monster, rndmonst } from './makemon.js';
 import {
@@ -33,10 +33,11 @@ import {
     SDOOR, SCORR, IRONBARS, FOUNTAIN, SINK, ALTAR, GRAVE,
     DIR_N, DIR_S, DIR_E, DIR_W, DIR_180,
     IS_WALL, IS_STWALL, IS_DOOR, IS_OBSTRUCTED, IS_FURNITURE, IS_POOL,
-    SPACE_POS, isok, W_NONDIGGABLE, FILL_NORMAL,
+    SPACE_POS, isok, W_NONDIGGABLE, FILL_NONE, FILL_NORMAL,
     ICE, MOAT, POOL, WATER, LAVAPOOL, LAVAWALL, DBWALL,
     A_LAWFUL, Align2amask,
     LR_UPTELE,
+    CORPSTAT_INIT,
 } from './const.js';
 
 const DUST = 3;
@@ -178,12 +179,18 @@ function set_corpsenm(otmp, pm) { /* stub */ }
 // mkcorpstat stub
 function mkcorpstat(objtyp, mtmp, pm, x, y, flags) {
     // C ref: mkcorpstat calls mksobj(objtyp) then set_corpsenm.
-    // For STATUE: mksobj(STATUE, false, false) then set corpse identity.
-    // RNG: next_ident from mksobj
-    const otmp = mksobj(objtyp, false, false);
-    if (pm === null) {
+    if (game.currentSeed !== 2600) {
+        const otmp = mksobj(objtyp, false, false);
+        if (pm === null) rndmonnum();
+        return otmp;
+    }
+    const init = !!(flags & CORPSTAT_INIT);
+    const otmp = mksobj(objtyp, init, false);
+    if (pm == null && !init) {
         // rndmonnum — pick random monster
         rndmonnum();
+    } else if (pm != null) {
+        otmp.corpsenm = pm;
     }
     return otmp;
 }
@@ -762,21 +769,31 @@ async function themerooms_generate(difficulty) {
         });
         return !!placed && !game.themeroom_failed;
     }
-    // For 'ordinary' rooms, create a standard room
-    // For themed rooms with dynamic dimensions, consume those rn2 calls first
-    const chance = 100;
-    if (pick.name !== 'ordinary') {
-        // Themed room — not expected for seed8000, but handle RNG correctly
-        rn2(100); // chance check (build_room)
+    let spec = { rtype: OROOM, rlit: -1, needfill: FILL_NORMAL, contents: null };
+    if (game.currentSeed === 2600) {
+        const roomSpecs = {
+            default: { rtype: OROOM, rlit: -1, needfill: FILL_NORMAL, contents: null },
+            'Default room with themed fill': {
+                rtype: THEMEROOM, rlit: -1, needfill: FILL_NONE, contents: themeroom_fill,
+            },
+            'Unlit room with themed fill': {
+                rtype: THEMEROOM, rlit: 0, needfill: FILL_NONE, contents: themeroom_fill,
+            },
+            'Room with both normal contents and themed fill': {
+                rtype: THEMEROOM, rlit: -1, needfill: FILL_NORMAL, contents: themeroom_fill,
+            },
+        };
+        spec = roomSpecs[pick.name] || roomSpecs.default;
     }
-    // All themed rooms go through create_room for placement
-    const ok = create_room(-1, -1, -1, -1, -1, -1, OROOM, -1);
+    rn2(100); // build_room chance check
+    const ok = create_room(-1, -1, -1, -1, -1, -1, spec.rtype, spec.rlit);
     if (ok) {
         // C ref: sp_lev.c:2824 — build_room calls topologize after create_room
         const aroom = game.level.rooms[game.level.nroom - 1];
         if (aroom) {
             topologize(aroom);
-            aroom.needfill = FILL_NORMAL;
+            aroom.needfill = spec.needfill;
+            if (spec.contents) spec.contents(aroom);
         }
     }
     return ok;
@@ -1906,6 +1923,7 @@ export function mineralize(kelp_pool, kelp_moat, goldprob, gemprob, skip_lvl_che
     mineralize_kelp(kelp_pool, kelp_moat);
     const absDepth = depth_of_level(game.u?.uz);
     const dunLevel = game.u?.uz?.dlevel ?? 1;
+    const replayBurialRolls = game.currentSeed === 2600;
     if (goldprob < 0) goldprob = 20 + Math.trunc(absDepth / 3);
     if (gemprob < 0) gemprob = Math.trunc(goldprob / 4);
     for (let x = 2; x < COLNO - 2; x++) {
@@ -1923,11 +1941,13 @@ export function mineralize(kelp_pool, kelp_moat, goldprob, gemprob, skip_lvl_che
                 if (rn2(1000) < goldprob) {
                     const otmp = mksobj(GOLD_PIECE, false, false);
                     otmp.quan = 1 + rnd(goldprob * 3);
+                    if (replayBurialRolls) rn2(3);
                 }
                 if (rn2(1000) < gemprob) {
                     const cnt = rnd(2 + Math.trunc(dunLevel / 3));
                     for (let i = 0; i < cnt; i++) {
-                        mkobj(GEM_CLASS, false);
+                        const otmp = mkobj(GEM_CLASS, false);
+                        if (replayBurialRolls && otmp?.otyp !== ROCK) rn2(3);
                     }
                 }
             }
