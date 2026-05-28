@@ -84,6 +84,9 @@ function main() {
         case 'manifest':
             delegate([join(SWARM_ROOT, 'bin/manifest.mjs'), ...rest]);
             break;
+        case 'learn':
+            delegate([join(SWARM_ROOT, 'bin/learn.mjs'), ...rest]);
+            break;
         case 'status':
         case undefined:
             status();

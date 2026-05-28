@@ -19,6 +19,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join } from 'path';
 import { REPO_ROOT, SWARM_ROOT } from '../lib/state.mjs';
 import { renderPorterPrompt } from '../lib/porter-task.mjs';
+import { emit } from '../lib/journal.mjs';
 
 const WORKTREES_DIR = join(SWARM_ROOT, 'worktrees');
 const RUNS_DIR      = join(SWARM_ROOT, 'state/porter-runs');
@@ -159,46 +160,85 @@ async function main() {
     const t0 = Date.now();
     console.error(`[run-porter] provider=${provider} label=${label} wt=${wtPath} branch=${branch}`);
 
+    emit('porter_spawn', { label, provider, wt_path: wtPath, branch, target_session: task.session, c_caller: task.c_caller || null });
+
     let result;
     try {
         result = await runProvider(provider, wtPath, prompt, runRecordPath);
     } catch (e) {
         console.error('[run-porter] launch error:', e.message);
+        emit('porter_complete', { label, provider, wt_path: wtPath, target_session: task.session, exit_code: -1, error: e.message, files_touched: [], diff_lines: 0 });
         removeWorktreeIfClean(wtPath);
         process.exit(2);
     }
 
     const dt = ((Date.now() - t0) / 1000).toFixed(1);
+
+    // Capture full diff for learning even if the worktree is later discarded.
+    let diff = '';
+    let filesTouched = [];
+    let shortstat = '';
+    try {
+        filesTouched = (sh(`git -C "${wtPath}" status --porcelain`) || '')
+            .split('\n').map(l => l.slice(3).trim()).filter(Boolean);
+        // Stage everything so `git diff --cached` captures new files too.
+        if (filesTouched.length) {
+            sh(`git -C "${wtPath}" add -A`);
+            diff = sh(`git -C "${wtPath}" diff --cached`, { maxBuffer: 64 * 1024 * 1024 });
+            shortstat = sh(`git -C "${wtPath}" diff --cached --shortstat`) || '';
+        }
+    } catch (_) {}
+
+    const diffPath = runRecordPath.replace(/\.json$/, '.diff');
+    if (diff) writeFileSync(diffPath, diff);
+
+    // Extract the agent's final summary heuristically: last ~30 lines of stdout
+    // before any tool-invocation markers. Good enough for learning.
+    const summaryLines = result.stdout.split('\n').slice(-50).join('\n');
+    const diffLines = (diff.match(/^[+-]/gm) || []).length;
+
     writeFileSync(runRecordPath, JSON.stringify({
         provider, label, name, wtPath, branch,
         target_session: task.session,
+        c_caller: task.c_caller || null,
         task,
         exitCode: result.exitCode,
         elapsedSec: Number(dt),
         finishedAt: new Date().toISOString(),
+        filesTouched,
+        diffShortStat: shortstat,
+        diffLines,
+        agentSummary: summaryLines,
     }, null, 2));
+
+    emit('porter_complete', {
+        label, provider, wt_path: wtPath,
+        target_session: task.session,
+        c_caller: task.c_caller || null,
+        exit_code: result.exitCode,
+        elapsed_sec: Number(dt),
+        files_touched: filesTouched,
+        diff_lines: diffLines,
+        diff_shortstat: shortstat,
+        agent_summary_tail: summaryLines,
+    });
 
     // If the worktree saw no edits, auto-clean. Otherwise leave for the
     // merge gate to inspect.
-    let touched = '';
-    try { touched = sh(`git -C "${wtPath}" status --porcelain`); } catch (_) {}
-    if (!touched) {
+    if (filesTouched.length === 0) {
         console.error(`[run-porter] no edits, cleaning worktree ${wtPath}`);
         removeWorktreeIfClean(wtPath);
         console.log(`(no edits in ${wtPath})`);
         process.exit(result.exitCode || 0);
     }
 
-    // Stage and commit inside the worktree so the merge gate has a clean
-    // diff to inspect. (verify-and-merge does the actual main-branch
-    // commit later.)
+    // Commit inside the worktree so the merge gate has a clean diff to
+    // inspect. (verify-and-merge does the actual main-branch commit.)
     try {
-        sh(`git -C "${wtPath}" add -A`);
-        const stat = sh(`git -C "${wtPath}" diff --cached --shortstat`) || '(no diff)';
         sh(`git -C "${wtPath}" commit -m "porter ${label}: ${task.session || task.c_caller?.fn || 'edits'}" --no-verify`);
-        console.error(`[run-porter] committed in worktree: ${stat}`);
+        console.error(`[run-porter] committed in worktree: ${shortstat || '(no diff)'}`);
     } catch (e) {
-        console.error(`[run-porter] commit failed (likely no changes): ${e.message.split('\n')[0]}`);
+        console.error(`[run-porter] commit failed: ${e.message.split('\n')[0]}`);
     }
 
     console.log(wtPath);

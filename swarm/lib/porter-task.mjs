@@ -13,6 +13,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { execSync } from 'child_process';
 import { REPO_ROOT, SWARM_ROOT } from './state.mjs';
 
 const UPSTREAM_SRC = join(REPO_ROOT, 'nethack-c/upstream/src');
@@ -147,6 +148,18 @@ export function renderPorterPrompt(task) {
     parts.push(`node swarm/bin/triage.mjs sessions/${task.session}`);
     parts.push(`bash frozen/score.sh    # full regression check before declaring done`);
     parts.push('```');
+
+    // Prior attempts: splice in what the swarm has already tried on this
+    // target. If learn.mjs has nothing, this is a single "(first try)" line.
+    try {
+        const prior = execSync(`node ${join(SWARM_ROOT, 'bin/learn.mjs')} --prior=${task.session}`, {
+            cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+        }).trim();
+        if (prior) {
+            parts.push('');
+            parts.push(prior);
+        }
+    } catch (_) { /* learn.mjs missing or journal empty — skip */ }
 
     return parts.join('\n');
 }

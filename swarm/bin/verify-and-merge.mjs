@@ -18,6 +18,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join, basename } from 'path';
 import { REPO_ROOT, SWARM_ROOT, load, save, recordRunBundle } from '../lib/state.mjs';
 import { runScoreAll, diffBundles, loadBundleFromFile, summarize } from '../lib/score.mjs';
+import { emit } from '../lib/journal.mjs';
 
 const BASELINE_PATH = join(SWARM_ROOT, 'state/baseline.json');
 const LATEST_PATH   = join(SWARM_ROOT, 'state/latest.json');
@@ -93,6 +94,28 @@ async function main() {
     const accept = d.regressions.length === 0
         && (d.screensDelta > 0 || (targetCheck && targetCheck.rng > 0));
 
+    // Reject-reason classification — feeds the learn subcommand.
+    let rejectReason = null;
+    if (!accept) {
+        if (d.regressions.length > 0) rejectReason = 'regression';
+        else if (d.screensDelta <= 0 && targetCheck && targetCheck.rng <= 0) rejectReason = 'no_improvement';
+        else if (d.screensDelta <= 0 && !targetCheck) rejectReason = 'no_screen_improvement';
+        else rejectReason = 'unknown';
+    }
+
+    emit('verify_decision', {
+        worktree: worktree,
+        target_session: targetSession || null,
+        accept,
+        reject_reason: rejectReason,
+        screens_delta: d.screensDelta,
+        rng_delta: d.rngDelta,
+        target_rng_delta: targetCheck?.rng ?? null,
+        target_screen_delta: targetCheck?.screen ?? null,
+        regressions: d.regressions.slice(0, 10),
+        improvements_count: d.improvements.length,
+    });
+
     console.log(accept ? '\nDECISION: ACCEPT' : '\nDECISION: REJECT');
 
     if (commit && accept) {
@@ -118,7 +141,9 @@ async function main() {
         sh(`git add ${all.map(f => `'${f}'`).join(' ')}`);
         const msg = `porter: ${targetSession || 'merge from worktree'} (screens +${d.screensDelta}, rng +${d.rngDelta})`;
         sh(`git commit -m '${msg.replace(/'/g, "'\\''")}'`);
-        console.log(`\n  committed: ${msg}`);
+        const commitSha = sh('git rev-parse HEAD').slice(0, 7);
+        console.log(`\n  committed: ${msg} (${commitSha})`);
+        emit('merge_commit', { commit_sha: commitSha, message: msg, target_session: targetSession || null, screens_delta: d.screensDelta, rng_delta: d.rngDelta });
 
         // Promote latest + record run
         writeFileSync(LATEST_PATH, JSON.stringify(next));

@@ -21,6 +21,7 @@ import { spawn, execSync, spawnSync } from 'child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { REPO_ROOT, SWARM_ROOT } from '../lib/state.mjs';
+import { emit } from '../lib/journal.mjs';
 
 const WORKTREES_DIR = join(SWARM_ROOT, 'worktrees');
 const RUNS_DIR      = join(SWARM_ROOT, 'state/porter-runs');
@@ -140,6 +141,13 @@ async function oneIteration(iIdx, opts) {
         console.log(`Divergence: ${task.c_caller.fn} (${task.c_caller.file}:${task.c_caller.line})`);
     }
 
+    emit('iteration_start', {
+        iter: iIdx + 1, of: opts.iterations,
+        target_session: task.session,
+        c_caller: task.c_caller || null,
+        providers: opts.providers,
+    });
+
     const taskJSON = JSON.stringify(task);
 
     console.log(`Spawning ${opts.providers.length} porter(s): ${opts.providers.join(', ')}`);
@@ -166,17 +174,30 @@ async function oneIteration(iIdx, opts) {
 
     if (accepted.length === 0) {
         console.log('\nNo porter passed the merge gate this iteration. Cleaning worktrees.');
+        emit('iteration_no_winner', { iter: iIdx + 1, target_session: task.session, attempted: verifications.length });
         for (const v of verifications) cleanupWorktree(v.wtPath);
         return false;
     }
 
     const winner = accepted[0];
     console.log(`\nWINNER: ${winner.label} (screens +${winner.screensDelta}, rng +${winner.rngDelta})`);
+    emit('iteration_winner', {
+        iter: iIdx + 1, target_session: task.session,
+        label: winner.label, provider: winner.provider,
+        screens_delta: winner.screensDelta, rng_delta: winner.rngDelta,
+    });
     const merged = mergeWinner(winner.wtPath, task.session);
-    if (!merged) { console.log('Merge failed; aborting iteration.'); return false; }
+    if (!merged) {
+        console.log('Merge failed; aborting iteration.');
+        emit('merge_failed', { iter: iIdx + 1, target_session: task.session, label: winner.label });
+        return false;
+    }
 
     // Push.
-    if (opts.push) pushOrigin();
+    if (opts.push) {
+        const ok = pushOrigin();
+        emit('merge_push', { iter: iIdx + 1, ok });
+    }
 
     // Cleanup all worktrees including the winner (changes are now on main).
     for (const v of verifications) cleanupWorktree(v.wtPath);
