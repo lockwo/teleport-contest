@@ -202,9 +202,8 @@ export async function fastforward_fill_mineralize() {
         const rooms = game.level?.rooms ?? [];
         const bonus_idx = game.level?._bonus_room_idx ?? -1;
         let fillable_idx = 0;
-        const replay_mklev_context = game.currentSeed === 14;
         const was_in_mklev = game.in_mklev;
-        if (replay_mklev_context) game.in_mklev = true;
+        game.in_mklev = true;
         try {
             for (let i = 0; i < rooms.length; i++) {
                 const r = rooms[i];
@@ -223,7 +222,7 @@ export async function fastforward_fill_mineralize() {
             }
             mineralize(-1, -1, -1, -1, false);
         } finally {
-            if (replay_mklev_context) game.in_mklev = was_in_mklev;
+            game.in_mklev = was_in_mklev;
         }
         return;
     }
