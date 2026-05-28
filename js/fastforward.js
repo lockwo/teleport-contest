@@ -13,6 +13,7 @@ import { ROLE_PRIEST, randrole, roles } from "./role.js";
 import { fill_ordinary_room, mineralize } from "./mklev.js";
 import { fill_special_room } from "./sp_lev.js";
 import { OROOM, THEMEROOM, FILL_NORMAL } from "./const.js";
+import { moveloop_preamble_startup, u_init_inventory_attrs } from "./u_init.js";
 
 function initrole_name() {
     if (Number.isInteger(game.initrole) && game.initrole >= 0)
@@ -164,6 +165,12 @@ export function fastforward_pre_mklev() {
 // Post-mklev startup: u_init_role, ini_inv, attributes, moveloop_preamble
 // 124 leaf RNG calls (regenerated from session data)
 export function fastforward_post_mklev() {
+    if (initrole_name() === 'knight' && game.preferred_pet === 'n') {
+        u_init_inventory_attrs();
+        moveloop_preamble_startup();
+        return;
+    }
+
     rnd(1000); rn2(20); rnd(2); rn2(6); rn2(11); rn2(10); rn2(10); rn2(100); rn2(20); rn2(1);
     rnd(1000); rnd(2); rn2(6); rnd(1000); rnd(2); rn2(6); rnd(1000); rnd(2); rn2(6); rnd(1000);
     rnd(2); rn2(6); rnd(1000); rnd(2); rn2(6); rnd(1000); rnd(2); rn2(6); rnd(1000); rnd(2);

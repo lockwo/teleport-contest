@@ -2,7 +2,7 @@
 // C refs: mkobj.c, objects.h, o_init.c object probability setup.
 
 import { game } from './gstate.js';
-import { rn2, rnd, rn1 } from './rng.js';
+import { rn2, rnd, rn1, pushRngLogEntry } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import {
     Is_rogue_level, GEHENNOM,
@@ -741,6 +741,8 @@ function rne(x) {
     let tmp = 1;
     while (tmp < utmp && !rn2(x))
         tmp++;
+    if (game._log_mkobj_rne)
+        pushRngLogEntry(`rne(${x})=${tmp}`);
     return tmp;
 }
 
