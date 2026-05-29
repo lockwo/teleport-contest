@@ -613,6 +613,36 @@ export async function topl_more() {
     }
 }
 
+// C ref: win/tty/topl.c update_topl(bp) — append a message to the top line,
+// or fire --More-- and start a fresh line when there is no room.  When a
+// previous message is still unacknowledged (toplin == NEED_MORE) and there is
+// room ("len(bp) + len(toplines) + 3 < CO - 8"), the new message is appended
+// after two spaces on the same line; otherwise the pending line is shown with
+// --More-- (a blocking nhgetch, captured as its own screen frame) before the
+// new message replaces it.  Used by the level-gain cascade (exper.js pluslvl).
+//
+// toplin state is tracked in game._toplin (0 = empty, 1 = NEED_MORE); the
+// accumulated line lives in game._pending_message, matching the rest of the
+// rendering pipeline.
+const TOPLIN_NEED_MORE = 1; // game._toplin: 0 = empty, 1 = NEED_MORE
+
+export async function update_topl(bp) {
+    const n0 = bp.length;
+    const cur = game._pending_message || '';
+    if (game._toplin === TOPLIN_NEED_MORE
+        && n0 + cur.length + 3 < CO - 8
+        && !bp.startsWith('You die')) {
+        game._pending_message = cur + '  ' + bp;
+        game._toplin = TOPLIN_NEED_MORE;
+        return;
+    }
+    if (game._toplin === TOPLIN_NEED_MORE) {
+        await topl_more();
+    }
+    game._pending_message = bp;
+    game._toplin = TOPLIN_NEED_MORE;
+}
+
 // C ref: topl.c tty_yn_function / hack.h y_n.  Render a yes/no prompt and read
 // a valid response.  When a top-line message is still pending acknowledgment
 // (needMore), show "--More--" first (capturing that as its own step) before the
