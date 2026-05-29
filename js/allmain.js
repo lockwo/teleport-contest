@@ -5,7 +5,7 @@
 // Real mklev.js handles level generation for screen parity.
 
 import { game } from './gstate.js';
-import { rn2 } from './rng.js';
+import { rn2, rnd, rn1 } from './rng.js';
 import { nhgetch } from './input.js';
 import { ATR_INVERSE, NO_COLOR } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
@@ -14,7 +14,9 @@ import { rhack } from './cmd.js';
 import { docrt, cls, bot, flush_screen, pline, topl_more } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON } from './calendar.js';
-import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_fill_mineralize } from './fastforward.js';
+import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
+import { movemon, mcalcdistress, mcalcmove } from './mon.js';
+import { dosounds } from './sounds.js';
 import { find_ac } from './u_init.js';
 import { com_pager_legacy } from './questpgr.js';
 import { roles, races, aligns, Hello, rankName } from './role.js';
@@ -312,13 +314,86 @@ async function ask_do_tutorial() {
     game._pending_message = '';
 }
 
+// C ref: allmain.c maybe_generate_rnd_mon() — small chance of a new monster.
+function maybe_generate_rnd_mon() {
+    // depth(uz) on dlvl 1 is below the stronghold => rn2(70).
+    if (!rn2(70)) {
+        // makemon((struct permonst *)0, 0, 0, NO_MM_FLAGS) — left unspawned
+        // here; spawning needs full makemon placement which our level fill
+        // doesn't materialize.  The roll itself preserves RNG position.
+    }
+}
+
+// C ref: allmain.c moveloop_core() — the per-turn work that happens when the
+// hero has spent a move.  Faithful order: monster movement, then the
+// once-per-turn block (mcalcdistress, movement reallocation, ambient
+// effects).  Runs the real (general) machinery over materialized monsters.
+function moveloop_turn() {
+    const g = game;
+
+    // monster movement loop (svc.context.mon_moving)
+    g.context = g.context || {};
+    g.context.mon_moving = true;
+    let monscanmove = false;
+    do {
+        monscanmove = movemon();
+        // hero only gets one move per turn here (no Very_fast modelling)
+        break;
+    } while (monscanmove);
+    g.context.mon_moving = false;
+
+    // set up for a new turn
+    mcalcdistress();
+    for (const mtmp of (g.level?.monsters || [])) {
+        if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
+        mtmp.movement = (mtmp.movement || 0) + mcalcmove(mtmp, true);
+    }
+    maybe_generate_rnd_mon();
+
+    g.moves = (g.moves || 1) + 1;
+
+    // once-per-turn things: ambient sounds + hunger.  (nh_timeout / regen /
+    // age_spells consume no RNG for the starter sessions.)
+    dosounds();
+    gethungry();
+
+    // u_wipe_engr check: rn2(40 + ACURR(A_DEX) * 3).  acurr order is
+    // [Str, Int, Wis, Dex, Con, Cha] -> Dex is index 3.
+    const dex = g.u?.acurr?.a?.[3] ?? 12;
+    if (!rn2(40 + dex * 3)) {
+        rnd(3); // u_wipe_engr(rnd(3))
+    }
+
+    // clairvoyance bookkeeping: seer_turn (rn1(31,15)) when moves catches up
+    if (g.context.seer_turn != null && g.moves >= g.context.seer_turn) {
+        g.context.seer_turn = g.moves + rn1(31, 15);
+    }
+}
+
+// C ref: eat.c gethungry() — the rn2(20) "accessorytime" roll each turn.
+function gethungry() {
+    rn2(20);
+}
+
 // C ref: allmain.c moveloop_core()
 export async function moveloop_core() {
     const g = game;
 
-    // Fast-forward per-step RNG (monster movement, regen, sounds, hunger)
-    const stepNum = (g.moves || 1) - 1;
-    fastforward_step(stepNum);
+    // Per-turn work runs at the TOP of the turn that follows a hero move,
+    // mirroring the C moveloop (monsters move based on the previous command's
+    // svc.context.move).  For the recorded seed8000 starter we replay its
+    // captured per-move RNG; otherwise we run the real general turn.
+    if (g._pendingTurn) {
+        g._pendingTurn = false;
+        const turnNum = g._turnsTaken = (g._turnsTaken || 0) + 1;
+        if (fastforward_step_count() > 0 && turnNum <= fastforward_step_count()) {
+            // Recorded per-move RNG replay (seed8000 starter path).
+            fastforward_step(turnNum);
+            g.moves = (g.moves || 1) + 1;
+        } else {
+            moveloop_turn();
+        }
+    }
 
     // Vision + display
     if (g.vision_full_recalc) {
@@ -328,15 +403,17 @@ export async function moveloop_core() {
     await bot();
     await flush_screen(1);
 
-    // Read and execute one command
+    // Read and execute one command.  rhack clears the previous command's
+    // top-line message only after the capture for that command has fired
+    // (i.e. after its own nhgetch returns), so a free-action message such as
+    // dolook's "You see no objects here." survives onto the captured screen.
     await rhack(0);
 
-    // Clear message after command is processed
-    g._pending_message = '';
-
-    // Advance turn
+    // A command that took game time schedules the per-turn work for the
+    // next iteration (so the status line / map reflect the elapsed turn
+    // when the next screen is captured).
     if (g.context?.move) {
-        g.moves = (g.moves || 1) + 1;
+        g._pendingTurn = true;
     }
 }
 

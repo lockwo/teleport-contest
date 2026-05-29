@@ -49,6 +49,24 @@ export function rnd(x) {
 // C ref: rn1(x, y) — random number y..y+x-1
 export function rn1(x, y) { return rn2(x) + y; }
 
+// C ref: rnd.c rnl(x) — luck-adjusted random number 0..x-1.  With Luck==0
+// (the contest's starter state) this is a single RND(x) with no adjustment
+// roll; non-zero Luck adds the secondary rn2(37+|adj|) bias roll.
+export function rnl(x) {
+    if (x <= 0) return 0;
+    let adjustment = game.u?.uluck || 0;
+    if (x <= 15)
+        adjustment = Math.trunc((Math.abs(adjustment) + 1) / 3) * Math.sign(adjustment);
+    let i = RND(x);
+    if (_rngLogEnabled) _rngLog.push(`rnl(${x})=${i}`);
+    if (adjustment && rn2(37 + Math.abs(adjustment))) {
+        i -= adjustment;
+        if (i < 0) i = 0;
+        else if (i >= x) i = x - 1;
+    }
+    return i;
+}
+
 // C ref: d(n, x) — roll n dice of x sides
 export function d(n, x) {
     let sum = 0;
