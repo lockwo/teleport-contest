@@ -149,24 +149,51 @@ const ALLOW_U = 0x100000;
 // we only need the RNG side-effects (the mtrack-avoidance rn2(4*(cnt-j))
 // rolls at monmove.c:1963) and the resulting move, so we implement the
 // approach-the-hero path used by ordinary monsters.
-const MMOVE_NOTHING = 0, MMOVE_MOVED = 2;
+const MMOVE_NOTHING = 0, MMOVE_NOMOVES = 1, MMOVE_MOVED = 2, MMOVE_DIED = 3;
 
 function m_move(mtmp) {
     const ptr = mtmp.data;
-    const omx = mtmp.mx, omy = mtmp.my;
+    let omx = mtmp.mx, omy = mtmp.my;
 
-    // appr: +1 approach the hero, -1 flee, 0 wander.  Peaceful/tame
-    // wanderers approach; this mirrors the common case.
-    let appr = 1;
-    if (mtmp.mflee) appr = -1;
+    // C ref: monmove.c:1773 — tame monsters delegate to dog_move() (dogmove.c).
+    // dog_move() is not ported yet (it lives in a future dogmove.js, not this
+    // file), so we must NOT run the hostile movement path for a pet: doing so
+    // would fabricate the wrong rn2() rolls.  Return without consuming RNG and
+    // leave the pet's true dog_move RNG to be supplied when that port lands.
+    if (mtmp.mtame)
+        return MMOVE_NOTHING;
+
+    // C ref: monmove.c m_move — meating / hides-under early returns omitted
+    // (newt/kobold neither eat nor hide).  set_apparxy was already called by
+    // dochug for monsters driven from this file (C re-calls it harmlessly).
 
     // goal = the hero's apparent position
-    const ggx = mtmp.mux ?? game.u.ux;
-    const ggy = mtmp.muy ?? game.u.uy;
+    let ggx = mtmp.mux ?? game.u.ux;
+    let ggy = mtmp.muy ?? game.u.uy;
+
+    // appr: +1 approach, -1 flee, 0 wander.  C ref monmove.c:1858.
+    let appr = mtmp.mflee ? -1 : 1;
+    if (mtmp.mconf) {
+        appr = 0;
+    } else {
+        // should_see / Invis / underwater branches: for a visible hero and a
+        // sighted, non-peaceful monster none of the appr=0 triggers fire and
+        // none consume RNG (the Invis rn2(11) and stalker/bat rn2(3) rolls are
+        // gated on hero-invisibility / specific mlets that don't apply).
+        if (!mtmp.mcansee || mtmp.mpeaceful) appr = 0;
+    }
+
+    // C ref monmove.c:1894 — getitems probe.  `!mpeaceful || !rn2(10)`: for
+    // hostile monsters the first disjunct short-circuits (no roll); a peaceful
+    // monster would roll rn2(10) here.  Reproduce that one roll faithfully.
+    if (!Is_rogue_level()) {
+        if (mtmp.mpeaceful) rn2(10);
+        // lined_up / pickup logic consumes no further RNG for these monsters.
+    }
 
     const poss = mfndpos(mtmp, mtmp.mpeaceful ? 0 : ALLOW_U);
     const cnt = poss.length;
-    if (cnt === 0) return MMOVE_NOTHING;
+    if (cnt === 0) return MMOVE_NOMOVES;
 
     let nix = omx, niy = omy;
     let nidist = dist2(nix, niy, ggx, ggy);
@@ -207,24 +234,175 @@ function m_move(mtmp) {
     return MMOVE_NOTHING;
 }
 
-// C ref: monmove.c dochug(mtmp).  The pre-move adjustments, then distfleeck,
-// then (for the common case) m_move, then a recalculating distfleeck.
+// C ref: makemon.c makemon() — every freshly-placed monster gets
+// mcansee=mcanmove=TRUE and mpeaceful=peace_minded().  The JS makemon doesn't
+// persist these move-loop fields, so initialize the C defaults lazily the
+// first time a monster is driven through the move loop.  Consumes NO RNG:
+// peace_minded() only rolls for co-aligned non-special monsters, and for the
+// dungeon monsters our sessions place (all M2_HOSTILE or cross-aligned) it
+// returns FALSE via an early return, so the result is deterministic here.
+export function initMonMoveState(mtmp) {
+    if (mtmp._moveInit) return;
+    mtmp._moveInit = true;
+    if (mtmp.mcanmove == null) mtmp.mcanmove = 1;
+    if (mtmp.mcansee == null) mtmp.mcansee = 1;
+    if (mtmp.mpeaceful == null) mtmp.mpeaceful = peace_minded_nonrng(mtmp.data) ? 1 : 0;
+    if (mtmp.mflee == null) mtmp.mflee = 0;
+    if (mtmp.mtame == null) mtmp.mtame = 0;
+    if (mtmp.mconf == null) mtmp.mconf = 0;
+    if (mtmp.mstun == null) mtmp.mstun = 0;
+    if (mtmp.msleeping == null) mtmp.msleeping = 0;
+    if (mtmp.mtrack == null) mtmp.mtrack = [];
+    // mux/muy default to the monster's own square (C leaves them 0 until the
+    // first set_apparxy, which dochug always runs before they're read).
+    if (mtmp.mux == null) mtmp.mux = mtmp.mx;
+    if (mtmp.muy == null) mtmp.muy = mtmp.my;
+}
+
+// C ref: makemon.c peace_minded() — the deterministic (no-RNG) portion.
+// always_hostile (M2_HOSTILE) monsters and monsters whose alignment sign
+// differs from the hero's are hostile without any random roll.  The random
+// co-aligned roll (rn2(16+..) && rn2(2+..)) is NOT reproduced here because it
+// belongs to monster-creation time, not the move loop; for the monsters our
+// sessions exercise that branch is never reached (they early-return hostile).
+function peace_minded_nonrng(ptr) {
+    if (!ptr) return false;
+    const M2_PEACEFUL = 0x00000020, M2_HOSTILE = 0x00000010;
+    const mflags2 = ptr.mflags2 ?? ptr.mflags2_derived ?? hostileFlag(ptr);
+    if (mflags2 & M2_PEACEFUL) return true;
+    if (mflags2 & M2_HOSTILE) return false;
+    const mal = ptr.maligntyp ?? 0;
+    const ual = game.u?.ualign?.type ?? 0;
+    if (Math.sign(mal) !== Math.sign(ual)) return false;
+    // Co-aligned: C would roll here.  None of our sessions reach this with a
+    // move-loop monster; treat as hostile so we never silently consume RNG.
+    return false;
+}
+
+// Conservative M2_HOSTILE membership for the low-level dungeon monsters the
+// RNDMONST table places (jackal, fox, kobold, sewer rat, grid bug, lichen,
+// newt are flagged M2_HOSTILE in monsters.h).  Returns the M2_HOSTILE bit.
+function hostileFlag(ptr) {
+    const M2_HOSTILE = 0x00000010;
+    const HOSTILE_PMIDX = new Set([12, 13, 59, 88, 116, 158, 322]);
+    return HOSTILE_PMIDX.has(ptr.pmidx) ? M2_HOSTILE : 0;
+}
+
+// C ref: monmove.c dochug(mtmp).  Faithful control flow: PHASE ONE pre-move
+// adjustments, PHASE TWO set_apparxy + distfleeck, PHASE THREE m_move (guarded
+// by the same "opportunity to move" predicate as C, which decides whether the
+// recalculating second distfleeck runs), PHASE FOUR attacks.
 export function dochug(mtmp) {
+    const mdat = mtmp.data;
     if (DEADMONSTER(mtmp)) return 1;
+
+    // PHASE ONE — frozen / sleeping / pre-move timers.
     if (!mtmp.mcanmove) return 0;
 
-    // set_apparxy must run before distfleeck (it sets mux/muy).
+    if (mtmp.msleeping) {
+        // disturb() may wake it; for our (already-noticed) hostile monsters
+        // disturb consumes no RNG and the monster stays asleep -> returns 0.
+        if (!disturb(mtmp)) return 0;
+    }
+
+    // confused monsters get unconfused with small probability
+    if (mtmp.mconf && !rn2(50)) mtmp.mconf = 0;
+    // stunned monsters get un-stunned with larger probability
+    if (mtmp.mstun && !rn2(10)) mtmp.mstun = 0;
+
+    // fleeing teleporters (can_teleport) — not modeled for ordinary monsters.
+    // fleeing monsters might regain courage
+    if (mtmp.mflee && !mtmp.mfleetim && mtmp.mhp === mtmp.mhpmax && !rn2(25))
+        mtmp.mflee = 0;
+
+    // PHASE TWO — set_apparxy (sets mux/muy) then distance/scariness check.
     set_apparxy(mtmp);
+    const { inrange, nearby, scared } = distfleeck(mtmp);
 
-    // distance / scariness check
-    distfleeck(mtmp);
+    // PHASE THREE — movement opportunity.  C ref monmove.c:882: a short-circuit
+    // OR.  The rn2() terms must only roll when control actually reaches them,
+    // so they are evaluated lazily here (mirroring C's || left-to-right order).
+    let status = MMOVE_NOTHING;
+    const S_LEPRECHAUN = 27;
+    const may_move =
+           !nearby
+        || mtmp.mflee
+        || scared
+        || mtmp.mconf
+        || mtmp.mstun
+        || (mtmp.minvis && !rn2(3))
+        || (mdat?.mlet === S_LEPRECHAUN && !findgold_invent()
+            && (findgold_minvent(mtmp) || rn2(2)))
+        || (is_wanderer(mdat) && !rn2(4))
+        || (!mtmp.mcansee && !rn2(4))
+        || mtmp.mpeaceful;
 
-    // PHASE THREE — movement.  Ordinary monsters that aren't engaging in
-    // melee fall through to m_move.
-    m_move(mtmp);
-    // recalc after moving (matches C's second distfleeck call)
-    distfleeck(mtmp);
-    return 0;
+    if (may_move) {
+        // (undirected-spell casting omitted — our monsters have no AT_MAGC)
+        status = m_move(mtmp);
+        if (status !== MMOVE_DIED) {
+            const r = distfleeck(mtmp); /* recalc */
+            return phase_four(mtmp, mdat, status, r.inrange, r.nearby, r.scared);
+        }
+        return 1;
+    }
+
+    // Did not enter the move block -> attack with the pre-move flags.
+    return phase_four(mtmp, mdat, status, inrange, nearby, scared);
+}
+
+// C ref: invent.c findgold — hero/monster never carries gold in our sessions.
+function findgold_invent() { return false; }
+function findgold_minvent(_mtmp) { return false; }
+
+// C ref: monmove.c dochug PHASE FOUR — the attack step.  mattacku()/wormhitu()
+// live in uhitm.c (not this file); we don't reproduce their RNG here, so we
+// neither consume nor mis-order the stream.  The trailing cuss() roll is
+// reproduced for MS_CUSS monsters because it belongs to monmove.c.
+function phase_four(mtmp, mdat, status, inrange, nearby, scared) {
+    // (attack RNG handled in uhitm.c; intentionally not emitted here)
+    const MS_CUSS = 35;
+    if (inrange && mdat?.msound === MS_CUSS && !mtmp.mpeaceful
+        && !mtmp.minvis) {
+        rn2(5);
+    }
+    return (status === MMOVE_DIED) ? 1 : 0;
+}
+
+// C ref: monmove.c disturb(mtmp) — wake-up check for sleeping monsters.
+// For ordinary hostile monsters that the hero has already encountered this
+// consumes no RNG; default to "stays asleep" so we don't fabricate rolls.
+function disturb(_mtmp) {
+    return false;
+}
+
+// C ref: mondata.h is_wanderer(ptr) — M2_WANDER flag.  The RNDMONST data
+// objects don't carry mflags2, so recognize the M2_WANDER monsters our
+// sessions actually place by pmidx (kitten and pony starting pets; bats and
+// felines wander too).  Hostile RNDMONST monsters (newt, kobold, jackal, …)
+// are NOT wanderers, so the rn2(4) at monmove.c:886 never fires for them.
+const M2_WANDER_PMIDX = new Set([
+    34,  // kitten
+    35,  // housecat
+    36,  // large cat (jaguar/etc. share S_FELINE wander)
+    102, // pony
+    103, // white unicorn
+    104, // gray unicorn
+    105, // black unicorn
+]);
+function is_wanderer(ptr) {
+    const M2_WANDER = 0x00000200;
+    if (ptr?.mflags2 != null) return !!(ptr.mflags2 & M2_WANDER);
+    return M2_WANDER_PMIDX.has(ptr?.pmidx);
+}
+
+// C ref: dungeon.h Is_rogue_level(uz) — the special Rogue-emulation level.
+// Our gameplay sessions stay on the upper Dungeons of Doom (dlvl 1), never the
+// Rogue level, so this is always false; defined for faithful m_move gating.
+function Is_rogue_level() {
+    const uz = game.u?.uz;
+    const rl = game.rogue_level;
+    return !!uz && !!rl && uz.dnum === rl.dnum && uz.dlevel === rl.dlevel;
 }
 
 // C ref: monmove.c dochugw(mtmp, inrange) — wrapper around dochug used by

@@ -13,7 +13,7 @@ import { depth as depth_of_level } from './hacklib.js';
 import { filler_region, lspo_map, fill_special_room, themeroom_fill, themeroom_map_contents } from './sp_lev.js';
 import { somex, somey, somexyspace, occupied } from './mkroom.js';
 import { maketrap } from './trap.js';
-import { makemon as make_monster, rndmonst } from './makemon.js';
+import { makemon as make_monster, rndmonst, mkclass } from './makemon.js';
 import { make_engr_at, random_engraving, wipe_engr_at } from './engrave.js';
 import {
     RANDOM_CLASS, WEAPON_CLASS, ARMOR_CLASS, RING_CLASS, FOOD_CLASS,
@@ -1493,9 +1493,14 @@ async function makeniche(trap_type) {
                 if (!rn2(5) && loc && IS_WALL(loc.typ)) {
                     loc.typ = IRONBARS;
                     if (rn2(3)) {
-                        // human corpse — consume rn2 for mkclass + mkcorpstat
-                        rn2(398); // mkclass(S_HUMAN)
-                        mkcorpstat(CORPSE, null, 0, xx, yy + dy, 1);
+                        // inaccessible niches occasionally have iron bars with
+                        // a human corpse behind them.  C: mkcorpstat(CORPSE,
+                        // NULL, mkclass(S_HUMAN, 0), ...).  mkclass() consumes
+                        // the rn2(9)-per-candidate / rn2(2) / rnd(num) stream.
+                        const S_HUMAN = 53;
+                        const hptr = mkclass(S_HUMAN, 0);
+                        mkcorpstat(CORPSE, null, hptr ? hptr.pmidx : 0,
+                                   xx, yy + dy, 1);
                     }
                 }
                 if (!g.level.flags.noteleport) {

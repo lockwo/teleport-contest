@@ -22,7 +22,7 @@ import {
     objects,
     weight,
 } from './mkobj.js';
-import { roles } from './role.js';
+import { roles, races } from './role.js';
 
 export const UNDEF_TYP = 0;
 export const UNDEF_SPE = 0x7f;
@@ -42,6 +42,16 @@ const PM_TOURIST = 10;
 const PM_VALKYRIE = 11;
 const PM_WIZARD = 12;
 const A_CHAOTIC = -1;
+
+// C ref: include/monsters.h player-race monster numbers (urace.mnum).
+const PM_HUMAN = 0;
+const PM_ELF = 1;
+const PM_DWARF = 2;
+const PM_GNOME = 3;
+const PM_ORC = 4;
+
+// C ref: u_init.c Xtra_food[] — orc compensation: 2 random food items.
+const XTRA_FOOD_TRQUAN = 2;
 
 const YA = 22;
 const ARROW = 18;
@@ -130,6 +140,14 @@ const RIN_AGGRAVATE_MONSTER = 185;
 const RIN_POISON_RESISTANCE = 188;
 const RIN_POLYMORPH = 196;
 const RIN_POLYMORPH_CONTROL = 197;
+
+// C ref: include/objects.h — non-magic instruments for the elf race start.
+const WOODEN_FLUTE = 247;
+const TOOLED_HORN = 249;
+const WOODEN_HARP = 253;
+const BELL = 255;
+const BUGLE = 256;
+const LEATHER_DRUM = 257;
 
 const F_CHARGED = 1;
 
@@ -335,6 +353,16 @@ const Lamp = [
     { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
 ];
 
+// C ref: u_init.c Xtra_food[] — 2 random FOOD_CLASS items (orc compensation).
+const Xtra_food = [
+    { trotyp: UNDEF_TYP, trspe: UNDEF_SPE, trclass: FOOD_CLASS, trquan_min: XTRA_FOOD_TRQUAN, trquan_max: XTRA_FOOD_TRQUAN, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c u_init_race PM_ELF — a single random non-magic instrument
+// chosen via ROLL_FROM(trotyp) = trotyp[rn2(6)] (cleric/wizard elves only).
+const ELF_INSTRUMENTS = [WOODEN_FLUTE, TOOLED_HORN, WOODEN_HARP, BELL, BUGLE, LEATHER_DRUM];
+
 const ROLE_INVENTORY = new Map([
     [PM_ARCHEOLOGIST, Archeologist],
     [PM_CAVE_DWELLER, Cave_man],
@@ -528,6 +556,16 @@ function current_role_mnum() {
     return role?.mnum ?? null;
 }
 
+// C ref: urace.mnum — the player race's monster number.  game.initrace is the
+// index into races[]; default to human when unset.
+function current_race_mnum() {
+    if (Number.isInteger(game.initrace))
+        return races[game.initrace]?.mnum ?? game.initrace;
+    const name = String(game.initrace || '').toLowerCase();
+    const race = races.find((r) => r.name?.toLowerCase() === name);
+    return race?.mnum ?? PM_HUMAN;
+}
+
 /* randomizes the quantity given a trobj description */
 export function trquan(trop) {
     if (!trop?.trquan_min)
@@ -557,12 +595,102 @@ function role_is(pm) {
     return current_role_mnum() === pm;
 }
 
-function race_is(_pm) {
-    return false;
+function race_is(pm) {
+    return current_race_mnum() === pm;
 }
 
-function restricted_spell_discipline(_otyp) {
-    return !role_is(PM_WIZARD);
+// C ref: include/skills.h — spell skill-type ids (P_ATTACK_SPELL..P_MATTER_SPELL).
+const P_NONE = 0;
+
+// C ref: include/objects.h SPELL(name,desc,sub,prob,delay,level,...) — the
+// spell's skill discipline (oc_skill) and spell level (oc_level), keyed by
+// otyp.  spell_skilltype(otyp)==objects[otyp].oc_skill (spell.c:856); the JS
+// objects table doesn't carry oc_skill/oc_level, so they live here.
+const SPELL_META = new Map([
+    [365, { skill: 34, level: 5 }], // SPE_DIG
+    [366, { skill: 28, level: 2 }], // SPE_MAGIC_MISSILE
+    [367, { skill: 28, level: 4 }], // SPE_FIREBALL
+    [368, { skill: 28, level: 4 }], // SPE_CONE_OF_COLD
+    [369, { skill: 31, level: 3 }], // SPE_SLEEP
+    [370, { skill: 28, level: 7 }], // SPE_FINGER_OF_DEATH
+    [371, { skill: 30, level: 1 }], // SPE_LIGHT
+    [372, { skill: 30, level: 1 }], // SPE_DETECT_MONSTERS
+    [373, { skill: 29, level: 1 }], // SPE_HEALING
+    [374, { skill: 34, level: 1 }], // SPE_KNOCK
+    [375, { skill: 28, level: 1 }], // SPE_FORCE_BOLT
+    [376, { skill: 31, level: 1 }], // SPE_CONFUSE_MONSTER
+    [377, { skill: 29, level: 2 }], // SPE_CURE_BLINDNESS
+    [378, { skill: 28, level: 2 }], // SPE_DRAIN_LIFE
+    [379, { skill: 31, level: 2 }], // SPE_SLOW_MONSTER
+    [380, { skill: 34, level: 2 }], // SPE_WIZARD_LOCK
+    [381, { skill: 32, level: 2 }], // SPE_CREATE_MONSTER
+    [382, { skill: 30, level: 2 }], // SPE_DETECT_FOOD
+    [383, { skill: 31, level: 3 }], // SPE_CAUSE_FEAR
+    [384, { skill: 30, level: 3 }], // SPE_CLAIRVOYANCE
+    [385, { skill: 29, level: 3 }], // SPE_CURE_SICKNESS
+    [386, { skill: 31, level: 5 }], // SPE_CHARM_MONSTER
+    [387, { skill: 33, level: 3 }], // SPE_HASTE_SELF
+    [388, { skill: 30, level: 3 }], // SPE_DETECT_UNSEEN
+    [389, { skill: 33, level: 4 }], // SPE_LEVITATION
+    [390, { skill: 29, level: 3 }], // SPE_EXTRA_HEALING
+    [391, { skill: 29, level: 4 }], // SPE_RESTORE_ABILITY
+    [392, { skill: 33, level: 4 }], // SPE_INVISIBILITY
+    [393, { skill: 30, level: 4 }], // SPE_DETECT_TREASURE
+    [394, { skill: 32, level: 3 }], // SPE_REMOVE_CURSE
+    [395, { skill: 30, level: 5 }], // SPE_MAGIC_MAPPING
+    [396, { skill: 30, level: 3 }], // SPE_IDENTIFY
+    [397, { skill: 32, level: 6 }], // SPE_TURN_UNDEAD
+    [398, { skill: 34, level: 6 }], // SPE_POLYMORPH
+    [399, { skill: 33, level: 6 }], // SPE_TELEPORT_AWAY
+    [400, { skill: 32, level: 6 }], // SPE_CREATE_FAMILIAR
+    [401, { skill: 34, level: 7 }], // SPE_CANCELLATION
+    [402, { skill: 32, level: 1 }], // SPE_PROTECTION
+    [403, { skill: 33, level: 1 }], // SPE_JUMPING
+    [404, { skill: 29, level: 3 }], // SPE_STONE_TO_FLESH
+    [405, { skill: 28, level: 2 }], // SPE_CHAIN_LIGHTNING
+    // SPE_BLANK_PAPER(406)/SPE_NOVEL(407)/SPE_BOOK_OF_THE_DEAD(408): P_NONE, level 0.
+]);
+
+// C ref: u_init.c skills_for_role() — the SPELL-discipline skill ids each
+// role can train.  Non-spell skill entries are irrelevant to
+// restricted_spell_discipline (spell_skilltype only ever returns a spell
+// discipline or P_NONE), so only spell disciplines are kept here.
+const ROLE_SPELL_SKILLS = new Map([
+    [PM_ARCHEOLOGIST, new Set([28, 29, 30, 34])],
+    [PM_BARBARIAN, new Set([28, 33])],
+    [PM_CAVE_DWELLER, new Set([28, 34])],
+    [PM_HEALER, new Set([29])],
+    [PM_KNIGHT, new Set([28, 29, 32])],
+    [PM_MONK, new Set([28, 29, 30, 31, 32, 33, 34])],
+    [PM_CLERIC, new Set([29, 30, 32])],
+    [PM_ROGUE, new Set([30, 33, 34])],
+    [PM_RANGER, new Set([29, 30, 33])],
+    [PM_SAMURAI, new Set([28, 30, 32])],
+    [PM_TOURIST, new Set([30, 31, 33])],
+    [PM_VALKYRIE, new Set([28, 33])],
+    [PM_WIZARD, new Set([28, 29, 30, 31, 32, 33, 34])],
+]);
+
+// C ref: spell.c spell_skilltype — objects[booktype].oc_skill.
+function spell_skilltype(otyp) {
+    return SPELL_META.get(otyp)?.skill ?? P_NONE;
+}
+
+// C ref: objects[otyp].oc_level (the SPELL() macro's `level` argument).
+function spell_level(otyp) {
+    return SPELL_META.get(otyp)?.level ?? 0;
+}
+
+// C ref: u_init.c restricted_spell_discipline — TRUE when the spell's
+// discipline is not in the role's skill list (skills aren't initialized yet,
+// so the role-specific skill list is consulted directly).
+function restricted_spell_discipline(otyp) {
+    const skills = ROLE_SPELL_SKILLS.get(current_role_mnum());
+    const thisSkill = spell_skilltype(otyp);
+    // P_NONE never matches any skill-list entry -> restricted, like the C loop.
+    if (thisSkill === P_NONE || !skills)
+        return true;
+    return !skills.has(thisSkill);
 }
 
 function is_forbidden_ini_obj(obj, got_level1_spellbook) {
@@ -583,7 +711,7 @@ function is_forbidden_ini_obj(obj, got_level1_spellbook) {
         || (otyp === SCR_ENCHANT_WEAPON && role_is(5))
         || (otyp === SPE_FORCE_BOLT && role_is(PM_WIZARD))
         || (obj.oclass === SPBOOK_CLASS
-            && (((objects[otyp]?.dir ?? 0) > (got_level1_spellbook ? 3 : 1))
+            && (spell_level(otyp) > (got_level1_spellbook ? 3 : 1)
                 || restricted_spell_discipline(otyp)))
         || otyp === SPE_NOVEL;
 }
@@ -685,7 +813,7 @@ export function ini_inv(tropList) {
             quan = 1;
         addinv(obj);
         ini_inv_wear_armor(obj);
-        if (obj.oclass === SPBOOK_CLASS && (objects[obj.otyp]?.dir ?? 0) === 1)
+        if (obj.oclass === SPBOOK_CLASS && spell_level(obj.otyp) === 1)
             got_sp1 = true;
 
         if (--quan)
@@ -696,8 +824,31 @@ export function ini_inv(tropList) {
     }
 }
 
+// C ref: u_init.c u_init_race — race-specific startup inventory.  Only the
+// RNG-bearing branches matter for parity: elf cleric/wizard get one random
+// instrument (ROLL_FROM => rn2(6) inside ini_inv), and non-wizard orcs get
+// Xtra_food (2 random FOOD_CLASS items).  knows_object() calls and the
+// gnome/dwarf branches consume no RNG.
 function u_init_race() {
-    // Human has no random race-specific startup adjustments.
+    const race = current_race_mnum();
+    switch (race) {
+    case PM_ELF:
+        if (role_is(PM_CLERIC) || role_is(PM_WIZARD)) {
+            const Instrument = [
+                { trotyp: ELF_INSTRUMENTS[rn2(ELF_INSTRUMENTS.length)], trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+                { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+            ];
+            ini_inv(Instrument);
+        }
+        break;
+    case PM_ORC:
+        if (!role_is(PM_WIZARD))
+            ini_inv(Xtra_food);
+        break;
+    default:
+        // Human/dwarf/gnome: no random race-specific startup adjustments.
+        break;
+    }
 }
 
 function current_role_attrs() {

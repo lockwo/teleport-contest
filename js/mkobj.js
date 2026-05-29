@@ -11,7 +11,10 @@ import {
     ROT_AGE, TAINT_AGE, TROLL_REVIVE_CHANCE,
     TIMER_OBJECT, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON,
 } from './const.js';
-import { rndmonst_adj, monster_by_pmidx } from './makemon.js';
+import {
+    rndmonst_adj, monster_by_pmidx, can_be_hatched, dead_species,
+    undead_to_corpse, mon_has_cnutrit, mon_nocorpse,
+} from './makemon.js';
 import { set_tin_variety, SPINACH_TIN, RANDOM_TIN } from './eat.js';
 
 export const RANDOM_CLASS = 0;
@@ -161,6 +164,7 @@ const GEMSTONE = 20;
 const MINERAL = 21;
 const NODIR = 1;
 const NON_PM = -1;
+const PM_HUMAN = 260;
 
 const PM_LICHEN = 158;
 const PM_LICHEN_ALT = 162;
@@ -1123,17 +1127,45 @@ function mksobj_init(otmp, artif) {
     case FOOD_CLASS:
         otmp.oeaten = 0;
         switch (otmp.otyp) {
-        case CORPSE: otmp.corpsenm = rndmonnum(); break;
+        case CORPSE: {
+            // C mkobj.c:898 — retry up to 50 times to avoid a G_NOCORPSE
+            // species, then fall back to an adventurer (PM_HUMAN) corpse.
+            let tryct = 50;
+            do {
+                otmp.corpsenm = undead_to_corpse(rndmonnum());
+            } while (mon_nocorpse(otmp.corpsenm) && (--tryct > 0));
+            if (tryct === 0) otmp.corpsenm = PM_HUMAN;
+            break;
+        }
         case EGG:
-            if (!rn2(3)) otmp.corpsenm = rndmonnum();
+            otmp.corpsenm = NON_PM; /* generic egg */
+            // C mkobj.c:913 — up to 200 tries to find a hatchable, viable
+            // species; otherwise stays a generic (unhatchable) egg.
+            if (!rn2(3)) {
+                for (let tryct = 200; tryct > 0; --tryct) {
+                    const mndx = can_be_hatched(rndmonnum());
+                    if (mndx !== NON_PM && !dead_species(mndx, true)) {
+                        otmp.corpsenm = mndx; /* typed egg */
+                        break;
+                    }
+                }
+            }
             break;
         case TIN:
             otmp.corpsenm = NON_PM; /* empty (so far) */
             if (!rn2(6)) {
                 set_tin_variety(otmp, SPINACH_TIN);
             } else {
-                otmp.corpsenm = rndmonnum();
-                set_tin_variety(otmp, RANDOM_TIN);
+                // C mkobj.c:925 — up to 200 tries to find a nourishing,
+                // corpse-bearing species for a random tin.
+                for (let tryct = 200; tryct > 0; --tryct) {
+                    const mndx = undead_to_corpse(rndmonnum());
+                    if (mon_has_cnutrit(mndx) && !mon_nocorpse(mndx)) {
+                        otmp.corpsenm = mndx;
+                        set_tin_variety(otmp, RANDOM_TIN);
+                        break;
+                    }
+                }
             }
             blessorcurse(otmp, 10);
             break;
