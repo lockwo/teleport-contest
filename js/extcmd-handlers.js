@@ -11,7 +11,8 @@
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { pline, topl_more } from './display.js';
-import { NO_COLOR } from './terminal.js';
+import { NO_COLOR, ATR_INVERSE } from './terminal.js';
+import { dotwoweapon } from './wield.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -376,30 +377,6 @@ async function wiz_level_change() {
     return 0;
 }
 
-// C ref: wield.c dotwoweapon().  Toggle two-weapon combat.
-async function dotwoweapon() {
-    if (game.u?.twoweap) {
-        await pline('You switch to your primary weapon.');
-        game.u.twoweap = false;
-        return 0;
-    }
-    if (can_twoweapon()) {
-        await pline('You begin two-weapon combat.');
-        if (game.u) game.u.twoweap = true;
-        return 0;
-    }
-    return 0;
-}
-
-// C ref: wield.c can_twoweapon().  We model the subset that decides the
-// recorded outcome: both hands must hold a (one-handed) weapon and no shield
-// may be worn.  uwep/uswapwep/uarms come from u_init's ini_inv wielding.
-function can_twoweapon() {
-    if (!game.uwep || !game.uswapwep) return false;
-    if (game.uarms) return false; // wearing a shield
-    return true;
-}
-
 // C ref: pray.c dopray().  ParanoidPray is on by default, so confirm first.
 async function dopray() {
     const ok = await paranoid_query('Are you sure you want to pray?');
@@ -421,6 +398,109 @@ async function getlin_top(query) {
     return await hooked_tty_getlin(query, null);
 }
 
+// ── #name / #call (do_name.c docallcmd) ──
+//
+// Builds the "What do you want to name?" PICK_ONE menu, displays it as the
+// tty corner-overlay NHW_MENU, then dispatches the chosen sub-action.  The
+// recorded sessions take the cancel (ESC) path, so once a selection is made
+// we hand off to the matching sub-handler; unmodelled sub-actions are no-ops.
+//
+// C ref: do_name.c docallcmd + win/tty/wintty.c tty_display_nhwindow (the
+// H2344_BROKEN corner-menu offx) + process_menu_window item/morestr layout.
+
+// Render a tty corner-overlay menu to the grid: title (inverse) on row 0,
+// a blank separator, the item lines, then the "(end)" morestr with the
+// cursor parked after it.  Columns left of offx keep the pre-existing
+// screen content (the map shows through).  C ref: process_menu_window.
+function render_corner_menu(disp, title, items) {
+    if (!disp?.setCell) return null;
+    const cols = disp.cols || 80;
+
+    // maxcols mirrors tty_end_menu: max(str.length + 2) over all rendered
+    // lines (items are "ch - text"; the title and blank line included).
+    const lines = [];
+    lines.push({ text: title, attr: ATR_INVERSE });   // menu prompt (title)
+    lines.push({ text: '' });                           // blank separator
+    for (const it of items) lines.push({ text: `${it.ch} - ${it.desc}` });
+
+    let maxcols = 0;
+    for (const l of lines) maxcols = Math.max(maxcols, l.text.length + 2);
+
+    // C: offx = min(min(82, cols/2), cols - maxcol - 1).  (H2344_BROKEN)
+    let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcols - 1);
+    if (offx < 0) offx = 0;
+    // Items render at column offx+1 (a leading space sits at offx).
+    const textCol = offx + 1;
+
+    const blankCols = (row) => {
+        for (let c = offx; c < cols; c++) disp.setCell(c, row, ' ', NO_COLOR, 0);
+    };
+    // The message window (row 0) is cleared in full when the menu is raised.
+    for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
+
+    for (let i = 0; i < lines.length; i++) {
+        blankCols(i);
+        if (lines[i].text) disp.putstr(textCol, i, lines[i].text, NO_COLOR, lines[i].attr || 0);
+    }
+    // morestr "(end) " on the row after the last line (single-page menu).
+    const moreRow = lines.length;
+    blankCols(moreRow);
+    disp.putstr(textCol, moreRow, '(end)', NO_COLOR, 0);
+    // C dmore: cursor parked at offx + strlen("(end) ") + 2 = textCol + 6.
+    disp.setCursor(textCol + 6, moreRow);
+    return offx;
+}
+
+// C ref: do_name.c docallcmd.  Present the name/call menu, read a single
+// PICK_ONE selection (ESC/space cancels), then dispatch the sub-action.
+async function docallcmd() {
+    const disp = game?.nhDisplay;
+    // C: the inventory branches ('i','o') are only added when gi.invent is
+    // non-empty; the hero always carries starting inventory, so include them.
+    const haveInvent = true;
+    const items = [{ ch: 'm', desc: 'a monster' }];
+    if (haveInvent) {
+        items.push({ ch: 'i', desc: 'a particular object in inventory' });
+        items.push({ ch: 'o', desc: 'the type of an object in inventory' });
+    }
+    items.push({ ch: 'f', desc: 'the type of an object upon the floor' });
+    items.push({ ch: 'd', desc: 'the type of an object on discoveries list' });
+    items.push({ ch: 'a', desc: 'record an annotation for the current level' });
+
+    render_corner_menu(disp, 'What do you want to name?', items);
+    const key = await nhgetch();
+
+    // Map the key to a menu selection.  A direct accelerator letter selects
+    // that item; ESC / space / return with no selection cancels (-> 'q').
+    let ch = 'q';
+    const c = String.fromCharCode(key);
+    if (key !== 27 && key !== 32 && key !== 13 && key !== 10
+        && items.some((it) => it.ch === c)) {
+        ch = c;
+    }
+
+    // The menu is left on the grid; the next rhack() iteration's
+    // flush_screen(1) clears it and redraws the map with the cursor parked at
+    // the hero (matching tty_dismiss_nhwindow -> docorner/docrt).
+
+    // C: switch(ch) — dispatch the chosen sub-action.  The recorded sessions
+    // only take the cancel path; the individual naming sub-commands (getlin
+    // prompts / monster targeting) are not modelled and behave as no-ops.
+    switch (ch) {
+    case 'q':
+    default:
+        break;
+    case 'm': // name a visible monster (do_mgivenname)
+    case 'i': // name an individual object (do_oname)
+    case 'o': // name a type of object (docall)
+    case 'f': // name a type of object on the floor (namefloorobj)
+    case 'd': // rename a discovered type (rename_disco)
+    case 'a': // annotate the level (donamelevel)
+        break;
+    }
+    return 0;
+}
+
 // Map extcmdlist index -> handler.  Unimplemented commands fall through to
 // a no-op (no message), which keeps RNG/state untouched.
 const HANDLERS = {
@@ -428,6 +508,8 @@ const HANDLERS = {
     levelchange: wiz_level_change,
     twoweapon: dotwoweapon,
     pray: dopray,
+    name: docallcmd,
+    call: docallcmd,
 };
 
 // C ref: cmd.c doextcmd().  '#' entry: read an extended command name and
@@ -440,10 +522,12 @@ export async function doextcmd() {
     }
     const txt = EXTCMDLIST[idx][0];
     const fn = HANDLERS[txt];
+    let res = 0;
     if (fn) {
-        await fn();
+        res = await fn();
     }
-    // Commands we don't model take no game time and emit no message.
-    game.context.move = 0;
-    return 0;
+    // C ref: doextcmd returns the command's ECMD_* result; ECMD_TIME (1)
+    // makes the move loop advance a turn.  Commands we don't model return 0.
+    game.context.move = res === 1 ? 1 : 0;
+    return res;
 }
