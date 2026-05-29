@@ -18,6 +18,46 @@ import { DEADMONSTER } from './mon.js';
 import { dog_move } from './dogmove.js';
 import { newsym } from './display.js';
 
+// C ref: include/monsters.h — grid bug's index (makemon.js MONS convention).
+// The only NODIAG monster the contest sessions place on dlvl 1.
+const PM_GRID_BUG = 116;
+
+// C ref: mon.c mon_allowflags() — a monster gets OPENDOOR (and thus may step
+// onto a *closed* (but not locked) door, opening it) when
+//   can_open = !(nohands(ptr) || verysmall(ptr)).
+// makemon.js exposes `data.verysmall` (MZ_TINY) but not the M1_NOHANDS /
+// M1_NOLIMBS flags, so this Set lists the pmidx (makemon MONS convention) of
+// every species with hands and size >= MZ_SMALL — i.e. those for which
+// can_open is TRUE — derived straight from include/monsters.h flag/size data.
+// Used only to decide closed-door passability in mfndpos (matching C's cnt).
+const CAN_OPEN_DOOR_PMIDX = new Set([
+    15, 21, 40, 41, 42, 43, 44, 45, 48, 49, 50, 53, 54, 55, 59, 60, 62, 67, 68,
+    69, 70, 71, 72, 73, 74, 75, 76, 77, 91, 120, 122, 123, 125, 130, 131, 132,
+    153, 165, 167, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180,
+    181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 203,
+    210, 211, 213, 220, 221, 222, 223, 224, 225, 226, 228, 229, 230, 231, 232,
+    233, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248,
+    249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263,
+    264, 265, 266, 267, 270, 271, 272, 273, 274, 277, 278, 279, 280, 281, 282,
+    283, 284, 285, 286, 287, 288, 289, 291, 292, 293, 294, 295, 296, 297, 298,
+    299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 311, 312, 313, 314,
+    328, 329,
+]);
+
+// Pet pmidx use dog.js's convention (little dog 16, kitten 34, pony 102); all
+// three have hands/aren't tiny, so they can open doors too.
+const PET_CAN_OPEN_PMIDX = new Set([16, 34, 102]);
+
+// C ref: mon.c mon_allowflags() can_open / can_unlock.  OPENDOOR lets a
+// monster treat a *closed* door as passable; UNLOCKDOOR additionally for a
+// *locked* door (only key-carriers, the Wizard, and Riders — none of the
+// dlvl-1 dungeon monsters), so closed-but-not-locked is the only case we add.
+function mon_can_open_door(mon) {
+    const pm = mon?.data?.pmidx;
+    if (mon?.mtame && PET_CAN_OPEN_PMIDX.has(pm)) return true;
+    return CAN_OPEN_DOOR_PMIDX.has(pm);
+}
+
 // C ref: mondata.h dist2(x0,y0,x1,y1).
 export function dist2(x0, y0, x1, y1) {
     const dx = x0 - x1, dy = y0 - y1;
@@ -103,7 +143,11 @@ export function mfndpos(mon, flag) {
     const poss = [];
     const x = mon.mx, y = mon.my;
     const nowtyp = terrainTyp(x, y);
-    const nodiag = false; // NODIAG only for grid bugs / a few classes.
+    // C ref: hack.h NODIAG(monnum) == (monnum == PM_GRID_BUG).  Only grid bugs
+    // are restricted to orthogonal moves; a grid bug in the open therefore has
+    // cnt 4 (not 8), which feeds the m_move/dog_move rn2(4*(cnt-j)) tie-breaks.
+    // The grid bug carries makemon's pmidx 116 (matching base_mmove's table).
+    const nodiag = (mon.data?.pmidx === PM_GRID_BUG);
     const ALLOW_U = 0x100000; // sentinel; callers below pass it in `flag`.
 
     const maxx = Math.min(x + 1, COLNO - 1);
@@ -114,10 +158,14 @@ export function mfndpos(mon, flag) {
             const ntyp = terrainTyp(nx, ny);
             if (ntyp == null) continue;
             if (IS_OBSTRUCTED(ntyp)) continue; // wall / rock (no dig/passwall)
-            // closed/locked doors block unless monster can open (not modeled)
+            // closed/locked doors: a monster that can_open (has hands, not
+            // tiny) treats a *closed* door as passable (C: OPENDOOR flag in
+            // mon_allowflags); a *locked* door still blocks (no dlvl-1 monster
+            // has UNLOCKDOOR).  Door-less openers see it blocked, as before.
             if (IS_DOOR(ntyp)) {
                 const dm = doormask(nx, ny);
-                if ((dm & D_CLOSED) || (dm & D_LOCKED)) continue;
+                if (dm & D_LOCKED) continue;
+                if ((dm & D_CLOSED) && !mon_can_open_door(mon)) continue;
             }
             // diagonal squeeze rules through doorways
             if (nx !== x && ny !== y) {
