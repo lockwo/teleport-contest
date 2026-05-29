@@ -1053,6 +1053,14 @@ export function u_init_inventory_attrs() {
 }
 
 export function moveloop_preamble_startup() {
-    rnd(9000);
-    rnd(30);
+    // C ref: allmain.c moveloop_preamble() — new-game-only RNG.
+    //   svc.context.rndencode = rnd(9000);
+    //   ... set_wear / pickup (no RNG for our starting gear) ...
+    //   svc.context.seer_turn = (long) rnd(30);
+    //   u.umovement = NORMAL_SPEED; initrack();
+    // Store seer_turn so the per-turn clairvoyance bookkeeping fires at the
+    // right turn (it re-rolls rn1(31,15) once svm.moves catches up).
+    game.context = game.context || {};
+    game.context.rndencode = rnd(9000);
+    game.context.seer_turn = rnd(30);
 }

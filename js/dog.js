@@ -184,8 +184,23 @@ function makedog_mon(pettype, x, y) {
 
     const petinfo = PET_DATA[pettype] || { name: 'pet', mlet: 'd', mcolor: 15 };
     const mtmp = {
-        data: { pmidx: pettype, name: petinfo.name, mlet: petinfo.mlet, mcolor: petinfo.mcolor },
-        mx, my, mtame: true,
+        data: { pmidx: pettype, name: petinfo.name, mlet: petinfo.mlet,
+                mcolor: petinfo.mcolor,
+                // carnivore/herbivore flags drive dogfood() classification.
+                carnivore: pettype !== PM_PONY,
+                herbivore: pettype === PM_PONY },
+        mx, my, mtame: 10,
+        // C ref: dog.c initedog() — edog structure for a freshly-tamed pet.
+        // apport = ACURR(A_CHA); the hero's attributes aren't rolled until
+        // u_init runs (just after makedog), so leave apport null and resolve it
+        // lazily on first use (dogmove.js), once acurr is populated.
+        edog: {
+            droptime: 0, dropdist: 10000,
+            apport: null, // resolved lazily from ACURR(A_CHA)
+            whistletime: 0,
+            hungrytime: (game.moves || 1) + 1000,
+            mhpmax_penalty: 0,
+        },
     };
     mtmp.m_id = rnd(2);
     newmonhp_for_pet(pettype);

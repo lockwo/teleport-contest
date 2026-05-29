@@ -15,9 +15,11 @@ import {
     IS_OBSTRUCTED, IS_DOOR, IS_POOL, IS_LAVA, isok,
 } from './const.js';
 import { DEADMONSTER } from './mon.js';
+import { dog_move } from './dogmove.js';
+import { newsym } from './display.js';
 
 // C ref: mondata.h dist2(x0,y0,x1,y1).
-function dist2(x0, y0, x1, y1) {
+export function dist2(x0, y0, x1, y1) {
     const dx = x0 - x1, dy = y0 - y1;
     return dx * dx + dy * dy;
 }
@@ -97,7 +99,7 @@ function set_apparxy(mtmp) {
 // Implements the common-case terrain/door/diagonal/occupancy checks; exotic
 // cases (digging, water-walkers, poison gas, garlic, boulders) are omitted
 // because no contest session exercises them with materialized monsters.
-function mfndpos(mon, flag) {
+export function mfndpos(mon, flag) {
     const poss = [];
     const x = mon.mx, y = mon.my;
     const nowtyp = terrainTyp(x, y);
@@ -156,12 +158,8 @@ function m_move(mtmp) {
     let omx = mtmp.mx, omy = mtmp.my;
 
     // C ref: monmove.c:1773 — tame monsters delegate to dog_move() (dogmove.c).
-    // dog_move() is not ported yet (it lives in a future dogmove.js, not this
-    // file), so we must NOT run the hostile movement path for a pet: doing so
-    // would fabricate the wrong rn2() rolls.  Return without consuming RNG and
-    // leave the pet's true dog_move RNG to be supplied when that port lands.
     if (mtmp.mtame)
-        return MMOVE_NOTHING;
+        return dog_move(mtmp, 0);
 
     // C ref: monmove.c m_move — meating / hides-under early returns omitted
     // (newt/kobold neither eat nor hide).  set_apparxy was already called by
@@ -229,6 +227,9 @@ function m_move(mtmp) {
         // record track history (most-recent first, length MTSZ)
         mtmp.mtrack = [{ x: omx, y: omy }, ...mtrack].slice(0, MTSZ);
         mtmp.mx = nix; mtmp.my = niy;
+        // Redraw vacated + occupied squares (C: remove/place_monster + newsym).
+        newsym(omx, omy);
+        newsym(nix, niy);
         return MMOVE_MOVED;
     }
     return MMOVE_NOTHING;

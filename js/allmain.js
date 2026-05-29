@@ -7,7 +7,7 @@
 import { game } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { nhgetch } from './input.js';
-import { ATR_INVERSE, NO_COLOR } from './terminal.js';
+import { ATR_INVERSE, NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
 import { makedog } from './dog.js';
 import { rhack } from './cmd.js';
@@ -288,9 +288,27 @@ async function ask_do_tutorial() {
         for (const l of lines) if (l.text.length > maxlen) maxlen = l.text.length;
         const offx = Math.max(10, cols - (maxlen + 1) - 1);
 
-        // Overlay the map: clear the message row and cols offx..end per row,
-        // leaving the rest of the map visible underneath.
-        for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
+        // The acknowledged top-line message no longer belongs on screen.  When
+        // a long welcome line wrapped its "--More--" onto grid row 1 (cols
+        // 0..7), the tutorial menu must clear it AND restore the map cell that
+        // was underneath.  C ref: the message window is cleared when the menu
+        // window is raised.  Clear grid rows 0 (message) and 1 (wrap) fully,
+        // then redraw the map there before overlaying the menu.
+        for (let c = 0; c < cols; c++) {
+            disp.setCell(c, 0, ' ', NO_COLOR, 0);
+            disp.setCell(c, 1, ' ', NO_COLOR, 0);
+        }
+        // Restore the map underneath grid row 1 (map y == 0).
+        if (game.level) {
+            for (let x = 1; x < cols + 1; x++) {
+                const loc = game.level.at(x, 0);
+                if (!loc?.disp_ch || loc.disp_ch === ' ') continue;
+                const ch = loc.disp_decgfx ? (DEC_TO_UNICODE[loc.disp_ch] || loc.disp_ch) : loc.disp_ch;
+                disp.setCell(x - 1, 1, ch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0);
+            }
+        }
+        // Overlay the menu: clear cols offx..end per row, leaving the rest of
+        // the map visible underneath.
         for (let i = 0; i < lines.length; i++) {
             for (let c = offx; c < cols; c++) disp.setCell(c, i, ' ', NO_COLOR, 0);
             if (lines[i].text)
@@ -312,6 +330,41 @@ async function ask_do_tutorial() {
         if (c === 32 || c === 13 || c === 10) renderMenu(pass++);
     }
     game._pending_message = '';
+}
+
+// C ref: attrib.c innate ability tables (sam_abil/mon_abil/kni_abil/...).
+// The dungeon level at which each role first gains intrinsic Fast (HFast).
+// Roles absent from this map never gain Fast intrinsically.  Used by
+// u_calc_moveamt() to decide whether the per-turn hero-speed rn2(3) fires.
+const FAST_AT_LEVEL = Object.freeze({
+    1: 7,   // Barbarian (bar_abil)
+    2: 7,   // Caveman   (cav_abil)
+    4: 7,   // Knight    (kni_abil)
+    5: 1,   // Monk      (mon_abil)
+    9: 1,   // Samurai   (sam_abil)
+    11: 7,  // Valkyrie  (val_abil)
+    0: 10,  // Archeologist (arc_abil)
+});
+
+// C ref: hack.h Fast / Very_fast — does the hero have intrinsic Fast?
+// We model only the role-granted intrinsic (no speed boots/potions in the
+// gameplay sessions we exercise).  Very_fast (extrinsic) is never set here,
+// so u_calc_moveamt only emits the `Fast` branch rn2(3).
+function youHaveFast() {
+    const mnum = gameRoleMnum();
+    const lvl = FAST_AT_LEVEL[mnum];
+    if (lvl == null) return false;
+    return (game.u?.ulevel ?? 1) >= lvl;
+}
+
+// C ref: allmain.c u_calc_moveamt() — gives the hero movement points for the
+// turn.  A Fast hero gets a free action on 1/3 of turns: `if (rn2(3) == 0)`.
+// (Very_fast would instead roll `if (rn2(3) != 0)`; not modeled.)  Only the
+// rn2(3) side-effect matters for parity; the hero still moves once per command
+// in our simplified loop.
+function u_calc_moveamt() {
+    if (game.u?.usteed) return; // steed branch consumes no rn2(3)
+    if (youHaveFast()) rn2(3);
 }
 
 // C ref: allmain.c maybe_generate_rnd_mon() — small chance of a new monster.
@@ -349,6 +402,11 @@ function moveloop_turn() {
         mtmp.movement = (mtmp.movement || 0) + mcalcmove(mtmp, true);
     }
     maybe_generate_rnd_mon();
+
+    // C ref: allmain.c — u_calc_moveamt(mvl_wtcap); settrack();  The Fast
+    // hero-speed roll happens here, between maybe_generate_rnd_mon and the
+    // once-per-turn block (matches the recorded RNG position).
+    u_calc_moveamt();
 
     g.moves = (g.moves || 1) + 1;
 

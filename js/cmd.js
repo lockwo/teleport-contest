@@ -89,8 +89,11 @@ export async function rhack(key) {
         await dosearch();
         game.context.move = 1;
     } else if (isMovementKey(ch)) {
+        // domove() sets game.context.move itself: 1 when the hero actually
+        // moves (time passes), 0 when the move is blocked (bump a wall — no
+        // turn elapses).  C ref: hack.c domove() / rhack().  Do NOT override
+        // it here, or blocked moves would wrongly advance the turn counter.
         await domove(DIR_DX[ch], DIR_DY[ch]);
-        game.context.move = 1;
     } else {
         // Unknown command
         game.context.move = 0;
@@ -158,6 +161,10 @@ async function domove(dx, dy) {
         game.context.move = 0;
         return;
     }
+
+    // The move actually happens -> a game turn elapses.  C ref: hack.c domove
+    // sets svc.context.move=1 on a successful step.
+    game.context.move = 1;
 
     // Move the hero
     const oldx = u.ux, oldy = u.uy;
