@@ -2,6 +2,14 @@
 
 _Last refresh: 2026-05-27T00:00:00Z_
 
+> **2026-05-28 manual override (HIGHEST PRIORITY):** The scored metric is SCREENS, and
+> screens are gated by **game-start RENDERING**, not RNG parity. `js/allmain.js newgame()`
+> hardcodes a Tourist game-start for every session (ignores real role), so ~30 sessions
+> score 0 screens despite good RNG. RNG-only fixes yield `screens +0`. The high-leverage
+> work is **FIX 2 — generic game-start**: see `swarm/state/FIX2-SPEC.md`. "RIPE" sessions
+> (0383/2600/2200 wizard, 4500 knight) have full newgame RNG parity and score immediately
+> once the real role/attrs/HP/Pw/AC/legend/welcome render. Judge progress by SCREEN delta.
+
 ## Headline insights
 
 - The swarm has zero porter completions so far — all sections below are derived solely from the static divergence histogram, not from observed porter behavior.

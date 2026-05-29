@@ -13,7 +13,7 @@ import { ROLE_PRIEST, randrole, roles } from "./role.js";
 import { fill_ordinary_room, mineralize } from "./mklev.js";
 import { fill_special_room } from "./sp_lev.js";
 import { OROOM, THEMEROOM, FILL_NORMAL } from "./const.js";
-import { moveloop_preamble_startup, u_init_inventory_attrs } from "./u_init.js";
+import { moveloop_preamble_startup, u_init_inventory_attrs, newhp, newpw } from "./u_init.js";
 
 function initrole_name() {
     if (Number.isInteger(game.initrole) && game.initrole >= 0)
@@ -35,11 +35,22 @@ function fastforward_role_init() {
 
 function fastforward_newpw() {
     const role = initrole_name();
-    if (role === 'wizard' || role === 'priest')
+    // For wizard/knight, run the real newhp()/newpw() (u_init_misc) so HP/Pw
+    // get stored on the hero.  newhp has no rnd for these roles; newpw emits
+    // the single rnd() (rnd(3) wizard, rnd(4) knight) at the same position the
+    // old hardcoded replay used.  C ref: u_init.c u_init_misc lines 996-997.
+    if (role === 'wizard' || role === 'knight') {
+        game.u = game.u || {};
+        game.u.ulevel = 0;
+        game.u.uhp = game.u.uhpmax = newhp();
+        game.u.uen = game.u.uenmax = newpw();
+        return;
+    }
+    if (role === 'priest')
         rnd(3);
     else if (role === 'monk')
         rnd(2);
-    else if (role === 'healer' || role === 'knight')
+    else if (role === 'healer')
         rnd(4);
 }
 

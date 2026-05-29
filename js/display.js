@@ -180,17 +180,43 @@ function render_map_row(y) {
 }
 
 // ── Status lines ──
+// Hero name as shown on the status line. In debug (wizard) mode the C
+// game forces plname to "wizard"; status capitalizes the first letter.
+function _statusPlname() {
+    let name = game.flags?.debug ? 'wizard' : (game.plname || 'Hero');
+    if (name && name[0] >= 'a' && name[0] <= 'z')
+        name = name[0].toUpperCase() + name.slice(1);
+    return name;
+}
+
+// C ref: botl.c get_strength_str — STR encoded 3..18 normal, 19..118 as 18/xx.
+function _strengthStr(st) {
+    const STR18_100 = 118;
+    if (st > 18) {
+        if (st > STR18_100) return String(st - 100);
+        if (st < STR18_100) return `18/${String(st - 18).padStart(2, '0')}`;
+        return '18/**';
+    }
+    return String(st);
+}
+
+export function statusLine1Text() { return _statusLine1(); }
+export function statusLine2Text() { return _statusLine2(); }
+
 function _statusLine1() {
     const u = game.u;
     if (!u) return '';
-    const name = game.plname || 'Hero';
+    const name = _statusPlname();
     const role = game.urole?.rank?.m || game.urole?.name?.m || 'Adventurer';
     const title = `${name} the ${role}`;
-    const stats = `St:${u.acurr?.a?.[0] || '?'} Dx:${u.acurr?.a?.[1] || '?'} Co:${u.acurr?.a?.[2] || '?'} In:${u.acurr?.a?.[3] || '?'} Wi:${u.acurr?.a?.[4] || '?'} Ch:${u.acurr?.a?.[5] || '?'}`;
+    // acurr.a is stored in attribute order [STR, INT, WIS, DEX, CON, CHA]
+    // (A_STR..A_CHA); the status line displays St Dx Co In Wi Ch.
+    const a = u.acurr?.a || [];
+    const stats = `St:${_strengthStr(a[0] ?? 0)} Dx:${a[3] ?? 0} Co:${a[4] ?? 0} In:${a[1] ?? 0} Wi:${a[2] ?? 0} Ch:${a[5] ?? 0}`;
     const align = u.ualign?.type === 0 ? 'Neutral' : u.ualign?.type > 0 ? 'Lawful' : 'Chaotic';
-    // C uses cursor-forward for gap between title and stats
-    // C pads to align stats starting at a fixed column
-    const gap = Math.max(1, 31 - title.length);
+    // C pads title+"  " out so the stats column starts at a fixed offset
+    // (mrank_sz + 15 == 31 for our roles).
+    const gap = Math.max(2, 31 - title.length);
     if (gap > 4) return `${title}\x1b[${gap}C${stats} ${align}`;
     return `${title}${' '.repeat(gap)}${stats} ${align}`;
 }
@@ -198,7 +224,15 @@ function _statusLine1() {
 function _statusLine2() {
     const u = game.u;
     if (!u) return '';
-    return `Dlvl:${u.uz?.dlevel || 1} $:${game._goldCount || 0} HP:${u.uhp || 0}(${u.uhpmax || 0}) Pw:${u.uen || 0}(${u.uenmax || 0}) AC:${u.uac ?? 10} Xp:${u.ulevel || 1}/${u.uexp || 0} T:${game.moves || 1}`;
+    let s = `Dlvl:${u.uz?.dlevel || 1} $:${game._goldCount || 0} HP:${u.uhp || 0}(${u.uhpmax || 0}) Pw:${u.uen || 0}(${u.uenmax || 0}) AC:${u.uac ?? 0}`;
+    // C ref: botl.c do_statusline2 — Xp:<lvl>[/<exp>], optional T:<moves>.
+    if (game.flags?.showexp)
+        s += ` Xp:${u.ulevel || 1}/${u.uexp || 0}`;
+    else
+        s += ` Xp:${u.ulevel || 1}`;
+    if (game.flags?.time)
+        s += ` T:${game.moves || 1}`;
+    return s;
 }
 
 // ── Serialize terminal grid for screen comparison ──
@@ -276,6 +310,20 @@ function _buildScreenOutput() {
         if (game.u?.ux > 0)
             display.setCursor(game.u.ux - 1, game.u.uy + 1);
     }
+}
+
+// Write the two status lines (rows 22-23) to the terminal grid. Used by
+// the legend/welcome startup rendering, which overlays a window region
+// but must keep the status visible underneath.
+export function renderStatusLines(display) {
+    if (!display?.setCell) return;
+    const s1 = _statusLine1().replace(/\x1b\[[0-9;]*[A-Za-z]/g, m =>
+        m.match(/\x1b\[\d+C/) ? ' '.repeat(parseInt(m.slice(2))) : '');
+    for (let c = 0; c < Math.min(s1.length, display.cols); c++)
+        display.setCell(c, 22, s1[c], NO_COLOR, 0);
+    const s2 = _statusLine2();
+    for (let c = 0; c < Math.min(s2.length, display.cols); c++)
+        display.setCell(c, 23, s2[c], NO_COLOR, 0);
 }
 
 // ── flush_screen ──

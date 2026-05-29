@@ -8,16 +8,18 @@
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
-import { docrt, flush_screen, newsym } from './display.js';
+import { docrt, flush_screen, newsym, statusLine1Text, statusLine2Text } from './display.js';
 import { ATR_INVERSE, CLR_GRAY, NO_COLOR } from './terminal.js';
 import {
     AMULET_CLASS,
     AMULET_OF_YENDOR,
     ARMOR_CLASS,
     BAG_OF_TRICKS,
+    BALL_CLASS,
     BELL_OF_OPENING,
     BLINDING_VENOM,
     BOULDER,
+    CHAIN_CLASS,
     CHEST,
     COIN_CLASS,
     CORPSE,
@@ -34,6 +36,7 @@ import {
     POT_WATER,
     RING_CLASS,
     ROCK,
+    ROCK_CLASS,
     SCROLL_CLASS,
     SCR_BLANK_PAPER,
     SCR_SCARE_MONSTER,
@@ -44,6 +47,7 @@ import {
     TIN,
     TOOL_CLASS,
     VENOM_CLASS,
+    WAND_CLASS,
     WEAPON_CLASS,
     objects,
     weight,
@@ -457,20 +461,16 @@ function compareInvlet(a, b) {
     return invletter_value(a.invlet || NOINVSYM) - invletter_value(b.invlet || NOINVSYM);
 }
 
+// Status lines share the single implementation in display.js (correct
+// attribute order, strength formatting, and showexp/time conditionals).
 function statusLine1() {
-    const u = ustate();
-    const name = game.plname || 'Hero';
-    const role = game.urole?.rank?.m || game.urole?.name?.m || 'Adventurer';
-    const title = `${name} the ${role}`;
-    const stats = `St:${u.acurr?.a?.[0] || '?'} Dx:${u.acurr?.a?.[1] || '?'} Co:${u.acurr?.a?.[2] || '?'} In:${u.acurr?.a?.[3] || '?'} Wi:${u.acurr?.a?.[4] || '?'} Ch:${u.acurr?.a?.[5] || '?'}`;
-    const align = u.ualign?.type === 0 ? 'Neutral' : u.ualign?.type > 0 ? 'Lawful' : 'Chaotic';
-    const gap = Math.max(1, 31 - title.length);
-    return `${title}${' '.repeat(gap)}${stats} ${align}`;
+    // strip cursor-forward escapes into spaces for the putstr path
+    return statusLine1Text().replace(/\x1b\[[0-9;]*[A-Za-z]/g, m =>
+        m.match(/\x1b\[\d+C/) ? ' '.repeat(parseInt(m.slice(2))) : '');
 }
 
 function statusLine2() {
-    const u = ustate();
-    return `Dlvl:${u.uz?.dlevel || 1} $:${game._goldCount || money_cnt(inventoryArray()) || 0} HP:${u.uhp || 0}(${u.uhpmax || 0}) Pw:${u.uen || 0}(${u.uenmax || 0}) AC:${u.uac ?? 10} Xp:${u.ulevel || 1}/${u.uexp || 0} T:${game.moves || 1}`;
+    return statusLine2Text();
 }
 
 function putStatusLines(display) {

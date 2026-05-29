@@ -12,6 +12,48 @@ import { rhack } from './cmd.js';
 import { docrt, cls, bot, flush_screen, pline } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals } from './vision.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_fill_mineralize } from './fastforward.js';
+import { find_ac } from './u_init.js';
+import { com_pager_legacy } from './questpgr.js';
+import { roles, races, aligns, Hello, rankName } from './role.js';
+import { ROLE_MALE, ROLE_FEMALE } from './const.js';
+
+const PM_KNIGHT = 4;
+const PM_WIZARD = 12;
+
+// Resolve the role's PM number from game.initrole (index or name).
+function gameRoleMnum() {
+    if (Number.isInteger(game.initrole))
+        return roles[game.initrole]?.mnum ?? game.initrole;
+    const name = String(game.initrole || '').toLowerCase();
+    return roles.find((r) => r.name?.m?.toLowerCase() === name)?.mnum ?? null;
+}
+
+// True for roles whose real u_init (attrs + inventory) actually ran in
+// fastforward_post_mklev — only these have real player state to render.
+function realUinitRan() {
+    const mnum = gameRoleMnum();
+    if (mnum === PM_WIZARD) return true;
+    if (mnum === PM_KNIGHT && game.preferred_pet === 'n') return true;
+    return false;
+}
+
+// C ref: allmain.c welcome(TRUE) — startup greeting message text.
+function welcomeMessage() {
+    const role = roles[game.initrole];
+    const race = races[game.initrace] || races[0];
+    const align = aligns[game.initalign];
+    const female = !!game.flags?.female;
+    const plname = game.flags?.debug ? 'wizard' : (game.plname || 'Hero');
+
+    let buf = ` ${align?.adj || 'neutral'}`;
+    // Gender word: only when role has no fixed female name and allows both.
+    if (!role?.name?.f
+        && (role?.allow & (ROLE_MALE | ROLE_FEMALE)) === (ROLE_MALE | ROLE_FEMALE))
+        buf += ` ${female ? 'female' : 'male'}`;
+    const roleNm = (female && role?.name?.f) ? role.name.f : role?.name?.m;
+    buf += ` ${race.adj} ${roleNm}`;
+    return `${Hello(gameRoleMnum())} ${plname}, welcome to NetHack!  You are a${buf}.`;
+}
 
 // C ref: allmain.c newgame()
 export async function newgame() {
@@ -49,18 +91,24 @@ export async function newgame() {
 
     // Fast-forward through post-mklev startup RNG calls.
     // Covers: u_init_role, ini_inv, attributes, moveloop_preamble.
+    // For wizard/knight this runs the real u_init_inventory_attrs().
     fastforward_post_mklev();
 
-    // Hardcoded player state for seed8000 Tourist.
-    // Contestants: port u_init to compute these from game PRNG.
+    if (realUinitRan()) {
+        await newgame_real();
+        return;
+    }
+
+    // Hardcoded player state for seed8000 Tourist (fastforward path).
     g._goldCount = 757;
     g.u.ulevel = 1;
     g.u.uhp = 10; g.u.uhpmax = 10;
     g.u.uen = 2; g.u.uenmax = 2;
     g.u.uac = 10; g.u.uexp = 0;
     g.u.ualign = { type: 0, record: 0 };
-    g.u.acurr = { a: [9, 14, 12, 11, 16, 16] };
-    g.u.amax = { a: [9, 14, 12, 11, 16, 16] };
+    // Stored in attribute order [STR, INT, WIS, DEX, CON, CHA].
+    g.u.acurr = { a: [9, 11, 16, 14, 12, 16] };
+    g.u.amax = { a: [9, 11, 16, 14, 12, 16] };
     g.moves = 1;
     g.urole = { name: { m: 'Tourist', f: 'Tourist' }, rank: { m: 'Rambler', f: 'Rambler' } };
     g.urace = { adj: 'human' };
@@ -80,6 +128,60 @@ export async function newgame() {
     const alignName = 'neutral';
     const genderAdj = g.flags?.female ? 'female' : 'male';
     await pline(`Aloha ${g.plname}, welcome to NetHack!  You are a ${alignName} ${genderAdj} human ${g.urole.name.m}.`);
+}
+
+// Game start for roles whose real u_init ran (wizard/knight): render
+// the real role/attrs/HP/Pw/AC, the legacy legend (if enabled) and the
+// welcome line.  C ref: allmain.c newgame() lines ~815-843.
+async function newgame_real() {
+    const g = game;
+    const mnum = gameRoleMnum();
+    const role = roles[game.initrole];
+
+    // Wire up urole/urace/ualign and level for the status line.
+    g.urole = { name: { m: role?.name?.m, f: role?.name?.f },
+                rank: { m: rankName(game.initrole, !!g.flags?.female) },
+                mnum };
+    g.urace = { adj: races[game.initrace]?.adj || 'human' };
+    const alignType = aligns[game.initalign]?.value ?? 0;
+    g.u.ualign = { type: alignType, record: 0 };
+    g.u.ulevel = 1; g.u.ulevelmax = 1; g.u.uexp = 0;
+    g.u.uz = g.u.uz || { dnum: 0, dlevel: 1 };
+    g.u.umonnum = mnum;
+    g._goldCount = 0;
+    g.moves = 1;
+    g.flags = g.flags || {};
+    if (g.flags.female === undefined)
+        g.flags.female = (game.initgend === 1);
+    // Pre-find_ac armor class is 0 (matches the legend-step status line).
+    g.u.uac = 0;
+
+    init_vision_globals();
+    vision_reset();
+    vision_recalc(0);
+    await cls();
+    await docrt();
+    await flush_screen(1);
+    await bot();
+
+    // C ref: allmain.c — com_pager("legacy") when the legacy option is on.
+    // The legend menu overlays the already-drawn map (clearing only its own
+    // columns) and the status line underneath still shows pre-find_ac AC (0).
+    const legacyOn = (g.flags?.legacy !== false);
+    if (legacyOn) {
+        await com_pager_legacy();
+    }
+
+    // find_ac() runs in u_init_skills_discoveries (after the legend's bot,
+    // before welcome) — gives the real AC shown from the welcome step on.
+    find_ac();
+
+    // C ref: allmain.c welcome(TRUE).
+    await cls();
+    await docrt();
+    await flush_screen(1);
+    await bot();
+    await pline(welcomeMessage());
 }
 
 // C ref: allmain.c moveloop_core()

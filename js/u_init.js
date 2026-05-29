@@ -102,6 +102,110 @@ const ROLE_INVENTORY = new Map([
     [PM_WIZARD, Wizard],
 ]);
 
+// C ref: role.c — hpadv/enadv advance structs {infix,inrnd,lofix,lornd,hifix,hirnd}.
+// Only the level-0 (initial) fields infix/inrnd are used here.
+const ROLE_ADV = new Map([
+    [PM_KNIGHT, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 4 } }],
+    [PM_WIZARD, { hpadv: { infix: 10, inrnd: 0 }, enadv: { infix: 4, inrnd: 3 } }],
+]);
+// Human race advance (the only race used by these sessions).
+const RACE_ADV_HUMAN = { hpadv: { infix: 2, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } };
+
+// Player-monster base armor class (mons[].ac).  C ref: include/monsters.h
+// — both Knight and Wizard player-monsters have base AC 10.
+const PLAYER_BASE_AC = new Map([
+    [PM_KNIGHT, 10],
+    [PM_WIZARD, 10],
+]);
+
+// a_ac (objects[].a_ac = 10 - macro ac arg) for the starting armor pieces.
+// C ref: include/objects.h ARMOR()/HELM()/SHIELD()/GLOVES()/CLOAK().
+const ARMOR_A_AC = new Map([
+    [RING_MAIL, 3],
+    [HELMET, 1],
+    [SMALL_SHIELD, 1],
+    [LEATHER_GLOVES, 1],
+    [CLOAK_OF_MAGIC_RESISTANCE, 1],
+]);
+
+// Worn-armor slot masks (subset of do_wear.c W_ARM*).
+const W_ARM = 0x01;
+const W_ARMC = 0x02;
+const W_ARMH = 0x04;
+const W_ARMS = 0x08;
+const W_ARMG = 0x10;
+const W_ARMF = 0x20;
+const W_ARMU = 0x40;
+
+function is_cloak(obj) { return obj?.otyp === CLOAK_OF_MAGIC_RESISTANCE; }
+function is_helmet(obj) { return obj?.otyp === HELMET; }
+function is_gloves(obj) { return obj?.otyp === LEATHER_GLOVES; }
+function is_shield(obj) { return obj?.otyp === SMALL_SHIELD; }
+function is_suit(obj) { return obj?.otyp === RING_MAIL; }
+
+// C ref: do.c setworn — record a worn armor object on the hero.
+function setworn(obj, mask) {
+    if (!obj) return;
+    obj.owornmask = (obj.owornmask || 0) | mask;
+    if (mask === W_ARM) game.uarm = obj;
+    else if (mask === W_ARMC) game.uarmc = obj;
+    else if (mask === W_ARMH) game.uarmh = obj;
+    else if (mask === W_ARMS) game.uarms = obj;
+    else if (mask === W_ARMG) game.uarmg = obj;
+    else if (mask === W_ARMF) game.uarmf = obj;
+    else if (mask === W_ARMU) game.uarmu = obj;
+}
+
+// C ref: u_init.c ini_inv_use_obj — auto-wear starting armor.
+function ini_inv_wear_armor(obj) {
+    if (obj.oclass !== ARMOR_CLASS) return;
+    if (is_shield(obj) && !game.uarms) setworn(obj, W_ARMS);
+    else if (is_helmet(obj) && !game.uarmh) setworn(obj, W_ARMH);
+    else if (is_gloves(obj) && !game.uarmg) setworn(obj, W_ARMG);
+    else if (is_cloak(obj) && !game.uarmc) setworn(obj, W_ARMC);
+    else if (is_suit(obj) && !game.uarm) setworn(obj, W_ARM);
+}
+
+// C ref: hack.h ARM_BONUS — a_ac + spe (no erosion at game start).
+function ARM_BONUS(obj) {
+    return (ARMOR_A_AC.get(obj.otyp) || 0) + (obj.spe || 0);
+}
+
+// C ref: do_wear.c find_ac — current armor class from worn gear.
+export function find_ac() {
+    const base = PLAYER_BASE_AC.get(current_role_mnum()) ?? 10;
+    let uac = base;
+    for (const obj of [game.uarm, game.uarmc, game.uarmh, game.uarmf,
+        game.uarms, game.uarmg, game.uarmu]) {
+        if (obj) uac -= ARM_BONUS(obj);
+    }
+    game.u = game.u || {};
+    game.u.uac = uac;
+    return uac;
+}
+
+// C ref: attrib.c newhp() / exper.c newpw() — level-0 HP and Pw.
+// The single rnd() each role's enadv contributes is emitted here at the
+// same RNG position the old fastforward_newpw() used.
+export function newhp() {
+    const adv = ROLE_ADV.get(current_role_mnum());
+    if (!adv) return 0;
+    let hp = adv.hpadv.infix + RACE_ADV_HUMAN.hpadv.infix;
+    if (adv.hpadv.inrnd > 0) hp += rnd(adv.hpadv.inrnd);
+    if (RACE_ADV_HUMAN.hpadv.inrnd > 0) hp += rnd(RACE_ADV_HUMAN.hpadv.inrnd);
+    return hp;
+}
+
+export function newpw() {
+    const adv = ROLE_ADV.get(current_role_mnum());
+    if (!adv) return 0;
+    let en = adv.enadv.infix + RACE_ADV_HUMAN.enadv.infix;
+    if (adv.enadv.inrnd > 0) en += rnd(adv.enadv.inrnd);
+    if (RACE_ADV_HUMAN.enadv.inrnd > 0) en += rnd(RACE_ADV_HUMAN.enadv.inrnd);
+    if (en <= 0) en = 1;
+    return en;
+}
+
 const A_MAX = 6;
 const HUMAN_ATTRMIN = [3, 3, 3, 3, 3, 3];
 const HUMAN_ATTRMAX = [118, 18, 18, 18, 18, 18]; // STR18(100), then plain 18s.
@@ -282,6 +386,7 @@ export function ini_inv(tropList) {
         if (ini_inv_adjust_obj(trop, obj))
             quan = 1;
         addinv(obj);
+        ini_inv_wear_armor(obj);
         if (obj.oclass === SPBOOK_CLASS && (objects[obj.otyp]?.dir ?? 0) === 1)
             got_sp1 = true;
 
@@ -395,6 +500,8 @@ export function u_init_inventory_attrs() {
     game.u = game.u || {};
     game.invent = [];
     game.u.umoney0 = 0;
+    game.uarm = game.uarmc = game.uarmh = game.uarmf = null;
+    game.uarms = game.uarmg = game.uarmu = null;
 
     game._log_mkobj_rne = true;
     try {

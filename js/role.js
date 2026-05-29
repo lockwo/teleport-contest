@@ -4,7 +4,7 @@
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import {
-    A_CHAOTIC, A_LAWFUL, A_NEUTRAL,
+    A_CHAOTIC, A_LAWFUL, A_NEUTRAL, A_NONE,
     PICK_RANDOM, PICK_RIGID,
     ROLE_ALIGNMASK, ROLE_ALIGNS, ROLE_CHAOTIC, ROLE_FEMALE,
     ROLE_GENDERS, ROLE_GENDMASK, ROLE_LAWFUL, ROLE_MALE,
@@ -633,6 +633,60 @@ export function rankName(rolenum, female = false) {
     const rank = roles[rolenum]?.rank?.[0];
     if (!rank) return roleName(rolenum, female);
     return (female && rank.f) || rank.m;
+}
+
+// Player-monster (PM_) numbers, matching roles[].mnum.
+const PM_KNIGHT = 4;
+const PM_SAMURAI = 9;
+const PM_TOURIST = 10;
+const PM_VALKYRIE = 11;
+
+// C ref: role.c rank_of() — rank title for a given experience level.
+// At game start (level 1) this is the role's first rank entry.
+export function rank_of(_lev, rolenum, female = false) {
+    return rankName(rolenum, female);
+}
+
+// C ref: role.c Hello() — role-specific greeting word for welcome().
+export function Hello(rolenum) {
+    switch (rolenum) {
+    case PM_KNIGHT:
+        return 'Salutations';
+    case PM_SAMURAI:
+        return 'Konnichi wa';
+    case PM_TOURIST:
+        return 'Aloha';
+    case PM_VALKYRIE:
+        return 'Velkommen';
+    default:
+        return 'Hello';
+    }
+}
+
+// roles[].gods is [lawfulGod, neutralGod, chaoticGod].
+function godForAlign(rolenum, alignType) {
+    const gods = roles[rolenum]?.gods;
+    if (!gods) return null;
+    if (alignType === A_LAWFUL) return gods[0];
+    if (alignType === A_NEUTRAL) return gods[1];
+    if (alignType === A_CHAOTIC) return gods[2];
+    return null;
+}
+
+// C ref: pray.c align_gname() — deity name for the hero's alignment.
+// A goddess name is stored with a leading '_' which is stripped here.
+export function align_gname(rolenum, alignType) {
+    if (alignType === A_NONE) return 'Moloch';
+    let gnam = godForAlign(rolenum, alignType);
+    if (!gnam) return 'someone';
+    if (gnam[0] === '_') gnam = gnam.slice(1);
+    return gnam;
+}
+
+// C ref: pray.c align_gtitle() — "god" or "goddess" (goddess marked by '_').
+export function align_gtitle(rolenum, alignType) {
+    const gnam = godForAlign(rolenum, alignType);
+    return (gnam && gnam[0] === '_') ? 'goddess' : 'god';
 }
 
 export function roleFromGame() {
