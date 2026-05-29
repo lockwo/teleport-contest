@@ -381,7 +381,10 @@ function maybe_generate_rnd_mon() {
 // hero has spent a move.  Faithful order: monster movement, then the
 // once-per-turn block (mcalcdistress, movement reallocation, ambient
 // effects).  Runs the real (general) machinery over materialized monsters.
-function moveloop_turn() {
+// Exported so the multi-turn run/travel loop in hack.js can run the same
+// per-turn machinery between its inline domove() steps (a run executes many
+// turns within a single command, with no nhgetch between them).
+export function moveloop_turn() {
     const g = game;
 
     // monster movement loop (svc.context.mon_moving)

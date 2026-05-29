@@ -19,6 +19,7 @@ import { docast } from './spell.js';
 import { doread } from './read.js';
 import { rnl } from './rng.js';
 import { doextcmd } from './extcmd-handlers.js';
+import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook } from './hack.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          SDOOR, SCORR, CORR, IS_WALL, IS_OBSTRUCTED, isok } from './const.js';
 
@@ -33,7 +34,7 @@ function isMovementKey(ch) {
 }
 
 // C ref: hack.c — check if a cell blocks movement
-function blocksMove(x, y) {
+export function blocksMove(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return true;
     if (loc.typ === STONE) return true;
@@ -109,6 +110,30 @@ export async function rhack(key) {
     } else if (ch === 'r') {
         // C ref: cmd.c — 'r' read a scroll or spellbook.
         game.context.move = (await doread()) ? 1 : 0;
+    } else if (ch === ';') {
+        // C ref: cmd.c ';' "glance" -> pager.c do_look(1): quick farlook.
+        // Cursor-positioning loop + look-at description; no game time passes.
+        await do_farlook();
+        game.context.move = 0;
+    } else if (isRunKey(ch)) {
+        // Capital-letter run: do_run_west/east/... -> set_move_cmd(dir, 1).
+        // Run until something interesting is seen.  hack.js drives the whole
+        // multi-turn run inline and leaves game.context.move = 0 (every
+        // elapsed turn was already taken), so the moveloop does not schedule
+        // another per-turn pass.  C ref: cmd.c do_run_*(), hack.c domove().
+        await do_run(RUN_DX[ch], RUN_DY[ch]);
+    } else if (ch === 'G' || ch === 'g') {
+        // C ref: cmd.c do_run()/do_rush() prefix commands: read a following
+        // movement key, then run (G -> run==3) / rush (g -> run==2).  An ESC
+        // or a non-movement key cancels with no time elapsed.
+        const dirKey = await nhgetch();
+        const dch = String.fromCharCode(dirKey);
+        const ldir = dch.toLowerCase();
+        if (DIR_DX[ldir] !== undefined) {
+            await do_run_prefixed(DIR_DX[ldir], DIR_DY[ldir], ch === 'G' ? 3 : 2);
+        } else {
+            game.context.move = 0;
+        }
     } else if (isMovementKey(ch)) {
         // domove() sets game.context.move itself: 1 when the hero actually
         // moves (time passes), 0 when the move is blocked (bump a wall — no
@@ -158,7 +183,7 @@ async function dosearch() {
 
 // C ref: hack.c domove / domove_core — execute a movement, including the
 // bump-into-a-monster path (attack a hostile, or swap places with a pet).
-async function domove(dx, dy) {
+export async function domove(dx, dy) {
     const u = game.u;
     const newx = u.ux + dx;
     const newy = u.uy + dy;
