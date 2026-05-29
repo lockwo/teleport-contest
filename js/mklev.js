@@ -10,8 +10,9 @@ import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { init_rect, rnd_rect, get_rect, split_rects } from './rect.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { filler_region, lspo_map, fill_special_room, themeroom_fill } from './sp_lev.js';
+import { filler_region, lspo_map, fill_special_room, themeroom_fill, themeroom_map_contents } from './sp_lev.js';
 import { somex, somey, somexyspace, occupied } from './mkroom.js';
+import { maketrap } from './trap.js';
 import { makemon as make_monster, rndmonst } from './makemon.js';
 import { make_engr_at, random_engraving, wipe_engr_at } from './engrave.js';
 import {
@@ -196,29 +197,6 @@ async function makemon(mdat, x, y, mmflags) {
         game.level.monsters.push(mtmp);
     }
     return mtmp;
-}
-
-// maketrap stub
-function choose_trapnote(ttmp) {
-    const used = new Set();
-    for (const trap of game.level?.traps ?? []) {
-        if (trap !== ttmp && trap.ttyp === SQKY_BOARD && Number.isInteger(trap.tnote))
-            used.add(trap.tnote);
-    }
-    const picks = [];
-    for (let k = 0; k < 12; k++)
-        if (!used.has(k)) picks.push(k);
-    return picks.length ? picks[rn2(picks.length)] : rn2(12);
-}
-
-async function maketrap(x, y, typ) {
-    const trap = { ttyp: typ, tx: x, ty: y, tseen: false, once: false, launch: { x: 0, y: 0 } };
-    if (!game.level) return trap;
-    if (!game.level.traps) game.level.traps = [];
-    if (typ === SQKY_BOARD)
-        trap.tnote = choose_trapnote(trap);
-    game.level.traps.push(trap);
-    return trap;
 }
 
 function make_grave(x, y, text) {
@@ -752,7 +730,7 @@ async function themerooms_generate(difficulty) {
         const placed = lspo_map({
             map: mapSpec.map,
             contents: mapSpec.filler
-                ? () => filler_region(mapSpec.filler[0], mapSpec.filler[1])
+                ? () => themeroom_map_contents(pick.name, mapSpec.filler[0], mapSpec.filler[1])
                 : null,
         });
         return !!placed && !game.themeroom_failed;
@@ -1064,9 +1042,39 @@ function good_rm_wall_doorpos(x, y, dir, room) {
     return true;
 }
 
+// C ref: mklev.c finddpos_shift()
+// starting from x,y going towards dir, find a good location for a door
 function finddpos_shift(xp, yp, dir, aroom) {
+    const map = game.level;
     const rdir = DIR_180(dir);
+    const dx = xdir[rdir];
+    const dy = ydir[rdir];
+
     if (good_rm_wall_doorpos(xp.v, yp.v, rdir, aroom)) return true;
+
+    // irregular rooms may have the room wall away from the room rectangular
+    // area; go into the area until we encounter something
+    if (aroom.irregular) {
+        let rx = xp.v, ry = yp.v;
+        let fail = false;
+        let rloc = map.at(rx, ry);
+        while (!fail && isok(rx, ry)
+               && rloc && (rloc.typ === STONE || rloc.typ === CORR)) {
+            rx += dx;
+            ry += dy;
+            if (good_rm_wall_doorpos(rx, ry, rdir, aroom)) {
+                xp.v = rx;
+                yp.v = ry;
+                return true;
+            }
+            rloc = map.at(rx, ry);
+            if (!rloc || !(rloc.typ === STONE || rloc.typ === CORR))
+                fail = true;
+            if (rx < aroom.lx || rx > aroom.hx
+                || ry < aroom.ly || ry > aroom.hy)
+                fail = true;
+        }
+    }
     return false;
 }
 

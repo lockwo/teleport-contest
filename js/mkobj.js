@@ -2,7 +2,7 @@
 // C refs: mkobj.c, objects.h, o_init.c object probability setup.
 
 import { game } from './gstate.js';
-import { rn2, rnd, rn1, rnz, pushRngLogEntry } from './rng.js';
+import { rn2, rnd, rn1, rnz, rne } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import {
     Is_rogue_level, GEHENNOM,
@@ -12,6 +12,7 @@ import {
     TIMER_OBJECT, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON,
 } from './const.js';
 import { rndmonst_adj, monster_by_pmidx } from './makemon.js';
+import { set_tin_variety, SPINACH_TIN, RANDOM_TIN } from './eat.js';
 
 export const RANDOM_CLASS = 0;
 export const ILLOBJ_CLASS = 1;
@@ -745,18 +746,15 @@ function rnd_class(first, last) {
 }
 
 export function next_ident() {
-    return rnd(2);
-}
-
-function rne(x) {
-    const ulevel = game.u?.ulevel || 1;
-    const utmp = ulevel < 15 ? 5 : Math.trunc(ulevel / 3);
-    let tmp = 1;
-    while (tmp < utmp && !rn2(x))
-        tmp++;
-    if (game._log_mkobj_rne)
-        pushRngLogEntry(`rne(${x})=${tmp}`);
-    return tmp;
+    // C mkobj.c:508 next_ident(): returns the current context.ident, then
+    // advances it by rnd(2) (so half the potential ids are skipped). The
+    // single rnd(2) is the only RNG consumed; we also track the running id so
+    // o_id values match C (some code keys on the low bits of o_id).
+    if (game.context_ident == null) game.context_ident = 2; /* allmain.c:773 */
+    const res = game.context_ident;
+    game.context_ident += rnd(2);
+    if (!game.context_ident) game.context_ident = rnd(2) + 1; /* id 1 reserved */
+    return res;
 }
 
 export function curse(otmp) {
@@ -777,6 +775,71 @@ export function blessorcurse(otmp, chance) {
         if (!rn2(2)) curse(otmp);
         else bless(otmp);
     }
+}
+
+// Artifact list (C: artilist.h). Only the fields mk_artifact()/nartifact_exist()
+// need for RNG parity: the artifact index m (1-based, matching artiexist[]), its
+// base object otyp, whether SPFX_NOGEN is set, the gift_value, and the role it is
+// a first choice for. The quest artifacts and Excalibur carry SPFX_NOGEN so they
+// are never random-generated; they are omitted because nogen entries are skipped
+// before they can be selected and they do not contribute to the eligible list.
+// (They DO count toward artiexist once created by other means, but in the early
+// game covered by the parity sessions none are created, and nartifact_exist()
+// only matters via the random-generation path implemented here.)
+// [m, otyp, gift_value, role(PM_ or -1)]
+const ARTIFACTS = [
+    [2, 58 /*RUNESWORD*/, 9, -1],        // Stormbringer
+    [3, 76 /*WAR_HAMMER*/, 8, -1],       // Mjollnir (PM_VALKYRIE; first-choice only matters for by_align)
+    [4, 45 /*BATTLE_AXE*/, 8, -1],       // Cleaver
+    [5, 36 /*ORCISH_DAGGER*/, 5, -1],    // Grimtooth
+    [6, 53 /*ELVEN_BROADSWORD*/, 4, -1], // Orcrist
+    [7, 35 /*ELVEN_DAGGER*/, 1, -1],     // Sting
+    [8, 38 /*ATHAME*/, 7, -1],           // Magicbane
+    [9, 54 /*LONG_SWORD*/, 9, -1],       // Frost Brand
+    [10, 54 /*LONG_SWORD*/, 5, -1],      // Fire Brand
+    [11, 52 /*BROADSWORD*/, 5, -1],      // Dragonbane
+    [12, 74 /*SILVER_MACE*/, 3, -1],     // Demonbane
+    [13, 51 /*SILVER_SABER*/, 4, -1],    // Werebane
+    [14, 51 /*SILVER_SABER*/, 10, -1],   // Grayswandir
+    [15, 54 /*LONG_SWORD*/, 4, -1],      // Giantslayer
+    [16, 76 /*WAR_HAMMER*/, 1, -1],      // Ogresmasher
+    [17, 75 /*MORNING_STAR*/, 1, -1],    // Trollsbane
+    [18, 54 /*LONG_SWORD*/, 5, -1],      // Vorpal Blade
+    [19, 56 /*KATANA*/, 8, -1],          // Snickersnee
+    [20, 54 /*LONG_SWORD*/, 6, -1],      // Sunsword
+];
+
+function nartifact_exist() {
+    const set = game.artiexist;
+    if (!set) return 0;
+    return set.size;
+}
+
+// C artifact.c:172 mk_artifact() restricted to the A_NONE / random-generation
+// case used by mksobj_init (by_align == FALSE). For an object whose otyp has
+// unused non-NOGEN artifacts, picks one with rn2(n) and marks it created. For a
+// generic item with no matching artifact (the common case) it consumes no RNG
+// and leaves the object unchanged. Returns the (possibly artifacted) obj.
+function mk_artifact(otmp) {
+    const o_typ = otmp.otyp;
+    const oc_unique = !!(objects[o_typ]?.flags & F_UNIQUE);
+    if (oc_unique) return otmp; // unique base items never become random artifacts
+    if (!game.artiexist) game.artiexist = new Set();
+    const eligible = [];
+    for (const [m, otyp /*, gv, role*/] of ARTIFACTS) {
+        if (game.artiexist.has(m)) continue;       // artiexist[m].exists
+        // gift_value > 99 never happens (max 12); role first-choice only used by_align
+        if (otyp === o_typ) eligible.push(m);
+    }
+    const n = eligible.length;
+    if (n) {
+        const m = eligible[rn2(n)];
+        otmp.oeroded = 0;
+        otmp.oeroded2 = 0;
+        otmp.oartifact = m;
+        game.artiexist.add(m);                     // artifact_origin -> exists
+    }
+    return otmp;
 }
 
 function hasFlag(otmp, flag) {
@@ -1055,7 +1118,7 @@ function mksobj_init(otmp, artif) {
             blessorcurse(otmp, 10);
         }
         if (hasFlag(otmp, F_POISONABLE) && !rn2(100)) otmp.opoisoned = 1;
-        if (artif && !rn2(20)) otmp.oartifact = 1;
+        if (artif && !rn2(20 + 10 * nartifact_exist())) mk_artifact(otmp);
         break;
     case FOOD_CLASS:
         otmp.oeaten = 0;
@@ -1065,10 +1128,12 @@ function mksobj_init(otmp, artif) {
             if (!rn2(3)) otmp.corpsenm = rndmonnum();
             break;
         case TIN:
+            otmp.corpsenm = NON_PM; /* empty (so far) */
             if (!rn2(6)) {
-                otmp.spe = 1;
+                set_tin_variety(otmp, SPINACH_TIN);
             } else {
                 otmp.corpsenm = rndmonnum();
+                set_tin_variety(otmp, RANDOM_TIN);
             }
             blessorcurse(otmp, 10);
             break;
@@ -1188,7 +1253,7 @@ function mksobj_init(otmp, artif) {
         } else {
             blessorcurse(otmp, 10);
         }
-        if (artif && !rn2(40)) otmp.oartifact = 1;
+        if (artif && !rn2(40 + 10 * nartifact_exist())) mk_artifact(otmp);
         break;
     case WAND_CLASS:
         if (otmp.otyp === WAN_WISHING) otmp.spe = 1;

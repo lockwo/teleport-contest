@@ -40,7 +40,7 @@ export const roles = [
         filecode: 'Cav',
         mnum: 2,
         allow: MH_HUMAN | MH_DWARF | MH_GNOME | ROLE_MALE | ROLE_FEMALE | ROLE_LAWFUL | ROLE_NEUTRAL,
-        gods: ['Anu', 'Ishtar', 'Anshar'],
+        gods: ['Anu', '_Ishtar', 'Anshar'],
     },
     {
         name: { m: 'Healer', f: null },
@@ -48,7 +48,7 @@ export const roles = [
         filecode: 'Hea',
         mnum: 3,
         allow: MH_HUMAN | MH_GNOME | ROLE_MALE | ROLE_FEMALE | ROLE_NEUTRAL,
-        gods: ['Athena', 'Hermes', 'Poseidon'],
+        gods: ['_Athena', 'Hermes', 'Poseidon'],
     },
     {
         name: { m: 'Knight', f: null },
@@ -56,7 +56,7 @@ export const roles = [
         filecode: 'Kni',
         mnum: 4,
         allow: MH_HUMAN | ROLE_MALE | ROLE_FEMALE | ROLE_LAWFUL,
-        gods: ['Lugh', 'Brigit', 'Manannan Mac Lir'],
+        gods: ['Lugh', '_Brigit', 'Manannan Mac Lir'],
     },
     {
         name: { m: 'Monk', f: null },
@@ -88,7 +88,7 @@ export const roles = [
         filecode: 'Ran',
         mnum: 7,
         allow: MH_HUMAN | MH_ELF | MH_GNOME | MH_ORC | ROLE_MALE | ROLE_FEMALE | ROLE_NEUTRAL | ROLE_CHAOTIC,
-        gods: ['Mercury', 'Venus', 'Mars'],
+        gods: ['Mercury', '_Venus', 'Mars'],
     },
     {
         name: { m: 'Samurai', f: null },
@@ -96,7 +96,7 @@ export const roles = [
         filecode: 'Sam',
         mnum: 9,
         allow: MH_HUMAN | ROLE_MALE | ROLE_FEMALE | ROLE_LAWFUL,
-        gods: ['Amaterasu Omikami', 'Raijin', 'Susanowo'],
+        gods: ['_Amaterasu Omikami', 'Raijin', 'Susanowo'],
     },
     {
         name: { m: 'Tourist', f: null },
@@ -104,7 +104,7 @@ export const roles = [
         filecode: 'Tou',
         mnum: 10,
         allow: MH_HUMAN | ROLE_MALE | ROLE_FEMALE | ROLE_NEUTRAL,
-        gods: ['Blind Io', 'The Lady', 'Offler'],
+        gods: ['Blind Io', '_The Lady', 'Offler'],
     },
     {
         name: { m: 'Valkyrie', f: null },
@@ -665,7 +665,11 @@ export function Hello(rolenum) {
 
 // roles[].gods is [lawfulGod, neutralGod, chaoticGod].
 function godForAlign(rolenum, alignType) {
-    const gods = roles[rolenum]?.gods;
+    // C ref: role.c role_init — a role with no own gods (Priest) inherits the
+    // randomly chosen flags.pantheon role's god names.
+    let gods = roles[rolenum]?.gods;
+    if (!gods && Number.isInteger(game.pantheon))
+        gods = roles[game.pantheon]?.gods;
     if (!gods) return null;
     if (alignType === A_LAWFUL) return gods[0];
     if (alignType === A_NEUTRAL) return gods[1];
@@ -722,4 +726,40 @@ export function first_valid_align(rolenum, racenum, gendnum) {
         if (ok_align(rolenum, racenum, gendnum, i))
             return i;
     return ROLE_NONE;
+}
+
+// C ref: role.c tty_player_selection() pick4u=='n' (manual menu) branches —
+// each facet block counts the valid options with ok_X() (falling back to
+// validX() when none are ok) and only shows a menu when the count is > 1; a
+// single-valid facet is assigned directly (no menu, no keystroke, no RNG).
+// These helpers return {n, k}: n = number of valid choices, k = last valid
+// index (the forced value when n == 1), mirroring the C loops exactly.
+export function count_ok_race(rolenum, gendnum, alignnum) {
+    let n = 0, k = 0;
+    for (let i = 0; i < races.length; i++)
+        if (ok_race(rolenum, i, gendnum, alignnum)) { n++; k = i; }
+    if (n === 0)
+        for (let i = 0; i < races.length; i++)
+            if (validrace(rolenum, i)) { n++; k = i; }
+    return { n, k };
+}
+
+export function count_ok_gend(rolenum, racenum, alignnum) {
+    let n = 0, k = 0;
+    for (let i = 0; i < ROLE_GENDERS; i++)
+        if (ok_gend(rolenum, racenum, i, alignnum)) { n++; k = i; }
+    if (n === 0)
+        for (let i = 0; i < ROLE_GENDERS; i++)
+            if (validgend(rolenum, racenum, i)) { n++; k = i; }
+    return { n, k };
+}
+
+export function count_ok_align(rolenum, racenum, gendnum) {
+    let n = 0, k = 0;
+    for (let i = 0; i < ROLE_ALIGNS; i++)
+        if (ok_align(rolenum, racenum, gendnum, i)) { n++; k = i; }
+    if (n === 0)
+        for (let i = 0; i < ROLE_ALIGNS; i++)
+            if (validalign(rolenum, racenum, i)) { n++; k = i; }
+    return { n, k };
 }

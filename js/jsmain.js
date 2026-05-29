@@ -16,12 +16,13 @@ import { newgame, moveloop_core } from './allmain.js';
 import { parseNethackrc } from './options.js';
 import { flush_screen } from './display.js';
 import { GameDisplay } from './game_display.js';
-import { PICK_RIGID, ROLE_NONE } from './const.js';
+import { ROLE_NONE } from './const.js';
 import { ATR_INVERSE, NO_COLOR } from './terminal.js';
 import {
-    aligns, apply_selection, first_valid_align, genders, ok_align, ok_gend,
-    ok_race, pick_align, races, random_player_selection, rigid_role_checks,
-    roleName, roles, selectionIsComplete, str2align, str2gend, str2race, str2role,
+    aligns, apply_selection, count_ok_race, count_ok_gend, count_ok_align,
+    genders, ok_align, ok_gend, ok_race, races, random_player_selection,
+    rigid_role_checks, roleName, roles, selectionIsComplete,
+    str2align, str2gend, str2race, str2role,
 } from './role.js';
 
 function initialSelectionFromOptions(opts) {
@@ -56,10 +57,6 @@ function alignKey(ch) {
 
 function keyChar(code) {
     return String.fromCharCode(code);
-}
-
-function pickAlignIfRigid(sel) {
-    return pick_align(sel.role, sel.race, sel.gender, PICK_RIGID);
 }
 
 // ── NethackGame ──
@@ -139,6 +136,9 @@ export class NethackGame {
         g.plname = opts.name || '';
         g.flags = { verbose: true, ...opts.flags };
         g.iflags = { ...opts.iflags };
+        // symset selects the drawing glyph table; DECgraphics uses VT100
+        // line-drawing for walls/floor, otherwise the default ASCII symbols.
+        g.symset = opts.symset || '';
         const optsel = initialSelectionFromOptions(opts);
         g.initrole = optsel.role;
         g.initrace = optsel.race;
@@ -273,18 +273,44 @@ export class NethackGame {
         }
     }
 
-    _completeDeterministicTail(sel) {
-        if (sel.role >= 0 && sel.race >= 0 && sel.gender >= 0 && sel.align < 0) {
-            const a = first_valid_align(sel.role, sel.race, sel.gender);
-            if (a >= 0) sel.align = a;
+    // C ref: role.c tty_player_selection() makepicks loop (pick4u=='n').
+    // Resolve every facet that has only a single valid option WITHOUT showing
+    // a menu and WITHOUT consuming a keystroke, advancing facet-by-facet in the
+    // C order role->race->gender->alignment. Before a facet whose option count
+    // is > 1 (the point where C opens a menu via plsel_startmenu), run the real
+    // rigid_role_checks() once — this is the only place chargen consumes RNG
+    // (pick_*(PICK_RIGID) emits rn2(1) for any other still-forced facet, e.g.
+    // a Rogue's forced chaotic alignment). Returns the prompt the player must
+    // answer next ('role'/'race'/'gender'/'align'/'ok'), or null if everything
+    // resolved to a single choice.
+    _advanceForcedFacets(sel) {
+        for (;;) {
+            if (sel.role < 0)
+                return 'role'; // role always offered via a menu
+            if (sel.race < 0) {
+                const { n, k } = count_ok_race(sel.role, sel.gender, sel.align);
+                if (n > 1) { rigid_role_checks(sel); if (sel.race < 0) return 'race'; else continue; }
+                sel.race = k; continue;
+            }
+            if (sel.gender < 0) {
+                const { n, k } = count_ok_gend(sel.role, sel.race, sel.align);
+                if (n > 1) { rigid_role_checks(sel); if (sel.gender < 0) return 'gender'; else continue; }
+                sel.gender = k; continue;
+            }
+            if (sel.align < 0) {
+                const { n, k } = count_ok_align(sel.role, sel.race, sel.gender);
+                if (n > 1) { rigid_role_checks(sel); if (sel.align < 0) return 'align'; else continue; }
+                sel.align = k; continue;
+            }
+            return 'ok';
         }
     }
 
     async _manualCharacterSelection(sel) {
+        let prompt = this._advanceForcedFacets(sel);
         this._renderManualPrompt(sel);
         for (;;) {
             const ch = await this._readPromptKey();
-            const prompt = this._nextManualPrompt(sel);
             const lower = ch.toLowerCase();
 
             if (prompt === 'ok') {
@@ -296,23 +322,19 @@ export class NethackGame {
                 } else if (lower === 'q') {
                     return false;
                 }
+                prompt = this._advanceForcedFacets(sel);
                 this._renderManualPrompt(sel);
                 continue;
             }
 
             if (prompt === 'role') {
                 const role = roleKey(ch);
-                if (role !== undefined) {
+                if (role !== undefined)
                     sel.role = role;
-                    rigid_role_checks(sel);
-                }
             } else if (prompt === 'race') {
                 const race = raceKey(ch);
-                if (race !== undefined && ok_race(sel.role, race, sel.gender, sel.align)) {
+                if (race !== undefined && ok_race(sel.role, race, sel.gender, sel.align))
                     sel.race = race;
-                    if (sel.align === ROLE_NONE && sel.gender === ROLE_NONE)
-                        sel.align = pickAlignIfRigid(sel);
-                }
             } else if (prompt === 'gender') {
                 const gender = genderKey(ch);
                 if (gender !== undefined && ok_gend(sel.role, sel.race, gender, sel.align))
@@ -323,7 +345,7 @@ export class NethackGame {
                     sel.align = align;
             }
 
-            this._completeDeterministicTail(sel);
+            prompt = this._advanceForcedFacets(sel);
             this._renderManualPrompt(sel);
         }
     }
@@ -463,7 +485,17 @@ export async function runSegment(input) {
 
     for (const ch of moves) display.pushKey(ch.charCodeAt(0));
 
-    await nhGame.start();
+    // Startup/chargen can run out of recorded keystrokes when the C session
+    // used a tty selection feature the port doesn't model (e.g. the '~'
+    // role-filter sub-menu). Treat that like the moveloop does: stop driving
+    // input and keep whatever screens were captured up to that point, rather
+    // than letting the whole segment fail.
+    try {
+        await nhGame.start();
+    } catch (e) {
+        if (!String(e?.message || '').includes('Input queue empty'))
+            throw e;
+    }
 
     // Drive the game loop until input is exhausted. The judge looks
     // at game.getScreens() afterwards; whatever the contestant

@@ -156,60 +156,62 @@ const ANSI_COLOR = [
     97,  // CLR_WHITE     15
 ];
 
+// True when the active symset uses VT100 line-drawing (DECgraphics).  C ref:
+// drawing.c symset[] / dat/symbols — without it the default ASCII glyphs
+// (defsym.h PCHAR) are used for walls/floor/doorways.
+function useDECgraphics() {
+    return /^dec/i.test(String(game.symset || ''));
+}
+
 // ── Terrain to display character + color + DEC flag ──
-// C ref: display.c back_to_glyph + drawing.c defsyms (DECgraphics symset).
+// C ref: display.c back_to_glyph + drawing.c defsyms.  Walls follow the
+// active symset: DECgraphics VT100 line-drawing, else default ASCII.
 function wall_glyph(typ) {
+    const dec = useDECgraphics();
     switch (typ) {
-    case HWALL:     return { ch: 'q', color: NO_COLOR, dec: true };  // ─
-    case VWALL:     return { ch: 'x', color: NO_COLOR, dec: true };  // │
-    case TLCORNER:  return { ch: 'l', color: NO_COLOR, dec: true };  // ┌
-    case TRCORNER:  return { ch: 'k', color: NO_COLOR, dec: true };  // ┐
-    case BLCORNER:  return { ch: 'm', color: NO_COLOR, dec: true };  // └
-    case BRCORNER:  return { ch: 'j', color: NO_COLOR, dec: true };  // ┘
-    case CROSSWALL: return { ch: 'n', color: NO_COLOR, dec: true };  // ┼
-    case TUWALL:    return { ch: 'v', color: NO_COLOR, dec: true };  // ┴
-    case TDWALL:    return { ch: 'w', color: NO_COLOR, dec: true };  // ┬
-    case TLWALL:    return { ch: 'u', color: NO_COLOR, dec: true };  // ┤
-    case TRWALL:    return { ch: 't', color: NO_COLOR, dec: true };  // ├
-    default:        return { ch: 'q', color: NO_COLOR, dec: true };
+    case HWALL:     return dec ? { ch: 'q', color: NO_COLOR, dec: true } : { ch: '-', color: NO_COLOR, dec: false };
+    case VWALL:     return dec ? { ch: 'x', color: NO_COLOR, dec: true } : { ch: '|', color: NO_COLOR, dec: false };
+    case TLCORNER:  return dec ? { ch: 'l', color: NO_COLOR, dec: true } : { ch: '-', color: NO_COLOR, dec: false };
+    case TRCORNER:  return dec ? { ch: 'k', color: NO_COLOR, dec: true } : { ch: '-', color: NO_COLOR, dec: false };
+    case BLCORNER:  return dec ? { ch: 'm', color: NO_COLOR, dec: true } : { ch: '-', color: NO_COLOR, dec: false };
+    case BRCORNER:  return dec ? { ch: 'j', color: NO_COLOR, dec: true } : { ch: '-', color: NO_COLOR, dec: false };
+    case CROSSWALL: return dec ? { ch: 'n', color: NO_COLOR, dec: true } : { ch: '-', color: NO_COLOR, dec: false };
+    case TUWALL:    return dec ? { ch: 'v', color: NO_COLOR, dec: true } : { ch: '-', color: NO_COLOR, dec: false };
+    case TDWALL:    return dec ? { ch: 'w', color: NO_COLOR, dec: true } : { ch: '-', color: NO_COLOR, dec: false };
+    case TLWALL:    return dec ? { ch: 'u', color: NO_COLOR, dec: true } : { ch: '|', color: NO_COLOR, dec: false };
+    case TRWALL:    return dec ? { ch: 't', color: NO_COLOR, dec: true } : { ch: '|', color: NO_COLOR, dec: false };
+    default:        return dec ? { ch: 'q', color: NO_COLOR, dec: true } : { ch: '-', color: NO_COLOR, dec: false };
     }
 }
 
 function terrain_glyph(loc, x, y) {
     const typ = loc.typ;
+    const dec = useDECgraphics();
     switch (typ) {
     case STONE:     return { ch: ' ', color: NO_COLOR, dec: false };
     case SCORR:     return { ch: ' ', color: NO_COLOR, dec: false };  // secret corridor = stone
-    case ROOM:      return { ch: '~', color: NO_COLOR, dec: true };  // DEC middle dot
+    case ROOM:      return dec ? { ch: '~', color: NO_COLOR, dec: true } : { ch: '.', color: NO_COLOR, dec: false };
     case CORR:      return { ch: '#', color: NO_COLOR, dec: false };
     case SDOOR:
-        // Secret door: shown as the wall it is hidden in.
-        // C ref: back_to_glyph SDOOR falls through to the wall case.
+        // Secret door shows as the wall it hides in. C ref: back_to_glyph.
         return loc.horizontal ? wall_glyph(HWALL) : wall_glyph(VWALL);
     case DOOR:
-        // DECgraphics: open door => meta-a checkerboard ('a', dec); doorway
-        // (no/broken door) => meta-~ centered dot ('~', dec); closed/locked
-        // door => ASCII '+'.  C ref: dat/symbols DECgraphics S_*door.
-        if (loc.doormask & D_BROKEN) return { ch: '~', color: NO_COLOR, dec: true };
+        if (loc.doormask & D_BROKEN)
+            return dec ? { ch: '~', color: NO_COLOR, dec: true } : { ch: '.', color: NO_COLOR, dec: false };
         if (loc.doormask & D_ISOPEN)
-            return { ch: 'a', color: CLR_BROWN, dec: true };
+            return dec ? { ch: 'a', color: CLR_BROWN, dec: true } : { ch: '|', color: CLR_BROWN, dec: false };
         if (loc.doormask & (D_CLOSED | D_LOCKED))
             return { ch: '+', color: CLR_BROWN, dec: false };
-        return { ch: '~', color: NO_COLOR, dec: true };  // D_NODOOR = floor (doorway)
+        return dec ? { ch: '~', color: NO_COLOR, dec: true } : { ch: '.', color: NO_COLOR, dec: false };  // D_NODOOR
     case STAIRS:
-        // Branch stairs are yellow; plain stairs are gray.  C ref:
-        // back_to_glyph STAIRS (known_branch_stairs => S_br{up,dn}stair).
-        // Most starting-level stairs at <ux,uy> are the Mines branch
-        // (yellow), matching the recordings.
         if (game.level?.upstair?.x === x && game.level?.upstair?.y === y)
             return { ch: '<', color: CLR_YELLOW, dec: false };
         return { ch: '>', color: CLR_YELLOW, dec: false };
     case FOUNTAIN:  return { ch: '{', color: CLR_BRIGHT_BLUE, dec: false };
     case SINK:      return { ch: '{', color: CLR_GRAY, dec: false };
     case GRAVE:     return { ch: '|', color: CLR_WHITE, dec: false };
-    case THRONE:    return { ch: '\\', color: CLR_YELLOW, dec: false };  // HI_GOLD
-    case ALTAR:     return { ch: '{', color: CLR_GRAY, dec: true };  // DEC pi (π)
-    // Wall types → DEC line-drawing characters
+    case THRONE:    return { ch: '\\', color: CLR_YELLOW, dec: false };
+    case ALTAR:     return { ch: '{', color: CLR_GRAY, dec: true };
     case HWALL:
     case VWALL:
     case TLCORNER:

@@ -77,7 +77,12 @@ export async function com_pager_legacy() {
         if (l.length + 1 > maxcol) maxcol = l.length + 1;
 
     const cols = 80;
-    let offx = Math.max(10, cols - maxcol - 1);
+    // C ref: wintty.c tty_display_nhwindow NHW_MENU offx — the recorder build
+    // defines H2344_BROKEN, so offx = min(min(82, cols/2), cols-maxcol-1)
+    // (NOT the max(10,...) form).  The longer Samurai deity ("Amaterasu
+    // Omikami") pushes offx below 10, which the H2344 path allows.
+    let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
+    if (offx < 0) offx = 0;
     // The leading space printed for each menu line shifts text to offx+1.
     const textCol = offx + 1;
 
