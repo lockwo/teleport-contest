@@ -432,6 +432,10 @@ const W_ARMS = 0x08;
 const W_ARMG = 0x10;
 const W_ARMF = 0x20;
 const W_ARMU = 0x40;
+// C ref: prop.h — wielded/quiver/secondary weapon slot masks.
+const W_WEP = 0x100;
+const W_QUIVER = 0x200;
+const W_SWAPWEP = 0x400;
 
 // C ref: objclass.h armor-category predicates (is_cloak/is_helmet/...).
 const CLOAK_OTYPS = new Set([CLOAK_OF_MAGIC_RESISTANCE, CLOAK_OF_DISPLACEMENT, ROBE]);
@@ -460,16 +464,36 @@ function setworn(obj, mask) {
     else if (mask === W_ARMU) game.uarmu = obj;
 }
 
-// C ref: u_init.c ini_inv_use_obj — auto-wear starting armor.
+// C ref: u_init.c ini_inv_use_obj — auto-wear starting armor and wield
+// starting weapon(s).  Ammo/missiles fill the quiver; the first wieldable
+// weapon becomes the primary (uwep) and the next the secondary (uswapwep),
+// matching the C order so e.g. the Samurai starts katana/short-sword ready
+// to two-weapon and the inventory display marks them correctly.
 function ini_inv_wear_armor(obj) {
-    if (obj.oclass !== ARMOR_CLASS) return;
-    if (is_shield(obj) && !game.uarms) setworn(obj, W_ARMS);
-    else if (is_helmet(obj) && !game.uarmh) setworn(obj, W_ARMH);
-    else if (is_gloves(obj) && !game.uarmg) setworn(obj, W_ARMG);
-    else if (is_shirt(obj) && !game.uarmu) setworn(obj, W_ARMU);
-    else if (is_cloak(obj) && !game.uarmc) setworn(obj, W_ARMC);
-    else if (is_suit(obj) && !game.uarm) setworn(obj, W_ARM);
+    if (obj.oclass === ARMOR_CLASS) {
+        if (is_shield(obj) && !game.uarms) setworn(obj, W_ARMS);
+        else if (is_helmet(obj) && !game.uarmh) setworn(obj, W_ARMH);
+        else if (is_gloves(obj) && !game.uarmg) setworn(obj, W_ARMG);
+        else if (is_shirt(obj) && !game.uarmu) setworn(obj, W_ARMU);
+        else if (is_cloak(obj) && !game.uarmc) setworn(obj, W_ARMC);
+        else if (is_suit(obj) && !game.uarm) setworn(obj, W_ARM);
+    }
+
+    // C ref: u_init.c ini_inv_use_obj — wield the starting weapon(s).
+    if (obj.oclass === WEAPON_CLASS) {
+        if (ini_is_ammo(obj)) {
+            if (!game.uquiver) { obj.owornmask = (obj.owornmask || 0) | W_QUIVER; game.uquiver = obj; }
+        } else if (!game.uwep) {
+            obj.owornmask = (obj.owornmask || 0) | W_WEP; game.uwep = obj;
+        } else if (!game.uswapwep) {
+            obj.owornmask = (obj.owornmask || 0) | W_SWAPWEP; game.uswapwep = obj;
+        }
+    }
 }
+
+// C ref: objclass.h is_ammo — a stacked (quan>1) weapon is treated as ammo
+// for the starting-quiver decision (matches invent.js is_ammo).
+function ini_is_ammo(obj) { return obj.oclass === WEAPON_CLASS && (obj.quan || 1) > 1; }
 
 // C ref: hack.h ARM_BONUS — a_ac + spe (no erosion at game start).
 function ARM_BONUS(obj) {

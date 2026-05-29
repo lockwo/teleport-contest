@@ -13,6 +13,7 @@ import { ddoinv, dismiss_invent_screen, dolook,
          dodiscovered, doattributes, dovspell,
          attr_window_advance } from './invent.js';
 import { rnl } from './rng.js';
+import { doextcmd } from './extcmd-handlers.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          SDOOR, SCORR, CORR, IS_WALL, IS_OBSTRUCTED, isok } from './const.js';
 
@@ -88,6 +89,9 @@ export async function rhack(key) {
         // squares for hidden doors/passages/traps.  Takes a game turn.
         await dosearch();
         game.context.move = 1;
+    } else if (ch === '#') {
+        // C ref: cmd.c doextcmd — read and run an extended command.
+        await doextcmd();
     } else if (isMovementKey(ch)) {
         // domove() sets game.context.move itself: 1 when the hero actually
         // moves (time passes), 0 when the move is blocked (bump a wall — no
