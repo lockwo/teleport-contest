@@ -9,7 +9,9 @@ import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { newsym, flush_screen, pline } from './display.js';
 import { vision_recalc } from './vision.js';
-import { ddoinv, dismiss_invent_screen, dolook } from './invent.js';
+import { ddoinv, dismiss_invent_screen, dolook,
+         dodiscovered, doattributes, dovspell,
+         attr_window_advance } from './invent.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          IS_WALL, IS_OBSTRUCTED } from './const.js';
 
@@ -43,10 +45,25 @@ export async function rhack(key) {
 
     const ch = String.fromCharCode(key);
 
-    if (ch === '\x1b' && await dismiss_invent_screen()) {
+    // A paged ^X attributes window consumes space/return to advance pages and
+    // dismiss after the last; ESC cancels.  C ref: process_menu_window().
+    if (game._modal_screen === 'attrwin'
+        && (ch === ' ' || ch === '\r' || ch === '\n' || ch === '>')) {
+        await attr_window_advance();
+        game.context.move = 0;
+    } else if (ch === '\x1b' && await dismiss_invent_screen()) {
         game.context.move = 0;
     } else if (ch === 'i') {
         ddoinv();
+        game.context.move = 0;
+    } else if (ch === '\\') {
+        dodiscovered();
+        game.context.move = 0;
+    } else if (ch === '+') {
+        await dovspell();
+        game.context.move = 0;
+    } else if (ch === '\x18') { // ^X
+        doattributes();
         game.context.move = 0;
     } else if (ch === ':') {
         await dolook();

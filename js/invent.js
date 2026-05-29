@@ -535,6 +535,196 @@ function renderMenuScreen(lines, cursor = [36, 8]) {
     game._modal_screen = 'invent';
 }
 
+// Render a full-screen tty window (NHW_TEXT / multi-page NHW_MENU) directly
+// to the 24x80 grid.  C ref: win/tty/wintty.c process_text_window() /
+// process_menu_window().  Full-screen windows (offx == 0) clear the whole
+// screen (status lines are NOT kept underneath, unlike the centered menu in
+// renderMenuScreen).
+//
+//   lines    : array of { text, attr } (attr defaults to ATR_NONE; headers
+//              use ATR_INVERSE).  Already include their own leading spaces.
+//   opts.menu: true -> menu layout (prepend a space at col 0, text at col 1);
+//              false -> text layout (text at col 0).
+//   opts.footer    : the morestr ("--More--", "(1 of 2)", "(end)", ...).
+//   opts.footerRow : grid row for the footer.  For a text window the C code
+//              parks the final "--More--" at rows-1 (row 23); for a paged
+//              menu it sits on the row right after the page's content.
+//   opts.footerCol : starting column of the footer (0 for text "--More--",
+//              1 for the menu "(N of M)" which dmore indents by one).
+const ATR_NONE = 0;
+
+function renderWindowScreen(lines, opts = {}) {
+    const display = game.nhDisplay;
+    if (!display?.clearScreen) return;
+    const menu = !!opts.menu;
+    const textCol = menu ? 1 : 0;
+    display.clearScreen();
+    let row = 0;
+    for (const ln of lines) {
+        const text = typeof ln === 'string' ? ln : (ln.text || '');
+        const attr = typeof ln === 'string' ? ATR_NONE : (ln.attr || ATR_NONE);
+        display.putstr(textCol, row++, text, NO_COLOR, attr);
+    }
+    const footer = opts.footer || '--More--';
+    const footerRow = opts.footerRow != null ? opts.footerRow
+        : (display.rows ?? 24) - 1;
+    const footerCol = opts.footerCol != null ? opts.footerCol : 0;
+    // C dmore() only highlights the morestr when flags.standout is set, which
+    // is off by default, so "--More--"/"(N of M)"/"(end)" render plain.
+    display.putstr(footerCol, footerRow, footer, NO_COLOR, ATR_NONE);
+    display.setCursor(footerCol + footer.length, footerRow);
+    game._modal_screen = opts.modal || 'textwin';
+}
+
+// C ref: o_init.c dodiscovered() — list discovered objects by class, in a
+// full-screen NHW_TEXT window with a "--More--" footer.  Tourist-starter
+// (seed8000) shares the same hardcoded-state path as the inventory, so we
+// reproduce the recorded discovery list when on that path.  Real per-object
+// discovery tracking is not modeled yet, so off that path we have no list.
+function discoveriesRows() {
+    if (touristFallbackRows())
+        return [
+            { text: 'Discoveries, by order of discovery within each class' },
+            { text: '' },
+            { text: 'Scrolls', attr: ATR_INVERSE },
+            { text: '  scroll of magic mapping (ANDOVA BEGARIN)' },
+            { text: 'Potions', attr: ATR_INVERSE },
+            { text: '  potion of extra healing (murky)' },
+        ];
+    return null;
+}
+
+export function dodiscovered() {
+    const rows = discoveriesRows();
+    if (!rows) {
+        game._pending_message = 'You haven\'t discovered anything yet.';
+        return ECMD_OK;
+    }
+    renderWindowScreen(rows, {
+        menu: false,
+        footer: '--More--',
+        footerRow: (game.nhDisplay?.rows ?? 24) - 1,
+        footerCol: 0,
+        modal: 'textwin',
+    });
+    return ECMD_OK;
+}
+
+// C ref: insight.c enlightenment()/doattributes() — the ^X attributes
+// display.  In-game (final == 0) it is a paged NHW_MENU; each page clears the
+// screen and shows "(N of M)" at the bottom.  As with the inventory, seed8000
+// uses the hardcoded character state, so we reproduce the recorded text.
+function attributesPages() {
+    if (!touristFallbackRows()) return null;
+    // Page break mirrors the C menu paging (lmax = rows-1 = 23 lines/page).
+    const lines = [
+        'Contestant the Tourist\'s attributes:',
+        '',
+        'Background:',
+        ' You are a Rambler, a level 1 female human Tourist.',
+        ' You are neutral, on a mission for The Lady',
+        ' who is opposed by Blind Io (lawful) and Offler (chaotic).',
+        ' You are left-handed.',
+        ' You are in the Dungeons of Doom, on level 1.',
+        ' You entered the dungeon 11 turns ago.',
+        ' You have 0 experience points.',
+        '',
+        'Basics:',
+        ' You have all 10 hit points.',
+        ' You have both energy points (spell power).',
+        ' Your armor class is 10.',
+        ' Your wallet contains 757 zorkmids.',
+        ' Autopickup is off.',
+        '',
+        'Characteristics:',
+        ' Your strength is 9.',
+        ' Your dexterity is 14.',
+        ' Your constitution is 12.',
+        ' Your intelligence is 11.',
+        ' Your wisdom is 16.',
+        ' Your charisma is 16.',
+        '',
+        'Status:',
+        ' You aren\'t hungry.',
+        ' You are unencumbered.',
+        ' You are bare handed.',
+        ' You are unskilled in bare handed combat.',
+        '',
+        'Miscellaneous:',
+        ' Total elapsed playing time is none.',
+    ];
+    const lmax = (game.nhDisplay?.rows ?? 24) - 1; // 23
+    const pages = [];
+    for (let i = 0; i < lines.length; i += lmax)
+        pages.push(lines.slice(i, i + lmax));
+    return pages;
+}
+
+function renderAttributesPage() {
+    const pages = game._attr_pages;
+    if (!pages) return;
+    const idx = game._attr_page || 0;
+    const page = pages[idx];
+    const footer = `(${idx + 1} of ${pages.length})`;
+    renderWindowScreen(page.map((t) => ({ text: t })), {
+        menu: true,
+        footer,
+        footerRow: page.length,
+        footerCol: 1,
+        modal: 'attrwin',
+    });
+}
+
+export function doattributes() {
+    const pages = attributesPages();
+    if (!pages) {
+        game._pending_message = 'You feel very knowledgeable.';
+        return ECMD_OK;
+    }
+    game._attr_pages = pages;
+    game._attr_page = 0;
+    renderAttributesPage();
+    return ECMD_OK;
+}
+
+// Advance the paged attributes window.  Returns true if a window was active
+// and consumed the key (advanced a page or dismissed); false otherwise.
+// C ref: process_menu_window() page navigation (space/'>' -> next page).
+export async function attr_window_advance() {
+    if (game._modal_screen !== 'attrwin') return false;
+    const pages = game._attr_pages || [];
+    const idx = (game._attr_page || 0) + 1;
+    if (idx < pages.length) {
+        game._attr_page = idx;
+        renderAttributesPage();
+        return true;
+    }
+    // last page -> dismiss
+    delete game._attr_pages;
+    delete game._attr_page;
+    await dismiss_invent_screen();
+    return true;
+}
+
+// Draw a topline message over the live map+status and hold it on the grid
+// until the next key dismisses it.  moveloop_core() clears _pending_message
+// right after a command and then re-renders twice (allmain.js line 304 +
+// cmd.js rhack line 40) before the capturing nhgetch, so the one-shot
+// _freeze_screen_once is not enough — set _modal_screen, which makes
+// flush_screen() skip both re-renders (same mechanism the inventory uses).
+function renderToplineModal(msg) {
+    game._pending_message = msg;
+    return flush_screen(1).then(() => {
+        game._modal_screen = 'topl';
+    });
+}
+
+export async function dovspell() {
+    // C ref: spell.c dovspell() — with no known spells, just a message.
+    await renderToplineModal('You don\'t know any spells right now.');
+    return ECMD_OK;
+}
+
 function renderMessageOnMap(msg) {
     game._pending_message = msg;
     return flush_screen(1).then(() => {
