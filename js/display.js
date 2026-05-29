@@ -242,13 +242,19 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
 // The "background" glyph for a cell: the topmost non-monster thing the
 // hero would remember.  C ref: display.c _map_location —
 // priority object > trap > terrain.  (Engravings/regions not modeled.)
-function background_glyph(loc, x, y) {
+export function background_glyph(loc, x, y) {
     const obj = vobj_at(x, y);
     if (obj) {
         const og = object_glyph(obj);
         if (og) return og;
     }
     // (traps would go here, between objects and terrain)
+    return terrain_glyph(loc, x, y);
+}
+
+// C ref: display.c magic_map_background — the terrain-only background a cell
+// shows after magic mapping (objects/traps are layered on by the caller).
+export function terrain_background_glyph(loc, x, y) {
     return terrain_glyph(loc, x, y);
 }
 
@@ -563,5 +569,47 @@ export async function topl_more() {
     for (;;) {
         const c = await nhgetch();
         if (c === 32 || c === 13 || c === 10 || c === 27) break;
+    }
+}
+
+// C ref: topl.c tty_yn_function / hack.h y_n.  Render a yes/no prompt and read
+// a valid response.  When a top-line message is still pending acknowledgment
+// (needMore), show "--More--" first (capturing that as its own step) before the
+// prompt.  resp lists the allowed letters (an embedded ESC marks hidden,
+// always-acceptable choices); def is returned on space/return/ESC.
+export async function y_n(query, resp = 'yn\x1b', def = 'n') {
+    if (game._yn_need_more) {
+        game._yn_need_more = false;
+        await topl_more();
+    }
+    // Build the displayed prompt (hidden ESC-and-after choices are stripped).
+    const shown = resp.split('\x1b')[0];
+    let prompt = query;
+    if (resp) {
+        prompt += ` [${shown}]`;
+        if (def) prompt += ` (${def})`;
+    }
+    const full = prompt + ' ';
+
+    const disp = game?.nhDisplay;
+    for (;;) {
+        game._pending_message = full.trimEnd();
+        await flush_screen(1);
+        game._modal_screen = 'topl';
+        if (disp?.setCursor) disp.setCursor(Math.min(full.length, CO - 1), 0);
+        const c = await nhgetch();
+        delete game._modal_screen;
+        const ch = String.fromCharCode(c);
+        // quitchars (space/return/ESC) -> default.
+        if (c === 32 || c === 13 || c === 10 || c === 27) {
+            game._pending_message = '';
+            return def;
+        }
+        const lc = ch.toLowerCase();
+        if (resp.includes(lc)) {
+            game._pending_message = '';
+            return lc;
+        }
+        // invalid response: re-prompt (no bell modeled).
     }
 }
