@@ -132,6 +132,9 @@ export class NethackGame {
         g.plname = opts.name || '';
         g.flags = { verbose: true, ...opts.flags };
         g.iflags = { ...opts.iflags };
+        // symset selects the drawing glyph table; DECgraphics uses VT100
+        // line-drawing for walls/floor, otherwise the default ASCII symbols.
+        g.symset = opts.symset || '';
         const optsel = initialSelectionFromOptions(opts);
         g.initrole = optsel.role;
         g.initrace = optsel.race;

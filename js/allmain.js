@@ -28,13 +28,26 @@ function gameRoleMnum() {
     return roles.find((r) => r.name?.m?.toLowerCase() === name)?.mnum ?? null;
 }
 
-// True for roles whose real u_init (attrs + inventory) actually ran in
-// fastforward_post_mklev — only these have real player state to render.
+// Role names whose real u_init (attrs + inventory) actually runs in
+// fastforward_post_mklev (see fastforward.js) — only these have real player
+// state to render via newgame_real().  Must stay in sync with the routing in
+// fastforward_post_mklev().
+const REAL_UINIT_ROLES = new Set([
+    'wizard', 'rogue', 'samurai', 'priest',
+    'archeologist', 'barbarian', 'caveman', 'healer', 'monk',
+    'ranger', 'valkyrie',
+]);
+
+function gameRoleName() {
+    if (Number.isInteger(game.initrole))
+        return roles[game.initrole]?.name?.m?.toLowerCase() || '';
+    return String(game.initrole || '').toLowerCase();
+}
+
 function realUinitRan() {
-    const mnum = gameRoleMnum();
-    if (mnum === PM_WIZARD) return true;
-    if (mnum === PM_KNIGHT && game.preferred_pet === 'n') return true;
-    return false;
+    const name = gameRoleName();
+    if (name === 'knight') return game.preferred_pet === 'n';
+    return REAL_UINIT_ROLES.has(name);
 }
 
 // C ref: allmain.c welcome(TRUE) — startup greeting message text.

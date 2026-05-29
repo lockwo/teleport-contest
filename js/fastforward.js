@@ -21,37 +21,47 @@ function initrole_name() {
     return String(game.initrole || '').toLowerCase();
 }
 
+// Roles whose real u_init_inventory_attrs() reproduces the recorded RNG
+// stream (chargen parity verified after the phase-1 fan-out integration).
+// Tourist stays on the hardcoded replay path (seed8000); Knight is handled
+// separately because only the 'n'-pet variant runs real u_init.
+const REAL_UINIT_ROLES = new Set([
+    'wizard', 'rogue', 'samurai', 'priest',
+    'archeologist', 'barbarian', 'caveman', 'healer', 'monk',
+    'ranger', 'valkyrie',
+]);
+
 function fastforward_role_init() {
     const role = initrole_name();
     if (role === 'wizard' || role === 'archeologist')
         rn2(100);
     if (game.initrole === ROLE_PRIEST || role === 'priest') {
-        let pantheon;
+        // C ref: role.c role_init — Priest has no own gods, so pick a random
+        // other role's pantheon: pantheon = initrole; while(!roles[pantheon]
+        // .lgod) pantheon = randrole(FALSE).  ROLE_PRIEST is the only godless
+        // role.  Store it so the legend/prayers use the right deity names.
+        let pantheon = ROLE_PRIEST;
         do {
             pantheon = randrole(false);
         } while (pantheon === ROLE_PRIEST);
+        game.pantheon = pantheon;
     }
 }
 
 function fastforward_newpw() {
     const role = initrole_name();
-    // For wizard/knight, run the real newhp()/newpw() (u_init_misc) so HP/Pw
-    // get stored on the hero.  newhp has no rnd for these roles; newpw emits
-    // the single rnd() (rnd(3) wizard, rnd(4) knight) at the same position the
-    // old hardcoded replay used.  C ref: u_init.c u_init_misc lines 996-997.
-    if (role === 'wizard' || role === 'knight') {
+    // Run the real newhp()/newpw() (u_init_misc) so HP/Pw get stored on the
+    // hero AND the enadv rnd() (if any) is emitted at the correct stream
+    // position.  newhp has inrnd=0 for every role (no HP rnd at level 0);
+    // newpw emits rnd(enadv.inrnd) only for Healer/Knight (rnd(4)),
+    // Monk (rnd(2)), Priest/Wizard (rnd(3)) — identical to the old hardcoded
+    // replay.  C ref: u_init.c u_init_misc lines 996-997.
+    if (role === 'knight' || REAL_UINIT_ROLES.has(role)) {
         game.u = game.u || {};
         game.u.ulevel = 0;
         game.u.uhp = game.u.uhpmax = newhp();
         game.u.uen = game.u.uenmax = newpw();
-        return;
     }
-    if (role === 'priest')
-        rnd(3);
-    else if (role === 'monk')
-        rnd(2);
-    else if (role === 'healer')
-        rnd(4);
 }
 
 function fastforward_legacy_role_intro() {
@@ -152,8 +162,8 @@ export function fastforward_pre_mklev() {
 // 124 leaf RNG calls (regenerated from session data)
 export function fastforward_post_mklev() {
     const role = initrole_name();
-    if (role === 'wizard' || (role === 'knight' && game.preferred_pet === 'n')
-        || role === 'rogue' || role === 'samurai' || role === 'priest') {
+    if (REAL_UINIT_ROLES.has(role)
+        || (role === 'knight' && game.preferred_pet === 'n')) {
         u_init_inventory_attrs();
         fastforward_legacy_role_intro();
         moveloop_preamble_startup();

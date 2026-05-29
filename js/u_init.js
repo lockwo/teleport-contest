@@ -2,7 +2,7 @@
 // C ref: u_init.c
 
 import { game } from './gstate.js';
-import { rn2, rnd, rne } from './rng.js';
+import { rn2, rnd, rne, rn1 } from './rng.js';
 import { addinv as invent_addinv } from './invent.js';
 import {
     ARMOR_CLASS,
@@ -28,34 +28,67 @@ export const UNDEF_TYP = 0;
 export const UNDEF_SPE = 0x7f;
 export const UNDEF_BLESS = 2;
 
+const PM_ARCHEOLOGIST = 0;
+const PM_BARBARIAN = 1;
+const PM_CAVE_DWELLER = 2;
+const PM_HEALER = 3;
 const PM_KNIGHT = 4;
+const PM_MONK = 5;
 const PM_CLERIC = 6; // Priest/Priestess
+const PM_RANGER = 7;
 const PM_ROGUE = 8;
 const PM_SAMURAI = 9;
+const PM_TOURIST = 10;
+const PM_VALKYRIE = 11;
 const PM_WIZARD = 12;
 const A_CHAOTIC = -1;
 
 const YA = 22;
+const ARROW = 18;
+const DART = 24;
+const SPEAR = 27;
 const DAGGER = 34;
+const SCALPEL = 39;
+const AXE = 44;
+const BATTLE_AXE = 45;
 const SHORT_SWORD = 46;
 const LONG_SWORD = 54;
+const TWO_HANDED_SWORD = 55;
 const KATANA = 56;
 const LANCE = 72;
 const MACE = 73;
+const CLUB = 77;
 const QUARTERSTAFF = 79;
+const BULLWHIP = 82;
+const BOW = 83;
 const YUMI = 86;
+const SLING = 87;
+const FEDORA = 92;
 const HELMET = 97;
 const SPLINT_MAIL = 124;
 const RING_MAIL = 132;
 const LEATHER_ARMOR = 134;
+const LEATHER_JACKET = 135;
+const HAWAIIAN_SHIRT = 136;
 const ROBE = 143;
 const CLOAK_OF_MAGIC_RESISTANCE = 148;
+const CLOAK_OF_DISPLACEMENT = 149;
 const SMALL_SHIELD = 150;
 const LEATHER_GLOVES = 159;
 const SACK = 217;
 const LOCK_PICK = 222;
+const CREDIT_CARD = 223;
 const OIL_LAMP = 227;
+const EXPENSIVE_CAMERA = 229;
 const BLINDFOLD = 233;
+const TOWEL = 234;
+const LEASH = 236;
+const STETHOSCOPE = 237;
+const TINNING_KIT = 238;
+const TIN_OPENER = 239;
+const PICK_AXE = 259;
+const ORANGE = 278;
+const FORTUNE_COOKIE = 289;
 const SPRIG_OF_WOLFSBANE = 283;
 const CLOVE_OF_GARLIC = 284;
 const POT_SICKNESS = 318;
@@ -63,6 +96,20 @@ const POT_WATER = 322;
 const APPLE = 277;
 const CARROT = 282;
 const PANCAKE = 290;
+const CRAM_RATION = 292;
+const FOOD_RATION = 293;
+const POT_HEALING = 307;
+const POT_EXTRA_HEALING = 308;
+const SCR_MAGIC_MAPPING = 337;
+const SPE_HEALING = 373;
+const SPE_CONFUSE_MONSTER = 376;
+const SPE_EXTRA_HEALING = 390;
+const SPE_PROTECTION = 402;
+const SPE_STONE_TO_FLESH = 404;
+const WAN_SLEEP = 431;
+const TOUCHSTONE = 471;
+const FLINT = 472;
+const ROCK = 473;
 const POT_HALLUCINATION = 304;
 const POT_POLYMORPH = 316;
 const POT_ACID = 320;
@@ -144,6 +191,134 @@ const Samurai = [
     { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
 ];
 
+// C ref: u_init.c Archeologist[].
+const Archeologist = [
+    { trotyp: BULLWHIP, trspe: 2, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: LEATHER_JACKET, trspe: 0, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: FEDORA, trspe: 0, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: FOOD_RATION, trspe: 0, trclass: FOOD_CLASS, trquan_min: 3, trquan_max: 3, trbless: 0 },
+    { trotyp: PICK_AXE, trspe: UNDEF_SPE, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: TINNING_KIT, trspe: UNDEF_SPE, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: TOUCHSTONE, trspe: 0, trclass: GEM_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: SACK, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Barbarian_0[] / Barbarian_1[].
+const Barbarian_0 = [
+    { trotyp: TWO_HANDED_SWORD, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: AXE, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: RING_MAIL, trspe: 0, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: FOOD_RATION, trspe: 0, trclass: FOOD_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+const Barbarian_1 = [
+    { trotyp: BATTLE_AXE, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: SHORT_SWORD, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: RING_MAIL, trspe: 0, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: FOOD_RATION, trspe: 0, trclass: FOOD_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Cave_man[].
+const Cave_man = [
+    { trotyp: CLUB, trspe: 1, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: SLING, trspe: 2, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: FLINT, trspe: 0, trclass: GEM_CLASS, trquan_min: 10, trquan_max: 20, trbless: UNDEF_BLESS },
+    { trotyp: ROCK, trspe: 0, trclass: GEM_CLASS, trquan_min: 3, trquan_max: 3, trbless: 0 },
+    { trotyp: LEATHER_ARMOR, trspe: 0, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Healer[].
+const Healer = [
+    { trotyp: SCALPEL, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: LEATHER_GLOVES, trspe: 1, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: STETHOSCOPE, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: POT_HEALING, trspe: 0, trclass: POTION_CLASS, trquan_min: 4, trquan_max: 4, trbless: UNDEF_BLESS },
+    { trotyp: POT_EXTRA_HEALING, trspe: 0, trclass: POTION_CLASS, trquan_min: 4, trquan_max: 4, trbless: UNDEF_BLESS },
+    { trotyp: WAN_SLEEP, trspe: UNDEF_SPE, trclass: WAND_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: SPE_HEALING, trspe: 0, trclass: SPBOOK_CLASS, trquan_min: 1, trquan_max: 1, trbless: 1 },
+    { trotyp: SPE_EXTRA_HEALING, trspe: 0, trclass: SPBOOK_CLASS, trquan_min: 1, trquan_max: 1, trbless: 1 },
+    { trotyp: SPE_STONE_TO_FLESH, trspe: 0, trclass: SPBOOK_CLASS, trquan_min: 1, trquan_max: 1, trbless: 1 },
+    { trotyp: APPLE, trspe: 0, trclass: FOOD_CLASS, trquan_min: 5, trquan_max: 5, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Monk[].
+const Monk = [
+    { trotyp: LEATHER_GLOVES, trspe: 2, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: ROBE, trspe: 1, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: UNDEF_TYP, trspe: UNDEF_SPE, trclass: SCROLL_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: POT_HEALING, trspe: 0, trclass: POTION_CLASS, trquan_min: 3, trquan_max: 3, trbless: UNDEF_BLESS },
+    { trotyp: FOOD_RATION, trspe: 0, trclass: FOOD_CLASS, trquan_min: 3, trquan_max: 3, trbless: 0 },
+    { trotyp: APPLE, trspe: 0, trclass: FOOD_CLASS, trquan_min: 5, trquan_max: 5, trbless: UNDEF_BLESS },
+    { trotyp: ORANGE, trspe: 0, trclass: FOOD_CLASS, trquan_min: 5, trquan_max: 5, trbless: UNDEF_BLESS },
+    { trotyp: FORTUNE_COOKIE, trspe: 0, trclass: FOOD_CLASS, trquan_min: 3, trquan_max: 3, trbless: UNDEF_BLESS },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Ranger[].
+const Ranger = [
+    { trotyp: DAGGER, trspe: 1, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: BOW, trspe: 1, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: ARROW, trspe: 2, trclass: WEAPON_CLASS, trquan_min: 50, trquan_max: 59, trbless: UNDEF_BLESS },
+    { trotyp: ARROW, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 30, trquan_max: 39, trbless: UNDEF_BLESS },
+    { trotyp: CLOAK_OF_DISPLACEMENT, trspe: 2, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: CRAM_RATION, trspe: 0, trclass: FOOD_CLASS, trquan_min: 4, trquan_max: 4, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Tourist[].
+const Tourist = [
+    { trotyp: DART, trspe: 2, trclass: WEAPON_CLASS, trquan_min: 21, trquan_max: 40, trbless: UNDEF_BLESS },
+    { trotyp: UNDEF_TYP, trspe: UNDEF_SPE, trclass: FOOD_CLASS, trquan_min: 10, trquan_max: 10, trbless: 0 },
+    { trotyp: POT_EXTRA_HEALING, trspe: 0, trclass: POTION_CLASS, trquan_min: 2, trquan_max: 2, trbless: UNDEF_BLESS },
+    { trotyp: SCR_MAGIC_MAPPING, trspe: 0, trclass: SCROLL_CLASS, trquan_min: 4, trquan_max: 4, trbless: UNDEF_BLESS },
+    { trotyp: HAWAIIAN_SHIRT, trspe: 0, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: EXPENSIVE_CAMERA, trspe: UNDEF_SPE, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: CREDIT_CARD, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Valkyrie[].
+const Valkyrie = [
+    { trotyp: SPEAR, trspe: 1, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: DAGGER, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: SMALL_SHIELD, trspe: 3, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: FOOD_RATION, trspe: 0, trclass: FOOD_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Monk M_spell[] (Healing_book/Protection_book/Confuse_monster_book).
+const Healing_book = [
+    { trotyp: SPE_HEALING, trspe: UNDEF_SPE, trclass: SPBOOK_CLASS, trquan_min: 1, trquan_max: 1, trbless: 1 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+const Protection_book = [
+    { trotyp: SPE_PROTECTION, trspe: UNDEF_SPE, trclass: SPBOOK_CLASS, trquan_min: 1, trquan_max: 1, trbless: 1 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+const Confuse_monster_book = [
+    { trotyp: SPE_CONFUSE_MONSTER, trspe: UNDEF_SPE, trclass: SPBOOK_CLASS, trquan_min: 1, trquan_max: 1, trbless: 1 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+const M_spell = [Healing_book, Protection_book, Confuse_monster_book];
+
+// C ref: u_init.c Tinopener[] / Leash[] / Towel[].
+const Tinopener = [
+    { trotyp: TIN_OPENER, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+const Leash = [
+    { trotyp: LEASH, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+const Towel = [
+    { trotyp: TOWEL, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
 const Blindfold = [
     { trotyp: BLINDFOLD, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
     { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
@@ -161,34 +336,48 @@ const Lamp = [
 ];
 
 const ROLE_INVENTORY = new Map([
+    [PM_ARCHEOLOGIST, Archeologist],
+    [PM_CAVE_DWELLER, Cave_man],
+    [PM_HEALER, Healer],
     [PM_KNIGHT, Knight],
+    [PM_MONK, Monk],
     [PM_CLERIC, Priest],
+    [PM_RANGER, Ranger],
     [PM_ROGUE, Rogue],
     [PM_SAMURAI, Samurai],
+    [PM_TOURIST, Tourist],
+    [PM_VALKYRIE, Valkyrie],
     [PM_WIZARD, Wizard],
+    // Barbarian picks Barbarian_0/Barbarian_1 via rn2 in u_init_role.
 ]);
 
 // C ref: role.c — hpadv/enadv advance structs {infix,inrnd,lofix,lornd,hifix,hirnd}.
 // Only the level-0 (initial) fields infix/inrnd are used here.
+// role.c hpadv/enadv {infix,inrnd,...}; only level-0 infix/inrnd are used.
 const ROLE_ADV = new Map([
+    [PM_ARCHEOLOGIST, { hpadv: { infix: 11, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
+    [PM_BARBARIAN, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
+    [PM_CAVE_DWELLER, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
+    [PM_HEALER, { hpadv: { infix: 11, inrnd: 0 }, enadv: { infix: 1, inrnd: 4 } }],
     [PM_KNIGHT, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 4 } }],
+    [PM_MONK, { hpadv: { infix: 12, inrnd: 0 }, enadv: { infix: 2, inrnd: 2 } }],
     // role.c Priest: hp {12,0,...}, en {4,3,0,2,0,2} -> inrnd=3.
     [PM_CLERIC, { hpadv: { infix: 12, inrnd: 0 }, enadv: { infix: 4, inrnd: 3 } }],
+    [PM_RANGER, { hpadv: { infix: 13, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
     // role.c Rogue: hp {10,0,...}, en {1,0,0,1,0,1} -> inrnd=0.
     [PM_ROGUE, { hpadv: { infix: 10, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
     // role.c Samurai: hp {13,0,...}, en {1,0,0,1,0,1} -> inrnd=0.
     [PM_SAMURAI, { hpadv: { infix: 13, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
+    [PM_TOURIST, { hpadv: { infix: 8, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
+    [PM_VALKYRIE, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
     [PM_WIZARD, { hpadv: { infix: 10, inrnd: 0 }, enadv: { infix: 4, inrnd: 3 } }],
 ]);
 // Human race advance (the only race used by these sessions).
 const RACE_ADV_HUMAN = { hpadv: { infix: 2, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } };
 
 // Player-monster base armor class (mons[].ac).  C ref: include/monsters.h
-// — both Knight and Wizard player-monsters have base AC 10.
-const PLAYER_BASE_AC = new Map([
-    [PM_KNIGHT, 10],
-    [PM_WIZARD, 10],
-]);
+// — every player-monster (all 13 roles) has base AC 10.
+const PLAYER_BASE_AC_DEFAULT = 10;
 
 // a_ac (objects[].a_ac = 10 - macro ac arg) for the starting armor pieces.
 // C ref: include/objects.h ARMOR()/HELM()/SHIELD()/GLOVES()/CLOAK().
@@ -198,6 +387,13 @@ const ARMOR_A_AC = new Map([
     [SMALL_SHIELD, 1],
     [LEATHER_GLOVES, 1],
     [CLOAK_OF_MAGIC_RESISTANCE, 1],
+    [LEATHER_JACKET, 1],
+    [FEDORA, 0],
+    [LEATHER_ARMOR, 2],
+    [ROBE, 2],
+    [SPLINT_MAIL, 6],
+    [CLOAK_OF_DISPLACEMENT, 1],
+    [HAWAIIAN_SHIRT, 0],
 ]);
 
 // Worn-armor slot masks (subset of do_wear.c W_ARM*).
@@ -209,11 +405,19 @@ const W_ARMG = 0x10;
 const W_ARMF = 0x20;
 const W_ARMU = 0x40;
 
-function is_cloak(obj) { return obj?.otyp === CLOAK_OF_MAGIC_RESISTANCE; }
-function is_helmet(obj) { return obj?.otyp === HELMET; }
-function is_gloves(obj) { return obj?.otyp === LEATHER_GLOVES; }
-function is_shield(obj) { return obj?.otyp === SMALL_SHIELD; }
-function is_suit(obj) { return obj?.otyp === RING_MAIL; }
+// C ref: objclass.h armor-category predicates (is_cloak/is_helmet/...).
+const CLOAK_OTYPS = new Set([CLOAK_OF_MAGIC_RESISTANCE, CLOAK_OF_DISPLACEMENT, ROBE]);
+const HELM_OTYPS = new Set([HELMET, FEDORA]);
+const GLOVES_OTYPS = new Set([LEATHER_GLOVES]);
+const SHIELD_OTYPS = new Set([SMALL_SHIELD]);
+const SHIRT_OTYPS = new Set([HAWAIIAN_SHIRT]);
+const SUIT_OTYPS = new Set([RING_MAIL, LEATHER_ARMOR, LEATHER_JACKET, SPLINT_MAIL]);
+function is_cloak(obj) { return CLOAK_OTYPS.has(obj?.otyp); }
+function is_helmet(obj) { return HELM_OTYPS.has(obj?.otyp); }
+function is_gloves(obj) { return GLOVES_OTYPS.has(obj?.otyp); }
+function is_shield(obj) { return SHIELD_OTYPS.has(obj?.otyp); }
+function is_shirt(obj) { return SHIRT_OTYPS.has(obj?.otyp); }
+function is_suit(obj) { return SUIT_OTYPS.has(obj?.otyp); }
 
 // C ref: do.c setworn — record a worn armor object on the hero.
 function setworn(obj, mask) {
@@ -234,6 +438,7 @@ function ini_inv_wear_armor(obj) {
     if (is_shield(obj) && !game.uarms) setworn(obj, W_ARMS);
     else if (is_helmet(obj) && !game.uarmh) setworn(obj, W_ARMH);
     else if (is_gloves(obj) && !game.uarmg) setworn(obj, W_ARMG);
+    else if (is_shirt(obj) && !game.uarmu) setworn(obj, W_ARMU);
     else if (is_cloak(obj) && !game.uarmc) setworn(obj, W_ARMC);
     else if (is_suit(obj) && !game.uarm) setworn(obj, W_ARM);
 }
@@ -245,7 +450,7 @@ function ARM_BONUS(obj) {
 
 // C ref: do_wear.c find_ac — current armor class from worn gear.
 export function find_ac() {
-    const base = PLAYER_BASE_AC.get(current_role_mnum()) ?? 10;
+    const base = PLAYER_BASE_AC_DEFAULT;
     let uac = base;
     for (const obj of [game.uarm, game.uarmc, game.uarmh, game.uarmf,
         game.uarms, game.uarmg, game.uarmu]) {
@@ -284,14 +489,20 @@ const HUMAN_ATTRMAX = [118, 18, 18, 18, 18, 18]; // STR18(100), then plain 18s.
 
 // role.c attrbase/attrdist, order [Str,Int,Wis,Dex,Con,Cha].
 const ROLE_ATTRS = new Map([
+    [PM_ARCHEOLOGIST, { attrbase: [7, 10, 10, 7, 7, 7], attrdist: [20, 20, 20, 10, 20, 10] }],
+    [PM_BARBARIAN, { attrbase: [16, 7, 7, 15, 16, 6], attrdist: [30, 6, 7, 20, 30, 7] }],
+    [PM_CAVE_DWELLER, { attrbase: [10, 7, 7, 7, 8, 6], attrdist: [30, 6, 7, 20, 30, 7] }],
+    [PM_HEALER, { attrbase: [7, 7, 13, 7, 11, 16], attrdist: [15, 20, 20, 15, 25, 5] }],
     [PM_KNIGHT, {
         attrbase: [13, 7, 14, 8, 10, 17],
         attrdist: [30, 15, 15, 10, 20, 10],
     }],
+    [PM_MONK, { attrbase: [10, 7, 8, 8, 7, 7], attrdist: [25, 10, 20, 20, 15, 10] }],
     [PM_CLERIC, {
         attrbase: [7, 7, 10, 7, 7, 7],
         attrdist: [15, 10, 30, 15, 20, 10],
     }],
+    [PM_RANGER, { attrbase: [13, 13, 13, 9, 13, 7], attrdist: [30, 10, 10, 20, 20, 10] }],
     [PM_ROGUE, {
         attrbase: [7, 7, 7, 10, 7, 6],
         attrdist: [20, 10, 10, 30, 20, 10],
@@ -300,6 +511,8 @@ const ROLE_ATTRS = new Map([
         attrbase: [10, 8, 7, 10, 17, 6],
         attrdist: [30, 10, 8, 30, 14, 8],
     }],
+    [PM_TOURIST, { attrbase: [7, 10, 6, 7, 7, 10], attrdist: [15, 10, 10, 15, 30, 20] }],
+    [PM_VALKYRIE, { attrbase: [10, 7, 7, 7, 10, 7], attrdist: [30, 6, 7, 20, 30, 7] }],
     [PM_WIZARD, {
         attrbase: [7, 10, 7, 7, 7, 7],
         attrdist: [10, 30, 10, 20, 20, 10],
@@ -575,9 +788,44 @@ export function u_init_role() {
     const role = current_role_mnum();
 
     game.moves = 1;
+    if (game.u) game.u.umoney0 = game.u.umoney0 ?? 0;
     switch (role) {
+    case PM_ARCHEOLOGIST:
+        ini_inv(Archeologist);
+        if (!rn2(10))
+            ini_inv(Tinopener);
+        else if (!rn2(4))
+            ini_inv(Lamp);
+        else if (!rn2(5))
+            ini_inv(Magicmarker);
+        break;
+    case PM_BARBARIAN:
+        if (rn2(100) >= 50)
+            ini_inv(Barbarian_0);
+        else
+            ini_inv(Barbarian_1);
+        if (!rn2(6))
+            ini_inv(Lamp);
+        break;
+    case PM_CAVE_DWELLER:
+        ini_inv(Cave_man);
+        break;
+    case PM_HEALER:
+        if (game.u) game.u.umoney0 = rn1(1000, 1001);
+        ini_inv(Healer);
+        if (!rn2(25))
+            ini_inv(Lamp);
+        break;
     case PM_KNIGHT:
         ini_inv(Knight);
+        break;
+    case PM_MONK:
+        ini_inv(Monk);
+        ini_inv(M_spell[Math.floor(rn2(90) / 30)]); /* [0..2] */
+        if (!rn2(4))
+            ini_inv(Magicmarker);
+        else if (!rn2(10))
+            ini_inv(Lamp);
         break;
     case PM_CLERIC: // priest/priestess
         ini_inv(Priest);
@@ -585,6 +833,9 @@ export function u_init_role() {
             ini_inv(Magicmarker);
         else if (!rn2(10))
             ini_inv(Lamp);
+        break;
+    case PM_RANGER:
+        ini_inv(Ranger);
         break;
     case PM_ROGUE:
         if (game.u) game.u.umoney0 = 0;
@@ -596,6 +847,23 @@ export function u_init_role() {
         ini_inv(Samurai);
         if (!rn2(5))
             ini_inv(Blindfold);
+        break;
+    case PM_TOURIST:
+        if (game.u) game.u.umoney0 = rnd(1000);
+        ini_inv(Tourist);
+        if (!rn2(25))
+            ini_inv(Tinopener);
+        else if (!rn2(25))
+            ini_inv(Leash);
+        else if (!rn2(25))
+            ini_inv(Towel);
+        else if (!rn2(20))
+            ini_inv(Magicmarker);
+        break;
+    case PM_VALKYRIE:
+        ini_inv(Valkyrie);
+        if (!rn2(6))
+            ini_inv(Lamp);
         break;
     case PM_WIZARD:
         ini_inv(Wizard);
