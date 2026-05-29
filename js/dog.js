@@ -189,7 +189,11 @@ function makedog_mon(pettype, x, y) {
                 // carnivore/herbivore flags drive dogfood() classification.
                 carnivore: pettype !== PM_PONY,
                 herbivore: pettype === PM_PONY },
-        mx, my, mtame: 10,
+        // C ref: makemon.c / dog.c initedog() — a tamed monster is peaceful
+        // (all mtame are mpeaceful).  is_safemon() in the hero's bump-to-swap
+        // path keys off mpeaceful, so set it explicitly at creation (before
+        // initMonMoveState would otherwise default it to hostile).
+        mx, my, mtame: 10, mpeaceful: 1,
         // C ref: dog.c initedog() — edog structure for a freshly-tamed pet.
         // apport = ACURR(A_CHA); the hero's attributes aren't rolled until
         // u_init runs (just after makedog), so leave apport null and resolve it
@@ -224,6 +228,19 @@ export function makedog() {
     const mtmp = makedog_mon(pettype, g.u?.ux ?? 0, g.u?.uy ?? 0);
     if (!g.context.startingpet_mid)
         g.context.startingpet_mid = mtmp.m_id;
+
+    // C ref: dog.c makedog() — default pet names (dogs only): Slasher
+    // (Caveman), Hachi (Samurai), Idefix (Barbarian), Sirius (Ranger).
+    // christen_monst() stores the name in mtmp->mextra->mgivenname, which
+    // x_monnam() then renders standalone (no article).
+    if (mtmp && pettype === PM_LITTLE_DOG) {
+        const role = current_role_name();
+        const DOG_NAMES = { 'Caveman': 'Slasher', 'Samurai': 'Hachi',
+                            'Barbarian': 'Idefix', 'Ranger': 'Sirius' };
+        const petname = DOG_NAMES[role];
+        if (petname)
+            mtmp.mgivenname = petname;
+    }
     // Place the pet on the level so the renderer can draw it.
     if (mtmp && mtmp.mx > 0 && mtmp.my >= 0 && g.level) {
         if (!g.level.monsters) g.level.monsters = [];
