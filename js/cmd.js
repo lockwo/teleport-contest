@@ -13,6 +13,10 @@ import { do_attack, is_safemon, x_monnam } from './uhitm.js';
 import { ddoinv, dismiss_invent_screen, dolook,
          dodiscovered, doattributes, dovspell,
          attr_window_advance } from './invent.js';
+import { dodrink } from './potion.js';
+import { dozap } from './zap.js';
+import { docast } from './spell.js';
+import { doread } from './read.js';
 import { rnl } from './rng.js';
 import { doextcmd } from './extcmd-handlers.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
@@ -93,6 +97,18 @@ export async function rhack(key) {
     } else if (ch === '#') {
         // C ref: cmd.c doextcmd — read and run an extended command.
         await doextcmd();
+    } else if (ch === 'q') {
+        // C ref: cmd.c — 'q' quaff (drink) a potion.
+        game.context.move = (await dodrink()) ? 1 : 0;
+    } else if (ch === 'z') {
+        // C ref: cmd.c — 'z' zap a wand.
+        game.context.move = (await dozap()) ? 1 : 0;
+    } else if (ch === 'Z') {
+        // C ref: cmd.c — 'Z' cast a spell.
+        game.context.move = (await docast()) ? 1 : 0;
+    } else if (ch === 'r') {
+        // C ref: cmd.c — 'r' read a scroll or spellbook.
+        game.context.move = (await doread()) ? 1 : 0;
     } else if (isMovementKey(ch)) {
         // domove() sets game.context.move itself: 1 when the hero actually
         // moves (time passes), 0 when the move is blocked (bump a wall — no
@@ -104,21 +120,6 @@ export async function rhack(key) {
         game.context.move = 0;
         await pline(`Unknown command '${ch}'.`);
     }
-}
-
-// C ref: spell.c docast/getspell — list/select a spell to cast.  num_spells
-// is the count of known spells in spl_book; with none known we just report.
-function num_spells() {
-    const book = game.spl_book || game.u?.spl_book || [];
-    return book.filter(s => s && s.sp_id != null && s.sp_id >= 0).length;
-}
-
-async function docast() {
-    if (num_spells() === 0) {
-        await pline("You don't know any spells right now.");
-        return;
-    }
-    // (Spell selection menu / casting not needed for the starter sessions.)
 }
 
 // C ref: detect.c dosearch0(0) — explicit searching of the 8 adjacent

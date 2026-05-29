@@ -8,7 +8,8 @@
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
-import { docrt, flush_screen, newsym, statusLine1Text, statusLine2Text } from './display.js';
+import { nhgetch } from './input.js';
+import { docrt, flush_screen, newsym, pline, statusLine1Text, statusLine2Text } from './display.js';
 import { ATR_INVERSE, CLR_GRAY, NO_COLOR } from './terminal.js';
 import {
     AMULET_CLASS,
@@ -153,7 +154,7 @@ function has_omid(_obj) { return false; }
 function has_omailcmd(_obj) { return false; }
 function OMAILCMD(obj) { return obj?.omailcmd || ''; }
 function observe_object(obj) { if (obj) obj.dknown = 1; }
-function makeknown(otyp) { if (objects[otyp]) objects[otyp].known = true; }
+export function makeknown(otyp) { if (objects[otyp]) objects[otyp].known = true; }
 function discover_artifact(_id) {}
 function learn_egg_type(_mnum) {}
 function Role_if(_pm) { return false; }
@@ -1144,6 +1145,164 @@ export function compactify(buf) {
     return out;
 }
 
+// C ref: hack.h — getobj control flags.
+export const GETOBJ_NOFLAGS = 0x0;
+export const GETOBJ_ALLOWCNT = 0x1;
+export const GETOBJ_PROMPT = 0x2;
+
+// C ref: decl.c quitchars[] " \r\n\033" — keys that cancel a getobj prompt.
+const QUITCHARS = ' \r\n\x1b';
+
+// Draw a top-line yn_function prompt over the live map+status (like the C tty
+// yn_function used by getobj) and park the cursor one column past the prompt
+// plus trailing space.  The modal flag stops moveloop's re-render from
+// clobbering the prompt before the capturing nhgetch fires.  Returns the key.
+async function topline_query(prompt) {
+    game._pending_message = prompt;
+    await flush_screen(1);
+    game._modal_screen = 'topl';
+    const disp = game.nhDisplay;
+    if (disp?.setCursor)
+        disp.setCursor(Math.min(prompt.length + 1, 79), 0);
+    const c = await nhgetch();
+    delete game._modal_screen;
+    return c;
+}
+
+// C ref: invent.c getobj() — prompt for an inventory object passing obj_ok.
+// Ports the common interactive path: build the candidate-letter summary from
+// inventory in invlet order, render "What do you want to <word>? [<lets> or
+// ?*]", read one key, and resolve it to the matching inventory object.  The
+// hands/self ('-'), count, and '?'/'*' menu branches are not exercised by the
+// gameplay sessions and are omitted.
+export async function getobj(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
+    const forceprompt = (ctrlflags & GETOBJ_PROMPT) !== 0;
+
+    let lets = '';
+    let suggested = 0;
+    let inaccess = 0;
+    const altlets = [];
+
+    for (const otmp of [...inventoryArray()].sort(compareInvlet)) {
+        const v = obj_ok(otmp);
+        if (v === GETOBJ_EXCLUDE_INACCESS) { inaccess++; continue; }
+        if (v === GETOBJ_EXCLUDE || v === GETOBJ_EXCLUDE_SELECTABLE) continue;
+        if (v === GETOBJ_DOWNPLAY) { altlets.push(otmp.invlet); continue; }
+        if (v === GETOBJ_SUGGEST) { lets += otmp.invlet; suggested++; }
+    }
+
+    let buf = lets;
+    if (suggested > 5) buf = compactify(buf);
+
+    if (suggested === 0 && !forceprompt && altlets.length === 0) {
+        await pline(`You don't have anything ${inaccess ? 'else ' : ''}to ${word}.`);
+        return null;
+    }
+
+    let qbuf = `What do you want to ${word}?`;
+    if (!buf) qbuf += ' [*]';
+    else qbuf += ` [${buf} or ?*]`;
+
+    const key = await topline_query(qbuf);
+    const ilet = String.fromCharCode(key);
+
+    if (QUITCHARS.includes(ilet)) {
+        game._pending_message = '';
+        return null;
+    }
+
+    // Resolve the chosen invlet to its inventory object (any letter the player
+    // types is accepted; an unknown letter yields "You don't have that
+    // object.").  The '?'/'*' menu path is not modeled.
+    const otmp = inventoryArray().find(o => o.invlet === ilet);
+    if (!otmp) {
+        await pline('You don\'t have that object.');
+        return null;
+    }
+    return otmp;
+}
+
+// printf-style helpers for the cast menu column layout.
+function padEnd(s, n) { return s.length >= n ? s : s + ' '.repeat(n - s.length); }
+function padStart(s, n) { return s.length >= n ? s : ' '.repeat(n - s.length) + s; }
+
+// C ref: spell.c dospellmenu — build the menu lines (header + per-spell rows)
+// using the non-tab column format, return { header, rows } (without the "a - "
+// selector prefix, which the tty menu prepends).
+function buildSpellMenuLines(nspells, book, meta) {
+    // Header: "    %-20s Level %-12s Fail Retention" (Name, Category).
+    const header = '    ' + padEnd('Name', 20) + ' Level ' + padEnd('Category', 12)
+        + ' Fail Retention';
+    // Row fmt: "%-20s  %2d   %-12s %3d%% %9s".
+    const rows = [];
+    for (let i = 0; i < nspells; i++) {
+        const ent = book[i];
+        const name = meta.name(ent.sp_id);
+        const lev = ent.sp_lev;
+        const cat = meta.category(ent.sp_id);
+        const fail = meta.fail(i);
+        const reten = meta.retention(i);
+        const buf = padEnd(name, 20) + '  ' + padStart(String(lev), 2) + '   '
+            + padEnd(cat, 12) + ' ' + padStart(`${fail}%`, 4) + ' ' + padStart(reten, 9);
+        rows.push(buf);
+    }
+    return { header, rows };
+}
+
+// C ref: spell.c dospellmenu / win/tty menu.  Render the known-spell list as a
+// menu overlaying the map (offx column, status kept underneath) and return the
+// picked spell index (or -1 on cancel).
+export async function spell_menu(prompt, nspells, book, meta) {
+    const display = game.nhDisplay;
+    if (!display?.setCell) return -1;
+
+    const { header, rows } = buildSpellMenuLines(nspells, book, meta);
+    const selector = (i) => (i < 26 ? String.fromCharCode(97 + i)
+        : String.fromCharCode(65 + i - 26)) + ' - ';
+
+    // Menu item display lines (selector + buf); header has no selector.
+    const itemLines = rows.map((r, i) => selector(i) + r);
+    // C: each menu line's "len" = strlen + 2 (space at beg & end); maxcol is the
+    // widest, capped at cols.  offx = max(10, cols - maxcol - 1).
+    const allLines = [header, ...itemLines, prompt];
+    let maxcol = 0;
+    for (const ln of allLines) maxcol = Math.max(maxcol, ln.length + 2);
+    if (maxcol > 80) maxcol = 80;
+    // C: offx = max(10, ttyDisplay->cols - maxcol - 1).  The recorded sessions
+    // place content one column further right than 80 - maxcol - 1, consistent
+    // with ttyDisplay->cols == 81 (an 80-col map plus the status margin).
+    let offx = Math.max(10, 81 - maxcol - 1);
+    if (offx === 10) offx = 0; // full-screen fallback (matches C menu_overlay)
+
+    // Draw: prompt (inverse) at row 0, blank, header (inverse), rows, (end).
+    const draw = (text, row, attr) => {
+        for (let c = 0; c < text.length && offx + c < 80; c++)
+            display.setCell(offx + c, row, text[c], NO_COLOR, attr);
+    };
+    let row = 0;
+    draw(prompt, row++, ATR_INVERSE);
+    draw('', row++, 0);
+    draw(header, row++, ATR_INVERSE);
+    for (const ln of itemLines) draw(ln, row++, 0);
+    draw('(end)', row, 0);
+    if (offx > 0) putStatusLines(display);
+    // Cursor parks at the start of the "(end)" line content (offx + 6 observed).
+    display.setCursor(offx + 6, row);
+    game._modal_screen = 'spellmenu';
+
+    for (;;) {
+        const c = await nhgetch();
+        const ch = String.fromCharCode(c);
+        if (c === 27 || c === 32) { delete game._modal_screen; return -1; }
+        const idx = (ch >= 'a' && ch <= 'z') ? ch.charCodeAt(0) - 97
+            : (ch >= 'A' && ch <= 'Z') ? ch.charCodeAt(0) - 65 + 26 : -1;
+        if (idx >= 0 && idx < nspells) {
+            delete game._modal_screen;
+            return idx;
+        }
+    }
+}
+
 export function splittable(obj) {
     return !(obj?.otyp === LOADSTONE && obj.cursed) && !(obj === game.uwep && welded(game.uwep));
 }
@@ -1168,12 +1327,6 @@ export function getobj_hands_txt(action, qbuf = '') {
     return qbuf || `your ${makeplural(body_part(6))}`;
 }
 
-export function getobj(_word, obj_ok, _ctrlflags = 0) {
-    for (const obj of inventoryArray())
-        if ((obj_ok ? obj_ok(obj) : GETOBJ_SUGGEST) > GETOBJ_EXCLUDE)
-            return obj;
-    return null;
-}
 
 export function silly_thing(word, otmp) {
     if (word === 'call' && otmp?.otyp === AMULET_OF_YENDOR)

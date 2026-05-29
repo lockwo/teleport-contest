@@ -4,6 +4,7 @@
 import { game } from './gstate.js';
 import { rn2, rnd, rne, rn1 } from './rng.js';
 import { addinv as invent_addinv } from './invent.js';
+import { initialspell } from './spell.js';
 import {
     ARMOR_CLASS,
     COIN_CLASS,
@@ -630,7 +631,7 @@ const P_NONE = 0;
 // spell's skill discipline (oc_skill) and spell level (oc_level), keyed by
 // otyp.  spell_skilltype(otyp)==objects[otyp].oc_skill (spell.c:856); the JS
 // objects table doesn't carry oc_skill/oc_level, so they live here.
-const SPELL_META = new Map([
+export const SPELL_META = new Map([
     [365, { skill: 34, level: 5 }], // SPE_DIG
     [366, { skill: 28, level: 2 }], // SPE_MAGIC_MISSILE
     [367, { skill: 28, level: 4 }], // SPE_FIREBALL
@@ -837,6 +838,10 @@ export function ini_inv(tropList) {
             quan = 1;
         addinv(obj);
         ini_inv_wear_armor(obj);
+        // C ref: u_init.c ini_inv_use_obj — a starting (non-blank) spellbook
+        // is memorized into spl_book with full retention.
+        if (obj.oclass === SPBOOK_CLASS && obj.otyp !== SPE_BLANK_PAPER)
+            initialspell(obj);
         if (obj.oclass === SPBOOK_CLASS && spell_level(obj.otyp) === 1)
             got_sp1 = true;
 

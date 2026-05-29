@@ -67,11 +67,16 @@ export function rnl(x) {
     return i;
 }
 
-// C ref: d(n, x) — roll n dice of x sides
+// C ref: rnd.c d(n, x) — roll n dice of x sides.  C's d() calls RND(x)
+// directly and the PRNG instrumentation logs the whole roll as a single
+// "d(n,x)=sum" entry, so do the same here (the inner RND draws still advance
+// the stream identically) instead of emitting n separate rnd() entries.
 export function d(n, x) {
-    let sum = 0;
-    for (let i = 0; i < n; i++) sum += rnd(x);
-    return sum;
+    if (x < 0 || n < 0 || (x === 0 && n !== 0)) return 1;
+    let tmp = n;
+    for (let i = 0; i < n; i++) tmp += RND(x);
+    if (_rngLogEnabled) _rngLog.push(`d(${n},${x})=${tmp}`);
+    return tmp;
 }
 
 // C ref: rne(x) — exponentially distributed
