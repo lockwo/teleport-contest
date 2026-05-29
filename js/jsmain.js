@@ -182,7 +182,12 @@ export class NethackGame {
         disp.putstr(9, 7, 'See license for details.', NO_COLOR);
         const prompt = `Who are you? ${name || ''}`;
         disp.putstr(0, 12, prompt, NO_COLOR);
-        if (topLine) disp.setCursor(Math.min(topLine.length, 79), 0);
+        // The topLine is a tty yn_function prompt ("...? [ynaq]"). C's
+        // yn_function prints the prompt followed by a space and leaves
+        // the cursor after that space, i.e. one column past the text.
+        // The name prompt (getlin) leaves the cursor right after the
+        // typed text with no trailing space.
+        if (topLine) disp.setCursor(Math.min(topLine.length + 1, 79), 0);
         else disp.setCursor(Math.min(prompt.length, 79), 12);
     }
 
@@ -320,12 +325,11 @@ export class NethackGame {
     }
 
     async _startupCharacterSelection(optsel) {
-        if (!game.plname && selectionIsComplete(optsel)) {
-            game.plname = 'Hero';
-            apply_selection(optsel);
-            return;
-        }
-
+        // C ref: src/files.c / role.c — NetHack prompts "Who are you?"
+        // for the player name whenever OPTIONS supplied no name:, even
+        // when role/race/gender/align are all pre-pinned. Only after the
+        // name is entered does it proceed (skipping any selection prompts
+        // that the rc already answered).
         if (!game.plname)
             await this._promptForName();
 
