@@ -8,7 +8,7 @@ import {
     COLNO, ROWNO, STONE, ROOM, CORR, DOOR, STAIRS,
     HWALL, VWALL, TLCORNER, TRCORNER, BLCORNER, BRCORNER,
     CROSSWALL, TUWALL, TDWALL, TLWALL, TRWALL,
-    SDOOR, SCORR, FOUNTAIN, SINK, ALTAR, GRAVE, THRONE,
+    SDOOR, SCORR, FOUNTAIN, SINK, ALTAR, GRAVE, THRONE, ICE,
     D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED, D_BROKEN,
 } from './const.js';
 import {
@@ -17,6 +17,7 @@ import {
 } from './terminal.js';
 import { monster_by_pmidx } from './makemon.js';
 import { objects } from './mkobj.js';
+import { engr_at } from './engrave.js';
 
 const COIN_CLASS = 12;
 const ROCK_CLASS = 14;
@@ -77,11 +78,18 @@ const OC_COLOR_OVERRIDE = {
 };
 
 // C ref: display.c reset_glyphmap obj_color(n) = objects[n].oc_color.
+const AMULET_CLASS = 5;
+
 function obj_color(otmp) {
     if (!otmp) return NO_COLOR;
     if (OC_COLOR_OVERRIDE[otmp.otyp] != null) return OC_COLOR_OVERRIDE[otmp.otyp];
     const obj = objects[otmp.otyp];
     if (otmp.oclass === COIN_CLASS) return CLR_YELLOW;
+    // C ref: src/objects.h — every AMULET macro entry (and both Amulet-of-Yendor
+    // objects) declares oc_color = HI_METAL (CLR_CYAN), independent of material
+    // (the fake Yendor amulet is PLASTIC yet still HI_METAL).  The shared
+    // OBJECT_DATA omits the per-object oc_color, so pin the class default here.
+    if (otmp.oclass === AMULET_CLASS) return CLR_CYAN;
     const mat = obj?.material;
     if (mat != null && HI_BY_MATERIAL[mat] != null) return HI_BY_MATERIAL[mat];
     return NO_COLOR;
@@ -208,7 +216,8 @@ function terrain_glyph(loc, x, y) {
             return { ch: '<', color: CLR_YELLOW, dec: false };
         return { ch: '>', color: CLR_YELLOW, dec: false };
     case FOUNTAIN:  return { ch: '{', color: CLR_BRIGHT_BLUE, dec: false };
-    case SINK:      return { ch: '{', color: CLR_GRAY, dec: false };
+    // C ref: defsym.h PCHAR(36, '{', S_sink, CLR_WHITE).
+    case SINK:      return { ch: '{', color: CLR_WHITE, dec: false };
     case GRAVE:     return { ch: '|', color: CLR_WHITE, dec: false };
     case THRONE:    return { ch: '\\', color: CLR_YELLOW, dec: false };
     case ALTAR:     return { ch: '{', color: CLR_GRAY, dec: true };
@@ -239,16 +248,37 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     loc.gnew = 1;
 }
 
+// C ref: include/engrave.h spot_shows_engravings(x,y) — an engraving is only
+// drawn over CORR / ICE / ROOM terrain.
+function spot_shows_engravings(loc) {
+    const typ = loc?.typ;
+    return typ === CORR || typ === ICE || typ === ROOM;
+}
+
+// Glyph for an engraving.  C ref: include/engrave.h engraving_to_defsym +
+// defsym.h — a corridor engraving shows as '#' (S_engrcorr), any other (room
+// or ice) as '`' (S_engroom); both are CLR_BRIGHT_BLUE.
+function engraving_glyph(loc) {
+    const ch = (loc?.typ === CORR) ? '#' : '`';
+    return { ch, color: CLR_BRIGHT_BLUE, dec: false };
+}
+
 // The "background" glyph for a cell: the topmost non-monster thing the
 // hero would remember.  C ref: display.c _map_location —
-// priority object > trap > terrain.  (Engravings/regions not modeled.)
+// priority object > trap > engraving > terrain.  (Traps/regions not modeled.)
 function background_glyph(loc, x, y) {
     const obj = vobj_at(x, y);
     if (obj) {
         const og = object_glyph(obj);
         if (og) return og;
     }
-    // (traps would go here, between objects and terrain)
+    // (traps would go here, between objects and engravings)
+    // C ref: _map_location — a revealed engraving on engraving-showing terrain
+    // is drawn above the bare terrain.
+    if (spot_shows_engravings(loc)) {
+        const ep = engr_at(x, y);
+        if (ep && ep.erevealed) return engraving_glyph(loc);
+    }
     return terrain_glyph(loc, x, y);
 }
 
@@ -261,7 +291,12 @@ export function newsym(x, y) {
     if (!loc) return;
 
     if (game.u?.ux === x && game.u?.uy === y) {
-        // Hero — drawn live; remember the background underneath.
+        // Hero — drawn live; remember the background underneath.  Standing on
+        // an engraved spot reveals it (C ref: display.c _map_location).
+        if (spot_shows_engravings(loc)) {
+            const ep = engr_at(x, y);
+            if (ep) ep.erevealed = 1;
+        }
         show_glyph_cell(x, y, '@', CLR_WHITE, false);
         const bg = background_glyph(loc, x, y);
         loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec };
@@ -269,6 +304,12 @@ export function newsym(x, y) {
     }
 
     if (cansee(x, y)) {
+        // C ref: display.c unmap_object/_map_location — seeing an engraved
+        // spot reveals the engraving so it can be mapped.
+        if (spot_shows_engravings(loc)) {
+            const ep = engr_at(x, y);
+            if (ep) ep.erevealed = 1;
+        }
         const bg = background_glyph(loc, x, y);
         // Remember the background (not the monster — monsters move).
         if (game.level?.flags?.hero_memory) {
