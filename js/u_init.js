@@ -10,6 +10,7 @@ import {
     COIN_CLASS,
     FOOD_CLASS,
     GEM_CLASS,
+    GOLD_PIECE,
     MAGIC_MARKER,
     POTION_CLASS,
     RING_CLASS,
@@ -351,6 +352,16 @@ const Magicmarker = [
 
 const Lamp = [
     { trotyp: OIL_LAMP, trspe: 1, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Money[] = { { GOLD_PIECE, 0, COIN_CLASS, 1, 1, 0 }, ... }.
+// u_init_inventory_attrs() runs ini_inv(Money) whenever u.umoney0 > 0 (e.g.
+// the Tourist's rnd(1000) starting gold).  ini_inv_adjust_obj sets the coin
+// quantity to u.umoney0 directly, but the trobj still emits trquan() (rn2(1))
+// plus the GOLD_PIECE mksobj's next_ident rnd(2), so it must run for parity.
+const Money = [
+    { trotyp: GOLD_PIECE, trspe: 0, trclass: COIN_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
     { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
 ];
 
@@ -1073,6 +1084,14 @@ export function u_init_inventory_attrs() {
     try {
         u_init_role();
         u_init_race();
+        // C ref: u_init.c u_init_inventory_attrs — `if (discover)
+        // ini_inv(Wishing);` (wizard-mode only, not exercised by these
+        // sessions) then `if (u.umoney0) ini_inv(Money);`.  The Tourist
+        // (and Healer) start with rnd()-rolled gold, so the Money trobj
+        // must run: it emits trquan() (rn2(1)) plus the GOLD_PIECE
+        // next_ident rnd(2) at exactly this stream position.
+        if (game.u?.umoney0)
+            ini_inv(Money);
         init_attr(75);
         vary_init_attr();
         u_init_carry_attr_boost();

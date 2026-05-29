@@ -168,7 +168,13 @@ function peace_minded_pet() {
     const mal = 0; // dog/cat/pony are neutral
     if (Math.sign(mal) !== Math.sign(ual))
         return; // hostile, no roll (academic for forced-tame pet)
-    const record = game.u?.ualign?.record ?? 0;
+    // C ref: u_init.c u_init_misc -> newhp() sets u.ualign.record =
+    // gu.urole.initrecord BEFORE makedog(); peace_minded() rolls
+    // rn2(16 + record).  initrecord (role.c) is 10 for Archeologist/
+    // Barbarian/Healer/Knight/Monk/Ranger/Rogue/Samurai, 0 for Caveman/
+    // Priest/Tourist/Valkyrie/Wizard.  Indexed by role.js array position.
+    const ROLE_INITRECORD = [10, 10, 0, 10, 10, 10, 0, 10, 10, 10, 0, 0, 0];
+    const record = ROLE_INITRECORD[game.initrole] ?? (game.u?.ualign?.record ?? 0);
     if (rn2(16 + (record < -15 ? -15 : record)))
         rn2(2);
 }

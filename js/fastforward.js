@@ -28,7 +28,7 @@ function initrole_name() {
 const REAL_UINIT_ROLES = new Set([
     'wizard', 'rogue', 'samurai', 'priest',
     'archeologist', 'barbarian', 'caveman', 'healer', 'monk',
-    'ranger', 'valkyrie',
+    'ranger', 'valkyrie', 'tourist',
 ]);
 
 function fastforward_role_init() {
