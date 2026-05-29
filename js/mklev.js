@@ -14,7 +14,7 @@ import { filler_region, lspo_map, fill_special_room, themeroom_fill, themeroom_m
 import { somex, somey, somexyspace, occupied } from './mkroom.js';
 import { maketrap } from './trap.js';
 import { makemon as make_monster, rndmonst, mkclass } from './makemon.js';
-import { make_engr_at, random_engraving, wipe_engr_at } from './engrave.js';
+import { make_engr_at, random_engraving, wipe_engr_at, get_rnd_epitaph } from './engrave.js';
 import {
     RANDOM_CLASS, WEAPON_CLASS, ARMOR_CLASS, RING_CLASS, FOOD_CLASS,
     SCROLL_CLASS, POTION_CLASS, TOOL_CLASS, GEM_CLASS, SPBOOK_no_NOVEL,
@@ -39,7 +39,7 @@ import {
     ICE, MOAT, POOL, WATER, LAVAPOOL, LAVAWALL, DBWALL,
     A_LAWFUL, Align2amask,
     LR_UPTELE,
-    DUST, MARK,
+    DUST, MARK, HEADSTONE,
 } from './const.js';
 
 const XLIM = 4;
@@ -199,9 +199,27 @@ async function makemon(mdat, x, y, mmflags) {
     return mtmp;
 }
 
+// C ref: engrave.c make_grave(). The only RNG side-effect is the epitaph pick
+// when no text is supplied: get_rnd_text(EPITAPHFILE, ...) -> rn2(24075) plus the
+// MD_PAD_RUMORS line scan. Dropping that draw desyncs every subsequent rn2() on
+// levels that contain a grave. The headstone text itself is not shown at game
+// start, so only the draw sequence is load-bearing.
 function make_grave(x, y, text) {
     const loc = game.level?.at(x, y);
-    if (loc) loc.typ = GRAVE;
+    if (!loc) return;
+    // Can we put a grave here?  (caller's find_okay_roompos already excludes
+    // traps/furniture, so this guard normally passes for a plain ROOM cell)
+    if (loc.typ !== ROOM && loc.typ !== GRAVE) return;
+    loc.typ = GRAVE;
+    // del_engr_at: drop any existing engraving at this spot (consumes no RNG)
+    if (game.level?.engravings) {
+        game.level.engravings = game.level.engravings.filter(
+            (ep) => ep.engr_x !== x || ep.engr_y !== y,
+        );
+    }
+    let str = text;
+    if (str == null) str = get_rnd_epitaph();
+    make_engr_at(x, y, str, null, 0, HEADSTONE);
 }
 
 // in_rooms stub

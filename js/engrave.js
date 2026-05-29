@@ -7,6 +7,7 @@ import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { BUFSZ, BURN, DUST, ENGR_BLOOD, HEADSTONE, ICE } from './const.js';
 import { RUMORS_B64, ENGRAVE_B64 } from './rumors_data.js';
+import { EPITAPH_B64 } from './epitaph_data.js';
 
 const MD_PAD_RUMORS = 60;
 
@@ -18,6 +19,7 @@ const MD_PAD_RUMORS = 60;
 // ---------------------------------------------------------------------------
 const RUMORS_DATA = decodeBase64(RUMORS_B64);
 const ENGRAVE_DATA = decodeBase64(ENGRAVE_B64);
+const EPITAPH_DATA = decodeBase64(EPITAPH_B64);
 
 function decodeBase64(b64) {
     if (typeof Buffer !== 'undefined') return Buffer.from(b64, 'base64');
@@ -181,6 +183,14 @@ const rubouts = [
 function get_rnd_text(data, padlength) {
     const { next: starttxt } = dlb_fgets(data, 0); // skip comment line
     return get_rnd_line(data, starttxt, 0, padlength);
+}
+
+// C ref: engrave.c make_grave() -> get_rnd_text(EPITAPHFILE, buf, rn2, MD_PAD_RUMORS).
+// Emits the same rn2() draw the C side does against the makedefs-built 'epitaph' file
+// (rn2(24075) over the text region, then the MD_PAD_RUMORS line scan). The epitaph text
+// is not displayed at game start, so only the draw sequence is load-bearing.
+export function get_rnd_epitaph() {
+    return get_rnd_text(EPITAPH_DATA, MD_PAD_RUMORS);
 }
 
 // C ref: rumors.c getrumor(). truth: 1=true, -1=false, 0=either.
