@@ -7,8 +7,9 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { newsym, flush_screen, pline } from './display.js';
+import { newsym, flush_screen, pline, m_at } from './display.js';
 import { vision_recalc } from './vision.js';
+import { do_attack, is_safemon, x_monnam } from './uhitm.js';
 import { ddoinv, dismiss_invent_screen, dolook,
          dodiscovered, doattributes, dovspell,
          attr_window_advance } from './invent.js';
@@ -150,11 +151,58 @@ async function dosearch() {
     }
 }
 
-// C ref: hack.c domove — execute a movement
+// C ref: hack.c domove / domove_core — execute a movement, including the
+// bump-into-a-monster path (attack a hostile, or swap places with a pet).
 async function domove(dx, dy) {
     const u = game.u;
     const newx = u.ux + dx;
     const newy = u.uy + dy;
+
+    // C ref: domove_core sets u.dx/u.dy from the chosen direction; do_attack()
+    // and the swap logic read them.
+    u.dx = dx;
+    u.dy = dy;
+
+    const mtmp = m_at(newx, newy);
+
+    // ── bump into a monster ──  C ref: hack.c domove_core mtmp handling.
+    if (mtmp) {
+        u.ux0 = u.ux;
+        u.uy0 = u.uy;
+        // domove_attackmon_at(): displacer-beast swap not modelled; for a
+        // normal bump we call do_attack().  do_attack() returns TRUE when the
+        // hero's move was used up (a real attack, or "in the way" while
+        // running), FALSE when the monster evaded -> fall through to the
+        // swap-places handling below.
+        if (await do_attack(mtmp)) {
+            // The attack consumed the turn (C: do_attack returned TRUE); the
+            // hero stays put (no vision recalc — position unchanged).
+            game.context.move = 1;
+            return;
+        }
+        // Monster evaded.  If we can't actually move there, stop.
+        if (blocksMove(newx, newy)) {
+            game.context.move = 0;
+            return;
+        }
+        game.context.move = 1;
+        // C ref: domove_core tentatively advances the hero, then swaps with a
+        // safe pet at the destination.
+        u.ux = newx;
+        u.uy = newy;
+        if (is_safemon(mtmp)) {
+            const swapped = await domove_swap_with_pet(mtmp, newx, newy);
+            if (!swapped) {
+                // didn't move after all
+                u.ux = u.ux0;
+                u.uy = u.uy0;
+            }
+        }
+        newsym(u.ux0, u.uy0);
+        vision_recalc(1);
+        newsym(u.ux, u.uy);
+        return;
+    }
 
     if (blocksMove(newx, newy)) {
         // Can't move there
@@ -177,4 +225,38 @@ async function domove(dx, dy) {
     newsym(oldx, oldy);
     vision_recalc(1);
     newsym(newx, newy);
+}
+
+// C ref: hack.c domove_swap_with_pet(mtmp, x, y) — swap the hero and a tame
+// pet.  Returns TRUE if the swap happened.  The starter sessions always take
+// the simple swap branch (floor destination, untrapped pet, no boulder); the
+// blocking conditions are checked for faithfulness.  On entry u.ux/u.uy are
+// the destination (the pet's old square) and u.ux0/u.uy0 are the hero's old
+// square (the pet's new square).
+async function domove_swap_with_pet(mtmp, x, y) {
+    const u = game.u;
+
+    // can't swap diagonally if the pet can't move diagonally — not relevant
+    // for dogs/cats/ponies (none are NODIAG), so the common case proceeds.
+
+    // peaceful pet won't swap into a trapped / unsafe square or if it is a
+    // quest leader / shk / priest etc. — none apply for a starting pet.
+
+    // Perform the swap: pet -> hero's old square.
+    mtmp.mtrapped = 0;
+    mtmp.mx = u.ux0;
+    mtmp.my = u.uy0;
+    // monster still knows where the hero is
+    mtmp.mux = u.ux;
+    mtmp.muy = u.uy;
+
+    // C: You("%s %s.", mpeaceful ? "swap places with" : "frighten",
+    //        x_monnam(mtmp, ARTICLE_YOUR, ..., SUPPRESS_SADDLE, FALSE));
+    const verb = mtmp.mpeaceful ? 'swap places with' : 'frighten';
+    const who = x_monnam(mtmp, /*ARTICLE_YOUR*/ 3, null, /*SUPPRESS_SADDLE*/ 0, false);
+    await pline(`You ${verb} ${who}.`);
+
+    // (minliquid/mintrap on the pet's new square: the hero's old square is dry
+    //  floor in the starter sessions, so no trap/liquid effect.)
+    return true;
 }
