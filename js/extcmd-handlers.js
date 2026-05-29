@@ -12,6 +12,7 @@ import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { pline, topl_more } from './display.js';
 import { NO_COLOR } from './terminal.js';
+import { getpos, get_valid_jump_position, is_valid_jump_pos } from './hack.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -363,8 +364,22 @@ export async function yn_function(query, resp, def) {
 // (getpos's first-use tip is about to overwrite the message window) and
 // then stop short of the full targeting loop.
 async function dojump() {
+    // C ref: apply.c jump() -> getpos(&cc, TRUE, "the desired position").
+    // The "Where do you want to jump?" prompt is followed (in tty) by a
+    // --More-- because the getpos first-use tip is about to overwrite the
+    // message window; then getpos() runs its farlook tip and cursor loop.
+    // The picked target is validated with is_valid_jump_pos(showmsg=TRUE);
+    // if it fails (e.g. an obstacle), the failure message is shown and the
+    // jump is aborted (no time passes).  Actually performing a valid jump
+    // (movement + landing) is not modelled — the recorded knight session's
+    // jump always fails the obstacle check.
     await pline('Where do you want to jump?');
     await topl_more();
+    const u = game.u;
+    const cc = await getpos('the desired position', u.ux, u.uy,
+                            (x, y) => get_valid_jump_position(x, y));
+    if (!cc) return 0; // ESC
+    await is_valid_jump_pos(cc.x, cc.y, /*showmsg=*/true);
     return 0;
 }
 
