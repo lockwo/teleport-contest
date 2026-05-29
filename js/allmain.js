@@ -6,11 +6,14 @@
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
+import { nhgetch } from './input.js';
+import { ATR_INVERSE, NO_COLOR } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
 import { makedog } from './dog.js';
 import { rhack } from './cmd.js';
-import { docrt, cls, bot, flush_screen, pline } from './display.js';
+import { docrt, cls, bot, flush_screen, pline, topl_more } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals } from './vision.js';
+import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_fill_mineralize } from './fastforward.js';
 import { find_ac } from './u_init.js';
 import { com_pager_legacy } from './questpgr.js';
@@ -182,6 +185,106 @@ async function newgame_real() {
     await flush_screen(1);
     await bot();
     await pline(welcomeMessage());
+
+    // C ref: allmain.c moveloop_preamble() — runs right after newgame().
+    // The moon-phase / Friday-the-13th greeting is the first thing printed
+    // after welcome(); because the welcome line is still on the top line,
+    // printing it forces a "--More--" on the welcome message first.
+    const preambleShownMore = await moveloop_preamble_messages();
+
+    // C ref: allmain.c moveloop() -> maybe_do_tutorial().  When the tutorial
+    // wasn't disabled in the rc, a menu asking "Do you want a tutorial?" is
+    // displayed; showing that menu flushes the pending top-line message,
+    // which forces its "--More--" first (if not already acknowledged).
+    await maybe_do_tutorial(preambleShownMore);
+}
+
+// C ref: allmain.c moveloop_preamble() — the new-game moon-phase /
+// Friday-13th messages.  These are the second message after welcome(), so
+// they trigger the welcome line's "--More--" prompt before being shown.
+async function moveloop_preamble_messages() {
+    const g = game;
+    const moonphase = phase_of_the_moon();
+    let preamble = null;
+    if (moonphase === FULL_MOON)
+        preamble = 'You are lucky!  Full moon tonight.';
+    else if (moonphase === NEW_MOON)
+        preamble = 'Be careful!  New moon tonight.';
+    if (!preamble && friday_13th())
+        preamble = 'Watch out!  Bad things can happen on Friday the 13th.';
+
+    if (!preamble) return false;
+
+    // The welcome line is the current top-line message; the new preamble
+    // message can't share the line, so acknowledge the welcome via --More--.
+    await topl_more();
+    // Now the preamble message becomes the top line for the next step.
+    await pline(preamble);
+    return true;
+}
+
+// C ref: allmain.c maybe_do_tutorial() + options.c ask_do_tutorial().
+// When the tutorial option wasn't set in the rc, a NHW_MENU asking the
+// player is displayed.  Our recorded sessions all answer "no".
+async function maybe_do_tutorial(preambleShownMore) {
+    const g = game;
+    if (g.tutorial_set_in_config) return; // "OPTIONS=!tutorial" => no prompt
+    // Showing the menu flushes the pending top-line message.  If the moon
+    // phase preamble already paged the welcome line, the message currently
+    // on the top line is the preamble; otherwise it's the welcome line.
+    await topl_more();
+    await ask_do_tutorial();
+}
+
+// Render the "Do you want a tutorial?" NHW_MENU exactly as the tty corner
+// menu does and read the y/n response.  C ref: options.c ask_do_tutorial,
+// win/tty/wintty.c process_menu_window.  The menu re-displays (adding a
+// "(Please choose...)" line) whenever the user confirms without selecting.
+async function ask_do_tutorial() {
+    const disp = game.nhDisplay;
+    if (!disp?.putstr) { game._pending_message = ''; return; }
+    const cols = 80;
+
+    const renderMenu = (pass) => {
+        const lines = [
+            { text: 'Do you want a tutorial?', attr: ATR_INVERSE },
+            { text: '' },
+            { text: 'y - Yes, do a tutorial' },
+            { text: 'n - No, just start play' },
+            { text: '' },
+            { text: 'Put "OPTIONS=!tutorial" in .nethackrc to skip this query.' },
+        ];
+        if (pass > 0) lines.push({ text: "(Please choose 'y' or 'n'.)" });
+        lines.push({ text: '(end)' });
+
+        let maxlen = 0;
+        for (const l of lines) if (l.text.length > maxlen) maxlen = l.text.length;
+        const offx = Math.max(10, cols - (maxlen + 1) - 1);
+
+        // Overlay the map: clear the message row and cols offx..end per row,
+        // leaving the rest of the map visible underneath.
+        for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
+        for (let i = 0; i < lines.length; i++) {
+            for (let c = offx; c < cols; c++) disp.setCell(c, i, ' ', NO_COLOR, 0);
+            if (lines[i].text)
+                disp.putstr(offx, i, lines[i].text, NO_COLOR, lines[i].attr || 0);
+        }
+        const endRow = lines.length - 1;
+        disp.setCursor(offx + 6, endRow);
+    };
+
+    let pass = 0;
+    renderMenu(pass++);
+    for (;;) {
+        const c = await nhgetch();
+        const ch = String.fromCharCode(c);
+        if (ch === 'y') { game._tutorial_yes = true; break; }
+        if (ch === 'n' || c === 27) break;       // No / Escape => start play
+        // space / return confirm with no selection => re-prompt; any other
+        // key is ignored (the menu just waits for the next key).
+        if (c === 32 || c === 13 || c === 10) renderMenu(pass++);
+    }
+    game._pending_message = '';
 }
 
 // C ref: allmain.c moveloop_core()

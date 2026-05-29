@@ -130,6 +130,10 @@ export class NethackGame {
     async start() {
         const g = resetGame();
 
+        // Fixed in-game datetime "YYYYMMDDHHMMSS" — drives the moon-phase /
+        // Friday-the-13th game-start messages.  C ref: calendar.c getnow.
+        g.datetime = this._datetime || null;
+
         // Parse nethackrc
         const opts = parseNethackrc(this._nethackrc);
         g.plname = opts.name || '';
@@ -448,10 +452,10 @@ export class NethackGame {
 // this segment. The harness concatenates them itself. Cross-segment
 // C-side state (bones, record file, save) lives in `input.storage`.
 export async function runSegment(input) {
-    const { seed, nethackrc, storage } = input;
+    const { seed, nethackrc, storage, datetime } = input;
     const moves = input.moves || '';
 
-    const nhGame = new NethackGame({ seed, nethackrc, storage });
+    const nhGame = new NethackGame({ seed, nethackrc, storage, datetime });
 
     const display = new GameDisplay(null);
     display.onEmptyQueue = () => { throw new Error('Input queue empty - test may be missing keystrokes'); };

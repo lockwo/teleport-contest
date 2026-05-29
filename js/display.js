@@ -3,13 +3,135 @@
 
 import { game } from './gstate.js';
 import { cansee } from './vision.js';
+import { nhgetch } from './input.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, DOOR, STAIRS,
     HWALL, VWALL, TLCORNER, TRCORNER, BLCORNER, BRCORNER,
     CROSSWALL, TUWALL, TDWALL, TLWALL, TRWALL,
-    D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED,
+    SDOOR, SCORR, FOUNTAIN, SINK, ALTAR, GRAVE, THRONE,
+    D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED, D_BROKEN,
 } from './const.js';
-import { NO_COLOR, CLR_GRAY, CLR_BROWN, CLR_WHITE, CLR_YELLOW, DEC_TO_UNICODE } from './terminal.js';
+import {
+    NO_COLOR, CLR_GRAY, CLR_BROWN, CLR_WHITE, CLR_YELLOW,
+    CLR_CYAN, CLR_BRIGHT_BLUE, CLR_BRIGHT_CYAN, DEC_TO_UNICODE,
+} from './terminal.js';
+import { monster_by_pmidx } from './makemon.js';
+import { objects } from './mkobj.js';
+
+const COIN_CLASS = 12;
+const ROCK_CLASS = 14;
+const STATUE_OTYP = 475;
+const BOULDER_OTYP = 474;
+
+// ── Object class display symbols ──
+// C ref: drawing.c def_oc_syms (defsym.h OBJCLASS table).  Index by oclass.
+const OC_SYM = {
+    1: ']',  // ILLOBJ
+    2: ')',  // WEAPON
+    3: '[',  // ARMOR
+    4: '=',  // RING
+    5: '"',  // AMULET
+    6: '(',  // TOOL
+    7: '%',  // FOOD
+    8: '!',  // POTION
+    9: '?',  // SCROLL
+    10: '+', // SPBOOK
+    11: '/', // WAND
+    12: '$', // COIN (GOLD_SYM)
+    13: '*', // GEM
+    14: '`', // ROCK
+    15: '0', // BALL
+    16: '_', // CHAIN
+    17: '.', // VENOM
+};
+
+// C ref: include/color.h — HI_* material-color aliases.
+const HI_BY_MATERIAL = {
+    1: CLR_GRAY,        // LIQUID
+    2: CLR_WHITE,       // WAX
+    3: CLR_BROWN,       // VEGGY  (HI_ORGANIC)
+    4: CLR_BROWN,       // FLESH  (HI_ORGANIC)
+    5: CLR_WHITE,       // PAPER  (HI_PAPER)
+    6: CLR_BROWN,       // CLOTH  (HI_CLOTH)
+    7: CLR_BROWN,       // LEATHER(HI_LEATHER)
+    8: CLR_BROWN,       // WOOD   (HI_WOOD)
+    9: CLR_WHITE,       // BONE
+    10: CLR_GRAY,       // DRAGON_HIDE
+    11: CLR_CYAN,       // IRON   (HI_METAL)
+    12: CLR_CYAN,       // METAL  (HI_METAL)
+    13: CLR_YELLOW,     // COPPER (HI_COPPER)
+    14: CLR_GRAY,       // SILVER (HI_SILVER)
+    15: CLR_YELLOW,     // GOLD   (HI_GOLD)
+    16: CLR_WHITE,      // PLATINUM
+    17: CLR_CYAN,       // MITHRIL
+    18: CLR_BROWN,      // PLASTIC
+    19: CLR_BRIGHT_CYAN,// GLASS  (HI_GLASS)
+    20: CLR_GRAY,       // GEMSTONE
+    21: CLR_GRAY,       // MINERAL(HI_MINERAL)
+};
+
+// oc_color overrides for the few objects whose declared color in
+// objects.c differs from the material default.  C ref: src/objects.c.
+const OC_COLOR_OVERRIDE = {
+    [STATUE_OTYP]: CLR_WHITE,
+};
+
+// C ref: display.c reset_glyphmap obj_color(n) = objects[n].oc_color.
+function obj_color(otmp) {
+    if (!otmp) return NO_COLOR;
+    if (OC_COLOR_OVERRIDE[otmp.otyp] != null) return OC_COLOR_OVERRIDE[otmp.otyp];
+    const obj = objects[otmp.otyp];
+    if (otmp.oclass === COIN_CLASS) return CLR_YELLOW;
+    const mat = obj?.material;
+    if (mat != null && HI_BY_MATERIAL[mat] != null) return HI_BY_MATERIAL[mat];
+    return NO_COLOR;
+}
+
+// Glyph (symbol + color) for a single floor object.
+// C ref: display.h obj_to_glyph + display.c reset_glyphmap.
+function object_glyph(otmp) {
+    if (!otmp) return null;
+    // Statues display as the petrified monster's class symbol.
+    if (otmp.otyp === STATUE_OTYP) {
+        const mon = monster_by_pmidx(otmp.corpsenm);
+        const sym = mon?.mlet || OC_SYM[ROCK_CLASS];
+        return { ch: sym, color: CLR_WHITE, dec: false };
+    }
+    // Boulder uses the rock symbol; the generic case below covers it.
+    const sym = OC_SYM[otmp.oclass] || OC_SYM[1];
+    return { ch: sym, color: obj_color(otmp), dec: false };
+}
+
+// Topmost visible object at (x, y).  C ref: display.h vobj_at.
+export function vobj_at(x, y) {
+    const objs = game.level?.objects;
+    if (!objs) return null;
+    let top = null;
+    for (const o of objs) {
+        if (o.where === 'floor' && o.ox === x && o.oy === y) top = o;
+    }
+    return top;
+}
+
+// Monster at (x, y).  C ref: mon.c m_at.
+export function m_at(x, y) {
+    const mons = game.level?.monsters;
+    if (!mons) return null;
+    for (const m of mons) {
+        if (m.mx === x && m.my === y) return m;
+    }
+    return null;
+}
+
+// Glyph (symbol + color) for a monster.  C ref: display.c mon_color /
+// def_monsyms: symbol = monster class char, color = mons[].mcolor.
+function monster_glyph(mon) {
+    if (!mon) return null;
+    const d = mon.data || {};
+    const sym = d.mlet || 'x';
+    const color = (d.mcolor != null) ? d.mcolor : NO_COLOR;
+    return { ch: sym, color, dec: false };
+}
 
 // ── ANSI color codes ──
 // Maps CLR_* constants (0-15) to ANSI SGR color codes.
@@ -35,22 +157,9 @@ const ANSI_COLOR = [
 ];
 
 // ── Terrain to display character + color + DEC flag ──
-function terrain_glyph(loc, x, y) {
-    const typ = loc.typ;
+// C ref: display.c back_to_glyph + drawing.c defsyms (DECgraphics symset).
+function wall_glyph(typ) {
     switch (typ) {
-    case STONE:     return { ch: ' ', color: NO_COLOR, dec: false };
-    case ROOM:      return { ch: '~', color: NO_COLOR, dec: true };  // DEC middle dot
-    case CORR:      return { ch: '#', color: NO_COLOR, dec: false };
-    case DOOR:
-        if (loc.doormask & D_ISOPEN) return { ch: '|', color: CLR_BROWN, dec: false };
-        if (loc.doormask & (D_CLOSED | D_LOCKED)) return { ch: '+', color: CLR_BROWN, dec: false };
-        return { ch: '~', color: NO_COLOR, dec: true };  // D_NODOOR = floor
-    case STAIRS:
-        // Check upstair vs downstair
-        if (game.level?.upstair?.x === x && game.level?.upstair?.y === y)
-            return { ch: '<', color: CLR_YELLOW, dec: false };
-        return { ch: '>', color: CLR_YELLOW, dec: false };
-    // Wall types → DEC line-drawing characters
     case HWALL:     return { ch: 'q', color: NO_COLOR, dec: true };  // ─
     case VWALL:     return { ch: 'x', color: NO_COLOR, dec: true };  // │
     case TLCORNER:  return { ch: 'l', color: NO_COLOR, dec: true };  // ┌
@@ -62,6 +171,57 @@ function terrain_glyph(loc, x, y) {
     case TDWALL:    return { ch: 'w', color: NO_COLOR, dec: true };  // ┬
     case TLWALL:    return { ch: 'u', color: NO_COLOR, dec: true };  // ┤
     case TRWALL:    return { ch: 't', color: NO_COLOR, dec: true };  // ├
+    default:        return { ch: 'q', color: NO_COLOR, dec: true };
+    }
+}
+
+function terrain_glyph(loc, x, y) {
+    const typ = loc.typ;
+    switch (typ) {
+    case STONE:     return { ch: ' ', color: NO_COLOR, dec: false };
+    case SCORR:     return { ch: ' ', color: NO_COLOR, dec: false };  // secret corridor = stone
+    case ROOM:      return { ch: '~', color: NO_COLOR, dec: true };  // DEC middle dot
+    case CORR:      return { ch: '#', color: NO_COLOR, dec: false };
+    case SDOOR:
+        // Secret door: shown as the wall it is hidden in.
+        // C ref: back_to_glyph SDOOR falls through to the wall case.
+        return loc.horizontal ? wall_glyph(HWALL) : wall_glyph(VWALL);
+    case DOOR:
+        // DECgraphics: open door => meta-a checkerboard ('a', dec); doorway
+        // (no/broken door) => meta-~ centered dot ('~', dec); closed/locked
+        // door => ASCII '+'.  C ref: dat/symbols DECgraphics S_*door.
+        if (loc.doormask & D_BROKEN) return { ch: '~', color: NO_COLOR, dec: true };
+        if (loc.doormask & D_ISOPEN)
+            return { ch: 'a', color: CLR_BROWN, dec: true };
+        if (loc.doormask & (D_CLOSED | D_LOCKED))
+            return { ch: '+', color: CLR_BROWN, dec: false };
+        return { ch: '~', color: NO_COLOR, dec: true };  // D_NODOOR = floor (doorway)
+    case STAIRS:
+        // Branch stairs are yellow; plain stairs are gray.  C ref:
+        // back_to_glyph STAIRS (known_branch_stairs => S_br{up,dn}stair).
+        // Most starting-level stairs at <ux,uy> are the Mines branch
+        // (yellow), matching the recordings.
+        if (game.level?.upstair?.x === x && game.level?.upstair?.y === y)
+            return { ch: '<', color: CLR_YELLOW, dec: false };
+        return { ch: '>', color: CLR_YELLOW, dec: false };
+    case FOUNTAIN:  return { ch: '{', color: CLR_BRIGHT_BLUE, dec: false };
+    case SINK:      return { ch: '{', color: CLR_GRAY, dec: false };
+    case GRAVE:     return { ch: '|', color: CLR_WHITE, dec: false };
+    case THRONE:    return { ch: '\\', color: CLR_YELLOW, dec: false };  // HI_GOLD
+    case ALTAR:     return { ch: '{', color: CLR_GRAY, dec: true };  // DEC pi (π)
+    // Wall types → DEC line-drawing characters
+    case HWALL:
+    case VWALL:
+    case TLCORNER:
+    case TRCORNER:
+    case BLCORNER:
+    case BRCORNER:
+    case CROSSWALL:
+    case TUWALL:
+    case TDWALL:
+    case TLWALL:
+    case TRWALL:
+        return wall_glyph(typ);
     default:        return { ch: '?', color: NO_COLOR, dec: false };
     }
 }
@@ -77,46 +237,64 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     loc.gnew = 1;
 }
 
+// The "background" glyph for a cell: the topmost non-monster thing the
+// hero would remember.  C ref: display.c _map_location —
+// priority object > trap > terrain.  (Engravings/regions not modeled.)
+function background_glyph(loc, x, y) {
+    const obj = vobj_at(x, y);
+    if (obj) {
+        const og = object_glyph(obj);
+        if (og) return og;
+    }
+    // (traps would go here, between objects and terrain)
+    return terrain_glyph(loc, x, y);
+}
+
 // ── newsym ──
+// C ref: display.c newsym — draw the glyph stack for one cell with the
+// hero-memory + visibility semantics.  Display priority is
+// monster > (remembered background: object > trap > terrain).
 export function newsym(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return;
 
     if (game.u?.ux === x && game.u?.uy === y) {
-        // Hero
+        // Hero — drawn live; remember the background underneath.
         show_glyph_cell(x, y, '@', CLR_WHITE, false);
-        const tg = terrain_glyph(loc, x, y);
-        loc.remembered_glyph = { ch: tg.ch, color: tg.color, decgfx: tg.dec };
+        const bg = background_glyph(loc, x, y);
+        loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec };
         return;
     }
 
-    // Contestants: add monster, object, and trap display here.
-
-    const tg = terrain_glyph(loc, x, y);
-    // Only update display/memory if cell is IN_SIGHT (lit and visible)
     if (cansee(x, y)) {
-        show_glyph_cell(x, y, tg.ch, tg.color, tg.dec);
+        const bg = background_glyph(loc, x, y);
+        // Remember the background (not the monster — monsters move).
         if (game.level?.flags?.hero_memory) {
-            loc.remembered_glyph = { ch: tg.ch, color: tg.color, decgfx: tg.dec };
+            loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec };
+        }
+        // A visible monster takes precedence over the background.
+        const mon = m_at(x, y);
+        if (mon) {
+            const mg = monster_glyph(mon);
+            show_glyph_cell(x, y, mg.ch, mg.color, mg.dec);
+        } else {
+            show_glyph_cell(x, y, bg.ch, bg.color, bg.dec);
         }
     } else if (loc.remembered_glyph) {
-        // Out of sight but remembered — show remembered glyph
+        // Out of sight but remembered — show remembered background.
         show_glyph_cell(x, y, loc.remembered_glyph.ch,
             loc.remembered_glyph.color, loc.remembered_glyph.decgfx);
     }
 }
 
 // ── docrt ──
+// C ref: display.c docrt — recompute the live glyph for every cell so the
+// monster/object/terrain stack and hero are all redrawn from current state.
 export async function docrt() {
     if (!game.level) return;
     for (let y = 0; y < ROWNO; y++)
-        for (let x = 1; x < COLNO; x++) {
-            const loc = game.level.at(x, y);
-            if (loc?.remembered_glyph) {
-                show_glyph_cell(x, y, loc.remembered_glyph.ch,
-                    loc.remembered_glyph.color, loc.remembered_glyph.decgfx);
-            }
-        }
+        for (let x = 1; x < COLNO; x++)
+            newsym(x, y);
     if (game.u?.ux > 0) show_glyph_cell(game.u.ux, game.u.uy, '@', CLR_WHITE, false);
 }
 
@@ -351,4 +529,37 @@ export async function bot() {
 // ── pline ──
 export async function pline(msg) {
     game._pending_message = msg;
+}
+
+// Draw "--More--" for the current top-line message and block until the
+// user presses space/return/escape.  C ref: win/tty/topl.c more() +
+// win/tty/getline.c xwaitforspace().  The current message is assumed to
+// already be on the grid (drawn by _buildScreenOutput / flush_screen);
+// the map + status underneath are likewise already present.
+const DEFMORESTR = '--More--';
+const CO = 80;
+
+export async function topl_more() {
+    const disp = game?.nhDisplay;
+    if (!disp?.setCell) return;
+    // Re-render the current frame (message + map + status) to the grid.
+    _buildScreenOutput();
+
+    const msg = game._pending_message || '';
+    let curx = msg.length;   // 0-based column one past the message
+    let cury = 0;
+    // C more(): if there's no room for "--More--" on the line, wrap first.
+    if (curx >= CO - 8) {
+        curx = 0;
+        cury = 1;
+    }
+    for (let i = 0; i < DEFMORESTR.length && curx + i < CO; i++)
+        disp.setCell(curx + i, cury, DEFMORESTR[i], NO_COLOR, 0);
+    disp.setCursor(Math.min(curx + DEFMORESTR.length, CO - 1), cury);
+
+    // xwaitforspace: read keys until space / return / escape.
+    for (;;) {
+        const c = await nhgetch();
+        if (c === 32 || c === 13 || c === 10 || c === 27) break;
+    }
 }

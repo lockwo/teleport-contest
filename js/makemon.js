@@ -27,17 +27,18 @@ const NON_PM = -1;
 const ALIGNWEIGHT = 5;
 
 // Minimal mons[] slice needed by rndmonst_adj on depth 1.
-// Fields: pmidx, name, mlet, mlevel, difficulty, maligntyp, geno, mresists, gender.
+// Fields: pmidx, name, mlet, mlevel, difficulty, maligntyp, geno, mresists, gender, mcolor.
+// mcolor comes from include/monsters.h (the per-monster display color).
 const RNDMONST_LOW_LEVEL = Object.freeze([
-    { pmidx: 12, name: 'jackal', mlet: 'd', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 3, mresists: 0, gender: 'random' },
-    { pmidx: 13, name: 'fox', mlet: 'd', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 1, mresists: 0, gender: 'random' },
-    { pmidx: 59, name: 'kobold', mlet: 'k', mlevel: 0, difficulty: 1, maligntyp: -2, geno: 1, mresists: 0, gender: 'random', armed: true },
-    { pmidx: 70, name: 'goblin', mlet: 'o', mlevel: 0, difficulty: 1, maligntyp: -3, geno: 2, mresists: 0, gender: 'random', armed: true },
-    { pmidx: 88, name: 'sewer rat', mlet: 'r', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 1, mresists: 0, gender: 'random', verysmall: true },
-    { pmidx: 116, name: 'grid bug', mlet: 'x', mlevel: 0, difficulty: 1, maligntyp: 0, geno: G_NOCORPSE | 3, mresists: 0, gender: 'random', verysmall: true },
-    { pmidx: 158, name: 'lichen', mlet: 'F', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 4, mresists: 0, gender: 'neuter' },
-    { pmidx: 239, name: 'kobold zombie', mlet: 'Z', mlevel: 0, difficulty: 1, maligntyp: -2, geno: G_NOCORPSE | 1, mresists: 0, gender: 'random' },
-    { pmidx: 322, name: 'newt', mlet: ':', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 5, mresists: 0, gender: 'random', verysmall: true },
+    { pmidx: 12, name: 'jackal', mlet: 'd', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 3, mresists: 0, gender: 'random', mcolor: 3 },
+    { pmidx: 13, name: 'fox', mlet: 'd', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 1, mresists: 0, gender: 'random', mcolor: 1 },
+    { pmidx: 59, name: 'kobold', mlet: 'k', mlevel: 0, difficulty: 1, maligntyp: -2, geno: 1, mresists: 0, gender: 'random', armed: true, mcolor: 3 },
+    { pmidx: 70, name: 'goblin', mlet: 'o', mlevel: 0, difficulty: 1, maligntyp: -3, geno: 2, mresists: 0, gender: 'random', armed: true, mcolor: 7 },
+    { pmidx: 88, name: 'sewer rat', mlet: 'r', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 1, mresists: 0, gender: 'random', verysmall: true, mcolor: 3 },
+    { pmidx: 116, name: 'grid bug', mlet: 'x', mlevel: 0, difficulty: 1, maligntyp: 0, geno: G_NOCORPSE | 3, mresists: 0, gender: 'random', verysmall: true, mcolor: 5 },
+    { pmidx: 158, name: 'lichen', mlet: 'F', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 4, mresists: 0, gender: 'neuter', mcolor: 10 },
+    { pmidx: 239, name: 'kobold zombie', mlet: 'Z', mlevel: 0, difficulty: 1, maligntyp: -2, geno: G_NOCORPSE | 1, mresists: 0, gender: 'random', mcolor: 3 },
+    { pmidx: 322, name: 'newt', mlet: ':', mlevel: 0, difficulty: 1, maligntyp: 0, geno: 5, mresists: 0, gender: 'random', verysmall: true, mcolor: 11 },
 ]);
 
 export function monster_by_pmidx(pmidx) {
