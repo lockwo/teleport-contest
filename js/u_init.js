@@ -29,18 +29,37 @@ export const UNDEF_SPE = 0x7f;
 export const UNDEF_BLESS = 2;
 
 const PM_KNIGHT = 4;
+const PM_CLERIC = 6; // Priest/Priestess
+const PM_ROGUE = 8;
+const PM_SAMURAI = 9;
 const PM_WIZARD = 12;
 const A_CHAOTIC = -1;
 
+const YA = 22;
+const DAGGER = 34;
+const SHORT_SWORD = 46;
 const LONG_SWORD = 54;
+const KATANA = 56;
 const LANCE = 72;
+const MACE = 73;
 const QUARTERSTAFF = 79;
+const YUMI = 86;
 const HELMET = 97;
+const SPLINT_MAIL = 124;
 const RING_MAIL = 132;
+const LEATHER_ARMOR = 134;
+const ROBE = 143;
 const CLOAK_OF_MAGIC_RESISTANCE = 148;
 const SMALL_SHIELD = 150;
 const LEATHER_GLOVES = 159;
+const SACK = 217;
+const LOCK_PICK = 222;
+const OIL_LAMP = 227;
 const BLINDFOLD = 233;
+const SPRIG_OF_WOLFSBANE = 283;
+const CLOVE_OF_GARLIC = 284;
+const POT_SICKNESS = 318;
+const POT_WATER = 322;
 const APPLE = 277;
 const CARROT = 282;
 const PANCAKE = 290;
@@ -92,13 +111,60 @@ const Wizard = [
     { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
 ];
 
+// C ref: u_init.c Priest[].
+const Priest = [
+    { trotyp: MACE, trspe: 1, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: 1 },
+    { trotyp: ROBE, trspe: 0, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: SMALL_SHIELD, trspe: 0, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: POT_WATER, trspe: 0, trclass: POTION_CLASS, trquan_min: 4, trquan_max: 4, trbless: 1 }, // holy water
+    { trotyp: CLOVE_OF_GARLIC, trspe: 0, trclass: FOOD_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: SPRIG_OF_WOLFSBANE, trspe: 0, trclass: FOOD_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: UNDEF_TYP, trspe: UNDEF_SPE, trclass: SPBOOK_CLASS, trquan_min: 2, trquan_max: 2, trbless: UNDEF_BLESS },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Rogue[].
+const Rogue = [
+    { trotyp: SHORT_SWORD, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: DAGGER, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 6, trquan_max: 15, trbless: 0 },
+    { trotyp: LEATHER_ARMOR, trspe: 1, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: POT_SICKNESS, trspe: 0, trclass: POTION_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: LOCK_PICK, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: SACK, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+// C ref: u_init.c Samurai[].
+const Samurai = [
+    { trotyp: KATANA, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: SHORT_SWORD, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS }, // wakizashi
+    { trotyp: YUMI, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: YA, trspe: 0, trclass: WEAPON_CLASS, trquan_min: 26, trquan_max: 45, trbless: UNDEF_BLESS },
+    { trotyp: SPLINT_MAIL, trspe: 0, trclass: ARMOR_CLASS, trquan_min: 1, trquan_max: 1, trbless: UNDEF_BLESS },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
 const Blindfold = [
     { trotyp: BLINDFOLD, trspe: 0, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
     { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
 ];
 
+// C ref: u_init.c Magicmarker[] / Lamp[] (optional extras).
+const Magicmarker = [
+    { trotyp: MAGIC_MARKER, trspe: 19, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
+const Lamp = [
+    { trotyp: OIL_LAMP, trspe: 1, trclass: TOOL_CLASS, trquan_min: 1, trquan_max: 1, trbless: 0 },
+    { trotyp: 0, trspe: 0, trclass: 0, trquan_min: 0, trquan_max: 0, trbless: 0 },
+];
+
 const ROLE_INVENTORY = new Map([
     [PM_KNIGHT, Knight],
+    [PM_CLERIC, Priest],
+    [PM_ROGUE, Rogue],
+    [PM_SAMURAI, Samurai],
     [PM_WIZARD, Wizard],
 ]);
 
@@ -106,6 +172,12 @@ const ROLE_INVENTORY = new Map([
 // Only the level-0 (initial) fields infix/inrnd are used here.
 const ROLE_ADV = new Map([
     [PM_KNIGHT, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 4 } }],
+    // role.c Priest: hp {12,0,...}, en {4,3,0,2,0,2} -> inrnd=3.
+    [PM_CLERIC, { hpadv: { infix: 12, inrnd: 0 }, enadv: { infix: 4, inrnd: 3 } }],
+    // role.c Rogue: hp {10,0,...}, en {1,0,0,1,0,1} -> inrnd=0.
+    [PM_ROGUE, { hpadv: { infix: 10, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
+    // role.c Samurai: hp {13,0,...}, en {1,0,0,1,0,1} -> inrnd=0.
+    [PM_SAMURAI, { hpadv: { infix: 13, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
     [PM_WIZARD, { hpadv: { infix: 10, inrnd: 0 }, enadv: { infix: 4, inrnd: 3 } }],
 ]);
 // Human race advance (the only race used by these sessions).
@@ -210,10 +282,23 @@ const A_MAX = 6;
 const HUMAN_ATTRMIN = [3, 3, 3, 3, 3, 3];
 const HUMAN_ATTRMAX = [118, 18, 18, 18, 18, 18]; // STR18(100), then plain 18s.
 
+// role.c attrbase/attrdist, order [Str,Int,Wis,Dex,Con,Cha].
 const ROLE_ATTRS = new Map([
     [PM_KNIGHT, {
         attrbase: [13, 7, 14, 8, 10, 17],
         attrdist: [30, 15, 15, 10, 20, 10],
+    }],
+    [PM_CLERIC, {
+        attrbase: [7, 7, 10, 7, 7, 7],
+        attrdist: [15, 10, 30, 15, 20, 10],
+    }],
+    [PM_ROGUE, {
+        attrbase: [7, 7, 7, 10, 7, 6],
+        attrdist: [20, 10, 10, 30, 20, 10],
+    }],
+    [PM_SAMURAI, {
+        attrbase: [10, 8, 7, 10, 17, 6],
+        attrdist: [30, 10, 8, 30, 14, 8],
     }],
     [PM_WIZARD, {
         attrbase: [7, 10, 7, 7, 7, 7],
@@ -483,15 +568,48 @@ function u_init_carry_attr_boost() {
     // Inventory weight boosting has no RNG for the covered startup path.
 }
 
+// C ref: u_init.c u_init_role — role switch. The RNG-bearing tails
+// (Blindfold/Magicmarker/Lamp extras) are ported faithfully so the call
+// sequence matches C exactly. knows_object/knows_class consume no RNG.
 export function u_init_role() {
     const role = current_role_mnum();
-    const inventory = ROLE_INVENTORY.get(role);
 
     game.moves = 1;
-    if (inventory)
-        ini_inv(inventory);
-    if (role === PM_WIZARD && !rn2(5))
-        ini_inv(Blindfold);
+    switch (role) {
+    case PM_KNIGHT:
+        ini_inv(Knight);
+        break;
+    case PM_CLERIC: // priest/priestess
+        ini_inv(Priest);
+        if (!rn2(5))
+            ini_inv(Magicmarker);
+        else if (!rn2(10))
+            ini_inv(Lamp);
+        break;
+    case PM_ROGUE:
+        if (game.u) game.u.umoney0 = 0;
+        ini_inv(Rogue);
+        if (!rn2(5))
+            ini_inv(Blindfold);
+        break;
+    case PM_SAMURAI:
+        ini_inv(Samurai);
+        if (!rn2(5))
+            ini_inv(Blindfold);
+        break;
+    case PM_WIZARD:
+        ini_inv(Wizard);
+        if (!rn2(5))
+            ini_inv(Blindfold);
+        break;
+    default: {
+        // Roles without a ported inventory table: skip ini_inv (no RNG).
+        const inventory = ROLE_INVENTORY.get(role);
+        if (inventory)
+            ini_inv(inventory);
+        break;
+    }
+    }
     reset_uinit_nocreate();
 }
 

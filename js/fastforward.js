@@ -61,47 +61,15 @@ function fastforward_legacy_role_intro() {
     rn2(2);
 }
 
-const LEGACY_DUNGEON_RN2_ARGS = [
-    100, 5,
-    100, 100, 100, 100, 100,
-    4, 5, 4, 1,
-    100, 5,
-    1,
-    100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
-    1, 1, 4, 3, 5, 6, 1, 1, 4, 4, 3,
-    100, 2,
-    3,
-    100, 100,
-    2, 1,
-    100, 2,
-    2,
-    100, 100, 100,
-    1, 1, 1,
-    100,
-    1,
-    100, 100, 100, 100,
-    1, 1, 1, 1,
-    100,
-    4,
-    100,
-    1,
-    100,
-    5,
-    100, 100, 100,
-    1, 1, 1,
-    100,
-    1,
-    100, 100, 100, 100, 100, 100,
-    1, 1, 1, 1, 1, 1,
-    100,
-    100, 100,
-    1, 1,
-    7, 7, 7, 7, 7,
-];
-
 function fastforward_legacy_dungeon_seed8000() {
-    for (const arg of LEGACY_DUNGEON_RN2_ARGS)
-        rn2(arg);
+    // The dungeon-init RNG sequence is fully reproduced by the real
+    // init_dungeons() port (dungeon.c init_dungeons/place_level/etc.).
+    // For seed 8000 this emits exactly the sequence the old hardcoded
+    // LEGACY_DUNGEON_RN2_ARGS array replayed; for other legacy seeds
+    // (2, 31..40) the layout — and thus the rn2(npossible) place_level
+    // calls and the rn1() num_dunlevs rolls — differs, so a generic
+    // call is required for parity rather than a frozen capture.
+    init_dungeons();
 }
 
 function use_legacy_startup() {
@@ -184,7 +152,8 @@ export function fastforward_pre_mklev() {
 // 124 leaf RNG calls (regenerated from session data)
 export function fastforward_post_mklev() {
     const role = initrole_name();
-    if (role === 'wizard' || (role === 'knight' && game.preferred_pet === 'n')) {
+    if (role === 'wizard' || (role === 'knight' && game.preferred_pet === 'n')
+        || role === 'rogue' || role === 'samurai' || role === 'priest') {
         u_init_inventory_attrs();
         fastforward_legacy_role_intro();
         moveloop_preamble_startup();

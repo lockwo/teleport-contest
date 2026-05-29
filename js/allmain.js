@@ -85,6 +85,18 @@ export async function newgame() {
     // These create objects/monsters that don't affect terrain display
     await fastforward_fill_mineralize();
 
+    // C ref: allmain.c newgame() — u.ualign.type is set (role_init/init_align)
+    // before makedog().  peace_minded() compares the pet's alignment sign to
+    // u.ualign.type, so it must be populated here for non-wizard/knight roles
+    // (e.g. chaotic Rogue, lawful Samurai) to skip the co-align rn2 correctly.
+    {
+        const at = aligns[game.initalign]?.value;
+        if (at !== undefined) {
+            g.u.ualign = g.u.ualign || {};
+            g.u.ualign.type = at;
+            if (g.u.ualign.record === undefined) g.u.ualign.record = 0;
+        }
+    }
     // C ref: dog.c makedog() - create the starting pet after level fill.
     u_on_upstairs();
     makedog();

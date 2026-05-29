@@ -171,8 +171,27 @@ function selection_room(croom) {
     return sel;
 }
 
+// C ref: nhlib.lua:44 percent(threshold) → math.random(0,99) < threshold.
+// math.random(0,99) is the 2-arg form: nh.random(0, 100) == 0 + rn2(100).
+// Emits exactly one rn2(100).
 function percent(n) {
     return rn2(100) < n;
+}
+
+// C ref: nhlib.lua:17 shuffle(list) — Fisher-Yates over a 1-based Lua array.
+//   for i = #list, 2, -1 do  j = math.random(i)  swap(list[i], list[j])  end
+// math.random(i) is the 1-arg form: 1 + nh.rn2(i). So each iteration emits one
+// rn2(i) for i from len down to 2 (len-1 calls total). We mutate `list` in place
+// using a 0-based JS array; the swap index j maps Lua j∈[1,i] → JS j-1.
+function shuffle(list) {
+    for (let i = list.length; i >= 2; i--) {
+        const j = 1 + rn2(i); // math.random(i) == 1 + rn2(i), Lua 1-based
+        const a = i - 1, b = j - 1;
+        const tmp = list[a];
+        list[a] = list[b];
+        list[b] = tmp;
+    }
+    return list;
 }
 
 function rawRnd(x) {
@@ -393,6 +412,33 @@ export function filler_region(x, y) {
         filled: 1,
         contents: func,
     });
+}
+
+// C ref: themerms.lua — the per-themeroom des.map() contents callback.
+// Most map themerooms simply call filler_region(fx,fy). A few have extra logic
+// (and thus extra RNG) BEFORE the filler_region call; this dispatcher mirrors
+// each room's contents() faithfully so the rn2/rnd call sequence matches C.
+// `name` is the themeroom name; (fx,fy) the filler_region anchor.
+export function themeroom_map_contents(name, fx, fy) {
+    if (name === 'Blocked center') {
+        // themerms.lua 'Blocked center':
+        //   if (percent(30)) then
+        //      local terr = { "-", "P" }; shuffle(terr);
+        //      des.replace_terrain({ region={1,1,9,9}, fromterrain="L",
+        //                            toterrain=terr[1] });
+        //   end
+        //   filler_region(1,1);
+        if (percent(30)) {
+            const terr = ['-', 'P'];
+            shuffle(terr); // 2-elem shuffle → one rn2(2)
+            // replace_terrain over region {1,1,9,9}, fromterrain="L"
+            // (chance defaults to 100). C lspo_replace_terrain emits rn2(100)
+            // for each cell whose typ == LAVAPOOL ("L"). The Blocked-center map
+            // has a 3x3 LAVAPOOL block (9 cells) entirely inside {1,1,9,9}.
+            for (let i = 0; i < 9; i++) rn2(100);
+        }
+    }
+    filler_region(fx, fy);
 }
 
 export function lspo_map({ map, x = -1, y = -1, halign = 'none',

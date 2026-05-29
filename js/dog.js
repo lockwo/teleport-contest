@@ -111,8 +111,15 @@ function newmonhp_for_pet(pettype) {
 }
 
 function peace_minded_pet() {
+    // C ref: makemon.c peace_minded — co-aligned check first. A starting
+    // pet (dog/cat/pony) is neutral (mal=0); if the player's alignment
+    // sign differs, the function returns early with NO rng.
+    const ual = game.u?.ualign?.type ?? 0;
+    const mal = 0; // dog/cat/pony are neutral
+    if (Math.sign(mal) !== Math.sign(ual))
+        return; // hostile, no roll (academic for forced-tame pet)
     const record = game.u?.ualign?.record ?? 0;
-    if (rn2(16 + Math.max(record, -15)))
+    if (rn2(16 + (record < -15 ? -15 : record)))
         rn2(2);
 }
 

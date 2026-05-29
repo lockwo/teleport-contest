@@ -1,73 +1,129 @@
 // engrave.js - engraving text selection and degradation.
-// C refs: engrave.c random_engraving(), wipeout_text(), wipe_engr_at().
+// C refs: engrave.c random_engraving(), wipeout_text(), wipe_engr_at();
+//         rumors.c init_rumors(), getrumor(), get_rnd_line(), get_rnd_text();
+//         hacklib.c xcrypt().
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { BUFSZ, BURN, DUST, ENGR_BLOOD, HEADSTONE, ICE } from './const.js';
+import { RUMORS_B64, ENGRAVE_B64 } from './rumors_data.js';
 
 const MD_PAD_RUMORS = 60;
 
-const ENGRAVE_TEXTS = [
-    'No matter where you go, there you are.',
-    'Elbereth',
-    'Vlad was here',
-    'ad aerarium',
-    'Owlbreath',
-    'Galadriel',
-    'Kilroy was here',
-    'Frodo lives',
-    'A.S. ->',
-    '<- A.S.',
-    "You won't get it up the steps",
-    "Lasciate ogni speranza o voi ch'entrate.",
-    'Well Come',
-    'We apologize for the inconvenience.',
-    'See you next Wednesday',
-    'notary sojak',
-    'For a good time call 8?7-5309',
-    "Please don't feed the animals.",
-    "Madam, in Eden, I'm Adam.",
-    'Two thumbs up!',
-    'Hello, World!',
-    "You've got mail!",
-    'As if!',
-    'BAD WOLF',
-    'Arooo!  Werewolves of Yendor!',
-    'Dig for Victory here',
-    'Gaius Julius Primigenius was here.  Why are you late?',
-    "Don't go this way",
-    'Go left --->',
-    '<--- Go right',
-    'X marks the spot',
-    'X <--- You are here.',
-    'Here be dragons',
-    'Save now, and do your homework!',
-    "There was a hole here.  It's gone now.",
-    'The Vibrating Square',
-    'This is a pit!',
-    'This is not the dungeon you are looking for.',
-    "Watch out, there's a gnome with a wand of death behind that door!",
-    'This square deliberately left blank.',
-    'Haermund Hardaxe carved these runes',
-    "Need a light?  Come visit the Minetown branch of Izchak's Lighting Store!",
-    'Snakes on the Astral Plane - Soon in a dungeon near you',
-    'You are the one millionth visitor to this place!  Please wait 200 turns for your wand of wishing.',
-    'Warning, Exploding runes!',
-    'If you can read these words then you are not only a nerd but probably dead.',
-    'The cake is a lie',
-];
+// ---------------------------------------------------------------------------
+// Embedded dlb data files (makedefs-built, xcrypt'd + underscore-padded).
+// We reproduce the C side's byte-offset line selection (rumors.c get_rnd_line)
+// against the *exact* bytes the recorder read, so rumor/engrave lengths and
+// contents — and therefore the rn2() call sequence in wipeout_text — match C.
+// ---------------------------------------------------------------------------
+const RUMORS_DATA = decodeBase64(RUMORS_B64);
+const ENGRAVE_DATA = decodeBase64(ENGRAVE_B64);
 
-const FALSE_RUMOR_SIZE = 25762;
-const TRUE_RUMOR_SIZE = 24924;
-const KNOWN_TRUE_RUMORS = new Map([
-    [3453, 'Elven cloaks cannot rust.'],
-    [19566, 'They say that tengu never steal gold although they would be good at it.'],
-]);
-const KNOWN_FALSE_RUMORS = new Map([
-    [5789, 'If you want to feel great, you must eat something real big.'],
-    [7767, 'Never mind the monsters hitting you:  they just replace the charwomen.'],
-    [15312, 'They say that building a dungeon is a team effort.'],
-]);
+function decodeBase64(b64) {
+    if (typeof Buffer !== 'undefined') return Buffer.from(b64, 'base64');
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+}
+
+// C ref: hacklib.c xcrypt() — symmetric bit-rotation cipher used for data files.
+function xcrypt(str) {
+    let out = '';
+    let bitmask = 1;
+    for (let i = 0; i < str.length; i++) {
+        let q = str.charCodeAt(i);
+        if (q & (32 | 64)) q ^= bitmask;
+        out += String.fromCharCode(q);
+        bitmask <<= 1;
+        if (bitmask >= 32) bitmask = 1;
+    }
+    return out;
+}
+
+// C ref: rumors.c unpadline() — strip trailing newline then '_' padding.
+function unpadline(line) {
+    let p = line.length;
+    if (p > 0 && line[p - 1] === '\n') --p;
+    while (p > 0 && line[p - 1] === '_') --p;
+    return line.slice(0, p);
+}
+
+// Mimic dlb_fgets: read bytes (as a 1:1 char string) from `pos`, stopping after
+// the first '\n' (inclusive) or after BUFSZ-1 chars, or at EOF.
+function dlb_fgets(data, pos) {
+    let s = '';
+    let i = pos;
+    while (i < data.length && s.length < BUFSZ - 1) {
+        const c = String.fromCharCode(data[i]);
+        s += c;
+        i++;
+        if (c === '\n') break;
+    }
+    return { line: s, next: i };
+}
+
+// C ref: rumors.c get_rnd_line(). Position randomly inside [startpos,endpos),
+// land mid-line, read the rest of that line, then use the *next* line (wrapping
+// to startpos at EOF/endpos). Lines are xcrypt'd and underscore-padded.
+function get_rnd_line(data, startpos, endpos, padlength) {
+    if (!endpos) endpos = data.length;
+    const filechunksize = endpos - startpos;
+    if (filechunksize < 1) return '';
+
+    let bufstr = '';
+    let next = startpos;
+    for (let trylimit = 10; trylimit > 0; --trylimit) {
+        const chunkoffset = rn2(filechunksize);
+        ({ line: bufstr, next } = dlb_fgets(data, startpos + chunkoffset));
+        if (!padlength || bufstr.length <= padlength + 1) break;
+    }
+
+    // use next line; reaching endpos is treated as end-of-file
+    if (next >= endpos) {
+        ({ line: bufstr, next } = dlb_fgets(data, startpos));
+    } else {
+        const r = dlb_fgets(data, next);
+        if (r.line.length === 0) {
+            ({ line: bufstr, next } = dlb_fgets(data, startpos));
+        } else {
+            ({ line: bufstr, next } = r);
+        }
+    }
+
+    const nl = bufstr.indexOf('\n');
+    if (nl >= 0) bufstr = bufstr.slice(0, nl);
+    bufstr = xcrypt(bufstr);
+    if (padlength) bufstr = unpadline(bufstr);
+    return bufstr;
+}
+
+// C ref: rumors.c init_rumors() — parse the header line for the true/false
+// rumor file regions. Memoized; mirrors gt.true_rumor_* / gf.false_rumor_*.
+let _rumorMeta = null;
+function init_rumors() {
+    if (_rumorMeta) return _rumorMeta;
+    // line 1: "don't edit" comment; line 2: header
+    const { next: p1 } = dlb_fgets(RUMORS_DATA, 0);
+    const { line: header } = dlb_fgets(RUMORS_DATA, p1);
+    // "%d,%ld,%lx;%d,%ld,%lx;0,0,%lx" — true_count,true_size,true_start; ...
+    const m = header.match(
+        /^(\d+),(\d+),([0-9a-fA-F]+);(\d+),(\d+),([0-9a-fA-F]+);0,0,([0-9a-fA-F]+)/,
+    );
+    const true_size = parseInt(m[2], 10);
+    const true_start = parseInt(m[3], 16);
+    const false_size = parseInt(m[5], 10);
+    const false_start = parseInt(m[6], 16);
+    _rumorMeta = {
+        true_rumor_size: true_size,
+        true_rumor_start: true_start,
+        true_rumor_end: true_start + true_size,
+        false_rumor_size: false_size,
+        false_rumor_start: false_start,
+        false_rumor_end: false_start + false_size,
+    };
+    return _rumorMeta;
+}
 
 const rubouts = [
     ['A', '^'],
@@ -120,69 +176,48 @@ const rubouts = [
     ['8', '3o'],
 ];
 
-function padded_line_length(text, padlength = MD_PAD_RUMORS) {
-    const len = text.length + 1; // generated files include a newline
-    return len <= padlength ? padlength : len;
+// C ref: rumors.c get_rnd_text() — pick a random line from a whole data file
+// (no true/false split). Skips the leading "don't edit" comment line.
+function get_rnd_text(data, padlength) {
+    const { next: starttxt } = dlb_fgets(data, 0); // skip comment line
+    return get_rnd_line(data, starttxt, 0, padlength);
 }
 
-function get_rnd_line(lines, rng, padlength = MD_PAD_RUMORS) {
-    const lengths = lines.map((line) => padded_line_length(line, padlength));
-    const filechunksize = lengths.reduce((sum, len) => sum + len, 0);
-    if (filechunksize < 1) return '';
-
-    let idx = 0;
-    let offset_in_line = 0;
-    for (let trylimit = 10; trylimit > 0; --trylimit) {
-        let chunkoffset = rng(filechunksize);
-        let pos = 0;
-        for (idx = 0; idx < lengths.length; idx++) {
-            if (chunkoffset < pos + lengths[idx]) break;
-            pos += lengths[idx];
-        }
-        if (idx >= lengths.length) idx = lengths.length - 1;
-        offset_in_line = chunkoffset - pos;
-        if (!padlength || lengths[idx] - offset_in_line <= padlength + 1)
-            break;
-    }
-
-    const next = (idx + 1 >= lines.length) ? 0 : idx + 1;
-    return lines[next];
-}
-
-function get_rnd_text_engrave() {
-    return get_rnd_line(ENGRAVE_TEXTS, rn2, MD_PAD_RUMORS);
-}
-
-function synthetic_rumor(offset, size) {
-    const len = 20 + (offset % 41);
-    return 'x'.repeat(Math.min(len, size ? 60 : len));
-}
-
+// C ref: rumors.c getrumor(). truth: 1=true, -1=false, 0=either.
 function getrumor(truth, exclude_cookie) {
     const cookie_marker = '[cookie] ';
+    const marklen = cookie_marker.length;
+    const meta = init_rumors();
+
     let rumor = '';
     let count = 0;
-
     do {
+        rumor = '';
+        // input: 1 0 -1 ; rn2+1 => 2/1=T, 1/0=T/F, 0/-1=F/F
         const adjtruth = truth + rn2(2);
-        if (adjtruth > 0) {
-            const offset = rn2(TRUE_RUMOR_SIZE);
-            rumor = KNOWN_TRUE_RUMORS.get(offset) ?? synthetic_rumor(offset, TRUE_RUMOR_SIZE);
+        let beginning;
+        let ending;
+        if (adjtruth >= 1) {
+            beginning = meta.true_rumor_start;
+            ending = meta.true_rumor_end;
         } else {
-            const offset = rn2(FALSE_RUMOR_SIZE);
-            rumor = KNOWN_FALSE_RUMORS.get(offset) ?? synthetic_rumor(offset, FALSE_RUMOR_SIZE);
+            beginning = meta.false_rumor_start;
+            ending = meta.false_rumor_end;
         }
-    } while (count++ < 50 && exclude_cookie && rumor.startsWith(cookie_marker));
+        rumor = get_rnd_line(RUMORS_DATA, beginning, ending, MD_PAD_RUMORS);
+    } while (count++ < 50 && exclude_cookie
+             && rumor.slice(0, marklen) === cookie_marker);
 
-    if (!exclude_cookie && rumor.startsWith(cookie_marker))
-        rumor = rumor.slice(cookie_marker.length);
+    if (!exclude_cookie && rumor.slice(0, marklen) === cookie_marker)
+        rumor = rumor.slice(marklen);
     return rumor;
 }
 
 export function random_engraving() {
+    // a random engraving may come from the "rumors" file, or the "engrave" file
     let pristine = '';
     if (!rn2(4) || !(pristine = getrumor(0, true)) || !pristine)
-        pristine = get_rnd_text_engrave();
+        pristine = get_rnd_text(ENGRAVE_DATA, MD_PAD_RUMORS);
 
     const text = wipeout_text(pristine, Math.trunc(pristine.length / 4), 0);
     return { text, pristine };

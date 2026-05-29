@@ -2,9 +2,15 @@
 // C ref: makemon.c - rndmonst_adj, rndmonst, makemon, newmonhp.
 
 import { game } from './gstate.js';
-import { rn2, rnd } from './rng.js';
+import { rn2, rnd, d } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { DART, mksobj } from './mkobj.js';
+
+// Object type indices (mkobj.js OBJECT_DATA), needed by m_initweap.
+const ORCISH_DAGGER = 36;
+// SCIMITAR (50) is the alternative in C's ORCISH_DAGGER/SCIMITAR ternary, but
+// PM_GOBLIN always short-circuits to ORCISH_DAGGER, so it is never reached here.
+const ORCISH_HELM = 90;
 import {
     A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL,
     AM_NONE, AM_CHAOTIC, AM_NEUTRAL, AM_LAWFUL,
@@ -158,58 +164,67 @@ function next_ident() {
     return rnd(2);
 }
 
-function rne(x) {
-    const utmp = (game.u?.ulevel || 1) < 15 ? 5 : Math.trunc((game.u?.ulevel || 1) / 3);
-    let tmp = 1;
-    while (tmp < utmp && !rn2(x))
-        tmp++;
-    return tmp;
+// C ref: mongets() (makemon.c:2181). Creates obj via mksobj and gives it to
+// mtmp. We only need the RNG-consuming mksobj() call; the post-creation
+// blessing/spe tweaks in C don't consume RNG for the low-level cases here.
+function mongets(_mtmp, otyp) {
+    if (!otyp) return;
+    mksobj(otyp, true, false);
 }
 
-function blessorcurse(chance) {
-    if (!rn2(chance))
-        rn2(2);
+function m_initthrow(_mtmp, otyp, oquan) {
+    mksobj(otyp, true, false);
+    rn2(oquan); // rn1(oquan, 3) — quantity (the +3 base consumes no RNG)
 }
 
-function mksobj_weapon({ multigen = false, poisonable = false } = {}) {
-    next_ident();
-    if (multigen)
-        rn2(6); // rn1(6, 6), quantity is overwritten by m_initthrow().
-    if (!rn2(11)) {
-        rne(3);
-        rn2(2);
-    } else if (!rn2(10)) {
-        rne(3);
-    } else {
-        blessorcurse(10);
-    }
-    if (poisonable)
-        rn2(100);
+// C ref: adj_lev() (makemon.c:2016). Adjusts a monster's level for the
+// current depth and player level. The slice has no Wizard of Yendor / special
+// (>49) monsters, so only the general path is needed.
+function adj_lev(ptr) {
+    let tmp = ptr.mlevel;
+    if (tmp > 49) return 50;
+
+    let tmp2 = level_difficulty() - tmp;
+    if (tmp2 < 0)
+        tmp--;
+    else
+        tmp += Math.trunc(tmp2 / 5);
+
+    tmp2 = (game.u?.ulevel || 1) - ptr.mlevel;
+    if (tmp2 > 0)
+        tmp += Math.trunc(tmp2 / 4);
+
+    let upper = Math.trunc((3 * ptr.mlevel) / 2);
+    if (upper > 49) upper = 49;
+    return tmp > upper ? upper : (tmp > 0 ? tmp : 0);
 }
 
-function mongets_weapon() {
-    mksobj_weapon();
-}
-
-function m_initthrow(_otyp, oquan) {
-    const was_in_mklev = game.in_mklev;
-    game.in_mklev = true;
-    try {
-        mksobj(_otyp, true, false);
-    } finally {
-        game.in_mklev = was_in_mklev;
-    }
-    rn2(oquan); // rn1(oquan, 3)
-}
-
-export function newmonhp(ptr) {
+// C ref: newmonhp() (makemon.c:1012). Sets mon.m_lev / mhp / mhpmax and
+// returns mhp. Only the general (non-golem, non-rider, non-special, non-dragon)
+// paths are reachable by the low-level slice.
+export function newmonhp(mon) {
+    // Backward-compatible: callers may pass a bare permonst (ptr) instead of a
+    // monst; in that case operate on a scratch object.
+    const isMon = mon && mon.data !== undefined;
+    const ptr = isMon ? mon.data : mon;
+    const out = isMon ? mon : {};
     if (!ptr) return 0;
-    if (ptr.mlevel <= 0) return rnd(4);
 
-    let hp = 0;
-    for (let i = 0; i < ptr.mlevel; i++)
-        hp += rnd(8);
-    return hp;
+    out.m_lev = adj_lev(ptr);
+    let basehp;
+    if (!out.m_lev) {
+        basehp = 1;
+        out.mhpmax = out.mhp = rnd(4);
+    } else {
+        basehp = out.m_lev;
+        out.mhpmax = out.mhp = d(basehp, 8);
+    }
+
+    if (out.mhpmax === basehp) {
+        out.mhpmax += 1;
+        out.mhp = out.mhpmax;
+    }
+    return out.mhp;
 }
 
 function m_initinv(ptr) {
@@ -217,25 +232,52 @@ function m_initinv(ptr) {
     rn2(100);
 }
 
+// C ref: m_initweap() (makemon.c:160). Only the cases reachable by the
+// low-level mons[] slice (S_KOBOLD, S_ORC) plus the general default tail are
+// ported; the slice contains no giants/mercenaries/elves/etc.
 function m_initweap(mtmp) {
     const ptr = mtmp?.data;
     if (!ptr || Is_rogue_level(game.u?.uz)) return;
 
     switch (ptr.mlet) {
-    case 'k': // S_KOBOLD
-        if (!rn2(4))
-            m_initthrow(DART, 12);
+    case 'o': { // S_ORC
+        if (rn2(2)) // makemon.c:411
+            mongets(mtmp, ORCISH_HELM);
+        // makemon.c:413 switch selector: only PM_ORC_CAPTAIN consumes rn2(2);
+        // the slice's only orc is PM_GOBLIN, so the selector is just mm and we
+        // fall through to the default case (makemon.c:439).
+        // default (makemon.c:440): PM_GOBLIN short-circuits the inner rn2(2)
+        // in `(mm == PM_GOBLIN || rn2(2) == 0)`, so it is never evaluated.
+        if (rn2(2)) // mm != PM_ORC_SHAMAN && rn2(2)
+            mongets(mtmp, ORCISH_DAGGER); // mm == PM_GOBLIN -> ORCISH_DAGGER
         break;
-    case 'o': // S_ORC; current low-level table only includes goblin.
-        if (rn2(2))
-            mongets_weapon();
+    }
+    case 'k': // S_KOBOLD (makemon.c:469)
+        if (!rn2(4))
+            m_initthrow(mtmp, DART, 12);
         break;
     default:
         break;
     }
 
+    // General tail (makemon.c:570). rnd_offensive_item() consumes no RNG before
+    // mongets() is reached for the level-0 slice monsters (m_lev 0 means the
+    // guard `m_lev > rn2(75)` is always false, so mongets is never called).
     if (mtmp.m_lev > rn2(75))
-        mongets_weapon();
+        mongets(mtmp, rnd_offensive_item(mtmp));
+}
+
+// C ref: rnd_offensive_item() (muse.c:2035). For the low-level slice this is
+// only reached when m_lev > rn2(75), which never happens for m_lev 0; provide
+// the RNG-faithful selector anyway. difficulty<4 here so the switch is rn2(8).
+function rnd_offensive_item(mtmp) {
+    const ptr = mtmp?.data;
+    const difficulty = ptr?.difficulty ?? 0;
+    // is_animal / mindless monsters return 0 with no RNG; the slice's orc &
+    // kobold are neither, so this branch is the relevant one.
+    if (difficulty > 7 && !rn2(35)) return /*WAN_DEATH*/ 432;
+    rn2(9 - (difficulty < 4 ? 1 : 0) + 4 * (difficulty > 6 ? 1 : 0));
+    return 0; // exact item irrelevant for parity at this difficulty
 }
 
 export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
@@ -244,8 +286,8 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
 
     const mtmp = { data: ptr, mx: x, my: y, mmflags };
     mtmp.m_id = next_ident();
-    mtmp.m_lev = ptr.mlevel;
-    mtmp.mhp = newmonhp(ptr);
+    // newmonhp() sets mtmp.m_lev (= adj_lev(ptr)), mhp and mhpmax.
+    newmonhp(mtmp);
     if (ptr.gender === 'random')
         mtmp.female = rn2(2);
 

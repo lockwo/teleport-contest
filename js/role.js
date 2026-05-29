@@ -723,3 +723,39 @@ export function first_valid_align(rolenum, racenum, gendnum) {
             return i;
     return ROLE_NONE;
 }
+
+// C ref: role.c tty_player_selection() pick4u=='n' (manual menu) branches —
+// each facet block counts the valid options with ok_X() (falling back to
+// validX() when none are ok) and only shows a menu when the count is > 1; a
+// single-valid facet is assigned directly (no menu, no keystroke, no RNG).
+// These helpers return {n, k}: n = number of valid choices, k = last valid
+// index (the forced value when n == 1), mirroring the C loops exactly.
+export function count_ok_race(rolenum, gendnum, alignnum) {
+    let n = 0, k = 0;
+    for (let i = 0; i < races.length; i++)
+        if (ok_race(rolenum, i, gendnum, alignnum)) { n++; k = i; }
+    if (n === 0)
+        for (let i = 0; i < races.length; i++)
+            if (validrace(rolenum, i)) { n++; k = i; }
+    return { n, k };
+}
+
+export function count_ok_gend(rolenum, racenum, alignnum) {
+    let n = 0, k = 0;
+    for (let i = 0; i < ROLE_GENDERS; i++)
+        if (ok_gend(rolenum, racenum, i, alignnum)) { n++; k = i; }
+    if (n === 0)
+        for (let i = 0; i < ROLE_GENDERS; i++)
+            if (validgend(rolenum, racenum, i)) { n++; k = i; }
+    return { n, k };
+}
+
+export function count_ok_align(rolenum, racenum, gendnum) {
+    let n = 0, k = 0;
+    for (let i = 0; i < ROLE_ALIGNS; i++)
+        if (ok_align(rolenum, racenum, gendnum, i)) { n++; k = i; }
+    if (n === 0)
+        for (let i = 0; i < ROLE_ALIGNS; i++)
+            if (validalign(rolenum, racenum, i)) { n++; k = i; }
+    return { n, k };
+}
