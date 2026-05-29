@@ -10,8 +10,10 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { pline, topl_more } from './display.js';
+import { pline, topl_more, update_topl } from './display.js';
 import { NO_COLOR } from './terminal.js';
+import { pluslvl, losexp } from './exper.js';
+import { MAXULEV } from './const.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -368,11 +370,44 @@ async function dojump() {
     return 0;
 }
 
-// C ref: wizcmds.c wiz_level_change().  getlin a target experience level.
-// The level-set itself (pluslvl/losexp) is RNG/state heavy; we render the
-// numeric getlin prompt + echo and stop before applying.
+// C ref: wizcmds.c wiz_level_change().  getlin a target experience level, then
+// drive pluslvl()/losexp() to reach it.  Each level gain prints "You feel more
+// experienced." + "Welcome to experience level N." (and any adjabil intrinsic
+// message); the topline accumulates two messages per line and fires --More--
+// when the next message won't fit (display.js update_topl).  pluslvl/losexp
+// roll the per-level newhp()/newpw() RNG.
 async function wiz_level_change() {
-    await getlin_top('To what experience level do you want to be set?');
+    const buf = mungspaces(await getlin_top('To what experience level do you want to be set?'));
+    if (buf === '' || buf[0] === '\x1b') return 0;
+    const m = buf.match(/^(-?\d+)/);
+    if (!m) { await pline('Never mind.'); return 0; }
+    let newlevel = parseInt(m[1], 10);
+    const u = game.u;
+
+    // Reset the topline-accumulation state for this command (toplin starts
+    // empty: the first message replaces the line without a --More--).
+    game._toplin = 0;
+
+    if (newlevel === (u.ulevel || 0)) {
+        await pline('You are already that experienced.');
+    } else if (newlevel < (u.ulevel || 0)) {
+        if ((u.ulevel || 0) === 1) {
+            await pline('You are already as inexperienced as you can get.');
+            return 0;
+        }
+        if (newlevel < 1) newlevel = 1;
+        while ((u.ulevel || 0) > newlevel)
+            await losexp('#levelchange', update_topl);
+    } else {
+        if ((u.ulevel || 0) >= MAXULEV) {
+            await pline('You are already as experienced as you can get.');
+            return 0;
+        }
+        if (newlevel > MAXULEV) newlevel = MAXULEV;
+        while ((u.ulevel || 0) < newlevel)
+            await pluslvl(false, update_topl);
+    }
+    u.ulevelmax = u.ulevel;
     return 0;
 }
 
