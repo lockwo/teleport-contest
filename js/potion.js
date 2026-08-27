@@ -17,17 +17,18 @@ import { getobj, makeknown, useup, trycall, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
          makeplural, remove_worn_item, is_plural, pair_of,
-         learn_unseen_invent } from './invent.js';
+         learn_unseen_invent, splitobj } from './invent.js';
 import { surface, hliquid } from './dungeon.js';
 import { heal_legs, water_damage } from './trap.js';
 import { monster_detect } from './hack.js';
+import { object_detect } from './detect.js';
 import { DEADMONSTER } from './mon.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { more_experienced, pluslvl, newuexp } from './exper.js';
 import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          POT_HEALING, POT_EXTRA_HEALING, POT_FRUIT_JUICE, POT_BOOZE,
          POT_SICKNESS, POT_WATER, POT_SPEED, POT_GAIN_LEVEL, POT_GAIN_ENERGY,
-         objects, COIN_CLASS, RING_CLASS, mkobj_at, CORPSE } from './mkobj.js';
+         objects, COIN_CLASS, RING_CLASS, mkobj_at, CORPSE, next_ident } from './mkobj.js';
 import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED } from './const.js';
 import { fruitname } from './objnam.js';
@@ -1258,12 +1259,14 @@ async function peffect_monster_detection(otmp) {
 // C ref: prop.h TIMEOUT — the low 24 bits of a property word.
 const TIMEOUT_MASK = 0x00ffffff;
 
-// C ref: potion.c peffect_object_detection().  object_detect() is not modelled;
-// C returns 1 ("nothing detected") when the level holds no interesting object,
-// and 0 otherwise after exercising Wisdom.
-async function peffect_object_detection(_otmp) {
+// C ref: potion.c peffect_object_detection() -> detect.c object_detect().
+// The detector maps every visible object and leaves the same topline/map
+// framing as the scroll and crystal-ball paths; the old stub only exercised
+// Wisdom and left the quaff prompt on screen.
+async function peffect_object_detection(otmp) {
+    const result = await object_detect(otmp, 0);
     exercise(A_WIS, true);
-    return 0;
+    return result;
 }
 
 // C ref: potion.c peffects — dispatch by potion type; returns -1 to signal
@@ -1436,9 +1439,12 @@ export async function dodrink() {
     // renumbers inventory, so the guard has to exist for it to stay that way.
     if (otmp.owornmask) {
         if ((otmp.quan || 1) > 1) {
-            // splitobj() is invent.js-private; the quan>1 worn case needs a
-            // stack split that only that module can do, so this arm is left to
-            // the completeness pass (see the deferred list).
+            // C: splitobj(otmp, 1L) mints a new object id before the occupant
+            // roll, while leaving the remainder of the worn stack intact.
+            // splitobj() mirrors the list bookkeeping but intentionally leaves
+            // the RNG-bearing next_ident() to each caller.
+            next_ident();
+            otmp = splitobj(otmp, 1);
             otmp.owornmask = 0;
         } else {
             await remove_worn_item(otmp, false);

@@ -5175,8 +5175,15 @@ function can_track(ptr) { return haseyes(ptr); }
 // invisible (a generic bite instead of AD_SITM/AT_MAGC/AT_SPIT).
 function mon_attacks(mdat) {
     if (!mdat) return [];
-    // resolve by NAME (mhitm.js permonst() convention) — dog.js pet records
-    // carry a non-makemon pmidx (pony=102 == gray unicorn).
+    // Prefer the live pmidx when it is a generated mons[] record.  Names are
+    // not unique: the animal and human werejackal forms both print as
+    // "werejackal", but their attack tables are bite versus weapon.  Falling
+    // back to NAME keeps synthetic pet records working when their pmidx is
+    // only a pet-type tag.
+    if (Number.isInteger(mdat.pmidx)) {
+        const direct = mattk_of(mdat);
+        if (direct.length) return direct;
+    }
     const p = _name_to_pmidx_cf(mdat.name);
     const rec = (p >= 0) ? _monster_by_pmidx_cf(p) : null;
     return mattk_of(rec || mdat);
@@ -5197,6 +5204,13 @@ function mon_attacks(mdat) {
 // adjacent hit declines further RNG (clean divergence, never a silent desync).
 export async function mattacku(mtmp, mdat) {
     const u = game.u;
+
+    // C ref: mhitu.c:510-513 — a nearby monster attack interrupts the hero's
+    // multi-turn action and clears any canned command sequence.
+    if (mdistu(mtmp) <= 3) {
+        const { nomul } = await import('./hack.js');
+        nomul(0);
+    }
 
     // calc_mattacku_vars: range2/foundyou from the APPARENT position (mux/muy).
     const mux = mtmp.mux ?? mtmp.mx, muy = mtmp.muy ?? mtmp.my;
@@ -5243,25 +5257,23 @@ export async function mattacku(mtmp, mdat) {
     if (mtmp.mtrapped) tmp -= 2;
     if (tmp <= 0) tmp = 1;
 
-    // C ref mhitu.c:718 — a non-cancelled, non-shapechanged demon rolls its
-    // "summon more demons" gate EVERY combat turn (summonmu -> is_demon), even
-    // when the roll doesn't fire; this always consumes an rn2 before the
-    // attack loop, shifting every later roll in the turn if skipped (seed0006
-    // water demon step-103 bite dice).  mtmp.cham is never populated by this
-    // port (no chameleon-shapechanger monster reaches combat here), so treat
-    // it as always NON_PM (-1, "not currently shapechanged").
+    // C ref mhitu.c:718 — a non-cancelled, non-shapechanged demon or were
+    // creature runs summonmu before the attack loop.  The helper owns both
+    // the demon gate and the were form/summoning gates; each consumes RNG even
+    // when no creature is actually summoned.  mtmp.cham is never populated by
+    // this port (no chameleon-shapechanger monster reaches combat here), so
+    // treat it as always NON_PM (-1, "not currently shapechanged").
     const cham = mtmp.cham ?? -1;
-    if (cham === -1 && !mtmp.mcan && !range2 && is_demon(mdat)) {
-        // summonmu(mtmp): the two demon species exempted from summoning
-        // (Balrog / incubus-succubus "amorous demon") aren't in the melee
-        // sessions this port drives, so only the roll itself is needed here.
-        const inhell = Inhell();
-        if (!rn2(inhell ? 10 : 16)) {
-            // msummon(mtmp): rare demon-summon consequence, not modeled —
-            // an honest divergence rather than a silent RNG desync.
-        }
-        // is_were(mdat) branch not modeled: no were-creature reaches
-        // mattacku in this port yet, so it would be dead code.
+    if (cham === -1 && !mtmp.mcan && !range2
+        && (is_demon(mdat) || is_were_flag(permonst_of(mdat)))) {
+        const { summonmu } = await import('./mhitu.js');
+        const alreadyFleeing = !!mtmp.mflee;
+        await summonmu(mtmp, canspotmon(mtmp));
+        // mhitu.c returns early when summonmu makes a monster flee for the
+        // first time; do the same before resolving this turn's attacks.
+        if (mtmp.mflee && !alreadyFleeing) return 0;
+        // A were's form may change in summonmu(); use the live data below.
+        mdat = mtmp.data || mdat;
     }
 
     // C ref mhitu.c:758 — unlike defensive items, a monster won't both use an

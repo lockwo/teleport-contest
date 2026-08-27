@@ -3240,6 +3240,9 @@ export async function normal_shape(mon) {
 // new_were() is this file's own (private) port, and normal_shape is its only
 // new caller; a thin alias keeps that function untouched.
 async function new_were_pub(mon) { await new_were(mon); }
+// mhitu.c invokes the same form swap from summonmu(); export a lazy-cycle-safe
+// wrapper rather than duplicating were.c's message/healing/armor behavior.
+export async function new_were_for_mhitu(mon) { await new_were(mon); }
 
 // ── mon.c:4471 alloc_itermonarr() ───────────────────────────────────────────
 // C keeps one reusable struct monst *[] between monster-movement loops,

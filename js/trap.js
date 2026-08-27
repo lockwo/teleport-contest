@@ -1144,6 +1144,12 @@ async function trapeffect_sqky_board(trap, trflags) {
     seetrap(trap);
     // Deaf is never set for the contest hero, so C's "vibrates" arm is dead.
     await pline(`A board beneath you squeaks ${trapnote(trap, false)} loudly.`);
+    // C's pline leaves toplin == TOPLINE_NEED_MORE.  The ambient sound pass
+    // can run in the same turn; when its text does not fit, update_topl() must
+    // page this board message before replacing it with the sound.  Most of
+    // the port's pline callers use the deferred soft marker, but this trap is
+    // a recorded case where the real paging boundary is observable.
+    game._toplin = 1;
     // cmd.js's copy, not monmove.js's: only that one carries C's wake_msg()
     // ("<Monster> wakes up.") which lands on the topline after the squeak.
     const { wake_nearby } = await import('./cmd.js');
@@ -1222,7 +1228,12 @@ async function trapeffect_web(trap, trflags) {
     if (webmsgok) {
         const verbbuf = (forcetrap || viasitting)
             ? 'are caught by' : `${u_locomotion('stumble')} into`;
-        await pline(`You ${verbbuf} ${a_your(trap.madeby_u)} spider web!`);
+        // C's pline() reaches topl.c:update_topl(), so this must append to the
+        // look_here() message from spoteffects() when both happen on one move.
+        // The raw pline shim replaces its pending text, which suppresses the
+        // floor-pile announcement and keeps a following monster hit under the
+        // CO-8 paging threshold.
+        await update_topl(`You ${verbbuf} ${a_your(trap.madeby_u)} spider web!`);
     }
     set_utrap(1, TT_WEB); /* time is adjusted below */
     // ACURR(A_STR): acurr_eff returns the C-encoded strength (3..18, then

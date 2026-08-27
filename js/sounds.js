@@ -348,7 +348,10 @@ export async function yelp(mtmp) {
     const { Monnam } = await import('./uhitm.js');
     const ptr = mtmp?.data;
     const canmove = (mtmp.mcanmove == null) ? 1 : mtmp.mcanmove;
-    if (mtmp.msleeping || !canmove) return;
+    // C ref: sounds.c yelp() checks helplessness, not msleeping.  Pet abuse is
+    // called before the later wakeup(mon, TRUE), so a sleeping pet still yelps
+    // when the abuse roll selects that sound.
+    if (!canmove) return;
     const ms = msound_of(ptr) ?? MS_SILENT;
     if (!ms) return;                                  // C: `!mtmp->data->msound`
     let verb = null;

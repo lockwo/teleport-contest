@@ -234,6 +234,11 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
             await poisontell(typ, true);
     }
     if ((u.uhp | 0) < 1) {
+        // C ref: hack.c:4287 losehp() — urgent_pline("You die...") runs
+        // before done(), even when the poison call already left a message on
+        // the topline.  update_topl() pages that prior message first, so the
+        // death line gets its own input boundary like C's urgent_pline().
+        await update_topl('You die...');
         // C ref: attrib.c:405 — done(strstri(pkiller,"poison") ? DIED : POISONING).
         const { done, DIED } = await import('./end.js');
         game._killer_name = pkiller;

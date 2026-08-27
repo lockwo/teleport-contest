@@ -355,8 +355,10 @@ function d_fobj() {
     return (game.level?.objects || []).filter((o) => o.where === 'floor');
 }
 function d_objs_at(x, y) {
+    // mkobj.place_object() keeps the flat array in C-chain order reversed:
+    // the last matching entry is nexthere's head (the visible pile top).
     return (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y);
+        (o) => o.where === 'floor' && o.ox === x && o.oy === y).reverse();
 }
 function d_OBJ_AT(x, y) { return d_objs_at(x, y).length > 0; }
 function d_buriedobjs() {
@@ -955,6 +957,16 @@ export async function object_detect(detector, oclass) {
     }
 
     await cls();
+    // C's cls() clears the physical tty while object_detect() paints its
+    // temporary object-only map.  The live renderer normally rebuilds every
+    // remembered terrain cell, so mark this scoped mode and clear stale dirty
+    // bits before the detection glyphs are installed below.
+    game._object_detect_map = true;
+    for (let x = 1; x < COLNO; x++)
+        for (let y = 0; y < ROWNO; y++) {
+            const loc = game.level?.at(x, y);
+            if (loc) loc.gnew = 0;
+        }
     unconstrain_map();
 
     /* map all buried objects first */
@@ -1023,6 +1035,9 @@ export async function object_detect(detector, oclass) {
     if (!ct) await flush_screen(1);                 /* display_nhwindow(WIN_MAP, TRUE) */
     else await browse_map(ter_typ, 'object');
 
+    // The browse frames above use the object-only buffer.  C then restores
+    // the ordinary dungeon map before returning to the command loop.
+    game._object_detect_map = false;
     await map_redisplay();
     return 0;
 }

@@ -45,7 +45,8 @@ import { objects as OBJECTS } from './mkobj.js';
 import { acurr_eff, exercise } from './attrib.js';
 import { newsym, map_invisible, update_topl, canseemon_shared } from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
-import { is_home_elemental, monster_by_pmidx } from './makemon.js';
+import { is_home_elemental, monster_by_pmidx, name_to_pmidx,
+    enexto_spawn, makemon } from './makemon.js';
 import { DEADMONSTER } from './mon.js';
 import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
@@ -702,9 +703,14 @@ export async function summonmu(mtmp, youseeit) {
                 const { Monnam } = await import('./uhitm.js');
                 await emitU(`${Monnam(mtmp)} summons help!`);
             }
-            // were_summon(): makemon() of 1..5 compatible critters, each with
-            // its own placement rolls.  Not carried, so stop here rather than
-            // invent them; the "But none comes." tail depends on the count.
+            const { total, visible } = await were_summon_u(mdat, youseeit, prot);
+            if (youseeit) {
+                if (total > 0) {
+                    if (visible === 0) await emitU('You feel hemmed in.');
+                } else {
+                    await emitU('But none comes.');
+                }
+            }
         }
         return;
     }
@@ -717,7 +723,54 @@ function Inhell() {
 // (its trailing monflee rn1(9,2) only fires with context.mon_moving set and a
 // scary square adjacent), so a were that changes form here keeps its stream.
 async function new_were_u(mtmp) {
-    void mtmp;
+    // mon.js owns the complete were.c form swap (message, healing, armor,
+    // and the scary-square flee check); call it lazily to avoid a module-init
+    // cycle while retaining mhitu.c's async call shape.
+    const { new_were_for_mhitu } = await import('./mon.js');
+    await new_were_for_mhitu(mtmp);
+}
+
+// C ref: were.c:142 were_summon().  A helper is created at a square selected
+// by enexto_core around the hero; makemon() then consumes the normal identity,
+// HP, gender, inventory, and saddle draws for that species.  The caller passes
+// the post-form-change data so the animal and human forms share one table.
+async function were_summon_u(mdat, youseeit, blocked) {
+    if (blocked) return { total: 0, visible: 0 };
+    const pm = mdat?.pmidx;
+    // The generated mons table gives the human forms the same display name
+    // as their animal counterparts, so use both verified pmidx values.
+    const rat = pm === 91 || pm === 261;
+    const jackal = pm === 15 || pm === 262;
+    const wolf = pm === 21 || pm === 263;
+    const names = rat ? ['sewer rat', 'giant rat', 'rabid rat']
+        : jackal ? ['jackal', 'coyote', 'fox']
+            : wolf ? ['wolf', 'warg', 'winter wolf'] : null;
+    let total = 0, visible = 0;
+    for (let i = rnd(5); i > 0; i--) {
+        if (!names) continue;
+        let idx;
+        if (rat) idx = rn2(3) ? 0 : (rn2(3) ? 1 : 2);
+        else if (jackal) idx = rn2(7) ? 0 : (rn2(3) ? 1 : 2);
+        else idx = rn2(5) ? 0 : (rn2(2) ? 1 : 2);
+        const ptr = monster_by_pmidx(name_to_pmidx(names[idx]));
+        if (!ptr) continue;
+        const spot = enexto_spawn(game.u?.ux, game.u?.uy, ptr);
+        if (!spot) continue;
+        const mon = makemon(ptr, spot.x, spot.y, 0);
+        if (!mon) continue;
+        // makemon() links the record but does not redraw its square; C's
+        // place_monster() path leaves the new helper visible immediately.
+        newsym(spot.x, spot.y);
+        if (youseeit && canseemon_shared(mon)
+            && Math.max(Math.abs(spot.x - (game.u?.ux ?? 0)),
+                                 Math.abs(spot.y - (game.u?.uy ?? 0))) <= 1) {
+            const article = /^[aeiou]/i.test(ptr.name || '') ? 'An' : 'A';
+            await emitU(`${article} ${ptr.name} suddenly appears next to you!`);
+        }
+        total++;
+        if (canseemon_shared(mon)) visible++;
+    }
+    return { total, visible };
 }
 
 // ═══ mhitu.c:1273 gulp_blnd_check ═══════════════════════════════════════════

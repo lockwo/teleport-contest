@@ -783,6 +783,10 @@ async function flip_through_book(obj) {
     // does not, so use the observation-free accessor.
     await _display.pline(
         `You flip through the pages of the ${_invent.cxname_singular(obj)}.`);
+    // C's second You()/pline() call first acknowledges the previous topline's
+    // --More-- prompt. Keep that wait inside the command so invalid keys are
+    // consumed by more() and the follow-up text appears only after dismissal.
+    await _display.topl_more();
     if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
         // Deaf is never set for these heroes.
         await _display.pline(`You hear the pages make an unpleasant ${
