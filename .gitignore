@@ -1,2 +1,27 @@
 node_modules/
 .cache/
+
+# Claude Code local session metadata (per-developer)
+.claude/
+
+# Local-only developer tooling and scratch — not part of the port.
+swarm/
+
+# porter/scheduler self-gate scratch (never commit)
+.agentbase.json
+.sched-*.json
+.portermsg
+.git-commit-msg.tmp
+
+# porter scaffolding — a per-agent artifact, never part of the port
+RECON_NOTES.md
+.portermsg
+.agentbase.json
+heldout-proxy/
+heldout-wave3/
+heldout-wave4/
+heldout-wave5/
+heldout-wave6/
+heldout-wave7/
+heldout-wave9/
+heldout-w4all/

@@ -24,6 +24,8 @@ export function makeLocation() {
         gnew: 0,           // dirty flag for flush_glyph_buf
         glyph_symidx: -1,  // S_* symbol index
         remembered_glyph: undefined,  // { ch, color, decgfx, symidx }
+        invisMon: false,   // C ref: rm.h glyph_is_invisible(glyph) — this square
+                           // is remembered as holding a sensed-but-unseen monster
     };
 }
 

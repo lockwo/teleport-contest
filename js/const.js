@@ -463,12 +463,18 @@ export const DUNGEON_ALIGN_BY_DNUM = {
     [TUTORIAL]: A_CHAOTIC,
 };
 
-// Build-specific constants: hand-pinned for deterministic replay.
-// These come from date.h and change every C rebuild, so the generator skips them.
-export const BUILD_DATE = "Sun May  3 01:27:17 2026";
-export const BUILD_TIME = (1777786037);
-// nomakedefs.copyright_banner_c — build-specific version string
-export const COPYRIGHT_BANNER_C = "         Version 5.0.0 MacOS, built Sun May  3 01:27:17 2026.";
+// Build-specific constants, hand-pinned for deterministic replay and permitted
+// as literals by docs/recording-environment.md.
+//
+// These do NOT come from date.h.  patchlevel.h:43 defines COPYRIGHT_BANNER_C as
+// `nomakedefs.copyright_banner_c`, i.e. the RUNTIME date.c path, whose
+// `__DATE__ " " __TIME__` is pinned by nethack-c/patches/001 line 133 to
+// "May  2 2026 12:00:00".  The old values here ("Sun May  3 01:27:17 2026",
+// 1777786037) were somebody's local date.h and never matched the recorder.
+export const BUILD_DATE = "May  2 2026 12:00:00";
+export const BUILD_TIME = (1777737600);
+// nomakedefs.copyright_banner_c — nine leading spaces, as in patchlevel.h.
+export const COPYRIGHT_BANNER_C = "         Version 5.0.0 MacOS, built May  2 2026 12:00:00.";
 
 // AUTO-IMPORT-BEGIN: CONST_ALL_HEADERS
 // Auto-imported header constants (pre-symbol pass)
@@ -1900,14 +1906,20 @@ export const EXPL_MAGICAL = 4;
 export const EXPL_FIERY = 5;
 export const EXPL_FROSTY = 6;
 export const EXPL_MAX = 7;
-export const MON_EXPLODE = -1;
-export const BURNING_OIL = -2;
-export const TRAP_EXPLODE = -3;
-export const MAY_HITMON = 0x1;
-export const MAY_HITYOU = 0x2;
-export const MAY_HIT = (0x1 | 0x2);
-export const MAY_DESTROY = 0x4;
-export const MAY_FRACTURE = 0x8;
+// objclass.h:154-156 — BURNING_OIL/MON_EXPLODE/TRAP_EXPLODE are MAXOCLASSES+1
+// ..+3, and MAXOCLASSES is 18 (RANDOM_CLASS 0 .. VENOM_CLASS 17).  These were
+// -1/-2/-3, which collides with the object classes explode()'s `olet` also
+// carries.
+export const BURNING_OIL = 19;
+export const MON_EXPLODE = 20;
+export const TRAP_EXPLODE = 21;
+// hack.h:1339-1344 — the scatter() flag bits start at VIS_EFFECTS 0x01, so
+// every MAY_* below was one bit low (and MAY_HIT was 0x03 instead of 0x06).
+export const MAY_HITMON = 0x02;
+export const MAY_HITYOU = 0x04;
+export const MAY_HIT = (0x02 | 0x04);
+export const MAY_DESTROY = 0x08;
+export const MAY_FRACTURE = 0x10;
 
 // Steed dismount reason enum (src/steed.c)
 // Runtime fields: dismount_steed(reason) reason selector.
@@ -2902,6 +2914,22 @@ export function Is_waterlevel(uz) { const lev = uz ?? game?.u?.uz; const wl = ga
 export function Is_firelevel(uz) { const lev = uz ?? game?.u?.uz; const fl = game?.fire_level; return !!lev && !!fl && lev.dnum === fl.dnum && lev.dlevel === fl.dlevel; }
 export function Is_earthlevel(uz) { const lev = uz ?? game?.u?.uz; const el = game?.earth_level; return !!lev && !!el && lev.dnum === el.dnum && lev.dlevel === el.dlevel; }
 export function Is_airlevel(uz) { const lev = uz ?? game?.u?.uz; const al = game?.air_level; return !!lev && !!al && lev.dnum === al.dnum && lev.dlevel === al.dlevel; }
+// C ref: youprop.h Unaware = (gm.multi < 0 && (unconscious() || is_fainted())),
+// with trap.c unconscious() = multi < 0 && (u.usleep || nomovemsg begins with
+// "You awake" / "You regain con" / "You are consci").  Reading the nomovemsg
+// prefix is how C itself decides this — eat.c rottenfood() sets exactly
+// "You are conscious again." — so no separate flag is needed.  Lives here (a
+// leaf) because both allmain.js (gethungry's slowed metabolism) and timeout.js
+// (make_deaf's message suppression) need it.
+export function Unaware() {
+    const g = game;
+    if ((g?.multi ?? 0) >= 0) return false;
+    if (g?.u?.usleep) return true;
+    const m = g?.nomovemsg || '';
+    return m.startsWith('You awake') || m.startsWith('You regain con')
+        || m.startsWith('You are consci');
+}
+
 export function In_mines(uz) { return (uz ?? game?.u?.uz)?.dnum === game?.mines_dnum; }
 export function In_sokoban(uz) { return (uz ?? game?.u?.uz)?.dnum === game?.sokoban_dnum; }
 export function In_V_tower(uz) { return (uz ?? game?.u?.uz)?.dnum === game?.tower_dnum; }
@@ -2918,3 +2946,5 @@ export function Is_rogue_level(uz) { const g = game; return g?.rogue_level && (u
 export function Is_oracle_level(uz) { const g = game; return g?.oracle_level && (uz ?? g?.u?.uz)?.dnum === g.oracle_level.dnum && (uz ?? g?.u?.uz)?.dlevel === g.oracle_level.dlevel; }
 export function Is_knox_level(uz) { const g = game; return g?.knox_level && (uz ?? g?.u?.uz)?.dnum === g.knox_level.dnum && (uz ?? g?.u?.uz)?.dlevel === g.knox_level.dlevel; }
 export function Is_juiblex_level(uz) { return false; /* TODO */ }
+// C ref: dungeon.h Is_medusa_level(lev) — on_level(lev, &svd.medusa_level).
+export function Is_medusa_level(uz) { const g = game; return g?.medusa_level && (uz ?? g?.u?.uz)?.dnum === g.medusa_level.dnum && (uz ?? g?.u?.uz)?.dlevel === g.medusa_level.dlevel; }

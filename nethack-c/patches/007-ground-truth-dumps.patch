@@ -1,0 +1,146 @@
+Add the NHOBJDUMP / NHMAPDUMP / NHCDBG ground-truth dumps.
+
+These three hooks are the differential oracle the JS port is debugged against,
+and they were previously applied by hand to nethack-c/recorder/ — which
+build-recorder.sh deletes and regenerates, so every rebuild silently dropped
+them.  They belong in the patch series.
+
+  NHOBJDUMP=<path>   one JSON line per input boundary: fobj / fmon / ftrap
+  NHMAPDUMP=1        adds levl[][].typ to that line (needs NHOBJDUMP)
+  NHCDBG=1 + _LO/_HI names the monster running dochug at an RNG call index
+
+All three are read-only: no game state, no RNG, so a run with them set is
+byte-identical to one without.
+
+diff --git a/src/monmove.c b/src/monmove.c
+index f1a294d..012d3f9 100644
+--- a/src/monmove.c
++++ b/src/monmove.c
+@@ -535,7 +535,25 @@ distfleeck(
+     int *inrange, int *nearby, int *scared) /* output */
+ {
+     int seescaryx, seescaryy;
+-    boolean sawscary = FALSE, bravegremlin = (rn2(5) == 0);
++    boolean sawscary = FALSE, bravegremlin;
++
++    /* NHCDBG=1 NHCDBG_LO=<n> NHCDBG_HI=<n>: name the monster whose dochug is
++     * running at a given global RNG call index.  distfleeck() is the first
++     * draw of every dochug, so this maps an index reported by
++     * swarm/bin/rngstep.mjs onto (mx,my,pmidx) — without it a wrong modulus
++     * hundreds of calls downstream is unattributable.  Pure output. */
++    if (getenv("NHCDBG")) {
++        long cc = rng_log_get_call_count();
++        long lo = atol(getenv("NHCDBG_LO") ? getenv("NHCDBG_LO") : "0");
++        long hi = atol(getenv("NHCDBG_HI") ? getenv("NHCDBG_HI") : "0");
++
++        if (cc >= lo && cc <= hi)
++            fprintf(stderr, "[C distfleeck] rng#=%ld mx=%d my=%d pmidx=%d"
++                            " mtame=%d movement=%ld\n",
++                    cc, mtmp->mx, mtmp->my, monsndx(mtmp->data),
++                    (int) mtmp->mtame, (long) mtmp->movement);
++    }
++    bravegremlin = (rn2(5) == 0);
+ 
+     *inrange = (dist2(mtmp->mx, mtmp->my, mtmp->mux, mtmp->muy)
+                 <= (BOLT_LIM * BOLT_LIM));
+diff --git a/win/tty/termcap.c b/win/tty/termcap.c
+index 465ab8b..fe148a1 100644
+--- a/win/tty/termcap.c
++++ b/win/tty/termcap.c
+@@ -709,11 +709,96 @@ nomux_capture_write_screen(void)
+ /* Called at every real input-wait boundary (tty_nhgetch, tty_nh_poskey)
+  * and once at nh_terminate after topten — the points where one
+  * authoritative frame should be captured per step.  Bumps SEQ. */
++/* NHOBJDUMP=<path>: append the level's floor-object chain, monster chain and
++ * trap chain as one JSON line per input boundary.  Ground truth for
++ * swarm/bin/mondiff.mjs: a non-RNG placement bug shifts state while the RNG
++ * stream stays byte-aligned, so the first STATE divergence is routinely
++ * hundreds of calls earlier than the first RNG divergence and is invisible in
++ * the scored screens.  Pure output: touches no game state and draws no RNG, so
++ * a run with NHOBJDUMP set is byte-identical to one without it. */
++static void
++nomux_objdump(void)
++{
++    const char *path = getenv("NHOBJDUMP");
++    FILE *fp;
++    struct obj *o;
++    int first = 1;
++
++    if (!path || !*path)
++        return;
++    if ((fp = fopen(path, "a")) == (FILE *) 0)
++        return;
++    fprintf(fp, "{\"seq\":%d,\"dnum\":%d,\"dlevel\":%d,\"ux\":%d,\"uy\":%d,\"objs\":[",
++            nomux_seq, (int) u.uz.dnum, (int) u.uz.dlevel, (int) u.ux, (int) u.uy);
++    for (o = fobj; o; o = o->nobj) {
++        fprintf(fp, "%s{\"otyp\":%d,\"oclass\":%d,\"ox\":%d,\"oy\":%d,\"quan\":%ld}",
++                first ? "" : ",", (int) o->otyp, (int) o->oclass,
++                (int) o->ox, (int) o->oy, (long) o->quan);
++        first = 0;
++    }
++    fprintf(fp, "],\"mons\":[");
++    first = 1;
++    {
++        struct monst *m;
++
++        for (m = fmon; m; m = m->nmon) {
++            fprintf(fp,
++                    "%s{\"m_id\":%u,\"mnum\":%d,\"mx\":%d,\"my\":%d,\"mtame\":%d,"
++                    "\"mpeaceful\":%d,\"msleep\":%d,\"mcansee\":%d,\"mhp\":%d,"
++                    "\"mux\":%d,\"muy\":%d,\"movement\":%d,\"mcanmove\":%d,"
++                    "\"mfrozen\":%d,\"mflee\":%d,\"mfleetim\":%d,\"mstate\":%u,"
++                    "\"mspeed\":%d,\"mconf\":%d,\"mstrategy\":%u,\"mundetected\":%d}",
++                    first ? "" : ",", (unsigned) m->m_id, (int) m->mnum,
++                    (int) m->mx, (int) m->my, (int) m->mtame,
++                    (int) m->mpeaceful, (int) m->msleeping, (int) m->mcansee,
++                    (int) m->mhp, (int) m->mux, (int) m->muy,
++                    (int) m->movement, (int) m->mcanmove,
++                    (int) m->mfrozen, (int) m->mflee, (int) m->mfleetim,
++                    (unsigned) m->mstate, (int) m->mspeed, (int) m->mconf,
++                    (unsigned) m->mstrategy, (int) m->mundetected);
++            first = 0;
++        }
++    }
++    fprintf(fp, "],\"traps\":[");
++    first = 1;
++    {
++        struct trap *t;
++
++        for (t = gf.ftrap; t; t = t->ntrap) {
++            fprintf(fp,
++                    "%s{\"ttyp\":%d,\"tx\":%d,\"ty\":%d,\"tseen\":%d,"
++                    "\"dnum\":%d,\"dlevel\":%d}",
++                    first ? "" : ",", (int) t->ttyp, (int) t->tx, (int) t->ty,
++                    (int) t->tseen, (int) t->dst.dnum, (int) t->dst.dlevel);
++            first = 0;
++        }
++    }
++    /* NHMAPDUMP=1 also emits levl[][].typ as ROWNO strings of COLNO hex byte
++     * pairs.  Terrain parity is invisible in the scored screens (an unlit
++     * square draws blank) yet it sets mfndpos()'s cnt, which IS the modulus of
++     * m_move's rn2(4*(cnt-j)) — a wall we get wrong surfaces only as a wrong
++     * modulus much later.  Off by default: ~4KB per boundary. */
++    if (getenv("NHMAPDUMP")) {
++        int x, y;
++
++        fprintf(fp, "],\"map\":[");
++        for (y = 0; y < ROWNO; y++) {
++            fprintf(fp, "%s\"", y ? "," : "");
++            for (x = 0; x < COLNO; x++)
++                fprintf(fp, "%02x", (unsigned) levl[x][y].typ);
++            fprintf(fp, "\"");
++        }
++    }
++    fprintf(fp, "]}\n");
++    fclose(fp);
++}
++
+ void
+ nomux_capture_write_input_boundary(void)
+ {
+     nomux_seq++;
+     nomux_emit_marker("input");
++    nomux_objdump();
+ }
+ 
+ /* NOMUX shadow frame buffer implementation */

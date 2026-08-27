@@ -1,0 +1,90 @@
+// oracles_data.js — the makedefs-built dat/oracles file, byte-for-byte as the
+// C recorder read it (xcrypt'd, with the offset table makedefs writes at the
+// head).  rumors.c outoracle() seeks to oracle_loc[idx] and reads until "---",
+// so the exact bytes decide both the text and (via oracle_cnt) the rnd().
+// Source: nethack-c/recorder/dat/oracles.  Do not edit by hand.
+
+export const ORACLES_B64 =
+    'IwlUaGlzIGRhdGEgZmlsZSBpcyBnZW5lcmF0ZWQgYnkgJ21ha2VkZWZzJy4gIERvIG5vdCBlZGl0LiAKICAgMjEKMDAwY2EKMDAy' +
+    'NjgKMDAzMzIKMDAzYmYKMDA0ZmEKMDA1ZjgKMDA2YWYKMDA3OTEKMDA4NWQKMDA5OWIKMDBhNjgKMDBiNmMKMDBjN2MKMDBkOWIK' +
+    'MDBlOWMKMDBmOTYKMDEwNzYKMDEyN2UKMDE0MWYKMDE2MjMKMDE3MGEKMDE4NDkKLS0tCiMsKiZ5dSJtezBzY3BgdXMiYGFjYm1q' +
+    'a3Vzdm1mdyF2ayhyZCJnZ35ncGtmZGRmJH95dWokfHhkCmdtaGR/dmtqbzB1amFnYmRvJG5ibm8kU1JgaWF6PCFFbWR8LSJlZnQh' +
+    'UWtkf3djfSQwMDszPU0vCgpVamFnYmRvJD8+MDokKERpZ3ZtMGR6bXtkIXBha2VzcW1+dSFuZWZ3dGNjbWMhQyRpfmUiRihjdGFs' +
+    'KGRpY3AKISIsOTkhIlQgUSgiOTUwT1IsSTktImVmdAohIiw6OSEiVCBSKCIlNTBPUixKOQoKVWptezBxcGt+eWVndyh5bHJ2bWNy' +
+    'a3JtMGR0bWx1b2FhKGRpY3AoZGlnJHx1YmpqYWF0Z3coZGljcChxc2cKYnd2enVvdmhxMGB0ZWF8YGBobTB2a2hkMG9tcChjdGRi' +
+    'YXNkImJnYiFydmdmaGxjKGRpY3AoQCEjOSheUSJrejAhIiQoMCEiJCgKdWplfDBRIjk1ME9SKiowIVlDaWJkeyRpfmUiTmd4b3Fr' +
+    'ZjwhciooITk3KlUKLS0tCkhkJHx4eCJzaX5lImxpZGkidn1+IW1xfDBuZCRreGBwY21jLSJwYH90ImlpaXJ2JHJxcSJtfDBgZWVh' +
+    'fiFjamwwYGVlYX46InBgf3RlbApvY3FveHUic2F8bSJsaWBxZ2oocXUiYmFicnYoKGZkcG1kaS0icGBpIXJhemNocXBtfmJnJHt4' +
+    'YG5oKHJkInZtZ2BwYG10LSJlewpubGEofGBxcChzaWN2b3Uhb2VxMHhncChyZCJzenVydmFsMGdwa2UwaHYlCi0tLQpVamt9d2ki' +
+    'cGB1IXFsZ2BqZ2F4dXNxJGp1IXVlemktInBgeWR0YXswaWNybTBvZ3JtYnVqYWR1cnEke2RubmFmMGx3Z2AwY3skfWNobGMKdWph' +
+    'YWIhZm1vd2hsYyhnYGxgezB1bSRgcXJ2YWYwZHptfGMhdmx6f3RlbChkaWckeHF3Z2ltfnUsCi0tLQpIZCR8eG53JGBxcnYkYHFl' +
+    'InB6f3RgaG0wdmtwYDBzd3d8MG5sJHx4aGxhKHFzb2t6MG5wJH91YHJrZmMtInBgf3Qid2B/dG5ge2QKamxrfzB1amV8MHVqa30w' +
+    'YmNqe2QhcnZtZmRscChkaWt3KHJ4LiR/eGhuYSh5byJlKHNubGJ9Y2RmJHtkYHZhJDBzZ2VseW9lJHx4ZApsY2Nhc2BuJHhxc2Fs' +
+    'ZXVvdncoZ2lrZ2Awb212ZXFtbn0ocXNnJH1jZGYkfH8hYWV9Y2QicGB1aHAkbX5iamVmZGxnanw+ClRsY311b3Z3KH9nImh9cnNr' +
+    'Z2lkaG1qKH1geyR4Ym50bWx1IXFtZXltY3YoYHNtcG1zdWtrZjwhY2hqdWh2JGd2IWMKdXBlZmNodmt6aSFsZXxlc2cqCi0tLQpD' +
+    'Z2xnfGUicGB1IWFra3tgdnZhc2QuJH94bnFhKHRob21mZXVrcm0wcnZlfGVzZyRqdW1rYXswaHZ3KHhoZmBtfiFvbW94dSwkKERp' +
+    'ZwpibWdjcXVwbWt1IWFlZjBxZ3B6eWd7JGl+eCJrenRobGV6aSFgYWF+ZiJtfDBibWp8cWJ2dyU9cmNybTB1amt7dSF1bXt1CmBm' +
+    'cm1+dXd2bWJyInNgfyFnZXwwYCJgbXFlImhhamBwYCh/cyJmZH9jImtuMGBhbWwwdmphZjB1amFxMGdnYWQwdWphZWNkbnJtYwpy' +
+    'bmt/fHgicH1ib2tqbzB1bSR7ZG5sYSYKLS0tClZqbWR1IXFrZXUhdWVxdmBwYXpjIXBhZGkhbWooY2Jwa31+ZmtqbzBna2phY2ln' +
+    'YChxc29rfWIha2ooZGlnJGxlb2VhZ34tInBgdQpzZ3dnZXNhYW5lbSJvZn92InBgdSFvfXtkaGFlZDBsZ2VmYyFgfShnaWtnYDBs' +
+    'Y21kMGxjfShyZCJiaWNpa2tmdWUia31kIW1iCnJhZWR1ciJien9sImUodHNjY2d+JnEkYHllZyoKLS0tCkh2JGFjIWFxe2Rub2V6' +
+    'eW17JGN+bnVqKHFsbWpvMHVwZX51bWd2ezB1amV8MGR6cHpxLGphaXxobGModHNjcW94dXEkZXF4ImdkdWBwCnVqfShjZGx3bWMh' +
+    'dWxtfiF2bGdlIWN2fDBgZmBkdWUiZnEwZWdofWNucH0oZmhxbWd+ciwkKFJ0diRmdXdndih2bnBjbWQtInBgdQptbXNkaSFya3x5' +
+    'bmwkf3hoYWwofWBpYXswbmxhKGNoYW8ofWB7JGp1IXd3bXQhZGt6MHVqYShjYG9hKGB0cHRnY2QsCi0tLQpWam1kdSF2bG0wYm1q' +
+    'e2VscnBhf28ia24wbWt+aWJlImJkdXJqJGdiIXVlfHVzImZtfG50YWwwbmQkfHhkImNndHIiaWlpIWFobXFzCnVqYSh9dGZgZHVl' +
+    'ImxtcWUuJHx4ZCJleGBta2dpZGhtaih/ZyJwYHUhamt6fiFtYihxIWF2bXF1d3ZtMG5kJH1kbG13fDBxd3ZhZHgKYmNqKHFtbmF+' +
+    'eWB2YSh9YGx9KH91amF6MGBkYmR5YnZtZ35yImV7MHZnaGQ+Ci0tLQpIZCR8eG53JH9/dG5ge2QhdnZpZmRuJHllaGFvZGkhYGF8' +
+    'Z2Rnaih0aHFwaX51Imhnc2B2bWd+ci4kfHhudyRlZXJ2JGp1CmBgaG0wdW0ka39vdnZnfCF2bHEwdWdobWBucHB7PCFjamwwaGwk' +
+    'aTBibWpuZXJnYChjdWNwbTBsa3d6dWBmJHx4ZCJ3a2JubmgKdmpta3ghd3d9cW1ufShkZG5heH9zdncoZGl7d218ZyJoZ3Ngbmhx' +
+    'PiEiQGliaGxjKHFldGFmZHRwYXpjIWplfnUhY2h7fwpxZ3Zuf3NvYWwwdWphKGNgb2EodmRjcChjYGx3KH5kZ2Aodm5wJHtzc21o' +
+    'ZGMhbXYoYG52bWd+ciJmcTBydmF4YGhsYyh5b3ZrCmAidGlidWtnfXxgcCRpfWN3d2txZWcqCi0tLQpAbmlnY3UiZWR8IWNgfnVv' +
+    'dnF6dXNxJH94biJnZ31kInBgeXIic2lpIWpreHUhdmsoYGBxdyhkaWckbGJkY2AoXWRmcXtxLyIkXH8KZW0kfHhocSgoZGlnJGp1' +
+    'cnYkaXR3a2dtMGhxJHx/IWlhbWAhdmxhfmQiYXF1ciJmZHlvZmJnfGVnYChxb2YkfH8hYWV9Y2QicGB1CmJwYWlkdHBhKGRuImF7' +
+    'YHgibXxjIW1zZjBzZ2JkdWJ2bWd+IWtqKHEhb216Ym5wKgotLS0KQGxgKGdpZ3ZtMGh2JGFjIXV2YWR1Z2ooMmBmJGl1c2N2YWVs' +
+    'ICgodGhubW91b3Yke3VgcGdgeW9lJH95bW4kZ3Z1Z2ooYmR0YWl8CnVqYShnYHskfH8hYyR8YmByJH94aGFsKGNkbGB7MG5sYShk' +
+    'biJwYHUhT2VveWIiSW19bnB9KEZgd2h8PCF1bG1iZCJwYHUhcG1reGRxCm5kJEtibmd3fWMhY3ZtMHJ2a3p1ZTkkYH92Z3JtYi0i' +
+    'YXtzYHJtZnchZHZnfSF2bG0wd2NxZGQhdW18eCFrcHswZm1obDBocSRlZWJqCmljdmx1cyJwYHFvImNtZHVram8waGwqCi0tLQpI' +
+    'diRhYyF1YWR8IWlqZ2dvInBgcXUic2F8eCJ3YH9xaWFtYGRwdyhiYGt3bTB1amFhYiFydmFzZHEkf3hkbGEvdXMicGB1eApkcXRx' +
+    'MHVqYSh3YHBte3ghY3R4cXNnaCh/ZyJwYHUhY3R4Ym5jZ2B5b2UkfH90cG17ZCFtdihkaWcka390bHBtfmBsZ20wbmQkaQpla3du' +
+    'cXdtdm10IXJlfGJubCooMFVqYXEwZ2NyZ2IhdmxtMGZnanx8ZCJrbjBsY2pmdXMiZWZ0IXZsbTBnY216MG5kJG5xYmcqClVqYShy' +
+    'bm12KH1geyRtaHFnZ3wwdGx0en9na3Bpcm1nJHxiYGx3aXN1a2tmYy8KLS0tClVqYShzbWtnYHUhbWIoZGlnJGN5dWFsbX4hcW1m' +
+    'eyFxc2l8bW1zYX5mImVmaSF3am5/c3ZxZnF1ZyR6eW9ldyhkaWNwKHNubHBpc3UKaHZ3KGBkcGphc2htcXswcnd2bnFiZyR6dWdu' +
+    'YWtkZHZsKHdzZ2V8dXMicHpldWokfHhgbCRlcW97JGB/bGtoYXVyLiRxdXUKZHRhZjBybSgodmR1JGBxd2ckbHV3Z2hnYGRmJHx4' +
+    'ZCJ3Y3ltbiR8fyFrYG1+dWticTBkbGdgcW92YWwwc2tqb2MhYH0oZGlnCnVwZWZjZ2tjfWJgdm1nfnIiYW52ZGFwbXQhd3RnfiF2' +
+    'bG0wd212aXNobXF7MGVncmFzZCV3KHZzY2ltPgotLS0KVWphKH1kY3Aof2ciYWZzaWNqfHVlImd6dWB2cXp1ciJrbmR1a2ltYyFh' +
+    'a2ZmZHthfHghb2VveWJjaChgc210bWJ1a2F7CnRscGcwdWphKHNubHd9fWRwKigwQCJienVyaiRrf3Nyd20wbmQkbnxuY3BhfmYi' +
+    'YXF1IWZrfHghZGF8c2kiZSh4aGVsCnFwbWt1IWNpZ35mInNhamBwYHswZ212KHl1cSR9ZGhubXxpIWtqKHNubGJtYnNram8wVWdo' +
+    'bWBgdmxxPCFgfShnaWtnYAp1amEoY2hlbHx8ZHF3KH1geyRkf2JjcG0wcnd2en90bGBhfmYiaWF+ZXEqCi0tLQpVamEodGR2YWtk' +
+    'aG1qKH9nImZkdXJxbWZ3ciJlZnQhYXF6Y2RxJGFjIWtqKGRpZyRsf2xjbWYwbmQkfHhkImNndHIsJChEaWd9KGdobmgKbGNvbTB1' +
+    'am17MGhsYmdibGNwYX9vImV+cWhuZWp8ZCJwZzBsbXZ8cW1xJH94biJ2bWF0Z3d8MGh2JGlkIXZsbXlzInRkcWJndyh/Zwp2bXZ7' +
+    'eGhyKCh/cyJhZGNkdWxtYmQiYmdiIXZsZ2NkImlnYnVjaHswdmprKHRkdGt8dSF2bG19cmdofnVyInBnMHVqYShjZHByYXNkCm5k' +
+    'JHx4ZCJjZ3RyLAotLS0KQHYkfHlsZ3ckMHVqYSh3bmZ3KH1geyRucXdtdihnbnBwYGkhcXF4YG1rZ2l+dXEkf3l1aiRmcWxnYChy' +
+    'bWNgbWMhdWxnY2QKcW1zbWJyImFreG4icGBibndjYH90diRkdWZnamw+ISJIbXFzbGFsMHZjfW5xc2d2ezBiY2ooYmRydmd0dGFh' +
+    'KHJtY2BtYyFtYgpkbnJtfiFubWZ1YGVhJDBpY3BtdCFtYihkaWckZ2JicSgoZ2h2bGdldSJwYHUhbGFtdCFka3owcndnYDBobHBt' +
+    'Yndnanx5bmwqCi0tLQpVamF6dSFjdm0wbGNqcTBydmt6eWRxJGd2IWMkZXlmanBxMGBvcWR1dS4kfHhkImt6eWZranswbmQkf3ho' +
+    'YWwocXNnJHtxaGYKdW0kanUhY2preWRscChJZGxgZ2IvIiRceGhxJGl9dG5hfDBlbXBgMGljcm0wYHVhe39sZyR4f3ZndiQwYGxg' +
+    'KGRpZyRvf2VxCmVnd2FiZCJtfDBmcGFpZG17KigwTG12fHFtcSRlcXhxcChkYHIkZ35teyR4f3N2bWd+ciJrbjBodncoZGRwdmFy' +
+    'bWcKYGBtZHl1a2F7PiEiUGB1IXFwZ2JoZ3coZGRuaCh/ZyJpZ2J1Y2h7MHJnYWF+ZiJzYHF1InBgdWhwJG1pZHEka3FvbGt8CnJn' +
+    'YShxb2Yke3VkaW1mdyFyaGlzZHEkZ3Yhb2VveWJjaChkc2Nqe2BucHBpZGhtaiQwdmptZHUhamV+eW9lJHx4aHEKYG9xZHV1Im1m' +
+    'MHVqYWFiIXJre2NkcXdhf28sJChfdWphemMhcWVxMGAiaWdidWNoKH10cXAoZ2RjdihkaWckaX10bmF8MHVtCm5gcGl5byJwYHVy' +
+    'ZyR4f3Zndns+ISJGfWQhdGF6eW17KChjdGFsKGBudWF6MGJtaW1jIWNwKHdzZ2V8MGJtd3w8IXZrCnFwYXt1c3RhKGRpZyRqcW1j' +
+    'amt1LwotLS0KSHYkYWMhcWVhdCF2bGlkIXZsZ2Uhb2VxY3UiY2l5byJhZmRzeyR8fyFPa2R/YmojezByY2prZHRjdnE8IWtiKGRp' +
+    'bXEKZWN2bWN1LiRuYm5vJGkwcW5la3UhdWxtYmQicGB1IWV2Z2VvZiR+eWNwZXx1dWokYX4hdmxtMGVnYXh1cnYkbHVxdmx7MG5k' +
+    'CkZnbG1+b21pJjAhVmxnZSFsYW10ciJpfWN1ImxpZmQicGB1IWNtbDBuZCR8eHNnYSh9YGVta3FtIm18dWxxKigwVWphCnF3dm0w' +
+    'cm1xZnQhbWIocSFxbWRmZHAkanVtbiR7eGBuaChxb2xrfX5iZyR8eGRnKigwVWphKGRkcHZhcm1nJHplb2d3JApzZ2VsMGdwa2Uw' +
+    'TG1oZ3NpJXcocm5tbyQwcmplZHwhYWV9Y2QicGB1IWdlemRpInBnMHVwYWVybWckZXlmanBhfHgsJChEaWcKbWtjYGQhbWIocW8i' +
+    'YWZzaWNqfHVlImdpfmVnaGlyc3dpKGNpY2hkMHJqa38wdWphbTB1amEoZ2B7KgotLS0KSGwkfHhkImBtdXFnd3wwc2dnbWNyZ3co' +
+    'f2cicGB1IUZxZndkbWp7MG5kJEx/bm8oKHd0Y3ZseW9lJGlzYmd3ezB1bSR8eGQKb2dwYHVzInZtd2htans8IXZsbWJkInd8cW9m' +
+    'YXx4IWMka3FydmhtPCF1bG1iZGtqKHxoZ3BgMGAic2l+ZSJrbjB2a3dgdXIsCkhkJHx4bnckf390bmB7ZCFlZWF+IWdqfGJ4LiRq' +
+    'dWBwJH95dWokfHhkZyRpfiFrantkc3dpbX51ImtuMGx3d2FzLSJiZ2IhdmxtCnFtanx8ZHRtezBsY30ocmQiZ2Bxc29hbDBlbXNm' +
+    'MHZrcGAwdWphKGBzbXRtYiFvYWR/ZXsqKDBWamV8MG9tcG1jIWFrZWBza3dtCmh2JGd+bXskfHhkImNndHIib2Z/di4kamV1ImUo' +
+    'fXRxbWtxbSJpaWN1Z3ZleW9mJGVxeCJ9bWQhcXFrc2RnYChyeCJzYWRnd2gKaG90en93a3dpZGhtaiYwIUprf3V3Z3YkMHVqYSh8' +
+    'ZHF3KGBkcHd4eWJjZ2F/dHEkaWJkImpnZCF1bXx4bndwKGJkYWt9YnJnKApyamt9fGUicGB1eCJmbTBxcGF4cXNnYChkbiJnYWJi' +
+    'd2lpfWN3aGlkZCJwYHUhYWV7ZG1nJHx/IXZsbTBxbXd8dXNsKgotLS0KVWphKHduZncocXNnJHtxaGYkfH8hYGEoYG1nZXt1ZSJz' +
+    'YHVvImtudmRwbWZ3ciJlenUhZW1+dW8icGcwdWphCnFwbW1jdXEkf3huImV8ZGRsYChkaWdtejB1Z2l4fGRxKChxb2YkfHhkeyRl' +
+    'cXgiY3pxb3YkfnFza2t9YyFkZX5/c3EkfH8KdWpre3UhdWxnMGVtJHt/LyIkSmV1ImZtZ2BwYSkwIVZrKHJkIn1nZW9lJGl+ZSJi' +
+    'emVmY2goeXIiZm1kdWd2KGRpY2ooZG4KY2ckZ3xlImVmdCFvbXt1c259JgotLS0KVWphKH5gb2Eof2ciQWRyZHBhfHghb2VxMHJ2' +
+    'dmF7ZCJibXFzIm1mZG4icGB1IWphaWJ1cSRndiF2bGF+ZCJhZnVsa2F7PCFrYgp1amt9MGVtd3wwdnBtfHUha3AoZXFtaihkaWck' +
+    'b2Jud2psMGB2JHx4eCJibXV1LCQoWWcicGB/dCJpaXlvdmVhfmRxcChkaWcKdHZpZ2N1ImdpfGwuJHx4eCJ3aXZkdn0oZ2huaChy' +
+    'ZCJlYXRkZiRvYmRjcGRpLSJmfWQhYGF/cXNnJGR1cnYkfHh4ImdkZWxxfQpnZ2F8MHJhcW52IXZsbTBobHdrYmhycGF/by4ka3Fv' +
+    'YWFkfGhsYyh5dXEkeH91Z2prdS0ia3owdWp9KGdge3NpYmUKcnVrenQsY3ZlMGNwYWl7IXZsbTB1cHFrdS8KLS0tCg==';

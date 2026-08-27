@@ -629,6 +629,26 @@ async function main() {
             newSegments.push(out);
         }
 
+        // NHGT: the C recorder writes ground-truth dumps to a flat, seed-named
+        // path (/private/tmp/gt/seed<N>.{state,monsters}.jsonl). Move them into a
+        // SESSION-scoped dir so two sessions that share a seed (e.g. seed0013)
+        // don't clobber each other and the oracle can key GT by session slug.
+        if (process.env.NHGT) {
+            const gtBase = process.env.NHGT_DIR || '/private/tmp/gt';
+            const slug = path.basename(inputPath).replace(/\.session\.json$/, '');
+            const destDir = path.join(gtBase, slug);
+            try {
+                await fs.mkdir(destDir, { recursive: true });
+                for (const seg of session.segments) {
+                    for (const ext of ['state', 'monsters']) {
+                        const src = path.join(gtBase, `seed${seg.seed}.${ext}.jsonl`);
+                        await fs.rename(src, path.join(destDir, `seed${seg.seed}.${ext}.jsonl`)).catch(() => {});
+                    }
+                }
+                console.error(`[NHGT] session-scoped ground truth -> ${destDir}/`);
+            } catch (e) { console.error(`[NHGT] could not session-scope GT: ${e.message}`); }
+        }
+
         const outDoc = {
             version: 5,
             segments: newSegments,

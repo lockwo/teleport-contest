@@ -25,7 +25,14 @@ export function enableRngLog() { _rngLogEnabled = true; _rngLog = []; }
 export function getRngLog() { return _rngLog; }
 export function pushRngLogEntry(entry) { if (_rngLogEnabled) _rngLog.push(entry); }
 
+let _dbgN = 0;
+const _DBG = process?.env?.RNG_STACK_AT ? process.env.RNG_STACK_AT.split('-').map(Number) : null;
 function RND(x) {
+    if (_DBG) {
+        _dbgN++;
+        if (_dbgN >= _DBG[0] && _dbgN <= (_DBG[1] ?? _DBG[0]))
+            console.error(`#${_dbgN} mod=${x}\n` + new Error().stack.split('\n').slice(2, 8).join('\n'));
+    }
     const val = isaac64_next_uint64(game.coreCtx);
     return Number(val % BigInt(x));
 }
@@ -49,11 +56,39 @@ export function rnd(x) {
 // C ref: rn1(x, y) — random number y..y+x-1
 export function rn1(x, y) { return rn2(x) + y; }
 
-// C ref: d(n, x) — roll n dice of x sides
+// C ref: rnd.c rnl(x) — luck-adjusted random number 0..x-1.  With Luck==0
+// (the contest's starter state) this is a single RND(x) with no adjustment
+// roll; non-zero Luck adds the secondary rn2(37+|adj|) bias roll.
+export function rnl(x) {
+    if (x <= 0) return 0;
+    let adjustment = game.u?.uluck || 0;
+    if (x <= 15)
+        adjustment = Math.trunc((Math.abs(adjustment) + 1) / 3) * Math.sign(adjustment);
+    let i = RND(x);
+    // C ref: rnd.c rnl() — the luck adjustment fires a secondary rn2(37+|adj|)
+    // bias roll AFTER the base RND(x).  The C recorder emits that internal rn2
+    // entry BEFORE the rnl() entry in the flat log, so push the rnl marker only
+    // after the bias roll to keep the two streams in lockstep.  With Luck==0
+    // (no bias roll) ordering is moot — the rnl marker is pushed immediately.
+    if (adjustment && rn2(37 + Math.abs(adjustment))) {
+        i -= adjustment;
+        if (i < 0) i = 0;
+        else if (i >= x) i = x - 1;
+    }
+    if (_rngLogEnabled) _rngLog.push(`rnl(${x})=${i}`);
+    return i;
+}
+
+// C ref: rnd.c d(n, x) — roll n dice of x sides.  C's d() calls RND(x)
+// directly and the PRNG instrumentation logs the whole roll as a single
+// "d(n,x)=sum" entry, so do the same here (the inner RND draws still advance
+// the stream identically) instead of emitting n separate rnd() entries.
 export function d(n, x) {
-    let sum = 0;
-    for (let i = 0; i < n; i++) sum += rnd(x);
-    return sum;
+    if (x < 0 || n < 0 || (x === 0 && n !== 0)) return 1;
+    let tmp = n;
+    for (let i = 0; i < n; i++) tmp += RND(x);
+    if (_rngLogEnabled) _rngLog.push(`d(${n},${x})=${tmp}`);
+    return tmp;
 }
 
 // C ref: rne(x) — exponentially distributed
