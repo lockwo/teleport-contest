@@ -65,12 +65,28 @@ function diffSummary(a, b) {
             const yr = y.rng || [];
             if (xr.length !== yr.length) return `seg ${si} step ${i} rng len ${xr.length} vs ${yr.length}`;
             for (let j = 0; j < xr.length; j++) {
-                if (xr[j] !== yr[j]) return `seg ${si} step ${i} rng[${j}]`;
+                // Compare the CALL AND RESULT ("rn2(5)=2"), not the trailing
+                // " @ callsite(file.c:LINE)" annotation.  A rebuilt recorder
+                // reports the same draw at a different source line whenever the
+                // patched C has shifted by a line, which is a property of OUR
+                // build rather than of the recording: seed0361 re-recorded with
+                // all 366 screens byte-identical and failed only on
+                // "distfleeck(monmove.c:538)" vs ":548".  Treating that as a
+                // mismatch made the recorder look untrustworthy and blocked
+                // using it to record a private held-out corpus.
+                if (rngKey(xr[j]) !== rngKey(yr[j]))
+                    return `seg ${si} step ${i} rng[${j}]: ${rngKey(xr[j])} vs ${rngKey(yr[j])}`;
             }
         }
     }
     return null;
 }
+
+// The recorded RNG entry is "<call>=<result> @ <callsite>(<file>:<line>)".
+// Only the call and result are semantically part of the recording; the callsite
+// is a debugging annotation whose line numbers move when the recorder is
+// rebuilt.  (swarm/bin/rngstep.mjs already normalises the same way.)
+function rngKey(entry) { return String(entry ?? '').split(' @ ')[0]; }
 
 async function recordOne(input, output) {
     return await new Promise((resolve, reject) => {

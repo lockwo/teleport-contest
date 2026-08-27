@@ -139,6 +139,18 @@ cd "$RECORDER_DIR"
 export SOURCE_DATE_EPOCH="${TELEPORT_BUILD_EPOCH:-1777723200}"
 make -j"$NPROC" SYSCFLAGS="$LUA_SYSCFLAGS" >/dev/null
 make install >/dev/null
+
+# The binary is built with SYSCF and dies with "Unable to open SYSCF_FILE." if
+# HACKDIR has no sysconf; `make install` does not place one.  WIZARDS=* (rather
+# than upstream's `root games`) so the recorder can run as any player name —
+# with `root games` a session recorded under a different -u name diverges from
+# the published sessions/.
+install -m 644 /dev/stdin "$INSTALL_PREFIX/games/lib/nethackdir/sysconf" <<'SYSCONF'
+WIZARDS=*
+EXPLORERS=*
+GENERICUSERS=play player game games nethack nethacker ec2-user
+MAXPLAYERS=10
+SYSCONF
 echo
 echo "[ok] recorder built: $RECORDER_DIR/src/nethack"
 echo "[ok] installed to:    $INSTALL_PREFIX/games/lib/nethackdir/"

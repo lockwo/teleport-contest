@@ -18,6 +18,15 @@ export function pushKeys(keys) {
 // In replay mode, reads from the input queue.
 // In browser mode, waits for a real keypress.
 export async function nhgetch() {
+    // C ref: win/tty/wintty.c tty_nhgetch() — `wins[WIN_MESSAGE]->flags &=
+    // ~WIN_STOP;` unconditionally, before reading anything.  WIN_STOP (set by
+    // topl_more_ext when a --More-- is dismissed with ESC, suppressing further
+    // topline messages until acknowledged) only survives until the very next
+    // keystroke read for ANY purpose; only more()'s own post-read ESC check
+    // re-arms it.  Clearing it here (the one low-level read every nhgetch/
+    // xwaitforspace call funnels through) makes that survive-one-read window
+    // exact without threading the flag through every prompt call site.
+    game._winStop = false;
     // Fire the capture hook before reading the next key
     const hook = game._preNhgetchHook;
     if (hook) await hook();
