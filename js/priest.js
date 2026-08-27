@@ -7,7 +7,8 @@
 
 import { game } from './gstate.js';
 import { rn2, rn1 } from './rng.js';
-import { isok, ROOMOFFSET, Amask2align, A_NONE, MM_EPRI, MM_EMIN } from './const.js';
+import { isok, ROOMOFFSET, Amask2align, A_NONE, ALTAR, AM_SHRINE,
+         MM_EPRI, MM_EMIN } from './const.js';
 import { mkobj, SPBOOK_no_NOVEL, curse, uncurse,
          AMULET_OF_YENDOR } from './mkobj.js';
 import { makemon, monster_by_pmidx, name_to_pmidx,
@@ -158,9 +159,9 @@ function has_shrine(pri) {
     if (!pri || !pri.ispriest) return false;
     const p = pri.epri;
     const lev = game.level?.at(p?.shrpos?.x, p?.shrpos?.y);
-    if (!lev || lev.typ !== 22 /* ALTAR */) return false;
-    if (!(lev.altarmask & 8 /* AM_SHRINE */)) return false;
-    return (p.shralign === Amask2align(lev.altarmask & ~8));
+    if (!lev || lev.typ !== ALTAR) return false;
+    if (!(lev.altarmask & AM_SHRINE)) return false;
+    return (p.shralign === Amask2align(lev.altarmask & ~AM_SHRINE));
 }
 
 export async function intemple(roomno) {

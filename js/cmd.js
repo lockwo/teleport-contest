@@ -1871,8 +1871,8 @@ async function find_trap(trap) {
     exercise(A_WIS, true); // -> rn2(19)
     newsym(trap.tx, trap.ty);
     await pline(`You find ${an(trap_explanation(trap.ttyp))}.`);
-    await topl_more();
-    game._pending_message = '';
+    // C's find_trap() only prints the announcement.  The normal topline
+    // lifecycle decides whether its eventual replacement needs a pager.
 }
 
 // C ref: detect.c dosearch0(aflag) — search the 8 adjacent squares for hidden

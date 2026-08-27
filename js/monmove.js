@@ -58,7 +58,7 @@ import {
 import { phase_of_the_moon, NEW_MOON } from './calendar.js';
 import { Amonnam as Amonnam_dn } from './do_name.js';
 import { quest_talk } from './questpgr.js';
-import { In_hell } from './dungeon.js';
+import { In_hell, surface } from './dungeon.js';
 import { COIN_CLASS, ROCK, ROCK_CLASS, GOLD_PIECE, GEM_CLASS, CORPSE, ARROW, DART,
     GLOB_OF_GREEN_SLIME, SCR_SCARE_MONSTER, AMULET_OF_STRANGULATION, mksobj_at } from './mkobj.js';
 import { t_at, t_missile, Can_fall_thru, maketrap } from './trap.js';
@@ -107,7 +107,7 @@ import { place_object, next_ident, BLINDING_VENOM, ACID_VENOM, VENOM_CLASS, obje
 import { stackobj } from './invent.js';
 import { obj_resists, resists_sleep, sleep_monst } from './zap.js';
 // m_harmless_trap's FIRE_TRAP arm; mondata.js reads permonst.mresists (MR_FIRE).
-import { resists_fire, resists_acid } from './mondata.js';
+import { resists_fire, resists_cold, resists_acid } from './mondata.js';
 import { clear_path, couldsee, cansee, vision_recalc, recalc_block_point, Blind } from './vision.js';
 import { mattackm, mdisplacem } from './mhitm.js';
 import { hitval } from './weapon.js';
@@ -2537,6 +2537,89 @@ function mon_wearing_iron_shoes(mtmp) {
     return false;
 }
 
+// C ref: trap.c:1730 trapeffect_fire_trap() — the monster arm.  Keep this as a
+// separate helper because MAGIC_TRAP can redirect here after its rn2(21).
+async function mon_trapeffect_fire_trap(mtmp, trap) {
+    const tx = trap.tx, ty = trap.ty;
+    const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
+    const see_it = cansee(tx, ty);
+    const orig_dmg = d(2, 4);
+    if (in_sight) {
+        await pline_mon(mtmp, `A tower of flame erupts from the ${surface(mtmp.mx, mtmp.my)} under ${mon_nam(mtmp)}!`);
+    } else if (see_it) {
+        await pline(`You see a tower of flame erupt from the ${surface(tx, ty)}!`);
+    }
+
+    let trapkilled = false;
+    if (resists_fire(mtmp)) {
+        if (in_sight) {
+            const { shieldeff } = await import('./display.js');
+            await shieldeff(mtmp.mx, mtmp.my);
+            await pline(`${Monnam(mtmp)} is uninjured.`);
+        }
+    } else {
+        let num = orig_dmg;
+        let immolate = false;
+        switch (mtmp.data?.name) {
+        case 'paper golem':
+            immolate = true;
+            num = mtmp.mhpmax;
+            break;
+        case 'straw golem':
+            num = Math.trunc(mtmp.mhpmax / 2);
+            break;
+        case 'wood golem':
+            num = Math.trunc(mtmp.mhpmax / 4);
+            break;
+        case 'leather golem':
+            num = Math.trunc(mtmp.mhpmax / 8);
+            break;
+        default:
+            break;
+        }
+        if (num < orig_dmg) num = orig_dmg;
+        if (await mon_thitm(0, mtmp, null, num, immolate)) {
+            trapkilled = true;
+        } else {
+            // C also reduces maximum HP after a surviving direct hit.
+            mtmp.mhpmax -= rn2(num + 1);
+            if (mtmp.mhp > mtmp.mhpmax) mtmp.mhp = mtmp.mhpmax;
+        }
+    }
+
+    // burnarmor() owns a reroll-until-body-slot RNG chain.  It must run before
+    // destroy_items(), including for monsters with no inventory, because C's
+    // empty-inventory destroy_items still consumes its limit roll.
+    const { burnarmor, destroy_items, ignite_items, burn_floor_objects } =
+        await import('./zap.js');
+    if (await burnarmor(mtmp) || rn2(3)) {
+        const xtradmg = await destroy_items(mtmp, AD_FIRE, orig_dmg);
+        await ignite_items(mtmp.minvent || []);
+        if (!DEADMONSTER(mtmp)) {
+            mtmp.mhp -= xtradmg;
+            if (DEADMONSTER(mtmp)) {
+                mon_kill_leaving(mtmp, false);
+                trapkilled = true;
+            }
+        }
+    }
+    const burned = burn_floor_objects(tx, ty, see_it, false);
+    if (burned && !see_it && dist2(tx, ty, game.u.ux, game.u.uy) <= 3 * 3)
+        await emitU('You smell smoke.');
+    const { is_ice } = await import('./dbridge.js');
+    if (is_ice(tx, ty)) {
+        const { melt_ice } = await import('./zap.js');
+        await melt_ice(tx, ty, null);
+    }
+    if (DEADMONSTER(mtmp)) trapkilled = true;
+    if (see_it && t_at(tx, ty)) {
+        const { seetrap } = await import('./trap.js');
+        seetrap(t_at(tx, ty));
+    }
+    return trapkilled ? Trap_Killed_Mon
+        : (mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished);
+}
+
 async function mon_trapeffect(mtmp, trap) {
     switch (trap.ttyp) {
     case ROCKTRAP: {
@@ -2716,6 +2799,8 @@ async function mon_trapeffect(mtmp, trap) {
         }
         return mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished;
     }
+    case FIRE_TRAP:
+        return mon_trapeffect_fire_trap(mtmp, trap);
     case ROLLING_BOULDER_TRAP: {
         // C ref: trap.c:2660 trapeffect_rolling_boulder_trap(), monster branch.
         // Falling into `default:` left the boulder in place AND skipped the
@@ -2737,8 +2822,7 @@ async function mon_trapeffect(mtmp, trap) {
         // roll is non-zero (leocrotta @ seed4500 step 222), so nothing further
         // happens.  If it ever rolls 0, fall through to the fire trap.
         if (!rn2(21)) {
-            // trapeffect_fire_trap(mtmp,...) — not reached in the contest
-            // sessions; leave unmodeled rather than guess its RNG.
+            return mon_trapeffect_fire_trap(mtmp, trap);
         }
         return Trap_Effect_Finished;
     case ARROW_TRAP:
@@ -4057,6 +4141,18 @@ export async function dochug(mtmp) {
 
     // PHASE TWO — set_apparxy (sets mux/muy) then distance/scariness check.
     set_apparxy(mtmp);
+
+    // C ref: monmove.c:798 — covetous monsters run tactics() after their
+    // initial set_apparxy().  tactics() owns the target-seeking rn2(5) and may
+    // relocate the monster; a successful relocation sets mstate and consumes
+    // the whole turn, otherwise C refreshes mux/muy before distfleeck().
+    if (is_covetous(mdat)) {
+        const { tactics } = await import('./wizard.js');
+        await tactics(mtmp);
+        if (mtmp.mstate) return 0;
+        set_apparxy(mtmp);
+    }
+
     const { inrange, nearby, scared } = await distfleeck(mtmp);
 
     // C ref: monmove.c:793-800 — "search for and potentially use defensive or
@@ -5519,8 +5615,30 @@ function getmattk(magr, indx, prev_result) {
         // The weap-based half of the guard (petrifying corpse / Stormbringer /
         // Vorpal Blade wielded) needs artifacts no monster here carries.
         attk.adtyp = AD_PHYS;
+    } else if (indx === 0 && attk.aatyp === AT_TUCH
+               && attk.adtyp === AD_COLD && hero_resists_cold()
+               && game.u?.data?.pmidx !== PM_SHADE) {
+        // C ref: mhitu.c getmattk() — a lich's cold touch is weakened to
+        // physical damage against a cold-resistant defender (3d6 -> 2d6 for
+        // master liches), while preserving the touch attack message.
+        attk.adtyp = AD_PHYS;
+        attk.damn = Math.trunc((attk.damn + 1) / 2);
+        if (attk.damd === 10) attk.damd = 6;
     }
     return attk;
+}
+
+// C ref: prop.h Cold_resistance — the hero's intrinsic/extrinsic property
+// spellings used by the gameplay state.  Brown mold and other cold-resistant
+// polymorphs take the lich's physical fallback damage.
+function hero_resists_cold() {
+    const u = game.u || {};
+    const p = u.uprops || {};
+    return !!(p.Cold_resistance || p.HCold_resistance || p.ECold_resistance
+              || u.Cold_resistance
+              // Polymorph resistance comes from the active permonst record,
+              // not from uprops (Brown Mold is the failing case here).
+              || resists_cold({ data: u.mondata || u.data }));
 }
 
 // C ref: mondata.h digests(ptr) — attacktype_fordmg(ptr, AT_ENGL, AD_DGST).

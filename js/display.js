@@ -2900,7 +2900,12 @@ export async function update_topl(bp) {
         return;
     }
     let paged = false;
-    if (game._toplin === TOPLIN_NEED_MORE) {
+    // A message written by pline() has TOPLINE_NEED_MORE semantics too, even
+    // though the port tracks that state in _toplinSoft until the next writer.
+    // C pages either form when the replacement does not fit; dropping the
+    // soft-pending arm here let monster messages overwrite a preceding player
+    // message in the same turn (notably the polymorphed pickup refusal).
+    if (game._toplin === TOPLIN_NEED_MORE || softPending) {
         await topl_more();
         paged = true;
     }

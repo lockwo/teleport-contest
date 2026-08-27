@@ -85,6 +85,9 @@ const G_IGNORE = 0x8000;
 const G_GONE = 0x03; // mvflags G_GENOD | G_EXTINCT
 const G_GENOD = 0x02;
 
+// C ref: defsym.h S_BAT / monst.h MFAST.
+const S_BAT = 28, MFAST = 2;
+
 const MR_FIRE = 0x01;
 const MR_COLD = 0x02;
 
@@ -3111,6 +3114,15 @@ function makemon_mlet_switch(mtmp, ptr, x, y) {
             && Math.sign(game.u?.ualign?.type ?? 0) === Math.sign(ptr.maligntyp ?? 0))
             mtmp.mpeaceful = true;
         break;
+    case S_BAT:
+        // C ref: makemon.c:1343-1346 / mondata.h is_bat().  `is_bat()` is
+        // intentionally narrower than the shared S_BAT class: birds share it.
+        // mon_adjust_speed() sets both permanent and current speed fields.
+        if (In_hell(game.u?.uz) && is_bat(ptr)) {
+            mtmp.permspeed = MFAST;
+            mtmp.mspeed = MFAST;
+        }
+        break;
     case 25: // S_LIGHT
     case 31: // S_ELEMENTAL
         if (ptr.name === 'stalker' || ptr.name === 'black light') {
@@ -3119,6 +3131,13 @@ function makemon_mlet_switch(mtmp, ptr, x, y) {
         }
         break;
     }
+}
+
+// C ref: mondata.h is_bat().  Keep this by species name instead of generated
+// table offsets so a future monster-table regeneration cannot retarget it.
+function is_bat(ptr) {
+    return ptr?.name === 'bat' || ptr?.name === 'giant bat'
+        || ptr?.name === 'vampire bat';
 }
 
 export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
