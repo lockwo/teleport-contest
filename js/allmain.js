@@ -1716,15 +1716,6 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._eat_occupation = null;
-        // C ref: allmain.c:501-508 — after one eatfood() occupation step,
-        // monster_nearby() interrupts the meal when a hostile is adjacent.
-        // The jackal beside the monk in lp-monk-human reaches this exact arm.
-        if (busy && monster_nearby()) {
-            // The monster turn has already put its message on the topline;
-            // C's You("stop eating ...") appends to it rather than replacing it.
-            await (await import('./hack.js')).stop_occupation(true);
-            g._eat_occupation = null;
-        }
         return;
     }
 

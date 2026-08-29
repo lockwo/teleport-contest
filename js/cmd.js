@@ -956,36 +956,6 @@ export async function rhack(key) {
             else game.iflags.menu_requested = false;
         }
     }
-    // C ref: cmd.c rhack() got_prefix_input — a canned extended command is
-    // dispatched before parse() reads another key.  Fire-assist uses this for
-    // doswapweapon -> dowield -> dofire; preserving one queue entry per rhack
-    // pass is important because each wield can page and consume ECMD_TIME.
-    let queuedExt = null;
-    if (key === 0) {
-        const canned = cmdq_of(CQ_CANNED);
-        if (canned.length) {
-            const entry = canned.shift();
-            if (entry.typ === CMDQ_EXTCMD) {
-                queuedExt = entry.ec_entry?.ef_funct;
-            } else if (entry.typ === CMDQ_KEY) {
-                key = entry.key;
-            }
-        }
-    }
-
-    if (queuedExt) {
-        const res = typeof queuedExt === 'function'
-            ? await queuedExt()
-            : await run_extcmd_by_name(queuedExt);
-        // invent.js uses ECMD_TIME=3, while the C-style command table uses
-        // bit 0x01.  The queued fire-assist functions are all invent.js
-        // handlers; a string entry retains the C bitmask convention.
-        game.context.move = res === 3
-            || (typeof queuedExt !== 'function' && (res & 0x01)) ? 1 : 0;
-        if (res === 0) reset_cmd_vars(false);
-        return;
-    }
-
     if (key === 0) {
         // Read key from input.  The flush renders the *previous* command's
         // top-line message so it is captured for that command's screen; once
@@ -1521,15 +1491,6 @@ export async function rhack(key) {
     } else if (ch === '#') {
         // C ref: cmd.c doextcmd — read and run an extended command.
         await doextcmd();
-        // A no-time extended command completes the current parse and invokes
-        // C's reset_cmd_vars().  Only clear the synthetic stale-prefix marker
-        // here: a real run in progress can legitimately survive this nested
-        // command in the recorder's input stream.
-        if (!game.context.move && game.context.stale_run) {
-            game.context.run = 0;
-            game.context.stale_run = 0;
-            game.domove_attempting = 0;
-        }
     } else if (ch === '?') {
         // C ref: cmd.c { '?', "help", dohelp, IFBURIED | GENERALCMD } ->
         // pager.c dohelp(): the help-topic PICK_ONE menu ("Select one item:").
@@ -1669,18 +1630,6 @@ export async function rhack(key) {
         // — that reads the next key AND clears the top line.  Reading the
         // direction inline instead left the previous message on the recorded
         // screen and swallowed a key that C dispatches as its own command.
-        // A prefix that survived an invalid follow-up is still armed in C's
-        // gd.domove_attempting.  The next same-family prefix cancels it; it is
-        // not a new prefix (for example, `g <space> g` must print "Double rush
-        // prefix, canceled." and leave the following movement as a walk).
-        const pendingRun = game.context.run_prefix || staleRun;
-        if (pendingRun) {
-            await Norep_topl(`Double ${ch === 'G' ? 'run' : 'rush'} prefix, canceled.`);
-            game.context.run_prefix = 0;
-            game.context.stale_run = 0;
-            game.context.move = 0;
-            return;
-        }
         game.context.run_prefix = (ch === 'G') ? 3 : 2;
         game.context.move = 0;
         // C: a PREFIXCMD sets rhack()'s local prefix_seen and re-enters
@@ -3303,10 +3252,7 @@ export async function domove(dx, dy) {
                        : (IS_WALL(t) || t === SDOOR)
                            ? (wall_shows_as_stone(tgt) ? 'solid stone' : 'a wall')
                       : null;
-            // C's pline_dir() goes through update_topl(), so a wall reached on
-            // the next iteration of a run appends after an unacknowledged
-            // message from the preceding step (for example, a pet swap).
-            if (buf) await update_topl(`It's ${buf}.`);
+            if (buf) await pline(`It's ${buf}.`);
         }
         game.context.move = 0;
         return;
@@ -4190,7 +4136,6 @@ async function objDoname(obj) {
     // COIN_CLASS gold: "4 gold pieces" — C doname() has no article for coins.
     if (obj && (obj.oclass === COIN_CLASS_CMD)) {
         const q = obj.quan || 0;
-        if (q === 1) return 'a gold piece';
         return `${q} gold piece${q === 1 ? '' : 's'}`;
     }
     // CORPSE (otyp 265): "a goblin corpse" — species from corpsenm.

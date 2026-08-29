@@ -645,23 +645,15 @@ export async function attack_checks(mtmp) {
         await wakeupAttack(mtmp, true);
     }
 
-    // C ref: uhitm.c:308-324 — a visible peaceful target requires an explicit
-    // confirmation.  This also applies to kicks: dokick.c calls attack_checks()
-    // with a null weapon, so declining must leave `context.move` clear and
-    // consume no turn.
-    const flags = game.flags || {};
-    const Confusion = !!game.u?.uconf;
-    const Hallucination = !!game.u?.uhallu;
-    const Stunned = !!game.u?.ustun;
-    if (flags.confirm !== false && mtmp.mpeaceful
-        && !Confusion && !Hallucination && !Stunned && canspotmon(mtmp)) {
-        const { y_n } = await import('./display.js');
-        const answer = await y_n(`Really attack ${mon_nam(mtmp)}?`, 'yn', 'n');
-        if (answer !== 'y') {
-            game.context.move = 0;
-            return true;
-        }
-    }
+    // uhitm.c:308-324 — the flags.confirm "Really attack <mon>?" prompt.  Its
+    // gate is `flags.confirm && mpeaceful && !Confusion && !Hallucination
+    // && !Stunned` and then `canspotmon(mtmp)`, which is is_safemon()'s gate
+    // with flags.safe_dog swapped for flags.confirm — so do_attack's safemon
+    // block already consumed every target that could reach it, UNLESS the
+    // player has turned safe_dog off (nethackrc `!safe_pet`) while leaving
+    // confirm on.  That combination would consume an input here (a y/n query),
+    // which is the shape of bug the doenhance() menu turned out to be, so it is
+    // called out rather than assumed unreachable.
 
     return false;
 }
@@ -1163,23 +1155,10 @@ async function hmon(mon, weapon, dieroll) {
 async function hmon_hitmon(mon, weapon, dieroll) {
     const unarmed = !weapon;
     let dmg;
-    let potion_attack = false;
     // C ref: uhitm.c:1768 `hmd.use_weapon_skill = FALSE;` — set TRUE by the
     // ordinary-weapon and bare-handed arms only.
     let use_weapon_skill = false;
-    if (weapon?.oclass === POTION_CLASS) {
-        /* C's hmon_hitmon_do_hit() dispatches potion attacks through
-           hmon_hitmon_potion(), which in turn calls potionhit() before the
-           common damage/kill tail.  The live path below is an inlined version
-           of that tail, so preserve the same hmd fields here. */
-        const hmd = { hand_to_hand: true, thrown: HMON_MELEE,
-                      doreturn: false, retval: true, hittxt: false,
-                      mdat: mon.data, dmg: 1 };
-        await hmon_hitmon_potion(hmd, mon, weapon);
-        if (hmd.doreturn) return false;
-        dmg = hmd.dmg ?? 1;
-        potion_attack = true;
-    } else if (unarmed) {
+    if (unarmed) {
         // hmon_hitmon_barehands (uhitm.c:847): dmg = rnd(martial ? 4 : 2).
         dmg = rnd(martial_bonus() ? 4 : 2);
     } else if (weapon.oclass === WEAPON_CLASS || is_weptool(weapon)) {
@@ -1326,17 +1305,15 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     // verbose mode does it name the monster.  (seed4500 sets `!verbose` in its
     // nethackrc, so an adjacent, fully-visible earth elemental still prints
     // "You hit it.")
-    if (!potion_attack) {
-        const { update_topl } = await import('./display.js');
-        const verbose = game.flags?.verbose !== false;
-        const exclamU = (f) => (f < 0 ? '?' : (f <= 4 ? '.' : '!'));
-        if (!verbose)
-            await update_topl('You hit it.');
-        else if (canspotmon(mon))
-            await update_topl(`You ${hit_verb(weapon)} ${mon_nam(mon)}${canseemon(mon) ? exclamU(dmg) : '.'}`);
-        else
-            await update_topl('You hit it.');
-    }
+    const { update_topl } = await import('./display.js');
+    const verbose = game.flags?.verbose !== false;
+    const exclamU = (f) => (f < 0 ? '?' : (f <= 4 ? '.' : '!'));
+    if (!verbose)
+        await update_topl('You hit it.');
+    else if (canspotmon(mon))
+        await update_topl(`You ${hit_verb(weapon)} ${mon_nam(mon)}${canseemon(mon) ? exclamU(dmg) : '.'}`);
+    else
+        await update_topl('You hit it.');
     // C ref: uhitm.c:1925 — `wakeup(mon, TRUE)` for a surviving, on-map hit.
     // This was reduced to a bare `msleeping = 0`, which dropped the via_attack
     // half: landing a HIT on a peaceful monster never angered it (only a miss
@@ -2851,23 +2828,21 @@ export async function hmon_hitmon_weapon(hmd, mon, obj) {
 }
 
 // C ref: uhitm.c:1095 hmon_hitmon_potion(hmd, mon, obj) — bash with a potion.
-// potion.c potionhit() owns the impact message, breakage roll, and potion
-// effect.  Keep the split/freeinv order here, then call the full shared
-// routine so a hero striking a monster follows the same RNG path as C.
+// potion.c potionhit() is where the RNG lives (breakage + effect); this port
+// only has potionhit_hero() (monster-thrown at the hero), so the hero-bash
+// direction is a wiring blocker.
 export async function hmon_hitmon_potion(hmd, mon, obj) {
     const I = await import('./invent.js');
-    if ((obj.quan ?? 1) > 1) {
-        /* C splitobj() allocates a fresh object id through next_ident(),
-           whose rnd(2) draw precedes potionhit()'s bottlename() roll. */
-        const { next_ident } = await import('./mkobj.js');
-        next_ident();
+    if ((obj.quan ?? 1) > 1)
         obj = I.splitobj(obj, 1);
-    } else
+    else
         game.uwep = null;      /* wield.c setuwep(0); no port */
     I.freeinv(obj);
-    const { potionhit } = await import('./potion.js');
-    await potionhit(mon, obj,
-                    hmd.hand_to_hand ? POTHIT_HERO_BASH : POTHIT_HERO_THROW);
+    /* potion.c potionhit(mon, obj, hand_to_hand ? POTHIT_HERO_BASH
+       : POTHIT_HERO_THROW).  js/potion.js only has potionhit_hero() (a monster
+       throwing at the hero), so the hero-bashes-a-monster direction — and the
+       breakage/vapour RNG inside it — is a wiring blocker. */
+    void (hmd.hand_to_hand ? POTHIT_HERO_BASH : POTHIT_HERO_THROW);
     if (DEADMONSTER(mon)) {
         hmd.doreturn = true;
         hmd.retval = false;    /* killed */

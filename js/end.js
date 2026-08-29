@@ -431,13 +431,6 @@ async function done(how) {
     const discover = is_discover();
     if (!survive && (wizard || discover) && how <= GENOCIDED) {
         game._yn_need_more = true; // page the pending "You die..." line first
-        // If an older --More-- was dismissed with ESC during the fatal turn,
-        // WIN_STOP is still set here.  C clears that suppression for the
-        // deferred death line: the next input boundary must show
-        // "You die...--More--" before the paranoid query.
-        if (game._winStop && (game._pending_message || '').startsWith('You die')
-            && !(game._death_prior_message || '').includes('poisoned'))
-            game._winStop = false;
         const ans = await d.y_n('Die?', 'yn\x1b', 'n');
         if (ans !== 'y') {
             // "OK, so you don't die." (update_topl so it concatenates with the
@@ -1258,7 +1251,6 @@ function shk_name_for_killer(mtmp) {
 export async function done_in_by(mtmp, how = DIED) {
     const d = await deps();
     // C ref end.c:195 — You((how == STONING) ? "turn to stone..." : "die...").
-    game._death_prior_message = game._pending_message || '';
     await d.update_topl('You die...');
     game._killer_mon = mtmp || null;
     if (mtmp) game._killer_name = killer_text_for_monster(mtmp);

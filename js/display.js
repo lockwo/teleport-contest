@@ -2516,11 +2516,6 @@ function _buildScreenOutput() {
                 if (clipping && (x <= clipx || x >= clipxmax)) continue;
                 const loc = game.level?.at(x, y);
                 if (!loc?.disp_ch || loc.disp_ch === ' ') continue;
-                // Detection effects call cls() and then paint only the
-                // detected glyphs into the tty buffer.  During the cursor
-                // browse, do not repopulate remembered terrain from the live
-                // map; show_glyph_cell() marks exactly the cells C redrew.
-                if (game._object_detect_map && !loc.gnew) continue;
                 const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
                 display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0);
             }
@@ -2805,7 +2800,6 @@ export async function topl_more_ext(extraChars) {
             // message line is WIPED (space/return leave it standing).
             if (cury > 0) clear_wrapped_rows();
             else if (c === 27) { game._pending_message = ''; game._toplin = 0; }
-            else game._toplin = 0;
             return c;
         }
         if (extraChars && extraChars.includes(String.fromCharCode(c))) {
@@ -2868,15 +2862,7 @@ export async function update_topl(bp) {
     // skip = FALSE;` — a "You die" line CANCELS the ESC suppression and is
     // redrawn (with its own --More--).  Without this the wizard-mode "Die?"
     // query never appears and the port runs several input boundaries ahead.
-    // C's `notdied` assignment is inside the "there is room" condition in
-    // topl.c:update_topl().  Thus a You-die line cancels WIN_STOP only when it
-    // could have shared the current topline; after a long pending message has
-    // already been dismissed with ESC, WIN_STOP survives when the replacement
-    // does not fit.  That distinction controls whether tty_yn_function() adds
-    // another --More-- before the Die? prompt.
-    const dieFits = bp.startsWith('You die')
-        && n0 + cur.length + 3 < CO - 8;
-    if (game._winStop && dieFits) {
+    if (game._winStop && bp.startsWith('You die')) {
         game._winStop = false;
         game._toplin = 0;   // the skipped arm never more()s the pending line
     }
@@ -2899,24 +2885,12 @@ export async function update_topl(bp) {
         game._toplines = game._pending_message;
         return;
     }
-    let paged = false;
-    // A message written by pline() has TOPLINE_NEED_MORE semantics too, even
-    // though the port tracks that state in _toplinSoft until the next writer.
-    // C pages either form when the replacement does not fit; dropping the
-    // soft-pending arm here let monster messages overwrite a preceding player
-    // message in the same turn (notably the polymorphed pickup refusal).
-    if (game._toplin === TOPLIN_NEED_MORE || softPending) {
+    if (game._toplin === TOPLIN_NEED_MORE) {
         await topl_more();
-        paged = true;
     }
     game._pending_message = bp;
     game._toplin = TOPLIN_NEED_MORE;
     game._toplines = bp;
-    // more() updates the terminal immediately, while update_topl() normally
-    // defers drawing until the next input boundary.  Redraw here when the
-    // former path was taken so the new message cannot inherit the old
-    // --More-- suffix left in the physical grid.
-    if (paged) await flush_screen(1);
     // C ref: win/tty/topl.c redotoplin():139 — `if (ttyDisplay->cury && otoplin
     // != TOPLINE_SPECIAL_PROMPT) more()`.  A message that word-wrapped onto a
     // second row blocks on --More-- IMMEDIATELY; more() then blanks rows 0..cury
@@ -2955,10 +2929,7 @@ function topl_cursor_after(str) {
 export async function y_n(query, resp = 'yn\x1b', def = 'n') {
     if (game._yn_need_more) {
         game._yn_need_more = false;
-        // tty_yn_function() skips its pending --More-- check while WIN_STOP is
-        // set.  This is the path after an ESC that dismissed a long death
-        // message: the prompt is the next captured frame, not another page.
-        if (!game._winStop) await topl_more();
+        await topl_more();
         // Acking a deferred --More-- is where a pending status redraw lands:
         // the --More-- frames still show the pre-done() line, this prompt's
         // frames show the current one.  (end.c: done() sets disp.botl at :1071

@@ -24,7 +24,7 @@ import { rnd } from './rng.js';
 import { vision_recalc, Blind, couldsee, cansee } from './vision.js';
 import { nhgetch } from './input.js';
 import { is_safemon, canspotmon } from './uhitm.js';
-import { distant_monnam, a_monnam, ARTICLE_NONE } from './do_name.js';
+import { distant_monnam, ARTICLE_NONE } from './do_name.js';
 import { dist2, distmin } from './hacklib.js';
 import { worm_seg_at } from './worm.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -183,9 +183,6 @@ export function nomul(nval = 0) {
     if ((game.multi ?? 0) < nval) return;
     game.multi = nval;
     game.context.travel = game.context.travel1 = game.context.mv = 0;
-    // C ref: cmd.c nomul() clears CQ_CANNED.  Monster attacks use nomul(0)
-    // to interrupt the hero's queued multi-step command.
-    if (game._cmdq_canned) game._cmdq_canned.length = 0;
 }
 
 // C ref: allmain.c:684 stop_occupation().  This port splits C's single
@@ -222,7 +219,7 @@ export function occupation_active() {
     return !!game._eat_occupation;
 }
 
-export async function stop_occupation(append = false) {
+export async function stop_occupation() {
     for (const [slot, txt] of OCC_SLOTS) {
         if (!game[slot]) continue;
         game[slot] = null;
@@ -249,10 +246,8 @@ export async function stop_occupation(append = false) {
             await eatfood_step();
         } else {
             game._eat_occupation = null;
-            const msg = `You stop eating ${
-                v?.piece ? await occ_food_xname(v.piece, true) : 'your meal'}.`;
-            if (append) await update_topl(msg);
-            else await pline(msg);
+            await pline(`You stop eating ${
+                v?.piece ? await occ_food_xname(v.piece, true) : 'your meal'}.`);
         }
         nomul(0);
         return;
@@ -273,7 +268,6 @@ function lookaround() {
     let corrct = 0, noturn = 0;
     let i;
     let stop = false;
-    let stopMessage = null;
 
     // C ref: hack.c:3906 — a grid bug that polymorphed mid-run stops dead
     // rather than continuing on a diagonal.  NODIAG(mnum) == (mnum ==
@@ -318,12 +312,6 @@ function lookaround() {
             if (mtmp && mon_visible(mtmp)) {
                 if ((c.run !== 1 && !is_safemon(mtmp))
                     || (infront && !c.travel)) {
-                    // C ref: hack.c lookaround() pline_xy() — with
-                    // mention_walls enabled this follows a pet swap in the
-                    // same run and appends "A kitten blocks your path." to
-                    // the swap message.  Emit after this synchronous scan.
-                    if (game.flags?.mention_walls)
-                        stopMessage = `${upstart(a_monnam(mtmp))} blocks your path.`;
                     stop = true; break outer;
                 }
             }
@@ -399,7 +387,7 @@ function lookaround() {
         }
     }
 
-    if (stop) { nomul(0); return stopMessage; }
+    if (stop) { nomul(0); return; }
 
     if (corrct > 1 && c.run === 2) {
         nomul(0); return;
@@ -523,8 +511,7 @@ async function run_movement(run) {
 
         if (game.multi <= 0) break;    // nomul triggered -> stop after this turn
 
-        const stopMessage = lookaround(); // may stop (multi=0) or turn the path
-        if (stopMessage) await update_topl(stopMessage);
+        lookaround();                  // may stop (multi=0) or turn the path
         if (game.multi <= 0) break;
 
         // C: `if (gm.multi < COLNO && !--gm.multi) end_running(TRUE);` — the
@@ -1045,8 +1032,7 @@ async function travel_walk() {
         await moveloop_turn();       // the elapsed turn, taken inline
         if ((game.multi ?? 0) <= 0) break;
 
-        const stopMessage = lookaround();
-        if (stopMessage) await update_topl(stopMessage);
+        lookaround();
         if ((game.multi ?? 0) <= 0) break;
 
         // C: `if (gm.multi < COLNO && !--gm.multi) end_running(TRUE);` — travel
@@ -1938,12 +1924,7 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
     // with the optional "(invalid target)" suffix from getpos_getvalid.
     const describe = (x, y) => {
         let desc;
-        // C reveal_terrain() replaces the live hero/monster glyphs with the
-        // underlying terrain before browse_map() starts.  The hero's logical
-        // coordinates therefore must not win the self-description branch.
-        if (terrainMode) {
-            desc = terrain_description(x, y);
-        } else if (u && x === u.ux && y === u.uy) {
+        if (u && x === u.ux && y === u.uy) {
             desc = self_lookat();
         } else if (detectMode) {
             // C ref: pager.c do_screen_description(), reached via 'need_to_look'
@@ -2270,32 +2251,13 @@ export async function do_farlook() {
 // TER_* subset bits (detect.c / include/hack.h).
 const TER_MAP = 0x01, TER_TRP = 0x02, TER_OBJ = 0x04;
 
-// The normal-play "View which?" entries; 'a' is the preselected default
+// The three normal-play "View which?" entries; 'a' is the preselected default
 // (rendered with a '*' marker instead of the '-' of the unselected entries).
 const TERRAIN_MENU_ITEMS = [
     { ch: 'a', sel: true,  desc: 'known map without monsters, objects, and traps' },
     { ch: 'b', sel: false, desc: 'known map without monsters and objects' },
     { ch: 'c', sel: false, desc: 'known map without monsters' },
 ];
-const TERRAIN_FULL = 0x10;
-
-// C ref: cmd.c doterrain() — explore mode adds the full map choice, and wizard
-// mode adds the two levl[][] diagnostic views after it.
-function terrain_menu_items() {
-    const items = TERRAIN_MENU_ITEMS.map((it) => ({ ...it }));
-    const f = game.flags || {};
-    if (f.debug || f.explore || f.discover || f.playmode === 'explore') {
-        items.push({ ch: 'd', sel: false,
-                     desc: 'full map without monsters, objects, and traps' });
-        if (f.debug) {
-            items.push({ ch: 'e', sel: false,
-                         desc: 'internal levl[][].typ codes in base-36' });
-            items.push({ ch: 'f', sel: false,
-                         desc: 'legend of base-36 levl[][].typ codes' });
-        }
-    }
-    return items;
-}
 
 // Render the "View which?" PICK_ONE menu as a tty corner overlay (the map
 // shows through the columns left of offx).  Mirrors render_whatis_menu /
@@ -2303,7 +2265,7 @@ function terrain_menu_items() {
 // lines, then the "(end)" morestr with the cursor parked after it.  A selected
 // PICK_ONE default renders its marker column as '*' (tty tty_print_glyph:
 // n==2 && selected => '*').
-function render_terrain_menu(items) {
+function render_terrain_menu() {
     const disp = game.nhDisplay;
     if (!disp?.setCell) return;
     const cols = disp.cols || 80;
@@ -2311,7 +2273,7 @@ function render_terrain_menu(items) {
     const lines = [];
     lines.push({ text: 'View which?', attr: ATR_INVERSE });
     lines.push({ text: '' });
-    for (const it of items)
+    for (const it of TERRAIN_MENU_ITEMS)
         lines.push({ text: `${it.ch} ${it.sel ? '*' : '-'} ${it.desc}` });
 
     let maxcols = 0;
@@ -2340,15 +2302,16 @@ function render_terrain_menu(items) {
 // chosen a_int (1..3), or -1 if cancelled.  C select_menu(PICK_ONE): a
 // <space>/<return> confirms the preselected entry (n==1 => which==1); a direct
 // accelerator picks that entry; ESC cancels.
-async function terrain_menu(items) {
-    render_terrain_menu(items);
+async function terrain_menu() {
+    render_terrain_menu();
     for (;;) {
         const k = await nhgetch();
         if (k === 27) return -1;                        // ESC: cancel
         if (k === 32 || k === 13 || k === 10) return 1; // confirm preselected
         const ch = String.fromCharCode(k);
-        const item = items.find((it) => it.ch === ch);
-        if (item) return item.ch.charCodeAt(0) - 'a'.charCodeAt(0) + 1;
+        if (ch === 'a') return 1;
+        if (ch === 'b') return 2;
+        if (ch === 'c') return 3;
         // invalid key: PICK_ONE stays open (the menu is still on the grid).
     }
 }
@@ -2357,13 +2320,11 @@ async function terrain_menu(items) {
 // model, so it is skipped; the normal-play menu selects a TER_* subset and
 // hands off to reveal_terrain().  Returns ECMD_OK (no game time).
 export async function doterrain() {
-    const items = terrain_menu_items();
-    const which = await terrain_menu(items);
+    const which = await terrain_menu();
     if (which < 0) return 0; // ESC-cancelled: no display change
     let subset = TER_MAP;
     if (which === 2) subset = TER_MAP | TER_TRP;
     else if (which === 3) subset = TER_MAP | TER_TRP | TER_OBJ;
-    else if (which === 4) subset = TER_MAP | TERRAIN_FULL;
     await reveal_terrain(subset);
     return 0;
 }

@@ -28,8 +28,7 @@ import { newsym, vobj_at, object_glyph, see_with_infrared } from './display.js';
 import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision.js';
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
 import { floor_object_name, doname_invent, sobj_at, stackobj } from './invent.js';
-import { dist2, mfndpos, mon_mintrap, Trap_Killed_Mon, Trap_Moved_Mon,
-    m_avoid_kicked_loc,
+import { dist2, mfndpos, mon_mintrap, Trap_Killed_Mon, m_avoid_kicked_loc,
     mon_allowflags, set_apparxy, onscary, mon_wield_item,
     Conflict, resist_conflict, mattacku } from './monmove.js';
 import { goodpos } from './teleport.js';
@@ -1777,12 +1776,7 @@ export async function dog_move(mtmp, after) {
         // square is redrawn (pet painted over the object) only afterwards.
         newsym(omx, omy);
         const trapret = await mon_mintrap(mtmp);
-        // C postmov() treats Trap_Moved_Mon like a death: the pet was
-        // teleported off this level, so dochug() must skip its recalc.
-        if (trapret === Trap_Killed_Mon || trapret === Trap_Moved_Mon) {
-            if (mtmp.mx) newsym(mtmp.mx, mtmp.my);
-            return MMOVE_DIED;
-        }
+        if (trapret === Trap_Killed_Mon) { newsym(nix, niy); return MMOVE_DIED; }
         newsym(nix, niy);
         // C ref: dogmove.c:1318 — after moving onto the food, the pet eats it.
         if (do_eat && eat_obj) {

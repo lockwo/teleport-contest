@@ -3115,9 +3115,8 @@ function makemon_mlet_switch(mtmp, ptr, x, y) {
             mtmp.mpeaceful = true;
         break;
     case S_BAT:
-        // C ref: makemon.c:1343-1346 / mondata.h is_bat().  `is_bat()` is
-        // intentionally narrower than the shared S_BAT class: birds share it.
-        // mon_adjust_speed() sets both permanent and current speed fields.
+        // C ref: makemon.c:1343-1346 / mondata.h is_bat().  Birds share the
+        // S_BAT class, but only actual bats become fast in Gehennom.
         if (In_hell(game.u?.uz) && is_bat(ptr)) {
             mtmp.permspeed = MFAST;
             mtmp.mspeed = MFAST;
@@ -3133,8 +3132,8 @@ function makemon_mlet_switch(mtmp, ptr, x, y) {
     }
 }
 
-// C ref: mondata.h is_bat().  Keep this by species name instead of generated
-// table offsets so a future monster-table regeneration cannot retarget it.
+// C ref: mondata.h is_bat(). Keep this by species name so generated monster
+// table offsets cannot retarget the speed rule.
 function is_bat(ptr) {
     return ptr?.name === 'bat' || ptr?.name === 'giant bat'
         || ptr?.name === 'vampire bat';

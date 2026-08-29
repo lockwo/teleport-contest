@@ -805,7 +805,7 @@ async function halu_gname_(alignment) {
 async function a_gname_at_(x, y) {
     const loc = game.level?.at(x, y);
     const typ = loc?.typ | 0;
-    if (typ !== 22 /* ALTAR */) return null;
+    if (typ !== ALTAR) return null;
     const { align_gname, roles } = await import('./role.js');
     const mnum = game.urole?.mnum;
     let idx = roles.findIndex((r) => r?.mnum === mnum);

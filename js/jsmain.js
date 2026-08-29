@@ -13,7 +13,7 @@ import { game, resetGame } from './gstate.js';
 import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
 import { newgame, moveloop_core } from './allmain.js';
-import { parseNethackrc, config_error_report, fruitadd } from './options.js';
+import { parseNethackrc, config_error_report } from './options.js';
 import { flush_screen } from './display.js';
 import { GameDisplay } from './game_display.js';
 import {
@@ -287,12 +287,6 @@ export class NethackGame {
         // Initialize hero struct
         g.u = { ux: 0, uy: 0, ux0: 0, uy0: 0 };
         g.context = { move: 0 };
-        // C ref: initoptions_finish() -> fruitadd() runs before init_objects()
-        // and gives every slime mold its preferred-fruit id in obj->spe.
-        // The replay startup parses rc options directly, so seed that small
-        // piece of options state here before any level objects are created.
-        g.svp = { pl_fruit: opts.pl_fruit || 'slime mold' };
-        fruitadd(g.svp.pl_fruit, null);
         g.program_state = {};
         g.moves = 1;
 

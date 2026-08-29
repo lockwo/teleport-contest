@@ -506,18 +506,7 @@ async function losehp_do(n) {
     u.uhp = (u.uhp ?? 0) - n;
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     if (u.uhp < 0) u.uhp = 0;
-    // C ref: hack.c losehp() — lethal damage emits urgent_pline("You die...")
-    // and immediately enters done(DIED).  Keeping this in the shared helper
-    // covers fall/lava/trap damage, whose callers otherwise continue one input
-    // boundary past death and start disclosure out of phase.
-    if (u.uhp < 1 && !game.program_state?.gameover) {
-        await update_topl('You die...');
-        const { done, DIED } = await import('./end.js');
-        await done(DIED);
-        return;
-    }
-    // C ref: hack.c losehp() tail — the low-HP warning is the nonlethal arm;
-    // a lethal hit takes the branch above before maybe_wail() can run.
+    // C ref: hack.c losehp() tail — `else if (n > 0 && u.uhp * 10 < u.uhpmax) maybe_wail();`
     if (n > 0 && u.uhp * 10 < (u.uhpmax ?? 0)) await maybe_wail();
 }
 
@@ -1333,13 +1322,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // C ref: do.c:1990 — a trap-door/hole fall costs d(max(dist,1), 6) hp, rolled
     // at the very END of the arrival (after every message above and after
     // check_special_room(FALSE)).  Maybe_Half_Phys is the identity here.
-    if (do_fall_dmg) {
-        await losehp_do(d(Math.max(dist, 1), 6));
-        // C's losehp()->done() does not return to goto_level() on a real
-        // death.  A wizard/discover lifesave can return normally, so only
-        // abandon the arrival when the game was actually ended.
-        if (game.program_state?.gameover) return;
-    }
+    if (do_fall_dmg) await losehp_do(d(Math.max(dist, 1), 6));
     // MEASURED NEGATIVE, do not re-add here: C's do.c:1814 `if (Punished)
     // placebc();` belongs EARLIER in goto_level (before obj_delivery()/
     // losedogs()/run_timers()), so the arrival square's nexthere order is C's.
