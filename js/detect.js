@@ -355,8 +355,11 @@ function d_fobj() {
     return (game.level?.objects || []).filter((o) => o.where === 'floor');
 }
 function d_objs_at(x, y) {
+    // place_object() appends to the flat store, while C prepends each object
+    // to levl[x][y]'s nexthere chain.  Expose C's pile-head-first order to
+    // detection: the first mapped object is what the tty leaves visible.
     return (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y);
+        (o) => o.where === 'floor' && o.ox === x && o.oy === y).reverse();
 }
 function d_OBJ_AT(x, y) { return d_objs_at(x, y).length > 0; }
 function d_buriedobjs() {
@@ -956,6 +959,14 @@ export async function object_detect(detector, oclass) {
 
     await cls();
     unconstrain_map();
+    // C's cls() clears the physical map before object_detect() paints only
+    // detected glyphs.  Our retained display buffer backs normal redraws, so
+    // clear it explicitly here; map_redisplay()'s docrt() restores the real
+    // map after browse_map() returns.  This mirrors monster_detect()'s map
+    // preparation and keeps unseen terrain from leaking behind the detector.
+    for (let x = 1; x < COLNO; x++)
+        for (let y = 0; y < ROWNO; y++)
+            show_glyph_cell(x, y, ' ', NO_COLOR, false);
 
     /* map all buried objects first */
     for (const obj of d_buriedobjs()) {

@@ -2134,7 +2134,7 @@ function PM_GHOST() {
     if (_pm_ghost < 0) _pm_ghost = name_to_pmidx('ghost') ?? -2;
     return _pm_ghost;
 }
-export function x_monnam(mtmp, article, _adjective, _suppress, _called) {
+export function x_monnam(mtmp, article, _adjective, _suppress, called) {
     const base = mon_pmname(mtmp);
     const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
 
@@ -2181,17 +2181,24 @@ export function x_monnam(mtmp, article, _adjective, _suppress, _called) {
     const has_adjectives = adj !== '';
 
     if (given) {
-        // A personal name is name_at_start: C drops the article for
+        // A personal name is normally name_at_start: C drops the article for
         // ARTICLE_YOUR or when there are no adjectives, but keeps it otherwise
-        // ("the peaceful Slasher").
-        if (article === 3 || !has_adjectives) article = 0;
+        // ("the peaceful Slasher").  The `called` spelling puts the species
+        // first ("the dog called Fido"), so it keeps that article except for
+        // proper-noun monster types.
+        const nameAtStart = !called || (mflags2_of(mtmp?.data) & M2_PNAME) !== 0;
+        if (nameAtStart && (article === 3 || !has_adjectives))
+            article = base === 'Wizard of Yendor' ? 1 : 0;
         // C ref: do_name.c:1006 — a named GHOST is "<name>'s ghost", never the
         // bare name: christen_monst() puts the dead hero's name on the bones
         // ghost, so "You miss Elara." must read "You miss Elara's ghost."
         // (hacklib.c s_suffix: a name already ending in 's' takes a bare "'").
         const gnamed = (mtmp?.data?.pmidx === PM_GHOST())
             ? adj + (/s$/i.test(given) ? `${given}'` : `${given}'s`) + ' ghost'
-            : adj + given;
+            // C's l_monnam()/distant_monnam() request a species followed by
+            // "called <name>".  The other wrappers use the personal name
+            // directly ("Fido") and pass called=false.
+            : called ? adj + `${base} called ${given}` : adj + given;
         return article === 1 ? 'the ' + gnamed
              : article === 2 ? an(gnamed)
              : gnamed;

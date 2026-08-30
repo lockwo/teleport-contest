@@ -2005,6 +2005,10 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
         // C topl.c — reading a key acknowledges any pending NEED_MORE topline,
         // so subsequent autodescribe plines overwrite without a new --More--.
         game._toplin = 0;
+        // The soft marker carries the same acknowledgement state for pline()
+        // messages.  It must die with NEED_MORE here: leaving it behind made a
+        // later getpos '$' re-page an already acknowledged travel prompt.
+        game._toplinSoft = null;
         // C getpos.c:888 — only autodescribe mode clears msg_given, so with
         // '#' turned off the last message stays up across keystrokes.
         if (gp_iflags().autodescribe) msgGiven = false;

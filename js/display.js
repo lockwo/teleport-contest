@@ -2885,7 +2885,11 @@ export async function update_topl(bp) {
         game._toplines = game._pending_message;
         return;
     }
-    if (game._toplin === TOPLIN_NEED_MORE) {
+    // A soft pline is just as unacknowledged as a hard topline in C.  The
+    // distinction only prevents unrelated command handling from paging it;
+    // when a second message cannot fit, update_topl() must page either form
+    // before replacing it.
+    if (game._toplin === TOPLIN_NEED_MORE || softPending) {
         await topl_more();
     }
     game._pending_message = bp;

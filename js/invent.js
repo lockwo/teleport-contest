@@ -10,7 +10,7 @@ import { game } from './gstate.js';
 import { find_mac as worn_find_mac } from './worn.js';
 import { rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch } from './input.js';
-import { docrt, flush_screen, newsym, pline, statusLine1Text, statusLine2Text, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, m_at } from './display.js';
+import { docrt, flush_screen, newsym, pline, statusLine1Text, statusLine2Text, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, m_at, display_nhwindow_message } from './display.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
 import { distmin, depth as depth_of_level } from './hacklib.js';
 import { surface } from './dungeon.js';
@@ -5534,16 +5534,18 @@ async function tmiss(obj, mon, maybe_wakeup) {
     if (maybe_wakeup && !rn2(3)) await wakeupAttack(mon, true);
 }
 
-// C ref: dog.c abuse_dog(mtmp), reached from uhitm.c hmon_hitmon_pet().  Only
-// the RNG-bearing yelp/growl choice matters here; both sounds are silent in this
-// port (js/uhitm.js keeps the same shape).
-function abuse_dog_thrown(mtmp) {
+// C ref: dog.c abuse_dog(mtmp), reached from uhitm.c hmon_hitmon_pet().
+// Projectile attacks need the same pet complaint and wake-up side effects as
+// hand-to-hand attacks; keeping this local preserves the thrown-path ordering.
+async function abuse_dog_thrown(mtmp) {
     if (!mtmp.mtame) return;
     mtmp.mtame--;
     if (mtmp.mtame && !mtmp.isminion && mtmp.edog)
         mtmp.edog.abuse = (mtmp.edog.abuse || 0) + 1;
     if (mtmp.mx !== 0) {
-        if (mtmp.mtame && rn2(mtmp.mtame)) { /* yelp */ } else { /* growl */ }
+        const { yelp, growl } = await import('./sounds.js');
+        if (mtmp.mtame && rn2(mtmp.mtame)) await yelp(mtmp);
+        else await growl(mtmp);
         if (!mtmp.mtame) newsym(mtmp.mx, mtmp.my);
     }
 }
@@ -5600,7 +5602,7 @@ async function hmon_thrown(mon, obj, dieroll, skillsnap) {
 
     // C ref: uhitm.c hmon_hitmon_pet() — runs BEFORE killed().
     if (mon.mtame && dmg > 0) {
-        abuse_dog_thrown(mon);
+        await abuse_dog_thrown(mon);
         if (mon.mtame && !destroyed)
             await U.monflee(mon, 10 * rnd(dmg), false, false);
     }
@@ -6695,6 +6697,11 @@ export async function dofire(getDir) {
                     if ((await doswapweapon()) === ECMD_TIME) {
                         game.context.move = 0;
                         await moveloop_turn();
+                        // The queued dowield is a distinct command.  Its
+                        // predecessor left the former primary's prinv() line
+                        // pending, which C pages at the command boundary
+                        // before dowield() can replace it with the launcher.
+                        await display_nhwindow_message();
                     }
                 }
                 // The queued invlet is popped by getobj()'s cmdq fast path, so

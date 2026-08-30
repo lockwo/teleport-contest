@@ -41,6 +41,7 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { name_to_pmidx, monster_by_pmidx, enexto_spawn, makemon,
          placeOnLevel } from './makemon.js';
 import { race_attrmin, race_attrmax } from './u_init.js';
+import { object_detect } from './detect.js';
 
 // C ref: potion.c make_confused(xtime, talk) — set the HConfusion timeout.  The
 // hero's confusion timer lives on game.u.uprops.Confusion (read by isConfused()
@@ -1258,10 +1259,11 @@ async function peffect_monster_detection(otmp) {
 // C ref: prop.h TIMEOUT — the low 24 bits of a property word.
 const TIMEOUT_MASK = 0x00ffffff;
 
-// C ref: potion.c peffect_object_detection().  object_detect() is not modelled;
-// C returns 1 ("nothing detected") when the level holds no interesting object,
-// and 0 otherwise after exercising Wisdom.
-async function peffect_object_detection(_otmp) {
+// C ref: potion.c peffect_object_detection().  object_detect() owns both the
+// detected-map modal UI and the no-object early return; only a successful
+// detection exercises Wisdom here.
+async function peffect_object_detection(otmp) {
+    if (await object_detect(otmp, 0)) return 1;
     exercise(A_WIS, true);
     return 0;
 }
