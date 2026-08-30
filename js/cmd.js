@@ -3252,7 +3252,12 @@ export async function domove(dx, dy) {
                        : (IS_WALL(t) || t === SDOOR)
                            ? (wall_shows_as_stone(tgt) ? 'solid stone' : 'a wall')
                       : null;
-            if (buf) await pline(`It's ${buf}.`);
+            // C test_move() calls pline_dir(), whose vpline() appends to an
+            // unacknowledged message from the same command (for example, a
+            // pet-swap line followed by the wall hit at the end of a run).
+            // update_topl() is the live equivalent; pline() would replace the
+            // swap message and lose the first divergence's text.
+            if (buf) await update_topl(`It's ${buf}.`);
         }
         game.context.move = 0;
         return;
@@ -4133,9 +4138,11 @@ const COIN_CLASS_CMD = 12;
 // import to avoid a static cycle.  Corpses read "<species> corpse"; gold reads
 // "<n> gold piece(s)"; other objects defer to invent.js's doname().
 async function objDoname(obj) {
-    // COIN_CLASS gold: "4 gold pieces" — C doname() has no article for coins.
+    // COIN_CLASS gold: doname() uses an article for a single coin and a
+    // quantity for a stack.
     if (obj && (obj.oclass === COIN_CLASS_CMD)) {
         const q = obj.quan || 0;
+        if (q === 1) return 'a gold piece';
         return `${q} gold piece${q === 1 ? '' : 's'}`;
     }
     // CORPSE (otyp 265): "a goblin corpse" — species from corpsenm.

@@ -15,7 +15,7 @@ import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl } from './
 import { vision_recalc, vision_reset, init_vision_globals } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
-import { movemon, mcalcdistress, mcalcmove, base_mmove } from './mon.js';
+import { movemon, mcalcdistress, mcalcmove, base_mmove, fmonOrder } from './mon.js';
 import { run_regions } from './region.js';
 import { makemon_rnd_spawn } from './makemon.js';
 import { SPEED_BOOTS, objects } from './mkobj.js';
@@ -899,7 +899,12 @@ export async function moveloop_turn() {
         if (!monscanmove && g.u.umovement < NORMAL_SPEED) {
             // Both hero and all monsters are out of steam -> advance a turn.
             await mcalcdistress();
-            for (const mtmp of (g.level?.monsters || [])) {
+            // C walks the fmon chain here, which is newest-first because
+            // makemon prepends each monster.  The level array is creation
+            // order, so use the same shared ordering as movemon(); assigning
+            // the six rounding draws to the wrong monsters changes who gets
+            // the next action even when the raw RNG stream is unchanged.
+            for (const mtmp of fmonOrder()) {
                 if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
                 mtmp.movement = (mtmp.movement || 0) + mcalcmove(mtmp, true);
             }
@@ -1716,6 +1721,16 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._eat_occupation = null;
+        // C ref: allmain.c:501-508 — after one eatfood() occupation step,
+        // monster_nearby() interrupts the meal when a hostile is adjacent.
+        // This is a general occupation rule; the same path is used by every
+        // role and food type.
+        if (busy && monster_nearby()) {
+            // The monster turn has already put its message on the topline;
+            // C's You("stop eating ...") appends to it rather than replacing it.
+            await (await import('./hack.js')).stop_occupation(true);
+            g._eat_occupation = null;
+        }
         return;
     }
 

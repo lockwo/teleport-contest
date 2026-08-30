@@ -219,7 +219,7 @@ export function occupation_active() {
     return !!game._eat_occupation;
 }
 
-export async function stop_occupation() {
+export async function stop_occupation(append = false) {
     for (const [slot, txt] of OCC_SLOTS) {
         if (!game[slot]) continue;
         game[slot] = null;
@@ -246,8 +246,10 @@ export async function stop_occupation() {
             await eatfood_step();
         } else {
             game._eat_occupation = null;
-            await pline(`You stop eating ${
-                v?.piece ? await occ_food_xname(v.piece, true) : 'your meal'}.`);
+            const msg = `You stop eating ${
+                v?.piece ? await occ_food_xname(v.piece, true) : 'your meal'}.`;
+            if (append) await update_topl(msg);
+            else await pline(msg);
         }
         nomul(0);
         return;

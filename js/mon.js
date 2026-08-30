@@ -180,7 +180,7 @@ export function monsterList() {
 // (makemon.c:1249-1250), so C visits monsters newest-first.  Our level array
 // holds monsters in creation order; return a reversed snapshot so per-monster
 // RNG (distfleeck / m_move) is emitted in the same order as C.
-function fmonOrder() {
+export function fmonOrder() {
     const list = monsterList();
     const out = new Array(list.length);
     for (let i = 0; i < list.length; i++) out[i] = list[list.length - 1 - i];

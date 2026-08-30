@@ -1483,7 +1483,7 @@ export function objectBaseName(obj) {
     // picked-up item shows its BUC word the first time it is described.
     if (Role_if(PM_CLERIC) && obj.bknown !== 1) obj.bknown = 1;
     if (obj.otyp === GOLD_PIECE || obj.oclass === COIN_CLASS)
-        return `${obj.quan || 0} gold piece${(obj.quan || 0) === 1 ? '' : 's'}`;
+        return 'gold piece';
 
     // C ref: objnam.c xname_flags() case BALL_CLASS:
     //     Sprintf(buf, "%sheavy iron ball", (obj->owt > ocl->oc_weight) ? "very " : "");
@@ -1746,8 +1746,10 @@ function simple_obj_name(obj, opts = {}) {
     // "some "); }`.  Only farlook passes DONAME_VAGUE_QUAN.
     const vagueQuan = vague_quan && !obj.dknown && (obj.quan || 1) !== 1;
     if (obj.oclass === COIN_CLASS || obj.otyp === GOLD_PIECE) {
-        const nm = objectBaseName(obj);          /* "<quan> gold piece(s)" */
-        return vagueQuan ? nm.replace(/^\d+ /, 'some ') : nm;
+        const q = obj.quan || 0;
+        if (!quantity) return 'gold piece';
+        if (q === 1) return article ? 'a gold piece' : 'gold piece';
+        return vagueQuan ? 'some gold pieces' : `${q} gold pieces`;
     }
     let base = objectBaseName(obj);
     // C ref: objnam.c xname_flags "if (typ == TIN && known) tin_details(...)" —
