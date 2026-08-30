@@ -13,7 +13,7 @@
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, y_n, newsym } from './display.js';
-import { getobj, makeknown, useup, trycall, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
+import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
          makeplural, remove_worn_item, is_plural, pair_of,
@@ -27,7 +27,7 @@ import { more_experienced, pluslvl, newuexp } from './exper.js';
 import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          POT_HEALING, POT_EXTRA_HEALING, POT_FRUIT_JUICE, POT_BOOZE,
          POT_SICKNESS, POT_WATER, POT_SPEED, POT_GAIN_LEVEL, POT_GAIN_ENERGY,
-         objects, COIN_CLASS, RING_CLASS, mkobj_at, CORPSE } from './mkobj.js';
+         objects, COIN_CLASS, RING_CLASS, mkobj_at, CORPSE, next_ident } from './mkobj.js';
 import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED } from './const.js';
 import { fruitname } from './objnam.js';
@@ -1436,9 +1436,11 @@ export async function dodrink() {
     // renumbers inventory, so the guard has to exist for it to stay that way.
     if (otmp.owornmask) {
         if ((otmp.quan || 1) > 1) {
-            // splitobj() is invent.js-private; the quan>1 worn case needs a
-            // stack split that only that module can do, so this arm is left to
-            // the completeness pass (see the deferred list).
+            // C splitobj() calls nextoid(), whose trailing next_ident() spends
+            // rnd(2).  The shared JS splitobj deliberately has no RNG side
+            // effects so callers pay that draw at their C-equivalent site.
+            next_ident();
+            otmp = splitobj(otmp, 1);
             otmp.owornmask = 0;
         } else {
             await remove_worn_item(otmp, false);
