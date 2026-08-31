@@ -135,6 +135,7 @@ function boolStr(name, dflt) {
     let v;
     switch (name) {
     case 'autopickup': v = game.flags.pickup; break;
+    case 'cmdassist': v = game.iflags?.cmdassist; break;
     default:           v = game.flags[name]; break;
     }
     if (v === undefined) v = dflt;
@@ -712,6 +713,13 @@ function toggleSimpleBool(name) {
         game.flags.pickup = !cur;
         return;
     }
+    if (name === 'cmdassist') {
+        game.iflags = game.iflags || {};
+        const cur = game.iflags.cmdassist === undefined
+            ? SIMPLE_BOOL_DEFAULT.cmdassist : !!game.iflags.cmdassist;
+        game.iflags.cmdassist = !cur;
+        return;
+    }
     const dflt = SIMPLE_BOOL_DEFAULT[name] ?? false;
     const cur = game.flags[name] === undefined ? dflt : !!game.flags[name];
     game.flags[name] = !cur;
@@ -793,6 +801,7 @@ function applyBooleanToggle(name, turnOn) {
     game.flags = game.flags || {};
     switch (name) {
     case 'autopickup': game.flags.pickup = turnOn; break;
+    case 'cmdassist':  (game.iflags = game.iflags || {}).cmdassist = turnOn; break;
     case 'showexp':    game.flags.showexp = turnOn; break;
     case 'time':       game.flags.time = turnOn; break;
     case 'verbose':    game.flags.verbose = turnOn; break;

@@ -6,6 +6,7 @@ import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
 import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
+import { set_malign } from './makemon.js';
 
 // C ref: include/onames.h — SADDLE object type index (mkobj.js OBJECTS table
 // row [235, "SADDLE", ...]).  A saddle is a TOOL_CLASS object whose
@@ -225,6 +226,10 @@ function makedog_mon(pettype, x, y) {
     const mtmp = {
         data: { pmidx: pettype, name: petinfo.name, mlet: petinfo.mlet,
                 mcolor: petinfo.mcolor,
+                // C's mons[] rows give all three starting pets neutral
+                // maligntyp.  Keep it on the reduced pet record so the shared
+                // set_malign() computes the tame-pet kill penalty correctly.
+                maligntyp: 0,
                 // mflags3 (M3_*): starting pets are M3_INFRAVISIBLE so the hero's
                 // infravision shows them in dark corridors (see_with_infrared).
                 mflags3: petinfo.mflags3 ?? 0x200,
@@ -318,6 +323,10 @@ export function makedog() {
     g.context.startingpet_typ = pettype;
 
     const mtmp = makedog_mon(pettype, g.u?.ux ?? 0, g.u?.uy ?? 0);
+    // C ref: dog.c initedog() — makedog_mon() is intentionally a compact
+    // construction path, but it still needs the regular tame-monster
+    // alignment value before the pet can later be killed or retamed.
+    if (mtmp) set_malign(mtmp);
     if (!g.context.startingpet_mid) {
         g.context.startingpet_mid = mtmp.m_id;
         // C ref: dog.c makedog() — initial horses (PM_PONY) start wearing a

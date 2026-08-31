@@ -58,7 +58,7 @@ import {
 import { phase_of_the_moon, NEW_MOON } from './calendar.js';
 import { Amonnam as Amonnam_dn } from './do_name.js';
 import { quest_talk } from './questpgr.js';
-import { In_hell } from './dungeon.js';
+import { In_hell, surface } from './dungeon.js';
 import { COIN_CLASS, ROCK, ROCK_CLASS, GOLD_PIECE, GEM_CLASS, CORPSE, ARROW, DART,
     GLOB_OF_GREEN_SLIME, SCR_SCARE_MONSTER, AMULET_OF_STRANGULATION, mksobj_at } from './mkobj.js';
 import { t_at, t_missile, Can_fall_thru, maketrap } from './trap.js';
@@ -90,7 +90,11 @@ import { is_armed, mattk_of,
     AD_POLY, AD_ACID, AD_COLD, AD_FIRE, AD_SITM, AD_SEDU, AD_SSEX,
     AD_RUST, AD_CORR, AD_MAGM, AD_RBRE, AD_SPEL, AD_CLRC,
     AD_SLEE, AD_DISN, AD_DRDX, AD_DRCO,
-    AD_BLND, AD_STON } from './monattk_data.js';
+    AD_BLND, AD_STON, AD_LEGS } from './monattk_data.js';
+const PM_PAPER_GOLEM_FT = _name_to_pmidx_cf('paper golem');
+const PM_STRAW_GOLEM_FT = _name_to_pmidx_cf('straw golem');
+const PM_WOOD_GOLEM_FT = _name_to_pmidx_cf('wood golem');
+const PM_LEATHER_GOLEM_FT = _name_to_pmidx_cf('leather golem');
 import { castmu } from './mcastu.js';
 import { dog_move, m_cansee, could_reach_item } from './dogmove.js';
 import { mon_msize, mon_cwt, monster_by_pmidx, makemon, level_difficulty_ext } from './makemon.js';
@@ -2716,6 +2720,78 @@ async function mon_trapeffect(mtmp, trap) {
         }
         return mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished;
     }
+    case FIRE_TRAP: {
+        // C ref: trap.c:1730 trapeffect_fire_trap() monster branch.  This is
+        // deliberately separate from the hero's dofiretrap(): monsters lose
+        // current and maximum HP through thitm() and retain their own inventory.
+        const tx = trap.tx, ty = trap.ty;
+        const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
+        const see_it = cansee(tx, ty);
+        const orig_dmg = d(2, 4);
+        let trapkilled = false;
+
+        if (in_sight) {
+            await pline_mon(mtmp, `A tower of flame erupts from the ${
+                surface(mtmp.mx, mtmp.my)} under ${mon_nam(mtmp)}!`);
+        } else if (see_it) {
+            await update_topl(`You see a tower of flame erupt from the ${
+                surface(mtmp.mx, mtmp.my)}!`);
+        }
+
+        if (resists_fire(mtmp)) {
+            // C's shieldeff() only produces a transient animation frame here.
+            if (in_sight)
+                await pline_mon(mtmp, `${Monnam(mtmp)} is uninjured.`);
+        } else {
+            let damage = orig_dmg;
+            let immolate = false;
+            switch (monsndx_of(mtmp.data)) {
+            case PM_PAPER_GOLEM_FT:
+                immolate = true;
+                damage = Math.max(damage, mtmp.mhpmax | 0);
+                break;
+            case PM_STRAW_GOLEM_FT:
+                damage = Math.max(damage, Math.trunc((mtmp.mhpmax | 0) / 2));
+                break;
+            case PM_WOOD_GOLEM_FT:
+                damage = Math.max(damage, Math.trunc((mtmp.mhpmax | 0) / 4));
+                break;
+            case PM_LEATHER_GOLEM_FT:
+                damage = Math.max(damage, Math.trunc((mtmp.mhpmax | 0) / 8));
+                break;
+            default:
+                break;
+            }
+            if (await mon_thitm(0, mtmp, null, damage, immolate)) {
+                trapkilled = true;
+            } else {
+                mtmp.mhpmax -= rn2(damage + 1);
+                if (mtmp.mhp > mtmp.mhpmax) mtmp.mhp = mtmp.mhpmax;
+            }
+        }
+
+        const { burnarmor, destroy_items, ignite_items, burn_floor_objects }
+            = await import('./zap.js');
+        if (await burnarmor(mtmp) || rn2(3)) {
+            const extra_damage = await destroy_items(mtmp, AD_FIRE, orig_dmg);
+            await ignite_items(mtmp.minvent || []);
+            if (!DEADMONSTER(mtmp)) {
+                mtmp.mhp -= extra_damage;
+                if (DEADMONSTER(mtmp)) {
+                    mon_kill_leaving(mtmp, false);
+                    trapkilled = true;
+                }
+            }
+        }
+        burn_floor_objects(tx, ty, see_it, false);
+        // melt_ice() is RNG-free; ice melting itself is not yet modeled.
+        if (see_it && t_at(tx, ty)) {
+            const { seetrap } = await import('./trap.js');
+            seetrap(t_at(tx, ty));
+        }
+        return trapkilled ? Trap_Killed_Mon
+            : (mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished);
+    }
     case ROLLING_BOULDER_TRAP: {
         // C ref: trap.c:2660 trapeffect_rolling_boulder_trap(), monster branch.
         // Falling into `default:` left the boulder in place AND skipped the
@@ -4057,6 +4133,19 @@ export async function dochug(mtmp) {
 
     // PHASE TWO — set_apparxy (sets mux/muy) then distance/scariness check.
     set_apparxy(mtmp);
+
+    // C ref: monmove.c:796-805.  Covetous monsters choose their objective
+    // before distance checks: tactics() can relocate them (and emit an arrival
+    // message) or remove them from the floor altogether.  Treating them as
+    // ordinary walkers skips that decision and changes both combat and topline
+    // pagination.
+    if (is_covetous(mdat)) {
+        const { tactics } = await import('./wizard.js');
+        await tactics(mtmp);
+        if (mtmp.mstate) return 0;
+        set_apparxy(mtmp);
+    }
+
     const { inrange, nearby, scared } = await distfleeck(mtmp);
 
     // C ref: monmove.c:793-800 — "search for and potentially use defensive or
@@ -5472,8 +5561,8 @@ export async function mattacku(mtmp, mdat) {
 //     AD_PHYS.
 // Not ported (and unreachable for the monsters this port drives): the
 // SEDUCE=0 AD_SSEX substitution (no succubus/incubus), the AD_DREN energy
-// proportioning, the lich AT_TUCH/AD_COLD downgrade, and the home-elemental
-// double damage (needs an elemental plane).
+// proportioning, and the home-elemental double damage (needs an elemental
+// plane).
 function getmattk(magr, indx, prev_result) {
     const list = mon_attacks(magr.data);
     const base = list[indx];
@@ -5507,8 +5596,25 @@ function getmattk(magr, indx, prev_result) {
         // The weap-based half of the guard (petrifying corpse / Stormbringer /
         // Vorpal Blade wielded) needs artifacts no monster here carries.
         attk.adtyp = AD_PHYS;
+    } else if (indx === 0 && attk.aatyp === AT_TUCH && attk.adtyp === AD_COLD
+               && cold_resistance_hero()
+               && youmonst_data_mm()?.name !== 'shade') {
+        // C ref: mhitu.c:412-433.  Liches otherwise become helpless against a
+        // cold-resistant defender because their spell attack is unavailable in
+        // monster-vs-monster combat.  Convert the touch to a weaker physical
+        // blow before hitmu() rolls its damage.
+        attk.adtyp = AD_PHYS;
+        attk.damn = Math.trunc((attk.damn + 1) / 2);
+        if (attk.damd === 10) attk.damd = 6;
     }
     return attk;
+}
+
+function cold_resistance_hero() {
+    const u = game.u || {};
+    if (u.uprops?.Cold_resistance || u.uprops?.HCold_resistance
+        || u.uprops?.ECold_resistance) return true;
+    return ((youmonst_data_mm()?.mresists | 0) & 0x02) !== 0; // MR_COLD
 }
 
 // C ref: mondata.h digests(ptr) — attacktype_fordmg(ptr, AT_ENGL, AD_DGST).
@@ -7035,6 +7141,15 @@ async function mhitm_adtyping(mtmp, mattk, mhm) {
     case AD_SEDU: // seduce & steal (foocubi, nymphs' second attack)
         await mhitm_ad_sedu(mtmp, mattk, mhm); break;
     case AD_STCK: await mhitm_ad_stck(mtmp, mattk, mhm); break;
+    case AD_LEGS: {
+        // C uhitm.c's AD_LEGS arm is shared with the other combat directions.
+        // Reuse its data-driven xan/leg-wound implementation rather than
+        // collapsing the attack to a generic sting (which skips two RNG draws).
+        const { mhitm_ad_legs, YOUMONST } = await import('./mhitm_ad.js');
+        const { mhitu_ops } = await import('./mhitu.js');
+        await mhitm_ad_legs(mtmp, mattk, YOUMONST, mhm, mhitu_ops());
+        break;
+    }
     case AD_BLND: await mhitm_ad_blnd_u(mtmp, mattk, mhm); break;
     case AD_STON: await mhitm_ad_ston_u(mtmp, mattk, mhm); break;
     default:

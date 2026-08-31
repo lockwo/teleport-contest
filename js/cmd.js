@@ -1207,7 +1207,7 @@ export async function rhack(key) {
         // threaded in for the Throw action's direction prompt.
         game.context.move = (await ddoinv(getdir)) === 3 ? 1 : 0;
     } else if (ch === '\\') {
-        dodiscovered();
+        await dodiscovered();
         game.context.move = 0;
     } else if (ch === 'v') {
         // C ref: cmd.c { 'v', "chronicle", ..., do_gamelog } — the #chronicle
@@ -1261,7 +1261,7 @@ export async function rhack(key) {
         const { dosave } = await import('./save.js');
         await dosave();
     } else if (ch === '\x18') { // ^X
-        doattributes();
+        await doattributes();
         game.context.move = 0;
     } else if (ch === ':') {
         await dolook();
@@ -1947,7 +1947,8 @@ export function monster_nearby() {
 // safe_wait guard refuses it.  Exported because '#wait' dispatches here too.
 export async function donull() {
     if (await cmd_safety_prevention('Waiting', 'a no-op (to rest)',
-                                    'Are you waiting to get hit?'))
+                                    'Are you waiting to get hit?',
+                                    '_did_nothing_flag'))
         return 0; // ECMD_OK
     return 1;     // ECMD_TIME
 }
@@ -1956,12 +1957,18 @@ export async function donull() {
 // and no menu-request prefix or multi-turn action, a wait/search next to a
 // hostile monster is refused: it prints `act` (+ the cmdassist "Use 'm' prefix"
 // hint) and returns true (the command does nothing and costs no turn).
-async function cmd_safety_prevention(ucverb, cmddesc, act) {
+async function cmd_safety_prevention(ucverb, cmddesc, act, counterKey) {
     const menuRequested = !!game.iflags?.menu_requested;
     if (menuRequested) game.iflags.menu_requested = false;
     if (game.flags?.safe_wait !== false && !menuRequested && !game.multi) {
-        // cmdassist defaults On, so the "Use 'm' prefix" suffix always shows.
-        const buf = `  Use 'm' prefix to force ${cmddesc}.`;
+        // C's per-command flagcounter gives the cmdassist hint on the first
+        // blocked command even when cmdassist is off, then leaves subsequent
+        // warnings short until a command is allowed and resets the counter.
+        const warned = game[counterKey] | 0;
+        game[counterKey] = warned + 1;
+        const buf = (game.iflags?.cmdassist || !warned)
+            ? `  Use 'm' prefix to force ${cmddesc}.`
+            : '';
         if (monster_nearby()) {
             // C: Norep("%s%s", act, buf) — suppressed when identical to the
             // current top line, so a repeated blocked search/wait next to the
@@ -1970,13 +1977,14 @@ async function cmd_safety_prevention(ucverb, cmddesc, act) {
             return true;
         }
     }
+    game[counterKey] = 0;
     return false;
 }
 
 // The explicit `s` search command.  C ref: detect.c dosearch().
 async function dosearch() {
     if (await cmd_safety_prevention('Searching', 'another search',
-        'You already found a monster.'))
+        'You already found a monster.', '_already_found_flag'))
         return false; // ECMD_OK: no game turn
     await dosearch0(0);
     return true;

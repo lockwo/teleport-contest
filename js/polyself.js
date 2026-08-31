@@ -11,7 +11,7 @@
 
 import { game } from './gstate.js';
 import { rn1, rn2, rnd, d } from './rng.js';
-import { update_topl, newsym, see_monsters } from './display.js';
+import { update_topl, urgent_topl, newsym, see_monsters } from './display.js';
 // C ref: win/tty/topl.c pline()/update_topl() — this module always uses
 // update_topl() (never the simpler pline()) because every message here can be
 // immediately followed by another one from the same command (polymon()'s
@@ -971,6 +971,7 @@ export async function newman() {
 // tail used by both newman() and (eventually) rehumanize().
 async function polyman(fmt, arg) {
     const u = game.u;
+    const was_blind = Blind();
     if (u.Upolyd) {
         u.acurr = { a: (u.macurr.a || []).slice() };
         u.amax = { a: (u.mamax.a || []).slice() };
@@ -989,7 +990,11 @@ async function polyman(fmt, arg) {
 
     newsym(u.ux, u.uy);
 
-    await pline(fmt.replace('%s', arg));
+    // C's rehumanize() uses urgent_pline here.  It must override WIN_STOP when
+    // the fatal form damage was acknowledged with ESC, otherwise the return
+    // form (and the following sight-restoration message) disappears.
+    await urgent_topl(fmt.replace('%s', arg));
+    if (was_blind && !Blind()) await update_topl('You can see again.');
 }
 
 

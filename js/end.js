@@ -260,8 +260,19 @@ function savelife(_how) {
     const givehp = 50 + 10 * Math.trunc(con / 2);
     u.uhp = Math.min(u.uhpmax, givehp);
     if (u.mh != null && u.mhmax != null) u.mh = Math.min(u.mhmax, givehp);
-    // init_uhunger() only when uhunger < 500: the wizard starts well-fed, skip.
-
+    // C end.c savelife():752 sets disp.botl after restoring HP.  Death froze
+    // the last real status draw; the next pline must publish the recovered
+    // HP, including any monster attacks which follow in that same turn.
+    delete game._botlFrozen;
+    game.botl = true;
+    // C ref: eat.c init_uhunger() — a revived hungry hero starts again at the
+    // standard nutrition level, which also clears any hunger-derived temporary
+    // strength penalty.  It is deterministic and does not consume RNG.
+    if ((u.uhunger ?? 900) < 500) {
+        u.uhunger = 900;
+        u.uhs = 1; // NOT_HUNGRY
+        if ((u.atemp?.a?.[0] || 0) < 0) u.atemp.a[0] = 0;
+    }
     // gn.nomovemsg = "You survived that attempt on your life."; context.move = 0;
     // gm.multi = -1 (can't move again during the current turn).  The moveloop's
     // unmul() will print nomovemsg when ++multi reaches 0.
@@ -376,6 +387,12 @@ async function done(how) {
     const u = game.u;
     const stopprint = !!game._done_stopprint;
 
+    // C ref: end.c:1071 — mortality counts every actual death attempt before
+    // a life-saving amulet, debug fuzzer, or declined wizard "Die?" prompt can
+    // revive the hero.  It drives enlightenment and the final disclosure.
+    if (how < PANICKED)
+        u.umortality = (u.umortality || 0) + 1;
+
     // how < PANICKED: force HP to zero (it may already be <= 0) and redraw
     // bot.  Skip the forced status update when quitting via a 'q' answer to
     // "Dump core?" (done_stopprint) — end.c done(): disp.botl = FALSE etc.
@@ -430,7 +447,10 @@ async function done(how) {
     const wizard = is_wizard();
     const discover = is_discover();
     if (!survive && (wizard || discover) && how <= GENOCIDED) {
-        game._yn_need_more = true; // page the pending "You die..." line first
+        // tty_yn_function pages a pending line unless WIN_STOP survived the
+        // preceding update_topl().  A long ESC-suppressed combat line leaves
+        // STOP set for "You die...", which the prompt then replaces directly.
+        game._yn_need_more = !game._winStop;
         const ans = await d.y_n('Die?', 'yn\x1b', 'n');
         if (ans !== 'y') {
             // "OK, so you don't die." (update_topl so it concatenates with the

@@ -255,12 +255,20 @@ export async function castmu(mtmp, mattk, thinks_it_foundyou, foundyou) {
     return M_ATTK_HIT;
 }
 
-// C ref: mcastu.c:801 mcast_spell().  Only the MCF_INDIRECT spells are
-// reachable from dochug's undirected-cast loop (it returns M_ATTK_MISS for any
-// directed pick), so the directed arms are deliberately absent until AT_MAGC is
-// wired into mattacku.
+// C ref: mcastu.c:801 mcast_spell().  castmu reaches this for both the
+// undirected dochug path and AT_MAGC attacks handled by mattacku.  Keep the
+// damage application beside each implemented directed spell until every arm
+// has C's explicit dmg=0 handling.
 async function mcast_spell(mtmp, dmg, spellnum) {
     switch (spellnum) {
+    case MCAST_PSI_BOLT: {
+        dmg = await mcast_psi_bolt(dmg);
+        if (dmg) {
+            const { mdamageu } = await import('./mhitu.js');
+            await mdamageu(mtmp, dmg);
+        }
+        break;
+    }
     case MCAST_CURE_SELF:
         // mcastu.c:441 m_cure_self: heal 3d6 when hurt.
         if (mtmp.mhp < mtmp.mhpmax) {
@@ -313,7 +321,6 @@ async function mcast_spell(mtmp, dmg, spellnum) {
         // fired, so the stream stays aligned up to the effect.
         break;
     }
-    if (dmg) { /* mdamageu(mtmp, dmg) — directed spells only */ }
 }
 
 // ---------------------------------------------------------------------------

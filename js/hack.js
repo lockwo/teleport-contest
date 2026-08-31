@@ -61,6 +61,7 @@ import { x_monnam } from './uhitm.js';
 import { canseemon_shared } from './display.js';
 import { mflags2_of, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
+import { newuhs } from './eat.js';
 
 // Run direction deltas for the capital-letter run commands (and the
 // 'G'/'g' prefix followed by a movement key).  C: xdir[]/ydir[].
@@ -3379,6 +3380,12 @@ export async function do_look_full() {
 // they're reused here rather than reimplemented.
 export async function dotele_wizard() {
     const u = game.u;
+    const pay_teleport_hunger = () => {
+        // C teleport.c:dotele() calls morehungry(100) after a non-trap
+        // teleport attempt, including a cancelled targeting selection.
+        u.uhunger = (u.uhunger ?? 900) - 100;
+        newuhs(true);
+    };
     // tele() -> scrolltele(0): with the wizard override taken, C prints
     //   pline("Where do %s want to be teleported?", "you")   [no steed]
     // then getpos(&cc, force=TRUE, "the desired position").  The pline leaves the
@@ -3396,6 +3403,7 @@ export async function dotele_wizard() {
     const cc = await getpos('the desired position', u.ux, u.uy, null, /*force=*/true, verbose);
     if (!cc) {
         // ESC: getpos() returned < 0 -> tele() returns; dotele() still ECMD_TIME.
+        pay_teleport_hunger();
         return 1;
     }
     if (teleok_hero(cc.x, cc.y, false)) {
@@ -3412,6 +3420,7 @@ export async function dotele_wizard() {
         game._toplin = 1;
         await safe_teleds_hero();
     }
+    pay_teleport_hunger();
     return 1;
 }
 

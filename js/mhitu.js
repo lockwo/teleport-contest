@@ -1689,9 +1689,13 @@ export function mhitu_ops() {
         u_slow_down,
         canseemon: canseemon_shared,
         canspotmon: canseemon_shared,
-        Monnam: (m) => m?.data?.name || 'monster',
+        Monnam: (m) => canseemon_shared(m)
+            ? `The ${m?.data?.name || 'monster'}` : 'It',
         mon_nam: (m) => m?.data?.name || 'monster',
         ACURR_DEX: () => acurr_eff(A_DEX),
+        set_wounded_legs: async (...args) =>
+            (await import('./trap.js')).set_wounded_legs(...args),
+        exercise,
         diseasemu,
         u_slip_free,
         cloneu,

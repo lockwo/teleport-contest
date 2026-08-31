@@ -807,13 +807,25 @@ for (const o of objects)
         if (p) o.oc_oprop = p;
     }
 
-// C ref: include/objects.h:513/540 DRGN_ARMR("red dragon scale mail"/"red
-// dragon scales", ..., FIRE_RES, ...) — the only NON-ring/amulet rows whose
-// oc_oprop is FIRE_RES, which mkobj.c is_flammable() tests directly.
-const FIRE_RES_PROP = 1; // prop.h FIRE_RES
-for (const o of objects)
-    if (o && (o.name === 'red dragon scale mail' || o.name === 'red dragon scales'))
-        o.oc_oprop = FIRE_RES_PROP;
+// C ref: include/objects.h:502-552 DRGN_ARMR().  Every coloured dragon
+// scale-mail/scales pair has an oc_oprop, not just the red pair.  worn.c uses
+// this column to install the extrinsic, and zap.c uses it to protect inventory
+// from elemental damage, so this table must remain the shared source of truth.
+const DRAGON_ARMOR_PROP = {
+    'gray dragon scale mail': 12, 'gray dragon scales': 12,       // ANTIMAGIC
+    'silver dragon scale mail': 65, 'silver dragon scales': 65,   // REFLECTING
+    'red dragon scale mail': 1, 'red dragon scales': 1,           // FIRE_RES
+    'white dragon scale mail': 2, 'white dragon scales': 2,       // COLD_RES
+    'orange dragon scale mail': 3, 'orange dragon scales': 3,     // SLEEP_RES
+    'black dragon scale mail': 4, 'black dragon scales': 4,       // DISINT_RES
+    'blue dragon scale mail': 5, 'blue dragon scales': 5,         // SHOCK_RES
+    'green dragon scale mail': 6, 'green dragon scales': 6,       // POISON_RES
+    'yellow dragon scale mail': 7, 'yellow dragon scales': 7,     // ACID_RES
+};
+for (const o of objects) {
+    const prop = o && DRAGON_ARMOR_PROP[o.name];
+    if (prop) o.oc_oprop = prop;
+}
 
 // C ref: include/objects.h BITS() mgc field — oc_magic, the "magic" flag used
 // by poly_obj() (zap.c) to keep a polymorphed object's magic-or-not status the

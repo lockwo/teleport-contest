@@ -51,6 +51,7 @@ import {
 import { DEADMONSTER, healmon } from './mon.js';
 import {
     STRAT_WAITFORU, W_ARMOR, W_AMUL, W_ARMH, W_ARMS, W_ARMG, W_ARMF,
+    A_STR, A_DEX, LEFT_SIDE, RIGHT_SIDE,
 } from './const.js';
 import { dmgval } from './uhitm.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -1359,7 +1360,8 @@ export async function mhitm_ad_stun(magr, mattk, mdef, mhm, ops) {
 
 export async function mhitm_ad_legs(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
-        const side = rn2(2) ? 'right' : 'left';
+        const sideMask = rn2(2) ? RIGHT_SIDE : LEFT_SIDE;
+        const side = sideMask === RIGHT_SIDE ? 'right' : 'left';
         const u = game.u;
         if ((u.usteed || u.Levitation || u.Flying)
             && !((mflags1_of(ops.permonst(magr)) & 0x1) !== 0)) {   // M1_FLY
@@ -1383,8 +1385,16 @@ export async function mhitm_ad_legs(magr, mattk, mdef, mhm, ops) {
             } else {
                 await ops.emit(`${ops.Monnam(magr)} pricks your ${side} leg!`);
             }
-            if (ops.set_wounded_legs)
-                await ops.set_wounded_legs(side, rnd(60 - (ops.ACURR_DEX ? ops.ACURR_DEX() : 10)));
+            if (ops.set_wounded_legs) {
+                await ops.set_wounded_legs(sideMask,
+                    rnd(60 - (ops.ACURR_DEX ? ops.ACURR_DEX() : 10)));
+                // uhitm.c:4444-4445: a successful leg wound weakens both
+                // exercise accumulators.  These are RNG-bearing while their
+                // accumulators have room, so omitting them desynchronizes the
+                // following attack even when the visible wound is correct.
+                ops.exercise?.(A_STR, false);
+                ops.exercise?.(A_DEX, false);
+            }
         }
         return;
     }

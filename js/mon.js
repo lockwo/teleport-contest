@@ -973,22 +973,16 @@ function See_invisible_mon() {
 }
 
 // C ref: worn.c:799 m_dowear_type(mon, flag, creation, racialexception).
-// Draws no CORE rng anywhere along this path (nor does curse()).
-//
-// NOT ported, and it is NOT free: C's worn.c:532 opens with
-//   Strcpy(nambuf, See_invisible ? Monnam(mon) : mon_nam(mon));
-// unconditionally on all eight m_dowear() calls.  While the hero hallucinates
-// each of those names is an x_monnam() -> rndmonnam() pick off the DISPLAY rng
-// (2-3 draws each), so C advances that stream 15 times in the turn a monster
-// sorts its armour (seed0383 step 199 measured against the recorder's
-// NETHACK_RNGLOG_DISP log).  Adding the call here measured WORSE (-1 screen,
-// frontier 199 -> 196) because this port ALSO runs m_dowear() on a turn C does
-// not: at seed0383 step 196 we spend 8 names where C spends none, and at 199 we
-// spend 13 where C spends 15.  Fix the firing turn (I_SPECIAL / mfrozen state)
-// FIRST, then add the snapshot; see RECON_NOTES.md.
+// The function itself draws no CORE RNG, but its unconditional nambuf snapshot
+// is a display-RNG operation while the hero hallucinates.
 async function m_dowear_type(mon, flag, creation, racialexception) {
     if (mon.mfrozen)
         return;                            /* probably putting previous item on */
+    // worn.c snapshots `See_invisible ? Monnam(mon) : mon_nam(mon)` before
+    // checking this slot.  The string is later needed only if armor changes,
+    // but x_monnam() still randomizes hallucinated monster names for every
+    // eligible slot.  Both wrappers consume the same display RNG sequence.
+    Monnam(mon);
     const sawmon = canseemon_shared(mon);
     let old = which_armor_mon(mon, flag);
     if (old && old.cursed) return;

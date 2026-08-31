@@ -14,7 +14,7 @@ import { game } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
 import { newsym, m_at, update_topl } from './display.js';
-import { couldsee } from './vision.js';
+import { Blind, couldsee } from './vision.js';
 import { update_monster_region } from './region.js';
 import { onscary, set_apparxy, noteleport_level } from './monmove.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
@@ -207,9 +207,8 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
                         : (du < olddu) ? ' closer to you' : ' farther away';
             await update_topl(`${Monnam(mtmp)} vanishes and reappears${where}.`);
         } else {
-            const Blind = (game.u?.blinded || 0) > 0 || !!game.u?.ublindf;
             await update_topl(`${Monnam(mtmp)} ${appearmsg ? 'suddenly ' : ''}`
-                + `${!Blind ? 'appears' : 'arrives'}${next || nearu || ''}!`);
+                + `${!Blind() ? 'appears' : 'arrives'}${next || nearu || ''}!`);
         }
         // (the WAN_TELEPORTATION discovery needs gc.current_wand, which is Null
         // for an attack-driven relocation)

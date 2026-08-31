@@ -22,7 +22,7 @@ import {
     P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_SKILLED, P_TWO_WEAPON_COMBAT,
     P_BARE_HANDED_COMBAT, In_quest, In_endgame, Is_knox_level,
 } from './const.js';
-import { objects as mkobjObjects } from './mkobj.js';
+import { objects as mkobjObjects, SPBOOK_CLASS } from './mkobj.js';
 import { weapon_type } from './weapon.js';
 import { p_skill_of } from './enhance.js';
 import { update_topl } from './display.js';
@@ -38,18 +38,34 @@ import { objects as OBJECTS } from './mkobj.js';
 import { MFLAGS2, M2_PNAME } from './monflags_data.js';
 const G_UNIQ = 0x1000; // monflag.h
 import { magic_negation_hero } from './monmove.js';
+import { armor_simple_name } from './do_wear.js';
 
 // insight.c:1803 mc_types[] — indexed by magic_negation()'s result.
 const MC_TYPES = ['', 'warded', 'guarded', 'protected'];
 const W_ARMOR_MASK = 0x7f; // monst.h W_ARMOR: the seven armour slots
 // C ref: prop.h Antimagic == EAntimagic || HAntimagic.  The extrinsic is worn
 // gear with oc_oprop ANTIMAGIC; no session grants the intrinsic.
-function Antimagic() {
-    for (const o of (game.invent || []))
-        if ((o.owornmask || 0) & W_ARMOR_MASK) {
-            if (OBJECTS[o.otyp]?.oc_oprop === 12 /* ANTIMAGIC */) return true;
+function worn_property_sources() {
+    const seen = new Set();
+    const sources = [];
+    const add = (o) => {
+        if (o && !seen.has(o)) {
+            seen.add(o);
+            sources.push(o);
         }
-    return !!(game.u?.HAntimagic);
+    };
+    // C worn.c's worn[] order.  Saved games can have a valid hero slot before
+    // the inventory list is reconstructed, so do not rely on invent alone.
+    for (const o of [game.uarm, game.uarmc, game.uarmh, game.uarms, game.uarmg,
+        game.uarmf, game.uarmu, game.uleft, game.uright, game.uwep,
+        game.uswapwep, game.uquiver, game.uamul, game.ublindf]) add(o);
+    for (const o of (game.invent || []))
+        if ((o.owornmask || 0) & W_GIVES_PROP) add(o);
+    return sources;
+}
+function Antimagic() {
+    return worn_property_sources().some((o) => OBJECTS[o.otyp]?.oc_oprop === 12)
+        || !!(game.u?.HAntimagic);
 }
 
 // The four owornmask groups from_what()/cause_known() scan.  These are
@@ -59,8 +75,8 @@ const W_GIVES_PROP = W_ARMOR_MASK | 0x00020000 /*W_RINGL*/ | 0x00040000 /*W_RING
 // C ref: attrib.c what_gives(&u.uprops[propidx].extrinsic) — the worn item
 // whose oc_oprop is `propidx`, or null.
 function what_gives(propidx) {
-    for (const o of (game.invent || []))
-        if (((o.owornmask || 0) & W_GIVES_PROP) && OBJECTS[o.otyp]?.oc_oprop === propidx)
+    for (const o of worn_property_sources())
+        if (OBJECTS[o.otyp]?.oc_oprop === propidx)
             return o;
     return null;
 }
@@ -69,7 +85,12 @@ function what_gives(propidx) {
 // directly, so both spellings are read).
 function haveProp(propidx, hkey) {
     if (what_gives(propidx)) return true;
-    if (hkey && ((game.u?.uprops?.[hkey] || 0) || (game.u?.[hkey] || 0))) return true;
+    if (hkey) {
+        const base = hkey.startsWith('H') ? hkey.slice(1) : hkey;
+        const keys = [hkey, base, `H${base}`, `E${base}`];
+        if (keys.some((key) => (game.u?.uprops?.[key] || 0) || (game.u?.[key] || 0)))
+            return true;
+    }
     return !!(hkey && has_innate(hkey));
 }
 const TIMEOUT_MASK = 0x00ffffff; // prop.h TIMEOUT
@@ -96,6 +117,14 @@ function cause_known(propidx) {
 // speed boots; what_gives() below finds worn speed boots by oc_oprop anyway.
 function from_what(propidx, hkey) {
     if (!_wizard()) return '';
+    if (propidx === FAST_PROP && youHaveVeryFast()) {
+        const timed = (game.u?.uprops?.HFast || game.u?.HFast || 0) & TIMEOUT_MASK;
+        if (timed) return ' because of a potion or spell';
+        if (game.uarmf?.otyp === 166 /* SPEED_BOOTS */
+            && game.uarmf.dknown && OBJECTS[166]?.oc_name_known)
+            return ` because of ${ysimple_name(game.uarmf)}`;
+        return ' because of worn equipment';
+    }
     if (hkey) {
         // C ref: attrib.c:887 is_innate() — "can't become very fast innately",
         // so worn/timed speed suppresses the innate answer for FAST.
@@ -108,8 +137,19 @@ function from_what(propidx, hkey) {
     const o = what_gives(propidx);
     return o ? ` because of ${ysimple_name(o)}` : '';
 }
+// C ref: zap.c item_what() / insight.c item_resistance_message().  This is
+// only emitted for an equipped oc_oprop source; innate resistance protects the
+// hero but does not shield the inventory.
+function basic_item_resistance_message(propidx, phrase, final, enlLine) {
+    const source = what_gives(propidx);
+    if (!source) return;
+    const simple = source?.oclass === 3 ? armor_simple_name(source)
+        : ysimple_name(source).replace(/^your\s+/, '');
+    enlLine('Your items ', final ? 'were' : 'are', phrase, ` by your ${simple}`);
+}
 // C ref: prop.h FAST = 64.
 const FAST_PROP = 64;
+const PM_KNIGHT = 4;
 import { LL_WISH, LL_ACHIEVE, LL_UMONST, LL_DIVINEGIFT, LL_LIFESAVE,
          LL_ARTIFACT, LL_GENOCIDE, LL_DUMP, LL_SPOILER, LL_MINORAC,
          livelog_printf } from './livelog.js';
@@ -145,6 +185,23 @@ function _fromWhatAntimagic() {
         if ((o.owornmask || 0) & W_ARMOR_MASK)
             if (OBJECTS[o.otyp]?.oc_oprop === 12) return ` because of your ${OBJECTS[o.otyp].name}`;
     return '';
+}
+
+// C ref: attrib.c is_innate(JUMPING).  Knight jumping is an intrinsic
+// exception installed during u_init rather than one of the role ability rows.
+function hasJumping() {
+    return haveProp(45 /* JUMPING */, 'HJumping')
+        || (game.urole?.mnum === PM_KNIGHT);
+}
+function jumpingFromWhat() {
+    const source = from_what(45, 'HJumping');
+    return source || (game.urole?.mnum === PM_KNIGHT ? ' intrinsically' : '');
+}
+function n_times(n) {
+    if (n === 1) return 'once';
+    if (n === 2) return 'twice';
+    if (n === 3) return 'thrice';
+    return `${n} times`;
 }
 
 function alignStr(t) {
@@ -393,9 +450,30 @@ export function enlightenment_lines(final = 0) {
     // ── Status ──
     out('');
     out(final ? 'Final Status:' : 'Status:');
+    // C ref: insight.c:2372-2377.  Timed Hallucination is represented under
+    // both H- and bare property names across the port, so use the same
+    // effective-property test as the rest of this display.
+    if (haveProp(23 /* HALLUC */, 'HHallucination')
+        && !haveProp(24 /* HALLUC_RES */, 'HHalluc_resistance'))
+        youAre('hallucinating');
     // C ref: insight.c:1073 — `if (Deaf) you_are("deaf", from_what(DEAF));`,
     // emitted BEFORE the hunger line.
     if (((u.uprops?.HDeaf || 0) > 0) || u.Deaf) youAre('deaf');
+    // C ref: insight.c status_enlightenment() external-trouble block.  These
+    // are live state, not special messages: omitting them changes the number
+    // of tty menu pages whenever a punished or leg-wounded hero uses ^X.
+    if (u.uball) youAre(`chained to ${ansimpleoname(u.uball)}`);
+    {
+        const woundTimer = (u.HWounded_legs | 0)
+            || (u.uprops?.HWounded_legs | 0);
+        const sides = ((u.uprops?.EWounded_legs | 0) || (u.EWounded_legs | 0)) & 0x3;
+        if (woundTimer || sides) {
+            if (sides === 0x3) youHave('wounded legs');
+            // C's enlightenment code reports the right leg when the source
+            // bit has expired but the timed wounded-legs property remains.
+            else youHave(`a wounded ${sides === 1 ? 'left' : 'right'} leg`);
+        }
+    }
     // C ref: insight.c:1181 — Sleepy (worn/eaten amulet of restful sleep),
     // emitted immediately before the hunger line.  cause_known() is bypassed
     // whenever MAGICENLIGHTENMENT is on, which end-of-game disclosure always is.
@@ -467,13 +545,21 @@ export function enlightenment_lines(final = 0) {
             [9, 'HDrain_resistance', 'level-drain resistant'],
             [10, 'HSick_resistance', 'immune to sickness'],
             [8, 'HStone_resistance', 'petrification resistant'],
-        ]) if (haveProp(propidx, hkey)) youAre(phrase, from_what(propidx, hkey));
+        ]) {
+            if (haveProp(propidx, hkey)) youAre(phrase, from_what(propidx, hkey));
+            if (propidx === 1) basic_item_resistance_message(propidx, ' protected from fire', final, enlLine);
+            else if (propidx === 2) basic_item_resistance_message(propidx, ' protected from cold', final, enlLine);
+            else if (propidx === 4) basic_item_resistance_message(propidx, ' protected from disintegration', final, enlLine);
+            else if (propidx === 5) basic_item_resistance_message(propidx, ' protected from electric shocks', final, enlLine);
+            else if (propidx === 7) basic_item_resistance_message(propidx, ' protected from acid', final, enlLine);
+        }
         // /*** Vision and senses ***/  insight.c:1565
         if (haveProp(29, 'HSee_invisible')) {
             // C's third arm (PermaBlind) has no source in this port.
             if (!Blind()) enlLine('You ', final ? 'saw' : 'see', ' invisible', from_what(29, 'HSee_invisible'));
-            else enlLine('You ', final ? 'would have seen' : 'will see', ' invisible when not blind', '');
+                else enlLine('You ', final ? 'would have seen' : 'will see', ' invisible when not blind', '');
         }
+        if (haveProp(30, 'HTelepat')) youAre('telepathic', from_what(30, 'HTelepat'));
         if (haveProp(31, 'HWarning')) youAre('warned', from_what(31, 'HWarning'));
         if (youHaveSearching() || haveProp(34, 'HSearching'))
             youHave('automatic searching', from_what(34, 'HSearching'));
@@ -483,6 +569,8 @@ export function enlightenment_lines(final = 0) {
         if (haveProp(43, 'HAggravate_monster'))
             enlLine('You aggravate', final ? 'd' : '', ' monsters', from_what(43, 'HAggravate_monster'));
         // /*** Transportation ***/  insight.c:1677
+        if (hasJumping())
+            enlLine('You ', final ? 'could' : 'can', ' jump', jumpingFromWhat());
         if (haveProp(47, 'HTeleport_control'))
             youHave('teleport control', from_what(47, 'HTeleport_control'));
         // insight.c:1800 — the worn-armour magic-cancellation level.
@@ -494,6 +582,8 @@ export function enlightenment_lines(final = 0) {
         // Omitting it shifted every later line of the ^X page (seed0373 step 119).
         if (youHaveFast() || youHaveVeryFast())
             youAre(youHaveVeryFast() ? 'very fast' : 'fast', from_what(FAST_PROP, 'HFast'));
+        if (haveProp(68 /* LIFESAVED */, 'HLifesaved'))
+            enlLine('Your life ', final ? 'would have been' : 'will be', ' saved', '');
 
         // C ref: insight.c:1908 /*** Miscellany ***/ — the Luck block, which
         // was omitted entirely.  Luck = u.uluck + u.moreluck, and it is non-zero
@@ -501,7 +591,7 @@ export function enlightenment_lines(final = 0) {
         const luckTot = (u.uluck || 0) + (u.moreluck || 0);
         if (luckTot) {
             const lt = Math.abs(luckTot);
-            youAre(`${lt >= 10 ? 'extremely ' : lt >= 5 ? 'very ' : ''}${luckTot < 0 ? 'un' : ''}lucky`);
+            youAre(`${lt >= 10 ? 'extremely ' : lt >= 5 ? 'very ' : ''}${luckTot < 0 ? 'un' : ''}lucky${_wizard() ? ` (${luckTot})` : ''}`);
         }
         if ((u.moreluck || 0) > 0) youHave('extra luck');
         else if ((u.moreluck || 0) < 0) youHave('reduced luck');
@@ -513,8 +603,10 @@ export function enlightenment_lines(final = 0) {
             if (_wizard()) pb += ` (${u.ublesscnt ?? 0})`;
             enlLine('You ', 'can ', pb, '');
         }
-        // C ref: enlightenment() tail — "have been killed .../are dead" via
-        // u.umortality; the covered death path always has umortality === 1.
+        // C ref: insight.c:1977 — prior debug/explore revivals are reported
+        // after prayer safety and before the Miscellaneous header.
+        if (!final && u.umortality)
+            enlLine('You ', 'have been killed ', n_times(u.umortality), '');
         if (final) out(' You are dead.');
     }
 
@@ -707,6 +799,7 @@ const SKILL_NAME_BY_NUM = {
 };
 // weapon_type() comes from js/weapon.js (weapon.c:1517).
 function weaponDescr(obj) {
+    if (obj?.oclass === SPBOOK_CLASS) return 'spellbook';
     return SKILL_NAME_BY_NUM[weapon_type(obj)] || obj.name || mkobjObjects?.[obj.otyp]?.name || 'weapon';
 }
 function weaponSkillName(obj) {

@@ -2793,7 +2793,7 @@ export async function topl_more_ext(extraChars) {
             // yn_function-style prompt (getdir/y_n), which both checks-and-more()s
             // and then unconditionally clears the flag.  Space/return leave
             // messages flowing normally.
-            if (c === 27) game._winStop = true;
+            if (c === 27 && !game._winNoStop) game._winStop = true;
             // C more():237-245 — the docorner() and the ESC cl_end() arms are
             // an if/else: the corner clear only runs with cw->cury != 0, so a
             // one-row topline dismissed with ESC takes the cl_end() arm and the
@@ -2858,16 +2858,33 @@ export async function update_topl(bp) {
     // is still accumulated into gt.toplines but is neither drawn nor more()d.
     // The flag dies at the very next nhgetch (input.js), so this window is one
     // command long; an earlier attempt with a longer lifetime measured -172.
-    // C ref: topl.c update_topl():299 `if (!notdied) cw->flags &= ~WIN_STOP,
-    // skip = FALSE;` — a "You die" line CANCELS the ESC suppression and is
-    // redrawn (with its own --More--).  Without this the wizard-mode "Die?"
-    // query never appears and the port runs several input boundaries ahead.
-    if (game._winStop && bp.startsWith('You die')) {
+    // C ref: topl.c update_topl():273-299.  `notdied` is assigned inside the
+    // normal append test, so an ESC-stopped full topline short-circuits before
+    // it ever compares against "You die".  In that case WIN_STOP survives and
+    // tty_yn_function replaces the hidden death line directly with "Die?".
+    // Only the short, one-line case reaches the comparison, clears STOP, and
+    // redraws the death line for its own --More--.
+    const deathClearsStop = game._winStop
+        && bp.startsWith('You die')
+        && (game._toplin === TOPLIN_NEED_MORE || game._winStop)
+        && wrap_topl(cur).length === 1
+        && n0 + cur.length + 3 < CO - 8;
+    if (deathClearsStop) {
         game._winStop = false;
         game._toplin = 0;   // the skipped arm never more()s the pending line
     }
     if (game._winStop) {
-        game._toplines = (cur && n0 + cur.length + 3 < CO - 8) ? `${cur}  ${bp}` : bp;
+        // C updates gt.toplines even while WIN_STOP suppresses the redraw.
+        // Keep the hidden text as the next append base: its final length is
+        // observable when a later message (notably "You die...") decides
+        // whether STOP gets cleared.
+        const skipped = !bp.startsWith('You die')
+            && cur
+            && n0 + cur.length + 3 < CO - 8
+            ? `${cur}  ${bp}`
+            : bp;
+        game._pending_message = skipped;
+        game._toplines = skipped;
         return;
     }
     // A line put there by pline() is equally unacknowledged (toplin ==
@@ -2905,6 +2922,25 @@ export async function update_topl(bp) {
         await topl_more();
         game._toplin = 0;
         game._pending_message = '';
+    }
+}
+
+// C ref: pline.c urgent_pline() + wintty.c tty_putstr(ATR_URGENT).  An urgent
+// message is visible even when ESC dismissed an earlier --More--; tty clears
+// that stopped topline before writing it.  WIN_NOSTOP is scoped to this one
+// write so an ESC used for an immediate wrapped --More-- cannot suppress it.
+export async function urgent_topl(bp) {
+    if (game._winStop) {
+        game._winStop = false;
+        game._pending_message = '';
+        game._toplin = 0;
+        game._toplinSoft = null;
+    }
+    game._winNoStop = true;
+    try {
+        await update_topl(bp);
+    } finally {
+        game._winNoStop = false;
     }
 }
 
@@ -3267,7 +3303,7 @@ function statue_to_glyph(obj) {
            ? (obj_is_piletop(obj) ? GLYPH_STATUE_FEM_PILETOP_OFF : GLYPH_STATUE_FEM_OFF)
            : (obj_is_piletop(obj) ? GLYPH_STATUE_MALE_PILETOP_OFF : GLYPH_STATUE_MALE_OFF));
 }
-function obj_to_glyph(obj) {
+export function obj_to_glyph(obj) {
     return (obj.otyp === STATUE_OTYP) ? statue_to_glyph(obj)
         : Hallucination_u() ? random_obj_to_glyph()
           : (obj.otyp === CORPSE_OTYP) ? corpse_to_glyph(obj)

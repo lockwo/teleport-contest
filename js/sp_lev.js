@@ -154,6 +154,7 @@ export { makemaz_water } from './levels/water.js';
 export { makemaz_cav_strt } from './levels/cav_strt.js';
 export { makemaz_hea_strt } from './levels/hea_strt.js';
 export { makemaz_kni_strt } from './levels/kni_strt.js';
+export { makemaz_kni_goal } from './levels/kni_goal.js';
 export { makemaz_mon_strt } from './levels/mon_strt.js';
 export { makemaz_ran_strt } from './levels/ran_strt.js';
 export { makemaz_rog_strt } from './levels/rog_strt.js';

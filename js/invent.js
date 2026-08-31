@@ -10,7 +10,7 @@ import { game } from './gstate.js';
 import { find_mac as worn_find_mac } from './worn.js';
 import { rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch } from './input.js';
-import { docrt, flush_screen, newsym, pline, statusLine1Text, statusLine2Text, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, m_at, display_nhwindow_message } from './display.js';
+import { docrt, flush_screen, newsym, pline, statusLine1Text, statusLine2Text, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, m_at, display_nhwindow_message, obj_to_glyph } from './display.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
 import { distmin, depth as depth_of_level } from './hacklib.js';
 import { surface } from './dungeon.js';
@@ -1035,6 +1035,7 @@ function acurrstr() {
 // modelled (no multi-turn levitation-boots don in this port).
 export function weight_cap() {
     const u = game.u;
+    let ewl = 0;
     let carrcap = WT_WEIGHTCAP_STRCON * (acurrstr() + acurr_eff(A_CON))
                   + WT_WEIGHTCAP_SPARE;
     // C ref: hack.c weight_cap() Upolyd branch (consistent with mon.c
@@ -1061,7 +1062,9 @@ export function weight_cap() {
         // C ref: hack.c:4331 `if (!Flying)` — wounded legs only interfere with
         // proper WALKING.  A polymorphed flyer sets u.uprops.Flying in
         // set_uasmon(); Flying is unset for every non-poly hero.
-        const ewl = (!u?.uprops?.Flying) ? (u?.EWounded_legs || 0) : 0;
+        ewl = (!u?.uprops?.Flying)
+        ? ((u?.EWounded_legs || 0) || (u?.uprops?.EWounded_legs || 0))
+        : 0;
         if (ewl & LEFT_SIDE) carrcap -= WT_WOUNDEDLEG_REDUCT;
         if (ewl & RIGHT_SIDE) carrcap -= WT_WOUNDEDLEG_REDUCT;
     }
@@ -1397,8 +1400,6 @@ function poly_when_stoned(_data) { return false; }
 function instapetrify(_why) {}
 function will_feel_cockatrice_external(_obj, _force) { return false; }
 function map_glyphinfo(_x, _y, _glyph, _flags, _info) {}
-function obj_to_glyph(_obj, _rng) { return 0; }
-function rn2_on_display_rng(x) { return rn2(x); }
 function let_to_name_fallback(letChar) { return names[letChar] || names[ILLOBJ_CLASS]; }
 
 const def_oc_syms = [
@@ -2140,6 +2141,10 @@ function inventoryRows(lets = null, ofilter = null) {
             : ofclass.sort(compareInvlet);
         if (!items.length) continue;
         rows.push([let_to_name(oclass, false, false), ...items.map((obj) => {
+            // C's display_pickinv() always generates the menu glyph before
+            // formatting an item.  The tty window does not render it, but the
+            // hallucination arm advances the independent display RNG.
+            obj_to_glyph(obj);
             const letter = obj.invlet || obj_to_let(obj);
             return `${letter} - ${doname_invent(obj)}`;
         })]);
@@ -2341,7 +2346,7 @@ function discoveriesRows() {
     return rows;
 }
 
-export function dodiscovered() {
+export async function dodiscovered() {
     const rows = discoveriesRows();
     if (!rows) {
         game._pending_message = 'You haven\'t discovered anything yet.';
@@ -2358,7 +2363,21 @@ export function dodiscovered() {
     game._disco_pages = pages;
     game._disco_page = 0;
     renderDiscoveriesPage();
-    return ECMD_OK;
+    // `display_nhwindow(tmpwin, TRUE)` owns the text-window input in C.
+    // Returning to the command loop here runs its once-per-input hallucination
+    // redraw while the window is still open, advancing the display RNG too
+    // early.  Keep the command blocked until the window is dismissed.
+    for (;;) {
+        const c = await nhgetch();
+        if (c === 27) {
+            await dismiss_invent_screen();
+            return ECMD_OK;
+        }
+        if (c === 32 || c === 13 || c === 10) {
+            await disco_window_advance();
+            if (game._modal_screen !== 'textwin') return ECMD_OK;
+        }
+    }
 }
 
 function renderDiscoveriesPage() {
@@ -2432,7 +2451,7 @@ function renderAttributesPage() {
     });
 }
 
-export function doattributes() {
+export async function doattributes() {
     const pages = attributesPages();
     if (!pages) {
         game._pending_message = 'You feel very knowledgeable.';
@@ -2441,7 +2460,14 @@ export function doattributes() {
     game._attr_pages = pages;
     game._attr_page = 0;
     renderAttributesPage();
-    return ECMD_OK;
+    // C's select_menu(PICK_NONE) owns all ^X page-navigation input.  Returning
+    // to moveloop_core between pages would run its hallucination redraw before
+    // the next menu key, advancing the display PRNG when C is still blocked in
+    // wintty's process_menu_window().
+    for (;;) {
+        await attr_window_advance(String.fromCharCode(await nhgetch()));
+        if (game._modal_screen !== 'attrwin') return ECMD_OK;
+    }
 }
 
 // Advance the paged attributes window.  Returns true if a window was active

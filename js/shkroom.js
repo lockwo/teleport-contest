@@ -18,8 +18,9 @@ import { record_price_quote } from './o_init.js';
 import { depth as depth_of_level } from './hacklib.js';
 import {
     ROOMOFFSET, NO_ROOM, SHARED, SHARED_PLUS, SHOPBASE, COLNO, ROWNO,
-    A_CHA, HUNGRY, TEMPLE, MAXNROFROOMS, G_GONE,
+    A_CHA, HUNGRY, TEMPLE, MORGUE, OROOM, MAXNROFROOMS, G_GONE,
 } from './const.js';
+import { midnight } from './calendar.js';
 
 const PICK_AXE = 259, DWARVISH_MATTOCK = 71;
 
@@ -40,6 +41,22 @@ function roomAt(rno) {
     return game.level?.rooms?.[idx] || null;
 }
 function rtypeOf(rno) { return roomAt(rno)?.rtype ?? 0; }
+
+// C ref: hack.c check_special_room() — the one-time special-room types are
+// converted back to ordinary rooms as soon as their entry event fires.  Keep
+// the level flag in sync too: sounds.c reads it to decide whether to make the
+// room's ambient noises on later turns.
+function retireSpecialRoom(rno, type) {
+    const room = roomAt(rno);
+    if (!room || room.rtype !== type) return;
+    room.rtype = OROOM;
+    const flagByType = { [MORGUE]: 'has_morgue' };
+    const flag = flagByType[type];
+    if (!flag || !game.level?.flags) return;
+    const allRooms = [...(game.level.rooms || []), ...(game.level.subrooms || [])];
+    if (!allRooms.some((candidate) => candidate?.rtype === type))
+        game.level.flags[flag] = false;
+}
 
 // C ref: hack.c in_rooms(x, y, typewanted) — the room numbers covering (x,y),
 // filtered by room type.  Returns C's buffer as an array of roomno values in
@@ -538,7 +555,15 @@ export async function check_special_room(newlev) {
     // what u.uentered already holds.
     for (const c of u.uentered) {
         const rt = rtypeOf(c);
-        if (rt === TEMPLE) {
+        if (rt === MORGUE) {
+            // C ref: hack.c:3683 — this is a normal room-entry event, not a
+            // quest message.  It can therefore page a prior arrival/quest
+            // topline before leaving its own line pending.
+            await update_topl(midnight() ? 'Run away!  Run away!'
+                : 'You have an uncanny feeling...');
+            room_discovered(c - ROOMOFFSET);
+            retireSpecialRoom(c, rt);
+        } else if (rt === TEMPLE) {
             const { intemple } = await import('./priest.js');
             await intemple(c);
         }

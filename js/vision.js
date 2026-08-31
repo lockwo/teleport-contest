@@ -142,6 +142,17 @@ function _blocks(level, x, y) {
             }
         }
     }
+    // C ref: vision.c does_block() -> visible_region_at().  A visible region
+    // (currently gas or steam) is opaque even though it is not terrain.  This
+    // must live in the predicate used by vision_reset(): a level reload restores
+    // its regions before goto_level rebuilds the visibility pointers.
+    for (const reg of (game.regions || [])) {
+        if (!reg?.visible || reg.ttl === -2) continue;
+        for (const rect of (reg.rects || [])) {
+            if (x >= rect.lx && x <= rect.hx && y >= rect.ly && y <= rect.hy)
+                return true;
+        }
+    }
     return false;
 }
 

@@ -1422,6 +1422,7 @@ function set_boolean(name, value, result) {
     switch (name) {
     case 'autopickup': result.flags.pickup = value; break;      // C: flags.pickup
     case 'fixinv': result.flags.invlet_constant = value; break; // C: flags.invlet_constant
+    case 'cmdassist': result.iflags.cmdassist = value; break;
     case 'splash_screen': result.iflags.wc_splash_screen = value; break;
     case 'tutorial':
         result.flags.tutorial = value;
