@@ -34,7 +34,7 @@ import {
 // neighbourhood, not S_NYMPH: the test silently never fired.)
 const S_NYMPH_MCLS = 14;
 // C ref: obj.h how_lost values.
-const LOST_NONE = 0, LOST_STOLEN = 2;
+const LOST_NONE = 0, LOST_STOLEN = 3;
 
 // C ref: mon.c monnear(mon, x, y) — is the monster close enough to attack?
 // (The NODIAG grid-bug refinement doesn't matter for a thief.)

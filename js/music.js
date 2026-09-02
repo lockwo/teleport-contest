@@ -7,7 +7,11 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
-import { isok, A_STR, A_DEX, A_WIS, COLNO, ROWNO } from './const.js';
+import {
+    isok, A_STR, A_DEX, A_WIS, COLNO, ROWNO,
+    PIT, SPIKED_PIT, CORR, DRAWBRIDGE_UP, DRAWBRIDGE_DOWN,
+    FOUNTAIN, SINK, ALTAR, GRAVE, THRONE, SCORR, ROOM, SDOOR, DOOR,
+} from './const.js';
 import { m_at, newsym, update_topl } from './display.js';
 import { cansee } from './vision.js';
 import { Is_stronghold, In_sokoban } from './const.js';
@@ -38,7 +42,6 @@ const TOOL_CLASS = 6;
 const S_SNAKE = 45, S_NYMPH = 14, S_PIERCER = 16; // defsym.h MONSYM indices
 const STRAT_WAITMASK = 0x03000000;
 const TT_PIT = 2, TT_BURIEDBALL = 7;
-const PIT = 5;                      // trap.h ttyp
 const PM_ARCHEOLOGIST = 0;
 
 function DEADMONSTER(m) { return !m || (m.mhp | 0) <= 0; }
@@ -297,7 +300,7 @@ async function do_earthquake(force) {
     const { t_at } = await import('./mkroom.js');
     const trap_at_u = t_at(u.ux, u.uy);
     let tu_pit = 0;
-    if (trap_at_u) tu_pit = (trap_at_u.ttyp === PIT || trap_at_u.ttyp === 6 /*SPIKED_PIT*/) ? 1 : 0;
+    if (trap_at_u) tu_pit = (trap_at_u.ttyp === PIT || trap_at_u.ttyp === SPIKED_PIT) ? 1 : 0;
     if (force > 13) force = 13;
     let start_x = Math.max(u.ux - (force * 2), 1);
     let start_y = Math.max(u.uy - (force * 2), 0);
@@ -325,42 +328,42 @@ async function do_earthquake(force) {
             const loc = game.level?.at?.(x, y);
             const typ = loc ? loc.typ : 0;
             switch (typ) {
-            case 19: /* FOUNTAIN */
+            case FOUNTAIN:
                 if (cansee(x, y)) await update_topl('The fountain falls into a chasm.');
                 await do_pit(x, y, tu_pit);
                 break;
-            case 20: /* SINK */
+            case SINK:
                 if (cansee(x, y)) await update_topl('The kitchen sink falls into a chasm.');
                 await do_pit(x, y, tu_pit);
                 break;
-            case 21: /* ALTAR */
+            case ALTAR:
                 // The high altars (AM_SANCTUM) are preserved; desecrate_altar()
                 // is not ported, so an ordinary altar just becomes a chasm.
                 if (cansee(x, y)) await update_topl('The altar falls into a chasm.');
                 await do_pit(x, y, tu_pit);
                 break;
-            case 22: /* GRAVE */
+            case GRAVE:
                 if (cansee(x, y)) await update_topl('The headstone topples into a chasm.');
                 await do_pit(x, y, tu_pit);
                 break;
-            case 18: /* THRONE */
+            case THRONE:
                 if (cansee(x, y)) await update_topl('The throne falls into a chasm.');
                 await do_pit(x, y, tu_pit);
                 break;
-            case 24: /* SCORR */
-                loc.typ = 26 /* CORR */;
+            case SCORR:
+                loc.typ = CORR;
                 if (cansee(x, y)) await update_topl('A secret corridor is revealed.');
                 await do_pit(x, y, tu_pit);
                 break;
-            case 26: /* CORR */
-            case 27: /* ROOM */
+            case CORR:
+            case ROOM:
                 await do_pit(x, y, tu_pit);
                 break;
-            case 25: /* SDOOR */
-                loc.typ = 23 /* DOOR */;
+            case SDOOR:
+                loc.typ = DOOR;
                 if (cansee(x, y)) await update_topl('A secret door is revealed.');
                 /* FALLTHRU */
-            case 23: /* DOOR */
+            case DOOR:
                 if ((loc.doormask | 0) === 0 /* D_NODOOR */) {
                     await do_pit(x, y, tu_pit);
                     break;
@@ -641,7 +644,7 @@ export async function do_play_instrument(instr) {
                         u.uevent = u.uevent || {};
                         u.uevent.uheard_tune = 2;
                         const loc = game.level?.at?.(found.x ?? x, found.y ?? y);
-                        if (loc && loc.typ === 10 /* DRAWBRIDGE_DOWN */)
+                        if (loc && loc.typ === DRAWBRIDGE_DOWN)
                             await close_drawbridge(found.x ?? x, found.y ?? y);
                         else
                             await open_drawbridge(found.x ?? x, found.y ?? y);
@@ -656,7 +659,7 @@ export async function do_play_instrument(instr) {
                 for (let x = u.ux - 1; x <= u.ux + 1 && !ok; x++) {
                     if (!isok(x, y)) continue;
                     const t = game.level?.at?.(x, y)?.typ;
-                    if (t === 10 /* DRAWBRIDGE_DOWN */ || t === 11 /* DRAWBRIDGE_UP */
+                    if (t === DRAWBRIDGE_DOWN || t === DRAWBRIDGE_UP
                         || (is_drawbridge_wall && is_drawbridge_wall(x, y) >= 0))
                         ok = true;
                 }

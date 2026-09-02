@@ -26,6 +26,7 @@ import {
     NHW_MENU, NHW_TEXT, PICK_ONE, PICK_ANY, MENU_BEHAVE_STANDARD,
     MENU_ITEMFLAGS_NONE, MENU_ITEMFLAGS_SELECTED, MENU_ITEMFLAGS_SKIPINVERT,
     In_quest, In_endgame, Is_knox_level, COLNO,
+    P_QUARTERSTAFF, P_POLEARMS, P_LANCE, P_MORNING_STAR, P_UNICORN_HORN,
 } from './const.js';
 import { NO_COLOR } from './terminal.js';
 import { GOLD_PIECE, COIN_CLASS, WEAPON_CLASS } from './mkobj.js';
@@ -139,9 +140,6 @@ const GLYPH_OBJ_OFF = 9 * NUMMONS + 1;
 const AKLYS = 80, CREAM_PIE = 287, CLOAK_OF_PROTECTION = 146,
       RIN_PROTECTION = 178, AMULET_OF_GUARDING = 210;
 const ART_MITRE_OF_HOLINESS = 27, ART_TSURUGI_OF_MURAMASA = 30;
-/* C ref: skills.h — the weapon_type() values weapon_status() shortens. */
-const P_QUARTERSTAFF = 15, P_POLEARMS = 18, P_LANCE = 19,
-      P_MORNING_STAR = 12, P_UNICORN_HORN = 21;
 /* C ref: monsym.h S_EEL */
 const S_EEL = 57;
 /* C ref: rm.h ICE */

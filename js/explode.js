@@ -159,7 +159,7 @@ async function engulfer_explosion_msg(adtyp, olet) {
     const eng = game.u?.ustuck;
     const p = mdata(eng);
     // C ref: mondata.h digests(ptr) — AT_ENGL attack.
-    const digest = (p?.mattk || []).some((a) => a && a[0] === 12 /* AT_ENGL */);
+    const digest = (p?.mattk || []).some((a) => a && a[0] === 11 /* AT_ENGL */);
     let adj;
     if (digest) {
         switch (adtyp) {
@@ -666,7 +666,7 @@ export async function explode_oil(obj, x, y) {
     if (!obj?.lamplit) return;
     // end_burn(obj, TRUE) — extinguish before the blast can kill the hero.
     obj.lamplit = 0;
-    obj.how_lost = 3 /* LOST_EXPLODING */;
+    obj.how_lost = 4 /* LOST_EXPLODING */;
     await splatter_burning_oil(x, y, diluted_oil);
 }
 

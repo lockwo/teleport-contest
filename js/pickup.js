@@ -58,20 +58,21 @@ const slightloadpfx = 'You have a little trouble',
 
 /* hack.h query_objlist() flags */
 export const BY_NEXTHERE = 0x01;
-export const AUTOSELECT_SINGLE = 0x02;
-export const USE_INVLET = 0x04;
-export const INVORDER_SORT = 0x08;
-export const SIGNAL_NOMENU = 0x10;
-export const SIGNAL_ESCAPE = 0x20;
-export const FEEL_COCKATRICE = 0x40;
-export const INCLUDE_HERO = 0x80;
-export const INCLUDE_VENOM = 0x100;
+export const INCLUDE_VENOM = 0x02;
+export const AUTOSELECT_SINGLE = 0x04;
+export const USE_INVLET = 0x08;
+export const INVORDER_SORT = 0x10;
+export const SIGNAL_NOMENU = 0x20;
+export const SIGNAL_ESCAPE = 0x40;
+export const FEEL_COCKATRICE = 0x80;
+export const INCLUDE_HERO = 0x100;
 
-/* hack.h query_category() flags */
-export const ALL_TYPES = 0x01;
+/* hack.h query_category() flags (BY_NEXTHERE/INCLUDE_VENOM's 0x01/0x02 are
+   deliberately skipped -- C combines both flag spaces into one qflags int). */
+export const ALL_TYPES = 0x20;
 export const ALL_TYPES_SELECTED = -2;
-export const UNPAID_TYPES = 0x10;
-export const WORN_TYPES = 0x20;
+export const UNPAID_TYPES = 0x04;
+export const WORN_TYPES = 0x10;
 export const BILLED_TYPES = 0x40;
 export const CHOOSE_ALL = 0x80;
 export const BUC_BLESSED_F = 0x100;
@@ -1628,7 +1629,7 @@ function dropx(obj) {
 export async function loot_mon(mtmp, passed_info, prev_loot) {
     let timepassed = 0;
     const u = ustate();
-    const W_SADDLE = 0x00008000;
+    const W_SADDLE = 0x00100000; /* prop.h W_SADDLE */
     const otmp = (mtmp && mtmp !== u.usteed)
         ? (mtmp.minvent || []).find((o) => (o.owornmask || 0) & W_SADDLE)
         : null;
@@ -1741,7 +1742,7 @@ export async function observe_quantum_cat(box, makecat, givemsg) {
         if (makecat) {
             const mk = await import('./makemon.js');
             const PM_HOUSECAT = pmidx_by_name('housecat');
-            const NO_MINVENT = 0x01, MM_ADJACENTOK = 0x800, MM_NOMSG = 0x8000;
+            const NO_MINVENT = 0x01, MM_ADJACENTOK = 0x10, MM_NOMSG = 0x20000;
             livecat = mk.makemon(monster_by_pmidx(PM_HOUSECAT), box.ox, box.oy,
                                  NO_MINVENT | MM_ADJACENTOK | MM_NOMSG);
         }

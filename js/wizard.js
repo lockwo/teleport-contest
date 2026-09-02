@@ -10,13 +10,12 @@ import { game } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { update_topl } from './display.js';
 import { AT_MAGC, attacktype } from './monattk_data.js';
+import { MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT } from './const.js';
 
 const AMULET_OF_YENDOR = 213;           // js/mkobj.js OBJECT_DATA index
-const MAGIC_PORTAL = 24;                // trap.h ttyp
 const STRAT_WAITMASK = 0x03000000;
 const MAXNASTIES = 10;
 const S_ANGEL = 27, S_DEMON = 56;       // defsym.h MONSYM indices
-const MM_NOMSG = 0x40;                  // makemon.h
 
 function DEADMONSTER(m) { return !m || (m.mhp | 0) <= 0; }
 function mdata(m) { return m?.data || m?.mdat || null; }
@@ -268,7 +267,6 @@ export async function resurrect() {
     if ((game.context?.no_of_wizards | 0)) return;
     const { makemon, monster_by_pmidx, name_to_pmidx, set_malign }
         = await import('./makemon.js');
-    const MM_NOWAIT = 0x08;
     const mtmp = makemon(monster_by_pmidx(name_to_pmidx('Wizard of Yendor')),
                          game.u.ux, game.u.uy, MM_NOWAIT);
     if (!mtmp) return;

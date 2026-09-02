@@ -916,8 +916,8 @@ function is_flyer(ptr) { return (mflags1_of(ptr) & M1_FLY) !== 0; }
 function is_swimmer(ptr) { return (mflags1_of(ptr) & M1_SWIM) !== 0; }
 function passes_walls(ptr) { return (mflags1_of(ptr) & M1_WALLWALK) !== 0; }
 // C ref: mondata.h:20/31 — these two are mlet (monster class) tests, not flags.
-// monsym.h S_EYE=5, S_LIGHT=25, S_GHOST=26.
-const S_EYE = 5, S_LIGHT = 25, S_GHOST = 26;
+// defsym.h MONSYM idx (enum mon_syms in sym.h): S_EYE=5, S_LIGHT=25, S_GHOST=54.
+const S_EYE = 5, S_LIGHT = 25, S_GHOST = 54;
 function is_floater(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIGHT; }
 function noncorporeal(ptr) { return ptr?.mcls === S_GHOST; }
 // C ref: mondata.h:190 likes_lava(ptr) — fire elemental and salamander, looked

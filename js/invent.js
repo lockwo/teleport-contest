@@ -6802,6 +6802,7 @@ export async function dotravel() {
     // first one left it.
     const iflags = game.iflags = game.iflags || {};
     const tcc = iflags.travelcc || { x: 0, y: 0 };
+    if (process.env.DEBUG_TRAVELCC) console.error('DOTRAVEL tcc=', JSON.stringify(tcc), 'u=', u.ux, u.uy, 'dnum/dlvl', game.u.uz?.dnum, game.u.uz?.dlevel);
     const startx = (tcc.x || tcc.y) ? tcc.x : u.ux;
     const starty = (tcc.x || tcc.y) ? tcc.y : u.uy;
     await pline('Where do you want to travel to?');

@@ -471,7 +471,7 @@ async function impossible_r(msg) {
 
 // hack.h:964-972 NHFILE mode bits and the sfbase.c Sfo_/Sfi_ marshalling
 // (coverage.mjs marks sfbase.c/sfstruct.c N/A); mirrors js/end.js:1960.
-const COUNTING = 1, WRITING = 2, FREEING = 8;
+const COUNTING = 1, WRITING = 2, FREEING = 4;
 function update_file(nhfp) { return ((nhfp?.mode | 0) & (COUNTING | WRITING)); }
 function release_data(nhfp) { return ((nhfp?.mode | 0) & FREEING); }
 function Sfo_ulong(nhfp, val, _tag) {

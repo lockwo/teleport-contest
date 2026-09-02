@@ -27,8 +27,8 @@ import { CLR_BLACK, CLR_BLUE, CLR_BRIGHT_BLUE, CLR_BRIGHT_CYAN, CLR_BRIGHT_GREEN
 export function SIZE(arr) { return arr.length; }
 
 // Version (patchlevel.h)
-export const VERSION_MAJOR = 3;
-export const VERSION_MINOR = 7;
+export const VERSION_MAJOR = 5;
+export const VERSION_MINOR = 0;
 export const PATCHLEVEL = 0;
 export const VERSION_STRING = `NetHack ${VERSION_MAJOR}.${VERSION_MINOR}.${PATCHLEVEL} Teleport #${COMMIT_NUMBER}`;
 export const TELEPORT_BANNER_C = `         Version ${VERSION_MAJOR}.${VERSION_MINOR}.${PATCHLEVEL}-134 Teleport JS (experiment ${COMMIT_NUMBER}) ${TELEPORT_BUILD_DATE}.`;
@@ -281,8 +281,8 @@ export const PICK_ONE = 1;
 export const PICK_ANY = 2;
 export const MENU_BEHAVE_STANDARD = 0;
 export const MENU_BEHAVE_PERMINV = 1;
-export const ATR_ULINE = 1;
-export const ATR_BLINK = 4;
+export const ATR_ULINE = 4;
+export const ATR_BLINK = 5;
 export const ATR_URGENT = 16;
 export const ATR_NOHISTORY = 32;
 
@@ -655,12 +655,12 @@ export const NH_BASIC_COLOR = 0x1000000;
 export const NH_ALTPALETTE = 0x2000000;
 
 // ===== patchlevel.h =====
-export const EDITLEVEL = 134;
+export const EDITLEVEL = 0;
 export const NH_STATUS_RELEASED = 0;
 export const NH_STATUS_WIP = 1;
 export const NH_STATUS_BETA = 2;
 export const NH_STATUS_POSTRELEASE = 3;
-export const NH_DEVEL_STATUS = NH_STATUS_WIP;
+export const NH_DEVEL_STATUS = NH_STATUS_RELEASED;
 export const COPYRIGHT_BANNER_A = "NetHack, Copyright 1985-2026";
 export const COPYRIGHT_BANNER_B = "         By Stichting Mathematisch Centrum and M. Stephenson.";
 export const COPYRIGHT_BANNER_D = "         See license for details.";
@@ -1980,8 +1980,8 @@ export const XL_RIGHT = 8;
 
 // Light-source type tags (src/light.c)
 // Runtime fields: light_base[] entry type and routing for object/monster lookups.
-export const LS_OBJECT = 0;
-export const LS_MONSTER = 1;
+export const LS_OBJECT = 1;
+export const LS_MONSTER = 2;
 
 // Timeout timer-kind and timer-function enums (src/timeout.c)
 // Runtime fields: timer queue kind/func selectors and timer dispatch.
@@ -2010,13 +2010,13 @@ export const TAINT_AGE = 50;
 // Artifact naming/origin flags (src/artifact.c)
 // Runtime fields: oname()/artifact_origin() provenance bits.
 export const ONAME_NO_FLAGS = 0;
-export const ONAME_VIA_NAMING = 0x0001;
-export const ONAME_WISH = 0x0002;
-export const ONAME_GIFT = 0x0004;
-export const ONAME_VIA_DIP = 0x0008;
-export const ONAME_LEVEL_DEF = 0x0010;
-export const ONAME_BONES = 0x0020;
-export const ONAME_RANDOM = 0x0040;
+export const ONAME_VIA_NAMING = 0x0002;
+export const ONAME_WISH = 0x0004;
+export const ONAME_GIFT = 0x0008;
+export const ONAME_VIA_DIP = 0x0010;
+export const ONAME_LEVEL_DEF = 0x0020;
+export const ONAME_BONES = 0x0040;
+export const ONAME_RANDOM = 0x0080;
 export const ONAME_KNOW_ARTI = 0x0100;
 
 // seenv octants and wall-info bits (include/rm.h)
@@ -2161,10 +2161,9 @@ export const GP_AVOID_MONPOS = 0x01000000;
 // Monster relocation flags (include/hack.h; src/teleport.c rloc/rloc_to)
 // Runtime fields: rloc/rloc_to rlocflags args
 export const RLOC_NONE = 0x0000;
-export const RLOC_NOMSG = 0x0001;
+export const RLOC_ERR = 0x0001;
 export const RLOC_MSG = 0x0002;
-export const RLOC_TELE = 0x0004;
-export const RLOC_ERR = 0x0100;
+export const RLOC_NOMSG = 0x0004;
 
 // Hero teleport placement flags (include/hack.h; src/teleport.c teleds)
 // Runtime fields: teleds/safe_teleds flags args

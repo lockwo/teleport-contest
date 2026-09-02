@@ -37,7 +37,7 @@ import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './d
 import { cansee } from './vision.js';
 import { update_topl } from './display.js';
 import { make_corpse, dmgval } from './uhitm.js';
-import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU } from './const.js';
+import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './const.js';
 // used only by the appended mhitm.c translations at the bottom of this file
 import { IS_OBSTRUCTED, IS_TREE, IRONBARS, D_CLOSED, D_LOCKED } from './const.js';
 import { is_animal, is_neuter_flag, perceives_flag, is_elf_flag, is_orc_flag,
@@ -1529,8 +1529,6 @@ export async function gulpmm(magr, mdef, mattk) {
 
 // C ref: hack.h:1016-1022 SUPPRESS_* flags used by gulpmm's x_monnam() call.
 const SUPPRESS_IT = 0x01, SUPPRESS_INVISIBLE = 0x02, SUPPRESS_NAME = 0x20;
-// C ref: mkobj.h MM_IGNOREWATER — goodpos() flag.
-const MM_IGNOREWATER = 0x2000;
 // C ref: mondata.h is_vampshifter(mon) — a vampire in another form (its cham
 // index names a vampire).  mdef.cham is the shapeshifter's base pmidx.
 function is_vampshifter_mm(mon) {

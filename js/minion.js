@@ -45,7 +45,7 @@ import { currency } from './invent.js';
 import { money2mon } from './shk.js';
 import { bless, mksobj } from './mkobj.js';
 import { which_armor, m_dowear } from './worn.js';
-import { rloc, tele_restrict } from './teleport.js';
+import { rloc, tele_restrict, RLOC_MSG } from './teleport.js';
 import { livelog_printf, LL_UMONST } from './livelog.js';
 import { Hear_again } from './eat.js';
 import { nomul, stop_occupation } from './hack.js';
@@ -88,7 +88,7 @@ function u_wield_art(art) { return is_art(game.uwep, art); }
 // C ref: permonst.h G_UNIQ.
 const G_UNIQ = 0x1000;
 // C ref: monsym.h S_ANGEL / S_DEMON.
-const S_ANGEL = 55, S_DEMON = 56;
+const S_ANGEL = 27, S_DEMON = 56;
 // C ref: youprop.h Blind / Deaf / Conflict.  Same readings as js/engrave.js
 // isBlind() and js/eat.js's Deaf: potion.js writes blindness to u.blinded.
 function Blind() {
@@ -556,7 +556,7 @@ export async function demon_talk(mtmp) {
         else if (canseemon_shared(mtmp))
             await pline(`${Amonnam(mtmp)} says something.`);
         if (!await tele_restrict(mtmp))
-            await rloc(mtmp, 1 /* RLOC_MSG */);
+            await rloc(mtmp, RLOC_MSG);
         return 1;
     }
     cash = money_cnt(game.invent);

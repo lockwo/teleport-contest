@@ -10,7 +10,7 @@
 
 import { game } from './gstate.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
-import { G_GENOD, G_EXTINCT } from './const.js';
+import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING } from './const.js';
 
 // end.h death codes (subset).  DIED=0; GENOCIDED separates the death codes
 // that leave a tombstone/bones from the ones that don't (QUIT/ESCAPED/
@@ -201,27 +201,23 @@ export async function outrip_and_score(how) {
         }
     };
 
-    // Page 1 — the tombstone.  C tty process_text_window() prints window lines
-    // 0..(rows-2) then pauses with --More-- on the last row (rows-1 == 23).
-    disp.clearScreen();
-    for (let i = 0; i < ROWS - 1 && i < lines.length; i++) {
-        if (lines[i]) disp.putstr(0, i, lines[i], NO_COLOR, 0);
-    }
-    drawMore(ROWS - 1);
-    // wintty.c:1821 — ESC sets WIN_CANCELLED and abandons every remaining page.
-    const ripCancelled = (await waitforspace()) === 27;
-
-    // The remaining pages are blank --More-- acknowledgements: process_text_window
-    // clears and shows its final page (window line 23 == "" -> blank) with
-    // --More--, then the endgame window teardown / topten() setup pauses for the
-    // recorded space/return acknowledgements before the score line is printed.
-    for (let b = 0; !ripCancelled && b < 5; b++) {
+    // C tty process_text_window() pages the endwin TEXT window (this function's
+    // `lines`, 24 rows for a stoned death) 23 (ROWS-1) lines at a time, each page
+    // pausing with --More-- on the last row; the final page (here just the
+    // trailing blank line) gets the same --More-- pause via display_nhwindow's
+    // teardown.  Every page uses dmore()/xwaitforspace() quitchar semantics.
+    const PAGE = ROWS - 1;
+    const npages = Math.max(1, Math.ceil(lines.length / PAGE));
+    let ripCancelled = false;
+    for (let p = 0; p < npages && !ripCancelled; p++) {
         disp.clearScreen();
+        for (let i = 0; i < PAGE; i++) {
+            const t = lines[p * PAGE + i];
+            if (t) disp.putstr(0, i, t, NO_COLOR, 0);
+        }
         drawMore(ROWS - 1);
-        // NOT waitforspace(): this port folds really_done()'s disclosure
-        // queries into these frames, and those answer keys ('y'/'n') are not
-        // quitchars — looping here would swallow the next command.
-        await nhgetch();
+        // wintty.c:1821 — ESC sets WIN_CANCELLED and abandons every remaining page.
+        ripCancelled = (await waitforspace()) === 27;
     }
 
     // topten() in wizard/discover mode: raw_print("") then raw_print(msg) — two
@@ -1977,7 +1973,6 @@ export function restore_killers(nhfp) {
 }
 
 // hack.h:964-972 mode bits; sfbase.c Sfo_/Sfi_ marshalling (coverage N/A).
-const COUNTING = 1, WRITING = 2, FREEING = 8;
 function update_file(nhfp) { return ((nhfp?.mode | 0) & (COUNTING | WRITING)); }
 function release_data(nhfp) { return ((nhfp?.mode | 0) & FREEING); }
 function Sfo_kinfo(nhfp, kptr, _tag) {

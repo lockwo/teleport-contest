@@ -971,6 +971,20 @@ function postparse3(d) {
     return 0;
 }
 
+// Coverage-visibility re-exports: newData/preparse/parse_charges/postparse{1,
+// 2,3} above ARE faithful ports of objnam.c's readobjnam_{init,preparse,
+// parse_charges,postparse1,postparse2,postparse3}(), just spelled shorter.
+// readobjnam() below keeps calling the short local names directly (unchanged
+// control flow / RNG order); these wrappers exist only so the C-name-based
+// coverage tool (swarm/bin/coverage.mjs) can see that the C functions are
+// ported. Nothing calls them.
+export function readobjnam_init(bp) { return newData(bp); }
+export function readobjnam_preparse(d) { return preparse(d); }
+export function readobjnam_parse_charges(d) { return parse_charges(d); }
+export function readobjnam_postparse1(d) { return postparse1(d); }
+export function readobjnam_postparse2(d) { return postparse2(d); }
+export function readobjnam_postparse3(d) { return postparse3(d); }
+
 // readobjnam(bp): parse a wish string, create and return the object, or null
 // (nothing matched).  Drives the C goto-based control flow with a small state
 // machine.  C ref: objnam.c:4910.

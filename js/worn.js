@@ -16,7 +16,7 @@ import {
 import {
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU, W_AMUL, W_ART,
     W_ARMOR, W_ARTI, W_RINGL, W_RINGR, W_WEP, W_SWAPWEP, W_QUIVER, W_TOOL,
-    W_SADDLE, W_BALL, W_CHAIN,
+    W_SADDLE, W_BALL, W_CHAIN, I_SPECIAL,
 } from './const.js';
 // Cycle with makemon.js (which imports m_dowear from here) is safe: both sides
 // only touch the other's bindings from inside function bodies.
@@ -656,8 +656,6 @@ function is_weptool_worn(obj) {
         && (objects[obj?.otyp]?.oc_skill ?? 0) !== 0;
 }
 
-// C ref: prop.h I_SPECIAL (js/artifact.js:2370 keeps the same constant).
-const I_SPECIAL = 0x10000000;
 // C ref: hack.h impossible() — this port has no panic/impossible channel, so
 // the complaints check_wornmask_slots() would raise are collected here instead.
 export const worn_slot_insanity = [];

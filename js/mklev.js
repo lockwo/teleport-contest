@@ -80,7 +80,7 @@ import {
     WM_T_LONG, WM_T_BL, WM_T_BR,
     WM_C_OUTER, WM_C_INNER,
     WM_X_TL, WM_X_TR, WM_X_BL, WM_X_BR, WM_X_TLBR, WM_X_BLTR,
-    A_LAWFUL, Align2amask, AM_SHRINE,
+    A_LAWFUL, A_NONE, Align2amask, AM_SHRINE,
     LR_UPTELE, LR_DOWNTELE, LR_TELE, LR_UPSTAIR, LR_DOWNSTAIR,
     LR_PORTAL, LR_BRANCH, LA_UP, LA_DOWN,
     In_endgame, BURN,
@@ -4629,7 +4629,7 @@ function hf_altar(x, y, shrine) {
     const loc = game.level?.at(c.x, c.y);
     if (!loc) return;
     loc.typ = ALTAR;
-    loc.altarmask = Align2amask(0 /* A_NONE: "noalign" */);
+    loc.altarmask = Align2amask(A_NONE /* "noalign" */);
     if (shrine) game.level.flags.has_temple = true;
 }
 
@@ -4637,7 +4637,7 @@ function hf_altar(x, y, shrine) {
 // explicit state and direction there is no RNG; the effect is terrain only —
 // the moat square becomes the bridge and the wall beside it the portcullis.
 // DB_NORTH/SOUTH/EAST/WEST are the rm.h drawbridgemask direction values.
-const DB_NORTH = 0, DB_SOUTH = 1, DB_EAST = 2, DB_WEST = 3, DB_LAVA = 0x40;
+const DB_NORTH = 0, DB_SOUTH = 1, DB_EAST = 2, DB_WEST = 3, DB_LAVA = 0x04;
 function hf_drawbridge({ x, y, dir, state }) {
     const c = hf_loc(x, y);
     const loc = game.level?.at(c.x, c.y);

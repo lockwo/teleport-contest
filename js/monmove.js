@@ -318,7 +318,7 @@ function is_axe_otyp(o) {
 // dwarf's pick is not cursed, so this is FALSE for the contest, but keep it
 // faithful.
 export function mwelded(o) {
-    const W_WEP = 0x1; // wield slot bit (approx; the dwarf's pick is never welded)
+    const W_WEP = 0x100; // prop.h W_WEP (owornmask wield-slot bit)
     return !!o && ((o.owornmask || 0) & W_WEP) !== 0 && !!o.cursed;
 }
 // weapon_check enum (monst.h wpn_chk_flags) — the digging values.
@@ -517,7 +517,7 @@ function artifact_light(_obj) { return false; }
 // is not ported, so the final clause cannot be evaluated and this answers
 // FALSE.  Written out so the reachable early-outs (minion/rider exemption,
 // hero's alignment record) are already in place.
-const ALGN_SINNED = -1; /* align.h ALGN_SINNED */
+const ALGN_SINNED = -4; /* priest.c ALGN_SINNED */
 function in_your_sanctuary(mon, x, y) {
     if (mon) {
         if (is_minion(mon.data) || is_rider(mon.data)) return false;

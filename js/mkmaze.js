@@ -1302,7 +1302,7 @@ function mm_on_baalzebub_level(uz) {
 const MM_MR_STONE = 0x20;
 function mm_pm_resistance(ptr, mask) { return !!((ptr?.mresists | 0) & mask); }
 function mm_poly_when_stoned(ptr) {
-    return ptr?.mcls === 12 /* S_GOLEM */
+    return ptr?.mcls === 55 /* S_GOLEM, defsym.h */
         && (ptr?.name === 'flesh golem' || ptr?.name === 'clay golem');
 }
 

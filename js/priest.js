@@ -188,7 +188,7 @@ export async function intemple(roomno) {
             epri_p.enter_time = moves + d(10, 100);
         }
         let m1, m2, thisKey, otherKey;
-        if (!shrined || !p_coaligned(priest) || (u.ualign?.record ?? 0) <= 0 /* ALGN_SINNED */) {
+        if (!shrined || !p_coaligned(priest) || (u.ualign?.record ?? 0) <= -4 /* ALGN_SINNED, priest.c */) {
             m1 = 'have a%s forbidding feeling...'; m2 = (!shrined || !p_coaligned(priest)) ? '' : ' strange';
             thisKey = 'hostile_time'; otherKey = 'peaceful_time';
         } else {

@@ -1722,7 +1722,7 @@ function optfn_fruit(o, negated, opts, op, result) {
         return OPTN_ERR;
     }
     op = mungspaces(op);
-    let fruit = sanitize_name(nmcpy(op, 128 /* PL_FSIZ */));
+    let fruit = sanitize_name(nmcpy(op, PL_FSIZ));
     if (!fruit) fruit = 'slime mold';
     result.flags.fruit = fruit;
     result.pl_fruit = fruit;
@@ -3789,7 +3789,7 @@ function cnf_line_SYMBOLS(bufp, result) {
     return false;
 }
 function cnf_line_WIZKIT(bufp, result) {
-    result.wizkit = bufp.slice(0, 79 /* WIZKIT_MAX - 1 */);
+    result.wizkit = bufp.slice(0, 127 /* WIZKIT_MAX - 1, hack.h */);
     return true;
 }
 // QT_* are `nhUse(bufp)` without QT_GRAPHICS.

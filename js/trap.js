@@ -33,6 +33,7 @@ import {
     VAULT, IS_FURNITURE, TRAPPED_DOOR, TRAPPED_CHEST,
     POOL, MAY_DESTROY, MAY_HIT, MAY_FRACTURE, VIS_EFFECTS,
     ARM, FINGER, D_TRAPPED, D_ISOPEN, A_WIS, TIMEOUT,
+    AS_NO_MON, AS_MON_IS_UNIQUE,
 } from './const.js';
 import {
     objects, mksobj, weight, place_object, BOULDER, STATUE as STATUE_OTYP,
@@ -2022,7 +2023,6 @@ async function trapeffect_landmine(trap, trflags) {
 // take: mk_trap_statue() builds the statue with mkcorpstat() and no omonst and
 // no oname, so use_saved_traits (montraits()) and christen_monst() are both
 // unreachable, and cause is always ANIMATE_NORMAL from a trap.
-const AS_MON_IS_UNIQUE = 1, AS_NO_MON = 2;
 export async function animate_statue(statue, x, y, _cause, fail_reason) {
     const mnum = statue.corpsenm;
     const mptr = monster_by_pmidx(mnum);
@@ -2068,7 +2068,7 @@ export async function activate_statue_trap(trap, x, y, shatter) {
     deltrap(trap);
     while (otmp) {
         const fail = { v: 0 };
-        mtmp = await animate_statue(otmp, x, y, shatter ? 2 /*ANIMATE_SHATTER*/ : 0, fail);
+        mtmp = await animate_statue(otmp, x, y, shatter ? 1 /*ANIMATE_SHATTER*/ : 0, fail);
         if (mtmp || fail.v !== AS_MON_IS_UNIQUE) break;
         otmp = sobj_at_floor(STATUE_OTYP, x, y);
     }

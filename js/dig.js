@@ -802,9 +802,9 @@ function trapname_(ttyp) { return TRAPNAME_BY_TTYP[ttyp] || 'trap'; }
 function mflags1_(ptr) { return mflags1_of(ptr); }
 function is_flyer_(ptr) { return (mflags1_of(ptr) & M1_FLY) !== 0; }
 /* C ref: mondata.h:20 is_floater / :31 noncorporeal — mlet tests, not flags.
-   monsym.h S_EYE == 5, S_LIGHT == 25, S_GHOST == 26; the port stores the class
+   defsym.h S_EYE == 5, S_LIGHT == 25, S_GHOST == 54; the port stores the class
    on ptr.mcls (cf. js/dbridge.js:920). */
-const S_EYE = 5, S_LIGHT = 25, S_GHOST = 26;
+const S_EYE = 5, S_LIGHT = 25, S_GHOST = 54;
 function is_floater_(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIGHT; }
 function noncorporeal_(ptr) { return ptr?.mcls === S_GHOST; }
 function passes_walls_(ptr) { return (mflags1_of(ptr) & M1_WALLWALK) !== 0; }

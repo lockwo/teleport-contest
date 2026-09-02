@@ -18,7 +18,7 @@
 
 import { game } from './gstate.js';
 import { rn2, rn1, rnd } from './rng.js';
-import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO } from './const.js';
+import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE } from './const.js';
 import { cansee, block_point, unblock_point, does_block, Blind } from './vision.js';
 // js/monflags_data.js is a generated LEAF module (no imports of its own), so
 // naming it here cannot create an import cycle or a TDZ edge.
@@ -787,8 +787,6 @@ export function save_regions(nhfp) {
 // data and (for a real save, not a checkpoint) then frees it.
 function update_file(nhfp) { return nhfp.update_file !== false; }
 function release_data(nhfp) { return nhfp.release_data === true; }
-// C ref: NHF_BONESFILE.
-const NHF_BONESFILE = 2;
 
 export function rest_regions(nhfp) {
     const ghostly = (nhfp?.ftype === NHF_BONESFILE);

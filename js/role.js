@@ -1069,7 +1069,7 @@ export function RS_menu_arg(x) { return ROLE_RANDOM - (x + 1); }
 // this.  A "window" here is a plain object whose `strs` and `items` record what
 // C would have drawn, which is what makes the four setup_*menu() builders below
 // verifiable without a terminal.
-const NHW_MENU = 3, MENU_BEHAVE_STANDARD = 0;
+const NHW_MENU = 4, MENU_BEHAVE_STANDARD = 0;
 const ATR_NONE = 0, NO_COLOR = 0;
 const MENU_ITEMFLAGS_NONE = 0, MENU_ITEMFLAGS_SELECTED = 1;
 const PICK_ANY = 2;
@@ -1626,7 +1626,7 @@ export async function role_init() {
         // spellbook of light is a clerical spell rather than an attack one.
         const { objects } = await import('./mkobj.js');
         const SPE_LIGHT = objects.findIndex((o) => o.name === 'light');
-        const P_CLERIC_SPELL = 27;   /* skills.h */
+        const P_CLERIC_SPELL = 32;   /* skills.h */
         if (SPE_LIGHT >= 0) objects[SPE_LIGHT].oc_skill = P_CLERIC_SPELL;
     }
 

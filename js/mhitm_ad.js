@@ -51,7 +51,8 @@ import {
 import { DEADMONSTER, healmon } from './mon.js';
 import {
     STRAT_WAITFORU, W_ARMOR, W_AMUL, W_ARMH, W_ARMS, W_ARMG, W_ARMF,
-    A_STR, A_DEX, LEFT_SIDE, RIGHT_SIDE,
+    A_STR, A_DEX, LEFT_SIDE, RIGHT_SIDE, MSLOW,
+    ERODE_RUST, ERODE_CORRODE, ERODE_ROT,
 } from './const.js';
 import { dmgval } from './uhitm.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -507,7 +508,6 @@ export async function mhitm_ad_rust(magr, mattk, mdef, mhm, ops) {
         mhm.damage = 0;
     }
 }
-const ERODE_RUST = 0, ERODE_CORRODE = 2, ERODE_ROT = 3;   // C ref: obj.h
 
 export async function mhitm_ad_corr(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
@@ -1077,7 +1077,6 @@ export async function mhitm_ad_slow(magr, mattk, mdef, mhm, ops) {
     }
     void mhm;
 }
-const MSLOW = 2;                                // C ref: monst.h
 
 export async function mhitm_ad_conf(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {

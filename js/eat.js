@@ -7,7 +7,7 @@ import { monster_by_pmidx, mon_cwt, mon_cnutrit, name_to_pmidx } from './makemon
 import { game } from './gstate.js';
 import { pline, update_topl, y_n } from './display.js';
 import { poison_strdmg, exercise, acurr_eff } from './attrib.js';
-import { A_STR, A_DEX, A_CON } from './const.js';
+import { A_STR, A_DEX, A_CON, EXT_ENCUMBER } from './const.js';
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_POIS,
          M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME }
@@ -923,11 +923,11 @@ async function floorfood_eat() {
     return { kind: 'invent' };
 }
 
-// C ref: hack.c check_capacity(str) — refuse the action while carrying more
-// than EXT_ENCUMBER (Strained).  doeat() calls it right after floorfood(), so
-// an overloaded hero burns no turn even after answering the floor prompt.
+// C ref: hack.c check_capacity(str) — refuse the action while carrying at
+// least EXT_ENCUMBER (Overtaxed).  doeat() calls it right after floorfood(),
+// so an overloaded hero burns no turn even after answering the floor prompt.
 async function check_capacity() {
-    if (_invent && _invent.near_capacity() >= 3 /* EXT_ENCUMBER */) {
+    if (_invent && _invent.near_capacity() >= EXT_ENCUMBER) {
         // You_cant() contracts to "can't"; "cannot" is not a NetHack string.
         await pline("You can't do that while carrying so much stuff.");
         return true;

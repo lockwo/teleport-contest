@@ -1528,7 +1528,7 @@ export function look_at_monster(mtmp, x, y, wantMonbuf = true) {
 function rndmonnam() {
     for (let tries = 0; tries < 100; tries++) {
         const mon = monster_by_pmidx(rn2(NUMMONS));
-        if (mon && mon.name && !(mon.mflags2 & 0x00000010 /* M2_PNAME */))
+        if (mon && mon.name && !(mon.mflags2 & 0x00080000 /* M2_PNAME */))
             return mon.name;
     }
     return 'creature';
@@ -1541,7 +1541,7 @@ function coyotename(mtmp) {
 }
 /* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
 function pg_digests(ptr) {
-    return (ptr?.mattk || []).some((a) => a && a.aatyp === 12 /* AT_ENGL */);
+    return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */);
 }
 /* trap.h is_pit(ttyp) */
 function pg_is_pit(tt) { return tt === PIT || tt === (PIT + 1) /* SPIKED_PIT */; }

@@ -1202,7 +1202,7 @@ function destroy_nhwindow(_win) {}
 // port (frozen/terminal.js owns the grid); all four are RNG-free.  Prefixed
 // sp_ so they cannot claim display.c coverage they do not deliver — the same
 // convention js/apply.js:1636 uses for its jump-hilite loop.
-const DISP_BEAM = -1, DISP_CHANGE = -5, DISP_END = -7; // include/display.h
+const DISP_BEAM = -1, DISP_CHANGE = -6, DISP_END = -7; // include/display.h
 const S_goodpos = 0;                                   // include/defsym.h cmap
 function sp_tmp_at(_x, _y) {}
 function sp_cmap_to_glyph(_cmap) { return 0; }

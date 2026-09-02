@@ -21,7 +21,8 @@ import { P_NONE, P_BARE_HANDED_COMBAT, P_AXE, P_SPEAR, P_PICK_AXE,
          P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_LAST_SPELL, P_NUM_SKILLS,
          P_TWO_WEAPON_COMBAT, P_RIDING, A_STR, A_DEX,
-         W_ARM, W_ARMC, W_ARMU, W_ARMG, W_RINGL, W_RINGR } from './const.js';
+         W_ARM, W_ARMC, W_ARMU, W_ARMG, W_RINGL, W_RINGR,
+         POOL, MOAT, WATER } from './const.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { mon_hates_silver } from './mon.js';
 import { which_armor } from './worn.js';
@@ -163,7 +164,6 @@ export function hitval(otmp, mon) {
 
 // rm.h is_pool(x,y) — POOL/MOAT/WATER at that square.  Read through the live
 // level map; an off-level or unknown square is dry.
-const POOL = 20, MOAT = 21, WATER = 22; // C ref: rm.h typ values
 function is_pool_at(x, y) {
     if (x == null || y == null) return false;
     const typ = game.level?.locations?.[x]?.[y]?.typ;

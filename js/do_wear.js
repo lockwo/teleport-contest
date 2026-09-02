@@ -13,7 +13,7 @@ import { pline, update_topl, newsym } from './display.js';
 import { objects, ARMOR_CLASS, WEAPON_CLASS, CORPSE } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { A_INT, A_WIS, A_DEX, A_CHA, TT_BEARTRAP, TT_INFLOOR, TT_LAVA, TT_BURIEDBALL,
-         TIMEOUT } from './const.js';
+         TIMEOUT, ICE } from './const.js';
 import {
     WA_ARM, WA_ARMC, WA_ARMH, WA_ARMS, WA_ARMG, WA_ARMF, WA_ARMU,
     W_ARMOR_WORN, W_RINGL, W_RINGR, W_AMUL,
@@ -911,7 +911,7 @@ export function cancel_don() {
 
 // C ref: do_wear.c:1645 cancel_doff(obj, slotmask) — I_SPECIAL keeps the 'A'
 // command's own <slot>_off() from cancelling the disrobing it is driving.
-const I_SPECIAL = 0x40000000;
+const I_SPECIAL = 0x20000000;
 export function cancel_doff(obj, slotmask) {
     const t = takeoff_ctx();
     if (!(t.mask & I_SPECIAL) && donning(obj)) cancel_don();
@@ -1379,7 +1379,7 @@ export function helm_simple_name(obj) { return hard_helmet(obj) ? 'helm' : 'hat'
 // C ref: dungeon.c surface(x,y) — only the message text depends on it.
 function surface_here() {
     const loc = game.level?.at?.(game.u?.ux, game.u?.uy);
-    return (loc && loc.typ === 21 /*ICE*/) ? 'ice' : 'floor';
+    return (loc && loc.typ === ICE) ? 'ice' : 'floor';
 }
 
 function Tobjnam(obj, verb) {

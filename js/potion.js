@@ -29,7 +29,8 @@ import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          POT_SICKNESS, POT_WATER, POT_SPEED, POT_GAIN_LEVEL, POT_GAIN_ENERGY,
          objects, COIN_CLASS, RING_CLASS, mkobj_at, CORPSE, next_ident } from './mkobj.js';
 import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
-         HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED } from './const.js';
+         HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
+         W_SADDLE } from './const.js';
 import { fruitname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, vision_recalc, cansee as vis_cansee } from './vision.js';
@@ -1062,7 +1063,7 @@ async function peffect_invisibility(otmp) {
     }
 }
 // C ref: prop.h FROMOUTSIDE — the "intrinsic, permanent" bit of a property word.
-const FROMOUTSIDE = 0x20000000;
+const FROMOUTSIDE = 0x04000000;
 
 // C ref: potion.c peffect_see_invisible() — POT_SEE_INVISIBLE and, sharing the
 // taste messages, POT_FRUIT_JUICE (which returns before the intrinsic part).
@@ -1199,7 +1200,7 @@ async function peffect_levitation(otmp) {
     void u;
 }
 // C ref: prop.h I_SPECIAL — "can be removed at will" bit.
-const I_SPECIAL = 0x10000000;
+const I_SPECIAL = 0x20000000;
 // C ref: objects.c hard_helmet(otmp) — a metallic/hard hat.  DWARVISH_IRON_HELM
 // through HELM_OF_TELEPATHY (mkobj.js OBJECT_DATA rows) are the hard ones.
 function hard_helmet(otmp) {
@@ -1855,7 +1856,7 @@ function p_permapoisoned(_obj) { return false; }
 // C ref: obj.h carried(obj) — the object is in the hero's inventory.
 function p_carried(obj) {
     if (!obj) return false;
-    return obj.where === 1 /* OBJ_INVENT */
+    return obj.where === 3 /* OBJ_INVENT */
         || (Array.isArray(game.invent) && game.invent.includes(obj));
 }
 // C ref: hack.h distu(x,y) — squared distance from the hero.
@@ -2266,7 +2267,6 @@ export async function potionhit(mon, obj, how) {
         tx = mon.mx; ty = mon.my;
         /* sometimes it hits the saddle */
         const { which_armor } = await import('./worn.js');
-        const W_SADDLE = 0x00080000; /* C ref: prop.h W_SADDLE */
         if (((mon.misc_worn_check | 0) & W_SADDLE)
             && (saddle = which_armor(mon, W_SADDLE))
             && (!rn2(10)
@@ -2281,8 +2281,9 @@ export async function potionhit(mon, obj, how) {
             const mnam = UH.mon_nam(mon);
             let buf;
             if (hit_saddle && saddle)
-                buf = `${p_s_suffix(UH.x_monnam(mon, 2 /* ARTICLE_THE */, null,
-                                                0x04 | 0x40, false))} saddle`;
+                buf = `${p_s_suffix(UH.x_monnam(mon, 1 /* ARTICLE_THE */, null,
+                                                0x01 | 0x08 /* SUPPRESS_IT|SUPPRESS_SADDLE */,
+                                                false))} saddle`;
             else if (p_has_head(mon.data))
                 buf = `${p_s_suffix(mnam)} ${game.notonhead ? 'body' : 'head'}`;
             else
@@ -2960,7 +2961,7 @@ export async function potion_dip(obj, potion) {
         else
             singlepotion = potion;
 
-        await p_costly_alteration(singlepotion, 1 /* COST_NUTRLZ */);
+        await p_costly_alteration(singlepotion, 10 /* COST_NUTRLZ */);
         singlepotion.otyp = mixture;
         singlepotion.blessed = 0;
         if (mixture === POT_WATER)

@@ -429,7 +429,7 @@ const MIGR_RANDOM = 0, MIGR_APPROX_XY = 1, MIGR_EXACT_XY = 2,
       MIGR_LADDER_DOWN = 6, MIGR_SSTAIRS = 7, MIGR_PORTAL = 8,
       MIGR_WITH_HERO = 9, MIGR_LEFTOVERS = 8192;
 // C ref: include/trap.h MAGIC_PORTAL.
-const MAGIC_PORTAL = 24;
+const MAGIC_PORTAL = 17;
 // C ref: include/monsters.h PM_LONG_WORM (makemon.js MONS_NAMES index).
 const PM_LONG_WORM = 168;
 // C ref: include/worm.h MAX_NUM_WORMS — mon_leave()'s segment-count clamp.
@@ -447,15 +447,15 @@ function mbirth_limit(mndx) {
 }
 // C ref: include/onames.h SPE_CREATE_FAMILIAR (js/spell.js:518).
 const SPE_CREATE_FAMILIAR = 401;
-// C ref: include/objclass.h AT_WEAP / NEED_HTH_WEAPON (monst.h weapon_check).
-const AT_WEAP = 4;
-const NEED_HTH_WEAPON = 1;
+// C ref: include/monattk.h AT_WEAP / monst.h wpn_chk_flags NEED_HTH_WEAPON.
+const AT_WEAP = 254;
+const NEED_HTH_WEAPON = 3;
 // C ref: include/mkroom.h CORPSTAT_GENDER/_FEMALE/_MALE, makemon.h MM_* flags.
 const CORPSTAT_GENDER = 0x03, CORPSTAT_FEMALE = 1, CORPSTAT_MALE = 2;
 const NO_MINVENT = 0x00000001, MM_IGNOREWATER = 0x00000008,
       MM_EDOG = 0x00000800, MM_MALE = 0x00008000, MM_FEMALE = 0x00010000,
       MM_NOMSG = 0x00020000;
-const RLOC_NOMSG = 0x0001;
+const RLOC_NOMSG = 0x0004;
 // C ref: include/monst.h DISMOUNT_GENERIC / DISMOUNT_THROWN.
 const DISMOUNT_THROWN = 1, DISMOUNT_GENERIC = 7;
 // C ref: include/trap.h NO_TRAP_FLAGS.
@@ -1288,12 +1288,11 @@ export async function discard_migrations() {
     const { discard_minvent } = await import('./mkobj.js');
     const { dealloc_monst } = await import('./mon.js');
     const { emits_light } = await import('./light.js');
-    const { del_light_source } = await import('./light.js');
+    const { del_light_source, LS_MONSTER } = await import('./light.js');
     const { monst_to_any } = await import('./hack.js');
     const { obfree } = await import('./invent.js');
     const g = gm_chains();
     const dest = { dnum: 0, dlevel: 0 };
-    const LS_MONSTER = 1;   /* C ref: include/light.h */
 
     for (let i = 0; i < g.migrating_mons.length; ) {
         const mtmp = g.migrating_mons[i];

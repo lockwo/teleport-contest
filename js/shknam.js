@@ -217,7 +217,7 @@ const S_MIMIC = 13;
 // and mongets_shk() feeds the otyp straight to mksobj() (RNG-consuming).
 const SKELETON_KEY = 221, TOUCHSTONE = 472, SCR_CHARGING = 342;
 const GOLD_PIECE = 438;
-const DUST = 2;      // engrave.h DUST
+const DUST = 1;      // engrave.h DUST
 
 // C ref: shknam.c veggy_item(NULL, otyp) — the type-only mode used by
 // shkveg(): a FOOD_CLASS item whose material is VEGGY or which is an egg is

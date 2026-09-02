@@ -68,7 +68,7 @@ import { mon_nocorpse, undead_to_corpse, name_to_pmidx } from './makemon.js';
 import { more_experienced, newexplevel } from './exper.js';
 import { gethungry } from './allmain.js';
 import { is_weptool, objectBaseName, simple_typename, is_plural, otense,
-         near_capacity, update_inventory } from './invent.js';
+         near_capacity, update_inventory, distant_far, distant_doname } from './invent.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { engr_at, wipe_engr_at } from './engrave.js';
 import { find_mac as worn_find_mac } from './worn.js';
@@ -1877,6 +1877,16 @@ export function relobj(mon, x, y) {
     if (!inv || !inv.length) { repaint(); return; }
     const objs = (game.level && (game.level.objects || (game.level.objects = []))) || null;
     if (!objs) { repaint(); return; }
+    // C ref: steal.c mdrop_obj():823 `distant_name(obj, doname)` — called for
+    // its dknown/discovery side effect BEFORE the object leaves minvent, once
+    // per item, in the front-to-back minvent order that relobj's `while
+    // ((otmp = mtmp->minvent) ...)` loop drains the head in.  Skipping this
+    // left every dropped item's '\' discoveries-list entry ordered by floor
+    // pile position instead of by drop order.  mon.minvent here is append-
+    // ordered (oldest grant first) — the opposite of C's head-prepend list —
+    // so C's front-to-back order is this array reversed (same reversal the
+    // placement loop below uses).
+    for (const otmp of [...inv].reverse()) distant_doname(otmp, distant_far(otmp, x, y));
     // C ref: steal.c relobj() walks mon->minvent front-to-back but each
     // mdrop_obj() pushes onto the head of the floor pile, so the resulting
     // nexthere order is REVERSED relative to minvent.

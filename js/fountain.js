@@ -30,7 +30,7 @@ import { observe_object } from './o_init.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import {
     ER_NOTHING, ER_GREASED, ER_DESTROYED, F_LOOTED, F_WARNED, FROMOUTSIDE,
-    FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE,
+    FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE, MM_NOMSG,
 } from './const.js';
 
 // C ref: include/onames.h — long sword otyp (mkobj.js OBJECT_DATA order).
@@ -532,7 +532,7 @@ async function dowaterdemon() {
     game._full_mon_gen = true;
     let mtmp;
     try {
-        mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+        mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
     } finally {
         game._full_mon_gen = was_full;
     }
@@ -576,7 +576,7 @@ async function dowaternymph() {
         const was_full = game._full_mon_gen;
         game._full_mon_gen = true;
         try {
-            mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+            mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
         } finally {
             game._full_mon_gen = was_full;
         }
@@ -628,7 +628,7 @@ async function dowatersnakes() {
     while (num-- > 0) {
         const spot = enexto_spawn(u.ux, u.uy, ptr);
         if (!spot) continue;
-        const mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+        const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
         if (!mtmp) continue;
         placeOnLevel(mtmp, spot.x, spot.y);
         newsym(spot.x, spot.y);
@@ -848,7 +848,7 @@ async function spawnAtHeroSquare(pmidx) {
     if (!ptr) return null;
     const spot = enexto_spawn(u.ux, u.uy, ptr);
     if (!spot) return null;
-    const mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+    const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
     if (mtmp) {
         placeOnLevel(mtmp, spot.x, spot.y);
         newsym(spot.x, spot.y);

@@ -17,7 +17,7 @@ import { A_WIS, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMIN, LUCKMAX, MM_NOMSG,
     IS_OBSTRUCTED, SDOOR, SCORR } from './const.js';
 import { isok } from './hacklib.js';
-import { OMONST } from './const.js';
+import { OMONST, W_BALL, W_CHAIN, FROMOUTSIDE } from './const.js';
 import { adjalign, exercise, adjattrib } from './attrib.js';
 import { losexp, xlev_to_rank } from './exper.js';
 import { heal_legs } from './trap.js';
@@ -50,8 +50,8 @@ const TROUBLE_PUNISHED = -1, TROUBLE_FUMBLING = -2, TROUBLE_CURSED_ITEMS = -3,
 const HUNGRY = 2, WEAK = 3;
 // C ref: attrib.h ATTRMIN(A_WIS) for a non-Gnome/Human hero is 3.
 const ATTRMIN = 3;
-// C ref: obj.h WT_IRON_BALL_INCR / prop.h W_BALL / W_CHAIN (js/read.js:67).
-const WT_IRON_BALL_INCR = 160, W_BALL = 0x10000, W_CHAIN = 0x20000;
+// C ref: obj.h WT_IRON_BALL_INCR (js/read.js:67); W_BALL/W_CHAIN from const.js.
+const WT_IRON_BALL_INCR = 160;
 
 // Prayer-resolution scratch state (C globals gp.p_type / gp.p_aligntyp /
 // gp.p_trouble), stored on `game` so it resets per segment.
@@ -1485,7 +1485,7 @@ async function offer_corpse(otmp, highaltar, altaralign) {
     if (omon && omon.mtame) {
         await update_topl('So this is how you repay loyalty?');
         adjalign(-3);
-        u.HAggravate_monster = (u.HAggravate_monster | 0) | 0x10000 /* FROMOUTSIDE */;
+        u.HAggravate_monster = (u.HAggravate_monster | 0) | FROMOUTSIDE;
         await offer_negative_valued(highaltar, altaralign);
         return;
     }

@@ -2858,6 +2858,15 @@ export async function update_topl(bp) {
     // is still accumulated into gt.toplines but is neither drawn nor more()d.
     // The flag dies at the very next nhgetch (input.js), so this window is one
     // command long; an earlier attempt with a longer lifetime measured -172.
+    // While the window is open, gt.toplines (game._toplines) keeps growing
+    // with every suppressed message — it is the hidden append base, NOT the
+    // frozen on-screen text (game._pending_message), which C only touches via
+    // addtopl()/redotoplin(), both skipped while `skip` holds.  Using the
+    // visible text here made a whole chain of skipped messages (amulet of
+    // life saving's "The medallion crumbles to dust!" through the deferred
+    // "You survived that attempt on your life.") overwrite the still-visible
+    // "You feel much better!" instead of silently accumulating behind it.
+    const hiddenCur = game._toplines || '';
     // C ref: topl.c update_topl():273-299.  `notdied` is assigned inside the
     // normal append test, so an ESC-stopped full topline short-circuits before
     // it ever compares against "You die".  In that case WIN_STOP survives and
@@ -2867,8 +2876,8 @@ export async function update_topl(bp) {
     const deathClearsStop = game._winStop
         && bp.startsWith('You die')
         && (game._toplin === TOPLIN_NEED_MORE || game._winStop)
-        && wrap_topl(cur).length === 1
-        && n0 + cur.length + 3 < CO - 8;
+        && wrap_topl(hiddenCur).length === 1
+        && n0 + hiddenCur.length + 3 < CO - 8;
     if (deathClearsStop) {
         game._winStop = false;
         game._toplin = 0;   // the skipped arm never more()s the pending line
@@ -2877,13 +2886,13 @@ export async function update_topl(bp) {
         // C updates gt.toplines even while WIN_STOP suppresses the redraw.
         // Keep the hidden text as the next append base: its final length is
         // observable when a later message (notably "You die...") decides
-        // whether STOP gets cleared.
+        // whether STOP gets cleared.  game._pending_message (the visible
+        // line) is deliberately left untouched — see hiddenCur comment above.
         const skipped = !bp.startsWith('You die')
-            && cur
-            && n0 + cur.length + 3 < CO - 8
-            ? `${cur}  ${bp}`
+            && hiddenCur
+            && n0 + hiddenCur.length + 3 < CO - 8
+            ? `${hiddenCur}  ${bp}`
             : bp;
-        game._pending_message = skipped;
         game._toplines = skipped;
         return;
     }

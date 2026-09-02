@@ -2442,7 +2442,7 @@ const PM_ROGUE = 8;
 
 // C ref: include/lock.h — pick_lock() / lock-occupation result codes.
 const PICKLOCK_DID_NOTHING = 0, PICKLOCK_DID_SOMETHING = 1,
-      PICKLOCK_LEARNED_SOMETHING = 2;
+      PICKLOCK_LEARNED_SOMETHING = -1;
 
 // C ref: objclass.h Is_box() — the three lockable floor containers.
 function Is_box_otyp(otyp) {
@@ -4484,7 +4484,7 @@ const gc_Cmd = {
     mousebtn: [null, null, null],
     dirchars: SDIR, alphadirchars: SDIR,
 };
-const NUM_MOUSE_BUTTONS = 3;
+const NUM_MOUSE_BUTTONS = 2;
 
 // C ref: cmd.c:3344 reset_commands(TRUE) — the `initial` branch plus the tail
 // that every call runs: fill gc.Cmd.spkeys[] from spkeys_binds[], build the

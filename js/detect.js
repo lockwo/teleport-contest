@@ -10,7 +10,8 @@ import { engr_at } from './engrave.js';
 import { couldsee } from './vision.js';
 import { exercise } from './attrib.js';
 import { COLNO, ROWNO, BOLT_LIM, SDOOR, SCORR, DOOR, CORR, A_WIS, IS_FURNITURE,
-         STONE, W_NONDIGGABLE, W_NONPASSWALL, ROOMOFFSET } from './const.js';
+         STONE, W_NONDIGGABLE, W_NONPASSWALL, ROOMOFFSET,
+         Is_rogue_level } from './const.js';
 import { room_discovered } from './dungeon.js';
 import { BOULDER, COIN_CLASS, GOLD_PIECE, objects } from './mkobj.js';
 import { NO_COLOR, CLR_WHITE } from './terminal.js';
@@ -382,7 +383,7 @@ function d_distu(x, y) {
 }
 /* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
 function d_digests(ptr) {
-    return (ptr?.mattk || []).some((a) => a && a.aatyp === 12 /* AT_ENGL */);
+    return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */);
 }
 /* hack.h Confusion — mirrors js/allmain.js:1414. */
 function d_Confusion() { return !!(game.u?.uconf || game.u?.HConfusion); }
@@ -1678,8 +1679,12 @@ function show_map_spot_cnf(x, y, cnf) {
 // C ref: detect.c:1589 cvt_sdoor_to_door(lev) — js/dokick.js:181 owns the same
 // port; repeated here because this module cannot import that file's private copy.
 function cvt_sdoor_to_door(lev) {
-    let newmask = (lev.doormask | 0) & ~(0xE0 /* WM_MASK */);
-    if (!(newmask & D_LOCKED)) newmask |= D_CLOSED;
+    let newmask = (lev.doormask | 0) & ~(0x07 /* WM_MASK */);
+    if (Is_rogue_level(game.u?.uz)) {
+        newmask = D_NODOOR;
+    } else if (!(newmask & D_LOCKED)) {
+        newmask |= D_CLOSED;
+    }
     lev.typ = DOOR;
     lev.doormask = newmask;
     lev.arboreal_sdoor = 0;                         /* clears 'candig' */
@@ -1690,12 +1695,12 @@ function cvt_sdoor_to_door(lev) {
 function get_obj_location(obj) {
     let o = obj;
     for (let guard = 0; o && guard < 32; guard++) {
-        if (o.where === 'floor' || o.where === 3 /* OBJ_FLOOR */
-            || o.where === 'buried' || o.where === 5 /* OBJ_BURIED */)
+        if (o.where === 'floor' || o.where === 1 /* OBJ_FLOOR */
+            || o.where === 'buried' || o.where === 6 /* OBJ_BURIED */)
             return { x: o.ox, y: o.oy };
-        if (o.where === 'invent' || o.where === 1 /* OBJ_INVENT */)
+        if (o.where === 'invent' || o.where === 3 /* OBJ_INVENT */)
             return { x: game.u?.ux, y: game.u?.uy };
-        if (o.where === 'minvent' || o.where === 2 /* OBJ_MINVENT */)
+        if (o.where === 'minvent' || o.where === 4 /* OBJ_MINVENT */)
             return o.ocarry ? { x: o.ocarry.mx, y: o.ocarry.my } : null;
         o = o.ocontainer;                           /* OBJ_CONTAINED */
         if (!o) return null;

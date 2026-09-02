@@ -21,7 +21,7 @@ import {
 import { pluslvl, losexp } from './exper.js';
 import { MAXULEV, IS_WALL, SDOOR, MM_NOEXCLAM, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
-         QBUFSZ } from './const.js';
+         QBUFSZ, VIBRATING_SQUARE } from './const.js';
 import { create_particular_monster } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
 import { is_undead_flag, is_demon_flag, humanoid } from './monflags_data.js';
@@ -3005,7 +3005,6 @@ async function doherecmdmenu() {
     const { num_spells } = await import('./spell.js');
     if (num_spells() > 0) push(nextCh(), 'Cast a spell');
     const ttmp = herecmd_t_at(x, y);
-    const VIBRATING_SQUARE = 24;   // C ref: trap.h trap types
     if (ttmp && ttmp.tseen && ttmp.ttyp !== VIBRATING_SQUARE)
         push(nextCh(), 'Attempt to disarm trap');
     // C ref: cmd.c:4646 there_cmd_menu_common() — for self, "Look at map symbol"

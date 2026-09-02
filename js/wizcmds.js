@@ -26,8 +26,10 @@ import {
     has_mgivenname, MGIVENNAME, ONAME, OMONST, ESHK, EPRI, EGD, EMIN, EDOG,
     EBONES, ARTICLE_A, ARTICLE_THE, ARTICLE_YOUR, SUPPRESS_IT,
     SUPPRESS_HALLUCINATION, SUPPRESS_SADDLE, XKILL_NOMSG, DIED, KILLED_BY,
-    MIGR_EXACT_XY, In_sokoban, In_endgame, Is_stronghold, Is_botlevel,
+    MIGR_EXACT_XY, MIGR_RANDOM, In_sokoban, In_endgame, Is_stronghold, Is_botlevel,
     Is_knox_level,
+    MON_OFFMAP, MON_MIGRATING, MON_LIMBO, MON_ENDGAME_MIGR,
+    NHL_SB_SAFE, NHL_SB_DEBUGGING,
 } from './const.js';
 import { defsyms, S_fountain, S_sink } from './symbols.js';
 import { objects, MAXOCLASSES, OMAILCMD, obj_sanity_check } from './mkobj.js';
@@ -229,8 +231,6 @@ export function makemap_unmakemon(mtmp, migratory) {
 // holds 0x01 G_EXTINCT / 0x02 G_GENOD / 0x08 MV_KNOWS_EGG), so the old 0x0004
 // meant makemap_unmakemon's `mvflags &= ~G_EXTINCT` above cleared nothing.
 const G_UNIQ = 0x1000, G_EXTINCT = 0x01;
-const MON_OFFMAP = 0x0001, MON_MIGRATING = 0x0002, MON_LIMBO = 0x0004,
-      MON_ENDGAME_MIGR = 0x0008;
 
 // C ref: wizcmds.c:110 makemap_remove_mons() — get rid of all the monsters
 // on (or intimately involved with) the current level.  js/cmd.js:5326 has a
@@ -447,8 +447,6 @@ export async function wiz_load_lua() {
     }
     return ECMD_OK;
 }
-// include/nhlua.h sandbox flag bits.
-const NHL_SB_SAFE = 0x0001, NHL_SB_DEBUGGING = 0x0002;
 
 // C ref: wizcmds.c:376 wiz_load_splua() — load a special level lua file.
 export async function wiz_load_splua() {
@@ -1347,7 +1345,6 @@ export async function wiz_migrate_mons() {
     iflags.debug_mongen = mongen_saved;
     return ECMD_OK;
 }
-const MIGR_RANDOM = 1;   // include/monst.h
 
 /* ------------------------------------------------------------------ */
 /*  #stats                                                            */
