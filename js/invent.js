@@ -78,7 +78,7 @@ import { enlightenment_lines } from './insight.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { find_ac } from './u_init.js';
 import { moveloop_turn, youHaveFast, youHaveVeryFast } from './allmain.js';
-import { acurr_eff, exercise } from './attrib.js';
+import { acurr_eff, acurr_str_encoded, exercise } from './attrib.js';
 import { hitval, dbon, weapon_type, weapon_hit_bonus_core,
          weapon_dam_bonus_core } from './weapon.js';
 import { P_TWO_WEAPON_COMBAT as P_TWO_WEAPON_COMBAT_INV,
@@ -1018,8 +1018,14 @@ function youmonst_data() {
 
 // C ref: attrib.c acurrstr() — encode A_STR (3..125; 18/01 stored as 19, ..)
 // onto the 3..25 scale used by weight_cap.  (Mirrors cmd.js' acurrstr.)
+// C ref: attrib.c acurrstr() reads ACURR(A_STR), whose macro expansion (see
+// acurr()) pins the encoded value at 125 while gauntlets of power are worn —
+// acurr_str_encoded() is that same override; reading game.u.acurr.a[A_STR]
+// directly skipped it, so a Str-25-via-gauntlets hero's carrying capacity was
+// computed from the RAW (unboosted) Str instead of 25, e.g. St:25 read as if
+// it were St:9 and weight_cap() came out ~400 too low (seed0360 step 828).
 function acurrstr() {
-    const str = game.u?.acurr?.a?.[A_STR] ?? 0;
+    const str = acurr_str_encoded();
     if (str <= 18) return Math.max(str, 3);
     if (str <= 121) return 19 + Math.trunc(str / 50);
     return Math.min(str, 125) - 100;
@@ -9091,8 +9097,8 @@ function renderInventoryMenu(rows, page = 0) {
     const lines = [];
     for (const group of rows) {
         const [heading, ...items] = group;
-        lines.push({ text: ` ${heading}`, attr: headerAttr, header: true });
-        for (const it of items) lines.push({ text: ` ${it}`, attr: 0 });
+        lines.push({ text: heading, attr: headerAttr, header: true });
+        for (const it of items) lines.push({ text: it, attr: 0 });
     }
     const display = game.nhDisplay;
     if (!display?.clearScreen) return { multipage: false, pages: 1 };
@@ -9111,8 +9117,13 @@ function renderInventoryMenu(rows, page = 0) {
         const pageLines = lines.slice(curPage * perPage, curPage * perPage + perPage);
         display.clearScreen();
         let row = 0;
+        // C ref: win/tty/wintty.c process_menu_window() — each row's leading
+        // pad column is an unconditional plain putchar(' ') BEFORE the attr
+        // toggle for the entry text, so a header's ATR_INVERSE never covers
+        // that column (draw it separately, never as part of `ln.text`).
         for (const ln of pageLines) {
-            display.putstr(0, row, ln.text, NO_COLOR, ln.attr || 0);
+            display.putstr(0, row, ' ', NO_COLOR, 0);
+            display.putstr(1, row, ln.text, NO_COLOR, ln.attr || 0);
             row++;
         }
         const footer = `(${curPage + 1} of ${pages})`;

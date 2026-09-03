@@ -23,6 +23,7 @@ import {
 } from './const.js';
 import { bail } from './wintty.js';
 import { ATR_INVERSE, NO_COLOR } from './terminal.js';
+import { serializeGrid } from './screen_serialize.js';
 import './light.js';   // registers game.lightsources_hook for vision_recalc
 import {
     aligns, apply_selection, build_plselection_prompt, count_ok_race,
@@ -225,7 +226,7 @@ export class NethackGame {
         const disp = game?.nhDisplay;
         const term = disp?.terminal || disp;
         this._pendingAnimFrames.push({
-            screen: term?.serialize ? term.serialize() : '',
+            screen: term ? serializeGrid(term) : '',
             cursor: disp ? [disp.cursorCol ?? 0, disp.cursorRow ?? 0, 1] : null,
         });
         if (typeof requestAnimationFrame === 'function') {
@@ -1162,7 +1163,7 @@ export class NethackGame {
             // and compares to the C session's recorded screen.
             const disp = game?.nhDisplay;
             const term = disp?.terminal || disp;
-            nhGame._screens.push(term?.serialize ? term.serialize() : '');
+            nhGame._screens.push(term ? serializeGrid(term) : '');
             nhGame._rngSlices.push(slice);
             // Step boundary for the display-prng trace (js/disprng.js); inert
             // unless swarm/bin/dispdiff.mjs armed it.

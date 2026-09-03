@@ -711,22 +711,27 @@ const _NAME_TO_PMIDX = (() => {
     }
     return m;
 })();
-// C ref: do_name.c pmname(pm, mgender) — mons[].pmnames[MALE|FEMALE], falling
-// back to pmnames[NEUTRAL] (which is what MONS_NAMES stores) for the species
-// that carry no gendered pair.  Exported for botl.c's polymorphed status title.
-export function pmname_of_pmidx(pmidx, female) {
+// C ref: include/monflag.h enum mgender { MALE, FEMALE, NEUTRAL }.
+export const MGEND_MALE = 0, MGEND_FEMALE = 1, MGEND_NEUTRAL = 2;
+
+// C ref: do_name.c pmname(pm, mgender) — mons[].pmnames[mgender], falling back
+// to pmnames[NEUTRAL] (which is what MONS_NAMES stores) for the species that
+// carry no gendered pair OR when mgender is explicitly MGEND_NEUTRAL (a
+// corpse/statue/figurine with unspecified gender — do_name.c obj_pmname()).
+// `gender` also accepts a plain boolean (true/false) from the many callers
+// that only distinguish male/female, matching MALE=0/FEMALE=1 by value.
+// Exported for botl.c's polymorphed status title.
+export function pmname_of_pmidx(pmidx, gender) {
     const m = MONS[pmidx];
     if (!m) return 'monster';
+    if (gender === MGEND_NEUTRAL) return m.name;
     const pair = _GENDERED_BY_NEUTRAL.get(m.name);
-    return (pair && pair[female ? 1 : 0]) || m.name;
+    return (pair && pair[gender ? 1 : 0]) || m.name;
 }
 export function name_to_pmidx(name) {
     const v = _NAME_TO_PMIDX.get(name);
     return v == null ? -1 : v;
 }
-
-// C ref: include/monflag.h enum mgender { MALE, FEMALE, NEUTRAL }.
-export const MGEND_MALE = 0, MGEND_FEMALE = 1, MGEND_NEUTRAL = 2;
 
 // C ref: mondata.c name_to_monplus()'s `matchgend` — which pmnames[] SLOT the
 // name matched.  monst.c NAM(name) fills only pmnames[NEUTRAL], so a plain
@@ -2374,6 +2379,21 @@ const SMS_STATUE = 476, SMS_FIGURINE = 241, SMS_CORPSE = 265, SMS_EGG = 266,
     SMS_GOLD_PIECE = 438, SMS_BOULDER = 475, SMS_LUMP_OF_ROYAL_JELLY = 286;
 const S_MIMIC_DEF = 60;          // monsym.h S_MIMIC_DEF
 const ROOMOFFSET_JS = 3;         // rm.h ROOMOFFSET
+const MAXNROFROOMS_JS = 40;      // global.h MAXNROFROOMS
+
+// C ref: decl.c `struct mkroom svr.rooms[(MAXNROFROOMS + 1) * 2]` with
+// `gs.subrooms = &svr.rooms[MAXNROFROOMS + 1]` — rooms and subrooms share one
+// array, so C's `svr.rooms[roomno]` in set_mimic_sym() resolves a subroom's
+// roomno too (a mimic standing in one of Mine Town's shops).  This port keeps
+// them in two arrays (see js/shkroom.js's own roomAt(), same fix); without
+// the second lookup the subroom's rtype read back 0, so a Mine Town shop
+// mimic fell through to the generic ROLL_FROM(syms) branch instead of the
+// shop-item roll (seed0014).
+function roomnoLookup(roomno) {
+    if (roomno > MAXNROFROOMS_JS)
+        return (game.level?.subrooms || [])[roomno - (MAXNROFROOMS_JS + 1)] || null;
+    return game.level?.rooms?.[roomno] || null;
+}
 // mkroom.h room types (enum at mkroom.h:52).  SHOPBASE is the shop threshold.
 const VAULT_RT = 4, ZOO_RT = 8, DELPHI_RT = 9, TEMPLE_RT = 10;
 const SHOPBASE_RT = 14;          // mkroom.h SHOPBASE
@@ -2461,7 +2481,7 @@ export function set_mimic_sym(mtmp) {
     // C ref: the #ifdef SPECIALIZATION `else if (IS_ROOM(typ))` arm is dead —
     // global.h:120 ships SPECIALIZATION commented out — so roomno < 0 gives
     // rt = 0 (OROOM) and leaves roomno negative for the BOULDER test below.
-    const rt = roomno >= 0 ? (game.level.rooms[roomno]?.rtype ?? 0) : 0;
+    const rt = roomno >= 0 ? (roomnoLookup(roomno)?.rtype ?? 0) : 0;
     const dep = depth_of_level(game.u?.uz);
     const lflags = game.level?.flags || {};
 
@@ -3087,12 +3107,14 @@ function mon_learns_traps_local(mtmp, ttyp) {
 // rn2(4*(cnt-j)) (w3-elf-wiz-debug step 149).
 // S_MIMIC's set_mimic_sym and the S_JABBERWOCK/S_NYMPH rn2(5) DRAW RNG.
 function makemon_mlet_switch(mtmp, ptr, x, y) {
-    // C ref: makemon.c:1304 — set_mimic_sym() consumes RNG (rn2(17)
-    // ROLL_FROM(syms) + the mkobj that follows, rn2(10) + get_shop_item in a
-    // shop).  C runs it for EVERY mimic; gating it on the full-monster-gen
-    // flags dropped the draws for des.monster()-placed mimics (seed0360
-    // step 211: soko1's two "giant mimic" boulders).
-    if (ptr.mcls === 13 /* S_MIMIC */ && x && y) {
+    // C ref: makemon.c:1303-1305 `case S_MIMIC: set_mimic_sym(mtmp); break;` —
+    // unconditional, unlike the `if (x && y)` guard on the NEXT case down
+    // (S_SPIDER/S_SNAKE, mkmaze.c web placement).  A mimic placed at x==0 or
+    // y==0 (Rog-strt.lua's west/north map-edge "exit" mimics) was wrongly
+    // skipping set_mimic_sym() by inheriting that neighboring case's guard,
+    // dropping the rn2(2) is_maze_lev draw and desyncing every RNG call after
+    // it (found via seed0367-priest-quest-tour lane's Rog-strt probe).
+    if (ptr.mcls === 13 /* S_MIMIC */) {
         set_mimic_sym(mtmp);
     }
 

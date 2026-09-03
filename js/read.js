@@ -2506,11 +2506,9 @@ export async function seffect_stinking_cloud(sobj) {
 // itself draws for a rock's quantity — then the confused rn1(5, 2) stack, then
 // dmgval()'s damage dice, then flooreffects().
 //
-// SCOPE: do.c flooreffects() is not ported anywhere (dokick.js:1013 has a
-// kick-specific private copy), so the boulder is always placed rather than
-// possibly filling a pit / sinking in water; and the amorphous/Passes_walls/
-// noncorporeal/unsolid polyform test needs youmonst.data, which is only set
-// while polymorphed (see [[umonnum-is-a-role-index]]).
+// SCOPE: the amorphous/Passes_walls/noncorporeal/unsolid polyform test needs
+// youmonst.data, which is only set while polymorphed (see
+// [[umonnum-is-a-role-index]]).
 export async function drop_boulder_on_player(confused, helmet_protects, byu,
                                              skip_uswallow) {
     const u = game.u;
@@ -2549,17 +2547,20 @@ export async function drop_boulder_on_player(confused, helmet_protects, byu,
     const { wake_nearto } = await import('./cmd.js');
     await wake_nearto(u.ux, u.uy, 4 * 4);
     /* C: must be before the losehp(), for bones files */
-    place_object(otmp2, u.ux, u.uy);
-    stackobj(otmp2);
-    newsym(u.ux, u.uy);
+    const { flooreffects } = await import('./do.js');
+    if (!await flooreffects(otmp2, u.ux, u.uy, 'fall')) {
+        place_object(otmp2, u.ux, u.uy);
+        stackobj(otmp2);
+        newsym(u.ux, u.uy);
+    }
     if (dmg) losehp_read(dmg);         // C: losehp(Maybe_Half_Phys(dmg), ...)
 }
 
 // C ref: read.c:2341 drop_boulder_on_monster(x, y, confused, byu).  Same RNG
 // order as the player version; the helmet check reads the monster's own W_ARMH.
 //
-// SCOPE: flooreffects() as above; mon.c mondied() is not exported (mhitm.js's
-// mondied_mm() is the port's stand-in and is used here).
+// SCOPE: mon.c mondied() is not exported (mhitm.js's mondied_mm() is the
+// port's stand-in and is used here).
 export async function drop_boulder_on_monster(x, y, confused, byu) {
     /* Make the object(s) */
     const otmp2 = mksobj(confused ? ROCK : BOULDER, false, false);
@@ -2627,9 +2628,12 @@ export async function drop_boulder_on_monster(x, y, confused, byu) {
         return true;
     }
     /* Drop the rock/boulder to the floor */
-    place_object(otmp2, x, y);
-    stackobj(otmp2);
-    newsym(x, y);                      /* map the rock */
+    const { flooreffects } = await import('./do.js');
+    if (!await flooreffects(otmp2, x, y, 'fall')) {
+        place_object(otmp2, x, y);
+        stackobj(otmp2);
+        newsym(x, y);                  /* map the rock */
+    }
     return true;
 }
 

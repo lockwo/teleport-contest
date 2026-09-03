@@ -152,7 +152,7 @@ const AMULET_OF_GUARDING = 210;
 // (measured: resolving unconditionally sends every @-form werecreature down
 // m_dowear's is_animal() early-out and costs the whole w3-elf-wiz gain).
 const _pm_cache = new Map();
-function species(mon) {
+export function species(mon) {
     const dat = mon?.data;
     if (!dat) return null;
     if (dat.ac != null) return dat;      /* a full makemon() permonst */

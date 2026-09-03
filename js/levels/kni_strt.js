@@ -1,19 +1,77 @@
 // levels/kni_strt.js - special level builder makemaz_kni_strt() (dat/Kni-strt.lua).
 // sp_lev.js re-exports it; the shared special-level machinery is imported below.
 
-import { ROOM } from '../const.js';
+import { artifact_exists } from '../artifact.js';
+import { ONAME_LEVEL_DEF, ROOM } from '../const.js';
 import { game } from '../gstate.js';
-import { CHEST } from '../mkobj.js';
 import {
-    bigrm_load_map, lspo_region, percent, quest_create_object,
-    quest_drop_default_invent, quest_place_stair, quest_region_light,
-    quest_register_branch, quest_set_door, reset_xystart_size,
+    MGEND_NEUTRAL, makemon, mongets_pub, monster_by_pmidx, name_gender_hint,
+    name_to_pmidx, set_malign,
+} from '../makemon.js';
+import { CHEST, mksobj } from '../mkobj.js';
+import { mk_mplayer } from '../mplayer.js';
+import {
+    bigrm_get_location_dry, bigrm_load_map, lspo_region, percent,
+    quest_create_object, quest_drop_default_invent, quest_place_stair,
+    quest_region_light, quest_register_branch, quest_set_door,
+    reset_xystart_size, vly_abs,
 } from '../sp_lev.js';
 import { rn2 } from '../rng.js';
 import {
     SLP_GAS_TRAP, quest_align_shuffle, quest_finalize, quest_level_init_fill,
     quest_level_init_mines_flat, quest_monster, quest_trap,
 } from './quest_home_common.js';
+
+// C ref: sp_lev.c create_object() passes `artif = !named` to mksobj_at, so a
+// des.object() with an explicit `name` (Excalibur) gets artif=FALSE and
+// mksobj_init's WEAPON_CLASS re-roll (mkobj.c:2007 `if (artif && !rn2(20 +
+// 10*nartifact_exist())) mk_artifact(otmp);`) never fires — the weapon is
+// about to be renamed into an artifact by hand, not randomly promoted into
+// one first.  quest_create_object() hardcodes artif=true, which is right for
+// every OTHER object this level creates (none of them are named), so
+// Excalibur alone needs this direct call instead of going through it.
+function quest_create_named_weapon(otyp, spe, carryingMon) {
+    bigrm_get_location_dry();               // get_location_coord(DRY) draw
+    const otmp = mksobj(otyp, true, false);
+    if (spe != null) otmp.spe = spe;
+    if (!carryingMon.minvent) carryingMon.minvent = [];
+    carryingMon.minvent.unshift(otmp);
+    return otmp;
+}
+
+// C ref: sp_lev.c create_monster() (sp_lev.c:1983-1988): a des.monster()
+// whose resolved species index falls in the PM_ARCHEOLOGIST..PM_WIZARD row
+// range of mons[] (the thirteen role-lookalike "class NPC" species — plain
+// "knight" IS that row, not a subclass of it) is built via mk_mplayer(),
+// never plain makemon().  quest_monster()/splev_create_monster()
+// (quest_home_common.js, shared by every quest-home builder) has no such
+// dispatch and always calls makemon(), so a knight guard's whole inventory
+// -- a completely different shape and length of RNG draws in mplayer.c --
+// desyncs the instant it is rolled.  This level's other monsters (King
+// Arthur is the unique PM, pages/quasits/warhorses are ordinary species)
+// never land in that row range, so only the four knight guards need this.
+const PM_ARCHEOLOGIST_IDX = name_to_pmidx('archeologist');
+const PM_WIZARD_IDX = name_to_pmidx('wizard');
+function quest_knight_guard(mx, my, peaceful) {
+    const pmidx = name_to_pmidx('knight');
+    const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
+    if (!ptr) return null;
+    if (ptr.gcode !== 1 && ptr.gcode !== 2
+        && name_gender_hint('knight') === MGEND_NEUTRAL)
+        rn2(2);                                        // find_montype sp_lev.c:3156
+    rn2(3);                                             // induced_align dungeon.c:2012
+    const { x, y } = vly_abs(mx, my);
+    // No mm_mon_at/enexto check: the four guard squares are fixed and empty
+    // at this point in generation (nothing else is placed there first).
+    const mtmp = (pmidx >= PM_ARCHEOLOGIST_IDX && pmidx <= PM_WIZARD_IDX)
+        ? mk_mplayer(ptr, x, y, false, { mongets: mongets_pub })
+        : makemon(ptr, x, y, 0);
+    if (mtmp && peaceful != null) {
+        mtmp.mpeaceful = peaceful ? 1 : 0;
+        set_malign(mtmp);           // sp_lev.c:2129 — mpeaceful changed again
+    }
+    return mtmp;
+}
 
 // ════════════════════════════════════════════════════════════════════════
 // Knight quest "home" level loader (dat/Kni-strt.lua) — King Arthur's keep,
@@ -86,12 +144,19 @@ export async function makemaz_kni_strt() {
     try {
         const arthur = quest_monster({ name: 'King Arthur', mx: 9, my: 7 });
         quest_drop_default_invent(arthur);
-        const excalibur = quest_create_object(54 /*LONG_SWORD*/, null, null, 4, arthur);
-        if (excalibur) { excalibur.blessed = 1; excalibur.cursed = 0; excalibur.oname = 'Excalibur'; }
+        const excalibur = quest_create_named_weapon(54 /*LONG_SWORD*/, 4, arthur);
+        if (excalibur) {
+            excalibur.blessed = 1; excalibur.cursed = 0; excalibur.oname = 'Excalibur';
+            // C ref: mkobj.c create_object() -> oname(otmp, "Excalibur", ONAME_LEVEL_DEF)
+            // -> artifact_exists(): registers artiexist[ART_EXCALIBUR], which
+            // mksobj_init's later `rn2(40 + 10*nartifact_exist())` artif rolls
+            // (plate mail, then every other object this level creates) read.
+            artifact_exists(excalibur, 'Excalibur', 1, ONAME_LEVEL_DEF);
+        }
         quest_create_object(121 /*PLATE_MAIL*/, null, null, 4, arthur);
         quest_create_object(CHEST, 9, 7, null, null);
         for (const [kx, ky] of [[4, 2], [4, 13], [45, 2], [45, 13]])
-            quest_monster({ name: 'knight', mx: kx, my: ky, peaceful: 1 });
+            quest_knight_guard(kx, ky, 1);
         for (const [px, py] of [[16, 6], [18, 6], [20, 6], [16, 9], [18, 9], [20, 9]])
             quest_monster({ name: 'page', mx: px, my: py });
         // des.non_diggable — no RNG.

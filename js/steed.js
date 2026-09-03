@@ -27,7 +27,8 @@ import { pline, flush_screen, newsym, update_topl } from './display.js';
 import { m_at } from './display.js';
 import { vision_recalc } from './vision.js';
 import { x_monnam } from './uhitm.js';
-import { isok, MAXULEV, W_SADDLE, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED } from './const.js';
+import { isok, MAXULEV, W_SADDLE, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED,
+         D_NODOOR, D_BROKEN, Is_rogue_level } from './const.js';
 import { pickup_after_move, getdir_confdir } from './cmd.js';
 
 // C ref: cmd.c getdir() — read a direction.  Renders "In what direction?",
@@ -198,14 +199,30 @@ function steed_accessible(x, y) {
 // for the diagonal-squeeze test below.
 function bad_rock(x, y) { return !steed_accessible(x, y); }
 
+// C ref: hack.c doorless_door(x,y) — a doorway whose door leaf is gone
+// (NODOOR/BROKEN); the rogue level's doorless doorways still disallow
+// diagonal access, so they are treated as if a door were present.
+function steed_doorless_door(x, y) {
+    const loc = game.level?.at(x, y);
+    if (!loc || !IS_DOOR(loc.typ)) return false;
+    if (Is_rogue_level(game.u?.uz)) return false;
+    return !((loc.doormask ?? 0) & ~(D_NODOOR | D_BROKEN));
+}
+
 // C ref: hack.c test_move(ux,uy,dx,dy,TEST_MOVE) — the subset that matters for
-// dismount landing-spot selection in the open rooms these sessions use: a
-// diagonal step is rejected only when squeezing between two walls, and the
-// destination itself must be accessible (checked by the caller).
+// dismount landing-spot selection: a diagonal step is rejected when squeezing
+// between two walls, or when leaving a doorway diagonally (steed.c dismount
+// lands the hero on an adjacent square, so the origin can be an open door —
+// seed0104's #ride dismount stands in one), and the destination itself must
+// be accessible (checked by the caller).
 function steed_test_move(ux, uy, dx, dy) {
     if (dx && dy) {
         if (bad_rock(ux, uy + dy) && bad_rock(ux + dx, uy))
             return false; // can't squeeze diagonally between two walls
+        const originLoc = game.level?.at(ux, uy);
+        if (!game.u?.uprops?.Passes_walls && originLoc && IS_DOOR(originLoc.typ)
+            && !steed_doorless_door(ux, uy))
+            return false; // can't move diagonally out of a doorway with a door
     }
     return true;
 }
@@ -241,8 +258,9 @@ function landing_spot() {
         const x = u.ux + tryArr[j].x;
         const y = u.uy + tryArr[j].y;
         if (!isok(x, y) || (x === u.ux && y === u.uy)) continue;
-        if (steed_accessible(x, y) && !steed_mon_at(x, y)
-            && steed_test_move(u.ux, u.uy, x - u.ux, y - u.uy)) {
+        const acc = steed_accessible(x, y), mon = steed_mon_at(x, y),
+            tm = steed_test_move(u.ux, u.uy, x - u.ux, y - u.uy);
+        if (acc && !mon && tm) {
             ++viable;
             const distance = (x - u.ux) * (x - u.ux) + (y - u.uy) * (y - u.uy);
             if (min_distance < 0

@@ -12,8 +12,8 @@ import {
 } from '../sp_lev.js';
 import {
     FIRE_TRAP, W_ANY, W_NORTH, W_RANDOM, W_WEST, quest_align_shuffle,
-    quest_finalize, quest_level_init_fill, quest_monster, quest_sel_grow,
-    quest_sel_set_random, quest_sel_terrain, quest_trap,
+    quest_finalize, quest_level_init_fill, quest_monster, quest_non_diggable,
+    quest_sel_grow, quest_sel_set_random, quest_sel_terrain, quest_trap,
 } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -103,7 +103,7 @@ export async function makemaz_val_strt() {
         const warriors = [[27, 8], [27, 9], [27, 11], [27, 12],
                           [42, 8], [42, 9], [42, 11], [42, 12]];
         for (const [wx, wy] of warriors) quest_create_monster('warrior', wx, wy, null);
-        // des.non_diggable — no RNG.
+        quest_non_diggable(26, 7, 43, 13);    // des.non_diggable — no RNG.
         // Six fire traps: a FIXED type at a RANDOM location, so each one costs
         // the get_location(DRY) loop plus mktrap's victim rnd(4) — and NO
         // traptype_rnd() rolls, unlike the bare des.trap() the other homes use.

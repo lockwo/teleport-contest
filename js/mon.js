@@ -917,8 +917,10 @@ function extra_pref(mon, obj) {
     return (obj && obj.otyp === SPEED_BOOTS_OTYP && (mon?.permspeed | 0) !== MFAST) ? 20 : 0;
 }
 // C ref: worn.c:1360 racial_exception(mon, obj) — hobbits may wear elven armour.
-function racial_exception(mon, obj) {
-    return (monsndx_mon(mon) === PM_HOBBIT && is_elven_armor(obj)) ? 1 : 0;
+// Takes the resolved species (permonst), not a MONST: mon.js's own hand-rolled
+// pets carry a non-makemon pmidx on mon.data ([[pet-pmidx-convention-mismatch]]).
+function racial_exception(ptr, obj) {
+    return ((ptr?.pmidx ?? -1) === PM_HOBBIT && is_elven_armor(obj)) ? 1 : 0;
 }
 function is_elven_armor(obj) {
     const o = obj?.otyp;
@@ -962,7 +964,6 @@ function is_flimsy(obj) {
     return (OBJECTS[obj?.otyp]?.material ?? 99) <= LEATHER_MATERIAL
         || obj?.otyp === RUBBER_HOSE_OTYP;
 }
-function monsndx_mon(mon) { return mon?.data?.pmidx ?? -1; }
 function slithy_mon(ptr) { return (mflags1_of(ptr) & M1_SLITHY) !== 0; }
 // C ref: youprop.h See_invisible.  js/display.js:335 has the shared reader but
 // does not export it; this port spells the hero's copy several ways.
@@ -978,6 +979,13 @@ function See_invisible_mon() {
 async function m_dowear_type(mon, flag, creation, racialexception) {
     if (mon.mfrozen)
         return;                            /* probably putting previous item on */
+    // C ref: worn.c reads mon->data directly; a pet's .data is a hand-rolled
+    // permonst with no .ac/.msize/makemon pmidx ([[pet-pmidx-convention-mismatch]]),
+    // so every mondata predicate below needs the resolved species, not mon.data
+    // itself.  worn.js's species() is a no-op (returns mon.data unchanged) for
+    // every monster made by makemon(), which already carries .ac.
+    const { species } = await import('./worn.js');
+    const ptr = species(mon);
     // worn.c snapshots `See_invisible ? Monnam(mon) : mon_nam(mon)` before
     // checking this slot.  The string is later needed only if armor changes,
     // but x_monnam() still randomizes hallucinated monster names for every
@@ -1007,7 +1015,7 @@ async function m_dowear_type(mon, flag, creation, racialexception) {
             // mummy wrapping is the only cloak allowed above human size, and a
             // monster that is already invisible won't put one on (it blocks
             // invisibility and would reveal it).
-            if ((mon.data?.msize ?? 0) > MZ_HUMAN_M && obj.otyp !== MUMMY_WRAPPING_OTYP)
+            if ((ptr?.msize ?? 0) > MZ_HUMAN_M && obj.otyp !== MUMMY_WRAPPING_OTYP)
                 continue;
             if (mon.minvis && obj.otyp === MUMMY_WRAPPING_OTYP
                 && !See_invisible_mon() && !creation)
@@ -1015,9 +1023,9 @@ async function m_dowear_type(mon, flag, creation, racialexception) {
         } else if (flag === W_ARMH) {
             if (obj.otyp === HELM_OF_OPPOSITE_ALIGNMENT_OTYP
                 && (mon.ispriest || mon.isminion)) continue;
-            if (has_horns(mon.data) && !is_flimsy(obj)) continue;
+            if (has_horns(ptr) && !is_flimsy(obj)) continue;
         } else if (flag === W_ARM) {
-            if (racialexception && racial_exception(mon, obj) < 1) continue;
+            if (racialexception && racial_exception(ptr, obj) < 1) continue;
         }
         if (obj[WORNF]) continue;
         if (best && (ARM_BONUS(best) + extra_pref(mon, best)
@@ -1096,7 +1104,11 @@ async function mon_adjust_speed_worn(mon, creation) {
 // slot.  Slot order is load-bearing: m_dowear_type() returns immediately once
 // mon->mfrozen is set, so only the FIRST slot that upgrades charges a delay.
 export async function m_dowear(mon, creation) {
-    const ptr = mon?.data;
+    // C ref: worn.c reads mon->data directly; resolve through worn.js's
+    // species() first, same as m_dowear_type() above
+    // ([[pet-pmidx-convention-mismatch]]).
+    const { species } = await import('./worn.js');
+    const ptr = species(mon);
     if (!ptr) return;
     if ((ptr.msize ?? 0) < MZ_SMALL_M || nohands(ptr) || is_animal(ptr)) return;
     // mummies get a chance to wear their wrappings; skeletons their armour
@@ -1661,8 +1673,7 @@ const C_OBJ_COLORS_M = [
     'bright magenta', 'bright cyan', 'white',
 ];
 
-// C ref: mondata.h monsndx(ptr) — the mons[] index of a permonst.  mon.js's
-// monsndx_mon() takes a MONST; this is the permonst form C's mon.c uses.
+// C ref: mondata.h monsndx(ptr) — the mons[] index of a permonst.
 function monsndx(ptr) { return ptr?.pmidx ?? NON_PM; }
 
 // Lazy, memoized PM_* lookup.  It must stay lazy: a top-level name_to_pmidx()

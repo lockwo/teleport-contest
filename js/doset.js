@@ -618,9 +618,12 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
             d.putstr(0, r, ' ', NO_COLOR, 0);
             d.putstr(1, r, it.name, NO_COLOR, ATR_INVERSE);
         } else if (it.type === 'heading') {
-            // Section heading: " %-30s " (32-wide) fully inverse at col 1;
+            // Section heading: C only paints " <name>" inverse (ESC[7m General
+            // ESC[24C ESC[0m — the 24-column pad to the 32-wide field is a
+            // cursor-forward past cells the earlier clearRow() already left
+            // default, never a rewrite), not the whole 32-wide padded field.
             // col 0 is the plain menu leading space.
-            const head = ' ' + it.name.padEnd(30, ' ') + ' ';
+            const head = ' ' + it.name;
             d.putstr(0, r, ' ', NO_COLOR, 0);
             d.putstr(1, r, head, NO_COLOR, ATR_INVERSE);
         } else if (it.type === 'item') {

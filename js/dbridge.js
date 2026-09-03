@@ -741,9 +741,12 @@ export async function destroy_drawbridge(x, y) {
         lev1.drawbridgemask = 0;
         const otmp2 = sobj_at(BOULDER, x, y);
         if (otmp2) {
-            // DEFERRED (do.c flooreffects): C does obj_extract_self(otmp2) then
-            // flooreffects(otmp2, x, y, "fall") — the boulder fills the moat and
-            // that path draws RNG.  js/ has no flooreffects().
+            // C ref: dbridge.c:927-928 — obj_extract_self(otmp2) then
+            // flooreffects(otmp2, x, y, "fall"); the boulder fills the moat/lava.
+            const { obj_extract_self } = await import('./invent.js');
+            const { flooreffects } = await import('./do.js');
+            obj_extract_self(otmp2);
+            await flooreffects(otmp2, x, y, 'fall');
         }
     } else {
         /* no moat beneath */

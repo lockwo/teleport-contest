@@ -2603,17 +2603,24 @@ export function quest_drop_default_invent(mtmp) {
     mtmp.minvent = [];
 }
 
-// C ref: sp_lev.c lspo_map halign=SPLEV_H_LEFT / valign=SPLEV_CENTER offset.
+// C ref: sp_lev.c lspo_map halign=SPLEV_H_LEFT / valign=SPLEV_CENTER offset
+// (the default, used by Vlad's tower's own "half-left" des.map calls).
 // gx.xstart = 2 + ((x_maze_max-2-xsize)/4); gy.ystart = 2 + ((y_maze_max-2-ysize)/2);
 // each bumped odd.  Then stamp the fixed terrain (no RNG).
 // `lit` is des.map's OWN "lit" option (sp_lev.c:6122 get_table_boolean_opt
 // "lit", default FALSE) — NOT the level_init lit.  Passing the level_init
 // rn2(2) here renders the whole of tower2 lit (its roll is 1, tower1/3 roll 0).
-export function tower1_load_map(mapstr, lit) {
+//
+// `halignLeft` selects sp_lev.c's OTHER SPLEV_LEFT case (plain "left", not
+// "half-left"): gx.xstart = splev_init_present ? 1 : 3.  Every quest-home
+// script runs a des.level_init before its des.map, so splev_init_present is
+// always TRUE by the time this runs and the plain-left offset is always 1.
+export function tower1_load_map(mapstr, lit, halignLeft = false) {
     const mf = mapfrag_fromstr(mapstr);
     gx.xsize = mf.wid;
     gy.ysize = mf.hei;
-    gx.xstart = 2 + Math.trunc((gx.x_maze_max - 2 - gx.xsize) / 4);   // SPLEV_H_LEFT
+    gx.xstart = halignLeft ? 1                                        // SPLEV_LEFT
+        : 2 + Math.trunc((gx.x_maze_max - 2 - gx.xsize) / 4);         // SPLEV_H_LEFT
     gy.ystart = 2 + Math.trunc((gy.y_maze_max - 2 - gy.ysize) / 2);   // SPLEV_CENTER
     if (!(gx.xstart % 2)) gx.xstart++;
     if (!(gy.ystart % 2)) gy.ystart++;

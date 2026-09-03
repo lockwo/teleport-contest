@@ -5041,6 +5041,7 @@ export async function handler_number_pad() {
     const mode_pick = [];
     const clr = NO_COLOR;
     game.iflags = game.iflags || {};
+    game.flags = game.flags || {};
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -5050,6 +5051,19 @@ export async function handler_number_pad() {
                  ATR_NONE, clr, npchoices[i], MENU_ITEMFLAGS_NONE);
     end_menu(tmpwin, 'Select number_pad mode:');
     if (await select_menu(tmpwin, PICK_ONE, mode_pick) > 0) {
+        // C ref: options.c:2574 optfn_number_pad()'s do_set path stores this
+        // same mode number into iflags.num_pad/num_pad_mode AND is the value
+        // reset_commands()/js/cmd.js's numpad_iflags() decodes back out of
+        // `flags.number_pad` (js/cmd.js:361).  The rc-file path (optfn_number_pad
+        // above, via keep()) already writes game.flags.number_pad verbatim; this
+        // interactive handler was only writing game.iflags, leaving
+        // game.flags.number_pad — the value js/cmd.js's numpad_cmd() actually
+        // keys its (memoised) rebuild on — stale, so the movement-key rebind
+        // never took effect ([[duplicate-reimplementation-shadows-faithful-port]]
+        // family: reset_commands()/number_pad() below are genuine no-ops for
+        // this build per the comment at their definition, but calling them was
+        // never enough without this write).
+        const NUMPAD_MODE = [0, 1, 2, 3, 4, -1];
         switch (mode_pick[0].a_int - 1) {
         case 0:
             game.iflags.num_pad = false;
@@ -5077,6 +5091,7 @@ export async function handler_number_pad() {
             game.iflags.num_pad_mode = 1;
             break;
         }
+        game.flags.number_pad = NUMPAD_MODE[mode_pick[0].a_int - 1];
         reset_commands(false);
         number_pad(game.iflags.num_pad ? 1 : 0);
     }

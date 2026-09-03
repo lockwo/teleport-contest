@@ -827,6 +827,40 @@ for (const o of objects) {
     if (prop) o.oc_oprop = prop;
 }
 
+// C ref: include/objects.h HELM()/CLOAK()/SHIELD()/GLOVES()/BOOTS() `power`
+// argument — every OTHER piece of armor whose oc_oprop grants a worn
+// extrinsic (cornuthaum..levitation boots).  Before this table, insight.c
+// what_gives()/from_what()'s port (js/insight.js) had no way to find the
+// source of e.g. "You are displaced" for a cloak of displacement or "You have
+// reflection" for a shield of reflection, so those enlightenment lines were
+// silently omitted.  Keyed by NAME for the same reason as the tables above.
+// speed boots (FAST) and helm of telepathy (TELEPAT) are deliberately absent:
+// each already has its own dedicated mechanism elsewhere (allmain.js
+// youHaveVeryFast(), the TELEPAT_PROP loop above) and giving speed boots a
+// generic oc_oprop here is untested against those call sites.
+const ARMOR_OC_OPROP_BY_NAME = {
+    'cornuthaum': 35,                  // CLAIRVOYANT
+    'helm of caution': 31,             // WARNING
+    'elven cloak': 42,                 // STEALTH
+    'alchemy smock': 6,                // POISON_RES
+    'cloak of protection': 59,         // PROTECTION
+    'cloak of invisibility': 40,       // INVIS
+    'cloak of displacement': 41,       // DISPLACED
+    'shield of drain resistance': 9,   // DRAIN_RES
+    'shield of shock resistance': 5,   // SHOCK_RES
+    'shield of reflection': 65,        // REFLECTING
+    'gauntlets of fumbling': 25,       // FUMBLING
+    'water walking boots': 50,         // WWALKING
+    'jumping boots': 45,               // JUMPING
+    'elven boots': 42,                 // STEALTH
+    'fumble boots': 25,                // FUMBLING
+    'levitation boots': 48,            // LEVITATION
+};
+for (const o of objects) {
+    const prop = o && ARMOR_OC_OPROP_BY_NAME[o.name];
+    if (prop) o.oc_oprop = prop;
+}
+
 // C ref: include/objects.h BITS() mgc field — oc_magic, the "magic" flag used
 // by poly_obj() (zap.c) to keep a polymorphed object's magic-or-not status the
 // same as the source, and by obj_shuffle_range().  Extracted from the per-class

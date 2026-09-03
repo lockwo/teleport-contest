@@ -494,12 +494,6 @@ function Punished() { return !!game.u?.uball; }
 // C ref: include/youprop.h Levitation.
 function Levitation() { return !!game.u?.uprops?.Levitation; }
 
-// C ref: mkobj.c flooreffects(obj, x, y, verb) — "the chain/ball might rust".
-// UNPORTED in js/ (no flooreffects anywhere); it can only bite over water, lava
-// or a pit and every recorded placebc() lands on room floor.  Named rather than
-// silently dropped so a wiring pass knows what is missing.
-function flooreffects(_obj, _x, _y, _verb) { return false; }
-
 // C ref: mon.c maybe_unhide_at(x, y) — the faithful port is module-private at
 // js/monmove.js:1910 (js/invent.js:1170 is a stub); export that one when wiring.
 async function maybe_unhide_at_bc(x, y) {
@@ -604,13 +598,18 @@ export async function placebc_core() {
         return;
     }
 
-    flooreffects(u.uchain, u.ux, u.uy, ''); /* chain might rust */
+    // C ref: mkobj.c flooreffects(obj, x, y, verb) — dynamic import, not a
+    // top-level one: ball.js is imported by do.js, so a static edge back to
+    // do.js would create a cycle ([[_mktrap_victim TDZ is real]]).
+    const { flooreffects } = await import('./do.js');
+
+    await flooreffects(u.uchain, u.ux, u.uy, ''); /* chain might rust */
 
     if (carried(u.uball)) { /* the ball is carried */
         u.bc_order = BCPOS_DIFFER;
     } else {
         /* ball might rust -- already checked when carried */
-        flooreffects(u.uball, u.ux, u.uy, '');
+        await flooreffects(u.uball, u.ux, u.uy, '');
         place_object(u.uball, u.ux, u.uy);
         u.bc_order = BCPOS_CHAIN;
     }

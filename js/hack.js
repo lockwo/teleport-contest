@@ -3386,6 +3386,15 @@ export async function dotele_wizard() {
         u.uhunger = (u.uhunger ?? 900) - 100;
         newuhs(true);
     };
+    // C ref: teleport.c dotele():1151 — the no-trap branch zeroes
+    // iflags.travelcc UNCONDITIONALLY right before calling tele(), so
+    // tele()'s own "pre-suggest this coordinate" read of travelcc (teleport.c
+    // :887-891) is always moot here and getpos() starts on the hero.  The
+    // side effect that matters is this reset itself: a later '_' travel
+    // command reads iflags.travelcc as getpos()'s starting cursor (cmd.c
+    // dotravel():5314), so leaving a stale cached destination here parks that
+    // NEXT getpos() prompt on the old target instead of the hero.
+    (game.iflags = game.iflags || {}).travelcc = { x: 0, y: 0 };
     // tele() -> scrolltele(0): with the wizard override taken, C prints
     //   pline("Where do %s want to be teleported?", "you")   [no steed]
     // then getpos(&cc, force=TRUE, "the desired position").  The pline leaves the
