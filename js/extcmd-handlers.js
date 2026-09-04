@@ -3358,7 +3358,20 @@ export async function doextcmd() {
         game.context.move = 0;
         return 0;
     }
-    const txt = EXTCMDLIST[idx][0];
+    const [txt, flags] = EXTCMDLIST[idx];
+    // C ref: cmd.c:463 can_do_extcmd() — a WIZMODECMD command must be refused
+    // outside wizard mode even when typed by its FULL NAME here (not just via
+    // an unbound raw key); this check was entirely missing, so e.g.
+    // "#wizidentify<Enter>" ran the real debug-identify menu in a normal-mode
+    // game.  cmd.js has its own can_do_extcmd() but it is never called from
+    // anywhere (dead code) and operates on a different extcmdlist shape, so
+    // this re-implements just the WIZMODECMD half against THIS file's
+    // EXTCMDLIST, matching the message wizcmds.js's unavail() already uses.
+    if ((flags & WIZMODECMD) && !game.flags?.debug) {
+        game.context.move = 0;
+        await pline(`Unavailable command '${txt}'.`);
+        return 0;
+    }
     const fn = HANDLERS[txt];
     let res = 0;
     if (fn) {
