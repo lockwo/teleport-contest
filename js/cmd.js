@@ -1320,6 +1320,15 @@ export async function rhack(key) {
         game.context.move = searched ? 1 : 0;
         if (searched && (game.multi ?? 0) > 0)
             game._search_occupation = true;
+    } else if (key === 1) { // ^A — repeat the previous command (cmd.c do_repeat)
+        // C ref: cmd.c:1822 { C('a'), "repeat", ..., do_repeat }.  Unbound
+        // here, ^A fell through to "Unknown command '<ch>'." (a non-printable
+        // control character, so the recorded screen shows it as blank)
+        // instead of silently re-running the last command (do_repeat() is
+        // already fully implemented and self-contained, including its own
+        // "There is no command available to repeat." message).
+        const res = await do_repeat();
+        game.context.move = res === 1 ? 1 : 0;
     } else if (key === 4) { // ^D — kick (dokick.c dokick())
         // C ref: cmd.c keymap C('d') = dokick.  Reads a direction, then resolves
         // the kicked square (monster / object / terrain).  Sets the turn flag
