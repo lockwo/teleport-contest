@@ -2949,7 +2949,23 @@ const HANDLERS = {
     wizmap: wiz_map_extcmd,
     herecmdmenu: doherecmdmenu,
     wizwhere: wiz_where,
+    wizmondiff: wizmondiff_extcmd,
 };
+
+// C ref: wizcmds.c:1790 wiz_mon_diff() — was fully implemented in wizcmds.js
+// but never wired into HANDLERS, so #wizmondiff silently no-opped (fn
+// undefined): no window opened, and the keystrokes C's real window would
+// have absorbed instead leaked into the live game as top-level commands,
+// permanently desyncing the rest of the session.  Dynamic import, not a
+// static one: a static `import { wiz_mon_diff } from './wizcmds.js'` here
+// flips this file's ESM evaluation order relative to the existing
+// options.js/cfgfiles.js cycle and throws "Cannot access 'CONFIG_LINE_STMT'
+// before initialization" at load — see [[mktrap-victim-tdz-is-real]], the
+// same class of hazard, a different edge.
+async function wizmondiff_extcmd() {
+    const { wiz_mon_diff } = await import('./wizcmds.js');
+    return await wiz_mon_diff();
+}
 
 // C ref: cmd.c:4332 doherecmdmenu() -> here_cmd_menu() -> there_cmd_menu(u.ux,
 // u.uy, CLICK_1).  Only the u_at(x,y) arm (there_cmd_menu_self) can be reached
