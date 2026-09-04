@@ -9799,8 +9799,19 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
 }
 
 export async function dolook() {
+    // C ref: invent.c dolook() — a bare pass-through to look_here(); dolook()
+    // itself has NO message logic, look_here() already prints everything for
+    // every branch (no-object via update_topl, single-object via
+    // game._pending_message for us to flush here, pile-summary via
+    // update_topl, and the multi-object "Things that are here:" menu via its
+    // own overlay with no topline text needed — renderThingsHereMenu()
+    // explicitly sets game._pending_message = '' for that branch). Falling
+    // back to a hardcoded 'You see no objects here.' whenever
+    // _pending_message was falsy wrongly re-printed that line after the
+    // multi-object menu too, even though there WERE objects here (they were
+    // just shown in the menu, matching a blank row 0 in the real recording).
     await look_here(0, 0);
-    await renderMessageOnMap(game._pending_message || 'You see no objects here.');
+    if (game._pending_message) await renderMessageOnMap(game._pending_message);
     return ECMD_OK;
 }
 
