@@ -18,7 +18,7 @@ import { ddoinv, dismiss_invent_screen, dolook,
          dopickup, dowear, dotakeoff, doputon, doremring, dopay, floor_object_name,
          doprgold, doprwep, doprarm, doprring, dopramulet, doprinuse,
          renderWindowScreen, ECMD_NOTHANDLED, describe_decor, dfeature_at,
-         dotypeinv, doprtool, nohands_youmonst, notake_youmonst } from './invent.js';
+         dotypeinv, doprtool, nohands_youmonst, notake_youmonst, wiz_identify } from './invent.js';
 import { WEAPON_CLASS, objects as OBJECTS, KICKING_BOOTS } from './mkobj.js';
 import { doeat } from './eat.js';
 import { doapply, ECMD } from './apply.js';
@@ -30,6 +30,7 @@ import { dohelp, dowhatdoes } from './pager.js';
 import { rnl, rn2, rnd } from './rng.js';
 import { doextcmd, doddoremarm, hooked_tty_getlin, wiz_wish, wiz_genesis,
          wiz_map_extcmd, run_extcmd_by_name, docallcmd, dooverview } from './extcmd-handlers.js';
+import { wiz_detect } from './wizcmds.js';
 import { do_gamelog } from './insight.js';
 import { skill_window_advance } from './enhance.js';
 import { wiz_level_tele, dodown, doup } from './do.js';
@@ -1325,6 +1326,24 @@ export async function rhack(key) {
         // from dokick's ECMD result.
         const res = await dokick();
         game.context.move = res === 1 ? 1 : 0;
+    } else if (key === 5) { // ^E — wizard-mode detect (wizcmds.c wiz_detect)
+        // C ref: cmd.c:1953 { C('e'), "wizdetect", ..., WIZMODECMD }.  Unbound
+        // here, ^E fell through to "Unknown command '<ch>'." (a non-printable
+        // control character, so the recorded screen shows it as blank) instead
+        // of C's "Unavailable command 'wizdetect'."  wiz_detect() already
+        // gates on wizard()/unavail() itself (js/wizcmds.js), so just call it.
+        await wiz_detect();
+        game.context.move = 0;
+    } else if (key === 9) { // ^I — wizard-mode identify (wizcmds.c wiz_identify)
+        // C ref: cmd.c:1963 { C('i'), "wizidentify", ..., WIZMODECMD }.  Same
+        // missing gate as ^E above; wiz_identify() (js/invent.js) does not
+        // self-gate, so check debug mode here like wizgenesis/wizmap do.
+        if (game.flags?.debug) {
+            wiz_identify();
+        } else {
+            await pline(`Unavailable command 'wizidentify'.`);
+        }
+        game.context.move = 0;
     } else if (key === 7) { // ^G — wizard-mode create monster (wizcmds.c wiz_genesis)
         // C ref: cmd.c keymap C('g') = wiz_genesis, IFBURIED|WIZMODECMD.  Clears
         // iflags.debug_mongen, then create_particular() prompts "Create what kind
