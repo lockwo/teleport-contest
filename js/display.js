@@ -680,8 +680,15 @@ const _WALL_ASCII = {
     [S_blcorn]: '-', [S_brcorn]: '-', [S_crwall]: '-', [S_tuwall]: '-',
     [S_tdwall]: '-', [S_tlwall]: '|', [S_trwall]: '|',
 };
+const _WALL_NAME = {
+    [S_vwall]: 'S_vwall', [S_hwall]: 'S_hwall', [S_tlcorn]: 'S_tlcorn', [S_trcorn]: 'S_trcorn',
+    [S_blcorn]: 'S_blcorn', [S_brcorn]: 'S_brcorn', [S_crwall]: 'S_crwall', [S_tuwall]: 'S_tuwall',
+    [S_tdwall]: 'S_tdwall', [S_tlwall]: 'S_tlwall', [S_trwall]: 'S_trwall',
+};
 function wall_cmap_glyph(idx) {
     if (idx === S_stone || idx == null) return { ch: ' ', color: NO_COLOR, dec: false };
+    const ov = symOverrideChar(_WALL_NAME[idx]);
+    if (ov) return { ch: ov, color: wall_cmap_color(), dec: false };
     const dec = useDECgraphics();
     const ch = dec ? _WALL_DEC[idx] : _WALL_ASCII[idx];
     return { ch: ch ?? (dec ? 'q' : '-'), color: wall_cmap_color(), dec };
@@ -776,8 +783,28 @@ function symOverrideChar(name) {
     return ov && ov[name] ? ov[name] : null;
 }
 
+// C ref: dat/symbols IBMgraphics block.  The recording terminal has no
+// smacs/rmacs alternate-charset capability, so C's own tty layer (wintty.c
+// g_putch: `ch & 0x80 -> putchar(ch ^ 0x80)`) strips the high bit off every
+// IBMgraphics byte and prints the resulting plain-ASCII letter instead of a
+// real CP437 glyph — these values are exactly that XOR, e.g. S_hwall's
+// \xc4 -> 'D', S_vwall's \xb3 -> '3'.  jsmain.js merges this into
+// game.symoverride when `symset:IBMgraphics` is chosen, so it flows through
+// the same symOverrideChar() lookup a SYMBOLS= rc line already uses — a
+// symset just fills in every glyph a SYMBOLS= line didn't already set.
+export const IBMGRAPHICS_CHARS = {
+    S_vwall: '3', S_hwall: 'D', S_tlcorn: 'Z', S_trcorn: '?', S_blcorn: '@',
+    S_brcorn: 'Y', S_crwall: 'E', S_tuwall: 'A', S_tdwall: 'B', S_tlwall: '4',
+    S_trwall: 'C', S_ndoor: 'z', S_vodoor: '~', S_hodoor: '~', S_room: 'z',
+    S_corr: '0', S_litcorr: '1', S_pool: 'w', S_ice: 'z', S_lava: 'w',
+    S_lavawall: 'w', S_vodbridge: 'z', S_hodbridge: 'z', S_water: 'w',
+    S_bars: 'p', S_tree: 'q', S_fountain: 't', S_sink: 't',
+};
+
 // S_tree, shared by TREE terrain and an arboreal level's STONE/SCORR.
 function tree_glyph(dec) {
+    const ov = symOverrideChar('S_tree');
+    if (ov) return { ch: ov, color: CLR_GREEN, dec: false };
     return dec ? { ch: 'g', color: CLR_GREEN, dec: false }
                : { ch: '#', color: CLR_GREEN, dec: false };
 }
@@ -792,7 +819,11 @@ export function terrain_glyph(loc, x, y) {
     case SCORR:
         if (game.level?.flags?.arboreal) return tree_glyph(dec);
         return { ch: ' ', color: NO_COLOR, dec: false };
-    case ROOM:      return dec ? { ch: '~', color: NO_COLOR, dec: true } : { ch: '.', color: NO_COLOR, dec: false };
+    case ROOM: {
+        const ov = symOverrideChar('S_room');
+        if (ov) return { ch: ov, color: NO_COLOR, dec: false };
+        return dec ? { ch: '~', color: NO_COLOR, dec: true } : { ch: '.', color: NO_COLOR, dec: false };
+    }
     case CORR: {
         // C ref: display.c back_to_glyph CORR — idx = (ptr->waslit ||
         // flags.lit_corridor) ? S_litcorr : S_corr.  Both S_corr and S_litcorr
@@ -802,6 +833,8 @@ export function terrain_glyph(loc, x, y) {
         // difference.  CLR_GRAY emits no tty escape (records as NO_COLOR=8),
         // CLR_WHITE records as bright white (15).  lit_corridor defaults off.
         const litcorr = !!(loc.waslit || (game.flags && game.flags.lit_corridor));
+        const ov = symOverrideChar(litcorr ? 'S_litcorr' : 'S_corr');
+        if (ov) return { ch: ov, color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
         return { ch: '#', color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
     }
     case SDOOR:
@@ -822,8 +855,11 @@ export function terrain_glyph(loc, x, y) {
         // the horizontal/vertical cmap variant per loc.horizontal (S_hodoor '-'
         // / S_vodoor '|' when open; S_hcdoor / S_vcdoor '+' when closed); broken
         // or doorless openings use S_ndoor ('.').
-        if (loc.doormask & D_BROKEN)
+        if (loc.doormask & D_BROKEN) {
+            const ov = symOverrideChar('S_ndoor');
+            if (ov) return { ch: ov, color: NO_COLOR, dec: false };
             return dec ? { ch: '~', color: NO_COLOR, dec: true } : { ch: '.', color: NO_COLOR, dec: false };
+        }
         if (loc.doormask & D_ISOPEN) {
             // C ref: include/defsym.h — in ASCII, S_vodoor ("vertical open door",
             // a door in a VERTICAL wall, loc.horizontal == 0) draws as '-' and
@@ -831,6 +867,8 @@ export function terrain_glyph(loc, x, y) {
             // counter-intuitive: the glyph shows the open gap, perpendicular to
             // the wall it sits in.  The DECgraphics symset draws both open-door
             // orientations with the same line-drawing glyph ('a').
+            const ov = symOverrideChar(loc.horizontal ? 'S_hodoor' : 'S_vodoor');
+            if (ov) return { ch: ov, color: CLR_BROWN, dec: false };
             if (dec)
                 return { ch: 'a', color: CLR_BROWN, dec: true };
             return loc.horizontal
@@ -839,7 +877,11 @@ export function terrain_glyph(loc, x, y) {
         }
         if (loc.doormask & (D_CLOSED | D_LOCKED))
             return { ch: '+', color: CLR_BROWN, dec: false };
-        return dec ? { ch: '~', color: NO_COLOR, dec: true } : { ch: '.', color: NO_COLOR, dec: false };  // D_NODOOR
+        {
+            const ov = symOverrideChar('S_ndoor');
+            if (ov) return { ch: ov, color: NO_COLOR, dec: false };
+            return dec ? { ch: '~', color: NO_COLOR, dec: true } : { ch: '.', color: NO_COLOR, dec: false };  // D_NODOOR
+        }
     case STAIRS: {
         // C ref: display.c back_to_glyph STAIRS case — a *known branch*
         // staircase uses S_brupstair/S_brdnstair (CLR_YELLOW); an ordinary
@@ -884,20 +926,19 @@ export function terrain_glyph(loc, x, y) {
         return dec ? { ch: '`', color: CLR_BLUE, dec: false }
                    : { ch: '}', color: CLR_BLUE, dec: false };
     }
-    case WATER:     return dec ? { ch: '`', color: CLR_BRIGHT_BLUE, dec: false }
-                               : { ch: '}', color: CLR_BRIGHT_BLUE, dec: false };
-    case LAVAPOOL:  return dec ? { ch: '`', color: CLR_RED, dec: false }
-                               : { ch: '}', color: CLR_RED, dec: false };
-    case LAVAWALL:  return dec ? { ch: '`', color: CLR_ORANGE, dec: false }
-                               : { ch: '}', color: CLR_ORANGE, dec: false };
-    case ICE:       return dec ? { ch: '~', color: CLR_CYAN, dec: true }
-                               : { ch: '.', color: CLR_CYAN, dec: false };
+    case WATER:     return { ch: symOverrideChar('S_water') || (dec ? '`' : '}'), color: CLR_BRIGHT_BLUE, dec: false };
+    case LAVAPOOL:  return { ch: symOverrideChar('S_lava') || (dec ? '`' : '}'), color: CLR_RED, dec: false };
+    case LAVAWALL:  return { ch: symOverrideChar('S_lavawall') || (dec ? '`' : '}'), color: CLR_ORANGE, dec: false };
+    case ICE: {
+        const ov = symOverrideChar('S_ice');
+        if (ov) return { ch: ov, color: CLR_CYAN, dec: false };
+        return dec ? { ch: '~', color: CLR_CYAN, dec: true } : { ch: '.', color: CLR_CYAN, dec: false };
+    }
     // C ref: defsym.h PCHAR(17, '#', S_bars, HI_METAL) — HI_METAL is CLR_CYAN,
     // not the gray this used to claim.  dat/symbols DECgraphics remaps S_bars to
     // \xfc (meta-'|', "not-equals"); DEC_MAP has no '|' entry so, like S_tree,
     // emit the bare character with dec=false.
-    case IRONBARS:  return dec ? { ch: '|', color: CLR_CYAN, dec: false }
-                               : { ch: '#', color: CLR_CYAN, dec: false };
+    case IRONBARS:  return { ch: symOverrideChar('S_bars') || (dec ? '|' : '#'), color: CLR_CYAN, dec: false };
     // C ref: dat/symbols DECgraphics S_tree = \xe7 (meta-g).  The recorder emits
     // it as 'g' inside the DEC (Shift-Out) font; the frozen decoder's DEC_MAP has
     // no 'g' entry, so the recorded C cell renders as the literal 'g'.  Emit 'g'
@@ -906,7 +947,7 @@ export function terrain_glyph(loc, x, y) {
     case TREE:      return tree_glyph(dec);
     case FOUNTAIN:  return { ch: symOverrideChar('S_fountain') || '{', color: CLR_BRIGHT_BLUE, dec: false };
     // C ref: defsym.h PCHAR(36, '{', S_sink, CLR_WHITE).
-    case SINK:      return { ch: '{', color: CLR_WHITE, dec: false };
+    case SINK:      return { ch: symOverrideChar('S_sink') || '{', color: CLR_WHITE, dec: false };
     case GRAVE:     return { ch: '|', color: CLR_WHITE, dec: false };
     case THRONE:    return { ch: '\\', color: CLR_YELLOW, dec: false };
     // C ref: back_to_glyph ALTAR — the glyph is altar_to_glyph(altarmask), and
@@ -930,10 +971,14 @@ export function terrain_glyph(loc, x, y) {
     // / S_vcdbridge ('#', CLR_BROWN; not remapped by DECgraphics).
     case DBWALL:    return { ch: '#', color: CLR_BROWN, dec: false };
     // C ref: back_to_glyph DRAWBRIDGE_DOWN — S_hodbridge / S_vodbridge, which
-    // DECgraphics remaps to \xfe (meta-'~', the centered dot).
-    case DRAWBRIDGE_DOWN:
+    // DECgraphics remaps to \xfe (meta-'~', the centered dot).  Both share the
+    // same IBMgraphics override char, so either name works as the lookup key.
+    case DRAWBRIDGE_DOWN: {
+        const ov = symOverrideChar('S_hodbridge');
+        if (ov) return { ch: ov, color: CLR_BROWN, dec: false };
         return dec ? { ch: '~', color: CLR_BROWN, dec: true }
                    : { ch: '.', color: CLR_BROWN, dec: false };
+    }
     // C ref: back_to_glyph DRAWBRIDGE_UP — the square the raised bridge covers
     // shows whatever is underneath (drawbridgemask & DB_UNDER).
     case DRAWBRIDGE_UP:

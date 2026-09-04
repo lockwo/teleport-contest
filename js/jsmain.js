@@ -14,7 +14,7 @@ import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
 import { newgame, moveloop_core } from './allmain.js';
 import { parseNethackrc, config_error_report } from './options.js';
-import { flush_screen } from './display.js';
+import { flush_screen, IBMGRAPHICS_CHARS } from './display.js';
 import { GameDisplay } from './game_display.js';
 import {
     ROLE_NONE, ROLE_RANDOM, ROLE_RACEMASK, ROLE_GENDMASK, ROLE_ALIGNMASK,
@@ -276,6 +276,17 @@ export class NethackGame {
         // SYMBOLS= rc line overrides one cmap glyph's display character,
         // independent of (and layered on top of) the base symset.
         g.symoverride = opts.symoverride || {};
+        // C ref: symbols.c do_symset()/load_symset() — a `symset:` line loads
+        // a whole prebuilt dat/symbols table; an explicit SYMBOLS= line on top
+        // of it must win, so only fill gaps a SYMBOLS= line didn't already
+        // set.  Only IBMgraphics is ported (see IBMGRAPHICS_CHARS in
+        // display.js for why its values are XORed ASCII, not real CP437
+        // bytes); DECgraphics already has its own hand-coded glyph tables in
+        // display.js's terrain_glyph/wall_cmap_glyph.
+        if (/^ibm/i.test(g.symset)) {
+            for (const [symname, ch] of Object.entries(IBMGRAPHICS_CHARS))
+                if (!(symname in g.symoverride)) g.symoverride[symname] = ch;
+        }
         // C ref: options.c ga.apelist — the AUTOPICKUP_EXCEPTION list, read by
         // pickup.c check_autopickup_exceptions().
         g.apelist = opts.apelist || [];
