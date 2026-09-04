@@ -1422,6 +1422,14 @@ export async function rhack(key) {
             await pline(`Unavailable command 'wizwish'.`);
         }
         game.context.move = 0;
+    } else if (key === 26) { // ^Z — suspend (cmd.c dosuspend_core)
+        // C ref: cmd.c:1878 { C('z'), "suspend", ..., dosuspend_core }.
+        // Unbound here, ^Z fell through to "Unknown command '<ch>'." (a
+        // non-printable control character, so the recorded screen shows it
+        // as blank) instead of dosuspend_core()'s own "Suspend command not
+        // available." (this build's sysconf has no SHELLERS line, so the
+        // SYSCF branch always refuses).
+        game.context.move = (await dosuspend_core()) === 1 ? 1 : 0;
     } else if (key === 127) { // <del> / '\177' — #terrain (cmd.c doterrain)
         // C ref: cmd.c command list — '\177' (<del>/<rubout>) is bound to the
         // "terrain" command (doterrain, IFBURIED|GENERALCMD|AUTOCOMPLETE): show
@@ -7538,11 +7546,15 @@ export async function yn_function_menu(query, resp, def, res) {
     return false;
 }
 
-// C ref: cmd.c:5662 dosuspend_core() — the ^Z command, #suspend.  SUSPEND is
-// not defined for the recorder build (extcmdlist flags it CMD_NOT_AVAILABLE),
-// so only the Norep arm is live.
+// C ref: cmd.c:5662 dosuspend_core() -> sys/share/ioctl.c:156 dosuspend().
+// SUSPEND *is* defined for this build (unixconf.h:289-291 `#ifndef NOSUSPEND
+// #define SUSPEND`) — the "not defined" premise this comment used to claim is
+// false. dosuspend() takes the SYSCF branch (sysopt.shellers is empty, no
+// SHELLERS line in the shipped sysconf, same gate as the '!' shell command)
+// and prints ioctl.c:167's own message, NOT the generic cmdnotavail("%s
+// command not available.") text.
 export async function dosuspend_core() {
-    await Norep_topl(cmdnotavail.replace('%s', '#suspend'));
+    await Norep_topl('Suspend command not available.');
     return ECMD_OK;
 }
 
