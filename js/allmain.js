@@ -336,6 +336,20 @@ async function newgame_real() {
     await flush_screen(1);
     await bot();
     await pline(welcomeMessage());
+    // C ref: allmain.c newgame():843-848 — notice_all_mons(TRUE) runs right
+    // after welcome(TRUE), announcing every monster already visible from the
+    // starting square (gated on the `spot_monsters` rc option).  Was entirely
+    // missing here; notice_all_mons() itself only got called from a level
+    // teleport (teleport.js), never from game start, so a spot_monsters
+    // session's opening "You see X.--More--" screen(s) never appeared and
+    // every following keystroke was fed to a game that hadn't blocked on them
+    // the way C's recording did — an immediate, permanent input desync.
+    // (notice_all_mons() itself pages the still-pending welcome line with its
+    // own --More-- ONLY when it actually has something to announce — see
+    // hack.js — so this call is a no-op, including its screen effects, for
+    // every session that doesn't set spot_monsters.)
+    const { notice_all_mons } = await import('./hack.js');
+    await notice_all_mons(true);
     // C ref: allmain.c welcome(TRUE) — "guarantee that 'major' event category
     // is never empty": the very first gamelog line.
     livelog_printf(LL_ACHIEVE, `${welcomePlname()} the${welcomeBuf()} entered the dungeon`);

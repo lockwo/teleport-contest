@@ -3565,13 +3565,16 @@ export function notice_mons_cmp(m1, m2) {
 function set_msg_xy(_x, _y) { /* no-op */ }
 
 // C ref: hack.c:1708 notice_mon(mtmp) — announce a newly spotted monster once,
-// and forget it again when it stops being spottable.  Gated on
-// ACCESSIBILITY=mon_notices, which no recorded session sets, so this is inert
-// in the corpus but it is real state (mtmp->mspotted) when enabled.
+// and forget it again when it stops being spottable.  Gated on the
+// `spot_monsters` boolean rc option (optlist.h:706-708: &a11y.mon_notices) —
+// js/options.js's set_boolean() has no special case for it, so it falls
+// through to `result.flags.spot_monsters` (the generic default: branch) and
+// game.a11y.mon_notices is never written by anything.  Read the option from
+// where it actually lands rather than introducing a whole a11y namespace.
 export async function notice_mon(mtmp) {
     const a11y = game.a11y || {};
 
-    if (a11y.mon_notices && !a11y.mon_notices_blocked) {
+    if (game.flags?.spot_monsters && !a11y.mon_notices_blocked) {
         const spot = canspotmon(mtmp)
             && !(is_hider_flag(mtmp.data)
                  && (mtmp.mundetected
@@ -3588,7 +3591,13 @@ export async function notice_mon(mtmp) {
                                  : ARTICLE_NONE,
                                  (mtmp.mpeaceful && !mtmp.mtame) ? 'peaceful' : null,
                                  has_mgivenname(mtmp) ? SUPPRESS_SADDLE : 0, false);
-            await pline(`You ${canseemon_shared(mtmp) ? 'see' : 'notice'} ${nam}.`);
+            // C ref: pline.c pline() leaves toplin==NEED_MORE, so a second
+            // notice printed in the same batch (notice_all_mons() iterates
+            // every newly-spottable monster) appends to the first with two
+            // spaces instead of replacing it ("You see your little dog.  You
+            // see a lichen."), matching update_topl()'s port of that
+            // accumulation — see [[pline-vs-update-topl-trap]].
+            await update_topl(`You ${canseemon_shared(mtmp) ? 'see' : 'notice'} ${nam}.`);
         } else if (!spot) {
             mtmp.mspotted = false;
         }
@@ -3601,7 +3610,7 @@ export async function notice_mon(mtmp) {
 // matters because pass 1's count caps how many pass 2 collects.
 export async function notice_all_mons(reset) {
     const a11y = game.a11y || {};
-    if (!(a11y.mon_notices && !a11y.mon_notices_blocked))
+    if (!(game.flags?.spot_monsters && !a11y.mon_notices_blocked))
         return;
 
     const fmon = game.level?.monsters || [];
@@ -3623,6 +3632,13 @@ export async function notice_all_mons(reset) {
     }
 
     if (arr.length) {
+        // C ref: topl.c more() — the FIRST notice can't share the top line
+        // with whatever text is already pending there (the game-start
+        // welcome line, or ordinary topline text mid-game) — matching
+        // moveloop_preamble_messages()'s identical pattern, page it with its
+        // own --More-- before printing anything.  A no-op when nothing is
+        // pending, so this is safe for every notice_all_mons() call site.
+        await topl_more();
         arr.sort(notice_mons_cmp);
         for (const mtmp of arr)
             await notice_mon(mtmp);
