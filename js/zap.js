@@ -2337,9 +2337,31 @@ async function maybe_destroy_item(carrier, obj, dmgtyp) {
     case AD_ELEC:
         quan = obj.quan;
         if (obj.oclass === WAND_CLASS) { dindx = 6; dmg = rnd(10); }
+        else if (obj.oclass === RING_CLASS) {
+            // C ref: zap.c:5863 — a worn ring under non-metallic gloves is
+            // shielded outright; RIN_SHOCK_RESISTANCE is already excluded by
+            // destroyable()'s pre-filter, so it's not re-checked here.
+            const MAT_IRON = 11, MAT_MITHRIL = 17;
+            const gloves = game.uarmg;
+            const glovesMetallic = gloves
+                && (objects[gloves.otyp]?.material | 0) >= MAT_IRON
+                && (objects[gloves.otyp]?.material | 0) <= MAT_MITHRIL;
+            if (((obj.owornmask & W_RING) !== 0) && gloves && !glovesMetallic) {
+                skip = 1;
+            } else if ((objects[obj.otyp]?.flags & 1 /* F_CHARGED */) && rn2(3)) {
+                // C: chargeit -> recharge(obj, 0).  recharge() is NOT ported
+                // anywhere in this codebase (read.js:2733's SCR_CHARGING
+                // blocker); the rn2(3) gate above is faithful, the ring's
+                // enchant-adjust/explode effect inside recharge() is not.
+                chargeit = true;
+            } else {
+                dindx = 5;
+            }
+        }
         break;
     default: skip = 1; break;
     }
+    if (chargeit) return dmg;
     if (skip) return dmg;
 
     let cnt = 0;
@@ -2606,6 +2628,17 @@ export async function zapyourself(obj, ordinary) {
             await pline("Idiot!  You've shot yourself!");
         }
         break;
+
+    case SPE_FIREBALL: {
+        // C ref: zap.c:2748 — reuses explode()'s WAND_CLASS "retributive
+        // strike" path, so a Cleric/Monk/Wizard hero takes 1/5 damage and a
+        // Healer/Knight takes 1/2 (explode.js:277 already has that table).
+        await update_topl('You explode a fireball on top of yourself!');
+        const { explode } = await import('./explode.js');
+        const { EXPL_FIERY } = await import('./const.js');
+        await explode(u.ux, u.uy, 11, d(6, 6), WAND_CLASS, EXPL_FIERY);
+        break;
+    }
 
     case WAN_POLYMORPH:
     case SPE_POLYMORPH:

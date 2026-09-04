@@ -2247,10 +2247,9 @@ function dlev_in_current_branch(dlev) {
 
 // C ref: dungeon.c:2098 lev_by_name(nam) — resolve one word to a level DEPTH
 // (0 when it names nothing the hero may teleport to).  Recognized names are the
-// ones print_dungeon() shows, plus the player's own annotations.
-//
-// NOTE: js/do.js:2066's lev_by_name() is a stub returning 0; swapping its
-// callers over to this is a separate measured pass and is NOT done here.
+// ones print_dungeon() shows, plus the player's own annotations.  Called from
+// js/do.js's wiz_level_tele()/level_tele() (teleport.c:1246/1859), where a
+// return of 0 means "not a name" and the caller falls back to atoi().
 export function lev_by_name(nam) {
     let lev = 0;
     let slev = null;

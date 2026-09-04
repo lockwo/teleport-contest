@@ -2,12 +2,14 @@
 // des.map-less levels (the Gnomish Mines fill levels, the Priest quest levels,
 // dat/Bar-fila.lua, …) are built from.
 //
-// INERT BY DESIGN.  Nothing in js/ imports this module.
+// WIRED: js/levels/val_loca.js, val_goal.js, val_fila.js, val_filb.js call
+// mkmap() directly (join_map()'s own add_room()/dig_corridor() calls are now
+// LOCAL ports — mkmap_add_room()/mkmap_dig_corridor() below — since the real
+// ones in js/mklev.js are module-private and that file is off limits to edit;
+// the previous `await import('./mklev.js')` grabbed undefined and silently
+// no-opped both calls whenever join=true was requested).
 //
-// THIS FILE IS THE CANONICAL PORT; TWO REDUCED PRIVATE COPIES ARE LIVE.
-// mkmap.c was previously translated twice, under mangled names, into the
-// modules that needed it:
-//
+// TWO REDUCED PRIVATE COPIES ARE STILL LIVE ELSEWHERE (unrelated callers):
 //   js/mklev.js:2936-3221   mk_get_map, mk_init_map, mk_init_fill,
 //                           mk_pass_one, mk_pass_two, mk_pass_three,
 //                           mk_flood_fill_rm, mk_join_map_cleanup,
@@ -27,8 +29,8 @@
 //     js/sp_lev.js:3508, also module-private);
 //   * remove_room()/remove_rooms() have no port anywhere.
 //
-// A wiring pass must REPLACE those copies one call site at a time under
-// measurement, not add a second caller
+// A further wiring pass could REPLACE those copies one call site at a time
+// under measurement, not add a second caller
 // ([[duplicate-reimplementation-shadows-faithful-port]]).
 //
 // litstate_rnd() and flood_fill_rm() are mkmap.c's own functions and are
@@ -39,9 +41,10 @@ import { game } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, depth } from './hacklib.js';
 import { somexy } from './mkroom.js';
+import { BOULDER, mksobj_at } from './mkobj.js';
 import {
     COLNO, ROWNO, NO_ROOM, SHARED, ROOMOFFSET, MAXNROFROOMS, OROOM,
-    SDOOR, TREE, LAVAPOOL, ICE, ICED_POOL, ICED_MOAT,
+    SDOOR, TREE, LAVAPOOL, ICE, ICED_POOL, ICED_MOAT, CORR, SCORR,
     IS_ROOM, IS_WALL, IS_DOOR, IS_OBSTRUCTED,
 } from './const.js';
 
@@ -299,6 +302,117 @@ export function join_map_cleanup() {
     lev.subrooms[lev.nsubroom] = { ...(lev.subrooms[lev.nsubroom] || {}), hx: -1 };
 }
 
+// C ref: mklev.c add_room(), reached from join_map() ONLY with special=TRUE.
+// do_room_or_subroom()'s `if (!special) {...}` block (terrain/wall writes,
+// corner typs) is therefore dead for this caller — flood_fill_rm() already
+// painted the room's cells fg_typ and stamped their roomno.  What's left is
+// pure bookkeeping: the edge clamps, the lit-loop, and the mkroom fields.  No
+// RNG either way.
+function mkmap_add_room(lowx, lowy, hix, hiy, lit) {
+    const lev = game.level;
+    if (!lowx) lowx++;
+    if (!lowy) lowy++;
+    if (hix >= COLNO - 1) hix = COLNO - 2;
+    if (hiy >= ROWNO - 1) hiy = ROWNO - 2;
+    if (lit) {
+        for (let x = lowx - 1; x <= hix + 1; x++)
+            for (let y = Math.max(lowy - 1, 0); y <= hiy + 1; y++) {
+                const loc = at(x, y);
+                if (loc) loc.lit = true;
+            }
+    }
+    const croom = {
+        lx: lowx, ly: lowy, hx: hix, hy: hiy,
+        rtype: OROOM, rlit: lit ? 1 : 0,
+        doorct: 0, fdoor: lev.doorindex,
+        irregular: false, needjoining: false,
+        nsubrooms: 0, sbrooms: [],
+        roomnoidx: lev.nroom, needfill: 0,
+    };
+    lev.rooms[lev.nroom] = croom;
+    lev.nroom++;
+    if (lev.nroom < MAXNROFROOMS) lev.rooms[lev.nroom] = { hx: -1 };
+    return croom;
+}
+
+// C ref: mklev.c maybe_sdoor() — only reachable from dig_corridor() below when
+// ftyp === CORR, which join_map() never passes (fg_typ is always a room-like
+// fill), so this is dead for every caller in js/levels/ today; ported anyway
+// since dig_corridor() is transcribed faithfully.
+function mkmap_maybe_sdoor(chance) {
+    const d = depth(game.u?.uz);
+    return (d > 2) && !rn2(Math.max(2, chance));
+}
+
+// C ref: sp_lev.c dig_corridor() — join_map()'s only caller passes
+// npoints_out=null, nxcor=false, so the SCORR/boulder/nxcor-abort branches
+// below never fire for a mines-style level_init; transcribed in full to match
+// mklev.js:2517 (module-private there) rather than reduced.
+function mkmap_dig_corridor(org, dest, npoints_out, nxcor, ftyp, btyp) {
+    let dx = 0, dy = 0;
+    let xx = org.x, yy = org.y;
+    const tx = dest.x, ty = dest.y;
+    let npoints = 0;
+    if (npoints_out) npoints_out.v = 0;
+    if (xx <= 0 || yy <= 0 || tx <= 0 || ty <= 0
+        || xx > COLNO - 1 || tx > COLNO - 1 || yy > ROWNO - 1 || ty > ROWNO - 1)
+        return false;
+    if (tx > xx) dx = 1;
+    else if (ty > yy) dy = 1;
+    else if (tx < xx) dx = -1;
+    else dy = -1;
+    xx -= dx; yy -= dy;
+    let cct = 0;
+    while (xx !== tx || yy !== ty) {
+        if (cct++ > 500 || (nxcor && !rn2(35))) return false;
+        xx += dx; yy += dy;
+        if (xx >= COLNO - 1 || xx <= 0 || yy <= 0 || yy >= ROWNO - 1) return false;
+        const crm = at(xx, yy);
+        if (!crm) return false;
+        if (crm.typ === btyp) {
+            if (ftyp === CORR && mkmap_maybe_sdoor(100)) {
+                npoints++;
+                if (npoints_out) npoints_out.v = npoints;
+                crm.typ = SCORR;
+            } else {
+                npoints++;
+                if (npoints_out) npoints_out.v = npoints;
+                crm.typ = ftyp;
+                if (nxcor && !rn2(50)) mksobj_at(BOULDER, xx, yy, true, false);
+            }
+        } else if (crm.typ !== ftyp && crm.typ !== SCORR) {
+            return false;
+        }
+        let dix = Math.abs(xx - tx);
+        let diy = Math.abs(yy - ty);
+        if ((dix > diy) && diy && !rn2(dix - diy + 1)) dix = 0;
+        else if ((diy > dix) && dix && !rn2(diy - dix + 1)) diy = 0;
+        if (dy && dix > diy) {
+            const ddx = (xx > tx) ? -1 : 1;
+            const ncr = at(xx + ddx, yy);
+            if (ncr && (ncr.typ === btyp || ncr.typ === ftyp || ncr.typ === SCORR)) {
+                dx = ddx; dy = 0; continue;
+            }
+        } else if (dx && diy > dix) {
+            const ddy = (yy > ty) ? -1 : 1;
+            const ncr = at(xx, yy + ddy);
+            if (ncr && (ncr.typ === btyp || ncr.typ === ftyp || ncr.typ === SCORR)) {
+                dy = ddy; dx = 0; continue;
+            }
+        }
+        const straight = at(xx + dx, yy + dy);
+        if (straight && (straight.typ === btyp || straight.typ === ftyp || straight.typ === SCORR))
+            continue;
+        if (dx) { dx = 0; dy = (ty < yy) ? -1 : 1; }
+        else { dy = 0; dx = (tx < xx) ? -1 : 1; }
+        const alt = at(xx + dx, yy + dy);
+        if (alt && (alt.typ === btyp || alt.typ === ftyp || alt.typ === SCORR)) continue;
+        dy = -dy; dx = -dx;
+    }
+    if (npoints_out) npoints_out.v = npoints;
+    return true;
+}
+
 // C ref: mkmap.c:257 join_map(bg_typ, fg_typ) — flood-fill every fg region into
 // a temporary irregular room, erase regions of 3 cells or fewer, then dig
 // corridors between consecutive rooms.  RNG: the rn2(3) that decides whether to
@@ -308,13 +422,6 @@ export async function join_map(bg_typ, fg_typ) {
     let croom, croom2;      /* indices into svr.rooms[] */
     let x, y, sx, sy;
     const sm = { x: 0, y: 0 }, em = { x: 0, y: 0 };
-
-    /* C ref: mklev.c add_room() and sp_lev.c dig_corridor() — the faithful
-       ports are MODULE-PRIVATE at js/mklev.js:2278 and js/mklev.js:2496.
-       Export those two when wiring this up; do not transcribe them here. */
-    const MKLEV = await import('./mklev.js');
-    const add_room = MKLEV.add_room;
-    const dig_corridor = MKLEV.dig_corridor;
 
     /* first, use flood filling to find all of the regions that need joining */
     let goto_joinm = false;
@@ -327,11 +434,9 @@ export async function join_map(bg_typ, fg_typ) {
                 ffrm.n_loc_filled = 0;
                 flood_fill_rm(x, y, lev.nroom + ROOMOFFSET, false, false);
                 if (ffrm.n_loc_filled > 3) {
-                    if (typeof add_room === 'function') {
-                        add_room(ffrm.min_rx, ffrm.min_ry, ffrm.max_rx,
-                                 ffrm.max_ry, false, OROOM, true);
-                        lev.rooms[lev.nroom - 1].irregular = true;
-                    }
+                    mkmap_add_room(ffrm.min_rx, ffrm.min_ry, ffrm.max_rx,
+                                   ffrm.max_ry, false);
+                    lev.rooms[lev.nroom - 1].irregular = true;
                     if (lev.nroom >= (MAXNROFROOMS * 2)) {
                         goto_joinm = true;   /* goto joinm */
                         break;
@@ -370,8 +475,7 @@ export async function join_map(bg_typ, fg_typ) {
             em.y = r2.ly + Math.trunc((r2.hy - r2.ly) / 2);
         }
 
-        if (typeof dig_corridor === 'function')
-            dig_corridor(sm, em, null, false, fg_typ, bg_typ);
+        mkmap_dig_corridor(sm, em, null, false, fg_typ, bg_typ);
 
         /* choose next region to join */
         /* only increment croom if croom and croom2 are non-overlapping */

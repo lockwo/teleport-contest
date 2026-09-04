@@ -13,7 +13,7 @@ import { makedog } from './dog.js';
 import { rhack, dosearch0, monster_nearby } from './cmd.js';
 import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals } from './vision.js';
-import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON } from './calendar.js';
+import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
 import { movemon, mcalcdistress, mcalcmove, base_mmove, fmonOrder } from './mon.js';
 import { run_regions } from './region.js';
@@ -33,8 +33,9 @@ import { Unaware,
          ROLE_MALE, ROLE_FEMALE, NORMAL_SPEED, A_STR, A_WIS, A_INT, A_DEX, A_CON,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
-    Is_waterlevel, Is_airlevel } from './const.js';
+    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS } from './const.js';
 import { near_capacity } from './invent.js';
+import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { settrack } from './track.js';
 import { nh_timeout } from './timeout.js';
@@ -746,6 +747,56 @@ function youHaveSearching() {
 }
 export { youHaveSearching };
 
+// C ref: youprop.h Teleportation == (HTeleportation || ETeleportation).
+// Nothing in this port currently sets either half (no role table or item grants
+// it yet), so this always reads false today; kept faithful for moveloop_core's
+// per-turn teleport-intrinsic check below.
+function youHaveTeleportationIntrinsic() {
+    const p = game.u?.uprops;
+    return !!(p?.HTeleportation || p?.ETeleportation);
+}
+
+// C ref: youprop.h Polymorph == (HPolymorph || EPolymorph).  Same story as
+// Teleportation above: never set anywhere in this port yet.
+function youHavePolymorph() {
+    const p = game.u?.uprops;
+    return !!(p?.HPolymorph || p?.EPolymorph);
+}
+
+// C ref: youprop.h Unchanging == (HUnchanging || EUnchanging).
+function youHaveUnchanging() {
+    const p = game.u?.uprops;
+    return !!(p?.HUnchanging || p?.EUnchanging);
+}
+
+// C ref: youprop.h Breathless == (HBreathless || EBreathless).  Checked against
+// all three key spellings already used elsewhere in this port (dbridge.js,
+// do.js) since nothing here sets any of them yet.
+function youHaveBreathless() {
+    const p = game.u?.uprops;
+    return !!(p?.Breathless || p?.HBreathless || p?.EBreathless);
+}
+
+// C ref: youprop.h Half_physical_damage == (HHalf_physical_damage ||
+// EHalf_physical_damage).
+function youHaveHalfPhysicalDamage() {
+    const p = game.u?.uprops;
+    return !!(p?.Half_physical_damage || p?.HHalf_physical_damage
+               || p?.EHalf_physical_damage);
+}
+
+// C ref: youprop.h Sleepy == (HSleepy || ESleepy).  js/extcmd-handlers.js's
+// WIZINTRINSIC_PROPS table documents this port's key for Sleepy as the bare
+// 'Sleepy' field (not H/E-split); checked here too as a defensive fallback.
+function youHaveSleepy() {
+    const p = game.u?.uprops;
+    return !!(p?.Sleepy || p?.HSleepy || p?.ESleepy);
+}
+
+// C ref: monsym.h S_EEL — mons[].mlet class index for eels/sharks/kraken
+// (matches the local S_EEL copies in js/botl.js, js/monmove.js, js/sounds.js).
+const S_EEL = 57;
+
 // C ref: allmain.c u_calc_moveamt(wtcap) — gives the hero movement points for
 // the turn.  When riding and the hero moved, moveamt = mcalcmove(usteed, TRUE)
 // (rolls rn2(NORMAL_SPEED)); otherwise moveamt = youmonst.data->mmove
@@ -954,7 +1005,7 @@ export async function moveloop_turn() {
             // turns and the overexert/regen_pw encumbrance gates see 0.
             let turn_wtcap = mvl_wtcap;
             if (g.u.uinvulnerable) turn_wtcap = 0 /* UNENCUMBERED */;
-            else regen_hp(turn_wtcap);
+            else await regen_hp(turn_wtcap);
 
             // C ref: allmain.c:299-304 — "moving around while encumbered is hard
             // work": a hero above MOD_ENCUMBER who moved loses 1 HP every 30
@@ -974,6 +1025,62 @@ export async function moveloop_turn() {
             // regen_hp's rn2(100) and dosounds' rn2(200), and skipping it shifted
             // the rest of that turn and every turn after it.
             regen_pw(turn_wtcap);
+
+            // C ref: allmain.c moveloop_core():307-340 — intrinsic Teleportation
+            // and the Polymorph/lycanthropy "delayed change" timer, both under
+            // !u.uinvulnerable (prayer invulnerability suppresses these too, same
+            // as the regen_hp/regen_pw checks above).  No current session grants
+            // HTeleportation/ETeleportation, HPolymorph/EPolymorph, or a valid
+            // u.ulycn, so every rn2 draw below is unreached today (short-
+            // circuited by its guard) — kept faithful for parity with any future
+            // session that reaches one of those states.
+            if (!g.u.uinvulnerable) {
+                if (youHaveTeleportationIntrinsic() && rn2(85) === 0) {
+                    const old_ux = g.u.ux, old_uy = g.u.uy;
+                    // C ref: teleport.c tele(void) -> scrolltele((struct obj*)0).
+                    const { scrolltele } = await import('./read.js');
+                    await scrolltele(null);
+                    if (g.u.ux !== old_ux || g.u.uy !== old_uy) {
+                        // C ref: apply.c next_to_u() — FALSE only for a leashed
+                        // pet left behind.  Leashes are not modelled anywhere in
+                        // this port (do.js/dig.js/trap.js keep the same always-
+                        // true stub), so check_leash() never fires here.
+                        // C ref: allmain.c — "clear doagain keystrokes"; these
+                        // run unconditionally once the hero's position changed.
+                        if (g._cmdq_canned) g._cmdq_canned.length = 0;
+                        if (g._cmdq_repeat) g._cmdq_repeat.length = 0;
+                    }
+                }
+
+                if ((g.context.mvl_change === 1 && !youHavePolymorph())
+                    || (g.context.mvl_change === 2 && !ismnum(g.u.ulycn)))
+                    g.context.mvl_change = 0;
+
+                if (youHavePolymorph() && rn2(100) === 0) {
+                    g.context.mvl_change = 1;
+                } else if (ismnum(g.u.ulycn) && !g.u.Upolyd
+                           && rn2(80 - 20 * (night() ? 1 : 0)) === 0) {
+                    g.context.mvl_change = 2;
+                }
+
+                if (g.context.mvl_change && !youHaveUnchanging()) {
+                    if ((g.multi ?? 0) >= 0) {
+                        const { stop_occupation } = await import('./hack.js');
+                        await stop_occupation();
+                        if (g.context.mvl_change === 1) {
+                            const { polyself } = await import('./polyself.js');
+                            await polyself(POLY_NOFLAGS);
+                        }
+                        // else: C ref: polyself.c you_were() — involuntary
+                        // lycanthrope transformation.  DEFERRED: u.ulycn is
+                        // never set to a valid mnum anywhere in this port
+                        // (js/mhitm.js:1646 you_were_mm() documents the same
+                        // gap), so ismnum(g.u.ulycn) above is always false and
+                        // this arm cannot be reached yet.
+                        g.context.mvl_change = 0;
+                    }
+                }
+            }
 
             // C ref: allmain.c moveloop_core() — intrinsic autosearch.  Runs
             // every turn before dosounds when the hero has Searching (and the
@@ -1225,7 +1332,7 @@ function interrupt_multi() {
     }
 }
 
-function regen_hp(wtcap = 0) {
+async function regen_hp(wtcap = 0) {
     const u = game.u;
     if (!u) return;
     // C ref: allmain.c:622 — encumbrance_ok = (wtcap < MOD_ENCUMBER ||
@@ -1238,10 +1345,23 @@ function regen_hp(wtcap = 0) {
     // polymorphed hero (whose u.uhp is still the pre-poly injured value)
     // keeps drawing the human rn2(100) every turn, desyncing the stream.
     if (u.Upolyd) {
-        // S_EEL-out-of-water damage (rn2(u.mh) > rn2(8)) needs a poly into an
-        // eel, which no covered session reaches; u.mh < 1 -> rehumanize() is
-        // handled at the damage site.  Both are RNG-inert here.
-        if (u.mh < u.mhmax) {
+        // C ref: allmain.c:632 — "shouldn't happen", but if a polymorphed
+        // hero's mh already dropped to 0 this reverts them to human form.
+        if (u.mh < 1) {
+            const { rehumanize } = await import('./polyself.js');
+            await rehumanize();
+        } else if (u.data?.mcls === S_EEL && !is_pool(u.ux, u.uy)
+                   && !Is_waterlevel(u.uz) && !youHaveBreathless()) {
+            // C ref: allmain.c:637 — an eel stranded out of water loses hp,
+            // similar to monster eels; the rate of loss slows as hp drops.
+            // No current session polymorphs the hero into an eel, so this arm
+            // is unreached, but the guard order (mh>1, !Regeneration, the two
+            // rn2 draws, then the Half_physical_damage odd-turn gate) is kept
+            // exact for when it is.
+            if (u.mh > 1 && !u_can_regen() && rn2(u.mh) > rn2(8)
+                && (!youHaveHalfPhysicalDamage() || !((game.moves || 0) % 2)))
+                u.mh -= 1;
+        } else if (u.mh < u.mhmax) {
             if (u_can_regen() || (encumbrance_ok && !((game.moves || 0) % 20))) {
                 u.mh += 1;
                 if (u.mh === u.mhmax) interrupt_multi();
@@ -1254,9 +1374,12 @@ function regen_hp(wtcap = 0) {
     const con = u.acurr?.a?.[A_CON] ?? 12;
     let heal = ((u.ulevel || 1) + con) > rn2(100) ? 1 : 0;
     // C ref: U_CAN_REGEN() == Regeneration — a worn ring of regeneration grants
-    // an extra +1 heal each turn (so the hero recovers every turn).  Sleepy is
-    // never set for the starter hero.
+    // an extra +1 heal each turn (so the hero recovers every turn).
     if (u_can_regen()) heal += 1;
+    // C ref: allmain.c:663 — a Sleepy hero who is asleep heals one more point
+    // on top of the Regeneration bonus above; never set for the starter
+    // sessions, so this is a documented no-op today.
+    if (youHaveSleepy() && u.usleep) heal += 1;
     if (heal) {
         u.uhp += heal;
         if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;

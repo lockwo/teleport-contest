@@ -62,7 +62,7 @@ import { mattk_of, AT_NONE, AT_CLAW, AT_BITE, AT_KICK, AT_STNG, AT_BUTT, AT_TUCH
          AD_ENCH } from './monattk_data.js';
 import { mkcorpstat, mkobj, mksobj, CORPSE, FIGURINE, place_object, WEAPON_CLASS,
          TOOL_CLASS, GEM_CLASS, SPBOOK_CLASS, FOOD_CLASS, objects, COIN_CLASS,
-         STRANGE_OBJECT } from './mkobj.js';
+         STRANGE_OBJECT, ARMOR_CLASS } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { mon_nocorpse, undead_to_corpse, name_to_pmidx } from './makemon.js';
 import { more_experienced, newexplevel } from './exper.js';
@@ -1026,6 +1026,7 @@ async function hitum(mon) {
     const u = game.u;
     const x = u.ux + u.dx, y = u.uy + u.dy;
     const secondwep = u.twoweap ? game.uswapwep : null;
+    const wepbefore = game.uwep;
     // C ref: uhitm.c:775 — `gt.twohits = (uwep ? u.twoweap : double_punch())`.
     // The bare-handed arm was hardcoded FALSE; double_punch() rolls rn2(5) for
     // any hero whose bare-handed/martial-arts skill is above Basic, and on
@@ -1043,7 +1044,8 @@ async function hitum(mon) {
     mhit = kh.mhit;
     // passive(mon, uwep, mhit, malive, AT_WEAP): the defender's passive counter
     // fires after every swing (even a miss) while the monster is alive.
-    await passive(mon, game.uwep, mhit, malive, AT_WEAP);
+    await passive(mon, game.uwep, mhit, malive, AT_WEAP,
+                  !!(wepbefore && !game.uwep));
 
     // ── second swing (uswapwep) for two-weapon combat ──
     if (twohits && malive && m_at(x, y) === mon) {
@@ -1056,7 +1058,8 @@ async function hitum(mon) {
         malive = kh.malive;
         mhit = kh.mhit;
         // second passive counter-attack only occurs if the second swing hit.
-        if (mhit) await passive(mon, secondwep, mhit, malive, AT_WEAP);
+        if (mhit) await passive(mon, secondwep, mhit, malive, AT_WEAP,
+                                 !!(secondwep && !game.uswapwep));
     }
     return malive;
 }
@@ -1376,7 +1379,43 @@ export async function abuse_dog(mtmp) {
 // and floating eye (d(m_lev+1, damd)) has a real one, and those are among the
 // first monsters any hero meets: each swing at a blue jelly draws five rolls
 // here that this port was not making.
-export async function passive(mon, weapon, mhit, malive, aatyp) {
+
+// C ref: mhitm.c:1475 attk_protection(aatyp) — the worn slot that blocks
+// contact petrification for that attack form; ~0L ("always safe") is -1 here.
+// js/mhitm.js keeps its own copy (attk_protection_mm) for the mon-vs-mon path.
+function attk_protection_uh(aatyp) {
+    switch (aatyp) {
+    case AT_NONE: case AT_SPIT: case AT_EXPL: case AT_BOOM:
+    case AT_GAZE: case AT_BREA: case AT_MAGC:
+        return -1;
+    case AT_CLAW: case AT_TUCH: case AT_WEAP:
+        return W_ARMG;
+    case AT_KICK:
+        return W_ARMF;
+    case AT_BUTT:
+        return W_ARMH;
+    case AT_HUGS:
+        return W_ARMC | W_ARMG;
+    default:
+        return 0;
+    }
+}
+
+const PM_STONE_GOLEM_UH = 257; // pmdat.h ordering; matches zap.js's PM_STONE_GOLEM
+
+// C ref: mondata.h poly_when_stoned(ptr) — a golem hero turns into a stone
+// golem instead of dying to a petrification attack.
+function poly_when_stoned_uh(ptr) {
+    return ptr?.mcls === S_GOLEM_U && ptr?.name !== 'stone golem';
+}
+
+async function try_poly_when_stoned_uh(ptr) {
+    if (!poly_when_stoned_uh(ptr)) return false;
+    const { polymon } = await import('./polyself.js');
+    return !!(await polymon(PM_STONE_GOLEM_UH));
+}
+
+export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroyed = false) {
     const ptr = mon.data;
     const attacks = mattk_of(ptr);
     const NATTK = 6;
@@ -1421,6 +1460,33 @@ export async function passive(mon, weapon, mhit, malive, aatyp) {
         if (mhit && !mon.mcan && weapon && obj_attack)
             await passive_obj(mon, weapon, slot);
         break;
+    case AD_STON: {
+        // C ref: uhitm.c:5934 — a successful bare(-enough)-handed hit on a
+        // cockatrice-like passive petrifies the hero unless the attack form's
+        // protective slot is worn (or, for AT_MAGC, gloves specifically).
+        if (mhit) {
+            let protector = attk_protection_uh(aatyp);
+            if (aatyp === AT_MAGC) protector = W_ARMG;
+            const unprotected =
+                protector === 0
+                || (protector === W_ARMG && !game.uarmg && !game.uwep
+                    && !wep_was_destroyed)
+                || (protector === W_ARMF && !game.uarmf)
+                || (protector === W_ARMH && !game.uarmh)
+                || (protector === (W_ARMC | W_ARMG)
+                    && (!game.uarmc || !game.uarmg));
+            // C: `!Stone_resistance && !(poly_when_stoned(...) && polymon(...))`
+            // — Stone_resistance short-circuits BEFORE polymon() is ever
+            // reached, so a stone-resistant golem-hero draws no RNG here.
+            if (unprotected && !Stone_resistance()
+                && !(await try_poly_when_stoned_uh(game.youmonst?.data))) {
+                const { done_in_by } = await import('./end.js');
+                await done_in_by(mon, 8 /* STONING */);
+                return;
+            }
+        }
+        break;
+    }
     case AD_MAGM:
         // "wrath of gods for attacking Oracle"; no Antimagic hero here.
         {
@@ -1543,6 +1609,20 @@ async function passive_obj(mon, obj, mattk) {
         break;
     case AD_CORR:
         if (!mon.mcan) await erode_obj_local(obj, ERODE_CORRODE);
+        break;
+    case AD_ENCH:
+        if (!mon.mcan) {
+            const { drain_item } = await import('./zap.js');
+            const drained = await drain_item(obj, true);
+            const carried = obj.where === 'invent' || obj.where === 3 /* OBJ_INVENT */;
+            if (drained && carried && (obj.known || obj.oclass === ARMOR_CLASS)) {
+                const { pline } = await import('./display.js');
+                const { cxname_singular, makeplural } = await import('./invent.js');
+                const base = cxname_singular(obj);
+                const nm = is_plural(obj) ? makeplural(base) : base;
+                await pline(`Your ${nm} ${otense(obj, 'seem')} less effective.`);
+            }
+        }
         break;
     default:
         break;
@@ -2589,7 +2669,8 @@ export async function hitum_cleave(target, uattk) {
         game.bhitpos = { x: tx, y: ty };   /* normally set by do_attack() */
         game.notonhead = (mtmp.mx !== tx || mtmp.my !== ty);
         await known_hitum(mtmp, game.uwep, mhit, dieroll);
-        await passive(mtmp, game.uwep, mhit, !DEADMONSTER(mtmp), AT_WEAP);
+        await passive(mtmp, game.uwep, mhit, !DEADMONSTER(mtmp), AT_WEAP,
+                      !game.uwep);
 
         /* stop if the weapon is gone or a passive counter-attack paralysed or
            killed (then life-saved) the hero */

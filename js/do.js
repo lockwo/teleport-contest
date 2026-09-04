@@ -27,7 +27,7 @@ import { A_STR } from './const.js';
 import { rn2, rn1, rnd, rnl, d } from './rng.js';
 import { print_dungeon, builds_up, In_hell, Is_valley, surface,
          find_hell, dunlevs_in_dungeon, single_level_branch, level_difficulty_c,
-         at_dgn_entrance, Is_bigroom } from './dungeon.js';
+         at_dgn_entrance, Is_bigroom, lev_by_name } from './dungeon.js';
 
 // insight.c record_achievement(), reached lazily: insight.js -> u_init.js ->
 // mkobj.js is a static cycle this file must not join.
@@ -2069,14 +2069,6 @@ async function level_tele_destination(newlev) {
         return null;
     }
     return newlevel;
-}
-
-// C ref: dungeon.c lev_by_name — resolve a level *name* ("mines end", branch
-// names, annotations) to a logical depth.  Named-level lookup isn't exercised
-// by the recorded scroll teleports (the destination is a number or the confused
-// "Oops..." random path), so this returns 0 (not a name).
-function lev_by_name(_nam) {
-    return 0;
 }
 
 // C ref: teleport.c random_teleport_level() — pick a random destination depth

@@ -10,12 +10,16 @@ import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { init_rect, rnd_rect, get_rect, split_rects, within_bounded_area } from './rect.js';
 import { depth as depth_of_level, distmin } from './hacklib.js';
-import { set_mktrap_victim, filler_region, lspo_map, lspo_region, fill_special_room, themeroom_fill, themeroom_map_contents, makemaz_bigroom, makemaz_bar_strt, makemaz_bar_loca, makemaz_bar_goal, makemaz_arc_strt, makemaz_arc_loca, makemaz_arc_goal, makemaz_pri_strt, makemaz_pri_loca, makemaz_pri_goal, makemaz_tower1, makemaz_tower2, makemaz_tower3, makemaz_soko1, makemaz_soko_upper, makemaz_valley, makemaz_sanctum, makemaz_minetown2, makemaz_minetown3, makemaz_minetown5, makemaz_minetown7, makemaz_minend1, makemaz_minend2, makemaz_minend3, makemaz_medusa1, makemaz_medusa2, makemaz_medusa3, makemaz_medusa4, makemaz_asmodeus, makemaz_baalz, makemaz_juiblex, makemaz_orcus, makemaz_wizard1, makemaz_wizard2, makemaz_wizard3, makemaz_fakewiz1, makemaz_fakewiz2, makemaz_air, makemaz_earth, makemaz_fire, makemaz_water, makemaz_astral, makemaz_cav_strt, makemaz_hea_strt, makemaz_kni_strt, makemaz_kni_goal, makemaz_mon_strt, makemaz_ran_strt, makemaz_rog_strt, makemaz_sam_strt, makemaz_tou_strt, makemaz_val_strt, makemaz_wiz_loca, makemaz_wiz_strt, shuffle,
+import { set_mktrap_victim, filler_region, lspo_map, lspo_region, fill_special_room, themeroom_fill, themeroom_map_contents, makemaz_bigroom, makemaz_bar_strt, makemaz_bar_loca, makemaz_bar_goal, makemaz_arc_strt, makemaz_arc_loca, makemaz_arc_goal, makemaz_pri_strt, makemaz_pri_loca, makemaz_pri_goal, makemaz_tower1, makemaz_tower2, makemaz_tower3, makemaz_soko1, makemaz_soko_upper, makemaz_valley, makemaz_sanctum, makemaz_minetown2, makemaz_minetown3, makemaz_minetown5, makemaz_minetown7, makemaz_minend1, makemaz_minend2, makemaz_minend3, makemaz_medusa1, makemaz_medusa2, makemaz_medusa3, makemaz_medusa4, makemaz_asmodeus, makemaz_baalz, makemaz_juiblex, makemaz_orcus, makemaz_wizard1, makemaz_wizard2, makemaz_wizard3, makemaz_fakewiz1, makemaz_fakewiz2, makemaz_air, makemaz_earth, makemaz_fire, makemaz_water, makemaz_astral, makemaz_cav_strt, makemaz_cav_loca, makemaz_cav_goal, makemaz_cav_fila, makemaz_cav_filb, makemaz_hea_strt, makemaz_hea_loca, makemaz_hea_goal, makemaz_hea_fila, makemaz_hea_filb, makemaz_kni_strt, makemaz_kni_goal, makemaz_kni_loca, makemaz_kni_fila, makemaz_kni_filb, makemaz_mon_strt, makemaz_mon_loca, makemaz_mon_goal, makemaz_ran_strt, makemaz_ran_loca, makemaz_ran_goal, makemaz_ran_fila, makemaz_ran_filb, makemaz_rog_strt, makemaz_rog_loca, makemaz_rog_goal, makemaz_sam_strt, makemaz_sam_loca, makemaz_sam_goal, makemaz_sam_fila, makemaz_sam_filb, makemaz_tou_strt, makemaz_tou_loca, makemaz_tou_goal, makemaz_tou_fila, makemaz_tou_filb, makemaz_val_strt, makemaz_val_loca, makemaz_val_goal, makemaz_val_fila, makemaz_val_filb, makemaz_wiz_loca, makemaz_wiz_goal, makemaz_wiz_strt, shuffle,
          mapfrag_fromstr, mapfrag_match, selection_match, set_levltyp_lit,
          splev_map_origin, reset_xystart_size, flip_level, bigrm_get_level_extends, set_door_orientation,
          okdoor, bydoor, create_door, lspo_door_relative,
          is_ok_location, pm_to_humidity, LOC_DRY,
          run_themeroom_postprocess,
+         q_absx, q_absy, quest_floodfill_match, splev_object_at, splev_feature,
+         splev_door_at, vly_altar, vly_region, splev_region_lit,
+         splev_create_monster, splev_link_doors_rooms, remove_boundary_syms,
+         bigrm_get_location_dry, lspo_replace_terrain, bigrm_load_map,
          SET_LIT_NOCHANGE } from './sp_lev.js';
 import { create_maze, walkfrom, mz, reset_maze_bounds, mkportal } from './mkmaze.js';
 import {
@@ -53,7 +57,9 @@ import {
     SCR_ENCHANT_ARMOR, SCR_CONFUSE_MONSTER, SCR_SCARE_MONSTER,
     WAN_DIGGING, SPE_HEALING, LARGE_BOX, CHEST, FOOD_RATION,
     CRAM_RATION, LEMBAS_WAFER, WAND_CLASS, SPBOOK_CLASS,
+    WAX_CANDLE, TALLOW_CANDLE, OIL_LAMP,
     mkobj, mkobj_at, mksobj, mksobj_at, mkcorpstat, mkgold, curse,
+    unbless, uncurse,
     place_object, weight, objects, add_to_container,
     obj_extract_self_mkobj, dealloc_oextra, GEM_CLASS as GEM_CLASS_MK,
 } from './mkobj.js';
@@ -80,7 +86,7 @@ import {
     WM_T_LONG, WM_T_BL, WM_T_BR,
     WM_C_OUTER, WM_C_INNER,
     WM_X_TL, WM_X_TR, WM_X_BL, WM_X_BR, WM_X_TLBR, WM_X_BLTR,
-    A_LAWFUL, A_NONE, Align2amask, AM_SHRINE,
+    A_LAWFUL, A_NONE, Align2amask, AM_SHRINE, AM_NONE,
     LR_UPTELE, LR_DOWNTELE, LR_TELE, LR_UPSTAIR, LR_DOWNSTAIR,
     LR_PORTAL, LR_BRANCH, LA_UP, LA_DOWN,
     In_endgame, BURN,
@@ -514,6 +520,32 @@ async function makelevel() {
         await makemaz_kni_goal();
         return;
     }
+    // C ref: mklev.c:1269 makemaz(slev->proto) — the remaining role-quest
+    // "locate"/"goal" levels (Caveman, Healer, Knight, Monk, Ranger, Rogue,
+    // Samurai, Tourist, Valkyrie, and Wizard's goal).  None of these .lua
+    // files registers a "branch" levregion (only the *-strt files do;
+    // Rog-goal registers its own stair levregion and places it internally at
+    // the end of its own builder), so there is no quest_place_branch()
+    // finalize here; each builder already ends with its own
+    // wallification/flip.
+    {
+        const QUEST_LOCA_GOAL = {
+            'Cav-loca': makemaz_cav_loca, 'Cav-goal': makemaz_cav_goal,
+            'Hea-loca': makemaz_hea_loca, 'Hea-goal': makemaz_hea_goal,
+            'Kni-loca': makemaz_kni_loca,
+            'Mon-loca': makemaz_mon_loca, 'Mon-goal': makemaz_mon_goal,
+            'Ran-loca': makemaz_ran_loca, 'Ran-goal': makemaz_ran_goal,
+            'Rog-loca': makemaz_rog_loca, 'Rog-goal': makemaz_rog_goal,
+            'Sam-loca': makemaz_sam_loca, 'Sam-goal': makemaz_sam_goal,
+            'Tou-loca': makemaz_tou_loca, 'Tou-goal': makemaz_tou_goal,
+            'Val-loca': makemaz_val_loca, 'Val-goal': makemaz_val_goal,
+            'Wiz-goal': makemaz_wiz_goal,
+        };
+        if (slev && QUEST_LOCA_GOAL[slev.proto]) {
+            await QUEST_LOCA_GOAL[slev.proto]();
+            return;
+        }
+    }
     // C ref: mklev.c:1269 makemaz(slev->proto) — the Wizard quest "locate"
     // level (Wiz-loca.lua), a moated ring-fort on a cloudy plain.  Registers no
     // branch levregion, so no quest_place_branch() finalize.
@@ -658,13 +690,16 @@ async function makelevel() {
     }
 
     // C ref: mklev.c:1269 makemaz(slev->proto) — Mine Town.  mkmaze.c:1136:
-    // an s_level carrying rndlevs picks its script with rnd(sp->rndlevs), so
-    // the draw is made for EVERY variant even though only "-5" is ported; a
-    // different roll falls through to the ordinary generator as before.
+    // an s_level carrying rndlevs picks its script with rnd(sp->rndlevs); all
+    // seven variants (1-7) are ported, so this always dispatches.
     // Mine Town registers no branch levregion (the Mines branch sits on the
     // main-dungeon side), so fixup_special() places nothing here.
     if (slev && slev.proto === 'minetn') {
         const variant = rnd(slev.rndlevs || 1);   // mkmaze.c:1136
+        if (variant === 1) {
+            await makemaz_minetown1();   // sets its own wall state after flip
+            return;
+        }
         if (variant === 5) {
             await makemaz_minetown5();
             set_wall_state();
@@ -672,6 +707,10 @@ async function makelevel() {
         }
         if (variant === 4) {
             await makemaz_minetown4();   // sets its own wall state after flip
+            return;
+        }
+        if (variant === 6) {
+            await makemaz_minetown6();   // sets its own wall state after flip
             return;
         }
         // minetn-2/3/7 set their own wall state after the flip; they return
@@ -733,15 +772,27 @@ async function makelevel() {
     // (dlevel < the locate level's) or "{filecode}-filb" (>=).  This is an
     // else-if arm in C, so when it fires the below-Medusa rn2(5) check (and
     // the regular generator) are NOT reached at all — no RNG is drawn for
-    // them.  Only the Barbarian's filler levels (Bar-fila/Bar-filb) are
-    // ported; every other role falls through to the regular generator
-    // exactly as before this change (unmodelled, not a regression).
+    // them.  Barbarian, Caveman, Healer, Knight, Ranger, Samurai, Tourist and
+    // Valkyrie each have their own dedicated builder (their .lua fillers are
+    // NOT the generic six-des.room() shape); every other role (Archeologist,
+    // Monk, Priest, Rogue, Wizard) uses the generic QUEST_FILLERS data table
+    // below via makemaz_quest_fill().
     if (!slev && In_quest(g.u?.uz)) {
         const fc = roles[g.initrole]?.filecode;
         const ql = g.qlocate_level;
-        if (fc === 'Bar' && ql) {
-            if (g.u.uz.dlevel < ql.dlevel) await makemaz_bar_fila();
-            else await makemaz_bar_filb();
+        const DEDICATED_FILLERS = {
+            Bar: [makemaz_bar_fila, makemaz_bar_filb],
+            Cav: [makemaz_cav_fila, makemaz_cav_filb],
+            Hea: [makemaz_hea_fila, makemaz_hea_filb],
+            Kni: [makemaz_kni_fila, makemaz_kni_filb],
+            Ran: [makemaz_ran_fila, makemaz_ran_filb],
+            Sam: [makemaz_sam_fila, makemaz_sam_filb],
+            Tou: [makemaz_tou_fila, makemaz_tou_filb],
+            Val: [makemaz_val_fila, makemaz_val_filb],
+        };
+        if (DEDICATED_FILLERS[fc] && ql) {
+            const [fila, filb] = DEDICATED_FILLERS[fc];
+            await (g.u.uz.dlevel < ql.dlevel ? fila : filb)();
             return;
         }
         // Every other ported role's filler is the six-des.room() program.
@@ -3838,6 +3889,427 @@ export const _minetn_room_api = {
     oracle_trap, oracle_induced_align, mk_find_montype, mk_mines_race_suppress,
     mt4_place_monster, mt4_altar, mt4_flip_subrooms,
 };
+
+// ============================================================
+// dat/minetn-1.lua — Mine Town variant 1, "Orcish Town".  Unlike minetn-2/3/4/7
+// (a des.room tree) or minetn-5 (a des.map over a plain solidfill), variants
+// 1 and 6 run des.level_init({style="mines", ...}) themselves: the WHOLE level
+// is first generated as a random smoothed/joined mines cavern (mk_mkmap, the
+// same engine makemaz_minefill() above already drives), and only THEN does a
+// des.map() stamp a fixed town layout over a sub-rectangle of it — every cell
+// the fixed map does NOT cover (there are none inside minetn-1's box; some ring
+// minetn-6's, via the 'x' "leave alone" char) keeps the random cavern terrain.
+//
+// C ref: dat/minetn-1.lua, mkmaze.c:1136, mkmap.c mkmap(), sp_lev.c
+// create_object()/create_monster()/lspo_replace_terrain()/place_lregion().
+// ============================================================
+
+// obj.h otyps not exported by mkobj.js's named-const list (verified against
+// its objects[] table rows).
+const WAN_STRIKING = 417, WAN_MAGIC_MISSILE = 429;
+
+const MINETN1_MAP = [
+    '.....................................',
+    '.----------------F------------------.',
+    '.|.................................|.',
+    '.|.-------------......------------.|.',
+    '.|.|...|...|...|......|..|...|...|.|.',
+    '.F.|...|...|...|......|..|...|...|.|.',
+    '.|.|...|...|...|......|..|...|...|.F.',
+    '.|.|...|...|----......------------.|.',
+    '.|.---------.......................|.',
+    '.|.................................|.',
+    '.|.---------.....--...--...........|.',
+    '.|.|...|...|----.|.....|.---------.|.',
+    '.|.|...|...|...|.|.....|.|..|....|.|.',
+    '.|.|...|...|...|.|.....|.|..|....|.|.',
+    '.|.|...|...|...|.|.....|.|..|....|.|.',
+    '.|.-------------.-------.---------.|.',
+    '.|.................................F.',
+    '.-----------F------------F----------.',
+    '.....................................',
+].join('\n');
+
+// C ref: sp_lev.c lspo_teleport_region() -> levregion_add(), dir defaults to
+// "both" (LR_TELE), which fixup_special() copies into BOTH svu.updest and
+// svd.dndest.  `region` is level-absolute (region_islev=1); `exclude` has no
+// exclude_islev so it goes through get_location() (the des.map() origin).
+function mtown1_teleport_region(lx, ly, hx, hy, ex1, ey1, ex2, ey2) {
+    const rgn = { lx, ly, hx, hy,
+                  nlx: q_absx(ex1), nly: q_absy(ey1),
+                  nhx: q_absx(ex2), nhy: q_absy(ey2) };
+    game.updest = { ...rgn };
+    game.dndest = { ...rgn };
+}
+
+// C ref: sp_lev.c lspo_levregion() -> levregion_add() for a "stair-up"/
+// "stair-down" region -> fixup_special() -> place_lregion()/put_lregion_here().
+// castle_place_stair_lregion() (below) already implements exactly this random
+// placement loop for castle.lua's own stair levregions; reused verbatim.
+function mtown_stair_lregion(rtype, lx, ly, hx, hy, ex1, ey1, ex2, ey2) {
+    castle_place_stair_lregion({
+        rtype, lx, ly, hx, hy,
+        nlx: q_absx(ex1), nly: q_absy(ey1), nhx: q_absx(ex2), nhy: q_absy(ey2),
+    });
+}
+
+// C ref: sp_lev.c create_object() override tail (sp_lev.c:2230-2296) — spe,
+// buc (only the "uncursed" case these scripts use: unbless+uncurse, no RNG)
+// and quantity are all applied to the object mksobj_at already built, AFTER
+// its own internal rolls (mksobj's owt recompute at the very end means a
+// quantity override needs its own weight() recompute too).  Map-relative.
+function mtown1_object(otyp, mx, my, { spe = null, uncursedBuc = false,
+                                       quan = null } = {}) {
+    const otmp = mksobj_at(otyp, q_absx(mx), q_absy(my), true, true);
+    if (spe != null) otmp.spe = spe;
+    if (uncursedBuc) { unbless(otmp); uncurse(otmp); }
+    if (quan != null) { otmp.quan = quan; otmp.owt = weight(otmp); }
+    return otmp;
+}
+
+// des.object("boulder"/"rock") with no coordinate: random DRY spot inside the
+// last des.map()'s own box (bigrm_get_location_dry, not the whole level).
+function mtown1_object_random(otyp) {
+    const c = bigrm_get_location_dry();
+    return mksobj_at(otyp, c.x, c.y, true, true);
+}
+
+// des.object({id="corpse", montype=...}) with no coordinate.
+function mtown1_corpse_random(montype) {
+    const c = bigrm_get_location_dry();
+    const otmp = mksobj_at(CORPSE, c.x, c.y, true, true);
+    const pmidx = name_to_pmidx(montype);
+    if (pmidx >= 0) set_corpsenm(otmp, pmidx);
+    return otmp;
+}
+
+// selection.area(x1,y1,x2,y2) as an absolute-coordinate point Set, matching
+// quest_floodfill_match()'s own key format so the two can intersect.
+function mtown1_area_abs(x1, y1, x2, y2) {
+    const ax1 = q_absx(x1), ay1 = q_absy(y1);
+    const ax2 = q_absx(x2), ay2 = q_absy(y2);
+    const s = new Set();
+    for (let x = ax1; x <= ax2; x++)
+        for (let y = ay1; y <= ay2; y++) s.add(x + ',' + y);
+    return s;
+}
+function mtown1_intersect(a, b) {
+    const s = new Set();
+    for (const k of a) if (b.has(k)) s.add(k);
+    return s;
+}
+
+// C ref: selvar.c selection_rndcoord(sel, removeit) — quest_rndcoord() (in
+// sp_lev.js) always removes; minetn-1 needs both (`inside:rndcoord(1)` and
+// `near_temple:rndcoord(0)`), so this is the same bounding-box scan with the
+// removal made conditional.
+function mtown1_rndcoord(sel, removeit) {
+    const pts = [];
+    let lx = COLNO, hx = -1, ly = ROWNO, hy = -1;
+    for (const k of sel) {
+        const [x, y] = k.split(',').map(Number);
+        if (x < lx) lx = x; if (x > hx) hx = x;
+        if (y < ly) ly = y; if (y > hy) hy = y;
+    }
+    for (let x = lx; x <= hx; x++)
+        for (let y = ly; y <= hy; y++)
+            if (sel.has(x + ',' + y)) pts.push([x, y]);
+    if (!pts.length) return null;
+    const [px, py] = pts[rn2(pts.length)];
+    if (removeit) sel.delete(px + ',' + py);
+    return { x: px, y: py };
+}
+
+// C ref: sp_lev.c create_monster() for a named monster at an explicit (already
+// level-absolute) coordinate — the `inside`/`near_temple` selections are built
+// from quest_floodfill_match()'s absolute keys, so this must NOT re-apply the
+// des.map() origin offset the way splev_create_monster()'s mx/my branch does.
+function mtown1_monster_abs(name, x, y, peaceful, levAdj) {
+    const { data, mgend } = mk_find_montype(name);
+    oracle_induced_align();
+    const data2 = mk_mines_race_suppress(data);
+    const c = { x, y };
+    mk_enexto_if_occupied(c, data2);
+    const mtmp = make_monster(data2, c.x, c.y, 0);
+    if (mtmp) mtmp.female = mgend;
+    if (mtmp && peaceful != null) mtmp.mpeaceful = !!peaceful;
+    if (mtmp && levAdj) {                              // sp_lev.c:2168-2175
+        if (mtmp.m_lev + levAdj > 49) mtmp.m_lev = 49;
+        else if (mtmp.m_lev + levAdj < 0) mtmp.m_lev = 0;
+        else mtmp.m_lev += levAdj;
+    }
+    return mtmp;
+}
+
+// Entry point.  C ref: makemaz("minetn") -> load_special("minetn-1.lua").
+async function makemaz_minetown1() {
+    const g = game;
+    // des.level_flags("mazelevel") — overwritten to FALSE by mk_mkmap below
+    // (walled&&joined always sets is_maze_lev=false, mkmap.c:481); no RNG.
+    if (g.level?.flags) g.level.flags.is_maze_lev = true;
+
+    // des.level_init({style="mines", fg=".", bg=" ", smoothed=true,
+    // joined=true, walled=true}) — lit unset -> BOOL_RANDOM -> one rn2(2)
+    // (sp_lev.c:3005-3006), then mkmap() (mk_mkmap always smooths+joins,
+    // matching every one of its other callers).
+    mk_mkmap(!!rn2(2), STONE, ROOM, true);
+
+    // des.map([[...]]) — 37x19, bare string -> SPLEV_CENTER, lit=FALSE.
+    bigrm_load_map(MINETN1_MAP, false);
+
+    // "used to explicitly exclude the town, but that meant you couldn't
+    // teleport out as well as not in" — hero can leave, never arrive inside.
+    mtown1_teleport_region(1, 1, 75, 19, 1, 0, 35, 21);
+    splev_region_lit(1, 1, 35, 17, 1);
+
+    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 0, 1, 36, 17);
+    mtown_stair_lregion(LR_DOWNSTAIR, 57, 3, 75, 19, 0, 1, 36, 17);
+
+    splev_feature(16, 9, FOUNTAIN);
+    splev_feature(25, 9, FOUNTAIN);
+    // "the altar's defiled ... never coaligned" — no des.region(type="temple")
+    // wraps it, so vly_altar's TEMPLE_RTYPE check bails before priestini().
+    vly_altar(20, 13, AM_NONE, 1);
+
+    for (const [dx, dy] of [[5, 8], [9, 8], [13, 7], [22, 5], [27, 7], [31, 7],
+                            [5, 10], [9, 10], [15, 13], [25, 13], [31, 11]])
+        splev_door_at('random', dx, dy);
+
+    // "knock a few holes in the shop interior walls" — one rn2(100) per
+    // matching cell, drawn even at chance==100 (none of these are).
+    lspo_replace_terrain({ totyp: ROOM, fromtyp: VWALL, chance: 18,
+                           region: [7, 4, 11, 6] });
+    lspo_replace_terrain({ totyp: ROOM, fromtyp: VWALL, chance: 18,
+                           region: [25, 4, 29, 6] });
+    lspo_replace_terrain({ totyp: ROOM, fromtyp: VWALL, chance: 18,
+                           region: [7, 12, 11, 14] });
+    lspo_replace_terrain({ totyp: ROOM, fromtyp: VWALL, chance: 33,
+                           region: [28, 12, 28, 14] });
+
+    // "One spot each in most shops..." shuffle(place); place[] is 1-based Lua.
+    const place = shuffle([[5, 4], [9, 5], [13, 4], [26, 4], [31, 5],
+                           [30, 14], [5, 14], [10, 13], [26, 14], [27, 13]]);
+    const P = (i) => place[i - 1];
+
+    g._full_mon_gen = true;
+    if (g.level) g.level._splev_fullmon = true;
+    try {
+        // "scatter some bodies"
+        splev_object_at({ otyp: CORPSE, montype: 'aligned cleric' }, 20, 12);
+        for (let i = 1; i <= 5; i++)
+            splev_object_at({ otyp: CORPSE, montype: 'shopkeeper' }, ...P(i));
+        for (let i = 0; i < 4; i++) mtown1_corpse_random('watchman');
+        mtown1_corpse_random('watch captain');
+
+        // "Rubble!"
+        const nRubble = mk_mrandom(10, 19);
+        for (let i = 0; i < nRubble; i++) {
+            if (mk_percent(90)) mtown1_object_random(BOULDER);
+            mtown1_object_random(ROCK);
+        }
+
+        // "Guarantee 7 candles since we won't have Izchak available"
+        mtown1_object(WAX_CANDLE, ...P(4), { quan: mk_mrandom(1, 2) });
+        mtown1_object(WAX_CANDLE, ...P(1), { quan: mk_mrandom(2, 4) });
+        mtown1_object(WAX_CANDLE, ...P(2), { quan: mk_mrandom(1, 2) });
+        mtown1_object(TALLOW_CANDLE, ...P(3), { quan: mk_mrandom(1, 3) });
+        mtown1_object(TALLOW_CANDLE, ...P(2), { quan: mk_mrandom(1, 2) });
+        mtown1_object(TALLOW_CANDLE, ...P(4), { quan: mk_mrandom(1, 2) });
+
+        // "leave a lamp next to one corpse ... and some empty wands..."
+        mtown1_object(OIL_LAMP, ...P(2));
+        mtown1_object(WAN_STRIKING, ...P(1), { uncursedBuc: true, spe: 0 });
+        mtown1_object(WAN_STRIKING, ...P(3), { uncursedBuc: true, spe: 0 });
+        mtown1_object(WAN_STRIKING, ...P(4), { uncursedBuc: true, spe: 0 });
+        mtown1_object(WAN_MAGIC_MISSILE, ...P(4), { uncursedBuc: true, spe: 0 });
+        mtown1_object(WAN_MAGIC_MISSILE, ...P(5), { uncursedBuc: true, spe: 0 });
+
+        // "the Orcish Army"
+        const inside = quest_floodfill_match(18, 8);
+        const near_temple = mtown1_intersect(mtown1_area_abs(17, 8, 23, 14),
+                                             inside);
+
+        const nArmy = mk_mrandom(5, 15);
+        for (let i = 0; i < nArmy; i++) {
+            let name;
+            if (mk_percent(50)) name = 'orc-captain';
+            else name = mk_percent(80) ? 'Uruk-hai' : 'Mordor orc';
+            const c = mtown1_rndcoord(inside, true);
+            if (c) mtown1_monster_abs(name, c.x, c.y, false);
+        }
+        // "shamans can be hanging out in/near the temple; one ... is higher
+        // level" — m_lev_adj=3 on the FIRST shaman only.
+        const nShaman = mk_mrandom(1, 6);
+        for (let i = 0; i < nShaman; i++) {
+            const c = mtown1_rndcoord(near_temple, false);
+            if (c) mtown1_monster_abs('orc shaman', c.x, c.y, false,
+                                      (i === 0) ? 3 : 0);
+        }
+        // "not such a big deal to run into outside the bars" — random
+        // position inside the town's own box, not restricted to `inside`.
+        const nRabble = mk_mrandom(10, 19);
+        for (let i = 0; i < nRabble; i++) {
+            if (mk_percent(90)) splev_create_monster({ name: 'hill orc', peaceful: 0 });
+            else splev_create_monster({ name: 'goblin', peaceful: 0 });
+        }
+    } finally {
+        g._full_mon_gen = false;
+    }
+
+    // "Hack to force full-level wallification" — des.wallify() with no args
+    // is scoped to (xstart-1..xstart+xsize+1, ystart-1..ystart+ysize+1)
+    // (sp_lev.c:5983-5986), not the whole level.  The box has no leftover
+    // STONE (every cell inside it was map-drawn) and the border strip was
+    // already wallified by mk_mkmap's own full-level finish_map(), so this is
+    // a faithful no-op — kept for completeness (it draws no RNG either way).
+    {
+        const o = splev_map_origin();
+        mk_wallify_map(o.xstart - 1, o.ystart - 1,
+                       o.xstart + o.xsize + 1, o.ystart + o.ysize + 1);
+    }
+
+    // lspo_finalize_level(): link_doors_rooms, remove_boundary_syms,
+    // wallification (!corrmaze), flip_level_rnd(allow_flips=3).  No branch
+    // levregion is registered for Mine Town (the Mines branch sits on the
+    // main-dungeon side), so fixup_special() places nothing here.
+    splev_link_doors_rooms();
+    remove_boundary_syms();
+    wallification(1, 0, COLNO - 1, ROWNO - 1);
+    let flp = 0;
+    if (rn2(2)) flp |= 1;
+    if (rn2(2)) flp |= 2;
+    if (flp) flip_level(flp);
+    set_wall_state();
+}
+
+// ============================================================
+// dat/minetn-6.lua — Mine Town variant 6, "Bustling Town" by Kelly Bailey.
+// Same mines-cavern-then-map-overlay shape as minetn-1 above, but bg="-"
+// (HWALL) instead of bg=" " (STONE): the untouched cavern displays as solid
+// wall rather than unlit rock, which is what the .lua's own comment says the
+// "inaccessibles" level flag is there to compensate for ("creating backdoors
+// into adjacent shops which we don't want").  That repair pass — C's
+// ensure_way_out(), a floodfill accessibility check that digs a corridor when
+// (and only when) the random cavern actually left a pocket unreachable — is
+// NOT ported; it only draws RNG in that unreachable-pocket case, which the
+// des.map overlay's own doors make rare.  See RECON_NOTES.md.
+// ============================================================
+
+const MINETN6_MAP = [
+    'x--------xxxxxxxxxxx-------------------x',
+    'x------xxxxxxxxxxxxxx-----------------xx',
+    '.-----................----------------.x',
+    '.|...|................|...|..|...|...|..',
+    '.|...+..--+--.........|...|..|...|...|..',
+    '.|...|..|...|..-----..|...|..|-+---+--..',
+    '.-----..|...|--|...|..--+---+-.........x',
+    '........|...|..|...+.............-----.x',
+    '........-----..|...|......--+-...|...|..',
+    'x----...|...|+------..{...|..|...+...|..',
+    'x|..+...|...|.............|..|...|...|..',
+    '.|..|...|...|-+-.....---+-------------.x',
+    '.----...--+--..|..-+-|..................',
+    '...|........|..|..|..|----....--------.x',
+    '...|..T.....----..|..|...+....|......|..',
+    '...|-....{........|..|...|....+......|x.',
+    '...--..-....T.....--------....|......|x.',
+    '.......--.....................----------',
+    '.xxxx-----xxxxxxxxxxxxxxxxxx------------',
+    'xxxx-------xxxxxxxxxxxxxxx--------------',
+].join('\n');
+
+// align.h AM_LAWFUL/AM_NEUTRAL/AM_CHAOTIC bit values (matches minetown5.js's
+// own MINETN_ALIGN_AMASK — Align2amask() takes an alignment TYPE, not a name).
+const MT6_ALIGN_AMASK = { law: 0x04, neutral: 0x02, chaos: 0x01 };
+
+// C ref: dat/nhlib.lua:47 monkfoodshop() — role-dependent, no RNG.
+function mtown6_monkfoodshop() {
+    const rl = roles[game.initrole];
+    return (rl && rl.name && rl.name.m === 'Monk') ? SHOPBASE + 10
+                                                    : SHOPBASE + 5;
+}
+
+// Entry point.  C ref: makemaz("minetn") -> load_special("minetn-6.lua").
+async function makemaz_minetown6() {
+    const g = game;
+    // des.level_init({style="solidfill", fg=" "}) — draws one rn2(2) (lit);
+    // fully overwritten by the mines-style init below (sp_lev.c:2990-2993),
+    // so only the draw itself matters.
+    rn2(2);
+    // des.level_flags("mazelevel","inaccessibles") — is_maze_lev is set here
+    // but overwritten to FALSE by mk_mkmap (walled&&joined, mkmap.c:481);
+    // check_inaccessibles isn't tracked since ensure_way_out() isn't ported.
+    if (g.level?.flags) g.level.flags.is_maze_lev = true;
+
+    // des.level_init({style="mines", fg=".", bg="-", smoothed=true,
+    // joined=true, lit=1, walled=true}) — lit is explicit, no rn2 draw.
+    mk_mkmap(true, HWALL, ROOM, true);
+
+    // des.map({halign="center", valign="top", map=[[...]]}) — 41x20; 'x'
+    // cells leave the mines cavern above untouched.
+    hf_map({ map: MINETN6_MAP, halign: 'center', valign: 'top', lit: false });
+
+    const align = shuffle(['law', 'neutral', 'chaos']);
+
+    splev_region_lit(0, 0, 39, 19, 1);
+
+    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 1, 0, 39, 18);
+    mtown_stair_lregion(LR_DOWNSTAIR, 60, 3, 75, 19, 0, 0, 38, 18);
+
+    splev_region_lit(13, 7, 14, 8, 0);
+    vly_region(9, 9, 11, 11, 1, SHOPBASE + 11, FILL_NORMAL, false);   // candle
+    vly_region(16, 6, 18, 8, 1, SHOPBASE + 8, FILL_NORMAL, false);    // tool
+    vly_region(23, 3, 25, 5, 1, SHOPBASE, FILL_NORMAL, false);        // shop
+    vly_region(22, 14, 24, 15, 1, mtown6_monkfoodshop(), FILL_NORMAL, false);
+    vly_region(31, 14, 36, 16, 1, TEMPLE, FILL_NORMAL, false);
+    vly_altar(35, 15, MT6_ALIGN_AMASK[align[0]], 1);
+
+    for (const [dst, dx, dy] of [
+        ['closed', 5, 4], ['locked', 4, 10], ['closed', 10, 4],
+        ['closed', 10, 12], ['locked', 13, 9], ['locked', 14, 11],
+        ['closed', 19, 7], ['closed', 19, 12], ['closed', 24, 6],
+        ['closed', 24, 11], ['closed', 25, 14], ['closed', 28, 6],
+        ['locked', 28, 8], ['closed', 30, 15], ['closed', 31, 5],
+        ['closed', 35, 5], ['closed', 33, 9],
+    ]) splev_door_at(dst, dx, dy);
+
+    g._full_mon_gen = true;
+    if (g.level) g.level._splev_fullmon = true;
+    try {
+        for (let i = 0; i < 6; i++) splev_create_monster({ name: 'gnome' });
+        splev_create_monster({ name: 'gnome', mx: 14, my: 8 });
+        splev_create_monster({ name: 'gnome lord', mx: 14, my: 7 });
+        splev_create_monster({ name: 'gnome', mx: 27, my: 10 });
+        splev_create_monster({ name: 'gnome lord' });
+        splev_create_monster({ name: 'gnome lord' });
+        for (let i = 0; i < 3; i++) splev_create_monster({ name: 'dwarf' });
+        for (let i = 0; i < 2; i++)
+            splev_create_monster({ name: 'dwarf', peaceful: 1 });
+        for (let i = 0; i < 2; i++)
+            splev_create_monster({ name: 'gnome', peaceful: 1 });
+        splev_create_monster({ name: 'hobbit', peaceful: 1 });
+        splev_create_monster({ name: 'goblin', peaceful: 1 });
+        splev_create_monster({ name: 'kobold', peaceful: 1 });
+        splev_create_monster({ name: 'dog', peaceful: 1 });
+        for (let i = 0; i < 3; i++)
+            splev_create_monster({ name: 'watchman', peaceful: 1 });
+        for (let i = 0; i < 2; i++)
+            splev_create_monster({ name: 'watch captain', peaceful: 1 });
+    } finally {
+        g._full_mon_gen = false;
+    }
+
+    // lspo_finalize_level() — see makemaz_minetown1's identical tail comment.
+    // minetn-6.lua has no trailing des.wallify() call of its own.
+    splev_link_doors_rooms();
+    remove_boundary_syms();
+    wallification(1, 0, COLNO - 1, ROWNO - 1);
+    let flp = 0;
+    if (rn2(2)) flp |= 1;
+    if (rn2(2)) flp |= 2;
+    if (flp) flip_level(flp);
+    set_wall_state();
+}
 
 
 // ============================================================

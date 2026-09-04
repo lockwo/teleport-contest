@@ -1,14 +1,18 @@
 // levels/pri_loca.js - special level builder makemaz_pri_loca() (dat/Pri-loca.lua).
-// Also exports the mkmap.c "mines"-style level_init engine, which Pri-goal reuses.
+// Also exports the mkmap.c "mines"-style level_init engine, which Pri-goal and
+// the Healer maze levels (hea_loca.js/hea_goal.js/hea_fila.js/hea_filb.js) reuse.
 
 import {
-    COLNO, ICE, IS_OBSTRUCTED, IS_WALL, LAVAPOOL, MORGUE, NO_ROOM, ROOM, ROWNO, TREE,
+    COLNO, CORR, ICE, IS_OBSTRUCTED, IS_WALL, LAVAPOOL, MAXNROFROOMS, MORGUE,
+    NO_ROOM, OROOM, ROOM, ROWNO, SCORR, TREE,
     AM_NONE, A_NONE, FILL_NORMAL, LADDER, STAIRS, MM_ADJACENTOK, MM_NOMSG,
-    ROOMOFFSET, SHARED,
+    ROOMOFFSET, SHARED, isok,
 } from '../const.js';
 import { game } from '../gstate.js';
+import { depth as depth_of_level } from '../hacklib.js';
 import { enexto_spawn, makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx,
          name_gender_hint, MGEND_NEUTRAL, MM_EMIN } from '../makemon.js';
+import { somexy } from '../mkroom.js';
 import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
 import {
@@ -130,9 +134,204 @@ function mkmap_finish_map(fg_typ, bg_typ, lit, walled, icedpools) {
         }
 }
 
+// ── mkmap.c join_map() — the "joined=true" arm, needed by the Healer maze
+// levels (Hea-loca/Hea-goal/Hea-fila/Hea-filb all pass joined=true; neither
+// Priest maze level does, which is why this was originally left unported).
+//
+// C ref: mkmap.c flood_fill_rm() anyroom=FALSE path (the arm join_map() itself
+// uses).  Distinct from sp_lev.js's flood_fill_room(), which is the OTHER,
+// anyroom=TRUE arm used by vly_region()'s irregular branch.
+let _joinMinRx, _joinMaxRx, _joinMinRy, _joinMaxRy, _joinFilled;
+
+function mkmap_flood_fill_rm(sx, sy, rmno) {
+    const map = game.level;
+    const fg_typ = map.at(sx, sy).typ;
+
+    while (sx > 0 && map.at(sx, sy).typ === fg_typ && map.at(sx, sy).roomno !== rmno)
+        sx--;
+    sx++;
+
+    if (sx < _joinMinRx) _joinMinRx = sx;
+    if (sy < _joinMinRy) _joinMinRy = sy;
+
+    let i;
+    for (i = sx; i <= MKMAP_WIDTH && map.at(i, sy).typ === fg_typ; i++) {
+        map.at(i, sy).roomno = rmno;
+        map.at(i, sy).lit = false;
+        _joinFilled++;
+    }
+    const nx = i;
+
+    if (isok(sx, sy - 1)) {
+        for (i = sx; i < nx; i++)
+            if (map.at(i, sy - 1).typ === fg_typ) {
+                if (map.at(i, sy - 1).roomno !== rmno) mkmap_flood_fill_rm(i, sy - 1, rmno);
+            } else {
+                if ((i > sx || isok(i - 1, sy - 1)) && map.at(i - 1, sy - 1).typ === fg_typ) {
+                    if (map.at(i - 1, sy - 1).roomno !== rmno) mkmap_flood_fill_rm(i - 1, sy - 1, rmno);
+                }
+                if ((i < nx - 1 || isok(i + 1, sy - 1)) && map.at(i + 1, sy - 1).typ === fg_typ) {
+                    if (map.at(i + 1, sy - 1).roomno !== rmno) mkmap_flood_fill_rm(i + 1, sy - 1, rmno);
+                }
+            }
+    }
+    if (isok(sx, sy + 1)) {
+        for (i = sx; i < nx; i++)
+            if (map.at(i, sy + 1).typ === fg_typ) {
+                if (map.at(i, sy + 1).roomno !== rmno) mkmap_flood_fill_rm(i, sy + 1, rmno);
+            } else {
+                if ((i > sx || isok(i - 1, sy + 1)) && map.at(i - 1, sy + 1).typ === fg_typ) {
+                    if (map.at(i - 1, sy + 1).roomno !== rmno) mkmap_flood_fill_rm(i - 1, sy + 1, rmno);
+                }
+                if ((i < nx - 1 || isok(i + 1, sy + 1)) && map.at(i + 1, sy + 1).typ === fg_typ) {
+                    if (map.at(i + 1, sy + 1).roomno !== rmno) mkmap_flood_fill_rm(i + 1, sy + 1, rmno);
+                }
+            }
+    }
+
+    if (nx > _joinMaxRx) _joinMaxRx = nx - 1;
+    if (sy > _joinMaxRy) _joinMaxRy = sy;
+}
+
+// C ref: mkmap.c maybe_sdoor() reached from dig_corridor()'s CORR arm — dead
+// for every current caller (fg_typ is never CORR here) but kept so a future
+// caller that DID pass fg="#" would draw the same RNG.
+function mkmap_maybe_sdoor(chance) {
+    const d = depth_of_level(game.u?.uz);
+    return (d > 2) && !rn2(Math.max(2, chance));
+}
+
+// C ref: mkmap.c dig_corridor().  join_map() always calls this with nxcor
+// hardcoded FALSE (mkmap.c:316), so the nxcor-gated early-return and boulder
+// arms never fire and are omitted; everything else is a direct port.
+function mkmap_dig_corridor(org, dest, ftyp, btyp) {
+    const map = game.level;
+    let dx = 0, dy = 0;
+    let xx = org.x, yy = org.y;
+    const tx = dest.x, ty = dest.y;
+    if (xx <= 0 || yy <= 0 || tx <= 0 || ty <= 0
+        || xx > COLNO - 1 || tx > COLNO - 1 || yy > ROWNO - 1 || ty > ROWNO - 1)
+        return false;
+    if (tx > xx) dx = 1;
+    else if (ty > yy) dy = 1;
+    else if (tx < xx) dx = -1;
+    else dy = -1;
+    xx -= dx; yy -= dy;
+    let cct = 0;
+    while (xx !== tx || yy !== ty) {
+        if (cct++ > 500) return false;
+        xx += dx; yy += dy;
+        if (xx >= COLNO - 1 || xx <= 0 || yy <= 0 || yy >= ROWNO - 1) return false;
+        const crm = map.at(xx, yy);
+        if (!crm) return false;
+        if (crm.typ === btyp) {
+            if (ftyp === CORR && mkmap_maybe_sdoor(100)) crm.typ = SCORR;
+            else crm.typ = ftyp;
+        } else if (crm.typ !== ftyp && crm.typ !== SCORR) {
+            return false;
+        }
+        let dix = Math.abs(xx - tx);
+        let diy = Math.abs(yy - ty);
+        if ((dix > diy) && diy && !rn2(dix - diy + 1)) dix = 0;
+        else if ((diy > dix) && dix && !rn2(diy - dix + 1)) diy = 0;
+        if (dy && dix > diy) {
+            const ddx = (xx > tx) ? -1 : 1;
+            const ncr = map.at(xx + ddx, yy);
+            if (ncr && (ncr.typ === btyp || ncr.typ === ftyp || ncr.typ === SCORR)) {
+                dx = ddx; dy = 0; continue;
+            }
+        } else if (dx && diy > dix) {
+            const ddy = (yy > ty) ? -1 : 1;
+            const ncr = map.at(xx, yy + ddy);
+            if (ncr && (ncr.typ === btyp || ncr.typ === ftyp || ncr.typ === SCORR)) {
+                dy = ddy; dx = 0; continue;
+            }
+        }
+        const straight = map.at(xx + dx, yy + dy);
+        if (straight && (straight.typ === btyp || straight.typ === ftyp || straight.typ === SCORR))
+            continue;
+        if (dx) { dx = 0; dy = (ty < yy) ? -1 : 1; }
+        else { dy = 0; dx = (tx < xx) ? -1 : 1; }
+        const alt = map.at(xx + dx, yy + dy);
+        if (alt && (alt.typ === btyp || alt.typ === ftyp || alt.typ === SCORR)) continue;
+        dy = -dy; dx = -dx;
+    }
+    return true;
+}
+
+// C ref: mkmap.c join_map_cleanup().
+function mkmap_join_cleanup() {
+    const map = game.level;
+    for (let x = 1; x < COLNO; x++)
+        for (let y = 0; y < ROWNO; y++)
+            map.at(x, y).roomno = NO_ROOM;
+    game.level.nroom = 0;
+    game.level.rooms[0] = { hx: -1 };
+}
+
+// C ref: mkmap.c join_map() second half — somexy(croom)/somexy(croom2) pick
+// the corridor endpoints, dig_corridor() connects them.  add_room(...,TRUE)'s
+// "special" bookkeeping-only room (no wall/corner drawing) is add_sp_room()
+// with irregular=true, needfill=0, joined=false.
+function mkmap_join_corridors(bg_typ, fg_typ) {
+    const g = game;
+    const rooms = g.level.rooms;
+    let ci = 0, c2i = 1;
+    while (c2i < g.level.nroom) {
+        const croom = rooms[ci], croom2 = rooms[c2i];
+        const sm = { x: 0, y: 0 }, em = { x: 0, y: 0 };
+        if (!somexy(croom, sm) || !somexy(croom2, em)) {
+            sm.x = croom.lx + Math.trunc((croom.hx - croom.lx) / 2);
+            sm.y = croom.ly + Math.trunc((croom.hy - croom.ly) / 2);
+            em.x = croom2.lx + Math.trunc((croom2.hx - croom2.lx) / 2);
+            em.y = croom2.ly + Math.trunc((croom2.hy - croom2.ly) / 2);
+        }
+        mkmap_dig_corridor(sm, em, fg_typ, bg_typ);
+        if (croom2.lx > croom.hx
+            || ((croom2.ly > croom.hy || croom2.hy < croom.ly) && rn2(3)))
+            ci = c2i;
+        c2i++;
+    }
+    mkmap_join_cleanup();
+}
+
+// C ref: mkmap.c join_map() first half — flood-fill every unclaimed fg_typ
+// island into its own irregular room (erasing tiny 1-3 cell ones), then join.
+function mkmap_join_map(bg_typ, fg_typ) {
+    const g = game;
+    const map = g.level;
+    for (let x = 2; x <= MKMAP_WIDTH; x++)
+        for (let y = 1; y < MKMAP_HEIGHT; y++) {
+            const loc = map.at(x, y);
+            if (loc.typ === fg_typ && loc.roomno === NO_ROOM) {
+                _joinMinRx = _joinMaxRx = x;
+                _joinMinRy = _joinMaxRy = y;
+                _joinFilled = 0;
+                mkmap_flood_fill_rm(x, y, g.level.nroom + ROOMOFFSET);
+                if (_joinFilled > 3) {
+                    add_sp_room(_joinMinRx, _joinMinRy, _joinMaxRx, _joinMaxRy,
+                                false, OROOM, true, 0, false);
+                    if (g.level.nroom >= (MAXNROFROOMS * 2)) {
+                        mkmap_join_corridors(bg_typ, fg_typ);
+                        return;
+                    }
+                } else {
+                    for (let sx = _joinMinRx; sx <= _joinMaxRx; sx++)
+                        for (let sy = _joinMinRy; sy <= _joinMaxRy; sy++) {
+                            const l2 = map.at(sx, sy);
+                            if (l2.roomno === g.level.nroom + ROOMOFFSET) {
+                                l2.typ = bg_typ;
+                                l2.roomno = NO_ROOM;
+                            }
+                        }
+                }
+            }
+        }
+    mkmap_join_corridors(bg_typ, fg_typ);
+}
+
 // C ref: mkmap.c:449 mkmap(lev_init *).  `lit` here is already resolved (both
 // Priest scripts pass an explicit 0/1, so litstate_rnd draws nothing).
-// join == FALSE for both, so join_map()/flood_fill_rm/dig_corridor never run.
 export function mkmap_mines(bg_typ, fg_typ, smooth, join, lit, walled) {
     mkmap_init_map(bg_typ);
     mkmap_init_fill(bg_typ, fg_typ);
@@ -142,7 +341,7 @@ export function mkmap_mines(bg_typ, fg_typ, smooth, join, lit, walled) {
         mkmap_pass_buffered(bg_typ, fg_typ, (c) => c < 3);
         mkmap_pass_buffered(bg_typ, fg_typ, (c) => c < 3);
     }
-    if (join) throw new Error('mkmap_mines: joined=true is unported');
+    if (join) mkmap_join_map(bg_typ, fg_typ);
     mkmap_finish_map(fg_typ, bg_typ, lit, walled, false);
     if (walled && join && game.level?.flags) {
         game.level.flags.is_maze_lev = false;
@@ -189,7 +388,10 @@ const PRI_LOCA_MAP = [
 // difference is invisible on a level whose floor starts dark; here the
 // level_init lit the whole cavern, so unlighting the four morgue rectangles hid
 // every monster C displays in them (27 cells per screen on seed0367 step 203).
-function pri_region_rect(mx1, my1, mx2, my2, rlit, rtype, needfill) {
+// Exported: hea_loca.js reuses this for Hea-loca.lua's non-irregular temple
+// region (des.region({region={...}, filled=1}) with no irregular=1 flag) —
+// the exact same lspo_region() arm, not Priest-specific despite the name.
+export function pri_region_rect(mx1, my1, mx2, my2, rlit, rtype, needfill) {
     let lowx = q_absx(mx1), lowy = q_absy(my1);
     let hix = q_absx(mx2), hiy = q_absy(my2);
     // do_room_or_subroom(): "locations might bump level edges in wall-less rooms"

@@ -2848,23 +2848,9 @@ export async function untrap_at(x, y, force) {
     return 1;
 }
 
-// C ref: trap.c trapeffect_selector() — dispatch on trap type (hero variant).
-// Still incomplete; the arms C has that this port does not are listed with
-// their blocker so the next completeness pass can pick them up:
-//   HOLE/TRAPDOOR      fall_through() -> goto_level()
-//   TELEP_TRAP         tele_trap() -> tele()/level_tele()
-//   MAGIC_PORTAL       domagicportal() -> goto_level()
-//   STATUE_TRAP        activate_statue_trap() -> animate_statue()
-//   POLY_TRAP          polyself()
-//   LANDMINE           blow_up_landmine() -> scatter()/fill_pit()
-//   ROLLING_BOULDER_TRAP  launch_obj()
-//   FIRE_TRAP          dofiretrap()  [see domagictrap fate 12]
-//   PIT/SPIKED_PIT     needs hack.c climb_pit()'s per-turn rn2(2) too (cmd.js
-//                      climb_pit_min() is a no-op), and SPIKED_PIT needs
-//                      poisoned(); falling in without those desyncs on the
-//                      NEXT turn instead of this one
-// Everything unlisted falls through to seetrap() so the trap is at least
-// revealed (C would trapeffect_* it; VIBRATING_SQUARE really is just feeltrap).
+// C ref: trap.c:2937 trapeffect_selector() — dispatch on trap type (hero
+// variant). Every C case now has an arm; the default: is unreachable for a
+// valid ttyp, same as C's impossible().
 async function trapeffect_selector(trap, trflags) {
     switch (trap.ttyp) {
     case ARROW_TRAP:
@@ -2903,6 +2889,12 @@ async function trapeffect_selector(trap, trflags) {
     case LEVEL_TELEP:
         await trapeffect_level_telep(trap, trflags);
         break;
+    case MAGIC_PORTAL: {
+        const { domagicportal } = await import('./teleport.js');
+        feeltrap(trap);
+        await domagicportal(trap);
+        break;
+    }
     case ROLLING_BOULDER_TRAP:
         await trapeffect_rolling_boulder_trap(trap, trflags);
         break;
