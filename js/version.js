@@ -248,7 +248,10 @@ export async function doversion() {
         return await doextversion();
 
     const { pline } = await import('./display.js');
-    await pline('%s', getversionstring(buf, BUFSZ));
+    // js/display.js's pline() takes one pre-formatted string, not a C printf
+    // template + args; this call was never exercised (doversion() had no
+    // dispatch arm anywhere) so the '%s' literal never got caught.
+    await pline(getversionstring(buf, BUFSZ));
     return ECMD_OK;
 }
 

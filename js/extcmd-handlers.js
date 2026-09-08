@@ -30,14 +30,14 @@ import { align_gname } from './role.js';
 import { newsym, map_invisible } from './display.js';
 import { STATUE, objects, place_object, weight, COIN_CLASS } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { delobj, stackobj } from './invent.js';
+import { delobj, stackobj, doddrop } from './invent.js';
 import { count_unpaid, is_worn, wearing_armor, inventoryArray, takeoff_worn_obj,
          dismiss_invent_screen } from './invent.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT } from './livelog.js';
 import { rn2 } from './rng.js';
 import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED } from './const.js';
-import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor } from './hack.js';
+import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed } from './hack.js';
 import { dotwoweapon } from './wield.js';
 import { doride } from './steed.js';
 import { doenhance } from './enhance.js';
@@ -2950,7 +2950,77 @@ const HANDLERS = {
     herecmdmenu: doherecmdmenu,
     wizwhere: wiz_where,
     wizmondiff: wizmondiff_extcmd,
+    wizlevelport: wizlevelport_extcmd,
+    droptype: doddrop_extcmd,
+    movewest: () => domove_extcmd(-1, 0), movenorthwest: () => domove_extcmd(-1, -1),
+    movenorth: () => domove_extcmd(0, -1), movenortheast: () => domove_extcmd(1, -1),
+    moveeast: () => domove_extcmd(1, 0), movesoutheast: () => domove_extcmd(1, 1),
+    movesouth: () => domove_extcmd(0, 1), movesouthwest: () => domove_extcmd(-1, 1),
+    rushwest: () => runrush_extcmd(-1, 0, true), rushnorthwest: () => runrush_extcmd(-1, -1, true),
+    rushnorth: () => runrush_extcmd(0, -1, true), rushnortheast: () => runrush_extcmd(1, -1, true),
+    rusheast: () => runrush_extcmd(1, 0, true), rushsoutheast: () => runrush_extcmd(1, 1, true),
+    rushsouth: () => runrush_extcmd(0, 1, true), rushsouthwest: () => runrush_extcmd(-1, 1, true),
+    runwest: () => runrush_extcmd(-1, 0, false), runnorthwest: () => runrush_extcmd(-1, -1, false),
+    runnorth: () => runrush_extcmd(0, -1, false), runnortheast: () => runrush_extcmd(1, -1, false),
+    runeast: () => runrush_extcmd(1, 0, false), runsoutheast: () => runrush_extcmd(1, 1, false),
+    runsouth: () => runrush_extcmd(0, 1, false), runsouthwest: () => runrush_extcmd(-1, 1, false),
 };
+
+// C ref: teleport.c wiz_level_tele() / js/do.js wiz_level_tele() — fully
+// implemented and correctly wired to the raw ^V keypress (js/cmd.js:1418), but
+// never wired into HANDLERS, so "#wizlevelport<Enter>" silently no-oped: no
+// prompt drawn, and the keystrokes meant to answer it leaked into rhack() as
+// fresh top-level commands.  Dynamic import of do.js: same TDZ-avoidance
+// reason as wizmondiff_extcmd below.  hooked_tty_getlin is this file's own
+// getlin hook, already in scope, matching the raw-key call site exactly.
+async function wizlevelport_extcmd() {
+    const { wiz_level_tele } = await import('./do.js');
+    return await wiz_level_tele((q) => hooked_tty_getlin(q, null));
+}
+
+// C ref: do.c doddrop() — fully implemented in invent.js and correctly wired
+// to the raw 'D' key (js/cmd.js:1502, `(await doddrop()) ? 1 : 0`), but absent
+// from HANDLERS so "#droptype<Enter>" silently no-oped and its menu-answer
+// keystrokes leaked into rhack().  invent.js's own ECMD_TIME is 3, not 1, so
+// (unlike cmd.js's truthy check) doextcmd()'s strict `res === 1` needs this
+// translated here.
+async function doddrop_extcmd() {
+    return (await doddrop()) ? 1 : 0;
+}
+
+// C ref: cmd.c rhack():3775-3801 — after a MOVEMENTCMD (do_move_west() etc.,
+// js/cmd.js:5640-5670) calls set_move_cmd() to STAGE u.dx/u.dy/domove_attempting,
+// rhack() itself is what actually calls domove() (WALK) or drives the
+// run/rush engine (RUSH) — js/cmd.js's set_move_cmd()/do_move_*()/do_rush_*()/
+// do_run_*() functions are a faithful but ORPHANED port: nothing in this file
+// (the only place '#movewest' etc. are dispatched from) ever consumed
+// domove_attempting, so the whole command silently no-oped and the keystrokes
+// meant to be consumed by the walk instead ran as fresh top-level commands.
+// Reimplemented directly against dx/dy here (skipping the u.dx/u.dy staging
+// indirection) rather than calling do_move_west() itself, since domove()
+// (js/cmd.js, dynamic import to dodge the same TDZ hazard as wizmondiff_extcmd)
+// takes dx/dy directly — mirrors the raw isMovementKey branch (js/cmd.js
+// ~1688) exactly, including its nopick/menu_requested reset.
+async function domove_extcmd(dx, dy) {
+    const { domove } = await import('./cmd.js');
+    game.context.nopick = game.iflags?.menu_requested ? 1 : 0;
+    if (game.iflags) game.iflags.menu_requested = false;
+    await domove(dx, dy);
+    return game.context.move === 1 ? 1 : 0;
+}
+
+// C ref: cmd.c rhack():3792-3799 — the RUSH/RUN half of the same dead-end;
+// mirrors the raw isRunKey/CTRL_RUSH_DIR branches (js/cmd.js ~1620/1636),
+// which already drive the whole multi-turn run/rush inline via hack.js's
+// do_run()/do_run_prefixed() and leave context.move=0 (every elapsed turn was
+// already taken via the moveloop calls inside run_movement()).
+async function runrush_extcmd(dx, dy, rush) {
+    game.context.nopick = game.iflags?.menu_requested ? 1 : 0;
+    if (game.iflags) game.iflags.menu_requested = false;
+    if (rush) await do_run_prefixed(dx, dy, 3);
+    else await do_run(dx, dy);
+    return 0;
+}
 
 // C ref: wizcmds.c:1790 wiz_mon_diff() — was fully implemented in wizcmds.js
 // but never wired into HANDLERS, so #wizmondiff silently no-opped (fn

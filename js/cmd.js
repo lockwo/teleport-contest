@@ -1216,6 +1216,16 @@ export async function rhack(key) {
         // branch, so 'v' fell through to "Unknown command 'v'.".
         await do_gamelog();
         game.context.move = 0;
+    } else if (ch === 'V') {
+        // C ref: cmd.c { 'V', "versionshort", doversion, IFBURIED |
+        // GENERALCMD | CMD_M_PREFIX } — 'versionshort' was registered in the
+        // key/handler-name tables but had no dispatch branch, so 'V' fell
+        // through to "Unknown command 'V'.".  doversion() already
+        // self-escalates to the full #version listing under CMD_M_PREFIX
+        // (iflags.menu_requested), so no extra handling is needed here.
+        const { doversion } = await import('./version.js');
+        await doversion();
+        game.context.move = 0;
     } else if (ch === '*') {
         // C ref: cmd.c:1848 { '*', "seeall", doprinuse, IFBURIED | GENERALCMD |
         // CMD_M_PREFIX } — the ')' + '[' + '=' + '"' + '(' listings combined.
@@ -1737,9 +1747,12 @@ export async function rhack(key) {
         // Unknown command.  C ref: cmd.c rhack() bad_command — no
         // reset_cmd_vars(), so a pending g/G prefix's svc.context.run stays
         // armed for the next command (context.stale_run, set at the head).
+        // C ref: cmd.c bad_command(cmd) { pline("Unknown command '%s'.",
+        // visctrl(cmd)); } — a control key must render as "^X", not raw
+        // (matches the npBad arm above, which already does this conversion).
         badCommand = true;
         game.context.move = 0;
-        await pline(`Unknown command '${ch}'.`);
+        await pline(`Unknown command '${visctrl_code(key & 0xff)}'.`);
     }
 
     // C ref: cmd.c rhack():3813-3816 — reset_cmd_vars() (which clears

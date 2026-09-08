@@ -441,8 +441,13 @@ async function moveloop_preamble_messages() {
     let win_stop = false;
     for (const m of msgs) {
         if (win_stop) { game._toplines = m; continue; } // C: skip -> no more(), no redraw
-        await topl_more();
-        win_stop = !!game._winStop; // more() set it iff this --More-- was ESC'd
+        // A wrapped welcome line already paged ITSELF (pline()'s own
+        // wrap_topl().length>1 check) and cleared _pending_message; calling
+        // topl_more() again here would consume a second, phantom keystroke.
+        if (game._pending_message) {
+            await topl_more();
+            win_stop = !!game._winStop; // more() set it iff this --More-- was ESC'd
+        }
         await pline(m);
     }
     return true;
@@ -456,8 +461,10 @@ async function maybe_do_tutorial(preambleShownMore) {
     if (g.tutorial_set_in_config) return; // "OPTIONS=!tutorial" => no prompt
     // Showing the menu flushes the pending top-line message.  If the moon
     // phase preamble already paged the welcome line, the message currently
-    // on the top line is the preamble; otherwise it's the welcome line.
-    await topl_more();
+    // on the top line is the preamble; otherwise it's the welcome line — or
+    // nothing at all, if that line had wrapped and paged itself already (see
+    // the same guard above).
+    if (game._pending_message) await topl_more();
     await ask_do_tutorial();
 
     // C ref: maybe_do_tutorial() tutorial-yes branch — ask_do_tutorial() set up

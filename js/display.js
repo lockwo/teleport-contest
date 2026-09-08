@@ -799,6 +799,7 @@ export const IBMGRAPHICS_CHARS = {
     S_corr: '0', S_litcorr: '1', S_pool: 'w', S_ice: 'z', S_lava: 'w',
     S_lavawall: 'w', S_vodbridge: 'z', S_hodbridge: 'z', S_water: 'w',
     S_bars: 'p', S_tree: 'q', S_fountain: 't', S_sink: 't',
+    S_engroom: 'n', S_engrcorr: '0',
 };
 
 // S_tree, shared by TREE terrain and an arboreal level's STONE/SCORR.
@@ -1056,7 +1057,9 @@ function spot_shows_engravings(loc) {
 // defsym.h — a corridor engraving shows as '#' (S_engrcorr), any other (room
 // or ice) as '`' (S_engroom); both are CLR_BRIGHT_BLUE.
 export function engraving_glyph(loc) {
-    const ch = (loc?.typ === CORR) ? '#' : '`';
+    const isCorr = loc?.typ === CORR;
+    const ov = symOverrideChar(isCorr ? 'S_engrcorr' : 'S_engroom');
+    const ch = ov || (isCorr ? '#' : '`');
     return { ch, color: CLR_BRIGHT_BLUE, dec: false };
 }
 
@@ -2684,6 +2687,21 @@ export async function pline(msg) {
     // flush_screen(), which is what runs bot() when disp.botl is set.
     pline_vision_flush();
     await botl_flush();
+    const cur = game._pending_message || '';
+    const softPending = !!cur && game._toplinSoft === cur;
+    // C ref: win/tty/topl.c update_topl():273-299 — a second message in the
+    // same still-unacknowledged turn merges onto the pending line with two
+    // spaces IF it fits in CO-8 columns (e.g. flip_through_book's two plines);
+    // otherwise the pending line must page via --More-- first, exactly like
+    // update_topl()'s own softPending branch below.  Kept on _toplinSoft (text
+    // keyed), not _toplin, for the reason explained further down.
+    if (softPending && !msg.startsWith('You die') && msg.length + cur.length + 3 < CO - 8) {
+        game._pending_message = cur + '  ' + msg;
+        game._toplinSoft = game._pending_message;
+        game._toplines = game._pending_message;
+        return;
+    }
+    if (softPending) await topl_more();
     game._pending_message = msg;
     // C ref: pline -> vpline -> update_topl sets gt.toplines; mirror it so the
     // Norep dedup reference tracks the actual last topline text.
@@ -2697,6 +2715,14 @@ export async function pline(msg) {
     // the text self-clears the moment any writer (rhack's per-command reset,
     // a prompt, a menu) replaces the pending line.
     game._toplinSoft = msg;
+    // C ref: win/tty/topl.c redotoplin():139 — a message that word-wraps onto
+    // a second display row blocks on --More-- IMMEDIATELY, no second logical
+    // message required (e.g. a long welcome greeting).
+    if (wrap_topl(msg).length > 1) {
+        await topl_more();
+        game._toplinSoft = null;
+        game._pending_message = '';
+    }
 }
 
 // C ref: pline.c impossible():584-616 — a failed internal invariant prints the
