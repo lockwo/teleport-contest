@@ -1527,6 +1527,16 @@ export async function rhack(key) {
         // already-ported handler whose key was never bound.  ECMD_OK.
         await dooverview();
         game.context.move = 0;
+    } else if (key === 16) {   /* ^P */
+        // C ref: cmd.c { C('p'), "prevmsg", doprev_message } — same shape as
+        // ^O above: doprev_message() (js/cmd.js) is already ported and the
+        // #prevmsg extcmd-by-name path already wired (extcmd-handlers.js
+        // prevmsg_extcmd), but the raw key itself had no dispatch arm.
+        // cmd_nh_doprev_message() is an explicit unported stub (message
+        // history recall itself is a separate, real missing feature), so
+        // this only stops the wrong "Unknown command '^P'." message.
+        doprev_message();
+        game.context.move = 0;
     } else if (ch === ',') {
         // C ref: cmd.c { ',', "pickup", dopickup } -> hack.c dopickup().  Pick up
         // the objects under the hero.  ECMD_TIME (turn elapses, monsters move) when

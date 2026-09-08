@@ -16,7 +16,27 @@ import { distmin, depth as depth_of_level } from './hacklib.js';
 import { surface } from './dungeon.js';
 import { mmove_of } from './mon.js';
 import { WEP_HITBON } from './weapondmg_data.js';
-import { ATR_INVERSE, CLR_GRAY, NO_COLOR } from './terminal.js';
+import { ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE, CLR_GRAY, NO_COLOR } from './terminal.js';
+
+// js/options.js stores menu_headings.attr VERBATIM in ITS OWN local ATR_*
+// enum (options.js: NONE=0, BOLD=1, DIM=2, ITALIC=3, ULINE=4, BLINK=5,
+// INVERSE=6 — a plain enum index, C ref: options.c ATR_* / coloratt.c
+// attrnames[]), which is NOT the same numbering as terminal.js's ATR_* render
+// BITS (NONE=0, INVERSE=1, BOLD=2, UNDERLINE=4) this file's renderers need —
+// only NONE and underline/ULINE(4) coincide by accident.  Per
+// [[options-storage-contract]] (options.js keeps values verbatim, consumers
+// convert), this is the consumer-side translation.  DIM/ITALIC/BLINK have no
+// render bit in this port's terminal model, so they fall back to no attr.
+function menuHeadAttr() {
+    const a = game.iflags?.menu_headings?.attr;
+    if (a == null) return ATR_INVERSE;
+    switch (a) {
+    case 1: return ATR_BOLD;       // options.js ATR_BOLD
+    case 4: return ATR_UNDERLINE;  // options.js ATR_ULINE
+    case 6: return ATR_INVERSE;    // options.js ATR_INVERSE
+    default: return ATR_NONE;      // NONE/DIM/ITALIC/BLINK: no render bit
+    }
+}
 import {
     AMULET_CLASS,
     AMULET_OF_YENDOR,
@@ -2211,7 +2231,7 @@ function renderMenuScreen(lines, cursor = [36, 8]) {
     // C ref: windows.c:1816 add_menu_heading() — `if (program_state.gameover)
     // attr = ATR_NONE`, so the end-of-game disclosure lists draw class headers
     // PLAIN.
-    const headAttr = game.program_state?.gameover ? 0 : ATR_INVERSE;
+    const headAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
     const flat = [];
     for (const group of lines) {
         const [heading, ...items] = group;
@@ -2573,7 +2593,7 @@ export async function dovspell() {
     // C ref: windows.c:1816 add_menu_heading() — `if (program_state.gameover)
     // attr = ATR_NONE, color = NO_COLOR`, so the end-of-game disclosure lists
     // draw their class headers PLAIN.
-    const headAttr = game.program_state?.gameover ? 0 : ATR_INVERSE;
+    const headAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
     const drawHeading = (text, row) => {
         for (let c = 0; c < text.length && offx + c < 80; c++) {
             let attr = headAttr;
@@ -7405,7 +7425,7 @@ async function menu_pick_pay_items(ibill) {
     const amt_width = String(largest_amt).length;
 
     // C ref: windows.c add_menu_heading() — ATR_INVERSE unless the game is over.
-    const headAttr = game.program_state?.gameover ? 0 : ATR_INVERSE;
+    const headAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
     // end_menu(win, "Pay for which items?") prepends the prompt + a blank line.
     const flat = [{ text: 'Pay for which items?', attr: ATR_INVERSE },
                   { text: '', attr: 0 }];
@@ -8215,8 +8235,9 @@ export async function spell_menu(prompt, nspells, book, meta) {
     // (which decode as default attr) while runs of <= 4 spaces keep the inverse
     // bit.  Same treatment dovspell's menu already uses.
     const drawHeading = (text, row) => {
+        const baseAttr = menuHeadAttr();
         for (let c = 0; c < text.length && offx + c < 80; c++) {
-            let attr = ATR_INVERSE;
+            let attr = baseAttr;
             if (text[c] === ' ') {
                 let s = c; while (s > 0 && text[s - 1] === ' ') s--;
                 let e = c; while (e + 1 < text.length && text[e + 1] === ' ') e++;
@@ -8382,7 +8403,7 @@ export function wiz_identify() {
         let prompt = `select ${unid_cnt === 1 ? 'it' : 'any or all of them'} to permanently identify`;
         if (unid_cnt > 1) prompt += ' (^I for all)';
         flat.push({ text: `_ - ${prompt}`, attr: 0 });
-        const headAttr = game.program_state?.gameover ? 0 : ATR_INVERSE;
+        const headAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
         for (const group of inventoryRows(null, not_fully_identified)) {
             const [heading, ...items] = group;
             flat.push({ text: heading, attr: headAttr });
@@ -8572,7 +8593,6 @@ function itemactions_list(otmp) {
     const oclass = otmp.oclass;
     const already_worn = (otmp.owornmask & (W_ARMOR | W_ACCESSORY)) !== 0;
     const quan = otmp.quan || 1;
-    const is_blade = (o) => o.oclass === WEAPON_CLASS && objects[o.otyp]?.oc_skill != null;
 
     // '-' (un-wield / un-ready): C ref iactions.c:291 — picking the wielded,
     // alternate or quivered item offers the "wield bare hands" shortcut.  This
@@ -8678,8 +8698,8 @@ function itemactions_list(otmp) {
     // = HARDGEM(mohs) (mohs >= 8 — only the hardest gemstones).  None of the
     // exercised rings/gems are HARDGEM (the see-invisible ring's mohs is 5), so
     // they "Write"; only wands and blades "Engrave".
-    if (oclass === WAND_CLASS || oclass === RING_CLASS || oclass === GEM_CLASS
-        || is_blade(otmp)) {
+    if (oclass === WEAPON_CLASS || oclass === WAND_CLASS || oclass === RING_CLASS
+        || oclass === GEM_CLASS) {
         const tough = (oclass === GEM_CLASS || oclass === RING_CLASS)
             && obj_is_hardgem(otmp);
         const verb = (is_blade(otmp) || oclass === WAND_CLASS || tough)
@@ -9093,7 +9113,7 @@ function renderInventoryMenu(rows, page = 0) {
     // Flatten rows into menu lines, tagging class headers (ATR_INVERSE).
     // C ref: windows.c add_menu_heading() — suppresses the highlight
     // (attr = ATR_NONE) during end-of-game disclosure (program_state.gameover).
-    const headerAttr = game.program_state?.gameover ? 0 : ATR_INVERSE;
+    const headerAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
     const lines = [];
     for (const group of rows) {
         const [heading, ...items] = group;

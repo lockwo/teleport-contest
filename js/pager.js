@@ -1571,7 +1571,7 @@ export function lookat(x, y) {
         // C forces the general "wizard" data.base entry for a gnomish Wizard so
         // the lookup doesn't land on the "gnomish wizard" MONSTER entry.
         if (game.urole?.mnum === 12 /* PM_WIZARD */ && !u.Upolyd
-            && game.urace?.mnum === 42 /* PM_GNOME */)
+            && game.urace?.mnum === 3 /* PM_GNOME */)
             pm = monster_by_pmidx(12);
         if ((u.uinvis || u.uundetected) && !Blind()
             && !(u.uswallow || iflags.save_uswallow)) {
@@ -1819,7 +1819,7 @@ export function do_screen_description(cc, looked, sym, out_str, firstmatch,
         if ((looked ? (sym === humanSym && pg_u_at(cc.x, cc.y))
                     : (sym === humanSym && !game.flags?.showrace))
             && !(game.urace?.mnum === 0 /* PM_HUMAN */
-                 || game.urace?.mnum === 5 /* PM_ELF */) && !u.Upolyd)
+                 || game.urace?.mnum === 1 /* PM_ELF */) && !u.Upolyd)
             found += append_str(out_str, 'you');    /* tack on "or you" */
     }
 

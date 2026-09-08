@@ -14,7 +14,7 @@ import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
 import { newgame, moveloop_core } from './allmain.js';
 import { parseNethackrc, config_error_report } from './options.js';
-import { flush_screen, IBMGRAPHICS_CHARS } from './display.js';
+import { flush_screen, IBMGRAPHICS_CHARS, warmupBotlStatusFns } from './display.js';
 import { GameDisplay } from './game_display.js';
 import {
     ROLE_NONE, ROLE_RANDOM, ROLE_RACEMASK, ROLE_GENDMASK, ROLE_ALIGNMASK,
@@ -357,17 +357,24 @@ export class NethackGame {
         // C ref: wintty.c tty_askname() tryct > 1 — the retry hint is written to
         // the BASE window one row above the prompt, so it stays on screen under
         // every later chargen menu (the confirmation overlay starts at col 31).
-        if (this._asknameRetry)
-            disp.putstr(0, 11, 'Enter a name for your character...', NO_COLOR);
-        const prompt = `Who are you? ${name || ''}`;
-        disp.putstr(0, 12, prompt, NO_COLOR);
+        // C ref: sys askname() (options.c set_playmode()/OPTIONS=name: etc.
+        // can all pre-set plname, in which case genl_player_setup() never
+        // calls askname() at all, and this row never gets drawn).  This
+        // helper repaints the persistent startup backdrop for several other
+        // callers too (_drawChargenBase, the y/n/a/q chargen-confirmation
+        // loop), so gate the "Who are you?" line on whether askname() ACTUALLY
+        // ran this game, not on whether a name happens to be set.
+        if (this._asknamePrompted) {
+            if (this._asknameRetry)
+                disp.putstr(0, 11, 'Enter a name for your character...', NO_COLOR);
+            const prompt = `Who are you? ${name || ''}`;
+            disp.putstr(0, 12, prompt, NO_COLOR);
+            if (!topLine) disp.setCursor(Math.min(prompt.length, 79), 12);
+        }
         // The topLine is a tty yn_function prompt ("...? [ynaq]"). C's
         // yn_function prints the prompt followed by a space and leaves
         // the cursor after that space, i.e. one column past the text.
-        // The name prompt (getlin) leaves the cursor right after the
-        // typed text with no trailing space.
         if (topLine) disp.setCursor(Math.min(topLine.length + 1, 79), 0);
-        else disp.setCursor(Math.min(prompt.length, 79), 12);
     }
 
     // Clear the screen and redraw whatever C left on the BASE window beneath
@@ -686,6 +693,7 @@ export class NethackGame {
     // with the hint line one row up; ten empty tries give up.
     async _promptForName(renameRow = -1) {
         let name = '', tryct = 0;
+        this._asknamePrompted = true;
         this._asknameRetry = false;
         const render = (n) => renameRow >= 0
             ? this._renderRenameScreen(n, renameRow)
@@ -1252,6 +1260,7 @@ export class NethackGame {
 // this segment. The harness concatenates them itself. Cross-segment
 // C-side state (bones, record file, save) lives in `input.storage`.
 export async function runSegment(input) {
+    await warmupBotlStatusFns();
     const { seed, nethackrc, storage, datetime } = input;
     const moves = input.moves || '';
 

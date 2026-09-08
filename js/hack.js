@@ -2554,9 +2554,15 @@ function look_pick_description(x, y) {
     if (u && x === u.ux && y === u.uy) {
         // '@' matches S_HUMAN ("human or elf"); need_to_look => lookat() appends
         // " (<self_lookat>)".  firstmatch becomes the self_lookat string.
+        // C ref: pager.c:1347-1353 — a hero whose race is NOT human/elf (and
+        // who isn't polymorphed) tacks on "or you", since '@' wouldn't
+        // otherwise ever refer to them.  Mirrors js/pager.js's own faithful
+        // (but, for this '/' command, unreached) do_screen_description port.
         const self = self_lookat();
+        const showsYou = !(game.urace?.mnum === 0 /* PM_HUMAN */
+                            || game.urace?.mnum === 1 /* PM_ELF */) && !u.Upolyd;
         return {
-            text: `@        a human or elf (${self})`,
+            text: `@        a human or elf${showsYou ? ' or you' : ''} (${self})`,
             firstmatch: self,
             found: 1,
         };
