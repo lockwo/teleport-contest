@@ -6847,7 +6847,7 @@ export async function dotravel() {
 // domove() reaches findtravelpath(TRAVP_TRAVEL), whose adjacent-destination
 // fast path IS ported (hack.js travel_adjacent_step).  Longer walks still need
 // the BFS and cost no time.
-async function dotravel_target() {
+export async function dotravel_target() {
     const u = game.u;
     const cc = game.iflags?.travelcc || { x: 0, y: 0 };
     if (!isok(cc.x, cc.y)) {

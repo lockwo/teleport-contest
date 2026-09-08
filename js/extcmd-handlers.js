@@ -17,6 +17,11 @@ import {
     name_inventory_object, call_inventory_object, doorganize,
     addinv, prinv, prinv_fmt, let_to_name, report_merge_discovery,
     wiz_identify, renderWindowScreen, renderMenuLines, useup, xname,
+    doattributes, dodrop, doremring, dotravel_target, dopay, doperminv,
+    dopickup, doputon, dowieldquiver, dothrow, dotravel, dowear, dowield,
+    doprinuse, dofire, ddoinv, dotypeinv, dodiscovered, dolook, doswapweapon,
+    dotakeoff, doprring, doprtool, doprwep, doprgold, dovspell, dopramulet,
+    doprarm,
 } from './invent.js';
 import { pluslvl, losexp } from './exper.js';
 import { MAXULEV, IS_WALL, SDOOR, MM_NOEXCLAM, BOLT_LIM, STRAT_WAITMASK,
@@ -27,7 +32,7 @@ import { mon_mr } from './monmr_data.js';
 import { is_undead_flag, is_demon_flag, humanoid } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
 import { align_gname } from './role.js';
-import { newsym, map_invisible } from './display.js';
+import { newsym, map_invisible, doredraw } from './display.js';
 import { STATUE, objects, place_object, weight, COIN_CLASS } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { delobj, stackobj, doddrop } from './invent.js';
@@ -37,18 +42,18 @@ import { exercise } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT } from './livelog.js';
 import { rn2 } from './rng.js';
 import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED } from './const.js';
-import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed } from './hack.js';
+import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full } from './hack.js';
 import { dotwoweapon } from './wield.js';
 import { doride } from './steed.js';
 import { doenhance } from './enhance.js';
-import { dorub, dowipe, ECMD as APPLY_ECMD } from './apply.js';
+import { dorub, dowipe, doapply, ECMD as APPLY_ECMD } from './apply.js';
 import { readobjnam } from './readobjnam.js';
 import { hold_another_object, encumber_msg, objects_at, otense } from './invent.js';
 import { rn1 } from './rng.js';
 import { dopray as pray_dopray, dosacrifice } from './pray.js';
 import { dosit } from './sit.js';
-import { dodip } from './potion.js';
-import { dogenocided, do_gamelog, doconduct, dovanquished } from './insight.js';
+import { dodip, dodrink } from './potion.js';
+import { dogenocided, do_gamelog, doconduct, dovanquished, doborn } from './insight.js';
 import { isok } from './hacklib.js';
 import { Monnam, canspotmon, x_monnam, mon_nam, oc_wldam } from './uhitm.js';
 import { domonnoise } from './sounds.js';
@@ -57,8 +62,22 @@ import { doextversion } from './version.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { polyok_flag } from './monflags_data.js';
 import { polymon, newman, domonability, PM_HUMAN } from './polyself.js';
-import { obj_resists } from './zap.js';
-import { timed_prop } from './timeout.js';
+import { obj_resists, dozap } from './zap.js';
+import { timed_prop, wiz_timeout_queue } from './timeout.js';
+import { dobugreport } from './report.js';
+import { docast } from './spell.js';
+import { dodown, doup } from './do.js';
+import { doengrave } from './engrave.js';
+import { dotogglepickup } from './options.js';
+import { doclassdisco } from './o_init.js';
+import { doread } from './read.js';
+import { dotelecmd } from './teleport.js';
+import { doset, dosetSimple } from './doset.js';
+import { wiz_light_sources } from './light.js';
+import { wiz_debug_cmd_bury } from './dig.js';
+import { doeat } from './eat.js';
+import { dohelp, doquickwhatis, hmenu_dohistory } from './pager.js';
+import { dokick } from './dokick.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -2964,6 +2983,111 @@ const HANDLERS = {
     runnorth: () => runrush_extcmd(0, -1, false), runnortheast: () => runrush_extcmd(1, -1, false),
     runeast: () => runrush_extcmd(1, 0, false), runsoutheast: () => runrush_extcmd(1, 1, false),
     runsouth: () => runrush_extcmd(0, 1, false), runsouthwest: () => runrush_extcmd(-1, 1, false),
+
+    // Bare references: the underlying function's own return convention
+    // already matches doextcmd()'s `res === 1 ? 1 : 0` rule with no
+    // translation (either it's always 0/ECMD_OK, or its own numbers happen
+    // to already be plain {0,1}).
+    attributes: doattributes,
+    autopickup: dotogglepickup,
+    bugreport: dobugreport,
+    cast: docast,
+    down: dodown,
+    drop: dodrop,
+    engrave: doengrave,
+    glance: doquickwhatis,
+    help: dohelp,
+    history: hmenu_dohistory,
+    inventtype: dotypeinv,
+    kick: dokick,
+    known: dodiscovered,
+    knownclass: doclassdisco,
+    look: dolook,
+    options: dosetSimple,
+    optionsfull: doset,
+    perminv: doperminv,
+    pickup: dopickup,
+    quaff: dodrink,
+    read: doread,
+    redraw: doredraw,
+    seeamulet: dopramulet,
+    seearmor: doprarm,
+    seerings: doprring,
+    seetools: doprtool,
+    seeweapon: doprwep,
+    showgold: doprgold,
+    showspells: dovspell,
+    takeoffall: doddoremarm,
+    teleport: dotelecmd,
+    timeout: wiz_timeout_queue,
+    up: doup,
+    whatis: do_look_full,
+    wizborn: doborn,
+    wizbury: wiz_debug_cmd_bury,
+    zap: dozap,
+
+    // Wrapped: the function's own ECMD_* convention needs translating to
+    // doextcmd()'s res===1 rule, or it needs an argument (getdir/getlin) not
+    // available to a bare zero-arg call.
+    apply: doapply_extcmd,
+    close: doclose_extcmd,
+    eat: doeat_extcmd,
+    exploremode: exploremode_extcmd,
+    fight: fight_extcmd,
+    fire: fire_extcmd,
+    inventory: inventory_extcmd,
+    lookaround: lookaround_extcmd,
+    open: open_extcmd,
+    pay: pay_extcmd,
+    puton: puton_extcmd,
+    quiver: quiver_extcmd,
+    remove: doremring_extcmd,
+    repeat: do_repeat_extcmd,
+    reqmenu: do_reqmenu_extcmd,
+    retravel: dotravel_target_extcmd,
+    run: do_run_extcmd,
+    rush: do_rush_extcmd,
+    save: dosave_extcmd,
+    search: dosearch_extcmd,
+    seeall: doprinuse_extcmd,
+    showtrap: doidtrap_extcmd,
+    swap: doswapweapon_extcmd,
+    takeoff: dotakeoff_extcmd,
+    therecmdmenu: dotherecmdmenu_extcmd,
+    throw: dothrow_extcmd,
+    toggle: dotoggleoption_extcmd,
+    travel: dotravel_extcmd,
+    wear: dowear_extcmd,
+    whatdoes: dowhatdoes_extcmd,
+    wield: dowield_extcmd,
+    prevmsg: prevmsg_extcmd,
+
+    // Wizard-mode-only (WIZMODECMD; doextcmd() already refuses these outside
+    // game.flags.debug before HANDLERS is even consulted). All live in
+    // wizcmds.js: a static top-level import of that file throws a TDZ error
+    // at load (same class as wizmondiff_extcmd below), so every one of these
+    // reaches its real implementation via a dynamic import instead.
+    debugfuzzer: debugfuzzer_extcmd,
+    lightsources: lightsources_extcmd,
+    migratemons: migratemons_extcmd,
+    panic: panic_extcmd,
+    stats: stats_extcmd,
+    vision: vision_extcmd,
+    wizcustom: wizcustom_extcmd,
+    wizdetect: wizdetect_extcmd,
+    wizdispmacros: wizdispmacros_extcmd,
+    wizfliplevel: wizfliplevel_extcmd,
+    wizkill: wizkill_extcmd,
+    wizloaddes: wizloaddes_extcmd,
+    wizloadlua: wizloadlua_extcmd,
+    wizobjprobs: wizobjprobs_extcmd,
+    wizmakemap: wizmakemap_extcmd,
+    wizrumorcheck: wizrumorcheck_extcmd,
+    wizseenv: wizseenv_extcmd,
+    wizshownhuuid: wizshownhuuid_extcmd,
+    wizsmell: wizsmell_extcmd,
+    wiztelekinesis: wiztelekinesis_extcmd,
+    wmode: wmode_extcmd,
 };
 
 // C ref: teleport.c wiz_level_tele() / js/do.js wiz_level_tele() — fully
@@ -2976,6 +3100,404 @@ const HANDLERS = {
 async function wizlevelport_extcmd() {
     const { wiz_level_tele } = await import('./do.js');
     return await wiz_level_tele((q) => hooked_tty_getlin(q, null));
+}
+
+// ── #apply .. #zap: the ~90-entry HANDLERS/EXTCMDLIST gap, found by a 8-agent
+// audit of every EXTCMDLIST name absent from HANDLERS (only wizlevelport,
+// droptype and the move/rush/run family above had been fixed already).  Same
+// bug shape throughout: the command's real handler is fully ported, correct,
+// and already exercised by its bound raw key, but was simply never added to
+// this file's separate-by-name dispatch table, so "#<name><Enter>" silently
+// no-oped and any follow-up keystrokes (a getobj/getdir/getlin answer) leaked
+// into rhack() as fresh top-level commands.  Each wrapper mirrors its raw-key
+// call site's own ECMD_*->res translation exactly (the numeric ECMD_* values
+// are NOT uniform across files — read each home file's own constants, never
+// assume).  Anything living in js/cmd.js is reached via dynamic import only:
+// cmd.js has a static top-level import FROM this file, so a static import in
+// the other direction throws a TDZ error at load (see wizmondiff_extcmd
+// above); pager.js/wizcmds.js have their own indirect edges back to cmd.js
+// and get the same dynamic-import treatment for the same reason.
+
+// C ref: apply.c doapply() — apply.js's own ECMD_TIME is 2, not 1.
+async function doapply_extcmd() {
+    const res = await doapply();
+    return res === APPLY_ECMD.ECMD_TIME ? 1 : 0;
+}
+
+// C ref: lock.c doclose() — cmd.js's own LOCAL ECMD_TIME for doclose is 2,
+// distinct from cmd.js's module-level ECMD_TIME=1 used elsewhere in that file.
+async function doclose_extcmd() {
+    const { doclose } = await import('./cmd.js');
+    const res = await doclose();
+    return res === 2 ? 1 : 0;
+}
+
+// C ref: eat.c doeat() — eat.js's doeat() returns a JS boolean, not a numeric
+// ECMD code (true/false, not 1/0).
+async function doeat_extcmd() {
+    return (await doeat()) ? 1 : 0;
+}
+
+// C ref: cmd.c:952 enter_explore_mode() — cmd.js's own ECMD_TIME=1; the
+// function itself only ever returns ECMD_OK(0) in this port (its 'yes'
+// confirmation path is unreachable, a pre-existing separate limitation).
+async function exploremode_extcmd() {
+    const { enter_explore_mode } = await import('./cmd.js');
+    return (await enter_explore_mode()) === 1 ? 1 : 0;
+}
+
+// C ref: cmd.c do_fight() — the 'F' fight prefix; never returns ECMD_TIME.
+async function fight_extcmd() {
+    const { do_fight } = await import('./cmd.js');
+    const res = await do_fight();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: dothrow.c dofire() — mirrors js/cmd.js's 'f' key translation
+// exactly. getdir lives in cmd.js, reached via dynamic import.
+async function fire_extcmd() {
+    const { getdir } = await import('./cmd.js');
+    return (await dofire(getdir)) === 3 ? 1 : 0;
+}
+
+// C ref: invent.c ddoinv() — mirrors js/cmd.js's 'i' key translation exactly.
+async function inventory_extcmd() {
+    const { getdir } = await import('./cmd.js');
+    return (await ddoinv(getdir)) === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c dolookaround() — lives in cmd.js; own ECMD_TIME=1, but
+// dolookaround() itself only ever returns ECMD_OK(0).
+async function lookaround_extcmd() {
+    const { dolookaround } = await import('./cmd.js');
+    const res = await dolookaround();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: lock.c doopen_indir(0,0) — the #open command, identical to the 'o'
+// key (cmd.js:1311); doopen_indir already returns plain 1/0.
+async function open_extcmd() {
+    const { doopen_indir } = await import('./cmd.js');
+    return await doopen_indir(0, 0);
+}
+
+// C ref: shk.c dopay() — mirrors js/cmd.js's 'p' key translation exactly
+// (invent.js's own ECMD_TIME is 3, not 1).
+async function pay_extcmd() {
+    return (await dopay()) === 3 ? 1 : 0;
+}
+
+// C ref: do_wear.c doputon() — mirrors js/cmd.js's 'P' key translation
+// (invent.js's own ECMD_TIME is 3, not 1); doputon() can no longer return
+// ECMD_NOTHANDLED (that raw-key guard is dead code), so no such branch here.
+async function puton_extcmd() {
+    return (await doputon()) === 3 ? 1 : 0;
+}
+
+// C ref: wield.c doquiver_core('ready') via dowieldquiver() — mirrors
+// js/cmd.js's 'Q' key translation (invent.js's own ECMD_TIME is 3).
+async function quiver_extcmd() {
+    return (await dowieldquiver()) === 3 ? 1 : 0;
+}
+
+// C ref: do_wear.c doremring() — mirrors js/cmd.js's 'R' key translation
+// (invent.js's own ECMD_TIME is 3; its ECMD_CANCEL is literally 1, so a bare
+// reference would misreport a cancelled prompt as a turn spent).
+async function doremring_extcmd() {
+    return (await doremring()) === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c do_repeat() (^A) — lives in cmd.js; own ECMD_TIME=1.
+async function do_repeat_extcmd() {
+    const { do_repeat } = await import('./cmd.js');
+    const res = await do_repeat();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: cmd.c do_reqmenu() — a PREFIXCMD, never returns ECMD_TIME(1); the
+// raw 'm' key instead reimplements the same logic inline (a pre-existing,
+// separate duplicate-reimplementation gap, out of scope here).
+async function do_reqmenu_extcmd() {
+    const { do_reqmenu } = await import('./cmd.js');
+    const res = await do_reqmenu();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: hack.c dotravel_target() — invent.js's own ECMD_TIME is 3. No
+// raw-key call site exists (Ctrl+_ has no dispatch arm), so the translation
+// is read from dotravel_target()'s own return convention.
+async function dotravel_target_extcmd() {
+    const res = await dotravel_target();
+    return res === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c:1606 do_run() (the #run prefix, 'G') — never ported before
+// this pass; js/cmd.js's do_run_prefix() (added alongside this fix) mirrors
+// its sibling do_rush() exactly. Own ECMD_TIME=1, never actually returned.
+async function do_run_extcmd() {
+    const { do_run_prefix } = await import('./cmd.js');
+    const res = await do_run_prefix();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: cmd.c:1590 do_rush() (the #rush prefix, 'g') — already a faithful
+// port in cmd.js, just never wired into HANDLERS; own ECMD_TIME=1, never
+// actually returned (do_rush is a PREFIXCMD).
+async function do_rush_extcmd() {
+    const { do_rush } = await import('./cmd.js');
+    const res = await do_rush();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: save.c dosave() — mirrors the 'S' raw-key site exactly: dosave()
+// sets game.context.move itself (always to 0, since a successful save exits
+// the process) and never signals time via its return value.
+async function dosave_extcmd() {
+    const { dosave } = await import('./save.js');
+    await dosave();
+    return 0;
+}
+
+// C ref: hack.c dosearch() — lives in cmd.js as a local (now exported)
+// wrapper returning a JS boolean, not a numeric ECMD code; mirrors the 's'
+// raw-key site's occupation-arming side effect exactly.
+async function dosearch_extcmd() {
+    const { dosearch } = await import('./cmd.js');
+    const searched = await dosearch();
+    if (searched && (game.multi ?? 0) > 0)
+        game._search_occupation = true;
+    return searched ? 1 : 0;
+}
+
+// C ref: invent.c doprinuse() — real C discards its return value and never
+// spends a turn; mirrors the '*' raw-key site's unconditional move=0 exactly
+// rather than translating doprinuse()'s own (unused) return value.
+async function doprinuse_extcmd() {
+    const { getdir } = await import('./cmd.js');
+    await doprinuse(getdir);
+    return 0;
+}
+
+// C ref: pager.c doidtrap() — no raw-key call site exists for '^' at all;
+// doidtrap()'s own CANCEL value happens to be the literal 1 (doextcmd()'s own
+// "time used" sentinel), but this command never spends a turn, so its result
+// must be discarded, not passed through.  Dynamic import: pager.js has its
+// own static import FROM cmd.js, which would otherwise close a new cycle back
+// through this file.
+async function doidtrap_extcmd() {
+    const { doidtrap } = await import('./pager.js');
+    await doidtrap();
+    return 0;
+}
+
+// C ref: wield.c doswapweapon() — mirrors js/cmd.js's 'x' key translation
+// (invent.js's own ECMD_TIME is 3).
+async function doswapweapon_extcmd() {
+    return (await doswapweapon()) === 3 ? 1 : 0;
+}
+
+// C ref: do_wear.c dotakeoff() — mirrors js/cmd.js's 'T' key translation
+// (invent.js's own ECMD_TIME is 3; its ECMD_CANCEL is literally 1).
+async function dotakeoff_extcmd() {
+    return (await dotakeoff()) === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c:4343 dotherecmdmenu() — lives in cmd.js; own ECMD_TIME(1)
+// already matches doextcmd()'s convention, so this is a pure pass-through.
+async function dotherecmdmenu_extcmd() {
+    const { dotherecmdmenu } = await import('./cmd.js');
+    return await dotherecmdmenu();
+}
+
+// C ref: dothrow.c dothrow() — mirrors js/cmd.js's 't' key translation
+// exactly (invent.js's own ECMD_TIME is 3; its ECMD_CANCEL is literally 1).
+async function dothrow_extcmd() {
+    const { getdir } = await import('./cmd.js');
+    return (await dothrow(getdir)) === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c dotoggleoption() — lives in cmd.js; reachable via '#toggle'
+// only bare (no BIND-macro param populated by this path), so it always
+// returns ECMD_OK(0) — a pure pass-through wrapper.
+async function dotoggleoption_extcmd() {
+    const { dotoggleoption } = await import('./cmd.js');
+    return await dotoggleoption();
+}
+
+// C ref: hack.c dotravel() — invent.js's own ECMD_TIME is 3.  No raw-key
+// translation to mirror: cmd.js's '_' site hardcodes move=0 unconditionally
+// (the tested public sessions all cancel at the destination prompt), so this
+// is read from dotravel()'s own declared return convention instead.
+async function dotravel_extcmd() {
+    return (await dotravel()) === 3 ? 1 : 0;
+}
+
+// C ref: do_wear.c dowear() — mirrors js/cmd.js's 'W' key translation
+// exactly (invent.js's own ECMD_TIME is 3).
+async function dowear_extcmd() {
+    return (await dowear()) === 3 ? 1 : 0;
+}
+
+// C ref: pager.c dowhatdoes() — always returns 0 (prompts for one key,
+// prints its description, never spends time); pager.js has its own static
+// import FROM cmd.js, so this is reached dynamically to avoid a new cycle.
+async function dowhatdoes_extcmd() {
+    const { dowhatdoes } = await import('./pager.js');
+    return await dowhatdoes();
+}
+
+// C ref: wield.c dowield() — mirrors js/cmd.js's 'w' key translation exactly
+// (invent.js's own ECMD_TIME is 3).
+async function dowield_extcmd() {
+    return (await dowield()) === 3 ? 1 : 0;
+}
+
+// C ref: topl.c nh_doprev_message() (^P) — cmd_nh_doprev_message() is an
+// explicit unported stub (message-history recall is a real missing feature,
+// out of scope here); doprev_message() itself always returns ECMD_OK(0), so
+// wiring this is a behavior-neutral, zero-risk dispatch fix.
+async function prevmsg_extcmd() {
+    const { doprev_message } = await import('./cmd.js');
+    return doprev_message();
+}
+
+// C ref: wizcmds.c wiz_fuzzer() — #debugfuzzer.
+async function debugfuzzer_extcmd() {
+    const { wiz_fuzzer } = await import('./wizcmds.js');
+    return await wiz_fuzzer();
+}
+
+// C ref: light.c:934 wiz_light_sources() — the function only builds the menu
+// lines; display_text_window (pager.js) draws them. pager.js has its own
+// static import FROM cmd.js, so it's reached dynamically here.
+async function lightsources_extcmd() {
+    const lines = wiz_light_sources();
+    const { display_text_window } = await import('./pager.js');
+    await display_text_window(lines);
+    return 0;
+}
+
+// C ref: wizcmds.c:1873 wiz_migrate_mons() — #migratemons.
+async function migratemons_extcmd() {
+    const { wiz_migrate_mons } = await import('./wizcmds.js');
+    return await wiz_migrate_mons();
+}
+
+// C ref: wizcmds.c:534 wiz_panic() — #panic.
+async function panic_extcmd() {
+    const { wiz_panic } = await import('./wizcmds.js');
+    return await wiz_panic();
+}
+
+// C ref: wizcmds.c:1616 wiz_show_stats() — #stats.
+async function stats_extcmd() {
+    const { wiz_show_stats } = await import('./wizcmds.js');
+    return await wiz_show_stats();
+}
+
+// C ref: wizcmds.c:621 wiz_show_vision() — #vision.
+async function vision_extcmd() {
+    const { wiz_show_vision } = await import('./wizcmds.js');
+    return await wiz_show_vision();
+}
+
+// C ref: wizcmds.c:1934 wiz_custom() — #wizcustom.
+async function wizcustom_extcmd() {
+    const { wiz_custom } = await import('./wizcmds.js');
+    return await wiz_custom();
+}
+
+// C ref: wizcmds.c:229 wiz_detect() — #wizdetect (independent of the
+// already-fixed raw ^E key, which uses its own static cmd.js->wizcmds.js
+// import — that direction is fine; the hazard is only extcmd-handlers.js
+// importing FROM wizcmds.js while cmd.js imports FROM extcmd-handlers.js).
+async function wizdetect_extcmd() {
+    const { wiz_detect } = await import('./wizcmds.js');
+    return await wiz_detect();
+}
+
+// C ref: wizcmds.c:1705 wiz_display_macros() — #wizdispmacros.
+async function wizdispmacros_extcmd() {
+    const { wiz_display_macros } = await import('./wizcmds.js');
+    return await wiz_display_macros();
+}
+
+// C ref: wizcmds.c:412 wiz_flip_level() — #wizfliplevel.
+async function wizfliplevel_extcmd() {
+    const { wiz_flip_level } = await import('./wizcmds.js');
+    return await wiz_flip_level();
+}
+
+// C ref: wizcmds.c:243 wiz_kill() — #wizkill.
+async function wizkill_extcmd() {
+    const { wiz_kill } = await import('./wizcmds.js');
+    return await wiz_kill();
+}
+
+// C ref: wizcmds.c wiz_load_splua() — #wizloaddes.
+async function wizloaddes_extcmd() {
+    const { wiz_load_splua } = await import('./wizcmds.js');
+    return await wiz_load_splua();
+}
+
+// C ref: wizcmds.c wiz_load_lua() — #wizloadlua.
+async function wizloadlua_extcmd() {
+    const { wiz_load_lua } = await import('./wizcmds.js');
+    return await wiz_load_lua();
+}
+
+// C ref: wizcmds.c:1498 wiz_objprobs() — #wizobjprobs.
+async function wizobjprobs_extcmd() {
+    const { wiz_objprobs } = await import('./wizcmds.js');
+    return await wiz_objprobs();
+}
+
+// C ref: wizcmds.c wiz_makemap() — #wizmakemap.
+async function wizmakemap_extcmd() {
+    const { wiz_makemap } = await import('./wizcmds.js');
+    return await wiz_makemap();
+}
+
+// C ref: wizcmds.c:880 wiz_rumor_check() — #wizrumorcheck. Its own body
+// (nyi_rumor_check()) is an inert stand-in for rumors.c's real sanity check —
+// a separate, pre-existing feature gap; the wiring itself is safe (zero
+// keyboard input either way, byte-identical observable no-op).
+async function wizrumorcheck_extcmd() {
+    const { wiz_rumor_check } = await import('./wizcmds.js');
+    return await wiz_rumor_check();
+}
+
+// C ref: wizcmds.c:616 wiz_show_seenv() — #wizseenv.
+async function wizseenv_extcmd() {
+    const { wiz_show_seenv } = await import('./wizcmds.js');
+    return await wiz_show_seenv();
+}
+
+// C ref: wizcmds.c:1438 wiz_show_nhuuid() — #wizshownhuuid.
+async function wizshownhuuid_extcmd() {
+    const { wiz_show_nhuuid } = await import('./wizcmds.js');
+    return await wiz_show_nhuuid();
+}
+
+// C ref: wizcmds.c wiz_smell() — #wizsmell.
+async function wizsmell_extcmd() {
+    const { wiz_smell } = await import('./wizcmds.js');
+    return await wiz_smell();
+}
+
+// C ref: wizcmds.c wiz_telekinesis() — #wiztelekinesis. Its mhurtle/hurtle
+// effect is backed by inert nyi_* stand-ins (a separate, pre-existing gap);
+// the position/direction-picking prompts and cancels are fully real, so
+// wiring this still closes the keystroke-leak bug regardless.
+async function wiztelekinesis_extcmd() {
+    const { wiz_telekinesis } = await import('./wizcmds.js');
+    return await wiz_telekinesis();
+}
+
+// C ref: wizcmds.c:671 wiz_show_wmodes() — #wmode.
+async function wmode_extcmd() {
+    const { wiz_show_wmodes } = await import('./wizcmds.js');
+    return await wiz_show_wmodes();
 }
 
 // C ref: do.c doddrop() — fully implemented in invent.js and correctly wired
