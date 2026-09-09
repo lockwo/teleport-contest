@@ -3262,7 +3262,7 @@ async function getobj_menu(lets, allowed) {
         const invArr = inventoryArray();
         const n = choices != null ? choices.length
             : (invArr.length === 0 ? 0 : invArr.length === 1 ? 1 : 2);
-        if (n === 1 && !game.iflags?.force_invmenu && !game.iflags?.menu_requested) {
+        if (n === 1 && !game.flags?.force_invmenu && !game.iflags?.menu_requested) {
             const invlet = choices ? choices[0] : invArr[0]?.invlet;
             const otmp = invArr.find(o => o.invlet === invlet);
             if (otmp) {
@@ -3283,6 +3283,14 @@ async function getobj_menu(lets, allowed) {
         for (const obj of inventoryArray())
             if (!choices || String(choices).includes(obj.invlet))
                 shownLets.add(obj.invlet);
+        // C ref: invent.c display_pickinv()'s force_invmenu "Special" row
+        // (see force_invmenu_special()) — its accelerator ('*' to broaden to
+        // the whole pack, or '?' to narrow back to likely candidates) is
+        // selectable exactly when display_pickinv() would have drawn it, and
+        // picking it REISSUES the menu with `allowed` flipped rather than
+        // returning to the caller.
+        const special = force_invmenu_special(choices);
+        if (special) shownLets.add(special.ch);
         for (;;) {
             const key = await nhgetch();
             const ch = String.fromCharCode(key);
@@ -3290,6 +3298,7 @@ async function getobj_menu(lets, allowed) {
             if (ch === '\0' || ch === '\n' || ch === '\r' || ch === ' ') {
                 delete game._modal_screen; return '\0';
             }
+            if (special && ch === special.ch) { delete game._modal_screen; allowed = !allowed; break; }
             // C: the tty menu ignores non-accelerator keys (tty_nhbell)
             if (shownLets.has(ch)) { delete game._modal_screen; return ch; }
             // unacceptable input: tty_nhbell() (no visible change), keep reading
@@ -3347,7 +3356,8 @@ export async function getobj(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
         return null;
     }
 
-    let qbuf = `What do you want to ${word}?`;
+    const qbufPlain = `What do you want to ${word}?`;
+    let qbuf = qbufPlain;
     if (!buf) qbuf += ' [*]';
     else qbuf += ` [${buf} or ?*]`;
 
@@ -3355,15 +3365,36 @@ export async function getobj(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
     // that object." and loops back to re-prompt; the next yn_function call first
     // flushes that message with --More-- (handled by topline_query honouring
     // _yn_need_more).  A quitchar (space/return/ESC) cancels with "Never mind.".
+    let oneloop = false;
     for (;;) {
         // C ref: invent.c getobj() — a canned command-queue key (pushed by
         // itemactions, the "Do what with X?" submenu) is consumed as the object
         // selection WITHOUT rendering the prompt (no extra frame), exactly as
         // tty's cmdq_pop fast path does.
         const canned = cmdq_pop(CQ_CANNED);
-        const key = canned && canned.typ === CMDQ_KEY
-            ? canned.key : await topline_query(qbuf);
-        let ilet = String.fromCharCode(key);
+        let ilet, key;
+        if (!canned && !oneloop && game.flags?.force_invmenu) {
+            // C ref: invent.c getobj() ~line 1917 — force_invmenu skips the
+            // single-line "[f or ?*]" yn_function prompt entirely on the
+            // FIRST pass and auto-selects '?' (or '*' with no suggested
+            // letters), jumping straight to the boxed picker menu with no
+            // keystroke consumed.  A re-prompt after an invalid pick (a
+            // later loop iteration) still uses the normal single-line query.
+            // C ref: invent.c getobj() `if (!msggiven) putmsghistory(qbuf,
+            // FALSE); msggiven = TRUE;` — the bare question (no "[f or ?*]"
+            // suffix: that's only appended on the non-force_invmenu path)
+            // is still written to the top line, just never blocks for a
+            // keypress there; the boxed menu then opens below it.
+            game._pending_message = qbufPlain;
+            game._toplines = qbufPlain;
+            ilet = (lets || altlets.length) ? '?' : '*';
+            key = ilet.charCodeAt(0);
+        } else {
+            key = canned && canned.typ === CMDQ_KEY
+                ? canned.key : await topline_query(qbuf);
+            ilet = String.fromCharCode(key);
+        }
+        oneloop = true;
         let cnt = 0, cntgiven = false;
 
         // C ref: invent.c getobj():1935 — a DIGIT at the object prompt is a
@@ -9206,9 +9237,27 @@ export function find_unpaid(list, last_found) {
 
 export function free_pickinv_cache() { game.cached_pickinv_win = WIN_ERR; }
 
+// C ref: invent.c display_pickinv():3341-3363 — "default for force_invmenu is
+// a menu listing likely candidates; add '*' for 'list all' as an extra choice
+// unless the menu already includes everything; when reissuing the menu after
+// player has picked '*', add '?' for 'list likely candidates' to reverse
+// that." Only the `lets` (not allowxtra/usextra) half applies to this port's
+// one caller (getobj_menu(), always allowxtra=false); factored out so
+// getobj_menu() can add the same synthetic letter to its own accept-set.
+function force_invmenu_special(lets) {
+    if (!game.flags?.force_invmenu) return null;
+    if (lets && lets.length < inventoryArray().length)
+        return { ch: '*', text: '(list everything)' };
+    if (!lets)
+        return { ch: '?', text: '(list likely candidates)' };
+    return null;
+}
+
 export function display_pickinv(lets = null, xtra_choice = null, query = null, allowxtra = false, want_reply = false, out_cnt = null) {
-    void xtra_choice; void query; void allowxtra; void want_reply;
+    void xtra_choice; void query; void allowxtra;
     const rows = inventoryRows(lets);
+    const special = want_reply ? force_invmenu_special(lets) : null;
+    if (special) rows.push(['Special', `${special.ch} - ${special.text}`]);
     if (!rows.length) {
         game._pending_message = 'Not carrying anything.';
         return '\0';

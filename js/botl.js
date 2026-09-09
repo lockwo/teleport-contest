@@ -1,13 +1,17 @@
 // botl.js — the status lines and the STATUS HILITES subsystem.  C ref: botl.c.
 //
-// INERT BY DESIGN: nothing imports this module.  The live status line is still
-// rendered by js/display.js's own _botFields()/bot() path; rows 22/23 appear on
-// EVERY scored screen, so switching the renderer over is a separate, measured
-// change.  bot() itself lives in display.js and is deliberately not duplicated
-// here (nor are rank/rank_of/xlev_to_rank/rank_to_xlev, status_initialize,
-// stat_cap_indx, repad_with_dashes, count_status_hilites, or the
-// parse_status_hl1/hl2/fldname_to_bl_indx/splitsubfields/is_ltgt_percentnumber/
-// has_ltgt_percentnumber/parse_cond_option group that options.js already owns).
+// MOSTLY INERT BY DESIGN: this module's own bot_via_windowport()-style
+// renderer is not the live one. The live status line is rendered by
+// js/display.js's own _botFields()/bot() path; rows 22/23 appear on EVERY
+// scored screen, so switching the whole renderer over is a separate, measured
+// change. Three self-contained fields ARE wired live from here via a cached
+// dynamic import (js/display.js's warmupBotlStatusFns()): weapon_status(),
+// armor_status(), terrain_status(). bot() itself lives in display.js and is
+// deliberately not duplicated here (nor are rank/rank_of/xlev_to_rank/
+// rank_to_xlev, status_initialize, stat_cap_indx, repad_with_dashes,
+// count_status_hilites, or the parse_status_hl1/hl2/fldname_to_bl_indx/
+// splitsubfields/is_ltgt_percentnumber/has_ltgt_percentnumber/
+// parse_cond_option group that options.js already owns).
 //
 // The status line is a SNAPSHOT, not live state: rows 22/23 only change when
 // bot() runs, and bot() SKIPS while u.uhp == -1 (dosave()'s "game over"
@@ -27,7 +31,12 @@ import {
     MENU_ITEMFLAGS_NONE, MENU_ITEMFLAGS_SELECTED, MENU_ITEMFLAGS_SKIPINVERT,
     In_quest, In_endgame, Is_knox_level, COLNO,
     P_QUARTERSTAFF, P_POLEARMS, P_LANCE, P_MORNING_STAR, P_UNICORN_HORN,
+    STONE, TREE, CORR, ROOM, DOOR, DRAWBRIDGE_UP, MOAT, WATER,
+    D_ISOPEN, D_CLOSED, D_LOCKED, D_TRAPPED,
+    xFLOOR, xGROUND, xOPENDOOR, xSHUTDOOR, xSWAMP, xSUBMERGED, xSEA, xWATERWALL,
+    Is_earthlevel, Is_medusa_level, Is_juiblex_level, Is_waterlevel,
 } from './const.js';
+import { db_under_typ } from './dbridge.js';
 import { NO_COLOR } from './terminal.js';
 import { GOLD_PIECE, COIN_CLASS, WEAPON_CLASS } from './mkobj.js';
 import { roles } from './role.js';
@@ -268,11 +277,64 @@ function status_version_str(indent) {
     return `${indent ? ' ' : ''}NetHack`;
 }
 
-/* C ref: hack.c classify_terrain() — private copy for the same reason.  Only
-   the "already classified" fast path matters to bot_via_windowport(). */
+/* C ref: hack.c classify_terrain() — computes the #terrainstatus pseudo-type
+   for the hero's CURRENT square and stores it in game.iflags.terrain_typ.
+   Unlike C (which only recomputes on change and uses the result to decide
+   whether to request a status redraw), this is called fresh on every render
+   by terrain_status() below, matching this file's existing weapon_status()/
+   armor_status() "rebuilt live every frame" design — no dirty-flag/redraw-
+   suppression semantics to get wrong. */
+function classify_terrain() {
+    const u = game.u || {};
+    const loc = game.level?.at(u.ux, u.uy);
+    let typ = loc?.typ;
+    if (typ == null) { game.iflags = game.iflags || {}; game.iflags.terrain_typ = MAX_TYPE; return; }
+
+    if (Underwater()) {
+        typ = xSUBMERGED;
+    } else {
+        switch (typ) {
+        case STONE:
+            if (game.level?.flags?.arboreal) typ = TREE;
+            break;
+        case CORR:
+        case ROOM:
+            typ = !Is_earthlevel() ? xFLOOR : xGROUND;
+            break;
+        case DOOR:
+            if (((loc.doormask ?? 0) & D_ISOPEN) !== 0) typ = xOPENDOOR;
+            else if (((loc.doormask ?? 0) & (D_CLOSED | D_LOCKED | D_TRAPPED)) !== 0) typ = xSHUTDOOR;
+            break;
+        case DRAWBRIDGE_UP:
+            typ = db_under_typ(loc.drawbridgemask ?? 0);
+            if (typ === STONE || typ === ROOM) typ = xGROUND;
+            break;
+        case MOAT:
+            if (Is_medusa_level()) typ = xSEA;
+            else if (Is_juiblex_level()) typ = xSWAMP;
+            break;
+        case WATER:
+            if (!Is_waterlevel()) typ = xWATERWALL;
+            break;
+        default:
+            break;
+        }
+    }
+    game.iflags = game.iflags || {};
+    game.iflags.terrain_typ = typ;
+}
+
 function classify_terrain_typ() {
     const t = game.iflags?.terrain_typ;
     return (t === undefined || t === null) ? MAX_TYPE : t;
+}
+
+/* C ref: botl.c bot1() terrain_descr[classify_terrain_typ()] — the
+   #terrainstatus botl field. */
+export function terrain_status() {
+    classify_terrain();
+    const i = classify_terrain_typ();
+    return i === MAX_TYPE ? '' : (terrain_descr[i] || '');
 }
 
 /* C ref: pray.c critically_low_hp(only_if_injured) — private copy (pray.js has

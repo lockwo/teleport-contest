@@ -4,7 +4,7 @@
 import { game } from './gstate.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
-import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE } from './const.js';
+import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
 import { set_malign } from './makemon.js';
 
@@ -76,8 +76,17 @@ function goodpos(x, y) {
     if (x < 1 || x >= COLNO || y < 0 || y >= ROWNO) return false;
     if (game.u?.ux === x && game.u?.uy === y) return false;
     if (m_at(x, y)) return false;
-    const typ = game.level?.at(x, y)?.typ;
-    return typ != null && typ >= DOOR; // ACCESSIBLE(typ)
+    const loc = game.level?.at(x, y);
+    const typ = loc?.typ;
+    if (typ == null || typ < DOOR) return false; // !ACCESSIBLE(typ)
+    // C ref: monmove.c:2193 accessible() = ACCESSIBLE(...) && !closed_door(x,y)
+    // -- this closed-door term was missing (same bug already fixed in
+    // js/makemon.js's goodpos_spawn for random spawns, never propagated to
+    // this separate copy used for the starting pet), so the pony could be
+    // planted inside a shut/locked door instead of the next ring-1 candidate.
+    if (typ === DOOR && ((loc.doormask ?? 0) & (D_CLOSED | D_LOCKED)) !== 0)
+        return false;
+    return true;
 }
 
 // C ref: teleport.c collect_coords — gather candidate spots in expanding

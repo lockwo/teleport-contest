@@ -81,6 +81,18 @@ export const DRAWBRIDGE_DOWN = 34;
 export const AIR = 35;
 export const CLOUD = 36;
 export const MAX_TYPE = 37;
+// rm.h:100-107 — classify_terrain()'s pseudo-types, indices into
+// terrain_descr[] (js/botl.js) for the #terrainstatus botl field.  MATCH_WALL
+// (38, rm.h:96) is declared further down this file already — unused here
+// anyway (special-level wall matching, not a hero-underfoot classification).
+export const xFLOOR = 39;
+export const xGROUND = 40;
+export const xOPENDOOR = 41;
+export const xSHUTDOOR = 42;
+export const xSWAMP = 43;
+export const xSUBMERGED = 44;
+export const xSEA = 45;
+export const xWATERWALL = 46;
 
 // Door states — cf. rm.h
 export const D_NODOOR = 0x00;

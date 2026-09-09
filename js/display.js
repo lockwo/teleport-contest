@@ -319,6 +319,15 @@ function pile_attr(pile) {
         ? ATR_INVERSE : 0;
 }
 
+// C ref: win/tty/wintty.c tty_print_glyph — MG_BW_ENGR (a corridor engraving
+// whose glyph collides with plain corridor's, see engraving_glyph() above)
+// draws ATR_INVERSE under the same use_inverse gate as MG_OBJPILE, but is NOT
+// additionally gated on hilite_pile.
+function bg_attr(bg) {
+    return pile_attr(bg?.pile)
+        || ((bg?.bwEngr && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0);
+}
+
 // Monster at (x, y).  C ref: rm.h m_at(x,y) = svl.level.monsters[x][y].
 // A ridden steed has been removed from the map grid (remove_monster in
 // mount_steed) but remains in the fmon chain, so it must NOT be reported by the
@@ -1060,7 +1069,15 @@ export function engraving_glyph(loc) {
     const isCorr = loc?.typ === CORR;
     const ov = symOverrideChar(isCorr ? 'S_engrcorr' : 'S_engroom');
     const ch = ov || (isCorr ? '#' : '`');
-    return { ch, color: CLR_BRIGHT_BLUE, dec: false };
+    // C ref: display.c reset_glyphmap() sets MG_BW_ENGR whenever a corridor
+    // engraving's rendered char collides with plain corridor's/lit-corridor's
+    // (true for every built-in symset, since none give S_engrcorr a distinct
+    // glyph); win/tty/wintty.c then draws any MG_BW_ENGR glyph in ATR_INVERSE
+    // whenever iflags.use_inverse, independent of color mode.
+    const bwEngr = isCorr
+        && (ch === (symOverrideChar('S_corr') || '#')
+            || ch === (symOverrideChar('S_litcorr') || '#'));
+    return { ch, color: CLR_BRIGHT_BLUE, dec: false, bwEngr };
 }
 
 // C ref: display.h covers_objects(x,y) — a liquid cell hides objects/traps:
@@ -1432,7 +1449,7 @@ export async function swallowed(first) {
 // (background_glyph hands that back as bg.mem).
 function remember_bg(loc, bg) {
     const m = bg.mem || bg;
-    loc.remembered_glyph = { ch: m.ch, color: m.color, decgfx: m.dec, pile: !!bg.pile };
+    loc.remembered_glyph = { ch: m.ch, color: m.color, decgfx: m.dec, pile: !!bg.pile, bwEngr: !!bg.bwEngr };
 }
 
 // C ref: display.c:3357 seenv_matrix[3][3] — shared with vision.c.
@@ -1482,7 +1499,7 @@ export function feel_location(x, y) {
     // _map_location(x, y, 1): object > trap > engraving > terrain.
     const bg = background_glyph(loc, x, y);
     if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
-    show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, pile_attr(bg.pile));
+    show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
 
     // C ref: display.c:912 — which of the ball/chain the hero is touching.
     if (u?.uball && u?.uchain) {
@@ -1547,7 +1564,7 @@ export function newsym(x, y) {
             const hg = hero_glyph();
             show_glyph_cell(x, y, hg.ch, hg.color, false);
         } else {
-            show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, pile_attr(bg.pile));
+            show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
         }
         remember_bg(loc, bg);
         // C ref: display.c feel_location():869 — the Punished block.  While
@@ -1666,7 +1683,7 @@ export function newsym(x, y) {
             if (game.level?.flags?.hero_memory) {
                 remember_bg(loc, bg);
             }
-            show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, pile_attr(bg.pile));
+            show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
         }
     } else {
         // Can't physically see <x,y>.  C ref: display.c newsym "Can't see the
@@ -1715,7 +1732,7 @@ export function newsym(x, y) {
             // current hilite_pile setting), matching C's stored pile-top glyph.
             show_glyph_cell(x, y, loc.remembered_glyph.ch,
                 loc.remembered_glyph.color, loc.remembered_glyph.decgfx,
-                pile_attr(loc.remembered_glyph.pile));
+                bg_attr(loc.remembered_glyph));
         } else {
             // C ref: display.c newsym show_mem — an out-of-sight cell with
             // nothing remembered shows lev->glyph, which for an unmapped square
@@ -1821,7 +1838,7 @@ export async function docrt() {
         for (let y = 0; y < ROWNO; y++) {
             const loc = game.level.at(x, y);
             const rg = loc?.remembered_glyph;
-            if (rg) show_glyph_cell(x, y, rg.ch, rg.color, rg.decgfx, pile_attr(rg.pile));
+            if (rg) show_glyph_cell(x, y, rg.ch, rg.color, rg.decgfx, bg_attr(rg));
             else show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);
         }
     }
@@ -2141,6 +2158,7 @@ function _botFields(order) {
     // rather than a static one.
     if (active[BL_WEAPON]) raw[BL_WEAPON] = _botlStatusFns?.weapon_status() ?? '';
     if (active[BL_ARMOR]) raw[BL_ARMOR] = _botlStatusFns?.armor_status() ?? '';
+    if (active[BL_TERRAIN]) raw[BL_TERRAIN] = _botlStatusFns?.terrain_status() ?? '';
 
     raw[BL_TITLE] = _botTitle();
 

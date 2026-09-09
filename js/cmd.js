@@ -83,7 +83,7 @@ import { EXTCMD_TABLE } from './cmd_data.js';
 import { selection_new, selection_getbounds,
          selection_getpoint } from './selvar.js';
 import { carrying, objects_at, inventoryArray,
-         cmdq_add_key } from './invent.js';
+         cmdq_add_key, cmdq_pop } from './invent.js';
 import { num_spells } from './spell.js';
 import { vobj_at } from './display.js';
 import { dist2 } from './hacklib.js';
@@ -966,7 +966,14 @@ export async function rhack(key) {
         // prompt.  (Persisting until here is what lets free-action messages
         // like dolook survive onto the recorded screen.)
         await flush_screen(1);
-        key = await nhgetch();
+        // C ref: cmd.c rhack() `if ((cmdq = cmdq_pop()) != 0) { ...; key =
+        // cq.key; }` — do_repeat() (^A) sets game.in_doagain and re-enters
+        // rhack(0) expecting THIS call to replay the queued command instead
+        // of reading fresh input.  do_repeat() itself set up CQ_REPEAT's
+        // dispatch-epilogue recording (see the bottom of this function) and
+        // already restores the queue afterward so a second ^A repeats again.
+        const replay = game.in_doagain ? cmdq_pop(CQ_REPEAT) : null;
+        key = replay ? replay.key : await nhgetch();
         game._pending_message = '';
         // The top line was acknowledged by this keystroke; reset the topl
         // NEED_MORE state so the next turn's messages start a fresh line
@@ -1763,6 +1770,49 @@ export async function rhack(key) {
         badCommand = true;
         game.context.move = 0;
         await pline(`Unknown command '${visctrl_code(key & 0xff)}'.`);
+    }
+
+    // C ref: cmd.c rhack():3729-3735 — after ANY successfully-resolved
+    // command (not do_repeat itself, not doextcmd, not while already
+    // replaying), record it as #repeat's (^A) target.  C stores this by
+    // function pointer (cmdq_add_ec); this port's dispatch is a hand-written
+    // if/else rather than a tlist walk, so there is no single call site that
+    // "knows" which branch just ran — but cmdbind_get()/extcmdlist (built by
+    // cmd_commands_init(), including the runtime dirchars rebinding for
+    // movement keys) already carry the same key-to-command identity C's own
+    // cmdbind_get() would resolve, so one generic lookup here matches every
+    // dispatch path uniformly.  Was entirely unwired: do_repeat() (already
+    // ported, already dispatched via ^A) could never find anything to
+    // replay.  Storing the raw KEY (not a function name) since this port's
+    // "replay" re-drives the SAME key through this same dispatch (see the
+    // key===0 branch above), unlike C's direct function-pointer call.
+    // C ref: cmd.c rhack():3833-3835 — bad_command has its OWN explicit
+    // `cmdq_clear(CQ_REPEAT)`, separate from (and NOT covered by) the
+    // reset_cmd_vars() skip already noted above for stale_run: an unbound
+    // key clears whatever was queued to repeat, even though it leaves
+    // context.run alone.  Measured: without this, 3 consecutive "Unknown
+    // command ' '." presses left a stale search/move queued forever,
+    // making ^A repeat it when C has nothing left to repeat (bl018 -511).
+    // Checked against the resolved BINDING rather than the `badCommand`
+    // local: several branches print their own "Unknown command" (e.g. the
+    // ch===' '/rest_on_space-off arm) without setting that flag, so it
+    // under-covers C's real bad_command set; an absent binding is the
+    // C-faithful "tlist == 0" test regardless of which branch handled it.
+    const repeatBind = cmdbind_get(key & 0xff)?.cmd;
+    const repeatName = npExt || bindExt || repeatBind?.ef_funct;
+    if (badCommand || !repeatName) {
+        cmdq_of(CQ_REPEAT).length = 0;
+    } else if (!game.in_doagain) {
+        // C ref: cmd.c rhack() — a PREFIXCMD (F/m/g/G) goes `goto
+        // got_prefix_input` BEFORE the recording block, so it never reaches
+        // it; only the command it eventually prefixes gets recorded.
+        const isPrefixCmd = !npExt && !bindExt && !!(repeatBind?.flags & PREFIXCMD);
+        if (repeatName === 'doextcmd') {
+            cmdq_of(CQ_REPEAT).length = 0;
+        } else if (repeatName !== 'do_repeat' && !isPrefixCmd) {
+            if (!game.context._prefix_seen) cmdq_of(CQ_REPEAT).length = 0;
+            cmdq_add_key(CQ_REPEAT, key);
+        }
     }
 
     // C ref: cmd.c rhack():3813-3816 — reset_cmd_vars() (which clears
@@ -5521,9 +5571,16 @@ export function dolookaround_floodfill_findroom(x, y) {
 export async function lookaround_known_room(x, y) {
     const sel = selection_new();
     const u = game.u;
-    // C: u.urooms[0] - ROOMOFFSET.  u.urooms is a string here and is empty
-    // outside a room, which is C's '\0' first byte, so the result is negative.
-    const rmno = ((u.urooms || '').charCodeAt(0) || 0) - /*ROOMOFFSET*/ 3;
+    // C: u.urooms[0] - ROOMOFFSET.  Unlike C's raw char buffer, this port's
+    // u.urooms (js/shkroom.js in_rooms()) is an Array of already-ROOMOFFSET-
+    // encoded room numbers -- every OTHER reader (dokick.js, vault.js,
+    // priest.js, pray.js, teleport.js, dungeon.js) already treats it that
+    // way; this was the one holdout still assuming a C string, throwing
+    // "(u.urooms || '').charCodeAt is not a function" the moment the hero
+    // used #lookaround while actually standing in a room (a non-empty array
+    // is truthy, so `|| ''` never substitutes the string fallback).
+    const rmno = (Array.isArray(u.urooms) && u.urooms.length ? u.urooms[0] : 0)
+        - /*ROOMOFFSET*/ 3;
 
     cmd_set_selection_floodfillchk(dolookaround_floodfill_findroom);
     cmd_selection_floodfill(sel, x, y, true);
