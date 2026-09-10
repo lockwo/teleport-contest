@@ -2733,7 +2733,20 @@ function msgtype_suppressed(msg) {
 }
 
 // ── pline ──
-export async function pline(msg) {
+// C ref: pline.c custompline(SUPPRESS_HISTORY, ...) — used by cmd.c's
+// "Unknown command '%s'." (and similarly-flagged callers) to print WITHOUT
+// touching gt.toplines/the message-history ring: topl.c remember_topl()
+// (called from inside update_topl(), right before gt.toplines is overwritten)
+// is what archives the PRIOR topline into the ^P recall ring and only THEN
+// does the new text become gt.toplines — a SUPPRESS_HISTORY message skips
+// this bookkeeping entirely, so game._toplines (this port's gt.toplines
+// mirror) must stay at whatever it already was.  Without this, a bad-command
+// message became recallable via ^P even though C's own history ring never
+// captured it, and ^P at that point shows blank in C (the ring slot it
+// would-be point to next was never written either) but recalled the wrong
+// text here.
+export async function pline(msg, opts = {}) {
+    const suppressHistory = !!opts.suppressHistory;
     if (msgtype_suppressed(msg)) return;
     // C ref: pline.c vpline():266-274 — vision_recalc() FIRST, then
     // flush_screen(), which is what runs bot() when disp.botl is set.
@@ -2747,17 +2760,24 @@ export async function pline(msg) {
     // otherwise the pending line must page via --More-- first, exactly like
     // update_topl()'s own softPending branch below.  Kept on _toplinSoft (text
     // keyed), not _toplin, for the reason explained further down.
+    // C ref: pline.c vpline():280 `strncpy(gp.prevmsg, line, BUFSZ)` — runs
+    // UNCONDITIONALLY in vpline()'s tail, regardless of pflags (so even a
+    // SUPPRESS_HISTORY message like "Unknown command" still updates it).
+    // gp.prevmsg is a SEPARATE field from gt.toplines (this port previously
+    // conflated the two, using game._toplines as both the ^P-recall text AND
+    // the Norep_topl() dedup reference — that coupling is what the
+    // suppressHistory guards above/below would otherwise have broken).
+    game._prevmsg = msg;
     if (softPending && !msg.startsWith('You die') && msg.length + cur.length + 3 < CO - 8) {
         game._pending_message = cur + '  ' + msg;
         game._toplinSoft = game._pending_message;
-        game._toplines = game._pending_message;
+        if (!suppressHistory) game._toplines = game._pending_message;
         return;
     }
     if (softPending) await topl_more();
     game._pending_message = msg;
-    // C ref: pline -> vpline -> update_topl sets gt.toplines; mirror it so the
-    // Norep dedup reference tracks the actual last topline text.
-    game._toplines = msg;
+    // C ref: pline -> vpline -> update_topl sets gt.toplines.
+    if (!suppressHistory) game._toplines = msg;
     // C ref: topl.c update_topl() — pline() leaves toplin == TOPLINE_NEED_MORE,
     // so a message printed later in the SAME command (before the next nhgetch
     // demotes it) is appended after two spaces instead of replacing the line:
@@ -3004,6 +3024,13 @@ export async function update_topl(bp) {
     if (deathClearsStop) {
         game._winStop = false;
         game._toplin = 0;   // the skipped arm never more()s the pending line
+        // The suppressed message was never actually acknowledged by a real
+        // --More--, but C's own state has nothing resembling _toplinSoft to
+        // leave dangling here either: clearing WIN_STOP/toplin without also
+        // clearing this made the death message's softPending check below
+        // see the STALE prior text as still "fresh", forcing a spurious
+        // extra --More-- for it that consumed a keystroke C never needed.
+        game._toplinSoft = null;
     }
     if (game._winStop) {
         // C updates gt.toplines even while WIN_STOP suppresses the redraw.
@@ -3026,7 +3053,10 @@ export async function update_topl(bp) {
         && n0 + cur.length + 3 < CO - 8
         && !bp.startsWith('You die')) {
         game._pending_message = cur + '  ' + bp;
-        if (softPending) game._toplinSoft = game._pending_message;
+        // Whatever got us into this branch, the merged text is now the fresh,
+        // unacknowledged line — same as pline()'s equivalent append (which sets
+        // this unconditionally); leaving it stale here missed the ^P case below.
+        game._toplinSoft = game._pending_message;
         game._toplin = TOPLIN_NEED_MORE;
         // C ref: topl.c gt.toplines — the persistent last-topline text (used by
         // Norep dedup), which is NOT blanked when the command prompt clears the
@@ -3044,6 +3074,12 @@ export async function update_topl(bp) {
     game._pending_message = bp;
     game._toplin = TOPLIN_NEED_MORE;
     game._toplines = bp;
+    // pline() marks this same write _toplinSoft too (see pline() above);
+    // update_topl() models the same underlying gt.toplines write and must
+    // match, or a message written via this path (e.g. combat's emitU "The X
+    // bites!") never registers as the still-fresh line doprev_message() (^P)
+    // is allowed to redisplay.
+    game._toplinSoft = bp;
     // C ref: win/tty/topl.c redotoplin():139 — `if (ttyDisplay->cury && otoplin
     // != TOPLINE_SPECIAL_PROMPT) more()`.  A message that word-wrapped onto a
     // second row blocks on --More-- IMMEDIATELY; more() then blanks rows 0..cury
@@ -3053,6 +3089,7 @@ export async function update_topl(bp) {
     if (wrap_topl(bp).length > 1) {
         await topl_more();
         game._toplin = 0;
+        game._toplinSoft = null;
         game._pending_message = '';
     }
 }

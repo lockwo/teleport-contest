@@ -18,7 +18,8 @@ import { ddoinv, dismiss_invent_screen, dolook,
          dopickup, dowear, dotakeoff, doputon, doremring, dopay, floor_object_name,
          doprgold, doprwep, doprarm, doprring, dopramulet, doprinuse,
          renderWindowScreen, ECMD_NOTHANDLED, describe_decor, dfeature_at,
-         dotypeinv, doprtool, nohands_youmonst, notake_youmonst, wiz_identify } from './invent.js';
+         dotypeinv, doprtool, nohands_youmonst, notake_youmonst, wiz_identify,
+         ECMD_TIME as I_ECMD_TIME } from './invent.js';
 import { WEAPON_CLASS, objects as OBJECTS, KICKING_BOOTS } from './mkobj.js';
 import { doeat } from './eat.js';
 import { doapply, ECMD } from './apply.js';
@@ -83,7 +84,7 @@ import { EXTCMD_TABLE } from './cmd_data.js';
 import { selection_new, selection_getbounds,
          selection_getpoint } from './selvar.js';
 import { carrying, objects_at, inventoryArray,
-         cmdq_add_key, cmdq_pop } from './invent.js';
+         cmdq_add_key, cmdq_pop, doperminv } from './invent.js';
 import { num_spells } from './spell.js';
 import { vobj_at } from './display.js';
 import { dist2 } from './hacklib.js';
@@ -521,6 +522,37 @@ function movecmd_dir(Cmd, key, mode) {
                           || (m[1] === 'rush' && mode !== MV_RUSH)))
         return -1;
     return Number(m[2]);
+}
+
+// C ref: getpos.c `movecmd(c, MV_WALK)`, resolved through the LIVE,
+// number_pad-aware command table.  Returns {dx,dy} for a key bound to a
+// single-step walk direction (dz==0, i.e. not '<'/'>'), or null.  Exposed for
+// js/hack.js's getpos() (travel/#jump/#terrain/farlook), which used to
+// hardcode the default hjklyubn keymap regardless of the rc's number_pad
+// setting, so e.g. 'n' during a number_pad rc's getpos() prompt was silently
+// accepted as a SE move instead of being refused as unbound.
+export function getpos_walkdir(key) {
+    const d = movecmd_dir(numpad_cmd(), key, MV_WALK);
+    return (d >= 0 && d < N_DIRS) ? { dx: xdir[d], dy: ydir[d] } : null;
+}
+
+// C ref: getpos.c `movecmd(c, MV_RUSH) || movecmd(c, MV_RUN)` — either mode
+// triggers the SAME rush/moveskip behavior in getpos(), so this checks both
+// (this also covers the default keymap's Ctrl-<dirchar> rush keys and capital
+// run keys, and number_pad's Alt-<digit> rush/run keys, uniformly).
+export function getpos_rushdir(key) {
+    let d = movecmd_dir(numpad_cmd(), key, MV_RUSH);
+    if (d < 0) d = movecmd_dir(numpad_cmd(), key, MV_RUN);
+    return (d >= 0 && d < N_DIRS) ? { dx: xdir[d], dy: ydir[d] } : null;
+}
+
+// C ref: getpos.c:1120-1128 — the "use '<w>','<s>','<n>','<e>' or '.'" hint
+// characters in the "Unknown direction" message are built from the LIVE
+// bound keys for do_move_west/south/north/east (Cmd.dirchars), not a
+// hardcoded default keymap.
+export function getpos_hint_chars() {
+    const dc = numpad_cmd().dirchars;
+    return [dc[0], dc[6], dc[2], dc[4]]; // west, south, north, east
 }
 
 // C ref: cmd.c rhack() `gc.cmd_bind = cmdbind_get(key & 0xFF)` — resolve the
@@ -974,6 +1006,18 @@ export async function rhack(key) {
         // already restores the queue afterward so a second ^A repeats again.
         const replay = game.in_doagain ? cmdq_pop(CQ_REPEAT) : null;
         key = replay ? replay.key : await nhgetch();
+        // C ref: cmd.c readchar_core() ALTMETA arm — with the rc's `altmeta`
+        // option on, a bare ESC read at the START of a fresh top-level
+        // command (never mid getdir()/getpos(), which is what "not otherInp"
+        // gates in C) combines with the NEXT already-queued key into a single
+        // M-<c> keystroke (e.g. M-j is bound to #jump) instead of being
+        // dispatched as its own, separate no-op command. js/cmd.js's own
+        // parse()/readchar_core() port this faithfully but have no live
+        // caller; replicate just this top-level-read case here.
+        if (!replay && key === 27 && game.iflags?.altmeta) {
+            const next = await nhgetch();
+            key = (next === 0 || next === 27) ? 27 : (next | 0x80);
+        }
         game._pending_message = '';
         // The top line was acknowledged by this keystroke; reset the topl
         // NEED_MORE state so the next turn's messages start a fresh line
@@ -1059,7 +1103,14 @@ export async function rhack(key) {
     // cmdbind_get(); a modal window consumes its keys in the window code.
     // A BIND= already resolved above owns the key: C keeps one binds table, so
     // whichever of the two wrote it last wins and nothing re-resolves it.
-    if (numpad_active(Cmd) && !game._modal_screen && npExt === null && npBad === null
+    // C ref: cmd.c cmdbind_get() is consulted for EVERY key, not just under
+    // number_pad — a Meta-bit key (e.g. M('j') for #jump) is a DEFAULT
+    // binding the alphabetic dispatch chain below has no branches for at all,
+    // so it must resolve through the table even when number_pad is off
+    // (reachable via readchar_core()'s altmeta ESC-combining, or a literal
+    // Meta keypress).
+    if ((numpad_active(Cmd) || (key & 0x80) !== 0)
+        && !game._modal_screen && npExt === null && npBad === null
         && key !== 0 && key !== 27 && key !== 0xff) {
         const res = numpad_resolve(Cmd, key);
         npBound = res.name != null;
@@ -1164,7 +1215,7 @@ export async function rhack(key) {
             // bad_command skips reset_cmd_vars(), so a pending g/G prefix's
             // svc.context.run survives it — carried by context.stale_run, which
             // the rhack() head already armed for this unbound key.
-            await pline(`Unknown command '${ch}'.`);
+            await pline(`Unknown command '${ch}'.`, { suppressHistory: true });
             game.context.move = 0;
         } else if ((key === 13 || key === 10) && !game._modal_screen) {
             // <return> at top level drives a south run in the recorded debug
@@ -1187,7 +1238,7 @@ export async function rhack(key) {
         // C ref: cmd.c rhack() bad_command — cmdbind_get() found no binding
         // (with number_pad on, y/b/Y/H/J/K/L/U/B and ^J are all unbound).
         game.context.move = 0;
-        await pline(`Unknown command '${npBad}'.`);
+        await pline(`Unknown command '${npBad}'.`, { suppressHistory: true });
     } else if (ch === '\x12') {
         // C ref: cmd.c { C('r'), "redraw", doredraw } -> docrt(): repaint the
         // screen.  ECMD_OK, no message; number_pad also puts it on ^L.
@@ -1282,8 +1333,11 @@ export async function rhack(key) {
         await doattributes();
         game.context.move = 0;
     } else if (ch === ':') {
-        await dolook();
-        game.context.move = 0;
+        // C ref: invent.c dolook() = `res = look_here(...); return res;`, and
+        // look_here()'s final line: `return (!!Blind ? ECMD_TIME : ECMD_OK);`.
+        // A blind ':' spends a turn; js/invent.js's look_here() already
+        // computes this correctly but dolook() used to discard it here.
+        game.context.move = (await dolook()) === I_ECMD_TIME ? 1 : 0;
     } else if (ch === '@') {
         // C ref: cmd.c { '@', "autopickup", ..., dotogglepickup } -> options.c
         // dotogglepickup(): flip flags.pickup and report the new state.  No game
@@ -1476,7 +1530,7 @@ export async function rhack(key) {
         // undisturbed.
         const rP = await doputon();
         if (rP === ECMD_NOTHANDLED) {
-            await pline(`Unknown command '${ch}'.`);
+            await pline(`Unknown command '${ch}'.`, { suppressHistory: true });
             game.context.move = 0;
         } else {
             game.context.move = rP === 3 ? 1 : 0;
@@ -1487,7 +1541,7 @@ export async function rhack(key) {
         // unknown) when the hero wears no accessory, mirroring the 'P' guard.
         const rR = await doremring();
         if (rR === ECMD_NOTHANDLED) {
-            await pline(`Unknown command '${ch}'.`);
+            await pline(`Unknown command '${ch}'.`, { suppressHistory: true });
             game.context.move = 0;
         } else {
             game.context.move = rR === 3 ? 1 : 0;
@@ -1539,10 +1593,19 @@ export async function rhack(key) {
         // ^O above: doprev_message() (js/cmd.js) is already ported and the
         // #prevmsg extcmd-by-name path already wired (extcmd-handlers.js
         // prevmsg_extcmd), but the raw key itself had no dispatch arm.
-        // cmd_nh_doprev_message() is an explicit unported stub (message
-        // history recall itself is a separate, real missing feature), so
-        // this only stops the wrong "Unknown command '^P'." message.
-        doprev_message();
+        // doprev_message() (below) redisplays the last message for the
+        // default prevmsg_window='s' single-press case; a repeated ^P
+        // recalling further history is not modelled (see its own comment).
+        await doprev_message();
+        game.context.move = 0;
+    } else if (ch === '|') {
+        // C ref: cmd.c { '|', "perminv", doperminv, IFBURIED | GENERALCMD |
+        // NOFUZZERCMD } — '|' is perminv's own DEFAULT key (not a number_pad
+        // rebinding), so unlike the ^O/^P cases above it isn't reachable via
+        // the npExt/bindExt path either; it had no dispatch arm at all.
+        // ECMD_OK: doperminv() always takes the WC_PERM_INVENT-unsupported
+        // branch (this port's tty windowport never implements it).
+        await doperminv();
         game.context.move = 0;
     } else if (ch === ',') {
         // C ref: cmd.c { ',', "pickup", dopickup } -> hack.c dopickup().  Pick up
@@ -1769,7 +1832,7 @@ export async function rhack(key) {
         // (matches the npBad arm above, which already does this conversion).
         badCommand = true;
         game.context.move = 0;
-        await pline(`Unknown command '${visctrl_code(key & 0xff)}'.`);
+        await pline(`Unknown command '${visctrl_code(key & 0xff)}'.`, { suppressHistory: true });
     }
 
     // C ref: cmd.c rhack():3729-3735 — after ANY successfully-resolved
@@ -3147,6 +3210,25 @@ export async function domove(dx, dy) {
         // `!(boulder || solid)`), so without this a force-fight at a boulder
         // read "You attack thin air."
         const boulder = off_edge ? null : boulder_at(newx, newy);
+        // C ref: hack.c:2266 — force-fight at a boulder/statue/wall/door while
+        // wielding a pick/axe starts digging instead of printing a wasted-swing
+        // message.  Gated on the real 'F' trigger (not the remembered-'I'
+        // trigger below) and skipped underwater and off-edge, matching C's
+        // `if (!Underwater) { if (svc.context.forcefight && uwep &&
+        // dig_typ(...) && !glyph_is_invisible && !glyph_is_monster) {...} }`.
+        // C discards use_pick_axe2()'s return value and unconditionally
+        // returns TRUE (turn used), so we do the same.
+        if (!off_edge && !game.u?.uinwater && game.context?.forcefight && game.uwep) {
+            const stillInvisMarked = !!loc?.invisMon;
+            if (!stillInvisMarked) {
+                const { dig_typ, use_pick_axe2 } = await import('./dig.js');
+                if (dig_typ(game.uwep, newx, newy)) {
+                    await use_pick_axe2(game.uwep);
+                    game.context.move = 1;
+                    return;
+                }
+            }
+        }
         // C ref: hack.c:2280 — "about to become known empty; remove 'I' if
         // present", BEFORE the message.  Without this the 'I' persists and the
         // hero force-fights thin air on that square forever.
@@ -3727,14 +3809,17 @@ async function trapmove(x, y) {
     }
 }
 
-// C ref: pline.c Norep(...) — like pline() but suppresses the message when it is
-// identical to the CURRENT top line (gt.toplines).  gt.toplines persists across
-// the command-prompt blank (it is not cleared with the displayed message), so a
+// C ref: pline.c Norep(...) — like pline() but suppresses the message when it
+// is identical to gp.prevmsg, the LAST individual message vpline() processed
+// (set unconditionally in its tail, even for a SUPPRESS_HISTORY message like
+// "Unknown command" — this port mirrors it as game._prevmsg, set inside
+// pline()).  This is a SEPARATE field from gt.toplines/game._toplines (the
+// CURRENT topline text, archived into the ^P-recall history instead): a
 // struggle line stays deduped turn after turn, yet an intervening *different*
-// message (e.g. the pet's "caught in a bear trap!") lets the next struggle line
-// reprint.  We track that persistent text in game._toplines.
+// message (e.g. the pet's "caught in a bear trap!", or even a suppressed one
+// like a stray bad-command keypress) lets the next struggle line reprint.
 async function Norep_topl(msg) {
-    if (game._toplines === msg) return;
+    if (game._prevmsg === msg) return;
     const { update_topl } = await import('./display.js');
     await update_topl(msg);
 }
@@ -4577,9 +4662,6 @@ function cmd_docrt() {}
 // C ref: cmd.c:3517 randomkey() — js/wintty.js keeps the port's copy (iflags
 // .debug_fuzzer is never set here, so the branches guarded by it never run).
 function cmd_randomkey() { return 0x1b; }
-// C ref: topl.c nh_doprev_message() — the ^P message recall; unported.
-function cmd_nh_doprev_message() { return 0; }
-
 // ── gc.Cmd and the Cmd_bind list ───────────────────────────────────────────
 // C ref: func_tab.h struct Cmd_bind + hack.h struct cmd.  This is the C-shaped
 // mirror: a singly linked list of {key, userbind, param, cmd, next}.  The LIVE
@@ -4972,9 +5054,37 @@ const spkeys_binds = [
 
 // ── cmd.c, in source order ─────────────────────────────────────────────────
 
-// C ref: cmd.c:164 — the #prevmsg command.
-export function doprev_message() {
-    cmd_nh_doprev_message();
+// C ref: cmd.c:164 — the #prevmsg command -> topl.c tty_doprev_message().
+// Only the default `prevmsg_window == 's'` (single) mode is ported, and only
+// its FIRST press: real C's 's' mode is a do/while loop over a message-
+// history ring (win/tty/wintty.c cw->data[], populated by putmsghistory(),
+// which this port also doesn't implement) that lets REPEATED ^P presses walk
+// further back; the very first press of that loop just redisplays
+// `gt.toplines` (this port's game._toplines, already tracked by every
+// pline()/update_topl() call), which is the only case this port's sessions
+// exercise. A second consecutive ^P press would need the real ring buffer
+// and is not modelled.
+export async function doprev_message() {
+    // C ref: topl.c tty_doprev_message() 's' branch: `redotoplin(gt.toplines)`
+    // — force the last message back onto the topline.  But gt.toplines only
+    // holds something MEANINGFUL to redisplay while it is still the SAME
+    // message remember_topl()/update_topl() last wrote with no later one
+    // (of any kind, including a SUPPRESS_HISTORY one) replacing it — once a
+    // newer message has been written, the archive/ring bookkeeping this port
+    // doesn't model takes over and a single ^P press (this port's only
+    // modelled case) shows blank rather than stale text.  game._toplinSoft
+    // is exactly that "still the last-written message" marker (it self-clears
+    // whenever any writer replaces the pending line, per pline()'s own
+    // comment), so only redisplay when it still matches game._toplines.
+    const msg = (game._toplinSoft && game._toplinSoft === game._toplines)
+        ? game._toplines : '';
+    game._pending_message = msg;
+    game._toplinSoft = msg || null;
+    if (wrap_topl(msg).length > 1) {
+        await topl_more();
+        game._toplinSoft = null;
+        game._pending_message = '';
+    }
     return ECMD_OK;
 }
 

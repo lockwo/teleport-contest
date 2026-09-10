@@ -6,6 +6,7 @@ import { game } from './gstate.js';
 import { rn2, rn1, rnd, d } from './rng.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING } from './const.js';
 import { adj_erinys } from './makemon.js';
+import { has_innate } from './exper.js';
 
 const AVAL = 50; // C ref: attrib.c — tune value for exercise gains.
 
@@ -228,6 +229,14 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
         loss = thrown_weapon ? rnd(6) : rn1(10, 6);                  // attrib.c:388
         u.uhp = (u.uhp | 0) - loss;
         game.disp_botl = true; game.botl = true;
+        // C ref: this branch calls the REAL hack.c losehp(), which prints
+        // "You die..." itself (urgent_pline) before done(DIED) whenever the
+        // damage is lethal — unlike the i==0 branch above (its own "The
+        // poison was deadly..." stands in for it) and the stat-loss branch
+        // below (never lethal via HP directly).  Without this, the death
+        // check just below silently opened the "Die?" wizard-mode prompt
+        // with no "You die..." line ever shown.
+        if ((u.uhp | 0) < 1) await update_topl('You die...');
     } else {
         loss = (thrown_weapon || !fatal) ? 1 : d(2, 2);              // attrib.c:395
         if (await adjattrib(typ, -loss, 1))
@@ -244,8 +253,11 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
 }
 function Poison_resistance() {
     const u = game.u || {};
+    // A race-innate grant (e.g. every orc, from level 1) is never persisted as
+    // a stored flag anywhere in js/ — OR in the pure has_innate() derivation.
     return !!(u.uprops?.Poison_resistance || u.HPoison_resistance
-        || u.EPoison_resistance || u.Poison_resistance);
+        || u.EPoison_resistance || u.Poison_resistance)
+        || has_innate('HPoison_resistance');
 }
 
 // C ref: align.h ALIGNLIM = (10L + (svm.moves / 200L)) — the cap on how good

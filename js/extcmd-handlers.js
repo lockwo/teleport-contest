@@ -42,7 +42,7 @@ import { exercise } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT } from './livelog.js';
 import { rn2 } from './rng.js';
 import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED } from './const.js';
-import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full } from './hack.js';
+import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full, do_farlook } from './hack.js';
 import { dotwoweapon } from './wield.js';
 import { doride } from './steed.js';
 import { doenhance } from './enhance.js';
@@ -76,7 +76,7 @@ import { doset, dosetSimple } from './doset.js';
 import { wiz_light_sources } from './light.js';
 import { wiz_debug_cmd_bury } from './dig.js';
 import { doeat } from './eat.js';
-import { dohelp, doquickwhatis, hmenu_dohistory } from './pager.js';
+import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
@@ -2928,6 +2928,11 @@ async function docrt_after_text() {
 // Map extcmdlist index -> handler.  Unimplemented commands fall through to
 // a no-op (no message), which keeps RNG/state untouched.
 const HANDLERS = {
+    // C ref: cmd.c EXTCMDLIST's self-referential `{ '#', "#", ..., doextcmd,
+    // ... }` row — typing "#" as the extended-command name recurses into
+    // doextcmd() again (a fresh "enter an extended command" prompt) instead
+    // of no-oping.
+    '#': doextcmd,
     invoke: doinvoke,
     untrap: dountrap,
     tip: dotip,
@@ -2995,7 +3000,18 @@ const HANDLERS = {
     down: dodown,
     drop: dodrop,
     engrave: doengrave,
-    glance: doquickwhatis,
+    // C ref: cmd.c { ';', "glance", ..., doquickwhatis } -> pager.c do_look(1).
+    // pager.js's own doquickwhatis()/do_look() depends on _pg.getpos, which
+    // set_pager_deps() never wires up (dead injection point, zero call
+    // sites), so it prints only "Pick a monster, object or location." and
+    // returns without ever entering a cursor-selection loop — every keystroke
+    // meant to answer that prompt then leaks into the top-level dispatcher as
+    // a fresh command.  The raw ';' key (js/cmd.js:1658) already uses the
+    // working hack.js do_farlook()/getpos() for this same quick-farlook
+    // command; route the "#glance" extended-command name to it too, matching
+    // how the sibling "whatis" entry below already uses do_look_full instead
+    // of pager.js's dowhatis().
+    glance: do_farlook,
     help: dohelp,
     history: hmenu_dohistory,
     inventtype: dotypeinv,
@@ -3352,10 +3368,10 @@ async function dowield_extcmd() {
     return (await dowield()) === 3 ? 1 : 0;
 }
 
-// C ref: topl.c nh_doprev_message() (^P) — cmd_nh_doprev_message() is an
-// explicit unported stub (message-history recall is a real missing feature,
-// out of scope here); doprev_message() itself always returns ECMD_OK(0), so
-// wiring this is a behavior-neutral, zero-risk dispatch fix.
+// C ref: topl.c nh_doprev_message() (^P) — js/cmd.js doprev_message() ports
+// the default prevmsg_window='s' single-press case (redisplay the last
+// message); a repeated ^P recalling further history needs a real message-
+// history ring this port doesn't implement.
 async function prevmsg_extcmd() {
     const { doprev_message } = await import('./cmd.js');
     return doprev_message();

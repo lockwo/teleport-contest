@@ -273,7 +273,7 @@ export async function dorestore() {
     // restores svm.moves unchanged, so nothing is normally due; it still matters
     // for a floor corpse whose rot timer came due on a turn the port's own
     // nh_timeout did not reap.
-    run_object_timers();
+    await run_object_timers();
 
     // clear_nhwindow(WIN_MESSAGE) + docrt() (dorecover tail).
     game._pending_message = '';
@@ -1384,7 +1384,7 @@ export async function dorecover(nhfp) {
     vision_reset();
     game.vision_full_recalc = 1; /* recompute vision (not saved) */
 
-    run_object_timers(); /* run_timers(): expire timers that went off while away */
+    await run_object_timers(); /* run_timers(): expire timers that went off while away */
     if (game.program_state)
         game.program_state.restoring = 0; /* affects bot(), so clear before docrt() */
 

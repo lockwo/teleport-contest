@@ -54,6 +54,7 @@ import {
     AM_MASK, AM_SHRINE, Amask2align, I_SPECIAL,
     M_SEEN_NOTHING, M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP,
     M_SEEN_DISINT, M_SEEN_ELEC, M_SEEN_POISON, M_SEEN_ACID,
+    Is_botlevel,
 } from './const.js';
 import { phase_of_the_moon, NEW_MOON } from './calendar.js';
 import { Amonnam as Amonnam_dn } from './do_name.js';
@@ -2920,6 +2921,31 @@ async function mon_trapeffect(mtmp, trap) {
         const msz = (hptr?.msize != null) ? hptr.msize : (mon_msize(hptr?.pmidx) ?? 2);
         if (is_flyer(hptr) || is_floater(hptr) || msz >= MZ_HUGE)
             return Trap_Effect_Finished;
+        const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
+        // C ref: teleport.c mlevel_tele_trap() — on the dungeon's bottom level
+        // a hole/trapdoor has nowhere lower to go; the Is_stronghold->valley
+        // destination swap isn't modelled (this port doesn't simulate
+        // off-level monster state, so only the observable in_sight message
+        // differs by destination, and it's the same "falls" line either way).
+        if (Is_botlevel(game.u?.uz)) {
+            if (in_sight && trap.tseen) {
+                await pline_mon(mtmp, `${Monnam(mtmp)} avoids the ${
+                    trap.ttyp === HOLE ? 'hole' : 'trap'}.`);
+            }
+            return Trap_Effect_Finished;
+        }
+        // C ref: teleport.c mlevel_tele_trap() tail — `if (in_sight) {
+        // pline_mon(...); seetrap(trap); }`, always run just before
+        // migrate_to_level(), for every non-early-return branch above.  This
+        // is also the ONLY place that flips trap.tseen for a monster-fall, so
+        // skipping it left a later hero encounter with the same trap unable
+        // to take dotrap()'s already_seen escape-roll branch.
+        if (in_sight) {
+            await pline_mon(mtmp, `Suddenly, ${mon_nam(mtmp)} ${
+                trap.ttyp === HOLE ? 'falls into a hole' : 'falls through a trap door'}.`);
+            const { seetrap } = await import('./trap.js');
+            seetrap(trap);
+        }
         // migrate_to_level(): detach from this level's monster chain.  Our port
         // does not simulate other levels' monsters, so dropping it here IS the
         // faithful observable outcome.
@@ -3896,10 +3922,16 @@ export function initMonMoveState(mtmp) {
     if (mtmp.mstun == null) mtmp.mstun = 0;
     if (mtmp.msleeping == null) mtmp.msleeping = 0;
     if (mtmp.mtrack == null) mtmp.mtrack = [];
-    // mux/muy default to the monster's own square (C leaves them 0 until the
-    // first set_apparxy, which dochug always runs before they're read).
-    if (mtmp.mux == null) mtmp.mux = mtmp.mx;
-    if (mtmp.muy == null) mtmp.muy = mtmp.my;
+    // C ref: include/monst.h `coordxy mux, muy;` on a calloc'd struct -> 0,0
+    // (the permanent off-map stone border, which vision's fill never marks
+    // COULD_SEE) until the first set_apparxy call legitimately sets them.
+    // Defaulting to the monster's OWN square instead was wrong whenever that
+    // square happened to already be within the hero's sight line: the very
+    // first notthere-branch set_apparxy call (e.g. a Displaced hero's first
+    // turn) then read couldsee(mux,muy) as true instead of C's guaranteed
+    // false, flipping the displ=1-vs-2 guess-loop modulus.
+    if (mtmp.mux == null) mtmp.mux = 0;
+    if (mtmp.muy == null) mtmp.muy = 0;
 }
 
 // C ref: makemon.c peace_minded() — the deterministic (no-RNG) portion.

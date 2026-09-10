@@ -1424,6 +1424,9 @@ function set_boolean(name, value, result) {
     case 'fixinv': result.flags.invlet_constant = value; break; // C: flags.invlet_constant
     case 'cmdassist': result.iflags.cmdassist = value; break;
     case 'splash_screen': result.iflags.wc_splash_screen = value; break;
+    // C: iflags.altmeta (cmd.c readchar_core()'s ESC+char -> M-char combining
+    // gate), not a flags.* field.
+    case 'altmeta': result.iflags.altmeta = value; break;
     case 'tutorial':
         result.flags.tutorial = value;
         // allmain.js gates the "Do you want a tutorial?" prompt on this, which
@@ -3881,13 +3884,9 @@ function is_config_section(str) {
 // should skip the line, either because it IS a section header or because it
 // falls inside a section that CHOOSE did not pick.
 //
-// CHOOSE picks its section with rn2() (choose_random_part()), the first draw of
-// the game; jsmain.js seeds the PRNG only after the rc has been read, so the
-// pick is left unresolved and section_chosen holds a sentinel that matches no
-// header.  That keeps a CHOOSE file off the "without CHOOSE" error path — the
-// only part of it that would otherwise cost screens the file has not lost
-// already to the missing draw.
-const SECTION_UNRESOLVED = '\0unresolved';
+// CHOOSE picks its section with rn2() (choose_random_part()), the FIRST draw
+// of the game — jsmain.js seeds the PRNG before calling parseNethackrc() so
+// that draw lands in the right place in the stream (see NethackGame.start()).
 
 function handle_config_section(buf, st) {
     const sect = is_config_section(buf);
@@ -3908,7 +3907,7 @@ function handle_config_section(buf, st) {
     return false;
 }
 
-export function parseNethackrc(rc) {
+export async function parseNethackrc(rc) {
     const result = {
         name: '', role: -1, race: -1, gender: -1, align: -1,
         flags: {}, iflags: {}, keybind: {}, symoverride: {}, apelist: [],
@@ -3947,12 +3946,24 @@ export function parseNethackrc(rc) {
         const buf = pending;
         pending = null;
         if (handle_config_section(buf, st)) continue;
-        // C ref: cfgfiles.c parse_conf_buf() CHOOSE branch.
+        // C ref: cfgfiles.c parse_conf_buf() CHOOSE branch — draws rn2() via
+        // choose_random_part() to pick one of the comma-separated section
+        // names, replacing any earlier CHOOSE='s pick.
         if (match_optname(buf, 'CHOOSE', 6, true)) {
-            if (find_optparam(buf) < 0)
+            const eq = find_optparam(buf);
+            if (eq < 0) {
                 config_error_add('Format is CHOOSE=section1,section2,...');
-            else
-                st.section_chosen = SECTION_UNRESOLVED;
+            } else {
+                st.section_chosen = null;
+                // Dynamic import: a static one creates a load-order cycle
+                // that throws `Cannot access 'CONFIG_LINE_STMT' before
+                // initialization` inside cfgfiles.js (see its own header
+                // note on this file being otherwise INERT/unimported).
+                const { choose_random_part } = await import('./cfgfiles.js');
+                const section = choose_random_part(buf.slice(eq + 1), ',');
+                if (section) st.section_chosen = section;
+                else config_error_add('No config section to choose');
+            }
             continue;
         }
         parse_config_line(buf, result);

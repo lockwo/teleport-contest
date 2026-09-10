@@ -15,7 +15,7 @@ import { curse, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj,
     mkgold, rnd_class, DILITHIUM_CRYSTAL, LUCKSTONE, BOULDER } from './mkobj.js';
 import { exercise, acurr_eff, poison_strdmg } from './attrib.js';
 import { fruitname } from './objnam.js';
-import { more_experienced, newexplevel } from './exper.js';
+import { more_experienced, newexplevel, has_innate } from './exper.js';
 import { newuhs } from './eat.js';
 import { Blind, cansee, couldsee } from './vision.js';
 import { depth, distmin } from './hacklib.js';
@@ -61,8 +61,11 @@ function Poison_resistance() {
     const u = game.u;
     if (!u) return false;
     const p = u.uprops || {};
+    // A race-innate grant (e.g. every orc, from level 1) is never persisted
+    // as a stored flag anywhere in js/ — OR in the pure has_innate() derivation.
     return !!(u.Poison_resistance || p.Poison_resistance
-              || p.HPoison_resistance || p.PoisonResistance);
+              || p.HPoison_resistance || p.PoisonResistance)
+        || has_innate('HPoison_resistance');
 }
 
 // C ref: mondata.h is_watch(ptr) — a literal `ptr == &mons[PM_WATCHMAN] ||

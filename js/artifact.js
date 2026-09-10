@@ -44,6 +44,7 @@ import {
 // prop.h W_* bits.  NOTE: js/invent.js deliberately REMAPS these (QW_WEP
 // 0x100, QW_SWAPWEP 0x400) — const.js carries the real prop.h values and is
 // the right source here.
+import { has_innate } from './exper.js';
 import {
     W_ART, W_ARTI, W_WEP, W_SWAPWEP, W_QUIVER, W_BALL, W_SADDLE,
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU,
@@ -546,7 +547,12 @@ function Antimagic() {
 function Fire_resistance() { return !!(uprop('Fire_resistance') || game.u?.Fire_resistance); }
 function Cold_resistance() { return !!(uprop('Cold_resistance') || game.u?.Cold_resistance); }
 function Shock_resistance() { return !!(uprop('Shock_resistance') || game.u?.Shock_resistance); }
-function Poison_resistance() { return !!(uprop('Poison_resistance') || game.u?.Poison_resistance); }
+// A race-innate grant (e.g. every orc, from level 1) is never persisted as a
+// stored flag anywhere in js/ — OR in the pure has_innate() derivation.
+function Poison_resistance() {
+    return !!(uprop('Poison_resistance') || game.u?.Poison_resistance)
+        || has_innate('HPoison_resistance');
+}
 function Drain_resistance() { return !!(uprop('Drain_resistance') || game.u?.Drain_resistance); }
 function Stone_resistance() { return !!(uprop('Stone_resistance') || game.u?.Stone_resistance); }
 // C ref: youprop.h Hate_silver == (u.ulycn >= LOW_PM || hates_silver(youmonst)).

@@ -24,6 +24,7 @@ import {
 import { m_at, newsym, update_topl, map_invisible } from './display.js';
 import { cansee, couldsee } from './vision.js';
 import { is_undead_flag, is_demon_flag } from './monflags_data.js';
+import { has_innate } from './exper.js';
 
 // C ref: hack.h:1471 PHYS_EXPL_TYPE; objclass.h:154-156 BURNING_OIL /
 // MON_EXPLODE / TRAP_EXPLODE are MAXOCLASSES+1..+3 and MAXOCLASSES is 18
@@ -63,7 +64,12 @@ function Antimagic() { return uprop('Antimagic', 'HAntimagic', 'EAntimagic') || 
 function Fire_resistance() { return uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance'); }
 function Cold_resistance() { return uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance'); }
 function Shock_resistance() { return uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance'); }
-function Poison_resistance() { return uprop('Poison_resistance', 'HPoison_resistance', 'EPoison_resistance'); }
+// A race-innate grant (e.g. every orc, from level 1) is never persisted as a
+// stored flag anywhere in js/ — OR in the pure has_innate() derivation.
+function Poison_resistance() {
+    return uprop('Poison_resistance', 'HPoison_resistance', 'EPoison_resistance')
+        || has_innate('HPoison_resistance');
+}
 function Acid_resistance() { return uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance'); }
 function Disint_resistance() { return uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance'); }
 function Invulnerable() { return uprop('Invulnerable') || !!game.u?.uinvulnerable; }

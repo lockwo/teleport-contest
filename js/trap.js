@@ -7,7 +7,7 @@ import { game } from './gstate.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, topl_more } from './display.js';
 import { Blind, recalc_block_point } from './vision.js';
-import { body_part, near_capacity, update_inventory, delobj, xname } from './invent.js';
+import { body_part, near_capacity, update_inventory, delobj, xname, uslinging } from './invent.js';
 import { observe_object } from './o_init.js';
 import { find_ac } from './u_init.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -34,13 +34,14 @@ import {
     POOL, MAY_DESTROY, MAY_HIT, MAY_FRACTURE, VIS_EFFECTS,
     ARM, FINGER, D_TRAPPED, D_ISOPEN, A_WIS, TIMEOUT,
     AS_NO_MON, AS_MON_IS_UNIQUE,
+    W_BALL, W_ART, W_ARTI,
 } from './const.js';
 import {
     objects, mksobj, weight, place_object, BOULDER, STATUE as STATUE_OTYP,
     LARGE_BOX, CHEST,
     mkcorpstat, ROCK, ARROW,
     WEAPON_CLASS, ARMOR_CLASS, SCROLL_CLASS, POTION_CLASS, SPBOOK_CLASS,
-    POT_WATER,
+    POT_WATER, COIN_CLASS, GEM_CLASS, LOADSTONE, LEASH, uncurse, blessorcurse,
 } from './mkobj.js';
 import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx,
          pmname_of_pmidx } from './makemon.js';
@@ -1351,10 +1352,64 @@ async function trapeffect_bear_trap(trap, _trflags) {
     exercise(A_DEX, false);
 }
 
+// C ref: read.c seffect_remove_curse() — domagictrap() case 20 ("uncurse
+// stuff") calls this with a synthetic, permanently-uncursed-and-unblessed
+// SPE_REMOVE_CURSE "pseudo" spellbook (real C: `pseudo = cg.zeroobj;` —
+// deliberately NOT a real scroll, so the hero can't discover scroll of
+// remove curse from it).  Since sblessed/scursed are always false for that
+// pseudo object, the `if (scursed) {...} else {...}` split always takes the
+// else branch, and the "sblessed" clause of the per-item wornmask gate never
+// fires — both are omitted here as dead code for this specific caller.
+async function magictrap_uncurse_stuff() {
+    const u = game.u;
+    const confused = !!(u?.uprops?.Confusion || 0);
+    // C ref: win/tty/topl.c update_topl() — stepping onto a square with a
+    // magic trap AND a large object pile prints look_here()'s pile-limit
+    // summary ("There are several objects here.") first; that line is
+    // itself written via update_topl() (js/invent.js's LOOKHERE_PILE_LIMIT
+    // block), not pline(), so this message must also use update_topl() to
+    // append onto it rather than pline()'s bare setter replacing it outright
+    // (see js/invent.js's note next to LOOKHERE_PILE_LIMIT).
+    await update_topl(!confused ? 'You feel like someone is helping you.'
+                                 : 'You feel like you need some help.');
+    const inv = Array.isArray(game.invent) ? game.invent.slice() : [];
+    for (const obj of inv) {
+        if (obj.oclass === COIN_CLASS) continue;
+        let wornmask = (obj.owornmask || 0) & ~(W_BALL | W_ART | W_ARTI);
+        if (wornmask) {
+            if (obj === game.uswapwep) {
+                if (!u?.twoweap) wornmask = 0;
+            } else if (obj === game.uquiver) {
+                if (obj.oclass === WEAPON_CLASS) {
+                    if (!(objects[obj.otyp]?.flags & 32 /* F_MERGE */)) wornmask = 0;
+                } else if (obj.oclass === GEM_CLASS) {
+                    if (!uslinging()) wornmask = 0;
+                } else {
+                    wornmask = 0;
+                }
+            }
+        }
+        if (wornmask || obj.otyp === LOADSTONE
+            || (obj.otyp === LEASH && obj.leashmon)) {
+            if (confused) {
+                blessorcurse(obj, 2);
+                obj.bknown = 0;
+            } else if (obj.cursed) {
+                uncurse(obj);
+            }
+        }
+    }
+    // NOT modelled: the riding-steed's-saddle clause (needs a mounted hero
+    // on the SAME turn a magic trap fires — not exercised by this port's
+    // corpus), and the Punished/buried-ball cleanup tail (needs a hero
+    // already dragging a punishment ball, likewise not exercised).
+    update_inventory();
+}
+
 // C ref: trap.c domagictrap() — the common (non-explosion) magic-trap effect.
 // fate = rnd(20) selects the outcome.  The fate < 10 monster-summoning branch
 // is ported faithfully (rnd(4) count, rn1(5,10) blindness, rn1(20,30) deafness,
-// then `cnt` makemon calls); fates 12/19/20 still call out to machinery this
+// then `cnt` makemon calls); fates 12/19 still call out to machinery this
 // port lacks and are listed in the per-arm comments below.
 async function domagictrap() {
     const u = game.u;
@@ -1458,9 +1513,7 @@ async function domagictrap() {
         // "You feel charismatic!"; neither is available in this port yet.
         break;
     case 20:
-        // GAP: seffects(&pseudo) with a pseudo SPE_REMOVE_CURSE — uncurses
-        // worn/wielded gear (and, for a Priest, everything).  read.js has no
-        // seffects() entry point that takes a synthetic object.
+        await magictrap_uncurse_stuff();
         break;
     default:
         break;

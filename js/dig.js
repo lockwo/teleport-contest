@@ -2189,6 +2189,12 @@ export async function use_pick_axe2(obj) {
             }
             const { set_occupation } = await import('./cmd.js');
             set_occupation(dig, verbing, 0);
+            // C ref: allmain.c moveloop_core():485 `(*go.occupation)()`.  This
+            // port drives each occupation via its own module-level flag (see
+            // allmain.js's _eat_occupation/_engrave_occupation arms); dig() was
+            // fully ported but nothing ever set the flag that runs it, so a
+            // multi-turn dig never advanced past the first "You start digging."
+            game._dig_occupation = true;
         }
     } else if (Is_airlevel(u.uz) || Is_waterlevel(u.uz)) {
         /* it must be air -- water checked above */
@@ -2233,6 +2239,7 @@ export async function use_pick_axe2(obj) {
         game.did_dig_msg = false;
         const { set_occupation } = await import('./cmd.js');
         set_occupation(dig, verbing, 0);
+        game._dig_occupation = true;
     }
     return ECMD_TIME;
 }

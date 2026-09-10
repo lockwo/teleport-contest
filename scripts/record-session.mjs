@@ -614,11 +614,21 @@ async function main() {
                 homeDir,
                 tz,
             });
+            // recordSegment() can return fewer steps than requested when the
+            // game itself terminates early (e.g. death fires nh_terminate()
+            // before every requested key is consumed).  `moves` must be
+            // trimmed to match: every other producer of a session file keeps
+            // moves.length + 1 === steps.length, and the test harness feeds
+            // `moves` verbatim as the replay input budget, so leaving it at
+            // its full requested length here queued up hundreds/thousands of
+            // never-actually-consumed keys that a post-death drain-style
+            // compensation would then replay as phantom extra screens.
+            const moves = seg.moves.slice(0, Math.max(0, steps.length - 1));
             const out = {
                 seed: seg.seed,
                 datetime: seg.datetime,
                 nethackrc: seg.nethackrc,
-                moves: seg.moves,
+                moves,
                 steps,
             };
             // Preserve any extra per-segment fields (e.g. checkpoints) that

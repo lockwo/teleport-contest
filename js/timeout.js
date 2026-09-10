@@ -397,7 +397,7 @@ export async function nh_timeout() {
 
     // C ref: timeout.c nh_timeout() ends with run_timers() — expire any object
     // timer (here: ROT_CORPSE) whose scheduled turn has arrived.
-    run_object_timers();
+    await run_object_timers();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1876,10 +1876,8 @@ function _fmt_ptr(v) {
 
 // C ref: timeout.c:1978 timeout_funcs[] — the dispatch table, in
 // timeout.h enum timeout_types order, each with its optional cleanup hook.
-// Handlers are resolved LAZILY from the module that owns them: four are not
-// ported anywhere (rot_organic/rot_corpse are dig.c, revive_mon/zombify_mon are
-// zap.c, melt_ice_away is do.c), and a static import of a missing export is a
-// link-time error.
+// Handlers are resolved LAZILY from the module that owns them, and a static
+// import of a missing export is a link-time error.
 function _nyi(name, where) {
     return async () => impossible(`timeout_funcs: ${name}() (${where}) is not ported`);
 }
@@ -1894,17 +1892,36 @@ function _obj_handler(mod, fname) {
         return fn(arg?.a_obj ?? arg, timeout);
     };
 }
+// rot_organic/rot_corpse (dig.js), revive_mon/zombify_mon (do.js) and
+// melt_ice_away (zap.js) all unwrap arg.a_obj / arg.a_long THEMSELVES
+// internally (matching C's real signature, `arg` the whole `anything`
+// union), unlike the two _obj_handler cases above — pass `arg` through as-is.
+function _arg_handler(mod, fname) {
+    return async (arg, timeout) => {
+        const fn = (await import(mod))[fname];
+        if (typeof fn !== 'function')
+            return impossible(`timeout_funcs: ${fname}() is not exported by ${mod}`);
+        return fn(arg, timeout);
+    };
+}
 
 const timeout_funcs = [];
 /* object timers */
-timeout_funcs[ROT_ORGANIC] = { f: _nyi('rot_organic', 'dig.c'), cleanup: null,
-                               name: 'rot_organic' };
-timeout_funcs[ROT_CORPSE] = { f: _nyi('rot_corpse', 'dig.c'), cleanup: null,
-                              name: 'rot_corpse' };
-timeout_funcs[REVIVE_MON] = { f: _nyi('revive_mon', 'zap.c'), cleanup: null,
-                              name: 'revive_mon' };
-timeout_funcs[ZOMBIFY_MON] = { f: _nyi('zombify_mon', 'zap.c'), cleanup: null,
-                               name: 'zombify_mon' };
+// C ref: dig.c rot_organic()/rot_corpse() — both are fully ported in
+// js/dig.js (rot_corpse includes the "Your <corpse> rots away." message) but
+// this table still pointed at _nyi() stubs, so a corpse's rot timer firing
+// while carried never announced it, silently deleted the object, and never
+// stopped an occupation on a worn/wielded one.
+timeout_funcs[ROT_ORGANIC] = { f: _arg_handler('./dig.js', 'rot_organic'),
+                               cleanup: null, name: 'rot_organic' };
+timeout_funcs[ROT_CORPSE] = { f: _arg_handler('./dig.js', 'rot_corpse'),
+                              cleanup: null, name: 'rot_corpse' };
+// C ref: zap.c revive_mon()/zombify_mon() — both fully ported in js/do.js
+// (not zap.c in this port's layout), same stale-stub gap as above.
+timeout_funcs[REVIVE_MON] = { f: _arg_handler('./do.js', 'revive_mon'),
+                              cleanup: null, name: 'revive_mon' };
+timeout_funcs[ZOMBIFY_MON] = { f: _arg_handler('./do.js', 'zombify_mon'),
+                               cleanup: null, name: 'zombify_mon' };
 timeout_funcs[BURN_OBJECT] = { f: burn_object, cleanup: cleanup_burn,
                                name: 'burn_object' };
 timeout_funcs[HATCH_EGG] = { f: hatch_egg, cleanup: null, name: 'hatch_egg' };
@@ -1913,8 +1930,10 @@ timeout_funcs[FIG_TRANSFORM] = { f: _obj_handler('./apply.js', 'fig_transform'),
 timeout_funcs[SHRINK_GLOB] = { f: _obj_handler('./mkobj.js', 'shrink_glob'),
                                cleanup: null, name: 'shrink_glob' };
 /* level timers */
-timeout_funcs[MELT_ICE_AWAY] = { f: _nyi('melt_ice_away', 'do.c'), cleanup: null,
-                                 name: 'melt_ice_away' };
+// C ref: zap.c melt_ice_away() — fully ported in js/zap.js (do.c in C, moved
+// here in this port's layout), same stale-stub gap as above.
+timeout_funcs[MELT_ICE_AWAY] = { f: _arg_handler('./zap.js', 'melt_ice_away'),
+                                 cleanup: null, name: 'melt_ice_away' };
 /* currently no monster or global timers */
 
 // C ref: timeout.c:1994 kind_name(kind).

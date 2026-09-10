@@ -1567,12 +1567,18 @@ export function objectBaseName(obj) {
         actualn = Japanese_item_name(obj.otyp) || actualn;
         if (obj.otyp === WOODEN_HARP_OTYP || obj.otyp === MAGIC_HARP_OTYP) dn = 'koto';
     }
-    const nn = ocl ? !!ocl.oc_name_known : false;
+    // C ref: objnam.c xname_flags() — `if (iflags.override_ID) { known =
+    // dknown = bknown = TRUE; nn = 1; }`.  Used by reroll_menu()'s doname()
+    // calls (wrapped in ++iflags.override_ID) to show every starting item's
+    // real type name even though its actual discovery (discover_object(),
+    // u_init.c ini_inv_use_obj()) hasn't run yet at that point.
+    const overrideID = !!game.iflags?.override_ID;
+    const nn = overrideID || (ocl ? !!ocl.oc_name_known : false);
     const un = ocl?.oc_uname || null;
     // C: observe_object() runs inside xname_flags when not blind/distant, so
     // a freshly looked-at object has dknown set; mirror that for the common
     // (non-blind) replay case where dknown may not yet be assigned.
-    const dknown = (obj.dknown != null) ? !!obj.dknown : true;
+    const dknown = overrideID || ((obj.dknown != null) ? !!obj.dknown : true);
     const oc_magic = ocl ? !!ocl.oc_magic : false;
 
     switch (obj.oclass) {
@@ -1765,8 +1771,8 @@ function tin_details(obj, base) {
 }
 
 function simple_obj_name(obj, opts = {}) {
-    const { article = true, quantity = true, buc = true, empty = false,
-            vague_quan = false } = opts;
+    const { article = true, quantity = true, count = true, buc = true,
+            empty = false, vague_quan = false } = opts;
     if (!obj) return 'nothing';
     // C ref: objnam.c doname_base():1283 — `if (obj->quan != 1L) { if (dknown
     // || !vague_quan) Sprintf(prefix, "%ld ", quan); else Strcpy(prefix,
@@ -1776,6 +1782,7 @@ function simple_obj_name(obj, opts = {}) {
         const q = obj.quan || 0;
         if (!quantity) return 'gold piece';
         if (q === 1) return article ? 'a gold piece' : 'gold piece';
+        if (!count) return 'gold pieces';
         return vagueQuan ? 'some gold pieces' : `${q} gold pieces`;
     }
     let base = objectBaseName(obj);
@@ -1832,8 +1839,10 @@ function simple_obj_name(obj, opts = {}) {
         const n = count_contents(obj, false, false, true, false);
         containing = ` containing ${n} item${n === 1 ? '' : 's'}`;
     }
-    if (quantity && (obj.quan || 1) > 1 && !pair_of(obj))
-        return `${vagueQuan ? 'some' : obj.quan} ${prefix}${makeplural(base)}${containing}${chg}${oname_suffix(obj)}`;
+    if (quantity && (obj.quan || 1) > 1 && !pair_of(obj)) {
+        const numPrefix = count ? `${vagueQuan ? 'some' : obj.quan} ` : '';
+        return `${numPrefix}${prefix}${makeplural(base)}${containing}${chg}${oname_suffix(obj)}`;
+    }
     const phrase = `${prefix}${base}`;
     return (article ? with_article_obj(obj, phrase) : phrase) + containing + chg + oname_suffix(obj);
 }
@@ -3373,7 +3382,17 @@ export async function getobj(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
         // tty's cmdq_pop fast path does.
         const canned = cmdq_pop(CQ_CANNED);
         let ilet, key;
-        if (!canned && !oneloop && game.flags?.force_invmenu) {
+        if (!canned && game.in_doagain) {
+            // C ref: invent.c getobj() `if (gi.in_doagain) { ilet = readchar();
+            // } else if (...) {...} else {...}` — a #repeat (^A) replay skips
+            // the prompt entirely and silently reads the next queued key as
+            // the answer.  Without this branch, replaying any command that
+            // calls getobj() (eat, drop, wield, apply, ...) re-rendered the
+            // object-selection prompt as an extra frame C never produces,
+            // permanently misaligning the rest of the recorded session.
+            key = await nhgetch();
+            ilet = String.fromCharCode(key);
+        } else if (!canned && !oneloop && game.flags?.force_invmenu) {
             // C ref: invent.c getobj() ~line 1917 — force_invmenu skips the
             // single-line "[f or ?*]" yn_function prompt entirely on the
             // FIRST pass and auto-selects '?' (or '*' with no suggested
@@ -4984,7 +5003,14 @@ async function doquiver_core(verb) {
     const was_twoweap = !!game.u?.twoweap;
 
     if (!inventoryArray().length) {
-        game._pending_message = `You have nothing to ready for firing.`;
+        // C ref: wield.c doquiver_core() `You("have nothing to ready for
+        // firing.");` — a real pline(), not a raw topline write: dofire()'s
+        // own "You have no ammunition readied." (this file's dofire, above)
+        // precedes it in the SAME command when there's no quiver set, and
+        // C's two consecutive You() calls merge onto one line; a bare
+        // `game._pending_message =` assignment here replaced that message
+        // outright instead of appending after it.
+        await pline('You have nothing to ready for firing.');
         return ECMD_OK;
     }
 
@@ -5484,6 +5510,12 @@ function bhit_thrown_landing(dx, dy, range) {
         const mtmp = m_at(bx, by);
         if (mtmp) { hitmon = mtmp; break; }
         if (!throw_zap_pos(typ) || throw_closed_door(loc)) { bx -= dx; by -= dy; break; }
+        // C ref: zap.c bhit():4092 `if (IS_SINK(typ) && weapon != FLASHED_LIGHT)
+        // break;` — a thrown object always falls right onto a sink it reaches
+        // (no revert, unlike the wall/closed-door case above).  js/dothrow.js's
+        // boomhit(), js/dokick.js's kicked-object walker and js/mthrowu.js's
+        // monster-throw walker already do this; this hero-throw walker didn't.
+        if (IS_SINK(typ)) break;
     }
     if (hitmon) return { x: bx, y: by, mon: hitmon };
     return { x: bx, y: by, mon: null };
@@ -8365,7 +8397,69 @@ export function ggetobj(_word, _fn, _mx, _combo, resultflags = null) {
 }
 
 export function askchain(_objchn, _olets, _allflag, _fn, _ckfn, _mx, _word) { return 0; }
-export function reroll_menu() { return false; }
+// C ref: invent.c reroll_menu() — the OPTIONS=reroll confirm-or-reroll PICK_ONE
+// menu: 'p' selects a_char 'n' ("start the game with this character"), 'r'
+// selects a_char 'y' ("reroll another character"), then the starting
+// inventory (doname() per item) and a "St:.. Dx:.. Co:.. In:.. Wi:.. Ch:.."
+// line, all non-selectable.  If the player closes the menu without picking
+// (ESC/space/Enter with nothing selected — tty_select_menu()'s PICK_ONE
+// already matches C's process_menu_window commit-with-nothing-selected
+// behavior), C falls back to a plain y_n() re-ask instead of a definite
+// answer.  Returns true (and bumps u.uroleplay.numrerolls) only for 'y'.
+export async function reroll_menu() {
+    const u = game.u;
+    const inv = Array.isArray(game.invent) ? game.invent : [];
+    const items = [
+        { selector: 'p', achar: 'n', desc: 'start the game with this character',
+          selected: false, count: -1, gselector: null, skipinvert: false },
+        { selector: 'r', achar: 'y', desc: 'reroll another character',
+          selected: false, count: -1, gselector: null, skipinvert: false },
+    ];
+    const plan = [
+        { str: 'Reroll this character?', attr: ATR_INVERSE }, { str: '' },
+        { item: items[0] }, { item: items[1] }, { str: '' },
+    ];
+    // C ref: u_init.c — starting gear isn't setworn()/setuwep()'d until
+    // ini_inv_use_obj() (called from u_init_skills_discoveries(), AFTER
+    // reroll_menu() returns), so doname()'s owornmask-driven "(being worn)"/
+    // "(weapon in hand)"/"(alternate weapon; not wielded)" suffixes cannot
+    // fire yet — this port sets owornmask earlier, so use the bare name
+    // (doname() minus that suffix) to match what C actually shows here.
+    // C ref: invent.c reroll_menu() `++iflags.override_ID;` — every listed
+    // item shows its REAL type name (e.g. "small shield", not the unidentified
+    // "wooden shield" appearance) even though discover_object() for it hasn't
+    // run yet (that's ini_inv_use_obj(), also after reroll_menu() returns).
+    game.iflags = game.iflags || {};
+    const savedOverrideID = game.iflags.override_ID;
+    game.iflags.override_ID = true;
+    try {
+        for (const obj of inv) plan.push({ str: simple_obj_name(obj, { empty: true }) });
+    } finally {
+        game.iflags.override_ID = savedOverrideID;
+    }
+    plan.push({ str: '' });
+    const { get_strength_str } = await import('./botl.js');
+    plan.push({ str: `St:${get_strength_str()} Dx:${acurr_eff(A_DEX)}`
+        + ` Co:${acurr_eff(A_CON)} In:${acurr_eff(A_INT)}`
+        + ` Wi:${acurr_eff(A_WIS)} Ch:${acurr_eff(A_CHA)}` });
+
+    const picked = await tty_select_menu(items, plan, PICK_ONE);
+    // C ref: wintty.c tty_select_menu() — `tty_dismiss_nhwindow(window)` runs
+    // BEFORE the n>0 check, so the overlay is already gone (map restored)
+    // by the time a fallback y_n() might show its own prompt.
+    delete game._modal_screen;
+    await docrt();
+    await flush_screen(1);
+    const option = picked.length > 0 ? picked[0].achar
+        : await y_n('Reroll this character?');
+
+    if (option === 'y') {
+        u.uroleplay = u.uroleplay || {};
+        u.uroleplay.numrerolls = (u.uroleplay.numrerolls | 0) + 1;
+        return true;
+    }
+    return false;
+}
 export function set_cknown_lknown(obj) { if (Is_container(obj) || obj?.otyp === STATUE) obj.cknown = obj.lknown = 1; else if (obj?.otyp === TIN) obj.cknown = 1; }
 export function fully_identify_obj(otmp) { makeknown(otmp?.otyp); observe_object(otmp); if (otmp) otmp.known = otmp.bknown = otmp.rknown = 1; set_cknown_lknown(otmp); if (otmp?.otyp === EGG) learn_egg_type(otmp.corpsenm); }
 // C ref: invent.c identify(otmp) — fully_identify_obj() then prinv(), whose
@@ -8466,7 +8560,15 @@ export function learn_unseen_invent() {
     if (invupdated) update_inventory();
 }
 export function update_inventory() { if (!program_state().in_moveloop && !game._allow_inventory_update) return; }
-export function doperminv() { return ECMD_OK; }
+// C ref: invent.c doperminv() — the '|' #perminv command.  This port's
+// windowport (js/wintty.js) never sets WC_PERM_INVENT (persistent inventory
+// display is a curses/Qt/browser-port feature, not tty), so the very first
+// branch always fires: `pline("Persistent inventory display is not
+// supported by '%s'.", windowprocs.name);` with windowprocs.name=="tty".
+export async function doperminv() {
+    await pline("Persistent inventory display is not supported by 'tty'.");
+    return ECMD_OK;
+}
 export function obj_to_let(obj) { if (!flags().invlet_constant) reassign(); return obj?.invlet || NOINVSYM; }
 
 // The text prinv() would print, with no display side effects.  Callers that
@@ -8942,9 +9044,14 @@ function renderItemActionsMenu(otmp, entries) {
     game._modal_screen = 'itemactions';
 }
 
-// the(cxname(otmp)) — "the <object name>", used in the submenu title.
+// the(cxname(otmp)) — "the <object name>", used in the submenu title.  Real
+// C cxname()/xname() pluralize a stack's base name but never show a leading
+// count (that belongs to doname() alone), so a 3-count stack reads "the food
+// rations", not "the food ration" (cxname_singular) or "the 3 food rations"
+// (this module's own exported xname(), which intentionally shows the count
+// for its 266 other call sites and is left untouched here).
 function the_obj(otmp) {
-    const nm = cxname_singular(otmp);
+    const nm = simple_obj_name(otmp, { article: false, quantity: true, count: false, buc: false });
     return /^(the |a |an |your |my |[A-Z])/.test(nm) ? nm : `the ${nm}`;
 }
 
@@ -9879,9 +9986,9 @@ export async function dolook() {
     // _pending_message was falsy wrongly re-printed that line after the
     // multi-object menu too, even though there WERE objects here (they were
     // just shown in the menu, matching a blank row 0 in the real recording).
-    await look_here(0, 0);
+    const res = await look_here(0, 0);
     if (game._pending_message) await renderMessageOnMap(game._pending_message);
-    return ECMD_OK;
+    return res;
 }
 
 // C ref: invent.c will_feel_cockatrice() — the petrifying-corpse test is on the

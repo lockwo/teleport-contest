@@ -26,7 +26,7 @@ import { age_spells } from './spell.js';
 import { newuhs } from './eat.js';
 import { adj_erinys } from './makemon.js';
 import { find_ac, u_init_skills_discoveries, moveloop_preamble_startup,
-         race_attrmin, race_attrmax } from './u_init.js';
+         race_attrmin, race_attrmax, u_init_inventory_attrs } from './u_init.js';
 import { com_pager_legacy } from './questpgr.js';
 import { roles, races, aligns, genders, Hello, rankName } from './role.js';
 import { Unaware,
@@ -34,7 +34,7 @@ import { Unaware,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
     Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS } from './const.js';
-import { near_capacity } from './invent.js';
+import { near_capacity, reroll_menu } from './invent.js';
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { settrack } from './track.js';
@@ -43,6 +43,7 @@ import { genTutorialLevel } from './tutorial.js';
 import { find_level } from './dungeon.js';
 import { livelog_printf, LL_ACHIEVE } from './livelog.js';
 import { check_special_room } from './shkroom.js';
+import { runtime_info_init } from './mdlib.js';
 
 const PM_KNIGHT = 4;
 const PM_WIZARD = 12;
@@ -313,6 +314,18 @@ async function newgame_real() {
     await docrt();
     await flush_screen(1);
     await bot();
+
+    // C ref: allmain.c:817-823 — the OPTIONS=reroll confirm-or-reroll menu,
+    // right after the first post-mklev bot() and before u_init_skills_
+    // discoveries()/the legend pager below.  u_init_inventory_attrs() is
+    // already a full, faithful port of C's own reroll body (init_attr(75) +
+    // vary_init_attr() re-rolls St/Dx/Co/In/Wi/Ch, u_init_role()/u_init_race()
+    // clears and regenerates starting inventory), so re-running it here is
+    // the whole reroll, matching C exactly.
+    while (g.u.uroleplay?.reroll && await reroll_menu()) {
+        u_init_inventory_attrs();
+        await bot();
+    }
 
     // C ref: allmain.c — com_pager("legacy") when the legacy option is on.
     // The legend menu overlays the already-drawn map (clearing only its own
@@ -1143,7 +1156,9 @@ export async function moveloop_turn() {
             // effective Dex used by this roll.
             const dex = acurr_eff(3);
             if (!rn2(40 + dex * 3)) {
-                rnd(3); // u_wipe_engr(rnd(3))
+                const cnt = rnd(3);
+                const { wipe_engr_at, can_reach_floor } = await import('./engrave.js');
+                if (can_reach_floor(true)) wipe_engr_at(g.u.ux, g.u.uy, cnt, false);
             }
 
             // C ref: allmain.c:362 — once the Wizard is dead the hero is
@@ -1893,6 +1908,22 @@ export async function moveloop_core() {
         return;
     }
 
+    // C ref: allmain.c moveloop_core():485 — the dig() occupation (set by
+    // dig.c use_pick_axe2()'s set_occupation(dig, verbing, 0)).  Like #wipe/
+    // #force, the move loop runs the occupation step instead of reading a
+    // command: each turn rolls the effort increment (dig.c:1298) and elapses a
+    // game turn (monsters move), with no nhgetch in between, until dig()
+    // returns 0 (finished, wall broken through / hole dug / interrupted).
+    if (g._dig_occupation) {
+        const { dig } = await import('./dig.js');
+        const busy = await dig();
+        g.context = g.context || {};
+        g.context.move = 1;
+        g._pendingTurn = true;
+        if (!busy) g._dig_occupation = null;
+        return;
+    }
+
     // C ref: allmain.c moveloop_core():485 — the learn() occupation (set by
     // spell.c study_book()).  An UNTIMED occupation: learn() counts
     // context.spbook.delay up toward zero itself, one turn per call, so the move
@@ -2064,14 +2095,20 @@ function program_state_init() {
     ps.exiting = 0;
     ps.saving = ps.restoring = ps.freeing = 0;
 }
-// The three table-copy initialisers (decl.c/objects.c/monst.c) and
-// runtime_info_init() (sys.c) have no port; sys_early_init()'s outcome is
-// js/cfgfiles.js:149's frozen defaults, so it is a no-op here.
+// The three table-copy initialisers (decl.c/objects.c/monst.c) have no port;
+// sys_early_init()'s outcome is js/cfgfiles.js:149's frozen defaults, so it is
+// a no-op here. runtime_info_init() (sys.c) DOES have a real port — js/mdlib.js
+// — imported above; a local no-op used to shadow it here, so nomakedefs'
+// version/build-date banner never got populated and every 'V'/#version press
+// showed the placeholder Hack-1.0-era default instead of the real banner.
+// NOTE: early_init() itself still has no caller anywhere in this port (it is
+// only ever defined/exported here) — js/jsmain.js's start() now calls
+// runtime_info_init()'s real trigger directly (early_init(0, null)), since
+// that is the only one of early_init()'s five sub-calls that does anything.
 function decl_globals_init() { /* decl.c: no separate globals store in js/ */ }
 function objects_globals_init() { /* objects.c: js/mkobj.js objects[] is live */ }
 function monst_globals_init() { /* monst.c: js/makemon.js MONS[] is live */ }
 function sys_early_init() { /* sys.c: see js/cfgfiles.js:149 */ }
-function runtime_info_init() { /* sys.c: version/runtime banner strings */ }
 
 // C ref: allmain.c:48 moveloop_preamble(resuming) — everything that happens
 // once between newgame()/restore and the first moveloop_core() iteration.

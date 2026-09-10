@@ -1410,21 +1410,28 @@ function obj_stop_timers(obj) {
 }
 
 // C ref: timeout.c run_timers() — dispatch expired TIMER_OBJECT timers.
-// ROT_CORPSE on a floor object (dig.c rot_corpse() -> rot_organic() silently
-// frees it; no message, no RNG) and SHRINK_GLOB, whose handler mkobj.c
-// shrink_glob() is ported below and DOES draw (start_glob_timeout's rn2(5)) each
-// time it reschedules.  REVIVE_MON / ZOMBIFY_MON / FIG_TRANSFORM need
-// makemon()-side handlers that live outside this file and stay unfired.
-export function run_object_timers() {
+// SHRINK_GLOB's handler mkobj.c shrink_glob() is ported below and DOES draw
+// (start_glob_timeout's rn2(5)) each time it reschedules.  ROT_CORPSE's real
+// handler (dig.c rot_corpse(), which prints "Your <corpse> rots away." for a
+// carried corpse, stops an occupation if it was worn/wielded, and reveals a
+// hiding monster if on the floor) is fully ported at js/dig.js's rot_corpse();
+// this used to only scan FLOOR objects and silently splice them out (no
+// message, no RNG, no owornmask/occupation handling) instead of calling it —
+// so a corpse rotting away while CARRIED (the common case) never fired at
+// all, and a floor one never revealed a hiding monster or got the message.
+export async function run_object_timers() {
     const moves = game.moves ?? 0;
-    // Globs can be anywhere; collect the timed ones from every list mkobj.c
-    // maintains so a glob in a pack or a container keeps shrinking as in C.
-    const globs = [];
+    // Collect every timed object due to fire, from every list mkobj.c
+    // maintains, so an object in a pack or a container is reached exactly
+    // like C's timer queue (keyed on the object, not on which list holds it).
+    const globs = [], corpses = [];
     const scan = (list) => {
         if (!Array.isArray(list)) return;
         for (const o of list) {
-            if (o.timed && o.timer?.action === SHRINK_GLOB && o.timer.when <= moves)
-                globs.push(o);
+            if (o.timed && o.timer && o.timer.when <= moves) {
+                if (o.timer.action === SHRINK_GLOB) globs.push(o);
+                else if (o.timer.action === ROT_CORPSE) corpses.push(o);
+            }
             if (Array.isArray(o.cobj)) scan(o.cobj);
         }
     };
@@ -1436,13 +1443,13 @@ export function run_object_timers() {
         scan(mon.minvent);
     for (const g of globs) shrink_glob(g, g.timer?.when ?? moves);
 
-    const objs = game.level?.objects;
-    if (!Array.isArray(objs)) return;
-    for (let i = objs.length - 1; i >= 0; i--) {
-        const obj = objs[i];
-        if (obj.timed && obj.timer && obj.timer.action === ROT_CORPSE
-            && obj.timer.when <= moves) {
-            objs.splice(i, 1);
+    if (corpses.length) {
+        const { rot_corpse } = await import('./dig.js');
+        for (const obj of corpses) {
+            const when = obj.timer?.when ?? moves;
+            obj.timed = false;
+            delete obj.timer;
+            await rot_corpse({ a_obj: obj }, when);
         }
     }
 }

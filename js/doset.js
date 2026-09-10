@@ -25,6 +25,22 @@ import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { update_topl, topl_more, render_map_to_grid, docrt } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
+import { count_status_hilites } from './options.js';
+
+// C ref: dat/symbols "Handling:" lines per symset `start:` block — game.symset
+// (jsmain.js) stores only the selected symset NAME (no handling struct, unlike
+// symbols.c's gs.symset[PRIMARYSET]), so this mirrors the file's per-set
+// Handling: value for the "handler=" suffix optfn_symset() prints (get_val,
+// options.c:4200-4209).  Names without a Handling: line (plain/Blank/
+// AmigaFont) correctly have no entry here -> no handler= suffix, matching C's
+// handling==H_UNK(0) skip.
+const SYMSET_HANDLING = {
+    ibmgraphics: 'IBM', ibmgraphics_1: 'IBM', ibmgraphics_2: 'IBM',
+    rogueibm: 'IBM', rogueepyx: 'IBM', roguewindows: 'IBM',
+    curses: 'DEC', decgraphics: 'DEC',
+    macgraphics: 'MAC',
+    enhanced1: 'UTF8', enhanced2: 'UTF8',
+};
 
 const COLS = 80;
 const ROWS = 24;
@@ -115,14 +131,14 @@ const SIMPLE_SECTIONS = [
         { name: 'hilite_pile',   kind: 'bool',     val: () => boolStr('hilite_pile', false) },
         { name: 'showrace',      kind: 'bool',     val: () => boolStr('showrace', false) },
         { name: 'sparkle',       kind: 'bool',     val: () => boolStr('sparkle', true) },
-        { name: 'symset',        kind: 'compound', val: () => 'DECgraphics, active, handler=DEC' },
+        { name: 'symset',        kind: 'compound', val: () => symsetStr() },
     ] },
     { name: 'Status', items: [
         { name: 'hitpointbar',             kind: 'bool',     val: () => boolStr('hitpointbar', false) },
         { name: 'menu colors',             kind: 'other',    val: () => '(0 currently set)' },
         { name: 'showexp',                 kind: 'bool',     val: () => boolStr('showexp', false) },
         { name: 'status condition fields', kind: 'other',    val: () => '(16 currently set)' },
-        { name: 'status highlight rules',  kind: 'other',    val: () => '(0 currently set)' },
+        { name: 'status highlight rules',  kind: 'other',    val: () => `(${count_status_hilites()} currently set)` },
         { name: 'statuslines',             kind: 'compound', val: () => '2' },
         { name: 'time',                    kind: 'bool',     val: () => boolStr('time', false) },
     ] },
@@ -140,6 +156,23 @@ function boolStr(name, dflt) {
     }
     if (v === undefined) v = dflt;
     return v ? 'X' : ' ';
+}
+
+// C ref: options.c optfn_symset() get_val (4200-4209) — name-or-"default",
+// then ", active" (currentgraphics==PRIMARYSET, which this build always is:
+// ROGUESET switching isn't modeled, see js/options.js:571), then
+// ", handler=X" when the set has one.  game.symset is the plain rc-selected
+// name (jsmain.js:305; '' when unset, e.g. an `!DECgraphics` negation is a
+// no-op per optfn_graphics_compat, js/options.js:1676-1688).
+function symsetStr() {
+    const name = game.symset || '';
+    let s = name || 'default';
+    if (name) {
+        s += ', active';
+        const h = SYMSET_HANDLING[name.toLowerCase()];
+        if (h) s += `, handler=${h}`;
+    }
+    return s;
 }
 
 function autopickupOn() {

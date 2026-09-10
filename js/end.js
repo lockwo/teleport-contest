@@ -793,8 +793,15 @@ async function disclose(how, taken = false) {
     if (!stopprint) {
         // C ref: insight.c:3007 list_genocided(defquery, ask) — at end of game
         // `both` is TRUE (program_state.gameover), so extinct species count too.
-        // With nothing gone there is no prompt at all.
-        const { ngenocided, nextinct, ngone } = genocided_counts();
+        // With nothing gone there is no prompt at all.  Counts come from the
+        // already-C-faithful insight.js num_extinct()/num_gone() (insight.js:
+        // 4155/4170), which apply the UniqCritterIndx filter so a merely-CREATED
+        // unique (e.g. the Oracle) is never counted as "extinct" — the
+        // hand-rolled genocided_counts() this replaced scanned mvitals with no
+        // such filter and fired a spurious prompt here.
+        const ngenocided = insight.num_gone(G_GENOD, []);
+        const nextinct = insight.num_extinct();
+        const ngone = insight.num_gone(G_GENOD | G_EXTINCT, []);
         if (ngone > 0) {
             const q = should_query_disclose_option(end_disclose, 'g');
             let defquery = q.defquery;
@@ -832,21 +839,6 @@ async function disclose(how, taken = false) {
 
     if (stopprint) game._done_stopprint = (game._done_stopprint || 0) + 1;
     return !stopprint;
-}
-
-// C ref: insight.c num_genocides()/num_extinct()/num_gone(mvflags, mindx) — the
-// three counts list_genocided() decides its prompt wording from.  mvitals[]
-// carries G_GENOD / G_EXTINCT per species; a species can be both.
-function genocided_counts() {
-    const mv = game.mvitals || [];
-    let ngenocided = 0, nextinct = 0, ngone = 0;
-    for (let i = 0; i < mv.length; i++) {
-        const f = mv[i]?.mvflags | 0;
-        if (f & G_GENOD) ngenocided++;
-        if (f & G_EXTINCT) nextinct++;
-        if (f & (G_GENOD | G_EXTINCT)) ngone++;
-    }
-    return { ngenocided, nextinct, ngone };
 }
 
 // C ref: end.c really_done() tail for a normal (non-wizard, non-discover)

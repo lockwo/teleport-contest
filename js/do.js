@@ -1100,7 +1100,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // A revisited level's corpses have kept rotting in the JS per-ledger store
     // exactly as C's saved timers do, so without this they linger on the map
     // until the arrival turn's own nh_timeout.  ROT_CORPSE draws no RNG.
-    run_object_timers();
+    await run_object_timers();
 
     // C ref: do.c goto_level() ~1827 — the hero might be arriving at a spot that
     // now holds a monster (commonly the pet that accompanied the hero and landed

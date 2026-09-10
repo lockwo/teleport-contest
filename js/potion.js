@@ -23,7 +23,7 @@ import { heal_legs, water_damage } from './trap.js';
 import { monster_detect } from './hack.js';
 import { DEADMONSTER } from './mon.js';
 import { exercise, acurr_eff } from './attrib.js';
-import { more_experienced, pluslvl, newuexp } from './exper.js';
+import { more_experienced, pluslvl, newuexp, has_innate } from './exper.js';
 import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          POT_HEALING, POT_EXTRA_HEALING, POT_FRUIT_JUICE, POT_BOOZE,
          POT_SICKNESS, POT_WATER, POT_SPEED, POT_GAIN_LEVEL, POT_GAIN_ENERGY,
@@ -99,7 +99,16 @@ function Upolyd() { return !!game.u?.Upolyd; }
 function Unaware() { return !!(game.u?.usleep || game.u?.Unaware); }
 // C ref: attrib.h Fixed_abil — blocks every adjattrib().
 function Fixed_abil() { return HProp('HFixed_abil', 'EFixed_abil') > 0; }
-function Poison_resistance() { return HProp('HPoison_resistance', 'PoisonResistance', 'Poison_resistance') > 0; }
+// C ref: attrib.c orc_abil[]/RACE_ABIL race-innate poison resistance (e.g.
+// every orc, from level 1) is never PERSISTED as a uprops/H*/E* flag anywhere
+// in js/ — adjabil() only emits the message, never the state write, and is
+// never called at chargen — so a bare H*/E* read always missed it.  OR in the
+// pure has_innate() derivation, which js/insight.js's enlightenment screen
+// already uses correctly for this same property.
+function Poison_resistance() {
+    return HProp('HPoison_resistance', 'PoisonResistance', 'Poison_resistance') > 0
+        || has_innate('HPoison_resistance');
+}
 function Sick_resistance() { return HProp('HSick_resistance') > 0; }
 function Invis() { return HProp('HInvis', 'EInvis') > 0; }
 function See_invisible() { return HProp('HSee_invisible', 'ESee_invisible') > 0; }

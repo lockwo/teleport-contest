@@ -15,7 +15,7 @@
 
 import { game } from './gstate.js';
 import { t_at as t_at_hk, trap_explanation as trap_explanation_hk } from './trap.js';
-import { domove, blocksMove, test_move_quiet } from './cmd.js';
+import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars } from './cmd.js';
 import { moveloop_turn } from './allmain.js';
 import { m_at, vobj_at, covers_objects, object_glyph, flush_screen, newsym, pline, update_topl, topl_more, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature } from './display.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inventoryArray, is_pick, ansimpleoname,
@@ -1290,33 +1290,17 @@ async function getpos_help(force, goal, doingWhatIs, hasValid, hasHilite) {
     }
 }
 
-// getpos movement keys: hjkl + diagonals (lower and upper case both move the
-// cursor here; rush/run prefixes handled separately).  C: movecmd().
-const GP_DX = { h: -1, l: 1, j: 0, k: 0, y: -1, u: 1, b: -1, n: 1 };
-const GP_DY = { h: 0, l: 0, j: 1, k: -1, y: -1, u: -1, b: 1, n: 1 };
-
-// C ref: cmd.c reset_commands() — dirchars "hykulnjb><"; for each direction
-// the rush mode binds Ctrl-<dirchar> (C(di)) and the run mode binds the capital
-// (highc(di)).  getpos's movecmd(MV_RUSH)/movecmd(MV_RUN) therefore accept the
-// control-char rush keys too — notably Ctrl-J ('\n', 0x0A) which rushes south.
-// Map the control byte -> lowercase movement letter so getpos() can fast-move.
-const GP_CTRL_RUSH = {
-    8: 'h',  // ^H west
-    25: 'y', // ^Y northwest
-    11: 'k', // ^K north
-    21: 'u', // ^U northeast
-    12: 'l', // ^L east  (note: ^L is doredraw at top level, but in getpos the
-             //           rush binding wins via movecmd() before redraw_cmd())
-    14: 'n', // ^N southeast
-    10: 'j', // ^J south  (Return / '\n')
-    // C ref: sys/share/unixtty.c setftty() — cbreak mode only clears ICANON,
-    // leaving ICRNL enabled, so the tty driver maps a raw CR (Enter, 0x0D)
-    // to NL (0x0A) before NetHack's readchar() ever sees it.  A recorded
-    // '\r' keystroke therefore reaches getpos() as Ctrl-J, i.e. rush south,
-    // same as literal '\n'.
-    13: 'j', // '\r' (Enter) — tty ICRNL maps it to ^J before the app sees it
-    2: 'b',  // ^B southwest
-};
+// getpos movement-key resolution (C: movecmd()) now lives in cmd.js's
+// getpos_walkdir()/getpos_rushdir(): it reads the LIVE, number_pad-aware
+// command table instead of a hardcoded default hjklyubn keymap, so an rc that
+// remaps movement (number_pad, swap_yz, ...) is honored here too.
+//
+// C ref: sys/share/unixtty.c setftty() — cbreak mode only clears ICANON,
+// leaving ICRNL enabled, so the tty driver maps a raw CR (Enter, 0x0D) to NL
+// (0x0A) before NetHack's readchar() ever sees it.  A recorded '\r' keystroke
+// therefore reaches getpos() as Ctrl-J (rush south in the default keymap),
+// same as literal '\n' — translate it the same way before resolving.
+function getpos_key(k) { return k === 13 ? 10 : k; }
 
 // C ref: getpos.c truncate_to_map(cx, cy, dx, dy) — add <dx,dy> to the cursor,
 // clamping at the map edges.  A DIAGONAL move that hits one edge shortens the
@@ -1530,7 +1514,16 @@ function is_valid_travelpt(x, y) {
     const u = game.u;
     if (u && x === u.ux && y === u.uy) return true;
     const loc = game.level?.at(x, y);
-    if (loc && !loc.seenv && loc.remembered_glyph == null) return false;
+    // C ref: hack.c:1535-1536 — the fast-reject is a KNOWN blank stone/secret-
+    // corridor square that hasn't been SEEN (glyph_is_cmap(glyph) && S_stone ==
+    // glyph_to_cmap(glyph) && !seenv), matching terrain_description()'s own
+    // STONE/SCORR "stone" vs "unexplored" split just above (lines 1428, 1501).
+    // A genuinely never-drawn (GLYPH_UNEXPLORED) cell does NOT hit this C
+    // guard at all and instead falls through to the real BFS below — the old
+    // broader "!seenv && remembered_glyph == null" test wrongly rejected that
+    // case too, so a never-explored-but-reachable cell always read "no travel
+    // path" even when findtravelpath() would have found one.
+    if (loc && (loc.typ === STONE || loc.typ === SCORR) && !loc.seenv) return false;
     const tx = u.tx, ty = u.ty;
     u.tx = x; u.ty = y;
     const ret = findtravelpath(TRAVP_VALID);
@@ -2033,27 +2026,32 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
             game._toplin = 0;
             rushrun = true;
         }
-        const ldir = GP_CTRL_RUSH[k] || ch.toLowerCase();
-        const isRush = rushrun || 'HJKLYUBN'.includes(ch)
-                       || GP_CTRL_RUSH[k] !== undefined;
-        if (GP_DX[ldir] !== undefined) {
-            let dx = GP_DX[ldir], dy = GP_DY[ldir];
-            if (isRush) {
-                if (gp_iflags().getloc_moveskip) {
-                    // C getpos.c:922 — "skip same glyphs": walk while the NEXT
-                    // TWO cells both show the cursor cell's glyph.
-                    const g0 = gp_glyph_at(cx, cy);
-                    while (isok(cx + dx, cy + dy)
-                           && g0 === gp_glyph_at(cx + dx, cy + dy)
-                           && isok(cx + dx + GP_DX[ldir], cy + dy + GP_DY[ldir])
-                           && g0 === gp_glyph_at(cx + dx + GP_DX[ldir],
-                                                 cy + dy + GP_DY[ldir])) {
-                        dx += GP_DX[ldir];
-                        dy += GP_DY[ldir];
-                    }
-                } else {
-                    dx *= 8; dy *= 8;
+        // C ref: getpos.c `movecmd(c, MV_WALK)` / `movecmd(c, MV_RUSH) ||
+        // movecmd(c, MV_RUN)`, resolved through the live command table so a
+        // number_pad (or swap_yz, etc.) rc is honored instead of always
+        // accepting the default hjklyubn keymap.
+        const kk = getpos_key(k);
+        const walkDir = getpos_walkdir(kk);
+        const dir = (walkDir && !rushrun) ? null : (walkDir || getpos_rushdir(kk));
+        if (walkDir && !rushrun) {
+            [cx, cy] = truncate_to_map(cx, cy, walkDir.dx, walkDir.dy);
+            continue; // C: goto nxtc; auto_describe runs at top of next loop
+        } else if (dir) {
+            let dx = dir.dx, dy = dir.dy;
+            if (gp_iflags().getloc_moveskip) {
+                // C getpos.c:922 — "skip same glyphs": walk while the NEXT
+                // TWO cells both show the cursor cell's glyph.
+                const g0 = gp_glyph_at(cx, cy);
+                while (isok(cx + dx, cy + dy)
+                       && g0 === gp_glyph_at(cx + dx, cy + dy)
+                       && isok(cx + dx + dir.dx, cy + dy + dir.dy)
+                       && g0 === gp_glyph_at(cx + dx + dir.dx,
+                                             cy + dy + dir.dy)) {
+                    dx += dir.dx;
+                    dy += dir.dy;
                 }
+            } else {
+                dx *= 8; dy *= 8;
             }
             [cx, cy] = truncate_to_map(cx, cy, dx, dy);
             continue; // C: goto nxtc; auto_describe runs at top of next loop
@@ -2179,9 +2177,7 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
                 continue;
             }
             // k == 0 (no symbol match): "Unknown direction".
-            const note = force
-                ? "use 'h', 'j', 'k', 'l' or '.'"
-                : 'aborted';
+            const note = force ? getpos_direction_hint() : 'aborted';
             unknownMsg = `Unknown direction: '${visctrl_key(k)}' (${note}).`;
             await getpos_render(unknownMsg, cx, cy);
             msgGiven = true;
@@ -2205,6 +2201,15 @@ function visctrl_key(k) {
     if (k < 32) return '^' + String.fromCharCode(k + 64);
     if (k === 127) return '^?';
     return String.fromCharCode(k);
+}
+
+// C ref: getpos.c:1120-1128 — "use '%s', '%s', '%s', '%s' or '%s'" built from
+// the LIVE bound do_move_west/south/north/east keys (Cmd.dirchars), not a
+// hardcoded default hjklyubn keymap.
+function getpos_direction_hint() {
+    const [w, s, n, e] = getpos_hint_chars();
+    return `use '${visctrl_key(w.charCodeAt(0))}', '${visctrl_key(s.charCodeAt(0))}', `
+         + `'${visctrl_key(n.charCodeAt(0))}', '${visctrl_key(e.charCodeAt(0))}' or '.'`;
 }
 
 // C ref: pager.c do_look(mode=1) reached by the ';' "glance" command.  A quick
