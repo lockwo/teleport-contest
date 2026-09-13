@@ -310,6 +310,23 @@ const TIMED_PROPS = [
       get: (u) => u.HFumbling || 0,
       set: (u, v) => { u.HFumbling = v; },
       expire: expire_fumbling },
+    // prop.h LEVITATION = 48.  get/set mask to the TIMEOUT (count) bits and
+    // splice them back next to whatever flag bits (I_SPECIAL) potion.js OR'd
+    // in, mirroring C's `--upp->intrinsic & TIMEOUT` on the packed int — a
+    // plain overwrite would drop I_SPECIAL on every decrement.  Without this
+    // entry HLevitation never counted down at all, so levitation_dialogue()'s
+    // periodic messages ("You float slightly lower." / "You wobble
+    // unsteadily...") never landed on the right turn.
+    { name: 'LEVITATION',
+      get: (u) => (u.uprops?.Levitation | 0) & TIMEOUT,
+      set: (u, v) => {
+          const flags = (u.uprops?.Levitation | 0) & ~TIMEOUT;
+          u.uprops.Levitation = flags | (v & TIMEOUT);
+      },
+      // C ref: timeout.c:794 case LEVITATION -> float_down(I_SPECIAL|TIMEOUT,0)
+      // — float_down() (trap.c) is a separate, unported subsystem (trapdoor/
+      // water/lava landing, autopickup); left inert rather than guessed at.
+      expire: async () => {} },
     // prop.h FAST = 64, after every other entry here.  A timed HFast is what
     // makes Very_fast true (hack.h Very_fast == ((HFast & ~INTRINSIC) || EFast)),
     // so this countdown is load-bearing: u_calc_moveamt draws a different roll
@@ -363,6 +380,12 @@ export async function nh_timeout() {
     // uprops[] loop.  Cream on the face wears off a point a turn independently
     // of the blindness it caused.
     if ((u.uprops.Vomiting || 0) > 0) await vomiting_dialogue();
+
+    // C ref: timeout.c:633-634 `if (HLevitation & TIMEOUT) levitation_dialogue();`
+    // — same "runs on the CURRENT, pre-decrement value" slot as vomiting_dialogue
+    // above.  Draws no RNG, so wiring only this one dialogue can't reorder any
+    // later draw.
+    if (((u.uprops.Levitation || 0) & TIMEOUT) > 0) await levitation_dialogue();
 
     // C ref: timeout.c:641-648 — the polymorph countdown, immediately above
     // u.ucreamed.  Without it a self-polymorph never wore off: u.mtimedone was

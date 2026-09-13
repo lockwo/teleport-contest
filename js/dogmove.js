@@ -1774,12 +1774,25 @@ export async function dog_move(mtmp, after) {
             const what = reluctant_what(nix, niy);
             await emit_pet_msg(`${noit_Monnam(mtmp)} ${verb} reluctantly ${over ? 'over' : 'onto'} ${what}.`);
         }
-        // C ref: monmove.c postmov():1508 — the tty redraw is deferred here (m_move
-        // returns postmov(..., dog_move(...), ...)).  Clear the vacated square,
-        // then run mintrap on the new square: a trap message (e.g. "<pet> is caught
-        // in a bear trap!") pages the still-pending reluctant line with --More--,
-        // and the trap's own RNG only fires once the prompt is dismissed.  The new
-        // square is redrawn (pet painted over the object) only afterwards.
+        // C ref: dogmove.c:1350-1357 — "We have to know if the pet's going to do
+        // a combined eat and move before moving it, but it can't eat until after
+        // being moved.  Thus the do_eat flag."  dog_eat() runs HERE, still inside
+        // dog_move() itself, before dog_move() returns at all.
+        if (do_eat && eat_obj) {
+            const r = await dog_eat(mtmp, edog, eat_obj, omx, omy);
+            if (r === 2) return MMOVE_DIED;
+        }
+        // C ref: monmove.c postmov():1508,1526 — postmov() only runs once dog_move()
+        // has RETURNED (`postmov(..., dog_move(...), ...)`), so the mintrap check
+        // below is strictly ordered after the do_eat block above, not before it —
+        // moving it earlier let the pet's fatal trapeffect_pit cut the turn short
+        // and skip dog_eat()'s own reward-check/delobj obj_resists rn2(100)s
+        // (2 draws), desyncing every roll for the rest of the session.  Clear the
+        // vacated square, then run mintrap on the new square: a trap message (e.g.
+        // "<pet> is caught in a bear trap!") pages the still-pending reluctant
+        // line with --More--, and the trap's own RNG only fires once the prompt
+        // is dismissed.  The new square is redrawn (pet painted over the object)
+        // only afterwards.
         newsym(omx, omy);
         const trapret = await mon_mintrap(mtmp);
         // Trap_Moved_Mon means the pet migrated off this level.  C's postmov()
@@ -1790,11 +1803,6 @@ export async function dog_move(mtmp, after) {
             return MMOVE_DIED;
         }
         newsym(nix, niy);
-        // C ref: dogmove.c:1318 — after moving onto the food, the pet eats it.
-        if (do_eat && eat_obj) {
-            const r = await dog_eat(mtmp, edog, eat_obj, omx, omy);
-            if (r === 2) return MMOVE_DIED;
-        }
         return MMOVE_MOVED;
     }
     // C ref: dogmove.c:1354 — dog_move() falls through to `return MMOVE_MOVED`

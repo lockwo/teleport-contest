@@ -50,6 +50,7 @@ import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          A_STR, A_DEX, A_CON, A_WIS, Is_rogue_level,
          TT_BEARTRAP, TT_PIT, TT_WEB, TT_LAVA, TT_INFLOOR,
          PIT, SPIKED_PIT, STATUE_TRAP, TIP_SWIM, TRAPNUM, In_sokoban, ICE,
+         is_hole,
          SLT_ENCUMBER, MOD_ENCUMBER, OVERLOADED, Is_medusa_level, Is_juiblex_level,
          Is_waterlevel } from './const.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -1008,12 +1009,13 @@ export async function rhack(key) {
         key = replay ? replay.key : await nhgetch();
         // C ref: cmd.c readchar_core() ALTMETA arm — with the rc's `altmeta`
         // option on, a bare ESC read at the START of a fresh top-level
-        // command (never mid getdir()/getpos(), which is what "not otherInp"
-        // gates in C) combines with the NEXT already-queued key into a single
+        // command combines with the NEXT already-queued key into a single
         // M-<c> keystroke (e.g. M-j is bound to #jump) instead of being
-        // dispatched as its own, separate no-op command. js/cmd.js's own
-        // parse()/readchar_core() port this faithfully but have no live
-        // caller; replicate just this top-level-read case here.
+        // dispatched as its own, separate no-op command. getdir()/getpos()
+        // are "not otherInp" too and get the same merge at their own call
+        // sites. js/cmd.js's own parse()/readchar_core() port this faithfully
+        // but have no live caller; replicate just this top-level-read case
+        // here.
         if (!replay && key === 27 && game.iflags?.altmeta) {
             const next = await nhgetch();
             key = (next === 0 || next === 27) ? 27 : (next | 0x80);
@@ -1751,20 +1753,36 @@ export async function rhack(key) {
         }
         game.context.move = 0;
     } else if (ch === 'G' || ch === 'g') {
-        // C ref: cmd.c do_run()/do_rush() are PREFIXCMDs: rhack marks the
-        // prefix and jumps back to `got_prefix_input`, which re-enters parse()
-        // — that reads the next key AND clears the top line.  Reading the
-        // direction inline instead left the previous message on the recorded
-        // screen and swallowed a key that C dispatches as its own command.
-        game.context.run_prefix = (ch === 'G') ? 3 : 2;
-        game.context.move = 0;
-        // C: a PREFIXCMD sets rhack()'s local prefix_seen and re-enters
-        // parse() for the follow-up key; that flag dies with this call.
-        const savedSeen = game.context._prefix_seen;
-        game.context._prefix_seen = true;
-        await rhack(0);
-        game.context._prefix_seen = savedSeen;
-        return;
+        // C ref: cmd.c do_run()/do_rush() (cmd.c:1585-1610) — a second
+        // run/rush prefix while one is still pending (armed as run_prefix, or
+        // carried as staleRun across an intervening unbound key) cancels
+        // both instead of re-arming: "Double run/rush prefix, canceled.", no
+        // time taken — mirrors the 'F'/'m' double-prefix checks just above.
+        // Missing this let a second 'g'/'G' silently re-arm the prefix,
+        // turning the FOLLOWING plain step into a multi-tile rush C never
+        // took (bl016 ux drift: "g <bad-key> g <bad-key> h" must walk one
+        // step west, not rush).
+        if (game.context.run_prefix || staleRun) {
+            await Norep_topl(`Double ${ch === 'G' ? 'run' : 'rush'} prefix, canceled.`);
+            game.context.run_prefix = 0;
+            game.context.move = 0;
+        } else {
+            // C ref: cmd.c do_run()/do_rush() are PREFIXCMDs: rhack marks the
+            // prefix and jumps back to `got_prefix_input`, which re-enters
+            // parse() — that reads the next key AND clears the top line.
+            // Reading the direction inline instead left the previous message
+            // on the recorded screen and swallowed a key that C dispatches as
+            // its own command.
+            game.context.run_prefix = (ch === 'G') ? 3 : 2;
+            game.context.move = 0;
+            // C: a PREFIXCMD sets rhack()'s local prefix_seen and re-enters
+            // parse() for the follow-up key; that flag dies with this call.
+            const savedSeen = game.context._prefix_seen;
+            game.context._prefix_seen = true;
+            await rhack(0);
+            game.context._prefix_seen = savedSeen;
+            return;
+        }
     } else if (isMovementKey(ch)) {
         // staleRun: svc.context.run left over from a g/G whose next key was
         // unbound (see the rhack() head) — the walk still runs at that level.
@@ -2289,7 +2307,52 @@ async function dotele_nonwizard() {
 // reads one key.  Returns {dx,dy,dz} or null on cancel/ESC.
 // An optional `s` overrides the prompt (e.g. dochat's "Talk to whom? ...").
 export async function getdir(s) {
-    const prompt = s || 'In what direction?';
+    // C ref: cmd.c getdir() `struct _cmd_queue *cmdq = cmdq_pop();` — a queued
+    // direction (CQ_CANNED, from a #therecmdmenu mouse-click dispatch) is
+    // consumed silently: no prompt drawn, no key read.  `cmdq_pop()` itself
+    // reads CQ_REPEAT instead while gi.in_doagain (a #repeat (^A) replay), so
+    // C's OWN earlier getdir() answer for THIS call site — a cancel included —
+    // replays with no new prompt either; see the in_doagain branch below for
+    // why that half is handled separately in this port.
+    if (!game.in_doagain) {
+        const canned = cmdq_pop(CQ_CANNED);
+        if (canned) {
+            if (canned.typ === CMDQ_DIR)
+                return getdir_confdir({ dx: canned.dirx, dy: canned.diry,
+                                        dz: canned.dirz });
+            if (canned.typ === CMDQ_KEY)
+                return getdir_answer(canned.key);
+        }
+    } else {
+        // C's do_repeat() replays a command via its saved FUNCTION POINTER,
+        // so getdir()'s own `cmdq_add_key(CQ_REPEAT, dirsym)` (below) sits
+        // right behind the ec on the SAME queue for the replay to find. This
+        // port's do_repeat() (cmd.js) instead re-drives the command's
+        // original top-level KEY back through the shared key dispatch, and
+        // that dispatch unconditionally rewrites CQ_REPEAT to hold just that
+        // one key after every command runs — so a direction queued there
+        // from a MID-command getdir() call never survives to be replayed.
+        // _getdir_repeat is getdir()'s own parallel stash of "the last
+        // direction key *I* answered", immune to that rewrite, filling the
+        // same role for this call site.  Without it, replaying a command
+        // whose getdir() had already been answered/cancelled (e.g. "o" +
+        // <space> -> "Never mind.") re-prompted "In what direction?" on ^A
+        // and then silently ate the NEXT real key as its answer, instead of
+        // silently reproducing the original answer with no key consumed.
+        // A single overwritten slot (not a FIFO of every getdir() call ever
+        // made) — the one being replayed is always the MOST recent answer,
+        // whichever earlier command it belonged to.
+        const stash = game._getdir_repeat;
+        if (stash !== undefined) {
+            game._getdir_repeat = undefined;
+            return getdir_answer(stash);
+        }
+    }
+    // C ref: cmd.c getdir() `(s && *s != '^') ? s : "In what direction?"` —
+    // doidtrap() (pager.c:2338) calls getdir("^") using '^' as a SENTINEL
+    // (its own command key), not a literal prompt; C substitutes the default
+    // text for this one exact value.  Only js/pager.js's doidtrap() passes it.
+    const prompt = (s && s !== '^') ? s : 'In what direction?';
     // C ref: win/tty/topl.c tty_yn_function() — `if (toplin == TOPLINE_NEED_MORE
     // && !skip) more(); flags &= ~(WIN_STOP|WIN_NOSTOP);` before drawing the new
     // prompt: an unacknowledged pending message (e.g. a pet dropping an item
@@ -2305,10 +2368,29 @@ export async function getdir(s) {
     game._modal_screen = 'topl';
     const disp = game.nhDisplay;
     if (disp?.setCursor) disp.setCursor(Math.min(prompt.length + 1, 79), 0);
-    const key = await nhgetch();
+    let key = await nhgetch();
+    // C ref: cmd.c readchar_core() ALTMETA arm — getdir() sets
+    // program_state.input_state=getdirInp (not otherInp) before reading, so a
+    // bare ESC here also combines with the NEXT key into a single M-<c>
+    // (curses arrow keys) instead of cancelling by itself; the prompt stays on
+    // screen until that second key arrives, same as C's blocking second read.
+    if (key === 27 && game.iflags?.altmeta) {
+        const next = await nhgetch();
+        key = (next === 0 || next === 27) ? 27 : (next | 0x80);
+    }
     delete game._modal_screen;
     game._pending_message = '';
     game._toplin = 0; // TEST: topl.c:544 clean_up -> TOPLINE_NON_EMPTY
+    // C ref: cmd.c getdir() `if (!gi.in_doagain) cmdq_add_key(CQ_REPEAT,
+    // dirsym);` — stash this answer (valid or not) so a LATER #repeat replays
+    // it instead of re-prompting; see _getdir_repeat above.
+    if (!game.in_doagain) game._getdir_repeat = key;
+    return getdir_answer(key);
+}
+
+// C ref: cmd.c getdir() `got_dirsym:` — resolve a direction KEY (freshly read
+// or replayed from a queue) into {dx,dy,dz}, shared by every path above.
+async function getdir_answer(key) {
     const ch = String.fromCharCode(key);
     // C ref: cmd.c getdir() — spkeys[NHKF_GETDIR_SELF] ('.') and
     // NHKF_GETDIR_SELF2 ('s') both mean "at yourself", for either number_pad.
@@ -3832,6 +3914,20 @@ function trap_at(x, y) {
 }
 // C ref: trap.h is_pit(ttyp) — PIT or SPIKED_PIT.
 function is_pit_ttyp(ttyp) { return ttyp === PIT || ttyp === SPIKED_PIT; }
+// C ref: trap.c uteetering_at_seen_pit()/uescaped_shaft() — used by pickup()'s
+// can_reach_floor gate (below) to decide whether an unreachable-floor square
+// still gets read_engr_at().
+function uteetering_at_seen_pit(trap) {
+    const u = game.u;
+    return !!trap && is_pit_ttyp(trap.ttyp) && !!trap.tseen
+        && trap.tx === u.ux && trap.ty === u.uy
+        && !(u.utrap && u.utraptype === TT_PIT);
+}
+function uescaped_shaft(trap) {
+    const u = game.u;
+    return !!trap && is_hole(trap.ttyp) && !!trap.tseen
+        && trap.tx === u.ux && trap.ty === u.uy;
+}
 // C ref: trap.c climb_pit() — one turn's attempt to get out of a pit.
 //
 // The old placeholder here consumed NO RNG on the grounds that the climb path
@@ -4146,6 +4242,22 @@ export async function pickup_after_move(x, y) {
     // --More-- (seed0014 step 653).
     if (ctx.nopick) {
         await read_engr_at(x, y);
+        return;
+    }
+    // C ref: pickup.c pickup():708 — a hero who can't reach the floor (chiefly
+    // Levitation off the air/water levels) gets NO floor-object announcement
+    // at all: check_here()/look_here() never runs, only (conditionally)
+    // read_engr_at().  This function always has autopickup=TRUE, so the
+    // middle disjunct below collapses to "pickup option off".  Without this
+    // gate a levitating hero got a spurious "You see here ..." for whatever
+    // is on the floor beneath them.
+    const reachTrap = trap_at(x, y);
+    if (!can_reach_floor(!!(reachTrap && is_pit_ttyp(reachTrap.ttyp)))) {
+        if (((game.multi ?? 0) && !ctx.run)
+            || !game.flags?.pickup
+            || (reachTrap && (uteetering_at_seen_pit(reachTrap)
+                              || uescaped_shaft(reachTrap))))
+            await read_engr_at(x, y);
         return;
     }
     // C ref: pickup.c pickup() — "if there's anything here, stop running":

@@ -2,9 +2,9 @@
 // C ref: read.c.  Ports the 'r' command entry (doread), the scroll dispatch
 // (seffects) and spellbook reading (study_book, in spell.js).
 // Still unported in seffects(): SCR_GENOCIDE, SCR_CHARGING, SCR_FIRE,
-// SCR_EARTH, SCR_STINKING_CLOUD, SCR_TAMING and the two detection scrolls —
+// SCR_EARTH, SCR_STINKING_CLOUD and the two detection scrolls —
 // each needs a helper that does not exist yet in the port (do_genocide/getlin,
-// recharge(), explode(), drop_boulder_on_*(), getpos(), tamedog(), and
+// recharge(), explode(), drop_boulder_on_*(), getpos(), and
 // detect.c's gold_detect/food_detect/trap_detect respectively).
 
 import { game } from './gstate.js';
@@ -57,11 +57,13 @@ const SCR_IDENTIFY = 336;
 const SCR_LIGHT = 332;
 const SCR_PUNISHMENT = 341;
 const SCR_CREATE_MONSTER = 329;
+const SCR_TAMING = 330;
 const SCR_GOLD_DETECTION = 334;
 const SCR_AMNESIA = 338;
 const SCR_MAIL = 364;
 const SPE_CONFUSE_MONSTER = 377;
 const SPE_CREATE_MONSTER = 382;
+const SPE_CHARM_MONSTER = 387;
 const SPE_CAUSE_FEAR = 384;
 const SPE_REMOVE_CURSE = 395;
 const SPE_MAGIC_MAPPING = 396;
@@ -288,6 +290,10 @@ export async function seffects(sobj) {
     case SPE_CREATE_MONSTER:
         await seffect_create_monster(sobj);
         break;
+    case SCR_TAMING:
+    case SPE_CHARM_MONSTER:
+        await seffect_taming(sobj);
+        break;
     case SCR_AMNESIA:
         await seffect_amnesia(sobj);
         break;
@@ -354,7 +360,6 @@ export async function seffects(sobj) {
     default:
         // C ref: read.c seffects default: -> impossible().  Every otyp that
         // still lands here is a REAL unported effect, not an inert one:
-        //   SCR_TAMING/SPE_CHARM_MONSTER (needs dog.c tamedog),
         //   SCR_GENOCIDE (do_genocide -> getlin loop),
         //   SCR_GOLD_DETECTION / SCR_FOOD_DETECTION (detect.c gold_detect,
         //     trap_detect, food_detect — none ported),

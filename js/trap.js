@@ -1513,6 +1513,12 @@ async function domagictrap() {
         // "You feel charismatic!"; neither is available in this port yet.
         break;
     case 20:
+        // C ref: read.c:2200 seffects() — the pseudo object's caller is
+        // seffects(&pseudo), not seffect_remove_curse() directly; its
+        // `if (objects[otyp].oc_magic) exercise(A_WIS, TRUE)` preamble runs
+        // for every magic scroll/spellbook including this synthetic one
+        // (SPE_REMOVE_CURSE has mgc=1), so the rn2(19) fires here too.
+        exercise(A_WIS, true);
         await magictrap_uncurse_stuff();
         break;
     default:

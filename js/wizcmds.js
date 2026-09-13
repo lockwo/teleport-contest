@@ -47,6 +47,7 @@ import {
 } from './mon.js';
 import { minimal_monnam } from './do_name.js';
 import { monster_by_pmidx } from './makemon.js';
+import { mstrength } from './mondata.js';
 import { NUMMONS } from './disprng.js';
 import {
     flip_level, flip_level_rnd, lspo_reset_level, lspo_finalize_level,
@@ -1438,12 +1439,9 @@ export async function wiz_show_nhuuid() {
     return ECMD_OK;
 }
 
-// C ref: wizcmds.c:1790 wiz_mon_diff() — the #wizmondiff command.
-//
-// mstrength() is mondata.c:428 and has no port in js/mondata.js; it needs
-// permonst.mmove, which no js/ table carries.  For an unmodified mons[] every
-// hardcoded difficulty matches mstrength() by construction (that is what the
-// command exists to police), so C's output is the no-discrepancy line.
+// C ref: wizcmds.c:1790 wiz_mon_diff() — the #wizmondiff command.  mstrength()
+// itself is a faithful, complete port at js/mondata.js:208 (it was this call
+// site that stubbed it out as nyi_mstrength(), not a missing port).
 export async function wiz_mon_diff() {
     const win = [];
     let trouble = 0;
@@ -1451,9 +1449,9 @@ export async function wiz_mon_diff() {
     for (let cnt = 0; cnt < NUMMONS; cnt++) {
         const ptr = monster_by_pmidx(cnt);
         if (!ptr || !ptr.mlet) break;
-        const mcalculated = nyi_mstrength(ptr);
+        const mcalculated = mstrength(ptr);
         const mhardcoded = ptr.difficulty | 0;
-        const mdiff = (mcalculated == null) ? 0 : mhardcoded - mcalculated;
+        const mdiff = mhardcoded - mcalculated;
         if (mdiff) {
             if (!trouble++)
                 win.push('Review of monster difficulty ratings [index:level]:');
@@ -1462,7 +1460,7 @@ export async function wiz_mon_diff() {
                 mlev = 50;
             win.push(`${padRight(ptr.name, 18)} [${padLeft(cnt, 3)}:${
                 padLeft(mlev, 2)}]: calculated: ${padLeft(mcalculated, 2)
-                }, hardcoded: ${padLeft(mhardcoded, 2)}, (${
+                }, hardcoded: ${padLeft(mhardcoded, 2)} (${
                 mdiff > 0 ? '+' : ''}${mdiff})`);
         }
     }
@@ -1594,8 +1592,6 @@ function nyi_get_level(levnum) { return { dnum: 0, dlevel: levnum }; }
 function nyi_ledger_no(_lev) { return 0; }
 // mon.c migrate_to_level(mtmp, tolev, xyloc, cc) -> js/mon.js
 async function nyi_migrate_to_level(_mtmp, _tolev, _xyloc, _cc) {}
-// mondata.c:428 mstrength(ptr) -> js/mondata.js (needs a permonst.mmove table)
-function nyi_mstrength(_ptr) { return null; }
 // engrave.c:1626 engr_stats(hdrfmt, hdrbuf, &count, &size) -> js/engrave.js
 function nyi_engr_stats(hdrfmt) {
     return { hdrbuf: hdrfmt.replace('%ld', String(SIZEOF_ENGR)), count: 0, size: 0 };

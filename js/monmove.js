@@ -109,7 +109,8 @@ import { place_object, next_ident, BLINDING_VENOM, ACID_VENOM, VENOM_CLASS, obje
     weight, base_oc_weight, BOULDER, WEAPON_CLASS, ARMOR_CLASS, FOOD_CLASS,
     AMULET_CLASS, POTION_CLASS, SCROLL_CLASS, WAND_CLASS, RING_CLASS,
     SPBOOK_CLASS, BALL_CLASS } from './mkobj.js';
-import { stackobj } from './invent.js';
+import { stackobj, welded as welded_iv, bimanual as bimanual_iv,
+    calc_capacity as calc_capacity_iv, nohands_youmonst, otense, xname } from './invent.js';
 import { obj_resists, resists_sleep, sleep_monst } from './zap.js';
 // m_harmless_trap's FIRE_TRAP arm; mondata.js reads permonst.mresists (MR_FIRE).
 import { resists_fire, resists_acid } from './mondata.js';
@@ -118,7 +119,7 @@ import { mattackm, mdisplacem } from './mhitm.js';
 import { hitval } from './weapon.js';
 import { Monnam, mon_nam, canspotmon, make_corpse, corpse_chance, dmgval,
     setmangry, relobj } from './uhitm.js';
-import { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE } from './const.js';
+import { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE, SLT_ENCUMBER } from './const.js';
 import { wipe_engr_at, engr_at } from './engrave.js';
 import { discover_object, observe_object } from './o_init.js';
 import { WEP_HITBON, WEP_SDAM, WEP_LDAM } from './weapondmg_data.js';
@@ -6105,18 +6106,35 @@ function ACURR_DEX() {
     return game.u?.acurr?.a?.[A_DEX_IDX] ?? 0;
 }
 
-// C ref: mthrowu.c:532 u_catch_thrown_obj(otmp).  The recorded heroes aren't
-// blind/confused/stunned/fumbling, have hands and a free hand, and the missile
-// is light, so the only gate that matters is the rn2(100 - Dex) catch roll
-// (monks/rogues get -20 but the wizard here is neither).  A non-zero roll means
-// "didn't catch" -> returns FALSE and the missile proceeds to thitu().
+// C ref: wield.c freehand() — `!uwep || !welded(uwep) || (!bimanual(uwep) &&
+// (!uarms || !uarms->cursed))`.
+function freehand_mm() {
+    const uwep = game.uwep;
+    if (!uwep || !welded_iv(uwep)) return true;
+    return !bimanual_iv(uwep) && !(game.uarms && game.uarms.cursed);
+}
+const PM_MONK_MM = 5, PM_ROGUE_MM = 8;
+function Role_if_mm(pm) { return (game.urole?.mnum ?? game.u?.umonnum) === pm; }
+function Confusion_mm() { return !!game.u?.uconf; }
+function Stunned_mm() { return !!game.u?.Stunned; }
+function Fumbling_mm() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
+
+// C ref: mthrowu.c:532 u_catch_thrown_obj(otmp) — catch_chance also drops by
+// 20 for a Monk/Rogue, and the roll is gated behind Blind/Confusion/Stunned/
+// Fumbling/VENOM_CLASS/nohands/freehand/encumbrance; missing any one of those
+// either rolls an rn2() C never draws, or skips one it does (a Blind hero here
+// desyncs the very next draw, since C short-circuits before ever reaching the
+// roll).
 function u_catch_thrown_obj(otmp) {
     const dex = ACURR_DEX();
-    let catch_chance = 100 - dex;
+    let catch_chance = 100 - dex
+        - ((Role_if_mm(PM_MONK_MM) || Role_if_mm(PM_ROGUE_MM)) ? 20 : 0);
     if (catch_chance < 1) catch_chance = 1; // guard rn2(0)
-    if (!rn2(catch_chance)) {
-        // Catch succeeds — not exercised by the owned sessions (Dex 18 -> 1/82),
-        // but model it faithfully: the missile is added to inventory.
+    if (!Blind() && !Confusion_mm() && !Stunned_mm() && !Fumbling_mm()
+        && otmp?.oclass !== VENOM_CLASS
+        && !nohands_youmonst() && freehand_mm()
+        && calc_capacity_iv(otmp?.owt | 0) <= SLT_ENCUMBER
+        && !rn2(catch_chance)) {
         return true;
     }
     return false;
@@ -6271,7 +6289,7 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
             await pline_mon(mtmp, 'It is missed.');
         }
         if (!range) {              // last square: the missile drops on the spot
-            drop_thrown_missile(thrower, otmp, mtmp.mx, mtmp.my, 0);
+            await drop_thrown_missile(thrower, otmp, mtmp.mx, mtmp.my, 0);
             return true;
         }
         return false;              // still in flight
@@ -6362,7 +6380,7 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
         mtmp.mblinded = Math.min((mtmp.mblinded || 0) + rnd(25) + 20, 127);
     }
     // setmangry() is skipped while svc.context.mon_moving, so it does not run here.
-    const objgone = drop_thrown_missile(thrower, otmp, bx, by, 1); // drop_throw(otmp,1,..)
+    const objgone = await drop_thrown_missile(thrower, otmp, bx, by, 1); // drop_throw(otmp,1,..)
     // C ref: mthrowu.c:494-497 — `if (!objgone && range == -1) { obj_extract_self(otmp);
     // return FALSE; }`.  range -1 is the rolling-boulder-trap caller: the boulder
     // does NOT stop on the monster it just hit, it is freed for motion again and
@@ -6432,6 +6450,13 @@ function mt_flightcheck(bx, by, dx, dy, otmp, forcehit) {
     return false;
 }
 
+// C ref: objnam.c Tobjnam(obj, verb) — "The dagger slips" / "The daggers slip".
+function Tobjnam_mm(obj, verb) {
+    const nm = xname(obj);
+    const named = /^[A-Z]/.test(nm) ? nm : `the ${nm}`;
+    return `${named.charAt(0).toUpperCase()}${named.slice(1)} ${otense(obj, verb)}`;
+}
+
 // C ref: mthrowu.c m_throw() — fly the single missile from (x,y) toward the
 // hero along (dx,dy) up to `range` squares.  Faithful loop (mthrowu.c:673-808):
 // each iteration advances one square; on the hero square the catch attempt and
@@ -6463,12 +6488,28 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
     // If thitu() below kills the hero, end.c done_object_cleanup() is what puts
     // this object back on the map so it reaches bones.
     game.thrownobj = singleobj;
-    // C ref: mthrowu.c:637 — `if (MT_FLIGHTCHECK(TRUE, 0)) { drop_throw(...);
-    // return; }`.  Before any flight, if the very first square is off the map, a
-    // wall or a closed door, the missile just falls at the thrower's feet.
-    if (mt_flightcheck(sx, sy, dx, dy, singleobj, false)) {
-        drop_thrown_missile(mon, singleobj, sx, sy, 0);
-        return;
+    // C ref: mthrowu.c:622-638 — a cursed/greased missile misfires one throw in
+    // seven (only when actually aimed, dx||dy) and flies off in a random
+    // direction instead.  This roll was missing entirely: every draw after it
+    // (the per-square forcehit rn2(5), any catch/hit roll) landed one position
+    // early against the recorded C stream the moment a cursed/greased missile
+    // was thrown.  (This replaces a duplicate, wrongly-cited early
+    // MT_FLIGHTCHECK(TRUE,0) call that pre-empted the one below; C only calls
+    // it once, right after this block.)
+    if ((singleobj.cursed || singleobj.greased) && (dx || dy) && !rn2(7)) {
+        if (canseemon_mm(mon) && game.flags?.verbose) {
+            if (is_ammo(singleobj))
+                await pline(`${Monnam(mon)} misfires!`);
+            else
+                await pline(`${Tobjnam_mm(singleobj, 'slip')} as ${mon_nam(mon)} throws it!`);
+        }
+        dx = rn2(3) - 1;
+        dy = rn2(3) - 1;
+        // check validity of new direction
+        if (!dx && !dy) {
+            await drop_thrown_missile(mon, singleobj, sx, sy, 0);
+            return;
+        }
     }
     // C ref: mthrowu.c:649-651 — `if (sym) tmp_at(DISP_FLASH, obj_to_glyph(...))`.
     // sym = obj->oclass (always truthy for a thrown weapon/ammo); the contest
@@ -6495,7 +6536,7 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
     // C ref: mthrowu.c:639 — MT_FLIGHTCHECK(TRUE, 0) BEFORE the flight loop: a
     // missile launched straight into a wall/closed door never moves.
     if (mt_flightcheck(bx, by, dx, dy, singleobj, false)) {
-        drop_thrown_missile(mon, singleobj, bx, by, 0);
+        await drop_thrown_missile(mon, singleobj, bx, by, 0);
         return;
     }
     while (range-- > 0) {
@@ -6515,6 +6556,13 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
         const inpath = m_at(bx, by);
         if (inpath) {
             if (await ohitmon(inpath, singleobj, range, true, bx, by, mon)) {
+                // C ref: mthrowu.c:801-828 — the post-loop tmp_at(bhitpos)/
+                // tmp_at(DISP_END) reveal runs for every break reason, not
+                // only the miss-exhausted-range fallthrough below; ohitmon()
+                // itself never touches the display (like drop_throw()), so
+                // without this a blind hero's square memory would otherwise
+                // only ever get frozen by the flash path, never refreshed.
+                flash_at(bx, by);
                 flash_end();
                 game.thrownobj = null;  // C ref: mthrowu.c:842
                 return;
@@ -6522,6 +6570,7 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
         } else if (bx === u.ux && by === u.uy) {
             // hero square: catch attempt, then the hit resolution.
             if (u_catch_thrown_obj(singleobj)) {
+                flash_at(bx, by);
                 flash_end(); game.thrownobj = null; return;  // mthrowu.c:842
             }
             const dam0 = dmgval_thrown(singleobj, u);    // rnd(wsdam) (+spe)
@@ -6537,8 +6586,12 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
                 // C drop_throw(singleobj, 1, u.ux, u.uy): the hit missile settles
                 // on the hero's own square (hidden under '@') or mulches.  The
                 // missile stops here (break before the mthrowu.c:798 forcehit).
+                // Placement happens BEFORE the shared post-loop flash/reveal
+                // (mthrowu.c:820 precedes :824-828), so the reveal below shows
+                // what just landed, not the square's prior contents.
+                await drop_thrown_missile(mon, singleobj, u.ux, u.uy, 1);
+                flash_at(u.ux, u.uy);
                 flash_end();
-                drop_thrown_missile(mon, singleobj, u.ux, u.uy, 1);
                 return;
             }
             // MISS: the dart flies past the hero — fall through to the forcehit
@@ -6560,8 +6613,11 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
     }
     // Reached end of range (or was stopped by terrain) without connecting; the
     // missile drops where it stopped (drop_throw with ohit==0 -> no mulch roll).
+    // Place first, then the shared post-loop flash/reveal, same order as the
+    // hit case above (mthrowu.c:801-828).
+    await drop_thrown_missile(mon, singleobj, bx, by, 0);
+    flash_at(bx, by);
     flash_end();
-    drop_thrown_missile(mon, singleobj, bx, by, 0);
 }
 
 // C ref: mthrowu.c m_throw() lines 593-616 — produce the single in-flight
@@ -6586,6 +6642,11 @@ function m_throw_single(mon, otmp) {
         // C: if (MON_WEP(mon) == obj) setmnotwielded(mon, obj);
         if (MON_WEP(mon) === otmp) { mon.mw = null; otmp.owornmask = 0; }
         extract_self(otmp);
+        // C ref: mkobj.c extract_nobj() — the extraction itself is what stamps
+        // `obj->where = OBJ_FREE`, not obj_extract_self()'s caller.  flooreffects()
+        // (do.js) panics on anything else, so a missile still tagged 'minvent'
+        // (or never tagged at all) fails its very first guard.
+        otmp.where = 'free';
         return otmp;
     }
     next_ident();           // splitobj -> nextoid -> next_ident: rnd(2)
@@ -6597,6 +6658,7 @@ function m_throw_single(mon, otmp) {
         otyp: otmp.otyp, oclass: otmp.oclass, spe: otmp.spe | 0,
         quan: 1, blessed: otmp.blessed, cursed: otmp.cursed,
         oeroded: otmp.oeroded, oeroded2: otmp.oeroded2, owornmask: 0,
+        where: 'free',
         _split_from: otmp,
     };
 }
@@ -6613,7 +6675,7 @@ function m_throw_single(mon, otmp) {
 // `otmp` normally left the thrower's inventory at launch (m_throw_single does
 // C's obj_extract_self); the splice below is the idempotent backstop for the
 // m_throw_potion path, which still settles its missile through m_useup_thrown.
-function drop_thrown_missile(mon, otmp, x, y, ohit) {
+async function drop_thrown_missile(mon, otmp, x, y, ohit) {
     let broken = false;
     // C ref: mthrowu.c:170-175 — a cream pie / venom / (hit) egg ALWAYS breaks,
     // and skips should_mulch_missile() entirely.  Omitting this arm left the pie
@@ -6635,12 +6697,31 @@ function drop_thrown_missile(mon, otmp, x, y, ohit) {
         return true;   // shattered missile: no object settles on the floor
     }
     otmp.owornmask = 0;
+    // C ref: mthrowu.c:184-190 — flooreffects(obj, x, y, "fall") runs BEFORE
+    // place_object(): landing on an altar/sink/fountain/pool/drawbridge can
+    // print a message (the altar case is what forces --More-- to fire mid-
+    // monster-move in the recorded stream, since a THIRD topline message no
+    // longer fits after "<Mon> throws/shoots ...!  You are hit/missed ...")
+    // or consume the object outright (lava, a pool for most items).  Omitting
+    // this left every dropped missile silently placed regardless of terrain.
+    const { flooreffects } = await import('./do.js');
+    if (await flooreffects(otmp, x, y, 'fall')) {
+        game.thrownobj = null;  // C ref: mthrowu.c:192 `gt.thrownobj = 0`
+        return true;
+    }
     // C ref: mthrowu.c:189 — place_object() then stackobj(): three arrows shot
     // at the same square are ONE pile entry, not three.  The count is invisible
     // on screen but reaches the next segment through savebones(): restobjchn()
     // re-stamps one o_id [rnd(2)] per surviving entry, so a missing merge shows
     // up as extra next_ident() draws when the bones level is read back.
-    try { place_object(otmp, x, y); stackobj(otmp); newsym(x, y); } catch (e) { /* ignore */ }
+    // No newsym() here: C's drop_throw() never touches the display itself —
+    // every caller's shared post-loop tmp_at(bhitpos)/tmp_at(DISP_END) is what
+    // reveals the landing square, and ONLY if cansee() was true somewhere along
+    // the flight (mthrowu.c:1284).  A blind hero (or one who never saw any point
+    // on this flight path) must NOT have this square's memory refreshed — an
+    // unconditional newsym() here was doing exactly that, freezing a dropped
+    // object into memory for a square the hero could never have perceived it on.
+    try { place_object(otmp, x, y); stackobj(otmp); } catch (e) { /* ignore */ }
     game.thrownobj = null;  // C ref: mthrowu.c:192 `gt.thrownobj = 0`
     return false; // C drop_throw() returns `broken`
 }

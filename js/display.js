@@ -1551,6 +1551,22 @@ export function newsym(x, y) {
             const ep = engr_at(x, y);
             if (ep) ep.erevealed = 1;
         }
+        // C ref: display.c newsym — within the cansee(x,y) branch (only:
+        // the !cansee/feel_location half has no such check), a visible
+        // region (e.g. a gas cloud) at the hero's own square is drawn
+        // INSTEAD of the hero's glyph unless a monster here overrides it.
+        // A des.gas_cloud{selection=...} with no explicit ttl defaults to
+        // permanent (region.c create_region()'s ttl=-1), so this can
+        // persist on the hero's square for the rest of the game.
+        if (cansee(x, y)) {
+            const reg = visible_region_at(x, y);
+            if (reg && (ACCESSIBLE(loc.typ) || (reg.visible && (IS_POOL(loc.typ) || IS_LAVA(loc.typ))))
+                && !mon_overrides_region(m_at(x, y), x, y)) {
+                const rg = show_region(reg);
+                show_glyph_cell(x, y, rg.ch, rg.color, false);
+                return;
+            }
+        }
         // C ref: display.c newsym u_at branch —
         //   int see_self = canspotself();
         //   _map_location(x, y, !see_self);
@@ -1629,13 +1645,12 @@ export function newsym(x, y) {
         // up front (as this used to) would spend a draw C never makes.
         // C ref: display.c newsym — a visible gas-cloud region drawn on top of
         // the background, UNLESS a directly-occupying monster overrides it
-        // (mon_overrides_region()).  SCOPE: mon_overrides_region's adjacent-
-        // monster / sensemon / mon_warning / xray_range cases are not modeled
-        // — only the simple "a normally-visible monster stands exactly here"
-        // override — since no covered session has needed the richer form yet.
-        // This is never reached for the hero's own square (handled earlier),
-        // so C's region-overrides-the-hero-glyph ordering nuance is also not
-        // replicated (see region.js's file header for the broader scope note).
+        // (mon_overrides_region()).  SCOPE: this arm's own override check is
+        // only the simple "a normally-visible monster stands exactly here"
+        // case, not the full mon_overrides_region() (adjacent-monster /
+        // sensemon / mon_warning / xray_range) — since no covered session
+        // has needed the richer form here yet.  The hero's own square is
+        // handled earlier and DOES call the full mon_overrides_region().
         const reg = visible_region_at(x, y);
         if (reg && (ACCESSIBLE(loc.typ) || (reg.visible && (IS_POOL(loc.typ) || IS_LAVA(loc.typ))))
             && !(mon && mon_visible(mon))) {

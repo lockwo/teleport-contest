@@ -15,7 +15,7 @@
 
 import { game } from './gstate.js';
 import { t_at as t_at_hk, trap_explanation as trap_explanation_hk } from './trap.js';
-import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars } from './cmd.js';
+import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core } from './cmd.js';
 import { moveloop_turn } from './allmain.js';
 import { m_at, vobj_at, covers_objects, object_glyph, flush_screen, newsym, pline, update_topl, topl_more, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature } from './display.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inventoryArray, is_pick, ansimpleoname,
@@ -194,6 +194,8 @@ const OCC_SLOTS = [
     ['_wait_occupation', 'waiting'],               // cmd.c:1931
     ['_study_occupation', 'studying'],             // spell.c:639
     ['_wipe_occupation', 'wiping off your face'],  // do.c:2394
+    ['_tin_occupation', 'opening the tin'],        // eat.c:1723 start_tin()
+    ['_engrave_occupation', 'engraving'],          // engrave.c:1244 doengrave()
 ];
 
 // C ref: eat.c food_xname(food, the_pfx) — reimplemented here (eat.js keeps its
@@ -1994,7 +1996,13 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
             if (disp?.setCursor) disp.setCursor(cx - 1, cy + 1);
         }
         firstPass = false;
-        let k = await nhgetch();
+        // C getpos.c:882 readchar_poskey() -- sets input_state=getposInp
+        // before the read so readchar_core()'s ALTMETA arm treats a bare
+        // ESC as the start of an "ESC c" -> M-c sequence here too, not just
+        // at the top-level command read (parse() already routes through
+        // this same input_state/readchar_core pairing).
+        game.input_state = 'getposInp';
+        let k = await readchar_core({});
         let ch = String.fromCharCode(k);
         // C topl.c — reading a key acknowledges any pending NEED_MORE topline,
         // so subsequent autodescribe plines overwrite without a new --More--.
@@ -2021,7 +2029,10 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
         // fast-moved where C steps one cell.
         let rushrun = false;
         if (ch === 'G' || ch === 'g') {
-            k = await nhgetch();
+            // C getpos.c:898 — this second read is ALSO readchar_poskey(),
+            // so it gets the same ALTMETA ESC-combining as the first.
+            game.input_state = 'getposInp';
+            k = await readchar_core({});
             ch = String.fromCharCode(k);
             game._toplin = 0;
             rushrun = true;
@@ -2195,12 +2206,16 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
     }
 }
 
-// C ref: cmd.c visctrl() — printable rendering of a control character for the
-// "Unknown direction: '%s'" message (^X form).  Plain printables pass through.
+// C ref: hacklib.c visctrl() — printable rendering of a control character for
+// the "Unknown direction: '%s'" message (^X form).  Plain printables pass
+// through.  The 8th bit (a getpos() ALTMETA-merged key) prints as an "M-"
+// prefix ahead of the unset-high-bit rendering, not the raw high-bit glyph.
 function visctrl_key(k) {
-    if (k < 32) return '^' + String.fromCharCode(k + 64);
-    if (k === 127) return '^?';
-    return String.fromCharCode(k);
+    const meta = (k & 0x80) ? 'M-' : '';
+    k &= 0x7f;
+    if (k < 32) return meta + '^' + String.fromCharCode(k + 64);
+    if (k === 127) return meta + '^?';
+    return meta + String.fromCharCode(k);
 }
 
 // C ref: getpos.c:1120-1128 — "use '%s', '%s', '%s', '%s' or '%s'" built from

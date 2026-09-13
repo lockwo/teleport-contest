@@ -2643,14 +2643,16 @@ export async function dovspell() {
     display.setCursor(offx + 6, row);
     game._modal_screen = 'spellmenu';
 
-    // C ref: dospellmenu select_menu — VIEW with one spell is PICK_NONE (any
-    // key dismisses); with >1 spell it is PICK_ONE (only a/b/.../+ select, the
-    // reorder path; an invalid key keeps the menu shown).  No covered session
-    // drives an actual reorder, so any selection or space/escape dismisses.
+    // C ref: dospellmenu select_menu — VIEW with one spell is PICK_NONE, with
+    // >1 spell it's PICK_ONE (only a/b/.../+ select, the reorder path).  No
+    // covered session drives an actual reorder, so any selection or
+    // space/escape dismisses.  wintty.c process_menu_window()'s default case
+    // bells and keeps PICK_NONE menus open on anything but ESC/space/return —
+    // it is NOT "any key dismisses".
     for (;;) {
         const c = await nhgetch();
-        if (c === 27 || c === 32 || c === 13) break; // escape / space / return
-        if (!multi) break; // PICK_NONE: any key dismisses
+        if (c === 27 || c === 32 || c === 13 || c === 10) break; // esc/space/return
+        if (!multi) continue; // PICK_NONE: bell, menu stays shown
         const ch = String.fromCharCode(c);
         const idx = (ch >= 'a' && ch <= 'z') ? ch.charCodeAt(0) - 97
             : (ch >= 'A' && ch <= 'Z') ? ch.charCodeAt(0) - 65 + 26 : -1;
@@ -3254,7 +3256,7 @@ async function topline_query(prompt) {
 // (space/return), or '\x1b' for cancel.  '?'/'*' re-issue the menu with the
 // other candidate set.  Any other key just rings the bell (no re-render: the
 // menu screen is unchanged).
-async function getobj_menu(lets, allowed) {
+async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) {
     for (;;) {
         // allowed=true (the '?' set): show only `lets`; allowed=false ('*'):
         // show the whole pack.  display_pickinv() sets game._modal_screen and
@@ -3285,13 +3287,19 @@ async function getobj_menu(lets, allowed) {
             }
         }
 
-        display_pickinv(choices, null, null, false, true, null);
+        const usextra = !!(xtraChoice && allowxtra);
+        display_pickinv(choices, xtraChoice, null, allowxtra, true, null);
         // The menu lines drive which letters are selectable; outside-of-menu
         // letters ring the bell.  Build the selectable set from the rows shown.
         const shownLets = new Set();
         for (const obj of inventoryArray())
             if (!choices || String(choices).includes(obj.invlet))
                 shownLets.add(obj.invlet);
+        // C ref: invent.c getobj() `if (ilet == HANDS_SYM) return &hands_obj;`
+        // (checked right after display_pickinv() returns) — the synthetic
+        // "Miscellaneous / - - <hands>" row this menu just drew is itself
+        // selectable by its own letter, same as any other menu line.
+        if (usextra) shownLets.add(HANDS_SYM);
         // C ref: invent.c display_pickinv()'s force_invmenu "Special" row
         // (see force_invmenu_special()) — its accelerator ('*' to broaden to
         // the whole pack, or '?' to narrow back to likely candidates) is
@@ -3450,8 +3458,21 @@ export async function getobj(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
         let pick = ilet;
         if (pick === '?' || pick === '*') {
             const allowed = (pick === '?');
-            const choiceLets = (allowed && !lets && altlets.length) ? altlets.join('') : lets;
-            const sel = await getobj_menu(choiceLets, allowed);
+            // C ref: invent.c getobj():1964 `allowed_choices = (ilet == '?')
+            // ? lets : (char *) 0;` — '*' unconditionally passes NULL, so its
+            // menu (and the hands test below) is NEVER narrowed by `lets`.
+            const choiceLets = allowed
+                ? ((!lets && altlets.length) ? altlets.join('') : lets)
+                : null;
+            // C ref: invent.c getobj():1976-1978 — the boxed menu gets a
+            // "Miscellaneous / - - <hands>" row whenever the choice set about
+            // to be shown has no letters, starts with HANDS_SYM (the altlets
+            // case), or the original prompt buf itself started with HANDS_SYM
+            // (the bufHands/SUGGEST case) — independent of whether '?' or '*'
+            // was pressed.
+            const wantHands = !choiceLets || choiceLets[0] === HANDS_SYM || buf[0] === HANDS_SYM;
+            const xtraChoice = wantHands ? getobj_hands_txt(word) : null;
+            const sel = await getobj_menu(choiceLets, allowed, xtraChoice, allownone);
             if (sel === '\x1b') { if (game.flags?.verbose !== false) await pline('Never mind.'); return null; }
             if (sel === '\0') continue;                   // committed with no pick: re-prompt
             if (sel === HANDS_SYM) return hands_obj;
@@ -5177,18 +5198,29 @@ function ready_weapon(wep) {
     const was_twoweap = !!game.u?.twoweap;
     const had_wep = !!game.uwep;
 
+    // C ref: wield.c:163-353 — every branch below is a pline()/You() call, which
+    // leaves toplin==NEED_MORE so a same-turn follow-on (doswapweapon()'s second
+    // prinv() line for the bumped secondary) merges onto it instead of replacing
+    // it.  Only the wield-success arm marked this (via prinv(), below); the
+    // others left a bare _pending_message assignment, so doswapweapon()'s
+    // update_topl() saw no pending line and silently dropped this one instead
+    // of merging (e.g. unwielding into an empty swap slot: "You are bare
+    // handed." followed by "b - a +2 sling (alternate weapon; not wielded).").
     if (!wep) {
         if (game.uwep) {
             game._pending_message = `You are ${empty_handed()}.`;
+            game._toplin = 1;
             setuwep_slot(null);
             res = ECMD_TIME;
         } else {
             game._pending_message = `You are already ${empty_handed()}.`;
+            game._toplin = 1;
         }
     } else if (game.uarms && bimanual(wep)) {
         game._pending_message =
             `You cannot wield a two-handed ${is_sword(wep) ? 'sword'
               : wep.otyp === 45 /*BATTLE_AXE*/ ? 'axe' : 'weapon'} while wearing a shield.`;
+        game._toplin = 1;
         res = ECMD_FAIL;
     } else if (!retouch_object(wep)) {
         res = ECMD_TIME; // takes a turn even though it doesn't get wielded
@@ -5200,6 +5232,7 @@ function ready_weapon(wep) {
             game._pending_message =
                 `${cxname_singular(wep)} ${wep.quan === 1 ? 'welds itself' : 'weld themselves'} to your `
                 + `${bimanual(wep) ? makeplural(body_part(6)) : `dominant right ${body_part(6)}`}!`;
+            game._toplin = 1;
             wep.bknown = 1;
         } else {
             // C kludge: temporarily set W_WEP so prinv() prints "(weapon in
@@ -6810,13 +6843,35 @@ export async function dofire(getDir) {
             if (olauncher) {
                 if (game.uwep && !game.flags?.pushweapon) {
                     if ((await doswapweapon()) === ECMD_TIME) {
+                        // C ref: topl.c update_topl() — doswapweapon's OWN
+                        // still-pending line is what we page below.  Save it
+                        // so we can tell that apart from an autonomous
+                        // monster message (e.g. dog_eat()'s "Sirius eats a
+                        // jackal corpse.") that fires during moveloop_turn()
+                        // and overwrites/merges onto it first.
+                        const preSwapMsg = game._pending_message;
                         game.context.move = 0;
                         await moveloop_turn();
-                        // The queued dowield is a distinct command.  Its
-                        // predecessor left the former primary's prinv() line
-                        // pending, which C pages at the command boundary
-                        // before dowield() can replace it with the launcher.
-                        await display_nhwindow_message();
+                        if (game._pending_message === preSwapMsg) {
+                            // The queued dowield is a distinct command.  Its
+                            // predecessor left the former primary's prinv()
+                            // line pending, which C pages at the command
+                            // boundary before dowield() can replace it with
+                            // the launcher.
+                            await display_nhwindow_message();
+                        } else {
+                            // C ref: win/tty/topl.c update_topl():257 `skip =
+                            // (flags & (WIN_STOP|WIN_NOSTOP)) == WIN_STOP` —
+                            // the autonomous message's own update_topl() call
+                            // already paged (and, if dismissed with ESC, set
+                            // WIN_STOP) on the SAME call stack with no real
+                            // input read by dowield(); dowield()'s next
+                            // prinv() then silently replaces the pending
+                            // line instead of paging it again.
+                            game._pending_message = '';
+                            game._toplin = 0;
+                            game._toplinSoft = null;
+                        }
                     }
                 }
                 // The queued invlet is popped by getobj()'s cmdq fast path, so
@@ -6977,6 +7032,20 @@ async function drop(obj) {
     if (obj === game.uswapwep) setuswapwep(null);
 
     const u = ustate();
+    // C ref: do.c drop():758 — Levitation (or an unskilled steed, or a seen
+    // pit's edge) bars the floor: freeinv() first, then hitfloor() prints its
+    // OWN "X hits/strikes the Y." pline, a second message in the same command
+    // that pages behind a --More-- before the turn's housekeeping can run.
+    // (u.uswallow keeps its pre-existing, separate gap here; levhack /
+    // finesse_ahriman -- Heart of Ahriman ending levitation mid-drop -- needs
+    // float_down(), which this port doesn't have.)
+    const { can_reach_floor } = await import('./engrave.js');
+    if (!u.uswallow && !can_reach_floor(true)) {
+        if (game.flags?.verbose) await update_topl(`You drop ${doname(obj)}.`);
+        freeinv(obj);
+        await hitfloor(obj, true);
+        return 1; /* ECMD_TIME */
+    }
     // C: `if (!IS_ALTAR(...) && flags.verbose) You("drop %s.", doname(obj));`
     // The wandpoly session runs with !verbose so the drop is silent.
     // C's You() is pline(): it must accumulate onto a pending topline (and page
@@ -9348,9 +9417,8 @@ export function free_pickinv_cache() { game.cached_pickinv_win = WIN_ERR; }
 // a menu listing likely candidates; add '*' for 'list all' as an extra choice
 // unless the menu already includes everything; when reissuing the menu after
 // player has picked '*', add '?' for 'list likely candidates' to reverse
-// that." Only the `lets` (not allowxtra/usextra) half applies to this port's
-// one caller (getobj_menu(), always allowxtra=false); factored out so
-// getobj_menu() can add the same synthetic letter to its own accept-set.
+// that." Factored out so getobj_menu() can add the same synthetic letter to
+// its own accept-set.
 function force_invmenu_special(lets) {
     if (!game.flags?.force_invmenu) return null;
     if (lets && lets.length < inventoryArray().length)
@@ -9361,8 +9429,15 @@ function force_invmenu_special(lets) {
 }
 
 export function display_pickinv(lets = null, xtra_choice = null, query = null, allowxtra = false, want_reply = false, out_cnt = null) {
-    void xtra_choice; void query; void allowxtra;
+    void query;
+    // C ref: invent.c display_pickinv():3084 `usextra = (xtra_choice &&
+    // allowxtra);` — the "Miscellaneous / - - <hands>" row getobj()'s '?'/'*'
+    // menu draws when hands is a reachable answer (getobj_menu()'s own
+    // caller computes xtra_choice/allowxtra; this port's only OTHER caller,
+    // display_inventory(), always passes null/false, so this is a no-op there).
+    const usextra = !!(xtra_choice && allowxtra);
     const rows = inventoryRows(lets);
+    if (usextra) rows.unshift(['Miscellaneous', `${HANDS_SYM} - ${xtra_choice}`]);
     const special = want_reply ? force_invmenu_special(lets) : null;
     if (special) rows.push(['Special', `${special.ch} - ${special.text}`]);
     if (!rows.length) {

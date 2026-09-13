@@ -65,7 +65,7 @@ import { objects as OBJDATA } from './mkobj.js';
 import { mkgold, next_ident, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
          CORPSE, CHEST, LARGE_BOX, STATUE, mk_tt_object, mkobj_at, BOULDER,
          FOOD_CLASS, GOLD_PIECE, add_to_container, weight, mkobj, RANDOM_CLASS,
-         OIL_LAMP,
+         OIL_LAMP, ARROW,
          bless, unbless, curse, uncurse, blessorcurse, discard_minvent,
          GEM_CLASS, COIN_CLASS } from './mkobj.js';
 import { monster_by_pmidx, name_to_pmidx, level_difficulty_ext, makemon,
@@ -488,6 +488,10 @@ function c_d(n, x) {
 // divergence.  C ref: themerms.lua "Ghost of an Adventurer" -> des.monster({
 // id = "ghost", asleep = true, waiting = true }).
 const PM_GHOST = 287;
+// C ref: objects.h — otyp constants not otherwise exported by mkobj.js;
+// u_init.js already carries the same local literals (DAGGER=34, BOW=83).
+const DAGGER = 34;
+const BOW = 83;
 
 function create_ghost_of_adventurer(croom) {
     const loc = selection_rndcoord(selection_room(croom), false);
@@ -533,52 +537,34 @@ function create_ghost_of_adventurer(croom) {
         game.level.monsters.push(mtmp);
     }
 
-    if (percent(65)) create_simple_object('dagger');
-    if (percent(55)) create_object_class('weapon');
+    // C ref: sp_lev.c create_object() — every des.object() below is
+    // buc="not-blessed" (curse_state 6: `unbless(otmp)`, no RNG), at the same
+    // `loc` the ghost used.  This used to be a hand-rolled sequence of bare
+    // rn2()/rnd() calls standing in for the object creation (matching only
+    // one memorized trace's branch outcomes) instead of actually calling
+    // mksobj_at()/mkobj_at(), so it never re-branched for a different roll
+    // and never produced a real object.
+    if (percent(65)) splev_theme_object(DAGGER, null, loc);
+    if (percent(55)) splev_theme_object(null, ')', loc);
     if (percent(45)) {
-        create_simple_object('bow');
-        create_simple_object('arrow');
+        splev_theme_object(BOW, null, loc);
+        splev_theme_object(ARROW, null, loc);
     }
-    if (percent(65)) create_object_class('armor');
-    if (percent(20)) create_object_class('ring');
-    if (percent(20)) create_object_class('scroll');
+    if (percent(65)) splev_theme_object(null, '[', loc);
+    if (percent(20)) splev_theme_object(null, '=', loc);
+    if (percent(20)) splev_theme_object(null, '?', loc);
 }
 
-function create_simple_object(_id) {
-    rnd(2);
-}
-
-function create_object_class(oclass) {
-    if (oclass === 'weapon') {
-        rnd(1002);
-        rnd(2);
-        rn2(6);
-        rn2(11);
-        rn2(10);
-        rn2(10);
-        rn2(100);
-        rn2(20);
-        mkobj_erosions();
-    } else if (oclass === 'armor') {
-        rnd(1000);
-        rnd(2);
-        rn2(10);
-        rn2(11);
-        rn2(10);
-        rn2(10);
-        rn2(40);
-        mkobj_erosions();
-    } else {
-        rnd(1000);
-        rnd(2);
-    }
-}
-
-function mkobj_erosions() {
-    rn2(100);
-    rn2(80);
-    rn2(80);
-    rn2(1000);
+// C ref: sp_lev.c create_object() — o->id != -1 -> mksobj_at(id, x, y, TRUE,
+// !named); else o->class -> mkobj_at(def_char_to_objclass(class), x, y,
+// !named).  named is always false for a themed-room fill, so artif is TRUE
+// either way.  Every caller here passes buc="not-blessed" (curse_state 6).
+function splev_theme_object(otyp, classChar, loc) {
+    const otmp = (otyp != null)
+        ? splev_create_object_id(otyp, null, { mx: loc.x, my: loc.y })
+        : mkobj_at(def_char_to_objclass(classChar), loc.x, loc.y, true);
+    if (otmp) unbless(otmp);
+    return otmp;
 }
 
 // C: themerms.lua:101 "Trap room".  des.trap() is not RNG-free: mklev.c:2135's

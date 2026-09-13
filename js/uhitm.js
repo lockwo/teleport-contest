@@ -1161,21 +1161,49 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     // C ref: uhitm.c:1768 `hmd.use_weapon_skill = FALSE;` — set TRUE by the
     // ordinary-weapon and bare-handed arms only.
     let use_weapon_skill = false;
+    // C ref: uhitm.c:1769 `hmd.train_weapon_skill = FALSE;` — only overridden
+    // below for the ordinary hand-to-hand weapon branch.
+    let force_no_train = false;
     if (unarmed) {
         // hmon_hitmon_barehands (uhitm.c:847): dmg = rnd(martial ? 4 : 2).
         dmg = rnd(martial_bonus() ? 4 : 2);
     } else if (weapon.oclass === WEAPON_CLASS || is_weptool(weapon)) {
-        // hmon_hitmon_weapon_melee: dmg = dmgval(weapon, mon).
-        dmg = dmgval(weapon, mon);
-        use_weapon_skill = true;               // C ref: uhitm.c:943
-        // C ref: uhitm.c:947-951 — a Healer's anatomy knowledge: a knife-skill
-        // WEAPON_CLASS item in hand adds min(3, mvitals[species].died / 6).
-        // The Healer starts with a scalpel, so this fires as soon as the same
-        // species has been killed six times.
-        if (roleMnum() === PM_HEALER && weapon.oclass === WEAPON_CLASS
-            && (objects[weapon.otyp]?.oc_skill ?? 0) === P_KNIFE) {
-            const died = game.mvitals?.[mon?.data?.pmidx]?.died ?? 0;
-            dmg += Math.min(3, Math.trunc(died / 6));
+        // C ref: uhitm.c:1070 hmon_hitmon_weapon() — before the ordinary melee
+        // damage, fork off a launcher, a missile/ammo swung in hand, or an
+        // un-mounted pole weapon (this port never calls with thrown!=MELEE, so
+        // the thrown-ammo terms of the C condition are always false here) to
+        // the weak "ranged" 1-2 pt branch.  Was missing: an un-mounted
+        // lance/spear/bow swing dealt full dmgval() melee damage instead.
+        const IV = await import('./invent.js');
+        const A = await import('./artifact.js');
+        const isRangedInMelee = IV.is_launcher(weapon) || IV.is_missile(weapon)
+            || IV.is_ammo(weapon)
+            || (IV.is_pole(weapon) && !game.u?.usteed
+                && !A.is_art(weapon, ART_SNICKERSNEE));
+        if (isRangedInMelee) {
+            // hmon_hitmon_weapon_ranged (uhitm.c:885): dmg = rnd(2), plus a
+            // silver bonus vs. a silver-hating monster.  use_weapon_skill and
+            // train_weapon_skill both stay FALSE (uhitm.c:1479-1483).
+            dmg = rnd(2);
+            force_no_train = true;
+            if ((objects[weapon.otyp]?.material) === MAT_SILVER) {
+                const { mon_hates_silver } = await import('./mon.js');
+                if (mon_hates_silver(mon)) dmg += rnd(dmg ? 20 : 10);
+            }
+        } else {
+            // hmon_hitmon_weapon_melee: dmg = dmgval(weapon, mon).
+            dmg = dmgval(weapon, mon);
+            use_weapon_skill = true;               // C ref: uhitm.c:943
+            // C ref: uhitm.c:947-951 — a Healer's anatomy knowledge: a
+            // knife-skill WEAPON_CLASS item in hand adds
+            // min(3, mvitals[species].died / 6).  The Healer starts with a
+            // scalpel, so this fires as soon as the same species has been
+            // killed six times.
+            if (roleMnum() === PM_HEALER && weapon.oclass === WEAPON_CLASS
+                && (objects[weapon.otyp]?.oc_skill ?? 0) === P_KNIFE) {
+                const died = game.mvitals?.[mon?.data?.pmidx]?.died ?? 0;
+                dmg += Math.min(3, Math.trunc(died / 6));
+            }
         }
     } else {
         // C ref: uhitm.c hmon_hitmon_misc_obj() `default:` — wielding an
@@ -1186,7 +1214,7 @@ async function hmon_hitmon(mon, weapon, dieroll) {
         // reached by the covered sessions and are left to the default arm.
         dmg = hmon_misc_obj_dmg(weapon);
     }
-    const train_weapon_skill = dmg > 1;   // uhitm.c:849 / :946
+    const train_weapon_skill = force_no_train ? false : dmg > 1;   // uhitm.c:849 / :946
 
     // C ref: uhitm.c:1015 hmon_hitmon_do_hit() — `if (obj->oartifact
     // && artifact_hit(&youmonst, mon, obj, &hmd->dmg, hmd->dieroll))`.  Runs

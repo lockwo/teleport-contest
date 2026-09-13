@@ -14,6 +14,7 @@ import { rn1, rnd } from './rng.js';
 import { A_WIS, A_CON } from './const.js';
 import { MAXULEV } from './const.js';
 import { races } from './roles.js';
+import { LL_MINORAC, livelog_printf } from './livelog.js';
 
 // ── role / race advancement data (C: role.c roles[]/races[]) ──
 // RoleAdvance = {infix, inrnd, lofix, lornd, hifix, hirnd}; xlev is the
@@ -363,13 +364,20 @@ export async function pluslvl(incr, emitMsg) {
         // C ref: exper.c:358 — crossing into a new rank is an achievement, and
         // it is the ORDER of u.uachieved that #conduct prints, so this has to
         // run here rather than be derived from the final level.
+        //
+        // Dynamic import: insight.js -> u_init.js -> mkobj.js is a static
+        // cycle this file must not join.
+        const I = await import('./insight.js');
+        const old_ach_cnt = I.count_achievements();
         const newrank = xlev_to_rank(u.ulevel);
-        if (newrank > oldrank) {
-            // Dynamic import: insight.js -> u_init.js -> mkobj.js is a static
-            // cycle this file must not join.
-            const I = await import('./insight.js');
-            I.record_achievement(I.achieve_rank(newrank));
+        if (newrank > oldrank) I.record_achievement(I.achieve_rank(newrank));
+        // C ref: exper.c:365 — log a plain level-gain event, but only when the
+        // rank achievement above (if any) didn't already log one this level-up.
+        if (I.count_achievements() === old_ach_cnt) {
+            livelog_printf(LL_MINORAC,
+                `${u.ulevel <= (u.ulevelpeak || 0) ? 're' : ''}gained experience level ${u.ulevel}`);
         }
+        if (u.ulevel > (u.ulevelpeak || 0)) u.ulevelpeak = u.ulevel;
     }
 }
 

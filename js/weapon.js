@@ -116,8 +116,17 @@ function artifact_light(_obj) { return false; }
 function mdata_of(mon) {
     if (!mon) return null;
     if (mon.data) return mon.data;
-    if (mon === game.u || mon._isyou || mon === game.youmonst)
-        return monster_by_pmidx(game.u?.umonnum ?? -1);
+    if (mon === game.u || mon._isyou || mon === game.youmonst) {
+        // u.umonnum holds the 0-based ROLE index in this port, not a mons[]
+        // index, while unpolymorphed — see js/hack.js youmonst_data();
+        // PM_ARCHEOLOGIST == 331.  A raw monster_by_pmidx(umonnum) misread
+        // role 8 (Rogue) as mons[8] (gelatinous cube, MZ_LARGE), so every
+        // small-monst weapon-damage branch below took the bigmonst arm for
+        // an unpolymorphed hero.
+        const u = game.u;
+        if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
+        return monster_by_pmidx(331 + (u?.umonnum ?? 0)) || u?.data || null;
+    }
     return null;
 }
 

@@ -1348,10 +1348,15 @@ async function is_home_elemental_(_ptr) { return false; }
 // C ref: teleport.c:2190 random_teleport_level() — RNG-BEARING (rn2(5),
 // rn2(cur+3-min), rnd(3)).  Ports at js/do.js:2075 and js/muse.js:467, private.
 function random_teleport_level_() { return depth_(game.u?.uz); }
-// C ref: teleport.c vault_tele/tele + read.c scrolltele — js/trap.js:2990 and
-// js/zap.js:2834 (private); js/read.js:1094 exports scrolltele.
+// C ref: teleport.c vault_tele — js/trap.js:2990 and js/zap.js:2834 (private).
 async function vault_tele_() { }
-async function tele_() { }
+// C ref: teleport.c tele(void) { scrolltele((struct obj *) 0); } — js/read.js
+// exports the faithful port of scrolltele(); dotele() calls this with no
+// scroll (the #teleport command / non-scroll teleport paths).
+async function tele_() {
+    const { scrolltele } = await import('./read.js');
+    await scrolltele(null);
+}
 // C ref: trap.c level_tele_trap(trap, trflags) — js/trap.js:3021, private.
 async function level_tele_trap_(_trap, _trflags) { }
 // C ref: display.c y_n / getpos — js/display.js exports y_n; js/hack.js:1860's

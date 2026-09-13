@@ -1908,6 +1908,26 @@ export async function moveloop_core() {
         return;
     }
 
+    // C ref: allmain.c moveloop_core():485 — the opentin() occupation (set by
+    // eat.c start_tin()/doeat()'s TIN branch and apply.c's tin-opener use).
+    // Each turn advances usedtime and elapses a game turn, with no nhgetch in
+    // between, until opentin() returns 0 (opened, given up, or interrupted).
+    if (g._tin_occupation) {
+        const { opentin } = await import('./eat.js');
+        const busy = await opentin();
+        g.context = g.context || {};
+        g.context.move = 1;
+        g._pendingTurn = true;
+        if (!busy) g._tin_occupation = null;
+        // C ref: allmain.c:501-508 — monster_nearby() interrupts ANY active
+        // occupation, tin-opening included; see the _eat_occupation arm above.
+        if (busy && monster_nearby()) {
+            await (await import('./hack.js')).stop_occupation(true);
+            g._tin_occupation = null;
+        }
+        return;
+    }
+
     // C ref: allmain.c moveloop_core():485 — the dig() occupation (set by
     // dig.c use_pick_axe2()'s set_occupation(dig, verbing, 0)).  Like #wipe/
     // #force, the move loop runs the occupation step instead of reading a

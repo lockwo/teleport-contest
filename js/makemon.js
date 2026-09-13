@@ -14,8 +14,10 @@ import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
          // plain names.  ESM allows binding one export to two local names.
          WAN_DIGGING, WAN_DIGGING as WAN_DIGGING_OTYP,
          DILITHIUM_CRYSTAL, DILITHIUM_CRYSTAL as DILITHIUM_CRYSTAL_OTYP,
-         LUCKSTONE, LUCKSTONE as LUCKSTONE_OTYP } from './mkobj.js';
+         LUCKSTONE, LUCKSTONE as LUCKSTONE_OTYP,
+         SCR_SCARE_MONSTER } from './mkobj.js';
 import { get_shop_item, FODDERSHOP, VEGETARIAN_CLASS } from './shtypes.js';
+import { within_bounded_area } from './rect.js';
 import { get_wormno, initworm, count_wsegs, worm_seg_at,
          place_worm_tail_randomly } from './worm.js';
 // Object-class constants inlined (not imported) to avoid a circular-import TDZ:
@@ -35,6 +37,7 @@ import {
     HWALL, TLCORNER, BLCORNER, CROSSWALL, TUWALL, TDWALL, TRWALL, DBWALL,
     SDOOR, SCORR, D_CLOSED, D_LOCKED,
     STRAT_CLOSE, STRAT_WAITFORU, STRAT_APPEARMSG, W_SADDLE,
+    IS_ALTAR, HEADSTONE, LR_MONGEN,
 } from './const.js';
 // set_mimic_sym() needs the room/trap/vision helpers.  These modules sit below
 // makemon.js in the import graph except vision.js, which imports two function
@@ -59,6 +62,7 @@ import {
     throws_rocks_flag, likes_gold_flag,
     MFLAGS1, M1_OVIPAROUS,
     M1_SEE_INVIS, M1_AMPHIBIOUS, M1_FLY, M1_REGEN, M1_TPORT_CNTRL, M1_TPORT,
+    mflags1_of, M1_NOEYES,
 } from './monflags_data.js';
 import { AT_EXPL, attacktype, is_armed, MATTK,
          AT_WEAP, AT_MAGC, AD_DRST, AD_SPEL } from './monattk_data.js';
@@ -101,6 +105,7 @@ const ALIGNWEIGHT = 4;
 const S_LICH = 38;
 const S_VAMPIRE = 48;
 const S_HUMAN = 53;
+const S_ANGEL = 27;
 
 // C ref: mondata.h quest_mon_represents_role(mptr, role_pm) —
 //   mptr->mlet == S_HUMAN && Role_if(role_pm)
@@ -3360,13 +3365,15 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
             }
         }
         const canHideUnder = hasObj && (hasNonCoin || coinQuan >= 10);
-        // Gated to quest- and Big-Room-generation (like peace_minded_bigrm /
-        // the eel sleep roll): the ordinary level-gen path keeps the prior
-        // conservative behavior (concealing hiders there shifted seed4500's
-        // post-divergence frames).  Within a quest home or a Big Room,
-        // spiders and snakes hide under the object they just dropped.
-        if ((game._quest_gen || game._bigrm_gen) && mm_hides_under_pm(ptr)
-            && canHideUnder && !nonPitTrap
+        // C ref: makemon.c:1310-1311 — `(void) hideunder(mtmp)` runs for every
+        // in_mklev S_SPIDER/S_SNAKE, not just quest homes or the Big Room; this
+        // used to be gated on (game._quest_gen || game._bigrm_gen), which left
+        // an ordinary room's spider/snake dropped on top of its own object
+        // fully visible (e.g. bl008/bl045: a cave spider rendered as 's' where
+        // C shows the object it is hiding under).  The gate's seed4500
+        // rationale was the S_EEL swamp case below, already fixed separately
+        // and unconditionally (line ~3587); it did not need to cover this arm.
+        if (mm_hides_under_pm(ptr) && canHideUnder && !nonPitTrap
             && !mm_is_pool(x, y) && !mm_is_lava(x, y)) {
             mtmp.mundetected = 1;
         }
@@ -3659,8 +3666,13 @@ function goodpos_spawn(x, y, ptr) {
         }
         if (passes_walls_flag(ptr) && mm_may_passwall(x, y)) return true;
         if (amorphous_flag(ptr) && mm_closed_door(x, y)) return true;
-        // onscary(): Elbereth/scare-monster only exist once the hero has acted;
-        // during level generation there is nothing scary on the map.
+        // C ref: teleport.c:170 `if (checkscary && ... goodpos_onscary(...)) return
+        // FALSE;`.  makemon()'s gpflags sets GP_CHECKSCARY unconditionally, so this
+        // runs on every spawn attempt, not just during level generation — an
+        // Elbereth-guarded square (or a scroll of scare monster on the floor)
+        // rejects nearly every random species and is what drives C's species retry
+        // loop to run its full ~50 tries instead of accepting the first roll.
+        if (mm_goodpos_onscary(x, y, ptr)) return false;
     }
     const typ = game.level?.at(x, y)?.typ;
     if (typ == null) return false;
@@ -3672,7 +3684,55 @@ function goodpos_spawn(x, y, ptr) {
     if (mm_closed_door(x, y)) return false;
     // C ref: `if (sobj_at(BOULDER, x, y) && !throws_rocks(mdat)) return FALSE;`
     if (!(ptr && throws_rocks_flag(ptr)) && mm_boulder_at(x, y)) return false;
+    // C ref: teleport.c:191 `if (avoid_monpos && is_exclusion_zone(LR_MONGEN, x, y))
+    // return FALSE;` — makemon() always passes GP_AVOID_MONPOS.
+    if (mm_is_mongen_exclusion(x, y)) return false;
     return true;
+}
+
+// C ref: teleport.c:52 goodpos_onscary(x, y, mptr) — the mptr-only approximation
+// of onscary() used for monster CREATION: goodpos() takes this branch whenever
+// the candidate monst has no m_id yet, i.e. every makemon() spawn attempt (the
+// fake monst here never has one).  Returns true when mptr should be scared off
+// <x,y> (goodpos_spawn then rejects the square for that species).
+function mm_goodpos_onscary(x, y, ptr) {
+    if (ptr.mcls === S_HUMAN || ptr.mcls === S_ANGEL || is_rider(ptr)
+        || mm_unique_corpstat(ptr)) return false;
+    if (IS_ALTAR(game.level?.at(x, y)?.typ) && ptr.mcls === S_VAMPIRE) return true;
+    if (mm_scaremon_at(x, y)) return true;
+    if (In_hell(game.u?.uz) || In_endgame(game.u?.uz)) return false;
+    if (ptr.pmidx === PM_MINOTAUR_ONSCARY || !mm_haseyes(ptr)) return false;
+    return mm_engr_elbereth_at(x, y);
+}
+const PM_MINOTAUR_ONSCARY = name_to_pmidx('minotaur');
+// C ref: monflag.h:194 G_UNIQ — reuses the already-defined constant above.
+function mm_unique_corpstat(ptr) { return !!ptr && ((ptr.geno | 0) & G_UNIQ) !== 0; }
+function mm_haseyes(ptr) { return (mflags1_of(ptr) & M1_NOEYES) === 0; }
+// C ref: `sobj_at(SCR_SCARE_MONSTER, x, y)`.
+function mm_scaremon_at(x, y) {
+    const objs = game.level?.objects;
+    if (!objs) return false;
+    for (const o of objs)
+        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === SCR_SCARE_MONSTER)
+            return true;
+    return false;
+}
+// C ref: engrave.c:251 sengr_at("Elbereth", x, y, TRUE) — strict, case-
+// insensitive, ignores headstones and an engraving not yet finished.
+function mm_engr_elbereth_at(x, y) {
+    const ep = (game.level?.engravings ?? []).find((e) => e.engr_x === x && e.engr_y === y);
+    if (!ep || ep.engr_type === HEADSTONE || (ep.engr_time | 0) > (game.moves | 0))
+        return false;
+    return (ep.actualText || '').toLowerCase() === 'elbereth';
+}
+// C ref: mkmaze.c:317 is_exclusion_zone(LR_MONGEN, x, y) — duplicated locally
+// (not imported from mkmaze.js) because mkmaze.js already imports makemon.js's
+// enexto_spawn, and the reverse import would cycle.
+function mm_is_mongen_exclusion(x, y) {
+    for (const ez of (game.exclusion_zones || []))
+        if (ez.zonetype === LR_MONGEN && within_bounded_area(x, y, ez.lx, ez.ly, ez.hx, ez.hy))
+            return true;
+    return false;
 }
 
 // C ref: mondata.h likes_lava(ptr) — the fire elemental and the salamander,

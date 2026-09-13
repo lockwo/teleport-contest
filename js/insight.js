@@ -22,7 +22,6 @@ import {
     P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_SKILLED, P_TWO_WEAPON_COMBAT,
     P_BARE_HANDED_COMBAT, In_quest, In_endgame, Is_knox_level,
 } from './const.js';
-import { objects as mkobjObjects, SPBOOK_CLASS } from './mkobj.js';
 import { weapon_type } from './weapon.js';
 import { p_skill_of } from './enhance.js';
 import { update_topl } from './display.js';
@@ -741,8 +740,17 @@ function weaponInsight(youAre, youHave, enlLine) {
     if (game.u?.twoweap) {
         youAre('wielding two weapons at once');
     } else {
-        const descr = weaponDescr(uwep);
-        youAre(`wielding ${uwep.quan === 1 || uwep.quan == null ? an(descr) : makeplural(descr)}`);
+        let descr = weapon_descr(uwep);
+        if (uwep.otyp === SHIELD_OF_REFLECTION) descr = shield_simple_name(uwep);
+        else if (is_wet_towel(uwep)) descr = 'wet towel';
+        // C ref: insight.c:1297 — a weapon whose skill class falls back to its
+        // object class ("food"/"armor"/"venom") reads as a generic category,
+        // e.g. "wielding some food" rather than naming the specific item.
+        if (strcmpi(descr, 'armor') === 0 || strcmpi(descr, 'food') === 0
+            || strcmpi(descr, 'venom') === 0)
+            youAre(`wielding some ${descr}`);
+        else
+            youAre(`wielding ${uwep.quan === 1 || uwep.quan == null ? an(descr) : objnam_makeplural(descr)}`);
     }
 
     const skName = weaponSkillName(uwep);
@@ -838,11 +846,6 @@ const SKILL_NAME_BY_NUM = {
     20: 'bow', 21: 'sling', 22: 'crossbow', 23: 'dart', 24: 'shuriken',
     25: 'boomerang', 26: 'whip', 27: 'unicorn horn',
 };
-// weapon_type() comes from js/weapon.js (weapon.c:1517).
-function weaponDescr(obj) {
-    if (obj?.oclass === SPBOOK_CLASS) return 'spellbook';
-    return SKILL_NAME_BY_NUM[weapon_type(obj)] || obj.name || mkobjObjects?.[obj.otyp]?.name || 'weapon';
-}
 function weaponSkillName(obj) {
     return SKILL_NAME_BY_NUM[weapon_type(obj)] || null;
 }
@@ -1042,8 +1045,9 @@ function N_times(n) {
 
 // C ref: insight.c achieve_msg[] — one {llflag, msg} per you.h ACH_* index.
 // The eight rank entries (23..30) build their text from the role's rank title
-// at record time and ACH_MINE_PRIZE/ACH_SOKO_PRIZE append an identified item
-// name; neither form is reachable from this port, so both are omitted.
+// at record time (handled separately in record_achievement() below) and
+// ACH_MINE_PRIZE/ACH_SOKO_PRIZE append an identified item name; the latter
+// form isn't reachable from this port, so it's omitted.
 const ACHIEVE_MSG = {
     1: [LL_ACHIEVE, 'acquired the Bell of Opening'],
     2: [LL_ACHIEVE, 'entered Gehennom'],
@@ -1080,6 +1084,17 @@ export function record_achievement(achidx) {
     if (u.uachieved.some((a) => Math.abs(a) === absidx)) return;
     u.uachieved.push(achidx);
     if (game.program_state_gameover) return;
+    if (absidx >= 23 && absidx <= 30 /* ACH_RNK1..ACH_RNK8, you.h */) {
+        // C ref: insight.c:2449 record_achievement() — rank text/flag isn't
+        // in achieve_msg[]'s static msg (role/gender-specific), built here.
+        // insight.c:57 achieve_msg[] gives RNK1..3 LL_MINORAC|LL_DUMP, RNK4..8
+        // LL_ACHIEVE.
+        const llflag = absidx <= 25 ? (LL_MINORAC | LL_DUMP) : LL_ACHIEVE;
+        const rankname = rank_of(rank_to_xlev(absidx - 22 /* ACH_RNK1 - 1 */),
+            game.urole?.mnum, achidx < 0);
+        livelog_printf(llflag, `attained the rank of ${rankname} (level ${u.ulevel})`);
+        return;
+    }
     const entry = ACHIEVE_MSG[absidx];
     if (!entry || !entry[1]) return;
     livelog_printf(entry[0], entry[1]);

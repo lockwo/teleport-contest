@@ -264,7 +264,7 @@ export function autoquiver() {
 
 // C ref: obj.h is_crackable(o) — glass armor cracks rather than shattering.
 function is_crackable(obj) {
-    return obj?.oclass === ARMOR_CLASS && objects[obj.otyp]?.material === GLASS;
+    return obj?.oclass === ARMOR_CLASS && objects[obj.otyp]?.oc_material === GLASS;
 }
 
 // C ref: dothrow.c breaktest(obj) — will this shatter when it hits something
@@ -272,12 +272,15 @@ function is_crackable(obj) {
 // survive breakobj() (erode_obj cracks them instead).
 export function breaktest(obj) {
     let nonbreakchance = 1;
-    if (obj.oclass === ARMOR_CLASS && objects[obj.otyp]?.material === GLASS)
+    // oc_material (not .material, the pre-shuffle seed) — o_init.js shuffle()
+    // swaps material among wands/amulets/potions/rings/scrolls/spellbooks at
+    // game start, so e.g. a given seed's "wand of light" need not be glass.
+    if (obj.oclass === ARMOR_CLASS && objects[obj.otyp]?.oc_material === GLASS)
         nonbreakchance = 90;
     // C ref: mkobj.c obj_resists() — the invocation items and Rider corpses
     // resist WITHOUT rolling; a bare rn2(100) here burned a draw on them.
     if (I.obj_resists(obj, nonbreakchance, 99)) return false;
-    if (objects[obj.otyp]?.material === GLASS && !obj.oartifact
+    if (objects[obj.otyp]?.oc_material === GLASS && !obj.oartifact
         && obj.oclass !== GEM_CLASS)
         return true;
     switch (obj.oclass === POTION_CLASS ? POT_WATER : obj.otyp) {

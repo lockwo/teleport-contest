@@ -331,11 +331,20 @@ export class NethackGame {
 
         // Initialize hero struct
         g.u = { ux: 0, uy: 0, ux0: 0, uy0: 0 };
-        // C ref: options.c NHOPTB(reroll, ..., &u.uroleplay.reroll, ...) — a
-        // real C field on u.uroleplay, not flags.*; parseNethackrc() ran
-        // before `g.u` existed, so it staged the rc value on opts.flags.reroll
-        // (the generic unlisted-boolean default) for this copy.
-        g.u.uroleplay = { reroll: !!opts.flags?.reroll };
+        // C ref: optlist.h NHOPTB(blind/deaf/nudist/pauper/reroll, ...,
+        // &u.uroleplay.*, ...) — these are real u.uroleplay fields, not
+        // flags.*; parseNethackrc() ran before `g.u` existed, so it staged
+        // each rc value on opts.flags.<name> (the generic unlisted-boolean
+        // default) for this copy.  Only reroll was copied here before, so an
+        // rc's `OPTIONS=nudist` (etc.) parsed fine but never reached
+        // u.uroleplay, leaving u_init.c ini_inv()'s nudist-skip untaken.
+        g.u.uroleplay = {
+            reroll: !!opts.flags?.reroll,
+            blind: !!opts.flags?.blind,
+            deaf: !!opts.flags?.deaf,
+            nudist: !!opts.flags?.nudist,
+            pauper: !!opts.flags?.pauper,
+        };
         g.context = { move: 0 };
         // C ref: unixmain.c main() calls initoptions() (-> initoptions_finish()
         // -> fruitadd()) before dorecover()/newgame() -- before any object,

@@ -13,8 +13,9 @@
 // of speed quaffs it mid-turn; C's remaining twelve monsters then move only
 // after the player dismisses the --More--.
 //
-// Why the gap was invisible in the RNG stream: MUSE_POT_SPEED draws NOTHING
-// (mquaffmsg + mon_adjust_speed + m_useup are all deterministic), and the
+// Why the gap was invisible in the RNG stream: MUSE_POT_SPEED's own
+// mquaffmsg/m_useup are deterministic (mon_adjust_speed's witnessed-discovery
+// rn2(19) is conditional, not absent -- see its C ref below), and the
 // per-monster rolls around it — distfleeck's rn2(5) and mcalcmove's
 // rn2(NORMAL_SPEED) — do not mention the monster, so a different SET of
 // monsters acting produces a byte-identical call sequence.  Only the C
@@ -2963,10 +2964,14 @@ function green_mon(mon) {
  * only caller in this port.
  * ------------------------------------------------------------------------ */
 
-// Consumes no RNG.  The message gate is `give_msg = !gi.in_mklev` — NOT
-// !mon_moving — so the "suddenly moving faster" line does print during monster
-// movement.
-export async function mon_adjust_speed(mon, adjust, _obj) {
+// C ref: worn.c mon_adjust_speed() tail — "might discover an object if we see
+// the speed change happen": `if (obj != 0) learnwand(obj);` inside the
+// give_msg branch.  A monster quaffing its own potion of speed (muse.c
+// MUSE_POT_SPEED) passes that potion here, and a witnessed speed-up
+// identifies it via makeknown() -> exercise(A_WIS, TRUE) -- a REAL rn2(19)
+// draw this port dropped ("MUSE_POT_SPEED draws NOTHING" was wrong: the
+// draw is conditional on canseemon()/an actual speed change, not absent).
+export async function mon_adjust_speed(mon, adjust, obj) {
     const oldspeed = mon.mspeed | 0;
     let give_msg = !game.in_mklev;
     switch (adjust) {
@@ -2995,5 +3000,9 @@ export async function mon_adjust_speed(mon, adjust, _obj) {
             await update_topl(`${Monnam(mon)} is suddenly moving ${howmuch}faster.`);
         else
             await update_topl(`${Monnam(mon)} seems to be moving ${howmuch}slower.`);
+        if (obj) {
+            const { learnwand } = await import('./zap.js');
+            learnwand(obj);
+        }
     }
 }

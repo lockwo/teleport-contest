@@ -981,13 +981,12 @@ export async function doeat() {
         return true;                               // ECMD_TIME
     }
 
-    // C: tins are a special case — start_tin() opens them over several turns.
-    // start_tin()/opentin()/consume_tin() are unported (see the DEFERRED note
-    // at the end of this file); declining is wrong but bounded, whereas a
-    // half-ported tin would desync the whole opening occupation.
+    // C ref: eat.c:2956 doeat() — tins are a special case, opened over
+    // several turns via start_tin()/opentin() (allmain.js polls
+    // game._tin_occupation; see the C ref there for the occupation wiring).
     if (otmp.otyp === TIN) {
-        await pline('You cannot eat that!');
-        return false;
+        await start_tin(otmp);
+        return true;                                // ECMD_TIME
     }
 
     // C ref: eat.c doeat():2962 — `if (!u.uconduct.food++) livelog_printf(
@@ -2812,12 +2811,12 @@ export async function consume_tin(mesg) {
 }
 
 // C ref: eat.c:1703 opentin() — the tin-opening occupation, one call per turn.
-// Returns 1 to stay busy, 0 when finished (or given up on).
+// Returns 1 to stay busy, 0 when finished (or given up on).  Polled by
+// js/allmain.js's game._tin_occupation arm.
 //
-// WIRING: js/allmain.js polls a named slot per occupation (_eat_occupation,
-// _engrave_occupation, ...); this one needs a `_tin_occupation` arm there, and
-// lesshungry() needs `choke((go.occupation == opentin) ? tin : 0)` — the copy
-// above (lesshungry_eat) always passes victual.piece.
+// STILL OPEN: lesshungry() needs `choke((go.occupation == opentin) ? tin : 0)`
+// — the copy above (lesshungry_eat) always passes victual.piece, so a
+// tin-eating choke death names the wrong food (edge case: only hunger>=2000).
 export async function opentin() {
     const ctx = tin_context();
     const tin = ctx.tin;
@@ -2840,9 +2839,6 @@ export async function opentin() {
 // draws rn2(2) unless a blessed tin opener is wielded; a wielded tin opener
 // draws rn2(cursed ? 3 : !blessed ? 2 : 1); bare hands draw
 // rn1(1 + 500 / (ACURR(A_DEX) + ACURRSTR), 10).
-//
-// WIRING: doeat() above declines a tin outright ("You cannot eat that!"); the
-// C branch is `if (otmp->otyp == TIN) { start_tin(otmp); return ECMD_TIME; }`.
 export async function start_tin(otmp) {
     const T = await loadTailDeps();
     let mesg = null, tmp;

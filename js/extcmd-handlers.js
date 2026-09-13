@@ -358,11 +358,19 @@ export async function hooked_tty_getlin(query, hook) {
     // --More-- (its own captured frame) before drawing the getlin prompt.  This
     // fires for e.g. a confused scroll's "Being confused, ..." line preceding the
     // level-teleport prompt; ordinary command-initiated getlins start with a
-    // cleared top line, so it is a no-op for them.
-    if (game._toplin === 1) {
+    // cleared top line, so it is a no-op for them.  pline() itself only marks
+    // this "soft" pending (game._toplinSoft, not game._toplin — see pline()'s
+    // own comment), but C's toplin is one unified state and getline.c checks it
+    // unconditionally, so this reader must catch both (e.g. #migratemons'
+    // "No monsters currently migrating." must page before its own getlin
+    // prompt, same as any hard-pending message would).
+    const cur = game._pending_message || '';
+    const softPending = !!cur && game._toplinSoft === cur;
+    if (game._toplin === 1 || softPending) {
         await topl_more();
         game._pending_message = '';
         game._toplin = 0;
+        game._toplinSoft = null;
     }
 
     let typed = '';   // what the user actually typed (obufp/bufp content)
