@@ -903,6 +903,7 @@ export async function whatis_menu_pick(render) {
 
 import { COLNO, ROWNO, BOLT_LIM, BUFSZ, isok, STONE, SCORR, SDOOR, ROOM, CORR,
          DOOR, ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL, TREE, CLOUD,
+         STAIRS, LADDER,
          IS_WALL, IS_DOOR, IS_TREE, IS_GRAVE, D_BROKEN,
          D_TRAPPED, D_CLOSED, D_LOCKED, D_ISOPEN,
          NO_TRAP, BEAR_TRAP, TRAPPED_DOOR, TRAPPED_CHEST, ROCKTRAP, HOLE, PIT,
@@ -918,10 +919,13 @@ import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
          S_litcorr, S_ndoor, S_altar, S_grave, S_cloud, S_ice, S_pool,
          S_water, S_lava, S_lavawall, S_engroom, S_engrcorr, S_arrow_trap,
          S_vodbridge, S_hcdbridge, S_vibrating_square, S_invisible, S_HUMAN,
-         S_sw_tl, S_sw_br, SYM_OFF_O, SYM_OFF_M, SYM_OFF_W, SYM_OFF_X, gs }
+         S_sw_tl, S_sw_br, SYM_OFF_O, SYM_OFF_M, SYM_OFF_W, SYM_OFF_X, gs,
+         S_upstair, S_dnstair, S_upladder, S_dnladder,
+         S_brupstair, S_brdnstair, S_brupladder, S_brdnladder }
     from './symbols.js';
 import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
-         update_topl, Hallucination_u, impossible as pg_impossible_async }
+         update_topl, Hallucination_u, impossible as pg_impossible_async,
+         stairway_at, known_branch_stairs, stairs_go_down }
     from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { engr_at } from './engrave.js';
@@ -1088,6 +1092,21 @@ function cmap_index_for(loc, x, y) {
     }
     if (t === CORR) return cansee(x, y) && loc.waslit ? S_litcorr : S_corr;
     if (t === ROOM) return cansee(x, y) ? S_room : S_darkroom;
+    // C ref: display.c back_to_glyph() STAIRS/LADDER cases — a *known branch*
+    // staircase/ladder uses the S_br* pair; js/display.js's back_to_glyph()
+    // (used for the rendered glyph) already computes this identically.
+    if (t === STAIRS) {
+        const branch = known_branch_stairs(stairway_at(x, y));
+        const down = stairs_go_down(loc, x, y);
+        return branch ? (down ? S_brdnstair : S_brupstair)
+                      : (down ? S_dnstair : S_upstair);
+    }
+    if (t === LADDER) {
+        const branch = known_branch_stairs(stairway_at(x, y));
+        const down = stairs_go_down(loc, x, y);
+        return branch ? (down ? S_brdnladder : S_brupladder)
+                      : (down ? S_dnladder : S_upladder);
+    }
     if (t === ICE) return S_ice;
     if (t === POOL || t === MOAT) return S_pool;
     if (t === WATER) return S_water;

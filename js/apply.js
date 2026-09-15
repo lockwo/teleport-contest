@@ -696,6 +696,34 @@ export async function doapply() {
         return await dowrite(obj);
     }
 
+    // C ref: apply.c `case TINNING_KIT: use_tinning_kit(obj); break;` — res is
+    // never reassigned in this case, so (per doapply()'s `int res = ECMD_TIME`
+    // default) applying a tinning kit ALWAYS costs a turn, even when nothing
+    // happens (no tins left, no corpse picked). use_tinning_kit() is exported
+    // by THIS file (line ~3232, module-local); only the dispatch arm was
+    // missing, so applying it fell through to "Sorry, I don't know how to use
+    // that." instead of prompting for a corpse to tin.
+    if (obj.otyp === TINNING_KIT) {
+        await use_tinning_kit(obj);
+        return ECMD_TIME;
+    }
+
+    // C ref: apply.c `case TIN_OPENER: res = use_tin_opener(obj);` — wields the
+    // opener (if not already wielded) then starts opening a carried tin.
+    // js/eat.js:3461 exports the full C port (use_tin_opener); only this
+    // dispatch arm was missing, so every apply of a tin opener fell through to
+    // "Sorry, I don't know how to use that." instead. eat.js returns the real
+    // hack.h bit values (ECMD_TIME_=0x01, ECMD_CANCEL_=0x02); this file's own
+    // ECMD_TIME/ECMD_CANCEL are renumbered (2/1), so translate rather than
+    // pass the code straight through.
+    if (obj.otyp === TIN_OPENER) {
+        const { use_tin_opener } = await import('./eat.js');
+        const r = await use_tin_opener(obj);
+        if (r & 0x01) return ECMD_TIME;
+        if (r & 0x02) return ECMD_CANCEL;
+        return ECMD_OK;
+    }
+
     // C ref apply.c:4258 — applying a cream pie immerses the hero's face in it.
     if (obj.otyp === CREAM_PIE) {
         return await use_cream_pie(obj);
@@ -1696,10 +1724,44 @@ async function ap_hurtle(_dx, _dy, _range, _verbose) {}
 async function ap_boulder_hits_pool(_otmp, _rx, _ry, _newspot) { return false; }
 // C ref: mon.c revive_corpse(corpse) — DEFERRED (no port).
 async function ap_revive_corpse(_corpse) { return false; }
-// C ref: eat.c floorfood(verb, corpsecheck) — the "There is X here; eat it?"
-// picker.  js/eat.js's equivalent is fused into its own doeat() flow, so this
-// returns 0 ("nothing chosen") and use_tinning_kit() stops there.
-async function ap_floorfood(_verb, _corpsecheck) { return null; }
+// C ref: eat.c floorfood(verb, corpsecheck) — the "There is X here; VERB it?"
+// floor picker, then (declined/no floor corpse) getobj(verb, tin_ok) over
+// inventory.  Only the corpsecheck===2 (tinning) caller reaches this
+// function, so that is the only path ported; RNG-free (per use_tinning_kit's
+// own comment above its call site).  getobj() itself is what prints "You
+// don't have anything to tin." when nothing eligible is carried either —
+// this used to always return null before even reaching getobj(), so that
+// message (and the floor offer) never appeared.
+const CORPSE_A = 265; // objects.c CORPSE (food-class corpse)
+async function ap_floorfood(verb, corpsecheck) {
+    const A = await ap_load();
+    const u = game.u;
+    // C: 'm' prefix / can't-reach-floor / mounted all skip to skipfloor; this
+    // call site can only observe menu_requested among those.
+    if (!game.iflags?.menu_requested && corpsecheck === 2) {
+        const objs = (game.level?.objects || []).filter(
+            (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy
+                && o.otyp === CORPSE_A && tinnable(o));
+        for (const otmp of objs) {
+            const one = (otmp.quan || 1) === 1;
+            const nm = A.invent.obj_doname(otmp);
+            const qbuf = `There ${one ? 'is' : 'are'} ${nm} here; ${verb} ${
+                one ? 'it' : 'one'}?`;
+            const c = await A.display.y_n(qbuf, 'ynq', 'n');
+            if (c === 'y') return otmp;
+            if (c === 'q') return null;
+            // 'n': fall through to the next floor object, then inventory.
+        }
+    }
+    const { tin_ok } = await import('./eat.js');
+    const otmp = await A.invent.getobj(verb, tin_ok);
+    if (otmp && corpsecheck
+        && (otmp.otyp !== CORPSE_A || (corpsecheck === 2 && !tinnable(otmp)))) {
+        await A.display.pline(`You can't ${verb} that!`);
+        return null;
+    }
+    return otmp;
+}
 // C ref: teleport.c tele_to_rnd_pet() — DEFERRED (no port).
 async function ap_tele_to_rnd_pet() {}
 // C ref: zap.c bhit(dx, dy, range, weapon, fhitm, fhito, &obj) for the

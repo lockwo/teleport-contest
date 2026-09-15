@@ -8,7 +8,7 @@
 // the recorded sessions.  Kept faithful to the C control flow so it extends
 // to richer monster behavior without per-seed special cases.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { acurr_eff as _acurr_cf } from './attrib.js';
 import { in_rooms as in_rooms_shk } from './shkroom.js';
 import { costly_spot } from './shk.js';
@@ -61,7 +61,8 @@ import { Amonnam as Amonnam_dn } from './do_name.js';
 import { quest_talk } from './questpgr.js';
 import { In_hell, surface } from './dungeon.js';
 import { COIN_CLASS, ROCK, ROCK_CLASS, GOLD_PIECE, GEM_CLASS, CORPSE, ARROW, DART,
-    GLOB_OF_GREEN_SLIME, SCR_SCARE_MONSTER, AMULET_OF_STRANGULATION, mksobj_at } from './mkobj.js';
+    GLOB_OF_GREEN_SLIME, SCR_SCARE_MONSTER, AMULET_OF_STRANGULATION, mksobj_at,
+    clear_dknown } from './mkobj.js';
 import { t_at, t_missile, Can_fall_thru, maketrap } from './trap.js';
 import { gettrack } from './track.js';
 import { find_mac as worn_find_mac } from './worn.js';
@@ -944,6 +945,14 @@ export function set_apparxy(mtmp) {
     }
     mtmp.mux = mx; mtmp.muy = my;
 }
+// Late-bound entry point (see gstate.js hooks / js/light.js precedent): a
+// static import of set_apparxy from makemon.js would form a cycle back to
+// this file's own `import { monster_by_pmidx, makemon, ... } from
+// './makemon.js'` above, TDZ-trapping the whole load.  makemon() needs to
+// call this SYNCHRONOUSLY (its own m_initweap/m_initinv RNG draws must follow
+// it in the same tick, not after a dynamic import's microtask), so a hook
+// function pointer is the only option — not a dynamic import.
+hooks.set_apparxy = set_apparxy;
 
 // C ref: mon.c m_in_air(mtmp) — is the monster up in the air / on the ceiling?
 function m_in_air(mtmp) {
@@ -2543,6 +2552,82 @@ function mon_wearing_iron_shoes(mtmp) {
     return false;
 }
 
+// C ref: trap.c:1730 trapeffect_fire_trap() monster branch.  This is
+// deliberately separate from the hero's dofiretrap(): monsters lose
+// current and maximum HP through thitm() and retain their own inventory.
+// Shared by case FIRE_TRAP and by MAGIC_TRAP's !rn2(21) misfire (trap.c:2316
+// trapeffect_magic_trap() else-branch redirects mtmp straight into this
+// same function, reusing the current (magic) trap's tx/ty).
+async function mon_trapeffect_fire_trap(mtmp, trap) {
+    const tx = trap.tx, ty = trap.ty;
+    const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
+    const see_it = cansee(tx, ty);
+    const orig_dmg = d(2, 4);
+    let trapkilled = false;
+
+    if (in_sight) {
+        await pline_mon(mtmp, `A tower of flame erupts from the ${
+            surface(mtmp.mx, mtmp.my)} under ${mon_nam(mtmp)}!`);
+    } else if (see_it) {
+        await update_topl(`You see a tower of flame erupt from the ${
+            surface(mtmp.mx, mtmp.my)}!`);
+    }
+
+    if (resists_fire(mtmp)) {
+        // C's shieldeff() only produces a transient animation frame here.
+        if (in_sight)
+            await pline_mon(mtmp, `${Monnam(mtmp)} is uninjured.`);
+    } else {
+        let damage = orig_dmg;
+        let immolate = false;
+        switch (monsndx_of(mtmp.data)) {
+        case PM_PAPER_GOLEM_FT:
+            immolate = true;
+            damage = Math.max(damage, mtmp.mhpmax | 0);
+            break;
+        case PM_STRAW_GOLEM_FT:
+            damage = Math.max(damage, Math.trunc((mtmp.mhpmax | 0) / 2));
+            break;
+        case PM_WOOD_GOLEM_FT:
+            damage = Math.max(damage, Math.trunc((mtmp.mhpmax | 0) / 4));
+            break;
+        case PM_LEATHER_GOLEM_FT:
+            damage = Math.max(damage, Math.trunc((mtmp.mhpmax | 0) / 8));
+            break;
+        default:
+            break;
+        }
+        if (await mon_thitm(0, mtmp, null, damage, immolate)) {
+            trapkilled = true;
+        } else {
+            mtmp.mhpmax -= rn2(damage + 1);
+            if (mtmp.mhp > mtmp.mhpmax) mtmp.mhp = mtmp.mhpmax;
+        }
+    }
+
+    const { burnarmor, destroy_items, ignite_items, burn_floor_objects }
+        = await import('./zap.js');
+    if (await burnarmor(mtmp) || rn2(3)) {
+        const extra_damage = await destroy_items(mtmp, AD_FIRE, orig_dmg);
+        await ignite_items(mtmp.minvent || []);
+        if (!DEADMONSTER(mtmp)) {
+            mtmp.mhp -= extra_damage;
+            if (DEADMONSTER(mtmp)) {
+                mon_kill_leaving(mtmp, false);
+                trapkilled = true;
+            }
+        }
+    }
+    burn_floor_objects(tx, ty, see_it, false);
+    // melt_ice() is RNG-free; ice melting itself is not yet modeled.
+    if (see_it && t_at(tx, ty)) {
+        const { seetrap } = await import('./trap.js');
+        seetrap(t_at(tx, ty));
+    }
+    return trapkilled ? Trap_Killed_Mon
+        : (mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished);
+}
+
 async function mon_trapeffect(mtmp, trap) {
     switch (trap.ttyp) {
     case ROCKTRAP: {
@@ -2722,78 +2807,8 @@ async function mon_trapeffect(mtmp, trap) {
         }
         return mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished;
     }
-    case FIRE_TRAP: {
-        // C ref: trap.c:1730 trapeffect_fire_trap() monster branch.  This is
-        // deliberately separate from the hero's dofiretrap(): monsters lose
-        // current and maximum HP through thitm() and retain their own inventory.
-        const tx = trap.tx, ty = trap.ty;
-        const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
-        const see_it = cansee(tx, ty);
-        const orig_dmg = d(2, 4);
-        let trapkilled = false;
-
-        if (in_sight) {
-            await pline_mon(mtmp, `A tower of flame erupts from the ${
-                surface(mtmp.mx, mtmp.my)} under ${mon_nam(mtmp)}!`);
-        } else if (see_it) {
-            await update_topl(`You see a tower of flame erupt from the ${
-                surface(mtmp.mx, mtmp.my)}!`);
-        }
-
-        if (resists_fire(mtmp)) {
-            // C's shieldeff() only produces a transient animation frame here.
-            if (in_sight)
-                await pline_mon(mtmp, `${Monnam(mtmp)} is uninjured.`);
-        } else {
-            let damage = orig_dmg;
-            let immolate = false;
-            switch (monsndx_of(mtmp.data)) {
-            case PM_PAPER_GOLEM_FT:
-                immolate = true;
-                damage = Math.max(damage, mtmp.mhpmax | 0);
-                break;
-            case PM_STRAW_GOLEM_FT:
-                damage = Math.max(damage, Math.trunc((mtmp.mhpmax | 0) / 2));
-                break;
-            case PM_WOOD_GOLEM_FT:
-                damage = Math.max(damage, Math.trunc((mtmp.mhpmax | 0) / 4));
-                break;
-            case PM_LEATHER_GOLEM_FT:
-                damage = Math.max(damage, Math.trunc((mtmp.mhpmax | 0) / 8));
-                break;
-            default:
-                break;
-            }
-            if (await mon_thitm(0, mtmp, null, damage, immolate)) {
-                trapkilled = true;
-            } else {
-                mtmp.mhpmax -= rn2(damage + 1);
-                if (mtmp.mhp > mtmp.mhpmax) mtmp.mhp = mtmp.mhpmax;
-            }
-        }
-
-        const { burnarmor, destroy_items, ignite_items, burn_floor_objects }
-            = await import('./zap.js');
-        if (await burnarmor(mtmp) || rn2(3)) {
-            const extra_damage = await destroy_items(mtmp, AD_FIRE, orig_dmg);
-            await ignite_items(mtmp.minvent || []);
-            if (!DEADMONSTER(mtmp)) {
-                mtmp.mhp -= extra_damage;
-                if (DEADMONSTER(mtmp)) {
-                    mon_kill_leaving(mtmp, false);
-                    trapkilled = true;
-                }
-            }
-        }
-        burn_floor_objects(tx, ty, see_it, false);
-        // melt_ice() is RNG-free; ice melting itself is not yet modeled.
-        if (see_it && t_at(tx, ty)) {
-            const { seetrap } = await import('./trap.js');
-            seetrap(t_at(tx, ty));
-        }
-        return trapkilled ? Trap_Killed_Mon
-            : (mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished);
-    }
+    case FIRE_TRAP:
+        return await mon_trapeffect_fire_trap(mtmp, trap);
     case ROLLING_BOULDER_TRAP: {
         // C ref: trap.c:2660 trapeffect_rolling_boulder_trap(), monster branch.
         // Falling into `default:` left the boulder in place AND skipped the
@@ -2811,13 +2826,10 @@ async function mon_trapeffect(mtmp, trap) {
     }
     case MAGIC_TRAP:
         // C ref: trapeffect_magic_trap() else-branch — monsters are usually
-        // immune; rn2(21)==0 redirects to the fire-trap effect.  The contest
-        // roll is non-zero (leocrotta @ seed4500 step 222), so nothing further
-        // happens.  If it ever rolls 0, fall through to the fire trap.
-        if (!rn2(21)) {
-            // trapeffect_fire_trap(mtmp,...) — not reached in the contest
-            // sessions; leave unmodeled rather than guess its RNG.
-        }
+        // immune; rn2(21)==0 redirects straight into trapeffect_fire_trap()
+        // for the same trap (a magic trap "misfiring" as a fire trap).
+        if (!rn2(21))
+            return await mon_trapeffect_fire_trap(mtmp, trap);
         return Trap_Effect_Finished;
     case ARROW_TRAP:
     case DART_TRAP: {
@@ -3569,15 +3581,24 @@ async function m_move(mtmp) {
         // happens in these slices, so it draws nothing.  Term (g) DOES fire for a
         // hostile, sighted giant bat/stalker/light: it rolls rn2(3) (the bat
         // "flutters randomly" 1/3 of the time -> appr=0).  Reproduce the
-        // short-circuit order: terms (a) !mcansee and (f) mpeaceful both force
-        // appr=0 WITHOUT reaching (g), so the rn2(3) is only drawn when the
-        // monster can see and is hostile.
+        // short-circuit order: terms (a) !mcansee and (f) mpeaceful (EXCEPT a
+        // shopkeeper: C's term is `mtmp->mpeaceful && !mtmp->isshk`, "allow shks
+        // to follow" — a peaceful shk that has left his shop, e.g. chasing an
+        // unpaid debtor, still keeps a real appr so it can catch up, instead of
+        // being forced into the same random-wander branch as any other
+        // peaceful) both force appr=0 WITHOUT reaching (g), so the rn2(3) is
+        // only drawn when the monster can see and is hostile (or an
+        // out-of-shop shk).  Dropping the !isshk qualifier forced such a shk's
+        // appr to 0, which sends it into m_move's `!appr && !rn2(++chcnt)`
+        // selection arm instead of C's real appr!=0 mtrack-avoidance
+        // `rn2(4*(cnt-j))` arm — same call site, wrong RNG stream entirely
+        // (bl020 seg1 step 315).
         const ptrMcls = ptr?.mcls;
         const isStalkerBatLight =
             (ptr?.pmidx === PM_STALKER)   // monsndx(ptr) == PM_STALKER
             || (ptrMcls === S_BAT)        // ptr->mlet == S_BAT
             || (ptrMcls === S_LIGHT);     // ptr->mlet == S_LIGHT
-        if (!mtmp.mcansee || mtmp.mpeaceful) {
+        if (!mtmp.mcansee || (mtmp.mpeaceful && !mtmp.isshk)) {
             appr = 0;
         } else if (should_see && Invis() && !perceives(ptr) && rn2(11)) {
             appr = 0;
@@ -6647,20 +6668,43 @@ function m_throw_single(mon, otmp) {
         // (do.js) panics on anything else, so a missile still tagged 'minvent'
         // (or never tagged at all) fails its very first guard.
         otmp.where = 'free';
+        // C ref: mthrowu.c:615-616 `if (!canseemon(mon)) clear_dknown(singleobj);`
+        // — a missile thrown by a monster the hero can't SEE (blind, or the
+        // thrower itself unseen) lands unidentified even if this exact object
+        // was dknown from an earlier sighting: the hero didn't watch this
+        // particular throw, so they can't vouch for what just landed. Omitting
+        // this left a re-thrown-while-blind dart carrying its old dknown=1,
+        // merging it into an unrelated already-seen pile the real engine keeps
+        // as a separate "Things that you feel here" entry (bl004 step 378: C
+        // shows "6 darts"/"a +0 orcish short sword"/"a dart" as three piles,
+        // JS collapsed the two dart piles into "7 darts").
+        if (!canseemon_mm(mon)) clear_dknown(otmp);
         return otmp;
     }
-    next_ident();           // splitobj -> nextoid -> next_ident: rnd(2)
+    const newid = next_ident();     // splitobj -> nextoid -> next_ident: rnd(2)
     otmp.quan = (otmp.quan | 0) - 1;
-    // The split-off missile shares the parent's type/enchantment/erosion.  C's
-    // splitobj() links it into the same chain and obj_extract_self() then pulls
-    // it back out; we never insert it, which is the same end state.
-    return {
-        otyp: otmp.otyp, oclass: otmp.oclass, spe: otmp.spe | 0,
-        quan: 1, blessed: otmp.blessed, cursed: otmp.cursed,
-        oeroded: otmp.oeroded, oeroded2: otmp.oeroded2, owornmask: 0,
-        where: 'free',
-        _split_from: otmp,
-    };
+    otmp.owt = weight(otmp);
+    // C ref: mkobj.c splitobj() — `*otmp2 = *obj1` copies the WHOLE struct (only
+    // quan/owornmask/o_id differ after), not a hand-picked field subset.  The
+    // previous version built a bare object carrying only otyp/oclass/spe/quan/
+    // blessed/cursed/oeroded/oeroded2/owornmask, silently dropping o_id (left
+    // undefined despite the next_ident() roll above being taken specifically to
+    // assign one), dknown, bknown, oartifact, oname, unpaid, and every other
+    // mergable()-relevant flag.  A stray `undefined` on those fields still
+    // compares equal to a sibling stack's real 0/false via mergable()'s `|0`
+    // normalization, so this split missile could wrongly RE-MERGE with an
+    // untouched remainder of the same ammo type sharing a square (e.g. this
+    // monster's own later death-drop), collapsing two floor piles the C
+    // engine keeps separate.
+    const singleobj = { ...otmp, quan: 1, owornmask: 0, o_id: newid,
+                         where: 'free', _split_from: otmp };
+    singleobj.owt = weight(singleobj);
+    // C ref: mthrowu.c:615-616 — see the twin comment in the quan<=1 branch
+    // above; splitobj() copies dknown from the parent stack, so without this
+    // the split-off missile inherits an old dknown=1 it isn't entitled to
+    // when the hero can't see this particular throw.
+    if (!canseemon_mm(mon)) clear_dknown(singleobj);
+    return singleobj;
 }
 
 // C ref: mthrowu.c m_throw -> drop_throw(singleobj, ohit, x, y).  When the
@@ -6872,18 +6916,28 @@ function select_rwep(mtmp) {
         _propellor = HANDS_OBJ;   // KMH -- belongs here so darts work
         const prop = OBJECTS[wt]?.oc_skill;
         if (prop != null && prop < 0) {
+            // C's gp.propellor is a struct obj* — NULL (found no launcher) IS
+            // the integer 0 that `if (gp.propellor != 0)` below tests against.
+            // oselect_mm()'s "not found" is JS `null`, and `null !== 0`, so
+            // without the explicit `|| 0` fallback a bow/sling/crossbow-less
+            // monster fell through with _propellor left `null` and the guard
+            // below wrongly treated "no launcher" as "found one" — letting a
+            // kobold with a bare floor arrow and no bow loose it anyway
+            // (bl020 T=68: "The kobold throws an arrow!" that C's kobold,
+            // correctly propellor-less, never says).
             switch (-prop) {
             case P_BOW_SKILL:
                 _propellor = oselect_mm(mtmp, YUMI_OTYP)
                     || oselect_mm(mtmp, ELVEN_BOW_OTYP)
                     || oselect_mm(mtmp, BOW_OTYP)
-                    || oselect_mm(mtmp, ORCISH_BOW_OTYP);
+                    || oselect_mm(mtmp, ORCISH_BOW_OTYP)
+                    || 0;
                 break;
             case P_SLING_SKILL:
-                _propellor = oselect_mm(mtmp, SLING_OTYP);
+                _propellor = oselect_mm(mtmp, SLING_OTYP) || 0;
                 break;
             case P_CROSSBOW_SKILL:
-                _propellor = oselect_mm(mtmp, CROSSBOW_OTYP2);
+                _propellor = oselect_mm(mtmp, CROSSBOW_OTYP2) || 0;
                 break;
             default: break;
             }
@@ -7099,6 +7153,22 @@ async function thrwmu(mtmp, mdat) {
     const multishot = monmulti(mtmp, otmp, MON_WEP(mtmp));
     if (canseemon_mm(mtmp)) {
         const { update_topl } = await import('./display.js');
+        // C ref: mthrowu.c monshoot() builds this same announcement via
+        // `onm = singular(otmp, xname)` / `xname(otmp)` on the PARENT stack —
+        // BEFORE m_throw()'s splitobj() peels off the flying missile.
+        // xname_flags():628 `if (!Blind && !gd.distantname) observe_object(obj)`
+        // fires as a side effect of merely NAMING the object for this message,
+        // so a sighted throw permanently dknown=1's the remainder still sitting
+        // in the thrower's inventory — independent of whatever dknown the
+        // split-off flying copy ends up with. mshot_xname() here is a bare
+        // name lookup with no such side effect (thitu() below already has to
+        // call observe_object() separately for the same reason). Omitting this
+        // left a kobold's remaining ammo, dropped later at death, silently
+        // mergable() with an unrelated dknown=0 stack from an earlier UNSEEN
+        // throw of the same ammo type onto the same square (bl004 step 378:
+        // C shows "6 darts"/"a +0 orcish short sword"/"a dart" as three piles,
+        // JS collapsed the two dart piles into one "7 darts").
+        observe_object(otmp);
         const onm = multishot > 1
             ? `${multishot} ${mshot_xname(otmp)}s`
             : an_name(mshot_xname(otmp));

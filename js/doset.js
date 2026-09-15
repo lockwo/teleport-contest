@@ -144,16 +144,27 @@ const SIMPLE_SECTIONS = [
     ] },
 ];
 
+// The storage key a boolean option's value actually lives under, when it
+// isn't just game.flags[name].  C ref: options.c set_bool_via_field() &c —
+// the same handful of names js/options.js's set_boolean() (options.js:1421)
+// redirects to a different field for.  Shared by doset_simple's boolStr
+// below and doset()'s full-menu live values so both menus read the one
+// place an rc line or a prior toggle actually wrote.
+function rawBoolValue(name) {
+    game.flags = game.flags || {};
+    switch (name) {
+    case 'autopickup': return game.flags.pickup;
+    case 'fixinv':     return game.flags.invlet_constant;
+    case 'cmdassist':  return game.iflags?.cmdassist;
+    case 'altmeta':    return game.iflags?.altmeta;
+    default:           return game.flags[name];
+    }
+}
+
 // Boolean display value: "X" when on, " " when off.  Tracks any toggles made
 // during this menu session via game.flags.
 function boolStr(name, dflt) {
-    game.flags = game.flags || {};
-    let v;
-    switch (name) {
-    case 'autopickup': v = game.flags.pickup; break;
-    case 'cmdassist': v = game.iflags?.cmdassist; break;
-    default:           v = game.flags[name]; break;
-    }
+    let v = rawBoolValue(name);
     if (v === undefined) v = dflt;
     return v ? 'X' : ' ';
 }
@@ -200,19 +211,19 @@ const OPT_MENU_ENTRIES = [
     {"t":"x","text":"     [To suppress this menu help, toggle off the 'cmdassist' option.]"},
     {"t":"x","text":""},
     {"t":"x","text":" Booleans (selecting will toggle value):","inv":true},
-    {"t":"x","text":"     blind                   [false]"},
-    {"t":"x","text":"     bones                   [true]"},
-    {"t":"x","text":"     deaf                    [false]"},
-    {"t":"x","text":"     legacy                  [true]"},
-    {"t":"x","text":"     news                    [false]"},
-    {"t":"x","text":"     nudist                  [false]"},
-    {"t":"x","text":"     pauper                  [false]"},
-    {"t":"x","text":"     reroll                  [false]"},
-    {"t":"x","text":"     selectsaved             [true]"},
-    {"t":"x","text":"     status_updates          [true]"},
-    {"t":"x","text":"     tutorial                [true]"},
-    {"t":"x","text":"     use_darkgray            [true]"},
-    {"t":"x","text":"     use_truecolor           [false]"},
+    {"t":"x","text":"     blind                   [false]","name":"blind"},
+    {"t":"x","text":"     bones                   [true]","name":"bones"},
+    {"t":"x","text":"     deaf                    [false]","name":"deaf"},
+    {"t":"x","text":"     legacy                  [true]","name":"legacy"},
+    {"t":"x","text":"     news                    [false]","name":"news"},
+    {"t":"x","text":"     nudist                  [false]","name":"nudist"},
+    {"t":"x","text":"     pauper                  [false]","name":"pauper"},
+    {"t":"x","text":"     reroll                  [false]","name":"reroll"},
+    {"t":"x","text":"     selectsaved             [true]","name":"selectsaved"},
+    {"t":"x","text":"     status_updates          [true]","name":"status_updates"},
+    {"t":"x","text":"     tutorial                [true]","name":"tutorial"},
+    {"t":"x","text":"     use_darkgray            [true]","name":"use_darkgray"},
+    {"t":"x","text":"     use_truecolor           [false]","name":"use_truecolor"},
     {"t":"x","text":"     voices                  [excluded from build]"},
     {"t":"a","a":"a","body":"accessiblemsg           [false]","name":"accessiblemsg","kind":"bool"},
     {"t":"a","a":"a","body":"acoustics               [true]","name":"acoustics","kind":"bool"},
@@ -367,6 +378,32 @@ const PICKUP_CLASSES = [
     {a:'o', sym:'_', label:'iron chain'},
 ];
 
+// OPT_MENU_ENTRIES's bracketed value for every plain-boolean line (both the
+// non-modifiable "Booleans" list and the a..z-accelerated ones) is a snapshot
+// baked from ONE authoring game (name Septor, role Rogue, race orc, legacy
+// and tutorial both explicitly on) — see the module comment.  A boolean whose
+// value that authoring run happened to share with a true optlist.h default is
+// still right for any other run today; one it set non-default (legacy,
+// tutorial — and anything a different session's own rc/menu touches) is not.
+// Recompute the bracket from this run's actual game.flags/iflags (falling
+// back to the baked word when this run never touched the option), reusing
+// rawBoolValue so both this and doset_simple's boolStr read the identical
+// storage location per name.  Only rewrites a trailing "[true]"/"[false]"/
+// "[on]"/"[off]" — anything else (e.g. voices' "[excluded from build]") is
+// left verbatim.
+function liveOptValue(name, bakedText) {
+    const m = bakedText.match(/\[(true|false|on|off)\]\s*$/);
+    if (!m) return { text: bakedText, on: null };
+    const onWord = (m[1] === 'true' || m[1] === 'false') ? 'true' : 'on';
+    const offWord = (m[1] === 'true' || m[1] === 'false') ? 'false' : 'off';
+    const bakedOn = (m[1] === onWord);
+    let v = name ? rawBoolValue(name) : undefined;
+    if (v === undefined) v = bakedOn;
+    const word = v ? onWord : offWord;
+    const text = bakedText.slice(0, m.index) + `[${word}]` + bakedText.slice(m.index + m[0].length);
+    return { text, on: !!v };
+}
+
 function disp() { return game.nhDisplay; }
 
 // Clear a row from `from` to end of line.
@@ -391,16 +428,18 @@ function renderOptionsPage(entries, page, npages, selected) {
             // Verbatim line; headings/title carry ATR_INVERSE on the text only
             // (the leading space stays plain — C draws the inversion over the
             // option text via menu_headings = no-color&inverse).
-            if (e.text) {
-                const lead = e.text.match(/^ */)[0].length;
-                d.putstr(0, r, e.text.slice(0, lead), NO_COLOR, 0);
-                d.putstr(lead, r, e.text.slice(lead), NO_COLOR, e.inv ? ATR_INVERSE : 0);
+            const text = e.name ? liveOptValue(e.name, e.text).text : e.text;
+            if (text) {
+                const lead = text.match(/^ */)[0].length;
+                d.putstr(0, r, text.slice(0, lead), NO_COLOR, 0);
+                d.putstr(lead, r, text.slice(lead), NO_COLOR, e.inv ? ATR_INVERSE : 0);
             }
         } else {
             // Selectable: " <accel> <-|+> <body>" at col 0 (leading space + text
             // at col 1).  '?' help item is never selectable-marked here.
             const mark = selected.has(i) ? '+' : '-';
-            d.putstr(0, r, ` ${e.a} ${mark} ${e.body}`, NO_COLOR, 0);
+            const body = e.kind === 'bool' ? liveOptValue(e.name, e.body).text : e.body;
+            d.putstr(0, r, ` ${e.a} ${mark} ${body}`, NO_COLOR, 0);
         }
     }
     // Page footer (morestr): "(N of M)" with no trailing space when paged,
@@ -804,8 +843,11 @@ export async function doset() {
     for (const e of picks) {
         if (e.kind === 'bool') {
             // parseoptions toggles the boolean; the displayed value is the
-            // pre-toggle one, so a [false]/[off] option turns "on".
-            const wasOff = /\[(false|off)\]/.test(e.body);
+            // pre-toggle one, so a [false]/[off] option turns "on".  Read
+            // that pre-toggle value LIVE (liveOptValue), not off the entry's
+            // static baked body — the body can be stale for any run whose
+            // rc/menu already set this option away from the snapshot's value.
+            const wasOff = !liveOptValue(e.name, e.body).on;
             applyBooleanToggle(e.name, wasOff);
             await update_topl(`'${e.name}' option toggled ${wasOff ? 'on' : 'off'}.`);
         } else if (e.name === 'pickup_types') {
@@ -837,6 +879,11 @@ function applyBooleanToggle(name, turnOn) {
     game.flags = game.flags || {};
     switch (name) {
     case 'autopickup': game.flags.pickup = turnOn; break;
+    // C ref: js/options.js:1421 set_boolean() — the same two names that
+    // land under a different field than game.flags[name] when set from an
+    // rc line; the interactive menu must write the same place.
+    case 'fixinv': game.flags.invlet_constant = turnOn; break;
+    case 'altmeta': (game.iflags = game.iflags || {}).altmeta = turnOn; break;
     case 'cmdassist':  (game.iflags = game.iflags || {}).cmdassist = turnOn; break;
     case 'showexp':    game.flags.showexp = turnOn; break;
     case 'time':       game.flags.time = turnOn; break;

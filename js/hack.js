@@ -48,6 +48,7 @@ import { ROOMOFFSET, MOD_ENCUMBER, SLT_ENCUMBER, FOOT,
          RUN_TPORT, RUN_LEAP, RUN_CRAWL,
          TIP_ENHANCE, TIP_SWIM, TIP_UNTRAP_MON, TIP_GETPOS, NUM_TIPS,
          NHCORE_GETPOS_TIP, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT,
+         GFILTER_VIEW,
          has_mgivenname } from './const.js';
 import { in_rooms } from './shkroom.js';
 import { inside_room } from './mkroom.js';
@@ -1762,7 +1763,15 @@ const GLOC_MONS = 0, GLOC_OBJS = 1, GLOC_DOOR = 2, GLOC_EXPLORE = 3,
 // C ref: cmd.c spkeys[] defaults for mMoOdDxX_def[] — next/prev pairs, so the
 // index >> 1 is the GLOC_* class.
 const GLOC_KEYS = 'mMoOdDxXaAzZ';
-function gather_locs_interesting(x, y, gloc, validfn) {
+export function gather_locs_interesting(x, y, gloc, validfn) {
+    // C ref: getpos.c:444 — the '"'/travel filters restrict the scan before any
+    // gloc-specific test runs.  #lookaround sets GFILTER_VIEW for its per-cell
+    // scan, so a remembered-but-currently-unseen feature must NOT be reported.
+    // GFILTER_AREA needs gloc_filter_init()'s selection map, which no caller of
+    // this port builds yet, so it is left unrestricted (matches every caller
+    // that never sets it).
+    if (game.iflags?.getloc_filter === GFILTER_VIEW && !cansee(x, y))
+        return false;
     const loc = game.level?.at(x, y);
     if (!loc) return false;
     const explored = !gloc_unexplored(x, y);
@@ -3587,8 +3596,12 @@ export function notice_mons_cmp(m1, m2) {
 }
 
 // C ref: display.c set_msg_xy(x, y) — remembers which square the next message
-// is about (msg_xy / #terrain highlighting).  Not ported.
-function set_msg_xy(_x, _y) { /* no-op */ }
+// is about.  js/display.js's live pline() reads game.a11y.msg_loc (and always
+// resets it) to prefix a message with a direction string when a11y.accessiblemsg
+// is set; #lookaround (js/cmd.js) is the other writer.
+export function set_msg_xy(x, y) {
+    (game.a11y || (game.a11y = {})).msg_loc = { x, y };
+}
 
 // C ref: hack.c:1708 notice_mon(mtmp) — announce a newly spotted monster once,
 // and forget it again when it stops being spottable.  Gated on the

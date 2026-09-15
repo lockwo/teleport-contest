@@ -47,7 +47,7 @@ import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx,
          pmname_of_pmidx } from './makemon.js';
 import { likes_gems_flag, M1_MINDLESS } from './monflags_data.js';
 import { AD_FIRE, AD_ELEC } from './monattk_data.js';
-import { MM_NOCOUNTBIRTH, MM_NOMSG, STATUE_TRAP } from './const.js';
+import { MM_NOCOUNTBIRTH, MM_NOMSG, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX } from './const.js';
 import { In_hell as dungeon_In_hell, single_level_branch, surface, find_hell } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { check_special_room } from './shkroom.js';
@@ -968,12 +968,22 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
 }
 
 // ── dotrap / trap effect dispatch ─────────────────────────────────────────
-// C ref: hack.c nomul(0) — interrupt any multi-turn action.
-function trap_nomul() {
-    game.multi = 0;
-    if (game.context) {
-        game.context.travel = game.context.travel1 = game.context.mv = 0;
-    }
+// C ref: hack.c nomul(0) — interrupt any multi-turn action.  hack.c's real
+// nomul() guards `if (gm.multi < nval) return;` (a deliberate bug fix by
+// ab@unido): dotrap() calls nomul(0) UNCONDITIONALLY, including on the
+// recursive dotrap(trap, RECURSIVETRAP) a land mine/pit fires right after
+// losehp() -> done(DIED) -> savelife() has just set multi = -1 for the rest
+// of the turn ("You survived that attempt on your life." pending).  This
+// local copy skipped that guard and unconditionally zeroed game.multi, so
+// the pending nomovemsg's turn-end announcement (allmain.js's multi<0 -> 0
+// unmul step) never fired: the hero silently kept moving with no "You
+// survived..." message and no --More-- to flush it, permanently
+// misaligning the recorded input stream from that point on (bl008 step
+// ~399+).  Delegate to hack.js's already-faithful nomul() instead of
+// duplicating (and re-diverging from) its guard.
+async function trap_nomul() {
+    const { nomul } = await import('./hack.js');
+    nomul(0);
 }
 
 // C ref: trap.c trapeffect_rust_trap(&youmonst, trap, trflags) — the hero
@@ -1026,18 +1036,48 @@ async function trapeffect_rust_trap(trap, _trflags) {
 }
 
 // C ref: hack.c losehp(n, knam, k_format) — for a non-polymorphed hero this
-// subtracts the damage from u.uhp.  No RNG.
-// GAP: C's `if (u.uhp < 1) { You("die..."); done(DIED); }` is replaced by a
-// clamp to 0, so a trap that would kill the hero leaves them walking around at
-// 0 HP instead of ending the game.  Also unported: maybe_wail() when the blow
+// subtracts the damage from u.uhp; running it to 0 or below runs the death
+// path (wizard/discover "Die?" via done(DIED), same as monmove.js mdamageu()).
+// No RNG.  Formerly this clamped HP to 0 and returned, so a trap that would
+// kill the hero left them walking around at 0 HP forever instead of ending
+// the game (or, in wizard mode, offering "Die?"/"OK, so you don't die." and
+// restoring HP via savelife()) — every trap-caused death in the port went
+// through this one function.  Still unported: maybe_wail() when the blow
 // drops the hero below a tenth of uhpmax (message only, no RNG).
-function losehp(n) {
+async function losehp(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
     if (!u) return;
+    if (u.Upolyd) {
+        u.mh = (u.mh | 0) - n;
+        if (u.mh > u.mhmax) u.mhmax = u.mh;
+        if (u.mh < 1) {
+            const { rehumanize } = await import('./polyself.js');
+            if (rehumanize) await rehumanize();
+        }
+        return;
+    }
     u.uhp -= n;
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     else game.botl = true;
-    if (u.uhp < 1) u.uhp = 0;
+    if (u.uhp < 1) {
+        // C ref: hack.c:4287 `urgent_pline("You die..."); done(DIED);` — every
+        // real losehp() caller announces this before done() runs; done() itself
+        // does not (see end.js done_in_by(), which announces the same way for
+        // a monster kill).
+        await update_topl('You die...');
+        game._killer_name = knam ? format_trap_killer(knam, k_format) : null;
+        const { done } = await import('./end.js');
+        await done(DIED);
+    }
+}
+
+// C ref: topten.c formatkiller() reduced to the DIED prefix (the only `how`
+// any trap-caused death in this port reaches) — mirrors end.js
+// killer_text_for_monster()'s simplification of the same switch.
+function format_trap_killer(knam, k_format) {
+    if (k_format === NO_KILLER_PREFIX) return knam;
+    if (k_format === KILLED_BY_AN) return `killed by ${an_str(knam)}`;
+    return `killed by ${knam}`;
 }
 
 // C ref: hacklib.c exclam(force) — "!" for damage > 5, "." otherwise.
@@ -1073,7 +1113,7 @@ async function thitu_named(tlev, dam, name) {
     }
     // Hit: You("are hit by %s%s", onm, exclam(dam)).
     await update_topl(`You are hit by ${onm}${exclam(dam)}`);
-    losehp(dam);                                 // no RNG
+    await losehp(dam, name);                     // no RNG
     exercise(0 /*A_STR*/, false);                // rn2(2)
     return 1;
 }
@@ -1348,7 +1388,7 @@ async function trapeffect_bear_trap(trap, _trflags) {
     // No iron shoes -> wounded legs + hp loss (Maybe_Half_Phys is identity for a
     // hero without HALF_PHDAM, i.e. every starting role).
     await set_wounded_legs(rn2(2) ? RIGHT_SIDE : LEFT_SIDE, rn1(10, 10));
-    losehp(dmg);
+    await losehp(dmg, 'bear trap');
     exercise(A_DEX, false);
 }
 
@@ -1548,7 +1588,7 @@ async function trapeffect_magic_trap(trap, _trflags) {
         const { update_topl } = await import('./display.js');
         await update_topl('You are caught in a magical explosion!');
         game._toplin = 1;
-        losehp(rnd(10));
+        await losehp(rnd(10), 'magical explosion');
         await update_topl('Your body absorbs some of the magical energy!');
         if (u) {
             u.uenmax = (u.uenmax || 0) + 2;
@@ -1607,7 +1647,7 @@ async function trapeffect_rocktrap(trap, _trflags) {
     stackobj(otmp);
     newsym(u.ux, u.uy);
     // Maybe_Half_Phys is the identity for a hero without HALF_PHDAM.
-    losehp(dmg);
+    await losehp(dmg, 'falling rock');
     exercise(A_STR, false);
 }
 
@@ -1751,7 +1791,11 @@ async function trapeffect_pit(trap, trflags) {
         // Maybe_Half_Phys is the identity for a hero without HALF_PHDAM.
         if (relevant_spikes) {
             const oldumort = u?.umortality | 0;
-            losehp(rnd(conj_pit ? 4 : adj_pit ? 6 : 10));
+            const spikeKnam = plunged ? 'deliberately plunged into a pit of iron spikes'
+                : (conj_pit || deliberate) ? 'stepped into a pit of iron spikes'
+                : adj_pit ? 'stumbled into a pit of iron spikes'
+                : 'fell into a pit of iron spikes';
+            await losehp(rnd(conj_pit ? 4 : adj_pit ? 6 : 10), spikeKnam, NO_KILLER_PREFIX);
             if (!rn2(6)) {
                 const { poisoned } = await import('./attrib.js');
                 await poisoned('spikes', A_STR,
@@ -1762,7 +1806,8 @@ async function trapeffect_pit(trap, trflags) {
             }
         } else if (!conj_pit && !deliberate && !(plunged && Flying)) {
             /* plunging flyers take spike damage but not pit damage */
-            losehp(rnd(adj_pit ? 3 : 6));
+            const pitKnam = plunged ? 'deliberately plunged into a pit' : 'fell into a pit';
+            await losehp(rnd(adj_pit ? 3 : 6), pitKnam, NO_KILLER_PREFIX);
         }
         // Punished is never set in this port -> no unplacebc/ballfall/placebc.
         if (!conj_pit) selftouch('Falling, you');
@@ -2068,7 +2113,7 @@ async function trapeffect_landmine(trap, trflags) {
        blow_up_landmine() will remove the pit afterwards if inappropriate */
     trap.ttyp = PIT;
     trap.madeby_u = 0;
-    losehp(Maybe_Half_Phys(damage));
+    await losehp(Maybe_Half_Phys(damage), 'land mine');
     await blow_up_landmine(trap);
     newsym(u.ux, u.uy); /* update trap symbol */
     /* fall recursively into the pit... */
@@ -2158,7 +2203,7 @@ export async function dofiretrap(box) {
     if ((box && !invent_list().includes(box)) ? isPoolAt(box.ox, box.oy) : !!u?.uinwater) {
         await pline(`A cascade of steamy bubbles erupts from ${noun}!`);
         if (Fire_resistance) await update_topl('You are uninjured.');
-        else losehp(rnd(3));
+        else await losehp(rnd(3), 'boiling water', KILLED_BY);
         return;
     }
     await pline(`A ${TOWER_OF_FLAME} ${box ? 'bursts' : 'erupts'} from ${noun}!`);
@@ -2197,7 +2242,7 @@ export async function dofiretrap(box) {
         if (u.uhp > u.uhpmax) { u.uhp = u.uhpmax; game.botl = true; }
     }
     if (!num) await update_topl('You are uninjured.');
-    else losehp(num);
+    else await losehp(num, TOWER_OF_FLAME);
     // burn_away_slime(): the hero is never sliming in this port, and the
     // function draws no RNG.
     const { burnarmor, destroy_items, ignite_items, burn_floor_objects }
@@ -2632,6 +2677,7 @@ export async function chest_trap(obj, bodypart, disarm) {
             // NOT PORTED: the shop arms (costly_spot/stolen_value/
             // make_angry_shk) and unpunish() for a ball/chain on the spot.
             await pline(`The ${xname(obj)} explodes!`);
+            const explodeKnam = `exploding ${xname(obj)}`; /* buf captured before delobj() */
             obj.cobj = [];                            /* delete_contents() */
             let chestgone = false;
             for (const o of [...(game.level?.objects || [])])
@@ -2641,7 +2687,7 @@ export async function chest_trap(obj, bodypart, disarm) {
                 }
             const { wake_nearby } = await import('./cmd.js');
             await wake_nearby(false);
-            losehp(Maybe_Half_Phys(d(6, 6)));
+            await losehp(Maybe_Half_Phys(d(6, 6)), explodeKnam);
             exercise(A_STR, false);
             if (chestgone) return true;
         } else if (sel >= 17) {
@@ -2669,7 +2715,7 @@ export async function chest_trap(obj, bodypart, disarm) {
             }
             const { destroy_items } = await import('./zap.js');
             await destroy_items(u, AD_ELEC, orig_dmg);
-            if (dmg) losehp(dmg);
+            if (dmg) await losehp(dmg, 'electric shock');
         } else if (sel >= 3) {
             if (!u?.uprops?.Free_action) {
                 await pline('Suddenly you are frozen in place!');
@@ -3265,7 +3311,7 @@ export async function dotrap(trap, trflags = 0) {
     const conj_pit = conjoined_pits(trap, t_at(u?.ux0 ?? 0, u?.uy0 ?? 0), true);
     const adj_pit = adj_nonconjoined_pit(trap);
 
-    trap_nomul();
+    await trap_nomul();
 
     if (fixed_tele_trap(trap)) { trflags |= FORCETRAP; forcetrap = true; }
 

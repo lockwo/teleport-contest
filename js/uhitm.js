@@ -68,7 +68,8 @@ import { mon_nocorpse, undead_to_corpse, name_to_pmidx } from './makemon.js';
 import { more_experienced, newexplevel } from './exper.js';
 import { gethungry } from './allmain.js';
 import { is_weptool, objectBaseName, simple_typename, is_plural, otense,
-         near_capacity, update_inventory, distant_far, distant_doname } from './invent.js';
+         near_capacity, update_inventory, distant_far, distant_doname,
+         mergable } from './invent.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { engr_at, wipe_engr_at } from './engrave.js';
 import { find_mac as worn_find_mac } from './worn.js';
@@ -363,6 +364,24 @@ const FURNITURE_EXPLANATION = {
     36: 'sink',
 };
 
+// C ref: display.c map_object's fake `obj` for an M_AP_OBJECT mimic never sets
+// oclass (display.h's cg.zeroobj copy), so obj_is_generic()'s gem/glass and
+// spellbook tests -- which key off otyp, not oclass -- still fire, while its
+// oclass==POTION_CLASS test never can (oclass stays 0).  The resulting glyph
+// (GLYPH_OBJ_OFF + oclass(0)) is numerically the same as otyp 0 (STRANGE_
+// OBJECT)'s own normal glyph, so every reader of "the glyph at this square"
+// (pager.c mhidden_description, uhitm.c that_is_a_mimic via object_from_map)
+// sees a strange object, not the disguise's true type -- for a gem/glass-gem
+// or ordinary spellbook, never for a potion.  Same otyp ranges as js/display.js
+// monster_glyph() (duplicated locally there too; that file can't import this
+// one without a cycle).
+const MIMIC_FIRST_SPELL = 366, MIMIC_LAST_SPELL = 407;         // SPE_DIG..SPE_BLANK_PAPER
+const MIMIC_FIRST_REAL_GEM = 439, MIMIC_LAST_GLASS_GEM = 469;  // DILITHIUM_CRYSTAL..WORTHLESS_VIOLET_GLASS
+function mimic_disguise_collapses_to_strange(otyp) {
+    return (otyp >= MIMIC_FIRST_REAL_GEM && otyp <= MIMIC_LAST_GLASS_GEM)
+        || (otyp >= MIMIC_FIRST_SPELL && otyp <= MIMIC_LAST_SPELL);
+}
+
 // C ref: mon.c seemimic(mtmp) — a discovered mimic drops its object/furniture
 // appearance and is redrawn as its true form.
 export function seemimicLocal(mtmp) {
@@ -418,7 +437,9 @@ function that_is_a_mimic_message(mtmp) {
     } else if (mtmp.m_ap_type === 'obj') {
         const otyp = mtmp.mappearance;
         const otmp = object_from_map_lite(mtmp);
-        const otmp_name = (otyp && otyp !== STRANGE_OBJECT) ? simple_typename(otyp) : 'strange object';
+        const otmp_name = (otyp && otyp !== STRANGE_OBJECT
+                           && !mimic_disguise_collapses_to_strange(otyp))
+            ? simple_typename(otyp) : 'strange object';
         const plural = is_plural(otmp);
         const verb = otense(otmp, 'are');
         fmtbuf = `${plural ? 'Those' : 'That'} ${otmp_name} ${verb} %s!`;
@@ -1289,10 +1310,18 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     // (jousting omitted — no lance/steed here).  This is evaluated BEFORE the
     // mhp subtraction; stagger rolls rnd(100) immediately, knockback is deferred
     // until after a surviving hit (below).
+    // C ref: uhitm.c:1779 `hmd.unarmed = !uwep && !uarm && !uarms;` — this
+    // gate's "unarmed" is NOT the local no-weapon-object flag above: a hero
+    // swinging bare hands while wearing body armor or a shield still counts
+    // as armed here, so the stagger roll never fires for them. Conflating the
+    // two rolled an extra rnd(100) on every >1-damage bare-handed hit landed
+    // while wearing a suit/shield, desyncing the whole rest of the session.
+    const hmdUnarmed = !game.uwep && !game.uarm && !game.uarms;
     let maybe_knockback = false;
-    if (unarmed && dmg > 1) {
+    if (hmdUnarmed && dmg > 1 && !game.u?.Upolyd) {
         rnd(100);                              // hmon_hitmon_stagger (uhitm.c:1576)
-    } else if (!unarmed && dmg > 1 && !game.u?.twoweap && game.uwep) {
+    } else if (!unarmed && dmg > 1 && !game.u?.twoweap && game.uwep
+               && !game.u?.Upolyd) {
         maybe_knockback = true;                // uhitm.c:1831
     }
 
@@ -2008,13 +2037,21 @@ export function relobj(mon, x, y) {
             mon.misc_worn_check = ((mon.misc_worn_check | 0) & ~unwornmask) | I_SPECIAL;
             if (otmp === mon.mw) mon.mw = null;
         }
-        // mdrop_obj -> place_object + stackobj.  Merge into an existing floor
-        // stack of the same otyp/spe so quantities combine like C stackobj().
+        // mdrop_obj -> place_object + stackobj().  C's stackobj() walks the
+        // floor pile at (ox,oy) and merges into the first mergable() match —
+        // the SAME full mergable() contract used everywhere else (dknown,
+        // bknown-while-blind, cursed/blessed, erosion, oname, ...), not a
+        // hand-picked otyp/spe subset.  The previous otyp+spe-only check let a
+        // stack the hero had already SEEN merge with an unrelated dknown=0
+        // one dropped here (a kobold's remaining ammo, unseen-thrown-then-
+        // repicked-up earlier, merging with its own already-observed
+        // remainder at death): C keeps three separate floor piles where JS
+        // collapsed two into one (bl004 step 378: "6 darts"/"a +0 orcish
+        // short sword"/"a dart" vs JS's single "7 darts").
         let merged = false;
         for (const f of objs) {
             if (f.where === 'floor' && f.ox === x && f.oy === y
-                && f.otyp === otmp.otyp && (f.spe || 0) === (otmp.spe || 0)
-                && f.otyp !== CORPSE) {
+                && mergable(f, otmp)) {
                 f.quan = (f.quan || 1) + (otmp.quan || 1);
                 merged = true;
                 break;
@@ -4849,7 +4886,8 @@ function mhidden_description_uh(mtmp) {
     if (M_AP_TYPE(mtmp) === M_AP_FURNITURE)
         return FURNITURE_EXPLANATION[mtmp.mappearance] || 'thing';
     if (M_AP_TYPE(mtmp) === M_AP_OBJECT)
-        return (mtmp.mappearance && mtmp.mappearance !== STRANGE_OBJECT)
+        return (mtmp.mappearance && mtmp.mappearance !== STRANGE_OBJECT
+                && !mimic_disguise_collapses_to_strange(mtmp.mappearance))
             ? simple_typename(mtmp.mappearance) : 'strange object';
     return 'monster';
 }

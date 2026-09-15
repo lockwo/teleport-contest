@@ -2,7 +2,7 @@
 // C ref: makemon.c - rndmonst_adj, rndmonst, mkclass, mkclass_aligned,
 //        makemon, newmonhp, m_initweap.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, d, rn1 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { builds_up, In_hell, Is_special, level_difficulty_c } from './dungeon.js';
@@ -37,7 +37,7 @@ import {
     HWALL, TLCORNER, BLCORNER, CROSSWALL, TUWALL, TDWALL, TRWALL, DBWALL,
     SDOOR, SCORR, D_CLOSED, D_LOCKED,
     STRAT_CLOSE, STRAT_WAITFORU, STRAT_APPEARMSG, W_SADDLE,
-    IS_ALTAR, HEADSTONE, LR_MONGEN,
+    IS_ALTAR, HEADSTONE, LR_MONGEN, MM_APPARXY_BYYOU,
 } from './const.js';
 // set_mimic_sym() needs the room/trap/vision helpers.  These modules sit below
 // makemon.js in the import graph except vision.js, which imports two function
@@ -3450,6 +3450,27 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
              || nm === 'wumpus')
             && rn2(5))
             mtmp.msleeping = true;
+    } else if ((mmflags & MM_APPARXY_BYYOU) && !game.in_mklev) {
+        // C ref: makemon.c:1390-1394 — the `else` half of the in_mklev/else
+        // pair above: `if (byyou) { newsym(mtmp->mx, mtmp->my);
+        // set_apparxy(mtmp); }`.  byyou is C's u_at(ORIGINAL x,y) computed at
+        // makemon() entry, before x,y get reassigned by the placement search —
+        // a caller here has ALREADY run that search itself (this port's
+        // enexto_spawn, since makemon() has no byyou branch of its own to run
+        // it), so MM_APPARXY_BYYOU is how it tells makemon() "byyou was true,
+        // still run the tail".  Must fire here, between the gender roll above
+        // and m_initweap/m_initinv below: set_apparxy()'s own notseen/notthere
+        // RNG draw (monmove.c:2257) precedes theirs in C, so calling it any
+        // later desyncs every RNG draw for the rest of the game by one.
+        //
+        // C's place_monster(mtmp, x, y) runs even earlier (makemon.c:1295),
+        // long before this block, so newsym() always finds the monster already
+        // on the map; this port defers placement to the caller instead, so we
+        // place it here too (placeOnLevel is idempotent — the caller's own
+        // placeOnLevel call after makemon() returns is a harmless no-op).
+        placeOnLevel(mtmp, x, y);
+        hooks.newsym?.(x, y);
+        hooks.set_apparxy?.(mtmp);
     }
 
     // C ref: makemon.c:1396-1403 — a bribeable demon prince starts peaceful and
@@ -4012,7 +4033,11 @@ export function create_particular_monster(name, mmflags = 0) {
     // MM_NOWAIT is the one caller flag that still matters past the placement:
     // it suppresses the mflags3 STRAT_WAITFORU/CLOSE/APPEARMSG block, which is
     // what wizard.c resurrect() passes.
-    const mtmp = makemon(ptr, spot.x, spot.y, MM_NOGRP | (mmflags & MM_NOWAIT));
+    // MM_APPARXY_BYYOU tells makemon() that byyou was true in C (this caller
+    // IS the byyou placement search), so it still runs the `if (byyou) {
+    // newsym(); set_apparxy(); }` tail at the right point in its own body.
+    const mtmp = makemon(ptr, spot.x, spot.y,
+                         MM_NOGRP | MM_APPARXY_BYYOU | (mmflags & MM_NOWAIT));
     if (!mtmp) return null;
     placeOnLevel(mtmp, spot.x, spot.y);
 

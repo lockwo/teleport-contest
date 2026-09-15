@@ -128,7 +128,7 @@ import { engr_at, wipe_engr_at } from './engrave.js';
 import { costly_spot, addtobill, shkname } from './shkroom.js';
 // C ref: objnam.c doname_base():1648 — the shop-price suffix is formatted in
 // objnam.c, on top of shk.c's get_cost_of_shop_item()/unpaid_cost().
-import { price_suffix } from './objnam.js';
+import { price_suffix, singplur_lookup } from './objnam.js';
 // role.js imports only gstate/rng/const, so this is cycle-safe.
 import { roles, align_gname } from './role.js';
 // pickup.c lives in js/pickup.js.  The cycle back to this file is fine: both
@@ -1365,6 +1365,24 @@ export function makeplural(oldstr) {
     const lc = last.toLowerCase();
     const prev = len >= 2 ? head.charAt(len - 2).toLowerCase() : '';
     const vowels = 'aeiou';
+
+    // C ref: objnam.c:2707 singplur_lookup(str, spot+1, TRUE, already_plural)
+    // PRE-PASS, run whenever the word is more than a single letter/symbol (the
+    // "'s" branch below, matching C's len===1/!letter guard, skips it exactly
+    // as C does). Covers as_is[] words (deer, fish, sheep, ninja, samurai,
+    // shuriken, piranha, Nazgul, boots/gloves/..., "*craft", "slice"/
+    // "mongoose", "<x>ox" -> "<x>oxes", the badman()-gated man/men exceptions,
+    // and the one_off[] table (foot/feet, tooth/teeth, ox/oxen, mouse/mice,
+    // goose/geese, child/children, ...). This function previously implemented
+    // none of it, so any direct caller (most of js/ calls this makeplural())
+    // got formula output instead — "9 shurikens", "foots", "3 deers" — while a
+    // few call sites (js/potion.js, js/wield.js) carried their own local
+    // pre-check copy of the same table as a workaround.
+    if (len > 1 && /[a-z]/i.test(last)) {
+        const sb = { s: head };
+        if (singplur_lookup(sb, len, true, ['ae', 'eaux', 'matzot']))
+            return sb.s + excess;
+    }
 
     let plural;
     if (len === 1 || !/[a-z]/i.test(last)) {
@@ -3323,6 +3341,29 @@ async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) 
     }
 }
 
+// C ref: cmd.c rhack():3732-3736/3810-3813 — a command that returns
+// ECMD_CANCEL never gets added to CQ_REPEAT, and reset_cmd_vars(TRUE) clears
+// whatever was already queued there.  This port's rhack()-equivalent
+// (js/cmd.js) instead unconditionally re-queues the pressed key for #repeat
+// once the command function returns, with no per-command ECMD_* result
+// threaded back to it — so a getobj() cancellation (every caller propagates
+// a null pick straight up as its own cancel) left a stale, already-abandoned
+// command sitting in CQ_REPEAT forever.  A much later, unrelated ^A then
+// replayed it and silently consumed the NEXT keystroke as its answer,
+// desyncing the rest of the session (bl006, seed700822 step 167: a
+// cancelled 'w' wield left CQ_REPEAT non-empty, so ^A replayed the wield
+// prompt instead of reporting "There is no command available to repeat.").
+// Flagging it here and consuming the flag in js/cmd.js's tail bookkeeping
+// is the narrowest fix without threading ECMD_* through every dispatch arm.
+export async function getobj(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
+    const obj = await getobj_impl(word, obj_ok, ctrlflags);
+    if (obj === null) {
+        const svc = game.context || (game.context = {});
+        svc._getobj_cancelled = true;
+    }
+    return obj;
+}
+
 // C ref: invent.c getobj() — prompt for an inventory object passing obj_ok.
 // Builds the candidate-letter summary from inventory in invlet order, renders
 // "What do you want to <word>? [<lets> or ?*]", reads a key and resolves it:
@@ -3330,7 +3371,7 @@ async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) 
 // '?'/'*' menus, the gold and throw restrictions, and the stack split.
 // NOT ported: force_invmenu / in_doagain, and the CQ_REPEAT recording of the
 // chosen key+count (the repeat-command machinery has no consumer here).
-export async function getobj(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
+async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
     let forceprompt = (ctrlflags & GETOBJ_PROMPT) !== 0;
     const allowcnt = (ctrlflags & GETOBJ_ALLOWCNT) !== 0;
 
@@ -6843,34 +6884,28 @@ export async function dofire(getDir) {
             if (olauncher) {
                 if (game.uwep && !game.flags?.pushweapon) {
                     if ((await doswapweapon()) === ECMD_TIME) {
-                        // C ref: topl.c update_topl() — doswapweapon's OWN
-                        // still-pending line is what we page below.  Save it
-                        // so we can tell that apart from an autonomous
-                        // monster message (e.g. dog_eat()'s "Sirius eats a
-                        // jackal corpse.") that fires during moveloop_turn()
-                        // and overwrites/merges onto it first.
-                        const preSwapMsg = game._pending_message;
                         game.context.move = 0;
                         await moveloop_turn();
-                        if (game._pending_message === preSwapMsg) {
-                            // The queued dowield is a distinct command.  Its
-                            // predecessor left the former primary's prinv()
-                            // line pending, which C pages at the command
-                            // boundary before dowield() can replace it with
-                            // the launcher.
+                        // C ref: win/tty/topl.c update_topl():257 `skip =
+                        // (flags & (WIN_STOP|WIN_NOSTOP)) == WIN_STOP`.
+                        // doswapweapon()'s own still-pending secondary-weapon
+                        // line needs paging before dowield() can replace it
+                        // with the launcher's line — UNLESS the player already
+                        // dismissed some earlier --More-- with ESC this same
+                        // command (game._winStop), in which case C's
+                        // update_topl() silently overwrites the hidden line
+                        // instead of blocking again.  This used to compare
+                        // game._pending_message against its pre-turn value as
+                        // a proxy for "did winStop get set", which answers a
+                        // different question (whether an autonomous message
+                        // fired during the swap's turn) and forced a bogus
+                        // extra --More-- whenever the ONLY dismissal was the
+                        // real ESC that set winStop (bl010 step 495: JS
+                        // blocked on "d - ... (alternate weapon)" while C's
+                        // getdir() had already silently absorbed that line and
+                        // gone straight to "In what direction?").
+                        if (!game._winStop) {
                             await display_nhwindow_message();
-                        } else {
-                            // C ref: win/tty/topl.c update_topl():257 `skip =
-                            // (flags & (WIN_STOP|WIN_NOSTOP)) == WIN_STOP` —
-                            // the autonomous message's own update_topl() call
-                            // already paged (and, if dismissed with ESC, set
-                            // WIN_STOP) on the SAME call stack with no real
-                            // input read by dowield(); dowield()'s next
-                            // prinv() then silently replaces the pending
-                            // line instead of paging it again.
-                            game._pending_message = '';
-                            game._toplin = 0;
-                            game._toplinSoft = null;
                         }
                     }
                 }

@@ -32,7 +32,7 @@ import { mon_mr } from './monmr_data.js';
 import { is_undead_flag, is_demon_flag, humanoid } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
 import { align_gname } from './role.js';
-import { newsym, map_invisible, doredraw } from './display.js';
+import { map_invisible, doredraw } from './display.js';
 import { STATUE, objects, place_object, weight, COIN_CLASS } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { delobj, stackobj, doddrop } from './invent.js';
@@ -1317,9 +1317,14 @@ async function create_particular() {
     }
     if (!made) return;
 
-    // C makemon.c:1473-1508 — newsym + "<Mon> appears<place>." (MM_NOEXCLAM, so
-    // no " suddenly" and a trailing '.').  what = Amonnam(mtmp) when spottable.
-    newsym(made.x, made.y);
+    // C makemon.c:1473-1508 — "<Mon> appears<place>." (MM_NOEXCLAM, so no
+    // " suddenly" and a trailing '.').  what = Amonnam(mtmp) when spottable.
+    // makemon() itself already ran newsym()+set_apparxy() (its byyou tail,
+    // makemon.c:1390-1394 via MM_APPARXY_BYYOU — see makemon.js) at the exact
+    // point C does; calling newsym() again here would be a second, unwanted
+    // display update (an extra hallucination-glyph RNG draw for a
+    // hallucinating hero) and set_apparxy() was missing entirely until that
+    // fix, leaving every RNG draw for the rest of the game off by one.
     // C ref: makemon.c:1479 — the "<Mon> appears." line is gated on
     // `canseemon(mtmp) || sensemon(mtmp)`: a BLIND hero who ^G's a monster gets
     // NO message at all (C leaves the top line empty).  Printing it

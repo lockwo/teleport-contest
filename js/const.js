@@ -2162,6 +2162,14 @@ export const MM_NOMSG = 0x00020000;
 export const MM_NOEXCLAM = 0x00040000;
 export const MM_IGNORELAVA = 0x00080000;
 export const MM_ASYNC = 0x00100000;      // caller will await; store appear-message promise on monster
+// JS-only synthetic flag (no C equivalent bit — byyou is a LOCAL computed
+// from the ORIGINAL x,y makemon() was entered with, not a caller flag).
+// A caller that pre-resolves the enexto placement itself (because makemon()
+// has no byyou branch of its own) sets this so makemon() still runs the
+// `if (byyou) { newsym(); set_apparxy(); }` tail C always runs in that case,
+// at the exact point C runs it (between the gender roll and m_initweap/
+// m_initinv — set_apparxy's own RNG draw must precede theirs).
+export const MM_APPARXY_BYYOU = 0x00400000;
 
 // Teleport target search flags (include/hack.h; src/teleport.c goodpos/enexto)
 // Runtime fields: teleport goodpos/enexto entflags/gpflags args

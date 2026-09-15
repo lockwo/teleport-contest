@@ -358,7 +358,21 @@ export class NethackGame {
         g.svp.pl_fruit = opts.flags?.fruit || 'slime mold';
         fruitadd(g.svp.pl_fruit, null);
         g.program_state = {};
-        g.moves = 1;
+        // C ref: decl.h `long moves;` is a plain global — zero-initialized at
+        // process start, and stays 0 until u_init_role() (u_init.c:645) sets
+        // it to 1 *after* mklev() builds the first level (allmain.c newgame():
+        // mklev() runs before u_init_inventory_attrs()).  Setting it to 1 this
+        // early made it 1 throughout the dlvl-1 room fill too, one full phase
+        // before C's real svm.moves ticks over; makemon.js align_shift()'s
+        // moves-keyed Is_special() cache (itself a deliberate replica of a
+        // C `static long oldmoves` local) then primed on dlvl 1 and never
+        // re-fired for a same-turn level change (e.g. an immediate wizard ^V
+        // level-teleport before the first real turn), so a special level
+        // entered that way kept AM_NONE instead of its real alignment.
+        // allmain.js's newgame()/newgame_real() already set moves=1 at the
+        // correct (post-mklev) point; this one just needs to stop pre-empting
+        // them.
+        g.moves = 0;
 
         // Install display
         if (this._pendingDisplay) {

@@ -1,7 +1,7 @@
 // display.js — Map rendering and terminal output.
 // C ref: display.c — newsym, show_glyph, docrt, cls, flush_screen.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { cansee, couldsee, Blind, Infravision, vision_recalc,
          block_point, unblock_point } from './vision.js';
 import { nhgetch } from './input.js';
@@ -30,6 +30,7 @@ import {
     DB_FLOOR, MAX_TYPE, MAXTCHARS, MAXEXPCHARS, BOLT_LIM,
     M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, M_AP_TYPMASK,
     In_mines, Is_waterlevel,
+    GPCOORDS_NONE, GPCOORDS_COMFULL,
 } from './const.js';
 import {
     NO_COLOR, CLR_BLACK, CLR_GRAY, CLR_BROWN, CLR_WHITE, CLR_YELLOW,
@@ -362,6 +363,26 @@ function monster_glyph(mon) {
     if (mon.m_ap_type === 'obj' && mon.mappearance != null) {
         // Appear as an object: same glyph the floor object would draw.  C ref:
         // display.c map_object/obj_to_glyph(mappearance) for an M_AP_OBJECT mon.
+        //
+        // C's fake `obj` for this case (display.c's cg.zeroobj copy) never sets
+        // oclass, so it stays 0 (RANDOM_CLASS).  obj_is_generic()'s gem/glass and
+        // spellbook tests key off otyp directly and still fire; its
+        // oclass==POTION_CLASS test can never fire (oclass isn't POTION_CLASS,
+        // it's 0) so a mimicked potion always shows its true glyph. And because
+        // the resulting "generic" glyph (GLYPH_OBJ_OFF + oclass(0)) is the exact
+        // same number as otyp 0 (STRANGE_OBJECT)'s own normal glyph, it decodes
+        // back through STRANGE_OBJECT's ILLOBJ_CLASS symbol (']') rather than the
+        // disguise's real class symbol — and glyph_is_generic_object()'s strict
+        // '>' bound excludes that same glyph, so the close-range "observe"
+        // upgrade (map_object's neardist check) never applies to it either: a
+        // mimic disguised as a gem/glass-gem or ordinary spellbook ALWAYS shows
+        // as a plain strange object, at any distance, discovered or not.
+        const ap = mon.mappearance;
+        if ((ap >= FIRST_REAL_GEM && ap <= LAST_GLASS_GEM)
+            || (ap >= FIRST_SPELL && ap <= LAST_SPELL)) {
+            return object_glyph({ otyp: 0, oclass: 1 /* ILLOBJ_CLASS */,
+                                   corpsenm: -1, dknown: 1 });
+        }
         return object_glyph({
             otyp: mon.mappearance,
             oclass: objects[mon.mappearance]?.oclass ?? 1,
@@ -1645,15 +1666,19 @@ export function newsym(x, y) {
         // up front (as this used to) would spend a draw C never makes.
         // C ref: display.c newsym — a visible gas-cloud region drawn on top of
         // the background, UNLESS a directly-occupying monster overrides it
-        // (mon_overrides_region()).  SCOPE: this arm's own override check is
-        // only the simple "a normally-visible monster stands exactly here"
-        // case, not the full mon_overrides_region() (adjacent-monster /
-        // sensemon / mon_warning / xray_range) — since no covered session
-        // has needed the richer form here yet.  The hero's own square is
-        // handled earlier and DOES call the full mon_overrides_region().
+        // (mon_overrides_region()).  This arm used to substitute a simplified
+        // "any normally-visible monster here" test for the real function,
+        // which drops mon_overrides_region()'s distu(mx,my) <= r*(r+1) range
+        // check (r defaults to 1 without xray) — so a monster more than one
+        // step from the hero showed its own glyph clean through a gas cloud
+        // instead of the cloud glyph C draws over it (a fog cloud more than
+        // one square from the hero, trailing its own permanent vapor region,
+        // showed as 'v' forever instead of the '#' cloud glyph).  The hero's
+        // own square (above) already calls the full function; do the same
+        // here so both arms share one rule.
         const reg = visible_region_at(x, y);
         if (reg && (ACCESSIBLE(loc.typ) || (reg.visible && (IS_POOL(loc.typ) || IS_LAVA(loc.typ))))
-            && !(mon && mon_visible(mon))) {
+            && !mon_overrides_region(mon, x, y)) {
             const rg = show_region(reg);
             show_glyph_cell(x, y, rg.ch, rg.color, false);
             return;
@@ -1758,6 +1783,11 @@ export function newsym(x, y) {
         }
     }
 }
+// Late-bound entry point (see gstate.js hooks / js/light.js precedent):
+// makemon.js needs to call newsym() synchronously, in the middle of makemon()
+// itself (right where C's byyou block does), and a static import would cycle
+// back through display.js's own imports from makemon.js-adjacent modules.
+hooks.newsym = newsym;
 
 // C ref: display.c map_invisible(x,y) — make the hero remember that a square
 // holds a monster it can sense but cannot see (drawn as the 'I' invisible-mon
@@ -2761,6 +2791,21 @@ function msgtype_suppressed(msg) {
 // would-be point to next was never written either) but recalled the wrong
 // text here.
 export async function pline(msg, opts = {}) {
+    // C ref: pline.c vpline():162-190 — when a11y.accessiblemsg is set (only
+    // #lookaround forces it on, in js/cmd.js) and set_msg_xy() left a valid
+    // location for THIS message, prefix it with a direction string and reset
+    // the location.  The reset runs unconditionally, exactly like C's, so a
+    // stale location can never leak into a later unrelated message.
+    const a11y = game.a11y;
+    const savedMsgLoc = a11y?.msg_loc;
+    if (a11y) a11y.msg_loc = { x: 0, y: 0 };
+    if (a11y?.accessiblemsg && savedMsgLoc && isok(savedMsgLoc.x, savedMsgLoc.y)) {
+        const { coord_desc } = await import('./getpos.js');
+        const gpc = game.iflags?.getpos_coords;
+        const cmode = (gpc === undefined || gpc === GPCOORDS_NONE)
+            ? GPCOORDS_COMFULL : gpc;
+        msg = `${coord_desc(savedMsgLoc.x, savedMsgLoc.y, '', cmode)}: ${msg}`;
+    }
     const suppressHistory = !!opts.suppressHistory;
     if (msgtype_suppressed(msg)) return;
     // C ref: pline.c vpline():266-274 — vision_recalc() FIRST, then

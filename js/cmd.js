@@ -27,7 +27,7 @@ import { dodrink } from './potion.js';
 import { dozap } from './zap.js';
 import { docast } from './spell.js';
 import { doread } from './read.js';
-import { dohelp, dowhatdoes } from './pager.js';
+import { dohelp, dowhatdoes, do_screen_description } from './pager.js';
 import { rnl, rn2, rnd } from './rng.js';
 import { doextcmd, doddoremarm, hooked_tty_getlin, wiz_wish, wiz_genesis,
          wiz_map_extcmd, run_extcmd_by_name, docallcmd, dooverview } from './extcmd-handlers.js';
@@ -38,7 +38,7 @@ import { wiz_level_tele, dodown, doup } from './do.js';
 import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation,
          TRAP_CLEARLY_IMMUNE } from './trap.js';
 import { doset, dosetSimple } from './doset.js';
-import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, dotele_wizard, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos } from './hack.js';
+import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, dotele_wizard, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy } from './hack.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          D_ISOPEN, D_BROKEN, D_NODOOR, D_TRAPPED,
          SDOOR, SCORR, CORR, IS_WALL, IS_OBSTRUCTED, IS_ROCK, isok, IS_DOOR,
@@ -77,13 +77,15 @@ import { dokick } from './dokick.js';
 // terrain predicates cmd.c's #lookaround / [t]herecmdmenu code tests.
 import { CMDQ_KEY, CMDQ_EXTCMD, CMDQ_DIR, CMDQ_USER_INPUT, CMDQ_INT,
          CQ_CANNED, CQ_REPEAT, MAX_TYPE, IS_ROOM, IS_TREE, IS_WATERWALL,
-         IS_THRONE, IS_FOUNTAIN, IS_SINK, IS_ALTAR,
+         IS_THRONE, IS_FOUNTAIN, IS_SINK, IS_ALTAR, GLOC_INTERESTING,
          has_mgivenname } from './const.js';
 // C ref: cmd.c extcmdlist[] — key/name/description/flags, build-constant.
 import { EXTCMD_TABLE } from './cmd_data.js';
 // C ref: selvar.c — the selection accessors #lookaround's room description uses.
 import { selection_new, selection_getbounds,
-         selection_getpoint } from './selvar.js';
+         selection_getpoint, selection_free, selection_floodfill,
+         set_selection_floodfillchk,
+         selection_size_description } from './selvar.js';
 import { carrying, objects_at, inventoryArray,
          cmdq_add_key, cmdq_pop, doperminv } from './invent.js';
 import { num_spells } from './spell.js';
@@ -1138,11 +1140,18 @@ export async function rhack(key) {
     // (game.context.run_prefix) outlives that call; prefix_seen does not, so
     // the complaint must key on the local one.
     // C guards the whole block with `tlist != 0`: an UNBOUND key falls through
-    // to bad_command instead of complaining about the prefix.
+    // to bad_command instead of complaining about the prefix.  <space> is
+    // unbound (tlist==0) with 'rest_on_space' Off, but update_rest_on_space()
+    // binds it to a donull clone (no CMD_gGF_PREFIX) when the option is On,
+    // so it must join the complaint like any other bound non-prefix command
+    // instead of staying permanently exempt (bl006, seed700822 step 178: a
+    // pending 'g' prefix silently rested on <space> and ate a turn/RNG draw
+    // C never took, instead of refusing with the prefix message).
     if ((game.context.forcefight || game.context._prefix_seen)
         && npBound !== false
         && !game._modal_screen && !isMovementKey(ch)
-        && ch !== '\x1b' && key !== 32 && key !== 13 && key !== 10
+        && ch !== '\x1b' && (key !== 32 || !!game.flags?.rest_on_space)
+        && key !== 13 && key !== 10
         && ch !== 'F' && ch !== 'g' && ch !== 'G' && ch !== 'm') {
         const which = game.context.forcefight ? 'F'
             : (game.context.run_prefix === 3 ? 'G' : 'g');
@@ -1211,6 +1220,14 @@ export async function rhack(key) {
         if (game._modal_screen === 'invent' || game._modal_screen === 'textwin') {
             await dismiss_invent_screen();
             game.context.move = 0;
+        } else if (key === 32 && !game._modal_screen && game.flags?.rest_on_space) {
+            // C ref: cmd.c update_rest_on_space() — with 'rest_on_space' On,
+            // <space> is bound to a clone of extcmdlist['.'] (donull, "wait",
+            // f_text "waiting"), so it rests exactly like the '.' key below
+            // rather than falling through to bad_command.
+            game.context.move = await donull();
+            if (game.context.move && (game.multi ?? 0) > 0)
+                game._wait_occupation = true;
         } else if (key === 32 && !game._modal_screen) {
             // <space> is unbound with 'rest_on_space' Off (the default) and
             // elicits "Unknown command ' '." (cmd.c update_rest_on_space).
@@ -1881,7 +1898,15 @@ export async function rhack(key) {
     // C-faithful "tlist == 0" test regardless of which branch handled it.
     const repeatBind = cmdbind_get(key & 0xff)?.cmd;
     const repeatName = npExt || bindExt || repeatBind?.ef_funct;
-    if (badCommand || !repeatName) {
+    // C ref: cmd.c rhack():3810-3813 — a command returning ECMD_CANCEL/
+    // ECMD_FAIL runs reset_cmd_vars(TRUE), clearing CQ_REPEAT the same as
+    // bad_command.  This dispatch has no per-command ECMD_* result to test
+    // here, so js/invent.js getobj() flags a cancelled pick (every caller
+    // propagates a null pick straight up as its own cancel) via
+    // game.context._getobj_cancelled; consume it once per command.
+    const getobjCancelled = !!game.context._getobj_cancelled;
+    game.context._getobj_cancelled = false;
+    if (badCommand || !repeatName || getobjCancelled) {
         cmdq_of(CQ_REPEAT).length = 0;
     } else if (!game.in_doagain) {
         // C ref: cmd.c rhack() — a PREFIXCMD (F/m/g/G) goes `goto
@@ -3627,6 +3652,17 @@ export async function domove(dx, dy) {
     // lava_effects()) just ended the game, none of domove()'s post-move work
     // (engraving smudge) runs.
     if (game.program_state?.gameover) return;
+    // C ref: cmd.c rhack() — `if (res & ECMD_TIME) svc.context.move = TRUE;`
+    // unconditionally, AFTER the command handler returns, regardless of
+    // anything the handler did to context.move in between (the comment there
+    // literally reads "reset_cmd_vars() sets context.move to False so we
+    // might need to change it [back] to True").  A trap sprung by this very
+    // step can walk the hero's HP to 0 and back (end.js savelife(), on a
+    // declined wizard/discover "Die?") which zeroes context.move as a side
+    // effect of ending the death sequence, not because this move failed to
+    // consume a turn.  Without restoring it here, the moveloop skips the
+    // monster-movement phase for a turn that C always ran one for.
+    game.context.move = 1;
 
     // C ref: hack.c domove_core():2984 — "delay next move because of ball
     // dragging; must come after we finished picking up, in spoteffects()".
@@ -5804,11 +5840,11 @@ export async function lookaround_known_room(x, y) {
     const rmno = (Array.isArray(u.urooms) && u.urooms.length ? u.urooms[0] : 0)
         - /*ROOMOFFSET*/ 3;
 
-    cmd_set_selection_floodfillchk(dolookaround_floodfill_findroom);
-    cmd_selection_floodfill(sel, x, y, true);
+    set_selection_floodfillchk(dolookaround_floodfill_findroom);
+    selection_floodfill(sel, x, y, true);
 
     if (!cmd_u_at(x, y))
-        cmd_set_msg_xy(x, y);
+        set_msg_xy(x, y);
 
     if (u_have_seen_whole_selection(sel)) {
         const u_in = !!selection_getpoint(x, y, sel);
@@ -5817,24 +5853,18 @@ export async function lookaround_known_room(x, y) {
             + (cmd_u_at(x, y) && u_in && u_can_see_whole_selection(sel)
                ? 'are in'
                : cmd_u_at(x, y) ? 'remember this as' : 'remember that as')
-            + ' ' + an(cmd_selection_size_description(sel))
+            + ' ' + an(selection_size_description(sel))
             + ' ' + (rmno >= 0 ? 'room' : 'area') + '.');
     } else if (u_have_seen_bounds_selection(sel)) {
         await pline(`You guess ${cmd_u_at(x, y) ? 'this' : 'that'} to be `
-            + `${an(cmd_selection_size_description(sel))} `
+            + `${an(selection_size_description(sel))} `
             + `${rmno >= 0 ? 'room' : 'area'}.`);
     } else {
         await pline("You can't guess the size of "
                     + `${cmd_u_at(x, y) ? 'this' : 'that'} area.`);
     }
+    selection_free(sel, true);
 }
-// selvar.c's floodfill and its "small/large/huge" size wording are unported;
-// the callback plumbing is kept so the call order matches C.
-let cmd_selection_floodfillchk = null;
-function cmd_set_selection_floodfillchk(fn) { cmd_selection_floodfillchk = fn; }
-function cmd_selection_floodfill(_sel, _x, _y, _diagok) {}
-function cmd_selection_size_description(_sel) { return 'area'; }
-function cmd_set_msg_xy(_x, _y) {}
 
 // C ref: cmd.c:1310 dolookaround() — the #lookaround command: describe what the
 // hero can see, in text.
@@ -5875,10 +5905,13 @@ export async function dolookaround() {
             const iscorr = (corr_next2u && dch === '#');
 
             if (!cmd_u_at(x, y)
-                && (cmd_gather_locs_interesting(x, y) || iscorr)) {
-                const firstmatch = cmd_do_screen_description(x, y);
+                && (gather_locs_interesting(x, y, GLOC_INTERESTING) || iscorr)) {
+                const out_str = { s: '' };
+                const firstmatch = { s: '' };
 
-                await pline(`${firstmatch}.`);
+                do_screen_description({ x, y }, true, 0, out_str, firstmatch, null);
+                set_msg_xy(x, y);
+                await pline(`${firstmatch.s}.`);
             }
         }
 
@@ -5887,10 +5920,6 @@ export async function dolookaround() {
 
     return ECMD_OK;
 }
-// getpos.c gather_locs_interesting(x, y, GLOC_INTERESTING) and pager.c
-// do_screen_description() are not ported; #lookaround is the only caller.
-function cmd_gather_locs_interesting(_x, _y) { return false; }
-function cmd_do_screen_description(_x, _y) { return 'unexplored area'; }
 
 // C ref: cmd.c:1376 dotoggleoption() — the #toggle extended command, e.g.
 //   BIND=':toggle(price_quotes)      BIND=@:toggle(autopickup)

@@ -2774,6 +2774,11 @@ export async function seffect_charging(sobj) {
     useup(sobj);
     const otmp = await getobj('charge', charge_ok,
                               GETOBJ_PROMPT | GETOBJ_ALLOWCNT);
+    // Declining this prompt doesn't cancel the read: the scroll is already
+    // consumed above, so the overall command still took a turn.  Clear the
+    // getobj()-cancellation flag js/invent.js just set, or the read's key
+    // would wrongly be dropped from CQ_REPEAT (js/cmd.js consumes the flag).
+    if (game.context) game.context._getobj_cancelled = false;
     if (otmp) {
         // C: recharge(otmp, scursed ? -1 : sblessed ? 1 : 0);
         void otmp;
