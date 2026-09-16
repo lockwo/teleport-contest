@@ -1703,6 +1703,23 @@ export async function moveloop_core() {
     // done() never reaches.  Matches moveloop()'s own post-death stop.
     if (g.program_state?.gameover) return;
 
+    // C ref: allmain.c moveloop_core() — `if (iflags.sanity_check ||
+    // iflags.debug_fuzzer) sanity_check();`, once per player-input boundary,
+    // before the context.move block below.  Deliberately NOT wired live here:
+    // wizcmds.js's sanity_check() -> mon_sanity_check() faithfully flags every
+    // starting pet ("pet without edog") because this port's pets are built
+    // without a C-style edog/mnum ([[pet-pmidx-convention-mismatch]]) -- a
+    // real, pre-existing representation gap, invisible on every screen, that
+    // a real C game never has and never reports.  Calling this live would
+    // print an impossible() message no real 'sanity_check:1' session ever
+    // shows, which is worse than the option's true (silent) effect.  Left
+    // inert until that pet representation is fixed; wizcmds.js's
+    // sanity_check() is fully ported and callable (verified dormant-safe)
+    // for whenever it is.  js/mklev.js's separate per-level
+    // mklev_sanity_check() call IS wired (door/room-connectivity checks
+    // only; verified clean across the whole public corpus with the option
+    // forced on).
+
     // Per-turn work runs at the TOP of the turn that follows a hero move,
     // mirroring the C moveloop (monsters move based on the previous command's
     // svc.context.move).  For the recorded seed8000 starter we replay its

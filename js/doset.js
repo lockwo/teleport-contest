@@ -631,7 +631,19 @@ function buildSimpleFlat() {
         items.push({ type: 'blank' });
         items.push({ type: 'heading', name: sec.name });
         for (const it of sec.items) {
-            let body = it.name.padEnd(NAMEW, ' ') + ' [' + it.val() + ']';
+            // C ref: options.c doset_simple_menu() -- fmtstr is "%-Ns [%s]"
+            // normally but literally "%s\t[%s]" (no padding) when
+            // iflags.menu_tab_sep is set.  Verified against a real recorder
+            // build (patches/006-nomux-capture.patch's nomux_putch(): "if
+            // (... ch < 32) return;" -- a raw tab byte is < 32, so it is
+            // silently dropped by the shadow-buffer writer while wintty's
+            // own per-char loop still advances curx by one; the net visible
+            // effect on the 80x24 capture is exactly ONE blank column, never
+            // a real tab stop jump) -- so render one literal space here,
+            // not '\t', to match the captured screen byte-for-byte.
+            let body = game.iflags?.menu_tab_sep
+                ? `${it.name} [${it.val()}]`
+                : it.name.padEnd(NAMEW, ' ') + ' [' + it.val() + ']';
             if (it.apsuffix) body += '  (for autopickup)';
             items.push({ type: 'item', selectable: true, kind: it.kind,
                          name: it.name, item: it, body });

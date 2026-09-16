@@ -996,11 +996,12 @@ function pet_extract_floor(obj) {
 }
 
 // C ref: mon.c mpickobj(mtmp,otmp) — add an object to the monster's minvent.
-// No RNG for ordinary items.
+// No RNG for ordinary items.  add_to_minv() prepends (mkobj.c:2648); keep
+// minvent newest-first.
 function mpickobj(mtmp, obj) {
     mtmp.minvent = mtmp.minvent || [];
     obj.where = 3; // OBJ_MINVENT
-    mtmp.minvent.push(obj);
+    mtmp.minvent.unshift(obj);
 }
 
 // C ref: dogmove.c dog_goal(...).  Returns the approach desire (-1/0/1) or -2

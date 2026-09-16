@@ -13,7 +13,7 @@
 import { game } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
-import { newsym, m_at, update_topl } from './display.js';
+import { newsym, m_at, update_topl, y_n } from './display.js';
 import { Blind, couldsee } from './vision.js';
 import { update_monster_region } from './region.js';
 import { onscary, set_apparxy, noteleport_level } from './monmove.js';
@@ -230,9 +230,21 @@ export async function rloc_to(mtmp, x, y) {
 // RNG: up to 50 tries of `rnd(COLNO - 1)` then `rn2(ROWNO)`, both consumed on
 // every iteration, stopping at the first square rloc_pos_ok() accepts.
 export async function rloc(mtmp, rlocflags) {
-    // The u.usteed / iswiz / iflags.mon_telecontrol special cases don't apply:
-    // the teleporting monsters here are ordinary hostiles and wizard mode's
-    // 'montelecontrol' option is off.
+    // The u.usteed / iswiz special cases don't apply here: the teleporting
+    // monsters are ordinary hostiles, never the player's steed or the Wizard
+    // of Yendor mid-game.  'montelecontrol' DOES apply and is wired below.
+    //
+    // C ref: teleport.c:1834 — wizard-mode player can choose the destination
+    // by setting 'montelecontrol'; ignored for a migrating monster's arrival
+    // (mtmp.mx === 0 is this function's own "just arriving" convention, per
+    // its C doc comment).
+    if (game.iflags?.mon_telecontrol && mtmp.mx) {
+        const cc = { x: mtmp.mx, y: mtmp.my };
+        if (await control_mon_tele(mtmp, cc, rlocflags, true)) {
+            await rloc_to_core(mtmp, cc.x, cc.y, rlocflags);
+            return true;
+        }
+    }
     let x = 0, y = 0, found = false;
     for (let trycount = 0; trycount < 50; ++trycount) {
         x = rnd(COLNO - 1);        /* 1..COLNO-1 */
@@ -964,6 +976,14 @@ export function stairway_find_forwiz(isladder, up) {
 // C ref: teleport.c:1898 control_mon_tele(mon, cc_p, rlocflags, via_rloc) —
 // wizard-mode 'montelecontrol'.  No RNG.  Returns TRUE with the chosen spot
 // written back into cc_p.
+//
+// The interactive pieces are the REAL primitives (js/hack.js's getpos()
+// cursor loop — the same one the wizard-mode ^T self-teleport prompt uses —
+// and js/display.js's y_n()), not the module's generic y_n_()/getpos_()
+// stubs: those two stay stubbed for their OTHER (unrelated, still-unported)
+// call sites in this file, so wiring this option must not flip their
+// behavior for level-teleporter/trapdoor prompts too.  getpos is pulled in
+// dynamically to avoid a static import cycle with hack.js.
 export async function control_mon_tele(mon, cc_p, rlocflags, via_rloc) {
     if (!isok(cc_p.x, cc_p.y)) {
         cc_p.x = mon.mx; cc_p.y = mon.my;
@@ -975,14 +995,17 @@ export async function control_mon_tele(mon, cc_p, rlocflags, via_rloc) {
     await update_topl(`Teleport ${noit_mon_nam_(mon)} @ <${mon.mx},${mon.my}> where?`);
     /* getpos '?' will show "Move the cursor to <where to teleport Foo>:" */
     const tcbuf = `where to teleport ${noit_mon_nam_(mon)}`;
-    const picked = await getpos_(cc_p, false, tcbuf);
-    if (picked >= 0 && !u_at(cc_p.x, cc_p.y)) {
+    const { getpos } = await import('./hack.js');
+    const verbose = game.flags?.verbose !== false;
+    const picked = await getpos(tcbuf, cc_p.x, cc_p.y, null, /*force=*/false, verbose);
+    if (picked && !u_at(picked.x, picked.y)) {
+        cc_p.x = picked.x; cc_p.y = picked.y;
         if (via_rloc ? rloc_pos_ok_(cc_p.x, cc_p.y, mon)
                      : goodpos(cc_p.x, cc_p.y, mon, rlocflags))
             return true;
         if (!game.iflags?.debug_fuzzer) {
-            if (await y_n_(`<${mon.mx},${mon.my}> is not considered viable; `
-                           + 'force anyway?') === 'y')
+            if (await y_n(`<${mon.mx},${mon.my}> is not considered viable; `
+                          + 'force anyway?') === 'y')
                 return true;
         }
     }

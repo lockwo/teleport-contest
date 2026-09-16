@@ -55,7 +55,7 @@ const MKTRAP_MAZEFLAG = 0x01, MKTRAP_NOSPIDERONWEB = 0x04;
 // C ref: dungeon.h lev_region rtypes, in lspo_levregion's regiontypes2i order.
 const LR_DOWNSTAIR = 0, LR_UPSTAIR = 1, LR_BRANCH = 3;
 // C ref: monsym.h def_char_to_monclass — the class chars these scripts use.
-const S_ANGEL = 1, S_SNAKE = 45;
+const S_ANGEL = 27, S_SNAKE = 45;
 // C ref: monst.h MR_STONE, the bit resists_ston() reads off the species.
 const MR_STONE = 0x80;
 
@@ -449,13 +449,13 @@ function med_lregion(rtype, x1, y1, x2, y2, ex = null) {
 }
 
 // C ref: sp_lev.c flip_level() also flips gl.lregions[] and the stored
-// up/down teleport destinations.
+// up/down teleport destinations — UNCONDITIONALLY (unlike traps/objects/
+// monsters/engravings, which flip_level() only touches when inFlipArea()
+// holds; the lregions/updest/dndest loop there has no such guard at all).
 function med_flip_rect(r, kx1, ky1, kx2, ky2, flp) {
     if (!r) return;
     const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
-    const inArea = (x, y) => (x >= minx && x <= maxx && y >= miny && y <= maxy);
     for (const [kx, ky] of [[kx1, ky1], [kx2, ky2]]) {
-        if (!inArea(r[kx], r[ky])) continue;
         if (flp & 1) r[ky] = miny + maxy - r[ky];
         if (flp & 2) r[kx] = minx + maxx - r[kx];
     }
@@ -513,11 +513,15 @@ function med_fixup_statues() {
     if (rn2(2)) {                                  // mkmaze.c:671
         otmp = mk_tt_object(STATUE, somex(croom), somey(croom));
     } else {
-        // "Medusa statues don't contain books": mkcorpstat() with a NULL
-        // permonst, i.e. mksobj_at(STATUE, x, y, TRUE, FALSE) — whose STATUE
-        // arm already rolls the species — and no tt_oname().
+        // "Medusa statues don't contain books": mkcorpstat(STATUE, NULL, NULL,
+        // x, y, CORPSTAT_NONE) -> mksobj_at(STATUE, x, y, init=FALSE, FALSE)
+        // (CORPSTAT_NONE has no CORPSTAT_INIT bit).  init=FALSE means
+        // mksobj_init() — and its ROCK_CLASS/STATUE spellbook-content roll —
+        // never runs; only the unconditional corpsenm-assignment switch in
+        // mksobj() does.  This was passing init=TRUE, which ran mksobj_init()
+        // anyway (an extra rn2() draw plus, at ~50% odds, an actual book).
         const x = somex(croom), y = somey(croom);
-        otmp = mksobj_at(STATUE, x, y, true, false);
+        otmp = mksobj_at(STATUE, x, y, false, false);
     }
     let tryct = 0;
     while (++tryct < 100 && otmp && med_statue_is_stony(otmp))
@@ -554,7 +558,15 @@ function med_finalize(lregions) {
     if (rn2(2)) flp |= 2;                          // sp_lev.c:977
     if (flp) {
         flip_level(flp);
-        for (const r of lregions) med_flip_rect(r, 'lx', 'ly', 'hx', 'hy', flp);
+        // C ref: sp_lev.c flip_level() flips BOTH gl.lregions[i].inarea (the
+        // region itself) AND gl.lregions[i].delarea (its exclusion sub-rect,
+        // the LR_BRANCH exclude=... box here) — flipping only inarea left a
+        // stale, un-flipped exclusion zone that place_lregion's bad_location
+        // exclusion check tested candidate spots against.
+        for (const r of lregions) {
+            med_flip_rect(r, 'lx', 'ly', 'hx', 'hy', flp);
+            med_flip_rect(r, 'nlx', 'nly', 'nhx', 'nhy', flp);
+        }
         med_flip_rect(game.dndest, 'lx', 'ly', 'hx', 'hy', flp);
         med_flip_rect(game.updest, 'lx', 'ly', 'hx', 'hy', flp);
     }

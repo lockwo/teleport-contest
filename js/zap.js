@@ -6,7 +6,7 @@ import { game } from './gstate.js';
 import { rn2, rn1, rnd, rnl, d } from './rng.js';
 import { pline, newsym, m_at, show_glyph_cell, update_topl, topl_more, y_n,
          bot, flush_screen, canseemon_shared, map_invisible, unmap_object,
-         impossible } from './display.js';
+         impossible, display_nhwindow_message } from './display.js';
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_NOFLAGS, xname, near_capacity, splitobj, delobj_core, obfree,
          obj_extract_self, sobj_at, encumber_msg, is_weptool, update_inventory,
@@ -175,11 +175,16 @@ function zap_ok(obj) {
 
 // C ref: zap.c zappable — can the wand be zapped?  spe<0 -> no; spe==0 wrests
 // a final charge with WAND_WREST_CHANCE odds; otherwise consume one charge.
-export function zappable(wand) {
+// C: You("wrest one last charge...") is a real pline — routed through
+// update_topl() (both callers are already async) so a still-pending prior
+// message pages with --More-- first instead of getting silently overwritten
+// by dozap()'s/doengrave()'s very next message (backfire, "glows and fades",
+// "too worn out to engrave", ...).
+export async function zappable(wand) {
     if (wand.spe < 0 || (wand.spe === 0 && rn2(WAND_WREST_CHANCE)))
         return false;
     if (wand.spe === 0)
-        game._pending_message = 'You wrest one last charge from the worn-out wand.';
+        await update_topl('You wrest one last charge from the worn-out wand.');
     wand.spe--;
     return true;
 }
@@ -224,7 +229,7 @@ export async function wand_explode(obj, chg) {
 // C ref: youprop.h Maybe_Half_Phys(dmg) — halve physical damage when the hero
 // has Half_physical_damage.  No covered hero carries it; kept so the callers
 // read like C.
-function Maybe_Half_Phys(dmg) {
+export function Maybe_Half_Phys(dmg) {
     return (game.u?.uprops?.Half_physical_damage) ? Math.trunc((dmg + 1) / 2) : dmg;
 }
 
@@ -302,12 +307,20 @@ export async function zapnodir(obj) {
 
 // C ref: zap.c do_enlightenment_effect — the trailing exercise(A_WIS, TRUE) is
 // an rn2(19) draw; the enlightenment window itself is a menu (display_nhwindow
-// + enlightenment), which this port renders through insight.js.
-async function do_enlightenment_effect() {
-    await pline('You feel self-knowledgeable...');
+// + enlightenment), which this port renders through insight.js.  The explicit
+// display_nhwindow_message() between the two calls mirrors C's
+// `display_nhwindow(WIN_MESSAGE, FALSE)`: it forces the "You feel
+// self-knowledgeable..." line to page with its OWN --More-- before the menu
+// opens, rather than being silently wiped by the menu's clearScreen() (pline()
+// alone only pages a message that word-wraps onto a second row).
+export async function do_enlightenment_effect() {
+    await update_topl('You feel self-knowledgeable...');
+    await display_nhwindow_message();
     const { show_attributes_disclosure } = await import('./insight.js');
-    await show_attributes_disclosure(0 /* ENL_GAMEINPROGRESS */);
-    await pline('The feeling subsides.');
+    // C ref: mode is MAGICENLIGHTENMENT alone (no BASICENLIGHTENMENT bit), so
+    // the Background/Basics/Characteristics section is skipped — basic=false.
+    await show_attributes_disclosure(0 /* ENL_GAMEINPROGRESS */, false);
+    await update_topl('The feeling subsides.');
     exercise(A_WIS, true);
 }
 
@@ -684,7 +697,7 @@ function bhito(obj, otmp) {
 // prepends).  Our flat game.level.objects is append-ordered (oldest-first), so we
 // iterate the square's objects in reverse to reproduce C's traversal order — the
 // order determines the obj_resists / obj_shudders / mkobj RNG sequence.
-async function bhitpile(obj, tx, ty) {
+export async function bhitpile(obj, tx, ty) {
     const arr = game.level?.objects || [];
     const here = [];
     for (let i = arr.length - 1; i >= 0; i--) {
@@ -824,7 +837,7 @@ function closed_door_at(x, y) {
 // below draw C's rolls in C's order; effects that need subsystems this port
 // lacks (cancel_monst, u_teleport_mon, probe_monster, stone_to_flesh) fall
 // through to the shared wakeup() tail rather than skipping it.
-async function bhitm(mtmp, otmp) {
+export async function bhitm(mtmp, otmp) {
     if (!mtmp || !otmp) return 0;
     let ret = 0;
     let wake = true;            /* most 'zaps' should wake monster */
@@ -901,8 +914,12 @@ async function bhitm(mtmp, otmp) {
                 }
                 await killed(mtmp, { nocorpse: true });
             } else {
-                const { newcham } = await import('./makemon.js');
-                if (newcham(mtmp, null) !== 0) {
+                // newcham_wizard_aware (not plain newcham): a wand/spell/potion
+                // of polymorph on a monster is wizard mode's own natural way to
+                // test 'monpolycontrol' (mon.c:5210's post-switch override) --
+                // this call site is already async and off makemon()'s hot path.
+                const { newcham_wizard_aware } = await import('./makemon.js');
+                if (await newcham_wizard_aware(mtmp, null) !== 0) {
                     if (canspotmon(mtmp)) learn_it = true;
                 }
             }
@@ -1048,7 +1065,7 @@ function is_undead_mdat(mdat) {
 function canseemon_z(mon) { return canseemon_shared(mon); }
 
 // C ref: zap.c zapwrapup — after an IMMEDIATE zap, announce system shock once.
-async function zapwrapup() {
+export async function zapwrapup() {
     if (game.obj_zapped)
         await pline('You feel shuddering vibrations.');
     game.obj_zapped = false;
@@ -2492,7 +2509,7 @@ function age_is_relative(obj) {
 // ── losehp / death (hack.c losehp + end.c done) ──────────────────────────
 // C ref: hack.c losehp — subtract HP; on death announce "You die..." and run
 // done(DIED).  showdamage is off in the covered rc so no per-hit damage line.
-async function losehp(n, knam) {
+export async function losehp(n, knam) {
     const u = game.u;
     if (game.program_state?.gameover) return;
     u.uhp -= n;
@@ -3050,7 +3067,7 @@ export async function dozap() {
         // C evaluates !zappable(obj) first.  Match C's short-circuit ordering:
         // zappable (charge), then cursed-backfire, then getdir.
     }
-    if (!zappable(obj)) {
+    if (!(await zappable(obj))) {
         await pline('Nothing happens.');
     } else if (obj.cursed && !rn2(WAND_BACKFIRE_CHANCE)) {
         await backfire(obj); /* the wand blows up in your face! */

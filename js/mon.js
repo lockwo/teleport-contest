@@ -28,7 +28,7 @@ import { is_were_flag, is_human_flag, mflags1_of, mflags2_of, mflags3_of,
 import { attacktype, AT_ENGL } from './monattk_data.js';
 import { objects as OBJECTS, CORPSE, BOULDER, BELL_OF_OPENING,
     COIN_CLASS, GEM_CLASS, ROCK_CLASS, place_object } from './mkobj.js';
-import { monster_by_pmidx, newcham, enexto_spawn,
+import { monster_by_pmidx, newcham, newcham_wizard_aware, enexto_spawn,
     pickvampshape_pub, set_mimic_sym } from './makemon.js';
 import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
     tp_sensemon } from './display.js';
@@ -3545,7 +3545,7 @@ export async function kill_genocided_monsters() {
         const kill_cham = (ismnum(mtmp.cham) && genocided_pm(mtmp.cham));
         if (genocided_pm(mndx) || kill_cham) {
             if (ismnum(mtmp.cham) && !kill_cham) {
-                newcham(mtmp, null);            /* C: NC_SHOW_MSG */
+                await newcham_wizard_aware(mtmp, null);   /* C: NC_SHOW_MSG */
             } else {
                 /* C ref: mon.c:3081 mondead(mtmp) — js/muse.js has a private
                    copy; the pieces of it that live in this file are

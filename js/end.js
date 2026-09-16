@@ -557,7 +557,12 @@ async function done(how) {
                     await savebones(how, corpse || game._death_corpse || null);
                 }
             }
-            if (clean) await real_death_epilogue(how, wizard || discover);
+            // C ref: end.c really_done() — a 'q' partway through disclose()
+            // (this file's `clean`, C's global done_stopprint) skips the
+            // tombstone/goodbye/summary text but topten()'s score notice
+            // still runs; it is NOT a gate on calling really_done()'s tail
+            // at all (that used to skip this entirely for a 'q' answer).
+            await real_death_epilogue(how, wizard || discover, !clean);
         }
     }
 }
@@ -752,8 +757,8 @@ async function disclose(how, taken = false) {
             await invmod.display_inventory_interactive(null);
             // C ref: end.c:641 `container_contents(gi.invent, TRUE, TRUE,
             // FALSE)` — one "Contents of the <box>:" window per carried
-            // container, recursing into nested ones.  Not ported: reachable only
-            // for a hero who both carries a container and answers 'y' here.
+            // container, recursing into nested ones.
+            await container_contents(inv, true, true, false);
         }
         if (c === 'q') stopprint = true;
     }
@@ -851,7 +856,7 @@ async function disclose(how, taken = false) {
 // `scoreSkipped` == (wizard || discover): topten() then prints the "score list
 // will not be checked" notice in place of the high-score table (topten.c:725)
 // and the 'record' file is left alone.
-async function real_death_epilogue(how, scoreSkipped = false) {
+async function real_death_epilogue(how, scoreSkipped = false, stopprint = false) {
     const disp = game?.nhDisplay;
     const { nhgetch } = await import('./input.js');
     if (!disp?.putstr) return;
@@ -891,59 +896,71 @@ async function real_death_epilogue(how, scoreSkipped = false) {
     const year = (+String(game.datetime || '').slice(0, 4)) || 2020;
     const moves = (game.moves == null ? 0 : (game.moves | 0));
 
-    const lines = [];
-    // Stone only for a death (how <= GENOCIDED); see outrip_and_score().
-    const stone = how <= GENOCIDED;
-    if (stone) {
-        lines.push('');
-        for (const r of genl_outrip(plname, umoney, deathText, year)) lines.push(r);
-        lines.push('');
-        lines.push('');
-    }
-    lines.push(`${goodbye_for_role(roleName)} ${plname} the ${roleName}...`);
-    lines.push('');
-    lines.push((how !== ESCAPED && how !== ASCENDED)
-        ? `You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
-          + ` with ${urexp} point${plur(urexp)},`
-        : `You ${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
-          + ` with ${urexp} point${plur(urexp)},`);
-    lines.push(`and ${umoney} piece${plur(umoney)} of gold, after ${moves} move${plur(moves)}.`);
-    lines.push(`You were level ${u?.ulevel || 1} with a maximum of ${u?.uhpmax || 0}`
-        + ` hit point${plur(u?.uhpmax || 0)} when you ${ENDS[how]}.`);
-    lines.push('');
-
-    const MORE = '--More--';
-    const drawMore = (row) => {
-        for (let i = 0; i < MORE.length; i++) disp.setCell(i, row, MORE[i], NO_COLOR, 0);
-        disp.setCursor(MORE.length, row);
-    };
-
-    // C ref: getline.c xwaitforspace(quitchars) behind every dmore() — only
-    // " \r\n\033" dismiss; any other key rings the bell and waits again without
-    // redrawing, so it records as a repeat of the same frame.
-    const waitforspace = async () => {
-        for (;;) {
-            const k = await nhgetch();
-            if (k === 32 || k === 13 || k === 10 || k === 27) return k;
+    // C ref: end.c really_done() — every rip/goodbye/summary line is written
+    // through `dump_forward_putstr(endwin, 0, str, done_stopprint)`, whose
+    // 4th arg SKIPS the actual putstr() (dumplog-only) once done_stopprint is
+    // set; `endwin` itself is never even created unless `!done_stopprint ||
+    // flags.tombstone` (end.c:1390).  disclose()'s own 'q' answer sets that
+    // SAME global, so a 'q' partway through disclosure (this session:
+    // "attributes?" answered with ESC, which maps to 'q' when the response
+    // set offers one) skips the whole tombstone+goodbye+summary block, not
+    // just disclose()'s own remaining queries — only topten()'s score
+    // notice below is unconditional.
+    if (!stopprint) {
+        const lines = [];
+        // Stone only for a death (how <= GENOCIDED); see outrip_and_score().
+        const stone = how <= GENOCIDED;
+        if (stone) {
+            lines.push('');
+            for (const r of genl_outrip(plname, umoney, deathText, year)) lines.push(r);
+            lines.push('');
+            lines.push('');
         }
-    };
+        lines.push(`${goodbye_for_role(roleName)} ${plname} the ${roleName}...`);
+        lines.push('');
+        lines.push((how !== ESCAPED && how !== ASCENDED)
+            ? `You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
+              + ` with ${urexp} point${plur(urexp)},`
+            : `You ${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
+              + ` with ${urexp} point${plur(urexp)},`);
+        lines.push(`and ${umoney} piece${plur(umoney)} of gold, after ${moves} move${plur(moves)}.`);
+        lines.push(`You were level ${u?.ulevel || 1} with a maximum of ${u?.uhpmax || 0}`
+            + ` hit point${plur(u?.uhpmax || 0)} when you ${ENDS[how]}.`);
+        lines.push('');
 
-    // C ref: wintty.c process_text_window() — the endgame TEXT window is paged
-    // 23 lines at a time with --More-- on row 23 of EVERY page (including the
-    // last).  A death's text is exactly 24 lines (blank + 15 rip rows + 2 blank
-    // + goodbye + blank + 3 summary + trailing blank), so it pages as a full
-    // page then a blank one; a QUIT's is 6 lines -> a single page.
-    const PAGE = ROWS - 1;
-    const npages = Math.max(1, Math.ceil(lines.length / PAGE));
-    let ripCancelled = false;
-    for (let p = 0; p < npages && !ripCancelled; p++) {
-        disp.clearScreen();
-        for (let i = 0; i < PAGE; i++) {
-            const t = lines[p * PAGE + i];
-            if (t) disp.putstr(0, i, t, NO_COLOR, 0);
+        const MORE = '--More--';
+        const drawMore = (row) => {
+            for (let i = 0; i < MORE.length; i++) disp.setCell(i, row, MORE[i], NO_COLOR, 0);
+            disp.setCursor(MORE.length, row);
+        };
+
+        // C ref: getline.c xwaitforspace(quitchars) behind every dmore() — only
+        // " \r\n\033" dismiss; any other key rings the bell and waits again without
+        // redrawing, so it records as a repeat of the same frame.
+        const waitforspace = async () => {
+            for (;;) {
+                const k = await nhgetch();
+                if (k === 32 || k === 13 || k === 10 || k === 27) return k;
+            }
+        };
+
+        // C ref: wintty.c process_text_window() — the endgame TEXT window is paged
+        // 23 lines at a time with --More-- on row 23 of EVERY page (including the
+        // last).  A death's text is exactly 24 lines (blank + 15 rip rows + 2 blank
+        // + goodbye + blank + 3 summary + trailing blank), so it pages as a full
+        // page then a blank one; a QUIT's is 6 lines -> a single page.
+        const PAGE = ROWS - 1;
+        const npages = Math.max(1, Math.ceil(lines.length / PAGE));
+        let ripCancelled = false;
+        for (let p = 0; p < npages && !ripCancelled; p++) {
+            disp.clearScreen();
+            for (let i = 0; i < PAGE; i++) {
+                const t = lines[p * PAGE + i];
+                if (t) disp.putstr(0, i, t, NO_COLOR, 0);
+            }
+            drawMore(ROWS - 1);
+            ripCancelled = (await waitforspace()) === 27;
         }
-        drawMore(ROWS - 1);
-        ripCancelled = (await waitforspace()) === 27;
     }
 
     // C ref: topten() — "assure minimum number of points": t0->points is
@@ -958,13 +975,20 @@ async function real_death_epilogue(how, scoreSkipped = false) {
         // list will not be checked."); } goto showwin; }`.  No table, no record
         // update, and the window is still displayed.
         disp.clearScreen();
+        // C ref: end.c really_done() tail — `if (done_stopprint) { raw_print("");
+        // raw_print(""); }` runs right before nh_terminate(), AFTER topten()
+        // returns: two more blank-line cursor advances with no visible text
+        // change (see quit_final_message(), which already applies this for the
+        // "Dump core?" 'q' path).  `stopprint` here is disclose()'s own 'q'
+        // (this session: "attributes?" answered with ESC, which maps to 'q'),
+        // so it needs the same +2.
         if (how !== PANICKED) {
             const msg = `Since you were in ${is_wizard() ? 'wizard' : 'discover'} mode,`
                 + ' the score list will not be checked.';
             disp.putstr(0, 1, msg, NO_COLOR, 0);
-            disp.setCursor(0, 2);
+            disp.setCursor(0, stopprint ? 4 : 2);
         } else {
-            disp.setCursor(0, 0);
+            disp.setCursor(0, stopprint ? 2 : 0);
         }
         game.program_state = game.program_state || {};
         game.program_state.gameover = true;
@@ -1292,7 +1316,7 @@ import {
     objects as objects_, AMULET_CLASS as AMULET_CLASS_, GEM_CLASS as GEM_CLASS_,
     FIRST_REAL_GEM as FIRST_REAL_GEM_, LAST_REAL_GEM as LAST_REAL_GEM_,
     STATUE as STATUE_, BAG_OF_TRICKS as BAG_OF_TRICKS_, POT_WATER as POT_WATER_,
-    AMULET_OF_YENDOR as AMULET_OF_YENDOR_,
+    AMULET_OF_YENDOR as AMULET_OF_YENDOR_, LARGE_BOX as LARGE_BOX_,
 } from './mkobj.js';
 
 // hack.h:484-495 death codes end.js did not already name.
@@ -1356,15 +1380,15 @@ function OBJ_NAME(o) { return o?.name || ''; }
 // C ref: obj.h Has_contents / Is_container / SchroedingersBox.  js/invent.js
 // (372/378) and js/pickup.js:154 keep private copies of these; end.js has none.
 function Has_contents(obj) { return !!(obj?.cobj && obj.cobj.length); }
+// C ref: obj.h:337 Is_container(o) == otyp in [LARGE_BOX..BAG_OF_TRICKS]. This
+// port's otyp numbering runs LARGE_BOX=214..BAG_OF_TRICKS=220 (js/mkobj.js),
+// NOT the literal C header values — js/invent.js:397-405 already carries this
+// exact fix (its own comment: "the enumerated list stopped at BAG_OF_HOLDING,
+// so a bag of tricks was never a container").
 function Is_container(obj) {
-    const oc = objects_[obj?.otyp]?.oclass;
-    return oc === 6 /* TOOL_CLASS */ && CONTAINER_OTYPS.has(obj.otyp);
+    const t = obj?.otyp;
+    return t >= LARGE_BOX_ && t <= BAG_OF_TRICKS_;
 }
-// obj.h: BAG_OF_HOLDING..ICE_BOX plus the two chests/boxes and the sack family.
-const CONTAINER_OTYPS = new Set([
-    216 /* large box */, 217 /* chest */, 218 /* ice box */, 219 /* sack */,
-    BAG_OF_TRICKS_, 221 /* bag of holding */, 222 /* oilskin sack */,
-]);
 // C ref: obj.h SchroedingersBox(o) — a large box with spe==1 made by the
 // bones/quantum-mechanic path; mirrors js/pickup.js:154.
 function SchroedingersBox(obj) { return !!obj && obj.otyp === 216 && obj.spe === 1; }
@@ -1374,18 +1398,13 @@ function SchroedingersBox(obj) { return !!obj && obj.otyp === 216 && obj.spe ===
 function the_(s) { return /^[A-Z]/.test(s || '') ? s : `the ${s}`; }
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
-// C ref: win/tty/wintty.c create_nhwindow/putstr/display_nhwindow/
-// destroy_nhwindow.  frozen/terminal.js owns the real grid and coverage.mjs
-// marks windows.c/wintty.c N/A, so these are text sinks: the translated
-// functions accumulate their lines, and the wiring pass hands them to the
-// existing renderer (js/extcmd-handlers.js render_container_contents() already
-// does exactly that for container_contents(box, FALSE, FALSE, TRUE)).
-function create_nhwindow(type) { return { type, lines: [] }; }
+// C ref: win/tty/wintty.c putstr — the dumplog-only call sites below pass
+// window 0 (no live dumplog window in this port), so this stays a no-op sink
+// for them; container_contents() renders through extcmd-handlers.js's
+// draw_corner_window() instead (frozen/terminal.js owns the real grid).
 function putstr(win, _attr, str) {
     if (win && Array.isArray(win.lines)) win.lines.push(str);
 }
-function display_nhwindow(_win, _blocking) { /* wiring pass renders win.lines */ }
-function destroy_nhwindow(_win) { }
 
 // C ref: allmain.c gh.hero_seq == (svm.moves << 3) + hero moves this turn;
 // mirrors the private js/apply.js:213.  gd.done_seq lives on the game state.
@@ -1790,13 +1809,14 @@ const PROP_NAMES_1_8 = [
 // js/extcmd-handlers.js render_container_contents() with the tty corner-window
 // renderer inlined.  Do not wire this over that call site without replacing it
 // — two copies of the same window is the duplicate-reimplementation trap.  The
-// missing flavour is disclose()'s (gi.invent, TRUE, TRUE, FALSE) recursion
-// (end.c:641), which end.js's disclose() currently notes as unported.
+// other flavour, disclose()'s (gi.invent, TRUE, TRUE, FALSE) recursion
+// (end.c:641), is wired in disclose() below.
 export async function container_contents(list, identified, all_containers,
                                          reportempty) {
-    const dumping = !!game.iflags?.in_dumplog;
     const I = await import('./invent.js');
     const { discover_object } = await import('./o_init.js');
+    const { draw_corner_window } = await import('./extcmd-handlers.js');
+    const { nhgetch } = await import('./input.js');
     const d = await deps();
 
     for (const box of (list || [])) {
@@ -1810,15 +1830,11 @@ export async function container_contents(list, identified, all_containers,
             if (box.otyp === BAG_OF_TRICKS_) {
                 continue; /* wrong type of container */
             } else if (box.cobj && box.cobj.length) {
-                const tmpwin = create_nhwindow(4 /* NHW_MENU */);
-
                 /* at this stage, the SchroedingerBox() flag is only set if the
                    cat inside the box is alive */
                 const cat = SchroedingersBox(box);
-
-                putstr(tmpwin, 0, `Contents of ${the_(I.xname(box))}:`);
-                if (!dumping)
-                    putstr(tmpwin, 0, '');
+                const lines = [{ text: `Contents of ${the_(I.xname(box))}:` },
+                                { text: '' }];
                 /* C: buf[0] = buf[1] = ' ' — two leading spaces per item */
                 if (box.cobj.length && !cat) {
                     const sortloot_opt = game.flags?.sortloot;
@@ -1840,16 +1856,31 @@ export async function container_contents(list, identified, all_containers,
                         }
                         // doname_with_price() is private to js/invent.js;
                         // floor_object_name() is its exported wrapper (:545).
-                        putstr(tmpwin, 0, '  ' + I.floor_object_name(obj));
+                        lines.push({ text: '  ' + I.floor_object_name(obj) });
                     }
                     I.unsortloot(sortedcobj);
                 } else if (cat) {
-                    putstr(tmpwin, 0, "  Schroedinger's cat!");
+                    lines.push({ text: "  Schroedinger's cat!" });
                 }
-                if (dumping)
-                    putstr(0, 0, '');
-                display_nhwindow(tmpwin, true);
-                destroy_nhwindow(tmpwin);
+                let maxcol = 0;
+                for (const ln of lines) maxcol = Math.max(maxcol, ln.text.length + 1);
+                draw_corner_window(lines, maxcol, '--More--', 0);
+                // C ref: win/tty/wintty.c process_text_window() ->
+                // dmore(cw, quitchars); decl.c quitchars = " \r\n\033" — any
+                // other key rings the bell and leaves the window up (same
+                // xwaitforspace() loop topl_more_ext already implements for
+                // the plain --More--).
+                for (;;) {
+                    const k = await nhgetch();
+                    const kc = (k === 27) ? '\x1b' : String.fromCharCode(k);
+                    if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b') break;
+                }
+                // C ref: draw_corner_window()'s callers all clear the modal
+                // flag once their window is dismissed (e.g.
+                // extcmd-handlers.js:1803); without this the next disclose()
+                // query renders behind the stale overlay (display.js:2729
+                // `if (game._modal_screen) return;`).
+                delete game._modal_screen;
                 if (all_containers)
                     await container_contents(box.cobj, identified, true,
                                              reportempty);

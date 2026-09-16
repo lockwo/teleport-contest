@@ -2616,6 +2616,11 @@ function _buildScreenOutput() {
     const display = game?.nhDisplay;
     if (!display) return;
 
+    // A normal (non-modal) screen build is a genuine full bot(): any status
+    // truncation a prior chained corner window (draw_corner_window) needs to
+    // carry forward no longer applies once we're back to plain gameplay.
+    game._statusTruncCol = null;
+
     _syncClipping();
     const nstat = StatusRows();
     let output = '';
@@ -2867,6 +2872,12 @@ export async function pline(msg, opts = {}) {
 // topline into a --More--, which is the only part scored so far.
 export async function impossible(msg) {
     await update_topl(msg);
+    // C ref: pline.c:606 — `if (program_state.in_sanity_check) { ...; return; }`
+    // skips the "Program in disorder!" + report-to-devteam lines when this
+    // impossible() came from inside sanity_check() (the wizard-mode
+    // 'sanity_check' option's per-turn audit): only the offending line itself
+    // is shown.
+    if (game.program_state?.in_sanity_check) return;
     await update_topl('Program in disorder!  (Saving and reloading may fix this problem.)');
     await update_topl('Please report these messages to devteam@nethack.org.');
 }

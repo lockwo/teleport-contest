@@ -1174,7 +1174,11 @@ const AD_STON_LOCAL = AD_STON;   void AD_STON_LOCAL;
 export async function mdamageu(mtmp, n) {
     if (n < 0) n = 0;
     const u = game.u || {};
-    game.disp_botl = true;
+    // C ref: mhitu.c mdamageu() sets `disp.botl = TRUE`.  This used to write
+    // `game.disp_botl` (an unread, misspelled field — never `game.botl`, the
+    // one js/display.js botl_flush()/bot_snapshot() actually consume), so the
+    // dirty mark never reached anything.
+    game.botl = true;
     if (Upolyd()) {
         u.mh = (u.mh | 0) - n;
         if (u.mh > u.mhmax) u.mh = u.mhmax;

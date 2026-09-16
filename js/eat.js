@@ -582,6 +582,7 @@ export function newuhs(incr) {
                 const duration = 10 - uhunger_div_by_10;
                 game._eat_occupation = null;
                 game._pending_message = 'You faint from lack of food.';
+                game._toplin = 1;
                 u.uprops = u.uprops || {};
                 u.uprops.HDeaf = (u.uprops.HDeaf || 0) + duration;
                 if ((game.multi ?? 0) >= -duration) game.multi = -duration;
@@ -595,6 +596,7 @@ export function newuhs(incr) {
         } else if (h < -(100 + 10 * acurr_eff(A_CON))) {
             u.uhs = STARVED;
             game._pending_message = 'You die from starvation.';
+            game._toplin = 1;
             game._starved = true;      /* done(STARVING) is not modelled */
             return;
         }
@@ -620,6 +622,7 @@ export function newuhs(incr) {
                 : `You ${!incr ? 'only feel hungry now'
                      : (h < 145) ? 'feel hungry'
                        : 'are beginning to feel hungry'}.`;
+            game._toplin = 1;
         } else if (newhs === WEAK) {
             const role = game.urole?.name?.m || '';
             game._pending_message = hallu
@@ -632,6 +635,7 @@ export function newuhs(incr) {
                   : `You ${!incr ? 'are still'
                        : (h < 45) ? 'feel'
                          : 'are beginning to feel'} weak.`;
+            game._toplin = 1;
         }
         // C: incr && occupation && occupation != eatfood/opentin ->
         // stop_occupation(); the eating occupation deliberately survives.

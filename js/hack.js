@@ -530,7 +530,13 @@ async function run_movement(run) {
             if (game.multi === 0) { end_running(true); break; }
         }
 
-        await domove(u.dx, u.dy);
+        // C ref: allmain.c moveloop_core():526 — every continuation step calls
+        // domove() DIRECTLY (not through rhack()/set_move_cmd()), so
+        // gd.domove_attempting is 0 here and domove()'s smudge/bubble block
+        // never runs for it (see the domove() comment in cmd.js).  `false`
+        // reproduces that: only the FIRST domove() of a run (line above) may
+        // smudge an engraving or nudge the water bubble.
+        await domove(u.dx, u.dy, false);
     }
 
     // C ref: allmain.c:380 — a NEGATIVE gm.multi (nh_timeout()'s FUMBLING
@@ -1032,7 +1038,14 @@ async function travel_walk() {
             break;
         }
 
-        await domove(u.dx, u.dy);
+        // C ref: allmain.c moveloop_core():526 — like run_movement() above,
+        // every step after the first calls domove() directly from the
+        // moveloop rather than through rhack()/set_move_cmd(), so
+        // gd.domove_attempting is 0 and domove()'s smudge/bubble block never
+        // runs on it (see the domove() comment in cmd.js).  `first` is still
+        // this iteration's pre-update value here, so it is true on exactly
+        // the one domove() dotravel_target() dispatches fresh.
+        await domove(u.dx, u.dy, first);
         if (first) { first = false; c.move = 1; }
         if (!c.move) break;          // blocked move: no turn, travel stops
         await moveloop_turn();       // the elapsed turn, taken inline
@@ -1640,21 +1653,31 @@ function check_jump(x, y) {
 // with a clear Bresenham path.  Emits the failure message when showmsg.
 async function is_valid_jump_pos(x, y, showmsg) {
     const u = game.u;
+    // C ref: apply.c is_valid_jump_pos() — every failure message is a real
+    // pline()/You()/There() call (apply.c:1900,1904,1908,1912,1951), which
+    // merges onto or pages a still-pending topline via update_topl's normal
+    // logic.  These used to be raw game._pending_message writes with no
+    // _toplin/_toplinSoft marker at all: a message left pending by the
+    // "Where do you want to jump?" prompt (non-verbose getpos, where the
+    // tip window is skipped) would be silently clobbered instead of paged.
     if (distu(x, y) !== 5) {
-        if (showmsg) { game._pending_message = 'Illegal move!'; }
+        if (showmsg) { await pline('Illegal move!'); }
         return false;
     }
     if (distu(x, y) > 9) {
-        if (showmsg) { game._pending_message = 'Too far!'; }
+        if (showmsg) { await pline('Too far!'); }
         return false;
     }
     if (!isok(x, y)) {
-        if (showmsg) { game._pending_message = 'You cannot jump there!'; }
+        if (showmsg) { await pline('You cannot jump there!'); }
         return false;
     }
-    // cansee check omitted (targets on the recorded path are all seen)
+    if (!cansee(x, y)) {
+        if (showmsg) { await pline('You cannot see where to land!'); }
+        return false;
+    }
     if (!walk_path(u.ux, u.uy, x, y, check_jump)) {
-        if (showmsg) { game._pending_message = 'There is an obstacle preventing that jump.'; }
+        if (showmsg) { await pline('There is an obstacle preventing that jump.'); }
         return false;
     }
     return true;
@@ -1803,9 +1826,15 @@ export function gather_locs_interesting(x, y, gloc, validfn) {
         if (!explored) return false;
         if (look_at_object_here(x, y)) return true;
         // "not interesting": walls, trees, bars, ice, air, cloud, lava, water,
-        // plain room floor and corridor.
+        // plain room floor and corridor.  C tests the DISPLAYED glyph
+        // (glyph_at()), not the true terrain: an undiscovered SDOOR/SCORR
+        // renders identically to a wall/STONE until found (cvt_sdoor_to_door /
+        // the SCORR->CORR conversion is what actually flips loc.typ), so both
+        // must be excluded here too — the codebase's usual `IS_WALL(typ) ||
+        // typ === SDOOR` pairing (apply.js, dig.js, cmd.js, ...) was missing.
         return !(IS_WALL(loc.typ) || loc.typ === ICE || loc.typ === ROOM
                  || loc.typ === CORR || loc.typ === STONE
+                 || loc.typ === SDOOR || loc.typ === SCORR
                  || IS_POOL(loc.typ) || IS_LAVA(loc.typ) || IS_AIR(loc.typ));
     }
 }
@@ -1864,6 +1893,10 @@ async function getpos_render(message, cx, cy) {
 // `validfn(x,y)` flags invalid targets with a "(invalid target)" suffix.
 // `force` selects the wizard-teleport / #jump behavior (unknown keys keep the
 // loop alive) vs the ';' farlook behavior (unknown keys finish).
+// Already exported below (getpos_tip, getpos, ...) — js/teleport.js's
+// control_mon_tele() (the wizard-mode 'montelecontrol' monster-teleport
+// targeting prompt) reuses this same cursor loop via a dynamic import rather
+// than forking a second copy.
 async function getpos(goalText, startx, starty, validfn, force = false, verbose = false, travelMode = false, detectMode = false, terrainMode = false) {
     const u = game.u;
     let cx = startx, cy = starty;
@@ -1976,17 +2009,17 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
     let unknownMsg = null;
     for (;;) {
         if (showGoal) {
-            // C getpos.c:863 pline("Move cursor to %s:", goal).  In verbose mode
-            // route through update_topl so the pending "(For instructions...)"
-            // line is acknowledged with its --More-- frame first.
-            if (verbose) {
-                await update_topl(`Move cursor to ${goalText}:`);
-                await flush_screen(1);
-                const disp = game.nhDisplay;
-                if (disp?.setCursor) disp.setCursor(cx - 1, cy + 1);
-            } else {
-                await getpos_render(`Move cursor to ${goalText}:`, cx, cy);
-            }
+            // C getpos.c:863 pline("Move cursor to %s:", goal) — a plain
+            // pline(), so it concatenates onto any still-unacknowledged
+            // topline (the "(For instructions...)" hint in verbose mode, but
+            // just as easily a getpos toggle's gp_pline(), e.g. '#'/'"'/'!'/
+            // '*') regardless of the verbose setting; only the hint itself is
+            // gated on verbose, not this line's routing.  getpos_render's
+            // blind replace is only safe for a fresh, non-pending topline.
+            await update_topl(`Move cursor to ${goalText}:`);
+            await flush_screen(1);
+            const disp = game.nhDisplay;
+            if (disp?.setCursor) disp.setCursor(cx - 1, cy + 1);
             showGoal = false;
         } else if (gp_iflags().autodescribe && !msgGiven) {
             // C getpos.c:865 auto_describe(cx, cy) at top of loop.
@@ -2128,8 +2161,11 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
         if (ch === '#') { // NHKF_GETPOS_AUTODESC
             const ifl = gp_iflags();
             ifl.autodescribe = !ifl.autodescribe;
-            await gp_pline(`Automatic description of features under cursor is `
-                           + `${ifl.autodescribe ? 'on' : 'off'}.`, cx, cy);
+            // C ref: getpos.c:964 `pline("Automatic description %sis %s.",
+            // flags.verbose ? "of features under cursor " : "", ...)` — the
+            // longer wording only appears in verbose mode.
+            await gp_pline(`Automatic description ${verbose ? 'of features under cursor ' : ''}`
+                           + `is ${ifl.autodescribe ? 'on' : 'off'}.`, cx, cy);
             if (!ifl.autodescribe) showGoal = true;
             msgGiven = true;
             continue;
@@ -2190,6 +2226,11 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
                 const found = getpos_find_feature(ch, cx, cy);
                 if (found) {
                     cx = found.x; cy = found.y;
+                    // C getpos.c foundc: `if (msg_given) { clear_nhwindow(
+                    // WIN_MESSAGE); msg_given = FALSE; }` -- an immediate match
+                    // wipes a still-pending prompt (e.g. "Where do you want to
+                    // travel to?") instead of leaving it on screen.
+                    if (msgGiven) { game._pending_message = ''; msgGiven = false; }
                     continue; // silent jump; auto_describe fires next loop
                 }
                 await getpos_render(`Can't find dungeon feature '${ch}'.`, cx, cy);
@@ -2641,11 +2682,21 @@ function look_pick_description(x, y) {
         };
     }
 
-    // C ref: pager.c do_screen_description() is_swallow_sym() branch — the
-    // swallow-stomach middle-left/right symbol is the SAME char as S_vwall
-    // ('|' in ASCII, meta-x in DECgraphics), so every vertical wall enumerates
-    // "the interior of a monster" first (no article: C uses x_str verbatim).
-    if (IS_WALL(typ)) {
+    // C ref: pager.c do_screen_description() is_swallow_sym(sym) branch — sym
+    // is the CURRENTLY DISPLAYED symbol, not the terrain type.  Plain ASCII
+    // has no collision split: every wall glyph is literally '-' or '|', and
+    // dat/symbols' default (no symset) table repeats both on the swallow
+    // block, so ANY wall type collides there (matches the old blanket
+    // IS_WALL(typ) below).  dat/symbols' "DECgraphics"/"curses" blocks are
+    // NOT that uniform though: S_sw_ml/S_sw_mr copy ONLY S_vwall's VT100
+    // code (\xf8, this port's wall_cmap_glyph 'x'); S_hwall and every
+    // corner/tee/cross wall glyph ('q','l','k','m','j','n','v','w','u','t')
+    // get DIFFERENT codes that the swallow block never repeats.  This port
+    // renders decgraphics walls via its own hand-coded table (display.js
+    // wall_cmap_glyph), not through gs.showsyms, so `loc.disp_ch` (the same
+    // char actually drawn) plus the `disp_decgfx` flag it already carries
+    // are what stand in for sym/is_swallow_sym here.
+    if (IS_WALL(typ) && (!loc.disp_decgfx || loc.disp_ch === 'x')) {
         const look = terrain_description(x, y);
         return {
             text: `${prefix}the interior of a monster or ${an(look)} (${look})`,
@@ -3392,8 +3443,15 @@ export async function do_look_full() {
         // C do-while continues for LOOK_TRADITIONAL; the loop top reprompts.
     }
 
-    game._pending_message = '';
-    game._toplin = 0;
+    // C ref: pager.c do_look() end — after the do-while breaks (ans<0, i.e.
+    // ESC or getpos's own !force "Done." quit) it only restores flags.verbose
+    // and returns; it never touches the message window itself.  getpos()
+    // already left the right thing on the top line: ESC's own branch cleared
+    // it (msg_given was TRUE there, so C's exitgetpos clear_nhwindow ran),
+    // while the "Done." quit set msg_given=FALSE specifically to SUPPRESS
+    // that clear, so "Done." is meant to persist as the visible message here.
+    // Clearing it unconditionally (as this used to) wiped "Done." before the
+    // next screen render ever showed it.
     game.context.move = 0;
 }
 

@@ -325,7 +325,13 @@ function iflags() { game.iflags = game.iflags || {}; return game.iflags; }
 function ustate() { game.u = game.u || {}; return game.u; }
 function giState() { game.gi = game.gi || {}; return game.gi; }
 function glState() { game.gl = game.gl || {}; return game.gl; }
-function carried(obj) { return !!obj && (obj.where === OBJ_INVENT || inventoryArray().includes(obj)); }
+// C ref: hack.h carried(obj) — obj->where == OBJ_INVENT.  Exported: js/dothrow.js
+// hurtle()'s Punished-ball check (`import * as I from './invent.js'; I.carried(...)`)
+// called this as I.carried() while it was a local, unexported binding, which
+// threw "I.carried is not a function" the first time hurtle() actually ran
+// with a punished hero (previously unreachable — see js/region.js's
+// in_out_region() fix, which is what let any hurtle() finish at all).
+export function carried(obj) { return !!obj && (obj.where === OBJ_INVENT || inventoryArray().includes(obj)); }
 function mcarried(obj) { return !!obj && obj.where === 'minvent'; }
 function has_oname(obj) { return !!obj?.oname; }
 function ONAME(obj) { return obj?.oname || ''; }
@@ -662,7 +668,7 @@ export async function wield_tool(obj, verb) {
     } else {
         const oldwep = game.uwep;
         if (will_weld(obj)) {
-            ready_weapon(obj);
+            await ready_weapon(obj);
         } else {
             await update_topl(`You now wield ${doname(obj)}.`);
             setuwep_slot(obj);
@@ -671,7 +677,7 @@ export async function wield_tool(obj, verb) {
             setuswapwep(oldwep);
     }
     if (game.uwep && game.uwep !== obj) return false;
-    if (game.u && game.u.twoweap) untwoweapon();
+    if (game.u && game.u.twoweap) await untwoweapon();
     if (obj.oclass !== WEAPON_CLASS) game.unweapon = true;
     return true;
 }
@@ -1006,8 +1012,16 @@ export function touch_artifact(obj, _mon) {
         // RNG; the hero takes the blast.
         if (!yours) return false;
         // C: You("are blasted by %s power!", s_suffix(the(xname(obj))))
+        // toplin=NEED_MORE (not just a bare _pending_message write) so a
+        // same-turn follow-on this function's own caller prints (the wield
+        // success line, always reached when this branch didn't also evade
+        // the grasp below) sees a still-unacknowledged line and pages it via
+        // update_topl()'s merge-or-more() check instead of silently
+        // overwriting it and racing on into the turn's end-of-turn RNG a
+        // keystroke early.
         game._pending_message =
             `You are blasted by ${s_suffix(`the ${xname(obj)}`)} power!`;
+        game._toplin = 1;
         game._touch_blasted = true;
         let dmg = d(Antimagic() ? 2 : 4, self_willed ? 10 : 4);
         // C: half (Maybe_Half_Phys quarter) of the usual silver damage bonus.
@@ -1413,7 +1427,28 @@ export function makeplural(oldstr) {
     }
     return plural + excess;
 }
-function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
+// C ref: objnam.c:2108 just_an() / objnam.c:2144 an() — the naive vowel-only
+// test this replaced said "an unicorn horn"/"an uranium wand"/"an useful
+// gizmo" (seed5002 step 32); C's exception list treats these 'y'-sound
+// initial-U words (plus "eu-", "one" as in "one-eyed", and non-vowel-sounding
+// 'x') as consonants for article purposes.
+function an(s) {
+    if (!s) return s;
+    const c0 = s[0].toLowerCase();
+    if (!s[1] || s[1] === ' ')
+        return (('aefhilmnosx'.includes(c0)) ? 'an ' : 'a ') + s;
+    const low = s.toLowerCase();
+    if (low.startsWith('the ') || low === 'molten lava' || low === 'iron bars' || low === 'ice')
+        return s;
+    const oneShort = low.startsWith('one') && (s.length <= 3 || '-_ '.includes(s[3]));
+    const consonantSoundU = oneShort || low.startsWith('eu') || low.startsWith('uke')
+        || low.startsWith('ukulele') || low.startsWith('unicorn') || low.startsWith('uranium')
+        || low.startsWith('useful');
+    if (('aeiou'.includes(c0) && !consonantSoundU)
+        || (c0 === 'x' && !'aeiou'.includes((s[1] || '').toLowerCase())))
+        return `an ${s}`;
+    return `a ${s}`;
+}
 function s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
 function highc(s) { return String(s).charAt(0).toUpperCase(); }
 function mungspaces(s) { return String(s).replace(/\s+/g, ' ').trim(); }
@@ -1857,12 +1892,30 @@ function simple_obj_name(obj, opts = {}) {
         const n = count_contents(obj, false, false, true, false);
         containing = ` containing ${n} item${n === 1 ? '' : 's'}`;
     }
+    // C ref: objnam.c xname_flags TOOL_CLASS OIL_LAMP/MAGIC_LAMP/BRASS_LANTERN/
+    // candle arm — `if (obj->lamplit) bp += " (lit)"`.  This function is a
+    // parallel reimplementation of that switch (doname_base) for the
+    // inventory/floor-name callers and never carried this arm across, so a
+    // lit lamp/lantern/candle read with no indication it was burning.
+    const lit = lit_suffix(obj);
     if (quantity && (obj.quan || 1) > 1 && !pair_of(obj)) {
         const numPrefix = count ? `${vagueQuan ? 'some' : obj.quan} ` : '';
-        return `${numPrefix}${prefix}${makeplural(base)}${containing}${chg}${oname_suffix(obj)}`;
+        return `${numPrefix}${prefix}${makeplural(base)}${containing}${lit}${chg}${oname_suffix(obj)}`;
     }
     const phrase = `${prefix}${base}`;
-    return (article ? with_article_obj(obj, phrase) : phrase) + containing + chg + oname_suffix(obj);
+    return (article ? with_article_obj(obj, phrase) : phrase) + containing + lit + chg + oname_suffix(obj);
+}
+// C ref: objnam.c xname_flags — " (lit)" for a burning oil lamp/magic lamp/
+// brass lantern/candle.  (The candle-only "partly used " prefix that sits
+// beside it in C is left off: it depends on objnam.js's own peek_timer(),
+// which is itself a stub always returning 0, so porting the comparison here
+// would only ever compare against `-moves()`, not a real value.)
+function lit_suffix(obj) {
+    if (!obj) return '';
+    if (obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP
+        || obj.otyp === BRASS_LANTERN || Is_candle(obj))
+        return obj.lamplit ? ' (lit)' : '';
+    return '';
 }
 
 // C ref: objnam.c doname_base():1174 — `else if (obj_is_pname(obj)
@@ -2163,6 +2216,14 @@ function putStatusLines(display, bandStart = null, menuLastRow = -1) {
     const s2 = statusLine2();
     display.putstr(0, 22, (bandStart != null && menuLastRow >= 22) ? s1.slice(0, bandStart) : s1, NO_COLOR);
     display.putstr(0, 23, (bandStart != null && menuLastRow >= 23) ? s2.slice(0, bandStart) : s2, NO_COLOR);
+    // C ref: win/tty/wintty.c erase_menu_or_text() -> docorner() — dismissing
+    // THIS window later sweeps cl_end() from (offx-1) across every row down to
+    // and including the status window whenever the menu's own content reaches
+    // row 22, wiping row 23's tail too even though this draw wrote it in full.
+    // A short overlay drawn right after (no content of its own down there)
+    // inherits that already-wrecked line instead of a fresh recompute, so
+    // remember the cutoff for whichever corner window renders next.
+    if (bandStart != null && menuLastRow >= 22) game._statusTruncCol = Math.max(0, bandStart - 1);
 }
 
 function inventoryRows(lets = null, ofilter = null) {
@@ -2696,8 +2757,15 @@ export async function dismiss_invent_screen() {
     delete game._skill_pages;
     delete game._skill_page;
     game._pending_message = '';
+    // C ref: win/tty/wintty.c erase_menu_or_text() -> docorner() — tearing down
+    // a menu whose own content reached row 22 (putStatusLines set
+    // game._statusTruncCol for exactly this) is what wrecks the status line's
+    // tail; flush_screen's normal full redraw resets that for plain gameplay,
+    // so restore it here for the very next corner window to inherit.
+    const carriedTrunc = game._statusTruncCol;
     await docrt();
     await flush_screen(1);
+    if (carriedTrunc != null) game._statusTruncCol = carriedTrunc;
     return true;
 }
 
@@ -3489,7 +3557,7 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
             return null;
         }
         if (ilet === HANDS_SYM) {
-            if (!allownone) { mime_action(word); return null; }
+            if (!allownone) { await mime_action(word); return null; }
             return hands_obj;
         }
 
@@ -5047,9 +5115,15 @@ function ready_ok(obj) {
 }
 
 // C ref: wield.c untwoweapon() — end two-weapon combat (no-op when not active).
-function untwoweapon() {
+// C: You("can no longer use two weapons at once."), a real pline() -> update_
+// topl(), so a still-pending message from whatever the caller printed just
+// before this (e.g. ready_weapon()'s wield line, or doswapweapon()'s second
+// prinv() line) gets its own --More-- first instead of being silently
+// clobbered by a bare _pending_message write (js/uhitm.js's own local
+// untwoweapon() already made this same fix independently).
+async function untwoweapon() {
     if (game.u?.twoweap) {
-        game._pending_message = 'You can no longer use two weapons at once.';
+        await update_topl('You can no longer use two weapons at once.');
         game.u.twoweap = false;
         update_inventory();
     }
@@ -5107,7 +5181,7 @@ async function doquiver_core(verb) {
             return ECMD_OK;
         }
         setuwep_slot(null);
-        untwoweapon();
+        await untwoweapon();
         was_uwep = true;
     } else if (newquiver === game.uswapwep) {
         const use_plural = is_plural(game.uswapwep) || pair_of(game.uswapwep);
@@ -5117,26 +5191,30 @@ async function doquiver_core(verb) {
             return ECMD_OK;
         }
         setuswapwep(null);
-        untwoweapon();
+        await untwoweapon();
     }
 
     // quivering: C ref: wield.c — "ready" quivers first so the line shows
     // "(at the ready)"; "fire" prints "You ready: ..." BEFORE quivering so it
-    // does not.
+    // does not.  Routed through update_topl (not prinv()'s bare setter) so a
+    // still-pending untwoweapon() line just above pages first instead of
+    // being silently clobbered.
     if (verb === 'ready') {
         setuqwep(newquiver);
-        prinv(null, newquiver, 0);
+        await update_topl(prinv_fmt(null, newquiver, 0));
     } else {
-        prinv('You ready:', newquiver, 0);
+        await update_topl(prinv_fmt('You ready:', newquiver, 0));
         setuqwep(newquiver);
     }
 
+    // Same reasoning: this closing line is a real pline() in C (wield.c),
+    // chained after the prinv() line above in the same command.
     let res = 0;
     if (was_uwep) {
-        game._pending_message = `You are now ${empty_handed()}.`;
+        await update_topl(`You are now ${empty_handed()}.`);
         res = 1;
     } else if (was_twoweap && !game.u?.twoweap) {
-        game._pending_message = 'You are no longer wielding two weapons at once.';
+        await update_topl('You are no longer wielding two weapons at once.');
         res = 1;
     }
     return res ? ECMD_TIME : ECMD_OK;
@@ -5203,7 +5281,7 @@ function will_weld(obj) { return will_weld_dw(obj); }
 // keep handling the object.  The recorded hero (Neutral archeologist) does not
 // hate silver and is not a bane target, so after touch_artifact the function
 // returns true with no further RNG.
-function retouch_object(obj) {
+async function retouch_object(obj) {
     // C: a silver-hating hero may still perform the invocation ritual.
     if (obj?.otyp === BELL_OF_OPENING && game._invocation_pos) return true;
     if (touch_artifact(obj, game.youmonst)) {
@@ -5211,8 +5289,14 @@ function retouch_object(obj) {
         // bane_applies(): needs a polymorphed bane-target hero, not modelled.
         const bane = false;
         if (!ag && !bane) return true;
-        game._pending_message =
-            `You can't handle ${yname(obj)}${obj.owornmask ? ' anymore' : ''}!`;
+        // C: You("can't handle %s%s!", ...) is a real pline() (artifact.c
+        // retouch_object()), reached right after touch_artifact() may have
+        // already left its OWN blast pline pending (toplin=1) a few lines
+        // above in the caller — a bare _pending_message write here would
+        // silently clobber that still-unacknowledged line instead of paging
+        // it first.
+        await update_topl(
+            `You can't handle ${yname(obj)}${obj.owornmask ? ' anymore' : ''}!`);
         // C ref: artifact.c:2535 — the damage is skipped when touch_artifact()
         // already blasted the hero this call.
         if (!game._touch_blasted) {
@@ -5234,46 +5318,49 @@ function retouch_object(obj) {
 // prinv announcement, and the artifact retouch (rn2(4)).  Welding, shield/
 // two-handed conflicts, corpse-wield, and talking/glowing-artifact effects are
 // modelled but not exercised.
-function ready_weapon(wep) {
+async function ready_weapon(wep) {
     let res = ECMD_OK;
     const was_twoweap = !!game.u?.twoweap;
     const had_wep = !!game.uwep;
 
-    // C ref: wield.c:163-353 — every branch below is a pline()/You() call, which
-    // leaves toplin==NEED_MORE so a same-turn follow-on (doswapweapon()'s second
-    // prinv() line for the bumped secondary) merges onto it instead of replacing
-    // it.  Only the wield-success arm marked this (via prinv(), below); the
-    // others left a bare _pending_message assignment, so doswapweapon()'s
-    // update_topl() saw no pending line and silently dropped this one instead
-    // of merging (e.g. unwielding into an empty swap slot: "You are bare
-    // handed." followed by "b - a +2 sling (alternate weapon; not wielded).").
+    // C ref: wield.c:163-353 — every branch below is a pline()/You() call.
+    // Routed through update_topl() (not a bare _pending_message/_toplin
+    // write) so EITHER direction of the same-turn interaction is faithful:
+    // a still-pending EARLIER message (e.g. touch_artifact()'s artifact-
+    // blast pline, which fires first when retouch_object() lets a
+    // self-willed/misaligned artifact through) gets its own --More-- here
+    // before this line replaces it — exactly like C's update_topl(), which
+    // calls more() inline the moment a new pline can't share the row —
+    // instead of the JS command silently overwriting/dropping it and racing
+    // on to consume the turn's end-of-turn RNG a --More-- away too early.
+    // And this line then leaves toplin==NEED_MORE so a same-turn follow-on
+    // (doswapweapon()'s second prinv() line for the bumped secondary) merges
+    // onto it instead of replacing it (e.g. unwielding into an empty swap
+    // slot: "You are bare handed." followed by "b - a +2 sling (alternate
+    // weapon; not wielded).").
     if (!wep) {
         if (game.uwep) {
-            game._pending_message = `You are ${empty_handed()}.`;
-            game._toplin = 1;
+            await update_topl(`You are ${empty_handed()}.`);
             setuwep_slot(null);
             res = ECMD_TIME;
         } else {
-            game._pending_message = `You are already ${empty_handed()}.`;
-            game._toplin = 1;
+            await update_topl(`You are already ${empty_handed()}.`);
         }
     } else if (game.uarms && bimanual(wep)) {
-        game._pending_message =
+        await update_topl(
             `You cannot wield a two-handed ${is_sword(wep) ? 'sword'
-              : wep.otyp === 45 /*BATTLE_AXE*/ ? 'axe' : 'weapon'} while wearing a shield.`;
-        game._toplin = 1;
+              : wep.otyp === 45 /*BATTLE_AXE*/ ? 'axe' : 'weapon'} while wearing a shield.`);
         res = ECMD_FAIL;
-    } else if (!retouch_object(wep)) {
+    } else if (!(await retouch_object(wep))) {
         res = ECMD_TIME; // takes a turn even though it doesn't get wielded
     } else {
         res = ECMD_TIME;
         if (will_weld(wep)) {
             // Cursed-artifact weld message (not exercised: welded() is false for
             // the recorded kits).  Kept minimal to avoid unported name helpers.
-            game._pending_message =
+            await update_topl(
                 `${cxname_singular(wep)} ${wep.quan === 1 ? 'welds itself' : 'weld themselves'} to your `
-                + `${bimanual(wep) ? makeplural(body_part(6)) : `dominant right ${body_part(6)}`}!`;
-            game._toplin = 1;
+                + `${bimanual(wep) ? makeplural(body_part(6)) : `dominant right ${body_part(6)}`}!`);
             wep.bknown = 1;
         } else {
             // C kludge: temporarily set W_WEP so prinv() prints "(weapon in
@@ -5281,12 +5368,11 @@ function ready_weapon(wep) {
             // real.
             const dummy = wep.owornmask || 0;
             wep.owornmask = dummy | QW_WEP;
-            prinv(null, wep, 0);
+            await update_topl(prinv_fmt(null, wep, 0));
             wep.owornmask = dummy;
             // C ref: prinv() -> pline() leaves toplin == NEED_MORE, so a
             // following same-turn message (e.g. a pet's attack on the freed
             // turn) accumulates onto the wield line instead of replacing it.
-            game._toplin = 1;
         }
         setuwep_slot(wep);
         if (was_twoweap && !game.u?.twoweap) {
@@ -5366,10 +5452,10 @@ export async function dowield() {
     }
 
     const oldwep = game.uwep;
-    const result = ready_weapon(newwep);
+    const result = await ready_weapon(newwep);
     if (game.flags?.pushweapon && oldwep && game.uwep !== oldwep)
         setuswapwep(oldwep);
-    untwoweapon();
+    await untwoweapon();
     update_inventory();
     return result;
 }
@@ -5392,7 +5478,7 @@ export async function doswapweapon() {
 
     const oldwep = game.uwep, oldswap = game.uswapwep;
     setuswapwep(null);
-    const result = ready_weapon(oldswap);     // prints the new primary's line
+    const result = await ready_weapon(oldswap);     // prints the new primary's line
     if (game.uwep === oldwep) {
         setuswapwep(oldswap);                 // wield failed; put it back
     } else {
@@ -5404,7 +5490,7 @@ export async function doswapweapon() {
     }
     if (game.u?.twoweap) {
         const { can_twoweapon } = await import('./wield.js');
-        if (!(await can_twoweapon())) untwoweapon();
+        if (!(await can_twoweapon())) await untwoweapon();
     }
     update_inventory();
     return result;
@@ -6129,8 +6215,11 @@ async function throw_obj(obj, dir, shotlimit = 0) {
     // fatal.  The message is printed before instapetrify() takes over.
     if (!game.uarmg && obj.otyp === CORPSE && corpse_petrifies(obj)
         && !(game.u?.uprops?.StoneResistance)) {
-        game._pending_message = `You throw ${the_name_of(obj)} with your bare ${
-            makeplural(body_part(6 /*HAND*/))}.`;
+        // C: pline() before instapetrify()'s own death cascade; a bare write
+        // here would leave nothing pending for that cascade's first message
+        // to page against, silently dropping this line instead.
+        await update_topl(`You throw ${the_name_of(obj)} with your bare ${
+            makeplural(body_part(6 /*HAND*/))}.`);
         instapetrify(`throwing ${xname(obj)} bare-handed`);
     }
     if (welded(obj)) { weldmsg(obj); return ECMD_TIME; }
@@ -6374,7 +6463,12 @@ async function throwit(otmp, skillsnap, wep_mask) {
             range = Math.trunc(range / 2); // C: range /= 2 (truncating int division)
             const launcherName = an(skill_name_for(weapon_type(otmp)));
             const descr = weapon_descr_for(otmp);
-            game._pending_message = `You aren't wielding ${launcherName}, so you throw your ${descr} by hand.`;
+            // C ref: dothrow.c:1643 calls pline() here, which routes through
+            // update_topl() and its --More-- paging; writing game._pending_message
+            // directly bypassed toplin bookkeeping so the very next message
+            // (thitmonst's hit/miss line) silently overwrote this one instead of
+            // pausing for acknowledgement first.
+            await update_topl(`You aren't wielding ${launcherName}, so you throw your ${descr} by hand.`);
         }
     }
 
@@ -8195,7 +8289,12 @@ async function pickup_checks() {
             // every engulfer took the digests() branch.
             const dat = u.ustuck?.data;
             if (dat && attacktype_fordmg(dat, AT_ENGL, AD_DGST)) {
-                game._pending_message = `You pick up the ${dat.name || 'monster'}'s tongue.`;
+                // C: two consecutive You() calls in the same command — a bare
+                // write here left nothing pending for pline()'s own softPending
+                // check to see, so it silently replaced this line instead of
+                // merging (both fit on one row: "You pick up the ...'s tongue.
+                // But it's kind of slimy, so you drop it.").
+                await update_topl(`You pick up the ${dat.name || 'monster'}'s tongue.`);
                 await pline("But it's kind of slimy, so you drop it.");
             } else {
                 game._pending_message =
@@ -8461,8 +8560,8 @@ export function taking_off(action) {
     return action === 'take off' || action === 'remove';
 }
 
-export function mime_action(word) {
-    game._pending_message = `You mime ${ing_suffix(word)} something.`;
+export async function mime_action(word) {
+    await update_topl(`You mime ${ing_suffix(word)} something.`);
 }
 
 export function any_obj_ok(obj) {
@@ -8478,10 +8577,10 @@ export function getobj_hands_txt(action, qbuf = '') {
 }
 
 
-export function silly_thing(word, otmp) {
+export async function silly_thing(word, otmp) {
     if (word === 'call' && otmp?.otyp === AMULET_OF_YENDOR)
-        game._pending_message = "The Amulet doesn't like being called names.";
-    else game._pending_message = `That is a silly thing to ${word}.`;
+        await update_topl("The Amulet doesn't like being called names.");
+    else await update_topl(`That is a silly thing to ${word}.`);
 }
 
 export function ckvalidcat(otmp) { return allow_category(otmp) ? 1 : 0; }
@@ -9476,7 +9575,14 @@ export function display_pickinv(lets = null, xtra_choice = null, query = null, a
     const special = want_reply ? force_invmenu_special(lets) : null;
     if (special) rows.push(['Special', `${special.ch} - ${special.text}`]);
     if (!rows.length) {
+        // Narrow fix (not update_topl): display_pickinv() is sync and called
+        // from several other files (end.js, pager.js) that would all need an
+        // await cascade to route this through update_topl properly.  Setting
+        // toplin=1 alongside the write is enough for the many *other*
+        // generic `if (game._toplin === 1) topl_more()` command epilogues
+        // elsewhere to still page a still-pending earlier message correctly.
         game._pending_message = 'Not carrying anything.';
+        game._toplin = 1;
         return '\0';
     }
     // Pass null EXPLICITLY, not nothing: renderMenuScreen's default parameter is
@@ -9536,9 +9642,9 @@ export function count_contents(container, nested, quantity, everything, _newdrop
     return count;
 }
 
-export function dounpaid(count, floorcount, buriedcount) {
+export async function dounpaid(count, floorcount, buriedcount) {
     void floorcount; void buriedcount;
-    if (!count) game._pending_message = "You aren't carrying any unpaid objects.";
+    if (!count) await update_topl("You aren't carrying any unpaid objects.");
 }
 
 export function this_type_only(obj) {
@@ -9644,7 +9750,7 @@ export async function dotypeinv() {
         return doI_done();
     }
     if (c === 'u' || (c === 'U' && any_unpaid && !uc.value)) {
-        if (any_unpaid) dounpaid(u_carried, u_floor, u_buried);
+        if (any_unpaid) await dounpaid(u_carried, u_floor, u_buried);
         else await pline('You are not carrying any unpaid objects.');
         return doI_done();
     }
@@ -9983,7 +10089,13 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
             // instead of silently overwriting it.
             await update_topl(`You ${verb} here ${doname_with_price(otmp)}.`);
         } else {
-            game._pending_message = `You ${verb} here ${doname_with_price(otmp)}.`;
+            // Every other arm of this single-object branch (the dfeature
+            // pair above, and the blind-grope follow-on below) already
+            // routes through update_topl(); this bare write was the odd one
+            // out, and look_here() has several callers (cmd.js's movement-
+            // triggered check_here, pickup.js) where an earlier message from
+            // the same step could still be genuinely pending.
+            await update_topl(`You ${verb} here ${doname_with_price(otmp)}.`);
         }
         return Blind_for_wear() ? ECMD_TIME : ECMD_OK;
     }

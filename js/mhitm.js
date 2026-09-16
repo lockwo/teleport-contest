@@ -49,7 +49,7 @@ import { xname } from './invent.js';
 import { MATTK } from './monattk_data.js';
 import { name_to_pmidx, monster_by_pmidx, is_home_elemental } from './makemon.js';
 // newcham/pm_to_cham: used only by the appended gulpmm()/mon_poly() below
-import { newcham, pm_to_cham } from './makemon.js';
+import { newcham, newcham_wizard_aware, pm_to_cham } from './makemon.js';
 import { mhitm_adtyping } from './mhitm_ad.js';
 // mhitu.c owns these four (mhitm.c:383/426/85/659 call them across the file
 // boundary); js/mhitu.js is the single faithful copy.
@@ -1592,7 +1592,7 @@ export async function mon_poly(magr, mdef, dmg) {
                 else
                     await monkilled_mm(mdef, AD_RBRE);
             }
-        } else if (newcham(mdef, null)) {
+        } else if (await newcham_wizard_aware(mdef, null)) {
             if (gv_vis) { /* either seen or adjacent */
                 const was_seen = Before.toLowerCase() !== 'it',
                       verbosely = !!game.flags?.verbose || !was_seen;

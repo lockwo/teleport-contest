@@ -1126,9 +1126,15 @@ export async function scrolltele(scroll) {
             await pline_append('Being unconscious, you cannot control your teleport.');
         } else {
             const { getpos, getpos_render } = await import('./hack.js');
-            await getpos_render('Where do you want to be teleported?', u.ux, u.uy);
-            game._toplin = 1;
-            game._toplines = 'Where do you want to be teleported?';
+            // C ref: this prompt is a plain pline(), which concatenates onto
+            // an already-pending same-turn message (e.g. cursed_book's "You
+            // feel a wrenching sensation.") rather than replacing it; only
+            // THEN does getpos() curs+flush_screen the map (no text of its
+            // own). getpos_render conflates both steps, so re-pass the now-
+            // accumulated text to keep its curs/flush_screen half a no-op on
+            // the message.
+            await pline_append('Where do you want to be teleported?');
+            await getpos_render(game._pending_message, u.ux, u.uy);
             if (scroll) learnscroll(scroll);
             const verbose = game.flags?.verbose !== false;
             const cc = await getpos('the desired position', u.ux, u.uy, null,

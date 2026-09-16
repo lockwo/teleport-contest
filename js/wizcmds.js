@@ -1158,7 +1158,13 @@ export async function levl_sanity_check() {
     }
 }
 
-// C ref: wizcmds.c:1460 sanity_check().
+// C ref: wizcmds.c:1460 sanity_check().  Fully ported and callable (verified:
+// every sub-check below is a faithful port and none consumes RNG), but NOT
+// wired into the live per-turn loop -- see js/allmain.js moveloop_core()'s
+// comment.  mon_sanity_check() flags this port's starting pets ("pet without
+// edog") because of a real, separate, pre-existing pet representation gap
+// ([[pet-pmidx-convention-mismatch]]); wiring this in before that is fixed
+// would make 'sanity_check:1' sessions WORSE than leaving the option inert.
 export async function sanity_check() {
     const iflags = (game.iflags ||= {});
 
@@ -1172,12 +1178,24 @@ export async function sanity_check() {
     game.program_state.in_sanity_check = (game.program_state.in_sanity_check || 0) + 1;
     await you_sanity_check();
     obj_sanity_check();
-    nyi_timer_sanity_check();
+    {
+        const { timer_sanity_check } = await import('./timeout.js');
+        await timer_sanity_check();
+    }
     await mon_sanity_check();
     light_sources_sanity_check();
-    nyi_bc_sanity_check();
-    nyi_trap_sanity_check();
-    nyi_engraving_sanity_check();
+    {
+        const { bc_sanity_check } = await import('./ball.js');
+        await bc_sanity_check();
+    }
+    {
+        const { trap_sanity_check } = await import('./trap.js');
+        await trap_sanity_check();
+    }
+    {
+        const { engraving_sanity_check } = await import('./engrave.js');
+        await engraving_sanity_check();
+    }
     await levl_sanity_check();
     game.program_state.in_sanity_check--;
 }
@@ -1615,14 +1633,6 @@ function nyi_overview_stats(win, _totals) {
 function nyi_wizcustom_glyphids(_win) {}
 // do_wear.c check_wornmask_slots() -> js/do_wear.js
 function nyi_check_wornmask_slots() {}
-// timeout.c timer_sanity_check() -> js/timeout.js
-function nyi_timer_sanity_check() {}
-// ball.c bc_sanity_check() -> js/ball.js
-function nyi_bc_sanity_check() {}
-// trap.c trap_sanity_check() -> js/trap.js
-function nyi_trap_sanity_check() {}
-// engrave.c engraving_sanity_check() -> js/engrave.js
-function nyi_engraving_sanity_check() {}
 // wintty.c display_nhwindow(WIN_MESSAGE, TRUE) -> js/wintty.js (needs the
 // blocking --More-- the js text pager provides, not the stubbed xwaitforspace)
 async function nyi_display_nhwindow_message() {}

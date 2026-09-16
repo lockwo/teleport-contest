@@ -12,7 +12,7 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
-import { pline, update_topl, y_n, newsym } from './display.js';
+import { pline, update_topl, y_n, newsym, display_nhwindow_message } from './display.js';
 import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
@@ -279,9 +279,22 @@ export async function make_hallucinated(xtime, talk, _mask) {
     if (changed) {
         // C ref: potion.c make_hallucinated() — the display refresh runs BEFORE
         // the pline.  A swallowed hero has no map to re-see, just the stomach
-        // box, whose eight cells each re-pick a random_monster() colour.
-        const { swallowed } = await import('./display.js');
-        if (game.u?.uswallow) await swallowed(0);
+        // box, whose eight cells each re-pick a random_monster() colour; not
+        // swallowed instead re-sees every monster/object/trap square on the
+        // level (each newsym() re-picks its own random_monster()/
+        // random_object() while Hallucination is on). Missing this else arm
+        // let the map's hallucinatory glyphs go stale until the NEXT turn's
+        // ordinary newsym() cycle repainted them one step late (seed0383).
+        const { swallowed, see_monsters, see_objects, see_traps } = await import('./display.js');
+        if (game.u?.uswallow) {
+            await swallowed(0);
+        } else {
+            see_monsters();
+            see_objects();
+            see_traps();
+        }
+        const { update_inventory } = await import('./invent.js');
+        update_inventory();
         game.botl = true;
         if (talk) {
             await update_topl(!xtime
@@ -755,12 +768,17 @@ async function peffect_oil(otmp) {
 function likes_fire_hero() { return false; }
 
 // pline is async (sets the pending message); for the synchronous peffect bodies
-// we only need to stash the message, so call the setter directly.
-function pline_sync(msg) { game._pending_message = msg; }
+// we only need to stash the message, so call the setter directly.  C's vpline()
+// always leaves toplin == NEED_MORE (topl.c); without marking that here too, a
+// LATER update_topl() call (this turn's own dopotion() "peculiar feeling"
+// pline, or simply next turn's first message) sees nothing pending and
+// silently overwrites this message instead of paging it with --More-- first.
+function pline_sync(msg) { game._pending_message = msg; game._toplin = 1; }
 function pline_append_sync(msg) {
     game._pending_message = game._pending_message
         ? `${game._pending_message}  ${msg}`
         : msg;
+    game._toplin = 1;
 }
 
 // C ref: potion.c peffect_booze — ordinary booze confuses, heals one point,
@@ -779,7 +797,6 @@ async function peffect_booze(otmp) {
     exercise(A_WIS, false);
     if (otmp.cursed) {
         pline_append_sync('You pass out.');
-        game._toplin = 1;
         game.multi = -rnd(15);
         game.nomovemsg = 'You awake with a headache.';
     }
@@ -822,7 +839,6 @@ function peffect_paralysis(otmp) {
     else
         pline_sync(`Your ${makeplural_c(body_part(FOOT))} are frozen to the ${
             surface(game.u.ux, game.u.uy)}!`);
-    game._toplin = 1;
     game.multi = -rn1(10, 25 - 12 * bcsign(otmp));
     game.multi_reason = 'frozen by a potion';
     game.nomovemsg = 'You can move again.';
@@ -982,7 +998,13 @@ async function peffect_hallucination(otmp) {
         itimeout_incr(HHallucination(), rn1(200, 600 - 300 * bcsign(otmp))), true, 0);
     if ((otmp.blessed && !rn2(3)) || (!otmp.cursed && !rn2(6))) {
         await update_topl('You perceive yourself...');
-        // enlightenment(MAGICENLIGHTENMENT, ENL_GAMEINPROGRESS) is a menu, not RNG.
+        // C ref: potion.c peffect_hallucination — display_nhwindow(WIN_MESSAGE,
+        // FALSE) forces the line above to page with its own --More-- before the
+        // enlightenment menu opens (mirrors do_enlightenment_effect() in zap.js).
+        await display_nhwindow_message();
+        const { show_attributes_disclosure } = await import('./insight.js');
+        // C ref: mode is MAGICENLIGHTENMENT alone here too — basic=false.
+        await show_attributes_disclosure(0 /* ENL_GAMEINPROGRESS */, false);
         await update_topl('Your awareness re-normalizes.');
         exercise(A_WIS, true);
     }
@@ -1042,7 +1064,11 @@ async function peffect_enlightenment(otmp) {
             await adjattrib(A_INT, 1, false);
             await adjattrib(A_WIS, 1, false);
         }
-        // do_enlightenment_effect() is a menu window; no RNG.
+        // C ref: potion.c peffect_enlightenment -> do_enlightenment_effect();
+        // reuse zap.js's port of that function (shared with WAN_ENLIGHTENMENT)
+        // instead of re-deriving it here.
+        const { do_enlightenment_effect } = await import('./zap.js');
+        await do_enlightenment_effect();
     }
 }
 

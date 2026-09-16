@@ -32,6 +32,10 @@ import { resists_elec } from './mondata.js';
 const MAT_IRON = 11, MAT_MITHRIL = 17;
 // C ref: include/objects.h — otyp constants used by percent_success / weight.
 const OTYP_ROBE = 143, OTYP_QUARTERSTAFF = 79;
+// C ref: role.c role_init() — `if (Role_if(PM_CLERIC)) objects[SPE_LIGHT].oc_skill
+// = P_CLERIC_SPELL;` permanently recategorizes the "light" spellbook as clerical
+// (instead of its table default of divination) for Priest characters only.
+const SPE_LIGHT_OTYP = 372, PM_CLERIC_ROLE = 6, P_CLERIC_SPELL = 32;
 // C ref: include/objects.h — objects[SMALL_SHIELD].oc_weight.
 const SMALL_SHIELD_OC_WEIGHT = 30;
 // C ref: spell.c — metal armor casting penalties.
@@ -48,7 +52,11 @@ const SKILL_CATEGORY = {
     28: 'attack', 29: 'healing', 30: 'divination', 31: 'enchantment',
     32: 'clerical', 33: 'escape', 34: 'matter',
 };
-export function spell_skilltype(otyp) { return SPELL_META.get(otyp)?.skill ?? 0; }
+export function spell_skilltype(otyp) {
+    if (otyp === SPE_LIGHT_OTYP && (game.urole?.mnum ?? -1) === PM_CLERIC_ROLE)
+        return P_CLERIC_SPELL;
+    return SPELL_META.get(otyp)?.skill ?? 0;
+}
 export function spell_level_of(otyp) { return SPELL_META.get(otyp)?.level ?? 1; }
 export function spelltypemnemonic(otyp) {
     return SKILL_CATEGORY[spell_skilltype(otyp)] || 'attack';
@@ -800,10 +808,15 @@ async function cursed_book(bp) {
     const lev = spell_level_of(bp.otyp); // objects[bp->otyp].oc_level
     let dmg = 0;
     switch (rn2(lev)) {
-    case 0:
+    case 0: {
         await update_topl('You feel a wrenching sensation.');
-        // tele() (teleport self) not ported; effect omitted.
+        // C ref: tele(void) == scrolltele((struct obj *)0) — teleport the
+        // hero (possibly a controlled teleport prompt, "Where do you want to
+        // be teleported?", when Teleport_control is active).
+        const { scrolltele } = await import('./read.js');
+        await scrolltele(null);
         break;
+    }
     case 1:
         await update_topl('You feel threatened.');
         aggravate();

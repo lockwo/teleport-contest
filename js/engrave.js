@@ -778,7 +778,7 @@ async function doengrave_sfx_item(de) {
         break;
     case WAND_CLASS: {
         const zap = await import('./zap.js');
-        if (zap.zappable(de.otmp)) {
+        if (await zap.zappable(de.otmp)) {
             if (de.otmp.cursed && !rn2(WAND_BACKFIRE_CHANCE)) {
                 await zap.wand_explode(de.otmp, 0);
                 de.ret = 1; // ECMD_TIME

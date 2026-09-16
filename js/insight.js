@@ -330,7 +330,14 @@ const GENDER_ADJ = ['male', 'female'];
 // = the end-of-game disclosure (past tense, plus the MAGICENLIGHTENMENT
 // "Final Attributes:" section) -- the only non-zero value the covered
 // sessions reach.
-export function enlightenment_lines(final = 0) {
+// C ref: insight.c enlightenment(mode, final) — `basic` mirrors mode &
+// BASICENLIGHTENMENT (role/race/alignment/HP/AC/characteristics section and
+// the Miscellaneous wizard/bones reminder).  doattributes() (^X) and the
+// end-of-game disclosure always set it; potion.c's peffect_enlightenment /
+// peffect_hallucination and zap.c's do_enlightenment_effect() pass
+// MAGICENLIGHTENMENT alone (mode has no BASICENLIGHTENMENT bit at all), so
+// they must call this with basic=false to skip that whole section.
+export function enlightenment_lines(final = 0, basic = true) {
     const u = game.u || {};
     const rolemnum = game.urole?.mnum ?? u.umonnum ?? 9;
     const roleDef = roles.find((r) => r.mnum === rolemnum) || roles[rolemnum] || {};
@@ -371,7 +378,11 @@ export function enlightenment_lines(final = 0) {
     // window supplies the single selector-column space when rendered.
     out(`${titleName} the ${roleName}'s attributes:`);
 
-    // ── Background ──
+    // ── Background / Basics / Characteristics ── C ref: insight.c
+    // enlightenment() — `if (mode & BASICENLIGHTENMENT) { background_...();
+    // basics_...(); characteristics_...(); }`.  Skipped whole when the caller
+    // (a potion/wand effect) passed MAGICENLIGHTENMENT alone.
+    if (basic) {
     out('');
     out('Background:');
 
@@ -559,6 +570,7 @@ export function enlightenment_lines(final = 0) {
     characteristic(A_INT, 'intelligence');
     characteristic(A_WIS, 'wisdom');
     characteristic(A_CHA, 'charisma');
+    } // if (basic)
 
     // ── Status ──
     out('');
@@ -638,7 +650,12 @@ export function enlightenment_lines(final = 0) {
     // artifact-granted ones (e.g. "You resist hallucinations because of
     // Grayswandir") were silently omitted from every ^X screen — 34 of the 44
     // public sessions press ^X.
-    const _magic = final ? true : (_wizard() || _discover());
+    // C ref: enlightenment() `if (mode & MAGICENLIGHTENMENT)`.  doattributes()
+    // (^X, basic=true) only sets that bit for wizard/explore mode (or the
+    // final disclosure); the potion/wand callers (basic=false) pass
+    // MAGICENLIGHTENMENT unconditionally — mode there has NO BASICENLIGHTENMENT
+    // bit at all, so basic can't be reused to mean "wizard-gated" here.
+    const _magic = !basic || final || _wizard() || _discover();
     if (_magic) {
         const _savedWin = ge.en_win, _savedMenu = ge.en_via_menu;
         ge.en_win = create_nhwindow(NHW_MENU);
@@ -656,7 +673,8 @@ export function enlightenment_lines(final = 0) {
     // C ref: enlightenment() — bones-level reminder, shown for BASIC mode in
     // wizard/explore/final; flags.bones defaults on and no session has visited
     // a bones level yet, so this is always the "didn't encounter any" form.
-    if (_wizard() || _discover() || final) {
+    // C ref: `(mode & BASICENLIGHTENMENT) != 0 && (wizard||discover||final)`.
+    if (basic && (_wizard() || _discover() || final)) {
         if (_wizard() || _discover())
             youAre(`running in ${_wizard() ? 'debug' : 'explore'} mode`);
         if (game.flags?.bones === false)
@@ -966,7 +984,10 @@ function is_pname(m) { return ((MFLAGS2[m?.pmidx] ?? 0) & M2_PNAME) !== 0; }
 // C ref: insight.c:2769 dovanquished() — the #vanquished command.
 export async function dovanquished() {
     if (!vanquished_ntypes()) {
-        game._pending_message = 'No creatures have been vanquished.';
+        // C ref: pline() for this "none" case; its sibling dogenocided() right
+        // below already routes through update_topl() -- this raw write skipped
+        // the merge-or-page check, silently dropping a still-pending message.
+        await update_topl('No creatures have been vanquished.');
         return 0;
     }
     await list_vanquished_screen();
@@ -1381,27 +1402,44 @@ export async function doconduct() {
 // trailing "--More--" right after the last line of the final page (an
 // NHW_MENU window parks its trailing morestr at the current row, not pinned
 // to 23 the way NHW_TEXT's is).
-export async function show_attributes_disclosure(final) {
-    const lines = enlightenment_lines(final);
-    const { renderWindowScreen, dismiss_invent_screen } = await import('./invent.js');
+export async function show_attributes_disclosure(final, basic = true) {
+    const lines = enlightenment_lines(final, basic);
+    const { renderWindowScreen, renderMenuLines, dismiss_invent_screen } =
+        await import('./invent.js');
     const disp = game.nhDisplay;
     const rows = disp?.rows ?? 24;
     const perPage = rows - 1; // 23 content lines; footer parked right after them
+    // C ref: wintty.c tty_end_menu() — cw->maxrow is nitems+1 for a single-page
+    // menu (npages<=1) but lmax+1 (== rows, always) for a multi-page one, so
+    // tty_display_nhwindow's `maxrow >= rows` full-screen-forcing test can only
+    // ever come out FALSE for a single, short page: a live MAGICENLIGHTENMENT
+    // popup (quaffed/zapped enlightenment, basic=false) is short enough to
+    // float as a corner menu over the still-visible map, exactly like any
+    // other NHW_MENU window (renderMenuLines) -- it never reaches this
+    // function's own multi-page path at all.  The end-of-game disclosure
+    // (final!=0, basic=true+MAGICENLIGHTENMENT) always exceeds one page, so it
+    // keeps going through the full-screen branch below unchanged.
+    const npages = Math.max(1, Math.ceil(lines.length / perPage));
     let i = 0;
     while (i < lines.length) {
         const take = Math.min(perPage, lines.length - i);
         const chunk = lines.slice(i, i + take);
         i += take;
-        renderWindowScreen(chunk, {
-            menu: false,
-            footer: '--More--',
-            footerRow: take,
-            // C ref: wintty.c dmore() — offset = (NHW_TEXT) ? 1 : 2; this is an
-            // NHW_MENU window, so the morestr lands one column further right
-            // than content lines (which start at column 0 here, offx==0).
-            footerCol: 1,
-            modal: 'enlightenment',
-        });
+        if (npages === 1 && take + 1 < rows) {
+            renderMenuLines(chunk.map((t) => ({ text: t })), null);
+        } else {
+            renderWindowScreen(chunk, {
+                menu: false,
+                footer: '--More--',
+                footerRow: take,
+                // C ref: wintty.c dmore() — offset = (NHW_TEXT) ? 1 : 2; this is
+                // an NHW_MENU window, so the morestr lands one column further
+                // right than content lines (which start at column 0 here,
+                // offx==0).
+                footerCol: 1,
+                modal: 'enlightenment',
+            });
+        }
         for (;;) {
             const key = await nhgetch();
             if (key === 27) { i = lines.length; break; } // ESC cancels the rest

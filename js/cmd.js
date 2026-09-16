@@ -3113,7 +3113,23 @@ async function escape_from_sticky_mon(x, y) {
 
 // C ref: hack.c domove / domove_core — execute a movement, including the
 // bump-into-a-monster path (attack a hostile, or swap places with a pet).
-export async function domove(dx, dy) {
+//
+// `attemptTracked` mirrors gd.domove_attempting: C's moveloop_core() drives
+// every step AFTER a run/rush/travel's first by calling domove() DIRECTLY
+// (allmain.c:523-526, the `if (svc.context.mv) domove();` continuation),
+// bypassing rhack()'s dispatch of the direction command that would otherwise
+// call set_move_cmd() and set gd.domove_attempting.  domove() unconditionally
+// zeroes domove_attempting at its OWN end (hack.c:2706), so on every
+// continuation step it is already 0 going in; domove_succeeded (hack.c:2966,
+// computed BEFORE spoteffects()) then ANDs that 0 against DOMOVE_RUSH|WALK
+// and never sets the bit, so domove()'s post-domove_core() smudge/bubble
+// block (guarded on that bit) is skipped for the ENTIRE rest of the run —
+// only the very first step of any multi-step run/rush/travel can smudge an
+// engraving or nudge the hero's water-level bubble.  Callers driving a
+// continuation loop (hack.js run_movement()/travel_walk()) pass `false` here
+// for every step after the first; every other caller is a fresh top-level
+// dispatch (domove_attempting equivalent-set) and keeps the default.
+export async function domove(dx, dy, attemptTracked = true) {
     const u = game.u;
     // C ref: hack.c rhack() sets u.dx/u.dy from the pressed direction key
     // BEFORE calling domove(); domove_core() then reads u.ux+u.dx/u.uy+u.dy
@@ -3287,9 +3303,14 @@ export async function domove(dx, dy) {
             // DOMOVE_WALK in gd.domove_succeeded), so domove() still smudges the
             // engravings on the squares left and entered.  Returning early here
             // skipped the rnd(5)/rn2(1+50/(cnt+1)) pair on every displace-a-pet
-            // move over an engraving.
-            maybe_smudge_engr(u.ux0, u.uy0, u.ux, u.uy);
-            maybe_adjust_hero_bubble();
+            // move over an engraving.  Gated on attemptTracked like the common
+            // tail below: a run/rush/travel continuation step has
+            // domove_attempting == 0 in C too (see the domove() comment above),
+            // so this same swap on a LATER step of a run must NOT smudge.
+            if (attemptTracked) {
+                maybe_smudge_engr(u.ux0, u.uy0, u.ux, u.uy);
+                maybe_adjust_hero_bubble();
+            }
         }
         return;
     }
@@ -3687,11 +3708,26 @@ export async function domove(dx, dy) {
     // further, e.g. falling through a trap door).  This runs AFTER read_engr_at
     // (called from spoteffects' pickup path), so what gets read/displayed this
     // turn is the engraving as it stood BEFORE this move's smudge.
-    maybe_smudge_engr(oldx, oldy, u.ux, u.uy);
-    // C ref: hack.c domove():2704 — the same DOMOVE_RUSH|DOMOVE_WALK guard also
-    // gives the bubble the hero is riding on the Plane of Water a 1-in-2 chance
-    // of taking up the hero's heading.
-    maybe_adjust_hero_bubble();
+    //
+    // Gated on attemptTracked: C's domove_succeeded (hack.c:2966) ANDs
+    // gd.domove_attempting into this bit BEFORE spoteffects() ever runs, and
+    // every step of a run/rush/travel AFTER the first calls domove() directly
+    // from moveloop_core() (allmain.c:526) without going back through the
+    // direction command that would have set domove_attempting — so it reads 0
+    // and this whole block never runs on those later steps, no matter what
+    // spoteffects() just did (discovering/reading an engraving included).
+    // Found via seed0009-swimmer-mforce (heldout-mirror44): a 3-step 'H' run
+    // whose 2nd/3rd steps landed on an already-engraved tutorial-hint tile —
+    // C's oracle RNG trace has NO rnd(5) there at all, only on a single-step
+    // 'y' move earlier in the same session that left a DIFFERENT engraved
+    // tile on its very first (and only) step.
+    if (attemptTracked) {
+        maybe_smudge_engr(oldx, oldy, u.ux, u.uy);
+        // C ref: hack.c domove():2704 — the same DOMOVE_RUSH|DOMOVE_WALK guard
+        // also gives the bubble the hero is riding on the Plane of Water a
+        // 1-in-2 chance of taking up the hero's heading.
+        maybe_adjust_hero_bubble();
+    }
 }
 
 // ── defsyms[].explanation ───────────────────────────────────────────────────

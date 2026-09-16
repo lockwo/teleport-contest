@@ -37,6 +37,14 @@ import {
     SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED,
     IS_AIR, IS_ROOM, IS_WALL, IS_DOOR,
 } from './const.js';
+// C ref: apply.c do_break_wand() — the shared explode() call, its direction
+// table, the dig-a-pit-vs-hole choice, and the room type the digging branch
+// treats as "no liquid to fill it".
+import {
+    EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY, N_DIRS, xdir, ydir,
+    DIGCHECK_FAILED, DIGCHECK_FAIL_BOULDER, PIT, HOLE, ROOM, ICE,
+    MELT_ICE_AWAY, NO_MM_FLAGS,
+} from './const.js';
 import { surface as surface_word } from './dungeon.js';
 
 // C ref: include/onames.h — STETHOSCOPE object type index (mkobj.js OBJECTS
@@ -777,6 +785,36 @@ export async function doapply() {
         return r === 3 ? ECMD_TIME : (r ? ECMD_CANCEL : ECMD_OK);
     }
 
+    // C ref apply.c:4337 `case CANDELABRUM_OF_INVOCATION: use_candelabrum(obj);
+    // break;` — res is never reassigned, so applying it always costs a turn.
+    // use_candelabrum() is exported by this file (line ~2935); only the
+    // dispatch arm was missing, so it fell through to "Sorry, I don't know
+    // how to use that." instead.
+    if (obj.otyp === CANDELABRUM_OF_INVOCATION) {
+        await use_candelabrum(obj);
+        return ECMD_TIME;
+    }
+
+    // C ref apply.c:4340-4342 `case WAX_CANDLE: case TALLOW_CANDLE:
+    // use_candle(&obj); break;` — likewise always costs a turn.  use_candle()
+    // (line ~2996) takes C's `struct obj **` as a one-field box so it can null
+    // out / replace the caller's obj after splitobj(); only the dispatch arm
+    // was missing.
+    if (obj.otyp === WAX_CANDLE || obj.otyp === TALLOW_CANDLE) {
+        await use_candle({ obj });
+        return ECMD_TIME;
+    }
+
+    // C ref apply.c:4344-4347 `case OIL_LAMP: case MAGIC_LAMP:
+    // case BRASS_LANTERN: use_lamp(obj); break;` — always costs a turn.
+    // use_lamp() (line ~3115) is a faithful port; only the dispatch arm was
+    // missing, so lighting/extinguishing any lamp or lantern fell through to
+    // "Sorry, I don't know how to use that." instead.
+    if (obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP || obj.otyp === BRASS_LANTERN) {
+        await use_lamp(obj);
+        return ECMD_TIME;
+    }
+
     // C ref apply.c:4400 default: — a polearm strikes at a distance, a
     // pick/axe digs.  Both are SUGGESTed by apply_ok(), so both are ordinary
     // picks at the "use or apply" prompt (a Knight's lance is invlet 'b', an
@@ -871,14 +909,28 @@ async function flip_coin(obj) {
     return ECMD_TIME;
 }
 
-// C ref: apply.c do_break_wand(obj) — applying a wand breaks it.  The zap
-// effects (bhitm/bhito over the 3x3 area, explosion, shop damage) are a whole
-// unported subsystem, but the guards and the y/n confirmation in front of them
-// are NOT: C blocks on "Are you really sure you want to break <wand>?" and
-// consumes that keystroke.  Answering 'n' is fully faithful (ECMD_OK, no RNG);
-// answering 'y' prints the break line and stops before the effects.
+// apply.c do_break_wand() otyp constants (onames.h, matching mkobj.js's table).
+const WAN_LIGHT_OTYP = 410, WAN_SECRET_DOOR_DETECTION_OTYP = 411,
+      WAN_ENLIGHTENMENT_OTYP = 412, WAN_CREATE_MONSTER_OTYP = 413,
+      WAN_WISHING_OTYP = 414, WAN_STASIS_OTYP = 415, WAN_NOTHING_OTYP = 416,
+      WAN_STRIKING_OTYP = 417, WAN_UNDEAD_TURNING_OTYP = 421,
+      WAN_POLYMORPH_OTYP = 422, WAN_CANCELLATION_OTYP = 423,
+      WAN_TELEPORTATION_OTYP = 424, WAN_OPENING_OTYP = 425,
+      WAN_LOCKING_OTYP = 426, WAN_PROBING_OTYP = 427, WAN_DIGGING_OTYP = 428,
+      WAN_MAGIC_MISSILE_OTYP = 429, WAN_FIRE_OTYP = 430, WAN_COLD_OTYP = 431,
+      WAN_DEATH_OTYP = 433, WAN_LIGHTNING_OTYP = 434;
+
+// C ref: apply.c do_break_wand(obj) — applying a wand breaks it.  C blocks on
+// "Are you really sure you want to break <wand>?" and consumes that keystroke;
+// answering 'n' is fully faithful (ECMD_OK, no RNG).  Answering 'y' prints the
+// break line, then dispatches a per-otyp effect: the two explosion helpers
+// (broken_wand_explode/discard_broken_wand below) and the zap primitives they
+// share with weffects() (zappable/zapsetup/zapwrapup/bhitm/bhitpile/
+// zapyourself, all in js/zap.js) were already ported for that other caller —
+// this switch is the missing wiring, not new game logic.
 async function do_break_wand(obj) {
     await loadDeps();
+    const A = await ap_load();
     const { acurr_eff } = await import('./attrib.js');
     const A_STR = 0; // attrib.h — [Str,Int,Wis,Dex,Con,Cha]
     // C: objdescr_is(obj, "balsa") || objdescr_is(obj, "glass") — compares the
@@ -896,8 +948,165 @@ async function do_break_wand(obj) {
     await _display.pline(
         `Raising your ${_invent.cxname_singular(obj)} high above your head,`
                          + ` you ${is_fragile ? 'snap' : 'break'} it in two!`);
-    // zappable()/the per-otyp effect switch is unported; stop here rather than
-    // invent an RNG stream C does not draw.
+
+    // C: obj->unpaid -> check_unpaid(obj) + costly_alteration(obj, COST_DSTROY).
+    // Shop billing is a no-op elsewhere in this port too (js/invent.js
+    // check_unpaid() and js/trap.js costly_alteration() are both stubs);
+    // skipped here for the same reason, and likewise for pay_for_damage()
+    // below when a dug wall/door happens to be a shop's.
+    const u = game.u;
+    game.current_wand = obj;
+    A.invent.freeinv(obj);
+    // C: setnotworn(obj) clears the worn-item slots (uamul/uleft/.../uarmu);
+    // a wand is never any of those, so this is a no-op and is omitted.
+
+    if (!(await A.zap.zappable(obj))) {
+        await _display.pline('But nothing else happens...');
+        await discard_broken_wand();
+        return ECMD_TIME;
+    }
+    // Put back the charge zappable() just consumed, then apply do_break_wand's
+    // own "a used-up wand breaks harder" bump.
+    obj.spe = (obj.spe | 0) + 1;
+    if (!obj.spe) obj.spe = rnd(3);
+
+    obj.ox = u.ux; obj.oy = u.uy;
+    let dmg = obj.spe * 4;
+    let affects_objects = false;
+    let shop_damage = false;
+    let fillmsg = false;
+
+    switch (obj.otyp) {
+    case WAN_OPENING_OTYP:
+        if (u?.ustuck) {
+            await A.zap.release_hold();
+            if (obj.dknown) A.invent.makeknown(WAN_OPENING_OTYP);
+            await discard_broken_wand();
+            return ECMD_TIME;
+        }
+        /* FALLTHRU */
+    case WAN_WISHING_OTYP:
+    case WAN_NOTHING_OTYP:
+    case WAN_LOCKING_OTYP:
+    case WAN_PROBING_OTYP:
+    case WAN_ENLIGHTENMENT_OTYP:
+    case WAN_SECRET_DOOR_DETECTION_OTYP:
+    case WAN_STASIS_OTYP:
+        await _display.pline('But nothing else happens...');
+        await discard_broken_wand();
+        return ECMD_TIME;
+
+    case WAN_DEATH_OTYP:
+    case WAN_LIGHTNING_OTYP:
+        await broken_wand_explode(obj, dmg * 4, EXPL_MAGICAL);
+        return ECMD_TIME;
+    case WAN_FIRE_OTYP:
+        await broken_wand_explode(obj, dmg * 2, EXPL_FIERY);
+        return ECMD_TIME;
+    case WAN_COLD_OTYP:
+        await broken_wand_explode(obj, dmg * 2, EXPL_FROSTY);
+        return ECMD_TIME;
+    case WAN_MAGIC_MISSILE_OTYP:
+        await broken_wand_explode(obj, dmg, EXPL_MAGICAL);
+        return ECMD_TIME;
+
+    case WAN_STRIKING_OTYP:
+        // Soundeffect(se_wall_of_force, 65) is a no-op build without
+        // SYSTEM_SOUNDS (sndprocs.h) — nothing to port.
+        await _display.pline('A wall of force smashes down around you!');
+        dmg = d(1 + obj.spe, 6); /* normally 2d12 */
+        /* FALLTHRU */
+    case WAN_CANCELLATION_OTYP:
+    case WAN_POLYMORPH_OTYP:
+    case WAN_TELEPORTATION_OTYP:
+    case WAN_UNDEAD_TURNING_OTYP:
+        affects_objects = true;
+        break;
+    default:
+        break;
+    }
+
+    // Magical explosion and its visual effect occur before the per-otyp
+    // effects below (C's comment, verbatim).
+    await A.explodemod.explode(obj.ox, obj.oy, -(obj.otyp), rnd(dmg),
+                               WAND_CLASS, EXPL_MAGICAL);
+    A.zap.zapsetup(); /* prepare for potential feedback from polymorph */
+
+    // This makes it hit the hero last, so the hero sees the action first.
+    for (let i = 0; i <= N_DIRS; i++) {
+        const x = obj.ox + xdir[i], y = obj.oy + ydir[i];
+        if (!ap_isok(x, y)) continue;
+
+        if (obj.otyp === WAN_DIGGING_OTYP) {
+            const { dig_check, fillholetyp, digactualhole, liquid_flow, BY_OBJECT }
+                = await import('./dig.js');
+            const dcres = dig_check(BY_OBJECT, x, y);
+            if (dcres < DIGCHECK_FAILED || dcres === DIGCHECK_FAIL_BOULDER) {
+                const loc = game.level?.at(x, y);
+                const typ0 = loc?.typ ?? 0;
+                if (IS_WALL(typ0) || IS_DOOR(typ0)) {
+                    /* normally pits/holes don't anger guards, but a dug
+                       wall/door does */
+                    await A.trap.watch_dig(null, x, y, true);
+                    if (A.shkroom.in_rooms(x, y, SHOPBASE_A)?.length)
+                        shop_damage = true;
+                }
+                if (typ0 === ICE) {
+                    const { spot_stop_timers } = await import('./timeout.js');
+                    await spot_stop_timers(x, y, MELT_ICE_AWAY);
+                }
+                const typ = fillholetyp(x, y, false);
+                if (typ !== ROOM) {
+                    if (loc) { loc.typ = typ; loc.flags = 0; }
+                    await liquid_flow(x, y, typ, A.trap.t_at(x, y),
+                        fillmsg ? null : 'Some holes are quickly filled with %s!');
+                    fillmsg = true;
+                } else {
+                    const canDigDown = A.trap.Can_dig_down(u?.uz);
+                    const ttyp = (rn2(obj.spe) < 3 || (!canDigDown && !loc?.candig))
+                        ? PIT : HOLE;
+                    await digactualhole(x, y, BY_OBJECT, ttyp);
+                }
+            }
+            A.trap.fill_pit(x, y);
+            await maybe_dunk_boulders(x, y);
+            A.vision.recalc_block_point(x, y);
+            continue;
+        } else if (obj.otyp === WAN_CREATE_MONSTER_OTYP) {
+            /* u.ux,u.uy creates it near the hero — x,y might create it in rock */
+            A.makemon.makemon(null, u.ux, u.uy, NO_MM_FLAGS);
+            continue;
+        } else if (x !== u.ux || y !== u.uy) {
+            const mon = A.display.m_at(x, y);
+            if (mon) await A.zap.bhitm(mon, obj);
+            if (affects_objects && A.invent.objects_at(x, y).length) {
+                await A.zap.bhitpile(obj, x, y);
+                game.disp_botl = true; /* potion effects */
+            }
+        } else {
+            if (affects_objects && A.invent.objects_at(x, y).length) {
+                await A.zap.bhitpile(obj, x, y);
+                game.disp_botl = true; /* potion effects */
+            }
+            const damage = await A.zap.zapyourself(obj, false);
+            if (damage) {
+                const him = game.flags?.female ? 'her' : 'him';
+                await A.zap.losehp(A.zap.Maybe_Half_Phys(damage),
+                    `killed ${him}self by breaking a wand`);
+            }
+            game.disp_botl = true; /* blindness */
+        }
+    }
+
+    await A.zap.zapwrapup(); /* potentially give post zap/break feedback */
+    void shop_damage; /* pay_for_damage() — shop billing unported, see above */
+
+    if (obj.otyp === WAN_LIGHT_OTYP) {
+        const { litroom } = await import('./read.js');
+        await litroom(true, obj); /* only needs to be done once */
+    }
+
+    await discard_broken_wand();
     return ECMD_TIME;
 }
 

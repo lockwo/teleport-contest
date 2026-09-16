@@ -5,7 +5,7 @@
 
 import { game } from './gstate.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
-import { newsym, pline, m_at, update_topl, topl_more } from './display.js';
+import { newsym, pline, m_at, update_topl, topl_more, impossible } from './display.js';
 import { Blind, recalc_block_point } from './vision.js';
 import { body_part, near_capacity, update_inventory, delobj, xname, uslinging } from './invent.js';
 import { observe_object } from './o_init.js';
@@ -35,6 +35,7 @@ import {
     ARM, FINGER, D_TRAPPED, D_ISOPEN, A_WIS, TIMEOUT,
     AS_NO_MON, AS_MON_IS_UNIQUE,
     W_BALL, W_ART, W_ARTI,
+    NO_TRAP, TRAPNUM,
 } from './const.js';
 import {
     objects, mksobj, weight, place_object, BOULDER, STATUE as STATUE_OTYP,
@@ -3644,4 +3645,17 @@ async function launch_obj(otyp, x1, y1, x2, y2, style) {
     place_object(singleobj, x2, y2);
     newsym(x2, y2);
     return 1;
+}
+
+// C ref: trap.c:7197 trap_sanity_check() — the 'sanity_check' option's trap
+// list audit (game.level.traps is the ftrap chain; order doesn't matter here).
+export async function trap_sanity_check() {
+    const traps = game.level?.traps;
+    if (!Array.isArray(traps)) return;
+    for (const ttmp of traps) {
+        if (!isok(ttmp.tx, ttmp.ty))
+            await impossible(`trap sanity: location (${ttmp.tx},${ttmp.ty})`);
+        if (ttmp.ttyp <= NO_TRAP || ttmp.ttyp >= TRAPNUM)
+            await impossible(`trap sanity: type (${ttmp.ttyp})`);
+    }
 }

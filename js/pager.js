@@ -294,15 +294,22 @@ function dowhatdoes_core(q) {
 // bare "What command? " prompt (yn_function with NULL resp: reads any single
 // key), then the key's description is plined.  Returns ECMD_OK (no game time).
 export async function dowhatdoes() {
-    let needMore = false;
     if (!game._dowhatdoes_once) {
         await pline("Ask about '&' or '?' to get more info.");
         game._dowhatdoes_once = true;
-        needMore = true;
     }
-    // yn_function("What command?", NULL, '\0', TRUE): more() the pending
-    // top-line message, then show "What command? " and read one raw key.
-    if (needMore) await topl_more();
+    // C ref: pager.c dowhatdoes() calls yn_function("What command?", ...)
+    // UNCONDITIONALLY (not just after printing the banner above); tty_yn_function
+    // pages any still-pending toplin with --More-- before drawing its own
+    // prompt.  pline() only marks this "soft" pending (game._toplinSoft, not
+    // game._toplin -- see pline()'s own comment), so this reader must catch
+    // both, exactly like extcmd-handlers.js's hooked_tty_getlin().  Gating this
+    // solely on "did THIS call just print the once-only banner" (the old
+    // `needMore` local) missed any OTHER message still pending from earlier in
+    // the same turn when '/' is pressed after the banner has already fired once.
+    const cur = game._pending_message || '';
+    const softPending = !!cur && game._toplinSoft === cur;
+    if (game._toplin === 1 || softPending) await topl_more();
     const full = 'What command? ';
     game._pending_message = full;
     game._toplines = full;

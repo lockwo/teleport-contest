@@ -889,17 +889,13 @@ export async function newman() {
     const oldlvl = u.ulevel || 1;
     let newlvl = oldlvl + rn1(5, -2);
     if (newlvl > 127 || newlvl < 1) {
-        // C ref: polyself.c:344 `goto dead` — urgent_pline("Your new form
-        // doesn't seem healthy enough to survive.") + done(DIED).  NOT a
-        // clamp: C SKIPS the whole rest of newman() (adjabil, rndexp,
-        // redist_attr, per-level newhp()/newpw(), rn1(500,500)), so every RNG
-        // draw below is wrong on this arm as well as the outcome.
-        //
-        // DEFERRED, and it is REACHABLE: rn1(5,-2) is {-2..+2}, so any hero at
-        // experience level 1 or 2 hits it.  Porting it needs done(DIED) from
-        // end.js, which this module cannot call without dragging the whole
-        // death/bones path in; the same gap blocks the u.uhp<=0 arm below.
-        newlvl = 1;
+        // C ref: polyself.c:343-344 `goto dead` — jumps straight past
+        // u.ulevel's own assignment (line 358) and every reroll below
+        // (adjabil, rndexp, redist_attr, per-level newhp()/newpw(),
+        // rn1(500,500)); the hero's level/HP/attributes are left exactly as
+        // they were ("old level is still intact (in case of lifesaving)").
+        await newman_dead();
+        return;
     }
     const MAXULEV = 30;
     if (newlvl > MAXULEV) newlvl = MAXULEV;
@@ -952,6 +948,19 @@ export async function newman() {
 
     u.uhunger = rn1(500, 500);
 
+    // C ref: polyself.c:419-435 — a non-positive rerolled HP either survives
+    // at 1 HP (Polymorph_control, "even when Stunned || Unaware") or falls
+    // into the same dead: arm the out-of-range newlvl check above uses,
+    // except u.ulevel/HP HAVE already been rerolled here (they stay as-is).
+    if (u.uhp <= 0) {
+        if (Polymorph_control()) {
+            if (u.uhp <= 0) u.uhp = 1;
+        } else {
+            await newman_dead();
+            return;
+        }
+    }
+
     newuhs(false);
     update_rank();
 
@@ -964,6 +973,23 @@ export async function newman() {
     await polyman('You feel like a new %s!', newform);
 
     game.botl = true;
+    await encumber_msg();
+}
+
+// C ref: polyself.c:424-433, the `dead:` label newman() falls into either
+// straight from the out-of-range newlvl check or from a non-positive
+// rerolled HP without Polymorph_control.  done(DIED) is C's own done(), so a
+// declined wizard/explore-mode "Die?" (or an amulet of life saving) survives
+// it exactly the way any other death does; C's comment "must have been
+// life-saved to get here" is why only newuhs()+encumber_msg() follow — no
+// polyman() "You feel like a new %s!", because the level/form roll never
+// took effect.
+async function newman_dead() {
+    await urgent_topl("Your new form doesn't seem healthy enough to survive.");
+    const { done, DIED } = await import('./end.js');
+    game._killer_name = 'unsuccessful polymorph';
+    await done(DIED);
+    newuhs(false);
     await encumber_msg();
 }
 

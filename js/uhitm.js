@@ -44,7 +44,7 @@ import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
          P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_BARE_HANDED_COMBAT, P_TWO_WEAPON_COMBAT,
          P_RIDING, ERODE_BURN, ERODE_RUST, ERODE_CORRODE, ER_NOTHING,
-         EF_NONE, EF_GREASE } from './const.js';
+         EF_NONE, EF_GREASE, In_endgame } from './const.js';
 import { Blind } from './vision.js';
 import { exercise, adjalign } from './attrib.js';
 import { DEADMONSTER, Protection_from_shape_changers, mmove_of, base_mmove,
@@ -65,7 +65,12 @@ import { mkcorpstat, mkobj, mksobj, CORPSE, FIGURINE, place_object, WEAPON_CLASS
          STRANGE_OBJECT, ARMOR_CLASS } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { mon_nocorpse, undead_to_corpse, name_to_pmidx } from './makemon.js';
-import { more_experienced, newexplevel } from './exper.js';
+// C ref: mplayer.js:216-222 — exper.js's rank_of() is keyed by the TRUE mons[]
+// offset from PM_ARCHEOLOGIST (its own PM_ROGUE=8/PM_RANGER=7 constants match
+// roles[].mnum); role.js's same-named rank_of() instead indexes its roles[]
+// ARRAY directly, and that array has Rogue/Ranger swapped relative to mons[]
+// order, so it answers the wrong role for exactly those two.
+import { more_experienced, newexplevel, rank_of } from './exper.js';
 import { gethungry } from './allmain.js';
 import { is_weptool, objectBaseName, simple_typename, is_plural, otense,
          near_capacity, update_inventory, distant_far, distant_doname,
@@ -1246,16 +1251,14 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     if (weapon?.oartifact) {
         const { artifact_hit } = await import('./artifact.js');
         const mdmg = { d: dmg };
-        const prevmsg = game._pending_message;
+        // artifact_hit() now routes its own messages through update_topl()
+        // (merge-or-page against whatever was already pending), so no
+        // caller-side capture/replay is needed here any more; doing so would
+        // now double-process the same line (see js/artifact.js's touch_
+        // artifact()/Mb_hit()/artifact_hit() pending_message sweep).
         const special = await artifact_hit(game.youmonst || game.u, mon,
                                            weapon, mdmg, dieroll);
         dmg = mdmg.d;
-        if (game._pending_message && game._pending_message !== prevmsg) {
-            const { update_topl } = await import('./display.js');
-            const line = game._pending_message;
-            game._pending_message = prevmsg;
-            await update_topl(line);
-        }
         if (special) {
             /* C: artifact killed the monster / beheading missed a headless one */
             if (DEADMONSTER(mon)) return false;
@@ -2017,17 +2020,17 @@ export function relobj(mon, x, y) {
     // C ref: steal.c mdrop_obj():823 `distant_name(obj, doname)` — called for
     // its dknown/discovery side effect BEFORE the object leaves minvent, once
     // per item, in the front-to-back minvent order that relobj's `while
-    // ((otmp = mtmp->minvent) ...)` loop drains the head in.  Skipping this
-    // left every dropped item's '\' discoveries-list entry ordered by floor
-    // pile position instead of by drop order.  mon.minvent here is append-
-    // ordered (oldest grant first) — the opposite of C's head-prepend list —
-    // so C's front-to-back order is this array reversed (same reversal the
-    // placement loop below uses).
-    for (const otmp of [...inv].reverse()) distant_doname(otmp, distant_far(otmp, x, y));
-    // C ref: steal.c relobj() walks mon->minvent front-to-back but each
-    // mdrop_obj() pushes onto the head of the floor pile, so the resulting
-    // nexthere order is REVERSED relative to minvent.
-    for (const otmp of [...inv].reverse()) {
+    // ((otmp = mtmp->minvent) ...)` loop drains the head in.  mon.minvent is
+    // newest-first, same as C's head, so plain array order already matches.
+    for (const otmp of [...inv]) distant_doname(otmp, distant_far(otmp, x, y));
+    // C ref: steal.c relobj() walks mon->minvent front-to-back (newest first)
+    // and each mdrop_obj() PREPENDS onto the floor pile, so the oldest-dropped
+    // item ends up on top.  Our place_object() APPENDS instead (see
+    // mkobj.c:place_object port — last-pushed is topmost, matching vobj_at's
+    // "last match wins"), so processing minvent in its native newest-first
+    // order and appending each in turn reproduces the same end state: the
+    // oldest item is appended last and lands on top.
+    for (const otmp of [...inv]) {
         // C ref: worn.c extract_from_minvent().  An object stops being worn
         // before it reaches the floor; otherwise a pet which later picks it
         // up incorrectly treats it as undroppable armour.
@@ -2289,6 +2292,21 @@ function PM_GHOST() {
     if (_pm_ghost < 0) _pm_ghost = name_to_pmidx('ghost') ?? -2;
     return _pm_ghost;
 }
+// C ref: mondata.h is_mplayer(ptr) = ptr >= &mons[PM_ARCHEOLOGIST] && ptr <=
+// &mons[PM_WIZARD] — the thirteen player-role mons[] rows, contiguous.
+let _pm_archeologist = -1, _pm_wizard = -1;
+function PM_ARCHEOLOGIST() {
+    if (_pm_archeologist < 0) _pm_archeologist = name_to_pmidx('archeologist') ?? -2;
+    return _pm_archeologist;
+}
+function PM_WIZARD() {
+    if (_pm_wizard < 0) _pm_wizard = name_to_pmidx('wizard') ?? -2;
+    return _pm_wizard;
+}
+function is_mplayer(mdat) {
+    const idx = mdat?.pmidx;
+    return idx != null && idx >= PM_ARCHEOLOGIST() && idx <= PM_WIZARD();
+}
 export function x_monnam(mtmp, article, _adjective, _suppress, called) {
     const base = mon_pmname(mtmp);
     const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
@@ -2377,15 +2395,27 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
              : art === 2 ? an(hnamed) : hnamed;
     }
 
-    const named = adj + base;
+    // C ref: do_name.c:988 — a nameless wandering player-role monster (a
+    // wandering "Rogue", "Barbarian", etc, NOT the hero) is shown by its
+    // experience-level RANK TITLE ("the pilferer"), lowercased, instead of its
+    // plain species name ("the rogue") — anywhere outside the endgame.  This
+    // is unconditional on hallucination: it applies whether or not the hero is
+    // hallucinating (the do_hallu branch above already returned if so).
+    const mdat = mtmp?.data;
+    const mplayer_named = is_mplayer(mdat) && !In_endgame(game.u?.uz);
+    const named = mplayer_named
+        ? adj + rank_of(mtmp?.m_lev | 0, mdat.pmidx - PM_ARCHEOLOGIST(),
+                        !!mtmp?.female).toLowerCase()
+        : adj + base;
 
     // C ref: do_name.c:1000 — name_at_start is type_is_pname(mdat) for a plain
     // species name.  A proper-noun species ("Medusa", a quest leader) drops its
     // article entirely; the Wizard of Yendor takes "the" instead.  Any G_UNIQ
-    // monster asked for with ARTICLE_A is upgraded to "the" as well.
+    // monster asked for with ARTICLE_A is upgraded to "the" as well.  The
+    // mplayer rank-title branch sets name_at_start FALSE (do_name.c:994), so it
+    // skips straight to the G_UNIQ check.
     let art = article;
-    const mdat = mtmp?.data;
-    if ((mflags2_of(mdat) & M2_PNAME) && (art === 3 || !has_adjectives))
+    if (!mplayer_named && (mflags2_of(mdat) & M2_PNAME) && (art === 3 || !has_adjectives))
         art = (mdat?.name === 'Wizard of Yendor') ? 1 : 0;
     else if (((mdat?.geno ?? 0) & G_UNIQ_XM) !== 0 && art === 2)
         art = 1;

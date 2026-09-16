@@ -55,7 +55,7 @@ import { dosit } from './sit.js';
 import { dodip, dodrink } from './potion.js';
 import { dogenocided, do_gamelog, doconduct, dovanquished, doborn } from './insight.js';
 import { isok } from './hacklib.js';
-import { Monnam, canspotmon, x_monnam, mon_nam, oc_wldam } from './uhitm.js';
+import { Monnam, canspotmon, x_monnam, mon_nam, oc_wldam, killed } from './uhitm.js';
 import { domonnoise } from './sounds.js';
 import { build_overview_lines, surface, print_dungeon_lines } from './dungeon.js';
 import { doextversion } from './version.js';
@@ -834,9 +834,11 @@ async function doturn() {
                     mtmp.mpeaceful = 1;
                 } else {
                     // C: killed(mtmp) — the hero destroys the undead outright.
-                    const mon = await import('./mon.js');
-                    const kill = mon.killed || mon.xkilled;
-                    if (kill) await kill(mtmp);
+                    // uhitm.js's killed() is the real xkilled() port (js/mon.js
+                    // exports neither name); its own update_topl() "You destroy
+                    // the %s!" is what triggers C's mid-xkilled() --More-- pause
+                    // against doturn()'s still-pending "Calling upon..." line.
+                    await killed(mtmp);
                 }
             } else {
                 // monflee(mtmp, 0, FALSE, TRUE): untimed scare, no RNG.
@@ -1576,7 +1578,7 @@ function _container_status2() { return statusLine2Text(); }
 //   morestr : "(end)" for a menu, "--More--" for a text window
 //   curPad  : extra columns past the morestr where the cursor parks (the menu's
 //             "(end) " has a trailing space -> +1; the text "--More--" -> +0)
-function draw_corner_window(lines, maxcol, morestr, curPad) {
+export function draw_corner_window(lines, maxcol, morestr, curPad) {
     const disp = game?.nhDisplay;
     if (!disp?.clearScreen) return;
     const cols = disp.cols || 80;
@@ -1584,9 +1586,18 @@ function draw_corner_window(lines, maxcol, morestr, curPad) {
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
     const textCol = offx + 1;
+    const moreRow = lines.length;
+    // C ref: win/tty/wintty.c erase_menu_or_text() -> docorner() — dismissing a
+    // taller corner window (one whose own content reached row 22) sweeps
+    // cl_end() across every row down through the status window, wiping the
+    // tail of row 22/23 even though this window's own content never touches
+    // them.  invent.js's putStatusLines records that cutoff in
+    // game._statusTruncCol; a short window opened right after must inherit it
+    // instead of drawing a freshly recomputed FULL status the real terminal
+    // never redrew.
+    const carried = game._statusTruncCol;
     disp.clearScreen();
     render_map_to_grid();
-    const moreRow = lines.length;
     for (let r = 0; r <= moreRow && r < 22; r++)
         for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
     for (let r = 0; r < lines.length; r++) {
@@ -1594,8 +1605,26 @@ function draw_corner_window(lines, maxcol, morestr, curPad) {
         if (ln && ln.text) disp.putstr(textCol, r, ln.text, NO_COLOR, ln.attr || 0);
     }
     disp.putstr(textCol, moreRow, morestr, NO_COLOR, 0);
-    disp.putstr(0, 22, _container_status1(), NO_COLOR, 0);
-    disp.putstr(0, 23, _container_status2(), NO_COLOR, 0);
+    const s1 = _container_status1(), s2 = _container_status2();
+    // render_map_to_grid() already laid down a FULL fresh status (its own
+    // renderStatusLines() call); putstr() never clears past what it writes,
+    // so a truncated re-write below must blank the tail itself or the full
+    // text it's replacing keeps showing through past the cutoff.
+    let cut = null;
+    if (moreRow >= 22) {
+        // This window's own content reaches into the status rows: truncate at
+        // its own left edge (same as invent.js's putStatusLines for the tall
+        // single-page menu), combined with any cutoff already inherited.
+        cut = (carried != null) ? Math.min(offx, carried) : offx;
+        game._statusTruncCol = cut;
+    } else if (carried != null) {
+        cut = carried;
+    }
+    disp.putstr(0, 22, cut != null ? s1.slice(0, cut) : s1, NO_COLOR, 0);
+    disp.putstr(0, 23, cut != null ? s2.slice(0, cut) : s2, NO_COLOR, 0);
+    if (cut != null) {
+        for (let c = cut; c < cols; c++) { disp.setCell(c, 22, ' ', NO_COLOR, 0); disp.setCell(c, 23, ' ', NO_COLOR, 0); }
+    }
     disp.setCursor(textCol + morestr.length + (curPad || 0), moreRow);
     game._modal_screen = 'container';
 }
@@ -3944,20 +3973,34 @@ async function wiz_intrinsic() {
         // topline (C update_topl appends with two spaces while it fits).
         await update_topl(`Timeout for ${it.name} ${oldtimeout ? 'increased by' : 'set to'} ${DEFAULT_TIMEOUT_INCR}.`);
     }
-    // C: docrt() — clears the screen (flushing the topline through --More--)
-    // and repaints the map.  A pick whose handler prints nothing (BLINDED on an
-    // already-blind hero) leaves the topline EMPTY, and C never --More--s an
-    // empty topline.
-    if (game._pending_message) await topl_more();
-    game._pending_message = '';
     // C ref: display.c docrt():1727 — `if (u.uswallow) { swallowed(1); goto
-    // post_map; }`.  That is a SECOND full stomach repaint after the one
-    // make_hallucinated() already did, and while hallucinating each repaint
-    // spends eight more display-RNG picks, so skipping it leaves every later
-    // frame one batch behind (seed0383 step 165).
+    // post_map; }`, which skips cls()/the message flush entirely.  That is a
+    // SECOND full stomach repaint after the one make_hallucinated() already
+    // did, and while hallucinating each repaint spends eight more display-RNG
+    // picks, so skipping it leaves every later frame one batch behind
+    // (seed0383 step 165).
     if (game.u?.uswallow) {
+        if (game._pending_message) await topl_more();
+        game._pending_message = '';
         const { swallowed } = await import('./display.js');
         await swallowed(1);
+    } else {
+        // C ref: display.c docrt_flags() non-swallow path — cls() (flush the
+        // pending topline through its OWN --More--), vision_recalc(2), repaint
+        // the level's remembered glyphs, then vision_recalc(0) + see_monsters()
+        // to re-see everything currently visible.  This whole pass was
+        // OUTRIGHT MISSING (only flush_screen(1) ran after), so a
+        // hallucinating hero's map kept showing whatever make_hallucinated()'s
+        // own see_monsters()/see_objects() had just drawn instead of docrt()'s
+        // full second pass — every later screen one whole redraw's worth of
+        // display-rng picks behind (heldout-mirror44 seed0383-wizard-
+        // hallucinate, step 165: C 40 more draws here, ours 0).  js/display.js's
+        // docrt() already ports this exact sequence (message flush included)
+        // faithfully; call it directly instead of flushing the message here
+        // too — a duplicate EARLY flush closed this step's capture before
+        // docrt()'s own redraw ran, pushing all 40 draws into the WRONG step.
+        const { docrt } = await import('./display.js');
+        await docrt();
     }
     await flush_screen(1);
     return 0;

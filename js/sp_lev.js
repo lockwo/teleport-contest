@@ -2343,13 +2343,22 @@ export function quest_create_object(otyp, mx, my, spe, carryingMon) {
 }
 
 // C ref: sp_lev.c create_trap for a fixed-type, fixed-coord trap: get_location
-// (explicit -> no RNG) then mktrap(type, MKTRAP_MAZEFLAG|NOSPIDERONWEB).  The
-// only RNG mktrap consumes here is the victim check rnd(4) (mklev.c:2137), which
-// is always drawn (in_mklev, kind != NO_TRAP) and, at this level difficulty,
-// never places a victim.
+// (explicit -> no RNG) then mktrap(type, MKTRAP_MAZEFLAG).  A bare des.trap()
+// call (string/table form used by every quest .lua) leaves lspo_trap's
+// spider_on_web default of TRUE untouched, so MKTRAP_NOSPIDERONWEB is NOT set
+// here -- mktrap() spawns a giant spider (its own next_ident/newmonhp/gender
+// rolls) whenever the placed trap resolves to WEB (mklev.c:2101-2103), BEFORE
+// the victim check.  The victim check itself (rnd(4), mklev.c:2137) is always
+// drawn (in_mklev, kind != NO_TRAP) and, at this level difficulty, never
+// places a victim.
 export async function quest_create_trap(ttyp, mx, my) {
     const x = q_absx(mx), y = q_absy(my);
-    await maketrap(x, y, ttyp);
+    const t = await maketrap(x, y, ttyp);
+    const kind = t ? t.ttyp : NO_TRAP;
+    if (kind === WEB) {
+        const spider = name_to_pmidx('giant spider');
+        if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
+    }
     rnd(4);                                          // mktrap victim check
 }
 
@@ -2571,7 +2580,11 @@ function arc_traptype_rnd() {
 // C ref: sp_lev.c create_trap for a random type + random (maze) location.
 // get_location_coord(DRY) loop rejecting stairs/ladder, then mktrap(0,...):
 // retry traptype_rnd() until valid, is_hole&&!Can_fall_thru -> ROCKTRAP, place,
-// then the always-drawn victim check rnd(4) (lvl(14) <= rnd(4) is never true).
+// then -- if the placed trap is a WEB -- mktrap()'s own spider_on_web arm
+// (lspo_trap defaults spider_on_web=TRUE for a bare des.trap(), so
+// MKTRAP_NOSPIDERONWEB is never set here) spawns a giant spider with its own
+// next_ident/newmonhp/gender rolls (mklev.c:2101-2103), BEFORE the
+// always-drawn victim check rnd(4) (lvl(14) <= rnd(4) is never true).
 export async function quest_create_trap_random() {
     let x = -1, y = -1, trycnt = 0;
     do {
@@ -2584,7 +2597,12 @@ export async function quest_create_trap_random() {
     do { kind = arc_traptype_rnd(); } while (kind === ARC_NO_TRAP);
     // hardfloor is set on this level -> Can_fall_thru() is FALSE (RNG-neutral).
     if (kind === ARC_HOLE || kind === ARC_TRAPDOOR) kind = ARC_ROCKTRAP;
-    await maketrap(x, y, kind);                       // rolling-boulder draws launch coord
+    const trap = await maketrap(x, y, kind);           // rolling-boulder draws launch coord
+    const placed = trap ? trap.ttyp : ARC_NO_TRAP;
+    if (placed === WEB) {
+        const spider = name_to_pmidx('giant spider');
+        if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
+    }
     rnd(4);                                            // mktrap victim check (mklev.c:2137)
 }
 

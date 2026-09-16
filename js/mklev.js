@@ -42,7 +42,8 @@ import { maketrap, Can_fall_thru, Can_dig_down, t_at, Invocation_lev, deltrap } 
 import { makemon as make_monster, rndmonst, mkclass,
          name_to_pmidx, monster_by_pmidx, enexto_spawn, placeOnLevel,
          name_gender_hint, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
-import { m_at, newsym } from './display.js';
+import { m_at, newsym, impossible } from './display.js';
+import { wiz_flip_lregions } from './levels/wiz_common.js';
 import { getbones } from './bones.js';
 import { set_corpsenm } from './mkobj.js';
 import { make_engr_at, random_engraving, wipe_engr_at, get_rnd_epitaph,
@@ -192,10 +193,16 @@ function bad_location(x, y, nlx, nly, nhx, nhy) {
     const loc = game.level?.at(x, y);
     if (!loc) return true;
     if (occupied(x, y)) return true;
-    // C: within_bounded_area(x, y, nlx, nly, nhx, nhy) — the `nlx &&` guard is
-    // ours, and inert: place_lregion clamps lx to >= 1, so a 0,0,0,0 exclusion
-    // can only match x == 0, which never comes out of the rn1.
-    if (nlx && x >= nlx && x <= nhx && y >= nly && y <= nhy) return true;
+    // C: within_bounded_area(x, y, nlx, nly, nhx, nhy) is an UNCONDITIONAL
+    // macro — no "nlx truthy" guard.  A `nlx &&` guard here would silently
+    // treat a real exclude region whose lower x bound happens to be 0 as "no
+    // exclusion" instead of a real (if unlikely) restriction.  This function's
+    // own current callers never hit that case (their sentinel for "no
+    // exclude" is -1, not 0), but castle_bad_location — the hand-written
+    // duplicate of this same predicate — DID have exactly this bug live: its
+    // LR_UPSTAIR registers a real exclude of [0,0,62,16].  Fixed here too so
+    // the two copies stay in sync and match C exactly either way.
+    if (x >= nlx && x <= nhx && y >= nly && y <= nhy) return true;
     return !((loc.typ === CORR && !!game.level?.flags?.is_maze_lev)
              || loc.typ === ROOM || loc.typ === AIR);
 }
@@ -855,6 +862,11 @@ async function makelevel() {
     if (!isRogue) {
     makecorridors();
     await make_niches();
+
+    // C ref: mklev.c:1312 `mklev_sanity_check();` — the 'sanity_check' rc
+    // option's post-corridor/niche audit (door consistency + needjoining room
+    // connectivity).  No-op unless iflags.sanity_check/debug_fuzzer is set.
+    for (const complaint of mklev_sanity_check()) await impossible(complaint);
 
     // Vault creation (simplified for contest)
     if (g.vault_x !== -1) {
@@ -4232,6 +4244,12 @@ function mtown6_monkfoodshop() {
 // Entry point.  C ref: makemaz("minetn") -> load_special("minetn-6.lua").
 async function makemaz_minetown6() {
     const g = game;
+    // load_special -> load_lua -> nhlib.lua prelude `align = {...}; shuffle(align)`
+    // runs before minetn-6.lua's own body (its global `align` reference at the
+    // des.altar() call below is this same table) — must draw BEFORE the script's
+    // own des.level_init() calls, not after them.
+    const align = shuffle(['law', 'neutral', 'chaos']);
+
     // des.level_init({style="solidfill", fg=" "}) — draws one rn2(2) (lit);
     // fully overwritten by the mines-style init below (sp_lev.c:2990-2993),
     // so only the draw itself matters.
@@ -4249,12 +4267,13 @@ async function makemaz_minetown6() {
     // cells leave the mines cavern above untouched.
     hf_map({ map: MINETN6_MAP, halign: 'center', valign: 'top', lit: false });
 
-    const align = shuffle(['law', 'neutral', 'chaos']);
-
     splev_region_lit(0, 0, 39, 19, 1);
 
-    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 1, 0, 39, 18);
-    mtown_stair_lregion(LR_DOWNSTAIR, 60, 3, 75, 19, 0, 0, 38, 18);
+    // C ref: des.levregion() only QUEUES an lregion; the actual place_lregion()
+    // RNG draw happens in fixup_special() (mkmaze.c:603-609), which runs after
+    // the WHOLE script body — doors and monsters included — has executed, not
+    // at this textual position.  Moved to the tail (below) to match; see the
+    // fixup_special() comment there for why this matters here specifically.
 
     splev_region_lit(13, 7, 14, 8, 0);
     vly_region(9, 9, 11, 11, 1, SHOPBASE + 11, FILL_NORMAL, false);   // candle
@@ -4309,6 +4328,16 @@ async function makemaz_minetown6() {
     if (rn2(2)) flp |= 2;
     if (flp) flip_level(flp);
     set_wall_state();
+
+    // C ref: des.levregion() only QUEUES an lregion (sp_lev.c lspo_levregion);
+    // the actual place_lregion() RNG draw happens in fixup_special()
+    // (mkmaze.c:570-609), which sp_lev.c:6040-6050 calls AFTER wallification
+    // and flip_level_rnd() — i.e. after everything above, not back where the
+    // script text declares the stairs (before the shops/altar/doors/monsters).
+    // Moved here (from just after the des.map() overlay) so the two rn1()
+    // draws land in the same relative position as the C recorder's trace.
+    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 1, 0, 39, 18);
+    mtown_stair_lregion(LR_DOWNSTAIR, 60, 3, 75, 19, 0, 0, 38, 18);
 }
 
 
@@ -5496,7 +5525,17 @@ async function makemaz_castle() {
     // then flip_level_rnd(allow_flips) with allow_flips == 2 ("noflipy"), which
     // draws exactly one rn2(2) for the horizontal axis.
     wallification(1, 0, COLNO - 1, ROWNO - 1);
-    if (rn2(2)) flip_level(2);
+    // C ref: sp_lev.c flip_level():697-733 flips gl.lregions[] (BOTH inarea
+    // and delarea, unconditionally) alongside the map/monsters/objects.
+    // flip_level() here only mirrors the map; castle's own 3 registered
+    // lregions (LR_DOWNTELE/LR_UPTELE/LR_UPSTAIR) need the same treatment
+    // the wizard-tower levels already give theirs via wiz_flip_lregions() —
+    // without it, LR_UPSTAIR's search+exclude band stayed pointed at the
+    // PRE-flip (west) side while the carved maze moved to the mirrored
+    // (east) side, so place_lregion() searched empty stone and burned a
+    // different number of rn1() draws than C before falling back,
+    // desyncing the rest of the level (seed0360 step 159).
+    if (rn2(2)) { flip_level(2); wiz_flip_lregions(2); }
 
     // fixup_special(): walk the registered lregions, then (no LR_BRANCH among
     // them) place the dungeon branch.
@@ -5504,6 +5543,15 @@ async function makemaz_castle() {
     await castle_place_branch();
     // Is_stronghold -> level.flags.graveyard = 1.  No RNG.
     if (g.level?.flags) g.level.flags.graveyard = true;
+    // C ref: mkmaze.c fixup_special() tail (mkmaze.c:701-703) — free
+    // gl.lregions / reset num_lregions=0 once this level's regions are all
+    // consumed.  wiz_place_lregions() (the wizard-tower levels' equivalent
+    // of this function) already does this; castle's own hand port didn't,
+    // leaving its 3 entries sitting in the shared `game.lregions` for the
+    // rest of the run — harmless today only because nothing else currently
+    // reads that field once populated, but not the C-faithful lifecycle.
+    g.lregions = null;
+    g.num_lregions = 0;
 }
 
 // C ref: sp_lev.c get_location(DRY) with croom == NULL and a random coord —
@@ -5685,12 +5733,16 @@ function castle_put_stair_here(x, y, r, up) {
 }
 
 // C ref: mkmaze.c bad_location() — occupied, inside the excluded region, or not
-// a ROOM/maze-CORR/AIR square.
+// a ROOM/maze-CORR/AIR square.  C's within_bounded_area() is an UNCONDITIONAL
+// macro with no "is there even an exclude region" guard; castle's own
+// LR_UPSTAIR registration has a real exclude of [0,0,62,16] (nlx==0), so a
+// truthiness guard on nlx (`nlx && ...`) wrongly treats that as "no exclude"
+// and accepts squares C rejects — desyncing the whole level's RNG stream.
 function castle_bad_location(x, y, nlx, nly, nhx, nhy) {
     const loc = game.level?.at(x, y);
     if (!loc) return true;
     if (occupied(x, y)) return true;
-    if (nlx && x >= nlx && x <= nhx && y >= nly && y <= nhy) return true;
+    if (x >= nlx && x <= nhx && y >= nly && y <= nhy) return true;
     const is_maze = !!game.level?.flags?.is_maze_lev;
     return !((loc.typ === CORR && is_maze) || loc.typ === ROOM || loc.typ === AIR);
 }

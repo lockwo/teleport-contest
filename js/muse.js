@@ -44,7 +44,11 @@ import { attacktype, dmgtype, AT_GAZE, AT_EXPL, AT_BREA, AT_ENGL, AD_FIRE,
     AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
 import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
     objects as OBJECTS, place_object } from './mkobj.js';
-import { monster_by_pmidx, makemon } from './makemon.js';
+import { monster_by_pmidx, makemon, little_to_big, name_to_pmidx } from './makemon.js';
+import { set_mon_data } from './mondata.js';
+import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag }
+    from './monflags_data.js';
+import { mondied_mm } from './mhitm.js';
 import { find_mac as worn_find_mac } from './worn.js';
 // onscary() is an `export function` declaration in monmove.js, so the
 // monmove -> muse -> monmove import cycle resolves through a hoisted binding
@@ -61,6 +65,7 @@ import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver }
 // messages that land mid-turn must go through update_topl() to get C's boundary.
 import { update_topl, newsym, map_invisible, see_with_infrared } from './display.js';
 import { Monnam, mon_nam, monflee } from './uhitm.js';
+import { YMonnam } from './do_name.js';
 import { cansee, couldsee } from './vision.js';
 import { obj_doname, xname, makeknown, trycall, hands_obj,
     W_ARMOR_WORN, W_ACCESSORY_WORN }
@@ -74,7 +79,7 @@ import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     IS_FURNITURE, IS_DRAWBRIDGE, IS_DOOR, IS_OBSTRUCTED, IS_AIR, ACCESSIBLE,
     ZAP_POS, is_hole, is_pit, In_endgame, Is_botlevel, Is_knox_level,
     M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP, M_SEEN_ELEC,
-    M_SEEN_ACID, M_SEEN_REFL } from './const.js';
+    M_SEEN_ACID, M_SEEN_REFL, G_GENOD } from './const.js';
 import { surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 
@@ -823,18 +828,12 @@ function m_next2m(mtmp) {
 }
 
 // C ref: mkobj.c:2648 add_to_minv() — a monster's minvent CHAIN is newest-first
-// (each pickup is prepended).  Our minvent array is append-ordered, so every
-// muse.c scan that walks `mtmp->minvent` and keeps the FIRST/LAST match has to
-// read it backwards; walking it forwards makes a shopkeeper quaff its oldest
-// healing potion where C quaffs the newest (w3-human-knight-debug step 135).
-// Same inversion as monmove.js objPileAt()/invent.js objects_at() apply to the
-// floor `nexthere` chain.
+// (each pickup is prepended), and our minvent array matches that order
+// directly (every producer unshifts).  A snapshot copy so a muse.c scan that
+// walks `mtmp->minvent` while extracting items doesn't mutate mid-iteration.
 function m_chain(mtmp) {
     const inv = mtmp?.minvent;
-    if (!inv || inv.length < 2) return inv || [];
-    const out = new Array(inv.length);
-    for (let i = 0, n = inv.length; i < n; i++) out[i] = inv[n - 1 - i];
-    return out;
+    return inv ? inv.slice() : [];
 }
 
 /* ------------------------------------------------------------------------ *
@@ -2332,7 +2331,7 @@ export async function use_misc(mtmp) {
         if (vismon) await update_topl(`${Monnam(mtmp)} seems more experienced.`);
         if (oseen) makeknown(OT().POT_GAIN_LEVEL);
         m_useup(mtmp, otmp);
-        if (!grow_up_potion(mtmp)) return 1;
+        if (!(await grow_up_potion(mtmp))) return 1;
         return 2; /* grew into a genocided monster */
     case MUSE_WAN_MAKE_INVISIBLE:
     case MUSE_POT_INVISIBILITY: {
@@ -2483,17 +2482,83 @@ function hero_unwield(obj) {
     if (i >= 0) inv.splice(i, 1);
 }
 // C ref: makemon.c grow_up(mtmp, (struct monst *) 0) — the potion-of-gain-level
-// branch: always go up a level, rnd(8) extra max HP.  Returns false when the
-// monster grew into a genocided form (which kills it).
-function grow_up_potion(mtmp) {
+// branch: always go up a level, rnd(8) extra max HP, and (makemon.c:2120-2163)
+// may promote the monster to its little_to_big() "big" form once the new level
+// reaches that form's minimum mlevel — printing "<Mon> becomes/grows up
+// into/changes into a <big-form>." and reassigning mon.data via set_mon_data().
+// Previously unported ("little_to_big... needs tables the port doesn't expose
+// here"): the promotion draws no RNG of its own, but SKIPPING the message left
+// nothing to force the "seems more experienced" --More--'s own flush, so
+// movemon() ran straight through every other monster's turn this same pass
+// instead of pausing here — a whole extra monster-movement burst (dozens of
+// rn2 calls for unrelated monsters) landing one step early.  Returns false
+// when the monster grew into a genocided form (which kills it, matching C's
+// "return (struct permonst *)0" -> use_misc()'s "return 1").
+async function grow_up_potion(mtmp) {
     if (DEADMONSTER(mtmp)) return false;
+    const oldtype = (mtmp.data && mtmp.data.pmidx != null) ? mtmp.data.pmidx : (mtmp.mnum | 0);
+    // C ref: makemon.c:2066 — the killer-bee/no-victim special case, otherwise
+    // little_to_big(oldtype).  PM_KILLER_BEE=1, PM_QUEEN_BEE=5 (makemon.js).
+    const newtype = (oldtype === 1) ? 5 : little_to_big(oldtype);
+
     const max_increase = rnd(8);
     mtmp.mhpmax = (mtmp.mhpmax | 0) + max_increase;
     mtmp.mhp = (mtmp.mhp | 0) + max_increase;
-    /* C recalculates lev_limit and may switch to the "big" form; little_to_big
-       and the genocide check need makemon.c tables the port doesn't expose
-       here, and neither draws RNG, so only the level bump is applied. */
-    if ((mtmp.m_lev | 0) < 49) mtmp.m_lev = (mtmp.m_lev | 0) + 1;
+
+    // C ref: makemon.c:2113-2118 — is_mplayer -> 30; else clamp into [5,49]
+    // (or 50 for a form whose own mlevel already exceeds 49).
+    let lev_limit = 50;
+    const loArch = name_to_pmidx('archeologist'), hiWiz = name_to_pmidx('wizard');
+    const isMplayer = loArch >= 0 && hiWiz >= loArch
+        && oldtype >= loArch && oldtype <= hiWiz;
+    if (isMplayer) lev_limit = 30;
+    else if (lev_limit > 49)
+        lev_limit = ((mtmp.data?.mlevel ?? 0) > 49) ? 50 : 49;
+
+    mtmp.m_lev = (mtmp.m_lev | 0) + 1;
+
+    const newptr = monster_by_pmidx(newtype);
+    if (mtmp.m_lev >= (newptr?.mlevel ?? Infinity) && newtype !== oldtype) {
+        const fem = is_male_flag(newptr) ? false
+            : is_female_flag(newptr) ? true : !!mtmp.female;
+        const genod = ((game.mvitals?.[newtype]?.mvflags | 0) & G_GENOD) !== 0;
+        if (genod) {
+            if (canspotmon(mtmp)) {
+                // C ref: makemon.c:2126-2129 — nonliving(ptr) picks "expires"
+                // vs "dies"; approximated via the undead flag (covers every
+                // reachable grownups[] big-form: no golem/vortex is a big form).
+                const isNonliving = (mflags2_of(newptr) & M2_UNDEAD) !== 0;
+                await update_topl(`As ${mon_nam(mtmp)} grows up into `
+                    + `${an(newptr?.name || '')}, ${mhe(mtmp)} `
+                    + `${isNonliving ? 'expires' : 'dies'}!`);
+            }
+            set_mon_data(mtmp, newptr);
+            await mondied_mm(mtmp);
+            return false; // grew into a genocided form
+        } else if (canspotmon(mtmp)) {
+            const prefix = (mtmp.female && !fem) ? 'male '
+                : (fem && !mtmp.female) ? 'female ' : '';
+            const buf = `${prefix}${newptr?.name || ''}`;
+            const verb = (fem !== !!mtmp.female) ? 'changes into'
+                : humanoid(newptr) ? 'becomes' : 'grows up into';
+            await update_topl(`${YMonnam(mtmp)} ${verb} ${an(buf)}.`);
+        }
+        set_mon_data(mtmp, newptr);
+        if (mtmp.cham === oldtype && is_shapeshifter_flag(newptr))
+            mtmp.cham = newtype;
+        newsym(mtmp.mx, mtmp.my);
+        lev_limit = mtmp.m_lev; // never undo the increment
+        mtmp.female = fem;
+    }
+
+    // C ref: makemon.c:2165-2172 — sanity clamps (hp_threshold is 0 on this
+    // no-victim path, so `mhpmax == hp_threshold + 1` is `mhpmax == 1`).
+    if (mtmp.m_lev > lev_limit) {
+        mtmp.m_lev -= 1;
+        if (mtmp.mhpmax === 1) mtmp.mhpmax -= 1;
+    }
+    if (mtmp.mhpmax > 50 * 8) mtmp.mhpmax = 50 * 8;
+    if (mtmp.mhp > mtmp.mhpmax) mtmp.mhp = mtmp.mhpmax;
     return true;
 }
 

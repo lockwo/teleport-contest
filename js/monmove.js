@@ -92,7 +92,7 @@ import { is_armed, mattk_of,
     AD_POLY, AD_ACID, AD_COLD, AD_FIRE, AD_SITM, AD_SEDU, AD_SSEX,
     AD_RUST, AD_CORR, AD_MAGM, AD_RBRE, AD_SPEL, AD_CLRC,
     AD_SLEE, AD_DISN, AD_DRDX, AD_DRCO,
-    AD_BLND, AD_STON, AD_LEGS } from './monattk_data.js';
+    AD_BLND, AD_STON, AD_LEGS, AD_WRAP } from './monattk_data.js';
 const PM_PAPER_GOLEM_FT = _name_to_pmidx_cf('paper golem');
 const PM_STRAW_GOLEM_FT = _name_to_pmidx_cf('straw golem');
 const PM_WOOD_GOLEM_FT = _name_to_pmidx_cf('wood golem');
@@ -111,7 +111,10 @@ import { place_object, next_ident, BLINDING_VENOM, ACID_VENOM, VENOM_CLASS, obje
     AMULET_CLASS, POTION_CLASS, SCROLL_CLASS, WAND_CLASS, RING_CLASS,
     SPBOOK_CLASS, BALL_CLASS } from './mkobj.js';
 import { stackobj, welded as welded_iv, bimanual as bimanual_iv,
-    calc_capacity as calc_capacity_iv, nohands_youmonst, otense, xname } from './invent.js';
+    calc_capacity as calc_capacity_iv, nohands_youmonst, otense, xname,
+    carrying as carrying_mm } from './invent.js';
+import { is_art } from './artifact.js';
+const ART_GIANTSLAYER = 15, ART_OGRESMASHER = 16, LOADSTONE = 471;
 import { obj_resists, resists_sleep, sleep_monst } from './zap.js';
 // m_harmless_trap's FIRE_TRAP arm; mondata.js reads permonst.mresists (MR_FIRE).
 import { resists_fire, resists_acid } from './mondata.js';
@@ -4870,7 +4873,8 @@ function mon_engulf_obj(mtmp, otmp) {
     }
     otmp.where = 3; // OBJ_MINVENT
     mtmp.minvent = mtmp.minvent || [];
-    mtmp.minvent.push(otmp);
+    // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.
+    mtmp.minvent.unshift(otmp);
 }
 
 // C ref: mon.c:1392 m_consume_obj(mtmp, otmp) — a monster eats/absorbs a
@@ -5177,7 +5181,8 @@ async function mpickstuff(mtmp) {
             }
             otmp3.where = 3; // OBJ_MINVENT
             mtmp.minvent = mtmp.minvent || [];
-            mtmp.minvent.push(otmp3);
+            // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.
+            mtmp.minvent.unshift(otmp3);
             // C ref: mon.c:1904 check_gear_next_turn(mtmp) — mon.c:5915 sets
             // misc_worn_check|I_SPECIAL so movemon_singlemon (js/mon.js) runs
             // m_dowear() next turn and spends that turn equipping.  The
@@ -5421,10 +5426,21 @@ export async function mattacku(mtmp, mdat) {
     // C ref mhitu.c:769 — sum[] holds each attack's M_ATTK_* result; the AT_HUGS
     // case and the end-of-iteration AGR_DIED/AGR_DONE tests both read it.
     const sum = atks.map(() => M_ATTK_MISS);
+    // C ref mhitu.c:782 `if (!u_at(gb.bhitpos.x, gb.bhitpos.y)) continue;` — the
+    // hero's square when THIS call started, i.e. before any of its own attacks
+    // could run.  A multi-attack monster (e.g. an ettin zombie's two claws)
+    // whose first hit knocks the hero away no longer has a second attack to
+    // make: C skips every attack past i==0 with no roll at all once the hero
+    // has left that square.  Missing this made every later hand-to-hand
+    // attack this turn roll anyway, desyncing the RNG stream for the rest of
+    // the turn — invisible until js/monmove.js's mhitm_knockback actually
+    // moved the hero (see its own header) instead of being a permanent no-op.
+    const bhitx = u.ux, bhity = u.uy;
     for (let i = 0; i < atks.length; i++) {
         // C ref mhitu.c:771 — a counterattack against attack [i-1] may have
         // killed the aggressor.
         if (DEADMONSTER(mtmp)) return 1;
+        if (i > 0 && (u.ux !== bhitx || u.uy !== bhity)) continue;
         // C ref mhitu.c:786 getmattk() — attack substitution.  Every branch is
         // RNG-free; the ones that can fire for the monsters this port drives are
         // ported in getmattk() below.
@@ -5959,14 +5975,14 @@ const BIMANUAL_HWEP = new Set([57 /*TSURUGI*/, 71 /*DWARVISH_MATTOCK*/,
     55 /*TWO_HANDED_SWORD*/, 45 /*BATTLE_AXE*/, 79 /*QUARTERSTAFF*/]);
 
 // C ref: weapon.c m_carrying(mon, otyp) — the monster's first minvent obj of
-// that type, else null.  C's minvent CHAIN is newest-first (mkobj.c:2648
-// add_to_minv prepends), so "first" means the most recently acquired one; our
-// minvent array is append-ordered and has to be read backwards.
+// that type, else null.  Our minvent array is newest-first (mkobj.c:2648
+// add_to_minv prepends, and every producer here unshifts to match), so
+// "first" is simply index order.
 // Exported for muse.js: C's m_carrying() is used all over muse.c's item search.
 export function m_carrying(mon, otyp) {
     const inv = mon?.minvent;
     if (!inv) return null;
-    for (let i = inv.length - 1; i >= 0; i--) if (inv[i].otyp === otyp) return inv[i];
+    for (const o of inv) if (o.otyp === otyp) return o;
     return null;
 }
 
@@ -6825,12 +6841,11 @@ const BIMANUAL_RWEP = new Set([63, 64, 61, 68, 65, 60, 67, 62, 69, 70, 66, 59]);
 // C ref: weapon.c:471 oselect(mtmp, x) — the first minvent object of type x the
 // monster may use: a CORPSE/EGG only if it petrifies on touch, and never an
 // artifact it cannot handle (no monster in reach carries one).
-// C's minvent CHAIN is newest-first (mkobj.c:2648 add_to_minv prepends), so
-// "first" is the most recently acquired one — same inversion m_carrying applies.
+// Our minvent array is newest-first (mkobj.c:2648 add_to_minv prepends,
+// matched by every producer), so "first" is simply index order.
 function oselect_mm(mtmp, otyp) {
     const inv = mtmp?.minvent || [];
-    for (let i = inv.length - 1; i >= 0; i--) {
-        const o = inv[i];
+    for (const o of inv) {
         if (o.otyp !== otyp) continue;
         if ((otyp === CORPSE || otyp === EGG_OTYP)
             && !(o.corpsenm != null && o.corpsenm >= 0
@@ -7265,7 +7280,7 @@ async function hitmu(mtmp, mdat, mattk) {
 
     // mhitu.c:1193 — knockback (AD_PHYS claw/kick/butt/weap only; the rn2(3) and
     // rn2(chance=6) gate rolls always fire first).
-    mhitm_knockback(mtmp, mattk);
+    await mhitm_knockback(mtmp, mattk, MON_WEP(mtmp) != null);
 
     if (mhm.done) return mhm.hitflags;    // mhitu.c:1196
 
@@ -7682,23 +7697,121 @@ function pmname_of_mon(mtmp) {
     return ptr?.name || 'monster';
 }
 
-// C ref: uhitm.c:5247 mhitm_knockback() — hero is the defender.  The
-// knockdistance rn2(3) and the rn2(chance) gate roll fire before any adtyp /
-// engulf checks, so they always advance the stream; knockback only proceeds for
-// AD_PHYS claw/kick/butt/weap.  Returns false (no actual hurtle modelled).
-function mhitm_knockback(mtmp, mattk) {
+// C ref: uhitm.c:5247 mhitm_knockback() — hero is always the defender in this
+// call site (mdef == &youmonst), so u_def is always TRUE and u_agr always
+// FALSE; the mon-vs-mon and hero-attacks branches of the real function are
+// not reachable here and are not ported.  weaponUsed mirrors the real call's
+// `(MON_WEP(mtmp) != 0)`.
+//
+// NOT MODELLED (narrow, deliberate gaps, each a no-op fallback rather than a
+// silent wrong answer):
+//  * cursed-saddle "knock the steed instead" / dismount_steed() branch — if
+//    the hero has a steed we bail out early, same as the previous stub did
+//    for every case, so no existing steed session regresses.
+//  * u.ustuck: C frees the hero from a DIFFERENT sticking monster before the
+//    hurtle; skipped, so a knockback while stuck to something else no-ops
+//    (hurtle() itself refuses to move a stuck hero).
+//  * is_blunt_weapon(): needs oc_dir/WHACK data this port's object table does
+//    not carry, so a weapon-wielding attacker conservatively never qualifies
+//    (unchanged from the prior stub's always-false behavior for that case).
+// C ref: mondata.c:654 sticks(ptr) — a holder; grabbing one would be ambiguous.
+function sticks_mm(ptr) {
+    return dmgtype(ptr, AD_STCK)
+        || (dmgtype(ptr, AD_WRAP) && !attacktype(ptr, AT_ENGL))
+        || attacktype(ptr, AT_HUGS);
+}
+async function mhitm_knockback(mtmp, mattk, weaponUsed) {
+    const u = game.u;
     const knockdistance = rn2(3) ? 1 : 2;            // uhitm.c:5258
-    void knockdistance;
-    const chance = 6;                                // no Ogresmasher here
+    let chance = 6;
+    const wep = weaponUsed ? MON_WEP(mtmp) : null;
+    if (wep && is_art(wep, ART_OGRESMASHER)) chance = 2;
     if (rn2(chance)) return false;                   // uhitm.c:5269
+
     // AD_PHYS + (AT_CLAW|AT_KICK|AT_BUTT|AT_WEAP) required; AD_ELEC bite fails.
     if (!(mattk.adtyp === AD_PHYS
           && (mattk.aatyp === AT_CLAW || mattk.aatyp === AT_KICK
-              || mattk.aatyp === AT_WEAP /* AT_BUTT shares this gate */))) {
+              || mattk.aatyp === AT_BUTT || mattk.aatyp === AT_WEAP))) {
         return false;
     }
-    // The actual hurtle (test_move / hurtle) is not modelled — it would move the
-    // hero; not reached by the contest's monster-hits-hero scenarios.
+    // don't knockback if attacker also wants to grab or engulf
+    if (attacktype(mtmp.data, AT_ENGL) || attacktype(mtmp.data, AT_HUGS)
+        || sticks_mm(mtmp.data)) {
+        return false;
+    }
+
+    const defx = u.ux, defy = u.uy;
+    const dx = sgn(defx - mtmp.mx), dy = sgn(defy - mtmp.my);
+    // Reduced stand-in for the real hack.c test_move(defx, defy, dx, dy,
+    // TEST_MOVE): reject a destination the hero could never occupy (a wall or
+    // other obstructed terrain — a huge attacker pushing the hero straight
+    // into a wall it's braced against is exactly the common case this must
+    // catch) and the same still-doored-diagonal restriction uhitm.c's own
+    // non-hero branch uses.  Not a full port of test_move()'s every rule.
+    if (!isok(defx + dx, defy + dy)) return false;
+    const nextLoc = game.level?.at(defx + dx, defy + dy);
+    if (IS_OBSTRUCTED(nextLoc?.typ ?? 0)) return false;
+    const destLoc = game.level?.at(defx, defy);
+    if (destLoc && IS_DOOR(destLoc.typ) && dx && dy) {
+        const dm = destLoc.doormask || 0;
+        if ((dm & ~(D_NODOOR | D_BROKEN)) !== 0) return false;
+    }
+
+    // cursed-saddle / dismount branch not modelled; bail rather than guess.
+    if (u.usteed) return false;
+
+    if (DEADMONSTER(mtmp)) return false;             // attacker must be alive
+    // attacker must be much larger than defender
+    const pa = mtmp.data, pd = youmonst_data_mm();
+    if (!((pa?.msize ?? 0) > ((pd?.msize ?? 0) + 1))) return false;
+    // no knockback with a flimsy or non-blunt weapon; oc_dir/WHACK data isn't
+    // carried by this port's object table, so a wielded weapon never
+    // qualifies (matches the prior stub's behavior for that case).
+    if (wep) return false;
+    if (unsolid(pa)) return false;                   // needs a solid hit
+    if (m_is_steadfast_u()) {
+        await emitU(`You don't budge.`);
+        return false;
+    }
+
+    const { hurtle } = await import('./dothrow.js');
+    // C ref: dothrow.c:977 will_hurtle(mdef, defx+dx, defy+dy) — only varies
+    // this message's wording (never gates whether the knockback happens), so
+    // a self-contained "is this one step open" check stands in for it rather
+    // than reusing dothrow.js's will_hurtle(): that helper's goodpos_hurtle()
+    // fallback is only a reduced stand-in until some OTHER mhurtle() call has
+    // primed the real goodpos() handle, so whether this wording is even right
+    // would otherwise depend on unrelated earlier-turn state.
+    const nextTyp = game.level?.at(defx + dx, defy + dy)?.typ ?? 0;
+    const knockedhow = (!IS_OBSTRUCTED(nextTyp) && !m_at(defx + dx, defy + dy))
+        ? 'backward' : 'back';
+    const magrbuf = Monnam(mtmp);
+    await emitU(`${magrbuf} ${vtense_mm(magrbuf, 'knock')} you ${knockedhow} `
+                + `with a ${rn2(2) ? 'forceful' : 'powerful'} `
+                + `${rn2(2) ? 'blow' : 'strike'}!`);
+
+    await hurtle(dx, dy, knockdistance, false);
+    set_apparxy(mtmp);
+    // C ref: potion.c make_stunned(xtime, talk) via uhitm.c:5397 — this port's
+    // own make_stunned_u() (mhitu.js) isn't exported, so this sets HStun/ustun
+    // directly the same way cmd.js/do.js/eat.js/pray.js's Stunned checks read
+    // it (u.uprops.Stun, with u.ustun kept in sync for the ustun-only readers).
+    const stunned = (u.uprops?.Stun || u.ustun || 0) > 0;
+    if (!stunned && !rn2(4)) {
+        u.uprops = u.uprops || {};
+        u.uprops.Stun = knockdistance + 1;   /* 2 or 3 */
+        u.ustun = knockdistance + 1;
+    }
+    return true;
+}
+// m_is_steadfast(&youmonst): flying/levitating hero is never steadfast;
+// Giantslayer or a carried loadstone makes them so.  Water-level air-bubble
+// and Is_airlevel() cases are not modelled (never reached on dlvl 1+).
+function m_is_steadfast_u() {
+    const u = game.u;
+    if (u.uprops?.Flying || u.uprops?.Levitation) return false;
+    if (is_art(u.uwep, ART_GIANTSLAYER)) return true;
+    if (carrying_mm(LOADSTONE)) return true;
     return false;
 }
 
@@ -7707,6 +7820,13 @@ function mhitm_knockback(mtmp, mattk) {
 async function mdamageu(mtmp, n) {
     const u = game.u;
     if (n < 0) n = 0;
+    // C ref: mhitu.c:1908 `disp.botl = TRUE;` — the comment above this
+    // function already claimed this local copy "sets disp.botl", but it
+    // never actually wrote anything; js/monmove.js mattacku()'s bot_snapshot()
+    // (mhitu.c:936 `if (disp.botl) bot();`) was consequently always a no-op
+    // for ordinary hero-damaging attacks, matching the same bug js/mhitu.js's
+    // own mdamageu() had (there it wrote the misspelled `game.disp_botl`).
+    game.botl = true;
     // C ref: mhitu.c:1910-1918 — while Upolyd the damage lands on u.mh, and
     // running the monster form out of hit points calls rehumanize() rather
     // than done().  This copy went straight to u.uhp, so a polymorphed hero

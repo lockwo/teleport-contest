@@ -824,7 +824,10 @@ const UNDEAD_TO_CORPSE = new Map([
 ]);
 
 // C ref: mondata.c little_to_big() — first matching grownups[] little form.
-function little_to_big(mndx) {
+// Exported: js/mondata.js keeps its own module-private copy (grownup_of) for
+// big_little_match(), and js/muse.js's grow_up_potion() needs this same table
+// to port makemon.c grow_up()'s species-upgrade branch faithfully.
+export function little_to_big(mndx) {
     return GROWNUPS_LITTLE_TO_BIG.has(mndx)
         ? GROWNUPS_LITTLE_TO_BIG.get(mndx) : mndx;
 }
@@ -1421,12 +1424,21 @@ function m_initthrow(_mtmp, otyp, oquan) {
 // C routine merges stacks and tracks weapon wielding; for the death-drop use
 // here we only need the object to live in mtmp.minvent so relobj() can release
 // it.  Consumes no RNG.
+// C ref: mkobj.c:2648 add_to_minv() PREPENDS (`obj->nobj = mon->minvent;
+// mon->minvent = obj;`), so mon->minvent iterates NEWEST-FIRST.  A starting
+// monster typically gets several mongets() calls (weapon, armor, misc); using
+// push() here left our minvent OLDEST-first while muse.js/monmove.js's own
+// "first minvent match" helpers already assumed newest-first (per their own
+// comments), and object_detect's per-square pile pick reads array order
+// directly — both silently picked the wrong item for a multi-item monster
+// (seed0030 mirror44: an object-detection screen showed the wrong glyph, and
+// relobj()'s death-drop showed the wrong item on top of the floor pile).
 export function mpickobj(mtmp, otmp) {
     if (!mtmp || !otmp) return;
     if (!mtmp.minvent) mtmp.minvent = [];
     otmp.where = 'minvent';
     otmp.ocarry = mtmp;
-    mtmp.minvent.push(otmp);
+    mtmp.minvent.unshift(otmp);
 }
 
 // C ref: makemon.c golemhp(type) — fixed HP per golem species (no RNG).  pmidx
@@ -2941,11 +2953,16 @@ function tt_doppel(_mon) {
 // Quest-guardian pmidx block (monsters.h "student" .. "apprentice").
 const PM_STUDENT_MON = 369, PM_APPRENTICE_MON = 382;
 
-// C ref: mon.c select_newcham_form() — the full cham switch.  Every arm's RNG
-// is distinct, and this is the function seed4500 diverged on at step 326: a
-// doppelganger generated on Dlvl 40 draws rn2(7) then rn2(3) then tt_doppel's
-// pair, none of which our port made.
-function select_newcham_form(mon) {
+// C ref: mon.c select_newcham_form() switch only — the RNG-bearing shape pick
+// per mon.cham.  Split out from select_newcham_form() so the wizard-mode
+// 'monpolycontrol' override (mon.c:5210, "if (wizard && iflags.mon_polycontrol)
+// mndx = wiz_force_cham_form(mon);" — placed AFTER the switch, BEFORE the
+// NON_PM random fallback below) can be spliced in between the two for the
+// call sites that support it (select_newcham_form_wizard_aware below)
+// WITHOUT forking this RNG sequence: every arm's RNG is distinct, and this is
+// the function seed4500 diverged on at step 326 (a doppelganger generated on
+// Dlvl 40 draws rn2(7) then rn2(3) then tt_doppel's pair).
+function run_cham_switch(mon) {
     let mndx = NON_PM, tryct;
     switch (mon.cham) {
     case PM_SANDESTIN:
@@ -2984,15 +3001,18 @@ function select_newcham_form(mon) {
         // this arm leaves mndx as NON_PM and draws nothing.
         break;
     }
+    return mndx;
+}
 
-    // C ref: mon.c:5213 — "if no form was specified above, pick one at random
-    // now".  Omitting this made every arm that declines (a chameleon's rn2(3),
-    // an ordinary monster) return NON_PM, and newcham's retry loop re-ran the
-    // whole switch instead of drawing C's single rn1(SPECIAL_PM-LOW_PM,LOW_PM).
-    // The while condition is C's, ANDed: outside the Rogue level it always
-    // fails, so exactly one draw happens.
+// C ref: mon.c:5213 — "if no form was specified above, pick one at random
+// now".  Omitting this made every arm that declines (a chameleon's rn2(3),
+// an ordinary monster) return NON_PM, and newcham's retry loop re-ran the
+// whole switch instead of drawing C's single rn1(SPECIAL_PM-LOW_PM,LOW_PM).
+// The while condition is C's, ANDed: outside the Rogue level it always
+// fails, so exactly one draw happens.
+function newcham_random_fallback(mon, mndx) {
     if (mndx === NON_PM) {
-        tryct = 50;
+        let tryct = 50;
         do {
             mndx = rn1(SPECIAL_PM - 0 /*LOW_PM*/, 0 /*LOW_PM*/);
         } while (--tryct > 0 && !validspecmon(mon, mndx)
@@ -3001,6 +3021,30 @@ function select_newcham_form(mon) {
     }
     return mndx;
 }
+
+function select_newcham_form(mon) {
+    return newcham_random_fallback(mon, run_cham_switch(mon));
+}
+
+// C ref: mon.c:5210 — the wizard-mode 'monpolycontrol' override, spliced
+// between the switch and the NON_PM fallback exactly as C places it.  Async
+// twin of select_newcham_form(), used ONLY by call sites that are already
+// async and NOT on makemon()'s synchronous, extremely hot monster-creation
+// path (creation-time chameleon/doppelganger/sandestin/vampire shifts still
+// go through the plain select_newcham_form()/newcham() above, unwizarded —
+// converting makemon() itself to async would ripple through ~100+ callers
+// across the codebase, which is out of scope for this option).
+async function select_newcham_form_wizard_aware(mon) {
+    let mndx = run_cham_switch(mon);
+    if (wizard() && game.iflags?.mon_polycontrol) {
+        const { wiz_force_cham_form } = await import('./mon.js');
+        mndx = await wiz_force_cham_form(mon);
+    }
+    return newcham_random_fallback(mon, mndx);
+}
+// C ref: cmd.c wizard / flags.debug — matches mon.js's/objnam.js's own local
+// copies of this predicate (each file keeps its own rather than share one).
+function wizard() { return !!(game.flags && game.flags.debug); }
 
 // C ref: mon.c:4993 validspecmon(mon, mndx).
 function validspecmon(mon, mndx) {
@@ -3034,6 +3078,28 @@ function accept_newcham_form(mon, mndx) {
     return polyok_flag(mdat) ? mdat : null;
 }
 
+// C ref: mon.c newcham()'s tail — apply the chosen mdat to mtmp (gender, HP
+// rescaling).  Shared by newcham() and newcham_wizard_aware() so the two
+// retry loops below cannot drift on this part.
+function apply_newcham(mtmp, mdat, olddata) {
+    if (!mdat || mdat === olddata || mdat.pmidx === olddata?.pmidx)
+        return 0;                       /* still the same monster */
+
+    mgender_from_permonst(mtmp, mdat);
+    // "give the new form the same proportion of HP as its old one had" — no
+    // RNG in the arithmetic; newmonhp() draws d(m_lev, 8) for the new form.
+    const hpn = mtmp.mhp, hpd = mtmp.mhpmax || 1;
+    const tmp = { data: mdat };
+    newmonhp(tmp);
+    mtmp.m_lev = tmp.m_lev;
+    mtmp.mhpmax = tmp.mhpmax;
+    let nhp = Math.floor((hpn * tmp.mhp) / hpd);
+    if (nhp < 0 || nhp > mtmp.mhpmax) nhp = mtmp.mhpmax;
+    mtmp.mhp = nhp || 1;
+    mtmp.data = mdat;
+    return 1;
+}
+
 // C ref: mon.c newcham() — the random-shape path (mdat == 0), which is the one
 // makemon.c:1367 uses for every newly created shapechanger.  Returns 1 if the
 // form actually changed.  The retry loop is C's: select_newcham_form() can
@@ -3055,22 +3121,33 @@ export function newcham(mtmp, mdat) {
     } else if ((mvflags(mdat.pmidx) & G_GENOD) !== 0) {
         return 0;
     }
-    if (!mdat || mdat === olddata || mdat.pmidx === olddata?.pmidx)
-        return 0;                       /* still the same monster */
+    return apply_newcham(mtmp, mdat, olddata);
+}
 
-    mgender_from_permonst(mtmp, mdat);
-    // "give the new form the same proportion of HP as its old one had" — no
-    // RNG in the arithmetic; newmonhp() draws d(m_lev, 8) for the new form.
-    const hpn = mtmp.mhp, hpd = mtmp.mhpmax || 1;
-    const tmp = { data: mdat };
-    newmonhp(tmp);
-    mtmp.m_lev = tmp.m_lev;
-    mtmp.mhpmax = tmp.mhpmax;
-    let nhp = Math.floor((hpn * tmp.mhp) / hpd);
-    if (nhp < 0 || nhp > mtmp.mhpmax) nhp = mtmp.mhpmax;
-    mtmp.mhp = nhp || 1;
-    mtmp.data = mdat;
-    return 1;
+// Async twin of newcham(), for the (already-async, non-makemon()-hot-path)
+// call sites that want the wizard-mode 'monpolycontrol' override honored —
+// see select_newcham_form_wizard_aware() above for why this is not just
+// newcham() itself.  Only the mdat==null path differs; an explicit mdat
+// (a concrete forced shape) never consults select_newcham_form at all, in
+// either version, so callers that already pass one may as well keep calling
+// the plain sync newcham().
+export async function newcham_wizard_aware(mtmp, mdat) {
+    const olddata = mtmp.data;
+    if (mdat == null) {
+        let tryct = 20, mndx;
+        do {
+            mndx = await select_newcham_form_wizard_aware(mtmp);
+            mdat = accept_newcham_form(mtmp, mndx);
+            if (tryct > 15 && Is_rogue_level(game.u?.uz)
+                && mdat && !is_upper_monsym(mdat.pmidx))
+                mdat = null;
+            if (mdat) break;
+        } while (--tryct > 0);
+        if (!tryct) return 0;
+    } else if ((mvflags(mdat.pmidx) & G_GENOD) !== 0) {
+        return 0;
+    }
+    return apply_newcham(mtmp, mdat, olddata);
 }
 
 // Retained name for the Vlad's-Tower call sites; newcham() now covers every

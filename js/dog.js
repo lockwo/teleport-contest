@@ -310,9 +310,10 @@ function put_saddle_on_mon(saddle, mtmp) {
         saddle.dknown = 1;
     }
     // mpickobj(mtmp, saddle): hand the saddle to the (tame) monster.
+    // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.
     if (!mtmp.minvent) mtmp.minvent = [];
     saddle.where = 'minvent';
-    mtmp.minvent.push(saddle);
+    mtmp.minvent.unshift(saddle);
     // misc_worn_check |= W_SADDLE; saddle->owornmask = W_SADDLE; ...
     mtmp.misc_worn_check = (mtmp.misc_worn_check || 0) | W_SADDLE;
     saddle.owornmask = W_SADDLE;

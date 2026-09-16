@@ -240,6 +240,14 @@ function is_hero_inside_gas_cloud() {
 // inside_gas_cloud's ttl bump, so the gap has not been exercised.  Exported so
 // that hook can be added later without touching this module again.
 export function in_out_region(x, y) {
+    // C ref: region.c:479 in_out_region() returns TRUE unless a region's
+    // can_enter_f/can_leave_f callback vetoes the move — callbacks this port
+    // does not model, so (matching every region this corpus creates, none of
+    // which sets one) the move is never vetoed here.  Missing this return
+    // left the function returning `undefined` (falsy): dothrow.js's
+    // hurtle_step() treats `!in_out_region(x, y)` as "stop", so EVERY hurtle
+    // (kick/throw recoil, jump, and monster-knockback) silently failed to
+    // move the hero even one square.
     for (const reg of regions()) {
         if (reg.attach2u) continue;
         if (reg.heroInside && !inside_region(reg, x, y)) reg.heroInside = false;
@@ -248,6 +256,7 @@ export function in_out_region(x, y) {
         if (reg.attach2u) continue;
         if (!reg.heroInside && inside_region(reg, x, y)) reg.heroInside = true;
     }
+    return true;
 }
 export function m_in_out_region(mon, x, y) {
     for (const reg of regions()) {

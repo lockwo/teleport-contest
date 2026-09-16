@@ -70,6 +70,24 @@ const OPT_BOOL = [
     'verbose', 'voices', 'weaponstatus', 'whatis_menu', 'whatis_moveskip',
 ];
 
+// The BoolOpt names option_help()'s loop SKIPS in a non-wizard game
+// (setwhere==set_wizonly, or ==set_wiznofuz while iflags.debug_fuzzer) --
+// OPT_BOOL above is the "already ... non-wizard" survivor list this port
+// used to treat as the whole boolean set, which is wrong for a session that
+// actually reaches '?g' while in wizard mode: a real captured C screen
+// (heldout-wave4/6's hs-wizard-debug.session.json, playmode:debug then '?g')
+// shows every one of these ten woven into the alphabetical list right
+// alongside the ordinary ones, e.g. "...menu_overlay, menu_tab_sep,
+// menucolors, mon_movement, monpolycontrol, montelecontrol, news...". Missing
+// even one shifts every following word-wrap boundary, so it is not just this
+// option's own name that goes wrong -- the WHOLE rest of the (multi-page)
+// screen desyncs.  option_help_lines() below merges these in and re-sorts
+// rather than leaving OPT_BOOL static, matching option_help()'s real,
+// wizard-state-dependent loop instead of baking in one fixed answer.
+const OPT_BOOL_WIZONLY = ['menu_tab_sep', 'monpolycontrol', 'montelecontrol',
+                          'sanity_check', 'travel_debug', 'wizmgender', 'wizweight'];
+const OPT_BOOL_WIZNOFUZ = ['debug_hunger', 'debug_mongen', 'debug_overwrite_stairs'];
+
 // Compound option [name, description] pairs, in allopt[] order (option_help()
 // CompOpt loop; descriptions are allopt[].descr).
 const OPT_COMPOUND = [
@@ -222,11 +240,23 @@ export function option_help_lines() {
     wput(L, '');
     wput(L, 'Boolean options (which can be negated by prefixing them with \'!\' or "no"):');
 
+    // C ref: options.c option_help() BoolOpt loop's own setwhere filter,
+    // reproduced at call time (not baked into OPT_BOOL) so a wizard-mode
+    // session's '?g' shows the real, larger list.  iflags.debug_fuzzer is
+    // never true in a recorded/scored session, so that half of the
+    // set_wiznofuz test never actually excludes anything here; kept for
+    // fidelity anyway.
+    const is_wizard = !!((game.flags && game.flags.debug) || game.wizard);
+    const boolNames = OPT_BOOL.slice();
+    if (is_wizard) boolNames.push(...OPT_BOOL_WIZONLY);
+    if (is_wizard && !game.iflags?.debug_fuzzer) boolNames.push(...OPT_BOOL_WIZNOFUZ);
+    boolNames.sort();
+
     // Boolean options via next_opt(): accumulate "opt, opt, " and flush a line
     // whenever adding the next name would exceed COLNO-2; final next_opt("")
     // turns the trailing ", " into "." and emits a blank line.
     let buf = '';
-    for (const nm of OPT_BOOL) {
+    for (const nm of boolNames) {
         if (buf.length + nm.length + 2 > OPT_CO - 2) { wput(L, buf); buf = ''; }
         buf += nm + ', ';
     }
@@ -1424,9 +1454,32 @@ function set_boolean(name, value, result) {
     case 'fixinv': result.flags.invlet_constant = value; break; // C: flags.invlet_constant
     case 'cmdassist': result.iflags.cmdassist = value; break;
     case 'splash_screen': result.iflags.wc_splash_screen = value; break;
+    // C: &iflags.sanity_check (optlist.h) — the already-ported sanity-check
+    // subsystem (mon.js/mklev.js/wizcmds.js/ball.js/engrave.js/timeout.js/
+    // trap.js) all read game.iflags.sanity_check, not game.flags.
+    case 'sanity_check': result.iflags.sanity_check = value; break;
+    // C: iflags.menu_tab_sep -- read directly (no windowport gating) by
+    // weapon.c, region.c, invent.c, spell.c and artifact.c's menu-column
+    // formatting; js/invent.js, js/region.js, js/spell.js and this file's own
+    // menu builders all read game.iflags.menu_tab_sep, not game.flags.*.
+    case 'menu_tab_sep':
+        result.flags.menu_tab_sep = value; // canonical value for get_option_value()
+        result.iflags.menu_tab_sep = value;
+        break;
     // C: iflags.altmeta (cmd.c readchar_core()'s ESC+char -> M-char combining
     // gate), not a flags.* field.
     case 'altmeta': result.iflags.altmeta = value; break;
+    // The five wizard-mode-only (setwhere==set_wizonly) booleans: C's addr is
+    // an iflags.* field, most under a name that differs from the option name
+    // (optlist.h NHOPTB bp column).  Falling through to the `default:` arm
+    // below landed these under result.flags[name] instead, which mon.js /
+    // teleport.js / objnam.js / shk.js never read, so setting any of them in
+    // an rc had NO effect on iflags at all.
+    case 'monpolycontrol': result.iflags.mon_polycontrol = value; break;
+    case 'montelecontrol': result.iflags.mon_telecontrol = value; break;
+    case 'travel_debug': result.iflags.trav_debug = value; break;
+    case 'wizmgender': result.iflags.wizmgender = value; break;
+    case 'wizweight': result.iflags.wizweight = value; break;
     case 'tutorial':
         result.flags.tutorial = value;
         // allmain.js gates the "Do you want a tutorial?" prompt on this, which
@@ -4035,8 +4088,15 @@ export {
 // -> set_in_config), ALTMETA on, INSURANCE on, STATUS_HILITES on (hilite_status
 // /statushilites -> set_in_game), MACOS9 off, TTY_GRAPHICS on (menu_overlay),
 // PREV_MSGS 1 (msg_window), SCORE_ON_BOTL off (showscore -> set_in_config),
-// TIMED_DELAY on (config1.h defines MACOS on Apple), SND_SPEECH off (voices ->
-// set_gameview/Term_Excluded), CHANGE_COLOR off (palette absent entirely).
+// TIMED_DELAY off (config1.h's `#if defined(__APPLE__) && defined(__MACH__)
+// #define MACOS` would auto-enable it per unixconf.h's MACOS-and-not-yet-
+// defined check, but patches/006-nomux-capture.patch adds a
+// `&& !defined(NO_TIMED_DELAY)` guard to that check and
+// nethack-c/macosx-minimal's CFLAGS pass -DNO_TIMED_DELAY specifically to
+// suppress it; linux-minimal never defines MACOS at all -> timed_delay ->
+// set_in_config, matching rawio's #else/undefined-macro branch), SND_SPEECH
+// off (voices -> set_gameview/Term_Excluded), CHANGE_COLOR off (palette
+// absent entirely).
 // Cross-checked: filtering this table the way option_help() does reproduces
 // OPT_BOOL (87) and OPT_COMPOUND (71) exactly.
 const ALLOPT_META_DATA = `
@@ -4082,7 +4142,7 @@ const ALLOPT_META_DATA = `
     status condition fields|4S,statushilites|4A,status highlight rules|4S,
     statuslines|4S,suppress_alert|4A,symset|4M,term_cols|2A,term_rows|2A,
     terrainstatus|4A,tile_file|3A,tile_height|3A,tile_width|3A,tiled_map|4A,
-    time|4S,timed_delay|4M,tips|4A,tombstone|4A,toptenwin|4A,traps|2A,
+    time|4S,timed_delay|2M,tips|4A,tombstone|4A,toptenwin|4A,traps|2A,
     travel|4A,travel_debug|5A,tutorial|2A,use_darkgray|2A,use_inverse|4A,
     use_truecolor|2A,vary_msgcount|3A,verbose|4A,versinfo|4A,voices|3A,
     vt_tiledata|2A,vt_sounddata|2A,warnings|2A,weaponstatus|4A,

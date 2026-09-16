@@ -111,7 +111,9 @@ export function mpickobj(mtmp, otmp) {
         if (otmp.how_lost === LOST_THROWN) otmp.how_lost = LOST_STOLEN;
         else if (otmp.how_lost === LOST_DROPPED) otmp.how_lost = LOST_NONE;
     }
-    // add_to_minv(): merge with an identical stack already carried, else append.
+    // add_to_minv(): merge with an identical stack already carried, else
+    // PREPEND (mkobj.c:2648 `obj->nobj = mon->minvent; mon->minvent = obj;`)
+    // so mon.minvent stays newest-first, matching every other producer.
     mtmp.minvent = mtmp.minvent || [];
     for (const o of mtmp.minvent) {
         if (mergable(o, otmp)) {
@@ -121,7 +123,7 @@ export function mpickobj(mtmp, otmp) {
     }
     otmp.where = 'minvent';
     otmp.ocarry = mtmp;
-    mtmp.minvent.push(otmp);
+    mtmp.minvent.unshift(otmp);
     return 0;
 }
 // C ref: obj.h how_lost values used by mpickobj's autopickup bookkeeping.
@@ -727,7 +729,7 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
 
     if (obj === game.uball || obj === game.uchain || obj.oclass === ROCK_CLASS
         || obj_resists(obj, 100 - ochance, 100 - achance)
-        || !touch_artifact(obj, mon))
+        || !(await touch_artifact(obj, mon)))
         return;
 
     if (carried_st(obj)) {
