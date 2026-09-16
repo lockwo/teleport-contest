@@ -18,15 +18,12 @@ import { mmove_of } from './mon.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE, CLR_GRAY, NO_COLOR } from './terminal.js';
 
-// js/options.js stores menu_headings.attr VERBATIM in ITS OWN local ATR_*
-// enum (options.js: NONE=0, BOLD=1, DIM=2, ITALIC=3, ULINE=4, BLINK=5,
-// INVERSE=6 — a plain enum index, C ref: options.c ATR_* / coloratt.c
-// attrnames[]), which is NOT the same numbering as terminal.js's ATR_* render
-// BITS (NONE=0, INVERSE=1, BOLD=2, UNDERLINE=4) this file's renderers need —
-// only NONE and underline/ULINE(4) coincide by accident.  Per
-// [[options-storage-contract]] (options.js keeps values verbatim, consumers
-// convert), this is the consumer-side translation.  DIM/ITALIC/BLINK have no
-// render bit in this port's terminal model, so they fall back to no attr.
+// options.js stores menu_headings.attr verbatim in its own enum (NONE=0,
+// BOLD=1, DIM=2, ITALIC=3, ULINE=4, BLINK=5, INVERSE=6 — C ref: options.c
+// ATR_* / coloratt.c attrnames[]), NOT terminal.js's render BITS (NONE=0,
+// INVERSE=1, BOLD=2, UNDERLINE=4); only NONE/ULINE(4) coincide by accident.
+// Per [[options-storage-contract]] this is the consumer-side translation;
+// DIM/ITALIC/BLINK have no render bit here and fall back to no attr.
 function menuHeadAttr() {
     const a = game.iflags?.menu_headings?.attr;
     if (a == null) return ATR_INVERSE;
@@ -261,15 +258,11 @@ export const W_RINGL = 0x00020000;
 export const W_RINGR = 0x00040000;
 export const W_AMUL = 0x00080000;
 const W_TOOL = 0x00100000;
-// W_BLINDF was 0x00200000, which is prop.h:126 W_BALL — the PUNISHMENT BALL
-// slot.  Harmless while nothing in this file read W_BALL, but doname() now has
-// to tell a worn blindfold from a chained iron ball, so the two need distinct
-// bits.  Following this block's existing remapping convention (see the accessory
-// comment above), W_BLINDF moves to a free high bit while W_BALL/W_CHAIN keep
-// prop.h's real values, which is what read.js stamps into owornmask via
-// const.js.  0x00080000 is NOT available here: this file already uses it for
-// W_AMUL, and reusing it made an amulet answer the blindfold test (-7 on
-// seed5006 before the collision was spotted).
+// W_BLINDF was 0x00200000 == prop.h:126 W_BALL, harmless until doname() needed
+// to distinguish a worn blindfold from a chained iron ball. Moved to a free
+// high bit; W_BALL/W_CHAIN keep prop.h's real values since read.js stamps them
+// via const.js. 0x00080000 already holds W_AMUL above — reusing it made an
+// amulet answer the blindfold test (-7 on seed5006).
 const W_BLINDF = 0x00800000;
 const W_BALL = 0x00200000;   // C ref: prop.h:126 — punishment ball
 const BALL_CLASS_INV = 15;   // C ref: objclass.h BALL_CLASS
@@ -357,12 +350,9 @@ function OMAILCMD(obj) { return obj?.omailcmd || ''; }
 // bookkeeping to o_init.js so the discovery state lives in one place.
 function observe_object(obj) { if (obj) { obj.dknown = 1; disco_observe_object(obj); } }
 // C ref: objnam.c xname_flags():627 `if (!Blind && !gd.distantname)
-// observe_object(obj)` — every name built through xname()/doname() observes the
-// object, but ONLY when the hero can see.  Naming an object while blind must
-// not teach the hero its appearance ("o - a potion.", not "a brilliant blue
-// potion.").
-// C ref: objnam.c xname_flags():627 `if (!Blind && !gd.distantname)
-// observe_object(obj);` — naming an object up close learns its appearance.
+// observe_object(obj)` — every name built through xname()/doname() observes
+// the object, but ONLY when the hero can see; naming one while blind must not
+// teach its appearance ("o - a potion.", not "a brilliant blue potion.").
 function observe_object_named(obj) {
     if (!Blind_for_wear() && !gd_distantname) observe_object(obj);
 }
@@ -512,13 +502,13 @@ function obj_absorb(potmp, pobj) { if (pobj) pobj.obj = null; return potmp?.obj 
 function pudding_merge_message(_otmp, _obj) {}
 function maybereleaseobuf(_str) {}
 function dupstr(s) { return String(s ?? ''); }
-// C ref: objnam.c cxname_singular() == xname_flags(obj, CXN_SINGULAR).  xname
-// never prepends the BUC word ("blessed"/"uncursed"/"cursed") — that belongs to
-// doname() alone — so a BUC-known object still reads e.g. "ring of see invisible"
-// here (used by loot_xname, the itemactions title/label, and data.base lookups).
-// C ref: cxname_singular() is xname_flags(obj, CXN_SINGULAR), so it observes
-// the object exactly like xname() does — that observe is what makes a visible
-// monster's weapon read "orcish dagger" rather than "crude dagger".
+// C ref: objnam.c cxname_singular() == xname_flags(obj, CXN_SINGULAR). xname
+// never prepends the BUC word ("blessed"/"uncursed"/"cursed") — that belongs
+// to doname() alone — so a BUC-known object still reads e.g. "ring of see
+// invisible" here (used by loot_xname, the itemactions title/label, and
+// data.base lookups). It DOES observe the object like xname() does — that's
+// what makes a visible monster's weapon read "orcish dagger" rather than
+// "crude dagger".
 export function cxname_singular(obj) { observe_object_named(obj); return simple_obj_name(obj, { article: false, quantity: false, buc: false }); }
 // C ref: objnam.c xname() — the bare object name: no "a"/"an" article and no
 // BUC word (unlike doname()), but still quantity-aware for stackable types.
@@ -682,7 +672,7 @@ export async function wield_tool(obj, verb) {
     return true;
 }
 function corpse_xname(obj, _name, flagsArg = 0) { return simple_obj_name(obj, { article: !!(flagsArg & 8) }); }
-function killer_xname(obj) { return simple_obj_name(obj, { article: false }); }
+export function killer_xname(obj) { return simple_obj_name(obj, { article: false }); }
 
 // C ref: do_name.c docall_xname(obj) — the bare "a/an <appearance>" name used
 // in the "Call <x>:" prompt: a fresh copy with diluted/poison/BUC fixups so it
@@ -1011,14 +1001,13 @@ export function touch_artifact(obj, _mon) {
         // C ref: artifact.c:947-957.  A non-hero toucher returns 0 before any
         // RNG; the hero takes the blast.
         if (!yours) return false;
-        // C: You("are blasted by %s power!", s_suffix(the(xname(obj))))
-        // toplin=NEED_MORE (not just a bare _pending_message write) so a
-        // same-turn follow-on this function's own caller prints (the wield
-        // success line, always reached when this branch didn't also evade
-        // the grasp below) sees a still-unacknowledged line and pages it via
-        // update_topl()'s merge-or-more() check instead of silently
-        // overwriting it and racing on into the turn's end-of-turn RNG a
-        // keystroke early.
+        // C: You("are blasted by %s power!", s_suffix(the(xname(obj)))). Sets
+        // toplin=NEED_MORE (not a bare _pending_message write) so the
+        // caller's same-turn follow-on (the wield success line, reached
+        // whenever this branch doesn't also evade the grasp below) sees an
+        // unacknowledged line and pages it via update_topl()'s
+        // merge-or-more() check, instead of overwriting it and racing into
+        // end-of-turn RNG a keystroke early.
         game._pending_message =
             `You are blasted by ${s_suffix(`the ${xname(obj)}`)} power!`;
         game._toplin = 1;
@@ -1051,13 +1040,12 @@ function youmonst_data() {
 }
 
 // C ref: attrib.c acurrstr() — encode A_STR (3..125; 18/01 stored as 19, ..)
-// onto the 3..25 scale used by weight_cap.  (Mirrors cmd.js' acurrstr.)
-// C ref: attrib.c acurrstr() reads ACURR(A_STR), whose macro expansion (see
-// acurr()) pins the encoded value at 125 while gauntlets of power are worn —
-// acurr_str_encoded() is that same override; reading game.u.acurr.a[A_STR]
-// directly skipped it, so a Str-25-via-gauntlets hero's carrying capacity was
-// computed from the RAW (unboosted) Str instead of 25, e.g. St:25 read as if
-// it were St:9 and weight_cap() came out ~400 too low (seed0360 step 828).
+// onto the 3..25 scale weight_cap() uses (mirrors cmd.js' acurrstr()). Its
+// ACURR(A_STR) macro pins the encoded value at 125 while gauntlets of power
+// are worn (acurr_str_encoded() is that override); reading
+// game.u.acurr.a[A_STR] directly skipped it, so a Str-25-via-gauntlets hero's
+// carrying capacity used the RAW Str instead of 25 (St:25 read as St:9),
+// coming out ~400 too low (seed0360 step 828).
 function acurrstr() {
     const str = acurr_str_encoded();
     if (str <= 18) return Math.max(str, 3);
@@ -1156,16 +1144,13 @@ export function near_capacity() { return calc_capacity(0); }
 export async function encumber_msg() {
     const newcap = near_capacity();
     const oldcap = game._oldcap || 0;
-    // C ref: pickup.c encumber_msg() sets disp.botl = TRUE AFTER its own
-    // Your()/You() message, not before — so whether the status line's BL_CAP
-    // field shows the new level DURING that message's own --More-- (which can
-    // fire if an earlier pending message, e.g. a pickup's prinv line, is still
-    // unflushed) depends on whether disp.botl was ALREADY dirty from something
-    // the caller did first (do.c set_wounded_legs()/heal_legs() both set
-    // disp.botl = TRUE before calling this).  Mirror that with game.botl: if
-    // it's already dirty, publish _curcap eagerly (matches wounded-legs); if
-    // not (an ordinary pickup crossing a capacity threshold has nothing else
-    // dirtying botl yet), defer until our own message(s) are queued below.
+    // C ref: pickup.c encumber_msg() sets disp.botl=TRUE AFTER its own message,
+    // so whether BL_CAP shows the new level during that message's own
+    // --More-- (possible if an earlier message, e.g. pickup's prinv line, is
+    // unflushed) depends on whether disp.botl was ALREADY dirty (do.c
+    // set_wounded_legs()/heal_legs() set it before calling this). Mirror with
+    // game.botl: publish _curcap eagerly if already dirty, else defer until
+    // our message(s) are queued below.
     const dirtyBefore = !!game.botl;
     if (dirtyBefore) game._curcap = newcap;
     if (oldcap < newcap) {
@@ -1380,18 +1365,12 @@ export function makeplural(oldstr) {
     const prev = len >= 2 ? head.charAt(len - 2).toLowerCase() : '';
     const vowels = 'aeiou';
 
-    // C ref: objnam.c:2707 singplur_lookup(str, spot+1, TRUE, already_plural)
-    // PRE-PASS, run whenever the word is more than a single letter/symbol (the
-    // "'s" branch below, matching C's len===1/!letter guard, skips it exactly
-    // as C does). Covers as_is[] words (deer, fish, sheep, ninja, samurai,
-    // shuriken, piranha, Nazgul, boots/gloves/..., "*craft", "slice"/
-    // "mongoose", "<x>ox" -> "<x>oxes", the badman()-gated man/men exceptions,
-    // and the one_off[] table (foot/feet, tooth/teeth, ox/oxen, mouse/mice,
-    // goose/geese, child/children, ...). This function previously implemented
-    // none of it, so any direct caller (most of js/ calls this makeplural())
-    // got formula output instead — "9 shurikens", "foots", "3 deers" — while a
-    // few call sites (js/potion.js, js/wield.js) carried their own local
-    // pre-check copy of the same table as a workaround.
+    // C ref: objnam.c:2707 singplur_lookup(str, spot+1, TRUE, already_plural) —
+    // pre-pass for irregular plurals (as_is[]/one_off[] tables: deer/fish/sheep,
+    // foot/feet, ox/oxen, badman()-gated man/men, etc.), gated the same as C's
+    // len===1/!letter guard below. Previously unimplemented, so callers got
+    // formula output ("9 shurikens", "foots", "3 deers"); js/potion.js and
+    // js/wield.js had grown their own local copies of the same table as a workaround.
     if (len > 1 && /[a-z]/i.test(last)) {
         const sb = { s: head };
         if (singplur_lookup(sb, len, true, ['ae', 'eaux', 'matzot']))
@@ -1755,16 +1734,13 @@ function bucPrefix(obj) {
     // in the "uncursed" guard is false for a cleric).  This is the seed0106
     // priest path (also gains seed0367/seed0107).
     if (Role_if(PM_CLERIC)) return '';
-    // C ref: objnam.c doname_base — with flags.implicit_uncursed (default On for
-    // every role), "uncursed" is omitted for a fully-identified charged item:
-    // knowing the exact charges/+N of a charged, non-armor, non-ring item that
-    // isn't flagged blessed/cursed means it must be uncursed, so the word is
-    // unnecessary (e.g. "a magic marker (0:19)", "a wand of sleep (0:7)", "a +0
-    // short sword").  The exceptions (Amulet of Yendor, its fake) keep the word.
-    // Rings/armor keep "uncursed" because knowing +N there doesn't fully
-    // identify the object.  The flag is role-independent (any role's known
-    // weapon/wand/tool suppresses the same way), so no Role_if() gate belongs
-    // here — the Cleric case is already handled by the early return above.
+    // C ref: objnam.c doname_base — with flags.implicit_uncursed (default On), a
+    // fully-identified charged non-armor/non-ring item omits "uncursed":
+    // knowing exact charges/+N with no blessed/cursed flag implies uncursed
+    // (e.g. "a magic marker (0:19)", "a +0 short sword"). Amulet of
+    // Yendor/fake keep the word; rings/armor keep it too since +N alone
+    // doesn't fully identify them. Role-independent, so no Role_if() gate here
+    // (Cleric already handled above).
     if (obj.known && is_oc_charged(obj)
         && obj.oclass !== ARMOR_CLASS && obj.oclass !== RING_CLASS
         && obj.otyp !== FAKE_AMULET_OF_YENDOR_OTYP
@@ -2029,13 +2005,12 @@ function worn_status_suffix(obj) {
     }
     if (m & QW_QUIVER) {
         // C ref: objnam.c doname_base():1622 — the quiver phrasing switches on
-        // oclass, and its `default:` arm ("at the ready") covered only the odd
-        // things: RING/AMULET/WAND/COIN/GEM_CLASS all read "in quiver pouch".
-        // A slinger's quivered flint stones (GEM_CLASS) therefore read "(at the
-        // ready)", which is also 3 columns narrower than C's line and shifted
-        // the whole inventory menu one column right.
-        // The bow-ammo test is `oc_skill == -P_BOW`, not an otyp range (the old
-        // ARROW..YA window missed every non-arrow -P_BOW ammo).
+        // oclass; its `default:` arm ("at the ready") covered only
+        // RING/AMULET/WAND/COIN/GEM_CLASS reading "in quiver pouch", so a
+        // slinger's quivered flint stones (GEM_CLASS) read "(at the ready)" —
+        // 3 columns narrower than C's line, shifting the whole inventory menu
+        // one column right. The bow-ammo test is `oc_skill == -P_BOW`, not an
+        // otyp range (the old ARROW..YA window missed non-arrow -P_BOW ammo).
         let Qtyp;
         switch (obj.oclass) {
         case WEAPON_CLASS:
@@ -2080,28 +2055,20 @@ export function doname_invent(obj) {
     return doname_invent_core(obj);
 }
 
-// C ref: objnam.c distant_name(obj, doname) — name an object the hero is only
-// looking at from a distance.  C forces Blinded around the call so the naming
-// routine skips its dknown/discovery reveal; this port's observe_object() IS
-// that reveal, so the distant form is simply "doname without observing".
-// (mon.c mpickstuff() uses it: a monster grabbing an unidentified item must not
-// add its appearance to the hero's '\' discoveries list.)
-// C ref: objnam.c distant_name(obj, func):386-404 — the FAR branch only bumps
-// gd.distantname, which suppresses xname_flags()'s observe_object(); it does
-// NOT hide what is already known, so an already-dknown gem still reads "blue
-// gem".  (Pre-3.6.1 C forced Blind here, which is where the old clear-dknown
-// port came from.)  The NEAR branch observes before the name is built, so the
-// appearance shows even on first sight.
+// C ref: objnam.c distant_name(obj, doname):370-404 — name an object seen only
+// from a distance. The FAR branch just bumps gd.distantname (suppressing
+// xname_flags()'s observe_object()); it does NOT hide an already-known dknown,
+// so a seen gem still reads "blue gem" (pre-3.6.1 C forced Blind here, source
+// of the old clear-dknown port). NEAR observes before naming, so appearance
+// shows on first sight. mon.c mpickstuff() relies on FAR not revealing: a
+// monster grabbing an unidentified item must not add it to '\' discoveries.
 export function distant_doname(obj, far) {
     if (!obj) return 'nothing';
     if (!far) { observe_object_named(obj); return doname_invent_core(obj); }
-    // FAR: C only bumps gd.distantname here, which suppresses xname's
-    // observe_object(); it does NOT hide dknown, so an already-seen gem still
-    // reads "blue gem".  This port however leaves obj.dknown UNSET on most
-    // freshly made objects and simple_obj_name() reads "unset" as known, so
-    // stand in for mkobj.c mksobj_init()'s missing `clear_dknown()` — and only
-    // for that unset case.  (C also clears it for shields and every oc_merge
-    // type; not modelled, no covered session names one from a distance.)
+    // This port leaves obj.dknown UNSET on most fresh objects (C uses 0), so
+    // stand in for mkobj.c mksobj_init()'s missing clear_dknown() for that
+    // unset case only. (C also clears it for shields/oc_merge types; not
+    // modelled, no covered session needs it.)
     if (obj.dknown != null) return doname_invent_core(obj);
     const sav = obj.dknown;
     obj.dknown = DKNOWNS_CLASSES.has(obj.oclass) ? 0 : 1;
@@ -2340,25 +2307,17 @@ export function renderMenuLines(flat, cursor = [36, 8]) {
     // an overlay: the map (and status) show through in the columns/rows the menu
     // doesn't cover.  Lay the map down first, then draw the menu on top.
     render_map_to_grid();
-    // C ref: win/tty/wintty.c tty_end_menu() `len = strlen(str) + 2` (a space
-    // either side) vs the morestr's bare strlen("(end) ") == 6, so
-    //   maxcol = max(6, widest + 2)
-    // and tty_display_nhwindow's H2344_BROKEN branch (wintty.c:13 defines it in
-    // the recorder's build) picks
-    //   offx = min(min(82, cols/2), cols - maxcol - 1), floored at 0,
-    // with the text itself drawn at offx+1 (tty_curs adds cw->offx).  The old
-    // max(10, ...) form is the #else arm: it pushed every menu narrower than 38
-    // columns too far right (a 20-wide pickup menu landed at 58, not 41).
     let widest = 0;
     for (const ln of flat) if (ln.text.length > widest) widest = ln.text.length;
     const cols = display.cols ?? 80;
     const rows = display.rows ?? 24;
-    // wintty.c:1907 is compiled with H2344_BROKEN (wintty.c:13), so the offx
-    // formula is min(min(82, cols/2), cols - maxcol - 1) — a CAP at cols/2, not
-    // a floor at 10.  A narrow menu therefore stops at text column 41 instead
-    // of drifting further right.  maxcol is tty_end_menu()'s cw->cols
-    // (wintty.c:2762): the widest item + 2 (a space at each end), but never
-    // below strlen("(end) ") == 6.
+    // C ref: win/tty/wintty.c tty_end_menu() cw->cols (wintty.c:2762):
+    // maxcol = max(widest+2, strlen("(end) ")==6). tty_display_nhwindow()'s
+    // H2344_BROKEN branch (wintty.c:13, defined in the recorder's build):
+    // offx = min(min(82, cols/2), cols-maxcol-1), floored at 0, text drawn at
+    // offx+1 (tty_curs adds cw->offx). This CAPS offx at cols/2 rather than
+    // flooring at 10 — the old max(10,...) #else form pushed narrow menus too
+    // far right (a 20-wide pickup menu landed at column 58, not 41).
     const maxcol = Math.max(6, widest + 2);
     let col = Math.max(0, Math.min(Math.min(82, Math.floor(cols / 2)),
                                    cols - maxcol - 1)) + 1;
@@ -2524,22 +2483,17 @@ export async function disco_window_advance() {
     return true;
 }
 
-// C ref: insight.c enlightenment()/doattributes() — the ^X attributes
-// display.  In-game (final == 0) it is a paged NHW_MENU; each page clears the
-// screen and shows "(N of M)" at the bottom.
+// C ref: insight.c enlightenment()/doattributes() — the ^X attributes display.
+// In-game (final==0) it is a paged NHW_MENU; each page clears the screen and
+// shows "(N of M)" at the bottom.
 //
-// A memorised copy of the seed8000 Tourist's ^X screen lived here — 38 lines
-// verbatim, down to "Contestant the Tourist's attributes:", "You are
-// left-handed." and "Your wallet contains 757 zorkmids." — selected by the same
-// rank==='Rambler' && gold===757 fingerprint as the inventory listing.
-// insight.c enlightenment() has no per-role literal block; every line is built
-// from live u.*/flags state, so enlightenment_lines() is now used for all roles.
-//
-// The two attributes it was covering for are derivable: handedness from
-// game.u.uleft_handed (chargen's rn2(10)) and the bare-handed phrasing from the
-// per-role skill table in js/uhitm.js.  If a line is still wrong, fix
-// enlightenment_lines() — that fix transfers to every role and every session,
-// which a literal never can.
+// A memorised seed8000 Tourist ^X screen (38 literal lines, keyed on the same
+// rank==='Rambler' && gold===757 fingerprint as the inventory listing) lived
+// here; removed since C builds every line from live u.*/flags state (no
+// per-role literal block) — handedness from game.u.uleft_handed (chargen's
+// rn2(10)), bare-handed phrasing from js/uhitm.js's per-role table. Fix wrong
+// lines in enlightenment_lines(), which transfers to every role/session,
+// unlike a literal.
 function attributesPages() {
     const lines = enlightenment_lines();
     if (!lines || !lines.length) return null;
@@ -2952,16 +2906,13 @@ export function merge_choice(objlist, obj) {
     return null;
 }
 
-// C ref: invent.c merged():856-942 — objects can be identified by comparing
-// them (unless Blind, handled in mergable()); an item becomes identified in a
-// dimension if either object was previously identified there. When that
-// reveals new information (and the merge isn't a thrown item, which would be
-// too spammy), C prints "You learn more about your items by comparing them."
-// via pline(), which can block on --More--. Rather than making merged() (and
-// its whole synchronous call chain, including character-generation's ini_inv
-// loop) async just for this rare message, stash the fact that a discovery
-// happened; the few call sites that can actually surface it to the player
-// (interactive pickup/#adjust) check and emit it right after merging.
+// C ref: invent.c merged():856-942 — comparing objects can identify them
+// (unless Blind; handled in mergable()) in any dimension either was known in.
+// A non-thrown reveal prints "You learn more about your items by comparing
+// them." via pline() (can --More--). Making merged() async for this rare
+// message would infect its whole sync call chain (incl. chargen's ini_inv
+// loop), so stash the fact instead; the few sites that can surface it
+// (interactive pickup/#adjust) check and emit right after merging.
 export function merged(potmp, pobj) {
     const otmp = potmp?.obj ?? potmp;
     const obj = pobj?.obj ?? pobj;
@@ -3028,6 +2979,9 @@ export function addinv_core0(obj, other_obj = null, update_perm_invent = true) {
         panic('addinv: obj not free');
     if (obj.how_lost === LOST_EXPLODING) return null;
     obj.no_charge = 0;
+    // C ref: invent.c:1074 — how_lost is LATCHED before being cleared; the
+    // quiver-fill below is the only consumer.
+    const obj_was_thrown = (obj.how_lost === LOST_THROWN);
     obj.how_lost = LOST_NONE;
     addinv_core1(obj);
     const inv = inventoryArray();
@@ -3056,6 +3010,18 @@ export function addinv_core0(obj, other_obj = null, update_perm_invent = true) {
             obj.pickup_prev = 1;
             syncInventory(inv);
             reorder_invent();
+            // C ref: invent.c:1128-1140 "fill empty quiver if obj was thrown".
+            // Only on this no-merge insert path (C jumps past it to `added:`
+            // for every merge).  Mjollnir and the aklys are excluded because
+            // both must be WIELDED to be re-thrown.  Gray stones are sling
+            // ammo (oc_skill -P_SLING), so an Archeologist who throws their
+            // touchstone and walks back over it has it quivered on pickup —
+            // which is what makes a later 'f' throw it instead of printing
+            // "You have no ammunition readied."
+            if (obj_was_thrown && flags().pickup_thrown !== false && !game.uquiver
+                && obj.oartifact !== ART_MJOLLNIR && obj.otyp !== AKLYS
+                && (throwing_weapon(obj) || is_ammo(obj)))
+                setuqwep(obj);
             addinv_core2(obj);
             carry_obj_effects(obj);
             if (update_perm_invent) update_inventory();
@@ -3182,13 +3148,12 @@ export function freeinv(obj) {
 }
 
 // C keeps svl.level.objects as a per-cell [x][y] head-of-chain grid; this port
-// keeps ONE flat push-ordered array (js/mkobj.js place_object), where the LAST
-// matching entry is the top of the pile.  So C's nexthere order == the matching
-// entries in reverse index order.  Both functions below indexed the flat array
-// as if it were the grid, which yields undefined for every square: sobj_at()
-// answered null everywhere and delallobj() deleted nothing.  That is why
-// js/do.js:628, js/dbridge.js:877, js/muse.js, js/trap.js:3253, js/hack.js:583
-// and js/monmove.js:1706 all carry private copies.
+// keeps ONE flat push-ordered array (js/mkobj.js place_object), so C's
+// nexthere order == matching entries in reverse index order. Indexing the
+// flat array as a grid yields undefined everywhere (sobj_at() null,
+// delallobj() deletes nothing) — why js/do.js:628, js/dbridge.js:877,
+// js/muse.js, js/trap.js:3253, js/hack.js:583 and js/monmove.js:1706 all
+// carry private copies.
 function floor_pile_at(x, y) {
     const out = [];
     for (const o of (game.level?.objects || []))
@@ -3409,20 +3374,16 @@ async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) 
     }
 }
 
-// C ref: cmd.c rhack():3732-3736/3810-3813 — a command that returns
-// ECMD_CANCEL never gets added to CQ_REPEAT, and reset_cmd_vars(TRUE) clears
-// whatever was already queued there.  This port's rhack()-equivalent
-// (js/cmd.js) instead unconditionally re-queues the pressed key for #repeat
-// once the command function returns, with no per-command ECMD_* result
-// threaded back to it — so a getobj() cancellation (every caller propagates
-// a null pick straight up as its own cancel) left a stale, already-abandoned
-// command sitting in CQ_REPEAT forever.  A much later, unrelated ^A then
-// replayed it and silently consumed the NEXT keystroke as its answer,
-// desyncing the rest of the session (bl006, seed700822 step 167: a
-// cancelled 'w' wield left CQ_REPEAT non-empty, so ^A replayed the wield
-// prompt instead of reporting "There is no command available to repeat.").
-// Flagging it here and consuming the flag in js/cmd.js's tail bookkeeping
-// is the narrowest fix without threading ECMD_* through every dispatch arm.
+// C ref: cmd.c rhack():3732-3736/3810-3813 — ECMD_CANCEL never queues into
+// CQ_REPEAT, and reset_cmd_vars(TRUE) clears it. This port's rhack()
+// (js/cmd.js) unconditionally re-queues the pressed key for #repeat with no
+// ECMD_* result threaded back, so a getobj() cancel (every caller propagates a
+// null pick as its own cancel) left a stale command in CQ_REPEAT; a later
+// unrelated ^A replayed it and silently ate the next keystroke, desyncing the
+// session (bl006, seed700822 step 167: cancelled 'w' wield -> ^A replayed the
+// wield prompt instead of "There is no command available to repeat."). Flag
+// it here; js/cmd.js's tail bookkeeping consumes the flag — narrowest fix
+// without threading ECMD_* through every dispatch arm.
 export async function getobj(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
     const obj = await getobj_impl(word, obj_ok, ctrlflags);
     if (obj === null) {
@@ -3460,6 +3421,11 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
         case GETOBJ_EXCLUDE_NONINVENT: forceprompt = false; inaccess++; break;
         default: break;
     }
+
+    // C ref: invent.c getobj():1856 `if (!flags.invlet_constant) reassign();`
+    // — with 'nofixinv' the letters are not bound to objects, so every prompt
+    // re-letters the pack consecutively before collecting candidate letters.
+    if (!flags().invlet_constant) reassign();
 
     let lets = '';
     let suggested = 0;
@@ -3510,17 +3476,14 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
             key = await nhgetch();
             ilet = String.fromCharCode(key);
         } else if (!canned && !oneloop && game.flags?.force_invmenu) {
-            // C ref: invent.c getobj() ~line 1917 — force_invmenu skips the
-            // single-line "[f or ?*]" yn_function prompt entirely on the
-            // FIRST pass and auto-selects '?' (or '*' with no suggested
-            // letters), jumping straight to the boxed picker menu with no
-            // keystroke consumed.  A re-prompt after an invalid pick (a
-            // later loop iteration) still uses the normal single-line query.
-            // C ref: invent.c getobj() `if (!msggiven) putmsghistory(qbuf,
-            // FALSE); msggiven = TRUE;` — the bare question (no "[f or ?*]"
-            // suffix: that's only appended on the non-force_invmenu path)
-            // is still written to the top line, just never blocks for a
-            // keypress there; the boxed menu then opens below it.
+            // C ref: invent.c getobj() ~1917 — force_invmenu skips the
+            // single-line "[f or ?*]" prompt on the FIRST pass, auto-selecting
+            // '?' (or '*' with no suggested letters) straight to the boxed
+            // picker with no keystroke consumed (a re-prompt after an invalid
+            // pick still uses the normal query). The bare question (no
+            // "[f or ?*]" suffix) is still written to the top line via
+            // putmsghistory/msggiven=TRUE, just never blocks for a keypress;
+            // the boxed menu opens below it.
             game._pending_message = qbufPlain;
             game._toplines = qbufPlain;
             ilet = (lets || altlets.length) ? '?' : '*';
@@ -4559,25 +4522,19 @@ async function accessory_or_armor_on(obj) {
     // non-negative one does not).
     const delay = ARMOR_OC_DELAY.get(obj.otyp) || 0;
     if (delay) {
-        // C ref: do_wear.c accessory_or_armor_on — nomul(-delay) makes the hero
-        // busy "dressing up" for `delay` game turns; nomovemsg is shown when the
-        // occupation finishes.  Crucially, while multi < 0 the moveloop SKIPS the
-        // intrinsic autosearch (allmain.c:342 guard `gm.multi >= 0`), so a hero
-        // with Searching does not roll dosearch0() during the maneuver.
-        //
-        // The donning turns run inline here: in C the 'W' command's getobj()
-        // reads the object-letter key (the recorded 'j' that follows 'W'), then
-        // accessory_or_armor_on() calls nomul(-delay) and the moveloop runs the
-        // `delay` elapsed turns before the next keystroke is polled — all within
-        // the processing of that object-letter key, so the recorded screen for
-        // it shows "You finish your dressing maneuver".  run_dress_occupation
-        // advances exactly `delay` game turns with multi<0 (which suppresses the
-        // intrinsic autosearch) and clears multi when done.
-        // C ref: do_wear.c sets ga.afternmv to the slot's *_on routine before
-        // nomul(-delay); unmul() runs it after the maneuver finishes.  Boots get
-        // Boots_on (speed-up message + makeknown for speed boots); the body-armor
-        // suit gets Armor_on (dragon scale mail's dragon_armor_handling); the
-        // other slots' afternmv effects aren't exercised by the scored sessions.
+        // C ref: do_wear.c accessory_or_armor_on() — nomul(-delay) makes the hero
+        // busy `delay` game turns (nomovemsg shown on finish); while multi<0 the
+        // moveloop skips intrinsic autosearch (allmain.c:342 guard
+        // `gm.multi >= 0`). In C the 'W' command's getobj() reads the
+        // object-letter key, then nomul(-delay) runs the moveloop's elapsed
+        // turns before the next keystroke poll — all within processing that one
+        // key, so the recorded screen shows "You finish your dressing
+        // maneuver". run_dress_occupation() mirrors this: advances exactly
+        // `delay` turns with multi<0, clears multi when done. do_wear.c sets
+        // ga.afternmv to the slot's *_on routine before nomul(); unmul() runs it
+        // after: Boots_on (speed-up message + makeknown for speed boots) or
+        // Armor_on (dragon scale mail's dragon_armor_handling) for the suit;
+        // other slots' afternmv effects aren't exercised by scored sessions.
         await run_dress_occupation(delay, 'You finish your dressing maneuver.',
                                    armor_on_fn(mask));
         if (game._allow_inventory_update !== undefined) update_inventory();
@@ -4591,9 +4548,9 @@ async function accessory_or_armor_on(obj) {
     if (on_fn) await on_fn();
     // C ref: do_wear.c on_msg() — `an(xname(otmp))`, NOT doname(): xname omits
     // both the enchantment and the "(being worn)" suffix setworn() just added.
-    // C ref: do_wear.c on_msg() is pline() -> update_topl(): when the slot's
-    // *_on() already put a line up (Cloak_on's displacement notice), this must
-    // page it with --More-- rather than overwrite it (seed0360 step 497).
+    // Being pline()->update_topl(), when the slot's *_on() already put a line
+    // up (Cloak_on's displacement notice), this must page it with --More--
+    // rather than overwrite it (seed0360 step 497).
     await update_topl(`You are now wearing ${simple_obj_name(obj, { buc: false })}.`);
     if (game._allow_inventory_update !== undefined) update_inventory();
     return ECMD_TIME;
@@ -4696,13 +4653,12 @@ function count_worn_stuff(accessorizing) {
 }
 
 // C ref: do_wear.c armoroff(otmp) — remove a worn armor piece, with its
-// donning delay.  For a no-delay item the slot clears immediately and the
-// "You were wearing ..." feedback follows the removal.
-// C ref: do_wear.c armoroff() — objects[].oc_armcat picks both the "You finish
-// taking off your %s." noun and the <Armor>_off() routine that undoes the
-// piece's side effects (helm of brilliance INT/WIS, cornuthaum CHA, gauntlets of
-// dexterity DEX, elven-cloak stealth, ...).  Clearing the slot alone left those
-// bonuses applied forever.
+// donning delay; a no-delay item clears the slot immediately and the "You
+// were wearing ..." feedback follows removal. objects[].oc_armcat picks both
+// the "You finish taking off your %s." noun and the <Armor>_off() routine
+// that undoes the piece's side effects (helm of brilliance INT/WIS,
+// cornuthaum CHA, gauntlets of dexterity DEX, elven-cloak stealth, ...);
+// clearing the slot alone left those bonuses applied forever.
 function armor_off_fn(otmp) {
     // C ref: do_wear.c armoroff()'s `default: impossible(...)` arm — an object
     // in an armor slot that has no oc_armcat still has to come off, or the 'T'
@@ -5129,6 +5085,15 @@ async function untwoweapon() {
     }
 }
 
+// C ref: wield.c finish_splitting(obj) — "obj was split off from something; give
+// it its own invlet".  freeinv() + addinv_nomerge() is what stops the split
+// stack merging straight back into its parent.  (js/wield.js exports the same
+// pair; kept local here to avoid an invent<->wield import cycle.)
+function finish_splitting_inv(obj) {
+    freeinv(obj);
+    return addinv_nomerge(obj);
+}
+
 // C ref: wield.c doquiver_core() — guts of #quiver (verb "ready").  Ports the
 // interactive paths the gameplay sessions exercise: empty inventory, '-' to
 // empty the quiver, selecting an ordinary ammo/weapon, the "already readied"
@@ -5172,26 +5137,68 @@ async function doquiver_core(verb) {
         game._pending_message = `You cannot ${verb} that!`;
         return ECMD_OK;
     } else if (newquiver === game.uwep) {
-        // readying the wielded weapon needs confirmation; the sessions reach the
-        // single-item phrasing (quan 1, no welding).
-        const use_plural = is_plural(game.uwep) || pair_of(game.uwep);
-        const qbuf = `You are wielding ${!use_plural ? 'that' : 'those'}.  Ready ${!use_plural ? 'it' : 'them'} instead?`;
-        if (await ynq(qbuf) !== 'y') {
-            game._pending_message = `Your ${simpleonames(game.uwep)} ${otense(game.uwep, 'remain')} wielded.`;
-            return ECMD_OK;
+        // readying the wielded weapon needs confirmation.
+        const wep = game.uwep;
+        let qbuf, quivering = false;
+        // C: for a splittable STACK, offer to quiver all but the one that stays
+        // wielded, rather than the whole stack.  'q' cancels SILENTLY (no
+        // "remain wielded" line); only 'n' falls through to the second question.
+        if ((wep.quan | 0) > 1 && inv_cnt(false) < invlet_basic && splittable(wep)) {
+            qbuf = `You are wielding ${wep.quan} ${simpleonames(wep)}.  Ready ${(wep.quan | 0) - 1} of them?`;
+            const ans = await ynq(qbuf);
+            if (ans === 'q') return ECMD_OK;
+            if (ans === 'y') {
+                // C: splitobj() -> nextoid() -> next_ident() spends one rnd(2);
+                // this port's splitobj() draws nothing, so the call site pays it.
+                next_ident();
+                newquiver = splitobj(wep, (wep.quan | 0) - 1);
+                finish_splitting_inv(newquiver);
+                quivering = true;
+            } else {
+                qbuf = 'Ready all of them instead?';
+            }
+        } else {
+            const use_plural = is_plural(wep) || pair_of(wep);
+            qbuf = `You are wielding ${!use_plural ? 'that' : 'those'}.  Ready ${!use_plural ? 'it' : 'them'} instead?`;
         }
-        setuwep_slot(null);
-        await untwoweapon();
-        was_uwep = true;
+        if (!quivering) {
+            if (await ynq(qbuf) !== 'y') {
+                game._pending_message = `Your ${simpleonames(wep)} ${otense(wep, 'remain')} wielded.`;
+                return ECMD_OK;
+            }
+            setuwep_slot(null);
+            await untwoweapon();
+            was_uwep = true;
+        }
     } else if (newquiver === game.uswapwep) {
-        const use_plural = is_plural(game.uswapwep) || pair_of(game.uswapwep);
-        const qbuf = `${!use_plural ? 'That is' : 'Those are'} your ${game.u?.twoweap ? 'second' : 'alternate'} weapon.  Ready ${!use_plural ? 'it' : 'them'} instead?`;
-        if (await ynq(qbuf) !== 'y') {
-            game._pending_message = `Your ${simpleonames(game.uswapwep)} ${otense(game.uswapwep, 'remain')} ${game.u?.twoweap ? 'wielded' : 'as secondary weapon'}.`;
-            return ECMD_OK;
+        const swap = game.uswapwep;
+        let qbuf, quivering = false;
+        // C: same split offer for the alternate weapon (see the uwep arm above).
+        if ((swap.quan | 0) > 1 && inv_cnt(false) < invlet_basic && splittable(swap)) {
+            qbuf = `${game.u?.twoweap ? 'You are dual wielding' : 'Your alternate weapon is'}`
+                 + ` ${swap.quan} ${simpleonames(swap)}.  Ready ${(swap.quan | 0) - 1} of them?`;
+            const ans = await ynq(qbuf);
+            if (ans === 'q') return ECMD_OK;
+            if (ans === 'y') {
+                next_ident();
+                newquiver = splitobj(swap, (swap.quan | 0) - 1);
+                finish_splitting_inv(newquiver);
+                quivering = true;
+            } else {
+                qbuf = 'Ready all of them instead?';
+            }
+        } else {
+            const use_plural = is_plural(swap) || pair_of(swap);
+            qbuf = `${!use_plural ? 'That is' : 'Those are'} your ${game.u?.twoweap ? 'second' : 'alternate'} weapon.  Ready ${!use_plural ? 'it' : 'them'} instead?`;
         }
-        setuswapwep(null);
-        await untwoweapon();
+        if (!quivering) {
+            if (await ynq(qbuf) !== 'y') {
+                game._pending_message = `Your ${simpleonames(swap)} ${otense(swap, 'remain')} ${game.u?.twoweap ? 'wielded' : 'as secondary weapon'}.`;
+                return ECMD_OK;
+            }
+            setuswapwep(null);
+            await untwoweapon();
+        }
     }
 
     // quivering: C ref: wield.c — "ready" quivers first so the line shows
@@ -5323,21 +5330,16 @@ async function ready_weapon(wep) {
     const was_twoweap = !!game.u?.twoweap;
     const had_wep = !!game.uwep;
 
-    // C ref: wield.c:163-353 — every branch below is a pline()/You() call.
-    // Routed through update_topl() (not a bare _pending_message/_toplin
-    // write) so EITHER direction of the same-turn interaction is faithful:
-    // a still-pending EARLIER message (e.g. touch_artifact()'s artifact-
-    // blast pline, which fires first when retouch_object() lets a
-    // self-willed/misaligned artifact through) gets its own --More-- here
-    // before this line replaces it — exactly like C's update_topl(), which
-    // calls more() inline the moment a new pline can't share the row —
-    // instead of the JS command silently overwriting/dropping it and racing
-    // on to consume the turn's end-of-turn RNG a --More-- away too early.
-    // And this line then leaves toplin==NEED_MORE so a same-turn follow-on
-    // (doswapweapon()'s second prinv() line for the bumped secondary) merges
-    // onto it instead of replacing it (e.g. unwielding into an empty swap
-    // slot: "You are bare handed." followed by "b - a +2 sling (alternate
-    // weapon; not wielded).").
+    // C ref: wield.c:163-353 — every branch below is a pline()/You() call,
+    // routed through update_topl() (not a bare _pending_message write) so a
+    // still-pending EARLIER message (e.g. touch_artifact()'s blast pline)
+    // gets its own --More-- before this line replaces it, matching C's
+    // update_topl() calling more() inline rather than silently overwriting
+    // and racing on to consume end-of-turn RNG too early. It also leaves
+    // toplin==NEED_MORE so a same-turn follow-on (doswapweapon()'s second
+    // prinv() for the bumped secondary) merges onto it instead of replacing
+    // it (e.g. "You are bare handed." + "b - a +2 sling (alternate weapon;
+    // not wielded).").
     if (!wep) {
         if (game.uwep) {
             await update_topl(`You are ${empty_handed()}.`);
@@ -5681,18 +5683,17 @@ function bhit_thrown_landing(dx, dy, range) {
     return { x: bx, y: by, mon: null };
 }
 
-// ── thrown-object combat (C ref: dothrow.c thitmonst / uhitm.c hmon) ─────────
+// ── thrown-object combat (C ref: dothrow.c thitmonst / uhitm.c hmon) ────────
+// The whole "a thrown weapon can hit a monster" path was missing: bhit()
+// walked past every monster and throwit() just dropped the object, skipping
+// thitmonst()'s rnd(20) to-hit, hmon()'s damage roll and exercise()'s rn2(19)
+// — three calls that put the rest of the session's PRNG out of phase (the
+// whole seed-elf-ranger wall).
 //
-// The whole "a thrown weapon can hit a monster" path was missing: bhit() walked
-// past every monster and throwit() just dropped the object.  That skipped
-// thitmonst()'s rnd(20) to-hit roll, hmon()'s damage roll and exercise()'s
-// rn2(19) — three calls that put the rest of the session's PRNG stream out of
-// phase (the whole seed-elf-ranger wall).
-//
-// The hmon() slice below is HMON_THROWN only.  It delegates every shared piece
-// (dmgval, killed, monflee, wakeup, mon_nam) to js/uhitm.js's exports; the parts
-// that stay local are the ones uhitm.js keeps module-private.  See the deferred
-// note: exporting uhitm.c's hmon() would let this call it directly.
+// The hmon() slice below is HMON_THROWN only; it delegates shared pieces
+// (dmgval, killed, monflee, wakeup, mon_nam) to js/uhitm.js's exports and
+// keeps only what uhitm.js keeps module-private. Exporting uhitm.c's hmon()
+// would let this call it directly instead (deferred).
 
 // C ref: monst.h MZ_MEDIUM (the msize omon_adj() measures against).
 const MZ_MEDIUM = 2;
@@ -6145,10 +6146,9 @@ async function hmon_misc_thrown(mon, obj) {
     if (dmg > 0 && mon.mhp <= 0) await U.killed(mon);
 }
 
-// C ref: weapon.c weapon_hit_bonus(weapon) — skill-based to-hit modifier (the
-// riding and two-weapon arms don't apply to a throw).
-// C ref: weapon.c:1545 weapon_hit_bonus(weapon) — same completeness gap the
-// damage copy had (no P_NONE arm, no two-weapon arm, no riding penalty).
+// C ref: weapon.c:1545 weapon_hit_bonus(weapon) — skill-based to-hit modifier
+// (riding/two-weapon arms don't apply to a throw); same completeness gap as
+// the damage copy (no P_NONE arm, no two-weapon arm, no riding penalty).
 function weapon_hit_bonus_thrown(skill, snap, type) {
     return weapon_hit_bonus_core(type, skill, snap.wep, {
         martial: snap.martial, usteed: snap.usteed,
@@ -6981,23 +6981,22 @@ export async function dofire(getDir) {
                         game.context.move = 0;
                         await moveloop_turn();
                         // C ref: win/tty/topl.c update_topl():257 `skip =
-                        // (flags & (WIN_STOP|WIN_NOSTOP)) == WIN_STOP`.
-                        // doswapweapon()'s own still-pending secondary-weapon
-                        // line needs paging before dowield() can replace it
-                        // with the launcher's line — UNLESS the player already
-                        // dismissed some earlier --More-- with ESC this same
-                        // command (game._winStop), in which case C's
-                        // update_topl() silently overwrites the hidden line
-                        // instead of blocking again.  This used to compare
-                        // game._pending_message against its pre-turn value as
-                        // a proxy for "did winStop get set", which answers a
-                        // different question (whether an autonomous message
-                        // fired during the swap's turn) and forced a bogus
-                        // extra --More-- whenever the ONLY dismissal was the
-                        // real ESC that set winStop (bl010 step 495: JS
-                        // blocked on "d - ... (alternate weapon)" while C's
-                        // getdir() had already silently absorbed that line and
-                        // gone straight to "In what direction?").
+                        // (flags & (WIN_STOP|WIN_NOSTOP)) == WIN_STOP` —
+                        // doswapweapon()'s pending secondary-weapon line needs
+                        // paging before dowield() replaces it with the
+                        // launcher's line, UNLESS the player already dismissed
+                        // an earlier --More-- with ESC this same command
+                        // (game._winStop), in which case C silently overwrites
+                        // the hidden line instead of blocking again. This used
+                        // to compare game._pending_message against its
+                        // pre-turn value as a "did winStop fire" proxy — the
+                        // wrong question (whether an autonomous message fired
+                        // during the swap's turn) — forcing a bogus extra
+                        // --More-- whenever the only dismissal was the real
+                        // ESC that set winStop (bl010 step 495: JS blocked on
+                        // "d - ... (alternate weapon)" while C's getdir() had
+                        // already absorbed it and gone straight to "In what
+                        // direction?").
                         if (!game._winStop) {
                             await display_nhwindow_message();
                         }
@@ -7099,11 +7098,16 @@ export async function dotravel() {
     // C ref: getpos.c:843 `if (flags.verbose) pline("(For instructions type a
     // '%s')", ...)`.  This was hardcoded true; seed4500's rc sets !verbose, and
     // every other getpos() caller already reads the option.
+    // C ref: cmd.c dotravel():5321 `iflags.getloc_travelmode = TRUE` before
+    // getpos(), cleared again at :5336 when the player ESCs out.
+    iflags.getloc_travelmode = true;
     const cc = await getpos('the desired destination', startx, starty, null,
                             /*force=*/true,
-                            /*verbose=*/game.flags?.verbose !== false,
-                            /*travelMode=*/true);
-    if (!cc) return ECMD_CANCEL; // ESC -> cancelled, no time
+                            /*verbose=*/game.flags?.verbose !== false);
+    if (!cc) {
+        iflags.getloc_travelmode = false;
+        return ECMD_CANCEL; // ESC -> cancelled, no time
+    }
     game.iflags = game.iflags || {};
     game.iflags.travelcc = { x: cc.x, y: cc.y };
     return await dotravel_target();
@@ -7126,6 +7130,10 @@ export async function dotravel_target() {
         game.iflags.travelcc = { x: 0, y: 0 };
         return ECMD_OK;
     }
+    // C ref: cmd.c dotravel_target():5362 — the clear sits AFTER both early-outs,
+    // so neither "No travel destination set." nor "You are already here." resets
+    // it; getloc_travelmode stays set and leaks into the next getpos().
+    game.iflags.getloc_travelmode = false;
     u.tx = cc.x; u.ty = cc.y;
     // hack.c:1276 — the fast path zeroes travelcc before taking the step.
     if (await travel_adjacent_step(cc.x, cc.y)) {
@@ -9928,14 +9936,13 @@ export async function describe_decor() {
         const decorMsg = (game.flags?.verbose === false)
             ? `${dfeature.charAt(0).toUpperCase()}${dfeature.slice(1)}.`  /* upstart() */
             : `There is ${dfeature} here.`;
-        // update_topl, not pline: C's pline() pages an unacknowledged topline
-        // and this message routinely lands on one — from moveloop_preamble()'s
-        // pickup(1) it arrives while the moon-phase greeting is still pending,
-        // which is what puts the --More-- on that line.  update_topl() only
-        // more()s a HARD-pending line (game._toplin); making it also more() a
-        // pline()'d one globally costs -119 public (seed0014), so C's
-        // "doesn't fit, so page it" rule (topl.c update_topl():257) is applied
-        // here at the one call site that needs it.
+        // update_topl, not pline: C's pline() pages an unacknowledged topline,
+        // and this message routinely lands on one (moveloop_preamble()'s
+        // pickup(1) arrives while the moon-phase greeting is still pending).
+        // update_topl() only more()s a HARD-pending line (game._toplin);
+        // making it also more() any pline()'d line globally cost -119 public
+        // (seed0014), so C's "doesn't fit, so page it" rule (topl.c
+        // update_topl():257) is applied only at this one call site.
         const pend = game._pending_message || '';
         if (!game._winStop && pend && game._toplinSoft === pend
             && decorMsg.length + pend.length + 3 >= 80 - 8)
@@ -10197,17 +10204,15 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
 }
 
 export async function dolook() {
-    // C ref: invent.c dolook() — a bare pass-through to look_here(); dolook()
-    // itself has NO message logic, look_here() already prints everything for
-    // every branch (no-object via update_topl, single-object via
-    // game._pending_message for us to flush here, pile-summary via
-    // update_topl, and the multi-object "Things that are here:" menu via its
-    // own overlay with no topline text needed — renderThingsHereMenu()
-    // explicitly sets game._pending_message = '' for that branch). Falling
-    // back to a hardcoded 'You see no objects here.' whenever
+    // C ref: invent.c dolook() — a bare pass-through to look_here(), which
+    // already prints everything for every branch (no-object/pile-summary via
+    // update_topl, single-object via game._pending_message flushed below,
+    // multi-object "Things that are here:" menu via its own overlay with
+    // _pending_message explicitly set to '' by renderThingsHereMenu()). A
+    // prior fallback to hardcoded 'You see no objects here.' whenever
     // _pending_message was falsy wrongly re-printed that line after the
-    // multi-object menu too, even though there WERE objects here (they were
-    // just shown in the menu, matching a blank row 0 in the real recording).
+    // multi-object menu too, even though objects WERE here (shown in the
+    // menu, matching a blank row 0 in the real recording).
     const res = await look_here(0, 0);
     if (game._pending_message) await renderMessageOnMap(game._pending_message);
     return res;

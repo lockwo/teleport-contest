@@ -183,12 +183,10 @@ function u_on_newpos(x, y) {
     game.u.uy = y;
 }
 
-// C ref: mkmaze.c bad_location() — the FULL predicate.  Two terms were missing
-// and both change how many rn1() pairs place_lregion() burns before it settles:
-//   occupied(x,y)  — a trap, furniture, lava or pool square is rejected;
-//   typ == AIR     — accepted alongside ROOM (the Plane of Air is all AIR, so
-//                    without it every square there is "bad" and the whole 200-
-//                    iteration probabilistic loop runs before the fallback).
+// C ref: mkmaze.c bad_location() — full predicate; two missing terms restored:
+// occupied(x,y) (traps/furniture/lava/pool are bad) and typ===AIR accepted
+// alongside ROOM (Plane of Air is all-AIR; without it every square is "bad"
+// and the 200-iter loop runs before falling back).
 function bad_location(x, y, nlx, nly, nhx, nhy) {
     const loc = game.level?.at(x, y);
     if (!loc) return true;
@@ -207,12 +205,11 @@ function bad_location(x, y, nlx, nly, nhx, nhy) {
              || loc.typ === ROOM || loc.typ === AIR);
 }
 
-// C ref: mkmaze.c put_lregion_here().  Only the LR_*TELE arms are reachable
-// from this port's callers (u_on_upstairs and do.js's level-teleport), so the
-// LR_PORTAL / LR_UPSTAIR / LR_DOWNSTAIR / LR_BRANCH arms stay unported — they
-// would need this function to be async (mkportal/place_branch are).  The
-// is_exclusion_zone(rtype, x, y) test C ANDs into the bad_location check is
-// also unported; no exclusion zone is registered on a level that reaches here.
+// C ref: mkmaze.c put_lregion_here(). Only LR_*TELE arms are reachable from
+// this port's callers (u_on_upstairs, do.js's level-teleport); LR_PORTAL/
+// LR_UPSTAIR/LR_DOWNSTAIR/LR_BRANCH stay unported since they'd need this fn
+// async (mkportal/place_branch are). C's is_exclusion_zone() AND'd into
+// bad_location is also unported — no level reaching here registers one.
 function put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev) {
     if (bad_location(x, y, nlx, nly, nhx, nhy)) {
         // C's oneshot arm deletes a destroyable trap and re-tests; we only
@@ -310,14 +307,12 @@ async function makemon(mdat, x, y, mmflags) {
     return mtmp;
 }
 
-// C ref: mkroom.c in_rooms(x, y, typewanted) — the list of room numbers at/next
-// to <x,y> whose rtype matches (SHOPBASE matches any shop).  Stubbed empty, and
-// that is exact for this file's ONE caller: dosdoor()'s `shdoor` reads it with
-// SHOPBASE, and every dosdoor() call site here (join/makecorridors, makeniche,
-// makevtele) runs before do_mkroom(SHOPBASE) assigns any room a shop rtype, so
-// C's answer is also "no shop" there.  It is NOT a general stub — a caller that
-// runs after mkshop() would need the real scan, which also decides whether
-// dosdoor draws its rn2(25)/rn2(5)/rn2(20).
+// C ref: mkroom.c in_rooms(x, y, typewanted) — room numbers at/next to <x,y>
+// matching rtype (SHOPBASE = any shop). Stubbed empty; exact because this
+// stub's only caller (dosdoor's shdoor, from join/makecorridors/makeniche/
+// makevtele) always runs before do_mkroom(SHOPBASE) assigns a shop rtype, so
+// C also says "no shop" there. NOT a general stub — a caller after mkshop()
+// needs the real scan, which also gates dosdoor's rn2(25)/rn2(5)/rn2(20).
 function in_rooms(x, y, rtype) { return []; }
 
 // ============================================================
@@ -976,11 +971,10 @@ async function makelevel() {
 }
 
 // ── Rogue-emulation level (C ref: src/extralev.c) ───────────────────────────
-// Rogue levels are a 3x3 grid of cells, each holding either a real room or a
-// bare intersection ("dummy"), joined by a mini maze walk.  makelevel() takes
-// this instead of makerooms() and then jumps straight to place_branch(),
-// skipping makecorridors/make_niches/the vault/do_mkroom entirely (C's
-// `goto skip0`).
+// 3x3 grid of cells, each a room or bare "dummy" intersection, joined by a
+// mini maze walk. makelevel() takes this path instead of makerooms(), then
+// jumps straight to place_branch() (C's `goto skip0`), skipping
+// makecorridors/make_niches/the vault/do_mkroom entirely.
 const XL_UP = 1, XL_DOWN = 2, XL_LEFT = 4, XL_RIGHT = 8;
 
 // gr.r[3][3]
@@ -1635,15 +1629,13 @@ async function themerooms_generate(difficulty) {
 }
 
 // ------------------------------------------------------------------
-// Nested-room themerooms: "Fake Delphi", "Room in a room", "Huge room
-// with another room inside", "Nesting rooms" (themerms.lua).  These all
-// call des.room() recursively from within a room's own contents callback
-// (build_room()/lspo_room() in sp_lev.c): the nested room is a subroom of
-// the currently-active room (create_subroom), and des.door() places a
-// door directly on a wall of whichever room is currently active
-// (gc.coder->croom).  game._splevRoomStack tracks that "currently active
-// room" (mirrors the coder's tmproomlist/croom stack) for the duration of
-// these themeroom builds only.
+// Nested-room themerooms ("Fake Delphi", "Room in a room", "Huge room with
+// another room inside", "Nesting rooms" in themerms.lua) call des.room()
+// recursively from a room's own contents callback (build_room()/lspo_room()
+// in sp_lev.c): the nested room becomes a subroom of the active room
+// (create_subroom), and des.door() places on whichever room is active
+// (gc.coder->croom). game._splevRoomStack mirrors that active-room stack
+// (coder's tmproomlist/croom), scoped to theme-room builds only.
 // ------------------------------------------------------------------
 
 function splev_current_room() {
@@ -1652,10 +1644,10 @@ function splev_current_room() {
 }
 
 // C ref: dat/nhlib.lua math.random(lo,hi) override -> nh.random(lo,hi+1-lo)
-// = lo + rn2(hi+1-lo).  Raw Lua math.random (an independent xoshiro256**
-// generator per nhlua.c) is shadowed by this nhlib.lua wrapper for the
-// entire game Lua state, so — unlike the upstream comment's disclaimer —
-// themerms.lua's math.random() calls DO consume the ISAAC64 stream.
+// = lo + rn2(hi+1-lo). Raw Lua math.random (an independent xoshiro256**
+// generator per nhlua.c) is shadowed by this wrapper for the entire game Lua
+// state, so themerms.lua's math.random() DOES consume the ISAAC64 stream
+// (despite upstream's comment disclaiming that).
 function lua_math_random(lo, hi) {
     return lo + rn2(hi + 1 - lo);
 }
@@ -1857,10 +1849,10 @@ async function themeroom_mausoleum() {
 }
 
 // C ref: themerms.lua:445-457 'Random dungeon feature in the middle of an
-// odd-sized room' — two nh.rn2(3) size rolls BEFORE des.room()'s build_room
-// chance roll, then one of five features at the exact centre.  Falling through
-// to the generic "default room" path instead left those two rn2(3)s undrawn,
-// which shifts every later mklev draw on the level by two calls.
+// odd-sized room' — two nh.rn2(3) size rolls before build_room's chance
+// roll, then one of five features at the exact centre. Falling through to
+// the generic "default room" path instead skips those two rn2(3)s, shifting
+// every later mklev draw on the level by two calls.
 async function themeroom_random_feature() {
     const wid = 3 + rn2(3) * 2;
     const hei = 3 + rn2(3) * 2;
@@ -2101,33 +2093,29 @@ function create_vault() {
 
 // ============================================================
 // Special rooms (C ref: mkroom.c do_mkroom/mkshop/mkzoo/mktemple/mkswamp)
-//
-// These set a room's rtype + needfill so the later fill_special_room() loop
-// stocks them.  Only their *RNG side effects* and rtype assignment are
-// load-bearing for parity; the actual stocking (stock_room / fill_zoo) is
-// owned by sp_lev.js and runs from the fill loop, not here.
+// These set a room's rtype + needfill so fill_special_room() later stocks
+// it. Only RNG side effects + rtype assignment are load-bearing here; the
+// actual stocking (stock_room / fill_zoo) is owned by sp_lev.js's fill loop.
 // ============================================================
 
 // C ref: mon.h G_GONE == (G_GENOD | G_EXTINCT), tested as
-// `svm.mvitals[mndx].mvflags & G_GONE`.  Consumes no RNG, but it is a LIVE
-// predicate: G_GENOD comes from #genocide and G_EXTINCT from makemon.js's
-// propagate() when born reaches mbirth_limit().  It used to return a constant
-// FALSE, which takes the wrong makelevel() branch for any session that
-// genocides or exhausts a gated species.
+// `svm.mvitals[mndx].mvflags & G_GONE`. No RNG, but a LIVE predicate:
+// G_GENOD from #genocide, G_EXTINCT from makemon.js's propagate() at
+// mbirth_limit(). Used to hardcode FALSE, taking the wrong makelevel()
+// branch for any session that genocides or exhausts a gated species.
 const G_GONE_MV = 0x03;
 function mvitals_gone(mndx) {
     return ((game.mvitals?.[mndx]?.mvflags ?? 0) & G_GONE_MV) !== 0;
 }
 
-// C ref: mkroom.c antholemon() — picks one of SOLDIER_ANT/FIRE_ANT/GIANT_ANT
-// from ((ubirthday % 3) + level_difficulty() + trycnt) % 3, retrying up to 3
-// times past an extinct species, and returns NULL only if all three are gone.
-// No RNG.  makelevel() uses it purely as a truthiness gate on the ANTHOLE arm,
-// which this constant answers correctly (see mvitals_gone above).  The chosen
-// SPECIES is a different consumer — mkroom.c fill_zoo()'s ANTHOLE arm — and
-// that arm is not ported (sp_lev.js fill_special_room leaves ANTHOLE a no-op),
-// so nothing reads a return value yet.  Porting fill_zoo(ANTHOLE) means
-// returning a real permonst here, which needs ubirthday threaded through.
+// C ref: mkroom.c antholemon() — picks SOLDIER_ANT/FIRE_ANT/GIANT_ANT from
+// ((ubirthday%3) + level_difficulty() + trycnt) % 3, retrying past an extinct
+// species up to 3x, NULL only if all three are gone. No RNG. makelevel() only
+// uses this as a truthiness gate on the ANTHOLE arm, which this constant
+// satisfies correctly (see mvitals_gone above). The chosen SPECIES only
+// matters to mkroom.c fill_zoo()'s ANTHOLE arm, which is unported (sp_lev.js's
+// fill_special_room leaves ANTHOLE a no-op) — porting it needs a real
+// permonst return here, which needs ubirthday threaded through.
 function antholemon() {
     return true;
 }
@@ -2256,14 +2244,13 @@ function shrine_pos(roomno) {
     return { x: bx, y: by };
 }
 
-// C ref: mkroom.c mktemple().  The shrine altar is placed at the room center
-// and its alignment comes from induced_align(80), which DOES draw (rn2(100)
-// per align source, then rn2(3)) — the port used to hardcode A_LAWFUL and skip
-// the draws entirely.  AM_SHRINE is OR'd in afterwards so the square renders as
-// a temple altar rather than a plain one.  C does NOT set needfill here, so
-// fill_special_room() returns at its `needfill == FILL_NONE` gate; the port set
-// FILL_NORMAL, pushing the room through the fill switch C never runs.
-// priestini() (the temple priest) is still unported — see the deferred list.
+// C ref: mkroom.c mktemple(). Shrine altar goes at room center; alignment
+// comes from induced_align(80), which DOES draw (rn2(100) per align source,
+// then rn2(3)) — the port used to hardcode A_LAWFUL and skip those draws.
+// AM_SHRINE is OR'd in after so the square renders as a temple altar, not a
+// plain one. C does NOT set needfill here (fill_special_room returns at its
+// needfill==FILL_NONE gate); the port set FILL_NORMAL, wrongly pushing the
+// room through the fill switch. priestini() (temple priest) still unported.
 function mktemple() {
     const g = game;
     const sroom = pick_room(true);
@@ -2892,10 +2879,10 @@ async function generate_stairs() {
 }
 
 // ============================================================
-// Oracle special level (C ref: dat/oracle.lua, loaded via makemaz("oracle")
-// -> load_special -> the des.* program).  Reuses create_room/makecorridors/
-// wallification.  Only entered for the Oracle level position; gated so it
-// cannot affect ordinary level generation.
+// Oracle special level (C ref: dat/oracle.lua, via makemaz("oracle") ->
+// load_special -> the des.* program). Reuses create_room/makecorridors/
+// wallification; entered only for the Oracle level position, gated off
+// ordinary level generation.
 // ============================================================
 
 // C ref: dungeon.c induced_align(pct) — returns an ALTARMASK, not an aligntyp.
@@ -2987,10 +2974,9 @@ function oracle_place_statue(x, y, monclass) {
 }
 
 // ============================================================
-// Gnomish Mines fill level (C ref: dat/minefill.lua loaded via
-// makemaz("minefill") -> load_special -> the des.* program; the cave is built
-// by the cellular-automaton generator mkmap.c).  Gated so it only runs for the
-// mines fill levels and cannot perturb ordinary level generation.
+// Gnomish Mines fill level (C ref: dat/minefill.lua via makemaz("minefill")
+// -> load_special -> the des.* program; the cave is built by mkmap.c's
+// cellular-automaton generator). Gated to mines fill levels only.
 // ============================================================
 
 // mkmap.c constants.
@@ -3315,12 +3301,11 @@ function mk_get_location_random(okfn) {
     return { x, y };
 }
 
-// is_ok_location DRY: SPACE_POS(typ) && no boulder (sp_lev.c:1296).
-// The boulder test is load-bearing, not defensive: minefill's
-// `des.object("boulder")` runs BEFORE the monsters/traps, and a
-// ROLLING_BOULDER_TRAP drops another boulder at its launch coord
-// (trap.c:3680 mkroll_launch), so later get_location(DRY) rolls must reject
-// those squares and re-roll.
+// is_ok_location DRY: SPACE_POS(typ) && no boulder (sp_lev.c:1296). Load-
+// bearing, not defensive: minefill's des.object("boulder") runs before the
+// monsters/traps, and a ROLLING_BOULDER_TRAP drops another boulder at its
+// launch coord (trap.c:3680 mkroll_launch), so later get_location(DRY)
+// rolls must reject and re-roll those squares.
 function mk_ok_dry(x, y) {
     const loc = game.level.at(x, y);
     if (!loc) return false;
@@ -3357,11 +3342,11 @@ function mk_object(oclass, specificId) {
     }
 }
 
-// Name-implied gender for find_montype comes from makemon.js's table-derived
-// name_gender_hint(): the NEUTRAL name ("gnome leader") answers NEUTRAL and
-// still rolls, only the male/female forms ("gnome lord"/"gnome lady") skip it.
-// (The hand-written Set this replaced listed the neutral names as male, and
-// knew only 5 of the 15 NAMS() species.)
+// Name-implied gender for find_montype comes from makemon.js's
+// name_gender_hint(): NEUTRAL names ("gnome leader") still roll; only
+// male/female forms ("gnome lord"/"gnome lady") skip it — replaces a
+// hand-written Set that misclassified neutral names as male and knew only
+// 5/15 NAMS() species.
 
 // The JS monster table stores gender-neutral canonical names ("gnome leader",
 // "gnome ruler"); the lua uses gendered aliases ("gnome lord", "gnome king").
@@ -3386,12 +3371,11 @@ function mk_is_fixed_gender(data) {
 }
 
 // C ref: sp_lev.c find_montype() — name lookup + conditional gender roll.
-// Rolls rn2(2) only when the species is not fixed-gender AND the name does not
-// imply a gender.  Returns { data, mgend }: the resolved mgend is what
-// lspo_monster stores in tmpmons.female and create_monster then ASSIGNS to the
-// monster (sp_lev.c `mtmp->female = m->female;`), overwriting whatever
-// makemon()'s own rn2(2) picked — so a des.monster() gender is NOT the makemon
-// draw, and the two disagree half the time.
+// Rolls rn2(2) only when the species isn't fixed-gender AND the name doesn't
+// imply gender. Returns { data, mgend }: lspo_monster stores mgend in
+// tmpmons.female and create_monster ASSIGNS it to the monster
+// (`mtmp->female = m->female;`), overwriting makemon()'s own rn2(2) — so a
+// des.monster() gender is NOT the makemon draw; they disagree half the time.
 function mk_find_montype(name) {
     const pm = name_to_pmidx(mk_resolve_name(name));
     const data = monster_by_pmidx(pm);
@@ -3448,12 +3432,11 @@ function mk_enexto_if_occupied(c, data) {
 }
 
 // des.monster("G"/"h") — a single-char monster CLASS (no find_montype gender
-// roll).  C ref: create_monster -> mkclass(class, G_NOGEN), then induced_align
-// + makemon.  S_GNOME=33 ('G'), S_HUMANOID=8 ('h').
-// S_OGRE=41, S_TROLL=46 (defsym.h), needed by Bar-fila's "O"/"T" class picks.
-// defsym.h MONSYM(): L 38 lich, M 39 mummy, V 48 vampire, Z 52 zombie
-// (themerms.lua 'Mausoleum'), '@' 53 human.
-// S 45 snake (Arc-fil[ab]), W 49 wraith (Pri-fil[ab]).
+// roll). C ref: create_monster -> mkclass(class, G_NOGEN), then induced_align
+// + makemon. defsym.h MONSYM(): G=33 gnome, h=8 humanoid, O=41 ogre, T=46
+// troll (Bar-fila's "O"/"T" picks), L=38 lich, M=39 mummy, V=48 vampire,
+// Z=52 zombie (themerms.lua 'Mausoleum'), @=53 human, S=45 snake
+// (Arc-fil[ab]), W=49 wraith (Pri-fil[ab]).
 const MK_CLASS_CHAR = { G: 33, h: 8, O: 41, T: 46, L: 38, M: 39, V: 48, Z: 52, '@': 53,
                         S: 45, W: 49, E: 31, X: 50, i: 9, l: 12 };
 function mk_monster_class(classChar, peacefulOverride) {
@@ -3608,14 +3591,12 @@ async function makemaz_minefill() {
 
 // ============================================================
 // dat/minetn-4.lua — Mine Town variant 4, "College Town" (Kelly Bailey).
-//
-// Unlike minetn-5 (a des.map bitmap) this variant is a rooms-and-corridors
-// script: one big centred `des.room` holding 12 nested subrooms (shops,
-// a temple, gnome homes), four fully random rooms and des.random_corridors().
-// The engine pieces it needs — create_room/create_subroom/topologize/
-// create_door/makecorridors — are the same ones makemaz_oracle() drives, so
-// this reuses them rather than re-entering the sp_lev.js coder.
-//
+// Unlike minetn-5 (a des.map bitmap), this is a rooms-and-corridors script:
+// one big centred des.room with 12 nested subrooms (shops, a temple, gnome
+// homes), four fully random rooms, and des.random_corridors(). Reuses the
+// same engine pieces (create_room/create_subroom/topologize/create_door/
+// makecorridors) that makemaz_oracle() drives, rather than re-entering the
+// sp_lev.js coder.
 // C ref: mkmaze.c:1136 makemaz("minetn") -> load_special("minetn-4.lua"),
 // sp_lev.c lspo_room()/build_room()/create_door()/create_monster().
 // ============================================================
@@ -3868,13 +3849,13 @@ async function makemaz_minetown4() {
 }
 
 // C ref: sp_lev.c flip_level():788-809 — the per-room loop also flips each
-// croom->sbrooms[i].  js/sp_lev.js flip_level()'s `// rooms` loop walks only
-// map.rooms[], so a nested shop kept its UNflipped rectangle while its door
-// moved: good_shopdoor() then rejected every one and stock_room() never ran.
-// BELONGS in flip_level(); kept here because minetn-4 is the only caller today
-// and sp_lev.js was outside this change's write-lease.  Fold it in when a lane
-// owns that file — the two loops are equivalent (every subroom on the level
-// belongs to some room inside the extents).
+// croom->sbrooms[i]. js/sp_lev.js's flip_level() only walks map.rooms[], so
+// a nested shop kept its UNflipped rectangle while its door moved:
+// good_shopdoor() rejected every one and stock_room() never ran. Belongs in
+// flip_level() but lives here because minetn-4 is its only caller today and
+// sp_lev.js was outside this change's write-lease — fold in when a lane owns
+// that file (the two loops are equivalent: every subroom belongs to some
+// room inside the extents).
 function mt4_flip_subrooms(flp) {
     const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
     for (const r of game.level?.subrooms || []) {
@@ -3891,11 +3872,10 @@ function mt4_flip_subrooms(flp) {
 }
 
 
-// The rooms-and-corridors engine pieces the other three room-script Mine Town
-// variants (minetn-2/3/7, js/levels/minetown_rooms.js) need.  They are module-
-// private here and that module may not edit this file, so they travel as one
-// bundle; it reads them through a namespace import, so a missing bundle makes
-// those builders return false and makelevel() fall through, never throw.
+// Rooms-and-corridors engine pieces minetn-2/3/7 (js/levels/minetown_rooms.js)
+// need; module-private here, so they travel as one namespace-import bundle —
+// a missing bundle makes those builders return false and makelevel() fall
+// through, never throw.
 export const _minetn_room_api = {
     create_room, create_subroom, topologize, makecorridors, oracle_stair,
     oracle_trap, oracle_induced_align, mk_find_montype, mk_mines_race_suppress,
@@ -3903,15 +3883,14 @@ export const _minetn_room_api = {
 };
 
 // ============================================================
-// dat/minetn-1.lua — Mine Town variant 1, "Orcish Town".  Unlike minetn-2/3/4/7
-// (a des.room tree) or minetn-5 (a des.map over a plain solidfill), variants
-// 1 and 6 run des.level_init({style="mines", ...}) themselves: the WHOLE level
-// is first generated as a random smoothed/joined mines cavern (mk_mkmap, the
-// same engine makemaz_minefill() above already drives), and only THEN does a
-// des.map() stamp a fixed town layout over a sub-rectangle of it — every cell
-// the fixed map does NOT cover (there are none inside minetn-1's box; some ring
-// minetn-6's, via the 'x' "leave alone" char) keeps the random cavern terrain.
-//
+// dat/minetn-1.lua — Mine Town variant 1, "Orcish Town". Unlike minetn-2/3/4/7
+// (a des.room tree) or minetn-5 (a des.map over a plain solidfill), variants 1
+// and 6 run des.level_init({style="mines"}) themselves: the WHOLE level is
+// first a random smoothed/joined mines cavern (mk_mkmap, same engine
+// makemaz_minefill() drives), and only then does des.map() stamp a fixed town
+// layout over a sub-rectangle — cells the fixed map doesn't cover (none in
+// minetn-1's box; some ring minetn-6's via 'x' "leave alone") keep the random
+// cavern terrain.
 // C ref: dat/minetn-1.lua, mkmaze.c:1136, mkmap.c mkmap(), sp_lev.c
 // create_object()/create_monster()/lspo_replace_terrain()/place_lregion().
 // ============================================================
@@ -3965,11 +3944,11 @@ function mtown_stair_lregion(rtype, lx, ly, hx, hy, ex1, ey1, ex2, ey2) {
     });
 }
 
-// C ref: sp_lev.c create_object() override tail (sp_lev.c:2230-2296) — spe,
-// buc (only the "uncursed" case these scripts use: unbless+uncurse, no RNG)
-// and quantity are all applied to the object mksobj_at already built, AFTER
-// its own internal rolls (mksobj's owt recompute at the very end means a
-// quantity override needs its own weight() recompute too).  Map-relative.
+// C ref: sp_lev.c create_object() override tail (2230-2296) — spe, buc (only
+// the "uncursed" case these scripts use: unbless+uncurse, no RNG), and
+// quantity apply to the already-built mksobj_at object, AFTER its own rolls
+// (a quantity override needs its own weight() recompute too, since mksobj's
+// owt recompute runs at the very end). Map-relative.
 function mtown1_object(otyp, mx, my, { spe = null, uncursedBuc = false,
                                        quan = null } = {}) {
     const otmp = mksobj_at(otyp, q_absx(mx), q_absy(my), true, true);
@@ -4195,16 +4174,15 @@ async function makemaz_minetown1() {
 }
 
 // ============================================================
-// dat/minetn-6.lua — Mine Town variant 6, "Bustling Town" by Kelly Bailey.
-// Same mines-cavern-then-map-overlay shape as minetn-1 above, but bg="-"
-// (HWALL) instead of bg=" " (STONE): the untouched cavern displays as solid
-// wall rather than unlit rock, which is what the .lua's own comment says the
-// "inaccessibles" level flag is there to compensate for ("creating backdoors
-// into adjacent shops which we don't want").  That repair pass — C's
-// ensure_way_out(), a floodfill accessibility check that digs a corridor when
-// (and only when) the random cavern actually left a pocket unreachable — is
-// NOT ported; it only draws RNG in that unreachable-pocket case, which the
-// des.map overlay's own doors make rare.  See RECON_NOTES.md.
+// dat/minetn-6.lua — Mine Town variant 6, "Bustling Town" (Kelly Bailey).
+// Same mines-cavern-then-map-overlay shape as minetn-1, but bg="-" (HWALL)
+// instead of bg=" " (STONE): untouched cavern displays as solid wall, not
+// unlit rock — per the .lua's own comment, this is what the "inaccessibles"
+// flag compensates for ("creating backdoors into adjacent shops which we
+// don't want"). That repair pass — C's ensure_way_out(), a floodfill check
+// that digs a corridor only when the random cavern left a pocket unreachable
+// — is NOT ported; it only draws RNG in that rare case, made rarer still by
+// the des.map overlay's own doors. See RECON_NOTES.md.
 // ============================================================
 
 const MINETN6_MAP = [
@@ -4342,17 +4320,15 @@ async function makemaz_minetown6() {
 
 
 // ============================================================
-// dat/hellfill.lua — the "fill" level for Gehennom: every Gehennom dlvl that
-// is not one of the ~9 named specials (valley/sanctum/juiblex/baalz/asmodeus/
+// dat/hellfill.lua — the "fill" level for Gehennom: every Gehennom dlvl not
+// one of the ~9 named specials (valley/sanctum/juiblex/baalz/asmodeus/
 // wizard1-3) routes here via svd.dungeons[dnum].fill_lvl.
-//
-// C ref: dat/hellfill.lua + dat/nhlib.lua (hell_tweaks, percent, shuffle),
-// executed by the des.* engine in src/sp_lev.c, on top of src/mkmaze.c
-// (create_maze/walkfrom), src/mkmap.c (mkmap) and src/selvar.c (selections).
-//
-// The .lua picks one of 7 "hells" styles uniformly and runs it, then places
-// the stairs (or the vibrating square on the invocation level) and finally
-// populatemaze()'s object/monster/gold/trap budget.
+// C ref: dat/hellfill.lua + dat/nhlib.lua (hell_tweaks, percent, shuffle), run
+// by the des.* engine in src/sp_lev.c, atop src/mkmaze.c (create_maze/
+// walkfrom), src/mkmap.c (mkmap), src/selvar.c (selections).
+// Picks one of 7 "hells" styles uniformly, runs it, places the stairs (or
+// the vibrating square on the invocation level), then populatemaze()'s
+// object/monster/gold/trap budget.
 // ============================================================
 
 // C ref: sp_lev.c get_location() with croom == NULL — a des.* coordinate is
@@ -4868,12 +4844,11 @@ function hf_rnd_hell_prefab(coldhell) {
 }
 
 // ── the 7 hells[] styles ─────────────────────────────────────────────────
-//
 // Every style opens with the same two statements:
 //   des.level_init({ style = "solidfill", fg = " ", lit = 0 });
 //   des.level_flags("mazelevel", "noflip");
-// `lit = 0` is explicit, so SOLIDFILL draws NO rn2(2) here (unlike minefill's
-// implicit BOOL_RANDOM).  "noflip" only clears coder->allow_flips.
+// `lit = 0` is explicit, so SOLIDFILL draws no rn2(2) (unlike minefill's
+// implicit BOOL_RANDOM). "noflip" only clears coder->allow_flips.
 function hf_style_prologue(...flags) {
     hf_lvlfill_solid(STONE, 0);
     const lf = game.level.flags;
@@ -5172,14 +5147,13 @@ function hf_drawbridge({ x, y, dir, state }) {
 
 // ============================================================
 // dat/castle.lua — the stronghold at the bottom of the Dungeons of Doom, and
-// the level that carries the Gehennom branch.  A fixed 63x17 map laid over a
+// the level carrying the Gehennom branch. A fixed 63x17 map over a
 // "mazegrid" init, four storerooms, the wand of wishing in one of the four
-// towers, a throne room, two barracks, soldiers/dragons/sea monsters, and two
-// mazewalk-carved moat mazes that fill_empty_maze() then stocks.
-//
+// towers, a throne room, two barracks, soldiers/dragons/sea monsters, and
+// two mazewalk-carved moat mazes that fill_empty_maze() then stocks.
 // C ref: mklev.c makelevel() -> makemaz("castle") -> load_special("castle.lua")
 // running the des.* engine in src/sp_lev.c, then the load_special finalize
-// (wallification / flip_level_rnd / fixup_special) and makelevel()'s own
+// (wallification/flip_level_rnd/fixup_special) and makelevel()'s own
 // fill_special_room loop + level_finalize_topology -> mineralize().
 // ============================================================
 
@@ -5223,12 +5197,12 @@ function castle_storeroom(classCh, x0, x1, y) {
         for (let x = x0; x <= x1; x++) castle_object_class_at(classCh, x, ry);
 }
 
-// C ref: sp_lev.c lspo_teleport_region() / lspo_levregion() -> levregion_add().
+// C ref: sp_lev.c lspo_teleport_region()/lspo_levregion() -> levregion_add().
 // Registration only; place_lregions() (fixup_special) consumes them later.
-// `region_islev` marks the *region* coordinates as already-absolute level
-// coordinates; `exclude` has its own `exclude_islev` flag, which castle.lua
-// never sets — so the exclusion rectangle IS map-relative and goes through
-// get_location() (i.e. gets the des.map origin added).
+// `region_islev` marks the region coords as already level-absolute;
+// `exclude_islev` is castle.lua's own flag and it's never set, so the
+// exclusion rect stays map-relative and goes through get_location() (gets
+// the des.map origin added).
 function castle_levregion_add(rtype, inarea, delarea) {
     const g = game;
     if (!g.lregions) g.lregions = [];
@@ -5591,16 +5565,15 @@ function castle_maze1xy() {
 }
 
 // C ref: sp_lev.c SpLev_Map[x][y] — "this square was touched by the level
-// loader".  maze1xy() uses it to keep the maze filler out of the special
-// level's own footprint.
-//
-// Stored as `_castle_splev_map`, NOT `_splev_map`: js/sp_lev.js already keeps a
-// Set of "x,y" strings under that name for the same concept, and having two
-// modules write one game field with two different shapes made
-// themerooms_generate()'s splev_map_mark() call `.add()` on a Uint8Array —
-// crashing seed0360/0361/4500 to zero screens.  The grid form is what maze1xy()
-// wants here; the two are kept separate rather than unified because sp_lev's Set
-// is load-bearing for the already-gated themeroom path.
+// loader"; maze1xy() uses it to keep the maze filler out of the special
+// level's footprint.
+// Stored as `_castle_splev_map`, NOT `_splev_map`: js/sp_lev.js already uses
+// that name for a Set of "x,y" strings for the same concept, and two modules
+// writing one game field with different shapes made themerooms_generate()'s
+// splev_map_mark() call `.add()` on a Uint8Array — crashing seed0360/0361/
+// 4500 to zero screens. Kept separate (not unified) because sp_lev's Set is
+// load-bearing for the already-gated themeroom path; the grid form is what
+// maze1xy() needs here.
 function splev_map_reset() {
     game._castle_splev_map = Array.from({ length: COLNO }, () => new Uint8Array(ROWNO));
 }
@@ -5732,12 +5705,12 @@ function castle_put_stair_here(x, y, r, up) {
     return true;
 }
 
-// C ref: mkmaze.c bad_location() — occupied, inside the excluded region, or not
-// a ROOM/maze-CORR/AIR square.  C's within_bounded_area() is an UNCONDITIONAL
-// macro with no "is there even an exclude region" guard; castle's own
-// LR_UPSTAIR registration has a real exclude of [0,0,62,16] (nlx==0), so a
-// truthiness guard on nlx (`nlx && ...`) wrongly treats that as "no exclude"
-// and accepts squares C rejects — desyncing the whole level's RNG stream.
+// C ref: mkmaze.c bad_location() — occupied, inside the excluded region, or
+// not a ROOM/maze-CORR/AIR square. C's within_bounded_area() is an
+// UNCONDITIONAL macro with no "is there an exclude region" guard; castle's
+// own LR_UPSTAIR registration has a real exclude of [0,0,62,16] (nlx==0), so
+// a truthiness guard on nlx would wrongly treat that as "no exclude" and
+// accept squares C rejects — desyncing the whole level's RNG stream.
 function castle_bad_location(x, y, nlx, nly, nhx, nhy) {
     const loc = game.level?.at(x, y);
     if (!loc) return true;
@@ -5785,13 +5758,13 @@ function castle_stairs_room_good(croom, phase) {
 
 
 // C ref: mklev.c makelevel() `In_quest(&u.uz)` branch — a quest-branch level
-// that is NOT one of the three named levels (start/locate/goal) dispatches to
-// "{filecode}-fila" (before the locate level) or "{filecode}-filb" (at/after
-// it).  dat/Bar-fila.lua: same splev engine as minefill (mines-style init_fill
-// + smoothed + joined cave), but bg==fg==ROOM and walled=false (a fully open,
-// unwalled cavern) and an explicit lit=0 (no BOOL_RANDOM roll, unlike
-// minefill's implicit lit).  Only the Barbarian's "before locate" filler is
-// ported; other roles/filb fall through to the regular generator.
+// that isn't one of the three named levels (start/locate/goal) dispatches to
+// "{filecode}-fila" (before locate) or "-filb" (at/after it). dat/Bar-fila.lua
+// uses the same splev engine as minefill (mines-style init_fill + smoothed +
+// joined cave), but bg==fg==ROOM, walled=false (a fully open, unwalled
+// cavern), and an explicit lit=0 (no BOOL_RANDOM roll, unlike minefill's
+// implicit lit). Only the Barbarian's "before locate" filler is ported;
+// other roles/filb fall through to the regular generator.
 async function makemaz_bar_fila() {
     const g = game;
 
@@ -6127,12 +6100,11 @@ async function makemaz_bar_filb() {
 }
 
 // C ref: mkmaze.c fixup_special() — for a branch level with no rooms left
-// (join_map_cleanup reset svn.nroom to 0), the branch is placed via
-// place_lregion(0,...,LR_BRANCH).  Because nroom==0 the LR_BRANCH early-return
-// (place_branch) is NOT taken; instead place_lregion runs its probabilistic
-// rn1 loop: x = rn1(79,1), y = rn1(21,0) until put_lregion_here succeeds.
-// put_lregion_here(LR_BRANCH): valid iff !bad_location -> !occupied && typ==ROOM
-// (cavernous, not is_maze_lev), then place_branch(branchp, x, y).
+// (join_map_cleanup zeroed nroom), the branch goes through place_lregion
+// (0,...,LR_BRANCH) rather than place_branch()'s early return: it draws
+// x=rn1(79,1), y=rn1(21,0) in a probabilistic loop until put_lregion_here
+// (valid iff !bad_location -> !occupied && typ===ROOM, cavernous/not
+// is_maze_lev) succeeds, then calls place_branch(branchp, x, y).
 async function mk_fixup_branch() {
     const branchp = is_branchlev();
     if (!branchp) return;
@@ -6160,12 +6132,12 @@ function mk_bad_branch_location(x, y) {
     return !((loc.typ === CORR && is_maze) || loc.typ === ROOM || loc.typ === AIR);
 }
 
-// C ref: mkmaze.c place_lregions() — place the levregion a special level
-// registered with des.levregion({region=..., type=...}).  game._quest_lregion
-// holds the (already flipped) region and its LR_* rtype; place_lregion's
-// probabilistic loop draws rn1((hx-lx)+1,lx) for x and rn1((hy-ly)+1,ly) for y
-// (so exactly rn2(1)+x / rn2(1)+y for the 1-cell regions the quest home levels
-// use), then hands the accepted spot to put_lregion_here().
+// C ref: mkmaze.c place_lregions() — places the levregion a special level
+// registered via des.levregion({region=..., type=...}). game._quest_lregion
+// holds the (already flipped) region + LR_* rtype; the probabilistic loop
+// draws rn1((hx-lx)+1,lx) for x, rn1((hy-ly)+1,ly) for y (i.e. rn2(1)+x /
+// rn2(1)+y for the quest home levels' 1-cell regions), then hands the
+// accepted spot to put_lregion_here().
 export async function quest_place_branch() {
     const reg = game._quest_lregion;
     if (!reg) return;
@@ -6362,12 +6334,11 @@ function oracle_object(croom) {
     mkobj_at(RANDOM_CLASS, c.x, c.y, true);
 }
 
-// des.monster() fully random: induced_align, somexy, makemon(rndmonst).
-// C ref: sp_lev.c create_monster() — a random des.monster() resolves pm==NULL,
-// picks a spot via get_location_coord(random)->somexy, then, if that spot is
-// already occupied by a monster, relocates to a close free spot via enexto()
-// (which shuffles collect_coords rings, consuming rn2 exactly as the C engine
-// does).  If the relocated spot falls outside croom the monster is skipped.
+// des.monster() fully random: induced_align, somexy, makemon(rndmonst). C ref:
+// sp_lev.c create_monster() — a random des.monster() resolves pm==NULL, picks
+// a spot via get_location_coord(random)->somexy, and if occupied relocates via
+// enexto() (shuffles collect_coords rings, consuming rn2 exactly as C does).
+// A relocated spot outside croom skips the monster.
 function oracle_monster(croom) {
     oracle_induced_align();
     const c = oracle_get_free_room_loc(croom);
@@ -6560,26 +6531,24 @@ function is_branchlev() {
     return null;
 }
 
-// C ref: mklev.c find_branch_room().  With rooms, the branch goes in a room
-// picked by generate_stairs_find_room() at a somexyspace() spot inside it; with
-// no rooms at all C falls back to mazexy().  Levels that reach branch placement
-// with svn.nroom == 0 never call this in our port: place_lregion() (mkmaze.c)
-// short-circuits to place_branch() only when nroom is non-zero, and otherwise
-// runs its own whole-level rn1 loop and passes explicit coordinates
-// (mk_fixup_branch below), so the mazexy() arm is unreachable here.
+// C ref: mklev.c find_branch_room(). With rooms, the branch goes in a room
+// from generate_stairs_find_room() at a somexyspace() spot; with none, C
+// falls back to mazexy(). Never reached here with nroom==0 in this port:
+// place_lregion() (mkmaze.c) only short-circuits to place_branch() when
+// nroom is non-zero, otherwise running its own whole-level rn1 loop with
+// explicit coords (mk_fixup_branch below) — so the mazexy() arm is
+// unreachable here.
 function find_branch_room(mp) {
     const croom = generate_stairs_find_room();
     if (croom) somexyspace(croom, mp);
     return croom;
 }
 
-// C ref: mklev.c mktrap() — the random-trap-type selection chain for a call
-// with no explicit type:
-//   Is_rogue_level -> traptype_roguelvl()
-//   Inhell && !rn2(5) -> FIRE_TRAP        ("bias the frequency of fire traps
-//                                          in Gehennom")
-//   otherwise -> the do/while traptype_rnd() loop.
-// The rn2(5) is only reached in Gehennom, so this is RNG-neutral elsewhere.
+// C ref: mklev.c mktrap() — random-trap-type selection chain when no type is
+// given: Is_rogue_level -> traptype_roguelvl(); Inhell && !rn2(5) -> FIRE_TRAP
+// ("bias the frequency of fire traps in Gehennom"); otherwise the do/while
+// traptype_rnd() loop. The rn2(5) only fires in Gehennom, so RNG-neutral
+// elsewhere.
 function mktrap_random_kind() {
     if (In_hell(game.u?.uz) && !rn2(5)) return FIRE_TRAP;  // mklev.c:2070
     let kind;
@@ -6587,18 +6556,18 @@ function mktrap_random_kind() {
     return kind;
 }
 
-// C ref: mklev.c place_branch(br, x, y) — "If given a branch, randomly place a
-// special stair or portal."  x == 0 means "find random coordinates" (the
-// makelevel() call); every other caller — put_lregion_here(LR_BRANCH), the
-// castle/mines fixup_special loops — hands it an explicit spot.
-// A BR_PORTAL branch (the Quest) puts a MAGIC_PORTAL trap on the square and
-// leaves the terrain alone, everything else gets a staircase — and a
-// BR_NO_END1/BR_NO_END2 branch gets neither on the end declared stairless.
+// C ref: mklev.c place_branch(br, x, y) — "randomly place a special stair or
+// portal" if given a branch. x==0 means "find random coordinates" (the
+// makelevel() call); every other caller (put_lregion_here(LR_BRANCH), the
+// castle/mines fixup_special loops) hands it an explicit spot. A BR_PORTAL
+// branch (the Quest) drops a MAGIC_PORTAL trap and leaves the terrain alone;
+// everything else gets a staircase, and BR_NO_END1/BR_NO_END2 gets neither on
+// the end declared stairless.
 // C ref: mklev.c mk_knox_portal(x, y) — offer this level as the Fort Ludios
-// entrance.  The rn2(3) "defer to a later level" roll is only reached while the
-// branch is still floating (end1.dnum == n_dgns, the init_dungeons kludge); once
-// Knox has been placed every later vault level skips the roll entirely, which is
-// what keeps the makevtele() gate that follows it aligned.
+// entrance. The rn2(3) "defer to a later level" roll only fires while the
+// branch is still floating (end1.dnum==n_dgns, the init_dungeons kludge);
+// once Knox is placed every later vault level skips it, keeping the
+// makevtele() gate that follows aligned.
 async function mk_knox_portal(x, y) {
     const g = game;
     if (process.env.DBG_KNOX) console.error('DBG mk_knox_portal uz=', JSON.stringify(g.u?.uz));
@@ -7524,11 +7493,10 @@ function level_finalize_topology() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// mklev.c — remaining functions.  INERT: nothing above calls into this section
-// and no existing call site was rewired.  The RNG-drawing ones (mktrap,
-// mkgrave, mkinvpos) go through the same maketrap()/rn2() the live builders
-// use, so wiring one up reorders the shared draw stream and is a measured
-// change, not a refactor.
+// mklev.c — remaining functions. INERT: nothing above calls into this section,
+// no existing call site was rewired. The RNG-drawing ones (mktrap, mkgrave,
+// mkinvpos) share maketrap()/rn2() with the live builders, so wiring one up
+// reorders the shared draw stream — a measured change, not a refactor.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // hack.h:1429-1433 — mktrap()'s flag word.
@@ -7557,12 +7525,12 @@ export function mkroom_cmp(vx, vy) {
     return (x.lx > y.lx) ? 1 : 0;
 }
 
-// C ref: mklev.c:555 — (re)allocate space for the svd.doors array.  C grows a
-// flat coord[] by DOORINC whenever doorindex catches up with the allocation and
-// memcpy()s the old contents over; a JS array grows implicitly, so the only
-// observable part is the zero-fill of the new slots (add_door() at mklev.js:2620
-// writes into g.level.doors[] directly and never reads an uninitialised slot).
-// Kept so a save/restore pass that has to reproduce doors_alloc has the rule.
+// C ref: mklev.c:555 — (re)allocate space for svd.doors. C grows a flat
+// coord[] by DOORINC and memcpy()s the old contents when doorindex catches
+// up; a JS array grows implicitly, so the only observable part is the
+// zero-fill of new slots (add_door() at mklev.js:2620 writes doors[] directly,
+// never reads an uninitialised slot). Kept so a save/restore pass needing
+// doors_alloc has the rule.
 export function alloc_doors() {
     const g = game;
     if (!g.level) return;
@@ -7576,12 +7544,11 @@ export function alloc_doors() {
     }
 }
 
-// C ref: mklev.c:344 free_luathemes(theme_group) — release the per-dungeon
-// themeroom lua states.  `tut_themes` frees only the tutorial's, `most_themes`
-// keeps the Astral one (that dungeon is being entered), `all_themes` frees
-// everything.  This port has no lua_State; mklev.js:771-778 records "themes
-// loaded for dnum" in game._luathemes_loaded, which is the same lifetime, so
-// that is what gets cleared.  js/save.js:1111 records this as UNPORTED.
+// C ref: mklev.c:344 free_luathemes(theme_group) — release per-dungeon
+// themeroom lua states. tut_themes frees only the tutorial's, most_themes
+// keeps the Astral one (being entered), all_themes frees everything. No
+// lua_State here; mklev.js:771-778's game._luathemes_loaded has the same
+// lifetime, so that's what's cleared. js/save.js:1111 records this UNPORTED.
 export function free_luathemes(theme_group) {
     const g = game;
     const luathemes = g._luathemes_loaded;
@@ -7623,11 +7590,10 @@ export async function themerooms_post_level_generate() {
     /* C also frees gc.coder and runs lua_gc(themes, LUA_GCCOLLECT) */
 }
 
-// C ref: mklev.c:1197 — does a door open into solid terrain?  The four tests
-// are "one side is passable and the other is not"; `typ > TREE` is the
-// passable half of rm.h's terrain ordering (STONE..TREE are the solid ones).
-// Note both arms return FALSE for a MISMATCH, so a door with solid terrain on
-// BOTH sides (or open on both) is reported ok.
+// C ref: mklev.c:1197 — does a door open into solid terrain? The four tests
+// check "one side passable, other not"; `typ > TREE` is the passable half of
+// rm.h's terrain ordering (STONE..TREE are solid). Both arms return FALSE on
+// a mismatch, so solid-both-sides (or open-both) reports ok.
 export function chk_okdoor(x, y) {
     const loc = game.level?.at(x, y);
     if (loc && IS_DOOR(loc.typ)) {
@@ -7738,10 +7704,10 @@ function mklev_is_pool_or_lava(x, y) {
 }
 
 // C ref: mkmaze.c:1316 mazexy(cc) — rnd(x_maze_max)/rnd(y_maze_max) until the
-// square is the maze's own floor type, up to 100 tries, then a systematic scan.
-// js/mkmaze.js exports maze0xy() (the odd-cell carve start) but NOT mazexy, so
-// this local copy is what mktrap()'s MKTRAP_MAZEFLAG arm needs; if mkmaze.js
-// gains a mazexy() export, delete this and import that instead.
+// square matches the maze's own floor type, up to 100 tries, then a
+// systematic scan. js/mkmaze.js exports maze0xy() (odd-cell carve start) but
+// not mazexy, so this local copy covers mktrap()'s MKTRAP_MAZEFLAG arm;
+// delete it if mkmaze.js ever exports mazexy().
 function mklev_mazexy(cc) {
     const allowedtyp = game.level?.flags?.corrmaze ? CORR : ROOM;
     let cpt = 0;
@@ -7770,23 +7736,20 @@ function mklev_mazexy(cc) {
 /* mklev.c:2042 `static int mktrap_err` — the paniclog is issued once per run. */
 let mktrap_err = 0;
 
-// C ref: mklev.c:2035 mktrap(num, mktrapflags, croom, tm) — the general form.
-// mktrap_room() (mklev.js:6378) is the croom-only, flagless specialisation the
-// live fill path uses; this is the whole function, including the `tm` and
-// MKTRAP_MAZEFLAG placement arms and the three flag tests.
-//
-// RNG: the kind selection draws (traptype_rnd's rnd(TRAPNUM-1) in a NO_TRAP
-// retry loop, or traptype_roguelvl's rn2(7), or Gehennom's rn2(5) which is
-// drawn BEFORE the fire-trap shortcut and therefore always), then one
-// somexyspace()/mazexy() per placement attempt, then maketrap(), then the
-// victim gate's rnd(4) — which is the RIGHT operand of `lvl <= rnd(4)` and so
-// is drawn whenever the earlier conditions hold.
-//
-// CAVEAT: traptype_rnd() at mklev.js:6229 takes no argument, so C's
+// C ref: mklev.c:2035 mktrap(num, mktrapflags, croom, tm) — the general form;
+// mktrap_room() (mklev.js:6378) is the croom-only flagless specialisation the
+// live fill path uses. This is the whole function: `tm` and MKTRAP_MAZEFLAG
+// placement arms plus the three flag tests included.
+// RNG: kind selection draws (traptype_rnd's rnd(TRAPNUM-1) NO_TRAP retry loop,
+// or traptype_roguelvl's rn2(7), or Gehennom's rn2(5) — drawn BEFORE the
+// fire-trap shortcut, so always), then somexyspace()/mazexy() per placement
+// attempt, then maketrap(), then the victim gate's rnd(4) (RHS of
+// `lvl <= rnd(4)`, drawn whenever the earlier conditions hold).
+// CAVEAT: traptype_rnd() (mklev.js:6229) takes no argument, so C's
 // `case WEB: if (lvl < 7 && !(mktrapflags & MKTRAP_NOSPIDERONWEB))` degrades to
-// `if (lvl < 7)` here.  Identical for every flagless caller; a caller that
-// passes MKTRAP_NOSPIDERONWEB (a des.trap() with spider_on_web=false) would get
-// NO_TRAP where C gets a web.  Fixing that means editing traptype_rnd().
+// `if (lvl < 7)` here — identical for every flagless caller, but a caller
+// passing MKTRAP_NOSPIDERONWEB (des.trap() spider_on_web=false) gets NO_TRAP
+// where C gets a web. Fix requires editing traptype_rnd().
 export async function mktrap(num, mktrapflags, croom, tm) {
     let t, kind;
     const m = { x: 0, y: 0 };
@@ -7883,11 +7846,11 @@ export async function mktrap(num, mktrapflags, croom, tm) {
 }
 
 // C ref: mklev.c:2316 — a sink, if a free non-doorway square can be found.
-// find_okay_roompos() (mklev.js:6260) draws somexyspace() per attempt.  The
-// live fill_ordinary_room() (mklev.js:6529) inlines this; the difference is
-// C's set_levltyp() refusal to overwrite STAIRS/LADDER, which the inline copy
-// does not honour — a sink can only lose that race on a stairs square, which
-// occupied() already rejects, so the two agree in practice.
+// find_okay_roompos() (mklev.js:6260) draws somexyspace() per attempt. The
+// live fill_ordinary_room() (mklev.js:6529) inlines this; C's set_levltyp()
+// refuses to overwrite STAIRS/LADDER, which the inline copy doesn't honour —
+// but a sink can only lose that race on a stairs square, which occupied()
+// already rejects, so the two agree in practice.
 export function mksink(croom) {
     const m = { x: 0, y: 0 };
 
@@ -7902,10 +7865,10 @@ export function mksink(croom) {
 }
 
 // ── C names for ports that already exist under a local name ────────────────
-// mkgrave() is fully ported as mkgrave_room() (mklev.js:6456) — including the
-// `dobell = !rn2(10)` declaration-initialiser ordering fix.  Re-exported under
-// the C spelling rather than re-implemented; renaming the original would touch
-// its live call site in fill_ordinary_room().
+// mkgrave() is fully ported as mkgrave_room() (mklev.js:6456), including the
+// `dobell = !rn2(10)` declaration-initialiser ordering fix. Re-exported under
+// the C spelling rather than reimplemented — renaming the original would
+// touch its live call site in fill_ordinary_room().
 export function mkgrave(croom) { return mkgrave_room(croom); }
 
 // ── invocation area (mklev.c:2409-2613) ────────────────────────────────────
@@ -7924,15 +7887,14 @@ export function mkinvk_check_wall(x, y) {
 const X_MAZE_MIN = 2;
 const Y_MAZE_MIN = 2;
 
-// C ref: mklev.c:2409 mkinvokearea() — the earthquake that opens the stairs to
-// the Sanctum after the Book of the Dead is read on the vibrating square.
-// Two passes over the same 13x9-ish diamond: the first only COUNTS walls (to
+// C ref: mklev.c:2409 mkinvokearea() — the earthquake opening the stairs to
+// the Sanctum after the Book of the Dead is read on the vibrating square. Two
+// passes over the same 13x9-ish diamond: the first only COUNTS walls (to
 // decide whether to print the crumbling line), the second calls mkinvpos() to
-// actually retopologise, with a flush_screen()+delay per ring so the animation
-// plays outward.  `dist != 3` is C's comment "the area is wider than it is
-// high" — the y extent stops growing for one ring.
-//
-// No RNG of its own; mkinvpos()'s maketrap(FIRE_TRAP) and fracture_rock() draw.
+// actually retopologise, with a flush_screen()+delay per ring for the outward
+// animation. `dist != 3` is C's comment "the area is wider than it is high" —
+// the y extent stops growing for one ring. No RNG of its own; mkinvpos()'s
+// maketrap(FIRE_TRAP) and fracture_rock() draw.
 export async function mkinvokearea() {
     let dist, wallct;
     let xmin, xmax, ymin, ymax;
@@ -8023,11 +7985,11 @@ export async function mkinvokearea() {
     g.vision_full_recalc = 1;                   /* everything changed */
 }
 
-// C ref: zap.c fracture_rock(obj) — a boulder becomes rn1(60,7) rocks.  Private
-// copies already sit at vault.js:283, dig.js:956 and explode.js:630; none is
-// exported, so mkinvpos() gets a fourth.  The fix is to export ONE of them (the
-// dig.js copy is the C shape) and delete the rest — not to keep adding copies.
-// The rn1(60, 7) is the only draw and happens whether or not obj is on a floor.
+// C ref: zap.c fracture_rock(obj) — a boulder becomes rn1(60,7) rocks. Private
+// copies already sit at vault.js:283, dig.js:956, explode.js:630; none
+// exported, so mkinvpos() gets a fourth. Fix: export ONE (dig.js's is the C
+// shape) and delete the rest, not add more. rn1(60,7) is the only draw,
+// regardless of whether obj is on a floor.
 function mkinv_fracture_rock(obj) {
     if (!obj) return;
     obj.otyp = ROCK;
@@ -8055,12 +8017,11 @@ function mkinv_sobj_at(otyp, x, y) {
 }
 
 // C ref: mklev.c:2502 mkinvpos(x, y, dist) — retopologise one square of the
-// invocation area.  `dist` selects the terrain: 1 => fire traps, 4/5 => moat,
-// everything else => ROOM, and dist < 6 is the lit part.  It writes viz_array
-// directly to short-circuit the vision recalc so the animation is visible.
-//
-// Boulder handling draws: the FIRST boulder on a non-{moat,trap} square is
-// fractured (rn1(60,7)), the rest are freed outright.
+// invocation area. `dist` selects the terrain: 1 => fire traps, 4/5 => moat,
+// else ROOM; dist < 6 is the lit part. Writes viz_array directly to
+// short-circuit the vision recalc so the animation is visible. Boulder
+// handling draws: the FIRST boulder on a non-{moat,trap} square is fractured
+// (rn1(60,7)); the rest are freed outright.
 export async function mkinvpos(x, y, dist) {
     let ttmp, otmp;
     let make_rocks;

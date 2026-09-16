@@ -38,7 +38,7 @@ async function record_ach(achidx) {
 import { mklev, place_lregion, u_on_upstairs } from './mklev.js';
 import { fumaroles, movebubbles } from './mkmaze.js';
 const PM_ROGUE_DO = 339;   // mons[] index; C's Role_if(PM_ROGUE)
-import { clear_regions } from './region.js';
+import { clear_regions, remove_region } from './region.js';
 import { fastforward_fill_mineralize } from './fastforward.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
@@ -74,10 +74,9 @@ import { more_experienced, newexplevel } from './exper.js';
 import { olfaction } from './eat.js';
 import { placebc, unplacebc } from './ball.js';
 
-// C ref: dungeon.c level_difficulty() — factor of difficulty from depth,
-// bumped in a "builds up" branch (Sokoban / Vlad's Tower) to compensate for
-// depth() alone making their harder-to-reach levels look easier.  The amulet
-// / endgame variants are not exercised.
+// C ref: dungeon.c level_difficulty() — depth() factor, bumped in a "builds
+// up" branch (Sokoban/Vlad's Tower) since depth() alone makes those levels
+// look easier than they are; amulet/endgame variants not exercised.
 const PM_TOURIST = 10; // makemon/exper PM index
 function level_difficulty() { return level_difficulty_c(); }
 import { mon_catchup_elapsed_time, monnear } from './dogmove.js';
@@ -166,14 +165,13 @@ function place_hero_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy) {
             }
 }
 
-// C ref: dungeon.c u_on_newpos(x, y) — put the hero on a specific square.
-// The off-map validation is a panic()/impossible() in C, i.e. never reached
-// with a legal argument.  The "still on same level" arm is the one hack.c's
-// domove_core() takes (see cmd.js, which inlines it); goto_level() always takes
-// the other arm, because u.uz was already switched to the destination and u.uz0
-// still names the level being left.  There map_location() only seeds
-// lastseentyp for a later switch_terrain(), and the subsequent docrt() repaints
-// the whole level anyway, so it has no observable effect here.  Consumes no RNG.
+// C ref: dungeon.c u_on_newpos(x, y) — put the hero on a specific square. Off-
+// map validation is a panic()/impossible() in C, never reached legally.
+// hack.c's domove_core() (inlined in cmd.js) takes the "same level" arm;
+// goto_level() always takes the other, since u.uz already names the
+// destination while u.uz0 still names the level left — that arm's
+// map_location()/lastseentyp seed is moot anyway since docrt() repaints
+// everything.  Consumes no RNG.
 export function u_on_newpos(x, y) {
     const u = game.u;
     u.ux = x;
@@ -189,16 +187,14 @@ export function u_on_newpos(x, y) {
     }
 }
 
-// C ref: dungeon.c u_on_rndspot().  Level-teleport / fall arrival uses the
-// up/down-teleport destination region (both default to the whole level when
-// goto_level memset svu.updest / svd.dndest to zero).
+// C ref: dungeon.c u_on_rndspot() — level-teleport/fall arrival uses the
+// up/down-teleport destination region.  goto_level() memsets svu.updest/
+// svd.dndest to zero before mklev(); a special level's des.teleport_region()
+// (via fixup_special()'s LR_*TELE arm) can fill the matching one back in, and
+// an unfilled region (.lx==0) makes place_lregion() default to the whole
+// level.  (was_in_W_tower is Vlad's-Tower-only and never reached here.)
 function u_on_rndspot(upflag) {
     const up = (upflag & 1);
-    // C: goto_level() memsets svu.updest / svd.dndest to zero before mklev(),
-    // and a special level's des.teleport_region() (via fixup_special()'s
-    // LR_*TELE arm) fills the matching one back in.  An unspecified region
-    // (.lx == 0) makes place_lregion() default to the entire level.
-    // (The was_in_W_tower arm is Vlad's-Tower-only and never reached here.)
     const dest = up ? game.updest : game.dndest;
     place_hero_lregion(dest?.lx || 0, dest?.ly || 0, dest?.hx || 0, dest?.hy || 0,
                        dest?.nlx || 0, dest?.nly || 0, dest?.nhx || 0, dest?.nhy || 0,
@@ -232,23 +228,16 @@ function goodpos_mon(x, y, mtmp) {
     if (game.u?.ux === x && game.u?.uy === y) return false;
     if (m_at(x, y)) return false;
     // C ref: teleport.c goodpos() — `if (!accessible(x, y)) return FALSE;`.
-    // enexto() takes the FIRST goodpos candidate out of the collect_coords ring
-    // order, so accepting a square C refuses relocates the monster while
-    // consuming IDENTICAL RNG — an invisible, non-RNG placement fork.  Two bugs
-    // lived here: the threshold was `typ >= 13` with a comment claiming 13 was
-    // DOOR (it is TREE; DOOR is 23), and the closed-door rejection was missing
-    // entirely.  A pet arriving on a new level was landing in a closed doorway.
-    //
-    // The three tests below sit AHEAD of accessible() in C, and their order is
-    // observable through enexto(): each one C applies and we don't lets a pet
-    // take an earlier ring square than C does, forking placement while the RNG
-    // stream stays identical.
+    // enexto() takes the FIRST accepted ring square, so any test here that
+    // answers differently from C forks pet placement while the RNG stream
+    // stays identical (an invisible placement fork).  Two such bugs lived
+    // here: the threshold was `typ >= 13` mislabeled DOOR (it's TREE; DOOR is
+    // 23), and the closed-door rejection was missing, landing an arriving pet
+    // in a doorway.  The three tests below sit AHEAD of accessible() in C and
+    // share that same failure mode.
     // C ref: dbridge.c is_pool() — POOL/MOAT/WATER (is_moat()'s drawbridge
-    // indirection is unmodelled).  These used to be flat rejections justified by
-    // "no contest pet swims or flies"; C's real answers are the mondata.h flag
-    // tests, and goodpos() feeds enexto(), which takes the FIRST accepted ring
-    // square — so a wrong answer relocates the monster while the RNG stream
-    // stays identical (an invisible placement fork).
+    // indirection unmodelled).  Used to be a flat rejection ("no contest pet
+    // swims/flies"); C's real answer is the mondata.h flag test.
     const mdat = mtmp?.data ?? null;
     const typ = game.level?.at(x, y)?.typ;
     if (typ === POOL || typ === MOAT || typ === WATER)
@@ -266,12 +255,11 @@ function goodpos_mon(x, y, mtmp) {
 }
 
 // C ref: mon.c m_in_air(mon) — `is_flyer(mon->data) || is_floater(mon->data)
-// || (is_clinger(mon->data) && has_ceiling(&u.uz) && mon->mundetected)`.  It
-// reads the SPECIES, not per-monster flags: `mtmp->mflying` does not exist in
-// C, so this answered FALSE for every flyer and goodpos() refused pool/lava
-// squares C accepts — an invisible, RNG-free enexto() placement fork.
-// goodpos()'s caller here is enexto_core(), which passes a zeroed fake monst
-// carrying only mdat, so the is_clinger arm's mundetected is always 0.
+// || (is_clinger(mon->data) && has_ceiling(&u.uz) && mon->mundetected)`. It
+// reads the SPECIES, not per-monster flags — `mtmp->mflying` doesn't exist in
+// C — so this used to answer FALSE for every flyer, an invisible RNG-free
+// enexto() placement fork.  Our caller (enexto_core()) passes a zeroed fake
+// monst carrying only mdat, so the is_clinger arm's mundetected is always 0.
 function m_in_air_do(mtmp) {
     const d = mtmp?.data;
     if (!d) return false;
@@ -335,15 +323,13 @@ function enexto(xx, yy, mtmp) {
     return null;
 }
 
-// C ref: mon.c:3955 mnexto(mtmp, rlocflags) — put the monster next to the hero.
-// The enexto() search DRAWS (collect_coords shuffles every ring it gathers), so
-// a caller that "leaves the relocation to someone else" loses those calls.
-// C's enexto() is enexto_core(GP_CHECKSCARY) || enexto_core(NO_MM_FLAGS); the
-// scary-square filter only matters on a square with a scare-monster item or
-// Elbereth, so the first pass answers here and the second never runs.
-// (the module-private mnexto() below is the same C routine minus the
-// rloc_to_core() display/track bookkeeping; kept separate so the pet-arrival
-// path it serves is not perturbed.)
+// C ref: mon.c:3955 mnexto(mtmp, rlocflags) — put the monster next to the
+// hero.  enexto() DRAWS (collect_coords shuffles every ring), so it must
+// always be called even where relocation looks delegated elsewhere.  C's
+// enexto() is enexto_core(GP_CHECKSCARY) || enexto_core(NO_MM_FLAGS), but the
+// scary-square filter only matters near a scare item/Elbereth, so the second
+// pass never fires.  (mnexto() below is the same routine minus
+// rloc_to_core()'s display/track bookkeeping, kept separate for pet arrival.)
 export async function mnexto_rloc(mtmp, rlocflags = 0) {
     const u = game.u;
     if (mtmp === u?.usteed) { mtmp.mx = u.ux; mtmp.my = u.uy; return; }
@@ -382,15 +368,14 @@ function mon_arrive_with_you(mtmp) {
 // C ref: mondata.c:1211 levl_follower(mtmp) — used by keepdogs() to decide
 // whether a nearby monster accompanies a level change.  Tame pets, the Wizard
 // of Yendor and a following shopkeeper always qualify (even while fleeing); a
-// hostile M2_STALK monster (e.g. the water demon a fountain can unleash)
-// follows unless it is currently fleeing and the hero has no Amulet.  The one
-// monster that refuses is the Wizard once HE holds the Amulet — he wants to
-// fight, not chase.  This was a species-name Set that had drifted off M2_STALK:
-// it listed the vampire mage and the Goblin King (neither stalks) and omitted
-// the vampire lord/lady/leader and incubus/succubus/amorous demon.  The iswiz
-// arms were then omitted as "no recorded session drives a followed Wizard",
-// which is false: seed0373's wizard-mode level teleports drag him from the
-// Plane of Fire to the Plane of Air (step 110, C's second mon_arrive rn2(2)).
+// hostile M2_STALK monster (e.g. a fountain-unleashed water demon) follows
+// unless fleeing with the hero lacking the Amulet.  The Wizard himself
+// refuses once HE holds it (he fights, not chases).  Two bugs lived here: the
+// M2_STALK species-name Set had drifted (listed vampire mage/Goblin King,
+// neither stalks; omitted vampire lord/lady/leader and incubus/succubus/
+// amorous demon), and the iswiz arms were dropped as "no recorded session
+// drives a followed Wizard" — false: seed0373's ^V drags him Fire->Air at
+// step 110 (C's second mon_arrive rn2(2)).
 function levl_follower(m) {
     if (m === game.u.usteed) return true;
     /* Wizard with Amulet won't bother trying to follow across levels */
@@ -419,13 +404,10 @@ function keepdogs_helpless(m) {
     return !!(m.msleeping || !m.mcanmove);
 }
 
-// C ref: dog.c keepdogs()/losedogs().  Capture the monsters that accompany
-// the hero across a level change before the level is torn down by mklev():
-// a nearby tame pet, or a nearby non-fleeing M2_STALK hostile (levl_follower),
-// as long as it isn't helpless, isn't still waiting to notice the hero
-// (STRAT_WAITFORU), and isn't mid-meal/trapped (which leaves it behind rather
-// than following).  Re-placed next to the hero on the new level by
-// losedogs_place(); the only RNG this consumes is mon_arrive(With_you)'s
+// C ref: dog.c keepdogs()/losedogs().  Capture pets/non-fleeing M2_STALK
+// hostiles (levl_follower) near the hero before mklev() tears the level down,
+// skipping helpless/STRAT_WAITFORU/eating/trapped monsters; losedogs_place()
+// re-places them on arrival.  Only RNG: mon_arrive(With_you)'s
 // rn2(10)/rn2(5)/rn2(2).
 function keepdogs_capture() {
     const lev = game.level;
@@ -789,41 +771,24 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // Capture accompanying pet(s) before the old level is freed by mklev().
     const kept = at_stairs || !at_stairs ? keepdogs_capture() : [];
 
-    // C ref: do.c goto_level() — the ordinary on-foot transit message ("You
-    // descend the stairs." / "You climb up the stairs.") is delivered at do.c
-    // ~1799, AFTER mklev() but BEFORE the deferred docrt() (do.c:1840) repaints
-    // the destination map.  In the tty the display buffer therefore still holds
-    // the OLD level (and the OLD Dlvl on the status line) when the message's
-    // --More-- is captured: the recorder shows "You descend the stairs.--More--"
-    // over the level being LEFT, then the next acked frame shows the new level
-    // (seed0030 global-28/231/368).  The JS renderer rebuilds the grid from the
-    // live game state on every capture, so to reproduce that old-level frame we
-    // emit the message + force its --More-- HERE, while u.uz and game.level still
-    // refer to the level being left, before switching below.  This consumes no
-    // RNG, so the mklev()/makelevel() PRNG stream that follows is unaffected.
-    // C ref: do.c goto_level arrival block — the "You descend/climb the stairs."
-    // ordinary-transit message is emitted for any at_stairs move (including a
-    // branch crossing into the Gnomish Mines), not just same-dungeon descents.
-    // C ref: do.c:1780 — an over-loaded (near_capacity() > UNENCUMBERED),
-    // Punished or Fumbling hero FALLS down instead of descending: the message is
-    // printed unconditionally (unlike the flags.verbose-gated ordinary one) and
-    // costs rnd(3) hp.  do.c:1777 takes the Flying arm FIRST, so a flying hero
-    // never falls.  Only the message can be hoisted to this old-level frame; the
-    // losehp roll stays at C's position, in the at_stairs arrival arm below.
-    // C ref: do.c:1789 — `if (Punished) { drag_down(); ballrelease(); }`.
-    // drag_down() is now ported (drag_down_hero below); litter()'s per-item
-    // rnd(weight_cap) is still missing, as is the u.usteed
-    // dismount_steed(DISMOUNT_FELL) alternative to the losehp() below.
-    // C ref: topl.c — a topline the CALLING command left unacknowledged (the
-    // wizard '?' level teleport's prinv("Endgame prerequisite:", amu),
-    // teleport.c:1244) fires its --More-- before the destination map is drawn,
-    // and C paints that frame over the pre-departure screen: nothing flushes the
-    // map between here and goto_level's closing flush_screen(-1), so the tty
-    // still shows the departing level with the accompanying pet on it.  This
-    // port re-renders live state at every --More--, so the frame has to be taken
-    // HERE, while the departing level's glyph buffer is still intact — ahead of
-    // the keepdogs pet-cell redraw and vision_recalc(2)'s blanking sweep below.
-    // (seed0373 step 99.)
+    // C ref: do.c goto_level() ~1799 — the on-foot transit message ("You
+    // descend/climb the stairs.") is emitted for ANY at_stairs move (including
+    // a Mines branch crossing) AFTER mklev() but BEFORE do.c:1840's deferred
+    // docrt(), so C's tty still shows the OLD level under the --More--
+    // (seed0030 global-28/231/368).  Our renderer rebuilds from live state on
+    // every capture, so we emit the message + force its --More-- HERE, before
+    // switching u.uz/game.level below — no RNG crosses this point.
+    // C ref: do.c:1780 — an over-loaded/Punished/Fumbling (Flying takes
+    // precedence, do.c:1777) hero instead FALLS, with an unconditional message
+    // + rnd(3) hp (rolled later, at its real position in the arrival arm).
+    // do.c:1789's `if (Punished) { drag_down(); ballrelease(); }` is ported as
+    // drag_down_hero() below; litter()'s per-item rnd(weight_cap) and the
+    // usteed dismount_steed(DISMOUNT_FELL) alternative are still missing.
+    // C ref: topl.c — an unacknowledged topline left by the calling command
+    // (e.g. wizard '?' teleport's prinv("Endgame prerequisite:"), teleport.c:
+    // 1244) pages its --More-- here too, over the still-intact departing-level
+    // buffer, ahead of the keepdogs pet-cell redraw and vision_recalc(2) below
+    // (seed0373 step 99).
     if (game._toplin === 1) {
         await topl_more();
         game._pending_message = '';
@@ -865,29 +830,23 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         }
     }
 
-    // C ref: keepdogs()/mon leaving the level — the accompanying pet is no
-    // longer on the departing level, so the tty shows the terrain it stood on.
-    // Redraw each captured pet's old cell now: AFTER the on-foot transit frame
-    // ("You descend the stairs.--More--") has been captured with the pet still
-    // shown (C's gbuf keeps it there), but BEFORE mklev() — so a mid-mklev prompt
-    // over the departing level (wizard bones "Get bones?" on a ^V level-teleport,
-    // which has no transit frame) is captured with the pet already gone, exactly
-    // as C shows it.  u.uz still refers to the departing level here, so the
-    // hero's vision (and thus the redrawn terrain) is correct.
+    // C ref: keepdogs()/mon leaving the level — the pet is gone from the
+    // departing level, so its old cell must show bare terrain.  Redraw it
+    // here: AFTER the on-foot transit frame (pet still shown, matching C's
+    // gbuf) but BEFORE mklev(), so a mid-mklev prompt (e.g. wizard bones "Get
+    // bones?", which has no transit frame) already shows the pet gone, as C
+    // does.  u.uz still names the departing level, so vision/terrain here
+    // are correct.
     for (const m of kept) newsym(m.mx, m.my);
 
-    // C ref: do.c goto_level():1637 `vision_recalc(2)` — "we no longer see
-    // anything on the level", between keepdogs()/recalc_mapseen() and the save
-    // of the level being left.  Shutting vision down newsym()s every square
-    // that WAS in sight, so while hallucinating it re-picks a display-rng glyph
-    // for each of them (seed0383 step 195: nine warning glyphs on the bigroom
-    // level the hero level-teleports off, then nine more from the arrival
-    // docrt()).  It sits AFTER the hoisted transit-message frame above rather
-    // than at C's textual position because that frame is RNG-free: C emits the
-    // message at do.c:1799 (post-mklev) and the tty still shows the departing
-    // level, which this port reproduces by rendering live state early.  Running
-    // the vision shutdown first would blank that frame's monsters and costs 19
-    // screens across seed0030/0014/0002; the draw ORDER is identical either way.
+    // C ref: do.c goto_level():1637 `vision_recalc(2)` — shuts down vision for
+    // the level being left, between keepdogs() and the save below.  newsym()s
+    // every square that WAS in sight, re-picking a display-rng glyph while
+    // hallucinating (seed0383 step 195: nine warning glyphs go, nine more from
+    // arrival docrt()).  Runs AFTER the hoisted transit-message frame above
+    // (see that comment for why) rather than at C's textual position — running
+    // it first would blank that frame's monsters, costing 19 screens across
+    // seed0030/0014/0002; draw ORDER is identical either way.
     vision_recalc(2);
 
     // Move to the destination level.
@@ -914,13 +873,11 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     const oldLedger = `${u.uz.dnum}:${u.uz.dlevel}`;
     g._level_store[oldLedger] = {
         level: g.level, stairs: g.stairs, omoves: g.moves ?? 0,
-        // C ref: track.c save_track() (called from savelev()) — the hero's
-        // footprint ring (utrack) is written into the departing level's save
-        // file, then save_track's release_data() branch runs initrack() to clear
-        // the live ring.  So each level owns its own footprints; gettrack() on
-        // the destination never sees squares the hero walked on a DIFFERENT
-        // level.  Mirror that here: stash the ring by reference into the old
-        // level's store, then initrack() below installs a fresh empty ring.
+        // C ref: track.c save_track() (from savelev()) — utrack is written to
+        // the departing level's save file, then release_data() runs
+        // initrack() to clear the live ring, so each level owns its own
+        // footprints.  Mirror that: stash the ring by reference into the old
+        // level's store; initrack() below installs a fresh empty one.
         utrack: g._utrack, utcnt: g._utcnt, utpnt: g._utpnt,
         // C ref: region.c save_regions() — the region list is part of the
         // DEPARTING level's save file, and its release_data() arm then runs
@@ -1141,13 +1098,12 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     await docrt();
     await flush_screen(-1);
 
-    // C ref: do.c:1843-1845 — `if (gd.dfr_post_msg) maybe_lvltport_feedback();`
-    // is the FIRST message after the screen reset, i.e. before the Gehennom /
-    // familiar / arrival lines, before check_special_room(FALSE)'s shop greeting
-    // and before the closing pickup(1).  The caller stashes the text (there is
-    // no gd.dfr_post_msg here) and this delivers it at C's position; emitting it
-    // from the caller instead put it AFTER pickup(1)'s "You see here ..." line
-    // (w3-human-knight-debug step 131 shows the two in the opposite order).
+    // C ref: do.c:1843-1845 `if (gd.dfr_post_msg) maybe_lvltport_feedback();` —
+    // the FIRST message after the screen reset (before Gehennom/familiar/
+    // arrival lines, the shop greeting, and pickup(1)).  The caller stashes
+    // the text (no gd.dfr_post_msg field here); delivering it from the caller
+    // instead put it AFTER pickup(1)'s "You see here..." line
+    // (w3-human-knight-debug step 131 shows the reversed order).
     if (g._goto_post_msg) {
         const pmsg = g._goto_post_msg;
         g._goto_post_msg = null;
@@ -1216,13 +1172,12 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     } else if (In_quest(u.uz)) {
         await onquest(); /* might be reaching locate|goal level */
     } else if (Is_knox_level(u.uz)) {
-        // C ref: do.c:1897 — arriving in Fort Ludios trips the alarm: two plines
-        // AND every monster on the level is woken (msleeping = 0).  A sleeping
-        // monster is skipped by dochug() before it can draw, so waking the level
-        // changes the very next monster-movement pass's RNG.
-        // C re-arms it on every visit unless Croesus has died
-        // (`new || !svm.mvitals[PM_CROESUS].died`); mvitals is not modelled here
-        // and Croesus can only die on this level, so the alarm always sounds.
+        // C ref: do.c:1897 — arriving in Fort Ludios trips the alarm: two
+        // plines and every monster wakes (msleeping=0), changing the next
+        // monster-move pass's RNG (a sleeping monster is skipped by dochug()
+        // before it can draw).  C only re-arms if Croesus hasn't died; mvitals
+        // isn't modelled and Croesus can only die here, so the alarm always
+        // sounds.
         await update_topl('You have penetrated a high security area!');
         await update_topl('An alarm sounds!');
         for (const mtmp of g.level?.monsters ?? []) mtmp.msleeping = 0;
@@ -1277,19 +1232,17 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         }
     }
 
-    // C ref: do.c goto_level() — on first entry to a level ("if (new)"), a
-    // Tourist gains reward-experience scaled by the level's difficulty:
+    // C ref: do.c goto_level() "if (new)" block — a Tourist gains reward XP
+    // scaled by level difficulty:
     //   if (Role_if(PM_TOURIST)) { more_experienced(level_difficulty(), 0);
     //                              newexplevel(); }
-    // No RNG unless the gain crosses an experience-level boundary (newexplevel
-    // -> pluslvl), which does not happen on the shallow covered levels.  This
-    // feeds u.urexp for the end-of-game score (rip.c / end.c).
-    // C ref: do.c:1958 — the same `if (new)` block first logs the arrival to
-    // the #chronicle: `describe_level(dloc, 2)` -> "level <depth>, <dungeon
-    // name>" with a leading "The " lowercased.  LL_ACHIEVE only for the
-    // endgame/quest; the main dungeon logs LL_DEBUG, which show_gamelog() still
-    // lists (it filters on LL_SPOILER, not LL_DEBUG).  Without this the
-    // chronicle window showed only the "entered the dungeon" line.
+    // No RNG unless the gain crosses an XP-level boundary (not reached on the
+    // shallow covered levels); feeds u.urexp for the end-of-game score.
+    // C ref: do.c:1958 — the same block also logs to the #chronicle:
+    // describe_level(dloc, 2) -> "level <depth>, <dungeon name>" (leading
+    // "The" lowercased), LL_ACHIEVE for endgame/quest else LL_DEBUG (still
+    // listed by show_gamelog(), which filters LL_SPOILER not LL_DEBUG).
+    // Without this the chronicle window showed only "entered the dungeon".
     if (firstVisit) {
         const major = !!(In_endgame(u.uz) || In_quest(u.uz));
         const dname = String(game.dungeons?.[u.uz.dnum]?.dname || 'The Dungeons of Doom')
@@ -1310,13 +1263,11 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // above (before the level switch) so that the captured frame shows the OLD
     // level, exactly as the deferred-docrt() tty does.
 
-    // C ref: do.c:1976 check_special_room(FALSE) — "give room entrance message,
-    // if any" for the square the hero arrived on.  This is one of the LAST
-    // things goto_level() does: after maybe_lvltport_feedback()'s "You
-    // materialize on a different level!" and the familiar / Knox / temperature
-    // lines above, and before the closing pickup(1).  It used to run BEFORE the
-    // docrt() (with a caller-side deferral hook for the level-teleport path),
-    // which put the shop greeting ahead of the arrival message.
+    // C ref: do.c:1976 check_special_room(FALSE) — room-entrance message for
+    // the arrival square.  Runs near the END of goto_level(): after
+    // maybe_lvltport_feedback()/familiar/Knox/temperature, before pickup(1).
+    // Used to run BEFORE docrt() (a caller-side deferral hook), which put the
+    // shop greeting ahead of the arrival message.
     await check_special_room(false);
 
     // C ref: do.c:1990 — a trap-door/hole fall costs d(max(dist,1), 6) hp, rolled
@@ -1443,32 +1394,19 @@ async function getlev_restore(ledger) {
         g._utpnt = store.utpnt ?? 0;
     }
 
-    // C ref: region.c rest_regions() — clear_regions(), then this level's saved
-    // regions come back with their ttl aged by the turns spent away
-    // (`r->ttl = (r->ttl > tmstamp) ? r->ttl - tmstamp : 0`, ttl -1/-2 exempt).
-    {
-        const away = (g.moves ?? 0) - (store.regionMoves ?? 0);
-        g.regions = store.regions || [];
-        for (const r of g.regions)
-            if (r.ttl >= 0) r.ttl = (r.ttl > away) ? r.ttl - away : 0;
-    }
-
     // C ref: restore.c getlev() — elapsed = svm.moves - svo.omoves (turns spent
     // away from this level).
     const elapsed = (g.moves ?? 0) - (store.omoves ?? 0);
 
-    // C ref: restore.c:1181-1220 monster loop.  program_state.restoring is not
-    // REST_LEVELS (an ordinary in-game level change) and u.uz.dlevel != 0, so no
-    // monster is skipped by the "regenerate monsters while on another level"
-    // continue; ghostly is FALSE (this is not a bones file).
-    // C walks the chain restmonchn() just rebuilt, which preserves the order
-    // savelev() wrote it in -- i.e. fmon order, newest monster first
-    // (makemon.c:1249 prepends).  Our level array is in creation order, so
-    // iterate it reversed, the same convention mon.c's fmonOrder() uses for
-    // movemon().  Forward order gave the rnd(10)/hide_monst rolls to the wrong
-    // monsters: on seed4500's Dlvl 14 revisit the level's one eligible hider (a
-    // lurker above) is C's 13th of 14 and our 2nd, so our restrap() drew an
-    // extra rn2(3) 11 monsters early and shifted the whole PRNG stream by one.
+    // C ref: restore.c:1181-1220 monster loop.  No monster is skipped (this is
+    // an ordinary in-game change, not REST_LEVELS; not a bones file, so
+    // ghostly is FALSE).  C walks restmonchn() in fmon order — newest monster
+    // first (makemon.c:1249 prepends) — so iterate our creation-ordered array
+    // REVERSED (same convention as mon.c's fmonOrder()/movemon()).  Forward
+    // order gave the rnd(10)/hide_monst rolls to the wrong monsters:
+    // seed4500's Dlvl 14 revisit has its one eligible hider (a lurker above)
+    // as C's 13th of 14 monster but our 2nd, so our restrap() drew an extra
+    // rn2(3) 11 monsters early and shifted the whole PRNG stream by one.
     for (const mtmp of fmon_order(g.level.monsters)) {
         if (mtmp === g.u?.usteed) continue; // steed kept on list but off map
         if (elapsed > 0)
@@ -1477,6 +1415,28 @@ async function getlev_restore(ledger) {
         // "give hiders a chance to hide before their next move"
         if (elapsed > 0 && elapsed > rnd(10))
             await hide_monst(mtmp);
+    }
+
+    // C ref: region.c rest_regions(), called from getlev() at restore.c:1225 —
+    // i.e. AFTER the monster catch-up loop above, so the loop runs with the
+    // region list still empty from goto_level()'s clear_regions().
+    // ttl ages by the turns spent away (ttl -1/-2 exempt), then every region
+    // that ran out while we were away is dropped WITHOUT firing expire_f.
+    // Omitting that removal left an expired gas cloud alive at ttl 0: it painted
+    // its S_cloud '#' over the square, kept block_point() set so the cells
+    // behind it stayed dark, and made visible_region_at() true, so the fog cloud
+    // standing there never trailed fresh vapour (monmove.c m_everyturn_effect)
+    // and create_gas_cloud's rn1(3,4) went missing from the stream.
+    {
+        const away = (g.moves ?? 0) - (store.regionMoves ?? 0);
+        g.regions = store.regions || [];
+        for (const r of g.regions)
+            if (r.ttl >= 0) r.ttl = (r.ttl > away) ? r.ttl - away : 0;
+        // C walks BACKWARD because remove_region() compacts the array.
+        for (let i = g.regions.length - 1; i >= 0; i--) {
+            const r = g.regions[i];
+            if (r.ttl === 0) await remove_region(r);
+        }
     }
 }
 
@@ -1620,6 +1580,7 @@ export async function wiz_level_tele(readLevel) {
     let buf = null;
     let gotoRandom = false;
     let namedLev = 0;
+    let typedLev = 0; // C's newlev as computed inside the do-while
     for (;;) {
         if (++trycnt === 2)
             qbuf += ' [type a number, name, or ? for a menu]';
@@ -1647,12 +1608,37 @@ export async function wiz_level_tele(readLevel) {
 
         // C: `else if ((newlev = lev_by_name(buf)) == 0) newlev = atoi(buf);`
         // then the do-while repeats while newlev is 0 AND buf does not start a
-        // (optionally negative) number AND trycnt < 10.
+        // (optionally negative) number AND trycnt < 10.  The atoi() half has to
+        // feed the loop test too: atoi skips leading blanks, so "  12" ends the
+        // loop in C where a bare `digit(buf[0])` test would keep prompting.
         namedLev = lev_by_name(String(buf)) || 0;
+        typedLev = namedLev || (parseInt(String(buf), 10) || 0);
         const s = String(buf);
         const dig = (c) => c >= '0' && c <= '9';
-        if (namedLev || dig(s[0]) || (s[0] === '-' && dig(s[1])) || trycnt >= 10)
+        if (typedLev || dig(s[0]) || (s[0] === '-' && dig(s[1])) || trycnt >= 10)
             break;
+    }
+
+    // C ref: teleport.c:1250 `if (newlev == 0) { if (trycnt >= 10) goto
+    // random_levtport; if (ynq("Go to Nowhere. ...") != 'y') return; ... }`.
+    // The do-while also exits by EXHAUSTING its ten attempts, and C then throws
+    // the hero at a random level rather than cancelling.  ^V used to return
+    // silently here, so a session that answers the prompt ten times without
+    // ever naming a level froze on the starting level for good — the whole
+    // remaining recording then diverged (dp-named-tour: 10 unparseable answers
+    // across steps 1..235).  level_tele() (the scroll path, below) already
+    // ports this arm; only the ^V duplicate was missing it.
+    if (!gotoRandom && String(buf) !== '?' && typedLev === 0) {
+        if (trycnt >= 10) {
+            gotoRandom = true;
+        } else {
+            const { yn_function } = await import('./extcmd-handlers.js');
+            const c = await yn_function('Go to Nowhere.  Are you sure?', 'ynq', 'q');
+            if (c !== 'y') return 0;
+            // C then kills the hero (done(DIED) "committed suicide"); not
+            // ported — a declined prompt is the only reachable outcome here.
+            return 0;
+        }
     }
 
     if (gotoRandom) {
@@ -1715,20 +1701,11 @@ export async function wiz_level_tele(readLevel) {
         return 0; // ECMD_OK
     }
 
-    if (buf === '') return 0; // empty line: cancelled
-
     // C ref: teleport.c:1246 — lev_by_name() wins over atoi(), so a level or
-    // branch NAME ("oracle", "mine end") is a legal ^V destination.  This path
-    // used to fall through the digits-only regex below and silently return.
-    let newlev;
-    if (namedLev) {
-        newlev = namedLev;
-    } else {
-        const m = String(buf).match(/^(-?\d+)/);
-        if (!m) return 0;
-        newlev = parseInt(m[1], 10);
-    }
-    if (newlev === 0) return 0; // "Go to Nowhere" path not modelled
+    // branch NAME ("oracle", "mine end") is a legal ^V destination.  newlev was
+    // already settled by the loop; a 0 cannot reach here (the newlev==0 arm
+    // above consumed it), so no re-parse and no second empty-line guard.
+    let newlev = typedLev;
 
     // C ref: teleport.c level_tele():1305 — while already IN the endgame the
     // typed number selects a plane directly: dlevel = dunlevs_in_dungeon + n
@@ -1757,14 +1734,12 @@ export async function wiz_level_tele(readLevel) {
     // Negative levels (heaven/clouds) are not modelled.
     if (newlev < 0) return 0;
 
-    // C ref: teleport.c level_tele() — "if in Quest, the player sees 'Home 1',
-    // etc., on the status line, instead of the logical depth of the level.
-    // [...] it should be incremented to the value of the logical depth of the
-    // target level": a typed destination is relative to that "Home N" display,
-    // so convert it to an absolute logical depth before the generic
+    // C ref: teleport.c level_tele() — in Quest the status line shows "Home N"
+    // instead of logical depth, so a typed destination is relative to that
+    // display; convert to an absolute logical depth before the generic
     // depth->(dnum,dlevel) translation below (get_level() subtracts
-    // depth_start right back out, so for same-dungeon targets this nets out
-    // to "dlevel = the typed number").
+    // depth_start right back out, so same-dungeon targets net out to
+    // "dlevel = the typed number").
     if (In_quest(u.uz) && newlev > 0)
         newlev = newlev + (game.dungeons?.[u.uz.dnum]?.depth_start ?? 1) - 1;
 
@@ -1926,13 +1901,11 @@ export async function level_tele(readLevel) {
     game.known = true;
 
     // C ref: teleport.c schedule_goto(&newlevel, UTOTYPE_NONE, 0, "You
-    // materialize on a different level!").  C DEFERS the level change to
-    // deferred_goto(), called right after rhack() — i.e. AFTER doread()'s
-    // learnscroll()/makeknown() (which draws rn2(19) via exercise(A_WIS)).  So
-    // we must NOT run goto_level() here: mklev() must follow that exercise in
-    // the PRNG stream.  Record the pending destination; doread() runs
-    // run_deferred_lvltport() after makeknown() to fire it.  The scroll type is
-    // already known, so goto_level's mklev() then starts from the right state.
+    // materialize on a different level!").  C DEFERS to deferred_goto(),
+    // called right after rhack() — i.e. AFTER doread()'s learnscroll()/
+    // makeknown() (rn2(19) via exercise(A_WIS)) — so mklev() must follow that
+    // draw in the PRNG stream: record the destination here; doread() fires
+    // run_deferred_lvltport() after makeknown().
     game._lvltport_dest = {
         newlevel,
         post_msg: (game.flags?.verbose !== false)
@@ -1975,16 +1948,13 @@ function is_botlevel(lev) {
     return !!dng && lev.dlevel === dng.num_dunlevs;
 }
 
-// C ref: dungeon.c get_level(newlevel, levnum) — translate a logical depth into
-// a (dnum, dlevel).
-//
-// The branch-walk used to be omitted as "not exercised", but a level-teleport
-// that asks for a depth ABOVE the current dungeon's start needs it: seed4500
-// does `^V 1` from Dlvl 40, which is Gehennom (dnum 1, depth_start 27).  Without
-// the walk, `levnum - depth_start + 1` produced dlevel -25, so the ledger was
-// "1:-25" — a level never visited — and the port ran a full mklev() (6588 RNG
-// draws) where C reloaded the saved Dlvl 1 with 28.  Every screen from there on
-// was on a different dungeon.
+// C ref: dungeon.c get_level(newlevel, levnum) — translate a logical depth
+// into a (dnum, dlevel).  The branch-walk was once skipped as "not
+// exercised", but a level-teleport asking for a depth ABOVE the current
+// dungeon's start needs it: seed4500's `^V 1` from Dlvl 40 (Gehennom,
+// depth_start 27) produced ledger "1:-25" without it — a level never
+// visited — so the port ran a full mklev() (6588 RNG draws) where C reloaded
+// the saved Dlvl 1; every later screen was on the wrong dungeon.
 function get_level(levnum) {
     const u = game.u;
     let dgn = u.uz.dnum;

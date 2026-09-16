@@ -3409,12 +3409,13 @@ export function goodpos_for_hero(x, y) {
     return true;
 }
 
-// C ref: hack.c crawl_destination(x,y) — used by drown() to check whether the
-// hero can crawl from water to <x,y>.  The diagonal squeeze-through check
+// C ref: hack.c crawl_destination(x,y) — drown()'s crawl-out target test, and
+// findtravelpath()'s gate on the travel-to-adjacent fast path.  The diagonal
+// squeeze-through check
 // (bad_rock/cant_squeeze_thru) isn't reached by the corpus (the hero is a
 // normal, unencumbered human), so a diagonal step is allowed once the door
 // restriction clears.
-function crawl_destination(x, y) {
+export function crawl_destination(x, y) {
     if (!goodpos_for_hero(x, y)) return false;
     const u = game.u;
     if (x === u.ux || y === u.uy) return true; // orthogonal: unrestricted

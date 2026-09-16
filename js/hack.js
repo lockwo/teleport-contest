@@ -14,10 +14,10 @@
 // capture sees the final post-run state with the exact cumulative RNG.
 
 import { game } from './gstate.js';
-import { t_at as t_at_hk, trap_explanation as trap_explanation_hk } from './trap.js';
+import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, crawl_destination } from './trap.js';
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core } from './cmd.js';
 import { moveloop_turn } from './allmain.js';
-import { m_at, vobj_at, covers_objects, object_glyph, flush_screen, newsym, pline, update_topl, topl_more, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature } from './display.js';
+import { m_at, vobj_at, covers_objects, object_glyph, flush_screen, newsym, pline, update_topl, topl_more, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr } from './display.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inventoryArray, is_pick, ansimpleoname,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
 import { rnd } from './rng.js';
@@ -119,11 +119,9 @@ function is_door_mappear(mtmp) {
 }
 
 // C ref: hack.c avoid_moving_on_liquid(x, y, msg) — TRUE when the runner should
-// stop rather than step into visible water/lava.  Known_lwalking /
-// Known_wwalking are FALSE for a hero without the boots (nothing in this port
-// grants either), so the "liquid is safe to traverse" escape reduces to the
-// airborne case.  A local copy of cmd.js's identical helper: that one is
-// file-private there and cmd.js is a different owner's file.
+// stop rather than step into visible water/lava.  Known_lwalking/Known_wwalking
+// are FALSE for any hero here (no boots granted), so "safe to traverse" reduces
+// to the airborne case.  A local copy of cmd.js's file-private identical helper.
 function avoid_moving_on_liquid(x, y) {
     const u = game.u;
     const loc = game.level?.at(x, y);
@@ -143,13 +141,12 @@ function avoid_moving_on_liquid(x, y) {
 }
 
 // C ref: hack.c:2443-2460 avoid_moving_on_trap() — true when <x,y> holds a seen
-// trap (other than the vibrating square, which is a trap only in implementation
-// and is treated as terrain).  The old `t.ttyp !== undefined` guard was a no-op
-// that let a seen vibrating square stop a run.
-// C's `msg` parameter prints "You stop in front of <a trap>." when
-// flags.mention_walls; that is emitted at cmd.js's avoid_running_into_trap()
-// call site instead, since lookaround() here is synchronous and already omits
-// every mention_walls message (cf. its closed-door arm, hack.c:3968).
+// trap, excluding the vibrating square (a trap only in implementation, treated
+// as terrain).  The old `t.ttyp !== undefined` guard was a no-op that let a
+// seen vibrating square wrongly stop a run.  C's `msg` param ("You stop in
+// front of <a trap>." under mention_walls) is emitted instead at cmd.js's
+// avoid_running_into_trap() call site, since this synchronous lookaround()
+// already omits every mention_walls message (cf. hack.c:3968's closed-door arm).
 export function avoid_moving_on_trap(x, y) {
     const traps = game.level?.traps || [];
     for (const t of traps) {
@@ -176,11 +173,10 @@ export function end_running(and_travel) {
 }
 
 // C ref: hack.c nomul() — interrupt a multi-turn action, or (nval < 0) make the
-// hero helpless/busy for |nval| turns.  C: `if (multi < nval) return; multi =
-// nval;`.  The negative-multi path is needed for #jump (nomul(-1)): the hero is
-// "busy jumping" for one turn, so the moveloop runs that turn fully WITHOUT the
-// hero acting again — which prevents a Fast hero's leftover movement from being
-// spent as a free action right after the jump (the seed4500 jump turns).
+// hero helpless/busy for |nval| turns (`if (multi < nval) return; multi = nval`).
+// The negative path is needed for #jump (nomul(-1)): it makes the moveloop run
+// that turn fully without the hero acting again, so a Fast hero's leftover
+// movement isn't spent as a free action right after the jump (seed4500).
 export function nomul(nval = 0) {
     if ((game.multi ?? 0) < nval) return;
     game.multi = nval;
@@ -235,10 +231,10 @@ export async function stop_occupation(append = false) {
         return;
     }
     // C ref: allmain.c:687 `if (!maybe_finished_meal(TRUE)) You("stop %s.",
-    // go.occtxt)` with eat.c:2072's occtxt "eating <food_xname(otmp, TRUE)>".
-    // This used to end a meal SILENTLY, so every monster that interrupted the
-    // hero mid-meal (monmove.js's two stop_occupation() calls) lost the
-    // "You stop eating the food ration." topline C prints.
+    // go.occtxt)`, occtxt = eat.c:2072's "eating <food_xname(otmp, TRUE)>".
+    // Used to end a meal SILENTLY, dropping the "You stop eating the food
+    // ration." line for every monster that interrupts a mid-meal hero
+    // (monmove.js's two stop_occupation() calls).
     if (game._eat_occupation) {
         const v = game.context?.victual;
         // maybe_finished_meal(TRUE): a meal whose bites are already used up is
@@ -263,10 +259,8 @@ export async function stop_occupation(append = false) {
 
 // C ref: hack.c lookaround() — examine the 8 cells around the hero after a
 // run/travel step and decide whether to stop (nomul) or keep going, possibly
-// turning to follow a corridor.
-//
-// C's flags.mention_walls messages are all omitted (the option is off in every
-// recorded config); every control-flow effect they sit next to is kept.
+// turning to follow a corridor.  C's flags.mention_walls messages are all
+// omitted (off in every recorded config); the control flow they sit in stays.
 function lookaround() {
     const u = game.u;
     const c = game.context;
@@ -287,10 +281,9 @@ function lookaround() {
     }
 
     // C ref: hack.c:3912 `if (Blind || svc.context.run == 0) return;` — a BLIND
-    // runner does no scanning at all: no corridor turn, no stop-for-monster,
-    // no stop-for-object.  Dropping the Blind half made a blinded hero follow
-    // corridor corners and halt on things it cannot see, putting it on a
-    // different square from C for the rest of the session.
+    // runner does no scanning at all (no corridor turn, no stop-for-monster/
+    // object).  Dropping the Blind half made a blinded hero follow corridor
+    // corners and halt on things it can't see, landing off-square vs C.
     if (Blind() || c.run === 0) return;
 
     // Mirror C's `goto stop` / `goto bcorr` with labelled loops: STOP breaks
@@ -310,11 +303,10 @@ function lookaround() {
             const mtmp = m_at(x, y);
 
             // can we see a monster there?
-            // C ref: hack.c:3927 — the test is M_AP_TYPE != FURNITURE/OBJECT
-            // && mon_visible(), NOT canspotmon(): a concealed mimic drawn as a
-            // wall or an object never stops the run, and a monster sensed only
-            // by telepathy/monster-detection (canspotmon's sensemon half) does
-            // not either.
+            // C ref: hack.c:3927 — test is M_AP_TYPE != FURNITURE/OBJECT &&
+            // mon_visible(), NOT canspotmon(): a concealed mimic (wall/object
+            // disguise) or a monster sensed only via telepathy/detection never
+            // stops the run.
             if (mtmp && mon_visible(mtmp)) {
                 if ((c.run !== 1 && !is_safemon(mtmp))
                     || (infront && !c.travel)) {
@@ -424,11 +416,11 @@ function lookaround() {
 
 // C ref: hack.c:2765-2777 domove_core() — "Don't attack if you're running, and
 // can see it; it's fine to displace pets, though".  Called from cmd.js domove()
-// at C's position: AFTER impaired_movement() has redirected a confused hero, so
-// the square tested is the one actually being entered.  (Testing it before the
-// redirect is what made a confused rush swing at its own pet — is_safemon() is
-// FALSE for every monster while Confusion is set, so a pet counts as "hostile"
-// here and stops the rush without spending the turn.)
+// at C's position: AFTER impaired_movement() redirects a confused hero, so the
+// square tested is the one actually entered.  Testing it before the redirect
+// made a confused rush swing at its own pet (is_safemon() is FALSE under
+// Confusion for every monster, so the pet reads as "hostile" and stops the
+// rush without spending the turn).
 export function run_stop_for_monster_at(x, y) {
     if (!game.context?.run) return false;
     const mtmp = m_at(x, y);
@@ -443,12 +435,11 @@ export function run_stop_for_monster_at(x, y) {
 // C ref: pickup.c pickup() — "if there's anything here, stop running":
 //   if (OBJ_AT(u.ux,u.uy) && svc.context.run && svc.context.run != 8
 //       && !svc.context.nopick) nomul(0);
-// pickup() runs from spoteffects(TRUE) at the tail of domove_core, i.e. right
-// after the hero steps onto the new square.  Without this a run sails straight
-// over floor objects instead of halting on them, leaving the hero (and every
-// downstream monster-move / pet object scan) on the wrong square.  Only floor
-// objects count (a picked-up / contained object keeps stale ox/oy but its
-// `where` is no longer OBJ_FLOOR).
+// Runs from spoteffects(TRUE) at the tail of domove_core, right after the hero
+// steps onto the new square; without it a run sails past floor objects instead
+// of halting, leaving the hero on the wrong square for every downstream scan.
+// Only OBJ_FLOOR objects count (a picked-up/contained object keeps stale ox/oy
+// but a different `where`).
 function floorObjAt(x, y) {
     const objs = game.level?.objects;
     if (!Array.isArray(objs)) return false;
@@ -521,21 +512,20 @@ async function run_movement(run) {
         if (game.multi <= 0) break;
 
         // C: `if (gm.multi < COLNO && !--gm.multi) end_running(TRUE);` — the
-        // `--gm.multi` sits INSIDE the short-circuit, so a run started with
-        // gm.multi == max(COLNO,ROWNO) == COLNO never counts down at all; it
-        // ends only when lookaround()/domove() stop it.  The old `else`
-        // decrement capped every run at COLNO continuation steps.
+        // decrement is INSIDE the short-circuit, so a run starting at
+        // max(COLNO,ROWNO)==COLNO never counts down; it ends only via
+        // lookaround()/domove().  The old `else` decrement wrongly capped
+        // every run at COLNO continuation steps.
         if (game.multi < COLNO) {
             game.multi -= 1;
             if (game.multi === 0) { end_running(true); break; }
         }
 
         // C ref: allmain.c moveloop_core():526 — every continuation step calls
-        // domove() DIRECTLY (not through rhack()/set_move_cmd()), so
-        // gd.domove_attempting is 0 here and domove()'s smudge/bubble block
-        // never runs for it (see the domove() comment in cmd.js).  `false`
-        // reproduces that: only the FIRST domove() of a run (line above) may
-        // smudge an engraving or nudge the water bubble.
+        // domove() directly (not via rhack()/set_move_cmd()), so
+        // gd.domove_attempting is 0 and domove()'s smudge/bubble block never
+        // runs (see domove()'s comment in cmd.js).  `false` reproduces that:
+        // only the run's FIRST domove() (above) may smudge/nudge.
         await domove(u.dx, u.dy, false);
     }
 
@@ -958,7 +948,14 @@ export async function travel_adjacent_step(tx, ty) {
     u.tx = tx; u.ty = ty;
     const dx = tx - u.ux, dy = ty - u.uy;
     if (!dx && !dy) return false;
-    if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) {
+    // C ref: hack.c findtravelpath():1271 — the fast path is `next2u(tx,ty) &&
+    // crawl_destination(tx,ty)`, and crawl_destination()'s goodpos() rejects a
+    // square another monster stands on.  Travelling onto an adjacent monster
+    // therefore skips the fast path entirely, leaving context.run == 8 for the
+    // BFS below, and domove_core()'s "don't attack if you're running" test then
+    // stops the hero without a swing.  Without this gate we took the fast path,
+    // cleared run to 0 and attacked instead.
+    if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1 && crawl_destination(tx, ty)) {
         u.dx = dx; u.dy = dy; u.dz = 0;
         // C ref: hack.c findtravelpath():1276 — when the fast path's test_move()
         // refuses the step C does NOT abandon the command: it sets
@@ -1018,20 +1015,16 @@ async function travel_walk() {
         // C ref: cmd.c rhack():3819 — dotravel_target() returns ECMD_TIME and
         // rhack() then forces svc.context.move back to TRUE, so the FIRST
         // domove() of a travel always costs a turn even when it moved nobody:
-        // findtravelpath() failing both modes leaves u.dx/u.dy 0 (a move onto
-        // one's own square), and test_move(DO_MOVE) refusing a boulder while
-        // run == 8 zeroes context.move.  Later steps come from moveloop_core()'s
-        // context.mv continuation, which has no such override.
+        // either findtravelpath() failed both modes (u.dx/u.dy left 0, a move
+        // onto the hero's own square) or test_move(DO_MOVE) refused a boulder
+        // while run==8, zeroing context.move.  Later steps come from
+        // moveloop_core()'s context.mv continuation, which has no such
+        // override, so charging the turn only on this FIRST iteration left
+        // travel one turn short of C whenever a guess-step ran before the path
+        // gave out: lp-priest-dwarf key 121 travels (70,7)->(70,6) then fails,
+        // so C reads T:25 where we read T:24 -- and row 23 is on every screen,
+        // mismatching the whole rest of that session.
         if (!u.dx && !u.dy) {
-            // C ref: hack.c domove() — findtravelpath() failing BOTH modes still
-            // leaves a domove() that moves onto the hero's own square, and
-            // moveloop_core() spends the turn for it because context.move is
-            // still set.  Charging it only on the FIRST iteration left travel
-            // one turn short of C whenever a guess-step ran before the path
-            // gave out: lp-priest-dwarf key 121 travels (70,7)->(70,6) then
-            // fails, so C reads T:25 where we read T:24 -- and row 23 is on
-            // every screen, so the whole rest of the session mismatched on that
-            // one cell.
             first = false;
             c.move = 1;
             await moveloop_turn();
@@ -1039,11 +1032,10 @@ async function travel_walk() {
         }
 
         // C ref: allmain.c moveloop_core():526 — like run_movement() above,
-        // every step after the first calls domove() directly from the
-        // moveloop rather than through rhack()/set_move_cmd(), so
-        // gd.domove_attempting is 0 and domove()'s smudge/bubble block never
-        // runs on it (see the domove() comment in cmd.js).  `first` is still
-        // this iteration's pre-update value here, so it is true on exactly
+        // every step after the first calls domove() directly, bypassing
+        // rhack()/set_move_cmd(), so gd.domove_attempting stays 0 and the
+        // smudge/bubble block never runs (see domove()'s comment in cmd.js).
+        // `first` is still this iteration's pre-update value, true on exactly
         // the one domove() dotravel_target() dispatches fresh.
         await domove(u.dx, u.dy, first);
         if (first) { first = false; c.move = 1; }
@@ -1403,46 +1395,53 @@ function self_lookat() {
 // C ref: include/hack.h distu(x,y) = dist2(x,y,u.ux,u.uy).
 function distu(x, y) { return dist2(x, y, game.u.ux, game.u.uy); }
 
+// C ref: pager.c do_screen_description() `if (sym == DEF_INVISIBLE)` — a square
+// displaying the remembered-unseen-creature 'I' (display.c map_invisible, our
+// loc.invisMon) names the creature rather than the terrain beneath it.  Active
+// clairvoyance (EDetect_monsters & I_SPECIAL) or blindness picks the shorter
+// wording.  `#terrain` repaints terrain-only, so no 'I' is displayed there.
+// String pair duplicated from pager.js's invisexplain/altinvisexplain, which
+// hack.js cannot import without creating a pager->cmd->hack cycle.
+function unseen_creature_desc(x, y, terrainMode) {
+    if (terrainMode || !game.level?.at(x, y)?.invisMon) return null;
+    const usealt = ((game.u?.uprops?.EDetect_monsters | 0) & I_SPECIAL) !== 0;
+    return (usealt || Blind()) ? 'unseen creature' : 'remembered, unseen, creature';
+}
+
 // C ref: pager.c lookat() / do_screen_description() — the (firstmatch)
-// description of the terrain shown at <x,y>.  C dispatches on the *displayed*
-// glyph (glyph_at(x,y) from gbuf), NOT the underlying levl[x][y].typ, so a cell
-// whose true terrain is e.g. a wall but which has never been drawn still reads
-// as "unexplored area" (glyph_is_unexplored).  Our display model stores the
-// drawn glyph in loc.disp_ch: a cell that was never drawn has disp_ch unset,
-// which is C's GLYPH_UNEXPLORED.
+// description of the terrain at <x,y>.  C dispatches on the DISPLAYED glyph
+// (glyph_at(x,y) from gbuf), NOT the underlying levl[x][y].typ, so a cell
+// whose true terrain was never drawn reads "unexplored area"
+// (glyph_is_unexplored) regardless of what's actually there.  Our model:
+// loc.disp_ch unset == GLYPH_UNEXPLORED; "never revealed" == seenv==0 with no
+// remembered_glyph (such cells are only ever painted as blank S_stone).
 function terrain_description(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return 'solid stone';
-    // C ref: lookat() glyph_is_unexplored -> "unexplored area".  C dispatches on
-    // the displayed glyph (glyph_at, from gbuf), not levl[][].typ.  A cell that
-    // the hero has never actually revealed still holds GLYPH_UNEXPLORED in gbuf —
-    // even if our display model has painted its (blank/stone) background — so it
-    // reads as "unexplored area" regardless of the terrain underneath.  In our
-    // model "never revealed" is seenv == 0 with no remembered background glyph;
-    // such cells are only ever painted as blank S_stone.
     if (!loc.seenv && loc.remembered_glyph == null) return 'unexplored area';
-    // C ref: pager.c:779 — do_screen_description dispatches on the DISPLAYED
-    // glyph.  A square drawn BLANK is S_stone (S_darkroom's symbol is '.', not
-    // ' '), and every arm of case S_stone answers "stone" once seenv is set:
-    // the typ==STONE||SCORR arm directly, and the fallthrough via
-    // defsyms[S_stone].explanation, which defsym.h's PCHAR2 row makes "stone"
-    // ("dark part of a room" in that row is the TILE name, not the
-    // explanation).  Reading levl[][].typ instead made an unfelt corridor
-    // under a blind hero read "corridor".
+    // A square drawn BLANK is S_stone (S_darkroom's symbol is '.', not ' ', so
+    // it can't collide here).  Reading levl[][].typ instead of the displayed
+    // glyph made an unfelt corridor under a blind hero read "corridor".
     if (loc.disp_ch === ' ') return loc.seenv ? 'stone' : 'unexplored';
     const typ = loc.typ;
     // C ref: pager.c:779 do_screen_description() case S_stone —
     //     if (!levl[x][y].seenv)                       "unexplored"
-    //     else if (Underwater && !Is_waterlevel)       "land"/"unknown"
+    //     else if (Underwater && !Is_waterlevel)       "land"/"unknown" (not modelled)
     //     else if (typ == STONE || typ == SCORR)       "stone"
-    //     else FALLTHROUGH to defsyms[S_stone].explanation ("dark part of a
-    //         room" -- i.e. a remembered ROOM square drawn as blank, which the
-    //         ROOM arm below handles on its own).
-    // So real rock is "stone", never "dark part of a room" and never the
-    // "solid stone" wording (that string is hack.c's movement message).
-    // Underwater is not modelled (no covered hero is submerged).
+    //     else FALLTHROUGH to defsyms[S_stone].explanation, which is also
+    //         "stone" (the ROOM arm below owns "dark part of a room"; that's
+    //         the defsym row's TILE name, not its explanation).  So real rock
+    //         never reads "dark part of a room" or "solid stone" (the latter
+    //         is hack.c's movement message).
     if (typ === STONE) return loc.seenv ? 'stone' : 'unexplored';
     { const _t = t_at_hk(x, y); if (_t && _t.tseen) return trap_explanation_hk(_t.ttyp); }
+    // C ref: defsym.h rows 21/24 — a revealed engraving is DISPLAYED as
+    // S_engroom/S_engrcorr, whose explanation is "engraving", so
+    // do_screen_description() reports that rather than the floor/corridor
+    // underneath.  Ranked below a seen trap and above the bare terrain, matching
+    // display.c _map_location's object > trap > engraving > background order
+    // (objects and monsters are resolved by the caller).
+    if (is_cmap_engraving_at(x, y)) return 'engraving';
     if (IS_WALL(typ)) return 'wall';
     if (typ === DOOR) {
         if (loc.doormask & (D_CLOSED | D_LOCKED)) return 'closed door';
@@ -1451,15 +1450,13 @@ function terrain_description(x, y) {
     }
     if (typ === CORR) return loc.lit ? 'lit corridor' : 'corridor';
     if (typ === ROOM) {
-        // C ref: display.c back_to_glyph() gives every ROOM square S_room, and
-        // newsym():1086 rewrites it to S_darkroom on the OUT-OF-SIGHT path when
-        // `!lev->waslit || (flags.dark_room && iflags.use_color)` — both of
-        // those options default on.  do_screen_description() then dispatches on
-        // that DISPLAYED glyph, so what decides the wording is whether the hero
-        // can see the square right now, not whether the room is lit: an unlit
-        // square seen by night vision still reads "floor of a room", and every
-        // remembered square outside the hero's sight reads "dark part of a
-        // room" even in a permanently lit room.
+        // C ref: display.c back_to_glyph() gives every ROOM square S_room;
+        // newsym():1086 rewrites it to S_darkroom out-of-sight when
+        // `!lev->waslit || (flags.dark_room && iflags.use_color)` (both
+        // default on).  do_screen_description() dispatches on that DISPLAYED
+        // glyph, so wording tracks current visibility, not room lighting: an
+        // unlit square under night vision still reads "floor of a room", and
+        // a remembered-but-unseen square reads "dark part" even if lit.
         if (cansee(x, y)) return 'floor of a room';
         const dark_opt = (game.flags?.dark_room !== false)
                          && (game.flags?.color !== false);
@@ -1530,15 +1527,14 @@ function is_valid_travelpt(x, y) {
     const u = game.u;
     if (u && x === u.ux && y === u.uy) return true;
     const loc = game.level?.at(x, y);
-    // C ref: hack.c:1535-1536 — the fast-reject is a KNOWN blank stone/secret-
+    // C ref: hack.c:1535-1536 — fast-reject only a KNOWN blank stone/secret-
     // corridor square that hasn't been SEEN (glyph_is_cmap(glyph) && S_stone ==
     // glyph_to_cmap(glyph) && !seenv), matching terrain_description()'s own
-    // STONE/SCORR "stone" vs "unexplored" split just above (lines 1428, 1501).
-    // A genuinely never-drawn (GLYPH_UNEXPLORED) cell does NOT hit this C
-    // guard at all and instead falls through to the real BFS below — the old
-    // broader "!seenv && remembered_glyph == null" test wrongly rejected that
-    // case too, so a never-explored-but-reachable cell always read "no travel
-    // path" even when findtravelpath() would have found one.
+    // STONE/SCORR split above.  A genuinely never-drawn (GLYPH_UNEXPLORED) cell
+    // does NOT hit this guard and falls through to the real BFS instead — the
+    // old broader "!seenv && remembered_glyph == null" test wrongly rejected
+    // that case too, always reading "no travel path" for a never-explored but
+    // reachable cell even when the BFS would have found one.
     if (loc && (loc.typ === STONE || loc.typ === SCORR) && !loc.seenv) return false;
     const tx = u.tx, ty = u.ty;
     u.tx = x; u.ty = y;
@@ -1550,16 +1546,14 @@ function is_valid_travelpt(x, y) {
 // C ref: pager.c lookat() glyph_is_object branch -> look_at_object().  When the
 // displayed glyph at <x,y> is a floor object (e.g. a STATUE drawn as the
 // petrified monster's class letter), lookat names that object via
-// distant_name(otmp, doname) rather than the terrain underneath — so a statue
-// of a plains centaur reads "a statue of a plains centaur", not "floor of a
-// room".  We mirror C's _map_location object priority: an object is the drawn
-// background glyph only when present and not hidden by deep water/lava
-// (covers_objects).  A spotted monster on the cell is drawn on top (handled by
-// the caller before this, matching lookat's glyph_is_monster precedence), so
-// this is only consulted when no monster occupies the displayed glyph.  Returns
-// the object's name, or null when no floor object is shown.  look_at_object's
-// terrain suffixes (" in water", " embedded in ...") do not apply to a statue
-// on ordinary room floor and are omitted.
+// distant_name(otmp, doname) instead of the terrain underneath (a plains
+// centaur statue reads "a statue of a plains centaur", not "floor of a room").
+// Mirrors C's _map_location priority: an object counts only when present and
+// not hidden by deep water/lava (covers_objects); the caller already handles a
+// spotted monster on top (lookat's glyph_is_monster precedence) before calling
+// this.  Returns the name, or null when no floor object is shown.
+// look_at_object's terrain suffixes (" in water", " embedded in ...") don't
+// apply to a statue on ordinary room floor and are omitted.
 function look_at_object_here(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return null;
@@ -1654,12 +1648,11 @@ function check_jump(x, y) {
 async function is_valid_jump_pos(x, y, showmsg) {
     const u = game.u;
     // C ref: apply.c is_valid_jump_pos() — every failure message is a real
-    // pline()/You()/There() call (apply.c:1900,1904,1908,1912,1951), which
-    // merges onto or pages a still-pending topline via update_topl's normal
-    // logic.  These used to be raw game._pending_message writes with no
-    // _toplin/_toplinSoft marker at all: a message left pending by the
-    // "Where do you want to jump?" prompt (non-verbose getpos, where the
-    // tip window is skipped) would be silently clobbered instead of paged.
+    // pline()/You()/There() call (apply.c:1900,1904,1908,1912,1951), routed
+    // through update_topl's normal merge-or-page logic.  These used to be raw
+    // game._pending_message writes with no _toplin/_toplinSoft marker, so a
+    // message pending from the "Where do you want to jump?" prompt (non-verbose
+    // getpos, tip window skipped) was silently clobbered instead of paged.
     if (distu(x, y) !== 5) {
         if (showmsg) { await pline('Illegal move!'); }
         return false;
@@ -1754,10 +1747,8 @@ function jump_landing(nux, nuy) {
     game.vision_full_recalc = 1;
     vision_recalc(0);
 
-    // C ref: apply.c jump() tail — nomul(-1) makes the hero helpless ("jumping
-    // around") for one turn; the moveloop then runs that turn fully without the
-    // hero acting, so a Fast hero's leftover movement is not spent as a free
-    // action immediately after the jump.
+    // C ref: apply.c jump() tail — nomul(-1), "busy jumping" for one turn; see
+    // nomul()'s comment above for why the negative-multi path matters here.
     nomul(-1);
 
     // morehungry(rnd(25)) — roll first (argument evaluation), then apply.
@@ -1823,8 +1814,18 @@ export function gather_locs_interesting(x, y, gloc, validfn) {
     default:
         if (isDoorSym) return true;
         if (mtmp && canspotmon(mtmp)) return true;
+        // An 'I' (remembered, unseen creature) is a monster-layer glyph, so
+        // glyph_is_cmap() rejects it and C's !(boring cmap) test reports
+        // interesting.  GLOC_MONS above deliberately still excludes it.
+        if (loc.invisMon) return true;
         if (!explored) return false;
         if (look_at_object_here(x, y)) return true;
+        // C tests the displayed cmap sym, and S_engroom/S_engrcorr are NOT in
+        // the exclusion list below (they sit outside is_cmap_room/is_cmap_corr),
+        // so an engraved room/corridor square stays interesting even though its
+        // TERRAIN is plain ROOM/CORR.  Without this, getpos's 'a' jump skipped
+        // the hero's own engraving.
+        if (is_cmap_engraving_at(x, y)) return true;
         // "not interesting": walls, trees, bars, ice, air, cloud, lava, water,
         // plain room floor and corridor.  C tests the DISPLAYED glyph
         // (glyph_at()), not the true terrain: an undiscovered SDOOR/SCORR
@@ -1897,7 +1898,7 @@ async function getpos_render(message, cx, cy) {
 // control_mon_tele() (the wizard-mode 'montelecontrol' monster-teleport
 // targeting prompt) reuses this same cursor loop via a dynamic import rather
 // than forking a second copy.
-async function getpos(goalText, startx, starty, validfn, force = false, verbose = false, travelMode = false, detectMode = false, terrainMode = false) {
+async function getpos(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false) {
     const u = game.u;
     let cx = startx, cy = starty;
 
@@ -1967,29 +1968,25 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
         if (u && x === u.ux && y === u.uy) {
             desc = self_lookat();
         } else if (detectMode) {
-            // C ref: pager.c do_screen_description(), reached via 'need_to_look'
-            // once a monster's class symbol matches: falls through to lookat()'s
-            // look_at_monster() for the full tame/peaceful-prefixed identity
-            // (matches auto_describe's actual observed output — a named/peaceful
+            // C ref: pager.c do_screen_description() via 'need_to_look' once a
+            // monster's class symbol matches: falls through to look_at_monster()
+            // for the full tame/peaceful-prefixed identity (a named/peaceful
             // shopkeeper reads "peaceful Adjama", not a generic class string).
-            // A non-monster cell always reads as the freshly-cls()'d blank glyph
-            // (GLYPH_UNEXPLORED — monster_detect's repaint doesn't touch the
-            // hero's remembered terrain, only the live display buffer), i.e.
-            // "unexplored area" regardless of what's actually there.
+            // A non-monster cell reads as the freshly-cls()'d blank glyph —
+            // monster_detect's repaint touches only the live display buffer,
+            // not remembered terrain — i.e. always "unexplored area".
             const mtmp = m_at(x, y);
             desc = mtmp ? look_at_monster_desc(mtmp) : 'unexplored area';
         } else {
-            // C ref: pager.c lookat() dispatch — when the cell's displayed glyph
-            // is a floor object (e.g. a STATUE drawn as the petrified monster's
-            // class letter) and no spotted monster is drawn on top, lookat names
-            // the object via look_at_object() instead of the terrain underneath.
+            // C ref: pager.c lookat() dispatch, walked in DISPLAYED-glyph order
+            // (display.c newsym): a spotted monster, then the remembered-unseen-
+            // creature 'I', then a floor object (e.g. a STATUE drawn as the
+            // petrified monster's class letter), then the terrain underneath.
             const mtmp = m_at(x, y);
-            // C ref: pager.c lookat() — a SPOTTED monster on the square is
-            // named first; falling through to the object/terrain name described
-            // the floor under a visible monster.
-            const objname = (mtmp && canspotmon(mtmp)) ? null : look_at_object_here(x, y);
-            desc = (mtmp && canspotmon(mtmp)) ? look_at_monster_desc(mtmp)
-                 : (objname || terrain_description(x, y));
+            desc = (mtmp && canspotmon(mtmp))
+                 ? look_at_monster_desc(mtmp)
+                 : (unseen_creature_desc(x, y, terrainMode)
+                    || look_at_object_here(x, y) || terrain_description(x, y));
             // C ref: detect.c reveal_terrain_getglyph() — while browsing a
             // revealed map, S_darkroom is rewritten to S_room and S_litcorr to
             // S_corr, and do_screen_description() dispatches on that DISPLAYED
@@ -2001,7 +1998,14 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
             }
         }
         if (validfn && !validfn(x, y)) desc += ' (invalid target)';
-        if (travelMode && !is_valid_travelpt(x, y)) desc += ' (no travel path)';
+        // C ref: getpos.c auto_describe():657 — gated on the GLOBAL
+        // iflags.getloc_travelmode, not on which command opened getpos().
+        // dotravel() sets it and only dotravel_target()'s non-early-out path
+        // clears it, so a travel answered with the hero's own square ("You are
+        // already here.") leaves it set and every LATER getpos — farlook,
+        // #glance, #terrain — keeps appending the suffix.
+        if (game.iflags?.getloc_travelmode && !is_valid_travelpt(x, y))
+            desc += ' (no travel path)';
         return desc;
     };
 
@@ -2025,14 +2029,12 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
             // C getpos.c:865 auto_describe(cx, cy) at top of loop.
             await getpos_render(describe(cx, cy), cx, cy);
         } else if (!firstPass) {
-            // C getpos.c `nxtc:` — curs(WIN_MAP, cx, cy) + flush_screen(0)
-            // after EVERY key, so the cursor keeps tracking the cell even when
-            // no message is drawn (autodescribe toggled off with '#').  Only
-            // the loop iterations are emulated: C's identical PRE-loop pair
-            // runs while the caller's command still has map updates pending,
-            // and flush_screen() leaves the tty cursor on the last glyph it
-            // drew rather than at (cx,cy) — which is what our caller-side
-            // render already reproduces.
+            // C getpos.c `nxtc:` — curs(WIN_MAP, cx, cy) + flush_screen(0) after
+            // EVERY key, so the cursor tracks the cell even with no message
+            // drawn (autodescribe off via '#').  Only the loop iterations are
+            // emulated here: C's identical PRE-loop pair is left to the
+            // caller-side render, which already reproduces flush_screen()
+            // leaving the tty cursor on the last glyph drawn, not at (cx,cy).
             await flush_screen(1);
             const disp = game.nhDisplay;
             if (disp?.setCursor) disp.setCursor(cx - 1, cy + 1);
@@ -2064,11 +2066,10 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
             return null;
         }
         // C getpos.c:897 — the 'G'/'g' fast-move prefix reads its second key
-        // INSIDE the same loop pass (no nxtc, so no cursor flush and no
-        // auto_describe between them), and `rushrun` is a per-pass local: a
-        // prefix followed by a NON-direction key is simply forgotten.  The old
-        // `mult` carried the prefix across iterations, so 'G' then '#' then 'h'
-        // fast-moved where C steps one cell.
+        // INSIDE the same loop pass (no nxtc/auto_describe between them), and
+        // `rushrun` is a per-pass local: a prefix followed by a non-direction
+        // key is simply forgotten.  The old `mult` carried the prefix across
+        // iterations, so 'G' then '#' then 'h' fast-moved where C steps one cell.
         let rushrun = false;
         if (ch === 'G' || ch === 'g') {
             // C getpos.c:898 — this second read is ALSO readchar_poskey(),
@@ -2124,9 +2125,8 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
         }
         // C getpos.c:944 — NHKF_GETPOS_HELP ('?') or redraw_cmd (^R): show the
         // help window (a blocking --More--), refresh, then re-show the goal
-        // message.  ^L is claimed by the rush binding above, as in C.
-        // redraw_cmd(c) is (c == C('r') || c == C('l')); ^L is claimed by the
-        // rush binding above, as in C.  getpos_refresh() is
+        // message.  redraw_cmd(c) is (c == C('r') || c == C('l')), but ^L is
+        // claimed by the rush binding above, as in C.  getpos_refresh() ==
         // docrt_flags(docrtRefresh) == redraw_map(FALSE), a RE-SEND of the
         // existing glyph buffer that flush_screen already does, so the only
         // observable half is the goal message it re-shows.
@@ -2135,11 +2135,11 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
             continue;
         }
         if (ch === '?') {
-            // C's two help-line gates are getpos_getvalid ("Use 'z' or 'Z'...")
-            // and getpos_hilitefunc ("Use '$' to toggle marking..."), and every
-            // getpos_sethilite() caller (apply.c jump/polearm/grapple, read.c
-            // stinking cloud, spell.c spell target) sets BOTH — so they are the
-            // same predicate.  `game._getpos_hilite` was never assigned, which
+            // C's two help-line gates (getpos_getvalid "Use 'z' or 'Z'...",
+            // getpos_hilitefunc "Use '$' to toggle marking...") are the same
+            // predicate: every getpos_sethilite() caller (apply.c jump/
+            // polearm/grapple, read.c stinking cloud, spell.c spell target)
+            // sets BOTH.  `game._getpos_hilite` was never assigned, which
             // dropped the '$' line from every #jump help window.
             await getpos_help(force, goalText, goalText === WHAT_IS_A_LOCATION,
                               !!validfn, !!validfn);
@@ -2325,16 +2325,31 @@ export async function do_farlook() {
 // In normal play (not explore/wizard mode) it first offers a three-entry
 // "View which?" PICK_ONE menu whose first item (bare terrain) is preselected.
 
-// TER_* subset bits (detect.c / include/hack.h).
-const TER_MAP = 0x01, TER_TRP = 0x02, TER_OBJ = 0x04;
+// TER_* subset bits (include/flag.h:291).
+const TER_MAP = 0x01, TER_TRP = 0x02, TER_OBJ = 0x04, TER_FULL = 0x10;
 
-// The three normal-play "View which?" entries; 'a' is the preselected default
-// (rendered with a '*' marker instead of the '-' of the unselected entries).
-const TERRAIN_MENU_ITEMS = [
-    { ch: 'a', sel: true,  desc: 'known map without monsters, objects, and traps' },
-    { ch: 'b', sel: false, desc: 'known map without monsters and objects' },
-    { ch: 'c', sel: false, desc: 'known map without monsters' },
-];
+// C ref: cmd.c doterrain() — three entries in normal play, a fourth in explore
+// OR wizard mode, and two more (the levl[][].typ dump and its legend) in wizard
+// mode only.  'a' is the preselected default (rendered with a '*' marker
+// instead of the '-' of the unselected entries).
+function terrain_menu_items() {
+    const f = game.flags || {};
+    const wizard = !!f.debug;
+    const discover = !!(f.explore || f.discover || f.playmode === 'explore');
+    const items = [
+        { ch: 'a', sel: true,  desc: 'known map without monsters, objects, and traps' },
+        { ch: 'b', sel: false, desc: 'known map without monsters and objects' },
+        { ch: 'c', sel: false, desc: 'known map without monsters' },
+    ];
+    if (discover || wizard) {
+        items.push({ ch: 'd', sel: false, desc: 'full map without monsters, objects, and traps' });
+        if (wizard) {
+            items.push({ ch: 'e', sel: false, desc: 'internal levl[][].typ codes in base-36' });
+            items.push({ ch: 'f', sel: false, desc: 'legend of base-36 levl[][].typ codes' });
+        }
+    }
+    return items;
+}
 
 // Render the "View which?" PICK_ONE menu as a tty corner overlay (the map
 // shows through the columns left of offx).  Mirrors render_whatis_menu /
@@ -2342,7 +2357,7 @@ const TERRAIN_MENU_ITEMS = [
 // lines, then the "(end)" morestr with the cursor parked after it.  A selected
 // PICK_ONE default renders its marker column as '*' (tty tty_print_glyph:
 // n==2 && selected => '*').
-function render_terrain_menu() {
+function render_terrain_menu(items) {
     const disp = game.nhDisplay;
     if (!disp?.setCell) return;
     const cols = disp.cols || 80;
@@ -2350,7 +2365,7 @@ function render_terrain_menu() {
     const lines = [];
     lines.push({ text: 'View which?', attr: ATR_INVERSE });
     lines.push({ text: '' });
-    for (const it of TERRAIN_MENU_ITEMS)
+    for (const it of items)
         lines.push({ text: `${it.ch} ${it.sel ? '*' : '-'} ${it.desc}` });
 
     let maxcols = 0;
@@ -2380,15 +2395,15 @@ function render_terrain_menu() {
 // <space>/<return> confirms the preselected entry (n==1 => which==1); a direct
 // accelerator picks that entry; ESC cancels.
 async function terrain_menu() {
-    render_terrain_menu();
+    const items = terrain_menu_items();
+    render_terrain_menu(items);
     for (;;) {
         const k = await nhgetch();
         if (k === 27) return -1;                        // ESC: cancel
         if (k === 32 || k === 13 || k === 10) return 1; // confirm preselected
         const ch = String.fromCharCode(k);
-        if (ch === 'a') return 1;
-        if (ch === 'b') return 2;
-        if (ch === 'c') return 3;
+        const i = items.findIndex((it) => it.ch === ch);
+        if (i >= 0) return i + 1; // accelerator -> a_int (1-based menu order)
         // invalid key: PICK_ONE stays open (the menu is still on the grid).
     }
 }
@@ -2399,9 +2414,18 @@ async function terrain_menu() {
 export async function doterrain() {
     const which = await terrain_menu();
     if (which < 0) return 0; // ESC-cancelled: no display change
+    // C ref: cmd.c doterrain()'s switch — cases 5/6 leave reveal_terrain()
+    // entirely for the wizard-mode levl[][].typ dump and its legend.
+    if (which === 5 || which === 6) {
+        const wz = await import('./wizcmds.js');
+        if (which === 5) await wz.wiz_map_levltyp();
+        else await wz.wiz_levltyp_legend();
+        return 0;
+    }
     let subset = TER_MAP;
     if (which === 2) subset = TER_MAP | TER_TRP;
     else if (which === 3) subset = TER_MAP | TER_TRP | TER_OBJ;
+    else if (which === 4) subset = TER_MAP | TER_FULL;
     await reveal_terrain(subset);
     return 0;
 }
@@ -2419,6 +2443,10 @@ export async function reveal_terrain(which_subset) {
     // normal branch is the only one modelled.
     const keep_traps = (which_subset & TER_TRP) !== 0;
     const keep_objs = (which_subset & TER_OBJ) !== 0;
+    // C ref: detect.c reveal_terrain_getglyph — 'full' (the explore/wizard-mode
+    // "full map" entry) forces seenv = SVALL, so the real terrain shows even
+    // where the hero has never been; it also overrides the impairment check.
+    const full = (which_subset & TER_FULL) !== 0;
 
     // Paint the terrain-only glyph for every cell into the display buffer.
     // C reveal_terrain_getglyph strips monsters/objects from the remembered
@@ -2430,8 +2458,22 @@ export async function reveal_terrain(which_subset) {
             const loc = game.level?.at(x, y);
             if (!loc) continue;
             const isHero = u && x === u.ux && y === u.uy;
-            if (!loc.remembered_glyph && !isHero) {
+            if (!full && !loc.remembered_glyph && !isHero) {
                 show_glyph_cell(x, y, ' ', NO_COLOR, false); // never-seen: blank
+                continue;
+            }
+            // C ref: detect.c reveal_terrain_getglyph() — the base is the
+            // REMEMBERED glyph (levl[][].glyph); only monster/object/trap glyphs
+            // are stripped back to bare terrain.  A revealed engraving is none of
+            // those, so it survives into the terrain view as S_engroom/S_engrcorr
+            // (CLR_BRIGHT_BLUE, +ATR_INVERSE when its char collides with
+            // corridor's) — the closing "dirty hack" normalizes S_darkroom and
+            // S_litcorr but deliberately not these.  Reading pure terrain here
+            // drew every engraved square as plain floor/corridor.
+            if (is_cmap_engraving_at(x, y) && !vobj_at(x, y)
+                && !t_at_hk(x, y)?.tseen) {
+                const eg = engraving_glyph(loc);
+                show_glyph_cell(x, y, eg.ch, eg.color, eg.dec, bg_attr(eg));
                 continue;
             }
             const bg = terrain_background_glyph(loc, x, y);
@@ -2447,8 +2489,12 @@ export async function reveal_terrain(which_subset) {
     // C: Strcpy(buf, "known terrain"); + keep_* suffixes.  Only "known terrain"
     // is exercised, but build the suffixes faithfully for generalization.
     let buf = 'known terrain';
-    if (keep_traps) buf += keep_objs ? ', traps' : ' and traps';
-    if (keep_objs) buf += keep_traps ? ', and objects' : ' and objects';
+    if (full) {
+        buf = 'underlying terrain';
+    } else {
+        if (keep_traps) buf += keep_objs ? ', traps' : ' and traps';
+        if (keep_objs) buf += keep_traps ? ', and objects' : ' and objects';
+    }
     // pline("Showing %s only...", buf) — leaves the topline NEED_MORE; getpos's
     // first-use tip flushes it with --More-- before drawing the tip window.
     await getpos_render(`Showing ${buf} only...`, u.ux, u.uy);
@@ -2459,7 +2505,7 @@ export async function reveal_terrain(which_subset) {
     // force=FALSE, flags.verbose (default on) => the verbose cursor prompt.
     const verbose = game.flags?.verbose !== false;
     await getpos('anything of interest', u.ux, u.uy, null, /*force=*/false, verbose,
-                 /*travelMode=*/false, /*detectMode=*/false, /*terrainMode=*/true);
+                 /*detectMode=*/false, /*terrainMode=*/true);
 
     // map_redisplay(): docrt() redraws the real map.  cls() inside docrt calls
     // display_nhwindow(WIN_MESSAGE,...) which fires more() when the topline is
@@ -2479,8 +2525,7 @@ export async function reveal_terrain(which_subset) {
 export async function browse_map_getpos(goal, detectMode = true) {
     const u = game.u;
     const verbose = game.flags?.verbose !== false;
-    await getpos(goal, u.ux, u.uy, null, /*force=*/false, verbose,
-                 /*travelMode=*/false, detectMode);
+    await getpos(goal, u.ux, u.uy, null, /*force=*/false, verbose, detectMode);
     // map_redisplay()'s docrt -> cls -> display_nhwindow(WIN_MESSAGE) fires
     // more() when getpos left "Done." pending.
     if (game._pending_message) {
@@ -2492,15 +2537,14 @@ export async function browse_map_getpos(goal, detectMode = true) {
 
 // C ref: detect.c monster_detect(otmp, mclass) — crystal ball / fountain /
 // potion "sense the presence of monsters" effect.  Only the otmp==null,
-// mclass==0 case (the fountain's "See Monsters" quaff outcome) is reached;
-// the crystal-ball class filter and the cursed-item wake-helpless branch are
-// not modelled.  cls()+unconstrain_map() reduce, for our display model, to
-// blanking every map cell before drawing just the detected monsters (their
-// ordinary class glyph/color — mon_to_glyph/pet_to_glyph render identically
-// on a plain terminal) plus the hero's own glyph (display_self(), hero is
-// never swallowed here).  Since otmp is always null, the blessed "persistent
-// detection" branch never applies; browse_map(TER_DETECT|TER_MON, "monster of
-// interest") always runs, then map_redisplay() (docrt) restores the real map.
+// mclass==0 case (the fountain's "See Monsters" quaff outcome) is reached, so
+// the crystal-ball class filter, the cursed-item wake-helpless branch and the
+// blessed "persistent detection" branch never apply.  cls()+unconstrain_map()
+// reduce, for our display model, to blanking every map cell before drawing
+// just the detected monsters (mon_to_glyph/pet_to_glyph render identically on
+// a plain terminal) plus the hero's own glyph (display_self(), never
+// swallowed here); browse_map(TER_DETECT|TER_MON, "monster of interest") then
+// runs and map_redisplay() (docrt) restores the real map.
 export async function monster_detect(otmp, mclass) {
     const u = game.u;
     const mons = (game.level?.monsters || []).filter(
@@ -2539,7 +2583,7 @@ export async function monster_detect(otmp, mclass) {
     props.EDetect_monsters = (saveE | 0) | I_SPECIAL;
     try {
         await getpos('monster of interest', u.ux, u.uy, null, /*force=*/false,
-                     verbose, /*travelMode=*/false, /*detectMode=*/true);
+                     verbose, /*detectMode=*/true);
     } finally {
         props.EDetect_monsters = saveE;
     }

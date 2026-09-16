@@ -79,7 +79,7 @@ import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     IS_FURNITURE, IS_DRAWBRIDGE, IS_DOOR, IS_OBSTRUCTED, IS_AIR, ACCESSIBLE,
     ZAP_POS, is_hole, is_pit, In_endgame, Is_botlevel, Is_knox_level,
     M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP, M_SEEN_ELEC,
-    M_SEEN_ACID, M_SEEN_REFL, G_GENOD } from './const.js';
+    M_SEEN_ACID, M_SEEN_REFL, G_GENOD, MON_MIGRATING } from './const.js';
 import { surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 
@@ -669,10 +669,18 @@ function relmon(mon) {
     mon.mtrapped = 0;
 }
 // C ref: dog.c migrate_to_level(mtmp, tolev, xyloc, cc).  Draws no RNG.
+// The destination encoding (mtrack[]/mux/muy) is omitted because dog.js's
+// losedogs() is not wired into goto_level, so nothing ever drains
+// migrating_mons — but mstate/mx/my ARE C's observable off-map state, and
+// dochug() reads them through mon_offmap() to decide whether to skip its
+// post-m_move distfleeck recalc.  Leaving them unset spent one extra rn2(5)
+// on every monster that escaped the level under its own power.
 function migrate_to_level(mtmp) {
     const mx = mtmp.mx, my = mtmp.my;
     relmon(mtmp);
+    mtmp.mstate = (mtmp.mstate | 0) | MON_MIGRATING;
     mtmp.mlstmv = game.moves;
+    mtmp.mx = mtmp.my = 0; /* mx==0 implies migrating */
     newsym(mx, my);
 }
 // C ref: mon.c mongone(mtmp) — monster leaves without dying (no corpse).

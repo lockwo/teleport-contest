@@ -27,6 +27,15 @@ export async function nhgetch() {
     // xwaitforspace call funnels through) makes that survive-one-read window
     // exact without threading the flag through every prompt call site.
     game._winStop = false;
+    // C ref: win/tty/wintty.c tty_nhgetch():4099-4101 — `if (ttyDisplay->toplin
+    // == TOPLINE_NEED_MORE) ttyDisplay->toplin = TOPLINE_NON_EMPTY;`.  An owed
+    // --More-- survives only until the very next key read, for ANY purpose;
+    // _yn_need_more is that NEED_MORE as tty_yn_function's `more()` gate sees
+    // it (y_n / topline_query both test it before their own nhgetch, so a
+    // "pline then prompt in one command" site still pages).  Without the
+    // demotion a setter whose command never reaches a prompt left it armed
+    // indefinitely and the next unrelated getobj opened with a bare "--More--".
+    game._yn_need_more = false;
     // Fire the capture hook before reading the next key
     const hook = game._preNhgetchHook;
     if (hook) await hook();

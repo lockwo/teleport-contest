@@ -72,7 +72,7 @@ import { monster_by_pmidx, name_to_pmidx, level_difficulty_ext, makemon,
          mkclass, mkclass_aligned, mm_mon_at, enexto_spawn, mongets_pub,
          name_gender_hint, MGEND_NEUTRAL, MM_ASLEEP, MM_NOGRP,
          set_mimic_sym, propagate, mpickobj, set_malign,
-         newcham } from './makemon.js';
+         adj_lev, newcham } from './makemon.js';
 import { somexy, inside_room, occupied } from './mkroom.js';
 import { create_gas_cloud_selection, create_gas_cloud } from './region.js';
 import { is_flyer_flag, is_swimmer_flag, passes_walls_flag,
@@ -85,10 +85,9 @@ import { new_light_source, LS_OBJECT, del_light_source, LS_MONSTER,
          emits_light } from './light.js';
 import { stock_room } from './shknam.js';
 import { In_hell } from './dungeon.js';
-// Unreferenced here since the soko builders moved to js/levels/ (which import
-// premap_detect themselves).  Deliberately kept: dropping it would move where
-// detect.js sits in the module evaluation order, which this refactor does not
-// touch.  Delete it in a change that is separately gated.
+// Unused here (soko builders moved to js/levels/, which import this themselves)
+// but kept: removing it would shift detect.js's spot in module eval order.
+// Delete only in a separately-gated change.
 import { premap_detect } from './detect.js';
 import { make_engr_at, make_grave, engr_at, del_engr } from './engrave.js';
 import { priestini } from './priest.js';
@@ -195,16 +194,14 @@ export { makemaz_val_filb } from './levels/val_filb.js';
 export { makemaz_wiz_strt } from './levels/wiz_strt.js';
 export { makemaz_wiz_goal } from './levels/wiz_goal.js';
 
-// These seven imports belong to the sp_lev.c translations at the end of this
-// file, and they are HERE rather than with the imports at the top on purpose.
-// ESM evaluates modules in post-order DFS of the import graph, so an import
-// placed after every edge this file already has can only name a module that is
-// already fully evaluated, and cannot move anything (each of these finishes
-// well before sp_lev.js does).  The same import at the top could reorder a
-// module that is currently reached through one of the levels/ files.
-// js/mklev.js is excluded at either position: it imports THIS file and calls
-// set_mktrap_victim() while its own body runs, so the edge would make mklev's
-// body evaluate first and assign to `_mktrap_victim` inside its TDZ.
+// These seven imports belong to the sp_lev.c translations below but sit HERE,
+// not with the top imports: ESM evaluates post-order DFS, so an import
+// appended after every edge this file already has can't reorder anything
+// (each target already finishes before sp_lev.js does) -- the same import at
+// the top could reorder a module currently reached only via levels/.
+// js/mklev.js is excluded either way: it imports THIS file and calls
+// set_mktrap_victim() from its own body, so the edge would run mklev's body
+// first and assign into `_mktrap_victim`'s TDZ.
 import { sobj_at, stackobj, obj_extract_self, obfree } from './invent.js';
 import { does_block, block_point } from './vision.js';
 import { walkfrom, create_maze } from './mkmaze.js';
@@ -480,14 +477,16 @@ function c_d(n, x) {
     return sum;
 }
 
-// PM_GHOST index in the makemon MONS table (see makemon.js MONS_NAMES).  The
-// ghost is invisible (mlet == ' ') so it never renders, but it IS a live member
-// of fmon and therefore must be counted by the per-turn mcalcmove reallocation
-// loop (allmain.c:233).  Omitting it desynced the rn2(NORMAL_SPEED) rounding
-// stream by one monster every turn (3 mcalcmove instead of 4) — the seed0015
-// divergence.  C ref: themerms.lua "Ghost of an Adventurer" -> des.monster({
-// id = "ghost", asleep = true, waiting = true }).
+// PM_GHOST: makemon MONS table index for the invisible (mlet==' ') ghost (C ref:
+// themerms.lua "Ghost of an Adventurer" -> des.monster({id="ghost", asleep=true,
+// waiting=true})).  Never renders, but IS a live fmon member, so mcalcmove's
+// per-turn reallocation loop (allmain.c:233) must count it -- omitting it
+// desynced the rn2(NORMAL_SPEED) stream by 1 monster/turn (3 vs 4 calls),
+// causing the seed0015 divergence.
 const PM_GHOST = 287;
+// C ref: do_name.c ghostnames[] — SIZE(ghostnames), the modulus of
+// rndghostname()'s ROLL_FROM().
+const GHOSTNAMES_SIZE = 34;
 // C ref: objects.h — otyp constants not otherwise exported by mkobj.js;
 // u_init.js already carries the same local literals (DAGGER=34, BOW=83).
 const DAGGER = 34;
@@ -497,15 +496,29 @@ function create_ghost_of_adventurer(croom) {
     const loc = selection_rndcoord(selection_room(croom), false);
     if (!loc) return;
 
+    const gdata = monster_by_pmidx(PM_GHOST);
+    // C ref: makemon.c:1519 `mtmp->m_lev = adj_lev(ptr)` (makemon.c:2016) — a
+    // ghost's mlevel of 10 is SCALED by level_difficulty(), so newmonhp()'s
+    // d(m_lev, 8) is d(9,8) only while depth <= 9; on Dlvl 17 C rolls d(11,8).
+    const m_lev = gdata ? adj_lev(gdata) : 9;
+
     rn2(2);                  // find_montype("ghost")
     rn2(3);                  // induced_align()
     next_ident();            // mtmp->m_id = next_ident() — rnd(2)
-    const mhp = c_d(9, 8);   // newmonhp() — d(m_lev, 8); ghost m_lev == 9
+    const mhp = c_d(m_lev, 8);   // newmonhp() — d(m_lev, 8)
     rn2(2);                  // makemon() gender roll (gcode 0 -> femaleok)
-    rn2(7);                  // rndghostname()
-    rn2(34);
-    rn2(50);                 // m_initinv()
-    rn2(100);
+    // C ref: do_name.c:772 rndghostname() — `rn2(7) ? ROLL_FROM(ghostnames)
+    // : svp.plname`.  ROLL_FROM is a SECOND draw, rn2(SIZE(ghostnames)); the
+    // plname arm takes none, so drawing it unconditionally inserted a call C
+    // never makes whenever the rn2(7) comes out 0.
+    if (rn2(7)) rn2(GHOSTNAMES_SIZE);
+    // C ref: makemon.c:826/828 m_initinv() — S_GHOST has no case in the mlet
+    // switch, so these two rolls are unconditional and are all a ghost draws
+    // (likes_gold() is false for it, so the rn2(5) money arm never runs).  The
+    // mongets(rnd_defensive_item/rnd_misc_item) bodies, reached only when
+    // m_lev > the roll, are not modelled here.
+    rn2(50);                 // m_initinv() — if (m_lev > rn2(50)) mongets(...)
+    rn2(100);                // m_initinv() — if (m_lev > rn2(100)) mongets(...)
     rn2(100);                // makemon() trailing roll (makemon.c:1447)
 
     // Materialize the ghost so it joins fmon (game.level.monsters).  The RNG
@@ -513,14 +526,13 @@ function create_ghost_of_adventurer(croom) {
     // RNG.  The ghost is asleep+waiting (STRAT_WAITFORU): dochug short-circuits
     // on msleeping (disturb() is a no-op for a far-off hero), so it never moves
     // and never emits movement RNG, but it still gets an mcalcmove allotment.
-    const gdata = monster_by_pmidx(PM_GHOST);
     if (gdata && game.level && loc.x > 0 && loc.y > 0) {
         const mtmp = {
             data: gdata,
             mx: loc.x,
             my: loc.y,
             m_id: (game.context_ident ?? 0),
-            m_lev: 9,
+            m_lev,
             mhp,
             mhpmax: mhp,
             movement: 0,
@@ -538,12 +550,11 @@ function create_ghost_of_adventurer(croom) {
     }
 
     // C ref: sp_lev.c create_object() — every des.object() below is
-    // buc="not-blessed" (curse_state 6: `unbless(otmp)`, no RNG), at the same
-    // `loc` the ghost used.  This used to be a hand-rolled sequence of bare
-    // rn2()/rnd() calls standing in for the object creation (matching only
-    // one memorized trace's branch outcomes) instead of actually calling
-    // mksobj_at()/mkobj_at(), so it never re-branched for a different roll
-    // and never produced a real object.
+    // buc="not-blessed" (curse_state 6: unbless(otmp), no RNG) at the same
+    // `loc` the ghost used.  PREVIOUSLY a hand-rolled rn2()/rnd() sequence
+    // mimicking only one memorized trace's branches instead of calling
+    // mksobj_at()/mkobj_at() -- it never re-branched on a different roll and
+    // never produced a real object.
     if (percent(65)) splev_theme_object(DAGGER, null, loc);
     if (percent(55)) splev_theme_object(null, ')', loc);
     if (percent(45)) {
@@ -1896,18 +1907,17 @@ export function filler_region(x, y) {
     });
 }
 
-// C ref: themerms.lua — the per-themeroom des.map() contents callback.
-// Most map themerooms simply call filler_region(fx,fy). A few have extra logic
-// (and thus extra RNG) BEFORE the filler_region call; this dispatcher mirrors
-// each room's contents() faithfully so the rn2/rnd call sequence matches C.
-// `name` is the themeroom name; (fx,fy) the filler_region anchor.
-// C ref: dat/themerms.lua:759 'Water-surrounded vault' contents.  This was the
-// last themeroom left with `filler: null` in mklev.js's THEMEROOM_MAPS — the map
-// was placed but its contents callback never ran, so every draw below was
-// skipped and any level rolling this room desynced immediately.  It is invisible
-// on the public 44 (none of them roll it) and it is exactly what broke the
-// held-out proxy's samurai session: RNG diverged at call 464 of level generation
-// for 0/264 screens.
+// C ref: themerms.lua — the per-themeroom des.map() contents callback; `name`
+// is the themeroom name, (fx,fy) the filler_region anchor.  Most themerooms
+// just call filler_region(fx,fy); a few run extra RNG-consuming logic first,
+// which this dispatcher mirrors faithfully so the draw sequence matches C.
+//
+// C ref: dat/themerms.lua:759 'Water-surrounded vault' contents — the last
+// themeroom left with `filler: null` in mklev.js's THEMEROOM_MAPS, so its
+// contents callback never ran and every draw below was skipped, desyncing any
+// level that rolled it.  Invisible on the public 44 (none roll it); this is
+// what broke the held-out proxy's samurai session (RNG diverged at call 464 of
+// level generation, 0/264 screens).
 //
 // The order matters as much as the draws:
 //   des.region({3,3,3,3} themed irregular filled=0 joined=false) -> litstate_rnd
@@ -3321,15 +3331,13 @@ export function soko_region_lit_grow(x1, y1, x2, y2) {
         }
 }
 
-// C ref: sp_lev.c set_wall_property(W_NONDIGGABLE|W_NONPASSWALL) applied over
-// this file's own des.non_diggable/non_passwall(area(0,0,25,16)) call (which
-// covers every wall inside the map's own footprint, interior and boundary)
-// UNIONED with solidify_map()'s pass over the rest of the level (any
-// IS_STWALL cell outside the map's own footprint — everywhere else is
-// still bare STONE from level_init, so solidify_map's own "!SpLev_Map[x][y]"
-// gate is equivalent here to "outside our map").  Both operations are RNG
-// free, so folding them into one full-grid pass produces the same final
-// state as running them separately.
+// C ref: sp_lev.c set_wall_property(W_NONDIGGABLE|W_NONPASSWALL): this file's
+// own des.non_diggable/non_passwall(area(0,0,25,16)) call (every wall inside
+// the map's footprint) UNIONED with solidify_map()'s pass over the rest of the
+// level (any IS_STWALL cell outside it -- everywhere else is still bare STONE
+// from level_init, so solidify_map's "!SpLev_Map[x][y]" gate == "outside our
+// map" here).  Both passes are RNG-free, so merging them into one full-grid
+// scan is equivalent.
 export function soko_solidify_and_nondig() {
     for (let x = 1; x < COLNO; x++) {
         for (let y = 0; y < ROWNO; y++) {
@@ -4037,26 +4045,21 @@ function single_level_branch() {
 // ═══════════════════════════════════════════════════════════════════════════
 // The rest of sp_lev.c, translated.
 //
-// Everything from here to the end of the file is INERT: no code above this
-// line, and nothing outside this file, calls any of it.  It exists so the
-// special-level coder (des.* / lspo_*) is present and faithful for whoever
-// wires it up; that wiring is a separate, separately-gated change.
+// Everything from here to the end of the file is INERT: nothing above this
+// line, or outside this file, calls any of it.  It exists so the special-level
+// coder (des.*/lspo_*) is present and faithful for whoever wires it up, in a
+// separate, separately-gated change.
 //
-// Two rules shaped how the dependencies below are resolved:
-//
-//  * The import statements this block needs sit AFTER the levels/ re-export
-//    block above, not with the imports at the top of the file.  ESM evaluates
-//    modules in post-order DFS of the import graph, so an import placed after
-//    every edge this file already has can only name a module that is already
-//    fully evaluated -- it cannot move anything.  Adding the same import at the
-//    top could.
-//
-//  * js/mklev.js is deliberately NOT imported, at either position.  mklev.js
-//    imports THIS file and calls set_mktrap_victim() while its own body runs;
-//    an sp_lev -> mklev edge makes mklev's body evaluate first, so that call
-//    assigns to `_mktrap_victim` (an `export let`) inside its TDZ and the whole
-//    program fails to load.  add_room()/add_door()/mkstairs()/... therefore
-//    arrive through `EXT` below, as do the callees js/ has not ported at all.
+// Two placement rules: (1) the imports this block needs sit AFTER the levels/
+// re-export block above, not with the top imports -- ESM evaluates post-order
+// DFS, so an import appended after every edge this file already has can only
+// name an already-fully-evaluated module and cannot reorder anything; the same
+// import at the top could.  (2) js/mklev.js is NOT imported at either
+// position: it imports THIS file and calls set_mktrap_victim() from its own
+// body, so an sp_lev -> mklev edge would run mklev's body first and assign
+// into `_mktrap_victim`'s TDZ, failing the whole program's load.
+// add_room()/add_door()/mkstairs()/... therefore arrive through `EXT` below,
+// as do the callees js/ has not ported at all.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // C ref: the sp_lev.c callees that this file cannot reach (see the header

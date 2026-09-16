@@ -214,13 +214,12 @@ function halluc_mon_glyph() {
     return { ch: mon?.mlet || 'x', color: mon?.mcolor ?? NO_COLOR, dec: false };
 }
 
-// C ref: display.c map_object + see_nearby_objects — when the hero can see an
-// undescribed potion/gem/spellbook closely enough (distu(x,y) <= neardist,
-// where neardist is the small rounded square around the hero), it is observed:
-// dknown is set so its glyph upgrades from the generic class symbol to the
-// specific object (revealing its appearance color).  Not done while
-// hallucinating (objects are randomized then).  observe_object() also does the
-// '\'-discoveries bookkeeping (oc_encountered); it consumes no RNG.
+// C ref: display.c map_object + see_nearby_objects — an undescribed potion/
+// gem/spellbook within distu(x,y) <= neardist (a small rounded square around
+// the hero) is observed: dknown is set, upgrading its glyph from generic
+// class symbol to specific (real color).  Skipped while hallucinating
+// (objects are randomized then).  observe_object() also does the
+// '\'-discoveries bookkeeping (oc_encountered); consumes no RNG.
 function maybe_observe_near_object(x, y) {
     const obj = vobj_at(x, y);
     if (!obj || obj.dknown || !obj_is_generic(obj)) return;
@@ -236,17 +235,14 @@ function maybe_observe_near_object(x, y) {
     observe_object(obj);
 }
 
-// C ref: display.c see_nearby_objects() — mark the top object of nearby stacks
-// as having been seen, and if it was being displayed as a generic object,
-// redisplay it as specific.  Called from u_on_newpos() (dungeon.c) whenever the
-// hero relocates on the same level (and is not Blind/Hallucinating/Swallowed),
-// so an undescribed potion/gem/spellbook the hero walks *near* (without its own
-// tile being redrawn by newsym) still upgrades from the generic gray class
-// glyph to its appearance color.  Mirrors the neardist square scan around the
-// hero; consumes no RNG.  Unlike map_object() this has NO generic-object guard
-// on the observe: every nearby unseen pile-top is observed (which is how e.g. a
-// venom splat reaches the '\' list); only the redisplay is gated on the
-// remembered glyph having been generic.
+// C ref: display.c see_nearby_objects() — called from u_on_newpos() whenever
+// the hero relocates (not Blind/Hallucinating/Swallowed): observes each
+// nearby stack's top object and redisplays it if it was showing generic, so
+// an object merely walked *near* (no newsym on its own tile) still upgrades.
+// Same neardist scan as the hero's square; no RNG.  Unlike map_object(), the
+// OBSERVE itself has no generic-object guard — every nearby unseen pile-top
+// is observed (how e.g. a venom splat reaches the '\' list); only the
+// REDISPLAY is gated on the glyph having been generic.
 export function see_nearby_objects() {
     const u = game.u;
     if (!u || u.ux == null || u.uy == null) return;
@@ -324,7 +320,7 @@ function pile_attr(pile) {
 // whose glyph collides with plain corridor's, see engraving_glyph() above)
 // draws ATR_INVERSE under the same use_inverse gate as MG_OBJPILE, but is NOT
 // additionally gated on hilite_pile.
-function bg_attr(bg) {
+export function bg_attr(bg) {
     return pile_attr(bg?.pile)
         || ((bg?.bwEngr && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0);
 }
@@ -364,19 +360,15 @@ function monster_glyph(mon) {
         // Appear as an object: same glyph the floor object would draw.  C ref:
         // display.c map_object/obj_to_glyph(mappearance) for an M_AP_OBJECT mon.
         //
-        // C's fake `obj` for this case (display.c's cg.zeroobj copy) never sets
-        // oclass, so it stays 0 (RANDOM_CLASS).  obj_is_generic()'s gem/glass and
-        // spellbook tests key off otyp directly and still fire; its
-        // oclass==POTION_CLASS test can never fire (oclass isn't POTION_CLASS,
-        // it's 0) so a mimicked potion always shows its true glyph. And because
-        // the resulting "generic" glyph (GLYPH_OBJ_OFF + oclass(0)) is the exact
-        // same number as otyp 0 (STRANGE_OBJECT)'s own normal glyph, it decodes
-        // back through STRANGE_OBJECT's ILLOBJ_CLASS symbol (']') rather than the
-        // disguise's real class symbol — and glyph_is_generic_object()'s strict
-        // '>' bound excludes that same glyph, so the close-range "observe"
-        // upgrade (map_object's neardist check) never applies to it either: a
-        // mimic disguised as a gem/glass-gem or ordinary spellbook ALWAYS shows
-        // as a plain strange object, at any distance, discovered or not.
+        // C's fake `obj` (cg.zeroobj copy) never sets oclass, so it stays 0 —
+        // obj_is_generic()'s oclass==POTION_CLASS test can't fire (a mimicked
+        // potion always shows true), but its otyp-keyed gem/glass/spellbook
+        // tests still do.  The resulting "generic" glyph then collides with
+        // STRANGE_OBJECT (otyp 0)'s own glyph, decoding to ILLOBJ_CLASS (']')
+        // and falling outside glyph_is_generic_object()'s bound — so the
+        // close-range observe-upgrade never applies either: a mimic disguised
+        // as a gem/glass-gem or spellbook ALWAYS shows as a plain strange
+        // object, at any distance, discovered or not.
         const ap = mon.mappearance;
         if ((ap >= FIRST_REAL_GEM && ap <= LAST_GLASS_GEM)
             || (ap >= FIRST_SPELL && ap <= LAST_SPELL)) {
@@ -394,6 +386,14 @@ function monster_glyph(mon) {
     const sym = d.mlet || 'x';
     const color = (d.mcolor != null) ? d.mcolor : NO_COLOR;
     return { ch: sym, color, dec: false };
+}
+
+// C ref: monst.h:71 M_AP_TYPE(mon) == M_AP_OBJECT.  Only this disguise is
+// modelled by monster_glyph() above, so only this one is remembered by newsym()
+// below.  m_ap_type is a string in this port's live paths, numeric elsewhere.
+function mimics_an_object(mon) {
+    return mon?.mappearance != null
+        && (mon.m_ap_type === 'obj' || mon.m_ap_type === M_AP_OBJECT);
 }
 
 // C ref: display.h see_with_infrared(mon) = (!Blind && Infravision &&
@@ -725,21 +725,19 @@ function wall_cmap_glyph(idx) {
 }
 
 // C ref: display.h cmap_walls_to_glyph() + display.c reset_glyphmap's
-// wall_color(): a wall's glyph (and therefore its colour) is picked from a
-// per-branch GLYPH_CMAP_*_OFF range, in exactly this priority order —
-// mines, hell, knox, sokoban, main.  wallcolors[] itself defaults to CLR_GRAY
-// for every region, but loading a symset applies its `G_<wall>_<region>: /col`
-// lines, and dat/symbols' DECgraphics set (the one these recordings use)
-// specifies /brown for the mines, /red for Gehennom, /yellow for Knox and
-// /blue for Sokoban, leaving the main dungeon gray.  CLR_GRAY emits no tty
-// escape at all, which is what NO_COLOR records as.
+// wall_color(): picks a wall's glyph/colour from the per-branch
+// GLYPH_CMAP_*_OFF range, checked in this priority — mines, hell, knox,
+// sokoban, main.  wallcolors[] defaults to CLR_GRAY everywhere; only a
+// loaded symset's `G_<wall>_<region>: /col` lines override it, and
+// dat/symbols' DECgraphics set (used by these recordings) gives /brown to
+// the mines, /red to Gehennom, /yellow to Knox, /blue to Sokoban, leaving
+// the main dungeon gray — which emits no tty escape and records as NO_COLOR.
 function wall_cmap_color() {
     const uz = game.u?.uz;
     if (!uz) return NO_COLOR;
-    // C ref: display.c:2677 — wallcolors[] defaults to CLR_GRAY for all five
-    // regions; the per-region colours exist ONLY as G_<wall>_<region> lines
-    // inside the IBMgraphics/curses/DECgraphics/Enhanced blocks of dat/symbols.
-    // A session with no `symset:` option keeps the gray defaults (NO_COLOR).
+    // C ref: display.c:2677 — those per-region colours exist only inside a
+    // symset's IBMgraphics/curses/DECgraphics/Enhanced blocks; a session with
+    // no `symset:` option keeps the gray defaults (NO_COLOR).
     if (!/^(dec|ibm|curses|enhanced)/i.test(String(game.symset || ''))) return NO_COLOR;
     if (game.mines_dnum != null && uz.dnum === game.mines_dnum) return CLR_BROWN;
     if (In_hell(uz)) return CLR_RED;
@@ -939,17 +937,14 @@ export function terrain_glyph(loc, x, y) {
         return { ch: down ? '>' : '<', color, dec: false };
     }
     // C ref: back_to_glyph POOL/MOAT -> S_pool, WATER -> S_water, LAVAPOOL ->
-    // S_lava, LAVAWALL -> S_lavawall, ICE -> S_ice.  defsym.h ASCII glyphs:
-    // S_pool/S_water/S_lava/S_lavawall '}' ; S_ice '.'.  In DECgraphics the
-    // water/lava cmaps are the meta-'\' diamond, which the recorder emits as a
-    // backtick '`' inside the DEC (Shift-Out) font.  The frozen screen decoder's
-    // DEC_MAP has NO '`' entry, so the recorded C cell renders as the literal
-    // backtick '`'.  We therefore emit ch '`' with dec=FALSE (the terminal would
-    // otherwise map a DEC '`' to the '◆' diamond, which the decoder leaves as
-    // '◆' and would mismatch the recorded literal backtick).  ICE uses '~' which
-    // IS in DEC_MAP (-> centered dot '·'), so it keeps dec.  Colors: S_pool
-    // CLR_BLUE, S_water CLR_BRIGHT_BLUE, S_lava CLR_RED, S_lavawall CLR_ORANGE,
-    // S_ice CLR_CYAN.
+    // S_lava, LAVAWALL -> S_lavawall, ICE -> S_ice.  ASCII glyphs (defsym.h):
+    // '}' for pool/water/lava/lavawall, '.' for ice.  In DECgraphics these are
+    // the meta-'\' diamond, which the recorder emits as backtick '`' in the DEC
+    // font; the frozen decoder's DEC_MAP has no '`' entry (only maps '`' TO the
+    // diamond), so emit '`' with dec=FALSE to match the recorded literal
+    // rather than let the decoder turn it into '◆'.  ICE's '~' IS in DEC_MAP
+    // (-> '·'), so it keeps dec=true.  Colors: S_pool CLR_BLUE, S_water
+    // CLR_BRIGHT_BLUE, S_lava CLR_RED, S_lavawall CLR_ORANGE, S_ice CLR_CYAN.
     case POOL:
     case MOAT: {
         const ov = symOverrideChar('S_pool');
@@ -1059,13 +1054,11 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
 
 // C ref: display.c reset_glyphmap tail — `if (!has_color(color)) color =
 // NO_COLOR`.  In the contest's tty build has_color() is false for CLR_BLACK
-// and CLR_GRAY (their hilites[] entries are 0: black is rendered via the
-// default/dim foreground rather than an SGR 30/37), so a glyph carrying either
-// is rendered with NO color escape.  This is confirmed by the recorded C
-// screens, which never emit ESC[30m or ESC[37m — every CLR_BLACK / CLR_GRAY
-// glyph (e.g. a goblin or Uruk-hai 'o') shows as the terminal default.
-// Mapping these to NO_COLOR here makes the emitted SGR match the C reference
-// without touching the (frozen) terminal serializer.
+// and CLR_GRAY (hilites[] entries are 0, so black renders via the default/dim
+// foreground rather than SGR 30/37) — confirmed by the recorded C screens,
+// which never emit ESC[30m or ESC[37m (e.g. a goblin/Uruk-hai 'o' shows as
+// terminal default).  Map both to NO_COLOR here rather than touch the frozen
+// terminal serializer.
 function has_color_or_default(color) {
     // C ref: display.c reset_glyphmap tail — "Turn off color if no color
     // defined, or rogue level w/o PC graphics": every glyph on the Rogue level
@@ -1154,23 +1147,113 @@ export function trap_glyph(trap) {
     return { ch: d.ch, color: d.color, dec: false };
 }
 
-// C ref: getpos.c getpos() else-branch — terrain symbol matching.  A key that
-// is not a movement/pick/special key but DOES match a non-skipped cmap symbol
-// (defsym.h: walls/room/corr/door are skipped) triggers a map scan; when no
-// such feature exists "Can't find dungeon feature '%c'." is shown; a key that
-// matches no cmap symbol at all falls through to "Unknown direction".
-// GP_FEATURE_SYMS covers both kinds of matchable symbol: the transient
-// special-effect/beam/zap glyphs (defsym.h S_ss1 '0', S_goodpos '$',
-// S_flashbeam/S_ss4 '!'/'*', S_boomleft/right ')'/'(') that are never placed
-// as static terrain (so the scan always reports "Can't find ..."), plus the
-// static terrain/furniture/trap symbols (stairs/ladders '<'/'>', altar '_',
-// grave '|', throne '\\', sink/fountain '{', pool/water/lava '}', ice '.',
-// iron bars/tree/cloud '#', web '"', vibrating square/generic trap '~'/'^')
-// that getpos_find_feature actually scans the map for.
-const GP_FEATURE_SYMS = new Set([
-    '0', '$', '!', '*', ')', '(',
-    '<', '>', '_', '|', '\\', '{', '}', '.', '#', '"', '~', '^',
-]);
+// C ref: getpos.c getpos() else-branch — the matching[] build loop.  For every
+// cmap index that is not a wall / room floor / corridor / doorway (those whole
+// classes are skipped, along with S_ndoor), the pressed key matches when it
+// equals that symbol's default char, defsyms[sidx].sym.  One match is enough to
+// trigger the map scan, which reports "Can't find dungeon feature '%c'." when
+// the feature is nowhere on the map; a key matching no index at all falls
+// through to "Unknown direction".
+//
+// C also matches gs.showsyms[sidx], but that half is deliberately NOT modelled:
+// under a symset this port stores the DISPLAY character in game.symoverride
+// (IBMGRAPHICS_CHARS above holds wintty's high-bit-stripped 'D' for S_hwall's
+// \xc4), whereas C's showsyms holds the raw \xc4 that no keystroke can equal.
+// Matching our transformed values instead made 'w'/'t'/'p'/'q' feature keys on
+// every IBMgraphics session and cost 20 screens across heldout-blind.
+//
+// This is the COMPLETE non-skipped range of drawing.c defsyms[] (defsym.h PCHAR
+// rows 17..104), deliberately: the previous version listed 18 chars by hand and
+// omitted the beam / swallow / explosion glyphs, so '/' (S_rslant), '-'
+// (S_hbeam), '@' (S_ss3) and '`' (S_engroom) each wrongly reported "Unknown
+// direction" where C reports "Can't find dungeon feature".
+const GP_CMAP_DEFSYMS = [
+    { name: 'S_bars', ch: '#' },                  //  17
+    { name: 'S_tree', ch: '#' },                  //  18
+    { name: 'S_engroom', ch: '`' },               //  21
+    { name: 'S_engrcorr', ch: '#' },              //  24
+    { name: 'S_upstair', ch: '<' },               //  25
+    { name: 'S_dnstair', ch: '>' },               //  26
+    { name: 'S_upladder', ch: '<' },              //  27
+    { name: 'S_dnladder', ch: '>' },              //  28
+    { name: 'S_brupstair', ch: '<' },             //  29
+    { name: 'S_brdnstair', ch: '>' },             //  30
+    { name: 'S_brupladder', ch: '<' },            //  31
+    { name: 'S_brdnladder', ch: '>' },            //  32
+    { name: 'S_altar', ch: '_' },                 //  33
+    { name: 'S_grave', ch: '|' },                 //  34
+    { name: 'S_throne', ch: '\\' },               //  35
+    { name: 'S_sink', ch: '{' },                  //  36
+    { name: 'S_fountain', ch: '{' },              //  37
+    { name: 'S_pool', ch: '}' },                  //  38
+    { name: 'S_ice', ch: '.' },                   //  39
+    { name: 'S_lava', ch: '}' },                  //  40
+    { name: 'S_lavawall', ch: '}' },              //  41
+    { name: 'S_vodbridge', ch: '.' },             //  42
+    { name: 'S_hodbridge', ch: '.' },             //  43
+    { name: 'S_vcdbridge', ch: '#' },             //  44
+    { name: 'S_hcdbridge', ch: '#' },             //  45
+    { name: 'S_air', ch: ' ' },                   //  46
+    { name: 'S_cloud', ch: '#' },                 //  47
+    { name: 'S_water', ch: '}' },                 //  48
+    { name: 'S_arrow_trap', ch: '^' },            //  49
+    { name: 'S_dart_trap', ch: '^' },             //  50
+    { name: 'S_falling_rock_trap', ch: '^' },     //  51
+    { name: 'S_squeaky_board', ch: '^' },         //  52
+    { name: 'S_bear_trap', ch: '^' },             //  53
+    { name: 'S_land_mine', ch: '^' },             //  54
+    { name: 'S_rolling_boulder_trap', ch: '^' },  //  55
+    { name: 'S_sleeping_gas_trap', ch: '^' },     //  56
+    { name: 'S_rust_trap', ch: '^' },             //  57
+    { name: 'S_fire_trap', ch: '^' },             //  58
+    { name: 'S_pit', ch: '^' },                   //  59
+    { name: 'S_spiked_pit', ch: '^' },            //  60
+    { name: 'S_hole', ch: '^' },                  //  61
+    { name: 'S_trap_door', ch: '^' },             //  62
+    { name: 'S_teleportation_trap', ch: '^' },    //  63
+    { name: 'S_level_teleporter', ch: '^' },      //  64
+    { name: 'S_magic_portal', ch: '^' },          //  65
+    { name: 'S_web', ch: '"' },                   //  66
+    { name: 'S_statue_trap', ch: '^' },           //  67
+    { name: 'S_magic_trap', ch: '^' },            //  68
+    { name: 'S_anti_magic_trap', ch: '^' },       //  69
+    { name: 'S_polymorph_trap', ch: '^' },        //  70
+    { name: 'S_vibrating_square', ch: '~' },      //  71
+    { name: 'S_trapped_door', ch: '^' },          //  72
+    { name: 'S_trapped_chest', ch: '^' },         //  73
+    { name: 'S_vbeam', ch: '|' },                 //  74
+    { name: 'S_hbeam', ch: '-' },                 //  75
+    { name: 'S_lslant', ch: '\\' },               //  76
+    { name: 'S_rslant', ch: '/' },                //  77
+    { name: 'S_digbeam', ch: '*' },               //  78
+    { name: 'S_flashbeam', ch: '!' },             //  79
+    { name: 'S_boomleft', ch: ')' },              //  80
+    { name: 'S_boomright', ch: '(' },             //  81
+    { name: 'S_ss1', ch: '0' },                   //  82
+    { name: 'S_ss2', ch: '#' },                   //  83
+    { name: 'S_ss3', ch: '@' },                   //  84
+    { name: 'S_ss4', ch: '*' },                   //  85
+    { name: 'S_poisoncloud', ch: '#' },           //  86
+    { name: 'S_goodpos', ch: '$' },               //  87
+    { name: 'S_sw_tl', ch: '/' },                 //  88
+    { name: 'S_sw_tc', ch: '-' },                 //  89
+    { name: 'S_sw_tr', ch: '\\' },                //  90
+    { name: 'S_sw_ml', ch: '|' },                 //  91
+    { name: 'S_sw_mr', ch: '|' },                 //  92
+    { name: 'S_sw_bl', ch: '\\' },                //  93
+    { name: 'S_sw_bc', ch: '-' },                 //  94
+    { name: 'S_sw_br', ch: '/' },                 //  95
+    { name: 'S_expl_tl', ch: '/' },               //  96
+    { name: 'S_expl_tc', ch: '-' },               //  97
+    { name: 'S_expl_tr', ch: '\\' },              //  98
+    { name: 'S_expl_ml', ch: '|' },               //  99
+    { name: 'S_expl_mc', ch: ' ' },               // 100
+    { name: 'S_expl_mr', ch: '|' },               // 101
+    { name: 'S_expl_bl', ch: '\\' },              // 102
+    { name: 'S_expl_bc', ch: '-' },               // 103
+    { name: 'S_expl_br', ch: '/' },               // 104
+];
+const GP_FEATURE_SYMS = new Set(GP_CMAP_DEFSYMS.map((e) => e.ch));
 export function getpos_is_feature_sym(ch) { return GP_FEATURE_SYMS.has(ch); }
 
 // C ref: rm.h is_cmap_wall/is_cmap_room/is_cmap_corr/is_cmap_door + getpos.c's
@@ -1660,22 +1743,20 @@ export function newsym(x, y) {
                 mtrap.tseen = 1;
         }
         // C ref: display.c newsym — only three of the five arms below reach
-        // _map_location(); the region / warning / remembered-invisible arms
-        // return without mapping the square at all.  While Hallucination
-        // map_object() draws off the display rng, so computing the background
-        // up front (as this used to) would spend a draw C never makes.
-        // C ref: display.c newsym — a visible gas-cloud region drawn on top of
-        // the background, UNLESS a directly-occupying monster overrides it
-        // (mon_overrides_region()).  This arm used to substitute a simplified
-        // "any normally-visible monster here" test for the real function,
-        // which drops mon_overrides_region()'s distu(mx,my) <= r*(r+1) range
-        // check (r defaults to 1 without xray) — so a monster more than one
-        // step from the hero showed its own glyph clean through a gas cloud
-        // instead of the cloud glyph C draws over it (a fog cloud more than
-        // one square from the hero, trailing its own permanent vapor region,
-        // showed as 'v' forever instead of the '#' cloud glyph).  The hero's
-        // own square (above) already calls the full function; do the same
-        // here so both arms share one rule.
+        // _map_location(); region/warning/remembered-invisible return without
+        // mapping the square.  While Hallucinating, map_object() draws off
+        // the display rng, so precomputing the background up front (as this
+        // used to) would spend a draw C never makes.
+        // C ref: display.c newsym — a visible gas-cloud region draws over the
+        // background UNLESS a directly-occupying monster overrides it
+        // (mon_overrides_region()).  A prior version substituted a simplified
+        // "any normally-visible monster here" test, dropping
+        // mon_overrides_region()'s distu(mx,my) <= r*(r+1) range check (r
+        // defaults to 1) — so a monster more than one step away showed its
+        // own glyph through the cloud instead of the cloud glyph (a fog
+        // cloud's own permanent vapor region showed as 'v' forever instead of
+        // '#').  Match the hero's-square arm above: call the full function
+        // here too.
         const reg = visible_region_at(x, y);
         if (reg && (ACCESSIBLE(loc.typ) || (reg.visible && (IS_POOL(loc.typ) || IS_LAVA(loc.typ))))
             && !mon_overrides_region(mon, x, y)) {
@@ -1697,6 +1778,17 @@ export function newsym(x, y) {
             // gets rid of any invisibility glyph".
             loc.invisMon = false;
             const mg = monster_glyph(mon);
+            // C ref: display.c:531 display_monster() — "We must do the mimic
+            // check first.  If the mimic is mimicking something, and the
+            // location is in sight, we have to change the hero's memory so that
+            // when the position is out of sight, the hero remembers what the
+            // mimic was mimicking."  M_AP_OBJECT reaches `levl[x][y].glyph =
+            // glyph` through map_object() (display.c:354, gated on
+            // level.flags.hero_memory).  Remembering only the background left a
+            // mimic's square remembered as bare floor, so leaving the level and
+            // returning redrew floor where C redraws the disguise.
+            if (mimics_an_object(mon) && game.level?.flags?.hero_memory)
+                remember_bg(loc, mg);
             // C ref: win/tty/wintty.c tty_print_glyph — a pet glyph (MG_PET)
             // is drawn with iflags.wc2_petattr (default ATR_INVERSE) when
             // iflags.hilite_pet is set.  Only the attribute is changed, not the
@@ -1706,6 +1798,18 @@ export function newsym(x, y) {
             // no MG_PET and loses the highlight along with its own species.
             const petAttr = (mon.mtame && !Hallucination_u() && game.flags?.hilite_pet)
                 ? ATR_INVERSE : 0;
+            // C ref: display.c display_monster() — "We must do the mimic check
+            // first.  If the mimic is mimicking something, and the location is
+            // in sight, we have to change the hero's memory so that when the
+            // position is out of sight, the hero remembers what the mimic was
+            // mimicking."  newsym() always passes PHYSICALLY_SEEN from this arm,
+            // so the M_AP_OBJECT case runs map_object(), whose
+            // `levl[x][y].glyph = glyph` OVERWRITES the _map_location() memory
+            // written just above.  Without this a shop's disguised mimics
+            // reverted to bare floor the moment the hero left the level and came
+            // back, losing one remembered cell per mimic for the rest of the game.
+            if (game.level?.flags?.hero_memory && M_AP_TYPE(mon) === M_AP_OBJECT)
+                loc.remembered_glyph = { ch: mg.ch, color: mg.color, decgfx: mg.dec };
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
         } else if (mon && mon_warning(mon)) {
             // C ref: display.c newsym:1030 — `else if (mon && mon_warning(mon)
@@ -2265,19 +2369,17 @@ function _botFields(order) {
     raw[BL_XP] = String(u.ulevel || 1);
     raw[BL_EXP] = String(u.uexp || 0);
     // NOT YET FIXED: C ref: allmain.c:262-263 `if (flags.time &&
-    // !svc.context.run) disp.time_botl = TRUE;` — while a run/rush is armed,
-    // C freezes the displayed turn counter at its last value instead of
-    // republishing it every turn (see [[stale-context-run-freezes-turn-counter]]).
-    // A snapshot gated on game.context.run_prefix/stale_run (the JS stand-ins
-    // for svc.context.run) was tried and reverted: those fields are designed
-    // to bridge only ONE unbound keypress after a 'g'/'G' prefix, and can
-    // stay armed across several MORE turns than C's real svc.context.run
-    // would whenever a multi-turn occupation (e.g. take-off) advances
-    // game.moves without a new rhack() call to clear the residue — this
-    // false-froze bl011/bl023 by one screen each while fixing bl026, net
-    // only +11 across a 50-session draw.  A correct fix needs a more
-    // faithful svc.context.run equivalent (or an occupation-aware guard that
-    // actually works — game.occupation was NOT sufficient, still TBD).
+    // !svc.context.run) disp.time_botl = TRUE;` — while a run/rush is armed, C
+    // freezes the displayed turn counter instead of republishing it every turn
+    // (see [[stale-context-run-freezes-turn-counter]]).
+    // Tried and reverted: gating a snapshot on game.context.run_prefix/
+    // stale_run (JS stand-ins for svc.context.run) doesn't work — those only
+    // bridge ONE keypress after a 'g'/'G' prefix, but stay armed across MORE
+    // turns whenever a multi-turn occupation (e.g. take-off) advances
+    // game.moves without a new rhack() clearing them; false-froze bl011/bl023
+    // by one screen each while fixing bl026, net only +11/50-session draw.
+    // Needs a faithful svc.context.run equivalent or an occupation-aware guard
+    // (game.occupation alone was NOT sufficient — still TBD).
     raw[BL_TIME] = String(game.moves || 1);
     // C ref: botl.c bot_via_windowport — hu_stat[] (eat.c) = {Satiated, "",
     // Hungry, Weak, Fainting, Fainted, Starved}; NOT_HUNGRY(1) shows nothing.
@@ -2784,17 +2886,14 @@ function msgtype_suppressed(msg) {
 
 // ── pline ──
 // C ref: pline.c custompline(SUPPRESS_HISTORY, ...) — used by cmd.c's
-// "Unknown command '%s'." (and similarly-flagged callers) to print WITHOUT
-// touching gt.toplines/the message-history ring: topl.c remember_topl()
-// (called from inside update_topl(), right before gt.toplines is overwritten)
-// is what archives the PRIOR topline into the ^P recall ring and only THEN
-// does the new text become gt.toplines — a SUPPRESS_HISTORY message skips
-// this bookkeeping entirely, so game._toplines (this port's gt.toplines
-// mirror) must stay at whatever it already was.  Without this, a bad-command
-// message became recallable via ^P even though C's own history ring never
-// captured it, and ^P at that point shows blank in C (the ring slot it
-// would-be point to next was never written either) but recalled the wrong
-// text here.
+// "Unknown command '%s'." and similarly-flagged callers, printed WITHOUT
+// touching gt.toplines/the ^P history ring: topl.c remember_topl() (called
+// from inside update_topl(), just before gt.toplines is overwritten) is what
+// archives the PRIOR topline into the recall ring, and a SUPPRESS_HISTORY
+// message skips that entirely — so game._toplines (our gt.toplines mirror)
+// must stay unchanged.  Without this, a bad-command message became
+// recallable via ^P even though C's history ring never captured it (C shows
+// blank there instead, since the ring slot was never written).
 export async function pline(msg, opts = {}) {
     // C ref: pline.c vpline():162-190 — when a11y.accessiblemsg is set (only
     // #lookaround forces it on, in js/cmd.js) and set_msg_xy() left a valid
@@ -3087,11 +3186,13 @@ export async function update_topl(bp) {
     // tty_yn_function replaces the hidden death line directly with "Die?".
     // Only the short, one-line case reaches the comparison, clears STOP, and
     // redraws the death line for its own --More--.
-    const deathClearsStop = game._winStop
-        && bp.startsWith('You die')
-        && (game._toplin === TOPLIN_NEED_MORE || game._winStop)
+    // `notdied` is only ASSIGNED when all three conditions ahead of the strncmp
+    // hold, so every "You die" special case is gated on the same three.
+    const dieTestReached = (game._toplin === TOPLIN_NEED_MORE || game._winStop)
         && wrap_topl(hiddenCur).length === 1
         && n0 + hiddenCur.length + 3 < CO - 8;
+    const isDeathMsg = dieTestReached && bp.startsWith('You die');
+    const deathClearsStop = game._winStop && isDeathMsg;
     if (deathClearsStop) {
         game._winStop = false;
         game._toplin = 0;   // the skipped arm never more()s the pending line
@@ -3135,13 +3236,36 @@ export async function update_topl(bp) {
         game._toplines = game._pending_message;
         return;
     }
+    // C ref: topl.c update_topl():273 — `notdied` is ASSIGNED INSIDE the append
+    // test above, so it stays non-zero whenever an earlier term short-circuits;
+    // only a "You die" line that reached the strncmp makes it 0.
+    const notdied = !((game._toplin === TOPLIN_NEED_MORE || softPending)
+                      && n0 + cur.length + 3 < CO - 8
+                      && bp.startsWith('You die'));
     // A soft pline is just as unacknowledged as a hard topline in C.  The
     // distinction only prevents unrelated command handling from paging it;
     // when a second message cannot fit, update_topl() must page either form
     // before replacing it.
     if (game._toplin === TOPLIN_NEED_MORE || softPending) {
         await topl_more();
+        // C ref: topl.c update_topl():297 `if (!notdied) cw->flags &= ~WIN_STOP,
+        // skip = FALSE;` — it runs AFTER the more() above, so a "You die" line
+        // also clears a WIN_STOP that this very more() just set by being
+        // ESC-dismissed ("avoid suppressing mesg").  deathClearsStop above only
+        // sees STOP that was already set on ENTRY, so it cannot cover this:
+        // without the clear, the death line stayed hidden and tty_yn_function
+        // put "Die? [yn] (n)" where C shows "You die...--More--" first
+        // (bl040 step 1511).
+        if (isDeathMsg) game._winStop = false;
     }
+    // C ref: topl.c update_topl():299 `if (!notdied) cw->flags &= ~WIN_STOP` —
+    // this runs AFTER the more() above, so ESC dismissing that very --More--
+    // cannot suppress the death line: it is redrawn, and tty_yn_function's own
+    // `toplin == NEED_MORE && !WIN_STOP` test then pages it before "Die?".
+    // Without this, a wizard-mode death whose preceding --More-- was ESC'd lost
+    // the whole "You die...--More--" frame and ran one keystroke ahead of C for
+    // the rest of the session.
+    if (!notdied) game._winStop = false;
     game._pending_message = bp;
     game._toplin = TOPLIN_NEED_MORE;
     game._toplines = bp;
@@ -3221,7 +3345,10 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n') {
     let prompt = query;
     if (resp) {
         prompt += ` [${shown}]`;
-        if (def) prompt += ` (${def})`;
+        // C ref: topl.c tty_yn_function():422 `if (def)` — def is a char, so
+        // a NUL default is FALSY there and the " (c)" suffix is omitted.  A JS
+        // '\0' is a truthy 1-char string (wizcmds.js wiz_flip_level passes one).
+        if (def && def !== '\0') prompt += ` (${def})`;
     }
     const full = prompt + ' ';
 
@@ -4792,6 +4919,23 @@ export function glyph_at(x, y) {
     if (x < 0 || y < 0 || x >= COLNO || y >= ROWNO)
         return cmap_to_glyph(S_room); /* XXX */
     return gbuf()[y][x].glyphinfo.glyph; /* _glyph_at(x,y) */
+}
+
+// C ref: sym.h:108 is_cmap_engraving(glyph_to_cmap(glyph_at(x,y))).  Answers it
+// from display.c _map_location's engraving arm (the same condition this file's
+// background_glyph uses at the `spot_shows_engravings` test) rather than from a
+// glyph buffer: map_engraving() writes the glyph-NUMBER model, but this port's
+// live display is the cell/char model, so glyph_at() never sees it.
+// S_engroom(21)/S_engrcorr(24) sit OUTSIDE is_cmap_room (S_room..S_darkroom) and
+// is_cmap_corr (S_corr..S_litcorr), which is why getpos.c's GLOC_INTERESTING
+// exclusion list does not cover them — an engraved floor/corridor square IS an
+// interesting spot (cmd.c:1352 "note: GLOC_INTERESTING catches S_engrcorr").
+// Object/monster precedence is handled by gather_locs_interesting's earlier arms.
+export function is_cmap_engraving_at(x, y) {
+    const loc = game.level?.at(x, y);
+    if (!loc || !spot_shows_engravings(loc) || covers_objects(loc)) return false;
+    const ep = engr_at(x, y);
+    return !!(ep && ep.erevealed);
 }
 
 // C ref: display.c:2487 glyphinfo_at(x, y, glyph) — the UNBUFFERED_GLYPHINFO

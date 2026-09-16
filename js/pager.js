@@ -216,42 +216,20 @@ function key2txt(c) {
     return visctrl(c);
 }
 
-// Default rogue-like movement keys (number_pad off): walk = h j k l y u b n,
-// run = the capitalized forms, rush = the Ctrl forms.  C ref: cmd.c movecmd()
-// against the default gc.Cmd movement keymap.
-function movecmd(key, mode) {
-    // C ref: cmd.c reset_commands() — with number_pad the run key is M(digit)
-    // and there is no per-direction rush key at all.
-    const dirs = Cmd_dirchars().slice(0, 8);
-    const ch = String.fromCharCode(key & 0xff);
-    if (mode === 'walk') return dirs.includes(ch);
-    if (Cmd_num_pad())
-        return mode === 'run' && dirs.includes(String.fromCharCode(key & 0x7f));
-    if (mode === 'run') return dirs.toUpperCase().includes(ch);
-    if (mode === 'rush') {
-        for (const d of dirs) if ((d.charCodeAt(0) & 0x1f) === key) return true;
-        return false;
-    }
-    return false;
-}
-
-// key -> extcmdlist entry, from the default key bindings (cmd.c reset_commands
-// binds each extcmdlist entry's default key; later entries override earlier).
-const KEY2CMD = (() => {
-    const m = new Map();
-    for (const e of EXTCMD_TABLE)
-        if (e.key !== null && e.key !== 0) m.set(e.key, e);
-    return m;
-})();
-
 // C ref: cmd.c key2extcmddesc() — describe the command bound to a key.  Checks
 // movement (walk/run/rush) and count digits and the ESC prefix before the
 // extended-command binding, then formats "<desc> (#<txt>)" with the reqmenu
 // two-line and "(##)" special cases.  Returns null when the key is unbound.
 function key2extcmddesc(key) {
-    if (movecmd(key, 'walk')) return 'move';
-    if (movecmd(key, 'rush')) return 'rush';
-    if (movecmd(key, 'run')) return 'run';
+    // C ref: cmd.c:2573 — C only Strcpy()s "move"/"rush"/"run" into its static
+    // buffer here; every path out then clears it (digit branch), overwrites it
+    // (the binding lookup below) or drops it (the NULL return), so those three
+    // strings are dead in C.  Returning them early instead shadowed the real
+    // "<desc> (#<txt>)" text for every movement key, e.g. '&' then 'y' gave
+    // "y       move." where C gives
+    // "y       move northwest (screen upper left) (#movenorthwest).".
+    // The local pure-predicate movecmd() that produced them is gone with them;
+    // C's movecmd() also sets u.dx/u.dy, which that copy never modelled.
     const ch = String.fromCharCode(key & 0xff);
     // C ref: cmd.c key2extcmddesc() digit block — with number_pad the digits
     // are movement, so only '5'/M-5 (the run|rush prefix, swapped by
@@ -267,7 +245,7 @@ function key2extcmddesc(key) {
             return "synonym for 'i'";
     }
     if (key === 0o33) return 'cancel current prompt or pending prefix';
-    const e = KEY2CMD.get(key);
+    const e = cmdbind_get(key);
     if (e && e.txt) {
         let buf = `${e.desc} (#${e.txt})`;
         if (/^prefix:/i.test(buf) && /^reqmenu$/i.test(e.txt))
@@ -393,6 +371,38 @@ function buildKeymap() {
         }
     }
     return map;
+}
+
+// C ref: cmd.c:2070 move_funcs[] row order, which is the order sdir ("hykulnjb")
+// indexes: W, NW, N, NE, E, SE, S, SW.
+const MOVE_DIR_NAMES = ['west', 'northwest', 'north', 'northeast',
+                        'east', 'southeast', 'south', 'southwest'];
+const EXTCMD_BY_TXT = new Map(EXTCMD_TABLE.map((e) => [e.txt, e]));
+
+// C ref: cmd.c cmdbind_get() — look up the command bound to `key`.
+// buildKeymap() already models what commands_init() + reset_commands() install,
+// but collapses all 24 movement commands onto one flags-only marker because
+// dokeylist() needs nothing from them but MOVEMENTCMD.  key2extcmddesc() prints
+// the bound command's name and description, so re-point those keys at the real
+// extcmdlist rows.  reset_commands() runs last in C, so these overwrite both the
+// static default keys and commands_init()'s explicit bind_key() overrides (which
+// is why '&' then 'j' describes #movesouth, not #jump).
+function cmdbind_get(key) {
+    const map = buildKeymap();
+    const num_pad = Cmd_num_pad();
+    const dirchars = Cmd_dirchars().slice(0, 8);
+    for (let i = 0; i < dirchars.length; i++) {
+        const lc = dirchars[i].charCodeAt(0), nm = MOVE_DIR_NAMES[i];
+        map.set(lc, EXTCMD_BY_TXT.get(`move${nm}`));
+        if (num_pad) {
+            // C: can't bind highc()/C() of a digit, so only the Meta form.
+            map.set(0x80 | lc, EXTCMD_BY_TXT.get(`run${nm}`));
+        } else {
+            map.set(dirchars[i].toUpperCase().charCodeAt(0), EXTCMD_BY_TXT.get(`run${nm}`));
+            map.set(lc & 0x1f, EXTCMD_BY_TXT.get(`rush${nm}`));
+        }
+    }
+    return map.get(key);
 }
 
 // cmd.c keylist_func_has_key(): TRUE if extcmd is bound to some key that is
@@ -910,7 +920,9 @@ export async function whatis_menu_pick(render) {
 
 import { COLNO, ROWNO, BOLT_LIM, BUFSZ, isok, STONE, SCORR, SDOOR, ROOM, CORR,
          DOOR, ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL, TREE, CLOUD,
-         STAIRS, LADDER,
+         STAIRS, LADDER, ALTAR, FOUNTAIN, SINK, THRONE, IRONBARS, AIR,
+         DBWALL, DRAWBRIDGE_UP, DRAWBRIDGE_DOWN,
+         DB_UNDER, DB_MOAT, DB_LAVA, DB_ICE,
          IS_WALL, IS_DOOR, IS_TREE, IS_GRAVE, D_BROKEN,
          D_TRAPPED, D_CLOSED, D_LOCKED, D_ISOPEN,
          NO_TRAP, BEAR_TRAP, TRAPPED_DOOR, TRAPPED_CHEST, ROCKTRAP, HOLE, PIT,
@@ -925,6 +937,7 @@ import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
          MAXOCLASSES, DEF_INVISIBLE, S_stone, S_room, S_darkroom, S_corr,
          S_litcorr, S_ndoor, S_altar, S_grave, S_cloud, S_ice, S_pool,
          S_water, S_lava, S_lavawall, S_engroom, S_engrcorr, S_arrow_trap,
+         S_fountain, S_sink, S_throne, S_bars, S_air, S_hodbridge, S_vcdbridge,
          S_vodbridge, S_hcdbridge, S_vibrating_square, S_invisible, S_HUMAN,
          S_sw_tl, S_sw_br, SYM_OFF_O, SYM_OFF_M, SYM_OFF_W, SYM_OFF_X, gs,
          S_upstair, S_dnstair, S_upladder, S_dnladder,
@@ -1122,7 +1135,27 @@ function cmap_index_for(loc, x, y) {
     if (t === CLOUD) return S_cloud;
     if (t === TREE) return 18;                     /* S_tree */
     if (IS_GRAVE(t)) return S_grave;
-    if (t === 32 /* ALTAR */) return S_altar;
+    if (t === ALTAR) return S_altar;
+    // The rest of display.c back_to_glyph()'s switch.  Without them every one
+    // of these squares fell through to the S_room below, so farlook and
+    // #lookaround reported a fountain, sink, throne, iron bars or drawbridge
+    // as "floor of a room".  (js/getpos.js back_to_glyph_cmapidx() is a
+    // complete port of the same switch, but is private to that inert file.)
+    if (t === FOUNTAIN) return S_fountain;
+    if (t === SINK) return S_sink;
+    if (t === THRONE) return S_throne;
+    if (t === IRONBARS) return S_bars;
+    if (t === AIR) return S_air;
+    if (t === DBWALL) return loc.horizontal ? S_hcdbridge : S_vcdbridge;
+    if (t === DRAWBRIDGE_DOWN) return loc.horizontal ? S_hodbridge : S_vodbridge;
+    if (t === DRAWBRIDGE_UP) {
+        switch ((loc.drawbridgemask | 0) & DB_UNDER) {
+        case DB_MOAT: return S_pool;
+        case DB_LAVA: return S_lava;
+        case DB_ICE: return S_ice;
+        default: return S_room;       /* DB_FLOOR, or C's impossible() */
+        }
+    }
     return S_room;
 }
 

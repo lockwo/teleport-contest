@@ -304,6 +304,11 @@ async function mcast_spell(mtmp, dmg, spellnum) {
         }
         break;
     }
+    case MCAST_DESTRY_ARMR:
+        // C ref: mcastu.c:836 — `mcast_destroy_armor(); dmg = 0;`.  RNG-bearing
+        // through destroy_arm() (rn2(4)+1 hits, armors[rn2(idx)] each).
+        await mcast_destroy_armor();
+        break;
     case MCAST_CLONE_WIZ: {
         // C ref: mcastu.c:411 mcast_clone_wiz(mtmp).
         if (mtmp.iswiz && (game.context?.no_of_wizards | 0) === 1) {
@@ -953,9 +958,14 @@ function mon_set_minvis(mon, _adjust) { if (mon) mon.minvis = 1; }
 // object and for melting/freezing terrain).
 async function mon_spell_hits_spot(_mon, _adtyp, _x, _y) { /* UNPORTED */ }
 
-// C ref: read.c destroy_arm() — RNG-BEARING (picks a worn slot).  The port is
-// js/read.js:1455 but module-private; exporting it is the fix.
-async function destroy_arm_() { return false; }
+// C ref: do_wear.c destroy_arm() — rn2(4)+1 hits, each on armors[rn2(idx)].
+// js/read.js owns the port (the scroll-of-destroy-armor path); imported
+// dynamically because a static edge here would reorder ESM evaluation
+// ([[_mktrap_victim TDZ is real]]).
+async function destroy_arm_() {
+    const { destroy_arm } = await import('./read.js');
+    return await destroy_arm();
+}
 
 // C ref: zap.c ureflects(fmt, str) — no RNG.  Port is js/zap.js:1566, private.
 async function ureflects_(_fmt, _str) { return false; }

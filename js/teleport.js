@@ -207,7 +207,13 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
                         : (du < olddu) ? ' closer to you' : ' farther away';
             await update_topl(`${Monnam(mtmp)} vanishes and reappears${where}.`);
         } else {
-            await update_topl(`${Monnam(mtmp)} ${appearmsg ? 'suddenly ' : ''}`
+            // C ref: teleport.c rloc_to_core():1722 — `appearmsg ? Amonnam(mtmp)
+            // : Monnam(mtmp)`.  A STRAT_APPEARMSG monster the hero has never
+            // seen gets the INDEFINITE article ("A master lich suddenly appears
+            // next to you!"); only the vanish-and-reappear wording uses "The".
+            const { Amonnam } = await import('./do_name.js');
+            await update_topl(`${appearmsg ? Amonnam(mtmp) : Monnam(mtmp)} `
+                + `${appearmsg ? 'suddenly ' : ''}`
                 + `${!Blind() ? 'appears' : 'arrives'}${next || nearu || ''}!`);
         }
         // (the WAN_TELEPORTATION discovery needs gc.current_wand, which is Null

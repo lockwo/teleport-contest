@@ -1291,6 +1291,29 @@ function overview_count_feat(level, pred) {
     return n;
 }
 
+// C ref: dungeon.c recalc_mapseen()'s ALTAR arm (:3009-3023) — naltar counts
+// mapped altars (capped at 3, like every other feature), and msalign holds
+// their shared alignment, collapsing to MSA_NONE the moment two mapped altars
+// disagree.  Kept separate from overview_count_feat() because the alignment
+// has to be folded in per cell, before the count saturates.
+function overview_altars(level) {
+    let naltar = 0, msalign = MSA_NONE;
+    for (let x = 1; x < COLNO; x++) {
+        for (let y = 0; y < ROWNO; y++) {
+            const loc = level?.at(x, y);
+            if (!loc || loc.remembered_glyph == null || !IS_ALTAR(loc.typ)) continue;
+            // rm.h unions altarmask with flags, and this port writes whichever
+            // of the two the creating call site used (display.c's own ALTAR arm
+            // reads them the same way).
+            const atmp = Amask2msa((loc.altarmask ?? loc.flags ?? 0) | 0);
+            if (!naltar) msalign = atmp;
+            else if (msalign !== atmp) msalign = MSA_NONE;
+            if (naltar < 3) naltar++;
+        }
+    }
+    return { naltar, msalign };
+}
+
 // The live level if `ledger` is the hero's current one, else the stashed
 // per-level object graph do.js's goto_level() keeps for previously-visited
 // levels (the JS analog of a level's on-disk save file).
@@ -1427,25 +1450,34 @@ export function build_overview_lines(final = 0, how = 0) {
             nsink: overview_count_feat(level, IS_SINK),
             ngrave: overview_count_feat(level, IS_GRAVE),
             ntree: overview_count_feat(level, (t) => t === TREE),
-        } : { nthrone: 0, nfount: 0, nsink: 0, ngrave: 0, ntree: 0 };
+            ...overview_altars(level),
+        } : { nthrone: 0, nfount: 0, nsink: 0, ngrave: 0, ntree: 0,
+              naltar: 0, msalign: MSA_NONE };
         const ms = game._mapseen?.[p.ledger] || null;
         // C ref: recalc_mapseen()'s msrooms loop — a shop counts only once the
         // hero has been INSIDE it (room_discovered), and shoptype collapses to 0
         // when two different shop types have been entered on the same level.
-        feat.nshop = 0; feat.shoptype = 0;
+        feat.nshop = 0; feat.shoptype = 0; feat.ntemple = 0;
         if (level && ms) {
             for (const key of Object.keys(ms.msrooms)) {
                 const rt = level.rooms?.[+key]?.rtype | 0;
-                if (rt < SHOPBASE) continue;
-                if (!feat.nshop) feat.shoptype = rt;
-                else if (feat.shoptype !== rt) feat.shoptype = 0;
-                if (feat.nshop < 3) feat.nshop++;
+                if (rt >= SHOPBASE) {
+                    if (!feat.nshop) feat.shoptype = rt;
+                    else if (feat.shoptype !== rt) feat.shoptype = 0;
+                    if (feat.nshop < 3) feat.nshop++;
+                } else if (rt === TEMPLE) {
+                    // C ref: recalc_mapseen():3163 — "altar and temple alignment
+                    // handled below"; an entered temple counts even when its
+                    // altar was never mapped (blind, or out of view).
+                    if (feat.ntemple < 3) feat.ntemple++;
+                }
             }
         }
         const custom = game._level_annotations?.[p.ledger] || '';
         const onHere = p.ledger === uzLedger;
         const ofInterest = !!(feat.nshop || feat.nthrone || feat.nfount
-                              || feat.nsink || feat.ngrave || feat.ntree);
+                              || feat.nsink || feat.ngrave || feat.ntree
+                              || feat.naltar || feat.ntemple);
         const dptr = M.dungeons[p.dnum];
         if (!dptr) continue;
         const dunlevUreached = Math.max(dptr.dunlev_ureached ?? 0, maxDlevelByDnum.get(p.dnum) ?? 0);
@@ -1504,6 +1536,25 @@ export function build_overview_lines(final = 0, how = 0) {
             if (feat.nshop > 1) add('shop', feat.nshop);
             else if (feat.nshop > 0)
                 fbuf += (n++ > 0 ? ', ' : OVERVIEW_PREFIX) + an_dg(shop_string(feat.shoptype));
+            // C ref: print_mapseen():3603-3620 — ADD2NTOBUF("temple", ntemple,
+            // "altar", naltar), then the god's name but only when every mapped
+            // altar on the level is coaligned with the hero.
+            if (feat.naltar > 0 || feat.ntemple > 0) {
+                if (feat.ntemple && feat.naltar) {
+                    fbuf += (n++ > 0 ? ', ' : OVERVIEW_PREFIX)
+                        + `${overview_seen_string(feat.ntemple, 'temple')} temple`
+                        + `${overview_plur(feat.ntemple)} and `
+                        + `${overview_seen_string(feat.naltar, 'altar')} altar`
+                        + `${overview_plur(feat.naltar)}`;
+                } else {
+                    add('temple', feat.ntemple);
+                    add('altar', feat.naltar);
+                }
+                if (Amask2align(Msa2amask(feat.msalign)) === game.u?.ualign?.type)
+                    fbuf += ` to ${align_gname(
+                        roles.findIndex((r) => r.mnum === game.urole?.mnum),
+                        game.u.ualign.type)}`;
+            }
             add('throne', feat.nthrone);
             add('fountain', feat.nfount);
             add('sink', feat.nsink);

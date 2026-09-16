@@ -17,7 +17,7 @@ import { WEAPON_CLASS, WAND_CLASS, GEM_CLASS, RING_CLASS,
          TOOL_CLASS, RANDOM_CLASS, ILLOBJ_CLASS, ARMOR_CLASS, AMULET_CLASS,
          FOOD_CLASS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS, COIN_CLASS,
          ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
-         objects } from './mkobj.js';
+         objects, next_ident } from './mkobj.js';
 import { mflags1_of, M1_ANIMAL } from './monflags_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
@@ -1296,7 +1296,8 @@ export async function engrave_step() {
     const u = g.u;
     const ctx = g.context?.engraving;
     const { pline, newsym, update_topl } = await import('./display.js');
-    const { prinv_fmt, xname, hands_obj } = await import('./invent.js');
+    const { prinv_fmt, hands_obj, splitobj, obj_extract_self,
+            addinv } = await import('./invent.js');
     if (!ctx || !u) { g.context.engraving = null; return false; }
     if (ctx.pos.x !== u.ux || ctx.pos.y !== u.uy) { /* teleported? */
         await update_topl('You are unable to continue engraving.');
@@ -1337,13 +1338,23 @@ export async function engrave_step() {
     /* Step 3: the stylus wears out. */
     let truncate = false;
     if (dulling_wep) {
-        let dulled = false;
-        // The quan>1 splitobj() branch is not reached by any recorded session
-        // (a stack of blades), but its message belongs to the first action.
-        if (firsttime)
-            await update_topl((stylus.quan || 1) > 1
-                        ? `One of your ${xname(stylus)} gets dull.`
-                        : `Your ${xname(stylus)} gets dull.`);
+        let splitstack = false, dulled = false;
+        // C: a stack of blades peels ONE blade off to be the stylus, so only
+        // that blade's enchantment pays for the engraving.  yname()/Yname2()
+        // carry no count ("your orcish daggers", not "your 9 orcish daggers"),
+        // and the message is emitted BEFORE the split, off the whole stack.
+        if ((stylus.quan || 1) > 1) {
+            if (firsttime)
+                await update_topl(`One of ${await yname_of(stylus)} gets dull.`);
+            // C: splitobj() -> nextoid() -> next_ident() spends one rnd(2);
+            // this port's splitobj() draws nothing, so the call site pays it.
+            next_ident();
+            stylus = ctx.stylus = splitobj(stylus, 1);
+            stylus.owornmask = 0;   /* the split-off blade isn't wielded/quivered */
+            splitstack = true;
+        } else if (firsttime) {
+            await update_topl(`${await Yname2(stylus)} gets dull.`);
+        }
         // -1 enchantment per 2 characters, rounding down: deduct on the 1st,
         // 3rd, ... action unless this is the last character (but always on the
         // 1st, to prevent zero-cost engravings).  Truncation is checked BEFORE
@@ -1356,7 +1367,20 @@ export async function engrave_step() {
                 dulled = true;
             }
         }
-        if (dulled && stylus.known) {
+        if (splitstack) {
+            // C: obj_extract_self() + hold_another_object(stylus, "You drop one
+            // %s!", doname(stylus), NULL).  The blade's spe now differs from the
+            // stack's, so it cannot merge back and takes a NEW inventory letter.
+            // Weight is conserved by the split, so hold_another_object()'s
+            // encumbrance/overflow drop branch cannot fire here; its prinv() is
+            // routed through update_topl() because C's prinv() emits via pline()
+            // and so MERGES onto the "gets dull." topline (our prinv() would
+            // overwrite it).
+            obj_extract_self(stylus);
+            const oquan = stylus.quan;
+            stylus = ctx.stylus = addinv(stylus);
+            await update_topl(prinv_fmt(null, stylus, oquan));
+        } else if (dulled && stylus.known) {
             // prinv() -> pline(): the refreshed "b - a -1 dagger" line pages the
             // "gets dull" line above it with --More--.
             await update_topl(prinv_fmt(null, stylus, 1));

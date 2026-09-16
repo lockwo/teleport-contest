@@ -15,7 +15,9 @@ import {
     EXPL_NOXIOUS, EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY,
     MAY_HITMON, MAY_HITYOU, MAY_DESTROY, MAY_FRACTURE,
     N_DIRS, xdir, ydir,
+    DIED, BURNING, PLNMSG_CAUGHT_IN_EXPLOSION, PLNMSG_TOWER_OF_FLAME,
 } from './const.js';
+import { iflags } from './pline.js';
 import {
     AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_DRST,
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
@@ -427,11 +429,16 @@ export async function explode(x, y, type, dam, olet, expltype) {
 
     /* Do your injury last */
     if (uhurt) {
-        if (game.flags?.verbose !== false && (type < 0 || olet !== SCROLL_CLASS))
+        if (game.flags?.verbose !== false && (type < 0 || olet !== SCROLL_CLASS)) {
             await update_topl(`You are caught in the ${str}!`);
+            // C ref: explode.c:603 — the fatal line below reads this back to
+            // decide between "It is fatal." and "The <str> is fatal.".
+            iflags.last_msg = PLNMSG_CAUGHT_IN_EXPLOSION;
+        }
         if (Invulnerable()) {
             damu = 0;
             await update_topl('You are unharmed!');
+            iflags.last_msg = 0; /* PLNMSG_UNKNOWN — pline() clears it */
         } else if (adtyp === AD_PHYS || adtyp === AD_ACID) {
             damu = Maybe_Half_Phys(damu);
         }
@@ -452,8 +459,12 @@ export async function explode(x, y, type, dam, olet, expltype) {
         await monstseesu_ad(adtyp, uhurt !== 1);
 
         if ((u.uhp | 0) <= 0 || (Upolyd() && (u.mh | 0) <= 0)) {
-            if (!Upolyd()) {
-                u.uhp = 0;
+            if (Upolyd()) {
+                // C ref: explode.c:642 — a polymorphed hero whose mh runs out
+                // reverts instead of dying.
+                const { rehumanize } = await import('./polyself.js');
+                await rehumanize();
+            } else {
                 // C ref: explode.c:640-668 — the killer string depends on who
                 // set off the blast.  KILLED_BY_AN is 0 (hack.h:602); the old
                 // port wrote 2 (NO_KILLER_PREFIX) here and dropped "Killed by".
@@ -470,7 +481,27 @@ export async function explode(x, y, type, dam, olet, expltype) {
                     const an = (/^tower of flame$/i.test(str) || /^fireball$/i.test(str));
                     game.killer = { name: str, format: an ? 0 : 1 };
                 }
-                await update_topl(`The ${str} is fatal.`);
+                // C ref: explode.c:667-671 — when the blast's own "You are
+                // caught in the <str>!" was the last message printed, C appends
+                // the pronoun form to that same topline; otherwise it names the
+                // explosion again.  The port only ever emitted the second form,
+                // so a gas-spore death read "The gas spore's explosion is
+                // fatal." where C reads "...explosion!  It is fatal.".
+                if (iflags.last_msg === PLNMSG_CAUGHT_IN_EXPLOSION
+                    || iflags.last_msg === PLNMSG_TOWER_OF_FLAME)
+                    await update_topl('It is fatal.');
+                else
+                    await update_topl(`The ${str} is fatal.`);
+                // C ref: explode.c:674 `done((adtyp == AD_FIRE) ? BURNING
+                // : DIED)`.  The port stopped at the message and clamped uhp to
+                // 0, so the hero walked on with 0 HP and every later step
+                // diverged; the whole end-of-game sequence (the wizard-mode
+                // "Die?" query, the disclosure chain, "Save bones?") was never
+                // reached.  u.uhp keeps C's negative value: bot() has not run
+                // since the damage, so rows 22/23 still show the pre-blast
+                // snapshot until done() redraws them.
+                const { done } = await import('./end.js');
+                await done(adtyp === AD_FIRE ? BURNING : DIED);
             }
         }
         const { exercise } = await import('./attrib.js');

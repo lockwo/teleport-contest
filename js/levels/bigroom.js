@@ -5,7 +5,7 @@
 import {
     ARROW_TRAP, CLOUD, COLNO, CROSSWALL, FILL_NONE, FIRE_TRAP, FOUNTAIN, HOLE, HWALL, ICE,
     IRONBARS, IS_DOOR, IS_FURNITURE, IS_LAVA, IS_ROOM, IS_STWALL, IS_TREE, LAVAPOOL, LAVAWALL,
-    LEVEL_TELEP, MAGIC_PORTAL, MATCH_WALL, MOAT, NO_ROOM, NO_TRAP, OROOM, PIT, POLY_TRAP,
+    LADDER, LEVEL_TELEP, MAGIC_PORTAL, MATCH_WALL, MOAT, NO_ROOM, NO_TRAP, OROOM, PIT, POLY_TRAP,
     POOL, ROCKTRAP, ROLLING_BOULDER_TRAP, ROOM, ROOMOFFSET, ROWNO, SLP_GAS_TRAP, SPIKED_PIT,
     STAIRS, STATUE_TRAP, STONE, TELEP_TRAP, TRAPNUM, TRAPPED_CHEST, TRAPPED_DOOR, TREE,
     VIBRATING_SQUARE, VWALL, WATER, WEB, W_NONDIGGABLE, isok,
@@ -291,7 +291,15 @@ function bigrm_traptype_rnd(lvl) {
 //   dlvl 12, lvl(12) <= rnd(4)(<=4) is always false -> no victim placed,
 //   but the rnd(4) draw still happens.
 async function bigrm_trap(boulder = false) {
-    const c = bigrm_get_location_dry();
+    // C ref: sp_lev.c create_trap():1826-1832 — the croom==NULL arm re-rolls the
+    // whole location whenever it lands on a stairway; get_location() itself
+    // accepts STAIRS/LADDER (SPACE_POS is true for both).
+    let c = bigrm_get_location_dry();
+    for (let trycnt = 0; trycnt <= 100; trycnt++) {
+        const typ = game.level?.at(c.x, c.y)?.typ;
+        if (typ !== STAIRS && typ !== LADDER) break;
+        c = bigrm_get_location_dry();
+    }
     let kind;
     if (boulder) {
         kind = 7; /* ROLLING_BOULDER_TRAP — bigrm-11 forces this type */
@@ -306,18 +314,19 @@ async function bigrm_trap(boulder = false) {
     // makemon consumes the spider's full creation RNG (m_id/newmonhp/gender/
     // m_initinv/saddle) BEFORE the victim-check rnd(4) below.
     const WEB = 18;
-    const realKind = t ? (t.ttyp ?? kind) : 0; // NO_TRAP if maketrap failed
+    const realKind = t ? (t.ttyp ?? kind) : NO_TRAP; // maketrap refused the square
     if (realKind === WEB) {
         const spiderIdx = name_to_pmidx('giant spider');
         const spider = monster_by_pmidx(spiderIdx);
         if (spider) makemon(spider, c.x, c.y, 0 /* NO_MM_FLAGS */);
     }
-    // C ref: mklev.c mktrap victim check (mklev.c:2137).  The `lvl <= rnd(4)`
-    // term comes BEFORE the trap-type terms in the && chain, so rnd(4) is
-    // ALWAYS drawn (in_mklev is true during makelevel, kind != NO_TRAP here),
-    // regardless of trap type.  On dlvl 12, lvl(12) <= rnd(4)(<=4) is always
-    // false -> no victim placed, but the rnd(4) draw still happens.
-    rnd(4);
+    // C ref: mklev.c mktrap victim check (mklev.c:2135-2137).  `lvl <= rnd(4)`
+    // comes before the trap-KIND terms, so the draw happens whatever the type —
+    // but it comes AFTER `kind != NO_TRAP`, and mktrap re-reads kind from
+    // maketrap()'s return.  A refused square (bigrm-5 turns 2% of the floor,
+    // grown, into CLOUD, which IS_AIR rejects) therefore consumes NO rnd(4).
+    // On dlvl 10-12, lvl <= rnd(4)(<=4) is always false -> never a victim.
+    if (realKind !== NO_TRAP) rnd(4);
 }
 
 // C ref: sp_lev.c create_object() (random object, random location).

@@ -65,11 +65,10 @@ import { mkcorpstat, mkobj, mksobj, CORPSE, FIGURINE, place_object, WEAPON_CLASS
          STRANGE_OBJECT, ARMOR_CLASS } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { mon_nocorpse, undead_to_corpse, name_to_pmidx } from './makemon.js';
-// C ref: mplayer.js:216-222 — exper.js's rank_of() is keyed by the TRUE mons[]
-// offset from PM_ARCHEOLOGIST (its own PM_ROGUE=8/PM_RANGER=7 constants match
-// roles[].mnum); role.js's same-named rank_of() instead indexes its roles[]
-// ARRAY directly, and that array has Rogue/Ranger swapped relative to mons[]
-// order, so it answers the wrong role for exactly those two.
+// C ref: mplayer.js:216-222 — exper.js's rank_of() is keyed by the true mons[]
+// offset (PM_ROGUE=8/PM_RANGER=7 match roles[].mnum); role.js's own rank_of()
+// indexes its roles[] array directly instead, which has Rogue/Ranger swapped,
+// so it returns the wrong role for exactly those two.
 import { more_experienced, newexplevel, rank_of } from './exper.js';
 import { gethungry } from './allmain.js';
 import { is_weptool, objectBaseName, simple_typename, is_plural, otense,
@@ -95,20 +94,17 @@ function is_longworm(mdat) {
 }
 
 // C ref: include/mondata.h passes_walls(ptr) = (mflags1 & M1_WALLWALK).
-// do_attack()'s pet-swap `foo` reads this: a phasing peaceful/tame monster
-// standing where the hero is inside rock is NOT a reason to stop, so getting
-// it wrong picks the wrong arm of the flee/"doesn't move"/swap three-way
-// (rnd(6) monflee vs rn2(6) vs nothing).
+// do_attack()'s pet-swap `foo` reads this: a phasing peaceful/tame monster in
+// rock is NOT a reason to stop — getting it wrong picks the wrong arm of the
+// flee/"doesn't move"/swap three-way (rnd(6) monflee vs rn2(6) vs nothing).
 function passes_walls(mdat) {
     return (mflags1_of(mdat) & M1_WALLWALK) !== 0;
 }
 
-// C ref: display.c is_safemon() macro (include/display.h:159):
-//   flags.safe_dog && mpeaceful && canspotmon && !Confusion
-//   && !Hallucination && !Stunned.
-// safe_dog defaults ON; the early sessions don't disable it.  The hero isn't
-// confused/hallucinating/stunned at the bump moment, so those props (not yet
-// modelled) read as their default-false.
+// C ref: display.c is_safemon() macro (include/display.h:159): flags.safe_dog
+// && mpeaceful && canspotmon && !Confusion && !Hallucination && !Stunned.
+// safe_dog defaults ON and stays so in these sessions; Confusion/Hallucination/
+// Stunned aren't modelled yet, so they read as default-false.
 export function canspotmon(mtmp) {
     if (!mtmp) return false;
     // Blind/telepathy not modelled in the starter state; a lit-room adjacent
@@ -131,20 +127,18 @@ export function is_safemon(mtmp) {
               && !Confusion && !Hallucination && !Stunned);
 }
 
-// C ref: monmove.c:461 monflee(mtmp, fleetime, first, fleemsg) — the
-// bookkeeping half.  Both callers of this copy (do_attack's pet-in-the-way
-// scare and muse.c's use_scare_monster) pass fleemsg == FALSE, so the message
-// ladder and the vrock gas cloud (which monmove.js's copy has) are not needed;
-// everything else must match, in particular:
-//   - first == FALSE means the body runs even when the monster is ALREADY
-//     fleeing, accumulating onto the existing mfleetim;
+// C ref: monmove.c:461 monflee(mtmp, fleetime, first, fleemsg) — bookkeeping
+// half only; both callers here (do_attack's pet-in-the-way scare, muse.c's
+// use_scare_monster) pass fleemsg==FALSE, so the message ladder and vrock gas
+// cloud (which monmove.js's copy has) aren't needed. Must still match:
+//   - first==FALSE runs the body even if already fleeing, accumulating onto
+//     the existing mfleetim;
 //   - a resulting fleetime of exactly 1 is bumped to 2;
-//   - mon_track_clear() runs UNCONDITIONALLY at the end.
-// The last one is RNG-visible: the breadcrumb ring gates m_move's
-// `rn2(4 * (cnt - j))` and dog_move's `rn2(MTSZ * (k - j))` backtrack rolls, so
-// failing to clear it sends the fleeing pet to a different square (seed0014's
-// dog ended 3 squares from the hero instead of adjacent, which flipped
-// dog_goal's appr from 0 to 1 and skipped its whole inventory obj_resists scan).
+//   - mon_track_clear() runs UNCONDITIONALLY at the end — RNG-visible: it
+//     gates m_move's rn2(4*(cnt-j)) and dog_move's rn2(MTSZ*(k-j)) backtrack
+//     rolls, so skipping it moved a fleeing pet to the wrong square
+//     (seed0014: pet ended 3 squares off instead of adjacent, flipping
+//     dog_goal's appr 0->1 and skipping its obj_resists scan).
 export function monflee(mtmp, fleetime, first, _fleemsg) {
     if (DEADMONSTER(mtmp)) return;
     // (mtmp == u.ustuck -> release_hero(): neither caller can be the engulfer.)
@@ -163,11 +157,10 @@ export function monflee(mtmp, fleetime, first, _fleemsg) {
 }
 
 // ── do_attack ──
-// C ref: uhitm.c do_attack(struct monst *mtmp) — try to attack the monster at
-// <u.ux+u.dx, u.uy+u.dy>.  Returns TRUE if hero movement is used up, FALSE if
-// the monster evaded (so domove falls through to the swap-places logic).
-//
-// u.dx / u.dy must already be set by the caller (domove).
+// C ref: uhitm.c do_attack(struct monst *mtmp) — attack the monster at
+// <u.ux+u.dx, u.uy+u.dy> (u.dx/u.dy set by the caller, domove). Returns TRUE
+// if the hero's move is used up, FALSE if the monster evaded (domove falls
+// through to swap-places).
 export async function do_attack(mtmp) {
     const u = game.u;
     // C ref: hack.h `#define Punished (uball != 0)`.  This is the FIRST term of
@@ -251,12 +244,11 @@ export async function do_attack(mtmp) {
     return await hostile_attack(mtmp);
 }
 
-// C ref: include/permonst.h mons[].mmove — species base movement rate.  This
-// feeds do_attack()'s `mtmp->data->mmove == 0 && rn2(6)`, and MONS[] carries no
-// mmove field, so the old `?? 1` fallback made that rn2(6) unreachable for
-// EVERY monster.  The sessile species (molds, blue/spotted jelly, lichen's
-// mmove==0 neighbours, shriekers' 1) can be peaceful for a co-aligned hero, so
-// walking into one really does roll here.  mon.js owns the audited table.
+// C ref: include/permonst.h mons[].mmove — feeds do_attack()'s
+// `mtmp->data->mmove==0 && rn2(6)`. The old `?? 1` fallback (MONS[] has no
+// mmove field) made that rn2(6) unreachable for every monster; sessile species
+// (molds, jellies, lichen, shriekers) can be peaceful for a co-aligned hero,
+// so this roll does fire. mon.js owns the audited table.
 function movement_rate(mtmp) {
     return base_mmove(mtmp);
 }
@@ -301,13 +293,12 @@ async function overexert_hp() {
     }
 }
 
-// C ref: hack.c overexertion() — "combat increases metabolism".  Called by
-// do_attack() before the swing.  Always calls the real gethungry() (the same
-// per-turn function allmain.js's moveloop calls) — an EXTRA nutrition burn on
-// top of the once-per-turn drain, so an attack turn costs 2 hunger instead of
-// 1.  The overexert_hp() arm was previously hardcoded away as "never fires for
-// the unencumbered starter hero": it fires on 2 turns in 3 for ANY hero at
-// Strained or worse, and its exercise(A_CON, FALSE) draws rn2(2).
+// C ref: hack.c overexertion() — "combat increases metabolism", called by
+// do_attack() before the swing. Always calls the real gethungry() (same
+// per-turn fn moveloop calls) — an EXTRA burn, so an attack turn costs 2
+// hunger not 1. overexert_hp() was previously hardcoded away as "never fires
+// for the unencumbered starter hero": it actually fires 2 turns in 3 at
+// Strained+, drawing rn2(2) via exercise(A_CON, FALSE).
 export async function overexertion() {
     gethungry(); // hack.c:3056 — "consume extra nutrition during combat"
     if (((game.moves || 0) % 3) !== 0 && near_capacity() >= HVY_ENCUMBER)
@@ -330,11 +321,10 @@ function canseemon(mtmp) {
     return !!cansee(mtmp.mx, mtmp.my);
 }
 
-// C ref: mondata.h hides_under(ptr) = (mflags1 & M1_CONCEAL).  Same pmidx set
-// as monmove.js's hides_under_pm (cave spider, centipede, scorpion, garter
-// snake, snake, water moccasin, pit viper, cobra); duplicated locally rather
-// than imported to avoid a uhitm.js<->monmove.js import cycle (monmove.js
-// already imports several names from this file).
+// C ref: mondata.h hides_under(ptr) = (mflags1 & M1_CONCEAL); same pmidx set
+// as monmove.js's copy (cave spider, centipede, scorpion, garter snake, snake,
+// water moccasin, pit viper, cobra), duplicated locally to avoid a
+// uhitm.js<->monmove.js import cycle (monmove.js already imports from here).
 const M1_CONCEAL_PMIDX = new Set([94, 95, 97, 214, 215, 216, 218, 219]);
 function hides_under_pm(ptr) {
     return ptr != null && M1_CONCEAL_PMIDX.has(ptr.pmidx);
@@ -355,11 +345,10 @@ export function glyph_is_invisible(x, y) {
 // glyph.
 function glyph_is_warning() { return false; }
 
-// C ref: makemon.c FURNSYMS[] explanation text for the 6 furniture
-// appearances set_mimic_sym() can assign a mimic (up/down staircase, altar,
-// grave, throne, sink).  Same table as hack.js's FURNITURE_EXPLANATION
-// (duplicated locally: hack.js imports from this file, so the reverse import
-// would cycle).
+// C ref: makemon.c FURNSYMS[] — explanation text for the 6 furniture
+// disguises set_mimic_sym() can assign (stairs up/down, altar, grave, throne,
+// sink). Same table as hack.js's FURNITURE_EXPLANATION, duplicated locally
+// since hack.js imports from this file (reverse import would cycle).
 const FURNITURE_EXPLANATION = {
     25: 'staircase up',
     26: 'staircase down',
@@ -369,17 +358,16 @@ const FURNITURE_EXPLANATION = {
     36: 'sink',
 };
 
-// C ref: display.c map_object's fake `obj` for an M_AP_OBJECT mimic never sets
-// oclass (display.h's cg.zeroobj copy), so obj_is_generic()'s gem/glass and
-// spellbook tests -- which key off otyp, not oclass -- still fire, while its
-// oclass==POTION_CLASS test never can (oclass stays 0).  The resulting glyph
-// (GLYPH_OBJ_OFF + oclass(0)) is numerically the same as otyp 0 (STRANGE_
-// OBJECT)'s own normal glyph, so every reader of "the glyph at this square"
-// (pager.c mhidden_description, uhitm.c that_is_a_mimic via object_from_map)
-// sees a strange object, not the disguise's true type -- for a gem/glass-gem
-// or ordinary spellbook, never for a potion.  Same otyp ranges as js/display.js
-// monster_glyph() (duplicated locally there too; that file can't import this
-// one without a cycle).
+// C ref: display.c map_object's fake `obj` for an M_AP_OBJECT mimic never
+// sets oclass (cg.zeroobj copy), so obj_is_generic()'s gem/glass and
+// spellbook tests (keyed on otyp, not oclass) still fire while the
+// oclass==POTION_CLASS test never can. The resulting glyph is numerically the
+// same as otyp 0 (STRANGE_OBJECT)'s glyph, so every reader of "the glyph at
+// this square" (pager.c mhidden_description, uhitm.c that_is_a_mimic via
+// object_from_map) sees a strange object instead of the disguise's true
+// type — for a gem/glass-gem or ordinary spellbook, never a potion. Same otyp
+// ranges as js/display.js monster_glyph() (duplicated there too; can't
+// import without a cycle).
 const MIMIC_FIRST_SPELL = 366, MIMIC_LAST_SPELL = 407;         // SPE_DIG..SPE_BLANK_PAPER
 const MIMIC_FIRST_REAL_GEM = 439, MIMIC_LAST_GLASS_GEM = 469;  // DILITHIUM_CRYSTAL..WORTHLESS_VIOLET_GLASS
 function mimic_disguise_collapses_to_strange(otyp) {
@@ -406,21 +394,17 @@ function mimic_reveal_what(mtmp) {
 }
 
 // C ref: uhitm.c that_is_a_mimic(mtmp, MIM_REVEAL) — the "That <disguise> is
-// really/actually a <mimic>!" reveal line.  Reduced to the M_AP_OBJECT/
-// M_AP_FURNITURE cases this port's mimics ever carry (set_mimic_sym never
-// assigns M_AP_MONSTER); the Blind branch falls back to C's own generic
-// "Wait!  That's a monster!" (Blind_telepat is never true — no telepathy is
-// modeled, matching sensemon()'s stub above).
+// really/actually a <mimic>!" line, reduced to the M_AP_OBJECT/M_AP_FURNITURE
+// cases this port's mimics carry (set_mimic_sym never assigns M_AP_MONSTER);
+// Blind falls back to C's generic "Wait!  That's a monster!" (Blind_telepat
+// is never true — no telepathy modeled, matching sensemon()'s stub above).
 // C ref: pager.c object_from_map(glyph, x, y, &obj_p) — reduced to the
-// M_AP_OBJECT-mimic case that_is_a_mimic() needs.  If a REAL floor object of
-// the disguise's exact type already sits on the mimic's square, C names that
-// (no RNG).  Otherwise it builds a throwaway object via mksobj(glyphotyp,
-// FALSE, FALSE) purely to name/pluralize the disguise — critically, mksobj
-// ALWAYS assigns o_id via next_ident(), which rolls rnd(2), regardless of the
-// FALSE init arg.  This roll is NOT optional: skipping it desyncs every RNG
-// draw for the rest of the game (the bug a previous, reverted attempt at this
-// fix hit).  The temporary object is never placed on the floor or added to
-// any list, matching C's dealloc_obj() cleanup (left to the GC here).
+// M_AP_OBJECT case. A real floor object of the disguise's exact type is
+// named directly (no RNG); otherwise a throwaway mksobj(glyphotyp, FALSE,
+// FALSE) names/pluralizes it — mksobj ALWAYS assigns o_id via next_ident(),
+// rolling rnd(2) regardless of the FALSE init arg. This roll is NOT optional:
+// skipping it desyncs every later RNG draw (a previous, reverted attempt hit
+// this). The temp object is never placed/listed, matching C's dealloc_obj().
 function object_from_map_lite(mtmp) {
     const otyp = mtmp.mappearance;
     const real = (game.level?.objects || []).find(
@@ -454,14 +438,12 @@ function that_is_a_mimic_message(mtmp) {
     return fmtbuf.replace('%s', mimic_reveal_what(mtmp));
 }
 
-// C ref: mon.c wakeup(mtmp, via_attack) — reduced to the pieces attack_checks
+// C ref: mon.c wakeup(mtmp, via_attack) — reduced to what attack_checks
 // needs: the "<Mon> wakes up!"/"." message (gated on canseemon, using the
-// PRE-reset msleeping value) and un-mimicking (mimics/hiders always drop
-// their disguise on wakeup here; the M_AP_MONSTER "keep disguise" exception
-// never applies since this port's mimics never carry that appearance type).
-// The via_attack aftermath (growl/setmangry/ghod_hitsu/hot_pursuit) isn't
-// modeled — no covered session reaches a hostile-turn/temple/shop reaction
-// from this path yet.
+// PRE-reset msleeping value) and un-mimicking (the M_AP_MONSTER "keep
+// disguise" exception never applies — this port's mimics never carry that
+// appearance type). The via_attack aftermath (growl/setmangry/ghod_hitsu/
+// hot_pursuit) isn't modeled — no covered session reaches that path yet.
 export async function wakeupAttack(mtmp, viaAttack) {
     const wasSleeping = !!mtmp.msleeping;
     if (wasSleeping && canseemon(mtmp)) {
@@ -492,14 +474,9 @@ export async function wakeupAttack(mtmp, viaAttack) {
     }
 }
 
-// C ref: mon.c setmangry(mtmp, via_attack) — the hero attacked mtmp.  RNG-free
-// unless the hero stands on an Elbereth engraving (rnd(5) alignment penalty).
-//
-// peacefuls_respond() (mon.c:4160) is NOT ported: it draws rn2(5) + a
-// ROLL_FROM() + rn2(10)/rn2(50) per witness, and a witness needs a SECOND
-// non-mindless peaceful monster that is awake, can see the hero, and is in
-// line of sight.  Porting it needs the MS_* msound enum, which this tree does
-// not carry symbolically; a guessed table would silently answer FALSE.
+// C ref: mon.c setmangry(mtmp, via_attack) — the hero attacked mtmp; RNG-free
+// unless standing on an Elbereth engraving (rnd(5) alignment penalty).
+// peacefuls_respond() (mon.c:4160) is NOT ported — see the note further down.
 export async function setmangry(mtmp, via_attack) {
     const { update_topl: pline } = await import('./display.js');
     const u = game.u;
@@ -536,16 +513,15 @@ export async function setmangry(mtmp, via_attack) {
     // else growl(mtmp): deliberately silent here — sounds.c growl() is RNG-free
     // and its topline lands where C's does not (measured on seed0030).
 
-    // C ref: mon.c:4247 — `if (!svc.context.mon_moving) peacefuls_respond(mtmp)`.
-    // STILL UNPORTED, and it is the largest remaining RNG hole in this file: for
-    // every awake, non-mindless peaceful witness in line of sight it can draw
-    // rn2(5) + ROLL_FROM(Exclam) (another rn2(5)), rn2(10), rn2(50), or in the
-    // same-monster-class arm rn2(3)/rn2(4)/rn2(6)/rn2(25).  Porting it needs
-    // maybe_gasp()'s MS_* switch (monflags_data.js has the audited MSOUND table
-    // but this tree carries no symbolic MS_* enum) and big_little_match(), whose
-    // grownups[] walk is file-static in makemon.js.  A guessed MS_* mapping
-    // would silently answer "no gasp" and drop the rn2(5) — the exact failure
-    // mode the wrong-constant sweep documents — so it is left explicit.
+    // C ref: mon.c:4247 `if (!svc.context.mon_moving) peacefuls_respond(mtmp)` —
+    // STILL UNPORTED; the largest remaining RNG hole in this file. Per awake,
+    // non-mindless peaceful witness in sight it can draw rn2(5)+ROLL_FROM(Exclam)
+    // (another rn2(5)), rn2(10), rn2(50), or (same-class arm) rn2(3)/rn2(4)/
+    // rn2(6)/rn2(25). Needs maybe_gasp()'s MS_* switch (monflags_data.js has the
+    // audited MSOUND table but no symbolic MS_* enum here) and big_little_match()
+    // (grownups[] walk, file-static in makemon.js). A guessed MS_* mapping would
+    // silently answer "no gasp" and drop the rn2(5) — the wrong-constant-sweep
+    // failure mode — so left explicit.
 }
 
 // C ref: engrave.c sengr_at("Elbereth", x, y, TRUE) — a legible Elbereth
@@ -558,13 +534,11 @@ function engraving_says_elbereth(x, y) {
 
 
 
-// C ref: uhitm.c stumble_onto_mimic(mtmp) — the hero has bumped into (or
-// force-attacked) a disguised mimic for the first time: reveal it (message +
-// seemimic), then silently wake it (via_attack=FALSE: the "wakes up" framing
-// belongs to a fresh attack, not this reveal).  This whole call consumes the
-// hero's turn with NO swing — do_attack/attack_checks returns TRUE so the
-// caller skips hitum() entirely this turn.
-async function stumble_onto_mimic(mtmp) {
+// C ref: uhitm.c stumble_onto_mimic(mtmp) — first bump/force-attack on a
+// disguised mimic: reveal it (message + seemimic), then silently wake it
+// (via_attack=FALSE — "wakes up" framing belongs to a fresh attack, not this
+// reveal). Consumes the whole turn with no swing (attack_checks returns TRUE).
+export async function stumble_onto_mimic(mtmp) {
     const { pline } = await import('./display.js');
     const msg = that_is_a_mimic_message(mtmp);
     // uhitm.c:6269-6275 — pline() FIRST, `if (reveal_it) seemimic(mtmp)` after.
@@ -585,11 +559,10 @@ async function stumble_onto_mimic(mtmp) {
 }
 
 // C ref: uhitm.c attack_checks(mtmp, wep) — pre-swing special cases: engulf,
-// forcefight, hidden/invisible-monster reveal, mimic reveal, undetected-hider
-// reveal, and (peaceful "Really attack?" confirm — needs an interactive
-// prompt the recorded input streams can't drive, not modeled).  Returns TRUE
-// when the "attack" is fully resolved here (do_attack must return
-// immediately, no swing this turn); FALSE means fall through to hitum().
+// forcefight, hidden/invisible reveal, mimic reveal, undetected-hider reveal;
+// peaceful "Really attack?" confirm not modeled (needs an interactive prompt
+// the recorded streams can't drive). TRUE = attack fully resolved here (no
+// swing this turn); FALSE = fall through to hitum().
 export async function attack_checks(mtmp) {
     // uhitm.c:216 — clear the monster's "waiting for you" AI flag now that
     // you're adjacent enough to attack it (STRAT_WAITMASK = 0x00ff0000).
@@ -892,11 +865,11 @@ const P_DAGGER = 1, P_KNIFE = 2, P_AXE = 3, P_PICK_AXE = 4,
       P_QUARTERSTAFF = 15, P_POLEARMS = 16, P_SPEAR = 17, P_TRIDENT = 18,
       P_LANCE = 19, P_BOW = 20, P_DART = 23;
 
-// otyp -> { ws, wl, hb, sk }.  otyp values match mkobj.js objects[] indices.
-// C ref: weapon.c objects[otyp].oc_wldam — large-monster damage die; used by
-// lock.c forcelock() to derive the lock-forcing chance (oc_wldam * 2).
-// WEAP below is a 20-entry hand-written subset; the generated table is complete
-// (war hammer 76 is absent from WEAP, so doforce()'s chance was 0 -> never succeeds).
+// otyp -> { ws, wl, hb, sk }; otyp values match mkobj.js objects[] indices.
+// C ref: weapon.c objects[otyp].oc_wldam — large-monster damage die, used by
+// lock.c forcelock() (oc_wldam * 2) for the lock-forcing chance. WEAP is a
+// 20-entry hand-written subset; the generated table is complete (war hammer
+// 76 is absent from WEAP, so doforce()'s chance was 0 -> never succeeds).
 export function oc_wldam(otyp) { return WEP_LDAM[otyp] ?? WEAP[otyp]?.wl ?? 0; }
 
 const WEAP = {
@@ -923,12 +896,11 @@ const WEAP = {
 };
 
 
-// C ref: weapon.c weapon_hit_bonus(weapon) — skill-based to-hit modifier.  The
-// per-branch tables were previously collapsed to the constants a Basic-skilled
-// starter wielder produces (0 / -9 / -1), which silently answered "Basic" for
-// every skill level: an Unskilled discipline is -4, a Skilled one +2, Expert
-// +3, and the riding penalty is -2 for an Unskilled rider plus another -2 while
-// two-weaponing.  P_SKILL now comes from enhance.js's live array.
+// C ref: weapon.c weapon_hit_bonus(weapon) — skill-based to-hit modifier.
+// Previously collapsed to the Basic-skilled starter's constants (0/-9/-1),
+// silently answering "Basic" for every level: Unskilled is -4, Skilled +2,
+// Expert +3; riding adds -2 for an Unskilled rider, another -2 while
+// two-weaponing. P_SKILL now comes from enhance.js's live array.
 async function weapon_hit_bonus(weapon) {
     const u = game.u;
     const { p_skill_of } = await import('./enhance.js');
@@ -969,12 +941,11 @@ const PM_KNIGHT = 4;
 function Role_if_KNIGHT() { return roleMnum() === PM_KNIGHT; }
 function Role_if_SAMURAI() { return roleMnum() === PM_SAMURAI; }
 
-// C ref: uhitm.c check_caitiff(mtmp) — a lawful Knight who strikes a helpless
-// or fleeing foe, or a Samurai who strikes a peaceful one, loses an alignment
-// point.  Called from find_roll_to_hit on the FIRST swing only.  Was entirely
-// unported: adjalign() moves u.ualign.record, which is the MODULUS of
-// peace_minded()'s rn2(16 + u.ualign.record) for every monster generated
-// afterwards (the same mechanism killed() documents below).
+// C ref: uhitm.c check_caitiff(mtmp) — a lawful Knight striking a helpless or
+// fleeing foe, or a Samurai striking a peaceful one, loses an alignment point
+// (called on the FIRST swing only). Was entirely unported: adjalign() moves
+// u.ualign.record, the MODULUS of peace_minded()'s rn2(16 + record) for every
+// later monster (same mechanism as killed() below).
 export async function check_caitiff(mtmp) {
     const u = game.u;
     if ((u.ualign?.record ?? 0) <= -10) return;
@@ -1164,11 +1135,11 @@ async function missum(mon) {
     if (!mon.msleeping && mon.mcanmove) await wakeupAttack(mon, true);
 }
 
-// C ref: uhitm.c hmon(mon, obj, thrown, dieroll) — the thin wrapper around
-// hmon_hitmon().  Was collapsed into hmon_hitmon, which dropped an RNG call:
-// hitting a priest rolls rn2(2) whether or not the ghod_hitsu() aftermath does
-// anything.  (ghod_hitsu() itself needs in_rooms(TEMPLE), globally stubbed
-// empty in this port, so it returns immediately; angry_guards() is RNG-free.)
+// C ref: uhitm.c hmon(mon, obj, thrown, dieroll) — thin wrapper around
+// hmon_hitmon(). Was collapsed into hmon_hitmon, dropping an RNG call:
+// hitting a priest rolls rn2(2) regardless of whether ghod_hitsu()'s
+// aftermath does anything (ghod_hitsu() needs in_rooms(TEMPLE), stubbed
+// empty here, so it returns immediately; angry_guards() is RNG-free).
 async function hmon(mon, weapon, dieroll) {
     const result = await hmon_hitmon(mon, weapon, dieroll);
     if (mon.ispriest && !rn2(2)) {
@@ -1190,6 +1161,10 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     // C ref: uhitm.c:1769 `hmd.train_weapon_skill = FALSE;` — only overridden
     // below for the ordinary hand-to-hand weapon branch.
     let force_no_train = false;
+    // C ref: uhitm.c:1777 `hmd.hittxt = FALSE;` — set by an arm that already
+    // gave its own feedback, which suppresses hmon_hitmon_msg_hit()'s
+    // "You hit <mon>" (uhitm.c:1642).
+    let hittxt = false;
     if (unarmed) {
         // hmon_hitmon_barehands (uhitm.c:847): dmg = rnd(martial ? 4 : 2).
         dmg = rnd(martial_bonus() ? 4 : 2);
@@ -1231,6 +1206,20 @@ async function hmon_hitmon(mon, weapon, dieroll) {
                 dmg += Math.min(3, Math.trunc(died / 6));
             }
         }
+    } else if (weapon.oclass === POTION_CLASS) {
+        // C ref: uhitm.c:1421 hmon_hitmon_do_hit()'s POTION_CLASS arm — a
+        // wielded potion SHATTERS on the target instead of bludgeoning it.
+        // This arm was missing here (the faithful hmon_hitmon_do_hit() below
+        // has it, but nothing calls that), so bashing with a wielded potion
+        // dealt weight-based damage and skipped potionhit() entirely: no
+        // splitobj() rnd(2), no bottlename() rn2(7) and none of the breakage
+        // or per-otyp effect rolls.
+        const hmd = { hand_to_hand: true, mdat: mon.data, dmg: 0,
+                      hittxt: false, doreturn: false, retval: false };
+        await hmon_hitmon_potion(hmd, mon, weapon);
+        if (hmd.doreturn) return hmd.retval;
+        dmg = hmd.dmg;
+        hittxt = hmd.hittxt;
     } else {
         // C ref: uhitm.c hmon_hitmon_misc_obj() `default:` — wielding an
         // ordinary object still hurts, by its weight.  dmgval() returns 0 for
@@ -1371,7 +1360,11 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     const { update_topl } = await import('./display.js');
     const verbose = game.flags?.verbose !== false;
     const exclamU = (f) => (f < 0 ? '?' : (f <= 4 ? '.' : '!'));
-    if (!verbose)
+    // C ref: uhitm.c:1642 `if (!hmd->hittxt && ...)` — an arm that already
+    // spoke for itself (the potion smash) suppresses this line entirely.
+    if (hittxt) {
+        /* feedback already given by the damage arm */
+    } else if (!verbose)
         await update_topl('You hit it.');
     else if (canspotmon(mon))
         await update_topl(`You ${hit_verb(weapon)} ${mon_nam(mon)}${canseemon(mon) ? exclamU(dmg) : '.'}`);
@@ -1430,15 +1423,14 @@ export async function abuse_dog(mtmp) {
 }
 
 // C ref: uhitm.c passive(mon, weapon, mhit, malive, aatyp, wep_was_destroyed) —
-// the defender's passive counter-attack.  Walks mattk[] to the AT_NONE slot,
-// then rolls its damage dice UNCONDITIONALLY (before either switch, and even if
-// the monster just died).
+// defender's passive counter-attack. Walks mattk[] to the AT_NONE slot, then
+// rolls its damage dice UNCONDITIONALLY (before either switch, even if the
+// monster just died).
 //
-// The old body only kept the trailing `rn2(3)` on the grounds that the starter
-// victims' passive slot is damn==damd==0.  Every acid blob (1d8), jelly, mold
-// and floating eye (d(m_lev+1, damd)) has a real one, and those are among the
-// first monsters any hero meets: each swing at a blue jelly draws five rolls
-// here that this port was not making.
+// The old body kept only the trailing `rn2(3)`, assuming the starter victims'
+// passive slot is damn==damd==0. Acid blobs (1d8), jellies, molds, and the
+// floating eye (d(m_lev+1, damd)) all have a real one and are among the first
+// monsters any hero meets — each swing at a blue jelly was missing five rolls.
 
 // C ref: mhitm.c:1475 attk_protection(aatyp) — the worn slot that blocks
 // contact petrification for that attack form; ~0L ("always safe") is -1 here.
@@ -2123,14 +2115,13 @@ function experience(mtmp) {
     return tmp;
 }
 
-// C ref: mon.c corpse_chance(mon).  bigmonst/lizard (uncloned), golem, mplayer,
-// rider, shk all GUARANTEE a corpse and return TRUE with NO rn2 roll (mon.c:
-// 3246); only the ordinary case rolls rn2(2 + (G_FREQ<2) + verysmall).  Missing
-// the guaranteed-corpse short-circuit made JS roll an extra rn2 when killing a
-// big monster (seed4500 step-269: the MZ_HUGE earth elemental).  (The lich/Vlad
-// crumble, gas-spore AT_BOOM explosion, and LEVEL_SPECIFIC_NOCORPSE special
-// cases that precede this in C are not exercised by the corpse_chance kills in
-// the sessions and are intentionally not modeled here.)
+// C ref: mon.c corpse_chance(mon). bigmonst/lizard (uncloned), golem, mplayer,
+// rider, shk all GUARANTEE a corpse with NO rn2 roll (mon.c:3246); only the
+// ordinary case rolls rn2(2 + (G_FREQ<2) + verysmall). Missing that
+// short-circuit rolled an extra rn2 when killing a big monster (seed4500
+// step-269: the MZ_HUGE earth elemental). (lich/Vlad crumble, gas-spore
+// AT_BOOM, and LEVEL_SPECIFIC_NOCORPSE precede this in C but aren't exercised
+// by these sessions, so aren't modeled.)
 export function corpse_chance(mon) {
     const mdat = mon.data || {};
     const bigOrLizard = (largemonst(mdat) || mdat.name === 'lizard') && !mon.mcloned;
@@ -2208,11 +2199,10 @@ function hmon_misc_obj_dmg(obj) {
     return dmg;
 }
 
-// dmgval() now lives in js/weapon.js (weapon.c:216).  The copy that used to
-// sit here dropped the large-monster IRON_CHAIN case, the thick-skinned /
-// PM_SHADE zeroing, the HEAVY_IRON_BALL weight bonus and the silver rnd(20),
-// and gated the vs-monster bonus block on COIN_CLASS where C tests
-// GEM/BALL/CHAIN.
+// dmgval() now lives in js/weapon.js (weapon.c:216). The copy that used to
+// live here dropped the large-monster IRON_CHAIN case, the thick-skinned/
+// PM_SHADE zeroing, the HEAVY_IRON_BALL weight bonus, and the silver rnd(20),
+// and gated the vs-monster bonus on COIN_CLASS where C tests GEM/BALL/CHAIN.
 export { dmgval } from './weapon.js';
 
 // C ref: include/mondata.h bigmonst() / mons[].msize >= MZ_LARGE.
@@ -2455,21 +2445,15 @@ register_monnam_hooks({ x_monnam, mon_pmname });
 register_halluc_naming({ rndmonnam, bogon_is_pname });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// uhitm.c staging area — the remainder of the file.
+// uhitm.c staging area — ported but NOT WIRED (see file header). Translating
+// pieces the live path (do_attack -> hitum -> known_hitum -> hmon ->
+// hmon_hitmon) doesn't call yet pins their RNG order to the C source now, so
+// adopting one later is a wiring job, not a re-port.
 //
-// Everything past this line is a faithful port of the uhitm.c functions the
-// live melee path above (do_attack -> hitum -> known_hitum -> hmon ->
-// hmon_hitmon) does not call yet.  It is deliberately unreachable: the
-// hmon_hitmon() above is an inlined simplification of C's `struct
-// _hitmon_data` pipeline, and replacing it with these pieces is a separate,
-// measured change.  Translating them now pins each piece's RNG order to the C
-// source so that swap becomes a wiring job.
-//
-// Conventions in this block:
-//   * cross-module calls use dynamic import(), like the live code above, so
-//     nothing here can introduce a module-load cycle;
-//   * where the C callee has no port at all, the call site names it and names
-//     the RNG it would consume — those comments are the wiring blockers.
+// Conventions: cross-module calls use dynamic import(), like the live code
+// above (no module-load cycle); where the C callee has no port at all, the
+// call site names it and the RNG it would consume — those comments mark the
+// wiring blockers.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { ARTICLE_A, ARTICLE_YOUR, SUPPRESS_INVISIBLE, SUPPRESS_NAME,
@@ -2489,7 +2473,7 @@ import { attacktype_fordmg, AD_DRIN, AD_WRAP, AD_DGST, AD_HALU, AD_DREN,
          AT_BOOM } from './monattk_data.js';
 import { EGG, BOULDER, HEAVY_IRON_BALL, IRON_CHAIN, EXPENSIVE_CAMERA,
          LOADSTONE, ROCK, WAN_LIGHT, POTION_CLASS, BLINDING_VENOM, ACID_VENOM,
-         weight } from './mkobj.js';
+         weight, next_ident } from './mkobj.js';
 import { rnl, rn1 } from './rng.js';
 import { monster_by_pmidx } from './makemon.js';
 import { Mgender } from './do_name.js';
@@ -3020,22 +3004,25 @@ export async function hmon_hitmon_weapon(hmd, mon, obj) {
     }
 }
 
-// C ref: uhitm.c:1095 hmon_hitmon_potion(hmd, mon, obj) — bash with a potion.
-// potion.c potionhit() is where the RNG lives (breakage + effect); this port
-// only has potionhit_hero() (monster-thrown at the hero), so the hero-bash
-// direction is a wiring blocker.
+// C ref: uhitm.c:1095 hmon_hitmon_potion(hmd, mon, obj) — bash with a potion:
+// split one off the wielded stack, take it out of inventory, and smash it on
+// the target.  The RNG lives in potion.c potionhit() (bottlename + breakage +
+// the per-otyp effect).
 export async function hmon_hitmon_potion(hmd, mon, obj) {
     const I = await import('./invent.js');
-    if ((obj.quan ?? 1) > 1)
+    const { potionhit } = await import('./potion.js');
+    if ((obj.quan ?? 1) > 1) {
         obj = I.splitobj(obj, 1);
-    else
-        game.uwep = null;      /* wield.c setuwep(0); no port */
+        // C ref: mkobj.c splitobj():469 nextoid() -> next_ident() spends one
+        // rnd(2).  js/invent.js splitobj() is draw-free by convention, so each
+        // call site pays it (as eat.js touchfood() and dokick.js do).
+        next_ident();
+    } else {
+        I.setuwep_slot(null);           /* wield.c setuwep((struct obj *) 0) */
+    }
     I.freeinv(obj);
-    /* potion.c potionhit(mon, obj, hand_to_hand ? POTHIT_HERO_BASH
-       : POTHIT_HERO_THROW).  js/potion.js only has potionhit_hero() (a monster
-       throwing at the hero), so the hero-bashes-a-monster direction — and the
-       breakage/vapour RNG inside it — is a wiring blocker. */
-    void (hmd.hand_to_hand ? POTHIT_HERO_BASH : POTHIT_HERO_THROW);
+    await potionhit(mon, obj,
+                    hmd.hand_to_hand ? POTHIT_HERO_BASH : POTHIT_HERO_THROW);
     if (DEADMONSTER(mon)) {
         hmd.doreturn = true;
         hmd.retval = false;    /* killed */
@@ -3590,15 +3577,13 @@ export async function hmon_hitmon_msg_lightobj(hmd, mon, _obj) {
     await update_topl(fmt.replace('%s', whom));
 }
 
-// C ref: uhitm.c:1942 mhurtle_to_doom(mon, tmp, mptr) — a joust or martial-arts
-// punch knocks the target back, which may kill it (via a trap) before
-// known_hitum() gets the chance.  Returns TRUE if 'mon' died.
-//
-// The third C argument is `struct permonst **mptr`, the caller's cached
-// mon->data; this port passes the hmd record instead and writes hmd.mdat.
-// dothrow.c mhurtle() has no port (js/apply.js keeps an empty ap_hurtle()), so
-// the knockback itself — and the mintrap() at the landing square, which is
-// where the RNG is — is a wiring blocker.
+// C ref: uhitm.c:1942 mhurtle_to_doom(mon, tmp, mptr) — a joust or martial-
+// arts punch knocks the target back, possibly killing it (via a trap) before
+// known_hitum() gets the chance; returns TRUE if 'mon' died. The third C arg
+// is `struct permonst **mptr` (caller's cached mon->data); this port passes
+// the hmd record and writes hmd.mdat instead. dothrow.c mhurtle() has no port
+// (js/apply.js's ap_hurtle() is empty), so the knockback — and the
+// mintrap() RNG at the landing square — is a wiring blocker.
 export async function mhurtle_to_doom(mon, tmp, hmd) {
     /* only hurtle if the pending physical damage isn't going to kill mon */
     if (tmp < mon.mhp) {

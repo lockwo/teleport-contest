@@ -100,20 +100,36 @@ async function expire_stun() {
 }
 
 // C ref: potion.c make_blinded(0L, TRUE) — regaining sight prints
-// Your1(vision_clears) ("Your vision clears.") for an ordinary eyed hero whose
-// blindness simply ran out.  The Blindfolded and eyeless variants need a worn
-// blindfold / a polymorph form this port's blindness sources never combine
-// with.
+// You("can see again."), NOT Your1(vision_clears): `vision_clears` never
+// appears in make_blinded at all, only at the unrelated cream-pie/venom sites
+// (eat.c, engrave.c, mhitu.c, ...).  C picks the branch by probing whether
+// dropping the timer actually restores sight, so a blindfold / eyeless form /
+// the Eyes of the Overworld take the other arm.
 async function expire_blinded() {
     const u = game.u;
+    const { Blind } = await import('./vision.js');
+    // C ref: timeout.c:746 `set_itimeout(&HBlinded, 1L)` — the loop above has
+    // ALREADY decremented the timer to 0, so C puts it back to 1 before
+    // make_blinded()'s probe; without this u_could_see reads TRUE and the
+    // regaining-sight branch (the only one that talks) is never taken.
+    u.blinded = 1;
+    const u_could_see = !Blind();   // C: probe with HBlinded still set
     u.blinded = 0;
-    await update_topl('Your vision clears.');
+    const can_see_now = !Blind();   // C: probe with HBlinded cleared
+    if (can_see_now && !u_could_see) {
+        await update_topl(Hallucination()
+            ? 'Far out!  Everything is all cosmic again!'
+            : 'You can see again.');
+    }
+    // C's `else if (old && !xtime)` arm (the timer ran out but another source
+    // still blinds) branches to strange_feeling / the blindfold eyemsg / the
+    // Eyes-of-the-Overworld vismsg; all three need a worn blindfold or an
+    // eyeless polymorph form, which this port's blindness sources never reach.
     // C ref: timeout.c:747 `if (was_blind && !Blind) stop_occupation();` —
     // was_blind is necessarily true here (the timer just ran out), so the test
     // is whether some OTHER blindness source (blindfold, cream, eyeless form)
-    // still applies.
-    const { Blind } = await import('./vision.js');
-    if (!Blind()) await stop_occupation();
+    // still applies — i.e. exactly the can_see_now probed above.
+    if (can_see_now) await stop_occupation();
 }
 
 // C ref: potion.c make_hallucinated(0L, TRUE, 0L) — the display refresh and

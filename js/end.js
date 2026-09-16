@@ -545,6 +545,13 @@ async function done(how) {
             // the "You die..." --More-- has been paged; doing it earlier wiped
             // the map out from under those frames.
             if (bones_ok) {
+                // C ref: end.c:1306-1319 — the corpse and grave are built HERE,
+                // ahead of the query below, and their only gate is bones_ok:
+                // the 29 draws mksobj(CORPSE) makes are spent whatever the
+                // player answers.  Building them inside the 'y' arm instead
+                // lost all 29 on every declined save (dp-named-tour-barb step
+                // 214, whose screen IS the unanswered "Save bones?" prompt).
+                const corpse = await make_hero_corpse_and_grave(how);
                 // C ref: end.c:1366 — `if (!wizard || paranoid_query(
                 // ParanoidBones, "Save bones?")) savebones(...)`.  ParanoidBones
                 // is off by default, so this is a plain yn() defaulting to 'n';
@@ -552,7 +559,6 @@ async function done(how) {
                 let save_bones = true;
                 if (wizard) save_bones = (await d.y_n('Save bones?', 'yn', 'n')) === 'y';
                 if (save_bones) {
-                    const corpse = await make_hero_corpse_and_grave(how);
                     const { savebones } = await import('./bones.js');
                     await savebones(how, corpse || game._death_corpse || null);
                 }

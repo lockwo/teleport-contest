@@ -37,6 +37,7 @@ import { Blind, vision_recalc, cansee as vis_cansee } from './vision.js';
 // js/monattk_data.js is a generated LEAF module (no imports of its own), so
 // naming it cannot create an import cycle or a TDZ edge.
 import { dmgtype, AD_DISE, AD_PEST } from './monattk_data.js';
+import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
 import { dipfountain, drinkfountain, drinksink, breaksink } from './fountain.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { name_to_pmidx, monster_by_pmidx, enexto_spawn, makemon,
@@ -1822,8 +1823,14 @@ const P_EXPL_FIERY = 5;
 // C ref: include/hack.h DISP_ALWAYS / DISP_END (js/const.js:360/362).
 const P_DISP_ALWAYS = -5, P_DISP_END = -7;
 
-function p_mflags1(ptr) { return ptr?.mflags1 | 0; }
-function p_mflags2(ptr) { return ptr?.mflags2 | 0; }
+// The mons[] rows js/makemon.js builds carry mflags3 but NO mflags1/mflags2/
+// msound, so reading those fields off `ptr` yielded 0 for EVERY species: every
+// monster had a head and eyes, none was silent/were/human/undead/demon.  The
+// flags live in the generated per-pmidx tables, which is what monflags_data.js's
+// mflags1_of/mflags2_of/msound_of read.  (monflags_data.js is pure generated
+// data and imports nothing, so this closes no cycle.)
+const p_mflags1 = mflags1_of;
+const p_mflags2 = mflags2_of;
 // C ref: mondata.h:26/46/55/62/96/101 breathless/haseyes/has_head/is_silent/
 // is_were/is_human.  Each is a plain flag test; the local copies exist because
 // no js/ module exports them (js/uhitm.js, js/shk.js, js/mhitm_ad.js each keep
@@ -1831,7 +1838,7 @@ function p_mflags2(ptr) { return ptr?.mflags2 | 0; }
 function p_breathless(ptr) { return (p_mflags1(ptr) & P_M1_BREATHLESS) !== 0; }
 function p_haseyes(ptr) { return (p_mflags1(ptr) & P_M1_NOEYES) === 0; }
 function p_has_head(ptr) { return (p_mflags1(ptr) & P_M1_NOHEAD) === 0; }
-function p_is_silent(ptr) { return (ptr?.msound | 0) === P_MS_SILENT; }
+function p_is_silent(ptr) { return (msound_of(ptr) | 0) === P_MS_SILENT; }
 function p_is_were(ptr) { return (p_mflags2(ptr) & P_M2_WERE) !== 0; }
 function p_is_human(ptr) { return (p_mflags2(ptr) & P_M2_HUMAN) !== 0; }
 function p_is_undead(ptr) { return (p_mflags2(ptr) & P_M2_UNDEAD) !== 0; }

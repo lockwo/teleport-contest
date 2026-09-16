@@ -17,7 +17,7 @@ import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './ca
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
 import { movemon, mcalcdistress, mcalcmove, base_mmove, fmonOrder } from './mon.js';
 import { run_regions } from './region.js';
-import { makemon_rnd_spawn } from './makemon.js';
+import { makemon_rnd_spawn, makemon_appears_msg } from './makemon.js';
 import { SPEED_BOOTS, objects } from './mkobj.js';
 import { mflags1_of, M1_CARNIVORE, M1_HERBIVORE, M1_METALLIVORE }
     from './monflags_data.js';
@@ -891,7 +891,7 @@ function levelDepth(lev) {
 // the live dungeon depth when it's reliably materialized, and otherwise fall
 // back to 70 — which matches every shallow position the gameplay sessions
 // actually reach before any spawn would fire.
-function maybe_generate_rnd_mon() {
+async function maybe_generate_rnd_mon() {
     let bound = 70;
     if (game.u?.uevent?.udemigod) {
         bound = 25;
@@ -912,7 +912,10 @@ function maybe_generate_rnd_mon() {
         // the goodpos position search depends on.  Only seed0103/seed0104 reach
         // an in-game spawn with the RNG stream still matching; every other
         // spawning session has already diverged before its first spawn.
-        makemon_rnd_spawn();
+        const mtmp = makemon_rnd_spawn();
+        // C ref: makemon.c:1474-1500 — makemon()'s own tail announces the new
+        // monster when the hero can see or sense it.  RNG-free.
+        if (mtmp) await makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, 0);
     }
 }
 
@@ -993,7 +996,7 @@ export async function moveloop_turn() {
                 if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
                 mtmp.movement = (mtmp.movement || 0) + mcalcmove(mtmp, true);
             }
-            maybe_generate_rnd_mon();
+            await maybe_generate_rnd_mon();
 
             // C ref: allmain.c — u_calc_moveamt(mvl_wtcap); settrack();  The
             // hero's movement-point reallocation (Fast roll / steed mcalcmove /

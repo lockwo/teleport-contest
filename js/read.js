@@ -1465,7 +1465,7 @@ function count_worn_armor() {
 // armor effect: erode rn2(4)+1 random worn armor pieces (whatever material
 // each happens to be), stopping early if one is fully destroyed.  Returns
 // whether anything was actually damaged.
-async function destroy_arm() {
+export async function destroy_arm() {
     const armors = ['uarm', 'uarmc', 'uarmh', 'uarms', 'uarmg', 'uarmf', 'uarmu']
         .map((slot) => game[slot]).filter(Boolean);
     if (!armors.length) return false;
@@ -1842,7 +1842,7 @@ export async function doread() {
             await update_topl('It reads:');
             await update_topl(line);
         }
-        if (!Blind()) bump_literate();
+        if (!Blind()) bump_literate('became literate by reading a fortune cookie');
         useup(scroll);
         return ECMD_TIME;
     }
@@ -1863,7 +1863,8 @@ export async function doread() {
             await pline(`${game.flags?.verbose !== false ? 'The design' : 'It'} features ${hawaiian_design(scroll)}.`);
             return ECMD_TIME;
         }
-        bump_literate();
+        bump_literate(`became literate by reading ${
+            otyp === T_SHIRT ? 'a T-shirt' : 'an apron'}`);
         // (tshirt_text()/apron_text()'s message tables aren't ported; both are
         // o_id-indexed, so no RNG is lost — only the quoted line is wrong.)
         if (game.flags?.verbose !== false)
@@ -1878,7 +1879,8 @@ export async function doread() {
             return ECMD_OK;
         }
         await pline(`${!Blind() ? 'There is writing' : 'You feel lettering'} on the ${simpleonames_read(scroll)}.  It reads:  ${cap_text}.`);
-        bump_literate();
+        bump_literate(`became literate by reading ${
+            otyp === DUNCE_CAP ? 'a dunce cap' : 'a cornuthaum'}`);
         // "despite the fact that player will recognize the object type, don't
         // make it become a discovery for hero" — trycall() prompts for a name.
         await trycall(scroll);
@@ -1893,7 +1895,7 @@ export async function doread() {
             await pline(`"${CARD_MSGS[o_id % (CARD_MSGS.length - 1)]}"`);
         }
         await pline(`"${((o_id % 89) + 10)}0${o_id % 4} ${((o_id * 499) % 899999) + 100000}${o_id % 10}1 0${(!(o_id % 3)) ? 1 : 0}${(o_id * 7) % 10}0"${(game.flags?.verbose !== false || Blind()) ? '.' : ''}`);
-        bump_literate();
+        bump_literate('became literate by reading a credit card');
         return ECMD_TIME;
     }
     if (otyp === CAN_OF_GREASE) {
@@ -1909,14 +1911,14 @@ export async function doread() {
         const { monster_by_pmidx } = await import('./makemon.js');
         const pm = monster_by_pmidx(RED_MONS[(scroll.o_id ?? 0) % RED_MONS.length]);
         await pline(`"Magic Marker(TM) ${(pm?.name || '').toUpperCase()} Red Ink Marker Pen.  Water Soluble."`);
-        bump_literate();
+        bump_literate('became literate by reading a magic marker');
         return ECMD_TIME;
     }
     if (scroll.oclass === COIN_CLASS) {
         if (Blind()) await pline('You feel the embossed words:');
         else if (game.flags?.verbose !== false) await pline('You read:');
         await pline('"1 Zorkmid.  857 GUE.  In Frobs We Trust."');
-        bump_literate();
+        bump_literate("became literate by reading a coin's engravings");
         return ECMD_TIME;
     }
     if (otyp === CANDY_BAR) {
@@ -1930,7 +1932,7 @@ export async function doread() {
             return ECMD_OK;
         }
         await pline(`The wrapper reads: "${wrapper}".`);
-        bump_literate();
+        bump_literate('became literate by reading a candy bar wrapper');
         return ECMD_TIME;
     }
     // (the Orb of Fate "It is signed: Odin." branch needs artifact support.)

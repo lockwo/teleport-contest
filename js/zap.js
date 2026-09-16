@@ -75,12 +75,10 @@ const SPE_SLEEP = 370;
 
 // C ref: zap.c obj_resists(obj, ochance, achance) — chance an object resists
 // (e.g. destruction / theft).  The Amulet, the invocation items and Rider
-// corpses always resist and are NOT rolled for; everything else rolls rn2(100)
-// and resists when the roll lands below the per-object chance (achance for
-// artifacts, ochance otherwise).
-//
-// The otyps come from mkobj.js's object table rather than local literals: the
-// four that used to live here (155/355/360/359) were 3.4-era indices naming an
+// corpses always resist, unrolled; everything else rolls rn2(100) and resists
+// below the per-object chance (achance for artifacts, ochance otherwise).
+// otyps come from mkobj.js's object table rather than local literals: the four
+// that used to live here (155/355/360/359) were 3.4-era indices naming an
 // orcish shield and three unused scroll slots, so the early return never fired
 // and every invocation item burned an extra rn2(100).
 export function obj_resists(obj, ochance, achance) {
@@ -692,11 +690,10 @@ function bhito(obj, otmp) {
 
 
 
-// C ref: zap.c bhitpile — apply fhito to every object stacked at (tx,ty).
-// C's level.objects[tx][ty] is a nexthere chain ordered newest-first (place_object
-// prepends).  Our flat game.level.objects is append-ordered (oldest-first), so we
-// iterate the square's objects in reverse to reproduce C's traversal order — the
-// order determines the obj_resists / obj_shudders / mkobj RNG sequence.
+// C ref: zap.c bhitpile — apply fhito to every object stacked at (tx,ty).  C's
+// level.objects[tx][ty] chain is newest-first (place_object prepends); our flat
+// game.level.objects is oldest-first, so iterate in reverse to match C's
+// traversal order — order determines the obj_resists/obj_shudders/mkobj RNG sequence.
 export async function bhitpile(obj, tx, ty) {
     const arr = game.level?.objects || [];
     const here = [];
@@ -1816,13 +1813,12 @@ async function miss(str, mon) {
 // C ref: mondata.c disguised_as_non_mon — a hiding mimic/mimicking object.  No
 // covered zap target is a mimic.
 function disguised_as_non_mon(_mon) { return false; }
-// C ref: mon.c wakeup(mon, via_attack) — wake_msg() then clear msleeping, then
-// (via_attack) setmangry().  setmangry() is NOT message-only: it flips a
-// peaceful monster hostile, which changes every later m_move()/mattacku()
-// decision for it, and on an Elbereth square it draws rnd(5).  The old
-// msleeping-only version silently skipped all of that.
-// (growl() is deliberately not called: uhitm.js measured its topline landing
-// where C's does not, and C's growl() is RNG-free so omitting it cannot desync.)
+// C ref: mon.c wakeup(mon, via_attack) — wake_msg(), clear msleeping, then
+// (via_attack) setmangry(), which flips a peaceful monster hostile — steering
+// every later m_move()/mattacku() decision and drawing rnd(5) on Elbereth — so
+// the old msleeping-only version silently missed all of that.  (growl()
+// intentionally omitted: RNG-free in C, and uhitm.js already places its
+// topline differently.)
 async function wakeup(mon, viaAttack) {
     if (!mon) return;
     const wasSleeping = !!mon.msleeping;
@@ -2292,11 +2288,10 @@ const DESTROY_STRINGS = [
 ];
 
 // C ref: objnam.c yname(obj) — "Your <xname>" for a carried item.  The old
-// version hardcoded six otyp->string pairs (the ones the seed5002 fire zap
-// happens to destroy) and fell back to objects[].name, which is the BARE name
-// ("invisibility", not "potion of invisibility") for every class whose prefix
-// comes from the object class — so every unlisted potion/scroll/spellbook
-// printed the wrong line.  invent.js's xname() builds the real name.
+// version hardcoded six otyp->string pairs (whatever seed5002's fire zap
+// happens to destroy) and fell back to objects[].name — the BARE name
+// ("invisibility", not "potion of invisibility") — so every unlisted
+// potion/scroll/spellbook printed the wrong line.  xname() builds the real name.
 function yname_for(obj) {
     return 'Your ' + xname(obj);
 }
@@ -2946,14 +2941,12 @@ export function fall_asleep(how_long, wakeup_msg) {
     game.nomovemsg = wakeup_msg ? 'You wake up.' : 'You can move again.';
 }
 
-// C ref: end.c done(DIED) / really_done(DIED), reached from zapyourself()'s
-// urgent_pline("You die.").  At entry the "You die." topline is pending
-// (NEED_MORE) and the hero's HP is still positive.  C's done() forces a status
-// update (bot(), end.c:1046) BEFORE zeroing HP (end.c:1077, with only a deferred
-// disp.botl refresh), so the "You die." --More-- frame keeps the old HP and only
-// the "Die?" prompt shows HP 0.  Our status line is rebuilt live from u.uhp each
-// frame, so we reproduce the same three frames by paging "You die." while HP is
-// still positive, THEN zeroing HP, THEN showing the "Die?" query.
+// C ref: end.c done(DIED)/really_done(DIED), reached via zapyourself()'s
+// urgent_pline("You die.").  C's done() forces bot() BEFORE zeroing HP
+// (end.c:1046,1077), so the "You die." --More-- frame still shows the old HP
+// and only "Die?" shows HP 0.  Our status line is rebuilt live from u.uhp, so
+// reproduce that ordering: page "You die." while HP is still positive, THEN
+// zero HP, THEN show "Die?".
 async function done_selfzap(how) {
     const DIED_HOW = 0, GENOCIDED = 10; // end.h death codes
     const u = game.u;
@@ -2973,12 +2966,10 @@ async function done_selfzap(how) {
         const ans = await y_n('Die?', 'yn\x1b', 'n');
         if (ans !== 'y') {
             // C ref: end.c done():1113-1116 — pline("OK, so you don't die.")
-            // then savelife(how).  Declining the query used to leave the
-            // message pending and RETURN WITHOUT savelife(), so the hero kept
-            // uhp 0 (which then rolled regen_hp's rn2(100) every later turn)
-            // and never got nomovemsg/multi = -1.  update_topl so the caller's
-            // next message ("You are blinded by the flash!") lands on the same
-            // topline, exactly as C's two consecutive plines do.
+            // then savelife(how).  Used to return without savelife() on decline,
+            // leaving uhp at 0 (rolling regen_hp's rn2(100) every later turn)
+            // and no nomovemsg/multi=-1.  update_topl so the caller's next
+            // message shares this topline, like C's two consecutive plines.
             await update_topl("OK, so you don't die.");
             const { savelife } = await import('./end.js');
             savelife(how);
@@ -2986,16 +2977,12 @@ async function done_selfzap(how) {
         }
     }
 
-    // really_done(how): bones_ok = (how < GENOCIDED) && can_make_bones()
-    // (end.c:1201).  can_make_bones() draws rn2(1 + (depth>>2)) and, in wizard
-    // mode, returns TRUE (bones.c:355).  really_done then, in wizard mode,
-    //   if (!wizard || paranoid_query(ParanoidBones, "Save bones?"))
-    //       savebones(how, endtime, corpse);                          (end.c:1362)
-    // savebones() rewrites the death level into a legacy/bones level (drop the
-    // hero's inventory onto the floor, raise a ghost, wipe remembered display)
-    // and stashes it in the shared storage handle for a later segment's
-    // getbones() to reload — this is exactly seed5006 seg0's Dlvl:3 death whose
-    // bones seg1's ^V-to-3 loads.
+    // really_done(how) end.c:1201: bones_ok = (how < GENOCIDED) && can_make_bones()
+    // (rn2(1+(depth>>2)); TRUE in wizard mode, bones.c:355).  In wizard mode,
+    // savebones() runs only if "Save bones?" confirms (end.c:1362); it rewrites
+    // the death level into a bones level (drop inventory, raise a ghost, wipe
+    // remembered display) and stashes it for a later segment's getbones() —
+    // verified against seed5006 seg0's Dlvl:3 death / seg1's ^V-to-3 load.
     if (how < GENOCIDED && can_make_bones()) {
         const bones_wiz = !!game.flags?.debug;
         const bones_ans = bones_wiz ? await y_n('Save bones?', 'yn\x1b', 'n') : 'y';
@@ -3062,10 +3049,8 @@ export async function dozap() {
     const u = game.u;
     let dir = null;
     if (need_dir) {
-        // C ref: dozap() — getdir() is evaluated as part of the if-chain BEFORE
-        // zappable()'s charge is checked only in the !need_dir branch order; but
-        // C evaluates !zappable(obj) first.  Match C's short-circuit ordering:
-        // zappable (charge), then cursed-backfire, then getdir.
+        // C ref: dozap() — preserve C's evaluation order below: zappable()
+        // (charge) before cursed-backfire before getdir().
     }
     if (!(await zappable(obj))) {
         await pline('Nothing happens.');
@@ -3103,16 +3088,14 @@ export async function dozap() {
 }
 
 // ===========================================================================
-// zap.c completeness ports.  INERT: nothing above this banner calls into this
-// block.  These are the zap.c routines whose call sites (undead turning,
-// cancellation, corpse revival, ice melting, riding, wish assistance) are not
-// wired up in this port yet.
+// zap.c completeness ports — INERT: nothing above this banner calls into this
+// block.  Covers zap.c routines whose call sites (undead turning, cancellation,
+// corpse revival, ice melting, riding, wish assistance) aren't wired up yet.
 //
-// Cross-module helpers arrive through `await import()`, the convention the rest
-// of this file already uses (create_critters, create_polymon, zap_updown,
-// zap_map, done_selfzap): zap.js is imported by artifact.js/cmd.js/monmove.js
-// and a new top-level edge would reorder module evaluation.  That is why
-// several C-void / C-boolean routines below are `async`.
+// Cross-module helpers use `await import()` (this file's existing convention,
+// e.g. create_critters/create_polymon/zap_updown/zap_map/done_selfzap) to avoid
+// a new top-level edge that would reorder module evaluation — hence several
+// C-void/C-boolean routines below are `async`.
 // ===========================================================================
 
 // C ref: obj.h enum obj_where.  NOT imported from js/const.js: that file's
@@ -3476,15 +3459,14 @@ const PLNMSG_OBJ_GLOWS_Z = 'PLNMSG_OBJ_GLOWS';
 // re-derives the number the same way at timeout.js:62.
 const MELT_ICE_AWAY_Z = SHRINK_GLOB + 1;
 
-// C ref: zap.c:1702 poly_obj(obj, id) for `id != STRANGE_OBJECT` — "literally
-// replace obj with this new thing": mksobj(id, FALSE, FALSE) plus the
-// set_corpsenm carryover, then the shared quantity/BUC/erosion tail.  This
-// file's poly_obj() (js/zap.js:471) implements ONLY the STRANGE_OBJECT half and
-// takes `can_merge` as its second parameter, so handing it an otyp would run
-// the RANDOM-object path with can_merge set — a silent RNG fork.  Note that
-// can_merge is FALSE on this branch, so the tail's rn2(1000) merge roll and the
-// whole class-specific anti-polymorph-loop switch (TOOL/WAND/POTION/SPBOOK/GEM)
-// are unreachable for stone_to_flesh's food/corpse targets.
+// C ref: zap.c:1702 poly_obj(obj, id) for `id != STRANGE_OBJECT` — replace obj
+// outright: mksobj(id, FALSE, FALSE) + set_corpsenm carryover + the shared
+// quantity/BUC/erosion tail.  Kept separate from this file's poly_obj()
+// (js/zap.js:471, STRANGE_OBJECT-only, `can_merge` param) because handing it an
+// otyp would silently fork onto the random-object path instead.  can_merge is
+// FALSE on this branch, so the rn2(1000) merge roll and the whole
+// TOOL/WAND/POTION/SPBOOK/GEM anti-polymorph-loop switch never fire for
+// stone_to_flesh's food/corpse targets.
 async function poly_obj_id_z(obj, id) {
     const ox = obj.ox, oy = obj.oy;
     const obj_location = obj.where;
