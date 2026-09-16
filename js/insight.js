@@ -308,7 +308,13 @@ function hasJumping() {
 }
 function jumpingFromWhat() {
     const source = from_what(45, 'HJumping');
-    return source || (game.urole?.mnum === PM_KNIGHT ? ' intrinsically' : '');
+    // C ref: attrib.c from_what() is entirely gated on `wizard` (line 914);
+    // this port's hasJumping() special-cases Knight because no HJumping bit
+    // is actually stored for the role-granted ability, but the "intrinsically"
+    // wording it stands in for is itself wizard-only, so the fallback must
+    // respect that gate too (an explore-mode Knight should read plain
+    // "You can jump.", matching bl049's recorded screen).
+    return source || (_wizard() && game.urole?.mnum === PM_KNIGHT ? ' intrinsically' : '');
 }
 function n_times(n) {
     if (n === 1) return 'once';

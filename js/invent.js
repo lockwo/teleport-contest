@@ -7052,9 +7052,24 @@ async function doswapweapon_inline() {
         setuswapwep(oldswap);
     } else {
         setuswapwep(oldwep);
-        if (game.uswapwep)
-            await update_topl(xprname(game.uswapwep,
-                doname_invent_quan(game.uswapwep, 0), obj_to_let(game.uswapwep), true, 0, 0));
+        // C ref: wield.c doswapweapon():486-494 — this second prinv()/pline()
+        // for the secondary slot ALWAYS fires (with a "no secondary weapon
+        // readied" fallback when the old primary was empty-handed), and being
+        // a SECOND topline write in the same command it forces the FIRST
+        // message ("<let> - <name> (weapon in right hand).") to page behind
+        // its own --More-- via update_topl()'s pending-line check — even when
+        // there is no real secondary weapon left to announce.  Skipping this
+        // call outright (as before, when game.uswapwep was falsy) left that
+        // first message pending/undrained when this function returned, so the
+        // caller's immediately-following moveloop_turn() ran while it was
+        // still on screen, showing map changes (a monster stepping into
+        // view) a keystroke before C's recording reveals them (bl024: a grid
+        // bug appeared 2 keystrokes early, still behind the unacknowledged
+        // "b - a +2 sling (weapon in right hand)." --More--).
+        await update_topl(game.uswapwep
+            ? xprname(game.uswapwep, doname_invent_quan(game.uswapwep, 0),
+                      obj_to_let(game.uswapwep), true, 0, 0)
+            : 'You have no secondary weapon readied.');
     }
 }
 
@@ -9974,15 +9989,19 @@ async function read_engr_at_topl(x, y) {
     const ep = engr_at(x, y);
     const text = ep?.actualText || '';
     if (!ep || !text) return false;
+    // C ref: engrave.c read_engr_at():321 `const char *eloc = surface(x, y);`
+    // — every branch but DUST names the actual surface (doorway, altar,
+    // headstone, ...) instead of a hardcoded "floor".
+    const eloc = surface(x, y);
     let intro;
     switch (ep.engr_type) {
     case DUST:       if (game.Blind) return false;
                      intro = 'Something is written here in the dust.'; break;
     case ENGRAVE:
-    case HEADSTONE:  intro = 'Something is engraved here on the floor.'; break;
-    case BURN:       intro = 'Some text has been burned into the floor here.'; break;
+    case HEADSTONE:  intro = `Something is engraved here on the ${eloc}.`; break;
+    case BURN:       intro = `Some text has been burned into the ${eloc} here.`; break;
     case MARK:       if (game.Blind) return false;
-                     intro = "There's some graffiti on the floor here."; break;
+                     intro = `There's some graffiti on the ${eloc} here.`; break;
     case ENGR_BLOOD: if (game.Blind) return false;
                      intro = 'You see a message scrawled in blood here.'; break;
     default: return false;

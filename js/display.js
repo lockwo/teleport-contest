@@ -2003,7 +2003,7 @@ const RACE_PM = [260, 264, 44, 165, 72];
 
 // C ref: display.c display_self() — the glyph drawn at the hero's tile.  When
 // riding a steed the steed's glyph is shown instead of the hero's '@'.
-function hero_glyph() {
+export function hero_glyph() {
     const u = game.u;
     const st = u?.usteed;
     if (st) {
@@ -2849,9 +2849,25 @@ export async function cls() {
 }
 
 // ── bot ──
+// C ref: botl.c bot() is only ever reached through allmain.c moveloop_core()'s
+// `if (disp.botl || disp.botlx) { bot(); curs_on_u(); }` (line 473, once per
+// player input) or vpline()'s own flush_screen() (line 2236-2237, once per
+// pline()).  Both call sites are gated on disp.botl and CLEAR it once bot()
+// runs.  This port's per-frame renderer rebuilds every other status field
+// live, so the only thing bot() needs to actually do is the one snapshot
+// field (BL_CAP/game._curcap) and drop the dirty flag — exactly what
+// botl_flush() already does for the per-pline call sites.  Without also
+// wiring it here, a botl-dirtying event that happens to fall on a turn with
+// no accompanying message (e.g. a jackal bite's HP loss) left game.botl
+// stuck true across player inputs until some LATER, unrelated message
+// finally flushed it — at which point encumber_msg()'s "was botl already
+// dirty when I started?" check misfired, publishing the NEW capacity one
+// pline early (onto an still-pending EARLIER message's own --More--, e.g.
+// an autopickup's "You have a little trouble lifting..." line).
 export async function bot() {
     // Status line updates happen in _buildScreenOutput
     delete game._deafPending;
+    await botl_flush();
 }
 
 // C ref: pline.c vpline():266-274 — `if (gv.vision_full_recalc) vision_recalc(0);`

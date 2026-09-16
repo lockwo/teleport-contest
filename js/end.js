@@ -1174,11 +1174,12 @@ function topten_outheader(COLNO) {
 
 // C ref: topten.c outentry(rank, t1, so) — format one score-list entry,
 // word-wrapping across as many lines as needed so the "Hp [max]" column
-// stays aligned at the right edge.  Reduced to the death-description branches
-// reachable by a plain "died in <dungeon> [on level N]" contest death
-// (escaped/ascended/starved/choked/poisoned/crushed/petrified and the
-// astral-plane wording are not reachable here).  `so` (standout) pads each
-// line to COLNO-1 for the bold render, matching the just-died entry.
+// stays aligned at the right edge.  Handles the "escaped"/"ascended"
+// branches (topten.c:973-984) plus the plain "died in <dungeon> [on level
+// N]" contest death (starved/choked/poisoned/crushed/petrified); the
+// astral-plane wording (topten.c:1004-1028) is not reachable here.  `so`
+// (standout) pads each line to COLNO-1 for the bold render, matching the
+// just-died entry.
 function topten_outentry(rank, entry, so, COLNO) {
     let linebuf = rank ? String(rank).padStart(3) : '   ';
     // C: "%10ld", t1->points ? t1->points : u.urexp — a points-floored-to-0
@@ -1193,20 +1194,39 @@ function topten_outentry(rank, entry, so, COLNO) {
 
     let secondLine = true;
     const death = entry.death;
-    if (death.startsWith('quit')) { linebuf += 'quit'; secondLine = false; }
-    else if (death.startsWith('died of st')) { linebuf += 'starved to death'; secondLine = false; }
-    else if (death.startsWith('choked')) linebuf += `choked on h${entry.plgend[0] === 'F' ? 'er' : 'is'} food`;
-    else if (death.startsWith('poisoned')) linebuf += 'was poisoned';
-    else if (death.startsWith('crushed')) linebuf += 'was crushed to death';
-    else if (death.startsWith('petrified by ')) linebuf += 'turned to stone';
-    else linebuf += 'died';
-    // C: svd.dungeons[t1->deathdnum].dname — resolved against the CURRENT game's
-    // dungeon table, so a record entry written by an earlier game re-reads it.
-    const dname = game.dungeons?.[entry.deathdnum]?.dname || entry.dungeonName;
-    linebuf += ` in ${dname}`;
-    if (entry.deathdnum !== entry.knoxDnum) linebuf += ` on level ${entry.deathlev}`;
-    if (entry.deathlev !== entry.maxlvl) linebuf += ` [max ${entry.maxlvl}]`;
-    if (death.startsWith('quit ')) linebuf += death.slice(4);
+    // C: topten.c:973-984 — "escaped"/"ascended" get their own wording and
+    // never carry a second line (a "died in <dungeon>" second line makes
+    // no sense for either).
+    if (death.startsWith('escaped')) {
+        linebuf += `escaped the dungeon ${
+            death.slice(7, 9) === ' (' ? death.slice(7 + 2) : ''}[max level ${entry.maxlvl}]`;
+        // fixup for closing paren in "escaped... with...Amulet)[max..."
+        const bp = linebuf.indexOf(')');
+        if (bp >= 0) {
+            linebuf = (entry.deathdnum === game.astral_level?.dnum)
+                ? linebuf.slice(0, bp)
+                : `${linebuf.slice(0, bp)} ${linebuf.slice(bp + 1)}`;
+        }
+        secondLine = false;
+    } else if (death.startsWith('ascended')) {
+        linebuf += `ascended to demigod${entry.plgend[0] === 'F' ? 'dess' : ''}-hood`;
+        secondLine = false;
+    } else {
+        if (death.startsWith('quit')) { linebuf += 'quit'; secondLine = false; }
+        else if (death.startsWith('died of st')) { linebuf += 'starved to death'; secondLine = false; }
+        else if (death.startsWith('choked')) linebuf += `choked on h${entry.plgend[0] === 'F' ? 'er' : 'is'} food`;
+        else if (death.startsWith('poisoned')) linebuf += 'was poisoned';
+        else if (death.startsWith('crushed')) linebuf += 'was crushed to death';
+        else if (death.startsWith('petrified by ')) linebuf += 'turned to stone';
+        else linebuf += 'died';
+        // C: svd.dungeons[t1->deathdnum].dname — resolved against the CURRENT game's
+        // dungeon table, so a record entry written by an earlier game re-reads it.
+        const dname = game.dungeons?.[entry.deathdnum]?.dname || entry.dungeonName;
+        linebuf += ` in ${dname}`;
+        if (entry.deathdnum !== entry.knoxDnum) linebuf += ` on level ${entry.deathlev}`;
+        if (entry.deathlev !== entry.maxlvl) linebuf += ` [max ${entry.maxlvl}]`;
+        if (death.startsWith('quit ')) linebuf += death.slice(4);
+    }
     linebuf += '.';
 
     if (secondLine) {

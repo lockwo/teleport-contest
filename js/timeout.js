@@ -30,6 +30,13 @@ import { run_object_timers } from './mkobj.js';
 import { update_topl } from './display.js';
 import { Unaware } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
+import { t_at } from './trap.js';
+import { is_pool } from './dbridge.js';
+import { surface } from './dungeon.js';
+import { encumber_msg } from './invent.js';
+import { float_vs_flight } from './polyself.js';
+import { attacktype_fordmg, AT_ENGL, AD_DGST } from './monattk_data.js';
+import { mflags1_of, M1_FLY } from './monflags_data.js';
 
 // Imports used only by the timeout.c routines below the "rest of the file"
 // banner.  const.js arrives as a NAMESPACE import on purpose: several names
@@ -266,6 +273,20 @@ async function vomiting_dialogue() {
 // pre-existing entries are left where they are.  FUMBLING (prop.h 25) is placed
 // after DEAF and before FAST (64), which is the position with the fewest
 // remaining inversions.
+// C ref: mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL, AD_DGST) —
+// float_down()'s swallowed-vs-engulfed wording.  js/insight.js:2770,
+// js/uhitm.js:2559 and js/zap.js:3210 keep the same private copy.
+function _digests(ptr) { return !!attacktype_fordmg(ptr, AT_ENGL, AD_DGST); }
+// C ref: mondata.h is_floater(ptr)/is_flyer(ptr) — mlet == S_EYE/S_LIGHT and
+// M1_FLY, used only to phrase float_down()'s "settle more firmly in the
+// saddle" arm for a floating/flying steed.  js/dbridge.js:918 and friends
+// keep the same private duplicates.
+const _S_EYE = 5, _S_LIGHT = 25;
+function _steed_floats_or_flies(ptr) {
+    return !!ptr && (ptr.mcls === _S_EYE || ptr.mcls === _S_LIGHT
+                      || (mflags1_of(ptr) & M1_FLY) !== 0);
+}
+
 const TIMED_PROPS = [
     // prop.h INVULNERABLE = 11, ahead of every other entry here.  Only
     // #wizintrinsic gives it a timeout, and timeout.c has no case for it, so it
@@ -339,10 +360,58 @@ const TIMED_PROPS = [
           const flags = (u.uprops?.Levitation | 0) & ~TIMEOUT;
           u.uprops.Levitation = flags | (v & TIMEOUT);
       },
-      // C ref: timeout.c:794 case LEVITATION -> float_down(I_SPECIAL|TIMEOUT,0)
-      // — float_down() (trap.c) is a separate, unported subsystem (trapdoor/
-      // water/lava landing, autopickup); left inert rather than guessed at.
-      expire: async () => {} },
+      // C ref: trap.c:4029 float_down(hmask, emask) — nh_timeout() always
+      // calls it with hmask=(I_SPECIAL|TIMEOUT), emask=0 (no saddle/boots
+      // source is tracked through this timer in this port).  Ported: the
+      // "come down" feedback message and the Flying/swallowed short-circuits.
+      // NOT PORTED (no covered session reaches them): the Punished ball-drag
+      // and u.ustuck detachment that precede the fall check; drown()/
+      // lava_effects() when the landing square is a pool/lava (both exist as
+      // trap.js internals but are not wired to this call site); the Sokoban
+      // "air currents knock you down" case; and the post-message trap tail
+      // (HOLE/TRAPDOOR fall-through, autopickup).
+      expire: async () => {
+          const u = game.u;
+          if (!u) return;
+          // C: `if (Levitation) return 0;` — an I_SPECIAL "at will" source
+          // (e.g. a cursed potion) keeps the property itself nonzero even
+          // though this timer's TIMEOUT bits just hit zero.
+          if (u.uprops?.Levitation) return;
+          float_vs_flight();
+          game.botl = true;
+          nomul(0);
+          if (u.uprops?.Flying) {
+              await update_topl('You have stopped levitating and are now flying.');
+              await encumber_msg();
+              return;
+          }
+          if (u.uswallow) {
+              await update_topl(`You float down, but you are still ${
+                  _digests(u.ustuck?.data) ? 'swallowed' : 'engulfed'}.`);
+              await encumber_msg();
+              return;
+          }
+          const trap = t_at(u.ux, u.uy);
+          if (C.Is_airlevel(u.uz)) {
+              await update_topl('You begin to tumble in place.');
+          } else if (C.Is_waterlevel(u.uz)) {
+              await update_topl('You feel heavier.');
+          } else if (!u.uinwater) {
+              if (C.In_sokoban(u.uz) && trap) {
+                  /* NOT PORTED: the air-currents "fall over" / "Bummer!
+                     You've crashed." knockdown — no covered session lands
+                     on a Sokoban trap while levitation naturally expires. */
+              } else if (_steed_floats_or_flies(u.usteed?.data)) {
+                  await update_topl('You settle more firmly in the saddle.');
+              } else if (Hallucination()) {
+                  await update_topl(`Bummer!  You've ${
+                      is_pool(u.ux, u.uy) ? 'splashed down' : 'hit the ground'}.`);
+              } else {
+                  await update_topl(`You float gently to the ${surface(u.ux, u.uy)}.`);
+              }
+          }
+          await encumber_msg();
+      } },
     // prop.h FAST = 64, after every other entry here.  A timed HFast is what
     // makes Very_fast true (hack.h Very_fast == ((HFast & ~INTRINSIC) || EFast)),
     // so this countdown is load-bearing: u_calc_moveamt draws a different roll

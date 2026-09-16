@@ -8,7 +8,7 @@
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
-import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs } from './display.js';
+import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, covers_objects, show_glyph_cell, hero_glyph } from './display.js';
 import { vision_recalc, cansee, recalc_block_point, Blind } from './vision.js';
 import { hliquid, Some_Monnam, m_monnam } from './do_name.js';
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
@@ -93,6 +93,7 @@ import { num_spells } from './spell.js';
 import { vobj_at } from './display.js';
 import { dist2 } from './hacklib.js';
 import { M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID } from './monflags_data.js';
+import { NO_COLOR } from './terminal.js';
 
 // C ref: hack.c maybe_smudge_engr() — when the hero walks/rushes from (x1,y1)
 // to (x2,y2) and can reach the floor, any non-headstone engraving at the old
@@ -228,7 +229,8 @@ const EXTCMD_DEFAULT_KEY = {
     inventtype: 0x49, invoke: kM('i'), jump: kM('j'), kick: kC('d'),
     known: 0x5c, knownclass: 0x60, look: 0x3a, loot: kM('l'),
     monster: kM('m'), name: kM('n'), offer: kM('o'), open: 0x6f,
-    options: 0x4f, overview: kC('o'), pay: 0x70, perminv: 0x7c, pray: kM('p'),
+    options: 0x4f, overview: kC('o'), pay: 0x70, perminv: 0x7c, pickup: 0x2c,
+    pray: kM('p'),
     prevmsg: kC('p'), puton: 0x50, quaff: 0x71, quiver: 0x51, read: 0x72,
     redraw: kC('r'), remove: 0x52, repeat: kC('a'), reqmenu: 0x6d,
     retravel: kC('_'), ride: kM('R'), rub: kM('r'), run: 0x47, rush: 0x67,
@@ -1995,20 +1997,47 @@ async function mfind0(mtmp, via_warning) {
 
 // C ref: detect.c find_trap(trap) — reveal a trap the hero just located.
 // exercise(A_WIS, TRUE) (rn2(19)) was entirely missing from the old inline
-// "trap.tseen = true". The announcement pauses with --More--: C clears the
-// map, draws the trap+hero, prints "You find a <trap>.", then blocks via
-// display_nhwindow(WIN_MAP, TRUE) -> tty_display_nhwindow(WIN_MESSAGE, TRUE)
-// -> more() before docrt() repaints. The cls()/map_trap()/display_self()
-// repaint itself isn't reproduced (no cls primitive here), but the keystroke
-// it consumes is — omitting it would push every later command one key out
-// of step.
+// "trap.tseen = true".
+//
+// C: `feel_newsym(x,y); if (Hallucination || levl[x][y].glyph !=
+// trap_to_glyph(trap)) { cls(); map_trap(trap,1); display_self();
+// cleared=TRUE; } You("find %s.", ...); if (cleared) { display_nhwindow
+// (WIN_MAP, TRUE); docrt(); }`.  newsym() (just above) already repaints the
+// square with the SAME object > trap > engraving > background priority
+// trap_to_glyph()/background_glyph() encode, so by the time `cleared` is
+// checked the two normally already agree (no pause).  The one way they can
+// still differ is a visible, non-submerged OBJECT sitting on the trap square:
+// it outranks the trap in that priority chain, so newsym() left the object's
+// glyph showing instead of the trap's.  find_trap() then forces a blank
+// map + trap-only + hero-only frame to reveal the trap unambiguously before
+// pausing with --More--; docrt() afterward restores the normal (object-on-
+// top) view.  Hallucination always forces the same clear+pause, per C.
 async function find_trap(trap) {
     trap.tseen = 1;
     exercise(A_WIS, true); // -> rn2(19)
     newsym(trap.tx, trap.ty);
-    await pline(`You find ${an(trap_explanation(trap.ttyp))}.`);
-    // C's find_trap() only prints the announcement.  The normal topline
-    // lifecycle decides whether its eventual replacement needs a pager.
+    const loc = game.level?.at(trap.tx, trap.ty);
+    const cleared = Hallucination() || (!!vobj_at(trap.tx, trap.ty) && !covers_objects(loc));
+    if (cleared) {
+        for (let x = 1; x < COLNO; x++)
+            for (let y = 0; y < ROWNO; y++)
+                show_glyph_cell(x, y, ' ', NO_COLOR, false);
+        const tg = trap_glyph(trap);
+        show_glyph_cell(trap.tx, trap.ty, tg.ch, tg.color, tg.dec);
+        const u = game.u;
+        if (u?.ux > 0) {
+            const hg = hero_glyph();
+            show_glyph_cell(u.ux, u.uy, hg.ch, hg.color, false);
+        }
+    }
+    await update_topl(`You find ${an(trap_explanation(trap.ttyp))}.`);
+    if (cleared) {
+        // C: display_nhwindow(WIN_MAP, TRUE) blocks on the cleared frame
+        // above before docrt() restores the real map.  docrt() itself pages
+        // any still-pending NEED_MORE topline first (display_nhwindow_
+        // message()), which is exactly the announcement just printed.
+        await docrt();
+    }
 }
 
 // C ref: detect.c dosearch0(aflag) — search the 8 adjacent squares for hidden
@@ -3361,8 +3390,14 @@ export async function domove(dx, dy, attemptTracked = true) {
         const off_edge = !isok(newx, newy);
         const loc = off_edge ? null : game.level?.at(newx, newy);
         const typ = loc ? loc.typ : STONE;
-        // C: solid = off_edge || !accessible(x,y) || IS_FURNITURE(typ)
-        const solid = off_edge || !ACCESSIBLE(typ) || IS_FURNITURE(typ);
+        // C: solid = off_edge || !accessible(x,y) || IS_FURNITURE(typ), where
+        // accessible(x,y) = ACCESSIBLE(typ) && !closed_door(x,y) (monmove.c).
+        // A closed door's typ (DOOR) passes the bare ACCESSIBLE() macro, so
+        // without the closed_door check a force-fight at a shut door fell
+        // through to the "thin air" arm instead of naming the door.
+        const doorClosed = !off_edge && IS_DOOR(typ)
+            && ((loc.doormask | 0) & (D_CLOSED | D_LOCKED)) !== 0;
+        const solid = off_edge || !ACCESSIBLE(typ) || doorClosed || IS_FURNITURE(typ);
         // C ref: hack.c:2260 — `boulder = sobj_at(BOULDER, x, y)`; a boulder on
         // ACCESSIBLE floor is not `solid`, but it still names the object and
         // still takes the "harmlessly " prefix (the prefix test is

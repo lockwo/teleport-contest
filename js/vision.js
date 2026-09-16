@@ -7,7 +7,7 @@ import { game, hooks } from './gstate.js';
 import {
     COLNO, ROWNO, DOOR, SDOOR, POOL, ROOMOFFSET, isok,
     D_CLOSED, D_LOCKED, D_TRAPPED,
-    SV0, SV1, SV2, SV3, SV4, SV5, SV6, SV7,
+    SV0, SV1, SV2, SV3, SV4, SV5, SV6, SV7, SVALL,
     IS_WALL, CROSSWALL, TRWALL, TREE, CLOUD, WATER, LAVAWALL, TEMP_LIT,
 } from './const.js';
 import { newsym } from './display.js';
@@ -17,11 +17,14 @@ import { races } from './roles.js';
 const COULD_SEE = 0x1;
 const IN_SIGHT = 0x2;
 
-// C ref: vision.c seenv_matrix
+// C ref: vision.c seenv_matrix / display.c:3358 seenv_matrix[3][3].  The
+// middle-row/middle-column entry is the hero's OWN current square (row==uy
+// && col==ux) and is SVALL — the hero always fully knows its own tile —
+// not a 0 placeholder.
 const seenv_matrix = [
-    [SV2, SV1, SV0],
-    [SV3, 0,   SV7],
-    [SV4, SV5, SV6],
+    [SV2, SV1,   SV0],
+    [SV3, SVALL, SV7],
+    [SV4, SV5,   SV6],
 ];
 
 // C ref: vision.c new_angle(lev, sv, row, col).  Upstream NetHack 5.0 leaves

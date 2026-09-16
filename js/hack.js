@@ -1965,7 +1965,14 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
     // with the optional "(invalid target)" suffix from getpos_getvalid.
     const describe = (x, y) => {
         let desc;
-        if (u && x === u.ux && y === u.uy) {
+        // C ref: pager.c:668 lookat() gates the self case on
+        // `!iflags.terrainmode || (iflags.terrainmode & TER_MON) != 0`. The
+        // #terrain command's four subsets (cmd.c doterrain()) never include
+        // TER_MON, so browsing terrain with the cursor on the hero's own
+        // square must fall through to the terrain description below instead
+        // of reporting the hero's identity (stale "dwarven valkyrie called
+        // wizard" instead of "floor of a room").
+        if (u && x === u.ux && y === u.uy && !terrainMode) {
             desc = self_lookat();
         } else if (detectMode) {
             // C ref: pager.c do_screen_description() via 'need_to_look' once a
