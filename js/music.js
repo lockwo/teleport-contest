@@ -248,7 +248,10 @@ async function do_pit(x, y, tu_pit) {
                 if (cansee(x, y)) await update_topl(`${Monnam(mtmp)} falls into a chasm!`);
                 else if (humanoid(p)) await update_topl('You hear a scream!');
             }
-            // mselftouch(): only a cockatrice-corpse carrier is affected; no RNG.
+            {
+                const { mselftouch } = await import('./trap.js');
+                await mselftouch(mtmp, 'Falling, ', true);
+            }
             if (!DEADMONSTER(mtmp)) {
                 mtmp.mhp = (mtmp.mhp | 0) - rnd(m_already_trapped ? 4 : 6);
                 if (DEADMONSTER(mtmp)) {

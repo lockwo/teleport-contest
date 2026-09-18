@@ -2380,6 +2380,19 @@ function _botFields(order) {
     // by one screen each while fixing bl026, net only +11/50-session draw.
     // Needs a faithful svc.context.run equivalent or an occupation-aware guard
     // (game.occupation alone was NOT sufficient — still TBD).
+    // Round-3 lp-ranger-gnome attempt: gating on the ACTUAL game.context.run
+    // flag (not run_prefix/stale_run) also fails — e.g. bl000's boulder-push
+    // rush shows C's T: field updating LIVE (T:64) mid-run while our freeze
+    // held it at a 25-turn-stale T:39, because context.run stays truthy for
+    // the run's whole duration but C's timebot()-suppression is NOT simply
+    // "frozen for context.run's entire lifetime" — some other per-turn stat
+    // change (or a run-internal disp.botl trigger not modelled here) forces
+    // a live full redraw mid-run that this gate doesn't reproduce. Confirmed
+    // via gate.mjs --flat: REJECT (proxyscore -2, proxy4 -7, blind -37 across
+    // 8 sessions, wave7 -3, wave9 net -5 despite +2 on the target session).
+    // Do not re-attempt without first modelling C's disp.botl full-redraw
+    // triggers (any OTHER bot field changing) as an escape hatch from the
+    // freeze, not just gating on context.run in isolation.
     raw[BL_TIME] = String(game.moves || 1);
     // C ref: botl.c bot_via_windowport — hu_stat[] (eat.c) = {Satiated, "",
     // Hungry, Weak, Fainting, Fainted, Starved}; NOT_HUNGRY(1) shows nothing.

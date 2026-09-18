@@ -537,7 +537,7 @@ async function explmm(magr, mdef, mattk) {
 
 // C ref: mon.c monstone(mdef) — the victim becomes a STATUE.  Unlike
 // mondied() this does NOT run corpse_chance(), so it must not draw its rn2.
-async function monstone_mm(mdef) {
+export async function monstone_mm(mdef) {
     const mx = mdef.mx, my = mdef.my;
     const loc0 = game.level?.at(mx, my);
     if (loc0?.invisMon) unmap_object(mx, my);
@@ -776,7 +776,10 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
             tmp = 0;
         }
         rn2(30);   /* erode_armor(magr, ERODE_CORRODE) — no monster body armour */
-        rn2(6);    /* acid_damage(MON_WEP(magr)) — erosion only, no RNG inside */
+        if (!rn2(6)) {
+            const { acid_damage } = await import('./trap.js');
+            await acid_damage(MON_WEP_MM(magr));
+        }
         assess = true;
         break;
     case AD_ENCH:

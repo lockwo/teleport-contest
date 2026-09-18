@@ -33,7 +33,7 @@ import { Unaware,
          ROLE_MALE, ROLE_FEMALE, NORMAL_SPEED, A_STR, A_WIS, A_INT, A_DEX, A_CON,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
-    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS } from './const.js';
+    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA } from './const.js';
 import { near_capacity, reroll_menu } from './invent.js';
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -1237,6 +1237,16 @@ export async function moveloop_turn() {
     // turn, so ~every 4th command loops twice and the two placements differ.
     if (g.context.seer_turn != null && g.moves >= g.context.seer_turn) {
         g.context.seer_turn = g.moves + rn1(31, 15);
+    }
+    // C ref: allmain.c:424 — `if (u.utrap && u.utraptype == TT_LAVA)
+    // sink_into_lava(); else if (!u.umoved) (void) pooleffects(FALSE);`.
+    // Only the sink_into_lava() arm is ported (js/trap.js sink_into_lava);
+    // pooleffects(FALSE), the leaving-water/lava half, has no js/ port at all
+    // (only pooleffects(TRUE)'s arrival half exists, js/trap.js
+    // pooleffects_enter), so the `else` arm is left unwired here.
+    if (g.u?.utrap && g.u.utraptype === TT_LAVA) {
+        const { sink_into_lava } = await import('./trap.js');
+        await sink_into_lava();
     }
 }
 

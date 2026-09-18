@@ -58,7 +58,7 @@ import {
     M_SEEN_DISINT, M_SEEN_ELEC, M_SEEN_POISON, M_SEEN_ACID,
     Is_botlevel, MON_FLOOR,
 } from './const.js';
-import { phase_of_the_moon, NEW_MOON } from './calendar.js';
+import { phase_of_the_moon, NEW_MOON, night } from './calendar.js';
 import { Amonnam as Amonnam_dn } from './do_name.js';
 import { quest_talk } from './questpgr.js';
 import { In_hell, surface } from './dungeon.js';
@@ -70,7 +70,8 @@ import { gettrack } from './track.js';
 import { find_mac as worn_find_mac } from './worn.js';
 import { mvitals_died } from './mon.js';
 import { DEADMONSTER, healmon, base_mmove, curr_mon_load, max_mon_load,
-    can_carry as mon_can_carry, can_touch_safely } from './mon.js';
+    can_carry as mon_can_carry, can_touch_safely,
+    Protection_from_shape_changers, new_were_pub, were_summon } from './mon.js';
 import { regenerates_flag as regenerates_raw, mflags1_of as mflags1_raw,
     mflags2_of as mflags2_raw, mflags3_of as mflags3_raw, msound_of as msound_raw,
     is_mercenary_flag as is_mercenary_raw, mindless as mindless_raw,
@@ -83,7 +84,7 @@ import { regenerates_flag as regenerates_raw, mflags1_of as mflags1_raw,
     M1_SEE_INVIS, M1_CARNIVORE, M1_METALLIVORE,
     M2_UNDEAD, M2_HUMAN, M2_MINION, M2_GIANT, M2_WANDER, M2_ROCKTHROW, M2_DWARF,
     M2_JEWELS, M2_MERC, M2_STALK, M2_NASTY, M2_STRONG,
-    is_were_flag, strongmonst_flag, is_orc_flag, is_elf_flag, is_gnome_flag,
+    is_were_flag, is_human_flag, strongmonst_flag, is_orc_flag, is_elf_flag, is_gnome_flag,
     M2_DEMON, M2_LORD, M2_PRINCE, M2_HOSTILE, M2_PEACEFUL,
     M3_COVETOUS, M3_DISPLACES, M3_WAITMASK, humanoid } from './monflags_data.js';
 import { is_armed, mattk_of,
@@ -94,7 +95,7 @@ import { is_armed, mattk_of,
     AD_POLY, AD_ACID, AD_COLD, AD_FIRE, AD_SITM, AD_SEDU, AD_SSEX,
     AD_RUST, AD_CORR, AD_MAGM, AD_RBRE, AD_SPEL, AD_CLRC,
     AD_SLEE, AD_DISN, AD_DRDX, AD_DRCO,
-    AD_BLND, AD_STON, AD_LEGS, AD_WRAP } from './monattk_data.js';
+    AD_BLND, AD_STON, AD_LEGS, AD_WRAP, AD_WERE } from './monattk_data.js';
 const PM_PAPER_GOLEM_FT = _name_to_pmidx_cf('paper golem');
 const PM_STRAW_GOLEM_FT = _name_to_pmidx_cf('straw golem');
 // C ref: monsters.h PM_BALROG / PM_AMOROUS_DEMON — summonmu()'s two exemptions.
@@ -128,7 +129,7 @@ import { mattackm, mdisplacem } from './mhitm.js';
 import { hitval } from './weapon.js';
 import { Monnam, mon_nam, canspotmon, make_corpse, corpse_chance, dmgval,
     setmangry, relobj } from './uhitm.js';
-import { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE, SLT_ENCUMBER } from './const.js';
+import { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE, SLT_ENCUMBER, FORCETRAP } from './const.js';
 import { wipe_engr_at, engr_at } from './engrave.js';
 import { discover_object, observe_object } from './o_init.js';
 import { WEP_HITBON, WEP_SDAM, WEP_LDAM } from './weapondmg_data.js';
@@ -1506,7 +1507,7 @@ function unique_corpstat(ptr) { return !!ptr && ((ptr.geno ?? 0) & G_UNIQ) !== 0
 
 // C ref: mon.c:362 zombie_maker(mon) — a lich, or a Z-class monster that is
 // an actual zombie (the ghoul and the skeleton share the class but are not).
-function zombie_maker(mon) {
+export function zombie_maker(mon) {
     if (mon.mcan) return false;
     const ptr = mon.data;
     const mcls = ptr?.mcls;
@@ -2110,7 +2111,7 @@ async function launch_boulder(trap) {
     return 1;
 }
 
-export async function mon_mintrap(mtmp) {
+export async function mon_mintrap(mtmp, mintrapflags = 0) {
     const trap = t_at(mtmp.mx, mtmp.my);
     if (!trap) { mtmp.mtrapped = 0; return Trap_Effect_Finished; }
 
@@ -2177,9 +2178,12 @@ export async function mon_mintrap(mtmp) {
     const already_seen = mon_knows_traps(mtmp, tt)
         || (tt === HOLE && !mindless(mtmp.data));
 
-    // fixed_tele_trap(trap) (trap.h) would force FORCETRAP here, but it needs
-    // trap->teledest, which the JS trap record does not carry, so forcetrap
-    // stays false.
+    // C ref: trap.c:3792 forcetrap — set by an explicit FORCETRAP caller
+    // (openfallingtrap()/closeholdingtrap()) forcing this trap to fire
+    // regardless of the escape/step-over checks below.  fixed_tele_trap(trap)
+    // would also force it, but that needs trap->teledest, which the JS trap
+    // record does not carry, so only the explicit-flag path sets it.
+    const forcetrap = (mintrapflags & FORCETRAP) !== 0;
     // C ref: trap.c:3805-3807 — inside Sokoban a level-generated pit/hole/
     // trapdoor is inescapable: C skips BOTH the floor_trigger early return and
     // the already-seen rn2(4) step-over roll.  Without this arm a Sokoban
@@ -2187,7 +2191,7 @@ export async function mon_mintrap(mtmp) {
     if (Sokoban() && (is_pit(tt) || tt === HOLE || tt === TRAPDOOR)
         && !trap.madeby_u) {
         /* nothing here, the trap effects will handle messaging */
-    } else {
+    } else if (!forcetrap) {
         // floor_trigger + airborne -> the trap doesn't fire (no RNG).
         if (FLOOR_TRIGGER.has(tt) && mon_check_in_air(mtmp))
             return Trap_Effect_Finished;
@@ -2210,7 +2214,7 @@ export async function mon_mintrap(mtmp) {
     // angry at the hero.  rnl(5) is drawn only when trap->madeby_u.
     if (trap.madeby_u && rnl(5)) await setmangry(mtmp, false);
 
-    const trap_result = await mon_trapeffect(mtmp, trap);
+    const trap_result = await mon_trapeffect(mtmp, trap, mintrapflags);
 
     // C ref: trap.c:3825-3833 — a hider can't stay hidden under an object once
     // it is trapped in a non-pit, so it becomes visible ("<A mon> appears.").
@@ -2310,6 +2314,37 @@ async function mon_thitm(tlev, mon, obj, d_override, nocorpse) {
     // missile as its own pile object.  Fixing it is correct C but exposes a
     // second divergence in dog_goal()'s apport scan (bl020 step 1780): RNG +172,
     // screens -33.  Land the two together.
+    //
+    // Round-3 re-diagnosis (still not landed): the trigger is bl020 seg1
+    // move 9 — an UNSEEN hostile monster (pmidx 59, not the pet) steps on the
+    // dlvl-1 arrow trap at (75,15); its missed arrow SHOULD merge into the
+    // level-gen 6-arrow pile already sitting there (found via the fix: dest
+    // quan 6->7).  Un-fixed, the merge fails on the dknown mismatch above and
+    // the pet later (~move 75) notices, apports, and carries the orphaned
+    // single arrow around for dozens of turns — a real but WRONG behavior
+    // that this port's pet AI has apparently been quietly matching-by-luck.
+    // Applying the doname-timing fix alone removes that orphan arrow (the
+    // pet is never divergently burdened with it) but the pet's mx/my history
+    // from move 9 onward differs from the un-fixed run in every subsequent
+    // turn regardless (confirmed empirically: game.level.objects gains an
+    // otherwise-identical extra ROCK object, otyp 474, by move 70, meaning
+    // some monster's death/drop timing has already shifted).  This is NOT a
+    // second isolable RNG bug at dogmove.c:554 — dog_goal's fobj scan at that
+    // exact rn2-stream position (segment1-local index ~5317, confirmed via
+    // getRngLog().length gating, NOT the game.moves counter, which does not
+    // line up 1:1 with rn2-stream position once behavior has already
+    // diverged) sees the SAME fobj()-derived object COUNT (8) and the SAME
+    // dog_has_minvent/apport/in_masters_sight values in both the fixed and
+    // un-fixed runs; what differs is WHICH 8 objects, because an unrelated
+    // monster died/dropped differently upstream.  In other words: this fix
+    // is correct and isolated, but it perturbs downstream monster-death
+    // timing enough to fail the net screens count (1790->1757, -33) even
+    // though it improves net RNG matches (21396->21568, +172) and fully
+    // resolves the ORIGINAL bl020 divergence this comment used to describe
+    // (mkobj.c:521 next_ident, bl020 step 1810 — the pet trying to
+    // pick-up-and-split a stack that shouldn't have existed).  Landing this
+    // safely needs whatever OTHER, still-undiagnosed monster-death/drop-order
+    // bug the shifted timing now exposes, not a second dogmove.c fix.
     const missile = obj ? await mon_missile_name(obj) : '';
     if (!strike) {
         // Near-miss: obj && cansee -> "<Mon> is almost hit by <obj>!" (display).
@@ -2617,7 +2652,7 @@ async function mon_trapeffect_fire_trap(mtmp, trap) {
         : (mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished);
 }
 
-async function mon_trapeffect(mtmp, trap) {
+async function mon_trapeffect(mtmp, trap, trflags = 0) {
     switch (trap.ttyp) {
     case ROCKTRAP: {
         // C ref: trapeffect_rocktrap() else-branch (monster), trap.c:1379.
@@ -2661,6 +2696,16 @@ async function mon_trapeffect(mtmp, trap) {
                 const { update_topl } = await import('./display.js');
                 const a_your = trap.madeby_u ? 'your' : 'a';
                 await update_topl(`${Monnam(mtmp)} is caught in ${a_your} bear trap!`);
+                const { seetrap } = await import('./trap.js');
+                seetrap(trap);
+            }
+        } else if ((trflags & FORCETRAP) !== 0) {
+            // C ref: trap.c:1545-1552 — a small/airborne monster FORCED onto a
+            // bear trap (openholdingtrap()/closeholdingtrap()) evades it
+            // instead of silently passing over it.
+            if (in_sight) {
+                const a_your = trap.madeby_u ? 'your' : 'a';
+                await pline_mon(mtmp, `${Monnam(mtmp)} evades ${a_your} bear trap!`);
                 const { seetrap } = await import('./trap.js');
                 seetrap(trap);
             }
@@ -2886,8 +2931,14 @@ async function mon_trapeffect(mtmp, trap) {
             const { seetrap } = await import('./trap.js');
             seetrap(trap);
         }
-        // mselftouch (petrification while falling) requires a wielded/worn
-        // cockatrice corpse — none for the pets/quadrupeds here, so no RNG.
+        // C ref: trap.c:2000 mselftouch(mtmp, "Falling, ", FALSE) — petrifies a
+        // monster wielding a cockatrice/chickatrice corpse.  No-op (no RNG) for
+        // every victim without one, which is every pet/quadruped in these
+        // sessions today.
+        {
+            const { mselftouch } = await import('./trap.js');
+            await mselftouch(mtmp, 'Falling, ', false);
+        }
         // wearing_iron_shoes (would clear relevant_spikes) is likewise never
         // true for these victims.
         let trapkilled = false;
@@ -2921,9 +2972,22 @@ async function mon_trapeffect(mtmp, trap) {
         const MZ_HUGE = 4; // monflag.h MZ_HUGE (7 is MZ_GIGANTIC)
         const hptr = mtmp.data;
         const msz = (hptr?.msize != null) ? hptr.msize : (mon_msize(hptr?.pmidx) ?? 2);
-        if (is_flyer(hptr) || is_floater(hptr) || msz >= MZ_HUGE)
-            return Trap_Effect_Finished;
         const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
+        if (is_flyer(hptr) || is_floater(hptr) || msz >= MZ_HUGE) {
+            // C ref: trap.c:2040-2053 — a monster FORCED onto a trapdoor/hole
+            // (openfallingtrap()) that can't fall through it (flyer/floater/
+            // huge) evades instead of silently passing over it.
+            if ((trflags & FORCETRAP) !== 0 && !Sokoban()) {
+                if (in_sight) {
+                    await pline_mon(mtmp, trap.ttyp === TRAPDOOR
+                        ? `A trap door opens, but ${mon_nam(mtmp)} doesn't fall through.`
+                        : `${Monnam(mtmp)} doesn't fall through the hole.`);
+                    const { seetrap } = await import('./trap.js');
+                    seetrap(trap);
+                }
+            }
+            return Trap_Effect_Finished;
+        }
         // C ref: teleport.c mlevel_tele_trap() — on the dungeon's bottom level
         // a hole/trapdoor has nowhere lower to go; the Is_stronghold->valley
         // destination swap isn't modelled (this port doesn't simulate
@@ -4441,6 +4505,25 @@ function wake_nearto(x, y, distance) {
 // port buries one), so this is inert; kept so the call sites read like C.
 function disturb_buried_zombies(_x, _y) { /* no buried monsters are modeled */ }
 
+// C ref: obj.h:418 is_flimsy(otmp) — oc_material <= LEATHER, or a rubber
+// hose.  Module-private copy (js/mon.js, js/uhitm.js, js/worn.js, js/apply.js
+// and js/polyself.js each keep their own).
+function is_flimsy_impact(obj) {
+    return (OBJECTS[obj?.otyp]?.material ?? 99) <= 7 /* MAT_LEATHER */
+        || obj?.otyp === 78 /* RUBBER_HOSE */;
+}
+
+// C ref: hack.c:1786 impact_disturbs_zombies(obj, violent) — maybe disturb
+// buried zombies when `obj` makes a noticeable impact nearby (dropped,
+// thrown, or kicked).  A too-light or flimsy object lets buried zombies
+// rest.  disturb_buried_zombies() above is a no-op in this port (no buried
+// monsters are modeled), so this call is inert, but is ported/wired
+// faithfully so the real call sites read like C.
+export function impact_disturbs_zombies(obj, violent) {
+    if ((obj?.owt ?? 0) < (violent ? 10 : 100) || is_flimsy_impact(obj)) return;
+    disturb_buried_zombies(obj.ox, obj.oy);
+}
+
 // C ref: include/you.h m_next2u(m) — distu(mx,my) <= 2 (the monster's REAL
 // position is orthogonally/diagonally adjacent to the hero).
 export function m_next2u(mtmp) {
@@ -5386,8 +5469,19 @@ function can_track(ptr) { return haseyes(ptr); }
 // invisible (a generic bite instead of AD_SITM/AT_MAGC/AT_SPIT).
 function mon_attacks(mdat) {
     if (!mdat) return [];
-    // resolve by NAME (mhitm.js permonst() convention) — dog.js pet records
-    // carry a non-makemon pmidx (pony=102 == gray unicorn).
+    // C ref: mondata.h mon->data->mattk[] indexes mons[] BY POINTER IDENTITY,
+    // i.e. by pmidx — never by name.  A were-creature's human and animal forms
+    // SHARE ONE NAME (mons[] lists "werejackal" twice: pmidx 15 as S_DOG, 262
+    // as S_HUMAN), so resolving mdat unconditionally by name always answers
+    // with whichever form sorts first (the animal form) regardless of which
+    // form mdat actually is — a human-form werejackal's 2d4 AT_WEAP hit rolled
+    // the animal form's 1d4 AT_BITE dice instead (th-spellcast).  Trust
+    // mdat.pmidx first, the same way mattk_of() itself indexes MATTK[]: only
+    // fall back to the name lookup when mdat is NOT a real makemon() row (dog.js
+    // pet records built with a hand-rolled data object) and pmidx doesn't
+    // actually name it.
+    const byIdx = monster_by_pmidx(mdat.pmidx);
+    if (byIdx && byIdx.name === mdat.name) return mattk_of(byIdx);
     const p = _name_to_pmidx_cf(mdat.name);
     const rec = (p >= 0) ? _monster_by_pmidx_cf(p) : null;
     return mattk_of(rec || mdat);
@@ -5463,22 +5557,58 @@ export async function mattacku(mtmp, mdat) {
     // port (no chameleon-shapechanger monster reaches combat here), so treat
     // it as always NON_PM (-1, "not currently shapechanged").
     const cham = mtmp.cham ?? -1;
-    if (cham === -1 && !mtmp.mcan && !range2 && is_demon(mdat)) {
-        // C ref: mhitu.c:966 summonmu() — the Balrog and the incubus/succubus
-        // ("amorous demon") are EXEMPT: `if (mdat != &mons[PM_BALROG] && mdat
-        // != &mons[PM_AMOROUS_DEMON])` guards the roll, so for those two C
-        // draws nothing at all.  Rolling it anyway inserted an extra
-        // rn2(16) before every succubus attack's to-hit rnd(20+i).
-        const pm = mdat?.pmidx;
-        if (pm !== PM_BALROG_MU && pm !== PM_AMOROUS_DEMON_MU) {
-            const inhell = Inhell();
-            if (!rn2(inhell ? 10 : 16)) {
-                // msummon(mtmp): rare demon-summon consequence, not modeled —
-                // an honest divergence rather than a silent RNG desync.
+    if (cham === -1 && !mtmp.mcan && !range2 && (is_demon(mdat) || is_were_flag(mdat))) {
+        const already_fleeing = !!mtmp.mflee;
+        if (is_demon(mdat)) {
+            // C ref: mhitu.c:966 summonmu() — the Balrog and the incubus/succubus
+            // ("amorous demon") are EXEMPT: `if (mdat != &mons[PM_BALROG] && mdat
+            // != &mons[PM_AMOROUS_DEMON])` guards the roll, so for those two C
+            // draws nothing at all.  Rolling it anyway inserted an extra
+            // rn2(16) before every succubus attack's to-hit rnd(20+i).
+            const pm = mdat?.pmidx;
+            if (pm !== PM_BALROG_MU && pm !== PM_AMOROUS_DEMON_MU) {
+                const inhell = Inhell();
+                if (!rn2(inhell ? 10 : 16)) {
+                    // msummon(mtmp): rare demon-summon consequence, not modeled —
+                    // an honest divergence rather than a silent RNG desync.
+                }
+            }
+        } else {
+            // C ref: mhitu.c:974-989 — a were-creature attacking the hero rolls
+            // to flip form (human -> animal: rn2(5 - night()*2); animal -> human:
+            // rn2(30), skipped in favor of an automatic revert while the hero
+            // holds Protection_from_shape_changers), then rolls once more for a
+            // compatible-critter summon regardless of the protection ring.
+            if (is_human_flag(mdat)) {
+                if (!Protection_from_shape_changers() && !rn2(5 - (night() ? 2 : 0)))
+                    await new_were_pub(mtmp);
+            } else {
+                if (Protection_from_shape_changers() || !rn2(30))
+                    await new_were_pub(mtmp);
+            }
+            mdat = mtmp.data; // form change invalidates the cached value
+            if (!rn2(10)) {
+                // C ref: mhitu.c:990-1026 summonmu()'s critter-summon message.
+                // youseeit (canseemon) picks between two message shapes; the
+                // !youseeit half also needs sounds.c growl_sound(), unported —
+                // an honest gap (pline draws no RNG) rather than a desync.
+                const youseeit = canseemon_mm(mtmp);
+                if (youseeit) await pline_mon(mtmp, `${Monnam(mtmp)} summons help!`);
+                const { total, numseen } = await were_summon(mdat);
+                if (youseeit) {
+                    if (total > 0) {
+                        if (numseen === 0) await update_topl('You feel hemmed in.');
+                    } else {
+                        await update_topl('But none comes.');
+                    }
+                }
             }
         }
-        // is_were(mdat) branch not modeled: no were-creature reaches
-        // mattacku in this port yet, so it would be dead code.
+        // C ref: mhitu.c:734-739 — a were-creature that just changed form might
+        // have become newly afraid (a non-human reacting to Elbereth/scare
+        // monster it was ignoring in human form); abort the rest of the attack
+        // with no further rolls if THIS call is what set mflee.
+        if (mtmp.mflee && !already_fleeing) return 0;
     }
 
     // C ref mhitu.c:758 — unlike defensive items, a monster won't both use an
@@ -5669,14 +5799,24 @@ export async function mattacku(mtmp, mdat) {
             // (buzzmu — the ranged magic-missile ray — is a separate subsystem.)
             if (!range2) sum[i] = await castmu(mtmp, mattk, true, foundyou);
             break;
+        // C ref: mhitu.c:839 AT_EXPL — an automatic hit if next to and aimed
+        // at the hero (a yellow/black light, gas spore, or similar detonates
+        // in melee).  js/mhitu.js:919 already carries the full explmu() port
+        // (d(damn,damd) plus the AD_COLD/FIRE/ELEC/BLND/HALU arms); it was
+        // simply never reached because this case fell through to `default:`.
+        case AT_EXPL:
+            if (!range2) {
+                const { explmu } = await import('./mhitu.js');
+                sum[i] = await explmu(mtmp, mattk, foundyou);
+            }
+            break;
         default:
-            // C ref mhitu.c:832-931 — AT_GAZE (gazemu), AT_EXPL (explmu),
-            // AT_ENGL (gulpmu) and AT_BREA (breamu)
-            // are separate subsystems this port does not carry yet.  Doing
-            // nothing is the honest stand-in: it leaves an explicit screen
-            // divergence for the monsters that own those attacks rather than
-            // inventing rolls, and (unlike the old generic-bite fallback) it no
-            // longer lies about what the species can do.
+            // C ref mhitu.c:832-931 — AT_GAZE (gazemu) is a separate subsystem
+            // this port does not carry yet.  Doing nothing is the honest
+            // stand-in: it leaves an explicit screen divergence for the
+            // monsters that own that attack rather than inventing rolls, and
+            // (unlike the old generic-bite fallback) it no longer lies about
+            // what the species can do.
             break;
         }
         // C ref mhitu.c:936 — `if (disp.botl) bot();` after each attack.
@@ -6435,16 +6575,16 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
             await pline_mon(mtmp, `${flesh ? 'Its flesh' : 'It'} is seared!`);
         }
     }
-    // C ref: mthrowu.c:459-471 — acid venom.  (EGG petrification needs munstone/
-    // minstapetrify, a separate subsystem.)
-    if (otmp.otyp === ACID_VENOM && cansee(mtmp.mx, mtmp.my)) {
-        if (resists_acid(mtmp)) {
-            if (vis || verbose) await pline_mon(mtmp, `${Monnam(mtmp)} is unaffected.`);
-        } else if (vis) {
-            await pline_mon(mtmp, `The acid burns ${mon_nam(mtmp)}!`);
-        } else if (verbose) {
-            await pline_mon(mtmp, 'It is burned!');
+    // C ref: mthrowu.c:444-449 — a thrown cockatrice/chickatrice egg petrifies
+    // its monster target unless it eats a stone-curing corpse first or
+    // resists stoning outright.
+    if (otmp.otyp === EGG_OTYP && corpse_touch_petrifies(otmp.corpsenm)) {
+        const { munstone } = await import('./muse.js');
+        if (!await munstone(mtmp, false)) {
+            const { minstapetrify } = await import('./trap.js');
+            await minstapetrify(mtmp, false);
         }
+        if (resists_ston_mon(mtmp)) damage = 0;
     }
     if (!harmless && !DEADMONSTER(mtmp)) {
         mtmp.mhp -= damage;
@@ -7420,6 +7560,16 @@ async function mhitm_adtyping(mtmp, mattk, mhm) {
         const { mhitm_ad_legs, YOUMONST } = await import('./mhitm_ad.js');
         const { mhitu_ops } = await import('./mhitu.js');
         await mhitm_ad_legs(mtmp, mattk, YOUMONST, mhm, mhitu_ops());
+        break;
+    }
+    case AD_WERE: {
+        // C ref: uhitm.c mhitm_ad_were() `mdef == &gy.youmonst` arm — a
+        // werecreature's bite may infect the hero with lycanthropy.  This
+        // case used to be entirely absent, so the dispatcher's `default:`
+        // swallowed the whole arm: no rn2(4) roll, no infection, no message.
+        const { mhitm_ad_were, YOUMONST } = await import('./mhitm_ad.js');
+        const { mhitu_ops } = await import('./mhitu.js');
+        await mhitm_ad_were(mtmp, mattk, YOUMONST, mhm, mhitu_ops());
         break;
     }
     case AD_BLND: await mhitm_ad_blnd_u(mtmp, mattk, mhm); break;

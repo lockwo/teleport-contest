@@ -7,11 +7,11 @@
 // generated naturally for any session whose level state is materialized.
 
 import { game } from './gstate.js';
-import { rn2, rn1 } from './rng.js';
+import { rn2, rn1, rnd } from './rng.js';
 import { NORMAL_SPEED, A_NEUTRAL, ROOM, is_pit, MAX_CARR_CAP, WT_HUMAN,
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU, I_SPECIAL,
     IS_DOOR, IS_POOL, IS_LAVA, WATER, Is_waterlevel,
-    D_CLOSED, D_LOCKED } from './const.js';
+    D_CLOSED, D_LOCKED, MM_APPARXY_BYYOU } from './const.js';
 import { Conflict, resist_conflict, m_canseeu } from './monmove.js';
 import { mattackm } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, MON_MIGRATING } from './const.js';
@@ -29,7 +29,7 @@ import { attacktype, AT_ENGL } from './monattk_data.js';
 import { objects as OBJECTS, CORPSE, BOULDER, BELL_OF_OPENING,
     COIN_CLASS, GEM_CLASS, ROCK_CLASS, place_object } from './mkobj.js';
 import { monster_by_pmidx, newcham, newcham_wizard_aware, enexto_spawn,
-    pickvampshape_pub, set_mimic_sym } from './makemon.js';
+    pickvampshape_pub, set_mimic_sym, makemon, makemon_appears_msg } from './makemon.js';
 import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
     tp_sensemon } from './display.js';
 import { dist2 } from './hacklib.js';
@@ -303,9 +303,30 @@ export function mcalcmove(mon, m_moving, inline = false) {
 // pmidx because that IS the C monster index (verified by the generator).
 const COUNTER_WERE = { 15: 262, 21: 263, 91: 261, 261: 91, 262: 15, 263: 21 };
 function is_were(ptr) { return is_were_flag(ptr); }
-function counter_were(pmidx) {
+export function counter_were(pmidx) {
     const c = COUNTER_WERE[pmidx];
     return c === undefined ? -1 : c;
+}
+
+// C ref: were.c:70 were_beastie(pm) — map a lycanthrope OR one of its animal
+// cousins to the canonical animal-form werebeast pmidx.  Keyed by pmidx, same
+// as COUNTER_WERE above.  Real callers: eat.c maybe_cannibal() (a were-hero
+// eating one of their own animal cousins still counts as cannibalism) and
+// polyself.c polyself()'s do_shift arm (an uncontrolled poly on a were-hero
+// must land back on their OWN lycanthropy species, not a random form).
+const WB_WERERAT = 91, WB_WEREJACKAL = 15, WB_WEREWOLF = 21;
+const WERE_BEASTIE_RAT = new Set([WB_WERERAT, name_to_pmidx('sewer rat'),
+    name_to_pmidx('giant rat'), name_to_pmidx('rabid rat')]);
+const WERE_BEASTIE_JACKAL = new Set([WB_WEREJACKAL, name_to_pmidx('jackal'),
+    name_to_pmidx('fox'), name_to_pmidx('coyote')]);
+const WERE_BEASTIE_WOLF = new Set([WB_WEREWOLF, name_to_pmidx('wolf'),
+    name_to_pmidx('warg'), name_to_pmidx('winter wolf'),
+    name_to_pmidx('winter wolf cub')]);
+export function were_beastie(pm) {
+    if (WERE_BEASTIE_RAT.has(pm)) return WB_WERERAT;
+    if (WERE_BEASTIE_JACKAL.has(pm)) return WB_WEREJACKAL;
+    if (WERE_BEASTIE_WOLF.has(pm)) return WB_WEREWOLF;
+    return NON_PM;
 }
 function is_human_were(ptr) { return is_were_flag(ptr) && is_human_flag(ptr); }
 // C ref: youprop.h Protection_from_shape_changers — extrinsic only (the ring).
@@ -371,6 +392,60 @@ async function new_were(mon) {
     if (game.context?.mon_moving && !mon.mpeaceful
         && onscary(mon.mux, mon.muy, mon) && monnear(mon, mon.mux, mon.muy))
         await monflee(mon, rn1(9, 2), true, true); /* 2..10 turns */
+}
+
+// C ref: were.c:141 were_summon(ptr, yours, visible, genbuf) — a were-creature
+// (never the hero here: mhitu.c summonmu() always passes yours=FALSE) summons
+// a horde of compatible animal-form critters.  `ptr` is the were's OWN data
+// (either form — monsters.h gives wererat/werejackal/werewolf the same name
+// in both forms, so switching on the name covers both PM_WERERAT and
+// PM_HUMAN_WERERAT the way C's switch covers both enum values).  Returns the
+// total summoned and how many the hero could see, plus the generic species
+// noun mhitu.c's message needs.
+export async function were_summon(ptr) {
+    let total = 0, numseen = 0, genbuf = 'creature';
+    // C: `if (Protection_from_shape_changers && !yours) return 0;` — yours is
+    // always FALSE from summonmu(), so the ring alone blocks the whole horde.
+    if (Protection_from_shape_changers()) return { total, numseen, genbuf };
+    for (let i = rnd(5); i > 0; i--) {
+        let typ;
+        if (ptr?.name === 'wererat') {
+            typ = rn2(3) ? 'sewer rat' : rn2(3) ? 'giant rat' : 'rabid rat';
+            genbuf = 'rat';
+        } else if (ptr?.name === 'werejackal') {
+            typ = rn2(7) ? 'jackal' : rn2(3) ? 'coyote' : 'fox';
+            genbuf = 'jackal';
+        } else if (ptr?.name === 'werewolf') {
+            typ = rn2(5) ? 'wolf' : rn2(2) ? 'warg' : 'winter wolf';
+            genbuf = 'wolf';
+        } else {
+            continue; // C: `default: continue;` — draws nothing for this pass.
+        }
+        // C: makemon(&mons[typ], u.ux, u.uy, NO_MM_FLAGS) takes the byyou
+        // branch (x==u.ux, y==u.uy, !in_mklev): the exact square is the
+        // HERO's, so it resolves through enexto_spawn (collect_coords ring
+        // shuffle) to a nearby free square rather than placing there directly
+        // — makemon() itself has no byyou branch of its own (see
+        // create_particular_monster's note), so the search runs here first.
+        const u = game.u;
+        const spot = enexto_spawn(u?.ux ?? 0, u?.uy ?? 0, monster_by_pmidx(name_to_pmidx(typ)));
+        const mtmp = spot
+            ? makemon(monster_by_pmidx(name_to_pmidx(typ)), spot.x, spot.y,
+                      MM_APPARXY_BYYOU)
+            : null;
+        if (mtmp) {
+            total++;
+            if (canseemon_mon(mtmp)) numseen++;
+            // C ref: makemon.c:1472-1501 — every in-game (non-mklev) makemon()
+            // prints its own "X suddenly appears next to you!" arrival line;
+            // this port's makemon() defers that to the caller (see
+            // create_particular_monster), so were_summon's own caller-side
+            // makemon() call needs it too.
+            await makemon_appears_msg(mtmp, spot.x, spot.y, 0);
+        }
+        // C: `if (yours && mtmp) tamedog(...)` — yours is always FALSE here.
+    }
+    return { total, numseen, genbuf };
 }
 
 // C ref: were.c were_change(mon) — each lycanthrope rolls once per turn to
@@ -1692,7 +1767,7 @@ function mvitals_at(mndx) {
     const mv = (game.mvitals = game.mvitals || []);
     return (mv[mndx] = mv[mndx] || { died: 0, mvflags: 0 });
 }
-function genocided_pm(mndx) { return ((mvitals_at(mndx).mvflags | 0) & G_GENOD) !== 0; }
+export function genocided_pm(mndx) { return ((mvitals_at(mndx).mvflags | 0) & G_GENOD) !== 0; }
 
 // C ref: monst.h:255 mon_offmap(mon) == (mon->mstate != MON_FLOOR).
 function mon_offmap(mon) { return (mon?.mstate | 0) !== MON_FLOOR; }
@@ -3242,9 +3317,10 @@ export async function normal_shape(mon) {
         }
     }
 }
-// new_were() is this file's own (private) port, and normal_shape is its only
-// new caller; a thin alias keeps that function untouched.
-async function new_were_pub(mon) { await new_were(mon); }
+// new_were() is this file's own (private) port; normal_shape is one caller
+// and mhitu.c:966 summonmu()'s were-shapechange gate (ported in
+// js/monmove.js mattacku()) is another, so this thin alias is exported.
+export async function new_were_pub(mon) { await new_were(mon); }
 
 // ── mon.c:4471 alloc_itermonarr() ───────────────────────────────────────────
 // C keeps one reusable struct monst *[] between monster-movement loops,

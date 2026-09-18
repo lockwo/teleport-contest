@@ -57,13 +57,14 @@ import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          CXN_SINGULAR, REVIVE_MON, ROT_CORPSE, TIMER_OBJECT, RLOC_NOMSG,
          NON_PM, G_GENOD, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES, UTOTYPE_NONE,
          UTOTYPE_DEFERRED, UTOTYPE_ATSTAIRS, UTOTYPE_FALLING, UTOTYPE_PORTAL,
-         UTOTYPE_RMPORTAL } from './const.js';
+         UTOTYPE_RMPORTAL, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX } from './const.js';
 import { docrt, flush_screen, pline, update_topl, topl_more, y_n, newsym,
          see_nearby_objects } from './display.js';
 import { seetrap, dotrap } from './trap.js';
 import { check_special_room } from './shkroom.js';
 import { near_capacity, addinv, prinv } from './invent.js';
-import { BOULDER, run_object_timers, mksobj, AMULET_OF_YENDOR } from './mkobj.js';
+import { BOULDER, run_object_timers, mksobj, AMULET_OF_YENDOR,
+         is_rider_pm } from './mkobj.js';
 import { vision_reset, vision_recalc, Blind, cansee,
          recalc_block_point } from './vision.js';
 import { hide_monst } from './mon.js';
@@ -102,6 +103,23 @@ function m_at(x, y) {
     for (const m of game.level?.monsters ?? [])
         if (m.mx === x && m.my === y) return m;
     return null;
+}
+
+// C ref: hack.c:3220 set_uinwater(in_out) — set or clear u.uinwater.  C also
+// calls switch_terrain() on a real change; that is an established NOT-PORTED
+// no-op elsewhere in this port (js/dig.js switch_terrain(), js/dothrow.js
+// switch_terrain_hurtle(), js/teleport.js switch_terrain_()) — no B<prop>
+// masks are recomputed from a terrain change here — so wiring it changes
+// nothing observable; this still centralizes the flag write behind the one
+// real setter, matching every C caller (do.c, hack.c, trap.c, zap.c).
+export function set_uinwater(in_out) {
+    const u = game.u;
+    if (!u) return;
+    const val = in_out ? 1 : 0;
+    if (val !== (u.uinwater | 0)) {
+        u.uinwater = val;
+        /* switch_terrain(): NOT PORTED (see refs above). */
+    }
 }
 
 function within_bounded_area(x, y, lx, ly, hx, hy) {
@@ -480,16 +498,44 @@ function u_collide_m(mtmp) {
     }
 }
 
-// C ref: hack.c losehp() — HP subtraction only; death handling isn't reached by
-// the covered sessions (matching every other file-local losehp() in this port).
-async function losehp_do(n) {
+// C ref: hack.c losehp(n, knam, k_format) — HP subtraction; running the hero's
+// uhp to 0 or below runs the death path (matching trap.js's losehp(), the
+// established pattern for every other file-local losehp() in this port: set
+// the formatted killer text, urgent_pline "You die...", then done(DIED)).
+// `knam`/`k_format` are optional so file-internal callers that cannot reach
+// 0 HP (none currently) may omit them; every reachable call site below passes
+// its C-matching killer text.
+async function losehp_do(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
     if (!u || n <= 0) return;
+    if (u.Upolyd) {
+        u.mh = (u.mh ?? 0) - n;
+        if (u.mh > u.mhmax) u.mhmax = u.mh;
+        if (u.mh < 1) {
+            const { rehumanize } = await import('./polyself.js');
+            if (rehumanize) await rehumanize();
+        }
+        return;
+    }
     u.uhp = (u.uhp ?? 0) - n;
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
-    if (u.uhp < 0) u.uhp = 0;
-    // C ref: hack.c losehp() tail — `else if (n > 0 && u.uhp * 10 < u.uhpmax) maybe_wail();`
-    if (n > 0 && u.uhp * 10 < (u.uhpmax ?? 0)) await maybe_wail();
+    else game.botl = true;
+    if (u.uhp < 1) {
+        // C ref: hack.c:4287 `urgent_pline("You die..."); done(DIED);`
+        await update_topl('You die...');
+        game._killer_name = knam ? format_do_killer(knam, k_format) : null;
+        const { done } = await import('./end.js');
+        await done(DIED);
+    } else if (n > 0 && u.uhp * 10 < (u.uhpmax ?? 0)) {
+        await maybe_wail();
+    }
+}
+// C ref: topten.c formatkiller() reduced to the DIED prefix, mirroring
+// trap.js's format_trap_killer()/end.js's killer_text_for_monster().
+function format_do_killer(knam, k_format) {
+    if (k_format === NO_KILLER_PREFIX) return knam;
+    if (k_format === KILLED_BY_AN) return `killed by ${an(knam)}`;
+    return `killed by ${knam}`;
 }
 
 // C ref: hack.c maybe_wail() — the low-HP warning, throttled to once per 50
@@ -541,19 +587,19 @@ async function drag_down_hero() {
     if (forward) {
         if (rn2(6)) {
             await pline('The iron ball drags you downstairs!');
-            await losehp_do(rnd(6));
+            await losehp_do(rnd(6), 'dragged downstairs by an iron ball', NO_KILLER_PREFIX);
         }
     } else {
         if (rn2(2)) {
             await pline('The iron ball smacks into you!');
             game._toplin = 1;   // C pline() leaves toplin == TOPLINE_NEED_MORE
-            await losehp_do(rnd(20));
+            await losehp_do(rnd(20), 'iron ball collision', KILLED_BY_AN);
             exercise(A_STR, false);
             dragchance -= 2;
         }
         if (dragchance >= rnd(6)) {
             await pline('The iron ball drags you downstairs!');
-            await losehp_do(rnd(3));
+            await losehp_do(rnd(3), 'dragged downstairs by an iron ball', NO_KILLER_PREFIX);
             exercise(A_STR, false);
         }
     }
@@ -765,7 +811,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     u.utraptype = 0;
     u.ustuck = null;
     u.uswallow = 0;
-    u.uinwater = 0;
+    set_uinwater(0);
     u.uundetected = 0;
 
     // Capture accompanying pet(s) before the old level is freed by mklev().
@@ -1029,7 +1075,8 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         // is the identity here and selftouch("Falling, you") only bites a hero
         // wielding a petrifying corpse, so neither adds a draw.
         if (fell_downstairs && Punished_do()) await drag_down_hero();
-        if (fell_downstairs) await losehp_do(rnd(3));
+        if (fell_downstairs) await losehp_do(rnd(3),
+            at_ladder ? 'falling off a ladder' : 'tumbling down a flight of stairs', KILLED_BY);
     } else {
         // trap door / level teleport / endgame.  (The was_in_W_tower `| 2` flag
         // of C's u_on_rndspot() call is Vlad's-Tower-only and never set here.)
@@ -1273,7 +1320,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // C ref: do.c:1990 — a trap-door/hole fall costs d(max(dist,1), 6) hp, rolled
     // at the very END of the arrival (after every message above and after
     // check_special_room(FALSE)).  Maybe_Half_Phys is the identity here.
-    if (do_fall_dmg) await losehp_do(d(Math.max(dist, 1), 6));
+    if (do_fall_dmg) await losehp_do(d(Math.max(dist, 1), 6), 'falling down a mine shaft', KILLED_BY);
     // MEASURED NEGATIVE, do not re-add here: C's do.c:1814 `if (Punished)
     // placebc();` belongs EARLIER in goto_level (before obj_delivery()/
     // losedogs()/run_timers()), so the arrival square's nexthere order is C's.
@@ -1300,7 +1347,7 @@ const MM_NOWAIT_DO = 0x00000002;   // C ref: makemon.h MM_NOWAIT
 async function resurrect() {
     const M = await import('./makemon.js');
     const U = await import('./uhitm.js');
-    const made = M.create_particular_monster('Wizard of Yendor', MM_NOWAIT_DO);
+    const made = await M.create_particular_monster('Wizard of Yendor', MM_NOWAIT_DO);
     if (!made) return;
     const mtmp = made.mtmp;
     mtmp.mrevived = 1;
@@ -2046,7 +2093,7 @@ async function level_tele_destination(newlev) {
 // non-endgame, non-hell) case is modelled; the RNG draws (the initial rn2(5),
 // the rn2(range) selection, and the rnd(3) botlevel/min-depth adjustments) are
 // reproduced left-to-right so the mklev() stream that follows stays in sync.
-function random_teleport_level() {
+export function random_teleport_level() {
     const u = game.u;
     const cur_depth = depth_of_level(u.uz);
     const dng = game.dungeons[u.uz.dnum];
@@ -2537,10 +2584,9 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
             }
 
             if (fills_up && game.u.uinwater && distu(rx, ry) === 0) {
-                // C ref: do.c:128 set_uinwater(0) — NOT PORTED (nothing in js/
-                // defines it); it clears u.uinwater and redoes the underwater
-                // display bookkeeping.  The flag is what every caller reads.
-                game.u.uinwater = 0;
+                // C ref: do.c:128 set_uinwater(0) — clears u.uinwater and
+                // redoes the underwater display bookkeeping (below).
+                set_uinwater(0);
                 await docrt();
                 game.vision_full_recalc = 1;
                 await pline('You find yourself on dry land again!');
@@ -2552,7 +2598,7 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
                 await TO.burn_away_slime();
                 const dmg = d(Fire_resistance_do() ? 1 : 3, 6);
                 /* C: losehp(Maybe_Half_Phys(dmg), "molten lava", KILLED_BY) */
-                await losehp_do(Maybe_Half_Phys_do(dmg));
+                await losehp_do(Maybe_Half_Phys_do(dmg), 'molten lava', KILLED_BY);
             } else if (!fills_up && game.flags?.verbose
                        && (pushing ? !Blind() : cansee(rx, ry))) {
                 await pline('It sinks without a trace!');
@@ -2662,7 +2708,7 @@ export async function flooreffects(obj, x, y, verb) {
                 if (!Passes_walls_do() && !throws_rocks_flag(game.u.data)) {
                     /* C: losehp(Maybe_Half_Phys(rnd(15)),
                               "squished under a boulder", NO_KILLER_PREFIX) */
-                    await losehp_do(Maybe_Half_Phys_do(rnd(15)));
+                    await losehp_do(Maybe_Half_Phys_do(rnd(15)), 'squished under a boulder', NO_KILLER_PREFIX);
                     deletedwithboulder = true; /* C: goto deletedwithboulder */
                 } else {
                     reset_utrap_do(true);
@@ -2693,10 +2739,9 @@ export async function flooreffects(obj, x, y, verb) {
         newsym(x, y);
         res = true;
     } else if (DB.is_lava(x, y)) {
-        // C ref: do.c:271 `res = lava_damage(obj, x, y);` — trap.c lava_damage()
-        // has no port in js/ (only water_damage(), js/trap.js:707), so an object
-        // that C burns up survives here.
-        res = false;
+        // C ref: do.c:271 `res = lava_damage(obj, x, y);` — js/trap.js
+        // lava_damage().
+        res = await T.lava_damage(obj, x, y);
     } else if (DB.is_pool(x, y)) {
         /* Reasonably bulky objects splash when dropped; if you are floating
            above the water even small things make noise.  Stuff dropped near
@@ -3131,9 +3176,8 @@ export async function engulfer_digests_food(obj) {
             /* C: newcham(u.ustuck, slime, could_slime ? NC_SHOW_MSG : 0) */
             MK.newcham(ustuck, slime);
         } else if (could_petrify) {
-            // C ref: do.c:876 minstapetrify(u.ustuck, TRUE) — mon.c
-            // minstapetrify() has no port in js/, so the engulfer survives.
-            void 0;
+            const { minstapetrify } = await import('./trap.js');
+            await minstapetrify(ustuck, true);
         } else if (could_grow) {
             // C ref: do.c:878 grow_up(u.ustuck, NULL) — makemon.c grow_up() is
             // ported but module-private in js/mhitm.js:693 under a two-monster
@@ -3528,6 +3572,46 @@ export async function revive_corpse(corpse) {
         return true;
     }
     return false;
+}
+
+// ── revive_nasty (C ref: hack.c:104) ────────────────────────────────────────
+// Revive any Rider / Wizard-of-Yendor corpse lying at <x,y> before it is
+// crushed or destroyed (drawbridge open/close, boulder pushed onto an
+// occupied square, &c).  A monster already standing on the square is moved
+// out of the way first, `msg` (if given) is shown once via Norep, then each
+// matching corpse is revive_corpse()'d.  Faithful to the C loop's quirk: it
+// reassigns `revived` unconditionally every iteration rather than OR-ing, so
+// only the LAST corpse processed at the square decides the return value.
+export async function revive_nasty(x, y, msg) {
+    const { rloc_to } = await import('./teleport.js');
+    let revived = false;
+    const objs = (game.level?.objects || [])
+        .filter((o) => o.ox === x && o.oy === y
+                     && (o.where === 'floor' || o.where === 1));
+    for (const otmp of objs) {
+        if (otmp.otyp === CORPSE
+            && (is_rider_pm(otmp.corpsenm)
+                || otmp.corpsenm === await PM_do('Wizard of Yendor'))) {
+            const mtmp = m_at(x, y);
+            if (mtmp) {
+                const cc = enexto(x, y, mtmp);
+                if (cc) await rloc_to(mtmp, cc.x, cc.y);
+            }
+            if (msg) await Norep_do(msg);
+            revived = await revive_corpse(otmp);
+        }
+    }
+
+    /* this location might not be safe; if not, move revived monster */
+    if (revived) {
+        const mtmp = m_at(x, y);
+        if (mtmp && !goodpos_mon(x, y, mtmp)) {
+            const cc = enexto(x, y, mtmp);
+            if (cc) await rloc_to(mtmp, cc.x, cc.y);
+        }
+    }
+
+    return revived;
 }
 
 // C ref: mondata.c locomotion(ptr, def) — js/dogmove.js:2056, js/monmove.js:1876

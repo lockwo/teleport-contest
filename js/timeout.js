@@ -476,15 +476,22 @@ export async function nh_timeout() {
     // u.ucreamed.  Without it a self-polymorph never wore off: u.mtimedone was
     // set by polymon() and then never decremented, so the hero stayed in the
     // form (and kept its HD/AC status row) for the rest of the session.
-    // is_were()'s you_unwere() arm is deferred with the rest of lycanthropy.
     if (u.mtimedone && !--u.mtimedone) {
-        const { rehumanize, Unchanging_poly } = await import('./polyself.js');
+        const { rehumanize, Unchanging_poly, you_unwere } = await import('./polyself.js');
         if (Unchanging_poly && Unchanging_poly()) {
             // C DRAWS rnd(100 * mlevel + 1) here: an Unchanging hero's form is
             // re-armed rather than reverted.
             u.mtimedone = rnd(100 * ((u.data?.mlevel | 0)) + 1);
-        } else if (rehumanize) {
-            await rehumanize();
+        } else {
+            // C ref: timeout.c:644-647 — a were-hero whose timer ran out asks
+            // (if polycontrol) whether to stay in beast form instead of an
+            // unconditional rehumanize().
+            const { is_were_flag } = await import('./monflags_data.js');
+            if (is_were_flag(u.data)) {
+                if (you_unwere) await you_unwere(false);
+            } else if (rehumanize) {
+                await rehumanize();
+            }
         }
     }
 

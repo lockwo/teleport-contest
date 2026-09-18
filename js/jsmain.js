@@ -390,18 +390,25 @@ export class NethackGame {
         // the display and the capture hook are installed.
         await config_error_report(opts);
 
-        // C prompts for a name before role/race selection when OPTIONS
-        // does not supply one.  That selection can consume RNG before
-        // o_init/newgame startup begins.
-        await this._startupCharacterSelection(optsel);
-
-        // C ref: unixmain.c — if this player already has a save file, restore it
-        // instead of starting a new game (restore_saved_game() -> dorecover()).
+        // C ref: sys/unix/unixmain.c main() — restore_saved_game()/dorecover()
+        // is attempted FIRST, using whatever plname is already known (from
+        // OPTIONS=name: or an rc-forced wizard name); player_selection() (the
+        // "Shall I pick ... for you?" prompt this port's _startupCharacterSelection
+        // implements) only runs in the `!resuming` branch, i.e. when no save was
+        // found or restore failed (unixmain.c:243-291). Running character
+        // selection unconditionally BEFORE this check consumed the restoring
+        // segment's replayed keystrokes as bogus role/race/gender/align answers
+        // instead of leaving them for the restored game to read.
         const { have_saved_game, dorestore } = await import('./restore.js');
         if (have_saved_game()) {
             await dorestore();
             return;
         }
+
+        // C prompts for a name before role/race selection when OPTIONS
+        // does not supply one.  That selection can consume RNG before
+        // o_init/newgame startup begins.
+        await this._startupCharacterSelection(optsel);
 
         // Run game startup
         await newgame();

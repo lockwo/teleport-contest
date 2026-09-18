@@ -8,9 +8,9 @@
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
-import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, covers_objects, show_glyph_cell, hero_glyph } from './display.js';
+import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, covers_objects, show_glyph_cell, hero_glyph, glyph_at } from './display.js';
 import { vision_recalc, cansee, recalc_block_point, Blind } from './vision.js';
-import { hliquid, Some_Monnam, m_monnam } from './do_name.js';
+import { hliquid, Some_Monnam, m_monnam, YMonnam, y_monnam } from './do_name.js';
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
          glyph_is_invisible, stumble_onto_mimic } from './uhitm.js';
 import { ddoinv, dismiss_invent_screen, dolook,
@@ -18,10 +18,12 @@ import { ddoinv, dismiss_invent_screen, dolook,
          attr_window_advance, disco_window_advance, dowieldquiver, dowield, doswapweapon, dothrow, dofire, dotravel, dodrop, doddrop,
          dopickup, dowear, dotakeoff, doputon, doremring, dopay, floor_object_name,
          doprgold, doprwep, doprarm, doprring, dopramulet, doprinuse,
-         renderWindowScreen, ECMD_NOTHANDLED, describe_decor, dfeature_at,
+         renderWindowScreen, renderMenuLines, ECMD_NOTHANDLED, describe_decor, dfeature_at,
          dotypeinv, doprtool, nohands_youmonst, notake_youmonst, wiz_identify,
+         xname, otense, inv_cnt, invlet_basic, splitobj, freeinv,
+         obj_extract_self, makeplural,
          ECMD_TIME as I_ECMD_TIME } from './invent.js';
-import { WEAPON_CLASS, objects as OBJECTS, KICKING_BOOTS } from './mkobj.js';
+import { WEAPON_CLASS, objects as OBJECTS, KICKING_BOOTS, BOULDER, place_object } from './mkobj.js';
 import { doeat } from './eat.js';
 import { doapply, ECMD } from './apply.js';
 import { dodrink } from './potion.js';
@@ -34,12 +36,14 @@ import { doextcmd, doddoremarm, hooked_tty_getlin, wiz_wish, wiz_genesis,
          wiz_map_extcmd, run_extcmd_by_name, docallcmd, dooverview } from './extcmd-handlers.js';
 import { wiz_detect } from './wizcmds.js';
 import { do_gamelog } from './insight.js';
-import { skill_window_advance } from './enhance.js';
-import { wiz_level_tele, dodown, doup } from './do.js';
+import { skill_window_advance, uwep_skill_type, p_skill_of, use_skill } from './enhance.js';
+import { wiz_level_tele, dodown, doup, revive_nasty, random_teleport_level,
+         flooreffects, boulder_hits_pool, set_uinwater } from './do.js';
 import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation,
-         TRAP_CLEARLY_IMMUNE } from './trap.js';
+         TRAP_CLEARLY_IMMUNE, deltrap, fill_pit, blow_up_landmine, seetrap,
+         launch_obj, ROLL, LAUNCH_KNOWN } from './trap.js';
 import { doset, dosetSimple } from './doset.js';
-import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, dotele_wizard, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy } from './hack.js';
+import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, dotele_wizard, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg } from './hack.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          D_ISOPEN, D_BROKEN, D_NODOOR, D_TRAPPED,
          SDOOR, SCORR, CORR, IS_WALL, IS_OBSTRUCTED, IS_ROCK, isok, IS_DOOR,
@@ -51,20 +55,24 @@ import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          A_STR, A_DEX, A_CON, A_WIS, Is_rogue_level,
          TT_BEARTRAP, TT_PIT, TT_WEB, TT_LAVA, TT_INFLOOR,
          PIT, SPIKED_PIT, STATUE_TRAP, TIP_SWIM, TRAPNUM, In_sokoban, ICE,
-         is_hole,
+         is_hole, LANDMINE, HOLE, TRAPDOOR, LEVEL_TELEP, TELEP_TRAP,
+         ROLLING_BOULDER_TRAP,
+         W_NONDIGGABLE, SHOPBASE, BRK_BY_HERO, BRK_FROM_INV, BRK_MELEE,
+         BRK_KNOWN2BREAK, BRK_KNOWN2NOTBREAK, P_DAGGER, P_SABER, P_BASIC,
+         P_UNSKILLED, P_RIDING,
          SLT_ENCUMBER, MOD_ENCUMBER, OVERLOADED, Is_medusa_level, Is_juiblex_level,
          Is_waterlevel } from './const.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { is_hider_flag, hides_under_flag, throws_rocks_flag } from './monflags_data.js';
-import { noattacks, attacktype, AT_ENGL } from './monattk_data.js';
+import { noattacks, attacktype, AT_ENGL, AD_FIRE } from './monattk_data.js';
 // onscary() is an `export function` declaration in monmove.js, so this cycle
 // (cmd -> monmove -> uhitm -> allmain -> cmd) resolves through hoisting the
 // same way muse.js's import of it does.
-import { onscary } from './monmove.js';
+import { onscary, dissolve_bars } from './monmove.js';
 import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
          read_engr_at as engrave_read_engr_at } from './engrave.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { builds_up, level_difficulty_c } from './dungeon.js';
+import { builds_up, level_difficulty_c, surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { HEADSTONE } from './const.js';
 // C ref: dokick.c — the whole ^D command (kick_dumb/kick_ouch/kick_door/
@@ -72,6 +80,15 @@ import { HEADSTONE } from './const.js';
 // crossing it is a hoisted `function` declaration, the same way onscary() above
 // resolves cmd -> monmove -> uhitm -> allmain -> cmd.
 import { dokick } from './dokick.js';
+import { setuwep } from './wield.js';
+import { is_art, attacks, bare_artifactname, ART_STING } from './artifact.js';
+import { weapon_descr } from './weapon.js';
+import { rloco } from './teleport.js';
+import { costly_spot, subfrombill, onshopbill } from './shk.js';
+import { in_rooms, shop_keeper } from './shkroom.js';
+import { autopick_testobj } from './pickup.js';
+import { bury_objs } from './dig.js';
+import { hit_bars } from './mthrowu.js';
 
 // ── imports used only by the inert cmd.c section at the end of this file ────
 // C ref: hack.h enum cmdq_cmdtypes / CQ_* queue ids, rm.h MAX_TYPE and the
@@ -79,7 +96,10 @@ import { dokick } from './dokick.js';
 import { CMDQ_KEY, CMDQ_EXTCMD, CMDQ_DIR, CMDQ_USER_INPUT, CMDQ_INT,
          CQ_CANNED, CQ_REPEAT, MAX_TYPE, IS_ROOM, IS_TREE, IS_WATERWALL,
          IS_THRONE, IS_FOUNTAIN, IS_SINK, IS_ALTAR, GLOC_INTERESTING,
-         has_mgivenname, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } from './const.js';
+         has_mgivenname, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT,
+         MENU_FIRST_PAGE, MENU_LAST_PAGE, MENU_NEXT_PAGE, MENU_PREVIOUS_PAGE,
+         MENU_SELECT_ALL, MENU_UNSELECT_ALL, MENU_INVERT_ALL, MENU_SELECT_PAGE,
+         MENU_UNSELECT_PAGE, MENU_INVERT_PAGE, MENU_SEARCH } from './const.js';
 // C ref: cmd.c extcmdlist[] — key/name/description/flags, build-constant.
 import { EXTCMD_TABLE } from './cmd_data.js';
 // C ref: selvar.c — the selection accessors #lookaround's room description uses.
@@ -93,7 +113,7 @@ import { num_spells } from './spell.js';
 import { vobj_at } from './display.js';
 import { dist2 } from './hacklib.js';
 import { M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID } from './monflags_data.js';
-import { NO_COLOR } from './terminal.js';
+import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 
 // C ref: hack.c maybe_smudge_engr() — when the hero walks/rushes from (x1,y1)
 // to (x2,y2) and can reach the floor, any non-headstone engraving at the old
@@ -3305,11 +3325,24 @@ export async function domove(dx, dy, attemptTracked = true) {
             game.context.move = 1;
             return;
         }
-        // domove_attackmon_at(): displacer-beast swap not modelled; for a
-        // normal bump we call do_attack().  do_attack() returns TRUE when the
-        // hero's move was used up (a real attack, or "in the way" while
-        // running), FALSE when the monster evaded -> fall through to the
-        // swap-places handling below.
+        // domove_attackmon_at(): the *displaceu sub-case (a hostile
+        // DISPLACER_BEAST barging past the hero, !rn2(2), instead of being
+        // attacked) is a real, identified, deliberately-out-of-scope gap, not
+        // an oversight: C's own handling of it (hack.c:2886-2908) sits in a
+        // SEPARATE, substantial code path in domove_core -- remove_monster()
+        // + place_monster() swap the two positions directly, bypassing
+        // test_move()/trapmove()/the boulder-push block entirely, then calls
+        // minliquid()/mintrap() for the displaced monster -- none of which
+        // this port's domove() models today. The boolean side (goodpos()
+        // with GP_ALLOW_U is exported from js/teleport.js, mtmp.mux/muy DOES
+        // track the monster's belief about the hero's square throughout this
+        // port, so the *displaceu condition itself IS computable) is cheap;
+        // it is the swap's own execution path that is the real, disproportionate
+        // piece of unported work, and it is out of scope for this pass. For a
+        // normal bump we call do_attack(): it returns TRUE when the hero's
+        // move was used up (a real attack, or "in the way" while running),
+        // FALSE when the monster evaded, falling through to the swap-places
+        // handling below.
         if (await do_attack(mtmp)) {
             // The attack consumed the turn (C: do_attack returned TRUE); the
             // hero stays put (no vision recalc — position unchanged).
@@ -3373,6 +3406,17 @@ export async function domove(dx, dy, attemptTracked = true) {
             }
         }
         return;
+    }
+
+    // ── force-fight iron bars / a spider web ──  C ref: hack.c:2804-2808 —
+    // domove_fight_ironbars(x,y) then domove_fight_web(x,y), tried in that
+    // order BEFORE domove_fight_empty(x,y) below.  Both are real 'F'-prefix
+    // triggers only (never the remembered-'I' trigger domove_fight_empty also
+    // answers to), and both always consume the turn once their own gate
+    // (IRONBARS+uwep / WEB+tseen) passes.
+    if (game.context?.forcefight) {
+        if (await domove_fight_ironbars(newx, newy)) { game.context.move = 1; return; }
+        if (await domove_fight_web(newx, newy)) { game.context.move = 1; return; }
     }
 
     // ── force-fight an empty square ──  C ref: hack.c:2228 domove_fight_empty(x,y).
@@ -4188,59 +4232,302 @@ function hero_throws_rocks() {
     return throws_rocks_flag({ pmidx: game.u?.umonnum });
 }
 
-// C ref: objnam.c the(xname(otmp)) for a lone boulder — "the boulder".  Built
-// from the object type's base name so it stays correct for any pushable object
-// (boulders never take a shuffled appearance and always have quan 1 on the map).
+// C ref: objnam.c xname() BOULDER case (objnam.c:814-826): when
+// `next_boulder === 1` the name is "next boulder" instead of plain "boulder",
+// and the flag self-clears right there so a SECOND name-request for the same
+// object (e.g. two messages about the same push) reverts to plain "boulder" -
+// matching C's one-shot "once 'next boulder' occurs, subsequent messages
+// should just use ordinary 'boulder'" comment exactly.
+function pushable_base_name(otmp) {
+    const base = OBJECTS[otmp.otyp]?.name || 'boulder';
+    if (otmp.otyp === BOULDER && otmp.next_boulder === 1) {
+        otmp.next_boulder = 0;
+        return `next ${base}`;
+    }
+    return base;
+}
 function the_pushable_name(otmp) {
-    return `the ${OBJECTS[otmp.otyp]?.name || 'boulder'}`;
+    return `the ${pushable_base_name(otmp)}`;
+}
+function The_pushable_name(otmp) {
+    return `The ${pushable_base_name(otmp)}`;
+}
+// C ref: objnam.c Tobjnam(obj, verb): "The <obj> <verb-conjugated>".  Boulders
+// are always seen when pushed (adjacent square), so the cansee()/"Something"
+// arm of the real Tobjnam() never applies here.
+function Tobjnam_boulder(otmp, verb) {
+    return `${The_pushable_name(otmp)} ${otense(otmp, verb)}`;
+}
+// C ref: mondata.h verysmall(ptr) = msize < MZ_SMALL (1).  Only meaningful
+// while polymorphed (an unpolymorphed hero is never verysmall); js/dogmove.js
+// keeps the monster-side copy this mirrors.
+function hero_verysmall() {
+    const u = game.u;
+    return !!u?.Upolyd && ((u.data?.msize ?? 2) < 1);
+}
+// C ref: hack.c disturb_buried_zombies(x, y).  js/monmove.js:4474 keeps the
+// same no-op private copy: no buried monster is modeled anywhere in this port.
+function disturb_buried_zombies_boulder(_x, _y) { /* no buried monsters modeled */ }
+// C ref: hack.c u_locomotion(def).  js/do.js and js/trap.js keep their own
+// private copies; nolimbs()/swimmer forms never apply to a boulder-pushing
+// hero, so only Levitation/Flying change the verb.
+function u_locomotion_boulder(def) {
+    const p = game.u?.uprops;
+    return p?.Levitation ? 'float' : p?.Flying ? 'fly' : def;
+}
+// C ref: rm.h Sokoban == svl.level.flags.sokoban_rules.  js/dungeon.js:1723
+// keeps the same private copy under the same name.
+function Sokoban_boulder() { return !!game.level?.flags?.sokoban_rules; }
+// C ref: trap.c:7039 sokoban_guilt().  js/read.js:2153 keeps the same private
+// copy (gated on In_sokoban there; the real C guard is Sokoban, this port's
+// level-flag copy, which is what is used here).
+function sokoban_guilt_boulder() {
+    if (!Sokoban_boulder()) return;
+    const u = game.u;
+    u.uconduct = u.uconduct || {};
+    u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
+    u.uluck = (u.uluck || 0) - 1;
+}
+// C ref: obj.h is_blade(otmp).  js/engrave.js, js/invent.js, js/uhitm.js,
+// js/worn.js each keep the same private copy.
+function is_blade_boulder(obj) {
+    const sk = OBJECTS[obj?.otyp]?.oc_skill ?? 0;
+    return obj?.oclass === WEAPON_CLASS && sk >= P_DAGGER && sk <= P_SABER;
+}
+// C ref: dothrow.c is_flimsy(otmp).  js/mon.js, js/polyself.js, js/uhitm.js,
+// js/worn.js each keep the same private copy.
+const RUBBER_HOSE_OTYP_BOULDER = 250, MAT_LEATHER_BOULDER = 7;
+function is_flimsy_boulder(obj) {
+    const mat = OBJECTS[obj?.otyp]?.material;
+    return (mat !== undefined && mat <= MAT_LEATHER_BOULDER)
+        || obj?.otyp === RUBBER_HOSE_OTYP_BOULDER;
+}
+// C ref: dothrow.c harmless_missile(obj).  js/invent.js:6633 keeps the same
+// logic as a module-private (unexported) copy; duplicated here rather than
+// reused to avoid a fresh import cycle for one small table lookup.
+function harmless_missile_boulder(obj) {
+    switch (obj.otyp) {
+    case 83: case 275: case 276: case 283: case 289: case 290:
+        return true;
+    case 78: case 220:
+        return (obj.spe | 0) < 1;
+    case 217: case 218: case 219:
+        return !(obj.cobj && obj.cobj.length);
+    default:
+        if (obj.oclass === 3 /* SCROLL_CLASS */) return true;
+        if ((OBJECTS[obj.otyp]?.material | 0) === 6 /* CLOTH */) return true;
+        return false;
+    }
+}
+// C ref: mthrowu.c hit_bars()'s POT_ACID arm, inlined at the call site there
+// rather than a named C function (this port names the closure for clarity).
+async function acid_msg_boulder(barsx, barsy, nodissolve) {
+    if (cansee(barsx, barsy) && !nodissolve) {
+        await pline('The iron bars are dissolved!');
+    } else if (!game.u?.Deaf) {
+        await pline(Hallucination() ? 'You hear angry snakes!' : 'You hear a hissing noise.');
+    }
 }
 
-// C ref: hack.c moverock() — the hero, moving in direction (dx,dy), tries to
-// push the boulder at (sx,sy) one square further to (rx,ry).  Returns 0 when the
-// boulder rolled (or the hero may still advance), -1 when it is stuck and the
-// hero must stay put.  Only the on-foot, sighted common case is exercised by the
-// corpus; the swallowing-trap / pool / mounted variants are guarded out of the
-// success path so no boulder is ever left in an inconsistent map state.
-async function moverock(otmp, sx, sy, dx, dy) {
+// C ref: hack.c:261 cannot_push(otmp, sx, sy).  Final disposition once a push
+// has been refused for any reason: can the hero still get PAST the boulder
+// (a rock-thrower steps over it, or a tiny/empty-handed hero squeezes by)?
+// Returns 0 when the hero may still advance onto <sx,sy>, -1 when stuck.
+async function cannot_push(otmp, sx, sy) {
     const u = game.u;
-    const rx = u.ux + 2 * dx; // boulder destination
-    const ry = u.uy + 2 * dy;
-    game.multi = 0; // C nomul(0)
+    if (hero_throws_rocks()) {
+        const canpickup = !Sokoban_boulder()
+            && (inv_cnt(false) < invlet_basic || !carrying(BOULDER));
+        const willpickup = canpickup && game.flags?.pickup
+            && !game.context?.nopick && autopick_testobj(otmp, true);
+        if (u.usteed && p_skill_of(P_RIDING) < P_BASIC) {
+            await pline(`You aren't skilled enough to ${willpickup ? 'pick up' : 'push aside'} `
+                      + `${the_pushable_name(otmp)} from ${y_monnam(u.usteed)}.`);
+        } else {
+            await pline(`However, you ${willpickup ? 'easily pick it up' : 'maneuver over it'}`
+                      + `${(canpickup && !willpickup) ? ' and could pick it up' : ''}.`);
+            sokoban_guilt_boulder();
+        }
+        return 0;
+    }
+    if (could_move_onto_boulder(sx, sy)) {
+        await pline('However, you can squeeze yourself into a small opening.');
+        sokoban_guilt_boulder();
+        return 0;
+    }
+    return -1;
+}
 
-    // Levitation: no leverage to push.  (verysmall/steed variants omitted — no
-    // tiny-form or mounted hero pushes a boulder in the corpus.)
-    if (u?.uprops?.Levitation) {
-        await pline(`You don't have enough leverage to push ${the_pushable_name(otmp)}.`);
-        return -1;
+// C ref: hack.c:165 dopush(sx, sy, rx, ry, otmp, costly).  The push has been
+// cleared: print the effort message, relocate the boulder, and settle any
+// shop billing implied by crossing a shop boundary.
+async function dopush(sx, sy, rx, ry, otmp, costly) {
+    const u = game.u;
+    let shkp;
+    {
+        if (otmp.o_id !== game._bldrpush_oid) {
+            game._bldrpushtime = game.moves + 1;
+            game._bldrpush_oid = otmp.o_id;
+        }
+        const givemesg = (game.moves > (game._bldrpushtime ?? 0) + 2
+                        || game.moves < (game._bldrpushtime ?? 0));
+        const what = givemesg ? the_pushable_name(otmp) : null;
+        if (!u.usteed) {
+            const easypush = hero_throws_rocks();
+            if (givemesg)
+                await pline(`With ${easypush ? 'little' : 'great'} effort you move ${what}.`);
+            if (!easypush) exercise(A_STR, true);
+        } else if (givemesg) {
+            await pline(`${YMonnam(u.usteed)} moves ${what}.`);
+        }
+        game._bldrpushtime = game.moves;
     }
 
     const dloc = game.level?.at(rx, ry);
-    const dtyp = dloc ? dloc.typ : STONE;
-    const isPoolLava = dtyp === POOL || dtyp === MOAT || dtyp === WATER
-                    || dtyp === LAVAPOOL;
-    const closedDoor = dloc && IS_DOOR(dtyp)
-                    && (dloc.doormask & (D_CLOSED | D_LOCKED));
-    // C: the moverock_core() outer condition — destination must be a real,
-    // in-bounds, non-wall/rock/ironbars square not itself holding a boulder.
-    // A diagonal push is refused into a doored doorway (unless doorless).
-    const destOk = isok(rx, ry) && !IS_ROCK(dtyp) && dtyp !== IRONBARS
-        && (!IS_DOOR(dtyp) || !(dx && dy) || doorless_door(rx, ry))
-        && !boulder_at(rx, ry);
+    if (dloc?.invisMon) unmap_object(rx, ry);
+    otmp.next_boulder = 0;
+    // C: movobj(otmp, rx, ry) == remove_object(obj) + place_object(obj, ox, oy):
+    // unlinked from the floor chain and re-inserted at the fobj head, not just
+    // given new coordinates (see the dog_goal()/fobj-scan note this replaces).
+    const _objs = game.level?.objects;
+    if (_objs) {
+        const _oi = _objs.indexOf(otmp);
+        if (_oi >= 0) _objs.splice(_oi, 1);
+    }
+    otmp.ox = rx;
+    otmp.oy = ry;
+    if (_objs) _objs.push(otmp);
+    recalc_block_point(rx, ry);
+    recalc_block_point(sx, sy);
+    newsym(rx, ry);
+    if (Blind()) {
+        feel_location(rx, ry);
+        feel_location(sx, sy);
+    } else {
+        newsym(sx, sy);
+    }
 
-    if (destOk) {
-        // C ref: hack.c moverock_core() — a monster occupying the destination
-        // blocks the push (unless it's a noncorporeal ghost/shade, or one
-        // pinned in a pit/spiked pit).  Report it as seen or heard, then
-        // refuse the push, before falling through to the trap/door/pool
-        // handling below.
-        const mtmp = m_at(rx, ry);
+    if (costly && !costly_spot(rx, ry)) {
+        // C's first billing arm (addtobill(otmp, FALSE, FALSE, FALSE): pushing
+        // a boulder from inside a shop out to its free/boundary spot) has no
+        // exported counterpart in js/shk.js -- only its internal
+        // add_one_tobill() primitive exists, and wiring a fresh addtobill()
+        // wrapper is outside this port's scope. addtobill() draws no RNG
+        // (js/shk.js's own header note: "NONE of these functions draws RNG"),
+        // so skipping it costs no RNG parity, only a shop-bill side effect on
+        // an already-rare path (pushing a boulder out of a shop).
+    } else if (!costly && costly_spot(rx, ry) && otmp.unpaid
+               && (shkp = shop_keeper(in_rooms(rx, ry, SHOPBASE)[0]))
+               && onshopbill(otmp, shkp, true)) {
+        subfrombill(otmp, shkp);
+    }
+    // C's third billing arm (the boulder fully leaves the shop -> theft via
+    // stolen_value()) is skipped: stolen_value() is a universal no-RNG stub
+    // across this port (js/invent.js:1193, js/zap.js:3247, js/teleport.js:1434
+    // all document the same gap), so omitting it costs no RNG parity.
+}
+
+// C ref: hack.c moverock()/moverock_core() (hack.c:335-638), the hero pushing
+// a boulder at (sx,sy) one square further in direction (dx,dy).  Returns 0
+// when the boulder rolled (or the hero may still advance), -1 when it is
+// stuck and the hero must stay put.
+async function moverock(otmp, sx, sy, dx, dy) {
+    const u = game.u;
+    let firstboulder = true;
+
+    for (;;) {
+        const cur = boulder_at(sx, sy);
+        if (!cur) break;
+        otmp = cur;
+        // C ref: hack.c:368 otmp->next_boulder = firstboulder ? 0 : 1 -- the
+        // FIRST boulder at this square is named plainly; the second and any
+        // further ones in the same pile are named "next boulder" once (see
+        // pushable_base_name()'s self-clearing read of this flag).
+        otmp.next_boulder = firstboulder ? 0 : 1;
+        firstboulder = false;
+        // C ref: hack.c:358 "That feels like a boulder." (a blind hero's first
+        // touch of a boulder its map memory didn't already show there).  NOT
+        // PORTED: this port's live display path stores map memory as a
+        // character glyph (loc.remembered_glyph.ch, see js/display.js:3437's
+        // own note that the NUMERIC glyph model glyph_to_obj() reads is never
+        // wired to the live path), so there is no faithful same-model
+        // comparison available.  Rare enough (a blind hero's first-ever
+        // contact with THIS boulder while pushing) to call out rather than
+        // guess at a cross-model comparison.
+
+        const rx = u.ux + 2 * dx;
+        const ry = u.uy + 2 * dy;
+        game.multi = 0; // C nomul(0)
+
+        // C ref: hack.c:386 the m<dir>/travel "nopick" branch: step over or
+        // squeeze past the boulder instead of pushing it.
+        if (game.context?.nopick) {
+            const oldglyph = glyph_at(sx, sy);
+            feel_location(sx, sy);
+            let res;
+            if (hero_throws_rocks()) {
+                await pline(`You ${u_locomotion_boulder('step')} over a boulder here.`);
+                sokoban_guilt_boulder();
+                res = 0;
+            } else if (could_move_onto_boulder(sx, sy)) {
+                await pline(`You squeeze yourself ${u.uprops?.Flying ? 'over' : 'against'} the boulder.`);
+                sokoban_guilt_boulder();
+                res = 0;
+            } else {
+                await pline('There is a boulder in your way.');
+                if (glyph_at(sx, sy) !== oldglyph)
+                    game.context.door_opened = game.context.move = true;
+                res = -1;
+            }
+            return res;
+        }
+
+        // C ref: hack.c:415 Levitation / Is_airlevel: no leverage to push.
+        // Is_airlevel_cmd() is unconditionally false (no level this port
+        // generates is the Plane of Air); kept so this reads like C.
+        if (u?.uprops?.Levitation || Is_airlevel_cmd(u.uz)) {
+            if (Blind()) feel_location(sx, sy);
+            await pline(`You don't have enough leverage to push ${the_pushable_name(otmp)}.`);
+            return -1;
+        }
+
+        // C ref: hack.c:426 verysmall(youmonst) && !u.usteed.
+        if (hero_verysmall() && !u.usteed) {
+            if (Blind()) feel_location(sx, sy);
+            await pline(`You're too small to push that ${xname(otmp)}.`);
+            return await cannot_push(otmp, sx, sy);
+        }
+
+        const dloc = game.level?.at(rx, ry);
+        const dtyp = dloc ? dloc.typ : STONE;
+        const destOk = isok(rx, ry) && !IS_ROCK(dtyp) && dtyp !== IRONBARS
+            && (!IS_DOOR(dtyp) || !(dx && dy) || doorless_door(rx, ry))
+            && !boulder_at(rx, ry);
+
+        if (!destOk) {
+            await cannot_push_msg(otmp, sx, sy);
+            return await cannot_push(otmp, sx, sy);
+        }
+
         const destTrap = trap_at(rx, ry);
+        const costly = costly_spot(sx, sy) && !!shop_keeper(in_rooms(sx, sy, SHOPBASE)[0]);
+
+        // C ref: hack.c:442 KMH: Sokoban doesn't let you push boulders diagonally.
+        if (Sokoban_boulder() && dx && dy) {
+            if (Blind()) feel_location(sx, sy);
+            await pline(`${The_pushable_name(otmp)} won't roll diagonally on this ${surface(sx, sy)}.`);
+            return await cannot_push(otmp, sx, sy);
+        }
+
+        if (await revive_nasty(rx, ry, 'You sense movement on the other side.')) {
+            return -1;
+        }
+
+        // C ref: hack.c:455 a monster occupying the destination blocks the
+        // push (unless noncorporeal, or pinned in a pit/spiked pit).
+        const mtmp = m_at(rx, ry);
         if (mtmp && mtmp.data?.mlet !== ' ' /* noncorporeal ghost/shade */
             && (!mtmp.mtrapped || !(destTrap && is_pit_ttyp(destTrap.ttyp)))) {
-            // Two plines can fire in the same turn (sense + verbose), so route
-            // both through update_topl() — it inserts the --More-- pause (its
-            // own screen frame) when they don't fit coalesced on one line,
-            // exactly like C's back-to-back pline() calls do.
             let deliverPart1 = false;
             if (canspotmon(mtmp)) {
                 await update_topl(`There's ${x_monnam(mtmp, 2, null, 0, false)} on the other side.`);
@@ -4257,70 +4544,193 @@ async function moverock(otmp, sx, sy, dx, dy) {
                     ? `Perhaps that's why you cannot move it.`
                     : `You cannot move ${the_pushable_name(otmp)}.`);
             }
-            return -1;
+            return await cannot_push(otmp, sx, sy);
         }
+
+        // C ref: hack.c:485 closed_door(rx,ry).
+        const rDoorClosed = dloc && IS_DOOR(dtyp)
+            && ((dloc.doormask | 0) & (D_CLOSED | D_LOCKED)) !== 0;
+        if (rDoorClosed) {
+            await cannot_push_msg(otmp, sx, sy);
+            return await cannot_push(otmp, sx, sy);
+        }
+
+        disturb_buried_zombies_boulder(sx, sy);
+
+        // C ref: hack.c:496-618 the trap switch: does a trap at the boulder's
+        // destination affect it before it ever gets there?
+        if (destTrap) {
+            const ttyp = destTrap.ttyp;
+            if (ttyp === LANDMINE) {
+                if (rn2(10)) {
+                    obj_extract_self(otmp);
+                    place_object(otmp, rx, ry);
+                    newsym(sx, sy);
+                    const bang = (!game.u?.Deaf || !Blind()) ? 'KAABLAMM!!' : 'Gadzooks';
+                    await pline(`${bang}!  ${Tobjnam_boulder(otmp, 'trigger')} `
+                              + `${destTrap.madeby_u ? 'your' : 'a'} land mine.`);
+                    await blow_up_landmine(destTrap);
+                    fill_pit(u.ux, u.uy);
+                    if (cansee(rx, ry)) newsym(rx, ry);
+                    return boulder_at(sx, sy) ? -1 : 0;
+                }
+                /* 1-in-10: trap didn't fire; boulder unaffected, fall through */
+            } else if (ttyp === PIT || ttyp === SPIKED_PIT) {
+                obj_extract_self(otmp);
+                if (!(await flooreffects(otmp, rx, ry, 'fall'))) place_object(otmp, rx, ry);
+                if (m_at(rx, ry) && !Blind()) newsym(rx, ry);
+                return boulder_at(sx, sy) ? -1 : 0;
+            } else if (ttyp === HOLE || ttyp === TRAPDOOR) {
+                if (Blind()) {
+                    await pline(`Kerplunk!  You no longer feel ${the_pushable_name(otmp)}.`);
+                } else {
+                    await pline(`${Tobjnam_boulder(otmp, ttyp === TRAPDOOR ? 'trigger' : 'fall')}`
+                              + `${ttyp === TRAPDOOR ? '' : ' into'} ${otense(otmp, 'plug')} `
+                              + `a ${ttyp === TRAPDOOR ? 'trap door' : 'hole'} in the ${surface(rx, ry)}!`);
+                }
+                deltrap(destTrap);
+                useupf(otmp, 1);
+                await bury_objs(rx, ry);
+                const rloc = game.level?.at(rx, ry);
+                if (rloc) { rloc.wall_info = (rloc.wall_info | 0) & ~W_NONDIGGABLE; rloc.candig = 1; }
+                if (cansee(rx, ry)) newsym(rx, ry);
+                return boulder_at(sx, sy) ? -1 : 0;
+            } else if (ttyp === LEVEL_TELEP || ttyp === TELEP_TRAP) {
+                if (ttyp === LEVEL_TELEP) {
+                    const newlev = random_teleport_level();
+                    if (newlev === depth_of_level(u.uz)) {
+                        await dopush(sx, sy, rx, ry, otmp, costly);
+                        continue;
+                    }
+                }
+                await rock_disappear_msg(otmp);
+                otmp.next_boulder = 0;
+                if (destTrap.ttyp === TELEP_TRAP) {
+                    await rloco(otmp);
+                } else {
+                    // C's LEVEL_TELEP-to-a-different-level arm needs real
+                    // cross-level object migration (add_to_migration()); this
+                    // port models no such thing for a plain floor object (see
+                    // js/dig.js:925's identical migrate_to_level() gap for
+                    // monsters).  Removing the boulder from this level is the
+                    // closest faithful approximation: it vanishes from view
+                    // here exactly as the hero observes, even though it never
+                    // reappears on the target level.
+                    obj_extract_self(otmp);
+                }
+                seetrap(destTrap);
+                return boulder_at(sx, sy) ? -1 : 0;
+            } else if (ttyp === ROLLING_BOULDER_TRAP) {
+                let tox = rx, toy = ry;
+                while (isok(tox + dx, toy + dy)) {
+                    tox += dx; toy += dy;
+                    if (tox === destTrap.launch.x && toy === destTrap.launch.y) break;
+                    if (tox === destTrap.launch2.x && toy === destTrap.launch2.y) break;
+                }
+                await pline(`${Tobjnam_boulder(otmp, 'suddenly roll')} away from you!`);
+                seetrap(destTrap); // C feeltrap(trap) == seetrap() for a sighted hero
+                await launch_obj(BOULDER, sx, sy, tox, toy, ROLL | LAUNCH_KNOWN);
+                return boulder_at(sx, sy) ? -1 : 0;
+            }
+            /* default: trap doesn't affect a boulder; fall through */
+        }
+
+        if (await boulder_hits_pool(otmp, rx, ry, true)) continue;
+
+        await dopush(sx, sy, rx, ry, otmp, costly);
+        /* loop: another boulder may be stacked at sx,sy */
     }
-
-    const canRoll = destOk
-        && !closedDoor && !isPoolLava
-        && !trap_at(rx, ry);  // keep the boulder off any trap (conservative)
-
-    if (canRoll) {
-        // C ref: hack.c moverock() — the "With <little|great> effort you move
-        // <the boulder>." line, suppressed (via the static lastmovetime) when the
-        // hero pushed the same boulder within the last two turns so a run of
-        // pushes doesn't spam it.
-        if (!u.usteed) {
-            const lmt = game._boulder_lastmovetime;
-            if (lmt == null || game.moves > lmt + 2 || game.moves < lmt)
-                await pline(`With ${hero_throws_rocks() ? 'little' : 'great'} effort `
-                          + `you move ${the_pushable_name(otmp)}.`);
-            // C ref: hack.c dopush() — `if (!easypush) exercise(A_STR, TRUE);`.
-            // A non-rock-thrower trains Str (rn2(19) inside exercise) on EVERY
-            // push, independent of whether the effort message printed.
-            if (!hero_throws_rocks()) exercise(A_STR, true);
-            game._boulder_lastmovetime = game.moves;
-        }
-        // C ref: hack.c dopush() — "if (glyph_is_invisible(levl[rx][ry].glyph))
-        // unmap_object(rx, ry);" BEFORE moving the boulder: a destination
-        // square remembered as holding a sensed-but-unseen monster ('I') must
-        // have that notation cleared so the newsym(rx,ry) below shows the
-        // boulder instead of re-asserting the stale 'I'.
-        if (dloc?.invisMon) unmap_object(rx, ry);
-        // C: movobj(otmp, rx, ry) == remove_object(obj) + place_object(obj, ox, oy):
-        // the boulder is unlinked from the floor chain and RE-INSERTED AT THE
-        // FOBJ HEAD, not just given new coordinates.  A later dog_goal() fobj
-        // scan (dogmove.js) walks that chain newest-first, so a pet's
-        // apport/obj_resists roll order depends on this repositioning; leaving
-        // the boulder at its original (creation-order) slot in our flat
-        // game.level.objects array desyncs that scan's RNG order against a
-        // separately-created object the boulder has now been pushed past.
-        const _objs = game.level?.objects;
-        if (_objs) {
-            const _oi = _objs.indexOf(otmp);
-            if (_oi >= 0) _objs.splice(_oi, 1);
-        }
-        otmp.ox = rx;
-        otmp.oy = ry;
-        if (_objs) _objs.push(otmp);
-        // C ref: mkobj.c place_object() block_point(rx,ry) / remove_object()
-        // recalc_block_point(sx,sy) — a boulder blocks light, so relocating it
-        // must update the vision map: the destination becomes opaque and the
-        // vacated square becomes transparent again (unless the terrain blocks).
-        // Without this a monster's clear_path() to the hero would ignore the
-        // boulder and skip linedup()'s rn2(2+boulderspots) roll.
-        recalc_block_point(rx, ry);
-        recalc_block_point(sx, sy);
-        newsym(rx, ry);
-        newsym(sx, sy);
-        return 0;
-    }
-
-    // C ref: hack.c moverock() nopushmsg: — the boulder is wedged and won't budge.
-    if (game.flags?.verbose !== false)
-        await pline(`You try to move ${the_pushable_name(otmp)}, but in vain.`);
-    return -1;
+    return 0;
 }
+
+// C ref: hack.c:1995 domove_fight_ironbars(x, y) — force-fight iron bars with
+// the wielded weapon ('F' prefix).  Always returns TRUE once the forcefight +
+// IRONBARS + wielded-weapon gate passes: the hit lands (or the weapon breaks)
+// unconditionally, so the caller's turn is always consumed.
+async function domove_fight_ironbars(x, y) {
+    const u = game.u;
+    const loc = game.level?.at(x, y);
+    if (!(game.context?.forcefight && loc?.typ === IRONBARS && game.uwep))
+        return false;
+    const { breaktest } = await import('./dothrow.js');
+    let obj = game.uwep;
+    let breakflags = BRK_BY_HERO | BRK_FROM_INV | BRK_MELEE;
+    if (breaktest(obj)) {
+        if ((obj.quan | 0) > 1) {
+            obj = splitobj(obj, 1);
+        } else {
+            await setuwep(null);
+        }
+        freeinv(obj);
+        breakflags |= BRK_KNOWN2BREAK;
+    } else {
+        breakflags |= BRK_KNOWN2NOTBREAK;
+    }
+    const objp = { obj };
+    await hit_bars(objp, u.ux, u.uy, x, y, breakflags, {
+        pline,
+        wake_nearto,
+        harmless_missile: harmless_missile_boulder,
+        is_flimsy: is_flimsy_boulder,
+        dissolve_bars,
+        acid_msg: acid_msg_boulder,
+    });
+    return true;
+}
+
+// C ref: hack.c:2020 domove_fight_web(x, y) — force-fight a KNOWN spider web
+// with the wielded weapon (or bare hands).  Always returns TRUE once the
+// forcefight + WEB + tseen gate passes.
+async function domove_fight_web(x, y) {
+    if (!game.context?.forcefight) return false;
+    const trap = trap_at(x, y);
+    if (!(trap && trap.ttyp === TT_WEB && trap.tseen)) return false;
+
+    const u = game.u;
+    const uwep = game.uwep;
+    const wtype = uwep_skill_type();
+    const wskillMinus2 = Math.max(p_skill_of(wtype), P_UNSKILLED) - 2;
+    const roll = rn2(uwep ? 20 : (45 - 5 * wskillMinus2));
+
+    if (uwep && (is_art(uwep, ART_STING)
+                 || (uwep.oartifact && attacks(AD_FIRE, uwep)))) {
+        /* guaranteed success */
+        await pline(`${bare_artifactname(uwep)} ${is_art(uwep, ART_STING) ? 'cuts' : 'burns'} through the web!`);
+    } else if (uwep && !is_blade_boulder(uwep)
+               && (!u.twoweap || !is_blade_boulder(game.uswapwep))) {
+        const uwepbuf = weapon_descr(uwep);
+        const scndbuf = u.twoweap ? weapon_descr(game.uswapwep) : '';
+        const onewep = !scndbuf || uwepbuf.toLowerCase() === scndbuf.toLowerCase();
+        let uwepstr;
+        if (['armor', 'food', 'venom'].includes(uwepbuf.toLowerCase())) {
+            uwepstr = uwepbuf;
+        } else if ((uwep.quan | 0) === 1 && !(u.twoweap && onewep)) {
+            uwepstr = an(uwepbuf);
+        } else {
+            uwepstr = makeplural(uwepbuf);
+        }
+        let scndstr = '';
+        if (!onewep) {
+            scndstr = ((game.uswapwep.quan | 0) === 1) ? an(scndbuf) : makeplural(scndbuf);
+        }
+        await pline(`You can't cut a web with ${uwepstr}${!onewep ? ` or ${scndstr}` : ''}!`);
+        return true;
+    } else if (roll > (acurrstr() - 2
+                       + (uwep ? (uwep.spe | 0) + wskillMinus2 : 0))) {
+        /* TODO (matching C's own TODO): add failures, maybe make an occupation */
+        await pline(`You ${uwep ? 'hack' : 'thrash'} ineffectually at some of the strands.`);
+        return true;
+    } else {
+        await pline(`You ${uwep ? 'cut' : 'punch'} through the web.`);
+        /* doesn't break "never hit with a wielded weapon" conduct */
+        use_skill(wtype, 1);
+    }
+
+    deltrap(trap);
+    newsym(x, y);
+    return true;
+}
+
 
 // C ref: hack.c domove_core() -> spoteffects(TRUE) -> pickup(1), run at the
 // tail of EVERY move that relocates the hero (step, run, rush, pet swap).
@@ -5486,30 +5896,132 @@ export async function can_do_extcmd(extcmd) {
 }
 
 // C ref: cmd.c:524 doc_extcmd_flagstr(menuwin, efp) — format the extended
-// command flags for display; efp Null adds a footnote to the menu instead.
-export function doc_extcmd_flagstr(menuwin, efp) {
+// command flags for display.  The port renders this menu as a flat list of
+// {text,attr} lines (see doextlist() below) rather than through a live window
+// handle, so the `efp == null` footnote case returns its two lines for the
+// caller to append instead of writing them into a `menuwin` itself.
+export function doc_extcmd_flagstr(efp) {
     /* note: tag shown for menu prefix is 'm' even if the m-prefix action
        has been bound to some other key */
     if (!efp) {
-        let qbuf;
+        const qbuf = `[m] Command accepts '${cmd_visctrl(cmd_from_func(do_reqmenu))}' prefix`;
+        return ['[A] Command autocompletes', qbuf];
+    }
+    const mprefix = accept_menu_prefix(efp),
+          autocomplete = (efp.flags & AUTOCOMPLETE) !== 0;
+    let p = '';
 
-        cmd_add_menu_str(menuwin, '[A] Command autocompletes');
-        qbuf = `[m] Command accepts '${cmd_visctrl(cmd_from_func(do_reqmenu))}' prefix`;
-        cmd_add_menu_str(menuwin, qbuf);
-        return null;
-    } else {
-        const mprefix = accept_menu_prefix(efp),
-              autocomplete = (efp.flags & AUTOCOMPLETE) !== 0;
-        let p = '';
+    /* "" or "[m]" or "[A]" or "[mA]" */
+    if (mprefix || autocomplete) {
+        p += '[';
+        if (mprefix) p += 'm';
+        if (autocomplete) p += 'A';
+        p += ']';
+    }
+    return p;
+}
 
-        /* "" or "[m]" or "[A]" or "[mA]" */
-        if (mprefix || autocomplete) {
-            p += '[';
-            if (mprefix) p += 'm';
-            if (autocomplete) p += 'A';
-            p += ']';
+// C ref: win/tty/getline.c xwaitforspace(s) — read keys until one is
+// acceptable, ringing the bell for the rest.  Returns C's `morc`: '\0' for
+// return/newline, '\033' for escape, else the accepted character.
+async function extlist_waitforspace(s) {
+    for (;;) {
+        const c = await nhgetch();
+        if (c === 10 || c === 13) return '\0';
+        if (c === 27) return '\x1b';
+        const ch = String.fromCharCode(c);
+        if (s.indexOf(ch) >= 0) return ch;
+        // tty_nhbell(): the key is discarded, nothing is redrawn, read again.
+    }
+}
+
+// C ref: win/tty/wintty.c default_menu_cmds[].  gm.mapped_menu_cmds is empty
+// absent a menu_* rebind, so this is the full accepted non-selector set.
+const EXTLIST_DEFAULT_MENU_CMDS = MENU_FIRST_PAGE + MENU_LAST_PAGE
+    + MENU_NEXT_PAGE + MENU_PREVIOUS_PAGE + MENU_SELECT_ALL + MENU_UNSELECT_ALL
+    + MENU_INVERT_ALL + MENU_SELECT_PAGE + MENU_UNSELECT_PAGE + MENU_INVERT_PAGE
+    + MENU_SEARCH;
+
+// C ref: win/tty/wintty.c tty_end_menu() page layout (lmax = min(52,rows-1),
+// npages = ceil(nitems/lmax)) plus tty_display_nhwindow()'s "reaches the
+// screen height -> fullscreen" test.  doextlist()'s item count (90+ commands)
+// always forces the fullscreen branch in every recorded session.
+function extlist_paginate(flat) {
+    const rows = game.nhDisplay?.rows ?? 24;
+    const cols = game.nhDisplay?.cols ?? 80;
+    const lmax = Math.min(52, rows - 1);
+    const npages = Math.max(1, Math.ceil(flat.length / lmax));
+    for (const ln of flat)
+        if (ln.text.length + 2 > cols) ln.text = ln.text.slice(0, cols - 2);
+    const maxrow = npages > 1 ? lmax + 1 : flat.length + 1;
+    const pages = [];
+    for (let i = 0; i < flat.length; i += lmax) pages.push(flat.slice(i, i + lmax));
+    return { pages, npages, fullscreen: maxrow >= rows };
+}
+
+// C ref: win/tty/wintty.c process_menu_window() page paint + dmore().
+function extlist_render_page(m, idx) {
+    const page = m.pages[idx];
+    const items = page.map((ln) => ({
+        text: (ln.sel ? `${ln.sel} - ` : '') + ln.text, attr: ln.attr,
+    }));
+    if (m.fullscreen) {
+        renderWindowScreen(items, {
+            menu: true,
+            footer: m.npages > 1 ? `(${idx + 1} of ${m.npages})` : '(end) ',
+            footerRow: items.length,
+            footerCol: 1,
+            modal: 'extlistwin',
+        });
+        return;
+    }
+    // Only reachable once a search has narrowed the list under one page.
+    renderMenuLines(items);
+    game._modal_screen = 'extlistwin';
+}
+
+// C ref: win/tty/wintty.c process_menu_window(), the PICK_ONE case, for
+// doextlist()'s menu: a handful of selectable ('a', ':' or 's', 'z') lines
+// mixed with plain text and headings.  Returns the picked selector, or null
+// when the menu was cancelled or committed with nothing selected.
+async function extlist_select_menu(m) {
+    if (game._toplin === 1) { await topl_more(); game._toplin = 0; }
+    game._pending_message = '';
+    let curr_page = 0;
+    for (;;) {
+        extlist_render_page(m, curr_page);
+        const page = m.pages[curr_page];
+        const sels = page.filter((it) => it.sel).map((it) => it.sel).join('');
+        const morc = await extlist_waitforspace(
+            sels + ' \x1b\n\r' + EXTLIST_DEFAULT_MENU_CMDS);
+        // MENU_EXPLICIT_CHOICE: a page-local selector keeps its own meaning
+        // even when it also happens to be a menu command (':' vs a ':' item).
+        if (sels.indexOf(morc) >= 0) return morc;
+        switch (morc) {
+        case '\x1b':                              // cancel
+        case '\0':                                // commit, nothing picked
+            return null;
+        case ' ':
+        case MENU_NEXT_PAGE:
+            if (curr_page !== m.npages - 1) curr_page++;
+            else if (morc === ' ') return null;   // ' ' finishes, '>' does not
+            break;
+        case MENU_PREVIOUS_PAGE:
+            if (curr_page !== 0) curr_page--;
+            break;
+        case MENU_FIRST_PAGE:
+            curr_page = 0;
+            break;
+        case MENU_LAST_PAGE:
+            curr_page = m.npages - 1;
+            break;
+        default:
+            // MENU_SEARCH (':') on a page that doesn't hold doextlist()'s own
+            // ':'/'s' search entry, and the PICK_ANY-only select/unselect/
+            // invert commands: unreachable with this menu's fixed a/:/s/z
+            // item set from any recorded keystroke sequence; left as a bell.
+            break;
         }
-        return p;
     }
 }
 
@@ -5522,43 +6034,39 @@ export async function doextlist() {
     let cmd_desc;
     let n, pass;
     let menumode = 0, onelist = 0;
-    const menushown = [0, 0];
     let redisplay = true, search = false;
     const headings = ['Extended commands', 'Debugging Extended Commands'];
     const wizard = !!game.flags?.debug, discover = !!game.flags?.explore;
 
-    const menuwin = cmd_create_nhwindow(/*NHW_MENU*/ 3);
-
     while (redisplay) {
         redisplay = false;
-        cmd_start_menu(menuwin, /*MENU_BEHAVE_STANDARD*/ 0);
-        cmd_add_menu_str(menuwin, 'Extended Commands List');
-        cmd_add_menu_str(menuwin, '');
+        const flat = [];
+        const push = (text, attr = 0, sel) => flat.push({ text, attr, sel });
+        push('Extended Commands List');
+        push('');
 
         buf = `Switch to ${menumode ? 'including' : 'excluding'}`
             + " commands that don't autocomplete";
-        cmd_add_menu(menuwin, null, { a_int: 1 }, 'a', 0, 0, 0, buf, 0);
+        push(buf, 0, 'a');
 
         if (!searchbuf) {
             /* was 's', but then using ':' handling within the interface
                would only examine the two or three meta entries */
-            cmd_add_menu(menuwin, null, { a_int: 2 }, ':', 's', 0, 0,
-                         'Search extended commands', 0);
+            push('Search extended commands', 0, ':');
         } else {
             buf = 'Switch back from search';
             if (buf.length + searchbuf.length + ' (\"\")'.length < 80)
                 buf += ` ("${searchbuf}")`;
-            cmd_add_menu(menuwin, null, { a_int: 3 }, 's', ':', 0, 0, buf, 0);
+            push(buf, 0, 's');
         }
         if (wizard) {
-            cmd_add_menu(menuwin, null, { a_int: 4 }, 'z', 0, 0, 0,
-                onelist
+            push(onelist
                 ? 'Switch to showing debugging commands in separate section'
                 : 'Switch to showing all alphabetically, including debugging commands',
-                0);
+                0, 'z');
         }
-        cmd_add_menu_str(menuwin, '');
-        menushown[0] = menushown[1] = 0;
+        push('');
+        const menushown = [0, 0];
         n = 0;
         for (pass = 0; pass <= 1; ++pass) {
             /* skip second pass if not in wizard mode or wizard mode
@@ -5601,58 +6109,47 @@ export async function doextlist() {
                 /* doing the menu heading in the inner loop like this, on
                    demand, avoids a heading with no subordinate entries */
                 if (!menushown[pass]) {
-                    buf = headings[pass];
-                    cmd_add_menu_heading(menuwin, buf);
+                    push(headings[pass], ATR_INVERSE);
                     menushown[pass] = 1;
                 }
                 buf = ' ' + efp.ef_txt.padEnd(14) + ' '
-                    + String(doc_extcmd_flagstr(menuwin, efp)).padStart(4)
+                    + String(doc_extcmd_flagstr(efp)).padStart(4)
                     + ' ' + cmd_desc;
-                cmd_add_menu_str(menuwin, buf);
+                push(buf);
                 ++n;
             }
             if (n)
-                cmd_add_menu_str(menuwin, '');
+                push('');
         }
         if (searchbuf && !n)
-            cmd_add_menu_str(menuwin, 'no matches');
+            push('no matches');
         else
-            doc_extcmd_flagstr(menuwin, null);
+            for (const line of doc_extcmd_flagstr(null)) push(line);
 
-        cmd_end_menu(menuwin, null);
-        const selected = [];
-        n = cmd_select_menu(menuwin, /*PICK_ONE*/ 1, selected);
-        if (n > 0) {
-            switch (selected[0].item.a_int) {
-            case 1: /* 'a': toggle show/hide non-autocomplete */
-                menumode = 1 - menumode;
-                redisplay = true;
-                break;
-            case 2: /* ':' when not searching yet: enable search */
-                search = true;
-                break;
-            case 3: /* 's' when already searching: disable search */
-                search = false;
-                searchbuf = '';
-                redisplay = true;
-                break;
-            case 4: /* 'z': toggle showing wizard mode commands separately */
-                search = false;
-                searchbuf = '';
-                onelist = 1 - onelist;
-                redisplay = true;
-                break;
-            }
+        const m = extlist_paginate(flat);
+        const picked = await extlist_select_menu(m);
+        if (picked === 'a') { /* toggle show/hide non-autocomplete */
+            menumode = 1 - menumode;
+            redisplay = true;
+        } else if (picked === ':') { /* not searching yet: enable search */
+            search = true;
+        } else if (picked === 's') { /* already searching: disable search */
+            search = false;
+            searchbuf = '';
+            redisplay = true;
+        } else if (picked === 'z') { /* toggle showing wizard commands separately */
+            search = false;
+            searchbuf = '';
+            onelist = 1 - onelist;
+            redisplay = true;
         } else {
             search = false;
             searchbuf = '';
         }
         if (search) {
-            promptbuf = 'Extended command list search phrase';
-            promptbuf += '?';
-            const out = { buf: '' };
-            cmd_getlin(promptbuf, out);
-            searchbuf = cmd_mungspaces(out.buf);
+            promptbuf = 'Extended command list search phrase?';
+            const raw = await hooked_tty_getlin(promptbuf, null);
+            searchbuf = cmd_mungspaces(raw);
             if (searchbuf[0] === '\x1b')
                 searchbuf = '';
             if (searchbuf)
@@ -5660,7 +6157,12 @@ export async function doextlist() {
             search = false;
         }
     }
-    cmd_destroy_nhwindow(menuwin);
+    // C ref: destroy_nhwindow(menuwin) runs once, AFTER the while(redisplay)
+    // loop — the window is created once and reused (start_menu()/end_menu())
+    // across every redisplay pass, so its erase_menu_or_text()/docrt() redraw
+    // (and the display-PRNG draws that involves) must fire only this once,
+    // not on every internal toggle.
+    await dismiss_invent_screen();
     return ECMD_OK;
 }
 
@@ -5766,7 +6268,7 @@ export async function makemap_prepost(pre, wiztower) {
         game.updest = {};
         u.ustuck = null;
         u.uswallow = u.uswldtim = 0;
-        u.uinwater = 0;
+        set_uinwater(0);
         u.uundetected = 0;   /* not hidden, even if means are available */
         cmd_dmonsfree();
         cmd_dobjsfree();

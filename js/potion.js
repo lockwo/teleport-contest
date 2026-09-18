@@ -41,7 +41,7 @@ import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
 import { dipfountain, drinkfountain, drinksink, breaksink } from './fountain.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { name_to_pmidx, monster_by_pmidx, enexto_spawn, makemon,
-         placeOnLevel } from './makemon.js';
+         placeOnLevel, pmname_of_pmidx, MGEND_NEUTRAL } from './makemon.js';
 import { race_attrmin, race_attrmax } from './u_init.js';
 import { object_detect } from './detect.js';
 
@@ -84,7 +84,7 @@ function HProp(...keys) {
 // BLINDED entry and display.js's status line both read u.blinded.
 export function BlindedTimeout() { return game.u?.blinded || 0; }
 function set_blinded(v) { if (game.u) game.u.blinded = v; }
-function HHallucination() { return HProp('Hallucination', 'HHallucination') || (game.u?.uhallu ? 1 : 0); }
+export function HHallucination() { return HProp('Hallucination', 'HHallucination') || (game.u?.uhallu ? 1 : 0); }
 function set_hallucination(v) {
     const u = game.u;
     if (!u) return;
@@ -1027,10 +1027,21 @@ async function peffect_water(otmp) {
         if (otmp.blessed) {
             await update_topl(`This burns like ${hliquid('acid')}!`);
             exercise(A_CON, false);
+            if ((u?.ulycn ?? -1) >= 0) {
+                await update_topl(`Your affinity to ${
+                    makeplural(pmname_of_pmidx(u.ulycn, MGEND_NEUTRAL))} disappears!`);
+                const { you_unwere, set_ulycn } = await import('./polyself.js');
+                if (u.data?.pmidx === u.ulycn) await you_unwere(false);
+                set_ulycn(-1);                       // cure lycanthropy
+            }
             await losehp(Maybe_Half_Phys(d(2, 6)), 'potion of holy water');
         } else if (otmp.cursed) {
             await update_topl('You feel quite proud of yourself.');
             await healup(d(2, 6), 0, false, false);
+            if ((u?.ulycn ?? -1) >= 0 && !u.Upolyd) {
+                const { you_were } = await import('./polyself.js');
+                await you_were();
+            }
             exercise(A_CON, true);
         }
     } else {
@@ -1039,12 +1050,20 @@ async function peffect_water(otmp) {
             await make_sick(0, null, true, SICK_ALL);
             exercise(A_WIS, true);
             exercise(A_CON, true);
+            if ((u?.ulycn ?? -1) >= 0) {
+                const { you_unwere } = await import('./polyself.js');
+                await you_unwere(true);          // "Purified"
+            }
         } else {
             if ((u?.ualign?.type | 0) === 1 /* A_LAWFUL */) {
                 await update_topl(`This burns like ${hliquid('acid')}!`);
                 await losehp(Maybe_Half_Phys(d(2, 6)), 'potion of unholy water');
             } else {
                 await update_topl('You feel full of dread.');
+            }
+            if ((u?.ulycn ?? -1) >= 0 && !u.Upolyd) {
+                const { you_were } = await import('./polyself.js');
+                await you_were();
             }
             exercise(A_CON, false);
         }
@@ -2907,9 +2926,8 @@ export async function potion_dip(obj, potion) {
         let wisx = false;
 
         if (potion.lamplit) { /* burning */
-            /* C: fire_damage(obj, TRUE, u.ux, u.uy) — trap.c's symbol, with no
-               js/ port; it rolls the object's burn/destroy checks. */
-            void 0;
+            const { fire_damage } = await import('./trap.js');
+            await fire_damage(obj, true, game.u.ux, game.u.uy);
         } else if (potion.cursed) {
             const { fingers_or_gloves } = await import('./do_wear.js');
             await update_topl(`The potion spills and covers your ${

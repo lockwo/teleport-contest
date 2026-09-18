@@ -11,7 +11,7 @@
 
 import { game } from './gstate.js';
 import { rn1, rn2, rnd, d } from './rng.js';
-import { update_topl, urgent_topl, newsym, see_monsters } from './display.js';
+import { update_topl, urgent_topl, newsym, see_monsters, y_n } from './display.js';
 // C ref: win/tty/topl.c pline()/update_topl() — this module always uses
 // update_topl() (never the simpler pline()) because every message here can be
 // immediately followed by another one from the same command (polymon()'s
@@ -59,7 +59,8 @@ import {
 } from './monflags_data.js';
 import { attacktype, mattk_of, AT_BREA, AT_SPIT, AT_GAZE, AT_CLAW,
     AD_MAGM, AD_CONF, AD_FIRE } from './monattk_data.js';
-import { monsterList, DEADMONSTER, set_ustuck } from './mon.js';
+import { monsterList, DEADMONSTER, set_ustuck, were_beastie } from './mon.js';
+import { monster_nearby } from './cmd.js';
 import { races, roles, genders } from './role.js';
 import { Blind } from './vision.js';
 import { surface, In_hell } from './dungeon.js';
@@ -1381,6 +1382,89 @@ export async function rehumanize() {
     await encumber_msg();
 }
 
+// C ref: were.c:230 set_ulycn(which) — lycanthropy is being caught or cured;
+// no shape change happens here (that's you_were()/you_unwere() below).
+// `which` is NON_PM to cure, or the ANIMAL-form pmidx (e.g. PM_WEREWOLF) to
+// infect.  set_uasmon() re-derives every form-based intrinsic (DRAIN_RES
+// among them, via resists_drli()'s u.ulycn test) from the (unchanged)
+// u.umonnum, matching C exactly even though this port's set_uasmon() only
+// tracks a handful of those bits today.
+export function set_ulycn(which) {
+    const u = game.u;
+    if (!u) return;
+    u.ulycn = which;
+    set_uasmon();
+}
+
+// C ref: flag.h PARANOID_WERECHANGE (0x0100) / ParanoidWerechange.  Off by
+// default (flags.paranoia_bits starts as PRAY|SWIM|TRAP), so accepting a
+// were-change prompt normally only needs a single 'y'.
+function ParanoidWerechange() {
+    return (((game.flags?.paranoia_bits) | 0) & 0x0100) !== 0;
+}
+// C ref: cmd.c paranoid_query(be_paranoid, prompt) == paranoid_ynq(...,
+// accept_q=FALSE) === 'y'.  Same shape as eat.js's private copy; this port
+// keeps one per file that needs it rather than threading an export through
+// every combat/effect module (see eat.js's own note on this duplication).
+async function paranoid_query(be_paranoid, prompt) {
+    if (!be_paranoid) return (await y_n(prompt, 'yn\x1b', 'n')) === 'y';
+    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
+    const paranoidConfirm = (((game.flags?.paranoia_bits) | 0) & 0x0001) !== 0;
+    const responsetype = paranoidConfirm ? '[yes|no]' : '[yes|n] (n)';
+    let promptprefix = '', trylimit = 6, ans, c = 'n';
+    do {
+        const raw = await hooked_tty_getlin(`${promptprefix}${prompt} ${responsetype}`, null);
+        ans = String(raw == null ? '\x1b' : raw).replace(/\s+/g, ' ').trim();
+        if (ans.toLowerCase() === 'yes') { c = 'y'; break; }
+        if (ans[0] === '\x1b') { c = 'q'; break; }
+        promptprefix = '"Yes" or "No": ';
+    } while (paranoidConfirm && ans.toLowerCase() !== 'no' && --trylimit);
+    return c === 'y';
+}
+
+// C ref: were.c:191 you_were(void) — the hero (currently human-form
+// lycanthrope) shifts into their animal were-form.  Draws no RNG of its own;
+// the only thing that can consume input is the confirmation prompt under
+// Polymorph_control.
+export async function you_were() {
+    const u = game.u;
+    if (!u) return;
+    if (Unchanging() || u.umonnum === u.ulycn) return;
+    const controllable_poly = Polymorph_control() && !(Stunned() || Unaware());
+    if (controllable_poly) {
+        // C: `pmname(...) + 4` skips the "were" prefix to name just the beast.
+        const beastPtr = monster_by_pmidx(u.ulycn);
+        const beastName = (beastPtr?.name || '').slice(4) || 'creature';
+        if (!(await paranoid_query(ParanoidWerechange(),
+                `Do you want to change into ${an(beastName)}?`)))
+            return;
+    } else if (monster_nearby()) {
+        return;
+    }
+    game.were_changes = (game.were_changes || 0) + 1;
+    await polymon(u.ulycn);
+}
+
+// C ref: were.c:212 you_unwere(purify) — leave animal were-form, or (purify)
+// cure lycanthropy outright (holy water, wolfsbane, prayer).
+export async function you_unwere(purify) {
+    const u = game.u;
+    if (!u) return;
+    if (purify) {
+        await pline('You feel purified.');
+        set_ulycn(NON_PM);                       // C: cure lycanthropy
+    }
+    const controllable_poly = Polymorph_control() && !(Stunned() || Unaware());
+    if (!Unchanging() && is_were_flag(u.data)
+        && !monster_nearby()
+        && (!controllable_poly
+            || !(await paranoid_query(ParanoidWerechange(), 'Remain in beast form?')))) {
+        await rehumanize();
+    } else if (is_were_flag(u.data) && !u.mtimedone) {
+        u.mtimedone = rn1(200, 200);              // 40% of initial were change
+    }
+}
+
 // C ref: polyself.c:729-741, the `made_change:` label every arm converges on.
 async function polyself_made_change(old_light) {
     const u = game.u;
@@ -1424,9 +1508,11 @@ async function do_merge_dragon_armor(mntmp) {
 //   rn2(5)   polyself.c:712  the "newman() instead" roll, skipped for
 //                            forcecontrol (wizard #polyself) but NOT for a
 //                            ring of polymorph control
-// DEFERRED (no supporting state in this port): the vampire-shifter and
-// lycanthrope arms (u.ulycn / youmonst.cham are never set), retouch_equipment,
-// selftouch and polysense.
+// DEFERRED (no supporting state in this port): the vampire-shifter arm
+// (youmonst.cham is never set to a vampire-form value), retouch_equipment,
+// selftouch and polysense.  The lycanthrope arm below IS wired: were.c
+// set_ulycn() (js/polyself.js) now sets a real u.ulycn from eat.c's
+// were-corpse effect and uhitm.c's AD_WERE bite.
 export async function polyself(psflags) {
     const u = game.u;
     if (!u) return;
@@ -1543,6 +1629,18 @@ export async function polyself(psflags) {
             await polyself_made_change(old_light);
             return;
         }
+    } else if (iswere) {
+        // C ref: polyself.c:664-669 do_shift — an uncontrolled poly (system
+        // shock, wand/potion/trap of polymorph, mind flayer digestion) on a
+        // lycanthrope shifts straight to (or away from) their own were-form:
+        // no random monster is rolled, no rn2(5)/newman() gate runs, and no
+        // further RNG is drawn at all.
+        if (u.Upolyd && were_beastie(mntmp) !== u.ulycn) mntmp = PM_HUMAN;
+        else mntmp = u.ulycn;
+        if (mntmp === PM_HUMAN) await newman();
+        else await polymon(mntmp);
+        await polyself_made_change(old_light);
+        return;
     } else if (draconian) {
         /* special change that doesn't require polyok() */
         const dragon = armor_to_dragon(game.uarm.otyp);

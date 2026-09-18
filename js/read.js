@@ -33,7 +33,7 @@ import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          COLNO, ROWNO, VIBRATING_SQUARE, is_pit, is_hole, SPE_LIM,
          W_BALL, W_CHAIN, W_ARMH, SDOOR, DOOR, D_CLOSED, D_LOCKED, isok,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
-         In_endgame, Is_earthlevel, In_sokoban, GENOCIDED, KILLED_BY,
+         In_endgame, Is_earthlevel, GENOCIDED, KILLED_BY,
          KILLED_BY_AN, ROOM, STONE, IS_WALL, IS_DOOR,
          G_GONE } from './const.js';
 import { S_invisible, S_WORM_TAIL, S_MIMIC_DEF, S_MIMIC, S_WORM, S_DEMON,
@@ -2149,14 +2149,20 @@ function ceiling_read(x, y) {
     return 'rock cavern';
 }
 
-// C ref: trap.c:7039 sokoban_guilt() — a luck penalty for cheating in Sokoban.
+// C ref: trap.c:7038 sokoban_guilt() — a luck penalty for cheating in Sokoban.
+// Checks the per-level `Sokoban` flag (svl.level.flags.sokoban_rules), NOT
+// In_sokoban(uz): once trap.js maybe_finish_sokoban() clears that flag on
+// puzzle completion, later "cheats" on the same level no longer count even
+// though the hero is still geographically in the Sokoban branch.
 function sokoban_guilt_read() {
-    if (!In_sokoban(game.u?.uz)) return;
+    if (!game.level?.flags?.sokoban_rules) return;
     const u = game.u;
     u.uconduct = u.uconduct || {};
     u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
-    // C ref: attrib.c change_luck(-1); do_wear.js:229 exports the same helper.
+    // C ref: attrib.c change_luck(-1); do_wear.js:229 exports the same
+    // clamped helper (LUCKMIN/LUCKMAX -10/10).
     u.uluck = (u.uluck || 0) - 1;
+    if (u.uluck < -10) u.uluck = -10;
 }
 
 // C ref: rm.h closed_door(x, y) — IS_DOOR && (D_LOCKED|D_CLOSED).

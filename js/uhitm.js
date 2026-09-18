@@ -646,13 +646,30 @@ export async function attack_checks(mtmp) {
 
     // uhitm.c:308-324 — the flags.confirm "Really attack <mon>?" prompt.  Its
     // gate is `flags.confirm && mpeaceful && !Confusion && !Hallucination
-    // && !Stunned` and then `canspotmon(mtmp)`, which is is_safemon()'s gate
-    // with flags.safe_dog swapped for flags.confirm — so do_attack's safemon
-    // block already consumed every target that could reach it, UNLESS the
-    // player has turned safe_dog off (nethackrc `!safe_pet`) while leaving
-    // confirm on.  That combination would consume an input here (a y/n query),
-    // which is the shape of bug the doenhance() menu turned out to be, so it is
-    // called out rather than assumed unreachable.
+    // && !Stunned` and then `canspotmon(mtmp)`.  do_attack's is_safemon()
+    // swap-or-stop block (ported above as is_safemon()) already screens out
+    // ordinary movement-attacks on a spottable peaceful/tame monster, but
+    // maybe_kick_monster() (dokick.js) calls attack_checks() directly for the
+    // #kick command WITHOUT going through that gate first, so kicking your
+    // own pet (or any peaceful) reaches this prompt every time flags.confirm
+    // is on (the default).  Declining ('n', the default answer) cancels the
+    // attack/kick with no RNG draw and no time passed (context.move = 0,
+    // matching svc.context.move = 0 at uhitm.c:320).
+    {
+        const Confusion = !!game.u?.uconf, Hallucination = !!game.u?.uhallu,
+              Stunned = !!game.u?.ustun;
+        if (game.flags?.confirm !== false && mtmp.mpeaceful
+            && !Confusion && !Hallucination && !Stunned
+            && canspotmon(mtmp)) {
+            const { y_n } = await import('./display.js');
+            const qbuf = `Really attack ${mon_nam(mtmp)}?`;
+            if ((await y_n(qbuf, 'yn', 'n')) !== 'y') {
+                game.context = game.context || {};
+                game.context.move = 0;
+                return true;
+            }
+        }
+    }
 
     return false;
 }
@@ -3097,8 +3114,8 @@ export async function hmon_hitmon_misc_obj(hmd, mon, obj) {
             observe_object(obj);
             const { munstone } = await import('./muse.js');
             if (!await munstone(mon, true)) {
-                /* mon.c minstapetrify(mon, TRUE) — unported; it turns 'mon'
-                   into a statue, consuming no RNG of its own. */
+                const { minstapetrify } = await import('./trap.js');
+                await minstapetrify(mon, true);
             }
             if (M.resists_ston(mon)) break;
             /* note: hp may be <= 0 even if munstone() returned TRUE */
@@ -3131,7 +3148,8 @@ export async function hmon_hitmon_misc_obj(hmd, mon, obj) {
             useup_eggs(obj);
             const { munstone } = await import('./muse.js');
             if (!await munstone(mon, true)) {
-                /* mon.c minstapetrify(mon, TRUE) — unported (RNG-free) */
+                const { minstapetrify } = await import('./trap.js');
+                await minstapetrify(mon, true);
             }
             if (M.resists_ston(mon)) break;
             hmd.doreturn = true;
@@ -3830,8 +3848,8 @@ export async function steal_it(mdef, mattk) {
         if (unwornmask & W_WEP) {
             WPN.possibly_unwield(mdef, false);
         } else if (unwornmask & W_ARMG) {
-            /* mon.c mselftouch(mdef, 0, TRUE) — unported; a monster whose
-               gloves were stolen while wielding a c'trice corpse petrifies. */
+            const { mselftouch } = await import('./trap.js');
+            await mselftouch(mdef, null, true);
             if (DEADMONSTER(mdef)) break;
         }
 

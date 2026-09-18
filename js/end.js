@@ -10,7 +10,7 @@
 
 import { game } from './gstate.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
-import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING } from './const.js';
+import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM } from './const.js';
 
 // end.h death codes (subset).  DIED=0; GENOCIDED separates the death codes
 // that leave a tombstone/bones from the ones that don't (QUIT/ESCAPED/
@@ -298,12 +298,66 @@ function savelife(_how) {
 // hero's race.  make_grave() itself draws nothing when given a text.
 //
 // C's guard is `u.ugrave_arise == NON_PM && !(mvitals[u.umonnum].mvflags &
-// G_NOCORPSE)`; ugrave_arise is set from `how` at end.c:1206-1218, so the
-// death codes that leave no ordinary corpse are the ones excluded here.
+// G_NOCORPSE)`.  The `how`-based special values (PANICKED/BURNING/DISSOLVED/
+// STONING/TURNED_SLIME, end.c:1206-1218) all leave ugrave_arise != NON_PM, so
+// they are excluded here directly; done_in_by() below additionally sets
+// game.u.ugrave_arise from the KILLER's monster type (end.c:326-340) whenever
+// a wraith/mummy/zombie-maker/human-killing-vampire/ghoul is the killer —
+// that arise-as-undead case must ALSO skip this block, or mksobj(CORPSE)'s
+// wasted rndmonnum() draws run when C's real corpse+grave creation never
+// happens at all (heldout-blind bl044 step 546 boundary: the human-zombie
+// kill of an orc hero rolls no further RNG in the recording once
+// can_make_bones() returns).
+// C: `int mnum = !Upolyd ? gu.urace.mnum : u.umonnum;` reduced to the RACE
+// name — this port's u.umonnum holds the ROLE index, not a mons[] pmidx.
+// Shared by make_hero_corpse_and_grave() (the corpse's species) and
+// compute_ugrave_arise() (the race's mummy/zombie form).
+function hero_race_name() {
+    return String(game.urace?.noun || game.urace?.name
+                  || game.initrace || 'human').toLowerCase();
+}
+
+// C ref: end.c:326-340 (inside done_in_by()) — maintain u.ugrave_arise from
+// the KILLER's monster type before really_done() decides whether an ordinary
+// corpse+grave gets left behind.  Only reached for a real monster killer;
+// done_in_by()'s other callers (potion.js, spell.js, trap.js self-inflicted
+// deaths) pass mtmp === null, matching C's callers of done() directly
+// (never through done_in_by()) — u.ugrave_arise is simply left at whatever
+// it held before (NON_PM absent any prior death this game, mirrored here by
+// leaving `arise` seeded from the current value rather than resetting it).
+async function compute_ugrave_arise(mtmp) {
+    let arise = game.u?.ugrave_arise ?? NON_PM;
+    const ptr = mtmp?.data;
+    if (!ptr) return arise;
+    const { zombie_maker } = await import('./monmove.js');
+    const { name_to_pmidx } = await import('./makemon.js');
+    const S_WRAITH = 49, S_MUMMY = 39, S_VAMPIRE = 48, PM_GHOUL = 246;
+    const raceName = hero_race_name();
+    if (ptr.mcls === S_WRAITH) {
+        arise = name_to_pmidx('wraith');
+    } else if (ptr.mcls === S_MUMMY && name_to_pmidx(`${raceName} mummy`) !== NON_PM) {
+        arise = name_to_pmidx(`${raceName} mummy`);
+    } else if (zombie_maker(mtmp) && name_to_pmidx(`${raceName} zombie`) !== NON_PM) {
+        arise = name_to_pmidx(`${raceName} zombie`);
+    } else if (ptr.mcls === S_VAMPIRE && raceName === 'human') {
+        arise = name_to_pmidx('vampire');
+    } else if (ptr.pmidx === PM_GHOUL) {
+        arise = PM_GHOUL;
+    }
+    // C: `if (u.ugrave_arise >= LOW_PM && (mvitals[ugrave_arise].mvflags &
+    // G_GENOD)) u.ugrave_arise = NON_PM;` — a genocided arise-form reverts to
+    // an ordinary corpse instead.
+    if (arise >= LOW_PM && ((game.mvitals?.[arise]?.mvflags | 0) & G_GENOD))
+        arise = NON_PM;
+    return arise;
+}
+
 async function make_hero_corpse_and_grave(how) {
     const BURNING = 5, DISSOLVED = 6, STONING = 8, TURNED_SLIME = 9;
     if (how === PANICKED || how === BURNING || how === DISSOLVED
         || how === STONING || how === TURNED_SLIME)
+        return null;
+    if ((game.u?.ugrave_arise ?? NON_PM) !== NON_PM)
         return null;
     try {
         const u = game.u;
@@ -317,8 +371,7 @@ async function make_hero_corpse_and_grave(how) {
         // u.umonnum holds the ROLE index, not a mons[] pmidx, so resolve the
         // race's monster by name (mons[] carries "human"/"elf"/"dwarf"/
         // "gnome"/"orc" as the player-race entries).
-        const raceName = String(game.urace?.noun || game.urace?.name
-                                || game.initrace || 'human').toLowerCase();
+        const raceName = hero_race_name();
         const mnum = name_to_pmidx(raceName);
         const corpse = mkcorpstat(CORPSE, null, mnum ?? null, x, y,
                                   CORPSTAT_INIT);
@@ -479,6 +532,13 @@ async function done(how) {
         if (how < GENOCIDED) {
             const { can_make_bones } = await import('./bones.js');
             bones_ok = can_make_bones();
+        }
+        // C ref: end.c:1203-1204 — a boulder/statue still mid-flight from a
+        // rolling-boulder trap when the hero dies gets dropped at its
+        // recorded launch_drop_spot() square instead of vanishing; no RNG.
+        if (bones_ok) {
+            const { launch_in_progress, force_launch_placement } = await import('./trap.js');
+            if (launch_in_progress()) force_launch_placement();
         }
         // C ref: end.c:1238 really_done() — `taken = paybill((how == ESCAPED)
         // ? -1 : (how != QUIT), silently)`, immediately after the bones_ok
@@ -1312,6 +1372,10 @@ export async function done_in_by(mtmp, how = DIED) {
     await d.update_topl('You die...');
     game._killer_mon = mtmp || null;
     if (mtmp) game._killer_name = killer_text_for_monster(mtmp);
+    // C ref: end.c:326-340 — maintain u.ugrave_arise from the killer's type
+    // before done(how)'s really_done() decides the corpse+grave/message fate.
+    game.u = game.u || {};
+    game.u.ugrave_arise = await compute_ugrave_arise(mtmp);
     await done(how);
 }
 

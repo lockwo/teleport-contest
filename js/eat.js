@@ -10,7 +10,7 @@ import { poison_strdmg, exercise, acurr_eff } from './attrib.js';
 import { A_STR, A_DEX, A_CON, EXT_ENCUMBER } from './const.js';
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_POIS,
-         M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME }
+         M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME }
     from './monflags_data.js';
 import { more_experienced, newexplevel, pluslvl } from './exper.js';
 
@@ -1434,7 +1434,10 @@ function mon_poisonous(ptr) { return (mflags1_of(ptr) & M1_POIS) !== 0; }
 async function maybe_cannibal(pm, allowmsg) {
     if ((game.moves ?? 0) === game._ate_brains) return false;
     game._ate_brains = game.moves ?? 0;
-    if (!CANNIBAL_ALLOWED() && your_race(pm)) {
+    const ulycn = game.u?.ulycn;
+    const cannibalLycn = ismnum(ulycn)
+        && (await import('./mon.js')).were_beastie(pm) === ulycn;
+    if (!CANNIBAL_ALLOWED() && (your_race(pm) || cannibalLycn)) {
         if (allowmsg) await update_topl('You cannibal!  You will regret this!');
         const u = game.u;
         if (u) {
@@ -1532,7 +1535,20 @@ async function cpostfx(pm) {
     const ptr = monster_by_pmidx(pm);
     const nm = ptr?.name || '';
     let check_intrinsics = false;
+    let catch_lycanthropy = NON_PM;
 
+    // C ref: eat.c:1144-1152 — the three human-form lycanthrope corpses.
+    // Checked by FLAG, not species name: monsters.h gives a lycanthrope's
+    // human and animal forms the IDENTICAL name ("wererat" etc — see
+    // mon.js's is_were()/is_human() comment for the same trap), so a
+    // name-keyed switch can never tell them apart.  A human-were corpse
+    // takes no other cpostfx branch in C either (its switch case `break`s
+    // immediately without falling into check_intrinsics), so this replaces
+    // rather than supplements the name switch below.
+    if ((mflags2_of(ptr) & M2_HUMAN) !== 0 && (mflags2_of(ptr) & M2_WERE) !== 0) {
+        const { counter_were } = await import('./mon.js');
+        catch_lycanthropy = counter_were(pm);
+    } else
     switch (nm) {
     case 'wraith':
         // C: pluslvl(FALSE) — gain an experience level (newhp()/newpw() rolls).
@@ -1608,6 +1624,15 @@ async function cpostfx(pm) {
         if (attacktype(ptr, AT_MAGC) || nm === 'newt')
             await eye_of_newt_buzz();
         // corpse_intrinsic(ptr) + givit(): DEFERRED, see the comment above.
+    }
+    // C ref: eat.c:1323 — catching lycanthropy from a human-were corpse (no
+    // intrinsic-conveying path is involved; this runs regardless of
+    // check_intrinsics).
+    if (ismnum(catch_lycanthropy)) {
+        const { set_ulycn } = await import('./polyself.js');
+        set_ulycn(catch_lycanthropy);
+        const { retouch_equipment } = await import('./artifact.js');
+        await retouch_equipment(2);
     }
 }
 
@@ -3111,8 +3136,8 @@ export async function eataccessory(otmp) {
                 /* undo the `.intrinsic |= FROMOUTSIDE' done above */
                 uprop_set_raw(P_LEVITATION, oldprop);
                 if (!uprop_get(P_LEVITATION)) {
-                    // C: float_up() — js/ has no float_up(); the timer grant is
-                    // the observable part.
+                    const { float_up } = await import('./trap.js');
+                    await float_up();
                     incr_itimeout(P_LEVITATION, d(10, 20));
                     _invent.makeknown(typ);
                 }

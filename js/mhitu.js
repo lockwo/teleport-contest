@@ -46,7 +46,7 @@ import { acurr_eff, exercise } from './attrib.js';
 import { newsym, map_invisible, update_topl, canseemon_shared } from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { is_home_elemental, monster_by_pmidx } from './makemon.js';
-import { DEADMONSTER } from './mon.js';
+import { DEADMONSTER, mvitals_died, m_detach, wake_nearto_core } from './mon.js';
 import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
 import { YOUMONST } from './mhitm_ad.js';
@@ -777,6 +777,21 @@ export async function gulpmu(mtmp, mattk) {
                 u.utraptype === TT_WEB ? 'web' : 'trap'}!`);
             u.utrap = 0;
         }
+        // C ref: mhitu.c:1357 — if the HERO is polymorphed into a
+        // touch-petrifies form (cockatrice/chickatrice) and the engulfer has
+        // no armor protection, the engulfer petrifies instead of swallowing.
+        {
+            const ydat = youmonst_data();
+            const tp = ydat?.name === 'cockatrice' || ydat?.name === 'chickatrice';
+            const resistston = ((mtmp?.data?.mresists | 0) & 0x80) !== 0;
+            if (tp && !resistston) {
+                const { minstapetrify } = await import('./trap.js');
+                await minstapetrify(mtmp, true);
+                u.ustuck = null;
+                u.uswallow = 0;
+                return DEADMONSTER(mtmp) ? M_ATTK_AGR_DIED : M_ATTK_MISS;
+            }
+        }
 
         // C ref mhitu.c:1374 — display_nhwindow(WIN_MESSAGE, FALSE) flushes the
         // pending "engulfs you!" with its own --More-- BEFORE the map is redrawn
@@ -965,9 +980,14 @@ export async function explmu(mtmp, mattk, ufound) {
         if (ufound && !not_affected) {
             if (!Hallucination())
                 await emitU('You are caught in a blast of kaleidoscopic light!');
-            // mondead(mtmp) first, so the dying light is never hallucinated.
-            kill_agr = false;
-            await emitU('You seem unaffected.');
+            // C ref mhitu.c:1645 — mondead(mtmp) BEFORE make_hallucinated(),
+            // so the dying light is never itself displayed hallucinated.
+            mvitals_died(mtmp);
+            await m_detach(mtmp, mtmp.data, true);
+            kill_agr = false;                 /* already killed (maybe lifesaved) */
+            const { make_hallucinated, HHallucination } = await import('./potion.js');
+            const chg = await make_hallucinated(HHallucination() + tmp, false, 0);
+            await emitU(chg ? 'You are freaked out.' : 'You seem unaffected.');
         }
         break;
     default:
@@ -977,9 +997,16 @@ export async function explmu(mtmp, mattk, ufound) {
         await emitU('You seem unaffected by it.');
         // ugolemeffects(adtyp, tmp): the hero is never a golem here.
     }
-    void kill_agr;
     void canspotmon;
-    // mondead(mtmp) + wake_nearto(mx, my, 49) belong to the caller's kill tail.
+    // C ref mhitu.c:1660 — the exploding attacker always dies unless a
+    // switch arm above already killed it (AD_COLD/FIRE/ELEC's mon_explodes,
+    // AD_HALU's mondead); AD_BLND (and any not_affected arm) falls through
+    // to here with kill_agr still TRUE.
+    if (kill_agr && !DEADMONSTER(mtmp)) {
+        mvitals_died(mtmp);
+        await m_detach(mtmp, mtmp.data, true);
+    }
+    await wake_nearto_core(mtmp.mx, mtmp.my, 49, false);   // mhitu.c:1662
     return (!DEADMONSTER(mtmp)) ? M_ATTK_MISS : M_ATTK_AGR_DIED;
 }
 function resists_blnd_u() {
@@ -1536,7 +1563,10 @@ export async function passiveum(olduasmon, mtmp, mattk) {
             tmp = 0;
         }
         if (!rn2(30)) { /* erode_armor(mtmp, ERODE_CORRODE) */ }
-        if (!rn2(6)) { /* acid_damage(MON_WEP(mtmp)) */ }
+        if (!rn2(6)) {
+            const { acid_damage } = await import('./trap.js');
+            await acid_damage(mtmp?.mw || null);
+        }
         return assess_dmg(mtmp, tmp);
     case AD_STON: {
         const protector = attk_protection(mattk.aatyp);
@@ -1705,6 +1735,14 @@ export function mhitu_ops() {
         cloneu,
         mdamageu,
         mpoisons_subj,
+        // C ref: were.c set_ulycn(which) — a monster's AD_WERE bite infecting
+        // the hero.  Dynamic import: mhitu.js has no other edge to
+        // polyself.js and this path is only reached mid-combat, well after
+        // module load.
+        set_ulycn: async (which) => {
+            const { set_ulycn } = await import('./polyself.js');
+            set_ulycn(which);
+        },
     };
     return _ops;
 }

@@ -78,6 +78,7 @@ import { wiz_debug_cmd_bury } from './dig.js';
 import { doeat } from './eat.js';
 import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
+import { doextlist } from './cmd.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -1284,7 +1285,7 @@ async function create_particular() {
         buf = mungspaces(await getlin_top(prompt));
         if (buf === '\x1b' || (buf.length && buf[0] === '\x1b')) return; // ESC -> abort
 
-        made = create_particular_monster(buf, MM_NOEXCLAM);
+        made = await create_particular_monster(buf, MM_NOEXCLAM);
         if (made) break;
 
         // no good; try again (mirror C's altmsg/prompt expansion)
@@ -2949,6 +2950,14 @@ const HANDLERS = {
     // doextcmd() again (a fresh "enter an extended command" prompt) instead
     // of no-oping.
     '#': doextcmd,
+    // C ref: cmd.c EXTCMDLIST's `{ M('?'), "?", ..., doextlist, ... }` row —
+    // typing "?" as the extended-command name (or "#?") shows the "Extended
+    // Commands List" menu.  Was entirely missing from HANDLERS: the "?" name
+    // resolved via extcmds_match() fine, but the undefined `fn` lookup made
+    // doextcmd() silently no-op, so the answering keystroke(s) meant for the
+    // menu leaked into rhack() as fresh commands and desynced everything
+    // after.
+    '?': doextlist,
     invoke: doinvoke,
     untrap: dountrap,
     tip: dotip,
@@ -3997,31 +4006,41 @@ async function dowipe_extcmd() {
 }
 
 // C ref: cmd.c doextcmd().  '#' entry: read an extended command name and
-// dispatch it.
+// dispatch it.  The `do { ... } while (func == doextlist)` wrapper matters:
+// after "#?" runs the extended-commands-list menu (doextlist), C re-prompts
+// "#" for another extended command name instead of returning — without it,
+// the keystrokes the recording sends to that second "#" prompt (and any
+// prompt after it, for as long as the answer keeps being "?") leak into
+// rhack() as fresh top-level commands and desync the rest of the session.
 export async function doextcmd() {
-    const idx = await tty_get_ext_cmd();
-    if (idx < 0) {
-        game.context.move = 0;
-        return 0;
-    }
-    const [txt, flags] = EXTCMDLIST[idx];
-    // C ref: cmd.c:463 can_do_extcmd() — a WIZMODECMD command must be refused
-    // outside wizard mode even when typed by its FULL NAME (not just via an
-    // unbound raw key); this check was entirely missing, so e.g.
-    // "#wizidentify<Enter>" ran the real debug-identify menu in a normal game.
-    // cmd.js has its own can_do_extcmd(), but it's dead code (never called) and
-    // operates on a different extcmdlist shape, so this re-implements just the
-    // WIZMODECMD half against THIS file's EXTCMDLIST, matching the message
-    // wizcmds.js's unavail() already uses.
-    if ((flags & WIZMODECMD) && !game.flags?.debug) {
-        game.context.move = 0;
-        await pline(`Unavailable command '${txt}'.`);
-        return 0;
-    }
-    const fn = HANDLERS[txt];
-    let res = 0;
-    if (fn) {
-        res = await fn();
+    let fn, res = 0;
+    for (;;) {
+        const idx = await tty_get_ext_cmd();
+        if (idx < 0) {
+            game.context.move = 0;
+            return 0;
+        }
+        const [txt, flags] = EXTCMDLIST[idx];
+        // C ref: cmd.c:463 can_do_extcmd() — a WIZMODECMD command must be
+        // refused outside wizard mode even when typed by its FULL NAME (not
+        // just via an unbound raw key); this check was entirely missing, so
+        // e.g. "#wizidentify<Enter>" ran the real debug-identify menu in a
+        // normal game.  cmd.js has its own can_do_extcmd(), but it's dead
+        // code (never called) and operates on a different extcmdlist shape,
+        // so this re-implements just the WIZMODECMD half against THIS file's
+        // EXTCMDLIST, matching the message wizcmds.js's unavail() already
+        // uses.
+        if ((flags & WIZMODECMD) && !game.flags?.debug) {
+            game.context.move = 0;
+            await pline(`Unavailable command '${txt}'.`);
+            return 0;
+        }
+        fn = HANDLERS[txt];
+        res = 0;
+        if (fn) {
+            res = await fn();
+        }
+        if (fn !== doextlist) break;
     }
     // C ref: doextcmd returns the command's ECMD_* result; ECMD_TIME (1)
     // makes the move loop advance a turn.  Commands we don't model return 0.

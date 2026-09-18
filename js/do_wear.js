@@ -200,6 +200,19 @@ function extrinsic_invis_except(obj) {
     }
     return false;
 }
+// C ref: do_wear.c:236/1307 — "levitation from another already-worn source"
+// gate shared by Boots_on()/Ring_on(); a levitation ring is the only other
+// ported source (potion/wand timers aren't separately trackable from this
+// port's flat uprops.Levitation field once combined with a worn item, same
+// approximation as SPEED_BOOTS's efastArm check above).
+function extrinsic_levitation_except(obj) {
+    const RIN_LEVITATION_OTYP = 183;
+    for (const o of [game.uleft, game.uright]) {
+        if (!o || o === obj) continue;
+        if (o.otyp === RIN_LEVITATION_OTYP) return true;
+    }
+    return false;
+}
 function HStealth() { const u = game.u || {}; return !!(u.HStealth || u.uStealth || u.uprops?.HStealth); }
 function BStealth() {
     /* C: stealth is blocked while riding unless hero+steed fly */
@@ -326,13 +339,25 @@ export async function Boots_on() {
             u.HFumbling = (u.HFumbling | 0) + rnd(20); /* incr_itimeout */
         break;
     }
-    case LEVITATION_BOOTS:
-        /* float_up()/float_vs_flight() (hack.c) have no JS equivalent; the
-           extrinsic itself rides on the worn mask (deferred: levitation). */
-        uarmf.known = 1;
-        game.botl = true;
-        makeknown(otyp);
+    case LEVITATION_BOOTS: {
+        // C ref: do_wear.c:236 Boots_on() LEVITATION_BOOTS — oldprop is
+        // Levitation already active from another worn source (a levitation
+        // ring).  BLevitation (terrain-blocked levitation via FROMOUTSIDE) is
+        // never set anywhere in this port (switch_terrain() is NOT PORTED,
+        // see js/dig.js:868), so that half of C's gate is always false here.
+        const oldprop = extrinsic_levitation_except(uarmf);
+        if (!oldprop) {
+            uarmf.known = 1;
+            game.botl = true;
+            makeknown(otyp);
+            const { float_up, spoteffects } = await import('./trap.js');
+            await float_up();
+            if (Levitation()) await spoteffects();
+        }
+        // else: float_vs_flight() (hack.c) — not ported anywhere in this
+        // codebase (no BFlying I_SPECIAL-toggle infra exists).
         break;
+    }
     default:
         break;
     }

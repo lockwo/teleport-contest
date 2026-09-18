@@ -481,6 +481,16 @@ function weight_of(obj) {
 // Only the STRANGE_OBJECT (standard polymorph) case is exercised here; the new
 // object inherits quantity / bcu / charges and replaces the old on the floor.
 function poly_obj(obj, can_merge = true /* id == STRANGE_OBJECT */) {
+    // C ref: trap.c:7038 sokoban_guilt() / zap.c:1710 `if (obj->otyp ==
+    // BOULDER) sokoban_guilt();` — polymorphing a boulder away counts as a
+    // Sokoban cheat, checked BEFORE the object's otyp changes below.
+    if (obj.otyp === BOULDER && game.level?.flags?.sokoban_rules) {
+        const u = game.u;
+        u.uconduct = u.uconduct || {};
+        u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
+        u.uluck = (u.uluck || 0) - 1;              // C: change_luck(-1), clamped
+        if (u.uluck < -10) u.uluck = -10;
+    }
     const ox = obj.ox, oy = obj.oy;
     let magic_obj = objects[obj.otyp]?.oc_magic ? 1 : 0;
     // C: a degraded unicorn horn counts as non-magic, which changes which
@@ -952,10 +962,13 @@ export async function bhitm(mtmp, otmp) {
     }
 
     case WAN_LOCKING:
-    case SPE_WIZARD_LOCK:
-        // closeholdingtrap(mtmp, &learn_it): no trap subsystem hookup here.
-        wake = false;
+    case SPE_WIZARD_LOCK: {
+        const noticed = { value: learn_it };
+        const { closeholdingtrap } = await import('./trap.js');
+        wake = await closeholdingtrap(mtmp, noticed);
+        learn_it = noticed.value;
         break;
+    }
 
     case WAN_PROBING:
         wake = false;
@@ -964,9 +977,21 @@ export async function bhitm(mtmp, otmp) {
         break;
 
     case WAN_OPENING:
-    case SPE_KNOCK:
+    case SPE_KNOCK: {
         wake = false; /* don't want immediate counterattack */
+        if (mtmp === game.u?.ustuck) {
+            await release_hold();
+            learn_it = true;
+        } else {
+            const noticed = { value: learn_it };
+            const { openholdingtrap, openfallingtrap } = await import('./trap.js');
+            await openholdingtrap(mtmp, noticed) || await openfallingtrap(mtmp, true, noticed);
+            learn_it = noticed.value;
+            // saddle release / SPE_KNOCK knockback fallback (zap.c:401-417): not
+            // modelled — no covered session reaches it.
+        }
         break;
+    }
 
     case SPE_HEALING:
     case SPE_EXTRA_HEALING: {
@@ -1144,10 +1169,18 @@ async function zap_updown(obj) {
         return true; /* we've done our own bhitpile */
     }
     case WAN_OPENING:
-    case SPE_KNOCK:
-        // Drawbridge / quest-stairs / holding-and-falling-trap releases are
-        // RNG-free state changes this port does not model.
+    case SPE_KNOCK: {
+        // Drawbridge / quest-stairs releases are RNG-free state changes this
+        // port does not model (no drawbridge/quest-stairs under the hero).
+        if (u.dz > 0) {
+            const noticed = { value: disclose };
+            const { openholdingtrap, openfallingtrap } = await import('./trap.js');
+            if (u.utrap) await openholdingtrap(u, noticed);
+            else await openfallingtrap(u, false, noticed);
+            disclose = noticed.value;
+        }
         break;
+    }
     case WAN_STRIKING:
     case SPE_FORCE_BOLT:
         striking = true;
@@ -1169,8 +1202,13 @@ async function zap_updown(obj) {
             if (otmp) xname(otmp);   /* sets dknown, maybe bknown */
             newsym(x, y);
         } else if (u.dz > 0 && ttmp) {
-            // trapdoor <-> hole transformation: no RNG (dotrap's fall is a
-            // separate subsystem).  DEFERRED.
+            if (!striking) {
+                const noticed = { value: disclose };
+                const { closeholdingtrap } = await import('./trap.js');
+                await closeholdingtrap(u, noticed); /* now stuck in web/bear trap */
+                disclose = noticed.value;
+            }
+            // trapdoor <-> hole transformation (striking): no RNG. DEFERRED.
         }
         break;
     case SPE_STONE_TO_FLESH:
@@ -1996,8 +2034,14 @@ async function zhitu(type, nd, fltxt, sx, sy) {
             exercise(A_STR, false);
         }
         /* two weapons at once makes both more vulnerable */
-        if (!rn2(u.twoweap ? 3 : 6)) { /* acid_damage(uwep) */ }
-        if (u.twoweap && !rn2(3)) { /* acid_damage(uswapwep) */ }
+        if (!rn2(u.twoweap ? 3 : 6)) {
+            const { acid_damage } = await import('./trap.js');
+            await acid_damage(game.uwep);
+        }
+        if (u.twoweap && !rn2(3)) {
+            const { acid_damage } = await import('./trap.js');
+            await acid_damage(game.uswapwep);
+        }
         if (!rn2(6)) { /* erode_armor(&youmonst, ERODE_CORRODE) */ }
         break;
     default:
@@ -2088,8 +2132,10 @@ async function zhitm(mon, type, nd) {
     case ZT_ACID:
         if (resists_acid(mon)) { shieldeffFlag = true; break; }
         tmp = d(nd, 6);
-        if (!rn2(6)) { /* acid_damage(MON_WEP(mon)): scrolls only, null-safe;
-                           no covered target wields a destructible scroll. */ }
+        if (!rn2(6)) {
+            const { acid_damage } = await import('./trap.js');
+            await acid_damage(MON_WEP(mon));
+        }
         if (!rn2(6)) await erode_armor_mon(mon);
         break;
     }
@@ -2467,7 +2513,7 @@ function ignitable(obj) {
 }
 
 // C ref: apply.c catch_lit(obj).
-async function catch_lit(obj) {
+export async function catch_lit(obj) {
     if (obj.lamplit || !ignitable(obj)) return false;
     if (((obj.otyp === MAGIC_LAMP || obj.otyp === CANDELABRUM_OF_INVOCATION)
          && (obj.spe | 0) === 0)
@@ -2809,16 +2855,31 @@ export async function zapyourself(obj, ordinary) {
         break;
 
     case WAN_OPENING:
-    case SPE_KNOCK:
-        // release_hold()/unpunish()/openholdingtrap()/openfallingtrap() and
-        // boxlock_invent() are all RNG-free state changes this port does not
-        // model (no ustuck, no punishment, no carried boxes on the covered
-        // heroes).  Left as a no-op rather than falling into `default:` so the
-        // otyp is accounted for.
+    case SPE_KNOCK: {
+        if (u.ustuck) {
+            await release_hold();
+            learn_it = true;
+        }
+        // unpunish()/boxlock_invent(obj): ball-and-chain and carried
+        // containers are not modelled in this port.
+        const noticed = { value: learn_it };
+        const { openholdingtrap, openfallingtrap } = await import('./trap.js');
+        if (!u.utrap || !(await openholdingtrap(u, noticed))) {
+            await openfallingtrap(u, true, noticed);
+        }
+        learn_it = noticed.value;
         break;
+    }
     case WAN_LOCKING:
-    case SPE_WIZARD_LOCK:
+    case SPE_WIZARD_LOCK: {
+        const noticed = { value: learn_it };
+        const { closeholdingtrap } = await import('./trap.js');
+        if (u.utrap || !(await closeholdingtrap(u, noticed))) {
+            // boxlock_invent(obj): carried containers are not modelled.
+        }
+        learn_it = noticed.value;
         break;
+    }
     case WAN_DIGGING:
     case SPE_DIG:
     case SPE_DETECT_UNSEEN:
@@ -3429,8 +3490,8 @@ function seemimic_z(mtmp) {
     mtmp.mappearance = 0;
     newsym(mtmp.mx, mtmp.my);
 }
-// C ref: trap.c trap_ice_effects(x, y, ice_is_melting) — unported anywhere.
-async function trap_ice_effects_z(_x, _y, _ice_is_melting) { /* not ported */ }
+// C ref: trap.c:7175 trap_ice_effects(x, y, ice_is_melting) — js/trap.js owns
+// the real port; call it directly (both modules already import each other).
 // C ref: dbridge.c boulder_hits_pool(otmp, rx, ry, newspot) — unported
 // anywhere.  Fills the pool / prints "You hear a splash"; draws no RNG.
 async function boulder_hits_pool_z(_otmp, _rx, _ry, _newspot) { return false; }
@@ -4682,9 +4743,9 @@ export async function melt_ice(x, y, msg) {
     const tmo = await import('./timeout.js');
     /* no more ice to melt away */
     await tmo.spot_stop_timers(x, y, MELT_ICE_AWAY_Z);
-    const { t_at, spoteffects } = await import('./trap.js');
+    const { t_at, spoteffects, trap_ice_effects } = await import('./trap.js');
     if (t_at(x, y))
-        await trap_ice_effects_z(x, y, true); /* TRUE because ice_is_melting */
+        trap_ice_effects(x, y, true); /* TRUE because ice_is_melting */
     obj_ice_effects(x, y, false);
     const { unearth_objs } = await import('./dig.js');
     await unearth_objs(x, y);

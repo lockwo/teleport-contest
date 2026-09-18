@@ -48,14 +48,15 @@ import {
     M1_NOEYES, M1_NOHEAD, M1_THICK_HIDE, M1_SLITHY, M1_CARNIVORE,
     M1_HERBIVORE, M1_METALLIVORE, M1_ACID, M1_POIS, M2_UNDEAD, M2_MINION,
 } from './monflags_data.js';
-import { DEADMONSTER, healmon } from './mon.js';
+import { DEADMONSTER, healmon, Protection_from_shape_changers } from './mon.js';
 import {
     STRAT_WAITFORU, W_ARMOR, W_AMUL, W_ARMH, W_ARMS, W_ARMG, W_ARMF,
-    A_STR, A_DEX, LEFT_SIDE, RIGHT_SIDE, MSLOW,
+    A_STR, A_DEX, A_CON, LEFT_SIDE, RIGHT_SIDE, MSLOW,
     ERODE_RUST, ERODE_CORRODE, ERODE_ROT,
 } from './const.js';
 import { dmgval } from './uhitm.js';
 import { monster_by_pmidx } from './makemon.js';
+import { defends } from './artifact.js';
 import {
     objects as OBJECTS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
     RING_CLASS, WAND_CLASS, COIN_CLASS, FOOD_CLASS,
@@ -710,8 +711,8 @@ export async function mhitm_ad_acid(magr, mattk, mdef, mhm, ops) {
     // Both rolls fire regardless of the resistance branch above (uhitm.c:2781).
     if (!rn2(30)) await erode_armor(mdef, ERODE_CORRODE, ops);
     if (!rn2(6)) {
-        // acid_damage(MON_WEP(mdef)): erodes the defender's wielded weapon.
-        // erode_obj() draws no RNG, so nothing is lost by stopping here.
+        const { acid_damage } = await import('./trap.js');
+        await acid_damage(ops.MON_WEP(mdef));
     }
 }
 
@@ -1289,10 +1290,16 @@ const NEW_MOON = 0;
 export async function mhitm_ad_were(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
+        const pa = ops.permonst(magr);
         if (!rn2(4) && (game.u?.ulycn ?? -1) === -1
+            && !Protection_from_shape_changers()
+            && !defends(AD_WERE, game.uwep)
             && !await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
             await ops.emit('You feel feverish.');
-            if (ops.set_ulycn) await ops.set_ulycn(ops.permonst(magr));
+            if (ops.exercise) ops.exercise(A_CON, false);
+            if (ops.set_ulycn) await ops.set_ulycn(pa?.pmidx ?? -1);
+            const { retouch_equipment } = await import('./artifact.js');
+            await retouch_equipment(2);
         }
         return;
     }

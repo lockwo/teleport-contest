@@ -330,6 +330,20 @@ async function dismount_steed_bychoice() {
     u.ux0 = ux0; u.uy0 = uy0;
     u.ux = cc.x; u.uy = cc.y;
 
+    // C ref: steed.c:766 `if (sobj_at(BOULDER, cc.x, cc.y)) sokoban_guilt();`
+    // — dismounting onto a boulder's square lets the hero squeeze past it,
+    // same Sokoban cheat as could_move_onto_boulder().
+    {
+        const { sobj_at } = await import('./invent.js');
+        const { BOULDER } = await import('./mkobj.js');
+        if (sobj_at(BOULDER, cc.x, cc.y) && game.level?.flags?.sokoban_rules) {
+            u.uconduct = u.uconduct || {};
+            u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
+            u.uluck = (u.uluck || 0) - 1;          // C: change_luck(-1), clamped
+            if (u.uluck < -10) u.uluck = -10;
+        }
+    }
+
     // The now-grounded pony (mridden cleared) is a normal pet again; the move
     // loop's movemon()/dochug() pass for this hero command drives its move (and
     // its dog_move obj_resists / choice rolls), so we do NOT step it here.

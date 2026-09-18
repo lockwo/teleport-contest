@@ -192,10 +192,13 @@ async function resume_preamble_tail() {
 }
 
 // C ref: allmain.c moveloop_preamble(resuming=TRUE) — the moon-phase / Friday
-// the 13th messages for the restoring process's date.  Each message forces the
-// previous top-line message's --More-- (topl_more) first; the welcome line's
-// --More-- naturally spans two captured frames because the xwaitforspace loop
-// ignores the non-dismiss keys queued before the space that dismisses it.
+// the 13th messages for the restoring process's date.  Each is a plain
+// pline()/You() call in C with no explicit more() between them (allmain.c:58-68);
+// pline() itself already implements update_topl()'s conditional paging (this
+// port's pline() checks game._toplin/_toplinSoft before printing), so an extra
+// unconditional topl_more() here double-pages and, worse, forces a spurious
+// --More-- when the prior step (e.g. wizard-mode ask_about_keeping_savefile's
+// y_n(), which leaves toplin non-NEED_MORE) needed no paging at all.
 async function restore_preamble_messages() {
     const u = game.u || (game.u = {});
     const moonphase = phase_of_the_moon();
@@ -211,7 +214,6 @@ async function restore_preamble_messages() {
         u.uluck = (u.uluck || 0) - 1; // change_luck(-1)
     }
     for (const m of msgs) {
-        await topl_more();
         await pline(m);
     }
 }
@@ -229,13 +231,21 @@ export async function dorestore() {
 
     // Splice the restored state into the live game object, but preserve the
     // restoring segment's runtime environment (these were set up by
-    // jsmain.start() and are intentionally NOT in the save blob).
+    // jsmain.start() and are intentionally NOT in the save blob).  iflags is
+    // included here too: C's savegamestate() only writes `struct flags flags`
+    // (save.c:281 Sfo_flag(nhfp, &flags, ...)) — `struct instance_flags iflags`
+    // (flag.h:331) is never part of the save file at all, so a runtime-only
+    // toggle like getpos.c's '#' autodescribe flip (getpos.c:962-969, a bare
+    // `iflags.autodescribe = !iflags.autodescribe` with no save/config write)
+    // must NOT survive into the restored process; it has to come back at its
+    // compiled-in default (On) same as any other freshly-started segment.
     const keepDisplay = game.nhDisplay;
     const keepHook = game._preNhgetchHook;
     const keepDatetime = game.datetime;
     const keepStorage = game.storage;
     const keepMock = game.mockStorage;
     const keepCoreCtx = game.coreCtx;
+    const keepIflags = game.iflags;
     Object.assign(game, saved);
     game.nhDisplay = keepDisplay;
     game._preNhgetchHook = keepHook;
@@ -243,11 +253,27 @@ export async function dorestore() {
     game.storage = keepStorage;
     game.mockStorage = keepMock;
     game.coreCtx = keepCoreCtx;
+    game.iflags = keepIflags;
 
     // C ref: restore.c restgamestate() — role_init() runs partway through the
     // state reload, BEFORE restore_luadata()'s Lua-state creation below, so its
     // nemesis-gender roll comes first in the stream.
     role_init_nemgend();
+
+    // C ref: restore.c dorecover():691-699 — "reset weapon so that player will
+    // get a reminder about 'bashing' during next fight when bare-handed or
+    // wielding an unconventional item; for pick-axe, we aren't able to
+    // distinguish between having applied or wielded it, so be conservative
+    // and assume the former".  This ALWAYS re-arms the one-shot gu.unweapon
+    // notice across a restore when bare-handed or wielding a pick-axe/
+    // grappling hook, regardless of whether the saving segment had already
+    // consumed it — this port's reference-preserving splice above restores
+    // `unweapon` as saved (already consumed), so without this a restored
+    // pick-axe-wielding hero silently lost its "You begin bashing monsters
+    // with your pick-axe." notice on the next swing.
+    if (!game.uwep || game.uwep.otyp === PICK_AXE_RST
+        || game.uwep.otyp === GRAPPLING_HOOK_RST)
+        game.unweapon = true;
 
     // C ref: restore.c restgamestate() tail -> nhlua.c restore_luadata(), whose
     // `if (!gl.luacore) l_nhcore_init();` fires because a freshly launched

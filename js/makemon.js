@@ -4143,10 +4143,26 @@ export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
 //
 // Returns { mtmp, x, y, next2u } so the caller can print the C "appears"
 // message; null if no monster could be made (bad name, no good spot, genocided).
-export function create_particular_monster(name, mmflags = 0) {
+export async function create_particular_monster(name, mmflags = 0) {
     const pmidx = name_to_pmidx(name);
-    if (pmidx < 0) return null;       // name_to_mon() failed -> ismnum FALSE
-    const ptr = MONS[pmidx];
+    let ptr;
+    if (pmidx >= 0) {
+        ptr = MONS[pmidx];
+    } else {
+        // C ref: read.c:3231 create_particular_parse() — when `name` does not
+        // exactly name a species, C falls back to name_to_monclass() (a bare
+        // class symbol like 'y' for S_LIGHT, or a class description) before
+        // giving up.  create_particular_creation()'s per-iteration order then
+        // draws mkclass()'s RNG (makemon.c:1934 gn_mask rn2(9), :1969 rnd(num))
+        // BEFORE the placement search below, so that must happen here first.
+        const { create_particular_parse } = await import('./read.js');
+        const d = {};
+        const ok = await create_particular_parse(name, d);
+        if (!ok) return null;
+        ptr = d.randmonst ? rndmonst()
+            : d.monclass !== MAXMCLASSES ? mkclass(d.monclass, 0)
+            : monster_by_pmidx(d.which);
+    }
     if (!ptr) return null;
 
     const u = game.u;

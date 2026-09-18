@@ -672,13 +672,14 @@ async function fix_worst_trouble(trouble) {
     case TROUBLE_CURSED_BLINDFOLD:
         await fix_curse_trouble(game.ublindf, null);
         break;
-    case TROUBLE_LYCANTHROPE:
-        // C: were.c you_unwere(TRUE) — set_ulycn(NON_PM) plus the line.  The
-        // rehumanize()/mtimedone half needs a were POLYFORM, which needs
-        // polyself; in_trouble() keys on u.ulycn, which this clears.
-        await update_topl('You feel purified.');
-        u.ulycn = -1;
+    case TROUBLE_LYCANTHROPE: {
+        // C ref: were.c you_unwere(TRUE) — "You feel purified.", cure
+        // lycanthropy (set_ulycn(NON_PM)), and revert from beast form (or
+        // re-arm the shift timer) if currently shifted.
+        const { you_unwere } = await import('./polyself.js');
+        await you_unwere(true);
         break;
+    }
     case TROUBLE_PUNISHED:
         await update_topl('Your chain disappears.');
         unpunish_local();

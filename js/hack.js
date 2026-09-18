@@ -220,6 +220,16 @@ export function occupation_active() {
 }
 
 export async function stop_occupation(append = false) {
+    // C ref: allmain.c:695 `cmdq_clear(CQ_CANNED);` — runs UNCONDITIONALLY at
+    // the tail of stop_occupation(), regardless of which branch below fires,
+    // discarding any canned command queue a multi-step command (e.g.
+    // dothrow.c:568 dofire()'s auto-wield-then-retry) had queued.  This port's
+    // dofire() runs that retry's turn inline instead of through a real cmdq,
+    // so there is no literal queue to clear; this flag lets it detect the
+    // same interrupt (a monster's hit landing mid-swap) and abandon its own
+    // retry instead of resuming into a getDir() that pages a message C had
+    // already walked away from (bl039 step 93: spurious --More--).
+    game._cmdqAbandonRetry = true;
     for (const [slot, txt] of OCC_SLOTS) {
         if (!game[slot]) continue;
         game[slot] = null;
@@ -1820,6 +1830,17 @@ export function gather_locs_interesting(x, y, gloc, validfn) {
         if (loc.invisMon) return true;
         if (!explored) return false;
         if (look_at_object_here(x, y)) return true;
+        // C ref: display.c MAP_TRP macro — a discovered trap not covered by
+        // deep water/lava displays (and thus counts as interesting) whenever
+        // no floor object is shown on top of it.  Without this, a pit/spiked
+        // pit/etc. sitting on ordinary room floor or corridor fell through to
+        // the plain-terrain exclusion below and getpos's 'a' jump skipped it
+        // entirely (bl036 step 248: 'a' landed on a farther object instead of
+        // the nearer already-discovered pit).
+        {
+            const trap = t_at(x, y);
+            if (trap && trap.tseen && !covers_objects(loc)) return true;
+        }
         // C tests the displayed cmap sym, and S_engroom/S_engrcorr are NOT in
         // the exclusion list below (they sit outside is_cmap_room/is_cmap_corr),
         // so an engraved room/corridor square stays interesting even though its

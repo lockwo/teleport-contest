@@ -2351,8 +2351,21 @@ export async function arti_invoke(obj) {
                              : "You feel the tension decrease around you.");
         break;
     case LEVITATION:
-        /* float_up()/float_down() are do.c's */
-        unbound('float_up_down', undefined);
+        if (on) {
+            const { float_up, spoteffects } = await import('./trap.js');
+            await float_up();
+            // C: spoteffects(FALSE) — trap.js's spoteffects(pickupFn) with no
+            // pickupFn callback is this port's equivalent of pick=FALSE.
+            await spoteffects();
+        } else {
+            // float_down(I_SPECIAL | TIMEOUT, W_ARTI) (trap.c) is a distinct,
+            // still-unported symbol outside this batch's assignment (only the
+            // levitation-timeout-expiry arm is ported, inline, in
+            // js/timeout.js's TIMED_PROPS table); turning OFF a worn/wielded
+            // artifact's own LEVITATION ability is not exercised by any
+            // covered session.
+            unbound('float_down', undefined);
+        }
         break;
     case INVIS:
         /* C: `if (BInvis || Blind)`.  BInvis (invisibility BLOCKED by an

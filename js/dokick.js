@@ -53,7 +53,7 @@ import { map_invisible } from './display.js';
 import { special_dmgval } from './weapon.js';
 import { goodpos, rloc_to } from './teleport.js';
 import { m_in_out_region } from './region.js';
-import { set_apparxy, noteleport_level } from './monmove.js';
+import { set_apparxy, noteleport_level, impact_disturbs_zombies } from './monmove.js';
 import { AT_KICK } from './monattk_data.js';
 import { a_monnam } from './do_name.js';
 import { wipe_engr_at } from './engrave.js';
@@ -1195,6 +1195,7 @@ async function really_kick_object(x, y) {
         }
         if (!(await kick_flooreffects(gk_kickedobj, u.ux, u.uy))) {
             place_object(gk_kickedobj, u.ux, u.uy);
+            impact_disturbs_zombies(gk_kickedobj, true);
             stackobj(gk_kickedobj);
             newsym(u.ux, u.uy);
         }
@@ -1295,6 +1296,7 @@ async function really_kick_object(x, y) {
 
     if (await kick_flooreffects(gk_kickedobj, land.x, land.y)) return 1;
     place_object(gk_kickedobj, land.x, land.y);
+    impact_disturbs_zombies(gk_kickedobj, true);
     stackobj(gk_kickedobj);
     newsym(gk_kickedobj.ox, gk_kickedobj.oy);
     return 1;

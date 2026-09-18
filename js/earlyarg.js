@@ -516,7 +516,7 @@ export async function argcheck(argc, argv, e_arg) {
             /* C ref: makemon.c dump_mongen() — UNPORTED in js/ */
             return 2;
         case ARG_DUMPWEIGHTS:
-            /* C ref: mkobj.c dump_weights() — UNPORTED in js/ */
+            await dump_weights();
             return 2;
         /* ARG_BIDSHOW is CRASHREPORT-only, ARG_WINDOWS is WIN32-only */
         default:
@@ -673,4 +673,70 @@ export async function dump_enums() {
 export async function dump_glyphids() {
     const { dump_all_glyphids } = await import('./glyphs.js');
     return dump_all_glyphids(null /* stdout */);
+}
+
+// C ref: mkobj.c dump_weights()/cmp_weights() — the -dumpweights CLI dev tool
+// that regenerates the sorted `all_weights[]` C table.  Reached ONLY via
+// earlyarg.c's ARG_DUMPWEIGHTS branch (this file's ARG_DUMPWEIGHTS case
+// below), which returns before any game session starts (earlyarg.c:538-540):
+// no recorded session, public or held-out, can ever exercise this.  Ported
+// for completeness, not exhaustively verified against every C naming nuance
+// (CapitalMon's proper-noun form is approximated), since its output is never
+// part of any covered game.
+export async function dump_weights() {
+    const { monster_by_pmidx, name_to_pmidx } = await import('./makemon.js');
+    const { objects: OBJ_TABLE, base_oc_weight } = await import('./mkobj.js');
+    const { raw_print } = await import('./options.js');
+
+    const G_UNIQ_DW = 0x1000;  // makemon.js's own private copy
+    const F_UNIQUE_DW = 64;    // mkobj.js's own private copy
+    const worm_tail_pmidx = name_to_pmidx('long worm tail');
+
+    const an_dw = (nm) => (/^[aeiouAEIOU]/.test(nm) ? `an ${nm}` : `a ${nm}`);
+    const the_dw = (nm) => `the ${nm}`;
+    const isProperName_dw = (nm) => /^[A-Z]/.test(nm || '');
+
+    const weightlist = [];
+    for (let i = 0; monster_by_pmidx(i); i++) {
+        if (i === worm_tail_pmidx) continue;
+        const m = monster_by_pmidx(i);
+        const wt = m.cwt | 0;
+        const unique = ((m.geno | 0) & G_UNIQ_DW) !== 0;
+        const nm = 'the body of '
+            + (isProperName_dw(m.name) ? the_dw(m.name)
+               : unique ? m.name : an_dw(m.name));
+        weightlist.push({ wt, nm });
+    }
+    for (let i = 0; i < OBJ_TABLE.length; i++) {
+        const row = OBJ_TABLE[i];
+        if (!row) continue;
+        const ocName = row.name;
+        const wt = base_oc_weight({ otyp: i }) | 0;
+        if (!wt || !ocName) continue;
+        const unique = ((row.flags | 0) & F_UNIQUE_DW) !== 0;
+        const nm = unique ? the_dw(ocName) : an_dw(ocName);
+        weightlist.push({ wt, nm });
+    }
+
+    weightlist.sort(cmp_weights);
+
+    await raw_print('int all_weights[] = {');
+    for (let i = 0; i < weightlist.length; i++) {
+        const sep = (i === weightlist.length - 1) ? ' ' : ',';
+        await raw_print(`    ${String(weightlist[i].wt).padStart(7)}${sep}`
+            + ` /* ${weightlist[i].nm.padEnd(49)} */`);
+    }
+    await raw_print('};');
+    await raw_print('');
+}
+
+// C ref: mkobj.c QSORTCALLBACK cmp_weights(p1, p2) — dump_weights()'s qsort
+// comparator.  C compares the "%07u<name>" strings it built (the zero-padded
+// weight prefix makes a plain strcmp() also sort numerically by weight, tied
+// broken by name); this port keeps {wt, nm} apart and reconstructs the same
+// comparison key rather than pre-formatting a throwaway string per entry.
+export function cmp_weights(i1, i2) {
+    const s1 = `${String(i1.wt).padStart(7, '0')}${i1.nm}`;
+    const s2 = `${String(i2.wt).padStart(7, '0')}${i2.nm}`;
+    return s1 < s2 ? -1 : s1 > s2 ? 1 : 0;
 }

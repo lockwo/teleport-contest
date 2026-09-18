@@ -338,9 +338,19 @@ export async function steal(mtmp, objnambuf) {
         ++named;
     await update_topl(`${named ? 'She' : Monnambuf} stole ${doname_invent(otmp)}.`);
     await encumber_msg();
-    // could_petrify (a cockatrice corpse) needs a corpse in inventory.
+    const could_petrify = otmp.otyp === CORPSE
+        && await (async () => {
+            const { monster_by_pmidx } = await import('./makemon.js');
+            const ptr = monster_by_pmidx(otmp.corpsenm);
+            return ptr?.name === 'cockatrice' || ptr?.name === 'chickatrice';
+        })();
     otmp.how_lost = LOST_STOLEN;
     mpickobj(mtmp, otmp);
+    if (could_petrify && !((mtmp.misc_worn_check | 0) & W_ARMG)) {
+        const { minstapetrify } = await import('./trap.js');
+        await minstapetrify(mtmp, true);
+        return -1;
+    }
     return ((game.multi ?? 0) < 0) ? 0 : 1;
 }
 
@@ -399,7 +409,7 @@ import { cansee } from './vision.js';
 import { GOLD_PIECE, ROCK_CLASS, AMULET_OF_YENDOR,
          base_oc_cost, place_object } from './mkobj.js';
 import { mflags1_of, M1_SLITHY, can_teleport_flag } from './monflags_data.js';
-import { W_SADDLE } from './const.js';
+import { W_SADDLE, W_ARMG } from './const.js';
 
 // C ref: onames.h — the four "special interest" targets of an AD_SAMU theft,
 // resolved by NAME so an objects[] shift can't silently re-point them.

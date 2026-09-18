@@ -866,6 +866,10 @@ export async function use_whip(obj, getDir) {
 
     } else if (!u.dz && (IS_WATERWALL(rtyp) || rtyp === LAVAWALL)) {
         await update_topl('You cause a small splash.');
+        if (rtyp === LAVAWALL) {
+            const { fire_damage } = await import('./trap.js');
+            await fire_damage(obj, false, rx, ry);
+        }
         return ECMD_TIME;
 
     } else if ((!u.dx && !u.dy) || (u.dz > 0)) {
@@ -877,6 +881,10 @@ export async function use_whip(obj, getDir) {
         if (is_pool_or_lava_at(u.ux, u.uy) || IS_WATERWALL(rtyp)
             || rtyp === LAVAWALL) {
             await update_topl('You cause a small splash.');
+            if (is_lava_at(u.ux, u.uy)) {
+                const { fire_damage } = await import('./trap.js');
+                await fire_damage(obj, false, u.ux, u.uy);
+            }
             return ECMD_TIME;
         }
         if (Levitation || u.usteed || Flying) {
@@ -1794,8 +1802,12 @@ function wake_nearto_hurtle(x, y, distance) {
 }
 // C ref: trap.c instapetrify(str) — js/invent.js:1396 is an empty stub too.
 async function instapetrify_hurtle(_why) { /* NOT PORTED (js/invent.js:1396) */ }
-// C ref: mon.c minstapetrify(mon, byplayer) — no port anywhere in js/.
-async function minstapetrify_hurtle(_mon, _byplayer) { /* NOT PORTED */ }
+// C ref: mon.c minstapetrify(mon, byplayer) — a monster is instantly
+// petrified; ported at js/trap.js.
+async function minstapetrify_hurtle(mon, byplayer) {
+    const { minstapetrify } = await import('./trap.js');
+    await minstapetrify(mon, byplayer);
+}
 // C ref: hack.c switch_terrain() — js/dig.js:870 is an empty stub because the
 // port has no B<prop> masks (see js/polyself.js float_vs_flight()).
 function switch_terrain_hurtle() { /* NOT PORTED (js/dig.js:870) */ }

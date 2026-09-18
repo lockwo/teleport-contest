@@ -117,7 +117,7 @@ import {
     IS_DOOR, IS_FURNITURE, STONE, STAIRS, D_NODOOR, D_ISOPEN, D_BROKEN,
     Is_airlevel,
     DUST, ENGRAVE, HEADSTONE, BURN, MARK, ENGR_BLOOD,
-    PLNMSG_MON_TAKES_OFF_ITEM,
+    PLNMSG_MON_TAKES_OFF_ITEM, PLNMSG_BACK_ON_GROUND,
     MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL,
     TIMEOUT, isok, STRAT_WAITMASK,
 } from './const.js';
@@ -840,11 +840,24 @@ export function obj_extract_self(obj) {
 }
 function setworn(obj, mask) { if (obj) obj.owornmask = mask; }
 // C ref: worn.c setnotworn() — clears the worn-slot POINTER (*objp = 0) as well
-// as owornmask.  Dropping only the mask left game.uamul pointing at a used-up
-// amulet of life saving, so the hero was saved a second time by an amulet that
-// had already crumbled.
+// as owornmask. Dropping only the mask left game.uamul pointing at a used-up
+// amulet of life saving, so the hero was saved a second time by an amulet
+// that had already crumbled.
+//
+// worn.c's real `worn[]` table (worn.c:18-34) has 16 entries; this function
+// only ever covered the 11 armor/ring/amulet/blindfold slots. The other 5 --
+// W_WEP/uwep, W_SWAPWEP/uswapwep, W_QUIVER/uquiver, W_BALL/uball, W_CHAIN/
+// uchain -- were missing entirely, so any caller that destroys a wielded
+// weapon, quivered ammo, or attached ball/chain via setnotworn()+delobj()
+// (rather than a manually-inlined game.uwep check) left that field pointing
+// at a freed object. Real callers reachable from this port: js/trap.js
+// fire_damage()/lava_damage() on a wielded bullwhip/pick-axe/dipped item.
 function setnotworn(obj) {
     if (!obj) return;
+    if (game.u?.twoweap && (obj === game.uwep || obj === game.uswapwep)) {
+        game.u.twoweap = false;
+        if (game.flags?.weaponstatus) game.botl = true;
+    }
     if (obj === game.uamul) game.uamul = null;
     if (obj === game.uleft) game.uleft = null;
     if (obj === game.uright) game.uright = null;
@@ -856,6 +869,11 @@ function setnotworn(obj) {
     if (obj === game.uarmg) game.uarmg = null;
     if (obj === game.uarmf) game.uarmf = null;
     if (obj === game.uarmu) game.uarmu = null;
+    if (obj === game.uwep) game.uwep = null;
+    if (obj === game.uswapwep) game.uswapwep = null;
+    if (obj === game.uquiver) game.uquiver = null;
+    if (obj === game.uball) game.uball = null;
+    if (obj === game.uchain) game.uchain = null;
     obj.owornmask = 0;
 }
 export function welded(obj) {
@@ -1445,7 +1463,26 @@ function empty_handed() { return game.uarmg ? 'empty handed' : 'bare handed'; }
 // C ref: obj.h:427 pair_of(o) — lenses, gloves or boots (by oc_armcat, not
 // by a name regex: "gauntlets of power" matches neither 'gloves' nor 'boots').
 export function pair_of(obj) { return obj?.otyp === LENSES || is_gloves(obj) || is_boots(obj); }
-export function is_plural(obj) { return (obj?.quan || 1) > 1 || pair_of(obj); }
+// C ref: obj.h:421 is_plural(o) — quan != 1, OR the discovered unique
+// artifact "Eyes of the Overworld" (worn as lenses, otherwise singular).
+// This is deliberately NOT pair_of(o): a single pair of gloves/boots/lenses
+// stays grammatically singular ("hits the floor", not "hit the floor") for
+// otense()/verb-conjugation callers.  Call sites that also need the "pair
+// of X" pronoun (they/those/these) OR pair_of(obj) in explicitly (see
+// wield.js use_plural, potion.js shortestname/dip qbuf, invent.c:2120).
+const ART_EYES_OF_THE_OVERWORLD = 26;
+export function is_plural(obj) {
+    if (!obj) return false;
+    if ((obj.quan || 1) !== 1) return true;
+    if (obj.oartifact !== ART_EYES_OF_THE_OVERWORLD) return false;
+    const disco = game.artidisco;
+    if (!Array.isArray(disco)) return false; // artidisco() not yet touched: undiscovered
+    for (let i = 0; i < disco.length; i++) {
+        if (disco[i] === ART_EYES_OF_THE_OVERWORLD) return true;
+        if (disco[i] === 0) break;
+    }
+    return false;
+}
 // C ref: obj.h is_weptool(o) — a TOOL_CLASS object with a real weapon skill
 // (oc_skill != P_NONE).  Pick-axe / grappling hook / unicorn horn qualify;
 // lamps, towels, bags, etc. do not.
@@ -3850,10 +3887,24 @@ export async function Ring_on(obj) {
             await pline('Gee!  All of a sudden, you can see right through yourself.');
         }
         break;
-    case RIN_LEVITATION:
-        /* float_up()/float_vs_flight() (hack.c) are not ported; the extrinsic
-           itself rides on the worn mask.  See do_wear.js Boots_on(). */
+    case RIN_LEVITATION: {
+        // C ref: do_wear.c:1307 Ring_on() RIN_LEVITATION — oldprop here also
+        // needs the boots slot, not just the other ring hand: C's oldprop is
+        // the property's TOTAL pre-existing extrinsic bitmask across every
+        // worn source.  BLevitation (terrain-blocked, FROMOUTSIDE) is never
+        // set anywhere in this port (switch_terrain() is NOT PORTED, see
+        // js/dig.js:868), so that half of C's gate is always false here.
+        const oldpropLev = oldprop || game.uarmf?.otyp === LEVITATION_BOOTS;
+        if (!oldpropLev) {
+            const { float_up, spoteffects } = await import('./trap.js');
+            await float_up();
+            learnring(obj, true);
+            if (game.u?.uprops?.Levitation) await spoteffects();
+        }
+        // else: float_vs_flight() (hack.c) — not ported anywhere in this
+        // codebase (no BFlying I_SPECIAL-toggle infra exists).
         break;
+    }
     case RIN_PROTECTION_FROM_SHAPE_CHAN:
         /* rescham() (mon.c): un-mimics/de-chameleons every monster, no RNG */
         break;
@@ -6771,7 +6822,7 @@ export { obj_resists, uslinging, is_ammo, is_missile, is_launcher,
          an, s_suffix, singular_name, weapon_type,
          thitmonst, youmonst_data as youmonst_data_pub, ceiling_of,
          losehp_invent as losehp_throw, dbon_thrown as dbon,
-         acurr_eff as acurr_attr, Role_if };
+         acurr_eff as acurr_attr, Role_if, simpleonames };
 
 // C ref: mondata.h notake(ptr) / nohands(ptr) applied to gy.youmonst.data.
 // monflag.h: M1_NOTAKE is 0x00000800 and M1_NOHANDS 0x00002000; the literals
@@ -6960,7 +7011,27 @@ export async function dofire(getDir) {
             // C ref: ready_weapon() returns ECMD_TIME — the swap costs a turn even
             // though the subsequent throw may be cancelled.  Take it inline.
             game.context.move = 0;
+            game._cmdqAbandonRetry = false;
             await moveloop_turn();
+            // C ref: dothrow.c:568-569 `cmdq_add_ec(doswapweapon);
+            // cmdq_add_ec(dofire); return res;` — the requeued dofire is a
+            // SEPARATE top-level command that only runs if it's still in the
+            // queue by the time control returns to rhack().  allmain.c:695
+            // `stop_occupation()`'s unconditional `cmdq_clear(CQ_CANNED)`
+            // discards it the instant anything interrupts the hero during
+            // the swap's turn (e.g. hitmu() calling stop_occupation() after
+            // a monster's hit) — the fire is abandoned outright, and the
+            // NEXT real key starts a genuinely fresh top-level command
+            // (parse():5147 silently clears the pending topline, no
+            // --More--).  This port takes the swap's turn inline instead of
+            // through a real queue, so mirror the abandonment: if
+            // stop_occupation() fired during THIS turn, stop here rather
+            // than resuming into getDir(), which would page a message C had
+            // already walked away from (bl039 step 93: "The kobold hits!"
+            // gained a spurious --More--).  ECMD_OK (not ECMD_TIME): the
+            // swap's turn was already taken inline above, and no further
+            // time elapses for the abandoned fire.
+            if (game._cmdqAbandonRetry) return ECMD_OK;
             // retry dofire: now the launcher is wielded.
             obj = game.uquiver;
         } else {
@@ -9963,6 +10034,18 @@ export async function describe_decor() {
             && decorMsg.length + pend.length + 3 >= 80 - 8)
             await topl_more();
         await update_topl(decorMsg);
+    } else if (!game.Underwater) {
+        // C ref: pickup.c describe_decor():411 — no feature to announce at
+        // the new spot; if the PREVIOUS spot was a pool/lava/ice and this one
+        // isn't (and something else, e.g. lookat()'s own room message, hasn't
+        // already announced the resurfacing), announce coming back down.
+        if (IS_POOL_TYP(prevDecor) || prevDecor === LAVAPOOL || prevDecor === LAVAWALL
+            || prevDecor === ICE) {
+            if (game.last_msg !== PLNMSG_BACK_ON_GROUND) {
+                const { back_on_ground } = await import('./trap.js');
+                await back_on_ground(false);
+            }
+        }
     }
     game.iflags = game.iflags || {};
     game.iflags.prev_decor = game.flags?.mention_decor ? ltyp : STONE;
