@@ -28,23 +28,27 @@ const ARMOR_CLASS = 3, AMULET_CLASS = 5, WEAPON_CLASS = 2, TOOL_CLASS = 6;
 const TELEPAT = 30;  // prop.h
 const BOLT_LIM = 8;  // hack.h
 
-// C ref: worn.c recalc_telepat_range() — BOLT_LIM*BOLT_LIM per worn TELEPAT
-// source, -1 with none.  C caches it in u.unblind_telepat_range from
-// setworn()/setnotworn()/set_artifact_intrinsic(); the hero's worn slots have no
-// single choke point in this port, so it is derived on demand instead (same
-// value — it is a pure function of what is worn).
+// C ref: worn.c:48-69 recalc_telepat_range() — BOLT_LIM*BOLT_LIM per worn
+// TELEPAT source, -1 with none.  C counts the worn[] slots whose occupant has
+// oc_oprop == TELEPAT, then adds one for all SPFX_ESP artifacts together.
+//
+// That count is exactly the population count of ETelepat, because setworn() sets
+// one slot bit per conferring object.  This used to re-derive it by scanning the
+// 16 slots, because the port had no setworn() property step; js/invent.js
+// worn_extrinsics_on()/off() now maintain u.uprops_extrinsic the way C does, so
+// read the word instead of keeping a second representation of the same fact.
+function popcount(n) {
+    let c = 0;
+    for (let v = n | 0; v; v &= v - 1) c++;
+    return c;
+}
 export function recalc_telepat_range() {
     const u = game.u;
     if (!u) return -1;
-    // C ref: worn.c worn[] — every hero worn/wielded slot, in C's order.
-    const slots = [game.uarm, game.uarmc, game.uarmh, game.uarms, game.uarmg,
-        game.uarmf, game.uarmu, game.uleft, game.uright, game.uwep,
-        game.uswapwep, game.uquiver, game.uamul, game.ublindf, u.uball, u.uchain];
-    let nobjs = 0;
-    for (const o of slots)
-        if (o && objects[o.otyp]?.oc_oprop === TELEPAT) nobjs++;
-    // C: `if (ETelepat & W_ART) nobjs++` — all SPFX_ESP artifacts count as one.
-    if ((u.uprops_extrinsic?.[TELEPAT] || 0) & W_ART) nobjs++;
+    const etelepat = (u.uprops_extrinsic?.[TELEPAT] || 0);
+    // C: `if (ETelepat & W_ART) nobjs++` — all SPFX_ESP artifacts count as one,
+    // however many slots carry them, so the artifact bit is counted separately.
+    const nobjs = popcount(etelepat & ~W_ART) + ((etelepat & W_ART) ? 1 : 0);
     u.unblind_telepat_range = nobjs ? (BOLT_LIM * BOLT_LIM) * nobjs : -1;
     return u.unblind_telepat_range;
 }

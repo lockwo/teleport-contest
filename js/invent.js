@@ -120,6 +120,12 @@ import {
     PLNMSG_MON_TAKES_OFF_ITEM, PLNMSG_BACK_ON_GROUND,
     MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL,
     TIMEOUT, isok, STRAT_WAITMASK,
+    // prop.h property indices, for the setworn()/setnotworn() extrinsic
+    // bookkeeping below.  W_AMUL/W_TOOL are imported under CW_ names because
+    // this file's own W_AMUL/W_TOOL constants are REMAPPED bits (see the
+    // worn-mask block at line 240) and the extrinsic word must speak prop.h.
+    INVIS, CLAIRVOYANT, BLINDED,
+    W_AMUL as CW_AMUL, W_TOOL as CW_TOOL,
 } from './const.js';
 import { engr_at, wipe_engr_at } from './engrave.js';
 import { costly_spot, addtobill, shkname } from './shkroom.js';
@@ -430,12 +436,14 @@ function touch_petrifies(corpsenm) {
 function dead_species(_mnum, _force) { return false; }
 function attach_fig_transform_timeout(obj) { if (obj) obj.timed = true; }
 function picked_container(_obj) {}
-// C ref: worn.c setworn() for the W_QUIVER/W_SWAPWEP slots — clear the old
+// C ref: worn.c setworn() for the W_WEP/W_QUIVER/W_SWAPWEP slots — clear the old
 // occupant's worn bit, install the new object, and keep the matching u-pointer
-// in sync.  The quiver/swap slots confer no intrinsics, so the property
-// bookkeeping in the full C setworn() is skipped here.  Uses the prop.h mask
-// bits (W_WEP 0x100, W_QUIVER 0x200, W_SWAPWEP 0x400) the inventory display and
-// u_init rely on.
+// in sync.  Uses the prop.h mask bits (W_WEP 0x100, W_QUIVER 0x200, W_SWAPWEP
+// 0x400) the inventory display and u_init rely on.  The property bookkeeping is
+// now done too: worn.c's `wp->w_mask & ~(W_SWAPWEP | W_QUIVER)` guard means the
+// quiver and alternate-weapon slots really do confer nothing, but a WIELDED
+// weapon or weapon-tool does (that is how Magicbane's and the elven weapons'
+// extrinsics reach the hero), so W_WEP must not be skipped.
 function setworn_slot(obj, mask, getCur, setCur) {
     const old = getCur();
     // C ref: worn.c:90 setworn() — displacing the occupant of the primary or
@@ -444,9 +452,15 @@ function setworn_slot(obj, mask, getCur, setCur) {
     // file's remapped bits; do not substitute the prop.h values.)
     if (old && game.u?.twoweap && ((old.owornmask || 0) & (QW_WEP | QW_SWAPWEP)))
         game.u.twoweap = false;
-    if (old) old.owornmask = (old.owornmask || 0) & ~mask;
+    if (old) {
+        worn_extrinsics_off(old, mask);
+        old.owornmask = (old.owornmask || 0) & ~mask;
+    }
     setCur(obj);
-    if (obj) obj.owornmask = (obj.owornmask || 0) | mask;
+    if (obj) {
+        obj.owornmask = (obj.owornmask || 0) | mask;
+        worn_extrinsics_on(obj, mask);
+    }
 }
 export function setuqwep(obj) { setworn_slot(obj, QW_QUIVER, () => game.uquiver, (o) => { game.uquiver = o; }); }
 export function setuswapwep(obj) { setworn_slot(obj, QW_SWAPWEP, () => game.uswapwep, (o) => { game.uswapwep = o; }); }
@@ -838,7 +852,114 @@ export function obj_extract_self(obj) {
     removeObjectFromAllInventories(obj);
     obj.where = OBJ_FREE;
 }
-function setworn(obj, mask) { if (obj) obj.owornmask = mask; }
+// ── worn.c:73-184 setworn()/setnotworn(): the extrinsic/blocked half ────────
+//
+// C's setworn() is entirely generic: for every worn[] slot it touches it does
+//     p = objects[obj->otyp].oc_oprop;
+//     u.uprops[p].extrinsic |= wp->w_mask;
+//     if ((p = w_blocks(obj, mask)) != 0) u.uprops[p].blocked |= wp->w_mask;
+// and setnotworn()/the displaced-occupant arm do the AND-NOT.  That step did
+// not exist anywhere in this port, so no worn item conferred its property:
+// the Wizard's starting cloak of magic resistance left Antimagic false and a
+// self-zapped wand of magic missile rolled d(4,6) where C prints "The missiles
+// bounce!" and draws nothing.  objects[].oc_oprop IS carried by mkobj.js (70
+// rows, verified against the recorder's objects.h), so the table drives this;
+// nothing here hardcodes an otyp except C's own w_blocks() special cases.
+//
+// MASK VOCABULARY.  The extrinsic word must speak prop.h, because js/artifact.js
+// set_artifact_intrinsic() already owns the W_ART bit in the same store and
+// js/worn.js reads it.  This file's owornmask bits are a REMAPPED set (see the
+// block at line 240): the armor bits, W_WEP/W_QUIVER/W_SWAPWEP and W_RINGL/
+// W_RINGR happen to equal prop.h's, but this file's W_AMUL is 0x00080000
+// (prop.h's W_TOOL) and its W_BLINDF is 0x00800000 (not a prop.h bit at all,
+// C puts facewear in W_TOOL).  prop_wornmask() is the one place that reconciles
+// the two vocabularies; do not skip it.
+function prop_wornmask(mask) {
+    let m = (mask | 0) & (W_ARMOR | W_WEAPONS | W_RINGL | W_RINGR
+                          | W_BALL | W_CHAIN);
+    if (mask & W_AMUL) m |= CW_AMUL;
+    if (mask & W_BLINDF) m |= CW_TOOL;
+    return m;
+}
+
+// C ref: worn.c:38 w_blocks(o, m) — "This only allows for one blocking item per
+// property".  The cornuthaum arm really does depend on the hero's role.
+const MUMMY_WRAPPING_OTYP = 138, CORNUTHAUM_OTYP = 93;
+function w_blocks(obj, mask) {
+    if (!obj) return 0;
+    if (obj.otyp === MUMMY_WRAPPING_OTYP && (mask & WORN_CLOAK) !== 0)
+        return INVIS;
+    if (obj.otyp === CORNUTHAUM_OTYP && (mask & WORN_HELMET) !== 0
+        && !Role_if(PM_WIZARD))
+        return CLAIRVOYANT;
+    if (obj.oartifact === ART_EYES_OF_THE_OVERWORLD && (mask & W_BLINDF) !== 0)
+        return BLINDED;
+    return 0;
+}
+
+// prop.h u.uprops[prop].extrinsic / .blocked.  js/artifact.js:2867 already
+// keeps the extrinsic store in this exact shape (prop index -> slot bitmask);
+// the blocked store is its sibling and is created the same way.
+function uprops_bits(store, prop) { return (game.u?.[store] || {})[prop] | 0; }
+function uprops_set_bits(store, prop, bits) {
+    if (!game.u) return;
+    game.u[store] = game.u[store] || {};
+    game.u[store][prop] = bits;
+}
+// C ref: youprop.h E<Prop> — the extrinsic word for a property, and the
+// `blocked` word that suppresses it.  Exported as the single reader for the
+// property accessors scattered across this port; converting those readers is
+// deliberately NOT part of this change.
+export function worn_extrinsic(prop) { return uprops_bits('uprops_extrinsic', prop); }
+export function worn_blocked(prop) { return uprops_bits('uprops_blocked', prop); }
+
+// C ref: worn.c:120-131 — the install half.  C's two guards, verbatim:
+// `if (wp->w_mask & ~(W_SWAPWEP | W_QUIVER))` keeps quivered/alternate items
+// from conferring anything, and `obj->oclass == WEAPON_CLASS || is_weptool(obj)
+// || mask != W_WEP` stops a wielded potion/ring from conferring its property.
+// Exported because js/u_init.js has its own copy of setworn() for the starting
+// kit (the fifth of five hero worn-slot mutators in this port) and that is the
+// path that dons the Wizard's cloak of magic resistance.
+export function worn_extrinsics_on(obj, mask) {
+    if (!obj || !game.u) return;
+    if (!(mask & ~(W_SWAPWEP | W_QUIVER))) return;
+    const pm = prop_wornmask(mask);
+    if (obj.oclass === WEAPON_CLASS || is_weptool(obj) || mask !== W_WEP) {
+        const p = objects[obj.otyp]?.oc_oprop | 0;
+        if (p)
+            uprops_set_bits('uprops_extrinsic', p, worn_extrinsic(p) | pm);
+        const b = w_blocks(obj, mask);
+        if (b)
+            uprops_set_bits('uprops_blocked', b, worn_blocked(b) | pm);
+    }
+}
+
+// C ref: worn.c:92-107 (displacing a slot's previous occupant) and worn.c:168-175
+// (setnotworn).  Neither carries the WEAPON_CLASS guard: whatever bit went in
+// comes back out.  worn.c's setnotworn also omits the W_SWAPWEP/W_QUIVER guard
+// that its setworn twin has, which is equivalent — those two slots never get a
+// bit set in the first place, so AND-NOT-ing them is a no-op either way.
+export function worn_extrinsics_off(obj, mask) {
+    if (!obj || !game.u) return;
+    if (!(mask & ~(W_SWAPWEP | W_QUIVER))) return;
+    const pm = prop_wornmask(mask);
+    const p = objects[obj.otyp]?.oc_oprop | 0;
+    if (p)
+        uprops_set_bits('uprops_extrinsic', p, worn_extrinsic(p) & ~pm);
+    const b = w_blocks(obj, mask);
+    if (b)
+        uprops_set_bits('uprops_blocked', b, worn_blocked(b) & ~pm);
+}
+
+// C ref: worn.c:73-145 setworn(obj, mask) — the owornmask half.  The slot
+// POINTER half is spread over worn_slot_set()/setworn_accessory()/
+// setworn_slot() in this file and u_init.js's own copy; the extrinsic half is
+// worn_extrinsics_on() above.
+function setworn(obj, mask) {
+    if (!obj) return;
+    obj.owornmask = mask;
+    worn_extrinsics_on(obj, mask);
+}
 // C ref: worn.c setnotworn() — clears the worn-slot POINTER (*objp = 0) as well
 // as owornmask. Dropping only the mask left game.uamul pointing at a used-up
 // amulet of life saving, so the hero was saved a second time by an amulet
@@ -874,6 +995,9 @@ function setnotworn(obj) {
     if (obj === game.uquiver) game.uquiver = null;
     if (obj === game.uball) game.uball = null;
     if (obj === game.uchain) game.uchain = null;
+    // C ref: worn.c:168-175 — drop the property this object was conferring
+    // through EVERY slot it occupied, before the mask is cleared.
+    worn_extrinsics_off(obj, obj.owornmask | 0);
     obj.owornmask = 0;
 }
 export function welded(obj) {
@@ -942,9 +1066,12 @@ const ARTI_TOUCH_PROPS = {
     34: { restr: true,  intel: true,  align: 0,    role: 12 }, // Eye of the Aethiopica (WIZARD)
 };
 
-// C ref: prop.h Antimagic == HAntimagic || EAntimagic.  The port has no
-// oc_oprop column, so the extrinsic is read from whichever uprops mirror the
-// granting code used (js/mcastu.js and js/insight.js each picked one).
+// C ref: prop.h Antimagic == HAntimagic || EAntimagic.  This reads only the
+// intrinsic-ish mirrors; the extrinsic word is now maintained by
+// worn_extrinsics_on()/off() above and should be read with
+// worn_extrinsic(ANTIMAGIC).  Converting this port's eight independent
+// Antimagic() definitions (and every other property accessor) onto the bitmask
+// is queued separately — do not add a ninth.
 function Antimagic() {
     const u = game.u;
     return !!(u?.uprops?.Antimagic || u?.Antimagic || u?.HAntimagic || u?.EAntimagic);
@@ -3799,6 +3926,10 @@ export function worn_slot_clear(mask) {
             game.u.EFumbling = 0;
         }
     }
+    // C ref: worn.c:92-107 setworn(0, mask) — the vacating object stops
+    // conferring its property.  Done before the pointer is dropped, because the
+    // object is only reachable through it.
+    worn_extrinsics_off(worn_slot_get(mask), mask);
     switch (mask) {
     case WA_ARM:  game.uarm = null; break;
     case WA_ARMC: game.uarmc = null; break;
@@ -3813,6 +3944,9 @@ export function worn_slot_clear(mask) {
 
 function worn_slot_set(obj, mask) {
     obj.owornmask = (obj.owornmask || 0) | mask;
+    // C ref: worn.c:112-131 setworn(obj, mask).  Body armor / cloak / helmet /
+    // shield / gloves / boots / shirt all confer objects[].oc_oprop from here.
+    worn_extrinsics_on(obj, mask);
     switch (mask) {
     case WA_ARM:  game.uarm = obj; break;
     case WA_ARMC: game.uarmc = obj; break;
@@ -3842,6 +3976,7 @@ function setworn_accessory(obj, mask) {
     else if (obj === game.uswapwep) setuswapwep(null);
     else if (obj === game.uquiver) setuqwep(null);
     obj.owornmask = (obj.owornmask || 0) | mask;
+    worn_extrinsics_on(obj, mask);
     if (mask === W_RINGL) game.uleft = obj;
     else if (mask === W_RINGR) game.uright = obj;
     else if (mask === W_AMUL) game.uamul = obj;
@@ -3853,6 +3988,7 @@ function clearworn_accessory(obj) {
     if (m & W_RINGR) game.uright = null;
     if (m & W_AMUL) game.uamul = null;
     if (m & W_BLINDF) game.ublindf = null;
+    worn_extrinsics_off(obj, m & W_ACCESSORY);
     obj.owornmask = m & ~W_ACCESSORY;
 }
 
@@ -7402,6 +7538,34 @@ async function tty_select_menu(items, plan, how) {
             if (ch === '-' || ch === '\\') { unset_all(); continue; }
             if (ch === '@' || ch === '~') {             /* INVERT_ALL/_PAGE */
                 if (how === PICK_ANY) invert_all(0, -1);
+                continue;
+            }
+            /* wintty.c process_menu_window() case MENU_SEARCH:1700 —
+               tty_getlin("Search for:"), then toggle every SELECTABLE entry
+               whose menu string matches the "*pattern*" glob; PICK_ONE
+               finishes on the first hit and PICK_NONE only rings the bell.
+               C matches curr->str, which tty_add_menu() built as
+               "<selector> - <description>" (the selection-state character is
+               painted over position 2 at display time and is not part of the
+               stored string), so match that, not the rendered line.
+               Until this existed ':' fell through to the command loop: C
+               swallowed ':' and the whole typed pattern inside the menu while
+               this port ran them as game commands, desynchronizing the INPUT
+               stream for the rest of the session. */
+            if (ch === ':') {
+                if (how === PICK_NONE) continue;
+                const { hooked_tty_getlin, pmatchi }
+                    = await import('./extcmd-handlers.js');
+                const tmpbuf = await hooked_tty_getlin('Search for:', null);
+                if (!tmpbuf || tmpbuf[0] === '\x1b') continue;
+                const searchbuf = `*${tmpbuf}*`;
+                let one = false;
+                for (const it of items) {
+                    if (!pmatchi(searchbuf, `${it.selector} - ${it.desc}`)) continue;
+                    toggle_menu_curr(it, counting, count);
+                    if (how === PICK_ONE) { one = true; break; }
+                }
+                if (one) break;
                 continue;
             }
         }

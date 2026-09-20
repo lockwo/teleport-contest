@@ -1,11 +1,13 @@
 // read.js — reading scrolls and spellbooks.
 // C ref: read.c.  Ports the 'r' command entry (doread), the scroll dispatch
 // (seffects) and spellbook reading (study_book, in spell.js).
-// Still unported in seffects(): SCR_GENOCIDE, SCR_CHARGING, SCR_FIRE,
-// SCR_EARTH, SCR_STINKING_CLOUD and the two detection scrolls —
-// each needs a helper that does not exist yet in the port (do_genocide/getlin,
-// recharge(), explode(), drop_boulder_on_*(), getpos(), and
-// detect.c's gold_detect/food_detect/trap_detect respectively).
+// Still unported in seffects(): SCR_GENOCIDE, SCR_CHARGING,
+// SCR_STINKING_CLOUD and the two detection scrolls — each needs a helper that
+// does not exist yet in the port (do_genocide/getlin, recharge(), getpos(),
+// and detect.c's food_detect/trap_detect respectively).
+// SCR_FIRE and SCR_EARTH used to be listed here and were NOT unported at all:
+// seffect_fire()/seffect_earth() and drop_boulder_on_player/monster() were
+// fully written, just missing their `case` arms in the switch below.
 
 import { game } from './gstate.js';
 import { LL_CONDUCT, livelog_printf } from './livelog.js';
@@ -34,7 +36,7 @@ import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          W_BALL, W_CHAIN, W_ARMH, SDOOR, DOOR, D_CLOSED, D_LOCKED, isok,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
          In_endgame, Is_earthlevel, GENOCIDED, KILLED_BY,
-         KILLED_BY_AN, ROOM, STONE, IS_WALL, IS_DOOR,
+         KILLED_BY_AN, NO_KILLER_PREFIX, DIED, ROOM, STONE, IS_WALL, IS_DOOR,
          G_GONE } from './const.js';
 import { S_invisible, S_WORM_TAIL, S_MIMIC_DEF, S_MIMIC, S_WORM, S_DEMON,
          S_XAN, S_EEL, S_GHOST, def_monsyms, MAXMCLASSES } from './symbols.js';
@@ -217,13 +219,40 @@ function resist(mtmp, oclass, damage, _tell) {
     return resisted;
 }
 
-// C ref: hack.c losehp(dmg, ...) — file-local copy (same shape as attrib.js's
-// and fountain.js's); death handling isn't modelled here.
-function losehp_read(dmg) {
+// C ref: hack.c losehp(n, knam, k_format) — HP subtraction plus the death
+// path, following js/do.js losehp_do()'s shape (the established pattern for
+// this port's file-local losehp copies): set the formatted killer text,
+// urgent_pline "You die...", then done(DIED).  The old copy stopped at the
+// arithmetic and clamped uhp at 0, so a scroll of earth that drops a boulder
+// on the hero's head for lethal damage left them standing at 0 HP and the
+// game ran on (bl032 step 180: C goes straight into can_make_bones/savebones
+// while we kept moving monsters).
+async function losehp_read(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
-    if (!u || dmg <= 0) return;
-    u.uhp = (u.uhp ?? 0) - dmg;
-    if (u.uhp < 0) u.uhp = 0;
+    if (!u || n <= 0) return;
+    if (u.Upolyd) {
+        u.mh = (u.mh ?? 0) - n;
+        if (u.mh > u.mhmax) u.mhmax = u.mh;
+        if (u.mh < 1) {
+            const { rehumanize } = await import('./polyself.js');
+            if (rehumanize) await rehumanize();
+        }
+        return;
+    }
+    u.uhp = (u.uhp ?? 0) - n;
+    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
+    else game.botl = true;
+    if (u.uhp < 1) {
+        await update_topl('You die...');
+        // C ref: topten.c formatkiller() prefix handling (do.js:535 has the
+        // same three-way switch).
+        game._killer_name = !knam ? null
+            : k_format === NO_KILLER_PREFIX ? knam
+            : k_format === KILLED_BY_AN ? `killed by ${an_read(knam)}`
+            : `killed by ${knam}`;
+        const { done } = await import('./end.js');
+        await done(DIED);
+    }
 }
 
 // C ref: obj.h is_shield(otmp) — oc_armcat == ARM_SHIELD.  The JS object table
@@ -346,6 +375,16 @@ export async function seffects(sobj) {
     case 368 /*SPE_FIREBALL*/:
         await seffect_fire(sobj);
         return true;                       // seffect_fire uses the scroll up
+    case 340 /*SCR_EARTH*/:
+        // C ref: read.c:2273 `case SCR_EARTH: seffect_earth(&sobj); break;`.
+        // seffect_earth() and both drop_boulder_on_* helpers were already
+        // ported (below) but never wired into this switch, so reading a
+        // scroll of earth fell through to `default:` and did nothing — C
+        // spends one mksobj(BOULDER) next_ident rnd(2) per surrounding
+        // square plus the hero's own (bl032 step 179: six of them) and then
+        // dmgval()'s rnd(20) when the boulder lands on the hero.
+        await seffect_earth(sobj);
+        break;
     case SCR_PUNISHMENT:
         // C ref: read.c seffect_punishment — a confused OR blessed read only
         // makes the hero feel guilty; otherwise punish(sobj).  gk.known is set
@@ -357,6 +396,13 @@ export async function seffects(sobj) {
         }
         await punish(sobj);
         break;
+    case SCR_MAIL:
+        // C ref: read.c:2204 — seffect_mail() sets gk.known, so doread() then
+        // takes learnscroll() (makeknown -> discover_object credit_hero ->
+        // exercise(A_WIS, TRUE) rn2(19)) instead of the input-consuming
+        // trycall() prompt.  seffect_mail() itself draws no RNG.
+        await seffect_mail(sobj);
+        break;
     default:
         // C ref: read.c seffects default: -> impossible().  Every otyp that
         // still lands here is a REAL unported effect, not an inert one:
@@ -364,8 +410,7 @@ export async function seffects(sobj) {
         //   SCR_GOLD_DETECTION / SCR_FOOD_DETECTION (detect.c gold_detect,
         //     trap_detect, food_detect — none ported),
         //   SCR_CHARGING (getobj("charge") + recharge()),
-        //   SCR_FIRE (explode()), SCR_EARTH (drop_boulder_on_*),
-        //   SCR_STINKING_CLOUD (getpos), SCR_MAIL.
+        //   SCR_STINKING_CLOUD (getpos).
         // Each of those draws RNG and/or consumes input in C, so a hero who
         // reads one desynchronises from here on.
         break;
@@ -499,8 +544,18 @@ async function lightdamage(obj, ordinary, amt) {
         if (dmg > 10) dmg = 10 + rnd(dmg - 10);
         if (dmg > 20) dmg = 20;
         await pline_append(`Ow, that light hurts${(dmg > 2 || (game.u?.mh ?? 0) <= 5) ? '!' : '.'}`);
-        // C: losehp(Maybe_Half_Phys(dmg), "<zapped|blasted> himself with <obj>")
-        losehp_read(dmg);
+        // C: losehp(Maybe_Half_Phys(dmg), "<zapped|blasted> himself with
+        // <obj>", NO_KILLER_PREFIX).  The hero is Upolyd here (gremlin), so
+        // this takes losehp's mh/rehumanize arm, but the killer text still
+        // matters if Unchanging makes it fatal.
+        // C: how = spell-of-light | ansimpleoname(obj) == an(xname-without-
+        // quantity-or-BUC); "blasted" rather than "zapped" for a scroll/book.
+        const how = (obj?.oclass === SPBOOK_CLASS) ? 'spell of light'
+                                                   : an_read(xname(obj));
+        const zapped = ordinary && obj?.oclass !== SCROLL_CLASS
+                                && obj?.oclass !== SPBOOK_CLASS;
+        await losehp_read(dmg, `${zapped ? 'zapped' : 'blasted'} himself with ${how}`,
+                          NO_KILLER_PREFIX);
     }
     return dmg;
 }
@@ -2572,7 +2627,8 @@ export async function drop_boulder_on_player(confused, helmet_protects, byu,
         stackobj(otmp2);
         newsym(u.ux, u.uy);
     }
-    if (dmg) losehp_read(dmg);         // C: losehp(Maybe_Half_Phys(dmg), ...)
+    // C: losehp(Maybe_Half_Phys(dmg), "scroll of earth", KILLED_BY_AN)
+    if (dmg) await losehp_read(dmg, 'scroll of earth', KILLED_BY_AN);
 }
 
 // C ref: read.c:2341 drop_boulder_on_monster(x, y, confused, byu).  Same RNG

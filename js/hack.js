@@ -17,7 +17,7 @@ import { game } from './gstate.js';
 import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, crawl_destination } from './trap.js';
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core } from './cmd.js';
 import { moveloop_turn } from './allmain.js';
-import { m_at, vobj_at, covers_objects, object_glyph, flush_screen, newsym, pline, update_topl, topl_more, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr } from './display.js';
+import { m_at, vobj_at, covers_objects, object_glyph, flush_screen, newsym, pline, update_topl, topl_more, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location } from './display.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inventoryArray, is_pick, ansimpleoname,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
 import { rnd } from './rng.js';
@@ -161,6 +161,17 @@ export function avoid_moving_on_trap(x, y) {
 export function end_running(and_travel) {
     const c = game.context;
     if (c.run) c.run = 0;
+    // C has ONE svc.context.run; this port splits it in two.  cmd.js's
+    // `context.stale_run` carries the same variable across a bad_command
+    // (rhack() returns without reset_cmd_vars(), so 'g' <space> 'b' still
+    // rushes), so every C site that clears svc.context.run has to clear it
+    // too, or the run outlives C's: ms-five-deaths step 567 rushed into the
+    // newt instead of attacking it, because the 'g' from step 561 was still
+    // armed after the meal that interrupted it (no attack, no turn, 11
+    // recorded draws lost).  `context.run_prefix` is NOT cleared here: that
+    // one stands in for rhack()'s LOCAL prefix_seen, which C's end_running()
+    // cannot reach either.
+    c.stale_run = 0;
     if (and_travel) {
         c.travel = c.travel1 = c.mv = 0;
     }
@@ -180,7 +191,11 @@ export function end_running(and_travel) {
 export function nomul(nval = 0) {
     if ((game.multi ?? 0) < nval) return;
     game.multi = nval;
-    game.context.travel = game.context.travel1 = game.context.mv = 0;
+    // C ref: hack.c nomul() `end_running(TRUE)` — the travel/mv clear used to
+    // be inlined here, which dropped end_running()'s OTHER half: the run
+    // itself.  stop_occupation() -> nomul(0) is how C ends a run when a meal
+    // or a monster interrupts it.
+    end_running(true);
 }
 
 // C ref: allmain.c:684 stop_occupation().  This port splits C's single

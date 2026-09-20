@@ -564,7 +564,18 @@ export function genTutorialLevel() {
     const prevFmon = game.fmon;
     const prevInMklev = game.in_mklev;
     const lvl = new GameMap();
+    // C ref: dat/tut-1.lua:30 des.level_flags("mazelevel", "noflip",
+    // "nomongen", "nodeathdrops", "noautosearch") -> sp_lev.c lspo_level_flags().
+    // "nomongen" is the load-bearing one: makemon.c:1167 makes
+    // makemon(NULL,...) a no-op on this level, so allmain.c
+    // maybe_generate_rnd_mon()'s !rn2(70) spawns NOTHING inside the tutorial.
+    // Without it every 1-in-70 turn built a whole random monster here (~20 RNG
+    // draws) that C never built.  "noflip" is a level-loader flag, not a level
+    // flag, and the tutorial generator does not flip.
     lvl.flags.is_maze_lev = true;
+    lvl.flags.rndmongen = false;
+    lvl.flags.deathdrops = false;
+    lvl.flags.noautosearch = true;
     lvl.flags.hero_memory = true;
     lvl.flags.noteleport = false;
     game.level = lvl;

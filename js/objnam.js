@@ -512,6 +512,8 @@ const W_ARM = 0x1, W_ARMC = 0x2, W_ARMH = 0x4, W_ARMS = 0x8, W_ARMG = 0x10,
 /* objclass.h:12-35 obj_material_types */
 const LIQUID = 1, WOOD = 8, DRAGON_HIDE = 10, IRON = 11, COPPER = 13,
       MITHRIL = 17, PLASTIC = 18, GLASS = 19, MINERAL = 21;
+/* prop.h FIRE_RES — mkobj.c is_flammable() compares objects[].oc_oprop to it */
+const FIRE_RES_PROP = 1;
 /* objclass.h:37-45 obj_armor_types */
 const ARM_SUIT = 0, ARM_SHIELD = 1, ARM_HELM = 2, ARM_GLOVES = 3,
       ARM_BOOTS = 4, ARM_CLOAK = 5, ARM_SHIRT = 6;
@@ -714,10 +716,16 @@ function is_crackable(o) { return omat(o) === GLASS && o.oclass === ARMOR_CLASS;
 function is_corrodeable(o) { return omat(o) === COPPER || omat(o) === IRON; }
 function Is_candle(o) { return o.otyp === TALLOW_CANDLE_ || o.otyp === WAX_CANDLE_; }
 function is_flammable(o) {
-    /* mkobj.c:2270.  objects[].oc_oprop is not carried by this port, so the
-       FIRE_RES check degenerates to the WAN_FIRE special case. */
+    /* C ref: mkobj.c is_flammable() — a candle is burnable but not flammable,
+       and `objects[otyp].oc_oprop == FIRE_RES || otyp == WAN_FIRE` is one test.
+       The oc_oprop arm used to be dropped here on the grounds that the port had
+       no oc_oprop column; it has one (js/mkobj.js populates 70 rows), so run
+       C's real test.  On the current table it selects only red dragon scale
+       mail/scales (DRAGON_HIDE) and the ring of fire resistance (IRON), none of
+       which the material test below would call flammable anyway. */
     if (Is_candle(o)) return false;
-    if (o.otyp === 430 /*WAN_FIRE*/) return false;
+    if (objects[o.otyp]?.oc_oprop === FIRE_RES_PROP
+        || o.otyp === 430 /*WAN_FIRE*/) return false;
     const m = omat(o);
     return (m <= WOOD && m !== LIQUID) || m === PLASTIC;
 }

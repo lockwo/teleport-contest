@@ -865,8 +865,10 @@ function turn_xlev(mcls) {
 // and costs a turn (ECMD_TIME).
 // C ref: youprop.h `Jumping = HJumping || EJumping`. HJumping is set
 // FROMOUTSIDE for knights (u_init.c:691); the only extrinsic source is
-// objects[JUMPING_BOOTS].oc_oprop, absent from this port, so the worn item
-// stands in, the way js/do_wear.js does for its other extrinsics.
+// objects[JUMPING_BOOTS].oc_oprop == JUMPING, which js/mkobj.js DOES carry and
+// js/invent.js worn_extrinsics_on() now installs into the extrinsic word, so
+// this should become `worn_extrinsic(JUMPING)` when the accessor conversion
+// lands.  Until then the worn item stands in.
 function Jumping() {
     const u = game.u;
     if (u?.uprops?.Jumping || u?.HJumping || u?.EJumping) return true;

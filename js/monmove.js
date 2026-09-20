@@ -2307,44 +2307,31 @@ async function mon_thitm(tlev, mon, obj, d_override, nocorpse) {
     else strike = (find_mac_mon(mon) + tlev <= rnd(20)) ? 1 : 0;
     let trapkilled = false;
     // C: doname(obj) names the missile ("a dart", "a rock", "an arrow", ...).
-    // NOTE (diagnosed, not yet landed): C evaluates doname() only INSIDE the two
-    // cansee() guards below, so an unseen missile keeps dknown==0 and the
-    // stackobj() further down merges it into the pile.  Hoisting it here sets
-    // dknown=1 unconditionally, which makes mergable() false and leaves the
-    // missile as its own pile object.  Fixing it is correct C but exposes a
-    // second divergence in dog_goal()'s apport scan (bl020 step 1780): RNG +172,
-    // screens -33.  Land the two together.
+    // DIVERGENCE (diagnosed, deliberately NOT landed).  C evaluates doname()
+    // only INSIDE the two cansee() guards below; doname -> xname ->
+    // observe_object sets obj->dknown, and mergable() compares dknown, so in C
+    // a missile the hero never saw still merges into the floor pile it lands
+    // on.  Hoisting the name here sets dknown=1 unconditionally and leaves the
+    // missile as its own quan-1 pile object.
     //
-    // Round-3 re-diagnosis (still not landed): the trigger is bl020 seg1
-    // move 9 — an UNSEEN hostile monster (pmidx 59, not the pet) steps on the
-    // dlvl-1 arrow trap at (75,15); its missed arrow SHOULD merge into the
-    // level-gen 6-arrow pile already sitting there (found via the fix: dest
-    // quan 6->7).  Un-fixed, the merge fails on the dknown mismatch above and
-    // the pet later (~move 75) notices, apports, and carries the orphaned
-    // single arrow around for dozens of turns — a real but WRONG behavior
-    // that this port's pet AI has apparently been quietly matching-by-luck.
-    // Applying the doname-timing fix alone removes that orphan arrow (the
-    // pet is never divergently burdened with it) but the pet's mx/my history
-    // from move 9 onward differs from the un-fixed run in every subsequent
-    // turn regardless (confirmed empirically: game.level.objects gains an
-    // otherwise-identical extra ROCK object, otyp 474, by move 70, meaning
-    // some monster's death/drop timing has already shifted).  This is NOT a
-    // second isolable RNG bug at dogmove.c:554 — dog_goal's fobj scan at that
-    // exact rn2-stream position (segment1-local index ~5317, confirmed via
-    // getRngLog().length gating, NOT the game.moves counter, which does not
-    // line up 1:1 with rn2-stream position once behavior has already
-    // diverged) sees the SAME fobj()-derived object COUNT (8) and the SAME
-    // dog_has_minvent/apport/in_masters_sight values in both the fixed and
-    // un-fixed runs; what differs is WHICH 8 objects, because an unrelated
-    // monster died/dropped differently upstream.  In other words: this fix
-    // is correct and isolated, but it perturbs downstream monster-death
-    // timing enough to fail the net screens count (1790->1757, -33) even
-    // though it improves net RNG matches (21396->21568, +172) and fully
-    // resolves the ORIGINAL bl020 divergence this comment used to describe
-    // (mkobj.c:521 next_ident, bl020 step 1810 — the pet trying to
-    // pick-up-and-split a stack that shouldn't have existed).  Landing this
-    // safely needs whatever OTHER, still-undiagnosed monster-death/drop-order
-    // bug the shifted timing now exposes, not a second dogmove.c fix.
+    // Round-4 measurement (bl020, heldout-blind): making the two doname calls
+    // lazy is textbook-correct C and it does remove the orphan arrow, but it
+    // moves that session's FIRST rng divergence EARLIER, 21276 -> 21001, so it
+    // is a net loss.  Instrumenting dog_goal's fobj scan at the same stream
+    // position in both runs shows why: both runs match C's draws right up to
+    // 21000 and both scan 8 objects, but the un-fixed run's newest object at
+    // (52,5) is the apported ARROW (dogfood -> MANFOOD, which is what makes
+    // C's `edog->apport > rn2(8)` fire at 21001), while the lazy-doname run
+    // has a FOOD item there instead (dogfood -> DOGFOOD, no rn2(8)).  C agrees
+    // with the UN-fixed object, so some other, still-unidentified state
+    // difference is compensating for this one today.
+    //
+    // For the record, the only thing bl020 actually loses to the orphan arrow
+    // is a single draw: at step 1810 C splits one arrow off a multi-arrow
+    // stack (splitobj -> next_ident rnd(2)) while our pet picks up the whole
+    // quan-1 orphan, and the streams resync immediately afterwards.  Do not
+    // land the doname timing fix on its own; it needs the compensating bug
+    // found first.
     const missile = obj ? await mon_missile_name(obj) : '';
     if (!strike) {
         // Near-miss: obj && cansee -> "<Mon> is almost hit by <obj>!" (display).
@@ -4641,7 +4628,20 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
         // square is always in sight (unless Blind), so a potion that reaches an
         // unblinded hero is always seen -> dknown -> potionbreathe discovers it.
         if (!Blind() && cansee(bx, by)) singleobj._seen_thrown = true;
-        if (bx === u.ux && by === u.uy) {
+        // C ref: mthrowu.c:679-687 — a monster standing on the flight path is
+        // resolved FIRST and the hero-square arm is an `else if`: a potion
+        // hurled past an intervening monster shatters on IT, not on the hero.
+        // ohitmon() returning TRUE stops the missile; a miss with range left
+        // falls through to the forcehit roll and the potion keeps flying.
+        const inpath = m_at(bx, by);
+        if (inpath) {
+            if (await ohitmon(inpath, singleobj, range, true, bx, by, mon)) {
+                flash_at(bx, by);
+                flash_end();
+                m_useup_thrown(mon, otmp, singleobj);
+                return;
+            }
+        } else if (bx === u.ux && by === u.uy) {
             // hero square: catch attempt (rn2(100-Dex)); a non-catch shatters.
             if (u_catch_thrown_obj(singleobj)) {
                 flash_end();
@@ -4656,7 +4656,7 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
         }
         // forcehit roll on every non-hero square crossed (mthrowu.c:798).
         rn2(5);
-        // (no intervening monster / blocked terrain in the exercised path)
+        // (no blocked terrain in the exercised path)
         // C ref: mthrowu.c:824 — tmp_at(bhitpos) only fires on a non-terminal
         // iteration (the loop breaks before it once `!range`).
         if (range > 0) flash_at(bx, by);
@@ -6508,7 +6508,9 @@ function omon_adj(mtmp, obj, mon_notices) {
 // svc.context.mon_moving is set — neither draws here.
 export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
     const vis = !!cansee(bx, by);
-    // notonhead (a long worm's tail square) only affects worm messaging.
+    // C ref: mthrowu.c:334 — gn.notonhead is set from bhitpos vs the monster's
+    // own square (a long worm's tail); potionhit() reads it for "head"/"body".
+    game.notonhead = (bx !== mtmp.mx || by !== mtmp.my);
     // shade_miss(): no shades are reachable on these levels, so a missile never
     // passes harmlessly through its target here.
     let tmp = 5 + find_mac_mon(mtmp) + omon_adj(mtmp, otmp, false);
@@ -6529,7 +6531,15 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
         }
         return false;              // still in flight
     }
-    // POTION_CLASS goes to potionhit(); m_throw_potion handles that path.
+    // C ref: mthrowu.c:361-368 — a POTION_CLASS missile that connects never
+    // deals missile damage: it shatters on the target via potionhit() and
+    // ohitmon() always stops there (return 1), so no forcehit roll follows.
+    if (otmp.oclass === POTION_CLASS) {
+        mtmp.msleeping = 0;
+        const { potionhit } = await import('./potion.js');
+        await potionhit(mtmp, otmp, 3 /* POTHIT_OTHER_THROW */);
+        return true;
+    }
     // C ref: mthrowu.c:399 — a rock/gem missile passes straight through a
     // wall-phaser (xorn / earth elemental): the damage die is still ROLLED, but
     // no hp is lost and the message changes.  passes_rocks() used to be a

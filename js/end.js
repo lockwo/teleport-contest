@@ -589,16 +589,31 @@ async function done(how) {
             // HP, while the "You die..." --More-- frames still show the value
             // done()'s own bot() left (nothing, when uhp was exactly -1).
             delete game._botlFrozen;
-            // C ref: end.c really_done() — "needed for both inventory
-            // disclosure and dumplog": for how != PANICKED, fully identify
-            // every inventory object (discover_object + known/bknown/dknown/
-            // rknown=1 + set_cknown_lknown) before disclose() runs, so its
-            // 'i' listing shows true names/enchantments, not appearances.
+            // C ref: end.c really_done():1252-1262 — "needed for both
+            // inventory disclosure and dumplog": for how != PANICKED, run
+            // `discover_object(obj->otyp, TRUE, TRUE, FALSE)` over the pack
+            // plus known/bknown/dknown/rknown=1 and set_cknown_lknown(), so
+            // disclose()'s 'i' listing shows true names/enchantments.
+            // The fourth argument is credit_hero and C passes FALSE here: a
+            // DEAD hero is not credited with a Wisdom exercise for learning
+            // what they were carrying (C even notes "observe_object not
+            // necessary after discover_object").  Routing this through
+            // fully_identify_obj() instead used makeknown(), i.e.
+            // credit_hero TRUE, so every not-yet-name-known pack item spent
+            // an extra exercise(A_WIS) rn2(19) that C never draws — the
+            // whole post-death stream (savebones' mksobj(CORPSE) ->
+            // next_ident/rndmonnum/start_corpse_timeout) then read one draw
+            // late (mirror44 seed0108 idx 2465).
             if (how !== PANICKED) {
                 const invmod = await import('./invent.js');
+                const { discover_object } = await import('./o_init.js');
                 const inv = Array.isArray(game.invent) ? game.invent
                     : (Array.isArray(game.gi?.invent) ? game.gi.invent : []);
-                for (const obj of inv) invmod.fully_identify_obj(obj);
+                for (const obj of inv) {
+                    discover_object(obj.otyp, true, true, false);
+                    obj.known = obj.bknown = obj.dknown = obj.rknown = 1;
+                    invmod.set_cknown_lknown(obj);
+                }
             }
             const clean = await disclose(how, taken);
             // C ref: end.c:1363 — savebones() runs AFTER disclose(), i.e. after

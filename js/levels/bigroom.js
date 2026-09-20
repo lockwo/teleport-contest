@@ -3,10 +3,10 @@
 // shared special-level machinery still lives there and is imported below.
 
 import {
-    ARROW_TRAP, CLOUD, COLNO, CROSSWALL, FILL_NONE, FIRE_TRAP, FOUNTAIN, HOLE, HWALL, ICE,
+    ARROW_TRAP, CLOUD, COLNO, CROSSWALL, FIRE_TRAP, FOUNTAIN, HOLE, HWALL, ICE,
     IRONBARS, IS_DOOR, IS_FURNITURE, IS_LAVA, IS_ROOM, IS_STWALL, IS_TREE, LAVAPOOL, LAVAWALL,
-    LADDER, LEVEL_TELEP, MAGIC_PORTAL, MATCH_WALL, MOAT, NO_ROOM, NO_TRAP, OROOM, PIT, POLY_TRAP,
-    POOL, ROCKTRAP, ROLLING_BOULDER_TRAP, ROOM, ROOMOFFSET, ROWNO, SLP_GAS_TRAP, SPIKED_PIT,
+    LADDER, LEVEL_TELEP, MAGIC_PORTAL, MATCH_WALL, MOAT, NO_TRAP, PIT, POLY_TRAP,
+    POOL, ROCKTRAP, ROLLING_BOULDER_TRAP, ROOM, ROWNO, SLP_GAS_TRAP, SPIKED_PIT,
     STAIRS, STATUE_TRAP, STONE, TELEP_TRAP, TRAPNUM, TRAPPED_CHEST, TRAPPED_DOOR, TREE,
     VIBRATING_SQUARE, VWALL, WATER, WEB, W_NONDIGGABLE, isok,
 } from '../const.js';
@@ -22,9 +22,9 @@ import {
 } from '../selvar.js';
 import { maketrap } from '../trap.js';
 import {
-    SET_LIT_NOCHANGE, add_sp_room, bigrm_get_location_dry, bigrm_level_init_solidfill,
+    SET_LIT_NOCHANGE, bigrm_get_location_dry, bigrm_level_init_solidfill,
     bigrm_load_map, bigrm_wallification, flip_level, gx, gy, percent, reset_xystart_size,
-    selection_match, set_levltyp_lit, shuffle, splev_map_mark,
+    selection_match, set_levltyp_lit, shuffle, splev_map_mark, splev_mkstairs_at,
 } from '../sp_lev.js';
 
 // des.* coordinates are relative to the last des.map()'s origin; get_location()
@@ -162,49 +162,33 @@ function bigrm13_stamp_pillar(ox, oy) {
         }
 }
 
-// C ref: a region({...},"lit"/"unlit") with selection.area uses get_location
-// with ANY_LOC for its two corners -> NO RNG.  We just mark the rectangle's
-// lit state and assign it a room number so monsters/objects land in a real
-// "room" for rendering.  (The terrain itself was already stamped by the map.)
+// C ref: sp_lev.c lspo_region() argc==2 form (sp_lev.c:5613-5631) — which is
+// what `des.region(selection.area(x1,y1,x2,y2), "lit"/"unlit")` compiles to,
+// and that is the ONLY form any bigrm-*.lua uses.  C clones the selection,
+// selection_do_grow(W_ANY)s it when lighting, runs sel_set_lit over it and
+// RETURNS — it never reaches the add_room()/topologize() code below, so a Big
+// Room level really has nroom == 0 and roomno == NO_ROOM on every square.
+// This used to call add_sp_room() and stamp a roomno over the rectangle "so
+// monsters/objects land in a real room for rendering".  That made
+// set_mimic_sym() see roomno >= 0 and miss C's no-RNG `roomno < 0 && !t_at()`
+// BOULDER arm, falling through to ROLL_FROM(syms): one extra rn2(17) that
+// shifted every later draw (m900000/seed0399 first diverged at call 5650,
+// losing 11524 recorded calls).
+//
+// The lit/unlit write is sel_set_lit(): `levl[x][y].lit = (IS_LAVA(typ) ||
+// lit)`, and selection_iterate() skips every !isok() cell, i.e. column 0.
 function bigrm_region(x1, y1, x2, y2, lit) {
-    const g = game;
-    const roomno = g.level.nroom + ROOMOFFSET;
     const lo_x = x1 + gx.xstart, lo_y = y1 + gy.ystart;
     const hi_x = x2 + gx.xstart, hi_y = y2 + gy.ystart;
-    add_sp_room(lo_x, lo_y, Math.min(hi_x, COLNO - 1), Math.min(hi_y, ROWNO - 1),
-                lit ? 1 : 0, OROOM, false, FILL_NONE, true);
-    // C ref: mklev.c do_room_or_subroom() — when the room is lit, light the
-    // room PLUS a one-cell border (lowx-1..hix+1, lowy-1..hiy+1) so the room's
-    // bounding walls are lit too.  Without this the diamond Big Room's outermost
-    // wall ring stays dark and never gets revealed by vision_recalc (which only
-    // shows a wall when it AND the floor toward the hero are lit).
-    if (lit) {
-        const lx = Math.max(lo_x - 1, 1), hx = Math.min(hi_x + 1, COLNO - 1);
-        const ly = Math.max(lo_y - 1, 0), hy = Math.min(hi_y + 1, ROWNO - 1);
-        for (let x = lx; x <= hx; x++)
-            for (let y = ly; y <= hy; y++) {
-                const loc = g.level?.at(x, y);
-                if (loc) loc.lit = true;
-            }
-    }
-    // C ref: sel_set_lit() — an "unlit" region really does darken its cells
-    // (bigrm-9 stacks a dark region under three lit ones), except lava, which
-    // set_levltyp() keeps lit unconditionally.
-    if (!lit) {
-        for (let x = Math.max(lo_x, 0); x <= Math.min(hi_x, COLNO - 1); x++)
-            for (let y = Math.max(lo_y, 0); y <= Math.min(hi_y, ROWNO - 1); y++) {
-                const loc = g.level?.at(x, y);
-                if (loc) loc.lit = IS_LAVA(loc.typ);
-            }
-    }
-    // roomno is assigned only to the region interior (topologize covers the
-    // room's own cells; the bordering walls keep their existing roomno).
-    for (let x = lo_x; x <= hi_x && x < COLNO; x++)
-        for (let y = lo_y; y <= hi_y && y < ROWNO; y++) {
-            const loc = g.level?.at(x, y);
-            if (loc && (loc.roomno === NO_ROOM || loc.roomno === 0)) {
-                loc.roomno = roomno;
-            }
+    // selection_do_grow(sel, W_ANY) on a solid rectangle is the rectangle
+    // grown by one cell in all eight directions, clamped to the map.
+    const grow = lit ? 1 : 0;
+    const lx = Math.max(1, lo_x - grow), hx = Math.min(COLNO - 1, hi_x + grow);
+    const ly = Math.max(0, lo_y - grow), hy = Math.min(ROWNO - 1, hi_y + grow);
+    for (let x = lx; x <= hx; x++)
+        for (let y = ly; y <= hy; y++) {
+            const loc = game.level?.at(x, y);
+            if (loc) loc.lit = !!(IS_LAVA(loc.typ) || lit);
         }
 }
 
@@ -235,16 +219,15 @@ function bigrm_wallify_map(x1, y1, x2, y2) {
     }
 }
 
-// C ref: sp_lev.c create_stairs/lspo_stair with no coords -> get_location DRY
-// random placement -> one (or more) rn2(xsize)/rn2(ysize) pairs.
+// C ref: sp_lev.c l_create_stairway() with no coords -> get_location DRY
+// random placement (one or more rn2(xsize)/rn2(ysize) pairs) -> mkstairs().
+// The hand-rolled mkstairs() tail that used to live here registered the stair
+// on a plain ARRAY; every consumer walks the singly-linked gs.stairs chain, so
+// the Big Room's stairs were invisible to all of them (and u_on_upstairs() ->
+// stairway_find_special_dir() threw on the array's absent .tolev).
 function bigrm_stair(up) {
     const c = bigrm_get_location_dry();
-    const loc = game.level?.at(c.x, c.y);
-    if (loc) loc.typ = STAIRS;
-    if (!game.stairs) game.stairs = [];
-    game.stairs.push({ sx: c.x, sy: c.y, up: !!up });
-    if (up) { game.upstair = { x: c.x, y: c.y }; if (game.level) game.level.upstair = { x: c.x, y: c.y }; }
-    else { game.dnstair = { x: c.x, y: c.y }; if (game.level) game.level.dnstair = { x: c.x, y: c.y }; }
+    splev_mkstairs_at(c.x, c.y, up);
 }
 
 // C ref: mklev.c traptype_rnd() — pick a random valid trap type for this level.

@@ -120,8 +120,12 @@ export function goodpos(x, y, mtmp, gpflags) {
     let mdat = null;
     if (mtmp) {
         const mtmp2 = m_at(x, y);
-        // (mtmp->wormno: no long worms in the covered sessions)
-        if (mtmp2 && mtmp2 !== mtmp) return false;
+        // C ref: teleport.c goodpos() — "A monster may be placed back in its
+        // own location ... that is not correct for worm segments, because all
+        // the segments of the worm return the same m_at().  Actually we overdo
+        // the check a little bit--a worm can't be placed in its own location,
+        // period."
+        if (mtmp2 && (mtmp2 !== mtmp || mtmp.wormno)) return false;
 
         mdat = mtmp.data;
         if (is_pool(x, y)) {

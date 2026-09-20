@@ -11,7 +11,7 @@ import {
     MAGIC_PORTAL, LAVAPOOL, POOL, MOAT, WATER, AIR, CLOUD,
     Is_firelevel, Is_waterlevel, Is_airlevel,
 } from './const.js';
-import { maketrap, t_at } from './trap.js';
+import { maketrap, t_at, Invocation_lev } from './trap.js';
 import { m_at, newsym, pline, terrain_glyph } from './display.js';
 import {
     block_point, recalc_block_point, unblock_point, vision_recalc,
@@ -779,6 +779,10 @@ import { rn1 as mm_rn1 } from './rng.js';
 import {
     IS_STWALL, SPACE_POS, TRAPNUM, NO_TRAP, is_pit, is_hole,
     VIBRATING_SQUARE, MKTRAP_MAZEFLAG, MKTRAP_SEEN, ROCKTRAP,
+    FIRE_TRAP as MM_FIRE_TRAP, WEB as MM_WEB, SQKY_BOARD as MM_SQKY_BOARD,
+    RUST_TRAP as MM_RUST_TRAP, ROLLING_BOULDER_TRAP as MM_ROLLING_BOULDER_TRAP,
+    HOLE as MM_HOLE, MAGIC_TRAP as MM_MAGIC_TRAP, LANDMINE as MM_LANDMINE,
+    PIT as MM_PIT,
     NO_MM_FLAGS, MM_NONAME, CORPSTAT_NONE,
     LR_BRANCH, LR_PORTAL, LR_UPSTAIR, LR_DOWNSTAIR,
     LR_TELE, LR_UPTELE, LR_DOWNTELE,
@@ -790,7 +794,10 @@ import { depth as mm_depth, distmin as mm_distmin } from './hacklib.js';
 import { within_bounded_area as mm_within_bounded_area } from './rect.js';
 import { occupied as mm_occupied, somex as mm_somex, somey as mm_somey } from './mkroom.js';
 import { is_orc_flag as mm_is_orc } from './monflags_data.js';
-import { makemon as mm_makemon, set_malign as mm_set_malign } from './makemon.js';
+import { makemon as mm_makemon, set_malign as mm_set_malign,
+         monster_by_pmidx as mm_monster_by_pm,
+         name_to_pmidx as mm_name_to_pmidx,
+         level_difficulty_ext as mm_level_difficulty } from './makemon.js';
 import {
     objects as MM_OBJECTS, mksobj as mm_mksobj, mkobj as mm_mkobj,
     mkobj_at as mm_mkobj_at, mksobj_at as mm_mksobj_at, mkgold as mm_mkgold,
@@ -824,11 +831,15 @@ const MM_SLIME_MOLD = mm_otyp_by_name('slime mold');
 const MM_LONG_SWORD = mm_otyp_by_name('long sword');
 const MM_SILVER_SABER = mm_otyp_by_name('silver saber');
 
-// monsters.h PM_ indices this block names.
-const MM_PM_MINOTAUR = 210;
-const MM_PM_ORC = 72;
-const MM_PM_ORC_SHAMAN = 76;
-const MM_PM_ORC_CAPTAIN = 80;
+// monsters.h PM_ indices this block names.  Resolved by name against the
+// port's own mons[] (the js/makemon.js:3794 convention) rather than written
+// as literals: the literals here were three apart from the real table, so
+// PM_MINOTAUR named the quantum mechanic and PM_ORC_CAPTAIN the glass piercer.
+const MM_PM_MINOTAUR = mm_name_to_pmidx('minotaur');
+const MM_PM_ORC = mm_name_to_pmidx('orc');
+const MM_PM_ORC_SHAMAN = mm_name_to_pmidx('orc shaman');
+const MM_PM_ORC_CAPTAIN = mm_name_to_pmidx('orc-captain');
+const MM_PM_GIANT_SPIDER = mm_name_to_pmidx('giant spider');
 
 // C ref: decl.c gr.ransacked — set by check_ransacked() while makemaz() picks
 // the proto level name, read by fixup_special() after the level is built and
@@ -1104,10 +1115,6 @@ export async function stolen_booty() {
 // C ref: &mons[pmidx].  js/makemon.js exports monster_by_pmidx() but it is not
 // in this file's static graph; the one-line lookup is inlined so the two
 // makemon() call sites above stay synchronous like C's.
-function mm_monster_by_pm(pmidx) {
-    return game.mons?.[pmidx] ?? { mnum: pmidx };
-}
-
 // C ref: mondata.h has_mgivenname(mtmp).  js/const.js:2884 exports the real
 // one but under a name this file does not import; kept local rather than
 // widening the const.js import list of an existing line.
@@ -1273,15 +1280,17 @@ export async function fixup_special() {
 // Each of these HAS a faithful port elsewhere but only as a module-private; the
 // file:line is named so the fix is to export the original.
 
-// C ref: dungeon.c:1464 Is_branchlev(lev) — js/bones.js:86 has the real walk
-// over the global branch chain.
+// C ref: dungeon.c:1464 Is_branchlev(lev) — walks the GLOBAL branch chain and
+// matches either END.  Returns the BRANCH, as C does: makemaz() feeds the
+// result straight to place_branch(br, 0, 0), which needs the struct, and a
+// bare boolean would have placed the branch stair/portal on the wrong side.
 function mm_Is_branchlev(lev) {
-    if (!lev) return false;
+    if (!lev) return null;
     for (const br of (game.branches || []))
         if ((br.end1?.dnum === lev.dnum && br.end1?.dlevel === lev.dlevel)
             || (br.end2?.dnum === lev.dnum && br.end2?.dlevel === lev.dlevel))
-            return true;
-    return false;
+            return br;
+    return null;
 }
 
 // C ref: you.h Role_if(X) == (gu.urole.mnum == (X)).  js/invent.js:356,
@@ -1394,23 +1403,34 @@ export async function populate_maze() {
 
 // C ref: mklev.c:2036 mktrap(0, MKTRAP_MAZEFLAG, (struct mkroom *) 0,
 // (coord *) 0) — the exact form populate_maze() uses, with num==0 and no room
-// and no coord, so the type comes from the traptype_rnd() retry loop and the
-// position from mazexy().  mklev.c mktrap() itself is not exported (js/mklev.js
-// has mktrap_room()/mktrap_random_kind()/mktrap_victim() as privates), so this
-// spells out only that one argument combination.
+// and no coord, so the kind comes from the traptype_rnd() retry loop and the
+// position from mazexy().  mklev.c's mktrap() is not exported (js/mklev.js has
+// mktrap_room()/mktrap_random_kind() as privates), so this spells out just
+// that one argument combination — but it now spells out ALL of it, including
+// the tail.  The tail matters even when it does nothing: C evaluates
+// `lvl <= (unsigned) rnd(4)` as the FOURTH conjunct, after in_mklev, kind and
+// MKTRAP_NOVICTIM, so the rnd(4) is drawn for every trap on the level however
+// deep it is.  Skipping it cost one draw per maze trap.
 async function mm_mktrap_mazeflag() {
-    const { splev_traptype_rnd } = await import('./sp_lev.js');
+    const SP = await import('./sp_lev.js');
+    const { In_hell: mm_In_hell } = await import('./dungeon.js');
+    const g = game;
+    const uz = g.u?.uz;
+    const lvl = mm_level_difficulty();
     let kind;
 
-    /* C: `unsigned lvl = level_difficulty();` is read for the victim gate at
-       the bottom of mktrap(), which needs mktrap_victim() (js/mklev.js:6303,
-       private).  Neither the Rogue-level nor the Gehennom fire-trap bias arm
-       applies on a plain random maze. */
-    do {
-        kind = splev_traptype_rnd(MKTRAP_MAZEFLAG);
-    } while (kind === NO_TRAP);
+    /* C: the num>NO_TRAP and Is_rogue_level() arms cannot fire here — num is 0
+       and a maze is never the Rogue level. */
+    if (mm_In_hell(uz) && !rn2(5)) {
+        /* bias the frequency of fire traps in Gehennom */
+        kind = MM_FIRE_TRAP;
+    } else {
+        do {
+            kind = SP.splev_traptype_rnd(MKTRAP_MAZEFLAG);
+        } while (kind === NO_TRAP);
+    }
 
-    if (is_hole(kind) && !mm_Can_fall_thru(game.u?.uz)) kind = ROCKTRAP;
+    if (is_hole(kind) && !mm_Can_fall_thru(uz)) kind = ROCKTRAP;
 
     let m;
     {
@@ -1424,12 +1444,30 @@ async function mm_mktrap_mazeflag() {
     }
 
     const t = await maketrap(m.x, m.y, kind);
+    /* we should always get the type of trap we asked for, but be paranoid */
     kind = t ? t.ttyp : NO_TRAP;
-    void kind; void MKTRAP_SEEN; void TRAPNUM;
-    // UNPORTED: mklev.c mktrap()'s tail — the WEB giant spider, the
-    // MKTRAP_SEEN tseen flag and mktrap_victim() (js/mklev.js:6303, private).
-    // populate_maze() passes neither MKTRAP_SEEN nor MKTRAP_NOSPIDERONWEB, so
-    // both of the first two are live in C.
+
+    if (kind === MM_WEB)
+        mm_makemon(mm_monster_by_pm(MM_PM_GIANT_SPIDER), m.x, m.y, NO_MM_FLAGS);
+    /* populate_maze() passes neither MKTRAP_SEEN nor MKTRAP_NOSPIDERONWEB, and
+       traptype_rnd() never yields MAGIC_PORTAL, so C's tseen and u.ucamefrom
+       arms are both unreachable from here. */
+    void MKTRAP_SEEN; void TRAPNUM;
+
+    if (g.in_mklev && kind !== NO_TRAP
+        && lvl <= rnd(4)                                 // mklev.c:2137
+        && kind !== MM_SQKY_BOARD && kind !== MM_RUST_TRAP
+        && !(kind === MM_ROLLING_BOULDER_TRAP
+             && t.launch?.x === t.tx && t.launch?.y === t.ty)
+        && !is_pit(kind) && (kind < MM_HOLE || kind === MM_MAGIC_TRAP)) {
+        if (kind === MM_LANDMINE) {
+            /* a victim killed by a land mine leaves an unconcealed pit and no
+               scattered objects */
+            t.ttyp = MM_PIT;
+            t.tseen = 1;
+        }
+        if (SP._mktrap_victim) SP._mktrap_victim(t);
+    }
 }
 
 // C ref: dungeon.c Can_fall_thru(lev) — js/trap.js exports it, but under a name
@@ -1464,7 +1502,8 @@ function mm_sobj_at_boulder(x, y) {
 export async function makemaz(s) {
     const g = game;
     const { load_special } = await import('./sp_lev.js');
-    const { wallification } = await import('./mklev.js');
+    const { wallification, mkstairs: mm_mkstairs,
+            place_branch: mm_place_branch } = await import('./mklev.js');
     const { dunlevs_in_dungeon, Is_special } = await import('./dungeon.js');
     const sp = Is_special(g.u?.uz);
     let protofile;
@@ -1522,10 +1561,10 @@ export async function makemaz(s) {
         wallification(2, 2, mz.x_maze_max, mz.y_maze_max);
 
     mm = mazexy();
-    mm_mkstairs(mm.x, mm.y, 1, null, false); /* up */
+    mm_mkstairs(mm.x, mm.y, 1, null);       /* up */
     if (!Invocation_lev(g.u?.uz)) {
         mm = mazexy();
-        mm_mkstairs(mm.x, mm.y, 0, null, false); /* down */
+        mm_mkstairs(mm.x, mm.y, 0, null);   /* down */
     } else { /* choose "vibrating square" location */
         pick_vibrasquare_location();
         await maketrap(g.inv_pos.x, g.inv_pos.y, VIBRATING_SQUARE);
@@ -1535,26 +1574,6 @@ export async function makemaz(s) {
     await mm_place_branch(mm_Is_branchlev(g.u?.uz), 0, 0);
 
     await populate_maze();
-}
-
-// C ref: mklev.c mkstairs(x, y, up, croom, force) — js/mklev.js:2755 has the
-// real one (module-private, and its signature drops `force`).
-function mm_mkstairs(x, y, up, croom, force) {
-    void croom; void force;
-    const g = game;
-    if (!g.level) return;
-    if (!g.level.stairs) g.level.stairs = [];
-    g.level.stairs.push({ sx: x, sy: y, up: !!up, isladder: false });
-    const loc = g.level.at(x, y);
-    if (loc) loc.typ = 24;  /* STAIRS */
-}
-
-// C ref: mklev.c place_branch(br, x, y) — js/mklev.js:6110 has the real one
-// (module-private).  Reached lazily so mkmaze.js stays out of mklev's cycle.
-async function mm_place_branch(br, x, y) {
-    void br; void x; void y;
-    // UNPORTED (as an export): mklev.c place_branch().  js/mklev.js:6110 is the
-    // faithful port; exporting it is the fix.
 }
 
 // C ref: mkmaze.c:1316 mazexy(cc) — "find random point in generated corridors,

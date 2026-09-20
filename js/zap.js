@@ -1704,11 +1704,9 @@ function resists_acid(mon) { return !!(mresists_of(mon) & MR_ACID); }
 // unconditional FALSE let a wand of striking or polymorph hit a gray dragon,
 // taking the damage/newcham branch C never takes.
 const PM_BABY_GRAY_DRAGON = 133;
-// C ref: objects.h — the object types whose oc_oprop is ANTIMAGIC / DISINT_RES.
+// C ref: objects.h — the object types whose oc_oprop is DISINT_RES.
 // Resolved by name off the shared objects table so they cannot drift.
-const ANTIMAGIC_OTYPS = new Set(
-    ['gray dragon scale mail', 'gray dragon scales', 'cloak of magic resistance']
-        .map(n => objects.findIndex(o => o && o.name === n)).filter(i => i > 0));
+const ANTIMAGIC_PROP = 12; // prop.h ANTIMAGIC
 const DISINT_RES_OTYPS = new Set(
     ['black dragon scale mail', 'black dragon scales']
         .map(n => objects.findIndex(o => o && o.name === n)).filter(i => i > 0));
@@ -1718,14 +1716,15 @@ function resists_magm(mon) {
     if (dmgtype(ptr, AD_MAGM) || ptr.pmidx === PM_BABY_GRAY_DRAGON
         || dmgtype(ptr, AD_RBRE))
         return true;
-    // C: any WORN item whose objects[].oc_oprop is ANTIMAGIC.  mkobj.js's object
-    // rows carry no oc_oprop column, so the property is spelled out as the otyp
-    // set objects.h gives it: gray dragon scale mail / gray dragon scales /
-    // cloak of magic resistance.  (A silently-undefined `.oc_oprop` test would
-    // answer FALSE for every monster forever.)
+    // C ref: mondata.c resists_magm() — any WORN item whose
+    // objects[].oc_oprop is ANTIMAGIC.  mkobj.js carries that column (it holds
+    // exactly C's three rows: gray dragon scale mail, gray dragon scales, cloak
+    // of magic resistance), so read it instead of keeping a second copy of the
+    // same list as an otyp set.
     const mwflags = mon.misc_worn_check | 0;
     for (const o of (Array.isArray(mon.minvent) ? mon.minvent : []))
-        if (((o.owornmask | 0) & mwflags) && ANTIMAGIC_OTYPS.has(o.otyp))
+        if (((o.owornmask | 0) & mwflags)
+            && objects[o.otyp]?.oc_oprop === ANTIMAGIC_PROP)
             return true;
     return false;
 }

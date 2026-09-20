@@ -50,8 +50,10 @@ import { Can_fall_thru, maketrap, t_at } from '../trap.js';
 const CORPSTAT_MALE = 1, CORPSTAT_HISTORIC = 4;
 // C ref: objects[] indices (mkobj.js exports no constant for these two).
 const SCIMITAR = 50, SHIELD_OF_REFLECTION = 158;
-// C ref: mklev.h — create_trap() always passes both of these.
-const MKTRAP_MAZEFLAG = 0x01, MKTRAP_NOSPIDERONWEB = 0x04;
+// C ref: mklev.h MKTRAP_MAZEFLAG — create_trap() always passes this one, and
+// only this one: MKTRAP_NOSPIDERONWEB needs a des.trap() that sets
+// spider_on_web=false, which no medusa-*.lua does.
+const MKTRAP_MAZEFLAG = 0x02;
 // C ref: dungeon.h lev_region rtypes, in lspo_levregion's regiontypes2i order.
 const LR_DOWNSTAIR = 0, LR_UPSTAIR = 1, LR_BRANCH = 3;
 // C ref: monsym.h def_char_to_monclass — the class chars these scripts use.
@@ -361,12 +363,22 @@ async function med_trap(ttyp, mx = null, my = null) {
     if (!loc || IS_POOL(loc.typ) || IS_LAVA(loc.typ)) return;
     let kind = ttyp;
     if (!(kind > NO_TRAP && kind < TRAPNUM)) {
+        // NOT MKTRAP_NOSPIDERONWEB: lspo_trap() sets spider_on_web = TRUE at
+        // sp_lev.c:4405 and no medusa-*.lua des.trap() overrides it, so
+        // create_trap() never sets the flag.
         do {
-            kind = splev_traptype_rnd(MKTRAP_MAZEFLAG | MKTRAP_NOSPIDERONWEB);
+            kind = splev_traptype_rnd(MKTRAP_MAZEFLAG);
         } while (kind === NO_TRAP);
     }
     if (is_hole(kind) && !Can_fall_thru(game.u?.uz)) kind = ROCKTRAP;
-    await maketrap(x, y, kind);
+    const t = await maketrap(x, y, kind);
+    // C ref: mklev.c:2104 `if (kind == WEB && !(mktrapflags &
+    // MKTRAP_NOSPIDERONWEB)) makemon(&mons[PM_GIANT_SPIDER], m.x, m.y, ...)`
+    // — the spider's whole creation group runs before the victim check.
+    if ((t ? t.ttyp : kind) === 18 /* WEB */) {
+        const spider = name_to_pmidx('giant spider');
+        if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
+    }
     rnd(4);                                        // mklev.c:2137 victim check
 }
 

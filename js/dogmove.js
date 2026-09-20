@@ -32,7 +32,7 @@ import { dist2, mfndpos, mon_mintrap, Trap_Killed_Mon, Trap_Moved_Mon, m_avoid_k
     mon_allowflags, set_apparxy, onscary, mon_wield_item,
     Conflict, resist_conflict, mattacku } from './monmove.js';
 import { goodpos } from './teleport.js';
-import { ALLOW_TRAPS as ALLOW_TRAPS_F, ALLOW_U, I_SPECIAL } from './const.js';
+import { ALLOW_TRAPS as ALLOW_TRAPS_F, ALLOW_U, I_SPECIAL, In_sokoban } from './const.js';
 import { t_at } from './trap.js';
 import { mattackm } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, M_ATTK_MISS } from './const.js';
@@ -306,11 +306,25 @@ export function dogfood(mon, obj) {
     const carni = carnivorous(mdat);
     const herbi = herbivorous(mdat);
 
-    // C ref: dog.c:1011 — `obj->opoisoned && !resists_poison(mon)`.  The
+    // C ref: dog.c:1002 — `obj->opoisoned && !resists_poison(mon)`.  The
     // resists_poison() half used to be dropped ("pets don't, at start"), which
     // made a tamed poison-resistant monster refuse a poisoned item C lets it
     // consider (POISON >= MANFOOD, so it also suppresses the APPORT rn2(8)).
-    if (obj.opoisoned && !resists_poison_mon(mon)) return POISON;
+    //
+    // `opoisoned` and `otrapped` are THE SAME BIT in C: include/obj.h:137-139
+    // declares `Bitfield(otrapped, 1)  /* container is trapped */` and then
+    // `#define opoisoned otrapped`.  This port carries them as two independent
+    // object fields (mkobj.js sets `otrapped = !rn2(10)` for a CHEST/LARGE_BOX
+    // and `opoisoned` only for poisonable weapons), so reading `opoisoned`
+    // alone misses every trapped container.  C's dogfood() therefore returns
+    // POISON for a trapped chest and never reaches obj_resists — no rn2(100) —
+    // while we fell through and burned one, putting every later draw of the
+    // pet's turn (and of the whole session) one slot late.  POISON is also
+    // >= MANFOOD and > APPORT, so the trapped box both fires dog_goal's
+    // apport rn2(8) with no preceding rn2(100) and is `continue`d past once
+    // gg.gtyp has become APPORT.
+    if ((obj.opoisoned || obj.otrapped) && !resists_poison_mon(mon))
+        return POISON;
     // is_quest_artifact() is false for ordinary objects; obj_resists rolls
     // rn2(100) (always FALSE for non-artifacts with ochance 0).
     if (obj_resists(obj, 0, 95))
@@ -1509,6 +1523,21 @@ async function pet_ranged_attk(mtmp, forced) {
     return MMOVE_NOTHING;
 }
 
+// C ref: monmove.c:1313 m_avoid_soko_push_loc(mtmp, nx, ny).  Declared in
+// monmove.c but called only from dog_move() (dogmove.c:1185), so it lives here.
+// `sgn` is C's sign function; dist2 == 4 is the "exactly two squares away along
+// one axis" case, whose single intervening square is the one a boulder would be
+// pushed out of.
+function m_avoid_soko_push_loc(mtmp, nx, ny) {
+    if (!In_sokoban(game.u?.uz)) return false;
+    if (!(mtmp.mpeaceful || mtmp.mtame)) return false;
+    if (mtmp.mconf || mtmp.mstun) return false;
+    if (Conflict()) return false;
+    const ux = game.u.ux, uy = game.u.uy;
+    if (dist2(nx, ny, ux, uy) !== 4) return false;
+    return !!sobj_at(BOULDER, nx + Math.sign(ux - nx), ny + Math.sign(uy - ny));
+}
+
 // C ref: dogmove.c dog_move(mtmp, after).  Drives one pet move.
 export async function dog_move(mtmp, after) {
     const edog = mtmp.edog;
@@ -1647,9 +1676,18 @@ export async function dog_move(mtmp, after) {
         // kicked (gk.kickedloc, set for the kick turn, cleared next action).
         // The skipped square never reaches the rn2(++chcnt) tie-break, so the
         // pet's candidate count matches C (seed0060: kitten cnt 4 -> 3).
-        // m_avoid_soko_push_loc (dogmove.c:1185) is Sokoban-only and never
-        // triggers on the contest's non-Sokoban levels.
         if (m_avoid_kicked_loc(mtmp, nx, ny)) continue;
+        // C ref: dogmove.c:1185 / monmove.c:1313 m_avoid_soko_push_loc() — in
+        // Sokoban a calm peaceful/tame monster refuses a candidate square from
+        // which its next step toward the hero would shove a boulder: dist2 == 4
+        // means the square between it and the hero is <nx+sgn(ux-nx),
+        // ny+sgn(uy-ny)>, and a boulder there makes the square TABU.  This was
+        // written off as "Sokoban-only, never triggers", but the contest visits
+        // Sokoban, and dropping a candidate shortens dog_move's candidate scan:
+        // seed0116 step 125 had the pet at <31,9> with the hero at <32,10> and a
+        // boulder at <31,10>, so C never evaluated <30,10> and drew two
+        // rn2(3)/rn2(12) tie-break pairs where we drew three.
+        if (m_avoid_soko_push_loc(mtmp, nx, ny)) continue;
 
         // C ref: dogmove.c:1188 — the dog avoids a harmful trap it can see, but
         // might have to cross one to follow the hero: a *seen* trap gives a 39/40

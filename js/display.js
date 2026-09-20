@@ -38,7 +38,7 @@ import {
     CLR_ORANGE, CLR_GREEN, CLR_MAGENTA, CLR_BRIGHT_GREEN, CLR_BRIGHT_MAGENTA,
     DEC_TO_UNICODE, ATR_INVERSE,
 } from './terminal.js';
-import { monster_by_pmidx, infravisible, pmname_of_pmidx } from './makemon.js';
+import { monster_by_pmidx, infravisible, pmname_of_pmidx, name_to_pmidx } from './makemon.js';
 import { recalc_telepat_range } from './worn.js';
 import { mindless } from './monflags_data.js';
 import { random_monster, random_object, rn2_on_display_rng, NUMMONS } from './disprng.js';
@@ -325,19 +325,40 @@ export function bg_attr(bg) {
         || ((bg?.bwEngr && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0);
 }
 
+// The long worm whose TAIL segment stands on (x,y), if any.  C ref: worm.c
+// place_worm_seg() writes the worm's own pointer into svl.level.monsters[x][y]
+// for every tail square, so this is one half of C's single monster grid; this
+// port keeps the segments in a side list on the level (worm.js
+// place_worm_seg()).  Defined here, next to m_at(), because worm.js already
+// imports display.js and the reverse edge would close a module cycle through
+// makemon.js.
+export function worm_seg_owner_at(x, y) {
+    for (const s of game.level?.wormsegs || [])
+        if (s.x === x && s.y === y) return s.worm;
+    return null;
+}
+
 // Monster at (x, y).  C ref: rm.h m_at(x,y) = svl.level.monsters[x][y].
 // A ridden steed has been removed from the map grid (remove_monster in
 // mount_steed) but remains in the fmon chain, so it must NOT be reported by the
 // grid lookup even though it is still a live level monster colocated with the
 // hero.
+//
+// A long worm's TAIL squares are part of that same grid and hold the worm
+// itself: worm.c place_worm_seg() assigns svl.level.monsters[x][y] = worm for
+// each segment.  Reporting only the head made every tail square read as empty,
+// so hack.c monster_nearby() found nothing next to the hero and the safe_wait
+// guard let `s`/`.` spend a turn C refuses (seed0360 step 154, and from there
+// the whole rest of the session).  Callers distinguish the two the way C does,
+// by comparing (x,y) against the returned monster's own mx/my.
 export function m_at(x, y) {
     const mons = game.level?.monsters;
-    if (!mons) return null;
+    if (!mons) return worm_seg_owner_at(x, y);
     for (const m of mons) {
         if (m.mridden) continue;
         if (m.mx === x && m.my === y) return m;
     }
-    return null;
+    return worm_seg_owner_at(x, y);
 }
 
 // Glyph (symbol + color) for a monster.  C ref: display.c mon_color /
@@ -386,6 +407,23 @@ function monster_glyph(mon) {
     const sym = d.mlet || 'x';
     const color = (d.mcolor != null) ? d.mcolor : NO_COLOR;
     return { ch: sym, color, dec: false };
+}
+
+// C ref: display.c display_monster()'s worm_tail arm — a tail square draws the
+// PM_LONG_WORM_TAIL pseudo-monster (monnum_to_glyph/petnum_to_glyph), NOT the
+// worm's own 'w'.  mons[PM_LONG_WORM_TAIL] carries mlet S_WORM_TAIL ('~') and
+// mcolor CLR_BROWN, which is exactly what the recorded tty stream shows next to
+// a long worm.  Hallucination is handled by the caller: C runs the tail number
+// through what_mon() too, so it takes monster_glyph()'s halluc arm instead.
+let _worm_tail_data;
+function worm_tail_glyph() {
+    if (_worm_tail_data === undefined) {
+        const idx = name_to_pmidx('long worm tail');
+        _worm_tail_data = (idx != null && idx >= 0) ? monster_by_pmidx(idx) : null;
+    }
+    const d = _worm_tail_data || {};
+    return { ch: d.mlet || '~',
+             color: (d.mcolor != null) ? d.mcolor : CLR_BROWN, dec: false };
 }
 
 // C ref: monst.h:71 M_AP_TYPE(mon) == M_AP_OBJECT.  Only this disguise is
@@ -1731,6 +1769,11 @@ export function newsym(x, y) {
         // giant eel submerged in water) is NOT shown; the background shows
         // through instead.
         const mon = m_at(x, y);
+        // C ref: display.c:500 `#define is_worm_tail(mon) ((mon) && ((x !=
+        // (mon)->mx) || (y != (mon)->my)))` — m_at() reports the worm itself on
+        // every one of its tail squares, and only the coordinate comparison
+        // tells the two apart.
+        const worm_tail = !!mon && (x !== mon.mx || y !== mon.my);
         // C ref: display.c newsym:1015 — "if monster is in a physical trap, you
         // see trap too".  Runs BEFORE _map_location, so the trap this reveals is
         // what the square is remembered as once the monster steps off.  Purely
@@ -1768,7 +1811,7 @@ export function newsym(x, y) {
         // || (!worm_tail && (tp_sensemon(mon) || MATCH_WARN_OF_MON(mon))))`;
         // a telepathically sensed monster shows even on a square whose own
         // occupant the hero cannot make out (invisible, hiding).
-        if (mon && (mon_visible(mon) || tp_sensemon(mon))) {
+        if (mon && (mon_visible(mon) || (!worm_tail && tp_sensemon(mon)))) {
             // Remember the background (not the monster — monsters move).
             const bg = background_glyph(loc, x, y);   // _map_location(x, y, FALSE)
             if (game.level?.flags?.hero_memory) {
@@ -1777,7 +1820,10 @@ export function newsym(x, y) {
             // C ref: display.c newsym — showing an actual monster here "also
             // gets rid of any invisibility glyph".
             loc.invisMon = false;
-            const mg = monster_glyph(mon);
+            // C ref: display.c display_monster()'s worm_tail arm — a tail
+            // square draws PM_LONG_WORM_TAIL, never the worm's own letter.
+            const mg = (worm_tail && !Hallucination_u())
+                ? worm_tail_glyph() : monster_glyph(mon);
             // C ref: display.c:531 display_monster() — "We must do the mimic
             // check first.  If the mimic is mimicking something, and the
             // location is in sight, we have to change the hero's memory so that
@@ -1811,7 +1857,7 @@ export function newsym(x, y) {
             if (game.level?.flags?.hero_memory && M_AP_TYPE(mon) === M_AP_OBJECT)
                 loc.remembered_glyph = { ch: mg.ch, color: mg.color, decgfx: mg.dec };
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
-        } else if (mon && mon_warning(mon)) {
+        } else if (mon && mon_warning(mon) && !worm_tail) {
             // C ref: display.c newsym:1030 — `else if (mon && mon_warning(mon)
             // && !worm_tail) display_warning(mon)`.
             display_warning(mon, x, y);
@@ -1833,6 +1879,8 @@ export function newsym(x, y) {
         // Can't physically see <x,y>.  C ref: display.c newsym "Can't see the
         // location" branch.
         const mon = m_at(x, y);
+        // C ref: display.c:500 is_worm_tail(mon) — see the cansee() arm above.
+        const dark_worm_tail = !!mon && (x !== mon.mx || y !== mon.my);
         // C ref: display.c newsym:1046 — `see_it = tp_sensemon(mon)
         // || MATCH_WARN_OF_MON(mon) || (see_with_infrared(mon)
         // && mon_visible(mon))`.  Telepathy reaches monsters the hero has no
@@ -1845,10 +1893,12 @@ export function newsym(x, y) {
             // does NOT call _map_location or set waslit, so remembered
             // background/lit memory is untouched (the glyph is erased later by
             // the monster-move / vision redraw when it is no longer sensed).
-            const mg = monster_glyph(mon);
+            // C ref: display.c:1054 — this arm passes is_worm_tail(mon) too.
+            const mg = (dark_worm_tail && !Hallucination_u())
+                ? worm_tail_glyph() : monster_glyph(mon);
             const petAttr = (mon.mtame && game.flags?.hilite_pet) ? ATR_INVERSE : 0;
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
-        } else if (mon && mon_warning(mon)) {
+        } else if (mon && mon_warning(mon) && !dark_worm_tail) {
             // C ref: display.c newsym:1055 — the out-of-sight arm of the same
             // rule: a threatening monster the hero cannot see still shows its
             // warning glyph, on top of whatever the square is remembered as.

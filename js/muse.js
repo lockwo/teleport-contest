@@ -1772,9 +1772,11 @@ function hero_hates_light() { return false; }
  * muse.c:1596 mbhitm / :1706 fhito_loc / :1733 mbhit
  * ------------------------------------------------------------------------ */
 
-// C ref: prop.h Antimagic == HAntimagic || EAntimagic.  The port has no
-// oc_oprop column, so read every uprops mirror the granting code uses (the
-// Wizard's starting cloak of magic resistance sets one of them).
+// C ref: prop.h Antimagic == HAntimagic || EAntimagic.  The worn-armour arm
+// below reads objects[].oc_oprop directly (js/mkobj.js carries it on 70 rows);
+// js/invent.js now installs the same fact into the extrinsic word, so once the
+// property accessors are converted this collapses to
+// `worn_extrinsic(ANTIMAGIC) || HAntimagic`.
 function Antimagic_muse() {
     const W_ARMOR_MASK = 0x7f;  // monst.h W_ARMOR: the seven armour slots
     for (const o of (game.invent || []))
@@ -1787,9 +1789,10 @@ function Antimagic_muse() {
 function Half_spell_damage_muse() {
     return (game.u?.uprops?.HHalf_spell_damage || 0) > 0;
 }
-// C ref: mondata.c resists_magm(mon).  The artifact-weapon and worn-item arms
-// need an oc_oprop column the JS objects[] table lacks; no monster in the
-// covered corpora wears magic-resistant gear.
+// C ref: mondata.c resists_magm(mon).  The artifact-weapon arm needs monster
+// artifact gear, which this port does not model; no monster in the covered
+// corpora wears magic-resistant gear either, so the worn-item arm is moot here
+// (js/zap.js resists_magm carries the ported version of it).
 function resists_magm_muse(mon) {
     const ptr = mon?.data;
     if (!ptr) return false;

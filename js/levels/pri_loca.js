@@ -461,13 +461,26 @@ function pri_create_roamer(name, mx, my, peaceful) {
     return mtmp;
 }
 
-// C ref: sp_lev.c create_trap() -> mklev.c mktrap(0, MKTRAP_MAZEFLAG|
-// MKTRAP_NOSPIDERONWEB, NULL, &tm).  An explicit coord costs no get_location
-// draw; a bare des.trap() runs get_location(DRY)'s rn2(xsize)/rn2(ysize) loop
-// first, rejecting stairs/ladders.  Then the type is rolled (retry until not
-// NO_TRAP), maketrap runs, and mklev.c:2137's victim check rnd(4) is drawn
-// unconditionally (level_difficulty here is far above 4, so it never fires).
-const MKTRAP_MAZEFLAG = 0x02, MKTRAP_NOSPIDERONWEB = 0x04;
+// C ref: sp_lev.c create_trap() -> mklev.c mktrap(0, MKTRAP_MAZEFLAG, NULL,
+// &tm).  An explicit coord costs no get_location draw; a bare des.trap() runs
+// get_location(DRY)'s rn2(xsize)/rn2(ysize) loop first, rejecting stairs and
+// ladders.  Then the type is rolled (retry until not NO_TRAP), maketrap runs,
+// and mklev.c:2137's victim check rnd(4) is drawn unconditionally (level
+// difficulty here is far above 4, so it never fires).
+//
+// mktrapflags is MKTRAP_MAZEFLAG ONLY.  lspo_trap() sets
+// `tmptrap.spider_on_web = TRUE` at sp_lev.c:4405 before parsing any argument
+// form and the table branch re-reads it with default 1 (sp_lev.c:4431), so
+// Pri-loca.lua's `des.trap({ coord = {..} })` / bare `des.trap()` and
+// Pri-goal.lua's calls all leave it TRUE and create_trap's
+// `if (!t->spider_on_web) mktrap_flags |= MKTRAP_NOSPIDERONWEB;` never fires.
+// This file previously passed MKTRAP_NOSPIDERONWEB and skipped mklev.c:2104's
+// `makemon(&mons[PM_GIANT_SPIDER], ...)`, so a rolled WEB lost the spider's
+// whole creation group (next_ident / newmonhp / gender / m_initinv) and every
+// later draw on the level was read by the wrong caller: mirrorx m1300000
+// seed0367-priest-quest-tour idx 4325, m1400000 idx 4467.  Same wrong default
+// that js/levels/quest_home_common.js quest_trap() already fixed.
+const MKTRAP_MAZEFLAG = 0x02;
 export async function pri_create_trap(ttyp, mx, my) {
     let x, y;
     if (mx != null) { x = q_absx(mx); y = q_absy(my); }
@@ -482,14 +495,19 @@ export async function pri_create_trap(ttyp, mx, my) {
     }
     let kind = ttyp;
     if (!kind) {
-        do { kind = splev_traptype_rnd(MKTRAP_MAZEFLAG | MKTRAP_NOSPIDERONWEB); }
+        do { kind = splev_traptype_rnd(MKTRAP_MAZEFLAG); }
         while (kind === 0 /* NO_TRAP */);
     }
     // Pri-loca sets "hardfloor" so Can_fall_thru() is FALSE there and a hole
     // becomes a falling rock trap; Pri-goal does not, so keep the predicate.
     if ((kind === 13 /* HOLE */ || kind === 14 /* TRAPDOOR */)
         && !Can_fall_thru(game.u?.uz)) kind = 3 /* ROCKTRAP */;
-    await maketrap(x, y, kind);
+    const t = await maketrap(x, y, kind);
+    // C ref: mklev.c:2104 — reads the trap maketrap() actually placed.
+    if ((t ? t.ttyp : kind) === 18 /* WEB */) {
+        const spider = name_to_pmidx('giant spider');
+        if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
+    }
     rnd(4);                                      // mktrap victim check mklev.c:2137
 }
 

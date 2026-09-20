@@ -159,6 +159,22 @@ export function no_bones_level(lev) {
 // whole condition false (so the function does NOT return early on its account,
 // but the rn2(3) has already advanced the stream).  After that the bones file
 // never exists, so getbones() always ultimately returns 0 (false) here.
+//
+// DO NOT "fix" a getbones() first-divergence reported against heldout-mirrorx.
+// 144 of that corpus's 528 recordings contain
+//     Cannot open file "<lock>.0" for level 0 (errno 2).--More--
+//     Probably someone removed it.--More--
+// which is INSURANCE save_currentstate() (allmain.c:838, end of newgame())
+// hitting save.c:377 open_levelfile(0) on a lock file another concurrently
+// recording process had already unlinked.  tricked_fileremoved() then runs
+// done(TRICKED) — harmless in wizard mode, fatal otherwise — and the two extra
+// --More-- prompts eat two keystrokes, phase-shifting every later input.  In
+// seed0360-wizard-world-tour that shift leaves the "Do you want a tutorial?"
+// menu open until the 'y' of a wished-for "gray dragon scale mail" answers it
+// yes, so C generates tut-1 (headed, as every mklev() is, by this rn2(3))
+// where the clean run never leaves Dlvl 1.  The artifact appears in 0 of the
+// 277 sessions across sessions/, heldout-blind, heldout-mirror44 and the seven
+// other corpora; it is a recorder-environment race, not a port defect.
 export async function getbones() {
     if (is_discover()) return false;   // C: if (discover) return 0;  (no rng)
     if (!bones_enabled()) return false; // C: if (!flags.bones) return 0; (no rng)
@@ -770,20 +786,12 @@ export function bones_include_name(name) {
 export default { getbones, can_make_bones, no_bones_level, bones_include_name,
                  give_to_nearby_mon, drop_upon_death, savebones, bones_key };
 
-// ── dispatch note (NOT applied here; I own only js/bones.js) ──
+// ── wiring status ──
 //
-// To make this module the single source of truth for the getbones() rn2(3)
-// draw, mklev.js should import and call it instead of its private copy:
-//
-//   js/mklev.js:
-//     import { getbones } from './bones.js';
-//     // delete the local `function getbones() { ... }` definition (~line 238)
-//     // mklev() already calls `if (getbones()) return;` (line 260) — unchanged.
-//
-// The two implementations are behaviorally identical (same discover / bones /
-// rn2(3) / wizard semantics), so wiring this in is a no-op for the call stream
-// and cannot regress any session.  The orchestrator is expected to apply that
-// one-line import swap in mklev.js.
+// DONE: js/mklev.js:47 imports getbones() from this module and mklev() calls it
+// at js/mklev.js:340, so this file is the single source of truth for the
+// rn2(3) "find bones?" draw.  mklev.js has no private copy any more; do not
+// add a second import of getbones there.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // The remaining bones.c entry points, translated verbatim.  ADDITIVE ONLY:

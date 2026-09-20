@@ -13,14 +13,14 @@
 
 import {
     COLNO, CORR, CROSSWALL, HWALL, ICE, IS_OBSTRUCTED, IS_ROOM, IS_WALL, LAVAPOOL,
-    MAXNROFROOMS, NO_ROOM, OROOM, ROOM, ROOMOFFSET, ROWNO, STAIRS, STONE, TREE, VWALL, isok,
+    MAXNROFROOMS, NO_ROOM, OROOM, ROOM, ROOMOFFSET, ROWNO, STONE, TREE, VWALL, isok,
 } from '../const.js';
 import { game } from '../gstate.js';
 import { somexy } from '../mkroom.js';
 import { rn2, rnd } from '../rng.js';
 import {
     add_sp_room, bigrm_wallification, gx, gy, quest_level_init_solidfill,
-    splev_link_doors_rooms,
+    splev_link_doors_rooms, splev_mkstairs_at,
 } from '../sp_lev.js';
 import { quest_align_shuffle } from './quest_home_common.js';
 import {
@@ -387,10 +387,10 @@ export function mkmap_mines_joined(bg_typ, fg_typ, smooth, join, lit, walled) {
 // minefill.lua's no-map case.
 //
 // mkstairs()'s `force` arg is FALSE for a random coordinate (scoord IS
-// random), so its `if (force) typ = ROOM` never fires; the dunlev-at-branch-
+// random), so its `if (force) typ = ROOM` never fires; its dunlev-at-dungeon-
 // end early return only matters for a dlvl-1 home level's up stair, never for
-// these deeper filler/goal levels.  Both are omitted, matching the existing
-// (fixed-coordinate) quest_place_stair() helper's own simplification.
+// these deeper filler/goal levels.  Both come along for free now that the
+// tail below calls the one shared mkstairs() instead of open-coding it.
 export function cav_stair_random(up) {
     const mx = gx.xstart, my = gy.ystart, sx = gx.xsize, sy = gy.ysize;
     const okfn = (px, py) => {
@@ -412,15 +412,12 @@ export function cav_stair_random(up) {
             }
         }
     }
-    // C ref: mkstairs() tail (stairway_add + set_levltyp(STAIRS)); mirrors the
-    // existing fixed-coordinate quest_place_stair()'s own bookkeeping exactly,
-    // just with an already-absolute (x,y) instead of a map-relative one.
-    const loc = game.level?.at(x, y);
-    if (loc) loc.typ = STAIRS;
-    if (!game.stairs) game.stairs = [];
-    game.stairs.push({ sx: x, sy: y, up: !!up });
-    if (up) { game.upstair = { x, y }; if (game.level) game.level.upstair = { x, y }; }
-    else { game.dnstair = { x, y }; if (game.level) game.level.dnstair = { x, y }; }
+    // C ref: mkstairs(), shared with every other builder that already has an
+    // absolute square.  The hand-rolled tail this replaces pushed onto a plain
+    // ARRAY; gs.stairs is a singly-linked list and every consumer walks
+    // `.next`, so those stairs were invisible (and carried no .tolev, which
+    // made stairway_find_special_dir() throw on arrival).
+    splev_mkstairs_at(x, y, up);
 }
 
 // ════════════════════════════════════════════════════════════════════════

@@ -1395,15 +1395,17 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     await wakeupAttack(mon, true);
 
     // C ref uhitm.c:1922-1931 — wakeup(mon) then, for a surviving armed hit,
-    // mhitm_knockback(&youmonst, mon, ...).  Its leading rolls always fire:
-    //   knockdistance = rn2(3)        (uhitm.c:5258)
-    //   if (rn2(chance)) return FALSE  (uhitm.c:5269, chance==6, no ogresmasher)
-    // The contest hits all take the 5/6 "no knockback" branch, so the later
-    // size/solidity gates draw nothing.  (seed5002 step-242: hero hits the
-    // small mimic — the rn2(6) chance roll must follow the rn2(3) knockdistance.)
+    // mhitm_knockback(&youmonst, mon, youmonst.data->mattk, &hitflags, TRUE)
+    // with hitflags seeded to M_ATTK_HIT.  C's `mattk` argument is the FIRST
+    // entry of the hero form's attack table (a bare `->mattk` pointer deref),
+    // which for an ordinary human is AT_WEAP/AD_PHYS and therefore clears the
+    // attack-form gate.
     if (maybe_knockback) {
-        rn2(3);                                // knockdistance (uhitm.c:5258)
-        rn2(6);                                // chance         (uhitm.c:5269)
+        const hitflags = { v: M_ATTK_HIT };
+        if (await mhitm_knockback(mon, mattk_of(youmonst_data_uh())[0],
+                                  hitflags, true)
+            && (hitflags.v & M_ATTK_DEF_DIED) !== 0)
+            return false;                      // hmd.destroyed = TRUE
     }
     return true;
 }
@@ -2481,7 +2483,7 @@ import { ARTICLE_A, ARTICLE_YOUR, SUPPRESS_INVISIBLE, SUPPRESS_NAME,
          W_ARMF, W_RINGL, W_RINGR, W_WEP, STRAT_WAITFORU,
          POTHIT_HERO_BASH, POTHIT_HERO_THROW, MON_EXPLODE, EXPL_FIERY,
          NO_TRAP_FLAGS, M_AP_TYPE, ismnum, FACE, HAND, STOMACH,
-         xdir, ydir } from './const.js';
+         xdir, ydir, IS_DOOR, D_NODOOR, D_BROKEN } from './const.js';
 import { M1_AMORPHOUS, M1_UNSOLID, M1_NOEYES, M1_NOHEAD, M1_NOHANDS, M1_FLY,
          M1_BREATHLESS, M1_AMPHIBIOUS, M1_THICK_HIDE, M1_ANIMAL,
          mindless } from './monflags_data.js';
@@ -2493,7 +2495,7 @@ import { EGG, BOULDER, HEAVY_IRON_BALL, IRON_CHAIN, EXPENSIVE_CAMERA,
          weight, next_ident } from './mkobj.js';
 import { rnl, rn1 } from './rng.js';
 import { monster_by_pmidx } from './makemon.js';
-import { Mgender } from './do_name.js';
+import { Mgender, y_monnam, some_mon_nam } from './do_name.js';
 
 // C ref: include/objects.h oc_material enum (MAT_VEGGY/MAT_PAPER are declared
 // with hmon_misc_obj_dmg above).
@@ -2512,7 +2514,8 @@ const S_BLOB = 2, S_EYE = 5, S_KOBOLD = 11, S_ORC_CLS = 15, S_LIGHT = 25,
       S_ZOMBIE = 52;
 
 // C ref: include/artilist.h ordinals (same table js/artifact.js uses).
-const ART_CLEAVER = 4, ART_GIANTSLAYER = 15, ART_SNICKERSNEE = 19;
+const ART_CLEAVER = 4, ART_GIANTSLAYER = 15, ART_OGRESMASHER = 16,
+      ART_SNICKERSNEE = 19;
 
 // C ref: src/role.c roles[] order (PM_MONK/PM_SAMURAI/... are declared above).
 const PM_ROGUE = 8;
@@ -4261,6 +4264,143 @@ export async function m_is_steadfast(mtmp) {
 function Flying_uh() { return (u_of().uprops?.Flying || 0) > 0; }
 function Levitation_uh() { return (u_of().uprops?.Levitation || 0) > 0; }
 
+// C ref: monst.h gy.youmonst.data — the hero's CURRENT permonst.  game.youmonst
+// is a bare `{}` in this port (restore.js:1135 cg.zeromonst), so `.data` on it
+// is undefined; u.umonnum holds the 0-based ROLE index when not polymorphed,
+// exactly as js/monmove.js's and js/artifact.js's copies of this resolve it.
+const ROLE_PM_FIRST_UH = 331;
+function youmonst_data_uh() {
+    const u = game.u;
+    if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
+    return monster_by_pmidx(ROLE_PM_FIRST_UH + (u?.umonnum ?? 0))
+        || u?.data || null;
+}
+
+// C ref: objclass.h WHACK — objects[].oc_dir's blunt bit, which this port's
+// objects[] table does not carry (its oc_dir column is 0 for every weapon).
+// The WEAPON_CLASS entries are objects.h's `B`/`B|P` rows and the TOOL_CLASS
+// entries are the only two weptools with WHACK (pick-axe, grappling hook);
+// the unicorn horn is PIERCE, so it is deliberately absent.
+const WHACK_OTYPS = new Set([
+    69 /* lucern hammer B|P */, 70 /* bec de corbin B|P */,
+    71 /* dwarvish mattock */, 73 /* mace */, 74 /* silver mace */,
+    75 /* morning star */, 76 /* war hammer */, 77 /* club */,
+    78 /* rubber hose */, 79 /* quarterstaff */, 80 /* aklys */,
+    81 /* flail */, 259 /* pick-axe */, 260 /* grappling hook */,
+]);
+// C ref: obj.h:253 is_blunt_weapon(o) — (WEAPON_CLASS || is_weptool) && WHACK.
+function is_blunt_weapon_uh(o) {
+    if (!o) return false;
+    if (o.oclass !== WEAPON_CLASS && !is_weptool(o)) return false;
+    return WHACK_OTYPS.has(o.otyp);
+}
+
+// C ref: mondata.h:654 sticks(ptr) — a holder, for whom a knockback would be
+// ambiguous.
+function sticks_uh(ptr) {
+    return dmgtype(ptr, AD_STCK)
+        || (dmgtype(ptr, AD_WRAP) && !attacktype(ptr, AT_ENGL))
+        || attacktype(ptr, AT_HUGS);
+}
+
+// C ref: uhitm.c:5247 mhitm_knockback(magr, mdef, mattk, hitflags, weapon_used)
+// for the two call sites where the HERO is the aggressor (uhitm.c:1928 in
+// hmon_hitmon() and uhitm.c:5833 in hmonas()); mhitu.c's hero-as-defender call
+// is js/monmove.js's copy and mhitm.c's mon-vs-mon call is js/mhitm.js's, the
+// same split C's three callers already have.  So u_agr is always TRUE and
+// u_def always FALSE here, which removes the test_move()/cursed-saddle arms.
+//
+// This used to be a two-line stub that drew the leading rn2(3)/rn2(6) and then
+// always declined, on the assumption that the gate chain never passes.  It
+// does: a pick-axe (WHACK, iron) swung at a newt clears every gate, and C then
+// spends two more rn2(2)s picking the message's adjective and noun before
+// mhurtle()ing the target and rolling rn2(4) for mstun.  Declining lost three
+// draws per real knockback and left the monster unmoved.
+//
+// `hitflags` is C's `int *hitflags`, modelled as a { v } box.
+export async function mhitm_knockback(mdef, mattk, hitflags, weapon_used) {
+    const u = game.u;
+    const magr_data = youmonst_data_uh();
+    const knockdistance = rn2(3) ? 1 : 2;            // uhitm.c:5258
+    let chance = 6;                                  // 1/6 knocks back
+    const wep = weapon_used ? game.uwep : null;
+    const A = await import('./artifact.js');
+    if (wep && A.is_art(wep, ART_OGRESMASHER)) chance = 2;
+    if (rn2(chance)) return false;                   // uhitm.c:5269
+
+    /* only certain attacks qualify for knockback */
+    if (!(mattk?.adtyp === AD_PHYS
+          && (mattk.aatyp === AT_CLAW || mattk.aatyp === AT_KICK
+              || mattk.aatyp === AT_BUTT || mattk.aatyp === AT_WEAP)))
+        return false;
+    /* don't knockback if attacker also wants to grab or engulf */
+    if (attacktype(magr_data, AT_ENGL) || attacktype(magr_data, AT_HUGS)
+        || sticks_uh(magr_data))
+        return false;
+
+    const defx = mdef.mx, defy = mdef.my;
+    const sgn_ = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
+    const dx = sgn_(defx - u.ux), dy = sgn_(defy - u.uy);
+
+    /* the non-hero half of C's "can't move a target through a doorway
+       diagonally" test; a subset of test_move() */
+    if (!isok(defx + dx, defy + dy)) return false;
+    const dloc = game.level?.at(defx, defy);
+    if (dloc && IS_DOOR(dloc.typ) && (defx - u.ux) && (defy - u.uy)
+        && ((dloc.doormask || 0) & ~(D_NODOOR | D_BROKEN)) !== 0)
+        return false;
+
+    if (DEADMONSTER(mdef)) return false;             /* must be alive */
+    /* attacker must be much larger than defender */
+    if (!((magr_data?.msize ?? 2) > ((mdef.data?.msize ?? 2) + 1)))
+        return false;
+    /* no knockback with a flimsy or non-blunt weapon */
+    if (wep && (is_flimsy(wep) || !is_blunt_weapon_uh(wep))) return false;
+    if (unsolid(magr_data)) return false;            /* needs a solid hit */
+    /* the attack must have hit */
+    if (!(hitflags.v & M_ATTK_HIT)) return false;
+
+    if (await m_is_steadfast(mdef)) {
+        if (u.usteed && mdef === u.usteed)
+            await plineU(`You and ${y_monnam(u.usteed)} don't budge.`);
+        else if (canseemon(mdef))
+            await plineU(`${Monnam(mdef)} doesn't budge.`);
+        return false;
+    }
+
+    const { mhurtle, will_hurtle } = await import('./dothrow.js');
+    /* subtly vary the message text if the monster won't actually move */
+    const knockedhow = will_hurtle(mdef, defx + dx, defy + dy)
+        ? 'backward' : 'back';
+
+    if (canseemon(mdef)) {
+        /* "You knock the gnome back with a powerful blow!" -- the adjective
+           and the noun are two separate rn2(2)s (uhitm.c:5374) */
+        const adj = rn2(2) ? 'forceful' : 'powerful';
+        const noun = rn2(2) ? 'blow' : 'strike';
+        await plineU(`You knock ${y_monnam(mdef)} ${knockedhow} `
+                     + `with a ${adj} ${noun}!`);
+    } else {
+        /* hero knocks unseen foe back; noticed by touch */
+        await plineU(`You feel ${some_mon_nam(mdef)} be knocked ${knockedhow}!`);
+    }
+
+    if (u.ustuck) unstuck_mon(u.ustuck);
+
+    await mhurtle(mdef, dx, dy, knockdistance);
+    if (DEADMONSTER(mdef)) {
+        hitflags.v |= M_ATTK_DEF_DIED;
+    } else if (!rn2(4)) {                            // uhitm.c:5406
+        mdef.mstun = 1;
+    }
+    return true;
+}
+// Lazy pline, like plineMon() above (display.js imports uhitm.js).
+async function plineU(text) {
+    const { pline } = await import('./display.js');
+    await pline(text);
+}
+
 // C ref: mhitm.c:807 engulf_target(magr, mdef) — can magr swallow mdef?  No
 // RNG.  js/mhitm.js references it only in a comment, so this is a local copy;
 // the hero-as-defender arms are dropped (the hero can't be gulpum()'s target).
@@ -4687,16 +4827,14 @@ export async function hmonas(mon) {
                 await passive(mon, weapon, (sum[i] !== M_ATTK_MISS) ? 1 : 0, 1,
                               mattk.aatyp);
             }
-            /* uhitm.c:5247 mhitm_knockback(&youmonst, mon, mattk, &sum[i],
-               weapon_used) is file-static in js/mhitm.js and js/monmove.js.
-               Its leading rolls always fire: rn2(3) knockdistance, then
-               rn2(chance) with chance==6 for a non-Ogresmasher hit. */
-            rn2(3);
-            if (rn2(6)) {
-                /* no knockback */
-            } else {
-                /* the size/solidity/steadfast gates would follow */
-            }
+            /* C ref: uhitm.c:5833 mhitm_knockback(&youmonst, mon, mattk,
+               &sum[i], weapon_used) — a successful knockback ends the whole
+               attack sequence. */
+            const hitflags = { v: sum[i] };
+            const knocked = await mhitm_knockback(mon, mattk, hitflags,
+                                                  weapon_used);
+            sum[i] = hitflags.v;
+            if (knocked) break;
         }
 
         /* don't use sum[i] beyond this point: 'i' is out of bounds when we

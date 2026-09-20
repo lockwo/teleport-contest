@@ -10,7 +10,7 @@ import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { init_rect, rnd_rect, get_rect, split_rects, within_bounded_area } from './rect.js';
 import { depth as depth_of_level, distmin } from './hacklib.js';
-import { set_mktrap_victim, filler_region, lspo_map, lspo_region, fill_special_room, themeroom_fill, themeroom_map_contents, makemaz_bigroom, makemaz_bar_strt, makemaz_bar_loca, makemaz_bar_goal, makemaz_arc_strt, makemaz_arc_loca, makemaz_arc_goal, makemaz_pri_strt, makemaz_pri_loca, makemaz_pri_goal, makemaz_tower1, makemaz_tower2, makemaz_tower3, makemaz_soko1, makemaz_soko_upper, makemaz_valley, makemaz_sanctum, makemaz_minetown2, makemaz_minetown3, makemaz_minetown5, makemaz_minetown7, makemaz_minend1, makemaz_minend2, makemaz_minend3, makemaz_medusa1, makemaz_medusa2, makemaz_medusa3, makemaz_medusa4, makemaz_asmodeus, makemaz_baalz, makemaz_juiblex, makemaz_orcus, makemaz_wizard1, makemaz_wizard2, makemaz_wizard3, makemaz_fakewiz1, makemaz_fakewiz2, makemaz_air, makemaz_earth, makemaz_fire, makemaz_water, makemaz_astral, makemaz_cav_strt, makemaz_cav_loca, makemaz_cav_goal, makemaz_cav_fila, makemaz_cav_filb, makemaz_hea_strt, makemaz_hea_loca, makemaz_hea_goal, makemaz_hea_fila, makemaz_hea_filb, makemaz_kni_strt, makemaz_kni_goal, makemaz_kni_loca, makemaz_kni_fila, makemaz_kni_filb, makemaz_mon_strt, makemaz_mon_loca, makemaz_mon_goal, makemaz_ran_strt, makemaz_ran_loca, makemaz_ran_goal, makemaz_ran_fila, makemaz_ran_filb, makemaz_rog_strt, makemaz_rog_loca, makemaz_rog_goal, makemaz_sam_strt, makemaz_sam_loca, makemaz_sam_goal, makemaz_sam_fila, makemaz_sam_filb, makemaz_tou_strt, makemaz_tou_loca, makemaz_tou_goal, makemaz_tou_fila, makemaz_tou_filb, makemaz_val_strt, makemaz_val_loca, makemaz_val_goal, makemaz_val_fila, makemaz_val_filb, makemaz_wiz_loca, makemaz_wiz_goal, makemaz_wiz_strt, shuffle,
+import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_region, fill_special_room, themeroom_fill, themeroom_map_contents, makemaz_bigroom, makemaz_bar_strt, makemaz_bar_loca, makemaz_bar_goal, makemaz_arc_strt, makemaz_arc_loca, makemaz_arc_goal, makemaz_pri_strt, makemaz_pri_loca, makemaz_pri_goal, makemaz_tower1, makemaz_tower2, makemaz_tower3, makemaz_soko1, makemaz_soko_upper, makemaz_valley, makemaz_sanctum, makemaz_minetown2, makemaz_minetown3, makemaz_minetown5, makemaz_minetown7, makemaz_minend1, makemaz_minend2, makemaz_minend3, makemaz_medusa1, makemaz_medusa2, makemaz_medusa3, makemaz_medusa4, makemaz_asmodeus, makemaz_baalz, makemaz_juiblex, makemaz_orcus, makemaz_wizard1, makemaz_wizard2, makemaz_wizard3, makemaz_fakewiz1, makemaz_fakewiz2, makemaz_air, makemaz_earth, makemaz_fire, makemaz_water, makemaz_astral, makemaz_cav_strt, makemaz_cav_loca, makemaz_cav_goal, makemaz_cav_fila, makemaz_cav_filb, makemaz_hea_strt, makemaz_hea_loca, makemaz_hea_goal, makemaz_hea_fila, makemaz_hea_filb, makemaz_kni_strt, makemaz_kni_goal, makemaz_kni_loca, makemaz_kni_fila, makemaz_kni_filb, makemaz_mon_strt, makemaz_mon_loca, makemaz_mon_goal, makemaz_ran_strt, makemaz_ran_loca, makemaz_ran_goal, makemaz_ran_fila, makemaz_ran_filb, makemaz_rog_strt, makemaz_rog_loca, makemaz_rog_goal, makemaz_sam_strt, makemaz_sam_loca, makemaz_sam_goal, makemaz_sam_fila, makemaz_sam_filb, makemaz_tou_strt, makemaz_tou_loca, makemaz_tou_goal, makemaz_tou_fila, makemaz_tou_filb, makemaz_val_strt, makemaz_val_loca, makemaz_val_goal, makemaz_val_fila, makemaz_val_filb, makemaz_wiz_loca, makemaz_wiz_goal, makemaz_wiz_strt, shuffle,
          mapfrag_fromstr, mapfrag_match, selection_match, set_levltyp_lit,
          splev_map_origin, reset_xystart_size, flip_level, bigrm_get_level_extends, set_door_orientation,
          okdoor, bydoor, create_door, lspo_door_relative,
@@ -19,9 +19,10 @@ import { set_mktrap_victim, filler_region, lspo_map, lspo_region, fill_special_r
          q_absx, q_absy, quest_floodfill_match, splev_object_at, splev_feature,
          splev_door_at, vly_altar, vly_region, splev_region_lit,
          splev_create_monster, splev_link_doors_rooms, remove_boundary_syms,
+         ensure_way_out,
          bigrm_get_location_dry, lspo_replace_terrain, bigrm_load_map,
          SET_LIT_NOCHANGE } from './sp_lev.js';
-import { create_maze, walkfrom, mz, reset_maze_bounds, mkportal } from './mkmaze.js';
+import { create_maze, walkfrom, mz, reset_maze_bounds, mkportal, makemaz } from './mkmaze.js';
 import {
     selection_new, selection_clone, selection_clear, selection_setpoint,
     selection_getpoint, selection_getbounds, selection_iterate,
@@ -804,17 +805,27 @@ async function makelevel() {
         }
     }
 
-    // C ref: mklev.c:1286-1288 — `In_hell(&u.uz) || (rn2(5) && ...)`.  This is
-    // a logical OR: when the level is In_hell, the right-hand side (including
+    // C ref: mklev.c:1286-1289 — `In_hell(&u.uz) || (rn2(5) && u.uz.dnum ==
+    // medusa_level.dnum && depth(&u.uz) > depth(&medusa_level))` -> makemaz("").
+    // A logical OR: when the level is In_hell the right-hand side (including
     // the rn2(5) draw) is never evaluated at all.  Every Gehennom level takes
-    // an earlier branch (slev or the fill_lvl check above) in practice, so
-    // this line is normally unreachable for In_hell levels anyway — but guard
-    // it explicitly too, for any not-yet-ported named Gehennom special that
-    // falls through to here.
+    // an earlier branch (slev, or the hellfill fill_lvl check above) in
+    // practice, so the In_hell arm is normally unreachable — but it is spelled
+    // out so a not-yet-ported named Gehennom special falling through here
+    // still mazifies instead of growing rooms.
+    //
+    // The rn2(5) arm is the one that fires in play: four levels in five below
+    // Medusa in the main dungeon are raw mazes, not room-and-corridor levels.
+    // dnum 0 has no proto, so this reaches makemaz()'s bare-maze tail directly
+    // (corrmaze !rn2(3), create_maze, two mazexy() stairs, place_branch,
+    // populate_maze).  Leaving it a no-op cost the whole level: we grew rooms
+    // where C carved a maze, and lost every later draw in the session.
     const medusa = g.medusa_level;
-    if (!In_hell(g.u?.uz) && rn2(5) && g.u?.uz?.dnum === medusa?.dnum
-        && (g.u?.uz?.dlevel ?? 1) > (medusa?.dlevel ?? 999)) {
-        // Would generate maze — not applicable for contest level 1
+    if (In_hell(g.u?.uz)
+        || (rn2(5) && g.u?.uz?.dnum === medusa?.dnum
+            && depth_of_level(g.u?.uz) > depth_of_level(medusa))) {
+        await makemaz('');
+        return;
     }
 
     // Regular level generation
@@ -2810,7 +2821,7 @@ function generate_stairs_find_room() {
     return g.level.rooms[rn2(g.level.nroom)];
 }
 
-function mkstairs(x, y, up, croom) {
+export function mkstairs(x, y, up, croom) {
     const g = game;
     // C ref: mklev.c:2188 `if (dunlev(&u.uz) == (up ? 1 :
     // dunlevs_in_dungeon(&u.uz))) return;`, before BOTH stairway_add() and
@@ -4179,10 +4190,12 @@ async function makemaz_minetown1() {
 // instead of bg=" " (STONE): untouched cavern displays as solid wall, not
 // unlit rock — per the .lua's own comment, this is what the "inaccessibles"
 // flag compensates for ("creating backdoors into adjacent shops which we
-// don't want"). That repair pass — C's ensure_way_out(), a floodfill check
-// that digs a corridor only when the random cavern left a pocket unreachable
-// — is NOT ported; it only draws RNG in that rare case, made rarer still by
-// the des.map overlay's own doors. See RECON_NOTES.md.
+// don't want"). minetn-6.lua is the ONLY level file that sets that flag, and
+// it is far from a rare case: the mines cavern regularly leaves a pocket that
+// the map overlay walls off, so C's ensure_way_out() repair pass runs and
+// spends one selection_rndcoord() draw per candidate square of the pocket.
+// It is called from the finalize tail below, exactly where load_special() runs
+// it (sp_lev.c:6468, after remove_boundary_syms and before wallification).
 // ============================================================
 
 const MINETN6_MAP = [
@@ -4234,7 +4247,7 @@ async function makemaz_minetown6() {
     rn2(2);
     // des.level_flags("mazelevel","inaccessibles") — is_maze_lev is set here
     // but overwritten to FALSE by mk_mkmap (walled&&joined, mkmap.c:481);
-    // check_inaccessibles isn't tracked since ensure_way_out() isn't ported.
+    // "inaccessibles" is honoured by the ensure_way_out() call in the tail.
     if (g.level?.flags) g.level.flags.is_maze_lev = true;
 
     // des.level_init({style="mines", fg=".", bg="-", smoothed=true,
@@ -4300,6 +4313,8 @@ async function makemaz_minetown6() {
     // minetn-6.lua has no trailing des.wallify() call of its own.
     splev_link_doors_rooms();
     remove_boundary_syms();
+    /* des.level_flags("inaccessibles") — C: load_special() sp_lev.c:6468. */
+    ensure_way_out();
     wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;
@@ -6608,7 +6623,7 @@ async function mk_knox_portal(x, y) {
     await place_branch(br, x, y);
 }
 
-async function place_branch(br, x, y) {
+export async function place_branch(br, x, y) {
     const g = game;
     // C ref: mklev.c:1230 — "Return immediately if there is no branch to make
     // or we have already made one."  A special level that names an SSTAIR spot
@@ -6806,6 +6821,14 @@ function breaktest(otmp) {
     }
 }
 
+// C ref: sp_lev.c calls these mklev.c routines directly; this port cannot
+// import mklev.js from sp_lev.js (that edge would cycle -- see the EXT header
+// there), so hand them over through the extern seam the same way
+// set_mktrap_victim() is handed over.  This is the ONE binding call in the
+// tree; anything sp_lev.js can import without cycling is imported directly
+// there instead of going through EXT.
+bind_sp_lev_externs({ topologize, mkstairs, stairway_add });
+
 set_mktrap_victim(mktrap_victim);
 function mktrap_victim(trap) {
     const lvl = game.u?.uz?.dlevel ?? 1;
@@ -6854,7 +6877,11 @@ function mktrap_victim(trap) {
         // 10% chance of a candle too — placed on the floor and (if the square is
         // unlit) lit.  C ref: mklev.c mktrap_victim().
         if (!rn2(10)) {
-            otmp = mksobj(rn2(4) ? 370 : 371, true, false); // TALLOW_CANDLE / WAX_CANDLE
+            // C ref: mklev.c:1913.  Otyps 370/371 stood here, but those are the
+            // spellbooks "sleep"/"finger of death" — mksobj_init() then took the
+            // SPBOOK arm (blessorcurse 17) instead of the candle arm
+            // (rn2(2) ? rn2(7) : 0, then blessorcurse 5).
+            otmp = mksobj(rn2(4) ? TALLOW_CANDLE : WAX_CANDLE, true, false);
             otmp.quan = 1;
             otmp.owt = weight(otmp);
             curse(otmp);

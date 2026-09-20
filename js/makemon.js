@@ -3149,7 +3149,21 @@ function worm_goodpos(x, y, worm) {
     if (x < 1 || x >= COLNO || y < 0 || y >= ROWNO) return false;  // !isok
     if (game.u?.ux === x && game.u?.uy === y) return false;
     const mtmp2 = mm_mon_at(x, y);
-    if (mtmp2 && mtmp2 !== worm) return false;
+    // C ref: teleport.c goodpos() — "Actually we overdo the check a little
+    // bit--a worm can't be placed in its own location, period."  Every segment
+    // of a long worm answers the same m_at(), so mtmp2 === worm is NOT proof
+    // that <x,y> is a free square, and C rejects it outright for any worm.
+    // Without the wormno half, place_worm_tail_randomly() laid a segment onto
+    // the worm's own head square where C walks on to the next shuffled
+    // direction, so the tail came out one square short of C's.
+    if (mtmp2 && (mtmp2 !== worm || worm.wormno)) return false;
+    // C's place_monster() has already written the worm into
+    // svl.level.monsters[][] by the time makemon.c:1405 lays the tail, so the
+    // clause above catches the head square for it.  This port links the new
+    // monster into level.monsters only at the END of makemon(), i.e. AFTER
+    // place_worm_tail_randomly() runs, so mm_mon_at() still answers "empty"
+    // there and the head square has to be tested directly.
+    if (worm.wormno && x === worm.mx && y === worm.my) return false;
     if (mm_is_pool(x, y) || mm_is_lava(x, y)) return false;
     const typ = game.level?.at(x, y)?.typ;
     if (typ == null || typ < DOOR) return false;   // !accessible
@@ -3233,10 +3247,14 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
 
     // C ref: makemon.c:1167 — `if (iflags.debug_mongen || (!svl.level.flags
     // .rndmongen && !ptr)) return 0;`  A level whose script cleared rndmongen
-    // (des.level_flags("norandmonst")) never gets a RANDOM monster; a
-    // caller-named species still does.  Tested against `=== false` so a level
-    // that has not written the flag keeps C's default of TRUE.
-    if (!mdat && game.level?.flags?.rndmongen === false) return null;
+    // (des.level_flags("nomongen"), e.g. both tutorial levels) never gets a
+    // RANDOM monster; a caller-named species still does.  C's flag is a 1-bit
+    // bitfield and the two JS writers disagree on its type — mklev.js stores
+    // the boolean `true`, lspo_level_flags() stores the number 0 — so this has
+    // to be a falsiness test on a value defaulting to TRUE.  `=== false` never
+    // matched sp_lev's 0, so allmain.c maybe_generate_rnd_mon()'s makemon()
+    // spawned a monster (~20 RNG draws) on every !rn2(70) inside the tutorial.
+    if (!mdat && !(game.level?.flags?.rndmongen ?? true)) return null;
 
     // C ref: makemon.c:1194 — "Does monster already exist at the position?"
     // Without MM_ADJACENTOK this is a bare early return, consuming NO RNG —

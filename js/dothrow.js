@@ -12,7 +12,8 @@
 // beside its caller.
 import { game } from './gstate.js';
 import { rn2, rnd, rnl } from './rng.js';
-import { m_at, newsym, update_topl, glyph_at, map_invisible } from './display.js';
+import { m_at, newsym, update_topl, glyph_at, map_invisible,
+         canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
 import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT,
          LAVAPOOL, TT_PIT, P_DAGGER, A_DEX, A_CHA, NEED_HTH_WEAPON,
@@ -664,7 +665,7 @@ export async function tamedog(mtmp, obj, givemsg) {
                     && (mtmp.edog?.hungrytime ?? Infinity) <= (game.moves || 0)))
             && mtmp.edog) {
             /* pet will "catch" and eat this thrown food */
-            if (U.canseemon(mtmp)) {
+            if (canseemon_shared(mtmp)) {
                 const csz = monster_by_pmidx(obj.corpsenm)?.msize;
                 const big_corpse = obj.otyp === CORPSE && csz != null
                     && csz > (monster_by_pmidx(mtmp.data?.pmidx)?.msize ?? 0);

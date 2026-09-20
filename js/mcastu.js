@@ -319,11 +319,20 @@ async function mcast_spell(mtmp, dmg, spellnum) {
         }
         break;
     }
+    case MCAST_DISAPPEAR:
+        // C ref: mcastu.c:844 — `mcast_disappear(mtmp); dmg = 0;`.  RNG-free
+        // itself, but it is the state transition the NEXT cast depends on:
+        // without minvis, spell_would_be_useless() keeps saying DISAPPEAR is
+        // useful, so a caster re-picks it every turn and never advances to
+        // HASTE_SELF — whose mon_adjust_speed() sets permspeed = MFAST and so
+        // changes both later spell choices and the movement allotment.
+        await mcast_disappear(mtmp);
+        break;
     default:
-        // The remaining undirected spells (DISAPPEAR, INSECTS, AGGRAVATION)
-        // need mon_set_minvis / the insect-swarm makemon loop that this port
-        // does not carry; their spell_would_be_useless() draws have already
-        // fired, so the stream stays aligned up to the effect.
+        // The remaining undirected spells (INSECTS, AGGRAVATION) need the
+        // insect-swarm makemon loop / aggravate(); their
+        // spell_would_be_useless() draws have already fired, so the stream
+        // stays aligned up to the effect.
         break;
     }
 }
@@ -380,11 +389,12 @@ function helpless(mon) {
 }
 
 // ===========================================================================
-// The rest of src/mcastu.c.  INERT: nothing above this line calls anything
-// below it, and mcast_spell() above keeps its own reduced arm set on purpose.
-// Wiring these up means routing mcast_spell()/castmu() through them AND first
-// replacing the shims at the bottom of this section — several of those stand in
-// for RNG-BEARING C functions, so swapping one changes the draw stream.
+// The rest of src/mcastu.c.  MOSTLY INERT: mcast_spell() above calls only
+// mcast_disappear() from below; every other arm here is still unreferenced and
+// mcast_spell() keeps its reduced arm set on purpose.  Wiring another one means
+// routing mcast_spell()/castmu() through it AND first replacing the shims at
+// the bottom of this section — several of those stand in for RNG-BEARING C
+// functions, so swapping one changes the draw stream.
 //
 // Every function keeps its C name, argument order and return type.  The
 // per-function draw order is the load-bearing part: e.g. mcast_lightning()

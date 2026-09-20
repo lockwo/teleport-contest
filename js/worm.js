@@ -9,7 +9,7 @@
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { isok, COLNO, ROWNO, NORMAL_SPEED, MHPMAX, MCORPSENM } from './const.js';
-import { newsym, m_at, show_glyph_cell, Hallucination_u, pline } from './display.js';
+import { newsym, m_at, worm_seg_owner_at, show_glyph_cell, Hallucination_u, pline } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import { random_monster } from './disprng.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -173,11 +173,9 @@ export function place_worm_tail_randomly(worm, x, y, goodposfn) {
 
 // The worm-tail segment standing on (x,y), if any.  Used by the display: a
 // tail square renders as S_wormtail ('~'), not as the worm's own letter.
-export function worm_seg_at(x, y) {
-    for (const s of game.level?.wormsegs || [])
-        if (s.x === x && s.y === y) return s.worm;
-    return null;
-}
+// Single definition lives beside display.js m_at(), which has to consult the
+// same side list to reproduce C's one monster grid.
+export function worm_seg_at(x, y) { return worm_seg_owner_at(x, y); }
 
 // ───────────────────────────────────────────────────────────────────────────
 // The rest of src/worm.c, translated but NOT yet wired into any call site.

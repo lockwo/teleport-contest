@@ -4,7 +4,8 @@
 import { game } from './gstate.js';
 import { skill_init_snapshot } from './enhance.js';
 import { rn2, rnd, rne, rn1 } from './rng.js';
-import { addinv as invent_addinv, bimanual, near_capacity } from './invent.js';
+import { addinv as invent_addinv, bimanual, near_capacity,
+    worn_extrinsics_on } from './invent.js';
 import { initialspell, num_spells, skill_based_spellbook_id } from './spell.js';
 import {
     ARMOR_CLASS,
@@ -598,7 +599,14 @@ function is_shield(obj) { return is_armor_range(obj, 150, 158); }
 function is_shirt(obj) { return is_armor_range(obj, 136, 137); }
 function is_suit(obj) { return is_armor_range(obj, 101, 135); }
 
-// C ref: do.c setworn — record a worn armor object on the hero.
+// C ref: worn.c:73-145 setworn() — record a worn armor object on the hero.
+// This is the FIFTH copy of the hero worn-slot mutator in this port (the other
+// four are in js/invent.js: setworn, setworn_slot, setworn_accessory and
+// worn_slot_set) and it is the one that dons the starting kit, so it has to do
+// C's property bookkeeping too: without it the Wizard's cloak of magic
+// resistance never set EAntimagic and a self-zapped wand of magic missile
+// rolled d(4,6) that C does not roll.  Collapsing the five copies is a separate
+// change; this just routes the extrinsic half through the one owner.
 function setworn(obj, mask) {
     if (!obj) return;
     obj.owornmask = (obj.owornmask || 0) | mask;
@@ -609,6 +617,7 @@ function setworn(obj, mask) {
     else if (mask === W_ARMG) game.uarmg = obj;
     else if (mask === W_ARMF) game.uarmf = obj;
     else if (mask === W_ARMU) game.uarmu = obj;
+    worn_extrinsics_on(obj, mask);
 }
 
 // C ref: u_init.c ini_inv_use_obj — auto-wear starting armor and wield

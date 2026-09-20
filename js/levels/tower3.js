@@ -9,7 +9,8 @@ import {
 } from '../const.js';
 import { In_hell } from '../dungeon.js';
 import { game } from '../gstate.js';
-import { enexto_spawn, level_difficulty_ext, makemon, mm_mon_at } from '../makemon.js';
+import { enexto_spawn, level_difficulty_ext, makemon, mm_mon_at,
+         monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
 import {
@@ -92,16 +93,30 @@ function tower_traptype_rnd() {
 }
 
 // C ref: sp_lev.c create_trap with an explicit coord and no type ->
-// mktrap(NO_TRAP, MKTRAP_MAZEFLAG|MKTRAP_NOSPIDERONWEB): retry traptype_rnd()
-// until it yields a type, demote a hole/trapdoor when the floor is hard, then
-// the always-drawn victim check rnd(4) (mklev.c:2137).
+// mktrap(NO_TRAP, MKTRAP_MAZEFLAG): retry traptype_rnd() until it yields a
+// type, demote a hole/trapdoor when the floor is hard, spawn the web's giant
+// spider, then the always-drawn victim check rnd(4) (mklev.c:2137).
+//
+// NOT MKTRAP_NOSPIDERONWEB: lspo_trap() sets tmptrap.spider_on_web = TRUE at
+// sp_lev.c:4405 and the table branch re-reads it with default 1 (:4431), so
+// tower3.lua's `des.trap({ coord = place[n] })` leaves it TRUE and
+// create_trap() never sets the flag.  mklev.c:2104 therefore spawns a giant
+// spider on every rolled WEB, spending its whole creation group (next_ident /
+// newmonhp / gender / m_initinv) before the victim check.  Omitting it made
+// every later draw on the level read by the wrong caller: heldout-mirrorx
+// m1500000 seed0360-wizard-world-tour idx 63072.
 async function tower_create_trap_random_at(mx, my) {
     const x = q_absx(mx), y = q_absy(my);
     let kind;
     do { kind = tower_traptype_rnd(); } while (kind === NO_TRAP);
     if ((kind === HOLE || kind === TRAPDOOR) && !Can_fall_thru(game.u?.uz))
         kind = ROCKTRAP;
-    await maketrap(x, y, kind);
+    const t = await maketrap(x, y, kind);
+    // C ref: mklev.c:2104 — reads the trap maketrap() actually placed.
+    if ((t ? t.ttyp : kind) === WEB) {
+        const spider = name_to_pmidx('giant spider');
+        if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
+    }
     rnd(4);                                          // mktrap victim check
 }
 

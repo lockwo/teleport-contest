@@ -169,10 +169,12 @@ export function armor_simple_name(obj) {
 }
 
 /* ---- property helpers -------------------------------------------------- */
-// The port has no objects[].oc_oprop column and no u.uprops[].extrinsic
-// bitmask, so `oldprop` (the property's extrinsic from OTHER slots) is derived
-// from the other worn items that confer it.  Only the properties this file
-// toggles need an entry.
+// `oldprop` in C is `u.uprops[objects[otyp].oc_oprop].extrinsic & ~WORN_<slot>`,
+// i.e. the property's extrinsic from the OTHER slots.  js/invent.js now
+// maintains that word (worn_extrinsics_on/off) and exposes worn_extrinsic(prop),
+// so these hand-rolled per-property scans are redundant and should be replaced
+// by `worn_extrinsic(p) & ~slotbit` when the accessor conversion lands.  Only
+// the properties this file toggles have an entry.
 function extrinsic_stealth_except(obj) {
     for (const o of [game.uarmc, game.uarmf, game.uleft, game.uright]) {
         if (!o || o === obj) continue;

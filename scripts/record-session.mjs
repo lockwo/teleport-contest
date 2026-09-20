@@ -334,6 +334,57 @@ function parseNethackrcName(rc) {
     return null;
 }
 
+// The install dir is a SHARED, read-only template.  Every run gets its own
+// private HACKDIR instead of writing into it, because NetHack keeps its lock
+// file (`<lock>.0`, used by the INSURANCE checkpoint), its level files, its
+// save/ dir and its score files all inside HACKDIR.  Two recorders pointed at
+// one HACKDIR therefore fight over the same names, and clearStaleState()'s
+// `*.0` sweep below deletes a sibling's LIVE lock file.  C reacts at
+// allmain.c:838 newgame() -> save_currentstate() -> savestateinlock() ->
+// save.c:377 open_levelfile(0) == NULL -> tricked_fileremoved() -> done(TRICKED),
+// which prints
+//     Cannot open file "<lock>.0" for level 0 (errno 2).--More--
+//     Probably someone removed it.--More--
+// and kills the hero outright outside wizard mode.  Those two extra --More--
+// prompts also swallow two keystrokes, so every later input in the recording
+// is phase-shifted and the session no longer replays the recipe at all.  That
+// race polluted 158 of 672 heldout-mirrorx segments minted at --concurrency=8.
+//
+// Read-only data (the .lua level scripts, data/oracles/rumors/symbols/...) is
+// symlinked so a run dir costs a few hundred inodes instead of 8.3 MB; only
+// the files NetHack writes are materialised for real.
+const MUTABLE_ENTRIES = new Set([
+    'save',      // directory: save files and, for a save/restore pair, the
+                 // state seg 1 restores from
+    'record', 'logfile', 'xlogfile', 'livelog', 'paniclog',
+    'perm',      // score-file lock
+]);
+
+// `<lock>.<n>` level files and `bon*` bones files are per-game state that must
+// never be inherited from the template.
+function isPerGameState(name) {
+    const lower = name.toLowerCase();
+    return /\.\d+$/.test(lower) || lower.startsWith('bon');
+}
+
+async function makeRunHackdir(templateDir, runDir) {
+    await fs.mkdir(runDir, { recursive: true });
+    const entries = await fs.readdir(templateDir);
+    for (const name of entries) {
+        if (MUTABLE_ENTRIES.has(name.toLowerCase()) || isPerGameState(name)) continue;
+        await fs.symlink(path.join(templateDir, name), path.join(runDir, name));
+    }
+    await fs.mkdir(path.join(runDir, 'save'), { recursive: true });
+    // NetHack expects these to exist and be writable; clearStaleState() used to
+    // truncate them in the shared dir, so a fresh empty file is the same state
+    // the recorder has always started each session from.
+    for (const name of ['record', 'logfile', 'xlogfile', 'livelog', 'perm']) {
+        const fh = await fs.open(path.join(runDir, name), 'w');
+        await fh.close();
+    }
+    return runDir;
+}
+
 async function ensureScorefiles(installDir) {
     for (const name of ['record', 'xlogfile', 'logfile']) {
         const p = path.join(installDir, name);
@@ -344,6 +395,9 @@ async function ensureScorefiles(installDir) {
     }
 }
 
+// Reset the run's private HACKDIR between sessions.  Harmless now that the dir
+// is per-run, but still the thing that guarantees segment 0 of every session
+// starts from a virgin playground.
 async function clearStaleState(installDir) {
     const saveDir = path.join(installDir, 'save');
     try {
@@ -358,7 +412,8 @@ async function clearStaleState(installDir) {
         const lower = name.toLowerCase();
         const full = path.join(installDir, name);
         let st;
-        try { st = await fs.stat(full); } catch { continue; }
+        try { st = await fs.lstat(full); } catch { continue; }
+        // Never follow a symlink into the shared template.
         if (!st.isFile()) continue;
         if (name.endsWith('.lua')) continue;
         if (killNames.has(lower)
@@ -548,18 +603,20 @@ async function recordSegment({
     child.stdout.on('error', (err) => rejectDone(err));
     child.on('error', (err) => rejectDone(err));
     child.on('close', (code, signal) => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
+        clearTimeout(timeoutHandle);
         parser.stop();
-        if (signal === 'SIGTERM' || signal === 'SIGKILL') {
-            // Killed by us after collecting expected steps.
-            resolveDone(0);
-            return;
-        }
-        // For death sessions the game can terminate before all keys are
-        // consumed (the death itself fires nh_terminate); record whatever
-        // steps we got and let the caller compare against the canonical
-        // session, which captures the same truncated trace.
-        resolveDone(code ?? 0);
+        // 'close' fires once the child's stdio has closed, so every complete
+        // marker is already ENQUEUED on `chain` — but onMarker is async, so the
+        // last one or two may still be in flight.  Resolving here without
+        // draining loses them, which is why a session recorded twice could come
+        // back with one step more or fewer depending on machine load (visible as
+        // 4 of 44 sessions differing run-to-run at --concurrency=8, 1 of 44 when
+        // serial).  Drain first; `chain` already routes failures to rejectDone.
+        chain.then(() => {
+            // SIGTERM/SIGKILL means finish() tore the child down after we had
+            // collected every expected step.
+            resolveDone(signal === 'SIGTERM' || signal === 'SIGKILL' ? 0 : (code ?? 0));
+        }, rejectDone);
     });
 
     await done;
@@ -585,20 +642,23 @@ async function main() {
     const outputPath = argv[1] ? path.resolve(argv[1]) : inputPath;
 
     const binary = process.env.NETHACK_BINARY || DEFAULT_BINARY;
-    const installDir = process.env.NETHACK_INSTALL || DEFAULT_INSTALL;
+    const templateDir = process.env.NETHACK_INSTALL || DEFAULT_INSTALL;
     const tz = process.env.RERECORD_TZ || 'America/New_York';
 
     if (!await exists(binary)) {
         throw new Error(`recorder binary not found: ${binary}\n  build it via nethack-c/build-recorder.sh`);
     }
-    if (!await exists(installDir)) {
-        throw new Error(`install dir not found: ${installDir}`);
+    if (!await exists(templateDir)) {
+        throw new Error(`install dir not found: ${templateDir}`);
     }
 
     const session = await loadSession(inputPath);
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nh-rec-'));
     const rngLogPath = path.join(tmpDir, 'rng.log');
     const homeDir = path.join(tmpDir, 'home');
+    // Private playground: see makeRunHackdir().  Concurrent recorders MUST NOT
+    // share one, or they delete each other's live lock files.
+    const installDir = await makeRunHackdir(templateDir, path.join(tmpDir, 'hackdir'));
 
     try {
         const newSegments = [];

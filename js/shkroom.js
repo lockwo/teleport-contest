@@ -12,17 +12,39 @@ import { Hello } from './role.js';
 import { rn2, rnd } from './rng.js';
 import { objects, base_oc_cost } from './mkobj.js';
 import { acurr_eff } from './attrib.js';
-import { makemon, monster_by_pmidx, enexto_spawn } from './makemon.js';
+import { makemon, monster_by_pmidx, enexto_spawn, name_to_pmidx } from './makemon.js';
 import { builds_up, room_discovered } from './dungeon.js';
 import { record_price_quote } from './o_init.js';
-import { depth as depth_of_level } from './hacklib.js';
+import { depth as depth_of_level, isok } from './hacklib.js';
 import {
     ROOMOFFSET, NO_ROOM, SHARED, SHARED_PLUS, SHOPBASE, COLNO, ROWNO,
     A_CHA, HUNGRY, TEMPLE, MORGUE, OROOM, MAXNROFROOMS, G_GONE,
+    THRONE, ZOO, SWAMP, COURT, LEPREHALL, BEEHIVE, COCKNEST, ANTHOLE,
+    BARRACKS, DELPHI,
 } from './const.js';
 import { midnight } from './calendar.js';
+import { Blind } from './vision.js';
 
 const PICK_AXE = 259, DWARVISH_MATTOCK = 71;
+// do_wear.c's otyps for the three worn stealth sources (js/do_wear.js:48/60/62).
+const ELVEN_CLOAK = 139, ELVEN_BOOTS = 169, RIN_STEALTH = 181;
+
+// C ref: youprop.h `Stealth ((HStealth || EStealth) && !BStealth)`.  This port
+// grants no INTRINSIC stealth — exper.js adjabil() only prints the "You feel
+// stealthy!" line, it never sets the property — so the H term can only come
+// from an already-tracked field; EStealth is the three worn sources
+// js/do_wear.js:179 lists, and BStealth is C's "blocked while riding unless
+// hero and steed both fly".
+function Stealth() {
+    const u = game.u;
+    if (!u) return false;
+    const H = !!(u.HStealth || u.uStealth || u.uprops?.HStealth);
+    const E = [game.uarmc, game.uarmf, game.uleft, game.uright].some(
+        (o) => o && (o.otyp === ELVEN_CLOAK || o.otyp === ELVEN_BOOTS
+                     || o.otyp === RIN_STEALTH));
+    const B = !!u.usteed && !u.uprops?.Flying;
+    return (H || E) && !B;
+}
 
 const IS_SHOP = (rt) => rt >= SHOPBASE;
 
@@ -42,15 +64,26 @@ function roomAt(rno) {
 }
 function rtypeOf(rno) { return roomAt(rno)?.rtype ?? 0; }
 
-// C ref: hack.c check_special_room() — the one-time special-room types are
-// converted back to ordinary rooms as soon as their entry event fires.  Keep
-// the level flag in sync too: sounds.c reads it to decide whether to make the
-// room's ambient noises on later turns.
+// C ref: hack.c check_special_room():3737-3764 — the one-time special-room
+// types are converted back to ordinary rooms as soon as their entry event
+// fires, and when that was the level's LAST room of the type (C's
+// search_special(rt)) the matching level flag is cleared too.  sounds.c reads
+// those flags every turn to decide whether to roll the room's ambient noise,
+// so a flag left set keeps drawing an rn2(200) C no longer draws: seed4500
+// entered the Dlvl 7 throne room at step 914 and every later turn there cost
+// us one extra rn2(200) (sounds.c:226).  Only MORGUE was listed here.
 function retireSpecialRoom(rno, type) {
     const room = roomAt(rno);
     if (!room || room.rtype !== type) return;
     room.rtype = OROOM;
-    const flagByType = { [MORGUE]: 'has_morgue' };
+    const flagByType = {
+        [COURT]: 'has_court', [SWAMP]: 'has_swamp', [MORGUE]: 'has_morgue',
+        [ZOO]: 'has_zoo', [BARRACKS]: 'has_barracks',
+        // C's clearing switch also lists TEMPLE, but its case falls through to
+        // `default:` first and that sets rt = 0, so the TEMPLE arm is dead code
+        // in C too ("temples should remain TEMPLEs") — omitted rather than
+        // copied, since copying it would retire temples this port does enter.
+    };
     const flag = flagByType[type];
     if (!flag || !game.level?.flags) return;
     const allRooms = [...(game.level.rooms || []), ...(game.level.subrooms || [])];
@@ -519,10 +552,11 @@ async function u_entered_shop(enterstring) {
     }
 }
 
-// C ref: hack.c check_special_room(newlev).  Of the u.uentered switch only the
-// TEMPLE arm is ported; the zoo/court/morgue/... entry messages — and the
-// per-resident `!Stealth && !rn2(3)` wake-up roll that follows COURT/SWAMP/
-// MORGUE/ZOO, plus their rtype->OROOM + level.flags reset — are still missing.
+// C ref: hack.c:3625 check_special_room(newlev) — the one-time room-entry
+// messages.  Only the TEMPLE and MORGUE arms were ported; every other special
+// room entered silently AND kept its rtype, so hack.c:3737's
+// `svr.rooms[roomno].rtype = OROOM` plus the level-flag reset never happened
+// and sounds.c kept rolling that room's ambient noise forever.
 export async function check_special_room(newlev) {
     const u = game.u;
     if (!u || !game.level) return;
@@ -551,26 +585,118 @@ export async function check_special_room(newlev) {
 
     if (u.ushops_entered.length) await u_entered_shop(u.ushops_entered);
 
-    // C: `intemple(roomno + ROOMOFFSET)` — the offset room number, which is
-    // what u.uentered already holds.
     for (const c of u.uentered) {
-        const rt = rtypeOf(c);
-        if (rt === MORGUE) {
-            // C ref: hack.c:3683 — this is a normal room-entry event, not a
+        const roomno = c - ROOMOFFSET;
+        // C ref: hack.c:3662 — `rt` is re-assigned to 0 by the `default:` arm,
+        // which is what exempts VAULTs, TEMPLEs and shops from the retirement
+        // below; the switch's own arms leave it alone.
+        let rt = rtypeOf(c);
+        let msg_given = true;
+
+        switch (rt) {
+        case ZOO:
+            await update_topl("Welcome to David's treasure zoo!");
+            break;
+        case SWAMP:
+            await update_topl(`It ${Blind() ? 'feels' : 'looks'} rather ${
+                Blind() ? 'humid' : 'muddy'} down here.`);
+            break;
+        case COURT: {
+            // C: the Sam quest home level's throne room has no throne, so the
+            // adjective is conditional on the furniture actually being there.
+            const { furniture_present } = await import('./hack.js');
+            await update_topl(`You enter an opulent${
+                furniture_present(THRONE, roomno) ? ' throne' : ''} room!`);
+            break;
+        }
+        case LEPREHALL:
+            await update_topl('You enter a leprechaun hall!');
+            break;
+        case MORGUE:
+            // C ref: hack.c:3685 — this is a normal room-entry event, not a
             // quest message.  It can therefore page a prior arrival/quest
             // topline before leaving its own line pending.
             await update_topl(midnight() ? 'Run away!  Run away!'
                 : 'You have an uncanny feeling...');
-            room_discovered(c - ROOMOFFSET);
-            retireSpecialRoom(c, rt);
-        } else if (rt === TEMPLE) {
+            break;
+        case BEEHIVE:
+            await update_topl('You enter a giant beehive!');
+            break;
+        case COCKNEST:
+            await update_topl('You enter a disgusting nest!');
+            break;
+        case ANTHOLE:
+            await update_topl('You enter an anthole!');
+            break;
+        case BARRACKS: {
+            const { monstinroom } = await import('./hack.js');
+            const manned = ['soldier', 'sergeant', 'lieutenant', 'captain']
+                .some((nm) => !!monstinroom(monster_by_pmidx(name_to_pmidx(nm)),
+                                            roomno));
+            await update_topl(manned ? 'You enter a military barracks!'
+                : 'You enter an abandoned barracks.');
+            break;
+        }
+        case DELPHI: {
+            const { monstinroom } = await import('./hack.js');
+            const oracle = monstinroom(monster_by_pmidx(name_to_pmidx('Oracle')),
+                                       roomno);
+            if (oracle) {
+                // C: verbalize() — the quoted form, like js/dig.js's copy.
+                await update_topl(!oracle.mpeaceful
+                    ? `"You're in Delphi, ${game.plname}."`
+                    : `"${Hello(game.urole?.mnum, null)}, ${
+                        game.plname}, welcome to Delphi!"`);
+            } else {
+                msg_given = false;
+            }
+            break;
+        }
+        case TEMPLE: {
+            // C ref: hack.c:3725 — TEMPLE prints nothing itself; intemple()
+            // owns the message, then it FALLS THROUGH to `default:`.
             const { intemple } = await import('./priest.js');
             await intemple(c);
         }
-        // C ref: hack.c:3734 — `msg_given = (rt == TEMPLE || rt >= SHOPBASE)`,
-        // then room_discovered(roomno).  That is what makes #overview name the
-        // shop; without it the level's mapseen never learned the room.
-        if (rt === TEMPLE || rt >= SHOPBASE) room_discovered(c - ROOMOFFSET);
+        /* falls through */
+        default:
+            // C ref: hack.c:3730 — `msg_given = (rt == TEMPLE || rt >= SHOPBASE)`,
+            // then room_discovered(roomno).  That is what makes #overview name
+            // the shop; without it the level's mapseen never learned the room.
+            msg_given = (rt === TEMPLE || rt >= SHOPBASE);
+            rt = 0;
+            break;
+        }
+
+        if (msg_given) room_discovered(roomno);
+
+        if (rt !== 0) {
+            retireSpecialRoom(c, rt);
+            // C ref: hack.c:3765 — entering a COURT/SWAMP/MORGUE/ZOO gives each
+            // of its residents a 1-in-3 chance of waking, unless the hero is
+            // stealthy.  C compares its ZERO-based `roomno` against
+            // levl[][].roomno, which mklev.c topologize() stores ROOMOFFSET-
+            // based, so the test only ever matches monsters in the room
+            // ROOMOFFSET slots earlier in svr.rooms[] — an upstream off-by-
+            // ROOMOFFSET bug that makes the roll almost never fire (zero
+            // occurrences across the 142 recorded sessions).  Reproduced
+            // literally: "fixing" it here would invent rn2(3) draws C does not
+            // make.
+            if (rt === COURT || rt === SWAMP || rt === MORGUE || rt === ZOO) {
+                const { DEADMONSTER } = await import('./mon.js');
+                for (const mtmp of [...(game.level?.monsters || [])]) {
+                    if (DEADMONSTER(mtmp)) continue;
+                    if (!isok(mtmp.mx, mtmp.my)
+                        || roomno !== (game.level.at(mtmp.mx, mtmp.my)?.roomno | 0))
+                        continue;
+                    if (!Stealth() && !rn2(3)) {
+                        const { wake_msg_core } = await import('./mon.js');
+                        await wake_msg_core(mtmp, false);
+                        mtmp.msleeping = 0;
+                    }
+                }
+            }
+        }
     }
 }
 

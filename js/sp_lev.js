@@ -27,7 +27,7 @@ import {
     TUWALL, TDWALL, TLWALL, TRWALL, DBWALL, IS_ROOM, IS_WALL,
     TELEP_TRAP, D_SECRET, D_CLOSED, D_ISOPEN, D_LOCKED, D_TRAPPED, D_NODOOR,
     W_ANY, W_RANDOM, IS_OBSTRUCTED, A_NONE, In_endgame,
-    AM_SHRINE, AM_SANCTUM,
+    AM_SHRINE, AM_SANCTUM, A_LAWFUL,
     IS_STWALL, IS_TREE, IS_LAVA, IS_FURNITURE, W_NONDIGGABLE, W_NONPASSWALL,
     HOLE, ROLLING_BOULDER_TRAP, SQKY_BOARD, RUST_TRAP, LANDMINE, MAGIC_TRAP,
     ARROW_TRAP, DART_TRAP, ROCKTRAP, BEAR_TRAP, SLP_GAS_TRAP, ANTI_MAGIC,
@@ -100,6 +100,7 @@ import { match_maptyps,
          selection_getbounds as selection_getbounds_var,
          selection_recalc_bounds,
          selection_clone, selection_iterate, random_wdir,
+         selection_floodfill, set_selection_floodfillchk,
          selection_rndcoord as selection_rndcoord_var } from './selvar.js';
 
 // Special-level builders live one-per-file under js/levels/; re-exported here so
@@ -783,10 +784,26 @@ function create_garden(croom) {
     }
     if (!game.level._themeroom_postprocess)
         game.level._themeroom_postprocess = [];
-    game.level._themeroom_postprocess.push({
-        handler: 'garden_walls', roomnoidx: croom.roomnoidx,
-        lx: croom.lx, ly: croom.ly, hx: croom.hx, hy: croom.hy,
-    });
+    // C ref: themerms.lua:128 `table.insert(postprocess, { handler =
+    // make_garden_walls, data = { sel = selection.room() } })`.  The CELL SET is
+    // captured HERE, at fill time, and make_garden_walls() only grows that
+    // snapshot.  Recording croom.roomnoidx and re-deriving the cells from
+    // levl[][].roomno inside the postprocess handler silently produced an EMPTY
+    // selection: sort_rooms() renumbers svr.rooms[] after the themeroom fills
+    // run, so the stored index no longer matches the room's roomno by the time
+    // post_level_generate() fires, and make_garden_walls' two
+    // des.replace_terrain() passes lost every one of their rn2(100) draws.
+    // The capture follows selvar.c:781 selection_from_mkroom(): the room's
+    // bounding box minus the `edge` wall/door ring, y outer / x inner, with NO
+    // typ == ROOM filter — so a fountain this fill just placed still counts.
+    const gsel = [];
+    const grmno = croom.roomnoidx + ROOMOFFSET;
+    for (let y = croom.ly; y <= croom.hy; y++)
+        for (let x = croom.lx; x <= croom.hx; x++) {
+            const loc = isok(x, y) ? game.level?.at(x, y) : null;
+            if (loc && !loc.edge && loc.roomno === grmno) gsel.push({ x, y });
+        }
+    game.level._themeroom_postprocess.push({ handler: 'garden_walls', sel: gsel });
 }
 
 // C ref: themerms.lua:189 "Statuary".
@@ -986,20 +1003,27 @@ function create_teleportation_hub(croom) {
     for (let i = 0; i < count; i++) {
         const pos = selection_rndcoord(locs, true); // rndcoord(1): removeit
         if (!pos || pos.x < 0) continue;
-        // C ref: nhlsel.c l_selection_rndcoord returns coords RELATIVE to the
-        // current room (abs - croom->lx/ly).  themerms.lua checks `pos.x > 0`
-        // on that RELATIVE x, then maps back to the map via
-        //   pos.x = pos.x + rm.region.x1 - 1   (region.x1 == croom.lx)
-        //   pos.y = pos.y + rm.region.y1       (region.y1 == croom.ly)
-        // so the final trap cell is (abs_x - 1, abs_y).  A floor cell sitting on
-        // the room's left bounding column (abs_x == lx) yields relative x == 0
-        // and is silently skipped — this is why an irregular hub can queue fewer
-        // traps than its loop count.
+        // C ref: nhlsel.c:412 l_selection_rndcoord returns coords RELATIVE to
+        // the current room (abs - croom->lx/ly) while a room fill is running.
+        // themerms.lua checks `pos.x > 0` on that RELATIVE x, then shifts:
+        //   pos.x = pos.x + rm.region.x1 - 1   (region.x1 == croom->lx,
+        //   pos.y = pos.y + rm.region.y1        sp_lev.c:3064)
+        // which lands on (abs_x - 1, abs_y).  That `- 1` is only HALF of an
+        // xstart round trip: the stored coord is in the xstart-relative space
+        // des.* uses, and create_trap()'s get_location_coord() re-adds
+        // gx.xstart (sp_lev.c:4785), which is 1 on a random level
+        // (reset_xystart_size, sp_lev.c:208).  So the trap C actually makes
+        // sits on the cell rndcoord PICKED, and the queued coord must be that
+        // absolute cell.  Dropping the `+ xstart` half put our traps one column
+        // to the left AND made make_a_trap's self-comparison below test the
+        // wrong x, which skipped one of C's retry draws.
+        // A floor cell on the room's left bounding column (abs_x == lx) yields
+        // relative x == 0 and is silently skipped — this is why an irregular
+        // hub can queue fewer traps than its loop count.
         const relx = pos.x - croom.lx;
-        const rely = pos.y - croom.ly;
         if (relx <= 0) continue; // pos.x > 0 on the RELATIVE coordinate
-        const tx = relx + croom.lx - 1; // == pos.x - 1
-        const ty = rely + croom.ly;     // == pos.y
+        const tx = pos.x;        // == relx + region.x1 - 1 + gx.xstart
+        const ty = pos.y;        // == rely + region.y1 + gy.ystart
         if (!game.level) continue;
         if (!game.level._themeroom_postprocess)
             game.level._themeroom_postprocess = [];
@@ -1028,21 +1052,17 @@ function create_teleportation_hub(croom) {
 // and one per secret door.  "w" is MATCH_WALL (IS_STWALL), and mkmaze.c
 // set_levltyp turns a SDOOR -> AIR request into arboreal_sdoor with typ intact.
 function run_garden_walls(entry) {
-    const rmno = entry.roomnoidx + ROOMOFFSET;
     const grown = new Set();
     const key = (x, y) => (y * COLNO + x);
-    for (let x = entry.lx; x <= entry.hx; x++)
-        for (let y = entry.ly; y <= entry.hy; y++) {
-            const loc = game.level?.at(x, y);
-            if (!loc || loc.edge || loc.roomno !== rmno) continue;
-            // selection_do_grow(sel, W_ANY): the cell plus all eight neighbours.
-            for (let dx = -1; dx <= 1; dx++)
-                for (let dy = -1; dy <= 1; dy++) {
-                    const nx = x + dx, ny = y + dy;
-                    if (nx < 0 || nx > COLNO - 1 || ny < 0 || ny > ROWNO - 1) continue;
-                    grown.add(key(nx, ny));
-                }
-        }
+    // `data.sel` is the snapshot create_garden() took; selection_do_grow(sel,
+    // W_ANY) unions it with its own 8-neighbour dilation, clamped to the map.
+    for (const c of entry.sel || [])
+        for (let dx = -1; dx <= 1; dx++)
+            for (let dy = -1; dy <= 1; dy++) {
+                const nx = c.x + dx, ny = c.y + dy;
+                if (nx < 0 || nx > COLNO - 1 || ny < 0 || ny > ROWNO - 1) continue;
+                grown.add(key(nx, ny));
+            }
     if (!grown.size) return;
     let lox = COLNO, hix = 0, loy = ROWNO, hiy = 0;
     for (const k of grown) {
@@ -1117,16 +1137,42 @@ export async function run_themeroom_postprocess() {
         // So the loop RETRIES (re-rolls rndcoord, shrinking the modulus via the
         // removeit splice) whenever the pick shares EITHER x OR y with the trap
         // cell — hence the break uses && (both differ), not ||.
-        let teledest = null;
+        // Both sides of that test live in the same xstart-relative space (the
+        // pick is shifted by nhlsel.c:419, the stored coord by themerms.lua's
+        // `+ region.x1 - 1`), so comparing our two ABSOLUTE cells is the same
+        // comparison.  An exhausted selection yields C's (-1,-1), which the
+        // `until` accepts and isok() then rejects, leaving the trap destless.
+        let teledest = { x: -1, y: -1 };
         while (allDots.length) {
-            teledest = selection_rndcoord(allDots, true);
-            if (!teledest) break;
+            teledest = selection_rndcoord(allDots, true) || { x: -1, y: -1 };
+            if (teledest.x < 0) break;
             if (teledest.x !== entry.x && teledest.y !== entry.y) break;
         }
-        // des.trap -> mktrap teleport: mktrap_victim gate consumes one rnd(4),
-        // then the kind<HOLE test fails so no victim is rolled.
-        rnd(4);
-        await maketrap(entry.x, entry.y, TELEP_TRAP);
+        // des.trap(data) -> create_trap -> mktrap(TELEP_TRAP, MKTRAP_SEEN,
+        // NULL, &tm).  mktrap returns with NO draws at all when the target is
+        // pool or lava (mklev.c:2063), and it reaches the mktrap_victim gate
+        // only after maketrap has handed back a trap, since `kind` is
+        // NO_TRAP otherwise (mklev.c:2099-2102).
+        if (is_pool_or_lava(entry.x, entry.y)) continue;
+        const t = await maketrap(entry.x, entry.y, TELEP_TRAP);
+        if (t) {
+            t.tseen = true;   /* MKTRAP_SEEN, from des.trap's seen = true */
+            // C ref: maketrap()'s TELEP_TRAP arm — teledest is
+            // gx.xstart/gy.ystart plus gl.launchplace, and lspo_trap stored the
+            // xstart-relative pick into launchplace, so this is the absolute
+            // destination cell.  The `until` loop above is what guarantees C's
+            // "fixed-dest tele trap pointing to itself" impossible() can't fire.
+            if (teledest.x >= 0)
+                t.teledest = { x: teledest.x, y: teledest.y };
+        }
+        // mklev.c:2135-2144 mktrap_victim gate.  C evaluates left to right:
+        // in_mklev, kind != NO_TRAP, MKTRAP_NOVICTIM (unset here), then
+        // `lvl <= rnd(4)` — so the rnd(4) is drawn for every trap that got made,
+        // at any depth.  Same conjunct js/mkmaze.js spells out for the maze
+        // path.  It then dies on the last conjunct, `(kind < HOLE || kind ==
+        // MAGIC_TRAP)`: TELEP_TRAP is 15 and HOLE is 13, so a teleport trap
+        // never takes a victim and nothing further is rolled.
+        if (game.in_mklev && t) rnd(4);
     }
 }
 
@@ -1429,10 +1475,23 @@ function ndemon(atyp) {
     return (ptr && is_ndemon(ptr)) ? ptr : null;
 }
 
-// C ref: mondata.h is_ndemon() — a non-unique demon (lord/prince and the named
-// demons are G_UNIQ and excluded from a random "nameless demon" pick).
+// C ref: mondata.h:138 is_ndemon(ptr) = is_demon(ptr) && (mflags2 & (M2_LORD |
+// M2_PRINCE)) == 0, with is_demon(ptr) = (mflags2 & M2_DEMON) != 0.
+// This used to answer `mlet == S_DEMON && !(geno & G_UNIQ)`, which is a
+// different question and gets two whole groups wrong: the S_DEMON monsters
+// that carry no M2_DEMON flag (djinni, mail daemon, sandestin) were accepted,
+// and the demon lords/princes that are not flagged G_UNIQ were too.  ndemon()
+// therefore handed morguemon() a sandestin where C returns NON_PM and falls
+// through to PM_GHOST -- a different species, so a different newmonhp()
+// d(m_lev, 8) and every later draw shifted (m800000/seed0367 diverged at call
+// 6045, d(14,8) for our sandestin against C's d(13,8) ghost).
+// js/minion.js:63 and js/makemon.js:1080 already hold the correct predicate;
+// the M2_* bit values are monflag.h's and are spelled out here rather than
+// imported so this fix stays inside one function.
 function is_ndemon(ptr) {
-    return ptr.mcls === S_DEMON && !(ptr.geno & G_UNIQ);
+    const M2_DEMON_BIT = 0x100, M2_LORD_BIT = 0x400, M2_PRINCE_BIT = 0x800;
+    const f2 = mflags2_of(ptr);
+    return (f2 & M2_DEMON_BIT) !== 0 && (f2 & (M2_LORD_BIT | M2_PRINCE_BIT)) === 0;
 }
 
 // C ref: mkroom.c morguemon() — the graveyard's inhabitants.  BOTH rn2()s are
@@ -1874,15 +1933,21 @@ export function lspo_region({ region, type = 'ordinary', irregular = false,
                             rlit, rtype, true, filled, joined);
     } else {
         croom = add_sp_room(dx1, dy1, dx2, dy2, rlit, rtype, false, filled, joined);
-        const roomno = croom.roomnoidx + ROOMOFFSET;
-        for (let x = dx1; x <= dx2; x++)
-            for (let y = dy1; y <= dy2; y++) {
-                const loc = game.level?.at(x, y);
-                if (loc) {
-                    loc.roomno = roomno;
-                    loc.lit = !!rlit;
+        // C ref: mklev.c do_room_or_subroom() — add_room() lights the whole
+        // lowx-1..hix+1 / lowy-1..hiy+1 box, walls included, and an UNLIT room
+        // leaves the existing lighting alone (it only records rlit = 0).
+        if (rlit)
+            for (let x = dx1 - 1; x <= dx2 + 1; x++)
+                for (let y = dy1 - 1; y <= dy2 + 1; y++) {
+                    const loc = game.level?.at(x, y);
+                    if (loc) loc.lit = true;
                 }
-            }
+        // C ref: sp_lev.c:5689 topologize(troom) — the roomno stamp is NOT
+        // interior-only: topologize() also puts roomno (or SHARED) and edge=1
+        // on the room's surrounding wall ring.  Without the ring in_rooms()
+        // answers "no room here" for a monster standing in a shop's wall, so
+        // m_search_items() skipped its in-shop rn2(25).
+        EXT.topologize(croom);
     }
 
     if (contents) contents(croom);
@@ -2432,15 +2497,42 @@ export function quest_create_monster_at(name, x, y, peaceful) {
     return mtmp;
 }
 
-// des.stair("down", mx, my) — place a down stairway.  No RNG.
+// des.stair("up"/"down", mx, my) — place a stairway.  No RNG.
+//
+// C ref: sp_lev.c l_create_stairway()'s non-ladder arm, which is just
+// `mkstairs(x, y, up, gc.coder->croom, force)`; every caller of this helper
+// passes explicit map coordinates, so C's force is TRUE and croom is the
+// coder's room, which mkstairs() ignores (it is UNUSED there).
+//
+// This used to hand-roll the tail of mkstairs() and got three things wrong:
+// it never set levl[x][y].ladder (so a down stair rendered as `<`, since
+// back_to_glyph() picks S_dnstair off LA_DOWN), it had no "can't make a stair
+// off an end of the dungeon" guard (mklev.c:2188), and — the load-bearing one
+// — it PUSHED ONTO A PLAIN ARRAY instead of calling stairway_add().  C's
+// gs.stairs is a singly-linked list and every consumer in this port walks
+// `.next`, so array-registered stairs were invisible to all of them:
+// stairway_find_dir() found no up stair on arrival and stairway_find_special_
+// dir() then dereferenced the bare array's absent `.tolev`, throwing
+// "Cannot read properties of undefined (reading 'dnum')" and losing the whole
+// session (heldout-mirrorx/m1100000 seed4500-knight, Minetown variant 5).
+//
+// mkstairs() lives in mklev.js, which imports this file, so it arrives through
+// the EXT bridge rather than a direct import (see the EXT header below).
 export function quest_place_stair(mx, my, up) {
-    const x = q_absx(mx), y = q_absy(my);
-    const loc = game.level?.at(x, y);
-    if (loc) loc.typ = STAIRS;
-    if (!game.stairs) game.stairs = [];
-    game.stairs.push({ sx: x, sy: y, up: !!up });
-    if (up) { game.upstair = { x, y }; if (game.level) game.level.upstair = { x, y }; }
-    else { game.dnstair = { x, y }; if (game.level) game.level.dnstair = { x, y }; }
+    EXT.mkstairs(q_absx(mx), q_absy(my), up ? 1 : 0, null, true);
+}
+
+// The same mkstairs() call for builders that have already worked out an
+// ABSOLUTE stair square instead of a map-relative one: sp_lev.c
+// l_create_stairway()'s random-coordinate branch (Big Room, the Caveman and
+// Healer quest fillers) and mkmaze.c put_lregion_here()'s LR_DOWNSTAIR /
+// LR_UPSTAIR arm (Gehennom's lregions), which is literally
+// `mkstairs(x, y, (char) rtype, (struct mkroom *) 0, FALSE)` with
+// LR_DOWNSTAIR == 0 and LR_UPSTAIR == 1.  Each of those four builders used to
+// carry its own hand-rolled copy of the mkstairs() tail, all four with the
+// plain-array bug described above.
+export function splev_mkstairs_at(x, y, up) {
+    EXT.mkstairs(x, y, up ? 1 : 0, null, false);
 }
 
 // des.levregion({region={mx,my,mx,my}, type=...}) — store a 1-cell levregion
@@ -2710,21 +2802,24 @@ export function tower1_load_map(mapstr, lit, halignLeft = false) {
     return mf;
 }
 
-// des.ladder("up"/"down", mx, my) — no RNG.  C ref: sp_lev.c lspo_ladder ->
-// levl[x][y].typ = LADDER; levl[x][y].ladder = up ? LA_UP : LA_DOWN;
-// stairway_add(x, y, up, TRUE, ...).
+// des.ladder("up"/"down", mx, my) — no RNG.  C ref: sp_lev.c
+// l_create_stairway()'s using_ladder arm: levl[x][y].typ = LADDER, then
+// stairway_add(x, y, up, TRUE, &dest) with dest = u.uz ± 1, then
+// levl[x][y].ladder = up ? LA_UP : LA_DOWN.  (The ladder arm has no
+// "end of dungeon" guard; only mkstairs() does.)  Same defect as
+// quest_place_stair(): this pushed onto a plain array, so the ladder was
+// invisible to stairway_at()/stairway_find_dir() and carried no .tolev.
 export function tower_place_ladder(mx, my, up = false) {
     const x = q_absx(mx), y = q_absy(my);
+    const uz = game.u?.uz;
     const loc = game.level?.at(x, y);
     if (loc) loc.typ = LADDER;
-    if (!game.stairs) game.stairs = [];
-    game.stairs.push({ sx: x, sy: y, up: !!up, isladder: true });
-    if (up) {
-        game.upstair = { x, y };
-        if (game.level) { game.level.upstair = { x, y }; if (loc) loc.ladder = LA_UP; }
-    } else {
-        game.dnstair = { x, y };
-        if (game.level) { game.level.dnstair = { x, y }; if (loc) loc.ladder = LA_DOWN; }
+    EXT.stairway_add(x, y, !!up, true,
+                     { dnum: uz?.dnum ?? 0, dlevel: (uz?.dlevel ?? 1) + (up ? -1 : 1) });
+    if (loc) loc.ladder = up ? LA_UP : LA_DOWN;
+    if (game.level) {
+        if (up) game.level.upstair = { x, y };
+        else game.level.dnstair = { x, y };
     }
 }
 
@@ -3176,8 +3271,13 @@ export function flip_level(flp) {
     const FlipY = (y) => (miny + maxy - y);
     const inArea = (x, y) => (x >= minx && x <= maxx && y >= miny && y <= maxy);
 
-    // stairs (game.stairs may be an array (bigrm) or null)
-    for (const s of (Array.isArray(g.stairs) ? g.stairs : [])) {
+    // stairs and ladders — C ref: sp_lev.c:587 `for (stway = gs.stairs; stway;
+    // stway = stway->next)`, unconditional (no inFlipArea test).  gs.stairs is
+    // a singly-linked list; the array walk this replaces flipped nothing once
+    // quest_place_stair()/tower_place_ladder() started registering through
+    // stairway_add() like C does, which would have left flipped levels with
+    // their stairs at the unflipped coordinates.
+    for (let s = g.stairs; s; s = s.next) {
         if (flp & 1) s.sy = FlipY(s.sy);
         if (flp & 2) s.sx = FlipX(s.sx);
     }
@@ -3186,7 +3286,9 @@ export function flip_level(flp) {
         if (flp & 1) pt[ky] = FlipY(pt[ky]);
         if (flp & 2) pt[kx] = FlipX(pt[kx]);
     };
-    flipPt(g.upstair, 'x', 'y'); flipPt(g.dnstair, 'x', 'y');
+    // (game.upstair/game.dnstair were a duplicate of level.upstair/dnstair
+    // written only by the open-coded stair helpers this file no longer has;
+    // mkstairs() keeps the per-level pair, which is what every reader uses.)
     if (map?.upstair) flipPt(map.upstair, 'x', 'y');
     if (map?.dnstair) flipPt(map.dnstair, 'x', 'y');
 
@@ -3643,12 +3745,18 @@ export function vly_region(mx1, my1, mx2, my2, lit, rtype, needfill, irregular,
                             lit, rtype, true, needfill, true);
     } else {
         croom = add_sp_room(a.x, a.y, b.x, b.y, lit, rtype, false, needfill, true);
-        const roomno = croom.roomnoidx + ROOMOFFSET;
-        for (let x = a.x; x <= b.x; x++)
-            for (let y = a.y; y <= b.y; y++) {
-                const loc = game.level?.at(x, y);
-                if (loc) { loc.roomno = roomno; loc.lit = !!lit; }
-            }
+        // C ref: mklev.c do_room_or_subroom() — see lspo_region(): a lit room
+        // lights its whole lowx-1..hix+1 box, an unlit one changes nothing.
+        if (lit)
+            for (let x = a.x - 1; x <= b.x + 1; x++)
+                for (let y = a.y - 1; y <= b.y + 1; y++) {
+                    const loc = game.level?.at(x, y);
+                    if (loc) loc.lit = true;
+                }
+        // C ref: sp_lev.c:5689 topologize(troom) — see lspo_region(): the
+        // roomno stamp covers the room's surrounding wall ring too, so
+        // in_rooms() reports a monster standing in a shop wall as in-shop.
+        EXT.topologize(croom);
     }
     if (contents) contents(croom);
     splev_add_doors_to_room(croom);
@@ -4756,6 +4864,22 @@ export function noncoalignment(alignment) {
     return (k ? -alignment : 0);
 }
 
+// C ref: align.h:50 Align2amask(x) is a MACRO whose argument appears three
+// times in the expansion: ((x) == A_NONE) ? AM_NONE : ((x) == A_LAWFUL) ?
+// AM_LAWFUL : ((x) + 2).  So sp_lev.c:1915's
+// "Align2amask(noncoalignment(u.ualignbase[A_ORIGINAL]))" re-runs
+// noncoalignment(), and its rn2(2), on every evaluation that is reached.
+// do.c:435 sidesteps the same hazard with an explicit comment about it.
+// noncoalignment() never returns A_NONE, so the first test always costs a
+// draw and always fails; the altar therefore burns two rn2(2)s when the
+// second evaluation comes out lawful and three otherwise, and it is the LAST
+// evaluation that decides the alignment.
+export function Align2amask_noncoalignment(alignment) {
+    if (noncoalignment(alignment) === A_NONE) return AM_NONE;
+    if (noncoalignment(alignment) === A_LAWFUL) return AM_LAWFUL;
+    return (noncoalignment(alignment) + 2) & 0xff;
+}
+
 // C ref: sp_lev.c:1863 -- screen out squares a mimic-as-boulder should avoid.
 export function m_bad_boulder_spot(x, y) {
     if (t_at(x, y)) return true;
@@ -4767,7 +4891,8 @@ export function m_bad_boulder_spot(x, y) {
 }
 
 // C ref: sp_lev.c:1907 -- a special-level alignment mask becomes a real one.
-// AM_SPLEV_NONCO costs one rn2(2) (noncoalignment) and AM_SPLEV_RANDOM one
+// AM_SPLEV_NONCO goes through the Align2amask() macro's repeated evaluation
+// of noncoalignment() (two or three rn2(2)s) and AM_SPLEV_RANDOM costs one
 // rn2(3) (induced_align's 80% co-aligned roll); a literal alignment costs none.
 export function sp_amask_to_amask(sp_amask) {
     let amask;
@@ -4775,7 +4900,7 @@ export function sp_amask_to_amask(sp_amask) {
     if (sp_amask === AM_SPLEV_CO)
         amask = Align2amask(game.u?.ualignbase?.[A_ORIGINAL] ?? 0);
     else if (sp_amask === AM_SPLEV_NONCO)
-        amask = Align2amask(noncoalignment(game.u?.ualignbase?.[A_ORIGINAL] ?? 0));
+        amask = Align2amask_noncoalignment(game.u?.ualignbase?.[A_ORIGINAL] ?? 0);
     else if (sp_amask === AM_SPLEV_RANDOM)
         amask = EXT.induced_align(80);
     else
@@ -6682,7 +6807,7 @@ export function floodfillchk_match_under(x, y) {
 
 export function set_floodfillchk_match_under(typ) {
     spl.floodfillchk_match_under_typ = typ;
-    EXT.set_selection_floodfillchk(floodfillchk_match_under);
+    set_selection_floodfillchk(floodfillchk_match_under);
 }
 
 export function floodfillchk_match_accessible(x, y) {
@@ -7021,7 +7146,7 @@ export function generate_way_out_method(nx, ny, ov) {
     let res = true;
     let c;
 
-    EXT.selection_floodfill(ov2, nx, ny, true);
+    selection_floodfill(ov2, nx, ny, true);
     ov3 = selection_clone(ov2);
 
     /* try to make a secret door */
@@ -7084,17 +7209,18 @@ export function ensure_way_out() {
     const ov = selection_new_var();
     let ret = true;
 
-    EXT.set_selection_floodfillchk(floodfillchk_match_accessible);
+    set_selection_floodfillchk(floodfillchk_match_accessible);
 
-    for (const stway of (Array.isArray(game.stairs) ? game.stairs : [])) {
+    /* C: gs.stairs is a singly-linked list, so walk .next, not an array. */
+    for (let stway = game.stairs; stway; stway = stway.next) {
         if (stway.tolev?.dnum === game.u?.uz?.dnum)
-            EXT.selection_floodfill(ov, stway.sx, stway.sy, true);
+            selection_floodfill(ov, stway.sx, stway.sy, true);
     }
 
     for (const ttmp of (game.level?.traps || [])) {
         if ((undestroyable_trap(ttmp.ttyp) || is_hole(ttmp.ttyp))
             && !selection_getpoint_var(ttmp.tx, ttmp.ty, ov))
-            EXT.selection_floodfill(ov, ttmp.tx, ttmp.ty, true);
+            selection_floodfill(ov, ttmp.tx, ttmp.ty, true);
     }
 
     do {
@@ -7105,7 +7231,7 @@ export function ensure_way_out() {
                 if (ACCESSIBLE(levl_typ(x, y))
                     && !selection_getpoint_var(x, y, ov)) {
                     if (generate_way_out_method(x, y, ov))
-                        EXT.selection_floodfill(ov, x, y, true);
+                        selection_floodfill(ov, x, y, true);
                     ret = false;
                     done = true;            /* C: goto outhere */
                     break;

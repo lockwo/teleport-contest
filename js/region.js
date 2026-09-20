@@ -270,6 +270,15 @@ export function m_in_out_region(mon, x, y) {
         if (reg.attach2m === mon) continue;
         if (!reg.monsters.includes(mon) && inside_region(reg, x, y)) reg.monsters.push(mon);
     }
+    // C ref: region.c:533 m_in_out_region() returns TRUE unless a region's
+    // can_enter_f/can_leave_f callback vetoes the move — the same callbacks
+    // in_out_region() above does not model, and for the same reason.  This is
+    // the monster twin of the bug fixed there: without the return, the
+    // function yields `undefined` and dothrow.js's mhurtle_step() reads
+    // `will_hurtle(...) && m_in_out_region(...)` as false, so a monster
+    // knocked back by mhitm_knockback() (or hurtled by any other caller)
+    // never actually moved a square.
+    return true;
 }
 
 // C ref: region.c update_player_regions()/update_monster_region(mon) — resync

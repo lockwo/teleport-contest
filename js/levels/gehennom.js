@@ -10,7 +10,7 @@
 
 import {
     AIR, COLNO, CORR, HOLE, IRONBARS, IS_DOOR, In_endgame, LAVAPOOL, LEVEL_TELEP,
-    MAGIC_PORTAL, NO_TRAP, ROCKTRAP, ROLLING_BOULDER_TRAP, ROOM, ROWNO, STAIRS,
+    MAGIC_PORTAL, NO_TRAP, ROCKTRAP, ROLLING_BOULDER_TRAP, ROOM, ROWNO,
     STONE, TELEP_TRAP, TRAPDOOR, TRAPNUM, VIBRATING_SQUARE, isok,
 } from '../const.js';
 import { game } from '../gstate.js';
@@ -24,7 +24,7 @@ import { rn1, rn2, rnd } from '../rng.js';
 import {
     SET_LIT_NOCHANGE, bigrm_get_level_extends, is_ok_location, percent,
     selection_match, set_levltyp_lit, splev_map_at, splev_map_mark,
-    splev_map_origin, LOC_DRY,
+    splev_map_origin, splev_mkstairs_at, LOC_DRY,
 } from '../sp_lev.js';
 import {
     W_ANY, W_EAST, W_NORTH, W_RANDOM, W_SOUTH, W_WEST, l_selection_and,
@@ -384,13 +384,11 @@ function geh_put_lregion_here(x, y, reg, oneshot) {
         return false;
     }
     if (reg.rtype === LR_UPSTAIR || reg.rtype === LR_DOWNSTAIR) {
-        const loc = game.level.at(x, y);
-        loc.typ = STAIRS;
-        if (!game.stairs) game.stairs = [];
-        const up = reg.rtype === LR_UPSTAIR;
-        game.stairs.push({ sx: x, sy: y, up });
-        if (up) { game.upstair = { x, y }; if (game.level) game.level.upstair = { x, y }; }
-        else { game.dnstair = { x, y }; if (game.level) game.level.dnstair = { x, y }; }
+        // C: mkstairs(x, y, (char) rtype, (struct mkroom *) 0, FALSE) with
+        // LR_DOWNSTAIR == 0 / LR_UPSTAIR == 1, i.e. rtype IS the `up` flag.
+        // Open-coding mkstairs()'s tail here also open-coded its bug: the
+        // stair went onto a plain ARRAY that no gs.stairs consumer can see.
+        splev_mkstairs_at(x, y, reg.rtype === LR_UPSTAIR);
     }
     return true;
 }

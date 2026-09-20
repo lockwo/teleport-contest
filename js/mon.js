@@ -752,12 +752,19 @@ async function m_calcdistress(mtmp) {
     if (mtmp.mfleetim && !--mtmp.mfleetim) mtmp.mflee = 0;
 }
 
-// C ref: mon.c mcalcdistress(void) — iterates fmon (newest-first).
+// C ref: mon.c:1174 mcalcdistress(void) — `iter_mons(m_calcdistress);`.  Use the
+// real iter_mons() (mon.c:4527) rather than an inline fmon walk: iter_mons skips
+// DEADMONSTER *and* mon_offmap() monsters (mstate != MON_FLOOR), and the second
+// half of that filter was missing here.  A monster that is in the level list but
+// off the map — MON_MIGRATING (muse.js mon_leave / dog.js migrate_to_level),
+// MON_LIMBO, MON_STILL_ARRIVING, MON_OFFMAP — was getting a full distress pass:
+// mon_regen() healed it, decide_to_shapeshift()/were_change() DREW RNG for it,
+// and its mblinded/mfrozen/mfleetim timers ticked down a turn early.  C gives it
+// none of that.  (The movement-reallocation loop in allmain.c:233 deliberately
+// does NOT filter — it walks fmon raw — so mcalcmove() keeps drawing for off-map
+// monsters; only the distress pass skips them.)
 export async function mcalcdistress() {
-    for (const mtmp of fmonOrder()) {
-        if (DEADMONSTER(mtmp)) continue;
-        await m_calcdistress(mtmp);
-    }
+    await iter_mons(m_calcdistress);
 }
 
 // C ref: mondata.h:38 is_hider(ptr) = (mflags1 & M1_HIDE).  monflags_data.js
@@ -1841,7 +1848,7 @@ function Blind_telepat_mon() {
 // `msleeping && canseemon(mtmp)`, so wake_nearto_core()'s wake_msg(mtmp, FALSE)
 // prints there and is silent in monmove's version.  That divergence is why the
 // C form is restated here instead of reusing (or "fixing") the other copy.
-async function wake_msg_core(mtmp, interesting) {
+export async function wake_msg_core(mtmp, interesting) {
     if (mtmp.msleeping && canseemon_shared(mtmp))
         await pline(`${Monnam(mtmp)} wakes up${interesting ? '!' : '.'}`
             + `${monsndx(mtmp.data) === PM('flesh golem') ? " It's alive!" : ''}`);

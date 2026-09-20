@@ -2,12 +2,12 @@
 // Also exports the random-stair placement helper hea_filb.js reuses (neither
 // filler level carries a des.map(), so both need it).
 
-import { COLNO, CORR, ICE, POOL, ROOM, ROWNO, STAIRS } from '../const.js';
+import { COLNO, CORR, ICE, POOL, ROOM, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
 import { rn2 } from '../rng.js';
 import { deltrap, t_at } from '../trap.js';
 import {
-    bigrm_wallification, gx, gy, reset_xystart_size, vly_object,
+    bigrm_wallification, gx, gy, reset_xystart_size, splev_mkstairs_at, vly_object,
 } from '../sp_lev.js';
 import { quest_align_shuffle, quest_monster } from './quest_home_common.js';
 import { mkmap_mines, pri_create_trap } from './pri_loca.js';
@@ -63,16 +63,13 @@ function hea_stair_scan_rnd() {
     return hea_stair_scan_once(false);
 }
 
-// C ref: sp_lev.c l_create_stairway() -> mkstairs(): the STAIRS type-set plus
-// the bookkeeping quest_place_stair() also does, but taking already-absolute
-// coordinates (the random search above works in absolute space already).
+// C ref: sp_lev.c l_create_stairway() -> mkstairs(), now the one shared copy
+// (sp_lev.js splev_mkstairs_at) instead of a private transcription of its
+// tail.  The private one pushed the stair onto a plain ARRAY, which every
+// gs.stairs consumer (they all walk the singly-linked `.next` chain) missed,
+// and whose absent .tolev made stairway_find_special_dir() throw on arrival.
 function hea_place_stair_abs(x, y, up) {
-    const loc = game.level?.at(x, y);
-    if (loc) loc.typ = STAIRS;
-    if (!game.stairs) game.stairs = [];
-    game.stairs.push({ sx: x, sy: y, up: !!up });
-    if (up) { game.upstair = { x, y }; if (game.level) game.level.upstair = { x, y }; }
-    else { game.dnstair = { x, y }; if (game.level) game.level.dnstair = { x, y }; }
+    splev_mkstairs_at(x, y, up);
 }
 
 // C ref: sp_lev.c l_create_stairway() full random-coord path: search, then

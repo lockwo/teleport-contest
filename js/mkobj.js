@@ -811,6 +811,31 @@ for (const o of objects)
 // scale-mail/scales pair has an oc_oprop, not just the red pair.  worn.c uses
 // this column to install the extrinsic, and zap.c uses it to protect inventory
 // from elemental damage, so this table must remain the shared source of truth.
+//
+// KNOWN TABLE DIVERGENCE, deliberately carried.  The recorder's objects.h has
+// ELEVEN rows in each dragon group; OBJECT_DATA above has ten.  "shimmering
+// dragon scale mail" (objects.h:510) and "shimmering dragon scales"
+// (objects.h:537), both oc_oprop DISPLACED, are absent, and they sit at
+// position 4 of 11 — between silver and red.  Consequences:
+//   * every armour otyp from C's 104 (red dragon scale mail) up is one lower
+//     here, and from C's 115 (red dragon scales) up is two lower; our armour
+//     class holds 84 rows against the recorder's 86;
+//   * there is no DISPLACED armour source at all, so a cloak of displacement is
+//     the only way the hero can get that property;
+//   * every otyp constant in this port is derived from THIS table (or resolved
+//     by name), so the numbering is internally consistent and no recorded
+//     session is affected by the offset.
+// Inserting the two rows is rng-inert on both axes that consume rng, verified
+// against the C source: o_init.c obj_shuffle_range() gives ARMOR_CLASS exactly
+// four description-shuffle ranges (HELMET..HELM_OF_TELEPATHY,
+// LEATHER_GLOVES..GAUNTLETS_OF_DEXTERITY, CLOAK_OF_PROTECTION..
+// CLOAK_OF_DISPLACEMENT, SPEED_BOOTS..LEVITATION_BOOTS), none of which contains
+// a dragon row, so no shuffle changes length; and DRGN_ARMR() passes prob = 0
+// (objects.h:497-499), so the two extra rows never enter mkobj()'s
+// probability walk.  It is NOT landed because the insertion renumbers 377 of
+// 481 rows, and 687 hardcoded otyp literals across 72 files in js/ would have
+// to move with it — a change this corpus cannot fully validate.  Resolve it by
+// converting those literals to name lookups FIRST, then inserting the rows.
 const DRAGON_ARMOR_PROP = {
     'gray dragon scale mail': 12, 'gray dragon scales': 12,       // ANTIMAGIC
     'silver dragon scale mail': 65, 'silver dragon scales': 65,   // REFLECTING
@@ -834,11 +859,15 @@ for (const o of objects) {
 // source of e.g. "You are displaced" for a cloak of displacement or "You have
 // reflection" for a shield of reflection, so those enlightenment lines were
 // silently omitted.  Keyed by NAME for the same reason as the tables above.
-// speed boots (FAST) and helm of telepathy (TELEPAT) are deliberately absent:
-// each already has its own dedicated mechanism elsewhere (allmain.js
-// youHaveVeryFast(), the TELEPAT_PROP loop above) and giving speed boots a
-// generic oc_oprop here is untested against those call sites.
+// helm of telepathy is set by the TELEPAT_PROP loop above rather than here.
+// speed boots used to be omitted from BOTH, on the grounds that allmain.js
+// youHaveVeryFast() already hardcodes `uarmf.otyp === SPEED_BOOTS`; that left
+// objects[SPEED_BOOTS].oc_oprop undefined, so worn.c setworn()'s generic
+// `u.uprops[oc_oprop].extrinsic |= slot` (js/invent.js worn_extrinsics_on)
+// could not confer EFast, and every other oc_oprop consumer answered "these
+// boots grant nothing".  C objects.h:707 gives it FAST.
 const ARMOR_OC_OPROP_BY_NAME = {
+    'speed boots': 64,                 // FAST
     'cornuthaum': 35,                  // CLAIRVOYANT
     'helm of caution': 31,             // WARNING
     'elven cloak': 42,                 // STEALTH
