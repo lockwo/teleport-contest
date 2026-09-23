@@ -1181,12 +1181,9 @@ export async function acid_damage(obj) {
 
 
 // C ref: trap.c:4454 fire_damage(obj, force, x, y) — set an item on fire;
-// returns whether it was destroyed.  Real callers (apply.c/js/dothrow.js
-// use_whip's lava splash, dig.c/js/dig.js pick-axe hitting a lava wall,
-// potion.c/js/potion.js dipping into burning oil) all pass a hero-wielded
-// weapon, so only the erode_obj(ERODE_BURN) tail is reachable from this
-// port's wiring; the container/scroll/potion arms are ported for fidelity
-// against lava_damage() (below) and a future fire_damage_chain() caller.
+// returns whether it was destroyed.  In addition to hero-carried tools and
+// potions, minliquid() applies this to a fire-resistant monster's inventory
+// before relocating it out of lava.
 export async function fire_damage(obj, force, x, y) {
     const in_sight = !Blind() && couldsee(x, y);
 
@@ -1252,6 +1249,22 @@ export async function fire_damage(obj, force, x, y) {
         return true;
     }
     return false;
+}
+
+// C ref: trap.c:4550 fire_damage_chain(chain, force, here, x, y).  `delobj()`
+// removes a destroyed object from the mutable array, so retain its index for
+// the next object just as C saves `nobj` before calling fire_damage().
+export async function fire_damage_chain(chain, force, _here, x, y) {
+    let num = 0;
+    if (!Array.isArray(chain)) return num;
+    for (let i = 0; i < chain.length;) {
+        const obj = chain[i];
+        if (await fire_damage(obj, force, x, y)) ++num;
+        if (chain[i] === obj) ++i;
+    }
+    if (num && Blind() && !couldsee(x, y))
+        await update_topl('You smell smoke.');
+    return num;
 }
 
 // C ref: trap.c:4575 lava_damage(obj, x, y) — obj was thrown, dropped,

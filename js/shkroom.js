@@ -10,15 +10,15 @@ import { pline, update_topl } from './display.js';
 import { shtypes } from './shtypes.js';
 import { Hello } from './role.js';
 import { rn2, rnd } from './rng.js';
-import { objects, base_oc_cost } from './mkobj.js';
-import { acurr_eff } from './attrib.js';
+import { newomid } from './mkobj.js';
+import { get_cost, get_pricing_units } from './shk.js';
 import { makemon, monster_by_pmidx, enexto_spawn, name_to_pmidx } from './makemon.js';
 import { builds_up, room_discovered } from './dungeon.js';
 import { record_price_quote } from './o_init.js';
 import { depth as depth_of_level, isok } from './hacklib.js';
 import {
     ROOMOFFSET, NO_ROOM, SHARED, SHARED_PLUS, SHOPBASE, COLNO, ROWNO,
-    A_CHA, HUNGRY, TEMPLE, MORGUE, OROOM, MAXNROFROOMS, G_GONE,
+    TEMPLE, MORGUE, OROOM, MAXNROFROOMS, G_GONE,
     THRONE, ZOO, SWAMP, COURT, LEPREHALL, BEEHIVE, COCKNEST, ANTHOLE,
     BARRACKS, DELPHI,
 } from './const.js';
@@ -709,34 +709,16 @@ export async function check_special_room(newlev) {
 // what makes doname() append "(unpaid, N zorkmids)".  addtobill() was a `{}`
 // stub in invent.js, so a whole shop visit drew no RNG and printed none of it.
 
-// objects.h object classes and the otyps getprice() special-cases.
-const WEAPON_CLASS = 2, ARMOR_CLASS = 3, FOOD_CLASS = 7, POTION_CLASS = 8,
-      TOOL_CLASS = 6, GEM_CLASS = 13, COIN_CLASS = 12, WAND_CLASS = 10;
-const POT_WATER = 322, TALLOW_CANDLE = 224, WAX_CANDLE = 225, DUNCE_CAP = 94;
-const TIN = 296, EGG = 266, CORPSE = 265;
-const GLASS = 19;                 // objects.h MAT_GLASS
-const WORTHLESS_WHITE_GLASS = 461;
+// objects.h object classes billable()/addtobill() still need directly; the
+// rest of shk.c's pricing constants now live with getprice()/get_cost() in
+// js/shk.js (this file imports those functions instead of re-pricing).
+const FOOD_CLASS = 7, COIN_CLASS = 12;
 const BILLSZ = 200;               // shk.h
-const PM_TOURIST = 10, MAXULEV = 30, PM_ELF_RACE = 1, PM_ROGUE = 8;
+const PM_ELF_RACE = 1, PM_ROGUE = 8;
 // makemon.js pmidx for the four Kop ranks (C's k_mndx[]).
 const KEYSTONE_KOP = 179, KOP_SERGEANT = 180, KOP_LIEUTENANT = 181,
       KOP_KAPTAIN = 182;
 const MM_NOMSG = 0x00020000; // hack.h — no 'suddenly appears' message
-
-// C ref: shk.c get_cost() — each worthless glass gem is priced as one of two
-// real gems, chosen by a per-game pseudorandom bit.  Indexed from
-// WORTHLESS_WHITE_GLASS; [pseudorand ? a : b].
-const GLASS_GEM_PRICED_AS = [
-    [440, 452],  // white:  diamond / opal
-    [443, 448],  // blue:   sapphire / aquamarine
-    [441, 456],  // red:    ruby / jasper
-    [449, 450],  // yellowish brown: amber / topaz
-    [442, 459],  // orange: jacinth / agate
-    [447, 453],  // yellow: citrine / chrysoberyl
-    [444, 451],  // black:  black opal / jet
-    [445, 460],  // green:  emerald / jade
-    [455, 457],  // violet: amethyst / fluorite
-];
 
 // C ref: shk.c inside_shop(x, y) — the shop's room number, 0 if not inside one.
 // (The boolean inside_shop() above is this !== 0.)
@@ -768,114 +750,6 @@ function onbill(obj, shkp) {
     return null;
 }
 
-// C ref: shk.c corpsenm_price_adj(obj) — the per-species surcharge on a tin,
-// egg or corpse.  It needs intrinsic_possible(), which this port does not
-// have; every other object class prices exactly.
-function corpsenm_price_adj(obj) {
-    if (obj.otyp !== TIN && obj.otyp !== EGG && obj.otyp !== CORPSE) return 0;
-    return 0;
-}
-
-// C ref: shk.c get_pricing_units(obj) — quan, except globs are sold by weight.
-function get_pricing_units(obj) {
-    let units = obj.quan || 1;
-    if (obj.globby) {
-        const unit_weight = objects[obj.otyp]?.oc_weight || 0;
-        const wt = (obj.owt > 0) ? obj.owt : 0;
-        if (unit_weight) units = Math.floor((wt + unit_weight - 1) / unit_weight);
-    }
-    return units;
-}
-
-// C ref: shk.c getprice(obj, shk_buying) — base list price, before the
-// charisma / dunce-cap / unidentified multipliers.
-function getprice(obj, shk_buying) {
-    let tmp = base_oc_cost(obj.otyp);
-    // arti_cost(): no covered hero carries an artifact into a shop.
-    switch (obj.oclass) {
-    case FOOD_CLASS:
-        tmp += corpsenm_price_adj(obj);
-        // C: a HUNGRY-or-worse hero is charged u.uhs (2..4)x for food.
-        if ((game.u?.uhs || 0) >= HUNGRY && !shk_buying) tmp *= game.u.uhs;
-        if (obj.oeaten) tmp = 0;
-        break;
-    case WAND_CLASS:
-        if (obj.spe === -1) tmp = 0;
-        break;
-    case POTION_CLASS:
-        if (obj.otyp === POT_WATER && !obj.blessed && !obj.cursed) tmp = 0;
-        break;
-    case ARMOR_CLASS:
-    case WEAPON_CLASS:
-        if ((obj.spe || 0) > 0) tmp += 10 * obj.spe;
-        break;
-    case TOOL_CLASS:
-        if ((obj.otyp === WAX_CANDLE || obj.otyp === TALLOW_CANDLE)
-            && (obj.age || 0) < 20 * base_oc_cost(obj.otyp))
-            tmp = Math.trunc(tmp / 2);
-        break;
-    default: break;
-    }
-    return tmp;
-}
-
-// C ref: shk.c oid_price_adjustment(obj, oid) — an unidentified non-glass item
-// gets a 4/3 surcharge on one o_id in four, so the same item always quotes the
-// same price within a game.
-function oid_price_adjustment(obj, oid) {
-    const o = objects[obj.otyp];
-    if (!(obj.dknown && o?.oc_name_known)
-        && (obj.oclass !== GEM_CLASS || o?.material !== GLASS))
-        return (oid % 4) === 0 ? 1 : 0;
-    return 0;
-}
-
-// C ref: shk.c get_cost(obj, shkp) — list price with the shopkeeper's
-// multipliers.  Charisma dominates: CHA 16-17 pays 3/4, which is how a
-// 10-zorkmid cream pie is quoted at 8 to a Knight.  No RNG.
-export function get_cost(obj, shkp) {
-    let tmp = getprice(obj, false);
-    let multiplier = 1, divisor = 1;
-
-    if (!tmp) tmp = 5;
-    if (!obj.dknown || !objects[obj.otyp]?.oc_name_known) {
-        if (obj.oclass === GEM_CLASS && objects[obj.otyp]?.material === GLASS) {
-            const pseudorand =
-                ((game.ubirthday || 0) % obj.otyp) >= Math.trunc(obj.otyp / 2);
-            const pair = GLASS_GEM_PRICED_AS[obj.otyp - WORTHLESS_WHITE_GLASS];
-            if (pair) tmp = base_oc_cost(pseudorand ? pair[0] : pair[1]) || tmp;
-        } else if (oid_price_adjustment(obj, obj.o_id) > 0) {
-            multiplier *= 4; divisor *= 3;
-        }
-    }
-    if (game.uarmh && game.uarmh.otyp === DUNCE_CAP) {
-        multiplier *= 4; divisor *= 3;
-    } else if ((game.urole?.mnum === PM_TOURIST
-                && (game.u?.ulevel || 1) < Math.trunc(MAXULEV / 2))
-               || (game.uarmu && !game.uarm && !game.uarmc)) {
-        multiplier *= 4; divisor *= 3;
-    }
-
-    const cha = acurr_eff(A_CHA);
-    if (cha > 18) divisor *= 2;
-    else if (cha === 18) { multiplier *= 2; divisor *= 3; }
-    else if (cha >= 16) { multiplier *= 3; divisor *= 4; }
-    else if (cha <= 5) multiplier *= 2;
-    else if (cha <= 7) { multiplier *= 3; divisor *= 2; }
-    else if (cha <= 10) { multiplier *= 4; divisor *= 3; }
-
-    tmp *= multiplier;
-    if (divisor > 1) {
-        // C: tmp = (((tmp * 10) / divisor) + 5) / 10 — integer round-half-up.
-        tmp = Math.trunc((Math.trunc((tmp * 10) / divisor) + 5) / 10);
-    }
-    if (tmp <= 0) tmp = 1;
-    if (obj.oartifact) tmp *= 4;
-    // C applies the anger surcharge separately from multiplier/divisor.
-    if (shkp?.eshk?.surcharge) tmp += Math.trunc((tmp + 2) / 3);
-    return tmp;
-}
-
 // C ref: shk.c billable(&shkp, obj, roomno, reset_nocharge) — the shk who owns
 // obj, or null when nobody can charge for it.
 function billable(shkp, obj, roomno, reset_nocharge) {
@@ -902,17 +776,25 @@ function add_one_tobill(obj, dummy, shkp) {
     if (!eshk.bill) { eshk.bill = []; eshk.billct = 0; }
     if (!billable(shkp, obj, game.u.ushops?.[0], true)) return;
     if ((eshk.billct || 0) >= BILLSZ) return;
-    eshk.bill[eshk.billct] = {
+    const bp = {
         bo_id: obj.o_id,
         bquan: obj.quan || 1,
         useup: !!dummy,
         price: get_cost(obj, shkp),
     };
+    if (obj.globby) {
+        // C ref: shk.c:3352 — for globs, the amount charged for quan 1
+        // depends on owt; remember that weight for future re-pricing.
+        bp.price *= get_pricing_units(obj);
+        newomid(obj);
+        if (obj.oextra) obj.oextra.omid = obj.owt;
+    }
+    eshk.bill[eshk.billct] = bp;
     eshk.billct++;
     obj.unpaid = 1;
     // C ref: shk.c:3362 — the bill price is remembered per object TYPE for the
     // discoveries list's " {buy N}" suffix.
-    record_price_quote(obj.otyp, eshk.bill[eshk.billct - 1].price, true);
+    record_price_quote(obj.otyp, bp.price, true);
 }
 
 // C ref: shk.c append_honorific(buf) — rn2(SIZE(honored) - 1) picks among the

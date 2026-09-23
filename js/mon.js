@@ -710,8 +710,8 @@ async function minliquid(mtmp) {
             if (cansee(mtmp.mx, mtmp.my))
                 await pline(`${Monnam(mtmp)} burns slightly.`);
             if (!(is_flyer_m(ptr) || mtmp.mlevitating)) {
-                // fire_damage_chain(minvent) is deferred (no monster here
-                // carries burnable gear at a lava square); the rloc is not.
+                const { fire_damage_chain } = await import('./trap.js');
+                await fire_damage_chain(mtmp.minvent, false, false, mtmp.mx, mtmp.my);
                 const { rloc, RLOC_MSG } = await import('./teleport.js');
                 await rloc(mtmp, RLOC_MSG);
             }
@@ -1066,7 +1066,7 @@ async function m_dowear_type(mon, flag, creation, racialexception) {
     // so every mondata predicate below needs the resolved species, not mon.data
     // itself.  worn.js's species() is a no-op (returns mon.data unchanged) for
     // every monster made by makemon(), which already carries .ac.
-    const { species } = await import('./worn.js');
+    const { species, update_mon_extrinsics } = await import('./worn.js');
     const ptr = species(mon);
     // worn.c snapshots `See_invisible ? Monnam(mon) : mon_nam(mon)` before
     // checking this slot.  The string is later needed only if armor changes,
@@ -1153,8 +1153,17 @@ async function m_dowear_type(mon, flag, creation, racialexception) {
     mon.misc_worn_check = (mon.misc_worn_check | 0) | flag;
     best[WORNF] = (best[WORNF] | 0) | flag;
     if (autocurse) { best.cursed = 1; best.blessed = 0; }  // C ref: mkobj.c curse()
-    // C ref: worn.c:964/977 update_mon_extrinsics(mon, old|best, ..) `case FAST`.
+    // C ref: worn.c:962/992 update_mon_extrinsics(mon, old|best, .., creation)
+    // `case FAST` (speed boots) is handled by mon_adjust_speed_worn below,
+    // which also owns the "moving faster/slower" message and must run first
+    // so its oldspeed snapshot precedes any other mspeed recompute; the
+    // `maybe_blocks` INVIS arm (a worn mummy wrapping blocks/grants minvis)
+    // is idempotent and order-independent, so it is applied afterward via
+    // worn.js's shared update_mon_extrinsics for both the outgoing and
+    // incoming item, exactly like C's two call sites.
     await mon_adjust_speed_worn(mon, creation);
+    if (old) update_mon_extrinsics(mon, old, false);
+    update_mon_extrinsics(mon, best, true);
 }
 
 // C ref: worn.c:488 mon_adjust_speed(mon, 0, obj) — adjust==0 does nothing but

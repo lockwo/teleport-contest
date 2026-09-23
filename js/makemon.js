@@ -455,6 +455,37 @@ const MON_AC = [
     10, 10, 10,
 ];
 
+// C ref: include/monsters.h LVL(lvl, mov, ac, mr, aln) — mov (movement speed,
+// 12 == normal).  Indexed by pmidx, generated from the C mons[] table
+// (matched by name, same convention as MON_AC directly above).  Consumed by
+// dokick.c kick_monster()'s "monster blocks/evades the kick" branch
+// (`mon->data->mmove >= 12`); a missing field here defaulted to 0, which
+// always failed that test and skipped straight to kickdmg() for every kick,
+// silently dropping maybe_mnexto()'s enexto()/collect_coords() draws whenever
+// C actually relocated the kicked monster.
+const MON_MMOVE = [
+    18, 18, 18, 18, 6, 24, 3, 1, 6, 4, 6, 6, 12, 15, 12, 12, 18, 16, 16, 15,
+    12, 12, 12, 12, 12, 12, 14, 3, 1, 13, 13, 13, 18, 16, 15, 15, 15, 15, 12, 12,
+    12, 10, 15, 9, 6, 9, 6, 6, 12, 12, 3, 12, 12, 3, 15, 13, 0, 0, 3, 6,
+    6, 6, 6, 15, 3, 3, 3, 12, 12, 12, 6, 9, 9, 9, 5, 7, 9, 5, 1, 1,
+    1, 9, 9, 18, 3, 12, 12, 12, 12, 10, 12, 12, 3, 3, 12, 4, 15, 15, 3, 3,
+    16, 24, 24, 24, 20, 24, 1, 20, 20, 20, 22, 22, 3, 3, 3, 9, 12, 18, 15, 15,
+    8, 10, 8, 10, 18, 16, 22, 22, 20, 20, 18, 18, 20, 9, 9, 9, 9, 9, 9, 9,
+    9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 12, 36, 12, 6, 5, 1, 0,
+    0, 0, 0, 1, 1, 6, 8, 10, 10, 6, 6, 10, 12, 12, 12, 12, 18, 15, 12, 6,
+    8, 10, 12, 6, 9, 9, 9, 8, 10, 10, 10, 12, 12, 12, 14, 10, 10, 10, 10, 12,
+    14, 14, 16, 10, 12, 14, 1, 3, 6, 6, 12, 12, 18, 12, 8, 15, 15, 3, 15, 18,
+    12, 10, 12, 14, 12, 6, 12, 14, 26, 12, 12, 12, 9, 12, 12, 12, 15, 12, 15, 6,
+    6, 6, 6, 6, 6, 8, 6, 8, 8, 12, 12, 9, 9, 6, 3, 8, 7, 6, 6, 6,
+    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 16, 12, 12, 0, 12, 15, 10, 10, 6,
+    10, 10, 10, 10, 12, 12, 15, 3, 10, 12, 12, 9, 12, 12, 12, 12, 6, 15, 6, 9,
+    6, 12, 5, 3, 18, 9, 3, 15, 9, 12, 15, 12, 12, 12, 24, 12, 3, 18, 12, 9,
+    10, 3, 6, 6, 6, 6, 6, 5, 9, 12, 0, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    12, 12, 12,
+];
+
 // C ref: include/monsters.h SIZ(wt, nut, snd, siz) — cwt (corpse weight),
 // msize (MZ_*); indexed by pmidx, generated from mons[] matched by (name,
 // class symbol) — renamed leaders/rulers reuse their C counterpart's SIZ()
@@ -637,6 +668,7 @@ const MONS = MONS_RAW.map((t) => ({
     mcolor: t[8],
     mflags3: MFLAGS3[t[0]] ?? 0, // C include/monsters.h MON() flg3 group
     ac: MON_AC[t[0]] ?? 10,      // C LVL() base armour class (find_mac)
+    mmove: MON_MMOVE[t[0]] ?? 12, // C LVL() movement speed (dokick.c kick_monster)
     cwt: MON_CWT[t[0]],          // C SIZ() corpse weight (mkobj weight())
     cnutrit: MON_CNUTRIT[t[0]] ?? 0, // C SIZ() corpse nutrition (eat.c)
     msize: MON_MSIZE[t[0]],      // C SIZ() body size MZ_* (mkobj weight())
@@ -960,24 +992,10 @@ function dungeon_alignment() {
         return (am === AM_LAWFUL || am === AM_NEUTRAL || am === AM_CHAOTIC)
             ? am : AM_NONE;
     }
-    // C's fallback is `svd.dungeons[u.uz.dnum].flags.align` alone (no second,
-    // uncached special-level lookup; game.special_levels doesn't exist here).
-    // dungeon.h's d_flags packs align at bit 4 and UNCONNECTED as 0x10 — the
-    // SAME bit as AM_CHAOTIC — so C reads an "unconnected" dungeon (the
-    // tutorial) back as chaotic; re-apply that overlap or the tutorial loses
-    // its alignment shift.
-    const dgnflags = game.dungeons?.[dnum]?.flags;
-    if (dgnflags) {
-        const am = (((dgnflags.align | 0) | (dgnflags.unconnected ? AM_CHAOTIC : 0)) & 7);
-        return (am === AM_LAWFUL || am === AM_NEUTRAL || am === AM_CHAOTIC)
-            ? am : AM_NONE;
-    }
-    const raw = DUNGEON_ALIGN_BY_DNUM[dnum] ?? A_NONE;
-
-    if (raw === AM_NONE || raw === A_NONE) return AM_NONE;
-    if (raw === AM_LAWFUL || raw === A_LAWFUL) return AM_LAWFUL;
-    if (raw === AM_NEUTRAL || raw === A_NEUTRAL) return AM_NEUTRAL;
-    if (raw === AM_CHAOTIC || raw === A_CHAOTIC) return AM_CHAOTIC;
+    // C's d_flags.align is a 3-bit bitfield, but init_dungeon_dungeons()
+    // assigns the shifted D_ALIGN_* mask (0x10/0x20/0x40) into it.  Those
+    // values all truncate to zero.  Therefore only a special level's shifted
+    // alignment above can affect rndmonst_adj()'s weights.
     return AM_NONE;
 }
 
@@ -3273,10 +3291,25 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // position (mk_trap_statue's `makemon(&mons[...], 0, 0, ...)`) reaches
     // here with x == y == 0 and needs the position search, which draws
     // rn1(COLNO-3,2)/rn2(ROWNO) per attempt.
+    let effMmflags = mmflags;
     if (x === 0 && y === 0) {
         const pos = makemon_rnd_goodpos(ptr);
         if (!pos) return null;
         x = pos.x; y = pos.y;
+    } else if (game.u?.ux === x && game.u?.uy === y && !game.in_mklev) {
+        // C ref: makemon.c:1158,1179 `byyou = u_at(x, y); ... } else if (byyou
+        // && !gi.in_mklev) { enexto_core(&cc, u.ux, u.uy, ptr, gpflags) ...}`
+        // — a caller that places directly on the hero's own square (e.g.
+        // trap.js domagictrap's `makemon(null, u.ux, u.uy, 0)` monster-summon
+        // loop) needs makemon() itself to find a nearby free spot: mm_mon_at()
+        // below never catches this, since the hero isn't in the monster list.
+        // Recording MM_APPARXY_BYYOU here (mirroring the flag callers that
+        // pre-resolve their own enexto_spawn already pass in) makes the
+        // newsym/set_apparxy tail below still run for this path too.
+        const cc = enexto_spawn(game.u.ux, game.u.uy, ptr);
+        if (!cc) return null;
+        x = cc.x; y = cc.y;
+        effMmflags |= MM_APPARXY_BYYOU;
     }
     if (x > 0 && mm_mon_at(x, y)) {
         if (!(mmflags & MM_ADJACENTOK)) return null;
@@ -3527,7 +3560,7 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
              || nm === 'wumpus')
             && rn2(5))
             mtmp.msleeping = true;
-    } else if ((mmflags & MM_APPARXY_BYYOU) && !game.in_mklev) {
+    } else if ((effMmflags & MM_APPARXY_BYYOU) && !game.in_mklev) {
         // C ref: makemon.c:1390-1394 — the `else` half of the in_mklev/else
         // pair above: `if (byyou) { newsym(mtmp->mx, mtmp->my);
         // set_apparxy(mtmp); }`.  byyou is C's u_at(ORIGINAL x,y) computed at

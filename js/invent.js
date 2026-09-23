@@ -131,7 +131,7 @@ import { engr_at, wipe_engr_at } from './engrave.js';
 import { costly_spot, addtobill, shkname } from './shkroom.js';
 // C ref: objnam.c doname_base():1648 — the shop-price suffix is formatted in
 // objnam.c, on top of shk.c's get_cost_of_shop_item()/unpaid_cost().
-import { price_suffix, singplur_lookup } from './objnam.js';
+import { price_suffix, singplur_lookup, add_erosion_words } from './objnam.js';
 // role.js imports only gstate/rng/const, so this is cycle-safe.
 import { roles, align_gname } from './role.js';
 // pickup.c lives in js/pickup.js.  The cycle back to this file is fine: both
@@ -143,6 +143,7 @@ import { pickup, pickup_prinv_prefix, allow_category, add_valid_menu_class,
          menu_style, count_categories, allow_all, count_justpicked,
          find_justpicked, PICK_NONE, PICK_ONE, PICK_ANY,
          BY_NEXTHERE, AUTOSELECT_SINGLE, USE_INVLET, INVORDER_SORT,
+         SIGNAL_NOMENU, SIGNAL_ESCAPE,
          INCLUDE_VENOM, ALL_TYPES, ALL_TYPES_SELECTED, UNPAID_TYPES,
          WORN_TYPES, BILLED_TYPES, CHOOSE_ALL, BUC_BLESSED_F, BUC_CURSED_F,
          BUC_UNCURSED_F, BUC_UNKNOWN_F, JUSTPICKED } from './pickup.js';
@@ -2013,7 +2014,7 @@ function simple_obj_name(obj, opts = {}) {
         if (obj.opoisoned) prefix += 'poisoned ';
     }
     if (buc && (obj.oclass === WEAPON_CLASS || obj.oclass === ARMOR_CLASS || is_weptool(obj))) {
-        prefix += add_erosion_words(obj);
+        prefix = add_erosion_words(obj, prefix);
         if (obj.known) prefix += `${obj.spe >= 0 ? '+' : ''}${obj.spe | 0} `;
     }
     // C ref: objnam.c:1486 — the " (recharged:charges)" suffix is emitted by
@@ -2087,47 +2088,6 @@ function is_samurai() { return game.u?.umonnum === 9 || game.urole?.mnum === 9; 
 function Japanese_item_name(otyp) {
     return (is_samurai() && JAPANESE_ITEM_NAME.has(otyp))
         ? JAPANESE_ITEM_NAME.get(otyp) : null;
-}
-
-// C ref: objclass.h material constants — iron (rust-prone) vs others.
-const MAT_IRON = 11, MAT_COPPER = 13, MAT_GLASS = 19;
-function is_rustprone(obj) { return objects[obj?.otyp]?.material === MAT_IRON; }
-// objclass.h:205 is `oc_material == COPPER || oc_material == IRON`.  Testing
-// COPPER alone means add_erosion_words() below can never say "corroded" or
-// "corrodeproof" for an IRON item, which is the common case by a wide margin.
-function is_corrodeable(obj) {
-    const m = objects[obj?.otyp]?.material;
-    return m === MAT_COPPER || m === MAT_IRON;
-}
-// C ref: mkobj.c is_flammable(otmp) — (oc_material <= WOOD && != LIQUID) ||
-// PLASTIC.  The old literals (14/22/23) named NO real objclass.h material:
-// PAPER is 5, CLOTH 6, LEATHER 7, WOOD 8 — so this answered TRUE only for
-// SILVER(14) and FALSE for every actually-flammable item.
-const MAT_LIQUID = 1, MAT_WOOD = 8, MAT_PLASTIC = 18;
-function is_flammable(obj) {
-    const m = objects[obj?.otyp]?.material | 0;
-    return (m <= MAT_WOOD && m !== MAT_LIQUID) || m === MAT_PLASTIC;
-}
-
-// C ref: objnam.c add_erosion_words — erosion / erodeproof prefix words.
-function add_erosion_words(obj) {
-    let p = '';
-    if (!(obj?.oclass === WEAPON_CLASS || obj?.oclass === ARMOR_CLASS)) return p;
-    if (obj.oeroded) {
-        if (obj.oeroded === 2) p += 'very ';
-        else if (obj.oeroded === 3) p += 'thoroughly ';
-        p += is_rustprone(obj) ? 'rusty ' : 'burnt ';
-    }
-    if (obj.oeroded2) {
-        if (obj.oeroded2 === 2) p += 'very ';
-        else if (obj.oeroded2 === 3) p += 'thoroughly ';
-        p += is_corrodeable(obj) ? 'corroded ' : 'rotted ';
-    }
-    if (obj.rknown && obj.oerodeproof)
-        p += is_rustprone(obj) ? 'rustproof '
-           : is_corrodeable(obj) ? 'corrodeproof '
-           : is_flammable(obj) ? 'fireproof ' : '';
-    return p;
 }
 
 // C ref: objnam.c doname_base() worn-status suffix for the inventory window.
@@ -2289,7 +2249,7 @@ function doname_invent_core(obj) {
     }
     // poisoned (none of the starting kit), erosion words, then enchant.
     if (obj.opoisoned) prefix += 'poisoned ';
-    prefix += add_erosion_words(obj);
+    prefix = add_erosion_words(obj, prefix);
     if (known) prefix += `${obj.spe >= 0 ? '+' : ''}${obj.spe | 0} `;
 
     let phrase;
@@ -3233,7 +3193,8 @@ export async function hold_another_object(obj, drop_fmt, drop_arg, hold_msg) {
     // so we then proceed to addinv; the refuse-to-hold branch (return the
     // dropped object) is kept faithful but isn't exercised.
     if (obj && obj.oartifact) {
-        if (!touch_artifact(obj, game.youmonst)) {
+        const { touch_artifact: touchArtifact } = await import('./artifact.js');
+        if (!await touchArtifact(obj, game.u)) {
             place_object(obj, game.u?.ux ?? obj.ox, game.u?.uy ?? obj.oy);
             return obj;
         }
@@ -3263,10 +3224,9 @@ export async function hold_another_object(obj, drop_fmt, drop_arg, hold_msg) {
         update_inventory();
         return null;  /* might be gone */
     }
-    // C: `if (hold_msg || drop_fmt) prinv(hold_msg, obj, oquan);` — makewish
-    // passes a non-NULL drop_fmt with a NULL hold_msg, so prinv runs with a
-    // null prefix and prints the default "o - a silver wand." line.
-    if (hold_msg || drop_fmt) prinv(hold_msg, obj, oquan);
+    // C's prinv() is a pline(): it must page a pending touch_artifact() blast
+    // before showing the inventory line, rather than overwrite that blast.
+    if (hold_msg || drop_fmt) await update_topl(prinv_fmt(hold_msg, obj, oquan));
     update_inventory();
     await encumber_msg();
     return obj;
@@ -4757,46 +4717,29 @@ function armor_on_fn(mask) {
     }
 }
 
-// C ref: hack.c nomul(-delay) + allmain.c moveloop_core() multi<0 occupation
-// loop.  Drive a `delay`-turn immobile occupation inline: set multi negative so
-// the per-turn autosearch is skipped, advance `delay` game turns of monster
-// movement, then unmul() — print the finish message and run afternmv.
+// C ref: hack.c nomul(-delay, msg) + allmain.c moveloop_core() multi<0
+// occupation loop.  Register nomovemsg and afternmv before beginning the
+// occupation: unmul() runs both inside the final once-per-turn block, before
+// allmain's once-per-hero seer_turn roll.
 async function run_dress_occupation(delay, msg, afternmv) {
     const g = game;
     g.multi = -delay;
     g.multi_reason = 'dressing up';
+    g.nomovemsg = msg || '';
+    g.afternmv = afternmv || null;
     if (g.u && g.u.umovement == null) g.u.umovement = 12; // NORMAL_SPEED
     let guard = 0;
-    // C ref: allmain.c moveloop_core() — the immobile occupation elapses one
-    // game TURN per `++gm.multi`, and `++gm.multi` runs at the END of the
-    // once-per-turn block (after the autosearch check at allmain.c:343).  A
-    // single moveloop_turn() call may run a monster-movement pass WITHOUT
-    // elapsing a turn (the hero had leftover umovement), in which case C does
-    // not increment multi; only count an elapsed turn when 'moves' advanced.
-    // Gating on multi (not on a fixed moves delta) keeps the autosearch — run
-    // inside moveloop_turn while multi is still < 0 — suppressed on every
-    // occupation turn, including the last, exactly as in C.
+    // C ref: allmain.c:380 — `++gm.multi` runs at the end of each elapsed
+    // turn.  A moveloop_turn() may only spend leftover monster movement, so
+    // only its own multi countdown determines when the occupation completes.
     while (g.multi < 0 && guard++ < 60) {
         await moveloop_turn();
-        // C ref: allmain.c:453 — find_ac() is in the once-per-player-input block
-        // of moveloop_core(), which an occupation re-enters on every elapsed
-        // turn.  Running these turns inline here skipped it, so u.uac never went
-        // stale-then-fresh and C's turn-2 AC_VALUE draw went missing.
+        // C ref: allmain.c:453 — find_ac() is once per player-input loop; an
+        // inline occupation re-enters that loop for every elapsed turn.
         find_ac();
-        // moveloop_turn() already performs the C ref allmain.c:380 `++gm.multi`
-        // (and unmul when it reaches 0) inside the once-per-turn block, so the
-        // occupation count is driven entirely by moveloop_turn — do NOT also
-        // increment here (that would halve the maneuver length).
     }
     if (g.multi < 0) g.multi = 0; // safety: never leave the hero stuck busy
-    // unmul(): clear busy state, print nomovemsg, THEN run afternmv (hack.c
-    // unmul() prints gn.nomovemsg before invoking ga.afternmv).  Both messages
-    // accumulate on the topline, so the finished maneuver and the afternmv
-    // effect (e.g. "You feel yourself speed up.") share one "--More--" frame.
-    g.multi = 0;
     g.multi_reason = null;
-    if (msg) await update_topl(msg);
-    if (afternmv) await afternmv();
 }
 
 // C ref: do_wear.c dowear() — the 'W' command.
@@ -7582,7 +7525,11 @@ async function tty_select_menu(items, plan, how) {
         }
         /* anything else: rejected (tty_nhbell), the menu stays up */
     }
-    if (cancelled) return [];
+    if (cancelled) {
+        const none = [];
+        none.cancelled = true;
+        return none;
+    }
     return items.filter((it) => it.selected);
 }
 
@@ -7793,13 +7740,14 @@ async function query_objlist_menu(qstr, olist, qflags, how, allow) {
     if (game.this_title) plan.unshift({ str: game.this_title });
     /* end_menu(win, qstr) skips the prompt line entirely when qstr is NULL */
     if (qstr) plan.unshift({ str: qstr, attr: ATR_INVERSE }, { str: '' });
-
     const picked = await tty_select_menu(items, plan, how);
-    /* fix up counts: -1 means no count was given, i.e. the whole stack */
-    return picked.map((it) => ({
+
+    const result = picked.map((it) => ({
         obj: it.obj,
         count: (it.count === -1 || it.count > it.obj.quan) ? it.obj.quan : it.count,
     }));
+    result.cancelled = !!picked.cancelled;
+    return result;
 }
 
 /* do.c:963 menudrop_split() */
@@ -8935,7 +8883,41 @@ export async function identify(otmp) {
     await update_topl(prinv_fmt(null, otmp, 0));
     return 1;
 }
-export function menu_identify(id_limit) { identify_pack(id_limit, false); }
+// C ref: invent.c menu_identify — repeatedly open a PICK_ANY inventory menu
+// until the scroll's identification quota is exhausted, the hero declines with
+// ESC, or five empty submissions have been retried.
+async function menu_identify(id_limit) {
+    let first = true, tryct = 5;
+    while (id_limit) {
+        // C's menu setup flushes the pending message window before it draws the
+        // inventory menu.  `update_topl()` tracks this as a soft pending line,
+        // so force the same --More-- boundary before each menu iteration.
+        if (game._pending_message) {
+            await topl_more();
+            game._pending_message = '';
+            game._toplin = 0;
+            game._toplinSoft = null;
+        }
+        const picks = await query_objlist_menu(
+            `What would you like to identify ${first ? 'first' : 'next'}?`,
+            inventoryArray(),
+            SIGNAL_NOMENU | SIGNAL_ESCAPE | USE_INVLET | INVORDER_SORT,
+            PICK_ANY, not_fully_identified);
+        if (picks.length) {
+            const n = Math.min(picks.length, id_limit);
+            for (let i = 0; i < n; i++, id_limit--)
+                await identify(picks[i].obj);
+            first = false;
+        } else if (picks.cancelled) {
+            break;
+        } else if (!--tryct) {
+            await pline("That's enough tries.");
+            break;
+        } else {
+            await pline('Choose an item; use ESC to decline.');
+        }
+    }
+}
 export function count_unidentified(objchn) { let n = 0; for (const obj of iterateObjects(objchn)) if (not_fully_identified(obj)) ++n; return n; }
 // C ref: invent.c identify_pack(id_limit, learning_id).  id_limit==0 OR >=
 // unid_cnt identifies the whole pack; a positive limit identifies up to that
@@ -8958,13 +8940,7 @@ export async function identify_pack(id_limit = 0, learning_id = false) {
             if (not_fully_identified(obj)) { await identify(obj); if (--remaining < 1) break; }
         }
     } else {
-        // limited identify: identify up to id_limit items (menu selection in C;
-        // the owned sessions never hit the partial-menu path, so take the first
-        // id_limit unidentified items in pack order).
-        let n = id_limit;
-        for (const obj of inventoryArray()) {
-            if (n > 0 && not_fully_identified(obj)) { await identify(obj); --n; }
-        }
+        await menu_identify(id_limit);
     }
     update_inventory();
 }

@@ -64,7 +64,7 @@ import { mkcorpstat, mkobj, mksobj, CORPSE, FIGURINE, place_object, WEAPON_CLASS
          TOOL_CLASS, GEM_CLASS, SPBOOK_CLASS, FOOD_CLASS, objects, COIN_CLASS,
          STRANGE_OBJECT, ARMOR_CLASS } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
-import { mon_nocorpse, undead_to_corpse, name_to_pmidx } from './makemon.js';
+import { mon_nocorpse, undead_to_corpse, name_to_pmidx, mon_msize } from './makemon.js';
 // C ref: mplayer.js:216-222 — exper.js's rank_of() is keyed by the true mons[]
 // offset (PM_ROGUE=8/PM_RANGER=7 match roles[].mnum); role.js's own rank_of()
 // indexes its roles[] array directly instead, which has Rogue/Ranger swapped,
@@ -1892,25 +1892,24 @@ export async function killed(mon, opts) {
             const otyp = otmp.otyp;
             // C ref: mon.c:3600 xkilled() — "don't create large objects from
             // small monsters": mdat->msize < MZ_HUMAN && otyp != FIGURINE &&
-            // (owt>30 || oc_big) routes to delobj() instead of placing it.
-            // (The objects[] table here doesn't carry oc_big, so only the
-            // weight leg of that OR is checked — every otyp big enough to
-            // matter is also over the 30-unit threshold.)  delobj_core()
-            // always rolls obj_resists(obj,0,0)'s rn2(100) (the Amulet/
-            // invocation-tool guard) even though an ordinary item never
-            // resists — skipping that roll (as a bare place always would)
-            // desyncs every RNG draw after it, including corpse_chance() below.
+            // (owt > 30 || oc_big) routes to delobj() instead of placing it.
+            // `oc_big` is also the weapon/tool bimanual bit (obj.h), whose
+            // complete JS predicate is owned by invent.js.
             // C ref: mon.c:3597 — the FOOD_CLASS arm comes FIRST: newly created
             // permafood is destroyed unless the killed monster collects food
-            // (M2_COLLECT).  Omitting it left the food on the floor AND skipped
-            // delobj()'s obj_resists() rn2(100), desyncing everything after.
+            const msize = mon.data?.msize ?? mon_msize(mon.data?.pmidx) ?? 2;
+            const isSmallMonster = msize < 2 && otyp !== FIGURINE;
             const isFoodDrop = otmp.oclass === FOOD_CLASS
                 && !(mflags2_of(mon.data) & M2_COLLECT) && !otmp.oartifact;
-            if (isFoodDrop) {
-                const { delobj } = await import('./invent.js');
-                delobj(otmp);
-            } else if ((mon.data?.msize ?? 2 /* MZ_HUMAN */) < 2 && otyp !== FIGURINE
-                && (otmp.owt || 0) > 30) {
+            let tooBigForSmallMonster = false;
+            if (isSmallMonster) {
+                tooBigForSmallMonster = (otmp.owt || 0) > 30;
+                if (!tooBigForSmallMonster) {
+                    const { bimanual } = await import('./invent.js');
+                    tooBigForSmallMonster = bimanual(otmp);
+                }
+            }
+            if (isFoodDrop || tooBigForSmallMonster) {
                 const { delobj } = await import('./invent.js');
                 delobj(otmp);
             } else {
@@ -2141,11 +2140,40 @@ function experience(mtmp) {
 // step-269: the MZ_HUGE earth elemental). (lich/Vlad crumble, gas-spore
 // AT_BOOM, and LEVEL_SPECIFIC_NOCORPSE precede this in C but aren't exercised
 // by these sessions, so aren't modeled.)
+//
+// dog.js's starting pet (kitten/little dog/pony) carries a MINIMAL mon.data
+// with only name/pmidx/mcolor/mlet/mflags3/... -- no geno/msize at all (see
+// mhitm.js's permonst() header comment for the established fix for this same
+// gap). Reading mon.data directly here answered `mdat.geno || 0` as 0 for a
+// pet, so its G_FREQ<2 test came out TRUE (0 < 2) and inflated tmp by one --
+// the starting pony rolled rn2(3) instead of C's rn2(2) when killed
+// (heldout-mirrorx seed0030-ten-diverse-deaths, the Knight life's saddled
+// pony). Resolve the canonical MONS record through the species name first,
+// exactly as mhitm.js's permonst() does, falling back to the raw mon.data
+// only when the name can't be resolved.
+const _corpse_permonst_cache = new Map();
+function corpse_permonst(mon) {
+    const dat = mon?.data;
+    if (!dat) return {};
+    const nm = dat.name;
+    if (!nm) return dat;
+    let rec = _corpse_permonst_cache.get(nm);
+    if (rec === undefined) {
+        const p = name_to_pmidx(nm);
+        rec = (p >= 0) ? monster_by_pmidx(p) : null;
+        _corpse_permonst_cache.set(nm, rec);
+    }
+    return rec || dat;
+}
 export function corpse_chance(mon) {
-    const mdat = mon.data || {};
+    const mdat = corpse_permonst(mon);
     const bigOrLizard = (largemonst(mdat) || mdat.name === 'lizard') && !mon.mcloned;
     const golem = /\bgolem$/.test(mdat.name || '');
-    if (bigOrLizard || golem || mon.isshk) return true; // guaranteed, no roll
+    // mon.c:3244-3246 -- mplayer/rider guards belong here too (mhitm.js's own
+    // corpse_chance() copy already has them); a Rider or player-quest-form
+    // kill never reaches the ordinary rn2 below.
+    if (bigOrLizard || golem || is_mplayer(mdat) || is_rider(mdat) || mon.isshk)
+        return true; // guaranteed, no roll
     const geno = mdat.geno || 0;
     const G_FREQ = geno & 7;
     const verysmall = mdat.verysmall ? 1 : 0;

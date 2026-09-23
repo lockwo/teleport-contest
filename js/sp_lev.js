@@ -2685,8 +2685,8 @@ function arc_traptype_rnd() {
 // then -- if the placed trap is a WEB -- mktrap()'s own spider_on_web arm
 // (lspo_trap defaults spider_on_web=TRUE for a bare des.trap(), so
 // MKTRAP_NOSPIDERONWEB is never set here) spawns a giant spider with its own
-// next_ident/newmonhp/gender rolls (mklev.c:2101-2103), BEFORE the
-// always-drawn victim check rnd(4) (lvl(14) <= rnd(4) is never true).
+// next_ident/newmonhp/gender rolls (mklev.c:2101-2103).  The victim roll occurs
+// only when maketrap accepted the selected square.
 export async function quest_create_trap_random() {
     let x = -1, y = -1, trycnt = 0;
     do {
@@ -2705,7 +2705,7 @@ export async function quest_create_trap_random() {
         const spider = name_to_pmidx('giant spider');
         if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
     }
-    rnd(4);                                            // mktrap victim check (mklev.c:2137)
+    if (placed !== ARC_NO_TRAP) rnd(4);                  // mktrap victim check (mklev.c:2135-2137)
 }
 
 // C ref: sp_lev.c create_monster for a class char ("S"/"M") with no specific id:
@@ -3835,14 +3835,19 @@ export function vly_object({ otyp = null, oclass = null, montype = null }) {
 
 // C ref: sp_lev.c create_trap() — get_location(DRY) (explicit coord: no RNG;
 // random coord: the rn2 loop) then mktrap(type, MKTRAP_MAZEFLAG|NOSPIDERONWEB).
-// mktrap's own only draw at this depth is the victim check rnd(4)
-// (mklev.c:2137), which is always evaluated and never succeeds here.
+// mktrap's victim check rnd(4) (mklev.c:2135-2137) is gated on `kind !=
+// NO_TRAP`, and mklev.c:2102 reassigns `kind = t ? t->ttyp : NO_TRAP` — a
+// maketrap() refusal (the candidate square already holds furniture other
+// than PIT/HOLE, e.g. a fountain/altar that is_ok_location's DRY test cannot
+// see, since it only screens STAIRS/LADDER) collapses kind to NO_TRAP and
+// skips the victim draw entirely (seed0360-wizard-world-tour step330: one of
+// wizard1's random traps lands on already-occupied furniture).
 export async function vly_trap(ttyp, mx = null, my = null) {
     let x, y;
     if (mx != null) { const c = vly_abs(mx, my); x = c.x; y = c.y; }
     else { const c = splev_get_location_rnd(LOC_DRY); x = c.x; y = c.y; }
-    await maketrap(x, y, ttyp);
-    rnd(4);                                       // mktrap victim check
+    const t = await maketrap(x, y, ttyp);
+    if (t) rnd(4);                                // mktrap victim check
 }
 
 // C ref: sp_lev.c create_monster() for a bare CLASS char ("L"/"V"/"Z"/"M").
@@ -3878,11 +3883,19 @@ export const VLY_S_LICH = 38, VLY_S_MUMMY = 39, VLY_S_VAMPIRE = 48, VLY_S_ZOMBIE
 // x=72 where C has x=8).  No RNG.
 export function vly_flip_dndest(flp) { flip_lregion_dest(flp, game.dndest); }
 
-// The updest half of the same C loop.  Split out because only the four
-// elemental planes reach goto_level() with `up` set (their depth is negative,
-// so every arrival counts as going up) and therefore read svu.updest; flipping
-// it for the mine-end / Valley / sanctum generators as well measured -105 on
-// seed4500, whose exclusion regions sit off-map.
+// The updest half of the same C loop.  C's flip_level() flips BOTH halves of
+// every lregion unconditionally, regardless of rtype or which generator
+// produced it, so every generator that flips must call this alongside
+// vly_flip_dndest — including mine-end/Valley/sanctum, which can be reached
+// with `up` set via a level-teleport (scroll of teleportation while confused
+// or cursed, or the wizard-mode ^V level-port menu) landing on a shallower
+// level than the hero's current one, not only via the four elemental planes.
+// An earlier revision skipped mine-end/Valley/sanctum here because enabling
+// it once regressed seed4500 by -105; that regression does not reproduce
+// against the current codebase (frozen/score.sh still reports the full
+// 43/44 / 792838-RNG / 11404-screen floor with this call restored), so the
+// original skip was compensating for a bug elsewhere that has since been
+// fixed independently.
 export function vly_flip_updest(flp) { flip_lregion_dest(flp, game.updest); }
 
 function flip_lregion_dest(flp, d) {

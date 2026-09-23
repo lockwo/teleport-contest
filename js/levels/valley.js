@@ -14,7 +14,7 @@ import {
     TEMPLE_RTYPE, VLY_S_LICH, VLY_S_MUMMY, VLY_S_VAMPIRE, VLY_S_ZOMBIE, bigrm_load_map,
     bigrm_wallification, flip_level, percent, quest_flip_branch, quest_level_init_solidfill,
     quest_place_stair, quest_register_branch, quest_set_door, remove_boundary_syms, shuffle,
-    vly_altar, vly_flip_dndest, vly_monster_class, vly_non_diggable, vly_object,
+    vly_altar, vly_flip_dndest, vly_flip_updest, vly_monster_class, vly_non_diggable, vly_object,
     vly_place_monster, vly_region, vly_teleport_region, vly_terrain_at, vly_terrain_line,
     vly_trap,
 } from '../sp_lev.js';
@@ -225,6 +225,7 @@ export async function makemaz_valley() {
         flip_level(flp);
         quest_flip_branch(flp);
         vly_flip_dndest(flp);
+        vly_flip_updest(flp);
     }
     return morgues;
 }

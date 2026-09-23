@@ -19,12 +19,12 @@ import {
     COLNO, ROWNO, STONE, VWALL, HWALL, DBWALL, TREE, SDOOR, POOL, MOAT, WATER,
     LAVAPOOL, LAVAWALL, IRONBARS, DOOR, CORR, ROOM, STAIRS, FOUNTAIN, THRONE, ALTAR, ICE,
     MAX_TYPE, INVALID_TYPE, NO_ROOM, D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED,
-    W_NONDIGGABLE, LA_DOWN, ENGRAVE, BURN, NON_PM,
+    W_NONDIGGABLE, LA_DOWN, ENGRAVE, BURN, NON_PM, SPACE_POS,
     MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP,
 } from './const.js';
 import { GameMap } from './game.js';
 import { wallification, set_wall_state } from './mklev.js';
-import { objects, mksobj, next_ident, blessorcurse, curse, set_corpsenm } from './mkobj.js';
+import { objects, mksobj, next_ident, blessorcurse, curse, set_corpsenm, BOULDER } from './mkobj.js';
 import { name_to_pmidx, monster_by_pmidx, newmonhp } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { hole_destination, choose_trapnote } from './trap.js';
@@ -502,11 +502,36 @@ function makeStair(cx, cy) {
     if (loc) { loc.typ = STAIRS; loc.ladder = LA_DOWN; }
 }
 
+// C ref: sp_lev.c get_location() — the contents callback's object has no
+// coordinate, so it samples the 75x18 map fragment until it lands on a dry,
+// boulder-free cell.  Its final location is transient because the object is
+// then moved into the box, but every rejected candidate still consumes a pair.
+function randomTutorialDryLocation() {
+    let x, y, cpt = 0;
+    do {
+        x = OFF + rn2(TUT_MAP[0].length);
+        y = OFF + rn2(TUT_MAP.length);
+        const loc = game.level.at(x, y);
+        const boulder = game.level.objects?.some(
+            (obj) => obj.otyp === BOULDER && obj.ox === x && obj.oy === y);
+        if (SPACE_POS(loc?.typ) && !boulder) return { x, y };
+    } while (++cpt < 100);
+    for (let xx = 0; xx < TUT_MAP[0].length; xx++)
+        for (let yy = 0; yy < TUT_MAP.length; yy++) {
+            x = OFF + xx;
+            y = OFF + yy;
+            const loc = game.level.at(x, y);
+            const boulder = game.level.objects?.some(
+                (obj) => obj.otyp === BOULDER && obj.ox === x && obj.oy === y);
+            if (SPACE_POS(loc?.typ) && !boulder) return { x, y };
+        }
+    return { x, y };
+}
+
 // The large box (line 232): broken=true, trapped=false, with a scroll inside via
 // the contents function.  mksobj(LARGE_BOX) generates random contents through
 // mkbox_cnts (rn2(6) count + rnd(100)/rnd(1000)/next_ident/blessorcurse per
-// item), THEN the explicit scroll is placed at a RANDOM in-box location via
-// get_location (rn2(75),rn2(18)) + mksobj(WAND secret door detection).
+// item), THEN the explicit scroll is placed using get_location().
 function createBoxWithScroll(cx, cy) {
     // mksobj(LARGE_BOX) -> next_ident, olocked rn2(5), otrapped rn2(10),
     // [tknown rn2(100) only if trapped], mkbox_cnts(...).
@@ -519,10 +544,10 @@ function createBoxWithScroll(cx, cy) {
     const loc = game.level.at(x, y);
     if (loc) { if (!loc.objects) loc.objects = []; loc.objects.push(box); }
 
-    // The explicit contents scroll: des.object({ id="secret door detection",
-    // class="/" }) with NO coord -> get_location_coord random spot inside the
-    // map area: rn2(75), rn2(18).  Then mksobj(WAN_SECRET_DOOR_DETECTION).
-    rn2(75); rn2(18);                                   // get_location
+    // The explicit contents scroll calls get_location_coord() without a coord,
+    // then mksobj(WAN_SECRET_DOOR_DETECTION).  The object becomes contained, but
+    // get_location() must still reject non-DRY candidates before that happens.
+    randomTutorialDryLocation();
     mksobj(otypByName('secret door detection', 11), true, true); // WAND_CLASS; spe rn2(5) + blessorcurse rn2(17)
 }
 

@@ -661,7 +661,7 @@ const BIGRM_VARIANTS = {
         // nh.rn2(3) first, then deadends' t_or_f() -> percent(50).
         const corrwid = 3 + rn2(3);             // nh.rn2(3)
         const deadends = percent(50);           // deadends = t_or_f()
-        create_maze(corrwid, 1, deadends);      // LVLINIT_MAZE
+        create_maze(corrwid, 1, !deadends);     // C sp_lev.c:3865 inverts `deadends`
         bigrm_region(0, 0, 75, 18, true);
         bigrm_non_diggable_all();
         // Turn every wall with floor on both sides into floor + a boulder;

@@ -41,7 +41,7 @@ import { COLNO, ROWNO, STONE, ROOM, CORR, DOOR, ICE, STAIRS, FOUNTAIN,
          AM_MASK, AM_SANCTUM, Amask2align, A_LAWFUL, A_NEUTRAL, A_CHAOTIC, A_NONE,
          IS_WALL, IS_DOOR, IS_OBSTRUCTED, IS_FURNITURE, IS_AIR, IS_POOL, IS_LAVA,
          IS_WATERWALL, In_sokoban, Is_rogue_level, CLOUD, Is_airlevel,
-         Is_waterlevel, isok, VIBRATING_SQUARE, STRAT_WAITMASK, I_SPECIAL } from './const.js';
+         Is_waterlevel, isok, VIBRATING_SQUARE, STRAT_WAITMASK, I_SPECIAL, TELEDS_NO_FLAGS } from './const.js';
 
 // Imports used only by the hack.c completeness block at the bottom of this file.
 import { ROOMOFFSET, MOD_ENCUMBER, SLT_ENCUMBER, FOOT,
@@ -135,7 +135,7 @@ function avoid_moving_on_liquid(x, y) {
         && in_air /* || Known_lwalking || (is_pool && Known_wwalking) */
         && !(typ === WATER || typ === LAVAWALL))
         return false; // liquid is safe to traverse
-    if ((IS_POOL(typ) || IS_LAVA(typ)) && (loc?.seenv || 0))
+    if ((is_pool(x, y) || IS_LAVA(typ)) && (loc?.seenv || 0))
         return true;
     return false;
 }
@@ -1745,35 +1745,40 @@ function jump_hilite_first_cursor() {
     return [gx, gy + 1];
 }
 
-// C ref: apply.c jump() tail -> dothrow.c walk_path(hurtle_jump) + teleport.c
-// teleds(cc, TELEDS_NO_FLAGS) + nomul(-1) + morehungry(rnd(25)).
-// For the recorded knight (unpunished, not swallowed/trapped, jumping over open
-// floor) hurtle_step / teleds consume no RNG: the only RNG draw is the trailing
-// morehungry(rnd(25)).  teleds for this hero reduces to relocating <u.ux,u.uy>,
-// redrawing the vacated and new cells, and forcing a full vision recalc so the
-// landing room is revealed.  The monster turn (mcalcmove &c.) is driven by the
-// move loop after dojump() returns ECMD_TIME.
-function jump_landing(nux, nuy) {
+// C ref: apply.c jump() tail: uc={u.ux,u.uy}; range=max(|dx|,|dy|);
+// walk_path(&uc, &cc, hurtle_jump, &range); teleds(cc.x, cc.y, TELEDS_NO_FLAGS);
+// nomul(-1); morehungry(rnd(25)).
+// <nux,nuy> is the getpos()-validated TARGET square, not necessarily the
+// square actually reached: dothrow.js's real hurtle_jump/walk_path walk the
+// Bresenham path from the hero one square at a time and stop short
+// (dothrow.js hurtle_step's "You bump into X" arm) at the first monster,
+// wall, closed door, or boulder in the way, exactly as a physical jump does.
+// The previous version always landed on the raw requested square, so a
+// monster standing between the hero and the target left the hero jumping
+// PAST it instead of bumping into it and stopping one square short (the
+// seed4500-knight-coverage m800000 step-211 divergence: C's hill orc in the
+// path made C's landing ux two short of ours).  teleds() is the real port
+// (js/teleport.js), not a reduced reimplementation: it runs
+// spoteffects()/dotrap() at whatever square is actually reached, so a jump
+// that lands on a trap now triggers it, matching C's landing-trap behavior.
+async function jump_landing(nux, nuy) {
     const u = game.u;
-    const ux0 = u.ux, uy0 = u.uy;
+    const uc = { x: u.ux, y: u.uy };
+    const cc = { x: nux, y: nuy };
+    let range = Math.abs(cc.x - uc.x);
+    const rangeY = Math.abs(cc.y - uc.y);
+    if (range < rangeY) range = rangeY;
+    const { walk_path, hurtle_jump } = await import('./dothrow.js');
+    await walk_path(uc, cc, hurtle_jump, { range });
 
-    // u_on_newpos(nux, nuy): set the hero's new position.
-    u.ux = nux;
-    u.uy = nuy;
-    u.ux0 = ux0;
-    u.uy0 = uy0;
+    const { teleds } = await import('./teleport.js');
+    await teleds(cc.x, cc.y, TELEDS_NO_FLAGS);
     u.umoved = true; // the hero relocated this command
-
-    // teleds: newsym(u.ux0,u.uy0) clears the vacated tile; newsym(new) draws the
-    // hero; vision_full_recalc forces the move loop's vision_recalc to reveal
-    // the landing room (see_monsters runs as part of the recalc/redraw).
-    newsym(ux0, uy0);
-    newsym(nux, nuy);
-    game.vision_full_recalc = 1;
-    vision_recalc(0);
 
     // C ref: apply.c jump() tail — nomul(-1), "busy jumping" for one turn; see
     // nomul()'s comment above for why the negative-multi path matters here.
+    // Runs AFTER teleds() (which itself calls nomul(0)) so it wins, matching
+    // C's post-teleds nomul(-1) override.
     nomul(-1);
 
     // morehungry(rnd(25)) — roll first (argument evaluation), then apply.

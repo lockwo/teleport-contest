@@ -27,6 +27,8 @@ import { BOULDER } from './mkobj.js';
 import {
     is_swimmer_flag, passes_walls_flag, amorphous_flag, throws_rocks_flag,
 } from './monflags_data.js';
+import { inhishop } from './shk.js';
+import { inhistemple } from './priest.js';
 
 // C ref: include/hack.h — rloc() flags.  (js/const.js carries an older copy of
 // these names with different values; the ones here are this C build's.)
@@ -44,6 +46,7 @@ export const GP_AVOID_MONPOS = 0x01000000;
 const S_EEL_MCLS = 57;
 
 function terrainTyp(x, y) { return game.level?.at(x, y)?.typ; }
+function roomnoAt(x, y) { return game.level?.at(x, y)?.roomno ?? 0; }
 function u_at(x, y) { return game.u?.ux === x && game.u?.uy === y; }
 function distu(x, y) { return dist2(x, y, game.u?.ux ?? 0, game.u?.uy ?? 0); }
 
@@ -151,12 +154,30 @@ export function goodpos(x, y, mtmp, gpflags) {
     return true;
 }
 
-// C ref: teleport.c rloc_pos_ok(x, y, mtmp) — goodpos() plus the special-level
-// teleport-region restrictions (svu.updest / svd.dndest), which only exist on
-// the Wizard-tower and endgame levels the contest sessions never reach.
+// C ref: teleport.c rloc_pos_ok(x, y, mtmp) — goodpos() plus [try to] keeping
+// a shopkeeper/temple priest in their own room, plus the special-level
+// teleport-region restriction (tele_jump_ok / svu.updest / svd.dndest).  Many
+// special levels set these regions (js/levels/{fire,earth,water,air,asmodeus,
+// baalz,orcus,sanctum,valley,medusa,bigroom,minend1,minend2}.js, js/gehennom.js
+// vaults), not just the Wizard's Tower — skipping tele_jump_ok let rloc() cross
+// a level's inner-sanctum boundary it should have refused (seed0360 step 334,
+// Gehennom demon-lord level: an earth elemental burning in lava drew (52,6),
+// outside its own side of the level's dndest/updest split, and this port
+// accepted it while C's tele_jump_ok rejected it and drew again).
+// The migrating-monster-arrival branch (mtmp->mx==0, Wizard-tower yy-bit-flag
+// semantics) is not modeled: no rloc() caller in this port ever passes a
+// monster before it has a real position, so C's `if (!xx)` arm is unreached.
 function rloc_pos_ok(x, y, mtmp) {
     if (!goodpos(x, y, mtmp, GP_CHECKSCARY)) return false;
-    // tele_jump_ok(xx, yy, x, y) is TRUE on levels without updest/dndest.
+    const xx = mtmp?.mx, yy = mtmp?.my;
+    if (xx) {
+        if (mtmp.isshk && inhishop(mtmp)) {
+            if (roomnoAt(x, y) !== mtmp.eshk?.shoproom) return false;
+        } else if (mtmp.ispriest && inhistemple(mtmp)) {
+            if (roomnoAt(x, y) !== mtmp.epri?.shroom) return false;
+        }
+        if (!tele_jump_ok(xx, yy, x, y)) return false;
+    }
     return true;
 }
 
@@ -652,8 +673,16 @@ export async function teleds(nux, nuy, teleds_flags) {
         u.urooms = save_urooms;   /* reset prior to spoteffects() */
     }
     /* possible shop entry message comes after guard's shrill whistle */
+    // C ref: teleport.c teleds() -> spoteffects(TRUE) — this port's
+    // spoteffects(pickupFn) replaces C's boolean pick flag with an optional
+    // callback (see trap.js's own doc comment on spoteffects()); passing the
+    // bare literal `true` crashed with "pickupFn is not a function" the
+    // moment any real caller reached this line (read.js's teleds_hero(), the
+    // scroll-of-teleportation path, already uses this exact real-callback
+    // pattern and is the confirmed-working reference).
     const { spoteffects } = await import('./trap.js');
-    await spoteffects(true);
+    const { pickup_after_move } = await import('./cmd.js');
+    await spoteffects(pickup_after_move);
     const { invocation_message, notice_all_mons } = await import('./hack.js');
     await invocation_message();
     notice_mon_on_();

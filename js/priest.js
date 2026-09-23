@@ -214,13 +214,15 @@ export async function intemple(roomno) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// priest.c: the ten functions that had no counterpart here.
+// priest.c: nine of the ten functions that had no counterpart here still
+// don't (forget_temple_entry is now wired — see below).
 //
-// INERT: nothing in js/ calls anything below.  The existing deferral comments
-// that name these (js/save.js:241/604 for forget_temple_entry, js/uhitm.js:
-// 431/447/1144-1150 for ghod_hitsu, js/sp_lev.js:4033/4809 for mk_roamer via
-// its EXT stub, js/sounds.js:376 for priest_talk) still describe the LIVE
-// behaviour; wiring any of them up is a separate, scored change.
+// INERT: nothing in js/ calls anything below except forget_temple_entry
+// (js/save.js's savemonchn() now calls it, matching save.c:893-894).  The
+// existing deferral comments that name the rest (js/uhitm.js:431/447/
+// 1144-1150 for ghod_hitsu, js/sp_lev.js:4033/4809 for mk_roamer via its EXT
+// stub, js/sounds.js:376 for priest_talk) still describe the LIVE behaviour;
+// wiring any of THOSE up is a separate, scored change.
 //
 // ── THE epri/emin STORAGE GAP (reported, not papered over) ──────────────────
 // C reaches priest and minion data through mextra.h's EPRI(mon)/EMIN(mon), and
@@ -382,7 +384,10 @@ export async function priestname(mon, article, reveal_high_priest, _pname) {
 
 // C ref: priest.c:545 forget_temple_entry(priest) — reset the four move
 // counters that rate-limit intemple()'s feedback, so leaving the level and
-// coming back gives a fresh start.  No RNG.
+// coming back gives a fresh start.  No RNG.  Called from js/save.js's
+// savemonchn() (C ref: save.c:893-894), once per priest, right before that
+// priest's own record is saved/stored — i.e. on every level departure, not
+// only on a final game save.
 export function forget_temple_entry(priest) {
     const epri_p = priest?.ispriest ? EPRI_(priest) : null;
 

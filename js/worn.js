@@ -272,7 +272,7 @@ function blocks_invis(obj) { return obj?.otyp === MUMMY_WRAPPING; }
 // `default:` arm that ORs res_to_mr(which) in is a no-op here; what DOES have an
 // effect is the FAST arm (worn speed boots override permspeed) and the
 // w_blocks() invisibility arm.
-function update_mon_extrinsics(mon, obj, on) {
+export function update_mon_extrinsics(mon, obj, on) {
     // FAST: C calls mon_adjust_speed(mon, 0, obj), which only re-derives mspeed
     // from "is a FAST item worn"; with silently/in_mklev set it prints nothing.
     // SPEED_BOOTS is the only ARMOR_CLASS otyp with oc_oprop == FAST.

@@ -8,7 +8,8 @@
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { phase_of_the_moon, night, FULL_MOON } from './calendar.js';
-import { VAULT, ROOMOFFSET } from './const.js';
+import { VAULT, ROOMOFFSET, TEMPLE as TEMPLE_SND } from './const.js';
+import { in_rooms as in_rooms_snd } from './shkroom.js';
 import { GOLD_PIECE, objects, WEAPON_CLASS } from './mkobj.js';
 import { DEADMONSTER } from './mon.js';
 import { update_topl } from './display.js';
@@ -764,19 +765,25 @@ function vtense(subj, verb) {
 // numeric class index in `mcls` (`mlet` there is the display CHARACTER), so
 // every C `ptr->mlet == S_FOO` test reads `ptr.mcls` here.
 const S_ANT_MCLS = 1, S_EEL_MCLS = 57;
-// C ref: priest.c inhistemple(priest) — the priest is standing in its own
-// temple and that temple still holds a correctly aligned shrine.  The shrine
-// re-read is delegated to priest.js via a dynamic import at the call site.
+// C ref: priest.c histemple_at(priest, x, y) —
+//   EPRI(priest)->shroom == *in_rooms(x, y, TEMPLE)
+//   && on_level(&EPRI(priest)->shrlevel, &u.uz)
+// Going through in_rooms() (rather than indexing level.roomno directly) is
+// what makes a temple SUBroom, or a square shared with a neighboring room
+// (SHARED/SHARED_PLUS), resolve — js/monmove.js keeps the same in_rooms()
+// call for its own copy of this function.
 function histemple_at(priest, x, y) {
-    const rmno = game.level?.at?.(x, y)?.roomno ?? 0;
-    const sl = priest?.epri?.shrlevel, uz = game.u?.uz;
-    const samelevel = !sl || !uz
-        || (sl.dnum === uz.dnum && sl.dlevel === uz.dlevel);
-    return rmno !== 0 && rmno === priest?.epri?.shroom && samelevel;
+    const epri = priest?.epri;
+    if (!epri) return false;
+    const hits = in_rooms_snd(x, y, TEMPLE_SND);
+    const shroom = hits.length ? hits[0] : 0;
+    if (epri.shroom !== shroom) return false;
+    const sl = epri.shrlevel, uz = game.u?.uz;
+    return !!(sl && uz && sl.dnum === uz.dnum && sl.dlevel === uz.dlevel);
 }
 // C ref: priest.c has_shrine(priest) — the altar square still carries AM_SHRINE
 // and its alignment still matches the priest's.
-const AM_SHRINE_SND = 0x08, AM_MASK_SND = 0x07, ALTAR_TYP_SND = 21;
+const AM_SHRINE_SND = 0x08, AM_MASK_SND = 0x07, ALTAR_TYP_SND = 32;
 function has_shrine(priest) {
     const sp = priest?.epri?.shrpos;
     const loc = sp ? game.level?.at?.(sp.x, sp.y) : null;

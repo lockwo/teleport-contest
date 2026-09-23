@@ -10,7 +10,7 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, statusLine1Text, statusLine2Text } from './display.js';
+import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, statusLine1Text, statusLine2Text, newsym } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import {
     obj_doname, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
@@ -26,14 +26,15 @@ import {
 import { pluslvl, losexp } from './exper.js';
 import { MAXULEV, IS_WALL, SDOOR, MM_NOEXCLAM, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
-         QBUFSZ, VIBRATING_SQUARE } from './const.js';
+         QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
+         D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE } from './const.js';
 import { create_particular_monster } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
-import { is_undead_flag, is_demon_flag, humanoid } from './monflags_data.js';
+import { is_undead_flag, is_demon_flag, humanoid, nohands } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
 import { align_gname } from './role.js';
 import { map_invisible, doredraw } from './display.js';
-import { STATUE, objects, place_object, weight, COIN_CLASS } from './mkobj.js';
+import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { delobj, stackobj, doddrop } from './invent.js';
 import { count_unpaid, is_worn, wearing_armor, inventoryArray, takeoff_worn_obj,
@@ -48,7 +49,8 @@ import { doride } from './steed.js';
 import { doenhance } from './enhance.js';
 import { dorub, dowipe, doapply, ECMD as APPLY_ECMD } from './apply.js';
 import { readobjnam } from './readobjnam.js';
-import { hold_another_object, encumber_msg, objects_at, otense } from './invent.js';
+import { hold_another_object, encumber_msg, objects_at, otense, will_feel_cockatrice,
+         feel_cockatrice } from './invent.js';
 import { rn1 } from './rng.js';
 import { dopray as pray_dopray, dosacrifice } from './pray.js';
 import { dosit } from './sit.js';
@@ -78,7 +80,9 @@ import { wiz_debug_cmd_bury } from './dig.js';
 import { doeat } from './eat.js';
 import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
+import { invoke_ok as artifact_invoke_ok } from './artifact.js';
 import { doextlist } from './cmd.js';
+import { mon_beside, loot_mon, reverse_loot } from './pickup.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -1525,10 +1529,23 @@ function floor_obj_here(pred) {
         (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy && pred(o.otyp));
     return objs.length ? objs[0] : null;
 }
-// Return the floor container at the hero's square (first container in the
-// object chain), or null.  C ref: container_at()/do_loot_cont() iterate the
-// floor object list at (u.ux, u.uy), testing Is_container().
-function floor_box_here() { return floor_obj_here(is_container_otyp); }
+// Return every floor container at the hero's square (in floor-chain order),
+// for #loot's container_at()-driven single-container / multi-container-menu
+// split.  C ref: container_at()/do_loot_cont() iterate the floor object list
+// at (u.ux, u.uy), testing Is_container().
+function floor_boxes_here() {
+    const u = game.u;
+    if (!u) return [];
+    return (game.level?.objects || []).filter(
+        (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy && is_container_otyp(o.otyp));
+}
+// C ref: pickup.c doloot_core() lootmon: label — container_at(cc.x, cc.y,
+// FALSE) at an arbitrary (not-necessarily-hero) square, used to decide
+// whether directional looting found a container instead of a monster.
+function has_container_at(x, y) {
+    return (game.level?.objects || []).some(
+        (o) => o.where === 'floor' && o.ox === x && o.oy === y && is_container_otyp(o.otyp));
+}
 // C ref: lock.c doforce() — scans for Is_box() (large box/chest) only.
 function floor_lockbox_here() { return floor_obj_here(is_lockbox_otyp); }
 // C ref: lock.c doforce() iterates svl.level.objects[u.ux][u.uy] via nexthere
@@ -2452,56 +2469,10 @@ async function pick_lock_box(pick, box) {
     return 1; // PICKLOCK_DID_SOMETHING — a turn elapses
 }
 
-// C ref: pickup.c doloot()/do_loot_cont().  Floor container under the hero:
-// locked -> announce the lock, then attempt the default autounlock
-// (AUTOUNLOCK_APPLY_KEY): pick an unlocking tool and run pick_lock(); unlocked
-// -> use_container().
-async function doloot() {
-    // C ref: pickup.c doloot_core():2194 — check_capacity((char *) 0) runs
-    // FIRST: an Overtaxed hero "can't do that while carrying so much stuff"
-    // and no turn passes (so the container prompts never appear).
-    {
-        const { check_capacity_throw } = await import('./invent.js');
-        if (await check_capacity_throw()) return 0; // ECMD_OK
-    }
-    // C ref: pickup.c doloot():2198 — a handless polyform can't loot at all;
-    // skipping this opened the container menu and ate keystrokes C hands to
-    // the command parser.  Only consult the form while polymorphed: an
-    // unpolymorphed hero's u.umonnum is this port's ROLE index, not a mons[]
-    // pmidx (every player monster has hands anyway, so C's answer is FALSE
-    // either way).
-    const { nohands } = await import('./monflags_data.js');
-    const ydata = game.u?.Upolyd ? (game.u?.data || null) : null;
-    if (ydata && nohands(ydata)) {
-        await pline('You have no hands!');
-        return 0; // ECMD_OK
-    }
-    const box = floor_box_here();
-    if (!box) {
-        // C ref: pickup.c:2295-2341 doloot_core(), label `lootmon:` — when
-        // mon_beside() finds a monster in the 3x3 box (pickup.c:2071) C prompts
-        // "Loot in what direction?" via get_adjacent_loc(), whose getdir() EATS
-        // the following keystrokes.  Skipping this branch let them fall through
-        // to rhack() as a phantom command (a whole game turn).
-        const u = game.u;
-        let beside = false;
-        for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
-            const nx = u.ux + i, ny = u.uy + j;
-            if (isok(nx, ny) && m_at(nx, ny)) beside = true;
-        }
-        if (beside) {
-            const { getdir } = await import('./cmd.js');
-            const dir = await getdir('Loot in what direction?');
-            if (!dir) { await pline('Never mind.'); return 0; }
-            const cx = u.ux + dir.dx, cy = u.uy + dir.dy;
-            if (!isok(cx, cy)) { await pline('Invalid loot location'); return 0; }
-            const underfoot = (cx === u.ux && cy === u.uy);
-            await pline(`You don't find anything ${!underfoot ? 't' : ''}here to loot.`);
-            return 0;
-        }
-        await pline("You don't find anything here to loot.");
-        return 0;
-    }
+// C ref: pickup.c doloot_core():2088 do_loot_cont() — one container: locked ->
+// announce the lock, then attempt the default autounlock (AUTOUNLOCK_APPLY_KEY):
+// pick an unlocking tool and run pick_lock(); unlocked -> use_container().
+async function do_loot_one(box, more_containers) {
     if (box.olocked) {
         const name = box_basename(box.otyp);
         if (box.lknown) await pline(`The ${name} is locked.`);
@@ -2519,44 +2490,240 @@ async function doloot() {
         return 0;
     }
     box.lknown = 1;
-    return await use_container(box, false);
+    return await use_container(box, more_containers);
+}
+
+// C ref: pickup.c doloot_core():2237 — the ">1 container" PICK_ANY "Loot which
+// containers?" menu.  Returns the picked {letter,obj,...} items, [] when
+// confirmed with nothing picked, or null on ESC.
+async function loot_containers_menu(boxes) {
+    const items = [];
+    let menu_ch = 'a';
+    for (const box of boxes) {
+        items.push({ letter: menu_ch, obj: box, selected: false, skipinvert: false,
+                     desc: obj_doname(box) });
+        menu_ch = nextMenuCh(menu_ch);
+    }
+    const buildLines = () => {
+        const lines = [{ text: 'Loot which containers?', attr: ATR_INVERSE }, { text: '' }];
+        for (const it of items) lines.push({ text: menuItemLine(it) });
+        return lines;
+    };
+    return await run_pickany_menu(items, buildLines);
+}
+
+// C ref: pickup.c doloot()/doloot_core().  Floor container(s) under the hero:
+// locked -> announce the lock, then attempt the default autounlock
+// (AUTOUNLOCK_APPLY_KEY): pick an unlocking tool and run pick_lock(); unlocked
+// -> use_container().  A Confused hero instead drops old loot (reverse_loot)
+// or simply fumbles; Blind and gloveless, a cockatrice corpse here is fatal
+// before any container prompt; a grave here (with no container on it) can't
+// be looted without digging it up; failing all of that, an adjacent monster
+// may still be looted directionally (loot_mon(), e.g. saddle removal).
+async function doloot() {
+    // C ref: pickup.c doloot_core():2194 — check_capacity((char *) 0) runs
+    // FIRST: an Overtaxed hero "can't do that while carrying so much stuff"
+    // and no turn passes (so the container prompts never appear).
+    {
+        const { check_capacity_throw } = await import('./invent.js');
+        if (await check_capacity_throw()) return 0; // ECMD_OK
+    }
+    // C ref: pickup.c doloot():2198 — a handless polyform can't loot at all;
+    // skipping this opened the container menu and ate keystrokes C hands to
+    // the command parser.  Only consult the form while polymorphed: an
+    // unpolymorphed hero's u.umonnum is this port's ROLE index, not a mons[]
+    // pmidx (every player monster has hands anyway, so C's answer is FALSE
+    // either way).
+    const ydata = game.u?.Upolyd ? (game.u?.data || null) : null;
+    if (ydata && nohands(ydata)) {
+        await pline('You have no hands!');
+        return 0; // ECMD_OK
+    }
+    const u = game.u;
+    // C ref: pickup.c doloot_core():2202 — a Confused hero either "loots" old
+    // dropped items (reverse_loot) or the whole attempt fizzles; both cost the
+    // turn ordinary looting would.
+    if ((u?.uprops?.Confusion || 0) > 0) {
+        if (rn2(6) && await reverse_loot()) return 1; // ECMD_TIME
+        if (rn2(2)) {
+            await pline('Being confused, you find nothing to loot.');
+            return 1; // ECMD_TIME (costs a turn)
+        }
+        // else fall through to normal looting
+    }
+
+    let timepassed = 0;
+    let c = -1;
+    const boxes = floor_boxes_here();
+    if (boxes.length > 0) {
+        // C ref: pickup.c doloot_core():2223 — blind and gloveless, touching a
+        // cockatrice corpse here is fatal before any container prompt appears.
+        if (Blind() && !game.uarmg) {
+            for (const nobj of objects_at(u.ux, u.uy)) {
+                if (nobj.otyp === CORPSE && will_feel_cockatrice(nobj, false)) {
+                    feel_cockatrice(nobj, false);
+                    return 1; // ECMD_TIME
+                }
+            }
+        }
+        if (boxes.length > 1) {
+            const picks = await loot_containers_menu(boxes);
+            if (picks === null) {
+                // ESC: C's select_menu returns -1 here, which is `!= 0`, so C
+                // still sets c = 'y' and skips the "nothing to loot" fallback.
+                c = 'y';
+            } else if (picks.length > 0) {
+                const n = picks.length;
+                for (let i = 0; i < n; i++)
+                    timepassed |= await do_loot_one(picks[i].obj, i + 1 < n);
+                c = 'y';
+            }
+            // confirmed with nothing picked (picks === []): c stays -1, C
+            // falls through to the mon_beside/"nothing to loot" tail below.
+        } else {
+            timepassed |= await do_loot_one(boxes[0], false);
+            c = 'y';
+        }
+    } else if (IS_GRAVE(game.level?.at?.(u.ux, u.uy)?.typ)) {
+        await pline('You need to dig up the grave to effectively loot it...');
+    }
+
+    if (c === 'y') return timepassed ? 1 : 0;
+
+    // C ref: pickup.c doloot_core():2295 lootmon: — "3.3.1 introduced
+    // directional looting for some things."  mon_beside() finds a monster in
+    // the 3x3 box; get_adjacent_loc()'s getdir() EATS the following keystroke
+    // regardless of what's found there.
+    if (mon_beside(u.ux, u.uy)) {
+        const { getdir } = await import('./cmd.js');
+        const dir = await getdir('Loot in what direction?');
+        if (!dir) { await pline('Never mind.'); return 0; }
+        const cx = u.ux + dir.dx, cy = u.uy + dir.dy;
+        if (!isok(cx, cy)) { await pline('Invalid loot location'); return 0; }
+        const underfoot = (dir.dx === 0 && dir.dy === 0);
+
+        const mtmp = m_at(cx, cy);
+        let looted_mon = false;
+        let mon_timepassed = 0;
+        const passed_info = { value: 0 };
+        const prev_loot = { value: false };
+        if (mtmp) {
+            mon_timepassed = await loot_mon(mtmp, passed_info, prev_loot);
+            if (mon_timepassed) looted_mon = true;
+        }
+        const stunned = (u?.uprops?.Stun || 0) > 0;
+        const confused = (u?.uprops?.Confusion || 0) > 0;
+        if (confused || stunned) mon_timepassed = 1;
+
+        if (looted_mon) return mon_timepassed ? 1 : 0;
+
+        if (!underfoot && has_container_at(cx, cy)) {
+            if (mtmp) {
+                await pline(`You can't loot anything ${passed_info.value ? 'else ' : ''}`
+                            + `there with ${mon_nam(mtmp)} in the way.`);
+                return mon_timepassed ? 1 : 0;
+            }
+            await pline('You have to be at a container to loot it.');
+            return mon_timepassed ? 1 : 0;
+        }
+        await pline(`You don't find anything ${(passed_info.value || prev_loot.value) ? 'else ' : ''}`
+                    + `${!underfoot ? 't' : ''}here to loot.`);
+        return mon_timepassed ? 1 : 0;
+    }
+    await pline("You don't find anything here to loot.");
+    return 0;
 }
 
 // C ref: lock.c picklock() — the lock-picking occupation, run each turn from the
 // move loop (do_occupation).  Returns 1 while still busy (keep the occupation),
-// 0 when finished (success, give-up, or the box/hero moved).
+// 0 when finished (success, give-up, or the target/hero moved).
 export async function picklock() {
     const u = game.u;
     const xl = game.xlock;
-    if (!xl || !xl.box) { game._picklock_box = null; game.xlock = null; return 0; }
-
-    // you or the box moved -> abort (usedtime = 0), no message.
-    if (xl.box.where !== 'floor' || xl.box.ox !== u.ux || xl.box.oy !== u.uy) {
-        game._picklock_box = null; game.xlock = null; return 0;
+    if (!xl || (!xl.box && !xl.door)) {
+        game._picklock_box = null;
+        game.xlock = null;
+        return 0;
     }
-    // give-up check (usedtime >= 50 || nohands).  The starter hero has hands.
-    if (xl.usedtime++ >= 50) {
+
+    if (xl.box) {
+        // C lock.c:70-74 — you or the floor box moved.
+        if (xl.box.where !== 'floor' || xl.box.ox !== u.ux || xl.box.oy !== u.uy) {
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        }
+    } else {
+        // C lock.c:75-90 — this occupation remains attached to the same
+        // adjacent door, and stops before drawing when the door is no longer
+        // valid for locking.
+        const door = xl.door;
+        const dx = u.dx | 0, dy = u.dy | 0;
+        if (game.level?.at(u.ux + dx, u.uy + dy) !== door) {
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        }
+        switch (door.doormask) {
+        case D_NODOOR:
+            await pline('This doorway has no door.');
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        case D_ISOPEN:
+            await pline('You cannot lock an open door.');
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        case D_BROKEN:
+            await pline('This door is broken.');
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        }
+    }
+
+    // C lock.c:92-96.  `nohands()` only applies to a polymorphed hero here:
+    // without polymorph this port's u.umonnum is a role index, not mons[] data.
+    const ydata = u?.Upolyd ? (u.data || null) : null;
+    if (xl.usedtime++ >= 50 || (ydata && nohands(ydata))) {
         await update_topl(`You give up your attempt at ${lock_action(xl)}.`);
         exercise(A_DEX, true); // even if you don't succeed
-        game._picklock_box = null; game.xlock = null; return 0;
+        game._picklock_box = null;
+        game.xlock = null;
+        return 0;
     }
 
-    // rn2(100) >= chance -> still busy (re-roll next turn).  C ref: lock.c:98.
+    // C lock.c:98 — every occupation turn rolls this percentage check.
     if (rn2(100) >= xl.chance)
         return 1;
 
-    // (The Master-Key-of-Thievery trap-disarm branch is skipped: a plain lock
-    // pick is not a magic key and the starter box is untrapped.)
-
+    // C lock.c:101-136's Master Key trap-disarm branch is not modeled: none of
+    // the scheduled tools is the quest artifact, and the recorded targets are
+    // untrapped.  The ordinary success arm follows.
     await pline(`You succeed in ${lock_action(xl)}.`);
-    xl.box.olocked = !xl.box.olocked;
-    xl.box.lknown = 1;
-    // if (xl.box.otrapped) chest_trap(...) — chest traps are not modeled; the
-    // starter box is untrapped so this path is inert.
-    exercise(A_DEX, true); // -> rn2(19)
+    if (xl.door) {
+        const door = xl.door;
+        const x = u.ux + (u.dx | 0), y = u.uy + (u.dy | 0);
+        if (door.doormask & D_TRAPPED) {
+            await (await import('./cmd.js')).b_trapped('door', true);
+            door.doormask = D_NODOOR;
+        } else if (door.doormask & D_LOCKED) {
+            door.doormask = D_CLOSED;
+        } else {
+            door.doormask = D_LOCKED;
+        }
+        newsym(x, y);
+    } else {
+        xl.box.olocked = !xl.box.olocked;
+        xl.box.lknown = 1;
+        // C lock.c:154-155 chest_trap() is not modeled; scheduled boxes are
+        // untrapped, so this has no effect on the covered path.
+    }
+    exercise(A_DEX, true);
     game._picklock_box = null;
     game.xlock = null;
-    return 0; // usedtime = 0
+    return 0;
 }
 
 // C ref: obj.h is_weptool() / lock.c:660 u_have_forceable_weapon().
@@ -4057,17 +4224,20 @@ export async function doextcmd() {
 // command, which desynchronises every later step in the session.
 
 const GETOBJ_EXCLUDE_X = -3, GETOBJ_SUGGEST_X = 2;           // js/invent.js:147,152
-const FAKE_AMULET_OF_YENDOR_X = 212, CRYSTAL_BALL_X = 231;   // js/mkobj.js:414,433
 
-// C ref: artifact.c:1727 invoke_ok().
-// NOTE objects[].oc_unique is populated for only two otyps in this port
-// (js/o_init.js:192,195), so the Bell/Candelabrum are still mis-classified.
+// C ref: artifact.c:1727 invoke_ok().  js/artifact.js already ports the real
+// check (obj.oartifact || objects[].flags & F_UNIQUE || unidentified fake
+// Amulet, plus the crystal-ball synonym-for-apply case) — F_UNIQUE is this
+// port's own object-table bit (js/mkobj.js), correctly set for the
+// Candelabrum/Bell, unlike the oc_unique field o_init.js only ever populates
+// for the Amulet of Yendor and the Book of the Dead.  Its return codes are
+// scoped to artifact.js's own local GETOBJ_EXCLUDE(-3)/GETOBJ_SUGGEST(1)
+// pair though, and that SUGGEST(1) collides with invent.js's real
+// GETOBJ_DOWNPLAY(1) — the getobj() below would silently omit a suggested
+// otyp from the prompt instead of highlighting it, so remap it to invent.js's
+// real GETOBJ_SUGGEST(2).
 function invoke_ok(obj) {
-    if (!obj) return GETOBJ_EXCLUDE_X;
-    if (obj.oartifact || objects[obj.otyp]?.oc_unique
-        || (obj.otyp === FAKE_AMULET_OF_YENDOR_X && !obj.known)) return GETOBJ_SUGGEST_X;
-    if (obj.otyp === CRYSTAL_BALL_X) return GETOBJ_SUGGEST_X;
-    return GETOBJ_EXCLUDE_X;
+    return artifact_invoke_ok(obj) === GETOBJ_EXCLUDE_X ? GETOBJ_EXCLUDE_X : GETOBJ_SUGGEST_X;
 }
 
 // C ref: artifact.c:1749 doinvoke() -> retouch_object() -> :2131 arti_invoke().

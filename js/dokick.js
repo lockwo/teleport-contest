@@ -382,9 +382,31 @@ export async function kick_ouch(x, y, kickobjnam, maploc) {
     // losehp(Maybe_Half_Phys(dmg), kickstr(buf, kickobjnam), KILLED_BY): no hero
     // reaching here carries Half_physical_damage, so dmg passes unhalved.
     if (u) {
-        u.ukiller = kickstr(kickobjnam, maploc);
-        u.uhp = Math.max(0, (u.uhp || 0) - dmg);
+        // C ref: hack.c:4279-4288 losehp() — the HP loss AND the death check
+        // both happen inline, before kick_ouch()/dokick() ever return: a kick
+        // that drops uhp below 1 shows "You die..." and calls done(DIED) right
+        // here.  This used to only set the never-read `u.ukiller` and clamp
+        // uhp at a minimum of 0 with no death check at all, so a hero who
+        // kicked herself to death (e.g. repeatedly kicking a wall) just kept
+        // playing at 0/1 HP forever instead of ending the game — every other
+        // losehp() copy in this port (do.js losehp_do, potion.js, spell.js,
+        // read.js, ...) has this same check; this was the one missing it.
+        u.uhp = (u.uhp ?? 0) - dmg;
         game.botl = true;
+        if (u.uhp < 1) {
+            await update_topl('You die...');
+            // C: losehp(..., kickstr(...), KILLED_BY) — KILLED_BY (not
+            // KILLED_BY_AN) means the killer text is used verbatim with a
+            // plain "killed by " prefix, no article (const.js KILLED_BY=1).
+            game._killer_name = `killed by ${kickstr(kickobjnam, maploc)}`;
+            const { done, DIED } = await import('./end.js');
+            await done(DIED);
+            // C: done(DIED) never returns to its caller (nh_terminate() ends
+            // the process); the trailing Levitation/hurtle roll below is
+            // unreachable code on a real dead-from-kicking hero, so stop here
+            // too rather than fabricating an extra rn1(2,4) draw after death.
+            return;
+        }
     }
     // C ref: dokick.c — `if (Is_airlevel || Levitation) hurtle(-u.dx, -u.dy,
     // rn1(2, 4), TRUE)`: a levitating kicker is always thrown back, and the

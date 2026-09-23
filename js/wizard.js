@@ -13,7 +13,7 @@ import { AT_MAGC, attacktype } from './monattk_data.js';
 import { MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT } from './const.js';
 
 const AMULET_OF_YENDOR = 213;           // js/mkobj.js OBJECT_DATA index
-const STRAT_WAITMASK = 0x03000000;
+const STRAT_WAITMASK = 0x30000000;
 const MAXNASTIES = 10;
 const S_ANGEL = 27, S_DEMON = 56;       // defsym.h MONSYM indices
 
@@ -261,23 +261,66 @@ export async function intervene() {
     }
 }
 
-// C ref: wizard.c:715 resurrect() — only the "make a new Wizard" arm; the
-// migrating-Wizard arm draws rn2(elapsed + 1) which needs migrating_mons.
+// C ref: wizard.c:715 resurrect() — the "make a new Wizard" arm (no existing
+// Wizard) and the "look for a migrating Wizard" arm (one already exists,
+// off-level, chasing the hero across levels) that drags him back via
+// mon_arrive(Wiz_arrive).  Only the migrating arm draws RNG of its own:
+// mon_catchup_elapsed_time()'s recovery rolls, rn2(elapsed/50 + 1) to
+// possibly wake him, and mon_arrive()'s placement search.
 export async function resurrect() {
-    if ((game.context?.no_of_wizards | 0)) return;
-    const { makemon, monster_by_pmidx, name_to_pmidx, set_malign }
-        = await import('./makemon.js');
-    const mtmp = makemon(monster_by_pmidx(name_to_pmidx('Wizard of Yendor')),
-                         game.u.ux, game.u.uy, MM_NOWAIT);
-    if (!mtmp) return;
-    mtmp.mrevived = 1;
-    mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
-    mtmp.mtame = 0; mtmp.mpeaceful = 0;
-    set_malign(mtmp);
-    if (!Deaf()) {
-        await update_topl('A voice booms out...');
-        await update_topl('"So thou thought thou couldst kill me, fool."');
+    let mtmp = null;
+    let verb;
+    if (!(game.context?.no_of_wizards | 0)) {
+        /* make a new Wizard */
+        verb = 'kill';
+        const { makemon, monster_by_pmidx, name_to_pmidx }
+            = await import('./makemon.js');
+        mtmp = makemon(monster_by_pmidx(name_to_pmidx('Wizard of Yendor')),
+                       game.u.ux, game.u.uy, MM_NOWAIT);
+        if (mtmp) mtmp.mrevived = 1;
+    } else {
+        /* look for a migrating Wizard */
+        verb = 'elude';
+        const { mon_arrive, Wiz_arrive } = await import('./dog.js');
+        const { mon_catchup_elapsed_time } = await import('./dogmove.js');
+        const LARGEST_INT = 0x7fffffff;
+        const migr = game.migrating_mons || (game.migrating_mons = []);
+        for (let i = 0; i < migr.length; ) {
+            const cand = migr[i];
+            let elapsed = (game.moves | 0) - (cand.mlstmv | 0);
+            if (cand.iswiz && !mon_has_amulet(cand) && elapsed > 0) {
+                mon_catchup_elapsed_time(cand, elapsed);
+                if (elapsed >= LARGEST_INT) elapsed = LARGEST_INT - 1;
+                elapsed = Math.trunc(elapsed / 50);
+                if (cand.msleeping && rn2(elapsed + 1)) cand.msleeping = 0;
+                if (cand.mfrozen === 1) { cand.mfrozen = 0; cand.mcanmove = 1; }
+                if (!helpless(cand)) {
+                    migr.splice(i, 1);
+                    await mon_arrive(cand, Wiz_arrive);
+                    mtmp = cand.mx ? cand : null;
+                    break;
+                }
+            }
+            i++;
+        }
     }
+
+    if (mtmp) {
+        mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
+        mtmp.mtame = 0; mtmp.mpeaceful = 0;
+        const { set_malign } = await import('./makemon.js');
+        set_malign(mtmp);
+        if (!Deaf()) {
+            await update_topl('A voice booms out...');
+            await update_topl(`"So thou thought thou couldst ${verb} me, fool."`);
+        }
+    }
+}
+
+// C ref: include/monst.h:251 helpless(mon) = msleeping || !mcanmove.
+function helpless(mon) {
+    const canmove = (mon.mcanmove == null) ? 1 : mon.mcanmove;
+    return !!(mon.msleeping || !canmove);
 }
 
 function uprop(...names) {

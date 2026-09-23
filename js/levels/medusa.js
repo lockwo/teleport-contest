@@ -44,6 +44,7 @@ import {
     vly_region, vly_teleport_region,
 } from '../sp_lev.js';
 import { Can_fall_thru, maketrap, t_at } from '../trap.js';
+import { obj_resists } from '../zap.js';
 
 // C ref: obj.h — a statue's spe carries the CORPSTAT_* bits lspo_object builds
 // from the historic/male/female table keys before create_object() writes it.
@@ -218,9 +219,15 @@ function med_monster({ name = null, cls = 0, mx = null, my = null,
     return mtmp;
 }
 
-// C ref: mon.c mongone() — the monster leaves without dying and without a
-// corpse.  Its pack has already been emptied into the statue by the caller.
+// C ref: mon.c:3267 mongone() — the monster leaves without dying or a corpse.
+// Its pack has already been emptied into the statue by the successful caller;
+// rejected statues still pass every inventory item through mdrop_special_objs(),
+// which calls obj_resists() before discarding the remainder.
 function med_mongone(mtmp) {
+    if (!mtmp) return;
+    mtmp.mhp = 0;
+    for (const obj of mtmp.minvent || []) obj_resists(obj, 0, 0);
+    mtmp.minvent = [];
     const lvl = game.level;
     if (lvl?.monsters) {
         const i = lvl.monsters.indexOf(mtmp);
@@ -343,9 +350,16 @@ function med_perseus_statue(coord, shieldPct, bootsPct) {
 // ── traps ────────────────────────────────────────────────────────────────
 
 // C ref: sp_lev.c create_trap() + mklev.c mktrap(), for the des.trap() forms
-// these scripts use.  A random location re-rolls while it lands on stairs; the
-// trailing rnd(4) is mktrap()'s dead-predecessor check, which is evaluated
-// (and at this depth always fails) before the SQKY_BOARD/RUST_TRAP exclusions.
+// these scripts use.  A random location re-rolls while it lands on stairs.
+// maketrap() itself silently refuses a square already occupied by furniture
+// (STAIRS/LADDER excepted, already screened above, but FOUNTAIN/ALTAR/etc
+// pass is_ok_location's DRY test and only get caught here) or a WEB/HOLE-only
+// exemption; when it does, mktrap() reassigns kind = NO_TRAP and both the
+// spider-on-web summon and the trailing rnd(4) dead-predecessor check are
+// skipped (mklev.c:2099-2137 `kind = t ? t->ttyp : NO_TRAP;` gates the whole
+// `&&` chain, including `kind != NO_TRAP`, before rnd(4) is ever reached) —
+// seed0360-wizard-world-tour step290: medusa-3's 2nd "board" trap lands on
+// othloc's fountain and is silently dropped, so its rnd(4) must not fire.
 async function med_trap(ttyp, mx = null, my = null) {
     let x, y;
     if (mx != null) {
@@ -372,14 +386,15 @@ async function med_trap(ttyp, mx = null, my = null) {
     }
     if (is_hole(kind) && !Can_fall_thru(game.u?.uz)) kind = ROCKTRAP;
     const t = await maketrap(x, y, kind);
-    // C ref: mklev.c:2104 `if (kind == WEB && !(mktrapflags &
-    // MKTRAP_NOSPIDERONWEB)) makemon(&mons[PM_GIANT_SPIDER], m.x, m.y, ...)`
-    // — the spider's whole creation group runs before the victim check.
-    if ((t ? t.ttyp : kind) === 18 /* WEB */) {
+    // C ref: mklev.c:2102 `kind = t ? t->ttyp : NO_TRAP;` — a refused
+    // placement (furniture conflict) collapses kind to NO_TRAP, which gates
+    // out BOTH the spider-on-web summon (mklev.c:2104) and the victim check.
+    kind = t ? t.ttyp : NO_TRAP;
+    if (kind === 18 /* WEB */) {
         const spider = name_to_pmidx('giant spider');
         if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
     }
-    rnd(4);                                        // mklev.c:2137 victim check
+    if (kind !== NO_TRAP) rnd(4);                  // mklev.c:2135-2137 victim check
 }
 
 // ── level regions (fixup_special) ────────────────────────────────────────

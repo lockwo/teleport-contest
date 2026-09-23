@@ -10,7 +10,7 @@ import {
     S_HUMANOID, bigrm_load_map, bigrm_wallification, flip_level,
     quest_level_init_solidfill, quest_place_stair, remove_boundary_syms, shuffle,
     splev_create_monster, splev_door_at, splev_link_doors_rooms, splev_object_at,
-    splev_region_lit, vly_flip_dndest, vly_non_diggable, vly_object, vly_region,
+    splev_region_lit, vly_flip_dndest, vly_flip_updest, vly_non_diggable, vly_object, vly_region,
 } from '../sp_lev.js';
 import { splev_trap_random } from './minend2.js';
 
@@ -175,5 +175,5 @@ export async function makemaz_minend1() {
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975
     if (rn2(2)) flp |= 2;                 // flip_level_rnd sp_lev.c:977
-    if (flp) { flip_level(flp); vly_flip_dndest(flp); }
+    if (flp) { flip_level(flp); vly_flip_dndest(flp); vly_flip_updest(flp); }
 }

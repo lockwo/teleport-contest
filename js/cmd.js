@@ -1904,6 +1904,21 @@ export async function rhack(key) {
     game.context._getobj_cancelled = false;
     if (badCommand || !repeatName || getobjCancelled) {
         cmdq_of(CQ_REPEAT).length = 0;
+        // C ref: cmd.c rhack():3810-3816's reset_cmd_vars() (ECMD_CANCEL/
+        // ECMD_FAIL, or a cancelled getobj pick) and the bad_command tail
+        // (cmd.c:3833-3841) BOTH end in an unconditional `gm.multi = 0`.
+        // This port had no equivalent: a digit-count prefix (e.g. "5 ")
+        // in front of a key that resolves to no recognized command left
+        // `game.multi` armed, so the move loop's own occupation-continue
+        // check on ANY LATER command (`(game.multi ?? 0) > 0`) kept
+        // re-triggering — here, silently re-running the SAME failed
+        // "Unknown command" dispatch `multi` more times, each one eating a
+        // real keystroke meant for the actually-typed following command as
+        // a --More-- dismissal instead, permanently desyncing the rest of
+        // the session's input stream (heldout-mirrorx/m1700000/seed0361:
+        // "5 " before a real `s` search ate 's','i','l','v' as dismissals,
+        // so the search itself, and every command after it, never ran).
+        game.multi = 0;
     } else if (!game.in_doagain) {
         // C ref: cmd.c rhack() — a PREFIXCMD (F/m/g/G) goes `goto
         // got_prefix_input` BEFORE the recording block, so it never reaches
@@ -2802,19 +2817,13 @@ function autokey() {
     return key || pick || card || null;
 }
 
-// C ref: lock.c pick_lock() (autounlock door branch) + picklock().  Prompts
-// "Unlock it with <tool>? [ynq]" and, on 'y', runs the lock-picking occupation.
-// chance = 3*DEX + 30*(rogue) for a lock pick; each turn rolls rn2(100): on
-// rn2(100) >= chance the attempt is "still busy" (re-rolls next turn), else it
-// succeeds — "You succeed in picking the lock." + exercise(A_DEX) (rn2(19)) and
-// the door goes D_LOCKED -> D_CLOSED.  Returns 1 (a turn elapsed) on 'y'.
+// C ref: lock.c pick_lock() autounlock door arm.  On acceptance it installs
+// lock.c's `picklock` occupation; allmain.js invokes the shared occupation on
+// this and later turns rather than resolving just the first rn2(100) inline.
 async function pick_lock_door(pick, cx, cy, door) {
-    // yname(uncursed lock pick) -> "your lock pick"; skeleton key -> "your key".
     const toolname = pick.otyp === LOCK_PICK ? 'your lock pick'
                    : pick.otyp === SKELETON_KEY ? 'your key'
                    : 'your credit card';
-    // C ref: ynq() calls more() when a top-line message is still pending — the
-    // "This door is locked." message gets a --More-- before the prompt shows.
     game._yn_need_more = true;
     const c = await y_n(`Unlock it with ${toolname}?`, 'ynq\x1b', 'q');
     if (c !== 'y') return 0;
@@ -2828,31 +2837,15 @@ async function pick_lock_door(pick, cx, cy, door) {
     default:           chance = 0;
     }
 
-    // picklock occupation, resolved inline: usedtime starts at 0, so the first
-    // turn rolls rn2(100); on success the lock opens this turn.  (A failed roll
-    // would carry the occupation across turns; the recorded run succeeds first
-    // try, which is the only path the starter exercises.)
-    if (rn2(100) >= chance) {
-        // NOT PORTED: C's picklock occupation re-rolls rn2(100) on every
-        // following turn (up to xlock.usedtime 50) until the lock gives, so a
-        // first-turn failure here loses every one of those later draws and
-        // leaves the door locked where C opens it.  Wiring it up needs a
-        // door-flavoured occupation alongside allmain.js's _picklock_box hook.
-        return 2;
-    }
-    await pline('You succeed in picking the lock.');
-    if (door.doormask & D_TRAPPED) {
-        await b_trapped('door', true); // C ref: lock.c:141 b_trapped("door", FINGER)
-        door.doormask = D_NODOOR;
-        recalc_block_point(cx, cy); // C: unblock_point()
-    } else if (door.doormask & D_LOCKED) {
-        door.doormask = D_CLOSED;
-    } else {
-        door.doormask = D_LOCKED;
-    }
-    newsym(cx, cy);
-    exercise(A_DEX, true); // -> rn2(19)
-    return 2; // occupation elapsed a turn (advance monsters)
+    game.xlock = {
+        box: null, door, chance, picktyp: pick.otyp, usedtime: 0, magic_key: false,
+    };
+    // allmain's shared picklock dispatcher is keyed by this occupation marker;
+    game._picklock_box = door;
+    // C runs the first occupation callback before this command's monster turn;
+    // later callbacks are dispatched by allmain while the marker remains set.
+    await (await import('./extcmd-handlers.js')).picklock();
+    return 2; // command elapsed a turn
 }
 
 // C ref: lock.c pick_lock(pick, 0, 0, NULL) — the #apply path for a lock pick /
@@ -2965,25 +2958,18 @@ export async function pick_lock(pick) {
         target = { door, cx, cy };
     }
 
-    // set_occupation(picklock, ...): first turn (usedtime 0) rolls rn2(100);
-    // >= chance -> still busy.  NOT PORTED (same gap as pick_lock_door above):
-    // C keeps re-rolling rn2(100) each turn until the lock opens or usedtime
-    // hits 50; this stops after the first roll.
-    if (rn2(100) >= ch) return PICKLOCK_DID_SOMETHING; // busy: a turn elapsed
-    await pline(`You succeed in ${lock_action_str(picktyp, target)}.`);
-    if (target.door) {
-        const door = target.door;
-        if (door.doormask & D_TRAPPED) {
-            await b_trapped('door', true); // C ref: lock.c:141
-            door.doormask = D_NODOOR;
-            recalc_block_point(target.cx, target.cy); // C: unblock_point()
-        } else if (door.doormask & D_LOCKED) door.doormask = D_CLOSED;
-        else door.doormask = D_LOCKED;
-        newsym(target.cx, target.cy);
-    } else {
-        target.box.olocked = target.box.olocked ? 0 : 1;
-    }
-    exercise(A_DEX, true); // -> rn2(19)
+    // C lock.c:649-655 — install the shared occupation.  Its first rn2(100)
+    // fires on the next moveloop pass, then repeats on every occupied turn.
+    game.xlock = {
+        box: target.box || null,
+        door: target.door || null,
+        chance: ch,
+        picktyp,
+        usedtime: 0,
+        magic_key: false,
+    };
+    game._picklock_box = target.box || target.door;
+    await (await import('./extcmd-handlers.js')).picklock();
     return PICKLOCK_DID_SOMETHING;
 }
 
@@ -3385,12 +3371,19 @@ export async function domove(dx, dy, attemptTracked = true) {
         newsym(u.ux0, u.uy0);
         vision_recalc(1);
         newsym(u.ux, u.uy);
-        // C ref: after swapping with a pet, domove_core() still falls through to
-        // spoteffects(TRUE) -> pickup(1) on the hero's new square, so a swap onto
-        // a floor object announces it (autopickup off) or lifts it (autopickup
-        // on).  Only when the hero actually relocated (the swap succeeded).
+        // C ref: hack.c domove_core() — after swapping with a pet, C still
+        // falls through to the SAME spoteffects(TRUE) tail every relocating
+        // move runs (pooleffects/check_special_room/dosinkfall, pickup(1),
+        // and critically `if (trap) dotrap(trap, ...)`).  A direct
+        // pickup_after_move() call here skipped that trap check entirely, so
+        // a hero who swapped onto (or was standing on, before the pet
+        // shoved in) a pit never fell into it: trapeffect_pit()'s hero-branch
+        // set_utrap/rnd(6)/2x exercise(trap.c:1920-1963) were silently
+        // dropped, desyncing every later monster-phase roll that turn
+        // (seed2600-wizard-custom-binds step 10).
         if (u.umoved) {
-            await pickup_after_move(u.ux, u.uy);
+            await spoteffects(pickup_after_move);
+            if (game.program_state?.gameover) return;
             // C ref: hack.c domove() — a pet swap leaves domove_core() through
             // the same tail as any other successful step (u.ux0 != u.ux sets
             // DOMOVE_WALK in gd.domove_succeeded), so domove() still smudges the

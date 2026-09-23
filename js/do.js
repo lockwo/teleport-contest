@@ -36,7 +36,7 @@ async function record_ach(achidx) {
     record_achievement(achidx);
 }
 import { mklev, place_lregion, u_on_upstairs } from './mklev.js';
-import { fumaroles, movebubbles } from './mkmaze.js';
+import { fumaroles, movebubbles, is_exclusion_zone } from './mkmaze.js';
 const PM_ROGUE_DO = 339;   // mons[] index; C's Role_if(PM_ROGUE)
 import { clear_regions, remove_region } from './region.js';
 import { fastforward_fill_mineralize } from './fastforward.js';
@@ -62,6 +62,7 @@ import { docrt, flush_screen, pline, update_topl, topl_more, y_n, newsym,
          see_nearby_objects } from './display.js';
 import { seetrap, dotrap } from './trap.js';
 import { check_special_room } from './shkroom.js';
+import { forget_temple_entry } from './priest.js';
 import { near_capacity, addinv, prinv } from './invent.js';
 import { BOULDER, run_object_timers, mksobj, AMULET_OF_YENDOR,
          is_rider_pm } from './mkobj.js';
@@ -150,10 +151,9 @@ function bad_location(x, y, nlx, nly, nhx, nhy) {
 }
 
 // C ref: mkmaze.c place_lregion() — place the hero at a random location
-// within the region (the whole level when lx==0), retrying on bad squares.
-// This is the level-teleport / fall-through arrival placement.  Each retry
-// draws rn1((hx-lx)+1, lx) for x and rn1((hy-ly)+1, ly) for y.
-function place_hero_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy) {
+// within the region (the whole level when lx==0), retrying on bad or excluded
+// squares.  Each retry draws rn1((hx-lx)+1, lx) for x and rn1((hy-ly)+1, ly).
+function place_hero_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy, rtype) {
     if (!lx) { lx = 1; hx = COLNO - 1; ly = 0; hy = ROWNO - 1; }
     if (lx < 1) lx = 1;
     if (hx > COLNO - 1) hx = COLNO - 1;
@@ -168,16 +168,18 @@ function place_hero_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy) {
     for (let trycnt = 0; trycnt < 200; trycnt++) {
         const x = rn1((hx - lx) + 1, lx);
         const y = rn1((hy - ly) + 1, ly);
-        if (!bad_location(x, y, nlx, nly, nhx, nhy) && !m_at(x, y)) {
+        if (!bad_location(x, y, nlx, nly, nhx, nhy)
+            && !is_exclusion_zone(rtype, x, y) && !m_at(x, y)) {
             game.u.ux = x; game.u.uy = y;
             return;
         }
     }
-    // deterministic fallback (oneshot): bad_location only; a monster here would
-    // be relocated by rloc in C.
+    // deterministic fallback (oneshot): bad-location and exclusion checks only;
+    // a monster here would be relocated by rloc() in C.
     for (let x = lx; x <= hx; x++)
         for (let y = ly; y <= hy; y++)
-            if (!bad_location(x, y, nlx, nly, nhx, nhy)) {
+            if (!bad_location(x, y, nlx, nly, nhx, nhy)
+                && !is_exclusion_zone(rtype, x, y)) {
                 game.u.ux = x; game.u.uy = y;
                 return;
             }
@@ -588,6 +590,8 @@ async function drag_down_hero() {
         if (rn2(6)) {
             await pline('The iron ball drags you downstairs!');
             await losehp_do(rnd(6), 'dragged downstairs by an iron ball', NO_KILLER_PREFIX);
+            const { litter } = await import('./ball.js');
+            await litter();
         }
     } else {
         if (rn2(2)) {
@@ -601,6 +605,8 @@ async function drag_down_hero() {
             await pline('The iron ball drags you downstairs!');
             await losehp_do(rnd(3), 'dragged downstairs by an iron ball', NO_KILLER_PREFIX);
             exercise(A_STR, false);
+            const { litter } = await import('./ball.js');
+            await litter();
         }
     }
 }
@@ -715,10 +721,13 @@ async function climb_pit() {
     }
 }
 // C ref: trap.c m_easy_escape_pit() — a pit fiend or any MZ_HUGE-or-bigger
-// monster steps straight out.  MZ_HUGE == 4 (include/monflag.h).
+// monster steps straight out.  MZ_HUGE == 4 (include/monflag.h); PM_PIT_FIEND
+// == 300 (js/monmove.js:3206 carries the identical constants for its own
+// per-monster copy of this function).
+const PM_PIT_FIEND_DO = 300, MZ_HUGE_DO = 4;
 function m_easy_escape_pit() {
     const mdat = game.u?.data;
-    return !!mdat && (mdat.msize ?? 0) >= 4;
+    return !!mdat && (mdat.pmidx === PM_PIT_FIEND_DO || (mdat.msize ?? 0) >= MZ_HUGE_DO);
 }
 
 // C ref: dungeon.c on_level(&u.uz, &qstart_level); game.qstart_level comes from
@@ -917,6 +926,20 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // level (C likewise runs keepdogs(FALSE) before savelev()) and BEFORE u.uz
     // switches, keyed by the OLD ledger.
     const oldLedger = `${u.uz.dnum}:${u.uz.dlevel}`;
+    // C ref: save.c:893-894 savemonchn() (called from savelev() -> the
+    // monster-chain save for the level being left) — `if (mtmp->ispriest)
+    // forget_temple_entry(mtmp);` right before that priest's own record is
+    // saved.  Reset intone_time/enter_time/peaceful_time/hostile_time to 0
+    // for every priest STILL on the departing level, so a later revisit's
+    // intemple() gets a fresh start instead of comparing `moves` against a
+    // multi-thousand-turn-old timestamp from the level's first visit.  This
+    // in-memory reference-swap stash is this port's savelev()/getlev()
+    // analog (see the comment above), so it is the one place that needs the
+    // call — js/save.js's own savemonchn() only runs on a true save-file
+    // round trip (segment boundary), never on a within-segment level switch.
+    for (const mtmp of (g.level?.monsters || [])) {
+        if (mtmp.ispriest) forget_temple_entry(mtmp);
+    }
     g._level_store[oldLedger] = {
         level: g.level, stairs: g.stairs, omoves: g.moves ?? 0,
         // C ref: track.c save_track() (from savelev()) — utrack is written to

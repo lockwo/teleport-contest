@@ -1838,8 +1838,10 @@ function corpse_xname(otmp, adjective, cxn_flags) {
 }
 
 // add_erosion_words(): objnam.c:1142.  C appends to prefix[]; here the extended
-// prefix is returned.  js/invent.js:1857 holds the live copy.
-function add_erosion_words(obj, prefix) {
+// prefix is returned.  js/invent.js imports this copy directly (its own
+// duplicate, gated only on oclass and missing the tempered/rotproof arms, was
+// removed).
+export function add_erosion_words(obj, prefix) {
     const iscrys = (obj.otyp === CRYSKNIFE);
     const rknown = (iflags().override_ID ? true : !!obj.rknown);
 

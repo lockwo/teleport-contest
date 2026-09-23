@@ -27,7 +27,7 @@ import { obj_resists } from './zap.js';
 import { newsym, vobj_at, object_glyph, see_with_infrared } from './display.js';
 import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision.js';
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
-import { floor_object_name, doname_invent, sobj_at, stackobj } from './invent.js';
+import { floor_object_name, obj_doname, distant_name_pub, sobj_at, stackobj } from './invent.js';
 import { dist2, mfndpos, mon_mintrap, Trap_Killed_Mon, Trap_Moved_Mon, m_avoid_kicked_loc,
     mon_allowflags, set_apparxy, onscary, mon_wield_item,
     Conflict, resist_conflict, mattacku } from './monmove.js';
@@ -780,18 +780,12 @@ const SCR_MAIL = 364;
 function is_mines_prize(_obj) { return false; }
 function is_soko_prize(_obj) { return false; }
 
-// C ref: objnam.c doname(obj) for the items a starter pet carries (gold and
-// ordinary floor objects), used in the pet pickup/drop toplines.  For a single
-// gold piece doname() prefixes the article: "a gold piece"; a multi stack reads
-// "<n> gold pieces".  Other objects use the full doname (doname_invent) so a
-// known weapon/armor shows its enchantment ("a blessed +1 quarterstaff"); a
-// floor object has no worn mask, so doname_invent's worn-status suffix is empty.
-function pet_doname(obj) {
-    if (obj && (obj.oclass === COIN_CLASS || obj.otyp === GOLD_PIECE)) {
-        const q = obj.quan || 0;
-        return q === 1 ? 'a gold piece' : `${q} gold pieces`;
-    }
-    return doname_invent(obj);
+// C ref: objnam.c distant_name(obj, doname).  Pet pickup and eating messages
+// name a floor object before it is extracted, so distant_name can suppress the
+// observation side effect for objects outside the hero's near-visible area.
+// Stealing already holds the item and uses bare doname().
+function pet_doname(obj, distant = false) {
+    return distant ? distant_name_pub(obj, obj_doname) : obj_doname(obj);
 }
 
 // C ref: dogmove.c dog_invent(mtmp, edog, udist).  The pet either drops a
@@ -895,7 +889,7 @@ async function dog_invent(mtmp, edog, udist) {
                         // (e.g. a preceding "The <mon> is killed!") on the same top
                         // line, exactly as C's topl buffer does.
                         if (cansee(omx, omy) && game.flags?.verbose !== false)
-                            await emit_pet_msg(`${Monnam(mtmp)} picks up ${pet_doname(otmp)}.`);
+                            await emit_pet_msg(`${Monnam(mtmp)} picks up ${pet_doname(otmp, true)}.`);
                         // C ref: dogmove.c:463-464 — obj_extract_self(otmp) then
                         // newsym(omx, omy).  The pet is on the object's tile (omx,omy);
                         // the newsym refreshes the remembered background so the picked-up
@@ -1954,7 +1948,7 @@ export async function dog_eat(mtmp, edog, obj, x, y) {
     if (!cri_is_pool(mtmp.mx, mtmp.my)) {
         const seeobj = cansee(mtmp.mx, mtmp.my);
         const sawpet = cansee(x, y) && canseemon(mtmp);
-        const what = pet_doname(obj);
+        const what = pet_doname(obj, true);
         if (sawpet || (seeobj && canspotmon(mtmp))) {
             // C ref: dogmove.c:286 — a tunneller "digs in" instead of eating.
             if (tunnels(mtmp.data))

@@ -3295,14 +3295,33 @@ export function unknwn_contnr_contents(obj) {
     return result;
 }
 
-// C ref: mkobj.c nextoid(oldobj, newobj) — pick an o_id for a split stack that
-// keeps the same o_id-based shop price adjustment, then advance context.ident.
-// oid_price_adjustment() is shk.js's; with no shop price in play the do-loop
-// exits on its first pass, so this is `ident-1 + 1` followed by next_ident().
+// C ref: shk.c oid_price_adjustment(obj, oid):2860 — one unidentified item in
+// four (by o_id, so it is stable within a game) carries a surcharge. Private
+// copy of shk.js's function of the same name: nextoid() needs it and cannot
+// import from shk.js without creating an import cycle through
+// shk.js -> invent.js -> objnam.js -> mkobj.js that breaks objnam.js's
+// module-top-level `objects.length` read.
+function oid_price_adjustment(obj, oid) {
+    const o = objects[obj.otyp];
+    if (!(obj.dknown && o?.oc_name_known)
+        && (obj.oclass !== GEM_CLASS || o?.material !== GLASS))
+        return (oid % 4) === 0 ? 1 : 0;
+    return 0;
+}
+
+// C ref: mkobj.c nextoid(oldobj, newobj):536 — pick an o_id for a split stack
+// that keeps the same o_id-based shop price adjustment, then advance
+// context.ident.  trylimit caps the retry loop at 256 attempts.
 export function nextoid(oldobj, newobj) {
-    let oid = (game.context_ident ?? 2) - 1;
-    ++oid;
-    if (!oid) ++oid;
+    let trylimit = 256;
+    let oid = (game.context_ident ?? 2) - 1; /* loop increment reverses the -1 */
+    const olddif = oid_price_adjustment(oldobj, oldobj.o_id);
+    let newdif;
+    do {
+        ++oid;
+        if (!oid) ++oid;
+        newdif = oid_price_adjustment(newobj, oid);
+    } while (newdif !== olddif && --trylimit >= 0);
     game.context_ident = oid;
     next_ident();
     return oid;

@@ -10,7 +10,7 @@ import { pline, newsym, m_at, show_glyph_cell, update_topl, topl_more, y_n,
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_NOFLAGS, xname, near_capacity, splitobj, delobj_core, obfree,
          obj_extract_self, sobj_at, encumber_msg, is_weptool, update_inventory,
-         display_minventory } from './invent.js';
+         display_minventory, worn_extrinsic } from './invent.js';
 import { mon_mr } from './monmr_data.js';
 import { mflags1_of, M1_NOEYES, is_undead_flag, nohands } from './monflags_data.js';
 // AD_MAGM is NOT imported: this file already declares the AD_* block locally
@@ -44,7 +44,7 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          NO_NC_FLAGS, SHOPBASE, TIMER_OBJECT, TIMER_LEVEL, REVIVE_MON,
          ROT_CORPSE, SHRINK_GLOB, W_ARMOR, W_ACCESSORY, W_WEP, W_ART,
          W_AMUL, W_TOOL, W_RING, W_RINGL, FIRE_RES, COLD_RES,
-         SHOCK_RES, ACID_RES, DISINT_RES, is_magical_trap, has_oname, ONAME,
+         SHOCK_RES, ACID_RES, DISINT_RES, ANTIMAGIC, is_magical_trap, has_oname, ONAME,
          ESHK, engulfing_u, u_at, M_AP_TYPE, NHW_TEXT, NHW_MENU,
          PICK_ONE } from './const.js';
 import { is_pool, is_ice } from './dbridge.js';
@@ -2315,7 +2315,7 @@ function destroyable(obj, adtyp) {
     } else if (adtyp === AD_ELEC) {
         if (obj.oclass !== RING_CLASS && obj.oclass !== WAND_CLASS) return false;
         // RIN_SHOCK_RESISTANCE / WAN_LIGHTNING immune
-        if (obj.otyp !== 207 /*RIN_SHOCK_RESISTANCE*/ && obj.otyp !== WAN_LIGHTNING)
+        if (obj.otyp !== 191 /*RIN_SHOCK_RESISTANCE*/ && obj.otyp !== WAN_LIGHTNING)
             return true;
     }
     return false;
@@ -2972,7 +2972,8 @@ function Acid_resistance()  { return (game.u?.uprops?.AcidResistance    || 0) > 
 function Disint_resistance(){ return (game.u?.uprops?.HDisint_resistance|| 0) > 0; }
 function Drain_resistance() { return (game.u?.uprops?.HDrain_resistance || 0) > 0; }
 function Antimagic()        { return !!(game.u?.HAntimagic || game.u?.Antimagic
-                                        || game.u?.uprops?.HAntimagic); }
+                                        || game.u?.uprops?.HAntimagic
+                                        || worn_extrinsic(ANTIMAGIC)); }
 function Half_spell_damage(){ return (game.u?.uprops?.HHalf_spell_damage|| 0) > 0; }
 function Unchanging()       { return (game.u?.uprops?.HUnchanging       || 0) > 0; }
 function Invis()            { return !!(game.u?.uprops?.HInvis); }

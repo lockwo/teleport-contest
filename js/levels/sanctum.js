@@ -3,8 +3,8 @@
 // shared special-level machinery still lives there and is imported below.
 
 import {
-    AM_NONE, ANTI_MAGIC, A_NONE, COLNO, FILL_NORMAL, FIRE_TRAP, IRONBARS, IS_STWALL, IS_TREE,
-    MAGIC_TRAP, MORGUE, ROWNO, SLP_GAS_TRAP, SPIKED_PIT, W_NONPASSWALL,
+    AM_NONE, ANTI_MAGIC, A_NONE, COLNO, FILL_NORMAL, FIRE_TRAP, G_GONE, IRONBARS, IS_STWALL,
+    IS_TREE, MAGIC_TRAP, MORGUE, ROWNO, SLP_GAS_TRAP, SPIKED_PIT, W_NONPASSWALL,
 } from '../const.js';
 import { game } from '../gstate.js';
 import {
@@ -16,7 +16,7 @@ import { rn2 } from '../rng.js';
 import {
     TEMPLE_RTYPE, VLY_S_LICH, VLY_S_VAMPIRE, bigrm_load_map, bigrm_wallification, flip_level,
     lspo_door_relative, quest_level_init_solidfill, quest_place_stair, quest_set_door,
-    remove_boundary_syms, shuffle, vly_abs, vly_altar, vly_flip_dndest, vly_monster_class,
+    remove_boundary_syms, shuffle, vly_abs, vly_altar, vly_flip_dndest, vly_flip_updest, vly_monster_class,
     vly_non_diggable, vly_object, vly_region, vly_teleport_region, vly_trap,
 } from '../sp_lev.js';
 
@@ -61,33 +61,27 @@ function vly_non_passwall(mx1, my1, mx2, my2) {
         }
 }
 
-// C ref: sp_lev.c create_monster() for des.monster({id=..., x=, y=, ...}).
-// Two guards decide the prologue draws:
-//   * find_montype (sp_lev.c:3156) rolls rn2(2) for the gender unless the
-//     species has a fixed gender or the NAME itself is a gendered form;
-//   * sp_amask_to_amask (sp_lev.c:1908) only reaches induced_align's rn2(3)
-//     for AM_SPLEV_RANDOM, i.e. when the table carries NO `align` key.  An
-//     explicit align="noalign" is a plain mask and draws nothing — and it also
-//     routes creation through mk_roamer() (priest.c:724) instead of makemon().
+// C ref: sp_lev.c lspo_monster():3383 derives a named monster's class from its
+// species.  create_monster() normally passes that species to makemon(), but
+// turns a genocided or extinct species into a random monster first (1950-1958).
+// In this session erinys has reached its birth limit; preserving the named
+// ptr went directly to next_ident while C invokes rndmonst_adj().
 function sanc_monster(name, mx, my, opts = {}) {
     const { sp_align = null, peaceful = null } = opts;
     const pmidx = name_to_pmidx(name);
-    const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
-    if (!ptr) return null;
-    if (ptr.gcode !== 1 && ptr.gcode !== 2
+    const named = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
+    if (!named) return null;
+    if (named.gcode !== 1 && named.gcode !== 2
         && name_gender_hint(name) === MGEND_NEUTRAL)
         rn2(2);                                   // find_montype (sp_lev.c:3156)
+    const ptr = (game.mvitals?.[pmidx]?.mvflags & G_GONE) ? null : named;
     if (sp_align === null) rn2(3);                // induced_align (dungeon.c:2012)
     let x = mx, y = my;
     if (mm_mon_at(x, y)) {
         const cc = enexto_spawn(x, y, ptr);
         if (cc) { x = cc.x; y = cc.y; }
     }
-    // mk_roamer() -> makemon(ptr, x, y, MM_ADJACENTOK|MM_EMIN|MM_NOMSG); the
-    // AM_SPLEV_RANDOM arm is a plain makemon(pm, x, y, mm_flags).  MM_EMIN is
-    // load-bearing: makemon()'s aligned-cleric/high-cleric minion block
-    // (makemon.c:1411) is skipped when the caller supplies the emin itself, and
-    // passing 0 here made every sanctum cleric draw its two rn2(3)s.
+    // C's G_GONE arm passes NULL to makemon(), starting its rndmonst() scan.
     const mtmp = makemon(ptr, x, y, sp_align !== null ? MM_EMIN : 0);
     if (!mtmp) return null;
     if (sp_align !== null) {
@@ -223,6 +217,7 @@ export async function makemaz_sanctum() {
     if (flp) {
         flip_level(flp);
         vly_flip_dndest(flp);
+        vly_flip_updest(flp);
     }
 }
 

@@ -14,7 +14,7 @@ import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_r
          mapfrag_fromstr, mapfrag_match, selection_match, set_levltyp_lit,
          splev_map_origin, reset_xystart_size, flip_level, bigrm_get_level_extends, set_door_orientation,
          okdoor, bydoor, create_door, lspo_door_relative,
-         is_ok_location, pm_to_humidity, LOC_DRY,
+         is_ok_location, pm_to_humidity, LOC_DRY, splev_get_location_room,
          run_themeroom_postprocess,
          q_absx, q_absy, quest_floodfill_match, splev_object_at, splev_feature,
          splev_door_at, vly_altar, vly_region, splev_region_lit,
@@ -439,15 +439,21 @@ async function makelevel() {
     const slev = Is_special(g.u?.uz);
     if (slev && slev.proto && slev.proto.toLowerCase() === 'bigrm') {
         await makemaz_bigroom();
-        // C ref: sp_lev.c:6050 lspo_finalize_level -> fixup_special().  No
-        // bigrm-N registers a levregion, so this is the `!added_branch &&
-        // Is_branchlev()` arm: place_lregion(0,...,LR_BRANCH), and because the
-        // 2-arg des.region(sel,"lit") form adds no room svn.nroom is 0, so the
-        // LR_BRANCH->place_branch shortcut is NOT taken and the whole-level rn1
-        // loop runs.  Missing it cost both the rn1 pair AND the MAGIC_PORTAL
-        // trap it leaves behind, which the hero's own place_lregion then has to
-        // reject (seed0367 step 235: the quest portal lands on (74,9), the very
-        // square our arrival loop was accepting).
+        // C ref: bigrm-10.lua's LR_UPSTAIR levregion.  Its map-relative
+        // {0,0,70,18} region is resolved against the centered map's actual
+        // origin, so retain the down-teleport rectangle the builder recorded
+        // rather than guessing absolute coordinates.  fixup_special() places
+        // this matching stair levregion before the implicit LR_BRANCH.
+        const bigrm10 = g.dndest;
+        if (bigrm10) {
+            castle_place_stair_lregion({ rtype: LR_UPSTAIR, ...bigrm10 });
+        }
+        // C ref: sp_lev.c:6050 lspo_finalize_level -> fixup_special().  The
+        // remaining Big Room variants have no levregion, so the !added_branch
+        // && Is_branchlev() arm calls place_lregion(0,...,LR_BRANCH).  Because
+        // the 2-arg des.region(sel,"lit") form adds no room, svn.nroom is 0 and
+        // the whole-level rn1 loop runs.
+        // Its MAGIC_PORTAL makes a square our later hero-placement loop rejects.
         await mk_fixup_branch();
         return;
     }
@@ -2963,10 +2969,23 @@ function add_subroom(proom, lowx, lowy, hix, hiy, lit, rtype, special) {
     return croom;
 }
 
-// C ref: get_free_room_loc -> get_location_coord(random) -> somexy(croom).
-function oracle_get_free_room_loc(croom) {
-    const c = { x: 0, y: 0 };
-    somexy(croom, c);
+// C ref: sp_lev.c:create_monster() -> get_location_coord() with a RANDOM
+// coordinate.  The first location attempt for a specified monster keeps its
+// own humidity and has NO_LOC_WARN; only a total miss retries with DRY added.
+function oracle_get_free_room_loc(croom, pm) {
+    const get_location_coord = (humidity, nowarn) => {
+        let c = splev_get_location_room(croom, humidity, true);
+        if (c.x === -1 && c.y === -1)
+            c = splev_get_location_room(croom, humidity, nowarn);
+        return c;
+    };
+
+    if (!pm) return get_location_coord(LOC_DRY, false);
+
+    let humidity = pm_to_humidity(pm);
+    let c = get_location_coord(humidity, true);
+    if (c.x === -1 && c.y === -1)
+        c = get_location_coord(humidity | LOC_DRY, false);
     return c;
 }
 
@@ -3682,10 +3701,10 @@ async function mt4_altar(croom, rx, ry, alignName) {
     if (game.level?.flags) game.level.flags.has_temple = true;
 }
 
-// C ref: sp_lev.c create_monster() with croom != NULL — get_free_room_loc()
-// (somexy), then the enexto() relocation and the inside_room() reject.
+// C ref: sp_lev.c:create_monster() — choose the species' legal random
+// location before relocating occupied cells with enexto().
 function mt4_place_monster(data, croom, peaceful) {
-    const c = oracle_get_free_room_loc(croom);
+    const c = oracle_get_free_room_loc(croom, data);
     if (m_at(c.x, c.y)) {
         const cc = enexto_spawn(c.x, c.y, data);
         if (cc) { c.x = cc.x; c.y = cc.y; }
@@ -3948,11 +3967,11 @@ function mtown1_teleport_region(lx, ly, hx, hy, ex1, ey1, ex2, ey2) {
 // "stair-down" region -> fixup_special() -> place_lregion()/put_lregion_here().
 // castle_place_stair_lregion() (below) already implements exactly this random
 // placement loop for castle.lua's own stair levregions; reused verbatim.
-function mtown_stair_lregion(rtype, lx, ly, hx, hy, ex1, ey1, ex2, ey2) {
+function mtown_stair_lregion(rtype, lx, ly, hx, hy, ex1, ey1, ex2, ey2, flp) {
     castle_place_stair_lregion({
         rtype, lx, ly, hx, hy,
         nlx: q_absx(ex1), nly: q_absy(ey1), nhx: q_absx(ex2), nhy: q_absy(ey2),
-    });
+    }, flp);
 }
 
 // C ref: sp_lev.c create_object() override tail (2230-2296) — spe, buc (only
@@ -4046,6 +4065,16 @@ function mtown1_monster_abs(name, x, y, peaceful, levAdj) {
 // Entry point.  C ref: makemaz("minetn") -> load_special("minetn-1.lua").
 async function makemaz_minetown1() {
     const g = game;
+    // load_special -> load_lua -> nhlib.lua prelude `align = {...}; shuffle(align)`
+    // runs before every minetn-<N>.lua body executes, including this one.
+    // minetn-1.lua never indexes the result (its altar passes align="noalign"
+    // literally, dat/minetn-1.lua:52) but the top-level Lua state load still
+    // performs the shuffle unconditionally, so the draws (rn2(3), rn2(2)) must
+    // still happen — matching every other minetn variant (minetown2/3/4/5/6/7)
+    // and the pattern already used on Arc-strt/Bar-strt/etc. for levels that
+    // draw but don't consume `align`.
+    for (let i = 3; i >= 2; i--) rn2(i);
+
     // des.level_flags("mazelevel") — overwritten to FALSE by mk_mkmap below
     // (walled&&joined always sets is_maze_lev=false, mkmap.c:481); no RNG.
     if (g.level?.flags) g.level.flags.is_maze_lev = true;
@@ -4329,8 +4358,8 @@ async function makemaz_minetown6() {
     // script text declares the stairs (before the shops/altar/doors/monsters).
     // Moved here (from just after the des.map() overlay) so the two rn1()
     // draws land in the same relative position as the C recorder's trace.
-    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 1, 0, 39, 18);
-    mtown_stair_lregion(LR_DOWNSTAIR, 60, 3, 75, 19, 0, 0, 38, 18);
+    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 1, 0, 39, 18, flp);
+    mtown_stair_lregion(LR_DOWNSTAIR, 60, 3, 75, 19, 0, 0, 38, 18, flp);
 }
 
 
@@ -4535,6 +4564,13 @@ function mk_gold() {
 function mk_monster_random(peacefulOverride) {
     oracle_induced_align();
     const c = mk_get_location_random(mk_ok_dry);
+    // C ref: sp_lev.c create_monster():1977 — "try to find a close place if
+    // someone else is already there" runs for EVERY placement, including the
+    // pm==NULL (fully random) monster case; this was missing here (its sibling
+    // mk_monster_named/mk_monster_class both already call it), so a hellfill
+    // populatemaze() random-monster roll landing on an occupied square skipped
+    // the whole enexto()/collect_coords() ring shuffle C draws in that case.
+    mk_enexto_if_occupied(c, null);
     const mtmp = make_monster(null, c.x, c.y, 0);
     if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
     return mtmp;
@@ -5700,18 +5736,39 @@ function castle_place_lregions() {
 
 // C ref: mkmaze.c place_lregion() + put_lregion_here() for LR_UPSTAIR — the
 // probabilistic loop draws rn1((hx-lx)+1, lx) / rn1((hy-ly)+1, ly) per attempt.
-function castle_place_stair_lregion(r) {
-    const up = (r.rtype === LR_UPSTAIR);
-    const lx = Math.max(r.lx, 1), hx = Math.min(r.hx, COLNO - 1);
-    const ly = Math.max(r.ly, 0), hy = Math.min(r.hy, ROWNO - 1);
+function castle_place_stair_lregion(r, flp = 0) {
+    // C's flip_level() transforms every pending levregion, including both its
+    // candidate and exclusion rectangles, before fixup_special() calls
+    // place_lregion().  Mine Town's regions are still represented as literals
+    // here, so transform a local copy after the map flip rather than searching
+    // the stale, pre-flip rectangle.
+    let placed = r;
+    if (flp & 3) {
+        const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+        const flipX = (x) => minx + maxx - x;
+        const flipY = (y) => miny + maxy - y;
+        let { lx, ly, hx, hy, nlx, nly, nhx, nhy } = r;
+        if (flp & 1) {
+            [ly, hy] = [flipY(hy), flipY(ly)];
+            [nly, nhy] = [flipY(nhy), flipY(nly)];
+        }
+        if (flp & 2) {
+            [lx, hx] = [flipX(hx), flipX(lx)];
+            [nlx, nhx] = [flipX(nhx), flipX(nlx)];
+        }
+        placed = { ...r, lx, ly, hx, hy, nlx, nly, nhx, nhy };
+    }
+    const up = (placed.rtype === LR_UPSTAIR);
+    const lx = Math.max(placed.lx, 1), hx = Math.min(placed.hx, COLNO - 1);
+    const ly = Math.max(placed.ly, 0), hy = Math.min(placed.hy, ROWNO - 1);
     for (let trycnt = 0; trycnt < 200; trycnt++) {
         const x = rn1((hx - lx) + 1, lx);
         const y = rn1((hy - ly) + 1, ly);
-        if (castle_put_stair_here(x, y, r, up)) return;
+        if (castle_put_stair_here(x, y, placed, up)) return;
     }
     for (let x = lx; x <= hx; x++)
         for (let y = ly; y <= hy; y++)
-            if (castle_put_stair_here(x, y, r, up)) return;
+            if (castle_put_stair_here(x, y, placed, up)) return;
 }
 
 function castle_put_stair_here(x, y, r, up) {
