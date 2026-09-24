@@ -23,8 +23,20 @@
 import { game } from './gstate.js';
 import { rnd, rn1, rn2 } from './rng.js';
 import { nhgetch } from './input.js';
-import { pline, flush_screen, newsym, update_topl } from './display.js';
+import { pline, flush_screen, newsym, update_topl, unmap_object,
+         canseemon_shared } from './display.js';
 import { m_at } from './display.js';
+import { DEADMONSTER, mvitals_died, m_detach } from './mon.js';
+import { killed, corpse_chance, make_corpse } from './uhitm.js';
+import { is_pool, is_lava } from './dbridge.js';
+import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
+import { sokoban_guilt, set_wounded_legs, heal_legs } from './trap.js';
+import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
+import { surface } from './dungeon.js';
+import { hliquid } from './do_name.js';
+import { sobj_at, is_pole } from './invent.js';
+import { t_at } from './mkroom.js';
+import { mon_mintrap } from './monmove.js';
 import { vision_recalc } from './vision.js';
 import { x_monnam } from './uhitm.js';
 import { isok, MAXULEV, W_SADDLE, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED,
@@ -239,39 +251,82 @@ function steed_mon_at(x, y) {
     return null;
 }
 
-// C ref: steed.c landing_spot(spot, reason, forceit) — pick the square the
-// dismounting hero lands on.  Only the DISMOUNT_BYCHOICE (voluntary, unimpaired)
-// path is needed: best_j/clockwise_j/counterclk_j are all -1, so the candidate
-// list is simply the 8 adjacent squares in xdir/ydir order.  Each viable
-// candidate increments `viable`; among equal-distance candidates the choice is
-// the rn2(viable) tie-break (steed.c:543).  Returns the spot, or null.
-function landing_spot() {
+// C ref: steed.c:459 landing_spot(spot, reason, forceit) — pick the square
+// the dismounting hero lands on.  Full port: DISMOUNT_KNOCKED's preferred-
+// direction bias (u.dx,u.dy, set by the caller just before dismount_steed(
+// DISMOUNT_KNOCKED)), the three trap/boulder-avoidance passes keyed by
+// reason+impairment, and (forceit) the enexto() fallback when no adjacent
+// square qualifies.  Returns {x,y} or null.
+function xytodir_std(dx, dy) {
+    for (let k = 0; k < 8; k++) if (XDIR[k] === dx && YDIR[k] === dy) return k;
+    return -1; // DIR_ERR
+}
+function landing_spot(reason, forceit) {
     const u = game.u;
-    const tryArr = [];
-    for (let j = 0; j < 8; j++) tryArr.push({ x: XDIR[j], y: YDIR[j] });
+    const tryArr = new Array(8);
+    let n = 0;
+    let best_j = -1, clockwise_j = -1, counterclk_j = -1;
 
+    const j0 = xytodir_std(u.dx, u.dy);
+    if (reason === DISMOUNT_KNOCKED && j0 !== -1) {
+        // we'll check the preferred location first; if viable it'll be picked
+        best_j = j0;
+        tryArr[0] = { x: u.dx, y: u.dy };
+        const i0 = rn2(2);
+        clockwise_j = (j0 + 1) % 8;
+        tryArr[1 + i0] = { x: XDIR[clockwise_j], y: YDIR[clockwise_j] };
+        counterclk_j = (j0 + 8 - 1) % 8;
+        tryArr[2 - i0] = { x: XDIR[counterclk_j], y: YDIR[counterclk_j] };
+        n = 3;
+    }
+    for (let j = 0; j < 8; j++) {
+        if (j === best_j || j === clockwise_j || j === counterclk_j) continue;
+        // C ref: steed.c:501 `(j % 1) != 0` is unconditionally false for any
+        // integer j — this arm never fires in upstream C either; ported
+        // literally (bug-compatible) rather than "fixed".
+        if (reason === DISMOUNT_POLY && (j % 1) !== 0) continue;
+        tryArr[n++] = { x: XDIR[j], y: YDIR[j] };
+    }
+
+    // Up to three passes: i==0 (voluntary, unimpaired) avoids known traps and
+    // boulders; i==1 (voluntary+impaired, or knocked) avoids boulders but
+    // allows known traps; i==2 (other) allows both.  Falls back i==0->1->2.
+    const impaird = !!(Stunned_std() || Confusion_std() || Fumbling_std());
+    const iStart = (reason === DISMOUNT_BYCHOICE && !impaird) ? 0
+        : ((reason === DISMOUNT_BYCHOICE && impaird) || reason === DISMOUNT_KNOCKED) ? 1
+        : 2;
     let viable = 0, min_distance = -1, found = false;
     const spot = { x: 0, y: 0 };
-    // i==0 pass only (voluntary, unimpaired) avoids known traps/boulders; the
-    // ride sessions land on bare floor, so the single pass suffices.
-    for (let j = 0; j < tryArr.length; j++) {
-        const x = u.ux + tryArr[j].x;
-        const y = u.uy + tryArr[j].y;
-        if (!isok(x, y) || (x === u.ux && y === u.uy)) continue;
-        const acc = steed_accessible(x, y), mon = steed_mon_at(x, y),
-            tm = steed_test_move(u.ux, u.uy, x - u.ux, y - u.uy);
-        if (acc && !mon && tm) {
-            ++viable;
-            const distance = (x - u.ux) * (x - u.ux) + (y - u.uy) * (y - u.uy);
-            if (min_distance < 0
-                || (distance < min_distance)
-                || (distance === min_distance && !rn2(viable))) {
-                // (no known-trap / boulder on these floor tiles)
-                spot.x = x; spot.y = y;
-                min_distance = distance;
-                found = true;
+    for (let i = iStart; i <= 2 && !found; i++) {
+        for (let j = 0; j < n; j++) {
+            const x = u.ux + tryArr[j].x, y = u.uy + tryArr[j].y;
+            if (!isok(x, y) || (x === u.ux && y === u.uy)) continue;
+            if (steed_accessible(x, y) && !steed_mon_at(x, y)
+                && steed_test_move(u.ux, u.uy, x - u.ux, y - u.uy)) {
+                ++viable;
+                const distance = (x - u.ux) * (x - u.ux) + (y - u.uy) * (y - u.uy);
+                if (min_distance < 0
+                    || ((best_j === -1) ? (distance < min_distance) : (j < 3))
+                    || (distance === min_distance && !rn2(viable))) {
+                    const trap = t_at(x, y);
+                    const kn_trap = i === 0 && !!trap && !!trap.tseen
+                        && trap.ttyp !== VIBRATING_SQUARE;
+                    const boulder = i <= 1 && !!sobj_at(BOULDER, x, y)
+                        && !throws_rocks_std(game.youmonst?.data);
+                    if (!kn_trap && !boulder) {
+                        spot.x = x; spot.y = y;
+                        min_distance = distance;
+                        found = true;
+                        if (best_j !== -1 && j < 3) break;
+                    }
+                }
             }
         }
+    }
+
+    if (forceit && !found) {
+        const sp = enexto_gpflags(u.ux, u.uy, game.youmonst?.data, 0);
+        if (sp) { spot.x = sp.x; spot.y = sp.y; found = true; }
     }
     return found ? spot : null;
 }
@@ -288,7 +343,7 @@ async function dismount_steed_bychoice() {
     const mtmp = u.usteed;
     if (!mtmp) return;
 
-    const cc = landing_spot(); // RNG: rn2(viable) tie-breaks
+    const cc = landing_spot(DISMOUNT_BYCHOICE, 0); // RNG: rn2(viable) tie-breaks
     if (!cc) {
         await pline("You can't.  There isn't anywhere for you to stand.");
         return;
@@ -370,6 +425,207 @@ async function dismount_steed_bychoice() {
     await pickup_after_move(u.ux, u.uy);
 }
 
+// C ref: steed.c:576 dismount_steed(reason) — the general port: every
+// DISMOUNT_* reason, its own message/fall-damage/wounded-legs handling,
+// landing-spot selection (including the forceit enexto() retry), steed
+// relocation (including a water/lava death check) or repositioning around an
+// engulfer, the Sokoban boulder-squeeze guilt check, re-trapping the steed in
+// the hero's former trap, and the tail float_down(0,W_SADDLE) bookkeeping.
+// DISMOUNT_BYCHOICE delegates to the already-tested dismount_steed_bychoice()
+// above rather than re-deriving its exact (recorded-session-verified)
+// behavior here.
+export async function dismount_steed(reason) {
+    if (reason === DISMOUNT_BYCHOICE) return await dismount_steed_bychoice();
+
+    const u = game.u;
+    const mtmp = u.usteed;
+    if (!mtmp) return; // C: sanity check; caller lost the steed already
+
+    const save_utrap = u.utrap;
+    let repair_leg_damage = !!((u.HWounded_legs || 0) || (u.EWounded_legs || 0));
+    let cc = landing_spot(reason, 0);
+    let have_spot = !!cc;
+
+    // ufly/ulev/verb: C brackets u_locomotion() with u.usteed transiently
+    // cleared (it affects the Fly test) then restored.
+    u.usteed = null;
+    const ufly = !!u.uprops?.Flying;
+    const ulev = !!u.uprops?.Levitation;
+    let verb = u_locomotion_std('fall');
+    u.usteed = mtmp;
+
+    switch (reason) {
+    case DISMOUNT_THROWN:
+        verb = 'are thrown';
+        // FALLTHROUGH
+    case DISMOUNT_KNOCKED:
+    case DISMOUNT_FELL:
+        await pline(`You ${verb} off of ${mon_nam(mtmp)}!`);
+        if (!have_spot) { cc = landing_spot(reason, 1); have_spot = !!cc; }
+        if (!ulev && !ufly) {
+            await losehp(rn1(10, 10)); // "riding accident"
+            await set_wounded_legs(BOTH_SIDES, (u.HWounded_legs || 0) + rn1(5, 5));
+            repair_leg_damage = false;
+        }
+        break;
+    case DISMOUNT_POLY:
+        await pline(`You can no longer ride ${mon_nam(u.usteed)}.`);
+        if (!have_spot) { cc = landing_spot(reason, 1); have_spot = !!cc; }
+        break;
+    case DISMOUNT_ENGULFED:
+    case DISMOUNT_BONES:
+    case DISMOUNT_GENERIC:
+    default:
+        break;
+    }
+
+    // While riding, Wounded_legs refers to the steed's legs; heal_legs() must
+    // run BEFORE u.usteed is released below (heal_legs() itself gates its
+    // "Your leg(s) feel(s) better." message on !u.usteed).
+    if (repair_leg_damage) await heal_legs(1);
+
+    /* Release the steed */
+    u.usteed = null;
+    u.ugallop = 0;
+    steed_vs_stealth_std(); // Stealth not modelled; matches C's no-op here
+
+    if (u.utraptype === TT_BEARTRAP || u.utraptype === TT_PIT || u.utraptype === TT_WEB)
+        mtmp.mtrapped = 1;
+
+    let steedcc = { x: u.ux, y: u.uy };
+    if (m_at(u.ux, u.uy)) {
+        const sp = enexto_gpflags(u.ux, u.uy, mtmp.data, 0)
+            || enexto_gpflags(u.ux, u.uy, monster_by_pmidx(name_to_pmidx('bat')), 0)
+            || enexto_gpflags(u.ux, u.uy, monster_by_pmidx(name_to_pmidx('ghost')), 0);
+        if (sp) steedcc = sp;
+    }
+
+    if (!DEADMONSTER(mtmp)) {
+        steed_place_monster(mtmp, steedcc.x, steedcc.y);
+
+        if (reason === DISMOUNT_BONES) {
+            const sp = enexto_gpflags(u.ux, u.uy, mtmp.data, 0);
+            if (sp) await rloc_to(mtmp, sp.x, sp.y);
+            else await rloc(mtmp, RLOC_ERR | RLOC_NOMSG);
+            return;
+        }
+
+        if (!u.uswallow && !u.ustuck && have_spot) {
+            const mdat = mtmp.data;
+            if (steed_grounded(mdat)) {
+                if (is_pool(u.ux, u.uy)) {
+                    if (!Underwater_std())
+                        await pline(`${Monnam_uhitm(mtmp)} falls into the ${surface(u.ux, u.uy)}!`);
+                    if (!cant_drown_std(mdat)) { await killed(mtmp); adjalign(-1); }
+                } else if (is_lava(u.ux, u.uy)) {
+                    await pline(`${Monnam_uhitm(mtmp)} is pulled into the ${hliquid('lava')}!`);
+                    if (!likes_lava_std(mdat)) { await killed(mtmp); adjalign(-1); }
+                }
+            }
+            if (!DEADMONSTER(mtmp)) {
+                await teleds(cc.x, cc.y, TELEDS_ALLOW_DRAG);
+                if (sobj_at(BOULDER, cc.x, cc.y)) sokoban_guilt();
+                if (save_utrap) await mon_mintrap(mtmp, NO_TRAP_FLAGS);
+            }
+        } else {
+            const sp = enexto_gpflags(u.ux, u.uy, mtmp.data, 0);
+            if (sp) await rloc_to(mtmp, sp.x, sp.y);
+            else await steed_monkilled(mtmp);
+        }
+    }
+
+    if (reason !== DISMOUNT_ENGULFED && reason !== DISMOUNT_BONES) {
+        game.botl = true;
+        const { encumber_msg } = await import('./invent.js');
+        await encumber_msg();
+        game.vision_full_recalc = 1;
+    } else {
+        game.botl = true;
+    }
+
+    if (game.uwep && is_pole(game.uwep)) game.unweapon = true;
+}
+
+// ── dismount_steed() helper adapters ─────────────────────────────────────
+// C ref: hack.c u_locomotion(def) — the current hero's own way of moving.
+function u_locomotion_std(def) {
+    const u = game.u;
+    if (u?.uprops?.Levitation) return 'float';
+    if (u?.uprops?.Flying) return 'fly';
+    return def;
+}
+// C ref: youprop.h Stunned.
+function Stunned_std() {
+    const u = game.u;
+    return (u?.uprops?.Stun || u?.ustun || 0) > 0;
+}
+// C ref: mondata.h grounded(ptr) — none of the steeds() classes (quadruped/
+// unicorn/angel/centaur/dragon/jabberwock) carry M1_CLING, so the is_clinger
+// term (and has_ceiling(), which only gates it) is always true and need not
+// be modelled here.
+function steed_grounded(ptr) { return !is_flyer_std(ptr) && !is_floater_std(ptr); }
+// C ref: mondata.h cant_drown(ptr) = is_swimmer || amphibious || breathless.
+function cant_drown_std(ptr) {
+    return is_swimmer_std(ptr) || !!(mflags1_of(ptr) & (M1_AMPHIBIOUS | M1_BREATHLESS));
+}
+// C ref: mondata.h likes_lava(ptr) — fire elementals and salamanders only; no
+// steeds() class ever matches, kept for parity with the C branch.
+function likes_lava_std(ptr) {
+    const pmidx = ptr?.pmidx;
+    return pmidx === name_to_pmidx('fire elemental') || pmidx === name_to_pmidx('salamander');
+}
+// C ref: mondata.h nonliving(ptr) — undead / manes / golem / vortex.  No
+// steeds() class ever matches; kept for monkilled()'s message parity.
+function nonliving_steed(ptr) {
+    return !!(mflags2_of(ptr) & M2_UNDEAD) || ptr?.name === 'manes'
+        || ptr?.mcls === 55 /* S_GOLEM */ || ptr?.mcls === 22 /* S_VORTEX */;
+}
+// C ref: muse.c throws_rocks(ptr) — a rock-throwing giant/troll can stand on
+// a boulder square without triggering landing_spot's boulder-avoidance.
+function throws_rocks_std(ptr) { return !!ptr?.throws_rocks; }
+// C ref: mon.c place_monster(mon,x,y) — dog.js/vault.js keep private copies;
+// this is steed.c's own call site, so it gets one here too.  Also clears the
+// port-local `mridden` flag (mirroring dismount_steed_bychoice()'s own inline
+// `mtmp.mridden = false`): this port renders/looks up a ridden steed as
+// colocated with, and hidden behind, the hero (see mount_steed()'s own
+// comment on mridden); putting it back on the map grid must undo that or
+// the square keeps rendering as bare terrain instead of the steed's glyph.
+function steed_place_monster(mon, x, y) {
+    mon.mridden = false;
+    mon.mx = x; mon.my = y;
+    const list = game.level?.monsters;
+    if (list && !list.includes(mon)) list.push(mon);
+}
+// C ref: mon.c mondead(mtmp) — for a steed species none of the lifesaving/
+// vampshifter/vault-guard special cases apply, so this reduces to the
+// death-bookkeeping tail: bump the species' death counter, clear an
+// invisible glyph, then m_detach() (drops minvent — including the saddle —
+// removes any light source, purges mtmp from the level).
+async function steed_mondead(mtmp) {
+    mtmp.mhp = 0;
+    mvitals_died(mtmp);
+    if (game.level?.at(mtmp.mx, mtmp.my)?.invisMon) unmap_object(mtmp.mx, mtmp.my);
+    await m_detach(mtmp, mtmp.data, true);
+}
+// C ref: mon.c mondied(mdef) — mondead() then, unless life-saved (not
+// modelled anywhere in this codebase), maybe drop a corpse.
+async function steed_mondied(mtmp) {
+    const x = mtmp.mx, y = mtmp.my;
+    await steed_mondead(mtmp);
+    if (corpse_chance(mtmp) && (steed_accessible(x, y) || is_pool(x, y)))
+        make_corpse(mtmp, x, y);
+}
+// C ref: mon.c monkilled(mdef, "", -AD_PHYS) — steed died from an impersonal
+// cause (no adjacent square to flee to).  fltxt="" so the message never gets
+// a "by the ..." suffix; how=-AD_PHYS is neither AD_DGST/-AD_RBRE/AD_FIRE, so
+// corpse dropping applies normally with no exp/luck/treasure change (unlike
+// killed(), which is what DISMOUNT_BYCHOICE / the water-lava death arm use).
+async function steed_monkilled(mtmp) {
+    if (canseemon_shared(mtmp))
+        await pline(`${Monnam_uhitm(mtmp)} is ${nonliving_steed(mtmp.data) ? 'destroyed' : 'killed'}!`);
+    await steed_mondied(mtmp);
+}
+
 // C ref: steed.c doride() — the #ride command.  With no current steed, read a
 // direction and try to mount the monster there.  Returns ECMD_TIME (1) when a
 // mount succeeds (a turn passes), else ECMD_OK/ECMD_CANCEL (0, no turn).
@@ -410,14 +666,18 @@ import { canspotmon, Monnam as Monnam_uhitm } from './uhitm.js';
 import { roles } from './role.js';
 import { which_armor } from './worn.js';
 import { y_monnam, monverbself } from './do_name.js';
-import { exercise, acurr_eff } from './attrib.js';
+import { exercise, acurr_eff, adjalign } from './attrib.js';
 import { p_skill_of, use_skill } from './enhance.js';
-import { objects } from './mkobj.js';
+import { objects, BOULDER } from './mkobj.js';
 import { mflags1_of, M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID, M1_SLITHY,
-         M1_FLY } from './monflags_data.js';
+         M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS, mflags2_of,
+         M2_UNDEAD } from './monflags_data.js';
 import { A_DEX, A_CHA, A_WIS, ECMD_OK, ECMD_TIME, ECMD_CANCEL,
          P_RIDING, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
-         DISMOUNT_BYCHOICE, DISMOUNT_THROWN, DISMOUNT_FELL } from './const.js';
+         DISMOUNT_BYCHOICE, DISMOUNT_THROWN, DISMOUNT_FELL, DISMOUNT_KNOCKED,
+         DISMOUNT_POLY, DISMOUNT_ENGULFED, DISMOUNT_BONES, DISMOUNT_GENERIC,
+         BOTH_SIDES, TT_BEARTRAP, TT_PIT, TT_WEB, NO_TRAP_FLAGS, RLOC_ERR,
+         RLOC_NOMSG, TELEDS_ALLOW_DRAG, VIBRATING_SQUARE } from './const.js';
 
 // C ref: steed.c:8 steeds[] — the monster CLASSES that can be ridden, as
 // defsym.h MONSYM indices: S_QUADRUPED 17, S_UNICORN 21, S_ANGEL 27,
@@ -679,7 +939,7 @@ export async function kick_steed() {
         || ((u.ulevel | 0) + (u.usteed.mtame | 0)
             < rnd(Math.trunc(MAXULEV / 2) + 5))) {
         newsym(u.usteed.mx, u.usteed.my);
-        await dismount_steed_std(DISMOUNT_THROWN);
+        await dismount_steed(DISMOUNT_THROWN);
         return;
     }
 
@@ -717,7 +977,7 @@ export async function poly_steed(steed, oldshape) {
     if (!can_saddle(steed) || !can_ride(steed)) {
         /* can't get here; newcham() -> mon_break_armor() -> m_lose_armor()
            removes the saddle and/or forces a dismount first */
-        await dismount_steed_std(DISMOUNT_FELL);
+        await dismount_steed(DISMOUNT_FELL);
     } else {
         let buf = x_monnam(steed, ARTICLE_YOUR, null, SUPPRESS_SADDLE, false);
         if (oldshape !== steed.data)
@@ -764,14 +1024,8 @@ function mhe_std(mon) {
 }
 // C ref: eat.c finish_meating(mon) — js/dogmove.js:2300 holds the private port.
 function finish_meating_std(mon) { mon.meating = 0; }
-// C ref: steed.c:576 dismount_steed(reason) — UNPORTED in js/ (js/artifact.js:2799
-// and js/dog.js:1217 are stubs; js/steed.js's own dismount_steed_bychoice()
-// covers only DISMOUNT_BYCHOICE).
-async function dismount_steed_std(reason) {
-    if (reason === DISMOUNT_BYCHOICE) return await dismount_steed_bychoice();
-    if (game.u) game.u.usteed = null;   /* the part every reason shares */
-    return undefined;
-}
+// (dismount_steed_std removed — kick_steed()/poly_steed() above now call the
+// real, exported dismount_steed(reason) directly.)
 // C ref: hacklib.c strsubst(bp, orig, replacement) — first occurrence only.
 function strsubst_std(bp, orig, replacement) {
     const i = bp.indexOf(orig);

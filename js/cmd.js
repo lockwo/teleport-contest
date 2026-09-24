@@ -1410,12 +1410,14 @@ export async function rhack(key) {
         // safe_wait refuses it (hostile monster adjacent). A repeat count
         // (gm.multi) arms a timed occupation — set_occupation(dosearch,
         // "searching", gm.multi) — so the move loop re-runs the search for
-        // gm.multi more turns without reading another key; game._search_
-        // occupation mirrors this: this first search is the command turn,
-        // the move loop counts down gm.multi afterward.
+        // gm.multi more turns without reading another key.  C arms it BEFORE
+        // running the command (cmd.c:3728), so a first search that finds
+        // something (nomul(0) -> multi 0) still leaves the occupation set and
+        // the move loop runs one more (final) search turn.
+        const counted = (game.multi ?? 0) > 0;
         const searched = await dosearch();
         game.context.move = searched ? 1 : 0;
-        if (searched && (game.multi ?? 0) > 0)
+        if (searched && counted)
             game._search_occupation = true;
     } else if (key === 1) { // ^A — repeat the previous command (cmd.c do_repeat)
         // C ref: cmd.c:1822 { C('a'), "repeat", ..., do_repeat }.  Unbound
@@ -6311,7 +6313,13 @@ function cmd_dobjsfree() {}
 function cmd_vision_reset() {}
 function cmd_cls() {}
 async function cmd_u_on_rndspot(_upflag) {}
-async function cmd_losedogs() {}
+// C ref: dog.c:303 losedogs(), called (via #wizmakemap) with no hand-tuned
+// mydogs placement to preserve here -- makemap_prepost() has no equivalent
+// of do.js's kept/losedogs_place(), so the real port is a direct call.
+async function cmd_losedogs() {
+    const { losedogs } = await import('./dog.js');
+    await losedogs();
+}
 function cmd_kill_genocided_monsters() {}
 async function cmd_u_collide_m(_mtmp) {}
 function cmd_initrack() {}

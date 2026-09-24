@@ -49,7 +49,7 @@ import { mflags1_of, msound_of, perceives_flag, M1_NOEYES,
     is_animal, mindless, nohands, M1_TUNNEL, M1_NEEDPICK,
     passes_walls_flag, throws_rocks_flag, is_swimmer_flag,
     regenerates_flag as regenerates, is_flyer_flag } from './monflags_data.js';
-import { healmon, mon_hates_silver } from './mon.js';
+import { healmon, mon_hates_silver, mon_givit } from './mon.js';
 import { max_passive_dmg } from './mondata.js';
 import { attacktype, dmgtype, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
 import { gettrack } from './track.js';
@@ -1904,12 +1904,35 @@ export async function dog_move(mtmp, after) {
 //   - splitobj() of a quan>1 food stack -> next_ident() -> rnd(2).
 //   - the "<pet> eats <obj>." / "It eats <obj>." topline.
 //   - the reward-apport dogfood() check (dogmove.c:315) -> obj_resists rn2(100).
-//   - m_consume_obj() -> delobj() -> obj_resists(obj,0,0) rn2(100), then the
-//     object is removed from the floor.
+//   - m_consume_obj() -> delobj() -> obj_resists(obj,0,0) rn2(100), removes the
+//     object from the floor, then (for a corpse) mon_givit(mtmp, &mons[corpsenm])
+//     — corpse_intrinsic()/should_givit() rolls, WIRED below.
 // STILL MISSING (all species/shop-specific, none reachable for a dog/cat/pony):
 // the `devour` halving, bee_eat_jelly() for a killer bee eating royal jelly,
 // the rust monster's oerodeproof "spits it out in disgust" branch, and the
 // unpaid-item shop billing (suppress_price / unpaid_cost / costly_alteration).
+//
+// m_consume_obj()'s OTHER post-delobj arms are deliberately left unwired, each
+// for a reason beyond "just call the existing port" (there is no existing
+// port to call):
+//   - poly = polyfood(otmp): the real newcham(mtmp, ptr, ncflags) (mon.c:5277)
+//     that C calls here is NOT the same function as makemon.js's exported
+//     newcham() (that one is the narrower "pick a random shape for a newly
+//     created shapechanger" helper used at monster-creation time). The real
+//     one has rider/erinyes immunity checks, mcan uncancelling, an endgame
+//     mplayer name edit, wormno handling, and mgender_from_permonst's own
+//     rn2(10) gender-flip draw — none of that exists in this port yet.
+//   - grow = mlevelgain(otmp) (corpsenm == PM_WRAITH): mhitm.js's local
+//     grow_up(magr, mdef) only implements makemon.c's "victim present" (killed
+//     an enemy) branch. C's real grow_up(mtmp, NULL) — the wraith-corpse path
+//     — takes the OTHER branch entirely (max_increase = cur_increase =
+//     rnd(8), hp_threshold = 0, lev_limit = 50) and, on a level gain, runs the
+//     little_to_big() species-growth table (G_GENOD death, gender flip,
+//     set_mon_data) that is explicitly documented as unported.
+// Both would need a real port of new C functions, not a wiring fix, and each
+// carries its own RNG-bearing surface this task was not scoped to audit.  A
+// pet eating a wraith, chameleon, doppelganger, sandestin, or genetic
+// engineer corpse still gets nothing from those two arms.
 // Returns 2 if the pet died, else 1.
 export async function dog_eat(mtmp, edog, obj, x, y) {
     const moves = game.moves || 1;
@@ -1982,10 +2005,22 @@ export async function dog_eat(mtmp, edog, obj, x, y) {
     // background glyph to the now-object-free terrain *under* the monster.  Without
     // it the tile keeps its stale corpse memory and redraws the eaten '%' once the
     // pet steps away and the square falls out of the hero's sight.
+    // corpsenm is captured here (C: mon.c:1410, before delobj frees/reuses obj)
+    // for the mon_givit() call below, matching m_consume_obj's exact ordering.
+    const corpsenm = (obj.otyp === CORPSE) ? obj.corpsenm : -1;
     obj_resists(obj, 0, 0); // rn2(100)
     const ox = obj.ox, oy = obj.oy;
     pet_extract_floor(obj);
     newsym(ox, oy);
+
+    // C: if (corpsenm != NON_PM) mon_givit(mtmp, &mons[corpsenm]); — the LAST
+    // effect in m_consume_obj, run after delobj().  Draws corpse_intrinsic()'s
+    // rn2(count) unconditionally for every corpse, then should_givit()'s
+    // rn2(chance) when a non-zero, non-stalker prop was picked.
+    if (corpsenm >= 0) {
+        const cptr = monster_by_pmidx(corpsenm);
+        if (cptr) await mon_givit(mtmp, cptr);
+    }
 
     // C ref: dogmove.c:344 — return (DEADMONSTER(mtmp)) ? 2 : 1.
     return (mtmp.mhp != null && mtmp.mhp <= 0) ? 2 : 1;

@@ -200,7 +200,12 @@ export function nomul(nval = 0) {
 
 // C ref: allmain.c:684 stop_occupation().  This port splits C's single
 // go.occupation into one flag per activity, so the table supplies each one's
-// set_occupation() txt.
+// set_occupation() txt.  Every activity here uses a fixed string except dig
+// (dig.c use_pick_axe2() passes "digging" or "chopping" depending on whether
+// a pick or an axe is wielded), so a table entry's txt MAY be a thunk read at
+// stop time instead of a literal — cmd.js's set_occupation() already stashes
+// exactly that string on game.occupation_txt for every occupation, dig
+// included, so the thunk just reads it back.
 const OCC_SLOTS = [
     ['_search_occupation', 'searching'],           // cmd.c:1847
     ['_wait_occupation', 'waiting'],               // cmd.c:1931
@@ -208,6 +213,7 @@ const OCC_SLOTS = [
     ['_wipe_occupation', 'wiping off your face'],  // do.c:2394
     ['_tin_occupation', 'opening the tin'],        // eat.c:1723 start_tin()
     ['_engrave_occupation', 'engraving'],          // engrave.c:1244 doengrave()
+    ['_dig_occupation', () => game.occupation_txt || 'digging'], // dig.c:1311/1356 use_pick_axe2()
 ];
 
 // C ref: eat.c food_xname(food, the_pfx) — reimplemented here (eat.js keeps its
@@ -251,7 +257,7 @@ export async function stop_occupation(append = false) {
         // update_topl, not pline: C's You("stop %s.") lands on a topline that
         // already holds this turn's messages ("It hits!  You stop waiting."),
         // and only update_topl appends instead of replacing.
-        await update_topl(`You stop ${txt}.`);
+        await update_topl(`You stop ${typeof txt === 'function' ? txt() : txt}.`);
         nomul(0);
         return;
     }
@@ -1772,8 +1778,15 @@ async function jump_landing(nux, nuy) {
     await walk_path(uc, cc, hurtle_jump, { range });
 
     const { teleds } = await import('./teleport.js');
+    // C ref: apply.c jump() never sets u.umoved (only hack.c domove()'s real
+    // walking, and one trap-escape case, do).  u_calc_moveamt() reads it to
+    // decide whether a MOUNTED hero's movement ration comes from the steed's
+    // mcalcmove() instead of the hero's own species mmove; a jump wrongly
+    // marked as u.umoved left a riding Knight's post-jump turn drawing the
+    // steed's rn2(NORMAL_SPEED) rounding roll (and using its speed) exactly
+    // where C draws neither and uses the hero's own 12.  teleds() itself does
+    // not touch u.umoved either (js/teleport.js, matching teleport.c).
     await teleds(cc.x, cc.y, TELEDS_NO_FLAGS);
-    u.umoved = true; // the hero relocated this command
 
     // C ref: apply.c jump() tail — nomul(-1), "busy jumping" for one turn; see
     // nomul()'s comment above for why the negative-multi path matters here.

@@ -1459,7 +1459,11 @@ function rloc_pos_ok_(x, y, mtmp) { return rloc_pos_ok(x, y, mtmp); }
 // C ref: trap.c flooreffects(obj, x, y, verb) — UNPORTED and RNG-BEARING
 // (water/lava destruction rolls).  js/shk.c-side billing helpers are private.
 async function flooreffects_(_obj, _x, _y, _verb) { return false; }
-async function revive_corpse_(_obj) { return false; }
+// C ref: do.c:2111 revive_corpse(corpse) — ported at js/do.js revive_corpse().
+async function revive_corpse_(obj) {
+    const { revive_corpse } = await import('./do.js');
+    return await revive_corpse(obj);
+}
 function find_objowner_(_obj, _x, _y) { return null; }
 function costly_adjacent_(_shkp, _x, _y) { return false; }
 async function subfrombill_(_obj, _shkp) { }

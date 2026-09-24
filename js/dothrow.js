@@ -911,7 +911,7 @@ export async function use_whip(obj, getDir) {
 
     } else if ((Fumbling() || Glib()) && !rn2(5)) {
         await update_topl(`The bullwhip slips out of your ${I.body_part(HAND)}.`);
-        I.dropx(obj);
+        await I.dropx(obj);
 
     } else if (u.utrap && u.utraptype === TT_PIT) {
         /* trying to whip your way out of a pit */

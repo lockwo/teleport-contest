@@ -5,7 +5,7 @@
 // des.mazewalk(), by the .lua special levels (hellfill.lua in particular).
 
 import { game } from './gstate.js';
-import { rn2, rnd } from './rng.js';
+import { rn2, rn1, rnd } from './rng.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, HWALL, isok, IS_DOOR, ACCESSIBLE,
     MAGIC_PORTAL, LAVAPOOL, POOL, MOAT, WATER, AIR, CLOUD,
@@ -21,6 +21,7 @@ import { place_object } from './mkobj.js';
 import { enexto_spawn } from './makemon.js';
 import { goodpos, rloc_to, RLOC_NOMSG } from './teleport.js';
 import { placebc, unplacebc } from './ball.js';
+import { create_gas_cloud } from './region.js';
 
 // C ref: decl.c g_init_x/g_init_y — x_maze_max = (COLNO-1) & ~1 = 78,
 // y_maze_max = (ROWNO-1) & ~1 = 20.  create_maze() temporarily shrinks these
@@ -244,9 +245,14 @@ export function create_maze(corrwid, wallthick, rmdeadends) {
 // C ref: mkmaze.c:1484 fumaroles() — "augment the Plane of Fire"; called from
 // goto_level() on arrival and from moveloop_core() every turn a level carries
 // des.level_flags("fumaroles").  The rn2(3) count and the per-fumarole
-// rn1(COLNO-4,3)/rn1(ROWNO-4,3) coordinate pair ALWAYS draw; the gas cloud (and
-// its two extra rolls) only when the square happens to be lava.
-export function fumaroles() {
+// rn1(COLNO-4,3)/rn1(ROWNO-4,3) coordinate pair ALWAYS draw; the gas cloud
+// itself (create_gas_cloud's BFS-shuffle and ttl rolls) only draws when the
+// square happens to be lava — but when it is, C actually calls
+// create_gas_cloud(x, y, rn1(10, sizemin), rn1(10, 5)) and then
+// clear_heros_fault(r) (a level hazard, not the hero's doing), not just the
+// two rn1 rolls: skipping the call itself silently dropped every RNG draw
+// the cloud's own BFS growth and rn1(3,4) ttl would have made.
+export async function fumaroles() {
     const g = game;
     let nmax = rn2(3);                                   // mkmaze.c:1486
     let sizemin = 5;
@@ -256,11 +262,8 @@ export function fumaroles() {
         const x = rn2(COLNO - 4) + 3;                    // mkmaze.c:1500
         const y = rn2(ROWNO - 4) + 3;                    // mkmaze.c:1501
         if (g.level?.at(x, y)?.typ === LAVAPOOL) {
-            // C ref: region.c create_gas_cloud(x, y, rn1(10, sizemin),
-            // rn1(10, 5)) — the region itself is not modelled, but both rolls
-            // are part of the stream.
-            rn2(10); rn2(10);
-            void sizemin;
+            const r = await create_gas_cloud(x, y, rn1(10, sizemin), rn1(10, 5));
+            if (r) r.herosFault = false; /* clear_heros_fault(r): mkmaze.c:1506 */
         }
     }
 }
@@ -904,7 +907,7 @@ function mm_get_level(nlev) {
 // (with a 1-in-40 "not quite the very bottom") and carries MIGR_LEFTOVERS;
 // everyone else gets a uniform level between here and the bottom, bumped one
 // deeper when the roll lands on the current level.
-export function migrate_orc(mtmp, mflags) {
+export async function migrate_orc(mtmp, mflags) {
     let nlev;
     const cur_depth = mm_depth(game.u?.uz) | 0;
     const dgn = game.dungeons?.[game.u?.uz?.dnum ?? 0];
@@ -925,13 +928,13 @@ export function migrate_orc(mtmp, mflags) {
         mtmp.migflags = (mtmp.migflags | 0) & ~MIGR_LEFTOVERS;
     }
     const dest = mm_get_level(nlev);
-    // UNPORTED: dungeon.c migrate_to_level(mtmp, ledger_no(&dest),
-    // MIGR_RANDOM, (coord *) 0).  Neither migrate_to_level() nor ledger_no()
-    // has a live port (js/dig.js:924/925 are no-op privates, js/mon.js:2958
-    // migrate_mon_local() names the same gap), so the monster is not actually
-    // handed to the migrating-monster list here.  Everything above it — the
-    // rn2(40) / rn2(range) draws and the migflags bit — is C's.
-    void dest; void MIGR_RANDOM;
+    // C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
+    // js/dog.js:530, js/dig.js:1097 and js/save.js:287 keep the same private
+    // copy for the same import-order reason.
+    const ledger_no = (dest.dlevel | 0)
+        + (game.dungeons?.[dest.dnum]?.ledger_start | 0);
+    const { migrate_to_level } = await import('./dog.js');
+    await migrate_to_level(mtmp, ledger_no, MIGR_RANDOM, null);
 }
 
 // C ref: mon.c add_to_minv(mon, obj) — prepend to the monster's minvent chain.
@@ -1070,7 +1073,7 @@ export async function stolen_booty() {
         mtmp.mpeaceful = 0;
         mm_set_malign(mtmp);
         shiny_orc_stuff(mtmp);
-        migrate_orc(mtmp, ORC_LEADER);
+        await migrate_orc(mtmp, ORC_LEADER);
     }
 
     /* Make most of the orcs on the level be part of the invading gang */
@@ -1106,7 +1109,7 @@ export async function stolen_booty() {
         mtmp = mm_makemon(mm_monster_by_pm(mtyp), 0, 0, MM_NONAME);
         if (mtmp) {
             shiny_orc_stuff(mtmp);
-            migrate_orc(mtmp, 0);
+            await migrate_orc(mtmp, 0);
         }
     }
     gr.ransacked = 0;

@@ -668,7 +668,7 @@ function is_weptool(o) {
     return o.oclass === TOOL_CLASS && (objects[o.otyp]?.oc_skill | 0) !== 0;
 }
 function is_wet_towel(o) { return o.otyp === TOWEL && o.spe > 0; }
-function is_poisonable(o) {
+export function is_poisonable(o) {
     /* obj.h:264 — oc_skill in [-P_SHURIKEN .. -P_BOW]; the port stores the
        negative launcher/ammo skills in oc_skill exactly as C does. */
     const sk = objects[o.otyp]?.oc_skill | 0;

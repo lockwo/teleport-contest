@@ -119,7 +119,7 @@ import {
     DUST, ENGRAVE, HEADSTONE, BURN, MARK, ENGR_BLOOD,
     PLNMSG_MON_TAKES_OFF_ITEM, PLNMSG_BACK_ON_GROUND,
     MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL,
-    TIMEOUT, isok, STRAT_WAITMASK,
+    TIMEOUT, isok, STRAT_WAITMASK, SELL_NORMAL, SELL_DELIBERATE,
     // prop.h property indices, for the setworn()/setnotworn() extrinsic
     // bookkeeping below.  W_AMUL/W_TOOL are imported under CW_ names because
     // this file's own W_AMUL/W_TOOL constants are REMAPPED bits (see the
@@ -167,6 +167,7 @@ import {
 // polyself.js owns mbodypart()/body_part(); the cycle back to this file is
 // fine (both sides only call each other's hoisted declarations at run time).
 import { body_part as poly_body_part } from './polyself.js';
+import { twoweapon_action_ok } from './wield.js';
 import * as DT from './dothrow.js';
 // monattk_data.js is a pure data/predicate leaf (no top-level side effects), so
 // this edge cannot reorder anything observable.
@@ -430,7 +431,7 @@ export function is_axe(obj) {
 // (Medusa is flesh_petrifies, not this).  Was hardcoded FALSE, which made
 // will_feel_cockatrice() answer FALSE for every corpse.  Matched against the
 // generated mons[] table, as in js/mon.js and js/dogmove.js.
-function touch_petrifies(corpsenm) {
+export function touch_petrifies(corpsenm) {
     const nm = monster_by_pmidx(corpsenm)?.name;
     return nm === 'cockatrice' || nm === 'chickatrice';
 }
@@ -1008,8 +1009,26 @@ export function welded(obj) {
     return false;
 }
 function can_reach_floor(_pit) { return true; }
-export function dropx(obj) { if (obj) obj.where = OBJ_FLOOR; }
-function dropy(obj) { if (obj) obj.where = OBJ_FLOOR; }
+// C ref: do.c dropx(obj):786 — freeinv(), then (unless swallowed) the altar
+// check that reveals BUC via doaltarobj(), then dropy()/dropz() for the real
+// floor-placement/shop-sell dispatch.  ship_object() (dig.c — a dropped item
+// falling through a hole/trap door to the level below) has no port anywhere
+// in js/; js/do.js's flooreffects() already documents the identical gap for
+// its own ship_object() call, so skipping it here is consistent.
+export async function dropx(obj) {
+    freeinv(obj);
+    const u = ustate();
+    if (!u.uswallow && IS_ALTAR(game.level?.at(u.ux, u.uy)?.typ)) {
+        const DOm = await import('./do.js');
+        await DOm.doaltarobj(obj); /* set bknown */
+    }
+    await dropy(obj);
+}
+// C ref: do.c dropy(obj):800 — dropz(obj, FALSE).
+export async function dropy(obj) {
+    const u = ustate();
+    await dropz(obj, u.ux, u.uy, false);
+}
 function freeinv_no_update(obj) { removeObjectFromAllInventories(obj); }
 // C ref: mkobj.c place_object — set the floor coords and register the object
 // in the level's object list so vobj_at()/display can find it.
@@ -3220,7 +3239,7 @@ export async function hold_another_object(obj, drop_fmt, drop_arg, hold_msg) {
         if (obj.quan > oquan) obj = splitobj(obj, oquan);
         if (drop_fmt) await pline(String(drop_fmt).replace('%s', drop_arg ?? ''));
         obj.nomerge = 0;
-        dropz(obj, game.u?.ux, game.u?.uy);
+        await dropx(obj);
         update_inventory();
         return null;  /* might be gone */
     }
@@ -3264,9 +3283,17 @@ export function freeinv_core(obj) {
     else if (confers_luck(obj)) set_moreluck();
 }
 
+// C ref: invent.c freeinv(obj):1402 -> mkobj.c extract_nobj():2595 — unlink
+// from the hero's inventory AND set obj->where = OBJ_FREE.  The where write
+// was missing here (removeObjectFromAllInventories() only splices the array,
+// matching obj_extract_self()'s OWN explicit `obj.where = OBJ_FREE;` right
+// after the same splice call, just above): every real dropx()/dropz() caller
+// this wave wired in now hands the object straight to flooreffects(), whose
+// `obj.where !== OBJ_FREE` guard fired impossible("flooreffects: obj not
+// free") on every single drop once flooreffects() actually started running.
 export function freeinv(obj) {
     removeObjectFromAllInventories(obj);
-    if (obj) obj.pickup_prev = 0;
+    if (obj) { obj.pickup_prev = 0; obj.where = OBJ_FREE; }
     freeinv_core(obj);
     update_inventory();
 }
@@ -7315,9 +7342,18 @@ export async function dotravel_target() {
 // shop / altar / sink-ring / water / can't-reach-floor branches (all RNG-free
 // for these recordings but unused) are not modelled.  Returns ECMD_TIME (1)
 // when an item is dropped, 0 when the command is cancelled.
+// C ref: do.c dodrop():29 — the 'd' command: drop one inventory item.  A
+// deliberate drop while standing in a shop is prompted ("Sell it? [ynaq]")
+// rather than silently bought, unlike an accidental drop (glibr()'s slipping
+// ring, a forced cursed-loadstone release, &c) — see shk.c sellobj_state()'s
+// own comment for why the distinction matters.
 export async function dodrop() {
+    const inShop = (game.u?.ushops || []).length > 0;
+    if (inShop) (await import('./shk.js')).sellobj_state(SELL_DELIBERATE);
     const obj = await getobj('drop', any_obj_ok, GETOBJ_PROMPT | GETOBJ_ALLOWCNT);
-    return await drop(obj);
+    const result = await drop(obj);
+    if (inShop) (await import('./shk.js')).sellobj_state(SELL_NORMAL);
+    return result;
 }
 
 // C ref: do.c drop().  Normal-floor path only.
@@ -7352,16 +7388,13 @@ async function drop(obj) {
     // The wandpoly session runs with !verbose so the drop is silent.
     // C's You() is pline(): it must accumulate onto a pending topline (and page
     // it) so the same-turn monster message merges behind a --More--.
-    if (!IS_ALTAR_typ(u) && game.flags?.verbose) {
+    if (!IS_ALTAR(game.level?.at(u.ux, u.uy)?.typ) && game.flags?.verbose) {
         await update_topl(`You drop ${doname(obj)}.`);
     }
     obj.how_lost = LOST_DROPPED;
-    dropz(obj, u.ux, u.uy);
+    await dropx(obj);
     return 1; /* ECMD_TIME */
 }
-
-// IS_ALTAR check stub — none of the recorded drop tiles are altars.
-function IS_ALTAR_typ(_u) { return false; }
 
 // ══════════════════════════════════════════════════════════════════════════
 // The 'D' (#droptype) command: do.c doddrop() / menu_drop(), and the two
@@ -7857,11 +7890,14 @@ export async function doddrop() {
         return ECMD_OK;
     }
     add_valid_menu_class(0);            /* clear any classes already there */
-    /* (*u.ushops) sellobj_state(SELL_DELIBERATE/SELL_NORMAL): this port's
-       drop() does not run the shop sell-price bookkeeping. */
+    // C ref: do.c doddrop():933 — same deliberate-drop-in-shop prompt gate as
+    // dodrop(); see that function's comment.
+    const inShop = (game.u?.ushops || []).length > 0;
+    if (inShop) (await import('./shk.js')).sellobj_state(SELL_DELIBERATE);
     if (menu_style() !== MENU_TRADITIONAL
         || (result = ggetobj('drop', drop, 0, false, null)) < -1)
         result = await menu_drop(result);
+    if (inShop) (await import('./shk.js')).sellobj_state(SELL_NORMAL);
     /* a menu left up (ESC'd, or nothing picked) is a corner window still on
        screen; C's destroy_nhwindow() restores the map under it */
     await dismiss_invent_screen();
@@ -8293,13 +8329,55 @@ export async function dopay() {
     return paidRef.paid ? ECMD_TIME : ECMD_OK;
 }
 
-// C ref: do.c dropx/dropy/dropz — place the freed object on the floor and
-// redraw the destination cell.  flooreffects (water/lava/trapdoor) are not
-// reached on the recorded plain-floor tiles.
-function dropz(obj, x, y) {
-    freeinv(obj);
-    place_object(obj, x, y);
-    newsym(x, y);
+// C ref: do.c dropz(obj, with_impact):807 — the real floor-placement
+// primitive every drop path in this port should reach: unwield/unquiver/
+// unswap the object, flooreffects() (water/lava/pit/altar/hot-ground), the
+// shop-sell dispatch, stackobj() and encumber_msg().  x/y are always the
+// hero's current position (every caller passes u.ux/u.uy), mirroring C's
+// implicit use of the globals.  Unwired dependencies, each left as its call
+// site so the control flow matches C: display.c map_object() (a Blind+
+// Levitation redraw refinement; newsym() below is this port's only redraw,
+// the same simplification js/do.js flooreffects() documents for its own
+// map_background() call) and this file's own stolen_value() stub just above
+// (the u.uswallow + carrying-unpaid-goods combination it feeds is not
+// exercised by any covered session).
+async function dropz(obj, x, y, with_impact = false) {
+    if (obj === game.uwep) setuwep_slot(null);
+    if (obj === game.uquiver) setuqwep(null);
+    if (obj === game.uswapwep) setuswapwep(null);
+
+    const u = ustate();
+    if (u.uswallow) {
+        if (obj !== game.uball) {
+            const SK = await import('./shk.js');
+            if (SK.is_unpaid(obj)) stolen_value(obj, u.ux, u.uy, true, false);
+            const DOm = await import('./do.js');
+            if (!(await DOm.engulfer_digests_food(obj))) {
+                const ST = await import('./steal.js');
+                ST.mpickobj(u.ustuck, obj);
+            }
+        }
+    } else {
+        const DOm = await import('./do.js');
+        if (await DOm.flooreffects(obj, x, y, 'drop')) return;
+        place_object(obj, x, y);
+        if (with_impact) {
+            const { container_impact_dmg } = await import('./dokick.js');
+            container_impact_dmg(obj, x, y);
+        }
+        const { impact_disturbs_zombies } = await import('./monmove.js');
+        impact_disturbs_zombies(obj, with_impact);
+        if (obj === game.uball) {
+            const { drop_ball } = await import('./ball.js');
+            await drop_ball(x, y);
+        } else if (game.level?.flags?.has_shop) {
+            const SK = await import('./shk.js');
+            await SK.sellobj(obj, x, y);
+        }
+        stackobj(obj);
+        newsym(x, y);
+    }
+    await encumber_msg();
 }
 
 function weldmsg(_obj) {}
@@ -9383,6 +9461,9 @@ function itemactions_list(otmp) {
         add(IA_SWAPWEAPON, 'x', 'Ready this as an alternate weapon');
     else if (otmp === game.uswapwep)
         add(IA_SWAPWEAPON, 'x', 'Swap this with your main weapon');
+    // 'X' (toggle two-weapon combat): C ref iactions.c:672.
+    if (twoweapon_action_ok(otmp))
+        add(IA_TWOWEAPON, 'X', `Toggle two-weapon combat ${game.u?.twoweap ? 'off' : 'on'}`);
     // 'z' (zap a wand): C ref iactions.c:686.
     if (oclass === WAND_CLASS)
         add(IA_ZAP_OBJ, 'z', 'Zap this wand to release its magic');
@@ -9514,7 +9595,10 @@ async function itemactions(otmp, getDir) {
             delete game._modal_screen;
             return ECMD_OK;
         }
-        if (c === 13 || c === 10) { // Return/Enter: commit with nothing -> cancel
+        // Return/Enter commits with nothing selected -> cancel.  C ref
+        // wintty.c process_menu_window: ' ' on the last (here only) page
+        // finishes the menu the same way.
+        if (c === 13 || c === 10 || c === 32) {
             delete game._modal_screen;
             return ECMD_OK;
         }
@@ -9560,6 +9644,11 @@ async function itemactions_dispatch(otmp, act, getDir) {
         seedInvlet();
         const eng = await import('./engrave.js');
         return await eng.doengrave();
+    }
+    case IA_TWOWEAPON: {
+        // C ref: itemactions_pushkeys IA_TWOWEAPON -> cmdq_add_ec(dotwoweapon).
+        const { dotwoweapon } = await import('./wield.js');
+        return await dotwoweapon();
     }
     // IA_NAME_OBJ / IA_ADJUST_OBJ / IA_WHATIS_OBJ and the other actions are not
     // exercised by any recorded session; itemactions returns ECMD_OK for them so

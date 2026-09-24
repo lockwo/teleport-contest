@@ -2754,7 +2754,7 @@ export async function retouch_equipment(dropflag) {
     if (game.u?.usteed) {
         const saddle = (game.u.usteed.minvent || [])
             .find((o) => (o.owornmask & W_SADDLE) !== 0);
-        if (saddle && await untouchable(saddle, false)) dismount_steed();
+        if (saddle && await untouchable(saddle, false)) await dismount_steed();
     }
 
     dropit = (dropflag === 1);   /* all untouchable items */
@@ -2819,8 +2819,13 @@ function dropx(obj) {
     obj.where = OBJ_FLOOR;
     if (Array.isArray(game.level?.objects)) game.level.objects.push(obj);
 }
-// steed.c dismount_steed(reason)
-function dismount_steed() { if (game.u) game.u.usteed = null; }
+// C ref: artifact.c:2680 retouch_equipment() -> dismount_steed(DISMOUNT_THROWN)
+// — delegates to js/steed.js's real port (dynamic import avoids a cycle).
+async function dismount_steed() {
+    const { dismount_steed: fn } = await import('./steed.js');
+    const { DISMOUNT_THROWN } = await import('./const.js');
+    return fn(DISMOUNT_THROWN);
+}
 // dungeon.c invocation_pos(x,y) / On_stairs(x,y)
 function invocation_pos(x, y) {
     const inv = game.level?.invocation_pos;

@@ -982,9 +982,10 @@ export async function money2mon(mon, amount) {
     return amount;
 }
 
-// C ref: shk.c money2u(mon, amount):185 — the shk hands gold back.  Only
-// reachable from pay() with a negative balance (a credit refund).
-async function money2u(mon, amount) {
+// C ref: shk.c money2u(mon, amount):185 — the shk hands gold back.  Reachable
+// from pay() with a negative balance (a credit refund), and from priest.js
+// priest_talk()'s "gives you N bits for an ale" arm.
+export async function money2u(mon, amount) {
     const { addinv } = await import('./invent.js');
     const { findgold } = await import('./steal.js');
     const mongold = findgold(mon.minvent);
@@ -1801,16 +1802,16 @@ export function delete_contents(obj) {
 // ── shk.c:1316 .. :2760 ─────────────────────────────────────────────────────
 
 // C ref: shk.c home_shk(shkp, killkops):1317 — return the shk to the spot just
-// inside her door.  GAP: mnearto() (the enexto ring search that actually moves
-// her, and its RNG) and pacify_guards() have no port in this tree, so this
-// only re-flags the level and re-checks occupancy.
+// inside her door.
 export async function home_shk(shkp, killkops) {
-    /* GAP: mnearto(shkp, ESHK(shkp)->shk.x, ESHK(shkp)->shk.y, TRUE,
-       RLOC_NOMSG) — the shk does not actually move here. */
+    const { mnearto } = await import('./mon.js');
+    const { RLOC_NOMSG } = await import('./teleport.js');
+    await mnearto(shkp, shkp.eshk.shk.x, shkp.eshk.shk.y, true, RLOC_NOMSG);
     if (game.level?.flags) game.level.flags.has_shop = 1;
     if (killkops) {
         await kops_gone(true);
-        /* GAP: pacify_guards() */
+        const { pacify_guards } = await import('./mon.js');
+        await pacify_guards();
     }
     await after_shk_move(shkp);
 }
@@ -1824,11 +1825,12 @@ export function angry_shk_exists() {
 }
 
 // C ref: shk.c make_happy_shoppers(silentkops):1440 — also called from
-// losedogs() for a migrating shk.  GAP: pacify_guards() has no port.
+// losedogs() for a migrating shk.
 export async function make_happy_shoppers(silentkops) {
     if (!angry_shk_exists()) {
         await kops_gone(silentkops);
-        /* GAP: pacify_guards() */
+        const { pacify_guards } = await import('./mon.js');
+        await pacify_guards();
     }
 }
 
@@ -2591,8 +2593,7 @@ function closed_door(x, y) {
 const Invis = () => ((game.u?.uprops?.Invis || 0) > 0);
 
 // C ref: shk.c shkcatch(obj, x, y):4362 — the shk snatches a pick-axe thrown
-// into her shop.  GAP: mnearto() is unported, so the `== 2` (had to displace a
-// monster) arm can never fire and the shk does not actually move.
+// into her shop.
 export async function shkcatch(obj, x, y) {
     const shkp = shop_keeper(inside_shop(x, y));
     if (!shkp || !inhishop(shkp)) return null;
@@ -2604,14 +2605,16 @@ export async function shkcatch(obj, x, y) {
         && dist2(shkp.mx, shkp.my, x, y) < 3
         /* if it is the shk's own spot, you hit and anger him */
         && (shkp.mx !== x || shkp.my !== y)) {
-        const moved = 0; /* GAP: mnearto(shkp, x, y, TRUE, RLOC_NOMSG) */
+        const { mnearto } = await import('./mon.js');
+        const { RLOC_NOMSG } = await import('./teleport.js');
+        const moved = await mnearto(shkp, x, y, true, RLOC_NOMSG);
         if (moved === 2 && !Deaf() && !muteshk(shkp))
             await verbalize('Out of my way, scum!');
         const { cansee } = await import('./vision.js');
         if (cansee(x, y)) {
-            await update_topl(`${Shknam(shkp)}${
+            await update_topl(`${Shknam(shkp)} nimbly${
                 (x === shkp.mx && y === shkp.my) ? '' : ' reaches over and'
-            } nimbly catches ${the(xname(obj))}.`);
+            } catches ${the(xname(obj))}.`);
             const { canspotmon } = await import('./uhitm.js');
             if (!canspotmon(shkp)) map_invisible(x, y);
         }
@@ -3005,9 +3008,7 @@ export async function after_shk_move(shkp) {
     }
 }
 
-// C ref: shk.c shopdig(fall):5019 — digging in a shop.  GAP: mnexto() has no
-// port in this tree, so the "leaps and grabs your backpack" relocation is
-// skipped (and with it the enexto() draws).  No rn2() of its own.
+// C ref: shk.c shopdig(fall):5019 — digging in a shop.
 export async function shopdig(fall) {
     const shkp = shop_keeper((game.u?.ushops || [])[0]);
     let grabs = 'grabs';
@@ -3046,7 +3047,9 @@ export async function shopdig(fall) {
                && (shkp.eshk.billct || shkp.eshk.debit)) {
         if (nolimbs(shkp.data)) grabs = 'knocks off';
         if (!m_next2u(shkp)) {
-            /* GAP: mnexto(shkp, RLOC_MSG) */
+            const { mnexto } = await import('./mon.js');
+            const { RLOC_MSG } = await import('./teleport.js');
+            await mnexto(shkp, RLOC_MSG);
             if (!m_next2u(shkp)) {
                 if (lang === 2)
                     await update_topl(`${Shknam(shkp)} curses you in anger and frustration!`);
@@ -3125,8 +3128,7 @@ export async function getcad(shkp, dmgstr, x, y, uinshp, animal, pursue) {
 // C ref: shk.c pay_for_damage(dmgstr, cant_mollify):5174.  RNG, in order: an
 // rn2(++picks) tie-break per equidistant shopkeeper during the scan, then
 // rn2(50) on the "shk won't be mollified" test, then whatever getcad() or
-// currency() draw.  GAP: mnexto()/mnearto() are unported, so the shk does not
-// actually come to the door.
+// currency() draw.
 export async function pay_for_damage(dmgstr, cant_mollify) {
     let shkp = null;
     const uinshp = ((game.u?.ushops || []).length > 0);
@@ -3193,7 +3195,9 @@ export async function pay_for_damage(dmgstr, cant_mollify) {
     if (uinshp) {
         if (um_dist(shkp.mx, shkp.my, 1) && !um_dist(shkp.mx, shkp.my, 3)) {
             await update_topl(`${Shknam(shkp)} leaps towards you!`);
-            /* GAP: mnexto(shkp, RLOC_NOMSG) */
+            const { mnexto } = await import('./mon.js');
+            const { RLOC_NOMSG } = await import('./teleport.js');
+            await mnexto(shkp, RLOC_NOMSG);
         }
         pursue = um_dist(shkp.mx, shkp.my, 1);
         if (pursue) {
@@ -3213,7 +3217,9 @@ export async function pay_for_damage(dmgstr, cant_mollify) {
                 await growl(shkp);
             }
         }
-        /* GAP: mnearto(shkp, x, y, TRUE, RLOC_MSG) */
+        const { mnearto } = await import('./mon.js');
+        const { RLOC_MSG } = await import('./teleport.js');
+        await mnearto(shkp, x, y, true, RLOC_MSG);
     }
 
     if ((um_dist(x, y, 1) && !uinshp) || cant_mollify
@@ -3444,19 +3450,18 @@ export async function shk_chat(shkp) {
     }
 }
 
-// C ref: shk.c kops_gone(silent):5606 — the Kops give up.  GAP: mongone() is
-// module-private in js/muse.js and js/vault.js, so the Kops are only counted
-// here, not removed.  defsym.h S_KOP == 37.
+// C ref: shk.c kops_gone(silent):5606 — the Kops give up.  defsym.h S_KOP == 37.
 const S_KOP = 37;
 export async function kops_gone(silent) {
     let cnt = 0;
 
     const { canspotmon } = await import('./uhitm.js');
+    const { mongone } = await import('./mon.js');
     for (const mtmp of fmon().slice()) {
         if (DEADMONSTER(mtmp)) continue;
         if (mtmp.data?.mcls === S_KOP) {
             if (canspotmon(mtmp)) cnt++;
-            /* GAP: mongone(mtmp) */
+            await mongone(mtmp);
         }
     }
     if (cnt && !silent)

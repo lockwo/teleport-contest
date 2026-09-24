@@ -198,6 +198,22 @@ export async function newgame() {
         if (!g.urace) g.urace = { ...(races[game.initrace] || races[0]) };
     }
 
+    // C ref: u_init.c u_init_misc() sets u.umonnum = u.umonster =
+    // gu.urole.mnum, and allmain.c newgame() calls u_init_misc() (line 794)
+    // BEFORE mklev() (line 807) — the same "must run before mklev" ordering
+    // already applied to ualign/urace just above. mksobj_init()'s ARMOR_CLASS
+    // switch reads Role_if(PM_SAMURAI) via umonnum to erodeproof a Samurai's
+    // starting-level splint mail (mkobj.c:1104-1105 `svm.moves <= 1 ||
+    // In_quest`). This port used to set umonnum only in u_init_role()
+    // (js/u_init.js), which fastforward_post_mklev() calls AFTER mklev(), so
+    // umonnum was still undefined during the real level-1 room fill: the
+    // lacquer branch never fired and mkobj_erosions() rolled the erosion RNG
+    // (rn2(100)/rn2(80)/rn2(80)/rn2(1000)) that C skips for that armor piece,
+    // desyncing every later draw in the fill loop (seed0030 segment 8, step
+    // 1345 / idx 35947). u_init_role()'s own `if (umonnum == null)` guard
+    // makes its later assignment a no-op once this has already run.
+    g.u.umonnum = g.u.umonster = gameRoleMnum();
+
     // Real mklev generates the level with correct room positions
     // Structural phase consumes RNG for rooms/corridors/doors/stairs
     await mklev();
@@ -1186,7 +1202,7 @@ export async function moveloop_turn() {
                 await movebubbles();
             } else if (g.level?.flags?.fumaroles) {
                 const { fumaroles } = await import('./mkmaze.js');
-                fumaroles();
+                await fumaroles();
             }
 
             // C ref: allmain.c moveloop_core():380 — the multi<0 countdown sits
@@ -1971,6 +1987,16 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._dig_occupation = null;
+        // C ref: allmain.c:501-508 — a now-adjacent hostile monster interrupts
+        // the dig occupation early ("You stop digging.").  This mirrors the
+        // _eat_occupation/_tin_occupation arms above; without it a wandering
+        // monster's approach was silently ignored and dig() kept being called
+        // turn after turn with no interruption message or occupation-clear,
+        // desyncing every RNG draw and screen from the point of contact on.
+        if (busy && monster_nearby()) {
+            await (await import('./hack.js')).stop_occupation(true);
+            g._dig_occupation = null;
+        }
         return;
     }
 

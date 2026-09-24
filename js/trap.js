@@ -3753,11 +3753,12 @@ function is_floater_fu(ptr) {
     return !!ptr && (ptr.mcls === 5 /* S_EYE */ || ptr.mcls === 25 /* S_LIGHT */);
 }
 function is_flyer_fu(ptr) { return (mflags1_of(ptr) & M1_FLY) !== 0; }
-// C ref: steed.c dismount_steed(reason) — genuinely unported anywhere in this
-// codebase (artifact.js:2810, dog.js:1236, dokick.js:1396 all carry the same
-// "NOT PORTED"/no-op note); mirror artifact.js's minimal stand-in rather than
-// invent a second one.
-function dismount_steed_fu(_reason) { if (game.u) game.u.usteed = null; }
+// C ref: steed.c dismount_steed(reason) — delegates to js/steed.js's real,
+// faithful port (dynamic import avoids a trap.js <-> steed.js static cycle).
+async function dismount_steed_fu(reason) {
+    const { dismount_steed } = await import('./steed.js');
+    return await dismount_steed(reason);
+}
 
 // C ref: trap.c:3937 float_up() — start levitating: pick the right message
 // for the many "why don't I actually float away" states (trapped, in water,
@@ -3822,7 +3823,7 @@ export async function float_up() {
             await pline(`${Monnam_trap(u.usteed)} magically floats up!`);
         } else {
             await pline(`You cannot stay on ${mon_nam_trap(u.usteed)}.`);
-            dismount_steed_fu(DISMOUNT_GENERIC);
+            await dismount_steed_fu(DISMOUNT_GENERIC);
         }
     }
     if (Flying_fu())

@@ -31,6 +31,7 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import {
     ER_NOTHING, ER_GREASED, ER_DESTROYED, F_LOOTED, F_WARNED, FROMOUTSIDE,
     FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE, MM_NOMSG,
+    POLY_NOFLAGS,
 } from './const.js';
 
 // C ref: include/onames.h — long sword otyp (mkobj.js OBJECT_DATA order).
@@ -972,12 +973,15 @@ export async function drinksink() {
         morehungry(rn1(30 - acurr_eff(A_CON), 11));
         vomit();
         break;
-    case 10:
+    case 10: {
         await update_topl(`This ${water} contains toxic wastes!`);
-        // Unchanging is never true for the covered heroes.
-        await update_topl('You undergo a freakish metamorphosis!');
-        // polyself(POLY_NOFLAGS) is not modeled (no polymorph subsystem yet).
+        const { polyself, Unchanging_poly } = await import('./polyself.js');
+        if (!Unchanging_poly()) {
+            await update_topl('You undergo a freakish metamorphosis!');
+            await polyself(POLY_NOFLAGS);
+        }
         break;
+    }
     case 11:
         await update_topl('You hear clanking from the pipes...');
         break;

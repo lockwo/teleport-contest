@@ -2,11 +2,15 @@
 // the Astral guardian angel.
 // C ref: src/minion.c.
 //
-// NOTHING IMPORTS THIS FILE.  Every export below is a straight transcription of
-// its minion.c original and nothing in js/ calls it yet: the C call sites
-// (mhitu.c mattacku -> msummon/demon_talk, pray.c angrygods -> summon_minion,
-// do.c goto_level -> gain_guardian_angel, allmain.c -> lose_guardian_angel) are
-// either unported or reach their own local copies.
+// Wired into js/pray.js (angrygods() case 7/8 and both sacrifice-path
+// summon_minion() calls), js/mhitu.js and js/monmove.js (summonmu()'s
+// msummon()), js/wizard.js (nasty()'s Gehennom msummon(NULL) arm), js/do.js
+// (final_level()'s gain_guardian_angel()) and js/sounds.js (MS_BRIBE's
+// demon_talk()), all via dynamic import to avoid static cycles.  Not yet
+// wired: dogmove.c:1051 lose_guardian_angel(mtmp) (a tame guardian angel
+// losing Conflict resistance mid-move) and monmove.c:803 demon_talk()'s
+// "Demonic Blackmail" dochug() block (a peaceful demon not adjacent to the
+// hero) — neither is in this pass's scope.
 //
 // THREE minion.c functions are NOT redefined here because a faithful copy
 // already exists elsewhere in js/ (see the note above each stub site):
@@ -35,7 +39,7 @@ import {
     set_malign, mpickobj, enexto_spawn, mongets_pub,
 } from './makemon.js';
 import { is_art, ART_DEMONBANE, ART_EXCALIBUR } from './artifact.js';
-import { DEADMONSTER } from './mon.js';
+import { DEADMONSTER, mongone } from './mon.js';
 import { pline, canseemon_shared, newsym, impossible } from './display.js';
 import { canspotmon, x_monnam } from './uhitm.js';
 import { Monnam, Amonnam, mon_nam, ARTICLE_A } from './do_name.js';
@@ -49,6 +53,8 @@ import { rloc, tele_restrict, RLOC_MSG } from './teleport.js';
 import { livelog_printf, LL_UMONST } from './livelog.js';
 import { Hear_again } from './eat.js';
 import { nomul, stop_occupation } from './hack.js';
+import { reset_faint, unmul } from './vault.js';
+import { mk_roamer } from './priest.js';
 import { hooked_tty_getlin } from './extcmd-handlers.js';
 
 // --- macros minion.c uses ---------------------------------------------------
@@ -604,11 +610,10 @@ export async function demon_talk(mtmp) {
                    `bribed ${x_monnam(mtmp, ARTICLE_A, null, EXACT_NAME, false)}`
                    + ` with ${offer} ${(offer === 1) ? 'zorkmid' : 'zorkmids'}`
                    + ' for safe passage');
-    // UNPORTED: mongone(mtmp) (mon.c:3116).  js/muse.js:672 and js/vault.js:228
-    // hold private copies; js/read.js:2943 works around the same gap.  NOT
-    // stubbed: silently leaving the demon on the level after it "vanishes" is
-    // exactly the kind of no-op that looks correct when this gets wired up.
-    await mongone_unported(mtmp);
+    // C ref: mon.c:3116 mongone(mtmp) — js/mon.js exports the faithful copy
+    // (reused across every private mongone-shaped helper in this port);
+    // js/read.js:2943 works around the same gap with its own local copy.
+    await mongone(mtmp);
     return 1;
 }
 // C ref: do_name.h EXACT_NAME (SUPPRESS_HALLUCINATION|SUPPRESS_INVISIBLE|
@@ -622,23 +627,9 @@ function mon_has_amulet(mtmp) {
         if (otmp.otyp === 218 /* AMULET_OF_YENDOR */) return true;
     return false;
 }
-// The three mon.c/vault.c callees demon_talk() and the guardian-angel pair need
-// and js/ does not export.  Each throws rather than pretending to work.
-async function mongone_unported(_mtmp) {
-    throw new Error('UNPORTED: mongone() (mon.c) — no exported js/ port; see js/muse.js:672');
-}
-async function reset_faint() {
-    throw new Error('UNPORTED: reset_faint() (eat.c) — no exported js/ port; see js/vault.js:416');
-}
-async function unmul(_msg) {
-    throw new Error('UNPORTED: unmul() (hack.c) — no exported js/ port; see js/vault.js:422');
-}
-async function mk_roamer_unported(_ptr, _alignment, _x, _y, _peaceful) {
-    throw new Error('UNPORTED: mk_roamer() (makemon.c) — not ported anywhere in js/');
-}
-function select_hwep_unported(_mtmp) {
-    throw new Error('UNPORTED: select_hwep() (muse.c) — no exported js/ port; see js/monmove.js:5820');
-}
+// C ref: wizard.c mon_has_amulet(mtmp) is the only leaf helper still local to
+// this file — js/mon.js, js/vault.js and js/priest.js now supply the real
+// mongone()/reset_faint()/unmul()/mk_roamer() this module needs.
 
 // C ref: minion.c:361 bribe(mtmp, prompt) — read a number from the player and
 // hand that much gold over.  No RNG.
@@ -690,7 +681,7 @@ export async function lose_guardian_angel(mon) {
                 await pline(`${Monnam(mon)} vanishes!`);
             }
         }
-        await mongone_unported(mon);
+        await mongone(mon);
     }
     /* create 2 to 4 hostile angels to replace the lost guardian */
     for (i = rn1(3, 2); i > 0; --i) {
@@ -699,8 +690,8 @@ export async function lose_guardian_angel(mon) {
         const spot = enexto_spawn(mm.x, mm.y, monster_by_pmidx(p.ANGEL));
         if (spot) {
             mm.x = spot.x; mm.y = spot.y;
-            await mk_roamer_unported(monster_by_pmidx(p.ANGEL),
-                                     game.u.ualign.type, mm.x, mm.y, false);
+            await mk_roamer(monster_by_pmidx(p.ANGEL),
+                            game.u.ualign.type, mm.x, mm.y, false);
         }
     }
 }
@@ -739,8 +730,8 @@ export async function gain_guardian_angel() {
         const spot = enexto_spawn(mm.x, mm.y, monster_by_pmidx(p.ANGEL));
         if (spot) {
             mm.x = spot.x; mm.y = spot.y;
-            mtmp = await mk_roamer_unported(monster_by_pmidx(p.ANGEL),
-                                            game.u.ualign.type, mm.x, mm.y, true);
+            mtmp = await mk_roamer(monster_by_pmidx(p.ANGEL),
+                                  game.u.ualign.type, mm.x, mm.y, true);
         }
         if (spot && mtmp) {
             mtmp.mstrategy &= ~STRAT_APPEARMSG;
@@ -765,7 +756,11 @@ export async function gain_guardian_angel() {
             /* make him strong enough vs. endgame foes */
             mtmp.m_lev = rn1(8, 15);
             mtmp.mhp = mtmp.mhpmax = d(mtmp.m_lev, 10) + 30 + rnd(30);
-            if ((otmp = select_hwep_unported(mtmp)) === null) {
+            // C ref: weapon.c:704 select_hwep(mtmp) — js/monmove.js exports the
+            // faithful copy; dynamic import avoids a static cycle (monmove.js
+            // reaches msummon() through this same module).
+            const { select_hwep } = await import('./monmove.js');
+            if ((otmp = select_hwep(mtmp)) === null) {
                 otmp = mksobj(SILVER_SABER, false, false);
                 if (mpickobj(mtmp, otmp))
                     throw new Error('merged weapon?');   /* C: panic() */

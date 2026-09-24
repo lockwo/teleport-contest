@@ -57,7 +57,8 @@ import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          CXN_SINGULAR, REVIVE_MON, ROT_CORPSE, TIMER_OBJECT, RLOC_NOMSG,
          NON_PM, G_GENOD, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES, UTOTYPE_NONE,
          UTOTYPE_DEFERRED, UTOTYPE_ATSTAIRS, UTOTYPE_FALLING, UTOTYPE_PORTAL,
-         UTOTYPE_RMPORTAL, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX } from './const.js';
+         UTOTYPE_RMPORTAL, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX,
+         MIGR_EXACT_XY } from './const.js';
 import { docrt, flush_screen, pline, update_topl, topl_more, y_n, newsym,
          see_nearby_objects } from './display.js';
 import { seetrap, dotrap } from './trap.js';
@@ -71,7 +72,7 @@ import { vision_reset, vision_recalc, Blind, cansee,
 import { hide_monst } from './mon.js';
 import { mflags2_of, M2_STALK, is_swimmer_flag, throws_rocks_flag,
          is_flyer_flag, mflags1_of, mflags3_of, M1_WALLWALK, M2_UNDEAD,
-         M3_DISPLACES } from './monflags_data.js';
+         M3_DISPLACES, humanoid } from './monflags_data.js';
 import { more_experienced, newexplevel } from './exper.js';
 import { olfaction } from './eat.js';
 import { placebc, unplacebc } from './ball.js';
@@ -153,34 +154,64 @@ function bad_location(x, y, nlx, nly, nhx, nhy) {
 // C ref: mkmaze.c place_lregion() — place the hero at a random location
 // within the region (the whole level when lx==0), retrying on bad or excluded
 // squares.  Each retry draws rn1((hx-lx)+1, lx) for x and rn1((hy-ly)+1, ly).
-function place_hero_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy, rtype) {
+//
+// C ref: put_lregion_here() for LR_TELE/LR_UPTELE/LR_DOWNTELE — besides
+// bad_location, a square occupied by a monster is rejected (try again)
+// UNLESS this is the one-and-only square (oneshot, lx==hx && ly==hy), in
+// which case the monster is relocated via rloc(mtmp, RLOC_NOMSG) (falling
+// back to m_into_limbo() if rloc() fails) rather than rejected — and that
+// rloc() call draws its own RNG.  A fixed 1-cell arrival portal (a special
+// level's des.teleport_region() with a single point, e.g. the Plane of
+// Fire's) is oneshot from the very first try, so skipping this relocation
+// silently dropped rloc()'s two draws and, since the fixed cell never
+// changes across retries, burned up to 200 extra degenerate rn2(1) pairs
+// before falling through to the deterministic scan instead (seed0373 step
+// 99, Plane of Fire: C draws one rn1(1)/rn1(1) pair then rloc()'s
+// rnd(79)/rn2(21); this port used to draw 200 rn1(1)/rn1(1) pairs instead).
+// The deterministic fallback ALSO always relocates via rloc() on its winning
+// square (C passes oneshot=TRUE unconditionally into put_lregion_here there).
+async function place_hero_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy, rtype) {
     if (!lx) { lx = 1; hx = COLNO - 1; ly = 0; hy = ROWNO - 1; }
     if (lx < 1) lx = 1;
     if (hx > COLNO - 1) hx = COLNO - 1;
     if (ly < 0) ly = 0;
     if (hy > ROWNO - 1) hy = ROWNO - 1;
 
-    // C ref: put_lregion_here() for LR_*TELE — besides bad_location, a square
-    // occupied by a monster is rejected (return FALSE -> try again) unless this
-    // is the deterministic one-shot fallback (oneshot, lx==hx&&ly==hy), where
-    // the monster is relocated instead.  The Big Room is densely populated, so
-    // this monster rejection is what makes the C placement loop iterate.
+    const badForRegion = (x, y) => bad_location(x, y, nlx, nly, nhx, nhy)
+        || is_exclusion_zone(rtype, x, y);
+    const settle = async (x, y) => {
+        const mtmp = m_at(x, y);
+        if (mtmp) {
+            const { rloc } = await import('./teleport.js');
+            if (!(await rloc(mtmp, RLOC_NOMSG))) {
+                const { m_into_limbo } = await import('./dog.js');
+                await m_into_limbo(mtmp);
+            }
+        }
+        game.u.ux = x; game.u.uy = y;
+    };
+
+    const oneshot = (lx === hx && ly === hy);
     for (let trycnt = 0; trycnt < 200; trycnt++) {
         const x = rn1((hx - lx) + 1, lx);
         const y = rn1((hy - ly) + 1, ly);
-        if (!bad_location(x, y, nlx, nly, nhx, nhy)
-            && !is_exclusion_zone(rtype, x, y) && !m_at(x, y)) {
-            game.u.ux = x; game.u.uy = y;
-            return;
+        if (badForRegion(x, y)) {
+            // C's oneshot arm deletes a destroyable trap and re-tests; we only
+            // re-test (no covered level puts a destroyable trap on a fixed
+            // arrival portal), so a lone trapped square still fails here.
+            if (!oneshot || badForRegion(x, y)) continue;
         }
+        if (m_at(x, y) && !oneshot) continue;
+        await settle(x, y);
+        return;
     }
-    // deterministic fallback (oneshot): bad-location and exclusion checks only;
-    // a monster here would be relocated by rloc() in C.
+    // deterministic fallback: C forces oneshot=TRUE unconditionally, so the
+    // first bad_location/exclusion-clean square always accepts (relocating
+    // any occupying monster rather than rejecting it).
     for (let x = lx; x <= hx; x++)
         for (let y = ly; y <= hy; y++)
-            if (!bad_location(x, y, nlx, nly, nhx, nhy)
-                && !is_exclusion_zone(rtype, x, y)) {
-                game.u.ux = x; game.u.uy = y;
+            if (!badForRegion(x, y)) {
+                await settle(x, y);
                 return;
             }
 }
@@ -213,10 +244,10 @@ export function u_on_newpos(x, y) {
 // (via fixup_special()'s LR_*TELE arm) can fill the matching one back in, and
 // an unfilled region (.lx==0) makes place_lregion() default to the whole
 // level.  (was_in_W_tower is Vlad's-Tower-only and never reached here.)
-function u_on_rndspot(upflag) {
+async function u_on_rndspot(upflag) {
     const up = (upflag & 1);
     const dest = up ? game.updest : game.dndest;
-    place_hero_lregion(dest?.lx || 0, dest?.ly || 0, dest?.hx || 0, dest?.hy || 0,
+    await place_hero_lregion(dest?.lx || 0, dest?.ly || 0, dest?.hx || 0, dest?.hy || 0,
                        dest?.nlx || 0, dest?.nly || 0, dest?.nhx || 0, dest?.nhy || 0,
                        up ? LR_UPTELE : LR_DOWNTELE);
 }
@@ -414,35 +445,104 @@ function mon_has_amulet(m) {
 }
 
 // C ref: shk.c:5012 is_fshk(mtmp) — `mtmp->isshk && ESHK(mtmp)->following`, a
-// shopkeeper chasing the hero over an unpaid bill.  eshk.following is not
-// modelled in this port, so this answers FALSE for every shopkeeper; the
-// hostile-shk chase itself is unported, not merely unreached.
-function is_fshk(_m) { return false; }
+// shopkeeper chasing the hero over an unpaid bill.  js/shk.js's hot_pursuit()
+// sets eshk.following (and shk.js's paybill()/shk_chat() etc. clear it), so
+// this now tracks the real chase state.  Only reachable from levl_follower()
+// below, i.e. only matters for the wizard-mode level-teleport path this file
+// covers — an angry-and-following shk is otherwise handled entirely inside
+// js/shk.js (hot_pursuit/pay_for_damage/shopdig), not through this predicate.
+function is_fshk(m) {
+    return !!(m?.isshk && m.eshk?.following);
+}
 
 // C ref: include/monst.h helpless(mon) = msleeping || !mcanmove.
 function keepdogs_helpless(m) {
     return !!(m.msleeping || !m.mcanmove);
 }
 
-// C ref: dog.c keepdogs()/losedogs().  Capture pets/non-fleeing M2_STALK
-// hostiles (levl_follower) near the hero before mklev() tears the level down,
-// skipping helpless/STRAT_WAITFORU/eating/trapped monsters; losedogs_place()
-// re-places them on arrival.  Only RNG: mon_arrive(With_you)'s
-// rn2(10)/rn2(5)/rn2(2).
-function keepdogs_capture() {
+// C ref: dog.c:788 keepdogs(pets_only=FALSE).  Capture pets/non-fleeing
+// M2_STALK hostiles (levl_follower), plus the Wizard chasing an
+// amulet-holding hero from anywhere on the level, near the hero before
+// mklev() tears the level down; losedogs_place() re-places them on arrival
+// via the tuned mon_arrive_with_you() below (untouched — see its header).
+// A follower candidate that is still eating/trapped gets C's escape roll
+// (mintrap()) and, if it still can't come, C's "is still eating/trapped."
+// message instead of silently staying behind; a candidate carrying the real
+// Amulet also stays behind (disoriented message).  A non-follower kept
+// accessible by keep_mon_accessible() (the Wizard, an off-level shk/priest/
+// guard) is migrated instead of left in the level's monster list, so
+// dog.js's deliver_migrating_before()/deliver_migrating_after() can place it
+// again when the hero reaches its destination.  RNG: the mintrap() escape
+// roll for a trapped follower candidate, then mon_arrive(With_you)'s
+// rn2(10)/rn2(5)/rn2(2) (still in losedogs_place(), unchanged).
+async function keepdogs_capture() {
     const lev = game.level;
     if (!lev?.monsters) return [];
     const u = game.u;
     const kept = [];
     const remain = [];
-    for (const m of lev.monsters) {
-        const follows = monnear(m, u.ux, u.uy) && levl_follower(m);
+    const chain = lev.monsters.slice();
+    for (const m of chain) {
+        const follows = (monnear(m, u.ux, u.uy) && levl_follower(m))
+            || (u.uhave?.amulet && m.iswiz);
         const eligible = follows
             && (!keepdogs_helpless(m) || m === u.usteed)
-            && !((m.mstrategy || 0) & STRAT_WAITFORU)
-            && !m.meating && !m.mtrapped;
-        if (eligible) kept.push(m);
-        else remain.push(m);
+            && !((m.mstrategy || 0) & STRAT_WAITFORU);
+        if (eligible) {
+            let stay_behind = false;
+            if (m.mtrapped) {
+                const { mon_mintrap } = await import('./monmove.js');
+                await mon_mintrap(m); /* try to escape */
+            }
+            if (m === u.usteed) {
+                /* make sure the steed is eligible to accompany the hero */
+                m.mtrapped = 0;       /* escape trap */
+                m.meating = 0;        /* terminate eating */
+                /* C ref: steal.c mdrop_special_objs(m) — UNPORTED (drops the
+                   Amulet/invocation items the steed might be carrying). */
+            } else if (m.meating || m.mtrapped) {
+                if (await canseemon_do(m)) {
+                    const DN = await import('./do_name.js');
+                    await pline(`${DN.Monnam(m)} is still `
+                                + `${m.meating ? 'eating' : 'trapped'}.`);
+                }
+                stay_behind = true;
+            } else if (mon_has_amulet(m)) {
+                if (await canseemon_do(m)) {
+                    const DN = await import('./do_name.js');
+                    await pline(`${DN.Monnam(m)} seems very disoriented `
+                                + 'for a moment.');
+                }
+                stay_behind = true;
+            }
+            if (stay_behind) {
+                if (m.mleashed) {
+                    await pline(`${humanoid(m.data)
+                                    ? (m.female ? 'Her' : 'His') : 'Its'} `
+                                + 'leash suddenly comes loose.');
+                    const { m_unleash } = await import('./apply.js');
+                    await m_unleash(m, false);
+                }
+                /* C: `if (mtmp == u.usteed) impossible(...)` — can't happen
+                   unless the stay_behind logic above is scrambled. */
+                remain.push(m);
+                continue;
+            }
+            kept.push(m);
+        } else {
+            const { keep_mon_accessible, migrate_to_level } = await import('./dog.js');
+            if (keep_mon_accessible(m)) {
+                await migrate_to_level(m, ledger_no_do(u.uz), MIGR_EXACT_XY, null);
+            } else if (m.mleashed) {
+                const DN = await import('./do_name.js');
+                await pline(`${DN.Monnam(m)}'s leash goes slack.`);
+                const { m_unleash } = await import('./apply.js');
+                await m_unleash(m, false);
+                remain.push(m);
+            } else {
+                remain.push(m);
+            }
+        }
     }
     lev.monsters = remain;
     return kept;
@@ -824,7 +924,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     u.uundetected = 0;
 
     // Capture accompanying pet(s) before the old level is freed by mklev().
-    const kept = at_stairs || !at_stairs ? keepdogs_capture() : [];
+    const kept = await keepdogs_capture();
 
     // C ref: do.c goto_level() ~1799 — the on-foot transit message ("You
     // descend/climb the stairs.") is emitted for ANY at_stairs move (including
@@ -1066,7 +1166,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
             // on arrival — in which case it lands the hero at random without
             // complaint; otherwise it is an impossible() and lands the hero at
             // random anyway.  Either way, the placement is the same.
-            u_on_rndspot(0);
+            await u_on_rndspot(0);
         } else {
             seetrap(ttrap);
             u_on_newpos(ttrap.tx, ttrap.ty);
@@ -1088,9 +1188,9 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
             // which put an ascending hero on the wrong staircase (and, when the
             // level has no up stair at all, on a random place_lregion() square
             // that draws rn1 pairs C never draws).
-            if (newdungeon) u_on_sstairs(1); else u_on_dnstairs();
+            if (newdungeon) await u_on_sstairs(1); else await u_on_dnstairs();
         } else {
-            if (newdungeon) u_on_sstairs(0);
+            if (newdungeon) await u_on_sstairs(0);
             else u_on_upstairs(); /* descent lands on the new level's UP stair */
         }
         // C ref: do.c:1792 — the fall's damage roll, at its real position in the
@@ -1103,7 +1203,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     } else {
         // trap door / level teleport / endgame.  (The was_in_W_tower `| 2` flag
         // of C's u_on_rndspot() call is Vlad's-Tower-only and never set here.)
-        u_on_rndspot((up ? 1 : 0));
+        await u_on_rndspot((up ? 1 : 0));
         // C ref: do.c:1805 — a fall (trap door / hole) also does ballfall(),
         // selftouch("Falling, you") and defers d(max(dist,1),6) damage to the
         // very end of the arrival.  ballfall/selftouch need a punished hero or a
@@ -1119,8 +1219,21 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // order is wrong and seed4500 loses 4 steps to gain 2.
     if (Punished_do()) placebc();
 
-    // Bring the pet(s) along.  C ref: do.c goto_level() -> losedogs().
-    losedogs_place(kept);
+    // Bring the pet(s) along.  C ref: do.c goto_level() -> losedogs().  C's
+    // real losedogs() interleaves 3 delivery steps around the mydogs/
+    // With_you placement below; dog.js's deliver_migrating_before()/
+    // deliver_migrating_after() cover the two migrating_mons halves (the
+    // Wizard/off-level shk-priest-guard reappearing at their exact prior
+    // spot, then trapdoor/hole fallers, migrate_mon() and Orcish Town's
+    // migrate_orc() arriving) while losedogs_place() keeps driving the
+    // tuned mon_arrive_with_you() placement for `kept` unchanged.
+    {
+        const { deliver_migrating_before, deliver_migrating_after }
+            = await import('./dog.js');
+        await deliver_migrating_before(kept);
+        losedogs_place(kept);
+        await deliver_migrating_after();
+    }
 
     // C ref: do.c:1821 run_timers() — "expire all timers that have gone off
     // while away; must be after migrating monsters and objects are delivered".
@@ -1142,7 +1255,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // and Air get their first bubble sweep here, and the Plane of Fire draws
     // its fumarole rolls, both on ARRIVAL and before the screen reset.
     if (Is_waterlevel(u.uz) || Is_airlevel(u.uz)) await movebubbles();
-    else if (g.level?.flags?.fumaroles) fumaroles();
+    else if (g.level?.flags?.fumaroles) await fumaroles();
 
     // Reset the screen and draw the new level.  C ref: do.c goto_level()
     // lines ~1837-1841: vision_reset() (clear old level's line-of-sight),
@@ -2183,15 +2296,15 @@ function stairway_find_special_dir(up) {
 // C ref: stairs.c u_on_dnstairs()/u_on_sstairs() — the two placement fallbacks
 // goto_level()'s at_stairs arm uses when the destination has no stairway back
 // to the level just left.  (mklev.js exports only u_on_upstairs.)
-function u_on_sstairs(upflag) {
+async function u_on_sstairs(upflag) {
     const stway = stairway_find_special_dir(upflag);
     if (stway) u_on_newpos(stway.sx, stway.sy);
-    else u_on_rndspot(upflag);
+    else await u_on_rndspot(upflag);
 }
-function u_on_dnstairs() {
+async function u_on_dnstairs() {
     const stway = stairway_find_dir(false);
     if (stway) u_on_newpos(stway.sx, stway.sy);
-    else u_on_sstairs(1); /* destination dnstairs implies moving up */
+    else await u_on_sstairs(1); /* destination dnstairs implies moving up */
 }
 
 // C ref: apply.c next_to_u — FALSE only when a leashed pet (or amulet-bearing
@@ -2490,11 +2603,13 @@ async function is_whirly_do(ptr) {
     return ptr.mcls === S_VORTEX || ptr.pmidx === await PM_do('air elemental');
 }
 
-// C ref: zap.c revive(corpse, by_hero) — NOT PORTED: nothing in js/ defines it
-// (js/mkobj.js only has corpse_revive_type(), the vampire-corpse helper).  Kept
-// as the call site so revive_corpse()'s control flow below is C's; answering
-// null takes C's `return FALSE` tail.
-async function revive_unported(_corpse, _by_hero) { return null; }
+// C ref: zap.c:884 revive(corpse, by_hero) — ported at js/zap.js revive();
+// this thin wrapper is the call site so revive_corpse()'s control flow
+// below stays C's shape.
+async function revive_unported(corpse, by_hero) {
+    const { revive } = await import('./zap.js');
+    return await revive(corpse, by_hero);
+}
 
 // C ref: objnam.c Tobjnam(obj, verb) / Doname2(obj) / is_plural(obj).
 async function Tobjnam_do(obj, verb) {
@@ -3083,7 +3198,7 @@ export async function dosinkring(obj) {
     }
     if (giveback) { /* C: the `giveback:` label */
         obj.in_use = false;
-        I.dropx(obj);
+        await I.dropx(obj);
         await I.trycall(obj);
         return;
     }
@@ -3148,7 +3263,7 @@ export async function dosinkring(obj) {
     if (!rn2(20) && !nosink) {
         await pline(`The sink backs up, leaving ${I.obj_doname(obj)}.`);
         obj.in_use = false;
-        I.dropx(obj);
+        await I.dropx(obj);
     } else if (!rn2(5)) {
         I.freeinv(obj);
         obj.in_use = false;
@@ -3416,9 +3531,12 @@ export async function final_level() {
     void nplayers;
 
     /* create a guardian angel next to player, if worthy */
-    // C ref: do.c:2052 gain_guardian_angel() — priest.c gain_guardian_angel()
-    // has no port in js/ (it draws through makemon() when u.ualign.record > 8).
-    void 0;
+    // C ref: do.c:2052 gain_guardian_angel() — js/minion.js exports the
+    // faithful port; dynamic import avoids a static cycle.
+    {
+        const { gain_guardian_angel } = await import('./minion.js');
+        await gain_guardian_angel();
+    }
 }
 
 // ── schedule_goto (C ref: do.c:2057) ────────────────────────────────────────
@@ -3470,8 +3588,8 @@ export async function deferred_goto() {
 
 // ── revive_corpse (C ref: do.c:2111) ────────────────────────────────────────
 // Turn a corpse back into its monster.  Returns TRUE (corpse gone) on success.
-// The whole of the RNG spend is inside zap.c revive(), which has NO port in js/
-// (see revive_unported above), so this currently always takes C's FALSE tail.
+// RNG spend is entirely inside zap.c revive() (js/zap.js revive(), wired via
+// revive_unported() above).
 export async function revive_corpse(corpse) {
     const I = await import('./invent.js');
     const MK = await import('./makemon.js');
@@ -3492,10 +3610,10 @@ export async function revive_corpse(corpse) {
     const is_uwep = (corpse === game.u.uwep);
     const chewed = (corpse.oeaten | 0) !== 0;
     // C ref: do.c:2131 corpse_xname(corpse, chewed ? "bite-covered" : NULL,
-    // CXN_SINGULAR) — objnam.c corpse_xname() is ported but module-private at
-    // js/invent.js:657; exporting it is the fix.  xname() drops the adjective.
-    const cname = I.xname(corpse);
-    void CXN_SINGULAR;
+    // CXN_SINGULAR) — objnam.c corpse_xname() is module-private in js/invent.js
+    // and drops the adjective; reduced here the same way zap.js's private
+    // corpse_xname_z() does (adjective prefix, no CXN_SINGULAR nuance).
+    const cname = chewed ? `bite-covered ${I.xname(corpse)}` : I.xname(corpse);
     mcarry = (where === 'minvent') ? corpse.ocarry : null;
     /* mcarry is NULL for 'buried' and 'contained' now */
 
@@ -3504,10 +3622,15 @@ export async function revive_corpse(corpse) {
 
     if (where === 'contained') {
         container = corpse.ocontainer;
-        // C ref: do.c:2144 get_container_location(container, &where, NULL) —
-        // pickup.c get_container_location() has no port in js/; without it the
-        // nested-container message arm cannot pick between INVENT and FLOOR.
-        container_where = 0;
+        // C ref: zap.c:841 get_container_location(container, &container_where,
+        // NULL) — walk out to the outermost container and report where that
+        // one is, plus its carrying monster if OBJ_MINVENT.
+        const { get_container_location } = await import('./zap.js');
+        const nesting = {};
+        const carrier = get_container_location(container, nesting);
+        container_where = nesting.loc || 0;
+        if (container_where === 'minvent' && carrier)
+            mcarry = carrier;
     }
     const mtmp = await revive_unported(corpse, false); /* corpse gone on success */
 

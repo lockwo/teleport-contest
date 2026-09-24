@@ -21,7 +21,7 @@ import { attacktype_fordmg, dmgtype, AT_EXPL, AT_GAZE, AD_BLND,
 import { observe_object } from './o_init.js';
 // C ref: attrib.h ACURR(x) == acurr(x) (abon + atemp + acurr, clamped).
 import { exercise, acurr_eff as ACURR } from './attrib.js';
-import { more_experienced } from './exper.js';
+import { more_experienced, has_innate } from './exper.js';
 import { findit } from './detect.js';
 import { cansee, vision_recalc } from './vision.js';
 import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS, ARMOR_CLASS,
@@ -2919,7 +2919,7 @@ export async function zapyourself(obj, ordinary) {
 // C ref: teleport.c tele() -> scrolltele(NULL).  The Amulet / Wizard's-tower
 // `&& !rn2(3)` short-circuits before the roll for a hero carrying neither, so
 // the uncontrolled path draws only safe_teleds()'s placement rolls.
-async function tele() {
+export async function tele() {
     const wizard = !!game.flags?.debug;
     const { noteleport_level } = await import('./teleport.js');
     if (noteleport_level(null) && !wizard) {
@@ -2982,9 +2982,16 @@ function Stunned()          { return !!(game.u?.uprops?.Stun || game.u?.Stunned)
 // C ref: hack.h dist2(x0,y0,x1,y1).
 function dist2(x0, y0, x1, y1) { return (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0); }
 
-// C ref: youprop.h Sleep_resistance — intrinsic/extrinsic sleep immunity.  The
-// contest Healer has none; kept as a helper so the WAN_SLEEP branch mirrors C.
-export function Sleep_resistance() { return (game.u?.uprops?.SleepResistance || 0) > 0; }
+// C ref: youprop.h Sleep_resistance — intrinsic/extrinsic sleep immunity.
+// HSleep_resistance's innate source (elf from level 4, monk from level 1) is
+// never persisted as a stored uprops flag — adjabil() only prints the "You
+// feel drowsy/awake!" message — so OR in the pure has_innate() derivation,
+// the same pattern potion.js/artifact.js/fountain.js/explode.js already use
+// for their own H<Prop> reads.
+export function Sleep_resistance() {
+    return (game.u?.uprops?.SleepResistance || 0) > 0
+        || has_innate('HSleep_resistance');
+}
 
 // C ref: timeout.c fall_asleep(how_long, wakeup_msg) — the hero collapses
 // helpless for |how_long| turns (how_long < 0).  nomul(how_long) sets the

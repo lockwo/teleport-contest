@@ -9,7 +9,6 @@
 // the downstream RNG stays in lockstep.
 //
 // Still unported, in rough order of RNG weight (see the comment at each site):
-//   peacefuls_respond()   setmangry's witness reactions (needs MS_* + grownups[])
 //   leprechaun dodge      needs m_move(), file-static in monmove.js
 //   dmgval silver bonus   rnd(20); needs objects[].oc_material
 // NOTE: hmon_hitmon_jousting/hmon_hitmon_splitmon/hmonas and the other 36
@@ -48,7 +47,7 @@ import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
 import { Blind } from './vision.js';
 import { exercise, adjalign } from './attrib.js';
 import { DEADMONSTER, Protection_from_shape_changers, mmove_of, base_mmove,
-         healmon, mvitals_died, sensemon } from './mon.js';
+         healmon, mvitals_died, sensemon, peacefuls_respond } from './mon.js';
 import { MFLAGS1, MFLAGS2, M1_WALLWALK, M2_NASTY, M2_ORC, M2_UNDEAD, M2_DEMON,
          M2_COLLECT, M2_HUMAN, M2_HOSTILE, M2_PNAME, humanoid } from './monflags_data.js';
 // C ref: include/monflag.h G_UNIQ (0x1000) — generated only once.
@@ -475,8 +474,9 @@ export async function wakeupAttack(mtmp, viaAttack) {
 }
 
 // C ref: mon.c setmangry(mtmp, via_attack) — the hero attacked mtmp; RNG-free
-// unless standing on an Elbereth engraving (rnd(5) alignment penalty).
-// peacefuls_respond() (mon.c:4160) is NOT ported — see the note further down.
+// unless standing on an Elbereth engraving (rnd(5) alignment penalty), or
+// unless the "make other peaceful monsters react" tail (mon.c:4316-4317)
+// draws through peacefuls_respond() (mon.js:3165).
 export async function setmangry(mtmp, via_attack) {
     const { update_topl: pline } = await import('./display.js');
     const u = game.u;
@@ -513,15 +513,16 @@ export async function setmangry(mtmp, via_attack) {
     // else growl(mtmp): deliberately silent here — sounds.c growl() is RNG-free
     // and its topline lands where C's does not (measured on seed0030).
 
-    // C ref: mon.c:4247 `if (!svc.context.mon_moving) peacefuls_respond(mtmp)` —
-    // STILL UNPORTED; the largest remaining RNG hole in this file. Per awake,
-    // non-mindless peaceful witness in sight it can draw rn2(5)+ROLL_FROM(Exclam)
-    // (another rn2(5)), rn2(10), rn2(50), or (same-class arm) rn2(3)/rn2(4)/
-    // rn2(6)/rn2(25). Needs maybe_gasp()'s MS_* switch (monflags_data.js has the
-    // audited MSOUND table but no symbolic MS_* enum here) and big_little_match()
-    // (grownups[] walk, file-static in makemon.js). A guessed MS_* mapping would
-    // silently answer "no gasp" and drop the rn2(5) — the wrong-constant-sweep
-    // failure mode — so left explicit.
+    /* attacking your own quest leader will anger his or her guardians */
+    // C ref: mon.c:4312 `if (mtmp->data == &mons[quest_info(MS_LEADER)])
+    //   qst_guardians_respond();` — quest_leader_pm() above already tracks
+    // why this port's guard falls through (no MS_LEADER species available),
+    // so left unpaired with qst_guardians_respond() rather than guessed.
+
+    // C ref: mon.c:4316-4317 `if (!svc.context.mon_moving)
+    //   peacefuls_respond(mtmp);` — make other peaceful monsters react.
+    if (!game.context?.mon_moving)
+        await peacefuls_respond(mtmp);
 }
 
 // C ref: engrave.c sengr_at("Elbereth", x, y, TRUE) — a legible Elbereth
@@ -1317,8 +1318,9 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     //   unarmed && dmg>1 && !thrown && !obj && !Upolyd      -> hmon_hitmon_stagger
     //   !unarmed && dmg>1 && !thrown && !Upolyd && !twoweap && uwep -> maybe_knockback
     // (jousting omitted — no lance/steed here).  This is evaluated BEFORE the
-    // mhp subtraction; stagger rolls rnd(100) immediately, knockback is deferred
-    // until after a surviving hit (below).
+    // mhp subtraction; stagger's mhurtle_to_doom() can kill mon outright
+    // (already_killed) before this hit's own damage is ever applied, knockback
+    // is deferred until after a surviving hit (below).
     // C ref: uhitm.c:1779 `hmd.unarmed = !uwep && !uarm && !uarms;` — this
     // gate's "unarmed" is NOT the local no-weapon-object flag above: a hero
     // swinging bare hands while wearing body armor or a shield still counts
@@ -1327,8 +1329,15 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     // while wearing a suit/shield, desyncing the whole rest of the session.
     const hmdUnarmed = !game.uwep && !game.uarm && !game.uarms;
     let maybe_knockback = false;
+    let staggerAlreadyKilled = false;
     if (hmdUnarmed && dmg > 1 && !game.u?.Upolyd) {
-        rnd(100);                              // hmon_hitmon_stagger (uhitm.c:1576)
+        // C ref: uhitm.c:1827-1828 hmon_hitmon_stagger(&hmd, mon, obj) — was
+        // rolling and discarding rnd(100) with no message and no knockback;
+        // the real function (below) was already ported but never called.
+        const hmdS = { mdat: mon.data, dmg, hittxt: false, already_killed: false };
+        await hmon_hitmon_stagger(hmdS, mon, weapon);
+        if (hmdS.hittxt) hittxt = true;
+        staggerAlreadyKilled = hmdS.already_killed;
     } else if (!unarmed && dmg > 1 && !game.u?.twoweap && game.uwep
                && !game.u?.Upolyd) {
         maybe_knockback = true;                // uhitm.c:1831
@@ -1350,8 +1359,13 @@ async function hmon_hitmon(mon, weapon, dieroll) {
             `hit with a wielded weapon (${buf}) for the first time`);
     }
 
-    mon.mhp = (mon.mhp || 0) - dmg;
-    if (mon.mhpmax != null && mon.mhp > mon.mhpmax) mon.mhp = mon.mhpmax;
+    // C ref: uhitm.c:1834 `if (!hmd.already_killed) { ...; mon->mhp -= hmd.dmg; }`
+    // — a stagger hurtle that already killed mon (fatal trap while flying
+    // back) must not have this hit's damage applied a second time.
+    if (!staggerAlreadyKilled) {
+        mon.mhp = (mon.mhp || 0) - dmg;
+        if (mon.mhpmax != null && mon.mhp > mon.mhpmax) mon.mhp = mon.mhpmax;
+    }
     const destroyed = (mon.mhp <= 0 || DEADMONSTER(mon));
 
     // C ref: uhitm.c:1866 hmon_hitmon_pet() — runs BEFORE killed(), so abusing
@@ -1364,7 +1378,9 @@ async function hmon_hitmon(mon, weapon, dieroll) {
     if (destroyed) {
         // hmon_hitmon_msg_hit is suppressed once destroyed; killed() gives the
         // "You kill the <mon>!" message and runs the corpse/treasure aftermath.
-        await killed(mon);
+        // C ref: uhitm.c:1904-1905 `if (!hmd.already_killed) { ...; killed(mon); }`
+        // — already handled by whatever killed mon during the stagger hurtle.
+        if (!staggerAlreadyKilled) await killed(mon);
         return false;
     }
 
@@ -1666,7 +1682,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
 
 // C ref: uhitm.c passive_obj(mon, obj, mattk) — the passive attack's effect on
 // the striking object.
-async function passive_obj(mon, obj, mattk) {
+export async function passive_obj(mon, obj, mattk) {
     if (!obj) return;
     switch (mattk.adtyp) {
     case AD_FIRE:
@@ -2513,8 +2529,8 @@ import { ARTICLE_A, ARTICLE_YOUR, SUPPRESS_INVISIBLE, SUPPRESS_NAME,
          NO_TRAP_FLAGS, M_AP_TYPE, ismnum, FACE, HAND, STOMACH,
          xdir, ydir, IS_DOOR, D_NODOOR, D_BROKEN } from './const.js';
 import { M1_AMORPHOUS, M1_UNSOLID, M1_NOEYES, M1_NOHEAD, M1_NOHANDS, M1_FLY,
-         M1_BREATHLESS, M1_AMPHIBIOUS, M1_THICK_HIDE, M1_ANIMAL,
-         mindless } from './monflags_data.js';
+         M1_BREATHLESS, M1_AMPHIBIOUS, M1_THICK_HIDE, M1_ANIMAL, M1_SLITHY,
+         M1_NOLIMBS, mindless } from './monflags_data.js';
 import { attacktype_fordmg, AD_DRIN, AD_WRAP, AD_DGST, AD_HALU, AD_DREN,
          AD_SPEL, AT_SPIT, AT_TENT, AT_EXPL, AT_BREA, AT_GAZE,
          AT_BOOM } from './monattk_data.js';
@@ -2579,6 +2595,8 @@ function breathless(ptr) { return (mflags1_of(ptr) & M1_BREATHLESS) !== 0; }
 function amphibious(ptr) { return (mflags1_of(ptr) & M1_AMPHIBIOUS) !== 0; }
 function is_animal_uh(ptr) { return (mflags1_of(ptr) & M1_ANIMAL) !== 0; }
 function is_flyer(ptr) { return (mflags1_of(ptr) & M1_FLY) !== 0; }
+function slithy(ptr) { return (mflags1_of(ptr) & M1_SLITHY) !== 0; }
+function nolimbs_uh(ptr) { return (mflags1_of(ptr) & M1_NOLIMBS) === M1_NOLIMBS; }
 // C ref: mondata.h is_demon(ptr) — M2_DEMON.  (This file's is_orc()/is_undead()
 // are the same shape; _uh distinguishes it from js/mon.js's exported copy.)
 function is_demon_uh(ptr) { return (mflags2_of(ptr) & M2_DEMON) !== 0; }
@@ -3496,6 +3514,20 @@ export async function hmon_hitmon_jousting(hmd, mon, obj) {
     hmd.hittxt = true;
 }
 
+// C ref: mondata.c stagger(ptr, "stagger") — locomotion-appropriate verb for
+// the "%s %s from your powerful strike!" stagger message.  is_floater/is_flyer
+// (by size)/slithy/amorphous/immobile(mmove==0)/nolimbs each override the
+// literal "stagger" default; makeplural() below then agrees it with Monnam().
+function stagger_verb(ptr) {
+    if (is_floater(ptr)) return 'wobble';
+    if (is_flyer(ptr)) return (ptr?.msize ?? 2) <= MZ_SMALL ? 'flutter' : 'stagger';
+    if (slithy(ptr)) return 'falter';
+    if (amorphous(ptr)) return 'tremble';
+    if (species_mmove(ptr) === 0) return 'pulsate';
+    if (nolimbs_uh(ptr)) return 'falter';
+    return 'stagger';
+}
+
 // C ref: uhitm.c:1570 hmon_hitmon_stagger(hmd, mon, obj) — a martial-arts punch
 // may knock the target back.  RNG: rnd(100), unconditionally.
 export async function hmon_hitmon_stagger(hmd, mon, _obj) {
@@ -3508,7 +3540,7 @@ export async function hmon_hitmon_stagger(hmd, mon, _obj) {
             /* mondata.c stagger(ptr, "stagger") picks the body-appropriate
                verb; makeplural() then agrees it with Monnam() */
             const I = await import('./invent.js');
-            await update_topl(`${Monnam(mon)} ${I.makeplural('stagger')}`
+            await update_topl(`${Monnam(mon)} ${I.makeplural(stagger_verb(mon.data))}`
                 + ` from your powerful strike!`);
         }
         if (await mhurtle_to_doom(mon, hmd.dmg, hmd)) hmd.already_killed = true;
@@ -3630,13 +3662,19 @@ export async function hmon_hitmon_msg_lightobj(hmd, mon, _obj) {
 // arts punch knocks the target back, possibly killing it (via a trap) before
 // known_hitum() gets the chance; returns TRUE if 'mon' died. The third C arg
 // is `struct permonst **mptr` (caller's cached mon->data); this port passes
-// the hmd record and writes hmd.mdat instead. dothrow.c mhurtle() has no port
-// (js/apply.js's ap_hurtle() is empty), so the knockback — and the
-// mintrap() RNG at the landing square — is a wiring blocker.
+// the hmd record and writes hmd.mdat instead. dothrow.c mhurtle() IS ported
+// (js/dothrow.js:1645, already used by the armed-hit knockback path below);
+// wire it here too instead of the no-op that used to skip the hurtle
+// entirely. Note: js/dothrow.js's mintrap_hurtle()/minliquid_hurtle() are
+// still stubs (a hurtling monster never triggers the trap/liquid it lands
+// on), so DEADMONSTER(mon) can't yet fire from this path — already_killed
+// stays structurally correct but is currently unreachable.
 export async function mhurtle_to_doom(mon, tmp, hmd) {
     /* only hurtle if the pending physical damage isn't going to kill mon */
     if (tmp < mon.mhp) {
-        /* dothrow.c mhurtle(mon, u.dx, u.dy, 1) — unported */
+        const u = game.u;
+        const { mhurtle } = await import('./dothrow.js');
+        await mhurtle(mon, u.dx, u.dy, 1);
         /* update the caller's cached mon->data: mon might have been pushed onto
            a polymorph trap, or be a vampshifter whose current form was killed
            by a trap and reverted */

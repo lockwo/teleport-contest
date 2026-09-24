@@ -1931,8 +1931,11 @@ async function ap_mkundead(_mm, _revive, _mmflags) {}
 async function ap_hurtle(_dx, _dy, _range, _verbose) {}
 // C ref: dbridge.c boulder_hits_pool(otmp, rx, ry, newspot) — DEFERRED.
 async function ap_boulder_hits_pool(_otmp, _rx, _ry, _newspot) { return false; }
-// C ref: mon.c revive_corpse(corpse) — DEFERRED (no port).
-async function ap_revive_corpse(_corpse) { return false; }
+// C ref: do.c:2111 revive_corpse(corpse) — ported at js/do.js revive_corpse().
+async function ap_revive_corpse(corpse) {
+    const { revive_corpse } = await import('./do.js');
+    return await revive_corpse(corpse);
+}
 // C ref: eat.c floorfood(verb, corpsecheck) — the "There is X here; VERB it?"
 // floor picker, then (declined/no floor corpse) getobj(verb, tin_ok) over
 // inventory.  Only the corpsecheck===2 (tinning) caller reaches this
@@ -2304,7 +2307,7 @@ export async function use_towel(obj) {
                     const saved_ublindf = game.ublindf;
                     await A.display.pline(`You push your ${what} off.`);
                     await ap_Blindf_off(game.ublindf);
-                    A.invent.dropx(saved_ublindf);
+                    await A.invent.dropx(saved_ublindf);
                 }
             }
             if (A.weapon.is_wet_towel(obj))
@@ -3890,7 +3893,7 @@ export async function use_grease(obj) {
     if (ap_Glib()) {
         await A.display.pline(`${Tobjnam(obj, 'slip')} from your ${
             A.do_wear.fingers_or_gloves(false)}.`);
-        A.invent.dropx(obj);
+        await A.invent.dropx(obj);
         return ECMD_TIME;
     }
 
@@ -3900,7 +3903,7 @@ export async function use_grease(obj) {
 
             await A.display.pline(`${Tobjnam(obj, 'slip')} from your ${
                 A.do_wear.fingers_or_gloves(false)}.`);
-            A.invent.dropx(obj);
+            await A.invent.dropx(obj);
             return ECMD_TIME;
         }
         const otmp = await A.invent.getobj('grease', grease_ok,
@@ -4027,7 +4030,7 @@ export async function use_trap(otmp) {
                     reset_trapset();
                     await A.display.pline(`You drop ${
                         ap_the(A.trap.trapname ? A.trap.trapname(ttyp, false) : 'trap')}!`);
-                    A.invent.dropx(otmp);
+                    await A.invent.dropx(otmp);
                     return;
                 default:
                     break;

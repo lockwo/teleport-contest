@@ -1416,8 +1416,11 @@ export async function dokick() {
         // answer as a direction.
         if (await y_n('Kick your steed?', 'yn\x1b', 'y') === 'y') {
             await pline(`You kick ${mon_nam(u.usteed)}.`);
-            // NOT PORTED: steed.c kick_steed() — its dismount_steed(
-            // DISMOUNT_THROWN) leaf has no counterpart here (see `deferred`).
+            // C ref: steed.c kick_steed() — the exported js/steed.js port
+            // handles the rousing/dismount/gallop RNG; it assumes the
+            // "You kick <steed>." line above has already been printed.
+            const { kick_steed } = await import('./steed.js');
+            await kick_steed();
             return ECMD_TIME;
         }
         return ECMD_OK;

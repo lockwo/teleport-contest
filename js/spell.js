@@ -27,6 +27,7 @@ import { hcolor, hliquid } from './do_name.js';
 import { find_ac } from './u_init.js';
 import { DEADMONSTER } from './mon.js';
 import { resists_elec } from './mondata.js';
+import { has_innate } from './exper.js';
 
 // C ref: objclass.h obj_material_types — is_metallic() = material in [IRON,MITHRIL].
 const MAT_IRON = 11, MAT_MITHRIL = 17;
@@ -875,9 +876,12 @@ async function confused_book(spellbook) {
 }
 
 // C ref: youprop.h Sleep_resistance (HSleep_resistance || ESleep_resistance).
+// The innate source (elf from level 4, monk from level 1) is never persisted
+// as a stored uprops flag, so OR in has_innate()'s pure derivation.
 function Sleep_resistance_hero() {
     const u = game.u;
-    return ((u?.uprops?.HSleep_resistance ?? u?.uprops?.Sleep_resistance ?? 0) > 0);
+    return ((u?.uprops?.HSleep_resistance ?? u?.uprops?.Sleep_resistance ?? 0) > 0)
+        || has_innate('HSleep_resistance');
 }
 // C ref: objnam.c objdescr_is(obj, descr) — compare the SHUFFLED appearance.
 function objdescr_is_spell(obj, descr) {

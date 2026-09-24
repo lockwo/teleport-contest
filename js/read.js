@@ -1,10 +1,11 @@
 // read.js — reading scrolls and spellbooks.
 // C ref: read.c.  Ports the 'r' command entry (doread), the scroll dispatch
 // (seffects) and spellbook reading (study_book, in spell.js).
-// Still unported in seffects(): SCR_GENOCIDE, SCR_CHARGING,
-// SCR_STINKING_CLOUD and the two detection scrolls — each needs a helper that
-// does not exist yet in the port (do_genocide/getlin, recharge(), getpos(),
-// and detect.c's food_detect/trap_detect respectively).
+// Still unported in seffects(): SCR_CHARGING — it needs recharge(), which
+// does not exist yet in the port (getobj("charge") + a real wand/tool
+// recharge effect).  SCR_GENOCIDE, SCR_STINKING_CLOUD and the two detection
+// scrolls are wired below to their already-ported seffect_*/do_*/food_detect/
+// trap_detect helpers.
 // SCR_FIRE and SCR_EARTH used to be listed here and were NOT unported at all:
 // seffect_fire()/seffect_earth() and drop_boulder_on_player/monster() were
 // fully written, just missing their `case` arms in the switch below.
@@ -61,6 +62,10 @@ const SCR_PUNISHMENT = 341;
 const SCR_CREATE_MONSTER = 329;
 const SCR_TAMING = 330;
 const SCR_GOLD_DETECTION = 334;
+const SCR_GENOCIDE = 331;
+const SCR_FOOD_DETECTION = 335;
+const SCR_STINKING_CLOUD = 343;
+const SPE_DETECT_FOOD = 383;
 const SCR_AMNESIA = 338;
 const SCR_MAIL = 364;
 const SPE_CONFUSE_MONSTER = 377;
@@ -365,11 +370,20 @@ export async function seffects(sobj) {
         break;
     }
     case SCR_GOLD_DETECTION:
-        // C ref: read.c seffect_gold_detection() — a confused/cursed read does
-        // trap_detect() instead (not ported; it takes the same browse_map path
-        // and is left to the default until a session needs it).
-        if (Confused() || sobj.cursed) break;
+        // C ref: read.c seffect_gold_detection() — a confused/cursed read
+        // takes trap_detect(sobj) instead of gold_detect(sobj); both are
+        // ported in detect.js and report "nothing detected" the same way.
         if (await seffect_gold_detection(sobj)) return true; // strange_feeling used it up
+        break;
+    case SCR_GENOCIDE:
+        await seffect_genocide(sobj);
+        break;
+    case SCR_FOOD_DETECTION:
+    case SPE_DETECT_FOOD:
+        if (await seffect_food_detection(sobj)) return true; // strange_feeling used it up
+        break;
+    case SCR_STINKING_CLOUD:
+        await seffect_stinking_cloud(sobj);
         break;
     case 339 /*SCR_FIRE*/:
     case 368 /*SPE_FIREBALL*/:
@@ -404,15 +418,10 @@ export async function seffects(sobj) {
         await seffect_mail(sobj);
         break;
     default:
-        // C ref: read.c seffects default: -> impossible().  Every otyp that
-        // still lands here is a REAL unported effect, not an inert one:
-        //   SCR_GENOCIDE (do_genocide -> getlin loop),
-        //   SCR_GOLD_DETECTION / SCR_FOOD_DETECTION (detect.c gold_detect,
-        //     trap_detect, food_detect — none ported),
-        //   SCR_CHARGING (getobj("charge") + recharge()),
-        //   SCR_STINKING_CLOUD (getpos).
-        // Each of those draws RNG and/or consumes input in C, so a hero who
-        // reads one desynchronises from here on.
+        // C ref: read.c seffects default: -> impossible().  The only otyp
+        // that still lands here is SCR_CHARGING: it needs recharge(), which
+        // has no JS port yet (getobj("charge") + a real wand/tool recharge
+        // effect), so a hero who reads one desynchronises from here on.
         break;
     }
     return false;
@@ -423,6 +432,13 @@ export async function seffects(sobj) {
 // scroll up).  browse_map()'s getpos loop and the closing docrt() are threaded
 // in from hack.js/display.js here to keep detect.js free of that import cycle.
 async function seffect_gold_detection(sobj) {
+    if (Confused() || sobj.cursed) {
+        const { trap_detect } = await import('./detect.js');
+        // C: `trap_detect(sobj)` itself calls strange_feeling() on the
+        // "nothing found" path (detect.c:1082) and returns 1, matching
+        // seffect_gold_detection()'s `*sobjp = 0` — no second call here.
+        return !!(await trap_detect(sobj));
+    }
     const { gold_detect } = await import('./detect.js');
     const { browse_map_getpos } = await import('./hack.js');
     const { docrt, flush_screen } = await import('./display.js');

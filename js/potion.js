@@ -16,7 +16,7 @@ import { pline, update_topl, y_n, newsym, display_nhwindow_message } from './dis
 import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
-         makeplural, remove_worn_item, is_plural, pair_of,
+         makeplural, remove_worn_item, is_plural, pair_of, otense,
          learn_unseen_invent } from './invent.js';
 import { surface, hliquid } from './dungeon.js';
 import { heal_legs, water_damage } from './trap.js';
@@ -30,7 +30,7 @@ import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          objects, COIN_CLASS, RING_CLASS, mkobj_at, CORPSE, next_ident } from './mkobj.js';
 import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
-         W_SADDLE } from './const.js';
+         W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL } from './const.js';
 import { fruitname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, vision_recalc, cansee as vis_cansee } from './vision.js';
@@ -402,6 +402,14 @@ function objdescr_is(obj, descr) {
     if (idx == null) return false;
     return (DESCR_BY_OTYP[idx] ?? null) === descr;
 }
+// C ref: objnam.c OBJ_DESCR(obj) — obj_descr[objects[otyp].oc_descr_idx].oc_descr,
+// the unidentified appearance CURRENTLY bound to this otyp after shuffling.
+// A direct DESCR_BY_OTYP[otyp] index (o_init.js:864's documented pitfall) only
+// agrees with this when the shuffle happened to be the identity.
+function p_OBJ_DESCR(otyp) {
+    const idx = objects[otyp]?.oc_descr_idx;
+    return DESCR_BY_OTYP[idx != null ? idx : otyp] ?? null;
+}
 // C ref: hack.h POTION_OCCUPANT_CHANCE(n).
 const POTION_OCCUPANT_CHANCE = (n) => 13 + 2 * n;
 // C ref: mon.c svm.mvitals[].
@@ -454,7 +462,10 @@ function Maybe_Half_Phys(dmg) {
 // (zap.js/uhitm.js write the camel names, extcmd-handlers.js the H-prefixed
 // ones), so an intrinsic granted through either route is honoured here.
 function Free_action() { return HProp('FreeAction', 'HFree_action', 'EFree_action') > 0; }
-function Sleep_resistance() { return HProp('SleepResistance', 'HSleep_resistance') > 0; }
+function Sleep_resistance() {
+    return HProp('SleepResistance', 'HSleep_resistance') > 0
+        || has_innate('HSleep_resistance');
+}
 function Acid_resistance() { return HProp('AcidResistance', 'HAcid_resistance') > 0; }
 function Fire_resistance() { return HProp('FireResistance', 'HFire_resistance', 'EFire_resistance') > 0; }
 function Cold_resistance() { return HProp('ColdResistance', 'HCold_resistance', 'ECold_resistance') > 0; }
@@ -516,9 +527,10 @@ export async function potionhit_hero(obj, how) {
         // C ref: potion.c:1690 — the message fires before the Unchanging /
         // Antimagic gate, so it is NOT conditional on the shape change.
         await update_topl(`You feel a little ${Hallucination() ? 'normal' : 'strange'}.`);
-        // polyself(POLY_NOFLAGS) — the random-form self-polymorph subsystem is
-        // not modelled here (zap.js:2370 makes the same call site a no-op).
-        void (!Unchanging() && !Antimagic());
+        if (!Unchanging() && !Antimagic()) {
+            const { polyself } = await import('./polyself.js');
+            await polyself(POLY_NOFLAGS);
+        }
         break;
     default:
         break; // POT_SLEEPING and others: no direct isyou effect
@@ -1282,9 +1294,19 @@ async function peffect_acid(otmp) {
 async function peffect_polymorph(otmp) {
     await update_topl(`You feel a little ${Hallucination() ? 'normal' : 'strange'}.`);
     if (!Unchanging()) {
-        // polyself(...) — the self-polymorph subsystem is not modelled here (the
-        // same call site is a no-op in zap.js and fountain.js).
-        void otmp;
+        const u = game.u;
+        const { polyself } = await import('./polyself.js');
+        // C ref: potion.c:1322 — a blessed potion drunk while ALREADY in the
+        // hero's original (unpolymorphed) form grants a controlled,
+        // low-control-quality poly instead of the plain random-form roll.
+        if (!otmp.blessed || u.Upolyd) {
+            await polyself(POLY_NOFLAGS);
+        } else {
+            await polyself(POLY_CONTROLLED | POLY_LOW_CTRL);
+            if (u.mtimedone && u.umonnum !== u.umonster) {
+                u.mtimedone = Math.min(u.mtimedone, rn2(15) + 10);
+            }
+        }
     }
 }
 
@@ -1693,10 +1715,8 @@ export async function dodip() {
     const potion = await getobj(`dip ${named} into`, drink_ok, GETOBJ_NOFLAGS);
     if (!potion)
         return ECMD_CANCEL;
-    // potion_dip(obj, potion) — the carried-potion dip (H2Opotion_dip / mixtype /
-    // dip_potion_explosion, each with its own rolls) is the one part of potion.c
-    // still unported; see the handoff list.
-    return ECMD_OK;
+    // C ref: potion.c:2371 dodip() -> potion_dip(obj, potion).
+    return await potion_dip(obj, potion);
 }
 
 // C ref: rm.h is_pool — POOL/MOAT/WATER.
@@ -2289,7 +2309,7 @@ function p_Yobjnam2(obj, verb) {
     return `Your ${xname(obj)} ${p_otense(obj, verb)}`;
 }
 function p_otense(obj, verb) {
-    return ((obj?.quan | 0) > 1) ? verb : `${verb}s`;
+    return otense(obj, verb);
 }
 
 // C ref: potion.c:1625 potionhit(mon, obj, how) — a potion shatters on `mon`
@@ -2371,10 +2391,10 @@ export async function potionhit(mon, obj, how) {
         case POT_POLYMORPH:
             await update_topl(`You feel a little ${
                 Hallucination() ? 'normal' : 'strange'}.`);
-            /* polyself(POLY_NOFLAGS): the random self-polymorph subsystem is
-               not driven from here (js/potion.js:1222 peffect_polymorph makes
-               the same call site inert) */
-            void (!Unchanging() && !Antimagic());
+            if (!Unchanging() && !Antimagic()) {
+                const { polyself } = await import('./polyself.js');
+                await polyself(POLY_NOFLAGS);
+            }
             break;
         case POT_ACID:
             if (!Acid_resistance()) {
@@ -2859,7 +2879,7 @@ export async function potion_dip(obj, potion) {
         } else if (!Blind()) {
             const { hcolor } = await import('./do_name.js');
             await update_topl(`The mixture looks ${
-                hcolor(DESCR_BY_OTYP[obj.otyp])}.`);
+                hcolor(p_OBJ_DESCR(obj.otyp))}.`);
         }
 
         /* required when 'obj' was split off a bigger stack, so that it gets its
@@ -3013,7 +3033,7 @@ export async function potion_dip(obj, potion) {
 
         if (potion.dknown) {
             old_dknown = true;
-            oldbuf = `${hcolor(DESCR_BY_OTYP[potion.otyp])} `;
+            oldbuf = `${hcolor(p_OBJ_DESCR(potion.otyp))} `;
         }
         /* with multiple merged potions, split off one and just clear it */
         if (potion.quan > 1)
@@ -3039,7 +3059,7 @@ export async function potion_dip(obj, potion) {
             if (mixture === POT_WATER && singlepotion.dknown)
                 newbuf = 'clears';
             else if (!Blind())
-                newbuf = `turns ${hcolor(DESCR_BY_OTYP[mixture])}`;
+                newbuf = `turns ${hcolor(p_OBJ_DESCR(mixture))}`;
             if (newbuf)
                 await update_topl(`The ${oldbuf}potion${
                     more_than_one ? ' that you dipped into' : ''} ${newbuf}.`);

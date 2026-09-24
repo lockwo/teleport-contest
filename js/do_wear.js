@@ -1155,12 +1155,12 @@ export async function glibr() {
         if (leftfall) {
             const otmp = game.uleft;
             Ring_off(otmp);
-            dropx(otmp);
+            await dropx(otmp);
         }
         if (rightfall) {
             const otmp = game.uright;
             Ring_off(otmp);
-            dropx(otmp);
+            await dropx(otmp);
         }
     }
 
@@ -1174,7 +1174,7 @@ export async function glibr() {
         xfl++;
         wastwoweap = true;
         setuswapwep(null);
-        if (canletgo(otmp, '')) dropx(otmp);
+        if (await canletgo(otmp, '')) await dropx(otmp);
     }
     otmp = game.uwep;
     if (otmp && otmp.otyp !== AKLYS && !welded(otmp)) {
@@ -1191,7 +1191,7 @@ export async function glibr() {
         await pline(`${thiswep.startsWith('corpse') ? 'The' : 'Your'} ${otherwep ? 'other ' : ''}${thiswep} ${xfl ? 'also ' : ''}${otense(otmp, 'slip')} from your ${which}${hand}.`);
         otmp.quan = savequan;
         setuwep_slot(null);
-        if (canletgo(otmp, '')) dropx(otmp);
+        if (await canletgo(otmp, '')) await dropx(otmp);
     }
 }
 function makesingular_simple(s) { return String(s).replace(/s$/, ''); }

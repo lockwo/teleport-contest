@@ -11,8 +11,8 @@ import {
     set_levltyp_lit, shuffle, vly_object,
 } from '../sp_lev.js';
 import {
-    plane_abs, plane_coder_init, plane_level_flags, plane_levregion_add, plane_message,
-    plane_monster, plane_place_lregions, plane_teleport_region,
+    plane_abs, plane_coder_init, plane_flip_lregions, plane_level_flags, plane_levregion_add,
+    plane_message, plane_monster, plane_place_lregions, plane_teleport_region,
 } from './planes.js';
 
 // The map has no outer boundary: the caverns float in diggable rock, and
@@ -123,6 +123,9 @@ export async function makemaz_earth() {
     if (rn2(2)) flp |= 2;
     // C ref: sp_lev.c flip_level() mirrors gl.lregions[] too, and
     // fixup_special() only then copies the teleport region into svd.dndest.
-    if (flp) { flip_level(flp); vly_flip_dndest(flp); vly_flip_updest(flp); }
+    if (flp) {
+        flip_level(flp); vly_flip_dndest(flp); vly_flip_updest(flp);
+        plane_flip_lregions(flp);
+    }
     await plane_place_lregions();
 }

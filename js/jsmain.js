@@ -123,6 +123,15 @@ export class NethackGame {
             // Normalize JS booleans / undefined to the 0/1 ints C emits.
             const b = (v) => (v ? 1 : 0);
             const n = (v) => (v == null ? 0 : (v | 0));
+            // mstrategy/mstate are cast (unsigned) with %u by the C recorder
+            // (nethack-c/patches/007-ground-truth-dumps.patch); both are
+            // bitmasks whose high bit is genuinely set in real play (e.g.
+            // STRAT_APPEARMSG/STRAT_WAITFORU = 0xA0000000). Forcing `v | 0`
+            // reads them as signed, which flips the sign and produces a false
+            // divergence against C's unsigned value for any state-diff
+            // consumer (found live by swarm/bin/statefirst.mjs, wave-3
+            // 2026-09-22 W3Distfleeck ticket).
+            const u = (v) => (v == null ? 0 : (v >>> 0));
             out.push({
                 i,
                 m_id: n(m.m_id),
@@ -153,8 +162,8 @@ export class NethackGame {
                 // read here before now.
                 mconf: n(m.mconf),
                 mspeed: n(m.mspeed),
-                mstrategy: n(m.mstrategy),
-                mstate: n(m.mstate),
+                mstrategy: u(m.mstrategy),
+                mstate: u(m.mstate),
                 dead: (n(m.mhp) < 1) ? 1 : 0,
             });
         }

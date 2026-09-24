@@ -79,7 +79,9 @@ import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     IS_FURNITURE, IS_DRAWBRIDGE, IS_DOOR, IS_OBSTRUCTED, IS_AIR, ACCESSIBLE,
     ZAP_POS, is_hole, is_pit, In_endgame, Is_botlevel, Is_knox_level,
     M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP, M_SEEN_ELEC,
-    M_SEEN_ACID, M_SEEN_REFL, G_GENOD, MON_MIGRATING } from './const.js';
+    M_SEEN_ACID, M_SEEN_REFL, G_GENOD, MON_MIGRATING,
+    MIGR_RANDOM, MIGR_STAIRS_UP, MIGR_STAIRS_DOWN, MIGR_LADDER_UP,
+    MIGR_LADDER_DOWN, MIGR_SSTAIRS } from './const.js';
 import { surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 
@@ -668,20 +670,20 @@ function relmon(mon) {
     if (game.u?.ustuck === mon) game.u.ustuck = null;
     mon.mtrapped = 0;
 }
-// C ref: dog.c migrate_to_level(mtmp, tolev, xyloc, cc).  Draws no RNG.
-// The destination encoding (mtrack[]/mux/muy) is omitted because dog.js's
-// losedogs() is not wired into goto_level, so nothing ever drains
-// migrating_mons — but mstate/mx/my ARE C's observable off-map state, and
-// dochug() reads them through mon_offmap() to decide whether to skip its
-// post-m_move distfleeck recalc.  Leaving them unset spent one extra rn2(5)
-// on every monster that escaped the level under its own power.
-function migrate_to_level(mtmp) {
-    const mx = mtmp.mx, my = mtmp.my;
-    relmon(mtmp);
-    mtmp.mstate = (mtmp.mstate | 0) | MON_MIGRATING;
-    mtmp.mlstmv = game.moves;
-    mtmp.mx = mtmp.my = 0; /* mx==0 implies migrating */
-    newsym(mx, my);
+// C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
+// js/dog.js:530, js/dig.js:1097 and js/save.js:287 keep the same private
+// copy for the same import-order reason.
+function ledger_no(lev) {
+    return (lev?.dlevel | 0) + (game.dungeons?.[lev?.dnum ?? 0]?.ledger_start | 0);
+}
+// C ref: dog.c:886 migrate_to_level(mtmp, tolev, xyloc, cc) — js/dog.js has
+// the faithful port (mon_leave() worm/shk/container bookkeeping plus the
+// migrating_mons chain do.js's goto_level() now drains); delegate instead of
+// keeping a second, partial copy that only twiddled mstate/mx/my without
+// ever recording where the monster was actually headed.
+async function migrate_to_level(mtmp, tolev, xyloc, cc) {
+    const { migrate_to_level: real } = await import('./dog.js');
+    await real(mtmp, tolev, xyloc, cc ?? null);
 }
 // C ref: mon.c mongone(mtmp) — monster leaves without dying (no corpse).
 function mongone(mtmp) {
@@ -1216,7 +1218,9 @@ export async function use_defensive(mtmp) {
                 if (vismon)
                     await update_topl(`${Monnam(mtmp)} shudders for a moment.`);
             } else {
-                migrate_to_level(mtmp);
+                await migrate_to_level(mtmp,
+                    ledger_no({ dnum: game.u.uz.dnum, dlevel: nlev }),
+                    MIGR_RANDOM, null);
             }
         } else {
             await m_tele(mtmp, vismon, oseen, OT().SCR_TELEPORTATION);
@@ -1262,7 +1266,7 @@ export async function use_defensive(mtmp) {
             await update_topl(`You hear something crash through the ${
                 surface(mtmp.mx, mtmp.my)}.`);
         }
-        migrate_to_level(mtmp);
+        await migrate_to_level(mtmp, ledger_no(game.u.uz) + 1, MIGR_RANDOM, null);
         return 2;
     case MUSE_WAN_UNDEAD_TURNING:
         if (!otmp) return 0;
@@ -1317,7 +1321,7 @@ export async function use_defensive(mtmp) {
         newsym(mtmp.mx, mtmp.my);
         mtmp.mx = gt.trapx; mtmp.my = gt.trapy;
         newsym(gt.trapx, gt.trapy);
-        migrate_to_level(mtmp);
+        await migrate_to_level(mtmp, ledger_no(game.u.uz) + 1, MIGR_RANDOM, null);
         return 2;
     case MUSE_UPSTAIRS: {
         m_flee(mtmp);
@@ -1326,7 +1330,9 @@ export async function use_defensive(mtmp) {
         if ((game.u?.uz?.dlevel ?? 1) === 1 && (game.u?.uz?.dnum ?? 0) === 0)
             return await mon_escape(mtmp, vismon);
         if (vismon) await update_topl(`${Monnam(mtmp)} escapes upstairs!`);
-        migrate_to_level(mtmp);
+        await migrate_to_level(mtmp,
+            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            MIGR_STAIRS_DOWN, null);
         return 2;
     }
     case MUSE_DOWNSTAIRS: {
@@ -1334,7 +1340,9 @@ export async function use_defensive(mtmp) {
         const stway = stairway_here(mtmp.mx, mtmp.my);
         if (!stway) return 0;
         if (vismon) await update_topl(`${Monnam(mtmp)} escapes downstairs!`);
-        migrate_to_level(mtmp);
+        await migrate_to_level(mtmp,
+            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            MIGR_STAIRS_UP, null);
         return 2;
     }
     case MUSE_UP_LADDER: {
@@ -1342,7 +1350,9 @@ export async function use_defensive(mtmp) {
         const stway = stairway_here(mtmp.mx, mtmp.my);
         if (!stway) return 0;
         if (vismon) await update_topl(`${Monnam(mtmp)} escapes up the ladder!`);
-        migrate_to_level(mtmp);
+        await migrate_to_level(mtmp,
+            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            MIGR_LADDER_DOWN, null);
         return 2;
     }
     case MUSE_DN_LADDER: {
@@ -1350,7 +1360,9 @@ export async function use_defensive(mtmp) {
         const stway = stairway_here(mtmp.mx, mtmp.my);
         if (!stway) return 0;
         if (vismon) await update_topl(`${Monnam(mtmp)} escapes down the ladder!`);
-        migrate_to_level(mtmp);
+        await migrate_to_level(mtmp,
+            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            MIGR_LADDER_UP, null);
         return 2;
     }
     case MUSE_SSTAIRS: {
@@ -1362,7 +1374,9 @@ export async function use_defensive(mtmp) {
         if (vismon)
             await update_topl(`${Monnam(mtmp)} escapes ${
                 stway.up ? 'up' : 'down'}stairs!`);
-        migrate_to_level(mtmp);
+        await migrate_to_level(mtmp,
+            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            MIGR_SSTAIRS, null);
         return 2;
     }
     case MUSE_TELEPORT_TRAP:
@@ -2329,7 +2343,8 @@ export async function use_misc(mtmp) {
                     await trycall(otmp);
                 }
                 m_useup(mtmp, otmp);
-                migrate_to_level(mtmp);
+                await migrate_to_level(mtmp, ledger_no({ dnum: game.u.uz.dnum,
+                    dlevel: (game.u?.uz?.dlevel ?? 1) - 1 }), MIGR_RANDOM, null);
                 return 2;
             }
             if (vismon) {

@@ -34,7 +34,7 @@ import {
     obj_extract_self, obfree, makeknown, ynq, newsym_force, encumber_msg,
     stackobj, touch_artifact, trycall, useup, useupf, hold_another_object,
     remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool,
-    W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN,
+    W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN, dropy,
 } from './invent.js';
 import { monster_by_pmidx } from './makemon.js';
 import { mflags1_of, mflags2_of, M1_NOTAKE, M1_NOHANDS, M1_NOLIMBS,
@@ -527,7 +527,8 @@ export async function rider_corpse_revival(obj, remotely) {
     if (!obj || obj.otyp !== CORPSE || !is_rider_pm(obj.corpsenm)) return false;
     await pline(`At your ${remotely ? 'attempted acquisition' : 'touch'}, `
                 + 'the corpse suddenly moves...');
-    /* revive_corpse() is timeout.c and is not ported. */
+    const { revive_corpse } = await import('./do.js');
+    await revive_corpse(obj);
     const { exercise } = await import('./attrib.js');
     exercise(3 /* A_WIS */, false);
     return true;
@@ -2115,15 +2116,22 @@ export async function tipcontainer(box, targetbox = null) {
             }
             add_to_container(targetbox, otmp);
         } else {
-            /* hitfloor()/doaltarobj() (do.c) are not ported; a plain drop is
-               what the ordinary floor case does. */
-            if (!terse)
+            // C ref: pickup.c tipcontainer():3811 — the altar branch calls
+            // doaltarobj() itself (revealing BUC) and skips the generic drop
+            // message; either way it then falls through to dropy() for the
+            // real floor placement, so this must NOT also go through
+            // js/invent.js's dropx() (which would run the altar check again).
+            if (altarizing) {
+                const DOm = await import('./do.js');
+                await DOm.doaltarobj(otmp);
+            } else if (!terse) {
                 await pline(`${upstart(doname(otmp))} ${otense(otmp, 'drop')}`
                             + ' to the floor.');
-            else
+            } else {
                 await pline(`${doname(otmp)}${nobj ? ',' : '.'}`);
+            }
             otmp.how_lost = LOST_DROPPED;
-            dropx(otmp);
+            await dropy(otmp);
         }
     }
     if (loss)

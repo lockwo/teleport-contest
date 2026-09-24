@@ -3292,11 +3292,20 @@ export function flip_level(flp) {
     if (map?.upstair) flipPt(map.upstair, 'x', 'y');
     if (map?.dnstair) flipPt(map.dnstair, 'x', 'y');
 
-    // traps
+    // traps — C ref: sp_lev.c:594-616.  A rolling boulder trap's launch and
+    // launch2 points flip with it; leaving them behind aimed launch_obj() at
+    // empty squares, so the boulder never rolled and its ohitmon() never ran.
     for (const t of (map.traps || [])) {
         if (!inArea(t.tx, t.ty)) continue;
-        if (flp & 1) t.ty = FlipY(t.ty);
-        if (flp & 2) t.tx = FlipX(t.tx);
+        const rb = t.ttyp === ROLLING_BOULDER_TRAP && t.launch && t.launch2;
+        if (flp & 1) {
+            t.ty = FlipY(t.ty);
+            if (rb) { t.launch.y = FlipY(t.launch.y); t.launch2.y = FlipY(t.launch2.y); }
+        }
+        if (flp & 2) {
+            t.tx = FlipX(t.tx);
+            if (rb) { t.launch.x = FlipX(t.launch.x); t.launch2.x = FlipX(t.launch2.x); }
+        }
     }
     // objects
     for (const o of (map.objects || [])) {
@@ -3834,18 +3843,35 @@ export function vly_object({ otyp = null, oclass = null, montype = null }) {
 }
 
 // C ref: sp_lev.c create_trap() — get_location(DRY) (explicit coord: no RNG;
-// random coord: the rn2 loop) then mktrap(type, MKTRAP_MAZEFLAG|NOSPIDERONWEB).
-// mktrap's victim check rnd(4) (mklev.c:2135-2137) is gated on `kind !=
-// NO_TRAP`, and mklev.c:2102 reassigns `kind = t ? t->ttyp : NO_TRAP` — a
-// maketrap() refusal (the candidate square already holds furniture other
-// than PIT/HOLE, e.g. a fountain/altar that is_ok_location's DRY test cannot
-// see, since it only screens STAIRS/LADDER) collapses kind to NO_TRAP and
-// skips the victim draw entirely (seed0360-wizard-world-tour step330: one of
-// wizard1's random traps lands on already-occupied furniture).
+// random coord: the rn2 loop, wrapped in create_trap():1826-1832's OWN outer
+// do-while that rerolls the WHOLE location — a fresh rn2(xsize)/rn2(ysize)
+// pair via a brand-new get_location_coord() call — whenever the result lands
+// on STAIRS or LADDER.  is_ok_location's DRY test alone accepts both
+// (SPACE_POS(typ) = typ > DOOR is true for stairs/ladders too), so without
+// this outer retry a stairs square silently falls through to maketrap()
+// instead of being rerolled like C does.
+// mktrap(type, MKTRAP_MAZEFLAG|NOSPIDERONWEB)'s victim check rnd(4)
+// (mklev.c:2135-2137) is gated on `kind != NO_TRAP`, and mklev.c:2102
+// reassigns `kind = t ? t->ttyp : NO_TRAP` — a maketrap() refusal (the
+// candidate square already holds furniture other than PIT/HOLE, e.g. a
+// fountain/altar that is_ok_location's DRY test cannot see) collapses kind
+// to NO_TRAP and skips the victim draw entirely (seed0360-wizard-world-tour
+// step330 idx 77686: wizard1's 2nd random trap lands on the level's stairs
+// on its first pick, so C rerolls a fresh location — this port used to keep
+// the stairs square and let maketrap() silently refuse it instead).
 export async function vly_trap(ttyp, mx = null, my = null) {
     let x, y;
     if (mx != null) { const c = vly_abs(mx, my); x = c.x; y = c.y; }
-    else { const c = splev_get_location_rnd(LOC_DRY); x = c.x; y = c.y; }
+    else {
+        let trycnt = 0, c;
+        do {
+            c = splev_get_location_rnd(LOC_DRY);
+        } while ((game.level?.at(c.x, c.y)?.typ === STAIRS
+                  || game.level?.at(c.x, c.y)?.typ === LADDER)
+                 && ++trycnt <= 100);
+        if (trycnt > 100) return;
+        x = c.x; y = c.y;
+    }
     const t = await maketrap(x, y, ttyp);
     if (t) rnd(4);                                // mktrap victim check
 }
@@ -3898,7 +3924,7 @@ export function vly_flip_dndest(flp) { flip_lregion_dest(flp, game.dndest); }
 // fixed independently.
 export function vly_flip_updest(flp) { flip_lregion_dest(flp, game.updest); }
 
-function flip_lregion_dest(flp, d) {
+export function flip_lregion_dest(flp, d) {
     if (!d) return;
     const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
     // C ref: sp_lev.c flip_level():698-731 — the lregion loop applies FlipX /

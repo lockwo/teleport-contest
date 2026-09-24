@@ -18,11 +18,13 @@
 
 import { game } from './gstate.js';
 import { rn2, rn1, rnd } from './rng.js';
-import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE } from './const.js';
+import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
+         M_SEEN_POISON } from './const.js';
 import { cansee, block_point, unblock_point, does_block, Blind } from './vision.js';
 // js/monflags_data.js is a generated LEAF module (no imports of its own), so
 // naming it here cannot create an import cycle or a TDZ edge.
 import { is_undead_flag, mflags1_of, M1_BREATHLESS } from './monflags_data.js';
+import { has_innate } from './exper.js';
 
 const MAX_CLOUD_SIZE = 150;
 
@@ -544,13 +546,32 @@ async function inside_gas_cloud(reg, mtmp) {
             // the RNG-inert observable text matches, but the timer itself is
             // not modeled.
         }
-        // C ref: region.c — Poison_resistance is never true for the covered
-        // heroes yet (see m_poisongas_ok SCOPE note), so this always takes
-        // the damaging branch.
-        await update_topl('Something is burning your lungs!');
-        await update_topl('You cough and spit blood!');
-        const dmg = rnd(dam) + 5;
-        loseHeroHp(dmg);
+        // C ref: region.c:1117 `if (!Poison_resistance)`.  The innate source
+        // (orc/healer/barbarian from level 1, monk from level 3, tourist
+        // from level 20) is never persisted as a stored uprops flag, so OR
+        // in has_innate()'s pure derivation — the same reader potion.js's
+        // Poison_resistance() and fountain.js's Poison_resistance() already
+        // use.  This branch used to always take the damaging arm, so a
+        // poison-resistant hero standing in a gas cloud drew rnd(dam) it
+        // should never have drawn.
+        const { Half_gas_damage } = await import('./potion.js');
+        const { monstseesu, monstunseesu } = await import('./mondata.js');
+        const { wake_nearto } = await import('./cmd.js');
+        const u = game.u;
+        if (!((u?.uprops?.Poison_resistance || 0) > 0
+              || has_innate('HPoison_resistance'))) {
+            await update_topl('Something is burning your lungs!');
+            await update_topl('You cough and spit blood!');
+            await wake_nearto(u?.ux, u?.uy, 2);
+            let dmg = rnd(dam) + 5;
+            if (Half_gas_damage()) dmg = Math.floor((dmg + 1) / 2);
+            loseHeroHp(dmg);
+            await monstunseesu(M_SEEN_POISON);
+        } else {
+            await update_topl('You cough!');
+            await wake_nearto(u?.ux, u?.uy, 2);
+            await monstseesu(M_SEEN_POISON);
+        }
         return false;
     }
     // SCOPE: monster-in-poison-cloud damage/death is not modeled (no covered

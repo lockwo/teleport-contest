@@ -218,11 +218,12 @@ export async function intemple(roomno) {
 // don't (forget_temple_entry is now wired — see below).
 //
 // INERT: nothing in js/ calls anything below except forget_temple_entry
-// (js/save.js's savemonchn() now calls it, matching save.c:893-894).  The
+// (js/save.js's savemonchn() now calls it, matching save.c:893-894) and
+// priest_talk (js/sounds.js domonnoise()'s MS_PRIEST arm now calls it).  The
 // existing deferral comments that name the rest (js/uhitm.js:431/447/
 // 1144-1150 for ghod_hitsu, js/sp_lev.js:4033/4809 for mk_roamer via its EXT
-// stub, js/sounds.js:376 for priest_talk) still describe the LIVE behaviour;
-// wiring any of THOSE up is a separate, scored change.
+// stub) still describe the LIVE behaviour; wiring either of THOSE up is a
+// separate, scored change.
 //
 // ── THE epri/emin STORAGE GAP (reported, not papered over) ──────────────────
 // C reaches priest and minion data through mextra.h's EPRI(mon)/EMIN(mon), and
@@ -479,7 +480,7 @@ export async function priest_talk(priest) {
             } else {
                 await pline(`${Monnam_(priest)} preaches the virtues of poverty.`);
             }
-            exercise_(A_WIS_, true);
+            await exercise_(A_WIS_, true);
         } else {
             await pline(`${Monnam_(priest)} is not interested.`);
         }
@@ -508,7 +509,7 @@ export async function priest_talk(priest) {
         if (offer === 0) {
             SetVoice_(priest, 0, 80, 0);
             await verbalize_('Thou shalt regret thine action!');
-            if (coaligned) adjalign_(-1);
+            if (coaligned) await adjalign_(-1);
             if (cheapskate) cheapskate.cheapskate_count = (cheapskate.cheapskate_count | 0) + 1;
         } else if (offer < suggested * quan) {
             if (money_cnt_(invent_()) > (offer * 2)) {
@@ -519,14 +520,14 @@ export async function priest_talk(priest) {
                 SetVoice_(priest, 0, 80, 0);
                 await verbalize_('I thank thee for thy contribution.');
                 /* give player some token */
-                exercise_(A_WIS_, true);
+                await exercise_(A_WIS_, true);
             }
         } else if (offer < suggested * quan * 2) {
             SetVoice_(priest, 0, 80, 0);
             await verbalize_('Thou art indeed a pious individual.');
             if (money_cnt_(invent_()) < (offer * 2)) {
                 if (coaligned && (u.ualign?.record ?? 0) <= ALGN_SINNED)
-                    adjalign_(1);
+                    await adjalign_(1);
             }
             await verbalize_('I bestow upon thee a blessing.');
             const n = Math.trunc(500 * offer / suggested);
@@ -565,7 +566,7 @@ export async function priest_talk(priest) {
                     u.ualign.record = 0; /* cleanse thee */
                     u.ucleansed = game.moves | 0;
                 } else {
-                    adjalign_(2);
+                    await adjalign_(2);
                 }
             }
         }
@@ -872,9 +873,10 @@ function money_cnt_(list) {
             amt += (o.quan | 0);
     return amt;
 }
-// C ref: shk.c money2u(mon, amount) — js/shk.js:987 (unexported).
+// C ref: shk.c money2u(mon, amount) — js/shk.js exports it.
 async function money2u_(mon, amount) {
-    void mon; void amount; /* NOT PORTED (js/shk.js:987) */
+    const { money2u } = await import('./shk.js');
+    return money2u(mon, amount);
 }
 // C ref: shk.c money2mon(mon, amount) — js/shk.js exports it.
 async function money2mon_(mon, amount) {
@@ -887,12 +889,17 @@ async function currency_(amount) {
     return currency(amount);
 }
 // C ref: attrib.c exercise(attr, inc) / adjalign(n) — js/attrib.js exports
-// both; reached dynamically to keep the static graph unchanged.
-function exercise_(attr, inc) {
-    import('./attrib.js').then((A) => A.exercise(attr, inc));
+// both; reached dynamically to keep the static graph unchanged.  Both draw
+// real RNG (rn2(19)/rn2(2) inside exercise; adjalign is RNG-free itself but
+// its ordering relative to the rest of priest_talk still matters), so the
+// import MUST be awaited before the call, not fired off via .then().
+async function exercise_(attr, inc) {
+    const { exercise } = await import('./attrib.js');
+    exercise(attr, inc);
 }
-function adjalign_(n) {
-    import('./attrib.js').then((A) => A.adjalign(n));
+async function adjalign_(n) {
+    const { adjalign } = await import('./attrib.js');
+    adjalign(n);
 }
 // C ref: timeout.c incr_itimeout(&prop, incr) — js/eat.js:2013 (unexported).
 function incr_itimeout_(propname, incr) {

@@ -20,17 +20,20 @@
 //   kill tail:     rn2(corpse_chance), rnd(victim.m_lev+1) [+ rn2(max_inc)]
 //
 // STILL UNPORTED (each returns/continues without its C RNG, so it surfaces as
-// a clean divergence rather than a silent desync): AT_GAZE gazemm(), AT_ENGL
-// gulpmm(), AT_EXPL explmm(), AT_BREA/AT_SPIT breamm()/spitmm(), the AT_WEAP
-// ranged thrwmm() branch, mhitm_adtyping()'s non-physical damage arms, and
-// the pudding-division clone_mon().
+// a clean divergence rather than a silent desync): AT_BREA/AT_SPIT for a
+// monster-vs-monster target (breamm()/spitmm() are ported ONLY for mtarg ==
+// the hero, in js/monmove.js — see its own header note there), the pudding-
+// division clone_mon(), and mhitm_adtyping()'s remaining non-physical damage
+// arms.  AT_GAZE (gazemm), AT_ENGL (gulpmm), AT_EXPL (explmm), the ranged
+// AT_WEAP branch (thrwmm, via js/mthrowu.js), and corpse_chance()'s AT_BOOM
+// gas-spore explosion (mon_explodes, via js/explode.js) are now wired below.
 
 import { game } from './gstate.js';
 import { hitval } from './weapon.js';
 import { rn2, rnd, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED,
-    M_ATTK_AGR_DONE, W_SADDLE, STRAT_WAITMASK,
+    M_ATTK_AGR_DONE, W_SADDLE, STRAT_WAITMASK, engulfing_u,
 } from './const.js';
 import { DEADMONSTER, mvitals_died, healmon } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
@@ -288,7 +291,7 @@ function attacktype_at(mon, aatyp) {
 }
 
 // weapon_check states (C ref: monst.h wpn_chk_flags).
-const NO_WEAPON_WANTED = 0, NEED_WEAPON = 1, NEED_HTH_WEAPON = 3;
+const NO_WEAPON_WANTED = 0, NEED_WEAPON = 1, NEED_RANGED_WEAPON = 2, NEED_HTH_WEAPON = 3;
 // Hand-to-hand weapon priority (C ref: weapon.c hwep[]), restricted to the
 // otyps the contest's armed monsters carry; the orcish "crude" dagger (36) is
 // the only one reachable for the low-level orc/kobold slice.
@@ -426,6 +429,100 @@ function mm_ops() {
         set_skipdrin: () => { gs_skipdrin = true; },
         // hero-defender only; mhitm.js never dispatches with mdef == youmonst.
         hitmsg: async () => {},
+    };
+}
+
+// ── the deps bundle js/mthrowu.js's ADDITIVE thrwmm()/monshoot()/m_throw()
+// run against, for an AT_WEAP ranged mon-vs-mon attack ──────────────────────
+// mthrowu.js:217-242 names each piece's one real implementation elsewhere in
+// the port; this wires those in rather than writing a second copy.  Two C
+// pieces are left out on purpose, matching this port's existing stance:
+//   - dig.c ship_object() (a thrown object landing on a Sokoban down-gate
+//     square) has NO port anywhere in js/ (mthrowu.js:282, do.js:2678); its
+//     caller (drop_throw) already falls through to the ordinary
+//     flooreffects()/place_object() landing when this dep is absent.
+//   - polyself.c poly_when_stoned()+polymon(PM_STONE_GOLEM) (a poly'd hero
+//     escaping an egg's petrification by becoming a stone golem) is the same
+//     gap js/mhitu.js:1059 already declines for a direct hero-vs-monster hit;
+//     omitting both deps here just always takes C's `&&` short-circuit to the
+//     ordinary make_stoned() arm, which is exactly right whenever the hero
+//     isn't currently polymorphed into a stone golem.
+// tmp_at_flash/tmp_at_step/tmp_at_end are cosmetic beam-glyph overlays (no
+// RNG, not part of scored PRNG/screen text) and are likewise left unwired.
+async function thrwmmDeps() {
+    const MM = await import('./monmove.js');
+    const { shade_miss, passive_obj } = await import('./uhitm.js');
+    const { potionhit, make_blinded_hero, BlindedTimeout, make_stoned }
+        = await import('./potion.js');
+    const { poisoned } = await import('./attrib.js');
+    const { is_poisonable } = await import('./objnam.js');
+    const { touch_petrifies: touch_petrifies_egg, killer_xname, delobj }
+        = await import('./invent.js');
+    const { youmonst_data_pub } = await import('./invent.js');
+    const { observe_object } = await import('./o_init.js');
+    const { impossible } = await import('./display.js');
+    const { flooreffects } = await import('./do.js');
+    const { nomul, stop_occupation } = await import('./hack.js');
+    const { can_blnd } = await import('./mhitm_ad.js');
+    void killer_xname; // reserved for a future poisoned() message refinement
+
+    const an_ = (s) => (/^[aeiouAEIOU]/.test(s) ? `an ${s}` : `a ${s}`);
+
+    return {
+        // weapon selection / wielding — mon_wield_item() handles the
+        // NEED_RANGED_WEAPON check internally (select_rwep, not select_hwep).
+        mon_wield_item: MM.mon_wield_item,
+        select_rwep: MM.select_rwep,
+        is_pole: MM.is_pole,
+        ammo_and_launcher: MM.ammo_and_launcher,
+        nomul,
+        // monshoot()
+        monmulti: MM.monmulti,
+        canseemon: MM.canseemon_mm,
+        shoot_msg: async (mtmp, otmp, mwep, multishot) => {
+            observe_object(otmp);
+            const onm = multishot > 1
+                ? `${multishot} ${MM.mshot_xname(otmp)}s`
+                : an_(MM.mshot_xname(otmp));
+            const verb = MM.ammo_and_launcher(otmp, mwep) ? 'shoots' : 'throws';
+            await emitMMmsg(`${Monnam(mtmp)} ${verb} ${onm}!`);
+        },
+        // m_lined_up() — utarget is always false for a monster target, so the
+        // throws_rocks/m_carrying/WAN_STRIKING/U_AP_TYPE fields it also reads
+        // are never consulted (short-circuited before use).
+        linedup: MM.linedup,
+        // m_throw()
+        cansee, m_at,
+        closed_door: closed_door_mm,
+        observe_object,
+        shade_miss,
+        u_catch_thrown_obj: MM.u_catch_thrown_obj,
+        potionhit, POTHIT_MONST_THROW: 2,
+        touch_petrifies: touch_petrifies_egg,
+        impossible,
+        is_elf: is_elf_flag,
+        bigmonst,
+        youmonst_data: youmonst_data_pub,
+        Maybe_Half_Phys: (dmg) => ((game.u?.uprops?.Half_physical_damage)
+            ? Math.trunc((dmg + 1) / 2) : dmg),
+        is_poisonable,
+        poisoned,
+        can_blnd: (m1, m2, aatyp, obj) => can_blnd(m1, m2, aatyp, obj, mm_ops()),
+        AT_SPIT, AT_WEAP,
+        blind_msg: async () => { await emitMMmsg('The venom blinds you.'); },
+        Stone_resistance: () => !!(game.u?.uprops?.StoneResistance),
+        make_stoned,
+        stop_occupation,
+        miss_msg: async (obj) => { await emitMMmsg(`The ${MM.mshot_xname(obj)} misses.`); },
+        make_blinded: make_blinded_hero, BlindedTimeout,
+        vision_clears: async () => { await emitMMmsg('Your vision clears.'); },
+        pline_slip: async (mon, obj) => {
+            await emitMMmsg(`${MM.mshot_xname(obj)} slips as ${
+                the_monnam(mon)} throws it!`);
+        },
+        delobj,
+        flooreffects,
+        passive_obj,
     };
 }
 
@@ -595,19 +692,46 @@ export function attk_protection_mm(aatyp) {
 // killMonster() below.  The guards in front of it decide whether that rn2 is
 // drawn AT ALL, so leaving them out (as this did) picks the wrong modulus for
 // every big/golem/lich/gas-spore victim.
-function corpse_chance(mdef) {
+async function corpse_chance(mdef) {
     const mdat = permonst(mdef);
 
     // Vlad and the liches crumble to dust: no corpse, NO rn2.
     if (mdat?.name === 'Vlad the Impaler' || mdat?.mcls === S_LICH) return false;
 
-    // Gas spores always explode on death.  mon_explodes() is not modelled, but
-    // the AT_BOOM damage roll in front of it is real RNG, so draw it and then
-    // decline the corpse exactly as C does.
+    // Gas spores always explode on death.
     for (const a of mattk_list(mdef)) {
         if (a[0] !== AT_BOOM) continue;
-        if (a[2]) d(a[2], a[3]);
-        else if (a[3]) d((mdat?.mlevel ?? 0) + 1, a[3]);
+        let tmp;
+        if (a[2]) tmp = d(a[2], a[3]);
+        else if (a[3]) tmp = d((mdat?.mlevel ?? 0) + 1, a[3]);
+        else tmp = 0;
+
+        // C ref: mon.c:3189 `if (!magr && gm.mswallower && attacktype(...))
+        // magr = gm.mswallower, was_swallowed = TRUE`.  The port's mswallower
+        // is only ever set by this file's own gulpmm() around an AT_ENGL
+        // mdamagem() call, so magr here is always a monster engulfer, never
+        // the hero (the hero-swallows-a-gas-spore case lives in uhitm.js's
+        // own corpse_chance copy and never touches this global).
+        const swallower = game.mswallower;
+        if (swallower && attacktype_at(swallower, AT_ENGL)) {
+            // mon.c:3209 — a gas spore that dies digested inside an engulfer
+            // contains its own blast instead of detonating: it damages the
+            // swallower directly and draws no further RNG (mon_explodes()
+            // rolls its own independent d(); this branch never calls it).
+            await emitMMmsg('You hear an explosion.');
+            swallower.mhp = (swallower.mhp | 0) - tmp;
+            if (DEADMONSTER(swallower)) await killMonster(swallower);
+            if (DEADMONSTER(swallower)) {
+                if (mm_can_see_mon(swallower))
+                    await emitMMmsg(`${Monnam(swallower)} rips open!`);
+            } else if (mm_can_see_mon(swallower)) {
+                await emitMMmsg(`${Monnam(swallower)} seems to have indigestion.`);
+            }
+            return false;
+        }
+
+        const { mon_explodes } = await import('./explode.js');
+        await mon_explodes(mdef, a);
         return false;
     }
 
@@ -651,7 +775,7 @@ async function killMonster(mdef) {
     // remembered contents instead of keeping the 'I'.
     const loc0 = game.level?.at(mdef.mx, mdef.my);
     if (loc0?.invisMon) unmap_object(mdef.mx, mdef.my);
-    const dropCorpse = corpse_chance(mdef); // mon.c:3181
+    const dropCorpse = await corpse_chance(mdef); // mon.c:3181
     const mx = mdef.mx, my = mdef.my;
     // Detach from the level so the renderer (m_at / MON_AT) stops drawing it.
     // The dead monster's coordinates are intentionally left intact: mattackm
@@ -1095,9 +1219,13 @@ export async function mattackm(magr, mdef) {
         case AT_TENT: {
             if (mattk.aatyp === AT_WEAP) {
                 if (distmin(magr.mx, magr.my, mdef.mx, mdef.my) > 1) {
-                    // thrwmm(): a ranged volley with its own multishot/hit
-                    // rolls — not modelled, so decline without RNG.
-                    strike = 0; attk = 0;
+                    // C ref: mhitm.c:394 — a ranged AT_WEAP attack.
+                    const { thrwmm } = await import('./mthrowu.js');
+                    const tres = await thrwmm(magr, mdef, await thrwmmDeps());
+                    strike = (tres === M_ATTK_MISS) ? 0 : 1;
+                    if (strike) res[i] |= M_ATTK_HIT;
+                    if (DEADMONSTER(mdef)) res[i] = M_ATTK_DEF_DIED;
+                    if (DEADMONSTER(magr)) res[i] |= M_ATTK_AGR_DIED;
                     break;
                 }
                 // C ref: mhitm.c:406 — an armed aggressor wields its weapon
@@ -1150,23 +1278,25 @@ export async function mattackm(magr, mdef) {
             break;
 
         case AT_GAZE:                                  // mhitm.c:483
-            // gazemm() itself is not modelled, but C leaves attk == 1 here, so
-            // the defender still gets its passive; the previous `default:` arm
-            // zeroed attk and swallowed passivemm's rolls.
             strike = 0;
+            res[i] = await gazemm(magr, mdef, mattk);
             break;
 
         case AT_ENGL:                                  // mhitm.c:500
             if (pd?.name === 'shade') { strike = 0; break; }
             if (mdef === game.u?.usteed) { strike = 0; break; }
             if (distmin(magr.mx, magr.my, mdef.mx, mdef.my) > 1) continue;
-            strike = (tmp > rnd(20 + i)) ? 1 : 0;
-            if (strike) {
-                // gulpmm() (swallow + digestion) is not modelled; failed_grab
-                // still cancels an unsolid target faithfully.
-                if (await failed_grab(magr, mdef, mattk)) strike = 0;
+            // Engulfing attacks are directed at the hero if possible.
+            if (engulfing_u(magr)) {
+                strike = 0;
             } else {
-                await missmm(magr, mdef, mattk);
+                strike = (tmp > rnd(20 + i)) ? 1 : 0;
+                if (strike) {
+                    if (await failed_grab(magr, mdef, mattk)) strike = 0;
+                    else res[i] = await gulpmm(magr, mdef, mattk);
+                } else {
+                    await missmm(magr, mdef, mattk);
+                }
             }
             break;
 

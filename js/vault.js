@@ -412,14 +412,17 @@ function xy_set_wall_state(x, y) {
 }
 
 // C ref: eat.c reset_faint() — `if (ga.afternmv == unfaint) unmul("You
-// revive.")`.  js/eat.js parks the same callback in game.afternmv.
-async function reset_faint() {
+// revive.")`.  js/eat.js parks the same callback in game.afternmv.  Exported:
+// js/minion.js demon_talk() (minion.c:278) is the same C call, reached
+// through a fainted-hero-vs-demon encounter.
+export async function reset_faint() {
     if (game.afternmv === unfaint) await unmul('You revive.');
 }
 
 // C ref: hack.c unmul(msg) — release the hero from a multi-turn occupation and
-// run the pending afternmv.
-async function unmul(msg) {
+// run the pending afternmv.  Exported for the same js/minion.js demon_talk()
+// caller (minion.c:284).
+export async function unmul(msg) {
     game.multi = 0;
     if (game.context) game.context.travel = game.context.travel1 = game.context.mv = 0;
     const nmsg = msg || game.nomovemsg;

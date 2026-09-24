@@ -35,6 +35,9 @@
 //   ops.monLev(mon)
 //   ops.mattk_list(mon)
 //   ops.hitmsg(magr, mattk)  hero-defender only ("The cobra bites!")
+//   ops.fall_asleep(howlong) hero-defender only, AD_SLEE (timeout.c fall_asleep)
+//   ops.Blind()              hero-defender only, AD_SLEE message gating
+//   ops.monstseesu/monstunseesu(bit)  hero-defender only, AD_SLEE seenres bookkeeping
 //
 // A handler that needs machinery this port does not carry yet stops at the
 // last faithful step and says so, rather than inventing a roll: an explicit
@@ -52,8 +55,9 @@ import { DEADMONSTER, healmon, Protection_from_shape_changers } from './mon.js';
 import {
     STRAT_WAITFORU, W_ARMOR, W_AMUL, W_ARMH, W_ARMS, W_ARMG, W_ARMF,
     A_STR, A_DEX, A_CON, LEFT_SIDE, RIGHT_SIDE, MSLOW,
-    ERODE_RUST, ERODE_CORRODE, ERODE_ROT,
+    ERODE_RUST, ERODE_CORRODE, ERODE_ROT, M_SEEN_SLEEP,
 } from './const.js';
+import { has_innate } from './exper.js';
 import { dmgval } from './uhitm.js';
 import { monster_by_pmidx } from './makemon.js';
 import { defends } from './artifact.js';
@@ -999,14 +1003,33 @@ function paralyze_monst(mon, amt) {
     mon.mfrozen = Math.min(amt | 0, 127);
 }
 
+// C ref: uhitm.c:3478 mhitm_ad_slee() — the `mdef == &gy.youmonst` (mhitu)
+// arm only; the `magr == &gy.youmonst` (uhitm, hero biting a monster while
+// polymorphed) arm is a distinct branch in C (single sleep_monst() call, its
+// own negation/Blind gating) that this port has never modelled separately —
+// js/uhitm.js's damageum() reaches this function with no `ops` bundle at
+// all, so that direction is already broken independent of this change and is
+// left alone here.
 export async function mhitm_ad_slee(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if ((game.multi ?? 0) >= 0 && !rn2(5)
             && !await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
-            // Sleep_resistance is off for the covered roles.
-            if (ops.fall_asleep) await ops.fall_asleep(-rnd(10));
-            await ops.emit(`You are put to sleep by ${ops.mon_nam(magr)}!`);
+            // C ref: youprop.h Sleep_resistance (HSleep_resistance ||
+            // ESleep_resistance).  The innate source (elf from level 4, monk
+            // from level 1) is never persisted as a stored uprops flag, so OR
+            // in has_innate()'s pure derivation.
+            if ((game.u?.uprops?.Sleep_resistance || 0) > 0
+                || has_innate('HSleep_resistance')) {
+                if (ops.monstseesu) await ops.monstseesu(M_SEEN_SLEEP);
+                return;
+            }
+            if (ops.monstunseesu) await ops.monstunseesu(M_SEEN_SLEEP);
+            if (ops.fall_asleep) await ops.fall_asleep(-rnd(10), true);
+            if (ops.Blind && ops.Blind())
+                await ops.emit('You are put to sleep!');
+            else
+                await ops.emit(`You are put to sleep by ${ops.mon_nam(magr)}!`);
         }
         return;
     }

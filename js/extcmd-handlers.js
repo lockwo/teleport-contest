@@ -3471,8 +3471,10 @@ async function dosave_extcmd() {
 // raw-key site's occupation-arming side effect exactly.
 async function dosearch_extcmd() {
     const { dosearch } = await import('./cmd.js');
+    // C ref: cmd.c:3728 — the occupation is armed before the command runs.
+    const counted = (game.multi ?? 0) > 0;
     const searched = await dosearch();
-    if (searched && (game.multi ?? 0) > 0)
+    if (searched && counted)
         game._search_occupation = true;
     return searched ? 1 : 0;
 }

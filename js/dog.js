@@ -265,6 +265,10 @@ function makedog_mon(pettype, x, y) {
             droptime: 0, dropdist: 10000,
             apport: null, // resolved lazily from ACURR(A_CHA)
             whistletime: 0,
+            // C ref: dog.c:63 — "force error if used before set".  dog_goal's
+            // first out-of-sight call therefore takes the reuse-ogoal arm and
+            // heads for (-1,-1) instead of scanning do_clear_area.
+            ogoal: { x: -1, y: -1 },
             hungrytime: (game.moves || 1) + 1000,
             mhpmax_penalty: 0,
         },
@@ -495,29 +499,52 @@ function on_level(a, b) {
     return !!a && !!b && a.dnum === b.dnum && a.dlevel === b.dlevel;
 }
 
-// C ref: mon.c relmon(mon, monst_list) — unlink mon from fmon; when a list is
-// supplied, push it onto the head of that list instead of freeing it.
+// C ref: mon.c:2561 relmon(mon, monst_list) — unlink mon from fmon (calling
+// mon_leaving_level() first), then push it onto monst_list instead of
+// freeing it.  mon_leaving_level()'s only state change relevant to a monster
+// that stays alive off-map is `mon->mtrapped = 0` (worm/seemimic/fill_pit/
+// newsym are either handled by mon_leave()'s own worm branch beforehand or
+// affect only the map display of the square being vacated, which the wider
+// port already redraws on arrival/departure).  Missing that clear used to
+// leave mtrapped=1 on a migrating monster, so mon_catchup_elapsed_time()'s
+// `if (mtmp->mtrapped && rn2(imv + 1) > 20) mtmp->mtrapped = 0;` on arrival
+// drew an rn2() C never draws (C already cleared mtrapped at departure) --
+// unreachable until this wiring pass actually drained migrating_mons/mydogs.
+// unstuck(mon) is the other mon_leaving_level() side effect and is NOT
+// ported here: no caller of migrate_to_level() in this port can currently
+// reach a monster that is mid-engulf/holding the hero (mon.js's
+// migrate_mon_local() already runs its own set_ustuck(null) beforehand for
+// its two callers, and every muse.js escape case requires !mtmp.mtrapped
+// and !stuck as a precondition), so it is named rather than approximated.
 // (js/vault.js:217 holds a one-argument module-private copy; export that one
 // when this is wired up rather than keeping two.)
 function relmon(mon, monst_list) {
     const fm = fmon_list();
     const ix = fm.indexOf(mon);
     if (ix >= 0) fm.splice(ix, 1);
+    mon.mtrapped = 0;
     if (monst_list) monst_list.unshift(mon);
 }
 
 // C ref: mon.c m_into_limbo(mtmp) — take mtmp off the map and schedule it to
 // migrate back to this level when the hero next arrives.  (js/vault.js:239 is
-// the module-private copy; export it when wiring.)
-async function m_into_limbo(mtmp) {
+// the module-private copy.)  Exported: do.js's place_hero_lregion() (the
+// u_on_rndspot() level-teleport/fall arrival path) calls this when rloc()
+// fails to relocate a monster occupying the hero's fixed arrival square.
+export async function m_into_limbo(mtmp) {
     mtmp.mstate = (mtmp.mstate || 0) | MON_LIMBO;
     await migrate_to_level(mtmp, ledger_no(game.u?.uz), MIGR_EXACT_XY, null);
 }
 
-// C ref: dungeon.c ledger_no(&dlev) — the flat level index.  (Module-private
-// copies live at js/dig.js:924 and js/bones.js:69; export one when wiring.)
+// C ref: dungeon.c:1376 ledger_no(&dlev) — the flat level index.  js/bones.js:69,
+// js/dungeon.js:1706 and js/save.js:287 keep the same private copy for the
+// same import-order reason; this one used to skip the +ledger_start term
+// (every branch level -- Mines, Sokoban, Quest, ... -- got the main
+// dungeon's ledger number), which was never RNG-exercised because nothing
+// drained migrating_mons/kept keep_mon_accessible() monsters accessible
+// before this wiring pass.
 function ledger_no(lev) {
-    return lev?.dlevel ?? 0;
+    return (lev?.dlevel | 0) + (game.dungeons?.[lev?.dnum ?? 0]?.ledger_start | 0);
 }
 
 // C ref: mon.c place_monster(mon, x, y) — put mon on the map at <x,y>.
@@ -804,6 +831,88 @@ export async function losedogs() {
     /* put any monsters who couldn't arrive back on migrating_mons */
     while (failed_arrivals) {
         mtmp = failed_arrivals;
+        failed_arrivals = mtmp.nmon;
+        /* mon_arrive() put mtmp onto fmon, but relmon() took it off again;
+           put it back now because m_into_limbo() expects it to be there */
+        fmon_list().unshift(mtmp);
+        await m_into_limbo(mtmp);
+    }
+}
+
+// C ref: dog.c:303 losedogs() steps 1/3/5/6 -- the migrating_mons half of
+// losedogs(), split out so do.js's goto_level() can drive it around its OWN
+// tuned mydogs/With_you placement (do.js keepdogs_capture()/losedogs_place(),
+// which do the equivalent of step 2 with a hand-tuned RNG-critical arrival
+// routine that must not be replaced -- see the comment on that pair).
+// deliver_migrating_before() runs the shk kop-dismiss scan and delivers
+// monsters kept accessible via keep_mon_accessible() (the Wizard, an
+// off-level shk/priest/guard) back at their EXACT prior spot;
+// deliver_migrating_after() delivers everything else that migrated here
+// independently -- trapdoor/hole fallers, migrate_mon() (overcrowding,
+// endgame elemental congestion), Orcish Town's migrate_orc() -- and retries
+// any failed arrival on the next visit.  `kept` is do.js's array of monsters
+// accompanying the hero this transition, needed only for the same
+// kop-dismiss scan C also runs over gm.mydogs.
+export async function deliver_migrating_before(kept) {
+    const g = gm_chains();
+    const uz = game.u?.uz ?? { dnum: 0, dlevel: 0 };
+    let dismissKops = 0;
+
+    failed_arrivals = null;
+
+    for (const m of g.migrating_mons) {
+        if (m.mux !== uz.dnum || m.muy !== uz.dlevel) continue;
+        if (m.isshk) {
+            if (m.eshk?.dismiss_kops) {
+                if (dismissKops === 0) dismissKops = 1;
+                m.eshk.dismiss_kops = false; /* reset */
+            } else if (!m.mpeaceful) {
+                dismissKops = -1;
+            }
+        }
+    }
+    for (const m of (kept || [])) {
+        if (dismissKops < 0) break;
+        if (m.isshk && !m.mpeaceful) dismissKops = -1;
+    }
+    if (dismissKops > 0) {
+        const { make_happy_shoppers } = await import('./shk.js');
+        await make_happy_shoppers(true);
+    }
+
+    for (let i = 0; i < g.migrating_mons.length; ) {
+        const mtmp = g.migrating_mons[i];
+        const xyloc = mtmp.mtrack?.[0]?.x ?? 0;
+        if (mtmp.mux === uz.dnum && mtmp.muy === uz.dlevel
+            && xyloc === MIGR_EXACT_XY) {
+            g.migrating_mons.splice(i, 1);
+            await mon_arrive(mtmp, Before_you);
+        } else {
+            i++;
+        }
+    }
+}
+
+export async function deliver_migrating_after() {
+    const g = gm_chains();
+    const uz = game.u?.uz ?? { dnum: 0, dlevel: 0 };
+
+    for (let i = 0; i < g.migrating_mons.length; ) {
+        const mtmp = g.migrating_mons[i];
+        const xyloc = mtmp.mtrack?.[0]?.x ?? 0;
+        if (mtmp.mux === uz.dnum && mtmp.muy === uz.dlevel
+            && xyloc !== MIGR_EXACT_XY) {
+            g.migrating_mons.splice(i, 1);
+            /* note: if there's no room, it ends up on failed_arrivals */
+            await mon_arrive(mtmp, After_you);
+        } else {
+            i++;
+        }
+    }
+
+    /* put any monsters who couldn't arrive back on migrating_mons */
+    while (failed_arrivals) {
+        const mtmp = failed_arrivals;
         failed_arrivals = mtmp.nmon;
         /* mon_arrive() put mtmp onto fmon, but relmon() took it off again;
            put it back now because m_into_limbo() expects it to be there */
@@ -1232,8 +1341,12 @@ async function finish_meating_shared(mtmp) {
     if (typeof DM.finish_meating === 'function') DM.finish_meating(mtmp);
     else mtmp.meating = 0;   /* GAP: dogmove.js does not export it */
 }
-// C ref: steed.c dismount_steed(reason) — UNPORTED in js/.
-async function dismount_steed_shared(_reason) { return undefined; }
+// C ref: steed.c dismount_steed(reason) — delegates to js/steed.js's real,
+// faithful port (dynamic import avoids a steed.js <-> dog.js static cycle).
+async function dismount_steed_shared(reason) {
+    const { dismount_steed } = await import('./steed.js');
+    return await dismount_steed(reason);
+}
 
 // C ref: dog.c:886 migrate_to_level(mtmp, tolev, xyloc, cc).  Coverage credits
 // this name from a COMMENT ([[coverage-counts-comment-lines]]); there was no

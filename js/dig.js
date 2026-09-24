@@ -477,11 +477,15 @@ export async function zap_dig() {
                 _invent.stackobj(otmp);
             }
             newsym(u.ux, u.uy);
+        } else {
+            // C ref: dig.c:1605 — zapping straight down (not up, not off
+            // stairs): watch_dig() first (the Mine-Town watch reacts to the
+            // vandalism), then dighole(FALSE, TRUE, null) digs the actual
+            // pit/hole beneath the hero.  by_magic=TRUE lets magical digging
+            // disarm (rather than trigger) a landmine/bear trap it lands on.
+            await watch_dig(null, u.ux, u.uy, true);
+            await dighole(false, true, null);
         }
-        // NOT PORTED: the else arm, watch_dig() + dighole(FALSE, TRUE, 0) —
-        // digging a pit/hole straight down.  dighole/digactualhole (and the
-        // level change that follows a hole) are a separate unported subsystem,
-        // so a downward zap off the stairs still consumes no RNG here.
         return;
     }
 
@@ -691,17 +695,20 @@ export async function use_pick_axe(obj) {
     if (!dir)
         return 1;                        // ECMD_CANCEL
 
-    // use_pick_axe2() reports a mismatched tool before attempting an occupation.
-    if (!u.uswallow && dir.dz === 0 && (dir.dx || dir.dy)) {
-        const rx = u.ux + dir.dx, ry = u.uy + dir.dy;
-        if (dig_typ(obj, rx, ry) === DIGTYP_UNDIGGABLE) {
-            const typ = game.level?.at(rx, ry)?.typ;
-            if (IS_TREE(typ)) await pline('You need an axe to cut down a tree.');
-            else if (IS_OBSTRUCTED(typ)) await pline('You need a pick to dig rock.');
-        }
-    }
-
-    // The actual terrain change and multi-turn occupation remain unported.
+    // C ref: dig.c:1155 `return use_pick_axe2(obj);` — getdir() reports its
+    // answer as a return value, not a global side effect (see js/cmd.js
+    // getdir_confdir() + every other caller's own u.dx/u.dy/u.dz assignment,
+    // e.g. extcmd-handlers.js:1038, zap.js:2600-2601); use_pick_axe2() reads
+    // u.dx/u.dy/u.dz directly, exactly like C's version reads the globals
+    // getdir() itself wrote.
+    u.dx = dir.dx | 0;
+    u.dy = dir.dy | 0;
+    u.dz = dir.dz | 0;
+    // use_pick_axe2() always returns ECMD_TIME (dig.c:1162-1358 has no other
+    // exit path); apply.js's dispatch already maps this sentinel to its OWN
+    // ECMD_TIME numbering (apply.js: `if (r === USE_PICK_AXE_DIG) return
+    // ECMD_TIME;`), so there is nothing left to translate here.
+    await use_pick_axe2(obj);
     return USE_PICK_AXE_DIG;
 }
 
@@ -1088,11 +1095,23 @@ function teleport_pet(mtmp, force_it) {
     }
     return true;
 }
-// C ref: dungeon.c get_level(newlevel, levnum) / ledger_no(lev) /
-// mon.c migrate_to_level(mtmp, tolev, xyloc, cc).  NOT PORTED.
+// C ref: dungeon.c get_level(newlevel, levnum) / ledger_no(lev).
 function get_level(dst, levnum) { dst.dnum = game.u?.uz?.dnum ?? 0; dst.dlevel = levnum; }
-function ledger_no(lev) { return lev?.dlevel ?? 0; }
-function migrate_to_level(_mtmp, _tolev, _xyloc, _cc) { /* NOT PORTED */ }
+// C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
+// js/dog.js:530 and js/save.js:287 keep the same private copy for the same
+// import-order reason; this one used to drop the +ledger_start term.
+function ledger_no(lev) {
+    return (lev?.dlevel | 0) + (game.dungeons?.[lev?.dnum ?? 0]?.ledger_start | 0);
+}
+const MIGR_RANDOM = 0; // include/dungeon.h MIGR_RANDOM (js/const.js:894)
+// C ref: dog.c:886 migrate_to_level(mtmp, tolev, xyloc, cc) — js/dog.js has
+// the faithful port (mon_leave() worm/shk/container bookkeeping plus the
+// migrating_mons chain do.js's goto_level() now drains); delegate instead of
+// keeping a second, inert copy.
+async function migrate_to_level(mtmp, tolev, xyloc, cc) {
+    const { migrate_to_level: real } = await import('./dog.js');
+    await real(mtmp, tolev, xyloc, cc);
+}
 // C ref: pray.c angry_priest() / desecrate_altar(highaltar, alignment).
 // js/pray.js has both, unexported.
 async function angry_priest() { /* NOT PORTED (js/pray.js:1300) */ }
@@ -1449,7 +1468,7 @@ export async function dig() {
         case 0:
             if (!welded(uwep)) {
                 await pline(`You fumble and drop ${yname(uwep)}.`);
-                dropx(uwep);
+                await dropx(uwep);
             } else {
                 /* C: Yobjnam2(uwep, "bounce") — "Your pick-axe bounces" */
                 if (u.usteed) {
@@ -1970,7 +1989,7 @@ export async function digactualhole(x, y, madeby, ttyp) {
                         const { make_angry_shk } = await import('./shk.js');
                         await make_angry_shk(mtmp, 0, 0);
                     }
-                    migrate_to_level(mtmp, ledger_no(tolevel), 'MIGR_RANDOM', null);
+                    await migrate_to_level(mtmp, ledger_no(tolevel), MIGR_RANDOM, null);
                 }
             }
         }

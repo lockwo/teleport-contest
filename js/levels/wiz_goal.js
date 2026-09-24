@@ -48,8 +48,8 @@ import { christen_monst } from '../do_name.js';
 import { dunlevs_in_dungeon } from '../dungeon.js';
 import { game } from '../gstate.js';
 import {
-    enexto_spawn, makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx,
-    set_malign,
+    enexto_spawn, makemon, mm_mon_at, mongets_pub, monster_by_pmidx,
+    name_gender_hint, name_to_pmidx, set_malign, MGEND_NEUTRAL,
 } from '../makemon.js';
 import { mk_mplayer } from '../mplayer.js';
 import { rn2 } from '../rng.js';
@@ -112,17 +112,26 @@ function wiz_goal_induced_align() {
 }
 
 // C ref: sp_lev.c create_monster() (sp_lev.c:1924), reached from lspo_monster()
-// for each captive des.monster({id=...}) table.  None of the eight carry an
-// `align` field, so create_monster()'s `sp_amask !== AM_SPLEV_RANDOM` /
-// EXT.mk_roamer() arm is never taken; the only two branches that matter are
-// EXT.mk_mplayer() (unwired, but fully ported at js/mplayer.js — imported
-// directly here) for an `id` in the player-role pmidx range, and plain
-// makemon() otherwise.  christen_monst()/peaceful/asleep are applied last,
-// exactly matching create_monster()'s post-make tail.
+// for each captive des.monster({id=...}) table.  find_montype() (sp_lev.c:3156)
+// runs FIRST, during lspo_monster's own get_table_montype() call, and draws its
+// rn2(2) gender roll unless the species has a fixed gender (gcode 1/2, i.e.
+// M2_MALE/M2_FEMALE) OR the `id` string itself is a gendered name pair (e.g.
+// "gnome lord" implies MALE) — name_gender_hint() answers that second case.
+// None of the eight carry an `align` field, so create_monster()'s
+// `sp_amask !== AM_SPLEV_RANDOM` / EXT.mk_roamer() arm is never taken; the
+// only two branches that matter after the gender roll are EXT.mk_mplayer()
+// (unwired, but fully ported at js/mplayer.js — imported directly here, with
+// the real mongets passed in as its dep, as kni_strt.js does; the default
+// no-op dep silently drops every rnd_*_item's mksobj draws) for an `id` in
+// the player-role pmidx range, and plain makemon() otherwise.
+// christen_monst()/peaceful/asleep are applied last, exactly matching
+// create_monster()'s post-make tail.
 function wiz_goal_captive({ id, mx, my, peaceful = null, asleep = null, name = null }) {
     const pmidx = name_to_pmidx(id);
     const pm = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!pm) return null;
+    if (pm.gcode !== 1 && pm.gcode !== 2 && name_gender_hint(id) === MGEND_NEUTRAL)
+        rn2(2);                                           // find_montype sp_lev.c:3156
     wiz_goal_induced_align();                             // induced_align rn2(3), always drawn
     const { x: ax, y: ay } = vly_abs(mx, my);
     let x = ax, y = ay;
@@ -132,7 +141,7 @@ function wiz_goal_captive({ id, mx, my, peaceful = null, asleep = null, name = n
     }
     const roleLo = name_to_pmidx('archeologist'), roleHi = name_to_pmidx('wizard');
     const mtmp = (roleLo <= pmidx && pmidx <= roleHi)
-        ? mk_mplayer(pm, x, y, false)
+        ? mk_mplayer(pm, x, y, false, { mongets: mongets_pub })
         : makemon(pm, x, y, 0 /* NO_MM_FLAGS */);
     if (!mtmp) return null;
     let mon = mtmp;

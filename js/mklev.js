@@ -34,7 +34,7 @@ import {
 } from './selvar.js';
 import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty_c } from './dungeon.js';
 import { In_quest, BR_PORTAL, BR_NO_END1, BR_NO_END2,
-         Is_knox_level } from './const.js';
+         Is_knox_level, Is_earthlevel } from './const.js';
 import { roles, races } from './role.js';
 import { mflags2_of } from './monflags_data.js';
 import { priestini } from './priest.js';
@@ -80,7 +80,7 @@ import {
     DIR_N, DIR_S, DIR_E, DIR_W, DIR_180,
     IS_WALL, IS_STWALL, IS_DOOR, IS_OBSTRUCTED, IS_FURNITURE, IS_POOL, IS_ROOM,
     IS_SDOOR,
-    SPACE_POS, isok, W_NONDIGGABLE, FILL_NONE, FILL_NORMAL, OBJ_AT,
+    SPACE_POS, isok, W_NONDIGGABLE, W_NONPASSWALL, FILL_NONE, FILL_NORMAL, OBJ_AT,
     MATCH_WALL, INVALID_TYPE,
     ICE, MOAT, POOL, WATER, LAVAPOOL, LAVAWALL, DBWALL, AIR, TREE, CLOUD,
     DRAWBRIDGE_UP, DRAWBRIDGE_DOWN,
@@ -1271,15 +1271,23 @@ async function makerooms() {
             // shrinking+accepting it; rejecting skips an extra rect split and
             // keeps the subsequent rnd_rect args aligned with C. themeroom_failed
             // is also reset to FALSE around the call (mklev.c:414).
+            // C ref: mklev.c:418 `if (gt.themeroom_failed && (...)) break;` —
+            // the native loop breaks on the *global* themeroom_failed flag,
+            // NOT on themerooms_generate()'s own return value. lspo_room()
+            // (sp_lev.c:4103-4104/4112-4113) sets that flag on ANY des.room()
+            // failure during the call, including a NESTED des.room() whose
+            // parent already succeeded (e.g. "Room in a room"'s inner room
+            // failing because the outer room came out smaller than 4x4) —
+            // themerooms_generate()'s return value only reflects the
+            // outermost placement and misses that case.
             g.themeroom_failed = false;
             g.in_mk_themerooms = true;
-            let themed_ok;
             try {
-                themed_ok = await themerooms_generate(difficulty);
+                await themerooms_generate(difficulty);
             } finally {
                 g.in_mk_themerooms = false;
             }
-            if (!themed_ok) {
+            if (g.themeroom_failed) {
                 if (themeroom_tries++ > 10
                     || g.level.nroom >= Math.trunc(MAXNROFROOMS / 6))
                     break;
@@ -1633,6 +1641,10 @@ async function themerooms_generate(difficulty) {
         || { rtype: OROOM, rlit: -1, needfill: FILL_NORMAL, contents: null };
     rn2(100); // build_room chance check
     const ok = create_room(-1, -1, -1, -1, -1, -1, spec.rtype, spec.rlit);
+    // C ref: sp_lev.c:4103-4104 lspo_room() sets gt.themeroom_failed on ANY
+    // build_room()/create_room() failure while gi.in_mk_themerooms is set,
+    // not just for nested des.room() calls.
+    if (!ok) game.themeroom_failed = true;
     if (ok) {
         // C ref: sp_lev.c:2824 — build_room calls topologize after create_room
         const aroom = game.level.rooms[game.level.nroom - 1];
@@ -1909,7 +1921,8 @@ function themeroom_set_terrain(x, y, typ) {
 function themeroom_build_pillars() {
     rn2(100); // build_room chance check (sp_lev.c:2811)
     const ok = create_room(-1, -1, 10, 10, -1, -1, THEMEROOM, -1);
-    if (!ok) return false;
+    // C ref: sp_lev.c:4103-4104 — same lspo_room() flag as the fallback path.
+    if (!ok) { game.themeroom_failed = true; return false; }
     const aroom = game.level.rooms[game.level.nroom - 1];
     if (!aroom) return true;
     topologize(aroom);
@@ -2656,6 +2669,11 @@ function dosdoor(x, y, aroom, type) {
         } else {
             loc.doormask = shdoor ? D_ISOPEN : D_NODOOR;
         }
+        // C ref: mklev.c:645-648 — "also done in roguecorr(); doing it here
+        // first prevents making mimics in place of trapped doors on rogue
+        // level".  Clearing D_TRAPPED before the mimic check keeps that
+        // check's rn2(5) from drawing on the Rogue level.
+        if (Is_rogue_level_mk()) loc.doormask = D_NODOOR;
         if (loc.doormask & D_TRAPPED) {
             // C ref: mklev.c:653-663 — a deep trapped door is sometimes a mimic
             // instead.  The port used to stop at the D_NODOOR assignment, which
@@ -4093,9 +4111,6 @@ async function makemaz_minetown1() {
     mtown1_teleport_region(1, 1, 75, 19, 1, 0, 35, 21);
     splev_region_lit(1, 1, 35, 17, 1);
 
-    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 0, 1, 36, 17);
-    mtown_stair_lregion(LR_DOWNSTAIR, 57, 3, 75, 19, 0, 1, 36, 17);
-
     splev_feature(16, 9, FOUNTAIN);
     splev_feature(25, 9, FOUNTAIN);
     // "the altar's defiled ... never coaligned" — no des.region(type="temple")
@@ -4211,6 +4226,18 @@ async function makemaz_minetown1() {
     if (rn2(2)) flp |= 2;
     if (flp) flip_level(flp);
     set_wall_state();
+
+    // C ref: des.levregion() only QUEUES an lregion (sp_lev.c lspo_levregion);
+    // the actual place_lregion() RNG draw happens in fixup_special()
+    // (mkmaze.c:570-609), which sp_lev.c:6050 calls AFTER wallification and
+    // flip_level_rnd() — i.e. after doors/monsters/finalize, not back where
+    // the script text originally declared the stairs (right after the
+    // teleport region, before fountains/altar/doors/monsters).  Moved here
+    // (from just after mtown1_teleport_region) so the rn1() draws land in
+    // the same relative position as the C recorder's trace — same fix as
+    // makemaz_minetown6's identical tail, below.
+    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 0, 1, 36, 17, flp);
+    mtown_stair_lregion(LR_DOWNSTAIR, 57, 3, 75, 19, 0, 1, 36, 17, flp);
 }
 
 // ============================================================
@@ -7090,6 +7117,16 @@ export async function fill_ordinary_room(croom, bonus_items) {
     if (croom.needfill !== FILL_NORMAL) return;
 
     const pos = { x: 0, y: 0 };
+    // C ref: mklev.c:988-989 `if (Is_rogue_level(&u.uz)) goto skip_nonrogue;`
+    // — jumps from the gold roll straight to the final random-object block
+    // (skip_nonrogue: label at mklev.c:1157, right before it), skipping
+    // fountain/sink/altar/grave/statue/bonus_items/box-chest/graffiti
+    // entirely on a Rogue level.  This guard was missing outright: every one
+    // of those rolls fired on a Rogue level here, most visibly seeding a
+    // fountain that can never exist there (Rogue levels have no mkfount()
+    // call in C at all), which then tripped sounds.js dosounds()'s
+    // nfountains-gated rn2(400) ambient check every turn C never rolls.
+    const isRogue = Is_rogue_level_mk();
     // Sleeping monster.  C ref: mklev.c:974 `(u.uhave.amulet || !rn2(3))` — the
     // Amulet short-circuits the roll away entirely (every room gets a monster
     // and no rn2(3) is drawn), and a giant spider that lands on a free square
@@ -7114,6 +7151,7 @@ export async function fill_ordinary_room(croom, bonus_items) {
     if (!rn2(3) && somexyspace(croom, pos)) {
         mkgold(0, pos.x, pos.y);
     }
+    if (!isRogue) {
     // Fountain
     if (!rn2(10)) mkfount(croom);
     // Sink
@@ -7221,6 +7259,7 @@ export async function fill_ordinary_room(croom, bonus_items) {
             if (g.level?.at(pos.x, pos.y)?.typ === ROOM)
                 make_engr_at(pos.x, pos.y, engrText, pristine, 0, MARK);
         }
+    }
     }
     // Random objects
     if (!rn2(3) && somexyspace(croom, pos)) {
@@ -7377,6 +7416,7 @@ function get_level_extends() {
         }
     }
     xmin -= (nonwall || !game.level?.flags?.is_maze_lev) ? 2 : 1;
+    if (xmin < 0) xmin = 0;
     found = false; nonwall = false;
     for (xmax = COLNO - 1; !found && xmax >= 0; xmax--) {
         for (let y = 0; y <= ROWNO - 1; y++) {
@@ -7385,6 +7425,7 @@ function get_level_extends() {
         }
     }
     xmax += (nonwall || !game.level?.flags?.is_maze_lev) ? 2 : 1;
+    if (xmax >= COLNO) xmax = COLNO - 1;
     found = false; nonwall = false;
     for (ymin = 0; !found && ymin <= ROWNO - 1; ymin++) {
         for (let x = xmin; x <= xmax; x++) {
@@ -7404,16 +7445,22 @@ function get_level_extends() {
     return { xmin, xmax, ymin, ymax };
 }
 
+// C ref: mkmaze.c:1440 bound_digging() — undiggable walls at the level's
+// edges and, one tile further out, unphaseable ones: a wall-walker (shade,
+// xorn, earth elemental) at the maze's last wall column may not step into the
+// stone beyond it, which shrinks mfndpos()'s candidate count there.
 function bound_digging() {
+    if (Is_earthlevel(game.u?.uz)) return; /* everything diggable here */
     const map = game.level;
     const { xmin, xmax, ymin, ymax } = get_level_extends();
     for (let x = 0; x < COLNO; x++)
         for (let y = 0; y < ROWNO; y++) {
             const loc = map.at(x, y);
-            if (!loc) continue;
-            if (IS_STWALL(loc.typ) && (y <= ymin || y >= ymax || x <= xmin || x >= xmax)) {
+            if (!loc || !IS_STWALL(loc.typ)) continue;
+            if (y <= ymin || y >= ymax || x <= xmin || x >= xmax)
                 loc.wall_info = (loc.wall_info || 0) | W_NONDIGGABLE;
-            }
+            if (y < ymin || y > ymax || x < xmin || x > xmax)
+                loc.wall_info = (loc.wall_info || 0) | W_NONPASSWALL;
         }
 }
 

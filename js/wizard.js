@@ -126,73 +126,75 @@ export async function nasty(summoner) {
     const census = monster_census();
     let count = 0;
 
-    // C: `if (!rn2(10) && Inhell) count = msummon(NULL)` — msummon (minion.c)
-    // is unported, so the rn2(10) is still drawn but the Gehennom demon-summon
-    // arm falls through to the ordinary loop rather than being guessed at.
-    const hell_summon = (!rn2(10) && In_hell());
-    if (hell_summon) return 0;
+    // C ref: minion.c:59 msummon(NULL) — "this might summon a demon prince or
+    // lord... summons like WoY".  js/minion.js exports the faithful port;
+    // dynamic import avoids a static cycle.
+    if (!rn2(10) && In_hell()) {
+        const { msummon } = await import('./minion.js');
+        count = await msummon(null);
+    } else {
+        const s_cls = summoner ? (mdata(summoner)?.mcls | 0) : 0;
+        let difcap = summoner ? (mdata(summoner)?.difficulty | 0) : 0;
+        const castalign = summoner ? sgn(mdata(summoner)?.maligntyp | 0) : 0;
+        let tmp = ((u.ulevel | 0) > 3) ? Math.trunc((u.ulevel | 0) / 3) : 1;
+        const bypos = { x: u.ux, y: u.uy };
 
-    const s_cls = summoner ? (mdata(summoner)?.mcls | 0) : 0;
-    let difcap = summoner ? (mdata(summoner)?.difficulty | 0) : 0;
-    const castalign = summoner ? sgn(mdata(summoner)?.maligntyp | 0) : 0;
-    let tmp = ((u.ulevel | 0) > 3) ? Math.trunc((u.ulevel | 0) / 3) : 1;
-    const bypos = { x: u.ux, y: u.uy };
+        for (let i = rnd(tmp); i > 0 && count < MAXNASTIES; --i) {
+            for (let j = 0; j < 20; j++) {
+                let makeindex, m_cls, trylimit = 10 + 1, gave_up = false;
+                for (;;) {
+                    if (!--trylimit) { gave_up = true; break; }
+                    makeindex = M.pick_nasty(difcap);
+                    const mp = M.monster_by_pmidx(makeindex);
+                    m_cls = mp?.mcls | 0;
+                    if (!((difcap > 0 && (mp?.difficulty | 0) >= difcap
+                           && attacktype(mp, AT_MAGC))
+                          || (s_cls === S_DEMON && m_cls === S_ANGEL)
+                          || (s_cls === S_ANGEL && m_cls === S_DEMON)))
+                        break;
+                }
+                if (gave_up) continue;                     /* C: goto nextj */
 
-    for (let i = rnd(tmp); i > 0 && count < MAXNASTIES; --i) {
-        for (let j = 0; j < 20; j++) {
-            let makeindex, m_cls, trylimit = 10 + 1, gave_up = false;
-            for (;;) {
-                if (!--trylimit) { gave_up = true; break; }
-                makeindex = M.pick_nasty(difcap);
                 const mp = M.monster_by_pmidx(makeindex);
-                m_cls = mp?.mcls | 0;
-                if (!((difcap > 0 && (mp?.difficulty | 0) >= difcap
-                       && attacktype(mp, AT_MAGC))
-                      || (s_cls === S_DEMON && m_cls === S_ANGEL)
-                      || (s_cls === S_ANGEL && m_cls === S_DEMON)))
-                    break;
-            }
-            if (gave_up) continue;                     /* C: goto nextj */
-
-            const mp = M.monster_by_pmidx(makeindex);
-            if (summoner) {
-                const spot = M.enexto_spawn(summoner.mux ?? summoner.mx,
-                                            summoner.muy ?? summoner.my, mp);
-                if (!spot) continue;
-                bypos.x = spot.x; bypos.y = spot.y;
-            }
-            let mtmp = M.makemon(mp, bypos.x, bypos.y, mmflags);
-            if (mtmp) {
-                mtmp.msleeping = 0; mtmp.mpeaceful = 0; mtmp.mtame = 0;
-                M.set_malign(mtmp);
-            } else {
-                // Random substitute for a genocided selection.
-                mtmp = M.makemon(null, bypos.x, bypos.y, mmflags);
+                if (summoner) {
+                    const spot = M.enexto_spawn(summoner.mux ?? summoner.mx,
+                                                summoner.muy ?? summoner.my, mp);
+                    if (!spot) continue;
+                    bypos.x = spot.x; bypos.y = spot.y;
+                }
+                let mtmp = M.makemon(mp, bypos.x, bypos.y, mmflags);
                 if (mtmp) {
-                    m_cls = mdata(mtmp)?.mcls | 0;
-                    if ((difcap > 0 && (mdata(mtmp)?.difficulty | 0) >= difcap
-                         && rn2(In_endgame() ? 3 : 7)
-                         && attacktype(mdata(mtmp), AT_MAGC))
-                        || (s_cls === S_DEMON && m_cls === S_ANGEL)
-                        || (s_cls === S_ANGEL && m_cls === S_DEMON)) {
-                        unmakemon(mtmp);
-                        mtmp = null;
+                    mtmp.msleeping = 0; mtmp.mpeaceful = 0; mtmp.mtame = 0;
+                    M.set_malign(mtmp);
+                } else {
+                    // Random substitute for a genocided selection.
+                    mtmp = M.makemon(null, bypos.x, bypos.y, mmflags);
+                    if (mtmp) {
+                        m_cls = mdata(mtmp)?.mcls | 0;
+                        if ((difcap > 0 && (mdata(mtmp)?.difficulty | 0) >= difcap
+                             && rn2(In_endgame() ? 3 : 7)
+                             && attacktype(mdata(mtmp), AT_MAGC))
+                            || (s_cls === S_DEMON && m_cls === S_ANGEL)
+                            || (s_cls === S_ANGEL && m_cls === S_DEMON)) {
+                            unmakemon(mtmp);
+                            mtmp = null;
+                        }
                     }
                 }
-            }
 
-            if (mtmp) {
-                const nm = mdata(mtmp)?.name;
-                if (nm === 'arch-lich' || nm === 'Archon') {
-                    // C: min(Archon difficulty 26, arch-lich difficulty 31).
-                    const cap = 26;
-                    if (!difcap || difcap > cap) difcap = cap;
+                if (mtmp) {
+                    const nm = mdata(mtmp)?.name;
+                    if (nm === 'arch-lich' || nm === 'Archon') {
+                        // C: min(Archon difficulty 26, arch-lich difficulty 31).
+                        const cap = 26;
+                        if (!difcap || difcap > cap) difcap = cap;
+                    }
+                    mtmp.mspec_used = rnd(4);              /* delay first spell */
+                    if (++count >= MAXNASTIES
+                        || (mdata(mtmp)?.maligntyp | 0) === 0
+                        || sgn(mdata(mtmp)?.maligntyp | 0) === castalign)
+                        break;
                 }
-                mtmp.mspec_used = rnd(4);              /* delay first spell */
-                if (++count >= MAXNASTIES
-                    || (mdata(mtmp)?.maligntyp | 0) === 0
-                    || sgn(mdata(mtmp)?.maligntyp | 0) === castalign)
-                    break;
             }
         }
     }

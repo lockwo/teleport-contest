@@ -27,7 +27,7 @@ import { is_were_flag, is_human_flag, mflags1_of, mflags2_of, mflags3_of,
     strongmonst_flag, throws_rocks_flag } from './monflags_data.js';
 import { attacktype, AT_ENGL } from './monattk_data.js';
 import { objects as OBJECTS, CORPSE, BOULDER, BELL_OF_OPENING,
-    COIN_CLASS, GEM_CLASS, ROCK_CLASS, place_object } from './mkobj.js';
+    COIN_CLASS, GEM_CLASS, ROCK_CLASS, place_object, discard_minvent } from './mkobj.js';
 import { monster_by_pmidx, newcham, newcham_wizard_aware, enexto_spawn,
     pickvampshape_pub, set_mimic_sym, makemon, makemon_appears_msg } from './makemon.js';
 import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
@@ -2292,20 +2292,27 @@ export async function mon_give_prop(mtmp, prop) {
         await pline(msg.replace('%s', Monnam(mtmp)));
 }
 
-// ── mon.c:1778 mon_givit() ──────────────────────────────────────────────────
-// Maybe give a monster an intrinsic from the corpse it just ate.
+// mon.c:1778 mon_givit(): maybe give a monster an intrinsic from the corpse
+// it just ate.  RNG order matches C exactly: corpse_intrinsic(ptr) is drawn
+// FIRST, unconditionally, even for a dead monster or a stalker corpse (for
+// which it always returns 0 with zero draws, since the stalker conveys
+// nothing and is never a giant); should_givit(prop, ptr) is drawn only when
+// a non-stalker prop was chosen.
 export async function mon_givit(mtmp, ptr) {
-    /* C ref: eat.c corpse_intrinsic(ptr) — unported (js/eat.js:1522 records the
-       deferral).  It decides WHICH prop a corpse conveys and DRAWS rn2(count)
-       while doing so, so it cannot be guessed; prop therefore stays 0, which
-       makes the tail below a no-op rather than a wrong one. */
-    const prop = 0;
+    const { corpse_intrinsic, should_givit } = await import('./eat.js');
+    const prop = corpse_intrinsic(ptr);
     const vis = canseemon_shared(mtmp);
 
     if (DEADMONSTER(mtmp))
         return;
 
-    if (monsndx(ptr) === PM('invisible stalker')) {
+    // C: `ptr == &mons[PM_STALKER]` — a pointer/index compare against the
+    // species whose mons[] name field is literally "stalker".  "invisible
+    // stalker" is only a DISPLAY name for one that is actually invisible; no
+    // permonst entry is ever named that, so PM('invisible stalker') always
+    // resolved to -1 (name_to_pmidx() does no alias lookup) and this branch
+    // was silently unreachable for every corpse, including the real stalker.
+    if (monsndx(ptr) === PM('stalker')) {
         /*
          * The stalker isn't flagged as conferring invisibility, so prop is 0
          * for it.  A monster can only gain PERMANENT invisibility (temporary
@@ -2315,8 +2322,10 @@ export async function mon_givit(mtmp, ptr) {
          */
         if (!mtmp.perminvis || mtmp.invis_blkd) {
             const mtmpbuf = Monnam(mtmp);
-            /* C ref: mon.c:1806 mon_set_minvis(mtmp, FALSE) — unported; it
-               sets perminvis/minvis and redoes the light/vision bookkeeping. */
+            // C ref: mon.c:1806 mon_set_minvis(mtmp, FALSE) — the real,
+            // byte-exact port lives in worn.js (perminvis/minvis + newsym).
+            const { mon_set_minvis } = await import('./worn.js');
+            mon_set_minvis(mtmp, false);
             if (vis) {
                 const { canspotmon } = await import('./uhitm.js');
                 await pline(`${mtmpbuf} ${!canspotmon(mtmp) ? 'vanishes'
@@ -2331,8 +2340,9 @@ export async function mon_givit(mtmp, ptr) {
     if (prop === 0)
         return; /* no intrinsic from this corpse */
 
-    /* C ref: eat.c should_givit(prop, ptr) — the failed-die-roll gate; also
-       unported, and it DRAWS.  Reaching here needs corpse_intrinsic() first. */
+    if (!should_givit(prop, ptr))
+        return; /* failed die roll */
+
     await mon_give_prop(mtmp, prop);
 }
 
@@ -2583,10 +2593,44 @@ export async function m_detach(mtmp, mptr, due_to_death) {
 
     /* the hero is thrown from a steed that dies or is genocided */
     if (mtmp === game.u?.usteed) {
-        /* C ref: steed.c dismount_steed(DISMOUNT_GENERIC) — js/steed.js owns
-           that path; js/artifact.js:2799 has a one-line stand-in. */
-        game.u.usteed = null;
+        // C ref: steed.c dismount_steed(DISMOUNT_GENERIC) — dynamic import
+        // avoids a mon.js <-> steed.js static cycle.  Safe to call here: by
+        // this point mtmp->mhp is already 0 (line above), so dismount_steed's
+        // own DEADMONSTER(mtmp) guard skips straight to its tail (release the
+        // steed, no re-placement/teleds), matching C's identical ordering
+        // (the call sits at the very end of m_detach(), after mtmp->mhp=0).
+        const { dismount_steed } = await import('./steed.js');
+        const { DISMOUNT_GENERIC } = await import('./const.js');
+        await dismount_steed(DISMOUNT_GENERIC);
     }
+}
+
+// ── mon.c:3267 mongone() ────────────────────────────────────────────────────
+// A monster disappears from the game without dying: no corpse, no kill
+// message.  js/muse.js, js/vault.js, js/priest.js and js/zap.js each still
+// carry their own narrower private copy for their own (mostly corpse-path or
+// migration) contexts; js/minion.js's demon_talk() (bribed-off demon) and
+// lose_guardian_angel() (guardian replaced by hostile angels) are the first
+// callers reaching THIS faithful copy, so its isgd/mdrop_special_objs paths
+// get their first RNG exercise here.  No RNG of its own; m_detach()'s
+// mon_leaving_level() can draw the unstuck() rnd(2), and mdrop_special_objs()
+// can draw obj_resists()'s rn2(100) per carried item.
+export async function mongone(mdef) {
+    mdef.mhp = 0; /* can skip some inventory bookkeeping */
+
+    /* dead vault guard is actually kept at coordinate <0,0> until his
+       temporary corridor to/from the vault has been removed */
+    if (mdef.isgd) {
+        const { grddead } = await import('./vault.js');
+        if (!(await grddead(mdef))) return;
+    }
+    /* drop special items like the Amulet so that a dismissed Kop or nurse
+       can't remove them from the game */
+    const { mdrop_special_objs } = await import('./steal.js');
+    await mdrop_special_objs(mdef);
+    /* release rest of monster's inventory--it is removed from game */
+    discard_minvent(mdef, false);
+    await m_detach(mdef, mdef.data, false);
 }
 
 // ── mon.c:2808 set_mon_min_mhpmax() ─────────────────────────────────────────
@@ -3021,8 +3065,8 @@ export async function elemental_clog(mon) {
         await migrate_mon_local(mon, dest, MIGR_RANDOM);
     }
 }
-// C ref: mon.c:3843 migrate_mon(mtmp, target_lev, xyloc).  js/artifact.js has a
-// copy; this one keeps the two steps that have no port NAMED.
+// C ref: mon.c:3843 migrate_mon(mtmp, target_lev, xyloc).  js/artifact.js has
+// a copy; this one keeps the two steps that have no port named elsewhere.
 async function migrate_mon_local(mtmp, dest, xyloc) {
     /*
      * If mtmp->mx is zero this was a failed arrival from an earlier migration
@@ -3038,11 +3082,16 @@ async function migrate_mon_local(mtmp, dest, xyloc) {
         /* C ref: mon.c:3858 mdrop_special_objs(mtmp) — unported; it drops the
            Amulet and the invocation items so they can't leave the level. */
     }
-    /* C ref: dungeon.c migrate_to_level(mtmp, ledger_no(dest), xyloc, 0) —
-       js/muse.js's copy takes only the monster, and ledger_no() lives in
-       js/bones.js (module-private).  Both the ledger number and the MIGR_*
-       placement are therefore named rather than approximated. */
-    void dest; void xyloc;
+    // C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
+    // js/dog.js:530, js/dig.js:1097 and js/save.js:287 keep the same private
+    // copy for the same import-order reason.
+    const ledger_no = (dest?.dlevel | 0)
+        + (game.dungeons?.[dest?.dnum ?? 0]?.ledger_start | 0);
+    // C ref: dungeon.c migrate_to_level(mtmp, ledger_no(dest), xyloc, 0) —
+    // js/dog.js has the faithful port (mon_leave() worm/shk/container
+    // bookkeeping plus the migrating_mons chain do.js's goto_level() drains).
+    const { migrate_to_level } = await import('./dog.js');
+    await migrate_to_level(mtmp, ledger_no, xyloc, null);
 }
 
 // ── mon.c:3986 deal_with_overcrowding() ─────────────────────────────────────
@@ -3055,6 +3104,26 @@ export async function deal_with_overcrowding(mtmp) {
         mtmp.mstate = (mtmp.mstate | 0) | MON_LIMBO;
         await migrate_mon_local(mtmp, game.u?.uz, MIGR_APPROX_XY);
     }
+}
+
+// ── mon.c:3954 mnexto() ─────────────────────────────────────────────────────
+// Make monster mtmp next to the hero (if possible); might place it on the
+// far side of a wall or boulder.  A ridden steed stays in sync with the hero
+// instead of being relocated by enexto().
+export async function mnexto(mtmp, rlocflags) {
+    const u = game.u;
+    if (mtmp === u?.usteed) {
+        mtmp.mx = u.ux; mtmp.my = u.uy;
+        return;
+    }
+    const { enexto_gpflags, rloc_to_core } = await import('./teleport.js');
+    const mm = enexto_gpflags(u.ux, u.uy, mtmp.data, 0);
+    if (!mm || !isok(mm.x, mm.y)) {
+        await deal_with_overcrowding(mtmp);
+        return;
+    }
+    /* [wizard-mode 'montelecontrol' option not modelled] */
+    await rloc_to_core(mtmp, mm.x, mm.y, rlocflags);
 }
 
 // ── mon.c:4031 mnearto() ────────────────────────────────────────────────────
@@ -3077,7 +3146,7 @@ export async function mnearto(mtmp, x, y, move_other, rlocflags) {
     }
 
     let newx = x, newy = y;
-    const { goodpos, rloc_to } = await import('./teleport.js');
+    const { goodpos, rloc_to_core } = await import('./teleport.js');
     if (!goodpos(newx, newy, mtmp, 0)) {
         /* real trouble if enexto ever fails: migrating_mons that need placing
            cause no end of problems */
@@ -3094,10 +3163,10 @@ export async function mnearto(mtmp, x, y, move_other, rlocflags) {
         newx = mm.x;
         newy = mm.y;
     }
-    /* C: rloc_to_flag(mtmp, newx, newy, rlocflags); this doesn't honor the
-       'montelecontrol' option, and js/teleport.js has no flag-taking form. */
-    await rloc_to(mtmp, newx, newy);
-    void rlocflags;
+    /* C: rloc_to_flag(mtmp, newx, newy, rlocflags) — js/teleport.js's
+       flag-taking form is rloc_to_core(); this doesn't honor the
+       'montelecontrol' option. */
+    await rloc_to_core(mtmp, newx, newy, rlocflags);
 
     if (move_other && othermon) {
         res = 2; /* moving another monster out of the way */
@@ -3161,7 +3230,9 @@ function quest_leader_pm() {
 // RNG order in the humanoid arm: rn2(5) (gasp) -> rn2(10) (mlevel) ->
 // monflee's rn2(50)+25.  In the same-class arm: rn2(3) -> rn2(4) (growl) ->
 // rn2(6) -> monflee's rn2(25)+15.  Each draw is gated by the RNG-free guards
-// above it, so those guards have to be exact.
+// above it, so those guards have to be exact.  Wired from uhitm.js
+// setmangry() (mon.c:4316-4317 `if (!svc.context.mon_moving)
+// peacefuls_respond(mtmp);`).
 export async function peacefuls_respond(mtmp) {
     const mndx = monsndx(mtmp.data);
 
@@ -3186,11 +3257,8 @@ export async function peacefuls_respond(mtmp) {
                        copy, so the call is named rather than duplicated. */
                 } else {
                     if (!Deaf() && !rn2(5)) {
-                        /* C ref: sounds.c maybe_gasp(mon) — unported.  It picks
-                           one of several exclamations and DRAWS while doing so,
-                           so gasp stays null and the buf/exclaimed bookkeeping
-                           below is skipped rather than half-faked. */
-                        const gasp = null;
+                        const { maybe_gasp } = await import('./sounds.js');
+                        const gasp = maybe_gasp(mon);
                         if (gasp) {
                             if (/^gasp/i.test(gasp)) {
                                 buf = `${Monnam(mon)} gasps`;

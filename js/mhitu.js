@@ -680,7 +680,10 @@ export async function summonmu(mtmp, youseeit) {
     if (is_demon_flag(mdat)) {
         if (mdat.name !== 'Balrog' && mdat.name !== 'amorous demon') {
             if (!rn2(Inhell() ? 10 : 16)) {
-                // msummon(mtmp): the demon-summoning subsystem (minion.c).
+                // C ref: minion.c:59 msummon(mtmp) — js/minion.js exports the
+                // faithful port; dynamic import avoids a static cycle.
+                const { msummon } = await import('./minion.js');
+                await msummon(mtmp);
             }
         }
         return;   // no such thing as a demon were creature
@@ -1735,6 +1738,32 @@ export function mhitu_ops() {
         cloneu,
         mdamageu,
         mpoisons_subj,
+        // C ref: exper.c losexp(drainer). AD_DRLI's hero-defender arm
+        // (mhitm_ad.js:571) drains an experience level. emitU carries C's
+        // `pline("%s level %d.", Goodbye(), u.ulevel)` message. exper.js
+        // hardcodes "Goodbye" for the text, which matches every playable
+        // role except Knight, Samurai, Tourist, and Valkyrie, each of which
+        // has its own role-specific farewell.
+        losexp: async (drainer) => {
+            const { losexp: losexpFn } = await import('./exper.js');
+            await losexpFn(drainer, emitU);
+        },
+        // C ref: teleport.c tele() (via zap.js's export). AD_TLPT's
+        // hero-defender arm (mhitm_ad.js:750) calls this after a successful,
+        // non-negated hit.
+        tele: async () => {
+            const { tele: teleFn } = await import('./zap.js');
+            await teleFn();
+        },
+        // C ref: zap.c destroy_items(&gy.youmonst, dmgtyp, dmg_in). AD_FIRE's
+        // hero-defender arm (mhitm_ad.js:594) calls this for the m_lev >
+        // rn2(20) item-scorching roll. destroy_items() already accepts
+        // game.u directly, the same call zap.js/trap.js make for other
+        // hero-inventory-destroying hazards.
+        destroy_items_hero: async (dmgtyp, dmgIn) => {
+            const { destroy_items } = await import('./zap.js');
+            await destroy_items(game.u, dmgtyp, dmgIn);
+        },
         // C ref: were.c set_ulycn(which) — a monster's AD_WERE bite infecting
         // the hero.  Dynamic import: mhitu.js has no other edge to
         // polyself.js and this path is only reached mid-combat, well after
@@ -1742,6 +1771,29 @@ export function mhitu_ops() {
         set_ulycn: async (which) => {
             const { set_ulycn } = await import('./polyself.js');
             set_ulycn(which);
+        },
+        // C ref: timeout.c fall_asleep(how_long, wakeup_msg). AD_SLEE's
+        // hero-defender arm (mhitm_ad.js) calls this after a non-negated,
+        // non-resisted hit.
+        fall_asleep: async (howlong, wakeupmsg) => {
+            const { fall_asleep } = await import('./zap.js');
+            fall_asleep(howlong, wakeupmsg);
+        },
+        // C ref: youprop.h Blind. AD_SLEE's hero-defender arm gates its
+        // "put to sleep" message on it (Blind: no attacker name).
+        Blind: () => Blind(),
+        // C ref: mondata.c monstseesu()/monstunseesu(). AD_SLEE's
+        // hero-defender arm records whether nearby monsters watched the hero
+        // resist (or fail to resist) the sleep attack.  Dynamic import:
+        // mondata.js pulls in monmove.js (m_canseeu), which itself imports
+        // this file, so a static top-level binding here would be circular.
+        monstseesu: async (bit) => {
+            const { monstseesu } = await import('./mondata.js');
+            monstseesu(bit);
+        },
+        monstunseesu: async (bit) => {
+            const { monstunseesu } = await import('./mondata.js');
+            monstunseesu(bit);
         },
     };
     return _ops;

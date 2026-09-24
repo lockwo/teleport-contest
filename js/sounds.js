@@ -373,15 +373,16 @@ export async function yelp(mtmp) {
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 12);
 }
 
-// SCOPE: the arms that hand off to an unported subsystem — MS_PRIEST
-// (priest_talk), MS_LEADER/MS_NEMESIS/MS_GUARDIAN
-// (quest_chat, ported), MS_SELL (shk_chat), MS_VAMPIRE and MS_RIDER (both need the
-// 3.6-tribute / urace-noun machinery) — fall through to the silent ECMD_TIME
-// tail, as does the In_endgame mplayer_talk() arm of MS_HUMANOID.  Their RNG is
-// therefore not emitted; nothing in the covered dungeon range reaches them.
-// wake_nearto()/aggravate()/nomul() side effects of MS_TRUMPET, MS_WERE,
-// MS_SHRIEK and MS_BONES are likewise not replicated (all RNG-free in C, but
-// they do clear msleeping, so a deep-level shrieker would still diverge).
+// SCOPE: MS_PRIEST (priest_talk) and MS_SELL (shk_chat) are wired below;
+// MS_LEADER/MS_NEMESIS/MS_GUARDIAN (quest_chat) are also ported.  The arms
+// that still hand off to an unported subsystem — MS_VAMPIRE and MS_RIDER
+// (both need the 3.6-tribute / urace-noun machinery) — fall through to the
+// silent ECMD_TIME tail, as does the In_endgame mplayer_talk() arm of
+// MS_HUMANOID.  Their RNG is therefore not emitted; nothing in the covered
+// dungeon range reaches them.  wake_nearto()/aggravate()/nomul() side effects
+// of MS_TRUMPET, MS_WERE, MS_SHRIEK and MS_BONES are likewise not replicated
+// (all RNG-free in C, but they do clear msleeping, so a deep-level shrieker
+// would still diverge).
 export async function domonnoise(mtmp) {
     const { update_topl, map_invisible } = await import('./display.js');
     const { Monnam, canspotmon } = await import('./uhitm.js');
@@ -417,6 +418,11 @@ export async function domonnoise(mtmp) {
         const { quest_talk } = await import('./questpgr.js');
         await quest_talk(mtmp);
         return ECMD_TIME;
+    }
+    case MS_PRIEST: {
+        const { priest_talk } = await import('./priest.js');
+        await priest_talk(mtmp);
+        break;
     }
     case MS_ORACLE: {
         // C ref: sounds.c:724 — the Oracle's whole consultation transaction
@@ -624,9 +630,13 @@ export async function domonnoise(mtmp) {
                 "You're under arrest!", 'Stop in the name of the Law!'][rn2(3)];
         break;
     case MS_BRIBE:
-        // C: a peaceful non-tame demon runs demon_talk() (bribe negotiation,
-        // not ported); otherwise FALLTHRU into MS_CUSS.
-        if (mtmp.mpeaceful && !mtmp.mtame) break;
+        // C ref: minion.c:263 demon_talk(mtmp) — js/minion.js exports the
+        // faithful port; dynamic import avoids a static cycle.
+        if (mtmp.mpeaceful && !mtmp.mtame) {
+            const { demon_talk } = await import('./minion.js');
+            await demon_talk(mtmp);
+            break;
+        }
         /* FALLTHRU */
     case MS_CUSS:
         if (!mtmp.mpeaceful) {
@@ -666,6 +676,16 @@ export async function domonnoise(mtmp) {
                 "The food's not fit for Orcs!",
                 "My feet hurt, I've been on them all day!"][rn2(3)]
             : ['Resistance is useless!', "You're dog meat!", 'Surrender!'][rn2(3)];
+        break;
+    case MS_SELL: /* pitch, pay, total */
+        if (!game.u?.uhallu || is_silent(ptr) || (mtmp.isshk && !rn2(2))) {
+            const { shk_chat } = await import('./shk.js');
+            await shk_chat(mtmp);
+        } else {
+            // C: approximation of GEICO's advertising slogan.
+            const { currency } = await import('./invent.js');
+            verbl_msg = `15 minutes could save you 15 ${currency(15)}.`;
+        }
         break;
     default:
         break;
