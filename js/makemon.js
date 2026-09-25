@@ -68,14 +68,7 @@ import {
 } from './monflags_data.js';
 import { AT_EXPL, attacktype, is_armed, MATTK,
          AT_WEAP, AT_MAGC, AD_DRST, AD_SPEL } from './monattk_data.js';
-// deliver_obj_to_mon lives in dokick.js, which already imports makemon/
-// mpickobj/etc. from this module — a real cycle, not the hoisted-function-
-// declaration kind that resolves for free (dokick.js's own top-level code
-// runs before this module's does when dokick.js is the first thing loaded,
-// tripping this file's own TDZ'd top-level consts).  Call through the
-// gstate.js `hooks` registry instead (same pattern as hooks.newsym/
-// hooks.set_apparxy below): dokick.js sets hooks.deliver_obj_to_mon once,
-// at its own module init, and this file only reads it at makemon() call time.
+// Species delivery uses the hooks registry to avoid a dokick import cycle.
 const MM_NOWAIT = 0x00000002; // C ref: makemon.h MM_NOWAIT — suppress STRAT_WAITFORU/STRAT_CLOSE
 
 const G_UNIQ = 0x1000;
@@ -3705,15 +3698,10 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
         if (f3 & (M3_WAITMASK | M3_COVETOUS))
             mtmp.mstrategy = (mtmp.mstrategy | STRAT_APPEARMSG) >>> 0;
     }
-    // C ref: makemon.c:1469-1470 — "in case of waiting items": a freshly
-    // created monster claims any matching MIGR_TO_SPECIES stolen-booty object
-    // already sitting on the migration list (Orctown's stolen_booty(), which
-    // creates the loot before the orcs that carry it).  This can christen the
-    // monster (christen_orc()'s rn2(2)/rndorcname draws) even though
-    // stolen_booty() immediately renames the gang leader afterward — the
-    // draws still happen in C and must not be skipped here.
+    // C makemon.c:1469: claim waiting loot before placement. This may name
+    // the captain even though stolen_booty() renames it immediately afterward.
     if (allow_minvent && game.migrating_objs && game.migrating_objs.length) {
-        hooks.deliver_obj_to_mon?.(mtmp, 1, DF_NONE);
+        hooks.deliver_obj_to_mon(mtmp, 1, DF_NONE);
     }
     // C ref: makemon.c:1248 `mtmp->nmon = fmon; fmon = mtmp;` and :1295
     // `place_monster(mtmp, x, y);` — BOTH unconditional, and the link happens even

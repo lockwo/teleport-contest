@@ -14,7 +14,7 @@ import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
 import { observe_object } from './o_init.js';
 import { find_ac } from './u_init.js';
 import { exercise, acurr_eff } from './attrib.js';
-import { Boots_off, stop_donning } from './do_wear.js';
+import { Boots_off, stop_donning, hard_helmet, helm_simple_name } from './do_wear.js';
 import { float_vs_flight } from './polyself.js';
 import { is_weptool } from './weapon.js';
 import {
@@ -56,7 +56,7 @@ import {
 import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx,
          pmname_of_pmidx } from './makemon.js';
 import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
-         amorphous_flag, unsolid_flag, M1_ACID } from './monflags_data.js';
+         amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID } from './monflags_data.js';
 import { AD_FIRE, AD_ELEC } from './monattk_data.js';
 import { MM_NOCOUNTBIRTH, MM_NOMSG, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND } from './const.js';
 import { In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
@@ -2050,23 +2050,38 @@ async function trapeffect_rocktrap(trap, _trflags) {
         newsym(u.ux, u.uy);
         return;
     }
-    const dmg = d(2, 6);
+    let dmg = d(2, 6);
     trap.once = 1;
     seetrap(trap); // C feeltrap(trap) == seetrap() for a sighted hero
     const otmp = t_missile(ROCK, trap);
     place_object(otmp, u.ux, u.uy);
     otmp.where = 'floor'; otmp.ox = u.ux; otmp.oy = u.uy;
     await pline(`A trap door in the ${ceiling(u.ux, u.uy)} opens and ${an(xname(otmp))} falls on your ${body_part(HEAD)}!`);
-    // uarmh is null and passes_rocks(youmonst.data) is false for every role
-    // monster (all MZ_HUMAN, no M1_PASSES_WALLS), so C's helmet / "passes
-    // harmlessly through you" branches are unreachable and harmless stays FALSE.
+    const form = monster_by_pmidx(u.umonnum) || u.data;
+    const passesRocks = passes_walls_flag(form) && !unsolid_flag(form);
+    let harmless = false;
+    if (game.uarmh) {
+        if (passesRocks) {
+            await pline(`Unfortunately, you are wearing ${an(helm_simple_name(game.uarmh))}.`);
+            dmg = 2;
+        } else if (hard_helmet(game.uarmh)) {
+            await pline('Fortunately, you are wearing a hard helmet.');
+            dmg = 2;
+        } else if (game.flags?.verbose !== false) {
+            await pline(`${Yname2_dmg(game.uarmh)} does not protect you.`);
+        }
+    } else if (passesRocks) {
+        await pline('It passes harmlessly through you.');
+        harmless = true;
+    }
     if (!Blind()) observe_object(otmp);
     const { stackobj } = await import('./invent.js');
     stackobj(otmp);
     newsym(u.ux, u.uy);
-    // Maybe_Half_Phys is the identity for a hero without HALF_PHDAM.
-    await losehp(dmg, 'falling rock');
-    exercise(A_STR, false);
+    if (!harmless) {
+        await losehp(Maybe_Half_Phys(dmg), 'falling rock');
+        exercise(A_STR, false);
+    }
 }
 
 // ── shared helpers for the per-trap hero arms ────────────────────────────

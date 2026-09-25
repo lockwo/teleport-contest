@@ -938,15 +938,6 @@ export async function migrate_orc(mtmp, mflags) {
     await migrate_to_level(mtmp, ledger_no, MIGR_RANDOM, null);
 }
 
-// C ref: mkobj.c:2648 add_to_minv(mon, obj) — prepend to the monster's
-// minvent chain, merging with an existing stack first when possible.
-// js/makemon.js:1446 mpickobj() is this project's one accepted copy of that
-// (documented there as intentionally merge-less, "no RNG" — the same
-// simplification every other m_initinv() gift in that file already uses,
-// including this very species' M2_GREEDY starting gold via likes_gold_flag).
-// Reused here rather than forking a third private no-merge copy alongside
-// js/vault.js:184 and js/shk.js:3084.
-
 // C ref: mkmaze.c:748 shiny_orc_stuff(mtmp) — the loot each member of the gang
 // carries off.  Draw order is fixed: the gold gate, then the gold quantity,
 // then the gem gate, then (captain OR 1-in-8) the ring.  An orc captain is
@@ -981,23 +972,8 @@ export async function shiny_orc_stuff(mtmp) {
     }
 }
 
-// C ref: objnam.c:3532 shiny_obj(oclass) — js/objnam.js:441 exports the real
-// `rnd_otyp_by_namedesc("shiny", oclass, 0)`: the candidate set is whichever
-// objects of `oclass` got the shuffled "shiny" APPEARANCE this session (rings
-// reuse the same shuffle-per-game unidentified-description machinery as
-// wands/potions), weighted by oc_prob, drawing one rn2(maxprob).  objnam.js is
-// not in this file's static graph (it pulls in shk.js/makemon.js itself), so
-// the export is resolved lazily via dynamic import, matching every other
-// cross-module call in this file (do_name.js, options.js, dog.js, ...).
-//
-// The prior local matched objects[] by a `/gold/i` MATERIAL regex — wrong
-// candidate set entirely (material, not the shuffled name/description
-// "shiny" match C performs) — and cached the RESOLVED OTYP across the whole
-// process lifetime, so every Orctown generated after the first got the same
-// ring type with zero RNG draws.  Caching only the resolved FUNCTION
-// reference is safe (a dynamic import of the same module always returns the
-// same singleton) while every call still runs the real function's own
-// rn2(maxprob) draw.
+// Resolve lazily to avoid the objnam import cycle. Cache the function, not
+// its result: the shuffled descriptions and RNG state belong to each game.
 let mm_real_shiny_obj = null;
 async function mm_shiny_obj(oclass) {
     if (!mm_real_shiny_obj)
@@ -1029,9 +1005,7 @@ export async function migr_booty_item(otyp, gang) {
     return otmp;
 }
 
-// C ref: mkmaze.c:799 stolen_booty() — "A tragic accident has occurred in
-// Frontier Town... It has been overrun by orcs."  Reached from fixup_special()
-// on the Mines level built right after minetn-1 (orctown).
+// C ref: mkmaze.c stolen_booty(), run after Orctown's stair regions are placed.
 //
 // Draw order matters and is long: rndorcname(), then rnd(4) candles,
 // rnd(3) keys, one rn1 glove type, rnd(10) food attempts (each rn1, and only

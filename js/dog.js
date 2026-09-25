@@ -835,7 +835,7 @@ export async function losedogs() {
         failed_arrivals = mtmp.nmon;
         /* mon_arrive() put mtmp onto fmon, but relmon() took it off again;
            put it back now because m_into_limbo() expects it to be there */
-        fmon_list().unshift(mtmp);
+        fmon_list().push(mtmp);
         await m_into_limbo(mtmp);
     }
 }
@@ -917,7 +917,7 @@ export async function deliver_migrating_after() {
         failed_arrivals = mtmp.nmon;
         /* mon_arrive() put mtmp onto fmon, but relmon() took it off again;
            put it back now because m_into_limbo() expects it to be there */
-        fmon_list().unshift(mtmp);
+        fmon_list().push(mtmp);
         await m_into_limbo(mtmp);
     }
 }
@@ -945,7 +945,8 @@ export async function mon_arrive(mtmp, when) {
     const fromdlev = { dnum: 0, dlevel: 0 };
 
     mtmp.mstate = (mtmp.mstate || 0) | MON_STILL_ARRIVING;
-    fmon_list().unshift(mtmp);   /* mtmp->nmon = fmon; fmon = mtmp; */
+    // The level array is oldest-first; its tail is C's fmon head.
+    fmon_list().push(mtmp);
     if (mtmp.isshk) {
         const { set_residency } = await import('./shk.js');
         set_residency(mtmp, false);
@@ -1095,10 +1096,7 @@ export async function mon_arrive(mtmp, when) {
         xlocale = ylocale = 0;
 
     if (((mtmp.migflags || 0) & MIGR_LEFTOVERS) !== 0) {
-        /* Pick up the rest of the MIGR_TO_SPECIES objects.
-           C ref: dog.c:576-579 deliver_obj_to_mon(mtmp, 0, DF_ALL) — the
-           gm.migrating_objs null-check is folded into deliver_obj_to_mon
-           itself, which no-ops on an empty/missing list. */
+        // C dog.c:576: the gang leader collects remaining species-targeted loot.
         deliver_obj_to_mon(mtmp, 0, DF_ALL);
     }
 

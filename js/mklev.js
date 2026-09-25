@@ -13,6 +13,7 @@ import { depth as depth_of_level, distmin } from './hacklib.js';
 import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_region, fill_special_room, themeroom_fill, themeroom_map_contents, makemaz_bigroom, makemaz_bar_strt, makemaz_bar_loca, makemaz_bar_goal, makemaz_arc_strt, makemaz_arc_loca, makemaz_arc_goal, makemaz_pri_strt, makemaz_pri_loca, makemaz_pri_goal, makemaz_tower1, makemaz_tower2, makemaz_tower3, makemaz_soko1, makemaz_soko_upper, makemaz_valley, makemaz_sanctum, makemaz_minetown2, makemaz_minetown3, makemaz_minetown5, makemaz_minetown7, makemaz_minend1, makemaz_minend2, makemaz_minend3, makemaz_medusa1, makemaz_medusa2, makemaz_medusa3, makemaz_medusa4, makemaz_asmodeus, makemaz_baalz, makemaz_juiblex, makemaz_orcus, makemaz_wizard1, makemaz_wizard2, makemaz_wizard3, makemaz_fakewiz1, makemaz_fakewiz2, makemaz_air, makemaz_earth, makemaz_fire, makemaz_water, makemaz_astral, makemaz_cav_strt, makemaz_cav_loca, makemaz_cav_goal, makemaz_cav_fila, makemaz_cav_filb, makemaz_hea_strt, makemaz_hea_loca, makemaz_hea_goal, makemaz_hea_fila, makemaz_hea_filb, makemaz_kni_strt, makemaz_kni_goal, makemaz_kni_loca, makemaz_kni_fila, makemaz_kni_filb, makemaz_mon_strt, makemaz_mon_loca, makemaz_mon_goal, makemaz_ran_strt, makemaz_ran_loca, makemaz_ran_goal, makemaz_ran_fila, makemaz_ran_filb, makemaz_rog_strt, makemaz_rog_loca, makemaz_rog_goal, makemaz_sam_strt, makemaz_sam_loca, makemaz_sam_goal, makemaz_sam_fila, makemaz_sam_filb, makemaz_tou_strt, makemaz_tou_loca, makemaz_tou_goal, makemaz_tou_fila, makemaz_tou_filb, makemaz_val_strt, makemaz_val_loca, makemaz_val_goal, makemaz_val_fila, makemaz_val_filb, makemaz_wiz_loca, makemaz_wiz_goal, makemaz_wiz_strt, shuffle,
          mapfrag_fromstr, mapfrag_match, selection_match, set_levltyp_lit,
          splev_map_origin, reset_xystart_size, flip_level, bigrm_get_level_extends, set_door_orientation,
+         vly_flip_updest, vly_flip_dndest,
          okdoor, bydoor, create_door, lspo_door_relative,
          is_ok_location, pm_to_humidity, LOC_DRY, splev_get_location_room,
          run_themeroom_postprocess,
@@ -3986,11 +3987,11 @@ function mtown1_teleport_region(lx, ly, hx, hy, ex1, ey1, ex2, ey2) {
 // "stair-down" region -> fixup_special() -> place_lregion()/put_lregion_here().
 // castle_place_stair_lregion() (below) already implements exactly this random
 // placement loop for castle.lua's own stair levregions; reused verbatim.
-function mtown_stair_lregion(rtype, lx, ly, hx, hy, ex1, ey1, ex2, ey2, flp) {
+function mtown_stair_lregion(rtype, lx, ly, hx, hy, ex1, ey1, ex2, ey2, flp, bounds) {
     castle_place_stair_lregion({
         rtype, lx, ly, hx, hy,
         nlx: q_absx(ex1), nly: q_absy(ey1), nhx: q_absx(ex2), nhy: q_absy(ey2),
-    }, flp);
+    }, flp, bounds);
 }
 
 // C ref: sp_lev.c create_object() override tail (2230-2296) — spe, buc (only
@@ -4083,14 +4084,7 @@ function mtown1_monster_abs(name, x, y, peaceful, levAdj) {
 
 // Entry point.  C ref: makemaz("minetn") -> load_special("minetn-1.lua").
 async function makemaz_minetown1() {
-    // C ref: mkmaze.c:1185 makemaz(s) -> check_ransacked(protofile), called
-    // BEFORE load_special() runs the level's own body.  This hand-built
-    // variant bypasses the generic makemaz(s)/load_special() dispatch
-    // entirely (mklev.js's own minetn dispatcher calls it directly only when
-    // rnd(rndlevs) picked variant 1), so the proto name check_ransacked()
-    // needs is hardcoded here to the same literal makemaz() would have built:
-    // "minetn-1".  No RNG: gr.ransacked only gates the stolen_booty() call
-    // below.
+    // This builder bypasses makemaz()'s prototype dispatch.
     check_ransacked('minetn-1');
     const g = game;
     // load_special -> load_lua -> nhlib.lua prelude `align = {...}; shuffle(align)`
@@ -4224,16 +4218,16 @@ async function makemaz_minetown1() {
                        o.xstart + o.xsize + 1, o.ystart + o.ysize + 1);
     }
 
-    // lspo_finalize_level(): link_doors_rooms, remove_boundary_syms,
-    // wallification (!corrmaze), flip_level_rnd(allow_flips=3).  No branch
-    // levregion is registered for Mine Town (the Mines branch sits on the
-    // main-dungeon side), so fixup_special() places nothing here.
+    // lspo_finalize_level(): finalize and flip before placing queued regions.
     splev_link_doors_rooms();
     remove_boundary_syms();
     wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;
     if (rn2(2)) flp |= 2;
+    const flipBounds = bigrm_get_level_extends();
+    vly_flip_updest(flp);
+    vly_flip_dndest(flp);
     if (flp) flip_level(flp);
     set_wall_state();
 
@@ -4246,17 +4240,10 @@ async function makemaz_minetown1() {
     // (from just after mtown1_teleport_region) so the rn1() draws land in
     // the same relative position as the C recorder's trace — same fix as
     // makemaz_minetown6's identical tail, below.
-    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 0, 1, 36, 17, flp);
-    mtown_stair_lregion(LR_DOWNSTAIR, 57, 3, 75, 19, 0, 1, 36, 17, flp);
+    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 0, 1, 36, 17, flp, flipBounds);
+    mtown_stair_lregion(LR_DOWNSTAIR, 57, 3, 75, 19, 0, 1, 36, 17, flp, flipBounds);
 
-    // C ref: mkmaze.c:694-695 fixup_special() — `else if (u.uz.dnum ==
-    // mines_dnum && gr.ransacked) stolen_booty();`, reached right after the
-    // stair levregions are placed and before goto_level() resolves hero
-    // arrival.  This builder never runs the shared queue-based
-    // fixup_special() (its stairs were placed directly above instead of
-    // queued), so the gate and call are reproduced here, in the same
-    // relative position, without re-running any other part of fixup_special
-    // (no branch levregion exists for Mine Town, and nothing else queued).
+    // C fixup_special(): generate the stolen loot after placing stair regions.
     if (mm_gr.ransacked) await stolen_booty();
 }
 
@@ -4395,6 +4382,7 @@ async function makemaz_minetown6() {
     let flp = 0;
     if (rn2(2)) flp |= 1;
     if (rn2(2)) flp |= 2;
+    const flipBounds = bigrm_get_level_extends();
     if (flp) flip_level(flp);
     set_wall_state();
 
@@ -4405,8 +4393,8 @@ async function makemaz_minetown6() {
     // script text declares the stairs (before the shops/altar/doors/monsters).
     // Moved here (from just after the des.map() overlay) so the two rn1()
     // draws land in the same relative position as the C recorder's trace.
-    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 1, 0, 39, 18, flp);
-    mtown_stair_lregion(LR_DOWNSTAIR, 60, 3, 75, 19, 0, 0, 38, 18, flp);
+    mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 1, 0, 39, 18, flp, flipBounds);
+    mtown_stair_lregion(LR_DOWNSTAIR, 60, 3, 75, 19, 0, 0, 38, 18, flp, flipBounds);
 }
 
 
@@ -5783,15 +5771,11 @@ function castle_place_lregions() {
 
 // C ref: mkmaze.c place_lregion() + put_lregion_here() for LR_UPSTAIR — the
 // probabilistic loop draws rn1((hx-lx)+1, lx) / rn1((hy-ly)+1, ly) per attempt.
-function castle_place_stair_lregion(r, flp = 0) {
-    // C's flip_level() transforms every pending levregion, including both its
-    // candidate and exclusion rectangles, before fixup_special() calls
-    // place_lregion().  Mine Town's regions are still represented as literals
-    // here, so transform a local copy after the map flip rather than searching
-    // the stale, pre-flip rectangle.
+function castle_place_stair_lregion(r, flp = 0, bounds) {
+    // C transforms pending regions using the pre-flip map extents.
     let placed = r;
     if (flp & 3) {
-        const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+        const { minx, maxx, miny, maxy } = bounds;
         const flipX = (x) => minx + maxx - x;
         const flipY = (y) => miny + maxy - y;
         let { lx, ly, hx, hy, nlx, nly, nhx, nhy } = r;

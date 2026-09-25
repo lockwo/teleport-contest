@@ -1681,41 +1681,22 @@ export function drop_to(cc, loc, x, y) {
     }
 }
 
-// C ref: dokick.c:1854 deliver_obj_to_mon(mtmp, cnt, deliverflags) — hand
-// species-targeted migrating objects (Orctown stolen booty) to a monster of
-// the matching kind.  Called synchronously from makemon.js right after a new
-// monster's starting inventory is set up ("in case of waiting items", C
-// makemon.c:1469-1470) and from a migrating orc leader's level arrival
-// (MIGR_LEFTOVERS, C dog.c:576-579).  Synchronous like its C original: no
-// await, so no other RNG can interleave mid-scan.
-//
-// Species test: C tests `(mtmp->data->mflags2 & DELIVER_PM) ==
-// (unsigned) otmp->migr_species` — EQUALITY of the masked value, not a
-// nonzero-overlap test, so a monster whose mflags2 carries more than one
-// DELIVER_PM bit only matches an object whose migr_species is exactly that
-// combination.
+// C dokick.c:1854: transfer matching species-targeted loot in chain order.
 export function deliver_obj_to_mon(mtmp, cnt, deliverflags) {
     const list = game.migrating_objs;
-    if (!Array.isArray(list) || !list.length) return;
 
     const at_crime_scene = In_mines();
     let maxobj;
     if ((deliverflags & DF_RANDOM) && cnt > 1) maxobj = rnd(cnt);
     else if (deliverflags & DF_ALL) maxobj = 0;
     else maxobj = 1;
+    if (!list?.length) return;
 
     const DELIVER_PM = M2_UNDEAD | M2_WERE | M2_HUMAN | M2_ELF | M2_DWARF
                         | M2_GNOME | M2_ORC | M2_DEMON | M2_GIANT;
 
     let delivered = 0;
-    // C's gm.migrating_objs is a singly-linked chain that add_to_migration()
-    // (mkobj.js) PREPENDS to, so head-to-tail traversal visits the
-    // most-recently-added object first.  This port's array is append-order
-    // (the same function pushes), so that identical newest-first order is
-    // this array read back-to-front.  Reversed only in this loop, not by
-    // changing add_to_migration's storage — every other reader of
-    // game.migrating_objs (save/restore, sanity scans, the plain arrival
-    // splice in dog.js) is order-agnostic and stays untouched.
+    // Migration arrays are oldest-first, unlike C's prepended object chain.
     for (let i = list.length - 1; i >= 0; i--) {
         const otmp = list[i];
         const where = (otmp.owornmask || 0) & 0x7fff;
@@ -1751,15 +1732,7 @@ export function deliver_obj_to_mon(mtmp, cnt, deliverflags) {
         }
     }
 }
-// Exposed through gstate.js's `hooks` registry (not a direct import) for
-// makemon.js's caller: dokick.js already imports makemon.js (mpickobj/
-// makemon/monster_by_pmidx/name_to_pmidx/enexto_spawn), so a reverse static
-// import here would be a genuine two-way cycle — unlike the hoisted-
-// function-declaration cycles elsewhere in this codebase, one direction of
-// this pair would run makemon.js's top-level module body only partway before
-// handing control back to dokick.js, tripping makemon.js's own TDZ'd
-// top-level consts.  See js/display.js's hooks.newsym / js/monmove.js's
-// hooks.set_apparxy for the established precedent.
+// Avoid a dokick/makemon module-initialization cycle.
 hooks.deliver_obj_to_mon = deliver_obj_to_mon;
 
 // C ref: dokick.c container_impact_dmg(obj, x, y) — a container is kicked,
