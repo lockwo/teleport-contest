@@ -8,7 +8,7 @@
 // dokick()'s pre-direction refusals matter for a different reason: C returns
 // ECMD_FAIL *before* getdir(), so the direction key becomes the next command.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
 import { pline, newsym, m_at, topl_more, unmap_object, y_n, update_topl } from './display.js';
 import { Blind, couldsee, cansee, recalc_block_point, unblock_point } from './vision.js';
@@ -23,6 +23,8 @@ import {
     isok, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES, SLT_ENCUMBER, SHOPBASE,
     TT_PIT, TT_WEB, TT_BEARTRAP, TRAPDOOR, HOLE,
     MIGR_NOWHERE, MIGR_RANDOM, MIGR_STAIRS_UP, MIGR_LADDER_UP, MIGR_SSTAIRS,
+    MIGR_TO_SPECIES, NON_PM, OBJ_FREE, DF_RANDOM, DF_ALL, In_mines,
+    has_oname, ONAME, has_mgivenname,
     In_endgame, Is_stronghold, Is_botlevel,
     MM_ANGRY, MM_NOMSG, MM_MALE, MM_FEMALE, ER_NOTHING,
     AM_MASK, Amask2align, W_ARMF,
@@ -33,7 +35,7 @@ import { KICKING_BOOTS, BOULDER, ROCK, DILITHIUM_CRYSTAL, LUCKSTONE,
          RING_CLASS, GEM_CLASS, EGG, BAG_OF_HOLDING, BAG_OF_TRICKS,
          COIN_CLASS, CORPSE, LARGE_BOX, CHEST, ICE_BOX, place_object, next_ident,
          mkgold, mksobj_at, mkobj_at, rnd_class, objects, weight } from './mkobj.js';
-import { makemon, monster_by_pmidx, name_to_pmidx, enexto_spawn } from './makemon.js';
+import { makemon, monster_by_pmidx, name_to_pmidx, enexto_spawn, mpickobj } from './makemon.js';
 import { in_rooms, shop_keeper } from './shkroom.js';
 import { water_damage, set_wounded_legs, t_at } from './trap.js';
 import { near_capacity, sobj_at, useup, body_part, inv_weight, makeplural,
@@ -44,7 +46,8 @@ import { surface, hliquid, dunlevs_in_dungeon, Is_special } from './dungeon.js';
 import { attacktype, AT_ENGL } from './monattk_data.js';
 import { nolimbs, nohands, mflags1_of, M1_SLITHY, humanoid,
          M1_THICK_HIDE, M1_NOEYES, M1_FLY, M1_TPORT,
-         is_neuter_flag } from './monflags_data.js';
+         is_neuter_flag, mflags2_of, M2_UNDEAD, M2_WERE, M2_HUMAN, M2_ELF,
+         M2_DWARF, M2_GNOME, M2_ORC, M2_DEMON, M2_GIANT } from './monflags_data.js';
 import { canspotmon, Monnam, mon_nam, setmangry, killed, monflee,
          attack_checks, overexertion, passive, check_caitiff, abuse_dog,
          seemimicLocal as seemimic, glyph_is_invisible } from './uhitm.js';
@@ -55,7 +58,7 @@ import { goodpos, rloc_to } from './teleport.js';
 import { m_in_out_region } from './region.js';
 import { set_apparxy, noteleport_level, impact_disturbs_zombies } from './monmove.js';
 import { AT_KICK } from './monattk_data.js';
-import { a_monnam } from './do_name.js';
+import { a_monnam, free_oname, christen_orc } from './do_name.js';
 import { wipe_engr_at } from './engrave.js';
 import { getdir, wake_nearby, wake_nearto, b_trapped } from './cmd.js';
 import { goto_level } from './do.js';
@@ -1677,6 +1680,87 @@ export function drop_to(cc, loc, x, y) {
         break;
     }
 }
+
+// C ref: dokick.c:1854 deliver_obj_to_mon(mtmp, cnt, deliverflags) — hand
+// species-targeted migrating objects (Orctown stolen booty) to a monster of
+// the matching kind.  Called synchronously from makemon.js right after a new
+// monster's starting inventory is set up ("in case of waiting items", C
+// makemon.c:1469-1470) and from a migrating orc leader's level arrival
+// (MIGR_LEFTOVERS, C dog.c:576-579).  Synchronous like its C original: no
+// await, so no other RNG can interleave mid-scan.
+//
+// Species test: C tests `(mtmp->data->mflags2 & DELIVER_PM) ==
+// (unsigned) otmp->migr_species` — EQUALITY of the masked value, not a
+// nonzero-overlap test, so a monster whose mflags2 carries more than one
+// DELIVER_PM bit only matches an object whose migr_species is exactly that
+// combination.
+export function deliver_obj_to_mon(mtmp, cnt, deliverflags) {
+    const list = game.migrating_objs;
+    if (!Array.isArray(list) || !list.length) return;
+
+    const at_crime_scene = In_mines();
+    let maxobj;
+    if ((deliverflags & DF_RANDOM) && cnt > 1) maxobj = rnd(cnt);
+    else if (deliverflags & DF_ALL) maxobj = 0;
+    else maxobj = 1;
+
+    const DELIVER_PM = M2_UNDEAD | M2_WERE | M2_HUMAN | M2_ELF | M2_DWARF
+                        | M2_GNOME | M2_ORC | M2_DEMON | M2_GIANT;
+
+    let delivered = 0;
+    // C's gm.migrating_objs is a singly-linked chain that add_to_migration()
+    // (mkobj.js) PREPENDS to, so head-to-tail traversal visits the
+    // most-recently-added object first.  This port's array is append-order
+    // (the same function pushes), so that identical newest-first order is
+    // this array read back-to-front.  Reversed only in this loop, not by
+    // changing add_to_migration's storage — every other reader of
+    // game.migrating_objs (save/restore, sanity scans, the plain arrival
+    // splice in dog.js) is order-agnostic and stays untouched.
+    for (let i = list.length - 1; i >= 0; i--) {
+        const otmp = list[i];
+        const where = (otmp.owornmask || 0) & 0x7fff;
+        if ((where & MIGR_TO_SPECIES) === 0) continue;
+
+        if (otmp.migr_species != null && otmp.migr_species !== NON_PM
+            && (mflags2_of(mtmp.data) & DELIVER_PM) === otmp.migr_species) {
+            list.splice(i, 1);
+            otmp.where = OBJ_FREE;
+            otmp.owornmask = 0;
+            otmp.ox = 0;
+            otmp.oy = 0;
+
+            /* special treatment for orcs and their kind */
+            if ((otmp.migr_species & M2_ORC) !== 0 && has_oname(otmp)) {
+                if (!has_mgivenname(mtmp)) {
+                    if (at_crime_scene || !rn2(2)) {
+                        mtmp = christen_orc(mtmp,
+                            at_crime_scene ? ONAME(otmp) : null,
+                            /* bought the stolen goods */
+                            ' the Fence');
+                    }
+                }
+                free_oname(otmp);
+            }
+            otmp.migr_species = NON_PM;
+            otmp.omigr_from_dnum = 0;
+            otmp.omigr_from_dlevel = 0;
+            mpickobj(mtmp, otmp);
+            delivered++;
+            if (maxobj && delivered >= maxobj) break;
+            /* getting here implies DF_ALL */
+        }
+    }
+}
+// Exposed through gstate.js's `hooks` registry (not a direct import) for
+// makemon.js's caller: dokick.js already imports makemon.js (mpickobj/
+// makemon/monster_by_pmidx/name_to_pmidx/enexto_spawn), so a reverse static
+// import here would be a genuine two-way cycle — unlike the hoisted-
+// function-declaration cycles elsewhere in this codebase, one direction of
+// this pair would run makemon.js's top-level module body only partway before
+// handing control back to dokick.js, tripping makemon.js's own TDZ'd
+// top-level consts.  See js/display.js's hooks.newsym / js/monmove.js's
+// hooks.set_apparxy for the established precedent.
+hooks.deliver_obj_to_mon = deliver_obj_to_mon;
 
 // C ref: dokick.c container_impact_dmg(obj, x, y) — a container is kicked,
 // dropped, thrown or otherwise impacted; glass contents shatter and eggs crack.

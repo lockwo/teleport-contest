@@ -15,7 +15,7 @@ import {
     OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT,
     OBJ_MIGRATING, OBJ_BURIED, OBJ_ONBILL, OBJ_LUAFREE, OBJ_DELETED,
     ICE, DRAWBRIDGE_UP, DB_UNDER, DB_ICE, MAX_OIL_IN_FLASK,
-    COLNO, ROWNO, LUCKADD,
+    COLNO, ROWNO, LUCKADD, MIGR_TO_SPECIES,
     ONAME, has_oname, OMONST, Has_contents, ismnum, isok,
 } from './const.js';
 import {
@@ -2820,11 +2820,19 @@ export function add_to_buried(obj) {
 
 // C ref: mkobj.c mksobj_migr_to_species(otyp, mflags2, init, artif) — extra
 // orctown loot, created straight onto the migration list with the destination
-// encoded in the overloaded owornmask field.  MIGR_TO_SPECIES == 10 (dungeon.h).
+// encoded in the overloaded owornmask field.
+//
+// C aliases migr_species onto obj->corpsenm (obj.h:164 `#define migr_species
+// corpsenm`) since it is the same storage.  This port keeps corpsenm as its
+// own field (used for corpse/statue/egg/tin species, novel index, glob type,
+// ...); migr_species is a distinct property and dokick.js's
+// deliver_obj_to_mon() reads migr_species (never corpsenm) for both the
+// species-match test and the "orc kind" special-naming test, so the two
+// fields never need to be kept in sync.
 export function mksobj_migr_to_species(otyp, mflags2, init, artif) {
     const otmp = mksobj(otyp, init, artif);
     add_to_migration(otmp);
-    otmp.owornmask = 10;                       /* MIGR_TO_SPECIES */
+    otmp.owornmask = MIGR_TO_SPECIES;
     otmp.migr_species = mflags2;
     return otmp;
 }

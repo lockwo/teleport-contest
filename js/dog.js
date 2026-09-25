@@ -4,9 +4,10 @@
 import { game } from './gstate.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
-import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED } from './const.js';
+import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
 import { set_malign } from './makemon.js';
+import { deliver_obj_to_mon } from './dokick.js';
 
 // C ref: include/onames.h — SADDLE object type index (mkobj.js OBJECTS table
 // row [235, "SADDLE", ...]).  A saddle is a TOOL_CLASS object whose
@@ -1094,10 +1095,11 @@ export async function mon_arrive(mtmp, when) {
         xlocale = ylocale = 0;
 
     if (((mtmp.migflags || 0) & MIGR_LEFTOVERS) !== 0) {
-        /* Pick up the rest of the MIGR_TO_SPECIES objects */
-        /* C ref: mkobj.c deliver_obj_to_mon(mtmp, 0, DF_ALL) — UNPORTED, so
-           the leftover delivery is skipped rather than mis-ordered. */
-        void 0;
+        /* Pick up the rest of the MIGR_TO_SPECIES objects.
+           C ref: dog.c:576-579 deliver_obj_to_mon(mtmp, 0, DF_ALL) — the
+           gm.migrating_objs null-check is folded into deliver_obj_to_mon
+           itself, which no-ops on an empty/missing list. */
+        deliver_obj_to_mon(mtmp, 0, DF_ALL);
     }
 
     if (xlocale && wander) {
