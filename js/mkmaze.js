@@ -800,7 +800,8 @@ import { is_orc_flag as mm_is_orc } from './monflags_data.js';
 import { makemon as mm_makemon, set_malign as mm_set_malign,
          monster_by_pmidx as mm_monster_by_pm,
          name_to_pmidx as mm_name_to_pmidx,
-         level_difficulty_ext as mm_level_difficulty } from './makemon.js';
+         level_difficulty_ext as mm_level_difficulty,
+         mpickobj as mm_mpickobj } from './makemon.js';
 import {
     objects as MM_OBJECTS, mksobj as mm_mksobj, mkobj as mm_mkobj,
     mkobj_at as mm_mkobj_at, mksobj_at as mm_mksobj_at, mkgold as mm_mkgold,
@@ -937,23 +938,20 @@ export async function migrate_orc(mtmp, mflags) {
     await migrate_to_level(mtmp, ledger_no, MIGR_RANDOM, null);
 }
 
-// C ref: mon.c add_to_minv(mon, obj) — prepend to the monster's minvent chain.
-// js/vault.js:184 and js/shk.js:3084 already carry private copies; the right
-// fix is to export ONE of them, so this local is deliberately a different name
-// and only exists so the two mkmaze callers below can be written out in full.
-function mm_add_to_minv(mon, obj) {
-    if (!mon.minvent) mon.minvent = [];
-    obj.where = 'minvent';
-    obj.ocarry = mon;
-    mon.minvent.unshift(obj);
-    return obj;
-}
+// C ref: mkobj.c:2648 add_to_minv(mon, obj) — prepend to the monster's
+// minvent chain, merging with an existing stack first when possible.
+// js/makemon.js:1446 mpickobj() is this project's one accepted copy of that
+// (documented there as intentionally merge-less, "no RNG" — the same
+// simplification every other m_initinv() gift in that file already uses,
+// including this very species' M2_GREEDY starting gold via likes_gold_flag).
+// Reused here rather than forking a third private no-merge copy alongside
+// js/vault.js:184 and js/shk.js:3084.
 
 // C ref: mkmaze.c:748 shiny_orc_stuff(mtmp) — the loot each member of the gang
 // carries off.  Draw order is fixed: the gold gate, then the gold quantity,
 // then the gem gate, then (captain OR 1-in-8) the ring.  An orc captain is
 // twice as likely to have gold and gets the ring unconditionally.
-export function shiny_orc_stuff(mtmp) {
+export async function shiny_orc_stuff(mtmp) {
     const is_captain = (mtmp.data?.name === 'orc-captain'
                         || mtmp.mnum === MM_PM_ORC_CAPTAIN);
     /* probabilities */
@@ -965,38 +963,46 @@ export function shiny_orc_stuff(mtmp) {
         if (otmp) {
             otmp.quan = 1 + rnd(goldprob);                // mkmaze.c:759
             otmp.owt = mm_weight(otmp);
-            mm_add_to_minv(mtmp, otmp);
+            mm_mpickobj(mtmp, otmp);
         }
     }
     if (rn2(1000) < gemprob) {                            // mkmaze.c:764
         const otmp = mm_mkobj(MM_GEM_CLASS, false);
         if (otmp) {
             if (otmp.otyp === MM_ROCK) mm_dealloc_obj(otmp);
-            else mm_add_to_minv(mtmp, otmp);
+            else mm_mpickobj(mtmp, otmp);
         }
     }
     if (is_captain || !rn2(8)) {                          // mkmaze.c:771
-        const otyp = mm_shiny_obj(MM_RING_CLASS);
+        const otyp = await mm_shiny_obj(MM_RING_CLASS);
         let otmp;
         if (otyp !== MM_STRANGE_OBJECT && (otmp = mm_mksobj(otyp, true, false)))
-            mm_add_to_minv(mtmp, otmp);
+            mm_mpickobj(mtmp, otmp);
     }
 }
 
-// C ref: objnam.c shiny_obj(oclass) — js/objnam.js exports the real one, but
-// objnam.js is not in this file's static graph (it pulls in shk.js/makemon.js),
-// so the one call site resolves it lazily.  Kept synchronous by caching.
-let mm_shiny_ring = null;
-function mm_shiny_obj(oclass) {
-    if (oclass === MM_RING_CLASS && mm_shiny_ring != null) return mm_shiny_ring;
-    // C ref: objnam.c shiny_obj() — RING_CLASS answers the first gold ring in
-    // objects[], i.e. "ring of adornment"'s material==GOLD sibling; resolving
-    // it by material keeps this out of objnam.js's import closure.
-    const i = MM_OBJECTS.findIndex((o) => o.oc_class === oclass
-                                   && /gold/i.test(String(o.material ?? '')));
-    const res = i >= 0 ? i : MM_STRANGE_OBJECT;
-    if (oclass === MM_RING_CLASS) mm_shiny_ring = res;
-    return res;
+// C ref: objnam.c:3532 shiny_obj(oclass) — js/objnam.js:441 exports the real
+// `rnd_otyp_by_namedesc("shiny", oclass, 0)`: the candidate set is whichever
+// objects of `oclass` got the shuffled "shiny" APPEARANCE this session (rings
+// reuse the same shuffle-per-game unidentified-description machinery as
+// wands/potions), weighted by oc_prob, drawing one rn2(maxprob).  objnam.js is
+// not in this file's static graph (it pulls in shk.js/makemon.js itself), so
+// the export is resolved lazily via dynamic import, matching every other
+// cross-module call in this file (do_name.js, options.js, dog.js, ...).
+//
+// The prior local matched objects[] by a `/gold/i` MATERIAL regex — wrong
+// candidate set entirely (material, not the shuffled name/description
+// "shiny" match C performs) — and cached the RESOLVED OTYP across the whole
+// process lifetime, so every Orctown generated after the first got the same
+// ring type with zero RNG draws.  Caching only the resolved FUNCTION
+// reference is safe (a dynamic import of the same module always returns the
+// same singleton) while every call still runs the real function's own
+// rn2(maxprob) draw.
+let mm_real_shiny_obj = null;
+async function mm_shiny_obj(oclass) {
+    if (!mm_real_shiny_obj)
+        ({ shiny_obj: mm_real_shiny_obj } = await import('./objnam.js'));
+    return mm_real_shiny_obj(oclass);
 }
 
 // C ref: mkmaze.c:780 migr_booty_item(otyp, gang) — one object destined for
@@ -1034,7 +1040,7 @@ export async function migr_booty_item(otyp, gang) {
 // members each with a species roll + shiny_orc_stuff() + migrate_orc().
 export async function stolen_booty() {
     const { rndorcname, christen_monst, christen_orc } = await import('./do_name.js');
-    const { DEADMONSTER, monsterList } = await import('./mon.js');
+    const { DEADMONSTER, fmonOrder } = await import('./mon.js');
 
     let cnt, i, otyp, mtmp;
 
@@ -1072,16 +1078,15 @@ export async function stolen_booty() {
         mtmp = christen_monst(mtmp, mm_upstart(gang));
         mtmp.mpeaceful = 0;
         mm_set_malign(mtmp);
-        shiny_orc_stuff(mtmp);
+        await shiny_orc_stuff(mtmp);
         await migrate_orc(mtmp, ORC_LEADER);
     }
 
     /* Make most of the orcs on the level be part of the invading gang */
-    // C walks the fmon chain, which makemon() prepends to, so this is the
-    // newest-first order js/mon.js:183 fmonOrder() reproduces.
-    const chain = monsterList();
-    for (let k = chain.length - 1; k >= 0; k--) {
-        mtmp = chain[k];
+    // C walks the fmon chain, which makemon() prepends to; js/mon.js:183
+    // fmonOrder() is the project's one canonical newest-first traversal,
+    // reused here instead of a private manual chain.reverse().
+    for (mtmp of fmonOrder()) {
         if (DEADMONSTER(mtmp)) continue;
 
         if (mm_is_orc(mtmp.data) && !mm_has_mgivenname(mtmp) && rn2(10)) {
@@ -1108,7 +1113,7 @@ export async function stolen_booty() {
         const mtyp = rn2((MM_PM_ORC_SHAMAN - MM_PM_ORC) + 1) + MM_PM_ORC;
         mtmp = mm_makemon(mm_monster_by_pm(mtyp), 0, 0, MM_NONAME);
         if (mtmp) {
-            shiny_orc_stuff(mtmp);
+            await shiny_orc_stuff(mtmp);
             await migrate_orc(mtmp, 0);
         }
     }

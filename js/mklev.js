@@ -22,7 +22,8 @@ import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_r
          ensure_way_out,
          bigrm_get_location_dry, lspo_replace_terrain, bigrm_load_map,
          SET_LIT_NOCHANGE } from './sp_lev.js';
-import { create_maze, walkfrom, mz, reset_maze_bounds, mkportal, makemaz } from './mkmaze.js';
+import { create_maze, walkfrom, mz, reset_maze_bounds, mkportal, makemaz,
+         check_ransacked, stolen_booty, gr as mm_gr } from './mkmaze.js';
 import {
     selection_new, selection_clone, selection_clear, selection_setpoint,
     selection_getpoint, selection_getbounds, selection_iterate,
@@ -4082,6 +4083,15 @@ function mtown1_monster_abs(name, x, y, peaceful, levAdj) {
 
 // Entry point.  C ref: makemaz("minetn") -> load_special("minetn-1.lua").
 async function makemaz_minetown1() {
+    // C ref: mkmaze.c:1185 makemaz(s) -> check_ransacked(protofile), called
+    // BEFORE load_special() runs the level's own body.  This hand-built
+    // variant bypasses the generic makemaz(s)/load_special() dispatch
+    // entirely (mklev.js's own minetn dispatcher calls it directly only when
+    // rnd(rndlevs) picked variant 1), so the proto name check_ransacked()
+    // needs is hardcoded here to the same literal makemaz() would have built:
+    // "minetn-1".  No RNG: gr.ransacked only gates the stolen_booty() call
+    // below.
+    check_ransacked('minetn-1');
     const g = game;
     // load_special -> load_lua -> nhlib.lua prelude `align = {...}; shuffle(align)`
     // runs before every minetn-<N>.lua body executes, including this one.
@@ -4238,6 +4248,16 @@ async function makemaz_minetown1() {
     // makemaz_minetown6's identical tail, below.
     mtown_stair_lregion(LR_UPSTAIR, 1, 3, 21, 19, 0, 1, 36, 17, flp);
     mtown_stair_lregion(LR_DOWNSTAIR, 57, 3, 75, 19, 0, 1, 36, 17, flp);
+
+    // C ref: mkmaze.c:694-695 fixup_special() — `else if (u.uz.dnum ==
+    // mines_dnum && gr.ransacked) stolen_booty();`, reached right after the
+    // stair levregions are placed and before goto_level() resolves hero
+    // arrival.  This builder never runs the shared queue-based
+    // fixup_special() (its stairs were placed directly above instead of
+    // queued), so the gate and call are reproduced here, in the same
+    // relative position, without re-running any other part of fixup_special
+    // (no branch levregion exists for Mine Town, and nothing else queued).
+    if (mm_gr.ransacked) await stolen_booty();
 }
 
 // ============================================================
