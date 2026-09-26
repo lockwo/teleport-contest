@@ -8,7 +8,7 @@ import { depth as depth_of_level } from './hacklib.js';
 import { builds_up, In_hell, Is_special, level_difficulty_c } from './dungeon.js';
 import { roles } from './role.js';
 import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
-         rnd_class, objects,
+         rnd_class, objects, set_corpsenm, add_to_container,
          // Both spellings are imported on purpose: the pre-existing call sites
          // use the *_OTYP aliases while m_initinv_full() (ported later) uses the
          // plain names.  ESM allows binding one export to two local names.
@@ -2342,10 +2342,11 @@ function m_initinv_full(mtmp) {
             const catcorpse = mksobj(265 /*CORPSE*/, true, false);
             if (box && catcorpse) {
                 box.spe = 1;            /* flag for special SchroedingersBox */
-                catcorpse.corpsenm = 16 /*PM_HOUSECAT*/;
-                if (!box.cobj) box.cobj = [];
-                box.cobj.push(catcorpse);
-                catcorpse.where = 'contained';
+                set_corpsenm(catcorpse, 16 /*PM_HOUSECAT*/);
+                // The unobserved cat does not rot inside Schroedinger's box.
+                catcorpse.timed = false;
+                delete catcorpse.timer;
+                add_to_container(box, catcorpse);
                 box.owt = weight(box);
             }
             if (box) { mtmp._hasinv = true; mpickobj(mtmp, box); }
