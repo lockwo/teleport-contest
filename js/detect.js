@@ -20,7 +20,7 @@ import { rnd } from './rng.js';
 // Additional imports used only by the translated block at the end of this file.
 import { m_at, docrt, cls, covers_objects, map_invisible, unmap_object,
          terrain_glyph, see_monsters, update_topl, flush_screen,
-         Hallucination_u, impossible } from './display.js';
+         Hallucination_u, impossible, warning_of, display_nhwindow_message } from './display.js';
 import { Blind, cansee, unblock_point, clear_area_cells } from './vision.js';
 import { TER_DETECT, TER_MAP, TER_TRP, TER_OBJ, TER_MON, TER_FULL, SVALL,
          COULD_SEE, IN_SIGHT, I_SPECIAL, isok, IS_DOOR, ROOM,
@@ -1489,7 +1489,7 @@ export function detecting(func) {
 
 // C ref: detect.c:2107 warnreveal() — a warned-of monster adjacent to the hero
 // stops being mundetected.
-export function warnreveal() {
+export async function warnreveal() {
     const u = game.u;
     if (!u) return;
     for (let x = u.ux - 1; x <= u.ux + 1; x++)
@@ -1497,7 +1497,7 @@ export function warnreveal() {
             if (!isok(x, y) || d_u_at(x, y)) continue;
             const mtmp = m_at(x, y);
             if (mtmp && warning_of(mtmp) && mtmp.mundetected)
-                mfind0(mtmp, 1);                    /* via_warning */
+                await mfind0(mtmp, true);
         }
 }
 
@@ -1766,22 +1766,43 @@ function glyph_ttychar(glyph) {
     return ' ';
 }
 
-// C ref: monmove.c warning_of(mtmp) — MATCH_WARN_OF_MON: the hero is warned of
-// this monster's kind.  js/display.js have_warning() models only the
-// role-granted intrinsic and there is no warntype state, so this is FALSE.
-function warning_of(_mtmp) { return false; }
+// C ref: detect.c mfind0() — searching and warning share the same reveal.
+export async function mfind0(mtmp, via_warning) {
+    if (via_warning && !warning_of(mtmp)) return -1;
+    const { canspotmon, seemimicLocal, x_monnam } = await import('./uhitm.js');
+    const { sensemon } = await import('./mon.js');
+    const { is_hider_flag, hides_under_flag } = await import('./monflags_data.js');
+    const x = mtmp.mx, y = mtmp.my;
+    let found_something;
 
-// C ref: detect.c:1964 mfind0(mtmp, via_warning) — reveal a hidden monster
-// found by searching or by warning.  js/detect.js does not carry dosearch0()
-// yet, so only the via_warning path warnreveal() needs is spelled out.
-function mfind0(mtmp, via_warning) {
-    if (via_warning) {
-        // C: "You feel a presence" / map_invisible for a warned-of monster the
-        // hero cannot actually see.
-        map_invisible(mtmp.mx, mtmp.my);
-        return -1;
+    if (mtmp.m_ap_type) {
+        seemimicLocal(mtmp);
+        found_something = true;
+    } else {
+        found_something = !canspotmon(mtmp);
+        if (mtmp.mundetected
+            && (is_hider_flag(mtmp.data) || hides_under_flag(mtmp.data)
+                || mtmp.data?.mcls === 57 /* S_EEL */)) {
+            if (via_warning && found_something) {
+                await update_topl(`Your danger sense causes you to take a second ${
+                    Blind() ? 'to check nearby' : 'look close by'}.`);
+                await display_nhwindow_message();
+            }
+            mtmp.mundetected = 0;
+            found_something = true;
+        }
+        newsym(x, y);
     }
-    mtmp.mundetected = 0;
-    newsym(mtmp.mx, mtmp.my);
+
+    if (!found_something) return 0;
+    if (!canspotmon(mtmp) && game.level?.at(x, y)?.invisMon) return -1;
+    exercise(A_WIS, true);
+    if (!canspotmon(mtmp)) {
+        map_invisible(x, y);
+        await pline('You feel an unseen monster!');
+    } else if (!sensemon(mtmp)) {
+        const article = mtmp.mtame ? 3 /* ARTICLE_YOUR */ : 2 /* ARTICLE_A */;
+        await pline(`You find ${x_monnam(mtmp, article, null, 0, false)}.`);
+    }
     return 1;
 }

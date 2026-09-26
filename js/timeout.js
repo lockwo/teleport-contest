@@ -27,7 +27,7 @@ import { exercise } from './attrib.js';
 import { A_CON } from './const.js';
 import { nomul, stop_occupation } from './hack.js';
 import { run_object_timers } from './mkobj.js';
-import { update_topl } from './display.js';
+import { update_topl, see_monsters } from './display.js';
 import { Unaware } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { t_at } from './trap.js';
@@ -347,6 +347,14 @@ const TIMED_PROPS = [
       get: (u) => u.HFumbling || 0,
       set: (u, v) => { u.HFumbling = v; },
       expire: expire_fumbling },
+    { name: 'DETECT_MONSTERS',
+      get: (u) => (u.uprops?.HDetect_monsters | 0) & TIMEOUT,
+      set: (u, v) => {
+          const flags = (u.uprops?.HDetect_monsters | 0) & ~TIMEOUT;
+          u.uprops.HDetect_monsters = flags | (v & TIMEOUT);
+      },
+      // C ref: timeout.c:932 — erase monsters revealed only by detection.
+      expire: async () => { see_monsters(); } },
     // prop.h LEVITATION = 48.  get/set mask to the TIMEOUT (count) bits and
     // splice them back next to whatever flag bits (I_SPECIAL) potion.js OR'd
     // in, mirroring C's `--upp->intrinsic & TIMEOUT` on the packed int — a

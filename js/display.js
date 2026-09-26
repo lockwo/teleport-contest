@@ -367,17 +367,17 @@ export function m_at(x, y) {
 // furniture, or stock_room's chest-mimics) renders as its disguise, not its
 // own class letter — exactly like C's display.c mon_to_glyph / map_object,
 // which calls obj_to_glyph(mappearance) / cmap_to_glyph(mappearance).
-function monster_glyph(mon) {
+function monster_glyph(mon, reveal = false) {
     if (!mon) return null;
     // C ref: display.c display_monster — the whole function funnels through
     // what_mon()/map_object(), so while Hallucination the species (and, for an
     // M_AP_OBJECT mimic, the fake object) is re-rolled off the display rng on
     // EVERY draw.  One draw per rendered monster, in newsym()'s call order.
     if (Hallucination_u()) {
-        return (mon.m_ap_type === 'obj' && mon.mappearance != null)
+        return (!reveal && mon.m_ap_type === 'obj' && mon.mappearance != null)
             ? random_obj_glyph() : halluc_mon_glyph();
     }
-    if (mon.m_ap_type === 'obj' && mon.mappearance != null) {
+    if (!reveal && mon.m_ap_type === 'obj' && mon.mappearance != null) {
         // Appear as an object: same glyph the floor object would draw.  C ref:
         // display.c map_object/obj_to_glyph(mappearance) for an M_AP_OBJECT mon.
         //
@@ -1084,6 +1084,7 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     const loc = game.level?.at(x, y);
     if (!loc) return;
     loc.disp_ch = ch;
+    loc.disp_warning = false;
     loc.disp_color = has_color_or_default(color);
     loc.disp_decgfx = !!decgfx;
     loc.disp_attr = attr | 0;
@@ -1487,6 +1488,7 @@ function display_warning(mon, x, y) {
         : ((tmp > WARNCOUNT - 1) ? WARNCOUNT - 1 : tmp);
     const sym = WARNSYMS[wl];
     show_glyph_cell(x, y, sym.ch, sym.color, false);
+    game.level.at(x, y).disp_warning = true;
 }
 
 // C ref: display.h canspotself() — canseeself() || senseself(), where
@@ -1668,6 +1670,9 @@ export function _set_can_reach_floor(fn) { _crf = fn; }
 export function newsym(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return;
+    const u = game.u || {}, props = u.uprops || {};
+    const detect_monsters = !!(props.Detect_monsters || props.HDetect_monsters
+        || props.EDetect_monsters || u.HDetect_monsters || u.EDetect_monsters);
 
     // C ref: display.c newsym():"only permit updating the hero when swallowed".
     // Everything else on the map is frozen behind the stomach view, so a pet
@@ -1774,12 +1779,14 @@ export function newsym(x, y) {
         // every one of its tail squares, and only the coordinate comparison
         // tells the two apart.
         const worm_tail = !!mon && (x !== mon.mx || y !== mon.my);
+        const see_it = mon && (mon_visible(mon) || (!worm_tail && tp_sensemon(mon)));
+        const detected = mon && !worm_tail && detect_monsters;
         // C ref: display.c newsym:1015 — "if monster is in a physical trap, you
         // see trap too".  Runs BEFORE _map_location, so the trap this reveals is
         // what the square is remembered as once the monster steps off.  Purely
         // RNG-free state, but a remembered trap changes what unmap_object() and
         // every later redraw draw here.
-        if (mon && mon_visible(mon) && mon.mtrapped) {
+        if (mon && (see_it || detected) && mon.mtrapped) {
             const mtrap = game.level?.traps?.find((t) => t.tx === x && t.ty === y);
             const tt = mtrap ? mtrap.ttyp : 0;
             if (tt === BEAR_TRAP || tt === PIT || tt === SPIKED_PIT || tt === WEB)
@@ -1811,7 +1818,7 @@ export function newsym(x, y) {
         // || (!worm_tail && (tp_sensemon(mon) || MATCH_WARN_OF_MON(mon))))`;
         // a telepathically sensed monster shows even on a square whose own
         // occupant the hero cannot make out (invisible, hiding).
-        if (mon && (mon_visible(mon) || (!worm_tail && tp_sensemon(mon)))) {
+        if (see_it || detected) {
             // Remember the background (not the monster — monsters move).
             const bg = background_glyph(loc, x, y);   // _map_location(x, y, FALSE)
             if (game.level?.flags?.hero_memory) {
@@ -1822,8 +1829,8 @@ export function newsym(x, y) {
             loc.invisMon = false;
             // C ref: display.c display_monster()'s worm_tail arm — a tail
             // square draws PM_LONG_WORM_TAIL, never the worm's own letter.
-            const mg = (worm_tail && !Hallucination_u())
-                ? worm_tail_glyph() : monster_glyph(mon);
+            let mg = (worm_tail && !Hallucination_u())
+                ? worm_tail_glyph() : monster_glyph(mon, detected && !see_it);
             // C ref: display.c:531 display_monster() — "We must do the mimic
             // check first.  If the mimic is mimicking something, and the
             // location is in sight, we have to change the hero's memory so that
@@ -1833,7 +1840,7 @@ export function newsym(x, y) {
             // level.flags.hero_memory).  Remembering only the background left a
             // mimic's square remembered as bare floor, so leaving the level and
             // returning redrew floor where C redraws the disguise.
-            if (mimics_an_object(mon) && game.level?.flags?.hero_memory)
+            if (see_it && mimics_an_object(mon) && game.level?.flags?.hero_memory)
                 remember_bg(loc, mg);
             // C ref: win/tty/wintty.c tty_print_glyph — a pet glyph (MG_PET)
             // is drawn with iflags.wc2_petattr (default ATR_INVERSE) when
@@ -1848,14 +1855,17 @@ export function newsym(x, y) {
             // first.  If the mimic is mimicking something, and the location is
             // in sight, we have to change the hero's memory so that when the
             // position is out of sight, the hero remembers what the mimic was
-            // mimicking."  newsym() always passes PHYSICALLY_SEEN from this arm,
-            // so the M_AP_OBJECT case runs map_object(), whose
+            // mimicking."  When see_it selects PHYSICALLY_SEEN, the
+            // M_AP_OBJECT case runs map_object(), whose
             // `levl[x][y].glyph = glyph` OVERWRITES the _map_location() memory
             // written just above.  Without this a shop's disguised mimics
             // reverted to bare floor the moment the hero left the level and came
             // back, losing one remembered cell per mimic for the rest of the game.
-            if (game.level?.flags?.hero_memory && M_AP_TYPE(mon) === M_AP_OBJECT)
+            if (see_it && game.level?.flags?.hero_memory && M_AP_TYPE(mon) === M_AP_OBJECT)
                 loc.remembered_glyph = { ch: mg.ch, color: mg.color, decgfx: mg.dec };
+            // Detection reveals a mimic but preserves its visible disguise in map memory.
+            if (detected && see_it && M_AP_TYPE(mon) !== M_AP_NOTHING)
+                mg = monster_glyph(mon, true);
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
         } else if (mon && mon_warning(mon) && !worm_tail) {
             // C ref: display.c newsym:1030 — `else if (mon && mon_warning(mon)
@@ -1886,7 +1896,8 @@ export function newsym(x, y) {
         // && mon_visible(mon))`.  Telepathy reaches monsters the hero has no
         // line of sight to at all, which is what keeps a warning glyph off a
         // sensed one (display.c takes this arm before the mon_warning arm).
-        if (mon && (tp_sensemon(mon) || (mon_visible(mon) && see_with_infrared(mon)))) {
+        if (mon && (tp_sensemon(mon) || (mon_visible(mon) && see_with_infrared(mon))
+                    || (detect_monsters && !dark_worm_tail))) {
             // A warm monster within the hero's line of sight but on a square too
             // dark to see is revealed by infravision (see_with_infrared &&
             // mon_visible).  display_monster draws the normal monster glyph; it
@@ -1895,8 +1906,10 @@ export function newsym(x, y) {
             // the monster-move / vision redraw when it is no longer sensed).
             // C ref: display.c:1054 — this arm passes is_worm_tail(mon) too.
             const mg = (dark_worm_tail && !Hallucination_u())
-                ? worm_tail_glyph() : monster_glyph(mon);
-            const petAttr = (mon.mtame && game.flags?.hilite_pet) ? ATR_INVERSE : 0;
+                ? worm_tail_glyph() : monster_glyph(mon, detect_monsters);
+            loc.invisMon = false;
+            const petAttr = (mon.mtame && !Hallucination_u() && game.flags?.hilite_pet)
+                ? ATR_INVERSE : 0;
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
         } else if (mon && mon_warning(mon) && !dark_worm_tail) {
             // C ref: display.c newsym:1055 — the out-of-sight arm of the same

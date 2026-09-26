@@ -11,7 +11,7 @@ import { ATR_INVERSE, NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
 import { makedog } from './dog.js';
 import { rhack, dosearch0, monster_nearby } from './cmd.js';
-import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl } from './display.js';
+import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
@@ -1143,6 +1143,10 @@ export async function moveloop_turn() {
             if (youHaveSearching() && !g.level?.flags?.noautosearch
                 && (g.multi == null || g.multi >= 0))
                 await dosearch0(1);
+            if (have_warning()) {
+                const { warnreveal } = await import('./detect.js');
+                await warnreveal();
+            }
 
             // once-per-turn things: ambient sounds + hunger + spell aging +
             // periodic exercise.  (nh_timeout consumes no RNG for the starter

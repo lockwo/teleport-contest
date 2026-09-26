@@ -722,6 +722,7 @@ export async function savebones(how = 0, corpse = null) {
                     loc.glyph_symidx = -1;
                     loc.remembered_glyph = undefined;
                     loc.disp_ch = ' ';
+                    loc.disp_warning = false;
                 }
             }
         }

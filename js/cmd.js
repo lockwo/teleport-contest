@@ -35,6 +35,7 @@ import { rnl, rn2, rnd } from './rng.js';
 import { doextcmd, doddoremarm, hooked_tty_getlin, wiz_wish, wiz_genesis,
          wiz_map_extcmd, run_extcmd_by_name, docallcmd, dooverview } from './extcmd-handlers.js';
 import { wiz_detect } from './wizcmds.js';
+import { mfind0 } from './detect.js';
 import { do_gamelog } from './insight.js';
 import { skill_window_advance, uwep_skill_type, p_skill_of, use_skill } from './enhance.js';
 import { wiz_level_tele, dodown, doup, revive_nasty, random_teleport_level,
@@ -63,7 +64,7 @@ import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          SLT_ENCUMBER, MOD_ENCUMBER, OVERLOADED, Is_medusa_level, Is_juiblex_level,
          Is_waterlevel } from './const.js';
 import { exercise, acurr_eff } from './attrib.js';
-import { is_hider_flag, hides_under_flag, throws_rocks_flag } from './monflags_data.js';
+import { hides_under_flag, throws_rocks_flag } from './monflags_data.js';
 import { noattacks, attacktype, AT_ENGL, AD_FIRE } from './monattk_data.js';
 // onscary() is an `export function` declaration in monmove.js, so this cycle
 // (cmd -> monmove -> uhitm -> allmain -> cmd) resolves through hoisting the
@@ -1964,7 +1965,6 @@ export async function rhack(key) {
         game.kickedloc = { x: 0, y: 0 };
 }
 
-const S_EEL_CMD = 57;    // monsym.h S_EEL
 const LENSES_CMD = 232;  // objects[] LENSES (mkobj.js)
 
 // C ref: display.c unmap_invisible(x, y) — a square remembered as holding a
@@ -1976,60 +1976,6 @@ function unmap_invisible(x, y) {
     unmap_object(x, y);
     newsym(x, y);
     return true;
-}
-
-// C ref: detect.c mfind0(mtmp, via_warning) — the search/warning probe of one
-// adjacent monster.  Returns 1 when something was found (the caller stops
-// searching and the turn is used up), -1 when the find must be ignored, 0 when
-// there was nothing to find.
-//
-// This was left unported ("gated by !aflag"), but the !aflag gate is on the
-// CALL, not on the body: an explicit `s` next to a mimic or a hiding monster
-// runs it, and the exercise(A_WIS, TRUE) inside draws rn2(19) *and* aborts the
-// rest of the 8-square scan — so every later rnl(7)/rnl(8) in that same search
-// disappears from the stream too.
-async function mfind0(mtmp, via_warning) {
-    const x = mtmp.mx, y = mtmp.my;
-    let found_something = false;
-
-    // warning_of() needs the Warning intrinsic's monster-level test; dosearch0
-    // is the only caller here and always passes via_warning == FALSE.
-    if (via_warning) return -1;
-
-    if (mtmp.m_ap_type) {
-        // seemimic(): drop the object/furniture disguise and redraw.
-        mtmp.m_ap_type = 0;
-        mtmp.mappearance = 0;
-        newsym(x, y);
-        found_something = true;
-    } else {
-        found_something = !canspotmon(mtmp);
-        if (mtmp.mundetected
-            && (is_hider_flag(mtmp.data) || hides_under_flag(mtmp.data)
-                || mtmp.data?.mcls === S_EEL_CMD)) {
-            mtmp.mundetected = 0;
-            found_something = true;
-        }
-        newsym(x, y);
-    }
-
-    if (found_something) {
-        // Already an 'I' here: C deliberately returns -1 so the hero doesn't
-        // re-find the same unseen monster every single turn.
-        if (!canspotmon(mtmp) && game.level?.at(x, y)?.invisMon) return -1;
-        exercise(A_WIS, true); // -> rn2(19)
-        if (!canspotmon(mtmp)) {
-            map_invisible(x, y);
-            await pline('You feel an unseen monster!');
-        } else {
-            // sensemon() is FALSE throughout this port (no telepathy modelled).
-            const nm = mtmp.mtame ? x_monnam(mtmp, /*ARTICLE_YOUR*/ 3, null, 0, false)
-                                  : x_monnam(mtmp, /*ARTICLE_A*/ 2, null, 0, false);
-            await pline(`You find ${nm}.`);
-        }
-        return 1;
-    }
-    return 0;
 }
 
 // C ref: detect.c find_trap(trap) — reveal a trap the hero just located.

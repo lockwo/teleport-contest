@@ -338,11 +338,10 @@ export function glyph_is_invisible(x, y) {
     return !!game.level?.at(x, y)?.invisMon;
 }
 
-// C ref: display.c mon_warning()/glyph_is_warning() — the "Warning" monster-
-// detection intrinsic (via class ring or high-level Cleric prayer reward)
-// isn't modeled anywhere in this port yet, so no square is ever a warning
-// glyph.
-function glyph_is_warning() { return false; }
+// C ref: uhitm.c attack_checks() reads the shown glyph, not current senses.
+function glyph_is_warning(x, y) {
+    return !!game.level?.at(x, y)?.disp_warning;
+}
 
 // C ref: makemon.c FURNSYMS[] — explanation text for the 6 furniture
 // disguises set_mimic_sym() can assign (stairs up/down, altar, grave, throne,
@@ -574,7 +573,7 @@ export async function attack_checks(mtmp) {
 
     const gx = game.bhitpos.x, gy = game.bhitpos.y;
     const glyphInvisible = glyph_is_invisible(gx, gy);
-    const glyphWarning = glyph_is_warning();
+    const glyphWarning = glyph_is_warning(gx, gy);
 
     // uhitm.c:217-234 — the hero can't spot the target at all (not merely
     // disguised — an actually hidden/invisible one) and there's no warning/
@@ -1245,7 +1244,7 @@ async function hmon_hitmon(mon, weapon, dieroll) {
         // stethoscope could never kill anything).  The per-otyp special cases
         // (boulder, iron ball, potions, cream pie, corpses, ...) are not
         // reached by the covered sessions and are left to the default arm.
-        dmg = hmon_misc_obj_dmg(weapon);
+        dmg = hmon_misc_obj_dmg(weapon, mon);
     }
     const train_weapon_skill = force_no_train ? false : dmg > 1;   // uhitm.c:849 / :946
 
@@ -2247,7 +2246,7 @@ const W = {
 // (except spellbooks) are too floppy to hurt; everything else does weight-based
 // damage capped at 6, plus the wet-towel wetness bonus.
 const MAT_VEGGY = 3, MAT_PAPER = 5;
-function hmon_misc_obj_dmg(obj) {
+function hmon_misc_obj_dmg(obj, mon) {
     const mat = objects[obj.otyp]?.material;
     if ((mat === MAT_VEGGY || mat === MAT_PAPER) && obj.oclass !== SPBOOK_CLASS)
         return 0;
@@ -2259,6 +2258,7 @@ function hmon_misc_obj_dmg(obj) {
         dmg += (obj.spe | 0);
         dmg = rnd(dmg);
     }
+    if (obj.blessed && mon_hates_blessings(mon)) dmg += rnd(4);
     return dmg;
 }
 

@@ -131,7 +131,10 @@ import { engr_at, wipe_engr_at } from './engrave.js';
 import { costly_spot, addtobill, shkname } from './shkroom.js';
 // C ref: objnam.c doname_base():1648 — the shop-price suffix is formatted in
 // objnam.c, on top of shk.c's get_cost_of_shop_item()/unpaid_cost().
-import { price_suffix, singplur_lookup, add_erosion_words } from './objnam.js';
+import { price_suffix, singplur_lookup, add_erosion_words, cxname,
+         obj_is_pname, type_is_pname, the_unique_pm } from './objnam.js';
+import { shk_owns } from './shk.js';
+import { y_monnam } from './do_name.js';
 // role.js imports only gstate/rng/const, so this is cycle-safe.
 import { roles, align_gname } from './role.js';
 // pickup.c lives in js/pickup.js.  The cycle back to this file is fine: both
@@ -529,7 +532,22 @@ export function cxname_singular(obj) { observe_object_named(obj); return simple_
 // C ref: objnam.c xname() — the bare object name: no "a"/"an" article and no
 // BUC word (unlike doname()), but still quantity-aware for stackable types.
 export function xname(obj) { observe_object_named(obj); return simple_obj_name(obj, { article: false, buc: false }); }
-export function yname(obj) { return simple_obj_name(obj); }
+// C ref: objnam.c yname() and shk.c shk_your().
+export function yname(obj) {
+    const name = cxname(obj);
+    const owned = carried(obj);
+    if (owned && obj_is_pname(obj) && obj.oartifact < 21 /* ART_ORB_OF_DETECTION */)
+        return name;
+    if (obj.otyp === CORPSE && obj.corpsenm >= 0) {
+        const species = monster_by_pmidx(obj.corpsenm);
+        if (type_is_pname(species)) return name;
+        if (the_unique_pm(species)) return `the ${name}`;
+    }
+    const owner = shk_owns(obj)
+        || (mcarried(obj) ? s_suffix(y_monnam(obj.ocarry)) : null)
+        || (owned ? 'your' : 'the');
+    return `${owner} ${name}`;
+}
 // C ref: objnam.c minimal_xname() — xname() of a BARE copy (cg.zeroobj with
 // only otyp/oclass/quan/dknown/known copied), so weight-derived prefixes such
 // as HEAVY_IRON_BALL's "very " (objnam.c:829 reads obj->owt) cannot leak in.

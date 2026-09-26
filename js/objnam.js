@@ -745,7 +745,7 @@ function has_oname(o) { return !!(o && o.oname); }
 function ONAME(o) { return (o && o.oname) || ''; }
 function ismnum(m) { return m != null && m >= LOW_PM; }
 /* mondata.h type_is_pname(ptr) = (mflags2 & M2_PNAME) */
-function type_is_pname(ptr) {
+export function type_is_pname(ptr) {
     return !!(ptr && (MFLAGS2[ptr.pmidx] | 0) & M2_PNAME);
 }
 function mons_at(mndx) { return monster_by_pmidx(mndx); }
@@ -1694,7 +1694,7 @@ function the_unique_obj(obj) {
 
 // the_unique_pm(): should the monster type be prefixed with "the"?
 // C ref: objnam.c:1120.
-function the_unique_pm(ptr) {
+export function the_unique_pm(ptr) {
     if (!ptr) return false;
     if (type_is_pname(ptr))
         return false;
@@ -2227,6 +2227,13 @@ export function xname_flags(obj, cxn_flags) {
 // xname(): objnam.c:574.  js/invent.js exports the live xname(); this is the
 // xname_flags() wrapper the ports below need.
 function xname_c(obj) { return xname_flags(obj, CXN_NORMAL); }
+
+// C ref: objnam.c cxname(): include the species when naming a corpse.
+export function cxname(obj) {
+    return obj.otyp === CORPSE_
+        ? corpse_xname(obj, null, CXN_NORMAL)
+        : xname_c(obj);
+}
 
 // minimal_xname(): the most basic info for a particular object — "potion",
 // "brown potion", "potion of object detection".  C ref: objnam.c:1037.

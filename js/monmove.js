@@ -7669,6 +7669,12 @@ async function mhitm_adtyping(mtmp, mattk, mhm) {
     case AD_SEDU: // seduce & steal (foocubi, nymphs' second attack)
         await mhitm_ad_sedu(mtmp, mattk, mhm); break;
     case AD_STCK: await mhitm_ad_stck(mtmp, mattk, mhm); break;
+    case AD_WRAP: {
+        const { mhitm_ad_wrap, YOUMONST } = await import('./mhitm_ad.js');
+        const { mhitu_ops } = await import('./mhitu.js');
+        await mhitm_ad_wrap(mtmp, mattk, YOUMONST, mhm, mhitu_ops());
+        break;
+    }
     case AD_LEGS: {
         // C uhitm.c's AD_LEGS arm is shared with the other combat directions.
         // Reuse its data-driven xan/leg-wound implementation rather than

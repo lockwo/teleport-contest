@@ -370,9 +370,9 @@ async function maybe_destroy_item_hero(obj, dmgtyp, ops) {
     if (!cnt) return 0;
     const mult = (cnt === 1) ? ((quan === 1) ? '' : 'One of ')
         : ((cnt < quan) ? 'Some of ' : (quan === 2) ? 'Both of ' : 'All of ');
-    const nm = ops.yname ? ops.yname(obj) : (OBJECTS[obj.otyp]?.name || 'item');
-    await ops.emit(`${mult}${cnt === 1 && quan === 1 ? 'Your' : 'your'} ${nm} ${
-        DESTROY_STRINGS[dindx][(cnt > 1) ? 1 : 0]}!`);
+    const nm = ops.yname(obj);
+    const name = cnt === 1 && quan === 1 ? nm.charAt(0).toUpperCase() + nm.slice(1) : nm;
+    await ops.emit(`${mult}${name} ${DESTROY_STRINGS[dindx][(cnt > 1) ? 1 : 0]}!`);
     // potionbreathe() (AD_FIRE/AD_ELEC potions only), Ring_gone()/setnotworn()
     // and gc.current_wand are not reached by an AD_COLD potion shatter, the only
     // caller wired to this today.

@@ -2092,7 +2092,7 @@ async function zhitm(mon, type, nd) {
         break;
     case ZT_SLEEP:
         tmp = 0;
-        await sleep_monst(mon, d(nd, 25), WAND_CLASS);
+        await sleep_monst(mon, d(nd, 25), type === ZT_SLEEP ? WAND_CLASS : 0);
         break;
     case ZT_DEATH:
         if (Math.abs(type) !== 20 + ZT_DEATH /* ZT_BREATH(ZT_DEATH); unreachable

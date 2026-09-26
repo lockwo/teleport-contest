@@ -18,6 +18,7 @@ export function makeLocation() {
         edge: false,       // is this at the edge of the map?
         wall_info: 0,      // wall flags (W_NONDIGGABLE, etc.)
         disp_ch: ' ',      // current display character
+        disp_warning: false, // glyph identity, independent of configurable symbol
         disp_color: NO_COLOR,
         disp_decgfx: false,
         disp_attr: 0,

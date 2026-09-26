@@ -12,14 +12,15 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
-import { pline, update_topl, y_n, newsym, display_nhwindow_message } from './display.js';
+import { pline, update_topl, y_n, newsym, display_nhwindow_message,
+         unmap_object, see_monsters } from './display.js';
 import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
          makeplural, remove_worn_item, is_plural, pair_of, otense,
-         learn_unseen_invent } from './invent.js';
+         learn_unseen_invent, yname, worn_blocked } from './invent.js';
 import { surface, hliquid } from './dungeon.js';
-import { heal_legs, water_damage } from './trap.js';
+import { heal_legs, water_damage, float_up, spoteffects } from './trap.js';
 import { monster_detect } from './hack.js';
 import { DEADMONSTER } from './mon.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -30,7 +31,8 @@ import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          objects, COIN_CLASS, RING_CLASS, mkobj_at, CORPSE, next_ident } from './mkobj.js';
 import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
-         W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL } from './const.js';
+         W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
+         COLNO, ROWNO } from './const.js';
 import { fruitname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, vision_recalc, cansee as vis_cansee } from './vision.js';
@@ -450,6 +452,13 @@ const POT_GAIN_ABILITY = 297, POT_RESTORE_ABILITY = 298, POT_BLINDNESS = 300,
       POT_MONSTER_DETECTION = 311, POT_OBJECT_DETECTION = 312,
       POT_SLEEPING = 314, POT_FULL_HEALING = 315, POT_POLYMORPH = 316,
       POT_ACID = 320;
+// Spell otyps peffects() shares with the potion handlers (spell.c's
+// potion-duplicate spelleffects arm); same onames.h numbering.
+const SPE_DETECT_MONSTERS = 373, SPE_HASTE_SELF = 388, SPE_LEVITATION = 390,
+      SPE_RESTORE_ABILITY = 392, SPE_INVISIBILITY = 393,
+      SPE_DETECT_TREASURE = 394;
+// C ref: onames.h MUMMY_WRAPPING (mkobj.js OBJECT_DATA row 138).
+const MUMMY_WRAPPING = 138;
 
 // C ref: potion.c Maybe_Half_Phys(dmg) — halves physical damage when the hero
 // has Half_physical_damage.  The recorded heroes lack that property, so this is
@@ -978,15 +987,17 @@ async function peffect_restore_ability(otmp) {
         pline_sync('Ulch!  This makes you feel mediocre!');
         return;
     }
-    // unfixable_trouble_count() needs the prayer trouble table; a hero with no
-    // unfixable trouble gets "good"/"great", which is the reachable pair here.
-    pline_sync(`Wow!  This makes you feel ${otmp.blessed ? 'great' : 'good'}!`);
+    const { unfixable_trouble_count } = await import('./apply.js');
+    const feeling = !otmp.blessed ? 'good'
+        : unfixable_trouble_count(false) ? 'better' : 'great';
+    pline_sync(`Wow!  This makes you feel ${feeling}!`);
     let i = rn2(A_MAX);                                   // potion.c:663
     for (let ii = 0; ii < A_MAX; ii++) {
         const lim = amax_of(i);
         if (abase_of(i) < lim) {
             set_abase(i, lim);
             if (game.u?.aexe?.a) game.u.aexe.a[i] = Math.max(game.u.aexe.a[i] | 0, 0);
+            game.botl = true;
             if (!otmp.blessed) break;
         }
         if (++i >= A_MAX) i = 0;
@@ -1106,7 +1117,15 @@ async function peffect_enlightenment(otmp) {
 
 // C ref: potion.c peffect_invisibility().
 async function peffect_invisibility(otmp) {
-    if (Invis() || Blind()) {
+    const is_spell = (otmp.oclass === SPBOOK_CLASS);
+    const BInvis = worn_blocked(INVIS) !== 0;
+
+    /* spell cannot penetrate mummy wrapping */
+    if (is_spell && BInvis && game.uarmc?.otyp === MUMMY_WRAPPING) {
+        await update_topl(`You feel rather itchy under ${yname(game.uarmc)}.`);
+        return;
+    }
+    if (Invis() || Blind() || BInvis) {
         game.potion_nothing = (game.potion_nothing || 0) + 1;
     } else {
         // self_invis_message()
@@ -1243,28 +1262,33 @@ async function peffect_gain_energy(otmp) {
 // C ref: potion.c peffect_levitation().
 async function peffect_levitation(otmp) {
     const u = game.u;
-    if (!Levitation()) {
-        uprops().Levitation = 1;                          // set_itimeout(&HLevitation, 1)
-        // float_up() prints its message and clears u.utrap; no RNG.
-        await update_topl('You start to float in the air!');
+    const blocked = HProp('BLevitation') !== 0;
+    if (!Levitation() && !blocked) {
+        uprops().Levitation = (HProp('Levitation') & ~TIMEOUT_MASK) | 1;
+        await float_up();
     } else {
         game.potion_nothing = (game.potion_nothing || 0) + 1;
     }
     if (otmp.cursed) {
         uprops().Levitation = (HProp('Levitation') | 0) & ~I_SPECIAL;
-        // The upstairs (doup) arm needs the level-change subsystem; the
-        // has_ceiling arm below is the one that draws.
-        const dmg = rnd(!game.uarmh ? 10 : hard_helmet(game.uarmh) ? 3 : 6);
-        await update_topl(`You hit your ${body_part(HEAD)} on the ceiling.`);
-        await losehp(Maybe_Half_Phys(dmg), 'colliding with the ceiling');
-        game.potion_nothing = 0;
+        if (!blocked) {
+            // The upstairs (doup) arm needs the level-change subsystem; the
+            // has_ceiling arm below is the one that draws.
+            const dmg = rnd(!game.uarmh ? 10 : hard_helmet(game.uarmh) ? 3 : 6);
+            await update_topl(`You hit your ${body_part(HEAD)} on the ceiling.`);
+            await losehp(Maybe_Half_Phys(dmg), 'colliding with the ceiling');
+            game.potion_nothing = 0;
+        }
     } else if (otmp.blessed) {
         uprops().Levitation = itimeout_incr(HProp('Levitation'), rn1(50, 250));
         uprops().Levitation |= I_SPECIAL;
     } else {
         uprops().Levitation = itimeout_incr(HProp('Levitation'), rn1(140, 10));
     }
-    void u;
+    if (Levitation() && !blocked && IS_SINK(game.level?.at(u.ux, u.uy)?.typ))
+        await spoteffects();
+    const { float_vs_flight } = await import('./polyself.js');
+    float_vs_flight();
 }
 // C ref: prop.h I_SPECIAL — "can be removed at will" bit.
 const I_SPECIAL = 0x20000000;
@@ -1321,11 +1345,20 @@ async function peffect_monster_detection(otmp) {
         else if (otmp.oclass === SPBOOK_CLASS) i = rn1(40, 21);
         else i = rn2(100) + 100;                          // potion.c:924
         uprops().HDetect_monsters = itimeout_incr(HProp('HDetect_monsters'), i);
+        for (let x = 1; x < COLNO; x++) {
+            for (let y = 0; y < ROWNO; y++) {
+                if (game.level?.at(x, y)?.invisMon) {
+                    unmap_object(x, y);
+                    newsym(x, y);
+                }
+            }
+        }
         let any_mon = false;
         for (const mtmp of game.level?.monsters || []) if (!DEADMONSTER(mtmp)) any_mon = true;
         if (any_mon) game.potion_unkn = 0;
         // C: if swallowed or underwater, fall through to the uncursed case.
         if (!game.u?.uswallow && !Underwater()) {
+            see_monsters();
             if (game.potion_unkn) await update_topl('You feel lonely.');
             return 0;
         }
@@ -1353,6 +1386,7 @@ async function peffect_object_detection(otmp) {
 export async function peffects(otmp) {
     switch (otmp.otyp) {
     case POT_RESTORE_ABILITY:
+    case SPE_RESTORE_ABILITY:
         await peffect_restore_ability(otmp);
         break;
     case POT_HALLUCINATION:
@@ -1367,6 +1401,7 @@ export async function peffects(otmp) {
     case POT_ENLIGHTENMENT:
         await peffect_enlightenment(otmp);
         break;
+    case SPE_INVISIBILITY:
     case POT_INVISIBILITY:
         await peffect_invisibility(otmp);
         break;
@@ -1381,9 +1416,11 @@ export async function peffects(otmp) {
         peffect_sleeping(otmp);
         break;
     case POT_MONSTER_DETECTION:
+    case SPE_DETECT_MONSTERS:
         if (await peffect_monster_detection(otmp)) return 1;
         break;
     case POT_OBJECT_DETECTION:
+    case SPE_DETECT_TREASURE:
         if (await peffect_object_detection(otmp)) return 1;
         break;
     case POT_SICKNESS:
@@ -1396,6 +1433,7 @@ export async function peffects(otmp) {
         await peffect_gain_ability(otmp);
         break;
     case POT_SPEED:
+    case SPE_HASTE_SELF:
         await peffect_speed(otmp);
         break;
     case POT_BLINDNESS:
@@ -1414,6 +1452,7 @@ export async function peffects(otmp) {
         await peffect_full_healing(otmp);
         break;
     case POT_LEVITATION:
+    case SPE_LEVITATION:
         await peffect_levitation(otmp);
         break;
     case POT_GAIN_ENERGY:
