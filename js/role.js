@@ -747,6 +747,17 @@ export function Hello(rolenum, mtmp) {
     }
 }
 
+// C ref: role.c Goodbye() — role-specific farewell for level loss and endings.
+export function Goodbye(rolenum) {
+    switch (rolenum) {
+    case PM_KNIGHT:   return 'Fare thee well';
+    case PM_SAMURAI:  return 'Sayonara';
+    case PM_TOURIST:  return 'Aloha';
+    case PM_VALKYRIE: return 'Farvel';
+    default:         return 'Goodbye';
+    }
+}
+
 // roles[].gods is [lawfulGod, neutralGod, chaoticGod].
 function godForAlign(rolenum, alignType) {
     // C ref: role.c role_init — a role with no own gods (Priest) inherits the

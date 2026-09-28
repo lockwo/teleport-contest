@@ -11,7 +11,7 @@
 import { game, hooks } from './gstate.js';
 import { acurr_eff as _acurr_cf, exercise } from './attrib.js';
 import { u_slip_free } from './mhitu.js';
-import { in_rooms as in_rooms_shk } from './shkroom.js';
+import { in_rooms as in_rooms_shk, Stealth } from './shkroom.js';
 import { costly_spot } from './shk.js';
 import { mindless as mindless_flag, mflags1_of as _mf1_web, mflags2_of as _mf2_web,
     M1_ACID as M1_ACID_WEB, M2_NASTY as M2_NASTY_WEB } from './monflags_data.js';
@@ -45,7 +45,7 @@ import {
     SPIKED_PIT, HOLE, TRAPDOOR, MAGIC_TRAP, NO_TRAP_FLAGS, ALL_TRAPS, NO_TRAP,
     TRAPPED_DOOR,
     A_STR, SQSRCHRADIUS, ALLOW_TRAPS, STATUE_TRAP, VIBRATING_SQUARE, TRAPNUM,
-    W_ARMOR, W_ARMS, W_ARMG, W_AMUL, NOTONL, ALLOW_ROCK, ALLOW_M, ALLOW_U, ALLOW_SANCT,
+    W_ARMOR, W_ARMS, W_ARMG, W_ARMF, W_AMUL, NOTONL, ALLOW_ROCK, ALLOW_M, ALLOW_U, ALLOW_SANCT,
     ALLOW_SSM, OPENDOOR, UNLOCKDOOR, BUSTDOOR, ALLOW_WALL, ALLOW_BARS,
     NOGARLIC, IS_ALTAR, In_endgame, HEADSTONE, u_at,
     STAIRS, LADDER, IRONBARS, WEB, LAVAWALL, IS_WATERWALL,
@@ -57,16 +57,16 @@ import {
     AM_MASK, AM_SHRINE, Amask2align, I_SPECIAL,
     M_SEEN_NOTHING, M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP,
     M_SEEN_DISINT, M_SEEN_ELEC, M_SEEN_POISON, M_SEEN_ACID,
-    Is_botlevel, MON_FLOOR,
+    Is_botlevel, Is_stronghold, MIGR_RANDOM, MON_FLOOR, EMIN, A_LAWFUL, NC_SHOW_MSG,
 } from './const.js';
 import { phase_of_the_moon, NEW_MOON, night } from './calendar.js';
-import { Amonnam as Amonnam_dn } from './do_name.js';
-import { quest_talk } from './questpgr.js';
+import { Amonnam as Amonnam_dn, mhis } from './do_name.js';
+import { quest_talk, com_pager } from './questpgr.js';
 import { In_hell, surface } from './dungeon.js';
 import { COIN_CLASS, ROCK, ROCK_CLASS, GOLD_PIECE, GEM_CLASS, CORPSE, ARROW, DART,
     GLOB_OF_GREEN_SLIME, SCR_SCARE_MONSTER, AMULET_OF_STRANGULATION, mksobj_at,
     clear_dknown } from './mkobj.js';
-import { t_at, t_missile, Can_fall_thru, maketrap } from './trap.js';
+import { t_at, t_missile, Can_fall_thru, maketrap, clamp_hole_destination } from './trap.js';
 import { gettrack } from './track.js';
 import { find_mac as worn_find_mac, which_armor } from './worn.js';
 import { mvitals_died, DEADMONSTER, healmon, base_mmove, curr_mon_load,
@@ -122,7 +122,7 @@ import { stackobj, welded as welded_iv, bimanual as bimanual_iv,
     carrying as carrying_mm } from './invent.js';
 import { is_art } from './artifact.js';
 const ART_GIANTSLAYER = 15, ART_OGRESMASHER = 16, LOADSTONE = 471;
-import { obj_resists, resists_sleep, sleep_monst } from './zap.js';
+import { obj_resists, resists_sleep, sleep_monst, resist, resists_magm } from './zap.js';
 // m_harmless_trap's FIRE_TRAP arm; mondata.js reads permonst.mresists (MR_FIRE).
 import { resists_fire, resists_acid } from './mondata.js';
 import { clear_path, couldsee, cansee, vision_recalc, recalc_block_point, Blind } from './vision.js';
@@ -622,10 +622,8 @@ const M_AP_NOTHING = 0, M_AP_FURNITURE = 1, M_AP_OBJECT = 2, M_AP_MONSTER = 3;
 async function disturb(mtmp) {
     const u = game.u;
     if (!(couldsee(mtmp.mx, mtmp.my) && mdistu(mtmp) <= 100)) return 0;
-    // Stealth: hero's stealth intrinsic.  An ettin is hard to surprise, so it
-    // rolls rn2(10) even against a stealthy hero.
-    const Stealth = !!u?.uStealth;
-    if (!(!Stealth || (monsndx_of(mtmp.data) === PM_ETTIN && rn2(10)))) return 0;
+    // An ettin can notice even a stealthy hero.
+    if (!(!Stealth() || (monsndx_of(mtmp.data) === PM_ETTIN && rn2(10)))) return 0;
     const mcls = permonst_of(mtmp.data)?.mcls;
     const heavySleeper = (mcls === S_NYMPH
                           || monsndx_of(mtmp.data) === PM_JABBERWOCK
@@ -1349,13 +1347,6 @@ function m_harmless_trap(mtmp, ttmp) {
     }
 }
 
-// C ref: mondata.c:215 resists_magm(mon) — species term only; the wielded/worn
-// ANTIMAGIC and artifact terms need monster gear no session's monster carries.
-function resists_magm(mon) {
-    const ptr = mon?.data;
-    return dmgtype(ptr, AD_MAGM) || dmgtype(ptr, AD_RBRE)
-        || ptr?.name === 'baby gray dragon';
-}
 
 // C ref: mkobj.c sobj_at(BOULDER, x, y) — is there a boulder lying on the
 // floor at (x,y)?  BOULDER otyp is 475 (mkobj.js).
@@ -2360,7 +2351,7 @@ async function mon_thitm(tlev, mon, obj, d_override, nocorpse) {
                 // pit!  <pet> is killed!").
                 if (cansee(mon.mx, mon.my))
                     await pline_mon(mon, `${Monnam(mon)} is ${nonliving_mm(mon) ? 'destroyed' : 'killed'}!`);
-                mon_kill_leaving(mon, nocorpse);           // mondied -> mondead
+                await mon_kill_leaving(mon, nocorpse);      // mondied -> mondead
                 if (DEADMONSTER(mon)) { newsym(xx, yy); trapkilled = true; }
             }
         } else {
@@ -2413,7 +2404,7 @@ async function mon_missile_name(obj) {
 // draws no RNG for the mines-shallow species (no S_KOP/steam-vortex/vampshifter);
 // corpse_chance()'s rn2 and make_corpse()'s next_ident + rndmonnum + corpse
 // timeout are the only draws, matching C's trace.
-export function mon_kill_leaving(mon, nocorpse) {
+export async function mon_kill_leaving(mon, nocorpse) {
     mon.mhp = 0;
     // mondead(): detach the monster so the renderer stops drawing it.  Coords
     // are left intact for make_corpse() to place the cadaver.
@@ -2424,11 +2415,8 @@ export function mon_kill_leaving(mon, nocorpse) {
         const idx = list.indexOf(mon);
         if (idx >= 0) list.splice(idx, 1);
     }
-    // C ref: mon.c m_detach(due_to_death) -> relobj(mtmp, 1, FALSE) — the dead
-    // monster's inventory hits the floor (RNG-free) before the corpse, so its
-    // weapon shows on the square even when no corpse is left.  Missing here,
-    // so a monster killed by a trap took its gear out of the game.
-    relobj(mon, mx, my);
+    // C: m_detach() releases inventory before creating the corpse.
+    await relobj(mon, mx, my);
     if (mx > 0 && my >= 0) newsym(mx, my);
     // mondied(): corpse_chance() rolls its rn2; on success (and accessible
     // terrain) make_corpse() builds the cadaver.  nocorpse (disintegration)
@@ -2558,13 +2546,10 @@ function acidic_mm(ptr) { return (_mf1_web(ptr) & M1_ACID_WEB) !== 0; }      // 
 function extra_nasty_mm(ptr) { return (_mf2_web(ptr) & M2_NASTY_WEB) !== 0; } // mondata.h:120
 function count_wsegs_mm() { return 0; }   // long worms carry no segment chain here
 
-// C ref: trap.c wearing_iron_shoes(mtmp) — which_armor(mtmp, W_ARMF) is a pair
-// of iron shoes.  js/objects_data.js row: otyp 164 == IRON_SHOES.
-const IRON_SHOES_OTYP = 164;
+// C ref: trap.c wearing_iron_shoes(mtmp).
 function mon_wearing_iron_shoes(mtmp) {
-    for (const o of (mtmp?.minvent || []))
-        if (o.otyp === IRON_SHOES_OTYP && (o.owornmask | 0)) return true;
-    return false;
+    const boots = which_armor(mtmp, W_ARMF);
+    return !!boots && OBJECTS[boots.otyp]?.oc_material === 11 /* IRON */;
 }
 
 // C ref: trap.c:1730 trapeffect_fire_trap() monster branch.  This is
@@ -2628,12 +2613,12 @@ async function mon_trapeffect_fire_trap(mtmp, trap) {
         if (!DEADMONSTER(mtmp)) {
             mtmp.mhp -= extra_damage;
             if (DEADMONSTER(mtmp)) {
-                mon_kill_leaving(mtmp, false);
+                await mon_kill_leaving(mtmp, false);
                 trapkilled = true;
             }
         }
     }
-    burn_floor_objects(tx, ty, see_it, false);
+    await burn_floor_objects(tx, ty, see_it, false);
     // melt_ice() is RNG-free; ice melting itself is not yet modeled.
     if (see_it && t_at(tx, ty)) {
         const { seetrap } = await import('./trap.js');
@@ -2850,7 +2835,7 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             if (in_sight)
                 await pline_mon(mtmp, `${Monnam(mtmp)} falls to pieces!`);
             const xx = mtmp.mx, yy = mtmp.my;
-            mon_kill_leaving(mtmp, true);
+            await mon_kill_leaving(mtmp, true);
             if (DEADMONSTER(mtmp)) { newsym(xx, yy); return Trap_Killed_Mon; }
         } else if (mtmp.data?.name === 'gremlin' && rn2(3)) {
             // split_mon(mtmp, 0) — a second gremlin via clone_mon(); not
@@ -3005,17 +2990,20 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             }
             return Trap_Effect_Finished;
         }
-        // C ref: teleport.c mlevel_tele_trap() — on the dungeon's bottom level
-        // a hole/trapdoor has nowhere lower to go; the Is_stronghold->valley
-        // destination swap isn't modelled (this port doesn't simulate
-        // off-level monster state, so only the observable in_sight message
-        // differs by destination, and it's the same "falls" line either way).
-        if (Is_botlevel(game.u?.uz)) {
+        // C ref: teleport.c mlevel_tele_trap(): falling from the stronghold
+        // reaches the Valley; other falls respect the destination's bottom.
+        let tolevel;
+        if (Is_stronghold(game.u.uz)) {
+            tolevel = { ...game.valley_level };
+        } else if (Is_botlevel(game.u.uz)) {
             if (in_sight && trap.tseen) {
                 await pline_mon(mtmp, `${Monnam(mtmp)} avoids the ${
                     trap.ttyp === HOLE ? 'hole' : 'trap'}.`);
             }
             return Trap_Effect_Finished;
+        } else {
+            tolevel = { ...trap.dst };
+            clamp_hole_destination(tolevel);
         }
         // C ref: teleport.c mlevel_tele_trap() tail — `if (in_sight) {
         // pline_mon(...); seetrap(trap); }`, always run just before
@@ -3029,15 +3017,11 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             const { seetrap } = await import('./trap.js');
             seetrap(trap);
         }
-        // migrate_to_level(): detach from this level's monster chain.  Our port
-        // does not simulate other levels' monsters, so dropping it here IS the
-        // faithful observable outcome.
-        const list = game.level?.monsters;
-        if (list) {
-            const ix = list.indexOf(mtmp);
-            if (ix >= 0) list.splice(ix, 1);
-        }
-        newsym(mtmp.mx, mtmp.my);
+        const { migrate_to_level } = await import('./dog.js');
+        const ledger = tolevel.dlevel
+            + (game.dungeons?.[tolevel.dnum]?.ledger_start | 0);
+        await migrate_to_level(mtmp, ledger, MIGR_RANDOM, null);
+        newsym(trap.tx, trap.ty);
         return Trap_Moved_Mon;
     }
     case MAGIC_PORTAL: {
@@ -3173,6 +3157,35 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         }
         return mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished;
     }
+    case POLY_TRAP: {
+        // C ref: trap.c trapeffect_poly_trap(), monster arm.
+        const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
+        if (mon_wearing_iron_shoes(mtmp)) {
+            const { KICKING_BOOTS } = await import('./mkobj.js');
+            const IRON_SHOES = 164;
+            const { update_mon_extrinsics } = await import('./worn.js');
+            const { poly_obj_id } = await import('./zap.js');
+            let shoes = which_armor(mtmp, W_ARMF);
+            shoes.owornmask = 0;
+            mtmp.misc_worn_check = (mtmp.misc_worn_check | 0) & ~W_ARMF;
+            update_mon_extrinsics(mtmp, shoes, false);
+            // extract/re-add moves the old shoes to minvent's head in C.
+            mtmp.minvent.splice(mtmp.minvent.indexOf(shoes), 1);
+            mtmp.minvent.unshift(shoes);
+            shoes.ocarry = mtmp;
+            shoes = await poly_obj_id(shoes,
+                shoes.otyp === IRON_SHOES ? KICKING_BOOTS : IRON_SHOES);
+            mtmp.misc_worn_check |= W_ARMF;
+            shoes.owornmask = W_ARMF;
+            update_mon_extrinsics(mtmp, shoes, true);
+        } else if (!resists_magm(mtmp) && !resist(mtmp, WAND_CLASS, 0, false)) {
+            const { newcham_wizard_aware } = await import('./makemon.js');
+            await newcham_wizard_aware(mtmp, null, NC_SHOW_MSG);
+            if (in_sight) seetrap(trap);
+            newsym(mtmp.mx, mtmp.my);
+        }
+        return Trap_Effect_Finished;
+    }
     default:
         // Trap type not yet modeled for monsters.  Consume no RNG and let the
         // monster pass; add the faithful effect here when a session needs it.
@@ -3305,7 +3318,7 @@ async function mb_trapped(mtmp, canseeit) {
     if (DEADMONSTER(mtmp)) {
         // mondied(): mondead() detach + relobj + corpse_chance()/make_corpse.
         // No lifesaving is modelled, so the monster stays dead.
-        mon_kill_leaving(mtmp, false);
+        await mon_kill_leaving(mtmp, false);
         return true;
     }
     mon_learns_traps(mtmp, TRAPPED_DOOR);
@@ -4222,8 +4235,10 @@ export async function dochug(mtmp) {
     if (DEADMONSTER(mtmp)) return 1;
 
     // PHASE ONE — frozen / sleeping / pre-move timers.
-    // C ref: monmove.c:704-708 STRAT_ARRIVE/m_arrival is not modeled — no
-    // migrating monster reaches dochug in the covered sessions.
+    if (mtmp.mstrategy & MV_STRAT_ARRIVE) {
+        const result = m_arrival(mtmp);
+        if (result >= 0) return result;
+    }
     // C ref: monmove.c:710-712 — a monster waiting for the hero to notice it
     // (STRAT_WAITFORU: quest nemeses and a few uniques) stops waiting once it
     // can see the hero or has taken damage.
@@ -4493,14 +4508,8 @@ async function phase_four(mtmp, mdat, status, inrange, nearby, scared, panicattk
     return (status === MMOVE_DIED) ? 1 : 0;
 }
 
-// C ref: wizard.c:846 cuss(mtmp) — a vile monster insults the hero. Only the
-// non-Wizard, non-lawful-minion branch is reachable from monmove.c's MS_CUSS
-// gate (the Wizard takes his own branch inside cuss but is also MS_CUSS, so
-// his rolls are reproduced too). RNG-critical: `rn2(is_minion ? 100 : 5)`
-// selects the branch on every call.
-// GAP: the else branch is com_pager("demon_cuss"), reading a random line from
-// the unported quest-text Lua database; the insult text is dropped (not
-// invented) but its selection roll is still drawn, keeping the stream aligned.
+// C ref: wizard.c:846 cuss(mtmp). Quest-text insults load their own Lua
+// sandbox through com_pager(), including its alignment shuffle and line pick.
 export async function cuss(mtmp) {
     const Deaf = !!game.u?.Deaf;
     if (Deaf) return;
@@ -4520,12 +4529,14 @@ export async function cuss(mtmp) {
             rn2(RANDOM_MALEDICTION_COUNT);
             rn2(RANDOM_INSULT_COUNT);
         }
-    } else if (is_lminion(mtmp)) {
-        /* com_pager("angel_cuss") — see GAP above */
+    } else if (mtmp.isminion && EMIN(mtmp)?.min_align === A_LAWFUL
+               && !EMIN(mtmp)?.renegade) {
+        await com_pager('angel_cuss');
     } else {
         if (!rn2(is_minion(mtmp.data) ? 100 : 5))
             await emitU(`${Monnam(mtmp)} casts aspersions on your ancestry.`);
-        /* else com_pager("demon_cuss") — see GAP above */
+        else
+            await com_pager('demon_cuss');
     }
     wake_nearto(mtmp.mx, mtmp.my, 5 * 5);
 }
@@ -6419,11 +6430,11 @@ function mswings_verb(otemp, bash) {
 // (e.g. a demon's 5 carried daggers) reads "one of his daggers" — xname()'s
 // bare pluralized name, with no leading count digit (that belongs to
 // doname() alone), so this uses cxname_singular()+makeplural rather than the
-// digit-prefixing invent.js xname().  Display-only.
+// digit-prefixing invent.js xname().
 async function mswings_mm(mtmp, otemp, bash) {
-    if (!canseemon_mm(mtmp)) return;
+    if (game.flags?.verbose === false || !canseemon_mm(mtmp)) return;
     const verb = mswings_verb(otemp, bash);
-    const hisher = mtmp.female ? 'her' : 'his';
+    const hisher = mhis(mtmp);
     const { update_topl } = await import('./display.js');
     const { cxname_singular, makeplural } = await import('./invent.js');
     const quan = otemp?.quan ?? 1;
@@ -6701,7 +6712,7 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
                           || !canspotmon(mtmp)) ? 'destroyed' : 'killed'}!`);
             // svc.context.mon_moving is set for a monster's throw, so C takes the
             // mondied() arm (no hero kill credit / no experience).
-            mon_kill_leaving(mtmp, false);
+            await mon_kill_leaving(mtmp, false);
             if (DEADMONSTER(mtmp)) newsym(xx, yy);
         }
     }
@@ -8715,7 +8726,7 @@ export async function mind_blast(mtmp) {
                 await emitU(`It locks on to ${mon_nam(m2)}.`);
             m2.mhp = (m2.mhp | 0) - rnd(15);
             if (DEADMONSTER(m2))
-                mon_kill_leaving(m2, false);   /* monkilled(m2,"",AD_DRIN) */
+                await mon_kill_leaving(m2, false);   /* monkilled(m2,"",AD_DRIN) */
         }
     }
 }

@@ -30,6 +30,7 @@ import { mmove_of, DEADMONSTER } from './mon.js';
 import { m_canseeu } from './monmove.js';
 import { canspotmon } from './uhitm.js';
 import { defends, defends_when_carried } from './artifact.js';
+import { register_monnam_hooks } from './do_name.js';
 
 // C ref: monflag.h MR_* resistance bits (permonst.mresists).
 const MR_FIRE = 0x01, MR_COLD = 0x02, MR_ELEC = 0x10, MR_ACID = 0x40;
@@ -304,13 +305,7 @@ export function dmgtype_fromattack(ptr, dtyp, atyp) {
 // C ref: mondata.c:1191 pronoun_gender(mtmp, pg_flags) — gender() but unseen
 // humanoids are "it", lower animals are "it" even when seen, and hallucination
 // may yield "they".  0 he / 1 she / 2 it / 3 they.
-//
-// THE RNG POINT: the rn2(4) fires whenever PRONOUN_HALLU is set and the hero is
-// hallucinating, BEFORE any visibility test — so it is drawn even for a monster
-// the hero cannot see at all.  js/do_name.js:221 keeps a module-private
-// `pronoun_gender(mon)` that draws rn2(2) instead and returns 3-or-gender; that
-// is a live modulus divergence (see this port's report), not a reduction.
-// No js/ module has mhe()/mhim()/mhis() yet, so nothing calls this one.
+// Hallucination selects a gender before visibility, including unseen monsters.
 export function pronoun_gender(mtmp, pg_flags) {
     const override_vis = (pg_flags & PRONOUN_NO_IT) !== 0;
     const hallu_rand = (pg_flags & PRONOUN_HALLU) !== 0;
@@ -325,6 +320,7 @@ export function pronoun_gender(mtmp, pg_flags) {
     return (humanoid(ptr) || ((ptr?.geno | 0) & G_UNIQ)
             || type_is_pname(ptr)) ? (mtmp.female ? 1 : 0) : 2;
 }
+register_monnam_hooks({ pronoun_gender });
 // C ref: mondata.h is_neuter(ptr) / type_is_pname(ptr).
 function is_neuter(ptr) { return is_neuter_flag(ptr); }
 function type_is_pname(ptr) { return (mflags2_of(ptr) & M2_PNAME) !== 0; }

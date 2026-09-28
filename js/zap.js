@@ -10,9 +10,10 @@ import { pline, newsym, m_at, show_glyph_cell, update_topl, topl_more, y_n,
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_NOFLAGS, xname, near_capacity, splitobj, delobj_core, obfree,
          obj_extract_self, sobj_at, encumber_msg, is_weptool, update_inventory,
-         display_minventory, worn_extrinsic } from './invent.js';
+         display_minventory, worn_extrinsic, yname, makeplural,
+         Ring_gone, setnotworn } from './invent.js';
 import { mon_mr } from './monmr_data.js';
-import { mflags1_of, M1_NOEYES, is_undead_flag, nohands } from './monflags_data.js';
+import { mflags1_of, M1_NOEYES, M1_BREATHLESS, is_undead_flag, nohands } from './monflags_data.js';
 // AD_MAGM is NOT imported: this file already declares the AD_* block locally
 // (same values), and a duplicate binding is a module-load SyntaxError.
 import { attacktype_fordmg, dmgtype, AT_EXPL, AT_GAZE, AD_BLND,
@@ -31,7 +32,7 @@ import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_C
          CANDELABRUM_OF_INVOCATION, SPE_BOOK_OF_THE_DEAD,
          is_rider_pm, ROCK_CLASS, unbless, uncurse, container_weight,
          has_omonst, get_mtraits, has_omid, OMID, free_omid, free_omonst,
-         obj_ice_effects } from './mkobj.js';
+         obj_ice_effects, dealloc_obj } from './mkobj.js';
 import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOOR, IS_ROOM, IS_WALL, isok, ROOM, STONE,
          D_CLOSED, D_LOCKED, CORPSTAT_INIT, EXT_ENCUMBER, HEADSTONE, ENGRAVE,
          DUST, MM_NOMSG, In_mines, W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG,
@@ -46,7 +47,7 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          W_AMUL, W_TOOL, W_RING, W_RINGL, FIRE_RES, COLD_RES,
          SHOCK_RES, ACID_RES, DISINT_RES, ANTIMAGIC, is_magical_trap, has_oname, ONAME,
          ESHK, engulfing_u, u_at, M_AP_TYPE, NHW_TEXT, NHW_MENU,
-         PICK_ONE } from './const.js';
+         PICK_ONE, LEVITATION, FLYING, KILLED_BY, KILLED_BY_AN } from './const.js';
 import { is_pool, is_ice } from './dbridge.js';
 import { create_gas_cloud } from './region.js';
 import { CLR_ORANGE, CLR_BLACK, CLR_GREEN, CLR_YELLOW, CLR_WHITE, CLR_BRIGHT_BLUE } from './terminal.js';
@@ -1354,15 +1355,18 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
     let range = rn1(7, 7);              // C: range = rn1(7, 7)
     if (dx === 0 && dy === 0) range = 1;
     let lsx, lsy;
-    const beamGlyph = (dx !== 0 && dy === 0) ? 'q' /*S_hbeam ─*/
-                    : (dx === 0 && dy !== 0) ? 'f' /*S_vbeam │*/
-                    : (dx === dy) ? 'n' /*S_lslant ╲*/ : 'm' /*S_rslant ╱*/;
     // C ref: tmp_at(DISP_BEAM,...)/tmp_at(DISP_END,0) — the beam glyph is a
     // temporary overlay; once the zap finishes every cell it touched is
     // restored to its real glyph (corpse, monster, floor, ...).  Track visited
     // cells here and newsym() them back at the bottom of the function.
     const visited = new Map();
-    const drawBeam = (x, y) => { show_glyph_cell(x, y, beamGlyph, ZAPCOLORS[hdmgtype] ?? CLR_ORANGE, true); visited.set(`${x},${y}`, [x, y]); };
+    const drawBeam = (x, y) => {
+        // C: zapdir_to_glyph(), updated by DISP_CHANGE after each bounce.
+        const beamGlyph = dx === dy ? '\\' : (dx && dy) ? '/' : dx ? 'q' : 'x';
+        show_glyph_cell(x, y, beamGlyph, ZAPCOLORS[hdmgtype] ?? CLR_ORANGE,
+                        beamGlyph === 'q' || beamGlyph === 'x');
+        visited.set(`${x},${y}`, [x, y]);
+    };
 
     while (range-- > 0) {
         lsx = sx; sx += dx;
@@ -1541,7 +1545,7 @@ export async function zap_over_floor(x, y, type, _exploding_wand_typ) {
         }
     }
     if (damgtype === ZT_FIRE)
-        burn_floor_objects(x, y, false, type > 0);
+        await burn_floor_objects(x, y, false, type > 0);
     return rangemod;
 }
 
@@ -1591,7 +1595,7 @@ async function stop_occupation_zap() {
 }
 
 // C ref: zap.c burn_floor_objects(x, y, give_feedback, u_caused).
-export function burn_floor_objects(x, y, _give_feedback, u_caused) {
+export async function burn_floor_objects(x, y, _give_feedback, u_caused) {
     const arr = game.level?.objects || [];
     // C walks the nexthere chain (newest first); place_object prepends, and
     // this port's flat list appends, so iterate in reverse (same convention
@@ -1627,7 +1631,7 @@ export function burn_floor_objects(x, y, _give_feedback, u_caused) {
         cnt += delquan;
     }
     // C: ignite_items(level.objects[x][y]) — does not change cnt.
-    void ignite_items(here.filter(o => o.where === 'floor'));
+    await ignite_items(here.filter(o => o.where === 'floor'));
     return cnt;
 }
 
@@ -1710,7 +1714,7 @@ const ANTIMAGIC_PROP = 12; // prop.h ANTIMAGIC
 const DISINT_RES_OTYPS = new Set(
     ['black dragon scale mail', 'black dragon scales']
         .map(n => objects.findIndex(o => o && o.name === n)).filter(i => i > 0));
-function resists_magm(mon) {
+export function resists_magm(mon) {
     const ptr = mon?.data;
     if (!ptr) return false;
     if (dmgtype(ptr, AD_MAGM) || ptr.pmidx === PM_BABY_GRAY_DRAGON
@@ -1988,9 +1992,7 @@ async function zhitu(type, nd, fltxt, sx, sy) {
         }
         break;
     case ZT_DEATH:
-        // ZT_BREATH(ZT_DEATH) disintegration is unreachable from a hero wand
-        // zap (dobuzz's type is 0-9 here); the ordinary death ray kills outright
-        // with no damage roll.
+        // Death and disintegration enter done(DIED) without HP damage.
         if (abstyp === 20 + ZT_DEATH) {
             if (Disint_resistance()) {
                 await update_topl('You are not disintegrated.');
@@ -2002,7 +2004,11 @@ async function zhitu(type, nd, fltxt, sx, sy) {
             break;
         }
         game._killer_name = fltxt || '';
-        await losehp((u.uhp | 0) + 1, fltxt);
+        u.ugrave_arise = type === -(20 + ZT_DEATH) ? -3 : NON_PM;
+        {
+            const { done, DIED } = await import('./end.js');
+            await done(DIED);
+        }
         return;
     case ZT_LIGHTNING:
         orig_dam = d(nd, 6);
@@ -2274,9 +2280,7 @@ async function erode_burn(victim, slot, ostr) {
 }
 
 // ── destroy_items (zap.c) ────────────────────────────────────────────────
-// C ref: zap.c destroy_items / maybe_destroy_item / destroyable.  Iterate the
-// hero's inventory and probabilistically destroy fire/cold/elec-vulnerable
-// stacks.  Faithful to the RNG sequence the seed5002 fire zap exercises.
+// C ref: zap.c destroy_items / maybe_destroy_item / destroyable.
 const DMG_DESTROY_SCALE = 5, MAX_ITEMS_DESTROYED = 20;
 
 function invent_list() {
@@ -2288,17 +2292,8 @@ function invent_list() {
 // C ref: zap.c destroy_items's `objchn` (&gi.invent for the hero, &mon->minvent
 // otherwise).
 function obj_chain(carrier) {
-    return (carrier === game.u) ? invent_list() : (Array.isArray(carrier?.minvent) ? carrier.minvent : []);
-}
-// C ref: mon.c m_useup — decrement/remove one item from a monster's minvent.
-function mon_useup(carrier, obj) {
-    const inv = carrier?.minvent;
-    if (!inv) return;
-    obj.quan = (obj.quan || 1) - 1;
-    if (obj.quan <= 0) {
-        const idx = inv.indexOf(obj);
-        if (idx >= 0) inv.splice(idx, 1);
-    }
+    return (carrier === game.u || carrier === game.youmonst)
+        ? invent_list() : (Array.isArray(carrier?.minvent) ? carrier.minvent : []);
 }
 
 // C ref: zap.c destroyable(obj, adtyp).
@@ -2323,23 +2318,15 @@ function destroyable(obj, adtyp) {
 
 // destroy_strings[dindx][0 singular, 1 plural].  C ref: zap.c.
 const DESTROY_STRINGS = [
-    ['freezes and shatters', 'freeze and shatter'],
-    ['boils and explodes', 'boil and explode'],
-    ['ignites and explodes', 'ignite and explode'],
-    ['catches fire and burns', 'catch fire and burn'],
-    ['catches fire and burns', ''],
-    ['turns to dust and vanishes', ''],
-    ['breaks apart and explodes', ''],
+    ['freezes and shatters', 'freeze and shatter', 'shattered potion'],
+    ['boils and explodes', 'boil and explode', 'boiling potion'],
+    ['ignites and explodes', 'ignite and explode', 'exploding potion'],
+    ['catches fire and burns', 'catch fire and burn', 'burning scroll'],
+    ['catches fire and burns', '', 'burning book'],
+    ['turns to dust and vanishes', '', ''],
+    ['breaks apart and explodes', '', 'exploding wand'],
 ];
 
-// C ref: objnam.c yname(obj) — "Your <xname>" for a carried item.  The old
-// version hardcoded six otyp->string pairs (whatever seed5002's fire zap
-// happens to destroy) and fell back to objects[].name — the BARE name
-// ("invisibility", not "potion of invisibility") — so every unlisted
-// potion/scroll/spellbook printed the wrong line.  xname() builds the real name.
-function yname_for(obj) {
-    return 'Your ' + xname(obj);
-}
 
 export async function destroy_items(mon, dmgtyp, dmg_in) {
     const objchn = obj_chain(mon);
@@ -2348,23 +2335,28 @@ export async function destroy_items(mon, dmgtyp, dmg_in) {
     if (limit > MAX_ITEMS_DESTROYED) limit = MAX_ITEMS_DESTROYED;
     if (limit < 1) return 0;
 
-    const items = new Array(MAX_ITEMS_DESTROYED).fill(null).map(() => ({ obj: null, deferred: false }));
-    let elig = 0, where = null;
+    const items = new Array(limit);
+    const u_carry = mon === game.u || mon === game.youmonst;
+    let elig = 0;
     for (const obj of objchn) {
         if (!destroyable(obj, dmgtyp)) continue;
         const i = (elig < limit) ? elig : rn2(elig);
         elig++;
         if (i < 0 || i >= limit) continue;
-        items[i].obj = obj;
-        items[i].deferred = false; // levitation/flying deferral not on covered hero
-        if (where == null) where = 'invent';
+        const prop = objects[obj.otyp]?.oc_oprop;
+        const deferred = u_carry
+            && ((obj.owornmask && (prop === LEVITATION || prop === FLYING))
+                || (obj.otyp === POT_WATER && (game.u?.ulycn ?? NON_PM) >= 0
+                    && (game.u?.Upolyd ? obj.blessed : obj.cursed)));
+        items[i] = { obj, deferred: !!deferred };
     }
     if (elig > limit) elig = limit;
     let dmg_out = 0;
     for (let defer = 0; defer <= 1; defer++) {
         for (let i = 0; i < elig; i++) {
             const obj = items[i].obj;
-            if (obj && items[i].deferred === (defer === 1)) {
+            if (obj && obj_chain(mon).includes(obj)
+                && items[i].deferred === (defer === 1)) {
                 dmg_out += await maybe_destroy_item(mon, obj, dmgtyp);
                 items[i].obj = null;
             }
@@ -2374,15 +2366,25 @@ export async function destroy_items(mon, dmgtyp, dmg_in) {
 }
 
 async function maybe_destroy_item(carrier, obj, dmgtyp) {
-    const u_carry = (carrier === game.u);
+    const u_carry = carrier === game.u || carrier === game.youmonst;
+    const visible = u_carry || canseemon_shared(carrier);
+    const protection = u_carry ? u_adtyp_resistance_obj(dmgtyp) : 0;
+    if (protection && rn2(100) < protection) return 0;
     let dindx = 0, dmg = 0, quan = 0, skip = 0, xresist = 0, chargeit = false;
     switch (dmgtyp) {
     case AD_COLD:
         quan = obj.quan; dindx = 0; dmg = rnd(4); break;
     case AD_FIRE:
         xresist = (obj.oclass !== POTION_CLASS && obj.otyp !== GLOB_OF_GREEN_SLIME
-                   && (u_carry ? false /* hero not fire-resistant on covered level */
-                               : resists_fire(carrier)));
+                   && (u_carry ? Fire_resistance() : resists_fire(carrier)));
+        if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
+            if (u_carry ? !Blind() : visible) {
+                const { hcolor } = await import('./do_name.js');
+                await update_topl(`The ${xname(obj)} glows a strange ${
+                    hcolor('dark red')}, but remains intact.`);
+            }
+            return 0;
+        }
         quan = obj.quan;
         switch (obj.oclass) {
         case POTION_CLASS: dindx = (obj.otyp !== POT_OIL) ? 1 : 2; dmg = rnd(6); break;
@@ -2392,6 +2394,8 @@ async function maybe_destroy_item(carrier, obj, dmgtyp) {
         }
         break;
     case AD_ELEC:
+        xresist = obj.oclass !== RING_CLASS
+            && (u_carry ? Shock_resistance() : resists_elec(carrier));
         quan = obj.quan;
         if (obj.oclass === WAND_CLASS) { dindx = 6; dmg = rnd(10); }
         else if (obj.oclass === RING_CLASS) {
@@ -2426,31 +2430,53 @@ async function maybe_destroy_item(carrier, obj, dmgtyp) {
     for (let i = 0; i < quan; i++) if (!rn2(3)) cnt++;
     if (!cnt) return 0;
 
-    const visible = u_carry || canspotmon(carrier);
     if (visible) {
         const mult = (cnt === 1) ? ((quan === 1) ? '' : 'One of ')
                    : ((cnt < quan) ? 'Some of ' : (quan === 2) ? 'Both of ' : 'All of ');
-        // yname capitalises with "Your"; when prefixed by a mult word the leading
-        // "Your" lowercases to "your".  For the covered single-stack potions cnt
-        // and quan are both 1 so mult is empty -> "Your <name> <how>!".
-        const base = u_carry ? yname_for(obj) : `${carrier?.name || 'The monster'}'s ${objects[obj.otyp]?.name || 'item'}`;
-        const nm = (u_carry && mult) ? base.replace(/^Your/, 'your') : base;
+        const name = yname(obj);
+        const nm = mult ? name : name[0].toUpperCase() + name.slice(1);
         await update_topl(`${mult}${nm} ${DESTROY_STRINGS[dindx][cnt > 1 ? 1 : 0]}!`);
     }
     if (u_carry) {
-        if (obj.oclass === POTION_CLASS && dmgtyp !== AD_COLD)
-            await potionbreathe(obj);
+        const ptr = await youmonst_data_z();
+        const flags = mflags1_of(ptr);
+        if (obj.oclass === POTION_CLASS && dmgtyp !== AD_COLD
+            && (!(flags & M1_BREATHLESS) || !(flags & M1_NOEYES))) {
+            const { potionbreathe_hero } = await import('./potion.js');
+            await potionbreathe_hero(obj);
+        }
+        if (obj.owornmask & W_RING) Ring_gone(obj);
+        else if (obj.owornmask) setnotworn(obj);
+        if (obj === game.current_wand) game.current_wand = null;
     }
+    const osym = obj.oclass;
     for (let i = 0; i < cnt; i++) {
+        const last = obj.quan === 1;
         if (u_carry) useup(obj);
-        else mon_useup(carrier, obj);
+        else {
+            const { m_useup } = await import('./muse.js');
+            m_useup(carrier, obj);
+        }
+        if (last) {
+            if (obj.timed) {
+                const { obj_stop_timers } = await import('./timeout.js');
+                await obj_stop_timers(obj);
+            }
+            obj.where = 0; /* OBJ_FREE, as required by dealloc_obj */
+            obj.ocarry = null;
+            dealloc_obj(obj);
+        }
     }
     if (dmg) {
         if (!u_carry) return xresist ? 0 : dmg;
         if (xresist) {
             await update_topl("You aren't hurt!");
         } else {
-            await losehp(dmg, DESTROY_STRINGS[dindx][1] || DESTROY_STRINGS[dindx][0]);
+            const how = dmgtyp === AD_FIRE && osym === FOOD_CLASS
+                ? 'exploding glob of slime' : DESTROY_STRINGS[dindx][2];
+            const { losehp_do } = await import('./do.js');
+            await losehp_do(dmg, cnt === 1 ? how : makeplural(how),
+                cnt === 1 ? KILLED_BY_AN : KILLED_BY);
             exercise(A_STR, false);
         }
     }
@@ -2473,18 +2499,6 @@ async function speed_up(duration) {
     u.uprops.HFast = (u.uprops.HFast | 0) + duration; /* incr_itimeout(&HFast, ...) */
 }
 
-// C ref: potion.c potionbreathe — only the POT_INVISIBILITY case (no RNG) is
-// reached by the seed5002 fire zap.
-async function potionbreathe(obj) {
-    switch (obj.otyp) {
-    case POT_INVISIBILITY:
-        // !Blind && !Invis on the covered hero.
-        await update_topl("For an instant you couldn't see yourself!");
-        break;
-    default:
-        break;
-    }
-}
 
 // C ref: trap.c ignite_items(objchn) — every ignitable, not-already-lit item in
 // the chain catches fire.  catch_lit() draws rn2(2) for a CURSED oil/magic lamp,
@@ -2514,6 +2528,8 @@ function ignitable(obj) {
 // C ref: apply.c catch_lit(obj).
 export async function catch_lit(obj) {
     if (obj.lamplit || !ignitable(obj)) return false;
+    const loc = get_obj_location_z(obj, 0);
+    if (!loc) return false;
     if (((obj.otyp === MAGIC_LAMP || obj.otyp === CANDELABRUM_OF_INVOCATION)
          && (obj.spe | 0) === 0)
         || (age_is_relative(obj) && (obj.age | 0) === 0)
@@ -2523,16 +2539,16 @@ export async function catch_lit(obj) {
     if ((obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP)
         && obj.cursed && !rn2(2))
         return false;
-    // C: pline("%s %s %s", Yname2(obj), otense(obj, Blind ? "feel" : "catch"),
-    // Blind ? "warm." : "light!").  objects[].name is the BARE name ("oil", not
-    // "potion of oil") for class-prefixed types, so route through xname().
-    if (obj.where === 'invent' || cansee(obj.ox, obj.oy)) {
+    if (obj.where === OBJ_INVENT || cansee(loc.x, loc.y)) {
         const plural = (obj.quan || 1) > 1;
         const verb = Blind() ? (plural ? 'feel' : 'feels') : (plural ? 'catch' : 'catches');
-        await update_topl(`${yname_for(obj)} ${verb} ${Blind() ? 'warm.' : 'light!'}`);
+        const name = yname(obj);
+        await update_topl(`${name[0].toUpperCase() + name.slice(1)} ${verb} ${
+            Blind() ? 'warm.' : 'light!'}`);
     }
     if (obj.otyp === POT_OIL) makeknown(obj.otyp);
-    obj.lamplit = 1;
+    const { begin_burn } = await import('./timeout.js');
+    await begin_burn(obj, false);
     return true;
 }
 // C ref: obj.h age_is_relative(o) — lamps/candles burn down from obj->age.
@@ -2965,9 +2981,27 @@ async function flashburn(duration, _via_lightning) {
 // C ref: youprop.h hero property predicates.  This port stores intrinsics under
 // game.u.uprops (potion.js/cmd.js convention); an unmodelled property reads
 // false, which is what the covered heroes actually have.
-function Fire_resistance()  { return (game.u?.uprops?.HFire_resistance  || 0) > 0; }
-function Cold_resistance()  { return (game.u?.uprops?.HCold_resistance  || 0) > 0; }
-function Shock_resistance() { return (game.u?.uprops?.HShock_resistance || 0) > 0; }
+function Fire_resistance() {
+    const u = game.u;
+    return !!(u?.uprops?.Fire_resistance || u?.uprops?.HFire_resistance
+        || u?.uprops?.EFire_resistance || u?.Fire_resistance
+        || worn_extrinsic(FIRE_RES) || has_innate('HFire_resistance')
+        || (u?.Upolyd && resists_fire(u)));
+}
+function Cold_resistance() {
+    const u = game.u;
+    return !!(u?.uprops?.Cold_resistance || u?.uprops?.HCold_resistance
+        || u?.uprops?.ECold_resistance || u?.Cold_resistance
+        || worn_extrinsic(COLD_RES) || has_innate('HCold_resistance')
+        || (u?.Upolyd && resists_cold(u)));
+}
+function Shock_resistance() {
+    const u = game.u;
+    return !!(u?.uprops?.Shock_resistance || u?.uprops?.HShock_resistance
+        || u?.uprops?.EShock_resistance || u?.Shock_resistance
+        || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
+        || (u?.Upolyd && resists_elec(u)));
+}
 function Acid_resistance()  { return (game.u?.uprops?.AcidResistance    || 0) > 0; }
 function Disint_resistance(){ return (game.u?.uprops?.HDisint_resistance|| 0) > 0; }
 function Drain_resistance() { return (game.u?.uprops?.HDrain_resistance || 0) > 0; }
@@ -3527,16 +3561,8 @@ const PLNMSG_OBJ_GLOWS_Z = 'PLNMSG_OBJ_GLOWS';
 // re-derives the number the same way at timeout.js:62.
 const MELT_ICE_AWAY_Z = SHRINK_GLOB + 1;
 
-// C ref: zap.c:1702 poly_obj(obj, id) for `id != STRANGE_OBJECT` — replace obj
-// outright: mksobj(id, FALSE, FALSE) + set_corpsenm carryover + the shared
-// quantity/BUC/erosion tail.  Kept separate from this file's poly_obj()
-// (js/zap.js:471, STRANGE_OBJECT-only, `can_merge` param) because handing it an
-// otyp would silently fork onto the random-object path instead.  can_merge is
-// FALSE on this branch, so the rn2(1000) merge roll and the whole
-// TOOL/WAND/POTION/SPBOOK/GEM anti-polymorph-loop switch never fire for
-// stone_to_flesh's food/corpse targets.
-async function poly_obj_id_z(obj, id) {
-    const ox = obj.ox, oy = obj.oy;
+// C ref: zap.c poly_obj(obj, id), explicit-type replacement.
+export async function poly_obj_id(obj, id) {
     const obj_location = obj.where;
     const mk = await import('./mkobj.js');
 
@@ -3557,11 +3583,7 @@ async function poly_obj_id_z(obj, id) {
     otmp.recharged = obj.recharged;
     otmp.cursed = obj.cursed;
     otmp.blessed = obj.blessed;
-    /* C guards each field with is_flammable/is_rustprone/is_crackable (oeroded),
-       is_corrodeable/is_rottable (oeroded2) and is_damageable (oerodeproof);
-       only is_flammable_obj() of those is ported in this file, and
-       erosion_matters_obj() is FALSE for every otyp stone_to_flesh_obj() passes
-       here (food and corpses), so the sub-guards are unreachable today. */
+    // Iron footwear carries both rust and corrosion across polymorph.
     if (erosion_matters_obj(otmp)) {
         otmp.oeroded = obj.oeroded;
         otmp.oeroded2 = obj.oeroded2;
@@ -3572,15 +3594,12 @@ async function poly_obj_id_z(obj, id) {
         otmp.otrapped = 1;
     otmp.owt = weight_of(otmp);              /* C: otmp->owt = weight(otmp) */
 
-    /* replace old object with new in the same floor-chain position */
-    const floorObjects = game.level?.objects;
-    const floorIndex = floorObjects?.indexOf(obj) ?? -1;
-    delobj(obj);
-    place_object(otmp, ox, oy);
-    if (floorIndex >= 0) {
-        floorObjects.pop();
-        floorObjects.splice(floorIndex, 0, otmp);
+    mk.replace_object(obj, otmp);
+    if (obj.timed) {
+        const { obj_stop_timers } = await import('./timeout.js');
+        await obj_stop_timers(obj);
     }
+    delobj(obj);
     return otmp;
 }
 
@@ -4430,7 +4449,7 @@ export async function stone_to_flesh_obj(obj) {
     case ROCK_CLASS: /* boulders and statues */
     case TOOL_CLASS: /* figurines */
         if (obj.otyp === BOULDER) {
-            obj = await poly_obj_id_z(obj, ENORMOUS_MEATBALL);
+            obj = await poly_obj_id(obj, ENORMOUS_MEATBALL);
             smell = true;
         } else if (obj.otyp === STATUE || obj.otyp === FIGURINE) {
             ptr = await mons_(obj.corpsenm);
@@ -4438,7 +4457,7 @@ export async function stone_to_flesh_obj(obj) {
                 golem_xform = (ptr.pmidx !== PM_FLESH_GOLEM_Z);
             } else if (vegetarian(ptr)) {
                 /* Don't animate monsters that aren't flesh */
-                obj = await poly_obj_id_z(obj, MEATBALL);
+                obj = await poly_obj_id(obj, MEATBALL);
                 smell = true;
                 break;
             }
@@ -4495,7 +4514,7 @@ export async function stone_to_flesh_obj(obj) {
                     obj_extract_self(item);
                     place_object(item, oox, ooy);
                 }
-                obj = await poly_obj_id_z(obj, CORPSE);
+                obj = await poly_obj_id(obj, CORPSE);
             }
         } else { /* miscellaneous tool or unexpected rock... */
             res = 0;
@@ -4503,15 +4522,15 @@ export async function stone_to_flesh_obj(obj) {
         break;
     /* maybe add weird things to become? */
     case RING_CLASS: /* some of the rings are stone */
-        obj = await poly_obj_id_z(obj, MEAT_RING);
+        obj = await poly_obj_id(obj, MEAT_RING);
         smell = true;
         break;
     case WAND_CLASS: /* marble wand */
-        obj = await poly_obj_id_z(obj, MEAT_STICK);
+        obj = await poly_obj_id(obj, MEAT_STICK);
         smell = true;
         break;
     case GEM_CLASS: /* stones & gems */
-        obj = await poly_obj_id_z(obj, MEATBALL);
+        obj = await poly_obj_id(obj, MEATBALL);
         smell = true;
         break;
     case WEAPON_CLASS: /* crysknife */

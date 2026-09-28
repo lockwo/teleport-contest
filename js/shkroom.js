@@ -20,30 +20,25 @@ import {
     ROOMOFFSET, NO_ROOM, SHARED, SHARED_PLUS, SHOPBASE, COLNO, ROWNO,
     TEMPLE, MORGUE, OROOM, MAXNROFROOMS, G_GONE,
     THRONE, ZOO, SWAMP, COURT, LEPREHALL, BEEHIVE, COCKNEST, ANTHOLE,
-    BARRACKS, DELPHI,
+    BARRACKS, DELPHI, STEALTH,
 } from './const.js';
 import { midnight } from './calendar.js';
 import { Blind } from './vision.js';
+import { has_innate } from './exper.js';
+import { worn_extrinsic, worn_blocked } from './invent.js';
 
 const PICK_AXE = 259, DWARVISH_MATTOCK = 71;
-// do_wear.c's otyps for the three worn stealth sources (js/do_wear.js:48/60/62).
-const ELVEN_CLOAK = 139, ELVEN_BOOTS = 169, RIN_STEALTH = 181;
-
-// C ref: youprop.h `Stealth ((HStealth || EStealth) && !BStealth)`.  This port
-// grants no INTRINSIC stealth — exper.js adjabil() only prints the "You feel
-// stealthy!" line, it never sets the property — so the H term can only come
-// from an already-tracked field; EStealth is the three worn sources
-// js/do_wear.js:179 lists, and BStealth is C's "blocked while riding unless
-// hero and steed both fly".
-function Stealth() {
+// C ref: youprop.h Stealth; polyself.c steed_vs_stealth().
+export function Stealth() {
     const u = game.u;
     if (!u) return false;
-    const H = !!(u.HStealth || u.uStealth || u.uprops?.HStealth);
-    const E = [game.uarmc, game.uarmf, game.uleft, game.uright].some(
-        (o) => o && (o.otyp === ELVEN_CLOAK || o.otyp === ELVEN_BOOTS
-                     || o.otyp === RIN_STEALTH));
-    const B = !!u.usteed && !u.uprops?.Flying;
-    return (H || E) && !B;
+    const p = u.uprops || {};
+    const H = u.HStealth || u.uStealth || p.HStealth || p.Stealth
+        || has_innate('HStealth');
+    const E = u.EStealth || p.EStealth || worn_extrinsic(STEALTH);
+    const B = u.BStealth || p.BStealth || worn_blocked(STEALTH)
+        || (u.usteed && !p.Flying && !p.Levitation);
+    return !!(H || E) && !B;
 }
 
 const IS_SHOP = (rt) => rt >= SHOPBASE;

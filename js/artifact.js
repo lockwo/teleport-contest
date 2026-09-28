@@ -26,7 +26,8 @@ import { exercise } from './attrib.js';
 import { isok } from './hacklib.js';
 import { cansee } from './vision.js';
 import { mon_nam, monflee } from './uhitm.js';
-import { resist } from './zap.js';
+import { resist, destroy_items, ignite_items } from './zap.js';
+import { worn_extrinsic } from './invent.js';
 import { healmon } from './mon.js';
 import { nomul } from './hack.js';
 import {
@@ -449,17 +450,7 @@ export const artilist = [
 // ─────────────────────────────────────────────────────────────────────────
 // External bindings.
 //
-// These five C functions ARE implemented in this port but their JS modules do
-// not export them, so nothing here can call the real ones.  destroy_items()
-// and cancel_monst() DRAW RNG, so the fallbacks are not behavioural choices —
-// they are missing bindings.  A wiring pass adds `export` in the owning module
-// and calls setArtifactHooks() once; until then any call is recorded on
-// game._artifact_unbound so it cannot be lost silently.
-//   destroy_items   js/zap.js:2111 (async, draws a per-item rn2 chain)
-//   ignite_items    js/zap.js
-//   probe_monster   src/detect.c — not ported
-//   make_stunned    src/potion.c — not ported under that name
-//   make_confused   src/potion.c — not ported under that name
+// Hooks for effects whose owning modules do not yet expose a callable port.
 // ─────────────────────────────────────────────────────────────────────────
 function unbound(which, fallback) {
     game._artifact_unbound = game._artifact_unbound || new Set();
@@ -467,8 +458,6 @@ function unbound(which, fallback) {
     return fallback;
 }
 export const artifact_hooks = {
-    destroy_items: null,   // zap.c    — DRAWS RNG
-    ignite_items: null,    // zap.c
     probe_monster: null,   // detect.c
     make_stunned: null,    // potion.c
     make_confused: null,   // potion.c
@@ -545,9 +534,24 @@ function Antimagic() {
     const u = game.u;
     return !!(u?.uprops?.Antimagic || u?.Antimagic || u?.HAntimagic || u?.EAntimagic);
 }
-function Fire_resistance() { return !!(uprop('Fire_resistance') || game.u?.Fire_resistance); }
-function Cold_resistance() { return !!(uprop('Cold_resistance') || game.u?.Cold_resistance); }
-function Shock_resistance() { return !!(uprop('Shock_resistance') || game.u?.Shock_resistance); }
+function Fire_resistance() {
+    return !!(uprop('Fire_resistance') || uprop('HFire_resistance')
+        || uprop('EFire_resistance') || game.u?.Fire_resistance
+        || worn_extrinsic(FIRE_RES) || has_innate('HFire_resistance')
+        || (youmonst_data()?.mresists & MR_FIRE));
+}
+function Cold_resistance() {
+    return !!(uprop('Cold_resistance') || uprop('HCold_resistance')
+        || uprop('ECold_resistance') || game.u?.Cold_resistance
+        || worn_extrinsic(COLD_RES) || has_innate('HCold_resistance')
+        || (youmonst_data()?.mresists & MR_COLD));
+}
+function Shock_resistance() {
+    return !!(uprop('Shock_resistance') || uprop('HShock_resistance')
+        || uprop('EShock_resistance') || game.u?.Shock_resistance
+        || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
+        || (youmonst_data()?.mresists & MR_ELEC));
+}
 // A race-innate grant (e.g. every orc, from level 1) is never persisted as a
 // stored flag anywhere in js/ — OR in the pure has_innate() derivation.
 function Poison_resistance() {
@@ -1782,7 +1786,11 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
         if (!rn2(4)) {
             const itemdmg = await destroy_items(mdef, AD_FIRE, mdmg.d);
             if (!youdefend) mdmg.d += itemdmg;   /* item destruction dmg */
-            ignite_items(mdef.minvent);
+            await ignite_items(mdef.minvent);
+        }
+        if (youdefend) {
+            const { burn_away_slime } = await import('./timeout.js');
+            await burn_away_slime();
         }
         return realizes_damage;
     }
@@ -2771,18 +2779,6 @@ export async function retouch_equipment(dropflag) {
 // ─────────────────────────────────────────────────────────────────────────
 // Remaining cross-file helpers.
 // ─────────────────────────────────────────────────────────────────────────
-// zap.c destroy_items(mon, dmgtyp, dmg) — DRAWS RNG.  js/zap.js:2111 has the
-// real implementation but no `export`.
-async function destroy_items(mon, dmgtyp, dmg) {
-    const fn = artifact_hooks.destroy_items;
-    if (fn) return await fn(mon, dmgtyp, dmg);
-    return unbound('destroy_items', 0);
-}
-function ignite_items(minvent) {
-    const fn = artifact_hooks.ignite_items;
-    if (fn) return fn(minvent);
-    return unbound('ignite_items', undefined);
-}
 // cmd.c wake_nearto() — async in this port, so artifact_hit() awaits it to
 // keep C's statement order.  Loaded with a dynamic import so that a future
 // `import ... from './artifact.js'` inside cmd.js/exper.js/invent.js cannot
@@ -2794,7 +2790,7 @@ async function wake_nearto(x, y, dist) {
 // exper.c losexp(drainer)
 async function losexp(drainer) {
     const { losexp: fn } = await import('./exper.js');
-    return fn(drainer, true);
+    return fn(drainer, update_topl);
 }
 // cmd.c healup(nhp, nxtra, curesick, cureblind) — the nhp half.
 function healup(nhp) {

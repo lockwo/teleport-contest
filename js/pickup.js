@@ -7,6 +7,7 @@
 
 import { game } from './gstate.js';
 import { Blind } from './vision.js';
+import { read_engr_at } from './engrave.js';
 import { rn2, rnd, d } from './rng.js';
 import { pline, bot, m_at, newsym, flush_screen, y_n, update_topl } from './display.js';
 import {
@@ -581,10 +582,6 @@ export async function check_here(picked_some) {
     } else {
         await read_engr_at(u.ux, u.uy);
     }
-}
-async function read_engr_at(x, y) {
-    const inv = await import('./invent.js');
-    if (typeof inv.read_engr_at === 'function') await inv.read_engr_at(x, y);
 }
 
 /* pickup.c:460 n_or_more() */

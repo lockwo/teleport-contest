@@ -11,8 +11,7 @@
 // level uses belongs in that level's file.
 import { game } from './gstate.js';
 import { depth as depth_of_level, dist2, distmin } from './hacklib.js';
-import { isaac64_next_uint64 } from './isaac64.js';
-import { rn2, rnd, rn1, pushRngLogEntry } from './rng.js';
+import { rn2, rnd, rn1 } from './rng.js';
 import { somexyspace } from './mkroom.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, HWALL, VWALL, SDOOR, DOOR,
@@ -34,7 +33,7 @@ import {
     PIT, SPIKED_PIT, FIRE_TRAP, NO_TRAP, is_pit, BURN, LR_BRANCH,
     TRAPNUM, TRAPPED_DOOR, TRAPPED_CHEST, MAGIC_PORTAL, VIBRATING_SQUARE,
     LEVEL_TELEP, WEB, STATUE_TRAP, POLY_TRAP, TRAPDOOR,
-    LA_UP, LA_DOWN,
+    LA_UP, LA_DOWN, STRAT_WAITFORU,
     // used only by the sp_lev.c translations at the end of this file
     IS_POOL, ACCESSIBLE, IS_DRAWBRIDGE, DB_DIR, DB_NORTH, DB_SOUTH, DB_EAST,
     DB_WEST, SVALL, GRAVE, SP_COORD_IS_RANDOM, DRY, WET, HOT, ANY_LOC,
@@ -62,7 +61,7 @@ import {
 // so this is not a cycle.
 import { readobjnam } from './readobjnam.js';
 import { objects as OBJDATA } from './mkobj.js';
-import { mkgold, next_ident, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
+import { mkgold, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
          CORPSE, CHEST, LARGE_BOX, STATUE, mk_tt_object, mkobj_at, BOULDER,
          FOOD_CLASS, GOLD_PIECE, add_to_container, weight, mkobj, RANDOM_CLASS,
          OIL_LAMP, ARROW,
@@ -72,7 +71,7 @@ import { monster_by_pmidx, name_to_pmidx, level_difficulty_ext, makemon,
          mkclass, mkclass_aligned, mm_mon_at, enexto_spawn, mongets_pub,
          name_gender_hint, MGEND_NEUTRAL, MM_ASLEEP, MM_NOGRP,
          set_mimic_sym, propagate, mpickobj, set_malign,
-         adj_lev, newcham } from './makemon.js';
+         newcham } from './makemon.js';
 import { somexy, inside_room, occupied } from './mkroom.js';
 import { create_gas_cloud_selection, create_gas_cloud } from './region.js';
 import { is_flyer_flag, is_swimmer_flag, passes_walls_flag,
@@ -466,28 +465,6 @@ export function shuffle(list) {
     return list;
 }
 
-function rawRnd(x) {
-    const val = isaac64_next_uint64(game.coreCtx);
-    return Number(val % BigInt(x));
-}
-
-function c_d(n, x) {
-    let sum = 0;
-    for (let i = 0; i < n; i++) sum += rawRnd(x) + 1;
-    pushRngLogEntry(`d(${n},${x})=${sum}`);
-    return sum;
-}
-
-// PM_GHOST: makemon MONS table index for the invisible (mlet==' ') ghost (C ref:
-// themerms.lua "Ghost of an Adventurer" -> des.monster({id="ghost", asleep=true,
-// waiting=true})).  Never renders, but IS a live fmon member, so mcalcmove's
-// per-turn reallocation loop (allmain.c:233) must count it -- omitting it
-// desynced the rn2(NORMAL_SPEED) stream by 1 monster/turn (3 vs 4 calls),
-// causing the seed0015 divergence.
-const PM_GHOST = 287;
-// C ref: do_name.c ghostnames[] — SIZE(ghostnames), the modulus of
-// rndghostname()'s ROLL_FROM().
-const GHOSTNAMES_SIZE = 34;
 // C ref: objects.h — otyp constants not otherwise exported by mkobj.js;
 // u_init.js already carries the same local literals (DAGGER=34, BOW=83).
 const DAGGER = 34;
@@ -497,58 +474,11 @@ function create_ghost_of_adventurer(croom) {
     const loc = selection_rndcoord(selection_room(croom), false);
     if (!loc) return;
 
-    const gdata = monster_by_pmidx(PM_GHOST);
-    // C ref: makemon.c:1519 `mtmp->m_lev = adj_lev(ptr)` (makemon.c:2016) — a
-    // ghost's mlevel of 10 is SCALED by level_difficulty(), so newmonhp()'s
-    // d(m_lev, 8) is d(9,8) only while depth <= 9; on Dlvl 17 C rolls d(11,8).
-    const m_lev = gdata ? adj_lev(gdata) : 9;
-
-    rn2(2);                  // find_montype("ghost")
-    rn2(3);                  // induced_align()
-    next_ident();            // mtmp->m_id = next_ident() — rnd(2)
-    const mhp = c_d(m_lev, 8);   // newmonhp() — d(m_lev, 8)
-    rn2(2);                  // makemon() gender roll (gcode 0 -> femaleok)
-    // C ref: do_name.c:772 rndghostname() — `rn2(7) ? ROLL_FROM(ghostnames)
-    // : svp.plname`.  ROLL_FROM is a SECOND draw, rn2(SIZE(ghostnames)); the
-    // plname arm takes none, so drawing it unconditionally inserted a call C
-    // never makes whenever the rn2(7) comes out 0.
-    if (rn2(7)) rn2(GHOSTNAMES_SIZE);
-    // C ref: makemon.c:826/828 m_initinv() — S_GHOST has no case in the mlet
-    // switch, so these two rolls are unconditional and are all a ghost draws
-    // (likes_gold() is false for it, so the rn2(5) money arm never runs).  The
-    // mongets(rnd_defensive_item/rnd_misc_item) bodies, reached only when
-    // m_lev > the roll, are not modelled here.
-    rn2(50);                 // m_initinv() — if (m_lev > rn2(50)) mongets(...)
-    rn2(100);                // m_initinv() — if (m_lev > rn2(100)) mongets(...)
-    rn2(100);                // makemon() trailing roll (makemon.c:1447)
-
-    // Materialize the ghost so it joins fmon (game.level.monsters).  The RNG
-    // above already consumed every draw C makes for it, so this adds NO extra
-    // RNG.  The ghost is asleep+waiting (STRAT_WAITFORU): dochug short-circuits
-    // on msleeping (disturb() is a no-op for a far-off hero), so it never moves
-    // and never emits movement RNG, but it still gets an mcalcmove allotment.
-    if (gdata && game.level && loc.x > 0 && loc.y > 0) {
-        const mtmp = {
-            data: gdata,
-            mx: loc.x,
-            my: loc.y,
-            m_id: (game.context_ident ?? 0),
-            m_lev,
-            mhp,
-            mhpmax: mhp,
-            movement: 0,
-            mcanmove: 1,
-            mcansee: 1,
-            msleeping: 1,   // asleep = true
-            mpeaceful: 0,
-            mflee: 0,
-            mtame: 0,
-            minvis: 1,      // ghosts are invisible
-            mstrategy: 0,
-        };
-        if (!game.level.monsters) game.level.monsters = [];
-        game.level.monsters.push(mtmp);
-    }
+    const ghost = splev_create_monster({
+        name: 'ghost', mx: loc.x - gx.xstart, my: loc.y - gy.ystart,
+        croom, asleep: true,
+    });
+    if (ghost) ghost.mstrategy = (ghost.mstrategy || 0) | STRAT_WAITFORU;
 
     // C ref: sp_lev.c create_object() — every des.object() below is
     // buc="not-blessed" (curse_state 6: unbless(otmp), no RNG) at the same
@@ -4081,12 +4011,12 @@ function splev_your_race(ptr) {
 export function splev_create_monster({ name = null, cls = 0, mx = null, my = null,
                                 peaceful = null, croom = null, asleep = null }) {
     let ptr = null;
+    let female = null;
     if (name != null) {
-        const pmidx = name_to_pmidx(name);
+        const gender = { v: NEUTRAL };
+        const pmidx = find_montype(name, gender);
         ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
-        if (ptr && ptr.gcode !== 1 && ptr.gcode !== 2
-            && name_gender_hint(name) === MGEND_NEUTRAL)
-            rn2(2);                                   // find_montype sp_lev.c:3156
+        if (ptr) female = gender.v;
     }
     rn2(3);                                           // induced_align dungeon.c:2012
     if (name == null && cls) ptr = mkclass(cls, 0x0200 /* G_NOGEN */);
@@ -4115,6 +4045,7 @@ export function splev_create_monster({ name = null, cls = 0, mx = null, my = nul
     // outside croom aborts the monster entirely, before makemon.
     if (croom && !inside_room(croom, x, y)) return null;
     const mtmp = makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
+    if (mtmp && female != null) mtmp.female = female;
     if (mtmp && peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
     if (mtmp && asleep != null) mtmp.msleeping = asleep ? 1 : 0;
     return mtmp;
@@ -5389,8 +5320,6 @@ const MAX_CONTAINMENT = 10;
 // C ref: obj.h ONAME_LEVEL_DEF -- oname() flag for a level-file-supplied name.
 const ONAME_LEVEL_DEF = 0x04;
 
-// C ref: mon.h STRAT_WAITFORU.
-const STRAT_WAITFORU = 0x08000000;
 
 // Resolve an otyp from its objects.h name rather than hardcoding the index:
 // objects[] index drift is this port's most expensive bug class

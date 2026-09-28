@@ -660,7 +660,6 @@ export async function savebones(how = 0, corpse = null) {
                 const plname = svp_plname();
                 mtmp.mextra = mtmp.mextra || {};
                 christen_monst(mtmp, plname);
-                mtmp.mname = plname;
                 mtmp.m_lev = g.u?.ulevel || 1;
                 mtmp.mhp = mtmp.mhpmax = g.u?.uhpmax ?? 1;
                 mtmp.female = !!g.flags?.female;
@@ -723,6 +722,7 @@ export async function savebones(how = 0, corpse = null) {
                     loc.remembered_glyph = undefined;
                     loc.disp_ch = ' ';
                     loc.disp_warning = false;
+                    loc.disp_monster = false;
                 }
             }
         }

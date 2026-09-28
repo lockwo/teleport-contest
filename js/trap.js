@@ -10,7 +10,7 @@ import { Blind, recalc_block_point, cansee, couldsee } from './vision.js';
 import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
          Ring_off, off_msg, obj_doname, carried, otense, obj_extract_self,
          obj_resists, useupall, remove_worn_item, is_plural, simpleonames,
-         makeplural, stackobj, freeinv, inventoryArray, welded } from './invent.js';
+         makeplural, stackobj, freeinv, inventoryArray, welded, worn_extrinsic } from './invent.js';
 import { observe_object } from './o_init.js';
 import { find_ac } from './u_init.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -44,6 +44,7 @@ import {
     W_BALL, W_ART, W_ARTI, I_SPECIAL, FROM_FORM, IS_SINK, W_ARMG, Has_contents, OMONST,
     TT_INFLOOR, TT_BURIEDBALL,
     NO_TRAP, TRAPNUM, FIRE_RES, TELEDS_ALLOW_DRAG, TELEDS_TELEPORT,
+    ANTIMAGIC, HALF_PHDAM, HALF_SPDAM, PASSES_WALLS,
 } from './const.js';
 import {
     objects, mksobj, weight, place_object, BOULDER, STATUE as STATUE_OTYP, CORPSE,
@@ -57,7 +58,7 @@ import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx,
          pmname_of_pmidx } from './makemon.js';
 import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID } from './monflags_data.js';
-import { AD_FIRE, AD_ELEC } from './monattk_data.js';
+import { AD_FIRE, AD_ELEC, AD_MAGM } from './monattk_data.js';
 import { MM_NOCOUNTBIRTH, MM_NOMSG, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND } from './const.js';
 import { In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
@@ -1275,7 +1276,7 @@ export async function lava_damage(obj, x, y) {
 
     if (obj_resists(obj, 0, 0) && otyp !== SPE_BOOK_OF_THE_DEAD) return false;
 
-    const mat = objects[otyp]?.material;
+    const mat = objects[otyp]?.oc_material;
     const hasContents = !!(obj.cobj && obj.cobj.length);
     if (mat < MAT_DRAGON_HIDE
         && ocls !== SCROLL_CLASS && ocls !== SPBOOK_CLASS
@@ -2721,7 +2722,7 @@ export async function dofiretrap(box) {
         await destroy_items(u, AD_FIRE, orig_dmg);
         await ignite_items(invent_list());
     }
-    if (!box && burn_floor_objects(u.ux, u.uy, see_it, true) && !see_it)
+    if (!box && await burn_floor_objects(u.ux, u.uy, see_it, true) && !see_it)
         await update_topl('You smell paper burning.');
     // melt_ice(): the ICE terrain arm needs allmain.c's melting machinery; it
     // draws no RNG.
@@ -3647,12 +3648,30 @@ async function level_tele_trap(trap, trflags) {
 }
 
 // C ref: trap.c:2346 trapeffect_anti_magic(&youmonst, ...) — the hero branch.
-// The positively-enchanted-iron-shoes bypass (trap.c:2330) and the Antimagic
-// arm (which rolls rnd(4) for implosion damage) both need gear no covered hero
-// wears, so this is the plain energy-drain path.
 async function trapeffect_anti_magic(trap, _trflags) {
     const u = game.u;
     seetrap(trap);
+    if (u.uprops?.Antimagic || u.Antimagic || u.HAntimagic || u.EAntimagic
+        || worn_extrinsic(ANTIMAGIC)) {
+        const { ART_MAGICBANE, is_art, defends_when_carried } = await import('./artifact.js');
+        const { is_quest_artifact } = await import('./questpgr.js');
+        let damage = rnd(4);
+        const hp = u.Upolyd ? u.mh : u.uhp;
+        if (u.HHalf_physical_damage || u.EHalf_physical_damage
+            || u.HHalf_spell_damage || u.EHalf_spell_damage
+            || worn_extrinsic(HALF_PHDAM) || worn_extrinsic(HALF_SPDAM))
+            damage += rnd(4);
+        if (is_art(game.uwep, ART_MAGICBANE)) damage += rnd(4);
+        if (inventoryArray().some(obj => obj.oartifact && !is_quest_artifact(obj)
+            && defends_when_carried(AD_MAGM, obj)))
+            damage += rnd(4);
+        if (u.uprops?.Passes_walls || u.HPasses_walls || u.EPasses_walls
+            || worn_extrinsic(PASSES_WALLS) || passes_walls_flag(game.youmonst?.data))
+            damage = Math.trunc((damage + 3) / 4);
+        await pline(`You feel ${damage >= hp ? 'unbearably torpid!'
+            : damage >= Math.trunc(hp / 4) ? 'very lethargic.' : 'sluggish.'}`);
+        await losehp(damage, 'anti-magic implosion', KILLED_BY_AN);
+    }
     let drain = d(2, 6);                       // trap.c:2386
     const halfd = rnd(Math.trunc(drain / 2));  // trap.c:2387 — UNCONDITIONAL
     let exclaim_it = false;

@@ -14,6 +14,7 @@ import { rn1, rnd } from './rng.js';
 import { A_WIS, A_CON } from './const.js';
 import { MAXULEV } from './const.js';
 import { races } from './roles.js';
+import { Goodbye } from './role.js';
 import { LL_MINORAC, livelog_printf } from './livelog.js';
 
 // ── role / race advancement data (C: role.c roles[]/races[]) ──
@@ -386,7 +387,7 @@ export async function pluslvl(incr, emitMsg) {
 export async function losexp(drainer, emitMsg) {
     const u = game.u;
     if ((u.ulevel || 0) > 1 || drainer) {
-        if (emitMsg) await emitMsg(`Goodbye level ${u.ulevel}.`);
+        if (emitMsg) await emitMsg(`${Goodbye(game.urole?.mnum)} level ${u.ulevel}.`);
     }
     if ((u.ulevel || 0) > 1) {
         const oldlevel = u.ulevel;

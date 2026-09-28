@@ -17,13 +17,12 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
          MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
 import { mflags2_of, M2_PNAME } from './monflags_data.js';
 import { objects } from './mkobj.js';
+import { PRONOUN_HALLU } from './const.js';
+import { PRONOUN_GENDERS } from './role.js';
 
-// x_monnam()/mon_pmname() still live in js/uhitm.js.  They are reached through a
-// registration hook rather than a static import because do_name.js sits BELOW
-// uhitm.js in the graph (dungeon.js/do_wear.js/dbridge.js pull in hcolor and
-// hliquid during their own module evaluation, and dragging uhitm.js in that
-// early hits a temporal-dead-zone on mkobj.js's class constants).
-let _hooks = { x_monnam: null, mon_pmname: null };
+// Keep higher-level naming dependencies behind registration: a static import
+// of uhitm.js or mondata.js here creates a cycle during module initialization.
+let _hooks = { x_monnam: null, mon_pmname: null, pronoun_gender: null };
 export function register_monnam_hooks(h) { _hooks = { ..._hooks, ...h }; }
 function x_monnam(mtmp, article, adjective, suppress, called) {
     return _hooks.x_monnam
@@ -231,17 +230,16 @@ function m_next2u(mon) {
 // "itself" when the two are the same monster.
 export function mon_nam_too(mon, other_mon) {
     if (mon !== other_mon) return mon_nam(mon);
-    const g = pronoun_gender(mon);
+    const g = _hooks.pronoun_gender(mon, PRONOUN_HALLU);
     return g === 0 ? 'himself' : g === 1 ? 'herself'
         : g === 3 ? 'themselves' : 'itself';
 }
-// C ref: mon.c pronoun_gender(mon, PRONOUN_HALLU) — 0 he, 1 she, 2 it, 3 they.
-function pronoun_gender(mon) {
-    if (!mon) return 2;
-    if (Hallucination() && !rn2(2)) return 3;
-    const ptr = mon.data;
-    if ((ptr?.gcode ?? 0) === 3 /* neuter */) return 2;
-    return mon.female ? 1 : 0;
+// C ref: you.h — each pronoun independently selects its hallucinated gender.
+export function mhim(mon) {
+    return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_HALLU)].him;
+}
+export function mhis(mon) {
+    return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_HALLU)].his;
 }
 function Hallucination() { return !!(game.u?.uhallu || game.u?.Hallucination); }
 

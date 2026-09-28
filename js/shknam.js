@@ -18,6 +18,7 @@ import { make_engr_at } from './engrave.js';
 import { shtypes, get_shop_item, VEGETARIAN_CLASS } from './shtypes.js';
 import { Is_special } from './dungeon.js';
 import { obj_resists } from './zap.js';
+import { inside_shop } from './shk.js';
 
 // C ref: shknam.c shkliquors[]..shkgeneral[] — per-shop-type personal name
 // pools for nameshk().  Platform-conditional entries (#ifdef OVERLAY/WIN32/
@@ -490,21 +491,8 @@ function shk_mongone(shk, sroom) {
     shk.isshk = 0;
 }
 
-// C ref: shk.c inside_shop() — is <x,y> inside any shop room (returns the
-// shop's room number, or 0).  We only need a boolean for the door fixup.
-function inside_shop(x, y) {
-    const loc = game.level?.at(x, y);
-    if (!loc) return false;
-    const rno = (loc.roomno ?? 0) - ROOMOFFSET;
-    if (rno < 0) return false;
-    const r = game.level.rooms[rno];
-    return !!(r && r.rtype >= 14 /*SHOPBASE*/);
-}
-
 // C ref: hack.c *in_rooms(x, y, 0) — non-empty iff <x,y> is roomno-assigned to
-// a real room (typewanted==0 means "any room type").  Like inside_shop() above,
-// this treats a SHARED/SHARED_PLUS boundary square (roomno 1 or 2) as "not in
-// a room", matching that function's existing simplification.
+// a real room (typewanted==0 means "any room type").
 function in_any_room(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return false;

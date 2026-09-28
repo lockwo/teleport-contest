@@ -42,7 +42,7 @@ import { clear_regions, remove_region } from './region.js';
 import { fastforward_fill_mineralize } from './fastforward.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
-         STRAT_WAITMASK,
+         STRAT_WAITMASK, STRAT_ARRIVE, IS_STWALL, W_NONPASSWALL,
          ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED, In_quest, In_mines, In_endgame,
          MAGIC_PORTAL, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
          STAIRS, LADDER, VIBRATING_SQUARE, TT_PIT, TOOKPLUNGE, is_pit, is_hole,
@@ -75,7 +75,7 @@ import { mflags2_of, M2_STALK, is_swimmer_flag, throws_rocks_flag,
          M3_DISPLACES, humanoid } from './monflags_data.js';
 import { more_experienced, newexplevel } from './exper.js';
 import { olfaction } from './eat.js';
-import { placebc, unplacebc } from './ball.js';
+import { placebc, unplacebc, drag_down } from './ball.js';
 
 // C ref: dungeon.c level_difficulty() — depth() factor, bumped in a "builds
 // up" branch (Sokoban/Vlad's Tower) since depth() alone makes those levels
@@ -299,6 +299,10 @@ function goodpos_mon(x, y, mtmp) {
     // C ref: dbridge.c is_lava() — LAVAPOOL/LAVAWALL; mondata.h:190 likes_lava.
     if (typ === LAVAPOOL || typ === LAVAWALL)
         return m_in_air_do(mtmp) || likes_lava_do(mdat);
+    const loc = game.level?.at(x, y);
+    if (passes_walls_do(mdat)
+        && !(IS_STWALL(typ) && ((loc?.wall_info || 0) & W_NONPASSWALL)))
+        return true;
     if (!accessible_mon(x, y)) return false;
     // C ref: teleport.c goodpos() — `sobj_at(BOULDER, x, y) && !throws_rocks`.
     if (sobj_at(BOULDER, x, y) && !throws_rocks_flag(mdat)) return false;
@@ -406,6 +410,7 @@ function mon_arrive_with_you(mtmp) {
     // (mtmp->mux = u.ux, mtmp->muy = u.uy) so the pet's dog_move backtrack
     // avoidance and goal logic don't reuse coordinates from the level just left.
     mtmp.mtrack = [];
+    mtmp.mstrategy = (mtmp.mstrategy || 0) | STRAT_ARRIVE;
     mtmp.mux = u.ux; mtmp.muy = u.uy;
     if (!m_at(u.ux, u.uy) && !rn2(mtmp.mtame ? 10 : mtmp.mpeaceful ? 5 : 2)) {
         // rloc_to(mtmp, u.ux, u.uy) — lands on hero's square (no extra rng)
@@ -607,7 +612,7 @@ function u_collide_m(mtmp) {
 // `knam`/`k_format` are optional so file-internal callers that cannot reach
 // 0 HP (none currently) may omit them; every reachable call site below passes
 // its C-matching killer text.
-async function losehp_do(n, knam, k_format = KILLED_BY_AN) {
+export async function losehp_do(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
     if (!u || n <= 0) return;
     if (u.Upolyd) {
@@ -669,47 +674,6 @@ function Flying_do() {
 function Levitation_do() { return !!game.u?.uprops?.Levitation; }
 // C ref: youprop.h Punished — u.uball is set only while punished.
 function Punished_do() { return !!game.u?.uball; }
-
-// C ref: ball.c drag_down() — the punishment ball follows the hero down the
-// stairs.  Its cls() first flushes WIN_MESSAGE (the --More-- the hoisted
-// transit message already emitted) and then clears the map + status windows,
-// which is why the next captured frame is blank except for the topline.
-async function drag_down_hero() {
-    const u = game.u;
-    const uball = u?.uball;
-    let dragchance = 3;
-    const carried_ball = !!uball && uball.where === 'invent';
-    const welded_ball = false;   // welded(uball) needs a cursed WIELDED ball
-    const forward = carried_ball && (u.uwep === uball || !u.uwep || !rn2(3));
-    if (carried_ball && !welded_ball) await pline('You lose your grip on the iron ball.');
-    // cls(): clear_nhwindow(WIN_MAP) clears the PHYSICAL screen.  goto_level's
-    // following docrt() only rebuilds gg.gbuf; its flush_screen(-1) toggles
-    // delay_flushing, so nothing reaches the terminal until more()'s docorner().
-    game._screenBlank = true;
-    if (forward) {
-        if (rn2(6)) {
-            await pline('The iron ball drags you downstairs!');
-            await losehp_do(rnd(6), 'dragged downstairs by an iron ball', NO_KILLER_PREFIX);
-            const { litter } = await import('./ball.js');
-            await litter();
-        }
-    } else {
-        if (rn2(2)) {
-            await pline('The iron ball smacks into you!');
-            game._toplin = 1;   // C pline() leaves toplin == TOPLINE_NEED_MORE
-            await losehp_do(rnd(20), 'iron ball collision', KILLED_BY_AN);
-            exercise(A_STR, false);
-            dragchance -= 2;
-        }
-        if (dragchance >= rnd(6)) {
-            await pline('The iron ball drags you downstairs!');
-            await losehp_do(rnd(3), 'dragged downstairs by an iron ball', NO_KILLER_PREFIX);
-            exercise(A_STR, false);
-            const { litter } = await import('./ball.js');
-            await litter();
-        }
-    }
-}
 
 // C ref: hack.c u_locomotion(def) — the verb for the hero's mode of travel.
 // locomotion(youmonst.data, def) below it only differs for a polymorphed hero
@@ -936,9 +900,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // C ref: do.c:1780 — an over-loaded/Punished/Fumbling (Flying takes
     // precedence, do.c:1777) hero instead FALLS, with an unconditional message
     // + rnd(3) hp (rolled later, at its real position in the arrival arm).
-    // do.c:1789's `if (Punished) { drag_down(); ballrelease(); }` is ported as
-    // drag_down_hero() below; litter()'s per-item rnd(weight_cap) and the
-    // usteed dismount_steed(DISMOUNT_FELL) alternative are still missing.
+    // Punished falls run ball.c drag_down() after arrival placement below.
     // C ref: topl.c — an unacknowledged topline left by the calling command
     // (e.g. wizard '?' teleport's prinv("Endgame prerequisite:"), teleport.c:
     // 1244) pages its --More-- here too, over the still-intact departing-level
@@ -1197,7 +1159,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         // stream (after mklev()/placement, before losedogs()).  Maybe_Half_Phys
         // is the identity here and selftouch("Falling, you") only bites a hero
         // wielding a petrifying corpse, so neither adds a draw.
-        if (fell_downstairs && Punished_do()) await drag_down_hero();
+        if (fell_downstairs && Punished_do()) await drag_down();
         if (fell_downstairs) await losehp_do(rnd(3),
             at_ladder ? 'falling off a ladder' : 'tumbling down a flight of stairs', KILLED_BY);
     } else {
@@ -1776,13 +1738,9 @@ export async function wiz_level_tele(readLevel) {
         // including ESC.
         gotoRandom = String(buf) === '*';
         if (!gotoRandom && (u.uprops?.Confusion || 0) > 0 && rnl(5)) {
-            await pline('Oops...');
-            // Same deferred-docrt capture as level_tele() below: the "Oops..."
-            // --More-- is drawn over the OLD level, before goto_level() switches.
-            game._toplin = 1;
-            await topl_more();
-            game._pending_message = '';
-            game._toplin = 0;
+            // A failed jump appends "You shudder..." without a More prompt.
+            // Successful transitions flush the pending message in goto_level().
+            await update_topl('Oops...');
             gotoRandom = true;
         }
         if (gotoRandom) break;
@@ -1998,17 +1956,10 @@ export async function level_tele(readLevel) {
                                : ' [type a number or name]';
             const buf = await readLevel(qbuf);
             if (buf === '*') { gotoRandom = true; break; }
-            // C ref: teleport.c — a confused hero mispronounces the destination
-            // and (rnl(5) != 0) is teleported to a random level instead.  The
-            // "Oops..." message + its --More-- are shown over the OLD level
-            // (before goto_level switches), matching the deferred-docrt tty
-            // capture the recorder took (cf. the stair-transit handling below).
+            // Leave feedback pending until the destination is resolved.
+            // A same-level jump appends its failure message without paging.
             if (confused && rnl(5)) {
-                await pline('Oops...');
-                game._toplin = 1;
-                await topl_more();
-                game._pending_message = '';
-                game._toplin = 0;
+                await update_topl('Oops...');
                 gotoRandom = true;
                 break;
             }

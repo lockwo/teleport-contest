@@ -20,6 +20,7 @@ import { newsym, object_glyph } from './display.js';
 import { Blind } from './vision.js';
 import { place_object } from './mkobj.js';
 import { t_at } from './trap.js';
+import { losehp_do } from './do.js';
 import { IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED, is_pit, is_hole, POOL,
          DRAWBRIDGE_UP, SLT_ENCUMBER } from './const.js';
 
@@ -503,18 +504,6 @@ async function maybe_unhide_at_bc(x, y) {
     return undefined;   /* GAP: monmove.js does not export it */
 }
 
-// C ref: hack.c losehp(n, knam, k_format) — HP subtraction plus the death
-// path.  There is no exported losehp() in js/: private copies live at
-// js/zap.js:2490, js/attrib.js:75, js/dig.js:161, js/artifact.js:1507,
-// js/music.js:71, js/fountain.js:795 and js/do.js:503.  Subtract here and name
-// the gap; wiring this up means exporting one of those, not adding an eighth.
-async function losehp_bc(n, _knam, _kformat) {
-    const u = game.u;
-    if (!u) return;
-    u.uhp = (u.uhp ?? 0) - n;
-    if (game.disp) game.disp.botl = 1;
-}
-
 // C ref: attrib.c Maybe_Half_Phys(dmg) — halved by Half_physical_damage.
 // Module-private at js/zap.js:226 and js/spell.js:544.
 function Maybe_Half_Phys(dmg) {
@@ -579,7 +568,7 @@ export async function ballfall() {
                             + ' does not protect you.');
             }
         }
-        await losehp_bc(Maybe_Half_Phys(dmg),
+        await losehp_do(Maybe_Half_Phys(dmg),
                         'crunched in the head by an iron ball',
                         NO_KILLER_PREFIX);
     }
@@ -800,7 +789,7 @@ export async function drop_ball(x, y) {
                     const { body_part } = await import('./invent.js');
                     await pline(`Your ${(side === LEFT_SIDE) ? 'left' : 'right'}`
                                 + ` ${body_part(LEG)} is severely damaged.`);
-                    await losehp_bc(Maybe_Half_Phys(2),
+                    await losehp_do(Maybe_Half_Phys(2),
                         'leg damage from being pulled out of a bear trap',
                         KILLED_BY);
                 }
@@ -870,9 +859,9 @@ export async function litter() {
                 await pline(`You drop ${yname(otmp)} and`
                     + ` ${(otmp.quan === 1) ? 'it' : 'they'}`
                     + ` ${otense(otmp, 'fall')} down the stairs with you.`);
-                if (typeof setnotworn === 'function') setnotworn(otmp);
+                setnotworn(otmp);
                 freeinv(otmp);
-                if (typeof hitfloor === 'function') await hitfloor(otmp, false);
+                await hitfloor(otmp, false);
             }
         }
     }
@@ -886,7 +875,7 @@ export async function drag_down() {
     const u = game.u;
     let forward;
     let dragchance = 3;
-    const { pline } = await import('./display.js');
+    const { update_topl, topl_more } = await import('./display.js');
     const { rnd } = await import('./rng.js');
     const { welded } = await import('./invent.js');
 
@@ -901,18 +890,22 @@ export async function drag_down() {
         && (game.uwep === u.uball || !game.uwep || !rn2(3));
 
     if (carried(u.uball) && !welded(u.uball))
-        await pline('You lose your grip on the iron ball.');
+        await update_topl('You lose your grip on the iron ball.');
 
-    {   /* previous level is still displayed although you went down the
-           stairs.  Avoids bug C343-20 */
-        const { cls } = await import('./display.js');
-        await cls();
+    // C cls() flushes the message window before blanking the previous level.
+    if (game._toplin === 1 || (game._pending_message
+        && game._toplinSoft === game._pending_message)) {
+        await topl_more();
+        game._pending_message = '';
+        game._toplin = 0;
+        game._toplinSoft = null;
     }
+    game._screenBlank = true;
 
     if (forward) {
         if (rn2(6)) {
-            await pline('The iron ball drags you downstairs!');
-            await losehp_bc(Maybe_Half_Phys(rnd(6)),
+            await update_topl('The iron ball drags you downstairs!');
+            await losehp_do(Maybe_Half_Phys(rnd(6)),
                             'dragged downstairs by an iron ball',
                             NO_KILLER_PREFIX);
             await litter();
@@ -920,16 +913,16 @@ export async function drag_down() {
     } else {
         if (rn2(2)) {
             /* Soundeffect(se_iron_ball_hits_you, 25) */
-            await pline('The iron ball smacks into you!');
-            await losehp_bc(Maybe_Half_Phys(rnd(20)), 'iron ball collision',
+            await update_topl('The iron ball smacks into you!');
+            await losehp_do(Maybe_Half_Phys(rnd(20)), 'iron ball collision',
                             KILLED_BY_AN);
             const { exercise } = await import('./attrib.js');
             exercise(A_STR, false);
             dragchance -= 2;
         }
         if (dragchance >= rnd(6)) {
-            await pline('The iron ball drags you downstairs!');
-            await losehp_bc(Maybe_Half_Phys(rnd(3)),
+            await update_topl('The iron ball drags you downstairs!');
+            await losehp_do(Maybe_Half_Phys(rnd(3)),
                             'dragged downstairs by an iron ball',
                             NO_KILLER_PREFIX);
             const { exercise } = await import('./attrib.js');

@@ -34,6 +34,7 @@ import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
     tp_sensemon } from './display.js';
 import { dist2 } from './hacklib.js';
 import { Monnam } from './uhitm.js';
+import { mhim, mhis } from './do_name.js';
 
 // Additional bindings used ONLY by the "mon.c completion" block at the end of
 // this file.  They are separate import statements from modules mon.js already
@@ -46,7 +47,7 @@ import { NON_PM, LOW_PM, G_GENOD, MON_FLOOR, MON_OFFMAP, MON_DETACH, MON_LIMBO,
     W_SADDLE, MIGR_APPROX_XY, MIGR_RANDOM, POOL, MOAT, LAVAPOOL, LAVAWALL,
     ACCESSIBLE, thats_enough_tries, ismnum, engulfing_u, Has_contents,
     M_AP_TYPE, OBJ_AT, EDOG, MGIVENNAME, has_eshk, has_epri, has_emin,
-    has_egd, has_edog, In_endgame, Is_astralevel } from './const.js';
+    has_egd, has_edog, In_endgame, Is_astralevel, NC_SHOW_MSG } from './const.js';
 import { M1_NOHEAD, M2_UNDEAD, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC,
     M2_SHAPESHIFTER } from './monflags_data.js';
 import { AT_GAZE, AT_EXPL, AT_BOOM, mattk_of } from './monattk_data.js';
@@ -558,7 +559,7 @@ export function healmon(mtmp, amt, overheal) {
 const STRAT_WAITFORU = 0x20000000;
 const PM_FOG_CLOUD_IDX = 106;
 const BOLT_LIM_SQ = 8 * 8;
-function decide_to_shapeshift(mon) {
+async function decide_to_shapeshift(mon) {
     let ptr = null;
     const was_female = mon.female;
     let dochng = false;
@@ -597,7 +598,7 @@ function decide_to_shapeshift(mon) {
             dochng = true;                         /* 'ptr' stays Null */
         }
     }
-    if (dochng && newcham(mon, ptr)) {
+    if (dochng && await newcham_wizard_aware(mon, ptr, NC_SHOW_MSG)) {
         // vampshift overrides newcham's 10% sex change by restoring the
         // original gender when the new form allows either.  No RNG.
         if (is_vampshifter(mon)) {
@@ -695,7 +696,7 @@ async function minliquid(mtmp) {
                 // C: svc.context.mon_moving is set for every minliquid() call
                 // reached from movemon, so this is mondead() — no corpse, and
                 // no corpse_chance roll.
-                mon_kill_leaving(mtmp, true);
+                await mon_kill_leaving(mtmp, true);
                 return 1;
             }
             // Fire-resistant but not a lava-liker: 1 point of damage, then it
@@ -704,7 +705,7 @@ async function minliquid(mtmp) {
             if (mtmp.mhp <= 0) {
                 if (cansee(mtmp.mx, mtmp.my))
                     await pline(`${Monnam(mtmp)} surrenders to the fire.`);
-                mon_kill_leaving(mtmp, true);
+                await mon_kill_leaving(mtmp, true);
                 return 1;
             }
             if (cansee(mtmp.mx, mtmp.my))
@@ -745,7 +746,7 @@ async function m_calcdistress(mtmp) {
     mon_regen(mtmp, false);
     // C ref: mon.c:1196 `if (ismnum(mtmp->cham)) decide_to_shapeshift(mtmp);`
     // — BEFORE were_change().
-    if ((mtmp.cham ?? -1) >= 0) decide_to_shapeshift(mtmp);
+    if ((mtmp.cham ?? -1) >= 0) await decide_to_shapeshift(mtmp);
     await were_change(mtmp);
     if (mtmp.mblinded && !--mtmp.mblinded) mtmp.mcansee = 1;
     if (mtmp.mfrozen && !--mtmp.mfrozen) mtmp.mcanmove = 1;
@@ -1252,13 +1253,10 @@ function cloak_simple_name_mon(obj) {
     return 'cloak';
 }
 function s_suffix_mon(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
-function mhis_mon(mon) { return mon?.female ? 'her' : 'his'; }
-function mhim_mon(mon) { return mon?.female ? 'her' : 'him'; }
 
 // C ref: worn.c:1177 mon_break_armor(mon, polyspot) — a monster whose FORM just
 // changed (new_were, newcham, polymorph) sheds or bursts the armour that no
-// longer fits.  Draws no RNG, but the "You hear a thud." / "a cracking sound."
-// lines are top-line output and the dropped object lands on the floor.
+// longer fits. The two pronouns are selected even if no armor is worn or seen.
 // NOT ported: the W_SADDLE / u.usteed arm at worn.c:1312 (this port keeps the
 // saddle's mask in obj.owornmask via js/dog.js:304, not in the monster-worn
 // field, and the dismount path lives in js/steed.js).
@@ -1267,7 +1265,7 @@ export async function mon_break_armor(mon, polyspot) {
     if (!mdat) return;
     const vis = cansee(mon.mx, mon.my);
     const handless_or_tiny = nohands(mdat) || (mdat.msize ?? 0) < MZ_SMALL_M;
-    const ppronoun = mhis_mon(mon), pronoun = mhim_mon(mon);
+    const pronoun = mhim(mon), ppronoun = mhis(mon);
     const hear = async (what) => { if (!Deaf()) await update_topl(`You hear ${what}`); };
     let otmp;
     if (!sliparm_mon(mdat) && cantweararm_mon(mdat)) {   /* C: breakarm(mdat) */
@@ -2571,7 +2569,7 @@ export async function m_detach(mtmp, mptr, due_to_death) {
            three roles, fill the nemesis's square with noxious gas. */
         const { relobj } = await import('./uhitm.js');
         /* drop mtmp->minvent onto the map and issue newsym(mx,my) */
-        relobj(mtmp, mx, my);
+        await relobj(mtmp, mx, my);
     }
 
     /* C ref: steal.c thiefdead() (gs.stealmid) and shk.c shkgone() — neither
@@ -2975,7 +2973,7 @@ export async function vamp_stone(mtmp) {
         mtmp.mfrozen = 0;
         set_mon_min_mhpmax(mtmp, 10); /* mhpmax = max(m_lev+1, 10) */
         mtmp.mhp = mtmp.mhpmax;
-        newcham(mtmp, monster_by_pmidx(mtmp.cham)); /* C: NC_SHOW_MSG */
+        await newcham_wizard_aware(mtmp, monster_by_pmidx(mtmp.cham), NC_SHOW_MSG);
         newsym(mtmp.mx, mtmp.my);
         return false; /* didn't petrify */
     }
@@ -3376,7 +3374,7 @@ export async function normal_shape(mon) {
     if (ismnum(mcham)) {
         const mcan = mon.mcan;
 
-        newcham(mon, monster_by_pmidx(mcham)); /* C: NC_SHOW_MSG */
+        await newcham_wizard_aware(mon, monster_by_pmidx(mcham), NC_SHOW_MSG);
         mon.cham = NON_PM;
         /* newcham() may uncancel a polymorphing monster; override that */
         if (mcan) mon.mcan = 1;
@@ -3705,7 +3703,7 @@ export async function kill_genocided_monsters() {
         const kill_cham = (ismnum(mtmp.cham) && genocided_pm(mtmp.cham));
         if (genocided_pm(mndx) || kill_cham) {
             if (ismnum(mtmp.cham) && !kill_cham) {
-                await newcham_wizard_aware(mtmp, null);   /* C: NC_SHOW_MSG */
+                await newcham_wizard_aware(mtmp, null, NC_SHOW_MSG);
             } else {
                 /* C ref: mon.c:3081 mondead(mtmp) — js/muse.js has a private
                    copy; the pieces of it that live in this file are
@@ -3775,11 +3773,11 @@ export async function usmellmon(mdat) {
     const mndx = monsndx(mdat);
 
     if (mndx === PM('rothe') || mndx === PM('minotaur')) {
-        await pline('You notice a bovine smell.');
+        await update_topl('You notice a bovine smell.');
         msg_given = true;
     } else if (mndx === PM('caveman') || mndx === PM('barbarian')
                || mndx === PM('neanderthal')) {
-        await pline('You smell body odor.');
+        await update_topl('You smell body odor.');
         msg_given = true;
     } else if (mndx === PM('horned devil') || mndx === PM('balrog')
                || mndx === PM('Asmodeus') || mndx === PM('Dispater')
@@ -3789,16 +3787,16 @@ export async function usmellmon(mdat) {
                || mndx === PM('human werewolf') || mndx === PM('werejackal')
                || mndx === PM('wererat') || mndx === PM('werewolf')
                || mndx === PM('owlbear')) {
-        await pline("You detect an odor reminiscent of an animal's den.");
+        await update_topl("You detect an odor reminiscent of an animal's den.");
         msg_given = true;
     } else if (mndx === PM('steam vortex')) {
-        await pline('You smell steam.');
+        await update_topl('You smell steam.');
         msg_given = true;
     } else if (mndx === PM('green slime')) {
-        await pline('Something stinks.');
+        await update_topl('Something stinks.');
         msg_given = true;
     } else if (mndx === PM('violet fungus') || mndx === PM('shrieker')) {
-        await pline('You smell mushrooms.');
+        await update_topl('You smell mushrooms.');
         msg_given = true;
     } else if (mndx === PM('white unicorn') || mndx === PM('gray unicorn')
                || mndx === PM('black unicorn') || mndx === PM('jellyfish')) {
@@ -3810,37 +3808,37 @@ export async function usmellmon(mdat) {
     if (nonspecific) {
         switch (mdat.mcls) {
         case S_DOG_C:
-            await pline('You notice a dog smell.');
+            await update_topl('You notice a dog smell.');
             msg_given = true;
             break;
         case S_DRAGON:
-            await pline('You smell a dragon!');
+            await update_topl('You smell a dragon!');
             msg_given = true;
             break;
         case S_FUNGUS_C:
-            await pline('Something smells moldy.');
+            await update_topl('Something smells moldy.');
             msg_given = true;
             break;
         case S_UNICORN_C:
-            await pline(`You detect a${(mndx === PM('pony')) ? 'n' : ' strong'}`
+            await update_topl(`You detect a${(mndx === PM('pony')) ? 'n' : ' strong'}`
                 + ' odor reminiscent of a stable.');
             msg_given = true;
             break;
         case S_ZOMBIE_C:
-            await pline('You smell rotting flesh.');
+            await update_topl('You smell rotting flesh.');
             msg_given = true;
             break;
         case S_EEL_MCLS:
-            await pline('You smell fish.');
+            await update_topl('You smell fish.');
             msg_given = true;
             break;
         case S_ORC_C:
             /* C: maybe_polyd(is_orc(youmonst.data), Race_if(PM_ORC)) */
             if (game.u?.Upolyd ? is_orc_m(game.youmonst?.data)
                                : (game.urace?.mnum === PM('orc')))
-                await pline('You notice an attractive smell.');
+                await update_topl('You notice an attractive smell.');
             else
-                await pline('A foul stench makes you feel a little nauseated.');
+                await update_topl('A foul stench makes you feel a little nauseated.');
             msg_given = true;
             break;
         default:

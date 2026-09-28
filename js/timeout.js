@@ -13,12 +13,6 @@
 // integers (game.u.uprops.Confusion, game.u.blinded, ...), so the loop below is
 // a table over those fields; C's array order only matters when two expire on
 // the same turn and both talk.
-//
-// Consumes NO RNG: none of the modelled expiry cases (CONFUSION / STUNNED /
-// BLINDED / WOUNDED_LEGS / HALLUC) draws.  The cases that DO draw — SICK's
-// rn2(100) recovery check, SLEEPY's rnd(20) fall_asleep, STONED/SLIMED's
-// done_timeout() death — need properties nothing in this port ever sets, so
-// they are deliberately absent rather than guessed at.
 
 import { game } from './gstate.js';
 import { rn2, rnd, d } from './rng.js';
@@ -31,9 +25,9 @@ import { update_topl, see_monsters } from './display.js';
 import { Unaware } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { t_at } from './trap.js';
-import { is_pool } from './dbridge.js';
+import { is_pool, is_ice } from './dbridge.js';
 import { surface } from './dungeon.js';
-import { encumber_msg } from './invent.js';
+import { encumber_msg, inv_weight, body_part, makeplural } from './invent.js';
 import { float_vs_flight } from './polyself.js';
 import { attacktype_fordmg, AT_ENGL, AD_DGST } from './monattk_data.js';
 import { mflags1_of, M1_FLY } from './monflags_data.js';
@@ -49,7 +43,7 @@ import { pline, impossible } from './display.js';
 import { rn1 } from './rng.js';
 
 const {
-    TIMEOUT, I_SPECIAL, COLNO, ROWNO, CLOUD, ACCESSIBLE,
+    TIMEOUT, FROMOUTSIDE, I_SPECIAL, COLNO, ROWNO, CLOUD, ACCESSIBLE,
     TIMER_NONE, TIMER_LEVEL, TIMER_GLOBAL, TIMER_OBJECT, TIMER_MONSTER,
     NUM_TIMER_KINDS, RANGE_GLOBAL,
     ROT_ORGANIC, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON, BURN_OBJECT, HATCH_EGG,
@@ -58,6 +52,7 @@ const {
     NECK, A_DEX, A_STR, NO_KILLER_PREFIX, KILLED_BY, KILLED_BY_AN,
     GENOCIDED, TURNED_SLIME, SICK_NONVOMITABLE, NHW_MENU, WIN_ERR, ECMD_OK,
     DRAWBRIDGE_DOWN, DB_UNDER, DB_ICE, STONED, SLIMED,
+    WT_NOISY_INV, W_SADDLE, DISMOUNT_FELL, FOOT,
 } = C;
 
 // C ref: timeout.h enum timeout_types — MELT_ICE_AWAY follows SHRINK_GLOB and
@@ -149,21 +144,63 @@ async function expire_hallucination() {
     if (!Hallucination()) await stop_occupation();
 }
 
-// C ref: timeout.c:1222 slip_or_trip() — the fumble feedback.  Only the on-foot,
-// non-ice arms are reachable for the covered heroes (no steed, no ice level, no
-// FROMOUTSIDE fumbling source).
-//
-// SCOPE: the object-on-my-square arm ("You trip over <obj>.") needs
-// iflags.last_msg == PLNMSG_ONE_ITEM_HERE to choose between the pronoun and the
-// full doname(); we use doname() unconditionally, and skip the corpse
-// petrification check (no covered hero walks barefoot over a cockatrice).
+// C ref: timeout.c slip_or_trip() — ice can cause a slip on the move after
+// leaving it, so the FROMOUTSIDE source takes precedence over current terrain.
 async function slip_or_trip() {
     const u = game.u;
     const { vobj_at } = await import('./display.js');
-    const otmp = vobj_at(u.ux, u.uy);
-    if (otmp) {
+    let otmp = vobj_at(u.ux, u.uy);
+    const onFoot = !u.usteed;
+    if (otmp && onFoot && !u.uinwater && is_pool(u.ux, u.uy)) otmp = null;
+    if (otmp && onFoot) {
         const { doname_invent } = await import('./invent.js');
         await update_topl(`You trip over ${doname_invent(otmp)}.`);
+        return;
+    }
+    if ((u.HFumbling & FROMOUTSIDE) || (is_ice(u.ux, u.uy) && !rn2(3))) {
+        const iceOnly = !(u.EFumbling || (u.HFumbling & ~FROMOUTSIDE));
+        let who = 'You';
+        if (u.usteed) {
+            const { x_monnam } = await import('./uhitm.js');
+            const { ARTICLE_THE, SUPPRESS_SADDLE } = await import('./do_name.js');
+            who = x_monnam(u.usteed, ARTICLE_THE, null, SUPPRESS_SADDLE, false);
+            who = who.charAt(0).toUpperCase() + who.slice(1);
+        }
+        const verb = rn2(2) ? 'slip' : 'slide';
+        await pline(`${who} ${verb}${onFoot ? '' : 's'} ${is_ice(u.ux, u.uy) ? 'on' : 'off'} the ice.`);
+        const { which_armor } = await import('./worn.js');
+        if (!onFoot && !which_armor(u.usteed, W_SADDLE)?.cursed
+            && (!iceOnly || !rn2(3))) {
+            await pline('You lose your balance.');
+            const { dismount_steed } = await import('./steed.js');
+            await dismount_steed(DISMOUNT_FELL);
+        } else {
+            const { acurr_eff } = await import('./attrib.js');
+            if (!rn2(10 + acurr_eff(A_DEX))) {
+                if (u.umonnum !== 116 /* PM_GRID_BUG */) {
+                    const { confdir } = await import('./cmd.js');
+                    confdir(true);
+                }
+                if (u.ux + u.dx !== u.ux0 || u.uy + u.dy !== u.uy0) {
+                    const { hurtle } = await import('./dothrow.js');
+                    await hurtle(u.dx, u.dy, 1, false);
+                }
+            }
+        }
+        return;
+    }
+    if (!onFoot) {
+        const { which_armor } = await import('./worn.js');
+        if (!which_armor(u.usteed, W_SADDLE)?.cursed) {
+            switch (rn2(4)) {
+            case 1: await pline(`Your ${makeplural(body_part(FOOT))} slip out of the stirrups.`); break;
+            case 2: await pline('You let go of the reins.'); break;
+            case 3: await pline('You bang into the saddle-horn.'); break;
+            default: await pline('You slide to one side of the saddle.'); break;
+            }
+            const { dismount_steed } = await import('./steed.js');
+            await dismount_steed(DISMOUNT_FELL);
+        }
         return;
     }
     switch (rn2(4)) {
@@ -192,16 +229,16 @@ async function expire_fumbling() {
     // slip_or_trip() and so skips its rn2(4).
     if (u.umoved && !(u.uprops?.Levitation || u.uprops?.Flying)) {
         await slip_or_trip();
-        // C: nomul(-2); gm.multi_reason = "fumbling"; gn.nomovemsg = "";
-        game.multi = -2;
+        await nomul(-2);
         game.multi_reason = 'fumbling';
         game.nomovemsg = '';
-        // SCOPE: the inv_weight() > -WT_NOISY_INV "You make a lot of noise!" +
-        // wake_nearby() branch needs the noisy-inventory threshold; the covered
-        // hero's pack stays well under it.
+        if (inv_weight() > -WT_NOISY_INV) {
+            if (!(u.uprops?.HDeaf || u.Deaf)) await pline('You make a lot of noise!');
+            const { wake_nearby } = await import('./cmd.js');
+            await wake_nearby(false);
+        }
     }
-    // HFumbling &= ~FROMOUTSIDE (ice); then re-arm while still Fumbling.
-    u.HFumblingOutside = 0;
+    u.HFumbling &= ~FROMOUTSIDE;
     if (u.HFumbling || u.EFumbling) u.HFumbling = (u.HFumbling || 0) + rnd(20);
 }
 
@@ -341,11 +378,10 @@ const TIMED_PROPS = [
           // make_deaf(), so it runs even on the Unaware (silent) path.
           if (!(u?.uprops?.HDeaf || 0)) await stop_occupation();
       } },
-    // prop.h FUMBLING = 25.  The only expiry case here that draws RNG (rn2(4)
-    // in slip_or_trip, then the rnd(20) re-arm).
+    // Fumbling sources share the intrinsic word with its repeating timeout.
     { name: 'FUMBLING',
-      get: (u) => u.HFumbling || 0,
-      set: (u, v) => { u.HFumbling = v; },
+      get: (u) => (u.HFumbling | 0) & TIMEOUT,
+      set: (u, v) => { u.HFumbling = ((u.HFumbling | 0) & ~TIMEOUT) | (v & TIMEOUT); },
       expire: expire_fumbling },
     { name: 'DETECT_MONSTERS',
       get: (u) => (u.uprops?.HDetect_monsters | 0) & TIMEOUT,

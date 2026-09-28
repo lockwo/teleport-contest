@@ -154,23 +154,25 @@ export function goodpos(x, y, mtmp, gpflags) {
     return true;
 }
 
-// C ref: teleport.c rloc_pos_ok(x, y, mtmp) — goodpos() plus [try to] keeping
-// a shopkeeper/temple priest in their own room, plus the special-level
-// teleport-region restriction (tele_jump_ok / svu.updest / svd.dndest).  Many
-// special levels set these regions (js/levels/{fire,earth,water,air,asmodeus,
-// baalz,orcus,sanctum,valley,medusa,bigroom,minend1,minend2}.js, js/gehennom.js
-// vaults), not just the Wizard's Tower — skipping tele_jump_ok let rloc() cross
-// a level's inner-sanctum boundary it should have refused (seed0360 step 334,
-// Gehennom demon-lord level: an earth elemental burning in lava drew (52,6),
-// outside its own side of the level's dndest/updest split, and this port
-// accepted it while C's tele_jump_ok rejected it and drew again).
-// The migrating-monster-arrival branch (mtmp->mx==0, Wizard-tower yy-bit-flag
-// semantics) is not modeled: no rloc() caller in this port ever passes a
-// monster before it has a real position, so C's `if (!xx)` arm is unreached.
+// C ref: teleport.c rloc_pos_ok() — migrating monsters use mx==0 and my's
+// direction/tower flags; resident monsters retain their current region.
 function rloc_pos_ok(x, y, mtmp) {
     if (!goodpos(x, y, mtmp, GP_CHECKSCARY)) return false;
     const xx = mtmp?.mx, yy = mtmp?.my;
-    if (xx) {
+    if (!xx) {
+        const down = dndest_(), up = updest_();
+        if (down.nlx && On_W_tower_level_()) {
+            const inside = within_bounded_area(x, y, down.nlx, down.nly,
+                                               down.nhx, down.nhy);
+            return !!(yy & 2) === inside;
+        }
+        const dest = (yy & 1) ? up : down;
+        if (dest.lx) {
+            return within_bounded_area(x, y, dest.lx, dest.ly, dest.hx, dest.hy)
+                && (!dest.nlx || !within_bounded_area(x, y, dest.nlx, dest.nly,
+                                                     dest.nhx, dest.nhy));
+        }
+    } else {
         if (mtmp.isshk && inhishop(mtmp)) {
             if (roomnoAt(x, y) !== mtmp.eshk?.shoproom) return false;
         } else if (mtmp.ispriest && inhistemple(mtmp)) {
@@ -1316,7 +1318,11 @@ function sengr_at_(_str, _x, _y, _strict) { return false; }
 function Inhell_() { return !!game.u?.uz?.in_hell; }
 function In_endgame_() { return (game.u?.uz?.dnum | 0) === (game.endgame_dnum | 0) && !!game.endgame_dnum; }
 function In_tutorial_(_lev) { return false; }
-function On_W_tower_level_() { return false; }
+function On_W_tower_level_() {
+    const uz = game.u?.uz;
+    return on_level_(uz, game.wiz1_level) || on_level_(uz, game.wiz2_level)
+        || on_level_(uz, game.wiz3_level);
+}
 function Is_stronghold_() { return false; }
 function Is_botlevel_() { return false; }
 function depth_(lev) { return (lev?.dlevel | 0); }

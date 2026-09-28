@@ -9,6 +9,7 @@
 // (it can't here), and savelife()'s HP/hunger fixups are deterministic.
 
 import { game } from './gstate.js';
+import { Goodbye } from './role.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
 import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM } from './const.js';
 
@@ -37,17 +38,6 @@ const DEATHS = [
     'turned into slime', 'genocided', 'panic', 'trickery', 'quit',
     'escaped', 'ascended',
 ];
-
-// C ref: role.c Goodbye() — role-specific farewell for the score summary line.
-function goodbye_for_role(roleName) {
-    switch (roleName) {
-    case 'Knight':   return 'Fare thee well';
-    case 'Samurai':  return 'Sayonara';
-    case 'Tourist':  return 'Aloha';
-    case 'Valkyrie': return 'Farvel';
-    default:         return 'Goodbye';
-    }
-}
 
 // C ref: hack.h plur(x) — "" when x == 1, "s" otherwise.
 function plur(n) { return (n === 1) ? '' : 's'; }
@@ -173,7 +163,7 @@ export async function outrip_and_score(how) {
         lines.push('');                                // 16 (genl_outrip trailing "")
         lines.push('');                                // 17
     }
-    lines.push(`${goodbye_for_role(roleName)} ${plname} the ${roleName}...`); // 18
+    lines.push(`${Goodbye(game.urole?.mnum)} ${plname} the ${roleName}...`); // 18
     lines.push('');                                    // 19
     lines.push((how !== ESCAPED && how !== ASCENDED)
         ? `You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
@@ -997,7 +987,7 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
             lines.push('');
             lines.push('');
         }
-        lines.push(`${goodbye_for_role(roleName)} ${plname} the ${roleName}...`);
+        lines.push(`${Goodbye(game.urole?.mnum)} ${plname} the ${roleName}...`);
         lines.push('');
         lines.push((how !== ESCAPED && how !== ASCENDED)
             ? `You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`

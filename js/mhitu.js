@@ -1738,12 +1738,7 @@ export function mhitu_ops() {
         cloneu,
         mdamageu,
         mpoisons_subj,
-        // C ref: exper.c losexp(drainer). AD_DRLI's hero-defender arm
-        // (mhitm_ad.js:571) drains an experience level. emitU carries C's
-        // `pline("%s level %d.", Goodbye(), u.ulevel)` message. exper.js
-        // hardcodes "Goodbye" for the text, which matches every playable
-        // role except Knight, Samurai, Tourist, and Valkyrie, each of which
-        // has its own role-specific farewell.
+        // C ref: exper.c losexp(drainer), including the role-specific farewell.
         losexp: async (drainer) => {
             const { losexp: losexpFn } = await import('./exper.js');
             await losexpFn(drainer, emitU);

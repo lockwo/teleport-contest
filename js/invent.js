@@ -116,7 +116,6 @@ import {
     POOL, MOAT, WATER,
     IS_DOOR, IS_FURNITURE, STONE, STAIRS, D_NODOOR, D_ISOPEN, D_BROKEN,
     Is_airlevel,
-    DUST, ENGRAVE, HEADSTONE, BURN, MARK, ENGR_BLOOD,
     PLNMSG_MON_TAKES_OFF_ITEM, PLNMSG_BACK_ON_GROUND,
     MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL,
     TIMEOUT, isok, STRAT_WAITMASK, SELL_NORMAL, SELL_DELIBERATE,
@@ -127,7 +126,7 @@ import {
     INVIS, CLAIRVOYANT, BLINDED,
     W_AMUL as CW_AMUL, W_TOOL as CW_TOOL,
 } from './const.js';
-import { engr_at, wipe_engr_at } from './engrave.js';
+import { engr_at, wipe_engr_at, read_engr_at } from './engrave.js';
 import { costly_spot, addtobill, shkname } from './shkroom.js';
 // C ref: objnam.c doname_base():1648 — the shop-price suffix is formatted in
 // objnam.c, on top of shk.c's get_cost_of_shop_item()/unpaid_cost().
@@ -993,7 +992,7 @@ function setworn(obj, mask) {
 // (rather than a manually-inlined game.uwep check) left that field pointing
 // at a freed object. Real callers reachable from this port: js/trap.js
 // fire_damage()/lava_damage() on a wielded bullwhip/pick-axe/dipped item.
-function setnotworn(obj) {
+export function setnotworn(obj) {
     if (!obj) return;
     if (game.u?.twoweap && (obj === game.uwep || obj === game.uswapwep)) {
         game.u.twoweap = false;
@@ -3921,16 +3920,9 @@ function worn_slot_get(mask) {
 }
 
 export function worn_slot_clear(mask) {
-    // C ref: do_wear.c Boots_off() case FUMBLE_BOOTS —
-    //   if (!oldprop && !(HFumbling & ~TIMEOUT)) HFumbling = EFumbling = 0;
-    // Removing the boots cancels the pending fumble timer outright, so the
-    // per-turn slip/trip stops on the same turn.
-    if ((mask & WA_ARMF) && game.uarmf?.otyp === FUMBLE_BOOTS && game.u) {
-        if (!(game.u.HFumblingOutside || 0)) {
-            game.u.HFumbling = 0;
-            game.u.EFumbling = 0;
-        }
-    }
+    // Property sources leave with the slot; Boots_off/Gloves_off separately
+    // cancel the timer only when no intrinsic or other worn source remains.
+    if (game.u) game.u.EFumbling = (game.u.EFumbling | 0) & ~mask;
     // C ref: worn.c:92-107 setworn(0, mask) — the vacating object stops
     // conferring its property.  Done before the pointer is dropped, because the
     // object is only reachable through it.
@@ -6728,7 +6720,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
 // C ref: dothrow.c hitfloor(obj, verbosely) — an object lands at the hero's
 // feet: announce it, run hero_breaks() (breaktest's obj_resists rn2(100)) and
 // drop it.  Split out of throw_obj() so toss_up() can reuse it.
-async function hitfloor(otmp, verbosely) {
+export async function hitfloor(otmp, verbosely) {
     const u = game.u;
     const hereTyp = game.level.at(u.ux, u.uy)?.typ ?? 0;
     const soft = IS_SOFT(hereTyp);
@@ -9668,10 +9660,10 @@ async function itemactions_dispatch(otmp, act, getDir) {
         const { dotwoweapon } = await import('./wield.js');
         return await dotwoweapon();
     }
-    // IA_NAME_OBJ / IA_ADJUST_OBJ / IA_WHATIS_OBJ and the other actions are not
-    // exercised by any recorded session; itemactions returns ECMD_OK for them so
-    // the 'i' command elapses no time (the canned command, if any, would run on
-    // a subsequent rhack iteration).
+    case IA_ADJUST_OBJ:
+        seedInvlet();
+        return await doorganize();
+    // Other item actions have not yet been connected to their commands.
     default:
         return ECMD_OK;
     }
@@ -10310,47 +10302,8 @@ export function objects_at(x, y) {
     return here; // topmost (last placed) first
 }
 
-// C ref: engrave.c read_engr_at() — sense and read aloud any engraving at
-// (x,y) via update_topl (so it properly merges onto / pages an already
-// pending message, matching pline's real behavior).  Returns true if an
-// engraving was sensed (and so a message was queued).
-export async function read_engr_at(x, y) { return await read_engr_at_topl(x, y); }
-async function read_engr_at_topl(x, y) {
-    const ep = engr_at(x, y);
-    const text = ep?.actualText || '';
-    if (!ep || !text) return false;
-    // C ref: engrave.c read_engr_at():321 `const char *eloc = surface(x, y);`
-    // — every branch but DUST names the actual surface (doorway, altar,
-    // headstone, ...) instead of a hardcoded "floor".
-    const eloc = surface(x, y);
-    let intro;
-    switch (ep.engr_type) {
-    case DUST:       if (game.Blind) return false;
-                     intro = 'Something is written here in the dust.'; break;
-    case ENGRAVE:
-    case HEADSTONE:  intro = `Something is engraved here on the ${eloc}.`; break;
-    case BURN:       intro = `Some text has been burned into the ${eloc} here.`; break;
-    case MARK:       if (game.Blind) return false;
-                     intro = `There's some graffiti on the ${eloc} here.`; break;
-    case ENGR_BLOOD: if (game.Blind) return false;
-                     intro = 'You see a message scrawled in blood here.'; break;
-    default: return false;
-    }
-    const last = text.charAt(text.length - 1);
-    const endpunct = (text.length >= 2 && '.!?'.includes(last)) ? '' : '.';
-    await update_topl(intro);
-    await update_topl(`You read: "${text}"${endpunct}`);
-    ep.eread = 1;
-    ep.erevealed = 1;
-    return true;
-}
-
-// C ref: invent.c look_here() — report the dungeon feature and/or objects under
-// the hero.  Ports the no-object, single-object, and feature-only branches the
-// recorded sessions exercise; the multi-object menu branch is left for callers
-// that need it.  Returns ECMD_OK / ECMD_TIME.  When both a feature and exactly
-// one object are present, C prints the feature line, then the object line, which
-// pages the feature line with --More-- (the recorded final frame).
+// C ref: invent.c look_here() — report the feature, engraving and floor objects.
+// A single object follows the engraving; a pile's menu precedes it.
 export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
     const x = game.u?.ux, y = game.u?.uy;
     const here = objects_at(x, y);
@@ -10406,7 +10359,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
         // C ref: invent.c look_here() !otmp branch — pline1(fbuf); read_engr_at();
         // if (!skip_objects && (Blind || !dfeature)) You("%s no objects here.", verb).
         if (dfeature) await update_topl(`There is ${an(dfeature)} here.`);
-        await read_engr_at_topl(x, y);
+        await read_engr_at(x, y);
         if (!skip_objects && (Blind_for_wear() || !dfeature))
             await update_topl(`You ${verb} no objects here.`);
         return Blind_for_wear() ? ECMD_TIME : ECMD_OK;
@@ -10414,7 +10367,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
     if (skip_objects) {
         // C ref: invent.c look_here():4249 — too many objects to list.
         if (dfeature) await update_topl(`There is ${an(dfeature)} here.`);
-        await read_engr_at_topl(x, y);
+        await read_engr_at(x, y);
         if (obj_cnt === 1 && (otmp.quan || 1) === 1)
             await update_topl(`There is ${picked_some ? 'another' : 'an'} object here.`);
         else
@@ -10430,29 +10383,10 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
         return Blind_for_wear() ? ECMD_TIME : ECMD_OK;
     }
     if (here.length === 1) {
-        // Single object (plus possibly a feature underneath).
-        if (dfeature) {
-            // First the feature pline, then the object pline.  update_topl pages
-            // the unacknowledged feature message with --More-- before showing
-            // the object line.
-            game._pending_message = `There is ${an(dfeature)} here.`;
-            game._toplin = 1; // NEED_MORE
-            await update_topl(`You ${verb} here ${doname_with_price(otmp)}.`);
-        } else if (Blind_for_wear()) {
-            // The blind grope line above is already an unacknowledged topline,
-            // so this second pline must chain through update_topl — which pages
-            // it with --More-- when the pair overflows CO-8 (C's behaviour) —
-            // instead of silently overwriting it.
-            await update_topl(`You ${verb} here ${doname_with_price(otmp)}.`);
-        } else {
-            // Every other arm of this single-object branch (the dfeature
-            // pair above, and the blind-grope follow-on below) already
-            // routes through update_topl(); this bare write was the odd one
-            // out, and look_here() has several callers (cmd.js's movement-
-            // triggered check_here, pickup.js) where an earlier message from
-            // the same step could still be genuinely pending.
-            await update_topl(`You ${verb} here ${doname_with_price(otmp)}.`);
-        }
+        // C reads the engraving between the feature and the object.
+        if (dfeature) await update_topl(`There is ${an(dfeature)} here.`);
+        await read_engr_at(x, y);
+        await update_topl(`You ${verb} here ${doname_with_price(otmp)}.`);
         return Blind_for_wear() ? ECMD_TIME : ECMD_OK;
     }
     // Multiple objects (and obj_cnt < pile_limit, the default 5).  C ref:
@@ -10468,6 +10402,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
     // the menu window (putstr(fbuf); putstr("")), not on the topline.
     const pre = dfeature ? [`There is ${an(dfeature)} here.`, ''] : [];
     await renderThingsHereMenu(header, itemLines, pre);
+    await read_engr_at(x, y);
     return Blind_for_wear() ? ECMD_TIME : ECMD_OK;
 }
 
@@ -10889,16 +10824,8 @@ export async function doorganize_core(obj) {
         }
 
         reorder_invent();
-        if (game._merge_discovery_pending) {
-            await report_merge_discovery();
-            const acc = game._pending_message;
-            prinv(action, result, 0);
-            const line = game._pending_message;
-            game._pending_message = acc;
-            await update_topl(line);
-        } else {
-            prinv(action, result, 0);
-        }
+        if (game._merge_discovery_pending) await report_merge_discovery();
+        await update_topl(prinv_fmt(action, result, 0));
         update_inventory();
         return ECMD_OK;
     }

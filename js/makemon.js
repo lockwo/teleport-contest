@@ -5,6 +5,7 @@
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, d, rn1 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
+import { christen_monst } from './do_name.js';
 import { builds_up, In_hell, Is_special, level_difficulty_c } from './dungeon.js';
 import { roles } from './role.js';
 import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
@@ -18,7 +19,7 @@ import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
          SCR_SCARE_MONSTER } from './mkobj.js';
 import { get_shop_item, FODDERSHOP, VEGETARIAN_CLASS } from './shtypes.js';
 import { within_bounded_area } from './rect.js';
-import { get_wormno, initworm, count_wsegs, worm_seg_at,
+import { get_wormno, initworm, count_wsegs, worm_seg_at, wormgone,
          place_worm_tail_randomly } from './worm.js';
 // Object-class constants inlined (not imported) to avoid a circular-import TDZ:
 // mkobj.js's dependency chain reaches makemon.js, so importing these names here
@@ -31,7 +32,7 @@ import {
     DUNGEON_ALIGN_BY_DNUM,
     In_endgame, Is_astralevel, Is_rogue_level, MM_NONAME,
     Is_airlevel, Is_firelevel, Is_earthlevel, Is_waterlevel,
-    In_mines, In_sokoban, Is_stronghold, Align2amask,
+    In_mines, In_sokoban, Is_stronghold, In_quest, In_V_tower, Is_knox_level, Align2amask,
     PIT, HOLE, TRAPDOOR, ALL_TRAPS,
     COLNO, ROWNO, DOOR, IN_SIGHT, POOL, MOAT, WATER, LAVAPOOL,
     HWALL, TLCORNER, BLCORNER, CROSSWALL, TUWALL, TDWALL, TRWALL, DBWALL,
@@ -39,7 +40,8 @@ import {
     STRAT_CLOSE, STRAT_WAITFORU, STRAT_APPEARMSG, W_SADDLE,
     IS_ALTAR, HEADSTONE, LR_MONGEN, MM_APPARXY_BYYOU,
     MM_NOMSG, MM_NOEXCLAM, M_AP_NOTHING, M_AP_MONSTER,
-    MHID_ARTICLE, MHID_ALTMON, BOLT_LIM, DF_NONE,
+    MHID_ARTICLE, MHID_ALTMON, BOLT_LIM, DF_NONE, NO_NC_FLAGS, NC_SHOW_MSG,
+    NC_VIA_WAND_OR_SPELL,
 } from './const.js';
 // set_mimic_sym() needs the room/trap/vision helpers.  These modules sit below
 // makemon.js in the import graph except vision.js, which imports two function
@@ -3090,6 +3092,12 @@ function apply_newcham(mtmp, mdat, olddata) {
         return 0;                       /* still the same monster */
 
     mgender_from_permonst(mtmp, mdat);
+    if (mtmp.wormno) {
+        const { mx, my } = mtmp;
+        wormgone(mtmp);
+        mtmp.mx = mx;
+        mtmp.my = my;
+    }
     // "give the new form the same proportion of HP as its old one had" — no
     // RNG in the arithmetic; newmonhp() draws d(m_lev, 8) for the new form.
     const hpn = mtmp.mhp, hpd = mtmp.mhpmax || 1;
@@ -3101,6 +3109,13 @@ function apply_newcham(mtmp, mdat, olddata) {
     if (nhp < 0 || nhp > mtmp.mhpmax) nhp = mtmp.mhpmax;
     mtmp.mhp = nhp || 1;
     mtmp.data = mdat;
+    if (mdat.pmidx === 114 /* PM_LONG_WORM */) {
+        mtmp.wormno = get_wormno();
+        if (mtmp.wormno) {
+            initworm(mtmp, rn2(5));
+            place_worm_tail_randomly(mtmp, mtmp.mx, mtmp.my, worm_goodpos);
+        }
+    }
     return 1;
 }
 
@@ -3128,15 +3143,24 @@ export function newcham(mtmp, mdat) {
     return apply_newcham(mtmp, mdat, olddata);
 }
 
-// Async twin of newcham(), for the (already-async, non-makemon()-hot-path)
-// call sites that want the wizard-mode 'monpolycontrol' override honored —
-// see select_newcham_form_wizard_aware() above for why this is not just
-// newcham() itself.  Only the mdat==null path differs; an explicit mdat
-// (a concrete forced shape) never consults select_newcham_form at all, in
-// either version, so callers that already pass one may as well keep calling
-// the plain sync newcham().
-export async function newcham_wizard_aware(mtmp, mdat) {
+// Runtime shape changes can prompt through monpolycontrol or NC_SHOW_MSG.
+// Creation-time changes retain the synchronous, silent newcham() path.
+export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
     const olddata = mtmp.data;
+    const msg = (ncflags & NC_SHOW_MSG) !== 0;
+    const names = await import('./do_name.js');
+    let canspotmon, x_monnam, seenorsensed, oldname;
+    if (msg) {
+        ({ canspotmon, x_monnam } = await import('./uhitm.js'));
+        seenorsensed = canspotmon(mtmp);
+        oldname = x_monnam(mtmp,
+            mtmp.mtame ? names.ARTICLE_YOUR : names.ARTICLE_THE,
+            null, names.SUPPRESS_SADDLE, false);
+        oldname = oldname.charAt(0).toUpperCase() + oldname.slice(1);
+    }
+    // C also prepares the old form's ordinary name before choosing a new
+    // shape, even when the transformation message uses the capitalized name.
+    names.mon_nam(mtmp);
     if (mdat == null) {
         let tryct = 20, mndx;
         do {
@@ -3151,7 +3175,30 @@ export async function newcham_wizard_aware(mtmp, mdat) {
     } else if ((mvflags(mdat.pmidx) & G_GENOD) !== 0) {
         return 0;
     }
-    return apply_newcham(mtmp, mdat, olddata);
+    const changed = apply_newcham(mtmp, mdat, olddata);
+    if (changed && msg) {
+        const { newsym, update_topl } = await import('./display.js');
+        mtmp.meverseen = 0;
+        newsym(mtmp.mx, mtmp.my);
+        if (!canspotmon(mtmp)) {
+            if (seenorsensed) await update_topl(`${oldname} disappears!`);
+            const { usmellmon } = await import('./mon.js');
+            await usmellmon(mdat);
+        } else if (!seenorsensed) {
+            const name = x_monnam(mtmp,
+                mtmp.mtame ? names.ARTICLE_YOUR : names.ARTICLE_A,
+                null, 0, false);
+            await update_topl(`${name.charAt(0).toUpperCase() + name.slice(1)} appears!`);
+        } else {
+            await update_topl(`${oldname} turns into ${names.noname_monnam(mtmp, names.ARTICLE_A)}!`);
+        }
+    }
+    if (changed) {
+        const { mon_break_armor, check_gear_next_turn } = await import('./mon.js');
+        await mon_break_armor(mtmp, (ncflags & NC_VIA_WAND_OR_SPELL) !== 0);
+        check_gear_next_turn(mtmp);
+    }
+    return changed;
 }
 
 // Retained name for the Vlad's-Tower call sites; newcham() now covers every
@@ -3437,8 +3484,9 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // C ref: makemon.c:1288-1292 — locations whose inhabitants have already met
     // wands, so muse.c doesn't make them re-learn.  No RNG here, but mwandexp
     // gates the "monster knows what this wand does" branch in muse.
-    if (Is_stronghold(game.u?.uz) || In_endgame(game.u?.uz)
-        || In_hell(game.u?.uz))
+    if (Is_stronghold(game.u?.uz) || Is_knox_level(game.u?.uz)
+        || In_endgame(game.u?.uz) || In_hell(game.u?.uz)
+        || In_V_tower(game.u?.uz) || In_quest(game.u?.uz))
         mtmp.mwandexp = true;
     // C ref: makemon.c:1301 — `if (mmflags & MM_MINVIS) mon_set_minvis(mtmp)`,
     // used by #wizgenesis (^G).  mon_set_minvis sets minvis; perminvis is for
@@ -3538,8 +3586,7 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
             // C ref: makemon.c:1374 `christen_monst(mtmp, rndghostname())` —
             // do_name.c rndghostname() is rn2(7) ? ROLL_FROM(ghostnames)
             // : plname, i.e. one rn2(7) plus (usually) one rn2(34).
-            mtmp.mnamelth = 1;
-            mtmp.mname = rndghostname();
+            christen_monst(mtmp, rndghostname());
         } else if (ptr.name === 'Croesus') {
             mitem = TWO_HANDED_SWORD_OTYP;                 // makemon.c:1377
         } else if (msound_of(ptr) === MS_NEMESIS) {

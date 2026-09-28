@@ -62,23 +62,18 @@ export function olfaction(mdat) {
     return true;
 }
 
-// C ref: eat.c garlic_breath(mtmp) — eating garlic scares (untimed) every
-// monster within distu < 7 that can smell.  monflee(mtmp, 0, FALSE, FALSE)
-// with fleetime 0 and fleemsg FALSE consumes no RNG: it just sets mflee with
-// mfleetim 0 (an untimed scare).  The fleeing state then drives the dochug
-// rn2(40)/rn2(25) flee/teleport rolls (monmove.js) on each monster's turn.
-function garlic_breath() {
+// C ref: eat.c garlic_breath() — untimed fear also clears movement tracks.
+async function garlic_breath() {
     const u = game.u;
     if (!u) return;
-    for (const mtmp of (game.level?.monsters || [])) {
+    const { monflee } = await import('./monmove.js');
+    const { fmonOrder } = await import('./mon.js');
+    for (const mtmp of fmonOrder()) {
         if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
         if (!olfaction(mtmp.data)) continue;
         const dx = mtmp.mx - u.ux, dy = mtmp.my - u.uy;
-        if (dx * dx + dy * dy < 7) {
-            // monflee(mtmp, 0, FALSE, FALSE): untimed scare, no RNG, no message.
-            mtmp.mflee = 1;
-            mtmp.mfleetim = 0;
-        }
+        if (dx * dx + dy * dy < 7)
+            await monflee(mtmp, 0, false, false);
     }
 }
 
@@ -1181,7 +1176,7 @@ async function fprefx(otmp) {
             u.uprops.Vomiting = (u.uprops.Vomiting || 0) + t;
             break;
         }
-        garlic_breath();
+        await garlic_breath();
         /* FALLTHROUGH to the default arm */
         give_feedback = await fprefx_default(otmp, Halluc);
         break;

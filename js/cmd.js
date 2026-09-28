@@ -71,7 +71,7 @@ import { noattacks, attacktype, AT_ENGL, AD_FIRE } from './monattk_data.js';
 // same way muse.js's import of it does.
 import { onscary, dissolve_bars } from './monmove.js';
 import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
-         read_engr_at as engrave_read_engr_at } from './engrave.js';
+         read_engr_at } from './engrave.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { builds_up, level_difficulty_c, surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -2420,12 +2420,13 @@ async function getdir_answer(key) {
     }
     if (ch === '\x1b' || ch === ' ' || ch === '\r' || ch === '\n')
         return null;                        // decl.c quitchars[] " \r\n\033"
-    // C ref: cmd.c getdir() — an invalid direction key (not a movement key and
-    // not a quitchar) with iflags.cmdassist On (default) shows the help_dir()
-    // text window "cmdassist: Invalid direction key!" + the direction-keys
-    // legend, then returns 0 (cancel).  quitchars (space/return/ESC) were already
-    // handled above and return null silently.
-    await help_dir_window('Invalid direction key!');
+    // C ref: cmd.c getdir() — disabled assistance reports the error without
+    // opening a window (and therefore without consuming another input).
+    if (key === (Cmd.spkeys?.[NHKF.GETDIR_HELP] ?? 0x3f)
+        || game.iflags?.cmdassist !== false)
+        await help_dir_window('Invalid direction key!');
+    else
+        await pline('What a strange direction!');
     return null;
 }
 
@@ -3019,7 +3020,7 @@ const PM_GRID_BUG = 116;
 // C ref: cmd.c confdir(force_impairment) — if impaired (or forced), pick a
 // random direction and overwrite u.dx/u.dy.  A grid-bug hero is NODIAG and
 // only draws from the 4 cardinal entries of dirs_ord.
-function confdir(forceImpairment) {
+export function confdir(forceImpairment) {
     const u = game.u;
     if (!(forceImpairment || u_maybe_impaired())) return;
     const kmax = (u.umonnum === PM_GRID_BUG) ? 4 : 8;
@@ -4788,22 +4789,6 @@ export async function pickup_after_move(x, y) {
     }
 }
 
-// The engraving auto-read used to be scoped to the tutorial while regular-level
-// engraving placement was still diverging; that scoping was removed and the
-// predicate now matches C unconditionally (read_engr_at() runs on every move's
-// pickup, as in pickup.c check_here()).  Kept as a named hook so the call site
-// still reads like C's structure.
-function engr_read_enabled() {
-    return true;
-}
-
-// C ref: engrave.c read_engr_at(x, y) — ported in js/engrave.js, next to the
-// engr_at()/wipe_engr_at() state it reads.
-async function read_engr_at(x, y) {
-    if (!engr_read_enabled()) return;
-    await engrave_read_engr_at(x, y);
-}
-
 // C ref: pickup.c pickup(1) with flags.pickup set -> autopick() picks every
 // floor object autopick_testobj() approves, then check_here reports the
 // remainder. Eligibility is js/pickup.js's port of autopick_testobj():
@@ -4872,14 +4857,8 @@ async function pickup_one(inv, obj, x, y) {
 // helper duplicated per-file elsewhere (eat.js, invent.js, uhitm.js, hack.js).
 function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
 
-// C ref: invent.c look_here() — the "There is <feature> here." + "You see
-// here <obj>." auto-announcement when stepping onto a dungeon feature and/or
-// floor object(s) with autopickup disabled.  The single-object case prints
-// the dfeature line (if any and not already announced by describe_decor's
-// mention_decor path) then "You see here <obj>." on the top line; the
-// multi-object case (obj_cnt < pile_limit, default 5) opens the blocking
-// "Things that are here:" menu (look_here in invent.js).  Larger piles
-// ("There are N objects here.") aren't exercised by the owned sessions.
+// C ref: invent.c look_here() — announce the feature, read any engraving, and
+// describe a single floor object.  Blind and multi-object cases use look_here().
 async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = false) {
     const objs = (game.level?.objects || []).filter(
         (o) => o.where === 'floor' && o.ox === x && o.oy === y);
@@ -4910,6 +4889,7 @@ async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = fa
         const o = objs[0];
         const name = await objDoname(o);
         if (dfeature) await update_topl(`There is ${an(dfeature)} here.`);
+        await read_engr_at(x, y);
         await update_topl(`You see here ${name}.`);
         return;
     }

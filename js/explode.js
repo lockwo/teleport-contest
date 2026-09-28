@@ -419,7 +419,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
                         await killed(mtmp, { nomsg: true, nocorpse: xkflg });
                     } else {
                         const { mon_kill_leaving } = await import('./monmove.js');
-                        mon_kill_leaving(mtmp, xkflg);
+                        await mon_kill_leaving(mtmp, xkflg);
                     }
                 } else if (!game.context?.mon_moving) {
                     await setmangry(mtmp, true);
@@ -743,7 +743,7 @@ export async function mon_explodes(mon, mattk) {
     // and explmm() arrive with it alive.
     if (!DEADMONSTER(mon)) {
         const { mon_kill_leaving } = await import('./monmove.js');
-        mon_kill_leaving(mon, true);
+        await mon_kill_leaving(mon, true);
     }
 
     const { mon_pmname } = await import('./uhitm.js');

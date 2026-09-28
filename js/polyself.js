@@ -602,9 +602,9 @@ async function drop_weapon(alone) {
             await pline(`You find you must drop ${theYour} ${which}!`);
         }
         const otmp = game.uwep;
-        game.uwep = null;
-        otmp.owornmask = 0;
-        await dropp(otmp);
+        const { uwepgone } = await import('./wield.js');
+        await uwepgone();
+        if (!otmp.in_use) await dropp(otmp);
     }
 }
 

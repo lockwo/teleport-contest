@@ -33,7 +33,7 @@ import { hitval } from './weapon.js';
 import { rn2, rnd, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED,
-    M_ATTK_AGR_DONE, W_SADDLE, STRAT_WAITMASK, engulfing_u,
+    M_ATTK_AGR_DONE, STRAT_WAITMASK, engulfing_u,
 } from './const.js';
 import { DEADMONSTER, mvitals_died, healmon } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
@@ -43,7 +43,7 @@ import { make_corpse, dmgval } from './uhitm.js';
 import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './const.js';
 // used only by the appended mhitm.c translations at the bottom of this file
 import { IS_OBSTRUCTED, IS_TREE, IRONBARS, D_CLOSED, D_LOCKED } from './const.js';
-import { is_animal, is_neuter_flag, perceives_flag, is_elf_flag, is_orc_flag,
+import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
          is_undead_flag, is_demon_flag, unsolid_flag, mflags1_of, M1_NOEYES,
          M1_THICK_HIDE, M1_WALLWALK, M1_TPORT,
 } from './monflags_data.js';
@@ -58,6 +58,7 @@ import { mhitm_adtyping } from './mhitm_ad.js';
 // boundary); js/mhitu.js is the single faithful copy.
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
 import { find_mac as worn_find_mac } from './worn.js';
+import { Monnam, mon_nam, a_monnam, mhis } from './do_name.js';
 
 // C ref: mhitm.c:358 gv.vis — latched ONCE per mattackm() call, before the
 // attack loop.  Several mhitm_ad_* handlers rloc() a combatant and then still
@@ -80,44 +81,6 @@ let gs_skipdrin = false;
 async function emitMMmsg(msg) {
     if (!msg) return;
     await update_topl(msg);
-}
-
-// C ref: do_name.c x_monnam — the bare species name for a monster instance.
-// A mounted/grounded steed wearing a saddle is described as "saddled <species>"
-// (steed.c mon_nam path); the contest's only monster-combat messages with a
-// saddled attacker are the post-dismount pony bites.
-function mon_species(mtmp) {
-    let s = (mtmp?.data?.name) || 'monster';
-    if (((mtmp?.misc_worn_check || 0) & W_SADDLE)
-        && !(mtmp?.mgivenname || mtmp?.mextra?.mgivenname))
-        s = 'saddled ' + s;
-    return s;
-}
-// the(species): "the <species>" with a given name standing alone.
-function the_monnam(mtmp) {
-    const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
-    if (given) return given;
-    return 'the ' + mon_species(mtmp);
-}
-// Monnam(): capitalized the_monnam.
-function Monnam(mtmp) {
-    const s = the_monnam(mtmp);
-    return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// C ref: do_name.c x_monnam() do_it — when the hero can't spot the monster,
-// mon_nam()/Monnam() collapse to "it" (article != ARTICLE_YOUR, not gameover,
-// not the steed/engulfer).  For the modeled hero canspotmon() reduces to
-// canseemon() == mm_can_see_mon() (no telepathy/detection, and cold undead
-// aren't infravisible).  do_it is tested before the name is consulted, so even
-// a named monster that can't be spotted renders as "it".
-function mon_nam_mm(mtmp) {
-    if (!mm_can_see_mon(mtmp)) return 'it';
-    return the_monnam(mtmp);
-}
-function Monnam_mm(mtmp) {
-    const s = mon_nam_mm(mtmp);
-    return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // C ref: mhitm.c:358 gv.vis — `(cansee(magr) && canspotmon(magr)) ||
@@ -413,9 +376,9 @@ function mm_ops() {
         vis: gv_vis,
         permonst,
         Monnam,
-        mon_nam: the_monnam,          /* x_monnam(ARTICLE_THE) */
-        Monnam_vis: Monnam_mm,        /* Some_Monnam(): "it" when unspottable */
-        mon_nam_vis: mon_nam_mm,      /* some_mon_nam() */
+        mon_nam,
+        Monnam_vis: Monnam,
+        mon_nam_vis: mon_nam,
         canseemon: mm_can_see_mon,
         canspotmon: mm_can_see_mon,
         emit: emitMMmsg,
@@ -518,7 +481,7 @@ async function thrwmmDeps() {
         vision_clears: async () => { await emitMMmsg('Your vision clears.'); },
         pline_slip: async (mon, obj) => {
             await emitMMmsg(`${MM.mshot_xname(obj)} slips as ${
-                the_monnam(mon)} throws it!`);
+                mon_nam(mon)} throws it!`);
         },
         delobj,
         flooreffects,
@@ -647,7 +610,7 @@ export async function monstone_mm(mdef) {
     mdef.mhp = 0;
     // mkcorpstat(STATUE, ...) draws no RNG; the statue object itself is not
     // modelled, so the square just reverts to its remembered contents.
-    { const { relobj } = await import('./uhitm.js'); relobj(mdef, mx, my); }
+    { const { relobj } = await import('./uhitm.js'); await relobj(mdef, mx, my); }
     if (mx > 0 && my > 0) newsym(mx, my);
 }
 
@@ -790,7 +753,7 @@ async function killMonster(mdef) {
     }
     // C ref: mon.c m_detach(due_to_death) -> relobj(mtmp, 1, FALSE) — the dead
     // monster's inventory hits the floor BEFORE the corpse, so it sits under it.
-    { const { relobj } = await import('./uhitm.js'); relobj(mdef, mx, my); }
+    { const { relobj } = await import('./uhitm.js'); await relobj(mdef, mx, my); }
     // C ref: mon.c mondied — make_corpse only when corpse_chance passed AND the
     // square can hold a corpse (accessible terrain or a pool).
     if (dropCorpse && mx > 0 && my >= 0 && (accessible(mx, my) || is_pool(mx, my)))
@@ -890,7 +853,7 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
     case AD_ACID:
         if (mhitb && !rn2(2)) {
             if (mm_can_see_mon(magr))
-                await emitMMmsg(`${Monnam(magr)} is splashed by ${s_suffix_mm(mon_nam_mm(mdef))} acid!`);
+                await emitMMmsg(`${Monnam(magr)} is splashed by ${s_suffix_mm(mon_nam(mdef))} acid!`);
             if (mm_resists_acid(magr)) {
                 if (mm_can_see_mon(magr))
                     await emitMMmsg(`${Monnam(magr)} is not affected.`);
@@ -1028,8 +991,8 @@ export async function mdisplacem(magr, mdef, quietly) {
     if (vis && !quietly) {
         // C: `is_rider(pa) ? "the" : mhis(magr)` — a Rider barges through "the"
         // way, everyone else through "his"/"her" way.
-        const hisher = is_rider(pa) ? 'the' : (magr.female ? 'her' : 'his');
-        await emitMMmsg(`${Monnam_mm(magr)} moves ${mon_nam_mm(mdef)} out of ${hisher} way!`);
+        const hisher = is_rider(pa) ? 'the' : mhis(magr);
+        await emitMMmsg(`${Monnam(magr)} moves ${mon_nam(mdef)} out of ${hisher} way!`);
     }
     newsym(fx, fy);
     newsym(tx, ty);
@@ -1047,8 +1010,8 @@ async function failed_grab(magr, mdef, mattk) {
         if (mm_visible(magr, mdef) && mm_can_see_mon(mdef)) {
             const verb = (mattk.adtyp === AD_DGST) ? 'gulp'
                 : (mattk.adtyp === AD_STCK) ? 'adhere' : 'grab';
-            await emitMMmsg(`${s_suffix_mm(Monnam_mm(magr))} ${verb} attempt`
-                + ` passes right through ${mon_nam_mm(mdef)}!`);
+            await emitMMmsg(`${s_suffix_mm(Monnam(magr))} ${verb} attempt`
+                + ` passes right through ${mon_nam(mdef)}!`);
         }
         return true;
     }
@@ -1059,17 +1022,17 @@ async function failed_grab(magr, mdef, mattk) {
 // "<Mon> thrusts his <weapon> at <mdef>."  The mon-vs-mon format ends in
 // "at %s"; mhitu.c's monster-vs-hero mswings() is the one that doesn't, and
 // this used to emit that (hero-directed) wording with a hardcoded "crude
-// dagger" as the weapon name.  Display only; no RNG.
+// dagger" as the weapon name.
 async function mswingsm(magr, mdef, otemp) {
     if (!mm_can_see_mon(magr)) return;
     // mswings_verb(otemp, bash): SLASH weapons swing, everything else the
     // monsters here wield thrusts; a polearm used at reach bashes (no monster
     // in this port wields one).
     const verb = SLASH_OTYPS_MM.has(otemp.otyp) ? 'swings' : 'thrusts';
-    const hisher = magr.female ? 'her' : 'his';
+    const hisher = mhis(magr);
     const many = ((otemp.quan | 0) > 1) ? 'one of ' : '';
     await emitMMmsg(`${Monnam(magr)} ${verb} ${many}${hisher} ${xname(otemp)}`
-        + ` at ${mon_nam_mm(mdef)}.`);
+        + ` at ${mon_nam(mdef)}.`);
 }
 // C ref: objects[].oc_dir & SLASH for the edged weapons monsters can wield
 // (otyps per mkobj.js).  Everything else they carry is PIERCE.
@@ -1093,36 +1056,24 @@ function helpless_mm(mtmp) {
 // mtrapped_in_pit() now lives in js/mhitu.js (its C home, mhitu.c:467); the
 // copy that used to be here had no hero arm (u.utrap / u.utraptype).
 
-// C ref: do_name.c a_monnam(mtmp) — "a <species>" (the given name alone when
-// the monster has one).
-function a_monnam(mtmp) {
-    const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
-    if (given) return given;
-    const s = mon_species(mtmp);
-    return (/^[aeiouAEIOU]/.test(s) ? 'an ' : 'a ') + s;
-}
-
 // ── mhitm.c:644 hitmm ────────────────────────────────────────────────────────
-// pre_mm_attack() first, then the "X <verb> Y." line (when visible), THEN
-// mdamagem() — so the hit message precedes any death message.  Neither
-// consumes RNG.  When not visible the hero may instead hear it (noises()).
-// shade_miss() (a shade shrugging off a non-silver/non-blessed hit, which
-// BYPASSES mdamagem and its d() roll) is not modelled.
+// pre_mm_attack() first, then the visible attack message, then mdamagem().
+// An unseen fight may instead be heard through noises().
 async function hitmm(magr, mdef, mattk, mwep, dieroll) {
     pre_mm_attack(magr, mdef);
     const compat = !magr.mcan ? could_seduce(magr, mdef, mattk) : 0;
     if (mm_visible(magr, mdef)) {
         if (compat) {
-            await emitMMmsg(`${Monnam_mm(magr)}`
+            await emitMMmsg(`${Monnam(magr)}`
                 + ` ${mdef.mcansee ? 'smiles at' : 'talks to'}`
-                + ` ${mon_nam_mm(mdef)}`
+                + ` ${mon_nam(mdef)}`
                 + ` ${compat === 2 ? 'engagingly' : 'seductively'}.`);
         } else if (mattk.aatyp === AT_TENT) {
-            await emitMMmsg(`${s_suffix_mm(Monnam_mm(magr))} tentacles suck`
-                + ` ${mon_nam_mm(mdef)}.`);
+            await emitMMmsg(`${s_suffix_mm(Monnam(magr))} tentacles suck`
+                + ` ${mon_nam(mdef)}.`);
         } else {
-            await emitMMmsg(`${Monnam_mm(magr)} ${hit_verb(mattk.aatyp)}`
-                + ` ${mon_nam_mm(mdef)}.`);
+            await emitMMmsg(`${Monnam(magr)} ${hit_verb(mattk.aatyp)}`
+                + ` ${mon_nam(mdef)}.`);
         }
     } else {
         await noises(magr, mattk);
@@ -1135,9 +1086,9 @@ async function missmm(magr, mdef, mattk) {
     pre_mm_attack(magr, mdef);
     if (mm_visible(magr, mdef)) {
         const seduces = !magr.mcan && could_seduce(magr, mdef, mattk);
-        await emitMMmsg(`${Monnam_mm(magr)}`
+        await emitMMmsg(`${Monnam(magr)}`
             + ` ${seduces ? 'pretends to be friendly to' : 'misses'}`
-            + ` ${mon_nam_mm(mdef)}.`);
+            + ` ${mon_nam(mdef)}.`);
     } else {
         await noises(magr, mattk);
     }
@@ -1442,7 +1393,7 @@ export async function gazemm(magr, mdef, mattk) {
         const { Adjmonnam } = await import('./do_name.js');
         buf = `${altmesg ? Adjmonnam(magr, 'blinded') : Monnam(magr)} gazes ${
             altmesg ? 'toward' : 'at'}`;
-        await emitMMmsg(`${buf} ${mm_can_see_mon(mdef) ? the_monnam(mdef)
+        await emitMMmsg(`${buf} ${mm_can_see_mon(mdef) ? mon_nam(mdef)
                                                        : 'something'}...`);
     }
 
@@ -1468,7 +1419,7 @@ export async function gazemm(magr, mdef, mattk) {
             if (magr.minvis && !perceives_flag(permonst(magr))) {
                 if (mm_can_see_mon(magr)) {
                     await emitMMmsg(`${Monnam(magr)} doesn't seem to notice that ${
-                        mhis_mm(magr)} gaze was reflected.`);
+                        mhis(magr)} gaze was reflected.`);
                 }
                 return M_ATTK_MISS;
             }
@@ -1498,14 +1449,6 @@ export async function gazemm(magr, mdef, mattk) {
     }
 
     return await mdamagem(magr, mdef, mattk, null, 0);
-}
-
-// C ref: do_name.c mhis(mon) — the possessive pronoun.  js/mhitm.js already
-// carries is_neuter_flag for exactly this decision elsewhere.
-function mhis_mm(mtmp) {
-    const ptr = permonst(mtmp);
-    if (is_neuter_flag(ptr)) return 'its';
-    return mtmp?.female ? 'her' : 'his';
 }
 
 // C ref: mhitm.c:807 engulf_target(magr, mdef) — may magr swallow mdef?
@@ -1567,7 +1510,7 @@ export async function gulpmm(magr, mdef, mattk) {
         await emitMMmsg(`${Monnam(magr)} ${
             digests_mm(magr) ? 'swallows'
             : enfolds_mm(magr) ? 'encloses'
-              : 'engulfs'} ${the_monnam(mdef)}.`);
+              : 'engulfs'} ${mon_nam(mdef)}.`);
     }
     if (!flaming_mm(permonst(magr))) {
         const { snuff_lit } = await import('./apply.js');

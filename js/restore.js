@@ -33,7 +33,8 @@ import { l_nhcore_init } from './mklev.js';
 import { rn2 } from './rng.js';
 import { quest_nemgend_or_null } from './questpgr.js';
 import { check_special_room } from './shkroom.js';
-import { read_engr_at, encumber_msg, xname, useup } from './invent.js';
+import { encumber_msg, xname, useup } from './invent.js';
+import { read_engr_at } from './engrave.js';
 import { run_object_timers, place_object, next_ident, newoextra, newomonst,
          newomid, new_omailcmd, OMID, has_omid, has_omonst, free_omid,
          SLIME_MOLD, ICE_BOX, POT_OIL, TALLOW_CANDLE, WAX_CANDLE,

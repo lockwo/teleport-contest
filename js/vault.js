@@ -587,7 +587,7 @@ export async function grddead(grd) {
 
     if (!dispose) {
         /* destroy guard's gold; drop any other inventory */
-        relobj(grd, grd.mx, grd.my);
+        await relobj(grd, grd.mx, grd.my);
         grd.mhp = 0;
         parkguard(grd);
         dispose = await clear_fcorr(grd, true);

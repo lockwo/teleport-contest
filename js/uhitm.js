@@ -1872,11 +1872,8 @@ export async function killed(mon, opts) {
         if (idx >= 0) list.splice(idx, 1);
     }
 
-    // C ref: mon.c m_detach() -> relobj(mtmp, 1, FALSE) — when a monster dies it
-    // drops everything in mtmp->minvent onto the map at mx,my (consumes no RNG).
-    // A killed kobold/orc/gnome leaves its starting darts/weapon on the floor,
-    // which then renders as a ')' object glyph at the kill location.
-    relobj(mon, x, y);
+    // C: m_detach() releases inventory before creating the corpse.
+    await relobj(mon, x, y);
 
     if (!skipCorpseBlock) {
         // illogical-but-traditional treasure drop gate (mon.c:3587).  C also
@@ -2027,12 +2024,8 @@ export async function killed(mon, opts) {
     if (x > 0 && y > 0) newsym(x, y);
 }
 
-// C ref: steal.c relobj(mtmp, 1, FALSE) via mdrop_obj() — drop every object in
-// the dead monster's minvent onto the map at (x,y).  No RNG.  flooreffects()
-// (water/trap interactions) is not reachable for the modelled corridor/room
-// kills, so each object is simply placed and stacked with any matching floor
-// stack at the same cell (NetHack merges same-type drops via stackobj()).
-export function relobj(mon, x, y) {
+// C ref: steal.c relobj(mtmp, 1, FALSE) via mdrop_obj().
+export async function relobj(mon, x, y) {
     const inv = mon?.minvent;
     // C ref: steal.c relobj() tail — `if (show && cansee(omx, omy)) newsym(omx, omy);`
     // fires even for an EMPTY minvent (m_detach always passes show=1), which is
@@ -2040,22 +2033,14 @@ export function relobj(mon, x, y) {
     // inventory left a killed gas spore (no corpse, no gear) drawn on the map.
     const repaint = () => { if (x > 0 && y >= 0) newsym(x, y); };
     if (!inv || !inv.length) { repaint(); return; }
-    const objs = (game.level && (game.level.objects || (game.level.objects = []))) || null;
-    if (!objs) { repaint(); return; }
-    // C ref: steal.c mdrop_obj():823 `distant_name(obj, doname)` — called for
-    // its dknown/discovery side effect BEFORE the object leaves minvent, once
-    // per item, in the front-to-back minvent order that relobj's `while
-    // ((otmp = mtmp->minvent) ...)` loop drains the head in.  mon.minvent is
-    // newest-first, same as C's head, so plain array order already matches.
-    for (const otmp of [...inv]) distant_doname(otmp, distant_far(otmp, x, y));
-    // C ref: steal.c relobj() walks mon->minvent front-to-back (newest first)
-    // and each mdrop_obj() PREPENDS onto the floor pile, so the oldest-dropped
-    // item ends up on top.  Our place_object() APPENDS instead (see
-    // mkobj.c:place_object port — last-pushed is topmost, matching vobj_at's
-    // "last match wins"), so processing minvent in its native newest-first
-    // order and appending each in turn reproduces the same end state: the
-    // oldest item is appended last and lands on top.
+    const { flooreffects } = await import('./do.js');
+    const { stackobj } = await import('./invent.js');
+    // minvent is newest-first; place_object appends to the floor pile.
     for (const otmp of [...inv]) {
+        distant_doname(otmp, distant_far(otmp, x, y));
+        inv.splice(inv.indexOf(otmp), 1);
+        otmp.where = 'free';
+        otmp.ocarry = null;
         // C ref: worn.c extract_from_minvent().  An object stops being worn
         // before it reaches the floor; otherwise a pet which later picks it
         // up incorrectly treats it as undroppable armour.
@@ -2065,27 +2050,17 @@ export function relobj(mon, x, y) {
             mon.misc_worn_check = ((mon.misc_worn_check | 0) & ~unwornmask) | I_SPECIAL;
             if (otmp === mon.mw) mon.mw = null;
         }
-        // mdrop_obj -> place_object + stackobj().  C's stackobj() walks the
-        // floor pile at (ox,oy) and merges into the first mergable() match —
-        // the SAME full mergable() contract used everywhere else (dknown,
-        // bknown-while-blind, cursed/blessed, erosion, oname, ...), not a
-        // hand-picked otyp/spe subset.  The previous otyp+spe-only check let a
-        // stack the hero had already SEEN merge with an unrelated dknown=0
-        // one dropped here (a kobold's remaining ammo, unseen-thrown-then-
-        // repicked-up earlier, merging with its own already-observed
-        // remainder at death): C keeps three separate floor piles where JS
-        // collapsed two into one (bl004 step 378: "6 darts"/"a +0 orcish
-        // short sword"/"a dart" vs JS's single "7 darts").
-        let merged = false;
-        for (const f of objs) {
-            if (f.where === 'floor' && f.ox === x && f.oy === y
-                && mergable(f, otmp)) {
-                f.quan = (f.quan || 1) + (otmp.quan || 1);
-                merged = true;
-                break;
-            }
+        if (!await flooreffects(otmp, x, y, 'fall')) {
+            place_object(otmp, x, y);
+            stackobj(otmp);
+        } else if (otmp.timed) {
+            const { obj_stop_timers } = await import('./timeout.js');
+            await obj_stop_timers(otmp);
         }
-        if (!merged) place_object(otmp, x, y);
+        if (!DEADMONSTER(mon) && unwornmask) {
+            const { update_mon_extrinsics } = await import('./worn.js');
+            update_mon_extrinsics(mon, otmp, false);
+        }
     }
     mon.minvent = [];
     repaint();

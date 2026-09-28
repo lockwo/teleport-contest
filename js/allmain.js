@@ -2016,6 +2016,8 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._study_occupation = null;
+        if (busy && monster_nearby())
+            await (await import('./hack.js')).stop_occupation(true);
         return;
     }
 

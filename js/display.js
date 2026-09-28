@@ -1085,6 +1085,7 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     if (!loc) return;
     loc.disp_ch = ch;
     loc.disp_warning = false;
+    loc.disp_monster = false;
     loc.disp_color = has_color_or_default(color);
     loc.disp_decgfx = !!decgfx;
     loc.disp_attr = attr | 0;
@@ -1686,8 +1687,17 @@ export function newsym(x, y) {
     }
 
     if (game.u?.ux === x && game.u?.uy === y) {
-        // C ref: display.c newsym — the hero's own cell is cansee, so its lit
-        // condition is remembered: lev->waslit = (lev->lit != 0).
+        // C ref: display.c newsym() — unseen hero squares are mapped by touch,
+        // which updates seenv as well as the remembered glyph.
+        if (!cansee(x, y)) {
+            feel_location(x, y);
+            if (canspotself()) {
+                const hg = hero_glyph();
+                show_glyph_cell(x, y, hg.ch, hg.color, false);
+            }
+            return;
+        }
+        // The visible hero square remembers its current lighting.
         loc.waslit = loc.lit ? 1 : 0;
         // Hero — drawn live; remember the background underneath.  Standing on
         // an engraved spot reveals it.  C ref: display.c newsym:970
@@ -1705,14 +1715,12 @@ export function newsym(x, y) {
         // A des.gas_cloud{selection=...} with no explicit ttl defaults to
         // permanent (region.c create_region()'s ttl=-1), so this can
         // persist on the hero's square for the rest of the game.
-        if (cansee(x, y)) {
-            const reg = visible_region_at(x, y);
-            if (reg && (ACCESSIBLE(loc.typ) || (reg.visible && (IS_POOL(loc.typ) || IS_LAVA(loc.typ))))
-                && !mon_overrides_region(m_at(x, y), x, y)) {
-                const rg = show_region(reg);
-                show_glyph_cell(x, y, rg.ch, rg.color, false);
-                return;
-            }
+        const reg = visible_region_at(x, y);
+        if (reg && (ACCESSIBLE(loc.typ) || (reg.visible && (IS_POOL(loc.typ) || IS_LAVA(loc.typ))))
+            && !mon_overrides_region(m_at(x, y), x, y)) {
+            const rg = show_region(reg);
+            show_glyph_cell(x, y, rg.ch, rg.color, false);
+            return;
         }
         // C ref: display.c newsym u_at branch —
         //   int see_self = canspotself();
@@ -1730,26 +1738,6 @@ export function newsym(x, y) {
             show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
         }
         remember_bg(loc, bg);
-        // C ref: display.c feel_location():869 — the Punished block.  While
-        // blind, the hero's own square is mapped by feel_location(), which also
-        // records WHICH of the ball/chain it is currently feeling; ball.c
-        // move_bc()'s Blind arm reads u.bc_felt to decide whether the map
-        // memory it leaves behind has to be rewritten.  "A ball or chain is
-        // only felt if it is first on the object location list."
-        {
-            const u = game.u;
-            // Only the !cansee half of C's newsym u_at branch goes through
-            // feel_location(); the sighted half uses _map_location(), which has
-            // no bc_felt bookkeeping.
-            if (u?.uball && u?.uchain && !cansee(x, y)) {
-                const top = vobj_at(x, y);
-                u.bc_felt = (u.bc_felt | 0);
-                if (top === u.uchain) u.bc_felt |= BC_CHAIN_D;
-                else u.bc_felt &= ~BC_CHAIN_D;
-                if (top === u.uball) u.bc_felt |= BC_BALL_D;
-                else u.bc_felt &= ~BC_BALL_D;
-            }
-        }
         return;
     }
 
@@ -1867,6 +1855,7 @@ export function newsym(x, y) {
             if (detected && see_it && M_AP_TYPE(mon) !== M_AP_NOTHING)
                 mg = monster_glyph(mon, true);
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
+            loc.disp_monster = detected || !mimics_an_object(mon);
         } else if (mon && mon_warning(mon) && !worm_tail) {
             // C ref: display.c newsym:1030 — `else if (mon && mon_warning(mon)
             // && !worm_tail) display_warning(mon)`.
@@ -1911,6 +1900,7 @@ export function newsym(x, y) {
             const petAttr = (mon.mtame && !Hallucination_u() && game.flags?.hilite_pet)
                 ? ATR_INVERSE : 0;
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
+            loc.disp_monster = detect_monsters || !mimics_an_object(mon);
         } else if (mon && mon_warning(mon) && !dark_worm_tail) {
             // C ref: display.c newsym:1055 — the out-of-sight arm of the same
             // rule: a threatening monster the hero cannot see still shows its

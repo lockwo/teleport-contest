@@ -222,7 +222,6 @@ function BStealth() {
     return !!u.usteed && !u.uprops?.Flying;
 }
 function HFumbling() { const u = game.u || {}; return (u.HFumbling | 0); }
-function HFumblingOutside() { const u = game.u || {}; return (u.HFumblingOutside | 0); }
 function Hallucination() {
     const u = game.u || {};
     return !!u.uhallu || !!u.Hallucination || ((u.uprops?.Hallucination | 0) > 0);
@@ -336,8 +335,8 @@ export async function Boots_on() {
     case FUMBLE_BOOTS: {
         const u = u_();
         /* the extrinsic itself comes from setworn(); only the timer is here */
-        u.EFumbling = WA_ARMF;
-        if (!extrinsic_fumbling_except(uarmf) && !HFumblingOutside())
+        u.EFumbling = (u.EFumbling | 0) | WA_ARMF;
+        if (!extrinsic_fumbling_except(uarmf) && !(HFumbling() & ~TIMEOUT))
             u.HFumbling = (u.HFumbling | 0) + rnd(20); /* incr_itimeout */
         break;
     }
@@ -396,7 +395,7 @@ export async function Boots_off() {
         break;
     case FUMBLE_BOOTS: {
         const u = u_();
-        if (!oldprop_fumble && !HFumblingOutside()) {
+        if (!oldprop_fumble && !(HFumbling() & ~TIMEOUT)) {
             u.HFumbling = 0;
             u.EFumbling = 0;
         }
@@ -634,8 +633,8 @@ export async function Gloves_on() {
         break;
     case GAUNTLETS_OF_FUMBLING: {
         const u = u_();
-        u.EFumbling = WA_ARMG;
-        if (!extrinsic_fumbling_except(uarmg) && !HFumblingOutside())
+        u.EFumbling = (u.EFumbling | 0) | WA_ARMG;
+        if (!extrinsic_fumbling_except(uarmg) && !(HFumbling() & ~TIMEOUT))
             u.HFumbling = (u.HFumbling | 0) + rnd(20); /* incr_itimeout */
         break;
     }
@@ -678,7 +677,7 @@ export async function Gloves_off() {
         break;
     case GAUNTLETS_OF_FUMBLING: {
         const u = u_();
-        if (!oldprop_fumble && !HFumblingOutside()) { u.HFumbling = 0; u.EFumbling = 0; }
+        if (!oldprop_fumble && !(HFumbling() & ~TIMEOUT)) { u.HFumbling = 0; u.EFumbling = 0; }
         break;
     }
     case GAUNTLETS_OF_POWER:

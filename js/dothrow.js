@@ -12,7 +12,7 @@
 // beside its caller.
 import { game } from './gstate.js';
 import { rn2, rnd, rnl } from './rng.js';
-import { m_at, newsym, update_topl, glyph_at, map_invisible,
+import { m_at, newsym, update_topl, map_invisible,
          canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
 import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT,
@@ -1355,7 +1355,7 @@ export async function hurtle_step(arg, x, y) {
     if (mon) {
         /* C's two extra exceptions (hides_under, S_EEL) sit inside `#if 0` and
            are not compiled: any monster here stops the flight. */
-        const glyph = glyph_at(x, y);
+        const known_monster = !!game.level?.at(x, y)?.disp_monster;
         const U = await import('./uhitm.js');
 
         mon.mundetected = 0; /* wakeup() will handle mimic */
@@ -1364,7 +1364,7 @@ export async function hurtle_step(arg, x, y) {
         const mnam = U.x_monnam(mon, ARTICLE_A_, null,
             ((mon.mgivenname || mon.mextra?.mgivenname) ? SUPPRESS_SADDLE_ : 0)
             | AUGMENT_IT_, false);
-        if (!glyph_is_monster_hurtle(glyph) && !U.glyph_is_invisible(x, y))
+        if (!known_monster && !U.glyph_is_invisible(x, y))
             await update_topl(`You find ${mnam} by bumping into ${
                 noit_mhim_hurtle(mon)}.`);
         else
@@ -1842,9 +1842,6 @@ async function tmp_at_hurtle(x, y) {
 }
 // C ref: display.c obj_to_glyph(obj, rng) — js/invent.js:1397 also returns 0.
 function obj_to_glyph_hurtle(_obj) { return 0; }
-// C ref: display.h glyph_is_monster(glyph) — the port's glyph_at() returns a
-// char/objectless value, so this cannot be decided from the glyph alone.
-function glyph_is_monster_hurtle(_glyph) { return false; }
 // C ref: do_name.c noit_mhim(mon) — "him"/"her"/"it", with "it" suppressed for
 // a named or seen monster.
 function noit_mhim_hurtle(mon) { return mon?.female ? 'her' : 'him'; }
