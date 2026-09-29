@@ -13,17 +13,19 @@
 import { game } from './gstate.js';
 import { LL_CONDUCT, livelog_printf } from './livelog.js';
 import { rnd, rn2, rn1, d } from './rng.js';
-import { pline, topl_more, update_topl, newsym } from './display.js';
+import { pline, topl_more, update_topl, newsym, y_n } from './display.js';
 import { getobj, makeknown, useup, useupall, xname, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY,
          GETOBJ_EXCLUDE, GETOBJ_PROMPT, GETOBJ_ALLOWCNT, GETOBJ_EXCLUDE_SELECTABLE,
          identify_pack, trycall, near_capacity, obj_doname, stackobj, obfree,
-         update_inventory, remove_worn_item, makeplural } from './invent.js';
+         update_inventory, remove_worn_item, makeplural, delobj,
+         worn_extrinsics_off } from './invent.js';
 import { exercise } from './attrib.js';
 import { discover_object } from './o_init.js';
 import { do_mapping } from './detect.js';
 import { study_book } from './spell.js';
-import { erode_obj, obj_erode_type, goodpos_for_hero, t_at, spoteffects } from './trap.js';
+import { erode_obj, obj_erode_type, goodpos_for_hero, t_at } from './trap.js';
 import { find_ac } from './u_init.js';
+import { teleds, On_W_tower_level } from './teleport.js';
 import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          SCR_DESTROY_ARMOR, SCR_REMOVE_CURSE, SCR_ENCHANT_WEAPON,
          SCR_ENCHANT_ARMOR, SCR_CONFUSE_MONSTER, SCR_SCARE_MONSTER,
@@ -38,11 +40,11 @@ import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
          In_endgame, Is_earthlevel, GENOCIDED, KILLED_BY,
          KILLED_BY_AN, NO_KILLER_PREFIX, DIED, ROOM, STONE, IS_WALL, IS_DOOR,
-         G_GONE } from './const.js';
+         G_GONE, TELEDS_TELEPORT } from './const.js';
 import { S_invisible, S_WORM_TAIL, S_MIMIC_DEF, S_MIMIC, S_WORM, S_DEMON,
          S_XAN, S_EEL, S_GHOST, def_monsyms, MAXMCLASSES } from './symbols.js';
 import { wipeout_text } from './engrave.js';
-import { Blind, vision_recalc, cansee } from './vision.js';
+import { Blind, cansee } from './vision.js';
 import { mflags1_of, mflags2_of, msound_of, M1_NOHEAD, M1_AMORPHOUS,
          M1_UNSOLID, M1_WALLWALK, M1_HIDE,
          M2_PNAME, M2_HUMAN, M2_DEMON, M2_MALE, M2_FEMALE } from './monflags_data.js';
@@ -1065,10 +1067,7 @@ async function seffect_enchant_weapon(sobj) {
 // the endgame air/water levels have their own rules) and in_out_region()
 // (Juiblex's swamp / the Wizard's tower keep you in or out) both veto
 // destinations that the trap guard and goodpos() accept, so a teleport on one
-// of those levels can land somewhere C would have rejected.  Exported: also used by
-// hack.js's dotele_wizard() (wizard-mode ^T -> tele() -> scrolltele()), which
-// shares this exact C code path with the scroll-of-teleportation controlled
-// case below.
+// of those levels can land somewhere C would have rejected.
 export function teleok_hero(x, y, trapok) {
     if (!trapok) {
         const trap = t_at(x, y);
@@ -1081,79 +1080,6 @@ export function teleok_hero(x, y, trapok) {
         }
     }
     return goodpos_for_hero(x, y);
-}
-
-// C ref: teleport.c teleds(nux,nuy,TELEDS_TELEPORT) — hero-only subset.
-// Relocates the hero, redraws the vacated square, recalculates vision,
-// announces the materialize message (after the vision recalc, so a paged
-// --More-- shows the new map, matching the C comment on this ordering), then
-// runs spoteffects() at the new spot.
-// Still unported: the vault-guard alarm (needs vault_occupied/findgd), the
-// hidden-mimic unwind, switch_terrain() on a terrain-type change, fill_pit()
-// of the vacated square, and nomul(0) (the port's occupation model differs;
-// see the "nomul(0) must leave occupation armed" gotcha).
-// Exported for hack.js's dotele_wizard() (see teleok_hero above).
-export async function teleds_hero(nux, nuy) {
-    const u = game.u;
-    const oldx = u.ux, oldy = u.uy;
-    // C ref: teleds() — a punished hero's ball & chain come off the map before
-    // the move and go back down at the new spot.  Without this they stayed on
-    // the OLD square: two stray glyphs on the map and a ball the hero is
-    // supposedly chained to at arbitrary distance.  (drag_ball()'s
-    // distmin<=1 "don't have to move the ball" case can't apply to a real
-    // teleport, so C's unplacebc()+placebc() pair is what runs.)
-    const ball_active = !!(u.uball && u.uchain);
-    if (ball_active) {
-        // C ref: teleds() — unplacebc() takes the pair off the map, placebc()
-        // puts it back at the destination.  move_bc(before=1) was used here as
-        // "the same lift", but move_bc's whole body is the Blind arm's
-        // `if (!before)` and a control mask of 0 moves nothing, so the pair was
-        // never removed and placebc() duplicated it on the pile.
-        // (C's drag_ball()/move_bc() path for a destination within 2 squares of
-        // the ball is not ported; lifting and re-placing lands the pair on the
-        // hero's own square, which is where a 0-step hop leaves it anyway.)
-        const { unplacebc, placebc } = await import('./ball.js');
-        unplacebc();
-        // C ref: teleds() — reset_utrap(FALSE): teleporting frees the hero from
-        // a pit/web/bear trap.  Leaving u.utrap set kept a teleported hero
-        // "still stuck" at the destination.
-        reset_utrap();
-        u.ux0 = oldx; u.uy0 = oldy;
-        u.ux = nux; u.uy = nuy;
-        placebc();
-    } else {
-        reset_utrap();
-        u.ux0 = oldx; u.uy0 = oldy;
-        u.ux = nux; u.uy = nuy;
-    }
-    // C ref: teleds() — set_ustuck(NULL) also clears uswallow.
-    u.uswallow = 0;
-    u.ustuck = null;
-    newsym(oldx, oldy);
-    // SCRATCH: C ref: teleport.c:537 see_monsters()
-    for (const m of (game.level?.monsters || [])) {
-        if (m.mhp != null && m.mhp <= 0) continue;
-        newsym(m.mx, m.my);
-    }
-    newsym(nux, nuy);
-    vision_recalc(0);
-    if (game.flags?.verbose !== false) {
-        const where = (nux === oldx && nuy === oldy) ? 'the same' : 'a different';
-        await update_topl(`You materialize in ${where} location!`);
-    }
-    // C ref: teleport.c teleds() -> spoteffects(TRUE) — the arrival square's
-    // pile is looked at / picked up.  Passing null skipped the whole pickup.
-    const { pickup_after_move } = await import('./cmd.js');
-    await spoteffects(pickup_after_move);
-}
-
-// C ref: trap.c reset_utrap(msg) — clear the hero's trapped state.  The msg
-// arm (float_vs_flight) only matters for the TRUE caller.
-function reset_utrap() {
-    const u = game.u;
-    if (!u) return;
-    u.utrap = 0;
-    u.utraptype = 0;
 }
 
 // C ref: teleport.c scrolltele(scroll) — the in-level teleport a non-confused,
@@ -1181,13 +1107,12 @@ export async function scrolltele(scroll) {
     // C: `if (!Blinded) make_blinded(0L, FALSE);` — a no-op unless the hero is
     // blinded from a source with no timeout; not modelled.
 
-    // C ref: `(u.uhave.amulet || On_W_tower_level(&u.uz)) && !rn2(3)`.  (The
-    // Wizard's-tower half needs In_W_tower(); the Amulet half is ported.)
-    if (u?.uhave?.amulet && !rn2(3)) {
+    // C ref: teleport.c:865 — the whole tower level interferes, not just its interior.
+    if ((u?.uhave?.amulet || On_W_tower_level(u.uz)) && !rn2(3)) {
         await pline_append('You feel disoriented for a moment.');
         if (!wizard) return;
-        // (wizard mode's y_n("Override?") prompt is not modelled; C continues
-        // only on 'y'.)
+        game._yn_need_more = game._toplin === 1;
+        if ((await y_n('Override?')) !== 'y') return;
     }
 
     const stunned = (u?.uprops?.Stun || 0) > 0;
@@ -1212,7 +1137,7 @@ export async function scrolltele(scroll) {
                                     /*force=*/true, verbose);
             if (!cc) return; // getpos() < 0: abort
             if (teleok_hero(cc.x, cc.y, false)) {
-                await teleds_hero(cc.x, cc.y);
+                await teleds(cc.x, cc.y, TELEDS_TELEPORT);
                 return;
             }
             await pline_append('Sorry...');
@@ -1245,13 +1170,12 @@ function learnscroll(sobj) {
 // it, and finally falls back to the first acceptable TRAP square.  Returning
 // FALSE here instead leaves the hero standing where they were, with the whole
 // PRNG stream short by collect_coords' draws.
-// Exported for hack.js's dotele_wizard() (see teleok_hero above).
 export async function safe_teleds_hero() {
     for (let tcnt = 0; tcnt < 40; tcnt++) {
         const nux = rnd(COLNO - 1);
         const nuy = rn2(ROWNO);
         if (teleok_hero(nux, nuy, false)) {
-            await teleds_hero(nux, nuy);
+            await teleds(nux, nuy, TELEDS_TELEPORT);
             return true;
         }
     }
@@ -1409,28 +1333,21 @@ async function seffect_remove_curse(sobj) {
         await unpunish();
 }
 
-// C ref: ball.c unpunish() — free the hero of the ball & chain: the chain is
-// obfree'd and the ball moved to the floor (dealloc_obj in C only when it was
-// carried; placebc's floor copies are just unlinked here).  No RNG.
-async function unpunish() {
+// C ref: read.c unpunish() — destroy the chain, leaving the detached ball.
+export function unpunish() {
     const u = game.u;
-    const uchain = u.uchain, uball = u.uball;
-    if (uchain) {
-        const objs = game.level?.objects;
-        if (objs) {
-            const i = objs.indexOf(uchain);
-            if (i >= 0) objs.splice(i, 1);
-        }
-        uchain.owornmask = 0;
+    const chain = u.uchain, ball = u.uball;
+    if (chain) {
+        worn_extrinsics_off(chain, W_CHAIN);
+        chain.owornmask &= ~W_CHAIN;
         u.uchain = null;
-        newsym(uchain.ox, uchain.oy);
+        delobj(chain);
     }
-    if (uball) {
-        uball.owornmask = 0;
-        uball.spe = 0;
+    if (ball) {
+        worn_extrinsics_off(ball, W_BALL);
+        ball.owornmask &= ~W_BALL;
         u.uball = null;
     }
-    u.bc_felt = 0;
 }
 
 // C ref: read.c:1850 seffect_fire(sobjp) — the scroll of fire / fireball spell.
@@ -1908,7 +1825,10 @@ export async function doread() {
         const _engrave = await import('./engrave.js');
         const bcsign = (scroll.blessed ? 1 : 0) - (scroll.cursed ? 1 : 0);
         const line = _engrave.outrumor(bcsign, _engrave.BY_COOKIE);
-        if (line) {
+        if ((game.u?.uhs ?? 0) !== 5 /* FAINTED */ && Blind()) {
+            await update_topl('This cookie has a scrap of paper inside.');
+            await update_topl('What a pity that you cannot read it!');
+        } else if (line) {
             await update_topl('This cookie has a scrap of paper inside.');
             await update_topl('It reads:');
             await update_topl(line);
@@ -3488,7 +3408,6 @@ export async function create_particular_creation(d) {
         if ((await cant_revive(ref, false, null))
             && firstchoice !== name_to_pmidx('long worm tail')) {
             /* wizard mode can override handling of special monsters */
-            const { y_n } = await import('./display.js');
             const q = `Creating ${monster_by_pmidx(ref.v)?.name} instead; force ${
                 monster_by_pmidx(firstchoice)?.name}?`;
             if ((await y_n(q)) === 'y') ref.v = firstchoice;

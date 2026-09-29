@@ -10,7 +10,7 @@
 // hardcoded fastforward_pre_mklev() replay for seed8000 (and every other
 // public session whose first divergence is downstream of o_init).
 //
-// The shuffle results (oc_descr_idx / oc_color / oc_tough / oc_material) are
+// The shuffle results (oc_descr_idx / oc_color / oc_tough / material) are
 // written back onto the shared objects[] array so a renderer can later read
 // the per-appearance description / color.  Rendering itself lives in
 // display.js / invent.js and is out of scope for this file.
@@ -50,14 +50,15 @@ const WAN_NOTHING = 416;
 // values that zap.js (which uses the correct 1/2) then misread.
 const NODIR = 1, IMMEDIATE = 2;
 
-// Keep the immutable object-table colors so init_objects() can restore them
-// before each new game.  The shared objects[] entries are mutated by shuffling.
+// Keep immutable object-table appearance fields for each new game.
+// The shared objects[] entries are mutated by shuffling.
 // Snapshotted lazily on the first seedAppearance() (i.e. before any shuffle
 // has run): display.js now imports this module, which puts o_init.js inside the
 // mkobj.js import cycle, so touching objects[] at module-eval time is a TDZ
 // ReferenceError.
 let DECLARED_COLOR = null;
 let DECLARED_TOUGH = null;
+let DECLARED_MATERIAL = null;
 
 // Per-object appearance data (oc_color / oc_tough / oc_material) for the
 // objects that participate in shuffling.  Only the shuffle ranges need this:
@@ -130,6 +131,7 @@ function seedAppearance() {
     if (!DECLARED_COLOR) {
         DECLARED_COLOR = objects.map((o) => o?.oc_color ?? CLR_GRAY);
         DECLARED_TOUGH = objects.map((o) => o?.oc_tough ?? 0);
+        DECLARED_MATERIAL = objects.map((o) => o?.material ?? 0);
     }
     for (let i = 0; i < objects.length; i++) {
         const o = objects[i];
@@ -137,7 +139,7 @@ function seedAppearance() {
         o.oc_descr_idx = o.oc_name_idx = i;
         o.oc_color = DECLARED_COLOR[i];
         o.oc_tough = DECLARED_TOUGH[i];
-        o.oc_material = o.material ?? 0;
+        o.material = DECLARED_MATERIAL[i];
         // C's object table pre-marks types without alternate descriptions and
         // leaves description-bearing types unidentified.
         o.oc_name_known = DESCR_BY_OTYP[i] == null ? 1 : 0;
@@ -262,9 +264,9 @@ function shuffle(bases, o_low, o_high, domaterial) {
         objects[j].oc_color = objects[i].oc_color;
         objects[i].oc_color = color;
         if (domaterial) {
-            sw = objects[j].oc_material;
-            objects[j].oc_material = objects[i].oc_material;
-            objects[i].oc_material = sw;
+            sw = objects[j].material;
+            objects[j].material = objects[i].material;
+            objects[i].material = sw;
         }
     }
 }
@@ -980,7 +982,7 @@ function save_objclass(o) {
     return { oc_name_known: o.oc_name_known | 0, oc_encountered: o.oc_encountered | 0,
              oc_descr_idx: o.oc_descr_idx | 0, oc_name_idx: o.oc_name_idx | 0,
              oc_color: o.oc_color | 0, oc_tough: o.oc_tough | 0,
-             oc_material: o.oc_material | 0, oc_prob: o.oc_prob | 0,
+             oc_material: o.material | 0, oc_prob: o.oc_prob | 0,
              oc_dir: o.oc_dir | 0, oc_uname: o.oc_uname ? 1 : 0 };
 }
 function rest_objclass(o, rec) {
@@ -991,7 +993,7 @@ function rest_objclass(o, rec) {
     o.oc_name_idx = rec.oc_name_idx;
     o.oc_color = rec.oc_color;
     o.oc_tough = rec.oc_tough;
-    o.oc_material = rec.oc_material;
+    o.material = rec.oc_material;
     o.oc_prob = rec.oc_prob;
     o.oc_dir = rec.oc_dir;
     o.oc_uname = rec.oc_uname ? (o.oc_uname || '') : null;

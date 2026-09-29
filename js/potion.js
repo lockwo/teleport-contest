@@ -24,7 +24,7 @@ import { heal_legs, water_damage, float_up, spoteffects } from './trap.js';
 import { monster_detect } from './hack.js';
 import { DEADMONSTER } from './mon.js';
 import { exercise, acurr_eff } from './attrib.js';
-import { more_experienced, pluslvl, newuexp, has_innate } from './exper.js';
+import { more_experienced, pluslvl, rndexp, has_innate } from './exper.js';
 import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          POT_HEALING, POT_EXTRA_HEALING, POT_FRUIT_JUICE, POT_BOOZE,
          POT_SICKNESS, POT_WATER, POT_SPEED, POT_GAIN_LEVEL, POT_GAIN_ENERGY,
@@ -50,7 +50,7 @@ import { object_detect } from './detect.js';
 // C ref: potion.c make_confused(xtime, talk) — set the HConfusion timeout.  The
 // hero's confusion timer lives on game.u.uprops.Confusion (read by isConfused()
 // in engrave.js) and is mirrored to game.u.uconf for the uhitm safe-pet check.
-function make_confused(xtime, _talk) {
+export function make_confused(xtime, _talk) {
     const u = game.u;
     if (!u) return;
     if (!u.uprops) u.uprops = {};
@@ -380,21 +380,6 @@ async function speed_up(incr) {
         await update_topl('Your legs get new energy.');
     exercise(A_DEX, true);
     uprops().HFast = (HProp('HFast') | 0) + incr;   /* incr_itimeout(&HFast, ...) */
-}
-
-// C ref: exper.c rndexp(gaining) — a random experience total within the current
-// level's band.
-function rndexp(gaining) {
-    const u = game.u;
-    const ulvl = u?.ulevel | 0;
-    const elo = newuexp(ulvl - 1), ehi = newuexp(ulvl);
-    let xtmp;
-    if (gaining) {
-        xtmp = elo + rn2(ehi - elo);
-    } else {
-        xtmp = ehi - rn2(ehi - elo);
-    }
-    return xtmp;
 }
 
 // C ref: objnam.c objdescr_is(obj, descr) — compare the SHUFFLED appearance
@@ -2530,9 +2515,9 @@ export async function potionhit(mon, obj, how) {
         }
         case POT_SLEEPING:
             /* wakeup() doesn't rouse victims of temporary sleep */
-            if (Z.sleep_monst(mon, rnd(12), POTION_CLASS)) {
+            if (await Z.sleep_monst(mon, rnd(12), POTION_CLASS)) {
                 await update_topl(`${UH.Monnam(mon)} falls asleep.`);
-                await p_slept_monst(mon);
+                await Z.slept_monst(mon);
             }
             break;
         case POT_PARALYSIS:
@@ -2699,7 +2684,7 @@ function p_Tobjnam(obj, verb) {
     return `The ${xname(obj)} ${p_otense(obj, verb)}`;
 }
 // C ref: mon.c wakeup(mtmp, via_attack) / mon.c monkilled() / were.c new_were()
-// / mon.c mon_set_minvis() / mhitm_ad.c paralyze_monst() / zap.c slept_monst().
+// / mon.c mon_set_minvis() / mhitm_ad.c paralyze_monst().
 // None is exported by any js/ module (js/mon.js:331 documents new_were as
 // module-private, js/mhitm_ad.js has the only paralyze_monst); each is named
 // here so the gap is explicit rather than silently dropped.
@@ -2712,7 +2697,6 @@ async function p_paralyze_monst(mon, ntmp) {
     mon.mcanmove = 0;
     mon.mfrozen = ntmp;
 }
-async function p_slept_monst(_mon) { /* zap.c slept_monst(), unported */ }
 
 // C ref: potion.c:2243 hold_potion(potobj, drop_fmt, drop_arg, hold_msg) — put a
 // transformed potion back into inventory.  Its WEIGHT hasn't changed, but it may

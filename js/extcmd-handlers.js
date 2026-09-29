@@ -21,7 +21,7 @@ import {
     dopickup, doputon, dowieldquiver, dothrow, dotravel, dowear, dowield,
     doprinuse, dofire, ddoinv, dotypeinv, dodiscovered, dolook, doswapweapon,
     dotakeoff, doprring, doprtool, doprwep, doprgold, dovspell, dopramulet,
-    doprarm,
+    doprarm, near_capacity,
 } from './invent.js';
 import { pluslvl, losexp } from './exper.js';
 import { MAXULEV, IS_WALL, SDOOR, MM_NOEXCLAM, BOLT_LIM, STRAT_WAITMASK,
@@ -42,7 +42,7 @@ import { count_unpaid, is_worn, wearing_armor, inventoryArray, takeoff_worn_obj,
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT } from './livelog.js';
 import { rn2 } from './rng.js';
-import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED } from './const.js';
+import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED, UNENCUMBERED } from './const.js';
 import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full, do_farlook } from './hack.js';
 import { dotwoweapon } from './wield.js';
 import { doride } from './steed.js';
@@ -890,6 +890,10 @@ async function dojump() {
     if (!Jumping()) {
         await pline("You can't jump very far.");
         return 0;                                      // ECMD_OK
+    }
+    if (near_capacity() > UNENCUMBERED) {
+        await pline('You are carrying too much to jump!');
+        return 0;
     }
     // C ref: apply.c jump():  pline("Where do you want to jump?"); cc = <u>;
     // getpos_sethilite(...); getpos(&cc, TRUE, "the desired position").
@@ -4064,10 +4068,6 @@ async function wizIntrinsicMenu(entries) {
 // C ref: wizcmds.c wiz_intrinsic() — a PICK_ANY menu of every timeable
 // property; each pick adds DEFAULT_TIMEOUT_INCR to its intrinsic timeout and
 // plines "Timeout for <prop> set to/increased by N.".
-// GAP: C routes BLINDED/DEAF/HALLUC/SICK/SLIMED/STONED/STUNNED/VOMITING/GLIB/
-// WARN_OF_MON through make_*() helpers whose feedback differs from the default
-// "Timeout for ..." line; those helpers are inlined per-call-site here, so
-// every pick currently takes C's `default:` arm.
 async function wiz_intrinsic() {
     const entries = wizIntrinsicEntries();
     const committed = await wizIntrinsicMenu(entries);
@@ -4100,18 +4100,9 @@ async function wiz_intrinsic() {
             continue;
         }
         // C ref: wizcmds.c:1020 `case BLINDED: make_blinded(newtimeout, TRUE)`
-        // — also NOT the default arm, so there is no "Timeout for blinded"
-        // line.  make_blinded only talks when sight is actually regained, so
-        // topping up an already-blind hero is silent (and therefore raises no
-        // --More--, which is what kept the following steps misaligned).
         if (it.propId === 'BLINDED') {
-            const wasBlind = Blind();
-            slot.set(u, newtimeout);
-            game.botl = true;
-            if (!Blind() && wasBlind) {
-                game.vision_full_recalc = 1;
-                await update_topl('You can see again.');
-            }
+            const { make_blinded_hero } = await import('./potion.js');
+            await make_blinded_hero(newtimeout, true);
             continue;
         }
         if (slot) slot.set(u, newtimeout); else u.uprops[it.key] = newtimeout;

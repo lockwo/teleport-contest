@@ -1264,10 +1264,10 @@ async function fpostfx(otmp) {
         // C: outrumor(bcsign(otmp), BY_COOKIE)
         const bcsign = (otmp.blessed ? 1 : 0) - (otmp.cursed ? 1 : 0);
         const line = _engrave.outrumor(bcsign, _engrave.BY_COOKIE);
-        // BY_COOKIE feedback: "This cookie has a scrap of paper inside." then
-        // "It reads:" then the rumor (skipped when blind/fainted, in which case
-        // outrumor returned '' with no RNG).
-        if (line) {
+        if ((u?.uhs ?? NOT_HUNGRY) !== FAINTED && _vision.Blind()) {
+            await update_topl('This cookie has a scrap of paper inside.');
+            await update_topl('What a pity that you cannot read it!');
+        } else if (line) {
             // C ref: outrumor() -> pline() -> update_topl for each line so the
             // BY_COOKIE readout pages ("scrap of paper...It reads:--More--")
             // instead of clobbering the topline in one dumb overwrite.
@@ -1932,7 +1932,8 @@ const COST_DSTROY_ = 11, COST_OPEN_ = 14;
 // cmd.c b_trapped()'s "no body part" sentinel (js/const.js NO_PART == -1).
 const NO_PART_ = -1;
 // monattk.h attack results (js/const.js M_ATTK_*).
-const M_ATTK_MISS_ = 0x0, M_ATTK_HIT_ = 0x1, M_ATTK_AGR_DIED_ = 0x4;
+const M_ATTK_MISS_ = 0x0, M_ATTK_HIT_ = 0x1, M_ATTK_DEF_DIED_ = 0x2,
+      M_ATTK_AGR_DIED_ = 0x4;
 
 // objects.h otyps this section names.  (CORPSE/TIN/EGG/... are declared at the
 // top of this file; only the ones the tail needs are added here.)
@@ -2232,17 +2233,11 @@ export async function eating_conducts(pd) {
 // of the branches, and a player mind flayer's morehungry(-rnd(30)) and
 // rnd(4) Int recovery follow in that order.
 //
-// WIRING: js/mhitm_ad.js:900 and :917 are the two AD_DRIN sites that stop where
-// this function should be called.
 export async function eat_brains(magr, mdef, visflag, dmg_p) {
     const T = await loadTailDeps();
     const { YOUMONST } = await import('./mhitm_ad.js');
     const is_hero = (m) => m === YOUMONST;
-    // C: pd = mdef->data, which for the hero is gy.youmonst.data.  This port
-    // has no hero permonst (u.umonnum is a ROLE index), so the hero-as-defender
-    // arm below never consults pd — matching C, which only reads it there for
-    // the "no such thing as mindless players" comment.
-    const pd = is_hero(mdef) ? null : mdef?.data;
+    const pd = is_hero(mdef) ? _invent.youmonst_data_pub() : mdef?.data;
     let give_nutrit = false;
     let result = M_ATTK_HIT_;
     const xtra_dmg = rnd(10);                        /* eat.c:613 */
@@ -2269,18 +2264,20 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
         // The flayer went for a petrification-inducing brain (Medusa, most
         // likely; a cockatrice tentacle-touch is caught before reaching here).
         if (is_hero(magr)) {
-            if (!u?.uprops?.Stone_resistance && !u?.uprops?.Stoned) {
-                u.uprops = u.uprops || {};
-                u.uprops.Stoned = 5;                 /* make_stoned(5L, ...) */
-                game._delayed_killer = pd.name;
-            }
+            const props = u.uprops || {};
+            const stoneResistant = props.Stone_resistance || props.StoneResistance
+                || props.HStone_resistance || props.EStone_resistance
+                || ((_invent.youmonst_data_pub()?.mresists || 0) & MR_STONE)
+                || (game.invent || []).some((obj) =>
+                    obj.owornmask && _mkobj.objects[obj.otyp]?.oc_oprop === P_STONE_RES);
+            if (!stoneResistant && !props.Stoned)
+                await T.potion.make_stoned(5, null, 0, pd.name);
         } else {
-            // Mind flayers have neither poly_when_stoned nor Stone_resistance.
-            if (visflag && canseemon_eat(magr))
+            if (visflag && T.display.canseemon_shared(magr))
                 await pline(`${T.do_name.Monnam(magr)} turns to stone!`);
-            // C: monstone(magr).  js/ has no exported monstone()/mondied(); the
-            // observable part is that the attacker is dead.
-            magr.mhp = 0;
+            const { monstone_mm } = await import('./mhitm.js');
+            await monstone_mm(magr);
+            if (!T.mon.DEADMONSTER(magr)) return M_ATTK_MISS_;
             if (magr.mtame && !visflag)
                 await pline('You have a sad thought for a moment, then it passes.');
             return M_ATTK_AGR_DIED_;
@@ -2295,7 +2292,10 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
             return M_ATTK_MISS_;
         } else if (is_rider_pm(pd)) {
             await pline('Ingesting that is fatal.');
-            game._rider_death = true;                /* done(DIED) unmodelled */
+            const { done, DIED } = await import('./end.js');
+            game._killer_name = `unwisely ate the brain of ${pd.name}`;
+            await done(DIED);
+            if (game.program_state?.gameover) return M_ATTK_AGR_DIED_;
             exercise(A_WIS_EAT, false);
             dmg_p.value += xtra_dmg;                 /* Rider takes extra damage */
         } else {
@@ -2322,14 +2322,26 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
         // a mindless player.
         const abase = u?.acurr?.a;
         if (abase && abase[A_INT_EAT] <= ATTRMIN_INT) {
-            if (u?.uprops?.HLifesaved) {
-                game._brainless_death = true;
+            const { done, DIED } = await import('./end.js');
+            const amulet = game.uamul || u.uamul;
+            if (amulet?.otyp === AMULET_OF_LIFE_SAVING) {
+                game._killer_name = 'killed by brainlessness';
+                await done(DIED);
+                if (game.program_state?.gameover) return M_ATTK_DEF_DIED_;
                 await pline('Unfortunately your brain is still gone.');
-                u.uprops.HLifesaved = 0;
+                if (u.uprops) {
+                    u.uprops.Lifesaved = 0;
+                    u.uprops.HLifesaved = 0;
+                    u.uprops.ELifesaved = 0;
+                }
             } else {
                 await pline('Your last thought fades away.');
             }
-            game._brainless_death = true;            /* done(DIED) unmodelled */
+            game._killer_name = 'killed by brainlessness';
+            await done(DIED);
+            if (game.program_state?.gameover) return M_ATTK_DEF_DIED_;
+            abase[A_INT_EAT] = ATTRMIN_INT + 2;
+            await pline('You feel like a scarecrow.');
         }
         give_nutrit = true;      /* in case a conflicted pet is doing this */
         exercise(A_WIS_EAT, false);
@@ -2362,15 +2374,9 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
 }
 
 // C ref: display.h canspotmon(mon) = canseemon(mon) || sensemon(mon).
-// js/uhitm.js:103 exports the real canspotmon(); canseemon() itself is
-// module-private there (canseemon_shared), so the stricter half is approximated
-// as "spotted and not blind" — it only gates messages here.
 function canspotmon_eat(mtmp) {
     if (!mtmp || typeof mtmp !== 'object') return false;
     return _tail.uhitm ? !!_tail.uhitm.canspotmon(mtmp) : false;
-}
-function canseemon_eat(mtmp) {
-    return canspotmon_eat(mtmp) && !_vision?.Blind?.();
 }
 
 // C ref: eat.c:867 fix_petrification() — an acidic corpse (or a lizard) eaten

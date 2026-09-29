@@ -1,12 +1,8 @@
 // end.js — hero death / done() flow.
 //
-// C ref: src/end.c — done_in_by(), done(), savelife().  Scoped to the path the
-// contest sessions exercise: a hostile melee attack drops the hero to 0 HP in
-// WIZARD mode, the player declines the "Die?" paranoid query, savelife() restores
-// HP and sets a one-turn immobilization whose nomovemsg is "You survived that
-// attempt on your life." (seed5002 step-256..272).  No RNG is consumed on this
-// path: adjattrib(A_CON,-1) only rolls when Con would drop below its minimum
-// (it can't here), and savelife()'s HP/hunger fixups are deterministic.
+// C ref: src/end.c — done_in_by(), done(), savelife().
+// Life saving restores HP and releases any holder or engulfer before the
+// interrupted turn resumes.
 
 import { game } from './gstate.js';
 import { Goodbye } from './role.js';
@@ -237,7 +233,7 @@ async function deps() {
 // hero is immobilized for the rest of the turn (multi = -1) and unmul() will
 // announce nomovemsg ("You survived that attempt on your life.") when the turn
 // completes.
-function savelife(_how) {
+async function savelife(_how) {
     const u = game.u;
     if ((u.ulevel ?? 1) < 1) u.ulevel = 1;
     // minuhpmax(10): ensure uhpmax is at least 10 (it already exceeds that here).
@@ -266,6 +262,20 @@ function savelife(_how) {
     game.context = game.context || {};
     game.context.move = 0;
     game.multi = -1;
+    if (u.uswallow) {
+        const { expels } = await import('./mhitu.js');
+        await expels(u.ustuck, u.ustuck.data, true);
+    } else if (u.ustuck) {
+        const { Monnam, mon_nam, sticks } = await import('./uhitm.js');
+        const { monster_by_pmidx } = await import('./makemon.js');
+        const { update_topl } = await import('./display.js');
+        if (u.Upolyd && sticks(monster_by_pmidx(u.umonnum)))
+            await update_topl(`You release ${mon_nam(u.ustuck)}.`);
+        else
+            await update_topl(`${Monnam(u.ustuck)} releases you.`);
+        const { unstuck } = await import('./mon.js');
+        await unstuck(u.ustuck);
+    }
 }
 
 // C ref: end.c done(how) — for how < PANICKED, zero the hero's HP, then (in
@@ -474,7 +484,7 @@ async function done(how) {
         // C ref: end.c:1092 adjattrib(A_CON, -1, TRUE) — no RNG.
         if (game.u?.acurr?.a) game.u.acurr.a[4] = (game.u.acurr.a[4] | 0) - 1;
         if (game.u?.abase?.a) game.u.abase.a[4] = (game.u.abase.a[4] | 0) - 1;
-        savelife(how);
+        await savelife(how);
         survive = true;
     }
 
@@ -498,7 +508,7 @@ async function done(how) {
             // the status keeps showing the bonus-adjusted value, so leave the
             // displayed Con untouched.
             await d.update_topl("OK, so you don't die.");
-            savelife(how);
+            await savelife(how);
             survive = true;
         }
     }
@@ -507,6 +517,10 @@ async function done(how) {
         // C ref: end.c:1157 — `if (!program_state.panicking) done_object_cleanup()`,
         // run before disclosure and before bones are written.
         await done_object_cleanup();
+        if (game.moves <= 1 && how < PANICKED && !stopprint) {
+            const { currency } = await import('./invent.js');
+            await d.update_topl(`Do not pass Go.  Do not collect 200 ${currency(200)}.`);
+        }
         // C ref: end.c really_done(how) — the hero really dies.  Before the
         // disclosure/topten teardown, really_done computes
         //   bones_ok = (how < GENOCIDED) && can_make_bones();
@@ -1816,7 +1830,7 @@ export async function fuzzer_savelife(how) {
      * 'done_seq' is maintained in done().
      */
     if (!ps.panicking && how !== PANICKED && how !== TRICKED) {
-        savelife(how);
+        await savelife(how);
 
         /* periodically restore characteristics plus lost experience levels or
            cure lycanthropy or both */

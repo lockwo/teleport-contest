@@ -954,14 +954,7 @@ export async function moveloop_turn() {
     if (g.u.umovement == null) g.u.umovement = NORMAL_SPEED;
     g.u.umovement -= NORMAL_SPEED;
 
-    // C ref: allmain.c moveloop_core():208 — encumber_msg(); runs once per turn,
-    // right after context.move is consumed and before monster movement, so an
-    // autopickup that changed the hero's burden is announced here (chaining
-    // onto the pickup's prinv line via update_topl's --More-- paging).
-    {
-        const { encumber_msg } = await import('./invent.js');
-        await encumber_msg();
-    }
+    const { encumber_msg } = await import('./invent.js');
 
     // C ref: allmain.c moveloop_core():
     //   do {                                       // "hero can't move yet"
@@ -979,6 +972,8 @@ export async function moveloop_turn() {
     // to the hero -> dog_goal appr==0 -> invent obj_resists scan) is where the
     // divergence lived.  We mirror the C control flow exactly.
     do {
+        // C ref: allmain.c:208 — check before each monster movement round.
+        await encumber_msg();
         g.context.mon_moving = true;
         let monscanmove;
         do {
@@ -1250,6 +1245,9 @@ export async function moveloop_turn() {
             }
         }
     } while (g.u.umovement < NORMAL_SPEED);
+
+    // C ref: allmain.c:403 — monster actions and timeouts can change the load.
+    if (!g.program_state?.gameover) await encumber_msg();
 
     // C ref: allmain.c:409 — clairvoyance bookkeeping (rn1(31,15)) sits in the
     // "once-per-hero-took-time" block AFTER the do-while, so it fires once per

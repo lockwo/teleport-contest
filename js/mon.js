@@ -25,7 +25,7 @@ import { is_were_flag, is_human_flag, mflags1_of, mflags2_of, mflags3_of,
     M1_BREATHLESS, M1_SLITHY, M2_DEMON, M3_COVETOUS, mindless,
     humanoid, is_animal, nohands,
     strongmonst_flag, throws_rocks_flag } from './monflags_data.js';
-import { attacktype, AT_ENGL } from './monattk_data.js';
+import { attacktype, dmgtype, AD_STCK, AT_ENGL, AT_HUGS } from './monattk_data.js';
 import { objects as OBJECTS, CORPSE, BOULDER, BELL_OF_OPENING,
     COIN_CLASS, GEM_CLASS, ROCK_CLASS, place_object, discard_minvent } from './mkobj.js';
 import { monster_by_pmidx, newcham, newcham_wizard_aware, enexto_spawn,
@@ -2495,14 +2495,7 @@ export async function mon_leaving_level(mon) {
 
     /* to prevent an infinite relobj-flooreffects-hmon-killed loop */
     mon.mtrapped = 0;
-    /* C ref: mon.c:2703 unstuck(mon) — mon is neither swallowing nor holding
-       the hero, nor held by the hero.  The port's copy is js/uhitm.js
-       unstuck_mon() (module-private); its rnd(2) tail IS exported. */
-    if (game.u?.ustuck === mon) {
-        set_ustuck(null);
-        const { unstuck_mspec_used } = await import('./uhitm.js');
-        unstuck_mspec_used(mon);
-    }
+    await unstuck(mon);
 
     /* a vault guard might be at <0,0> */
     if (onmap || (mx === 0 && my === 0)) {
@@ -2742,9 +2735,8 @@ export async function vamprises(mtmp) {
                 const { expels } = await import('./mhitu.js');
                 await expels(mtmp, mtmp.data, false);
             } else {
-                /* C ref: uhitm.c uunstick() — not ported under that name; its
-                   body is set_ustuck(0) plus a "You get released!" line. */
-                set_ustuck(null);
+                const { uunstick } = await import('./polyself.js');
+                await uunstick();
             }
         }
 
@@ -2892,6 +2884,31 @@ export function set_ustuck(mtmp) {
         u.uswallow = 0;
         u.uswldtim = 0;
     }
+}
+
+// C ref: mon.c:3438 — release before relocation/redraw and re-grab cooldown.
+export async function unstuck(mtmp) {
+    const u = game.u;
+    if (!mtmp || u?.ustuck !== mtmp) return;
+    const ptr = mtmp.data;
+    const swallowed = u.uswallow;
+    set_ustuck(null);
+    if (swallowed) {
+        game.mswallower = null;
+        u.ux = mtmp.mx;
+        u.uy = mtmp.my;
+        if (u.uball && u.uchain && u.uchain.where !== 'floor') {
+            const { placebc } = await import('./ball.js');
+            placebc();
+        }
+        game.vision_full_recalc = 1;
+        const { docrt } = await import('./display.js');
+        await docrt();
+    }
+    if (!mtmp.mspec_used && (dmgtype(ptr, AD_STCK)
+                            || attacktype(ptr, AT_ENGL)
+                            || attacktype(ptr, AT_HUGS)))
+        mtmp.mspec_used = rnd(2);
 }
 
 // ── mon.c:3748 mon_to_stone() ───────────────────────────────────────────────
@@ -3072,11 +3089,7 @@ async function migrate_mon_local(mtmp, dest, xyloc) {
      * already have dropped its special objects.
      */
     if (mtmp.mx) {
-        if (game.u?.ustuck === mtmp) {
-            set_ustuck(null);
-            const { unstuck_mspec_used } = await import('./uhitm.js');
-            unstuck_mspec_used(mtmp);
-        }
+        await unstuck(mtmp);
         /* C ref: mon.c:3858 mdrop_special_objs(mtmp) — unported; it drops the
            Amulet and the invocation items so they can't leave the level. */
     }

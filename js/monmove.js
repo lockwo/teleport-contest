@@ -10,7 +10,7 @@
 
 import { game, hooks } from './gstate.js';
 import { acurr_eff as _acurr_cf, exercise } from './attrib.js';
-import { u_slip_free } from './mhitu.js';
+import { u_slip_free, expels } from './mhitu.js';
 import { in_rooms as in_rooms_shk, Stealth } from './shkroom.js';
 import { costly_spot } from './shk.js';
 import { mindless as mindless_flag, mflags1_of as _mf1_web, mflags2_of as _mf2_web,
@@ -60,7 +60,7 @@ import {
     Is_botlevel, Is_stronghold, MIGR_RANDOM, MON_FLOOR, EMIN, A_LAWFUL, NC_SHOW_MSG,
 } from './const.js';
 import { phase_of_the_moon, NEW_MOON, night } from './calendar.js';
-import { Amonnam as Amonnam_dn, mhis } from './do_name.js';
+import { Amonnam as Amonnam_dn, mhis, y_monnam } from './do_name.js';
 import { quest_talk, com_pager } from './questpgr.js';
 import { In_hell, surface } from './dungeon.js';
 import { COIN_CLASS, ROCK, ROCK_CLASS, GOLD_PIECE, GEM_CLASS, CORPSE, ARROW, DART,
@@ -71,7 +71,7 @@ import { gettrack } from './track.js';
 import { find_mac as worn_find_mac, which_armor } from './worn.js';
 import { mvitals_died, DEADMONSTER, healmon, base_mmove, curr_mon_load,
     max_mon_load, can_carry as mon_can_carry, can_touch_safely,
-    Protection_from_shape_changers, new_were_pub, were_summon, sensemon } from './mon.js';
+    Protection_from_shape_changers, new_were_pub, were_summon, sensemon, unstuck } from './mon.js';
 import { has_innate } from './exper.js';
 import { regenerates_flag as regenerates_raw, mflags1_of as mflags1_raw,
     mflags2_of as mflags2_raw, mflags3_of as mflags3_raw, msound_of as msound_raw,
@@ -95,7 +95,7 @@ import { is_armed, mattk_of,
     AD_PHYS, AD_ELEC, AD_DRST, AD_STUN, AD_DISE, AD_PEST, AD_FAMN, AD_STCK,
     AD_POLY, AD_ACID, AD_COLD, AD_FIRE, AD_SITM, AD_SEDU, AD_SSEX,
     AD_RUST, AD_CORR, AD_MAGM, AD_RBRE, AD_SPEL, AD_CLRC,
-    AD_SLEE, AD_DISN, AD_DRDX, AD_DRCO,
+    AD_SLEE, AD_DISN, AD_DRDX, AD_DRCO, AD_DRIN,
     AD_BLND, AD_STON, AD_LEGS, AD_WRAP, AD_WERE, AD_DRLI, AD_TLPT } from './monattk_data.js';
 const PM_PAPER_GOLEM_FT = _name_to_pmidx_cf('paper golem');
 const PM_STRAW_GOLEM_FT = _name_to_pmidx_cf('straw golem');
@@ -112,7 +112,7 @@ const mon_mlet = (pmidx) => monster_by_pmidx(pmidx)?.mcls;
 import { newsym, map_invisible, show_glyph_cell, object_glyph, pline, update_topl, see_with_infrared, bot_snapshot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at } from './display.js';
 import { mdig_tunnel, may_dig, in_town } from './dig.js';
 import { picking_lock } from './lock.js';
-import { hits_bars, rnd_hallublast } from './mthrowu.js';
+import { hits_bars, breathwep_name } from './mthrowu.js';
 import { place_object, next_ident, BLINDING_VENOM, ACID_VENOM, VENOM_CLASS, objects as OBJECTS,
     weight, base_oc_weight, BOULDER, WEAPON_CLASS, ARMOR_CLASS, FOOD_CLASS,
     AMULET_CLASS, POTION_CLASS, SCROLL_CLASS, WAND_CLASS, RING_CLASS,
@@ -543,17 +543,13 @@ function mon_track_add(mtmp, x, y) {
 // so an empty list is the faithful equivalent.
 function mon_track_clear(mtmp) { mtmp.mtrack = []; }
 
-// C ref: monmove.c:361 release_hero(mon) — a monster that is holding or has
-// swallowed the hero lets go.  Neither engulfing nor sticking is modeled (no
-// recorded session is grabbed), so this only clears u.ustuck.
+// C ref: monmove.c release_hero() — distinguish being held from holding.
 async function release_hero(mon) {
     if (mon !== game.u?.ustuck) return;
     if (game.u.uswallow) {
-        /* expels(mon, mon->data, TRUE) — engulfing not modeled */
-        game.u.uswallow = 0;
-        game.u.ustuck = null;
-    } else {
-        game.u.ustuck = null;
+        await expels(mon, mon.data, true);
+    } else if (!hooks.sticks(youmonst_data_mm())) {
+        await unstuck(mon);
         await emitU('You get released!');
     }
 }
@@ -1875,12 +1871,6 @@ function locomotion(ptr, def) {
     return slithy ? 'slither' : def;
 }
 
-// C ref: do_name.c:1117 y_monnam(mtmp) — mid-sentence monster name; the article
-// is ARTICLE_YOUR for a pet and ARTICLE_THE otherwise.  Invisibility, a given
-// name and hallucination are not modeled.
-export function y_monnam_local(mtmp) {
-    return `${mtmp?.mtame ? 'your' : 'the'} ${mtmp?.data?.name || 'creature'}`;
-}
 
 // C ref: objnam.c ansimpleoname(obj) — an(simpleoname(obj)); simpleoname for a
 // plain floor object is its base type name (e.g. STATUE -> "statue"), and an()
@@ -1965,7 +1955,7 @@ export async function hideunder(mtmp) {
         // arm has already set it to "dive".
         const locomo = seenlocomo || locomotion(ptr, 'hide');
         const { update_topl } = await import('./display.js');
-        await update_topl(`You see ${y_monnam_local(mtmp)} ${locomo} under ${seenobj}.`);
+        await update_topl(`You see ${y_monnam(mtmp)} ${locomo} under ${seenobj}.`);
     }
     mtmp.mundetected = undetected ? 1 : 0;
     if (undetected !== oldundet) newsym(x, y);
@@ -2082,6 +2072,7 @@ async function launch_boulder(trap) {
         fx = ax; fy = ay;
     };
     const flash_end = () => { if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } };
+    const { flooreffects } = await import('./do.js');
     flash_at(x, y);
     while (dist-- > 0 && !used_up) {
         flash_at(x, y);
@@ -2092,6 +2083,10 @@ async function launch_boulder(trap) {
             if (await ohitmon(victim, otmp, -1, false, x, y, null)) { used_up = true; break; }
         }
         // thitu(9 + spe, dmgval, ...) for the hero's square is not reached here.
+        if (await flooreffects(otmp, x, y, 'fall')) {
+            used_up = true;
+            break;
+        }
         if (IS_OBSTRUCTED(terrainTyp(x, y))) { x2 = x; y2 = y; break; }
     }
     flash_end();
@@ -2103,7 +2098,7 @@ async function launch_boulder(trap) {
         recalc_block_point(x2, y2);
         newsym(x2, y2);
     }
-    return 1;
+    return used_up ? 2 : 1;
 }
 
 export async function mon_mintrap(mtmp, mintrapflags = 0) {
@@ -2549,7 +2544,7 @@ function count_wsegs_mm() { return 0; }   // long worms carry no segment chain h
 // C ref: trap.c wearing_iron_shoes(mtmp).
 function mon_wearing_iron_shoes(mtmp) {
     const boots = which_armor(mtmp, W_ARMF);
-    return !!boots && OBJECTS[boots.otyp]?.oc_material === 11 /* IRON */;
+    return !!boots && OBJECTS[boots.otyp]?.material === 11 /* IRON */;
 }
 
 // C ref: trap.c:1730 trapeffect_fire_trap() monster branch.  This is
@@ -3052,17 +3047,14 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             const { seetrap } = await import('./trap.js');
             seetrap(trap);
         }
-        mtmp.mconf = 1;              /* is_xport(MAGIC_PORTAL) && !control_teleport */
-        // migrate_to_level(): unlink from this level's chain.  Other levels'
-        // monsters are not simulated, so dropping it here IS the outcome.
-        {
-            const list = game.level?.monsters;
-            if (list) {
-                const ix = list.indexOf(mtmp);
-                if (ix >= 0) list.splice(ix, 1);
-            }
-        }
-        newsym(mtmp.mx, mtmp.my);
+        const { control_teleport_flag } = await import('./monflags_data.js');
+        const { migrate_to_level } = await import('./dog.js');
+        const { MIGR_PORTAL } = await import('./const.js');
+        if (!control_teleport_flag(mtmp.data)) mtmp.mconf = 1;
+        const ledger = trap.dst.dlevel
+            + (game.dungeons?.[trap.dst.dnum]?.ledger_start | 0);
+        await migrate_to_level(mtmp, ledger, MIGR_PORTAL, null);
+        newsym(trap.tx, trap.ty);
         return Trap_Moved_Mon;
     }
     case SLP_GAS_TRAP: {
@@ -4717,7 +4709,8 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
             }
         } else if (bx === u.ux && by === u.uy) {
             // hero square: catch attempt (rn2(100-Dex)); a non-catch shatters.
-            if (u_catch_thrown_obj(singleobj)) {
+            if (game.multi) (await import('./hack.js')).nomul(0);
+            if (await u_catch_thrown_obj(singleobj)) {
                 flash_end();
                 m_useup_thrown(mon, otmp, singleobj);
                 return;
@@ -5717,6 +5710,7 @@ export async function mattacku(mtmp, mdat) {
     // C ref mhitu.c:769 — sum[] holds each attack's M_ATTK_* result; the AT_HUGS
     // case and the end-of-iteration AGR_DIED/AGR_DONE tests both read it.
     const sum = atks.map(() => M_ATTK_MISS);
+    game.skipdrin = false;
     // C ref mhitu.c:782 `if (!u_at(gb.bhitpos.x, gb.bhitpos.y)) continue;` — the
     // hero's square when THIS call started, i.e. before any of its own attacks
     // could run.  A multi-attack monster (e.g. an ettin zombie's two claws)
@@ -5740,6 +5734,7 @@ export async function mattacku(mtmp, mdat) {
         // C ref mhitu.c:787 — u.uswallow (never here) and the post-wildmiss
         // "spells only" skip.
         if (skipnonmagc && mattk.aatyp !== AT_MAGC) continue;
+        if (game.skipdrin && mattk.aatyp === AT_TENT && mattk.adtyp === AD_DRIN) continue;
         switch (mattk.aatyp) {
         // C ref mhitu.c:794 — the "hand to hand" attacks all share one case.
         // AT_STNG / AT_TUCH / AT_BUTT / AT_TENT resolve exactly like a claw or a
@@ -5891,6 +5886,13 @@ export async function mattacku(mtmp, mdat) {
             // (buzzmu — the ranged magic-missile ray — is a separate subsystem.)
             if (!range2) sum[i] = await castmu(mtmp, mattk, true, foundyou);
             break;
+        case AT_GAZE:
+            // Medusa's gaze is handled by m_respond(), once per round.
+            if (mdat?.name !== 'Medusa') {
+                const { gazemu } = await import('./mhitu.js');
+                sum[i] = await gazemu(mtmp, mattk);
+            }
+            break;
         // C ref: mhitu.c:839 AT_EXPL — an automatic hit if next to and aimed
         // at the hero (a yellow/black light, gas spore, or similar detonates
         // in melee).  js/mhitu.js:919 already carries the full explmu() port
@@ -5903,12 +5905,6 @@ export async function mattacku(mtmp, mdat) {
             }
             break;
         default:
-            // C ref mhitu.c:832-931 — AT_GAZE (gazemu) is a separate subsystem
-            // this port does not carry yet.  Doing nothing is the honest
-            // stand-in: it leaves an explicit screen divergence for the
-            // monsters that own that attack rather than inventing rolls, and
-            // (unlike the old generic-bite fallback) it no longer lies about
-            // what the species can do.
             break;
         }
         // C ref mhitu.c:936 — `if (disp.botl) bot();` after each attack.
@@ -6091,7 +6087,7 @@ async function breamm(mtmp, mattk) {
             // 1-in-3 of the time, and the rn2(18) follow-up is INSIDE that arm.
             if (!utarget || !rn2(3)) mtmp.mspec_used = 8 + rn2(18);
             if (utarget && typ === AD_SLEE_MM && !Sleep_resistance_bream())
-                mtmp.mspec_used += rnd(20);
+                mtmp.mspec_used = (mtmp.mspec_used || 0) + rnd(20);
             // (tame-breather hungrytime bookkeeping: no RNG.)
         }
     } else {
@@ -6103,15 +6099,6 @@ async function breamm(mtmp, mattk) {
 function BZ_OFS_AD(adtyp) { return Math.abs(adtyp - AD_MAGM_MM) % 10; }
 function BZ_M_BREATH(bztyp) { return -20 - bztyp; }
 function BZ_VALID_ADTYP(adtyp) { return adtyp >= AD_MAGM_MM && adtyp <= AD_SPC2_MM; }
-
-// C ref: mthrowu.c:24 breathwep[] — indexed by BZ_OFS_AD(typ).
-const BREATHWEP = ['fragments', 'fire', 'frost', 'sleep gas',
-                   'a disintegration blast', 'lightning', 'poison gas', 'acid',
-                   'strange breath #8', 'strange breath #9'];
-function breathwep_name(typ) {
-    if (game.u?.uhallu) return rnd_hallublast();   // mthrowu.c:1085-1086
-    return BREATHWEP[BZ_OFS_AD(typ)];
-}
 
 // C ref: mon.c m_seenres(mtmp, adtyp-derived bit) — has this monster watched
 // the hero shrug off that damage type?  mseenres is written only by
@@ -6470,7 +6457,7 @@ function Fumbling_mm() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
 // either rolls an rn2() C never draws, or skips one it does (a Blind hero here
 // desyncs the very next draw, since C short-circuits before ever reaching the
 // roll).
-export function u_catch_thrown_obj(otmp) {
+export async function u_catch_thrown_obj(otmp) {
     const dex = ACURR_DEX();
     let catch_chance = 100 - dex
         - ((Role_if_mm(PM_MONK_MM) || Role_if_mm(PM_ROGUE_MM)) ? 20 : 0);
@@ -6480,6 +6467,10 @@ export function u_catch_thrown_obj(otmp) {
         && !nohands_youmonst() && freehand_mm()
         && calc_capacity_iv(otmp?.owt | 0) <= SLT_ENCUMBER
         && !rn2(catch_chance)) {
+        const { hold_another_object, simpleonames } = await import('./invent.js');
+        const name = simpleonames(otmp);
+        await hold_another_object(otmp, 'You catch, but drop, the %s.',
+                                  name, `You catch the ${name}!`);
         return true;
     }
     return false;
@@ -6914,7 +6905,8 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
             }
         } else if (bx === u.ux && by === u.uy) {
             // hero square: catch attempt, then the hit resolution.
-            if (u_catch_thrown_obj(singleobj)) {
+            if (game.multi) (await import('./hack.js')).nomul(0);
+            if (await u_catch_thrown_obj(singleobj)) {
                 flash_at(bx, by);
                 flash_end(); game.thrownobj = null; return;  // mthrowu.c:842
             }
@@ -6941,6 +6933,7 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
                 await mv_poisoned(onmbuf, A_STR, knmbuf,
                                   ((game.u?.umortality | 0) > oldumort) ? 0 : 10, true);
             }
+            await stop_occupation();
             if (hitu) {
                 // C drop_throw(singleobj, 1, u.ux, u.uy): the hit missile settles
                 // on the hero's own square (hidden under '@') or mulches.  The
@@ -7653,6 +7646,12 @@ async function mhitm_adtyping(mtmp, mattk, mhm) {
     case AD_ELEC: await mhitm_ad_elec(mtmp, mattk, mhm); break;
     case AD_COLD: await mhitm_ad_cold_u(mtmp, mattk, mhm); break;
     case AD_PHYS: await mhitm_ad_phys(mtmp, mattk, mhm); break;
+    case AD_DRIN: {
+        const { mhitm_ad_drin, YOUMONST } = await import('./mhitm_ad.js');
+        const { mhitu_ops } = await import('./mhitu.js');
+        await mhitm_ad_drin(mtmp, mattk, YOUMONST, mhm, mhitu_ops());
+        break;
+    }
     case AD_FIRE: {
         // C ref: uhitm.c:2561 mhitm_ad_fire(), the `mdef == &gy.youmonst` arm.
         // A fire ant's or red mold's touch/bite burns the hero. This case was
@@ -8266,15 +8265,10 @@ async function mhitm_knockback(mtmp, mattk, weaponUsed) {
         await hurtle(dx, dy, knockdistance, false);
     }
     set_apparxy(mtmp);
-    // C ref: potion.c make_stunned(xtime, talk) via uhitm.c:5397 — this port's
-    // own make_stunned_u() (mhitu.js) isn't exported, so this sets HStun/ustun
-    // directly the same way cmd.js/do.js/eat.js/pray.js's Stunned checks read
-    // it (u.uprops.Stun, with u.ustun kept in sync for the ustun-only readers).
     const stunned = (u.uprops?.Stun || u.ustun || 0) > 0;
     if (!stunned && !rn2(4)) {
-        u.uprops = u.uprops || {};
-        u.uprops.Stun = knockdistance + 1;   /* 2 or 3 */
-        u.ustun = knockdistance + 1;
+        const { make_stunned_u } = await import('./mhitu.js');
+        await make_stunned_u(knockdistance + 1);
     }
     return true;
 }

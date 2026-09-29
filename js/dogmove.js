@@ -2394,7 +2394,7 @@ export function quickmimic(mtmp) {
 }
 
 // C ref: dogmove.c finish_meating(mtmp).
-function finish_meating(mtmp) {
+export function finish_meating(mtmp) {
     mtmp.meating = 0;
     if ((mtmp.m_ap_type ?? 0) !== 0 && mtmp.data?.mcls !== S_MIMIC) {
         mtmp.m_ap_type = 0;

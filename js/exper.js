@@ -10,9 +10,9 @@
 // handled by display.js update_topl(); this module is the RNG/state core.
 
 import { game } from './gstate.js';
-import { rn1, rnd } from './rng.js';
+import { rn1, rn2, rnd } from './rng.js';
 import { A_WIS, A_CON } from './const.js';
-import { MAXULEV } from './const.js';
+import { MAXULEV, LARGEST_INT } from './const.js';
 import { races } from './roles.js';
 import { Goodbye } from './role.js';
 import { LL_MINORAC, livelog_printf } from './livelog.js';
@@ -118,6 +118,22 @@ export function newuexp(lev) {
     if (lev < 10) return 10 * (1 << lev);
     if (lev < 20) return 10000 * (1 << (lev - 10));
     return 10000000 * (lev - 19);
+}
+
+// C ref: exper.c rndexp() — keep the draw within rn2's integer range.
+export function rndexp(gaining) {
+    const u = game.u;
+    const minexp = u.ulevel === 1 ? 0 : newuexp(u.ulevel - 1);
+    let diff = newuexp(u.ulevel) - minexp;
+    let factor = 1;
+    while (diff >= LARGEST_INT) {
+        diff = Math.trunc(diff / 2);
+        factor *= 2;
+    }
+    let result = minexp + factor * rn2(diff);
+    if (u.ulevel === MAXULEV && gaining)
+        result = Math.max(u.uexp, result + u.uexp - minexp);
+    return result;
 }
 
 // C ref: exper.c enermod(int en) — role-based energy multiplier.

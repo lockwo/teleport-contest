@@ -8,10 +8,10 @@
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { phase_of_the_moon, night, FULL_MOON } from './calendar.js';
-import { VAULT, ROOMOFFSET, TEMPLE as TEMPLE_SND } from './const.js';
+import { VAULT, ROOMOFFSET, TEMPLE as TEMPLE_SND, Is_astralevel, MON_FLOOR } from './const.js';
 import { in_rooms as in_rooms_snd } from './shkroom.js';
 import { GOLD_PIECE, objects, WEAPON_CLASS } from './mkobj.js';
-import { DEADMONSTER } from './mon.js';
+import { DEADMONSTER, fmonOrder } from './mon.js';
 import { update_topl } from './display.js';
 import {
     msound_of, mflags2_of, M2_MAGIC, is_elf_flag, is_dwarf_flag, is_gnome_flag,
@@ -152,7 +152,15 @@ export async function dosounds() {
     if (lf.has_zoo && !rn2(200)) { return; }
     // C ref: sounds.c:313-328 — shop ambient.
     if (lf.has_shop && !rn2(200)) { await You_hear1(SHOP_MSG[rn2(2) + hallu]); return; }
-    if (lf.has_temple && !rn2(200)) { return; }
+    if (lf.has_temple && !rn2(200)
+        && !Is_astralevel(g.u?.uz)
+        && !(g.sanctum_level?.dnum === g.u?.uz?.dnum
+             && g.sanctum_level?.dlevel === g.u?.uz?.dlevel)) {
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
+            if (await temple_priest_sound(mon)) return;
+        }
+    }
     // C ref: sounds.c:335 — `if (Is_oracle_level(&u.uz) && !rn2(400)) { ... }`.
     // The Oracle level (placed at dnum 0, base 5 range 5) is reached by these
     // descend sessions; its dosounds() makes a trailing rn2(400) chant probe

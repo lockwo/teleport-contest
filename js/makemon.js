@@ -39,7 +39,7 @@ import {
     SDOOR, SCORR, D_CLOSED, D_LOCKED,
     STRAT_CLOSE, STRAT_WAITFORU, STRAT_APPEARMSG, W_SADDLE,
     IS_ALTAR, HEADSTONE, LR_MONGEN, MM_APPARXY_BYYOU,
-    MM_NOMSG, MM_NOEXCLAM, M_AP_NOTHING, M_AP_MONSTER,
+    NO_MINVENT, MM_NOMSG, MM_NOEXCLAM, M_AP_NOTHING, M_AP_MONSTER,
     MHID_ARTICLE, MHID_ALTMON, BOLT_LIM, DF_NONE, NO_NC_FLAGS, NC_SHOW_MSG,
     NC_VIA_WAND_OR_SPELL,
 } from './const.js';
@@ -69,7 +69,7 @@ import {
     mflags1_of, M1_NOEYES,
 } from './monflags_data.js';
 import { AT_EXPL, attacktype, is_armed, MATTK,
-         AT_WEAP, AT_MAGC, AD_DRST, AD_SPEL } from './monattk_data.js';
+         AT_WEAP, AT_MAGC, AT_ENGL, AD_DRST, AD_SPEL } from './monattk_data.js';
 // Species delivery uses the hooks registry to avoid a dokick import cycle.
 const MM_NOWAIT = 0x00000002; // C ref: makemon.h MM_NOWAIT — suppress STRAT_WAITFORU/STRAT_CLOSE
 
@@ -870,7 +870,7 @@ export function little_to_big(mndx) {
 // C ref: mondata.c big_to_little() — reverse lookup (first little whose big
 // matches).  grownups[] order is preserved so the first match wins, mirroring
 // the C linear scan.
-function big_to_little(mndx) {
+export function big_to_little(mndx) {
     for (const [little, big] of GROWNUPS_LITTLE_TO_BIG)
         if (big === mndx) return little;
     return mndx;
@@ -1433,6 +1433,7 @@ function m_initthrow(_mtmp, otyp, oquan) {
     // C ref: makemon.c:153 otmp->quan = rn1(oquan, 3) = rn2(oquan) + 3.
     otmp.quan = rn2(oquan) + 3;
     otmp.owt = weight(otmp);
+    if (otyp === W_ORCISH_ARROW) otmp.opoisoned = true;
     if (_mtmp) { _mtmp._hasinv = true; mpickobj(_mtmp, otmp); }
 }
 
@@ -3108,7 +3109,11 @@ function apply_newcham(mtmp, mdat, olddata) {
     let nhp = Math.floor((hpn * tmp.mhp) / hpd);
     if (nhp < 0 || nhp > mtmp.mhpmax) nhp = mtmp.mhpmax;
     mtmp.mhp = nhp || 1;
-    mtmp.data = mdat;
+    hooks.set_mon_data(mtmp, mdat);
+    return 1;
+}
+
+function newcham_worm(mtmp, mdat) {
     if (mdat.pmidx === 114 /* PM_LONG_WORM */) {
         mtmp.wormno = get_wormno();
         if (mtmp.wormno) {
@@ -3116,7 +3121,6 @@ function apply_newcham(mtmp, mdat, olddata) {
             place_worm_tail_randomly(mtmp, mtmp.mx, mtmp.my, worm_goodpos);
         }
     }
-    return 1;
 }
 
 // C ref: mon.c newcham() — the random-shape path (mdat == 0), which is the one
@@ -3140,14 +3144,16 @@ export function newcham(mtmp, mdat) {
     } else if ((mvflags(mdat.pmidx) & G_GENOD) !== 0) {
         return 0;
     }
-    return apply_newcham(mtmp, mdat, olddata);
+    const changed = apply_newcham(mtmp, mdat, olddata);
+    if (changed) newcham_worm(mtmp, mdat);
+    return changed;
 }
 
 // Runtime shape changes can prompt through monpolycontrol or NC_SHOW_MSG.
 // Creation-time changes retain the synchronous, silent newcham() path.
 export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
     const olddata = mtmp.data;
-    const msg = (ncflags & NC_SHOW_MSG) !== 0;
+    let msg = (ncflags & NC_SHOW_MSG) !== 0;
     const names = await import('./do_name.js');
     let canspotmon, x_monnam, seenorsensed, oldname;
     if (msg) {
@@ -3160,7 +3166,7 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
     }
     // C also prepares the old form's ordinary name before choosing a new
     // shape, even when the transformation message uses the capitalized name.
-    names.mon_nam(mtmp);
+    const l_oldname = names.mon_nam(mtmp);
     if (mdat == null) {
         let tryct = 20, mndx;
         do {
@@ -3176,6 +3182,29 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         return 0;
     }
     const changed = apply_newcham(mtmp, mdat, olddata);
+    if (changed && game.u?.ustuck === mtmp && game.u.uswallow) {
+        if (!attacktype(mdat, AT_ENGL)) {
+            const whirly = ptr => ptr.mcls === S_VORTEX_CLS
+                || ptr.pmidx === PM_AIR_ELEMENTAL;
+            if (mdat.mcls !== S_GHOST_CLS && !whirly(mdat)
+                && !amorphous_flag(mdat) && mdat.mcls !== S_LIGHT_CLS) {
+                const trail = is_vampshifter_mon(mtmp)
+                    ? ` which was a shapeshifted ${names.noname_monnam(mtmp, names.ARTICLE_NONE)}`
+                    : '';
+                const { update_topl } = await import('./display.js');
+                await update_topl(`You ${amorphous_flag(olddata) || whirly(olddata)
+                    ? 'emerge from' : 'break out of'} ${l_oldname}${trail}!`);
+                msg = false;
+                mtmp.mhp = 1;
+            }
+            const { expels } = await import('./mhitu.js');
+            await expels(mtmp, olddata, false);
+        } else {
+            const { swallowed } = await import('./display.js');
+            await swallowed(0);
+        }
+    }
+    if (changed) newcham_worm(mtmp, mdat);
     if (changed && msg) {
         const { newsym, update_topl } = await import('./display.js');
         mtmp.meverseen = 0;
@@ -3310,7 +3339,7 @@ function is_bat(ptr) {
 
 export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     let ptr = mdat;
-    let allow_minvent = true;
+    let allow_minvent = (mmflags & NO_MINVENT) === 0;
 
     // C ref: makemon.c:1167 — `if (iflags.debug_mongen || (!svl.level.flags
     // .rndmongen && !ptr)) return 0;`  A level whose script cleared rndmongen
@@ -3411,6 +3440,11 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // that asked for a sleeping monster got a wide-awake one instead.
     if (mmflags & MM_ASLEEP) mtmp.msleeping = 1;
     mtmp.m_id = next_ident();
+    // C ref: makemon.c — retain the leader's identity, not their current form.
+    if (msound_of(ptr) === MS_LEADER && hooks.quest_info(MS_LEADER) === ptr.pmidx) {
+        game.quest_status ??= {};
+        game.quest_status.leader_m_id = mtmp.m_id;
+    }
     // C ref: makemon.c:1254 `mtmp->mnum = mndx;` — the species index every
     // monsndx()-shaped consumer reads.
     mtmp.mnum = ptr.pmidx;
@@ -3707,10 +3741,8 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
         if (mons && mons.length > grpFirstIdx) mtmp._chainBefore = mons[grpFirstIdx];
     }
 
-    // C ref: makemon.c:1441 — the whole block (m_initweap/m_initinv + the
-    // saddle rn2(100)) is guarded by allow_minvent, which a shapeshifter's
-    // newcham() clears.  For every non-shapeshifter path allow_minvent stays
-    // TRUE, so behaviour is unchanged.
+    // C ref: makemon.c:1441 — NO_MINVENT and an initial shapechange both
+    // suppress starting equipment, including the saddle attempt.
     if (allow_minvent) {
         // C ref: makemon.c:1442 — `if (is_armed(ptr)) m_initweap(mtmp);`, one
         // code path for every monster.

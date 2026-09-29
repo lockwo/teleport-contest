@@ -688,10 +688,12 @@ async function fix_worst_trouble(trouble) {
         await you_unwere(true);
         break;
     }
-    case TROUBLE_PUNISHED:
+    case TROUBLE_PUNISHED: {
         await update_topl('Your chain disappears.');
-        unpunish_local();
+        const { unpunish } = await import('./read.js');
+        unpunish();
         break;
+    }
     case TROUBLE_FUMBLING: {
         let otmp = null;
         if (Cursed_obj(game.uarmg, 'GAUNTLETS_OF_FUMBLING')) otmp = game.uarmg;
@@ -773,23 +775,6 @@ function ringglow(otmp) {
     if (otmp && otmp === game.uleft) return 'Your left ring softly glows';
     if (otmp && otmp === game.uright) return 'Your right ring softly glows';
     return null;
-}
-// C ref: ball.c unpunish() — free the ball and chain.  js/read.js:1317 has the
-// other copy; both only have to make Punished (uball != 0) false again.
-function unpunish_local() {
-    const u = game.u;
-    const objs = game.level?.objects;
-    for (const o of [u.uchain, u.uball]) {
-        if (!o) continue;
-        o.owornmask = 0;
-        if (Array.isArray(objs)) {
-            const i = objs.indexOf(o);
-            if (i >= 0) objs.splice(i, 1);
-        }
-    }
-    if (u.uchain && isok(u.uchain.ox, u.uchain.oy)) newsym(u.uchain.ox, u.uchain.oy);
-    u.uchain = null;
-    u.uball = null;
 }
 
 // C ref: hacklib.c an(str) — indefinite article, lowercase.  Every other file

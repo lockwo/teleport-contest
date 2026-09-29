@@ -8,6 +8,7 @@ import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL } from
 import { mksobj, next_ident } from './mkobj.js';
 import { set_malign } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
+import { finish_meating } from './dogmove.js';
 
 // C ref: include/onames.h — SADDLE object type index (mkobj.js OBJECTS table
 // row [235, "SADDLE", ...]).  A saddle is a TOOL_CLASS object whose
@@ -1108,7 +1109,7 @@ export async function mon_arrive(mtmp, when) {
         if (r && r.length) {
             const { somexy } = await import('./mkroom.js');
             const c = { x: 0, y: 0 };
-            const croom = game.level?.rooms?.[r.charCodeAt(0) - 3 /*ROOMOFFSET*/];
+            const croom = game.level?.rooms?.[r[0] - 3 /*ROOMOFFSET*/];
 
             /* somexy() handles irregular rooms */
             if (croom && somexy(croom, c)) {
@@ -1236,7 +1237,7 @@ export async function keepdogs(pets_only) {
             /* don't block pets from accompanying the hero's escape or
                ascension simply due to mundane trifles */
             mtmp.mtrapped = 0;
-            await finish_meating_shared(mtmp);
+            finish_meating(mtmp);
             mtmp.msleeping = 0;
             mtmp.mfrozen = 0;
             mtmp.mcanmove = 1;
@@ -1334,12 +1335,6 @@ async function canseemon_shared(mtmp) {
 async function Monnam_shared(mtmp) {
     const { Monnam } = await import('./do_name.js');
     return Monnam(mtmp);
-}
-// C ref: mon.c finish_meating(mtmp) — module-private at js/dogmove.js:2300.
-async function finish_meating_shared(mtmp) {
-    const DM = await import('./dogmove.js');
-    if (typeof DM.finish_meating === 'function') DM.finish_meating(mtmp);
-    else mtmp.meating = 0;   /* GAP: dogmove.js does not export it */
 }
 // C ref: steed.c dismount_steed(reason) — delegates to js/steed.js's real,
 // faithful port (dynamic import avoids a steed.js <-> dog.js static cycle).
@@ -1461,7 +1456,7 @@ export async function wary_dog(mtmp, was_dead) {
     let edog;
     const quietly = was_dead;
 
-    await finish_meating_shared(mtmp);
+    finish_meating(mtmp);
 
     if (!mtmp.mtame)
         return;

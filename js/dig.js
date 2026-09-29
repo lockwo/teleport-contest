@@ -2694,8 +2694,6 @@ export async function buried_ball_to_freedom() {
 // C ref: ball.c punish(sobj) — js/read.js:757 and js/pray.js:448 both keep a
 // private copy; neither is importable and neither takes an unearthed ball.
 async function punish_(_ball) { /* NOT PORTED */ }
-// C ref: ball.c unpunish() — js/read.js:1323, private.
-async function unpunish_() { /* NOT PORTED */ }
 
 // C ref: dig.c:1983 bury_an_obj(otmp, dealloced) — move one object from the
 // floor pile to the buried list, keeping its coordinates.  Returns the object
@@ -2709,8 +2707,9 @@ export async function bury_an_obj(otmp, dealloced) {
     const { obj_extract_self } = await import('./invent.js');
     const { obj_resists } = await import('./zap.js');
 
-    if (otmp === game.uball) {
-        await unpunish_();
+    if (otmp === game.u?.uball) {
+        const { unpunish } = await import('./read.js');
+        unpunish();
         set_utrap(rn1(50, 20), TT_BURIEDBALL);
         await pline('The iron ball gets buried!');
     }

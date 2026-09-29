@@ -7,14 +7,13 @@
 // `rloc(magr, RLOC_MSG)` (uhitm.c mhitm_ad_sedu), which both picks the
 // destination (the RNG-bearing part) and prints the vanish/appear message.
 //
-// The hero-teleport half of teleport.c (tele/dotele/level_tele/teleds) lives in
-// js/trap.js, where it grew alongside the trap effects that call it.
+// Hero placement is shared by jumping, teleport commands, scrolls, and traps.
 
 import { game } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
 import { newsym, m_at, update_topl, y_n } from './display.js';
-import { Blind, couldsee } from './vision.js';
+import { Blind, couldsee, vision_recalc } from './vision.js';
 import { update_monster_region } from './region.js';
 import { onscary, set_apparxy, noteleport_level } from './monmove.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
@@ -161,7 +160,7 @@ function rloc_pos_ok(x, y, mtmp) {
     const xx = mtmp?.mx, yy = mtmp?.my;
     if (!xx) {
         const down = dndest_(), up = updest_();
-        if (down.nlx && On_W_tower_level_()) {
+        if (down.nlx && On_W_tower_level()) {
             const inside = within_bounded_area(x, y, down.nlx, down.nly,
                                                down.nhx, down.nhy);
             return !!(yy & 2) === inside;
@@ -621,7 +620,7 @@ export async function teleds(nux, nuy, teleds_flags) {
     }
     if (ball_active && (ball_still_in_range || allow_drag)) {
         const bc = await B.drag_ball(nux, nuy, allow_drag);
-        if (bc && bc.ok) {
+        if (bc) {
             B.move_bc(0, bc.bc_control, bc.ballx, bc.bally, bc.chainx, bc.chainy);
         } else {
             /* dragging fails if hero is encumbered beyond 'burdened'; uball
@@ -649,7 +648,7 @@ export async function teleds(nux, nuy, teleds_flags) {
     const { nomul } = await import('./hack.js');
     nomul(0);
     notice_mon_off_();
-    vision_recalc_(0);        /* vision before effects */
+    vision_recalc(0);        /* vision before effects */
 
     /* this used to take place sooner, but if a --More-- prompt was issued then
        the old map display was shown instead of the new one */
@@ -675,13 +674,6 @@ export async function teleds(nux, nuy, teleds_flags) {
         u.urooms = save_urooms;   /* reset prior to spoteffects() */
     }
     /* possible shop entry message comes after guard's shrill whistle */
-    // C ref: teleport.c teleds() -> spoteffects(TRUE) — this port's
-    // spoteffects(pickupFn) replaces C's boolean pick flag with an optional
-    // callback (see trap.js's own doc comment on spoteffects()); passing the
-    // bare literal `true` crashed with "pickupFn is not a function" the
-    // moment any real caller reached this line (read.js's teleds_hero(), the
-    // scroll-of-teleportation path, already uses this exact real-callback
-    // pattern and is the confirmed-working reference).
     const { spoteffects } = await import('./trap.js');
     const { pickup_after_move } = await import('./cmd.js');
     await spoteffects(pickup_after_move);
@@ -1230,7 +1222,7 @@ export async function rloco(obj) {
                                                  dndest.nhx, dndest.nhy))))
              /* on the Wizard Tower levels, objects inside should stay inside
                 and objects outside should stay outside */
-             || (dndest.nlx && On_W_tower_level_()
+             || (dndest.nlx && On_W_tower_level()
                  && within_bounded_area_(tx, ty, dndest.nlx, dndest.nly,
                                          dndest.nhx, dndest.nhy)
                     !== within_bounded_area_(otx, oty, dndest.nlx, dndest.nly,
@@ -1318,8 +1310,7 @@ function sengr_at_(_str, _x, _y, _strict) { return false; }
 function Inhell_() { return !!game.u?.uz?.in_hell; }
 function In_endgame_() { return (game.u?.uz?.dnum | 0) === (game.endgame_dnum | 0) && !!game.endgame_dnum; }
 function In_tutorial_(_lev) { return false; }
-function On_W_tower_level_() {
-    const uz = game.u?.uz;
+export function On_W_tower_level(uz = game.u?.uz) {
     return on_level_(uz, game.wiz1_level) || on_level_(uz, game.wiz2_level)
         || on_level_(uz, game.wiz3_level);
 }
@@ -1382,7 +1373,7 @@ function distmin_(x0, y0, x1, y1) {
 // C ref: vault.c vault_occupied(rooms) / findgd() — js/sounds.js:167/174, private.
 function vault_occupied_(_rooms) { return false; }
 function findgd_() { return null; }
-// C ref: trap.c reset_utrap(msg) — js/read.js:1076, private.
+// C ref: trap.c reset_utrap(msg) — the FALSE arm used by teleportation.
 function reset_utrap_(_msg) { const u = game.u; if (u) { u.utrap = 0; u.utraptype = 0; } }
 // C ref: hack.c u_on_newpos(x, y) — js/mklev.js:170, private.
 function u_on_newpos_(x, y) { const u = game.u; if (u) { u.ux = x; u.uy = y; } }
@@ -1391,7 +1382,6 @@ function u_on_newpos_(x, y) { const u = game.u; if (u) { u.ux = x; u.uy = y; } }
 function see_monsters_() { see_monsters(); }
 function notice_mon_off_() { /* UNPORTED */ }
 function notice_mon_on_() { /* UNPORTED */ }
-function vision_recalc_(_control) { /* js/vision.js, via game.vision_full_recalc */ }
 function switch_terrain_() { /* js/dig.js:870 is itself a NOT PORTED stub */ }
 // C ref: mkroom.c search_special(type) / somexyspace(croom, c).  somexyspace is
 // RNG-BEARING (somexy's rn2 pick); js/mkroom.js:145 exports it, and this shim

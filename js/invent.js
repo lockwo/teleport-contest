@@ -57,6 +57,7 @@ import {
     LOADSTONE,
     MAXOCLASSES,
     POTION_CLASS,
+    WAN_FIRE,
     POT_WATER,
     RING_CLASS,
     ROCK,
@@ -104,6 +105,7 @@ import {
     UNENCUMBERED, OVERLOADED,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     WT_WEIGHTCAP_STRCON, WT_WEIGHTCAP_SPARE, WT_WOUNDEDLEG_REDUCT, MAX_CARR_CAP,
+    WT_SPLASH_THRESHOLD, FIRE_RES,
     A_CON, A_STR, A_INT, A_WIS, A_CHA, A_DEX, A_MAX, LEFT_SIDE, RIGHT_SIDE,
     P_DAGGER, P_KNIFE, P_SHORT_SWORD, P_SABER, P_SPEAR, P_BOW, P_SLING,
     P_CROSSBOW, P_DART, P_SHURIKEN,
@@ -115,7 +117,7 @@ import {
     TREE, IRONBARS, DRAWBRIDGE_DOWN, DBWALL, LAVAPOOL, LAVAWALL, ICE,
     POOL, MOAT, WATER,
     IS_DOOR, IS_FURNITURE, STONE, STAIRS, D_NODOOR, D_ISOPEN, D_BROKEN,
-    Is_airlevel,
+    Is_airlevel, Is_waterlevel,
     PLNMSG_MON_TAKES_OFF_ITEM, PLNMSG_BACK_ON_GROUND,
     MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL,
     TIMEOUT, isok, STRAT_WAITMASK, SELL_NORMAL, SELL_DELIBERATE,
@@ -863,11 +865,17 @@ function extract_nobj(obj, listRef) {
 // the level's object list (our flat game.level.objects array) via
 // floor_extract_self; otherwise it (e.g. a force-broken chest) lingers on the
 // floor and the pet's dog_goal fobj scan re-rolls an extra obj_resists rn2(100)
-// that C never makes (seed0014 step-47 divergence).  Inventory/container/minvent
-// objects are unlinked from the player's inventory list as before.
+// that C never makes (seed0014 step-47 divergence). Monster inventory is owned
+// by obj.ocarry, while hero inventory has the synchronized aliases below.
 export function obj_extract_self(obj) {
     if (!obj) return;
     if (obj.where === OBJ_FLOOR) { floor_extract_self(obj); return; }
+    if (obj.ocarry) {
+        const inv = obj.ocarry.minvent;
+        const index = inv.indexOf(obj);
+        if (index >= 0) inv.splice(index, 1);
+        obj.ocarry = null;
+    }
     removeObjectFromAllInventories(obj);
     obj.where = OBJ_FREE;
 }
@@ -1377,7 +1385,6 @@ function in_rooms(_x, _y, _shop) { return ''; }
 function u_at(x, y) { return game.u?.ux === x && game.u?.uy === y; }
 function hides_under(_data) { return false; }
 function hideunder(_mon) { return false; }
-function unpunish() {}
 function maybe_unhide_at(_x, _y) {}
 // C ref: zap.c obj_resists(obj, ochance, achance).  The invocation items, the
 // Amulet and a Rider corpse always resist; everything else rolls rn2(100) and resists when
@@ -2363,23 +2370,20 @@ function inventoryRows(lets = null, ofilter = null) {
     // else, while hiding every real doname()/inv_order bug for that role.
 
     const rows = [];
-    const inv = [...inventoryArray()].filter((obj) => (!lets || String(lets).includes(obj.invlet))
-        && (!ofilter || ofilter(obj)));
+    const sortflags = (flags().sortloot === 'f' ? SORTLOOT_LOOT : SORTLOOT_INVLET)
+        | (flags().sortpack !== false ? SORTLOOT_PACK : 0);
+    // C sorts the whole pack before filtering displayed inventory letters.
+    const inv = sortloot(inventoryArray(), sortflags).map((entry) => entry.obj)
+        .filter((obj) => obj && (!lets || String(lets).includes(obj.invlet))
+            && (!ofilter || ofilter(obj)));
     if (!inv.length) return [];
     // C ref: invent.c display_pickinv() — iterate flags.inv_order (def_inv_order,
     // which already leads with COIN_CLASS) exactly once per class.  classOrder()
     // already begins with COIN_CLASS, so it must NOT be prepended again or gold
     // renders twice ("Coins / $ - N gold pieces" duplicated).
-    // C ref: invent.c display_pickinv():3176 `sortflags = (flags.sortloot == 'f')
-    // ? SORTLOOT_LOOT : SORTLOOT_INVLET` — with 'sortloot:full' each class's
-    // items are alphabetized by description instead of by inventory letter.
-    const lootOrder = (flags().sortloot === 'f');
     const order = classOrder();
     for (const oclass of order) {
-        const ofclass = inv.filter((obj) => obj.oclass === oclass);
-        const items = lootOrder
-            ? sortloot(ofclass, SORTLOOT_LOOT).map((sli) => sli.obj).filter(Boolean)
-            : ofclass.sort(compareInvlet);
+        const items = inv.filter((obj) => obj.oclass === oclass);
         if (!items.length) continue;
         rows.push([let_to_name(oclass, false, false), ...items.map((obj) => {
             // C's display_pickinv() always generates the menu glyph before
@@ -2929,16 +2933,13 @@ export function inuse_classify(sort_item, obj) {
 }
 
 export function loot_classify(sort_item, obj) {
-    // C ref: invent.c loot_classify() — "observe_object(obj); /* xname(obj)
-    // does this; we want it sooner */" runs before 'seen' (dknown) is read,
-    // so a freshly created object (e.g. a just-landed trap missile) is
-    // already dknown by the time its discovery bucket is computed here.
-    observe_object(obj);
+    // Classification observes appearances before choosing a discovery bucket.
+    if (!Blind_for_wear()) observe_object(obj);
     const defOrder = [COIN_CLASS, AMULET_CLASS, RING_CLASS, WAND_CLASS,
         POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS, GEM_CLASS, FOOD_CLASS,
         TOOL_CLASS, WEAPON_CLASS, ARMOR_CLASS, ROCK_CLASS, BALL_CLASS,
         CHAIN_CLASS, 0];
-    const order = flags().sortpack ? classOrder() : defOrder;
+    const order = flags().sortpack !== false ? classOrder() : defOrder;
     const oclass = obj?.oclass ?? ILLOBJ_CLASS;
     const idx = order.indexOf(oclass);
     sort_item.orderclass = idx >= 0 ? idx + 1 : order.length + (oclass !== VENOM_CLASS ? 1 : 0);
@@ -6479,7 +6480,11 @@ async function throw_obj(obj, dir, shotlimit = 0) {
             martial: martial_bonus_inv(),
         };
         freeinv(otmp);
-        res = await throwit(otmp, skillsnap, wep_mask);
+        try {
+            res = await throwit(otmp, skillsnap, wep_mask);
+        } finally {
+            game.thrownobj = null;
+        }
     }
     game.m_shot = { o: 0, n: 0, i: 0, s: false };
     return res;
@@ -6560,6 +6565,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
         u.dz = 1;
     }
 
+    game.thrownobj = otmp;
     otmp.how_lost = LOST_THROWN;
     // C ref: dothrow.c:1564 `iflags.returning_missile = AutoReturn(obj,wep_mask)`
     // — an aklys/Mjollnir wielded when thrown, or any boomerang, comes back.
@@ -6706,6 +6712,22 @@ async function throwit(otmp, skillsnap, wep_mask) {
             return ECMD_TIME;
         }
     }
+    // C ref: dothrow.c:1794-1807 — landing damage precedes floor placement.
+    const { is_pool, is_lava } = await import('./dbridge.js');
+    const deaf = u.uprops?.HDeaf || u.uprops?.EDeaf || u.uprops?.Deaf
+        || u.HDeaf || u.EDeaf || u.Deaf || u.uroleplay?.deaf;
+    if (!deaf && !Underwater) {
+        const data = objects[otmp.otyp];
+        const mat = data?.material;
+        const flammable = ((mat <= 8 /* WOOD */ && mat !== 1 /* LIQUID */)
+                           || mat === 18 /* PLASTIC */)
+            && otmp.otyp !== TALLOW_CANDLE && otmp.otyp !== WAX_CANDLE
+            && otmp.otyp !== WAN_FIRE && data?.oc_oprop !== FIRE_RES;
+        if (is_pool(land.x, land.y) || (is_lava(land.x, land.y) && !flammable))
+            await update_topl(weight(otmp) > WT_SPLASH_THRESHOLD ? 'Splash!' : 'Plop!');
+    }
+    const { flooreffects } = await import('./do.js');
+    if (await flooreffects(otmp, land.x, land.y, 'fall')) return ECMD_TIME;
     otmp.owornmask = 0;
     mkobj_place_object(otmp, land.x, land.y);
     otmp.where = OBJ_FLOOR;
@@ -10337,19 +10359,24 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
         }
     }
 
-    // C ref: invent.c:4184 — a BLIND hero gropes around FIRST, before anything
-    // else is described: "You try to feel what is lying here on the floor."
-    // This whole block was missing, so a blind #look printed the sighted
-    // wording with no groping line at all.  (can_reach_floor()'s "But you can't
-    // reach it!" early-out needs the levitation/ball-and-chain state this port
-    // does not model for the floor test, so only the reachable arm is emitted.)
+    // C ref: invent.c:4185-4217 — unreachable objects aren't felt or inspected.
     if (Blind_for_wear()) {
+        const { can_reach_floor } = await import('./engrave.js');
         if (dfeature && dfeature.startsWith('altar ')) {
             await update_topl('You try to feel what is here.');
         } else {
             const surf = surface(x, y);
-            await update_topl(`You try to feel what is lying here on the ${surf}.`);
-            if (dfeature && dfeature === surf) dfeature = null; /* skip_dfeature */
+            const drift = Is_airlevel() || Is_waterlevel();
+            const where = drift ? 'floating here'
+                : !can_reach_floor(true) ? 'lying beneath you'
+                : `lying here on the ${surf}`;
+            await update_topl(`You try to feel what is ${where}.`);
+            if (dfeature && !drift && dfeature === surf) dfeature = null;
+        }
+        const trap = trap_at_hero();
+        if (!can_reach_floor(!!(trap && is_pit(trap.ttyp)))) {
+            await update_topl("But you can't reach it!");
+            return ECMD_OK;
         }
     }
 

@@ -32,7 +32,7 @@ import { amorphous_flag, throws_rocks_flag } from './monflags_data.js';
 import { roles, races } from './role.js';
 import { DATABASE_ENTRIES } from './data_base_data.js';
 import { NO_COLOR, ATR_INVERSE, DEC_TO_UNICODE, CLR_WHITE } from './terminal.js';
-import { teleok_hero, teleds_hero, safe_teleds_hero } from './read.js';
+import { scrolltele } from './read.js';
 import { COLNO, ROWNO, STONE, ROOM, CORR, DOOR, ICE, STAIRS, FOUNTAIN,
          POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
          D_CLOSED, D_LOCKED, D_ISOPEN, D_BROKEN, D_NODOOR, IRONBARS,
@@ -41,7 +41,8 @@ import { COLNO, ROWNO, STONE, ROOM, CORR, DOOR, ICE, STAIRS, FOUNTAIN,
          AM_MASK, AM_SANCTUM, Amask2align, A_LAWFUL, A_NEUTRAL, A_CHAOTIC, A_NONE,
          IS_WALL, IS_DOOR, IS_OBSTRUCTED, IS_FURNITURE, IS_AIR, IS_POOL, IS_LAVA,
          IS_WATERWALL, In_sokoban, Is_rogue_level, CLOUD, Is_airlevel,
-         Is_waterlevel, isok, VIBRATING_SQUARE, STRAT_WAITMASK, I_SPECIAL, TELEDS_NO_FLAGS } from './const.js';
+         Is_waterlevel, isok, VIBRATING_SQUARE, STRAT_WAITMASK, I_SPECIAL,
+         TELEDS_NO_FLAGS } from './const.js';
 
 // Imports used only by the hack.c completeness block at the bottom of this file.
 import { ROOMOFFSET, MOD_ENCUMBER, SLT_ENCUMBER, FOOT,
@@ -463,30 +464,6 @@ export function run_stop_for_monster_at(x, y) {
     return false;
 }
 
-// C ref: pickup.c pickup() — "if there's anything here, stop running":
-//   if (OBJ_AT(u.ux,u.uy) && svc.context.run && svc.context.run != 8
-//       && !svc.context.nopick) nomul(0);
-// Runs from spoteffects(TRUE) at the tail of domove_core, right after the hero
-// steps onto the new square; without it a run sails past floor objects instead
-// of halting, leaving the hero on the wrong square for every downstream scan.
-// Only OBJ_FLOOR objects count (a picked-up/contained object keeps stale ox/oy
-// but a different `where`).
-function floorObjAt(x, y) {
-    const objs = game.level?.objects;
-    if (!Array.isArray(objs)) return false;
-    for (const o of objs) {
-        if (o.ox === x && o.oy === y && (o.where === 'floor' || o.where === 1))
-            return true;
-    }
-    return false;
-}
-function runStopOnObject() {
-    const u = game.u;
-    const c = game.context;
-    if (!c.run || c.run === 8 || c.nopick) return false;
-    if (floorObjAt(u.ux, u.uy)) { nomul(0); return true; }
-    return false;
-}
 
 // C ref: hack.c domove_core() tail — after a run move onto a door /
 // obstruction / furniture (when run < 8), nomul(0) so the run ends after this
@@ -507,6 +484,10 @@ function runOntoStopTerrain() {
 // Run the per-turn machinery for the step that just elapsed.  C: the top of
 // allmain.c moveloop_core() runs this when svc.context.move is set.
 async function takeTurn() {
+    if (game._lvltport_dest) {
+        const { run_deferred_lvltport } = await import('./do.js');
+        await run_deferred_lvltport();
+    }
     await moveloop_turn();
 }
 
@@ -534,7 +515,6 @@ async function run_movement(run) {
 
         // The move happened: run its once-per-turn machinery.
         runOntoStopTerrain();          // may set game.multi = 0 (door etc.)
-        runStopOnObject();             // C pickup(): halt the run on a floor object
         await takeTurn();
 
         if (game.multi <= 0) break;    // nomul triggered -> stop after this turn
@@ -1001,7 +981,7 @@ export async function travel_adjacent_step(tx, ty) {
         // hack.c:1279 — the fast path zeroes travelcc before taking the step.
         (game.iflags = game.iflags || {}).travelcc = { x: 0, y: 0 };
         await domove(dx, dy);
-        if (c.move) await moveloop_turn();  // the elapsed turn, taken inline
+        if (c.move) await takeTurn();  // the elapsed turn, taken inline
         // C: reset_cmd_vars() at the top of the next rhack().
         c.run = 0; c.travel = c.travel1 = c.mv = 0; c.nopick = 0;
         c.move = 0;
@@ -1058,7 +1038,7 @@ async function travel_walk() {
         if (!u.dx && !u.dy) {
             first = false;
             c.move = 1;
-            await moveloop_turn();
+            await takeTurn();
             break;
         }
 
@@ -1071,7 +1051,7 @@ async function travel_walk() {
         await domove(u.dx, u.dy, first);
         if (first) { first = false; c.move = 1; }
         if (!c.move) break;          // blocked move: no turn, travel stops
-        await moveloop_turn();       // the elapsed turn, taken inline
+        await takeTurn();            // the elapsed turn, taken inline
         if ((game.multi ?? 0) <= 0) break;
 
         lookaround();
@@ -3560,74 +3540,14 @@ export async function do_look_full() {
     game.context.move = 0;
 }
 
-// C ref: teleport.c dotelecmd() -> dotele(break_the_rules=TRUE) -> tele().  In
-// wizard mode (playmode:debug) the ^T command with no 'm' prefix sets
-// ignore_restrictions and calls dotele(TRUE); with no trap under the hero it
-// skips the spell/energy block, and because wizard is set tele() shows
-// "Where do %s want to be teleported?" ("you") and enters getpos(&cc, TRUE,
-// "the desired position").  When getpos is cancelled (ESC -> result < 0) tele()
-// returns without teleporting, but dotele() still returns 1 (ECMD_TIME): the
-// command consumes a game turn (the moveloop then runs the monster moves).
-// When a spot IS picked, C's tele()/scrolltele(0) does:
-//   if (teleok(cc.x, cc.y, FALSE)) { teleds(cc.x, cc.y, TELEDS_TELEPORT); return; }
-//   pline("Sorry...");
-//   (void) safe_teleds(TELEDS_TELEPORT);   /* scroll==NULL, so no learnscroll() */
-// teleok_hero/teleds_hero/safe_teleds_hero (read.js) already port these
-// hero-only subsets faithfully for the scroll-of-teleportation controlled/
-// uncontrolled cases, and this is the exact same underlying C code path, so
-// they're reused here rather than reimplemented.
+// C ref: teleport.c:1151-1161 — wizard teleport still pays hunger and time
+// when interference or a cancelled targeting prompt prevents the teleport.
 export async function dotele_wizard() {
     const u = game.u;
-    const pay_teleport_hunger = () => {
-        // C teleport.c:dotele() calls morehungry(100) after a non-trap
-        // teleport attempt, including a cancelled targeting selection.
-        u.uhunger = (u.uhunger ?? 900) - 100;
-        newuhs(true);
-    };
-    // C ref: teleport.c dotele():1151 — the no-trap branch zeroes
-    // iflags.travelcc UNCONDITIONALLY right before calling tele(), so
-    // tele()'s own "pre-suggest this coordinate" read of travelcc (teleport.c
-    // :887-891) is always moot here and getpos() starts on the hero.  The
-    // side effect that matters is this reset itself: a later '_' travel
-    // command reads iflags.travelcc as getpos()'s starting cursor (cmd.c
-    // dotravel():5314), so leaving a stale cached destination here parks that
-    // NEXT getpos() prompt on the old target instead of the hero.
     (game.iflags = game.iflags || {}).travelcc = { x: 0, y: 0 };
-    // tele() -> scrolltele(0): with the wizard override taken, C prints
-    //   pline("Where do %s want to be teleported?", "you")   [no steed]
-    // then getpos(&cc, force=TRUE, "the desired position").  The pline leaves the
-    // message line pending (NEED_MORE); getpos()'s first-use farlook tip window
-    // (handle_tip -> l_nhcore_call) then forces that pending line to be
-    // acknowledged with --More-- before the tip is drawn.  So the recorded frames
-    // are: "Where do you want to be teleported?--More--" (topl_more), then the
-    // tip text window, then flags.verbose's "(For instructions type a '?')"
-    // appended ahead of "Move cursor to the desired position:".  Model the pline
-    // as a NEED_MORE topline and let getpos(verbose) fire the topl_more() frame.
-    await getpos_render('Where do you want to be teleported?', u.ux, u.uy);
-    game._toplin = 1; // TOPLIN_NEED_MORE — pending "Where..." pline
-    game._toplines = 'Where do you want to be teleported?';
-    const verbose = game.flags?.verbose !== false;
-    const cc = await getpos('the desired position', u.ux, u.uy, null, /*force=*/true, verbose);
-    if (!cc) {
-        // ESC: getpos() returned < 0 -> tele() returns; dotele() still ECMD_TIME.
-        pay_teleport_hunger();
-        return 1;
-    }
-    if (teleok_hero(cc.x, cc.y, false)) {
-        await teleds_hero(cc.x, cc.y);
-    } else {
-        await pline('Sorry...');
-        // C ref: topl.c update_topl() leaves toplin == TOPLINE_NEED_MORE, and
-        // wintty.c:1902 tty_display_nhwindow()'s NHW_MENU arm pages an
-        // unacknowledged topline with more() BEFORE laying down the overlay.
-        // safe_teleds() lands the hero on the chained ball/chain pile, whose
-        // look_here() menu must therefore be preceded by a "Sorry...--More--"
-        // frame.  Set per call site: js/display.js pline() deliberately does not
-        // raise _toplin globally (measured -191 public).
-        game._toplin = 1;
-        await safe_teleds_hero();
-    }
-    pay_teleport_hunger();
+    await scrolltele(null);
+    u.uhunger = (u.uhunger ?? 900) - 100;
+    newuhs(true);
     return 1;
 }
 

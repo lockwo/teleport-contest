@@ -2468,7 +2468,7 @@ function Half_physical_damage_do() {
     return uprop_do('Half_physical_damage', 'HHalf_physical_damage',
                     'EHalf_physical_damage') > 0;
 }
-function Maybe_Half_Phys_do(dmg) {
+export function Maybe_Half_Phys_do(dmg) {
     return Half_physical_damage_do() ? Math.floor((dmg + 1) / 2) : dmg;
 }
 // C ref: youprop.h EWounded_legs (u.uprops[WOUNDED_LEGS].extrinsic).

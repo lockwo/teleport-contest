@@ -12,6 +12,7 @@ import { objects, WEAPON_CLASS, ARMOR_CLASS, TOOL_CLASS, ROCK_CLASS,
          CORPSE, BOULDER, STATUE, HEAVY_IRON_BALL } from './mkobj.js';
 import { OBJ_ARMCAT } from './objarmor_data.js';
 import { monster_by_pmidx } from './makemon.js';
+import { Hallucination_u } from './display.js';
 
 // C ref: mthrowu.c:24 breathwep[] — indexed by BZ_OFS_AD(typ), i.e. adtyp - 1.
 const BREATHWEP = [
@@ -19,9 +20,7 @@ const BREATHWEP = [
     'lightning', 'poison gas', 'acid', 'strange breath #8',
     'strange breath #9',
 ];
-// C ref: mthrowu.c:31 hallublasts[] — 97 entries.  rnd_hallublast() is
-// ROLL_FROM(), i.e. a CORE rn2(SIZE) draw, NOT a display-rng one; the size of
-// this table is therefore the modulus and must stay complete.
+// C ref: mthrowu.c:31 hallublasts[] — core-RNG selection, not display RNG.
 const HALLUBLASTS = [
     'asteroids', 'beads', 'bubbles', 'butterflies', 'champagne', 'chaos',
     'coins', 'cotton candy', 'crumbs', 'dark matter', 'darkness', 'data',
@@ -46,10 +45,9 @@ export function rnd_hallublast() {
     return HALLUBLASTS[rn2(HALLUBLASTS.length)];
 }
 
-// C ref: mthrowu.c:1083 breathwep_name(typ) — a hallucinating hero hears a
-// nonsense blast name, and that substitution DRAWS rn2(97) on the core stream.
+// C ref: mthrowu.c:1083 breathwep_name().
 export function breathwep_name(typ) {
-    if (game.u?.uhallu) return rnd_hallublast();
+    if (Hallucination_u()) return rnd_hallublast();
     return BREATHWEP[(typ | 0) - 1] ?? 'strange breath';
 }
 
@@ -451,7 +449,7 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
             if (singleobj.oclass === GEM_CLASS && ucatchgem(singleobj, mon))
                 break;
 
-            if (!tethered_weapon && deps.u_catch_thrown_obj?.(singleobj))
+            if (!tethered_weapon && await deps.u_catch_thrown_obj?.(singleobj))
                 break;
 
             if (singleobj.oclass === POTION_CLASS) {

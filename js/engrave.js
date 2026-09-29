@@ -3,7 +3,7 @@
 //         rumors.c init_rumors(), getrumor(), get_rnd_line(), get_rnd_text();
 //         hacklib.c xcrypt().
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK,
          FINGERTIP, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY, GETOBJ_PROMPT,
@@ -19,9 +19,11 @@ import { WEAPON_CLASS, WAND_CLASS, GEM_CLASS, RING_CLASS,
          ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
          objects, next_ident } from './mkobj.js';
 import { mflags1_of, M1_ANIMAL } from './monflags_data.js';
+import { attacktype, AT_HUGS } from './monattk_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { A_WIS } from './const.js';
+import { Blind as isBlind } from './vision.js';
 
 // Heavy UI/inventory modules (display.js, invent.js, extcmd-handlers.js) are
 // loaded lazily inside doengrave() to avoid a module-init cycle: display.js
@@ -292,10 +294,10 @@ export function outrumor(truth, mechanism) {
     const reading = (mechanism === BY_COOKIE || mechanism === BY_PAPER);
     if (reading) {
         // is_fainted() && BY_COOKIE: too weak to read; no RNG, no message.
-        if (mechanism === BY_COOKIE && (game.u?.uhs ?? 0) >= 5 /*FAINTED*/)
+        if (mechanism === BY_COOKIE && (game.u?.uhs ?? 0) === 5 /*FAINTED*/)
             return '';
         // Blind: can't read it; no getrumor RNG.
-        if (game.u?.Blind)
+        if (isBlind())
             return '';
     }
     // get a rumor; exclude_cookie is FALSE when reading (cookie rumors allowed).
@@ -409,15 +411,13 @@ async function cant_reach_floor(x, y, up, check_pit, wand_engraving) {
     await pline(`${who} can't reach the ${where}.`);
 }
 
-// C ref: engrave.c can_reach_floor(check_pit) — the engulfed / airborne /
-// teetering-over-a-pit gate.  The AT_HUGS-grabber, riding-skill and
-// ceiling-hider clauses need mon/skill state this file cannot see, so only the
-// swallow, Levitation, Flying and pit clauses are modelled.
-// C ref: trap.c uteetering_at_seen_pit()/uescaped_shaft() for the last one.
+// C ref: engrave.c can_reach_floor(check_pit).
 export function can_reach_floor(check_pit) {
     const u = game.u;
     if (!u) return true;
-    if (u.uswallow) return false;
+    if (u.uswallow
+        || (u.ustuck && !(u.Upolyd && hooks.sticks(u.data))
+            && attacktype(u.ustuck.data, AT_HUGS))) return false;
     if (u.uprops?.Levitation) return false;
     if (u.uprops?.Flying) return true;
     if (check_pit) {
@@ -1503,16 +1503,6 @@ async function otense_of(obj, verb) {
     return otense(obj, verb);
 }
 
-// Status helpers.  Each reads the spelling the setter actually writes:
-// C ref: youprop.h Blind — the HBlinded timer plus worn eyewear.  potion.c
-// make_blinded() lands on game.u.blinded (js/potion.js set_blinded), NOT on
-// uprops.Blinded, so the old reading answered FALSE for a genuinely blind hero
-// and doengrave() printed "Your vision clears." right after blinding itself.
-// Same predicate as js/vision.js Blind().
-function isBlind() {
-    const u = game.u;
-    return !!u && ((u.blinded || 0) > 0 || !!game.ublindf);
-}
 function isConfused() { const u = game.u; return !!(u?.uprops?.Confusion || u?.uconf); }
 function isStunned() { const u = game.u; return !!(u?.uprops?.Stun || u?.ustun); }
 function isHallu() { const u = game.u; return !!(u?.uprops?.Hallucination || u?.uhallu); }

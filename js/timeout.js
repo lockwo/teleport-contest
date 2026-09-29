@@ -20,7 +20,7 @@ import { heal_legs } from './trap.js';
 import { exercise } from './attrib.js';
 import { A_CON } from './const.js';
 import { nomul, stop_occupation } from './hack.js';
-import { run_object_timers } from './mkobj.js';
+import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer } from './mkobj.js';
 import { update_topl, see_monsters } from './display.js';
 import { Unaware } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
@@ -48,7 +48,7 @@ const {
     NUM_TIMER_KINDS, RANGE_GLOBAL,
     ROT_ORGANIC, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON, BURN_OBJECT, HATCH_EGG,
     FIG_TRANSFORM, SHRINK_GLOB,
-    MAX_EGG_HATCH_TIME, NON_PM, G_GENOD, G_EXTINCT, MV_KNOWS_EGG, M_AP_MONSTER,
+    NON_PM, G_GENOD, G_EXTINCT, MV_KNOWS_EGG, M_AP_MONSTER,
     NECK, A_DEX, A_STR, NO_KILLER_PREFIX, KILLED_BY, KILLED_BY_AN,
     GENOCIDED, TURNED_SLIME, SICK_NONVOMITABLE, NHW_MENU, WIN_ERR, ECMD_OK,
     DRAWBRIDGE_DOWN, DB_UNDER, DB_ICE, STONED, SLIMED,
@@ -554,20 +554,16 @@ export async function nh_timeout() {
     // later in the same once-per-turn block, and no domove() can follow it.
     game._helpless_at_timeout = ((game.multi ?? 0) < 0);
 
-    // C ref: timeout.c nh_timeout() ends with run_timers() — expire any object
-    // timer (here: ROT_CORPSE) whose scheduled turn has arrived.
+    // C ref: timeout.c nh_timeout() ends with run_timers().
     await run_object_timers();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // timeout.c — the rest of the file.
 //
-// INERT BY CONSTRUCTION.  Nothing above this banner calls anything below it,
-// and the module's only importers are allmain.js (nh_timeout) and
-// extcmd-handlers.js (timed_prop).  The live per-turn path is still
-// nh_timeout()'s TIMED_PROPS table plus mkobj.js run_object_timers(); hooking
-// the queue below into it would reorder every later turn's draws, so that is a
-// separate change.
+// Object hatching is dispatched by mkobj.js run_object_timers(), alongside
+// corpse decay and glob shrinkage.  The separate queue below is not used by
+// the live object timer model.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── C helpers js/ defines but does not export ──────────────────────────────
@@ -1262,7 +1258,7 @@ function _SetVoice(_mon, _tag, _vol, _flags) { /* tty: nothing to do */ }
 // C ref: timeout.c:1008 kill_egg(egg) — prevent an egg from ever hatching.
 export async function kill_egg(egg) {
     /* stop previous timer, if any */
-    await stop_timer(HATCH_EGG, _obj_to_any(egg));
+    stop_object_timer(egg, HATCH_EGG);
 }
 
 // C ref: timeout.c:1192 learn_egg_type(mnum) — learn to recognise eggs of the
@@ -1270,8 +1266,8 @@ export async function kill_egg(egg) {
 // shadows this at its own call site; this is the real body.
 export async function learn_egg_type(mnum) {
     /* baby monsters hatch from grown-up eggs */
-    const { little_to_big } = await import('./makemon.js').catch(() => ({}));
-    const idx = little_to_big ? little_to_big(mnum) : mnum;
+    const { little_to_big } = await import('./makemon.js');
+    const idx = little_to_big(mnum);
     const mv = (game.mvitals = game.mvitals || []);
     mv[idx] = mv[idx] || { mvflags: 0 };
     mv[idx].mvflags |= MV_KNOWS_EGG;
@@ -1280,29 +1276,21 @@ export async function learn_egg_type(mnum) {
     await update_inventory();
 }
 
-// C ref: teleport.c enexto(cc, xx, yy, mdat).  GAP: teleport.c's symbol and no
-// js/ module exports it (js/dog.js:124 and js/do.js:316 each keep a private
-// copy, js/apply.js:1715 stubs it the same way).  enexto_core()'s goodpos ring
-// scan DRAWS, so the real one has to be in place before hatch_egg() below is
-// wired into the timer queue -- both the hatch position AND the draw count
-// depend on it.
-async function _enexto(_cc, _xx, _yy, _mdat) { return false; }
-
 // C ref: timeout.c:1016 hatch_egg(arg, timeout) — the HATCH_EGG timer callback.
 export async function hatch_egg(arg, timeout) {
     const egg = arg?.a_obj;
     /* sterilized while waiting */
     if (!egg || egg.corpsenm === NON_PM) return;
 
-    const { big_to_little, monster_by_pmidx } = await import('./makemon.js');
-    const { makemon } = await import('./makemon.js');
+    const { big_to_little, monster_by_pmidx, makemon } = await import('./makemon.js');
+    const { enexto_gpflags } = await import('./teleport.js');
     const { tamedog } = await import('./dothrow.js');
     const { m_monnam, a_monnam } = await import('./do_name.js');
-    const { makeplural, useup, obj_extract_self, obfree } = await import('./invent.js');
+    const { makeplural, useup, obfree } = await import('./invent.js');
     const { cansee } = await import('./vision.js');
     const { newsym, m_at, canseemon_shared } = await import('./display.js');
     const { cry_sound } = await import('./sounds.js');
-    const { container_weight } = await import('./mkobj.js');
+    const { container_weight, obj_extract_self_mkobj } = await import('./mkobj.js');
     const { is_pool } = await import('./dbridge.js');
     const { hideunder } = await import('./monmove.js');
 
@@ -1329,11 +1317,10 @@ export async function hatch_egg(arg, timeout) {
         const ptr = monster_by_pmidx(mnum);
         if (!((ptr?.geno | 0) & G_UNIQ)
             && !((mv[mnum]?.mvflags | 0) & (G_GENOD | G_EXTINCT))) {
-            const cc = { x: 0, y: 0 };
             for (i = hatchcount; i > 0; i--) {
-                if (!await _enexto(cc, x, y, ptr)
-                    || !(mon = makemon(ptr, cc.x, cc.y,
-                                       C.NO_MINVENT | C.MM_NOMSG)))
+                const cc = enexto_gpflags(x, y, ptr, 0);
+                if (!cc || !(mon = makemon(ptr, cc.x, cc.y,
+                                          C.NO_MINVENT | C.MM_NOMSG)))
                     break;
                 /* tame if your own egg hatches while you're on the same
                    dungeon level, or any dragon egg which hatches while it's in
@@ -1418,15 +1405,15 @@ export async function hatch_egg(arg, timeout) {
         if ((egg.quan | 0) > 0) {
             /* still some eggs left; the stack wasn't split, just decremented,
                so the weight needs updating; add a new, short hatch timer */
-            await _attach_egg_hatch_timeout(egg, rnd(12));
+            attach_egg_hatch_timeout(egg, rnd(12));
             container_weight(egg);
         } else if (_carried(egg)) {
             useup(egg);
         } else {
             /* free the egg here because we use it above */
-            obj_extract_self(egg);
+            obj_extract_self_mkobj(egg);
             obfree(egg, null);
-            if ((mon = m_at(x, y)) && !hideunder(mon) && cansee(x, y))
+            if ((mon = m_at(x, y)) && !await hideunder(mon) && cansee(x, y))
                 redraw = true;
         }
         if (redraw) await newsym(x, y);
@@ -1462,27 +1449,6 @@ async function _locomotion(ptr, def) {
 
 // C ref: objnam.c ing_suffix() — objnam.c's symbol, private at js/invent.js:1369.
 function _ing_suffix(s) { return `${String(s).replace(/e$/, '')}ing`; }
-
-// C ref: timeout.c:980 attach_egg_hatch_timeout(egg, when).  js/mkobj.js:1473
-// has the same function against ITS timer model (a {when,kind,action} record
-// hung on the object); this copy targets the queue at the bottom of this file,
-// which is what hatch_egg() above re-arms.  The rnd(i) loop is C's, verbatim:
-// the old hatch_it() tried once a turn from age 151 to 200 and hatched on a roll
-// above 150, which is > 99.9993% likely.
-async function _attach_egg_hatch_timeout(egg, when) {
-    /* stop previous timer, if any */
-    await stop_timer(HATCH_EGG, _obj_to_any(egg));
-
-    if (!when) {
-        for (let i = (MAX_EGG_HATCH_TIME - 50) + 1; i <= MAX_EGG_HATCH_TIME; i++)
-            if (rnd(i) > 150) {
-                when = i;       /* egg will hatch */
-                break;
-            }
-    }
-    if (when)
-        await start_timer(when, TIMER_OBJECT, HATCH_EGG, _obj_to_any(egg));
-}
 
 // ── burning objects ────────────────────────────────────────────────────────
 
@@ -2003,13 +1969,9 @@ export async function do_storms() {
 //   run_timers()                              -> fire everything due
 //   save/restore/relink, obj_move/split/stop, obj_has_timer.
 //
-// THE QUEUE ITSELF IS NEW AND LOCAL TO THIS FILE.  js/ has no timer_element
-// list: js/mkobj.js:1349 hangs a single {when, kind, action} record on the
-// object and its run_object_timers() only ever fires ROT_CORPSE and
-// SHRINK_GLOB from it.  Rather than add fields to that record or introduce a
-// parallel global, the list below keeps C's timer_element shape exactly
-// (next / timeout / tid / kind / needs_fixup / func_index / arg) in a
-// module-local head pointer, the way C's gt.timer_base does.
+// This queue retains C's timer_element shape for the remaining timer APIs.
+// Live object timers (including HATCH_EGG) use mkobj.js's object-owned records;
+// their creation, cancellation and rescheduling must stay in that model.
 let timer_base = null;      /* C: gt.timer_base */
 let timer_id = 1;           /* C: svt.timer_id */
 

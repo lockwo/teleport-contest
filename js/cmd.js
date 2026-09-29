@@ -21,7 +21,7 @@ import { ddoinv, dismiss_invent_screen, dolook,
          renderWindowScreen, renderMenuLines, ECMD_NOTHANDLED, describe_decor, dfeature_at,
          dotypeinv, doprtool, nohands_youmonst, notake_youmonst, wiz_identify,
          xname, otense, inv_cnt, invlet_basic, splitobj, freeinv,
-         obj_extract_self, makeplural,
+         obj_extract_self, makeplural, youmonst_data_pub,
          ECMD_TIME as I_ECMD_TIME } from './invent.js';
 import { WEAPON_CLASS, objects as OBJECTS, KICKING_BOOTS, BOULDER, place_object } from './mkobj.js';
 import { doeat } from './eat.js';
@@ -64,7 +64,7 @@ import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          SLT_ENCUMBER, MOD_ENCUMBER, OVERLOADED, Is_medusa_level, Is_juiblex_level,
          Is_waterlevel } from './const.js';
 import { exercise, acurr_eff } from './attrib.js';
-import { hides_under_flag, throws_rocks_flag } from './monflags_data.js';
+import { hides_under_flag, throws_rocks_flag, mflags1_of, M1_CLING } from './monflags_data.js';
 import { noattacks, attacktype, AT_ENGL, AD_FIRE } from './monattk_data.js';
 // onscary() is an `export function` declaration in monmove.js, so this cycle
 // (cmd -> monmove -> uhitm -> allmain -> cmd) resolves through hoisting the
@@ -654,7 +654,7 @@ function u_simple_floortyp(x, y) {
 // C ref: pager.c:561 waterbody_name(x,y) — non-hallucinating water-body name.
 // The MOAT arm has THREE special-level overrides before the generic "moat";
 // dropping them made Medusa's level say "moat" where C says "shallow sea".
-function waterbody_name(x, y) {
+export function waterbody_name(x, y) {
     const loc = game.level?.at(x, y);
     const typ = loc ? loc.typ : STONE;
     // C ref: pager.c waterbody_name — every liquid word goes through
@@ -1092,6 +1092,7 @@ export async function rhack(key) {
     // replaces is_bound_key() for the prefix bookkeeping.
     const Cmd = numpad_cmd();
     let npExt = null, npBad = null, npBound = null;
+    const commandName = game.keybind?.[ch] ?? Cmd.binds.get(key & 0xff);
 
     // C ref: cmd.c bind_key() — a nethackrc BIND=key:command entry replaced this
     // key's extcmdlist entry at config time, so resolve the bound command the
@@ -1142,6 +1143,19 @@ export async function rhack(key) {
             if (!npExt) npBad = visctrl_code(key & 0xff);
             ch = '\0';
             key = 0;
+        }
+    }
+
+    // C rhack(): a command without CMD_M_PREFIX must not run after 'm'.
+    if (game.iflags?.menu_requested && !game.context._prefix_seen
+        && !game._modal_screen) {
+        const command = extcmdlist.find(ec => ec.ef_txt === commandName);
+        if (command && !(command.flags & PREFIXCMD)
+            && !accept_menu_prefix(command)) {
+            await pline(`The ${command.ef_txt} command does not accept 'm' prefix.`,
+                        { suppressHistory: true });
+            reset_cmd_vars(true);
+            return;
         }
     }
 
@@ -2964,11 +2978,8 @@ async function air_turbulence() {
     return true;
 }
 
-// C ref: hack.c slippery_ice_fumbling() — every step taken on ice risks
-// starting a one-turn Fumbling, and the rn2(Cold_resistance ? 3 : 2) that
-// decides it is drawn on EVERY such step.  Snow boots, cold resistance, flying
-// and the floater/clinger/whirly poly forms take the hero off the ice for this
-// purpose (and then clear an externally-imposed Fumbling).
+// C ref: hack.c slippery_ice_fumbling() — innate skater traits prevent slips;
+// the hero's acquired cold resistance only lowers the chance.
 const FROMOUTSIDE_CMD = 0x04000000; // prop.h FROMOUTSIDE
 const TIMEOUT_CMD = 0x00ffffff;     // prop.h TIMEOUT
 function slippery_ice_fumbling() {
@@ -2979,8 +2990,15 @@ function slippery_ice_fumbling() {
         && (game.level?.at(u.ux, u.uy)?.typ === ICE);
     if (on_ice) {
         const uarmf = game.uarmf;
+        const skater = u.usteed;
+        const ptr = skater?.data || youmonst_data_pub();
+        const coldSkater = ((ptr?.mresists | skater?.mintrinsics
+                            | skater?.mextrinsics) & 0x02) !== 0;
+        const floater = ptr?.mlet === 'e' || ptr?.mlet === 'y';
+        const clinger = (mflags1_of(ptr) & M1_CLING) !== 0;
+        const whirly = ptr?.mlet === 'v' || ptr?.name === 'air elemental';
         const snowboots = !!uarmf && OBJ_DESCR_CMD(uarmf) === 'snow boots';
-        if (snowboots || cold_res || u.uprops?.Flying) {
+        if (snowboots || coldSkater || u.uprops?.Flying || floater || clinger || whirly) {
             on_ice = false;
         } else if (!rn2(cold_res ? 3 : 2)) {
             u.HFumbling = ((u.HFumbling || 0) | FROMOUTSIDE_CMD) & ~TIMEOUT_CMD;
@@ -2994,7 +3012,7 @@ function slippery_ice_fumbling() {
 // C ref: objclass.h OBJ_DESCR(obj) — the (possibly shuffled) appearance word.
 function OBJ_DESCR_CMD(obj) {
     if (!obj) return null;
-    const idx = obj.oc_descr_idx != null ? obj.oc_descr_idx : obj.otyp;
+    const idx = OBJECTS[obj.otyp]?.oc_descr_idx ?? obj.otyp;
     return DESCR_BY_OTYP[idx] ?? null;
 }
 
@@ -3066,7 +3084,7 @@ async function escape_from_sticky_mon(x, y) {
     const held = u.ustuck;
     if (!held || (x === held.mx && y === held.my)) return false;
     // Dynamic: monmove.js -> ... -> cmd.js is a static cycle.
-    const { m_next2u, y_monnam_local } = await import('./monmove.js');
+    const { m_next2u } = await import('./monmove.js');
     if (!m_next2u(held)) { u.ustuck = null; return false; }
     // sticks(youmonst.data) is FALSE for every playable base form.
     const roll = rn2(!held.mcanmove ? 8 : 40);                  // hack.c:2664
@@ -3079,13 +3097,13 @@ async function escape_from_sticky_mon(x, y) {
         // — Conflict (the ring/artifact property) is not modelled anywhere in
         // this port, so it reads as FALSE; a hostile holder never releases.
         if (held.mconf || !held.mtame) {
-            await pline(`You cannot escape from ${y_monnam_local(held)}!`);
+            await pline(`You cannot escape from ${y_monnam(held)}!`);
             game.multi = 0;                                     // nomul(0)
             return true;
         }
     }
     u.ustuck = null;
-    await pline(`You pull free from ${y_monnam_local(held)}.`);
+    await pline(`You pull free from ${y_monnam(held)}.`);
     return false;
 }
 
@@ -4677,7 +4695,7 @@ async function domove_fight_web(x, y) {
 // C ref: hack.c domove_core() -> spoteffects(TRUE) -> pickup(1), run at the
 // tail of EVERY move that relocates the hero (step, run, rush, pet swap).
 // With autopickup off it falls to look_here(): "You see here <a thing>." (no
-// time/RNG); a run also halts on the object (runStopOnObject in hack.js).
+// time/RNG); pickup's check_here() also halts a run on an object other than uchain.
 // With autopickup on it lifts matching floor objects (prinv "<letter> -
 // <name>." lines). Travel (run == 8) doesn't auto-stop but pickup still
 // fires; we exclude only the mid-action teleport case (context.mv with no
@@ -4746,9 +4764,8 @@ export async function pickup_after_move(x, y) {
     //       && !svc.context.nopick) nomul(0);
     // This runs INSIDE pickup(), i.e. BEFORE autopickup lifts the object, so a
     // run halts ON the object's square even when autopickup then removes it from
-    // the floor.  (hack.js runStopOnObject only catches the no-autopickup case,
-    // where the object is still on the floor after the move.)  nomul(0): leave a
-    // busy hero alone (multi < 0), else clear multi + travel state to end the run.
+    // the floor. nomul(0) leaves a busy hero alone (multi < 0), otherwise
+    // clears multi + travel state to end the run.
     if (hasObj && ctx.run && ctx.run !== 8 && !ctx.nopick
         && (game.multi ?? 0) >= 0) {
         game.multi = 0;
@@ -4863,6 +4880,8 @@ async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = fa
     const objs = (game.level?.objects || []).filter(
         (o) => o.where === 'floor' && o.ox === x && o.oy === y);
     if (objs.length === 0) return;
+    // check_here() excludes the attached chain from the pile-limit count.
+    const objCount = objs.length - Number(objs.includes(game.u?.uchain));
     // C ref: look_here() — "if (dfeature && !skip_dfeature) pline1(fbuf);"
     // fbuf = "There is <a feature> here." (dfeature_at names stairs, altars,
     // fountains, doors, ...).  skip_dfeature (LOOKHERE_SKIP_DFEATURE) is set
@@ -4876,7 +4895,7 @@ async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = fa
     // keeping a second, sighted-only copy of it here.
     if (Blind()) {
         const inv = await import('./invent.js');
-        await inv.look_here(objs.length, (_pickedSome ? 1 : 0) | (skipDfeature ? 2 : 0));
+        await inv.look_here(objCount, (_pickedSome ? 1 : 0) | (skipDfeature ? 2 : 0));
         return;
     }
     if (objs.length === 1) {
@@ -4900,7 +4919,7 @@ async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = fa
     // hero who stepped onto a pile on the stairs get BOTH describe_decor's line
     // and look_here's "There is a staircase ... here."
     const inv = await import('./invent.js');
-    await inv.look_here(objs.length, (_pickedSome ? 1 : 0) | (skipDfeature ? 2 : 0));
+    await inv.look_here(objCount, (_pickedSome ? 1 : 0) | (skipDfeature ? 2 : 0));
 }
 
 // COIN_CLASS (gold) — objclass.h; defined inline here to gate the gold look-here
@@ -4977,10 +4996,11 @@ async function domove_swap_with_pet(mtmp, x, y) {
     }
     if (mtmp.mpeaceful
         && (trap_at(u.ux0, u.uy0) || mtmp.ispriest || mtmp.isshk || mtmp.isgd
-            || mtmp.data?.name === 'Oracle')) {
+            || mtmp.data?.name === 'Oracle'
+            || mtmp.m_id === game.quest_status?.leader_m_id)) {
         // displacing a peaceful onto a trapped square, or a shk/priest/guard/
         // Oracle/quest leader, is refused.  (goodpos() is not ported.)
-        await pline(`You stop.  ${Monnam(mtmp)} doesn't want to swap places.`);
+        await update_topl(`You stop.  ${YMonnam(mtmp)} doesn't want to swap places.`);
         return false;
     }
 

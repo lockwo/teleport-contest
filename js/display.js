@@ -3017,6 +3017,7 @@ export async function pline(msg, opts = {}) {
     if (softPending && !msg.startsWith('You die') && msg.length + cur.length + 3 < CO - 8) {
         game._pending_message = cur + '  ' + msg;
         game._toplinSoft = game._pending_message;
+        game._yn_need_more = true;
         if (!suppressHistory) game._toplines = game._pending_message;
         return;
     }
@@ -3033,6 +3034,7 @@ export async function pline(msg, opts = {}) {
     // the text self-clears the moment any writer (rhack's per-command reset,
     // a prompt, a menu) replaces the pending line.
     game._toplinSoft = msg;
+    game._yn_need_more = true;
     // C ref: win/tty/topl.c redotoplin():139 — a message that word-wraps onto
     // a second display row blocks on --More-- IMMEDIATELY, no second logical
     // message required (e.g. a long welcome greeting).
@@ -3312,6 +3314,7 @@ export async function update_topl(bp) {
         // this unconditionally); leaving it stale here missed the ^P case below.
         game._toplinSoft = game._pending_message;
         game._toplin = TOPLIN_NEED_MORE;
+        game._yn_need_more = true;
         // C ref: topl.c gt.toplines — the persistent last-topline text (used by
         // Norep dedup), which is NOT blanked when the command prompt clears the
         // displayed message line.
@@ -3357,6 +3360,7 @@ export async function update_topl(bp) {
     // bites!") never registers as the still-fresh line doprev_message() (^P)
     // is allowed to redisplay.
     game._toplinSoft = bp;
+    game._yn_need_more = true;
     // C ref: win/tty/topl.c redotoplin():139 — `if (ttyDisplay->cury && otoplin
     // != TOPLINE_SPECIAL_PROMPT) more()`.  A message that word-wrapped onto a
     // second row blocks on --More-- IMMEDIATELY; more() then blanks rows 0..cury
@@ -3413,8 +3417,7 @@ function topl_cursor_after(str) {
 // prompt.  resp lists the allowed letters (an embedded ESC marks hidden,
 // always-acceptable choices); def is returned on space/return/ESC.
 export async function y_n(query, resp = 'yn\x1b', def = 'n') {
-    if (game._yn_need_more) {
-        game._yn_need_more = false;
+    if (game._yn_need_more && (!game._winStop || game._winNoStop)) {
         await topl_more();
         // Acking a deferred --More-- is where a pending status redraw lands:
         // the --More-- frames still show the pre-done() line, this prompt's
@@ -3422,6 +3425,9 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n') {
         // without calling bot(); the next real bot() is the one that pages.)
         delete game._botlFrozen;
     }
+    game._yn_need_more = false;
+    game._winStop = false;
+    game._winNoStop = false;
     // Build the displayed prompt (hidden ESC-and-after choices are stripped).
     const shown = resp.split('\x1b')[0];
     let prompt = query;

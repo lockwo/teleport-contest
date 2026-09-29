@@ -20,6 +20,10 @@ import {
     AD_DRST, AD_ACID,
 } from './monattk_data.js';
 import { healmon } from './mon.js';
+import { monster_by_pmidx, pmname_of_pmidx } from './makemon.js';
+import { Mgender } from './do_name.js';
+import { mflags2_of, M2_PNAME } from './monflags_data.js';
+import { an, the_unique_pm } from './objnam.js';
 
 // ---------------------------------------------------------------------------
 // include/mcastu.h — MONSPELL(def, lvl, flags) in enum order.  The enum VALUE
@@ -468,14 +472,14 @@ export function death_inflicted_by(_outbuf, deathreason, mtmp) {
     let outbuf = String(deathreason);
     if (mtmp) {
         const mptr = mtmp.data;
-        const champtr = ismnum_(mtmp.cham) ? mons_(mtmp.cham) : mptr;
-        let realnm = pmname(champtr, Mgender_(mtmp));
-        const fakenm = pmname(mptr, Mgender_(mtmp));
-
-        /* greatly simplified extract from done_in_by() */
-        if (!type_is_pname_(champtr) && !the_unique_pm_(mptr)) realnm = an_(realnm);
-        outbuf += ` inflicted by ${the_unique_pm_(mptr) ? 'the ' : ''}${realnm}`;
-        if (champtr !== mptr) outbuf += ` imitating ${an_(fakenm)}`;
+        const champtr = Number.isInteger(mtmp.cham) && mtmp.cham >= 0
+            ? monster_by_pmidx(mtmp.cham) : mptr;
+        let realnm = pmname_of_pmidx(champtr.pmidx, Mgender(mtmp));
+        const fakenm = pmname_of_pmidx(mptr.pmidx, Mgender(mtmp));
+        if (!(mflags2_of(champtr) & M2_PNAME) && !the_unique_pm(mptr))
+            realnm = an(realnm);
+        outbuf += ` inflicted by ${the_unique_pm(mptr) ? 'the ' : ''}${realnm}`;
+        if (champtr !== mptr) outbuf += ` imitating ${an(fakenm)}`;
     }
     return outbuf;
 }
@@ -1070,14 +1074,3 @@ function upstart_(s) {
     const str = String(s || '');
     return str ? str[0].toUpperCase() + str.slice(1) : str;
 }
-// C ref: mondata.c pmname(ptr, gend) / do_name.c Mgender(mtmp) /
-// mondata.h ismnum(x), type_is_pname(ptr), the_unique_pm(ptr).
-function pmname(ptr, _gend) { return ptr?.name || 'creature'; }
-function Mgender_(mtmp) { return mtmp?.female ? 1 : 0; }
-function ismnum_(x) { return Number.isInteger(x) && x >= 0; }
-// C ref: mons[idx] — js/makemon.js:642 monster_by_pmidx() is the accessor, but
-// death_inflicted_by() is sync so it can't await the import; the cham field is
-// NON_PM for every spellcaster these sessions run, so this arm is dead today.
-function mons_(_idx) { return null; }
-function type_is_pname_(ptr) { return !!ptr?.pname; }
-function the_unique_pm_(ptr) { return !!ptr?.unique; }

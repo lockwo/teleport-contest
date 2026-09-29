@@ -1,41 +1,6 @@
-// mkmap.js — port of src/mkmap.c, the cellular-automaton cave generator that
-// des.map-less levels (the Gnomish Mines fill levels, the Priest quest levels,
-// dat/Bar-fila.lua, …) are built from.
-//
-// WIRED: js/levels/val_loca.js, val_goal.js, val_fila.js, val_filb.js call
-// mkmap() directly (join_map()'s own add_room()/dig_corridor() calls are now
-// LOCAL ports — mkmap_add_room()/mkmap_dig_corridor() below — since the real
-// ones in js/mklev.js are module-private and that file is off limits to edit;
-// the previous `await import('./mklev.js')` grabbed undefined and silently
-// no-opped both calls whenever join=true was requested).
-//
-// TWO REDUCED PRIVATE COPIES ARE STILL LIVE ELSEWHERE (unrelated callers):
-//   js/mklev.js:2936-3221   mk_get_map, mk_init_map, mk_init_fill,
-//                           mk_pass_one, mk_pass_two, mk_pass_three,
-//                           mk_flood_fill_rm, mk_join_map_cleanup,
-//                           mk_join_map (+ mk_join_map_corridors),
-//                           mk_wallify_map, mk_finish_map, mk_mkmap
-//   js/levels/pri_loca.js:41-139  mkmap_init_map, mkmap_pass_one,
-//                           mkmap_pass_two/three, mkmap_finish_map
-//
-// The mklev.js set is REDUCED in four measurable ways, all fixed here:
-//   * mk_mkmap() hardcodes smoothed/joined TRUE and takes `lit` pre-resolved,
-//     so it never calls litstate_rnd() and never passes icedpools;
-//   * mk_finish_map() drops finish_map()'s `bg_typ == TREE` lit clause and its
-//     whole trailing LAVAPOOL/ICE loop (so lava is not force-lit and ICE never
-//     gets loc.icedpool set);
-//   * mk_flood_fill_rm() implements the anyroom=FALSE path only (the anyroom
-//     branch that pulls walls/doors into the room and marks SHARED is at
-//     js/sp_lev.js:3508, also module-private);
-//   * remove_room()/remove_rooms() have no port anywhere.
-//
-// A further wiring pass could REPLACE those copies one call site at a time
-// under measurement, not add a second caller
-// ([[duplicate-reimplementation-shadows-faithful-port]]).
-//
-// litstate_rnd() and flood_fill_rm() are mkmap.c's own functions and are
-// translated here for that reason even though the coverage tool already counts
-// them from the private copies at js/sp_lev.js:325 / js/sp_lev.js:3508.
+// mkmap.js — port of src/mkmap.c, the cellular-automaton cave generator.
+// Quest levels call mkmap() directly. mklev.js also shares finish_map() so its
+// cave generators preserve the same lighting and frozen-water terrain state.
 
 import { game } from './gstate.js';
 import { rn2, rnd } from './rng.js';

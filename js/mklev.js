@@ -8,6 +8,7 @@
 import { game } from './gstate.js';
 import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
+import { finish_map } from './mkmap.js';
 import { christen_monst } from './do_name.js';
 import { init_rect, rnd_rect, get_rect, split_rects, within_bounded_area } from './rect.js';
 import { depth as depth_of_level, distmin } from './hacklib.js';
@@ -77,7 +78,7 @@ import {
     CROSSWALL, TUWALL, TDWALL, TLWALL, TRWALL,
     D_NODOOR, D_CLOSED, D_ISOPEN, D_LOCKED, D_TRAPPED, D_BROKEN, D_SECRET,
     OROOM, VAULT, THEMEROOM, ROOMOFFSET, MAXNROFROOMS, SHARED, NO_ROOM,
-    SHOPBASE, COURT, ZOO, BEEHIVE, MORGUE, BARRACKS, SWAMP, TEMPLE,
+    SHOPBASE, ARMORSHOP, WEAPONSHOP, COURT, ZOO, BEEHIVE, MORGUE, BARRACKS, SWAMP, TEMPLE,
     LEPREHALL, COCKNEST, ANTHOLE,
     SDOOR, SCORR, IRONBARS, FOUNTAIN, SINK, ALTAR, GRAVE,
     DIR_N, DIR_S, DIR_E, DIR_W, DIR_180,
@@ -1818,6 +1819,38 @@ async function themeroom_nesting_rooms() {
     });
 }
 
+// C ref: themerms.lua "Twin businesses".
+async function themeroom_twin_businesses() {
+    return des_room({ rtype: THEMEROOM, w: 9, h: 5 }, async () => {
+        const southeast = () => mk_percent(50) ? 'south' : 'east';
+        const northeast = () => mk_percent(50) ? 'north' : 'east';
+        const northwest = () => mk_percent(50) ? 'north' : 'west';
+        const southwest = () => mk_percent(50) ? 'south' : 'west';
+        const placements = [
+            { lx: 1, ly: 1, rx: 4, ry: 1, lwall: 'south', rwall: southeast() },
+            { lx: 1, ly: 2, rx: 4, ry: 2, lwall: 'north', rwall: northeast() },
+            { lx: 1, ly: 1, rx: 5, ry: 1, lwall: southeast(), rwall: southwest() },
+            { lx: 1, ly: 1, rx: 5, ry: 2, lwall: southeast(), rwall: northwest() },
+            { lx: 1, ly: 2, rx: 5, ry: 1, lwall: northeast(), rwall: southwest() },
+            { lx: 1, ly: 2, rx: 5, ry: 2, lwall: northeast(), rwall: northwest() },
+            { lx: 2, ly: 1, rx: 5, ry: 1, lwall: southwest(), rwall: 'south' },
+            { lx: 2, ly: 2, rx: 5, ry: 2, lwall: northwest(), rwall: 'north' },
+        ];
+        const swap = mk_percent(50);
+        const shopdoorstate = () => mk_percent(1) ? 'locked'
+            : mk_percent(50) ? 'closed' : 'open';
+        const p = placements[lua_math_random(1, placements.length) - 1];
+        await des_room({
+            rtype: swap ? ARMORSHOP : WEAPONSHOP,
+            x: p.lx, y: p.ly, w: 3, h: 3, needfill: FILL_NORMAL, joined: false,
+        }, () => des_door({ state: shopdoorstate(), wall: p.lwall }));
+        await des_room({
+            rtype: swap ? WEAPONSHOP : ARMORSHOP,
+            x: p.rx, y: p.ry, w: 3, h: 3, needfill: FILL_NORMAL, joined: false,
+        }, () => des_door({ state: shopdoorstate(), wall: p.rwall }));
+    });
+}
+
 // C ref: dat/nhlib.lua:17 shuffle(list) — Fisher-Yates from the tail down,
 // drawing `math.random(i)` == 1 + rn2(i) for i = #list .. 2.
 function lua_shuffle(list) {
@@ -1907,6 +1940,7 @@ const NESTED_ROOM_BUILDERS = {
     'Nesting rooms': themeroom_nesting_rooms,
     'Mausoleum': themeroom_mausoleum,
     'Random dungeon feature': themeroom_random_feature,
+    'Twin businesses': themeroom_twin_businesses,
 };
 
 // C ref: sp_lev.c set_levltyp_lit() with lit=SET_LIT_NOCHANGE (-2) — set the
@@ -3290,28 +3324,9 @@ function mk_wallify_map(x1, y1, x2, y2) {
     }
 }
 
-// C ref: mkmap.c finish_map() — walled + lit handling (smooth/join already done).
-function mk_finish_map(fg_typ, bg_typ, lit, walled) {
-    const map = game.level;
-    if (walled)
-        mk_wallify_map(1, 0, COLNO - 1, ROWNO - 1);
-    if (lit) {
-        for (let x = 1; x < COLNO; x++)
-            for (let y = 0; y < ROWNO; y++) {
-                const t = map.at(x, y).typ;
-                if ((!IS_OBSTRUCTED(fg_typ) && t === fg_typ)
-                    || (!IS_OBSTRUCTED(bg_typ) && t === bg_typ)
-                    || (walled && IS_WALL(t)))
-                    map.at(x, y).lit = true;
-            }
-        for (let x = 0; x < game.level.nroom; x++)
-            game.level.rooms[x].rlit = 1;
-    }
-}
-
 // C ref: mkmap.c mkmap() — smooth+join always run (every covered caller sets
 // smoothed/joined); bg_typ/fg_typ/walled are the only params that vary.
-function mk_mkmap(lit, bg_typ = STONE, fg_typ = ROOM, walled = true) {
+async function mk_mkmap(lit, bg_typ = STONE, fg_typ = ROOM, walled = true) {
     mk_init_map(bg_typ);
     mk_init_fill(bg_typ, fg_typ);
     mk_pass_one(bg_typ, fg_typ);     // N_P1_ITER = 1
@@ -3319,7 +3334,7 @@ function mk_mkmap(lit, bg_typ = STONE, fg_typ = ROOM, walled = true) {
     mk_pass_three(bg_typ, fg_typ);   // N_P3_ITER = 2 (smoothed)
     mk_pass_three(bg_typ, fg_typ);
     mk_join_map(bg_typ, fg_typ);     // joined
-    mk_finish_map(fg_typ, bg_typ, lit, walled);
+    await finish_map(fg_typ, bg_typ, lit, walled, false);
     // a walled, joined level is cavernous, not mazelike
     if (walled) {
         game.level.flags.is_maze_lev = false;
@@ -3587,7 +3602,7 @@ async function makemaz_minefill() {
         //   splev_initlev MINES: lit = rn2(2); lvlfill_solid(ROOM,0); mkmap().
         const minesLit = rn2(2);
         // litstate_rnd(lit): lit >= 0 -> returns lit, no PRNG.
-        mk_mkmap(!!minesLit);
+        await mk_mkmap(!!minesLit);
 
         // des.stair("up"); des.stair("down")
         mk_stair(true);
@@ -4105,7 +4120,7 @@ async function makemaz_minetown1() {
     // joined=true, walled=true}) — lit unset -> BOOL_RANDOM -> one rn2(2)
     // (sp_lev.c:3005-3006), then mkmap() (mk_mkmap always smooths+joins,
     // matching every one of its other callers).
-    mk_mkmap(!!rn2(2), STONE, ROOM, true);
+    await mk_mkmap(!!rn2(2), STONE, ROOM, true);
 
     // des.map([[...]]) — 37x19, bare string -> SPLEV_CENTER, lit=FALSE.
     bigrm_load_map(MINETN1_MAP, false);
@@ -4315,7 +4330,7 @@ async function makemaz_minetown6() {
 
     // des.level_init({style="mines", fg=".", bg="-", smoothed=true,
     // joined=true, lit=1, walled=true}) — lit is explicit, no rn2 draw.
-    mk_mkmap(true, HWALL, ROOM, true);
+    await mk_mkmap(true, HWALL, ROOM, true);
 
     // des.map({halign="center", valign="top", map=[[...]]}) — 41x20; 'x'
     // cells leave the mines cavern above untouched.
@@ -4945,12 +4960,12 @@ function hf_style_prologue(...flags) {
 }
 
 // hells[1]: "mines"-style cavern flooded with lava.
-function hf_style_mines_lava() {
+async function hf_style_mines_lava() {
     hf_style_prologue('mazelevel');
     // MINES: lit=0 explicit (no roll); filling defaults to fg (".") so the map
     // is pre-filled with floor, then mkmap() re-initialises it from bg anyway.
     hf_lvlfill_solid(ROOM, 0);
-    mk_mkmap(false, STONE, ROOM, true);
+    await mk_mkmap(false, STONE, ROOM, true);
     hf_replace_terrain({ fromtyp: STONE, totyp: LAVAPOOL });
     hf_replace_terrain({ fromtyp: ROOM, totyp: LAVAPOOL, chance: 5 });
     hf_replace_terrain({ mapfragstr: 'w', totyp: LAVAPOOL, chance: 20 });
@@ -5036,11 +5051,11 @@ function hf_style_cold_maze() {
 }
 
 // hells[7]: open cavern — "mines" with wider corridors; walls stone or lava.
-function hf_style_open_cavern() {
+async function hf_style_open_cavern() {
     const wter = mk_percent(50) ? STONE : LAVAPOOL;
     hf_style_prologue('mazelevel');
     hf_lvlfill_solid(ROOM, 0);
-    mk_mkmap(false, wter, ROOM, false);
+    await mk_mkmap(false, wter, ROOM, false);
     const sel = l_selection_grow(selection_match('.'), W_ANY);
     hf_terrain_sel(sel, ROOM, 0);
     const border = hf_sel_rect(0, 0, 78, 20);
@@ -5096,13 +5111,13 @@ async function makemaz_hellfill() {
     try {
         const hellno = mk_mrandom(1, 7);
         switch (hellno) {
-        case 1: hf_style_mines_lava(); break;
+        case 1: await hf_style_mines_lava(); break;
         case 2: hf_style_mazegrid_tweaks(); break;
         case 3: hf_style_plain_maze(); break;
         case 4: hf_style_bars_or_lava_maze(); break;
         case 5: hf_style_thick_maze(); break;
         case 6: hf_style_cold_maze(); break;
-        default: hf_style_open_cavern(); break;
+        default: await hf_style_open_cavern(); break;
         }
 
         mk_stair(true);
@@ -5895,7 +5910,7 @@ async function makemaz_bar_fila() {
         //                  joined=true, lit=0, walled=false })
         //   splev_initlev MINES: lit is an explicit boolean (0), so
         //   litstate_rnd draws NO rn2 (unlike minefill's implicit/random lit).
-        mk_mkmap(false, ROOM, ROOM, false);
+        await mk_mkmap(false, ROOM, ROOM, false);
 
         // des.stair("up"); des.stair("down")
         mk_stair(true);
@@ -6797,7 +6812,7 @@ function wall_cleanup(x1, y1, x2, y2) {
                 loc.typ = STONE;
         }
 }
-function fix_wall_spines(x1, y1, x2, y2) {
+export function fix_wall_spines(x1, y1, x2, y2) {
     const spineArray = [VWALL, HWALL, HWALL, HWALL,
         VWALL, TRCORNER, TLCORNER, TDWALL,
         VWALL, BRCORNER, BLCORNER, TUWALL,

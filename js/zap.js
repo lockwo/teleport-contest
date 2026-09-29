@@ -6,14 +6,15 @@ import { game } from './gstate.js';
 import { rn2, rn1, rnd, rnl, d } from './rng.js';
 import { pline, newsym, m_at, show_glyph_cell, update_topl, topl_more, y_n,
          bot, flush_screen, canseemon_shared, map_invisible, unmap_object,
-         impossible, display_nhwindow_message } from './display.js';
+         impossible, display_nhwindow_message, Hallucination_u as Hallucination } from './display.js';
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_NOFLAGS, xname, near_capacity, splitobj, delobj_core, obfree,
          obj_extract_self, sobj_at, encumber_msg, is_weptool, update_inventory,
          display_minventory, worn_extrinsic, yname, makeplural,
-         Ring_gone, setnotworn } from './invent.js';
+         Ring_gone, setnotworn, body_part } from './invent.js';
 import { mon_mr } from './monmr_data.js';
-import { mflags1_of, M1_NOEYES, M1_BREATHLESS, is_undead_flag, nohands } from './monflags_data.js';
+import { mflags1_of, M1_NOEYES, M1_BREATHLESS, is_undead_flag, nohands,
+         passes_walls_flag, is_swimmer_flag } from './monflags_data.js';
 // AD_MAGM is NOT imported: this file already declares the AD_* block locally
 // (same values), and a duplicate binding is a module-load SyntaxError.
 import { attacktype_fordmg, dmgtype, AT_EXPL, AT_GAZE, AD_BLND,
@@ -24,7 +25,7 @@ import { observe_object } from './o_init.js';
 import { exercise, acurr_eff as ACURR } from './attrib.js';
 import { more_experienced, has_innate } from './exper.js';
 import { findit } from './detect.js';
-import { cansee, vision_recalc } from './vision.js';
+import { cansee, vision_recalc, Blind } from './vision.js';
 import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS, ARMOR_CLASS,
          FOOD_CLASS, RING_CLASS, POT_OIL, POT_WATER, GLOB_OF_GREEN_SLIME,
          SPBOOK_CLASS, mkobj as _mkobj, place_object, objects,
@@ -47,8 +48,10 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          W_AMUL, W_TOOL, W_RING, W_RINGL, FIRE_RES, COLD_RES,
          SHOCK_RES, ACID_RES, DISINT_RES, ANTIMAGIC, is_magical_trap, has_oname, ONAME,
          ESHK, engulfing_u, u_at, M_AP_TYPE, NHW_TEXT, NHW_MENU,
-         PICK_ONE, LEVITATION, FLYING, KILLED_BY, KILLED_BY_AN } from './const.js';
-import { is_pool, is_ice } from './dbridge.js';
+         PICK_ONE, LEVITATION, FLYING, KILLED_BY, KILLED_BY_AN,
+         NO_KILLER_PREFIX, ARM, LAVAWALL, DB_UNDER, DB_FLOOR, VWALL, HWALL,
+         TT_LAVA, TT_INFLOOR, PASSES_WALLS } from './const.js';
+import { is_pool, is_ice, is_lava } from './dbridge.js';
 import { create_gas_cloud } from './region.js';
 import { CLR_ORANGE, CLR_BLACK, CLR_GREEN, CLR_YELLOW, CLR_WHITE, CLR_BRIGHT_BLUE } from './terminal.js';
 // C ref: display.c:2661 zapcolors[NUM_ZAP], display.h:280 (HI_ZAP == CLR_BRIGHT_BLUE).
@@ -57,11 +60,12 @@ const ZAPCOLORS = [CLR_BRIGHT_BLUE, CLR_ORANGE, CLR_WHITE, CLR_BRIGHT_BLUE,
                    CLR_BLACK, CLR_WHITE, CLR_GREEN, CLR_YELLOW];
 import { can_make_bones } from './bones.js';
 import { DEADMONSTER, set_ustuck, dealloc_monst, replmon,
-         restore_cham } from './mon.js';
+         restore_cham, unstuck } from './mon.js';
 import { MON_WEP } from './monmove.js';
 import { killed, canspotmon, mon_nam, Monnam, x_monnam,
          mon_pmname } from './uhitm.js';
 import { find_mac as worn_find_mac } from './worn.js';
+import { rnd_hallublast } from './mthrowu.js';
 
 // Object-type numbers for the directional wands/spells that zapyourself() gives
 // a special self-inflicted effect.  C ref: include/objects.h (WAN_DEATH),
@@ -355,7 +359,8 @@ async function lightdamage(obj, ordinary, amt) {
         if (dmg > 20) dmg = 20;
         await pline(`Ow, that light hurts${(dmg > 2 || (game.u?.mh ?? 0) <= 5) ? '!' : '.'}`);
         await losehp(Maybe_Half_Phys(dmg),
-                     `${ordinary ? 'zapped' : 'blasted'} himself with ${xname(obj)}`);
+                     `${ordinary ? 'zapped' : 'blasted'} himself with ${xname(obj)}`,
+                     NO_KILLER_PREFIX);
     }
     return dmg;
 }
@@ -385,11 +390,6 @@ async function makewish() {
 // C ref: hack.h Luck — u.uluck + u.moreluck (plus the luck timeout, which this
 // port folds into uluck).
 function Luck() { return (game.u?.uluck | 0) + (game.u?.moreluck | 0); }
-// C ref: youprop.h Blind — u.ucreamed or the Blinded timeout.
-function Blind() {
-    const u = game.u;
-    return !!(u?.uprops?.Blinded || u?.Blind || u?.ucreamed);
-}
 
 // C ref: include/obj.h unpolyable(o) — object types that can't be polymorphed
 // (the polymorph items themselves and the amulet of unchanging).
@@ -1454,8 +1454,10 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                     await zhitu(type, nd, flash_killer(type), sx, sy);
                     if (game.program_state?.gameover) return;
                 }
-            } else {
+            } else if (!Blind()) {
                 await update_topl(`${flash_The(type)} whizzes by you!`);
+            } else if (damgtype === ZT_LIGHTNING) {
+                await update_topl(`Your ${body_part(ARM)} tingles.`);
             }
             // C: this runs for BOTH the hit and the miss arm — every lightning
             // bolt crossing the hero's square draws d(nd, 50) for the blinding
@@ -1497,12 +1499,8 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
     for (const [vx, vy] of visited.values()) newsym(vx, vy);
 }
 
-// C ref: zap.c zap_over_floor(x, y, type, ...) — terrain/floor-object effects
-// along a ray's path.  Returns C's `rangemod`.  The ZT_COLD / lava / iron-bars /
-// door arms still need terrain subsystems this port does not carry (freeze
-// timers, drawbridges) and are DEFERRED; ported here are the two a fire ray
-// actually crosses — the water/fountain steam clouds (each pool square draws
-// rnd(5) plus a whole create_gas_cloud) and the scroll/spellbook burn.
+// C ref: zap.c zap_over_floor() — terrain and floor-object effects, with
+// range consumed by the terrain change.
 export async function zap_over_floor(x, y, type, _exploding_wand_typ) {
     // C ref: zap.c:5157 — a PHYS_EXPL_TYPE blast (gas spore) has no effect on
     // the floor and returns before anything else.  Without this guard the
@@ -1542,6 +1540,83 @@ export async function zap_over_floor(x, y, type, _exploding_wand_typ) {
             if (see_it) await update_topl('Steam billows from the fountain.');
             rangemod -= 1;
             /* dryup(x, y, type > 0): fountain bookkeeping, no RNG on this path */
+        }
+    } else if (damgtype === ZT_COLD && lev
+               && (is_lava(x, y) || lev.typ === LAVAWALL)) {
+        const lavawall = lev.typ === LAVAWALL;
+        const see_it = cansee(x, y);
+        const { hliquid } = await import('./do_name.js');
+        const chance = Math.max(2, 5 + (game.level.flags?.temperature ?? 0) * 10);
+        if (lavawall && rn2(chance)) {
+            if (see_it)
+                await update_topl(`The ${hliquid('lava')} freezes for a moment.`);
+            else if (!game.u?.Deaf)
+                await update_topl('You hear a soft crackling.');
+            rangemod -= 1000;
+        } else {
+            // C computes this before changing terrain, including its display RNG.
+            const { waterbody_name } = await import('./cmd.js');
+            waterbody_name(x, y);
+            rangemod -= 3;
+            if (lev.typ === DRAWBRIDGE_UP) {
+                lev.drawbridgemask &= ~DB_UNDER;
+                lev.drawbridgemask |= DB_FLOOR;
+            } else {
+                lev.icedpool = 0;
+                if (lavawall) {
+                    lev.typ = ((isok(x, y - 1) && IS_WALL(game.level.at(x, y - 1).typ))
+                               || (isok(x, y + 1) && IS_WALL(game.level.at(x, y + 1).typ)))
+                        ? VWALL : HWALL;
+                    const { fix_wall_spines } = await import('./mklev.js');
+                    fix_wall_spines(Math.max(0, x - 1), Math.max(0, y - 1),
+                                    Math.min(COLNO - 1, x + 1), Math.min(ROWNO - 1, y + 1));
+                } else {
+                    lev.typ = ROOM;
+                }
+            }
+            const { bury_objs } = await import('./dig.js');
+            await bury_objs(x, y);
+            if (see_it) {
+                await Norep_zap(`The ${hliquid('lava')} cools and solidifies.`);
+                newsym(x, y);
+            }
+            const u = game.u;
+            if (u_at(x, y) && u.utrap && u.utraptype === TT_LAVA) {
+                const phasing = u.uprops?.Passes_walls || u.uprops?.HPasses_walls
+                    || u.uprops?.EPasses_walls || worn_extrinsic(PASSES_WALLS)
+                    || (u.Upolyd && passes_walls_flag(u.data));
+                const { float_vs_flight } = await import('./polyself.js');
+                if (phasing) {
+                    await update_topl('You pass through the now-solid rock.');
+                    const blockedLev = !!u.uprops?.BLevitation;
+                    const blockedFly = !!u.uprops?.BFlying;
+                    u.utrap = 0;
+                    u.utraptype = 0;
+                    float_vs_flight();
+                    if (blockedLev && !u.uprops?.BLevitation
+                        && (u.uprops?.Levitation || u.uprops?.HLevitation
+                            || u.uprops?.ELevitation || worn_extrinsic(LEVITATION))) {
+                        const { float_up } = await import('./trap.js');
+                        await float_up();
+                    }
+                    if (blockedFly && !u.uprops?.BFlying
+                        && (u.uprops?.Flying || u.uprops?.HFlying
+                            || u.uprops?.EFlying || worn_extrinsic(FLYING)))
+                        await update_topl('You can fly.');
+                } else {
+                    u.utrap = rn1(50, 20);
+                    u.utraptype = TT_INFLOOR;
+                    float_vs_flight();
+                    await update_topl('You are firmly stuck in the cooling rock.');
+                }
+            }
+            else if (!u_at(x, y)) {
+                const mon = m_at(x, y);
+                if (mon && is_swimmer_flag(mon.data) && mon.mundetected) {
+                    mon.mundetected = 0;
+                    newsym(x, y);
+                }
+            }
         }
     }
     if (damgtype === ZT_FIRE)
@@ -1658,10 +1733,6 @@ async function ureflects(fmt, str) {
     return false;
 }
 
-function Hallucination() {
-    const u = game.u;
-    return !!(u?.uprops?.Hallucination || u?.Hallu || u?.uhallu);
-}
 
 // C ref: zap.c zap_hit(ac, type) — does the ray hit a target of armor class ac?
 function zap_hit(ac, type) {
@@ -1846,10 +1917,11 @@ async function hit(str, mon, force) {
     const named = verbose && (cansee(mon?.mx, mon?.my) || canspotmon(mon));
     await update_topl(`The ${str} hits ${named ? mon_nam(mon) : 'it'}${force}`);
 }
-async function miss(str, mon) {
+export async function miss(str, mon) {
+    const { vtense } = await import('./dothrow.js');
     const verbose = game.flags?.verbose !== false;
     const named = (cansee(mon?.mx, mon?.my) || canspotmon(mon)) && verbose;
-    await update_topl(`The ${str} misses ${named ? mon_nam(mon) : 'it'}.`);
+    await update_topl(`The ${str} ${vtense(str, 'miss')} ${named ? mon_nam(mon) : 'it'}.`);
 }
 // C ref: mondata.c disguised_as_non_mon — a hiding mimic/mimicking object.  No
 // covered zap target is a mimic.
@@ -1873,9 +1945,15 @@ async function wakeup(mon, viaAttack) {
         await setmangry(mon, true);
     }
 }
-// C ref: zap.c slept_monst — releases a grappled hero when their engulfer/
-// holder falls asleep.  No covered zap target is grappling the hero.
-async function slept_monst(_mon) {}
+// C ref: mhitm.c:1250 slept_monst(): sleeping holders release, engulfers do not.
+export async function slept_monst(mon) {
+    const u = game.u;
+    if ((mon.msleeping || !(mon.mcanmove ?? 1)) && u.ustuck === mon
+        && !u.uswallow && !sticks(game.youmonst?.data || await youmonst_data_z())) {
+        await pline(`${s_suffix(Monnam(mon))} grip relaxes.`);
+        await unstuck(mon);
+    }
+}
 
 // C ref: mhitm.c sleep_monst(mon, amt, how) — how=WAND_CLASS for a wand of
 // sleep zap.  seemimic() mimic-reveal is not modelled (no covered zap target
@@ -1934,9 +2012,13 @@ const FLASH_NAME = [
     'blast of disintegration', 'blast of lightning',
     'blast of poison gas', 'blast of acid', '', '',
 ];
-function flash_str(type) { return FLASH_NAME[zaptype(type)] || 'bolt'; }
+function flash_str(type, nohallu = false) {
+    return Hallucination() && !nohallu
+        ? `blast of ${rnd_hallublast()}`
+        : FLASH_NAME[zaptype(type)] || 'bolt';
+}
 function flash_The(type) { return 'The ' + flash_str(type); }
-function flash_killer(type) { return flash_str(type); }
+function flash_killer(type) { return flash_str(type, true); }
 
 // C ref: zap.c zhitu — apply a ray's effect to the hero.  All eight abstract
 // damage types are handled: ZT_SLEEP (which draws d(nd,25) and calls
@@ -2052,10 +2134,21 @@ async function zhitu(type, nd, fltxt, sx, sy) {
     default:
         break;
     }
+    const verb = abstyp < 10
+        ? (game.current_wand?.oclass === TOOL_CLASS ? 'played' : 'zapped')
+        : abstyp < 20 ? 'cast' : abstyp < 30 ? 'exhaled' : 'imagined';
+    let kbuf;
+    if (type < 0 || (type === 0 && game.buzzer)) {
+        const { death_inflicted_by } = await import('./mcastu.js');
+        kbuf = death_inflicted_by('', fltxt, game.buzzer);
+        if (game.buzzer) kbuf = kbuf.replace('inflicted', verb);
+    } else {
+        kbuf = `${fltxt} ${verb} by ${game.flags?.female ? 'her' : 'him'}self`;
+    }
     // C: Half_spell_damage halves wand/spell damage (abstyp < 20), not breath.
     if (dam && Half_spell_damage() && abstyp < 20)
         dam = Math.trunc((dam + 1) / 2);
-    await losehp(dam, fltxt);
+    await losehp(dam, kbuf);
 }
 
 // C ref: monattk.h AD_* (used by destroy_items dispatch and zhitm's switch).
@@ -2067,7 +2160,7 @@ const AD_MAGM = 1, AD_FIRE = 2, AD_COLD = 3, AD_SLEE = 4, AD_DISN = 5,
 // for a disintegration instakill), otmp is worn armor disintegration
 // destroyed instead of killing (only reachable via the monster-breath branch,
 // which dobuzz never invokes for a hero wand zap).
-async function zhitm(mon, type, nd) {
+export async function zhitm(mon, type, nd) {
     const fltyp = zaptype(type);
     const damgtype = fltyp % 10;
     let tmp = 0, orig_dmg = 0, otmp = null, shieldeffFlag = false;
@@ -2565,45 +2658,19 @@ function age_is_relative(obj) {
 // ── losehp / death (hack.c losehp + end.c done) ──────────────────────────
 // C ref: hack.c losehp — subtract HP; on death announce "You die..." and run
 // done(DIED).  showdamage is off in the covered rc so no per-hit damage line.
-export async function losehp(n, knam) {
+export async function losehp(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
     if (game.program_state?.gameover) return;
     u.uhp -= n;
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     if (u.uhp < 1) {
-        game._killer_name = knam || '';
+        const { an } = await import('./objnam.js');
+        game._killer_name = !knam ? ''
+            : k_format === KILLED_BY_AN ? `killed by ${an(knam)}`
+            : k_format === KILLED_BY ? `killed by ${knam}` : knam;
         await update_topl('You die...');   // urgent_pline -> NEED_MORE topline
-        await done_died();
-    }
-}
-
-// C ref: end.c done(DIED) — wizard/explore mode offers "Die?" before really
-// dying.  bot() forces the status to HP 0; the paranoid "Die?" query pages the
-// pending "You die..." line (the recorded session ends at this prompt).
-async function done_died() {
-    const u = game.u;
-    // force HP to 0 (done(): how < PANICKED resets positive/negative uhp)
-    u.uhp = 0;
-    if (u.mh != null) u.mh = 0;
-    await bot();
-    await flush_screen(1);
-    // paranoid_query(ParanoidDie, "Die?"): yn_function shows the deferred
-    // "You die...--More--" first (game._yn_need_more), then "Die? [yn] (n)".
-    game._yn_need_more = true;
-    const ans = await y_n('Die?', 'yn\x1b', 'n');
-    if (ans === 'y') {
-        game.program_state = game.program_state || {};
-        game.program_state.gameover = true;
-    } else {
-        // C ref: end.c done():1113-1116 — pline("OK, so you don't die.") then
-        // savelife(how), which restores uhp to min(uhpmax, 50+10*Con/2).  The
-        // old stub only queued the message: the hero stayed at uhp 0, so
-        // regen_hp() rolled an extra rn2(100) on EVERY later turn
-        // (w3-elf-wiz-debug step 353).  update_topl so the caller's following
-        // message ("You are blinded by the flash!") shares the topline.
-        await update_topl('OK, so you don\'t die.');
-        const { savelife } = await import('./end.js');
-        savelife(0 /* DIED */);
+        const { done, DIED } = await import('./end.js');
+        await done(DIED);
     }
 }
 
@@ -3074,7 +3141,7 @@ async function done_selfzap(how) {
             // message shares this topline, like C's two consecutive plines.
             await update_topl("OK, so you don't die.");
             const { savelife } = await import('./end.js');
-            savelife(how);
+            await savelife(how);
             return;
         }
     }
@@ -3175,7 +3242,7 @@ export async function dozap() {
         if (damage) {
             // C: losehp(Maybe_Half_Phys(damage), "zapped ...self with ...") — not
             // reached for the ported WAN_DEATH case (done() ended the game first).
-            await losehp(damage, 'zapped himself with a wand');
+            await losehp(damage, 'zapped himself with a wand', NO_KILLER_PREFIX);
         }
     } else {
         game.current_wand = obj;
@@ -3531,11 +3598,6 @@ function seemimic_z(mtmp) {
     mtmp.mappearance = 0;
     newsym(mtmp.mx, mtmp.my);
 }
-// C ref: trap.c:7175 trap_ice_effects(x, y, ice_is_melting) — js/trap.js owns
-// the real port; call it directly (both modules already import each other).
-// C ref: dbridge.c boulder_hits_pool(otmp, rx, ry, newspot) — unported
-// anywhere.  Fills the pool / prints "You hear a splash"; draws no RNG.
-async function boulder_hits_pool_z(_otmp, _rx, _ry, _newspot) { return false; }
 // C ref: mon.c minliquid(mtmp) — js/mon.js:591 owns the real one but does not
 // export it (js/dig.js:882 keeps a NOT-PORTED stub under the same name).
 async function minliquid_z(_mtmp) { return false; }
@@ -3631,7 +3693,7 @@ export async function release_hold() {
         set_ustuck(null);
         await pline(`You release ${mon_nam(mtmp)}.`);
     } else { /* held but not swallowed */
-        await unstuck_z(u.ustuck);
+        await unstuck(u.ustuck);
         const relbuf = !nohands(mtmp.data)
             ? `from ${s_suffix(mon_nam(mtmp))} grasp`
             : `by ${mon_nam(mtmp)}`;
@@ -3639,34 +3701,6 @@ export async function release_hold() {
     }
 }
 
-// C ref: mon.c:3438 unstuck(mtmp).  Not a zap.c routine, but release_hold()'s
-// last arm is nothing but this call plus a message, and its trailing
-// mspec_used rnd(2) is the only draw the whole path makes.
-async function unstuck_z(mtmp) {
-    const u = game.u;
-    if (u?.ustuck !== mtmp) return;
-    const ptr = mtmp.data;
-    const swallowed = u.uswallow;
-
-    /* do this first so that docrt()'s botl update is accurate; clears
-       u.uswallow as well as setting u.ustuck to Null */
-    set_ustuck(null);
-
-    if (swallowed) {
-        game.mswallower = null;
-        u.ux = mtmp.mx;
-        u.uy = mtmp.my;
-        /* C: if (Punished && uchain->where != OBJ_FLOOR) placebc(); */
-        game.vision_full_recalc = 1;
-        await flush_screen();   /* C: docrt() */
-    }
-
-    /* prevent holder/engulfer from immediately re-holding/re-engulfing */
-    if (!mtmp.mspec_used && (dmgtype(ptr, AD_STCK)
-                             || attacktype(ptr, AT_ENGL)
-                             || attacktype(ptr, AT_HUGS)))
-        mtmp.mspec_used = rnd(2);
-}
 
 // C ref: zap.c:612 probe_objchain(otmp) — the wand of probing marks a whole
 // inventory chain "seen".  No RNG.
@@ -4754,7 +4788,7 @@ export async function buzz(type, nd, sx, sy, dx, dy) {
 }
 
 // C ref: zap.c:5040 melt_ice(x, y, msg) — the ice at <x,y> reverts to water.
-// No RNG of its own; minliquid()/spoteffects() may draw.
+// Floor effects and spoteffects() may draw RNG.
 export async function melt_ice(x, y, msg) {
     const lev = game.level?.at(x, y);
 
@@ -4782,11 +4816,12 @@ export async function melt_ice(x, y, msg) {
         await Norep_zap(msg);
     let otmp = sobj_at(BOULDER, x, y);
     if (otmp) {
+        const { boulder_hits_pool } = await import('./do.js');
         if (cansee(x, y))
             await pline(`${An_z(xname(otmp))} settles...`);
         do {
             obj_extract_self(otmp); /* boulder isn't being pushed */
-            if (!(await boulder_hits_pool_z(otmp, x, y, false)))
+            if (!(await boulder_hits_pool(otmp, x, y, false)))
                 await impossible('melt_ice: no pool?');
             /* try again if there's another boulder and pool didn't fill */
             otmp = is_pool(x, y) ? sobj_at(BOULDER, x, y) : null;

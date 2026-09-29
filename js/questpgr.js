@@ -5,7 +5,7 @@
 //        (onquest / chat_with_leader / quest_talk / quest_chat), and the tty
 //        NHW_MENU window display in win/tty/wintty.c for the "legacy" intro.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { nhgetch } from './input.js';
 import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle } from './role.js';
@@ -3125,15 +3125,9 @@ async function leader_speaks(mtmp) {
     await chat_with_leader(mtmp);
 }
 
-// C ref: quest.c — the leader is identified by m_id == Qstat(leader_m_id).  The
-// port has no leader_m_id; monsters.h marks all fifteen quest-leader species
-// MS_LEADER (role.c:2030 only re-asserts it for the hero's own role), so the
-// species is compared too — otherwise a foreign leader (Earendil/Elwing) would
-// be mistaken for one whose m_id C would never match.
+// C ref: quest.c — identity survives polymorph and is assigned by makemon().
 function is_quest_leader(mtmp) {
-    if (msound_of(mtmp?.data) !== MS_LEADER) return false;
-    const ldr = qrole()?.ldr, nm = mtmp.data?.name;
-    return !!ldr && !!nm && (nm === ldr || `the ${nm}` === ldr);
+    return !!mtmp && mtmp.m_id === game.quest_status?.leader_m_id;
 }
 
 // C ref: quest.c quest_chat() — the #chat entry point (sounds.c domonnoise's
@@ -3154,10 +3148,6 @@ export async function quest_talk(mtmp) {
     if (is_quest_leader(mtmp)) await leader_speaks(mtmp);
 }
 
-// ===========================================================================
-// questpgr.c functions with no caller in js/ yet.  Nothing above this line
-// calls into this block: it is additive only.
-// ===========================================================================
 
 // C ref: role.c roles[] — the four quest columns quest_info() reads.  js/role.js
 // carries none of them and QUEST_ROLE_DATA above stores the FORMATTED names
@@ -3202,7 +3192,7 @@ function artiidx_of_qname(nm) {
 
 // C ref: questpgr.c:31 quest_info(typ) — the four role fields the quest code
 // asks for by MS_* sound.  C's `default:` is an impossible() and returns 0.
-export async function quest_info(typ) {
+export function quest_info(typ) {
     const nums = quest_nums();
     switch (typ) {
     case 0:
@@ -3214,10 +3204,12 @@ export async function quest_info(typ) {
     case MS_GUARDIAN:
         return nums.guardnum;
     default:
-        await impossible(`quest_info(${typ})`);
+        void impossible(`quest_info(${typ})`);
     }
     return 0;
 }
+// makemon needs this synchronously; importing questpgr there creates a cycle.
+hooks.quest_info = quest_info;
 
 // C ref: mondata.h type_is_pname(ptr) — M2_PNAME, "Lord Carnarvon" vs "the
 // Grand Master".

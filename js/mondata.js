@@ -11,7 +11,7 @@ import { mattk_of, AT_NONE, AT_BOOM, AT_CLAW, AT_BITE, AT_KICK, AT_BUTT,
     AD_FIRE, AD_COLD, AD_ELEC, AD_ACID, AD_PHYS, AD_DCAY, AD_RUST,
     AD_DRST, AD_DRLI, AD_STON, AD_DRDX, AD_DRCO, AD_WERE, AD_BLND }
     from './monattk_data.js';
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2 } from './rng.js';
 import { mflags2_of, humanoid, is_undead_flag, is_demon_flag, is_neuter_flag,
     M2_STRONG, M2_PNAME } from './monflags_data.js';
@@ -52,6 +52,25 @@ const ROTS_NAMES = new Set(['wood golem', 'leather golem']);
 export const completelyburns = (ptr) => BURNS_NAMES.has(ptr?.name);
 export const completelyrots = (ptr) => ROTS_NAMES.has(ptr?.name);
 export const completelyrusts = (ptr) => ptr?.name === 'iron golem';
+
+// C ref: mondata.c on_fire() — describe the defender's response to fire.
+export function on_fire(ptr, mattk) {
+    switch (ptr?.name) {
+    case 'flaming sphere': case 'fire vortex':
+    case 'fire elemental': case 'salamander':
+        return 'already on fire';
+    case 'water elemental': case 'fog cloud': case 'steam vortex':
+        return 'boiling';
+    case 'ice vortex': case 'glass golem':
+        return 'melting';
+    case 'stone golem': case 'clay golem': case 'gold golem':
+    case 'air elemental': case 'earth elemental':
+    case 'dust vortex': case 'energy vortex':
+        return 'heating up';
+    default:
+        return mattk.aatyp === AT_HUGS ? 'being roasted' : 'on fire';
+    }
+}
 
 // The attack types that can each trigger a defender's passive.
 const PASSIVE_TRIGGERS = new Set([AT_CLAW, AT_BITE, AT_KICK, AT_BUTT, AT_TUCH,
@@ -151,6 +170,9 @@ export function set_mon_data(mon, ptr) {
         }
     }
 }
+
+// Creation-time newcham is synchronous; the registry avoids an import cycle.
+hooks.set_mon_data = set_mon_data;
 
 // C ref: mondata.c:278 resists_blnd_by_arti(mon) — True iff the monster resists
 // light-induced blindness because of worn/wielded magical equipment; used only

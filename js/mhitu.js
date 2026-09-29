@@ -25,7 +25,7 @@ import {
     M_SEEN_NOTHING, M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP,
     M_SEEN_DISINT, M_SEEN_ELEC, M_SEEN_POISON, M_SEEN_ACID,
     A_CON, A_CHA, A_DEX, A_STR,
-    NO_MINVENT, MM_EDOG, MM_NOMSG,
+    NO_MINVENT, MM_EDOG, MM_NOMSG, Unaware,
 } from './const.js';
 import {
     AT_NONE, AT_CLAW, AT_BITE, AT_KICK, AT_BUTT, AT_TUCH, AT_STNG, AT_HUGS,
@@ -39,17 +39,20 @@ import {
 import {
     mflags1_of, mflags2_of, is_animal, is_neuter_flag, perceives_flag,
     is_demon_flag, is_were_flag, is_human_flag,
-    M1_NOEYES, M1_NOLIMBS, M1_THICK_HIDE, M2_MINION,
+    M1_NOEYES, M1_NOLIMBS, M1_THICK_HIDE, M1_SLITHY, M2_MINION,
 } from './monflags_data.js';
 import { objects as OBJECTS } from './mkobj.js';
 import { acurr_eff, exercise } from './attrib.js';
-import { newsym, map_invisible, update_topl, canseemon_shared } from './display.js';
+import { newsym, map_invisible, update_topl, canseemon_shared, Hallucination_u as Hallucination } from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { is_home_elemental, monster_by_pmidx } from './makemon.js';
 import { DEADMONSTER, mvitals_died, m_detach, wake_nearto_core } from './mon.js';
 import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
 import { YOUMONST } from './mhitm_ad.js';
+import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u } from './potion.js';
+import { youmonst_data_pub as youmonst_data } from './invent.js';
+import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu } from './mondata.js';
 
 const is_hero = (m) => m === YOUMONST;
 
@@ -68,9 +71,7 @@ function See_invisible() {
               || u.uprops?.ESee_invisible);
 }
 function Upolyd() { return !!game.u?.Upolyd; }
-function Hallucination() { return !!(game.u?.uhallu || game.u?.uprops?.Hallucination); }
 function Deaf() { return !!(game.u?.Deaf || (game.u?.uprops?.HDeaf | 0) > 0); }
-function Unaware() { return !!(game.u?.usleep || (game.multi | 0) < 0); }
 function Verbose() { return game.flags?.verbose !== false; }
 // C ref: mondata.h poly_gender() — 2 (neuter) while poly'd into a neuter form.
 function poly_gender() {
@@ -82,26 +83,6 @@ function poly_gender() {
 function gender(mtmp) {
     return is_neuter_flag(permonst(mtmp)) ? 2 : (mtmp?.female ? 1 : 0);
 }
-// C ref: gy.youmonst.data — the hero's current permonst record, which for a
-// NON-polymorphed hero is still a real mons[] entry (&mons[urole.malenum], the
-// '@' record that carries the role's attacks).  js/polyself.js:352 keeps
-// u.umonnum pointing at it in both states, so resolve through that; the
-// u.mondata / game.youmonst.data spellings are checked first because
-// polyself.js writes them on the poly path.
-function youmonst_data() {
-    const u = game.u || {};
-    if (u.mondata) return u.mondata;
-    if (game.youmonst?.data) return game.youmonst.data;
-    if (u.umonnum != null) {
-        if (_yd_cache_idx !== u.umonnum) {
-            _yd_cache_idx = u.umonnum;
-            _yd_cache = monster_by_pmidx(u.umonnum) || null;
-        }
-        return _yd_cache;
-    }
-    return null;
-}
-let _yd_cache_idx = -1, _yd_cache = null;
 
 async function emitU(msg) { if (msg) await update_topl(msg); }
 
@@ -627,22 +608,8 @@ export async function expels(mtmp, mdat, message) {
         }
     }
     const u = game.u || {};
-    // C ref: mon.c:3438 unstuck(mtmp) — set_ustuck(0), then (when the hero was
-    // swallowed) move the hero onto the engulfer's square and redraw, then the
-    // re-grab cooldown rnd(2) (mon.c:3465).  That rnd(2) was missing entirely.
-    const swallowed = u.uswallow;
-    u.uswallow = 0;
-    u.uswldtim = 0;
-    u.ustuck = null;
-    if (swallowed) {
-        u.ux = mtmp.mx; u.uy = mtmp.my;
-        const { docrt } = await import('./display.js');
-        await docrt();
-    }
-    {
-        const { unstuck_mspec_used } = await import('./uhitm.js');
-        unstuck_mspec_used(mtmp);
-    }
+    const { unstuck } = await import('./mon.js');
+    await unstuck(mtmp);
     // C ref: mhitu.c:300 mnexto(mtmp, RLOC_NOMSG) — the enexto() ring search
     // DRAWS (collect_coords shuffles rings 1..3), so it belongs in the stream.
     {
@@ -1013,21 +980,13 @@ export async function explmu(mtmp, mattk, ufound) {
     return (!DEADMONSTER(mtmp)) ? M_ATTK_MISS : M_ATTK_AGR_DIED;
 }
 function resists_blnd_u() {
-    const u = game.u || {};
-    return !!(u.ublindf || u.uprops?.Blind_telepat);
-}
-async function make_blinded_u(xtime) {
-    const u = game.u || {};
-    u.uprops = u.uprops || {};
-    u.uprops.Blinded = xtime;
-    if (u.blinded != null) u.blinded = xtime;
+    if (Blind() || Unaware() || resists_blnd_by_arti(game.u)) return true;
+    const ptr = youmonst_data();
+    return !!(dmgtype_fromattack(ptr, AD_BLND, AT_EXPL)
+        || dmgtype_fromattack(ptr, AD_BLND, AT_GAZE));
 }
 
 // ═══ mhitu.c:1668 gazemu ════════════════════════════════════════════════════
-// A gaze attack.  Every arm's rn2 gate fires from the SAME `mcanseeu &&
-// !mspec_used && rn2(5)` shape, so an unmodelled adtyp loses one call per
-// gazing monster per turn; the "looks confused/dazzled" tail then draws
-// another 1-3.  This is the most frequently skipped RNG in the file.
 const GAZE_REACTIONS = ['confused', 'stunned', 'puzzled', 'dazzled',
     'irritated', 'inflamed', 'tired', 'dulled'];
 export async function gazemu(mtmp, mattk) {
@@ -1127,15 +1086,21 @@ export async function gazemu(mtmp, mattk) {
                 await (await import('./hack.js')).stop_occupation();
                 if (Fire_resistance()) {
                     await emitU("The fire doesn't feel hot!");
-                    d(12, 6);                         // ugolemeffects' damage roll
+                    monstseesu(M_SEEN_FIRE);
+                    const { ugolemeffects } = await import('./polyself.js');
+                    await ugolemeffects(AD_FIRE, d(12, 6));
                     dmg = 0;
+                } else {
+                    monstunseesu(M_SEEN_FIRE);
+                }
+                await (await import('./timeout.js')).burn_away_slime();
+                const { burnarmor, destroy_items, ignite_items } = await import('./zap.js');
+                if (lev > rn2(20)) {
+                    await burnarmor(game.u);
                 }
                 if (lev > rn2(20)) {
-                    // burnarmor(&youmonst): the per-slot armour burn walk.
-                }
-                if (lev > rn2(20)) {
-                    // destroy_items(&youmonst, AD_FIRE, orig_dmg) + ignite_items.
-                    void orig_dmg;
+                    await destroy_items(game.u, AD_FIRE, orig_dmg);
+                    await ignite_items(game.invent || []);
                 }
                 if (dmg) await mdamageu(mtmp, dmg);
             }
@@ -1160,24 +1125,25 @@ function mdistu(mtmp) {
 }
 function Reflecting() { return !!game.u?.uprops?.Reflecting; }
 function Confusion() { return (game.u?.uprops?.Confusion | 0) || (game.u?.uconf | 0); }
-function HConfusion() { return (game.u?.uprops?.HConfusion | 0) || Confusion(); }
-function HStun() { return (game.u?.uprops?.HStun | 0) || (game.u?.ustun | 0); }
+function HConfusion() { return game.u?.uprops?.Confusion | 0; }
+function HStun() { return game.u?.uprops?.Stun | 0; }
 function Fire_resistance() {
     const u = game.u || {};
     return !!(u.uprops?.Fire_resistance || u.uprops?.HFire_resistance
               || u.uprops?.EFire_resistance);
 }
-async function make_confused_u(xtime) {
+export async function make_stunned_u(xtime) {
     const u = game.u || {};
     u.uprops = u.uprops || {};
-    u.uprops.HConfusion = xtime;
-    u.uconf = xtime;
-}
-async function make_stunned_u(xtime) {
-    const u = game.u || {};
-    u.uprops = u.uprops || {};
-    u.uprops.HStun = xtime;
-    u.ustun = xtime;
+    if (xtime && !HStun() && !Unaware()) {
+        const ptr = youmonst_data();
+        const verb = nolimbs(ptr) ? 'falter'
+            : (mflags1_of(ptr) & M1_SLITHY) ? 'slither' : 'stagger';
+        await emitU(u.usteed ? 'You wobble in the saddle.' : `You ${verb}...`);
+    }
+    u.uprops.Stun = xtime;
+    u.Stunned = xtime > 0;
+    game.botl = true;
 }
 // C ref: mondata.c:1522 cvt_adtyp_to_mseenres — M_SEEN_NOTHING for every
 // damage type the hero has no matching resistance for.
@@ -1715,7 +1681,7 @@ let _ops = null;
 export function mhitu_ops() {
     if (_ops) return _ops;
     _ops = {
-        permonst,
+        permonst: (mon) => is_hero(mon) ? youmonst_data() : permonst(mon),
         vis: true,
         mattk_list,
         monLev: (m) => (m?.m_lev != null ? m.m_lev : (permonst(m)?.mlevel | 0)),
@@ -1737,6 +1703,7 @@ export function mhitu_ops() {
         u_slip_free,
         cloneu,
         mdamageu,
+        set_skipdrin: () => { game.skipdrin = true; },
         mpoisons_subj,
         // C ref: exper.c losexp(drainer), including the role-specific farewell.
         losexp: async (drainer) => {

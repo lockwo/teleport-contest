@@ -1254,7 +1254,7 @@ const C_OBJ_COLORS = [
 const RUBBER_HOSE_OTYP = 78; // mkobj.js OBJECT_DATA — the other is_flimsy item
 // C ref: obj.h:418 is_flimsy(otmp) — oc_material <= LEATHER, or a rubber hose.
 function is_flimsy_obj(obj) {
-    return (objects[obj?.otyp]?.oc_material ?? 99) <= MAT_LEATHER
+    return (objects[obj?.otyp]?.material ?? 99) <= MAT_LEATHER
         || obj?.otyp === RUBBER_HOSE_OTYP;
 }
 function plur(n) { return Number(n) === 1 ? '' : 's'; }
@@ -1328,7 +1328,7 @@ async function use_stone(tstone) {
     if (hallu) { await _display.pline('Oh wow, man: Fractals!'); return ECMD_TIME; }
 
     let do_scratch = false, streak_color = null;
-    const material = objects[obj.otyp]?.oc_material ?? 0;
+    const material = objects[obj.otyp]?.material ?? 0;
     // C ref: apply.c:2745 — a non-gemstone, non-mineral ring is neither gem nor
     // ring for the purposes of the switch below.
     let oclass = obj.oclass;
@@ -3090,8 +3090,9 @@ export async function use_bell(optr) {
         } else if (obj.blessed) {
             let res = 0;
 
-            if (game.uchain) {
-                A.invent.unpunish();
+            if (u.uchain) {
+                const { unpunish } = await import('./read.js');
+                unpunish();
                 res = 1;
             } else if (u.utrap && u.utraptype === TT_BURIEDBALL_A) {
                 ap_buried_ball_to_freedom();

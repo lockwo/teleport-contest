@@ -1658,7 +1658,7 @@ function just_an(str) {
     return 'a ';
 }
 /* objnam.c:2144 an() */
-function an(str) {
+export function an(str) {
     const buf = nextobuf();
     if (!str) {
         impossible(`Alphabet soup: 'an(${str == null ? '<null>' : '""'})'.`);

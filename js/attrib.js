@@ -120,7 +120,13 @@ export async function adjattrib(ndx, incr, msgflg) {
     const u = game.u;
     if (!u?.acurr) return false;
     if (Fixed_abil() || !incr) return false;
-    // uarmh == DUNCE_CAP blocks A_INT/A_WIS changes (no dunce cap in reach).
+    if ((ndx === A_INT || ndx === A_WIS) && game.uarmh?.otyp === 94 /* DUNCE_CAP */) {
+        if (msgflg === 0) {
+            const { update_topl } = await import('./display.js');
+            await update_topl('Your cap constricts briefly, then relaxes again.');
+        }
+        return false;
+    }
     const abase = u.acurr.a;
     u.amax = u.amax || { a: abase.slice() };
     const amax = u.amax.a;

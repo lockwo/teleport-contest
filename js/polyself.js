@@ -32,7 +32,7 @@ import { place_object, WEAPON_CLASS, TOOL_CLASS, ARMOR_CLASS, FOOD_CLASS,
     GEM_CLASS, ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
     RING_CLASS, AMULET_CLASS, ILLOBJ_CLASS } from './mkobj.js';
 import { makesingular } from './objnam.js';
-import { newuexp, newhp, newpw, adjabil, update_rank, rank_of } from './exper.js';
+import { rndexp, newhp, newpw, adjabil, update_rank, rank_of } from './exper.js';
 import { newuhs } from './eat.js';
 import { monster_by_pmidx, name_to_pmidx, golemhp_js as golemhp,
     is_home_elemental, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
@@ -50,7 +50,7 @@ import { ARM, EYE, FINGER, FINGERTIP, FOOT, HAND, HANDED, HEAD, LEG, TOE,
 import {
     is_hider_flag, hides_under_flag, is_were_flag, likes_gems_flag,
     strongmonst_flag, is_male_flag, is_flyer_flag, mflags1_of, M1_CLING,
-    M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS,
+    M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS, M1_AMORPHOUS, M1_UNSOLID,
     lays_eggs_flag, mindless, msound_of, is_swimmer_flag,
     is_female_flag, is_neuter_flag, is_orc_flag, is_elf_flag, is_dwarf_flag,
     is_gnome_flag, is_giant_flag, is_undead_flag, nohands, humanoid,
@@ -58,7 +58,7 @@ import {
     M2_PNAME,
 } from './monflags_data.js';
 import { attacktype, mattk_of, AT_BREA, AT_SPIT, AT_GAZE, AT_CLAW,
-    AD_MAGM, AD_CONF, AD_FIRE } from './monattk_data.js';
+    AD_MAGM, AD_CONF, AD_FIRE, AD_ELEC } from './monattk_data.js';
 import { monsterList, DEADMONSTER, set_ustuck, were_beastie } from './mon.js';
 import { monster_nearby } from './cmd.js';
 import { races, roles, genders } from './role.js';
@@ -625,7 +625,8 @@ async function drop_weapon(alone) {
 // (BFlying|I_SPECIAL, and its disp.botl), steed_vs_stealth() and polysense().
 export function set_uasmon() {
     const u = game.u;
-    const mdat = monster_by_pmidx(u.umonnum);
+    u.Upolyd = u.umonnum !== u.umonster;
+    const mdat = youmonst_data_pub();
     // C ref: mondata.c:13 set_mon_data() — leftover movement points are prorated
     // when the new form is SLOWER.  Human->gnome takes u.umovement 12 -> 6, which
     // changes how many turns every later hero command costs.
@@ -638,7 +639,6 @@ export function set_uasmon() {
             u.umovement = Math.trunc((u.umovement * new_speed) / old_speed);
     }
     u.data = mdat;
-    u.Upolyd = u.umonnum !== u.umonster;
 
     u.uprops = u.uprops || {};
     // C ref: polyself.c:99-100 PROPSET(FLYING, (is_flyer(mdat) && !is_floater(mdat))).
@@ -850,6 +850,12 @@ export async function polymon(mntmp) {
     newsym(u.ux, u.uy);
 
     find_ac();
+    if (u.uball && ((mflags1_of(mdatNew) & (M1_AMORPHOUS | M1_UNSOLID))
+                    || is_whirly(mdatNew))) {
+        await pline('You slip out of the iron chain.');
+        const { unpunish } = await import('./read.js');
+        unpunish();
+    }
     game.botl = true;
     // C ref: polyself.c:1016-1018 — vision_full_recalc + see_monsters().  A
     // blind hero keeps a stale monster glyph on screen until something
@@ -916,17 +922,7 @@ export async function newman() {
 
     await adjabil(oldlvl, u.ulevel, (msg) => pline(msg));
 
-    // rndexp(FALSE): random XP within the OLD level's threshold band (u.ulevel
-    // at this point is the NEW level; rndexp reads u.ulevel internally in C,
-    // but that call happens before oldlvl's HP/PW rerolls touch u.ulevel
-    // again, so it uses the just-set newlvl there — mirror that: min/max
-    // bracket the NEW level, not the old one).
-    {
-        const minexp = (u.ulevel === 1) ? 0 : newuexp(u.ulevel - 1);
-        const maxexp = newuexp(u.ulevel);
-        const diff = maxexp - minexp;
-        u.uexp = minexp + rn2(diff);
-    }
+    u.uexp = rndexp(false);
 
     redist_attr();
 
@@ -1333,15 +1329,6 @@ function Stunned() {
     const u = game.u;
     return ((u?.uprops?.Stun | 0) > 0) || ((u?.uprops?.HStun | 0) > 0) || !!u?.Stunned;
 }
-// C ref: hack.c losehp(dmg, ...) — the same reduction every other file-local
-// losehp() in this port makes (the done(DIED) half needs end.js).
-function losehp_poly(dmg) {
-    const u = game.u;
-    if (!u || dmg <= 0) return;
-    u.uhp = (u.uhp ?? 0) - dmg;
-    if (u.uhp < 0) u.uhp = 0;
-    game.botl = true;
-}
 // C ref: mondata.h your_race(ptr) == (mflags2 & gu.urace.selfmask).
 const RACE_SELFMASK = { human: M2_HUMAN, elven: M2_ELF, dwarven: M2_DWARF,
     gnomish: M2_GNOME, orcish: M2_ORC };
@@ -1534,7 +1521,9 @@ export async function polyself(psflags) {
     if (!Polymorph_control() && !forcecontrol && !draconian && !iswere && !isvamp) {
         if (rn2(20) > acurr_eff(A_CON)) {
             await pline('You shudder for a moment.');
-            losehp_poly(rnd(30));
+            const { losehp_do } = await import('./do.js');
+            await losehp_do(rnd(30), 'system shock');
+            if (game.program_state?.gameover) return;
             exercise(A_CON, false);
             return;
         }
@@ -1747,8 +1736,8 @@ async function doremove() {
         await pline('You are not chained to anything!');
         return ECMD_OK;
     }
-    // unpunish(): invent.js's stub is a no-op and is not exported; a Punished
-    // hero never reaches here in any covered session.  Deferred.
+    const { unpunish } = await import('./read.js');
+    unpunish();
     return ECMD_TIME;
 }
 
@@ -2360,4 +2349,21 @@ export function udeadinside() {
         : !weirdnonliving_poly(ptr)
             ? 'condemned'                       /* undead plus manes */
             : 'empty';                          /* golems plus vortices */
+}
+
+// C ref: polyself.c ugolemeffects().
+export async function ugolemeffects(damtype, dam) {
+    const u = game.u;
+    const ptr = youmonst_data_pub();
+    let heal = 0;
+    if (damtype === AD_ELEC && ptr?.name === 'flesh golem')
+        heal = Math.trunc((dam + 5) / 6);
+    else if (damtype === AD_FIRE && ptr?.name === 'iron golem')
+        heal = dam;
+    if (heal && u.mh < u.mhmax) {
+        u.mh = Math.min(u.mh + heal, u.mhmax);
+        game.botl = true;
+        await pline('Strangely, you feel better than before.');
+        exercise(A_STR, true);
+    }
 }

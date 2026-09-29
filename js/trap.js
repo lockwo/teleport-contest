@@ -17,6 +17,7 @@ import { exercise, acurr_eff } from './attrib.js';
 import { Boots_off, stop_donning, hard_helmet, helm_simple_name } from './do_wear.js';
 import { float_vs_flight } from './polyself.js';
 import { is_weptool } from './weapon.js';
+import { is_pool } from './dbridge.js';
 import {
     HOLE, TRAPDOOR, SQKY_BOARD, is_hole, In_quest,
     RUST_TRAP, BEAR_TRAP, DART_TRAP, MAGIC_TRAP, PIT, SPIKED_PIT,
@@ -1001,16 +1002,22 @@ export async function grease_protect(otmp, ostr, victim) {
     return false;
 }
 
-// C ref: trap.c erode_obj(otmp, ostr, type, ef_flags).  Correction to the old
-// note here: destroy_arm() is NOT the only call site — water_damage()'s default
-// arm routes every non-scroll/book/potion hero item through this too.  What is
-// genuinely omitted is (a) the monster-carried / floor-object (vismon/visobj)
-// message variants, which no call site can reach, and (b) two ef_flags no
-// caller passes: EF_GREASE (which would divert to grease_protect()'s rn2(2)
-// grease-burn-off — a REAL draw if a caller ever passes it) and EF_VERBOSE
-// (the "not affected by oxidation" lines).
+// C ref: trap.c erode_obj(otmp, ostr, type, ef_flags).  Floor objects are
+// visible only at bhitpos; submerged objects require an adjacent underwater
+// observer.  Damage still applies when its feedback cannot be seen.
 export async function erode_obj(otmp, ostr, type, ef_flags) {
     if (!otmp) return ER_NOTHING;
+    const isYou = carried(otmp);
+    const victim = isYou ? game.u : (mcarried_dmg(otmp) ? otmp.ocarry : null);
+    const vismon = !!victim && !isYou && canseemon_shared(victim);
+    const pos = game.bhitpos;
+    const visobj = !victim && !!pos && cansee(pos.x, pos.y)
+        && (!is_pool(pos.x, pos.y)
+            || (game.u?.uinwater && Math.abs(pos.x - game.u.ux) <= 1
+                && Math.abs(pos.y - game.u.uy) <= 1));
+    if (!ostr) ostr = xname(otmp);
+    if (visobj && /^the /i.test(ostr)) ostr = ostr.slice(4);
+    const visible = isYou || vismon || visobj;
 
     let vulnerable;
     // C ref: trap.c:182 `check_grease = (ef_flags & EF_GREASE)`, cleared again
@@ -1044,7 +1051,7 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
 
     // C ref: trap.c:246 — grease is checked FIRST, ahead of erosion_matters().
     if (check_grease && otmp.greased) {
-        await grease_protect(otmp, ostr, game.u);
+        await grease_protect(otmp, ostr, victim);
         return ER_GREASED;
     } else if (!erosion_matters(otmp)) {
         return ER_NOTHING;
@@ -1055,15 +1062,19 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
         // must fire here (when reached) to stay in sync with C.
         if (otmp.oerodeproof) {
             otmp.rknown = true;
-            update_inventory();
+            if (isYou) update_inventory();
         }
         return ER_NOTHING;
     } else if (erosion < MAX_ERODE) {
         const adverb = (erosion + 1 === MAX_ERODE) ? ' completely' : erosion ? ' further' : '';
-        await update_topl(`Your ${ostr} ${vtense(ostr, ERODE_ACTION[type])}${adverb}!`);
+        if (visible) {
+            const owner = isYou ? 'Your' : !vismon ? 'The'
+                : s_suffix_dmg((await import('./do_name.js')).Monnam(victim));
+            await update_topl(`${owner} ${ostr} ${vtense(ostr, ERODE_ACTION[type])}${adverb}!`);
+        }
         if (ef_flags & EF_PAY) costly_alteration(otmp, type);
         if (is_primary) otmp.oeroded = erosion + 1; else otmp.oeroded2 = erosion + 1;
-        update_inventory();
+        if (isYou) update_inventory();
         // C ref: allmain.c moveloop_core() — find_ac() runs once per player
         // input, not from erode_obj itself (see read.js destroy_arm()), so an
         // eroded piece's AC penalty shows up starting with the NEXT screen;
@@ -1073,7 +1084,11 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
     } else if (ef_flags & EF_DESTROY) {
         otmp.in_use = 1;
         const actbuf = (type === ERODE_CRACK) ? 'shatters' : `${vtense(ostr, ERODE_ACTION[type])} away`;
-        await update_topl(`Your ${ostr} ${actbuf}!`);
+        if (visible) {
+            const owner = isYou ? 'Your' : !vismon ? 'The'
+                : s_suffix_dmg((await import('./do_name.js')).Monnam(victim));
+            await update_topl(`${owner} ${ostr} ${actbuf}!`);
+        }
         if (ef_flags & EF_PAY) costly_alteration(otmp, type);
         if (otmp.owornmask) unwear_armor(otmp);
         delobj(otmp);
@@ -1276,7 +1291,7 @@ export async function lava_damage(obj, x, y) {
 
     if (obj_resists(obj, 0, 0) && otyp !== SPE_BOOK_OF_THE_DEAD) return false;
 
-    const mat = objects[otyp]?.oc_material;
+    const mat = objects[otyp]?.material;
     const hasContents = !!(obj.cobj && obj.cobj.length);
     if (mat < MAT_DRAGON_HIDE
         && ocls !== SCROLL_CLASS && ocls !== SPBOOK_CLASS
@@ -3542,14 +3557,16 @@ async function tele_trap(trap) {
     const u = game.u;
     // C: noteleport_level(&gy.youmonst) — the hero is neither covetous nor a
     // demon lord, so it reduces to the level flag.
-    if (In_endgame(u?.uz) || u?.uprops?.Antimagic || game.level?.flags?.noteleport) {
+    if (In_endgame(u?.uz) || u?.uprops?.Antimagic || u?.Antimagic
+        || u?.HAntimagic || u?.EAntimagic || worn_extrinsic(ANTIMAGIC)
+        || game.level?.flags?.noteleport) {
         await update_topl('You feel a wrenching sensation.');
     } else if (trap.once) {
         deltrap(trap);
         newsym(u.ux, u.uy); /* get rid of trap symbol */
         await vault_tele();
     } else if (trap.teledest && isok(trap.teledest.x, trap.teledest.y)) {
-        const { teleds_hero } = await import('./read.js');
+        const { teleds } = await import('./teleport.js');
         const { settrack } = await import('./track.js');
         let mtmp = m_at(trap.teledest.x, trap.teledest.y);
         settrack();
@@ -3564,7 +3581,7 @@ async function tele_trap(trap) {
                 mtmp = null;
             }
         }
-        if (!mtmp) await teleds_hero(trap.teledest.x, trap.teledest.y);
+        if (!mtmp) await teleds(trap.teledest.x, trap.teledest.y, TELEDS_TELEPORT);
     } else {
         const { scrolltele } = await import('./read.js');
         await scrolltele(null); /* teleport.c tele() */
@@ -3576,12 +3593,13 @@ async function tele_trap(trap) {
 // somexyspace() spot inside it.  The two rn2(2)s this draws (a vault is 2x2)
 // are seed0012's step 237.
 async function vault_tele() {
-    const { teleok_hero, teleds_hero } = await import('./read.js');
+    const { teleok_hero } = await import('./read.js');
+    const { teleds } = await import('./teleport.js');
     const { somexyspace } = await import('./mkroom.js');
     const croom = search_special(VAULT);
     const c = { x: 0, y: 0 };
     if (croom && somexyspace(croom, c) && teleok_hero(c.x, c.y, false)) {
-        await teleds_hero(c.x, c.y); /* TELEDS_TELEPORT */
+        await teleds(c.x, c.y, TELEDS_TELEPORT);
         return;
     }
     const { scrolltele } = await import('./read.js');
@@ -3620,7 +3638,8 @@ async function level_tele_trap(trap, trflags) {
 
     // Antimagic (shieldeff has no RNG) and In_endgame both abort before the
     // deltrap, leaving the trap in place.
-    const antimagic = !!(u?.uprops?.Antimagic);
+    const antimagic = !!(u?.uprops?.Antimagic || u?.Antimagic
+        || u?.HAntimagic || u?.EAntimagic || worn_extrinsic(ANTIMAGIC));
     if ((antimagic && !intentional) || In_endgame(u?.uz)) {
         await update_topl('You feel a wrenching sensation.');
         return;
@@ -4488,6 +4507,7 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     const u = game.u;
     const { thitu } = await import('./monmove.js');
     const { dmgval } = await import('./uhitm.js');
+    const { flooreffects } = await import('./do.js');
     let otmp = sobj_at_floor(otyp, x1, y1);
     let otherside = false;
     if (!otmp && otyp === BOULDER) { otherside = true; otmp = sobj_at_floor(otyp, x2, y2); }
@@ -4500,12 +4520,13 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
         otmp.where = 'free';
         singleobj = otmp;
     } else {
-        singleobj = { ...otmp, quan: 1 }; otmp.quan -= 1;
+        singleobj = { ...otmp, quan: 1, where: 'free' }; otmp.quan -= 1;
     }
     newsym(x1, y1);
     let dist = distmin_(x1, y1, x2, y2);
     let x = x1, y = y1;
     const dx = sgn_(x2 - x1), dy = sgn_(y2 - y1);
+    let used_up = false;
     if (style & LAUNCH_KNOWN) { singleobj.otrapped = 1; style &= ~LAUNCH_KNOWN; }
     style &= ~LAUNCH_UNSEEN;
     // C ref: trap.c:3361 launch_drop_spot(singleobj, x, y) — recorded at the
@@ -4521,6 +4542,12 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
             const dam = dmgval(singleobj, { data: { msize: 0 } });
             await thitu(9 + (singleobj.spe || 0), dam, singleobj);
         }
+        // C ref: trap.c:3509 — rolling objects land on every crossed square.
+        if (style === ROLL && await flooreffects(singleobj, x, y, 'fall')) {
+            used_up = true;
+            launch_drop_spot(null, 0, 0);
+            break;
+        }
         if (dist > 0 && isok(x + dx, y + dy)) {
             const typ = game.level?.at(x + dx, y + dy)?.typ;
             if (IS_STWALL(typ) || IS_TREE(typ)) { x2 = x; y2 = y; await pline('Thump!'); break; }
@@ -4529,10 +4556,13 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     // C ref: trap.c:3567 — launch_drop_spot((struct obj *)0,0,0), unconditional,
     // right after the flight loop ends and before the final placement below.
     launch_drop_spot(null, 0, 0);
-    singleobj.otrapped = 0;
-    place_object(singleobj, x2, y2);
-    newsym(x2, y2);
-    return 1;
+    if (!used_up) {
+        singleobj.otrapped = 0;
+        place_object(singleobj, x2, y2);
+        newsym(x2, y2);
+        return 1;
+    }
+    return 2;
 }
 
 // C ref: trap.c:7197 trap_sanity_check() — the 'sanity_check' option's trap

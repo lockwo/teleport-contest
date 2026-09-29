@@ -35,6 +35,7 @@ import { night, phase_of_the_moon, FULL_MOON } from './calendar.js';
 import { name_to_pmidx, monster_by_pmidx, makemon, set_malign,
          is_covetous } from './makemon.js';
 import * as I from './invent.js';
+import { ghitm } from './dokick.js';
 
 // C ref: hack.h ECMD_* result codes.
 const ECMD_OK = 0, ECMD_CANCEL = 1, ECMD_TIME = 3;
@@ -71,11 +72,9 @@ function Blind() { return !!(game.u?.uprops?.Blinded || game.u?.Blinded); }
 function breathless(ptr) { return (mflags1_of(ptr) & M1_BREATHLESS) !== 0; }
 function haseyes(ptr) { return (mflags1_of(ptr) & M1_NOEYES) === 0; }
 // C ref: objnam.c vtense(subj, verb) — `verb` arrives in the plural (no
-// trailing s) and is returned unchanged when `subj` reads as plural.  The
-// special_subjs[] false-match table and the " of "/" from "/" called " head-noun
-// scan are omitted: this port's only caller passes a body_part() noun, which
-// contains neither.
-function vtense(subj, verb) {
+// trailing s) and is returned unchanged when `subj` reads as plural.
+// Used for thrown body parts and for projectile miss messages.
+export function vtense(subj, verb) {
     if (subj) {
         const s = String(subj);
         if (!/^an? /i.test(s)) {
@@ -265,7 +264,7 @@ export function autoquiver() {
 
 // C ref: obj.h is_crackable(o) — glass armor cracks rather than shattering.
 function is_crackable(obj) {
-    return obj?.oclass === ARMOR_CLASS && objects[obj.otyp]?.oc_material === GLASS;
+    return obj?.oclass === ARMOR_CLASS && objects[obj.otyp]?.material === GLASS;
 }
 
 // C ref: dothrow.c breaktest(obj) — will this shatter when it hits something
@@ -273,15 +272,12 @@ function is_crackable(obj) {
 // survive breakobj() (erode_obj cracks them instead).
 export function breaktest(obj) {
     let nonbreakchance = 1;
-    // oc_material (not .material, the pre-shuffle seed) — o_init.js shuffle()
-    // swaps material among wands/amulets/potions/rings/scrolls/spellbooks at
-    // game start, so e.g. a given seed's "wand of light" need not be glass.
-    if (obj.oclass === ARMOR_CLASS && objects[obj.otyp]?.oc_material === GLASS)
+    if (obj.oclass === ARMOR_CLASS && objects[obj.otyp]?.material === GLASS)
         nonbreakchance = 90;
     // C ref: mkobj.c obj_resists() — the invocation items and Rider corpses
     // resist WITHOUT rolling; a bare rn2(100) here burned a draw on them.
     if (I.obj_resists(obj, nonbreakchance, 99)) return false;
-    if (objects[obj.otyp]?.oc_material === GLASS && !obj.oartifact
+    if (objects[obj.otyp]?.material === GLASS && !obj.oartifact
         && obj.oclass !== GEM_CLASS)
         return true;
     switch (obj.oclass === POTION_CLASS ? POT_WATER : obj.otyp) {
@@ -644,10 +640,8 @@ export async function tamedog(mtmp, obj, givemsg) {
             const MH = await import('./mhitu.js');
             await MH.expels(mtmp, mtmp.data, true);
         } else if (!(Upolyd() && sticks(I.youmonst_data_pub()))) {
-            /* C ref: mon.c unstuck(mtmp) */
-            u.ustuck = null;
-            u.uswallow = 0;
-            U.unstuck_mspec_used(mtmp);
+            const { unstuck } = await import('./mon.js');
+            await unstuck(mtmp);
         }
     }
 
@@ -783,24 +777,9 @@ export async function throw_gold(obj) {
 
     if (u.dz > 0) await update_topl(`The gold hits the ${surface(bx, by)}.`);
     place_object(obj, bx, by);
-    obj.where = 3 /* OBJ_FLOOR */;
     I.stackobj(obj);
     newsym(bx, by);
     return ECMD_TIME;
-}
-
-// C ref: steal.c ghitm(mtmp, gold) — a monster reacts to gold thrown at it.
-// Returns TRUE when the monster keeps it.  The bribe/leprechaun/soldier arms
-// need the gold-lover and bribe subsystems, which this port does not have; the
-// wake-and-pick-up behaviour common to every arm is what runs.
-async function ghitm(mtmp, gold) {
-    const U = await import('./uhitm.js');
-    mtmp.msleeping = 0;
-    if (!mtmp.mcanmove) return false;
-    await U.wakeupAttack(mtmp, false);
-    const { mpickobj } = await import('./steal.js');
-    mpickobj(mtmp, gold);
-    return true;
 }
 
 // ── use_whip (C ref: apply.c:2955) ───────────────────────────────────────────

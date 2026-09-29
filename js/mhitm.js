@@ -34,6 +34,7 @@ import { rn2, rnd, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED,
     M_ATTK_AGR_DONE, STRAT_WAITMASK, engulfing_u,
+    W_ARMG, W_ARMF, W_ARMH, W_ARMC,
 } from './const.js';
 import { DEADMONSTER, mvitals_died, healmon } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
@@ -48,12 +49,12 @@ import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
          M1_THICK_HIDE, M1_WALLWALK, M1_TPORT,
 } from './monflags_data.js';
 import { WEP_HITBON } from './weapondmg_data.js';
-import { xname } from './invent.js';
+import { xname, youmonst_data_pub } from './invent.js';
 import { MATTK } from './monattk_data.js';
 import { name_to_pmidx, monster_by_pmidx, is_home_elemental } from './makemon.js';
 // newcham/pm_to_cham: used only by the appended gulpmm()/mon_poly() below
 import { newcham, newcham_wizard_aware, pm_to_cham } from './makemon.js';
-import { mhitm_adtyping } from './mhitm_ad.js';
+import { mhitm_adtyping, YOUMONST } from './mhitm_ad.js';
 // mhitu.c owns these four (mhitm.c:383/426/85/659 call them across the file
 // boundary); js/mhitu.js is the single faithful copy.
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
@@ -218,7 +219,7 @@ const mm_resists_acid = (mon) => mm_resists(mon, MR_ACID);
 // everywhere mattackm needs species data.
 const _permonst_cache = new Map();
 export function permonst(mon) {
-    const dat = mon?.data;
+    const dat = is_youmonst_mm(mon) ? youmonst_data_pub() : mon?.data;
     if (!dat) return null;
     const nm = dat.name;
     if (!nm) return dat;
@@ -555,10 +556,10 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
 // killMonster() then removes it for the final frame.  When the square ISN'T
 // visible and the victim was tame, C prints "You have a sad feeling for a
 // moment." AFTER mondied() instead.
-async function monkilled_mm(mdef, _adtyp) {
+export async function monkilled_mm(mdef, _adtyp, cause = '') {
     let be_sad = false;
     if (cansee(mdef.mx, mdef.my))
-        await emitMMmsg(`${Monnam(mdef)} is ${nonliving(mdef) ? 'destroyed' : 'killed'}!`);
+        await emitMMmsg(`${Monnam(mdef)} is ${nonliving(mdef) ? 'destroyed' : 'killed'}${cause ? ` by the ${cause}` : ''}!`);
     else
         be_sad = !!mdef.mtame;
     await killMonster(mdef);
@@ -1488,10 +1489,10 @@ export function engulf_target(magr, mdef) {
     return true;
 }
 
-// C ref: mhitm.c:811 `magr == &gy.youmonst` — mhitm.js never dispatches with a
-// hero combatant (mattackm() is monster-vs-monster only), so the youmonst arms
-// are reachable only through engulf_target()'s other callers (uhitm.c/mhitu.c).
-function is_youmonst_mm(mon) { return mon === game.youmonst || mon?.isyou === true; }
+// Shared combat helpers use the same hero sentinel as the AD_* handlers.
+function is_youmonst_mm(mon) {
+    return mon === YOUMONST || mon === game.youmonst || mon?.isyou === true;
+}
 // C ref: you.h Passes_walls — the hero's intrinsic/extrinsic wall-walking.
 function Passes_walls_u() { return !!game.u?.uprops?.Passes_walls; }
 // C ref: rm.h closed_door(x, y) — IS_DOOR && (D_CLOSED | D_LOCKED).
@@ -1617,7 +1618,8 @@ function is_vampshifter_mm(mon) {
 // returns the damage that still applies (0 when the target changed shape).
 export async function mon_poly(magr, mdef, dmg) {
     const freaky = ' undergoes a freakish metamorphosis';
-    const oldform = mdef.data;
+    const oldform = is_youmonst_mm(mdef) ? permonst(mdef) : mdef.data;
+    const vis = is_youmonst_mm(magr) ? game.vis : gv_vis;
 
     if (is_youmonst_mm(mdef)) {
         /* hero defender: mhitm.js never dispatches this way, so the arm is
@@ -1644,11 +1646,11 @@ export async function mon_poly(magr, mdef, dmg) {
         }
     } else {
         const Before = Monnam(mdef);
-        const { resist } = await import('./zap.js');
+        const { resist, resists_magm } = await import('./zap.js');
 
-        if (resists_magm_mm(mdef)) {
+        if (resists_magm(mdef)) {
             /* Magic resistance */
-            if (gv_vis) await shieldeff_mon_mm(mdef);
+            if (vis) await shieldeff_mon_mm(mdef);
         } else if (resist(mdef, WAND_CLASS_MM, 0, /*TELL*/ 1)) {
             /* general resistance to magic... */
         } else if (!rn2(25) && (mdef.cham ?? NON_PM) === NON_PM
@@ -1656,7 +1658,7 @@ export async function mon_poly(magr, mdef, dmg) {
                        || pm_to_cham_mm(mdef) !== NON_PM)) {
             /* system shock; this variation takes away half of mon's HP
                rather than kill outright */
-            if (gv_vis)
+            if (vis)
                 await emitMMmsg(`${Before} shudders!`);
 
             dmg += Math.trunc(((mdef.mhpmax | 0) + 1) / 2);
@@ -1669,12 +1671,12 @@ export async function mon_poly(magr, mdef, dmg) {
                     await monkilled_mm(mdef, AD_RBRE);
             }
         } else if (await newcham_wizard_aware(mdef, null)) {
-            if (gv_vis) { /* either seen or adjacent */
+            if (vis) { /* either seen or adjacent */
                 const was_seen = Before.toLowerCase() !== 'it',
                       verbosely = !!game.flags?.verbose || !was_seen;
 
-                if (mm_can_see_mon(mdef)) {
-                    const { x_monnam } = await import('./uhitm.js');
+                const { canspotmon, x_monnam } = await import('./uhitm.js');
+                if (canspotmon(mdef)) {
                     await emitMMmsg(`${Before}${verbosely ? freaky : ''}${
                         verbosely ? ' and' : ''} turns into ${
                         x_monnam(mdef, /*ARTICLE_A*/ 2, null,
@@ -1694,35 +1696,46 @@ export async function mon_poly(magr, mdef, dmg) {
                     await rloc(magr, /*RLOC_MSG*/ 1);
             }
         } else {
-            if (gv_vis && game.flags?.verbose)
+            if (vis && game.flags?.verbose)
                 await emitMMmsg('Nothing seems to happen.'); /* nothing_happens */
         }
     }
     /* when a transformation has happened, can't attack again for poly
        effect during next turn or two; not enforced for poly'd hero */
-    if (mdef.data !== oldform && !is_youmonst_mm(magr))
+    if ((is_youmonst_mm(mdef) ? permonst(mdef) : mdef.data) !== oldform
+        && !is_youmonst_mm(magr))
         magr.mspec_used = (magr.mspec_used | 0) + rnd(2);
 
     return dmg;
 }
 
 // C ref: hack.h NON_PM (-1) and objclass.h WAND_CLASS.
-const NON_PM = -1, WAND_CLASS_MM = 8;
+const NON_PM = -1, WAND_CLASS_MM = 11;
 // C ref: makemon.c pm_to_cham(mndx) — js/makemon.js:2799 keys off the pmidx, so
 // route through permonst() for a pet's non-makemon index.
 function pm_to_cham_mm(mon) {
     const p = permonst(mon);
     return (p?.pmidx != null) ? pm_to_cham(p.pmidx) : NON_PM;
 }
-// C ref: you.h Antimagic / Unchanging.  polyself.c you_were()/you_unwere() and
-// teleport.c tele() have no export; mon.c xkilled() likewise (js/uhitm.js keeps
-// a private killed()).  The hero-defender arms are unreachable from mhitm.js.
+// C ref: you.h Antimagic / Unchanging.
 function Antimagic_u() { return !!game.u?.uprops?.Antimagic; }
 function Unchanging_u() { return !!game.u?.uprops?.Unchanging; }
-async function you_were_mm() { /* polyself.c you_were() */ }
-async function you_unwere_mm(_upgrade) { /* polyself.c you_unwere() */ }
-async function tele_mm() { /* teleport.c tele() */ }
-async function xkilled_mm(mdef) { return await killMonster(mdef); }
+async function you_were_mm() {
+    const { you_were } = await import('./polyself.js');
+    await you_were();
+}
+async function you_unwere_mm(purify) {
+    const { you_unwere } = await import('./polyself.js');
+    await you_unwere(purify);
+}
+async function tele_mm() {
+    const { scrolltele } = await import('./read.js');
+    await scrolltele(null);
+}
+async function xkilled_mm(mdef) {
+    const { killed } = await import('./uhitm.js');
+    await killed(mdef, { nocorpse: true });
+}
 // C ref: display.c shieldeff(x, y) / shieldeff_mon(mon) — the reflective flash.
 async function shieldeff_mm(x, y) {
     const { shieldeff } = await import('./display.js');

@@ -1427,7 +1427,10 @@ function start_timer(when, kind, action, obj) {
         // C ref: timeout.c start_timer() — gnu->timeout = svm.moves + when
         // (the caller's `when` is turns-from-now; the timer fires at that
         // absolute turn).
-        obj.timer = { when: (game.moves ?? 0) + when, kind, action };
+        obj.timer = {
+            when: (game.moves ?? 0) + when, kind, action,
+            tid: game._object_timer_id = (game._object_timer_id ?? 0) + 1,
+        };
     }
     return true;
 }
@@ -1438,29 +1441,22 @@ function obj_stop_timers(obj) {
     delete obj.timer;
 }
 
-// C ref: timeout.c run_timers() — dispatch expired TIMER_OBJECT timers.
-// SHRINK_GLOB's handler mkobj.c shrink_glob() is ported below and DOES draw
-// (start_glob_timeout's rn2(5)) each time it reschedules.  ROT_CORPSE's real
-// handler (dig.c rot_corpse(), which prints "Your <corpse> rots away." for a
-// carried corpse, stops an occupation if it was worn/wielded, and reveals a
-// hiding monster if on the floor) is fully ported at js/dig.js's rot_corpse();
-// this used to only scan FLOOR objects and silently splice them out (no
-// message, no RNG, no owornmask/occupation handling) instead of calling it —
-// so a corpse rotting away while CARRIED (the common case) never fired at
-// all, and a floor one never revealed a hiding monster or got the message.
+// C ref: timeout.c run_timers() — expire object timers in timeout order,
+// newest first for equal deadlines (insert_timer puts ties at the head).
 export async function run_object_timers() {
     const moves = game.moves ?? 0;
     // Collect every timed object due to fire, from every list mkobj.c
     // maintains, so an object in a pack or a container is reached exactly
     // like C's timer queue (keyed on the object, not on which list holds it).
-    const globs = [], corpses = [];
+    const due = [];
     const scan = (list) => {
         if (!Array.isArray(list)) return;
         for (const o of list) {
-            if (o.timed && o.timer && o.timer.when <= moves) {
-                if (o.timer.action === SHRINK_GLOB) globs.push(o);
-                else if (o.timer.action === ROT_CORPSE) corpses.push(o);
-            }
+            if (o.timed && o.timer && o.timer.when <= moves
+                && (o.timer.action === SHRINK_GLOB
+                    || o.timer.action === ROT_CORPSE
+                    || o.timer.action === HATCH_EGG))
+                due.push({ obj: o, timer: o.timer });
             if (Array.isArray(o.cobj)) scan(o.cobj);
         }
     };
@@ -1470,15 +1466,26 @@ export async function run_object_timers() {
     scan(game.migrating_objs);
     for (const mon of (Array.isArray(game.level?.monsters) ? game.level.monsters : []))
         scan(mon.minvent);
-    for (const g of globs) shrink_glob(g, g.timer?.when ?? moves);
-
-    if (corpses.length) {
-        const { rot_corpse } = await import('./dig.js');
-        for (const obj of corpses) {
-            const when = obj.timer?.when ?? moves;
-            obj.timed = false;
-            delete obj.timer;
-            await rot_corpse({ a_obj: obj }, when);
+    due.sort((a, b) => a.timer.when - b.timer.when
+        || (b.timer.tid ?? 0) - (a.timer.tid ?? 0));
+    for (const { obj, timer } of due) {
+        if (obj.timer !== timer || !obj.timed) continue;
+        obj.timed = false;
+        delete obj.timer;
+        switch (timer.action) {
+        case SHRINK_GLOB:
+            shrink_glob(obj, timer.when);
+            break;
+        case ROT_CORPSE: {
+            const { rot_corpse } = await import('./dig.js');
+            await rot_corpse({ a_obj: obj }, timer.when);
+            break;
+        }
+        case HATCH_EGG: {
+            const { hatch_egg } = await import('./timeout.js');
+            await hatch_egg({ a_obj: obj }, timer.when);
+            break;
+        }
         }
     }
 }
@@ -1528,7 +1535,7 @@ const MAX_EGG_HATCH_TIME = 200;
 // C ref: timeout.c stop_timer(func_index, arg) — remove the object's timer of
 // this action and return its REMAINING turns (`timeout - svm.moves`), or 0 when
 // there was none.  Consumes no RNG.
-function stop_object_timer(obj, action) {
+export function stop_object_timer(obj, action) {
     if (!obj?.timed || obj.timer?.action !== action) return 0;
     const remaining = obj.timer.when - (game.moves ?? 0);
     obj.timed = false;
@@ -1552,7 +1559,7 @@ function attach_fig_transform_timeout(figurine) {
 // mimics the old hatch_it(), which tried once a turn from age 151 to 200
 // inclusive and hatched on a roll of rnd(age) exceeding 150 — so the loop draws
 // rnd(151), rnd(152), ... until one exceeds 150 (chance of hatching > 99.999%).
-function attach_egg_hatch_timeout(egg, when) {
+export function attach_egg_hatch_timeout(egg, when) {
     stop_object_timer(egg, HATCH_EGG); /* stop previous timer, if any */
     if (!when) {
         for (let i = (MAX_EGG_HATCH_TIME - 50) + 1; i <= MAX_EGG_HATCH_TIME; i++) {

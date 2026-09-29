@@ -26,8 +26,9 @@ import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { Is_special } from './dungeon.js';
+import { roles } from './role.js';
 import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET,
-         Is_oracle_level } from './const.js';
+         Is_oracle_level, In_quest } from './const.js';
 import { msound_of, MS_LEADER, MS_NEMESIS } from './monflags_data.js';
 
 // ── small accessors that mirror the C globals/macros bones.c relies on ──
@@ -255,12 +256,14 @@ export async function getbones() {
     }
 }
 
-// C ref: bones.c open_bonesfile()/create_bonesfile() filename — the bones file
-// is keyed on the dungeon level (bonDD.nnn).  We key the shared-storage blob on
-// (dnum,dlevel) so savebones() in one segment and getbones() in the next agree.
+// C ref: files.c set_bonesfile_name(): special levels use their boneid rather
+// than their randomized depth, and quest bones are specific to the hero's role.
 export function bones_key(uz) {
-    const d = uz || game.u?.uz || {};
-    return `nethack.bones.${d.dnum ?? 0}.${d.dlevel ?? 1}`;
+    const lev = uz || game.u.uz;
+    const dungeon = game.dungeons[lev.dnum];
+    const special = Is_special(lev);
+    const role = In_quest(lev) ? roles[game.initrole].filecode : '0';
+    return `nethack.bones.${dungeon.boneid}${role}.${special ? special.boneid : lev.dlevel}`;
 }
 
 // C ref: restore.c getlev() for a bones file — deserialize the level graph and

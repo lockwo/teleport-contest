@@ -40,15 +40,15 @@ import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
     M1_UNSOLID, M1_NOEYES, M1_NOLIMBS, M1_NOHANDS, M1_NOTAKE,
     strongmonst_flag as strongmonst,
     M2_JEWELS, M2_UNDEAD, M2_MERC, M2_WERE } from './monflags_data.js';
-import { attacktype, dmgtype, AT_GAZE, AT_EXPL, AT_BREA, AT_ENGL, AD_FIRE,
-    AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
+import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
+    AT_ENGL, AD_FIRE, AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
 import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
     objects as OBJECTS, place_object } from './mkobj.js';
 import { monster_by_pmidx, makemon, little_to_big, name_to_pmidx } from './makemon.js';
 import { set_mon_data } from './mondata.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag }
     from './monflags_data.js';
-import { mondied_mm } from './mhitm.js';
+import { mondied_mm, monkilled_mm } from './mhitm.js';
 import { find_mac as worn_find_mac } from './worn.js';
 // onscary() is an `export function` declaration in monmove.js, so the
 // monmove -> muse -> monmove import cycle resolves through a hoisted binding
@@ -81,7 +81,7 @@ import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP, M_SEEN_ELEC,
     M_SEEN_ACID, M_SEEN_REFL, G_GENOD, MON_MIGRATING,
     MIGR_RANDOM, MIGR_STAIRS_UP, MIGR_STAIRS_DOWN, MIGR_LADDER_UP,
-    MIGR_LADDER_DOWN, MIGR_SSTAIRS } from './const.js';
+    MIGR_LADDER_DOWN, MIGR_SSTAIRS, STRAT_WAITFORU, FORCETRAP, Unaware } from './const.js';
 import { surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 
@@ -2894,6 +2894,7 @@ export async function munslime(mon, by_you) {
 
     if (slimeproof(mptr)) return false;
     if (mon.meating || helpless(mon)) return false;
+    mon.mstrategy = (mon.mstrategy | 0) & ~STRAT_WAITFORU;
 
     /* if the monster can breathe fire, do so upon self */
     if (!mon.mcan && !mon.mspec_used
@@ -2910,11 +2911,13 @@ export async function munslime(mon, by_you) {
                 return await muse_unslime(mon, obj, null, by_you);
 
         t = t_at(mon.mx, mon.my);
-        if ((t == null || t.ttyp !== FIRE_TRAP) && base_mmove(mon) && !mon.mtrapped) {
+        if ((t == null || t.ttyp !== FIRE_TRAP) && mptr.mmove && !mon.mtrapped) {
             const xy = [];
             for (let x = mon.mx - 1; x <= mon.mx + 1; ++x)
                 for (let y = mon.my - 1; y <= mon.my + 1; ++y)
                     if (isok(x, y) && ACCESSIBLE(levl_typ(x, y))
+                        && !(IS_DOOR(levl_typ(x, y))
+                             && ((game.level.at(x, y).doormask | 0) & (D_CLOSED | D_LOCKED)))
                         && !m_at(x, y) && !u_at(x, y))
                         xy.push([x, y]);
             t = null;
@@ -2937,24 +2940,17 @@ export async function munslime(mon, by_you) {
 }
 // C ref: mondata.h attacktype_fordmg(ptr, AT_BREA, AD_FIRE).
 function attacktype_fordmg_fire(ptr) {
-    const { attacktype_fordmg } = { attacktype_fordmg: null };
-    /* monattk_data exports attacktype_fordmg; call it through the import when
-       available so we don't duplicate the attack-table walk. */
-    return _attacktype_fordmg(ptr, AT_BREA, AD_FIRE);
+    return attacktype_fordmg(ptr, AT_BREA, AD_FIRE);
 }
 
-// C ref: muse.c muse_unslime(mon, obj, trap, by_you).  The zhitm()/explode()
-// damage paths are unported, so the fire sources that need them stop after the
-// message + speed adjustment; the fire-trap path uses the ported mintrap.
+// C ref: muse.c muse_unslime(mon, obj, trap, by_you).
 async function muse_unslime(mon, obj, trap, by_you) {
     const otyp = obj.otyp;
-    let vis = canseemon(mon);
-    const res = true;
+    let vis = canseemon(mon), res = true, dmg = 0;
 
     if (vis)
         await update_topl(`${Monnam(mon)} starts turning ${
             green_mon(mon) ? 'into ooze' : 'green'}.`);
-    /* -4 => sliming, causes quiet loss of enhanced speed */
     await mon_adjust_speed(mon, -4, null);
 
     if (trap) {
@@ -2963,21 +2959,23 @@ async function muse_unslime(mon, obj, trap, by_you) {
             if (vis)
                 await update_topl(`${Mnam} triggers ${trap.tseen ? 'the' : 'a'} fire trap!`);
         } else {
-            newsym(mon.mx, mon.my);
-            mon.mx = trap.tx; mon.my = trap.ty;
+            const ox = mon.mx, oy = mon.my;
+            mon.mx = trap.tx;
+            mon.my = trap.ty;
+            newsym(ox, oy);
             newsym(mon.mx, mon.my);
             if (vis)
                 await update_topl(`${Mnam} ${vtense_s(locomotion(mon.data, 'move'))} ${
                     is_floater(mon.data) ? 'over' : 'onto'} ${
                     trap.tseen ? 'the' : 'a'} fire trap!`);
         }
-        await mon_mintrap(mon);
+        await mon_mintrap(mon, FORCETRAP);
     } else if (otyp === STRANGE_OBJECT) {
-        /* monster is using fire breath on self */
         if (vis)
             await update_topl(`${Monnam(mon)} breathes fire on ${mhim(mon)}self.`);
         if (!rn2(3)) mon.mspec_used = rn1(10, 5);
-        /* GAP: zhitm() applies the fire damage; unported. */
+        const { zhitm } = await import('./zap.js');
+        ({ tmp: dmg } = await zhitm(mon, by_you ? 21 : -21, 1));
     } else if (otyp === OT().SCR_FIRE) {
         await mreadmsg(mon, obj);
         if (mon.mconf) {
@@ -2985,48 +2983,73 @@ async function muse_unslime(mon, obj, trap, by_you) {
             if (vis) await trycall(obj);
             m_useup(mon, obj);
             vis = false;
-            return false; /* failed to cure sliming */
-        }
-        // C ref: muse.c:3161 — dmg is rolled, the scroll is used up BEFORE
-        // explode(), and the blast itself applies the damage.  A negative
-        // expltype names `mon` as the monster the hero gets kill credit for.
-        const dmg = Math.trunc((2 * (rn1(3, 3) + 2 * bcsign(obj)) + 1) / 3);
-        m_useup(mon, obj);
-        {
+            res = false;
+        } else {
+            const blast = Math.trunc((2 * (rn1(3, 3) + 2 * bcsign(obj)) + 1) / 3);
+            m_useup(mon, obj);
             const { explode } = await import('./explode.js');
             const { EXPL_FIERY } = await import('./const.js');
-            const { SCROLL_CLASS } = await import('./mkobj.js');
-            await explode(mon.mx, mon.my, -11, dmg, SCROLL_CLASS,
+            await explode(mon.mx, mon.my, -11, blast, SCROLL_CLASS,
                           by_you ? -EXPL_FIERY : EXPL_FIERY);
         }
     } else if (otyp === OT().POT_OIL) {
         let o = obj;
         const was_lit = !!obj.lamplit;
-        if ((o.quan || 1) > 1) o = m_splitobj(o, 1);
-        if (vis && !was_lit)
+        let saw_lit = false;
+        if ((o.quan || 1) > 1) {
+            const { next_ident, weight } = await import('./mkobj.js');
+            o = m_splitobj(o, 1);
+            o.o_id = next_ident();
+            o.timed = 0;
+            o.lamplit = 0;
+            o.owornmask = 0;
+            obj.owt = weight(obj);
+            o.owt = weight(o);
+            mon.minvent.splice(mon.minvent.indexOf(obj) + 1, 0, o);
+        }
+        if (vis && !was_lit) {
             await update_topl(`${Monnam(mon)} ignites ${an(xname(o))}.`);
-        o.lamplit = 1;
+            saw_lit = true;
+        }
+        const { begin_burn, obj_stop_timers } = await import('./timeout.js');
+        await begin_burn(o, was_lit);
         vis = vis || canseemon(mon);
         if (vis) {
-            observe_object(o);
-            await update_topl(`${was_lit ? Monnam(mon) : upstart(mhe(mon))
+            if (!Unaware()) observe_object(o);
+            await update_topl(`${saw_lit ? upstart(mhe(mon)) : Monnam(mon)
                 } quaffs a burning ${xname(o)}`);
             makeknown(OT().POT_OIL);
         }
-        d(3, 4); /* [**TEMP** (different from hero)] */
+        dmg = d(3, 4);
+        await obj_stop_timers(o);
         m_useup(mon, o);
-    } else { /* wand/horn of fire w/ positive charge count */
+    } else {
         if (obj.otyp === OT().FIRE_HORN) await mplayhorn(mon, obj, true);
         else await mzapwand(mon, obj, true);
-        /* GAP: zhitm() applies the fire damage; unported. */
+        const { zhitm } = await import('./zap.js');
+        ({ tmp: dmg } = await zhitm(mon, by_you ? 1 : -1, 2));
     }
 
+    if (dmg) {
+        if (DEADMONSTER(mon)) {
+            if (by_you) {
+                if (vis)
+                    await update_topl(`${Monnam(mon)} is ${
+                        nonliving(mon.data) ? 'destroyed' : 'killed'} by the fire!`);
+                const { killed } = await import('./uhitm.js');
+                await killed(mon, { nomsg: true, noconduct: true });
+            } else {
+                await monkilled_mm(mon, AD_FIRE, 'fire');
+            }
+        } else if (vis) {
+            await update_topl(`${Monnam(mon)} is burned${dmg <= 4 ? '.' : '!'}`);
+        }
+    }
     if (vis) {
         if (res && !DEADMONSTER(mon))
             await update_topl(`${s_suffix(Monnam(mon))} slime is burned away!`);
         if (otyp !== STRANGE_OBJECT) makeknown(otyp);
     }
-    /* use up monster's next move */
     mon.movement = (mon.movement | 0) - NORMAL_SPEED;
     mon.mlstmv = game.moves;
     return res;
