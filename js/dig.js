@@ -9,8 +9,8 @@
 
 import { game } from './gstate.js';
 import { rnd, rn2, rn1 } from './rng.js';
-import { newsym } from './display.js';
-import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD } from './const.js';
+import { newsym, You_hear, You_feel } from './display.js';
+import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, Unaware } from './const.js';
 import { unblock_point, recalc_block_point, cansee } from './vision.js';
 import {
     IS_WALL, IS_TREE, IS_OBSTRUCTED, IS_STWALL, IS_DOOR,
@@ -239,11 +239,6 @@ function sobj_at_boulder(x, y) {
     return false;
 }
 
-async function You_hear(msg) {
-    const { update_topl } = await import('./display.js');
-    await update_topl(msg);
-}
-
 // C ref: hack.h Hallucination — the timer lives under three different names in
 // this port depending on which file wrote it (see cmd.js Hallucination()).
 function Hallucination() {
@@ -265,23 +260,23 @@ async function draft_message(unexpected) {
     const u = game.u || {};
     if (unexpected) {
         if (!Hallucination()) {
-            await You_hear('You feel an unexpected draft.');
+            await You_feel('an unexpected draft.');
         } else {
             const { acurr_eff } = await import('./attrib.js');
             const weak = (acurr_eff(A_STR) < 6 || acurr_eff(A_DEX) < 6
                           || acurr_eff(A_CON) < 6 || acurr_eff(A_CHA) < 6
                           || acurr_eff(A_INT) < 6 || acurr_eff(A_WIS) < 6);
-            await You_hear(`You feel like you are ${weak ? '4-F' : '1-A'}.`);
+            await You_feel(`like you are ${weak ? '4-F' : '1-A'}.`);
         }
     } else {
         if (!Hallucination()) {
-            await You_hear('You feel a draft.');
+            await You_feel('a draft.');
         } else {
             const atyp = u.ualign?.type ?? 0;
             let dridx = rn1(2, 1 - sgn(atyp));
             if ((u.ualign?.record ?? 0) < STRIDENT)
                 dridx += rn1(3, sgn(atyp) - 1);
-            await You_hear(`You feel like ${DRAFT_REACTION[dridx]}.`);
+            await You_feel(`like ${DRAFT_REACTION[dridx]}.`);
         }
     }
 }
@@ -370,9 +365,8 @@ export async function mdig_tunnel(mtmp) {
             // C ref: dig.c:1442 — draft feedback.  flags.verbose is on; the
             // rn2(3) is drawn whenever the hero is not Unaware.
             const verbose = game.flags?.verbose !== false;
-            const Unaware = !!game.u?.Unaware;
             if (verbose) {
-                if (!Unaware && !rn2(3))
+                if (!Unaware() && !rn2(3))
                     await draft_message(true);
             }
         }
@@ -397,13 +391,9 @@ export async function mdig_tunnel(mtmp) {
 
     if (IS_WALL(here.typ)) {
         // C ref: dig.c:1466 — "crashing rock" chance.  The rn2(5) is a REAL
-        // draw whenever flags.verbose; the You_hear text is post-draw and only
-        // reaches the hero when not Deaf.
+        // draw whenever flags.verbose; You_hear() owns the Deaf gate.
         const verbose = game.flags?.verbose !== false;
-        const Deaf = !!game.u?.Deaf;
-        if (verbose && !rn2(5)) {
-            if (!Deaf) await You_hear('You hear crashing rock.');
-        }
+        if (verbose && !rn2(5)) await You_hear('crashing rock.');
         const flags = game.level?.flags || {};
         if (flags.is_maze_lev) {
             here.typ = ROOM; here.flags = 0;

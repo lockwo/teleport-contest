@@ -23,9 +23,9 @@ import { exercise } from './attrib.js';
 import { discover_object } from './o_init.js';
 import { do_mapping } from './detect.js';
 import { study_book } from './spell.js';
-import { erode_obj, obj_erode_type, goodpos_for_hero, t_at } from './trap.js';
+import { erode_obj, obj_erode_type } from './trap.js';
 import { find_ac } from './u_init.js';
-import { teleds, On_W_tower_level } from './teleport.js';
+import { teleds, teleok, safe_teleds, On_W_tower_level } from './teleport.js';
 import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          SCR_DESTROY_ARMOR, SCR_REMOVE_CURSE, SCR_ENCHANT_WEAPON,
          SCR_ENCHANT_ARMOR, SCR_CONFUSE_MONSTER, SCR_SCARE_MONSTER,
@@ -35,7 +35,7 @@ import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          bless, curse, uncurse, blessorcurse, weight } from './mkobj.js';
 import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          ERODE_NONE, EF_PAY, EF_DESTROY, ER_NOTHING, ER_DESTROYED,
-         COLNO, ROWNO, VIBRATING_SQUARE, is_pit, is_hole, SPE_LIM,
+         COLNO, ROWNO, SPE_LIM,
          W_BALL, W_CHAIN, W_ARMH, SDOOR, DOOR, D_CLOSED, D_LOCKED, isok,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
          In_endgame, Is_earthlevel, GENOCIDED, KILLED_BY,
@@ -429,10 +429,7 @@ export async function seffects(sobj) {
     return false;
 }
 
-// C ref: read.c seffect_gold_detection() -> detect.c gold_detect().  Returns
-// true when nothing was detected (C's `*sobjp = 0`: strange_feeling used the
-// scroll up).  browse_map()'s getpos loop and the closing docrt() are threaded
-// in from hack.js/display.js here to keep detect.js free of that import cycle.
+// C ref: read.c seffect_gold_detection() -> detect.c gold_detect().
 async function seffect_gold_detection(sobj) {
     if (Confused() || sobj.cursed) {
         const { trap_detect } = await import('./detect.js');
@@ -442,10 +439,7 @@ async function seffect_gold_detection(sobj) {
         return !!(await trap_detect(sobj));
     }
     const { gold_detect } = await import('./detect.js');
-    const { browse_map_getpos } = await import('./hack.js');
-    const { docrt, flush_screen } = await import('./display.js');
-    const nothing = await gold_detect(sobj, (goal) => browse_map_getpos(goal, true),
-                                      docrt, update_topl, topl_more, flush_screen);
+    const nothing = await gold_detect(sobj);
     if (nothing) {
         await strange_feeling(sobj, 'You feel materially poor.');
         return true;
@@ -1062,26 +1056,6 @@ async function seffect_enchant_weapon(sobj) {
     return !chwSuccess;
 }
 
-// C ref: teleport.c teleok(x,y,trapok) — hero-only subset.  UNPORTED and real
-// on special levels: tele_jump_ok() (Sokoban forbids teleporting past a wall,
-// the endgame air/water levels have their own rules) and in_out_region()
-// (Juiblex's swamp / the Wizard's tower keep you in or out) both veto
-// destinations that the trap guard and goodpos() accept, so a teleport on one
-// of those levels can land somewhere C would have rejected.
-export function teleok_hero(x, y, trapok) {
-    if (!trapok) {
-        const trap = t_at(x, y);
-        if (trap) {
-            const u = game.u;
-            const airborne = !!(u?.uprops?.Levitation || u?.uprops?.Flying);
-            const ok = trap.ttyp === VIBRATING_SQUARE
-                || ((is_pit(trap.ttyp) || is_hole(trap.ttyp)) && airborne);
-            if (!ok) return false;
-        }
-    }
-    return goodpos_for_hero(x, y);
-}
-
 // C ref: teleport.c scrolltele(scroll) — the in-level teleport a non-confused,
 // non-cursed scroll of teleportation performs.  Only the tail (safe_teleds)
 // used to be here, so three earlier C branches were skipped entirely:
@@ -1136,7 +1110,7 @@ export async function scrolltele(scroll) {
             const cc = await getpos('the desired position', u.ux, u.uy, null,
                                     /*force=*/true, verbose);
             if (!cc) return; // getpos() < 0: abort
-            if (teleok_hero(cc.x, cc.y, false)) {
+            if (teleok(cc.x, cc.y, false)) {
                 await teleds(cc.x, cc.y, TELEDS_TELEPORT);
                 return;
             }
@@ -1152,7 +1126,7 @@ export async function scrolltele(scroll) {
     // fixes that carrot divergence.  Until then gk.known defers the makeknown
     // to doread(), which puts the rn2(19) after the teleport instead.
     if (scroll) learnscroll(scroll);
-    await safe_teleds_hero();
+    await safe_teleds(TELEDS_TELEPORT);
 }
 
 // C ref: read.c learnscroll(sobj) — a spellbook (fake object for a spell)
@@ -1161,26 +1135,6 @@ function learnscroll(sobj) {
     if (sobj.oclass !== SPBOOK_CLASS) learnscrolltyp(sobj.otyp);
 }
 
-// C ref: teleport.c safe_teleds(TELEDS_TELEPORT) — hero-only subset: the
-// initial "completely random, up to 40 tries" loop.
-// UNPORTED and real: when all 40 tries fail (a cramped or crowded level —
-// Sokoban, the mines' end, a big monster crowd) C does NOT give up.  It builds
-// a shuffled ring-expanding candidate list (collect_coords, CC_RING_PAIRS |
-// CC_SKIP_MONS [| CC_SKIP_INACCS]) — which itself draws for the shuffle — walks
-// it, and finally falls back to the first acceptable TRAP square.  Returning
-// FALSE here instead leaves the hero standing where they were, with the whole
-// PRNG stream short by collect_coords' draws.
-export async function safe_teleds_hero() {
-    for (let tcnt = 0; tcnt < 40; tcnt++) {
-        const nux = rnd(COLNO - 1);
-        const nuy = rn2(ROWNO);
-        if (teleok_hero(nux, nuy, false)) {
-            await teleds(nux, nuy, TELEDS_TELEPORT);
-            return true;
-        }
-    }
-    return false;
-}
 
 // C ref: read.c litroom(on, obj) — light (on) or darken (!on, a cursed scroll)
 // the area around the hero.  C lights every couldsee cell within radius
@@ -3386,6 +3340,19 @@ export async function create_particular_parse(str, d) {
     return false;
 }
 
+// C read.c create_particular_creation: resolve special species before placement.
+export async function create_particular_species(which) {
+    const { name_to_pmidx, monster_by_pmidx } = await import('./makemon.js');
+    const ref = { v: which };
+    if (await cant_revive(ref, false, null)
+        && which !== name_to_pmidx('long worm tail')) {
+        const q = `Creating ${monster_by_pmidx(ref.v).name} instead; force ${
+            monster_by_pmidx(which).name}?`;
+        if (await y_n(q) === 'y') ref.v = which;
+    }
+    return ref.v;
+}
+
 // C ref: read.c:3252 create_particular_creation(d) — make d.quan monsters from
 // a parsed create-particular request.  RNG order per iteration: mkclass()/
 // rndmonst() when a class or random was asked for, then makemon() (which itself
@@ -3395,8 +3362,8 @@ export async function create_particular_parse(str, d) {
 // makemon.js:3903 create_particular_monster() covers the single-named-monster
 // case only (and splits the placement walk out); this is the full loop.
 export async function create_particular_creation(d) {
-    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign, newcham,
-            name_to_pmidx } = await import('./makemon.js');
+    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign, newcham }
+        = await import('./makemon.js');
     const u = game.u;
     let whichpm = null;
     let firstchoice = NON_PM;
@@ -3404,15 +3371,7 @@ export async function create_particular_creation(d) {
 
     if (!d.randmonst) {
         firstchoice = d.which;
-        const ref = { v: d.which };
-        if ((await cant_revive(ref, false, null))
-            && firstchoice !== name_to_pmidx('long worm tail')) {
-            /* wizard mode can override handling of special monsters */
-            const q = `Creating ${monster_by_pmidx(ref.v)?.name} instead; force ${
-                monster_by_pmidx(firstchoice)?.name}?`;
-            if ((await y_n(q)) === 'y') ref.v = firstchoice;
-        }
-        d.which = ref.v;
+        d.which = await create_particular_species(d.which);
         whichpm = monster_by_pmidx(d.which);
     }
     for (let i = 0; i < d.quan; i++) {

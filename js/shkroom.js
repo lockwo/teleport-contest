@@ -6,6 +6,7 @@
 // state, not just display: without it a shopkeeper picks a different square.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { pline, update_topl } from './display.js';
 import { shtypes } from './shtypes.js';
 import { Hello } from './role.js';
@@ -160,7 +161,7 @@ export function shkname(shkp) {
     if (!nm) return shkp.data?.name || 'shopkeeper';
     return /[A-Za-z]/.test(nm[0]) ? nm : nm.slice(1);
 }
-const s_suffix = (s) => (/s$/.test(s) ? `${s}'` : `${s}'s`);
+
 
 // C ref: hack.c move_update(newlev) — recompute u.urooms/u.ushops and the
 // entered/left deltas for the hero's current square.
@@ -382,10 +383,9 @@ function is_watch_mon(mtmp) {
     return nm === 'watchman' || nm === 'watch captain';
 }
 
-// C ref: wizard.c choose_stairs(&sx, &sy, dir) — the staircase the Kops should
-// swarm around: forward (down, in a builds-down dungeon), else a ladder, else a
-// branch stair, else the opposite direction.  No RNG.
-function choose_stairs(dir) {
+// C wizard.c choose_stairs: covetous retreat and guardian deployment prefer
+// the requested direction, then a ladder, branch stairs, or the opposite direction.
+export function choose_stairs(dir) {
     const up = builds_up(game.u?.uz) ? dir : !dir;
     const findTypeDir = (isladder, wantUp) => {
         for (let st = game.stairs; st; st = st.next)

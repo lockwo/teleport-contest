@@ -23,6 +23,16 @@ export function dist2(x1, y1, x2, y2) {
     return (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
 }
 
+// C ref: hacklib.c s_suffix() — possessive: "it" -> "its", "you" -> "your"
+// (both case-insensitive, like strcmpi), "Xs" -> "Xs'", otherwise "X's".
+export function s_suffix(s) {
+    const str = String(s);
+    const lower = str.toLowerCase();
+    if (lower === 'it') return `${str}s`;
+    if (lower === 'you') return `${str}r`;
+    return str.endsWith('s') ? `${str}'` : `${str}'s`;
+}
+
 export function depth(uz) {
     const dnum = uz?.dnum ?? 0;
     const dlevel = uz?.dlevel ?? 1;

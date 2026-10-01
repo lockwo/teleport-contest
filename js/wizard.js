@@ -236,8 +236,8 @@ export async function intervene() {
         break;
     case 2: {
         if (!Blind()) await update_topl('You notice a black glow surrounding you.');
-        const { rndcurse } = await import('./zap.js').catch(() => ({ rndcurse: null }));
-        if (rndcurse) await rndcurse();
+        const { rndcurse } = await import('./pray.js');
+        await rndcurse();
         break;
     }
     case 3:
@@ -572,12 +572,7 @@ export async function tactics(mtmp) {
 
         /* if wounded, hole up on or near the stairs (to block them) */
         {
-            // C: choose_stairs(&sx, &sy, (mtmp->m_id % 2)).  js/shkroom.js:343
-            // holds the port but keeps it module-private and returns the spot
-            // instead of filling two out-params; when it is unavailable the
-            // out-params stay 0, which is C's "no spot found" case.
-            const st = (typeof shkr.choose_stairs === 'function')
-                ? shkr.choose_stairs((mtmp.m_id | 0) % 2) : null;
+            const st = shkr.choose_stairs((mtmp.m_id | 0) % 2);
             if (st) { sx = st.x | 0; sy = st.y | 0; }
         }
         mtmp.mavenge = 1; /* covetous monsters attack while fleeing */

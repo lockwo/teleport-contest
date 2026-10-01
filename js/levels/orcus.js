@@ -22,7 +22,7 @@ import {
 } from '../selvar.js';
 import {
     bigrm_wallification, flip_level, lspo_map, quest_place_stair, quest_set_door,
-    remove_boundary_syms, reset_xystart_size, selection_match, shuffle,
+    remove_boundary_syms, map_cleanup, reset_xystart_size, selection_match, shuffle,
     splev_create_monster, splev_link_doors_rooms, splev_map_reset,
     splev_region_lit, vly_altar, vly_object, vly_region, vly_trap,
 } from '../sp_lev.js';
@@ -176,11 +176,12 @@ export async function makemaz_orcus() {
 
     // C ref: lspo_finalize_level() — link_doors_rooms (the shops' doors are
     // declared before the des.region that creates them, so stock_room() has no
-    // door without this), remove_boundary_syms, wallification (not corrmaze),
+    // door without this), remove_boundary_syms, map_cleanup, wallification (not corrmaze),
     // flip_level_rnd, fixup_special.  The fill_special_room() loop that stocks
     // the morgue and the two shops is the engine's post-mklev pass.
     splev_link_doors_rooms();
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

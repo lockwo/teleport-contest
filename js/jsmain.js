@@ -309,6 +309,11 @@ export class NethackGame {
         // from nethackrc BIND= lines (key char -> command name).  cmd.js rhack()
         // remaps a bound key to the command's default key before dispatch.
         g.keybind = opts.keybind || {};
+        // Preserve explicit unbindings unless a later BIND reassigned the key.
+        for (const key of opts.keyunbind || []) {
+            if (!Object.prototype.hasOwnProperty.call(g.keybind, key))
+                g.keybind[key] = 'nothing';
+        }
         // symset selects the drawing glyph table; DECgraphics uses VT100
         // line-drawing for walls/floor, otherwise the default ASCII symbols.
         g.symset = opts.symset || '';

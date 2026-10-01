@@ -4,6 +4,7 @@
 // sequence as C during level generation so RNG parity is preserved.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, topl_more, impossible, canseemon_shared } from './display.js';
 import { Blind, recalc_block_point, cansee, couldsee } from './vision.js';
@@ -1069,7 +1070,7 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
         const adverb = (erosion + 1 === MAX_ERODE) ? ' completely' : erosion ? ' further' : '';
         if (visible) {
             const owner = isYou ? 'Your' : !vismon ? 'The'
-                : s_suffix_dmg((await import('./do_name.js')).Monnam(victim));
+                : s_suffix((await import('./do_name.js')).Monnam(victim));
             await update_topl(`${owner} ${ostr} ${vtense(ostr, ERODE_ACTION[type])}${adverb}!`);
         }
         if (ef_flags & EF_PAY) costly_alteration(otmp, type);
@@ -1086,7 +1087,7 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
         const actbuf = (type === ERODE_CRACK) ? 'shatters' : `${vtense(ostr, ERODE_ACTION[type])} away`;
         if (visible) {
             const owner = isYou ? 'Your' : !vismon ? 'The'
-                : s_suffix_dmg((await import('./do_name.js')).Monnam(victim));
+                : s_suffix((await import('./do_name.js')).Monnam(victim));
             await update_topl(`${owner} ${ostr} ${actbuf}!`);
         }
         if (ef_flags & EF_PAY) costly_alteration(otmp, type);
@@ -1121,9 +1122,6 @@ const FIRE_DESTROY_STRINGS = [
 // a wielded bullwhip, a dipped inventory item) reaches it with a hero-owned
 // object.
 function Yname2_dmg(obj) { return `Your ${xname(obj)}`; }
-// C ref: objnam.c s_suffix(str) — possessive.  Every caller here passes a
-// capitalized monster name, so the "it"/"you" special cases never apply.
-function s_suffix_dmg(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
 // C ref: obj.h mcarried(obj) — the object is in some monster's minvent.
 function mcarried_dmg(obj) { return !!obj && obj.where === 'minvent'; }
 // C ref: pline.c Norep() dedup, matching every other file's local copy.
@@ -1184,7 +1182,7 @@ export async function acid_damage(obj) {
                 await update_topl(`Your ${xname(obj)} ${otense(obj, 'fade')}.`);
             } else if (vismon) {
                 const { Monnam } = await import('./do_name.js');
-                await update_topl(`${s_suffix_dmg(Monnam(victim))} ${xname(obj)} ${otense(obj, 'fade')}.`);
+                await update_topl(`${s_suffix(Monnam(victim))} ${xname(obj)} ${otense(obj, 'fade')}.`);
             }
         }
         obj.otyp = SCR_BLANK_PAPER;
@@ -3593,12 +3591,11 @@ async function tele_trap(trap) {
 // somexyspace() spot inside it.  The two rn2(2)s this draws (a vault is 2x2)
 // are seed0012's step 237.
 async function vault_tele() {
-    const { teleok_hero } = await import('./read.js');
-    const { teleds } = await import('./teleport.js');
+    const { teleok, teleds } = await import('./teleport.js');
     const { somexyspace } = await import('./mkroom.js');
     const croom = search_special(VAULT);
     const c = { x: 0, y: 0 };
-    if (croom && somexyspace(croom, c) && teleok_hero(c.x, c.y, false)) {
+    if (croom && somexyspace(croom, c) && teleok(c.x, c.y, false)) {
         await teleds(c.x, c.y, TELEDS_TELEPORT);
         return;
     }
@@ -4208,31 +4205,162 @@ async function drown(pickupFn) {
     return true;
 }
 
-// C ref: trap.c lava_effects() — the hero (no Fire_resistance, no Wwalking:
-// the only case the corpus reaches) falls into lava and burns.  d(6,6) is
-// rolled unconditionally (it's only ever USED on the Wwalking branch, but C
-// declares/rolls it up front regardless), then usurvive is false, so no
-// "bursts into flame" messages print (those are gated on usurvive) and the
-// invent-burn loop runs silently; the covered heroes carry nothing at this
-// point (Tutorial mode sequesters invent — see allmain.js
-// sequester_inventory_for_tutorial), so that loop is a no-op here.  Ends in
-// done(BURNING); no return when the hero really dies (matches C's
-// really_done() never returning to the caller).
+// C ref: trap.c lava_effects() — the hero's inventory is flagged before any
+// lava messages.  `useupall()` itself calls obfree(), not delobj(), so these
+// are the only obj_resists draws for items burned by this path.
+const MAT_LIQUID_LAVA = 1, MAT_WOOD_LAVA = 8;
+function lava_burnable(obj) {
+    const mat = objects[obj?.otyp]?.material;
+    return (mat != null && mat > MAT_LIQUID_LAVA && mat <= MAT_WOOD_LAVA)
+        || obj?.oclass === POTION_CLASS;
+}
+
+function mark_lava_inventory() {
+    let protectedObj = null;
+    for (const obj of [...inventoryArray()]) {
+        // C reserves an item already being removed (for example, a stolen
+        // amulet) and leaves it available to the caller.
+        if (obj.in_use) {
+            if (!protectedObj) {
+                protectedObj = obj;
+                obj.in_use = 0;
+            }
+            continue;
+        }
+        if (lava_burnable(obj)
+            && !obj.oerodeproof
+            && objects[obj.otyp]?.oc_oprop !== FIRE_RES
+            && obj.otyp !== SCR_FIRE_OTYP
+            && obj.otyp !== SPE_FIREBALL_OTYP
+            && !obj_resists(obj, 0, 0)) {
+            obj.in_use = 1;
+        }
+    }
+    return protectedObj;
+}
+
+async function lava_burn_stuff(dmg) {
+    const { burnarmor, destroy_items, ignite_items } = await import('./zap.js');
+    // burnarmor() and the rn2(3) gate precede object destruction in C.
+    if (await burnarmor(game.u) || rn2(3)) {
+        await destroy_items(game.u, AD_FIRE, dmg);
+        await ignite_items(inventoryArray());
+    }
+}
+
 async function lava_effects() {
     const u = game.u;
-    const { topl_more } = await import('./display.js');
-    d(6, 6); // dmg; only consulted by the Wwalking branch, not reached here
+    const { urgent_topl } = await import('./display.js');
+    const dmg = d(6, 6); // C declares this before checking resistance.
+    void dmg;
+
+    // C's initial usurvive test is deliberately before its wizard/debug
+    // override, so debug-mode sessions still flag ordinary inventory here.
+    const fire_resistance = !!(u.uprops?.Fire_resistance
+        || u.uprops?.HFire_resistance || u.uprops?.EFire_resistance
+        || u.Fire_resistance);
+    const water_walking = !!(u.uprops?.Wwalking
+        || u.uprops?.HWwalking || u.uprops?.EWwalking);
+    const hp = u.Upolyd ? (u.mh || 0) : (u.uhp || 0);
+    const usurvive_initial = fire_resistance || (water_walking && dmg < hp);
+    const protectedObj = !usurvive_initial ? mark_lava_inventory() : null;
+
     await update_topl(`You fall into the ${waterbody_name(u.ux, u.uy)}!`);
     game._killer_name = 'burned by molten lava';
-    // C ref: hack.c urgent_pline() — pline() immediately followed by a forced
-    // --More--; concatenates onto the still-pending fall-in line (same as any
-    // other pline), then flushes the joint line.
-    await update_topl('You burn to a crisp...');
-    await topl_more();
-    game._toplin = 0;
-    game._pending_message = '';
+
+    // In debug/explore mode C survives the first death attempt, but the
+    // inventory has already been flagged above.  Remove each flagged item
+    // through useupall (obfree), preserving the pre-pass RNG ordering.
+    let burncount = 0, burnmesgcount = 0;
+    const wizard = !!game.flags?.debug;
+    const discover = !!(game.flags?.explore || game.flags?.discover
+                        || game.flags?.playmode === 'explore');
+    const usurvive = fire_resistance || usurvive_initial || wizard || discover;
+    for (const obj of [...inventoryArray()]) {
+        if (obj === protectedObj) {
+            obj.in_use = 1;
+            continue;
+        }
+        if (obj.otyp === SPE_BOOK_OF_THE_DEAD) continue;
+        if (!obj.in_use) continue;
+        if (obj.owornmask) {
+            if (usurvive) {
+                await update_topl(`${Yname2_dmg(obj)} burst into flame!`);
+                ++burnmesgcount;
+            }
+            await remove_worn_item(obj, true);
+        }
+        useupall(obj);
+        ++burncount;
+    }
+    if (usurvive && burncount > burnmesgcount) {
+        const remaining = burncount - burnmesgcount;
+        await update_topl(`${burnmesgcount ? (remaining === 1 ? 'Another' : 'Other')
+                                           : (remaining === 1 ? 'An' : 'Some')} `
+                          + `item${remaining === 1 ? '' : 's'} in your inventory `
+                          + `${remaining === 1 ? 'has' : 'have'} been destroyed.`);
+    }
+
+    // Fire resistance does not trigger the death loop.  C instead leaves the
+    // hero in lava with a timed trap and applies one point of damage.
+    if (fire_resistance) {
+        if (!water_walking && (!u.utrap || u.utraptype !== TT_LAVA)) {
+            u.utrap = rn1(4, 4) + (rn1(4, 12) << 8);
+            u.utraptype = TT_LAVA;
+            await update_topl(`You sink into the ${waterbody_name(u.ux, u.uy)}, `
+                              + 'but it only burns slightly.');
+            if ((u.uhp || 0) > 1)
+                await losehp(1, 'molten lava', KILLED_BY);
+        }
+        await lava_burn_stuff(dmg);
+        return false;
+    }
+    if (water_walking && usurvive_initial) {
+        await update_topl(`The ${waterbody_name(u.ux, u.uy)} here burns you!`);
+        await losehp(dmg, 'molten lava', KILLED_BY);
+        await lava_burn_stuff(dmg);
+        return false;
+    }
+    await urgent_topl('You burn to a crisp...');
+
     const { done } = await import('./end.js');
-    await done(BURNING);
+    // C retries death after each declined wizard/explore death prompt.  A
+    // life-saving attempt then uses safe_teleds(), whose first candidate is
+    // rnd(COLNO - 1), before terrain-rescue messaging.
+    for (let attempt = 0; attempt < 2; ++attempt) {
+        u.uhp = -1;
+        await done(BURNING);
+        if (game.program_state?.gameover) return true;
+        const { safe_teleds } = await import('./teleport.js');
+        const oldInLava = game._in_lava_effects;
+        game._in_lava_effects = true;
+        let teleported;
+        try {
+            teleported = await safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT);
+        } finally {
+            if (oldInLava === undefined) delete game._in_lava_effects;
+            else game._in_lava_effects = oldInLava;
+        }
+        if (teleported) {
+            await rescued_from_terrain(BURNING);
+            await spoteffects(false);
+            return true;
+        }
+        if (attempt === 0) await update_topl("You're still burning.");
+    }
+    // After two failed rescue attempts C grants temporary fire resistance and
+    // returns through burn_stuff, preserving burnarmor/destroy/ignite order.
+    u.uprops = u.uprops || {};
+    const fireTimeout = u.uprops.HFire_resistance | 0;
+    u.uprops.HFire_resistance = (fireTimeout & ~TIMEOUT)
+        | (((fireTimeout & TIMEOUT) + 5) & TIMEOUT);
+    if (!water_walking) {
+        const walkTimeout = u.uprops.HWwalking | 0;
+        u.uprops.HWwalking = (walkTimeout & ~TIMEOUT)
+            | (((walkTimeout & TIMEOUT) + 5) & TIMEOUT);
+    }
+    await lava_burn_stuff(dmg);
+    return false;
 }
 
 // C ref: dbridge.c is_ice(x,y).  Module-private copy (matches the convention
@@ -4505,7 +4633,7 @@ async function trapeffect_rolling_boulder_trap(trap, _trflags) {
 // trap.c:3319.  Everything that draws RNG on the hero's own path is here.
 export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     const u = game.u;
-    const { thitu } = await import('./monmove.js');
+    const { thitu, ohitmon } = await import('./monmove.js');
     const { dmgval } = await import('./uhitm.js');
     const { flooreffects } = await import('./do.js');
     let otmp = sobj_at_floor(otyp, x1, y1);
@@ -4519,6 +4647,9 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
         if (ix >= 0) arr.splice(ix, 1);
         otmp.where = 'free';
         singleobj = otmp;
+        // C's object mutators maintain vision; these JS floor-list operations
+        // do not, so update the blocker cache at both ends of a boulder flight.
+        if (otyp === BOULDER) recalc_block_point(x1, y1);
     } else {
         singleobj = { ...otmp, quan: 1, where: 'free' }; otmp.quan -= 1;
     }
@@ -4537,7 +4668,17 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     while (dist-- > 0) {
         if (!isok(x + dx, y + dy)) { x2 = x; y2 = y; break; }
         x += dx; y += dy;
-        if (m_at(x, y)) break;                       // ohitmon(): unported
+        // C ref: trap.c:3395-3413 — a monster occupies the next square: resolve
+        // ohitmon() there first (before the hero test).  A FALSE return means
+        // the boulder missed/passed and keeps rolling; TRUE stops it on the spot.
+        const victim = m_at(x, y);
+        if (victim) {
+            if (await ohitmon(victim, singleobj, (style === ROLL) ? -1 : dist, false, x, y, null)) {
+                used_up = true;
+                launch_drop_spot(null, 0, 0);
+                break;
+            }
+        }
         if (u && u.ux === x && u.uy === y) {
             const dam = dmgval(singleobj, { data: { msize: 0 } });
             await thitu(9 + (singleobj.spe || 0), dam, singleobj);
@@ -4559,6 +4700,7 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     if (!used_up) {
         singleobj.otrapped = 0;
         place_object(singleobj, x2, y2);
+        if (otyp === BOULDER) recalc_block_point(x2, y2);
         newsym(x2, y2);
         return 1;
     }

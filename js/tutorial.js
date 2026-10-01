@@ -28,6 +28,7 @@ import { objects, mksobj, next_ident, blessorcurse, curse, set_corpsenm, BOULDER
 import { name_to_pmidx, monster_by_pmidx, newmonhp } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { hole_destination, choose_trapnote } from './trap.js';
+import { cmd_from_ecname } from './cmd.js';
 
 // ── tut-1.lua map (verbatim, dat/tut-1.lua des.map). Lua coord (cx,cy) maps to
 //    absolute map cell (xstart + cx, ystart + cy) with the empirically-pinned
@@ -147,17 +148,17 @@ function engrave(cx, cy, type, text) {
     if (ep) ep.nowipeout = true;
 }
 
-// C ref: dat/tut-1.lua tut_key()/tut_key_help().  tut_key(cmd) resolves a
-// command to its key binding and, when that binding is a Ctrl-<X> combo (the
-// nh.eckey string matches "^X"), stashes the bare letter in tut_ctrl_key.
-// tut_key_help(x,y) then drops a one-off "Ctrl-key combinations are shown
-// prefixed with a caret" engraving at (x,y) *iff* the most recent tut_key call
-// was such a combo, and clears the flag.  The only Ctrl-bound command the
-// tutorial references before the first tut_key_help() is "kick" (^D), so the
-// note lands at des {6,8}; by the second call (des {64,4}) the flag has been
-// cleared and no further Ctrl command has re-set it, so nothing is engraved
-// there — matching C.  (No PRNG in either path.)
+// C ref: dat/tut-1.lua tut_key()/tut_key_help().
 let tut_ctrl_key = null;
+function tutKey(command) {
+    const key = cmd_from_ecname(command);
+    const ctrl = /^\^([A-Z])$/.exec(key);
+    if (ctrl) {
+        tut_ctrl_key = ctrl[1];
+        return `Ctrl-${ctrl[1]}`;
+    }
+    return key.replace(/^M-([A-Z])$/, 'Alt-$1');
+}
 function tutKeyHelp(cx, cy) {
     if (tut_ctrl_key != null) {
         engrave(cx, cy, ENGRAVE,
@@ -329,11 +330,16 @@ function runTutProgram() {
         game.flags.lit_corridor = true;
     }
 
-    // Engravings (lines 80-93) — no PRNG.  Ranger uses hjkl movement keys.
-    engrave(9, 3, ENGRAVE, 'Move around with h j k l');
-    // C ref: dat/tut-1.lua diagmovekeys = SW NE SE NW = "b u n y" (vi-keys).
-    engrave(5, 2, ENGRAVE, 'Move diagonally with b u n y');
-    // (Knight jump engraving skipped — hero is a Ranger.)
+    // Engravings (lines 80-93) — no PRNG.
+    const moveKeys = ['movewest', 'movesouth', 'movenorth', 'moveeast']
+        .map(tutKey).join(' ');
+    const diagonalKeys = ['movesouthwest', 'movenortheast', 'movesoutheast',
+        'movenorthwest'].map(tutKey).join(' ');
+    engrave(9, 3, ENGRAVE, `Move around with ${moveKeys}`);
+    engrave(5, 2, ENGRAVE, `Move diagonally with ${diagonalKeys}`);
+    if (game.urole?.name?.m === 'Knight') {
+        engrave(12, 1, ENGRAVE, `Knights can jump with '${tutKey('jump')}'`);
+    }
     engrave(2, 4, ENGRAVE, 'Some actions may require multiple tries before succeeding');
     engrave(2, 5, ENGRAVE, 'Open the door by moving into it');
     setDoor(2, 6, D_CLOSED);

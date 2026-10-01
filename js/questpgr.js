@@ -6,6 +6,7 @@
 //        NHW_MENU window display in win/tty/wintty.c for the "legacy" intro.
 
 import { game, hooks } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { nhgetch } from './input.js';
 import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle } from './role.js';
@@ -2758,7 +2759,7 @@ function qtext_pronoun(who, which, argText) {
 // screen already matches with, and widening its coverage would change text it
 // currently renders correctly.
 function makeplural(s) { return /s$/.test(s) ? s + 'es' : s + 's'; }
-function s_suffix_q(s) { return /s$/.test(s) ? s + "'" : s + "'s"; }
+
 function qt_convert_line(line) {
     let out = '';
     for (let i = 0; i < line.length; i++) {
@@ -2782,8 +2783,8 @@ function qt_convert_line(line) {
             break;
         case 'P': out += makeplural(cc.charAt(0).toUpperCase() + cc.slice(1)); i++; break;
         case 'p': out += makeplural(cc); i++; break;
-        case 'S': out += s_suffix_q(cc.charAt(0).toUpperCase() + cc.slice(1)); i++; break;
-        case 's': out += s_suffix_q(cc); i++; break;
+        case 'S': out += s_suffix(cc.charAt(0).toUpperCase() + cc.slice(1)); i++; break;
+        case 's': out += s_suffix(cc); i++; break;
         case 't': out += (/^the /i.test(cc) ? cc.slice(4) : cc); i++; break;
         default: out += cc; break; // modifier slot holds ordinary text
         }

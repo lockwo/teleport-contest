@@ -10,6 +10,7 @@
 // split (getlin shell there, pure logic in the C-file-matching module here).
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d } from './rng.js';
 import { update_topl, urgent_topl, newsym, see_monsters, y_n } from './display.js';
 // C ref: win/tty/topl.c pline()/update_topl() — this module always uses
@@ -1909,11 +1910,6 @@ function mdistu(mtmp) {
     const u = game.u;
     const dx = mtmp.mx - (u?.ux ?? 0), dy = mtmp.my - (u?.uy ?? 0);
     return dx * dx + dy * dy;
-}
-// C ref: hacklib.c s_suffix().
-function s_suffix(s) {
-    if (/s$/.test(s)) return `${s}'`;
-    return `${s}'s`;
 }
 
 // C ref: polyself.c dospinweb() — #monster for a spider.  The three refusal

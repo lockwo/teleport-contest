@@ -6,7 +6,7 @@ import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
 import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
-import { set_malign } from './makemon.js';
+import { set_malign, monster_by_pmidx } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
 import { finish_meating } from './dogmove.js';
 
@@ -15,18 +15,6 @@ import { finish_meating } from './dogmove.js';
 // mksobj_init() has no SADDLE case, so the only RNG it consumes is the single
 // rnd(2) inside next_ident() that assigns o_id.
 const SADDLE = 235;
-
-// Per-pet display info (class symbol + color).  C ref: include/monsters.h
-// (the starting pets).  Pets are drawn in HI_DOMESTIC = CLR_WHITE.
-// mflags3: the M3_* flag group (include/monsters.h).  All three starting pets
-// are M3_INFRAVISIBLE (0x200) so the hero's infravision reveals them in dark
-// corridors (display.c see_with_infrared -> infravisible(mon->data)); the
-// kitten additionally has M3_INFRAVISION (0x100).
-const PET_DATA = {
-    16: { name: 'little dog', mlet: 'd', mcolor: 15, mflags3: 0x200 }, // PM_LITTLE_DOG
-    32: { name: 'kitten', mlet: 'f', mcolor: 15, mflags3: 0x300 },     // PM_KITTEN (INFRAVISIBLE|INFRAVISION)
-    100: { name: 'pony', mlet: 'u', mcolor: 3, mflags3: 0x200 },       // PM_PONY (brown)
-};
 
 export const PM_LITTLE_DOG = 16;
 export const PM_KITTEN = 32;
@@ -233,20 +221,9 @@ function makedog_mon(pettype, x, y) {
         if (cc) { mx = cc.x; my = cc.y; }
     }
 
-    const petinfo = PET_DATA[pettype] || { name: 'pet', mlet: 'd', mcolor: 15, mflags3: 0x200 };
     const mtmp = {
-        data: { pmidx: pettype, name: petinfo.name, mlet: petinfo.mlet,
-                mcolor: petinfo.mcolor,
-                // C's mons[] rows give all three starting pets neutral
-                // maligntyp.  Keep it on the reduced pet record so the shared
-                // set_malign() computes the tame-pet kill penalty correctly.
-                maligntyp: 0,
-                // mflags3 (M3_*): starting pets are M3_INFRAVISIBLE so the hero's
-                // infravision shows them in dark corridors (see_with_infrared).
-                mflags3: petinfo.mflags3 ?? 0x200,
-                // carnivore/herbivore flags drive dogfood() classification.
-                carnivore: pettype !== PM_PONY,
-                herbivore: pettype === PM_PONY },
+        // C ref: makemon.c — mtmp->data = &mons[mndx], the shared species row.
+        data: monster_by_pmidx(pettype),
         // C ref: makemon.c / dog.c initedog() — a tamed monster is peaceful
         // (all mtame are mpeaceful).  is_safemon() in the hero's bump-to-swap
         // path keys off mpeaceful, so set it explicitly at creation (before
@@ -271,7 +248,7 @@ function makedog_mon(pettype, x, y) {
             // first out-of-sight call therefore takes the reuse-ogoal arm and
             // heads for (-1,-1) instead of scanning do_clear_area.
             ogoal: { x: -1, y: -1 },
-            hungrytime: (game.moves || 1) + 1000,
+            hungrytime: (game.moves ?? 0) + 1000,
             mhpmax_penalty: 0,
         },
     };
@@ -398,16 +375,11 @@ export function makedog() {
 // Nothing above this banner calls anything below it and no other module
 // imports these names yet, so wiring one up is a separate, measured step.
 //
-// PET RECORD MISMATCH (measured).  makedog_mon() above builds its OWN pet
-// record: `data` carries {pmidx, name, mlet, mcolor, mflags3, carnivore,
-// herbivore} with no cwt/msize, and its pmidx is not a makemon() index
-// (34 = jaguar, 102 = gray unicorn).  Every pmidx-keyed or mons[]-row-keyed
-// predicate therefore lies about a starting pet.  The functions below are
-// written against C's struct monst / struct edog, i.e. against a makemon()
-// monster (js/makemon.js monster_by_pmidx() rows).  Do NOT feed them a
-// makedog_mon() pet until that record is reconciled: deduping dogmove's
-// PET_MAXLOAD into the shared can_carry() is the same mismatch biting from the
-// other side and measured -2296.
+// PET RECORD.  makedog_mon() above assigns the canonical monster_by_pmidx()
+// species row as `data`, so the functions below (written against C's struct
+// monst / struct edog) see a starting pet the way C does.  Deduping dogmove's
+// PET_MAXLOAD into the shared can_carry() was measured -2296 against the old
+// hand-rolled record; re-measure before retrying it.
 //
 // LINKED LISTS AS ARRAYS.  C walks three singly-linked monster chains through
 // mtmp->nmon: fmon (the live level), gm.migrating_mons and gm.mydogs.  This
@@ -501,30 +473,13 @@ function on_level(a, b) {
     return !!a && !!b && a.dnum === b.dnum && a.dlevel === b.dlevel;
 }
 
-// C ref: mon.c:2561 relmon(mon, monst_list) — unlink mon from fmon (calling
-// mon_leaving_level() first), then push it onto monst_list instead of
-// freeing it.  mon_leaving_level()'s only state change relevant to a monster
-// that stays alive off-map is `mon->mtrapped = 0` (worm/seemimic/fill_pit/
-// newsym are either handled by mon_leave()'s own worm branch beforehand or
-// affect only the map display of the square being vacated, which the wider
-// port already redraws on arrival/departure).  Missing that clear used to
-// leave mtrapped=1 on a migrating monster, so mon_catchup_elapsed_time()'s
-// `if (mtmp->mtrapped && rn2(imv + 1) > 20) mtmp->mtrapped = 0;` on arrival
-// drew an rn2() C never draws (C already cleared mtrapped at departure) --
-// unreachable until this wiring pass actually drained migrating_mons/mydogs.
-// unstuck(mon) is the other mon_leaving_level() side effect and is NOT
-// ported here: no caller of migrate_to_level() in this port can currently
-// reach a monster that is mid-engulf/holding the hero (mon.js's
-// migrate_mon_local() already runs its own set_ustuck(null) beforehand for
-// its two callers, and every muse.js escape case requires !mtmp.mtrapped
-// and !stuck as a precondition), so it is named rather than approximated.
-// (js/vault.js:217 holds a one-argument module-private copy; export that one
-// when this is wired up rather than keeping two.)
-function relmon(mon, monst_list) {
+// C mon.c relmon: remove map effects before unlinking the live monster.
+async function relmon(mon, monst_list) {
+    const { mon_leaving_level } = await import('./mon.js');
+    await mon_leaving_level(mon);
     const fm = fmon_list();
     const ix = fm.indexOf(mon);
     if (ix >= 0) fm.splice(ix, 1);
-    mon.mtrapped = 0;
     if (monst_list) monst_list.unshift(mon);
 }
 
@@ -1294,7 +1249,7 @@ export async function keepdogs(pets_only) {
             /* prepare to take mtmp off the map */
             num_segs = await mon_leave(mtmp);
             /* take off map and move mtmp from fmon list to mydogs */
-            relmon(mtmp, g.mydogs); /* mtmp->mx,my retain current value */
+            await relmon(mtmp, g.mydogs); /* mtmp->mx,my retain current value */
             mtmp.mx = mtmp.my = 0;  /* mx==0 implies migrating */
             mtmp.wormno = num_segs;
             mtmp.mlstmv = game.moves;
@@ -1363,7 +1318,7 @@ export async function migrate_to_level(mtmp, tolev, xyloc, cc) {
     /* prepare to take mtmp off the map */
     num_segs = await mon_leave(mtmp);
     /* take off map and move mtmp from fmon list to migrating_mons */
-    relmon(mtmp, g.migrating_mons); /* mtmp->mx,my retain their value */
+    await relmon(mtmp, g.migrating_mons); /* mtmp->mx,my retain their value */
     mtmp.mstate = (mtmp.mstate || 0) | MON_MIGRATING;
 
     const { ledger_to_dnum, ledger_to_dlev } = await import('./dungeon.js');

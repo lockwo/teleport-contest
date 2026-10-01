@@ -2,11 +2,11 @@
 // C ref: src/worm.c.  A long worm occupies more than one square: the monster
 // itself is the head, and `wormno` indexes a per-level chain of tail segments
 // held in wtails[]/wheads[].  The creation side (get_wormno/initworm/
-// place_worm_tail_randomly) is what makemon() calls at level-generation time
-// and is the only part wired up; everything below the divider is translated
-// but INERT until a measured pass wires each call site.
+// place_worm_tail_randomly) is what makemon() calls; the movement and attack
+// side below the divider is driven from monmove.js.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { isok, COLNO, ROWNO, NORMAL_SPEED, MHPMAX, MCORPSENM } from './const.js';
 import { newsym, m_at, worm_seg_owner_at, show_glyph_cell, Hallucination_u, pline } from './display.js';
@@ -164,8 +164,15 @@ export function place_worm_tail_randomly(worm, x, y, goodposfn) {
             curr = curr.nseg;
             lev.wtails[wnum].nseg = new_tail;
             new_tail = lev.wtails[wnum];
+            // C ref: worm.c:785 — each placed segment is drawn at once.  C's
+            // newsym() is a no-op while _suppress_map_output() (in_mklev,
+            // saving, restoring); this port's newsym() has no such guard.
+            if (!(game.in_mklev || game.program_state?.saving
+                  || game.program_state?.restoring))
+                newsym(pos.x, pos.y);
         } else {
             // No room for the rest of the tail — truncate it.
+            toss_wsegs(curr, false);
             curr = null;
         }
     }
@@ -177,8 +184,27 @@ export function place_worm_tail_randomly(worm, x, y, goodposfn) {
 // same side list to reproduce C's one monster grid.
 export function worm_seg_at(x, y) { return worm_seg_owner_at(x, y); }
 
+// C ref: worm.c worm_cross(x1,y1,x2,y2) — a diagonal step passes through the
+// worm's body when two CONSECUTIVE segments of one long worm occupy the two
+// orthogonal corners.  m_at() already reports tail squares.  No RNG.
+export function worm_cross(x1, y1, x2, y2) {
+    if (x1 === x2 || y1 === y2) return false;
+    const worm = m_at(x1, y2);
+    if (!worm || m_at(x2, y1) !== worm) return false;
+    for (let curr = game.level?.wtails?.[worm.wormno]; curr; curr = curr.nseg) {
+        const wnxt = curr.nseg;
+        if (!wnxt) break;
+        if (curr.wx === x1 && curr.wy === y2)
+            return wnxt.wx === x2 && wnxt.wy === y1;
+        if (curr.wx === x2 && curr.wy === y1)
+            return wnxt.wx === x1 && wnxt.wy === y2;
+    }
+    return false;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
-// The rest of src/worm.c, translated but NOT yet wired into any call site.
+// The rest of src/worm.c.  m_move()/dochug() (monmove.js) drive worm_move(),
+// worm_nomove() and wormhitu(); the other entry points have their own callers.
 //
 // Representation note that every function below depends on: C keeps ONE grid,
 // svl.level.monsters[x][y], and worm.c's place_worm_seg() writes the worm's
@@ -218,7 +244,7 @@ function impossible(...args) {
 // C ref: hacklib.c distu(x, y) — SQUARED distance from the hero.
 function distu(x, y) { return dist2(x, y, game.u?.ux ?? 0, game.u?.uy ?? 0); }
 
-function s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 // C ref: hack.h plur(x) — "" for 1, "s" otherwise.
 function plur(x) { return x === 1 ? '' : 's'; }
 
@@ -444,9 +470,10 @@ function set_mcorpsenm(mon, v) {
  *  Returns 1 if the worm dies (poly'd hero with passive counter-attack)
  *  or 0 if it doesn't.
  */
-// C ref: worm.c:337 wormhitu(worm).  The loop stops BEFORE wheads[] on
+// C ref: worm.c:344 wormhitu(worm).  The loop stops BEFORE wheads[] on
 // purpose: the dummy segment sharing the head's square has already had its
-// chance to attack.  async because the port's mattacku() is.
+// chance to attack.  async because the port's mattacku() is; it takes the
+// monster's data as a second argument (C's mattacku() reads mtmp->data).
 export async function wormhitu(worm) {
     const lev = worm_state();
     if (!lev) return 0;
@@ -455,7 +482,7 @@ export async function wormhitu(worm) {
 
     for (let seg = lev.wtails[wnum]; seg !== lev.wheads[wnum]; seg = seg.nseg)
         if (distu(seg.wx, seg.wy) < 3)
-            if (await mattacku(worm))
+            if (await mattacku(worm, worm.data))
                 return 1; /* your passive ability killed the worm */
     return 0;
 }

@@ -14,7 +14,7 @@ import {
     selection_getbounds,
 } from '../selvar.js';
 import {
-    flip_level, lspo_door_relative, lspo_map, remove_boundary_syms,
+    flip_level, lspo_door_relative, lspo_map, remove_boundary_syms, map_cleanup,
     reset_xystart_size, selection_match, shuffle, splev_create_monster,
     splev_link_doors_rooms, splev_object_at, tower_wallification,
     vly_monster_class, vly_object, vly_region, vly_trap,
@@ -119,6 +119,7 @@ export async function makemaz_wizard1() {
     // map_cleanup (no RNG), wallification (no RNG), flip_level_rnd(3).
     splev_link_doors_rooms();
     remove_boundary_syms();
+    map_cleanup();
     tower_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

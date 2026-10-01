@@ -29,6 +29,7 @@
 // gas-spore explosion (mon_explodes, via js/explode.js) are now wired below.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { hitval } from './weapon.js';
 import { rn2, rnd, d } from './rng.js';
 import {
@@ -40,7 +41,7 @@ import { DEADMONSTER, mvitals_died, healmon } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
 import { update_topl } from './display.js';
-import { make_corpse, dmgval } from './uhitm.js';
+import { make_corpse, dmgval, mhitm_knockback } from './uhitm.js';
 import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './const.js';
 // used only by the appended mhitm.c translations at the bottom of this file
 import { IS_OBSTRUCTED, IS_TREE, IRONBARS, D_CLOSED, D_LOCKED } from './const.js';
@@ -335,36 +336,6 @@ function distmin(x0, y0, x1, y1) {
     return Math.max(Math.abs(x0 - x1), Math.abs(y0 - y1));
 }
 
-// ── uhitm.c mhitm_knockback ──────────────────────────────────────────────────
-// C draws knockdistance = rn2(3) at the top (uhitm.c:5258), then rn2(chance)
-// (chance == 6 without ART_OGRESMASHER; uhitm.c:5269).  Everything after the
-// 1/6 branch is RNG-free up to the hurtle, so the gate chain is ported in full
-// and the function still declines rather than hurtling the defender: the
-// actual hurtle_step/mon_break_boulder machinery is not modelled.  Getting the
-// chain right matters because it decides whether mdamagem() short-circuits.
-function mhitm_knockback(magr, mdef, mattk, weaponUsed) {
-    /* knockdistance */ rn2(3);              // uhitm.c:5258
-    const chance = 6;                         // no ART_OGRESMASHER in this port
-    if (rn2(chance)) return false;            // uhitm.c:5269 — 5/6 of the time
-
-    // only AD_PHYS claw/kick/butt/weapon attacks qualify
-    if (!(mattk.adtyp === AD_PHYS
-          && (mattk.aatyp === AT_CLAW || mattk.aatyp === AT_KICK
-              || mattk.aatyp === AT_BUTT || mattk.aatyp === AT_WEAP)))
-        return false;
-    // an attacker that wants to grab or engulf doesn't knock back
-    if (attacktype_at(magr, AT_ENGL) || attacktype_at(magr, AT_HUGS)
-        || attacktype_ad(magr, AD_STCK))
-        return false;
-    if (DEADMONSTER(magr) || DEADMONSTER(mdef)) return false;
-    // attacker must be much larger than defender
-    if (!((permonst(magr)?.msize ?? MZ_MEDIUM)
-          > (permonst(mdef)?.msize ?? MZ_MEDIUM) + 1))
-        return false;
-    // The remaining steps (test_move, hurtle, saddle dismount) move the
-    // defender; not modelled, so decline without further RNG.
-    return false;
-}
 
 // ── the ops bundle js/mhitm_ad.js runs its handlers against ─────────────────
 // C's mhitm_ad_* family is ONE function per damage type serving all three
@@ -477,7 +448,8 @@ async function thrwmmDeps() {
         Stone_resistance: () => !!(game.u?.uprops?.StoneResistance),
         make_stoned,
         stop_occupation,
-        miss_msg: async (obj) => { await emitMMmsg(`The ${MM.mshot_xname(obj)} misses.`); },
+        // C ref: mthrowu.c:813 pline("%s misses.", The(mshot_xname(singleobj))).
+        miss_msg: async (obj) => { await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} misses.`); },
         make_blinded: make_blinded_hero, BlindedTimeout,
         vision_clears: async () => { await emitMMmsg('Your vision clears.'); },
         pline_slip: async (mon, obj) => {
@@ -525,10 +497,12 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
 
     await mhitm_adtyping(magr, mattk, mdef, mhm, mm_ops());
 
-    // mhitm_knockback() — rolls rn2(3) then rn2(6); the gate chain always
-    // declines here (the hurtle itself isn't modelled), so it never
-    // short-circuits mdamagem.
-    mhitm_knockback(magr, mdef, mattk, !!mwep);
+    const knockflags = { v: mhm.hitflags };
+    const knocked = await mhitm_knockback(mdef, mattk, knockflags,
+                                          !!MON_WEP_MM(magr), magr);
+    mhm.hitflags = knockflags.v;
+    if (knocked && (mhm.hitflags & (M_ATTK_DEF_DIED | M_ATTK_HIT)))
+        return mhm.hitflags;
 
     if (mhm.done) return mhm.hitflags;          // mhitm.c:1069
 
@@ -854,7 +828,7 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
     case AD_ACID:
         if (mhitb && !rn2(2)) {
             if (mm_can_see_mon(magr))
-                await emitMMmsg(`${Monnam(magr)} is splashed by ${s_suffix_mm(mon_nam(mdef))} acid!`);
+                await emitMMmsg(`${Monnam(magr)} is splashed by ${s_suffix(mon_nam(mdef))} acid!`);
             if (mm_resists_acid(magr)) {
                 if (mm_can_see_mon(magr))
                     await emitMMmsg(`${Monnam(magr)} is not affected.`);
@@ -938,7 +912,7 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
     return (mdead | mhit);
 }
 
-function s_suffix_mm(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 
 // C ref: mondata.h haseyes(ptr) = !(mflags1 & M1_NOEYES).
 function haseyes(ptr) { return (mflags1_of(ptr) & M1_NOEYES) === 0; }
@@ -1011,7 +985,7 @@ async function failed_grab(magr, mdef, mattk) {
         if (mm_visible(magr, mdef) && mm_can_see_mon(mdef)) {
             const verb = (mattk.adtyp === AD_DGST) ? 'gulp'
                 : (mattk.adtyp === AD_STCK) ? 'adhere' : 'grab';
-            await emitMMmsg(`${s_suffix_mm(Monnam(magr))} ${verb} attempt`
+            await emitMMmsg(`${s_suffix(Monnam(magr))} ${verb} attempt`
                 + ` passes right through ${mon_nam(mdef)}!`);
         }
         return true;
@@ -1070,7 +1044,7 @@ async function hitmm(magr, mdef, mattk, mwep, dieroll) {
                 + ` ${mon_nam(mdef)}`
                 + ` ${compat === 2 ? 'engagingly' : 'seductively'}.`);
         } else if (mattk.aatyp === AT_TENT) {
-            await emitMMmsg(`${s_suffix_mm(Monnam(magr))} tentacles suck`
+            await emitMMmsg(`${s_suffix(Monnam(magr))} tentacles suck`
                 + ` ${mon_nam(mdef)}.`);
         } else {
             await emitMMmsg(`${Monnam(magr)} ${hit_verb(mattk.aatyp)}`

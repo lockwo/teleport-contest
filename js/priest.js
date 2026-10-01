@@ -6,6 +6,7 @@
 // type="shrine"/"sanctum"), and it is the sole RNG consumer of the temple fill.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rn1 } from './rng.js';
 import { isok, ROOMOFFSET, Amask2align, A_NONE, ALTAR, AM_SHRINE,
          MM_EPRI, MM_EMIN } from './const.js';
@@ -701,7 +702,7 @@ export async function ghod_hitsu(priest) {
         await pline(`${await a_gname_at_(ax, ay)} roars in anger:  "Thou shalt suffer!"`);
         break;
     case 1:
-        await pline(`${s_suffix_(await a_gname_at_(ax, ay))} voice booms:  "How darest thou harm my servant!"`);
+        await pline(`${s_suffix(await a_gname_at_(ax, ay))} voice booms:  "How darest thou harm my servant!"`);
         break;
     default:
         await pline(`${await a_gname_at_(ax, ay)} roars:  "Thou dost profane my shrine!"`);
@@ -818,8 +819,6 @@ async function a_gname_at_(x, y) {
     if (idx < 0) idx = 0;
     return align_gname(idx, Amask2align((loc.altarmask | 0) & 7 /* AM_MASK */));
 }
-// C ref: objnam.c s_suffix(s).
-function s_suffix_(s) { return /s$/.test(String(s)) ? `${s}'` : `${s}'s`; }
 // C ref: objnam.c just_an(outbuf, str) — "a "/"an "/"" for a bare noun.
 function just_an_(str) {
     const s = String(str || '');

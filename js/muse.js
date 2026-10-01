@@ -34,7 +34,7 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
-import { isok } from './hacklib.js';
+import { isok, depth, s_suffix } from './hacklib.js';
 import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
     M1_NEEDPICK, M1_BREATHLESS, M1_NOHEAD, M1_ACID, M1_WALLWALK, M1_AMORPHOUS,
     M1_UNSOLID, M1_NOEYES, M1_NOLIMBS, M1_NOHANDS, M1_NOTAKE,
@@ -63,7 +63,7 @@ import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver }
 // --More-- for the UNACKNOWLEDGED previous one first (or appends to it when both
 // fit).  js/display.js pline() only overwrites the pending text, so monster
 // messages that land mid-turn must go through update_topl() to get C's boundary.
-import { update_topl, newsym, map_invisible, see_with_infrared } from './display.js';
+import { update_topl, newsym, map_invisible, see_with_infrared, stairway_at, You_hear } from './display.js';
 import { Monnam, mon_nam, monflee } from './uhitm.js';
 import { YMonnam } from './do_name.js';
 import { cansee, couldsee } from './vision.js';
@@ -280,8 +280,6 @@ function sensemon(_mtmp) { return false; }
 function Deaf() { return !!game.u?.Deaf; }
 function Blind() { return !!game.u?.Blinded || !!game.u?.ublindf; }
 function Hallucination() { return !!game.u?.Hallucination; }
-// C ref: You_hear() — suppressed entirely when the hero is deaf.
-async function You_hear(msg) { if (!Deaf()) await update_topl(`You hear ${msg}`); }
 
 // C ref: objnam.c singular(otmp, doname) — name the stack as if quan were 1.
 function singular_doname(obj) {
@@ -293,8 +291,7 @@ function singular_doname(obj) {
 function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
 // C ref: objnam.c the().
 function the_(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
-// C ref: hacklib.c s_suffix() / upstart().
-function s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+// C ref: hacklib.c upstart().
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 // C ref: mon.c mhe()/mhim() — the port models no monster gender, and every
 // caller here is a fallback for an unseen monster, so use C's neuter forms.
@@ -471,15 +468,6 @@ function inhishop(shkp) { return !!shkp.isshk; }
 // returns TRUE for anyone who is not a demon lord/prince.  rnd_defensive_item()
 // (muse.c:1235) restarts its whole switch on that answer, so getting it wrong
 // costs an rn2 and picks a different item (seed0360 step 307).
-// C ref: teleport.c random_teleport_level() — see js/do.c's copy for the hero.
-// A monster reading a cursed teleport scroll needs the same depth roll.
-function random_teleport_level() {
-    const cur_depth = game.u?.uz?.dlevel ?? 1;
-    const max_depth = cur_depth + (In_endgame(game.u?.uz) ? 5 : 3);
-    const min_depth = In_endgame(game.u?.uz) ? cur_depth : 1;
-    const nlev = rn2(max_depth - min_depth + 1) + min_depth;
-    return nlev;
-}
 // C ref: do.c Can_rise_up(x, y, lev) — is there a level above to rise to?
 function Can_rise_up(_x, _y, uz) { return (uz?.dlevel ?? 1) > 1; }
 // C ref: hack.h Is_rogue_level / Is_earthlevel — neither is reachable in the
@@ -947,21 +935,21 @@ export function find_defensive(mtmp, tryescape) {
     if (stuck || immobile || mtmp.mtrapped) {
         /* fleeing by stairs or traps is not possible */
     } else if (levl_typ(x, y) === STAIRS) {
-        const stway = stairway_here(x, y);
-        if (stway && !stway.up && stway.dnum === game.u?.uz?.dnum) {
+        const stway = stairway_at(x, y);
+        if (stway && !stway.up && stway.tolev.dnum === game.u?.uz?.dnum) {
             if (!is_floater(mtmp.data)) m.has_defense = MUSE_DOWNSTAIRS;
-        } else if (stway && stway.up && stway.dnum === game.u?.uz?.dnum) {
+        } else if (stway && stway.up && stway.tolev.dnum === game.u?.uz?.dnum) {
             m.has_defense = MUSE_UPSTAIRS;
-        } else if (stway && stway.dnum !== game.u?.uz?.dnum) {
+        } else if (stway && stway.tolev.dnum !== game.u?.uz?.dnum) {
             if (stway.up || !is_floater(mtmp.data)) m.has_defense = MUSE_SSTAIRS;
         }
     } else if (levl_typ(x, y) === LADDER) {
-        const stway = stairway_here(x, y);
-        if (stway && stway.up && stway.dnum === game.u?.uz?.dnum) {
+        const stway = stairway_at(x, y);
+        if (stway && stway.up && stway.tolev.dnum === game.u?.uz?.dnum) {
             m.has_defense = MUSE_UP_LADDER;
-        } else if (stway && !stway.up && stway.dnum === game.u?.uz?.dnum) {
+        } else if (stway && !stway.up && stway.tolev.dnum === game.u?.uz?.dnum) {
             if (!is_floater(mtmp.data)) m.has_defense = MUSE_DN_LADDER;
-        } else if (stway && stway.dnum !== game.u?.uz?.dnum) {
+        } else if (stway && stway.tolev.dnum !== game.u?.uz?.dnum) {
             if (stway.up || !is_floater(mtmp.data)) m.has_defense = MUSE_SSTAIRS;
         }
     } else {
@@ -1105,21 +1093,6 @@ function is_lava(x, y) {
     const typ = levl_typ(x, y);
     return typ === LAVAPOOL || typ === LAVAWALL;
 }
-// C ref: dungeon.c stairway_at(x, y) — js/display.js has a private copy; this
-// one returns the fields find_defensive needs (up flag + destination dnum).
-function stairway_here(x, y) {
-    for (const s of (game.level?.stairs || [])) {
-        if (s.sx === x && s.sy === y)
-            return { up: !!s.up, dnum: s.tolev?.dnum ?? game.u?.uz?.dnum,
-                     dlevel: s.tolev?.dlevel };
-    }
-    const up = game.level?.upstair, dn = game.level?.dnstair;
-    if (up && up.sx === x && up.sy === y)
-        return { up: true, dnum: game.u?.uz?.dnum, dlevel: (game.u?.uz?.dlevel ?? 1) - 1 };
-    if (dn && dn.sx === x && dn.sy === y)
-        return { up: false, dnum: game.u?.uz?.dnum, dlevel: (game.u?.uz?.dlevel ?? 1) + 1 };
-    return null;
-}
 
 /* ------------------------------------------------------------------------ *
  * muse.c:756 reveal_trap / :779 mon_escape / :795 use_defensive
@@ -1209,17 +1182,17 @@ export async function use_defensive(mtmp) {
         else extract_from_minvent(mtmp, scroll);
         await mreadmsg(mtmp, scroll);
         if (obj_is_cursed || mtmp.mconf) {
+            const { random_teleport_level, get_level } = await import('./do.js');
             const nlev = random_teleport_level();
             if (mon_has_amulet(mtmp) || In_endgame(game.u?.uz)) {
                 if (vismon)
                     await update_topl(
                         `${Monnam(mtmp)} seems very disoriented for a moment.`);
-            } else if (nlev === (game.u?.uz?.dlevel ?? 1)) {
+            } else if (nlev === depth(game.u.uz)) {
                 if (vismon)
                     await update_topl(`${Monnam(mtmp)} shudders for a moment.`);
             } else {
-                await migrate_to_level(mtmp,
-                    ledger_no({ dnum: game.u.uz.dnum, dlevel: nlev }),
+                await migrate_to_level(mtmp, ledger_no(get_level(nlev)),
                     MIGR_RANDOM, null);
             }
         } else {
@@ -1235,7 +1208,7 @@ export async function use_defensive(mtmp) {
         if (oseen) makeknown(OT().WAN_DIGGING);
         if (IS_FURNITURE(levl_typ(mtmp.mx, mtmp.my))
             || IS_DRAWBRIDGE(levl_typ(mtmp.mx, mtmp.my))
-            || stairway_here(mtmp.mx, mtmp.my)) {
+            || stairway_at(mtmp.mx, mtmp.my)) {
             await update_topl('The digging ray is ineffective.');
             return 2;
         }
@@ -1325,49 +1298,49 @@ export async function use_defensive(mtmp) {
         return 2;
     case MUSE_UPSTAIRS: {
         m_flee(mtmp);
-        const stway = stairway_here(mtmp.mx, mtmp.my);
+        const stway = stairway_at(mtmp.mx, mtmp.my);
         if (!stway) return 0;
         if ((game.u?.uz?.dlevel ?? 1) === 1 && (game.u?.uz?.dnum ?? 0) === 0)
             return await mon_escape(mtmp, vismon);
         if (vismon) await update_topl(`${Monnam(mtmp)} escapes upstairs!`);
         await migrate_to_level(mtmp,
-            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            ledger_no(stway.tolev),
             MIGR_STAIRS_DOWN, null);
         return 2;
     }
     case MUSE_DOWNSTAIRS: {
         m_flee(mtmp);
-        const stway = stairway_here(mtmp.mx, mtmp.my);
+        const stway = stairway_at(mtmp.mx, mtmp.my);
         if (!stway) return 0;
         if (vismon) await update_topl(`${Monnam(mtmp)} escapes downstairs!`);
         await migrate_to_level(mtmp,
-            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            ledger_no(stway.tolev),
             MIGR_STAIRS_UP, null);
         return 2;
     }
     case MUSE_UP_LADDER: {
         m_flee(mtmp);
-        const stway = stairway_here(mtmp.mx, mtmp.my);
+        const stway = stairway_at(mtmp.mx, mtmp.my);
         if (!stway) return 0;
         if (vismon) await update_topl(`${Monnam(mtmp)} escapes up the ladder!`);
         await migrate_to_level(mtmp,
-            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            ledger_no(stway.tolev),
             MIGR_LADDER_DOWN, null);
         return 2;
     }
     case MUSE_DN_LADDER: {
         m_flee(mtmp);
-        const stway = stairway_here(mtmp.mx, mtmp.my);
+        const stway = stairway_at(mtmp.mx, mtmp.my);
         if (!stway) return 0;
         if (vismon) await update_topl(`${Monnam(mtmp)} escapes down the ladder!`);
         await migrate_to_level(mtmp,
-            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            ledger_no(stway.tolev),
             MIGR_LADDER_UP, null);
         return 2;
     }
     case MUSE_SSTAIRS: {
         m_flee(mtmp);
-        const stway = stairway_here(mtmp.mx, mtmp.my);
+        const stway = stairway_at(mtmp.mx, mtmp.my);
         if (!stway) return 0;
         if ((game.u?.uz?.dlevel ?? 1) === 1 && (game.u?.uz?.dnum ?? 0) === 0)
             return await mon_escape(mtmp, vismon);
@@ -1375,7 +1348,7 @@ export async function use_defensive(mtmp) {
             await update_topl(`${Monnam(mtmp)} escapes ${
                 stway.up ? 'up' : 'down'}stairs!`);
         await migrate_to_level(mtmp,
-            ledger_no({ dnum: stway.dnum, dlevel: stway.dlevel }),
+            ledger_no(stway.tolev),
             MIGR_SSTAIRS, null);
         return 2;
     }
@@ -1708,7 +1681,7 @@ export function find_offensive(mtmp) {
             && (onscary(game.u?.ux, game.u?.uy, mtmp)
                 || (hero_behind_chokepoint(mtmp) && mon_has_friends(mtmp))
                 || mon_likes_objpile_at(mtmp, game.u?.ux, game.u?.uy)
-                || stairway_here(game.u?.ux, game.u?.uy))) {
+                || stairway_at(game.u?.ux, game.u?.uy))) {
             m.offensive = obj; m.has_offense = MUSE_WAN_TELEPORTATION;
         }
         if (m.has_offense === MUSE_POT_PARALYSIS) continue;

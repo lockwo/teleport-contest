@@ -11,6 +11,7 @@
 // arm in this port, and js/apply.js is a separate write-lease, so it lives here
 // beside its caller.
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
 import { m_at, newsym, update_topl, map_invisible,
          canseemon_shared } from './display.js';
@@ -111,7 +112,7 @@ function Doname2(obj) {
     const d = I.doname_invent(obj);
     return d.charAt(0).toUpperCase() + d.slice(1);
 }
-// C ref: objnam.c an(s) / the(s) / s_suffix(s).
+// C ref: objnam.c an(s) / the(s).
 function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
 function the_str(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
 // C ref: objnam.c Tobjnam(obj, verb) — "The food ration stops".
@@ -769,7 +770,7 @@ export async function throw_gold(obj) {
         if (!isok(odx, ody) || !zap_pos(typ_at(odx, ody)) || closed_door(odx, ody)) {
             /* bhitpos stays on the hero */
         } else {
-            const land = I.bhit_thrown_landing(u.dx, u.dy, range);
+            const land = I.bhit_thrown_landing(u.dx, u.dy, range, obj);
             bx = land.x; by = land.y;
             if (land.mon && (await ghitm(land.mon, obj))) return ECMD_TIME;
         }
@@ -965,7 +966,7 @@ async function whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap) {
                 break;
             default: /* to floor beneath mon */
                 await update_topl(`You yank ${the_str(I.cxname_singular(otmp))} from ${
-                    I.s_suffix(U.mon_nam(mtmp))} ${await mon_hand_noun(mtmp, otmp)}!`);
+                    s_suffix(U.mon_nam(mtmp))} ${await mon_hand_noun(mtmp, otmp)}!`);
                 place_object(otmp, mtmp.mx, mtmp.my);
                 otmp.where = 3 /* OBJ_FLOOR */;
                 I.stackobj(otmp);

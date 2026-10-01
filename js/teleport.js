@@ -20,11 +20,12 @@ import { Monnam, canspotmon, mon_nam } from './uhitm.js';
 import { canseemon_shared as canseemon_tele } from './display.js';
 import {
     COLNO, ROWNO, DOOR, POOL, DRAWBRIDGE_UP, LAVAPOOL, LAVAWALL,
-    D_CLOSED, D_LOCKED, STRAT_APPEARMSG, BOLT_LIM,
+    D_CLOSED, D_LOCKED, STRAT_APPEARMSG, BOLT_LIM, TEMPLE, engulfing_u,
 } from './const.js';
 import { BOULDER } from './mkobj.js';
 import {
     is_swimmer_flag, passes_walls_flag, amorphous_flag, throws_rocks_flag,
+    control_teleport_flag,
 } from './monflags_data.js';
 import { inhishop } from './shk.js';
 import { inhistemple } from './priest.js';
@@ -111,10 +112,10 @@ export function goodpos(x, y, mtmp, gpflags) {
 
     if (!isok(x, y)) return false;
 
-    if (!allow_u) {
-        // The u.ustuck-while-swallowed and u.usteed exemptions don't apply: a
-        // relocating monster here neither engulfs the hero nor is ridden.
-        if (u_at(x, y)) return false;
+    if (!allow_u && u_at(x, y) && mtmp !== youmonst_()
+        && (mtmp !== game.u?.ustuck || !game.u?.uswallow)
+        && (!game.u?.usteed || mtmp !== game.u.usteed)) {
+        return false;
     }
 
     if (avoid_monpos && m_at(x, y)) return false;
@@ -292,6 +293,45 @@ export async function rloc(mtmp, rlocflags) {
     }
     await rloc_to_core(mtmp, x, y, rlocflags);
     return true;
+}
+
+// C ref: teleport.c:2263 u_teleport_mon(): a hero-induced teleport does not
+// use the monster's ordinary tele_restrict() gate.
+export async function u_teleport_mon(mtmp, give_feedback) {
+    const until = game.level?.flags?.stasis_until;
+    if (typeof until === 'number' && until >= (game.moves ?? game.svm?.moves ?? 0)) {
+        if (give_feedback)
+            await update_topl(`A mysterious force prevents you teleporting ${mon_nam(mtmp)}!`);
+        return false;
+    }
+    if (mtmp.ispriest) {
+        const { in_rooms } = await import('./shkroom.js');
+        if (in_rooms(mtmp.mx, mtmp.my, TEMPLE).length) {
+            if (give_feedback)
+                await update_topl(`${Monnam(mtmp)} resists your magic!`);
+            return false;
+        }
+    }
+    if (engulfing_u(mtmp) && noteleport_level(mtmp)) {
+        await update_topl(`You are no longer inside ${mon_nam(mtmp)}!`);
+        const { unstuck } = await import('./mon.js');
+        await unstuck(mtmp);
+        if (!await rloc(mtmp, RLOC_MSG)) {
+            const { m_into_limbo } = await import('./dog.js');
+            await m_into_limbo(mtmp);
+        }
+        return true;
+    }
+    if ((mtmp.data?.name === 'Death' || mtmp.data?.name === 'Famine'
+         || mtmp.data?.name === 'Pestilence' || control_teleport_flag(mtmp.data))
+        && rn2(13)) {
+        const cc = enexto_gpflags(game.u.ux, game.u.uy, mtmp.data, 0);
+        if (cc) {
+            await rloc_to(mtmp, cc.x, cc.y);
+            return true;
+        }
+    }
+    return rloc(mtmp, RLOC_MSG);
 }
 
 // C ref: teleport.c noteleport_level(mon).  This was a `return false` stub, so
@@ -674,9 +714,13 @@ export async function teleds(nux, nuy, teleds_flags) {
         u.urooms = save_urooms;   /* reset prior to spoteffects() */
     }
     /* possible shop entry message comes after guard's shrill whistle */
-    const { spoteffects } = await import('./trap.js');
-    const { pickup_after_move } = await import('./cmd.js');
-    await spoteffects(pickup_after_move);
+    // C lava_effects() keeps in_lava_effects set through safe_teleds(); the
+    // arrival spoteffects(FALSE) is issued by lava_effects after rescue.
+    if (!game._in_lava_effects) {
+        const { spoteffects } = await import('./trap.js');
+        const { pickup_after_move } = await import('./cmd.js');
+        await spoteffects(pickup_after_move);
+    }
     const { invocation_message, notice_all_mons } = await import('./hack.js');
     await invocation_message();
     notice_mon_on_();

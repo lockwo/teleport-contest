@@ -15,7 +15,7 @@ import { BOULDER, FOOD_CLASS, GEM_CLASS, POTION_CLASS } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import { selection_new, selection_rndcoord, selection_setpoint } from '../selvar.js';
 import {
-    bigrm_wallification, gx, gy, lspo_map, remove_boundary_syms,
+    bigrm_wallification, gx, gy, lspo_map, remove_boundary_syms, map_cleanup,
     reset_xystart_size, shuffle, splev_create_monster, splev_feature,
     splev_map_reset, splev_object_at, vly_object, vly_region, vly_trap,
 } from '../sp_lev.js';
@@ -221,9 +221,10 @@ export async function makemaz_juiblex() {
         g._full_mon_gen = false;
     }
 
-    // C ref: lspo_finalize_level() — remove_boundary_syms, wallification (not
+    // C ref: lspo_finalize_level() — remove_boundary_syms, map_cleanup, wallification (not
     // corrmaze), flip_level_rnd(allow_flips == 0 -> NO draws), fixup_special().
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     geh_place_lregions(lregions);
 }

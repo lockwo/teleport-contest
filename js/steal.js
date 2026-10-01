@@ -15,7 +15,7 @@
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
-import { dist2 } from './hacklib.js';
+import { dist2, s_suffix } from './hacklib.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
     AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
 import { PLNMSG_MON_TAKES_OFF_ITEM } from './const.js';
@@ -445,8 +445,6 @@ function money_cnt_st(list) {
 // C ref: worn.c setnotworn(obj) — js/invent.js:829 (private).  Clears the worn
 // mask; the slot-pointer half needs invent.js's uarm/uwep bookkeeping.
 function setnotworn_st(obj) { if (obj) obj.owornmask = 0; }
-// C ref: hacklib.c s_suffix(s) — js/zap.js:1712 (private).
-function s_suffix_st(s) { return /s$/.test(s || '') ? `${s}'` : `${s}'s`; }
 // C ref: artifact.c is_quest_artifact(obj) — js/invent.js:370 answers FALSE
 // unconditionally (no quest artifact reaches this port's play), and
 // any_quest_artifact() has no port at all.
@@ -489,7 +487,7 @@ export async function stealgold(mtmp) {
         const { mbodypart } = await import('./monmove.js');
         if (u.usteed) {
             who = u.usteed;
-            whose = s_suffix_st(y_monnam(who));
+            whose = s_suffix(y_monnam(who));
             what = makeplural(mbodypart(who, FOOT_ST));
         } else {
             who = game.youmonst;

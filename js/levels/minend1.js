@@ -8,7 +8,7 @@ import { GEM_CLASS, TOOL_CLASS, uncurse } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
     S_HUMANOID, bigrm_load_map, bigrm_wallification, flip_level,
-    quest_level_init_solidfill, quest_place_stair, remove_boundary_syms, shuffle,
+    quest_level_init_solidfill, quest_place_stair, remove_boundary_syms, map_cleanup, shuffle,
     splev_create_monster, splev_door_at, splev_link_doors_rooms, splev_object_at,
     splev_region_lit, vly_flip_dndest, vly_flip_updest, vly_non_diggable, vly_object, vly_region,
 } from '../sp_lev.js';
@@ -171,6 +171,7 @@ export async function makemaz_minend1() {
     // C ref: lspo_finalize_level() tail.
     splev_link_doors_rooms();
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

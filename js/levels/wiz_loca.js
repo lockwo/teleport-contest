@@ -20,7 +20,7 @@ import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, lspo_door_relative,
     quest_level_init_solidfill, quest_place_stair, quest_region_light,
-    quest_replace_terrain, quest_set_door, remove_boundary_syms, shuffle,
+    quest_replace_terrain, quest_set_door, remove_boundary_syms, map_cleanup, shuffle,
     splev_link_doors_rooms, vly_non_diggable, vly_region, vly_terrain_at,
 } from '../sp_lev.js';
 import {
@@ -183,6 +183,7 @@ export async function makemaz_wiz_loca() {
     // flip_level_rnd(allow_flips=3): one rn2(2) per axis.
     splev_link_doors_rooms();
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

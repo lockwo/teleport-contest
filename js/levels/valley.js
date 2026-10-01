@@ -13,7 +13,7 @@ import { rn2 } from '../rng.js';
 import {
     TEMPLE_RTYPE, VLY_S_LICH, VLY_S_MUMMY, VLY_S_VAMPIRE, VLY_S_ZOMBIE, bigrm_load_map,
     bigrm_wallification, flip_level, percent, quest_flip_branch, quest_level_init_solidfill,
-    quest_place_stair, quest_register_branch, quest_set_door, remove_boundary_syms, shuffle,
+    quest_place_stair, quest_register_branch, quest_set_door, remove_boundary_syms, map_cleanup, shuffle,
     vly_altar, vly_flip_dndest, vly_flip_updest, vly_monster_class, vly_non_diggable, vly_object,
     vly_place_monster, vly_region, vly_teleport_region, vly_terrain_at, vly_terrain_line,
     vly_trap,
@@ -217,6 +217,7 @@ export async function makemaz_valley() {
     // runs BEFORE wallification, so the 'B' cells are already ROOM by the time
     // the wall modes are computed.
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

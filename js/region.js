@@ -19,7 +19,7 @@
 import { game } from './gstate.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
-         M_SEEN_POISON } from './const.js';
+         M_SEEN_POISON, TELEDS_TELEPORT } from './const.js';
 import { cansee, block_point, unblock_point, does_block, Blind } from './vision.js';
 // js/monflags_data.js is a generated LEAF module (no imports of its own), so
 // naming it here cannot create an import cycle or a TDZ edge.
@@ -1010,8 +1010,8 @@ export async function region_safety() {
     const { update_topl } = await import('./display.js');
     if (n > 1 || (n === 1 && !r)) {
         /* multiple overlapping cloud regions or non-expiring one */
-        const { safe_teleds_hero } = await import('./read.js');
-        await safe_teleds_hero();
+        const { safe_teleds } = await import('./teleport.js');
+        await safe_teleds(TELEDS_TELEPORT);
         /* maybe there's no safe place available; must get hero out of danger
            or prayer's "fix all troubles" result will get stuck in a loop */
         if (region_danger()) {

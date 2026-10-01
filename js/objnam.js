@@ -14,6 +14,7 @@
 
 import { rn2 } from './rng.js';
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import {
     objects,
     MAXOCLASSES,
@@ -25,6 +26,7 @@ import {
 } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { shop_price_suffix } from './shk.js';
+import { currency } from './invent.js';
 
 // Additional imports used only by the objnam.c naming core appended at the end
 // of this file.  Each of these six modules is outside the pre-existing
@@ -618,18 +620,12 @@ function impossible(msg) {
 }
 function panic(msg) { throw new Error(msg); }
 
-/* hacklib.c plur(n) / ordin(n) / shk.c currency(amount) — each has private
-   copies scattered through js/ (js/invent.js:1287, :5465, :3075); these are
-   the objnam.c-side ones so this block stays import-free. */
+/* hacklib.c plur(n) / ordin(n) used by objnam.c naming. */
 function plur(n) { return Number(n) === 1 ? '' : 's'; }
 function ordin(n) {
     const dd = n % 10;
     return (dd === 0 || dd > 3 || (n % 100) / 10 === 1) ? 'th'
         : (dd === 1) ? 'st' : (dd === 2) ? 'nd' : 'rd';
-}
-function currency(amount) {
-    /* C: Hallucination ? currency_hallucinated() : "zorkmid" + plur */
-    return `zorkmid${Number(amount) === 1 ? '' : 's'}`;
 }
 /* polyself.c body_part(HAND) for an unpolymorphed hero */
 function body_part_HAND() { return 'hand'; }
@@ -1620,13 +1616,6 @@ function mungspaces(bp) {
     }
     if (was_space && out.length > 0) out = out.slice(0, -1);
     return out;
-}
-/* hacklib.c:345 s_suffix() */
-function s_suffix(s) {
-    if (strcmpi(s, 'it')) return s + 's';        /* it -> its */
-    if (strcmpi(s, 'you')) return s + 'r';       /* you -> your */
-    if (s[s.length - 1] === 's') return s + "'"; /* Xs -> Xs' */
-    return s + "'s";                             /* X -> X's */
 }
 /* hacklib.c digit() */
 function digit(c) { return c >= '0' && c <= '9'; }

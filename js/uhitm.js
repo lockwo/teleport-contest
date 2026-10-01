@@ -18,6 +18,7 @@
 // adopting the staged pieces is a separate, measured change.
 
 import { game, hooks } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { shkname, in_rooms, shop_keeper } from './shkroom.js';
 
 // C ref: shk.c tended_shop(sroom) — shop_keeper(room) still inside his shop.
@@ -40,7 +41,7 @@ import { m_at, newsym, map_invisible, unmap_object, canseemon_shared,
          update_topl } from './display.js';
 import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
          TAINT_AGE, CORPSTAT_INIT, CORPSTAT_NONE, W_SADDLE, SUPPRESS_SADDLE,
-         SHOPBASE, engulfing_u, STRAT_WAITMASK, I_SPECIAL,
+         SHOPBASE, engulfing_u, STRAT_WAITMASK, I_SPECIAL, M_ATTK_AGR_DIED,
          P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_BARE_HANDED_COMBAT, P_TWO_WEAPON_COMBAT,
          P_RIDING, ERODE_BURN, ERODE_RUST, ERODE_CORRODE, ER_NOTHING,
@@ -1778,9 +1779,6 @@ function monnear(mon, x, y) {
     return (dx * dx + dy * dy) < 3;
 }
 
-// C ref: objnam.c s_suffix(s).
-function s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
-
 // C ref: mhitu.c mdamageu(mtmp, n) — subtract n HP from the hero (monmove.js
 // keeps the same body for the monster-hits-hero path; it is file-static there).
 async function mdamageu(mtmp, n) {
@@ -2654,7 +2652,7 @@ function is_flimsy(otmp) {
 function stale_egg(egg) { return ((game.moves || 1) - (egg?.age ?? 0)) > 400; }
 
 // ── do_name.c / hacklib.c string helpers ───────────────────────────────────
-// (an(), s_suffix(), mon_nam(), Monnam(), x_monnam() are declared above.)
+// (an(), mon_nam(), Monnam(), x_monnam() are declared above.)
 
 // C ref: hacklib.c highc()/upstart() — capitalise the leading character.
 function highc_uh(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -4364,27 +4362,14 @@ function sticks_uh(ptr) {
         || attacktype(ptr, AT_HUGS);
 }
 
-// C ref: uhitm.c:5247 mhitm_knockback(magr, mdef, mattk, hitflags, weapon_used)
-// for the two call sites where the HERO is the aggressor (uhitm.c:1928 in
-// hmon_hitmon() and uhitm.c:5833 in hmonas()); mhitu.c's hero-as-defender call
-// is js/monmove.js's copy and mhitm.c's mon-vs-mon call is js/mhitm.js's, the
-// same split C's three callers already have.  So u_agr is always TRUE and
-// u_def always FALSE here, which removes the test_move()/cursed-saddle arms.
-//
-// This used to be a two-line stub that drew the leading rn2(3)/rn2(6) and then
-// always declined, on the assumption that the gate chain never passes.  It
-// does: a pick-axe (WHACK, iron) swung at a newt clears every gate, and C then
-// spends two more rn2(2)s picking the message's adjective and noun before
-// mhurtle()ing the target and rolling rn2(4) for mstun.  Declining lost three
-// draws per real knockback and left the monster unmoved.
-//
-// `hitflags` is C's `int *hitflags`, modelled as a { v } box.
-export async function mhitm_knockback(mdef, mattk, hitflags, weapon_used) {
+// C ref: uhitm.c mhitm_knockback, with a monster defender.
+// Omitted magr denotes the hero. hitflags models C's mutable int pointer.
+export async function mhitm_knockback(mdef, mattk, hitflags, weapon_used, magr = null) {
     const u = game.u;
-    const magr_data = youmonst_data_uh();
+    const magr_data = magr ? magr.data : youmonst_data_uh();
     const knockdistance = rn2(3) ? 1 : 2;            // uhitm.c:5258
     let chance = 6;                                  // 1/6 knocks back
-    const wep = weapon_used ? game.uwep : null;
+    const wep = weapon_used ? (magr ? MON_WEP_uh(magr) : game.uwep) : null;
     const A = await import('./artifact.js');
     if (wep && A.is_art(wep, ART_OGRESMASHER)) chance = 2;
     if (rn2(chance)) return false;                   // uhitm.c:5269
@@ -4401,17 +4386,18 @@ export async function mhitm_knockback(mdef, mattk, hitflags, weapon_used) {
 
     const defx = mdef.mx, defy = mdef.my;
     const sgn_ = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
-    const dx = sgn_(defx - u.ux), dy = sgn_(defy - u.uy);
+    const agrx = magr ? magr.mx : u.ux, agry = magr ? magr.my : u.uy;
+    const dx = sgn_(defx - agrx), dy = sgn_(defy - agry);
 
     /* the non-hero half of C's "can't move a target through a doorway
        diagonally" test; a subset of test_move() */
     if (!isok(defx + dx, defy + dy)) return false;
     const dloc = game.level?.at(defx, defy);
-    if (dloc && IS_DOOR(dloc.typ) && (defx - u.ux) && (defy - u.uy)
+    if (dloc && IS_DOOR(dloc.typ) && (defx - agrx) && (defy - agry)
         && ((dloc.doormask || 0) & ~(D_NODOOR | D_BROKEN)) !== 0)
         return false;
 
-    if (DEADMONSTER(mdef)) return false;             /* must be alive */
+    if (DEADMONSTER(mdef) || (magr && DEADMONSTER(magr))) return false;
     /* attacker must be much larger than defender */
     if (!((magr_data?.msize ?? 2) > ((mdef.data?.msize ?? 2) + 1)))
         return false;
@@ -4419,7 +4405,7 @@ export async function mhitm_knockback(mdef, mattk, hitflags, weapon_used) {
     if (wep && (is_flimsy(wep) || !is_blunt_weapon_uh(wep))) return false;
     if (unsolid(magr_data)) return false;            /* needs a solid hit */
     /* the attack must have hit */
-    if (!(hitflags.v & M_ATTK_HIT)) return false;
+    if (!magr && !(hitflags.v & M_ATTK_HIT)) return false;
 
     if (await m_is_steadfast(mdef)) {
         if (u.usteed && mdef === u.usteed)
@@ -4439,21 +4425,27 @@ export async function mhitm_knockback(mdef, mattk, hitflags, weapon_used) {
            and the noun are two separate rn2(2)s (uhitm.c:5374) */
         const adj = rn2(2) ? 'forceful' : 'powerful';
         const noun = rn2(2) ? 'blow' : 'strike';
-        await plineU(`You knock ${y_monnam(mdef)} ${knockedhow} `
+        await plineU(`${magr ? Monnam(magr) + ' knocks' : 'You knock'} ${y_monnam(mdef)} ${knockedhow} `
                      + `with a ${adj} ${noun}!`);
-    } else {
+    } else if (!magr) {
         /* hero knocks unseen foe back; noticed by touch */
         await plineU(`You feel ${some_mon_nam(mdef)} be knocked ${knockedhow}!`);
     }
 
-    if (u.ustuck) await unstuck(u.ustuck);
+    if (!magr && u.ustuck) await unstuck(u.ustuck);
 
     await mhurtle(mdef, dx, dy, knockdistance);
+    if (magr) hitflags.v |= M_ATTK_HIT;
     if (DEADMONSTER(mdef)) {
         hitflags.v |= M_ATTK_DEF_DIED;
     } else if (!rn2(4)) {                            // uhitm.c:5406
         mdef.mstun = 1;
+        if (magr && mdef === u.usteed) {
+            const { set_apparxy } = await import('./monmove.js');
+            set_apparxy(magr);
+        }
     }
+    if (magr && DEADMONSTER(magr)) hitflags.v |= M_ATTK_AGR_DIED;
     return true;
 }
 // Lazy pline, like plineMon() above (display.js imports uhitm.js).

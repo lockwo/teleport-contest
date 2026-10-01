@@ -5,9 +5,10 @@ import { rn2, rnd, rn1, d } from './rng.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { monster_by_pmidx, mon_cwt, mon_cnutrit, name_to_pmidx } from './makemon.js';
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { pline, update_topl, y_n } from './display.js';
 import { poison_strdmg, exercise, acurr_eff, adjattrib } from './attrib.js';
-import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER } from './const.js';
+import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, G_GENOD } from './const.js';
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_POIS,
          M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME }
@@ -1466,14 +1467,41 @@ const DOMESTIC_NAMES = new Set([
     'little dog', 'dog', 'large dog', 'kitten', 'housecat', 'large cat',
 ]);
 
+function stone_resistance_eat() {
+    const props = game.u?.uprops || {};
+    return !!(game.Stone_resistance || props.Stone_resistance
+        || props.HStone_resistance || props.EStone_resistance
+        || ((_invent?.youmonst_data_pub()?.mresists || 0) & 0x80));
+}
+// C mondata.c poly_when_stoned(): any non-stone golem can become a stone golem
+// unless that species was genocided.  polymon() itself checks Unchanging.
+function poly_when_stoned_eat() {
+    const form = _invent?.youmonst_data_pub();
+    const stoneGolem = name_to_pmidx('stone golem');
+    return form?.mcls === S_GOLEM_C && form.pmidx !== stoneGolem
+        && !((game.mvitals?.[stoneGolem]?.mvflags || 0) & G_GENOD);
+}
+
 // C ref: eat.c cprefx(pm) — run by start_eating() BEFORE the first bite of a
 // corpse.  The cannibalism Luck roll used to be missing entirely.
 async function cprefx(pm) {
     await maybe_cannibal(pm, true);
     const nm = corpse_mon_name(pm);
-    if (flesh_petrifies(pm)) {
-        // C: "You turn to stone." + done(STONING) unless Stone_resistance.
-        game._stoning_death = true;
+    if (flesh_petrifies(pm) && !stone_resistance_eat()) {
+        // eat.c cprefx():795-809 — a stone golem polymorph can absorb the
+        // petrification; otherwise the instant death occurs BEFORE bite().
+        const stoneGolem = name_to_pmidx('stone golem');
+        if (poly_when_stoned_eat()) {
+            const { polymon } = await import('./polyself.js');
+            if (await polymon(stoneGolem)) return;
+        }
+        game._killer_name = `tasting ${nm} meat`;
+        await update_topl('You turn to stone.');
+        const { done } = await import('./end.js');
+        const { STONING } = await import('./const.js');
+        await done(STONING);
+        if (game.context?.victual?.piece)
+            game.context.victual.eating = 0;
         return;
     }
     if (DOMESTIC_NAMES.has(nm)) {
@@ -1736,7 +1764,8 @@ async function eatcorpse(otmp) {
     // C ref: eat.c:1861 — a corpse that will petrify or slime the hero skips
     // the "tainted" branch entirely (those effects are deadlier and come
     // first), so the rot damage cascade must know about them.
-    const stoneable = flesh_petrifies(mnum);
+    const stoneable = flesh_petrifies(mnum) && !stone_resistance_eat()
+        && !poly_when_stoned_eat();
     const slimeable = (corpse_mon_name(mnum) === 'green slime'
                        && !u?.uprops?.Slimed);
 
@@ -1962,7 +1991,7 @@ const WAX = 2, PAPER = 5, LEATHER = 7, BONE = 9, DRAGON_HIDE = 10;
 // mondata.h / makemon record helpers this section needs (the same one-liners
 // the live half of this file already keeps local).
 function monsndx(ptr) { return ptr?.pmidx ?? NON_PM; }
-function s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 // mondata.h is_giant(ptr) = mflags2 & M2_GIANT (monflags_data.js M2_GIANT).
 const M2_GIANT_EAT = 0x2000;
 function is_giant(ptr) { return (mflags2_of(ptr) & M2_GIANT_EAT) !== 0; }

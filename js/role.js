@@ -2,6 +2,7 @@
 // C ref: src/role.c
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2 } from './rng.js';
 import {
     A_CHAOTIC, A_LAWFUL, A_NEUTRAL, A_NONE,
@@ -899,13 +900,6 @@ function promptsep(buf, num_post_attribs) {
     if (!gr.role_post_attribs && num_post_attribs > 1)
         buf += 'and ';
     return buf;
-}
-
-// C ref: hacklib.c s_suffix().
-function s_suffix(s) {
-    if (/^it$/i.test(s)) return s + 's';
-    if (/^you$/i.test(s)) return s + 'r';
-    return s + (s.endsWith('s') ? "'" : "'s");
 }
 
 // C ref: hacklib.c strsubst() — replaces the FIRST occurrence only.

@@ -14,7 +14,7 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { render_map_to_grid, pline, topl_more, flush_screen } from './display.js';
+import { render_map_to_grid, pline, topl_more, flush_screen, canspotself } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen } from './invent.js';
 import { doextversion } from './version.js';
 import { option_help_lines } from './options.js';
@@ -1056,7 +1056,8 @@ function pg_glyph_at(x, y) {
     if (!loc) return { kind: 'unexplored', x, y };
     const sym = (loc.disp_ch != null) ? loc.disp_ch : ' ';
     if (loc.invisMon && sym === DEF_INVISIBLE) return { kind: 'invisible', sym, x, y };
-    if (pg_u_at(x, y)) return { kind: 'monster', mon: null, isyou: true, sym, x, y };
+    if (pg_u_at(x, y) && canspotself())
+        return { kind: 'monster', mon: null, isyou: true, sym, x, y };
     const mon = m_at(x, y);
     if (mon && sym === (mon.data?.mlet ?? '\0'))
         return { kind: 'monster', mon, sym, x, y };
@@ -1623,7 +1624,7 @@ export function lookat(x, y) {
     const glyph = pg_glyph_at(x, y);
     const iflags = pg_iflags();
 
-    if (pg_u_at(x, y) && canspotself_pg()
+    if (pg_u_at(x, y) && canspotself()
         && !(iflags.save_uswallow && pg_glyph_is_monster(glyph) && !glyph.isyou)
         && (!iflags.terrainmode || (iflags.terrainmode & 0x08 /* TER_MON */) !== 0)) {
         buf = pg_self_lookat();
@@ -1715,11 +1716,6 @@ export function lookat(x, y) {
         buf = 'unexplored area';
     }
     return { pm: (pm && !Hallucination_u()) ? pm : null, buf, monbuf };
-}
-/* display.h canspotself() */
-function canspotself_pg() {
-    const u = pg_u();
-    return !u.uinvis || !!u.useeinvis || !!u.uswallow;
 }
 
 // C ref: pager.c:1132 add_cmap_descr(...) — add one defsyms[] possibility to
@@ -2254,7 +2250,7 @@ export async function look_all(nearby, do_mons) {
             let glyph = pg_glyph_at(x, y);
             if (do_mons) {
                 if (pg_glyph_is_monster(glyph)) {
-                    if (pg_u_at(x, y) && canspotself_pg()) {
+                    if (pg_u_at(x, y) && canspotself()) {
                         lookbuf = pg_self_lookat();
                         ++count;
                     } else {
@@ -2284,7 +2280,7 @@ export async function look_all(nearby, do_mons) {
                         ? `${pg_upstart(which)} currently shown near `
                           + `${(cmode !== GPCOORDS_COMPASS)
                                 ? coord_desc(u.ux, u.uy, cmode)
-                                : !canspotself_pg() ? 'your position' : 'you'}:`
+                                : !canspotself() ? 'your position' : 'you'}:`
                         : `All ${which} currently shown on the map:`);
                     /* hack alert (C's): Qt renders a text window in a
                        fixed-width font if any line has 4 consecutive spaces */

@@ -26,6 +26,7 @@ import {
     objects,
     mksobj,
     mkobj,
+    set_corpsenm,
     weight,
     STRANGE_OBJECT,
     WEAPON_CLASS,
@@ -56,9 +57,16 @@ import {
     wishymatch,
     strstri,
 } from './objnam.js';
+import { monster_by_pmidx, name_to_pmidx, name_gender_hint,
+    pmname_of_pmidx, can_be_hatched, dead_species, mon_nocorpse,
+    mon_has_cnutrit } from './makemon.js';
+import { counter_were } from './mon.js';
+import { is_were_flag, is_human_flag, msound_of, MS_GUARDIAN } from './monflags_data.js';
+import { tin_variety_txt, set_tin_variety, RANDOM_TIN } from './eat.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { game } from './gstate.js';
 import { wizterrainwish } from './wizterrainwish.js';
+import { u_safe_from_fatal_corpse, st_all } from './pickup.js';
 
 const NUM_OBJECTS = objects.length;
 
@@ -66,7 +74,7 @@ const NUM_OBJECTS = objects.length;
 const TIN_UNDEFINED = 0, TIN_EMPTY = 1, TIN_SPINACH = 2;
 // C ref: hack.h:1197 CORPSTAT_RANDOM/FEMALE/MALE/NEUTER + CORPSTAT_HISTORIC.
 const CORPSTAT_RANDOM = 0, CORPSTAT_FEMALE = 1, CORPSTAT_MALE = 2;
-const CORPSTAT_HISTORIC = 4;
+const CORPSTAT_NEUTER = 3, CORPSTAT_HISTORIC = 4;
 // C ref: monattk.h/you.h gender codes used by name_to_mon()'s gender out-param.
 const MALE = 0, FEMALE = 1, NEUTRAL = 2;
 
@@ -389,13 +397,14 @@ function newData(bp) {
         looted: 0,
         real: 0, fake: 0,
         mgend: -1,          /* not specified, aka random */
+        mntmp: NON_PM,
+        tvariety: RANDOM_TIN,
         contents: TIN_UNDEFINED,
         wetness: 0,
         gsize: 0,
         zombify: false,
         oclass: 0,
         actualn: null, dn: null, un: null, name: null,
-        dragonIdx: null, /* set by stripDragonPrefix; C d->mntmp dragon family */
         bp, origbp: bp,
         fruitbuf: '',
     };
@@ -670,43 +679,104 @@ function postparse1(d) {
     else if (strncmpi(d.bp, 'set of ', 7)) d.bp = d.bp.slice(7);
     else if (strncmpi(d.bp, 'sets of ', 8)) d.bp = d.bp.slice(8);
 
-    // dragon-prefix / monster-name stripping for "<color> dragon scale mail"
-    // and "<color> dragon scales" (C uses name_to_monplus; we handle the
-    // dragon family which is the only monster-name path the wishlist hits).
-    stripDragonPrefix(d);
+    // C objnam.c:4370-4433: "corpse of <monster>" is resolved before
+    // leading monster names ("<monster> corpse").  Keep the exclusions: an
+    // ogre in "gauntlets of ogre power" is not the object species.
+    if (!['wand ', 'spellbook ', 'gauntlets ', 'gloves ', 'finger ']
+        .some((word) => strstri(d.bp, word) >= 0)) {
+        if ((p = strstri(d.bp, 'tin of ')) >= 0) {
+            if (!strcmpi(d.bp.slice(p + 7), 'spinach')) {
+                const tvariety = { value: RANDOM_TIN };
+                const meat = d.bp.slice(p + 7);
+                const skip = tin_variety_txt(meat, tvariety);
+                d.tvariety = tvariety.value;
+                const match = matchMonsterPrefix(meat.slice(skip));
+                d.mntmp = match.pm;
+                d.mgend = genderForMatch(d.mgend, match.gender);
+            }
+            d.typ = OT('TIN');
+            return 2;
+        }
+        if ((p = strstri(d.bp, ' of ')) >= 0) {
+            const match = matchMonsterPrefix(d.bp.slice(p + 4));
+            if (match.pm !== NON_PM) {
+                d.mntmp = match.pm;
+                d.mgend = genderForMatch(d.mgend, match.gender);
+                d.bp = d.bp.slice(0, p);
+            }
+        }
+    }
+
+    if (d.mntmp === NON_PM
+        && !['samurai sword', 'wizard lock', 'death wand', 'master key',
+            'ninja-to', 'magenta'].some((word) => strncmpi(d.bp, word, word.length))
+        && d.bp.length > 2) {
+        const match = matchMonsterPrefix(d.bp);
+        if (match.pm !== NON_PM) {
+            const rest = d.bp.slice(match.length);
+            let skip = 0;
+            if (rest.startsWith(' ')) skip = 1;
+            else if (/^s |^s' /i.test(rest)) skip = 2;
+            else if (/^es |^'s /i.test(rest)) skip = 3;
+            if (skip || rest.length || d.actualn || d.dn || d.un || d.oclass) {
+                d.mntmp = match.pm;
+                d.mgend = genderForMatch(d.mgend, match.gender);
+                d.bp = rest.slice(skip);
+            }
+        }
+    }
     return 0;
 }
 
-// Strip a leading dragon monster name, mirroring the relevant slice of C's
-// name_to_monplus() handling in readobjnam_postparse1 (objnam.c:4407).  Only
-// the dragon family (used by "gray dragon scale mail") matters for parity here.
-// When a color is recognised we record its dragon index on d.dragonIdx so that
-// finalize() can promote a resulting SCALE_MAIL to the colored dragon scale
-// mail (C objnam.c:5246-5251 SCALE_MAIL switch case using d.mntmp).
-//
-// Index order matches the GRAY_DRAGON_SCALE_MAIL..YELLOW_DRAGON_SCALE_MAIL
-// object order (== PM_GRAY_DRAGON..PM_YELLOW_DRAGON monster order):
-//   gray, gold, silver, red, white, orange, black, blue, green, yellow.
-const DRAGON_COLOR_IDX = {
-    gray: 0, grey: 0, gold: 1, silver: 2, red: 3, white: 4,
-    orange: 5, black: 6, blue: 7, green: 8, yellow: 9,
-};
-function stripDragonPrefix(d) {
-    const low = d.bp.toLowerCase();
-    for (const c of Object.keys(DRAGON_COLOR_IDX)) {
-        const pre = c + ' dragon';
-        if (low.startsWith(pre)) {
-            let rest = d.bp.slice(pre.length);
-            if (rest.startsWith(' ')) {
-                d.bp = rest.slice(1);
-                d.dragonIdx = DRAGON_COLOR_IDX[c];
-            } else if (rest.length === 0) {
-                // bare "<color> dragon" with no referent; leave as-is
-            }
-            return;
+// C mondata.c name_to_monplus() scans mons[] for the longest full-word prefix;
+// gendered pmnames[] share their monster index but specify the corpse's sex.
+// Match the canonical names through makemon's species/name helpers, retaining
+// the already-supported alternate spelling "grey dragon" for dragon armor.
+function matchMonsterPrefix(input) {
+    let start = 0;
+    if (/^a /i.test(input)) start = 2;
+    else if (/^an /i.test(input)) start = 3;
+    else if (/^the /i.test(input)) start = 4;
+    const text = input.slice(start).replace(/^((?:baby )?)grey(?= (?:dragon|unicorn|ooze)\b)/i,
+        '$1gray').toLowerCase();
+    let best = { pm: NON_PM, gender: -1, length: 0 };
+    for (let pm = 0; monster_by_pmidx(pm); pm++) {
+        const mon = monster_by_pmidx(pm);
+        for (let sex = MALE; sex <= NEUTRAL; sex++) {
+            const name = pmname_of_pmidx(pm, sex);
+            if (!name || name.length <= best.length - start || !text.startsWith(name.toLowerCase()))
+                continue;
+            const next = text[name.length];
+            if (next !== undefined && next !== ' ' && next !== "'"
+                && !/^s(?: |$)|^es(?: |$)/i.test(text.slice(name.length)))
+                continue;
+            best = { pm, gender: name === mon.name ? NEUTRAL : name_gender_hint(name),
+                length: start + name.length };
+            if (name.length === text.length) return best;
         }
     }
+    return best;
 }
+
+function genderForMatch(requested, matched) {
+    // A neutral species name preserves an explicit "male"/"female" prefix;
+    // a name like "gnome queen" overrides it (mondata.c:1078-1082).
+    return requested === -1 || matched !== NEUTRAL ? matched : requested;
+}
+
+function dragonIndex(pm) {
+    const idx = pm - name_to_pmidx('gray dragon');
+    return idx >= 0 && idx <= name_to_pmidx('yellow dragon') - name_to_pmidx('gray dragon')
+        ? idx : NON_PM;
+}
+
+// C mon.c genus(mndx, 1) maps quest guardians to their role's corpse.
+const GUARDIAN_CORPSE = {
+    student: 'archeologist', chieftain: 'barbarian', neanderthal: 'cave dweller',
+    attendant: 'healer', page: 'knight', abbot: 'monk', acolyte: 'cleric',
+    hunter: 'ranger', thug: 'rogue', roshi: 'samurai', guide: 'tourist',
+    apprentice: 'wizard', warrior: 'valkyrie',
+};
 
 // readobjnam_postparse2: o_ranges exact match, " stone"/" gem", class search.
 function postparse2(d) {
@@ -728,11 +798,11 @@ function postparse2(d) {
         if (q >= 0) d.bp = d.bp.slice(0, q + 4) + d.bp.slice(q + 5);
     }
 
-    // C ref: objnam.c:4480 — "<color> dragon scales" (the scales, not the
-    // mail); stripDragonPrefix() left the color behind in d.dragonIdx.
-    if (strcmpi(d.bp, 'scales') && d.dragonIdx != null) {
-        d.typ = OT('GRAY_DRAGON_SCALES') + d.dragonIdx;
-        d.dragonIdx = null; /* C: d->mntmp = NON_PM, no monster */
+    // C objnam.c:4480 — the matching dragon species selects colored scales.
+    const dragon = dragonIndex(d.mntmp);
+    if (strcmpi(d.bp, 'scales') && dragon !== NON_PM) {
+        d.typ = OT('GRAY_DRAGON_SCALES') + dragon;
+        d.mntmp = NON_PM;
         return 2;
     }
 
@@ -770,7 +840,7 @@ function postparse2(d) {
     }
     // C ref: objnam.c:4521 — "orange" is the fruit here, not the gem/potion
     // colour, unless a monster name was recognised (orange dragon).
-    if (bstrcmpi_tail(d.bp, 6, 'orange') && d.dragonIdx == null) {
+    if (bstrcmpi_tail(d.bp, 6, 'orange') && d.mntmp === NON_PM) {
         d.typ = OT('ORANGE');
         return 2;
     }
@@ -985,11 +1055,12 @@ export function readobjnam_postparse1(d) { return postparse1(d); }
 export function readobjnam_postparse2(d) { return postparse2(d); }
 export function readobjnam_postparse3(d) { return postparse3(d); }
 
-// readobjnam(bp): parse a wish string, create and return the object, or null
-// (nothing matched).  Drives the C goto-based control flow with a small state
-// machine.  C ref: objnam.c:4910.
-export function readobjnam(bp) {
+// readobjnam(bp, forWish): parse an object description and create it.  Only
+// makewish() sets the wishedfor handoff bit; obj.new() uses the same parser
+// without wishing the object into the hero's hands.  C ref: objnam.c:4910.
+export function readobjnam(bp, forWish = true) {
     const d = newData(bp);
+    d.forWish = forWish;
     if (bp == null) return finalize(d); /* random object (not exercised) */
 
     d.bp = mungspaces(d.bp);
@@ -1072,16 +1143,11 @@ function finalize(d, anyRandom) {
     d.typ = otmp.otyp;
     d.oclass = otmp.oclass;
 
-    // C objnam.c:5246-5251 — SCALE_MAIL case of the ismnum(d.mntmp) switch.
-    // "gray dragon scale mail" parses to bare "scale mail" (the dragon name was
-    // stripped by stripDragonPrefix, recording d.dragonIdx); promote the base
-    // scale mail (otyp 130) to the matching colored dragon scale mail
-    // (GRAY_DRAGON_SCALE_MAIL=101 .. YELLOW_DRAGON_SCALE_MAIL=110).
-    const SCALE_MAIL = 130, GRAY_DRAGON_SCALE_MAIL = 101;
-    if (otmp.otyp === SCALE_MAIL && d.dragonIdx != null) {
-        otmp.otyp = GRAY_DRAGON_SCALE_MAIL + d.dragonIdx;
+    // C objnam.c:5246-5251 — dragon scale mail is promoted after mksobj.
+    const dragon = dragonIndex(d.mntmp);
+    if (otmp.otyp === OT('SCALE_MAIL') && dragon !== NON_PM) {
+        otmp.otyp = OT('GRAY_DRAGON_SCALE_MAIL') + dragon;
         d.typ = otmp.otyp;
-        d.oclass = otmp.oclass;
     }
 
     // C ref: objnam.c:5071 — the requested quantity is honoured only for a
@@ -1155,13 +1221,78 @@ function finalize(d, anyRandom) {
         if (!wizard()) otmp.spe = (rn2(10) ? -1 : 0);
         break;
     case OT('STATUE'):
-        // The corpse/statue/figurine gender arm needs a monster name, which
-        // this port does not parse; the historic flag does not.
-        if (d.ishistoric) otmp.spe |= CORPSTAT_HISTORIC;
+    case OT('FIGURINE'):
+    case OT('CORPSE'): {
+        // C objnam.c:5147-5165: mksobj has already rolled the initial random
+        // species/sex.  The wished-for species rolls its own sex only when its
+        // name and prefixes do not specify one and it is not single-sex.
+        const ptr = monster_by_pmidx(d.mntmp);
+        otmp.spe = !ptr ? CORPSTAT_RANDOM
+            : ptr.gender === 'neuter' ? CORPSTAT_NEUTER
+                : d.mgend === FEMALE && ptr.gender !== 'male' ? CORPSTAT_FEMALE
+                    : d.mgend === MALE && ptr.gender !== 'female' ? CORPSTAT_MALE
+                        : CORPSTAT_RANDOM;
+        if (ptr && otmp.spe === CORPSTAT_RANDOM)
+            otmp.spe = ptr.gender === 'male' ? CORPSTAT_MALE
+                : ptr.gender === 'female' ? CORPSTAT_FEMALE
+                    : rn2(2) ? CORPSTAT_MALE : CORPSTAT_FEMALE;
+        if (d.ishistoric && d.typ === OT('STATUE'))
+            otmp.spe |= CORPSTAT_HISTORIC;
         break;
+    }
     default:
         break;
     }
+    // C objnam.c:5191-5253: apply the species after mksobj's initial corpse
+    // and timer setup.  set_corpsenm() replaces the corpse rot timer with one
+    // for the requested species (and draws the corresponding rnz).
+    if (monster_by_pmidx(d.mntmp)) {
+        if (d.mntmp === name_to_pmidx('long worm tail'))
+            d.mntmp = name_to_pmidx('long worm');
+        let ptr = monster_by_pmidx(d.mntmp);
+        if (d.typ !== OT('FIGURINE') && is_were_flag(ptr)
+            && (game.mvitals?.[d.mntmp]?.mvflags & 0x10 || mon_nocorpse(d.mntmp))) {
+            const humanWere = counter_were(d.mntmp);
+            if (humanWere !== NON_PM) d.mntmp = humanWere;
+        }
+        ptr = monster_by_pmidx(d.mntmp);
+        const unique = !!(ptr.geno & 0x1000);
+        const noCorpse = !!(game.mvitals?.[d.mntmp]?.mvflags & 0x10)
+            || mon_nocorpse(d.mntmp);
+        switch (d.typ) {
+        case OT('TIN'):
+            if (dead_species(d.mntmp, false)) otmp.corpsenm = NON_PM;
+            else if ((!unique || wizard()) && !noCorpse && mon_has_cnutrit(d.mntmp))
+                otmp.corpsenm = d.mntmp;
+            break;
+        case OT('CORPSE'):
+            if ((!unique || wizard()) && !noCorpse) {
+                if (msound_of(ptr) === MS_GUARDIAN)
+                    d.mntmp = name_to_pmidx(GUARDIAN_CORPSE[ptr.name]);
+                set_corpsenm(otmp, d.mntmp);
+            }
+            break;
+        case OT('EGG'):
+            d.mntmp = can_be_hatched(d.mntmp);
+            set_corpsenm(otmp, d.mntmp);
+            break;
+        case OT('FIGURINE'):
+            if (!unique && (!is_human_flag(ptr) || is_were_flag(ptr)))
+                otmp.corpsenm = d.mntmp;
+            break;
+        case OT('STATUE'):
+            otmp.corpsenm = d.mntmp;
+            if (ptr.verysmall) otmp.cobj = null;
+            break;
+        default:
+            break;
+        }
+    }
+    // zap.c makewish():6401 marks an unsafe corpse before passing it to
+    // invent.c hold_another_object(); obj.new() does not perform this handoff.
+    if (d.forWish && otmp.otyp === OT('CORPSE')
+        && !u_safe_from_fatal_corpse(otmp, st_all))
+        otmp.wishedfor = 1;
 
     // blessed/cursed: direct field sets (no RNG in wizard mode).
     if (d.iscursed) { otmp.cursed = true; otmp.blessed = false; }

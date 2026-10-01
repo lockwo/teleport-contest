@@ -15,6 +15,7 @@
 // the same turn and both talk.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnd, d } from './rng.js';
 import { heal_legs } from './trap.js';
 import { exercise } from './attrib.js';
@@ -101,37 +102,21 @@ async function expire_stun() {
     if (!(u.uprops.Stun || 0)) await stop_occupation();
 }
 
-// C ref: potion.c make_blinded(0L, TRUE) — regaining sight prints
-// You("can see again."), NOT Your1(vision_clears): `vision_clears` never
-// appears in make_blinded at all, only at the unrelated cream-pie/venom sites
-// (eat.c, engrave.c, mhitu.c, ...).  C picks the branch by probing whether
-// dropping the timer actually restores sight, so a blindfold / eyeless form /
-// the Eyes of the Overworld take the other arm.
+// C ref: timeout.c:743 case BLINDED — `set_itimeout(&HBlinded, 1L);
+// make_blinded(0L, TRUE);`.  The loop above has ALREADY decremented the timer
+// to 0; C puts it back to 1 so make_blinded()'s probe sees the hero as blind,
+// prints "You can see again." while still blind (the status line keeps Blind
+// through any --More-- that message forces), then clears the timer and runs
+// toggle_blindness()'s vision_recalc(0).
 async function expire_blinded() {
     const u = game.u;
     const { Blind } = await import('./vision.js');
-    // C ref: timeout.c:746 `set_itimeout(&HBlinded, 1L)` — the loop above has
-    // ALREADY decremented the timer to 0, so C puts it back to 1 before
-    // make_blinded()'s probe; without this u_could_see reads TRUE and the
-    // regaining-sight branch (the only one that talks) is never taken.
+    const { make_blinded_hero } = await import('./potion.js');
     u.blinded = 1;
-    const u_could_see = !Blind();   // C: probe with HBlinded still set
-    u.blinded = 0;
-    const can_see_now = !Blind();   // C: probe with HBlinded cleared
-    if (can_see_now && !u_could_see) {
-        await update_topl(Hallucination()
-            ? 'Far out!  Everything is all cosmic again!'
-            : 'You can see again.');
-    }
-    // C's `else if (old && !xtime)` arm (the timer ran out but another source
-    // still blinds) branches to strange_feeling / the blindfold eyemsg / the
-    // Eyes-of-the-Overworld vismsg; all three need a worn blindfold or an
-    // eyeless polymorph form, which this port's blindness sources never reach.
-    // C ref: timeout.c:747 `if (was_blind && !Blind) stop_occupation();` —
-    // was_blind is necessarily true here (the timer just ran out), so the test
-    // is whether some OTHER blindness source (blindfold, cream, eyeless form)
-    // still applies — i.e. exactly the can_see_now probed above.
-    if (can_see_now) await stop_occupation();
+    const was_blind = Blind();
+    await make_blinded_hero(0, true);
+    // C ref: timeout.c:748 `if (was_blind && !Blind) stop_occupation();`.
+    if (was_blind && !Blind()) await stop_occupation();
 }
 
 // C ref: potion.c make_hallucinated(0L, TRUE, 0L) — the display refresh and
@@ -590,7 +575,7 @@ function _incr_itimeout(key, incr) { _set_itimeout(key, _prop(key) + (incr | 0))
 // with a separate urgent-message channel.
 const _urgent_pline = (msg) => pline(msg);
 
-// C ref: hacklib.c an()/upstart(), objnam.c s_suffix(), hacklib.c vtense().
+// C ref: hacklib.c an()/upstart()/vtense().
 function _an(s) {
     if (!s) return 'an []';
     if (/^the /i.test(s) || /^(molten lava|iron bars|ice)$/i.test(s)) return s;
@@ -602,7 +587,7 @@ function _an(s) {
     return `a ${s}`;
 }
 function _upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-function _s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 // C: vtense(subj, verb) — a plural subject leaves the verb alone, a singular
 // one gets the third-person form.  Only the pronoun subjects reach this file.
 function _vtense(subj, verb) {
@@ -672,7 +657,7 @@ async function _Shk_Your(obj) {
     if (_where(obj) === 'invent') return 'Your ';
     if (_where(obj) === 'minvent' && obj.ocarry) {
         const { Monnam } = await import('./do_name.js');
-        return `${_s_suffix(Monnam(obj.ocarry))} `;
+        return `${s_suffix(Monnam(obj.ocarry))} `;
     }
     return 'The ';
 }
@@ -1384,7 +1369,7 @@ export async function hatch_egg(arg, timeout) {
                 mon2 = egg.ocarry;
                 if (canseemon_shared(mon2)
                     && (!mon2.wormno || cansee(mon2.mx, mon2.my))) {
-                    carriedby = `${_s_suffix(a_monnam(mon2))} pack`;
+                    carriedby = `${s_suffix(a_monnam(mon2))} pack`;
                     knows_egg = true;
                 } else if (is_pool(mon.mx, mon.my)) {
                     carriedby = 'empty water';
@@ -1482,7 +1467,7 @@ export async function lantern_message(obj) {
         break;
     case 'minvent': {
         const { Monnam } = await import('./do_name.js');
-        await pline(`${_s_suffix(Monnam(obj.ocarry))} lantern is getting dim.`);
+        await pline(`${s_suffix(Monnam(obj.ocarry))} lantern is getting dim.`);
         break;
     }
     default:

@@ -60,6 +60,7 @@
 //   * l_nhcore_init() (nhlua.c:140) — js/mklev.js:316, as the align shuffle.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2 } from './rng.js';
 import {
     COLNO, ROWNO, BUFSZ, LOW_PM,
@@ -264,11 +265,10 @@ function _get_trapname_bytype(ttyp) { return `trap ${ttyp}`; }
 /* mkmaze.c levltyp_to_name(typ) — the debug name of a terrain type. */
 function _levltyp_to_name(typ) { return `typ ${typ}`; }
 
-/* objnam.c an(), s_suffix(), ing_suffix() — this port keeps only file-local
-   copies of these, so there is nothing to import; the three nh.* wrappers
-   below still check their argument count exactly as C does. */
+/* objnam.c an(), ing_suffix() — this port keeps only file-local copies of
+   these; the nh.* wrappers below still check their argument count exactly as
+   C does. */
 function _an(str) { return /^[aeiouAEIOU]/.test(str) ? `an ${str}` : `a ${str}`; }
-function _s_suffix(str) { return /s$/.test(str) ? `${str}'` : `${str}'s`; }
 function _ing_suffix(str) { return `${str.replace(/e$/, '')}ing`; }
 
 /* mon.c name_to_mon(str, &gend) -> pm index, NON_PM if unknown. */
@@ -968,7 +968,7 @@ export function nhl_s_suffix(...args) {
     const argc = args.length;
 
     if (argc === 1)
-        return _s_suffix(_checkstring(args[0]));
+        return s_suffix(_checkstring(args[0]));
     nhl_error(null, 'Wrong args');
     return undefined;
 }

@@ -127,60 +127,62 @@ export async function findit() {
     return num;
 }
 
-// C ref: detect.c show_map_spot(x, y, cnf) — reveal one cell's terrain into hero
-// memory.  Secret corridors are exposed (but not secret doors).
-// Furniture/traps/objects layering is simplified to the terrain background,
-// which covers the open-room starting levels.
-//
-// `cnf` is C's Confusion, and it is NOT decorative: the `cnf && rn2(7)` guard
-// draws once per cell for all 79x21 = 1659 cells, so a confused mapping both
-// costs 1659 core draws and reveals only ~1/7 of the level.  js/read.js sets
-// Confusion for a CURSED scroll of magic mapping, so this was reachable through
-// an ordinary item: we mapped the whole level for zero draws where C maps a
-// seventh for 1659.  cnf also suppresses the engraving arm and the #overview
-// room_discovered() call.
+// C ref: detect.c show_map_spot: furniture, known traps and engravings take
+// precedence over previously displayed objects and traps during mapping.
 function show_map_spot(x, y, cnf) {
     if (cnf && rn2(7)) return;
     const lev = game.level?.at(x, y);
     if (!lev) return;
+    const oldglyph = glyph_at(x, y);
+    const oldcell = {
+        ch: lev.disp_ch, color: lev.disp_color, dec: lev.disp_decgfx,
+        pile: lev.remembered_glyph?.pile, bwEngr: lev.remembered_glyph?.bwEngr,
+    };
     lev.seenv = 0xff;
     if (lev.typ === SCORR)
         lev.typ = CORR;
 
-    // C ref: detect.c show_map_spot — "force the real background, then if it's
-    // not furniture and there's a known trap there, display the trap, else if
-    // there was an object shown there, redisplay the object.  So during mapping,
-    // furniture takes precedence over traps, which take precedence over objects,
-    // opposite to how normal vision behaves."
-    let bg = terrain_background_glyph(lev, x, y);
-    // C's map_trap(t, 1) / map_engraving(ep, 1) run AFTER newsym() and SHOW
-    // their glyph, so during mapping a trap outranks whatever newsym just drew
-    // there — including a live monster standing on it (seed4500 step 1241 shows
-    // the giant spider's web, not the spider).
-    let overrideShown = false;
+    // C ref: detect.c show_map_spot — force the real background and newsym()
+    // it FIRST (magic_map_background() only overwrites an unexplored or
+    // bare-terrain remembered glyph, so an object/trap/invisible-monster
+    // glyph already there survives this step untouched).  THEN, if the spot
+    // isn't furniture, let a known trap/engraving/previously-shown object win
+    // LAST, overwriting whatever newsym() just drew — including a live
+    // monster standing on it (seed4500 step 1241 shows the giant spider's
+    // web, not the spider).  So during mapping, furniture > traps > objects,
+    // the OPPOSITE of normal vision's object > trap priority.  Getting this
+    // ordering backwards (background LAST) let newsym()'s normal object>trap
+    // priority re-show a stale remembered object pile over a freshly
+    // "#wizmap"-revealed trap underneath it (seed4500 step 789's arrow trap
+    // at a square also piled with a corpse/boulder/weapon).
+    if (game.level?.flags?.hero_memory) {
+        magic_map_background(x, y, 0);
+        newsym(x, y);
+    } else {
+        magic_map_background(x, y, 1);
+    }
     if (!IS_FURNITURE(lev.typ)) {
         const t = (game.level?.traps || []).find((tr) => tr.tx === x && tr.ty === y);
         const ep = engr_at(x, y);
         if (t && t.tseen) {
-            bg = trap_glyph(t);
-            overrideShown = true;
+            map_trap(t, 1);
         } else if (ep && !cnf) {                  /* C: `ep != 0 && !cnf` */
             ep.erevealed = 1;                     /* map_engraving(ep, 1) */
-            bg = engraving_glyph(lev);
-            overrideShown = true;
+            const g = engraving_glyph(lev);
+            if (game.level?.flags?.hero_memory)
+                lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
+            show_glyph_cell(x, y, g.ch, g.color, g.dec);
+        } else if (glyph_is_trap(oldglyph) || glyph_is_object(oldglyph)) {
+            if (game.level?.flags?.hero_memory) {
+                lev.invisMon = false;
+                lev.remembered_glyph = {
+                    ch: oldcell.ch, color: oldcell.color, decgfx: oldcell.dec,
+                    pile: !!oldcell.pile, bwEngr: !!oldcell.bwEngr,
+                };
+            }
+            show_glyph_cell(x, y, oldcell.ch, oldcell.color, oldcell.dec);
         }
-        // C's third arm restores a previously-shown trap/object glyph via
-        // glyph_is_trap(oldglyph)/glyph_is_object(oldglyph); this port's
-        // remembered_glyph carries no glyph-kind tag, so it is left out rather
-        // than guessed at.
     }
-    // Remember the background so the cell shows even out of sight (matches the
-    // dim "magic-mapped" rendering once the hero looks away).
-    lev.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec, mapped: true };
-    // Redraw via newsym so visible cells stay live and remembered ones appear.
-    newsym(x, y);
-    if (overrideShown || lev.disp_ch === ' ' || lev.disp_ch == null)
-        show_glyph_cell(x, y, bg.ch, bg.color, bg.dec);
     // C ref: detect.c:1416 — "possibly update #overview".  Magic mapping learns
     // every room on the level, which is how #overview names a shop the hero
     // never walked into.  C's guard is `!cnf && lev->roomno >= ROOMOFFSET`.
@@ -202,11 +204,7 @@ export async function do_mapping() {
 // C ref: detect.c gold_detect(sobj) — the scroll/spell of gold detection.
 // Returns TRUE when nothing was detected (C's caller then does the
 // strange_feeling()/useup); FALSE when the gold map was shown.
-//
-// This whole command was previously unported, so seffects() fell through its
-// default and the browse_map() cursor loop never ran — the keystrokes C feeds
-// to getpos then reached the command parser and moved the hero for real.
-export async function gold_detect(sobj, getposFn, docrtFn, updateTopl, moreFn, flushFn) {
+export async function gold_detect(sobj) {
     const u = game.u;
     const objs = (game.level?.objects || []).filter((o) => o.where === 'floor');
     const gold = objs.filter((o) => o.oclass === COIN_CLASS
@@ -223,21 +221,18 @@ export async function gold_detect(sobj, getposFn, docrtFn, updateTopl, moreFn, f
     const offSelf = gold.some((o) => o.ox !== u.ux || o.oy !== u.uy);
     if (!gold.length && !goldmons.length) return true;
     if (!offSelf && !goldmons.length) {
-        await updateTopl(`You notice some gold between your ${makeplural_foot()}.`);
+        await update_topl(`You notice some gold between your ${makeplural_foot()}.`);
         return false;
     }
 
-    // outgoldmap: cls() first does display_nhwindow(WIN_MESSAGE, FALSE), which
-    // fires the pending --More-- (wintty.c:1874) — BEFORE the gold map is
-    // painted, so the recorded --More-- frame still shows the ordinary map.
-    if (game._toplin === 1) await moreFn();
-    // ...then it blanks the map.  Each detected pile is map_object()ed, which
-    // writes hero MEMORY as well as the live display, so the '$'s survive the
-    // closing map_redisplay()/docrt().
+    await display_nhwindow_message();
+    await cls();
+    unconstrain_map();
     for (let x = 1; x < COLNO; x++)
         for (let y = 0; y < ROWNO; y++)
             show_glyph_cell(x, y, ' ', NO_COLOR, false);
     let ugold = false;
+    let ter_typ = TER_DETECT | TER_OBJ;
     const mark = (x, y, obj) => {
         const g = object_glyph(obj);
         const loc = game.level?.at(x, y);
@@ -251,17 +246,14 @@ export async function gold_detect(sobj, getposFn, docrtFn, updateTopl, moreFn, f
         mark(m.mx, m.my, fake);
     }
     if (!ugold) {
-        // newsym(u.ux, u.uy) redraws the hero on top of the blanked map.
-        show_glyph_cell(u.ux, u.uy, '@', CLR_WHITE, false);
+        newsym(u.ux, u.uy);
+        ter_typ |= TER_MON;
     }
-    await flushFn(1);
-    await updateTopl('You feel very greedy, and sense gold!');
+    await flush_screen(1);
+    await update_topl('You feel very greedy, and sense gold!');
     exercise(A_WIS, true);
-
-    // browse_map(TER_DETECT|TER_OBJ[|TER_MON], "gold")
-    await getposFn('gold');
-    // map_redisplay() -> docrt()
-    await docrtFn();
+    await browse_map(ter_typ, 'gold');
+    await map_redisplay();
     return false;
 }
 
@@ -423,7 +415,23 @@ function glyph_at(x, y) {
     if (loc.invisMon && sym === 'I') return { kind: 'invisible', x, y };
     if (d_u_at(x, y)) return { kind: 'monster', mon: null, isyou: true, x, y };
     const mon = m_at(x, y);
-    if (mon && sym === (mon.data?.mlet ?? '\0'))
+    // C ref: display.c glyph_at() just returns gbuf[y][x].glyphinfo.glyph —
+    // whatever glyph was ACTUALLY last drawn there, by its numeric range.  A
+    // cell nothing has ever been drawn on holds GLYPH_UNEXPLORED regardless
+    // of which monster physically occupies it right now.  This port instead
+    // re-derives "is a monster drawn here" by comparing the live disp_ch
+    // against the occupant's mlet, which breaks for the long worm tail: its
+    // mons[] entry's mlet is a literal space (worm tails draw through
+    // worm_tail_glyph(), never through mlet lookup — see display.js newsym()'s
+    // dark_worm_tail arm), so an UNDRAWN square (disp_ch still blank) that a
+    // tail segment happens to occupy spuriously matched sym===' '===mlet and
+    // was misclassified 'monster' instead of 'unexplored'.  magic_map_background
+    // 's guard then (correctly, per its own rule) refused to overwrite a
+    // "monster" cell, so #wizmap could never reveal the terrain under a worm
+    // tail segment lying across never-before-seen ground.  Excluding blank
+    // sym from the match is safe: no real monster's drawn glyph is ever a
+    // space, so this can only ever have matched the one broken case.
+    if (mon && sym !== ' ' && sym === (mon.data?.mlet ?? '\0'))
         return { kind: 'monster', mon, x, y };
     // C's trap-glyph test comes AFTER objects in _map_location's precedence but
     // BEFORE it here, because a mapped trapped chest/door glyph (stamped by
@@ -508,9 +516,22 @@ function magic_map_background(x, y, show) {
             g = { ch: defsyms[S_corr].sym, color: defsyms[S_corr].color, dec: false };
         }
     }
+    // C ref: display.c:251-253 magic_map_background() — only overwrite the
+    // remembered glyph when it was unexplored or already a bare cmap/terrain
+    // glyph (`glyph_is_unexplored(lev->glyph) || glyph_is_cmap(lev->glyph)`).
+    // An object, trap, or invisible-monster ('I') memory already on the
+    // square must survive untouched.  show_map_spot()'s own trailing
+    // glyph_is_trap/glyph_is_object branch separately restores those two
+    // cases from its saved oldglyph, but has no such restore for
+    // glyph_is_invisible — it relies entirely on this guard, so omitting it
+    // let every #wizmap/magic-mapping pass permanently stomp a remembered
+    // sensed-but-unseen monster with plain floor.
     if (game.level?.flags?.hero_memory) {
-        loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
-        loc.mapped_trap_ttyp = 0;
+        const old = glyph_at(x, y);
+        if (glyph_is_unexplored(old) || glyph_is_cmap(old)) {
+            loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
+            loc.mapped_trap_ttyp = 0;
+        }
     }
     if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec);
 }

@@ -30,7 +30,7 @@ import {
     DB_FLOOR, MAX_TYPE, MAXTCHARS, MAXEXPCHARS, BOLT_LIM,
     M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, M_AP_TYPMASK,
     In_mines, Is_waterlevel,
-    GPCOORDS_NONE, GPCOORDS_COMFULL,
+    GPCOORDS_NONE, GPCOORDS_COMFULL, Unaware,
 } from './const.js';
 import {
     NO_COLOR, CLR_BLACK, CLR_GRAY, CLR_BROWN, CLR_WHITE, CLR_YELLOW,
@@ -1304,6 +1304,16 @@ const GP_EXCLUDED_TYP = new Set([
     TUWALL, TDWALL, TLWALL, TRWALL, SDOOR, ROOM, CORR, SCORR, DOOR,
 ]);
 
+// The typs whose terrain_glyph() can return a `dec: true` DEC-charset
+// encoding artifact (see getpos_find_feature below), mapped to their own
+// canonical default char — reusing GP_CMAP_DEFSYMS rather than a new table.
+const _gpDefCh = (name) => GP_CMAP_DEFSYMS.find((e) => e.name === name).ch;
+const GP_DEC_DEFAULT_CH = new Map([
+    [ALTAR, _gpDefCh('S_altar')],
+    [ICE, _gpDefCh('S_ice')],
+    [DRAWBRIDGE_DOWN, _gpDefCh('S_hodbridge')],
+]);
+
 // C ref: getpos.c getpos() else-branch feature search — scans outward from
 // the cursor (just past the current spot to the bottom-right, then wrapping
 // from the top-left back to the current spot) for a map cell whose
@@ -1316,8 +1326,16 @@ export function getpos_find_feature(ch, cx, cy) {
     const tryCell = (tx, ty) => {
         const loc = game.level?.at(tx, ty);
         if (!loc || !(loc.seenv || loc.remembered_glyph)) return false;
-        if (!GP_EXCLUDED_TYP.has(loc.typ) && terrain_glyph(loc, tx, ty).ch === ch)
-            return true;
+        const tg = terrain_glyph(loc, tx, ty);
+        // C ref: getpos.c matches defsyms[sidx].sym, the compile-time default
+        // symbol — never the live symset's rendering.  A `dec: true` result
+        // is a DEC-charset encoding artifact (no symbol identity of its own:
+        // e.g. ALTAR's DEC glyph reuses FOUNTAIN's real default char '{'),
+        // so fall back to the type's own default char via GP_DEC_DEFAULT_CH.
+        const typ = (loc.typ === DRAWBRIDGE_UP)
+            ? db_under_typ_d(loc.drawbridgemask) : loc.typ;
+        const matchCh = tg.dec ? GP_DEC_DEFAULT_CH.get(typ) : tg.ch;
+        if (!GP_EXCLUDED_TYP.has(loc.typ) && matchCh === ch) return true;
         const trap = game.level?.traps?.find((t) => t.tx === tx && t.ty === ty);
         if (trap?.tseen && trap_glyph(trap).ch === ch) return true;
         return false;
@@ -1427,20 +1445,27 @@ function mon_warning(mon) {
 // C ref: display.c see_monsters() — redraw every live monster's square (and the
 // hero's).  A warning glyph is a property of the HERO's current position
 // (mdistu(mon) < 100), so without this pass a '2' drawn when the hero was
-// adjacent stayed on screen after they stepped away.  Sting_effects and the
-// worm-segment redraw have no analogue here; newsym() draws no RNG unless the
-// hero is hallucinating, and C's Hallucination arm is a different branch.
+// adjacent stayed on screen after they stepped away.  Sting_effects has no
+// analogue here; newsym() draws no RNG unless the hero is hallucinating, and
+// C's Hallucination arm is a different branch.
 export function see_monsters() {
     // C ref: makemon.c m_initweap-era `mtmp->nmon = fmon; fmon = mtmp` — fmon is
     // a PREPEND list, so C walks the level's monsters newest-first.  This port's
     // level.monsters[] is append-ordered, i.e. exactly the reverse.  The order
     // is invisible in a normal game (each newsym() paints its own square) but
     // fixes which display-rng draw each hallucinated monster gets.
-    const mons = game.level?.monsters || [];
+    const lev = game.level;
+    const mons = lev?.monsters || [];
     for (let i = mons.length - 1; i >= 0; i--) {
         const mon = mons[i];
         if (!mon || (mon.mhp != null && mon.mhp <= 0)) continue;
         newsym(mon.mx, mon.my);
+        // C ref: worm.c see_wsegs(mon) — every tail segment short of the
+        // hidden one under the head.  Inlined: worm.js imports this module.
+        if (mon.wormno && lev.wtails)
+            for (let seg = lev.wtails[mon.wormno]; seg && seg !== lev.wheads[mon.wormno];
+                 seg = seg.nseg)
+                newsym(seg.wx, seg.wy);
     }
     if (!game.u?.usteed) newsym(game.u?.ux, game.u?.uy);
 }
@@ -1488,6 +1513,7 @@ function display_warning(mon, x, y) {
         ? rn2_on_display_rng(WARNCOUNT - 1) + 1
         : ((tmp > WARNCOUNT - 1) ? WARNCOUNT - 1 : tmp);
     const sym = WARNSYMS[wl];
+    clear_invisible_memory(x, y);
     show_glyph_cell(x, y, sym.ch, sym.color, false);
     game.level.at(x, y).disp_warning = true;
 }
@@ -1498,15 +1524,15 @@ function display_warning(mon, x, y) {
 // and youprop.h Invisible = ((HInvis || EInvis) && !BInvis) && !See_invisible.
 // A blind hero still "sees" itself (touch); an invisible one does not, and its
 // square shows the terrain/object underneath instead of '@'.
-function canspotself() {
+export function canspotself() {
     const u = game.u || {};
     if (Blind() || u.uswallow) return true;
     const p = u.uprops || {};
     const invis = (p.HInvis || u.HInvis || p.EInvis || u.EInvis || 0) && !(p.BInvis || u.BInvis);
     if (!(invis && !see_invisible()) && !u.uundetected) return true;
-    // senseself(): ETelepat is the only Unblind_telepat source, and neither it
-    // nor Detect_monsters is reachable while the hero is merely invisible here.
-    return !!(p.HDetect_monsters || p.EDetect_monsters || u.HDetect_monsters);
+    return !!(p.ETelepat || u.ETelepat || p.Detect_monsters
+        || p.HDetect_monsters || p.EDetect_monsters
+        || u.HDetect_monsters || u.EDetect_monsters);
 }
 
 // C ref: display.c swallowed(first) — while u.uswallow the map window shows
@@ -1893,10 +1919,10 @@ export function newsym(x, y) {
             // does NOT call _map_location or set waslit, so remembered
             // background/lit memory is untouched (the glyph is erased later by
             // the monster-move / vision redraw when it is no longer sensed).
+            clear_invisible_memory(x, y);
             // C ref: display.c:1054 — this arm passes is_worm_tail(mon) too.
             const mg = (dark_worm_tail && !Hallucination_u())
                 ? worm_tail_glyph() : monster_glyph(mon, detect_monsters);
-            loc.invisMon = false;
             const petAttr = (mon.mtame && !Hallucination_u() && game.flags?.hilite_pet)
                 ? ATR_INVERSE : 0;
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
@@ -1923,6 +1949,16 @@ export function newsym(x, y) {
                 && loc.remembered_glyph.ch === '#'
                 && loc.remembered_glyph.color === CLR_WHITE) {
                 loc.remembered_glyph.color = NO_COLOR;
+            }
+            // C ref: display.c:1079 — on the Rogue level dark_room never
+            // applies: an unlit room square remembered as plain floor (S_room)
+            // is forgotten back to S_stone once it leaves the hero's sight.
+            if (Is_rogue_level(game.u?.uz) && loc.typ === ROOM && !loc.waslit
+                && !loc.invisMon) {
+                const rg = loc.remembered_glyph, floor = terrain_glyph(loc, x, y);
+                if (rg.ch === floor.ch && !!rg.decgfx === !!floor.dec
+                    && rg.color === floor.color && !rg.pile && !rg.bwEngr)
+                    loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
             }
             // Out of sight but remembered — show remembered background.  A
             // remembered pile-top keeps its MG_OBJPILE highlight (drawn via the
@@ -2453,11 +2489,11 @@ function _botFields(order) {
     const uhs = u.uhs ?? 1;
     raw[BL_HUNGER] = (uhs !== 1 && HU_STAT[uhs]) ? HU_STAT[uhs] : '';
     // C ref: botl.c bot_via_windowport()/enc_stat[].  botl.c:1106 recomputes
-    // near_capacity() inside bot(), but bot() only runs when disp.botl is dirty,
-    // so the DISPLAYED value is a snapshot: seed0399 step 435 still shows
-    // "Burdened" after the throw that unburdened the hero.  A live call here
-    // measured -14 there / -1 on seed0002 against +3 on seed0108;
-    // encumber_msg() owns the snapshot instead.
+    // near_capacity() inside bot(), and bot() only runs when disp.botl is
+    // dirty, but that dirty bit gates WHEN the redraw happens, not what
+    // value it shows: game._curcap is kept in lockstep with near_capacity()
+    // by display.js's botl_flush(), which runs on every pline/flush_screen
+    // point regardless of which earlier event set game.botl.
     const ENC_STAT = ['', 'Burdened', 'Stressed', 'Strained', 'Overtaxed', 'Overloaded'];
     raw[BL_CAP] = ENC_STAT[game._curcap | 0] || '';
 
@@ -3040,6 +3076,7 @@ export async function pline(msg, opts = {}) {
     // message required (e.g. a long welcome greeting).
     if (wrap_topl(msg).length > 1) {
         await topl_more();
+        game._toplin = 0;
         game._toplinSoft = null;
         game._pending_message = '';
     }
@@ -3111,14 +3148,11 @@ export async function topl_more() {
     await topl_more_ext('');
 }
 
-// C ref: win/tty/wintty.c tty_display_nhwindow(WIN_MESSAGE, FALSE) —
-//   if (ttyDisplay->toplin == TOPLINE_NEED_MORE) {
-//       more(); ttyDisplay->toplin = TOPLINE_NON_EMPTY;
-//   }
-// TOPLINE_NON_EMPTY is NOT NEED_MORE, so the next update_topl() REPLACES the
-// line instead of appending to it — which is why C's seed0383 step 142 shows
-// only "You are freezing to death!" and not the engulf line before it.
+// C ref: wintty.c tty_display_nhwindow(WIN_MESSAGE, FALSE).
+// WIN_CANCELLED suppresses the display. Otherwise, acknowledge a pending line
+// and clear its topline state before subsequent messages.
 export async function display_nhwindow_message() {
+    if (game._winStop) return; // WIN_CANCELLED and WIN_STOP share the same flag.
     if (game._toplin !== TOPLIN_NEED_MORE) return;
     await topl_more();
     game._toplin = 0;
@@ -3221,13 +3255,24 @@ const TOPLIN_NEED_MORE = 1; // game._toplin: 0 = empty, 1 = NEED_MORE
 
 // C ref: display.c flush_screen():`if (disp.botl || disp.botlx) bot();` — and
 // pline.c vpline() calls flush_screen() BEFORE putmesg(), so every message
-// republishes the status rows first and bot() CLEARS disp.botl.  Our rows are
-// rebuilt live each frame, so the only field that carries a snapshot is BL_CAP
-// (game._curcap).  Without the clear game.botl is sticky-true forever and
-// encumber_msg()'s "was it already dirty?" test always fires, making the
-// encumbrance word track inventory weight LIVE — one pline early (seed0399
-// step 435 wants "Burdened" on the throw's --More--, after the thrown object
-// already left invent).
+// republishes the status rows first and bot() CLEARS disp.botl.  disp.botl
+// is a gate on WHETHER bot() runs at all, not just on what it shows: a plain
+// `,` pickup's own "k - a foo." message runs BEFORE pickup.c's encumber_msg()
+// (called from allmain.c moveloop_core() once the whole turn's actions are
+// done), so disp.botl is still FALSE at that message and its flush_screen()
+// does nothing — the status line keeps the OLD capacity until encumber_msg()
+// itself sets disp.botl and prints its own load message later that turn.
+// Only when something EARLIER in the same turn already set disp.botl (gold
+// landing in inventory, invent.c addinv():963 `disp.botl = TRUE;`, or a
+// freeinv() loss, invent.c:1358-1360) does an UNRELATED later message's own
+// bot() pick up the new, already-changed near_capacity() for free — e.g.
+// seed0014 step 55's "You have a little trouble lifting e - an orc corpse.
+// f - 6 rocks." --More-- shows "Burdened" because an earlier gold pickup
+// that same turn already flagged disp.botl.  Dropping this gate entirely
+// made BL_CAP track inventory weight live on every pline (seed0399 step 435
+// then showed "Burdened" one pline early, on a throw's --More-- after the
+// thrown object already left invent) — the gate must stay; the real gap was
+// addinv_core1()/freeinv_core() not setting game.botl for gold, fixed there.
 async function botl_flush() {
     if (!game.botl) return;
     game.botl = false;
@@ -3373,6 +3418,33 @@ export async function update_topl(bp) {
         game._toplinSoft = null;
         game._pending_message = '';
     }
+}
+
+// C ref: youprop.h Deaf = (HDeaf || EDeaf || u.uroleplay.deaf).  The port
+// stores the timed intrinsic in u.uprops.HDeaf; worn/legacy sources land on
+// u.uprops.EDeaf / u.uprops.Deaf / u.Deaf.
+export function Deaf_hero() {
+    const u = game.u;
+    const p = u?.uprops;
+    return ((p?.HDeaf ?? 0) > 0) || ((p?.EDeaf ?? 0) > 0) || ((p?.Deaf ?? 0) > 0)
+        || !!u?.Deaf || !!u?.uroleplay?.deaf;
+}
+
+// C ref: pline.c:436 You_hear() — nothing when (Deaf && !Unaware) or with
+// acoustics off; otherwise "You barely hear " Underwater (u.uinwater), "You
+// dream that you hear " while Unaware, else "You hear ".  `line` is the text
+// after the prefix.
+export async function You_hear(line) {
+    const unaware = Unaware();
+    if ((Deaf_hero() && !unaware) || game.flags?.acoustics === false) return;
+    const prefix = game.u?.uinwater ? 'You barely hear '
+        : unaware ? 'You dream that you hear ' : 'You hear ';
+    await update_topl(prefix + line);
+}
+
+// C ref: pline.c:388 You_feel() — "You dream that you feel " while Unaware.
+export async function You_feel(line) {
+    await update_topl((Unaware() ? 'You dream that you feel ' : 'You feel ') + line);
 }
 
 // C ref: pline.c urgent_pline() + wintty.c tty_putstr(ATR_URGENT).  An urgent
@@ -4095,17 +4167,18 @@ export function map_object(obj, show) {
         show_glyph(x, y, glyph);
 }
 
+function clear_invisible_memory(x, y) {
+    const loc = game.level?.at(x, y);
+    if (!loc?.invisMon) return;
+    unmap_object(x, y);
+    if (cansee(x, y) && vobj_at(x, y))
+        remember_bg(loc, background_glyph(x, y));
+}
+
 // C ref: display.c:482 show_mon_or_warn(x, y, monglyph) — put something on the
 // monster layer, dropping any "remembered, unseen monster" note underneath.
 export function show_mon_or_warn(x, y, monglyph) {
-    // C: glyph_is_invisible(levl[x][y].glyph).  This port flags that memory as
-    // loc.invisMon (js/game.js:27), which is what unmap_object() below clears.
-    if (game.level?.at(x, y)?.invisMon) {
-        unmap_object(x, y);
-        let o;
-        if (cansee(x, y) && (o = vobj_at(x, y)) != null)
-            map_object(o, false);
-    }
+    clear_invisible_memory(x, y);
     show_glyph(x, y, monglyph);
 }
 

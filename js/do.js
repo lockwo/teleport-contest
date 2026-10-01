@@ -1445,17 +1445,17 @@ const MM_NOWAIT_DO = 0x00000002;   // C ref: makemon.h MM_NOWAIT
 async function resurrect() {
     const M = await import('./makemon.js');
     const U = await import('./uhitm.js');
-    const made = await M.create_particular_monster('Wizard of Yendor', MM_NOWAIT_DO);
-    if (!made) return;
-    const mtmp = made.mtmp;
+    const mtmp = M.makemon(M.monster_by_pmidx(M.name_to_pmidx('Wizard of Yendor')),
+        game.u.ux, game.u.uy, MM_NOWAIT_DO);
+    if (!mtmp) return;
     mtmp.mrevived = 1;
     // C ref: makemon.c:1472-1500 — makemon's own tail prints the arrival line
     // (no MM_NOEXCLAM here, so " suddenly" and a trailing '!').
-    newsym(made.x, made.y);
+    newsym(mtmp.mx, mtmp.my);
     if (U.canspotmon(mtmp)) {
         const what = U.x_monnam(mtmp, /*ARTICLE_A*/ 2, null, 0, false);
-        const dx = made.x - game.u.ux, dy = made.y - game.u.uy;
-        const place = made.next2u ? ' next to you'
+        const dx = mtmp.mx - game.u.ux, dy = mtmp.my - game.u.uy;
+        const place = Math.max(Math.abs(dx), Math.abs(dy)) <= 1 ? ' next to you'
             : (dx * dx + dy * dy <= 8 * 8) ? ' close by' : '';
         await update_topl(
             `${what.charAt(0).toUpperCase()}${what.slice(1)} suddenly appears${place}!`);
@@ -2089,7 +2089,7 @@ function is_botlevel(lev) {
 // depth_start 27) produced ledger "1:-25" without it — a level never
 // visited — so the port ran a full mklev() (6588 RNG draws) where C reloaded
 // the saved Dlvl 1; every later screen was on the wrong dungeon.
-function get_level(levnum) {
+export function get_level(levnum) {
     const u = game.u;
     let dgn = u.uz.dnum;
     const dngOf = (d) => game.dungeons?.[d];
@@ -2175,23 +2175,27 @@ async function level_tele_destination(newlev) {
     return newlevel;
 }
 
-// C ref: teleport.c random_teleport_level() — pick a random destination depth
-// for an uncontrolled level teleport.  The Dungeons-of-Doom (non-quest,
-// non-endgame, non-hell) case is modelled; the RNG draws (the initial rn2(5),
-// the rn2(range) selection, and the rnd(3) botlevel/min-depth adjustments) are
-// reproduced left-to-right so the mklev() stream that follows stays in sync.
+// C ref: teleport.c random_teleport_level() — absolute destination depth.
 export function random_teleport_level() {
     const u = game.u;
     const cur_depth = depth_of_level(u.uz);
     const dng = game.dungeons[u.uz.dnum];
 
-    // single_level_branch / In_endgame are false for the covered DoD teleport.
-    if (!rn2(5)) return cur_depth;
+    if (!rn2(5) || single_level_branch(u.uz) || In_endgame(u.uz))
+        return cur_depth;
 
-    // In_quest not modelled (no quest teleport on the covered starts).
-    const min_depth = 1;
-    let max_depth = dng.num_dunlevs + (dng.depth_start - 1);
-    // Inhell && !invoked adjustment omitted (not in hell).
+    let min_depth, max_depth;
+    if (In_quest(u.uz)) {
+        let bottom = dng.num_dunlevs;
+        const locate_depth = game.qlocate_level.dlevel;
+        if (dng.dunlev_ureached < locate_depth) bottom = locate_depth;
+        min_depth = dng.depth_start;
+        max_depth = bottom + dng.depth_start - 1;
+    } else {
+        min_depth = 1;
+        max_depth = dng.num_dunlevs + dng.depth_start - 1;
+        if (In_hell(u.uz) && !u.uevent?.invoked) max_depth--;
+    }
 
     // Range is 1..current+3, current not counting.
     let nlev = rn2(cur_depth + 3 - min_depth) + min_depth;

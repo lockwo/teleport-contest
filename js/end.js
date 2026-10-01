@@ -477,15 +477,21 @@ async function done(how) {
         game.botl = true;
         await d.update_topl('But wait...');
         I.makeknown(202);
-        await d.update_topl(`Your medallion ${!game.u?.Blinded ? 'begins to glow' : 'feels warm'}!`);
-        await d.update_topl('You feel much better!');
+        const { Blind } = await import('./vision.js');
+        await d.update_topl(`Your medallion ${!Blind() ? 'begins to glow' : 'feels warm'}!`);
+        if (how === CHOKING)
+            await d.update_topl('You vomit ...');
+        await d.You_feel('much better!');
         await d.update_topl('The medallion crumbles to dust!');
         I.useup(uamul);
         // C ref: end.c:1092 adjattrib(A_CON, -1, TRUE) — no RNG.
         if (game.u?.acurr?.a) game.u.acurr.a[4] = (game.u.acurr.a[4] | 0) - 1;
         if (game.u?.abase?.a) game.u.abase.a[4] = (game.u.abase.a[4] | 0) - 1;
         await savelife(how);
-        survive = true;
+        if (how === GENOCIDED)
+            await d.update_topl('Unfortunately you are still genocided...');
+        else
+            survive = true;
     }
 
     // explore/wizard mode: offer the "Die?" paranoid query — but only for
@@ -507,7 +513,7 @@ async function done(how) {
             // adjattrib(A_CON,-1,TRUE): no RNG (Con stays above its minimum) and
             // the status keeps showing the bonus-adjusted value, so leave the
             // displayed Con untouched.
-            await d.update_topl("OK, so you don't die.");
+            await d.update_topl(`OK, so you don't ${how === CHOKING ? 'choke' : 'die'}.`);
             await savelife(how);
             survive = true;
         }
@@ -1352,13 +1358,38 @@ function topten_outentry(rank, entry, so, COLNO) {
 // C ref: hack.h an(str) — indefinite article.
 function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
 
-// C ref: end.c done_in_by() killer-name construction, reduced to the common
-// case: an ordinary (non-unique, non-ghost, non-shopkeeper, non-priest,
-// non-shapeshifted) monster.  monhealthdescr() is a no-op in this NetHack
-// version (pager.c:140-161, disabled behind `#if 0`), so no health descriptor
-// is ever prepended.  killer.format is KILLED_BY_AN, giving "killed by a
-// <species>" — used for both the tombstone engraving and the topten entry.
-function killer_text_for_monster(mtmp) {
+// C ref: end.c done_in_by() — the killer's real species survives a shape change.
+async function killer_text_for_monster(mtmp) {
+    const { ismnum, M_AP_MONSTER, G_UNIQ } = await import('./const.js');
+    const { monster_by_pmidx, pmname_of_pmidx } = await import('./makemon.js');
+    const { Mgender } = await import('./do_name.js');
+    const { type_is_pname, the_unique_pm, an: article } = await import('./objnam.js');
+    const ptr = mtmp.data;
+    const champtr = ismnum(mtmp.cham) ? monster_by_pmidx(mtmp.cham) : ptr;
+    const mimicker = mtmp.m_ap_type === M_AP_MONSTER;
+    if (champtr && (champtr.pmidx !== ptr.pmidx || mimicker)) {
+        const mgender = Mgender(mtmp);
+        const realname = pmname_of_pmidx(champtr.pmidx, mgender);
+        const fakeptr = mimicker ? monster_by_pmidx(mtmp.mappearance) : ptr;
+        let fakename = pmname_of_pmidx(fakeptr.pmidx, mgender);
+        const { is_vampshifter } = await import('./monmove.js');
+        const vampire = is_vampshifter(mtmp);
+        if (!mimicker && vampire && realname.includes('vampire')
+            && fakename === 'vampire bat') fakename = 'bat';
+        const shape = vampire || type_is_pname(fakeptr) ? fakename
+            : the_unique_pm(fakeptr) ? `the ${fakename}` : article(fakename);
+        let name = vampire ? `${realname} in ${shape} form`
+            : `${realname} ${mimicker ? 'disguised as' : 'imitating'} ${shape}`;
+        const { Hallucination_u } = await import('./display.js');
+        const { canspotmon } = await import('./uhitm.js');
+        if (Hallucination_u() && canspotmon(mtmp))
+            name = `hallucinogen-distorted ${name}`;
+        if (mtmp.minvis) name = `invisible ${name}`;
+        const unique = mimicker && (ptr.geno & G_UNIQ)
+            && (ptr.name !== 'high cleric' || mtmp.ispriest);
+        return `killed by ${unique
+            ? (type_is_pname(ptr) ? name : `the ${name}`) : article(name)}`;
+    }
     // C ref: end.c:264-271 — a shopkeeper killer gets an honorific and NO
     // article (killer.format = KILLED_BY).  formatkiller() (topten.c:137) then
     // rewrites every ',' in the stored name to ';'; outentry() reverses it for
@@ -1390,7 +1421,7 @@ export async function done_in_by(mtmp, how = DIED) {
     // C ref end.c:195 — You((how == STONING) ? "turn to stone..." : "die...").
     await d.update_topl('You die...');
     game._killer_mon = mtmp || null;
-    if (mtmp) game._killer_name = killer_text_for_monster(mtmp);
+    if (mtmp) game._killer_name = await killer_text_for_monster(mtmp);
     // C ref: end.c:326-340 — maintain u.ugrave_arise from the killer's type
     // before done(how)'s really_done() decides the corpse+grave/message fate.
     game.u = game.u || {};

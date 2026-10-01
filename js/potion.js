@@ -11,6 +11,7 @@
 // spent in place; where it would not, only the framing message is emitted.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, y_n, newsym, display_nhwindow_message,
          unmap_object, see_monsters } from './display.js';
@@ -23,7 +24,7 @@ import { surface, hliquid } from './dungeon.js';
 import { heal_legs, water_damage, float_up, spoteffects } from './trap.js';
 import { monster_detect } from './hack.js';
 import { DEADMONSTER } from './mon.js';
-import { exercise, acurr_eff } from './attrib.js';
+import { exercise, acurr_eff, adjattrib } from './attrib.js';
 import { more_experienced, pluslvl, rndexp, has_innate } from './exper.js';
 import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          POT_HEALING, POT_EXTRA_HEALING, POT_FRUIT_JUICE, POT_BOOZE,
@@ -35,7 +36,7 @@ import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          COLNO, ROWNO } from './const.js';
 import { fruitname } from './objnam.js';
 import { newuhs } from './eat.js';
-import { Blind, vision_recalc, cansee as vis_cansee } from './vision.js';
+import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
 // js/monattk_data.js is a generated LEAF module (no imports of its own), so
 // naming it cannot create an import cycle or a TDZ edge.
 import { dmgtype, AD_DISE, AD_PEST } from './monattk_data.js';
@@ -44,7 +45,6 @@ import { dipfountain, drinkfountain, drinksink, breaksink } from './fountain.js'
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { name_to_pmidx, monster_by_pmidx, enexto_spawn, makemon,
          placeOnLevel, pmname_of_pmidx, MGEND_NEUTRAL } from './makemon.js';
-import { race_attrmin, race_attrmax } from './u_init.js';
 import { object_detect } from './detect.js';
 
 // C ref: potion.c make_confused(xtime, talk) — set the HConfusion timeout.  The
@@ -325,46 +325,6 @@ async function losehp(dmg, _knam) {
     }
 }
 
-// C ref: attrib.c adjattrib(ndx, incr, msgflg).  Draws rn2() only on the arm
-// where a decrease would push ABASE below ATTRMIN and the excess is taken off
-// AMAX instead.  ATTRMIN/ATTRMAX come from gu.urace.attrmin/attrmax (role.c
-// races[]), which u_init.js already tabulates.
-async function adjattrib(ndx, incr, msgflg) {
-    const u = game.u;
-    if (!u?.acurr) return false;
-    if (Fixed_abil() || !incr) return false;
-    if (!u.amax) u.amax = { a: (u.acurr.a || []).slice() };
-    const attrmin = race_attrmin()[ndx], attrmax = race_attrmax()[ndx];
-    const abase = u.acurr.a, amax = u.amax.a;
-    const old_acurr = acurr_eff(ndx);
-    const old_abase = abase[ndx] | 0, old_amax = amax[ndx] | 0;
-    abase[ndx] = old_abase + incr;
-    if (incr > 0) {
-        if (abase[ndx] > (amax[ndx] | 0)) {
-            amax[ndx] = abase[ndx];
-            if (amax[ndx] > attrmax) abase[ndx] = amax[ndx] = attrmax;
-        }
-    } else {
-        if (abase[ndx] < attrmin) {
-            const decr = rn2(attrmin - abase[ndx] + 1); // attrib.c:308
-            abase[ndx] = attrmin;
-            amax[ndx] = (amax[ndx] | 0) - decr;
-            if (amax[ndx] < attrmin) amax[ndx] = attrmin;
-        }
-    }
-    if (acurr_eff(ndx) === old_acurr) {
-        void old_abase; void old_amax;
-        return false;
-    }
-    if (u.aexe?.a) u.aexe.a[ndx] = 0;   // any successful change resets exercise
-    if (msgflg <= 0) {
-        const PLUS = ['strong', 'smart', 'wise', 'agile', 'tough', 'charismatic'];
-        const MINUS = ['weak', 'stupid', 'foolish', 'clumsy', 'fragile', 'repulsive'];
-        await update_topl(`You feel ${(incr > 1 || incr < -1) ? 'very ' : ''}${
-            (incr > 0 ? PLUS : MINUS)[ndx]}!`);
-    }
-    return true;
-}
 
 // C ref: timeout.c speed_up(incr) — HFast gets a timed boost.
 // C ref: potion.c:2919 speed_up(duration).  Two bugs lived here: the trailing
@@ -1089,8 +1049,8 @@ async function peffect_enlightenment(otmp) {
         exercise(A_WIS, false);
     } else {
         if (otmp.blessed) {
-            await adjattrib(A_INT, 1, false);
-            await adjattrib(A_WIS, 1, false);
+            await adjattrib(A_INT, 1, 0);
+            await adjattrib(A_WIS, 1, 0);
         }
         // C ref: potion.c peffect_enlightenment -> do_enlightenment_effect();
         // reuse zap.js's port of that function (shared with WAN_ENLIGHTENMENT)
@@ -2104,9 +2064,8 @@ export async function toggle_blindness() {
     if (!Blind())
         await learn_unseen_invent();
 }
-// C ref: youprop.h Blind_telepat / Infravision.
+// C ref: youprop.h Blind_telepat.
 function Blind_telepat() { return HProp('Telepat', 'HTelepat') > 0; }
-function Infravision() { return HProp('Infravision', 'HInfravision') > 0; }
 
 // C ref: potion.c:2122 mixtype(o1, o2) — the potion type that results from
 // dipping o1 into o2, or STRANGE_OBJECT for "no recipe".
@@ -2386,11 +2345,11 @@ export async function potionhit(mon, obj, how) {
             const mnam = UH.mon_nam(mon);
             let buf;
             if (hit_saddle && saddle)
-                buf = `${p_s_suffix(UH.x_monnam(mon, 1 /* ARTICLE_THE */, null,
+                buf = `${s_suffix(UH.x_monnam(mon, 1 /* ARTICLE_THE */, null,
                                                 0x01 | 0x08 /* SUPPRESS_IT|SUPPRESS_SADDLE */,
                                                 false))} saddle`;
             else if (p_has_head(mon.data))
-                buf = `${p_s_suffix(mnam)} ${game.notonhead ? 'body' : 'head'}`;
+                buf = `${s_suffix(mnam)} ${game.notonhead ? 'body' : 'head'}`;
             else
                 buf = mnam;
             await update_topl(
@@ -2433,7 +2392,7 @@ export async function potionhit(mon, obj, how) {
         let affected = false;
         const useeit = !Blind() && UH.canspotmon(mon) && cansee_p(tx, ty);
         const mnam = UH.x_monnam(mon, 2, null, 0x04 | 0x40, false);
-        const buf = p_upstart(p_s_suffix(mnam));
+        const buf = p_upstart(s_suffix(mnam));
 
         switch (obj.otyp) {
         case POT_WATER: {
@@ -2667,12 +2626,8 @@ function Protection_from_shape_changers() {
 // C ref: monst.h gy.youmonst.data — bogus while unpolymorphed in this port
 // (u.umonnum is a ROLE index), so the caller-visible reads are Upolyd-guarded.
 function youmonst_data() { return Upolyd() ? game.u?.data : null; }
-// C ref: objnam.c s_suffix / upstart / aobjnam / Tobjnam.  js/invent.js exports
-// s_suffix; the other three have only module-private copies elsewhere.
-function p_s_suffix(s) {
-    const str = String(s || '');
-    return /s$/.test(str) ? `${str}'` : `${str}'s`;
-}
+// C ref: hacklib.c upstart(), objnam.c aobjnam()/Tobjnam() — module-private
+// copies.
 function p_upstart(s) {
     const str = String(s || '');
     return str ? str[0].toUpperCase() + str.slice(1) : str;
@@ -3317,7 +3272,7 @@ export async function split_mon(mon, mtmp) {
     if (mtmp) {
         const UH = await import('./uhitm.js');
         reason = ` from ${(mtmp === game.youmonst || mtmp === u) ? 'your'
-                          : p_s_suffix(UH.mon_nam(mtmp))} heat`;
+                          : s_suffix(UH.mon_nam(mtmp))} heat`;
     }
 
     if (mon === game.youmonst || mon === u) {

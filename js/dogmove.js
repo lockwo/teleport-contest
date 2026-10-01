@@ -24,7 +24,7 @@ import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
     IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED,
     POOL, MOAT, WATER, LAVAPOOL, LAVAWALL } from './const.js';
 import { obj_resists } from './zap.js';
-import { newsym, vobj_at, object_glyph, see_with_infrared } from './display.js';
+import { newsym, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at } from './display.js';
 import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision.js';
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
 import { floor_object_name, obj_doname, distant_name_pub, sobj_at, stackobj } from './invent.js';
@@ -247,11 +247,12 @@ export const PET_REAL_VISION = true;
 // All three starting pets are M1_NOHANDS and are not dragons / engulfers.
 const PET_MAXLOAD = { [PM_LITTLE_DOG]: 51, [PM_KITTEN]: 51, [PM_PONY]: 1000 };
 
-// C ref: mon.c MON_AT — a (live) monster other than the hero at <x,y>.
+// C ref: rm.h MON_AT(x,y) — svl.level.monsters[x][y] != 0, which includes a
+// long worm's TAIL squares (worm.c place_worm_seg stores the worm there).
 function MON_AT(x, y) {
     for (const m of game.level?.monsters || [])
         if (m.mx === x && m.my === y && !(m.mhp != null && m.mhp <= 0)) return m;
-    return false;
+    return worm_seg_owner_at(x, y) || false;
 }
 
 // C ref: rm.h levl[x][y].typ + the object chain at a square.

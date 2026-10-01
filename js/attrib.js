@@ -176,9 +176,11 @@ export async function adjattrib(ndx, incr, msgflg) {
 }
 const ATTRNAME = ['strength', 'intelligence', 'wisdom', 'dexterity',
     'constitution', 'charisma'];
-// C ref: attrib.h Fixed_abil — the amulet/artifact that pins the stats.  No
-// covered hero carries one.
-function Fixed_abil() { return !!(game.u?.uprops?.Fixed_abil); }
+// C ref: prop.h Fixed_abil.
+function Fixed_abil() {
+    const props = game.u?.uprops;
+    return !!(props?.Fixed_abil || props?.HFixed_abil || props?.EFixed_abil);
+}
 
 // C ref: attrib.c:433 poisontell(typ, exclaim).
 const POISEFF = [['You feel ', 'weaker'], ['Your ', 'brain is on fire'],

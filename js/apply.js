@@ -22,6 +22,7 @@
 // hero_seq differ on the first use, giving the free ECMD_OK.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { CQ_CANNED } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 
@@ -33,6 +34,7 @@ import {
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 // Leaf data module (no imports of its own), so a static import is cycle-free.
 import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
+import { find_mac, species } from './worn.js';
 import {
     SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED,
     IS_AIR, IS_ROOM, IS_WALL, IS_DOOR,
@@ -247,29 +249,29 @@ function mon_aligntyp(mtmp) {
     return algn > 0 ? 1 : algn < 0 ? -1 : 0;
 }
 
-// C ref: insight.c mstatusline(mtmp) — one-line monster status produced when the
-// stethoscope (or probing) is aimed at a monster.  The starter-session monsters
-// reach here without the worn/leashed/held/shapechanger/segment flags, so only
-// the ", tame"/", peaceful" prefix (info) and the size+align+HP+AC body matter;
-// any hidden-appearance suffix has already been stripped by seemimic() before
-// this is called for the stethoscope, matching C's comment at insight.c:3315.
+// C ref: insight.c mstatusline(mtmp), used by the stethoscope and probing.
 async function mstatusline(mtmp, update_topl) {
     let info = '';
-    if (mtmp.mtame) info += ', tame';
-    else if (mtmp.mpeaceful) info += ', peaceful';
-    // ", cancelled"/", confused"/", asleep"/", scared"/... state suffixes — none
-    // of the probed monsters in the owned sessions carry these when statused.
+    if (mtmp.mtame) {
+        info += ', tame';
+        if (game.flags?.debug) {
+            info += ` (${mtmp.mtame}`;
+            if (!mtmp.isminion)
+                info += `; hungry ${mtmp.edog.hungrytime}; apport ${mtmp.edog.apport}`;
+            info += ')';
+        }
+    } else if (mtmp.mpeaceful) info += ', peaceful';
     if (mtmp.mcan) info += ', cancelled';
     if (mtmp.mconf) info += ', confused';
     if (mtmp.mflee) info += ', scared';
 
     const name = x_monnam(mtmp, /*ARTICLE_YOUR*/ 3, null, 0, false);
     const align = align_str(mon_aligntyp(mtmp));
-    const sz = size_str(mtmp.data?.msize ?? MZ_MEDIUM);
+    const sz = size_str(species(mtmp)?.msize ?? MZ_MEDIUM);
     const mlev = mtmp.m_lev ?? mtmp.data?.mlevel ?? 0;
     const mhp = mtmp.mhp ?? 0;
     const mhpmax = mtmp.mhpmax ?? mhp;
-    const mac = (mtmp.data?.ac != null) ? mtmp.data.ac : 10;
+    const mac = find_mac(mtmp);
     await update_topl(
         `Status of ${name} (${align}, ${sz}):  Level ${mlev}  HP ${mhp}(${mhpmax})  AC ${mac}${info}.`);
 }
@@ -829,6 +831,27 @@ export async function doapply() {
         if (r === USE_PICK_AXE_DIG) return ECMD_TIME;
         return r === 1 ? ECMD_CANCEL : ECMD_OK;
     }
+
+    // C ref apply.c:4244 — case BLINDFOLD/LENSES: toggle via the shared
+    // Blindf_on/Blindf_off wear helpers; cursed() refuses removal.  res stays
+    // ECMD_TIME in every arm (including "already wearing").
+    if (obj.otyp === BLINDFOLD_OTYP || obj.otyp === LENSES) {
+        if (obj === game.ublindf) {
+            if (!(await _invent.curse_blocks_removal(obj)))
+                await _invent.Blindf_off(obj);
+        } else if (!game.ublindf) {
+            await _invent.Blindf_on(obj);
+        } else {
+            const ub = game.ublindf;
+            await _display.pline(`You are already ${
+                ub.otyp === TOWEL ? 'covered by a towel'
+                : ub.otyp === BLINDFOLD_OTYP ? 'wearing a blindfold'
+                : 'wearing lenses'}.`);
+        }
+        return ECMD_TIME;
+    }
+    // C ref apply.c: case TOWEL: res = use_towel(obj);
+    if (obj.otyp === TOWEL) return await use_towel(obj);
 
     // Any other tool isn't exercised; mirror C's "I don't know how to use that"
     // (C returns ECMD_FAIL here, which like ECMD_OK costs no turn).
@@ -1543,11 +1566,13 @@ async function reapply_after_wield(obj) {
     const { moveloop_turn } = await import('./allmain.js');
     game.context = game.context || {};
     game.context.move = 0;
+    game._cmdqAbandonRetry = false;
     await moveloop_turn();
     // C ref: allmain.c moveloop_core() tail — `if (disp.botl || disp.botlx)
     // bot();` runs after the turn and before the next rhack(), so the queued
     // command's first frame already carries the new turn counter.
     await _display.flush_screen(1);
+    if (game._cmdqAbandonRetry) return ECMD_OK;
     // getobj()'s cmdq fast path pops this invlet instead of drawing a prompt.
     _invent.cmdq_add_key(CQ_CANNED, obj.invlet);
     return await doapply();
@@ -1700,7 +1725,7 @@ async function ap_load() {
 // BRASS_LANTERN / POT_OIL / CREAM_PIE / EGG-adjacent food otyps are already
 // declared near the top of this file.
 const TALLOW_CANDLE = 224, WAX_CANDLE = 225, EXPENSIVE_CAMERA = 229,
-      MIRROR = 230, LENSES = 232, TOWEL = 234, LEASH = 236,
+      MIRROR = 230, LENSES = 232, BLINDFOLD_OTYP = 233, TOWEL = 234, LEASH = 236,
       TINNING_KIT = 238, CAN_OF_GREASE = 240, FIGURINE = 241,
       LAND_MINE = 243, BEARTRAP_OTYP = 244, TIN_WHISTLE = 245,
       MAGIC_WHISTLE = 246, BELL = 255, GRAPPLING_HOOK = 260,
@@ -2060,9 +2085,8 @@ async function ap_xkilled(mtmp, flags) {
 // C ref: sounds.c whimper(mtmp) — js/sounds.js ports growl()/yelp() but not
 // whimper(); C's whimper() draws NOTHING (it is a pline plus wake_nearto()).
 async function ap_whimper(_mtmp) {}
-// C ref: objnam.c s_suffix / an / the / Tobjnam-adjacent helpers.  Each js file
-// keeps its own private copy of these one-liners; these are this block's.
-function ap_s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+// C ref: hacklib.c upstart()/an()/the() and Tobjnam-adjacent helpers; this
+// block keeps private copies of these one-liners.
 function ap_upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 function ap_an(s) { return /^[aeiouAEIOU]/.test(s || '') ? `an ${s}` : `a ${s}`; }
 function ap_the(s) { return /^[A-Z]/.test(s || '') ? s : `the ${s}`; }
@@ -2250,7 +2274,7 @@ export async function use_camera(obj) {
         await A.zap.zapyourself(obj, true);
     } else if (u.uswallow) {
         await A.display.pline(`You take a picture of ${
-            ap_s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
+            s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
     } else if (u.dz) {
         await A.display.pline(`You take a picture of the ${
             (u.dz > 0) ? surface_word(u.ux, u.uy) : ceiling_word(u.ux, u.uy)}.`);
@@ -2646,7 +2670,7 @@ export async function use_leash_core(obj, mtmp, cc, spotmon) {
         } else if (!leashable(mtmp)) {
             let lmonnam = A.do_name.l_monnam(mtmp);
             if (cc.x !== mtmp.mx || cc.y !== mtmp.my)
-                lmonnam = `${ap_s_suffix(lmonnam)} tail`;
+                lmonnam = `${s_suffix(lmonnam)} tail`;
             await A.display.pline(`The leash won't fit onto ${
                 spotmon ? 'your ' : ''}${lmonnam}.`);
         } else {
@@ -2754,7 +2778,7 @@ export async function check_leash(x, y) {
             } else {
                 if (ap_um_dist(mtmp.mx, mtmp.my, 5)) {
                     await A.display.pline(`${
-                        ap_s_suffix(A.do_name.Monnam(mtmp))} leash snaps loose!`);
+                        s_suffix(A.do_name.Monnam(mtmp))} leash snaps loose!`);
                     await m_unleash(mtmp, false);
                 } else {
                     await A.display.pline('You pull on the leash.');
@@ -2862,7 +2886,7 @@ export async function use_mirror(obj) {
     if (u.uswallow) {
         if (useeit)
             await A.display.pline(`You reflect ${
-                ap_s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
+                s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
         return ECMD_TIME;
     }
     if (ap_Underwater()) {
@@ -3376,7 +3400,7 @@ export async function use_lamp(obj) {
             A.invent.check_unpaid ? A.invent.check_unpaid(obj) : void 0;
             await A.display.pline(`${await ap_Shk_Your(obj)}${lamp} is now on.`);
         } else { /* candle(s) */
-            await A.display.pline(`${ap_s_suffix(await ap_Yname2(obj))} flame${
+            await A.display.pline(`${s_suffix(await ap_Yname2(obj))} flame${
                 plur(obj.quan)} ${A.invent.otense(obj, 'burn')}${
                 A.vision.Blind() ? '.' : ' brightly!'}`);
             if (obj.unpaid && A.shkroom.costly_spot(u.ux, u.uy)
@@ -3754,7 +3778,7 @@ export async function fig_transform(arg, timeout) {
             if (cansee_spot && !silent && !suppress_see) {
                 const mcarry = figurine.ocarry;
                 const carriedby = (mcarry && cansee_mon_ap(mcarry))
-                    ? `${ap_s_suffix(A.do_name.a_monnam(mcarry))} pack`
+                    ? `${s_suffix(A.do_name.a_monnam(mcarry))} pack`
                     : (mcarry && A.dbridge.is_pool(mcarry.mx, mcarry.my))
                       ? 'empty water' : 'thin air';
                 await A.display.pline(`You see ${monnambuf} drop out of ${

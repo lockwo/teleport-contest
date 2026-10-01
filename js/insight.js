@@ -13,6 +13,7 @@
 // already carry the leading space that C's `Sprintf(" %s%s%s%s.", …)` prepends.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { roles, align_gname } from './role.js';
 import {
     A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA,
@@ -268,7 +269,7 @@ import { LL_WISH, LL_ACHIEVE, LL_UMONST, LL_DIVINEGIFT, LL_LIFESAVE,
          livelog_printf } from './livelog.js';
 import { nhgetch } from './input.js';
 import { can_pray_quiet } from './pray.js';
-import { inv_weight, ysimple_name } from './invent.js';
+import { currency, inv_weight, ysimple_name } from './invent.js';
 const _wizard = () => !!(game.flags && game.flags.debug);
 const _discover = () => { const f = game.flags || {}; return !!(f.explore || f.discover || f.playmode === 'explore'); };
 
@@ -587,6 +588,18 @@ export function enlightenment_lines(final = 0, basic = true) {
     if (haveProp(23 /* HALLUC */, 'HHallucination')
         && !haveProp(24 /* HALLUC_RES */, 'HHalluc_resistance'))
         youAre('hallucinating');
+    // C ref: insight.c:1059 — Blind, between hallucinating and deaf.  The
+    // port keeps HBlinded's timeout in u.blinded and its FROMFORM bit in
+    // uprops.BlindedFromForm (FROMOUTSIDE, "permanently", is not modelled).
+    if (Blind()) {
+        const innate = (u.uprops?.BlindedFromForm | 0) > 0;
+        const timeout = u.blinded | 0;
+        let bb = `${innate ? 'innately'
+            : (Blindfolded() && !timeout) ? 'deliberately'
+              : 'temporarily'} blind`;
+        if (_wizard() && !innate && !Blindfolded()) bb += ` (${timeout})`;
+        youAre(bb, !haseyes(game.youmonst?.data) ? '' : from_what(BLINDED_PROP, 'HBlinded'));
+    }
     // C ref: insight.c:1073 — `if (Deaf) you_are("deaf", from_what(DEAF));`,
     // emitted BEFORE the hunger line.
     if (((u.uprops?.HDeaf || 0) > 0) || u.Deaf) youAre('deaf');
@@ -891,8 +904,6 @@ function hungerWord(uhs) {
     return buf;
 }
 
-// C ref: hacklib.c — currency() pluralisation.
-function currency(n) { return n === 1 ? 'zorkmid' : 'zorkmids'; }
 
 // C ref: insight.c fmt_elapsed_time — "none" before any real_time accrues.
 function elapsedTime() { return 'none'; }
@@ -1629,9 +1640,7 @@ function ordin(n) {
 }
 // C ref: hacklib.c the() / objnam.c the() — "the <foo>" unless already proper.
 function the_str(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
-// C ref: hacklib.c s_suffix() — possessive.  Five other modules keep a local
-// copy of this (js/invent.js:1369, js/eat.js:1915, ...); same convention here.
-function s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 // C ref: objnam.c simpleonames(obj) — the unadorned object-type name.
 // js/invent.js:516 owns the real one but keeps it module-private; the fix is to
 // export that, not to grow this.

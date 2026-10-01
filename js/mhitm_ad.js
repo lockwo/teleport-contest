@@ -58,6 +58,7 @@ import {
     STRAT_WAITFORU, W_ARMOR, W_AMUL, W_ARMH, W_ARMS, W_ARMG, W_ARMF,
     A_STR, A_INT, A_DEX, A_CON, LEFT_SIDE, RIGHT_SIDE, MSLOW, LEG,
     ERODE_RUST, ERODE_CORRODE, ERODE_ROT, M_SEEN_SLEEP,
+    W_ARM, W_ARMC, W_ARMU, EF_GREASE, EF_VERBOSE, ER_NOTHING,
 } from './const.js';
 import { has_innate } from './exper.js';
 import { dmgval, sticks, m_slips_free } from './uhitm.js';
@@ -214,36 +215,47 @@ export async function mhitm_mgc_atk_negated(magr, mdef, verbosely, ops) {
 // which use the const.js layout.
 
 // ── uhitm.c:126 erode_armor ─────────────────────────────────────────────────
-// Loops rn2(5) until it lands on a slot that erodes (case 1, the torso, always
-// terminates because the body is a target whether or not it is covered).  For
-// an unarmoured monster that is a geometric run of rn2(5) draws — real RNG the
-// `default:` arm was throwing away for every rust monster / black pudding /
-// acid blob hit.
-async function erode_armor(mdef, _hurt, ops) {
-    const chain = is_hero(mdef) ? (game.invent || []) : (mdef.minvent || []);
-    const worn = (mask) => chain.some((o) => (o.owornmask || 0) & mask);
+// C ref: uhitm.c:126-185.  Loops rn2(5) until a slot takes the erosion: the
+// head/shield/gloves/boots arms re-roll when the slot is empty OR erode_obj()
+// returns ER_NOTHING (not vulnerable, erodeproof, already maximally eroded);
+// case 1 (cloak, else body armour, else shirt) always ends the loop because
+// the body is a target whether or not it is covered.
+async function erode_armor(mdef, hurt, _ops) {
+    const { erode_obj } = await import('./trap.js');
+    const hero = is_hero(mdef);
+    const HERO_SLOT = { [W_ARMH]: 'uarmh', [W_ARMC]: 'uarmc', [W_ARM]: 'uarm',
+        [W_ARMU]: 'uarmu', [W_ARMS]: 'uarms', [W_ARMG]: 'uarmg', [W_ARMF]: 'uarmf' };
+    const which_armor = (mask) => {
+        if (hero) return game[HERO_SLOT[mask]] || null;
+        for (const o of mdef.minvent || [])
+            if (((o.owornmask || 0) & mask) !== 0) return o;
+        return null;
+    };
+    const erodes = async (mask) => {
+        const target = which_armor(mask);
+        return !!target
+            && await erode_obj(target, null, hurt, EF_GREASE) !== ER_NOTHING;
+    };
     for (;;) {
-        switch (rn2(5)) {                       // uhitm.c:136
-        case 0: if (worn(W_ARMH)) return; continue;
-        case 1: return;                         // torso: always terminates
-        case 2: if (worn(W_ARMS)) return; continue;
-        case 3: if (worn(W_ARMG)) return; continue;
-        case 4: if (worn(W_ARMF)) return; continue;
+        switch (rn2(5)) {                       // uhitm.c:137
+        case 0: if (!await erodes(W_ARMH)) continue; return;
+        case 1: {
+            const target = which_armor(W_ARMC) || which_armor(W_ARM)
+                || which_armor(W_ARMU);
+            if (target) await erode_obj(target, null, hurt, EF_GREASE | EF_VERBOSE);
+            return;
+        }
+        case 2: if (!await erodes(W_ARMS)) continue; return;
+        case 3: if (!await erodes(W_ARMG)) continue; return;
+        case 4: if (!await erodes(W_ARMF)) continue; return;
         }
     }
-    // APPROXIMATION: C re-rolls when erode_obj() returns ER_NOTHING (slot empty
-    // OR the piece is already maximally eroded / greased); this stops at "slot
-    // occupied", so an armoured target can end the walk one draw early.  The
-    // unarmoured case — the only one this port's monsters reach — is exact.
-    // erode_obj()'s "Your <armor> rusts!" messaging needs the erosion fields.
-    void ops;
 }
 
 // ── zap.c destroy_items (monster carrier) ───────────────────────────────────
 // AD_FIRE / AD_COLD / AD_ELEC all end with `mhm->damage += destroy_items(...)`,
 // and destroy_items ALWAYS draws its rn2(DMG_DESTROY_SCALE) limit roll before
 // looking at the inventory — so even a monster carrying nothing costs one call.
-// (js/zap.js has the hero-side twin but does not export it; see `deferred`.)
 const DMG_DESTROY_SCALE = 5, MAX_ITEMS_DESTROYED = 20;
 // otyps resolved from this port's own objects[] (js/mkobj.js), NOT from
 // upstream onames.h — the two numberings differ.
@@ -292,98 +304,6 @@ async function destroy_items_mon(mon, dmgtyp, dmg_in, ops) {
         if (obj) dmg_out += await maybe_destroy_item_mon(mon, obj, dmgtyp, ops);
     }
     return dmg_out;
-}
-
-// C ref: zap.c destroy_strings[dindx][0 singular, 1 plural, 2 killer reason].
-const DESTROY_STRINGS = [
-    ['freezes and shatters', 'freeze and shatter', 'shattered potion'],
-    ['boils and explodes', 'boil and explode', 'boiling potion'],
-    ['ignites and explodes', 'ignite and explode', 'exploding potion'],
-    ['catches fire and burns', 'catch fire and burn', 'burning scroll'],
-    ['catches fire and burns', null, 'burning book'],
-    ['turns to dust and vanishes', null, null],
-    ['breaks apart and explodes', null, 'exploding wand'],
-];
-
-// C ref: zap.c destroy_items(&gy.youmonst, dmgtyp, dmg_in) — the u_carry arm of
-// the same routine destroy_items_mon() ports.  It runs off gi.invent and its
-// damage lands on the hero through losehp() instead of being returned.  The
-// leading rn2(DMG_DESTROY_SCALE) fires even when 'limit' ends up 0, which is
-// the common case for a small melee hit — and it is a real call in the stream.
-export async function destroy_items_hero(dmgtyp, dmg_in, ops) {
-    let limit = Math.floor(dmg_in / DMG_DESTROY_SCALE);
-    if (dmg_in % DMG_DESTROY_SCALE > rn2(DMG_DESTROY_SCALE)) limit++;
-    if (limit > MAX_ITEMS_DESTROYED) limit = MAX_ITEMS_DESTROYED;
-    if (limit < 1) return 0;
-
-    const picks = new Array(MAX_ITEMS_DESTROYED).fill(null);
-    let elig = 0;
-    for (const obj of (game.invent || [])) {
-        if (!destroyable(obj, dmgtyp)) continue;
-        const i = (elig < limit) ? elig : rn2(elig);   // reservoir sample
-        elig++;
-        if (i < 0 || i >= limit) continue;
-        picks[i] = obj;
-    }
-    if (elig > limit) elig = limit;
-    let dmg_out = 0;
-    for (let i = 0; i < elig; i++) {
-        const obj = picks[i];
-        if (obj) dmg_out += await maybe_destroy_item_hero(obj, dmgtyp, ops);
-    }
-    return dmg_out;
-}
-
-// C ref: zap.c u_adtyp_resistance_obj() / inventory_resistance_check() — an
-// EXTRINSIC source of the matching resistance protects carried items 99% of the
-// time (a dwarvish cloak 90% against heat/cold).  The rn2(100) only happens
-// when such a source is worn, so a hero without one spends no call here.
-function inventory_resistance_check(dmgtyp) {
-    const u = game.u || {};
-    const prop = (dmgtyp === AD_COLD) ? 'Cold_resistance'
-        : (dmgtyp === AD_FIRE) ? 'Fire_resistance'
-            : (dmgtyp === AD_ELEC) ? 'Shock_resistance' : null;
-    if (!prop) return false;
-    const prob = (u.uprops?.['E' + prop] || u['E' + prop]) ? 99 : 0;
-    if (!prob) return false;
-    return rn2(100) < prob;
-}
-
-// C ref: zap.c maybe_destroy_item(&gy.youmonst, obj, dmgtyp).
-async function maybe_destroy_item_hero(obj, dmgtyp, ops) {
-    if (inventory_resistance_check(dmgtyp)) return 0;
-    let dmg = 0, dindx = 0, quan = obj.quan | 0;
-    switch (dmgtyp) {
-    case AD_COLD: dindx = 0; dmg = rnd(4); break;
-    case AD_FIRE:
-        switch (obj.oclass) {
-        case POTION_CLASS: dindx = (obj.otyp !== POT_OIL) ? 1 : 2; dmg = rnd(6); break;
-        case SCROLL_CLASS: dindx = 3; dmg = 1; break;
-        case SPBOOK_CLASS: dindx = 4; dmg = 1; break;
-        default: dindx = 1; dmg = Math.floor(((obj.owt | 0) + 19) / 20); break;
-        }
-        break;
-    case AD_ELEC:
-        if (obj.oclass === WAND_CLASS) { dindx = 6; dmg = rnd(10); }
-        else { dindx = 5; dmg = 0; }
-        break;
-    default: return 0;
-    }
-    if (obj.in_use) quan--;
-    let cnt = 0;
-    for (let i = 0; i < quan; i++) if (!rn2(3)) cnt++;
-    if (!cnt) return 0;
-    const mult = (cnt === 1) ? ((quan === 1) ? '' : 'One of ')
-        : ((cnt < quan) ? 'Some of ' : (quan === 2) ? 'Both of ' : 'All of ');
-    const nm = ops.yname(obj);
-    const name = cnt === 1 && quan === 1 ? nm.charAt(0).toUpperCase() + nm.slice(1) : nm;
-    await ops.emit(`${mult}${name} ${DESTROY_STRINGS[dindx][(cnt > 1) ? 1 : 0]}!`);
-    // potionbreathe() (AD_FIRE/AD_ELEC potions only), Ring_gone()/setnotworn()
-    // and gc.current_wand are not reached by an AD_COLD potion shatter, the only
-    // caller wired to this today.
-    if (ops.useup) for (let i = 0; i < cnt; i++) ops.useup(obj);
-    if (dmg && ops.losehp) await ops.losehp(dmg);
-    return dmg;
 }
 
 async function maybe_destroy_item_mon(mon, obj, dmgtyp, ops) {
@@ -989,6 +909,44 @@ export async function mhitm_ad_drst(magr, mattk, mdef, mhm, ops) {
 
 export async function mhitm_ad_drin(magr, mattk, mdef, mhm, ops) {
     const pd = ops.permonst(mdef);
+    if (is_hero(magr)) {
+        if (game.notonhead || !has_head(pd)) {
+            await ops.emit(`${ops.Monnam(mdef)} doesn't seem harmed.`);
+            ops.set_skipdrin();
+            mhm.damage = 0;
+            if (pd.name === 'green slime') {
+                const { Unchanging_poly } = await import('./polyself.js');
+                if (!Unchanging_poly() && !game.u.uprops?.Slimed) {
+                    await ops.emit("You suck in some slime and don't feel very well.");
+                    const { make_slimed } = await import('./potion.js');
+                    await make_slimed(10, null);
+                }
+            }
+            return;
+        }
+        if (await m_slips_free(mdef, mattk)) return;
+        const { which_armor } = await import('./worn.js');
+        const helmet = which_armor(mdef, W_ARMH);
+        if (helmet && rn2(8)) {
+            const { helm_simple_name } = await import('./do_wear.js');
+            const { mhis } = await import('./do_name.js');
+            const name = ops.Monnam(mdef);
+            await ops.emit(`${/s$/.test(name) ? `${name}'` : `${name}'s`} ${helm_simple_name(helmet)} blocks your attack to ${mhis(mdef)} head.`);
+            return;
+        }
+        const amulet = which_armor(mdef, W_AMUL);
+        const lifeSaved = OBJECTS[amulet?.otyp]?.name === 'amulet of life saving';
+        const { eat_brains } = await import('./eat.js');
+        const damage = { value: mhm.damage };
+        await eat_brains(magr, mdef, true, damage);
+        mhm.damage = damage.value;
+        if (lifeSaved && !which_armor(mdef, W_AMUL)) ops.set_skipdrin();
+        if (game.program_state?.gameover) {
+            mhm.done = true;
+            mhm.hitflags = M_ATTK_AGR_DIED;
+        }
+        return;
+    }
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (defends(AD_DRIN, game.uwep) || !has_head(pd)) {

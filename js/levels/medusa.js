@@ -39,7 +39,7 @@ import { rn1, rn2, rnd } from '../rng.js';
 import {
     LOC_DRY, bigrm_get_level_extends, bigrm_load_map, bigrm_wallification, flip_level, percent,
     pm_to_humidity, quest_level_init_solidfill, quest_place_stair, quest_rndcoord, quest_set_door,
-    remove_boundary_syms, shuffle, splev_door_at, splev_feature, splev_get_location_rnd,
+    remove_boundary_syms, map_cleanup, shuffle, splev_door_at, splev_feature, splev_get_location_rnd,
     splev_link_doors_rooms, splev_region_lit, splev_traptype_rnd, vly_abs, vly_non_diggable,
     vly_region, vly_teleport_region,
 } from '../sp_lev.js';
@@ -579,6 +579,7 @@ function med_prologue(mapstr, flags) {
 function med_finalize(lregions) {
     splev_link_doors_rooms();
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                          // sp_lev.c:975

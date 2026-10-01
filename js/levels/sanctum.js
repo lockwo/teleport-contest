@@ -16,7 +16,7 @@ import { rn2 } from '../rng.js';
 import {
     TEMPLE_RTYPE, VLY_S_LICH, VLY_S_VAMPIRE, bigrm_load_map, bigrm_wallification, flip_level,
     lspo_door_relative, quest_level_init_solidfill, quest_place_stair, quest_set_door,
-    remove_boundary_syms, shuffle, vly_abs, vly_altar, vly_flip_dndest, vly_flip_updest, vly_monster_class,
+    remove_boundary_syms, map_cleanup, shuffle, vly_abs, vly_altar, vly_flip_dndest, vly_flip_updest, vly_monster_class,
     vly_non_diggable, vly_object, vly_region, vly_teleport_region, vly_trap,
 } from '../sp_lev.js';
 
@@ -210,6 +210,7 @@ export async function makemaz_sanctum() {
     // C ref: lspo_finalize_level() — wallification (no RNG) then
     // flip_level_rnd(allow_flips=3): one rn2(2) per axis.
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

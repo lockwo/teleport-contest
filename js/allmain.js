@@ -34,7 +34,7 @@ import { Unaware,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
     Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA } from './const.js';
-import { near_capacity, reroll_menu } from './invent.js';
+import { near_capacity, reroll_menu, setnotworn, freeinv } from './invent.js';
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { settrack } from './track.js';
@@ -528,6 +528,9 @@ async function enter_tutorial_level() {
     g.u.dx = 0; g.u.dy = 0;
     if (g.u.umovement == null) g.u.umovement = NORMAL_SPEED;
 
+    // C ref: nhlib.lua tutorial_enter() sequesters inventory before arrival.
+    sequester_inventory_for_tutorial();
+
     // Reset vision for the new level and redraw.  C ref: goto_level() ->
     // vision_reset(); docrt(); flush_screen(-1).
     g.vision_full_recalc = 0;
@@ -553,47 +556,23 @@ async function enter_tutorial_level() {
     }
     g._pending_message = '';
 
-    // C ref: dat/nhlib.lua tutorial_enter() -> nh.gamestate() (save), which is
-    // nhlua.c nhl_gamestate() store branch: every inventory item is setnotworn()
-    // + freeinv()'d and sequestered in gg.gmst_invent.  The hero therefore enters
-    // the tutorial with NO worn gear, so find_ac() resets to the base unarmored
-    // class (the recorded screens show AC drop from 7 -> 10 for the Ranger whose
-    // cloak of displacement gave -3).  setnotworn() is silent (no message), and
-    // the status line is rebuilt live from u.uac at each flush, so the AC change
-    // must not be visible on the arrival/engraving --More-- pages (recorded steps
-    // 13-15 still show AC:7).  Do the sequester AFTER those pages so the updated
-    // AC first appears on the first moveloop turn's bot() (recorded step 16).
-    sequester_inventory_for_tutorial();
+    // C recomputes armor class on the next moveloop turn, after the arrival
+    // messages, even though the worn items have already been set aside.
+    find_ac();
 }
 
-// C ref: nhlua.c nhl_gamestate() store branch (dat/nhlib.lua tutorial_enter ->
-// nh.gamestate()).  On tutorial entry the entire inventory is set aside: each
-// item is unworn (setnotworn) and removed from invent (freeinv), then stashed
-// in gg.gmst_invent (with owornmask kept as a re-wear flag for the later
-// restore on leave).  We mirror that here: clear every worn-equipment pointer
-// so find_ac() yields the unarmored base class, and stash the items + their
-// worn masks on game._tutorial_saved_state for symmetry with leave (no recorded
-// session leaves the tutorial, so the restore path is not exercised, but we keep
-// the saved state faithful to the C structure).
+// C ref: nhlua.c nhl_gamestate() — preserve worn masks while removing items
+// through the inventory hooks, including gold and equipment extrinsics.
 function sequester_inventory_for_tutorial() {
     const g = game;
-    const inv = Array.isArray(g.invent) ? g.invent : [];
     const saved = [];
-    for (const obj of inv) {
+    while (g.invent.length) {
+        const obj = g.invent[0];
         saved.push({ obj, wornmask: obj.owornmask || 0 });
-        obj.owornmask = 0;
+        setnotworn(obj);
+        freeinv(obj);
     }
-    // setnotworn equivalent: drop every worn-slot pointer (armor, weapons,
-    // accessories) so they no longer contribute to find_ac / behaviour.
-    g.uarm = g.uarmc = g.uarmh = g.uarms = g.uarmg = g.uarmf = g.uarmu = null;
-    g.uwep = g.uswapwep = g.uquiver = null;
-    g.uleft = g.uright = g.uamul = g.ublindf = null;
-    if (g.u) g.u.twoweap = false;
-    // freeinv equivalent: the hero carries nothing inside the tutorial.
-    g.invent = [];
     g._tutorial_saved_state = { invent: saved };
-    // find_ac() recomputes u.uac from the now-empty worn slots -> base 10.
-    find_ac();
 }
 
 function engr_at_tut(x, y) {
@@ -1072,7 +1051,7 @@ export async function moveloop_turn() {
             // ulevel 15 => period 15, upper 2 from Wi:14 + In:7) between
             // regen_hp's rn2(100) and dosounds' rn2(200), and skipping it shifted
             // the rest of that turn and every turn after it.
-            regen_pw(turn_wtcap);
+            await regen_pw(turn_wtcap);
 
             // C ref: allmain.c moveloop_core():307-340 — intrinsic Teleportation
             // and the Polymorph/lycanthropy "delayed change" timer, both under
@@ -1382,13 +1361,9 @@ export function gethungry() {
 // The single rn2(100) is the RNG-relevant effect; the heal keeps uhp tracking
 // so the roll stops firing once the hero is back to full.  The caller invokes
 // this only when uhp < uhpmax, mirroring the C guard at allmain.c:290.
-// C ref: allmain.c:976 interrupt_multi(msg) — a voluntary multi-turn activity
-// (counted rest/search, a timed occupation) stops the instant the hero reaches
-// full HP or full Pw.  Running/travelling is exempt.  `msg` is only shown with
-// the verbose option, which the covered rc files turn off, so the Norep is not
-// modelled — but the nomul(0) is load-bearing: without it a counted "20." runs
-// all 20 turns where C stops at whichever turn tops the hero up.
-function interrupt_multi() {
+// C ref: allmain.c interrupt_multi: full recovery stops voluntary repeated
+// actions, but not running or travel. Verbose feedback uses Norep semantics.
+async function interrupt_multi(msg) {
     const g = game;
     if ((g.multi ?? 0) > 0 && !g.context?.travel && !g.context?.run) {
         // nomul(0), inlined: hack.js imports this module, so importing back
@@ -1396,6 +1371,8 @@ function interrupt_multi() {
         // `if (gm.multi < nval) return` guard.
         g.multi = 0;
         if (g.context) g.context.travel = g.context.travel1 = g.context.mv = 0;
+        if (g.flags?.verbose !== false && msg && g._prevmsg !== msg)
+            await update_topl(msg);
     }
 }
 
@@ -1431,7 +1408,7 @@ async function regen_hp(wtcap = 0) {
         } else if (u.mh < u.mhmax) {
             if (u_can_regen() || (encumbrance_ok && !((game.moves || 0) % 20))) {
                 u.mh += 1;
-                if (u.mh === u.mhmax) interrupt_multi();
+                if (u.mh === u.mhmax) await interrupt_multi('You are in full health.');
             }
         }
         return;
@@ -1452,7 +1429,7 @@ async function regen_hp(wtcap = 0) {
         if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
         // C ref: allmain.c:673 "stop voluntary multi-turn activity if now
         // fully healed".
-        if (u.uhp === u.uhpmax) interrupt_multi();
+        if (u.uhp === u.uhpmax) await interrupt_multi('You are in full health.');
     }
 }
 
@@ -1470,7 +1447,7 @@ async function regen_hp(wtcap = 0) {
 // nothing.
 const MAXULEV = 30;             // C ref: include/you.h MAXULEV
 const PM_WIZARD_ROLE = 12;      // roles[] index, not a mons[] index
-function regen_pw(wtcap = 0) {
+async function regen_pw(wtcap = 0) {
     const g = game, u = g.u;
     if (!u) return;
     if (!(u.uen < u.uenmax)) return;
@@ -1491,10 +1468,7 @@ function regen_pw(wtcap = 0) {
     // no covered hero wears.
     u.uen += rn1(upper, 1);
     if (u.uen > u.uenmax) u.uen = u.uenmax;
-    // C ref: allmain.c:616 — at full power, interrupt_multi("You feel full of
-    // energy.").  The message needs the verbose option (off in the covered rc
-    // files) but the nomul(0) inside interrupt_multi fires regardless.
-    if (u.uen === u.uenmax) interrupt_multi();
+    if (u.uen === u.uenmax) await interrupt_multi('You feel full of energy.');
 }
 
 // C ref: hack.c overexert_hp() — "HP loss or passing out from overexerting

@@ -778,6 +778,21 @@ function blocksDiagonalDoor(ux, uy, x, y, dx, dy) {
     return false;
 }
 
+// C ref: hack.c test_move() DO_MOVE — the obstacles a Blind hero feels when a
+// step is refused: rock, a wall or iron bars (hack.c:1012), a closed door
+// (hack.c:1076), an intact doorway entered diagonally (hack.c:1144).  These
+// destination tests run before the diagonal out-of-doorway refusal
+// (hack.c:1208), which feels nothing.
+function feel_refused_step(x, y, dx, dy) {
+    if (!Blind()) return;
+    const loc = game.level?.at(x, y);
+    if (!loc) return;
+    if (IS_OBSTRUCTED(loc.typ) || loc.typ === IRONBARS
+        || (IS_DOOR(loc.typ) && ((loc.doormask & (D_CLOSED | D_LOCKED))
+                                 || (dx && dy && !doorless_door(x, y)))))
+        feel_location(x, y);
+}
+
 // C ref: hack.c:991 test_move(ux,uy,dx,dy,TEST_MOVE) — "would this step be
 // viable at all", the silent query paranoid_confirm:trap makes before asking.
 // Rejects what DO_MOVE (domove() below) rejects: obstruction/iron bars
@@ -3125,11 +3140,9 @@ async function escape_from_sticky_mon(x, y) {
 // which wastes the turn too but prints its own message and maps the monster.
 async function domove_bump_mon(mtmp, x, y) {
     const c = game.context;
-    // C also allows glyph_is_warning(glyph) here; the Warning intrinsic is not
-    // modeled in this port, so no square is ever a warning glyph (uhitm.js
-    // keeps the same always-false stub for do_attack's copy).
     if (!(c?.nopick && !c?.travel
-          && (canspotmon(mtmp) || glyph_is_invisible(x, y))))
+          && (canspotmon(mtmp) || glyph_is_invisible(x, y)
+              || game.level?.at(x, y)?.disp_warning)))
         return false;
     const { sensemon, Protection_from_shape_changers } = await import('./mon.js');
     if (mtmp.m_ap_type && !Protection_from_shape_changers() && !sensemon(mtmp)) {
@@ -3271,6 +3284,10 @@ export async function domove(dx, dy, attemptTracked = true) {
 
     // ── bump into a monster ──  C ref: hack.c domove_core mtmp handling.
     if (mtmp) {
+        if (!is_safemon(mtmp) || game.context.forcefight) {
+            const { nomul } = await import('./hack.js');
+            nomul(0);
+        }
         // C ref: hack.c:2794 — domove_bump_mon() runs BEFORE
         // domove_attackmon_at(), so an 'm'-prefixed step onto a pet announces
         // the bump and stops; it must never reach do_attack()/the pet swap.
@@ -3313,11 +3330,9 @@ export async function domove(dx, dy, attemptTracked = true) {
         // a DOOR at (43,7), key `u` (diagonal) — C doesn't move, no turn; ours
         // swapped to (44,6) (the dump also disproved a guess that C's kitten
         // was asleep: msleep=0, mcanmove=1, mfrozen=0).
-        if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy)) {
-            game.context.move = 0;
-            return;
-        }
-        if (blocksMove(newx, newy)) {
+        if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy)
+            || blocksMove(newx, newy)) {
+            feel_refused_step(newx, newy, u.dx, u.dy);
             game.context.move = 0;
             return;
         }
@@ -3505,6 +3520,9 @@ export async function domove(dx, dy, attemptTracked = true) {
         const closedDoor = tgt && IS_DOOR(tgt.typ)
             && (tgt.doormask & (D_CLOSED | D_LOCKED));
         if (closedDoor) {
+            // C ref: hack.c:1076 — `if (Blind && mode == DO_MOVE)
+            // feel_location(x, y)` before any open/bump handling.
+            if (Blind()) feel_location(newx, newy);
             // C ref: hack.c:1097 — `flags.autoopen && !svc.context.run
             // && !Confusion && !Stunned && !Fumbling`.  An impaired hero walks
             // INTO the door ("Ouch!  That was a door.") instead of opening it,
@@ -3571,6 +3589,9 @@ export async function domove(dx, dy, attemptTracked = true) {
     // reach here.  This runs before the generic blocksMove() floor/wall test
     // because the door square itself is otherwise walkable floor.
     if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy)) {
+        // A refused diagonal out of a doorway still first tests the
+        // destination, so a blind hero may feel a wall there.
+        feel_refused_step(newx, newy, u.dx, u.dy);
         game.context.move = 0;
         return;
     }
@@ -3630,6 +3651,9 @@ export async function domove(dx, dy, attemptTracked = true) {
     }
 
     if (blocksMove(newx, newy)) {
+        // C ref: hack.c:1012 — `if (Blind && mode == DO_MOVE)
+        // feel_location(x, y)`: bumping rock, a wall or iron bars maps it.
+        feel_refused_step(newx, newy, u.dx, u.dy);
         // Can't move there.  C ref: hack.c test_move() DO_MOVE else-branch — a
         // blocked move announces the obstacle when flags.mention_walls is set
         // (closed doors are already handled above).  C names the background via
@@ -3716,10 +3740,13 @@ export async function domove(dx, dy, attemptTracked = true) {
     // domove_core), so it uses the still-old viz_array like C does.
     see_nearby_objects();
 
-    // Update display
+    // Update display.  C ref: hack.c:2969-2972 — "Clean old position --
+    // vision_recalc() will print our new one": vision_recalc() ends with its
+    // own newsym(u.ux, u.uy) (vision.c:850), so there is no second newsym of
+    // the new square here.  A second one spent an extra display-rng draw on
+    // the object under a hallucinating hero.
     newsym(oldx, oldy);
     vision_recalc(1);
-    newsym(newx, newy);
 
     // C ref: hack.c domove_core() -> spoteffects(TRUE): pickup(1) runs before
     // a non-pit trap (after a pit trap), then dotrap(). pickup_after_move is
@@ -4859,13 +4886,17 @@ async function autopickup_after_move(x, y) {
 // next key) before the pickup line replaces it.  C ref: topl.c update_topl().
 async function pickup_one(inv, obj, x, y) {
     const prior = game._pending_message || '';
+    // An answered y_n prompt stays visible but is no longer pending in C.
+    const pending = prior && (game._toplin === 1 || game._toplinSoft === prior);
     await inv.pick_one_obj(obj); // sets _pending_message to the pickup line
     const line = game._pending_message || '';
-    if (prior) {
+    if (pending) {
         // Restore the pending line + its TL_HAS_MESSAGE state, then chain.
         game._pending_message = prior;
         game._toplin = 1;
         await update_topl(line);
+    } else {
+        game._toplinSoft = line; // prinv's new message awaits acknowledgment.
     }
     newsym(x, y);
 }
@@ -4926,9 +4957,8 @@ async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = fa
 // announcement without dragging in an invent.js import cycle at module scope.
 const COIN_CLASS_CMD = 12;
 
-// Object name with article for the "You see here" line (C: doname()).  Lazy
-// import to avoid a static cycle.  Corpses read "<species> corpse"; gold reads
-// "<n> gold piece(s)"; other objects defer to invent.js's doname().
+// Object name with article for the "You see here" line (C: doname()).  The
+// shared floor namer includes corpse species and "partly eaten" status.
 async function objDoname(obj) {
     // COIN_CLASS gold: doname() uses an article for a single coin and a
     // quantity for a stack.
@@ -4937,16 +4967,7 @@ async function objDoname(obj) {
         if (q === 1) return 'a gold piece';
         return `${q} gold piece${q === 1 ? '' : 's'}`;
     }
-    // CORPSE (otyp 265): "a goblin corpse" — species from corpsenm.
-    if (obj && obj.otyp === 265 && obj.corpsenm != null) {
-        const mm = await import('./makemon.js');
-        const sp = mm.monster_by_pmidx?.(obj.corpsenm);
-        const name = sp?.name || 'monster';
-        const art = /^[aeiou]/i.test(name) ? 'an' : 'a';
-        return `${art} ${name} corpse`;
-    }
-    // Non-corpse floor object (e.g. a dropped weapon/ammo stack): C doname()
-    // gives "N <plural>" for a stack, "a <name>" for a single item.
+    // C doname() gives "N <plural>" for a stack, "a <name>" for a single item.
     try {
         if (floor_object_name) return floor_object_name(obj);
     } catch (_e) { /* fall through */ }
@@ -7116,37 +7137,36 @@ export function cmd_from_dir(dir, mode) {
 
 // C ref: cmd.c:3036 cmd_from_func(fn) — the key bound to an extended command.
 export function cmd_from_func(fn) {
-    cmd_binds_init_once();
-    let i;
-    let ret = '\0';
-    let bind;
+    const Cmd = numpad_cmd();
     const id = ef_id(fn);
-
-    for (bind = gc_Cmd.cmdbinds; bind; bind = bind.next) {
-        i = bind.key;
-        /* skip space; we'll use it below as a last resort if no other
-           keystroke invokes space's command */
-        if (i === 0x20)
-            continue;
-        /* skip digits if number_pad is Off; also skip '-' unless it has been
-           bound to something other than what number_pad assigns */
-        if (((i >= 0x30 && i <= 0x39)
-             || (i === 0x2d && id === 'do_fight'))
-            && !gc_Cmd.num_pad)
-            continue;
-
-        if (bind.cmd && bind.cmd.ef_funct === id) {
-            if (i >= 0x20 && i <= 0x7e)
-                return String.fromCharCode(i);
-            else {
-                ret = String.fromCharCode(i);
+    const names = new Set();
+    for (const entry of extcmdlist)
+        if (entry.ef_funct === id) names.add(entry.ef_txt);
+    for (let dir = 0; dir < move_funcs.length; dir++) {
+        for (let mode = MV_WALK; mode < N_MOVEMODES; mode++) {
+            if (move_funcs[dir][mode] === id) {
+                const prefix = mode === MV_WALK ? 'move'
+                    : mode === MV_RUN ? 'run' : 'rush';
+                names.add(`${prefix}:${dir}`);
             }
         }
     }
-    if ((bind = cmdbind_get(0x20)) != null && bind.cmd
-        && bind.cmd.ef_funct === id)
-        return ' ';
-    return ret;
+    // Use the same live table and user overrides as rhack(), not the separate
+    // default-only table maintained by the legacy command-menu helpers.
+    const matches = key => names.has(
+        game.keybind?.[String.fromCharCode(key)] ?? Cmd.binds.get(key));
+    let ret = '\0';
+    for (let key = 1; key < 256; key++) {
+        if (key === 0x20) continue;
+        if (((key >= 0x30 && key <= 0x39)
+             || (key === 0x2d && id === 'do_fight')) && !Cmd.num_pad)
+            continue;
+        if (matches(key)) {
+            if (key >= 0x20 && key <= 0x7e) return String.fromCharCode(key);
+            ret = String.fromCharCode(key);
+        }
+    }
+    return matches(0x20) ? ' ' : ret;
 }
 
 // C ref: cmd.c:3071 cmd_from_ecname(ecname) — the visual form of the key bound

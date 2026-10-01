@@ -3,6 +3,7 @@
 // the gameplay sessions are ported here.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rn1, rnd, rnl, d } from './rng.js';
 import { pline, newsym, m_at, show_glyph_cell, update_topl, topl_more, y_n,
          bot, flush_screen, canseemon_shared, map_invisible, unmap_object,
@@ -25,6 +26,7 @@ import { observe_object } from './o_init.js';
 import { exercise, acurr_eff as ACURR } from './attrib.js';
 import { more_experienced, has_innate } from './exper.js';
 import { findit } from './detect.js';
+import { find_ac } from './u_init.js';
 import { cansee, vision_recalc, Blind } from './vision.js';
 import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS, ARMOR_CLASS,
          FOOD_CLASS, RING_CLASS, POT_OIL, POT_WATER, GLOB_OF_GREEN_SLIME,
@@ -35,7 +37,7 @@ import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_C
          has_omonst, get_mtraits, has_omid, OMID, free_omid, free_omonst,
          obj_ice_effects, dealloc_obj } from './mkobj.js';
 import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOOR, IS_ROOM, IS_WALL, isok, ROOM, STONE,
-         D_CLOSED, D_LOCKED, CORPSTAT_INIT, EXT_ENCUMBER, HEADSTONE, ENGRAVE,
+         D_CLOSED, D_LOCKED, CORPSTAT_INIT, EXT_ENCUMBER, HEADSTONE, ENGRAVE, TELEDS_TELEPORT,
          DUST, MM_NOMSG, In_mines, W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG,
          W_ARMF, W_ARMU, POOL, IS_FOUNTAIN, Is_waterlevel,
          POLY_NOFLAGS, CORR, GRAVE, MOAT, DRAWBRIDGE_UP, DRAWBRIDGE_DOWN,
@@ -1836,8 +1838,6 @@ async function mon_reflects(mon, str) {
     if (str) await update_topl(str.replace('%s %s', `${s_suffix(mon_nam(mon))} scales`));
     return true;
 }
-// C ref: hacklib.c s_suffix().
-function s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
 // C ref: mondata.c is_demon(ptr) — mlet == S_DEMON (defsym.h index 56).
 function is_demon_mdat(mdat) { return !!mdat && mdat.mcls === 56; }
 // C ref: mondata.h nonliving(ptr) — undead/golem/vortex/elemental "destroyed"
@@ -2795,8 +2795,27 @@ export async function zapyourself(obj, ordinary) {
 
     case WAN_CANCELLATION:
     case SPE_CANCELLATION:
-        // cancel_monst(&youmonst, obj, TRUE, TRUE, TRUE) — cancels the hero's
-        // own inventory.  DEFERRED: needs cancel_item()'s per-object rolls.
+        // C ref: zap.c cancel_monst(..., self_cancel=TRUE) — cancel every item
+        // before reverting a polymorphed hero, then refresh AC for cancelled
+        // worn equipment. The caller refreshes the inventory display.
+        for (const item of invent_list()) await cancel_item(item);
+        find_ac();
+        if (u.Upolyd) {
+            if (u.umonnum === PM_CLAY_GOLEM) {
+                if (!Blind()) {
+                    await pline('Some writing vanishes from your head!');
+                } else {
+                    await pline(`You feel ${Hallucination() ? 'dark' : 'light'} headed.`);
+                }
+                u.mh = 0;
+            }
+            if (Unchanging() && u.mh > 0) {
+                await pline('Your amulet grows hot for a moment, then cools.');
+            } else {
+                const { rehumanize } = await import('./polyself.js');
+                await rehumanize();
+            }
+        }
         break;
 
     case SPE_DRAIN_LIFE:
@@ -3016,8 +3035,8 @@ export async function tele() {
         await dotele_wizard();
         return;
     }
-    const { safe_teleds_hero } = await import('./read.js');
-    await safe_teleds_hero();
+    const { safe_teleds } = await import('./teleport.js');
+    await safe_teleds(TELEDS_TELEPORT);
 }
 
 // C ref: zap.c unturn_you — unturn_dead() over carried corpses/eggs, then the
@@ -3048,14 +3067,14 @@ async function flashburn(duration, _via_lightning) {
 // C ref: youprop.h hero property predicates.  This port stores intrinsics under
 // game.u.uprops (potion.js/cmd.js convention); an unmodelled property reads
 // false, which is what the covered heroes actually have.
-function Fire_resistance() {
+export function Fire_resistance() {
     const u = game.u;
     return !!(u?.uprops?.Fire_resistance || u?.uprops?.HFire_resistance
         || u?.uprops?.EFire_resistance || u?.Fire_resistance
         || worn_extrinsic(FIRE_RES) || has_innate('HFire_resistance')
         || (u?.Upolyd && resists_fire(u)));
 }
-function Cold_resistance() {
+export function Cold_resistance() {
     const u = game.u;
     return !!(u?.uprops?.Cold_resistance || u?.uprops?.HCold_resistance
         || u?.uprops?.ECold_resistance || u?.Cold_resistance
@@ -3072,7 +3091,7 @@ function Shock_resistance() {
 function Acid_resistance()  { return (game.u?.uprops?.AcidResistance    || 0) > 0; }
 function Disint_resistance(){ return (game.u?.uprops?.HDisint_resistance|| 0) > 0; }
 function Drain_resistance() { return (game.u?.uprops?.HDrain_resistance || 0) > 0; }
-function Antimagic()        { return !!(game.u?.HAntimagic || game.u?.Antimagic
+export function Antimagic() { return !!(game.u?.HAntimagic || game.u?.Antimagic
                                         || game.u?.uprops?.HAntimagic
                                         || worn_extrinsic(ANTIMAGIC)); }
 function Half_spell_damage(){ return (game.u?.uprops?.HHalf_spell_damage|| 0) > 0; }

@@ -669,6 +669,23 @@ export function vision_recalc(control = 0) {
         view_from(u.uy, u.ux, next, next_rmin, next_rmax);
     }
 
+    if (process.env.VISION_DEBUG && u.ux >= 40 && u.ux <= 48 && u.uy >= 16 && u.uy <= 22 && (game.__visionDebugCount|0) < 3) {
+        game.__visionDebugCount = (game.__visionDebugCount|0) + 1;
+        game.__visionDebugged = true;
+        const lvl = game.level;
+        let dump = `VISION_DEBUG ux=${u.ux},uy=${u.uy}\n`;
+        for (let row = 8; row <= 20; row++) {
+            let line = `row${row}: `;
+            for (let col = 35; col <= 47; col++) {
+                const cs = !!(next[row][col] & COULD_SEE);
+                const loc = lvl?.at(col, row);
+                line += cs ? `[${loc?.typ}:${loc?.lit ? 'L' : '.'}] ` : '[    ] ';
+            }
+            dump += line + '\n';
+        }
+        console.error(dump);
+    }
+
     // C ref: vision.c:703 do_light_sources(next_array) — mobile light sources
     // (a gold dragon, a fire vortex, a lit lamp) mark TEMP_LIT on the cells
     // they light, which the IN_SIGHT passes below treat exactly like lev->lit.
@@ -818,15 +835,17 @@ export function Blind() {
                    || (u.uprops?.BlindedFromForm | 0) > 0);
 }
 
-// C ref: youprop.h Infravision (HInfravision || EInfravision).  polyself.c
-// set_uasmon() grants the hero the INFRAVISION intrinsic from
-// infravision(mons[urace.mnum]) (the racial base monster) when not polymorphed.
-// Our hero has no item/polyself infravision source, so Infravision is purely
-// racial: elf/dwarf/gnome/orc have it, human does not.
+// C ref: youprop.h Infravision and polyself.c set_uasmon().  The form source
+// replaces racial infravision while polymorphed, without clearing other sources.
 export function Infravision() {
-    const race = races[game.initrace];
-    if (!race || race.basepm == null) return false;
-    return infravision(monster_by_pmidx(race.basepm));
+    const u = game.u || {};
+    const props = u.uprops || {};
+    const intrinsic = (props.Infravision ?? u.Infravision)
+        || (props.HInfravision ?? u.HInfravision);
+    const extrinsic = props.EInfravision ?? u.EInfravision;
+    const pmidx = u.Upolyd ? u.umonnum : races[game.initrace]?.basepm;
+    return !!(intrinsic || extrinsic
+        || (pmidx != null && infravision(monster_by_pmidx(pmidx))));
 }
 
 // C ref: cansee(x, y)

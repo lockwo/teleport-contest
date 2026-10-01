@@ -11,13 +11,14 @@
 // including every discarded RNG draw, runs.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
 import { align_gname } from './role.js';
 import { A_WIS, A_STR, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     A_ORIGINAL, AM_SHRINE, AM_SANCTUM, AM_CHAOTIC, AM_MASK, Amask2align,
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMIN, LUCKMAX, MM_NOMSG,
-    IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE } from './const.js';
+    IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE, HALF_SPDAM } from './const.js';
 import { isok } from './hacklib.js';
 import { OMONST, W_BALL, W_CHAIN, FROMOUTSIDE } from './const.js';
 import { adjalign, exercise, adjattrib } from './attrib.js';
@@ -374,16 +375,25 @@ async function losexp_with_livelog() {
 }
 
 // C ref: sit.c rndcurse() — curse a few random inventory items.
-async function rndcurse() {
+export async function rndcurse() {
     const u = game.u;
-    // C's leading u_wield_art(ART_MAGICBANE) escape needs an artifact weapon.
-    await update_topl('You feel a malignant aura surround you.');
+    const D = await loadPrayExtras();
+    const mal_aura = (who) => `You feel a malignant aura surround ${who}.`;
+    // C ref: sit.c:576 u_wield_art(ART_MAGICBANE) && rn2(20).
+    if (D.art.is_art(game.uwep, D.art.ART_MAGICBANE) && rn2(20)) {
+        await update_topl(mal_aura('the magic-absorbing blade'));
+        return;
+    }
+    const antimagic = D.zap.Antimagic();
+    if (antimagic) await D.dsp.shieldeff(u.ux, u.uy);
+    await update_topl(mal_aura('you'));
     const invent = game.invent || [];
     let nobj = 0;
     for (const o of invent) if (o && o.oclass !== COIN_CLASS) nobj++;
-    // Antimagic / Half_spell_damage would shrink the divisor; neither is
-    // reachable for the heroes that get here, so the divisor is 1.
-    let cnt = rnd(6);
+    // C ref: sit.c:593 rnd(6 / ((!!Antimagic) + (!!Half_spell_damage) + 1)).
+    const half_spdam = !!(u.HHalf_spell_damage || u.EHalf_spell_damage
+        || u.uprops?.HHalf_spell_damage || D.inv.worn_extrinsic(HALF_SPDAM));
+    let cnt = rnd(Math.trunc(6 / ((antimagic ? 1 : 0) + (half_spdam ? 1 : 0) + 1)));
     if (nobj) {
         for (; cnt > 0; cnt--) {
             let onum = rnd(nobj);
@@ -393,7 +403,13 @@ async function rndcurse() {
                 if (--onum === 0) { otmp = o; break; }
             }
             if (!otmp || otmp.cursed) continue;
-            // C's artifact "resists" arm (rn2(10) < 8) needs SPFX_INTEL.
+            // C ref: sit.c:609 intelligent artifacts resist 80% of the time.
+            if (otmp.oartifact && D.art.spec_ability(otmp, D.art.SPFX_INTEL)
+                && rn2(10) < 8) {
+                const nm = D.inv.xname(otmp);
+                await update_topl(`${/^[A-Z]/.test(nm) ? '' : 'The '}${nm} ${D.inv.otense(otmp, 'resist')}!`);
+                continue;
+            }
             if (otmp.blessed) unbless(otmp);
             else curse(otmp);
         }
@@ -1902,8 +1918,6 @@ function vtense_pr(subj, verb) {
     if ((/[^us]s$/i.test(s)) || /(eeth|feet|ia|ae)$/i.test(s)) return verb;
     return `${verb}s`;
 }
-// C ref: hacklib.c s_suffix().
-function s_suffix_pr(s) { return /s$/.test(String(s)) ? `${s}'` : `${s}'s`; }
 // C ref: hacklib.c upstart().
 function upstart_pr(s) { return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s; }
 // C ref: hacklib.c An(str) — capitalised indefinite article.
@@ -1967,7 +1981,7 @@ export async function at_your_feet(str) {
     if (u.uswallow) {
         /* barrier between you and the floor */
         await D.dsp.pline(`${str} ${vtense_pr(str, 'drop')} into `
-            + `${s_suffix_pr(D.dnm.mon_nam(u.ustuck))} `
+            + `${s_suffix(D.dnm.mon_nam(u.ustuck))} `
             + `${D.pol.mbodypart(u.ustuck, 18 /*STOMACH*/)}.`);
     } else {
         await D.dsp.pline(`${str} ${vtense_pr(str, Blind() ? 'land' : 'appear')} `
@@ -2028,7 +2042,7 @@ export async function gcrownu() {
             D.art.artiname(P_ART_VORPAL_BLADE));
         await verbalize('Thou shalt be my Envoy of Balance!');
         livelog_printf(D.llg.LL_DIVINEGIFT,
-            `became ${s_suffix_pr(u_gname())} Envoy of Balance`);
+            `became ${s_suffix(u_gname())} Envoy of Balance`);
         break;
     case A_CHAOTIC:
         u.uevent = u.uevent || {};
@@ -2253,7 +2267,7 @@ export async function offer_real_amulet(otmp, altaralign) {
         await D.dsp.pline(`${Moloch} shrugs and retains dominion over`
             + ` ${u_gname()},`);
         await D.dsp.pline('then mercilessly snuffs out your life.');
-        game._killer_name = `${s_suffix_pr(Moloch)} indifference`;
+        game._killer_name = `${s_suffix(Moloch)} indifference`;
         game._killer_format = P_KILLED_BY;
         await D.end.done(P_DIED);
         /* life-saved (or declined to die in wizard/explore mode) */

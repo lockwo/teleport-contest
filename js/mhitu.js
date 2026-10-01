@@ -18,6 +18,7 @@
 // body, never at module top level, so neither evaluation order hits a TDZ.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE,
@@ -53,6 +54,7 @@ import { YOUMONST } from './mhitm_ad.js';
 import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u } from './potion.js';
 import { youmonst_data_pub as youmonst_data } from './invent.js';
 import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu } from './mondata.js';
+import { Monnam, mon_nam } from './do_name.js';
 
 const is_hero = (m) => m === YOUMONST;
 
@@ -502,7 +504,7 @@ export async function hitmsg(mtmp, mattk) {
     const h = game._hitmsg || (game._hitmsg = {});
     h.mid = mtmp.m_id; h.slot = mattk._slot; h.aatyp = mattk.aatyp;
 }
-const s_suffix = (s) => (/s$/.test(s) ? `${s}'` : `${s}'s`);
+
 
 // ═══ mhitu.c:85 missmu ══════════════════════════════════════════════════════
 // js/monmove.js owns the live copy on the mattacku path; this one exists so the
@@ -1692,9 +1694,10 @@ export function mhitu_ops() {
         u_slow_down,
         canseemon: canseemon_shared,
         canspotmon: canseemon_shared,
-        Monnam: (m) => canseemon_shared(m)
-            ? `The ${m?.data?.name || 'monster'}` : 'It',
-        mon_nam: (m) => m?.data?.name || 'monster',
+        // C ref: do_name.c Monnam()/mon_nam() — "the <mon>", "it" when the
+        // hero cannot spot the attacker, hallucination-aware.
+        Monnam: (m) => is_hero(m) ? 'You' : Monnam(m),
+        mon_nam: (m) => is_hero(m) ? 'you' : mon_nam(m),
         ACURR_DEX: () => acurr_eff(A_DEX),
         set_wounded_legs: async (...args) =>
             (await import('./trap.js')).set_wounded_legs(...args),

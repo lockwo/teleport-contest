@@ -27,6 +27,7 @@
 // real port, and the header comment says which original to export instead.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import {
     A_NONE, A_LAWFUL, A_NEUTRAL, A_CHAOTIC, A_CHA, G_GONE, NON_PM,
@@ -502,11 +503,6 @@ function align_gname_of(alignment) {
     const mnum = game.urole?.mnum ?? game.u?.umonnum ?? 9;
     const i = roles.findIndex((r) => r.mnum === mnum);
     return align_gname((i >= 0) ? i : mnum, alignment);
-}
-// C ref: objnam.c s_suffix(str).
-function s_suffix(s) {
-    if (s.endsWith('s')) return `${s}'`;
-    return `${s}'s`;
 }
 
 // C ref: minion.c:259 `#define Athome (Inhell && (mtmp->cham == NON_PM))`.

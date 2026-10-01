@@ -15,6 +15,7 @@
 // dumped from the recorder's own objects.o) via mkobj.js base_oc_cost().
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
          mksobj, place_object, remove_object, dealloc_obj, bill_dummy_object,
          newomid, MAGIC_LAMP, OIL_LAMP, BRASS_LANTERN, MAGIC_MARKER,
@@ -808,7 +809,7 @@ export function Shknam(shkp) {
     const s = shkname(shkp);
     return s.charAt(0).toUpperCase() + s.slice(1);
 }
-const s_suffix = (s) => (/s$/.test(s) ? `${s}'` : `${s}'s`);
+
 const plur = (n) => (n === 1 ? '' : 's');
 // C ref: pline.c verbalize() — the line wrapped in double quotes.
 const verbalize = (line) => update_topl(`"${line}"`);

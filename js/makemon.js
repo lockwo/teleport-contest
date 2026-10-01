@@ -5,7 +5,7 @@
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, d, rn1 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { christen_monst } from './do_name.js';
+import { christen_monst, mhim, mhis } from './do_name.js';
 import { builds_up, In_hell, Is_special, level_difficulty_c } from './dungeon.js';
 import { roles } from './role.js';
 import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
@@ -2292,10 +2292,7 @@ function m_initinv_full(mtmp) {
             }
         }
         break;
-    case 33: { // S_GNOME — C ref: makemon.c:807
-        // C creates the candle, sets quan/owt and mpickobj()s it; the port
-        // built the object and threw it away, so the gnome carried nothing (and
-        // `mtmp->minvent ? 5 : 10` in the gold tail below read the wrong arm).
+    case 33: { // S_GNOME — C ref: makemon.c:807-816
         if (!rn2((In_mines_js() && game.in_mklev) ? 20 : 60)) {
             const otmp = mksobj(rn2(4) ? 224 /*TALLOW_CANDLE*/ : 225 /*WAX_CANDLE*/,
                                 true, false);
@@ -2304,7 +2301,20 @@ function m_initinv_full(mtmp) {
                 otmp.owt = weight(otmp);
                 mtmp._hasinv = true;
                 mpickobj(mtmp, otmp);
-                /* C: begin_burn() when the square is unlit — display only */
+                // C ref: makemon.c:814-815 `if (!mpickobj(...) &&
+                // !levl[mx][my].lit) begin_burn(otmp, FALSE)` — mpickobj()
+                // only merges into an EXISTING stack, which a gnome's very
+                // first candle never has, so the condition reduces to "square
+                // is unlit": a candle given out on dark ground starts burning
+                // immediately.  Routed through gstate's hooks (js/light.js
+                // registers hooks.gnomeCandleLight) because light.js already
+                // imports name_to_pmidx from this file, so the reverse import
+                // would cycle — the same indirection js/vision.js uses for
+                // hooks.lightsources.  Skips begin_burn()/start_timer()'s
+                // multi-hundred-turn burn-out timer, which stays async and
+                // never fires within any covered recording anyway.
+                const loc = game.level?.at(mtmp.mx, mtmp.my);
+                if (loc && !loc.lit) hooks.gnomeCandleLight?.(mtmp.mx, mtmp.my, otmp);
             }
         }
         break;
@@ -3145,7 +3155,22 @@ export function newcham(mtmp, mdat) {
         return 0;
     }
     const changed = apply_newcham(mtmp, mdat, olddata);
-    if (changed) newcham_worm(mtmp, mdat);
+    if (changed) {
+        // C ref: mon.c newcham() -> worn.c mon_break_armor(mtmp, polyspot) runs
+        // UNCONDITIONALLY after set_mon_data, even when msg is suppressed (the
+        // creation-time caller passes NO_NC_FLAGS).  mon_break_armor's first two
+        // statements draw `pronoun = mhim(mon), ppronoun = mhis(mon)` before any
+        // armor-fit check, so both rn2(4)s fire even for a brand-new monster
+        // that has no armor yet (its default inventory is given AFTER newcham()
+        // returns — makemon.c:1368 allow_minvent = FALSE).  Only the RNG is
+        // replicated here: the async message/shedding path (possibly_unwield,
+        // mon_break_armor's own pline()s, mselftouch) is still unported for this
+        // sync call site, which is moot at creation (no armor exists yet) but a
+        // real gap for the later runtime newcham() callers (mon.js/zap.js/
+        // mhitm.js/uhitm.js) that may already be wearing armor.
+        mhim(mtmp); mhis(mtmp);
+        newcham_worm(mtmp, mdat);
+    }
     return changed;
 }
 
@@ -4282,9 +4307,11 @@ export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
 // message; null if no monster could be made (bad name, no good spot, genocided).
 export async function create_particular_monster(name, mmflags = 0) {
     const pmidx = name_to_pmidx(name);
-    let ptr;
+    let ptr, firstchoice = NON_PM;
     if (pmidx >= 0) {
-        ptr = MONS[pmidx];
+        const { create_particular_species } = await import('./read.js');
+        firstchoice = pmidx;
+        ptr = MONS[await create_particular_species(pmidx)];
     } else {
         // C ref: read.c:3231 create_particular_parse() — when `name` does not
         // exactly name a species, C falls back to name_to_monclass() (a bare
@@ -4310,16 +4337,16 @@ export async function create_particular_monster(name, mmflags = 0) {
     // The placement RNG has been spent; makemon must not re-run it, so pass the
     // resolved (x,y).  MM_NOGRP keeps it from drawing group RNG (a named ptr is
     // anymon==FALSE in C, which already skips groups).
-    // MM_NOWAIT is the one caller flag that still matters past the placement:
-    // it suppresses the mflags3 STRAT_WAITFORU/CLOSE/APPEARMSG block, which is
-    // what wizard.c resurrect() passes.
     // MM_APPARXY_BYYOU tells makemon() that byyou was true in C (this caller
     // IS the byyou placement search), so it still runs the `if (byyou) {
     // newsym(); set_apparxy(); }` tail at the right point in its own body.
     const mtmp = makemon(ptr, spot.x, spot.y,
-                         MM_NOGRP | MM_APPARXY_BYYOU | (mmflags & MM_NOWAIT));
+                         MM_NOGRP | MM_APPARXY_BYYOU | mmflags);
     if (!mtmp) return null;
     placeOnLevel(mtmp, spot.x, spot.y);
+    if (mtmp.cham != null && mtmp.cham !== NON_PM && firstchoice !== NON_PM
+        && mtmp.cham !== firstchoice)
+        newcham(mtmp, monster_by_pmidx(firstchoice));
 
     // next2u(x,y): chebyshev distance <= 1 from the hero.
     const next2u = Math.max(Math.abs(spot.x - u.ux), Math.abs(spot.y - u.uy)) <= 1;

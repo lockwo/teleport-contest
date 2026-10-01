@@ -7,6 +7,7 @@
 // generated naturally for any session whose level state is materialized.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { NORMAL_SPEED, A_NEUTRAL, ROOM, is_pit, MAX_CARR_CAP, WT_HUMAN,
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU, I_SPECIAL,
@@ -459,7 +460,7 @@ export async function were_summon(ptr) {
 // !Protection_from_shape_changers FIRST (so no draw while protected), while the
 // animal branch tests !rn2(30) first (so the draw ALWAYS happens).
 // C ref: youprop.h Deaf — HDeaf (a timed intrinsic) or EDeaf (worn).  Same
-// shape as sounds.js Deaf_hero(); only the timed intrinsic is reachable.
+// shape as display.js Deaf_hero(); only the timed intrinsic is reachable.
 function Deaf() {
     const u = game.u;
     return ((u?.uprops?.HDeaf ?? 0) > 0) || !!u?.Deaf;
@@ -1252,7 +1253,7 @@ function cloak_simple_name_mon(obj) {
     if (obj?.otyp === 144 /* ALCHEMY_SMOCK */) return 'apron';
     return 'cloak';
 }
-function s_suffix_mon(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 
 // C ref: worn.c:1177 mon_break_armor(mon, polyspot) — a monster whose FORM just
 // changed (new_were, newcham, polymorph) sheds or bursts the armour that no
@@ -1277,19 +1278,19 @@ export async function mon_break_armor(mon, polyspot) {
         }
         if ((otmp = which_armor_mon(mon, W_ARMC)) != null
             && (otmp.otyp !== MUMMY_WRAPPING_OTYP || !WrappingAllowed(mdat))) {
-            if (vis) await update_topl(`${s_suffix_mon(Monnam(mon))} ${cloak_simple_name_mon(otmp)} tears apart!`);
+            if (vis) await update_topl(`${s_suffix(Monnam(mon))} ${cloak_simple_name_mon(otmp)} tears apart!`);
             else await hear('a ripping sound.');
             m_useup_armor(mon, otmp);
         }
         if ((otmp = which_armor_mon(mon, W_ARMU)) != null) {
-            if (vis) await update_topl(`${s_suffix_mon(Monnam(mon))} shirt rips to shreds!`);
+            if (vis) await update_topl(`${s_suffix(Monnam(mon))} shirt rips to shreds!`);
             else await hear('a ripping sound.');
             m_useup_armor(mon, otmp);
         }
     } else if (sliparm_mon(mdat)) {
         const passes_thru_clothes = !((mdat.msize ?? 0) <= MZ_SMALL_M);
         if ((otmp = which_armor_mon(mon, W_ARM)) != null) {
-            if (vis) await update_topl(`${s_suffix_mon(Monnam(mon))} armor falls around ${pronoun}!`);
+            if (vis) await update_topl(`${s_suffix(Monnam(mon))} armor falls around ${pronoun}!`);
             else await hear('a thud.');
             m_lose_armor(mon, otmp, polyspot);
         }
@@ -1297,7 +1298,7 @@ export async function mon_break_armor(mon, polyspot) {
             && (otmp.otyp !== MUMMY_WRAPPING_OTYP || !WrappingAllowed(mdat))) {
             if (vis)
                 await update_topl(is_whirly_mon(mdat)
-                    ? `${s_suffix_mon(Monnam(mon))} ${cloak_simple_name_mon(otmp)} falls, unsupported!`
+                    ? `${s_suffix(Monnam(mon))} ${cloak_simple_name_mon(otmp)} falls, unsupported!`
                     : `${Monnam(mon)} shrinks out of ${ppronoun} ${cloak_simple_name_mon(otmp)}!`);
             m_lose_armor(mon, otmp, polyspot);
         }
@@ -1323,7 +1324,7 @@ export async function mon_break_armor(mon, polyspot) {
     if (handless_or_tiny || has_horns(mdat)) {
         if ((otmp = which_armor_mon(mon, W_ARMH)) != null
             && (handless_or_tiny || !is_flimsy(otmp))) {
-            if (vis) await update_topl(`${s_suffix_mon(Monnam(mon))} helmet falls to the ${surface_mon(mon)}!`);
+            if (vis) await update_topl(`${s_suffix(Monnam(mon))} helmet falls to the ${surface_mon(mon)}!`);
             else await hear('a clank.');
             m_lose_armor(mon, otmp, polyspot);
         }
@@ -1332,8 +1333,8 @@ export async function mon_break_armor(mon, polyspot) {
         if ((otmp = which_armor_mon(mon, W_ARMF)) != null) {
             if (vis)
                 await update_topl(is_whirly_mon(mdat)
-                    ? `${s_suffix_mon(Monnam(mon))} boots fall away!`
-                    : `${s_suffix_mon(Monnam(mon))} boots ${(mdat.msize ?? 0) < MZ_SMALL_M
+                    ? `${s_suffix(Monnam(mon))} boots fall away!`
+                    : `${s_suffix(Monnam(mon))} boots ${(mdat.msize ?? 0) < MZ_SMALL_M
                         ? 'slide' : 'are pushed'} off ${ppronoun} feet!`);
             m_lose_armor(mon, otmp, polyspot);
         }
@@ -2147,7 +2148,7 @@ export async function meatbox(mon, otmp) {
            distant_name() private and exports only the doname flavour, so the
            plain xname is used; the "far away" pretense only ever suppresses
            BUC/enchantment detail. */
-        await pline(`${s_suffix_mon(The_mon(xname(otmp)))} contents spill out`
+        await pline(`${s_suffix(The_mon(xname(otmp)))} contents spill out`
             + ` onto the ${surface(x, y)}.`);
     }
     const { obj_extract_self } = await import('./invent.js');
@@ -2659,7 +2660,7 @@ export async function lifesaved_monster(mtmp) {
            checked either — a glowing/disintegrating amulet is always visible. */
         if (cansee(mtmp.mx, mtmp.my)) {
             await pline('But wait...');
-            await pline(`${s_suffix_mon(Monnam(mtmp))} medallion begins to glow!`);
+            await pline(`${s_suffix(Monnam(mtmp))} medallion begins to glow!`);
             const { makeknown } = await import('./invent.js');
             makeknown(AMULET_OF_LIFE_SAVING_OTYP);
             /* the amulet is visible even when the monster is not */

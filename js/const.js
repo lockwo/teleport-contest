@@ -2935,18 +2935,19 @@ export function Is_earthlevel(uz) { const lev = uz ?? game?.u?.uz; const el = ga
 export function Is_airlevel(uz) { const lev = uz ?? game?.u?.uz; const al = game?.air_level; return !!lev && !!al && lev.dnum === al.dnum && lev.dlevel === al.dlevel; }
 // C ref: youprop.h Unaware = (gm.multi < 0 && (unconscious() || is_fainted())),
 // with trap.c unconscious() = multi < 0 && (u.usleep || nomovemsg begins with
-// "You awake" / "You regain con" / "You are consci").  Reading the nomovemsg
-// prefix is how C itself decides this — eat.c rottenfood() sets exactly
-// "You are conscious again." — so no separate flag is needed.  Lives here (a
-// leaf) because both allmain.js (gethungry's slowed metabolism) and timeout.js
-// (make_deaf's message suppression) need it.
+// "You awake" / "You regain con" / "You are consci") and eat.c is_fainted() =
+// (u.uhs == FAINTED).  Reading the nomovemsg prefix is how C itself decides
+// this — eat.c rottenfood() sets exactly "You are conscious again." — so no
+// separate flag is needed.  Lives here (a leaf) because allmain.js (gethungry's
+// slowed metabolism), timeout.js (make_deaf's message suppression) and
+// display.js (the You_hear()/You_feel() dream prefixes) need it.
 export function Unaware() {
     const g = game;
     if ((g?.multi ?? 0) >= 0) return false;
     if (g?.u?.usleep) return true;
     const m = g?.nomovemsg || '';
     return m.startsWith('You awake') || m.startsWith('You regain con')
-        || m.startsWith('You are consci');
+        || m.startsWith('You are consci') || g?.u?.uhs === FAINTED;
 }
 
 export function In_mines(uz) { return (uz ?? game?.u?.uz)?.dnum === game?.mines_dnum; }
