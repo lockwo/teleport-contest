@@ -16,7 +16,7 @@ import {
 import {
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU, W_AMUL, W_ART,
     W_ARMOR, W_ARTI, W_RINGL, W_RINGR, W_WEP, W_SWAPWEP, W_QUIVER, W_TOOL,
-    W_SADDLE, W_BALL, W_CHAIN,
+    W_SADDLE, W_BALL, W_CHAIN, I_SPECIAL,
 } from './const.js';
 // Cycle with makemon.js (which imports m_dowear from here) is safe: both sides
 // only touch the other's bindings from inside function bodies.
@@ -28,23 +28,27 @@ const ARMOR_CLASS = 3, AMULET_CLASS = 5, WEAPON_CLASS = 2, TOOL_CLASS = 6;
 const TELEPAT = 30;  // prop.h
 const BOLT_LIM = 8;  // hack.h
 
-// C ref: worn.c recalc_telepat_range() — BOLT_LIM*BOLT_LIM per worn TELEPAT
-// source, -1 with none.  C caches it in u.unblind_telepat_range from
-// setworn()/setnotworn()/set_artifact_intrinsic(); the hero's worn slots have no
-// single choke point in this port, so it is derived on demand instead (same
-// value — it is a pure function of what is worn).
+// C ref: worn.c:48-69 recalc_telepat_range() — BOLT_LIM*BOLT_LIM per worn
+// TELEPAT source, -1 with none.  C counts the worn[] slots whose occupant has
+// oc_oprop == TELEPAT, then adds one for all SPFX_ESP artifacts together.
+//
+// That count is exactly the population count of ETelepat, because setworn() sets
+// one slot bit per conferring object.  This used to re-derive it by scanning the
+// 16 slots, because the port had no setworn() property step; js/invent.js
+// worn_extrinsics_on()/off() now maintain u.uprops_extrinsic the way C does, so
+// read the word instead of keeping a second representation of the same fact.
+function popcount(n) {
+    let c = 0;
+    for (let v = n | 0; v; v &= v - 1) c++;
+    return c;
+}
 export function recalc_telepat_range() {
     const u = game.u;
     if (!u) return -1;
-    // C ref: worn.c worn[] — every hero worn/wielded slot, in C's order.
-    const slots = [game.uarm, game.uarmc, game.uarmh, game.uarms, game.uarmg,
-        game.uarmf, game.uarmu, game.uleft, game.uright, game.uwep,
-        game.uswapwep, game.uquiver, game.uamul, game.ublindf, u.uball, u.uchain];
-    let nobjs = 0;
-    for (const o of slots)
-        if (o && objects[o.otyp]?.oc_oprop === TELEPAT) nobjs++;
-    // C: `if (ETelepat & W_ART) nobjs++` — all SPFX_ESP artifacts count as one.
-    if ((u.uprops_extrinsic?.[TELEPAT] || 0) & W_ART) nobjs++;
+    const etelepat = (u.uprops_extrinsic?.[TELEPAT] || 0);
+    // C: `if (ETelepat & W_ART) nobjs++` — all SPFX_ESP artifacts count as one,
+    // however many slots carry them, so the artifact bit is counted separately.
+    const nobjs = popcount(etelepat & ~W_ART) + ((etelepat & W_ART) ? 1 : 0);
     u.unblind_telepat_range = nobjs ? (BOLT_LIM * BOLT_LIM) * nobjs : -1;
     return u.unblind_telepat_range;
 }
@@ -152,7 +156,7 @@ const AMULET_OF_GUARDING = 210;
 // (measured: resolving unconditionally sends every @-form werecreature down
 // m_dowear's is_animal() early-out and costs the whole w3-elf-wiz gain).
 const _pm_cache = new Map();
-function species(mon) {
+export function species(mon) {
     const dat = mon?.data;
     if (!dat) return null;
     if (dat.ac != null) return dat;      /* a full makemon() permonst */
@@ -268,7 +272,7 @@ function blocks_invis(obj) { return obj?.otyp === MUMMY_WRAPPING; }
 // `default:` arm that ORs res_to_mr(which) in is a no-op here; what DOES have an
 // effect is the FAST arm (worn speed boots override permspeed) and the
 // w_blocks() invisibility arm.
-function update_mon_extrinsics(mon, obj, on) {
+export function update_mon_extrinsics(mon, obj, on) {
     // FAST: C calls mon_adjust_speed(mon, 0, obj), which only re-derives mspeed
     // from "is a FAST item worn"; with silently/in_mklev set it prints nothing.
     // SPEED_BOOTS is the only ARMOR_CLASS otyp with oc_oprop == FAST.
@@ -656,8 +660,6 @@ function is_weptool_worn(obj) {
         && (objects[obj?.otyp]?.oc_skill ?? 0) !== 0;
 }
 
-// C ref: prop.h I_SPECIAL (js/artifact.js:2370 keeps the same constant).
-const I_SPECIAL = 0x10000000;
 // C ref: hack.h impossible() — this port has no panic/impossible channel, so
 // the complaints check_wornmask_slots() would raise are collected here instead.
 export const worn_slot_insanity = [];

@@ -25,6 +25,22 @@ import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { update_topl, topl_more, render_map_to_grid, docrt } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
+import { count_status_hilites } from './options.js';
+
+// C ref: dat/symbols "Handling:" lines per symset `start:` block — game.symset
+// (jsmain.js) stores only the selected symset NAME (no handling struct, unlike
+// symbols.c's gs.symset[PRIMARYSET]), so this mirrors the file's per-set
+// Handling: value for the "handler=" suffix optfn_symset() prints (get_val,
+// options.c:4200-4209).  Names without a Handling: line (plain/Blank/
+// AmigaFont) correctly have no entry here -> no handler= suffix, matching C's
+// handling==H_UNK(0) skip.
+const SYMSET_HANDLING = {
+    ibmgraphics: 'IBM', ibmgraphics_1: 'IBM', ibmgraphics_2: 'IBM',
+    rogueibm: 'IBM', rogueepyx: 'IBM', roguewindows: 'IBM',
+    curses: 'DEC', decgraphics: 'DEC',
+    macgraphics: 'MAC',
+    enhanced1: 'UTF8', enhanced2: 'UTF8',
+};
 
 const COLS = 80;
 const ROWS = 24;
@@ -115,30 +131,59 @@ const SIMPLE_SECTIONS = [
         { name: 'hilite_pile',   kind: 'bool',     val: () => boolStr('hilite_pile', false) },
         { name: 'showrace',      kind: 'bool',     val: () => boolStr('showrace', false) },
         { name: 'sparkle',       kind: 'bool',     val: () => boolStr('sparkle', true) },
-        { name: 'symset',        kind: 'compound', val: () => 'DECgraphics, active, handler=DEC' },
+        { name: 'symset',        kind: 'compound', val: () => symsetStr() },
     ] },
     { name: 'Status', items: [
         { name: 'hitpointbar',             kind: 'bool',     val: () => boolStr('hitpointbar', false) },
         { name: 'menu colors',             kind: 'other',    val: () => '(0 currently set)' },
         { name: 'showexp',                 kind: 'bool',     val: () => boolStr('showexp', false) },
         { name: 'status condition fields', kind: 'other',    val: () => '(16 currently set)' },
-        { name: 'status highlight rules',  kind: 'other',    val: () => '(0 currently set)' },
+        { name: 'status highlight rules',  kind: 'other',    val: () => `(${count_status_hilites()} currently set)` },
         { name: 'statuslines',             kind: 'compound', val: () => '2' },
         { name: 'time',                    kind: 'bool',     val: () => boolStr('time', false) },
     ] },
 ];
 
+// The storage key a boolean option's value actually lives under, when it
+// isn't just game.flags[name].  C ref: options.c set_bool_via_field() &c —
+// the same handful of names js/options.js's set_boolean() (options.js:1421)
+// redirects to a different field for.  Shared by doset_simple's boolStr
+// below and doset()'s full-menu live values so both menus read the one
+// place an rc line or a prior toggle actually wrote.
+function rawBoolValue(name) {
+    game.flags = game.flags || {};
+    switch (name) {
+    case 'autopickup': return game.flags.pickup;
+    case 'fixinv':     return game.flags.invlet_constant;
+    case 'cmdassist':  return game.iflags?.cmdassist;
+    case 'altmeta':    return game.iflags?.altmeta;
+    default:           return game.flags[name];
+    }
+}
+
 // Boolean display value: "X" when on, " " when off.  Tracks any toggles made
 // during this menu session via game.flags.
 function boolStr(name, dflt) {
-    game.flags = game.flags || {};
-    let v;
-    switch (name) {
-    case 'autopickup': v = game.flags.pickup; break;
-    default:           v = game.flags[name]; break;
-    }
+    let v = rawBoolValue(name);
     if (v === undefined) v = dflt;
     return v ? 'X' : ' ';
+}
+
+// C ref: options.c optfn_symset() get_val (4200-4209) — name-or-"default",
+// then ", active" (currentgraphics==PRIMARYSET, which this build always is:
+// ROGUESET switching isn't modeled, see js/options.js:571), then
+// ", handler=X" when the set has one.  game.symset is the plain rc-selected
+// name (jsmain.js:305; '' when unset, e.g. an `!DECgraphics` negation is a
+// no-op per optfn_graphics_compat, js/options.js:1676-1688).
+function symsetStr() {
+    const name = game.symset || '';
+    let s = name || 'default';
+    if (name) {
+        s += ', active';
+        const h = SYMSET_HANDLING[name.toLowerCase()];
+        if (h) s += `, handler=${h}`;
+    }
+    return s;
 }
 
 function autopickupOn() {
@@ -166,19 +211,19 @@ const OPT_MENU_ENTRIES = [
     {"t":"x","text":"     [To suppress this menu help, toggle off the 'cmdassist' option.]"},
     {"t":"x","text":""},
     {"t":"x","text":" Booleans (selecting will toggle value):","inv":true},
-    {"t":"x","text":"     blind                   [false]"},
-    {"t":"x","text":"     bones                   [true]"},
-    {"t":"x","text":"     deaf                    [false]"},
-    {"t":"x","text":"     legacy                  [true]"},
-    {"t":"x","text":"     news                    [false]"},
-    {"t":"x","text":"     nudist                  [false]"},
-    {"t":"x","text":"     pauper                  [false]"},
-    {"t":"x","text":"     reroll                  [false]"},
-    {"t":"x","text":"     selectsaved             [true]"},
-    {"t":"x","text":"     status_updates          [true]"},
-    {"t":"x","text":"     tutorial                [true]"},
-    {"t":"x","text":"     use_darkgray            [true]"},
-    {"t":"x","text":"     use_truecolor           [false]"},
+    {"t":"x","text":"     blind                   [false]","name":"blind"},
+    {"t":"x","text":"     bones                   [true]","name":"bones"},
+    {"t":"x","text":"     deaf                    [false]","name":"deaf"},
+    {"t":"x","text":"     legacy                  [true]","name":"legacy"},
+    {"t":"x","text":"     news                    [false]","name":"news"},
+    {"t":"x","text":"     nudist                  [false]","name":"nudist"},
+    {"t":"x","text":"     pauper                  [false]","name":"pauper"},
+    {"t":"x","text":"     reroll                  [false]","name":"reroll"},
+    {"t":"x","text":"     selectsaved             [true]","name":"selectsaved"},
+    {"t":"x","text":"     status_updates          [true]","name":"status_updates"},
+    {"t":"x","text":"     tutorial                [true]","name":"tutorial"},
+    {"t":"x","text":"     use_darkgray            [true]","name":"use_darkgray"},
+    {"t":"x","text":"     use_truecolor           [false]","name":"use_truecolor"},
     {"t":"x","text":"     voices                  [excluded from build]"},
     {"t":"a","a":"a","body":"accessiblemsg           [false]","name":"accessiblemsg","kind":"bool"},
     {"t":"a","a":"a","body":"acoustics               [true]","name":"acoustics","kind":"bool"},
@@ -333,6 +378,32 @@ const PICKUP_CLASSES = [
     {a:'o', sym:'_', label:'iron chain'},
 ];
 
+// OPT_MENU_ENTRIES's bracketed value for every plain-boolean line (both the
+// non-modifiable "Booleans" list and the a..z-accelerated ones) is a snapshot
+// baked from ONE authoring game (name Septor, role Rogue, race orc, legacy
+// and tutorial both explicitly on) — see the module comment.  A boolean whose
+// value that authoring run happened to share with a true optlist.h default is
+// still right for any other run today; one it set non-default (legacy,
+// tutorial — and anything a different session's own rc/menu touches) is not.
+// Recompute the bracket from this run's actual game.flags/iflags (falling
+// back to the baked word when this run never touched the option), reusing
+// rawBoolValue so both this and doset_simple's boolStr read the identical
+// storage location per name.  Only rewrites a trailing "[true]"/"[false]"/
+// "[on]"/"[off]" — anything else (e.g. voices' "[excluded from build]") is
+// left verbatim.
+function liveOptValue(name, bakedText) {
+    const m = bakedText.match(/\[(true|false|on|off)\]\s*$/);
+    if (!m) return { text: bakedText, on: null };
+    const onWord = (m[1] === 'true' || m[1] === 'false') ? 'true' : 'on';
+    const offWord = (m[1] === 'true' || m[1] === 'false') ? 'false' : 'off';
+    const bakedOn = (m[1] === onWord);
+    let v = name ? rawBoolValue(name) : undefined;
+    if (v === undefined) v = bakedOn;
+    const word = v ? onWord : offWord;
+    const text = bakedText.slice(0, m.index) + `[${word}]` + bakedText.slice(m.index + m[0].length);
+    return { text, on: !!v };
+}
+
 function disp() { return game.nhDisplay; }
 
 // Clear a row from `from` to end of line.
@@ -357,16 +428,18 @@ function renderOptionsPage(entries, page, npages, selected) {
             // Verbatim line; headings/title carry ATR_INVERSE on the text only
             // (the leading space stays plain — C draws the inversion over the
             // option text via menu_headings = no-color&inverse).
-            if (e.text) {
-                const lead = e.text.match(/^ */)[0].length;
-                d.putstr(0, r, e.text.slice(0, lead), NO_COLOR, 0);
-                d.putstr(lead, r, e.text.slice(lead), NO_COLOR, e.inv ? ATR_INVERSE : 0);
+            const text = e.name ? liveOptValue(e.name, e.text).text : e.text;
+            if (text) {
+                const lead = text.match(/^ */)[0].length;
+                d.putstr(0, r, text.slice(0, lead), NO_COLOR, 0);
+                d.putstr(lead, r, text.slice(lead), NO_COLOR, e.inv ? ATR_INVERSE : 0);
             }
         } else {
             // Selectable: " <accel> <-|+> <body>" at col 0 (leading space + text
             // at col 1).  '?' help item is never selectable-marked here.
             const mark = selected.has(i) ? '+' : '-';
-            d.putstr(0, r, ` ${e.a} ${mark} ${e.body}`, NO_COLOR, 0);
+            const body = e.kind === 'bool' ? liveOptValue(e.name, e.body).text : e.body;
+            d.putstr(0, r, ` ${e.a} ${mark} ${body}`, NO_COLOR, 0);
         }
     }
     // Page footer (morestr): "(N of M)" with no trailing space when paged,
@@ -558,7 +631,19 @@ function buildSimpleFlat() {
         items.push({ type: 'blank' });
         items.push({ type: 'heading', name: sec.name });
         for (const it of sec.items) {
-            let body = it.name.padEnd(NAMEW, ' ') + ' [' + it.val() + ']';
+            // C ref: options.c doset_simple_menu() -- fmtstr is "%-Ns [%s]"
+            // normally but literally "%s\t[%s]" (no padding) when
+            // iflags.menu_tab_sep is set.  Verified against a real recorder
+            // build (patches/006-nomux-capture.patch's nomux_putch(): "if
+            // (... ch < 32) return;" -- a raw tab byte is < 32, so it is
+            // silently dropped by the shadow-buffer writer while wintty's
+            // own per-char loop still advances curx by one; the net visible
+            // effect on the 80x24 capture is exactly ONE blank column, never
+            // a real tab stop jump) -- so render one literal space here,
+            // not '\t', to match the captured screen byte-for-byte.
+            let body = game.iflags?.menu_tab_sep
+                ? `${it.name} [${it.val()}]`
+                : it.name.padEnd(NAMEW, ' ') + ' [' + it.val() + ']';
             if (it.apsuffix) body += '  (for autopickup)';
             items.push({ type: 'item', selectable: true, kind: it.kind,
                          name: it.name, item: it, body });
@@ -617,9 +702,12 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
             d.putstr(0, r, ' ', NO_COLOR, 0);
             d.putstr(1, r, it.name, NO_COLOR, ATR_INVERSE);
         } else if (it.type === 'heading') {
-            // Section heading: " %-30s " (32-wide) fully inverse at col 1;
+            // Section heading: C only paints " <name>" inverse (ESC[7m General
+            // ESC[24C ESC[0m — the 24-column pad to the 32-wide field is a
+            // cursor-forward past cells the earlier clearRow() already left
+            // default, never a rewrite), not the whole 32-wide padded field.
             // col 0 is the plain menu leading space.
-            const head = ' ' + it.name.padEnd(30, ' ') + ' ';
+            const head = ' ' + it.name;
             d.putstr(0, r, ' ', NO_COLOR, 0);
             d.putstr(1, r, head, NO_COLOR, ATR_INVERSE);
         } else if (it.type === 'item') {
@@ -712,6 +800,13 @@ function toggleSimpleBool(name) {
         game.flags.pickup = !cur;
         return;
     }
+    if (name === 'cmdassist') {
+        game.iflags = game.iflags || {};
+        const cur = game.iflags.cmdassist === undefined
+            ? SIMPLE_BOOL_DEFAULT.cmdassist : !!game.iflags.cmdassist;
+        game.iflags.cmdassist = !cur;
+        return;
+    }
     const dflt = SIMPLE_BOOL_DEFAULT[name] ?? false;
     const cur = game.flags[name] === undefined ? dflt : !!game.flags[name];
     game.flags[name] = !cur;
@@ -760,8 +855,11 @@ export async function doset() {
     for (const e of picks) {
         if (e.kind === 'bool') {
             // parseoptions toggles the boolean; the displayed value is the
-            // pre-toggle one, so a [false]/[off] option turns "on".
-            const wasOff = /\[(false|off)\]/.test(e.body);
+            // pre-toggle one, so a [false]/[off] option turns "on".  Read
+            // that pre-toggle value LIVE (liveOptValue), not off the entry's
+            // static baked body — the body can be stale for any run whose
+            // rc/menu already set this option away from the snapshot's value.
+            const wasOff = !liveOptValue(e.name, e.body).on;
             applyBooleanToggle(e.name, wasOff);
             await update_topl(`'${e.name}' option toggled ${wasOff ? 'on' : 'off'}.`);
         } else if (e.name === 'pickup_types') {
@@ -793,6 +891,12 @@ function applyBooleanToggle(name, turnOn) {
     game.flags = game.flags || {};
     switch (name) {
     case 'autopickup': game.flags.pickup = turnOn; break;
+    // C ref: js/options.js:1421 set_boolean() — the same two names that
+    // land under a different field than game.flags[name] when set from an
+    // rc line; the interactive menu must write the same place.
+    case 'fixinv': game.flags.invlet_constant = turnOn; break;
+    case 'altmeta': (game.iflags = game.iflags || {}).altmeta = turnOn; break;
+    case 'cmdassist':  (game.iflags = game.iflags || {}).cmdassist = turnOn; break;
     case 'showexp':    game.flags.showexp = turnOn; break;
     case 'time':       game.flags.time = turnOn; break;
     case 'verbose':    game.flags.verbose = turnOn; break;

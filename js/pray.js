@@ -3,30 +3,34 @@
 // gods_upset(), godvoice(), pleased(), in_trouble().
 //
 // The whole prayer decision tree is ported: can_pray()'s four p_type outcomes,
-// angrygods()'s eight rn2(maxanger) arms, and pleased()'s favour switch.  Three
-// effects bottom out in subsystems this port does not have and are marked at
-// their call site (summon_minion, god_zaps_you's death, dosacrifice's
-// floorfood prompt); everything else, including every discarded RNG draw, runs.
+// angrygods()'s eight rn2(maxanger) arms, and pleased()'s favour switch.
+// summon_minion() (angrygods() case 7/8 and both sacrifice-path calls) is
+// wired to js/minion.js's faithful port.  Two remaining effects bottom out in
+// subsystems this port does not have and are marked at their call site
+// (god_zaps_you's death, dosacrifice's floorfood prompt); everything else,
+// including every discarded RNG draw, runs.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd } from './rng.js';
-import { update_topl, y_n, newsym } from './display.js';
+import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
 import { align_gname } from './role.js';
-import { A_WIS, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
+import { A_WIS, A_STR, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     A_ORIGINAL, AM_SHRINE, AM_SANCTUM, AM_CHAOTIC, AM_MASK, Amask2align,
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMIN, LUCKMAX, MM_NOMSG,
-    IS_OBSTRUCTED, SDOOR, SCORR } from './const.js';
+    IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE, HALF_SPDAM } from './const.js';
 import { isok } from './hacklib.js';
-import { OMONST } from './const.js';
+import { OMONST, W_BALL, W_CHAIN, FROMOUTSIDE } from './const.js';
 import { adjalign, exercise, adjattrib } from './attrib.js';
-import { losexp, xlev_to_rank } from './exper.js';
+import { losexp, xlev_to_rank, pluslvl } from './exper.js';
 import { heal_legs } from './trap.js';
 import { hcolor, a_monnam } from './do_name.js';
 import { Blind } from './vision.js';
 import { In_hell } from './dungeon.js';
-import { curse, uncurse, unbless, mkobj, place_object, BALL_CLASS, CHAIN_CLASS,
-    COIN_CLASS, POTION_CLASS, POT_WATER, objects as OBJECTS } from './mkobj.js';
-import { livelog_printf, LL_CONDUCT, LL_MINORAC } from './livelog.js';
+import { curse, uncurse, unbless, bless, mkobj, place_object, BALL_CLASS, CHAIN_CLASS,
+    COIN_CLASS, POTION_CLASS, POT_WATER, HELM_OF_OPPOSITE_ALIGNMENT,
+    objects as OBJECTS } from './mkobj.js';
+import { livelog_printf, LL_CONDUCT, LL_MINORAC, LL_DIVINEGIFT, LL_ARTIFACT } from './livelog.js';
 import { mflags2_of, is_undead_flag, likes_gems_flag,
     M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC } from './monflags_data.js';
 import { CORPSE, AMULET_OF_YENDOR, FOOD_CLASS, AMULET_CLASS } from './mkobj.js';
@@ -50,8 +54,8 @@ const TROUBLE_PUNISHED = -1, TROUBLE_FUMBLING = -2, TROUBLE_CURSED_ITEMS = -3,
 const HUNGRY = 2, WEAK = 3;
 // C ref: attrib.h ATTRMIN(A_WIS) for a non-Gnome/Human hero is 3.
 const ATTRMIN = 3;
-// C ref: obj.h WT_IRON_BALL_INCR / prop.h W_BALL / W_CHAIN (js/read.js:67).
-const WT_IRON_BALL_INCR = 160, W_BALL = 0x10000, W_CHAIN = 0x20000;
+// C ref: obj.h WT_IRON_BALL_INCR (js/read.js:67); W_BALL/W_CHAIN from const.js.
+const WT_IRON_BALL_INCR = 160;
 
 // Prayer-resolution scratch state (C globals gp.p_type / gp.p_aligntyp /
 // gp.p_trouble), stored on `game` so it resets per segment.
@@ -371,16 +375,25 @@ async function losexp_with_livelog() {
 }
 
 // C ref: sit.c rndcurse() — curse a few random inventory items.
-async function rndcurse() {
+export async function rndcurse() {
     const u = game.u;
-    // C's leading u_wield_art(ART_MAGICBANE) escape needs an artifact weapon.
-    await update_topl('You feel a malignant aura surround you.');
+    const D = await loadPrayExtras();
+    const mal_aura = (who) => `You feel a malignant aura surround ${who}.`;
+    // C ref: sit.c:576 u_wield_art(ART_MAGICBANE) && rn2(20).
+    if (D.art.is_art(game.uwep, D.art.ART_MAGICBANE) && rn2(20)) {
+        await update_topl(mal_aura('the magic-absorbing blade'));
+        return;
+    }
+    const antimagic = D.zap.Antimagic();
+    if (antimagic) await D.dsp.shieldeff(u.ux, u.uy);
+    await update_topl(mal_aura('you'));
     const invent = game.invent || [];
     let nobj = 0;
     for (const o of invent) if (o && o.oclass !== COIN_CLASS) nobj++;
-    // Antimagic / Half_spell_damage would shrink the divisor; neither is
-    // reachable for the heroes that get here, so the divisor is 1.
-    let cnt = rnd(6);
+    // C ref: sit.c:593 rnd(6 / ((!!Antimagic) + (!!Half_spell_damage) + 1)).
+    const half_spdam = !!(u.HHalf_spell_damage || u.EHalf_spell_damage
+        || u.uprops?.HHalf_spell_damage || D.inv.worn_extrinsic(HALF_SPDAM));
+    let cnt = rnd(Math.trunc(6 / ((antimagic ? 1 : 0) + (half_spdam ? 1 : 0) + 1)));
     if (nobj) {
         for (; cnt > 0; cnt--) {
             let onum = rnd(nobj);
@@ -390,7 +403,13 @@ async function rndcurse() {
                 if (--onum === 0) { otmp = o; break; }
             }
             if (!otmp || otmp.cursed) continue;
-            // C's artifact "resists" arm (rn2(10) < 8) needs SPFX_INTEL.
+            // C ref: sit.c:609 intelligent artifacts resist 80% of the time.
+            if (otmp.oartifact && D.art.spec_ability(otmp, D.art.SPFX_INTEL)
+                && rn2(10) < 8) {
+                const nm = D.inv.xname(otmp);
+                await update_topl(`${/^[A-Z]/.test(nm) ? '' : 'The '}${nm} ${D.inv.otense(otmp, 'resist')}!`);
+                continue;
+            }
             if (otmp.blessed) unbless(otmp);
             else curse(otmp);
         }
@@ -529,8 +548,13 @@ async function angrygods(resp_god) {
             && a_align(game.u.ux, game.u.uy) !== resp_god)
             ? 'scorn' : 'call upon'} me?`);
         await update_topl(`"Then die, ${heroIsHuman() ? 'mortal' : 'creature'}!"`);
-        // GAP: minion.c summon_minion(resp_god, FALSE) — no minion subsystem
-        // here, so the servant (and its makemon RNG) is not created.
+        // C ref: minion.c:198 summon_minion(resp_god, FALSE) — js/minion.js
+        // exports the faithful port; dynamic import avoids a static cycle
+        // (minion.js reaches pray.js through extcmd-handlers.js).
+        {
+            const { summon_minion } = await import('./minion.js');
+            await summon_minion(resp_god, false);
+        }
         break;
     default:
         await gods_angry(resp_god);
@@ -551,7 +575,7 @@ async function gods_upset(g_align) {
 }
 
 // C ref: pray.c align thresholds (pray.c:64-67).
-const DEVOUT = 14;
+const DEVOUT = 14, PIOUS = 20;
 
 // C ref: pray.c:373 fix_worst_trouble(trouble).
 //
@@ -672,17 +696,20 @@ async function fix_worst_trouble(trouble) {
     case TROUBLE_CURSED_BLINDFOLD:
         await fix_curse_trouble(game.ublindf, null);
         break;
-    case TROUBLE_LYCANTHROPE:
-        // C: were.c you_unwere(TRUE) — set_ulycn(NON_PM) plus the line.  The
-        // rehumanize()/mtimedone half needs a were POLYFORM, which needs
-        // polyself; in_trouble() keys on u.ulycn, which this clears.
-        await update_topl('You feel purified.');
-        u.ulycn = -1;
+    case TROUBLE_LYCANTHROPE: {
+        // C ref: were.c you_unwere(TRUE) — "You feel purified.", cure
+        // lycanthropy (set_ulycn(NON_PM)), and revert from beast form (or
+        // re-arm the shift timer) if currently shifted.
+        const { you_unwere } = await import('./polyself.js');
+        await you_unwere(true);
         break;
-    case TROUBLE_PUNISHED:
+    }
+    case TROUBLE_PUNISHED: {
         await update_topl('Your chain disappears.');
-        unpunish_local();
+        const { unpunish } = await import('./read.js');
+        unpunish();
         break;
+    }
     case TROUBLE_FUMBLING: {
         let otmp = null;
         if (Cursed_obj(game.uarmg, 'GAUNTLETS_OF_FUMBLING')) otmp = game.uarmg;
@@ -765,22 +792,48 @@ function ringglow(otmp) {
     if (otmp && otmp === game.uright) return 'Your right ring softly glows';
     return null;
 }
-// C ref: ball.c unpunish() — free the ball and chain.  js/read.js:1317 has the
-// other copy; both only have to make Punished (uball != 0) false again.
-function unpunish_local() {
+
+// C ref: hacklib.c an(str) — indefinite article, lowercase.  Every other file
+// in this port keeps its own copy (js/do.js, js/eat.js, js/dothrow.js, ...).
+function an_pr(s) { return /^[aeiou]/i.test(String(s)) ? `an ${s}` : `a ${s}`; }
+
+// C ref: youprop.h H<Name> intrinsic words.  This port has been observed to
+// store the same timer under a bare key ('Fast') and/or an H-prefixed key
+// ('HFast') depending on which file last wrote it (js/potion.js:75 HProp()
+// is the canonical multi-key reader; js/pray.js:1786 gcrownu() is the
+// canonical multi-key writer).  Read/write both spellings so pleased()'s
+// gratuitous-gift case agrees with every other reader in the tree.
+function HProp_pr(key) {
     const u = game.u;
-    const objs = game.level?.objects;
-    for (const o of [u.uchain, u.uball]) {
-        if (!o) continue;
-        o.owornmask = 0;
-        if (Array.isArray(objs)) {
-            const i = objs.indexOf(o);
-            if (i >= 0) objs.splice(i, 1);
-        }
-    }
-    if (u.uchain && isok(u.uchain.ox, u.uchain.oy)) newsym(u.uchain.ox, u.uchain.oy);
-    u.uchain = null;
-    u.uball = null;
+    const v = u?.uprops?.[key] ?? u?.[key];
+    return v ? (typeof v === 'number' ? v : 1) : 0;
+}
+function setHProp_pr(key, val) {
+    const u = game.u;
+    if (!u) return;
+    u.uprops = u.uprops || {};
+    u.uprops[key] = val;
+    u[key] = val;
+}
+
+// C ref: mondata.h is_human(ptr) applied to gy.youmonst.data — the hero's
+// current form (mons[] entry), Upolyd or not.  js/artifact.js:511
+// youmonst_data() documents the same u.umonnum encoding this mirrors:
+// polymorphed, u.umonnum IS the mons[] index; otherwise it is a 0-based ROLE
+// index needing the PM_ARCHEOLOGIST offset.
+const ROLE_PM_FIRST_PR = 331; /* PM_ARCHEOLOGIST */
+function hero_is_human_pr() {
+    const u = game.u;
+    const pmidx = u?.Upolyd ? (u.umonnum ?? 0) : (ROLE_PM_FIRST_PR + (u?.umonnum ?? 0));
+    const ptr = _mkm ? _mkm.monster_by_pmidx(pmidx) : null;
+    return (mflags2_of(ptr) & M2_HUMAN) !== 0;
+}
+
+// C ref: pline.c You_hear() Deaf gate, reduced to the same HDeaf test
+// in_trouble() above already uses (pray.js:225/712).
+function Deaf_pr() {
+    const u = game.u;
+    return (((u?.uprops?.HDeaf | 0) || (u?.HDeaf | 0)) > 1);
 }
 
 // C ref: pray.c pleased(g_align) — the god grants a favor.  fix_worst_trouble()
@@ -845,9 +898,152 @@ async function pleased(g_align) {
     }
 
     if (pat_on_head) {
-        // GAP: pray.c:1167 switch (rn2((Luck + 6) >> 1)) — the gratuitous-favor
-        // table (uncurse/bless weapon, gcrownu, give_spell, ...).  Reached only
-        // at record >= DEVOUT or action 5.
+        // C ref: pray.c:1167 switch (rn2((Luck + 6) >> 1)) — the gratuitous-favor
+        // table.  Luck() is >= 0 here: can_pray() already refused a negative-Luck
+        // prayer, so the modulus is always >= 3 and rn2() never sees <= 0.
+        switch (rn2((Luck() + 6) >> 1)) {
+        case 0:
+            break; /* your god blows you off, too bad */
+        case 1: {
+            const uwep = game.uwep;
+            if (uwep && (_inv.welded(uwep) || uwep.oclass === WEAPON_CLASS_PR
+                         || _inv.is_weptool(uwep))) {
+                let repair_buf = (uwep.oeroded || uwep.oeroded2)
+                    ? ` and ${_inv.otense(uwep, 'are')} now as good as new` : '';
+                if (uwep.cursed) {
+                    if (!Blind())
+                        await update_topl(`${Yobjnam2_local(uwep, 'softly glow')} `
+                            + `${hcolor('amber')}${repair_buf}.`);
+                    else
+                        await update_topl(`You feel the power of ${u_gname()} `
+                            + `over ${_inv.yname(uwep)}.`);
+                    uncurse(uwep);
+                    uwep.bknown = 1;
+                    repair_buf = '';
+                } else if (!uwep.blessed) {
+                    if (!Blind())
+                        await update_topl(`${Yobjnam2_local(uwep, 'softly glow')} `
+                            + `with ${an_pr(hcolor('light blue'))} aura${repair_buf}.`);
+                    else
+                        await update_topl(`You feel the blessing of ${u_gname()} `
+                            + `over ${_inv.yname(uwep)}.`);
+                    bless(uwep);
+                    uwep.bknown = 1;
+                    repair_buf = '';
+                }
+                if (uwep.oeroded || uwep.oeroded2) {
+                    uwep.oeroded = uwep.oeroded2 = 0;
+                    if (repair_buf)
+                        await update_topl(`${Yobjnam2_local(uwep, Blind() ? 'feel' : 'look')} `
+                            + 'as good as new!');
+                }
+                _inv.update_inventory();
+            }
+            break;
+        }
+        case 3: {
+            u.uevent = u.uevent || {};
+            if (!u.uevent.uopened_dbridge && !u.uevent.gehennom_entered) {
+                if ((u.uevent.uheard_tune | 0) < 1) {
+                    await godvoice(g_align, null);
+                    await verbalize(`Hark, ${hero_is_human_pr() ? 'mortal' : 'creature'}!`);
+                    await verbalize('To enter the castle, thou must play the right tune!');
+                    u.uevent.uheard_tune = (u.uevent.uheard_tune | 0) + 1;
+                    break;
+                } else if (u.uevent.uheard_tune < 2) {
+                    if (!Deaf_pr()) await update_topl('You hear a divine music...');
+                    await update_topl('It sounds like:  '
+                        + `"${(game.tune || []).join('').replace(/\0/g, '')}".`);
+                    u.uevent.uheard_tune = (u.uevent.uheard_tune | 0) + 1;
+                    const { record_achievement } = await import('./insight.js');
+                    record_achievement(ACH_TUNE);
+                    break;
+                }
+            }
+            /* FALLTHROUGH */
+        }
+        case 2: {
+            if (!Blind())
+                await update_topl(`You are surrounded by ${an_pr(hcolor('golden'))} glow.`);
+            if ((u.ulevel | 0) < (u.ulevelmax | 0)) {
+                u.ulevelmax = (u.ulevelmax | 0) - 1;
+                await pluslvl(false, update_topl);
+            } else {
+                u.uhpmax = (u.uhpmax | 0) + 5;
+                if (u.uhpmax > (u.uhppeak | 0)) u.uhppeak = u.uhpmax;
+                if (u.Upolyd) u.mhmax = (u.mhmax | 0) + 5;
+            }
+            u.uhp = u.uhpmax;
+            if (u.Upolyd) u.mh = u.mhmax;
+            if (ABASE(A_STR) < AMAX(A_STR)) {
+                u.acurr.a[A_STR] = AMAX(A_STR);
+                game.botl = true; /* before potential message */
+                await _inv.encumber_msg();
+            }
+            if ((u.uhunger | 0) < 900) init_uhunger();
+            if ((u.uluck | 0) < 0) u.uluck = 0;
+            u.ucreamed = 0;
+            await _pot.make_blinded_hero(0, true);
+            game.botl = true;
+            break;
+        }
+        case 4: {
+            let any = 0;
+            if (Blind()) await update_topl(`You feel the power of ${u_gname()}.`);
+            else await update_topl(`You are surrounded by ${an_pr(hcolor('light blue'))} aura.`);
+            for (const otmp of (game.invent || [])) {
+                if (otmp && otmp.cursed
+                    && (otmp !== game.uarmh || game.uarmh.otyp !== HELM_OF_OPPOSITE_ALIGNMENT)) {
+                    if (!Blind()) {
+                        await update_topl(`${Yobjnam2_local(otmp, 'softly glow')} ${hcolor('amber')}.`);
+                        otmp.bknown = 1;
+                        any++;
+                    }
+                    uncurse(otmp);
+                }
+            }
+            if (any) _inv.update_inventory();
+            break;
+        }
+        case 5: {
+            await godvoice(u.ualign?.type ?? 0, 'Thou hast pleased me with thy progress,');
+            const giftMsg = (what) => update_topl(`"and thus I grant thee the gift of ${what}!"`);
+            if (!(HProp_pr('HTelepat') & INTRINSIC)) {
+                setHProp_pr('HTelepat', (HProp_pr('HTelepat') | 0) | FROMOUTSIDE);
+                await giftMsg('Telepathy');
+                if (Blind()) see_monsters();
+            } else if (!(HProp_pr('HFast') & INTRINSIC)) {
+                setHProp_pr('HFast', (HProp_pr('HFast') | 0) | FROMOUTSIDE);
+                await giftMsg('Speed');
+            } else if (!(HProp_pr('HStealth') & INTRINSIC)) {
+                setHProp_pr('HStealth', (HProp_pr('HStealth') | 0) | FROMOUTSIDE);
+                await giftMsg('Stealth');
+            } else {
+                if (!(HProp_pr('HProtection') & INTRINSIC)) {
+                    setHProp_pr('HProtection', (HProp_pr('HProtection') | 0) | FROMOUTSIDE);
+                    if (!u.ublessed) u.ublessed = rn1(3, 2);
+                } else {
+                    u.ublessed = (u.ublessed | 0) + 1;
+                }
+                await giftMsg('my protection');
+            }
+            await verbalize('Use it wisely in my name!');
+            break;
+        }
+        case 7:
+        case 8:
+            if (record >= PIOUS && !(u.uevent && u.uevent.uhand_of_elbereth)) {
+                await gcrownu();
+                break;
+            }
+            /* FALLTHROUGH */
+        case 6:
+            await give_spell();
+            break;
+        default:
+            await impossible('Confused deity!');
+            break;
+        }
     }
 
     // reset prayer timeout (kick_on_butt is 0 for a non-demigod hero).
@@ -1036,12 +1232,16 @@ async function god_zaps_you(_resp_god) {
 
 // Lazily imported to keep pray.js off invent.js's import cycle; the same
 // pattern js/attrib.js uses for display.js.
-let _inv = null, _mkm = null, _art = null, _pri = null;
+let _inv = null, _mkm = null, _art = null, _pri = null, _wep = null, _oin = null,
+    _pot = null;
 async function loadSacDeps() {
     if (!_inv) _inv = await import('./invent.js');
     if (!_mkm) _mkm = await import('./makemon.js');
     if (!_art) _art = await import('./artifact.js');
     if (!_pri) _pri = await import('./priest.js');
+    if (!_wep) _wep = await import('./weapon.js');
+    if (!_oin) _oin = await import('./o_init.js');
+    if (!_pot) _pot = await import('./potion.js');
 }
 
 // C ref: obj.h carried(obj).
@@ -1280,8 +1480,9 @@ async function offer_different_alignment_altar(otmp, altaralign) {
         }
         if (rnl(u.ulevel | 0) > 6 && (u.ualign?.record ?? 0) > 0
             && rnd(u.ualign.record) > Math.floor((3 * ALIGNLIM()) / 4)) {
-            // GAP: minion.c summon_minion(altaralign, TRUE) — no minion
-            // subsystem, so the servant and its makemon RNG are not created.
+            // C ref: minion.c:198 summon_minion(altaralign, TRUE).
+            const { summon_minion } = await import('./minion.js');
+            await summon_minion(altaralign, true);
         }
         await angry_priest();
     } else {
@@ -1290,7 +1491,9 @@ async function offer_different_alignment_altar(otmp, altaralign) {
         exercise(A_WIS, false);
         if (rnl(u.ulevel | 0) > 6 && (u.ualign?.record ?? 0) > 0
             && rnd(u.ualign.record) > Math.floor((7 * ALIGNLIM()) / 8)) {
-            // GAP: summon_minion(altaralign, TRUE), as above.
+            // C ref: minion.c:198 summon_minion(altaralign, TRUE), as above.
+            const { summon_minion } = await import('./minion.js');
+            await summon_minion(altaralign, true);
         }
     }
 }
@@ -1411,13 +1614,35 @@ async function bestow_artifact(max_giftvalue) {
     let do_bestow = (u.ulevel | 0) > 2 && (u.uluck | 0) >= 0;
     if (do_bestow) {
         if (game.flags?.debug) do_bestow = (await y_n('Gift an artifact?')) === 'y';
-        else do_bestow = !rn2(10 + (2 * (u.ugifts | 0) * nartifacts));
+        else do_bestow = !rn2(6 + (2 * (u.ugifts | 0) * nartifacts));
     }
     if (!do_bestow) return false;
-    // GAP: the artifact gift itself (mk_artifact + hold_another_object +
-    // discover_artifact) belongs to js/artifact.js; the rn2 gate above, which
-    // is what shifts the stream, does run.
-    return false;
+
+    const otmp = _art.mk_artifact(null, a_align(u.ux, u.uy), max_giftvalue, true);
+    if (!otmp) return false;
+
+    _art.artifact_origin(otmp, P_ONAME_GIFT | P_ONAME_KNOW_ARTI);
+    if ((otmp.spe | 0) < 0) otmp.spe = 0;
+    if (otmp.cursed) uncurse(otmp);
+    otmp.oerodeproof = true;
+    let buf = Hallucination() ? 'a doodad' : Blind() ? 'an object' : _inv.ansimpleoname(otmp);
+    if (!Blind()) buf += ` named ${_art.bare_artifactname(otmp)}`;
+    await at_your_feet(upstart_pr(buf));
+    dropy_pr(_inv, otmp);
+    await godvoice(u.ualign?.type ?? 0, 'Use my gift wisely!');
+    u.ugifts = (u.ugifts | 0) + 1;
+    u.ublesscnt = rnz(300 + (50 * nartifacts));
+    exercise(A_WIS, true);
+    livelog_printf(LL_DIVINEGIFT | LL_ARTIFACT,
+        `was bestowed with ${_art.artiname(otmp.oartifact)} by `
+        + `${align_gname(roleMnum(), u.ualign?.type ?? 0)}`);
+    await _wep.unrestrict_weapon_skill(_wep.weapon_type(otmp));
+    if (!Hallucination() && !Blind()) {
+        _oin.observe_object(otmp);
+        _inv.makeknown(otmp.otyp);
+        _art.discover_artifact(otmp.oartifact);
+    }
+    return true;
 }
 
 // C ref: pray.c:1898 eval_offering(otmp, altaralign) — the corpse's worth,
@@ -1485,7 +1710,7 @@ async function offer_corpse(otmp, highaltar, altaralign) {
     if (omon && omon.mtame) {
         await update_topl('So this is how you repay loyalty?');
         adjalign(-3);
-        u.HAggravate_monster = (u.HAggravate_monster | 0) | 0x10000 /* FROMOUTSIDE */;
+        u.HAggravate_monster = (u.HAggravate_monster | 0) | FROMOUTSIDE;
         await offer_negative_valued(highaltar, altaralign);
         return;
     }
@@ -1693,8 +1918,6 @@ function vtense_pr(subj, verb) {
     if ((/[^us]s$/i.test(s)) || /(eeth|feet|ia|ae)$/i.test(s)) return verb;
     return `${verb}s`;
 }
-// C ref: hacklib.c s_suffix().
-function s_suffix_pr(s) { return /s$/.test(String(s)) ? `${s}'` : `${s}'s`; }
 // C ref: hacklib.c upstart().
 function upstart_pr(s) { return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s; }
 // C ref: hacklib.c An(str) — capitalised indefinite article.
@@ -1758,7 +1981,7 @@ export async function at_your_feet(str) {
     if (u.uswallow) {
         /* barrier between you and the floor */
         await D.dsp.pline(`${str} ${vtense_pr(str, 'drop')} into `
-            + `${s_suffix_pr(D.dnm.mon_nam(u.ustuck))} `
+            + `${s_suffix(D.dnm.mon_nam(u.ustuck))} `
             + `${D.pol.mbodypart(u.ustuck, 18 /*STOMACH*/)}.`);
     } else {
         await D.dsp.pline(`${str} ${vtense_pr(str, Blind() ? 'land' : 'appear')} `
@@ -1819,7 +2042,7 @@ export async function gcrownu() {
             D.art.artiname(P_ART_VORPAL_BLADE));
         await verbalize('Thou shalt be my Envoy of Balance!');
         livelog_printf(D.llg.LL_DIVINEGIFT,
-            `became ${s_suffix_pr(u_gname())} Envoy of Balance`);
+            `became ${s_suffix(u_gname())} Envoy of Balance`);
         break;
     case A_CHAOTIC:
         u.uevent = u.uevent || {};
@@ -2044,7 +2267,7 @@ export async function offer_real_amulet(otmp, altaralign) {
         await D.dsp.pline(`${Moloch} shrugs and retains dominion over`
             + ` ${u_gname()},`);
         await D.dsp.pline('then mercilessly snuffs out your life.');
-        game._killer_name = `${s_suffix_pr(Moloch)} indifference`;
+        game._killer_name = `${s_suffix(Moloch)} indifference`;
         game._killer_format = P_KILLED_BY;
         await D.end.done(P_DIED);
         /* life-saved (or declined to die in wizard/explore mode) */

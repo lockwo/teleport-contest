@@ -2,6 +2,7 @@
 // C ref: src/role.c
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2 } from './rng.js';
 import {
     A_CHAOTIC, A_LAWFUL, A_NEUTRAL, A_NONE,
@@ -747,6 +748,17 @@ export function Hello(rolenum, mtmp) {
     }
 }
 
+// C ref: role.c Goodbye() — role-specific farewell for level loss and endings.
+export function Goodbye(rolenum) {
+    switch (rolenum) {
+    case PM_KNIGHT:   return 'Fare thee well';
+    case PM_SAMURAI:  return 'Sayonara';
+    case PM_TOURIST:  return 'Aloha';
+    case PM_VALKYRIE: return 'Farvel';
+    default:         return 'Goodbye';
+    }
+}
+
 // roles[].gods is [lawfulGod, neutralGod, chaoticGod].
 function godForAlign(rolenum, alignType) {
     // C ref: role.c role_init — a role with no own gods (Priest) inherits the
@@ -888,13 +900,6 @@ function promptsep(buf, num_post_attribs) {
     if (!gr.role_post_attribs && num_post_attribs > 1)
         buf += 'and ';
     return buf;
-}
-
-// C ref: hacklib.c s_suffix().
-function s_suffix(s) {
-    if (/^it$/i.test(s)) return s + 's';
-    if (/^you$/i.test(s)) return s + 'r';
-    return s + (s.endsWith('s') ? "'" : "'s");
 }
 
 // C ref: hacklib.c strsubst() — replaces the FIRST occurrence only.
@@ -1069,7 +1074,7 @@ export function RS_menu_arg(x) { return ROLE_RANDOM - (x + 1); }
 // this.  A "window" here is a plain object whose `strs` and `items` record what
 // C would have drawn, which is what makes the four setup_*menu() builders below
 // verifiable without a terminal.
-const NHW_MENU = 3, MENU_BEHAVE_STANDARD = 0;
+const NHW_MENU = 4, MENU_BEHAVE_STANDARD = 0;
 const ATR_NONE = 0, NO_COLOR = 0;
 const MENU_ITEMFLAGS_NONE = 0, MENU_ITEMFLAGS_SELECTED = 1;
 const PICK_ANY = 2;
@@ -1626,7 +1631,7 @@ export async function role_init() {
         // spellbook of light is a clerical spell rather than an attack one.
         const { objects } = await import('./mkobj.js');
         const SPE_LIGHT = objects.findIndex((o) => o.name === 'light');
-        const P_CLERIC_SPELL = 27;   /* skills.h */
+        const P_CLERIC_SPELL = 32;   /* skills.h */
         if (SPE_LIGHT >= 0) objects[SPE_LIGHT].oc_skill = P_CLERIC_SPELL;
     }
 

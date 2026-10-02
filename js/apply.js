@@ -22,6 +22,7 @@
 // hero_seq differ on the first use, giving the free ECMD_OK.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { CQ_CANNED } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 
@@ -33,9 +34,18 @@ import {
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 // Leaf data module (no imports of its own), so a static import is cycle-free.
 import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
+import { find_mac, species } from './worn.js';
 import {
     SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED,
     IS_AIR, IS_ROOM, IS_WALL, IS_DOOR,
+} from './const.js';
+// C ref: apply.c do_break_wand() — the shared explode() call, its direction
+// table, the dig-a-pit-vs-hole choice, and the room type the digging branch
+// treats as "no liquid to fill it".
+import {
+    EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY, N_DIRS, xdir, ydir,
+    DIGCHECK_FAILED, DIGCHECK_FAIL_BOULDER, PIT, HOLE, ROOM, ICE,
+    MELT_ICE_AWAY, NO_MM_FLAGS,
 } from './const.js';
 import { surface as surface_word } from './dungeon.js';
 
@@ -239,29 +249,29 @@ function mon_aligntyp(mtmp) {
     return algn > 0 ? 1 : algn < 0 ? -1 : 0;
 }
 
-// C ref: insight.c mstatusline(mtmp) — one-line monster status produced when the
-// stethoscope (or probing) is aimed at a monster.  The starter-session monsters
-// reach here without the worn/leashed/held/shapechanger/segment flags, so only
-// the ", tame"/", peaceful" prefix (info) and the size+align+HP+AC body matter;
-// any hidden-appearance suffix has already been stripped by seemimic() before
-// this is called for the stethoscope, matching C's comment at insight.c:3315.
+// C ref: insight.c mstatusline(mtmp), used by the stethoscope and probing.
 async function mstatusline(mtmp, update_topl) {
     let info = '';
-    if (mtmp.mtame) info += ', tame';
-    else if (mtmp.mpeaceful) info += ', peaceful';
-    // ", cancelled"/", confused"/", asleep"/", scared"/... state suffixes — none
-    // of the probed monsters in the owned sessions carry these when statused.
+    if (mtmp.mtame) {
+        info += ', tame';
+        if (game.flags?.debug) {
+            info += ` (${mtmp.mtame}`;
+            if (!mtmp.isminion)
+                info += `; hungry ${mtmp.edog.hungrytime}; apport ${mtmp.edog.apport}`;
+            info += ')';
+        }
+    } else if (mtmp.mpeaceful) info += ', peaceful';
     if (mtmp.mcan) info += ', cancelled';
     if (mtmp.mconf) info += ', confused';
     if (mtmp.mflee) info += ', scared';
 
     const name = x_monnam(mtmp, /*ARTICLE_YOUR*/ 3, null, 0, false);
     const align = align_str(mon_aligntyp(mtmp));
-    const sz = size_str(mtmp.data?.msize ?? MZ_MEDIUM);
+    const sz = size_str(species(mtmp)?.msize ?? MZ_MEDIUM);
     const mlev = mtmp.m_lev ?? mtmp.data?.mlevel ?? 0;
     const mhp = mtmp.mhp ?? 0;
     const mhpmax = mtmp.mhpmax ?? mhp;
-    const mac = (mtmp.data?.ac != null) ? mtmp.data.ac : 10;
+    const mac = find_mac(mtmp);
     await update_topl(
         `Status of ${name} (${align}, ${sz}):  Level ${mlev}  HP ${mhp}(${mhpmax})  AC ${mac}${info}.`);
 }
@@ -696,6 +706,34 @@ export async function doapply() {
         return await dowrite(obj);
     }
 
+    // C ref: apply.c `case TINNING_KIT: use_tinning_kit(obj); break;` — res is
+    // never reassigned in this case, so (per doapply()'s `int res = ECMD_TIME`
+    // default) applying a tinning kit ALWAYS costs a turn, even when nothing
+    // happens (no tins left, no corpse picked). use_tinning_kit() is exported
+    // by THIS file (line ~3232, module-local); only the dispatch arm was
+    // missing, so applying it fell through to "Sorry, I don't know how to use
+    // that." instead of prompting for a corpse to tin.
+    if (obj.otyp === TINNING_KIT) {
+        await use_tinning_kit(obj);
+        return ECMD_TIME;
+    }
+
+    // C ref: apply.c `case TIN_OPENER: res = use_tin_opener(obj);` — wields the
+    // opener (if not already wielded) then starts opening a carried tin.
+    // js/eat.js:3461 exports the full C port (use_tin_opener); only this
+    // dispatch arm was missing, so every apply of a tin opener fell through to
+    // "Sorry, I don't know how to use that." instead. eat.js returns the real
+    // hack.h bit values (ECMD_TIME_=0x01, ECMD_CANCEL_=0x02); this file's own
+    // ECMD_TIME/ECMD_CANCEL are renumbered (2/1), so translate rather than
+    // pass the code straight through.
+    if (obj.otyp === TIN_OPENER) {
+        const { use_tin_opener } = await import('./eat.js');
+        const r = await use_tin_opener(obj);
+        if (r & 0x01) return ECMD_TIME;
+        if (r & 0x02) return ECMD_CANCEL;
+        return ECMD_OK;
+    }
+
     // C ref apply.c:4258 — applying a cream pie immerses the hero's face in it.
     if (obj.otyp === CREAM_PIE) {
         return await use_cream_pie(obj);
@@ -749,6 +787,36 @@ export async function doapply() {
         return r === 3 ? ECMD_TIME : (r ? ECMD_CANCEL : ECMD_OK);
     }
 
+    // C ref apply.c:4337 `case CANDELABRUM_OF_INVOCATION: use_candelabrum(obj);
+    // break;` — res is never reassigned, so applying it always costs a turn.
+    // use_candelabrum() is exported by this file (line ~2935); only the
+    // dispatch arm was missing, so it fell through to "Sorry, I don't know
+    // how to use that." instead.
+    if (obj.otyp === CANDELABRUM_OF_INVOCATION) {
+        await use_candelabrum(obj);
+        return ECMD_TIME;
+    }
+
+    // C ref apply.c:4340-4342 `case WAX_CANDLE: case TALLOW_CANDLE:
+    // use_candle(&obj); break;` — likewise always costs a turn.  use_candle()
+    // (line ~2996) takes C's `struct obj **` as a one-field box so it can null
+    // out / replace the caller's obj after splitobj(); only the dispatch arm
+    // was missing.
+    if (obj.otyp === WAX_CANDLE || obj.otyp === TALLOW_CANDLE) {
+        await use_candle({ obj });
+        return ECMD_TIME;
+    }
+
+    // C ref apply.c:4344-4347 `case OIL_LAMP: case MAGIC_LAMP:
+    // case BRASS_LANTERN: use_lamp(obj); break;` — always costs a turn.
+    // use_lamp() (line ~3115) is a faithful port; only the dispatch arm was
+    // missing, so lighting/extinguishing any lamp or lantern fell through to
+    // "Sorry, I don't know how to use that." instead.
+    if (obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP || obj.otyp === BRASS_LANTERN) {
+        await use_lamp(obj);
+        return ECMD_TIME;
+    }
+
     // C ref apply.c:4400 default: — a polearm strikes at a distance, a
     // pick/axe digs.  Both are SUGGESTed by apply_ok(), so both are ordinary
     // picks at the "use or apply" prompt (a Knight's lance is invlet 'b', an
@@ -763,6 +831,27 @@ export async function doapply() {
         if (r === USE_PICK_AXE_DIG) return ECMD_TIME;
         return r === 1 ? ECMD_CANCEL : ECMD_OK;
     }
+
+    // C ref apply.c:4244 — case BLINDFOLD/LENSES: toggle via the shared
+    // Blindf_on/Blindf_off wear helpers; cursed() refuses removal.  res stays
+    // ECMD_TIME in every arm (including "already wearing").
+    if (obj.otyp === BLINDFOLD_OTYP || obj.otyp === LENSES) {
+        if (obj === game.ublindf) {
+            if (!(await _invent.curse_blocks_removal(obj)))
+                await _invent.Blindf_off(obj);
+        } else if (!game.ublindf) {
+            await _invent.Blindf_on(obj);
+        } else {
+            const ub = game.ublindf;
+            await _display.pline(`You are already ${
+                ub.otyp === TOWEL ? 'covered by a towel'
+                : ub.otyp === BLINDFOLD_OTYP ? 'wearing a blindfold'
+                : 'wearing lenses'}.`);
+        }
+        return ECMD_TIME;
+    }
+    // C ref apply.c: case TOWEL: res = use_towel(obj);
+    if (obj.otyp === TOWEL) return await use_towel(obj);
 
     // Any other tool isn't exercised; mirror C's "I don't know how to use that"
     // (C returns ECMD_FAIL here, which like ECMD_OK costs no turn).
@@ -783,10 +872,6 @@ async function flip_through_book(obj) {
     // does not, so use the observation-free accessor.
     await _display.pline(
         `You flip through the pages of the ${_invent.cxname_singular(obj)}.`);
-    // C's second You()/pline() call first acknowledges the previous topline's
-    // --More-- prompt. Keep that wait inside the command so invalid keys are
-    // consumed by more() and the follow-up text appears only after dismissal.
-    await _display.topl_more();
     if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
         // Deaf is never set for these heroes.
         await _display.pline(`You hear the pages make an unpleasant ${
@@ -847,14 +932,28 @@ async function flip_coin(obj) {
     return ECMD_TIME;
 }
 
-// C ref: apply.c do_break_wand(obj) — applying a wand breaks it.  The zap
-// effects (bhitm/bhito over the 3x3 area, explosion, shop damage) are a whole
-// unported subsystem, but the guards and the y/n confirmation in front of them
-// are NOT: C blocks on "Are you really sure you want to break <wand>?" and
-// consumes that keystroke.  Answering 'n' is fully faithful (ECMD_OK, no RNG);
-// answering 'y' prints the break line and stops before the effects.
+// apply.c do_break_wand() otyp constants (onames.h, matching mkobj.js's table).
+const WAN_LIGHT_OTYP = 410, WAN_SECRET_DOOR_DETECTION_OTYP = 411,
+      WAN_ENLIGHTENMENT_OTYP = 412, WAN_CREATE_MONSTER_OTYP = 413,
+      WAN_WISHING_OTYP = 414, WAN_STASIS_OTYP = 415, WAN_NOTHING_OTYP = 416,
+      WAN_STRIKING_OTYP = 417, WAN_UNDEAD_TURNING_OTYP = 421,
+      WAN_POLYMORPH_OTYP = 422, WAN_CANCELLATION_OTYP = 423,
+      WAN_TELEPORTATION_OTYP = 424, WAN_OPENING_OTYP = 425,
+      WAN_LOCKING_OTYP = 426, WAN_PROBING_OTYP = 427, WAN_DIGGING_OTYP = 428,
+      WAN_MAGIC_MISSILE_OTYP = 429, WAN_FIRE_OTYP = 430, WAN_COLD_OTYP = 431,
+      WAN_DEATH_OTYP = 433, WAN_LIGHTNING_OTYP = 434;
+
+// C ref: apply.c do_break_wand(obj) — applying a wand breaks it.  C blocks on
+// "Are you really sure you want to break <wand>?" and consumes that keystroke;
+// answering 'n' is fully faithful (ECMD_OK, no RNG).  Answering 'y' prints the
+// break line, then dispatches a per-otyp effect: the two explosion helpers
+// (broken_wand_explode/discard_broken_wand below) and the zap primitives they
+// share with weffects() (zappable/zapsetup/zapwrapup/bhitm/bhitpile/
+// zapyourself, all in js/zap.js) were already ported for that other caller —
+// this switch is the missing wiring, not new game logic.
 async function do_break_wand(obj) {
     await loadDeps();
+    const A = await ap_load();
     const { acurr_eff } = await import('./attrib.js');
     const A_STR = 0; // attrib.h — [Str,Int,Wis,Dex,Con,Cha]
     // C: objdescr_is(obj, "balsa") || objdescr_is(obj, "glass") — compares the
@@ -872,8 +971,165 @@ async function do_break_wand(obj) {
     await _display.pline(
         `Raising your ${_invent.cxname_singular(obj)} high above your head,`
                          + ` you ${is_fragile ? 'snap' : 'break'} it in two!`);
-    // zappable()/the per-otyp effect switch is unported; stop here rather than
-    // invent an RNG stream C does not draw.
+
+    // C: obj->unpaid -> check_unpaid(obj) + costly_alteration(obj, COST_DSTROY).
+    // Shop billing is a no-op elsewhere in this port too (js/invent.js
+    // check_unpaid() and js/trap.js costly_alteration() are both stubs);
+    // skipped here for the same reason, and likewise for pay_for_damage()
+    // below when a dug wall/door happens to be a shop's.
+    const u = game.u;
+    game.current_wand = obj;
+    A.invent.freeinv(obj);
+    // C: setnotworn(obj) clears the worn-item slots (uamul/uleft/.../uarmu);
+    // a wand is never any of those, so this is a no-op and is omitted.
+
+    if (!(await A.zap.zappable(obj))) {
+        await _display.pline('But nothing else happens...');
+        await discard_broken_wand();
+        return ECMD_TIME;
+    }
+    // Put back the charge zappable() just consumed, then apply do_break_wand's
+    // own "a used-up wand breaks harder" bump.
+    obj.spe = (obj.spe | 0) + 1;
+    if (!obj.spe) obj.spe = rnd(3);
+
+    obj.ox = u.ux; obj.oy = u.uy;
+    let dmg = obj.spe * 4;
+    let affects_objects = false;
+    let shop_damage = false;
+    let fillmsg = false;
+
+    switch (obj.otyp) {
+    case WAN_OPENING_OTYP:
+        if (u?.ustuck) {
+            await A.zap.release_hold();
+            if (obj.dknown) A.invent.makeknown(WAN_OPENING_OTYP);
+            await discard_broken_wand();
+            return ECMD_TIME;
+        }
+        /* FALLTHRU */
+    case WAN_WISHING_OTYP:
+    case WAN_NOTHING_OTYP:
+    case WAN_LOCKING_OTYP:
+    case WAN_PROBING_OTYP:
+    case WAN_ENLIGHTENMENT_OTYP:
+    case WAN_SECRET_DOOR_DETECTION_OTYP:
+    case WAN_STASIS_OTYP:
+        await _display.pline('But nothing else happens...');
+        await discard_broken_wand();
+        return ECMD_TIME;
+
+    case WAN_DEATH_OTYP:
+    case WAN_LIGHTNING_OTYP:
+        await broken_wand_explode(obj, dmg * 4, EXPL_MAGICAL);
+        return ECMD_TIME;
+    case WAN_FIRE_OTYP:
+        await broken_wand_explode(obj, dmg * 2, EXPL_FIERY);
+        return ECMD_TIME;
+    case WAN_COLD_OTYP:
+        await broken_wand_explode(obj, dmg * 2, EXPL_FROSTY);
+        return ECMD_TIME;
+    case WAN_MAGIC_MISSILE_OTYP:
+        await broken_wand_explode(obj, dmg, EXPL_MAGICAL);
+        return ECMD_TIME;
+
+    case WAN_STRIKING_OTYP:
+        // Soundeffect(se_wall_of_force, 65) is a no-op build without
+        // SYSTEM_SOUNDS (sndprocs.h) — nothing to port.
+        await _display.pline('A wall of force smashes down around you!');
+        dmg = d(1 + obj.spe, 6); /* normally 2d12 */
+        /* FALLTHRU */
+    case WAN_CANCELLATION_OTYP:
+    case WAN_POLYMORPH_OTYP:
+    case WAN_TELEPORTATION_OTYP:
+    case WAN_UNDEAD_TURNING_OTYP:
+        affects_objects = true;
+        break;
+    default:
+        break;
+    }
+
+    // Magical explosion and its visual effect occur before the per-otyp
+    // effects below (C's comment, verbatim).
+    await A.explodemod.explode(obj.ox, obj.oy, -(obj.otyp), rnd(dmg),
+                               WAND_CLASS, EXPL_MAGICAL);
+    A.zap.zapsetup(); /* prepare for potential feedback from polymorph */
+
+    // This makes it hit the hero last, so the hero sees the action first.
+    for (let i = 0; i <= N_DIRS; i++) {
+        const x = obj.ox + xdir[i], y = obj.oy + ydir[i];
+        if (!ap_isok(x, y)) continue;
+
+        if (obj.otyp === WAN_DIGGING_OTYP) {
+            const { dig_check, fillholetyp, digactualhole, liquid_flow, BY_OBJECT }
+                = await import('./dig.js');
+            const dcres = dig_check(BY_OBJECT, x, y);
+            if (dcres < DIGCHECK_FAILED || dcres === DIGCHECK_FAIL_BOULDER) {
+                const loc = game.level?.at(x, y);
+                const typ0 = loc?.typ ?? 0;
+                if (IS_WALL(typ0) || IS_DOOR(typ0)) {
+                    /* normally pits/holes don't anger guards, but a dug
+                       wall/door does */
+                    await A.trap.watch_dig(null, x, y, true);
+                    if (A.shkroom.in_rooms(x, y, SHOPBASE_A)?.length)
+                        shop_damage = true;
+                }
+                if (typ0 === ICE) {
+                    const { spot_stop_timers } = await import('./timeout.js');
+                    await spot_stop_timers(x, y, MELT_ICE_AWAY);
+                }
+                const typ = fillholetyp(x, y, false);
+                if (typ !== ROOM) {
+                    if (loc) { loc.typ = typ; loc.flags = 0; }
+                    await liquid_flow(x, y, typ, A.trap.t_at(x, y),
+                        fillmsg ? null : 'Some holes are quickly filled with %s!');
+                    fillmsg = true;
+                } else {
+                    const canDigDown = A.trap.Can_dig_down(u?.uz);
+                    const ttyp = (rn2(obj.spe) < 3 || (!canDigDown && !loc?.candig))
+                        ? PIT : HOLE;
+                    await digactualhole(x, y, BY_OBJECT, ttyp);
+                }
+            }
+            A.trap.fill_pit(x, y);
+            await maybe_dunk_boulders(x, y);
+            A.vision.recalc_block_point(x, y);
+            continue;
+        } else if (obj.otyp === WAN_CREATE_MONSTER_OTYP) {
+            /* u.ux,u.uy creates it near the hero — x,y might create it in rock */
+            A.makemon.makemon(null, u.ux, u.uy, NO_MM_FLAGS);
+            continue;
+        } else if (x !== u.ux || y !== u.uy) {
+            const mon = A.display.m_at(x, y);
+            if (mon) await A.zap.bhitm(mon, obj);
+            if (affects_objects && A.invent.objects_at(x, y).length) {
+                await A.zap.bhitpile(obj, x, y);
+                game.disp_botl = true; /* potion effects */
+            }
+        } else {
+            if (affects_objects && A.invent.objects_at(x, y).length) {
+                await A.zap.bhitpile(obj, x, y);
+                game.disp_botl = true; /* potion effects */
+            }
+            const damage = await A.zap.zapyourself(obj, false);
+            if (damage) {
+                const him = game.flags?.female ? 'her' : 'him';
+                await A.zap.losehp(A.zap.Maybe_Half_Phys(damage),
+                    `killed ${him}self by breaking a wand`);
+            }
+            game.disp_botl = true; /* blindness */
+        }
+    }
+
+    await A.zap.zapwrapup(); /* potentially give post zap/break feedback */
+    void shop_damage; /* pay_for_damage() — shop billing unported, see above */
+
+    if (obj.otyp === WAN_LIGHT_OTYP) {
+        const { litroom } = await import('./read.js');
+        await litroom(true, obj); /* only needs to be done once */
+    }
+
+    await discard_broken_wand();
     return ECMD_TIME;
 }
 
@@ -1021,7 +1277,7 @@ const C_OBJ_COLORS = [
 const RUBBER_HOSE_OTYP = 78; // mkobj.js OBJECT_DATA — the other is_flimsy item
 // C ref: obj.h:418 is_flimsy(otmp) — oc_material <= LEATHER, or a rubber hose.
 function is_flimsy_obj(obj) {
-    return (objects[obj?.otyp]?.oc_material ?? 99) <= MAT_LEATHER
+    return (objects[obj?.otyp]?.material ?? 99) <= MAT_LEATHER
         || obj?.otyp === RUBBER_HOSE_OTYP;
 }
 function plur(n) { return Number(n) === 1 ? '' : 's'; }
@@ -1095,7 +1351,7 @@ async function use_stone(tstone) {
     if (hallu) { await _display.pline('Oh wow, man: Fractals!'); return ECMD_TIME; }
 
     let do_scratch = false, streak_color = null;
-    const material = objects[obj.otyp]?.oc_material ?? 0;
+    const material = objects[obj.otyp]?.material ?? 0;
     // C ref: apply.c:2745 — a non-gemstone, non-mineral ring is neither gem nor
     // ring for the purposes of the switch below.
     let oclass = obj.oclass;
@@ -1310,11 +1566,13 @@ async function reapply_after_wield(obj) {
     const { moveloop_turn } = await import('./allmain.js');
     game.context = game.context || {};
     game.context.move = 0;
+    game._cmdqAbandonRetry = false;
     await moveloop_turn();
     // C ref: allmain.c moveloop_core() tail — `if (disp.botl || disp.botlx)
     // bot();` runs after the turn and before the next rhack(), so the queued
     // command's first frame already carries the new turn counter.
     await _display.flush_screen(1);
+    if (game._cmdqAbandonRetry) return ECMD_OK;
     // getobj()'s cmdq fast path pops this invlet instead of drawing a prompt.
     _invent.cmdq_add_key(CQ_CANNED, obj.invlet);
     return await doapply();
@@ -1467,7 +1725,7 @@ async function ap_load() {
 // BRASS_LANTERN / POT_OIL / CREAM_PIE / EGG-adjacent food otyps are already
 // declared near the top of this file.
 const TALLOW_CANDLE = 224, WAX_CANDLE = 225, EXPENSIVE_CAMERA = 229,
-      MIRROR = 230, LENSES = 232, TOWEL = 234, LEASH = 236,
+      MIRROR = 230, LENSES = 232, BLINDFOLD_OTYP = 233, TOWEL = 234, LEASH = 236,
       TINNING_KIT = 238, CAN_OF_GREASE = 240, FIGURINE = 241,
       LAND_MINE = 243, BEARTRAP_OTYP = 244, TIN_WHISTLE = 245,
       MAGIC_WHISTLE = 246, BELL = 255, GRAPPLING_HOOK = 260,
@@ -1698,12 +1956,49 @@ async function ap_mkundead(_mm, _revive, _mmflags) {}
 async function ap_hurtle(_dx, _dy, _range, _verbose) {}
 // C ref: dbridge.c boulder_hits_pool(otmp, rx, ry, newspot) — DEFERRED.
 async function ap_boulder_hits_pool(_otmp, _rx, _ry, _newspot) { return false; }
-// C ref: mon.c revive_corpse(corpse) — DEFERRED (no port).
-async function ap_revive_corpse(_corpse) { return false; }
-// C ref: eat.c floorfood(verb, corpsecheck) — the "There is X here; eat it?"
-// picker.  js/eat.js's equivalent is fused into its own doeat() flow, so this
-// returns 0 ("nothing chosen") and use_tinning_kit() stops there.
-async function ap_floorfood(_verb, _corpsecheck) { return null; }
+// C ref: do.c:2111 revive_corpse(corpse) — ported at js/do.js revive_corpse().
+async function ap_revive_corpse(corpse) {
+    const { revive_corpse } = await import('./do.js');
+    return await revive_corpse(corpse);
+}
+// C ref: eat.c floorfood(verb, corpsecheck) — the "There is X here; VERB it?"
+// floor picker, then (declined/no floor corpse) getobj(verb, tin_ok) over
+// inventory.  Only the corpsecheck===2 (tinning) caller reaches this
+// function, so that is the only path ported; RNG-free (per use_tinning_kit's
+// own comment above its call site).  getobj() itself is what prints "You
+// don't have anything to tin." when nothing eligible is carried either —
+// this used to always return null before even reaching getobj(), so that
+// message (and the floor offer) never appeared.
+const CORPSE_A = 265; // objects.c CORPSE (food-class corpse)
+async function ap_floorfood(verb, corpsecheck) {
+    const A = await ap_load();
+    const u = game.u;
+    // C: 'm' prefix / can't-reach-floor / mounted all skip to skipfloor; this
+    // call site can only observe menu_requested among those.
+    if (!game.iflags?.menu_requested && corpsecheck === 2) {
+        const objs = (game.level?.objects || []).filter(
+            (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy
+                && o.otyp === CORPSE_A && tinnable(o));
+        for (const otmp of objs) {
+            const one = (otmp.quan || 1) === 1;
+            const nm = A.invent.obj_doname(otmp);
+            const qbuf = `There ${one ? 'is' : 'are'} ${nm} here; ${verb} ${
+                one ? 'it' : 'one'}?`;
+            const c = await A.display.y_n(qbuf, 'ynq', 'n');
+            if (c === 'y') return otmp;
+            if (c === 'q') return null;
+            // 'n': fall through to the next floor object, then inventory.
+        }
+    }
+    const { tin_ok } = await import('./eat.js');
+    const otmp = await A.invent.getobj(verb, tin_ok);
+    if (otmp && corpsecheck
+        && (otmp.otyp !== CORPSE_A || (corpsecheck === 2 && !tinnable(otmp)))) {
+        await A.display.pline(`You can't ${verb} that!`);
+        return null;
+    }
+    return otmp;
+}
 // C ref: teleport.c tele_to_rnd_pet() — DEFERRED (no port).
 async function ap_tele_to_rnd_pet() {}
 // C ref: zap.c bhit(dx, dy, range, weapon, fhitm, fhito, &obj) for the
@@ -1790,9 +2085,8 @@ async function ap_xkilled(mtmp, flags) {
 // C ref: sounds.c whimper(mtmp) — js/sounds.js ports growl()/yelp() but not
 // whimper(); C's whimper() draws NOTHING (it is a pline plus wake_nearto()).
 async function ap_whimper(_mtmp) {}
-// C ref: objnam.c s_suffix / an / the / Tobjnam-adjacent helpers.  Each js file
-// keeps its own private copy of these one-liners; these are this block's.
-function ap_s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+// C ref: hacklib.c upstart()/an()/the() and Tobjnam-adjacent helpers; this
+// block keeps private copies of these one-liners.
 function ap_upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 function ap_an(s) { return /^[aeiouAEIOU]/.test(s || '') ? `an ${s}` : `a ${s}`; }
 function ap_the(s) { return /^[A-Z]/.test(s || '') ? s : `the ${s}`; }
@@ -1980,7 +2274,7 @@ export async function use_camera(obj) {
         await A.zap.zapyourself(obj, true);
     } else if (u.uswallow) {
         await A.display.pline(`You take a picture of ${
-            ap_s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
+            s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
     } else if (u.dz) {
         await A.display.pline(`You take a picture of the ${
             (u.dz > 0) ? surface_word(u.ux, u.uy) : ceiling_word(u.ux, u.uy)}.`);
@@ -2037,7 +2331,7 @@ export async function use_towel(obj) {
                     const saved_ublindf = game.ublindf;
                     await A.display.pline(`You push your ${what} off.`);
                     await ap_Blindf_off(game.ublindf);
-                    A.invent.dropx(saved_ublindf);
+                    await A.invent.dropx(saved_ublindf);
                 }
             }
             if (A.weapon.is_wet_towel(obj))
@@ -2376,7 +2670,7 @@ export async function use_leash_core(obj, mtmp, cc, spotmon) {
         } else if (!leashable(mtmp)) {
             let lmonnam = A.do_name.l_monnam(mtmp);
             if (cc.x !== mtmp.mx || cc.y !== mtmp.my)
-                lmonnam = `${ap_s_suffix(lmonnam)} tail`;
+                lmonnam = `${s_suffix(lmonnam)} tail`;
             await A.display.pline(`The leash won't fit onto ${
                 spotmon ? 'your ' : ''}${lmonnam}.`);
         } else {
@@ -2484,7 +2778,7 @@ export async function check_leash(x, y) {
             } else {
                 if (ap_um_dist(mtmp.mx, mtmp.my, 5)) {
                     await A.display.pline(`${
-                        ap_s_suffix(A.do_name.Monnam(mtmp))} leash snaps loose!`);
+                        s_suffix(A.do_name.Monnam(mtmp))} leash snaps loose!`);
                     await m_unleash(mtmp, false);
                 } else {
                     await A.display.pline('You pull on the leash.');
@@ -2592,7 +2886,7 @@ export async function use_mirror(obj) {
     if (u.uswallow) {
         if (useeit)
             await A.display.pline(`You reflect ${
-                ap_s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
+                s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
         return ECMD_TIME;
     }
     if (ap_Underwater()) {
@@ -2820,8 +3114,9 @@ export async function use_bell(optr) {
         } else if (obj.blessed) {
             let res = 0;
 
-            if (game.uchain) {
-                A.invent.unpunish();
+            if (u.uchain) {
+                const { unpunish } = await import('./read.js');
+                unpunish();
                 res = 1;
             } else if (u.utrap && u.utraptype === TT_BURIEDBALL_A) {
                 ap_buried_ball_to_freedom();
@@ -3105,7 +3400,7 @@ export async function use_lamp(obj) {
             A.invent.check_unpaid ? A.invent.check_unpaid(obj) : void 0;
             await A.display.pline(`${await ap_Shk_Your(obj)}${lamp} is now on.`);
         } else { /* candle(s) */
-            await A.display.pline(`${ap_s_suffix(await ap_Yname2(obj))} flame${
+            await A.display.pline(`${s_suffix(await ap_Yname2(obj))} flame${
                 plur(obj.quan)} ${A.invent.otense(obj, 'burn')}${
                 A.vision.Blind() ? '.' : ' brightly!'}`);
             if (obj.unpaid && A.shkroom.costly_spot(u.ux, u.uy)
@@ -3483,7 +3778,7 @@ export async function fig_transform(arg, timeout) {
             if (cansee_spot && !silent && !suppress_see) {
                 const mcarry = figurine.ocarry;
                 const carriedby = (mcarry && cansee_mon_ap(mcarry))
-                    ? `${ap_s_suffix(A.do_name.a_monnam(mcarry))} pack`
+                    ? `${s_suffix(A.do_name.a_monnam(mcarry))} pack`
                     : (mcarry && A.dbridge.is_pool(mcarry.mx, mcarry.my))
                       ? 'empty water' : 'thin air';
                 await A.display.pline(`You see ${monnambuf} drop out of ${
@@ -3623,7 +3918,7 @@ export async function use_grease(obj) {
     if (ap_Glib()) {
         await A.display.pline(`${Tobjnam(obj, 'slip')} from your ${
             A.do_wear.fingers_or_gloves(false)}.`);
-        A.invent.dropx(obj);
+        await A.invent.dropx(obj);
         return ECMD_TIME;
     }
 
@@ -3633,7 +3928,7 @@ export async function use_grease(obj) {
 
             await A.display.pline(`${Tobjnam(obj, 'slip')} from your ${
                 A.do_wear.fingers_or_gloves(false)}.`);
-            A.invent.dropx(obj);
+            await A.invent.dropx(obj);
             return ECMD_TIME;
         }
         const otmp = await A.invent.getobj('grease', grease_ok,
@@ -3760,7 +4055,7 @@ export async function use_trap(otmp) {
                     reset_trapset();
                     await A.display.pline(`You drop ${
                         ap_the(A.trap.trapname ? A.trap.trapname(ttyp, false) : 'trap')}!`);
-                    A.invent.dropx(otmp);
+                    await A.invent.dropx(otmp);
                     return;
                 default:
                     break;

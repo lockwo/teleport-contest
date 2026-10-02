@@ -70,6 +70,24 @@ const OPT_BOOL = [
     'verbose', 'voices', 'weaponstatus', 'whatis_menu', 'whatis_moveskip',
 ];
 
+// The BoolOpt names option_help()'s loop SKIPS in a non-wizard game
+// (setwhere==set_wizonly, or ==set_wiznofuz while iflags.debug_fuzzer) --
+// OPT_BOOL above is the "already ... non-wizard" survivor list this port
+// used to treat as the whole boolean set, which is wrong for a session that
+// actually reaches '?g' while in wizard mode: a real captured C screen
+// (heldout-wave4/6's hs-wizard-debug.session.json, playmode:debug then '?g')
+// shows every one of these ten woven into the alphabetical list right
+// alongside the ordinary ones, e.g. "...menu_overlay, menu_tab_sep,
+// menucolors, mon_movement, monpolycontrol, montelecontrol, news...". Missing
+// even one shifts every following word-wrap boundary, so it is not just this
+// option's own name that goes wrong -- the WHOLE rest of the (multi-page)
+// screen desyncs.  option_help_lines() below merges these in and re-sorts
+// rather than leaving OPT_BOOL static, matching option_help()'s real,
+// wizard-state-dependent loop instead of baking in one fixed answer.
+const OPT_BOOL_WIZONLY = ['menu_tab_sep', 'monpolycontrol', 'montelecontrol',
+                          'sanity_check', 'travel_debug', 'wizmgender', 'wizweight'];
+const OPT_BOOL_WIZNOFUZ = ['debug_hunger', 'debug_mongen', 'debug_overwrite_stairs'];
+
 // Compound option [name, description] pairs, in allopt[] order (option_help()
 // CompOpt loop; descriptions are allopt[].descr).
 const OPT_COMPOUND = [
@@ -222,11 +240,23 @@ export function option_help_lines() {
     wput(L, '');
     wput(L, 'Boolean options (which can be negated by prefixing them with \'!\' or "no"):');
 
+    // C ref: options.c option_help() BoolOpt loop's own setwhere filter,
+    // reproduced at call time (not baked into OPT_BOOL) so a wizard-mode
+    // session's '?g' shows the real, larger list.  iflags.debug_fuzzer is
+    // never true in a recorded/scored session, so that half of the
+    // set_wiznofuz test never actually excludes anything here; kept for
+    // fidelity anyway.
+    const is_wizard = !!((game.flags && game.flags.debug) || game.wizard);
+    const boolNames = OPT_BOOL.slice();
+    if (is_wizard) boolNames.push(...OPT_BOOL_WIZONLY);
+    if (is_wizard && !game.iflags?.debug_fuzzer) boolNames.push(...OPT_BOOL_WIZNOFUZ);
+    boolNames.sort();
+
     // Boolean options via next_opt(): accumulate "opt, opt, " and flush a line
     // whenever adding the next name would exceed COLNO-2; final next_opt("")
     // turns the trailing ", " into "." and emits a blank line.
     let buf = '';
-    for (const nm of OPT_BOOL) {
+    for (const nm of boolNames) {
         if (buf.length + nm.length + 2 > OPT_CO - 2) { wput(L, buf); buf = ''; }
         buf += nm + ', ';
     }
@@ -1422,7 +1452,34 @@ function set_boolean(name, value, result) {
     switch (name) {
     case 'autopickup': result.flags.pickup = value; break;      // C: flags.pickup
     case 'fixinv': result.flags.invlet_constant = value; break; // C: flags.invlet_constant
+    case 'cmdassist': result.iflags.cmdassist = value; break;
     case 'splash_screen': result.iflags.wc_splash_screen = value; break;
+    // C: &iflags.sanity_check (optlist.h) — the already-ported sanity-check
+    // subsystem (mon.js/mklev.js/wizcmds.js/ball.js/engrave.js/timeout.js/
+    // trap.js) all read game.iflags.sanity_check, not game.flags.
+    case 'sanity_check': result.iflags.sanity_check = value; break;
+    // C: iflags.menu_tab_sep -- read directly (no windowport gating) by
+    // weapon.c, region.c, invent.c, spell.c and artifact.c's menu-column
+    // formatting; js/invent.js, js/region.js, js/spell.js and this file's own
+    // menu builders all read game.iflags.menu_tab_sep, not game.flags.*.
+    case 'menu_tab_sep':
+        result.flags.menu_tab_sep = value; // canonical value for get_option_value()
+        result.iflags.menu_tab_sep = value;
+        break;
+    // C: iflags.altmeta (cmd.c readchar_core()'s ESC+char -> M-char combining
+    // gate), not a flags.* field.
+    case 'altmeta': result.iflags.altmeta = value; break;
+    // The five wizard-mode-only (setwhere==set_wizonly) booleans: C's addr is
+    // an iflags.* field, most under a name that differs from the option name
+    // (optlist.h NHOPTB bp column).  Falling through to the `default:` arm
+    // below landed these under result.flags[name] instead, which mon.js /
+    // teleport.js / objnam.js / shk.js never read, so setting any of them in
+    // an rc had NO effect on iflags at all.
+    case 'monpolycontrol': result.iflags.mon_polycontrol = value; break;
+    case 'montelecontrol': result.iflags.mon_telecontrol = value; break;
+    case 'travel_debug': result.iflags.trav_debug = value; break;
+    case 'wizmgender': result.iflags.wizmgender = value; break;
+    case 'wizweight': result.iflags.wizweight = value; break;
     case 'tutorial':
         result.flags.tutorial = value;
         // allmain.js gates the "Do you want a tutorial?" prompt on this, which
@@ -1721,7 +1778,7 @@ function optfn_fruit(o, negated, opts, op, result) {
         return OPTN_ERR;
     }
     op = mungspaces(op);
-    let fruit = sanitize_name(nmcpy(op, 128 /* PL_FSIZ */));
+    let fruit = sanitize_name(nmcpy(op, PL_FSIZ));
     if (!fruit) fruit = 'slime mold';
     result.flags.fruit = fruit;
     result.pl_fruit = fruit;
@@ -3788,7 +3845,7 @@ function cnf_line_SYMBOLS(bufp, result) {
     return false;
 }
 function cnf_line_WIZKIT(bufp, result) {
-    result.wizkit = bufp.slice(0, 79 /* WIZKIT_MAX - 1 */);
+    result.wizkit = bufp.slice(0, 127 /* WIZKIT_MAX - 1, hack.h */);
     return true;
 }
 // QT_* are `nhUse(bufp)` without QT_GRAPHICS.
@@ -3880,13 +3937,9 @@ function is_config_section(str) {
 // should skip the line, either because it IS a section header or because it
 // falls inside a section that CHOOSE did not pick.
 //
-// CHOOSE picks its section with rn2() (choose_random_part()), the first draw of
-// the game; jsmain.js seeds the PRNG only after the rc has been read, so the
-// pick is left unresolved and section_chosen holds a sentinel that matches no
-// header.  That keeps a CHOOSE file off the "without CHOOSE" error path — the
-// only part of it that would otherwise cost screens the file has not lost
-// already to the missing draw.
-const SECTION_UNRESOLVED = '\0unresolved';
+// CHOOSE picks its section with rn2() (choose_random_part()), the FIRST draw
+// of the game — jsmain.js seeds the PRNG before calling parseNethackrc() so
+// that draw lands in the right place in the stream (see NethackGame.start()).
 
 function handle_config_section(buf, st) {
     const sect = is_config_section(buf);
@@ -3907,7 +3960,7 @@ function handle_config_section(buf, st) {
     return false;
 }
 
-export function parseNethackrc(rc) {
+export async function parseNethackrc(rc) {
     const result = {
         name: '', role: -1, race: -1, gender: -1, align: -1,
         flags: {}, iflags: {}, keybind: {}, symoverride: {}, apelist: [],
@@ -3946,12 +3999,24 @@ export function parseNethackrc(rc) {
         const buf = pending;
         pending = null;
         if (handle_config_section(buf, st)) continue;
-        // C ref: cfgfiles.c parse_conf_buf() CHOOSE branch.
+        // C ref: cfgfiles.c parse_conf_buf() CHOOSE branch — draws rn2() via
+        // choose_random_part() to pick one of the comma-separated section
+        // names, replacing any earlier CHOOSE='s pick.
         if (match_optname(buf, 'CHOOSE', 6, true)) {
-            if (find_optparam(buf) < 0)
+            const eq = find_optparam(buf);
+            if (eq < 0) {
                 config_error_add('Format is CHOOSE=section1,section2,...');
-            else
-                st.section_chosen = SECTION_UNRESOLVED;
+            } else {
+                st.section_chosen = null;
+                // Dynamic import: a static one creates a load-order cycle
+                // that throws `Cannot access 'CONFIG_LINE_STMT' before
+                // initialization` inside cfgfiles.js (see its own header
+                // note on this file being otherwise INERT/unimported).
+                const { choose_random_part } = await import('./cfgfiles.js');
+                const section = choose_random_part(buf.slice(eq + 1), ',');
+                if (section) st.section_chosen = section;
+                else config_error_add('No config section to choose');
+            }
             continue;
         }
         parse_config_line(buf, result);
@@ -4023,8 +4088,15 @@ export {
 // -> set_in_config), ALTMETA on, INSURANCE on, STATUS_HILITES on (hilite_status
 // /statushilites -> set_in_game), MACOS9 off, TTY_GRAPHICS on (menu_overlay),
 // PREV_MSGS 1 (msg_window), SCORE_ON_BOTL off (showscore -> set_in_config),
-// TIMED_DELAY on (config1.h defines MACOS on Apple), SND_SPEECH off (voices ->
-// set_gameview/Term_Excluded), CHANGE_COLOR off (palette absent entirely).
+// TIMED_DELAY off (config1.h's `#if defined(__APPLE__) && defined(__MACH__)
+// #define MACOS` would auto-enable it per unixconf.h's MACOS-and-not-yet-
+// defined check, but patches/006-nomux-capture.patch adds a
+// `&& !defined(NO_TIMED_DELAY)` guard to that check and
+// nethack-c/macosx-minimal's CFLAGS pass -DNO_TIMED_DELAY specifically to
+// suppress it; linux-minimal never defines MACOS at all -> timed_delay ->
+// set_in_config, matching rawio's #else/undefined-macro branch), SND_SPEECH
+// off (voices -> set_gameview/Term_Excluded), CHANGE_COLOR off (palette
+// absent entirely).
 // Cross-checked: filtering this table the way option_help() does reproduces
 // OPT_BOOL (87) and OPT_COMPOUND (71) exactly.
 const ALLOPT_META_DATA = `
@@ -4070,7 +4142,7 @@ const ALLOPT_META_DATA = `
     status condition fields|4S,statushilites|4A,status highlight rules|4S,
     statuslines|4S,suppress_alert|4A,symset|4M,term_cols|2A,term_rows|2A,
     terrainstatus|4A,tile_file|3A,tile_height|3A,tile_width|3A,tiled_map|4A,
-    time|4S,timed_delay|4M,tips|4A,tombstone|4A,toptenwin|4A,traps|2A,
+    time|4S,timed_delay|2M,tips|4A,tombstone|4A,toptenwin|4A,traps|2A,
     travel|4A,travel_debug|5A,tutorial|2A,use_darkgray|2A,use_inverse|4A,
     use_truecolor|2A,vary_msgcount|3A,verbose|4A,versinfo|4A,voices|3A,
     vt_tiledata|2A,vt_sounddata|2A,warnings|2A,weaponstatus|4A,
@@ -5040,6 +5112,7 @@ export async function handler_number_pad() {
     const mode_pick = [];
     const clr = NO_COLOR;
     game.iflags = game.iflags || {};
+    game.flags = game.flags || {};
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -5049,6 +5122,19 @@ export async function handler_number_pad() {
                  ATR_NONE, clr, npchoices[i], MENU_ITEMFLAGS_NONE);
     end_menu(tmpwin, 'Select number_pad mode:');
     if (await select_menu(tmpwin, PICK_ONE, mode_pick) > 0) {
+        // C ref: options.c:2574 optfn_number_pad()'s do_set path stores this
+        // same mode number into iflags.num_pad/num_pad_mode AND is the value
+        // reset_commands()/js/cmd.js's numpad_iflags() decodes back out of
+        // `flags.number_pad` (js/cmd.js:361).  The rc-file path (optfn_number_pad
+        // above, via keep()) already writes game.flags.number_pad verbatim; this
+        // interactive handler was only writing game.iflags, leaving
+        // game.flags.number_pad — the value js/cmd.js's numpad_cmd() actually
+        // keys its (memoised) rebuild on — stale, so the movement-key rebind
+        // never took effect ([[duplicate-reimplementation-shadows-faithful-port]]
+        // family: reset_commands()/number_pad() below are genuine no-ops for
+        // this build per the comment at their definition, but calling them was
+        // never enough without this write).
+        const NUMPAD_MODE = [0, 1, 2, 3, 4, -1];
         switch (mode_pick[0].a_int - 1) {
         case 0:
             game.iflags.num_pad = false;
@@ -5076,6 +5162,7 @@ export async function handler_number_pad() {
             game.iflags.num_pad_mode = 1;
             break;
         }
+        game.flags.number_pad = NUMPAD_MODE[mode_pick[0].a_int - 1];
         reset_commands(false);
         number_pad(game.iflags.num_pad ? 1 : 0);
     }

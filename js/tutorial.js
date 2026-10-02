@@ -19,15 +19,16 @@ import {
     COLNO, ROWNO, STONE, VWALL, HWALL, DBWALL, TREE, SDOOR, POOL, MOAT, WATER,
     LAVAPOOL, LAVAWALL, IRONBARS, DOOR, CORR, ROOM, STAIRS, FOUNTAIN, THRONE, ALTAR, ICE,
     MAX_TYPE, INVALID_TYPE, NO_ROOM, D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED,
-    W_NONDIGGABLE, LA_DOWN, ENGRAVE, BURN, NON_PM,
+    W_NONDIGGABLE, LA_DOWN, ENGRAVE, BURN, NON_PM, SPACE_POS,
     MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP,
 } from './const.js';
 import { GameMap } from './game.js';
 import { wallification, set_wall_state } from './mklev.js';
-import { objects, mksobj, next_ident, blessorcurse, curse, set_corpsenm } from './mkobj.js';
+import { objects, mksobj, next_ident, blessorcurse, curse, set_corpsenm, BOULDER } from './mkobj.js';
 import { name_to_pmidx, monster_by_pmidx, newmonhp } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { hole_destination, choose_trapnote } from './trap.js';
+import { cmd_from_ecname } from './cmd.js';
 
 // ── tut-1.lua map (verbatim, dat/tut-1.lua des.map). Lua coord (cx,cy) maps to
 //    absolute map cell (xstart + cx, ystart + cy) with the empirically-pinned
@@ -147,17 +148,17 @@ function engrave(cx, cy, type, text) {
     if (ep) ep.nowipeout = true;
 }
 
-// C ref: dat/tut-1.lua tut_key()/tut_key_help().  tut_key(cmd) resolves a
-// command to its key binding and, when that binding is a Ctrl-<X> combo (the
-// nh.eckey string matches "^X"), stashes the bare letter in tut_ctrl_key.
-// tut_key_help(x,y) then drops a one-off "Ctrl-key combinations are shown
-// prefixed with a caret" engraving at (x,y) *iff* the most recent tut_key call
-// was such a combo, and clears the flag.  The only Ctrl-bound command the
-// tutorial references before the first tut_key_help() is "kick" (^D), so the
-// note lands at des {6,8}; by the second call (des {64,4}) the flag has been
-// cleared and no further Ctrl command has re-set it, so nothing is engraved
-// there — matching C.  (No PRNG in either path.)
+// C ref: dat/tut-1.lua tut_key()/tut_key_help().
 let tut_ctrl_key = null;
+function tutKey(command) {
+    const key = cmd_from_ecname(command);
+    const ctrl = /^\^([A-Z])$/.exec(key);
+    if (ctrl) {
+        tut_ctrl_key = ctrl[1];
+        return `Ctrl-${ctrl[1]}`;
+    }
+    return key.replace(/^M-([A-Z])$/, 'Alt-$1');
+}
 function tutKeyHelp(cx, cy) {
     if (tut_ctrl_key != null) {
         engrave(cx, cy, ENGRAVE,
@@ -329,11 +330,16 @@ function runTutProgram() {
         game.flags.lit_corridor = true;
     }
 
-    // Engravings (lines 80-93) — no PRNG.  Ranger uses hjkl movement keys.
-    engrave(9, 3, ENGRAVE, 'Move around with h j k l');
-    // C ref: dat/tut-1.lua diagmovekeys = SW NE SE NW = "b u n y" (vi-keys).
-    engrave(5, 2, ENGRAVE, 'Move diagonally with b u n y');
-    // (Knight jump engraving skipped — hero is a Ranger.)
+    // Engravings (lines 80-93) — no PRNG.
+    const moveKeys = ['movewest', 'movesouth', 'movenorth', 'moveeast']
+        .map(tutKey).join(' ');
+    const diagonalKeys = ['movesouthwest', 'movenortheast', 'movesoutheast',
+        'movenorthwest'].map(tutKey).join(' ');
+    engrave(9, 3, ENGRAVE, `Move around with ${moveKeys}`);
+    engrave(5, 2, ENGRAVE, `Move diagonally with ${diagonalKeys}`);
+    if (game.urole?.name?.m === 'Knight') {
+        engrave(12, 1, ENGRAVE, `Knights can jump with '${tutKey('jump')}'`);
+    }
     engrave(2, 4, ENGRAVE, 'Some actions may require multiple tries before succeeding');
     engrave(2, 5, ENGRAVE, 'Open the door by moving into it');
     setDoor(2, 6, D_CLOSED);
@@ -502,11 +508,36 @@ function makeStair(cx, cy) {
     if (loc) { loc.typ = STAIRS; loc.ladder = LA_DOWN; }
 }
 
+// C ref: sp_lev.c get_location() — the contents callback's object has no
+// coordinate, so it samples the 75x18 map fragment until it lands on a dry,
+// boulder-free cell.  Its final location is transient because the object is
+// then moved into the box, but every rejected candidate still consumes a pair.
+function randomTutorialDryLocation() {
+    let x, y, cpt = 0;
+    do {
+        x = OFF + rn2(TUT_MAP[0].length);
+        y = OFF + rn2(TUT_MAP.length);
+        const loc = game.level.at(x, y);
+        const boulder = game.level.objects?.some(
+            (obj) => obj.otyp === BOULDER && obj.ox === x && obj.oy === y);
+        if (SPACE_POS(loc?.typ) && !boulder) return { x, y };
+    } while (++cpt < 100);
+    for (let xx = 0; xx < TUT_MAP[0].length; xx++)
+        for (let yy = 0; yy < TUT_MAP.length; yy++) {
+            x = OFF + xx;
+            y = OFF + yy;
+            const loc = game.level.at(x, y);
+            const boulder = game.level.objects?.some(
+                (obj) => obj.otyp === BOULDER && obj.ox === x && obj.oy === y);
+            if (SPACE_POS(loc?.typ) && !boulder) return { x, y };
+        }
+    return { x, y };
+}
+
 // The large box (line 232): broken=true, trapped=false, with a scroll inside via
 // the contents function.  mksobj(LARGE_BOX) generates random contents through
 // mkbox_cnts (rn2(6) count + rnd(100)/rnd(1000)/next_ident/blessorcurse per
-// item), THEN the explicit scroll is placed at a RANDOM in-box location via
-// get_location (rn2(75),rn2(18)) + mksobj(WAND secret door detection).
+// item), THEN the explicit scroll is placed using get_location().
 function createBoxWithScroll(cx, cy) {
     // mksobj(LARGE_BOX) -> next_ident, olocked rn2(5), otrapped rn2(10),
     // [tknown rn2(100) only if trapped], mkbox_cnts(...).
@@ -519,10 +550,10 @@ function createBoxWithScroll(cx, cy) {
     const loc = game.level.at(x, y);
     if (loc) { if (!loc.objects) loc.objects = []; loc.objects.push(box); }
 
-    // The explicit contents scroll: des.object({ id="secret door detection",
-    // class="/" }) with NO coord -> get_location_coord random spot inside the
-    // map area: rn2(75), rn2(18).  Then mksobj(WAN_SECRET_DOOR_DETECTION).
-    rn2(75); rn2(18);                                   // get_location
+    // The explicit contents scroll calls get_location_coord() without a coord,
+    // then mksobj(WAN_SECRET_DOOR_DETECTION).  The object becomes contained, but
+    // get_location() must still reject non-DRY candidates before that happens.
+    randomTutorialDryLocation();
     mksobj(otypByName('secret door detection', 11), true, true); // WAND_CLASS; spe rn2(5) + blessorcurse rn2(17)
 }
 
@@ -564,7 +595,18 @@ export function genTutorialLevel() {
     const prevFmon = game.fmon;
     const prevInMklev = game.in_mklev;
     const lvl = new GameMap();
+    // C ref: dat/tut-1.lua:30 des.level_flags("mazelevel", "noflip",
+    // "nomongen", "nodeathdrops", "noautosearch") -> sp_lev.c lspo_level_flags().
+    // "nomongen" is the load-bearing one: makemon.c:1167 makes
+    // makemon(NULL,...) a no-op on this level, so allmain.c
+    // maybe_generate_rnd_mon()'s !rn2(70) spawns NOTHING inside the tutorial.
+    // Without it every 1-in-70 turn built a whole random monster here (~20 RNG
+    // draws) that C never built.  "noflip" is a level-loader flag, not a level
+    // flag, and the tutorial generator does not flip.
     lvl.flags.is_maze_lev = true;
+    lvl.flags.rndmongen = false;
+    lvl.flags.deathdrops = false;
+    lvl.flags.noautosearch = true;
     lvl.flags.hero_memory = true;
     lvl.flags.noteleport = false;
     game.level = lvl;

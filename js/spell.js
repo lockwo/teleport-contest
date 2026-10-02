@@ -27,11 +27,16 @@ import { hcolor, hliquid } from './do_name.js';
 import { find_ac } from './u_init.js';
 import { DEADMONSTER } from './mon.js';
 import { resists_elec } from './mondata.js';
+import { has_innate } from './exper.js';
 
 // C ref: objclass.h obj_material_types — is_metallic() = material in [IRON,MITHRIL].
 const MAT_IRON = 11, MAT_MITHRIL = 17;
 // C ref: include/objects.h — otyp constants used by percent_success / weight.
 const OTYP_ROBE = 143, OTYP_QUARTERSTAFF = 79;
+// C ref: role.c role_init() — `if (Role_if(PM_CLERIC)) objects[SPE_LIGHT].oc_skill
+// = P_CLERIC_SPELL;` permanently recategorizes the "light" spellbook as clerical
+// (instead of its table default of divination) for Priest characters only.
+const SPE_LIGHT_OTYP = 372, PM_CLERIC_ROLE = 6, P_CLERIC_SPELL = 32;
 // C ref: include/objects.h — objects[SMALL_SHIELD].oc_weight.
 const SMALL_SHIELD_OC_WEIGHT = 30;
 // C ref: spell.c — metal armor casting penalties.
@@ -48,7 +53,11 @@ const SKILL_CATEGORY = {
     28: 'attack', 29: 'healing', 30: 'divination', 31: 'enchantment',
     32: 'clerical', 33: 'escape', 34: 'matter',
 };
-export function spell_skilltype(otyp) { return SPELL_META.get(otyp)?.skill ?? 0; }
+export function spell_skilltype(otyp) {
+    if (otyp === SPE_LIGHT_OTYP && (game.urole?.mnum ?? -1) === PM_CLERIC_ROLE)
+        return P_CLERIC_SPELL;
+    return SPELL_META.get(otyp)?.skill ?? 0;
+}
 export function spell_level_of(otyp) { return SPELL_META.get(otyp)?.level ?? 1; }
 export function spelltypemnemonic(otyp) {
     return SKILL_CATEGORY[spell_skilltype(otyp)] || 'attack';
@@ -800,10 +809,15 @@ async function cursed_book(bp) {
     const lev = spell_level_of(bp.otyp); // objects[bp->otyp].oc_level
     let dmg = 0;
     switch (rn2(lev)) {
-    case 0:
+    case 0: {
         await update_topl('You feel a wrenching sensation.');
-        // tele() (teleport self) not ported; effect omitted.
+        // C ref: tele(void) == scrolltele((struct obj *)0) — teleport the
+        // hero (possibly a controlled teleport prompt, "Where do you want to
+        // be teleported?", when Teleport_control is active).
+        const { scrolltele } = await import('./read.js');
+        await scrolltele(null);
         break;
+    }
     case 1:
         await update_topl('You feel threatened.');
         aggravate();
@@ -862,9 +876,12 @@ async function confused_book(spellbook) {
 }
 
 // C ref: youprop.h Sleep_resistance (HSleep_resistance || ESleep_resistance).
+// The innate source (elf from level 4, monk from level 1) is never persisted
+// as a stored uprops flag, so OR in has_innate()'s pure derivation.
 function Sleep_resistance_hero() {
     const u = game.u;
-    return ((u?.uprops?.HSleep_resistance ?? u?.uprops?.Sleep_resistance ?? 0) > 0);
+    return ((u?.uprops?.HSleep_resistance ?? u?.uprops?.Sleep_resistance ?? 0) > 0)
+        || has_innate('HSleep_resistance');
 }
 // C ref: objnam.c objdescr_is(obj, descr) — compare the SHUFFLED appearance.
 function objdescr_is_spell(obj, descr) {
@@ -1202,7 +1219,7 @@ function destroy_nhwindow(_win) {}
 // port (frozen/terminal.js owns the grid); all four are RNG-free.  Prefixed
 // sp_ so they cannot claim display.c coverage they do not deliver — the same
 // convention js/apply.js:1636 uses for its jump-hilite loop.
-const DISP_BEAM = -1, DISP_CHANGE = -5, DISP_END = -7; // include/display.h
+const DISP_BEAM = -1, DISP_CHANGE = -6, DISP_END = -7; // include/display.h
 const S_goodpos = 0;                                   // include/defsym.h cmap
 function sp_tmp_at(_x, _y) {}
 function sp_cmap_to_glyph(_cmap) { return 0; }

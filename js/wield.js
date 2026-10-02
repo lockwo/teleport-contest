@@ -10,11 +10,11 @@
 // parity (wield.c:861).
 
 import { game } from './gstate.js';
-import { pline, newsym } from './display.js';
+import { pline } from './display.js';
 import { rnd } from './rng.js';
 import {
     update_inventory, xname, is_plural, bimanual, otense, makeplural,
-    body_part, setuswapwep, freeinv, inventoryArray, encumber_msg,
+    body_part, setuswapwep, freeinv, inventoryArray,
 } from './invent.js';
 import { objects, WEAPON_CLASS, TOOL_CLASS } from './mkobj.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -86,6 +86,18 @@ function twoweapok(obj) {
         return !(launcher || ammo || missile);
     }
     return is_weptool(obj);
+}
+
+// C ref: iactions.c:666-682 — the 'X' "Toggle two-weapon combat" item-action
+// is offered for uwep/uswapwep when already two-weaponing, or when the quiet
+// subset of can_twoweapon() passes (MAYBETWOWEAPON = TWOWEAPOK && !bimanual).
+export function twoweapon_action_ok(otmp) {
+    const uwep = game.uwep, uswapwep = game.uswapwep;
+    if (otmp !== uwep && otmp !== uswapwep) return false;
+    if (game.u?.twoweap) return true;
+    const maybe = (o) => !!o && twoweapok(o) && !bimanual(o);
+    return could_twoweap(youmonst_data()) && !game.uarms
+        && maybe(uwep) && maybe(uswapwep);
 }
 
 // C ref: objnam.c xname() — the bare name, pluralized for a stack but with NO
@@ -256,21 +268,14 @@ export async function drop_uswapwep() {
     await dropx(obj);
 }
 
-// C ref: do.c dropx() -> dropy() -> dropz() — no message; the slot is emptied,
-// the object leaves inventory and is placed underfoot.  ship_object/doaltarobj/
-// flooreffects/sellobj/stackobj need do.c's floor machinery, which js/invent.js's
-// own drop() path (js/invent.js:7142 dropz) does not model either.
+// C ref: do.c dropx() -> dropy() -> dropz() — delegate to js/invent.js's real
+// port of those three functions (freeinv, the IS_ALTAR bknown-reveal check via
+// doaltarobj(), then flooreffects()/place_object()/shop-sell dispatch via
+// dropz()).  Dynamic import avoids a static cycle: js/invent.js already
+// imports this file's twoweapon_action_ok at module scope.
 async function dropx(obj) {
-    freeinv(obj);               /* dropx() */
-    setuswapwep(null);          /* dropz(): obj == uswapwep */
-    const u = game.u || {};
-    obj.ox = u.ux; obj.oy = u.uy;
-    if (game.level) {
-        if (!Array.isArray(game.level.objects)) game.level.objects = [];
-        if (!game.level.objects.includes(obj)) game.level.objects.push(obj);
-    }
-    newsym(u.ux, u.uy);         /* remap location under self */
-    await encumber_msg();
+    const { dropx: dropxReal } = await import('./invent.js');
+    await dropxReal(obj);
 }
 
 // C ref: wield.c:833 set_twoweap — toggle the two-weapon flag.

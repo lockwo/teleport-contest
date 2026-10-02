@@ -1,26 +1,31 @@
 // read.js — reading scrolls and spellbooks.
 // C ref: read.c.  Ports the 'r' command entry (doread), the scroll dispatch
 // (seffects) and spellbook reading (study_book, in spell.js).
-// Still unported in seffects(): SCR_GENOCIDE, SCR_CHARGING, SCR_FIRE,
-// SCR_EARTH, SCR_STINKING_CLOUD, SCR_TAMING and the two detection scrolls —
-// each needs a helper that does not exist yet in the port (do_genocide/getlin,
-// recharge(), explode(), drop_boulder_on_*(), getpos(), tamedog(), and
-// detect.c's gold_detect/food_detect/trap_detect respectively).
+// Still unported in seffects(): SCR_CHARGING — it needs recharge(), which
+// does not exist yet in the port (getobj("charge") + a real wand/tool
+// recharge effect).  SCR_GENOCIDE, SCR_STINKING_CLOUD and the two detection
+// scrolls are wired below to their already-ported seffect_*/do_*/food_detect/
+// trap_detect helpers.
+// SCR_FIRE and SCR_EARTH used to be listed here and were NOT unported at all:
+// seffect_fire()/seffect_earth() and drop_boulder_on_player/monster() were
+// fully written, just missing their `case` arms in the switch below.
 
 import { game } from './gstate.js';
 import { LL_CONDUCT, livelog_printf } from './livelog.js';
 import { rnd, rn2, rn1, d } from './rng.js';
-import { pline, topl_more, update_topl, newsym } from './display.js';
+import { pline, topl_more, update_topl, newsym, y_n } from './display.js';
 import { getobj, makeknown, useup, useupall, xname, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY,
          GETOBJ_EXCLUDE, GETOBJ_PROMPT, GETOBJ_ALLOWCNT, GETOBJ_EXCLUDE_SELECTABLE,
          identify_pack, trycall, near_capacity, obj_doname, stackobj, obfree,
-         update_inventory, remove_worn_item, makeplural } from './invent.js';
+         update_inventory, remove_worn_item, makeplural, delobj,
+         worn_extrinsics_off } from './invent.js';
 import { exercise } from './attrib.js';
 import { discover_object } from './o_init.js';
 import { do_mapping } from './detect.js';
 import { study_book } from './spell.js';
-import { erode_obj, obj_erode_type, goodpos_for_hero, t_at, spoteffects } from './trap.js';
+import { erode_obj, obj_erode_type } from './trap.js';
 import { find_ac } from './u_init.js';
+import { teleds, teleok, safe_teleds, On_W_tower_level } from './teleport.js';
 import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          SCR_DESTROY_ARMOR, SCR_REMOVE_CURSE, SCR_ENCHANT_WEAPON,
          SCR_ENCHANT_ARMOR, SCR_CONFUSE_MONSTER, SCR_SCARE_MONSTER,
@@ -30,16 +35,16 @@ import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          bless, curse, uncurse, blessorcurse, weight } from './mkobj.js';
 import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          ERODE_NONE, EF_PAY, EF_DESTROY, ER_NOTHING, ER_DESTROYED,
-         COLNO, ROWNO, VIBRATING_SQUARE, is_pit, is_hole, SPE_LIM,
+         COLNO, ROWNO, SPE_LIM,
          W_BALL, W_CHAIN, W_ARMH, SDOOR, DOOR, D_CLOSED, D_LOCKED, isok,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
-         In_endgame, Is_earthlevel, In_sokoban, GENOCIDED, KILLED_BY,
-         KILLED_BY_AN, ROOM, STONE, IS_WALL, IS_DOOR,
-         G_GONE } from './const.js';
+         In_endgame, Is_earthlevel, GENOCIDED, KILLED_BY,
+         KILLED_BY_AN, NO_KILLER_PREFIX, DIED, ROOM, STONE, IS_WALL, IS_DOOR,
+         G_GONE, TELEDS_TELEPORT } from './const.js';
 import { S_invisible, S_WORM_TAIL, S_MIMIC_DEF, S_MIMIC, S_WORM, S_DEMON,
          S_XAN, S_EEL, S_GHOST, def_monsyms, MAXMCLASSES } from './symbols.js';
 import { wipeout_text } from './engrave.js';
-import { Blind, vision_recalc, cansee } from './vision.js';
+import { Blind, cansee } from './vision.js';
 import { mflags1_of, mflags2_of, msound_of, M1_NOHEAD, M1_AMORPHOUS,
          M1_UNSOLID, M1_WALLWALK, M1_HIDE,
          M2_PNAME, M2_HUMAN, M2_DEMON, M2_MALE, M2_FEMALE } from './monflags_data.js';
@@ -57,11 +62,17 @@ const SCR_IDENTIFY = 336;
 const SCR_LIGHT = 332;
 const SCR_PUNISHMENT = 341;
 const SCR_CREATE_MONSTER = 329;
+const SCR_TAMING = 330;
 const SCR_GOLD_DETECTION = 334;
+const SCR_GENOCIDE = 331;
+const SCR_FOOD_DETECTION = 335;
+const SCR_STINKING_CLOUD = 343;
+const SPE_DETECT_FOOD = 383;
 const SCR_AMNESIA = 338;
 const SCR_MAIL = 364;
 const SPE_CONFUSE_MONSTER = 377;
 const SPE_CREATE_MONSTER = 382;
+const SPE_CHARM_MONSTER = 387;
 const SPE_CAUSE_FEAR = 384;
 const SPE_REMOVE_CURSE = 395;
 const SPE_MAGIC_MAPPING = 396;
@@ -215,13 +226,40 @@ function resist(mtmp, oclass, damage, _tell) {
     return resisted;
 }
 
-// C ref: hack.c losehp(dmg, ...) — file-local copy (same shape as attrib.js's
-// and fountain.js's); death handling isn't modelled here.
-function losehp_read(dmg) {
+// C ref: hack.c losehp(n, knam, k_format) — HP subtraction plus the death
+// path, following js/do.js losehp_do()'s shape (the established pattern for
+// this port's file-local losehp copies): set the formatted killer text,
+// urgent_pline "You die...", then done(DIED).  The old copy stopped at the
+// arithmetic and clamped uhp at 0, so a scroll of earth that drops a boulder
+// on the hero's head for lethal damage left them standing at 0 HP and the
+// game ran on (bl032 step 180: C goes straight into can_make_bones/savebones
+// while we kept moving monsters).
+async function losehp_read(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
-    if (!u || dmg <= 0) return;
-    u.uhp = (u.uhp ?? 0) - dmg;
-    if (u.uhp < 0) u.uhp = 0;
+    if (!u || n <= 0) return;
+    if (u.Upolyd) {
+        u.mh = (u.mh ?? 0) - n;
+        if (u.mh > u.mhmax) u.mhmax = u.mh;
+        if (u.mh < 1) {
+            const { rehumanize } = await import('./polyself.js');
+            if (rehumanize) await rehumanize();
+        }
+        return;
+    }
+    u.uhp = (u.uhp ?? 0) - n;
+    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
+    else game.botl = true;
+    if (u.uhp < 1) {
+        await update_topl('You die...');
+        // C ref: topten.c formatkiller() prefix handling (do.js:535 has the
+        // same three-way switch).
+        game._killer_name = !knam ? null
+            : k_format === NO_KILLER_PREFIX ? knam
+            : k_format === KILLED_BY_AN ? `killed by ${an_read(knam)}`
+            : `killed by ${knam}`;
+        const { done } = await import('./end.js');
+        await done(DIED);
+    }
 }
 
 // C ref: obj.h is_shield(otmp) — oc_armcat == ARM_SHIELD.  The JS object table
@@ -288,6 +326,10 @@ export async function seffects(sobj) {
     case SPE_CREATE_MONSTER:
         await seffect_create_monster(sobj);
         break;
+    case SCR_TAMING:
+    case SPE_CHARM_MONSTER:
+        await seffect_taming(sobj);
+        break;
     case SCR_AMNESIA:
         await seffect_amnesia(sobj);
         break;
@@ -330,16 +372,35 @@ export async function seffects(sobj) {
         break;
     }
     case SCR_GOLD_DETECTION:
-        // C ref: read.c seffect_gold_detection() — a confused/cursed read does
-        // trap_detect() instead (not ported; it takes the same browse_map path
-        // and is left to the default until a session needs it).
-        if (Confused() || sobj.cursed) break;
+        // C ref: read.c seffect_gold_detection() — a confused/cursed read
+        // takes trap_detect(sobj) instead of gold_detect(sobj); both are
+        // ported in detect.js and report "nothing detected" the same way.
         if (await seffect_gold_detection(sobj)) return true; // strange_feeling used it up
+        break;
+    case SCR_GENOCIDE:
+        await seffect_genocide(sobj);
+        break;
+    case SCR_FOOD_DETECTION:
+    case SPE_DETECT_FOOD:
+        if (await seffect_food_detection(sobj)) return true; // strange_feeling used it up
+        break;
+    case SCR_STINKING_CLOUD:
+        await seffect_stinking_cloud(sobj);
         break;
     case 339 /*SCR_FIRE*/:
     case 368 /*SPE_FIREBALL*/:
         await seffect_fire(sobj);
         return true;                       // seffect_fire uses the scroll up
+    case 340 /*SCR_EARTH*/:
+        // C ref: read.c:2273 `case SCR_EARTH: seffect_earth(&sobj); break;`.
+        // seffect_earth() and both drop_boulder_on_* helpers were already
+        // ported (below) but never wired into this switch, so reading a
+        // scroll of earth fell through to `default:` and did nothing — C
+        // spends one mksobj(BOULDER) next_ident rnd(2) per surrounding
+        // square plus the hero's own (bl032 step 179: six of them) and then
+        // dmgval()'s rnd(20) when the boulder lands on the hero.
+        await seffect_earth(sobj);
+        break;
     case SCR_PUNISHMENT:
         // C ref: read.c seffect_punishment — a confused OR blessed read only
         // makes the hero feel guilty; otherwise punish(sobj).  gk.known is set
@@ -351,33 +412,34 @@ export async function seffects(sobj) {
         }
         await punish(sobj);
         break;
+    case SCR_MAIL:
+        // C ref: read.c:2204 — seffect_mail() sets gk.known, so doread() then
+        // takes learnscroll() (makeknown -> discover_object credit_hero ->
+        // exercise(A_WIS, TRUE) rn2(19)) instead of the input-consuming
+        // trycall() prompt.  seffect_mail() itself draws no RNG.
+        await seffect_mail(sobj);
+        break;
     default:
-        // C ref: read.c seffects default: -> impossible().  Every otyp that
-        // still lands here is a REAL unported effect, not an inert one:
-        //   SCR_TAMING/SPE_CHARM_MONSTER (needs dog.c tamedog),
-        //   SCR_GENOCIDE (do_genocide -> getlin loop),
-        //   SCR_GOLD_DETECTION / SCR_FOOD_DETECTION (detect.c gold_detect,
-        //     trap_detect, food_detect — none ported),
-        //   SCR_CHARGING (getobj("charge") + recharge()),
-        //   SCR_FIRE (explode()), SCR_EARTH (drop_boulder_on_*),
-        //   SCR_STINKING_CLOUD (getpos), SCR_MAIL.
-        // Each of those draws RNG and/or consumes input in C, so a hero who
-        // reads one desynchronises from here on.
+        // C ref: read.c seffects default: -> impossible().  The only otyp
+        // that still lands here is SCR_CHARGING: it needs recharge(), which
+        // has no JS port yet (getobj("charge") + a real wand/tool recharge
+        // effect), so a hero who reads one desynchronises from here on.
         break;
     }
     return false;
 }
 
-// C ref: read.c seffect_gold_detection() -> detect.c gold_detect().  Returns
-// true when nothing was detected (C's `*sobjp = 0`: strange_feeling used the
-// scroll up).  browse_map()'s getpos loop and the closing docrt() are threaded
-// in from hack.js/display.js here to keep detect.js free of that import cycle.
+// C ref: read.c seffect_gold_detection() -> detect.c gold_detect().
 async function seffect_gold_detection(sobj) {
+    if (Confused() || sobj.cursed) {
+        const { trap_detect } = await import('./detect.js');
+        // C: `trap_detect(sobj)` itself calls strange_feeling() on the
+        // "nothing found" path (detect.c:1082) and returns 1, matching
+        // seffect_gold_detection()'s `*sobjp = 0` — no second call here.
+        return !!(await trap_detect(sobj));
+    }
     const { gold_detect } = await import('./detect.js');
-    const { browse_map_getpos } = await import('./hack.js');
-    const { docrt, flush_screen } = await import('./display.js');
-    const nothing = await gold_detect(sobj, (goal) => browse_map_getpos(goal, true),
-                                      docrt, update_topl, topl_more, flush_screen);
+    const nothing = await gold_detect(sobj);
     if (nothing) {
         await strange_feeling(sobj, 'You feel materially poor.');
         return true;
@@ -494,8 +556,18 @@ async function lightdamage(obj, ordinary, amt) {
         if (dmg > 10) dmg = 10 + rnd(dmg - 10);
         if (dmg > 20) dmg = 20;
         await pline_append(`Ow, that light hurts${(dmg > 2 || (game.u?.mh ?? 0) <= 5) ? '!' : '.'}`);
-        // C: losehp(Maybe_Half_Phys(dmg), "<zapped|blasted> himself with <obj>")
-        losehp_read(dmg);
+        // C: losehp(Maybe_Half_Phys(dmg), "<zapped|blasted> himself with
+        // <obj>", NO_KILLER_PREFIX).  The hero is Upolyd here (gremlin), so
+        // this takes losehp's mh/rehumanize arm, but the killer text still
+        // matters if Unchanging makes it fatal.
+        // C: how = spell-of-light | ansimpleoname(obj) == an(xname-without-
+        // quantity-or-BUC); "blasted" rather than "zapped" for a scroll/book.
+        const how = (obj?.oclass === SPBOOK_CLASS) ? 'spell of light'
+                                                   : an_read(xname(obj));
+        const zapped = ordinary && obj?.oclass !== SCROLL_CLASS
+                                && obj?.oclass !== SPBOOK_CLASS;
+        await losehp_read(dmg, `${zapped ? 'zapped' : 'blasted'} himself with ${how}`,
+                          NO_KILLER_PREFIX);
     }
     return dmg;
 }
@@ -984,102 +1056,6 @@ async function seffect_enchant_weapon(sobj) {
     return !chwSuccess;
 }
 
-// C ref: teleport.c teleok(x,y,trapok) — hero-only subset.  UNPORTED and real
-// on special levels: tele_jump_ok() (Sokoban forbids teleporting past a wall,
-// the endgame air/water levels have their own rules) and in_out_region()
-// (Juiblex's swamp / the Wizard's tower keep you in or out) both veto
-// destinations that the trap guard and goodpos() accept, so a teleport on one
-// of those levels can land somewhere C would have rejected.  Exported: also used by
-// hack.js's dotele_wizard() (wizard-mode ^T -> tele() -> scrolltele()), which
-// shares this exact C code path with the scroll-of-teleportation controlled
-// case below.
-export function teleok_hero(x, y, trapok) {
-    if (!trapok) {
-        const trap = t_at(x, y);
-        if (trap) {
-            const u = game.u;
-            const airborne = !!(u?.uprops?.Levitation || u?.uprops?.Flying);
-            const ok = trap.ttyp === VIBRATING_SQUARE
-                || ((is_pit(trap.ttyp) || is_hole(trap.ttyp)) && airborne);
-            if (!ok) return false;
-        }
-    }
-    return goodpos_for_hero(x, y);
-}
-
-// C ref: teleport.c teleds(nux,nuy,TELEDS_TELEPORT) — hero-only subset.
-// Relocates the hero, redraws the vacated square, recalculates vision,
-// announces the materialize message (after the vision recalc, so a paged
-// --More-- shows the new map, matching the C comment on this ordering), then
-// runs spoteffects() at the new spot.
-// Still unported: the vault-guard alarm (needs vault_occupied/findgd), the
-// hidden-mimic unwind, switch_terrain() on a terrain-type change, fill_pit()
-// of the vacated square, and nomul(0) (the port's occupation model differs;
-// see the "nomul(0) must leave occupation armed" gotcha).
-// Exported for hack.js's dotele_wizard() (see teleok_hero above).
-export async function teleds_hero(nux, nuy) {
-    const u = game.u;
-    const oldx = u.ux, oldy = u.uy;
-    // C ref: teleds() — a punished hero's ball & chain come off the map before
-    // the move and go back down at the new spot.  Without this they stayed on
-    // the OLD square: two stray glyphs on the map and a ball the hero is
-    // supposedly chained to at arbitrary distance.  (drag_ball()'s
-    // distmin<=1 "don't have to move the ball" case can't apply to a real
-    // teleport, so C's unplacebc()+placebc() pair is what runs.)
-    const ball_active = !!(u.uball && u.uchain);
-    if (ball_active) {
-        // C ref: teleds() — unplacebc() takes the pair off the map, placebc()
-        // puts it back at the destination.  move_bc(before=1) was used here as
-        // "the same lift", but move_bc's whole body is the Blind arm's
-        // `if (!before)` and a control mask of 0 moves nothing, so the pair was
-        // never removed and placebc() duplicated it on the pile.
-        // (C's drag_ball()/move_bc() path for a destination within 2 squares of
-        // the ball is not ported; lifting and re-placing lands the pair on the
-        // hero's own square, which is where a 0-step hop leaves it anyway.)
-        const { unplacebc, placebc } = await import('./ball.js');
-        unplacebc();
-        // C ref: teleds() — reset_utrap(FALSE): teleporting frees the hero from
-        // a pit/web/bear trap.  Leaving u.utrap set kept a teleported hero
-        // "still stuck" at the destination.
-        reset_utrap();
-        u.ux0 = oldx; u.uy0 = oldy;
-        u.ux = nux; u.uy = nuy;
-        placebc();
-    } else {
-        reset_utrap();
-        u.ux0 = oldx; u.uy0 = oldy;
-        u.ux = nux; u.uy = nuy;
-    }
-    // C ref: teleds() — set_ustuck(NULL) also clears uswallow.
-    u.uswallow = 0;
-    u.ustuck = null;
-    newsym(oldx, oldy);
-    // SCRATCH: C ref: teleport.c:537 see_monsters()
-    for (const m of (game.level?.monsters || [])) {
-        if (m.mhp != null && m.mhp <= 0) continue;
-        newsym(m.mx, m.my);
-    }
-    newsym(nux, nuy);
-    vision_recalc(0);
-    if (game.flags?.verbose !== false) {
-        const where = (nux === oldx && nuy === oldy) ? 'the same' : 'a different';
-        await update_topl(`You materialize in ${where} location!`);
-    }
-    // C ref: teleport.c teleds() -> spoteffects(TRUE) — the arrival square's
-    // pile is looked at / picked up.  Passing null skipped the whole pickup.
-    const { pickup_after_move } = await import('./cmd.js');
-    await spoteffects(pickup_after_move);
-}
-
-// C ref: trap.c reset_utrap(msg) — clear the hero's trapped state.  The msg
-// arm (float_vs_flight) only matters for the TRUE caller.
-function reset_utrap() {
-    const u = game.u;
-    if (!u) return;
-    u.utrap = 0;
-    u.utraptype = 0;
-}
-
 // C ref: teleport.c scrolltele(scroll) — the in-level teleport a non-confused,
 // non-cursed scroll of teleportation performs.  Only the tail (safe_teleds)
 // used to be here, so three earlier C branches were skipped entirely:
@@ -1105,13 +1081,12 @@ export async function scrolltele(scroll) {
     // C: `if (!Blinded) make_blinded(0L, FALSE);` — a no-op unless the hero is
     // blinded from a source with no timeout; not modelled.
 
-    // C ref: `(u.uhave.amulet || On_W_tower_level(&u.uz)) && !rn2(3)`.  (The
-    // Wizard's-tower half needs In_W_tower(); the Amulet half is ported.)
-    if (u?.uhave?.amulet && !rn2(3)) {
+    // C ref: teleport.c:865 — the whole tower level interferes, not just its interior.
+    if ((u?.uhave?.amulet || On_W_tower_level(u.uz)) && !rn2(3)) {
         await pline_append('You feel disoriented for a moment.');
         if (!wizard) return;
-        // (wizard mode's y_n("Override?") prompt is not modelled; C continues
-        // only on 'y'.)
+        game._yn_need_more = game._toplin === 1;
+        if ((await y_n('Override?')) !== 'y') return;
     }
 
     const stunned = (u?.uprops?.Stun || 0) > 0;
@@ -1121,16 +1096,22 @@ export async function scrolltele(scroll) {
             await pline_append('Being unconscious, you cannot control your teleport.');
         } else {
             const { getpos, getpos_render } = await import('./hack.js');
-            await getpos_render('Where do you want to be teleported?', u.ux, u.uy);
-            game._toplin = 1;
-            game._toplines = 'Where do you want to be teleported?';
+            // C ref: this prompt is a plain pline(), which concatenates onto
+            // an already-pending same-turn message (e.g. cursed_book's "You
+            // feel a wrenching sensation.") rather than replacing it; only
+            // THEN does getpos() curs+flush_screen the map (no text of its
+            // own). getpos_render conflates both steps, so re-pass the now-
+            // accumulated text to keep its curs/flush_screen half a no-op on
+            // the message.
+            await pline_append('Where do you want to be teleported?');
+            await getpos_render(game._pending_message, u.ux, u.uy);
             if (scroll) learnscroll(scroll);
             const verbose = game.flags?.verbose !== false;
             const cc = await getpos('the desired position', u.ux, u.uy, null,
                                     /*force=*/true, verbose);
             if (!cc) return; // getpos() < 0: abort
-            if (teleok_hero(cc.x, cc.y, false)) {
-                await teleds_hero(cc.x, cc.y);
+            if (teleok(cc.x, cc.y, false)) {
+                await teleds(cc.x, cc.y, TELEDS_TELEPORT);
                 return;
             }
             await pline_append('Sorry...');
@@ -1145,7 +1126,7 @@ export async function scrolltele(scroll) {
     // fixes that carrot divergence.  Until then gk.known defers the makeknown
     // to doread(), which puts the rn2(19) after the teleport instead.
     if (scroll) learnscroll(scroll);
-    await safe_teleds_hero();
+    await safe_teleds(TELEDS_TELEPORT);
 }
 
 // C ref: read.c learnscroll(sobj) — a spellbook (fake object for a spell)
@@ -1154,27 +1135,6 @@ function learnscroll(sobj) {
     if (sobj.oclass !== SPBOOK_CLASS) learnscrolltyp(sobj.otyp);
 }
 
-// C ref: teleport.c safe_teleds(TELEDS_TELEPORT) — hero-only subset: the
-// initial "completely random, up to 40 tries" loop.
-// UNPORTED and real: when all 40 tries fail (a cramped or crowded level —
-// Sokoban, the mines' end, a big monster crowd) C does NOT give up.  It builds
-// a shuffled ring-expanding candidate list (collect_coords, CC_RING_PAIRS |
-// CC_SKIP_MONS [| CC_SKIP_INACCS]) — which itself draws for the shuffle — walks
-// it, and finally falls back to the first acceptable TRAP square.  Returning
-// FALSE here instead leaves the hero standing where they were, with the whole
-// PRNG stream short by collect_coords' draws.
-// Exported for hack.js's dotele_wizard() (see teleok_hero above).
-export async function safe_teleds_hero() {
-    for (let tcnt = 0; tcnt < 40; tcnt++) {
-        const nux = rnd(COLNO - 1);
-        const nuy = rn2(ROWNO);
-        if (teleok_hero(nux, nuy, false)) {
-            await teleds_hero(nux, nuy);
-            return true;
-        }
-    }
-    return false;
-}
 
 // C ref: read.c litroom(on, obj) — light (on) or darken (!on, a cursed scroll)
 // the area around the hero.  C lights every couldsee cell within radius
@@ -1327,28 +1287,21 @@ async function seffect_remove_curse(sobj) {
         await unpunish();
 }
 
-// C ref: ball.c unpunish() — free the hero of the ball & chain: the chain is
-// obfree'd and the ball moved to the floor (dealloc_obj in C only when it was
-// carried; placebc's floor copies are just unlinked here).  No RNG.
-async function unpunish() {
+// C ref: read.c unpunish() — destroy the chain, leaving the detached ball.
+export function unpunish() {
     const u = game.u;
-    const uchain = u.uchain, uball = u.uball;
-    if (uchain) {
-        const objs = game.level?.objects;
-        if (objs) {
-            const i = objs.indexOf(uchain);
-            if (i >= 0) objs.splice(i, 1);
-        }
-        uchain.owornmask = 0;
+    const chain = u.uchain, ball = u.uball;
+    if (chain) {
+        worn_extrinsics_off(chain, W_CHAIN);
+        chain.owornmask &= ~W_CHAIN;
         u.uchain = null;
-        newsym(uchain.ox, uchain.oy);
+        delobj(chain);
     }
-    if (uball) {
-        uball.owornmask = 0;
-        uball.spe = 0;
+    if (ball) {
+        worn_extrinsics_off(ball, W_BALL);
+        ball.owornmask &= ~W_BALL;
         u.uball = null;
     }
-    u.bc_felt = 0;
 }
 
 // C ref: read.c:1850 seffect_fire(sobjp) — the scroll of fire / fireball spell.
@@ -1454,7 +1407,7 @@ function count_worn_armor() {
 // armor effect: erode rn2(4)+1 random worn armor pieces (whatever material
 // each happens to be), stopping early if one is fully destroyed.  Returns
 // whether anything was actually damaged.
-async function destroy_arm() {
+export async function destroy_arm() {
     const armors = ['uarm', 'uarmc', 'uarmh', 'uarms', 'uarmg', 'uarmf', 'uarmu']
         .map((slot) => game[slot]).filter(Boolean);
     if (!armors.length) return false;
@@ -1826,12 +1779,15 @@ export async function doread() {
         const _engrave = await import('./engrave.js');
         const bcsign = (scroll.blessed ? 1 : 0) - (scroll.cursed ? 1 : 0);
         const line = _engrave.outrumor(bcsign, _engrave.BY_COOKIE);
-        if (line) {
+        if ((game.u?.uhs ?? 0) !== 5 /* FAINTED */ && Blind()) {
+            await update_topl('This cookie has a scrap of paper inside.');
+            await update_topl('What a pity that you cannot read it!');
+        } else if (line) {
             await update_topl('This cookie has a scrap of paper inside.');
             await update_topl('It reads:');
             await update_topl(line);
         }
-        if (!Blind()) bump_literate();
+        if (!Blind()) bump_literate('became literate by reading a fortune cookie');
         useup(scroll);
         return ECMD_TIME;
     }
@@ -1852,7 +1808,8 @@ export async function doread() {
             await pline(`${game.flags?.verbose !== false ? 'The design' : 'It'} features ${hawaiian_design(scroll)}.`);
             return ECMD_TIME;
         }
-        bump_literate();
+        bump_literate(`became literate by reading ${
+            otyp === T_SHIRT ? 'a T-shirt' : 'an apron'}`);
         // (tshirt_text()/apron_text()'s message tables aren't ported; both are
         // o_id-indexed, so no RNG is lost — only the quoted line is wrong.)
         if (game.flags?.verbose !== false)
@@ -1867,7 +1824,8 @@ export async function doread() {
             return ECMD_OK;
         }
         await pline(`${!Blind() ? 'There is writing' : 'You feel lettering'} on the ${simpleonames_read(scroll)}.  It reads:  ${cap_text}.`);
-        bump_literate();
+        bump_literate(`became literate by reading ${
+            otyp === DUNCE_CAP ? 'a dunce cap' : 'a cornuthaum'}`);
         // "despite the fact that player will recognize the object type, don't
         // make it become a discovery for hero" — trycall() prompts for a name.
         await trycall(scroll);
@@ -1882,7 +1840,7 @@ export async function doread() {
             await pline(`"${CARD_MSGS[o_id % (CARD_MSGS.length - 1)]}"`);
         }
         await pline(`"${((o_id % 89) + 10)}0${o_id % 4} ${((o_id * 499) % 899999) + 100000}${o_id % 10}1 0${(!(o_id % 3)) ? 1 : 0}${(o_id * 7) % 10}0"${(game.flags?.verbose !== false || Blind()) ? '.' : ''}`);
-        bump_literate();
+        bump_literate('became literate by reading a credit card');
         return ECMD_TIME;
     }
     if (otyp === CAN_OF_GREASE) {
@@ -1898,14 +1856,14 @@ export async function doread() {
         const { monster_by_pmidx } = await import('./makemon.js');
         const pm = monster_by_pmidx(RED_MONS[(scroll.o_id ?? 0) % RED_MONS.length]);
         await pline(`"Magic Marker(TM) ${(pm?.name || '').toUpperCase()} Red Ink Marker Pen.  Water Soluble."`);
-        bump_literate();
+        bump_literate('became literate by reading a magic marker');
         return ECMD_TIME;
     }
     if (scroll.oclass === COIN_CLASS) {
         if (Blind()) await pline('You feel the embossed words:');
         else if (game.flags?.verbose !== false) await pline('You read:');
         await pline('"1 Zorkmid.  857 GUE.  In Frobs We Trust."');
-        bump_literate();
+        bump_literate("became literate by reading a coin's engravings");
         return ECMD_TIME;
     }
     if (otyp === CANDY_BAR) {
@@ -1919,7 +1877,7 @@ export async function doread() {
             return ECMD_OK;
         }
         await pline(`The wrapper reads: "${wrapper}".`);
-        bump_literate();
+        bump_literate('became literate by reading a candy bar wrapper');
         return ECMD_TIME;
     }
     // (the Orb of Fate "It is signed: Odin." branch needs artifact support.)
@@ -2136,14 +2094,20 @@ function ceiling_read(x, y) {
     return 'rock cavern';
 }
 
-// C ref: trap.c:7039 sokoban_guilt() — a luck penalty for cheating in Sokoban.
+// C ref: trap.c:7038 sokoban_guilt() — a luck penalty for cheating in Sokoban.
+// Checks the per-level `Sokoban` flag (svl.level.flags.sokoban_rules), NOT
+// In_sokoban(uz): once trap.js maybe_finish_sokoban() clears that flag on
+// puzzle completion, later "cheats" on the same level no longer count even
+// though the hero is still geographically in the Sokoban branch.
 function sokoban_guilt_read() {
-    if (!In_sokoban(game.u?.uz)) return;
+    if (!game.level?.flags?.sokoban_rules) return;
     const u = game.u;
     u.uconduct = u.uconduct || {};
     u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
-    // C ref: attrib.c change_luck(-1); do_wear.js:229 exports the same helper.
+    // C ref: attrib.c change_luck(-1); do_wear.js:229 exports the same
+    // clamped helper (LUCKMIN/LUCKMAX -10/10).
     u.uluck = (u.uluck || 0) - 1;
+    if (u.uluck < -10) u.uluck = -10;
 }
 
 // C ref: rm.h closed_door(x, y) — IS_DOOR && (D_LOCKED|D_CLOSED).
@@ -2506,11 +2470,9 @@ export async function seffect_stinking_cloud(sobj) {
 // itself draws for a rock's quantity — then the confused rn1(5, 2) stack, then
 // dmgval()'s damage dice, then flooreffects().
 //
-// SCOPE: do.c flooreffects() is not ported anywhere (dokick.js:1013 has a
-// kick-specific private copy), so the boulder is always placed rather than
-// possibly filling a pit / sinking in water; and the amorphous/Passes_walls/
-// noncorporeal/unsolid polyform test needs youmonst.data, which is only set
-// while polymorphed (see [[umonnum-is-a-role-index]]).
+// SCOPE: the amorphous/Passes_walls/noncorporeal/unsolid polyform test needs
+// youmonst.data, which is only set while polymorphed (see
+// [[umonnum-is-a-role-index]]).
 export async function drop_boulder_on_player(confused, helmet_protects, byu,
                                              skip_uswallow) {
     const u = game.u;
@@ -2549,17 +2511,21 @@ export async function drop_boulder_on_player(confused, helmet_protects, byu,
     const { wake_nearto } = await import('./cmd.js');
     await wake_nearto(u.ux, u.uy, 4 * 4);
     /* C: must be before the losehp(), for bones files */
-    place_object(otmp2, u.ux, u.uy);
-    stackobj(otmp2);
-    newsym(u.ux, u.uy);
-    if (dmg) losehp_read(dmg);         // C: losehp(Maybe_Half_Phys(dmg), ...)
+    const { flooreffects } = await import('./do.js');
+    if (!await flooreffects(otmp2, u.ux, u.uy, 'fall')) {
+        place_object(otmp2, u.ux, u.uy);
+        stackobj(otmp2);
+        newsym(u.ux, u.uy);
+    }
+    // C: losehp(Maybe_Half_Phys(dmg), "scroll of earth", KILLED_BY_AN)
+    if (dmg) await losehp_read(dmg, 'scroll of earth', KILLED_BY_AN);
 }
 
 // C ref: read.c:2341 drop_boulder_on_monster(x, y, confused, byu).  Same RNG
 // order as the player version; the helmet check reads the monster's own W_ARMH.
 //
-// SCOPE: flooreffects() as above; mon.c mondied() is not exported (mhitm.js's
-// mondied_mm() is the port's stand-in and is used here).
+// SCOPE: mon.c mondied() is not exported (mhitm.js's mondied_mm() is the
+// port's stand-in and is used here).
 export async function drop_boulder_on_monster(x, y, confused, byu) {
     /* Make the object(s) */
     const otmp2 = mksobj(confused ? ROCK : BOULDER, false, false);
@@ -2627,9 +2593,12 @@ export async function drop_boulder_on_monster(x, y, confused, byu) {
         return true;
     }
     /* Drop the rock/boulder to the floor */
-    place_object(otmp2, x, y);
-    stackobj(otmp2);
-    newsym(x, y);                      /* map the rock */
+    const { flooreffects } = await import('./do.js');
+    if (!await flooreffects(otmp2, x, y, 'fall')) {
+        place_object(otmp2, x, y);
+        stackobj(otmp2);
+        newsym(x, y);                  /* map the rock */
+    }
     return true;
 }
 
@@ -2765,6 +2734,11 @@ export async function seffect_charging(sobj) {
     useup(sobj);
     const otmp = await getobj('charge', charge_ok,
                               GETOBJ_PROMPT | GETOBJ_ALLOWCNT);
+    // Declining this prompt doesn't cancel the read: the scroll is already
+    // consumed above, so the overall command still took a turn.  Clear the
+    // getobj()-cancellation flag js/invent.js just set, or the read's key
+    // would wrongly be dropped from CQ_REPEAT (js/cmd.js consumes the flag).
+    if (game.context) game.context._getobj_cancelled = false;
     if (otmp) {
         // C: recharge(otmp, scursed ? -1 : sblessed ? 1 : 0);
         void otmp;
@@ -3366,6 +3340,19 @@ export async function create_particular_parse(str, d) {
     return false;
 }
 
+// C read.c create_particular_creation: resolve special species before placement.
+export async function create_particular_species(which) {
+    const { name_to_pmidx, monster_by_pmidx } = await import('./makemon.js');
+    const ref = { v: which };
+    if (await cant_revive(ref, false, null)
+        && which !== name_to_pmidx('long worm tail')) {
+        const q = `Creating ${monster_by_pmidx(ref.v).name} instead; force ${
+            monster_by_pmidx(which).name}?`;
+        if (await y_n(q) === 'y') ref.v = which;
+    }
+    return ref.v;
+}
+
 // C ref: read.c:3252 create_particular_creation(d) — make d.quan monsters from
 // a parsed create-particular request.  RNG order per iteration: mkclass()/
 // rndmonst() when a class or random was asked for, then makemon() (which itself
@@ -3375,8 +3362,8 @@ export async function create_particular_parse(str, d) {
 // makemon.js:3903 create_particular_monster() covers the single-named-monster
 // case only (and splits the placement walk out); this is the full loop.
 export async function create_particular_creation(d) {
-    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign, newcham,
-            name_to_pmidx } = await import('./makemon.js');
+    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign, newcham }
+        = await import('./makemon.js');
     const u = game.u;
     let whichpm = null;
     let firstchoice = NON_PM;
@@ -3384,16 +3371,7 @@ export async function create_particular_creation(d) {
 
     if (!d.randmonst) {
         firstchoice = d.which;
-        const ref = { v: d.which };
-        if ((await cant_revive(ref, false, null))
-            && firstchoice !== name_to_pmidx('long worm tail')) {
-            /* wizard mode can override handling of special monsters */
-            const { y_n } = await import('./display.js');
-            const q = `Creating ${monster_by_pmidx(ref.v)?.name} instead; force ${
-                monster_by_pmidx(firstchoice)?.name}?`;
-            if ((await y_n(q)) === 'y') ref.v = firstchoice;
-        }
-        d.which = ref.v;
+        d.which = await create_particular_species(d.which);
         whichpm = monster_by_pmidx(d.which);
     }
     for (let i = 0; i < d.quan; i++) {

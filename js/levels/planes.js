@@ -18,7 +18,8 @@ import {
 } from '../makemon.js';
 import { rn1, rn2 } from '../rng.js';
 import {
-    LOC_DRY, gx, gy, pm_to_humidity, reset_xystart_size, splev_get_location_rnd,
+    LOC_DRY, flip_lregion_dest, gx, gy, pm_to_humidity, reset_xystart_size,
+    splev_get_location_rnd,
 } from '../sp_lev.js';
 
 // des.* coordinates are relative to the last des.map() origin.
@@ -221,6 +222,23 @@ export async function plane_place_lregions() {
         }
     }
     game.lregions = [];
+}
+
+// C ref: sp_lev.c flip_level():698-731 flips every PENDING levregion's inarea
+// AND delarea unconditionally, before fixup_special() ever calls
+// place_lregion() on it.  The five plane generators flip dndest/updest (via
+// vly_flip_dndest/vly_flip_updest) but, until this fix, never flipped the
+// plane's OWN registered portal levregion (game.lregions), so a flipped map
+// (flp&3) tested placement candidates against the stale, pre-flip rectangle.
+// On seed0373 step 99 (Plane of Fire, flp=3) that let JS accept its very
+// first candidate (69,8) — inside the un-flipped exclusion zone but outside
+// the correctly-flipped one — where C's flipped exclusion rejects it and
+// retries to (17,10), an extra rn1() pair C's stream has and JS's didn't.
+// Reuses flip_lregion_dest verbatim: a game.lregions entry has exactly the
+// {lx,ly,hx,hy,nlx,nly,nhx,nhy} shape it already transforms for dndest/updest.
+export function plane_flip_lregions(flp) {
+    if ((flp & 3) === 0) return;
+    for (const lr of (game.lregions || [])) flip_lregion_dest(flp, lr);
 }
 
 // C ref: monsym.h MONSYM indices for the class characters the planes use.

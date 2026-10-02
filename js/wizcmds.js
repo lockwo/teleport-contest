@@ -26,8 +26,10 @@ import {
     has_mgivenname, MGIVENNAME, ONAME, OMONST, ESHK, EPRI, EGD, EMIN, EDOG,
     EBONES, ARTICLE_A, ARTICLE_THE, ARTICLE_YOUR, SUPPRESS_IT,
     SUPPRESS_HALLUCINATION, SUPPRESS_SADDLE, XKILL_NOMSG, DIED, KILLED_BY,
-    MIGR_EXACT_XY, In_sokoban, In_endgame, Is_stronghold, Is_botlevel,
+    MIGR_EXACT_XY, MIGR_RANDOM, In_sokoban, In_endgame, Is_stronghold, Is_botlevel,
     Is_knox_level,
+    MON_OFFMAP, MON_MIGRATING, MON_LIMBO, MON_ENDGAME_MIGR,
+    NHL_SB_SAFE, NHL_SB_DEBUGGING,
 } from './const.js';
 import { defsyms, S_fountain, S_sink } from './symbols.js';
 import { objects, MAXOCLASSES, OMAILCMD, obj_sanity_check } from './mkobj.js';
@@ -45,6 +47,7 @@ import {
 } from './mon.js';
 import { minimal_monnam } from './do_name.js';
 import { monster_by_pmidx } from './makemon.js';
+import { mstrength } from './mondata.js';
 import { NUMMONS } from './disprng.js';
 import {
     flip_level, flip_level_rnd, lspo_reset_level, lspo_finalize_level,
@@ -229,8 +232,6 @@ export function makemap_unmakemon(mtmp, migratory) {
 // holds 0x01 G_EXTINCT / 0x02 G_GENOD / 0x08 MV_KNOWS_EGG), so the old 0x0004
 // meant makemap_unmakemon's `mvflags &= ~G_EXTINCT` above cleared nothing.
 const G_UNIQ = 0x1000, G_EXTINCT = 0x01;
-const MON_OFFMAP = 0x0001, MON_MIGRATING = 0x0002, MON_LIMBO = 0x0004,
-      MON_ENDGAME_MIGR = 0x0008;
 
 // C ref: wizcmds.c:110 makemap_remove_mons() — get rid of all the monsters
 // on (or intimately involved with) the current level.  js/cmd.js:5326 has a
@@ -447,8 +448,6 @@ export async function wiz_load_lua() {
     }
     return ECMD_OK;
 }
-// include/nhlua.h sandbox flag bits.
-const NHL_SB_SAFE = 0x0001, NHL_SB_DEBUGGING = 0x0002;
 
 // C ref: wizcmds.c:376 wiz_load_splua() — load a special level lua file.
 export async function wiz_load_splua() {
@@ -1159,7 +1158,13 @@ export async function levl_sanity_check() {
     }
 }
 
-// C ref: wizcmds.c:1460 sanity_check().
+// C ref: wizcmds.c:1460 sanity_check().  Fully ported and callable (verified:
+// every sub-check below is a faithful port and none consumes RNG), but NOT
+// wired into the live per-turn loop -- see js/allmain.js moveloop_core()'s
+// comment.  mon_sanity_check() flags this port's starting pets ("pet without
+// edog") because of a real, separate, pre-existing pet representation gap
+// ([[pet-pmidx-convention-mismatch]]); wiring this in before that is fixed
+// would make 'sanity_check:1' sessions WORSE than leaving the option inert.
 export async function sanity_check() {
     const iflags = (game.iflags ||= {});
 
@@ -1173,12 +1178,24 @@ export async function sanity_check() {
     game.program_state.in_sanity_check = (game.program_state.in_sanity_check || 0) + 1;
     await you_sanity_check();
     obj_sanity_check();
-    nyi_timer_sanity_check();
+    {
+        const { timer_sanity_check } = await import('./timeout.js');
+        await timer_sanity_check();
+    }
     await mon_sanity_check();
     light_sources_sanity_check();
-    nyi_bc_sanity_check();
-    nyi_trap_sanity_check();
-    nyi_engraving_sanity_check();
+    {
+        const { bc_sanity_check } = await import('./ball.js');
+        await bc_sanity_check();
+    }
+    {
+        const { trap_sanity_check } = await import('./trap.js');
+        await trap_sanity_check();
+    }
+    {
+        const { engraving_sanity_check } = await import('./engrave.js');
+        await engraving_sanity_check();
+    }
     await levl_sanity_check();
     game.program_state.in_sanity_check--;
 }
@@ -1347,7 +1364,6 @@ export async function wiz_migrate_mons() {
     iflags.debug_mongen = mongen_saved;
     return ECMD_OK;
 }
-const MIGR_RANDOM = 1;   // include/monst.h
 
 /* ------------------------------------------------------------------ */
 /*  #stats                                                            */
@@ -1441,12 +1457,9 @@ export async function wiz_show_nhuuid() {
     return ECMD_OK;
 }
 
-// C ref: wizcmds.c:1790 wiz_mon_diff() — the #wizmondiff command.
-//
-// mstrength() is mondata.c:428 and has no port in js/mondata.js; it needs
-// permonst.mmove, which no js/ table carries.  For an unmodified mons[] every
-// hardcoded difficulty matches mstrength() by construction (that is what the
-// command exists to police), so C's output is the no-discrepancy line.
+// C ref: wizcmds.c:1790 wiz_mon_diff() — the #wizmondiff command.  mstrength()
+// itself is a faithful, complete port at js/mondata.js:208 (it was this call
+// site that stubbed it out as nyi_mstrength(), not a missing port).
 export async function wiz_mon_diff() {
     const win = [];
     let trouble = 0;
@@ -1454,9 +1467,9 @@ export async function wiz_mon_diff() {
     for (let cnt = 0; cnt < NUMMONS; cnt++) {
         const ptr = monster_by_pmidx(cnt);
         if (!ptr || !ptr.mlet) break;
-        const mcalculated = nyi_mstrength(ptr);
+        const mcalculated = mstrength(ptr);
         const mhardcoded = ptr.difficulty | 0;
-        const mdiff = (mcalculated == null) ? 0 : mhardcoded - mcalculated;
+        const mdiff = mhardcoded - mcalculated;
         if (mdiff) {
             if (!trouble++)
                 win.push('Review of monster difficulty ratings [index:level]:');
@@ -1465,7 +1478,7 @@ export async function wiz_mon_diff() {
                 mlev = 50;
             win.push(`${padRight(ptr.name, 18)} [${padLeft(cnt, 3)}:${
                 padLeft(mlev, 2)}]: calculated: ${padLeft(mcalculated, 2)
-                }, hardcoded: ${padLeft(mhardcoded, 2)}, (${
+                }, hardcoded: ${padLeft(mhardcoded, 2)} (${
                 mdiff > 0 ? '+' : ''}${mdiff})`);
         }
     }
@@ -1597,8 +1610,6 @@ function nyi_get_level(levnum) { return { dnum: 0, dlevel: levnum }; }
 function nyi_ledger_no(_lev) { return 0; }
 // mon.c migrate_to_level(mtmp, tolev, xyloc, cc) -> js/mon.js
 async function nyi_migrate_to_level(_mtmp, _tolev, _xyloc, _cc) {}
-// mondata.c:428 mstrength(ptr) -> js/mondata.js (needs a permonst.mmove table)
-function nyi_mstrength(_ptr) { return null; }
 // engrave.c:1626 engr_stats(hdrfmt, hdrbuf, &count, &size) -> js/engrave.js
 function nyi_engr_stats(hdrfmt) {
     return { hdrbuf: hdrfmt.replace('%ld', String(SIZEOF_ENGR)), count: 0, size: 0 };
@@ -1622,14 +1633,6 @@ function nyi_overview_stats(win, _totals) {
 function nyi_wizcustom_glyphids(_win) {}
 // do_wear.c check_wornmask_slots() -> js/do_wear.js
 function nyi_check_wornmask_slots() {}
-// timeout.c timer_sanity_check() -> js/timeout.js
-function nyi_timer_sanity_check() {}
-// ball.c bc_sanity_check() -> js/ball.js
-function nyi_bc_sanity_check() {}
-// trap.c trap_sanity_check() -> js/trap.js
-function nyi_trap_sanity_check() {}
-// engrave.c engraving_sanity_check() -> js/engrave.js
-function nyi_engraving_sanity_check() {}
 // wintty.c display_nhwindow(WIN_MESSAGE, TRUE) -> js/wintty.js (needs the
 // blocking --More-- the js text pager provides, not the stubbed xwaitforspace)
 async function nyi_display_nhwindow_message() {}

@@ -27,8 +27,8 @@ import { CLR_BLACK, CLR_BLUE, CLR_BRIGHT_BLUE, CLR_BRIGHT_CYAN, CLR_BRIGHT_GREEN
 export function SIZE(arr) { return arr.length; }
 
 // Version (patchlevel.h)
-export const VERSION_MAJOR = 3;
-export const VERSION_MINOR = 7;
+export const VERSION_MAJOR = 5;
+export const VERSION_MINOR = 0;
 export const PATCHLEVEL = 0;
 export const VERSION_STRING = `NetHack ${VERSION_MAJOR}.${VERSION_MINOR}.${PATCHLEVEL} Teleport #${COMMIT_NUMBER}`;
 export const TELEPORT_BANNER_C = `         Version ${VERSION_MAJOR}.${VERSION_MINOR}.${PATCHLEVEL}-134 Teleport JS (experiment ${COMMIT_NUMBER}) ${TELEPORT_BUILD_DATE}.`;
@@ -81,6 +81,18 @@ export const DRAWBRIDGE_DOWN = 34;
 export const AIR = 35;
 export const CLOUD = 36;
 export const MAX_TYPE = 37;
+// rm.h:100-107 — classify_terrain()'s pseudo-types, indices into
+// terrain_descr[] (js/botl.js) for the #terrainstatus botl field.  MATCH_WALL
+// (38, rm.h:96) is declared further down this file already — unused here
+// anyway (special-level wall matching, not a hero-underfoot classification).
+export const xFLOOR = 39;
+export const xGROUND = 40;
+export const xOPENDOOR = 41;
+export const xSHUTDOOR = 42;
+export const xSWAMP = 43;
+export const xSUBMERGED = 44;
+export const xSEA = 45;
+export const xWATERWALL = 46;
 
 // Door states — cf. rm.h
 export const D_NODOOR = 0x00;
@@ -281,8 +293,8 @@ export const PICK_ONE = 1;
 export const PICK_ANY = 2;
 export const MENU_BEHAVE_STANDARD = 0;
 export const MENU_BEHAVE_PERMINV = 1;
-export const ATR_ULINE = 1;
-export const ATR_BLINK = 4;
+export const ATR_ULINE = 4;
+export const ATR_BLINK = 5;
 export const ATR_URGENT = 16;
 export const ATR_NOHISTORY = 32;
 
@@ -655,12 +667,12 @@ export const NH_BASIC_COLOR = 0x1000000;
 export const NH_ALTPALETTE = 0x2000000;
 
 // ===== patchlevel.h =====
-export const EDITLEVEL = 134;
+export const EDITLEVEL = 0;
 export const NH_STATUS_RELEASED = 0;
 export const NH_STATUS_WIP = 1;
 export const NH_STATUS_BETA = 2;
 export const NH_STATUS_POSTRELEASE = 3;
-export const NH_DEVEL_STATUS = NH_STATUS_WIP;
+export const NH_DEVEL_STATUS = NH_STATUS_RELEASED;
 export const COPYRIGHT_BANNER_A = "NetHack, Copyright 1985-2026";
 export const COPYRIGHT_BANNER_B = "         By Stichting Mathematisch Centrum and M. Stephenson.";
 export const COPYRIGHT_BANNER_D = "         See license for details.";
@@ -1980,8 +1992,8 @@ export const XL_RIGHT = 8;
 
 // Light-source type tags (src/light.c)
 // Runtime fields: light_base[] entry type and routing for object/monster lookups.
-export const LS_OBJECT = 0;
-export const LS_MONSTER = 1;
+export const LS_OBJECT = 1;
+export const LS_MONSTER = 2;
 
 // Timeout timer-kind and timer-function enums (src/timeout.c)
 // Runtime fields: timer queue kind/func selectors and timer dispatch.
@@ -2010,13 +2022,13 @@ export const TAINT_AGE = 50;
 // Artifact naming/origin flags (src/artifact.c)
 // Runtime fields: oname()/artifact_origin() provenance bits.
 export const ONAME_NO_FLAGS = 0;
-export const ONAME_VIA_NAMING = 0x0001;
-export const ONAME_WISH = 0x0002;
-export const ONAME_GIFT = 0x0004;
-export const ONAME_VIA_DIP = 0x0008;
-export const ONAME_LEVEL_DEF = 0x0010;
-export const ONAME_BONES = 0x0020;
-export const ONAME_RANDOM = 0x0040;
+export const ONAME_VIA_NAMING = 0x0002;
+export const ONAME_WISH = 0x0004;
+export const ONAME_GIFT = 0x0008;
+export const ONAME_VIA_DIP = 0x0010;
+export const ONAME_LEVEL_DEF = 0x0020;
+export const ONAME_BONES = 0x0040;
+export const ONAME_RANDOM = 0x0080;
 export const ONAME_KNOW_ARTI = 0x0100;
 
 // seenv octants and wall-info bits (include/rm.h)
@@ -2150,6 +2162,14 @@ export const MM_NOMSG = 0x00020000;
 export const MM_NOEXCLAM = 0x00040000;
 export const MM_IGNORELAVA = 0x00080000;
 export const MM_ASYNC = 0x00100000;      // caller will await; store appear-message promise on monster
+// JS-only synthetic flag (no C equivalent bit — byyou is a LOCAL computed
+// from the ORIGINAL x,y makemon() was entered with, not a caller flag).
+// A caller that pre-resolves the enexto placement itself (because makemon()
+// has no byyou branch of its own) sets this so makemon() still runs the
+// `if (byyou) { newsym(); set_apparxy(); }` tail C always runs in that case,
+// at the exact point C runs it (between the gender roll and m_initweap/
+// m_initinv — set_apparxy's own RNG draw must precede theirs).
+export const MM_APPARXY_BYYOU = 0x00400000;
 
 // Teleport target search flags (include/hack.h; src/teleport.c goodpos/enexto)
 // Runtime fields: teleport goodpos/enexto entflags/gpflags args
@@ -2161,10 +2181,9 @@ export const GP_AVOID_MONPOS = 0x01000000;
 // Monster relocation flags (include/hack.h; src/teleport.c rloc/rloc_to)
 // Runtime fields: rloc/rloc_to rlocflags args
 export const RLOC_NONE = 0x0000;
-export const RLOC_NOMSG = 0x0001;
+export const RLOC_ERR = 0x0001;
 export const RLOC_MSG = 0x0002;
-export const RLOC_TELE = 0x0004;
-export const RLOC_ERR = 0x0100;
+export const RLOC_NOMSG = 0x0004;
 
 // Hero teleport placement flags (include/hack.h; src/teleport.c teleds)
 // Runtime fields: teleds/safe_teleds flags args
@@ -2916,18 +2935,19 @@ export function Is_earthlevel(uz) { const lev = uz ?? game?.u?.uz; const el = ga
 export function Is_airlevel(uz) { const lev = uz ?? game?.u?.uz; const al = game?.air_level; return !!lev && !!al && lev.dnum === al.dnum && lev.dlevel === al.dlevel; }
 // C ref: youprop.h Unaware = (gm.multi < 0 && (unconscious() || is_fainted())),
 // with trap.c unconscious() = multi < 0 && (u.usleep || nomovemsg begins with
-// "You awake" / "You regain con" / "You are consci").  Reading the nomovemsg
-// prefix is how C itself decides this — eat.c rottenfood() sets exactly
-// "You are conscious again." — so no separate flag is needed.  Lives here (a
-// leaf) because both allmain.js (gethungry's slowed metabolism) and timeout.js
-// (make_deaf's message suppression) need it.
+// "You awake" / "You regain con" / "You are consci") and eat.c is_fainted() =
+// (u.uhs == FAINTED).  Reading the nomovemsg prefix is how C itself decides
+// this — eat.c rottenfood() sets exactly "You are conscious again." — so no
+// separate flag is needed.  Lives here (a leaf) because allmain.js (gethungry's
+// slowed metabolism), timeout.js (make_deaf's message suppression) and
+// display.js (the You_hear()/You_feel() dream prefixes) need it.
 export function Unaware() {
     const g = game;
     if ((g?.multi ?? 0) >= 0) return false;
     if (g?.u?.usleep) return true;
     const m = g?.nomovemsg || '';
     return m.startsWith('You awake') || m.startsWith('You regain con')
-        || m.startsWith('You are consci');
+        || m.startsWith('You are consci') || g?.u?.uhs === FAINTED;
 }
 
 export function In_mines(uz) { return (uz ?? game?.u?.uz)?.dnum === game?.mines_dnum; }

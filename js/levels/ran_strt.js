@@ -24,8 +24,11 @@ import {
 // des.map, so its region is offset by the coder's INITIAL xstart/ystart (1/0
 // from sp_level_coder_init), not by a map origin — 77x20 squares, every one of
 // them ROOM after the mines-style level_init, so it is a flat 1540 rn2(100)
-// draws.  The map itself is placed halign="left"/valign="center"
-// (SPLEV_H_LEFT/SPLEV_CENTER), the same offset arithmetic Vlad's tower uses.
+// draws.  The map itself is placed halign="left"/valign="center" — PLAIN
+// left (SPLEV_LEFT, gx.xstart=1), NOT the "half-left" (SPLEV_H_LEFT) quarter
+// offset Vlad's tower uses; tower1_load_map's 3rd arg selects the plain-left
+// case (sp_lev.c lspo_map, halign string table: "left" -> SPLEV_LEFT,
+// "half-left" -> SPLEV_H_LEFT — a prior version of this file conflated them).
 // ════════════════════════════════════════════════════════════════════════
 
 const RAN_STRT_MAP = [
@@ -68,7 +71,7 @@ export async function makemaz_ran_strt() {
     quest_level_init_mines_flat();
     quest_replace_terrain(0, 0, 76, 19, ROOM, TREE, 5);
     // des.map({ halign="left", valign="center", map=... }).
-    tower1_load_map(RAN_STRT_MAP, false);  // des.map lit option unset -> FALSE
+    tower1_load_map(RAN_STRT_MAP, false, true);  // lit unset->FALSE; halign="left"
     quest_region_light(0, 0, 40, 20, true);
     quest_place_stair(10, 10, false);
     // Portal arrival point; anywhere on the right-hand side of the LEVEL

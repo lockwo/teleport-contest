@@ -7,15 +7,15 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
-import { update_topl, newsym, m_at, y_n } from './display.js';
+import { update_topl, newsym, m_at, y_n, display_nhwindow_message } from './display.js';
 import { hliquid, builds_up, dunlevs_in_dungeon, Is_special, level_difficulty_c } from './dungeon.js';
 import { water_damage, t_at, delfloortrap } from './trap.js';
 import { find_ac } from './u_init.js';
 import { curse, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
     mkgold, rnd_class, DILITHIUM_CRYSTAL, LUCKSTONE, BOULDER } from './mkobj.js';
-import { exercise, acurr_eff, poison_strdmg } from './attrib.js';
+import { exercise, acurr_eff, poison_strdmg, adjattrib } from './attrib.js';
 import { fruitname } from './objnam.js';
-import { more_experienced, newexplevel } from './exper.js';
+import { more_experienced, newexplevel, has_innate } from './exper.js';
 import { newuhs } from './eat.js';
 import { Blind, cansee, couldsee } from './vision.js';
 import { depth, distmin } from './hacklib.js';
@@ -30,7 +30,8 @@ import { observe_object } from './o_init.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import {
     ER_NOTHING, ER_GREASED, ER_DESTROYED, F_LOOTED, F_WARNED, FROMOUTSIDE,
-    FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE,
+    FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE, MM_NOMSG,
+    POLY_NOFLAGS,
 } from './const.js';
 
 // C ref: include/onames.h — long sword otyp (mkobj.js OBJECT_DATA order).
@@ -61,8 +62,11 @@ function Poison_resistance() {
     const u = game.u;
     if (!u) return false;
     const p = u.uprops || {};
+    // A race-innate grant (e.g. every orc, from level 1) is never persisted
+    // as a stored flag anywhere in js/ — OR in the pure has_innate() derivation.
     return !!(u.Poison_resistance || p.Poison_resistance
-              || p.HPoison_resistance || p.PoisonResistance);
+              || p.HPoison_resistance || p.PoisonResistance)
+        || has_innate('HPoison_resistance');
 }
 
 // C ref: mondata.h is_watch(ptr) — a literal `ptr == &mons[PM_WATCHMAN] ||
@@ -349,23 +353,22 @@ export async function drinkfountain() {
     }
 
     if (mgkftn && (u.uluck || 0) >= 0 && fate >= 10) {
-        // C ref: fountain.c:256 — the magic-fountain jackpot.  The old stub
-        // returned with NO output and, worse, no RNG: C's gain-ability loop
-        // opens with `i = rn2(A_MAX)` (a plain rn2(6)) to pick the starting
-        // attribute, and that draw fires whether or not any attribute can rise.
         const A_MAX = 6;
+        const littleluck = (u.uluck || 0) < 4;
         await update_topl('Wow!  This makes you feel great!');
-        // blessed restore ability: ABASE = AMAX for every deficient attribute.
-        if (u.acurr?.a && u.amax?.a) {
-            for (let ii = 0; ii < A_MAX; ii++)
-                if ((u.acurr.a[ii] ?? 0) < (u.amax.a[ii] ?? 0))
-                    u.acurr.a[ii] = u.amax.a[ii];
+        for (let ii = 0; ii < A_MAX; ii++) {
+            if (u.acurr.a[ii] < u.amax.a[ii]) {
+                u.acurr.a[ii] = u.amax.a[ii];
+                game.disp_botl = true;
+            }
         }
-        rn2(A_MAX); /* i = rn2(A_MAX): the gain-ability loop's start index */
-        // The loop body is adjattrib(i, 1, littleluck ? -1 : 0), which draws no
-        // RNG on the gain path (attrib.c:114-142) but raises ABASE/AMAX and
-        // prints "You feel <adjective>!".  attrib.js exports no adjattrib(), so
-        // the raise and that message are still missing.
+        let i = rn2(A_MAX);
+        for (let ii = 0; ii < A_MAX; ii++) {
+            if (await adjattrib(i, 1, littleluck ? -1 : 0) && littleluck)
+                break;
+            if (++i >= A_MAX) i = 0;
+        }
+        await display_nhwindow_message();
         await update_topl('A wisp of vapor escapes the fountain...');
         exercise(A_WIS, true);
         if (loc) loc.blessedftn = 0;
@@ -532,7 +535,7 @@ async function dowaterdemon() {
     game._full_mon_gen = true;
     let mtmp;
     try {
-        mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+        mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
     } finally {
         game._full_mon_gen = was_full;
     }
@@ -576,7 +579,7 @@ async function dowaternymph() {
         const was_full = game._full_mon_gen;
         game._full_mon_gen = true;
         try {
-            mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+            mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
         } finally {
             game._full_mon_gen = was_full;
         }
@@ -628,7 +631,7 @@ async function dowatersnakes() {
     while (num-- > 0) {
         const spot = enexto_spawn(u.ux, u.uy, ptr);
         if (!spot) continue;
-        const mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+        const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
         if (!mtmp) continue;
         placeOnLevel(mtmp, spot.x, spot.y);
         newsym(spot.x, spot.y);
@@ -848,7 +851,7 @@ async function spawnAtHeroSquare(pmidx) {
     if (!ptr) return null;
     const spot = enexto_spawn(u.ux, u.uy, ptr);
     if (!spot) return null;
-    const mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+    const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
     if (mtmp) {
         placeOnLevel(mtmp, spot.x, spot.y);
         newsym(spot.x, spot.y);
@@ -969,12 +972,15 @@ export async function drinksink() {
         morehungry(rn1(30 - acurr_eff(A_CON), 11));
         vomit();
         break;
-    case 10:
+    case 10: {
         await update_topl(`This ${water} contains toxic wastes!`);
-        // Unchanging is never true for the covered heroes.
-        await update_topl('You undergo a freakish metamorphosis!');
-        // polyself(POLY_NOFLAGS) is not modeled (no polymorph subsystem yet).
+        const { polyself, Unchanging_poly } = await import('./polyself.js');
+        if (!Unchanging_poly()) {
+            await update_topl('You undergo a freakish metamorphosis!');
+            await polyself(POLY_NOFLAGS);
+        }
         break;
+    }
     case 11:
         await update_topl('You hear clanking from the pipes...');
         break;

@@ -6,6 +6,7 @@
 // type="shrine"/"sanctum"), and it is the sole RNG consumer of the temple fill.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rn1 } from './rng.js';
 import { isok, ROOMOFFSET, Amask2align, A_NONE, ALTAR, AM_SHRINE,
          MM_EPRI, MM_EMIN } from './const.js';
@@ -188,7 +189,7 @@ export async function intemple(roomno) {
             epri_p.enter_time = moves + d(10, 100);
         }
         let m1, m2, thisKey, otherKey;
-        if (!shrined || !p_coaligned(priest) || (u.ualign?.record ?? 0) <= 0 /* ALGN_SINNED */) {
+        if (!shrined || !p_coaligned(priest) || (u.ualign?.record ?? 0) <= -4 /* ALGN_SINNED, priest.c */) {
             m1 = 'have a%s forbidding feeling...'; m2 = (!shrined || !p_coaligned(priest)) ? '' : ' strange';
             thisKey = 'hostile_time'; otherKey = 'peaceful_time';
         } else {
@@ -214,13 +215,16 @@ export async function intemple(roomno) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// priest.c: the ten functions that had no counterpart here.
+// priest.c: nine of the ten functions that had no counterpart here still
+// don't (forget_temple_entry is now wired — see below).
 //
-// INERT: nothing in js/ calls anything below.  The existing deferral comments
-// that name these (js/save.js:241/604 for forget_temple_entry, js/uhitm.js:
-// 431/447/1144-1150 for ghod_hitsu, js/sp_lev.js:4033/4809 for mk_roamer via
-// its EXT stub, js/sounds.js:376 for priest_talk) still describe the LIVE
-// behaviour; wiring any of them up is a separate, scored change.
+// INERT: nothing in js/ calls anything below except forget_temple_entry
+// (js/save.js's savemonchn() now calls it, matching save.c:893-894) and
+// priest_talk (js/sounds.js domonnoise()'s MS_PRIEST arm now calls it).  The
+// existing deferral comments that name the rest (js/uhitm.js:431/447/
+// 1144-1150 for ghod_hitsu, js/sp_lev.js:4033/4809 for mk_roamer via its EXT
+// stub) still describe the LIVE behaviour; wiring either of THOSE up is a
+// separate, scored change.
 //
 // ── THE epri/emin STORAGE GAP (reported, not papered over) ──────────────────
 // C reaches priest and minion data through mextra.h's EPRI(mon)/EMIN(mon), and
@@ -382,7 +386,10 @@ export async function priestname(mon, article, reveal_high_priest, _pname) {
 
 // C ref: priest.c:545 forget_temple_entry(priest) — reset the four move
 // counters that rate-limit intemple()'s feedback, so leaving the level and
-// coming back gives a fresh start.  No RNG.
+// coming back gives a fresh start.  No RNG.  Called from js/save.js's
+// savemonchn() (C ref: save.c:893-894), once per priest, right before that
+// priest's own record is saved/stored — i.e. on every level departure, not
+// only on a final game save.
 export function forget_temple_entry(priest) {
     const epri_p = priest?.ispriest ? EPRI_(priest) : null;
 
@@ -474,7 +481,7 @@ export async function priest_talk(priest) {
             } else {
                 await pline(`${Monnam_(priest)} preaches the virtues of poverty.`);
             }
-            exercise_(A_WIS_, true);
+            await exercise_(A_WIS_, true);
         } else {
             await pline(`${Monnam_(priest)} is not interested.`);
         }
@@ -503,7 +510,7 @@ export async function priest_talk(priest) {
         if (offer === 0) {
             SetVoice_(priest, 0, 80, 0);
             await verbalize_('Thou shalt regret thine action!');
-            if (coaligned) adjalign_(-1);
+            if (coaligned) await adjalign_(-1);
             if (cheapskate) cheapskate.cheapskate_count = (cheapskate.cheapskate_count | 0) + 1;
         } else if (offer < suggested * quan) {
             if (money_cnt_(invent_()) > (offer * 2)) {
@@ -514,14 +521,14 @@ export async function priest_talk(priest) {
                 SetVoice_(priest, 0, 80, 0);
                 await verbalize_('I thank thee for thy contribution.');
                 /* give player some token */
-                exercise_(A_WIS_, true);
+                await exercise_(A_WIS_, true);
             }
         } else if (offer < suggested * quan * 2) {
             SetVoice_(priest, 0, 80, 0);
             await verbalize_('Thou art indeed a pious individual.');
             if (money_cnt_(invent_()) < (offer * 2)) {
                 if (coaligned && (u.ualign?.record ?? 0) <= ALGN_SINNED)
-                    adjalign_(1);
+                    await adjalign_(1);
             }
             await verbalize_('I bestow upon thee a blessing.');
             const n = Math.trunc(500 * offer / suggested);
@@ -560,7 +567,7 @@ export async function priest_talk(priest) {
                     u.ualign.record = 0; /* cleanse thee */
                     u.ucleansed = game.moves | 0;
                 } else {
-                    adjalign_(2);
+                    await adjalign_(2);
                 }
             }
         }
@@ -695,7 +702,7 @@ export async function ghod_hitsu(priest) {
         await pline(`${await a_gname_at_(ax, ay)} roars in anger:  "Thou shalt suffer!"`);
         break;
     case 1:
-        await pline(`${s_suffix_(await a_gname_at_(ax, ay))} voice booms:  "How darest thou harm my servant!"`);
+        await pline(`${s_suffix(await a_gname_at_(ax, ay))} voice booms:  "How darest thou harm my servant!"`);
         break;
     default:
         await pline(`${await a_gname_at_(ax, ay)} roars:  "Thou dost profane my shrine!"`);
@@ -805,15 +812,13 @@ async function halu_gname_(alignment) {
 async function a_gname_at_(x, y) {
     const loc = game.level?.at(x, y);
     const typ = loc?.typ | 0;
-    if (typ !== 22 /* ALTAR */) return null;
+    if (typ !== ALTAR) return null;
     const { align_gname, roles } = await import('./role.js');
     const mnum = game.urole?.mnum;
     let idx = roles.findIndex((r) => r?.mnum === mnum);
     if (idx < 0) idx = 0;
     return align_gname(idx, Amask2align((loc.altarmask | 0) & 7 /* AM_MASK */));
 }
-// C ref: objnam.c s_suffix(s).
-function s_suffix_(s) { return /s$/.test(String(s)) ? `${s}'` : `${s}'s`; }
 // C ref: objnam.c just_an(outbuf, str) — "a "/"an "/"" for a bare noun.
 function just_an_(str) {
     const s = String(str || '');
@@ -867,9 +872,10 @@ function money_cnt_(list) {
             amt += (o.quan | 0);
     return amt;
 }
-// C ref: shk.c money2u(mon, amount) — js/shk.js:987 (unexported).
+// C ref: shk.c money2u(mon, amount) — js/shk.js exports it.
 async function money2u_(mon, amount) {
-    void mon; void amount; /* NOT PORTED (js/shk.js:987) */
+    const { money2u } = await import('./shk.js');
+    return money2u(mon, amount);
 }
 // C ref: shk.c money2mon(mon, amount) — js/shk.js exports it.
 async function money2mon_(mon, amount) {
@@ -882,12 +888,17 @@ async function currency_(amount) {
     return currency(amount);
 }
 // C ref: attrib.c exercise(attr, inc) / adjalign(n) — js/attrib.js exports
-// both; reached dynamically to keep the static graph unchanged.
-function exercise_(attr, inc) {
-    import('./attrib.js').then((A) => A.exercise(attr, inc));
+// both; reached dynamically to keep the static graph unchanged.  Both draw
+// real RNG (rn2(19)/rn2(2) inside exercise; adjalign is RNG-free itself but
+// its ordering relative to the rest of priest_talk still matters), so the
+// import MUST be awaited before the call, not fired off via .then().
+async function exercise_(attr, inc) {
+    const { exercise } = await import('./attrib.js');
+    exercise(attr, inc);
 }
-function adjalign_(n) {
-    import('./attrib.js').then((A) => A.adjalign(n));
+async function adjalign_(n) {
+    const { adjalign } = await import('./attrib.js');
+    adjalign(n);
 }
 // C ref: timeout.c incr_itimeout(&prop, incr) — js/eat.js:2013 (unexported).
 function incr_itimeout_(propname, incr) {

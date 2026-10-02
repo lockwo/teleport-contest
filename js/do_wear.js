@@ -13,7 +13,7 @@ import { pline, update_topl, newsym } from './display.js';
 import { objects, ARMOR_CLASS, WEAPON_CLASS, CORPSE } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { A_INT, A_WIS, A_DEX, A_CHA, TT_BEARTRAP, TT_INFLOOR, TT_LAVA, TT_BURIEDBALL,
-         TIMEOUT } from './const.js';
+         TIMEOUT, ICE } from './const.js';
 import {
     WA_ARM, WA_ARMC, WA_ARMH, WA_ARMS, WA_ARMG, WA_ARMF, WA_ARMU,
     W_ARMOR_WORN, W_RINGL, W_RINGR, W_AMUL,
@@ -169,10 +169,12 @@ export function armor_simple_name(obj) {
 }
 
 /* ---- property helpers -------------------------------------------------- */
-// The port has no objects[].oc_oprop column and no u.uprops[].extrinsic
-// bitmask, so `oldprop` (the property's extrinsic from OTHER slots) is derived
-// from the other worn items that confer it.  Only the properties this file
-// toggles need an entry.
+// `oldprop` in C is `u.uprops[objects[otyp].oc_oprop].extrinsic & ~WORN_<slot>`,
+// i.e. the property's extrinsic from the OTHER slots.  js/invent.js now
+// maintains that word (worn_extrinsics_on/off) and exposes worn_extrinsic(prop),
+// so these hand-rolled per-property scans are redundant and should be replaced
+// by `worn_extrinsic(p) & ~slotbit` when the accessor conversion lands.  Only
+// the properties this file toggles have an entry.
 function extrinsic_stealth_except(obj) {
     for (const o of [game.uarmc, game.uarmf, game.uleft, game.uright]) {
         if (!o || o === obj) continue;
@@ -200,6 +202,19 @@ function extrinsic_invis_except(obj) {
     }
     return false;
 }
+// C ref: do_wear.c:236/1307 — "levitation from another already-worn source"
+// gate shared by Boots_on()/Ring_on(); a levitation ring is the only other
+// ported source (potion/wand timers aren't separately trackable from this
+// port's flat uprops.Levitation field once combined with a worn item, same
+// approximation as SPEED_BOOTS's efastArm check above).
+function extrinsic_levitation_except(obj) {
+    const RIN_LEVITATION_OTYP = 183;
+    for (const o of [game.uleft, game.uright]) {
+        if (!o || o === obj) continue;
+        if (o.otyp === RIN_LEVITATION_OTYP) return true;
+    }
+    return false;
+}
 function HStealth() { const u = game.u || {}; return !!(u.HStealth || u.uStealth || u.uprops?.HStealth); }
 function BStealth() {
     /* C: stealth is blocked while riding unless hero+steed fly */
@@ -207,7 +222,6 @@ function BStealth() {
     return !!u.usteed && !u.uprops?.Flying;
 }
 function HFumbling() { const u = game.u || {}; return (u.HFumbling | 0); }
-function HFumblingOutside() { const u = game.u || {}; return (u.HFumblingOutside | 0); }
 function Hallucination() {
     const u = game.u || {};
     return !!u.uhallu || !!u.Hallucination || ((u.uprops?.Hallucination | 0) > 0);
@@ -321,18 +335,30 @@ export async function Boots_on() {
     case FUMBLE_BOOTS: {
         const u = u_();
         /* the extrinsic itself comes from setworn(); only the timer is here */
-        u.EFumbling = WA_ARMF;
-        if (!extrinsic_fumbling_except(uarmf) && !HFumblingOutside())
+        u.EFumbling = (u.EFumbling | 0) | WA_ARMF;
+        if (!extrinsic_fumbling_except(uarmf) && !(HFumbling() & ~TIMEOUT))
             u.HFumbling = (u.HFumbling | 0) + rnd(20); /* incr_itimeout */
         break;
     }
-    case LEVITATION_BOOTS:
-        /* float_up()/float_vs_flight() (hack.c) have no JS equivalent; the
-           extrinsic itself rides on the worn mask (deferred: levitation). */
-        uarmf.known = 1;
-        game.botl = true;
-        makeknown(otyp);
+    case LEVITATION_BOOTS: {
+        // C ref: do_wear.c:236 Boots_on() LEVITATION_BOOTS — oldprop is
+        // Levitation already active from another worn source (a levitation
+        // ring).  BLevitation (terrain-blocked levitation via FROMOUTSIDE) is
+        // never set anywhere in this port (switch_terrain() is NOT PORTED,
+        // see js/dig.js:868), so that half of C's gate is always false here.
+        const oldprop = extrinsic_levitation_except(uarmf);
+        if (!oldprop) {
+            uarmf.known = 1;
+            game.botl = true;
+            makeknown(otyp);
+            const { float_up, spoteffects } = await import('./trap.js');
+            await float_up();
+            if (Levitation()) await spoteffects();
+        }
+        // else: float_vs_flight() (hack.c) — not ported anywhere in this
+        // codebase (no BFlying I_SPECIAL-toggle infra exists).
         break;
+    }
     default:
         break;
     }
@@ -369,7 +395,7 @@ export async function Boots_off() {
         break;
     case FUMBLE_BOOTS: {
         const u = u_();
-        if (!oldprop_fumble && !HFumblingOutside()) {
+        if (!oldprop_fumble && !(HFumbling() & ~TIMEOUT)) {
             u.HFumbling = 0;
             u.EFumbling = 0;
         }
@@ -607,8 +633,8 @@ export async function Gloves_on() {
         break;
     case GAUNTLETS_OF_FUMBLING: {
         const u = u_();
-        u.EFumbling = WA_ARMG;
-        if (!extrinsic_fumbling_except(uarmg) && !HFumblingOutside())
+        u.EFumbling = (u.EFumbling | 0) | WA_ARMG;
+        if (!extrinsic_fumbling_except(uarmg) && !(HFumbling() & ~TIMEOUT))
             u.HFumbling = (u.HFumbling | 0) + rnd(20); /* incr_itimeout */
         break;
     }
@@ -651,7 +677,7 @@ export async function Gloves_off() {
         break;
     case GAUNTLETS_OF_FUMBLING: {
         const u = u_();
-        if (!oldprop_fumble && !HFumblingOutside()) { u.HFumbling = 0; u.EFumbling = 0; }
+        if (!oldprop_fumble && !(HFumbling() & ~TIMEOUT)) { u.HFumbling = 0; u.EFumbling = 0; }
         break;
     }
     case GAUNTLETS_OF_POWER:
@@ -911,7 +937,7 @@ export function cancel_don() {
 
 // C ref: do_wear.c:1645 cancel_doff(obj, slotmask) — I_SPECIAL keeps the 'A'
 // command's own <slot>_off() from cancelling the disrobing it is driving.
-const I_SPECIAL = 0x40000000;
+const I_SPECIAL = 0x20000000;
 export function cancel_doff(obj, slotmask) {
     const t = takeoff_ctx();
     if (!(t.mask & I_SPECIAL) && donning(obj)) cancel_don();
@@ -1128,12 +1154,12 @@ export async function glibr() {
         if (leftfall) {
             const otmp = game.uleft;
             Ring_off(otmp);
-            dropx(otmp);
+            await dropx(otmp);
         }
         if (rightfall) {
             const otmp = game.uright;
             Ring_off(otmp);
-            dropx(otmp);
+            await dropx(otmp);
         }
     }
 
@@ -1147,7 +1173,7 @@ export async function glibr() {
         xfl++;
         wastwoweap = true;
         setuswapwep(null);
-        if (canletgo(otmp, '')) dropx(otmp);
+        if (await canletgo(otmp, '')) await dropx(otmp);
     }
     otmp = game.uwep;
     if (otmp && otmp.otyp !== AKLYS && !welded(otmp)) {
@@ -1164,7 +1190,7 @@ export async function glibr() {
         await pline(`${thiswep.startsWith('corpse') ? 'The' : 'Your'} ${otherwep ? 'other ' : ''}${thiswep} ${xfl ? 'also ' : ''}${otense(otmp, 'slip')} from your ${which}${hand}.`);
         otmp.quan = savequan;
         setuwep_slot(null);
-        if (canletgo(otmp, '')) dropx(otmp);
+        if (await canletgo(otmp, '')) await dropx(otmp);
     }
 }
 function makesingular_simple(s) { return String(s).replace(/s$/, ''); }
@@ -1379,7 +1405,7 @@ export function helm_simple_name(obj) { return hard_helmet(obj) ? 'helm' : 'hat'
 // C ref: dungeon.c surface(x,y) — only the message text depends on it.
 function surface_here() {
     const loc = game.level?.at?.(game.u?.ux, game.u?.uy);
-    return (loc && loc.typ === 21 /*ICE*/) ? 'ice' : 'floor';
+    return (loc && loc.typ === ICE) ? 'ice' : 'floor';
 }
 
 function Tobjnam(obj, verb) {

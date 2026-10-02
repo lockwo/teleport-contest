@@ -3,17 +3,18 @@
 // is a des.* primitive that the three already-landed quest homes (Bar/Arc/Pri)
 // did not need; the primitives they DID need still live in js/sp_lev.js.
 
-import { COLNO, CROSSWALL, DRAWBRIDGE_UP, HWALL, IS_AIR, IS_FURNITURE, IS_LAVA,
-         IS_POOL, IS_ROOM, LADDER, LR_BRANCH, MAGIC_PORTAL, MOAT, NO_ROOM,
-         POOL, ROOM, ROWNO, STAIRS, STONE, TRAPPED_CHEST, TRAPPED_DOOR,
-         VIBRATING_SQUARE, VWALL, WATER } from '../const.js';
+import { COLNO, CROSSWALL, DRAWBRIDGE_UP, HWALL, IRONBARS, IS_AIR, IS_FURNITURE,
+         IS_LAVA, IS_POOL, IS_ROOM, IS_STWALL, IS_TREE, LADDER, LR_BRANCH,
+         MAGIC_PORTAL, MOAT, NO_ROOM, POOL, ROOM, ROWNO, STAIRS, STONE,
+         TRAPPED_CHEST, TRAPPED_DOOR, VIBRATING_SQUARE, VWALL, W_NONDIGGABLE,
+         WATER, WEB } from '../const.js';
 import { game } from '../gstate.js';
-import { mkclass } from '../makemon.js';
+import { makemon, mkclass, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { rn2, rnd } from '../rng.js';
 import { maketrap, t_at } from '../trap.js';
 import {
     LOC_ANY, LOC_DRY, SET_LIT_NOCHANGE, bigrm_wallification, flip_level, gx, gy,
-    quest_flip_branch, set_levltyp_lit, shuffle,
+    q_absx, q_absy, quest_flip_branch, set_levltyp_lit, shuffle,
     splev_create_monster, splev_get_location_rnd, splev_traptype_rnd,
 } from '../sp_lev.js';
 
@@ -41,10 +42,17 @@ export function quest_align_shuffle() {
 // (BOOL_RANDOM -> one rn2(2)), then lvlfill_solid(filling, lit).  `filling`
 // defaults to `fg` (sp_lev.c lspo_level_init), so the quest homes that pass
 // fg="." fill with ROOM and the ones that pass fg=" " fill with STONE.
+// lvlfill_solid's own loop (sp_lev.c:374-386) runs x=2..x_maze_max(78) and
+// y=0..y_maze_max(20), NOT the full 0..COLNO-1/0..ROWNO-1 grid — column 0 is
+// always off limits and column 79 is never part of the maze bounds.  Filling
+// them too left an extra rn2(2)-lit strip of `filling` visible in the probe's
+// recorded screen (columns 0/1/79 showed the fill's glyph where C shows the
+// level's untouched blank void instead).
 export function quest_level_init_fill(filling) {
     const lit = rn2(2);                              // sp_lev.c:2992
-    for (let y = 0; y < ROWNO; y++)
-        for (let x = 0; x < COLNO; x++) {
+    const xmax = (COLNO - 1) & ~1, ymax = (ROWNO - 1) & ~1;   // decl.c x_maze_max/y_maze_max defaults
+    for (let x = 2; x <= xmax; x++)
+        for (let y = 0; y <= ymax; y++) {
             const loc = game.level?.at(x, y);
             if (loc) { loc.typ = filling; loc.lit = !!lit; loc.roomno = NO_ROOM; }
         }
@@ -142,8 +150,16 @@ export function quest_monster(spec) {
 // ladders; mktrap() then re-rolls traptype_rnd() until it yields a legal type
 // (only when the .lua asked for a random type) and always ends with the
 // victim check rnd(4) (mklev.c:2137), which never fires at quest-home depth.
-// mktrapflags is MKTRAP_MAZEFLAG|MKTRAP_NOSPIDERONWEB for every des.trap()
-// on these levels (none of them set spider_on_web).
+// mktrapflags is MKTRAP_MAZEFLAG only: lspo_trap() (sp_lev.c:4404)
+// unconditionally sets `tmptrap.spider_on_web = TRUE` before parsing ANY
+// argument form, and none of these ten .lua files' des.trap() calls (bare or
+// "type",x,y) ever override it via a table, so create_trap's
+// `if (!t->spider_on_web) mktrap_flags |= MKTRAP_NOSPIDERONWEB;` never fires
+// here — a rolled WEB trap always gets its guardian giant spider
+// (mklev.c:2104), and the earlier "none of them set spider_on_web" comment
+// had the default backwards (found via seed0367's Rog-strt probe: rngdiff
+// showed a whole missing next_ident/newmonhp/makemon monster-creation group
+// right after a WEB traptype_rnd roll).
 export async function quest_trap(ttyp = null, mx = null, my = null) {
     let x, y;
     if (mx != null) { x = mx + gx.xstart; y = my + gy.ystart; }
@@ -158,7 +174,7 @@ export async function quest_trap(ttyp = null, mx = null, my = null) {
     }
     let kind = ttyp;
     if (kind == null) {
-        do { kind = splev_traptype_rnd(0x04 /* MKTRAP_NOSPIDERONWEB */); }
+        do { kind = splev_traptype_rnd(0); }
         while (kind === NO_TRAP);
         // hardfloor is set on every quest home, so Can_fall_thru() is FALSE and
         // mktrap() rewrites a hole/trapdoor into a falling-rock trap.  No RNG.
@@ -171,7 +187,15 @@ export async function quest_trap(ttyp = null, mx = null, my = null) {
     // for Wiz-strt (seed0360 step 373, call 1600): a des.trap() that rolled a
     // cloud square emits its traptype rolls and then nothing at all.
     if (quest_trap_placeable(x, y, kind)) {
-        await maketrap(x, y, kind);
+        const t = await maketrap(x, y, kind);
+        // C ref: mklev.c:2104 `if (kind == WEB && !(mktrapflags &
+        // MKTRAP_NOSPIDERONWEB)) makemon(&mons[PM_GIANT_SPIDER], m.x, m.y, ...)`
+        // — reads the trap maketrap() actually placed (kind may already be
+        // ROCKTRAP etc. by this point, but a WEB roll always makes a WEB).
+        if ((t ? t.ttyp : kind) === WEB) {
+            const spider = name_to_pmidx('giant spider');
+            if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
+        }
         rnd(4);                                      // mktrap victim (mklev.c:2137)
     }
 }
@@ -260,6 +284,23 @@ export function quest_sel_terrain(sel, typ) {
         const [x, y] = k.split(',').map(Number);
         set_levltyp_lit(x, y, typ, SET_LIT_NOCHANGE);
     }
+}
+
+// C ref: sp_lev.c lspo_non_diggable() -> set_wallprop_in_selection() ->
+// selection_iterate(sel, sel_set_wall_property).  No RNG: only cells whose typ
+// is a stone wall / tree / ironbars within the rectangle gain
+// wall_info |= W_NONDIGGABLE; the room's floor squares in the same rect are
+// untouched.  Coords are map-relative, like quest_region_light().
+export function quest_non_diggable(x1, y1, x2, y2) {
+    const ax1 = q_absx(x1), ay1 = q_absy(y1);
+    const ax2 = q_absx(x2), ay2 = q_absy(y2);
+    for (let y = ay1; y <= ay2; y++)
+        for (let x = ax1; x <= ax2; x++) {
+            const loc = game.level?.at(x, y);
+            if (!loc) continue;
+            if (IS_STWALL(loc.typ) || IS_TREE(loc.typ) || loc.typ === IRONBARS)
+                loc.wall_info = (loc.wall_info || 0) | W_NONDIGGABLE;
+        }
 }
 
 // C ref: nhlib.lua:10 math.random(lo, hi) == nh.random(lo, hi + 1 - lo).

@@ -1013,3 +1013,13 @@ hooks.lightsources = (cs_rows) => {
     sync_monster_light_sources();
     do_light_sources(cs_rows);
 };
+
+// C ref: makemon.c:814-815 — a S_GNOME's freshly-given candle starts burning
+// immediately on unlit ground.  js/makemon.js cannot import this file
+// directly (light.js already imports name_to_pmidx from makemon.js, and the
+// reverse import would cycle), so the effect is exposed through the same
+// hooks indirection vision.js uses above.
+hooks.gnomeCandleLight = (x, y, otmp) => {
+    otmp.lamplit = true;
+    new_light_source(x, y, candle_light_range(otmp), LS_OBJECT, otmp);
+};

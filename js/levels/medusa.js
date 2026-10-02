@@ -39,23 +39,26 @@ import { rn1, rn2, rnd } from '../rng.js';
 import {
     LOC_DRY, bigrm_get_level_extends, bigrm_load_map, bigrm_wallification, flip_level, percent,
     pm_to_humidity, quest_level_init_solidfill, quest_place_stair, quest_rndcoord, quest_set_door,
-    remove_boundary_syms, shuffle, splev_door_at, splev_feature, splev_get_location_rnd,
+    remove_boundary_syms, map_cleanup, shuffle, splev_door_at, splev_feature, splev_get_location_rnd,
     splev_link_doors_rooms, splev_region_lit, splev_traptype_rnd, vly_abs, vly_non_diggable,
     vly_region, vly_teleport_region,
 } from '../sp_lev.js';
 import { Can_fall_thru, maketrap, t_at } from '../trap.js';
+import { obj_resists } from '../zap.js';
 
 // C ref: obj.h — a statue's spe carries the CORPSTAT_* bits lspo_object builds
 // from the historic/male/female table keys before create_object() writes it.
 const CORPSTAT_MALE = 1, CORPSTAT_HISTORIC = 4;
 // C ref: objects[] indices (mkobj.js exports no constant for these two).
 const SCIMITAR = 50, SHIELD_OF_REFLECTION = 158;
-// C ref: mklev.h — create_trap() always passes both of these.
-const MKTRAP_MAZEFLAG = 0x01, MKTRAP_NOSPIDERONWEB = 0x04;
+// C ref: mklev.h MKTRAP_MAZEFLAG — create_trap() always passes this one, and
+// only this one: MKTRAP_NOSPIDERONWEB needs a des.trap() that sets
+// spider_on_web=false, which no medusa-*.lua does.
+const MKTRAP_MAZEFLAG = 0x02;
 // C ref: dungeon.h lev_region rtypes, in lspo_levregion's regiontypes2i order.
 const LR_DOWNSTAIR = 0, LR_UPSTAIR = 1, LR_BRANCH = 3;
 // C ref: monsym.h def_char_to_monclass — the class chars these scripts use.
-const S_ANGEL = 1, S_SNAKE = 45;
+const S_ANGEL = 27, S_SNAKE = 45;
 // C ref: monst.h MR_STONE, the bit resists_ston() reads off the species.
 const MR_STONE = 0x80;
 
@@ -216,9 +219,15 @@ function med_monster({ name = null, cls = 0, mx = null, my = null,
     return mtmp;
 }
 
-// C ref: mon.c mongone() — the monster leaves without dying and without a
-// corpse.  Its pack has already been emptied into the statue by the caller.
+// C ref: mon.c:3267 mongone() — the monster leaves without dying or a corpse.
+// Its pack has already been emptied into the statue by the successful caller;
+// rejected statues still pass every inventory item through mdrop_special_objs(),
+// which calls obj_resists() before discarding the remainder.
 function med_mongone(mtmp) {
+    if (!mtmp) return;
+    mtmp.mhp = 0;
+    for (const obj of mtmp.minvent || []) obj_resists(obj, 0, 0);
+    mtmp.minvent = [];
     const lvl = game.level;
     if (lvl?.monsters) {
         const i = lvl.monsters.indexOf(mtmp);
@@ -341,9 +350,16 @@ function med_perseus_statue(coord, shieldPct, bootsPct) {
 // ── traps ────────────────────────────────────────────────────────────────
 
 // C ref: sp_lev.c create_trap() + mklev.c mktrap(), for the des.trap() forms
-// these scripts use.  A random location re-rolls while it lands on stairs; the
-// trailing rnd(4) is mktrap()'s dead-predecessor check, which is evaluated
-// (and at this depth always fails) before the SQKY_BOARD/RUST_TRAP exclusions.
+// these scripts use.  A random location re-rolls while it lands on stairs.
+// maketrap() itself silently refuses a square already occupied by furniture
+// (STAIRS/LADDER excepted, already screened above, but FOUNTAIN/ALTAR/etc
+// pass is_ok_location's DRY test and only get caught here) or a WEB/HOLE-only
+// exemption; when it does, mktrap() reassigns kind = NO_TRAP and both the
+// spider-on-web summon and the trailing rnd(4) dead-predecessor check are
+// skipped (mklev.c:2099-2137 `kind = t ? t->ttyp : NO_TRAP;` gates the whole
+// `&&` chain, including `kind != NO_TRAP`, before rnd(4) is ever reached) —
+// seed0360-wizard-world-tour step290: medusa-3's 2nd "board" trap lands on
+// othloc's fountain and is silently dropped, so its rnd(4) must not fire.
 async function med_trap(ttyp, mx = null, my = null) {
     let x, y;
     if (mx != null) {
@@ -361,13 +377,24 @@ async function med_trap(ttyp, mx = null, my = null) {
     if (!loc || IS_POOL(loc.typ) || IS_LAVA(loc.typ)) return;
     let kind = ttyp;
     if (!(kind > NO_TRAP && kind < TRAPNUM)) {
+        // NOT MKTRAP_NOSPIDERONWEB: lspo_trap() sets spider_on_web = TRUE at
+        // sp_lev.c:4405 and no medusa-*.lua des.trap() overrides it, so
+        // create_trap() never sets the flag.
         do {
-            kind = splev_traptype_rnd(MKTRAP_MAZEFLAG | MKTRAP_NOSPIDERONWEB);
+            kind = splev_traptype_rnd(MKTRAP_MAZEFLAG);
         } while (kind === NO_TRAP);
     }
     if (is_hole(kind) && !Can_fall_thru(game.u?.uz)) kind = ROCKTRAP;
-    await maketrap(x, y, kind);
-    rnd(4);                                        // mklev.c:2137 victim check
+    const t = await maketrap(x, y, kind);
+    // C ref: mklev.c:2102 `kind = t ? t->ttyp : NO_TRAP;` — a refused
+    // placement (furniture conflict) collapses kind to NO_TRAP, which gates
+    // out BOTH the spider-on-web summon (mklev.c:2104) and the victim check.
+    kind = t ? t.ttyp : NO_TRAP;
+    if (kind === 18 /* WEB */) {
+        const spider = name_to_pmidx('giant spider');
+        if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
+    }
+    if (kind !== NO_TRAP) rnd(4);                  // mklev.c:2135-2137 victim check
 }
 
 // ── level regions (fixup_special) ────────────────────────────────────────
@@ -449,13 +476,13 @@ function med_lregion(rtype, x1, y1, x2, y2, ex = null) {
 }
 
 // C ref: sp_lev.c flip_level() also flips gl.lregions[] and the stored
-// up/down teleport destinations.
+// up/down teleport destinations — UNCONDITIONALLY (unlike traps/objects/
+// monsters/engravings, which flip_level() only touches when inFlipArea()
+// holds; the lregions/updest/dndest loop there has no such guard at all).
 function med_flip_rect(r, kx1, ky1, kx2, ky2, flp) {
     if (!r) return;
     const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
-    const inArea = (x, y) => (x >= minx && x <= maxx && y >= miny && y <= maxy);
     for (const [kx, ky] of [[kx1, ky1], [kx2, ky2]]) {
-        if (!inArea(r[kx], r[ky])) continue;
         if (flp & 1) r[ky] = miny + maxy - r[ky];
         if (flp & 2) r[kx] = minx + maxx - r[kx];
     }
@@ -513,11 +540,15 @@ function med_fixup_statues() {
     if (rn2(2)) {                                  // mkmaze.c:671
         otmp = mk_tt_object(STATUE, somex(croom), somey(croom));
     } else {
-        // "Medusa statues don't contain books": mkcorpstat() with a NULL
-        // permonst, i.e. mksobj_at(STATUE, x, y, TRUE, FALSE) — whose STATUE
-        // arm already rolls the species — and no tt_oname().
+        // "Medusa statues don't contain books": mkcorpstat(STATUE, NULL, NULL,
+        // x, y, CORPSTAT_NONE) -> mksobj_at(STATUE, x, y, init=FALSE, FALSE)
+        // (CORPSTAT_NONE has no CORPSTAT_INIT bit).  init=FALSE means
+        // mksobj_init() — and its ROCK_CLASS/STATUE spellbook-content roll —
+        // never runs; only the unconditional corpsenm-assignment switch in
+        // mksobj() does.  This was passing init=TRUE, which ran mksobj_init()
+        // anyway (an extra rn2() draw plus, at ~50% odds, an actual book).
         const x = somex(croom), y = somey(croom);
-        otmp = mksobj_at(STATUE, x, y, true, false);
+        otmp = mksobj_at(STATUE, x, y, false, false);
     }
     let tryct = 0;
     while (++tryct < 100 && otmp && med_statue_is_stony(otmp))
@@ -548,13 +579,22 @@ function med_prologue(mapstr, flags) {
 function med_finalize(lregions) {
     splev_link_doors_rooms();
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                          // sp_lev.c:975
     if (rn2(2)) flp |= 2;                          // sp_lev.c:977
     if (flp) {
         flip_level(flp);
-        for (const r of lregions) med_flip_rect(r, 'lx', 'ly', 'hx', 'hy', flp);
+        // C ref: sp_lev.c flip_level() flips BOTH gl.lregions[i].inarea (the
+        // region itself) AND gl.lregions[i].delarea (its exclusion sub-rect,
+        // the LR_BRANCH exclude=... box here) — flipping only inarea left a
+        // stale, un-flipped exclusion zone that place_lregion's bad_location
+        // exclusion check tested candidate spots against.
+        for (const r of lregions) {
+            med_flip_rect(r, 'lx', 'ly', 'hx', 'hy', flp);
+            med_flip_rect(r, 'nlx', 'nly', 'nhx', 'nhy', flp);
+        }
         med_flip_rect(game.dndest, 'lx', 'ly', 'hx', 'hy', flp);
         med_flip_rect(game.updest, 'lx', 'ly', 'hx', 'hy', flp);
     }

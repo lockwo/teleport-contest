@@ -8,13 +8,13 @@
 // dokick()'s pre-direction refusals matter for a different reason: C returns
 // ECMD_FAIL *before* getdir(), so the direction key becomes the next command.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
 import { pline, newsym, m_at, topl_more, unmap_object, y_n, update_topl } from './display.js';
 import { Blind, couldsee, cansee, recalc_block_point, unblock_point } from './vision.js';
 import { exercise, acurr_eff, adjalign } from './attrib.js';
 import {
-    A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, FACE, LEG,
+    A_STR, A_DEX, A_CON, A_WIS, A_CHA, A_LAWFUL, FACE, LEG,
     SDOOR, SCORR, CORR, DOOR, ROOM, STAIRS, LADDER, IRONBARS, LAVAWALL,
     LA_DOWN, D_ISOPEN, D_BROKEN, D_NODOOR, D_CLOSED, D_LOCKED, D_TRAPPED,
     D_WARNED, T_LOOTED, TREE_SWARM, S_LPUDDING, S_LDWASHER,
@@ -23,6 +23,8 @@ import {
     isok, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES, SLT_ENCUMBER, SHOPBASE,
     TT_PIT, TT_WEB, TT_BEARTRAP, TRAPDOOR, HOLE,
     MIGR_NOWHERE, MIGR_RANDOM, MIGR_STAIRS_UP, MIGR_LADDER_UP, MIGR_SSTAIRS,
+    MIGR_TO_SPECIES, NON_PM, OBJ_FREE, DF_RANDOM, DF_ALL, In_mines,
+    has_oname, ONAME, has_mgivenname,
     In_endgame, Is_stronghold, Is_botlevel,
     MM_ANGRY, MM_NOMSG, MM_MALE, MM_FEMALE, ER_NOTHING,
     AM_MASK, Amask2align, W_ARMF,
@@ -32,8 +34,8 @@ import {
 import { KICKING_BOOTS, BOULDER, ROCK, DILITHIUM_CRYSTAL, LUCKSTONE,
          RING_CLASS, GEM_CLASS, EGG, BAG_OF_HOLDING, BAG_OF_TRICKS,
          COIN_CLASS, CORPSE, LARGE_BOX, CHEST, ICE_BOX, place_object, next_ident,
-         mkgold, mksobj_at, mkobj_at, rnd_class, objects, weight } from './mkobj.js';
-import { makemon, monster_by_pmidx, name_to_pmidx, enexto_spawn } from './makemon.js';
+         mkgold, mksobj_at, mkobj_at, rnd_class, objects, weight, base_oc_cost } from './mkobj.js';
+import { makemon, monster_by_pmidx, name_to_pmidx, enexto_spawn, mpickobj } from './makemon.js';
 import { in_rooms, shop_keeper } from './shkroom.js';
 import { water_damage, set_wounded_legs, t_at } from './trap.js';
 import { near_capacity, sobj_at, useup, body_part, inv_weight, makeplural,
@@ -44,7 +46,9 @@ import { surface, hliquid, dunlevs_in_dungeon, Is_special } from './dungeon.js';
 import { attacktype, AT_ENGL } from './monattk_data.js';
 import { nolimbs, nohands, mflags1_of, M1_SLITHY, humanoid,
          M1_THICK_HIDE, M1_NOEYES, M1_FLY, M1_TPORT,
-         is_neuter_flag } from './monflags_data.js';
+         is_neuter_flag, mflags2_of, M2_UNDEAD, M2_WERE, M2_HUMAN, M2_ELF,
+         M2_DWARF, M2_GNOME, M2_ORC, M2_DEMON, M2_GIANT,
+         likes_gold_flag, is_mercenary_flag } from './monflags_data.js';
 import { canspotmon, Monnam, mon_nam, setmangry, killed, monflee,
          attack_checks, overexertion, passive, check_caitiff, abuse_dog,
          seemimicLocal as seemimic, glyph_is_invisible } from './uhitm.js';
@@ -53,9 +57,9 @@ import { map_invisible } from './display.js';
 import { special_dmgval } from './weapon.js';
 import { goodpos, rloc_to } from './teleport.js';
 import { m_in_out_region } from './region.js';
-import { set_apparxy, noteleport_level } from './monmove.js';
+import { set_apparxy, noteleport_level, impact_disturbs_zombies } from './monmove.js';
 import { AT_KICK } from './monattk_data.js';
-import { a_monnam } from './do_name.js';
+import { a_monnam, free_oname, christen_orc, mhis } from './do_name.js';
 import { wipe_engr_at } from './engrave.js';
 import { getdir, wake_nearby, wake_nearto, b_trapped } from './cmd.js';
 import { goto_level } from './do.js';
@@ -64,6 +68,11 @@ import { scatter } from './explode.js';
 import { hero_breaks } from './dothrow.js';
 import { is_art, ART_MJOLLNIR } from './artifact.js';
 import { costly_spot, addtobill } from './shkroom.js';
+import { canseemon_shared } from './display.js';
+import { finish_meating } from './dogmove.js';
+import { hidden_gold, money_cnt_invent, make_happy_shk } from './shk.js';
+import { currency } from './invent.js';
+import { set_voice } from './sounds.js';
 
 const ECMD_OK = 0, ECMD_TIME = 1, ECMD_FAIL = 0, ECMD_CANCEL = 0;
 const S_LIZARD = 58;      // defsym.h S_LIZARD, as numbered in permonst.mcls
@@ -382,9 +391,31 @@ export async function kick_ouch(x, y, kickobjnam, maploc) {
     // losehp(Maybe_Half_Phys(dmg), kickstr(buf, kickobjnam), KILLED_BY): no hero
     // reaching here carries Half_physical_damage, so dmg passes unhalved.
     if (u) {
-        u.ukiller = kickstr(kickobjnam, maploc);
-        u.uhp = Math.max(0, (u.uhp || 0) - dmg);
+        // C ref: hack.c:4279-4288 losehp() — the HP loss AND the death check
+        // both happen inline, before kick_ouch()/dokick() ever return: a kick
+        // that drops uhp below 1 shows "You die..." and calls done(DIED) right
+        // here.  This used to only set the never-read `u.ukiller` and clamp
+        // uhp at a minimum of 0 with no death check at all, so a hero who
+        // kicked herself to death (e.g. repeatedly kicking a wall) just kept
+        // playing at 0/1 HP forever instead of ending the game — every other
+        // losehp() copy in this port (do.js losehp_do, potion.js, spell.js,
+        // read.js, ...) has this same check; this was the one missing it.
+        u.uhp = (u.uhp ?? 0) - dmg;
         game.botl = true;
+        if (u.uhp < 1) {
+            await update_topl('You die...');
+            // C: losehp(..., kickstr(...), KILLED_BY) — KILLED_BY (not
+            // KILLED_BY_AN) means the killer text is used verbatim with a
+            // plain "killed by " prefix, no article (const.js KILLED_BY=1).
+            game._killer_name = `killed by ${kickstr(kickobjnam, maploc)}`;
+            const { done, DIED } = await import('./end.js');
+            await done(DIED);
+            // C: done(DIED) never returns to its caller (nh_terminate() ends
+            // the process); the trailing Levitation/hurtle roll below is
+            // unreachable code on a real dead-from-kicking hero, so stop here
+            // too rather than fabricating an extra rn1(2,4) draw after death.
+            return;
+        }
     }
     // C ref: dokick.c — `if (Is_airlevel || Levitation) hurtle(-u.dx, -u.dy,
     // rn1(2, 4), TRUE)`: a levitating kicker is always thrown back, and the
@@ -1195,6 +1226,7 @@ async function really_kick_object(x, y) {
         }
         if (!(await kick_flooreffects(gk_kickedobj, u.ux, u.uy))) {
             place_object(gk_kickedobj, u.ux, u.uy);
+            impact_disturbs_zombies(gk_kickedobj, true);
             stackobj(gk_kickedobj);
             newsym(u.ux, u.uy);
         }
@@ -1277,7 +1309,7 @@ async function really_kick_object(x, y) {
         if (mon.isshk && gk_kickedobj.where === 'minvent' && gk_kickedobj.ocarry === mon)
             return 1; /* alert shk caught it */
         game.notonhead = (mon.mx !== land.x || mon.my !== land.y);
-        if (isgold ? await ghitm_k(mon, gk_kickedobj)
+        if (isgold ? await ghitm(mon, gk_kickedobj)
                    : await thitmonst(mon, gk_kickedobj, await kick_skillsnap(gk_kickedobj)))
             return 1;
     }
@@ -1295,6 +1327,7 @@ async function really_kick_object(x, y) {
 
     if (await kick_flooreffects(gk_kickedobj, land.x, land.y)) return 1;
     place_object(gk_kickedobj, land.x, land.y);
+    impact_disturbs_zombies(gk_kickedobj, true);
     stackobj(gk_kickedobj);
     newsym(gk_kickedobj.ox, gk_kickedobj.oy);
     return 1;
@@ -1329,16 +1362,72 @@ async function kick_skillsnap(obj) {
 // doorway.  No RNG.
 function costly_adjacent_k(_shkp, _x, _y) { return false; }
 
-// C ref: steal.c ghitm(mtmp, gold) — js/dothrow.js keeps the same body module-
-// private for throw_gold().  Returns TRUE when the monster keeps the coins.
-async function ghitm_k(mtmp, gold) {
-    mtmp.msleeping = 0;
-    if (!mtmp.mcanmove) return false;
+// C ref: dokick.c ghitm() — only greedy monsters and gold-handling NPCs catch.
+export async function ghitm(mtmp, gold) {
     const U = await import('./uhitm.js');
-    await U.wakeupAttack(mtmp, false);
-    const { mpickobj } = await import('./steal.js');
-    mpickobj(mtmp, gold);
-    return true;
+    const { cxname } = await import('./objnam.js');
+    if (!likes_gold_flag(mtmp.data) && !mtmp.isshk && !mtmp.ispriest
+        && !mtmp.isgd && !is_mercenary_flag(mtmp.data)) {
+        await U.wakeupAttack(mtmp, true);
+    } else if (mtmp.mcanmove === 0 || mtmp.mcanmove === false) {
+        if (canseemon_shared(mtmp)) {
+            await update_topl(`The ${cxname(gold)} harmlessly ${otense(gold, 'hit')} ${mon_nam(mtmp)}.`);
+            return false;
+        }
+    } else {
+        const wasSleeping = mtmp.msleeping;
+        const value = gold.quan * base_oc_cost(gold.otyp);
+        mtmp.msleeping = 0;
+        finish_meating(mtmp);
+        if (!mtmp.isgd && !rn2(4)) await setmangry(mtmp, true);
+        if (cansee(mtmp.mx, mtmp.my))
+            await update_topl(`${Monnam(mtmp)} ${wasSleeping ? 'awakens and ' : ''}catches the gold.`);
+        const { mpickobj: catch_gold } = await import('./steal.js');
+        catch_gold(mtmp, gold);
+        if (mtmp.isshk) {
+            const eshk = mtmp.eshk;
+            if (eshk.robbed) {
+                eshk.robbed = Math.max(0, eshk.robbed - value);
+                await update_topl(`The amount ${eshk.robbed ? 'partially ' : ''}covers ${mhis(mtmp)} recent losses.`);
+                if (!eshk.robbed) await make_happy_shk(mtmp, false);
+            } else {
+                set_voice(mtmp, 0, 80, 0);
+                if (mtmp.mpeaceful) {
+                    eshk.credit = (eshk.credit || 0) + value;
+                    await update_topl(`You have ${eshk.credit} ${currency(eshk.credit)} in credit.`);
+                } else {
+                    await update_topl('"Thanks, scum!"');
+                }
+            }
+        } else if (mtmp.ispriest) {
+            set_voice(mtmp, 0, 80, 0);
+            await update_topl(mtmp.mpeaceful ? '"Thank you for your contribution."' : '"Thanks, scum!"');
+        } else if (mtmp.isgd) {
+            set_voice(mtmp, 0, 80, 0);
+            await update_topl(`"${money_cnt_invent() ? 'Drop the rest and follow me.'
+                : hidden_gold(true) ? 'You still have hidden gold.  Drop it now.'
+                    : mtmp.mpeaceful ? "I'll take care of that; please move along."
+                        : "I'll take that; now get moving."}"`);
+        } else if (is_mercenary_flag(mtmp.data)) {
+            const wasAngry = !mtmp.mpeaceful;
+            let required = ({ soldier: 100, sergeant: 250, lieutenant: 500,
+                              captain: 750 })[mtmp.data.name] || 0;
+            if (required && rn2(3)) {
+                required += Math.trunc((money_cnt_invent() + game.u.ulevel * rn2(5))
+                                      / ACURR(A_CHA));
+                if (value > required) mtmp.mpeaceful = true;
+            }
+            set_voice(mtmp, 0, 80, 0);
+            await update_topl(`"${!mtmp.mpeaceful
+                ? (required ? "That's not enough, coward!" : "I don't take bribes from scum like you!")
+                : wasAngry ? 'That should do.  Now beat it!'
+                    : `Thanks for the tip, ${game.flags?.female ? 'lady' : 'buddy'}.`}"`);
+        }
+        return true;
+    }
+    const { miss } = await import('./zap.js');
+    await miss(cxname(gold), mtmp);
+    return false;
 }
 
 // C ref: lock.c breakchestlock(box, destroyit) — the !destroyit half: the box
@@ -1392,8 +1481,11 @@ export async function dokick() {
         // answer as a direction.
         if (await y_n('Kick your steed?', 'yn\x1b', 'y') === 'y') {
             await pline(`You kick ${mon_nam(u.usteed)}.`);
-            // NOT PORTED: steed.c kick_steed() — its dismount_steed(
-            // DISMOUNT_THROWN) leaf has no counterpart here (see `deferred`).
+            // C ref: steed.c kick_steed() — the exported js/steed.js port
+            // handles the rousing/dismount/gallop RNG; it assumes the
+            // "You kick <steed>." line above has already been printed.
+            const { kick_steed } = await import('./steed.js');
+            await kick_steed();
             return ECMD_TIME;
         }
         return ECMD_OK;
@@ -1651,6 +1743,60 @@ export function drop_to(cc, loc, x, y) {
     }
 }
 
+// C dokick.c:1854: transfer matching species-targeted loot in chain order.
+export function deliver_obj_to_mon(mtmp, cnt, deliverflags) {
+    const list = game.migrating_objs;
+
+    const at_crime_scene = In_mines();
+    let maxobj;
+    if ((deliverflags & DF_RANDOM) && cnt > 1) maxobj = rnd(cnt);
+    else if (deliverflags & DF_ALL) maxobj = 0;
+    else maxobj = 1;
+    if (!list?.length) return;
+
+    const DELIVER_PM = M2_UNDEAD | M2_WERE | M2_HUMAN | M2_ELF | M2_DWARF
+                        | M2_GNOME | M2_ORC | M2_DEMON | M2_GIANT;
+
+    let delivered = 0;
+    // Migration arrays are oldest-first, unlike C's prepended object chain.
+    for (let i = list.length - 1; i >= 0; i--) {
+        const otmp = list[i];
+        const where = (otmp.owornmask || 0) & 0x7fff;
+        if ((where & MIGR_TO_SPECIES) === 0) continue;
+
+        if (otmp.migr_species != null && otmp.migr_species !== NON_PM
+            && (mflags2_of(mtmp.data) & DELIVER_PM) === otmp.migr_species) {
+            list.splice(i, 1);
+            otmp.where = OBJ_FREE;
+            otmp.owornmask = 0;
+            otmp.ox = 0;
+            otmp.oy = 0;
+
+            /* special treatment for orcs and their kind */
+            if ((otmp.migr_species & M2_ORC) !== 0 && has_oname(otmp)) {
+                if (!has_mgivenname(mtmp)) {
+                    if (at_crime_scene || !rn2(2)) {
+                        mtmp = christen_orc(mtmp,
+                            at_crime_scene ? ONAME(otmp) : null,
+                            /* bought the stolen goods */
+                            ' the Fence');
+                    }
+                }
+                free_oname(otmp);
+            }
+            otmp.migr_species = NON_PM;
+            otmp.omigr_from_dnum = 0;
+            otmp.omigr_from_dlevel = 0;
+            mpickobj(mtmp, otmp);
+            delivered++;
+            if (maxobj && delivered >= maxobj) break;
+            /* getting here implies DF_ALL */
+        }
+    }
+}
+// Avoid a dokick/makemon module-initialization cycle.
+hooks.deliver_obj_to_mon = deliver_obj_to_mon;
+
 // C ref: dokick.c container_impact_dmg(obj, x, y) — a container is kicked,
 // dropped, thrown or otherwise impacted; glass contents shatter and eggs crack.
 // RNG: obj_resists(otmp, 33, 100) per glass item, rn2(3) per egg — in cobj
@@ -1668,7 +1814,7 @@ export function container_impact_dmg(obj, x, y) {
     for (const otmp of [...obj.cobj]) {
         let result = null;
 
-        if (objects[otmp.otyp]?.oc_material === GLASS
+        if (objects[otmp.otyp]?.material === GLASS
             && otmp.oclass !== GEM_CLASS && !obj_resists(otmp, 33, 100)) {
             result = 'shatter';
         } else if (otmp.otyp === EGG && !rn2(3)) {

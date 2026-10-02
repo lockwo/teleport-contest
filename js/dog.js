@@ -4,26 +4,17 @@
 import { game } from './gstate.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
-import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE } from './const.js';
+import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
+import { set_malign, monster_by_pmidx } from './makemon.js';
+import { deliver_obj_to_mon } from './dokick.js';
+import { finish_meating } from './dogmove.js';
 
 // C ref: include/onames.h — SADDLE object type index (mkobj.js OBJECTS table
 // row [235, "SADDLE", ...]).  A saddle is a TOOL_CLASS object whose
 // mksobj_init() has no SADDLE case, so the only RNG it consumes is the single
 // rnd(2) inside next_ident() that assigns o_id.
 const SADDLE = 235;
-
-// Per-pet display info (class symbol + color).  C ref: include/monsters.h
-// (the starting pets).  Pets are drawn in HI_DOMESTIC = CLR_WHITE.
-// mflags3: the M3_* flag group (include/monsters.h).  All three starting pets
-// are M3_INFRAVISIBLE (0x200) so the hero's infravision reveals them in dark
-// corridors (display.c see_with_infrared -> infravisible(mon->data)); the
-// kitten additionally has M3_INFRAVISION (0x100).
-const PET_DATA = {
-    16: { name: 'little dog', mlet: 'd', mcolor: 15, mflags3: 0x200 }, // PM_LITTLE_DOG
-    32: { name: 'kitten', mlet: 'f', mcolor: 15, mflags3: 0x300 },     // PM_KITTEN (INFRAVISIBLE|INFRAVISION)
-    100: { name: 'pony', mlet: 'u', mcolor: 3, mflags3: 0x200 },       // PM_PONY (brown)
-};
 
 export const PM_LITTLE_DOG = 16;
 export const PM_KITTEN = 32;
@@ -75,8 +66,17 @@ function goodpos(x, y) {
     if (x < 1 || x >= COLNO || y < 0 || y >= ROWNO) return false;
     if (game.u?.ux === x && game.u?.uy === y) return false;
     if (m_at(x, y)) return false;
-    const typ = game.level?.at(x, y)?.typ;
-    return typ != null && typ >= DOOR; // ACCESSIBLE(typ)
+    const loc = game.level?.at(x, y);
+    const typ = loc?.typ;
+    if (typ == null || typ < DOOR) return false; // !ACCESSIBLE(typ)
+    // C ref: monmove.c:2193 accessible() = ACCESSIBLE(...) && !closed_door(x,y)
+    // -- this closed-door term was missing (same bug already fixed in
+    // js/makemon.js's goodpos_spawn for random spawns, never propagated to
+    // this separate copy used for the starting pet), so the pony could be
+    // planted inside a shut/locked door instead of the next ring-1 candidate.
+    if (typ === DOOR && ((loc.doormask ?? 0) & (D_CLOSED | D_LOCKED)) !== 0)
+        return false;
+    return true;
 }
 
 // C ref: teleport.c collect_coords — gather candidate spots in expanding
@@ -221,16 +221,9 @@ function makedog_mon(pettype, x, y) {
         if (cc) { mx = cc.x; my = cc.y; }
     }
 
-    const petinfo = PET_DATA[pettype] || { name: 'pet', mlet: 'd', mcolor: 15, mflags3: 0x200 };
     const mtmp = {
-        data: { pmidx: pettype, name: petinfo.name, mlet: petinfo.mlet,
-                mcolor: petinfo.mcolor,
-                // mflags3 (M3_*): starting pets are M3_INFRAVISIBLE so the hero's
-                // infravision shows them in dark corridors (see_with_infrared).
-                mflags3: petinfo.mflags3 ?? 0x200,
-                // carnivore/herbivore flags drive dogfood() classification.
-                carnivore: pettype !== PM_PONY,
-                herbivore: pettype === PM_PONY },
+        // C ref: makemon.c — mtmp->data = &mons[mndx], the shared species row.
+        data: monster_by_pmidx(pettype),
         // C ref: makemon.c / dog.c initedog() — a tamed monster is peaceful
         // (all mtame are mpeaceful).  is_safemon() in the hero's bump-to-swap
         // path keys off mpeaceful, so set it explicitly at creation (before
@@ -251,7 +244,11 @@ function makedog_mon(pettype, x, y) {
             droptime: 0, dropdist: 10000,
             apport: null, // resolved lazily from ACURR(A_CHA)
             whistletime: 0,
-            hungrytime: (game.moves || 1) + 1000,
+            // C ref: dog.c:63 — "force error if used before set".  dog_goal's
+            // first out-of-sight call therefore takes the reuse-ogoal arm and
+            // heads for (-1,-1) instead of scanning do_clear_area.
+            ogoal: { x: -1, y: -1 },
+            hungrytime: (game.moves ?? 0) + 1000,
             mhpmax_penalty: 0,
         },
     };
@@ -296,9 +293,10 @@ function put_saddle_on_mon(saddle, mtmp) {
         saddle.dknown = 1;
     }
     // mpickobj(mtmp, saddle): hand the saddle to the (tame) monster.
+    // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.
     if (!mtmp.minvent) mtmp.minvent = [];
     saddle.where = 'minvent';
-    mtmp.minvent.push(saddle);
+    mtmp.minvent.unshift(saddle);
     // misc_worn_check |= W_SADDLE; saddle->owornmask = W_SADDLE; ...
     mtmp.misc_worn_check = (mtmp.misc_worn_check || 0) | W_SADDLE;
     saddle.owornmask = W_SADDLE;
@@ -318,6 +316,10 @@ export function makedog() {
     g.context.startingpet_typ = pettype;
 
     const mtmp = makedog_mon(pettype, g.u?.ux ?? 0, g.u?.uy ?? 0);
+    // C ref: dog.c initedog() — makedog_mon() is intentionally a compact
+    // construction path, but it still needs the regular tame-monster
+    // alignment value before the pet can later be killed or retamed.
+    if (mtmp) set_malign(mtmp);
     if (!g.context.startingpet_mid) {
         g.context.startingpet_mid = mtmp.m_id;
         // C ref: dog.c makedog() — initial horses (PM_PONY) start wearing a
@@ -373,16 +375,11 @@ export function makedog() {
 // Nothing above this banner calls anything below it and no other module
 // imports these names yet, so wiring one up is a separate, measured step.
 //
-// PET RECORD MISMATCH (measured).  makedog_mon() above builds its OWN pet
-// record: `data` carries {pmidx, name, mlet, mcolor, mflags3, carnivore,
-// herbivore} with no cwt/msize, and its pmidx is not a makemon() index
-// (34 = jaguar, 102 = gray unicorn).  Every pmidx-keyed or mons[]-row-keyed
-// predicate therefore lies about a starting pet.  The functions below are
-// written against C's struct monst / struct edog, i.e. against a makemon()
-// monster (js/makemon.js monster_by_pmidx() rows).  Do NOT feed them a
-// makedog_mon() pet until that record is reconciled: deduping dogmove's
-// PET_MAXLOAD into the shared can_carry() is the same mismatch biting from the
-// other side and measured -2296.
+// PET RECORD.  makedog_mon() above assigns the canonical monster_by_pmidx()
+// species row as `data`, so the functions below (written against C's struct
+// monst / struct edog) see a starting pet the way C does.  Deduping dogmove's
+// PET_MAXLOAD into the shared can_carry() was measured -2296 against the old
+// hand-rolled record; re-measure before retrying it.
 //
 // LINKED LISTS AS ARRAYS.  C walks three singly-linked monster chains through
 // mtmp->nmon: fmon (the live level), gm.migrating_mons and gm.mydogs.  This
@@ -420,7 +417,7 @@ const MIGR_RANDOM = 0, MIGR_APPROX_XY = 1, MIGR_EXACT_XY = 2,
       MIGR_LADDER_DOWN = 6, MIGR_SSTAIRS = 7, MIGR_PORTAL = 8,
       MIGR_WITH_HERO = 9, MIGR_LEFTOVERS = 8192;
 // C ref: include/trap.h MAGIC_PORTAL.
-const MAGIC_PORTAL = 24;
+const MAGIC_PORTAL = 17;
 // C ref: include/monsters.h PM_LONG_WORM (makemon.js MONS_NAMES index).
 const PM_LONG_WORM = 168;
 // C ref: include/worm.h MAX_NUM_WORMS — mon_leave()'s segment-count clamp.
@@ -438,15 +435,15 @@ function mbirth_limit(mndx) {
 }
 // C ref: include/onames.h SPE_CREATE_FAMILIAR (js/spell.js:518).
 const SPE_CREATE_FAMILIAR = 401;
-// C ref: include/objclass.h AT_WEAP / NEED_HTH_WEAPON (monst.h weapon_check).
-const AT_WEAP = 4;
-const NEED_HTH_WEAPON = 1;
+// C ref: include/monattk.h AT_WEAP / monst.h wpn_chk_flags NEED_HTH_WEAPON.
+const AT_WEAP = 254;
+const NEED_HTH_WEAPON = 3;
 // C ref: include/mkroom.h CORPSTAT_GENDER/_FEMALE/_MALE, makemon.h MM_* flags.
 const CORPSTAT_GENDER = 0x03, CORPSTAT_FEMALE = 1, CORPSTAT_MALE = 2;
 const NO_MINVENT = 0x00000001, MM_IGNOREWATER = 0x00000008,
       MM_EDOG = 0x00000800, MM_MALE = 0x00008000, MM_FEMALE = 0x00010000,
       MM_NOMSG = 0x00020000;
-const RLOC_NOMSG = 0x0001;
+const RLOC_NOMSG = 0x0004;
 // C ref: include/monst.h DISMOUNT_GENERIC / DISMOUNT_THROWN.
 const DISMOUNT_THROWN = 1, DISMOUNT_GENERIC = 7;
 // C ref: include/trap.h NO_TRAP_FLAGS.
@@ -476,11 +473,10 @@ function on_level(a, b) {
     return !!a && !!b && a.dnum === b.dnum && a.dlevel === b.dlevel;
 }
 
-// C ref: mon.c relmon(mon, monst_list) — unlink mon from fmon; when a list is
-// supplied, push it onto the head of that list instead of freeing it.
-// (js/vault.js:217 holds a one-argument module-private copy; export that one
-// when this is wired up rather than keeping two.)
-function relmon(mon, monst_list) {
+// C mon.c relmon: remove map effects before unlinking the live monster.
+async function relmon(mon, monst_list) {
+    const { mon_leaving_level } = await import('./mon.js');
+    await mon_leaving_level(mon);
     const fm = fmon_list();
     const ix = fm.indexOf(mon);
     if (ix >= 0) fm.splice(ix, 1);
@@ -489,16 +485,23 @@ function relmon(mon, monst_list) {
 
 // C ref: mon.c m_into_limbo(mtmp) — take mtmp off the map and schedule it to
 // migrate back to this level when the hero next arrives.  (js/vault.js:239 is
-// the module-private copy; export it when wiring.)
-async function m_into_limbo(mtmp) {
+// the module-private copy.)  Exported: do.js's place_hero_lregion() (the
+// u_on_rndspot() level-teleport/fall arrival path) calls this when rloc()
+// fails to relocate a monster occupying the hero's fixed arrival square.
+export async function m_into_limbo(mtmp) {
     mtmp.mstate = (mtmp.mstate || 0) | MON_LIMBO;
     await migrate_to_level(mtmp, ledger_no(game.u?.uz), MIGR_EXACT_XY, null);
 }
 
-// C ref: dungeon.c ledger_no(&dlev) — the flat level index.  (Module-private
-// copies live at js/dig.js:924 and js/bones.js:69; export one when wiring.)
+// C ref: dungeon.c:1376 ledger_no(&dlev) — the flat level index.  js/bones.js:69,
+// js/dungeon.js:1706 and js/save.js:287 keep the same private copy for the
+// same import-order reason; this one used to skip the +ledger_start term
+// (every branch level -- Mines, Sokoban, Quest, ... -- got the main
+// dungeon's ledger number), which was never RNG-exercised because nothing
+// drained migrating_mons/kept keep_mon_accessible() monsters accessible
+// before this wiring pass.
 function ledger_no(lev) {
-    return lev?.dlevel ?? 0;
+    return (lev?.dlevel | 0) + (game.dungeons?.[lev?.dnum ?? 0]?.ledger_start | 0);
 }
 
 // C ref: mon.c place_monster(mon, x, y) — put mon on the map at <x,y>.
@@ -788,7 +791,88 @@ export async function losedogs() {
         failed_arrivals = mtmp.nmon;
         /* mon_arrive() put mtmp onto fmon, but relmon() took it off again;
            put it back now because m_into_limbo() expects it to be there */
-        fmon_list().unshift(mtmp);
+        fmon_list().push(mtmp);
+        await m_into_limbo(mtmp);
+    }
+}
+
+// C ref: dog.c:303 losedogs() steps 1/3/5/6 -- the migrating_mons half of
+// losedogs(), split out so do.js's goto_level() can drive it around its own
+// mydogs step (do.js keepdogs_capture()/losedogs_place(), which run step 2 by
+// calling mon_arrive(With_you) below).
+// deliver_migrating_before() runs the shk kop-dismiss scan and delivers
+// monsters kept accessible via keep_mon_accessible() (the Wizard, an
+// off-level shk/priest/guard) back at their EXACT prior spot;
+// deliver_migrating_after() delivers everything else that migrated here
+// independently -- trapdoor/hole fallers, migrate_mon() (overcrowding,
+// endgame elemental congestion), Orcish Town's migrate_orc() -- and retries
+// any failed arrival on the next visit.  `kept` is do.js's array of monsters
+// accompanying the hero this transition, needed only for the same
+// kop-dismiss scan C also runs over gm.mydogs.
+export async function deliver_migrating_before(kept) {
+    const g = gm_chains();
+    const uz = game.u?.uz ?? { dnum: 0, dlevel: 0 };
+    let dismissKops = 0;
+
+    failed_arrivals = null;
+
+    for (const m of g.migrating_mons) {
+        if (m.mux !== uz.dnum || m.muy !== uz.dlevel) continue;
+        if (m.isshk) {
+            if (m.eshk?.dismiss_kops) {
+                if (dismissKops === 0) dismissKops = 1;
+                m.eshk.dismiss_kops = false; /* reset */
+            } else if (!m.mpeaceful) {
+                dismissKops = -1;
+            }
+        }
+    }
+    for (const m of (kept || [])) {
+        if (dismissKops < 0) break;
+        if (m.isshk && !m.mpeaceful) dismissKops = -1;
+    }
+    if (dismissKops > 0) {
+        const { make_happy_shoppers } = await import('./shk.js');
+        await make_happy_shoppers(true);
+    }
+
+    for (let i = 0; i < g.migrating_mons.length; ) {
+        const mtmp = g.migrating_mons[i];
+        const xyloc = mtmp.mtrack?.[0]?.x ?? 0;
+        if (mtmp.mux === uz.dnum && mtmp.muy === uz.dlevel
+            && xyloc === MIGR_EXACT_XY) {
+            g.migrating_mons.splice(i, 1);
+            await mon_arrive(mtmp, Before_you);
+        } else {
+            i++;
+        }
+    }
+}
+
+export async function deliver_migrating_after() {
+    const g = gm_chains();
+    const uz = game.u?.uz ?? { dnum: 0, dlevel: 0 };
+
+    for (let i = 0; i < g.migrating_mons.length; ) {
+        const mtmp = g.migrating_mons[i];
+        const xyloc = mtmp.mtrack?.[0]?.x ?? 0;
+        if (mtmp.mux === uz.dnum && mtmp.muy === uz.dlevel
+            && xyloc !== MIGR_EXACT_XY) {
+            g.migrating_mons.splice(i, 1);
+            /* note: if there's no room, it ends up on failed_arrivals */
+            await mon_arrive(mtmp, After_you);
+        } else {
+            i++;
+        }
+    }
+
+    /* put any monsters who couldn't arrive back on migrating_mons */
+    while (failed_arrivals) {
+        const mtmp = failed_arrivals;
+        failed_arrivals = mtmp.nmon;
+        /* mon_arrive() put mtmp onto fmon, but relmon() took it off again;
+           put it back now because m_into_limbo() expects it to be there */
+        fmon_list().push(mtmp);
         await m_into_limbo(mtmp);
     }
 }
@@ -816,7 +900,8 @@ export async function mon_arrive(mtmp, when) {
     const fromdlev = { dnum: 0, dlevel: 0 };
 
     mtmp.mstate = (mtmp.mstate || 0) | MON_STILL_ARRIVING;
-    fmon_list().unshift(mtmp);   /* mtmp->nmon = fmon; fmon = mtmp; */
+    // The level array is oldest-first; its tail is C's fmon head.
+    fmon_list().push(mtmp);
     if (mtmp.isshk) {
         const { set_residency } = await import('./shk.js');
         set_residency(mtmp, false);
@@ -966,10 +1051,8 @@ export async function mon_arrive(mtmp, when) {
         xlocale = ylocale = 0;
 
     if (((mtmp.migflags || 0) & MIGR_LEFTOVERS) !== 0) {
-        /* Pick up the rest of the MIGR_TO_SPECIES objects */
-        /* C ref: mkobj.c deliver_obj_to_mon(mtmp, 0, DF_ALL) — UNPORTED, so
-           the leftover delivery is skipped rather than mis-ordered. */
-        void 0;
+        // C dog.c:576: the gang leader collects remaining species-targeted loot.
+        deliver_obj_to_mon(mtmp, 0, DF_ALL);
     }
 
     if (xlocale && wander) {
@@ -980,7 +1063,7 @@ export async function mon_arrive(mtmp, when) {
         if (r && r.length) {
             const { somexy } = await import('./mkroom.js');
             const c = { x: 0, y: 0 };
-            const croom = game.level?.rooms?.[r.charCodeAt(0) - 3 /*ROOMOFFSET*/];
+            const croom = game.level?.rooms?.[r[0] - 3 /*ROOMOFFSET*/];
 
             /* somexy() handles irregular rooms */
             if (croom && somexy(croom, c)) {
@@ -1108,7 +1191,7 @@ export async function keepdogs(pets_only) {
             /* don't block pets from accompanying the hero's escape or
                ascension simply due to mundane trifles */
             mtmp.mtrapped = 0;
-            await finish_meating_shared(mtmp);
+            finish_meating(mtmp);
             mtmp.msleeping = 0;
             mtmp.mfrozen = 0;
             mtmp.mcanmove = 1;
@@ -1165,7 +1248,7 @@ export async function keepdogs(pets_only) {
             /* prepare to take mtmp off the map */
             num_segs = await mon_leave(mtmp);
             /* take off map and move mtmp from fmon list to mydogs */
-            relmon(mtmp, g.mydogs); /* mtmp->mx,my retain current value */
+            await relmon(mtmp, g.mydogs); /* mtmp->mx,my retain current value */
             mtmp.mx = mtmp.my = 0;  /* mx==0 implies migrating */
             mtmp.wormno = num_segs;
             mtmp.mlstmv = game.moves;
@@ -1207,14 +1290,12 @@ async function Monnam_shared(mtmp) {
     const { Monnam } = await import('./do_name.js');
     return Monnam(mtmp);
 }
-// C ref: mon.c finish_meating(mtmp) — module-private at js/dogmove.js:2300.
-async function finish_meating_shared(mtmp) {
-    const DM = await import('./dogmove.js');
-    if (typeof DM.finish_meating === 'function') DM.finish_meating(mtmp);
-    else mtmp.meating = 0;   /* GAP: dogmove.js does not export it */
+// C ref: steed.c dismount_steed(reason) — delegates to js/steed.js's real,
+// faithful port (dynamic import avoids a steed.js <-> dog.js static cycle).
+async function dismount_steed_shared(reason) {
+    const { dismount_steed } = await import('./steed.js');
+    return await dismount_steed(reason);
 }
-// C ref: steed.c dismount_steed(reason) — UNPORTED in js/.
-async function dismount_steed_shared(_reason) { return undefined; }
 
 // C ref: dog.c:886 migrate_to_level(mtmp, tolev, xyloc, cc).  Coverage credits
 // this name from a COMMENT ([[coverage-counts-comment-lines]]); there was no
@@ -1236,7 +1317,7 @@ export async function migrate_to_level(mtmp, tolev, xyloc, cc) {
     /* prepare to take mtmp off the map */
     num_segs = await mon_leave(mtmp);
     /* take off map and move mtmp from fmon list to migrating_mons */
-    relmon(mtmp, g.migrating_mons); /* mtmp->mx,my retain their value */
+    await relmon(mtmp, g.migrating_mons); /* mtmp->mx,my retain their value */
     mtmp.mstate = (mtmp.mstate || 0) | MON_MIGRATING;
 
     const { ledger_to_dnum, ledger_to_dlev } = await import('./dungeon.js');
@@ -1279,12 +1360,11 @@ export async function discard_migrations() {
     const { discard_minvent } = await import('./mkobj.js');
     const { dealloc_monst } = await import('./mon.js');
     const { emits_light } = await import('./light.js');
-    const { del_light_source } = await import('./light.js');
+    const { del_light_source, LS_MONSTER } = await import('./light.js');
     const { monst_to_any } = await import('./hack.js');
     const { obfree } = await import('./invent.js');
     const g = gm_chains();
     const dest = { dnum: 0, dlevel: 0 };
-    const LS_MONSTER = 1;   /* C ref: include/light.h */
 
     for (let i = 0; i < g.migrating_mons.length; ) {
         const mtmp = g.migrating_mons[i];
@@ -1330,7 +1410,7 @@ export async function wary_dog(mtmp, was_dead) {
     let edog;
     const quietly = was_dead;
 
-    await finish_meating_shared(mtmp);
+    finish_meating(mtmp);
 
     if (!mtmp.mtame)
         return;

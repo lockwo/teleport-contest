@@ -14,6 +14,7 @@
 
 import { rn2 } from './rng.js';
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import {
     objects,
     MAXOCLASSES,
@@ -25,6 +26,7 @@ import {
 } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { shop_price_suffix } from './shk.js';
+import { currency } from './invent.js';
 
 // Additional imports used only by the objnam.c naming core appended at the end
 // of this file.  Each of these six modules is outside the pre-existing
@@ -512,6 +514,8 @@ const W_ARM = 0x1, W_ARMC = 0x2, W_ARMH = 0x4, W_ARMS = 0x8, W_ARMG = 0x10,
 /* objclass.h:12-35 obj_material_types */
 const LIQUID = 1, WOOD = 8, DRAGON_HIDE = 10, IRON = 11, COPPER = 13,
       MITHRIL = 17, PLASTIC = 18, GLASS = 19, MINERAL = 21;
+/* prop.h FIRE_RES — mkobj.c is_flammable() compares objects[].oc_oprop to it */
+const FIRE_RES_PROP = 1;
 /* objclass.h:37-45 obj_armor_types */
 const ARM_SUIT = 0, ARM_SHIELD = 1, ARM_HELM = 2, ARM_GLOVES = 3,
       ARM_BOOTS = 4, ARM_CLOAK = 5, ARM_SHIRT = 6;
@@ -616,18 +620,12 @@ function impossible(msg) {
 }
 function panic(msg) { throw new Error(msg); }
 
-/* hacklib.c plur(n) / ordin(n) / shk.c currency(amount) — each has private
-   copies scattered through js/ (js/invent.js:1287, :5465, :3075); these are
-   the objnam.c-side ones so this block stays import-free. */
+/* hacklib.c plur(n) / ordin(n) used by objnam.c naming. */
 function plur(n) { return Number(n) === 1 ? '' : 's'; }
 function ordin(n) {
     const dd = n % 10;
     return (dd === 0 || dd > 3 || (n % 100) / 10 === 1) ? 'th'
         : (dd === 1) ? 'st' : (dd === 2) ? 'nd' : 'rd';
-}
-function currency(amount) {
-    /* C: Hallucination ? currency_hallucinated() : "zorkmid" + plur */
-    return `zorkmid${Number(amount) === 1 ? '' : 's'}`;
 }
 /* polyself.c body_part(HAND) for an unpolymorphed hero */
 function body_part_HAND() { return 'hand'; }
@@ -666,7 +664,7 @@ function is_weptool(o) {
     return o.oclass === TOOL_CLASS && (objects[o.otyp]?.oc_skill | 0) !== 0;
 }
 function is_wet_towel(o) { return o.otyp === TOWEL && o.spe > 0; }
-function is_poisonable(o) {
+export function is_poisonable(o) {
     /* obj.h:264 — oc_skill in [-P_SHURIKEN .. -P_BOW]; the port stores the
        negative launcher/ammo skills in oc_skill exactly as C does. */
     const sk = objects[o.otyp]?.oc_skill | 0;
@@ -714,10 +712,16 @@ function is_crackable(o) { return omat(o) === GLASS && o.oclass === ARMOR_CLASS;
 function is_corrodeable(o) { return omat(o) === COPPER || omat(o) === IRON; }
 function Is_candle(o) { return o.otyp === TALLOW_CANDLE_ || o.otyp === WAX_CANDLE_; }
 function is_flammable(o) {
-    /* mkobj.c:2270.  objects[].oc_oprop is not carried by this port, so the
-       FIRE_RES check degenerates to the WAN_FIRE special case. */
+    /* C ref: mkobj.c is_flammable() — a candle is burnable but not flammable,
+       and `objects[otyp].oc_oprop == FIRE_RES || otyp == WAN_FIRE` is one test.
+       The oc_oprop arm used to be dropped here on the grounds that the port had
+       no oc_oprop column; it has one (js/mkobj.js populates 70 rows), so run
+       C's real test.  On the current table it selects only red dragon scale
+       mail/scales (DRAGON_HIDE) and the ring of fire resistance (IRON), none of
+       which the material test below would call flammable anyway. */
     if (Is_candle(o)) return false;
-    if (o.otyp === 430 /*WAN_FIRE*/) return false;
+    if (objects[o.otyp]?.oc_oprop === FIRE_RES_PROP
+        || o.otyp === 430 /*WAN_FIRE*/) return false;
     const m = omat(o);
     return (m <= WOOD && m !== LIQUID) || m === PLASTIC;
 }
@@ -737,7 +741,7 @@ function has_oname(o) { return !!(o && o.oname); }
 function ONAME(o) { return (o && o.oname) || ''; }
 function ismnum(m) { return m != null && m >= LOW_PM; }
 /* mondata.h type_is_pname(ptr) = (mflags2 & M2_PNAME) */
-function type_is_pname(ptr) {
+export function type_is_pname(ptr) {
     return !!(ptr && (MFLAGS2[ptr.pmidx] | 0) & M2_PNAME);
 }
 function mons_at(mndx) { return monster_by_pmidx(mndx); }
@@ -1613,13 +1617,6 @@ function mungspaces(bp) {
     if (was_space && out.length > 0) out = out.slice(0, -1);
     return out;
 }
-/* hacklib.c:345 s_suffix() */
-function s_suffix(s) {
-    if (strcmpi(s, 'it')) return s + 's';        /* it -> its */
-    if (strcmpi(s, 'you')) return s + 'r';       /* you -> your */
-    if (s[s.length - 1] === 's') return s + "'"; /* Xs -> Xs' */
-    return s + "'s";                             /* X -> X's */
-}
 /* hacklib.c digit() */
 function digit(c) { return c >= '0' && c <= '9'; }
 
@@ -1650,7 +1647,7 @@ function just_an(str) {
     return 'a ';
 }
 /* objnam.c:2144 an() */
-function an(str) {
+export function an(str) {
     const buf = nextobuf();
     if (!str) {
         impossible(`Alphabet soup: 'an(${str == null ? '<null>' : '""'})'.`);
@@ -1686,7 +1683,7 @@ function the_unique_obj(obj) {
 
 // the_unique_pm(): should the monster type be prefixed with "the"?
 // C ref: objnam.c:1120.
-function the_unique_pm(ptr) {
+export function the_unique_pm(ptr) {
     if (!ptr) return false;
     if (type_is_pname(ptr))
         return false;
@@ -1830,8 +1827,10 @@ function corpse_xname(otmp, adjective, cxn_flags) {
 }
 
 // add_erosion_words(): objnam.c:1142.  C appends to prefix[]; here the extended
-// prefix is returned.  js/invent.js:1857 holds the live copy.
-function add_erosion_words(obj, prefix) {
+// prefix is returned.  js/invent.js imports this copy directly (its own
+// duplicate, gated only on oclass and missing the tempered/rotproof arms, was
+// removed).
+export function add_erosion_words(obj, prefix) {
     const iscrys = (obj.otyp === CRYSKNIFE);
     const rknown = (iflags().override_ID ? true : !!obj.rknown);
 
@@ -2217,6 +2216,13 @@ export function xname_flags(obj, cxn_flags) {
 // xname(): objnam.c:574.  js/invent.js exports the live xname(); this is the
 // xname_flags() wrapper the ports below need.
 function xname_c(obj) { return xname_flags(obj, CXN_NORMAL); }
+
+// C ref: objnam.c cxname(): include the species when naming a corpse.
+export function cxname(obj) {
+    return obj.otyp === CORPSE_
+        ? corpse_xname(obj, null, CXN_NORMAL)
+        : xname_c(obj);
+}
 
 // minimal_xname(): the most basic info for a particular object — "potion",
 // "brown potion", "potion of object detection".  C ref: objnam.c:1037.

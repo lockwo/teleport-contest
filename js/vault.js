@@ -67,13 +67,13 @@ const GEM_CLASS = 9;
 const MM_EGD = 0x00000080;
 const MM_NOMSG = 0x00020000;
 // C ref: monflag.h MS_SILENT / the msound values yelp() switches on.
-const MS_SILENT = 0, MS_MEW = 5, MS_BARK = 8, MS_GROWL = 10, MS_ROAR = 11,
-    MS_SQEEK = 12, MS_SQAWK = 13, MS_WAIL = 22;
+const MS_SILENT = 0, MS_BARK = 1, MS_MEW = 2, MS_ROAR = 3, MS_GROWL = 5,
+    MS_SQEEK = 6, MS_SQAWK = 7, MS_WAIL = 14;
 // C ref: obj.h OBJ_FLOOR / OBJ_MINVENT.  js/mkobj.js place_object() writes the
 // string form of "on the floor"; js/dogmove.js mpickobj() writes the numeric
 // OBJ_MINVENT.  Both spellings are used verbatim so the shared readers agree.
 const OBJ_FLOOR = 'floor';
-const OBJ_MINVENT = 3;
+const OBJ_MINVENT = 4;
 
 /* ------------------------------------------------------------------ *
  * house-local helpers (the shape the rest of js/ uses)
@@ -333,7 +333,7 @@ const WM_MASK = 0x07;
 const WM_W_LEFT = 1, WM_W_RIGHT = 2, WM_W_TOP = 1, WM_W_BOTTOM = 2;
 const WM_T_LONG = 1, WM_T_BL = 2, WM_T_BR = 3;
 const WM_C_OUTER = 1, WM_C_INNER = 2;
-const WM_X_TL = 1, WM_X_TR = 2, WM_X_BR = 3, WM_X_BL = 4,
+const WM_X_TL = 1, WM_X_TR = 2, WM_X_BL = 3, WM_X_BR = 4,
     WM_X_TLBR = 5, WM_X_BLTR = 6;
 
 function check_pos(x, y, which) {
@@ -412,14 +412,17 @@ function xy_set_wall_state(x, y) {
 }
 
 // C ref: eat.c reset_faint() — `if (ga.afternmv == unfaint) unmul("You
-// revive.")`.  js/eat.js parks the same callback in game.afternmv.
-async function reset_faint() {
+// revive.")`.  js/eat.js parks the same callback in game.afternmv.  Exported:
+// js/minion.js demon_talk() (minion.c:278) is the same C call, reached
+// through a fainted-hero-vs-demon encounter.
+export async function reset_faint() {
     if (game.afternmv === unfaint) await unmul('You revive.');
 }
 
 // C ref: hack.c unmul(msg) — release the hero from a multi-turn occupation and
-// run the pending afternmv.
-async function unmul(msg) {
+// run the pending afternmv.  Exported for the same js/minion.js demon_talk()
+// caller (minion.c:284).
+export async function unmul(msg) {
     game.multi = 0;
     if (game.context) game.context.travel = game.context.travel1 = game.context.mv = 0;
     const nmsg = msg || game.nomovemsg;
@@ -584,7 +587,7 @@ export async function grddead(grd) {
 
     if (!dispose) {
         /* destroy guard's gold; drop any other inventory */
-        relobj(grd, grd.mx, grd.my);
+        await relobj(grd, grd.mx, grd.my);
         grd.mhp = 0;
         parkguard(grd);
         dispose = await clear_fcorr(grd, true);

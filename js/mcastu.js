@@ -20,6 +20,13 @@ import {
     AD_DRST, AD_ACID,
 } from './monattk_data.js';
 import { healmon } from './mon.js';
+import { monster_by_pmidx, pmname_of_pmidx } from './makemon.js';
+import { Mgender } from './do_name.js';
+import { mflags2_of, M2_PNAME } from './monflags_data.js';
+import { an, the_unique_pm } from './objnam.js';
+import { Fire_resistance, Cold_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
+import { monstseesu, monstunseesu } from './mondata.js';
+import { shieldeff } from './display.js';
 
 // ---------------------------------------------------------------------------
 // include/mcastu.h — MONSPELL(def, lvl, flags) in enum order.  The enum VALUE
@@ -207,8 +214,6 @@ export async function castmu(mtmp, mattk, thinks_it_foundyou, foundyou) {
         mtmp.mspec_used = (ml < 8) ? (10 - ml) : 2;
 
     if (!foundyou && thinks_it_foundyou && !is_undirected_spell(spellnum)) {
-        // "%s casts a spell at %s!" — reachable only from mattacku's AT_MAGC
-        // case, which this port does not wire up yet.
         return M_ATTK_MISS;
     }
 
@@ -242,25 +247,69 @@ export async function castmu(mtmp, mattk, thinks_it_foundyou, foundyou) {
         }
     }
 
-    // mcastu.c:232 — with !foundyou the damage roll is skipped entirely (dmg=0),
-    // which is the only case the dochug caller can reach.
+    // C mcastu.c: skip the damage roll for an undirected spell.
     let dmg = 0;
     if (foundyou) dmg = mattk.damd ? d(((ml / 2) | 0) + mattk.damn, mattk.damd)
                                    : d(((ml / 2) | 0) + 1, 6);
+    if (Half_spell_damage()) dmg = Math.trunc((dmg + 1) / 2);
 
-    if (mattk.adtyp === AD_SPEL || mattk.adtyp === AD_CLRC)
+    if (mattk.adtyp === AD_SPEL || mattk.adtyp === AD_CLRC) {
         await mcast_spell(mtmp, dmg, spellnum);
-    // AD_FIRE/AD_COLD/AD_MAGM variants of AT_MAGC belong to buzzmu's callers.
+    } else {
+        const { update_topl } = await import('./display.js');
+        const u = game.u;
+        switch (mattk.adtyp) {
+        case AD_FIRE:
+        case AD_COLD: {
+            const fire = mattk.adtyp === AD_FIRE;
+            const seenres = fire ? M_SEEN_FIRE : M_SEEN_COLD;
+            await update_topl(fire ? "You're enveloped in flames." : "You're covered in frost.");
+            if (fire ? Fire_resistance() : Cold_resistance()) {
+                await shieldeff(u.ux, u.uy);
+                await update_topl('But you resist the effects.');
+                monstseesu(seenres);
+                dmg = 0;
+            } else {
+                monstunseesu(seenres);
+            }
+            if (fire) await (await import('./timeout.js')).burn_away_slime();
+            await mon_spell_hits_spot(mtmp, mattk.adtyp, u.ux, u.uy);
+            break;
+        }
+        case AD_MAGM:
+            await update_topl('You are hit by a shower of missiles!');
+            if (Antimagic()) {
+                await shieldeff(u.ux, u.uy);
+                await update_topl('The missiles bounce off!');
+                monstseesu(M_SEEN_MAGR);
+                dmg = 0;
+            } else {
+                dmg = d(Math.trunc(ml / 2) + 1, 6);
+                monstunseesu(M_SEEN_MAGR);
+            }
+            await mon_spell_hits_spot(mtmp, AD_MAGM, u.ux, u.uy);
+            break;
+        }
+        if (dmg) await (await import('./mhitu.js')).mdamageu(mtmp, dmg);
+    }
 
     return M_ATTK_HIT;
 }
 
-// C ref: mcastu.c:801 mcast_spell().  Only the MCF_INDIRECT spells are
-// reachable from dochug's undirected-cast loop (it returns M_ATTK_MISS for any
-// directed pick), so the directed arms are deliberately absent until AT_MAGC is
-// wired into mattacku.
+// C ref: mcastu.c:801 mcast_spell().  castmu reaches this for both the
+// undirected dochug path and AT_MAGC attacks handled by mattacku.  Keep the
+// damage application beside each implemented directed spell until every arm
+// has C's explicit dmg=0 handling.
 async function mcast_spell(mtmp, dmg, spellnum) {
     switch (spellnum) {
+    case MCAST_PSI_BOLT: {
+        dmg = await mcast_psi_bolt(dmg);
+        if (dmg) {
+            const { mdamageu } = await import('./mhitu.js');
+            await mdamageu(mtmp, dmg);
+        }
+        break;
+    }
     case MCAST_CURE_SELF:
         // mcastu.c:441 m_cure_self: heal 3d6 when hurt.
         if (mtmp.mhp < mtmp.mhpmax) {
@@ -296,6 +345,14 @@ async function mcast_spell(mtmp, dmg, spellnum) {
         }
         break;
     }
+    case MCAST_WEAKEN_YOU:
+        await mcast_weaken_you(mtmp, dmg);
+        break;
+    case MCAST_DESTRY_ARMR:
+        // C ref: mcastu.c:836 — `mcast_destroy_armor(); dmg = 0;`.  RNG-bearing
+        // through destroy_arm() (rn2(4)+1 hits, armors[rn2(idx)] each).
+        await mcast_destroy_armor();
+        break;
     case MCAST_CLONE_WIZ: {
         // C ref: mcastu.c:411 mcast_clone_wiz(mtmp).
         if (mtmp.iswiz && (game.context?.no_of_wizards | 0) === 1) {
@@ -306,20 +363,39 @@ async function mcast_spell(mtmp, dmg, spellnum) {
         }
         break;
     }
-    default:
-        // The remaining undirected spells (DISAPPEAR, INSECTS, AGGRAVATION)
-        // need mon_set_minvis / the insect-swarm makemon loop that this port
-        // does not carry; their spell_would_be_useless() draws have already
-        // fired, so the stream stays aligned up to the effect.
+    case MCAST_DISAPPEAR:
+        // C ref: mcastu.c:844 — `mcast_disappear(mtmp); dmg = 0;`.  RNG-free
+        // itself, but it is the state transition the NEXT cast depends on:
+        // without minvis, spell_would_be_useless() keeps saying DISAPPEAR is
+        // useful, so a caster re-picks it every turn and never advances to
+        // HASTE_SELF — whose mon_adjust_speed() sets permspeed = MFAST and so
+        // changes both later spell choices and the movement allotment.
+        await mcast_disappear(mtmp);
+        break;
+    case MCAST_AGGRAVATION: {
+        const { update_topl } = await import('./display.js');
+        const { aggravate } = await import('./monmove.js');
+        await update_topl('You feel that monsters are aware of your presence.');
+        aggravate();
         break;
     }
-    if (dmg) { /* mdamageu(mtmp, dmg) — directed spells only */ }
+    case MCAST_CURSE_ITEMS: {
+        // C ref: mcastu.c:831 — `You_feel("as if you need some help."); rndcurse();`.
+        const { update_topl } = await import('./display.js');
+        const { rndcurse } = await import('./pray.js');
+        await update_topl('You feel as if you need some help.');
+        await rndcurse();
+        break;
+    }
+    default:
+        // INSECTS still needs its insect-swarm makemon loop.
+        break;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Small property shims.  Each names the C predicate it stands in for; all are
 // RNG-free and constant for the heroes these sessions drive.
-function Antimagic() { return !!game.u?.Antimagic; }
 function Hallucination() { return !!(game.u?.Hallucination); }
 function Blinded() { return !!(game.u?.Blinded); }
 function See_invisible() { return !!game.u?.See_invisible; }
@@ -368,11 +444,12 @@ function helpless(mon) {
 }
 
 // ===========================================================================
-// The rest of src/mcastu.c.  INERT: nothing above this line calls anything
-// below it, and mcast_spell() above keeps its own reduced arm set on purpose.
-// Wiring these up means routing mcast_spell()/castmu() through them AND first
-// replacing the shims at the bottom of this section — several of those stand in
-// for RNG-BEARING C functions, so swapping one changes the draw stream.
+// The rest of src/mcastu.c.  MOSTLY INERT: mcast_spell() above calls only
+// mcast_disappear() from below; every other arm here is still unreferenced and
+// mcast_spell() keeps its reduced arm set on purpose.  Wiring another one means
+// routing mcast_spell()/castmu() through it AND first replacing the shims at
+// the bottom of this section — several of those stand in for RNG-BEARING C
+// functions, so swapping one changes the draw stream.
 //
 // Every function keeps its C name, argument order and return type.  The
 // per-function draw order is the load-bearing part: e.g. mcast_lightning()
@@ -446,14 +523,14 @@ export function death_inflicted_by(_outbuf, deathreason, mtmp) {
     let outbuf = String(deathreason);
     if (mtmp) {
         const mptr = mtmp.data;
-        const champtr = ismnum_(mtmp.cham) ? mons_(mtmp.cham) : mptr;
-        let realnm = pmname(champtr, Mgender_(mtmp));
-        const fakenm = pmname(mptr, Mgender_(mtmp));
-
-        /* greatly simplified extract from done_in_by() */
-        if (!type_is_pname_(champtr) && !the_unique_pm_(mptr)) realnm = an_(realnm);
-        outbuf += ` inflicted by ${the_unique_pm_(mptr) ? 'the ' : ''}${realnm}`;
-        if (champtr !== mptr) outbuf += ` imitating ${an_(fakenm)}`;
+        const champtr = Number.isInteger(mtmp.cham) && mtmp.cham >= 0
+            ? monster_by_pmidx(mtmp.cham) : mptr;
+        let realnm = pmname_of_pmidx(champtr.pmidx, Mgender(mtmp));
+        const fakenm = pmname_of_pmidx(mptr.pmidx, Mgender(mtmp));
+        if (!(mflags2_of(champtr) & M2_PNAME) && !the_unique_pm(mptr))
+            realnm = an(realnm);
+        outbuf += ` inflicted by ${the_unique_pm(mptr) ? 'the ' : ''}${realnm}`;
+        if (champtr !== mptr) outbuf += ` imitating ${an(fakenm)}`;
     }
     return outbuf;
 }
@@ -474,7 +551,7 @@ export async function mcast_death_touch(mtmp) {
         monstunseesu(M_SEEN_MAGR);
     } else {
         if (Antimagic()) {
-            shieldeff(game.u?.ux, game.u?.uy);
+            await shieldeff(game.u?.ux, game.u?.uy);
             monstseesu(M_SEEN_MAGR);
         }
         await update_topl("Lucky for you, it didn't work!");
@@ -524,7 +601,7 @@ export async function mcast_summon_mons(mtmp) {
 export async function mcast_destroy_armor() {
     const { update_topl } = await import('./display.js');
     if (Antimagic()) {
-        shieldeff(game.u?.ux, game.u?.uy);
+        await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
         await update_topl('A field of force surrounds you!');
     } else if (!await destroy_arm_()) {
@@ -542,7 +619,7 @@ export async function mcast_destroy_armor() {
 export async function mcast_weaken_you(mtmp, dmg) {
     const { update_topl } = await import('./display.js');
     if (Antimagic()) {
-        shieldeff(game.u?.ux, game.u?.uy);
+        await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
         await update_topl('You feel momentarily weakened.');
     } else {
@@ -585,7 +662,7 @@ export async function mcast_disappear(mtmp) {
 export async function mcast_stun_you(dmg) {
     const { update_topl } = await import('./display.js');
     if (Antimagic() || Free_action()) {
-        shieldeff(game.u?.ux, game.u?.uy);
+        await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
         if (!Stunned_()) await update_topl('You feel momentarily disoriented.');
         await make_stunned_(1, false);
@@ -620,8 +697,8 @@ export async function mcast_fire_pillar(mtmp, dmg) {
 
     await update_topl('A pillar of fire strikes all around you!');
     orig_dmg = dmg = d(8, 6);
-    if (Fire_resistance_()) {
-        shieldeff(game.u?.ux, game.u?.uy);
+    if (Fire_resistance()) {
+        await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_FIRE);
         dmg = 0;
     } else {
@@ -651,7 +728,7 @@ export async function mcast_lightning(mtmp, dmg) {
     const reflects = await ureflects_('It bounces off your %s%s.', '');
     orig_dmg = dmg = d(8, 6);
     if (reflects || Shock_resistance_()) {
-        shieldeff(game.u?.ux, game.u?.uy);
+        await shieldeff(game.u?.ux, game.u?.uy);
         dmg = 0;
         if (reflects) {
             monstseesu(M_SEEN_REFL);
@@ -678,7 +755,7 @@ export async function mcast_lightning(mtmp, dmg) {
 export async function mcast_psi_bolt(dmg) {
     const { update_topl } = await import('./display.js');
     if (Antimagic()) {
-        shieldeff(game.u?.ux, game.u?.uy);
+        await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
         dmg = Math.trunc((dmg + 1) / 2);
     } else {
@@ -696,7 +773,7 @@ export async function mcast_psi_bolt(dmg) {
 export async function mcast_open_wounds(dmg) {
     const { update_topl } = await import('./display.js');
     if (Antimagic()) {
-        shieldeff(game.u?.ux, game.u?.uy);
+        await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
         dmg = Math.trunc((dmg + 1) / 2);
     } else {
@@ -818,7 +895,7 @@ export async function mcast_paralyze(mtmp) {
     let dmg = 0;
 
     if (Antimagic() || Free_action()) {
-        shieldeff(game.u?.ux, game.u?.uy);
+        await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
         if ((game.multi | 0) >= 0) await update_topl('You stiffen briefly.');
         dmg = 1; /* to produce nomul(-1), not actual damage */
@@ -839,7 +916,7 @@ export async function mcast_paralyze(mtmp) {
 export async function mcast_confuse_you(mtmp) {
     const { update_topl } = await import('./display.js');
     if (Antimagic()) {
-        shieldeff(game.u?.ux, game.u?.uy);
+        await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
         await update_topl('You feel momentarily dizzy.');
     } else {
@@ -916,39 +993,20 @@ function sgn_(n) { return (n | 0) > 0 ? 1 : (n | 0) < 0 ? -1 : 0; }
 // the same name; this indirection exists only so buzzmu() reads like C.
 async function cursetxt_(mtmp, undirected) { return cursetxt(mtmp, undirected); }
 
-// C ref: mondata.c:1557/1572 monstseesu()/monstunseesu() — every monster with
-// line of sight to the hero remembers (or forgets) that the hero resisted.  No
-// RNG, but m_seenres() gates read the bit, so the state matters on later turns.
-// js/muse.js:1794 has a private copy (monstseesu_muse); when a mondata.js port
-// exports the real pair, delete these two.
-function monstseesu(seenres) { monstseesu_core(seenres, false); }
-function monstunseesu(seenres) { monstseesu_core(seenres, true); }
-function monstseesu_core(seenres, clear) {
-    if (!seenres || game.u?.uswallow) return;
-    for (const mon of (game.level?.monsters || [])) {
-        if (!mon || (mon.mhp | 0) < 1) continue;
-        if (!couldsee(mon.mx, mon.my)) continue;   /* m_canseeu() */
-        mon.seen_resistance = clear ? ((mon.seen_resistance | 0) & ~seenres)
-                                   : ((mon.seen_resistance | 0) | seenres);
-    }
-}
-
-// C ref: display.c shieldeff(x, y) — the reflection/resistance flash.  Purely
-// display, no RNG; js/zap.js already treats it as a no-op at its call sites.
-function shieldeff(_x, _y) { /* display-only */ }
 
 // C ref: mon.c mon_set_minvis(mon, adjust).  UNPORTED; js/zap.js:910 open-codes
 // `mtmp.minvis = 1` with a comment naming it.  No RNG.
 function mon_set_minvis(mon, _adjust) { if (mon) mon.minvis = 1; }
 
-// C ref: zap.c mon_spell_hits_spot(mon, adtyp, x, y) -> zap_over_floor().
-// UNPORTED and RNG-BEARING (zap_over_floor rolls for each susceptible floor
-// object and for melting/freezing terrain).
-async function mon_spell_hits_spot(_mon, _adtyp, _x, _y) { /* UNPORTED */ }
 
-// C ref: read.c destroy_arm() — RNG-BEARING (picks a worn slot).  The port is
-// js/read.js:1455 but module-private; exporting it is the fix.
-async function destroy_arm_() { return false; }
+// C ref: do_wear.c destroy_arm() — rn2(4)+1 hits, each on armors[rn2(idx)].
+// js/read.js owns the port (the scroll-of-destroy-armor path); imported
+// dynamically because a static edge here would reorder ESM evaluation
+// ([[_mktrap_victim TDZ is real]]).
+async function destroy_arm_() {
+    const { destroy_arm } = await import('./read.js');
+    return await destroy_arm();
+}
 
 // C ref: zap.c ureflects(fmt, str) — no RNG.  Port is js/zap.js:1566, private.
 async function ureflects_(_fmt, _str) { return false; }
@@ -1008,7 +1066,6 @@ function HStun_() { return HProp_('HStun'); }
 function Free_action() { return HProp_('HFree_action') > 0 || HProp_('EFree_action') > 0; }
 function Half_spell_damage() { return HProp_('HHalf_spell_damage') > 0; }
 function Half_physical_damage() { return HProp_('HHalf_physical_damage') > 0; }
-function Fire_resistance_() { return HProp_('HFire_resistance') > 0; }
 function Shock_resistance_() { return HProp_('HShock_resistance') > 0; }
 function Detect_monsters_() { return HProp_('HDetect_monsters') > 0; }
 function Unaware_() { return !!(game.u?.usleep || game.u?.Unaware); }
@@ -1043,14 +1100,3 @@ function upstart_(s) {
     const str = String(s || '');
     return str ? str[0].toUpperCase() + str.slice(1) : str;
 }
-// C ref: mondata.c pmname(ptr, gend) / do_name.c Mgender(mtmp) /
-// mondata.h ismnum(x), type_is_pname(ptr), the_unique_pm(ptr).
-function pmname(ptr, _gend) { return ptr?.name || 'creature'; }
-function Mgender_(mtmp) { return mtmp?.female ? 1 : 0; }
-function ismnum_(x) { return Number.isInteger(x) && x >= 0; }
-// C ref: mons[idx] — js/makemon.js:642 monster_by_pmidx() is the accessor, but
-// death_inflicted_by() is sync so it can't await the import; the cham field is
-// NON_PM for every spellcaster these sessions run, so this arm is dead today.
-function mons_(_idx) { return null; }
-function type_is_pname_(ptr) { return !!ptr?.pname; }
-function the_unique_pm_(ptr) { return !!ptr?.unique; }

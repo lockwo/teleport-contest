@@ -26,8 +26,9 @@ import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { Is_special } from './dungeon.js';
+import { roles } from './role.js';
 import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET,
-         Is_oracle_level } from './const.js';
+         Is_oracle_level, In_quest } from './const.js';
 import { msound_of, MS_LEADER, MS_NEMESIS } from './monflags_data.js';
 
 // ── small accessors that mirror the C globals/macros bones.c relies on ──
@@ -159,6 +160,22 @@ export function no_bones_level(lev) {
 // whole condition false (so the function does NOT return early on its account,
 // but the rn2(3) has already advanced the stream).  After that the bones file
 // never exists, so getbones() always ultimately returns 0 (false) here.
+//
+// DO NOT "fix" a getbones() first-divergence reported against heldout-mirrorx.
+// 144 of that corpus's 528 recordings contain
+//     Cannot open file "<lock>.0" for level 0 (errno 2).--More--
+//     Probably someone removed it.--More--
+// which is INSURANCE save_currentstate() (allmain.c:838, end of newgame())
+// hitting save.c:377 open_levelfile(0) on a lock file another concurrently
+// recording process had already unlinked.  tricked_fileremoved() then runs
+// done(TRICKED) — harmless in wizard mode, fatal otherwise — and the two extra
+// --More-- prompts eat two keystrokes, phase-shifting every later input.  In
+// seed0360-wizard-world-tour that shift leaves the "Do you want a tutorial?"
+// menu open until the 'y' of a wished-for "gray dragon scale mail" answers it
+// yes, so C generates tut-1 (headed, as every mklev() is, by this rn2(3))
+// where the clean run never leaves Dlvl 1.  The artifact appears in 0 of the
+// 277 sessions across sessions/, heldout-blind, heldout-mirror44 and the seven
+// other corpora; it is a recorder-environment race, not a port defect.
 export async function getbones() {
     if (is_discover()) return false;   // C: if (discover) return 0;  (no rng)
     if (!bones_enabled()) return false; // C: if (!flags.bones) return 0; (no rng)
@@ -239,12 +256,14 @@ export async function getbones() {
     }
 }
 
-// C ref: bones.c open_bonesfile()/create_bonesfile() filename — the bones file
-// is keyed on the dungeon level (bonDD.nnn).  We key the shared-storage blob on
-// (dnum,dlevel) so savebones() in one segment and getbones() in the next agree.
+// C ref: files.c set_bonesfile_name(): special levels use their boneid rather
+// than their randomized depth, and quest bones are specific to the hero's role.
 export function bones_key(uz) {
-    const d = uz || game.u?.uz || {};
-    return `nethack.bones.${d.dnum ?? 0}.${d.dlevel ?? 1}`;
+    const lev = uz || game.u.uz;
+    const dungeon = game.dungeons[lev.dnum];
+    const special = Is_special(lev);
+    const role = In_quest(lev) ? roles[game.initrole].filecode : '0';
+    return `nethack.bones.${dungeon.boneid}${role}.${special ? special.boneid : lev.dlevel}`;
 }
 
 // C ref: restore.c getlev() for a bones file — deserialize the level graph and
@@ -644,7 +663,6 @@ export async function savebones(how = 0, corpse = null) {
                 const plname = svp_plname();
                 mtmp.mextra = mtmp.mextra || {};
                 christen_monst(mtmp, plname);
-                mtmp.mname = plname;
                 mtmp.m_lev = g.u?.ulevel || 1;
                 mtmp.mhp = mtmp.mhpmax = g.u?.uhpmax ?? 1;
                 mtmp.female = !!g.flags?.female;
@@ -706,6 +724,8 @@ export async function savebones(how = 0, corpse = null) {
                     loc.glyph_symidx = -1;
                     loc.remembered_glyph = undefined;
                     loc.disp_ch = ' ';
+                    loc.disp_warning = false;
+                    loc.disp_monster = false;
                 }
             }
         }
@@ -770,20 +790,12 @@ export function bones_include_name(name) {
 export default { getbones, can_make_bones, no_bones_level, bones_include_name,
                  give_to_nearby_mon, drop_upon_death, savebones, bones_key };
 
-// ── dispatch note (NOT applied here; I own only js/bones.js) ──
+// ── wiring status ──
 //
-// To make this module the single source of truth for the getbones() rn2(3)
-// draw, mklev.js should import and call it instead of its private copy:
-//
-//   js/mklev.js:
-//     import { getbones } from './bones.js';
-//     // delete the local `function getbones() { ... }` definition (~line 238)
-//     // mklev() already calls `if (getbones()) return;` (line 260) — unchanged.
-//
-// The two implementations are behaviorally identical (same discover / bones /
-// rn2(3) / wizard semantics), so wiring this in is a no-op for the call stream
-// and cannot regress any session.  The orchestrator is expected to apply that
-// one-line import swap in mklev.js.
+// DONE: js/mklev.js:47 imports getbones() from this module and mklev() calls it
+// at js/mklev.js:340, so this file is the single source of truth for the
+// rn2(3) "find bones?" draw.  mklev.js has no private copy any more; do not
+// add a second import of getbones there.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // The remaining bones.c entry points, translated verbatim.  ADDITIVE ONLY:

@@ -38,6 +38,7 @@ import { update_monster_region } from './region.js';
 import { wake_nearto } from './cmd.js';
 import { mflags1_of, M1_FLY, M1_SWIM, M1_WALLWALK } from './monflags_data.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
+import { revive_nasty } from './do.js';
 
 const OTYP = new Map(objects.map((o) => [o.sym, o.otyp]));
 const IRON_CHAIN = OTYP.get('IRON_CHAIN');
@@ -655,10 +656,11 @@ export async function close_drawbridge(x, y) {
     await do_entity(occ[1]);
     if (OBJ_AT(x, y) && !Deaf())
         await You_hear('smashing and crushing.');
-    // DEFERRED (hack.c revive_nasty): C calls revive_nasty(x,y,0) and
-    // revive_nasty(x2,y2,0) here, which revive() any Rider/troll corpses about
-    // to be crushed.  revive() draws RNG (montraits/makemon) and neither it nor
-    // revive_nasty exists anywhere in js/; see `deferred`.
+    // C ref: dbridge.c:820 revive_nasty(x,y,0) / revive_nasty(x2,y2,0) — any
+    // Rider/Wizard-of-Yendor corpse about to be crushed gets one last chance
+    // to revive before the debris wipes the squares.
+    await revive_nasty(x, y, null);
+    await revive_nasty(x2, y2, null);
     delallobj(x, y);
     delallobj(x2, y2);
     let t = t_at(x, y);
@@ -695,7 +697,8 @@ export async function open_drawbridge(x, y) {
     await do_entity(occ[0]);          /* do set_entity after first */
     set_entity(x2, y2, occ[1]);       /* do_entity for worm tails */
     await do_entity(occ[1]);
-    // DEFERRED (hack.c revive_nasty): C calls revive_nasty(x, y, 0) here.
+    // C ref: dbridge.c:868 revive_nasty(x, y, 0).
+    await revive_nasty(x, y, null);
     delallobj(x, y);
     let t = t_at(x, y);
     if (t) deltrap(t);
@@ -741,9 +744,12 @@ export async function destroy_drawbridge(x, y) {
         lev1.drawbridgemask = 0;
         const otmp2 = sobj_at(BOULDER, x, y);
         if (otmp2) {
-            // DEFERRED (do.c flooreffects): C does obj_extract_self(otmp2) then
-            // flooreffects(otmp2, x, y, "fall") — the boulder fills the moat and
-            // that path draws RNG.  js/ has no flooreffects().
+            // C ref: dbridge.c:927-928 — obj_extract_self(otmp2) then
+            // flooreffects(otmp2, x, y, "fall"); the boulder fills the moat/lava.
+            const { obj_extract_self } = await import('./invent.js');
+            const { flooreffects } = await import('./do.js');
+            obj_extract_self(otmp2);
+            await flooreffects(otmp2, x, y, 'fall');
         }
     } else {
         /* no moat beneath */
@@ -916,8 +922,8 @@ function is_flyer(ptr) { return (mflags1_of(ptr) & M1_FLY) !== 0; }
 function is_swimmer(ptr) { return (mflags1_of(ptr) & M1_SWIM) !== 0; }
 function passes_walls(ptr) { return (mflags1_of(ptr) & M1_WALLWALK) !== 0; }
 // C ref: mondata.h:20/31 — these two are mlet (monster class) tests, not flags.
-// monsym.h S_EYE=5, S_LIGHT=25, S_GHOST=26.
-const S_EYE = 5, S_LIGHT = 25, S_GHOST = 26;
+// defsym.h MONSYM idx (enum mon_syms in sym.h): S_EYE=5, S_LIGHT=25, S_GHOST=54.
+const S_EYE = 5, S_LIGHT = 25, S_GHOST = 54;
 function is_floater(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIGHT; }
 function noncorporeal(ptr) { return ptr?.mcls === S_GHOST; }
 // C ref: mondata.h:190 likes_lava(ptr) — fire elemental and salamander, looked

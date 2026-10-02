@@ -12,9 +12,9 @@
 import { game, resetGame } from './gstate.js';
 import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
-import { newgame, moveloop_core } from './allmain.js';
+import { newgame, moveloop_core, early_init } from './allmain.js';
 import { parseNethackrc, config_error_report, fruitadd } from './options.js';
-import { flush_screen } from './display.js';
+import { flush_screen, IBMGRAPHICS_CHARS, warmupBotlStatusFns } from './display.js';
 import { GameDisplay } from './game_display.js';
 import {
     ROLE_NONE, ROLE_RANDOM, ROLE_RACEMASK, ROLE_GENDMASK, ROLE_ALIGNMASK,
@@ -23,6 +23,7 @@ import {
 } from './const.js';
 import { bail } from './wintty.js';
 import { ATR_INVERSE, NO_COLOR } from './terminal.js';
+import { serializeGrid } from './screen_serialize.js';
 import './light.js';   // registers game.lightsources_hook for vision_recalc
 import {
     aligns, apply_selection, build_plselection_prompt, count_ok_race,
@@ -106,7 +107,7 @@ export class NethackGame {
 
     // Snapshot the full game state at an input boundary into a plain object
     // mirroring the C recorder's .state.jsonl record (seq/rng/moves/ux/uy/
-    // dlevel/uhp/uhpmax/multi + the fmon chain in iteration order).  Called
+    // dnum/dlevel/uhp/uhpmax/multi + the fmon chain in iteration order).  Called
     // ONLY when NHJSDUMP is set.  `rngCount` is the number of logged RNG
     // calls so far (== getRngLog().length), which equals the C recorder's
     // rng_call_count at the same boundary (both count one entry per
@@ -122,6 +123,15 @@ export class NethackGame {
             // Normalize JS booleans / undefined to the 0/1 ints C emits.
             const b = (v) => (v ? 1 : 0);
             const n = (v) => (v == null ? 0 : (v | 0));
+            // mstrategy/mstate are cast (unsigned) with %u by the C recorder
+            // (nethack-c/patches/007-ground-truth-dumps.patch); both are
+            // bitmasks whose high bit is genuinely set in real play (e.g.
+            // STRAT_APPEARMSG/STRAT_WAITFORU = 0xA0000000). Forcing `v | 0`
+            // reads them as signed, which flips the sign and produces a false
+            // divergence against C's unsigned value for any state-diff
+            // consumer (found live by swarm/bin/statefirst.mjs, wave-3
+            // 2026-09-22 W3Distfleeck ticket).
+            const u = (v) => (v == null ? 0 : (v >>> 0));
             out.push({
                 i,
                 m_id: n(m.m_id),
@@ -147,6 +157,13 @@ export class NethackGame {
                 muy: n(m.muy),
                 mcansee: (m.mcansee == null ? 1 : b(m.mcansee)),
                 mundetected: b(m.mundetected),
+                // C recorder's NHOBJDUMP also emits these (m->mconf, m->mspeed,
+                // m->mstrategy, raw m->mstate) — already on the wire, just not
+                // read here before now.
+                mconf: n(m.mconf),
+                mspeed: n(m.mspeed),
+                mstrategy: u(m.mstrategy),
+                mstate: u(m.mstate),
                 dead: (n(m.mhp) < 1) ? 1 : 0,
             });
         }
@@ -187,6 +204,11 @@ export class NethackGame {
             moves: (game.moves == null ? 0 : (game.moves | 0)),
             ux: (u.ux == null ? 0 : (u.ux | 0)),
             uy: (u.uy == null ? 0 : (u.uy | 0)),
+            // C recorder's NHOBJDUMP emits u.uz.dnum alongside dlevel; without
+            // it a same-numbered level on a branch (Mines/Sokoban/quest/etc.)
+            // can't be told apart from the main dungeon.  Same accessor
+            // pattern as dlevel below.
+            dnum: (u.uz && u.uz.dnum != null) ? (u.uz.dnum | 0) : -1,
             dlevel: (u.uz && u.uz.dlevel != null)
                     ? (u.uz.dlevel | 0)
                     : (game.dlevel == null ? -1 : (game.dlevel | 0)),
@@ -225,7 +247,7 @@ export class NethackGame {
         const disp = game?.nhDisplay;
         const term = disp?.terminal || disp;
         this._pendingAnimFrames.push({
-            screen: term?.serialize ? term.serialize() : '',
+            screen: term ? serializeGrid(term) : '',
             cursor: disp ? [disp.cursorCol ?? 0, disp.cursorRow ?? 0, 1] : null,
         });
         if (typeof requestAnimationFrame === 'function') {
@@ -238,6 +260,18 @@ export class NethackGame {
     async start() {
         const g = resetGame();
 
+        // C ref: sys/unix/unixmain.c main():66 — early_init(argc, argv) is
+        // the very first thing a real C process does, before rc parsing or
+        // anything else.  early_init() has NO caller anywhere in this port
+        // (only defined/exported), so its one real side effect —
+        // runtime_info_init() populating the version/build-date banner
+        // nomakedefs.version_id reads — never actually ran; a session's
+        // first 'V'/#version press always showed the Hack-1.0 placeholder
+        // default instead.  runtime_info_init() itself is one-shot
+        // (done_runtime_opt_init_once) so calling this every segment is
+        // harmless.
+        early_init(0, null);
+
         // Fixed in-game datetime "YYYYMMDDHHMMSS" — drives the moon-phase /
         // Friday-the-13th game-start messages.  C ref: calendar.c getnow.
         g.datetime = this._datetime || null;
@@ -249,8 +283,15 @@ export class NethackGame {
         // path can reach it.
         g.storage = this._storage || null;
 
+        // C ref: sys/unix/unixmain.c main() — the core RNG is seeded before
+        // the rc file is ever read, so a CHOOSE= line's choose_random_part()
+        // draw (cfgfiles.c, the FIRST rn2() of the whole game) lands in the
+        // right place in the stream.  This must run before parseNethackrc().
+        initRng(this._seed);
+        enableRngLog();
+
         // Parse nethackrc
-        const opts = parseNethackrc(this._nethackrc);
+        const opts = await parseNethackrc(this._nethackrc);
         g.plname = opts.name || '';
         g.flags = { verbose: true, invlet_constant: true, dark_room: true, ...opts.flags };
         // C ref: options.c set_playmode() — when wizard (debug) mode is requested
@@ -261,11 +302,18 @@ export class NethackGame {
         // svp.plname is printed, e.g. the stethoscope self-probe "Status of
         // wizard ..." (insight.c:3485).
         if (g.flags.debug) g.plname = 'wizard';
-        g.iflags = { ...opts.iflags };
+        // C initializes cmdassist enabled; an explicit !cmdassist in the rc
+        // is applied below through opts.iflags.
+        g.iflags = { cmdassist: true, ...opts.iflags };
         // C ref: cmd.c parsebindings()/reset_commands() — custom key bindings
         // from nethackrc BIND= lines (key char -> command name).  cmd.js rhack()
         // remaps a bound key to the command's default key before dispatch.
         g.keybind = opts.keybind || {};
+        // Preserve explicit unbindings unless a later BIND reassigned the key.
+        for (const key of opts.keyunbind || []) {
+            if (!Object.prototype.hasOwnProperty.call(g.keybind, key))
+                g.keybind[key] = 'nothing';
+        }
         // symset selects the drawing glyph table; DECgraphics uses VT100
         // line-drawing for walls/floor, otherwise the default ASCII symbols.
         g.symset = opts.symset || '';
@@ -273,6 +321,17 @@ export class NethackGame {
         // SYMBOLS= rc line overrides one cmap glyph's display character,
         // independent of (and layered on top of) the base symset.
         g.symoverride = opts.symoverride || {};
+        // C ref: symbols.c do_symset()/load_symset() — a `symset:` line loads
+        // a whole prebuilt dat/symbols table; an explicit SYMBOLS= line on top
+        // of it must win, so only fill gaps a SYMBOLS= line didn't already
+        // set.  Only IBMgraphics is ported (see IBMGRAPHICS_CHARS in
+        // display.js for why its values are XORed ASCII, not real CP437
+        // bytes); DECgraphics already has its own hand-coded glyph tables in
+        // display.js's terrain_glyph/wall_cmap_glyph.
+        if (/^ibm/i.test(g.symset)) {
+            for (const [symname, ch] of Object.entries(IBMGRAPHICS_CHARS))
+                if (!(symname in g.symoverride)) g.symoverride[symname] = ch;
+        }
         // C ref: options.c ga.apelist — the AUTOPICKUP_EXCEPTION list, read by
         // pickup.c check_autopickup_exceptions().
         g.apelist = opts.apelist || [];
@@ -286,19 +345,48 @@ export class NethackGame {
 
         // Initialize hero struct
         g.u = { ux: 0, uy: 0, ux0: 0, uy0: 0 };
+        // C ref: optlist.h NHOPTB(blind/deaf/nudist/pauper/reroll, ...,
+        // &u.uroleplay.*, ...) — these are real u.uroleplay fields, not
+        // flags.*; parseNethackrc() ran before `g.u` existed, so it staged
+        // each rc value on opts.flags.<name> (the generic unlisted-boolean
+        // default) for this copy.  Only reroll was copied here before, so an
+        // rc's `OPTIONS=nudist` (etc.) parsed fine but never reached
+        // u.uroleplay, leaving u_init.c ini_inv()'s nudist-skip untaken.
+        g.u.uroleplay = {
+            reroll: !!opts.flags?.reroll,
+            blind: !!opts.flags?.blind,
+            deaf: !!opts.flags?.deaf,
+            nudist: !!opts.flags?.nudist,
+            pauper: !!opts.flags?.pauper,
+        };
         g.context = { move: 0 };
-        // C ref: initoptions_finish() -> fruitadd() runs before init_objects()
-        // and gives every slime mold its preferred-fruit id in obj->spe.
-        // The replay startup parses rc options directly, so seed that small
-        // piece of options state here before any level objects are created.
-        g.svp = { pl_fruit: opts.pl_fruit || 'slime mold' };
+        // C ref: unixmain.c main() calls initoptions() (-> initoptions_finish()
+        // -> fruitadd()) before dorecover()/newgame() -- before any object,
+        // especially any slime mold, is ever created. Call the already-correct
+        // fruitadd()/fruitadd_nonew() ports directly (not the orphaned
+        // initoptions()/rcfile() wrapper, which would duplicate the
+        // parseNethackrc() pipeline above) with the rc-supplied fruit name
+        // (opts.flags.fruit, set by optfn_fruit) or C's real default ("slime
+        // mold", options.c:7282-7283).
+        g.svp = g.svp || {};
+        g.svp.pl_fruit = opts.flags?.fruit || 'slime mold';
         fruitadd(g.svp.pl_fruit, null);
         g.program_state = {};
-        g.moves = 1;
-
-        // Initialize PRNG
-        initRng(this._seed);
-        enableRngLog();
+        // C ref: decl.h `long moves;` is a plain global — zero-initialized at
+        // process start, and stays 0 until u_init_role() (u_init.c:645) sets
+        // it to 1 *after* mklev() builds the first level (allmain.c newgame():
+        // mklev() runs before u_init_inventory_attrs()).  Setting it to 1 this
+        // early made it 1 throughout the dlvl-1 room fill too, one full phase
+        // before C's real svm.moves ticks over; makemon.js align_shift()'s
+        // moves-keyed Is_special() cache (itself a deliberate replica of a
+        // C `static long oldmoves` local) then primed on dlvl 1 and never
+        // re-fired for a same-turn level change (e.g. an immediate wizard ^V
+        // level-teleport before the first real turn), so a special level
+        // entered that way kept AM_NONE instead of its real alignment.
+        // allmain.js's newgame()/newgame_real() already set moves=1 at the
+        // correct (post-mklev) point; this one just needs to stop pre-empting
+        // them.
+        g.moves = 0;
 
         // Install display
         if (this._pendingDisplay) {
@@ -316,18 +404,25 @@ export class NethackGame {
         // the display and the capture hook are installed.
         await config_error_report(opts);
 
-        // C prompts for a name before role/race selection when OPTIONS
-        // does not supply one.  That selection can consume RNG before
-        // o_init/newgame startup begins.
-        await this._startupCharacterSelection(optsel);
-
-        // C ref: unixmain.c — if this player already has a save file, restore it
-        // instead of starting a new game (restore_saved_game() -> dorecover()).
+        // C ref: sys/unix/unixmain.c main() — restore_saved_game()/dorecover()
+        // is attempted FIRST, using whatever plname is already known (from
+        // OPTIONS=name: or an rc-forced wizard name); player_selection() (the
+        // "Shall I pick ... for you?" prompt this port's _startupCharacterSelection
+        // implements) only runs in the `!resuming` branch, i.e. when no save was
+        // found or restore failed (unixmain.c:243-291). Running character
+        // selection unconditionally BEFORE this check consumed the restoring
+        // segment's replayed keystrokes as bogus role/race/gender/align answers
+        // instead of leaving them for the restored game to read.
         const { have_saved_game, dorestore } = await import('./restore.js');
         if (have_saved_game()) {
             await dorestore();
             return;
         }
+
+        // C prompts for a name before role/race selection when OPTIONS
+        // does not supply one.  That selection can consume RNG before
+        // o_init/newgame startup begins.
+        await this._startupCharacterSelection(optsel);
 
         // Run game startup
         await newgame();
@@ -349,17 +444,24 @@ export class NethackGame {
         // C ref: wintty.c tty_askname() tryct > 1 — the retry hint is written to
         // the BASE window one row above the prompt, so it stays on screen under
         // every later chargen menu (the confirmation overlay starts at col 31).
-        if (this._asknameRetry)
-            disp.putstr(0, 11, 'Enter a name for your character...', NO_COLOR);
-        const prompt = `Who are you? ${name || ''}`;
-        disp.putstr(0, 12, prompt, NO_COLOR);
+        // C ref: sys askname() (options.c set_playmode()/OPTIONS=name: etc.
+        // can all pre-set plname, in which case genl_player_setup() never
+        // calls askname() at all, and this row never gets drawn).  This
+        // helper repaints the persistent startup backdrop for several other
+        // callers too (_drawChargenBase, the y/n/a/q chargen-confirmation
+        // loop), so gate the "Who are you?" line on whether askname() ACTUALLY
+        // ran this game, not on whether a name happens to be set.
+        if (this._asknamePrompted) {
+            if (this._asknameRetry)
+                disp.putstr(0, 11, 'Enter a name for your character...', NO_COLOR);
+            const prompt = `Who are you? ${name || ''}`;
+            disp.putstr(0, 12, prompt, NO_COLOR);
+            if (!topLine) disp.setCursor(Math.min(prompt.length, 79), 12);
+        }
         // The topLine is a tty yn_function prompt ("...? [ynaq]"). C's
         // yn_function prints the prompt followed by a space and leaves
         // the cursor after that space, i.e. one column past the text.
-        // The name prompt (getlin) leaves the cursor right after the
-        // typed text with no trailing space.
         if (topLine) disp.setCursor(Math.min(topLine.length + 1, 79), 0);
-        else disp.setCursor(Math.min(prompt.length, 79), 12);
     }
 
     // Clear the screen and redraw whatever C left on the BASE window beneath
@@ -678,6 +780,7 @@ export class NethackGame {
     // with the hint line one row up; ten empty tries give up.
     async _promptForName(renameRow = -1) {
         let name = '', tryct = 0;
+        this._asknamePrompted = true;
         this._asknameRetry = false;
         const render = (n) => renameRow >= 0
             ? this._renderRenameScreen(n, renameRow)
@@ -891,25 +994,21 @@ export class NethackGame {
 
     // C ref: the ROLE_RANDOM menu entry — pick a random value for the facet
     // currently being chosen (pick_role/race/gend/align(PICK_RANDOM)).
+    // C ref: role.c rigid_role_checks() runs against the single global `flags`
+    // struct, so resolving one facet as a side effect of picking another
+    // (e.g. an orc Barbarian's forced chaotic alignment) persists along with
+    // the facet actually being picked. Routing this through a cloned/discarded
+    // `tmp` object used to drop that sibling side effect on the floor, so
+    // _advanceForcedFacets() had to re-run rigid_role_checks() a second time
+    // to recover it — burning an extra, C-nonexistent RNG draw for whichever
+    // facet the discarded clone had already force-resolved.
     _pickRandomFacet(sel, prompt) {
-        const r = { role: sel.role, race: sel.race, gender: sel.gender, align: sel.align };
-        if (prompt === 'role') {
-            const tmp = { ...r, role: ROLE_RANDOM };
-            rigid_role_checks(tmp);
-            sel.role = tmp.role;
-        } else if (prompt === 'race') {
-            const tmp = { ...r, race: ROLE_RANDOM };
-            rigid_role_checks(tmp);
-            sel.race = tmp.race;
-        } else if (prompt === 'gender') {
-            const tmp = { ...r, gender: ROLE_RANDOM };
-            rigid_role_checks(tmp);
-            sel.gender = tmp.gender;
-        } else if (prompt === 'align') {
-            const tmp = { ...r, align: ROLE_RANDOM };
-            rigid_role_checks(tmp);
-            sel.align = tmp.align;
-        }
+        if (prompt === 'role') sel.role = ROLE_RANDOM;
+        else if (prompt === 'race') sel.race = ROLE_RANDOM;
+        else if (prompt === 'gender') sel.gender = ROLE_RANDOM;
+        else if (prompt === 'align') sel.align = ROLE_RANDOM;
+        else return;
+        rigid_role_checks(sel);
     }
 
     // Placeholder filtering menu — populated below.
@@ -1166,11 +1265,13 @@ export class NethackGame {
             // and compares to the C session's recorded screen.
             const disp = game?.nhDisplay;
             const term = disp?.terminal || disp;
-            nhGame._screens.push(term?.serialize ? term.serialize() : '');
+            nhGame._screens.push(term ? serializeGrid(term) : '');
             nhGame._rngSlices.push(slice);
             // Step boundary for the display-prng trace (js/disprng.js); inert
             // unless swarm/bin/dispdiff.mjs armed it.
             if (globalThis.__DISPLOG) globalThis.__DISPLOG.push('---STEP---');
+            if (globalThis.__MOVEMENT_ORACLE)
+                globalThis.__MOVEMENT_ORACLE({ ev: 'boundary', step: keyIdx + 1 });
 
             // termcap.c nomux_get_cursor() reports the RAW writer's row/col
             // whenever nomux_raw_active, and that flag is never cleared once a
@@ -1216,7 +1317,8 @@ export class NethackGame {
     getAnimationFramesByStep() { return this._animFramesByStep; }
     // Per-step full game-state snapshots, parallel to getScreens().  One
     // entry per input boundary, each mirroring the C recorder's
-    // .state.jsonl record (hero + fmon chain + rng#).  Populated ONLY when
+    // .state.jsonl record (hero incl. dnum/dlevel + fmon chain + rng#).
+    // Populated ONLY when
     // process.env.NHJSDUMP is set — empty array (zero overhead) otherwise.
     // Consumed by scripts/oracle.mjs to pinpoint the first state divergence
     // from C.  NOT part of scoring.
@@ -1244,6 +1346,7 @@ export class NethackGame {
 // this segment. The harness concatenates them itself. Cross-segment
 // C-side state (bones, record file, save) lives in `input.storage`.
 export async function runSegment(input) {
+    await warmupBotlStatusFns();
     const { seed, nethackrc, storage, datetime } = input;
     const moves = input.moves || '';
 

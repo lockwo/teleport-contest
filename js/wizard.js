@@ -10,13 +10,12 @@ import { game } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { update_topl } from './display.js';
 import { AT_MAGC, attacktype } from './monattk_data.js';
+import { MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT } from './const.js';
 
 const AMULET_OF_YENDOR = 213;           // js/mkobj.js OBJECT_DATA index
-const MAGIC_PORTAL = 24;                // trap.h ttyp
-const STRAT_WAITMASK = 0x03000000;
+const STRAT_WAITMASK = 0x30000000;
 const MAXNASTIES = 10;
 const S_ANGEL = 27, S_DEMON = 56;       // defsym.h MONSYM indices
-const MM_NOMSG = 0x40;                  // makemon.h
 
 function DEADMONSTER(m) { return !m || (m.mhp | 0) <= 0; }
 function mdata(m) { return m?.data || m?.mdat || null; }
@@ -127,73 +126,75 @@ export async function nasty(summoner) {
     const census = monster_census();
     let count = 0;
 
-    // C: `if (!rn2(10) && Inhell) count = msummon(NULL)` — msummon (minion.c)
-    // is unported, so the rn2(10) is still drawn but the Gehennom demon-summon
-    // arm falls through to the ordinary loop rather than being guessed at.
-    const hell_summon = (!rn2(10) && In_hell());
-    if (hell_summon) return 0;
+    // C ref: minion.c:59 msummon(NULL) — "this might summon a demon prince or
+    // lord... summons like WoY".  js/minion.js exports the faithful port;
+    // dynamic import avoids a static cycle.
+    if (!rn2(10) && In_hell()) {
+        const { msummon } = await import('./minion.js');
+        count = await msummon(null);
+    } else {
+        const s_cls = summoner ? (mdata(summoner)?.mcls | 0) : 0;
+        let difcap = summoner ? (mdata(summoner)?.difficulty | 0) : 0;
+        const castalign = summoner ? sgn(mdata(summoner)?.maligntyp | 0) : 0;
+        let tmp = ((u.ulevel | 0) > 3) ? Math.trunc((u.ulevel | 0) / 3) : 1;
+        const bypos = { x: u.ux, y: u.uy };
 
-    const s_cls = summoner ? (mdata(summoner)?.mcls | 0) : 0;
-    let difcap = summoner ? (mdata(summoner)?.difficulty | 0) : 0;
-    const castalign = summoner ? sgn(mdata(summoner)?.maligntyp | 0) : 0;
-    let tmp = ((u.ulevel | 0) > 3) ? Math.trunc((u.ulevel | 0) / 3) : 1;
-    const bypos = { x: u.ux, y: u.uy };
+        for (let i = rnd(tmp); i > 0 && count < MAXNASTIES; --i) {
+            for (let j = 0; j < 20; j++) {
+                let makeindex, m_cls, trylimit = 10 + 1, gave_up = false;
+                for (;;) {
+                    if (!--trylimit) { gave_up = true; break; }
+                    makeindex = M.pick_nasty(difcap);
+                    const mp = M.monster_by_pmidx(makeindex);
+                    m_cls = mp?.mcls | 0;
+                    if (!((difcap > 0 && (mp?.difficulty | 0) >= difcap
+                           && attacktype(mp, AT_MAGC))
+                          || (s_cls === S_DEMON && m_cls === S_ANGEL)
+                          || (s_cls === S_ANGEL && m_cls === S_DEMON)))
+                        break;
+                }
+                if (gave_up) continue;                     /* C: goto nextj */
 
-    for (let i = rnd(tmp); i > 0 && count < MAXNASTIES; --i) {
-        for (let j = 0; j < 20; j++) {
-            let makeindex, m_cls, trylimit = 10 + 1, gave_up = false;
-            for (;;) {
-                if (!--trylimit) { gave_up = true; break; }
-                makeindex = M.pick_nasty(difcap);
                 const mp = M.monster_by_pmidx(makeindex);
-                m_cls = mp?.mcls | 0;
-                if (!((difcap > 0 && (mp?.difficulty | 0) >= difcap
-                       && attacktype(mp, AT_MAGC))
-                      || (s_cls === S_DEMON && m_cls === S_ANGEL)
-                      || (s_cls === S_ANGEL && m_cls === S_DEMON)))
-                    break;
-            }
-            if (gave_up) continue;                     /* C: goto nextj */
-
-            const mp = M.monster_by_pmidx(makeindex);
-            if (summoner) {
-                const spot = M.enexto_spawn(summoner.mux ?? summoner.mx,
-                                            summoner.muy ?? summoner.my, mp);
-                if (!spot) continue;
-                bypos.x = spot.x; bypos.y = spot.y;
-            }
-            let mtmp = M.makemon(mp, bypos.x, bypos.y, mmflags);
-            if (mtmp) {
-                mtmp.msleeping = 0; mtmp.mpeaceful = 0; mtmp.mtame = 0;
-                M.set_malign(mtmp);
-            } else {
-                // Random substitute for a genocided selection.
-                mtmp = M.makemon(null, bypos.x, bypos.y, mmflags);
+                if (summoner) {
+                    const spot = M.enexto_spawn(summoner.mux ?? summoner.mx,
+                                                summoner.muy ?? summoner.my, mp);
+                    if (!spot) continue;
+                    bypos.x = spot.x; bypos.y = spot.y;
+                }
+                let mtmp = M.makemon(mp, bypos.x, bypos.y, mmflags);
                 if (mtmp) {
-                    m_cls = mdata(mtmp)?.mcls | 0;
-                    if ((difcap > 0 && (mdata(mtmp)?.difficulty | 0) >= difcap
-                         && rn2(In_endgame() ? 3 : 7)
-                         && attacktype(mdata(mtmp), AT_MAGC))
-                        || (s_cls === S_DEMON && m_cls === S_ANGEL)
-                        || (s_cls === S_ANGEL && m_cls === S_DEMON)) {
-                        unmakemon(mtmp);
-                        mtmp = null;
+                    mtmp.msleeping = 0; mtmp.mpeaceful = 0; mtmp.mtame = 0;
+                    M.set_malign(mtmp);
+                } else {
+                    // Random substitute for a genocided selection.
+                    mtmp = M.makemon(null, bypos.x, bypos.y, mmflags);
+                    if (mtmp) {
+                        m_cls = mdata(mtmp)?.mcls | 0;
+                        if ((difcap > 0 && (mdata(mtmp)?.difficulty | 0) >= difcap
+                             && rn2(In_endgame() ? 3 : 7)
+                             && attacktype(mdata(mtmp), AT_MAGC))
+                            || (s_cls === S_DEMON && m_cls === S_ANGEL)
+                            || (s_cls === S_ANGEL && m_cls === S_DEMON)) {
+                            unmakemon(mtmp);
+                            mtmp = null;
+                        }
                     }
                 }
-            }
 
-            if (mtmp) {
-                const nm = mdata(mtmp)?.name;
-                if (nm === 'arch-lich' || nm === 'Archon') {
-                    // C: min(Archon difficulty 26, arch-lich difficulty 31).
-                    const cap = 26;
-                    if (!difcap || difcap > cap) difcap = cap;
+                if (mtmp) {
+                    const nm = mdata(mtmp)?.name;
+                    if (nm === 'arch-lich' || nm === 'Archon') {
+                        // C: min(Archon difficulty 26, arch-lich difficulty 31).
+                        const cap = 26;
+                        if (!difcap || difcap > cap) difcap = cap;
+                    }
+                    mtmp.mspec_used = rnd(4);              /* delay first spell */
+                    if (++count >= MAXNASTIES
+                        || (mdata(mtmp)?.maligntyp | 0) === 0
+                        || sgn(mdata(mtmp)?.maligntyp | 0) === castalign)
+                        break;
                 }
-                mtmp.mspec_used = rnd(4);              /* delay first spell */
-                if (++count >= MAXNASTIES
-                    || (mdata(mtmp)?.maligntyp | 0) === 0
-                    || sgn(mdata(mtmp)?.maligntyp | 0) === castalign)
-                    break;
             }
         }
     }
@@ -235,8 +236,8 @@ export async function intervene() {
         break;
     case 2: {
         if (!Blind()) await update_topl('You notice a black glow surrounding you.');
-        const { rndcurse } = await import('./zap.js').catch(() => ({ rndcurse: null }));
-        if (rndcurse) await rndcurse();
+        const { rndcurse } = await import('./pray.js');
+        await rndcurse();
         break;
     }
     case 3:
@@ -262,24 +263,66 @@ export async function intervene() {
     }
 }
 
-// C ref: wizard.c:715 resurrect() — only the "make a new Wizard" arm; the
-// migrating-Wizard arm draws rn2(elapsed + 1) which needs migrating_mons.
+// C ref: wizard.c:715 resurrect() — the "make a new Wizard" arm (no existing
+// Wizard) and the "look for a migrating Wizard" arm (one already exists,
+// off-level, chasing the hero across levels) that drags him back via
+// mon_arrive(Wiz_arrive).  Only the migrating arm draws RNG of its own:
+// mon_catchup_elapsed_time()'s recovery rolls, rn2(elapsed/50 + 1) to
+// possibly wake him, and mon_arrive()'s placement search.
 export async function resurrect() {
-    if ((game.context?.no_of_wizards | 0)) return;
-    const { makemon, monster_by_pmidx, name_to_pmidx, set_malign }
-        = await import('./makemon.js');
-    const MM_NOWAIT = 0x08;
-    const mtmp = makemon(monster_by_pmidx(name_to_pmidx('Wizard of Yendor')),
-                         game.u.ux, game.u.uy, MM_NOWAIT);
-    if (!mtmp) return;
-    mtmp.mrevived = 1;
-    mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
-    mtmp.mtame = 0; mtmp.mpeaceful = 0;
-    set_malign(mtmp);
-    if (!Deaf()) {
-        await update_topl('A voice booms out...');
-        await update_topl('"So thou thought thou couldst kill me, fool."');
+    let mtmp = null;
+    let verb;
+    if (!(game.context?.no_of_wizards | 0)) {
+        /* make a new Wizard */
+        verb = 'kill';
+        const { makemon, monster_by_pmidx, name_to_pmidx }
+            = await import('./makemon.js');
+        mtmp = makemon(monster_by_pmidx(name_to_pmidx('Wizard of Yendor')),
+                       game.u.ux, game.u.uy, MM_NOWAIT);
+        if (mtmp) mtmp.mrevived = 1;
+    } else {
+        /* look for a migrating Wizard */
+        verb = 'elude';
+        const { mon_arrive, Wiz_arrive } = await import('./dog.js');
+        const { mon_catchup_elapsed_time } = await import('./dogmove.js');
+        const LARGEST_INT = 0x7fffffff;
+        const migr = game.migrating_mons || (game.migrating_mons = []);
+        for (let i = 0; i < migr.length; ) {
+            const cand = migr[i];
+            let elapsed = (game.moves | 0) - (cand.mlstmv | 0);
+            if (cand.iswiz && !mon_has_amulet(cand) && elapsed > 0) {
+                mon_catchup_elapsed_time(cand, elapsed);
+                if (elapsed >= LARGEST_INT) elapsed = LARGEST_INT - 1;
+                elapsed = Math.trunc(elapsed / 50);
+                if (cand.msleeping && rn2(elapsed + 1)) cand.msleeping = 0;
+                if (cand.mfrozen === 1) { cand.mfrozen = 0; cand.mcanmove = 1; }
+                if (!helpless(cand)) {
+                    migr.splice(i, 1);
+                    await mon_arrive(cand, Wiz_arrive);
+                    mtmp = cand.mx ? cand : null;
+                    break;
+                }
+            }
+            i++;
+        }
     }
+
+    if (mtmp) {
+        mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
+        mtmp.mtame = 0; mtmp.mpeaceful = 0;
+        const { set_malign } = await import('./makemon.js');
+        set_malign(mtmp);
+        if (!Deaf()) {
+            await update_topl('A voice booms out...');
+            await update_topl(`"So thou thought thou couldst ${verb} me, fool."`);
+        }
+    }
+}
+
+// C ref: include/monst.h:251 helpless(mon) = msleeping || !mcanmove.
+function helpless(mon) {
+    const canmove = (mon.mcanmove == null) ? 1 : mon.mcanmove;
+    return !!(mon.msleeping || !canmove);
 }
 
 function uprop(...names) {
@@ -529,12 +572,7 @@ export async function tactics(mtmp) {
 
         /* if wounded, hole up on or near the stairs (to block them) */
         {
-            // C: choose_stairs(&sx, &sy, (mtmp->m_id % 2)).  js/shkroom.js:343
-            // holds the port but keeps it module-private and returns the spot
-            // instead of filling two out-params; when it is unavailable the
-            // out-params stay 0, which is C's "no spot found" case.
-            const st = (typeof shkr.choose_stairs === 'function')
-                ? shkr.choose_stairs((mtmp.m_id | 0) % 2) : null;
+            const st = shkr.choose_stairs((mtmp.m_id | 0) % 2);
             if (st) { sx = st.x | 0; sy = st.y | 0; }
         }
         mtmp.mavenge = 1; /* covetous monsters attack while fleeing */

@@ -15,7 +15,7 @@ import {
     OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT,
     OBJ_MIGRATING, OBJ_BURIED, OBJ_ONBILL, OBJ_LUAFREE, OBJ_DELETED,
     ICE, DRAWBRIDGE_UP, DB_UNDER, DB_ICE, MAX_OIL_IN_FLASK,
-    COLNO, ROWNO, LUCKADD,
+    COLNO, ROWNO, LUCKADD, MIGR_TO_SPECIES,
     ONAME, has_oname, OMONST, Has_contents, ismnum, isok,
 } from './const.js';
 import {
@@ -23,6 +23,7 @@ import {
     undead_to_corpse, mon_has_cnutrit, mon_nocorpse, mon_cwt, mon_msize,
     mon_cnutrit, name_to_pmidx,
 } from './makemon.js';
+import { block_point, recalc_block_point } from './vision.js';
 import { set_tin_variety, SPINACH_TIN, RANDOM_TIN, food_nutrit } from './eat.js';
 import { is_human_flag } from './monflags_data.js';
 
@@ -807,13 +808,88 @@ for (const o of objects)
         if (p) o.oc_oprop = p;
     }
 
-// C ref: include/objects.h:513/540 DRGN_ARMR("red dragon scale mail"/"red
-// dragon scales", ..., FIRE_RES, ...) — the only NON-ring/amulet rows whose
-// oc_oprop is FIRE_RES, which mkobj.c is_flammable() tests directly.
-const FIRE_RES_PROP = 1; // prop.h FIRE_RES
-for (const o of objects)
-    if (o && (o.name === 'red dragon scale mail' || o.name === 'red dragon scales'))
-        o.oc_oprop = FIRE_RES_PROP;
+// C ref: include/objects.h:502-552 DRGN_ARMR().  Every coloured dragon
+// scale-mail/scales pair has an oc_oprop, not just the red pair.  worn.c uses
+// this column to install the extrinsic, and zap.c uses it to protect inventory
+// from elemental damage, so this table must remain the shared source of truth.
+//
+// KNOWN TABLE DIVERGENCE, deliberately carried.  The recorder's objects.h has
+// ELEVEN rows in each dragon group; OBJECT_DATA above has ten.  "shimmering
+// dragon scale mail" (objects.h:510) and "shimmering dragon scales"
+// (objects.h:537), both oc_oprop DISPLACED, are absent, and they sit at
+// position 4 of 11 — between silver and red.  Consequences:
+//   * every armour otyp from C's 104 (red dragon scale mail) up is one lower
+//     here, and from C's 115 (red dragon scales) up is two lower; our armour
+//     class holds 84 rows against the recorder's 86;
+//   * there is no DISPLACED armour source at all, so a cloak of displacement is
+//     the only way the hero can get that property;
+//   * every otyp constant in this port is derived from THIS table (or resolved
+//     by name), so the numbering is internally consistent and no recorded
+//     session is affected by the offset.
+// Inserting the two rows is rng-inert on both axes that consume rng, verified
+// against the C source: o_init.c obj_shuffle_range() gives ARMOR_CLASS exactly
+// four description-shuffle ranges (HELMET..HELM_OF_TELEPATHY,
+// LEATHER_GLOVES..GAUNTLETS_OF_DEXTERITY, CLOAK_OF_PROTECTION..
+// CLOAK_OF_DISPLACEMENT, SPEED_BOOTS..LEVITATION_BOOTS), none of which contains
+// a dragon row, so no shuffle changes length; and DRGN_ARMR() passes prob = 0
+// (objects.h:497-499), so the two extra rows never enter mkobj()'s
+// probability walk.  It is NOT landed because the insertion renumbers 377 of
+// 481 rows, and 687 hardcoded otyp literals across 72 files in js/ would have
+// to move with it — a change this corpus cannot fully validate.  Resolve it by
+// converting those literals to name lookups FIRST, then inserting the rows.
+const DRAGON_ARMOR_PROP = {
+    'gray dragon scale mail': 12, 'gray dragon scales': 12,       // ANTIMAGIC
+    'silver dragon scale mail': 65, 'silver dragon scales': 65,   // REFLECTING
+    'red dragon scale mail': 1, 'red dragon scales': 1,           // FIRE_RES
+    'white dragon scale mail': 2, 'white dragon scales': 2,       // COLD_RES
+    'orange dragon scale mail': 3, 'orange dragon scales': 3,     // SLEEP_RES
+    'black dragon scale mail': 4, 'black dragon scales': 4,       // DISINT_RES
+    'blue dragon scale mail': 5, 'blue dragon scales': 5,         // SHOCK_RES
+    'green dragon scale mail': 6, 'green dragon scales': 6,       // POISON_RES
+    'yellow dragon scale mail': 7, 'yellow dragon scales': 7,     // ACID_RES
+};
+for (const o of objects) {
+    const prop = o && DRAGON_ARMOR_PROP[o.name];
+    if (prop) o.oc_oprop = prop;
+}
+
+// C ref: include/objects.h HELM()/CLOAK()/SHIELD()/GLOVES()/BOOTS() `power`
+// argument — every OTHER piece of armor whose oc_oprop grants a worn
+// extrinsic (cornuthaum..levitation boots).  Before this table, insight.c
+// what_gives()/from_what()'s port (js/insight.js) had no way to find the
+// source of e.g. "You are displaced" for a cloak of displacement or "You have
+// reflection" for a shield of reflection, so those enlightenment lines were
+// silently omitted.  Keyed by NAME for the same reason as the tables above.
+// helm of telepathy is set by the TELEPAT_PROP loop above rather than here.
+// speed boots used to be omitted from BOTH, on the grounds that allmain.js
+// youHaveVeryFast() already hardcodes `uarmf.otyp === SPEED_BOOTS`; that left
+// objects[SPEED_BOOTS].oc_oprop undefined, so worn.c setworn()'s generic
+// `u.uprops[oc_oprop].extrinsic |= slot` (js/invent.js worn_extrinsics_on)
+// could not confer EFast, and every other oc_oprop consumer answered "these
+// boots grant nothing".  C objects.h:707 gives it FAST.
+const ARMOR_OC_OPROP_BY_NAME = {
+    'speed boots': 64,                 // FAST
+    'cornuthaum': 35,                  // CLAIRVOYANT
+    'helm of caution': 31,             // WARNING
+    'elven cloak': 42,                 // STEALTH
+    'alchemy smock': 6,                // POISON_RES
+    'cloak of protection': 59,         // PROTECTION
+    'cloak of invisibility': 40,       // INVIS
+    'cloak of displacement': 41,       // DISPLACED
+    'shield of drain resistance': 9,   // DRAIN_RES
+    'shield of shock resistance': 5,   // SHOCK_RES
+    'shield of reflection': 65,        // REFLECTING
+    'gauntlets of fumbling': 25,       // FUMBLING
+    'water walking boots': 50,         // WWALKING
+    'jumping boots': 45,               // JUMPING
+    'elven boots': 42,                 // STEALTH
+    'fumble boots': 25,                // FUMBLING
+    'levitation boots': 48,            // LEVITATION
+};
+for (const o of objects) {
+    const prop = o && ARMOR_OC_OPROP_BY_NAME[o.name];
+    if (prop) o.oc_oprop = prop;
+}
 
 // C ref: include/objects.h BITS() mgc field — oc_magic, the "magic" flag used
 // by poly_obj() (zap.c) to keep a polymorphed object's magic-or-not status the
@@ -1352,7 +1428,10 @@ function start_timer(when, kind, action, obj) {
         // C ref: timeout.c start_timer() — gnu->timeout = svm.moves + when
         // (the caller's `when` is turns-from-now; the timer fires at that
         // absolute turn).
-        obj.timer = { when: (game.moves ?? 0) + when, kind, action };
+        obj.timer = {
+            when: (game.moves ?? 0) + when, kind, action,
+            tid: game._object_timer_id = (game._object_timer_id ?? 0) + 1,
+        };
     }
     return true;
 }
@@ -1363,22 +1442,22 @@ function obj_stop_timers(obj) {
     delete obj.timer;
 }
 
-// C ref: timeout.c run_timers() — dispatch expired TIMER_OBJECT timers.
-// ROT_CORPSE on a floor object (dig.c rot_corpse() -> rot_organic() silently
-// frees it; no message, no RNG) and SHRINK_GLOB, whose handler mkobj.c
-// shrink_glob() is ported below and DOES draw (start_glob_timeout's rn2(5)) each
-// time it reschedules.  REVIVE_MON / ZOMBIFY_MON / FIG_TRANSFORM need
-// makemon()-side handlers that live outside this file and stay unfired.
-export function run_object_timers() {
+// C ref: timeout.c run_timers() — expire object timers in timeout order,
+// newest first for equal deadlines (insert_timer puts ties at the head).
+export async function run_object_timers() {
     const moves = game.moves ?? 0;
-    // Globs can be anywhere; collect the timed ones from every list mkobj.c
-    // maintains so a glob in a pack or a container keeps shrinking as in C.
-    const globs = [];
+    // Collect every timed object due to fire, from every list mkobj.c
+    // maintains, so an object in a pack or a container is reached exactly
+    // like C's timer queue (keyed on the object, not on which list holds it).
+    const due = [];
     const scan = (list) => {
         if (!Array.isArray(list)) return;
         for (const o of list) {
-            if (o.timed && o.timer?.action === SHRINK_GLOB && o.timer.when <= moves)
-                globs.push(o);
+            if (o.timed && o.timer && o.timer.when <= moves
+                && (o.timer.action === SHRINK_GLOB
+                    || o.timer.action === ROT_CORPSE
+                    || o.timer.action === HATCH_EGG))
+                due.push({ obj: o, timer: o.timer });
             if (Array.isArray(o.cobj)) scan(o.cobj);
         }
     };
@@ -1388,15 +1467,26 @@ export function run_object_timers() {
     scan(game.migrating_objs);
     for (const mon of (Array.isArray(game.level?.monsters) ? game.level.monsters : []))
         scan(mon.minvent);
-    for (const g of globs) shrink_glob(g, g.timer?.when ?? moves);
-
-    const objs = game.level?.objects;
-    if (!Array.isArray(objs)) return;
-    for (let i = objs.length - 1; i >= 0; i--) {
-        const obj = objs[i];
-        if (obj.timed && obj.timer && obj.timer.action === ROT_CORPSE
-            && obj.timer.when <= moves) {
-            objs.splice(i, 1);
+    due.sort((a, b) => a.timer.when - b.timer.when
+        || (b.timer.tid ?? 0) - (a.timer.tid ?? 0));
+    for (const { obj, timer } of due) {
+        if (obj.timer !== timer || !obj.timed) continue;
+        obj.timed = false;
+        delete obj.timer;
+        switch (timer.action) {
+        case SHRINK_GLOB:
+            shrink_glob(obj, timer.when);
+            break;
+        case ROT_CORPSE: {
+            const { rot_corpse } = await import('./dig.js');
+            await rot_corpse({ a_obj: obj }, timer.when);
+            break;
+        }
+        case HATCH_EGG: {
+            const { hatch_egg } = await import('./timeout.js');
+            await hatch_egg({ a_obj: obj }, timer.when);
+            break;
+        }
         }
     }
 }
@@ -1446,7 +1536,7 @@ const MAX_EGG_HATCH_TIME = 200;
 // C ref: timeout.c stop_timer(func_index, arg) — remove the object's timer of
 // this action and return its REMAINING turns (`timeout - svm.moves`), or 0 when
 // there was none.  Consumes no RNG.
-function stop_object_timer(obj, action) {
+export function stop_object_timer(obj, action) {
     if (!obj?.timed || obj.timer?.action !== action) return 0;
     const remaining = obj.timer.when - (game.moves ?? 0);
     obj.timed = false;
@@ -1470,7 +1560,7 @@ function attach_fig_transform_timeout(figurine) {
 // mimics the old hatch_it(), which tried once a turn from age 151 to 200
 // inclusive and hatched on a roll of rnd(age) exceeding 150 — so the loop draws
 // rnd(151), rnd(152), ... until one exceeds 150 (chance of hatching > 99.999%).
-function attach_egg_hatch_timeout(egg, when) {
+export function attach_egg_hatch_timeout(egg, when) {
     stop_object_timer(egg, HATCH_EGG); /* stop previous timer, if any */
     if (!when) {
         for (let i = (MAX_EGG_HATCH_TIME - 50) + 1; i <= MAX_EGG_HATCH_TIME; i++) {
@@ -1854,12 +1944,12 @@ export function place_object(otmp, x, y) {
         for (let i = 0; i < objs.length; i++)
             if (objs[i] !== otmp && objs[i].where === 'floor'
                 && objs[i].ox === x && objs[i].oy === y) idx.push(i);
-        // C: `if (!otmp2 || otmp2->otyp != BOULDER) block_point(x,y)` for a new
-        // boulder, and recalc_block_point() in remove_object().  Both are done
-        // at this port's call sites (cmd.js moverock, dig.c, dbridge.c) because
-        // vision.js cannot be imported here without a module cycle.
+        // C ref: mkobj.c:2331-2334 — a boulder landing on a square whose top
+        // object is not already a boulder blocks light there.  remove_object()
+        // does the matching recalc_block_point().
         const topIsBoulder = idx.length
             && objs[idx[idx.length - 1]].otyp === BOULDER;
+        if (otmp.otyp === BOULDER && !topIsBoulder) block_point(x, y);
         let at = -1;
         if (topIsBoulder && otmp.otyp !== BOULDER) {
             // C: walk down the run of consecutive boulders, then splice in just
@@ -2707,9 +2797,8 @@ export function remove_object(otmp) {
     extract_nexthere(otmp, objs);
     extract_nobj(otmp, null);         /* the pile IS the fobj array here */
     otmp.where = OBJ_FREE;
-    // C: `if (otmp->otyp == BOULDER) recalc_block_point(x, y)` — vision.js is
-    // not importable from this module (cycle); the port's boulder movers
-    // (cmd.js moverock, dig.js, dbridge.js) already do this at their call sites.
+    // C ref: mkobj.c:2517-2518 — a departing boulder may unblock light.
+    if (otmp.otyp === BOULDER) recalc_block_point(x, y);
     if (otmp.timed) obj_timer_checks(otmp, x, y, 0);
 }
 
@@ -2738,11 +2827,12 @@ export function add_to_buried(obj) {
 
 // C ref: mkobj.c mksobj_migr_to_species(otyp, mflags2, init, artif) — extra
 // orctown loot, created straight onto the migration list with the destination
-// encoded in the overloaded owornmask field.  MIGR_TO_SPECIES == 10 (dungeon.h).
+// encoded in the overloaded owornmask field.
+// C aliases migr_species to corpsenm; JS keeps the destination species separate.
 export function mksobj_migr_to_species(otyp, mflags2, init, artif) {
     const otmp = mksobj(otyp, init, artif);
     add_to_migration(otmp);
-    otmp.owornmask = 10;                       /* MIGR_TO_SPECIES */
+    otmp.owornmask = MIGR_TO_SPECIES;
     otmp.migr_species = mflags2;
     return otmp;
 }
@@ -3213,14 +3303,33 @@ export function unknwn_contnr_contents(obj) {
     return result;
 }
 
-// C ref: mkobj.c nextoid(oldobj, newobj) — pick an o_id for a split stack that
-// keeps the same o_id-based shop price adjustment, then advance context.ident.
-// oid_price_adjustment() is shk.js's; with no shop price in play the do-loop
-// exits on its first pass, so this is `ident-1 + 1` followed by next_ident().
+// C ref: shk.c oid_price_adjustment(obj, oid):2860 — one unidentified item in
+// four (by o_id, so it is stable within a game) carries a surcharge. Private
+// copy of shk.js's function of the same name: nextoid() needs it and cannot
+// import from shk.js without creating an import cycle through
+// shk.js -> invent.js -> objnam.js -> mkobj.js that breaks objnam.js's
+// module-top-level `objects.length` read.
+function oid_price_adjustment(obj, oid) {
+    const o = objects[obj.otyp];
+    if (!(obj.dknown && o?.oc_name_known)
+        && (obj.oclass !== GEM_CLASS || o?.material !== GLASS))
+        return (oid % 4) === 0 ? 1 : 0;
+    return 0;
+}
+
+// C ref: mkobj.c nextoid(oldobj, newobj):536 — pick an o_id for a split stack
+// that keeps the same o_id-based shop price adjustment, then advance
+// context.ident.  trylimit caps the retry loop at 256 attempts.
 export function nextoid(oldobj, newobj) {
-    let oid = (game.context_ident ?? 2) - 1;
-    ++oid;
-    if (!oid) ++oid;
+    let trylimit = 256;
+    let oid = (game.context_ident ?? 2) - 1; /* loop increment reverses the -1 */
+    const olddif = oid_price_adjustment(oldobj, oldobj.o_id);
+    let newdif;
+    do {
+        ++oid;
+        if (!oid) ++oid;
+        newdif = oid_price_adjustment(newobj, oid);
+    } while (newdif !== olddif && --trylimit >= 0);
     game.context_ident = oid;
     next_ident();
     return oid;

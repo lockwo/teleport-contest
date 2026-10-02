@@ -20,41 +20,47 @@
 //   kill tail:     rn2(corpse_chance), rnd(victim.m_lev+1) [+ rn2(max_inc)]
 //
 // STILL UNPORTED (each returns/continues without its C RNG, so it surfaces as
-// a clean divergence rather than a silent desync): AT_GAZE gazemm(), AT_ENGL
-// gulpmm(), AT_EXPL explmm(), AT_BREA/AT_SPIT breamm()/spitmm(), the AT_WEAP
-// ranged thrwmm() branch, mhitm_adtyping()'s non-physical damage arms, and
-// the pudding-division clone_mon().
+// a clean divergence rather than a silent desync): AT_BREA/AT_SPIT for a
+// monster-vs-monster target (breamm()/spitmm() are ported ONLY for mtarg ==
+// the hero, in js/monmove.js — see its own header note there), the pudding-
+// division clone_mon(), and mhitm_adtyping()'s remaining non-physical damage
+// arms.  AT_GAZE (gazemm), AT_ENGL (gulpmm), AT_EXPL (explmm), the ranged
+// AT_WEAP branch (thrwmm, via js/mthrowu.js), and corpse_chance()'s AT_BOOM
+// gas-spore explosion (mon_explodes, via js/explode.js) are now wired below.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { hitval } from './weapon.js';
 import { rn2, rnd, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED,
-    M_ATTK_AGR_DONE, W_SADDLE, STRAT_WAITMASK,
+    M_ATTK_AGR_DONE, STRAT_WAITMASK, engulfing_u,
+    W_ARMG, W_ARMF, W_ARMH, W_ARMC,
 } from './const.js';
 import { DEADMONSTER, mvitals_died, healmon } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
 import { update_topl } from './display.js';
-import { make_corpse, dmgval } from './uhitm.js';
-import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU } from './const.js';
+import { make_corpse, dmgval, mhitm_knockback } from './uhitm.js';
+import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './const.js';
 // used only by the appended mhitm.c translations at the bottom of this file
 import { IS_OBSTRUCTED, IS_TREE, IRONBARS, D_CLOSED, D_LOCKED } from './const.js';
-import { is_animal, is_neuter_flag, perceives_flag, is_elf_flag, is_orc_flag,
+import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
          is_undead_flag, is_demon_flag, unsolid_flag, mflags1_of, M1_NOEYES,
          M1_THICK_HIDE, M1_WALLWALK, M1_TPORT,
 } from './monflags_data.js';
 import { WEP_HITBON } from './weapondmg_data.js';
-import { xname } from './invent.js';
+import { xname, youmonst_data_pub } from './invent.js';
 import { MATTK } from './monattk_data.js';
 import { name_to_pmidx, monster_by_pmidx, is_home_elemental } from './makemon.js';
 // newcham/pm_to_cham: used only by the appended gulpmm()/mon_poly() below
-import { newcham, pm_to_cham } from './makemon.js';
-import { mhitm_adtyping } from './mhitm_ad.js';
+import { newcham, newcham_wizard_aware, pm_to_cham } from './makemon.js';
+import { mhitm_adtyping, YOUMONST } from './mhitm_ad.js';
 // mhitu.c owns these four (mhitm.c:383/426/85/659 call them across the file
 // boundary); js/mhitu.js is the single faithful copy.
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
 import { find_mac as worn_find_mac } from './worn.js';
+import { Monnam, mon_nam, a_monnam, mhis } from './do_name.js';
 
 // C ref: mhitm.c:358 gv.vis — latched ONCE per mattackm() call, before the
 // attack loop.  Several mhitm_ad_* handlers rloc() a combatant and then still
@@ -77,44 +83,6 @@ let gs_skipdrin = false;
 async function emitMMmsg(msg) {
     if (!msg) return;
     await update_topl(msg);
-}
-
-// C ref: do_name.c x_monnam — the bare species name for a monster instance.
-// A mounted/grounded steed wearing a saddle is described as "saddled <species>"
-// (steed.c mon_nam path); the contest's only monster-combat messages with a
-// saddled attacker are the post-dismount pony bites.
-function mon_species(mtmp) {
-    let s = (mtmp?.data?.name) || 'monster';
-    if (((mtmp?.misc_worn_check || 0) & W_SADDLE)
-        && !(mtmp?.mgivenname || mtmp?.mextra?.mgivenname))
-        s = 'saddled ' + s;
-    return s;
-}
-// the(species): "the <species>" with a given name standing alone.
-function the_monnam(mtmp) {
-    const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
-    if (given) return given;
-    return 'the ' + mon_species(mtmp);
-}
-// Monnam(): capitalized the_monnam.
-function Monnam(mtmp) {
-    const s = the_monnam(mtmp);
-    return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// C ref: do_name.c x_monnam() do_it — when the hero can't spot the monster,
-// mon_nam()/Monnam() collapse to "it" (article != ARTICLE_YOUR, not gameover,
-// not the steed/engulfer).  For the modeled hero canspotmon() reduces to
-// canseemon() == mm_can_see_mon() (no telepathy/detection, and cold undead
-// aren't infravisible).  do_it is tested before the name is consulted, so even
-// a named monster that can't be spotted renders as "it".
-function mon_nam_mm(mtmp) {
-    if (!mm_can_see_mon(mtmp)) return 'it';
-    return the_monnam(mtmp);
-}
-function Monnam_mm(mtmp) {
-    const s = mon_nam_mm(mtmp);
-    return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // C ref: mhitm.c:358 gv.vis — `(cansee(magr) && canspotmon(magr)) ||
@@ -252,7 +220,7 @@ const mm_resists_acid = (mon) => mm_resists(mon, MR_ACID);
 // everywhere mattackm needs species data.
 const _permonst_cache = new Map();
 export function permonst(mon) {
-    const dat = mon?.data;
+    const dat = is_youmonst_mm(mon) ? youmonst_data_pub() : mon?.data;
     if (!dat) return null;
     const nm = dat.name;
     if (!nm) return dat;
@@ -288,7 +256,7 @@ function attacktype_at(mon, aatyp) {
 }
 
 // weapon_check states (C ref: monst.h wpn_chk_flags).
-const NO_WEAPON_WANTED = 0, NEED_WEAPON = 1, NEED_HTH_WEAPON = 3;
+const NO_WEAPON_WANTED = 0, NEED_WEAPON = 1, NEED_RANGED_WEAPON = 2, NEED_HTH_WEAPON = 3;
 // Hand-to-hand weapon priority (C ref: weapon.c hwep[]), restricted to the
 // otyps the contest's armed monsters carry; the orcish "crude" dagger (36) is
 // the only one reachable for the low-level orc/kobold slice.
@@ -368,36 +336,6 @@ function distmin(x0, y0, x1, y1) {
     return Math.max(Math.abs(x0 - x1), Math.abs(y0 - y1));
 }
 
-// ── uhitm.c mhitm_knockback ──────────────────────────────────────────────────
-// C draws knockdistance = rn2(3) at the top (uhitm.c:5258), then rn2(chance)
-// (chance == 6 without ART_OGRESMASHER; uhitm.c:5269).  Everything after the
-// 1/6 branch is RNG-free up to the hurtle, so the gate chain is ported in full
-// and the function still declines rather than hurtling the defender: the
-// actual hurtle_step/mon_break_boulder machinery is not modelled.  Getting the
-// chain right matters because it decides whether mdamagem() short-circuits.
-function mhitm_knockback(magr, mdef, mattk, weaponUsed) {
-    /* knockdistance */ rn2(3);              // uhitm.c:5258
-    const chance = 6;                         // no ART_OGRESMASHER in this port
-    if (rn2(chance)) return false;            // uhitm.c:5269 — 5/6 of the time
-
-    // only AD_PHYS claw/kick/butt/weapon attacks qualify
-    if (!(mattk.adtyp === AD_PHYS
-          && (mattk.aatyp === AT_CLAW || mattk.aatyp === AT_KICK
-              || mattk.aatyp === AT_BUTT || mattk.aatyp === AT_WEAP)))
-        return false;
-    // an attacker that wants to grab or engulf doesn't knock back
-    if (attacktype_at(magr, AT_ENGL) || attacktype_at(magr, AT_HUGS)
-        || attacktype_ad(magr, AD_STCK))
-        return false;
-    if (DEADMONSTER(magr) || DEADMONSTER(mdef)) return false;
-    // attacker must be much larger than defender
-    if (!((permonst(magr)?.msize ?? MZ_MEDIUM)
-          > (permonst(mdef)?.msize ?? MZ_MEDIUM) + 1))
-        return false;
-    // The remaining steps (test_move, hurtle, saddle dismount) move the
-    // defender; not modelled, so decline without further RNG.
-    return false;
-}
 
 // ── the ops bundle js/mhitm_ad.js runs its handlers against ─────────────────
 // C's mhitm_ad_* family is ONE function per damage type serving all three
@@ -410,9 +348,9 @@ function mm_ops() {
         vis: gv_vis,
         permonst,
         Monnam,
-        mon_nam: the_monnam,          /* x_monnam(ARTICLE_THE) */
-        Monnam_vis: Monnam_mm,        /* Some_Monnam(): "it" when unspottable */
-        mon_nam_vis: mon_nam_mm,      /* some_mon_nam() */
+        mon_nam,
+        Monnam_vis: Monnam,
+        mon_nam_vis: mon_nam,
         canseemon: mm_can_see_mon,
         canspotmon: mm_can_see_mon,
         emit: emitMMmsg,
@@ -426,6 +364,101 @@ function mm_ops() {
         set_skipdrin: () => { gs_skipdrin = true; },
         // hero-defender only; mhitm.js never dispatches with mdef == youmonst.
         hitmsg: async () => {},
+    };
+}
+
+// ── the deps bundle js/mthrowu.js's ADDITIVE thrwmm()/monshoot()/m_throw()
+// run against, for an AT_WEAP ranged mon-vs-mon attack ──────────────────────
+// mthrowu.js:217-242 names each piece's one real implementation elsewhere in
+// the port; this wires those in rather than writing a second copy.  Two C
+// pieces are left out on purpose, matching this port's existing stance:
+//   - dig.c ship_object() (a thrown object landing on a Sokoban down-gate
+//     square) has NO port anywhere in js/ (mthrowu.js:282, do.js:2678); its
+//     caller (drop_throw) already falls through to the ordinary
+//     flooreffects()/place_object() landing when this dep is absent.
+//   - polyself.c poly_when_stoned()+polymon(PM_STONE_GOLEM) (a poly'd hero
+//     escaping an egg's petrification by becoming a stone golem) is the same
+//     gap js/mhitu.js:1059 already declines for a direct hero-vs-monster hit;
+//     omitting both deps here just always takes C's `&&` short-circuit to the
+//     ordinary make_stoned() arm, which is exactly right whenever the hero
+//     isn't currently polymorphed into a stone golem.
+// tmp_at_flash/tmp_at_step/tmp_at_end are cosmetic beam-glyph overlays (no
+// RNG, not part of scored PRNG/screen text) and are likewise left unwired.
+async function thrwmmDeps() {
+    const MM = await import('./monmove.js');
+    const { shade_miss, passive_obj } = await import('./uhitm.js');
+    const { potionhit, make_blinded_hero, BlindedTimeout, make_stoned }
+        = await import('./potion.js');
+    const { poisoned } = await import('./attrib.js');
+    const { is_poisonable } = await import('./objnam.js');
+    const { touch_petrifies: touch_petrifies_egg, killer_xname, delobj }
+        = await import('./invent.js');
+    const { youmonst_data_pub } = await import('./invent.js');
+    const { observe_object } = await import('./o_init.js');
+    const { impossible } = await import('./display.js');
+    const { flooreffects } = await import('./do.js');
+    const { nomul, stop_occupation } = await import('./hack.js');
+    const { can_blnd } = await import('./mhitm_ad.js');
+    void killer_xname; // reserved for a future poisoned() message refinement
+
+    const an_ = (s) => (/^[aeiouAEIOU]/.test(s) ? `an ${s}` : `a ${s}`);
+
+    return {
+        // weapon selection / wielding — mon_wield_item() handles the
+        // NEED_RANGED_WEAPON check internally (select_rwep, not select_hwep).
+        mon_wield_item: MM.mon_wield_item,
+        select_rwep: MM.select_rwep,
+        is_pole: MM.is_pole,
+        ammo_and_launcher: MM.ammo_and_launcher,
+        nomul,
+        // monshoot()
+        monmulti: MM.monmulti,
+        canseemon: MM.canseemon_mm,
+        shoot_msg: async (mtmp, otmp, mwep, multishot) => {
+            observe_object(otmp);
+            const onm = multishot > 1
+                ? `${multishot} ${MM.mshot_xname(otmp)}s`
+                : an_(MM.mshot_xname(otmp));
+            const verb = MM.ammo_and_launcher(otmp, mwep) ? 'shoots' : 'throws';
+            await emitMMmsg(`${Monnam(mtmp)} ${verb} ${onm}!`);
+        },
+        // m_lined_up() — utarget is always false for a monster target, so the
+        // throws_rocks/m_carrying/WAN_STRIKING/U_AP_TYPE fields it also reads
+        // are never consulted (short-circuited before use).
+        linedup: MM.linedup,
+        // m_throw()
+        cansee, m_at,
+        closed_door: closed_door_mm,
+        observe_object,
+        shade_miss,
+        u_catch_thrown_obj: MM.u_catch_thrown_obj,
+        potionhit, POTHIT_MONST_THROW: 2,
+        touch_petrifies: touch_petrifies_egg,
+        impossible,
+        is_elf: is_elf_flag,
+        bigmonst,
+        youmonst_data: youmonst_data_pub,
+        Maybe_Half_Phys: (dmg) => ((game.u?.uprops?.Half_physical_damage)
+            ? Math.trunc((dmg + 1) / 2) : dmg),
+        is_poisonable,
+        poisoned,
+        can_blnd: (m1, m2, aatyp, obj) => can_blnd(m1, m2, aatyp, obj, mm_ops()),
+        AT_SPIT, AT_WEAP,
+        blind_msg: async () => { await emitMMmsg('The venom blinds you.'); },
+        Stone_resistance: () => !!(game.u?.uprops?.StoneResistance),
+        make_stoned,
+        stop_occupation,
+        // C ref: mthrowu.c:813 pline("%s misses.", The(mshot_xname(singleobj))).
+        miss_msg: async (obj) => { await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} misses.`); },
+        make_blinded: make_blinded_hero, BlindedTimeout,
+        vision_clears: async () => { await emitMMmsg('Your vision clears.'); },
+        pline_slip: async (mon, obj) => {
+            await emitMMmsg(`${MM.mshot_xname(obj)} slips as ${
+                mon_nam(mon)} throws it!`);
+        },
+        delobj,
+        flooreffects,
+        passive_obj,
     };
 }
 
@@ -464,10 +497,12 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
 
     await mhitm_adtyping(magr, mattk, mdef, mhm, mm_ops());
 
-    // mhitm_knockback() — rolls rn2(3) then rn2(6); the gate chain always
-    // declines here (the hurtle itself isn't modelled), so it never
-    // short-circuits mdamagem.
-    mhitm_knockback(magr, mdef, mattk, !!mwep);
+    const knockflags = { v: mhm.hitflags };
+    const knocked = await mhitm_knockback(mdef, mattk, knockflags,
+                                          !!MON_WEP_MM(magr), magr);
+    mhm.hitflags = knockflags.v;
+    if (knocked && (mhm.hitflags & (M_ATTK_DEF_DIED | M_ATTK_HIT)))
+        return mhm.hitflags;
 
     if (mhm.done) return mhm.hitflags;          // mhitm.c:1069
 
@@ -495,10 +530,10 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
 // killMonster() then removes it for the final frame.  When the square ISN'T
 // visible and the victim was tame, C prints "You have a sad feeling for a
 // moment." AFTER mondied() instead.
-async function monkilled_mm(mdef, _adtyp) {
+export async function monkilled_mm(mdef, _adtyp, cause = '') {
     let be_sad = false;
     if (cansee(mdef.mx, mdef.my))
-        await emitMMmsg(`${Monnam(mdef)} is ${nonliving(mdef) ? 'destroyed' : 'killed'}!`);
+        await emitMMmsg(`${Monnam(mdef)} is ${nonliving(mdef) ? 'destroyed' : 'killed'}${cause ? ` by the ${cause}` : ''}!`);
     else
         be_sad = !!mdef.mtame;
     await killMonster(mdef);
@@ -537,7 +572,7 @@ async function explmm(magr, mdef, mattk) {
 
 // C ref: mon.c monstone(mdef) — the victim becomes a STATUE.  Unlike
 // mondied() this does NOT run corpse_chance(), so it must not draw its rn2.
-async function monstone_mm(mdef) {
+export async function monstone_mm(mdef) {
     const mx = mdef.mx, my = mdef.my;
     const loc0 = game.level?.at(mx, my);
     if (loc0?.invisMon) unmap_object(mx, my);
@@ -550,7 +585,7 @@ async function monstone_mm(mdef) {
     mdef.mhp = 0;
     // mkcorpstat(STATUE, ...) draws no RNG; the statue object itself is not
     // modelled, so the square just reverts to its remembered contents.
-    { const { relobj } = await import('./uhitm.js'); relobj(mdef, mx, my); }
+    { const { relobj } = await import('./uhitm.js'); await relobj(mdef, mx, my); }
     if (mx > 0 && my > 0) newsym(mx, my);
 }
 
@@ -595,19 +630,46 @@ export function attk_protection_mm(aatyp) {
 // killMonster() below.  The guards in front of it decide whether that rn2 is
 // drawn AT ALL, so leaving them out (as this did) picks the wrong modulus for
 // every big/golem/lich/gas-spore victim.
-function corpse_chance(mdef) {
+async function corpse_chance(mdef) {
     const mdat = permonst(mdef);
 
     // Vlad and the liches crumble to dust: no corpse, NO rn2.
     if (mdat?.name === 'Vlad the Impaler' || mdat?.mcls === S_LICH) return false;
 
-    // Gas spores always explode on death.  mon_explodes() is not modelled, but
-    // the AT_BOOM damage roll in front of it is real RNG, so draw it and then
-    // decline the corpse exactly as C does.
+    // Gas spores always explode on death.
     for (const a of mattk_list(mdef)) {
         if (a[0] !== AT_BOOM) continue;
-        if (a[2]) d(a[2], a[3]);
-        else if (a[3]) d((mdat?.mlevel ?? 0) + 1, a[3]);
+        let tmp;
+        if (a[2]) tmp = d(a[2], a[3]);
+        else if (a[3]) tmp = d((mdat?.mlevel ?? 0) + 1, a[3]);
+        else tmp = 0;
+
+        // C ref: mon.c:3189 `if (!magr && gm.mswallower && attacktype(...))
+        // magr = gm.mswallower, was_swallowed = TRUE`.  The port's mswallower
+        // is only ever set by this file's own gulpmm() around an AT_ENGL
+        // mdamagem() call, so magr here is always a monster engulfer, never
+        // the hero (the hero-swallows-a-gas-spore case lives in uhitm.js's
+        // own corpse_chance copy and never touches this global).
+        const swallower = game.mswallower;
+        if (swallower && attacktype_at(swallower, AT_ENGL)) {
+            // mon.c:3209 — a gas spore that dies digested inside an engulfer
+            // contains its own blast instead of detonating: it damages the
+            // swallower directly and draws no further RNG (mon_explodes()
+            // rolls its own independent d(); this branch never calls it).
+            await emitMMmsg('You hear an explosion.');
+            swallower.mhp = (swallower.mhp | 0) - tmp;
+            if (DEADMONSTER(swallower)) await killMonster(swallower);
+            if (DEADMONSTER(swallower)) {
+                if (mm_can_see_mon(swallower))
+                    await emitMMmsg(`${Monnam(swallower)} rips open!`);
+            } else if (mm_can_see_mon(swallower)) {
+                await emitMMmsg(`${Monnam(swallower)} seems to have indigestion.`);
+            }
+            return false;
+        }
+
+        const { mon_explodes } = await import('./explode.js');
+        await mon_explodes(mdef, a);
         return false;
     }
 
@@ -651,7 +713,7 @@ async function killMonster(mdef) {
     // remembered contents instead of keeping the 'I'.
     const loc0 = game.level?.at(mdef.mx, mdef.my);
     if (loc0?.invisMon) unmap_object(mdef.mx, mdef.my);
-    const dropCorpse = corpse_chance(mdef); // mon.c:3181
+    const dropCorpse = await corpse_chance(mdef); // mon.c:3181
     const mx = mdef.mx, my = mdef.my;
     // Detach from the level so the renderer (m_at / MON_AT) stops drawing it.
     // The dead monster's coordinates are intentionally left intact: mattackm
@@ -666,7 +728,7 @@ async function killMonster(mdef) {
     }
     // C ref: mon.c m_detach(due_to_death) -> relobj(mtmp, 1, FALSE) — the dead
     // monster's inventory hits the floor BEFORE the corpse, so it sits under it.
-    { const { relobj } = await import('./uhitm.js'); relobj(mdef, mx, my); }
+    { const { relobj } = await import('./uhitm.js'); await relobj(mdef, mx, my); }
     // C ref: mon.c mondied — make_corpse only when corpse_chance passed AND the
     // square can hold a corpse (accessible terrain or a pool).
     if (dropCorpse && mx > 0 && my >= 0 && (accessible(mx, my) || is_pool(mx, my)))
@@ -766,7 +828,7 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
     case AD_ACID:
         if (mhitb && !rn2(2)) {
             if (mm_can_see_mon(magr))
-                await emitMMmsg(`${Monnam(magr)} is splashed by ${s_suffix_mm(mon_nam_mm(mdef))} acid!`);
+                await emitMMmsg(`${Monnam(magr)} is splashed by ${s_suffix(mon_nam(mdef))} acid!`);
             if (mm_resists_acid(magr)) {
                 if (mm_can_see_mon(magr))
                     await emitMMmsg(`${Monnam(magr)} is not affected.`);
@@ -776,7 +838,10 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
             tmp = 0;
         }
         rn2(30);   /* erode_armor(magr, ERODE_CORRODE) — no monster body armour */
-        rn2(6);    /* acid_damage(MON_WEP(magr)) — erosion only, no RNG inside */
+        if (!rn2(6)) {
+            const { acid_damage } = await import('./trap.js');
+            await acid_damage(MON_WEP_MM(magr));
+        }
         assess = true;
         break;
     case AD_ENCH:
@@ -847,7 +912,7 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
     return (mdead | mhit);
 }
 
-function s_suffix_mm(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 
 // C ref: mondata.h haseyes(ptr) = !(mflags1 & M1_NOEYES).
 function haseyes(ptr) { return (mflags1_of(ptr) & M1_NOEYES) === 0; }
@@ -901,8 +966,8 @@ export async function mdisplacem(magr, mdef, quietly) {
     if (vis && !quietly) {
         // C: `is_rider(pa) ? "the" : mhis(magr)` — a Rider barges through "the"
         // way, everyone else through "his"/"her" way.
-        const hisher = is_rider(pa) ? 'the' : (magr.female ? 'her' : 'his');
-        await emitMMmsg(`${Monnam_mm(magr)} moves ${mon_nam_mm(mdef)} out of ${hisher} way!`);
+        const hisher = is_rider(pa) ? 'the' : mhis(magr);
+        await emitMMmsg(`${Monnam(magr)} moves ${mon_nam(mdef)} out of ${hisher} way!`);
     }
     newsym(fx, fy);
     newsym(tx, ty);
@@ -920,8 +985,8 @@ async function failed_grab(magr, mdef, mattk) {
         if (mm_visible(magr, mdef) && mm_can_see_mon(mdef)) {
             const verb = (mattk.adtyp === AD_DGST) ? 'gulp'
                 : (mattk.adtyp === AD_STCK) ? 'adhere' : 'grab';
-            await emitMMmsg(`${s_suffix_mm(Monnam_mm(magr))} ${verb} attempt`
-                + ` passes right through ${mon_nam_mm(mdef)}!`);
+            await emitMMmsg(`${s_suffix(Monnam(magr))} ${verb} attempt`
+                + ` passes right through ${mon_nam(mdef)}!`);
         }
         return true;
     }
@@ -932,17 +997,17 @@ async function failed_grab(magr, mdef, mattk) {
 // "<Mon> thrusts his <weapon> at <mdef>."  The mon-vs-mon format ends in
 // "at %s"; mhitu.c's monster-vs-hero mswings() is the one that doesn't, and
 // this used to emit that (hero-directed) wording with a hardcoded "crude
-// dagger" as the weapon name.  Display only; no RNG.
+// dagger" as the weapon name.
 async function mswingsm(magr, mdef, otemp) {
     if (!mm_can_see_mon(magr)) return;
     // mswings_verb(otemp, bash): SLASH weapons swing, everything else the
     // monsters here wield thrusts; a polearm used at reach bashes (no monster
     // in this port wields one).
     const verb = SLASH_OTYPS_MM.has(otemp.otyp) ? 'swings' : 'thrusts';
-    const hisher = magr.female ? 'her' : 'his';
+    const hisher = mhis(magr);
     const many = ((otemp.quan | 0) > 1) ? 'one of ' : '';
     await emitMMmsg(`${Monnam(magr)} ${verb} ${many}${hisher} ${xname(otemp)}`
-        + ` at ${mon_nam_mm(mdef)}.`);
+        + ` at ${mon_nam(mdef)}.`);
 }
 // C ref: objects[].oc_dir & SLASH for the edged weapons monsters can wield
 // (otyps per mkobj.js).  Everything else they carry is PIERCE.
@@ -966,36 +1031,24 @@ function helpless_mm(mtmp) {
 // mtrapped_in_pit() now lives in js/mhitu.js (its C home, mhitu.c:467); the
 // copy that used to be here had no hero arm (u.utrap / u.utraptype).
 
-// C ref: do_name.c a_monnam(mtmp) — "a <species>" (the given name alone when
-// the monster has one).
-function a_monnam(mtmp) {
-    const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
-    if (given) return given;
-    const s = mon_species(mtmp);
-    return (/^[aeiouAEIOU]/.test(s) ? 'an ' : 'a ') + s;
-}
-
 // ── mhitm.c:644 hitmm ────────────────────────────────────────────────────────
-// pre_mm_attack() first, then the "X <verb> Y." line (when visible), THEN
-// mdamagem() — so the hit message precedes any death message.  Neither
-// consumes RNG.  When not visible the hero may instead hear it (noises()).
-// shade_miss() (a shade shrugging off a non-silver/non-blessed hit, which
-// BYPASSES mdamagem and its d() roll) is not modelled.
+// pre_mm_attack() first, then the visible attack message, then mdamagem().
+// An unseen fight may instead be heard through noises().
 async function hitmm(magr, mdef, mattk, mwep, dieroll) {
     pre_mm_attack(magr, mdef);
     const compat = !magr.mcan ? could_seduce(magr, mdef, mattk) : 0;
     if (mm_visible(magr, mdef)) {
         if (compat) {
-            await emitMMmsg(`${Monnam_mm(magr)}`
+            await emitMMmsg(`${Monnam(magr)}`
                 + ` ${mdef.mcansee ? 'smiles at' : 'talks to'}`
-                + ` ${mon_nam_mm(mdef)}`
+                + ` ${mon_nam(mdef)}`
                 + ` ${compat === 2 ? 'engagingly' : 'seductively'}.`);
         } else if (mattk.aatyp === AT_TENT) {
-            await emitMMmsg(`${s_suffix_mm(Monnam_mm(magr))} tentacles suck`
-                + ` ${mon_nam_mm(mdef)}.`);
+            await emitMMmsg(`${s_suffix(Monnam(magr))} tentacles suck`
+                + ` ${mon_nam(mdef)}.`);
         } else {
-            await emitMMmsg(`${Monnam_mm(magr)} ${hit_verb(mattk.aatyp)}`
-                + ` ${mon_nam_mm(mdef)}.`);
+            await emitMMmsg(`${Monnam(magr)} ${hit_verb(mattk.aatyp)}`
+                + ` ${mon_nam(mdef)}.`);
         }
     } else {
         await noises(magr, mattk);
@@ -1008,9 +1061,9 @@ async function missmm(magr, mdef, mattk) {
     pre_mm_attack(magr, mdef);
     if (mm_visible(magr, mdef)) {
         const seduces = !magr.mcan && could_seduce(magr, mdef, mattk);
-        await emitMMmsg(`${Monnam_mm(magr)}`
+        await emitMMmsg(`${Monnam(magr)}`
             + ` ${seduces ? 'pretends to be friendly to' : 'misses'}`
-            + ` ${mon_nam_mm(mdef)}.`);
+            + ` ${mon_nam(mdef)}.`);
     } else {
         await noises(magr, mattk);
     }
@@ -1092,9 +1145,13 @@ export async function mattackm(magr, mdef) {
         case AT_TENT: {
             if (mattk.aatyp === AT_WEAP) {
                 if (distmin(magr.mx, magr.my, mdef.mx, mdef.my) > 1) {
-                    // thrwmm(): a ranged volley with its own multishot/hit
-                    // rolls — not modelled, so decline without RNG.
-                    strike = 0; attk = 0;
+                    // C ref: mhitm.c:394 — a ranged AT_WEAP attack.
+                    const { thrwmm } = await import('./mthrowu.js');
+                    const tres = await thrwmm(magr, mdef, await thrwmmDeps());
+                    strike = (tres === M_ATTK_MISS) ? 0 : 1;
+                    if (strike) res[i] |= M_ATTK_HIT;
+                    if (DEADMONSTER(mdef)) res[i] = M_ATTK_DEF_DIED;
+                    if (DEADMONSTER(magr)) res[i] |= M_ATTK_AGR_DIED;
                     break;
                 }
                 // C ref: mhitm.c:406 — an armed aggressor wields its weapon
@@ -1147,23 +1204,25 @@ export async function mattackm(magr, mdef) {
             break;
 
         case AT_GAZE:                                  // mhitm.c:483
-            // gazemm() itself is not modelled, but C leaves attk == 1 here, so
-            // the defender still gets its passive; the previous `default:` arm
-            // zeroed attk and swallowed passivemm's rolls.
             strike = 0;
+            res[i] = await gazemm(magr, mdef, mattk);
             break;
 
         case AT_ENGL:                                  // mhitm.c:500
             if (pd?.name === 'shade') { strike = 0; break; }
             if (mdef === game.u?.usteed) { strike = 0; break; }
             if (distmin(magr.mx, magr.my, mdef.mx, mdef.my) > 1) continue;
-            strike = (tmp > rnd(20 + i)) ? 1 : 0;
-            if (strike) {
-                // gulpmm() (swallow + digestion) is not modelled; failed_grab
-                // still cancels an unsolid target faithfully.
-                if (await failed_grab(magr, mdef, mattk)) strike = 0;
+            // Engulfing attacks are directed at the hero if possible.
+            if (engulfing_u(magr)) {
+                strike = 0;
             } else {
-                await missmm(magr, mdef, mattk);
+                strike = (tmp > rnd(20 + i)) ? 1 : 0;
+                if (strike) {
+                    if (await failed_grab(magr, mdef, mattk)) strike = 0;
+                    else res[i] = await gulpmm(magr, mdef, mattk);
+                } else {
+                    await missmm(magr, mdef, mattk);
+                }
             }
             break;
 
@@ -1309,7 +1368,7 @@ export async function gazemm(magr, mdef, mattk) {
         const { Adjmonnam } = await import('./do_name.js');
         buf = `${altmesg ? Adjmonnam(magr, 'blinded') : Monnam(magr)} gazes ${
             altmesg ? 'toward' : 'at'}`;
-        await emitMMmsg(`${buf} ${mm_can_see_mon(mdef) ? the_monnam(mdef)
+        await emitMMmsg(`${buf} ${mm_can_see_mon(mdef) ? mon_nam(mdef)
                                                        : 'something'}...`);
     }
 
@@ -1335,7 +1394,7 @@ export async function gazemm(magr, mdef, mattk) {
             if (magr.minvis && !perceives_flag(permonst(magr))) {
                 if (mm_can_see_mon(magr)) {
                     await emitMMmsg(`${Monnam(magr)} doesn't seem to notice that ${
-                        mhis_mm(magr)} gaze was reflected.`);
+                        mhis(magr)} gaze was reflected.`);
                 }
                 return M_ATTK_MISS;
             }
@@ -1365,14 +1424,6 @@ export async function gazemm(magr, mdef, mattk) {
     }
 
     return await mdamagem(magr, mdef, mattk, null, 0);
-}
-
-// C ref: do_name.c mhis(mon) — the possessive pronoun.  js/mhitm.js already
-// carries is_neuter_flag for exactly this decision elsewhere.
-function mhis_mm(mtmp) {
-    const ptr = permonst(mtmp);
-    if (is_neuter_flag(ptr)) return 'its';
-    return mtmp?.female ? 'her' : 'his';
 }
 
 // C ref: mhitm.c:807 engulf_target(magr, mdef) — may magr swallow mdef?
@@ -1412,10 +1463,10 @@ export function engulf_target(magr, mdef) {
     return true;
 }
 
-// C ref: mhitm.c:811 `magr == &gy.youmonst` — mhitm.js never dispatches with a
-// hero combatant (mattackm() is monster-vs-monster only), so the youmonst arms
-// are reachable only through engulf_target()'s other callers (uhitm.c/mhitu.c).
-function is_youmonst_mm(mon) { return mon === game.youmonst || mon?.isyou === true; }
+// Shared combat helpers use the same hero sentinel as the AD_* handlers.
+function is_youmonst_mm(mon) {
+    return mon === YOUMONST || mon === game.youmonst || mon?.isyou === true;
+}
 // C ref: you.h Passes_walls — the hero's intrinsic/extrinsic wall-walking.
 function Passes_walls_u() { return !!game.u?.uprops?.Passes_walls; }
 // C ref: rm.h closed_door(x, y) — IS_DOOR && (D_CLOSED | D_LOCKED).
@@ -1434,7 +1485,7 @@ export async function gulpmm(magr, mdef, mattk) {
         await emitMMmsg(`${Monnam(magr)} ${
             digests_mm(magr) ? 'swallows'
             : enfolds_mm(magr) ? 'encloses'
-              : 'engulfs'} ${the_monnam(mdef)}.`);
+              : 'engulfs'} ${mon_nam(mdef)}.`);
     }
     if (!flaming_mm(permonst(magr))) {
         const { snuff_lit } = await import('./apply.js');
@@ -1529,8 +1580,6 @@ export async function gulpmm(magr, mdef, mattk) {
 
 // C ref: hack.h:1016-1022 SUPPRESS_* flags used by gulpmm's x_monnam() call.
 const SUPPRESS_IT = 0x01, SUPPRESS_INVISIBLE = 0x02, SUPPRESS_NAME = 0x20;
-// C ref: mkobj.h MM_IGNOREWATER — goodpos() flag.
-const MM_IGNOREWATER = 0x2000;
 // C ref: mondata.h is_vampshifter(mon) — a vampire in another form (its cham
 // index names a vampire).  mdef.cham is the shapeshifter's base pmidx.
 function is_vampshifter_mm(mon) {
@@ -1543,7 +1592,8 @@ function is_vampshifter_mm(mon) {
 // returns the damage that still applies (0 when the target changed shape).
 export async function mon_poly(magr, mdef, dmg) {
     const freaky = ' undergoes a freakish metamorphosis';
-    const oldform = mdef.data;
+    const oldform = is_youmonst_mm(mdef) ? permonst(mdef) : mdef.data;
+    const vis = is_youmonst_mm(magr) ? game.vis : gv_vis;
 
     if (is_youmonst_mm(mdef)) {
         /* hero defender: mhitm.js never dispatches this way, so the arm is
@@ -1570,11 +1620,11 @@ export async function mon_poly(magr, mdef, dmg) {
         }
     } else {
         const Before = Monnam(mdef);
-        const { resist } = await import('./zap.js');
+        const { resist, resists_magm } = await import('./zap.js');
 
-        if (resists_magm_mm(mdef)) {
+        if (resists_magm(mdef)) {
             /* Magic resistance */
-            if (gv_vis) await shieldeff_mon_mm(mdef);
+            if (vis) await shieldeff_mon_mm(mdef);
         } else if (resist(mdef, WAND_CLASS_MM, 0, /*TELL*/ 1)) {
             /* general resistance to magic... */
         } else if (!rn2(25) && (mdef.cham ?? NON_PM) === NON_PM
@@ -1582,7 +1632,7 @@ export async function mon_poly(magr, mdef, dmg) {
                        || pm_to_cham_mm(mdef) !== NON_PM)) {
             /* system shock; this variation takes away half of mon's HP
                rather than kill outright */
-            if (gv_vis)
+            if (vis)
                 await emitMMmsg(`${Before} shudders!`);
 
             dmg += Math.trunc(((mdef.mhpmax | 0) + 1) / 2);
@@ -1594,13 +1644,13 @@ export async function mon_poly(magr, mdef, dmg) {
                 else
                     await monkilled_mm(mdef, AD_RBRE);
             }
-        } else if (newcham(mdef, null)) {
-            if (gv_vis) { /* either seen or adjacent */
+        } else if (await newcham_wizard_aware(mdef, null)) {
+            if (vis) { /* either seen or adjacent */
                 const was_seen = Before.toLowerCase() !== 'it',
                       verbosely = !!game.flags?.verbose || !was_seen;
 
-                if (mm_can_see_mon(mdef)) {
-                    const { x_monnam } = await import('./uhitm.js');
+                const { canspotmon, x_monnam } = await import('./uhitm.js');
+                if (canspotmon(mdef)) {
                     await emitMMmsg(`${Before}${verbosely ? freaky : ''}${
                         verbosely ? ' and' : ''} turns into ${
                         x_monnam(mdef, /*ARTICLE_A*/ 2, null,
@@ -1620,35 +1670,46 @@ export async function mon_poly(magr, mdef, dmg) {
                     await rloc(magr, /*RLOC_MSG*/ 1);
             }
         } else {
-            if (gv_vis && game.flags?.verbose)
+            if (vis && game.flags?.verbose)
                 await emitMMmsg('Nothing seems to happen.'); /* nothing_happens */
         }
     }
     /* when a transformation has happened, can't attack again for poly
        effect during next turn or two; not enforced for poly'd hero */
-    if (mdef.data !== oldform && !is_youmonst_mm(magr))
+    if ((is_youmonst_mm(mdef) ? permonst(mdef) : mdef.data) !== oldform
+        && !is_youmonst_mm(magr))
         magr.mspec_used = (magr.mspec_used | 0) + rnd(2);
 
     return dmg;
 }
 
 // C ref: hack.h NON_PM (-1) and objclass.h WAND_CLASS.
-const NON_PM = -1, WAND_CLASS_MM = 8;
+const NON_PM = -1, WAND_CLASS_MM = 11;
 // C ref: makemon.c pm_to_cham(mndx) — js/makemon.js:2799 keys off the pmidx, so
 // route through permonst() for a pet's non-makemon index.
 function pm_to_cham_mm(mon) {
     const p = permonst(mon);
     return (p?.pmidx != null) ? pm_to_cham(p.pmidx) : NON_PM;
 }
-// C ref: you.h Antimagic / Unchanging.  polyself.c you_were()/you_unwere() and
-// teleport.c tele() have no export; mon.c xkilled() likewise (js/uhitm.js keeps
-// a private killed()).  The hero-defender arms are unreachable from mhitm.js.
+// C ref: you.h Antimagic / Unchanging.
 function Antimagic_u() { return !!game.u?.uprops?.Antimagic; }
 function Unchanging_u() { return !!game.u?.uprops?.Unchanging; }
-async function you_were_mm() { /* polyself.c you_were() */ }
-async function you_unwere_mm(_upgrade) { /* polyself.c you_unwere() */ }
-async function tele_mm() { /* teleport.c tele() */ }
-async function xkilled_mm(mdef) { return await killMonster(mdef); }
+async function you_were_mm() {
+    const { you_were } = await import('./polyself.js');
+    await you_were();
+}
+async function you_unwere_mm(purify) {
+    const { you_unwere } = await import('./polyself.js');
+    await you_unwere(purify);
+}
+async function tele_mm() {
+    const { scrolltele } = await import('./read.js');
+    await scrolltele(null);
+}
+async function xkilled_mm(mdef) {
+    const { killed } = await import('./uhitm.js');
+    await killed(mdef, { nocorpse: true });
+}
 // C ref: display.c shieldeff(x, y) / shieldeff_mon(mon) — the reflective flash.
 async function shieldeff_mm(x, y) {
     const { shieldeff } = await import('./display.js');

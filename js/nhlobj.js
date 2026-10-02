@@ -573,7 +573,7 @@ export function l_obj_new_readobjnam(...args) {
         let otmp;
         const buf = _checkstring(args[0]);
 
-        if ((otmp = readobjnam(buf, null)) === hands_obj)
+        if ((otmp = readobjnam(buf, false)) === hands_obj)
             otmp = null;
         return l_obj_push(otmp);
     } else if (argc === 1 && _istable(args[0])) {

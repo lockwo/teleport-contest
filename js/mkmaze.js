@@ -5,13 +5,13 @@
 // des.mazewalk(), by the .lua special levels (hellfill.lua in particular).
 
 import { game } from './gstate.js';
-import { rn2, rnd } from './rng.js';
+import { rn2, rn1, rnd } from './rng.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, HWALL, isok, IS_DOOR, ACCESSIBLE,
     MAGIC_PORTAL, LAVAPOOL, POOL, MOAT, WATER, AIR, CLOUD,
     Is_firelevel, Is_waterlevel, Is_airlevel,
 } from './const.js';
-import { maketrap, t_at } from './trap.js';
+import { maketrap, t_at, Invocation_lev } from './trap.js';
 import { m_at, newsym, pline, terrain_glyph } from './display.js';
 import {
     block_point, recalc_block_point, unblock_point, vision_recalc,
@@ -21,6 +21,7 @@ import { place_object } from './mkobj.js';
 import { enexto_spawn } from './makemon.js';
 import { goodpos, rloc_to, RLOC_NOMSG } from './teleport.js';
 import { placebc, unplacebc } from './ball.js';
+import { create_gas_cloud } from './region.js';
 
 // C ref: decl.c g_init_x/g_init_y — x_maze_max = (COLNO-1) & ~1 = 78,
 // y_maze_max = (ROWNO-1) & ~1 = 20.  create_maze() temporarily shrinks these
@@ -244,9 +245,14 @@ export function create_maze(corrwid, wallthick, rmdeadends) {
 // C ref: mkmaze.c:1484 fumaroles() — "augment the Plane of Fire"; called from
 // goto_level() on arrival and from moveloop_core() every turn a level carries
 // des.level_flags("fumaroles").  The rn2(3) count and the per-fumarole
-// rn1(COLNO-4,3)/rn1(ROWNO-4,3) coordinate pair ALWAYS draw; the gas cloud (and
-// its two extra rolls) only when the square happens to be lava.
-export function fumaroles() {
+// rn1(COLNO-4,3)/rn1(ROWNO-4,3) coordinate pair ALWAYS draw; the gas cloud
+// itself (create_gas_cloud's BFS-shuffle and ttl rolls) only draws when the
+// square happens to be lava — but when it is, C actually calls
+// create_gas_cloud(x, y, rn1(10, sizemin), rn1(10, 5)) and then
+// clear_heros_fault(r) (a level hazard, not the hero's doing), not just the
+// two rn1 rolls: skipping the call itself silently dropped every RNG draw
+// the cloud's own BFS growth and rn1(3,4) ttl would have made.
+export async function fumaroles() {
     const g = game;
     let nmax = rn2(3);                                   // mkmaze.c:1486
     let sizemin = 5;
@@ -256,11 +262,8 @@ export function fumaroles() {
         const x = rn2(COLNO - 4) + 3;                    // mkmaze.c:1500
         const y = rn2(ROWNO - 4) + 3;                    // mkmaze.c:1501
         if (g.level?.at(x, y)?.typ === LAVAPOOL) {
-            // C ref: region.c create_gas_cloud(x, y, rn1(10, sizemin),
-            // rn1(10, 5)) — the region itself is not modelled, but both rolls
-            // are part of the stream.
-            rn2(10); rn2(10);
-            void sizemin;
+            const r = await create_gas_cloud(x, y, rn1(10, sizemin), rn1(10, 5));
+            if (r) r.herosFault = false; /* clear_heros_fault(r): mkmaze.c:1506 */
         }
     }
 }
@@ -779,6 +782,10 @@ import { rn1 as mm_rn1 } from './rng.js';
 import {
     IS_STWALL, SPACE_POS, TRAPNUM, NO_TRAP, is_pit, is_hole,
     VIBRATING_SQUARE, MKTRAP_MAZEFLAG, MKTRAP_SEEN, ROCKTRAP,
+    FIRE_TRAP as MM_FIRE_TRAP, WEB as MM_WEB, SQKY_BOARD as MM_SQKY_BOARD,
+    RUST_TRAP as MM_RUST_TRAP, ROLLING_BOULDER_TRAP as MM_ROLLING_BOULDER_TRAP,
+    HOLE as MM_HOLE, MAGIC_TRAP as MM_MAGIC_TRAP, LANDMINE as MM_LANDMINE,
+    PIT as MM_PIT,
     NO_MM_FLAGS, MM_NONAME, CORPSTAT_NONE,
     LR_BRANCH, LR_PORTAL, LR_UPSTAIR, LR_DOWNSTAIR,
     LR_TELE, LR_UPTELE, LR_DOWNTELE,
@@ -790,7 +797,11 @@ import { depth as mm_depth, distmin as mm_distmin } from './hacklib.js';
 import { within_bounded_area as mm_within_bounded_area } from './rect.js';
 import { occupied as mm_occupied, somex as mm_somex, somey as mm_somey } from './mkroom.js';
 import { is_orc_flag as mm_is_orc } from './monflags_data.js';
-import { makemon as mm_makemon, set_malign as mm_set_malign } from './makemon.js';
+import { makemon as mm_makemon, set_malign as mm_set_malign,
+         monster_by_pmidx as mm_monster_by_pm,
+         name_to_pmidx as mm_name_to_pmidx,
+         level_difficulty_ext as mm_level_difficulty,
+         mpickobj as mm_mpickobj } from './makemon.js';
 import {
     objects as MM_OBJECTS, mksobj as mm_mksobj, mkobj as mm_mkobj,
     mkobj_at as mm_mkobj_at, mksobj_at as mm_mksobj_at, mkgold as mm_mkgold,
@@ -824,11 +835,15 @@ const MM_SLIME_MOLD = mm_otyp_by_name('slime mold');
 const MM_LONG_SWORD = mm_otyp_by_name('long sword');
 const MM_SILVER_SABER = mm_otyp_by_name('silver saber');
 
-// monsters.h PM_ indices this block names.
-const MM_PM_MINOTAUR = 210;
-const MM_PM_ORC = 72;
-const MM_PM_ORC_SHAMAN = 76;
-const MM_PM_ORC_CAPTAIN = 80;
+// monsters.h PM_ indices this block names.  Resolved by name against the
+// port's own mons[] (the js/makemon.js:3794 convention) rather than written
+// as literals: the literals here were three apart from the real table, so
+// PM_MINOTAUR named the quantum mechanic and PM_ORC_CAPTAIN the glass piercer.
+const MM_PM_MINOTAUR = mm_name_to_pmidx('minotaur');
+const MM_PM_ORC = mm_name_to_pmidx('orc');
+const MM_PM_ORC_SHAMAN = mm_name_to_pmidx('orc shaman');
+const MM_PM_ORC_CAPTAIN = mm_name_to_pmidx('orc-captain');
+const MM_PM_GIANT_SPIDER = mm_name_to_pmidx('giant spider');
 
 // C ref: decl.c gr.ransacked — set by check_ransacked() while makemaz() picks
 // the proto level name, read by fixup_special() after the level is built and
@@ -893,7 +908,7 @@ function mm_get_level(nlev) {
 // (with a 1-in-40 "not quite the very bottom") and carries MIGR_LEFTOVERS;
 // everyone else gets a uniform level between here and the bottom, bumped one
 // deeper when the roll lands on the current level.
-export function migrate_orc(mtmp, mflags) {
+export async function migrate_orc(mtmp, mflags) {
     let nlev;
     const cur_depth = mm_depth(game.u?.uz) | 0;
     const dgn = game.dungeons?.[game.u?.uz?.dnum ?? 0];
@@ -914,32 +929,20 @@ export function migrate_orc(mtmp, mflags) {
         mtmp.migflags = (mtmp.migflags | 0) & ~MIGR_LEFTOVERS;
     }
     const dest = mm_get_level(nlev);
-    // UNPORTED: dungeon.c migrate_to_level(mtmp, ledger_no(&dest),
-    // MIGR_RANDOM, (coord *) 0).  Neither migrate_to_level() nor ledger_no()
-    // has a live port (js/dig.js:924/925 are no-op privates, js/mon.js:2958
-    // migrate_mon_local() names the same gap), so the monster is not actually
-    // handed to the migrating-monster list here.  Everything above it — the
-    // rn2(40) / rn2(range) draws and the migflags bit — is C's.
-    void dest; void MIGR_RANDOM;
-}
-
-// C ref: mon.c add_to_minv(mon, obj) — prepend to the monster's minvent chain.
-// js/vault.js:184 and js/shk.js:3084 already carry private copies; the right
-// fix is to export ONE of them, so this local is deliberately a different name
-// and only exists so the two mkmaze callers below can be written out in full.
-function mm_add_to_minv(mon, obj) {
-    if (!mon.minvent) mon.minvent = [];
-    obj.where = 'minvent';
-    obj.ocarry = mon;
-    mon.minvent.unshift(obj);
-    return obj;
+    // C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
+    // js/dog.js:530, js/dig.js:1097 and js/save.js:287 keep the same private
+    // copy for the same import-order reason.
+    const ledger_no = (dest.dlevel | 0)
+        + (game.dungeons?.[dest.dnum]?.ledger_start | 0);
+    const { migrate_to_level } = await import('./dog.js');
+    await migrate_to_level(mtmp, ledger_no, MIGR_RANDOM, null);
 }
 
 // C ref: mkmaze.c:748 shiny_orc_stuff(mtmp) — the loot each member of the gang
 // carries off.  Draw order is fixed: the gold gate, then the gold quantity,
 // then the gem gate, then (captain OR 1-in-8) the ring.  An orc captain is
 // twice as likely to have gold and gets the ring unconditionally.
-export function shiny_orc_stuff(mtmp) {
+export async function shiny_orc_stuff(mtmp) {
     const is_captain = (mtmp.data?.name === 'orc-captain'
                         || mtmp.mnum === MM_PM_ORC_CAPTAIN);
     /* probabilities */
@@ -951,38 +954,31 @@ export function shiny_orc_stuff(mtmp) {
         if (otmp) {
             otmp.quan = 1 + rnd(goldprob);                // mkmaze.c:759
             otmp.owt = mm_weight(otmp);
-            mm_add_to_minv(mtmp, otmp);
+            mm_mpickobj(mtmp, otmp);
         }
     }
     if (rn2(1000) < gemprob) {                            // mkmaze.c:764
         const otmp = mm_mkobj(MM_GEM_CLASS, false);
         if (otmp) {
             if (otmp.otyp === MM_ROCK) mm_dealloc_obj(otmp);
-            else mm_add_to_minv(mtmp, otmp);
+            else mm_mpickobj(mtmp, otmp);
         }
     }
     if (is_captain || !rn2(8)) {                          // mkmaze.c:771
-        const otyp = mm_shiny_obj(MM_RING_CLASS);
+        const otyp = await mm_shiny_obj(MM_RING_CLASS);
         let otmp;
         if (otyp !== MM_STRANGE_OBJECT && (otmp = mm_mksobj(otyp, true, false)))
-            mm_add_to_minv(mtmp, otmp);
+            mm_mpickobj(mtmp, otmp);
     }
 }
 
-// C ref: objnam.c shiny_obj(oclass) — js/objnam.js exports the real one, but
-// objnam.js is not in this file's static graph (it pulls in shk.js/makemon.js),
-// so the one call site resolves it lazily.  Kept synchronous by caching.
-let mm_shiny_ring = null;
-function mm_shiny_obj(oclass) {
-    if (oclass === MM_RING_CLASS && mm_shiny_ring != null) return mm_shiny_ring;
-    // C ref: objnam.c shiny_obj() — RING_CLASS answers the first gold ring in
-    // objects[], i.e. "ring of adornment"'s material==GOLD sibling; resolving
-    // it by material keeps this out of objnam.js's import closure.
-    const i = MM_OBJECTS.findIndex((o) => o.oc_class === oclass
-                                   && /gold/i.test(String(o.material ?? '')));
-    const res = i >= 0 ? i : MM_STRANGE_OBJECT;
-    if (oclass === MM_RING_CLASS) mm_shiny_ring = res;
-    return res;
+// Resolve lazily to avoid the objnam import cycle. Cache the function, not
+// its result: the shuffled descriptions and RNG state belong to each game.
+let mm_real_shiny_obj = null;
+async function mm_shiny_obj(oclass) {
+    if (!mm_real_shiny_obj)
+        ({ shiny_obj: mm_real_shiny_obj } = await import('./objnam.js'));
+    return mm_real_shiny_obj(oclass);
 }
 
 // C ref: mkmaze.c:780 migr_booty_item(otyp, gang) — one object destined for
@@ -1009,9 +1005,7 @@ export async function migr_booty_item(otyp, gang) {
     return otmp;
 }
 
-// C ref: mkmaze.c:799 stolen_booty() — "A tragic accident has occurred in
-// Frontier Town... It has been overrun by orcs."  Reached from fixup_special()
-// on the Mines level built right after minetn-1 (orctown).
+// C ref: mkmaze.c stolen_booty(), run after Orctown's stair regions are placed.
 //
 // Draw order matters and is long: rndorcname(), then rnd(4) candles,
 // rnd(3) keys, one rn1 glove type, rnd(10) food attempts (each rn1, and only
@@ -1020,7 +1014,7 @@ export async function migr_booty_item(otyp, gang) {
 // members each with a species roll + shiny_orc_stuff() + migrate_orc().
 export async function stolen_booty() {
     const { rndorcname, christen_monst, christen_orc } = await import('./do_name.js');
-    const { DEADMONSTER, monsterList } = await import('./mon.js');
+    const { DEADMONSTER, fmonOrder } = await import('./mon.js');
 
     let cnt, i, otyp, mtmp;
 
@@ -1058,16 +1052,15 @@ export async function stolen_booty() {
         mtmp = christen_monst(mtmp, mm_upstart(gang));
         mtmp.mpeaceful = 0;
         mm_set_malign(mtmp);
-        shiny_orc_stuff(mtmp);
-        migrate_orc(mtmp, ORC_LEADER);
+        await shiny_orc_stuff(mtmp);
+        await migrate_orc(mtmp, ORC_LEADER);
     }
 
     /* Make most of the orcs on the level be part of the invading gang */
-    // C walks the fmon chain, which makemon() prepends to, so this is the
-    // newest-first order js/mon.js:183 fmonOrder() reproduces.
-    const chain = monsterList();
-    for (let k = chain.length - 1; k >= 0; k--) {
-        mtmp = chain[k];
+    // C walks the fmon chain, which makemon() prepends to; js/mon.js:183
+    // fmonOrder() is the project's one canonical newest-first traversal,
+    // reused here instead of a private manual chain.reverse().
+    for (mtmp of fmonOrder()) {
         if (DEADMONSTER(mtmp)) continue;
 
         if (mm_is_orc(mtmp.data) && !mm_has_mgivenname(mtmp) && rn2(10)) {
@@ -1094,8 +1087,8 @@ export async function stolen_booty() {
         const mtyp = rn2((MM_PM_ORC_SHAMAN - MM_PM_ORC) + 1) + MM_PM_ORC;
         mtmp = mm_makemon(mm_monster_by_pm(mtyp), 0, 0, MM_NONAME);
         if (mtmp) {
-            shiny_orc_stuff(mtmp);
-            migrate_orc(mtmp, 0);
+            await shiny_orc_stuff(mtmp);
+            await migrate_orc(mtmp, 0);
         }
     }
     gr.ransacked = 0;
@@ -1104,10 +1097,6 @@ export async function stolen_booty() {
 // C ref: &mons[pmidx].  js/makemon.js exports monster_by_pmidx() but it is not
 // in this file's static graph; the one-line lookup is inlined so the two
 // makemon() call sites above stay synchronous like C's.
-function mm_monster_by_pm(pmidx) {
-    return game.mons?.[pmidx] ?? { mnum: pmidx };
-}
-
 // C ref: mondata.h has_mgivenname(mtmp).  js/const.js:2884 exports the real
 // one but under a name this file does not import; kept local rather than
 // widening the const.js import list of an existing line.
@@ -1273,15 +1262,17 @@ export async function fixup_special() {
 // Each of these HAS a faithful port elsewhere but only as a module-private; the
 // file:line is named so the fix is to export the original.
 
-// C ref: dungeon.c:1464 Is_branchlev(lev) — js/bones.js:86 has the real walk
-// over the global branch chain.
+// C ref: dungeon.c:1464 Is_branchlev(lev) — walks the GLOBAL branch chain and
+// matches either END.  Returns the BRANCH, as C does: makemaz() feeds the
+// result straight to place_branch(br, 0, 0), which needs the struct, and a
+// bare boolean would have placed the branch stair/portal on the wrong side.
 function mm_Is_branchlev(lev) {
-    if (!lev) return false;
+    if (!lev) return null;
     for (const br of (game.branches || []))
         if ((br.end1?.dnum === lev.dnum && br.end1?.dlevel === lev.dlevel)
             || (br.end2?.dnum === lev.dnum && br.end2?.dlevel === lev.dlevel))
-            return true;
-    return false;
+            return br;
+    return null;
 }
 
 // C ref: you.h Role_if(X) == (gu.urole.mnum == (X)).  js/invent.js:356,
@@ -1302,7 +1293,7 @@ function mm_on_baalzebub_level(uz) {
 const MM_MR_STONE = 0x20;
 function mm_pm_resistance(ptr, mask) { return !!((ptr?.mresists | 0) & mask); }
 function mm_poly_when_stoned(ptr) {
-    return ptr?.mcls === 12 /* S_GOLEM */
+    return ptr?.mcls === 55 /* S_GOLEM, defsym.h */
         && (ptr?.name === 'flesh golem' || ptr?.name === 'clay golem');
 }
 
@@ -1394,23 +1385,34 @@ export async function populate_maze() {
 
 // C ref: mklev.c:2036 mktrap(0, MKTRAP_MAZEFLAG, (struct mkroom *) 0,
 // (coord *) 0) — the exact form populate_maze() uses, with num==0 and no room
-// and no coord, so the type comes from the traptype_rnd() retry loop and the
-// position from mazexy().  mklev.c mktrap() itself is not exported (js/mklev.js
-// has mktrap_room()/mktrap_random_kind()/mktrap_victim() as privates), so this
-// spells out only that one argument combination.
+// and no coord, so the kind comes from the traptype_rnd() retry loop and the
+// position from mazexy().  mklev.c's mktrap() is not exported (js/mklev.js has
+// mktrap_room()/mktrap_random_kind() as privates), so this spells out just
+// that one argument combination — but it now spells out ALL of it, including
+// the tail.  The tail matters even when it does nothing: C evaluates
+// `lvl <= (unsigned) rnd(4)` as the FOURTH conjunct, after in_mklev, kind and
+// MKTRAP_NOVICTIM, so the rnd(4) is drawn for every trap on the level however
+// deep it is.  Skipping it cost one draw per maze trap.
 async function mm_mktrap_mazeflag() {
-    const { splev_traptype_rnd } = await import('./sp_lev.js');
+    const SP = await import('./sp_lev.js');
+    const { In_hell: mm_In_hell } = await import('./dungeon.js');
+    const g = game;
+    const uz = g.u?.uz;
+    const lvl = mm_level_difficulty();
     let kind;
 
-    /* C: `unsigned lvl = level_difficulty();` is read for the victim gate at
-       the bottom of mktrap(), which needs mktrap_victim() (js/mklev.js:6303,
-       private).  Neither the Rogue-level nor the Gehennom fire-trap bias arm
-       applies on a plain random maze. */
-    do {
-        kind = splev_traptype_rnd(MKTRAP_MAZEFLAG);
-    } while (kind === NO_TRAP);
+    /* C: the num>NO_TRAP and Is_rogue_level() arms cannot fire here — num is 0
+       and a maze is never the Rogue level. */
+    if (mm_In_hell(uz) && !rn2(5)) {
+        /* bias the frequency of fire traps in Gehennom */
+        kind = MM_FIRE_TRAP;
+    } else {
+        do {
+            kind = SP.splev_traptype_rnd(MKTRAP_MAZEFLAG);
+        } while (kind === NO_TRAP);
+    }
 
-    if (is_hole(kind) && !mm_Can_fall_thru(game.u?.uz)) kind = ROCKTRAP;
+    if (is_hole(kind) && !mm_Can_fall_thru(uz)) kind = ROCKTRAP;
 
     let m;
     {
@@ -1424,12 +1426,30 @@ async function mm_mktrap_mazeflag() {
     }
 
     const t = await maketrap(m.x, m.y, kind);
+    /* we should always get the type of trap we asked for, but be paranoid */
     kind = t ? t.ttyp : NO_TRAP;
-    void kind; void MKTRAP_SEEN; void TRAPNUM;
-    // UNPORTED: mklev.c mktrap()'s tail — the WEB giant spider, the
-    // MKTRAP_SEEN tseen flag and mktrap_victim() (js/mklev.js:6303, private).
-    // populate_maze() passes neither MKTRAP_SEEN nor MKTRAP_NOSPIDERONWEB, so
-    // both of the first two are live in C.
+
+    if (kind === MM_WEB)
+        mm_makemon(mm_monster_by_pm(MM_PM_GIANT_SPIDER), m.x, m.y, NO_MM_FLAGS);
+    /* populate_maze() passes neither MKTRAP_SEEN nor MKTRAP_NOSPIDERONWEB, and
+       traptype_rnd() never yields MAGIC_PORTAL, so C's tseen and u.ucamefrom
+       arms are both unreachable from here. */
+    void MKTRAP_SEEN; void TRAPNUM;
+
+    if (g.in_mklev && kind !== NO_TRAP
+        && lvl <= rnd(4)                                 // mklev.c:2137
+        && kind !== MM_SQKY_BOARD && kind !== MM_RUST_TRAP
+        && !(kind === MM_ROLLING_BOULDER_TRAP
+             && t.launch?.x === t.tx && t.launch?.y === t.ty)
+        && !is_pit(kind) && (kind < MM_HOLE || kind === MM_MAGIC_TRAP)) {
+        if (kind === MM_LANDMINE) {
+            /* a victim killed by a land mine leaves an unconcealed pit and no
+               scattered objects */
+            t.ttyp = MM_PIT;
+            t.tseen = 1;
+        }
+        if (SP._mktrap_victim) SP._mktrap_victim(t);
+    }
 }
 
 // C ref: dungeon.c Can_fall_thru(lev) — js/trap.js exports it, but under a name
@@ -1464,7 +1484,8 @@ function mm_sobj_at_boulder(x, y) {
 export async function makemaz(s) {
     const g = game;
     const { load_special } = await import('./sp_lev.js');
-    const { wallification } = await import('./mklev.js');
+    const { wallification, mkstairs: mm_mkstairs,
+            place_branch: mm_place_branch } = await import('./mklev.js');
     const { dunlevs_in_dungeon, Is_special } = await import('./dungeon.js');
     const sp = Is_special(g.u?.uz);
     let protofile;
@@ -1522,10 +1543,10 @@ export async function makemaz(s) {
         wallification(2, 2, mz.x_maze_max, mz.y_maze_max);
 
     mm = mazexy();
-    mm_mkstairs(mm.x, mm.y, 1, null, false); /* up */
+    mm_mkstairs(mm.x, mm.y, 1, null);       /* up */
     if (!Invocation_lev(g.u?.uz)) {
         mm = mazexy();
-        mm_mkstairs(mm.x, mm.y, 0, null, false); /* down */
+        mm_mkstairs(mm.x, mm.y, 0, null);   /* down */
     } else { /* choose "vibrating square" location */
         pick_vibrasquare_location();
         await maketrap(g.inv_pos.x, g.inv_pos.y, VIBRATING_SQUARE);
@@ -1535,26 +1556,6 @@ export async function makemaz(s) {
     await mm_place_branch(mm_Is_branchlev(g.u?.uz), 0, 0);
 
     await populate_maze();
-}
-
-// C ref: mklev.c mkstairs(x, y, up, croom, force) — js/mklev.js:2755 has the
-// real one (module-private, and its signature drops `force`).
-function mm_mkstairs(x, y, up, croom, force) {
-    void croom; void force;
-    const g = game;
-    if (!g.level) return;
-    if (!g.level.stairs) g.level.stairs = [];
-    g.level.stairs.push({ sx: x, sy: y, up: !!up, isladder: false });
-    const loc = g.level.at(x, y);
-    if (loc) loc.typ = 24;  /* STAIRS */
-}
-
-// C ref: mklev.c place_branch(br, x, y) — js/mklev.js:6110 has the real one
-// (module-private).  Reached lazily so mkmaze.js stays out of mklev's cycle.
-async function mm_place_branch(br, x, y) {
-    void br; void x; void y;
-    // UNPORTED (as an export): mklev.c place_branch().  js/mklev.js:6110 is the
-    // faithful port; exporting it is the fix.
 }
 
 // C ref: mkmaze.c:1316 mazexy(cc) — "find random point in generated corridors,

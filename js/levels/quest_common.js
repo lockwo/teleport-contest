@@ -7,7 +7,7 @@
 // RNG each one consumes is annotated with its C callsite.
 
 import {
-    A_CHAOTIC, A_LAWFUL, A_NEUTRAL, Align2amask, ENGRAVE, LADDER, NO_TRAP, ROCKTRAP,
+    A_NEUTRAL, ENGRAVE, LADDER, NO_TRAP, ROCKTRAP,
     STAIRS, WEB,
 } from '../const.js';
 import { make_engr_at } from '../engrave.js';
@@ -21,7 +21,8 @@ import { bless, curse, mkobj_at, mksobj_at, unbless, uncurse } from '../mkobj.js
 import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
 import {
-    LOC_DRY, pm_to_humidity, q_absx, q_absy, splev_get_location_rnd, splev_traptype_rnd,
+    Align2amask_noncoalignment, LOC_DRY, pm_to_humidity, q_absx, q_absy,
+    splev_get_location_rnd, splev_traptype_rnd,
 } from '../sp_lev.js';
 
 // C ref: monflags.h G_NOGEN — mkclass()'s "ignore the never-generate flag" arg.
@@ -213,16 +214,14 @@ export function quest_named_object_at(otyp, mx, my, { spe = null, buc = null, na
     return otmp;
 }
 
-// C ref: sp_lev.c noncoalignment(u.ualignbase[A_ORIGINAL]) — the ONE rn2(2)
-// behind `align="noncoaligned"`, then Align2amask().  A_ORIGINAL is index 1.
+// C ref: sp_lev.c:1915 Align2amask(noncoalignment(u.ualignbase[A_ORIGINAL])).
+// Align2amask() is a macro that evaluates its argument repeatedly, so this
+// costs two or three rn2(2) draws, not one; sp_lev.js owns that emulation.
+// A_ORIGINAL is index 1.
 export function quest_noncoaligned_amask() {
     const u = game.u || {};
     const base = u.ualignbase?.[1] ?? u.ualign?.type ?? A_NEUTRAL;
-    const k = rn2(2);                                  // sp_lev.c:1856
-    let a;
-    if (base === A_NEUTRAL) a = k ? A_CHAOTIC : A_LAWFUL;
-    else a = k ? -base : A_NEUTRAL;
-    return Align2amask(a);
+    return Align2amask_noncoalignment(base);
 }
 
 // C ref: sp_lev.c aligns[] — the des-file alignment names, as used by

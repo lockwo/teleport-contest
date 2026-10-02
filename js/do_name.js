@@ -13,16 +13,16 @@ import { rn2, rn1 } from './rng.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { get_rnd_text, decode_dlb, MD_PAD_BOGONS } from './engrave.js';
 import { BOGUSMON_B64 } from './bogusmon_data.js';
-import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
+import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
+         MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
 import { mflags2_of, M2_PNAME } from './monflags_data.js';
 import { objects } from './mkobj.js';
+import { PRONOUN_HALLU } from './const.js';
+import { PRONOUN_GENDERS } from './role.js';
 
-// x_monnam()/mon_pmname() still live in js/uhitm.js.  They are reached through a
-// registration hook rather than a static import because do_name.js sits BELOW
-// uhitm.js in the graph (dungeon.js/do_wear.js/dbridge.js pull in hcolor and
-// hliquid during their own module evaluation, and dragging uhitm.js in that
-// early hits a temporal-dead-zone on mkobj.js's class constants).
-let _hooks = { x_monnam: null, mon_pmname: null };
+// Keep higher-level naming dependencies behind registration: a static import
+// of uhitm.js or mondata.js here creates a cycle during module initialization.
+let _hooks = { x_monnam: null, mon_pmname: null, pronoun_gender: null };
 export function register_monnam_hooks(h) { _hooks = { ..._hooks, ...h }; }
 function x_monnam(mtmp, article, adjective, suppress, called) {
     return _hooks.x_monnam
@@ -116,15 +116,32 @@ export function Mgender(mtmp) {
     return mtmp?.female ? FEMALE : MALE;
 }
 // C ref: do_name.c:1320 obj_pmname(obj) — the species name behind a corpse,
-// statue, figurine, egg or tin.
-const CORPSE = 265, EGG = 266, TIN = 296, STATUE = 476, FIGURINE = 260;
+// statue or figurine.  (EGG and TIN objects carry a corpsenm too, but
+// objnam.c names those inline off mons[].pmnames[NEUTRAL] directly — they
+// never call obj_pmname(), so it must not handle them here either.)
+const CORPSE = 265, STATUE = 476, FIGURINE = 260;
+// C ref: hack.h:1189 CORPSTAT_NONE/_GENDER/_RANDOM/_FEMALE/_MALE — obj->spe's
+// gender bits.  NOTE these values (RANDOM=0, FEMALE=1, MALE=2) are the
+// OPPOSITE order from do_name.c's own MALE=0/FEMALE=1 mgender enum.
+const CORPSTAT_GENDER = 0x03, CORPSTAT_RANDOM = 0, CORPSTAT_FEMALE = 1,
+      CORPSTAT_MALE = 2;
+let _PM_ALIGNED_CLERIC = -2, _PM_CLERIC = -2;
 export function obj_pmname(obj) {
     if (!obj) return 'thing';
-    if ((obj.otyp === CORPSE || obj.otyp === EGG || obj.otyp === TIN
-         || obj.otyp === STATUE || obj.otyp === FIGURINE)
+    if ((obj.otyp === CORPSE || obj.otyp === STATUE || obj.otyp === FIGURINE)
         && obj.corpsenm != null && obj.corpsenm >= LOW_PM) {
-        const gnd = obj.spe ? (obj.spe === 2 ? FEMALE : MALE) : NEUTRAL;
-        return pmname_by_idx(obj.corpsenm, gnd === FEMALE ? FEMALE : MALE);
+        const cgend = (obj.spe | 0) & CORPSTAT_GENDER;
+        const mgend = cgend === CORPSTAT_MALE ? MGEND_MALE
+                    : cgend === CORPSTAT_FEMALE ? MGEND_FEMALE : MGEND_NEUTRAL;
+        let mndx = obj.corpsenm;
+        // C ref: do_name.c:1338 — avoid "aligned cleric [corpse/statue]" when
+        // the gender was never set; the role monster's neutral name (plain
+        // "cleric") reads better and both share the same male/female forms.
+        if (_PM_ALIGNED_CLERIC === -2) _PM_ALIGNED_CLERIC = name_to_pmidx('aligned cleric');
+        if (_PM_CLERIC === -2) _PM_CLERIC = name_to_pmidx('cleric');
+        if (mndx === _PM_ALIGNED_CLERIC && cgend === CORPSTAT_RANDOM)
+            mndx = _PM_CLERIC;
+        return pmname_of_pmidx(mndx, mgend);
     }
     return objects[obj.otyp]?.name || 'thing';
 }
@@ -213,17 +230,16 @@ function m_next2u(mon) {
 // "itself" when the two are the same monster.
 export function mon_nam_too(mon, other_mon) {
     if (mon !== other_mon) return mon_nam(mon);
-    const g = pronoun_gender(mon);
+    const g = _hooks.pronoun_gender(mon, PRONOUN_HALLU);
     return g === 0 ? 'himself' : g === 1 ? 'herself'
         : g === 3 ? 'themselves' : 'itself';
 }
-// C ref: mon.c pronoun_gender(mon, PRONOUN_HALLU) — 0 he, 1 she, 2 it, 3 they.
-function pronoun_gender(mon) {
-    if (!mon) return 2;
-    if (Hallucination() && !rn2(2)) return 3;
-    const ptr = mon.data;
-    if ((ptr?.gcode ?? 0) === 3 /* neuter */) return 2;
-    return mon.female ? 1 : 0;
+// C ref: you.h — each pronoun independently selects its hallucinated gender.
+export function mhim(mon) {
+    return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_HALLU)].him;
+}
+export function mhis(mon) {
+    return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_HALLU)].his;
 }
 function Hallucination() { return !!(game.u?.uhallu || game.u?.Hallucination); }
 

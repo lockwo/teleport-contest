@@ -14,7 +14,7 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { render_map_to_grid, pline, topl_more, flush_screen } from './display.js';
+import { render_map_to_grid, pline, topl_more, flush_screen, canspotself } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen } from './invent.js';
 import { doextversion } from './version.js';
 import { option_help_lines } from './options.js';
@@ -216,42 +216,20 @@ function key2txt(c) {
     return visctrl(c);
 }
 
-// Default rogue-like movement keys (number_pad off): walk = h j k l y u b n,
-// run = the capitalized forms, rush = the Ctrl forms.  C ref: cmd.c movecmd()
-// against the default gc.Cmd movement keymap.
-function movecmd(key, mode) {
-    // C ref: cmd.c reset_commands() — with number_pad the run key is M(digit)
-    // and there is no per-direction rush key at all.
-    const dirs = Cmd_dirchars().slice(0, 8);
-    const ch = String.fromCharCode(key & 0xff);
-    if (mode === 'walk') return dirs.includes(ch);
-    if (Cmd_num_pad())
-        return mode === 'run' && dirs.includes(String.fromCharCode(key & 0x7f));
-    if (mode === 'run') return dirs.toUpperCase().includes(ch);
-    if (mode === 'rush') {
-        for (const d of dirs) if ((d.charCodeAt(0) & 0x1f) === key) return true;
-        return false;
-    }
-    return false;
-}
-
-// key -> extcmdlist entry, from the default key bindings (cmd.c reset_commands
-// binds each extcmdlist entry's default key; later entries override earlier).
-const KEY2CMD = (() => {
-    const m = new Map();
-    for (const e of EXTCMD_TABLE)
-        if (e.key !== null && e.key !== 0) m.set(e.key, e);
-    return m;
-})();
-
 // C ref: cmd.c key2extcmddesc() — describe the command bound to a key.  Checks
 // movement (walk/run/rush) and count digits and the ESC prefix before the
 // extended-command binding, then formats "<desc> (#<txt>)" with the reqmenu
 // two-line and "(##)" special cases.  Returns null when the key is unbound.
 function key2extcmddesc(key) {
-    if (movecmd(key, 'walk')) return 'move';
-    if (movecmd(key, 'rush')) return 'rush';
-    if (movecmd(key, 'run')) return 'run';
+    // C ref: cmd.c:2573 — C only Strcpy()s "move"/"rush"/"run" into its static
+    // buffer here; every path out then clears it (digit branch), overwrites it
+    // (the binding lookup below) or drops it (the NULL return), so those three
+    // strings are dead in C.  Returning them early instead shadowed the real
+    // "<desc> (#<txt>)" text for every movement key, e.g. '&' then 'y' gave
+    // "y       move." where C gives
+    // "y       move northwest (screen upper left) (#movenorthwest).".
+    // The local pure-predicate movecmd() that produced them is gone with them;
+    // C's movecmd() also sets u.dx/u.dy, which that copy never modelled.
     const ch = String.fromCharCode(key & 0xff);
     // C ref: cmd.c key2extcmddesc() digit block — with number_pad the digits
     // are movement, so only '5'/M-5 (the run|rush prefix, swapped by
@@ -267,7 +245,7 @@ function key2extcmddesc(key) {
             return "synonym for 'i'";
     }
     if (key === 0o33) return 'cancel current prompt or pending prefix';
-    const e = KEY2CMD.get(key);
+    const e = cmdbind_get(key);
     if (e && e.txt) {
         let buf = `${e.desc} (#${e.txt})`;
         if (/^prefix:/i.test(buf) && /^reqmenu$/i.test(e.txt))
@@ -294,15 +272,22 @@ function dowhatdoes_core(q) {
 // bare "What command? " prompt (yn_function with NULL resp: reads any single
 // key), then the key's description is plined.  Returns ECMD_OK (no game time).
 export async function dowhatdoes() {
-    let needMore = false;
     if (!game._dowhatdoes_once) {
         await pline("Ask about '&' or '?' to get more info.");
         game._dowhatdoes_once = true;
-        needMore = true;
     }
-    // yn_function("What command?", NULL, '\0', TRUE): more() the pending
-    // top-line message, then show "What command? " and read one raw key.
-    if (needMore) await topl_more();
+    // C ref: pager.c dowhatdoes() calls yn_function("What command?", ...)
+    // UNCONDITIONALLY (not just after printing the banner above); tty_yn_function
+    // pages any still-pending toplin with --More-- before drawing its own
+    // prompt.  pline() only marks this "soft" pending (game._toplinSoft, not
+    // game._toplin -- see pline()'s own comment), so this reader must catch
+    // both, exactly like extcmd-handlers.js's hooked_tty_getlin().  Gating this
+    // solely on "did THIS call just print the once-only banner" (the old
+    // `needMore` local) missed any OTHER message still pending from earlier in
+    // the same turn when '/' is pressed after the banner has already fired once.
+    const cur = game._pending_message || '';
+    const softPending = !!cur && game._toplinSoft === cur;
+    if (game._toplin === 1 || softPending) await topl_more();
     const full = 'What command? ';
     game._pending_message = full;
     game._toplines = full;
@@ -386,6 +371,38 @@ function buildKeymap() {
         }
     }
     return map;
+}
+
+// C ref: cmd.c:2070 move_funcs[] row order, which is the order sdir ("hykulnjb")
+// indexes: W, NW, N, NE, E, SE, S, SW.
+const MOVE_DIR_NAMES = ['west', 'northwest', 'north', 'northeast',
+                        'east', 'southeast', 'south', 'southwest'];
+const EXTCMD_BY_TXT = new Map(EXTCMD_TABLE.map((e) => [e.txt, e]));
+
+// C ref: cmd.c cmdbind_get() — look up the command bound to `key`.
+// buildKeymap() already models what commands_init() + reset_commands() install,
+// but collapses all 24 movement commands onto one flags-only marker because
+// dokeylist() needs nothing from them but MOVEMENTCMD.  key2extcmddesc() prints
+// the bound command's name and description, so re-point those keys at the real
+// extcmdlist rows.  reset_commands() runs last in C, so these overwrite both the
+// static default keys and commands_init()'s explicit bind_key() overrides (which
+// is why '&' then 'j' describes #movesouth, not #jump).
+function cmdbind_get(key) {
+    const map = buildKeymap();
+    const num_pad = Cmd_num_pad();
+    const dirchars = Cmd_dirchars().slice(0, 8);
+    for (let i = 0; i < dirchars.length; i++) {
+        const lc = dirchars[i].charCodeAt(0), nm = MOVE_DIR_NAMES[i];
+        map.set(lc, EXTCMD_BY_TXT.get(`move${nm}`));
+        if (num_pad) {
+            // C: can't bind highc()/C() of a digit, so only the Meta form.
+            map.set(0x80 | lc, EXTCMD_BY_TXT.get(`run${nm}`));
+        } else {
+            map.set(dirchars[i].toUpperCase().charCodeAt(0), EXTCMD_BY_TXT.get(`run${nm}`));
+            map.set(lc & 0x1f, EXTCMD_BY_TXT.get(`rush${nm}`));
+        }
+    }
+    return map.get(key);
 }
 
 // cmd.c keylist_func_has_key(): TRUE if extcmd is bound to some key that is
@@ -903,6 +920,9 @@ export async function whatis_menu_pick(render) {
 
 import { COLNO, ROWNO, BOLT_LIM, BUFSZ, isok, STONE, SCORR, SDOOR, ROOM, CORR,
          DOOR, ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL, TREE, CLOUD,
+         STAIRS, LADDER, ALTAR, FOUNTAIN, SINK, THRONE, IRONBARS, AIR,
+         DBWALL, DRAWBRIDGE_UP, DRAWBRIDGE_DOWN,
+         DB_UNDER, DB_MOAT, DB_LAVA, DB_ICE,
          IS_WALL, IS_DOOR, IS_TREE, IS_GRAVE, D_BROKEN,
          D_TRAPPED, D_CLOSED, D_LOCKED, D_ISOPEN,
          NO_TRAP, BEAR_TRAP, TRAPPED_DOOR, TRAPPED_CHEST, ROCKTRAP, HOLE, PIT,
@@ -917,11 +937,15 @@ import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
          MAXOCLASSES, DEF_INVISIBLE, S_stone, S_room, S_darkroom, S_corr,
          S_litcorr, S_ndoor, S_altar, S_grave, S_cloud, S_ice, S_pool,
          S_water, S_lava, S_lavawall, S_engroom, S_engrcorr, S_arrow_trap,
+         S_fountain, S_sink, S_throne, S_bars, S_air, S_hodbridge, S_vcdbridge,
          S_vodbridge, S_hcdbridge, S_vibrating_square, S_invisible, S_HUMAN,
-         S_sw_tl, S_sw_br, SYM_OFF_O, SYM_OFF_M, SYM_OFF_W, SYM_OFF_X, gs }
+         S_sw_tl, S_sw_br, SYM_OFF_O, SYM_OFF_M, SYM_OFF_W, SYM_OFF_X, gs,
+         S_upstair, S_dnstair, S_upladder, S_dnladder,
+         S_brupstair, S_brdnstair, S_brupladder, S_brdnladder }
     from './symbols.js';
 import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
-         update_topl, Hallucination_u, impossible as pg_impossible_async }
+         update_topl, Hallucination_u, impossible as pg_impossible_async,
+         stairway_at, known_branch_stairs, stairs_go_down }
     from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { engr_at } from './engrave.js';
@@ -1032,7 +1056,8 @@ function pg_glyph_at(x, y) {
     if (!loc) return { kind: 'unexplored', x, y };
     const sym = (loc.disp_ch != null) ? loc.disp_ch : ' ';
     if (loc.invisMon && sym === DEF_INVISIBLE) return { kind: 'invisible', sym, x, y };
-    if (pg_u_at(x, y)) return { kind: 'monster', mon: null, isyou: true, sym, x, y };
+    if (pg_u_at(x, y) && canspotself())
+        return { kind: 'monster', mon: null, isyou: true, sym, x, y };
     const mon = m_at(x, y);
     if (mon && sym === (mon.data?.mlet ?? '\0'))
         return { kind: 'monster', mon, sym, x, y };
@@ -1088,6 +1113,21 @@ function cmap_index_for(loc, x, y) {
     }
     if (t === CORR) return cansee(x, y) && loc.waslit ? S_litcorr : S_corr;
     if (t === ROOM) return cansee(x, y) ? S_room : S_darkroom;
+    // C ref: display.c back_to_glyph() STAIRS/LADDER cases — a *known branch*
+    // staircase/ladder uses the S_br* pair; js/display.js's back_to_glyph()
+    // (used for the rendered glyph) already computes this identically.
+    if (t === STAIRS) {
+        const branch = known_branch_stairs(stairway_at(x, y));
+        const down = stairs_go_down(loc, x, y);
+        return branch ? (down ? S_brdnstair : S_brupstair)
+                      : (down ? S_dnstair : S_upstair);
+    }
+    if (t === LADDER) {
+        const branch = known_branch_stairs(stairway_at(x, y));
+        const down = stairs_go_down(loc, x, y);
+        return branch ? (down ? S_brdnladder : S_brupladder)
+                      : (down ? S_dnladder : S_upladder);
+    }
     if (t === ICE) return S_ice;
     if (t === POOL || t === MOAT) return S_pool;
     if (t === WATER) return S_water;
@@ -1096,7 +1136,27 @@ function cmap_index_for(loc, x, y) {
     if (t === CLOUD) return S_cloud;
     if (t === TREE) return 18;                     /* S_tree */
     if (IS_GRAVE(t)) return S_grave;
-    if (t === 32 /* ALTAR */) return S_altar;
+    if (t === ALTAR) return S_altar;
+    // The rest of display.c back_to_glyph()'s switch.  Without them every one
+    // of these squares fell through to the S_room below, so farlook and
+    // #lookaround reported a fountain, sink, throne, iron bars or drawbridge
+    // as "floor of a room".  (js/getpos.js back_to_glyph_cmapidx() is a
+    // complete port of the same switch, but is private to that inert file.)
+    if (t === FOUNTAIN) return S_fountain;
+    if (t === SINK) return S_sink;
+    if (t === THRONE) return S_throne;
+    if (t === IRONBARS) return S_bars;
+    if (t === AIR) return S_air;
+    if (t === DBWALL) return loc.horizontal ? S_hcdbridge : S_vcdbridge;
+    if (t === DRAWBRIDGE_DOWN) return loc.horizontal ? S_hodbridge : S_vodbridge;
+    if (t === DRAWBRIDGE_UP) {
+        switch ((loc.drawbridgemask | 0) & DB_UNDER) {
+        case DB_MOAT: return S_pool;
+        case DB_LAVA: return S_lava;
+        case DB_ICE: return S_ice;
+        default: return S_room;       /* DB_FLOOR, or C's impossible() */
+        }
+    }
     return S_room;
 }
 
@@ -1528,7 +1588,7 @@ export function look_at_monster(mtmp, x, y, wantMonbuf = true) {
 function rndmonnam() {
     for (let tries = 0; tries < 100; tries++) {
         const mon = monster_by_pmidx(rn2(NUMMONS));
-        if (mon && mon.name && !(mon.mflags2 & 0x00000010 /* M2_PNAME */))
+        if (mon && mon.name && !(mon.mflags2 & 0x00080000 /* M2_PNAME */))
             return mon.name;
     }
     return 'creature';
@@ -1541,7 +1601,7 @@ function coyotename(mtmp) {
 }
 /* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
 function pg_digests(ptr) {
-    return (ptr?.mattk || []).some((a) => a && a.aatyp === 12 /* AT_ENGL */);
+    return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */);
 }
 /* trap.h is_pit(ttyp) */
 function pg_is_pit(tt) { return tt === PIT || tt === (PIT + 1) /* SPIKED_PIT */; }
@@ -1564,14 +1624,14 @@ export function lookat(x, y) {
     const glyph = pg_glyph_at(x, y);
     const iflags = pg_iflags();
 
-    if (pg_u_at(x, y) && canspotself_pg()
+    if (pg_u_at(x, y) && canspotself()
         && !(iflags.save_uswallow && pg_glyph_is_monster(glyph) && !glyph.isyou)
         && (!iflags.terrainmode || (iflags.terrainmode & 0x08 /* TER_MON */) !== 0)) {
         buf = pg_self_lookat();
         // C forces the general "wizard" data.base entry for a gnomish Wizard so
         // the lookup doesn't land on the "gnomish wizard" MONSTER entry.
         if (game.urole?.mnum === 12 /* PM_WIZARD */ && !u.Upolyd
-            && game.urace?.mnum === 42 /* PM_GNOME */)
+            && game.urace?.mnum === 3 /* PM_GNOME */)
             pm = monster_by_pmidx(12);
         if ((u.uinvis || u.uundetected) && !Blind()
             && !(u.uswallow || iflags.save_uswallow)) {
@@ -1656,11 +1716,6 @@ export function lookat(x, y) {
         buf = 'unexplored area';
     }
     return { pm: (pm && !Hallucination_u()) ? pm : null, buf, monbuf };
-}
-/* display.h canspotself() */
-function canspotself_pg() {
-    const u = pg_u();
-    return !u.uinvis || !!u.useeinvis || !!u.uswallow;
 }
 
 // C ref: pager.c:1132 add_cmap_descr(...) — add one defsyms[] possibility to
@@ -1819,7 +1874,7 @@ export function do_screen_description(cc, looked, sym, out_str, firstmatch,
         if ((looked ? (sym === humanSym && pg_u_at(cc.x, cc.y))
                     : (sym === humanSym && !game.flags?.showrace))
             && !(game.urace?.mnum === 0 /* PM_HUMAN */
-                 || game.urace?.mnum === 5 /* PM_ELF */) && !u.Upolyd)
+                 || game.urace?.mnum === 1 /* PM_ELF */) && !u.Upolyd)
             found += append_str(out_str, 'you');    /* tack on "or you" */
     }
 
@@ -2195,7 +2250,7 @@ export async function look_all(nearby, do_mons) {
             let glyph = pg_glyph_at(x, y);
             if (do_mons) {
                 if (pg_glyph_is_monster(glyph)) {
-                    if (pg_u_at(x, y) && canspotself_pg()) {
+                    if (pg_u_at(x, y) && canspotself()) {
                         lookbuf = pg_self_lookat();
                         ++count;
                     } else {
@@ -2225,7 +2280,7 @@ export async function look_all(nearby, do_mons) {
                         ? `${pg_upstart(which)} currently shown near `
                           + `${(cmode !== GPCOORDS_COMPASS)
                                 ? coord_desc(u.ux, u.uy, cmode)
-                                : !canspotself_pg() ? 'your position' : 'you'}:`
+                                : !canspotself() ? 'your position' : 'you'}:`
                         : `All ${which} currently shown on the map:`);
                     /* hack alert (C's): Qt renders a text window in a
                        fixed-width font if any line has 4 consecutive spaces */

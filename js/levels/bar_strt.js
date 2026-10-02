@@ -8,9 +8,10 @@ import { CHEST } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, q_absx, q_absy, quest_create_monster,
-    quest_create_monster_at, quest_create_object, quest_create_trap, quest_flip_branch,
-    quest_floodfill_match, quest_level_init_solidfill, quest_place_stair, quest_region_light,
-    quest_register_branch, quest_replace_terrain, quest_rndcoord, quest_set_door, shuffle,
+    quest_create_monster_at, quest_create_object, quest_create_trap, quest_drop_default_invent,
+    quest_flip_branch, quest_floodfill_match, quest_level_init_solidfill, quest_place_stair,
+    quest_region_light, quest_register_branch, quest_replace_terrain, quest_rndcoord,
+    quest_set_door, shuffle,
 } from '../sp_lev.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -143,8 +144,17 @@ export async function makemaz_bar_strt() {
     g._quest_gen = true;
     g._full_mon_gen = true;
     try {
-        // Elder Pelias + custom inventory (runesword+5, chain mail+5).
+        // Elder Pelias + custom inventory (runesword+5, chain mail+5).  C ref:
+        // sp_lev.c create_monster tail — a monster.inventory table with no
+        // keep_default_invent drops makemon()'s default inventory (obj_resists
+        // rn2(100) per item, mdrop_special_objs) before the custom items are
+        // added; every other quest leader already calls quest_drop_default_invent
+        // (arc/cav/hea/kni/mon/pri/ran/rog/sam/tou/val/wiz _strt.js) — Pelias was
+        // the one leader missing it, so his default item stayed (phantom extra
+        // inventory) and the level's RNG stream ran one rn2(100) short forever
+        // after (heldout-mirror44 seed0373).
         const pelias = quest_create_monster('Pelias', 10, 7, null);
+        quest_drop_default_invent(pelias);
         quest_create_object(58 /*RUNESWORD*/, null, null, 5, pelias);
         quest_create_object(128 /*CHAIN_MAIL*/, null, null, 5, pelias);
         // The treasure of Pelias.

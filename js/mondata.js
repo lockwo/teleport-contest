@@ -11,7 +11,7 @@ import { mattk_of, AT_NONE, AT_BOOM, AT_CLAW, AT_BITE, AT_KICK, AT_BUTT,
     AD_FIRE, AD_COLD, AD_ELEC, AD_ACID, AD_PHYS, AD_DCAY, AD_RUST,
     AD_DRST, AD_DRLI, AD_STON, AD_DRDX, AD_DRCO, AD_WERE, AD_BLND }
     from './monattk_data.js';
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2 } from './rng.js';
 import { mflags2_of, humanoid, is_undead_flag, is_demon_flag, is_neuter_flag,
     M2_STRONG, M2_PNAME } from './monflags_data.js';
@@ -30,6 +30,7 @@ import { mmove_of, DEADMONSTER } from './mon.js';
 import { m_canseeu } from './monmove.js';
 import { canspotmon } from './uhitm.js';
 import { defends, defends_when_carried } from './artifact.js';
+import { register_monnam_hooks } from './do_name.js';
 
 // C ref: monflag.h MR_* resistance bits (permonst.mresists).
 const MR_FIRE = 0x01, MR_COLD = 0x02, MR_ELEC = 0x10, MR_ACID = 0x40;
@@ -51,6 +52,25 @@ const ROTS_NAMES = new Set(['wood golem', 'leather golem']);
 export const completelyburns = (ptr) => BURNS_NAMES.has(ptr?.name);
 export const completelyrots = (ptr) => ROTS_NAMES.has(ptr?.name);
 export const completelyrusts = (ptr) => ptr?.name === 'iron golem';
+
+// C ref: mondata.c on_fire() — describe the defender's response to fire.
+export function on_fire(ptr, mattk) {
+    switch (ptr?.name) {
+    case 'flaming sphere': case 'fire vortex':
+    case 'fire elemental': case 'salamander':
+        return 'already on fire';
+    case 'water elemental': case 'fog cloud': case 'steam vortex':
+        return 'boiling';
+    case 'ice vortex': case 'glass golem':
+        return 'melting';
+    case 'stone golem': case 'clay golem': case 'gold golem':
+    case 'air elemental': case 'earth elemental':
+    case 'dust vortex': case 'energy vortex':
+        return 'heating up';
+    default:
+        return mattk.aatyp === AT_HUGS ? 'being roasted' : 'on fire';
+    }
+}
 
 // The attack types that can each trigger a defender's passive.
 const PASSIVE_TRIGGERS = new Set([AT_CLAW, AT_BITE, AT_KICK, AT_BUTT, AT_TUCH,
@@ -150,6 +170,9 @@ export function set_mon_data(mon, ptr) {
         }
     }
 }
+
+// Creation-time newcham is synchronous; the registry avoids an import cycle.
+hooks.set_mon_data = set_mon_data;
 
 // C ref: mondata.c:278 resists_blnd_by_arti(mon) — True iff the monster resists
 // light-induced blindness because of worn/wielded magical equipment; used only
@@ -304,13 +327,7 @@ export function dmgtype_fromattack(ptr, dtyp, atyp) {
 // C ref: mondata.c:1191 pronoun_gender(mtmp, pg_flags) — gender() but unseen
 // humanoids are "it", lower animals are "it" even when seen, and hallucination
 // may yield "they".  0 he / 1 she / 2 it / 3 they.
-//
-// THE RNG POINT: the rn2(4) fires whenever PRONOUN_HALLU is set and the hero is
-// hallucinating, BEFORE any visibility test — so it is drawn even for a monster
-// the hero cannot see at all.  js/do_name.js:221 keeps a module-private
-// `pronoun_gender(mon)` that draws rn2(2) instead and returns 3-or-gender; that
-// is a live modulus divergence (see this port's report), not a reduction.
-// No js/ module has mhe()/mhim()/mhis() yet, so nothing calls this one.
+// Hallucination selects a gender before visibility, including unseen monsters.
 export function pronoun_gender(mtmp, pg_flags) {
     const override_vis = (pg_flags & PRONOUN_NO_IT) !== 0;
     const hallu_rand = (pg_flags & PRONOUN_HALLU) !== 0;
@@ -325,6 +342,7 @@ export function pronoun_gender(mtmp, pg_flags) {
     return (humanoid(ptr) || ((ptr?.geno | 0) & G_UNIQ)
             || type_is_pname(ptr)) ? (mtmp.female ? 1 : 0) : 2;
 }
+register_monnam_hooks({ pronoun_gender });
 // C ref: mondata.h is_neuter(ptr) / type_is_pname(ptr).
 function is_neuter(ptr) { return is_neuter_flag(ptr); }
 function type_is_pname(ptr) { return (mflags2_of(ptr) & M2_PNAME) !== 0; }

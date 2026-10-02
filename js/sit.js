@@ -11,11 +11,12 @@ import { update_topl, vobj_at } from './display.js';
 import { surface, hliquid } from './dungeon.js';
 import { t_at, dotrap } from './trap.js';
 import { exercise } from './attrib.js';
-import { useupf, makeplural } from './invent.js';
+import { useupf } from './invent.js';
 import { objects, COIN_CLASS, CORPSE } from './mkobj.js';
+import { xname_flags } from './objnam.js';
 import {
     FOUNTAIN, STAIRS, LADDER, DRAWBRIDGE_DOWN, ICE, POOL, MOAT, WATER,
-    IS_SINK, IS_ALTAR, IS_GRAVE, IS_THRONE,
+    IS_SINK, IS_ALTAR, IS_GRAVE, IS_THRONE, CXN_NORMAL,
     VIASITTING, A_WIS, A_STR, A_CON,
     TT_BEARTRAP, TT_PIT, TT_WEB, TT_LAVA, TT_INFLOOR, TT_BURIEDBALL,
     SPIKED_PIT,
@@ -52,14 +53,16 @@ function can_reach_floor(_check_pit) {
     return true;
 }
 
-// C ref: objnam.c the(xname(obj)) for the sit-on-object message.  Object
-// identification internals are owned elsewhere; use the object's plain
-// name from the objects table for the (polymorph/rare) sit-on-object path.
-// C ref: sit.c dosit() `You("sit on %s.", the(xname(obj)))` — xname() is
-// quantity-aware, so a stack of two apples reads "the apples", not "the apple".
+// C ref: objnam.c:1290 the(str) — an already-capitalised name is a proper noun
+// and takes no article.
+function the(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
+
+// C ref: sit.c:453 dosit() `You("sit on %s.", the(xname(obj)))`.  Reading
+// objects[otyp].name here instead leaked the true type of an unidentified
+// object ("the tin whistle" for what C calls "the whistle"); xname() applies
+// the identification rules and pluralizes a stack on its own.
 function sit_obj_name(obj) {
-    const nm = objects[obj.otyp]?.name || 'object';
-    return `the ${(obj.quan || 1) > 1 ? makeplural(nm) : nm}`;
+    return the(xname_flags(obj, CXN_NORMAL));
 }
 
 // C ref: sit.c dosit() — the #sit command.

@@ -11,13 +11,13 @@ import { ATR_INVERSE, NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
 import { makedog } from './dog.js';
 import { rhack, dosearch0, monster_nearby } from './cmd.js';
-import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl } from './display.js';
-import { vision_recalc, vision_reset, init_vision_globals } from './vision.js';
-import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON } from './calendar.js';
+import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning } from './display.js';
+import { vision_recalc, vision_reset, init_vision_globals, Blind } from './vision.js';
+import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
-import { movemon, mcalcdistress, mcalcmove, base_mmove } from './mon.js';
+import { movemon, mcalcdistress, mcalcmove, base_mmove, fmonOrder } from './mon.js';
 import { run_regions } from './region.js';
-import { makemon_rnd_spawn } from './makemon.js';
+import { makemon_rnd_spawn, makemon_appears_msg } from './makemon.js';
 import { SPEED_BOOTS, objects } from './mkobj.js';
 import { mflags1_of, M1_CARNIVORE, M1_HERBIVORE, M1_METALLIVORE }
     from './monflags_data.js';
@@ -26,15 +26,16 @@ import { age_spells } from './spell.js';
 import { newuhs } from './eat.js';
 import { adj_erinys } from './makemon.js';
 import { find_ac, u_init_skills_discoveries, moveloop_preamble_startup,
-         race_attrmin, race_attrmax } from './u_init.js';
+         race_attrmin, race_attrmax, u_init_inventory_attrs } from './u_init.js';
 import { com_pager_legacy } from './questpgr.js';
 import { roles, races, aligns, genders, Hello, rankName } from './role.js';
 import { Unaware,
          ROLE_MALE, ROLE_FEMALE, NORMAL_SPEED, A_STR, A_WIS, A_INT, A_DEX, A_CON,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
-    Is_waterlevel, Is_airlevel } from './const.js';
-import { near_capacity } from './invent.js';
+    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA } from './const.js';
+import { near_capacity, reroll_menu, setnotworn, freeinv } from './invent.js';
+import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { settrack } from './track.js';
 import { nh_timeout } from './timeout.js';
@@ -42,6 +43,7 @@ import { genTutorialLevel } from './tutorial.js';
 import { find_level } from './dungeon.js';
 import { livelog_printf, LL_ACHIEVE } from './livelog.js';
 import { check_special_room } from './shkroom.js';
+import { runtime_info_init } from './mdlib.js';
 
 const PM_KNIGHT = 4;
 const PM_WIZARD = 12;
@@ -196,6 +198,22 @@ export async function newgame() {
         if (!g.urace) g.urace = { ...(races[game.initrace] || races[0]) };
     }
 
+    // C ref: u_init.c u_init_misc() sets u.umonnum = u.umonster =
+    // gu.urole.mnum, and allmain.c newgame() calls u_init_misc() (line 794)
+    // BEFORE mklev() (line 807) — the same "must run before mklev" ordering
+    // already applied to ualign/urace just above. mksobj_init()'s ARMOR_CLASS
+    // switch reads Role_if(PM_SAMURAI) via umonnum to erodeproof a Samurai's
+    // starting-level splint mail (mkobj.c:1104-1105 `svm.moves <= 1 ||
+    // In_quest`). This port used to set umonnum only in u_init_role()
+    // (js/u_init.js), which fastforward_post_mklev() calls AFTER mklev(), so
+    // umonnum was still undefined during the real level-1 room fill: the
+    // lacquer branch never fired and mkobj_erosions() rolled the erosion RNG
+    // (rn2(100)/rn2(80)/rn2(80)/rn2(1000)) that C skips for that armor piece,
+    // desyncing every later draw in the fill loop (seed0030 segment 8, step
+    // 1345 / idx 35947). u_init_role()'s own `if (umonnum == null)` guard
+    // makes its later assignment a no-op once this has already run.
+    g.u.umonnum = g.u.umonster = gameRoleMnum();
+
     // Real mklev generates the level with correct room positions
     // Structural phase consumes RNG for rooms/corridors/doors/stairs
     await mklev();
@@ -313,6 +331,18 @@ async function newgame_real() {
     await flush_screen(1);
     await bot();
 
+    // C ref: allmain.c:817-823 — the OPTIONS=reroll confirm-or-reroll menu,
+    // right after the first post-mklev bot() and before u_init_skills_
+    // discoveries()/the legend pager below.  u_init_inventory_attrs() is
+    // already a full, faithful port of C's own reroll body (init_attr(75) +
+    // vary_init_attr() re-rolls St/Dx/Co/In/Wi/Ch, u_init_role()/u_init_race()
+    // clears and regenerates starting inventory), so re-running it here is
+    // the whole reroll, matching C exactly.
+    while (g.u.uroleplay?.reroll && await reroll_menu()) {
+        u_init_inventory_attrs();
+        await bot();
+    }
+
     // C ref: allmain.c — com_pager("legacy") when the legacy option is on.
     // The legend menu overlays the already-drawn map (clearing only its own
     // columns) and the status line underneath still shows pre-find_ac AC (0).
@@ -335,6 +365,20 @@ async function newgame_real() {
     await flush_screen(1);
     await bot();
     await pline(welcomeMessage());
+    // C ref: allmain.c newgame():843-848 — notice_all_mons(TRUE) runs right
+    // after welcome(TRUE), announcing every monster already visible from the
+    // starting square (gated on the `spot_monsters` rc option).  Was entirely
+    // missing here; notice_all_mons() itself only got called from a level
+    // teleport (teleport.js), never from game start, so a spot_monsters
+    // session's opening "You see X.--More--" screen(s) never appeared and
+    // every following keystroke was fed to a game that hadn't blocked on them
+    // the way C's recording did — an immediate, permanent input desync.
+    // (notice_all_mons() itself pages the still-pending welcome line with its
+    // own --More-- ONLY when it actually has something to announce — see
+    // hack.js — so this call is a no-op, including its screen effects, for
+    // every session that doesn't set spot_monsters.)
+    const { notice_all_mons } = await import('./hack.js');
+    await notice_all_mons(true);
     // C ref: allmain.c welcome(TRUE) — "guarantee that 'major' event category
     // is never empty": the very first gamelog line.
     livelog_printf(LL_ACHIEVE, `${welcomePlname()} the${welcomeBuf()} entered the dungeon`);
@@ -426,8 +470,13 @@ async function moveloop_preamble_messages() {
     let win_stop = false;
     for (const m of msgs) {
         if (win_stop) { game._toplines = m; continue; } // C: skip -> no more(), no redraw
-        await topl_more();
-        win_stop = !!game._winStop; // more() set it iff this --More-- was ESC'd
+        // A wrapped welcome line already paged ITSELF (pline()'s own
+        // wrap_topl().length>1 check) and cleared _pending_message; calling
+        // topl_more() again here would consume a second, phantom keystroke.
+        if (game._pending_message) {
+            await topl_more();
+            win_stop = !!game._winStop; // more() set it iff this --More-- was ESC'd
+        }
         await pline(m);
     }
     return true;
@@ -441,8 +490,10 @@ async function maybe_do_tutorial(preambleShownMore) {
     if (g.tutorial_set_in_config) return; // "OPTIONS=!tutorial" => no prompt
     // Showing the menu flushes the pending top-line message.  If the moon
     // phase preamble already paged the welcome line, the message currently
-    // on the top line is the preamble; otherwise it's the welcome line.
-    await topl_more();
+    // on the top line is the preamble; otherwise it's the welcome line — or
+    // nothing at all, if that line had wrapped and paged itself already (see
+    // the same guard above).
+    if (game._pending_message) await topl_more();
     await ask_do_tutorial();
 
     // C ref: maybe_do_tutorial() tutorial-yes branch — ask_do_tutorial() set up
@@ -477,6 +528,9 @@ async function enter_tutorial_level() {
     g.u.dx = 0; g.u.dy = 0;
     if (g.u.umovement == null) g.u.umovement = NORMAL_SPEED;
 
+    // C ref: nhlib.lua tutorial_enter() sequesters inventory before arrival.
+    sequester_inventory_for_tutorial();
+
     // Reset vision for the new level and redraw.  C ref: goto_level() ->
     // vision_reset(); docrt(); flush_screen(-1).
     g.vision_full_recalc = 0;
@@ -502,47 +556,23 @@ async function enter_tutorial_level() {
     }
     g._pending_message = '';
 
-    // C ref: dat/nhlib.lua tutorial_enter() -> nh.gamestate() (save), which is
-    // nhlua.c nhl_gamestate() store branch: every inventory item is setnotworn()
-    // + freeinv()'d and sequestered in gg.gmst_invent.  The hero therefore enters
-    // the tutorial with NO worn gear, so find_ac() resets to the base unarmored
-    // class (the recorded screens show AC drop from 7 -> 10 for the Ranger whose
-    // cloak of displacement gave -3).  setnotworn() is silent (no message), and
-    // the status line is rebuilt live from u.uac at each flush, so the AC change
-    // must not be visible on the arrival/engraving --More-- pages (recorded steps
-    // 13-15 still show AC:7).  Do the sequester AFTER those pages so the updated
-    // AC first appears on the first moveloop turn's bot() (recorded step 16).
-    sequester_inventory_for_tutorial();
+    // C recomputes armor class on the next moveloop turn, after the arrival
+    // messages, even though the worn items have already been set aside.
+    find_ac();
 }
 
-// C ref: nhlua.c nhl_gamestate() store branch (dat/nhlib.lua tutorial_enter ->
-// nh.gamestate()).  On tutorial entry the entire inventory is set aside: each
-// item is unworn (setnotworn) and removed from invent (freeinv), then stashed
-// in gg.gmst_invent (with owornmask kept as a re-wear flag for the later
-// restore on leave).  We mirror that here: clear every worn-equipment pointer
-// so find_ac() yields the unarmored base class, and stash the items + their
-// worn masks on game._tutorial_saved_state for symmetry with leave (no recorded
-// session leaves the tutorial, so the restore path is not exercised, but we keep
-// the saved state faithful to the C structure).
+// C ref: nhlua.c nhl_gamestate() — preserve worn masks while removing items
+// through the inventory hooks, including gold and equipment extrinsics.
 function sequester_inventory_for_tutorial() {
     const g = game;
-    const inv = Array.isArray(g.invent) ? g.invent : [];
     const saved = [];
-    for (const obj of inv) {
+    while (g.invent.length) {
+        const obj = g.invent[0];
         saved.push({ obj, wornmask: obj.owornmask || 0 });
-        obj.owornmask = 0;
+        setnotworn(obj);
+        freeinv(obj);
     }
-    // setnotworn equivalent: drop every worn-slot pointer (armor, weapons,
-    // accessories) so they no longer contribute to find_ac / behaviour.
-    g.uarm = g.uarmc = g.uarmh = g.uarms = g.uarmg = g.uarmf = g.uarmu = null;
-    g.uwep = g.uswapwep = g.uquiver = null;
-    g.uleft = g.uright = g.uamul = g.ublindf = null;
-    if (g.u) g.u.twoweap = false;
-    // freeinv equivalent: the hero carries nothing inside the tutorial.
-    g.invent = [];
     g._tutorial_saved_state = { invent: saved };
-    // find_ac() recomputes u.uac from the now-empty worn slots -> base 10.
-    find_ac();
 }
 
 function engr_at_tut(x, y) {
@@ -746,6 +776,56 @@ function youHaveSearching() {
 }
 export { youHaveSearching };
 
+// C ref: youprop.h Teleportation == (HTeleportation || ETeleportation).
+// Nothing in this port currently sets either half (no role table or item grants
+// it yet), so this always reads false today; kept faithful for moveloop_core's
+// per-turn teleport-intrinsic check below.
+function youHaveTeleportationIntrinsic() {
+    const p = game.u?.uprops;
+    return !!(p?.HTeleportation || p?.ETeleportation);
+}
+
+// C ref: youprop.h Polymorph == (HPolymorph || EPolymorph).  Same story as
+// Teleportation above: never set anywhere in this port yet.
+function youHavePolymorph() {
+    const p = game.u?.uprops;
+    return !!(p?.HPolymorph || p?.EPolymorph);
+}
+
+// C ref: youprop.h Unchanging == (HUnchanging || EUnchanging).
+function youHaveUnchanging() {
+    const p = game.u?.uprops;
+    return !!(p?.HUnchanging || p?.EUnchanging);
+}
+
+// C ref: youprop.h Breathless == (HBreathless || EBreathless).  Checked against
+// all three key spellings already used elsewhere in this port (dbridge.js,
+// do.js) since nothing here sets any of them yet.
+function youHaveBreathless() {
+    const p = game.u?.uprops;
+    return !!(p?.Breathless || p?.HBreathless || p?.EBreathless);
+}
+
+// C ref: youprop.h Half_physical_damage == (HHalf_physical_damage ||
+// EHalf_physical_damage).
+function youHaveHalfPhysicalDamage() {
+    const p = game.u?.uprops;
+    return !!(p?.Half_physical_damage || p?.HHalf_physical_damage
+               || p?.EHalf_physical_damage);
+}
+
+// C ref: youprop.h Sleepy == (HSleepy || ESleepy).  js/extcmd-handlers.js's
+// WIZINTRINSIC_PROPS table documents this port's key for Sleepy as the bare
+// 'Sleepy' field (not H/E-split); checked here too as a defensive fallback.
+function youHaveSleepy() {
+    const p = game.u?.uprops;
+    return !!(p?.Sleepy || p?.HSleepy || p?.ESleepy);
+}
+
+// C ref: monsym.h S_EEL — mons[].mlet class index for eels/sharks/kraken
+// (matches the local S_EEL copies in js/botl.js, js/monmove.js, js/sounds.js).
+const S_EEL = 57;
+
 // C ref: allmain.c u_calc_moveamt(wtcap) — gives the hero movement points for
 // the turn.  When riding and the hero moved, moveamt = mcalcmove(usteed, TRUE)
 // (rolls rn2(NORMAL_SPEED)); otherwise moveamt = youmonst.data->mmove
@@ -806,7 +886,7 @@ function levelDepth(lev) {
 // the live dungeon depth when it's reliably materialized, and otherwise fall
 // back to 70 — which matches every shallow position the gameplay sessions
 // actually reach before any spawn would fire.
-function maybe_generate_rnd_mon() {
+async function maybe_generate_rnd_mon() {
     let bound = 70;
     if (game.u?.uevent?.udemigod) {
         bound = 25;
@@ -827,7 +907,10 @@ function maybe_generate_rnd_mon() {
         // the goodpos position search depends on.  Only seed0103/seed0104 reach
         // an in-game spawn with the RNG stream still matching; every other
         // spawning session has already diverged before its first spawn.
-        makemon_rnd_spawn();
+        const mtmp = makemon_rnd_spawn();
+        // C ref: makemon.c:1474-1500 — makemon()'s own tail announces the new
+        // monster when the hero can see or sense it.  RNG-free.
+        if (mtmp) await makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, 0);
     }
 }
 
@@ -850,14 +933,7 @@ export async function moveloop_turn() {
     if (g.u.umovement == null) g.u.umovement = NORMAL_SPEED;
     g.u.umovement -= NORMAL_SPEED;
 
-    // C ref: allmain.c moveloop_core():208 — encumber_msg(); runs once per turn,
-    // right after context.move is consumed and before monster movement, so an
-    // autopickup that changed the hero's burden is announced here (chaining
-    // onto the pickup's prinv line via update_topl's --More-- paging).
-    {
-        const { encumber_msg } = await import('./invent.js');
-        await encumber_msg();
-    }
+    const { encumber_msg } = await import('./invent.js');
 
     // C ref: allmain.c moveloop_core():
     //   do {                                       // "hero can't move yet"
@@ -875,6 +951,8 @@ export async function moveloop_turn() {
     // to the hero -> dog_goal appr==0 -> invent obj_resists scan) is where the
     // divergence lived.  We mirror the C control flow exactly.
     do {
+        // C ref: allmain.c:208 — check before each monster movement round.
+        await encumber_msg();
         g.context.mon_moving = true;
         let monscanmove;
         do {
@@ -899,11 +977,16 @@ export async function moveloop_turn() {
         if (!monscanmove && g.u.umovement < NORMAL_SPEED) {
             // Both hero and all monsters are out of steam -> advance a turn.
             await mcalcdistress();
-            for (const mtmp of (g.level?.monsters || [])) {
+            // C walks the fmon chain here, which is newest-first because
+            // makemon prepends each monster.  The level array is creation
+            // order, so use the same shared ordering as movemon(); assigning
+            // the six rounding draws to the wrong monsters changes who gets
+            // the next action even when the raw RNG stream is unchanged.
+            for (const mtmp of fmonOrder()) {
                 if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
                 mtmp.movement = (mtmp.movement || 0) + mcalcmove(mtmp, true);
             }
-            maybe_generate_rnd_mon();
+            await maybe_generate_rnd_mon();
 
             // C ref: allmain.c — u_calc_moveamt(mvl_wtcap); settrack();  The
             // hero's movement-point reallocation (Fast roll / steed mcalcmove /
@@ -949,7 +1032,7 @@ export async function moveloop_turn() {
             // turns and the overexert/regen_pw encumbrance gates see 0.
             let turn_wtcap = mvl_wtcap;
             if (g.u.uinvulnerable) turn_wtcap = 0 /* UNENCUMBERED */;
-            else regen_hp(turn_wtcap);
+            else await regen_hp(turn_wtcap);
 
             // C ref: allmain.c:299-304 — "moving around while encumbered is hard
             // work": a hero above MOD_ENCUMBER who moved loses 1 HP every 30
@@ -968,7 +1051,63 @@ export async function moveloop_turn() {
             // ulevel 15 => period 15, upper 2 from Wi:14 + In:7) between
             // regen_hp's rn2(100) and dosounds' rn2(200), and skipping it shifted
             // the rest of that turn and every turn after it.
-            regen_pw(turn_wtcap);
+            await regen_pw(turn_wtcap);
+
+            // C ref: allmain.c moveloop_core():307-340 — intrinsic Teleportation
+            // and the Polymorph/lycanthropy "delayed change" timer, both under
+            // !u.uinvulnerable (prayer invulnerability suppresses these too, same
+            // as the regen_hp/regen_pw checks above).  No current session grants
+            // HTeleportation/ETeleportation, HPolymorph/EPolymorph, or a valid
+            // u.ulycn, so every rn2 draw below is unreached today (short-
+            // circuited by its guard) — kept faithful for parity with any future
+            // session that reaches one of those states.
+            if (!g.u.uinvulnerable) {
+                if (youHaveTeleportationIntrinsic() && rn2(85) === 0) {
+                    const old_ux = g.u.ux, old_uy = g.u.uy;
+                    // C ref: teleport.c tele(void) -> scrolltele((struct obj*)0).
+                    const { scrolltele } = await import('./read.js');
+                    await scrolltele(null);
+                    if (g.u.ux !== old_ux || g.u.uy !== old_uy) {
+                        // C ref: apply.c next_to_u() — FALSE only for a leashed
+                        // pet left behind.  Leashes are not modelled anywhere in
+                        // this port (do.js/dig.js/trap.js keep the same always-
+                        // true stub), so check_leash() never fires here.
+                        // C ref: allmain.c — "clear doagain keystrokes"; these
+                        // run unconditionally once the hero's position changed.
+                        if (g._cmdq_canned) g._cmdq_canned.length = 0;
+                        if (g._cmdq_repeat) g._cmdq_repeat.length = 0;
+                    }
+                }
+
+                if ((g.context.mvl_change === 1 && !youHavePolymorph())
+                    || (g.context.mvl_change === 2 && !ismnum(g.u.ulycn)))
+                    g.context.mvl_change = 0;
+
+                if (youHavePolymorph() && rn2(100) === 0) {
+                    g.context.mvl_change = 1;
+                } else if (ismnum(g.u.ulycn) && !g.u.Upolyd
+                           && rn2(80 - 20 * (night() ? 1 : 0)) === 0) {
+                    g.context.mvl_change = 2;
+                }
+
+                if (g.context.mvl_change && !youHaveUnchanging()) {
+                    if ((g.multi ?? 0) >= 0) {
+                        const { stop_occupation } = await import('./hack.js');
+                        await stop_occupation();
+                        if (g.context.mvl_change === 1) {
+                            const { polyself } = await import('./polyself.js');
+                            await polyself(POLY_NOFLAGS);
+                        }
+                        // else: C ref: polyself.c you_were() — involuntary
+                        // lycanthrope transformation.  DEFERRED: u.ulycn is
+                        // never set to a valid mnum anywhere in this port
+                        // (js/mhitm.js:1646 you_were_mm() documents the same
+                        // gap), so ismnum(g.u.ulycn) above is always false and
+                        // this arm cannot be reached yet.
+                        g.context.mvl_change = 0;
+                    }
+                }
+            }
 
             // C ref: allmain.c moveloop_core() — intrinsic autosearch.  Runs
             // every turn before dosounds when the hero has Searching (and the
@@ -978,6 +1117,10 @@ export async function moveloop_turn() {
             if (youHaveSearching() && !g.level?.flags?.noautosearch
                 && (g.multi == null || g.multi >= 0))
                 await dosearch0(1);
+            if (have_warning()) {
+                const { warnreveal } = await import('./detect.js');
+                await warnreveal();
+            }
 
             // once-per-turn things: ambient sounds + hunger + spell aging +
             // periodic exercise.  (nh_timeout consumes no RNG for the starter
@@ -1010,7 +1153,9 @@ export async function moveloop_turn() {
             // effective Dex used by this roll.
             const dex = acurr_eff(3);
             if (!rn2(40 + dex * 3)) {
-                rnd(3); // u_wipe_engr(rnd(3))
+                const cnt = rnd(3);
+                const { wipe_engr_at, can_reach_floor } = await import('./engrave.js');
+                if (can_reach_floor(true)) wipe_engr_at(g.u.ux, g.u.uy, cnt, false);
             }
 
             // C ref: allmain.c:362 — once the Wizard is dead the hero is
@@ -1035,7 +1180,7 @@ export async function moveloop_turn() {
                 await movebubbles();
             } else if (g.level?.flags?.fumaroles) {
                 const { fumaroles } = await import('./mkmaze.js');
-                fumaroles();
+                await fumaroles();
             }
 
             // C ref: allmain.c moveloop_core():380 — the multi<0 countdown sits
@@ -1080,12 +1225,25 @@ export async function moveloop_turn() {
         }
     } while (g.u.umovement < NORMAL_SPEED);
 
+    // C ref: allmain.c:403 — monster actions and timeouts can change the load.
+    if (!g.program_state?.gameover) await encumber_msg();
+
     // C ref: allmain.c:409 — clairvoyance bookkeeping (rn1(31,15)) sits in the
     // "once-per-hero-took-time" block AFTER the do-while, so it fires once per
     // hero move, not once per turn.  A Burdened hero gets 9 movement points per
     // turn, so ~every 4th command loops twice and the two placements differ.
     if (g.context.seer_turn != null && g.moves >= g.context.seer_turn) {
         g.context.seer_turn = g.moves + rn1(31, 15);
+    }
+    // C ref: allmain.c:424 — `if (u.utrap && u.utraptype == TT_LAVA)
+    // sink_into_lava(); else if (!u.umoved) (void) pooleffects(FALSE);`.
+    // Only the sink_into_lava() arm is ported (js/trap.js sink_into_lava);
+    // pooleffects(FALSE), the leaving-water/lava half, has no js/ port at all
+    // (only pooleffects(TRUE)'s arrival half exists, js/trap.js
+    // pooleffects_enter), so the `else` arm is left unwired here.
+    if (g.u?.utrap && g.u.utraptype === TT_LAVA) {
+        const { sink_into_lava } = await import('./trap.js');
+        await sink_into_lava();
     }
 }
 
@@ -1203,13 +1361,9 @@ export function gethungry() {
 // The single rn2(100) is the RNG-relevant effect; the heal keeps uhp tracking
 // so the roll stops firing once the hero is back to full.  The caller invokes
 // this only when uhp < uhpmax, mirroring the C guard at allmain.c:290.
-// C ref: allmain.c:976 interrupt_multi(msg) — a voluntary multi-turn activity
-// (counted rest/search, a timed occupation) stops the instant the hero reaches
-// full HP or full Pw.  Running/travelling is exempt.  `msg` is only shown with
-// the verbose option, which the covered rc files turn off, so the Norep is not
-// modelled — but the nomul(0) is load-bearing: without it a counted "20." runs
-// all 20 turns where C stops at whichever turn tops the hero up.
-function interrupt_multi() {
+// C ref: allmain.c interrupt_multi: full recovery stops voluntary repeated
+// actions, but not running or travel. Verbose feedback uses Norep semantics.
+async function interrupt_multi(msg) {
     const g = game;
     if ((g.multi ?? 0) > 0 && !g.context?.travel && !g.context?.run) {
         // nomul(0), inlined: hack.js imports this module, so importing back
@@ -1217,10 +1371,12 @@ function interrupt_multi() {
         // `if (gm.multi < nval) return` guard.
         g.multi = 0;
         if (g.context) g.context.travel = g.context.travel1 = g.context.mv = 0;
+        if (g.flags?.verbose !== false && msg && g._prevmsg !== msg)
+            await update_topl(msg);
     }
 }
 
-function regen_hp(wtcap = 0) {
+async function regen_hp(wtcap = 0) {
     const u = game.u;
     if (!u) return;
     // C ref: allmain.c:622 — encumbrance_ok = (wtcap < MOD_ENCUMBER ||
@@ -1233,13 +1389,26 @@ function regen_hp(wtcap = 0) {
     // polymorphed hero (whose u.uhp is still the pre-poly injured value)
     // keeps drawing the human rn2(100) every turn, desyncing the stream.
     if (u.Upolyd) {
-        // S_EEL-out-of-water damage (rn2(u.mh) > rn2(8)) needs a poly into an
-        // eel, which no covered session reaches; u.mh < 1 -> rehumanize() is
-        // handled at the damage site.  Both are RNG-inert here.
-        if (u.mh < u.mhmax) {
+        // C ref: allmain.c:632 — "shouldn't happen", but if a polymorphed
+        // hero's mh already dropped to 0 this reverts them to human form.
+        if (u.mh < 1) {
+            const { rehumanize } = await import('./polyself.js');
+            await rehumanize();
+        } else if (u.data?.mcls === S_EEL && !is_pool(u.ux, u.uy)
+                   && !Is_waterlevel(u.uz) && !youHaveBreathless()) {
+            // C ref: allmain.c:637 — an eel stranded out of water loses hp,
+            // similar to monster eels; the rate of loss slows as hp drops.
+            // No current session polymorphs the hero into an eel, so this arm
+            // is unreached, but the guard order (mh>1, !Regeneration, the two
+            // rn2 draws, then the Half_physical_damage odd-turn gate) is kept
+            // exact for when it is.
+            if (u.mh > 1 && !u_can_regen() && rn2(u.mh) > rn2(8)
+                && (!youHaveHalfPhysicalDamage() || !((game.moves || 0) % 2)))
+                u.mh -= 1;
+        } else if (u.mh < u.mhmax) {
             if (u_can_regen() || (encumbrance_ok && !((game.moves || 0) % 20))) {
                 u.mh += 1;
-                if (u.mh === u.mhmax) interrupt_multi();
+                if (u.mh === u.mhmax) await interrupt_multi('You are in full health.');
             }
         }
         return;
@@ -1249,15 +1418,18 @@ function regen_hp(wtcap = 0) {
     const con = u.acurr?.a?.[A_CON] ?? 12;
     let heal = ((u.ulevel || 1) + con) > rn2(100) ? 1 : 0;
     // C ref: U_CAN_REGEN() == Regeneration — a worn ring of regeneration grants
-    // an extra +1 heal each turn (so the hero recovers every turn).  Sleepy is
-    // never set for the starter hero.
+    // an extra +1 heal each turn (so the hero recovers every turn).
     if (u_can_regen()) heal += 1;
+    // C ref: allmain.c:663 — a Sleepy hero who is asleep heals one more point
+    // on top of the Regeneration bonus above; never set for the starter
+    // sessions, so this is a documented no-op today.
+    if (youHaveSleepy() && u.usleep) heal += 1;
     if (heal) {
         u.uhp += heal;
         if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
         // C ref: allmain.c:673 "stop voluntary multi-turn activity if now
         // fully healed".
-        if (u.uhp === u.uhpmax) interrupt_multi();
+        if (u.uhp === u.uhpmax) await interrupt_multi('You are in full health.');
     }
 }
 
@@ -1275,7 +1447,7 @@ function regen_hp(wtcap = 0) {
 // nothing.
 const MAXULEV = 30;             // C ref: include/you.h MAXULEV
 const PM_WIZARD_ROLE = 12;      // roles[] index, not a mons[] index
-function regen_pw(wtcap = 0) {
+async function regen_pw(wtcap = 0) {
     const g = game, u = g.u;
     if (!u) return;
     if (!(u.uen < u.uenmax)) return;
@@ -1296,10 +1468,7 @@ function regen_pw(wtcap = 0) {
     // no covered hero wears.
     u.uen += rn1(upper, 1);
     if (u.uen > u.uenmax) u.uen = u.uenmax;
-    // C ref: allmain.c:616 — at full power, interrupt_multi("You feel full of
-    // energy.").  The message needs the verbose option (off in the covered rc
-    // files) but the nomul(0) inside interrupt_multi fires regardless.
-    if (u.uen === u.uenmax) interrupt_multi();
+    if (u.uen === u.uenmax) await interrupt_multi('You feel full of energy.');
 }
 
 // C ref: hack.c overexert_hp() — "HP loss or passing out from overexerting
@@ -1527,6 +1696,54 @@ async function exerchk() {
     }
 }
 
+// C ref: allmain.c moveloop_core():452-470 — the head of the once-per-player-
+// input block: find_ac(), then `if (!svc.context.mv || Blind)` the
+// hallucination / telepathy / warning redraw and its vision_recalc().  C runs
+// it at the top of EVERY moveloop_core() iteration, and each continuation step
+// of a run or travel is its own iteration, so hack.js's inline run/travel loops
+// call this between a step's elapsed turn and the next lookaround()+domove().
+// While running (context.mv) only a Blind hero gets the redraw: a blind,
+// hallucinating runner re-randomises its warnings at every step.
+export async function moveloop_input_redraw() {
+    const g = game;
+    // find_ac() runs once per player input, right after the amulet-wish block
+    // and BEFORE bot(), so any AC change a command or a monster's turn produced
+    // (erosion, a corroded suit, a spe change) is on the status line of the
+    // very next captured screen.  RNG-free and idempotent — find_ac() is this
+    // port's only writer of u.uac apart from the seed8000 fastforward stub
+    // (which has no worn gear, so this recomputes the same base 10).
+    find_ac();
+    if (g.context?.mv && !Blind()) return;
+    const dsp = await import('./display.js');
+    if (Hallucination()) {
+        // `see_monsters(); see_objects(); see_traps(); if (u.uswallow)
+        // swallowed(0);` — a hallucinating hero's map is re-randomised on every
+        // keystroke, and each redraw costs display-RNG draws, which is what
+        // makes the recorded colours advance frame by frame.  While swallowed,
+        // see_monsters()/objects/traps() all go through newsym(), which returns
+        // immediately (display.c "only permit updating the hero when
+        // swallowed"), so swallowed(0)'s eight swallow_to_glyph() picks are
+        // the whole cost.
+        dsp.see_monsters();
+        dsp.see_objects();
+        dsp.see_traps();
+        if (g.u?.uswallow) await dsp.swallowed(0);
+    } else {
+        // The `else if (Unblind_telepat || Warning || Warn_of_mon ||
+        // any_visible_region()) see_monsters();` arm.  Warn_of_mon is not
+        // modelled; the other three are.  Telepathy, warning glyphs and
+        // region-obscured monsters are all keyed on the HERO's position, so
+        // they have to be redrawn once per input or they linger where the
+        // monster no longer sets them (seed0360 wizard1: two '2's stayed put
+        // after a 'k').
+        const { any_visible_region } = await import('./region.js');
+        const { Unblind_telepat } = await import('./worn.js');
+        if (dsp.have_warning() || Unblind_telepat() || any_visible_region())
+            dsp.see_monsters();
+    }
+    if (g.vision_full_recalc) vision_recalc(0);
+}
+
 // C ref: allmain.c moveloop_core()
 export async function moveloop_core() {
     const g = game;
@@ -1538,6 +1755,23 @@ export async function moveloop_core() {
     // (monster moves, encumber_msg, ...) over a corpse, fabricating RNG really_
     // done() never reaches.  Matches moveloop()'s own post-death stop.
     if (g.program_state?.gameover) return;
+
+    // C ref: allmain.c moveloop_core() — `if (iflags.sanity_check ||
+    // iflags.debug_fuzzer) sanity_check();`, once per player-input boundary,
+    // before the context.move block below.  Deliberately NOT wired live here:
+    // wizcmds.js's sanity_check() -> mon_sanity_check() faithfully flags every
+    // starting pet ("pet without edog") because this port's pets are built
+    // without a C-style edog/mnum ([[pet-pmidx-convention-mismatch]]) -- a
+    // real, pre-existing representation gap, invisible on every screen, that
+    // a real C game never has and never reports.  Calling this live would
+    // print an impossible() message no real 'sanity_check:1' session ever
+    // shows, which is worse than the option's true (silent) effect.  Left
+    // inert until that pet representation is fixed; wizcmds.js's
+    // sanity_check() is fully ported and callable (verified dormant-safe)
+    // for whenever it is.  js/mklev.js's separate per-level
+    // mklev_sanity_check() call IS wired (door/room-connectivity checks
+    // only; verified clean across the whole public corpus with the option
+    // forced on).
 
     // Per-turn work runs at the TOP of the turn that follows a hero move,
     // mirroring the C moveloop (monsters move based on the previous command's
@@ -1574,47 +1808,7 @@ export async function moveloop_core() {
         await makewish();
     }
 
-    // C ref: allmain.c moveloop_core():452 — find_ac() runs once per player
-    // input, right after the amulet-wish block and BEFORE bot(), so any AC
-    // change a command or a monster's turn produced (erosion, a corroded suit,
-    // a spe change) is on the status line of the very next captured screen.
-    // It was missing here; individual sites (fountain.js) had to call it by
-    // hand.  RNG-free and idempotent — find_ac() is this port's only writer of
-    // u.uac apart from the seed8000 fastforward stub (which has no worn gear,
-    // so this recomputes the same base 10).
-    find_ac();
-
-    // C ref: allmain.c moveloop_core():453 — `if (!svc.context.mv || Blind)` then
-    // `if (Hallucination) { see_monsters(); see_objects(); see_traps();
-    //  if (u.uswallow) swallowed(0); }`.  This is ONCE PER PLAYER INPUT, not per
-    // turn, so a hallucinating hero's map is re-randomised on every keystroke —
-    // and each redraw costs display-RNG draws, which is what makes the recorded
-    // colours advance frame by frame.  While swallowed, see_monsters()/objects/
-    // traps() all go through newsym(), which returns immediately (display.c
-    // "only permit updating the hero when swallowed"), so swallowed(0)'s eight
-    // swallow_to_glyph() picks are the whole cost.
-    if (!g.context?.mv || (g.u?.blinded || 0) > 0 || g.ublindf) {
-        if (Hallucination()) {
-            const dsp = await import('./display.js');
-            dsp.see_monsters();
-            dsp.see_objects();
-            dsp.see_traps();
-            if (g.u?.uswallow) await dsp.swallowed(0);
-        } else {
-            // C ref: allmain.c moveloop_core():464 — the `else if
-            // (Unblind_telepat || Warning || Warn_of_mon || any_visible_region())
-            // see_monsters();` arm.  Warn_of_mon is not modelled; the other
-            // three are.  Telepathy, warning glyphs and region-obscured
-            // monsters are all keyed on the HERO's position, so they have to be
-            // redrawn once per input or they linger where the monster no longer
-            // sets them (seed0360 wizard1: two '2's stayed put after a 'k').
-            const dsp = await import('./display.js');
-            const { any_visible_region } = await import('./region.js');
-            const { Unblind_telepat } = await import('./worn.js');
-            if (dsp.have_warning() || Unblind_telepat() || any_visible_region())
-                dsp.see_monsters();
-        }
-    }
+    await moveloop_input_redraw();
 
     // Vision + display
     if (g.vision_full_recalc) {
@@ -1718,7 +1912,8 @@ export async function moveloop_core() {
         if (!busy) g._eat_occupation = null;
         // C ref: allmain.c:501-508 — after one eatfood() occupation step,
         // monster_nearby() interrupts the meal when a hostile is adjacent.
-        // The jackal beside the monk in lp-monk-human reaches this exact arm.
+        // This is a general occupation rule; the same path is used by every
+        // role and food type.
         if (busy && monster_nearby()) {
             // The monster turn has already put its message on the topline;
             // C's You("stop eating ...") appends to it rather than replacing it.
@@ -1743,6 +1938,52 @@ export async function moveloop_core() {
         return;
     }
 
+    // C ref: allmain.c moveloop_core():485 — the opentin() occupation (set by
+    // eat.c start_tin()/doeat()'s TIN branch and apply.c's tin-opener use).
+    // Each turn advances usedtime and elapses a game turn, with no nhgetch in
+    // between, until opentin() returns 0 (opened, given up, or interrupted).
+    if (g._tin_occupation) {
+        const { opentin } = await import('./eat.js');
+        const busy = await opentin();
+        g.context = g.context || {};
+        g.context.move = 1;
+        g._pendingTurn = true;
+        if (!busy) g._tin_occupation = null;
+        // C ref: allmain.c:501-508 — monster_nearby() interrupts ANY active
+        // occupation, tin-opening included; see the _eat_occupation arm above.
+        if (busy && monster_nearby()) {
+            await (await import('./hack.js')).stop_occupation(true);
+            g._tin_occupation = null;
+        }
+        return;
+    }
+
+    // C ref: allmain.c moveloop_core():485 — the dig() occupation (set by
+    // dig.c use_pick_axe2()'s set_occupation(dig, verbing, 0)).  Like #wipe/
+    // #force, the move loop runs the occupation step instead of reading a
+    // command: each turn rolls the effort increment (dig.c:1298) and elapses a
+    // game turn (monsters move), with no nhgetch in between, until dig()
+    // returns 0 (finished, wall broken through / hole dug / interrupted).
+    if (g._dig_occupation) {
+        const { dig } = await import('./dig.js');
+        const busy = await dig();
+        g.context = g.context || {};
+        g.context.move = 1;
+        g._pendingTurn = true;
+        if (!busy) g._dig_occupation = null;
+        // C ref: allmain.c:501-508 — a now-adjacent hostile monster interrupts
+        // the dig occupation early ("You stop digging.").  This mirrors the
+        // _eat_occupation/_tin_occupation arms above; without it a wandering
+        // monster's approach was silently ignored and dig() kept being called
+        // turn after turn with no interruption message or occupation-clear,
+        // desyncing every RNG draw and screen from the point of contact on.
+        if (busy && monster_nearby()) {
+            await (await import('./hack.js')).stop_occupation(true);
+            g._dig_occupation = null;
+        }
+        return;
+    }
+
     // C ref: allmain.c moveloop_core():485 — the learn() occupation (set by
     // spell.c study_book()).  An UNTIMED occupation: learn() counts
     // context.spbook.delay up toward zero itself, one turn per call, so the move
@@ -1755,6 +1996,8 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._study_occupation = null;
+        if (busy && monster_nearby())
+            await (await import('./hack.js')).stop_occupation(true);
         return;
     }
 
@@ -1914,14 +2157,20 @@ function program_state_init() {
     ps.exiting = 0;
     ps.saving = ps.restoring = ps.freeing = 0;
 }
-// The three table-copy initialisers (decl.c/objects.c/monst.c) and
-// runtime_info_init() (sys.c) have no port; sys_early_init()'s outcome is
-// js/cfgfiles.js:149's frozen defaults, so it is a no-op here.
+// The three table-copy initialisers (decl.c/objects.c/monst.c) have no port;
+// sys_early_init()'s outcome is js/cfgfiles.js:149's frozen defaults, so it is
+// a no-op here. runtime_info_init() (sys.c) DOES have a real port — js/mdlib.js
+// — imported above; a local no-op used to shadow it here, so nomakedefs'
+// version/build-date banner never got populated and every 'V'/#version press
+// showed the placeholder Hack-1.0-era default instead of the real banner.
+// NOTE: early_init() itself still has no caller anywhere in this port (it is
+// only ever defined/exported here) — js/jsmain.js's start() now calls
+// runtime_info_init()'s real trigger directly (early_init(0, null)), since
+// that is the only one of early_init()'s five sub-calls that does anything.
 function decl_globals_init() { /* decl.c: no separate globals store in js/ */ }
 function objects_globals_init() { /* objects.c: js/mkobj.js objects[] is live */ }
 function monst_globals_init() { /* monst.c: js/makemon.js MONS[] is live */ }
 function sys_early_init() { /* sys.c: see js/cfgfiles.js:149 */ }
-function runtime_info_init() { /* sys.c: version/runtime banner strings */ }
 
 // C ref: allmain.c:48 moveloop_preamble(resuming) — everything that happens
 // once between newgame()/restore and the first moveloop_core() iteration.

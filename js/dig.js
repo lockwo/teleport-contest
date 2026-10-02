@@ -9,8 +9,8 @@
 
 import { game } from './gstate.js';
 import { rnd, rn2, rn1 } from './rng.js';
-import { newsym } from './display.js';
-import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD } from './const.js';
+import { newsym, You_hear, You_feel } from './display.js';
+import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, Unaware } from './const.js';
 import { unblock_point, recalc_block_point, cansee } from './vision.js';
 import {
     IS_WALL, IS_TREE, IS_OBSTRUCTED, IS_STWALL, IS_DOOR,
@@ -18,7 +18,8 @@ import {
     D_NODOOR, D_BROKEN, D_CLOSED, D_LOCKED, D_TRAPPED,
     W_NONDIGGABLE, isok, Is_earthlevel,
 } from './const.js';
-import { mksobj_at, ROCK, BOULDER, STATUE, objects as OBJECTS_TBL } from './mkobj.js';
+import { mksobj_at, ROCK, BOULDER, STATUE, base_oc_weight,
+         objects as OBJECTS_TBL } from './mkobj.js';
 import {
     DIGTYP_UNDIGGABLE, DIGTYP_ROCK, DIGTYP_STATUE, DIGTYP_BOULDER,
     DIGTYP_DOOR, DIGTYP_TREE, N_DIRS, N_DIRS_Z, TT_WEB,
@@ -46,6 +47,175 @@ function closed_door(x, y) {
     return IS_DOOR(lev.typ) && ((lev.doormask & (D_CLOSED | D_LOCKED)) !== 0);
 }
 
+// C ref: hack.c:646 metallivorous(ptr)/still_chewing hero gate — mirrors
+// js/eat.js:1955 metallivorous_hero(): no polyform this port models grants
+// the hero the metal-eating M1_METALLIVORE flag, so this is hardcoded FALSE
+// exactly like the sibling copy.
+function metallivorous_hero_chew() { return false; }
+
+// C ref: hack.c:646 still_chewing(x, y) — a metallivorous/rock-eating
+// polyform hero (or one wielding no pick but able to tunnel/eat through an
+// obstruction) chews on the wall/door/boulder/iron-bars blocking <x,y>.
+// Called from hack.c test_move()'s DO_MOVE branch whenever bad_rock() or an
+// IRONBARS square blocks the destination.  Every real caller in this port
+// (js/cmd.js blocksMove(), js/hack.js test_move_trav()) is gated by
+// Passes_walls()/tunnels()/metallivorous_hero(), all of which are hardcoded
+// false because no polyform this port models ever grants them (see the
+// "stays unconditional" notes at js/cmd.js:591-600 and js/hack.js:614-617,
+// 708-712) — so this function is never reached in current play, but is
+// ported faithfully here in case a future polyform revives the reachable
+// path.  Returns TRUE while still chewing (the move is blocked), FALSE once
+// the obstacle gives way (chewed through).
+export async function still_chewing(x, y) {
+    const u = game.u;
+    const lev = game.level.at(x, y);
+    const boulder = sobj_at_boulder(x, y);
+    let digtxt = null, dmgtxt = null;
+    const { pline } = await import('./display.js');
+
+    if (digging_ctx().down) zero_digging();
+    const dg = digging_ctx();
+
+    if (!boulder
+        && ((IS_OBSTRUCTED(lev.typ) && !may_dig(x, y))
+            || (lev.typ === IRONBARS && ((lev.wall_info | 0) & W_NONDIGGABLE)))) {
+        await pline(`You hurt your teeth on the ${
+            lev.typ === IRONBARS ? 'bars' : IS_TREE(lev.typ) ? 'tree' : 'hard stone'}.`);
+        const { nomul } = await import('./hack.js');
+        nomul(0);
+        return true;
+    } else if (lev.typ === IRONBARS
+               && metallivorous_hero_chew() && (u.uhunger | 0) > 1500) {
+        await pline('You are too full to eat the bars.');
+        const { nomul } = await import('./hack.js');
+        nomul(0);
+        return true;
+    } else if (!dg.chew || dg.pos.x !== x || dg.pos.y !== y
+               || !on_level(dg.level, u.uz)) {
+        dg.down = false;
+        dg.chew = true;
+        dg.warned = false;
+        dg.pos.x = x;
+        dg.pos.y = y;
+        assign_level(dg.level, u.uz);
+        dg.effort = (IS_OBSTRUCTED(lev.typ) && !IS_TREE(lev.typ) ? 30 : 60)
+                    + (u.udaminc | 0);
+        await pline(`You start chewing ${
+            (boulder || IS_TREE(lev.typ) || lev.typ === IRONBARS) ? 'on a'
+                                                                   : 'a hole in the'} ${
+            boulder ? 'boulder'
+            : IS_TREE(lev.typ) ? 'tree'
+            : IS_OBSTRUCTED(lev.typ) ? 'rock'
+            : lev.typ === IRONBARS ? 'bar'
+            : 'door'}.`);
+        await watch_dig(null, x, y, false);
+        return true;
+    } else if ((dg.effort += (30 + (u.udaminc | 0))) <= 100) {
+        if (game.flags?.verbose !== false) {
+            await pline(`You ${dg.chew ? 'continue' : 'begin'} chewing on the ${
+                boulder ? 'boulder'
+                : IS_TREE(lev.typ) ? 'tree'
+                : IS_OBSTRUCTED(lev.typ) ? 'rock'
+                : lev.typ === IRONBARS ? 'bars'
+                : 'door'}.`);
+        }
+        dg.chew = true;
+        await watch_dig(null, x, y, false);
+        return true;
+    }
+
+    /* Okay, you've chewed through something. */
+    u.uconduct = u.uconduct || {};
+    if (!(u.uconduct.food || 0)) {
+        const { livelog_printf, LL_CONDUCT } = await import('./livelog.js');
+        livelog_printf(LL_CONDUCT,
+            `ate for the first time, by chewing through ${
+                boulder ? 'a boulder'
+                : IS_TREE(lev.typ) ? 'a tree'
+                : IS_OBSTRUCTED(lev.typ) ? 'rock'
+                : lev.typ === IRONBARS ? 'iron bars'
+                : 'a door'}`);
+    }
+    u.uconduct.food = (u.uconduct.food || 0) + 1;
+    u.uhunger = (u.uhunger | 0) + rnd(20);
+
+    if (boulder) {
+        const { delobj } = await import('./invent.js');
+        delobj(boulder);
+        await pline('You eat the boulder.');
+        if (IS_OBSTRUCTED(lev.typ) || closed_door(x, y) || sobj_at_boulder(x, y)) {
+            const { block_point } = await import('./vision.js');
+            block_point(x, y); /* delobj() already unblocked the point */
+            zero_digging();
+            return true;
+        }
+    } else if (IS_WALL(lev.typ)) {
+        if ((await in_rooms_(x, y, SHOPBASE)).length > 0) {
+            const { add_damage } = await import('./shk.js');
+            await add_damage(x, y, SHOP_WALL_DMG);
+            dmgtxt = 'damage';
+        }
+        digtxt = 'chew a hole in the wall.';
+        if (game.level?.flags?.is_maze_lev) {
+            lev.typ = ROOM;
+        } else if (game.level?.flags?.is_cavernous_lev && !in_town(x, y)) {
+            lev.typ = CORR;
+        } else {
+            lev.typ = DOOR;
+            lev.doormask = D_NODOOR;
+        }
+    } else if (IS_TREE(lev.typ)) {
+        digtxt = 'chew through the tree.';
+        lev.typ = ROOM;
+    } else if (lev.typ === IRONBARS) {
+        if (metallivorous_hero_chew()) {
+            const nut = base_oc_weight({ otyp: HEAVY_IRON_BALL });
+            u.uhunger = (u.uhunger | 0) + nut; /* C: morehungry(-nut) */
+        }
+        digtxt = (u.ux === x && u.uy === y)
+            ? 'devour the iron bars.' : 'eat through the bars.';
+        const { dissolve_bars } = await import('./monmove.js');
+        await dissolve_bars(x, y);
+    } else if (lev.typ === SDOOR) {
+        if ((lev.doormask | 0) & D_TRAPPED) {
+            lev.doormask = D_NODOOR;
+            const { b_trapped } = await import('./cmd.js');
+            await b_trapped('secret door', false); /* NO_PART */
+        } else {
+            digtxt = 'chew through the secret door.';
+            lev.doormask = D_BROKEN;
+        }
+        lev.typ = DOOR;
+    } else if (IS_DOOR(lev.typ)) {
+        if ((await in_rooms_(x, y, SHOPBASE)).length > 0) {
+            const { add_damage } = await import('./shk.js');
+            await add_damage(x, y, SHOP_DOOR_COST);
+            dmgtxt = 'break';
+        }
+        if ((lev.doormask | 0) & D_TRAPPED) {
+            lev.doormask = D_NODOOR;
+            const { b_trapped } = await import('./cmd.js');
+            await b_trapped('door', false); /* NO_PART */
+        } else {
+            digtxt = 'chew through the door.';
+            lev.doormask = D_BROKEN;
+        }
+    } else { /* STONE or SCORR */
+        digtxt = 'chew a passage through the rock.';
+        lev.typ = CORR;
+    }
+
+    recalc_block_point(x, y); /* vision */
+    newsym(x, y);
+    if (digtxt) await pline(`You ${digtxt}`); /* after newsym */
+    if (dmgtxt) {
+        const { pay_for_damage } = await import('./shk.js');
+        await pay_for_damage(dmgtxt, false);
+    }
+    zero_digging();
+    return false;
+}
+
 // C ref: detect.c cvt_sdoor_to_door(lev) — a secret door, once exposed, becomes
 // an ordinary (closed) door.  WM_MASK (rm.h) is the low wall-mode bits stored in
 // doormask for an SDOOR; strip them, then mark the newly revealed door closed
@@ -69,11 +239,6 @@ function sobj_at_boulder(x, y) {
     return false;
 }
 
-async function You_hear(msg) {
-    const { update_topl } = await import('./display.js');
-    await update_topl(msg);
-}
-
 // C ref: hack.h Hallucination — the timer lives under three different names in
 // this port depending on which file wrote it (see cmd.js Hallucination()).
 function Hallucination() {
@@ -95,23 +260,23 @@ async function draft_message(unexpected) {
     const u = game.u || {};
     if (unexpected) {
         if (!Hallucination()) {
-            await You_hear('You feel an unexpected draft.');
+            await You_feel('an unexpected draft.');
         } else {
             const { acurr_eff } = await import('./attrib.js');
             const weak = (acurr_eff(A_STR) < 6 || acurr_eff(A_DEX) < 6
                           || acurr_eff(A_CON) < 6 || acurr_eff(A_CHA) < 6
                           || acurr_eff(A_INT) < 6 || acurr_eff(A_WIS) < 6);
-            await You_hear(`You feel like you are ${weak ? '4-F' : '1-A'}.`);
+            await You_feel(`like you are ${weak ? '4-F' : '1-A'}.`);
         }
     } else {
         if (!Hallucination()) {
-            await You_hear('You feel a draft.');
+            await You_feel('a draft.');
         } else {
             const atyp = u.ualign?.type ?? 0;
             let dridx = rn1(2, 1 - sgn(atyp));
             if ((u.ualign?.record ?? 0) < STRIDENT)
                 dridx += rn1(3, sgn(atyp) - 1);
-            await You_hear(`You feel like ${DRAFT_REACTION[dridx]}.`);
+            await You_feel(`like ${DRAFT_REACTION[dridx]}.`);
         }
     }
 }
@@ -200,9 +365,8 @@ export async function mdig_tunnel(mtmp) {
             // C ref: dig.c:1442 — draft feedback.  flags.verbose is on; the
             // rn2(3) is drawn whenever the hero is not Unaware.
             const verbose = game.flags?.verbose !== false;
-            const Unaware = !!game.u?.Unaware;
             if (verbose) {
-                if (!Unaware && !rn2(3))
+                if (!Unaware() && !rn2(3))
                     await draft_message(true);
             }
         }
@@ -227,13 +391,9 @@ export async function mdig_tunnel(mtmp) {
 
     if (IS_WALL(here.typ)) {
         // C ref: dig.c:1466 — "crashing rock" chance.  The rn2(5) is a REAL
-        // draw whenever flags.verbose; the You_hear text is post-draw and only
-        // reaches the hero when not Deaf.
+        // draw whenever flags.verbose; You_hear() owns the Deaf gate.
         const verbose = game.flags?.verbose !== false;
-        const Deaf = !!game.u?.Deaf;
-        if (verbose && !rn2(5)) {
-            if (!Deaf) await You_hear('You hear crashing rock.');
-        }
+        if (verbose && !rn2(5)) await You_hear('crashing rock.');
         const flags = game.level?.flags || {};
         if (flags.is_maze_lev) {
             here.typ = ROOM; here.flags = 0;
@@ -307,11 +467,15 @@ export async function zap_dig() {
                 _invent.stackobj(otmp);
             }
             newsym(u.ux, u.uy);
+        } else {
+            // C ref: dig.c:1605 — zapping straight down (not up, not off
+            // stairs): watch_dig() first (the Mine-Town watch reacts to the
+            // vandalism), then dighole(FALSE, TRUE, null) digs the actual
+            // pit/hole beneath the hero.  by_magic=TRUE lets magical digging
+            // disarm (rather than trigger) a landmine/bear trap it lands on.
+            await watch_dig(null, u.ux, u.uy, true);
+            await dighole(false, true, null);
         }
-        // NOT PORTED: the else arm, watch_dig() + dighole(FALSE, TRUE, 0) —
-        // digging a pit/hole straight down.  dighole/digactualhole (and the
-        // level change that follows a hole) are a separate unported subsystem,
-        // so a downward zap off the stairs still consumes no RNG here.
         return;
     }
 
@@ -521,17 +685,20 @@ export async function use_pick_axe(obj) {
     if (!dir)
         return 1;                        // ECMD_CANCEL
 
-    // use_pick_axe2() reports a mismatched tool before attempting an occupation.
-    if (!u.uswallow && dir.dz === 0 && (dir.dx || dir.dy)) {
-        const rx = u.ux + dir.dx, ry = u.uy + dir.dy;
-        if (dig_typ(obj, rx, ry) === DIGTYP_UNDIGGABLE) {
-            const typ = game.level?.at(rx, ry)?.typ;
-            if (IS_TREE(typ)) await pline('You need an axe to cut down a tree.');
-            else if (IS_OBSTRUCTED(typ)) await pline('You need a pick to dig rock.');
-        }
-    }
-
-    // The actual terrain change and multi-turn occupation remain unported.
+    // C ref: dig.c:1155 `return use_pick_axe2(obj);` — getdir() reports its
+    // answer as a return value, not a global side effect (see js/cmd.js
+    // getdir_confdir() + every other caller's own u.dx/u.dy/u.dz assignment,
+    // e.g. extcmd-handlers.js:1038, zap.js:2600-2601); use_pick_axe2() reads
+    // u.dx/u.dy/u.dz directly, exactly like C's version reads the globals
+    // getdir() itself wrote.
+    u.dx = dir.dx | 0;
+    u.dy = dir.dy | 0;
+    u.dz = dir.dz | 0;
+    // use_pick_axe2() always returns ECMD_TIME (dig.c:1162-1358 has no other
+    // exit path); apply.js's dispatch already maps this sentinel to its OWN
+    // ECMD_TIME numbering (apply.js: `if (r === USE_PICK_AXE_DIG) return
+    // ECMD_TIME;`), so there is nothing left to translate here.
+    await use_pick_axe2(obj);
     return USE_PICK_AXE_DIG;
 }
 
@@ -802,9 +969,9 @@ function trapname_(ttyp) { return TRAPNAME_BY_TTYP[ttyp] || 'trap'; }
 function mflags1_(ptr) { return mflags1_of(ptr); }
 function is_flyer_(ptr) { return (mflags1_of(ptr) & M1_FLY) !== 0; }
 /* C ref: mondata.h:20 is_floater / :31 noncorporeal — mlet tests, not flags.
-   monsym.h S_EYE == 5, S_LIGHT == 25, S_GHOST == 26; the port stores the class
+   defsym.h S_EYE == 5, S_LIGHT == 25, S_GHOST == 54; the port stores the class
    on ptr.mcls (cf. js/dbridge.js:920). */
-const S_EYE = 5, S_LIGHT = 25, S_GHOST = 26;
+const S_EYE = 5, S_LIGHT = 25, S_GHOST = 54;
 function is_floater_(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIGHT; }
 function noncorporeal_(ptr) { return ptr?.mcls === S_GHOST; }
 function passes_walls_(ptr) { return (mflags1_of(ptr) & M1_WALLWALK) !== 0; }
@@ -918,11 +1085,23 @@ function teleport_pet(mtmp, force_it) {
     }
     return true;
 }
-// C ref: dungeon.c get_level(newlevel, levnum) / ledger_no(lev) /
-// mon.c migrate_to_level(mtmp, tolev, xyloc, cc).  NOT PORTED.
+// C ref: dungeon.c get_level(newlevel, levnum) / ledger_no(lev).
 function get_level(dst, levnum) { dst.dnum = game.u?.uz?.dnum ?? 0; dst.dlevel = levnum; }
-function ledger_no(lev) { return lev?.dlevel ?? 0; }
-function migrate_to_level(_mtmp, _tolev, _xyloc, _cc) { /* NOT PORTED */ }
+// C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
+// js/dog.js:530 and js/save.js:287 keep the same private copy for the same
+// import-order reason; this one used to drop the +ledger_start term.
+function ledger_no(lev) {
+    return (lev?.dlevel | 0) + (game.dungeons?.[lev?.dnum ?? 0]?.ledger_start | 0);
+}
+const MIGR_RANDOM = 0; // include/dungeon.h MIGR_RANDOM (js/const.js:894)
+// C ref: dog.c:886 migrate_to_level(mtmp, tolev, xyloc, cc) — js/dog.js has
+// the faithful port (mon_leave() worm/shk/container bookkeeping plus the
+// migrating_mons chain do.js's goto_level() now drains); delegate instead of
+// keeping a second, inert copy.
+async function migrate_to_level(mtmp, tolev, xyloc, cc) {
+    const { migrate_to_level: real } = await import('./dog.js');
+    await real(mtmp, tolev, xyloc, cc);
+}
 // C ref: pray.c angry_priest() / desecrate_altar(highaltar, alignment).
 // js/pray.js has both, unexported.
 async function angry_priest() { /* NOT PORTED (js/pray.js:1300) */ }
@@ -949,13 +1128,26 @@ function xytodir_(dx, dy) {
         if (xdir[i] === dx && ydir[i] === dy) return i;
     return DIR_ERR;
 }
+// C ref: trap.c:7038 sokoban_guilt() — a luck penalty for cheating in Sokoban.
+// Both callers below (the direct DIGTYP_BOULDER branch and break_statue())
+// only run from the hero's own dig_check() occupation, so `by_you` (C's
+// `!svc.context.mon_moving` guard) is always true here.
+function sokoban_guilt_dig() {
+    if (!game.level?.flags?.sokoban_rules) return;
+    const u = game.u;
+    u.uconduct = u.uconduct || {};
+    u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
+    u.uluck = (u.uluck || 0) - 1;              // C: change_luck(-1), clamped
+    if (u.uluck < -10) u.uluck = -10;
+}
 // C ref: zap.c fracture_rock(obj):5537 / break_statue(obj):5582.  js/explode.js
 // has private copies with an extra `weight` argument; these are the C shape.
 // The rn1(60, 7) is the only draw and it happens whether or not the object is
 // on the floor.
 async function fracture_rock(obj) {
     if (!obj) return;
-    /* NOT PORTED: the shop-billing head (billable/breakobj) and sokoban_guilt() */
+    /* NOT PORTED: the shop-billing head (billable/breakobj) */
+    if (obj.otyp === BOULDER) sokoban_guilt_dig();
     const { weight, GEM_CLASS, ROCK: ROCK_OTYP, dealloc_oextra, place_object }
         = await import('./mkobj.js');
     const { obj_extract_self } = await import('./invent.js');
@@ -1266,7 +1458,7 @@ export async function dig() {
         case 0:
             if (!welded(uwep)) {
                 await pline(`You fumble and drop ${yname(uwep)}.`);
-                dropx(uwep);
+                await dropx(uwep);
             } else {
                 /* C: Yobjnam2(uwep, "bounce") — "Your pick-axe bounces" */
                 if (u.usteed) {
@@ -1787,7 +1979,7 @@ export async function digactualhole(x, y, madeby, ttyp) {
                         const { make_angry_shk } = await import('./shk.js');
                         await make_angry_shk(mtmp, 0, 0);
                     }
-                    migrate_to_level(mtmp, ledger_no(tolevel), 'MIGR_RANDOM', null);
+                    await migrate_to_level(mtmp, ledger_no(tolevel), MIGR_RANDOM, null);
                 }
             }
         }
@@ -2118,7 +2310,8 @@ export async function use_pick_axe2(obj) {
                 await pline('Splash!');
             } else if (lev.typ === LAVAWALL) {
                 await pline('Splash!');
-                /* NOT PORTED: burn.c fire_damage(uwep, FALSE, rx, ry) */
+                const { fire_damage } = await import('./trap.js');
+                await fire_damage(obj, false, rx, ry);
             } else if (IS_TREE(lev.typ)) {
                 await pline('You need an axe to cut down a tree.');
             } else if (IS_OBSTRUCTED(lev.typ)) {
@@ -2189,6 +2382,12 @@ export async function use_pick_axe2(obj) {
             }
             const { set_occupation } = await import('./cmd.js');
             set_occupation(dig, verbing, 0);
+            // C ref: allmain.c moveloop_core():485 `(*go.occupation)()`.  This
+            // port drives each occupation via its own module-level flag (see
+            // allmain.js's _eat_occupation/_engrave_occupation arms); dig() was
+            // fully ported but nothing ever set the flag that runs it, so a
+            // multi-turn dig never advanced past the first "You start digging."
+            game._dig_occupation = true;
         }
     } else if (Is_airlevel(u.uz) || Is_waterlevel(u.uz)) {
         /* it must be air -- water checked above */
@@ -2233,6 +2432,7 @@ export async function use_pick_axe2(obj) {
         game.did_dig_msg = false;
         const { set_occupation } = await import('./cmd.js');
         set_occupation(dig, verbing, 0);
+        game._dig_occupation = true;
     }
     return ECMD_TIME;
 }
@@ -2484,8 +2684,6 @@ export async function buried_ball_to_freedom() {
 // C ref: ball.c punish(sobj) — js/read.js:757 and js/pray.js:448 both keep a
 // private copy; neither is importable and neither takes an unearthed ball.
 async function punish_(_ball) { /* NOT PORTED */ }
-// C ref: ball.c unpunish() — js/read.js:1323, private.
-async function unpunish_() { /* NOT PORTED */ }
 
 // C ref: dig.c:1983 bury_an_obj(otmp, dealloced) — move one object from the
 // floor pile to the buried list, keeping its coordinates.  Returns the object
@@ -2499,8 +2697,9 @@ export async function bury_an_obj(otmp, dealloced) {
     const { obj_extract_self } = await import('./invent.js');
     const { obj_resists } = await import('./zap.js');
 
-    if (otmp === game.uball) {
-        await unpunish_();
+    if (otmp === game.u?.uball) {
+        const { unpunish } = await import('./read.js');
+        unpunish();
         set_utrap(rn1(50, 20), TT_BURIEDBALL);
         await pline('The iron ball gets buried!');
     }

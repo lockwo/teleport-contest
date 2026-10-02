@@ -15,7 +15,8 @@
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
-import { dist2 } from './hacklib.js';
+import { dist2, s_suffix } from './hacklib.js';
+import { can_carry } from './mon.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
     AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
 import { PLNMSG_MON_TAKES_OFF_ITEM } from './const.js';
@@ -34,7 +35,7 @@ import {
 // neighbourhood, not S_NYMPH: the test silently never fired.)
 const S_NYMPH_MCLS = 14;
 // C ref: obj.h how_lost values.
-const LOST_NONE = 0, LOST_STOLEN = 2;
+const LOST_NONE = 0, LOST_STOLEN = 3;
 
 // C ref: mon.c monnear(mon, x, y) — is the monster close enough to attack?
 // (The NODIAG grid-bug refinement doesn't matter for a thief.)
@@ -111,7 +112,9 @@ export function mpickobj(mtmp, otmp) {
         if (otmp.how_lost === LOST_THROWN) otmp.how_lost = LOST_STOLEN;
         else if (otmp.how_lost === LOST_DROPPED) otmp.how_lost = LOST_NONE;
     }
-    // add_to_minv(): merge with an identical stack already carried, else append.
+    // add_to_minv(): merge with an identical stack already carried, else
+    // PREPEND (mkobj.c:2648 `obj->nobj = mon->minvent; mon->minvent = obj;`)
+    // so mon.minvent stays newest-first, matching every other producer.
     mtmp.minvent = mtmp.minvent || [];
     for (const o of mtmp.minvent) {
         if (mergable(o, otmp)) {
@@ -121,7 +124,7 @@ export function mpickobj(mtmp, otmp) {
     }
     otmp.where = 'minvent';
     otmp.ocarry = mtmp;
-    mtmp.minvent.push(otmp);
+    mtmp.minvent.unshift(otmp);
     return 0;
 }
 // C ref: obj.h how_lost values used by mpickobj's autopickup bookkeeping.
@@ -336,9 +339,19 @@ export async function steal(mtmp, objnambuf) {
         ++named;
     await update_topl(`${named ? 'She' : Monnambuf} stole ${doname_invent(otmp)}.`);
     await encumber_msg();
-    // could_petrify (a cockatrice corpse) needs a corpse in inventory.
+    const could_petrify = otmp.otyp === CORPSE
+        && await (async () => {
+            const { monster_by_pmidx } = await import('./makemon.js');
+            const ptr = monster_by_pmidx(otmp.corpsenm);
+            return ptr?.name === 'cockatrice' || ptr?.name === 'chickatrice';
+        })();
     otmp.how_lost = LOST_STOLEN;
     mpickobj(mtmp, otmp);
+    if (could_petrify && !((mtmp.misc_worn_check | 0) & W_ARMG)) {
+        const { minstapetrify } = await import('./trap.js');
+        await minstapetrify(mtmp, true);
+        return -1;
+    }
     return ((game.multi ?? 0) < 0) ? 0 : 1;
 }
 
@@ -375,9 +388,6 @@ function welded(obj) { return !!obj && obj === game.uwep && !!obj.cursed; }
 // the animal-thief path, which no covered session exercises.
 function bimanual(_obj) { return false; }
 
-// C ref: mon.c can_carry(mtmp, otmp) — weight/loadstone/Amulet limits.  The
-// monkey path is the only caller; the covered sessions have no monkeys.
-function can_carry(_mtmp, _otmp) { return 1; }
 
 // ===========================================================================
 // steal.c: the remaining top-level functions, translated.  APPEND-ONLY —
@@ -397,7 +407,7 @@ import { cansee } from './vision.js';
 import { GOLD_PIECE, ROCK_CLASS, AMULET_OF_YENDOR,
          base_oc_cost, place_object } from './mkobj.js';
 import { mflags1_of, M1_SLITHY, can_teleport_flag } from './monflags_data.js';
-import { W_SADDLE } from './const.js';
+import { W_SADDLE, W_ARMG } from './const.js';
 
 // C ref: onames.h — the four "special interest" targets of an AD_SAMU theft,
 // resolved by NAME so an objects[] shift can't silently re-point them.
@@ -433,8 +443,6 @@ function money_cnt_st(list) {
 // C ref: worn.c setnotworn(obj) — js/invent.js:829 (private).  Clears the worn
 // mask; the slot-pointer half needs invent.js's uarm/uwep bookkeeping.
 function setnotworn_st(obj) { if (obj) obj.owornmask = 0; }
-// C ref: hacklib.c s_suffix(s) — js/zap.js:1712 (private).
-function s_suffix_st(s) { return /s$/.test(s || '') ? `${s}'` : `${s}'s`; }
 // C ref: artifact.c is_quest_artifact(obj) — js/invent.js:370 answers FALSE
 // unconditionally (no quest artifact reaches this port's play), and
 // any_quest_artifact() has no port at all.
@@ -477,7 +485,7 @@ export async function stealgold(mtmp) {
         const { mbodypart } = await import('./monmove.js');
         if (u.usteed) {
             who = u.usteed;
-            whose = s_suffix_st(y_monnam(who));
+            whose = s_suffix(y_monnam(who));
             what = makeplural(mbodypart(who, FOOT_ST));
         } else {
             who = game.youmonst;
@@ -727,7 +735,7 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
 
     if (obj === game.uball || obj === game.uchain || obj.oclass === ROCK_CLASS
         || obj_resists(obj, 100 - ochance, 100 - achance)
-        || !touch_artifact(obj, mon))
+        || !(await touch_artifact(obj, mon)))
         return;
 
     if (carried_st(obj)) {

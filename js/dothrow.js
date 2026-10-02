@@ -11,8 +11,10 @@
 // arm in this port, and js/apply.js is a separate write-lease, so it lives here
 // beside its caller.
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
-import { m_at, newsym, update_topl, glyph_at, map_invisible } from './display.js';
+import { m_at, newsym, update_topl, map_invisible,
+         canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
 import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT,
          LAVAPOOL, TT_PIT, P_DAGGER, A_DEX, A_CHA, NEED_HTH_WEAPON,
@@ -34,6 +36,7 @@ import { night, phase_of_the_moon, FULL_MOON } from './calendar.js';
 import { name_to_pmidx, monster_by_pmidx, makemon, set_malign,
          is_covetous } from './makemon.js';
 import * as I from './invent.js';
+import { ghitm } from './dokick.js';
 
 // C ref: hack.h ECMD_* result codes.
 const ECMD_OK = 0, ECMD_CANCEL = 1, ECMD_TIME = 3;
@@ -70,11 +73,9 @@ function Blind() { return !!(game.u?.uprops?.Blinded || game.u?.Blinded); }
 function breathless(ptr) { return (mflags1_of(ptr) & M1_BREATHLESS) !== 0; }
 function haseyes(ptr) { return (mflags1_of(ptr) & M1_NOEYES) === 0; }
 // C ref: objnam.c vtense(subj, verb) — `verb` arrives in the plural (no
-// trailing s) and is returned unchanged when `subj` reads as plural.  The
-// special_subjs[] false-match table and the " of "/" from "/" called " head-noun
-// scan are omitted: this port's only caller passes a body_part() noun, which
-// contains neither.
-function vtense(subj, verb) {
+// trailing s) and is returned unchanged when `subj` reads as plural.
+// Used for thrown body parts and for projectile miss messages.
+export function vtense(subj, verb) {
     if (subj) {
         const s = String(subj);
         if (!/^an? /i.test(s)) {
@@ -111,7 +112,7 @@ function Doname2(obj) {
     const d = I.doname_invent(obj);
     return d.charAt(0).toUpperCase() + d.slice(1);
 }
-// C ref: objnam.c an(s) / the(s) / s_suffix(s).
+// C ref: objnam.c an(s) / the(s).
 function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
 function the_str(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
 // C ref: objnam.c Tobjnam(obj, verb) — "The food ration stops".
@@ -640,10 +641,8 @@ export async function tamedog(mtmp, obj, givemsg) {
             const MH = await import('./mhitu.js');
             await MH.expels(mtmp, mtmp.data, true);
         } else if (!(Upolyd() && sticks(I.youmonst_data_pub()))) {
-            /* C ref: mon.c unstuck(mtmp) */
-            u.ustuck = null;
-            u.uswallow = 0;
-            U.unstuck_mspec_used(mtmp);
+            const { unstuck } = await import('./mon.js');
+            await unstuck(mtmp);
         }
     }
 
@@ -661,7 +660,7 @@ export async function tamedog(mtmp, obj, givemsg) {
                     && (mtmp.edog?.hungrytime ?? Infinity) <= (game.moves || 0)))
             && mtmp.edog) {
             /* pet will "catch" and eat this thrown food */
-            if (U.canseemon(mtmp)) {
+            if (canseemon_shared(mtmp)) {
                 const csz = monster_by_pmidx(obj.corpsenm)?.msize;
                 const big_corpse = obj.otyp === CORPSE && csz != null
                     && csz > (monster_by_pmidx(mtmp.data?.pmidx)?.msize ?? 0);
@@ -771,7 +770,7 @@ export async function throw_gold(obj) {
         if (!isok(odx, ody) || !zap_pos(typ_at(odx, ody)) || closed_door(odx, ody)) {
             /* bhitpos stays on the hero */
         } else {
-            const land = I.bhit_thrown_landing(u.dx, u.dy, range);
+            const land = I.bhit_thrown_landing(u.dx, u.dy, range, obj);
             bx = land.x; by = land.y;
             if (land.mon && (await ghitm(land.mon, obj))) return ECMD_TIME;
         }
@@ -779,24 +778,9 @@ export async function throw_gold(obj) {
 
     if (u.dz > 0) await update_topl(`The gold hits the ${surface(bx, by)}.`);
     place_object(obj, bx, by);
-    obj.where = 3 /* OBJ_FLOOR */;
     I.stackobj(obj);
     newsym(bx, by);
     return ECMD_TIME;
-}
-
-// C ref: steal.c ghitm(mtmp, gold) — a monster reacts to gold thrown at it.
-// Returns TRUE when the monster keeps it.  The bribe/leprechaun/soldier arms
-// need the gold-lover and bribe subsystems, which this port does not have; the
-// wake-and-pick-up behaviour common to every arm is what runs.
-async function ghitm(mtmp, gold) {
-    const U = await import('./uhitm.js');
-    mtmp.msleeping = 0;
-    if (!mtmp.mcanmove) return false;
-    await U.wakeupAttack(mtmp, false);
-    const { mpickobj } = await import('./steal.js');
-    mpickobj(mtmp, gold);
-    return true;
 }
 
 // ── use_whip (C ref: apply.c:2955) ───────────────────────────────────────────
@@ -863,6 +847,10 @@ export async function use_whip(obj, getDir) {
 
     } else if (!u.dz && (IS_WATERWALL(rtyp) || rtyp === LAVAWALL)) {
         await update_topl('You cause a small splash.');
+        if (rtyp === LAVAWALL) {
+            const { fire_damage } = await import('./trap.js');
+            await fire_damage(obj, false, rx, ry);
+        }
         return ECMD_TIME;
 
     } else if ((!u.dx && !u.dy) || (u.dz > 0)) {
@@ -874,6 +862,10 @@ export async function use_whip(obj, getDir) {
         if (is_pool_or_lava_at(u.ux, u.uy) || IS_WATERWALL(rtyp)
             || rtyp === LAVAWALL) {
             await update_topl('You cause a small splash.');
+            if (is_lava_at(u.ux, u.uy)) {
+                const { fire_damage } = await import('./trap.js');
+                await fire_damage(obj, false, u.ux, u.uy);
+            }
             return ECMD_TIME;
         }
         if (Levitation || u.usteed || Flying) {
@@ -899,7 +891,7 @@ export async function use_whip(obj, getDir) {
 
     } else if ((Fumbling() || Glib()) && !rn2(5)) {
         await update_topl(`The bullwhip slips out of your ${I.body_part(HAND)}.`);
-        I.dropx(obj);
+        await I.dropx(obj);
 
     } else if (u.utrap && u.utraptype === TT_PIT) {
         /* trying to whip your way out of a pit */
@@ -974,7 +966,7 @@ async function whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap) {
                 break;
             default: /* to floor beneath mon */
                 await update_topl(`You yank ${the_str(I.cxname_singular(otmp))} from ${
-                    I.s_suffix(U.mon_nam(mtmp))} ${await mon_hand_noun(mtmp, otmp)}!`);
+                    s_suffix(U.mon_nam(mtmp))} ${await mon_hand_noun(mtmp, otmp)}!`);
                 place_object(otmp, mtmp.mx, mtmp.my);
                 otmp.where = 3 /* OBJ_FLOOR */;
                 I.stackobj(otmp);
@@ -1343,7 +1335,7 @@ export async function hurtle_step(arg, x, y) {
     if (mon) {
         /* C's two extra exceptions (hides_under, S_EEL) sit inside `#if 0` and
            are not compiled: any monster here stops the flight. */
-        const glyph = glyph_at(x, y);
+        const known_monster = !!game.level?.at(x, y)?.disp_monster;
         const U = await import('./uhitm.js');
 
         mon.mundetected = 0; /* wakeup() will handle mimic */
@@ -1352,7 +1344,7 @@ export async function hurtle_step(arg, x, y) {
         const mnam = U.x_monnam(mon, ARTICLE_A_, null,
             ((mon.mgivenname || mon.mextra?.mgivenname) ? SUPPRESS_SADDLE_ : 0)
             | AUGMENT_IT_, false);
-        if (!glyph_is_monster_hurtle(glyph) && !U.glyph_is_invisible(x, y))
+        if (!known_monster && !U.glyph_is_invisible(x, y))
             await update_topl(`You find ${mnam} by bumping into ${
                 noit_mhim_hurtle(mon)}.`);
         else
@@ -1791,8 +1783,12 @@ function wake_nearto_hurtle(x, y, distance) {
 }
 // C ref: trap.c instapetrify(str) — js/invent.js:1396 is an empty stub too.
 async function instapetrify_hurtle(_why) { /* NOT PORTED (js/invent.js:1396) */ }
-// C ref: mon.c minstapetrify(mon, byplayer) — no port anywhere in js/.
-async function minstapetrify_hurtle(_mon, _byplayer) { /* NOT PORTED */ }
+// C ref: mon.c minstapetrify(mon, byplayer) — a monster is instantly
+// petrified; ported at js/trap.js.
+async function minstapetrify_hurtle(mon, byplayer) {
+    const { minstapetrify } = await import('./trap.js');
+    await minstapetrify(mon, byplayer);
+}
 // C ref: hack.c switch_terrain() — js/dig.js:870 is an empty stub because the
 // port has no B<prop> masks (see js/polyself.js float_vs_flight()).
 function switch_terrain_hurtle() { /* NOT PORTED (js/dig.js:870) */ }
@@ -1826,9 +1822,6 @@ async function tmp_at_hurtle(x, y) {
 }
 // C ref: display.c obj_to_glyph(obj, rng) — js/invent.js:1397 also returns 0.
 function obj_to_glyph_hurtle(_obj) { return 0; }
-// C ref: display.h glyph_is_monster(glyph) — the port's glyph_at() returns a
-// char/objectless value, so this cannot be decided from the glyph alone.
-function glyph_is_monster_hurtle(_glyph) { return false; }
 // C ref: do_name.c noit_mhim(mon) — "him"/"her"/"it", with "it" suppressed for
 // a named or seen monster.
 function noit_mhim_hurtle(mon) { return mon?.female ? 'her' : 'him'; }

@@ -7,6 +7,7 @@
 
 import { game } from './gstate.js';
 import { Blind } from './vision.js';
+import { read_engr_at } from './engrave.js';
 import { rn2, rnd, d } from './rng.js';
 import { pline, bot, m_at, newsym, flush_screen, y_n, update_topl } from './display.js';
 import {
@@ -34,7 +35,7 @@ import {
     obj_extract_self, obfree, makeknown, ynq, newsym_force, encumber_msg,
     stackobj, touch_artifact, trycall, useup, useupf, hold_another_object,
     remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool,
-    W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN,
+    W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN, dropy,
 } from './invent.js';
 import { monster_by_pmidx } from './makemon.js';
 import { mflags1_of, mflags2_of, M1_NOTAKE, M1_NOHANDS, M1_NOLIMBS,
@@ -58,20 +59,21 @@ const slightloadpfx = 'You have a little trouble',
 
 /* hack.h query_objlist() flags */
 export const BY_NEXTHERE = 0x01;
-export const AUTOSELECT_SINGLE = 0x02;
-export const USE_INVLET = 0x04;
-export const INVORDER_SORT = 0x08;
-export const SIGNAL_NOMENU = 0x10;
-export const SIGNAL_ESCAPE = 0x20;
-export const FEEL_COCKATRICE = 0x40;
-export const INCLUDE_HERO = 0x80;
-export const INCLUDE_VENOM = 0x100;
+export const INCLUDE_VENOM = 0x02;
+export const AUTOSELECT_SINGLE = 0x04;
+export const USE_INVLET = 0x08;
+export const INVORDER_SORT = 0x10;
+export const SIGNAL_NOMENU = 0x20;
+export const SIGNAL_ESCAPE = 0x40;
+export const FEEL_COCKATRICE = 0x80;
+export const INCLUDE_HERO = 0x100;
 
-/* hack.h query_category() flags */
-export const ALL_TYPES = 0x01;
+/* hack.h query_category() flags (BY_NEXTHERE/INCLUDE_VENOM's 0x01/0x02 are
+   deliberately skipped -- C combines both flag spaces into one qflags int). */
+export const ALL_TYPES = 0x20;
 export const ALL_TYPES_SELECTED = -2;
-export const UNPAID_TYPES = 0x10;
-export const WORN_TYPES = 0x20;
+export const UNPAID_TYPES = 0x04;
+export const WORN_TYPES = 0x10;
 export const BILLED_TYPES = 0x40;
 export const CHOOSE_ALL = 0x80;
 export const BUC_BLESSED_F = 0x100;
@@ -526,7 +528,8 @@ export async function rider_corpse_revival(obj, remotely) {
     if (!obj || obj.otyp !== CORPSE || !is_rider_pm(obj.corpsenm)) return false;
     await pline(`At your ${remotely ? 'attempted acquisition' : 'touch'}, `
                 + 'the corpse suddenly moves...');
-    /* revive_corpse() is timeout.c and is not ported. */
+    const { revive_corpse } = await import('./do.js');
+    await revive_corpse(obj);
     const { exercise } = await import('./attrib.js');
     exercise(3 /* A_WIS */, false);
     return true;
@@ -579,10 +582,6 @@ export async function check_here(picked_some) {
     } else {
         await read_engr_at(u.ux, u.uy);
     }
-}
-async function read_engr_at(x, y) {
-    const inv = await import('./invent.js');
-    if (typeof inv.read_engr_at === 'function') await inv.read_engr_at(x, y);
 }
 
 /* pickup.c:460 n_or_more() */
@@ -1628,7 +1627,7 @@ function dropx(obj) {
 export async function loot_mon(mtmp, passed_info, prev_loot) {
     let timepassed = 0;
     const u = ustate();
-    const W_SADDLE = 0x00008000;
+    const W_SADDLE = 0x00100000; /* prop.h W_SADDLE */
     const otmp = (mtmp && mtmp !== u.usteed)
         ? (mtmp.minvent || []).find((o) => (o.owornmask || 0) & W_SADDLE)
         : null;
@@ -1741,7 +1740,7 @@ export async function observe_quantum_cat(box, makecat, givemsg) {
         if (makecat) {
             const mk = await import('./makemon.js');
             const PM_HOUSECAT = pmidx_by_name('housecat');
-            const NO_MINVENT = 0x01, MM_ADJACENTOK = 0x800, MM_NOMSG = 0x8000;
+            const NO_MINVENT = 0x01, MM_ADJACENTOK = 0x10, MM_NOMSG = 0x20000;
             livecat = mk.makemon(monster_by_pmidx(PM_HOUSECAT), box.ox, box.oy,
                                  NO_MINVENT | MM_ADJACENTOK | MM_NOMSG);
         }
@@ -2114,15 +2113,22 @@ export async function tipcontainer(box, targetbox = null) {
             }
             add_to_container(targetbox, otmp);
         } else {
-            /* hitfloor()/doaltarobj() (do.c) are not ported; a plain drop is
-               what the ordinary floor case does. */
-            if (!terse)
+            // C ref: pickup.c tipcontainer():3811 — the altar branch calls
+            // doaltarobj() itself (revealing BUC) and skips the generic drop
+            // message; either way it then falls through to dropy() for the
+            // real floor placement, so this must NOT also go through
+            // js/invent.js's dropx() (which would run the altar check again).
+            if (altarizing) {
+                const DOm = await import('./do.js');
+                await DOm.doaltarobj(otmp);
+            } else if (!terse) {
                 await pline(`${upstart(doname(otmp))} ${otense(otmp, 'drop')}`
                             + ' to the floor.');
-            else
+            } else {
                 await pline(`${doname(otmp)}${nobj ? ',' : '.'}`);
+            }
             otmp.how_lost = LOST_DROPPED;
-            dropx(otmp);
+            await dropy(otmp);
         }
     }
     if (loss)

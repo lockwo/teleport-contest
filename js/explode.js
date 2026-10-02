@@ -15,7 +15,9 @@ import {
     EXPL_NOXIOUS, EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY,
     MAY_HITMON, MAY_HITYOU, MAY_DESTROY, MAY_FRACTURE,
     N_DIRS, xdir, ydir,
+    DIED, BURNING, PLNMSG_CAUGHT_IN_EXPLOSION, PLNMSG_TOWER_OF_FLAME,
 } from './const.js';
+import { iflags } from './pline.js';
 import {
     AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_DRST,
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
@@ -24,6 +26,7 @@ import {
 import { m_at, newsym, update_topl, map_invisible } from './display.js';
 import { cansee, couldsee } from './vision.js';
 import { is_undead_flag, is_demon_flag } from './monflags_data.js';
+import { has_innate } from './exper.js';
 
 // C ref: hack.h:1471 PHYS_EXPL_TYPE; objclass.h:154-156 BURNING_OIL /
 // MON_EXPLODE / TRAP_EXPLODE are MAXOCLASSES+1..+3 and MAXOCLASSES is 18
@@ -63,7 +66,12 @@ function Antimagic() { return uprop('Antimagic', 'HAntimagic', 'EAntimagic') || 
 function Fire_resistance() { return uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance'); }
 function Cold_resistance() { return uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance'); }
 function Shock_resistance() { return uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance'); }
-function Poison_resistance() { return uprop('Poison_resistance', 'HPoison_resistance', 'EPoison_resistance'); }
+// A race-innate grant (e.g. every orc, from level 1) is never persisted as a
+// stored flag anywhere in js/ — OR in the pure has_innate() derivation.
+function Poison_resistance() {
+    return uprop('Poison_resistance', 'HPoison_resistance', 'EPoison_resistance')
+        || has_innate('HPoison_resistance');
+}
 function Acid_resistance() { return uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance'); }
 function Disint_resistance() { return uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance'); }
 function Invulnerable() { return uprop('Invulnerable') || !!game.u?.uinvulnerable; }
@@ -159,7 +167,7 @@ async function engulfer_explosion_msg(adtyp, olet) {
     const eng = game.u?.ustuck;
     const p = mdata(eng);
     // C ref: mondata.h digests(ptr) — AT_ENGL attack.
-    const digest = (p?.mattk || []).some((a) => a && a[0] === 12 /* AT_ENGL */);
+    const digest = (p?.mattk || []).some((a) => a && a[0] === 11 /* AT_ENGL */);
     let adj;
     if (digest) {
         switch (adtyp) {
@@ -411,7 +419,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
                         await killed(mtmp, { nomsg: true, nocorpse: xkflg });
                     } else {
                         const { mon_kill_leaving } = await import('./monmove.js');
-                        mon_kill_leaving(mtmp, xkflg);
+                        await mon_kill_leaving(mtmp, xkflg);
                     }
                 } else if (!game.context?.mon_moving) {
                     await setmangry(mtmp, true);
@@ -421,11 +429,16 @@ export async function explode(x, y, type, dam, olet, expltype) {
 
     /* Do your injury last */
     if (uhurt) {
-        if (game.flags?.verbose !== false && (type < 0 || olet !== SCROLL_CLASS))
+        if (game.flags?.verbose !== false && (type < 0 || olet !== SCROLL_CLASS)) {
             await update_topl(`You are caught in the ${str}!`);
+            // C ref: explode.c:603 — the fatal line below reads this back to
+            // decide between "It is fatal." and "The <str> is fatal.".
+            iflags.last_msg = PLNMSG_CAUGHT_IN_EXPLOSION;
+        }
         if (Invulnerable()) {
             damu = 0;
             await update_topl('You are unharmed!');
+            iflags.last_msg = 0; /* PLNMSG_UNKNOWN — pline() clears it */
         } else if (adtyp === AD_PHYS || adtyp === AD_ACID) {
             damu = Maybe_Half_Phys(damu);
         }
@@ -446,8 +459,12 @@ export async function explode(x, y, type, dam, olet, expltype) {
         await monstseesu_ad(adtyp, uhurt !== 1);
 
         if ((u.uhp | 0) <= 0 || (Upolyd() && (u.mh | 0) <= 0)) {
-            if (!Upolyd()) {
-                u.uhp = 0;
+            if (Upolyd()) {
+                // C ref: explode.c:642 — a polymorphed hero whose mh runs out
+                // reverts instead of dying.
+                const { rehumanize } = await import('./polyself.js');
+                await rehumanize();
+            } else {
                 // C ref: explode.c:640-668 — the killer string depends on who
                 // set off the blast.  KILLED_BY_AN is 0 (hack.h:602); the old
                 // port wrote 2 (NO_KILLER_PREFIX) here and dropped "Killed by".
@@ -464,7 +481,27 @@ export async function explode(x, y, type, dam, olet, expltype) {
                     const an = (/^tower of flame$/i.test(str) || /^fireball$/i.test(str));
                     game.killer = { name: str, format: an ? 0 : 1 };
                 }
-                await update_topl(`The ${str} is fatal.`);
+                // C ref: explode.c:667-671 — when the blast's own "You are
+                // caught in the <str>!" was the last message printed, C appends
+                // the pronoun form to that same topline; otherwise it names the
+                // explosion again.  The port only ever emitted the second form,
+                // so a gas-spore death read "The gas spore's explosion is
+                // fatal." where C reads "...explosion!  It is fatal.".
+                if (iflags.last_msg === PLNMSG_CAUGHT_IN_EXPLOSION
+                    || iflags.last_msg === PLNMSG_TOWER_OF_FLAME)
+                    await update_topl('It is fatal.');
+                else
+                    await update_topl(`The ${str} is fatal.`);
+                // C ref: explode.c:674 `done((adtyp == AD_FIRE) ? BURNING
+                // : DIED)`.  The port stopped at the message and clamped uhp to
+                // 0, so the hero walked on with 0 HP and every later step
+                // diverged; the whole end-of-game sequence (the wizard-mode
+                // "Die?" query, the disclosure chain, "Save bones?") was never
+                // reached.  u.uhp keeps C's negative value: bot() has not run
+                // since the damage, so rows 22/23 still show the pre-blast
+                // snapshot until done() redraws them.
+                const { done } = await import('./end.js');
+                await done(adtyp === AD_FIRE ? BURNING : DIED);
             }
         }
         const { exercise } = await import('./attrib.js');
@@ -666,7 +703,7 @@ export async function explode_oil(obj, x, y) {
     if (!obj?.lamplit) return;
     // end_burn(obj, TRUE) — extinguish before the blast can kill the hero.
     obj.lamplit = 0;
-    obj.how_lost = 3 /* LOST_EXPLODING */;
+    obj.how_lost = 4 /* LOST_EXPLODING */;
     await splatter_burning_oil(x, y, diluted_oil);
 }
 
@@ -706,7 +743,7 @@ export async function mon_explodes(mon, mattk) {
     // and explmm() arrive with it alive.
     if (!DEADMONSTER(mon)) {
         const { mon_kill_leaving } = await import('./monmove.js');
-        mon_kill_leaving(mon, true);
+        await mon_kill_leaving(mon, true);
     }
 
     const { mon_pmname } = await import('./uhitm.js');

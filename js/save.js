@@ -19,6 +19,7 @@
 import { game } from './gstate.js';
 import { GameMap } from './game.js';
 import { monster_by_pmidx } from './makemon.js';
+import { forget_temple_entry } from './priest.js';
 import { NO_COLOR } from './terminal.js';
 import { y_n, pline } from './display.js';
 import { nhgetch } from './input.js';
@@ -238,7 +239,7 @@ async function exit_be_seeing_you() {
 // file, and NOTHING is stubbed — a silent no-op stub is exactly what would look
 // correct to whoever wires this up and then quietly drop a side effect.  The
 // list: dmonsfree/dealloc_monst/monsndx (mon.c), dealloc_trap (trap.c),
-// dealloc_fruit (mkobj.c), allunworn (worn.c), forget_temple_entry (priest.c),
+// dealloc_fruit (mkobj.c), allunworn (worn.c),
 // clear_level_structures (mklev.js, ported but module-private), save_timers
 // (timeout.c), save_dungeon (dungeon.c), save_oracles (oracles.c), savenames
 // (o_init.c), save_killers (end.c), save_worm (worm.c), save_engravings
@@ -601,7 +602,17 @@ export function savemonchn(mtmp_list, mode) {
                index on mon.data.pmidx, which is what monsndx() computes. */
             mtmp.mnum = mtmp.data?.pmidx ?? mtmp.mnum;
             if (mtmp.ispriest) {
-                /* UNPORTED: forget_temple_entry() (priest.c) — EPRI() */
+                // C ref: save.c:893-894 savemonchn() — `if (mtmp->ispriest)
+                // forget_temple_entry(mtmp);` right before savemon().  Resets
+                // intone_time/enter_time/peaceful_time/hostile_time to 0 so a
+                // revisit after leaving the level gives intemple() a fresh
+                // start, matching the C comment on forget_temple_entry()
+                // itself.  Previously unported: without this call, a priest's
+                // rate-limit timers survived every level departure, so a
+                // revisit computed `moves >= intone_time` against a stale
+                // multi-thousand-turn timestamp set on the FIRST visit and
+                // silently skipped intemple()'s whole message+roll block.
+                forget_temple_entry(mtmp);
             }
             recs.push(savemon(mtmp));
         }

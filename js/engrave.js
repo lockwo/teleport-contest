@@ -3,7 +3,7 @@
 //         rumors.c init_rumors(), getrumor(), get_rnd_line(), get_rnd_text();
 //         hacklib.c xcrypt().
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK,
          FINGERTIP, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY, GETOBJ_PROMPT,
@@ -17,11 +17,13 @@ import { WEAPON_CLASS, WAND_CLASS, GEM_CLASS, RING_CLASS,
          TOOL_CLASS, RANDOM_CLASS, ILLOBJ_CLASS, ARMOR_CLASS, AMULET_CLASS,
          FOOD_CLASS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS, COIN_CLASS,
          ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
-         objects } from './mkobj.js';
+         objects, next_ident } from './mkobj.js';
 import { mflags1_of, M1_ANIMAL } from './monflags_data.js';
+import { attacktype, AT_HUGS } from './monattk_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { A_WIS } from './const.js';
+import { Blind as isBlind } from './vision.js';
 
 // Heavy UI/inventory modules (display.js, invent.js, extcmd-handlers.js) are
 // loaded lazily inside doengrave() to avoid a module-init cycle: display.js
@@ -292,10 +294,10 @@ export function outrumor(truth, mechanism) {
     const reading = (mechanism === BY_COOKIE || mechanism === BY_PAPER);
     if (reading) {
         // is_fainted() && BY_COOKIE: too weak to read; no RNG, no message.
-        if (mechanism === BY_COOKIE && (game.u?.uhs ?? 0) >= 5 /*FAINTED*/)
+        if (mechanism === BY_COOKIE && (game.u?.uhs ?? 0) === 5 /*FAINTED*/)
             return '';
         // Blind: can't read it; no getrumor RNG.
-        if (game.u?.Blind)
+        if (isBlind())
             return '';
     }
     // get a rumor; exclude_cookie is FALSE when reading (cookie rumors allowed).
@@ -409,15 +411,13 @@ async function cant_reach_floor(x, y, up, check_pit, wand_engraving) {
     await pline(`${who} can't reach the ${where}.`);
 }
 
-// C ref: engrave.c can_reach_floor(check_pit) — the engulfed / airborne /
-// teetering-over-a-pit gate.  The AT_HUGS-grabber, riding-skill and
-// ceiling-hider clauses need mon/skill state this file cannot see, so only the
-// swallow, Levitation, Flying and pit clauses are modelled.
-// C ref: trap.c uteetering_at_seen_pit()/uescaped_shaft() for the last one.
+// C ref: engrave.c can_reach_floor(check_pit).
 export function can_reach_floor(check_pit) {
     const u = game.u;
     if (!u) return true;
-    if (u.uswallow) return false;
+    if (u.uswallow
+        || (u.ustuck && !(u.Upolyd && hooks.sticks(u.data))
+            && attacktype(u.ustuck.data, AT_HUGS))) return false;
     if (u.uprops?.Levitation) return false;
     if (u.uprops?.Flying) return true;
     if (check_pit) {
@@ -778,7 +778,7 @@ async function doengrave_sfx_item(de) {
         break;
     case WAND_CLASS: {
         const zap = await import('./zap.js');
-        if (zap.zappable(de.otmp)) {
+        if (await zap.zappable(de.otmp)) {
             if (de.otmp.cursed && !rn2(WAND_BACKFIRE_CHANCE)) {
                 await zap.wand_explode(de.otmp, 0);
                 de.ret = 1; // ECMD_TIME
@@ -1296,7 +1296,8 @@ export async function engrave_step() {
     const u = g.u;
     const ctx = g.context?.engraving;
     const { pline, newsym, update_topl } = await import('./display.js');
-    const { prinv_fmt, xname, hands_obj } = await import('./invent.js');
+    const { prinv_fmt, hands_obj, splitobj, obj_extract_self,
+            addinv } = await import('./invent.js');
     if (!ctx || !u) { g.context.engraving = null; return false; }
     if (ctx.pos.x !== u.ux || ctx.pos.y !== u.uy) { /* teleported? */
         await update_topl('You are unable to continue engraving.');
@@ -1337,13 +1338,23 @@ export async function engrave_step() {
     /* Step 3: the stylus wears out. */
     let truncate = false;
     if (dulling_wep) {
-        let dulled = false;
-        // The quan>1 splitobj() branch is not reached by any recorded session
-        // (a stack of blades), but its message belongs to the first action.
-        if (firsttime)
-            await update_topl((stylus.quan || 1) > 1
-                        ? `One of your ${xname(stylus)} gets dull.`
-                        : `Your ${xname(stylus)} gets dull.`);
+        let splitstack = false, dulled = false;
+        // C: a stack of blades peels ONE blade off to be the stylus, so only
+        // that blade's enchantment pays for the engraving.  yname()/Yname2()
+        // carry no count ("your orcish daggers", not "your 9 orcish daggers"),
+        // and the message is emitted BEFORE the split, off the whole stack.
+        if ((stylus.quan || 1) > 1) {
+            if (firsttime)
+                await update_topl(`One of ${await yname_of(stylus)} gets dull.`);
+            // C: splitobj() -> nextoid() -> next_ident() spends one rnd(2);
+            // this port's splitobj() draws nothing, so the call site pays it.
+            next_ident();
+            stylus = ctx.stylus = splitobj(stylus, 1);
+            stylus.owornmask = 0;   /* the split-off blade isn't wielded/quivered */
+            splitstack = true;
+        } else if (firsttime) {
+            await update_topl(`${await Yname2(stylus)} gets dull.`);
+        }
         // -1 enchantment per 2 characters, rounding down: deduct on the 1st,
         // 3rd, ... action unless this is the last character (but always on the
         // 1st, to prevent zero-cost engravings).  Truncation is checked BEFORE
@@ -1356,7 +1367,20 @@ export async function engrave_step() {
                 dulled = true;
             }
         }
-        if (dulled && stylus.known) {
+        if (splitstack) {
+            // C: obj_extract_self() + hold_another_object(stylus, "You drop one
+            // %s!", doname(stylus), NULL).  The blade's spe now differs from the
+            // stack's, so it cannot merge back and takes a NEW inventory letter.
+            // Weight is conserved by the split, so hold_another_object()'s
+            // encumbrance/overflow drop branch cannot fire here; its prinv() is
+            // routed through update_topl() because C's prinv() emits via pline()
+            // and so MERGES onto the "gets dull." topline (our prinv() would
+            // overwrite it).
+            obj_extract_self(stylus);
+            const oquan = stylus.quan;
+            stylus = ctx.stylus = addinv(stylus);
+            await update_topl(prinv_fmt(null, stylus, oquan));
+        } else if (dulled && stylus.known) {
             // prinv() -> pline(): the refreshed "b - a -1 dagger" line pages the
             // "gets dull" line above it with --More--.
             await update_topl(prinv_fmt(null, stylus, 1));
@@ -1479,16 +1503,6 @@ async function otense_of(obj, verb) {
     return otense(obj, verb);
 }
 
-// Status helpers.  Each reads the spelling the setter actually writes:
-// C ref: youprop.h Blind — the HBlinded timer plus worn eyewear.  potion.c
-// make_blinded() lands on game.u.blinded (js/potion.js set_blinded), NOT on
-// uprops.Blinded, so the old reading answered FALSE for a genuinely blind hero
-// and doengrave() printed "Your vision clears." right after blinding itself.
-// Same predicate as js/vision.js Blind().
-function isBlind() {
-    const u = game.u;
-    return !!u && ((u.blinded || 0) > 0 || !!game.ublindf);
-}
 function isConfused() { const u = game.u; return !!(u?.uprops?.Confusion || u?.uconf); }
 function isStunned() { const u = game.u; return !!(u?.uprops?.Stun || u?.ustun); }
 function isHallu() { const u = game.u; return !!(u?.uprops?.Hallucination || u?.uhallu); }

@@ -13,23 +13,25 @@
 // integers (game.u.uprops.Confusion, game.u.blinded, ...), so the loop below is
 // a table over those fields; C's array order only matters when two expire on
 // the same turn and both talk.
-//
-// Consumes NO RNG: none of the modelled expiry cases (CONFUSION / STUNNED /
-// BLINDED / WOUNDED_LEGS / HALLUC) draws.  The cases that DO draw — SICK's
-// rn2(100) recovery check, SLEEPY's rnd(20) fall_asleep, STONED/SLIMED's
-// done_timeout() death — need properties nothing in this port ever sets, so
-// they are deliberately absent rather than guessed at.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn2, rnd, d } from './rng.js';
 import { heal_legs } from './trap.js';
 import { exercise } from './attrib.js';
 import { A_CON } from './const.js';
 import { nomul, stop_occupation } from './hack.js';
-import { run_object_timers } from './mkobj.js';
-import { update_topl } from './display.js';
+import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer } from './mkobj.js';
+import { update_topl, see_monsters } from './display.js';
 import { Unaware } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
+import { t_at } from './trap.js';
+import { is_pool, is_ice } from './dbridge.js';
+import { surface } from './dungeon.js';
+import { encumber_msg, inv_weight, body_part, makeplural } from './invent.js';
+import { float_vs_flight } from './polyself.js';
+import { attacktype_fordmg, AT_ENGL, AD_DGST } from './monattk_data.js';
+import { mflags1_of, M1_FLY } from './monflags_data.js';
 
 // Imports used only by the timeout.c routines below the "rest of the file"
 // banner.  const.js arrives as a NAMESPACE import on purpose: several names
@@ -42,15 +44,16 @@ import { pline, impossible } from './display.js';
 import { rn1 } from './rng.js';
 
 const {
-    TIMEOUT, I_SPECIAL, COLNO, ROWNO, CLOUD, ACCESSIBLE,
+    TIMEOUT, FROMOUTSIDE, I_SPECIAL, COLNO, ROWNO, CLOUD, ACCESSIBLE,
     TIMER_NONE, TIMER_LEVEL, TIMER_GLOBAL, TIMER_OBJECT, TIMER_MONSTER,
     NUM_TIMER_KINDS, RANGE_GLOBAL,
     ROT_ORGANIC, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON, BURN_OBJECT, HATCH_EGG,
     FIG_TRANSFORM, SHRINK_GLOB,
-    MAX_EGG_HATCH_TIME, NON_PM, G_GENOD, G_EXTINCT, MV_KNOWS_EGG, M_AP_MONSTER,
+    NON_PM, G_GENOD, G_EXTINCT, MV_KNOWS_EGG, M_AP_MONSTER,
     NECK, A_DEX, A_STR, NO_KILLER_PREFIX, KILLED_BY, KILLED_BY_AN,
     GENOCIDED, TURNED_SLIME, SICK_NONVOMITABLE, NHW_MENU, WIN_ERR, ECMD_OK,
     DRAWBRIDGE_DOWN, DB_UNDER, DB_ICE, STONED, SLIMED,
+    WT_NOISY_INV, W_SADDLE, DISMOUNT_FELL, FOOT,
 } = C;
 
 // C ref: timeout.h enum timeout_types — MELT_ICE_AWAY follows SHRINK_GLOB and
@@ -99,21 +102,21 @@ async function expire_stun() {
     if (!(u.uprops.Stun || 0)) await stop_occupation();
 }
 
-// C ref: potion.c make_blinded(0L, TRUE) — regaining sight prints
-// Your1(vision_clears) ("Your vision clears.") for an ordinary eyed hero whose
-// blindness simply ran out.  The Blindfolded and eyeless variants need a worn
-// blindfold / a polymorph form this port's blindness sources never combine
-// with.
+// C ref: timeout.c:743 case BLINDED — `set_itimeout(&HBlinded, 1L);
+// make_blinded(0L, TRUE);`.  The loop above has ALREADY decremented the timer
+// to 0; C puts it back to 1 so make_blinded()'s probe sees the hero as blind,
+// prints "You can see again." while still blind (the status line keeps Blind
+// through any --More-- that message forces), then clears the timer and runs
+// toggle_blindness()'s vision_recalc(0).
 async function expire_blinded() {
     const u = game.u;
-    u.blinded = 0;
-    await update_topl('Your vision clears.');
-    // C ref: timeout.c:747 `if (was_blind && !Blind) stop_occupation();` —
-    // was_blind is necessarily true here (the timer just ran out), so the test
-    // is whether some OTHER blindness source (blindfold, cream, eyeless form)
-    // still applies.
     const { Blind } = await import('./vision.js');
-    if (!Blind()) await stop_occupation();
+    const { make_blinded_hero } = await import('./potion.js');
+    u.blinded = 1;
+    const was_blind = Blind();
+    await make_blinded_hero(0, true);
+    // C ref: timeout.c:748 `if (was_blind && !Blind) stop_occupation();`.
+    if (was_blind && !Blind()) await stop_occupation();
 }
 
 // C ref: potion.c make_hallucinated(0L, TRUE, 0L) — the display refresh and
@@ -126,21 +129,63 @@ async function expire_hallucination() {
     if (!Hallucination()) await stop_occupation();
 }
 
-// C ref: timeout.c:1222 slip_or_trip() — the fumble feedback.  Only the on-foot,
-// non-ice arms are reachable for the covered heroes (no steed, no ice level, no
-// FROMOUTSIDE fumbling source).
-//
-// SCOPE: the object-on-my-square arm ("You trip over <obj>.") needs
-// iflags.last_msg == PLNMSG_ONE_ITEM_HERE to choose between the pronoun and the
-// full doname(); we use doname() unconditionally, and skip the corpse
-// petrification check (no covered hero walks barefoot over a cockatrice).
+// C ref: timeout.c slip_or_trip() — ice can cause a slip on the move after
+// leaving it, so the FROMOUTSIDE source takes precedence over current terrain.
 async function slip_or_trip() {
     const u = game.u;
     const { vobj_at } = await import('./display.js');
-    const otmp = vobj_at(u.ux, u.uy);
-    if (otmp) {
+    let otmp = vobj_at(u.ux, u.uy);
+    const onFoot = !u.usteed;
+    if (otmp && onFoot && !u.uinwater && is_pool(u.ux, u.uy)) otmp = null;
+    if (otmp && onFoot) {
         const { doname_invent } = await import('./invent.js');
         await update_topl(`You trip over ${doname_invent(otmp)}.`);
+        return;
+    }
+    if ((u.HFumbling & FROMOUTSIDE) || (is_ice(u.ux, u.uy) && !rn2(3))) {
+        const iceOnly = !(u.EFumbling || (u.HFumbling & ~FROMOUTSIDE));
+        let who = 'You';
+        if (u.usteed) {
+            const { x_monnam } = await import('./uhitm.js');
+            const { ARTICLE_THE, SUPPRESS_SADDLE } = await import('./do_name.js');
+            who = x_monnam(u.usteed, ARTICLE_THE, null, SUPPRESS_SADDLE, false);
+            who = who.charAt(0).toUpperCase() + who.slice(1);
+        }
+        const verb = rn2(2) ? 'slip' : 'slide';
+        await pline(`${who} ${verb}${onFoot ? '' : 's'} ${is_ice(u.ux, u.uy) ? 'on' : 'off'} the ice.`);
+        const { which_armor } = await import('./worn.js');
+        if (!onFoot && !which_armor(u.usteed, W_SADDLE)?.cursed
+            && (!iceOnly || !rn2(3))) {
+            await pline('You lose your balance.');
+            const { dismount_steed } = await import('./steed.js');
+            await dismount_steed(DISMOUNT_FELL);
+        } else {
+            const { acurr_eff } = await import('./attrib.js');
+            if (!rn2(10 + acurr_eff(A_DEX))) {
+                if (u.umonnum !== 116 /* PM_GRID_BUG */) {
+                    const { confdir } = await import('./cmd.js');
+                    confdir(true);
+                }
+                if (u.ux + u.dx !== u.ux0 || u.uy + u.dy !== u.uy0) {
+                    const { hurtle } = await import('./dothrow.js');
+                    await hurtle(u.dx, u.dy, 1, false);
+                }
+            }
+        }
+        return;
+    }
+    if (!onFoot) {
+        const { which_armor } = await import('./worn.js');
+        if (!which_armor(u.usteed, W_SADDLE)?.cursed) {
+            switch (rn2(4)) {
+            case 1: await pline(`Your ${makeplural(body_part(FOOT))} slip out of the stirrups.`); break;
+            case 2: await pline('You let go of the reins.'); break;
+            case 3: await pline('You bang into the saddle-horn.'); break;
+            default: await pline('You slide to one side of the saddle.'); break;
+            }
+            const { dismount_steed } = await import('./steed.js');
+            await dismount_steed(DISMOUNT_FELL);
+        }
         return;
     }
     switch (rn2(4)) {
@@ -169,16 +214,16 @@ async function expire_fumbling() {
     // slip_or_trip() and so skips its rn2(4).
     if (u.umoved && !(u.uprops?.Levitation || u.uprops?.Flying)) {
         await slip_or_trip();
-        // C: nomul(-2); gm.multi_reason = "fumbling"; gn.nomovemsg = "";
-        game.multi = -2;
+        await nomul(-2);
         game.multi_reason = 'fumbling';
         game.nomovemsg = '';
-        // SCOPE: the inv_weight() > -WT_NOISY_INV "You make a lot of noise!" +
-        // wake_nearby() branch needs the noisy-inventory threshold; the covered
-        // hero's pack stays well under it.
+        if (inv_weight() > -WT_NOISY_INV) {
+            if (!(u.uprops?.HDeaf || u.Deaf)) await pline('You make a lot of noise!');
+            const { wake_nearby } = await import('./cmd.js');
+            await wake_nearby(false);
+        }
     }
-    // HFumbling &= ~FROMOUTSIDE (ice); then re-arm while still Fumbling.
-    u.HFumblingOutside = 0;
+    u.HFumbling &= ~FROMOUTSIDE;
     if (u.HFumbling || u.EFumbling) u.HFumbling = (u.HFumbling || 0) + rnd(20);
 }
 
@@ -250,6 +295,20 @@ async function vomiting_dialogue() {
 // pre-existing entries are left where they are.  FUMBLING (prop.h 25) is placed
 // after DEAF and before FAST (64), which is the position with the fewest
 // remaining inversions.
+// C ref: mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL, AD_DGST) —
+// float_down()'s swallowed-vs-engulfed wording.  js/insight.js:2770,
+// js/uhitm.js:2559 and js/zap.js:3210 keep the same private copy.
+function _digests(ptr) { return !!attacktype_fordmg(ptr, AT_ENGL, AD_DGST); }
+// C ref: mondata.h is_floater(ptr)/is_flyer(ptr) — mlet == S_EYE/S_LIGHT and
+// M1_FLY, used only to phrase float_down()'s "settle more firmly in the
+// saddle" arm for a floating/flying steed.  js/dbridge.js:918 and friends
+// keep the same private duplicates.
+const _S_EYE = 5, _S_LIGHT = 25;
+function _steed_floats_or_flies(ptr) {
+    return !!ptr && (ptr.mcls === _S_EYE || ptr.mcls === _S_LIGHT
+                      || (mflags1_of(ptr) & M1_FLY) !== 0);
+}
+
 const TIMED_PROPS = [
     // prop.h INVULNERABLE = 11, ahead of every other entry here.  Only
     // #wizintrinsic gives it a timeout, and timeout.c has no case for it, so it
@@ -304,12 +363,84 @@ const TIMED_PROPS = [
           // make_deaf(), so it runs even on the Unaware (silent) path.
           if (!(u?.uprops?.HDeaf || 0)) await stop_occupation();
       } },
-    // prop.h FUMBLING = 25.  The only expiry case here that draws RNG (rn2(4)
-    // in slip_or_trip, then the rnd(20) re-arm).
+    // Fumbling sources share the intrinsic word with its repeating timeout.
     { name: 'FUMBLING',
-      get: (u) => u.HFumbling || 0,
-      set: (u, v) => { u.HFumbling = v; },
+      get: (u) => (u.HFumbling | 0) & TIMEOUT,
+      set: (u, v) => { u.HFumbling = ((u.HFumbling | 0) & ~TIMEOUT) | (v & TIMEOUT); },
       expire: expire_fumbling },
+    { name: 'DETECT_MONSTERS',
+      get: (u) => (u.uprops?.HDetect_monsters | 0) & TIMEOUT,
+      set: (u, v) => {
+          const flags = (u.uprops?.HDetect_monsters | 0) & ~TIMEOUT;
+          u.uprops.HDetect_monsters = flags | (v & TIMEOUT);
+      },
+      // C ref: timeout.c:932 — erase monsters revealed only by detection.
+      expire: async () => { see_monsters(); } },
+    // prop.h LEVITATION = 48.  get/set mask to the TIMEOUT (count) bits and
+    // splice them back next to whatever flag bits (I_SPECIAL) potion.js OR'd
+    // in, mirroring C's `--upp->intrinsic & TIMEOUT` on the packed int — a
+    // plain overwrite would drop I_SPECIAL on every decrement.  Without this
+    // entry HLevitation never counted down at all, so levitation_dialogue()'s
+    // periodic messages ("You float slightly lower." / "You wobble
+    // unsteadily...") never landed on the right turn.
+    { name: 'LEVITATION',
+      get: (u) => (u.uprops?.Levitation | 0) & TIMEOUT,
+      set: (u, v) => {
+          const flags = (u.uprops?.Levitation | 0) & ~TIMEOUT;
+          u.uprops.Levitation = flags | (v & TIMEOUT);
+      },
+      // C ref: trap.c:4029 float_down(hmask, emask) — nh_timeout() always
+      // calls it with hmask=(I_SPECIAL|TIMEOUT), emask=0 (no saddle/boots
+      // source is tracked through this timer in this port).  Ported: the
+      // "come down" feedback message and the Flying/swallowed short-circuits.
+      // NOT PORTED (no covered session reaches them): the Punished ball-drag
+      // and u.ustuck detachment that precede the fall check; drown()/
+      // lava_effects() when the landing square is a pool/lava (both exist as
+      // trap.js internals but are not wired to this call site); the Sokoban
+      // "air currents knock you down" case; and the post-message trap tail
+      // (HOLE/TRAPDOOR fall-through, autopickup).
+      expire: async () => {
+          const u = game.u;
+          if (!u) return;
+          // C: `if (Levitation) return 0;` — an I_SPECIAL "at will" source
+          // (e.g. a cursed potion) keeps the property itself nonzero even
+          // though this timer's TIMEOUT bits just hit zero.
+          if (u.uprops?.Levitation) return;
+          float_vs_flight();
+          game.botl = true;
+          nomul(0);
+          if (u.uprops?.Flying) {
+              await update_topl('You have stopped levitating and are now flying.');
+              await encumber_msg();
+              return;
+          }
+          if (u.uswallow) {
+              await update_topl(`You float down, but you are still ${
+                  _digests(u.ustuck?.data) ? 'swallowed' : 'engulfed'}.`);
+              await encumber_msg();
+              return;
+          }
+          const trap = t_at(u.ux, u.uy);
+          if (C.Is_airlevel(u.uz)) {
+              await update_topl('You begin to tumble in place.');
+          } else if (C.Is_waterlevel(u.uz)) {
+              await update_topl('You feel heavier.');
+          } else if (!u.uinwater) {
+              if (C.In_sokoban(u.uz) && trap) {
+                  /* NOT PORTED: the air-currents "fall over" / "Bummer!
+                     You've crashed." knockdown — no covered session lands
+                     on a Sokoban trap while levitation naturally expires. */
+              } else if (_steed_floats_or_flies(u.usteed?.data)) {
+                  await update_topl('You settle more firmly in the saddle.');
+              } else if (Hallucination()) {
+                  await update_topl(`Bummer!  You've ${
+                      is_pool(u.ux, u.uy) ? 'splashed down' : 'hit the ground'}.`);
+              } else {
+                  await update_topl(`You float gently to the ${surface(u.ux, u.uy)}.`);
+              }
+          }
+          await encumber_msg();
+      } },
     // prop.h FAST = 64, after every other entry here.  A timed HFast is what
     // makes Very_fast true (hack.h Very_fast == ((HFast & ~INTRINSIC) || EFast)),
     // so this countdown is load-bearing: u_calc_moveamt draws a different roll
@@ -364,19 +495,32 @@ export async function nh_timeout() {
     // of the blindness it caused.
     if ((u.uprops.Vomiting || 0) > 0) await vomiting_dialogue();
 
+    // C ref: timeout.c:633-634 `if (HLevitation & TIMEOUT) levitation_dialogue();`
+    // — same "runs on the CURRENT, pre-decrement value" slot as vomiting_dialogue
+    // above.  Draws no RNG, so wiring only this one dialogue can't reorder any
+    // later draw.
+    if (((u.uprops.Levitation || 0) & TIMEOUT) > 0) await levitation_dialogue();
+
     // C ref: timeout.c:641-648 — the polymorph countdown, immediately above
     // u.ucreamed.  Without it a self-polymorph never wore off: u.mtimedone was
     // set by polymon() and then never decremented, so the hero stayed in the
     // form (and kept its HD/AC status row) for the rest of the session.
-    // is_were()'s you_unwere() arm is deferred with the rest of lycanthropy.
     if (u.mtimedone && !--u.mtimedone) {
-        const { rehumanize, Unchanging_poly } = await import('./polyself.js');
+        const { rehumanize, Unchanging_poly, you_unwere } = await import('./polyself.js');
         if (Unchanging_poly && Unchanging_poly()) {
             // C DRAWS rnd(100 * mlevel + 1) here: an Unchanging hero's form is
             // re-armed rather than reverted.
             u.mtimedone = rnd(100 * ((u.data?.mlevel | 0)) + 1);
-        } else if (rehumanize) {
-            await rehumanize();
+        } else {
+            // C ref: timeout.c:644-647 — a were-hero whose timer ran out asks
+            // (if polycontrol) whether to stay in beast form instead of an
+            // unconditional rehumanize().
+            const { is_were_flag } = await import('./monflags_data.js');
+            if (is_were_flag(u.data)) {
+                if (you_unwere) await you_unwere(false);
+            } else if (rehumanize) {
+                await rehumanize();
+            }
         }
     }
 
@@ -395,20 +539,16 @@ export async function nh_timeout() {
     // later in the same once-per-turn block, and no domove() can follow it.
     game._helpless_at_timeout = ((game.multi ?? 0) < 0);
 
-    // C ref: timeout.c nh_timeout() ends with run_timers() — expire any object
-    // timer (here: ROT_CORPSE) whose scheduled turn has arrived.
-    run_object_timers();
+    // C ref: timeout.c nh_timeout() ends with run_timers().
+    await run_object_timers();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // timeout.c — the rest of the file.
 //
-// INERT BY CONSTRUCTION.  Nothing above this banner calls anything below it,
-// and the module's only importers are allmain.js (nh_timeout) and
-// extcmd-handlers.js (timed_prop).  The live per-turn path is still
-// nh_timeout()'s TIMED_PROPS table plus mkobj.js run_object_timers(); hooking
-// the queue below into it would reorder every later turn's draws, so that is a
-// separate change.
+// Object hatching is dispatched by mkobj.js run_object_timers(), alongside
+// corpse decay and glob shrinkage.  The separate queue below is not used by
+// the live object timer model.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── C helpers js/ defines but does not export ──────────────────────────────
@@ -435,7 +575,7 @@ function _incr_itimeout(key, incr) { _set_itimeout(key, _prop(key) + (incr | 0))
 // with a separate urgent-message channel.
 const _urgent_pline = (msg) => pline(msg);
 
-// C ref: hacklib.c an()/upstart(), objnam.c s_suffix(), hacklib.c vtense().
+// C ref: hacklib.c an()/upstart()/vtense().
 function _an(s) {
     if (!s) return 'an []';
     if (/^the /i.test(s) || /^(molten lava|iron bars|ice)$/i.test(s)) return s;
@@ -447,7 +587,7 @@ function _an(s) {
     return `a ${s}`;
 }
 function _upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-function _s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 // C: vtense(subj, verb) — a plural subject leaves the verb alone, a singular
 // one gets the third-person form.  Only the pronoun subjects reach this file.
 function _vtense(subj, verb) {
@@ -517,7 +657,7 @@ async function _Shk_Your(obj) {
     if (_where(obj) === 'invent') return 'Your ';
     if (_where(obj) === 'minvent' && obj.ocarry) {
         const { Monnam } = await import('./do_name.js');
-        return `${_s_suffix(Monnam(obj.ocarry))} `;
+        return `${s_suffix(Monnam(obj.ocarry))} `;
     }
     return 'The ';
 }
@@ -1103,7 +1243,7 @@ function _SetVoice(_mon, _tag, _vol, _flags) { /* tty: nothing to do */ }
 // C ref: timeout.c:1008 kill_egg(egg) — prevent an egg from ever hatching.
 export async function kill_egg(egg) {
     /* stop previous timer, if any */
-    await stop_timer(HATCH_EGG, _obj_to_any(egg));
+    stop_object_timer(egg, HATCH_EGG);
 }
 
 // C ref: timeout.c:1192 learn_egg_type(mnum) — learn to recognise eggs of the
@@ -1111,8 +1251,8 @@ export async function kill_egg(egg) {
 // shadows this at its own call site; this is the real body.
 export async function learn_egg_type(mnum) {
     /* baby monsters hatch from grown-up eggs */
-    const { little_to_big } = await import('./makemon.js').catch(() => ({}));
-    const idx = little_to_big ? little_to_big(mnum) : mnum;
+    const { little_to_big } = await import('./makemon.js');
+    const idx = little_to_big(mnum);
     const mv = (game.mvitals = game.mvitals || []);
     mv[idx] = mv[idx] || { mvflags: 0 };
     mv[idx].mvflags |= MV_KNOWS_EGG;
@@ -1121,29 +1261,21 @@ export async function learn_egg_type(mnum) {
     await update_inventory();
 }
 
-// C ref: teleport.c enexto(cc, xx, yy, mdat).  GAP: teleport.c's symbol and no
-// js/ module exports it (js/dog.js:124 and js/do.js:316 each keep a private
-// copy, js/apply.js:1715 stubs it the same way).  enexto_core()'s goodpos ring
-// scan DRAWS, so the real one has to be in place before hatch_egg() below is
-// wired into the timer queue -- both the hatch position AND the draw count
-// depend on it.
-async function _enexto(_cc, _xx, _yy, _mdat) { return false; }
-
 // C ref: timeout.c:1016 hatch_egg(arg, timeout) — the HATCH_EGG timer callback.
 export async function hatch_egg(arg, timeout) {
     const egg = arg?.a_obj;
     /* sterilized while waiting */
     if (!egg || egg.corpsenm === NON_PM) return;
 
-    const { big_to_little, monster_by_pmidx } = await import('./makemon.js');
-    const { makemon } = await import('./makemon.js');
+    const { big_to_little, monster_by_pmidx, makemon } = await import('./makemon.js');
+    const { enexto_gpflags } = await import('./teleport.js');
     const { tamedog } = await import('./dothrow.js');
     const { m_monnam, a_monnam } = await import('./do_name.js');
-    const { makeplural, useup, obj_extract_self, obfree } = await import('./invent.js');
+    const { makeplural, useup, obfree } = await import('./invent.js');
     const { cansee } = await import('./vision.js');
     const { newsym, m_at, canseemon_shared } = await import('./display.js');
     const { cry_sound } = await import('./sounds.js');
-    const { container_weight } = await import('./mkobj.js');
+    const { container_weight, obj_extract_self_mkobj } = await import('./mkobj.js');
     const { is_pool } = await import('./dbridge.js');
     const { hideunder } = await import('./monmove.js');
 
@@ -1170,11 +1302,10 @@ export async function hatch_egg(arg, timeout) {
         const ptr = monster_by_pmidx(mnum);
         if (!((ptr?.geno | 0) & G_UNIQ)
             && !((mv[mnum]?.mvflags | 0) & (G_GENOD | G_EXTINCT))) {
-            const cc = { x: 0, y: 0 };
             for (i = hatchcount; i > 0; i--) {
-                if (!await _enexto(cc, x, y, ptr)
-                    || !(mon = makemon(ptr, cc.x, cc.y,
-                                       C.NO_MINVENT | C.MM_NOMSG)))
+                const cc = enexto_gpflags(x, y, ptr, 0);
+                if (!cc || !(mon = makemon(ptr, cc.x, cc.y,
+                                          C.NO_MINVENT | C.MM_NOMSG)))
                     break;
                 /* tame if your own egg hatches while you're on the same
                    dungeon level, or any dragon egg which hatches while it's in
@@ -1238,7 +1369,7 @@ export async function hatch_egg(arg, timeout) {
                 mon2 = egg.ocarry;
                 if (canseemon_shared(mon2)
                     && (!mon2.wormno || cansee(mon2.mx, mon2.my))) {
-                    carriedby = `${_s_suffix(a_monnam(mon2))} pack`;
+                    carriedby = `${s_suffix(a_monnam(mon2))} pack`;
                     knows_egg = true;
                 } else if (is_pool(mon.mx, mon.my)) {
                     carriedby = 'empty water';
@@ -1259,15 +1390,15 @@ export async function hatch_egg(arg, timeout) {
         if ((egg.quan | 0) > 0) {
             /* still some eggs left; the stack wasn't split, just decremented,
                so the weight needs updating; add a new, short hatch timer */
-            await _attach_egg_hatch_timeout(egg, rnd(12));
+            attach_egg_hatch_timeout(egg, rnd(12));
             container_weight(egg);
         } else if (_carried(egg)) {
             useup(egg);
         } else {
             /* free the egg here because we use it above */
-            obj_extract_self(egg);
+            obj_extract_self_mkobj(egg);
             obfree(egg, null);
-            if ((mon = m_at(x, y)) && !hideunder(mon) && cansee(x, y))
+            if ((mon = m_at(x, y)) && !await hideunder(mon) && cansee(x, y))
                 redraw = true;
         }
         if (redraw) await newsym(x, y);
@@ -1304,27 +1435,6 @@ async function _locomotion(ptr, def) {
 // C ref: objnam.c ing_suffix() — objnam.c's symbol, private at js/invent.js:1369.
 function _ing_suffix(s) { return `${String(s).replace(/e$/, '')}ing`; }
 
-// C ref: timeout.c:980 attach_egg_hatch_timeout(egg, when).  js/mkobj.js:1473
-// has the same function against ITS timer model (a {when,kind,action} record
-// hung on the object); this copy targets the queue at the bottom of this file,
-// which is what hatch_egg() above re-arms.  The rnd(i) loop is C's, verbatim:
-// the old hatch_it() tried once a turn from age 151 to 200 and hatched on a roll
-// above 150, which is > 99.9993% likely.
-async function _attach_egg_hatch_timeout(egg, when) {
-    /* stop previous timer, if any */
-    await stop_timer(HATCH_EGG, _obj_to_any(egg));
-
-    if (!when) {
-        for (let i = (MAX_EGG_HATCH_TIME - 50) + 1; i <= MAX_EGG_HATCH_TIME; i++)
-            if (rnd(i) > 150) {
-                when = i;       /* egg will hatch */
-                break;
-            }
-    }
-    if (when)
-        await start_timer(when, TIMER_OBJECT, HATCH_EGG, _obj_to_any(egg));
-}
-
 // ── burning objects ────────────────────────────────────────────────────────
 
 // C ref: timeout.c:1344 see_lamp_flicker(obj, tailer) — only called if seen.
@@ -1357,7 +1467,7 @@ export async function lantern_message(obj) {
         break;
     case 'minvent': {
         const { Monnam } = await import('./do_name.js');
-        await pline(`${_s_suffix(Monnam(obj.ocarry))} lantern is getting dim.`);
+        await pline(`${s_suffix(Monnam(obj.ocarry))} lantern is getting dim.`);
         break;
     }
     default:
@@ -1844,13 +1954,9 @@ export async function do_storms() {
 //   run_timers()                              -> fire everything due
 //   save/restore/relink, obj_move/split/stop, obj_has_timer.
 //
-// THE QUEUE ITSELF IS NEW AND LOCAL TO THIS FILE.  js/ has no timer_element
-// list: js/mkobj.js:1349 hangs a single {when, kind, action} record on the
-// object and its run_object_timers() only ever fires ROT_CORPSE and
-// SHRINK_GLOB from it.  Rather than add fields to that record or introduce a
-// parallel global, the list below keeps C's timer_element shape exactly
-// (next / timeout / tid / kind / needs_fixup / func_index / arg) in a
-// module-local head pointer, the way C's gt.timer_base does.
+// This queue retains C's timer_element shape for the remaining timer APIs.
+// Live object timers (including HATCH_EGG) use mkobj.js's object-owned records;
+// their creation, cancellation and rescheduling must stay in that model.
 let timer_base = null;      /* C: gt.timer_base */
 let timer_id = 1;           /* C: svt.timer_id */
 
@@ -1876,10 +1982,8 @@ function _fmt_ptr(v) {
 
 // C ref: timeout.c:1978 timeout_funcs[] — the dispatch table, in
 // timeout.h enum timeout_types order, each with its optional cleanup hook.
-// Handlers are resolved LAZILY from the module that owns them: four are not
-// ported anywhere (rot_organic/rot_corpse are dig.c, revive_mon/zombify_mon are
-// zap.c, melt_ice_away is do.c), and a static import of a missing export is a
-// link-time error.
+// Handlers are resolved LAZILY from the module that owns them, and a static
+// import of a missing export is a link-time error.
 function _nyi(name, where) {
     return async () => impossible(`timeout_funcs: ${name}() (${where}) is not ported`);
 }
@@ -1894,17 +1998,36 @@ function _obj_handler(mod, fname) {
         return fn(arg?.a_obj ?? arg, timeout);
     };
 }
+// rot_organic/rot_corpse (dig.js), revive_mon/zombify_mon (do.js) and
+// melt_ice_away (zap.js) all unwrap arg.a_obj / arg.a_long THEMSELVES
+// internally (matching C's real signature, `arg` the whole `anything`
+// union), unlike the two _obj_handler cases above — pass `arg` through as-is.
+function _arg_handler(mod, fname) {
+    return async (arg, timeout) => {
+        const fn = (await import(mod))[fname];
+        if (typeof fn !== 'function')
+            return impossible(`timeout_funcs: ${fname}() is not exported by ${mod}`);
+        return fn(arg, timeout);
+    };
+}
 
 const timeout_funcs = [];
 /* object timers */
-timeout_funcs[ROT_ORGANIC] = { f: _nyi('rot_organic', 'dig.c'), cleanup: null,
-                               name: 'rot_organic' };
-timeout_funcs[ROT_CORPSE] = { f: _nyi('rot_corpse', 'dig.c'), cleanup: null,
-                              name: 'rot_corpse' };
-timeout_funcs[REVIVE_MON] = { f: _nyi('revive_mon', 'zap.c'), cleanup: null,
-                              name: 'revive_mon' };
-timeout_funcs[ZOMBIFY_MON] = { f: _nyi('zombify_mon', 'zap.c'), cleanup: null,
-                               name: 'zombify_mon' };
+// C ref: dig.c rot_organic()/rot_corpse() — both are fully ported in
+// js/dig.js (rot_corpse includes the "Your <corpse> rots away." message) but
+// this table still pointed at _nyi() stubs, so a corpse's rot timer firing
+// while carried never announced it, silently deleted the object, and never
+// stopped an occupation on a worn/wielded one.
+timeout_funcs[ROT_ORGANIC] = { f: _arg_handler('./dig.js', 'rot_organic'),
+                               cleanup: null, name: 'rot_organic' };
+timeout_funcs[ROT_CORPSE] = { f: _arg_handler('./dig.js', 'rot_corpse'),
+                              cleanup: null, name: 'rot_corpse' };
+// C ref: zap.c revive_mon()/zombify_mon() — both fully ported in js/do.js
+// (not zap.c in this port's layout), same stale-stub gap as above.
+timeout_funcs[REVIVE_MON] = { f: _arg_handler('./do.js', 'revive_mon'),
+                              cleanup: null, name: 'revive_mon' };
+timeout_funcs[ZOMBIFY_MON] = { f: _arg_handler('./do.js', 'zombify_mon'),
+                               cleanup: null, name: 'zombify_mon' };
 timeout_funcs[BURN_OBJECT] = { f: burn_object, cleanup: cleanup_burn,
                                name: 'burn_object' };
 timeout_funcs[HATCH_EGG] = { f: hatch_egg, cleanup: null, name: 'hatch_egg' };
@@ -1913,8 +2036,10 @@ timeout_funcs[FIG_TRANSFORM] = { f: _obj_handler('./apply.js', 'fig_transform'),
 timeout_funcs[SHRINK_GLOB] = { f: _obj_handler('./mkobj.js', 'shrink_glob'),
                                cleanup: null, name: 'shrink_glob' };
 /* level timers */
-timeout_funcs[MELT_ICE_AWAY] = { f: _nyi('melt_ice_away', 'do.c'), cleanup: null,
-                                 name: 'melt_ice_away' };
+// C ref: zap.c melt_ice_away() — fully ported in js/zap.js (do.c in C, moved
+// here in this port's layout), same stale-stub gap as above.
+timeout_funcs[MELT_ICE_AWAY] = { f: _arg_handler('./zap.js', 'melt_ice_away'),
+                                 cleanup: null, name: 'melt_ice_away' };
 /* currently no monster or global timers */
 
 // C ref: timeout.c:1994 kind_name(kind).

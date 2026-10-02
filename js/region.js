@@ -18,11 +18,13 @@
 
 import { game } from './gstate.js';
 import { rn2, rn1, rnd } from './rng.js';
-import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO } from './const.js';
+import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
+         M_SEEN_POISON, TELEDS_TELEPORT } from './const.js';
 import { cansee, block_point, unblock_point, does_block, Blind } from './vision.js';
 // js/monflags_data.js is a generated LEAF module (no imports of its own), so
 // naming it here cannot create an import cycle or a TDZ edge.
 import { is_undead_flag, mflags1_of, M1_BREATHLESS } from './monflags_data.js';
+import { has_innate } from './exper.js';
 
 const MAX_CLOUD_SIZE = 150;
 
@@ -240,6 +242,14 @@ function is_hero_inside_gas_cloud() {
 // inside_gas_cloud's ttl bump, so the gap has not been exercised.  Exported so
 // that hook can be added later without touching this module again.
 export function in_out_region(x, y) {
+    // C ref: region.c:479 in_out_region() returns TRUE unless a region's
+    // can_enter_f/can_leave_f callback vetoes the move — callbacks this port
+    // does not model, so (matching every region this corpus creates, none of
+    // which sets one) the move is never vetoed here.  Missing this return
+    // left the function returning `undefined` (falsy): dothrow.js's
+    // hurtle_step() treats `!in_out_region(x, y)` as "stop", so EVERY hurtle
+    // (kick/throw recoil, jump, and monster-knockback) silently failed to
+    // move the hero even one square.
     for (const reg of regions()) {
         if (reg.attach2u) continue;
         if (reg.heroInside && !inside_region(reg, x, y)) reg.heroInside = false;
@@ -248,6 +258,7 @@ export function in_out_region(x, y) {
         if (reg.attach2u) continue;
         if (!reg.heroInside && inside_region(reg, x, y)) reg.heroInside = true;
     }
+    return true;
 }
 export function m_in_out_region(mon, x, y) {
     for (const reg of regions()) {
@@ -261,6 +272,15 @@ export function m_in_out_region(mon, x, y) {
         if (reg.attach2m === mon) continue;
         if (!reg.monsters.includes(mon) && inside_region(reg, x, y)) reg.monsters.push(mon);
     }
+    // C ref: region.c:533 m_in_out_region() returns TRUE unless a region's
+    // can_enter_f/can_leave_f callback vetoes the move — the same callbacks
+    // in_out_region() above does not model, and for the same reason.  This is
+    // the monster twin of the bug fixed there: without the return, the
+    // function yields `undefined` and dothrow.js's mhurtle_step() reads
+    // `will_hurtle(...) && m_in_out_region(...)` as false, so a monster
+    // knocked back by mhitm_knockback() (or hurtled by any other caller)
+    // never actually moved a square.
+    return true;
 }
 
 // C ref: region.c update_player_regions()/update_monster_region(mon) — resync
@@ -526,13 +546,32 @@ async function inside_gas_cloud(reg, mtmp) {
             // the RNG-inert observable text matches, but the timer itself is
             // not modeled.
         }
-        // C ref: region.c — Poison_resistance is never true for the covered
-        // heroes yet (see m_poisongas_ok SCOPE note), so this always takes
-        // the damaging branch.
-        await update_topl('Something is burning your lungs!');
-        await update_topl('You cough and spit blood!');
-        const dmg = rnd(dam) + 5;
-        loseHeroHp(dmg);
+        // C ref: region.c:1117 `if (!Poison_resistance)`.  The innate source
+        // (orc/healer/barbarian from level 1, monk from level 3, tourist
+        // from level 20) is never persisted as a stored uprops flag, so OR
+        // in has_innate()'s pure derivation — the same reader potion.js's
+        // Poison_resistance() and fountain.js's Poison_resistance() already
+        // use.  This branch used to always take the damaging arm, so a
+        // poison-resistant hero standing in a gas cloud drew rnd(dam) it
+        // should never have drawn.
+        const { Half_gas_damage } = await import('./potion.js');
+        const { monstseesu, monstunseesu } = await import('./mondata.js');
+        const { wake_nearto } = await import('./cmd.js');
+        const u = game.u;
+        if (!((u?.uprops?.Poison_resistance || 0) > 0
+              || has_innate('HPoison_resistance'))) {
+            await update_topl('Something is burning your lungs!');
+            await update_topl('You cough and spit blood!');
+            await wake_nearto(u?.ux, u?.uy, 2);
+            let dmg = rnd(dam) + 5;
+            if (Half_gas_damage()) dmg = Math.floor((dmg + 1) / 2);
+            loseHeroHp(dmg);
+            await monstunseesu(M_SEEN_POISON);
+        } else {
+            await update_topl('You cough!');
+            await wake_nearto(u?.ux, u?.uy, 2);
+            await monstseesu(M_SEEN_POISON);
+        }
         return false;
     }
     // SCOPE: monster-in-poison-cloud damage/death is not modeled (no covered
@@ -787,8 +826,6 @@ export function save_regions(nhfp) {
 // data and (for a real save, not a checkpoint) then frees it.
 function update_file(nhfp) { return nhfp.update_file !== false; }
 function release_data(nhfp) { return nhfp.release_data === true; }
-// C ref: NHF_BONESFILE.
-const NHF_BONESFILE = 2;
 
 export function rest_regions(nhfp) {
     const ghostly = (nhfp?.ftype === NHF_BONESFILE);
@@ -973,8 +1010,8 @@ export async function region_safety() {
     const { update_topl } = await import('./display.js');
     if (n > 1 || (n === 1 && !r)) {
         /* multiple overlapping cloud regions or non-expiring one */
-        const { safe_teleds_hero } = await import('./read.js');
-        await safe_teleds_hero();
+        const { safe_teleds } = await import('./teleport.js');
+        await safe_teleds(TELEDS_TELEPORT);
         /* maybe there's no safe place available; must get hero out of danger
            or prayer's "fix all troubles" result will get stuck in a loop */
         if (region_danger()) {

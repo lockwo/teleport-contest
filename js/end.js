@@ -1,16 +1,13 @@
 // end.js — hero death / done() flow.
 //
-// C ref: src/end.c — done_in_by(), done(), savelife().  Scoped to the path the
-// contest sessions exercise: a hostile melee attack drops the hero to 0 HP in
-// WIZARD mode, the player declines the "Die?" paranoid query, savelife() restores
-// HP and sets a one-turn immobilization whose nomovemsg is "You survived that
-// attempt on your life." (seed5002 step-256..272).  No RNG is consumed on this
-// path: adjattrib(A_CON,-1) only rolls when Con would drop below its minimum
-// (it can't here), and savelife()'s HP/hunger fixups are deterministic.
+// C ref: src/end.c — done_in_by(), done(), savelife().
+// Life saving restores HP and releases any holder or engulfer before the
+// interrupted turn resumes.
 
 import { game } from './gstate.js';
+import { Goodbye } from './role.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
-import { G_GENOD, G_EXTINCT } from './const.js';
+import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM } from './const.js';
 
 // end.h death codes (subset).  DIED=0; GENOCIDED separates the death codes
 // that leave a tombstone/bones from the ones that don't (QUIT/ESCAPED/
@@ -37,17 +34,6 @@ const DEATHS = [
     'turned into slime', 'genocided', 'panic', 'trickery', 'quit',
     'escaped', 'ascended',
 ];
-
-// C ref: role.c Goodbye() — role-specific farewell for the score summary line.
-function goodbye_for_role(roleName) {
-    switch (roleName) {
-    case 'Knight':   return 'Fare thee well';
-    case 'Samurai':  return 'Sayonara';
-    case 'Tourist':  return 'Aloha';
-    case 'Valkyrie': return 'Farvel';
-    default:         return 'Goodbye';
-    }
-}
 
 // C ref: hack.h plur(x) — "" when x == 1, "s" otherwise.
 function plur(n) { return (n === 1) ? '' : 's'; }
@@ -173,7 +159,7 @@ export async function outrip_and_score(how) {
         lines.push('');                                // 16 (genl_outrip trailing "")
         lines.push('');                                // 17
     }
-    lines.push(`${goodbye_for_role(roleName)} ${plname} the ${roleName}...`); // 18
+    lines.push(`${Goodbye(game.urole?.mnum)} ${plname} the ${roleName}...`); // 18
     lines.push('');                                    // 19
     lines.push((how !== ESCAPED && how !== ASCENDED)
         ? `You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
@@ -201,27 +187,23 @@ export async function outrip_and_score(how) {
         }
     };
 
-    // Page 1 — the tombstone.  C tty process_text_window() prints window lines
-    // 0..(rows-2) then pauses with --More-- on the last row (rows-1 == 23).
-    disp.clearScreen();
-    for (let i = 0; i < ROWS - 1 && i < lines.length; i++) {
-        if (lines[i]) disp.putstr(0, i, lines[i], NO_COLOR, 0);
-    }
-    drawMore(ROWS - 1);
-    // wintty.c:1821 — ESC sets WIN_CANCELLED and abandons every remaining page.
-    const ripCancelled = (await waitforspace()) === 27;
-
-    // The remaining pages are blank --More-- acknowledgements: process_text_window
-    // clears and shows its final page (window line 23 == "" -> blank) with
-    // --More--, then the endgame window teardown / topten() setup pauses for the
-    // recorded space/return acknowledgements before the score line is printed.
-    for (let b = 0; !ripCancelled && b < 5; b++) {
+    // C tty process_text_window() pages the endwin TEXT window (this function's
+    // `lines`, 24 rows for a stoned death) 23 (ROWS-1) lines at a time, each page
+    // pausing with --More-- on the last row; the final page (here just the
+    // trailing blank line) gets the same --More-- pause via display_nhwindow's
+    // teardown.  Every page uses dmore()/xwaitforspace() quitchar semantics.
+    const PAGE = ROWS - 1;
+    const npages = Math.max(1, Math.ceil(lines.length / PAGE));
+    let ripCancelled = false;
+    for (let p = 0; p < npages && !ripCancelled; p++) {
         disp.clearScreen();
+        for (let i = 0; i < PAGE; i++) {
+            const t = lines[p * PAGE + i];
+            if (t) disp.putstr(0, i, t, NO_COLOR, 0);
+        }
         drawMore(ROWS - 1);
-        // NOT waitforspace(): this port folds really_done()'s disclosure
-        // queries into these frames, and those answer keys ('y'/'n') are not
-        // quitchars — looping here would swallow the next command.
-        await nhgetch();
+        // wintty.c:1821 — ESC sets WIN_CANCELLED and abandons every remaining page.
+        ripCancelled = (await waitforspace()) === 27;
     }
 
     // topten() in wizard/discover mode: raw_print("") then raw_print(msg) — two
@@ -251,7 +233,7 @@ async function deps() {
 // hero is immobilized for the rest of the turn (multi = -1) and unmul() will
 // announce nomovemsg ("You survived that attempt on your life.") when the turn
 // completes.
-function savelife(_how) {
+async function savelife(_how) {
     const u = game.u;
     if ((u.ulevel ?? 1) < 1) u.ulevel = 1;
     // minuhpmax(10): ensure uhpmax is at least 10 (it already exceeds that here).
@@ -260,8 +242,19 @@ function savelife(_how) {
     const givehp = 50 + 10 * Math.trunc(con / 2);
     u.uhp = Math.min(u.uhpmax, givehp);
     if (u.mh != null && u.mhmax != null) u.mh = Math.min(u.mhmax, givehp);
-    // init_uhunger() only when uhunger < 500: the wizard starts well-fed, skip.
-
+    // C end.c savelife():752 sets disp.botl after restoring HP.  Death froze
+    // the last real status draw; the next pline must publish the recovered
+    // HP, including any monster attacks which follow in that same turn.
+    delete game._botlFrozen;
+    game.botl = true;
+    // C ref: eat.c init_uhunger() — a revived hungry hero starts again at the
+    // standard nutrition level, which also clears any hunger-derived temporary
+    // strength penalty.  It is deterministic and does not consume RNG.
+    if ((u.uhunger ?? 900) < 500) {
+        u.uhunger = 900;
+        u.uhs = 1; // NOT_HUNGRY
+        if ((u.atemp?.a?.[0] || 0) < 0) u.atemp.a[0] = 0;
+    }
     // gn.nomovemsg = "You survived that attempt on your life."; context.move = 0;
     // gm.multi = -1 (can't move again during the current turn).  The moveloop's
     // unmul() will print nomovemsg when ++multi reaches 0.
@@ -269,6 +262,20 @@ function savelife(_how) {
     game.context = game.context || {};
     game.context.move = 0;
     game.multi = -1;
+    if (u.uswallow) {
+        const { expels } = await import('./mhitu.js');
+        await expels(u.ustuck, u.ustuck.data, true);
+    } else if (u.ustuck) {
+        const { Monnam, mon_nam, sticks } = await import('./uhitm.js');
+        const { monster_by_pmidx } = await import('./makemon.js');
+        const { update_topl } = await import('./display.js');
+        if (u.Upolyd && sticks(monster_by_pmidx(u.umonnum)))
+            await update_topl(`You release ${mon_nam(u.ustuck)}.`);
+        else
+            await update_topl(`${Monnam(u.ustuck)} releases you.`);
+        const { unstuck } = await import('./mon.js');
+        await unstuck(u.ustuck);
+    }
 }
 
 // C ref: end.c done(how) — for how < PANICKED, zero the hero's HP, then (in
@@ -291,12 +298,66 @@ function savelife(_how) {
 // hero's race.  make_grave() itself draws nothing when given a text.
 //
 // C's guard is `u.ugrave_arise == NON_PM && !(mvitals[u.umonnum].mvflags &
-// G_NOCORPSE)`; ugrave_arise is set from `how` at end.c:1206-1218, so the
-// death codes that leave no ordinary corpse are the ones excluded here.
+// G_NOCORPSE)`.  The `how`-based special values (PANICKED/BURNING/DISSOLVED/
+// STONING/TURNED_SLIME, end.c:1206-1218) all leave ugrave_arise != NON_PM, so
+// they are excluded here directly; done_in_by() below additionally sets
+// game.u.ugrave_arise from the KILLER's monster type (end.c:326-340) whenever
+// a wraith/mummy/zombie-maker/human-killing-vampire/ghoul is the killer —
+// that arise-as-undead case must ALSO skip this block, or mksobj(CORPSE)'s
+// wasted rndmonnum() draws run when C's real corpse+grave creation never
+// happens at all (heldout-blind bl044 step 546 boundary: the human-zombie
+// kill of an orc hero rolls no further RNG in the recording once
+// can_make_bones() returns).
+// C: `int mnum = !Upolyd ? gu.urace.mnum : u.umonnum;` reduced to the RACE
+// name — this port's u.umonnum holds the ROLE index, not a mons[] pmidx.
+// Shared by make_hero_corpse_and_grave() (the corpse's species) and
+// compute_ugrave_arise() (the race's mummy/zombie form).
+function hero_race_name() {
+    return String(game.urace?.noun || game.urace?.name
+                  || game.initrace || 'human').toLowerCase();
+}
+
+// C ref: end.c:326-340 (inside done_in_by()) — maintain u.ugrave_arise from
+// the KILLER's monster type before really_done() decides whether an ordinary
+// corpse+grave gets left behind.  Only reached for a real monster killer;
+// done_in_by()'s other callers (potion.js, spell.js, trap.js self-inflicted
+// deaths) pass mtmp === null, matching C's callers of done() directly
+// (never through done_in_by()) — u.ugrave_arise is simply left at whatever
+// it held before (NON_PM absent any prior death this game, mirrored here by
+// leaving `arise` seeded from the current value rather than resetting it).
+async function compute_ugrave_arise(mtmp) {
+    let arise = game.u?.ugrave_arise ?? NON_PM;
+    const ptr = mtmp?.data;
+    if (!ptr) return arise;
+    const { zombie_maker } = await import('./monmove.js');
+    const { name_to_pmidx } = await import('./makemon.js');
+    const S_WRAITH = 49, S_MUMMY = 39, S_VAMPIRE = 48, PM_GHOUL = 246;
+    const raceName = hero_race_name();
+    if (ptr.mcls === S_WRAITH) {
+        arise = name_to_pmidx('wraith');
+    } else if (ptr.mcls === S_MUMMY && name_to_pmidx(`${raceName} mummy`) !== NON_PM) {
+        arise = name_to_pmidx(`${raceName} mummy`);
+    } else if (zombie_maker(mtmp) && name_to_pmidx(`${raceName} zombie`) !== NON_PM) {
+        arise = name_to_pmidx(`${raceName} zombie`);
+    } else if (ptr.mcls === S_VAMPIRE && raceName === 'human') {
+        arise = name_to_pmidx('vampire');
+    } else if (ptr.pmidx === PM_GHOUL) {
+        arise = PM_GHOUL;
+    }
+    // C: `if (u.ugrave_arise >= LOW_PM && (mvitals[ugrave_arise].mvflags &
+    // G_GENOD)) u.ugrave_arise = NON_PM;` — a genocided arise-form reverts to
+    // an ordinary corpse instead.
+    if (arise >= LOW_PM && ((game.mvitals?.[arise]?.mvflags | 0) & G_GENOD))
+        arise = NON_PM;
+    return arise;
+}
+
 async function make_hero_corpse_and_grave(how) {
     const BURNING = 5, DISSOLVED = 6, STONING = 8, TURNED_SLIME = 9;
     if (how === PANICKED || how === BURNING || how === DISSOLVED
         || how === STONING || how === TURNED_SLIME)
+        return null;
+    if ((game.u?.ugrave_arise ?? NON_PM) !== NON_PM)
         return null;
     try {
         const u = game.u;
@@ -310,8 +371,7 @@ async function make_hero_corpse_and_grave(how) {
         // u.umonnum holds the ROLE index, not a mons[] pmidx, so resolve the
         // race's monster by name (mons[] carries "human"/"elf"/"dwarf"/
         // "gnome"/"orc" as the player-race entries).
-        const raceName = String(game.urace?.noun || game.urace?.name
-                                || game.initrace || 'human').toLowerCase();
+        const raceName = hero_race_name();
         const mnum = name_to_pmidx(raceName);
         const corpse = mkcorpstat(CORPSE, null, mnum ?? null, x, y,
                                   CORPSTAT_INIT);
@@ -376,6 +436,12 @@ async function done(how) {
     const u = game.u;
     const stopprint = !!game._done_stopprint;
 
+    // C ref: end.c:1071 — mortality counts every actual death attempt before
+    // a life-saving amulet, debug fuzzer, or declined wizard "Die?" prompt can
+    // revive the hero.  It drives enlightenment and the final disclosure.
+    if (how < PANICKED)
+        u.umortality = (u.umortality || 0) + 1;
+
     // how < PANICKED: force HP to zero (it may already be <= 0) and redraw
     // bot.  Skip the forced status update when quitting via a 'q' answer to
     // "Dump core?" (done_stopprint) — end.c done(): disp.botl = FALSE etc.
@@ -411,15 +477,21 @@ async function done(how) {
         game.botl = true;
         await d.update_topl('But wait...');
         I.makeknown(202);
-        await d.update_topl(`Your medallion ${!game.u?.Blinded ? 'begins to glow' : 'feels warm'}!`);
-        await d.update_topl('You feel much better!');
+        const { Blind } = await import('./vision.js');
+        await d.update_topl(`Your medallion ${!Blind() ? 'begins to glow' : 'feels warm'}!`);
+        if (how === CHOKING)
+            await d.update_topl('You vomit ...');
+        await d.You_feel('much better!');
         await d.update_topl('The medallion crumbles to dust!');
         I.useup(uamul);
         // C ref: end.c:1092 adjattrib(A_CON, -1, TRUE) — no RNG.
         if (game.u?.acurr?.a) game.u.acurr.a[4] = (game.u.acurr.a[4] | 0) - 1;
         if (game.u?.abase?.a) game.u.abase.a[4] = (game.u.abase.a[4] | 0) - 1;
-        savelife(how);
-        survive = true;
+        await savelife(how);
+        if (how === GENOCIDED)
+            await d.update_topl('Unfortunately you are still genocided...');
+        else
+            survive = true;
     }
 
     // explore/wizard mode: offer the "Die?" paranoid query — but only for
@@ -430,14 +502,10 @@ async function done(how) {
     const wizard = is_wizard();
     const discover = is_discover();
     if (!survive && (wizard || discover) && how <= GENOCIDED) {
-        game._yn_need_more = true; // page the pending "You die..." line first
-        // If an older --More-- was dismissed with ESC during the fatal turn,
-        // WIN_STOP is still set here.  C clears that suppression for the
-        // deferred death line: the next input boundary must show
-        // "You die...--More--" before the paranoid query.
-        if (game._winStop && (game._pending_message || '').startsWith('You die')
-            && !(game._death_prior_message || '').includes('poisoned'))
-            game._winStop = false;
+        // tty_yn_function pages a pending line unless WIN_STOP survived the
+        // preceding update_topl().  A long ESC-suppressed combat line leaves
+        // STOP set for "You die...", which the prompt then replaces directly.
+        game._yn_need_more = !game._winStop;
         const ans = await d.y_n('Die?', 'yn\x1b', 'n');
         if (ans !== 'y') {
             // "OK, so you don't die." (update_topl so it concatenates with the
@@ -445,8 +513,8 @@ async function done(how) {
             // adjattrib(A_CON,-1,TRUE): no RNG (Con stays above its minimum) and
             // the status keeps showing the bonus-adjusted value, so leave the
             // displayed Con untouched.
-            await d.update_topl("OK, so you don't die.");
-            savelife(how);
+            await d.update_topl(`OK, so you don't ${how === CHOKING ? 'choke' : 'die'}.`);
+            await savelife(how);
             survive = true;
         }
     }
@@ -455,6 +523,10 @@ async function done(how) {
         // C ref: end.c:1157 — `if (!program_state.panicking) done_object_cleanup()`,
         // run before disclosure and before bones are written.
         await done_object_cleanup();
+        if (game.moves <= 1 && how < PANICKED && !stopprint) {
+            const { currency } = await import('./invent.js');
+            await d.update_topl(`Do not pass Go.  Do not collect 200 ${currency(200)}.`);
+        }
         // C ref: end.c really_done(how) — the hero really dies.  Before the
         // disclosure/topten teardown, really_done computes
         //   bones_ok = (how < GENOCIDED) && can_make_bones();
@@ -470,6 +542,13 @@ async function done(how) {
         if (how < GENOCIDED) {
             const { can_make_bones } = await import('./bones.js');
             bones_ok = can_make_bones();
+        }
+        // C ref: end.c:1203-1204 — a boulder/statue still mid-flight from a
+        // rolling-boulder trap when the hero dies gets dropped at its
+        // recorded launch_drop_spot() square instead of vanishing; no RNG.
+        if (bones_ok) {
+            const { launch_in_progress, force_launch_placement } = await import('./trap.js');
+            if (launch_in_progress()) force_launch_placement();
         }
         // C ref: end.c:1238 really_done() — `taken = paybill((how == ESCAPED)
         // ? -1 : (how != QUIT), silently)`, immediately after the bones_ok
@@ -520,22 +599,44 @@ async function done(how) {
             // HP, while the "You die..." --More-- frames still show the value
             // done()'s own bot() left (nothing, when uhp was exactly -1).
             delete game._botlFrozen;
-            // C ref: end.c really_done() — "needed for both inventory
-            // disclosure and dumplog": for how != PANICKED, fully identify
-            // every inventory object (discover_object + known/bknown/dknown/
-            // rknown=1 + set_cknown_lknown) before disclose() runs, so its
-            // 'i' listing shows true names/enchantments, not appearances.
+            // C ref: end.c really_done():1252-1262 — "needed for both
+            // inventory disclosure and dumplog": for how != PANICKED, run
+            // `discover_object(obj->otyp, TRUE, TRUE, FALSE)` over the pack
+            // plus known/bknown/dknown/rknown=1 and set_cknown_lknown(), so
+            // disclose()'s 'i' listing shows true names/enchantments.
+            // The fourth argument is credit_hero and C passes FALSE here: a
+            // DEAD hero is not credited with a Wisdom exercise for learning
+            // what they were carrying (C even notes "observe_object not
+            // necessary after discover_object").  Routing this through
+            // fully_identify_obj() instead used makeknown(), i.e.
+            // credit_hero TRUE, so every not-yet-name-known pack item spent
+            // an extra exercise(A_WIS) rn2(19) that C never draws — the
+            // whole post-death stream (savebones' mksobj(CORPSE) ->
+            // next_ident/rndmonnum/start_corpse_timeout) then read one draw
+            // late (mirror44 seed0108 idx 2465).
             if (how !== PANICKED) {
                 const invmod = await import('./invent.js');
+                const { discover_object } = await import('./o_init.js');
                 const inv = Array.isArray(game.invent) ? game.invent
                     : (Array.isArray(game.gi?.invent) ? game.gi.invent : []);
-                for (const obj of inv) invmod.fully_identify_obj(obj);
+                for (const obj of inv) {
+                    discover_object(obj.otyp, true, true, false);
+                    obj.known = obj.bknown = obj.dknown = obj.rknown = 1;
+                    invmod.set_cknown_lknown(obj);
+                }
             }
             const clean = await disclose(how, taken);
             // C ref: end.c:1363 — savebones() runs AFTER disclose(), i.e. after
             // the "You die..." --More-- has been paged; doing it earlier wiped
             // the map out from under those frames.
             if (bones_ok) {
+                // C ref: end.c:1306-1319 — the corpse and grave are built HERE,
+                // ahead of the query below, and their only gate is bones_ok:
+                // the 29 draws mksobj(CORPSE) makes are spent whatever the
+                // player answers.  Building them inside the 'y' arm instead
+                // lost all 29 on every declined save (dp-named-tour-barb step
+                // 214, whose screen IS the unanswered "Save bones?" prompt).
+                const corpse = await make_hero_corpse_and_grave(how);
                 // C ref: end.c:1366 — `if (!wizard || paranoid_query(
                 // ParanoidBones, "Save bones?")) savebones(...)`.  ParanoidBones
                 // is off by default, so this is a plain yn() defaulting to 'n';
@@ -543,12 +644,16 @@ async function done(how) {
                 let save_bones = true;
                 if (wizard) save_bones = (await d.y_n('Save bones?', 'yn', 'n')) === 'y';
                 if (save_bones) {
-                    const corpse = await make_hero_corpse_and_grave(how);
                     const { savebones } = await import('./bones.js');
                     await savebones(how, corpse || game._death_corpse || null);
                 }
             }
-            if (clean) await real_death_epilogue(how, wizard || discover);
+            // C ref: end.c really_done() — a 'q' partway through disclose()
+            // (this file's `clean`, C's global done_stopprint) skips the
+            // tombstone/goodbye/summary text but topten()'s score notice
+            // still runs; it is NOT a gate on calling really_done()'s tail
+            // at all (that used to skip this entirely for a 'q' answer).
+            await real_death_epilogue(how, wizard || discover, !clean);
         }
     }
 }
@@ -743,8 +848,8 @@ async function disclose(how, taken = false) {
             await invmod.display_inventory_interactive(null);
             // C ref: end.c:641 `container_contents(gi.invent, TRUE, TRUE,
             // FALSE)` — one "Contents of the <box>:" window per carried
-            // container, recursing into nested ones.  Not ported: reachable only
-            // for a hero who both carries a container and answers 'y' here.
+            // container, recursing into nested ones.
+            await container_contents(inv, true, true, false);
         }
         if (c === 'q') stopprint = true;
     }
@@ -784,8 +889,15 @@ async function disclose(how, taken = false) {
     if (!stopprint) {
         // C ref: insight.c:3007 list_genocided(defquery, ask) — at end of game
         // `both` is TRUE (program_state.gameover), so extinct species count too.
-        // With nothing gone there is no prompt at all.
-        const { ngenocided, nextinct, ngone } = genocided_counts();
+        // With nothing gone there is no prompt at all.  Counts come from the
+        // already-C-faithful insight.js num_extinct()/num_gone() (insight.js:
+        // 4155/4170), which apply the UniqCritterIndx filter so a merely-CREATED
+        // unique (e.g. the Oracle) is never counted as "extinct" — the
+        // hand-rolled genocided_counts() this replaced scanned mvitals with no
+        // such filter and fired a spurious prompt here.
+        const ngenocided = insight.num_gone(G_GENOD, []);
+        const nextinct = insight.num_extinct();
+        const ngone = insight.num_gone(G_GENOD | G_EXTINCT, []);
         if (ngone > 0) {
             const q = should_query_disclose_option(end_disclose, 'g');
             let defquery = q.defquery;
@@ -825,21 +937,6 @@ async function disclose(how, taken = false) {
     return !stopprint;
 }
 
-// C ref: insight.c num_genocides()/num_extinct()/num_gone(mvflags, mindx) — the
-// three counts list_genocided() decides its prompt wording from.  mvitals[]
-// carries G_GENOD / G_EXTINCT per species; a species can be both.
-function genocided_counts() {
-    const mv = game.mvitals || [];
-    let ngenocided = 0, nextinct = 0, ngone = 0;
-    for (let i = 0; i < mv.length; i++) {
-        const f = mv[i]?.mvflags | 0;
-        if (f & G_GENOD) ngenocided++;
-        if (f & G_EXTINCT) nextinct++;
-        if (f & (G_GENOD | G_EXTINCT)) ngone++;
-    }
-    return { ngenocided, nextinct, ngone };
-}
-
 // C ref: end.c really_done() tail for a normal (non-wizard, non-discover)
 // death: outrip() renders the tombstone into a TEXT window whose teardown
 // pages two more blank --More-- acknowledgements, then topten() reports the
@@ -850,7 +947,7 @@ function genocided_counts() {
 // `scoreSkipped` == (wizard || discover): topten() then prints the "score list
 // will not be checked" notice in place of the high-score table (topten.c:725)
 // and the 'record' file is left alone.
-async function real_death_epilogue(how, scoreSkipped = false) {
+async function real_death_epilogue(how, scoreSkipped = false, stopprint = false) {
     const disp = game?.nhDisplay;
     const { nhgetch } = await import('./input.js');
     if (!disp?.putstr) return;
@@ -890,59 +987,71 @@ async function real_death_epilogue(how, scoreSkipped = false) {
     const year = (+String(game.datetime || '').slice(0, 4)) || 2020;
     const moves = (game.moves == null ? 0 : (game.moves | 0));
 
-    const lines = [];
-    // Stone only for a death (how <= GENOCIDED); see outrip_and_score().
-    const stone = how <= GENOCIDED;
-    if (stone) {
-        lines.push('');
-        for (const r of genl_outrip(plname, umoney, deathText, year)) lines.push(r);
-        lines.push('');
-        lines.push('');
-    }
-    lines.push(`${goodbye_for_role(roleName)} ${plname} the ${roleName}...`);
-    lines.push('');
-    lines.push((how !== ESCAPED && how !== ASCENDED)
-        ? `You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
-          + ` with ${urexp} point${plur(urexp)},`
-        : `You ${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
-          + ` with ${urexp} point${plur(urexp)},`);
-    lines.push(`and ${umoney} piece${plur(umoney)} of gold, after ${moves} move${plur(moves)}.`);
-    lines.push(`You were level ${u?.ulevel || 1} with a maximum of ${u?.uhpmax || 0}`
-        + ` hit point${plur(u?.uhpmax || 0)} when you ${ENDS[how]}.`);
-    lines.push('');
-
-    const MORE = '--More--';
-    const drawMore = (row) => {
-        for (let i = 0; i < MORE.length; i++) disp.setCell(i, row, MORE[i], NO_COLOR, 0);
-        disp.setCursor(MORE.length, row);
-    };
-
-    // C ref: getline.c xwaitforspace(quitchars) behind every dmore() — only
-    // " \r\n\033" dismiss; any other key rings the bell and waits again without
-    // redrawing, so it records as a repeat of the same frame.
-    const waitforspace = async () => {
-        for (;;) {
-            const k = await nhgetch();
-            if (k === 32 || k === 13 || k === 10 || k === 27) return k;
+    // C ref: end.c really_done() — every rip/goodbye/summary line is written
+    // through `dump_forward_putstr(endwin, 0, str, done_stopprint)`, whose
+    // 4th arg SKIPS the actual putstr() (dumplog-only) once done_stopprint is
+    // set; `endwin` itself is never even created unless `!done_stopprint ||
+    // flags.tombstone` (end.c:1390).  disclose()'s own 'q' answer sets that
+    // SAME global, so a 'q' partway through disclosure (this session:
+    // "attributes?" answered with ESC, which maps to 'q' when the response
+    // set offers one) skips the whole tombstone+goodbye+summary block, not
+    // just disclose()'s own remaining queries — only topten()'s score
+    // notice below is unconditional.
+    if (!stopprint) {
+        const lines = [];
+        // Stone only for a death (how <= GENOCIDED); see outrip_and_score().
+        const stone = how <= GENOCIDED;
+        if (stone) {
+            lines.push('');
+            for (const r of genl_outrip(plname, umoney, deathText, year)) lines.push(r);
+            lines.push('');
+            lines.push('');
         }
-    };
+        lines.push(`${Goodbye(game.urole?.mnum)} ${plname} the ${roleName}...`);
+        lines.push('');
+        lines.push((how !== ESCAPED && how !== ASCENDED)
+            ? `You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
+              + ` with ${urexp} point${plur(urexp)},`
+            : `You ${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
+              + ` with ${urexp} point${plur(urexp)},`);
+        lines.push(`and ${umoney} piece${plur(umoney)} of gold, after ${moves} move${plur(moves)}.`);
+        lines.push(`You were level ${u?.ulevel || 1} with a maximum of ${u?.uhpmax || 0}`
+            + ` hit point${plur(u?.uhpmax || 0)} when you ${ENDS[how]}.`);
+        lines.push('');
 
-    // C ref: wintty.c process_text_window() — the endgame TEXT window is paged
-    // 23 lines at a time with --More-- on row 23 of EVERY page (including the
-    // last).  A death's text is exactly 24 lines (blank + 15 rip rows + 2 blank
-    // + goodbye + blank + 3 summary + trailing blank), so it pages as a full
-    // page then a blank one; a QUIT's is 6 lines -> a single page.
-    const PAGE = ROWS - 1;
-    const npages = Math.max(1, Math.ceil(lines.length / PAGE));
-    let ripCancelled = false;
-    for (let p = 0; p < npages && !ripCancelled; p++) {
-        disp.clearScreen();
-        for (let i = 0; i < PAGE; i++) {
-            const t = lines[p * PAGE + i];
-            if (t) disp.putstr(0, i, t, NO_COLOR, 0);
+        const MORE = '--More--';
+        const drawMore = (row) => {
+            for (let i = 0; i < MORE.length; i++) disp.setCell(i, row, MORE[i], NO_COLOR, 0);
+            disp.setCursor(MORE.length, row);
+        };
+
+        // C ref: getline.c xwaitforspace(quitchars) behind every dmore() — only
+        // " \r\n\033" dismiss; any other key rings the bell and waits again without
+        // redrawing, so it records as a repeat of the same frame.
+        const waitforspace = async () => {
+            for (;;) {
+                const k = await nhgetch();
+                if (k === 32 || k === 13 || k === 10 || k === 27) return k;
+            }
+        };
+
+        // C ref: wintty.c process_text_window() — the endgame TEXT window is paged
+        // 23 lines at a time with --More-- on row 23 of EVERY page (including the
+        // last).  A death's text is exactly 24 lines (blank + 15 rip rows + 2 blank
+        // + goodbye + blank + 3 summary + trailing blank), so it pages as a full
+        // page then a blank one; a QUIT's is 6 lines -> a single page.
+        const PAGE = ROWS - 1;
+        const npages = Math.max(1, Math.ceil(lines.length / PAGE));
+        let ripCancelled = false;
+        for (let p = 0; p < npages && !ripCancelled; p++) {
+            disp.clearScreen();
+            for (let i = 0; i < PAGE; i++) {
+                const t = lines[p * PAGE + i];
+                if (t) disp.putstr(0, i, t, NO_COLOR, 0);
+            }
+            drawMore(ROWS - 1);
+            ripCancelled = (await waitforspace()) === 27;
         }
-        drawMore(ROWS - 1);
-        ripCancelled = (await waitforspace()) === 27;
     }
 
     // C ref: topten() — "assure minimum number of points": t0->points is
@@ -957,13 +1066,20 @@ async function real_death_epilogue(how, scoreSkipped = false) {
         // list will not be checked."); } goto showwin; }`.  No table, no record
         // update, and the window is still displayed.
         disp.clearScreen();
+        // C ref: end.c really_done() tail — `if (done_stopprint) { raw_print("");
+        // raw_print(""); }` runs right before nh_terminate(), AFTER topten()
+        // returns: two more blank-line cursor advances with no visible text
+        // change (see quit_final_message(), which already applies this for the
+        // "Dump core?" 'q' path).  `stopprint` here is disclose()'s own 'q'
+        // (this session: "attributes?" answered with ESC, which maps to 'q'),
+        // so it needs the same +2.
         if (how !== PANICKED) {
             const msg = `Since you were in ${is_wizard() ? 'wizard' : 'discover'} mode,`
                 + ' the score list will not be checked.';
             disp.putstr(0, 1, msg, NO_COLOR, 0);
-            disp.setCursor(0, 2);
+            disp.setCursor(0, stopprint ? 4 : 2);
         } else {
-            disp.setCursor(0, 0);
+            disp.setCursor(0, stopprint ? 2 : 0);
         }
         game.program_state = game.program_state || {};
         game.program_state.gameover = true;
@@ -1143,11 +1259,12 @@ function topten_outheader(COLNO) {
 
 // C ref: topten.c outentry(rank, t1, so) — format one score-list entry,
 // word-wrapping across as many lines as needed so the "Hp [max]" column
-// stays aligned at the right edge.  Reduced to the death-description branches
-// reachable by a plain "died in <dungeon> [on level N]" contest death
-// (escaped/ascended/starved/choked/poisoned/crushed/petrified and the
-// astral-plane wording are not reachable here).  `so` (standout) pads each
-// line to COLNO-1 for the bold render, matching the just-died entry.
+// stays aligned at the right edge.  Handles the "escaped"/"ascended"
+// branches (topten.c:973-984) plus the plain "died in <dungeon> [on level
+// N]" contest death (starved/choked/poisoned/crushed/petrified); the
+// astral-plane wording (topten.c:1004-1028) is not reachable here.  `so`
+// (standout) pads each line to COLNO-1 for the bold render, matching the
+// just-died entry.
 function topten_outentry(rank, entry, so, COLNO) {
     let linebuf = rank ? String(rank).padStart(3) : '   ';
     // C: "%10ld", t1->points ? t1->points : u.urexp — a points-floored-to-0
@@ -1162,20 +1279,39 @@ function topten_outentry(rank, entry, so, COLNO) {
 
     let secondLine = true;
     const death = entry.death;
-    if (death.startsWith('quit')) { linebuf += 'quit'; secondLine = false; }
-    else if (death.startsWith('died of st')) { linebuf += 'starved to death'; secondLine = false; }
-    else if (death.startsWith('choked')) linebuf += `choked on h${entry.plgend[0] === 'F' ? 'er' : 'is'} food`;
-    else if (death.startsWith('poisoned')) linebuf += 'was poisoned';
-    else if (death.startsWith('crushed')) linebuf += 'was crushed to death';
-    else if (death.startsWith('petrified by ')) linebuf += 'turned to stone';
-    else linebuf += 'died';
-    // C: svd.dungeons[t1->deathdnum].dname — resolved against the CURRENT game's
-    // dungeon table, so a record entry written by an earlier game re-reads it.
-    const dname = game.dungeons?.[entry.deathdnum]?.dname || entry.dungeonName;
-    linebuf += ` in ${dname}`;
-    if (entry.deathdnum !== entry.knoxDnum) linebuf += ` on level ${entry.deathlev}`;
-    if (entry.deathlev !== entry.maxlvl) linebuf += ` [max ${entry.maxlvl}]`;
-    if (death.startsWith('quit ')) linebuf += death.slice(4);
+    // C: topten.c:973-984 — "escaped"/"ascended" get their own wording and
+    // never carry a second line (a "died in <dungeon>" second line makes
+    // no sense for either).
+    if (death.startsWith('escaped')) {
+        linebuf += `escaped the dungeon ${
+            death.slice(7, 9) === ' (' ? death.slice(7 + 2) : ''}[max level ${entry.maxlvl}]`;
+        // fixup for closing paren in "escaped... with...Amulet)[max..."
+        const bp = linebuf.indexOf(')');
+        if (bp >= 0) {
+            linebuf = (entry.deathdnum === game.astral_level?.dnum)
+                ? linebuf.slice(0, bp)
+                : `${linebuf.slice(0, bp)} ${linebuf.slice(bp + 1)}`;
+        }
+        secondLine = false;
+    } else if (death.startsWith('ascended')) {
+        linebuf += `ascended to demigod${entry.plgend[0] === 'F' ? 'dess' : ''}-hood`;
+        secondLine = false;
+    } else {
+        if (death.startsWith('quit')) { linebuf += 'quit'; secondLine = false; }
+        else if (death.startsWith('died of st')) { linebuf += 'starved to death'; secondLine = false; }
+        else if (death.startsWith('choked')) linebuf += `choked on h${entry.plgend[0] === 'F' ? 'er' : 'is'} food`;
+        else if (death.startsWith('poisoned')) linebuf += 'was poisoned';
+        else if (death.startsWith('crushed')) linebuf += 'was crushed to death';
+        else if (death.startsWith('petrified by ')) linebuf += 'turned to stone';
+        else linebuf += 'died';
+        // C: svd.dungeons[t1->deathdnum].dname — resolved against the CURRENT game's
+        // dungeon table, so a record entry written by an earlier game re-reads it.
+        const dname = game.dungeons?.[entry.deathdnum]?.dname || entry.dungeonName;
+        linebuf += ` in ${dname}`;
+        if (entry.deathdnum !== entry.knoxDnum) linebuf += ` on level ${entry.deathlev}`;
+        if (entry.deathlev !== entry.maxlvl) linebuf += ` [max ${entry.maxlvl}]`;
+        if (death.startsWith('quit ')) linebuf += death.slice(4);
+    }
     linebuf += '.';
 
     if (secondLine) {
@@ -1222,13 +1358,38 @@ function topten_outentry(rank, entry, so, COLNO) {
 // C ref: hack.h an(str) — indefinite article.
 function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
 
-// C ref: end.c done_in_by() killer-name construction, reduced to the common
-// case: an ordinary (non-unique, non-ghost, non-shopkeeper, non-priest,
-// non-shapeshifted) monster.  monhealthdescr() is a no-op in this NetHack
-// version (pager.c:140-161, disabled behind `#if 0`), so no health descriptor
-// is ever prepended.  killer.format is KILLED_BY_AN, giving "killed by a
-// <species>" — used for both the tombstone engraving and the topten entry.
-function killer_text_for_monster(mtmp) {
+// C ref: end.c done_in_by() — the killer's real species survives a shape change.
+async function killer_text_for_monster(mtmp) {
+    const { ismnum, M_AP_MONSTER, G_UNIQ } = await import('./const.js');
+    const { monster_by_pmidx, pmname_of_pmidx } = await import('./makemon.js');
+    const { Mgender } = await import('./do_name.js');
+    const { type_is_pname, the_unique_pm, an: article } = await import('./objnam.js');
+    const ptr = mtmp.data;
+    const champtr = ismnum(mtmp.cham) ? monster_by_pmidx(mtmp.cham) : ptr;
+    const mimicker = mtmp.m_ap_type === M_AP_MONSTER;
+    if (champtr && (champtr.pmidx !== ptr.pmidx || mimicker)) {
+        const mgender = Mgender(mtmp);
+        const realname = pmname_of_pmidx(champtr.pmidx, mgender);
+        const fakeptr = mimicker ? monster_by_pmidx(mtmp.mappearance) : ptr;
+        let fakename = pmname_of_pmidx(fakeptr.pmidx, mgender);
+        const { is_vampshifter } = await import('./monmove.js');
+        const vampire = is_vampshifter(mtmp);
+        if (!mimicker && vampire && realname.includes('vampire')
+            && fakename === 'vampire bat') fakename = 'bat';
+        const shape = vampire || type_is_pname(fakeptr) ? fakename
+            : the_unique_pm(fakeptr) ? `the ${fakename}` : article(fakename);
+        let name = vampire ? `${realname} in ${shape} form`
+            : `${realname} ${mimicker ? 'disguised as' : 'imitating'} ${shape}`;
+        const { Hallucination_u } = await import('./display.js');
+        const { canspotmon } = await import('./uhitm.js');
+        if (Hallucination_u() && canspotmon(mtmp))
+            name = `hallucinogen-distorted ${name}`;
+        if (mtmp.minvis) name = `invisible ${name}`;
+        const unique = mimicker && (ptr.geno & G_UNIQ)
+            && (ptr.name !== 'high cleric' || mtmp.ispriest);
+        return `killed by ${unique
+            ? (type_is_pname(ptr) ? name : `the ${name}`) : article(name)}`;
+    }
     // C ref: end.c:264-271 — a shopkeeper killer gets an honorific and NO
     // article (killer.format = KILLED_BY).  formatkiller() (topten.c:137) then
     // rewrites every ',' in the stored name to ';'; outentry() reverses it for
@@ -1258,10 +1419,13 @@ function shk_name_for_killer(mtmp) {
 export async function done_in_by(mtmp, how = DIED) {
     const d = await deps();
     // C ref end.c:195 — You((how == STONING) ? "turn to stone..." : "die...").
-    game._death_prior_message = game._pending_message || '';
     await d.update_topl('You die...');
     game._killer_mon = mtmp || null;
-    if (mtmp) game._killer_name = killer_text_for_monster(mtmp);
+    if (mtmp) game._killer_name = await killer_text_for_monster(mtmp);
+    // C ref: end.c:326-340 — maintain u.ugrave_arise from the killer's type
+    // before done(how)'s really_done() decides the corpse+grave/message fate.
+    game.u = game.u || {};
+    game.u.ugrave_arise = await compute_ugrave_arise(mtmp);
     await done(how);
 }
 
@@ -1292,7 +1456,7 @@ import {
     objects as objects_, AMULET_CLASS as AMULET_CLASS_, GEM_CLASS as GEM_CLASS_,
     FIRST_REAL_GEM as FIRST_REAL_GEM_, LAST_REAL_GEM as LAST_REAL_GEM_,
     STATUE as STATUE_, BAG_OF_TRICKS as BAG_OF_TRICKS_, POT_WATER as POT_WATER_,
-    AMULET_OF_YENDOR as AMULET_OF_YENDOR_,
+    AMULET_OF_YENDOR as AMULET_OF_YENDOR_, LARGE_BOX as LARGE_BOX_,
 } from './mkobj.js';
 
 // hack.h:484-495 death codes end.js did not already name.
@@ -1356,15 +1520,15 @@ function OBJ_NAME(o) { return o?.name || ''; }
 // C ref: obj.h Has_contents / Is_container / SchroedingersBox.  js/invent.js
 // (372/378) and js/pickup.js:154 keep private copies of these; end.js has none.
 function Has_contents(obj) { return !!(obj?.cobj && obj.cobj.length); }
+// C ref: obj.h:337 Is_container(o) == otyp in [LARGE_BOX..BAG_OF_TRICKS]. This
+// port's otyp numbering runs LARGE_BOX=214..BAG_OF_TRICKS=220 (js/mkobj.js),
+// NOT the literal C header values — js/invent.js:397-405 already carries this
+// exact fix (its own comment: "the enumerated list stopped at BAG_OF_HOLDING,
+// so a bag of tricks was never a container").
 function Is_container(obj) {
-    const oc = objects_[obj?.otyp]?.oclass;
-    return oc === 6 /* TOOL_CLASS */ && CONTAINER_OTYPS.has(obj.otyp);
+    const t = obj?.otyp;
+    return t >= LARGE_BOX_ && t <= BAG_OF_TRICKS_;
 }
-// obj.h: BAG_OF_HOLDING..ICE_BOX plus the two chests/boxes and the sack family.
-const CONTAINER_OTYPS = new Set([
-    216 /* large box */, 217 /* chest */, 218 /* ice box */, 219 /* sack */,
-    BAG_OF_TRICKS_, 221 /* bag of holding */, 222 /* oilskin sack */,
-]);
 // C ref: obj.h SchroedingersBox(o) — a large box with spe==1 made by the
 // bones/quantum-mechanic path; mirrors js/pickup.js:154.
 function SchroedingersBox(obj) { return !!obj && obj.otyp === 216 && obj.spe === 1; }
@@ -1374,18 +1538,13 @@ function SchroedingersBox(obj) { return !!obj && obj.otyp === 216 && obj.spe ===
 function the_(s) { return /^[A-Z]/.test(s || '') ? s : `the ${s}`; }
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
-// C ref: win/tty/wintty.c create_nhwindow/putstr/display_nhwindow/
-// destroy_nhwindow.  frozen/terminal.js owns the real grid and coverage.mjs
-// marks windows.c/wintty.c N/A, so these are text sinks: the translated
-// functions accumulate their lines, and the wiring pass hands them to the
-// existing renderer (js/extcmd-handlers.js render_container_contents() already
-// does exactly that for container_contents(box, FALSE, FALSE, TRUE)).
-function create_nhwindow(type) { return { type, lines: [] }; }
+// C ref: win/tty/wintty.c putstr — the dumplog-only call sites below pass
+// window 0 (no live dumplog window in this port), so this stays a no-op sink
+// for them; container_contents() renders through extcmd-handlers.js's
+// draw_corner_window() instead (frozen/terminal.js owns the real grid).
 function putstr(win, _attr, str) {
     if (win && Array.isArray(win.lines)) win.lines.push(str);
 }
-function display_nhwindow(_win, _blocking) { /* wiring pass renders win.lines */ }
-function destroy_nhwindow(_win) { }
 
 // C ref: allmain.c gh.hero_seq == (svm.moves << 3) + hero moves this turn;
 // mirrors the private js/apply.js:213.  gd.done_seq lives on the game state.
@@ -1702,7 +1861,7 @@ export async function fuzzer_savelife(how) {
      * 'done_seq' is maintained in done().
      */
     if (!ps.panicking && how !== PANICKED && how !== TRICKED) {
-        savelife(how);
+        await savelife(how);
 
         /* periodically restore characteristics plus lost experience levels or
            cure lycanthropy or both */
@@ -1790,13 +1949,14 @@ const PROP_NAMES_1_8 = [
 // js/extcmd-handlers.js render_container_contents() with the tty corner-window
 // renderer inlined.  Do not wire this over that call site without replacing it
 // — two copies of the same window is the duplicate-reimplementation trap.  The
-// missing flavour is disclose()'s (gi.invent, TRUE, TRUE, FALSE) recursion
-// (end.c:641), which end.js's disclose() currently notes as unported.
+// other flavour, disclose()'s (gi.invent, TRUE, TRUE, FALSE) recursion
+// (end.c:641), is wired in disclose() below.
 export async function container_contents(list, identified, all_containers,
                                          reportempty) {
-    const dumping = !!game.iflags?.in_dumplog;
     const I = await import('./invent.js');
     const { discover_object } = await import('./o_init.js');
+    const { draw_corner_window } = await import('./extcmd-handlers.js');
+    const { nhgetch } = await import('./input.js');
     const d = await deps();
 
     for (const box of (list || [])) {
@@ -1810,15 +1970,11 @@ export async function container_contents(list, identified, all_containers,
             if (box.otyp === BAG_OF_TRICKS_) {
                 continue; /* wrong type of container */
             } else if (box.cobj && box.cobj.length) {
-                const tmpwin = create_nhwindow(4 /* NHW_MENU */);
-
                 /* at this stage, the SchroedingerBox() flag is only set if the
                    cat inside the box is alive */
                 const cat = SchroedingersBox(box);
-
-                putstr(tmpwin, 0, `Contents of ${the_(I.xname(box))}:`);
-                if (!dumping)
-                    putstr(tmpwin, 0, '');
+                const lines = [{ text: `Contents of ${the_(I.xname(box))}:` },
+                                { text: '' }];
                 /* C: buf[0] = buf[1] = ' ' — two leading spaces per item */
                 if (box.cobj.length && !cat) {
                     const sortloot_opt = game.flags?.sortloot;
@@ -1840,16 +1996,31 @@ export async function container_contents(list, identified, all_containers,
                         }
                         // doname_with_price() is private to js/invent.js;
                         // floor_object_name() is its exported wrapper (:545).
-                        putstr(tmpwin, 0, '  ' + I.floor_object_name(obj));
+                        lines.push({ text: '  ' + I.floor_object_name(obj) });
                     }
                     I.unsortloot(sortedcobj);
                 } else if (cat) {
-                    putstr(tmpwin, 0, "  Schroedinger's cat!");
+                    lines.push({ text: "  Schroedinger's cat!" });
                 }
-                if (dumping)
-                    putstr(0, 0, '');
-                display_nhwindow(tmpwin, true);
-                destroy_nhwindow(tmpwin);
+                let maxcol = 0;
+                for (const ln of lines) maxcol = Math.max(maxcol, ln.text.length + 1);
+                draw_corner_window(lines, maxcol, '--More--', 0);
+                // C ref: win/tty/wintty.c process_text_window() ->
+                // dmore(cw, quitchars); decl.c quitchars = " \r\n\033" — any
+                // other key rings the bell and leaves the window up (same
+                // xwaitforspace() loop topl_more_ext already implements for
+                // the plain --More--).
+                for (;;) {
+                    const k = await nhgetch();
+                    const kc = (k === 27) ? '\x1b' : String.fromCharCode(k);
+                    if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b') break;
+                }
+                // C ref: draw_corner_window()'s callers all clear the modal
+                // flag once their window is dismissed (e.g.
+                // extcmd-handlers.js:1803); without this the next disclose()
+                // query renders behind the stale overlay (display.js:2729
+                // `if (game._modal_screen) return;`).
+                delete game._modal_screen;
                 if (all_containers)
                     await container_contents(box.cobj, identified, true,
                                              reportempty);
@@ -1965,7 +2136,6 @@ export function restore_killers(nhfp) {
 }
 
 // hack.h:964-972 mode bits; sfbase.c Sfo_/Sfi_ marshalling (coverage N/A).
-const COUNTING = 1, WRITING = 2, FREEING = 8;
 function update_file(nhfp) { return ((nhfp?.mode | 0) & (COUNTING | WRITING)); }
 function release_data(nhfp) { return ((nhfp?.mode | 0) & FREEING); }
 function Sfo_kinfo(nhfp, kptr, _tag) {

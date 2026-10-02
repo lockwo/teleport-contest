@@ -10,55 +10,79 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, statusLine1Text, statusLine2Text } from './display.js';
+import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, statusLine1Text, statusLine2Text, newsym } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import {
     obj_doname, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
     name_inventory_object, call_inventory_object, doorganize,
     addinv, prinv, prinv_fmt, let_to_name, report_merge_discovery,
     wiz_identify, renderWindowScreen, renderMenuLines, useup, xname,
+    doattributes, dodrop, doremring, dotravel_target, dopay, doperminv,
+    dopickup, doputon, dowieldquiver, dothrow, dotravel, dowear, dowield,
+    doprinuse, dofire, ddoinv, dotypeinv, dodiscovered, dolook, doswapweapon,
+    dotakeoff, doprring, doprtool, doprwep, doprgold, dovspell, dopramulet,
+    doprarm, near_capacity,
 } from './invent.js';
 import { pluslvl, losexp } from './exper.js';
 import { MAXULEV, IS_WALL, SDOOR, MM_NOEXCLAM, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
-         QBUFSZ } from './const.js';
+         QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
+         D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE } from './const.js';
 import { create_particular_monster } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
-import { is_undead_flag, is_demon_flag, humanoid } from './monflags_data.js';
+import { is_undead_flag, is_demon_flag, humanoid, nohands } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
 import { align_gname } from './role.js';
-import { newsym, map_invisible } from './display.js';
-import { STATUE, objects, place_object, weight, COIN_CLASS } from './mkobj.js';
+import { map_invisible, doredraw } from './display.js';
+import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { delobj, stackobj } from './invent.js';
+import { delobj, stackobj, doddrop } from './invent.js';
 import { count_unpaid, is_worn, wearing_armor, inventoryArray, takeoff_worn_obj,
          dismiss_invent_screen } from './invent.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT } from './livelog.js';
 import { rn2 } from './rng.js';
-import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED } from './const.js';
-import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor } from './hack.js';
+import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED, UNENCUMBERED } from './const.js';
+import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full, do_farlook } from './hack.js';
 import { dotwoweapon } from './wield.js';
 import { doride } from './steed.js';
 import { doenhance } from './enhance.js';
-import { dorub, dowipe, ECMD as APPLY_ECMD } from './apply.js';
+import { dorub, dowipe, doapply, ECMD as APPLY_ECMD } from './apply.js';
 import { readobjnam } from './readobjnam.js';
-import { hold_another_object, encumber_msg, objects_at, otense } from './invent.js';
+import { hold_another_object, encumber_msg, objects_at, otense, will_feel_cockatrice,
+         feel_cockatrice } from './invent.js';
 import { rn1 } from './rng.js';
 import { dopray as pray_dopray, dosacrifice } from './pray.js';
 import { dosit } from './sit.js';
-import { dodip } from './potion.js';
-import { dogenocided, do_gamelog, doconduct, dovanquished } from './insight.js';
+import { dodip, dodrink } from './potion.js';
+import { dogenocided, do_gamelog, doconduct, dovanquished, doborn } from './insight.js';
 import { isok } from './hacklib.js';
-import { Monnam, canspotmon, x_monnam, mon_nam, oc_wldam } from './uhitm.js';
+import { Monnam, canspotmon, x_monnam, mon_nam, oc_wldam, killed } from './uhitm.js';
 import { domonnoise } from './sounds.js';
 import { build_overview_lines, surface, print_dungeon_lines } from './dungeon.js';
 import { doextversion } from './version.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { polyok_flag } from './monflags_data.js';
 import { polymon, newman, domonability, PM_HUMAN } from './polyself.js';
-import { obj_resists } from './zap.js';
-import { timed_prop } from './timeout.js';
+import { obj_resists, dozap } from './zap.js';
+import { timed_prop, wiz_timeout_queue } from './timeout.js';
+import { dobugreport } from './report.js';
+import { docast } from './spell.js';
+import { dodown, doup } from './do.js';
+import { doengrave } from './engrave.js';
+import { dotogglepickup } from './options.js';
+import { doclassdisco } from './o_init.js';
+import { doread } from './read.js';
+import { dotelecmd } from './teleport.js';
+import { doset, dosetSimple } from './doset.js';
+import { wiz_light_sources } from './light.js';
+import { wiz_debug_cmd_bury } from './dig.js';
+import { doeat } from './eat.js';
+import { dohelp, hmenu_dohistory } from './pager.js';
+import { dokick } from './dokick.js';
+import { invoke_ok as artifact_invoke_ok } from './artifact.js';
+import { doextlist } from './cmd.js';
+import { mon_beside, loot_mon, reverse_loot } from './pickup.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -72,14 +96,11 @@ const ECM_NOFLAGS = 0;
 const ECM_IGNOREAC = 0x1;   // ignore the AUTOCOMPLETE requirement
 const ECM_EXACTMATCH = 0x2; // require exact (full) name match
 
-// The extended-command table.  C ref: cmd.c extcmdlist[].  Each entry is
-// [ef_txt, flagbits, ef_desc].  We retain only the flag bits relevant to
-// matching (AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD); the
-// rest don't affect which entries match a typed prefix.  Ordering mirrors C so
-// matchlist indexes are stable.  ef_desc is what extcmd_via_menu() shows (null
-// for the INTERNALCMD entries, which C also leaves NULL).
-// The recorder build defines DEBUG (its binary carries "bury objs under and
-// around you"), so the #ifdef DEBUG / NH_DEVEL_STATUS entries are all present.
+// The extended-command table.  C ref: cmd.c extcmdlist[]: [ef_txt, flagbits,
+// ef_desc].  Only the matching-relevant flag bits are kept (AUTOCOMPLETE/
+// WIZMODECMD/CMD_NOT_AVAILABLE/INTERNALCMD); order mirrors C so matchlist
+// indexes stay stable.  ef_desc is null for INTERNALCMD entries, as in C.
+// Recorder build defines DEBUG, so every #ifdef DEBUG/NH_DEVEL_STATUS entry is present.
 const EXTCMDLIST = [
     ["#", 0, "enter and perform an extended command"],
     ["?", AUTOCOMPLETE, "list all extended commands"],
@@ -293,16 +314,13 @@ function mungspaces(s) {
     return s.replace(/\s+/g, ' ').replace(/^ | $/g, '');
 }
 
-// Render the top-line getline prompt: clear row 0, draw "<query> <buf>",
-// place the cursor right after the typed text (the autocompleted tail is
-// drawn but the cursor is parked at the end of what was actually typed).
-// C ref: win/tty/getline.c hooked_tty_getlin() display behavior.
-// C ref: win/tty/topl.c topl_putsym() — `if (ttyDisplay->curx == CO - 1)
-// topl_putsym('\n')`, i.e. a top-line row holds cols 0..CO-2 (79 chars) and the
-// next character starts the following screen row at col 0, overwriting the map.
-// This is a HARD wrap; display.js wrap_topl() is the word wrap for update_topl
-// and must not be reused here.  A getlin whose query + buffer stays under 79
-// chars (every ordinary one) is unaffected.
+// Render the top-line getline prompt: clear row 0, draw "<query> <buf>", cursor
+// parked right after the typed text (the autocompleted tail draws, but the
+// cursor sits at the end of what was actually typed).
+// C ref: win/tty/getline.c hooked_tty_getlin(); topl.c topl_putsym() wraps HARD
+// at col 79 (`curx==CO-1 -> topl_putsym('\n')`), distinct from display.js's
+// wrap_topl() word-wrap for update_topl — don't reuse that here.  Unaffected
+// when query+buffer stays under 79 chars (the ordinary case).
 const TOPL_CO = 80;
 const TOPL_WRAP = TOPL_CO - 1;
 function draw_getlin(query, shown, cursorCol) {
@@ -328,22 +346,26 @@ function draw_getlin(query, shown, cursorCol) {
     disp.setCursor(Math.min(cc, disp.cols - 1), Math.min(cr, disp.rows - 1));
 }
 
-// C ref: win/tty/getline.c hooked_tty_getlin().  Reads a line at the top
-// line, with optional completion hook.  Each keystroke is its own captured
-// screen frame (the nhgetch fires the capture hook for the freshly drawn
-// prompt state).  Returns the typed string, or "\x1b" if escaped out of an
-// empty buffer.
+// C ref: win/tty/getline.c hooked_tty_getlin() — reads a line at the top line
+// with an optional completion hook; each keystroke is its own captured screen
+// frame.  Returns the typed string, or "\x1b" if escaped from an empty buffer.
 export async function hooked_tty_getlin(query, hook) {
-    // C ref: win/tty/getline.c hooked_tty_getlin():53-54 — if a top-line message
-    // is still awaiting acknowledgment (toplin == NEED_MORE), page it with
-    // --More-- (its own captured frame) before drawing the getlin prompt.  This
-    // fires for e.g. a confused scroll's "Being confused, ..." line preceding the
-    // level-teleport prompt; ordinary command-initiated getlins start with a
-    // cleared top line, so it is a no-op for them.
-    if (game._toplin === 1) {
+    // C ref: win/tty/getline.c hooked_tty_getlin():53-54 — a pending top-line
+    // message (toplin==NEED_MORE) is paged with --More-- before the getlin
+    // prompt draws; ordinary command-initiated getlins already start with a
+    // cleared top line, so this is a no-op for them (e.g. a confused scroll's
+    // message before a level-teleport prompt, or #migratemons' "No monsters
+    // currently migrating." before its own prompt).  pline() marks pending only
+    // "softly" (game._toplinSoft, not _toplin — see pline()'s own comment); C's
+    // toplin is unified and getline.c checks it unconditionally, so this reader
+    // must catch both.
+    const cur = game._pending_message || '';
+    const softPending = !!cur && game._toplinSoft === cur;
+    if (game._toplin === 1 || softPending) {
         await topl_more();
         game._pending_message = '';
         game._toplin = 0;
+        game._toplinSoft = null;
     }
 
     let typed = '';   // what the user actually typed (obufp/bufp content)
@@ -392,11 +414,10 @@ export async function hooked_tty_getlin(query, hook) {
 }
 
 // ── OPTIONS=extmenu — the '#' extended-command MENU ────────────────────────
-// C ref: cmd.c extcmd_via_menu(), reached from win/tty/getline.c
-// tty_get_ext_cmd() when iflags.extmenu is set: '#' shows a PICK_ONE menu of
-// the AUTOCOMPLETE commands instead of the type-in prompt.  Each pick appends
-// its accelerator to cbuf and the list is re-filtered on that longer prefix
-// until exactly one command is left; that one is the selection.
+// C ref: cmd.c extcmd_via_menu(), reached from getline.c tty_get_ext_cmd() when
+// iflags.extmenu is set: '#' shows a PICK_ONE menu of AUTOCOMPLETE commands
+// instead of the type-in prompt.  Each pick appends its accelerator to cbuf and
+// re-filters until exactly one command remains — that's the selection.
 
 // C ref: win/tty/wintty.c default_menu_cmds[] (wintype.h MENU_*).  These are
 // accepted alongside the current page's selector letters, the digits and the
@@ -662,7 +683,10 @@ export async function yn_function(query, resp, def) {
     let prompt = query;
     if (resp != null) {
         prompt += ` [${resp}]`;
-        if (def) prompt += ` (${def})`;
+        // C ref: topl.c tty_yn_function():422 `if (def)` — def is a char, so
+        // a NUL default is FALSY there and the " (c)" suffix is omitted.  A JS
+        // '\0' is a truthy 1-char string (wizcmds.js wiz_flip_level passes one).
+        if (def && def !== '\0') prompt += ` (${def})`;
         prompt += ' ';
     } else {
         prompt += ' ';
@@ -676,11 +700,9 @@ export async function yn_function(query, resp, def) {
         }
         disp.setCursor(Math.min(prompt.length, disp.cols - 1), 0);
     };
-    // C ref: win/tty/topl.c — an answered y/n prompt is LEFT on the top line
-    // (tty_yn_function only updates gt.toplines bookkeeping; the message window
-    // is not cleared).  This wrote the prompt straight onto the grid, so the
-    // next flush_screen() repainted row 0 from the (empty) pending message and
-    // the answered prompt vanished a frame early.
+    // C ref: win/tty/topl.c — same "left on the top line" fact as clean_up()
+    // above; writing straight to the grid here (instead of via _pending_message)
+    // let flush_screen() blank row 0 a frame early, erasing the answered prompt.
     const done = (r) => { game._pending_message = prompt.trimEnd(); game._toplin = 0; return r; };
     for (;;) {
         drawPrompt();
@@ -700,12 +722,10 @@ export async function yn_function(query, resp, def) {
 
 // ── individual extended commands ──
 
-// C ref: zap.c resist(mtmp, oclass, damage, tell) — the generic
-// magic-resistance check.  `oclass` picks the attack level, the monster's m_lev
-// is the defense level, and the single draw is
-//     rn2(100 + alev - dlev) < mtmp->data->mr
-// so a monster with mr 0 still costs a draw.  Ported here because #turn needs
-// it; damage is always 0 for #turn so the damage/kill tail is a no-op.
+// C ref: zap.c resist(mtmp, oclass, damage, tell) — generic magic-resistance
+// check: `oclass` sets the attack level, monster m_lev is the defense level,
+// draw is rn2(100 + alev - dlev) < mtmp->data->mr (mr 0 still costs a draw).
+// Ported here for #turn; damage is always 0 there so the kill tail is a no-op.
 function resist(mtmp, oclass, damage, tell) {
     let alev;
     switch (oclass) {
@@ -728,11 +748,10 @@ function resist(mtmp, oclass, damage, tell) {
     return resisted;
 }
 
-// C ref: pray.c doturn() — the #turn command (Knights and Priests; other roles
-// fall back to the turn-undead spell).  Was entirely unimplemented, so
-// seed4500's `#turn` drew none of C's stream: the exercise(A_WIS, TRUE) rn2(19)
-// at step 643, plus whatever the per-monster iteration costs, plus the
-// nomul(-(5 - (ulevel-1)/6)) paralysis that makes the command span turns.
+// C ref: pray.c doturn() — the #turn command (Knights/Priests; other roles
+// fall back to the turn-undead spell).  Was entirely unimplemented: seed4500's
+// `#turn` drew none of C's stream (exercise(A_WIS,TRUE) rn2(19) at step 643,
+// per-monster iteration cost, nomul(-(5-(ulevel-1)/6)) paralysis spanning turns).
 async function doturn() {
     const g = game, u = g.u;
     const roleMnum = g.urole?.mnum ?? -1;
@@ -806,10 +825,12 @@ async function doturn() {
                 if ((u.ualign?.type ?? 0) === -1 /* A_CHAOTIC */) {
                     mtmp.mpeaceful = 1;
                 } else {
-                    // C: killed(mtmp) — the hero destroys the undead outright.
-                    const mon = await import('./mon.js');
-                    const kill = mon.killed || mon.xkilled;
-                    if (kill) await kill(mtmp);
+                    // C: killed(mtmp) destroys the undead outright — uhitm.js's
+                    // killed() is the real xkilled() port (js/mon.js has neither
+                    // name); its "You destroy the %s!" update_topl() triggers the
+                    // mid-xkilled() --More-- against doturn()'s pending
+                    // "Calling upon..." line.
+                    await killed(mtmp);
                 }
             } else {
                 // monflee(mtmp, 0, FALSE, TRUE): untimed scare, no RNG.
@@ -841,17 +862,17 @@ function turn_xlev(mcls) {
     }
 }
 
-// C ref: apply.c dojump()/jump().  For the recorded knight (innate Jumping)
-// this reaches the "Where do you want to jump?" prompt and then enters
-// getpos() targeting mode.  A picked target is validated with
-// is_valid_jump_pos(showmsg=TRUE); on failure the failure message is shown
-// and no time passes (ECMD_FAIL).  On a valid, non-self target the hero
-// hurtles to the landing spot (teleds) and morehungry(rnd(25)) is rolled —
-// the command then costs a turn (ECMD_TIME) so monsters move once.
-// C ref: youprop.h `#define Jumping (HJumping || EJumping)`.  HJumping is set
-// FROMOUTSIDE for knights at u_init.c:691; the only extrinsic source is
-// objects[JUMPING_BOOTS].oc_oprop, and this port has no oc_oprop column, so the
-// worn item stands in for it the way js/do_wear.js derives its extrinsics.
+// C ref: apply.c dojump()/jump(). The recorded knight (innate Jumping) reaches
+// "Where do you want to jump?" then getpos() targeting; a pick is validated
+// with is_valid_jump_pos(showmsg=TRUE) (fail -> message, no time, ECMD_FAIL); a
+// valid non-self target hurtles the hero (teleds), rolls morehungry(rnd(25)),
+// and costs a turn (ECMD_TIME).
+// C ref: youprop.h `Jumping = HJumping || EJumping`. HJumping is set
+// FROMOUTSIDE for knights (u_init.c:691); the only extrinsic source is
+// objects[JUMPING_BOOTS].oc_oprop == JUMPING, which js/mkobj.js DOES carry and
+// js/invent.js worn_extrinsics_on() now installs into the extrinsic word, so
+// this should become `worn_extrinsic(JUMPING)` when the accessor conversion
+// lands.  Until then the worn item stands in.
 function Jumping() {
     const u = game.u;
     if (u?.uprops?.Jumping || u?.HJumping || u?.EJumping) return true;
@@ -862,14 +883,17 @@ function Jumping() {
 }
 
 async function dojump() {
-    // C ref: apply.c jump():2001 `else if (!magic && !Jumping) {
-    // You_cant("jump very far"); return ECMD_OK; }` — without innate or worn
-    // jumping the command never reaches the targeting prompt.  (The two arms
-    // ahead of it, the SPE_JUMPING recast and the nolimbs/slithy form check,
-    // need known_spell()/polymorph state this port doesn't carry here.)
+    // C ref: apply.c jump():2001 `else if (!magic && !Jumping) { You_cant("jump
+    // very far"); return ECMD_OK; }` — without innate/worn jumping the prompt
+    // never appears. (The two arms ahead — SPE_JUMPING recast, nolimbs/slithy
+    // check — need known_spell()/polymorph state this port doesn't carry.)
     if (!Jumping()) {
         await pline("You can't jump very far.");
         return 0;                                      // ECMD_OK
+    }
+    if (near_capacity() > UNENCUMBERED) {
+        await pline('You are carrying too much to jump!');
+        return 0;
     }
     // C ref: apply.c jump():  pline("Where do you want to jump?"); cc = <u>;
     // getpos_sethilite(...); getpos(&cc, TRUE, "the desired position").
@@ -878,25 +902,24 @@ async function dojump() {
     // handle_tip(TIP_GETPOS) only fires a (no-op) Lua hook, it does not page.
     const u = game.u;
     await pline('Where do you want to jump?');
-    // C ref: getpos() -> handle_tip(TIP_GETPOS) shows a tty NHW_TEXT window the
-    // FIRST time getpos is used.  Displaying that window pages the pending
-    // message window first, so the prompt is shown with a trailing --More--;
-    // the tip text is then rendered by getpos_tip() inside getpos().  On every
-    // later getpos use the tip is suppressed (no --More--, no tip text): the
-    // cursor goes straight onto the map at the hero.  Mirror that gating with
-    // the TIP_GETPOS flag (1 << 4) so only the first #jump pages the prompt.
+    // C ref: getpos() -> handle_tip(TIP_GETPOS): the FIRST getpos() use shows a
+    // tty NHW_TEXT tip window, which pages the pending message first (a trailing
+    // --More--) then renders the tip text via getpos_tip(); every later use
+    // suppresses both (no --More--, no tip text — cursor goes straight to the
+    // hero).  Gated here with the TIP_GETPOS flag (1<<4) so only the first
+    // #jump pages the prompt.
     const TIP_GETPOS = 1 << 4;
     const tipPending = !((game.context?.tips || 0) & TIP_GETPOS);
     if (tipPending) {
         await topl_more();
     } else {
         await getpos_render('Where do you want to jump?', u.ux, u.uy);
-        // C ref: getpos.c getpos() opening "curs(WIN_MAP,u.ux,u.uy);
-        // flush_screen(0)".  jump()'s getpos_sethilite() marked every valid
-        // jump position gnew (selection_force_newsyms -> newsym_force); the
-        // opening flush redraws those cells and leaves the tty cursor one past
-        // the last (row-major) one rather than on the hero.  Reproduce that
-        // first-frame cursor placement (subsequent frames track <cx,cy>).
+        // C ref: getpos.c getpos() opening `curs(WIN_MAP,u.ux,u.uy);
+        // flush_screen(0)`. jump()'s getpos_sethilite() marks every valid jump
+        // position gnew (selection_force_newsyms -> newsym_force); the opening
+        // flush redraws those cells, leaving the cursor one past the last
+        // (row-major) one rather than on the hero.  Reproduce that first-frame
+        // placement (later frames track <cx,cy>).
         const hc = jump_hilite_first_cursor();
         if (hc) { const disp = game.nhDisplay; if (disp?.setCursor) disp.setCursor(hc[0], hc[1]); }
     }
@@ -924,12 +947,11 @@ async function dojump() {
     return 1; // ECMD_TIME — the move loop advances a turn (monsters move).
 }
 
-// C ref: wizcmds.c wiz_level_change().  getlin a target experience level, then
-// drive pluslvl()/losexp() to reach it.  Each level gain prints "You feel more
-// experienced." + "Welcome to experience level N." (and any adjabil intrinsic
-// message); the topline accumulates two messages per line and fires --More--
-// when the next message won't fit (display.js update_topl).  pluslvl/losexp
-// roll the per-level newhp()/newpw() RNG.
+// C ref: wizcmds.c wiz_level_change(): getlin a target level, then drive
+// pluslvl()/losexp() to reach it.  Each level gain prints "You feel more
+// experienced."+"Welcome to experience level N." (plus adjabil messages);
+// the topline accumulates two per line, --More--ing via update_topl when full.
+// pluslvl/losexp roll the per-level newhp()/newpw() RNG.
 async function wiz_level_change() {
     const buf = mungspaces(await getlin_top('To what experience level do you want to be set?'));
     if (buf === '' || buf[0] === '\x1b') return 0;
@@ -978,12 +1000,11 @@ async function paranoid_query(prompt) {
     return (await yn_function(prompt, 'yn', 'n')) === 'y';
 }
 
-// C ref: sounds.c dochat() — the #chat command.  The starter heroes can speak
-// (not silent/strangled/swallowed/underwater) and aren't standing on shop
-// merchandise, so the modelled path is: getdir("Talk to whom?...") then, for an
-// adjacent square, talk to a monster (domonnoise) / statue / wall / empty air.
-// getdir consumes no RNG; domonnoise() drives a turn (ECMD_TIME) when it talks
-// to a real monster, otherwise the command is free (ECMD_OK).
+// C ref: sounds.c dochat() — the #chat command.  Starter heroes can speak and
+// never stand on shop merchandise, so the modelled path is getdir("Talk to
+// whom?...") then, for an adjacent square, talk to a monster (domonnoise) /
+// statue / wall / empty air.  getdir draws no RNG; domonnoise() costs a turn
+// (ECMD_TIME) only when it talks to a real monster.
 async function dochat() {
     const u = game.u;
     // C ref: sounds.c dochat():1889 — u.uswallow / Underwater short-circuits.
@@ -1001,9 +1022,20 @@ async function dochat() {
         await pline('Your speech is unintelligible underwater.');
         return 0;
     }
-    // GAP: shop_object(u.ux, u.uy) — chatting while standing on unpaid shop
-    // merchandise makes the shopkeeper quote the price and COSTS A TURN
-    // (ECMD_TIME); not modelled, so a #chat inside a shop is one turn short.
+    // C ref: sounds.c dochat():1912 — `if (!Deaf && !Blind && (otmp =
+    // shop_object(u.ux, u.uy)) != 0) { price_quote(otmp); return ECMD_TIME; }`.
+    // Standing on shop merchandise makes the shopkeeper quote the price INSTEAD
+    // of asking for a direction, and it costs a turn.  shop_object() already
+    // screens for "inside a shop, shopkeeper present, not angry, not asleep,
+    // not mute, and something here other than gold".
+    if (!Deaf_hero_chat() && !Blind()) {
+        const { shop_object, price_quote } = await import('./shk.js');
+        const otmp = shop_object(u.ux, u.uy);
+        if (otmp) {
+            await price_quote(otmp);
+            return 1; /* ECMD_TIME */
+        }
+    }
     const { getdir } = await import('./cmd.js');
     const dir = await getdir('Talk to whom? (in what direction)');
     if (!dir) return 0; /* ECMD_CANCEL -> no turn */
@@ -1081,10 +1113,10 @@ async function dochat() {
     }
     // GAP (measured, deliberately omitted): C ref sounds.c:1389 does
     //     mtmp->mstrategy &= ~STRAT_WAITMASK;   /* prod it into action */
-    // Porting it costs 2 public steps on seed0367 (chatting to the Arch Priest
-    // un-freezes the quest leader, and our freed-leader m_move then diverges
-    // from C's).  Restore this line once a freed STRAT_CLOSE leader moves the
-    // way C's does; it is a real omission, not a no-op.
+    // Costs 2 public steps on seed0367 (chatting to the Arch Priest un-freezes
+    // the quest leader, whose freed m_move then diverges from C's).  Restore
+    // once a freed STRAT_CLOSE leader moves the way C's does — a real
+    // omission, not a no-op.
     mtmp.mstrategy = (mtmp.mstrategy ?? 0) & ~STRAT_WAITMASK;
 
     // a tame pet that is busy eating just makes eating noises (no turn).
@@ -1141,27 +1173,23 @@ async function getlin_top(query) {
 
 // ── #wizwish (wizcmds.c wiz_wish -> zap.c makewish) ──
 //
-// Wizard-mode wish.  C ref: wizcmds.c:32 wiz_wish() sets flags.verbose=FALSE
-// (so the "You may wish for an object." line is suppressed) then calls
-// makewish().  makewish (zap.c:6314) prompts "For what do you wish?", parses
-// the reply with readobjnam(), creates the object, holds it, and finally rolls
-// u.ublesscnt += rn1(100, 50) — recorded as rn2(100) @ makewish(zap.c:6421).
-//
-// readobjnam() drives the one RNG draw in name resolution (rn2(maxprob) @
-// rnd_otyp_by_namedesc) plus the artifact rn2(nartifact_exist()) when an
-// artifact is wished for; mksobj() supplies the object-creation RNG.
+// C ref: wizcmds.c:32 wiz_wish() sets flags.verbose=FALSE (suppressing "You may
+// wish for an object.") then calls makewish() (zap.c:6314): prompts "For what
+// do you wish?", parses with readobjnam(), creates+holds the object, then rolls
+// u.ublesscnt += rn1(100, 50) (recorded as rn2(100) @ makewish(zap.c:6421)).
+// readobjnam()'s own draw is rn2(maxprob) @ rnd_otyp_by_namedesc, plus
+// rn2(nartifact_exist()) for an artifact wish; mksobj() supplies creation RNG.
 const MAXWISHTRY = 5;
 // Exported so cmd.js can bind the C('w') keymap entry (cmd.c:2000-2001) in
 // addition to the '#wizwish' extended command both route here.
 export async function wiz_wish() {
     if (!isWizard()) return 0;
     await makewish();
-    // C ref: wizcmds.c:40 — wiz_wish() calls encumber_msg() itself, right after
-    // makewish() returns and before the command yields.  The wish takes no game
-    // time, so the moveloop's own encumber_msg() (allmain.c:208, inside the
-    // `if (context.move)` block) never runs for it; without this call a wish
-    // heavy enough to cross a capacity threshold would defer its load message
-    // to whichever later command finally does consume a move.
+    // C ref: wizcmds.c:40 — wiz_wish() calls encumber_msg() itself right after
+    // makewish() returns.  The wish costs no game time, so the moveloop's own
+    // encumber_msg() (allmain.c:208, inside `if (context.move)`) never runs for
+    // it; without this call, a wish crossing a capacity threshold would defer
+    // its load message to whichever later command finally consumes a move.
     await encumber_msg();
     return 0;
 }
@@ -1204,10 +1232,10 @@ export async function makewish() {
     }
 
     // C ref: zap.c makewish():6386-6397 — the wish is chronicled BEFORE the
-    // object is held, with the request echoed verbatim and the result rendered
-    // by doname() (so an unheld, letter-less object).  `uhis()` is
-    // genders[flags.female].his (you.h:316).  Without this the #chronicle /
-    // gamelog window listed only "entered the dungeon" for a wishing session.
+    // object is held: request echoed verbatim, result rendered by doname() (an
+    // unheld, letter-less object).  `uhis()` is genders[flags.female].his
+    // (you.h:316).  Without this, #chronicle/gamelog listed only "entered the
+    // dungeon" for a wishing session.
     {
         const u0 = game.u || {};
         u0.uconduct = u0.uconduct || {};
@@ -1220,15 +1248,11 @@ export async function makewish() {
         u0.uconduct.wishes = (u0.uconduct.wishes || 0) + 1;
     }
 
-    // hold the wished object (addinv).  drop_fmt/hold_msg as in C makewish:
-    //   hold_another_object(otmp, uswallow ? "Oops!  %s out of your reach!"
-    //                              : (airlevel || waterlevel
-    //                                 || level.objects[u.ux][u.uy])
-    //                                ? "Oops!  %s away from you!"
-    //                                : "Oops!  %s to the floor!",
-    //                       The(aobjnam(otmp, "drop")), (char *) 0);
-    // The argument only shows when the wish is too heavy to hold (pickup_burden),
-    // which is why it used to be passed as null.
+    // hold the wished object (addinv).  C ref: zap.c makewish() —
+    // hold_another_object(otmp, <uswallow/airlevel-or-floor-object -> reach/
+    // away/floor message>, The(aobjnam(otmp,"drop")), NULL).  The hold_msg arg
+    // only shows when the wish is too heavy to hold (pickup_burden), which is
+    // why it used to be passed as null.
     {
         const here = objects_at(game.u?.ux, game.u?.uy);
         const fmt = game.u?.uswallow ? 'Oops!  %s out of your reach!'
@@ -1251,17 +1275,17 @@ function strcmpi_eq(a, b) { return String(a).toLowerCase() === String(b).toLower
 
 // ── #wizgenesis / ^G (wizcmds.c wiz_genesis -> read.c create_particular) ──
 //
-// Wizard-mode create-monster.  C ref: wizcmds.c:203 wiz_genesis() clears
-// iflags.debug_mongen then calls create_particular(), which prompts "Create
-// what kind of monster?" with getlin, parses the reply (create_particular_parse,
-// RNG-free), and on a valid single named monster calls
-// create_particular_creation() -> makemon(whichpm, u.ux, u.uy, MM_NOEXCLAM).
+// C ref: wizcmds.c:203 wiz_genesis() clears iflags.debug_mongen then calls
+// create_particular(): prompts "Create what kind of monster?" via getlin,
+// parses the reply (create_particular_parse, RNG-free), and on a valid single
+// named monster calls create_particular_creation() -> makemon(whichpm, u.ux,
+// u.uy, MM_NOEXCLAM).
 //
-// The recorded seed5002 sessions create exactly one named monster per ^G (no
-// quantity/gender/disposition prefixes), so we model that common case: resolve
-// the name, place via enexto next to the hero (collect_coords RNG), run makemon,
-// then print the C "<Mon> appears next to you." materialize line.  Unknown
-// names print "I've never heard of such monsters." (matching the !*bufp branch).
+// Recorded seed5002 sessions create exactly one named monster per ^G (no
+// quantity/gender/disposition prefixes), so only that common case is modelled:
+// resolve the name, place via enexto next to the hero (collect_coords RNG), run
+// makemon, then print "<Mon> appears next to you."  Unknown names print "I've
+// never heard of such monsters." (the !*bufp branch).
 const CP_TRYLIM = 5;
 async function create_particular() {
     let prompt = 'Create what kind of monster?';
@@ -1271,7 +1295,7 @@ async function create_particular() {
         buf = mungspaces(await getlin_top(prompt));
         if (buf === '\x1b' || (buf.length && buf[0] === '\x1b')) return; // ESC -> abort
 
-        made = create_particular_monster(buf, MM_NOEXCLAM);
+        made = await create_particular_monster(buf, MM_NOEXCLAM);
         if (made) break;
 
         // no good; try again (mirror C's altmsg/prompt expansion)
@@ -1290,13 +1314,16 @@ async function create_particular() {
     }
     if (!made) return;
 
-    // C makemon.c:1473-1508 — newsym + "<Mon> appears<place>." (MM_NOEXCLAM, so
-    // no " suddenly" and a trailing '.').  what = Amonnam(mtmp) when spottable.
-    newsym(made.x, made.y);
-    // C ref: makemon.c:1479 — the "<Mon> appears." line is gated on
-    // `canseemon(mtmp) || sensemon(mtmp)`: a BLIND hero who ^G's a monster gets
-    // NO message at all (C leaves the top line empty).  Printing it
-    // unconditionally emitted a phantom "It appears close by." line.
+    // C makemon.c:1473-1508 — "<Mon> appears<place>." (MM_NOEXCLAM: no
+    // " suddenly", trailing '.').  what = Amonnam(mtmp) when spottable.
+    // makemon() already ran newsym()+set_apparxy() at C's exact point (its
+    // byyou tail, makemon.c:1390-1394 via MM_APPARXY_BYYOU — see makemon.js):
+    // calling newsym() again here would double an RNG draw (extra hallucination
+    // glyph pick), and set_apparxy() was missing entirely until that fix,
+    // offsetting every later RNG draw by one.
+    // C ref: makemon.c:1479 — gated on `canseemon(mtmp) || sensemon(mtmp)`: a
+    // BLIND hero who ^G's a monster gets NO message (C leaves the top line
+    // empty); printing unconditionally emitted a phantom "It appears close by."
     if (canspotmon(made.mtmp)) {
         const what = capitalize(x_monnam(made.mtmp, /*ARTICLE_A*/ 2, null, 0, false));
         const place = made.next2u ? ' next to you'
@@ -1327,12 +1354,12 @@ export async function wiz_genesis() {
 // ── #polyself (wizcmds.c wiz_polyself -> polyself.c polyself(POLY_CONTROLLED)) ──
 //
 // C ref: wizcmds.c:568 wiz_polyself() — the whole body is polyself(POLY_CONTROLLED).
-// This used to be a hand-rolled getlin loop here that duplicated (and
-// diverged from) polyself.c: it resolved names with a bare exact-match
-// name_to_pmidx(), never ran the is_placeholder() orc/elf/giant substitution
-// or mkclass_poly()'s by-class path, never printed "That's enough tries!",
-// and reverted nothing when a poly'd wizard named their own role.  polyself()
-// in js/polyself.js is the faithful port; delegate to it.
+// This used to be a hand-rolled getlin loop here, diverging from polyself.c: it
+// resolved names via bare exact-match name_to_pmidx() only, skipping the
+// is_placeholder() orc/elf/giant substitution and mkclass_poly()'s by-class
+// path, never printed "That's enough tries!", and never reverted a poly'd
+// wizard who named their own role.  js/polyself.js's polyself() is the
+// faithful port; delegate to it instead.
 export async function wiz_polyself() {
     if (!isWizard()) return 0;
     const { polyself } = await import('./polyself.js');
@@ -1342,13 +1369,10 @@ export async function wiz_polyself() {
 
 // ── #name / #call (do_name.c docallcmd) ──
 //
-// Builds the "What do you want to name?" PICK_ONE menu, displays it as the
-// tty corner-overlay NHW_MENU, then dispatches the chosen sub-action.  The
-// recorded sessions take the cancel (ESC) path, so once a selection is made
-// we hand off to the matching sub-handler; unmodelled sub-actions are no-ops.
-//
-// C ref: do_name.c docallcmd + win/tty/wintty.c tty_display_nhwindow (the
-// H2344_BROKEN corner-menu offx) + process_menu_window item/morestr layout.
+// Builds the "What do you want to name?" PICK_ONE menu as a tty corner-overlay
+// NHW_MENU, then dispatches the chosen sub-action (unmodelled ones are no-ops).
+// C ref: do_name.c docallcmd + win/tty/wintty.c tty_display_nhwindow
+// (H2344_BROKEN corner-menu offx) + process_menu_window item/morestr layout.
 
 // Render a tty corner-overlay menu to the grid: title (inverse) on row 0,
 // a blank separator, the item lines, then the "(end)" morestr with the
@@ -1509,10 +1533,23 @@ function floor_obj_here(pred) {
         (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy && pred(o.otyp));
     return objs.length ? objs[0] : null;
 }
-// Return the floor container at the hero's square (first container in the
-// object chain), or null.  C ref: container_at()/do_loot_cont() iterate the
-// floor object list at (u.ux, u.uy), testing Is_container().
-function floor_box_here() { return floor_obj_here(is_container_otyp); }
+// Return every floor container at the hero's square (in floor-chain order),
+// for #loot's container_at()-driven single-container / multi-container-menu
+// split.  C ref: container_at()/do_loot_cont() iterate the floor object list
+// at (u.ux, u.uy), testing Is_container().
+function floor_boxes_here() {
+    const u = game.u;
+    if (!u) return [];
+    return (game.level?.objects || []).filter(
+        (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy && is_container_otyp(o.otyp));
+}
+// C ref: pickup.c doloot_core() lootmon: label — container_at(cc.x, cc.y,
+// FALSE) at an arbitrary (not-necessarily-hero) square, used to decide
+// whether directional looting found a container instead of a monster.
+function has_container_at(x, y) {
+    return (game.level?.objects || []).some(
+        (o) => o.where === 'floor' && o.ox === x && o.oy === y && is_container_otyp(o.otyp));
+}
 // C ref: lock.c doforce() — scans for Is_box() (large box/chest) only.
 function floor_lockbox_here() { return floor_obj_here(is_lockbox_otyp); }
 // C ref: lock.c doforce() iterates svl.level.objects[u.ux][u.uy] via nexthere
@@ -1544,7 +1581,7 @@ function _container_status2() { return statusLine2Text(); }
 //   morestr : "(end)" for a menu, "--More--" for a text window
 //   curPad  : extra columns past the morestr where the cursor parks (the menu's
 //             "(end) " has a trailing space -> +1; the text "--More--" -> +0)
-function draw_corner_window(lines, maxcol, morestr, curPad) {
+export function draw_corner_window(lines, maxcol, morestr, curPad) {
     const disp = game?.nhDisplay;
     if (!disp?.clearScreen) return;
     const cols = disp.cols || 80;
@@ -1552,9 +1589,17 @@ function draw_corner_window(lines, maxcol, morestr, curPad) {
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
     const textCol = offx + 1;
+    const moreRow = lines.length;
+    // C ref: win/tty/wintty.c erase_menu_or_text() -> docorner() — dismissing a
+    // taller corner window (content reaching row 22) sweeps cl_end() through
+    // the status window, wiping the tail of row 22/23 even though this window's
+    // own content never touches them.  invent.js's putStatusLines records that
+    // cutoff in game._statusTruncCol; a short window opened right after must
+    // inherit it, not draw a freshly recomputed FULL status the real terminal
+    // never redrew.
+    const carried = game._statusTruncCol;
     disp.clearScreen();
     render_map_to_grid();
-    const moreRow = lines.length;
     for (let r = 0; r <= moreRow && r < 22; r++)
         for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
     for (let r = 0; r < lines.length; r++) {
@@ -1562,8 +1607,26 @@ function draw_corner_window(lines, maxcol, morestr, curPad) {
         if (ln && ln.text) disp.putstr(textCol, r, ln.text, NO_COLOR, ln.attr || 0);
     }
     disp.putstr(textCol, moreRow, morestr, NO_COLOR, 0);
-    disp.putstr(0, 22, _container_status1(), NO_COLOR, 0);
-    disp.putstr(0, 23, _container_status2(), NO_COLOR, 0);
+    const s1 = _container_status1(), s2 = _container_status2();
+    // render_map_to_grid() already laid down a FULL fresh status (its own
+    // renderStatusLines() call); putstr() never clears past what it writes,
+    // so a truncated re-write below must blank the tail itself or the full
+    // text it's replacing keeps showing through past the cutoff.
+    let cut = null;
+    if (moreRow >= 22) {
+        // This window's own content reaches into the status rows: truncate at
+        // its own left edge (same as invent.js's putStatusLines for the tall
+        // single-page menu), combined with any cutoff already inherited.
+        cut = (carried != null) ? Math.min(offx, carried) : offx;
+        game._statusTruncCol = cut;
+    } else if (carried != null) {
+        cut = carried;
+    }
+    disp.putstr(0, 22, cut != null ? s1.slice(0, cut) : s1, NO_COLOR, 0);
+    disp.putstr(0, 23, cut != null ? s2.slice(0, cut) : s2, NO_COLOR, 0);
+    if (cut != null) {
+        for (let c = cut; c < cols; c++) { disp.setCell(c, 22, ' ', NO_COLOR, 0); disp.setCell(c, 23, ' ', NO_COLOR, 0); }
+    }
     disp.setCursor(textCol + morestr.length + (curPad || 0), moreRow);
     game._modal_screen = 'container';
 }
@@ -1579,10 +1642,10 @@ function render_in_or_out_menu(box, outokay, inokay, alreadyused, more_container
     // C ref: use_container()'s safe_qbuf(..., yname, ...) for the prompt vs
     // in_or_out_menu()'s thesimpleoname(obj) for the entries: a CARRIED
     // container is "your bag" in the title but still "the bag" in the lines.
-    // pickup.c:3076 — when there is nothing to take out AND the contents are
-    // already known, the prompt is the Yname2()/" is empty.  Do what with it?"
-    // form instead ("Your sack is empty.  Do what with it?"), with two spaces
-    // after the period.  Same `outmaybe` that hides the o/b entries.
+    // pickup.c:3076 — when nothing can be taken out and contents are already
+    // known, the prompt instead reads "Your sack is empty.  Do what with it?"
+    // (two spaces after the period), gated by the same `outmaybe` that hides
+    // the o/b entries.
     const title = outokay
         ? `Do what with ${held ? `your ${box_basename(box.otyp)}` : name}?`
         : `${held ? 'Your' : 'The'} ${box_basename(box.otyp)} is empty.  Do what with it?`;
@@ -1615,12 +1678,11 @@ function render_in_or_out_menu(box, outokay, inokay, alreadyused, more_container
 }
 
 // Reproduce C's add_to_container() content chain (mkobj.c) on shallow display
-// copies WITHOUT mutating the real objects: each object is prepended to the
-// head of the list and merged into an existing mergable stack when possible.
-// This yields the same cobj ordering C holds, so sortloot's stable-by-index
-// tiebreak (e.g. "2 jackal corpses" before "a jackal corpse") lands
-// identically.  (The live cobj chain stays in creation/push order because the
-// force-lock chest-destruction path elsewhere depends on that ordering.)
+// copies WITHOUT mutating the real objects: prepend each object, merging into
+// an existing mergable stack when possible, to match C's cobj ordering so
+// sortloot's stable-by-index tiebreak (e.g. "2 jackal corpses" before "a jackal
+// corpse") lands identically.  (The live cobj chain stays in creation/push
+// order — the force-lock chest-destruction path elsewhere depends on that.)
 function container_display_stacks(box) {
     const stacks = [];
     for (const o of (box.cobj || [])) {
@@ -1652,12 +1714,11 @@ function render_container_contents(box) {
     draw_corner_window(lines, maxcol, '--More--', 0);
 }
 
-// C ref: pickup.c use_container().  Loot an unlocked, untrapped floor container.
-// Loops the in/out menu: ':' shows the contents (costs a turn to gain the info),
-// 'q'/ESC quits.  The take-out ('o'/'b') and put-in ('i'/'r'/'s') actions are
-// not yet modelled — selecting them ends the loop without moving items, which
-// leaves the container state untouched (no false RNG/screen divergence).
-// Returns 1 (ECMD_TIME) iff the command elapsed a turn, else 0.
+// C ref: pickup.c use_container().  Loot an unlocked, untrapped floor container:
+// loop the in/out menu — ':' shows contents (costs a turn), 'q'/ESC quits.
+// Take-out ('o'/'b') and put-in ('i'/'r'/'s') aren't modelled: picking them
+// ends the loop without moving items (container state untouched, no false
+// RNG/screen divergence).  Returns 1 (ECMD_TIME) iff a turn elapsed, else 0.
 async function use_container(box, more_containers, held = false) {
     let used = 0;
     box.lknown = 1;
@@ -1672,11 +1733,11 @@ async function use_container(box, more_containers, held = false) {
     const inokay = inv.some((o) => o !== box);
     const sel = game?.flags?.lootabc ? '_:abcdenq' : '_:oibrsnq';
     // C ref: win/tty/wintty.c process_menu_window() builds `resp` from the
-    // selectors of the entries ACTUALLY on the page, then appends
-    // " 0123456789\033\n\r" + default_menu_cmds, and dmore() -> xwaitforspace()
-    // rings the bell and reads again for anything outside it.  So a stray key
-    // over an open loot menu neither closes it nor reaches rhack() as a command
-    // — the screen simply does not change.
+    // selectors of the entries ACTUALLY on the page, plus " 0123456789\033\n\r"
+    // + default_menu_cmds; dmore()->xwaitforspace() bells and re-reads for
+    // anything outside it.  So a stray key over an open loot menu neither
+    // closes it nor leaks into rhack() as a command — the screen just doesn't
+    // change.
     let respsel = sel[1]; // ':' look inside is always present
     if (outmaybe) respsel += sel[2] + sel[4];
     if (inokay) respsel += sel[3] + sel[5] + sel[6];
@@ -1686,10 +1747,10 @@ async function use_container(box, more_containers, held = false) {
     // INVERT_ALL, SELECT_PAGE/UNSELECT_PAGE/INVERT_PAGE, SEARCH.
     const MENU_CMDS = '^|><.-@,\\~:';
     // C ref: wintty.c tty_display_nhwindow() NHW_MENU, corner (offx != 0) arm —
-    // an unacknowledged top line is paged first, then
-    // tty_clear_nhwindow(WIN_MESSAGE) blanks the message window outright.  So
-    // the getobj/#loot prompt that preceded the menu is GONE once the menu
-    // closes; without this the next flush_screen() repainted it.
+    // an unacknowledged top line is paged first, then tty_clear_nhwindow
+    // (WIN_MESSAGE) blanks the message window outright: the getobj/#loot
+    // prompt that preceded the menu is GONE once it closes; without this the
+    // next flush_screen() repainted it.
     if (game._toplin === 1) await topl_more();
     game._pending_message = '';
     game._toplin = 0;
@@ -1812,12 +1873,12 @@ function consolidate_container(box) {
     box.cobj = out;
 }
 
-// Shared PICK_ANY selection loop for the loot menus.  Renders the current
-// selection state, reads one key, applies a menu command (invert/select/deselect
-// all) or toggles the matching accelerator, and repeats until <return>/space
-// (confirm) or ESC (cancel).  Returns the selected items, or null on cancel.
-// C ref: wintty.c process_menu_window() + set_all/unset_all/invert_all with the
-// default menuinvertmode 1 (SKIPINVERT entries never bulk-select, only deselect).
+// Shared PICK_ANY selection loop for the loot menus: render selection state,
+// read one key, apply a menu command (invert/select/deselect all) or toggle
+// the matching accelerator, repeat until <return>/space (confirm) or ESC
+// (cancel).  Returns the selected items, or null on cancel.  C ref: wintty.c
+// process_menu_window() + set_all/unset_all/invert_all under the default
+// menuinvertmode 1 (SKIPINVERT entries never bulk-select, only deselect).
 async function run_pickany_menu(items, buildLines) {
     // menuitem_invert_test(mode 0) under menuinvertmode 1: non-SKIPINVERT items
     // always toggle; SKIPINVERT items toggle only when already selected.
@@ -1845,8 +1906,8 @@ async function run_pickany_menu(items, buildLines) {
             continue;
         }
         // C ref: wintty.c process_menu_window() — the gacc[] test runs BEFORE
-        // the per-item selector scan, so a key that is some item's GROUP
-        // accelerator inverts that whole group (invert_all(acc)).  A group
+        // the per-item selector scan, so a key matching some item's GROUP
+        // accelerator inverts that whole group (invert_all(acc)); a group
         // accelerator equal to its own item's selector is excluded from gacc,
         // except GOLD_SYM.  Without this, '$' on the "Put in what type of
         // objects?" menu (selector 'b', group '$') selected nothing.
@@ -1980,10 +2041,10 @@ async function query_objlist_take_out(box, allow) {
 }
 
 // C ref: pickup.c query_category(qflags = WORN_TYPES|ALL_TYPES|UNPAID_TYPES|
-// BUCX_TYPES) as called by do_wear.c menu_remarm() — the 'A' class filter.
-// WORN_TYPES sets ofilter = is_worn, so only worn/wielded items contribute the
-// class list AND the BUC counts.  CHOOSE_ALL is NOT passed, so there is no 'A'
-// auto-select entry and no hint line.
+// BUCX_TYPES), called from do_wear.c menu_remarm() — the 'A' class filter.
+// WORN_TYPES sets ofilter = is_worn, so only worn/wielded items contribute to
+// the class list AND the BUC counts.  CHOOSE_ALL is NOT passed, so there's no
+// 'A' auto-select entry or hint line.
 async function query_category_takeoff() {
     const worn = inventoryArray().filter(is_worn);
     const order = game?.flags?.inv_order || DEFAULT_INV_ORDER;
@@ -2074,11 +2135,11 @@ async function query_objlist_takeoff(allow) {
 }
 
 // C ref: do_wear.c doddoremarm() — the 'A' (#takeoffall) command with the
-// default menustyle:Full, i.e. menu_remarm(0): a class-filter menu, then an item
+// default menustyle:Full, i.e. menu_remarm(0): class-filter menu, then item
 // menu, then take_off().  NOT ported: take_off()'s multi-turn disrobing
-// occupation (per-item oc_delay) — the selected items come off on this command's
-// own turn instead.  Rendering both menus is what keeps their keystrokes out of
-// the command parser.
+// occupation (per-item oc_delay) — selected items come off on this command's
+// own turn instead.  Rendering both menus keeps their keystrokes out of the
+// command parser.
 export async function doddoremarm() {
     const g = game;
     if (!g.uwep && !g.uswapwep && !g.uquiver && !g.uamul && !g.ublindf
@@ -2368,13 +2429,12 @@ function lock_action(xl) {
     return 'picking the lock';
 }
 
-// C ref: lock.c pick_lock() — the autounlock box branch (rx/container supplied,
-// so no direction prompt).  Under the default AUTOUNLOCK_APPLY_KEY it prompts
-// "Unlock it with <yname(tool)>?" and, on 'y', sets up the lock-picking
-// occupation.  The success chance (box branch): LOCK_PICK 4*DEX+25*rogue,
-// SKELETON_KEY 75+DEX, CREDIT_CARD DEX+20*rogue, halved if the box is cursed.
-// Returns 1 (PICKLOCK_DID_SOMETHING, occupation started) on 'y', else 0
-// (PICKLOCK_DID_NOTHING, declined -> no time passes).
+// C ref: lock.c pick_lock() — autounlock box branch (rx/container supplied, so
+// no direction prompt).  Default AUTOUNLOCK_APPLY_KEY prompts "Unlock it with
+// <yname(tool)>?"; on 'y' it starts the lock-picking occupation.  Success
+// chance (box branch): LOCK_PICK 4*DEX+25*rogue, SKELETON_KEY 75+DEX,
+// CREDIT_CARD DEX+20*rogue, halved if cursed.  Returns 1 (PICKLOCK_DID_
+// SOMETHING) on 'y', else 0 (PICKLOCK_DID_NOTHING, no time passes).
 async function pick_lock_box(pick, box) {
     const picktyp = pick.otyp;
     // yname(uncursed lock pick) -> "your lock pick"; skeleton key -> "your key".
@@ -2413,56 +2473,10 @@ async function pick_lock_box(pick, box) {
     return 1; // PICKLOCK_DID_SOMETHING — a turn elapses
 }
 
-// C ref: pickup.c doloot()/do_loot_cont().  Floor container under the hero:
-// locked -> announce the lock, then attempt the default autounlock
-// (AUTOUNLOCK_APPLY_KEY): pick an unlocking tool and run pick_lock(); unlocked
-// -> use_container().
-async function doloot() {
-    // C ref: pickup.c doloot_core():2194 — check_capacity((char *) 0) runs
-    // FIRST: an Overtaxed hero "can't do that while carrying so much stuff"
-    // and no turn passes (so the container prompts never appear).
-    {
-        const { check_capacity_throw } = await import('./invent.js');
-        if (await check_capacity_throw()) return 0; // ECMD_OK
-    }
-    // C ref: pickup.c doloot():2198 — a handless polyform can't loot at all.
-    // Skipping this opened the container menu, which then ate the keystrokes
-    // C hands to the command parser.
-    // Only consult the form while polymorphed: an unpolymorphed hero's
-    // u.umonnum is this port's ROLE index, not a mons[] pmidx (every player
-    // monster has hands anyway, so C's answer is FALSE either way).
-    const { nohands } = await import('./monflags_data.js');
-    const ydata = game.u?.Upolyd ? (game.u?.data || null) : null;
-    if (ydata && nohands(ydata)) {
-        await pline('You have no hands!');
-        return 0; // ECMD_OK
-    }
-    const box = floor_box_here();
-    if (!box) {
-        // C ref: pickup.c:2295-2341 doloot_core(), label `lootmon:` — when
-        // mon_beside() finds a monster in the 3x3 box (pickup.c:2071) C prompts
-        // "Loot in what direction?" via get_adjacent_loc() and that getdir()
-        // EATS the following keystrokes.  Skipping the branch let them fall
-        // through to rhack() and run a phantom command (a whole game turn).
-        const u = game.u;
-        let beside = false;
-        for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
-            const nx = u.ux + i, ny = u.uy + j;
-            if (isok(nx, ny) && m_at(nx, ny)) beside = true;
-        }
-        if (beside) {
-            const { getdir } = await import('./cmd.js');
-            const dir = await getdir('Loot in what direction?');
-            if (!dir) { await pline('Never mind.'); return 0; }
-            const cx = u.ux + dir.dx, cy = u.uy + dir.dy;
-            if (!isok(cx, cy)) { await pline('Invalid loot location'); return 0; }
-            const underfoot = (cx === u.ux && cy === u.uy);
-            await pline(`You don't find anything ${!underfoot ? 't' : ''}here to loot.`);
-            return 0;
-        }
-        await pline("You don't find anything here to loot.");
-        return 0;
-    }
+// C ref: pickup.c doloot_core():2088 do_loot_cont() — one container: locked ->
+// announce the lock, then attempt the default autounlock (AUTOUNLOCK_APPLY_KEY):
+// pick an unlocking tool and run pick_lock(); unlocked -> use_container().
+async function do_loot_one(box, more_containers) {
     if (box.olocked) {
         const name = box_basename(box.otyp);
         if (box.lknown) await pline(`The ${name} is locked.`);
@@ -2480,44 +2494,240 @@ async function doloot() {
         return 0;
     }
     box.lknown = 1;
-    return await use_container(box, false);
+    return await use_container(box, more_containers);
+}
+
+// C ref: pickup.c doloot_core():2237 — the ">1 container" PICK_ANY "Loot which
+// containers?" menu.  Returns the picked {letter,obj,...} items, [] when
+// confirmed with nothing picked, or null on ESC.
+async function loot_containers_menu(boxes) {
+    const items = [];
+    let menu_ch = 'a';
+    for (const box of boxes) {
+        items.push({ letter: menu_ch, obj: box, selected: false, skipinvert: false,
+                     desc: obj_doname(box) });
+        menu_ch = nextMenuCh(menu_ch);
+    }
+    const buildLines = () => {
+        const lines = [{ text: 'Loot which containers?', attr: ATR_INVERSE }, { text: '' }];
+        for (const it of items) lines.push({ text: menuItemLine(it) });
+        return lines;
+    };
+    return await run_pickany_menu(items, buildLines);
+}
+
+// C ref: pickup.c doloot()/doloot_core().  Floor container(s) under the hero:
+// locked -> announce the lock, then attempt the default autounlock
+// (AUTOUNLOCK_APPLY_KEY): pick an unlocking tool and run pick_lock(); unlocked
+// -> use_container().  A Confused hero instead drops old loot (reverse_loot)
+// or simply fumbles; Blind and gloveless, a cockatrice corpse here is fatal
+// before any container prompt; a grave here (with no container on it) can't
+// be looted without digging it up; failing all of that, an adjacent monster
+// may still be looted directionally (loot_mon(), e.g. saddle removal).
+async function doloot() {
+    // C ref: pickup.c doloot_core():2194 — check_capacity((char *) 0) runs
+    // FIRST: an Overtaxed hero "can't do that while carrying so much stuff"
+    // and no turn passes (so the container prompts never appear).
+    {
+        const { check_capacity_throw } = await import('./invent.js');
+        if (await check_capacity_throw()) return 0; // ECMD_OK
+    }
+    // C ref: pickup.c doloot():2198 — a handless polyform can't loot at all;
+    // skipping this opened the container menu and ate keystrokes C hands to
+    // the command parser.  Only consult the form while polymorphed: an
+    // unpolymorphed hero's u.umonnum is this port's ROLE index, not a mons[]
+    // pmidx (every player monster has hands anyway, so C's answer is FALSE
+    // either way).
+    const ydata = game.u?.Upolyd ? (game.u?.data || null) : null;
+    if (ydata && nohands(ydata)) {
+        await pline('You have no hands!');
+        return 0; // ECMD_OK
+    }
+    const u = game.u;
+    // C ref: pickup.c doloot_core():2202 — a Confused hero either "loots" old
+    // dropped items (reverse_loot) or the whole attempt fizzles; both cost the
+    // turn ordinary looting would.
+    if ((u?.uprops?.Confusion || 0) > 0) {
+        if (rn2(6) && await reverse_loot()) return 1; // ECMD_TIME
+        if (rn2(2)) {
+            await pline('Being confused, you find nothing to loot.');
+            return 1; // ECMD_TIME (costs a turn)
+        }
+        // else fall through to normal looting
+    }
+
+    let timepassed = 0;
+    let c = -1;
+    const boxes = floor_boxes_here();
+    if (boxes.length > 0) {
+        // C ref: pickup.c doloot_core():2223 — blind and gloveless, touching a
+        // cockatrice corpse here is fatal before any container prompt appears.
+        if (Blind() && !game.uarmg) {
+            for (const nobj of objects_at(u.ux, u.uy)) {
+                if (nobj.otyp === CORPSE && will_feel_cockatrice(nobj, false)) {
+                    feel_cockatrice(nobj, false);
+                    return 1; // ECMD_TIME
+                }
+            }
+        }
+        if (boxes.length > 1) {
+            const picks = await loot_containers_menu(boxes);
+            if (picks === null) {
+                // ESC: C's select_menu returns -1 here, which is `!= 0`, so C
+                // still sets c = 'y' and skips the "nothing to loot" fallback.
+                c = 'y';
+            } else if (picks.length > 0) {
+                const n = picks.length;
+                for (let i = 0; i < n; i++)
+                    timepassed |= await do_loot_one(picks[i].obj, i + 1 < n);
+                c = 'y';
+            }
+            // confirmed with nothing picked (picks === []): c stays -1, C
+            // falls through to the mon_beside/"nothing to loot" tail below.
+        } else {
+            timepassed |= await do_loot_one(boxes[0], false);
+            c = 'y';
+        }
+    } else if (IS_GRAVE(game.level?.at?.(u.ux, u.uy)?.typ)) {
+        await pline('You need to dig up the grave to effectively loot it...');
+    }
+
+    if (c === 'y') return timepassed ? 1 : 0;
+
+    // C ref: pickup.c doloot_core():2295 lootmon: — "3.3.1 introduced
+    // directional looting for some things."  mon_beside() finds a monster in
+    // the 3x3 box; get_adjacent_loc()'s getdir() EATS the following keystroke
+    // regardless of what's found there.
+    if (mon_beside(u.ux, u.uy)) {
+        const { getdir } = await import('./cmd.js');
+        const dir = await getdir('Loot in what direction?');
+        if (!dir) { await pline('Never mind.'); return 0; }
+        const cx = u.ux + dir.dx, cy = u.uy + dir.dy;
+        if (!isok(cx, cy)) { await pline('Invalid loot location'); return 0; }
+        const underfoot = (dir.dx === 0 && dir.dy === 0);
+
+        const mtmp = m_at(cx, cy);
+        let looted_mon = false;
+        let mon_timepassed = 0;
+        const passed_info = { value: 0 };
+        const prev_loot = { value: false };
+        if (mtmp) {
+            mon_timepassed = await loot_mon(mtmp, passed_info, prev_loot);
+            if (mon_timepassed) looted_mon = true;
+        }
+        const stunned = (u?.uprops?.Stun || 0) > 0;
+        const confused = (u?.uprops?.Confusion || 0) > 0;
+        if (confused || stunned) mon_timepassed = 1;
+
+        if (looted_mon) return mon_timepassed ? 1 : 0;
+
+        if (!underfoot && has_container_at(cx, cy)) {
+            if (mtmp) {
+                await pline(`You can't loot anything ${passed_info.value ? 'else ' : ''}`
+                            + `there with ${mon_nam(mtmp)} in the way.`);
+                return mon_timepassed ? 1 : 0;
+            }
+            await pline('You have to be at a container to loot it.');
+            return mon_timepassed ? 1 : 0;
+        }
+        await pline(`You don't find anything ${(passed_info.value || prev_loot.value) ? 'else ' : ''}`
+                    + `${!underfoot ? 't' : ''}here to loot.`);
+        return mon_timepassed ? 1 : 0;
+    }
+    await pline("You don't find anything here to loot.");
+    return 0;
 }
 
 // C ref: lock.c picklock() — the lock-picking occupation, run each turn from the
 // move loop (do_occupation).  Returns 1 while still busy (keep the occupation),
-// 0 when finished (success, give-up, or the box/hero moved).
+// 0 when finished (success, give-up, or the target/hero moved).
 export async function picklock() {
     const u = game.u;
     const xl = game.xlock;
-    if (!xl || !xl.box) { game._picklock_box = null; game.xlock = null; return 0; }
-
-    // you or the box moved -> abort (usedtime = 0), no message.
-    if (xl.box.where !== 'floor' || xl.box.ox !== u.ux || xl.box.oy !== u.uy) {
-        game._picklock_box = null; game.xlock = null; return 0;
+    if (!xl || (!xl.box && !xl.door)) {
+        game._picklock_box = null;
+        game.xlock = null;
+        return 0;
     }
-    // give-up check (usedtime >= 50 || nohands).  The starter hero has hands.
-    if (xl.usedtime++ >= 50) {
+
+    if (xl.box) {
+        // C lock.c:70-74 — you or the floor box moved.
+        if (xl.box.where !== 'floor' || xl.box.ox !== u.ux || xl.box.oy !== u.uy) {
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        }
+    } else {
+        // C lock.c:75-90 — this occupation remains attached to the same
+        // adjacent door, and stops before drawing when the door is no longer
+        // valid for locking.
+        const door = xl.door;
+        const dx = u.dx | 0, dy = u.dy | 0;
+        if (game.level?.at(u.ux + dx, u.uy + dy) !== door) {
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        }
+        switch (door.doormask) {
+        case D_NODOOR:
+            await pline('This doorway has no door.');
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        case D_ISOPEN:
+            await pline('You cannot lock an open door.');
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        case D_BROKEN:
+            await pline('This door is broken.');
+            game._picklock_box = null;
+            game.xlock = null;
+            return 0;
+        }
+    }
+
+    // C lock.c:92-96.  `nohands()` only applies to a polymorphed hero here:
+    // without polymorph this port's u.umonnum is a role index, not mons[] data.
+    const ydata = u?.Upolyd ? (u.data || null) : null;
+    if (xl.usedtime++ >= 50 || (ydata && nohands(ydata))) {
         await update_topl(`You give up your attempt at ${lock_action(xl)}.`);
         exercise(A_DEX, true); // even if you don't succeed
-        game._picklock_box = null; game.xlock = null; return 0;
+        game._picklock_box = null;
+        game.xlock = null;
+        return 0;
     }
 
-    // rn2(100) >= chance -> still busy (re-roll next turn).  C ref: lock.c:98.
+    // C lock.c:98 — every occupation turn rolls this percentage check.
     if (rn2(100) >= xl.chance)
         return 1;
 
-    // (The Master-Key-of-Thievery trap-disarm branch is skipped: a plain lock
-    // pick is not a magic key and the starter box is untrapped.)
-
+    // C lock.c:101-136's Master Key trap-disarm branch is not modeled: none of
+    // the scheduled tools is the quest artifact, and the recorded targets are
+    // untrapped.  The ordinary success arm follows.
     await pline(`You succeed in ${lock_action(xl)}.`);
-    xl.box.olocked = !xl.box.olocked;
-    xl.box.lknown = 1;
-    // if (xl.box.otrapped) chest_trap(...) — chest traps are not modeled; the
-    // starter box is untrapped so this path is inert.
-    exercise(A_DEX, true); // -> rn2(19)
+    if (xl.door) {
+        const door = xl.door;
+        const x = u.ux + (u.dx | 0), y = u.uy + (u.dy | 0);
+        if (door.doormask & D_TRAPPED) {
+            await (await import('./cmd.js')).b_trapped('door', true);
+            door.doormask = D_NODOOR;
+        } else if (door.doormask & D_LOCKED) {
+            door.doormask = D_CLOSED;
+        } else {
+            door.doormask = D_LOCKED;
+        }
+        newsym(x, y);
+    } else {
+        xl.box.olocked = !xl.box.olocked;
+        xl.box.lknown = 1;
+        // C lock.c:154-155 chest_trap() is not modeled; scheduled boxes are
+        // untrapped, so this has no effect on the covered path.
+    }
+    exercise(A_DEX, true);
     game._picklock_box = null;
     game.xlock = null;
-    return 0; // usedtime = 0
+    return 0;
 }
 
 // C ref: obj.h is_weptool() / lock.c:660 u_have_forceable_weapon().
@@ -2538,10 +2748,11 @@ function u_have_forceable_weapon() {
 }
 
 // C ref: include/obj.h is_blade()/is_pick() — the picktyp selector for #force.
-// P_DAGGER..P_SABER is the blade span of skills.h; a pick-axe is excluded even
-// though its oc_skill is inside no blade range (it is a WEAPON/TOOL test of its
-// own).  Used to be hardcoded to 0 because the one recorded #force wielded a
-// dwarvish spear; every blade-wielding hero took the wrong forcelock branch.
+// P_DAGGER..P_SABER is the blade span of skills.h; a pick-axe is excluded (it's
+// a separate WEAPON/TOOL test), even though its oc_skill falls outside that
+// range anyway.  Used to be hardcoded to 0 because the one recorded #force
+// wielded a dwarvish spear; every blade-wielding hero took the wrong forcelock
+// branch.
 const P_SABER_SK = 9, P_PICK_AXE_SK = 4; // skills.h
 function is_blade_obj(o) {
     if (!o || o.oclass !== WEAPON_CLASS_OC) return false;
@@ -2669,10 +2880,10 @@ function wake_nearby_force() {
     }
 }
 
-// C ref: lock.c chest_shatter_msg(otmp) — the message when a forced-open chest's
-// contents are destroyed.  The disposition depends on oc_material; a spellbook
-// (PAPER) "is torn to shreds".  The name is the *blind* (unidentified) singular,
-// e.g. "spellbook".  Potions instead announce "You see a <potion> shatter!".
+// C ref: lock.c chest_shatter_msg(otmp) — message for a forced-open chest's
+// destroyed contents.  Disposition depends on oc_material (a PAPER spellbook
+// "is torn to shreds"); the name is the *blind* unidentified singular, e.g.
+// "spellbook".  Potions instead announce "You see a <potion> shatter!".
 // C ref: objclass.h material enum — WAX=2 VEGGY=3 FLESH=4 PAPER=5 WOOD=8 GLASS=19.
 const MAT_WAX = 2, MAT_VEGGY = 3, MAT_FLESH = 4, MAT_PAPER = 5, MAT_WOOD = 8, MAT_GLASS = 19;
 function chest_shatter_disposition(material) {
@@ -2701,11 +2912,11 @@ async function chest_shatter_msg(otmp) {
     await update_topl(`${an} ${thing} ${disposition}!`);
 }
 
-// C ref: lock.c breakchestlock(box, destroyit) — destroy-it path only (the
-// forcelock success on a non-blade weapon with !rn2(3)).  Spills the contents at
-// the hero's feet; each non-potion item has a 1/3 chance (and every potion) of
-// being destroyed (chest_shatter_msg), the rest land on the floor.  No shop on
-// the starting level, so no costly_alteration.  C ref: lock.c:172-211.
+// C ref: lock.c breakchestlock(box, destroyit):172-211 — destroy-it path only
+// (forcelock success on a non-blade weapon with !rn2(3)).  Spills contents at
+// the hero's feet; every potion and a 1/3 chance of each other item are
+// destroyed (chest_shatter_msg), the rest land on the floor.  No shop on the
+// starting level, so no costly_alteration.
 async function breakchestlock(box, destroyit) {
     if (!destroyit) {
         // C ref: lock.c:162 breakchestlock() — the lock breaks, the box stays,
@@ -2754,10 +2965,10 @@ export async function forcelock() {
 
     if (xl.picktyp) { /* blade */
         // C ref: lock.c forcelock():238.  rn2(1000 - spe) is drawn EVERY blade
-        // turn (before the cursed/obj_resists tests short-circuit), so a
-        // blade-wielding hero's force draws one more call per turn than a
-        // blunt one; obj_resists() adds its own rn2(100) only when the first
-        // two tests pass.  For a +0 weapon P(survive 50 tries) = .992^50.
+        // turn (before the cursed/obj_resists short-circuits), so a blade
+        // wielder's force draws one more call per turn than a blunt one;
+        // obj_resists() adds its own rn2(100) only when the first two tests
+        // pass.  For a +0 weapon, P(survive 50 tries) = .992^50.
         const uwep = game.uwep;
         if (rn2(1000 - (uwep.spe | 0)) > (992 - greatest_erosion(uwep) * 10)
             && !uwep.cursed && !obj_resists(uwep, 0, 99)) {
@@ -2814,8 +3025,7 @@ function render_overview_menu(lines) {
 }
 
 // C ref: dungeon.c dooverview() -> show_overview(0, 0) -> select_menu(win,
-// PICK_NONE, ...): a plain display, dismissed by ESC/space/return (tty
-// dismissal keys for a finished, non-counting menu).  Afterwards
+// PICK_NONE, ...): a plain display, dismissed by ESC/space/return.  Afterwards
 // tty_dismiss_nhwindow()'s corner-menu path (docorner) repaints the area the
 // menu covered with the real map/status; flush_screen(1) reproduces that.
 export async function dooverview() {
@@ -2852,12 +3062,11 @@ export async function wiz_where() {
     return 0;
 }
 
-// C ref: win/tty/wintty.c process_text_window() with cw->offx == 0, the
-// full-screen arm tty_display_nhwindow() picks whenever the window has at
-// least ttyDisplay->rows lines.  Text starts at column 0 (tty_curs(win,1,n)
-// with offx 0), a page holds rows-1 lines, and dmore() prints "--More--" at
-// (curx + 2) 1-based, i.e. column 1, on the row after the last text line.
-// Each page break does term_clear_screen() before the next page.
+// C ref: win/tty/wintty.c process_text_window() with cw->offx==0, the
+// full-screen arm tty_display_nhwindow() picks once the window has at least
+// ttyDisplay->rows lines.  Text starts at column 0, a page holds rows-1 lines,
+// and dmore() prints "--More--" at column 1 on the row after the last text
+// line.  Each page break does term_clear_screen() before the next page.
 async function display_text_fullscreen(lines) {
     const disp = game.nhDisplay;
     if (!disp?.setCell) return;
@@ -2909,6 +3118,19 @@ async function docrt_after_text() {
 // Map extcmdlist index -> handler.  Unimplemented commands fall through to
 // a no-op (no message), which keeps RNG/state untouched.
 const HANDLERS = {
+    // C ref: cmd.c EXTCMDLIST's self-referential `{ '#', "#", ..., doextcmd,
+    // ... }` row — typing "#" as the extended-command name recurses into
+    // doextcmd() again (a fresh "enter an extended command" prompt) instead
+    // of no-oping.
+    '#': doextcmd,
+    // C ref: cmd.c EXTCMDLIST's `{ M('?'), "?", ..., doextlist, ... }` row —
+    // typing "?" as the extended-command name (or "#?") shows the "Extended
+    // Commands List" menu.  Was entirely missing from HANDLERS: the "?" name
+    // resolved via extcmds_match() fine, but the undefined `fn` lookup made
+    // doextcmd() silently no-op, so the answering keystroke(s) meant for the
+    // menu leaked into rhack() as fresh commands and desynced everything
+    // after.
+    '?': doextlist,
     invoke: doinvoke,
     untrap: dountrap,
     tip: dotip,
@@ -2949,14 +3171,611 @@ const HANDLERS = {
     wizmap: wiz_map_extcmd,
     herecmdmenu: doherecmdmenu,
     wizwhere: wiz_where,
+    wizmondiff: wizmondiff_extcmd,
+    wizlevelport: wizlevelport_extcmd,
+    droptype: doddrop_extcmd,
+    movewest: () => domove_extcmd(-1, 0), movenorthwest: () => domove_extcmd(-1, -1),
+    movenorth: () => domove_extcmd(0, -1), movenortheast: () => domove_extcmd(1, -1),
+    moveeast: () => domove_extcmd(1, 0), movesoutheast: () => domove_extcmd(1, 1),
+    movesouth: () => domove_extcmd(0, 1), movesouthwest: () => domove_extcmd(-1, 1),
+    rushwest: () => runrush_extcmd(-1, 0, true), rushnorthwest: () => runrush_extcmd(-1, -1, true),
+    rushnorth: () => runrush_extcmd(0, -1, true), rushnortheast: () => runrush_extcmd(1, -1, true),
+    rusheast: () => runrush_extcmd(1, 0, true), rushsoutheast: () => runrush_extcmd(1, 1, true),
+    rushsouth: () => runrush_extcmd(0, 1, true), rushsouthwest: () => runrush_extcmd(-1, 1, true),
+    runwest: () => runrush_extcmd(-1, 0, false), runnorthwest: () => runrush_extcmd(-1, -1, false),
+    runnorth: () => runrush_extcmd(0, -1, false), runnortheast: () => runrush_extcmd(1, -1, false),
+    runeast: () => runrush_extcmd(1, 0, false), runsoutheast: () => runrush_extcmd(1, 1, false),
+    runsouth: () => runrush_extcmd(0, 1, false), runsouthwest: () => runrush_extcmd(-1, 1, false),
+
+    // Bare references: the underlying function's own return convention
+    // already matches doextcmd()'s `res === 1 ? 1 : 0` rule with no
+    // translation (either it's always 0/ECMD_OK, or its own numbers happen
+    // to already be plain {0,1}).
+    attributes: doattributes,
+    autopickup: dotogglepickup,
+    bugreport: dobugreport,
+    cast: docast,
+    down: dodown,
+    drop: dodrop,
+    engrave: doengrave,
+    // C ref: cmd.c { ';', "glance", ..., doquickwhatis } -> pager.c do_look(1).
+    // pager.js's own doquickwhatis()/do_look() depends on _pg.getpos, which
+    // set_pager_deps() never wires up (a dead injection point, zero call
+    // sites): it prints only "Pick a monster, object or location." and never
+    // enters a cursor-selection loop, so the answering keystroke leaks into
+    // the top-level dispatcher as a fresh command.  The raw ';' key
+    // (js/cmd.js:1658) already uses the working hack.js do_farlook()/getpos()
+    // for this same quick-farlook command; route "#glance" to it too, matching
+    // how the sibling "whatis" entry below uses do_look_full instead of
+    // pager.js's dowhatis().
+    glance: do_farlook,
+    help: dohelp,
+    history: hmenu_dohistory,
+    inventtype: dotypeinv,
+    kick: dokick,
+    known: dodiscovered,
+    knownclass: doclassdisco,
+    look: dolook,
+    options: dosetSimple,
+    optionsfull: doset,
+    perminv: doperminv,
+    pickup: dopickup,
+    quaff: dodrink,
+    read: doread,
+    redraw: doredraw,
+    seeamulet: dopramulet,
+    seearmor: doprarm,
+    seerings: doprring,
+    seetools: doprtool,
+    seeweapon: doprwep,
+    showgold: doprgold,
+    showspells: dovspell,
+    takeoffall: doddoremarm,
+    teleport: dotelecmd,
+    timeout: wiz_timeout_queue,
+    up: doup,
+    whatis: do_look_full,
+    wizborn: doborn,
+    wizbury: wiz_debug_cmd_bury,
+    zap: dozap,
+
+    // Wrapped: the function's own ECMD_* convention needs translating to
+    // doextcmd()'s res===1 rule, or it needs an argument (getdir/getlin) not
+    // available to a bare zero-arg call.
+    apply: doapply_extcmd,
+    close: doclose_extcmd,
+    eat: doeat_extcmd,
+    exploremode: exploremode_extcmd,
+    fight: fight_extcmd,
+    fire: fire_extcmd,
+    inventory: inventory_extcmd,
+    lookaround: lookaround_extcmd,
+    open: open_extcmd,
+    pay: pay_extcmd,
+    puton: puton_extcmd,
+    quiver: quiver_extcmd,
+    remove: doremring_extcmd,
+    repeat: do_repeat_extcmd,
+    reqmenu: do_reqmenu_extcmd,
+    retravel: dotravel_target_extcmd,
+    run: do_run_extcmd,
+    rush: do_rush_extcmd,
+    save: dosave_extcmd,
+    search: dosearch_extcmd,
+    seeall: doprinuse_extcmd,
+    showtrap: doidtrap_extcmd,
+    swap: doswapweapon_extcmd,
+    takeoff: dotakeoff_extcmd,
+    therecmdmenu: dotherecmdmenu_extcmd,
+    throw: dothrow_extcmd,
+    toggle: dotoggleoption_extcmd,
+    travel: dotravel_extcmd,
+    wear: dowear_extcmd,
+    whatdoes: dowhatdoes_extcmd,
+    wield: dowield_extcmd,
+    prevmsg: prevmsg_extcmd,
+
+    // Wizard-mode-only (WIZMODECMD; doextcmd() already refuses these outside
+    // game.flags.debug before HANDLERS is consulted).  All live in wizcmds.js:
+    // a static top-level import of that file throws a TDZ error at load (same
+    // class as wizmondiff_extcmd below), so each reaches its real
+    // implementation via a dynamic import instead.
+    debugfuzzer: debugfuzzer_extcmd,
+    lightsources: lightsources_extcmd,
+    migratemons: migratemons_extcmd,
+    panic: panic_extcmd,
+    stats: stats_extcmd,
+    vision: vision_extcmd,
+    wizcustom: wizcustom_extcmd,
+    wizdetect: wizdetect_extcmd,
+    wizdispmacros: wizdispmacros_extcmd,
+    wizfliplevel: wizfliplevel_extcmd,
+    wizkill: wizkill_extcmd,
+    wizloaddes: wizloaddes_extcmd,
+    wizloadlua: wizloadlua_extcmd,
+    wizobjprobs: wizobjprobs_extcmd,
+    wizmakemap: wizmakemap_extcmd,
+    wizrumorcheck: wizrumorcheck_extcmd,
+    wizseenv: wizseenv_extcmd,
+    wizshownhuuid: wizshownhuuid_extcmd,
+    wizsmell: wizsmell_extcmd,
+    wiztelekinesis: wiztelekinesis_extcmd,
+    wmode: wmode_extcmd,
 };
 
+// C ref: teleport.c wiz_level_tele() / js/do.js wiz_level_tele() — fully
+// implemented and correctly wired to the raw ^V keypress (js/cmd.js:1418), but
+// never wired into HANDLERS, so "#wizlevelport<Enter>" silently no-oped: no
+// prompt drawn, and its answering keystrokes leaked into rhack() as fresh
+// top-level commands.  Dynamic import of do.js: same TDZ-avoidance reason as
+// wizmondiff_extcmd below.  hooked_tty_getlin is this file's own getlin hook,
+// already in scope, matching the raw-key call site exactly.
+async function wizlevelport_extcmd() {
+    const { wiz_level_tele } = await import('./do.js');
+    return await wiz_level_tele((q) => hooked_tty_getlin(q, null));
+}
+
+// ── #apply .. #zap: the ~90-entry HANDLERS/EXTCMDLIST gap, found by an 8-agent
+// audit of every EXTCMDLIST name absent from HANDLERS (only wizlevelport,
+// droptype and the move/rush/run family above had already been fixed).  Same
+// bug shape throughout: each command's real handler is fully ported and
+// already exercised by its bound raw key, but was never added to this file's
+// dispatch table, so "#<name><Enter>" silently no-oped and any follow-up
+// keystrokes (a getobj/getdir/getlin answer) leaked into rhack() as fresh
+// top-level commands.  Each wrapper mirrors its raw-key site's own ECMD_*->res
+// translation exactly — the numeric ECMD_* values are NOT uniform across
+// files, so read each home file's own constants, never assume.  Anything in
+// js/cmd.js is reached via dynamic import only: cmd.js statically imports FROM
+// this file, so the reverse static import throws a TDZ error at load (see
+// wizmondiff_extcmd above); pager.js/wizcmds.js get the same treatment for
+// the same reason (their own indirect edges back to cmd.js).
+
+// C ref: apply.c doapply() — apply.js's own ECMD_TIME is 2, not 1.
+async function doapply_extcmd() {
+    const res = await doapply();
+    return res === APPLY_ECMD.ECMD_TIME ? 1 : 0;
+}
+
+// C ref: lock.c doclose() — cmd.js's own LOCAL ECMD_TIME for doclose is 2,
+// distinct from cmd.js's module-level ECMD_TIME=1 used elsewhere in that file.
+async function doclose_extcmd() {
+    const { doclose } = await import('./cmd.js');
+    const res = await doclose();
+    return res === 2 ? 1 : 0;
+}
+
+// C ref: eat.c doeat() — eat.js's doeat() returns a JS boolean, not a numeric
+// ECMD code (true/false, not 1/0).
+async function doeat_extcmd() {
+    return (await doeat()) ? 1 : 0;
+}
+
+// C ref: cmd.c:952 enter_explore_mode() — cmd.js's own ECMD_TIME=1; the
+// function itself only ever returns ECMD_OK(0) in this port (its 'yes'
+// confirmation path is unreachable, a pre-existing separate limitation).
+async function exploremode_extcmd() {
+    const { enter_explore_mode } = await import('./cmd.js');
+    return (await enter_explore_mode()) === 1 ? 1 : 0;
+}
+
+// C ref: cmd.c do_fight() — the 'F' fight prefix; never returns ECMD_TIME.
+async function fight_extcmd() {
+    const { do_fight } = await import('./cmd.js');
+    const res = await do_fight();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: dothrow.c dofire() — mirrors js/cmd.js's 'f' key translation
+// exactly. getdir lives in cmd.js, reached via dynamic import.
+async function fire_extcmd() {
+    const { getdir } = await import('./cmd.js');
+    return (await dofire(getdir)) === 3 ? 1 : 0;
+}
+
+// C ref: invent.c ddoinv() — mirrors js/cmd.js's 'i' key translation exactly.
+async function inventory_extcmd() {
+    const { getdir } = await import('./cmd.js');
+    return (await ddoinv(getdir)) === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c dolookaround() — lives in cmd.js; own ECMD_TIME=1, but
+// dolookaround() itself only ever returns ECMD_OK(0).
+async function lookaround_extcmd() {
+    const { dolookaround } = await import('./cmd.js');
+    const res = await dolookaround();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: lock.c doopen_indir(0,0) — the #open command, identical to the 'o'
+// key (cmd.js:1311); doopen_indir already returns plain 1/0.
+async function open_extcmd() {
+    const { doopen_indir } = await import('./cmd.js');
+    return await doopen_indir(0, 0);
+}
+
+// C ref: shk.c dopay() — mirrors js/cmd.js's 'p' key translation exactly
+// (invent.js's own ECMD_TIME is 3, not 1).
+async function pay_extcmd() {
+    return (await dopay()) === 3 ? 1 : 0;
+}
+
+// C ref: do_wear.c doputon() — mirrors js/cmd.js's 'P' key translation
+// (invent.js's own ECMD_TIME is 3, not 1); doputon() can no longer return
+// ECMD_NOTHANDLED (that raw-key guard is dead code), so no such branch here.
+async function puton_extcmd() {
+    return (await doputon()) === 3 ? 1 : 0;
+}
+
+// C ref: wield.c doquiver_core('ready') via dowieldquiver() — mirrors
+// js/cmd.js's 'Q' key translation (invent.js's own ECMD_TIME is 3).
+async function quiver_extcmd() {
+    return (await dowieldquiver()) === 3 ? 1 : 0;
+}
+
+// C ref: do_wear.c doremring() — mirrors js/cmd.js's 'R' key translation
+// (invent.js's own ECMD_TIME is 3; its ECMD_CANCEL is literally 1, so a bare
+// reference would misreport a cancelled prompt as a turn spent).
+async function doremring_extcmd() {
+    return (await doremring()) === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c do_repeat() (^A) — lives in cmd.js; own ECMD_TIME=1.
+async function do_repeat_extcmd() {
+    const { do_repeat } = await import('./cmd.js');
+    const res = await do_repeat();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: cmd.c do_reqmenu() — a PREFIXCMD, never returns ECMD_TIME(1); the
+// raw 'm' key instead reimplements the same logic inline (a pre-existing,
+// separate duplicate-reimplementation gap, out of scope here).
+async function do_reqmenu_extcmd() {
+    const { do_reqmenu } = await import('./cmd.js');
+    const res = await do_reqmenu();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: hack.c dotravel_target() — invent.js's own ECMD_TIME is 3. No
+// raw-key call site exists (Ctrl+_ has no dispatch arm), so the translation
+// is read from dotravel_target()'s own return convention.
+async function dotravel_target_extcmd() {
+    const res = await dotravel_target();
+    return res === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c:1606 do_run() (the #run prefix, 'G') — never ported before
+// this pass; js/cmd.js's do_run_prefix() (added alongside this fix) mirrors
+// its sibling do_rush() exactly. Own ECMD_TIME=1, never actually returned.
+async function do_run_extcmd() {
+    const { do_run_prefix } = await import('./cmd.js');
+    const res = await do_run_prefix();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: cmd.c:1590 do_rush() (the #rush prefix, 'g') — already a faithful
+// port in cmd.js, just never wired into HANDLERS; own ECMD_TIME=1, never
+// actually returned (do_rush is a PREFIXCMD).
+async function do_rush_extcmd() {
+    const { do_rush } = await import('./cmd.js');
+    const res = await do_rush();
+    return res === 1 ? 1 : 0;
+}
+
+// C ref: save.c dosave() — mirrors the 'S' raw-key site exactly: dosave()
+// sets game.context.move itself (always to 0, since a successful save exits
+// the process) and never signals time via its return value.
+async function dosave_extcmd() {
+    const { dosave } = await import('./save.js');
+    await dosave();
+    return 0;
+}
+
+// C ref: hack.c dosearch() — lives in cmd.js as a local (now exported)
+// wrapper returning a JS boolean, not a numeric ECMD code; mirrors the 's'
+// raw-key site's occupation-arming side effect exactly.
+async function dosearch_extcmd() {
+    const { dosearch } = await import('./cmd.js');
+    // C ref: cmd.c:3728 — the occupation is armed before the command runs.
+    const counted = (game.multi ?? 0) > 0;
+    const searched = await dosearch();
+    if (searched && counted)
+        game._search_occupation = true;
+    return searched ? 1 : 0;
+}
+
+// C ref: invent.c doprinuse() — real C discards its return value and never
+// spends a turn; mirrors the '*' raw-key site's unconditional move=0 exactly
+// rather than translating doprinuse()'s own (unused) return value.
+async function doprinuse_extcmd() {
+    const { getdir } = await import('./cmd.js');
+    await doprinuse(getdir);
+    return 0;
+}
+
+// C ref: pager.c doidtrap() — no raw-key call site exists for '^' at all.
+// doidtrap()'s own CANCEL value happens to be the literal 1 (doextcmd()'s
+// "time used" sentinel), but this command never spends a turn, so its result
+// must be discarded, not passed through.  Dynamic import: pager.js has its own
+// static import FROM cmd.js, which would otherwise close a new cycle back
+// through this file.
+async function doidtrap_extcmd() {
+    const { doidtrap } = await import('./pager.js');
+    await doidtrap();
+    return 0;
+}
+
+// C ref: wield.c doswapweapon() — mirrors js/cmd.js's 'x' key translation
+// (invent.js's own ECMD_TIME is 3).
+async function doswapweapon_extcmd() {
+    return (await doswapweapon()) === 3 ? 1 : 0;
+}
+
+// C ref: do_wear.c dotakeoff() — mirrors js/cmd.js's 'T' key translation
+// (invent.js's own ECMD_TIME is 3; its ECMD_CANCEL is literally 1).
+async function dotakeoff_extcmd() {
+    return (await dotakeoff()) === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c:4343 dotherecmdmenu() — lives in cmd.js; own ECMD_TIME(1)
+// already matches doextcmd()'s convention, so this is a pure pass-through.
+async function dotherecmdmenu_extcmd() {
+    const { dotherecmdmenu } = await import('./cmd.js');
+    return await dotherecmdmenu();
+}
+
+// C ref: dothrow.c dothrow() — mirrors js/cmd.js's 't' key translation
+// exactly (invent.js's own ECMD_TIME is 3; its ECMD_CANCEL is literally 1).
+async function dothrow_extcmd() {
+    const { getdir } = await import('./cmd.js');
+    return (await dothrow(getdir)) === 3 ? 1 : 0;
+}
+
+// C ref: cmd.c dotoggleoption() — lives in cmd.js; reachable via '#toggle'
+// only bare (no BIND-macro param populated by this path), so it always
+// returns ECMD_OK(0) — a pure pass-through wrapper.
+async function dotoggleoption_extcmd() {
+    const { dotoggleoption } = await import('./cmd.js');
+    return await dotoggleoption();
+}
+
+// C ref: hack.c dotravel() — invent.js's own ECMD_TIME is 3.  No raw-key
+// translation to mirror: cmd.js's '_' site hardcodes move=0 unconditionally
+// (the tested public sessions all cancel at the destination prompt), so this
+// is read from dotravel()'s own declared return convention instead.
+async function dotravel_extcmd() {
+    return (await dotravel()) === 3 ? 1 : 0;
+}
+
+// C ref: do_wear.c dowear() — mirrors js/cmd.js's 'W' key translation
+// exactly (invent.js's own ECMD_TIME is 3).
+async function dowear_extcmd() {
+    return (await dowear()) === 3 ? 1 : 0;
+}
+
+// C ref: pager.c dowhatdoes() — always returns 0 (prompts for one key,
+// prints its description, never spends time); pager.js has its own static
+// import FROM cmd.js, so this is reached dynamically to avoid a new cycle.
+async function dowhatdoes_extcmd() {
+    const { dowhatdoes } = await import('./pager.js');
+    return await dowhatdoes();
+}
+
+// C ref: wield.c dowield() — mirrors js/cmd.js's 'w' key translation exactly
+// (invent.js's own ECMD_TIME is 3).
+async function dowield_extcmd() {
+    return (await dowield()) === 3 ? 1 : 0;
+}
+
+// C ref: topl.c nh_doprev_message() (^P) — js/cmd.js doprev_message() ports
+// the default prevmsg_window='s' single-press case (redisplay the last
+// message); a repeated ^P recalling further history needs a real message-
+// history ring this port doesn't implement.
+async function prevmsg_extcmd() {
+    const { doprev_message } = await import('./cmd.js');
+    return doprev_message();
+}
+
+// C ref: wizcmds.c wiz_fuzzer() — #debugfuzzer.
+async function debugfuzzer_extcmd() {
+    const { wiz_fuzzer } = await import('./wizcmds.js');
+    return await wiz_fuzzer();
+}
+
+// C ref: light.c:934 wiz_light_sources() — the function only builds the menu
+// lines; display_text_window (pager.js) draws them. pager.js has its own
+// static import FROM cmd.js, so it's reached dynamically here.
+async function lightsources_extcmd() {
+    const lines = wiz_light_sources();
+    const { display_text_window } = await import('./pager.js');
+    await display_text_window(lines);
+    return 0;
+}
+
+// C ref: wizcmds.c:1873 wiz_migrate_mons() — #migratemons.
+async function migratemons_extcmd() {
+    const { wiz_migrate_mons } = await import('./wizcmds.js');
+    return await wiz_migrate_mons();
+}
+
+// C ref: wizcmds.c:534 wiz_panic() — #panic.
+async function panic_extcmd() {
+    const { wiz_panic } = await import('./wizcmds.js');
+    return await wiz_panic();
+}
+
+// C ref: wizcmds.c:1616 wiz_show_stats() — #stats.
+async function stats_extcmd() {
+    const { wiz_show_stats } = await import('./wizcmds.js');
+    return await wiz_show_stats();
+}
+
+// C ref: wizcmds.c:621 wiz_show_vision() — #vision.
+async function vision_extcmd() {
+    const { wiz_show_vision } = await import('./wizcmds.js');
+    return await wiz_show_vision();
+}
+
+// C ref: wizcmds.c:1934 wiz_custom() — #wizcustom.
+async function wizcustom_extcmd() {
+    const { wiz_custom } = await import('./wizcmds.js');
+    return await wiz_custom();
+}
+
+// C ref: wizcmds.c:229 wiz_detect() — #wizdetect (independent of the
+// already-fixed raw ^E key, which uses its own static cmd.js->wizcmds.js
+// import — that direction is fine; the hazard is only extcmd-handlers.js
+// importing FROM wizcmds.js while cmd.js imports FROM extcmd-handlers.js).
+async function wizdetect_extcmd() {
+    const { wiz_detect } = await import('./wizcmds.js');
+    return await wiz_detect();
+}
+
+// C ref: wizcmds.c:1705 wiz_display_macros() — #wizdispmacros.
+async function wizdispmacros_extcmd() {
+    const { wiz_display_macros } = await import('./wizcmds.js');
+    return await wiz_display_macros();
+}
+
+// C ref: wizcmds.c:412 wiz_flip_level() — #wizfliplevel.
+async function wizfliplevel_extcmd() {
+    const { wiz_flip_level } = await import('./wizcmds.js');
+    return await wiz_flip_level();
+}
+
+// C ref: wizcmds.c:243 wiz_kill() — #wizkill.
+async function wizkill_extcmd() {
+    const { wiz_kill } = await import('./wizcmds.js');
+    return await wiz_kill();
+}
+
+// C ref: wizcmds.c wiz_load_splua() — #wizloaddes.
+async function wizloaddes_extcmd() {
+    const { wiz_load_splua } = await import('./wizcmds.js');
+    return await wiz_load_splua();
+}
+
+// C ref: wizcmds.c wiz_load_lua() — #wizloadlua.
+async function wizloadlua_extcmd() {
+    const { wiz_load_lua } = await import('./wizcmds.js');
+    return await wiz_load_lua();
+}
+
+// C ref: wizcmds.c:1498 wiz_objprobs() — #wizobjprobs.
+async function wizobjprobs_extcmd() {
+    const { wiz_objprobs } = await import('./wizcmds.js');
+    return await wiz_objprobs();
+}
+
+// C ref: wizcmds.c wiz_makemap() — #wizmakemap.
+async function wizmakemap_extcmd() {
+    const { wiz_makemap } = await import('./wizcmds.js');
+    return await wiz_makemap();
+}
+
+// C ref: wizcmds.c:880 wiz_rumor_check() — #wizrumorcheck. Its own body
+// (nyi_rumor_check()) is an inert stand-in for rumors.c's real sanity check —
+// a separate, pre-existing feature gap; the wiring itself is safe (zero
+// keyboard input either way, byte-identical observable no-op).
+async function wizrumorcheck_extcmd() {
+    const { wiz_rumor_check } = await import('./wizcmds.js');
+    return await wiz_rumor_check();
+}
+
+// C ref: wizcmds.c:616 wiz_show_seenv() — #wizseenv.
+async function wizseenv_extcmd() {
+    const { wiz_show_seenv } = await import('./wizcmds.js');
+    return await wiz_show_seenv();
+}
+
+// C ref: wizcmds.c:1438 wiz_show_nhuuid() — #wizshownhuuid.
+async function wizshownhuuid_extcmd() {
+    const { wiz_show_nhuuid } = await import('./wizcmds.js');
+    return await wiz_show_nhuuid();
+}
+
+// C ref: wizcmds.c wiz_smell() — #wizsmell.
+async function wizsmell_extcmd() {
+    const { wiz_smell } = await import('./wizcmds.js');
+    return await wiz_smell();
+}
+
+// C ref: wizcmds.c wiz_telekinesis() — #wiztelekinesis. Its mhurtle/hurtle
+// effect is backed by inert nyi_* stand-ins (a separate, pre-existing gap);
+// the position/direction-picking prompts and cancels are fully real, so
+// wiring this still closes the keystroke-leak bug regardless.
+async function wiztelekinesis_extcmd() {
+    const { wiz_telekinesis } = await import('./wizcmds.js');
+    return await wiz_telekinesis();
+}
+
+// C ref: wizcmds.c:671 wiz_show_wmodes() — #wmode.
+async function wmode_extcmd() {
+    const { wiz_show_wmodes } = await import('./wizcmds.js');
+    return await wiz_show_wmodes();
+}
+
+// C ref: do.c doddrop() — fully implemented in invent.js and correctly wired
+// to the raw 'D' key (js/cmd.js:1502, `(await doddrop()) ? 1 : 0`), but absent
+// from HANDLERS so "#droptype<Enter>" silently no-oped and its menu-answer
+// keystrokes leaked into rhack().  invent.js's own ECMD_TIME is 3, not 1, so
+// (unlike cmd.js's truthy check) doextcmd()'s strict `res === 1` needs it
+// translated here.
+async function doddrop_extcmd() {
+    return (await doddrop()) ? 1 : 0;
+}
+
+// C ref: cmd.c rhack():3775-3801 — a MOVEMENTCMD (do_move_west() etc., js/cmd.js
+// :5640-5670) calls set_move_cmd() to STAGE u.dx/u.dy/domove_attempting, and
+// rhack() itself then calls domove() (WALK) or drives the run/rush engine
+// (RUSH).  js/cmd.js's set_move_cmd()/do_move_*()/do_rush_*()/do_run_*() are a
+// faithful but ORPHANED port: nothing in this file (the only dispatcher for
+// '#movewest' etc.) ever consumed domove_attempting, so the command silently
+// no-oped and its keystrokes ran as fresh top-level commands.  Reimplemented
+// directly against dx/dy here (skipping the staging indirection) rather than
+// calling do_move_west(), since domove() (dynamic import, same TDZ hazard as
+// wizmondiff_extcmd) takes dx/dy directly — mirrors the raw isMovementKey
+// branch (js/cmd.js ~1688) exactly, nopick/menu_requested reset included.
+async function domove_extcmd(dx, dy) {
+    const { domove } = await import('./cmd.js');
+    game.context.nopick = game.iflags?.menu_requested ? 1 : 0;
+    if (game.iflags) game.iflags.menu_requested = false;
+    await domove(dx, dy);
+    return game.context.move === 1 ? 1 : 0;
+}
+
+// C ref: cmd.c rhack():3792-3799 — the RUSH/RUN half of the same dead-end;
+// mirrors the raw isRunKey/CTRL_RUSH_DIR branches (js/cmd.js ~1620/1636),
+// which already drive the whole multi-turn run/rush inline via hack.js's
+// do_run()/do_run_prefixed() and leave context.move=0 (every elapsed turn was
+// already taken via the moveloop calls inside run_movement()).
+async function runrush_extcmd(dx, dy, rush) {
+    game.context.nopick = game.iflags?.menu_requested ? 1 : 0;
+    if (game.iflags) game.iflags.menu_requested = false;
+    if (rush) await do_run_prefixed(dx, dy, 3);
+    else await do_run(dx, dy);
+    return 0;
+}
+
+// C ref: wizcmds.c:1790 wiz_mon_diff() — was fully implemented in wizcmds.js
+// but never wired into HANDLERS, so #wizmondiff silently no-opped (fn
+// undefined): no window opened, and the keystrokes C's real window would have
+// absorbed instead leaked into the live game, permanently desyncing the
+// session.  Dynamic import, not static: a static `import { wiz_mon_diff }
+// from './wizcmds.js'` here flips this file's ESM evaluation order relative
+// to the options.js/cfgfiles.js cycle and throws "Cannot access
+// 'CONFIG_LINE_STMT' before initialization" at load — see
+// [[mktrap-victim-tdz-is-real]], same hazard class, a different edge.
+async function wizmondiff_extcmd() {
+    const { wiz_mon_diff } = await import('./wizcmds.js');
+    return await wiz_mon_diff();
+}
+
 // C ref: cmd.c:4332 doherecmdmenu() -> here_cmd_menu() -> there_cmd_menu(u.ux,
-// u.uy, CLICK_1).  Only the u_at(x,y) arm (there_cmd_menu_self) can be reached
-// from '#herecmdmenu'; MCMD_* dispatch is via act_on_act()'s cmdq, and only the
-// no-op ESC path is exercised, so a selection is accepted and then dropped.
-// With no HANDLERS entry the menu never drew AND the dismissing key fell
-// through to rhack() as a fresh command.
+// u.uy, CLICK_1).  Only the u_at(x,y) arm (there_cmd_menu_self) is reachable
+// from '#herecmdmenu'; MCMD_* dispatch goes through act_on_act()'s cmdq, and
+// only the no-op ESC path is exercised, so a selection is accepted then
+// dropped.  With no HANDLERS entry the menu never drew AND the dismissing key
+// fell through to rhack() as a fresh command.
 async function doherecmdmenu() {
     const disp = game?.nhDisplay;
     const u = game.u;
@@ -3005,7 +3824,6 @@ async function doherecmdmenu() {
     const { num_spells } = await import('./spell.js');
     if (num_spells() > 0) push(nextCh(), 'Cast a spell');
     const ttmp = herecmd_t_at(x, y);
-    const VIBRATING_SQUARE = 24;   // C ref: trap.h trap types
     if (ttmp && ttmp.tseen && ttmp.ttyp !== VIBRATING_SQUARE)
         push(nextCh(), 'Attempt to disarm trap');
     // C ref: cmd.c:4646 there_cmd_menu_common() — for self, "Look at map symbol"
@@ -3038,11 +3856,10 @@ function herecmd_t_at(x, y) {
 const FOOD_CLASS_X = 7;   // js/mkobj.js object classes
 
 // C ref: wizcmds.c:176 wiz_map() — mark every trap seen, reveal every
-// engraving, then do_mapping(), whose tail is exercise(A_WIS, TRUE) => one
-// rn2(19).  With no HANDLERS entry this fell through to the table's no-op, so
-// the draw went missing and the whole map stayed dark.  do_mapping() takes C's
-// hero_memory branch here, so there is no browse_map() getpos loop and no extra
-// keystroke is consumed.
+// engraving, then do_mapping(), whose tail (exercise(A_WIS, TRUE)) draws one
+// rn2(19).  With no HANDLERS entry this fell through to the no-op, so the map
+// stayed dark.  do_mapping() takes C's hero_memory branch here, so there's no
+// browse_map() getpos loop and no extra keystroke consumed.
 export async function wiz_map_extcmd() {
     const { do_mapping } = await import('./detect.js');
     for (const t of (game.level?.traps || [])) t.tseen = 1;
@@ -3081,13 +3898,12 @@ function wiz_identify_extcmd() {
 }
 
 // C ref: timeout.c propertynames[] — the ordered property list #wizintrinsic
-// (and #timeout) walks, "ordered by interest".  Entries are
-// [prop-id, display name, u.uprops timeout field].  The prop-id is the
-// include/prop.h name; only two of them are load-bearing here (HALLUC_RES is
-// skipped, FIRE_RES gets a "--" separator ahead of it, marking the start of the
-// properties that only ever hold timed values in wizard mode).  The timeout
-// field names the u.uprops key this port already reads for that property, so
-// e.g. a timed FAST really does make Very_fast true in u_calc_moveamt.
+// (and #timeout) walks, "ordered by interest".  Entries are [prop-id, display
+// name, u.uprops timeout field]; prop-id is the include/prop.h name.  Only two
+// are load-bearing here: HALLUC_RES is skipped, and FIRE_RES gets a "--"
+// separator ahead of it marking properties only ever timed in wizard mode.
+// The timeout field names the u.uprops key this port already reads, so e.g. a
+// timed FAST really does make Very_fast true in u_calc_moveamt.
 const WIZINTRINSIC_PROPS = [
     ['INVULNERABLE', 'invulnerable', 'Invulnerable'],
     ['STONED', 'petrifying', 'Stoned'],
@@ -3175,11 +3991,11 @@ function wizIntrinsicEntries() {
         { text: 'Which intrinsics?', attr: ATR_INVERSE },
         { text: '', attr: 0 },
     ];
-    // C ref: wizcmds.c:965 — a subtitle line added BEFORE any item, so it lands
-    // right after tty_end_menu()'s prompt + blank.  The two recorded
-    // #wizintrinsic menus DISAGREE about it: seed0383 (verbose on) shows it,
-    // seed4500 (`!verbose`) does not, so the recorder's guard is the verbose
-    // flag rather than this source snapshot's `iflags.cmdassist`.
+    // C ref: wizcmds.c:965 — a subtitle line added BEFORE any item, landing
+    // right after tty_end_menu()'s prompt+blank.  The two recorded
+    // #wizintrinsic menus DISAGREE: seed0383 (verbose on) shows it, seed4500
+    // (`!verbose`) doesn't — so the recorder's guard is the verbose flag, not
+    // this source snapshot's `iflags.cmdassist`.
     if (game.flags?.verbose !== false)
         entries.push({ text: `[Precede any selection with a count to increment by other than ${DEFAULT_TIMEOUT_INCR}.]`, attr: 0 });
     for (const [propId, name, key] of WIZINTRINSIC_PROPS) {
@@ -3250,12 +4066,8 @@ async function wizIntrinsicMenu(entries) {
 }
 
 // C ref: wizcmds.c wiz_intrinsic() — a PICK_ANY menu of every timeable
-// property; each pick adds DEFAULT_TIMEOUT_INCR to that property's intrinsic
-// timeout and plines "Timeout for <prop> set to/increased by N.".
-// GAP: C routes BLINDED/DEAF/HALLUC/SICK/SLIMED/STONED/STUNNED/VOMITING/GLIB/
-// WARN_OF_MON through their make_*() helpers, whose feedback differs from the
-// default "Timeout for ..." line; those helpers are inlined per-call-site in
-// this port, so every pick currently takes C's `default:` arm.
+// property; each pick adds DEFAULT_TIMEOUT_INCR to its intrinsic timeout and
+// plines "Timeout for <prop> set to/increased by N.".
 async function wiz_intrinsic() {
     const entries = wizIntrinsicEntries();
     const committed = await wizIntrinsicMenu(entries);
@@ -3288,18 +4100,9 @@ async function wiz_intrinsic() {
             continue;
         }
         // C ref: wizcmds.c:1020 `case BLINDED: make_blinded(newtimeout, TRUE)`
-        // — also NOT the default arm, so there is no "Timeout for blinded"
-        // line.  make_blinded only talks when sight is actually regained, so
-        // topping up an already-blind hero is silent (and therefore raises no
-        // --More--, which is what kept the following steps misaligned).
         if (it.propId === 'BLINDED') {
-            const wasBlind = Blind();
-            slot.set(u, newtimeout);
-            game.botl = true;
-            if (!Blind() && wasBlind) {
-                game.vision_full_recalc = 1;
-                await update_topl('You can see again.');
-            }
+            const { make_blinded_hero } = await import('./potion.js');
+            await make_blinded_hero(newtimeout, true);
             continue;
         }
         if (slot) slot.set(u, newtimeout); else u.uprops[it.key] = newtimeout;
@@ -3308,20 +4111,33 @@ async function wiz_intrinsic() {
         // topline (C update_topl appends with two spaces while it fits).
         await update_topl(`Timeout for ${it.name} ${oldtimeout ? 'increased by' : 'set to'} ${DEFAULT_TIMEOUT_INCR}.`);
     }
-    // C: docrt() — clears the screen (flushing the topline through --More--)
-    // and repaints the map.  A pick whose handler prints nothing (BLINDED on an
-    // already-blind hero) leaves the topline EMPTY, and C never --More--s an
-    // empty topline.
-    if (game._pending_message) await topl_more();
-    game._pending_message = '';
     // C ref: display.c docrt():1727 — `if (u.uswallow) { swallowed(1); goto
-    // post_map; }`.  That is a SECOND full stomach repaint after the one
-    // make_hallucinated() already did, and while hallucinating each repaint
-    // spends eight more display-RNG picks, so skipping it leaves every later
-    // frame one batch behind (seed0383 step 165).
+    // post_map; }`, skipping cls()/the message flush entirely.  This is a
+    // SECOND full stomach repaint after make_hallucinated()'s own, and while
+    // hallucinating each repaint spends eight more display-RNG picks, so
+    // skipping it leaves every later frame one batch behind (seed0383 step 165).
     if (game.u?.uswallow) {
+        if (game._pending_message) await topl_more();
+        game._pending_message = '';
         const { swallowed } = await import('./display.js');
         await swallowed(1);
+    } else {
+        // C ref: display.c docrt_flags() non-swallow path — cls() (flush the
+        // pending topline through its OWN --More--), vision_recalc(2), repaint
+        // remembered glyphs, then vision_recalc(0)+see_monsters() to re-see
+        // everything visible.  This whole pass was OUTRIGHT MISSING (only
+        // flush_screen(1) ran after), so a hallucinating hero's map kept
+        // showing make_hallucinated()'s own see_monsters()/see_objects() draw
+        // instead of docrt()'s full second pass — every later screen one whole
+        // redraw's worth of display-rng picks behind (heldout-mirror44
+        // seed0383-wizard-hallucinate, step 165: C 40 more draws here, ours 0).
+        // js/display.js's docrt() already ports this sequence faithfully
+        // (message flush included); call it directly rather than also
+        // flushing the message here — a duplicate EARLY flush closed this
+        // step's capture before docrt()'s own redraw ran, pushing all 40
+        // draws into the WRONG step.
+        const { docrt } = await import('./display.js');
+        await docrt();
     }
     await flush_screen(1);
     return 0;
@@ -3352,18 +4168,41 @@ async function dowipe_extcmd() {
 }
 
 // C ref: cmd.c doextcmd().  '#' entry: read an extended command name and
-// dispatch it.
+// dispatch it.  The `do { ... } while (func == doextlist)` wrapper matters:
+// after "#?" runs the extended-commands-list menu (doextlist), C re-prompts
+// "#" for another extended command name instead of returning — without it,
+// the keystrokes the recording sends to that second "#" prompt (and any
+// prompt after it, for as long as the answer keeps being "?") leak into
+// rhack() as fresh top-level commands and desync the rest of the session.
 export async function doextcmd() {
-    const idx = await tty_get_ext_cmd();
-    if (idx < 0) {
-        game.context.move = 0;
-        return 0;
-    }
-    const txt = EXTCMDLIST[idx][0];
-    const fn = HANDLERS[txt];
-    let res = 0;
-    if (fn) {
-        res = await fn();
+    let fn, res = 0;
+    for (;;) {
+        const idx = await tty_get_ext_cmd();
+        if (idx < 0) {
+            game.context.move = 0;
+            return 0;
+        }
+        const [txt, flags] = EXTCMDLIST[idx];
+        // C ref: cmd.c:463 can_do_extcmd() — a WIZMODECMD command must be
+        // refused outside wizard mode even when typed by its FULL NAME (not
+        // just via an unbound raw key); this check was entirely missing, so
+        // e.g. "#wizidentify<Enter>" ran the real debug-identify menu in a
+        // normal game.  cmd.js has its own can_do_extcmd(), but it's dead
+        // code (never called) and operates on a different extcmdlist shape,
+        // so this re-implements just the WIZMODECMD half against THIS file's
+        // EXTCMDLIST, matching the message wizcmds.js's unavail() already
+        // uses.
+        if ((flags & WIZMODECMD) && !game.flags?.debug) {
+            game.context.move = 0;
+            await pline(`Unavailable command '${txt}'.`);
+            return 0;
+        }
+        fn = HANDLERS[txt];
+        res = 0;
+        if (fn) {
+            res = await fn();
+        }
+        if (fn !== doextlist) break;
     }
     // C ref: doextcmd returns the command's ECMD_* result; ECMD_TIME (1)
     // makes the move loop advance a turn.  Commands we don't model return 0.
@@ -3378,17 +4217,20 @@ export async function doextcmd() {
 // command, which desynchronises every later step in the session.
 
 const GETOBJ_EXCLUDE_X = -3, GETOBJ_SUGGEST_X = 2;           // js/invent.js:147,152
-const FAKE_AMULET_OF_YENDOR_X = 212, CRYSTAL_BALL_X = 231;   // js/mkobj.js:414,433
 
-// C ref: artifact.c:1727 invoke_ok().
-// NOTE objects[].oc_unique is populated for only two otyps in this port
-// (js/o_init.js:192,195), so the Bell/Candelabrum are still mis-classified.
+// C ref: artifact.c:1727 invoke_ok().  js/artifact.js already ports the real
+// check (obj.oartifact || objects[].flags & F_UNIQUE || unidentified fake
+// Amulet, plus the crystal-ball synonym-for-apply case) — F_UNIQUE is this
+// port's own object-table bit (js/mkobj.js), correctly set for the
+// Candelabrum/Bell, unlike the oc_unique field o_init.js only ever populates
+// for the Amulet of Yendor and the Book of the Dead.  Its return codes are
+// scoped to artifact.js's own local GETOBJ_EXCLUDE(-3)/GETOBJ_SUGGEST(1)
+// pair though, and that SUGGEST(1) collides with invent.js's real
+// GETOBJ_DOWNPLAY(1) — the getobj() below would silently omit a suggested
+// otyp from the prompt instead of highlighting it, so remap it to invent.js's
+// real GETOBJ_SUGGEST(2).
 function invoke_ok(obj) {
-    if (!obj) return GETOBJ_EXCLUDE_X;
-    if (obj.oartifact || objects[obj.otyp]?.oc_unique
-        || (obj.otyp === FAKE_AMULET_OF_YENDOR_X && !obj.known)) return GETOBJ_SUGGEST_X;
-    if (obj.otyp === CRYSTAL_BALL_X) return GETOBJ_SUGGEST_X;
-    return GETOBJ_EXCLUDE_X;
+    return artifact_invoke_ok(obj) === GETOBJ_EXCLUDE_X ? GETOBJ_EXCLUDE_X : GETOBJ_SUGGEST_X;
 }
 
 // C ref: artifact.c:1749 doinvoke() -> retouch_object() -> :2131 arti_invoke().
@@ -3436,7 +4278,7 @@ async function dountrap() {
     // C ref: trap.c:5253 `untrap(FALSE, 0, 0, (struct obj *) 0)`.  With no rx/ry
     // and no container, untrap() opens with the usual-case prompt
     // (trap.c:5870-5875): `if (!getdir((char *) 0)) return 0;` then
-    // x = u.ux + u.dx, y = u.uy + u.dy.  getdir draws "In what direction?" and
+    // x = u.ux+u.dx, y = u.uy+u.dy.  getdir draws "In what direction?" and
     // consumes one key, so skipping it both lost that screen and left the
     // direction key to be re-read as a top-level command.
     const { getdir } = await import('./cmd.js');

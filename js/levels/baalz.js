@@ -17,7 +17,7 @@ import {
 import { rn2 } from '../rng.js';
 import {
     VLY_S_LICH, VLY_S_VAMPIRE, flip_level, lspo_map, quest_place_stair,
-    quest_set_door, remove_boundary_syms, reset_xystart_size, shuffle,
+    quest_set_door, remove_boundary_syms, map_cleanup, reset_xystart_size, shuffle,
     splev_map_reset, vly_monster_class, vly_non_diggable, vly_object, vly_trap,
 } from '../sp_lev.js';
 import {
@@ -126,6 +126,7 @@ export async function makemaz_baalz() {
     // map_cleanup, then wallification ONLY when !corrmaze (skipped here), then
     // flip_level_rnd(allow_flips=3), then fixup_special().
     remove_boundary_syms();
+    map_cleanup();
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975
     if (rn2(2)) flp |= 2;                 // flip_level_rnd sp_lev.c:977

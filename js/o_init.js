@@ -10,7 +10,7 @@
 // hardcoded fastforward_pre_mklev() replay for seed8000 (and every other
 // public session whose first divergence is downstream of o_init).
 //
-// The shuffle results (oc_descr_idx / oc_color / oc_tough / oc_material) are
+// The shuffle results (oc_descr_idx / oc_color / oc_tough / material) are
 // written back onto the shared objects[] array so a renderer can later read
 // the per-appearance description / color.  Rendering itself lives in
 // display.js / invent.js and is out of scope for this file.
@@ -24,7 +24,9 @@ import {
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { game } from './gstate.js';
 import { exercise } from './attrib.js';
+import { ATR_INVERSE } from './terminal.js';
 import { A_WIS } from './const.js';
+import { Hallucination_u } from './display.js';
 
 // ── Color constants (C ref: include/color.h) ──
 const CLR_BLACK = 0, CLR_RED = 1, CLR_GREEN = 2, CLR_BROWN = 3, CLR_BLUE = 4;
@@ -49,14 +51,15 @@ const WAN_NOTHING = 416;
 // values that zap.js (which uses the correct 1/2) then misread.
 const NODIR = 1, IMMEDIATE = 2;
 
-// Keep the immutable object-table colors so init_objects() can restore them
-// before each new game.  The shared objects[] entries are mutated by shuffling.
+// Keep immutable object-table appearance fields for each new game.
+// The shared objects[] entries are mutated by shuffling.
 // Snapshotted lazily on the first seedAppearance() (i.e. before any shuffle
 // has run): display.js now imports this module, which puts o_init.js inside the
 // mkobj.js import cycle, so touching objects[] at module-eval time is a TDZ
 // ReferenceError.
 let DECLARED_COLOR = null;
 let DECLARED_TOUGH = null;
+let DECLARED_MATERIAL = null;
 
 // Per-object appearance data (oc_color / oc_tough / oc_material) for the
 // objects that participate in shuffling.  Only the shuffle ranges need this:
@@ -129,6 +132,7 @@ function seedAppearance() {
     if (!DECLARED_COLOR) {
         DECLARED_COLOR = objects.map((o) => o?.oc_color ?? CLR_GRAY);
         DECLARED_TOUGH = objects.map((o) => o?.oc_tough ?? 0);
+        DECLARED_MATERIAL = objects.map((o) => o?.material ?? 0);
     }
     for (let i = 0; i < objects.length; i++) {
         const o = objects[i];
@@ -136,7 +140,7 @@ function seedAppearance() {
         o.oc_descr_idx = o.oc_name_idx = i;
         o.oc_color = DECLARED_COLOR[i];
         o.oc_tough = DECLARED_TOUGH[i];
-        o.oc_material = o.material ?? 0;
+        o.material = DECLARED_MATERIAL[i];
         // C's object table pre-marks types without alternate descriptions and
         // leaves description-bearing types unidentified.
         o.oc_name_known = DESCR_BY_OTYP[i] == null ? 1 : 0;
@@ -261,9 +265,9 @@ function shuffle(bases, o_low, o_high, domaterial) {
         objects[j].oc_color = objects[i].oc_color;
         objects[i].oc_color = color;
         if (domaterial) {
-            sw = objects[j].oc_material;
-            objects[j].oc_material = objects[i].oc_material;
-            objects[i].oc_material = sw;
+            sw = objects[j].material;
+            objects[j].material = objects[i].material;
+            objects[i].material = sw;
         }
     }
 }
@@ -444,11 +448,14 @@ export function discover_object(oindx, markKnown, markEncountered, creditHero) {
 export function observe_object(obj) {
     if (!obj) return;
     const oindx = obj.otyp;
-    // C ref: o_init.c observe_object() — seeing an object also learns its
+    // C ref: o_init.c:447 observe_object() — seeing an object also learns its
     // APPEARANCE (obj->dknown = 1), which is what tells doname_vague_quan()
-    // that the exact quantity of a stack is known.  (C's !Hallucination guard
-    // covers both statements and is not modelled here either.)
-    if (oindx >= FIRST_OBJECT()) { obj.dknown = 1; discover_object(oindx, false, true); }
+    // that the exact quantity of a stack is known.  A hallucinating hero
+    // learns neither the appearance nor the encountered type.
+    if (oindx >= FIRST_OBJECT() && !Hallucination_u()) {
+        obj.dknown = 1;
+        discover_object(oindx, false, true);
+    }
 }
 
 // C ref: u_init.c knows_object() — mark a type known (not encountered).
@@ -679,9 +686,11 @@ function className(oclass) {
 //   * `char *buf` fill-and-return functions take the buffer argument for
 //     signature fidelity, ignore it, and RETURN the string.
 //   * `int *` out-parameters are objects with a `.value` field.
-//   * The window layer (create_nhwindow/start_menu/select_menu/putstr) is a
-//     local record-collecting shim, exactly as js/options.js does it; install
-//     DISCO_MENU_DRIVER to drive the interactive functions for real.
+//   * create_nhwindow/start_menu/add_menu/end_menu/putstr only collect items
+//     (as C's tty_add_menu()/tty_putstr() do); select_menu/display_nhwindow/
+//     destroy_nhwindow render+read input for real, via the shared renderers
+//     in js/invent.js and the shared yn primitives in js/display.js and
+//     js/extcmd-handlers.js.
 //   * Collaborators in other modules are reached by dynamic import() so that
 //     o_init.js stays outside the mkobj.js import cycle (see the TDZ notes at
 //     the top of this file).
@@ -977,7 +986,7 @@ function save_objclass(o) {
     return { oc_name_known: o.oc_name_known | 0, oc_encountered: o.oc_encountered | 0,
              oc_descr_idx: o.oc_descr_idx | 0, oc_name_idx: o.oc_name_idx | 0,
              oc_color: o.oc_color | 0, oc_tough: o.oc_tough | 0,
-             oc_material: o.oc_material | 0, oc_prob: o.oc_prob | 0,
+             oc_material: o.material | 0, oc_prob: o.oc_prob | 0,
              oc_dir: o.oc_dir | 0, oc_uname: o.oc_uname ? 1 : 0 };
 }
 function rest_objclass(o, rec) {
@@ -988,7 +997,7 @@ function rest_objclass(o, rec) {
     o.oc_name_idx = rec.oc_name_idx;
     o.oc_color = rec.oc_color;
     o.oc_tough = rec.oc_tough;
-    o.oc_material = rec.oc_material;
+    o.material = rec.oc_material;
     o.oc_prob = rec.oc_prob;
     o.oc_dir = rec.oc_dir;
     o.oc_uname = rec.oc_uname ? (o.oc_uname || '') : null;
@@ -1137,7 +1146,7 @@ export async function choose_disco_sort(mode) {
     end_menu(tmpwin, 'Ordering of discoveries');
 
     n = await select_menu(tmpwin, PICK_ONE, selected);
-    destroy_nhwindow(tmpwin);
+    await destroy_nhwindow(tmpwin);
     if (n > 0) {
         choice = selected[0].a_int;
         /* skip preselected entry if we have more than one item chosen */
@@ -1315,7 +1324,7 @@ export async function doclassdisco() {
     /* there might not be anything for us to do... */
     if (!discosyms[0]) {
         await disco_You(havent_discovered_any, 'items');
-        if (tmpwin !== WIN_ERR) destroy_nhwindow(tmpwin);
+        if (tmpwin !== WIN_ERR) await destroy_nhwindow(tmpwin);
         return ECMD_OK;
     }
 
@@ -1352,7 +1361,7 @@ export async function doclassdisco() {
                 c = String.fromCharCode(pick_list[0].a_int);
             } /* else c stays 0 */
         }
-        destroy_nhwindow(tmpwin);
+        await destroy_nhwindow(tmpwin);
     }
     if (!c || c === '\0')
         return ECMD_OK; /* player declined to make a selection */
@@ -1440,7 +1449,7 @@ export async function doclassdisco() {
     }
     if (ct)
         await display_nhwindow(tmpwin, true);
-    destroy_nhwindow(tmpwin);
+    await destroy_nhwindow(tmpwin);
     return ECMD_OK;
 }
 
@@ -1524,7 +1533,7 @@ export async function rename_disco() {
             await inv.docall(odummy);
         }
     }
-    destroy_nhwindow(tmpwin);
+    await destroy_nhwindow(tmpwin);
     return;
 }
 
@@ -1544,14 +1553,21 @@ export function get_sortdisco(opts, cnf) {
     return disco_orders_descr[p];
 }
 
-// ── window-layer shim (js/options.js uses the identical set) ──
-// Install `select` (win, how) -> array of picked `any` values (or -1 for ESC),
-// `yn` (query, resp, def) -> character, and `text` (lines) -> void to drive the
-// interactive functions above for real.
-export const DISCO_MENU_DRIVER = { select: null, yn: null, text: null };
+// ── window layer ──
+// create_nhwindow/add_menu/end_menu/putstr only collect items (as C's own
+// tty_add_menu()/tty_putstr() do); select_menu/display_nhwindow/destroy_nhwindow
+// below do the actual rendering+input, sharing the real renderers
+// (renderMenuLines/renderWindowScreen, js/invent.js) and yn primitives
+// (y_n, js/display.js; yn_function, js/extcmd-handlers.js) that every other
+// interactive command in the port already uses.
 
 function create_nhwindow(type) { return { type, items: [], query: '', lines: [] }; }
-function destroy_nhwindow(_win) { }
+// C ref: wintty.c tty_destroy_nhwindow -> erase_menu_or_text(): closing a menu
+// or text window docrt()s the map back underneath it.
+async function destroy_nhwindow(_win) {
+    const inv = await import('./invent.js');
+    await inv.dismiss_invent_screen();
+}
 function start_menu(win, behave) { win.items.length = 0; win.behave = behave; }
 function add_menu(win, _glyphinfo, any, accel, gacc, attr, clr, str, itemflags) {
     win.items.push({ any, accel, gacc, attr, clr, str, itemflags,
@@ -1563,17 +1579,95 @@ function add_menu_heading(win, str) {
 }
 function end_menu(win, query) { win.query = query; }
 function putstr(win, _attr, str) { win.lines.push(str); }
-// Returns C's select_menu() count: >0 picked, 0 confirmed nothing, -1 ESC.
-// `picks` is the menu_item** out-param.
-async function select_menu(win, how, picks) {
-    if (!DISCO_MENU_DRIVER.select) return -1;
-    const got = await DISCO_MENU_DRIVER.select(win, how);
-    if (!got || got === -1) return -1;
-    for (const g of got) picks.push(g);
-    return picks.length;
+
+// C ref: wintty.c tty_add_menu():2602 `Sprintf(buf, "%c - ", ch ? ch : '?')` —
+// a selectable entry always paints as "<letter> - <text>"; set_item_state()
+// only overwrites the '-' with '+'/'#' for an item that starts preselected
+// (MENU_ITEMFLAGS_SELECTED, used by choose_disco_sort's current-order mark).
+function disco_menu_flat(win) {
+    const flat = [];
+    if (win.query)
+        flat.push({ text: win.query, attr: disco_menu_heading_attr() });
+    flat.push({ text: '' });
+    for (const it of win.items) {
+        if (it.heading) { flat.push({ text: it.str, attr: disco_menu_heading_attr() }); continue; }
+        if (!it.selectable) { flat.push({ text: it.str }); continue; }
+        const mark = (it.itemflags & MENU_ITEMFLAGS_SELECTED) ? '+' : '-';
+        flat.push({ text: `${it.accel || '?'} ${mark} ${it.str}` });
+    }
+    return flat;
 }
+
+// Returns C's select_menu() count: >0 picked, 0 confirmed nothing, -1 ESC.
+// `picks` is the menu_item** out-param.  C ref: wintty.c process_menu_window()
+// — an accelerator (or its group accelerator) toggles the item and, for
+// PICK_ONE, finishes immediately; ' '/Enter with nothing selected commits
+// whatever is already marked (a PICK_ONE default, e.g. choose_disco_sort's
+// current sort order) or 0 when nothing is; ESC cancels.
+async function select_menu(win, how, picks) {
+    const inv = await import('./invent.js');
+    const { nhgetch } = await import('./input.js');
+    const flat = disco_menu_flat(win);
+    const rows = game.nhDisplay?.rows ?? 24;
+    const perPage = Math.min(52, rows - 1);
+    const pages = [];
+    for (let i = 0; i < flat.length; i += perPage) pages.push(flat.slice(i, i + perPage));
+    if (!pages.length) pages.push([]);
+    const fullscreen = flat.length + 1 >= rows;
+    let idx = 0;
+    const render = () => {
+        if (fullscreen) {
+            inv.renderWindowScreen(pages[idx], {
+                menu: true,
+                footer: pages.length > 1 ? `(${idx + 1} of ${pages.length})` : '(end)',
+                footerRow: pages[idx].length, footerCol: 1, modal: 'discowin',
+            });
+        } else {
+            inv.renderMenuLines(flat, null); // cursor: parked past "(end)"
+            game._modal_screen = 'discowin';
+        }
+    };
+    render();
+    for (;;) {
+        const c = await nhgetch();
+        if (c === 27) return -1;
+        const ch = String.fromCharCode(c);
+        if (fullscreen && ch === ' ' && idx < pages.length - 1) { idx++; render(); continue; }
+        if (c === 32 || c === 13 || c === 10) {
+            const already = win.items.filter((it) => it.selectable
+                && (it.itemflags & MENU_ITEMFLAGS_SELECTED));
+            for (const it of already) picks.push(it.any);
+            return already.length;
+        }
+        const hit = win.items.find((it) => it.selectable
+            && (it.accel === ch || it.gacc === ch));
+        if (hit) { picks.push(hit.any); return 1; }
+        /* unacceptable key (C: tty_nhbell()); menu stays up */
+    }
+}
+
+// C ref: wintty.c process_text_window() paging — (rows-1) content lines per
+// page, "--More--" while more remains, "(end)" on the last page.
 async function display_nhwindow(win, _blocking) {
-    if (DISCO_MENU_DRIVER.text) await DISCO_MENU_DRIVER.text(win.lines);
+    const inv = await import('./invent.js');
+    const { nhgetch } = await import('./input.js');
+    const rows = game.nhDisplay?.rows ?? 24;
+    const perPage = rows - 1;
+    const lines = win.lines.map((s) => ({ text: s }));
+    const pages = [];
+    for (let i = 0; i < lines.length; i += perPage) pages.push(lines.slice(i, i + perPage));
+    if (!pages.length) pages.push([]);
+    for (let pi = 0; pi < pages.length; pi++) {
+        inv.renderWindowScreen(pages[pi], {
+            footer: pi === pages.length - 1 ? '(end)' : '--More--',
+            footerRow: rows - 1, footerCol: 0, modal: 'discotext',
+        });
+        for (;;) {
+            const c = await nhgetch();
+            if (c === 27) { pi = pages.length; break; }
+            if (c === 32 || c === 13 || c === 10) break;
+        }
+    }
 }
 // C ref: hack.h You()/pline() — the port routes a one-shot message through
 // game._pending_message when no display is attached.
@@ -1586,12 +1680,12 @@ async function disco_pline(msg) {
     else game._pending_message = msg;
 }
 async function disco_y_n(query) {
-    if (DISCO_MENU_DRIVER.yn) return await DISCO_MENU_DRIVER.yn(query, 'yn', 'n');
-    return 'n';
+    const { y_n } = await import('./display.js');
+    return await y_n(query);
 }
 async function disco_yn_function(query, resp, def, _allow_esc) {
-    if (DISCO_MENU_DRIVER.yn) return await DISCO_MENU_DRIVER.yn(query, resp, def);
-    return '\0';
+    const { yn_function } = await import('./extcmd-handlers.js');
+    return await yn_function(query, resp, def);
 }
 // C ref: options.c flags.menu_style — js/pickup.js:896 menu_style() converts
 // the letter the port stores into the flag.h enum.
@@ -1600,7 +1694,7 @@ async function disco_menu_style() {
     return menu_style();
 }
 // C ref: flag.h iflags.menu_headings.attr — ATR_INVERSE by default.
-function disco_menu_heading_attr() { return game.iflags?.menu_headings?.attr ?? 0; }
+function disco_menu_heading_attr() { return game.iflags?.menu_headings?.attr ?? ATR_INVERSE; }
 // C ref: objclass.h def_char_to_objclass(sym) — scan def_oc_syms for the symbol,
 // returning MAXOCLASSES when it names no class.  js/invent.js:1281,
 // js/options.js:1570 and js/readobjnam.js:87 each keep a private copy.

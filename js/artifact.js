@@ -15,6 +15,7 @@
 //     0..12 role index this port usually calls `mnum`.  Role_if()/Race_if()
 //     below do the conversion; do not "simplify" the table to 0..12.
 import { game } from './gstate.js';
+import { update_topl } from './display.js';
 import { rn2, rnd, d, rnz } from './rng.js';
 import { objects, mksobj, weight, base_oc_cost } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -25,8 +26,10 @@ import { exercise } from './attrib.js';
 import { isok } from './hacklib.js';
 import { cansee } from './vision.js';
 import { mon_nam, monflee } from './uhitm.js';
-import { resist } from './zap.js';
+import { resist, destroy_items, ignite_items } from './zap.js';
+import { worn_extrinsic } from './invent.js';
 import { healmon } from './mon.js';
+import { mon_aligntyp } from './minion.js';
 import { nomul } from './hack.js';
 import {
     mflags1_of, mflags2_of, mflags3_of, msound_of,
@@ -44,6 +47,7 @@ import {
 // prop.h W_* bits.  NOTE: js/invent.js deliberately REMAPS these (QW_WEP
 // 0x100, QW_SWAPWEP 0x400) — const.js carries the real prop.h values and is
 // the right source here.
+import { has_innate } from './exper.js';
 import {
     W_ART, W_ARTI, W_WEP, W_SWAPWEP, W_QUIVER, W_BALL, W_SADDLE,
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU,
@@ -447,17 +451,7 @@ export const artilist = [
 // ─────────────────────────────────────────────────────────────────────────
 // External bindings.
 //
-// These five C functions ARE implemented in this port but their JS modules do
-// not export them, so nothing here can call the real ones.  destroy_items()
-// and cancel_monst() DRAW RNG, so the fallbacks are not behavioural choices —
-// they are missing bindings.  A wiring pass adds `export` in the owning module
-// and calls setArtifactHooks() once; until then any call is recorded on
-// game._artifact_unbound so it cannot be lost silently.
-//   destroy_items   js/zap.js:2111 (async, draws a per-item rn2 chain)
-//   ignite_items    js/zap.js
-//   probe_monster   src/detect.c — not ported
-//   make_stunned    src/potion.c — not ported under that name
-//   make_confused   src/potion.c — not ported under that name
+// Hooks for effects whose owning modules do not yet expose a callable port.
 // ─────────────────────────────────────────────────────────────────────────
 function unbound(which, fallback) {
     game._artifact_unbound = game._artifact_unbound || new Set();
@@ -465,8 +459,6 @@ function unbound(which, fallback) {
     return fallback;
 }
 export const artifact_hooks = {
-    destroy_items: null,   // zap.c    — DRAWS RNG
-    ignite_items: null,    // zap.c
     probe_monster: null,   // detect.c
     make_stunned: null,    // potion.c
     make_confused: null,   // potion.c
@@ -529,13 +521,6 @@ function race_hostile(ptr) {
 }
 function ualign_type() { return game.u?.ualign?.type ?? A_NEUTRAL; }
 function ualign_record() { return game.u?.ualign?.record ?? 0; }
-// C ref: mondata.h mon_aligntyp(mon) — a tame or peaceful monster counts as
-// the hero's alignment.
-function mon_aligntyp(mon) {
-    if (is_you(mon)) return ualign_type();
-    if (mon?.mtame || mon?.mpeaceful) return ualign_type();
-    return mon_data(mon)?.maligntyp ?? 0;
-}
 function uprop(name) { return game.u?.uprops?.[name] || 0; }
 function Blind() { return !!(uprop('Blinded') || game.u?.Blinded); }
 function Hallucination() { return !!(uprop('Hallucination') || game.u?.Hallucination); }
@@ -543,10 +528,30 @@ function Antimagic() {
     const u = game.u;
     return !!(u?.uprops?.Antimagic || u?.Antimagic || u?.HAntimagic || u?.EAntimagic);
 }
-function Fire_resistance() { return !!(uprop('Fire_resistance') || game.u?.Fire_resistance); }
-function Cold_resistance() { return !!(uprop('Cold_resistance') || game.u?.Cold_resistance); }
-function Shock_resistance() { return !!(uprop('Shock_resistance') || game.u?.Shock_resistance); }
-function Poison_resistance() { return !!(uprop('Poison_resistance') || game.u?.Poison_resistance); }
+function Fire_resistance() {
+    return !!(uprop('Fire_resistance') || uprop('HFire_resistance')
+        || uprop('EFire_resistance') || game.u?.Fire_resistance
+        || worn_extrinsic(FIRE_RES) || has_innate('HFire_resistance')
+        || (youmonst_data()?.mresists & MR_FIRE));
+}
+function Cold_resistance() {
+    return !!(uprop('Cold_resistance') || uprop('HCold_resistance')
+        || uprop('ECold_resistance') || game.u?.Cold_resistance
+        || worn_extrinsic(COLD_RES) || has_innate('HCold_resistance')
+        || (youmonst_data()?.mresists & MR_COLD));
+}
+function Shock_resistance() {
+    return !!(uprop('Shock_resistance') || uprop('HShock_resistance')
+        || uprop('EShock_resistance') || game.u?.Shock_resistance
+        || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
+        || (youmonst_data()?.mresists & MR_ELEC));
+}
+// A race-innate grant (e.g. every orc, from level 1) is never persisted as a
+// stored flag anywhere in js/ — OR in the pure has_innate() derivation.
+function Poison_resistance() {
+    return !!(uprop('Poison_resistance') || game.u?.Poison_resistance)
+        || has_innate('HPoison_resistance');
+}
 function Drain_resistance() { return !!(uprop('Drain_resistance') || game.u?.Drain_resistance); }
 function Stone_resistance() { return !!(uprop('Stone_resistance') || game.u?.Stone_resistance); }
 // C ref: youprop.h Hate_silver == (u.ulycn >= LOW_PM || hates_silver(youmonst)).
@@ -1201,7 +1206,7 @@ function toggle_extrinsic(prop, on, wp_mask) {
 // C ref: artifact.c set_artifact_intrinsic() — a potential artifact has just
 // been worn/wielded/picked-up or the reverse.  Pickup/drop only set/reset the
 // W_ART bit.  RNG-free, but it writes the state that later moduli read.
-export function set_artifact_intrinsic(otmp, on, wp_mask) {
+export async function set_artifact_intrinsic(otmp, on, wp_mask) {
     const oart = get_artifact(otmp);
     if (oart === NONART()) return;
 
@@ -1259,7 +1264,7 @@ export function set_artifact_intrinsic(otmp, on, wp_mask) {
         /* might have to turn off the invoked power too */
         if (oart.inv_prop <= LAST_PROP
             && (extrinsic_of(oart.inv_prop) & W_ARTI))
-            arti_invoke(otmp);
+            await arti_invoke(otmp);
     }
 
     if (wp_mask === W_WEP && is_art(otmp, ART_SUNSWORD))
@@ -1450,45 +1455,52 @@ function touch_blasted(v) {
     return v;
 }
 
+// C ref: artifact.c:913-950. Monster checks are synchronous and draw no RNG.
+export function touch_artifact_monster(obj, mon) {
+    const oart = get_artifact(obj);
+    touch_blasted(false);
+    if (oart === NONART()) return 1;
+
+    const self_willed = (oart.spfx & SPFX_INTEL) !== 0;
+    let badclass, badalign;
+    if (!is_covetous(mon_data(mon)) && !is_mplayer(mon_data(mon))) {
+        badclass = self_willed && oart.role !== NON_PM
+            && oart !== artilist[ART_EXCALIBUR];
+        badalign = !!(oart.spfx & SPFX_RESTR) && oart.alignment !== A_NONE
+            && oart.alignment !== mon_aligntyp(mon);
+    } else {
+        badclass = badalign = false;
+    }
+    if (!badalign) badalign = bane_applies(oart, mon);
+    return ((badclass || badalign) && self_willed) || badalign ? 0 : 1;
+}
+
 // C ref: artifact.c touch_artifact().  RNG: rn2(4) for a hero touching a
 // badly-aligned artifact, then d(Antimagic ? 2 : 4, self_willed ? 10 : 4) and
 // a silver rnd(10) for the blast.  Returns C's 0/1.
-export function touch_artifact(obj, mon) {
+export async function touch_artifact(obj, mon) {
+    if (!is_you(mon)) return touch_artifact_monster(obj, mon);
     const oart = get_artifact(obj);
 
     touch_blasted(false);
     if (oart === NONART()) return 1;
 
-    const yours = is_you(mon);
     /* every quest artifact is self-willed; if that ever changes, badclass
        has to name them explicitly */
     const self_willed = (oart.spfx & SPFX_INTEL) !== 0;
-    let badclass, badalign;
-    if (yours) {
-        badclass = self_willed
-                   && ((oart.role !== NON_PM && !Role_if(oart.role))
-                       || (oart.race !== NON_PM && !Race_if(oart.race)));
-        badalign = (oart.spfx & SPFX_RESTR) !== 0
-                   && oart.alignment !== A_NONE
-                   && (oart.alignment !== ualign_type() || ualign_record() < 0);
-    } else if (!is_covetous(mon_data(mon)) && !is_mplayer(mon_data(mon))) {
-        badclass = self_willed && oart.role !== NON_PM
-                   && oart !== artilist[ART_EXCALIBUR];
-        badalign = !!(oart.spfx & SPFX_RESTR) && oart.alignment !== A_NONE
-                   && (oart.alignment !== mon_aligntyp(mon));
-    } else {
-        /* an M3_WANTSxxx monster or a fake player can touch anything that
-           isn't a `spec_applies' artifact */
-        badclass = badalign = false;
-    }
+    const badclass = self_willed
+        && ((oart.role !== NON_PM && !Role_if(oart.role))
+            || (oart.race !== NON_PM && !Race_if(oart.race)));
+    let badalign = (oart.spfx & SPFX_RESTR) !== 0
+        && oart.alignment !== A_NONE
+        && (oart.alignment !== ualign_type() || ualign_record() < 0);
     /* weapons that attack specific categories of monster are bad for them
        even when the alignments happen to match */
     if (!badalign) badalign = bane_applies(oart, mon);
 
     if (((badclass || badalign) && self_willed)
-        || (badalign && (!yours || !rn2(4)))) {
-        if (!yours) return 0;
-        game._pending_message = `You are blasted by the ${xname(obj)}'s power!`;
+        || (badalign && !rn2(4))) {
+        await update_topl(`You are blasted by the ${xname(obj)}'s power!`);
         touch_blasted(true);
         let dmg = d(Antimagic() ? 2 : 4, self_willed ? 10 : 4);
         /* add half (maybe quarter) of the usual silver damage bonus */
@@ -1542,7 +1554,7 @@ const mb_verb = [
 //
 // `mdmg` stands in for C's `int *dmgptr`: pass { d: <damage> } and read the
 // updated .d back out.  Returns C's boolean (a message was given).
-export function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
+export async function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
     const youattack = is_you(magr), youdefend = is_you(mdef);
     let resisted = false, do_stun, do_confuse, result = false;
     let scare_dieroll = Math.trunc(MB_MAX_DIEROLL / 2);
@@ -1576,7 +1588,7 @@ export function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
     const verb = mb_verb[Hallucination() ? 1 : 0][attack_indx];
     if (youattack || youdefend || vis) {
         result = true;
-        game._pending_message = `The magic-absorbing blade ${verb}s ${hittee}!`;
+        await update_topl(`The magic-absorbing blade ${verb}s ${hittee}!`);
     }
 
     switch (attack_indx) {
@@ -1594,7 +1606,7 @@ export function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
                     game.u.uenmax--;
                     if (game.u.uen > 0) game.u.uen--;
                     game.botl = true;
-                    game._pending_message = "You lose magical energy!";
+                    await update_topl("You lose magical energy!");
                 }
             } else {
                 if (mdef.data === monster_by_pmidx(PM_CLAY_GOLEM))
@@ -1605,7 +1617,7 @@ export function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
                         game.u.uenpeak = game.u.uenmax;
                     game.u.uen++;
                     game.botl = true;
-                    game._pending_message = "You absorb magical energy!";
+                    await update_topl("You absorb magical energy!");
                 }
             }
         }
@@ -1621,7 +1633,7 @@ export function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
                 game.nomovemsg = "";
                 if (magr && magr === game.u?.ustuck && sticks(youmonst_data())) {
                     game.u.ustuck = null;
-                    game._pending_message = `You release ${mon_nam(magr)}!`;
+                    await update_topl(`You release ${mon_nam(magr)}!`);
                 }
             }
         } else {
@@ -1637,7 +1649,7 @@ export function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
 
     case MB_INDEX_PROBE:
         if (youattack && (mb.spe === 0 || !rn2(3 * Math.abs(mb.spe)))) {
-            game._pending_message = `The ${verb} is insightful.`;
+            await update_topl(`The ${verb} is insightful.`);
             probe_monster(mdef);   /* pre-damage status */
         }
         break;
@@ -1657,13 +1669,13 @@ export function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
     }
 
     if (youattack || youdefend || vis) {
-        if (resisted) game._pending_message = `${upstart(hittee)} resists!`;
+        if (resisted) await update_topl(`${upstart(hittee)} resists!`);
         if (do_stun || do_confuse) {
             let buf = "";
             if (do_stun) buf += "stunned";
             if (do_stun && do_confuse) buf += " and ";
             if (do_confuse) buf += "confused";
-            game._pending_message = `${upstart(hittee)} ${youdefend ? "are" : "is"} ${buf}${(do_stun && do_confuse) ? '!' : '.'}`;
+            await update_topl(`${upstart(hittee)} ${youdefend ? "are" : "is"} ${buf}${(do_stun && do_confuse) ? '!' : '.'}`);
         }
     }
 
@@ -1767,23 +1779,27 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
     /* the four basic attacks: fire, cold, shock and missiles */
     if (attacks(AD_FIRE, otmp)) {
         if (realizes_damage)
-            game._pending_message = `The fiery blade ${
+            await update_topl(`The fiery blade ${
                 !game.spec_dbon_applies ? "hits"
                 : (mdef.data === monster_by_pmidx(PM_WATER_ELEMENTAL))
                     ? "vaporizes part of" : "burns"} ${hittee}${
-                !game.spec_dbon_applies ? '.' : '!'}`;
+                !game.spec_dbon_applies ? '.' : '!'}`);
         if (!rn2(4)) {
             const itemdmg = await destroy_items(mdef, AD_FIRE, mdmg.d);
             if (!youdefend) mdmg.d += itemdmg;   /* item destruction dmg */
-            ignite_items(mdef.minvent);
+            await ignite_items(mdef.minvent);
+        }
+        if (youdefend) {
+            const { burn_away_slime } = await import('./timeout.js');
+            await burn_away_slime();
         }
         return realizes_damage;
     }
     if (attacks(AD_COLD, otmp)) {
         if (realizes_damage)
-            game._pending_message = `The ice-cold blade ${
+            await update_topl(`The ice-cold blade ${
                 !game.spec_dbon_applies ? "hits" : "freezes"} ${hittee}${
-                !game.spec_dbon_applies ? '.' : '!'}`;
+                !game.spec_dbon_applies ? '.' : '!'}`);
         if (!rn2(4)) {
             const itemdmg = await destroy_items(mdef, AD_COLD, mdmg.d);
             if (!youdefend) mdmg.d += itemdmg;
@@ -1792,9 +1808,9 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
     }
     if (attacks(AD_ELEC, otmp)) {
         if (realizes_damage)
-            game._pending_message = `The massive hammer hits${
+            await update_topl(`The massive hammer hits${
                 !game.spec_dbon_applies ? "" : "!  Lightning strikes"} ${hittee}${
-                !game.spec_dbon_applies ? '.' : '!'}`;
+                !game.spec_dbon_applies ? '.' : '!'}`);
         if (game.spec_dbon_applies) await wake_nearto(mdef.mx, mdef.my, 4 * 4);
         if (!rn2(5)) {
             const itemdmg = await destroy_items(mdef, AD_ELEC, mdmg.d);
@@ -1804,15 +1820,15 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
     }
     if (attacks(AD_MAGM, otmp)) {
         if (realizes_damage)
-            game._pending_message = `The imaginary widget hits${
+            await update_topl(`The imaginary widget hits${
                 !game.spec_dbon_applies ? "" : "!  A hail of magic missiles strikes"} ${hittee}${
-                !game.spec_dbon_applies ? '.' : '!'}`;
+                !game.spec_dbon_applies ? '.' : '!'}`);
         return realizes_damage;
     }
 
     if (attacks(AD_STUN, otmp) && dieroll <= MB_MAX_DIEROLL)
         /* Magicbane's special attacks (possibly modifies hittee) */
-        return Mb_hit(magr, mdef, otmp, mdmg, dieroll, vis, hittee);
+        return await Mb_hit(magr, mdef, otmp, mdmg, dieroll, vis, hittee);
 
     if (!game.spec_dbon_applies) {
         /* the damage bonus didn't apply, so nothing more to do; no further
@@ -1826,7 +1842,7 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
             wepdesc = "The razor-sharp blade";
             /* not really beheading, but so close, why add another SPFX */
             if (youattack && engulfing_u(mdef)) {
-                game._pending_message = `You slice ${mon_nam(mdef)} wide open!`;
+                await update_topl(`You slice ${mon_nam(mdef)} wide open!`);
                 mdmg.d = 2 * mdef.mhp + FATAL_DAMAGE_MODIFIER;
                 return true;
             }
@@ -1835,25 +1851,25 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
                 if (game.notonhead) return false;
                 if (bigmonst(mdef.data)) {
                     if (youattack)
-                        game._pending_message = `You slice deeply into ${mon_nam(mdef)}!`;
+                        await update_topl(`You slice deeply into ${mon_nam(mdef)}!`);
                     else if (vis)
-                        game._pending_message = `${upstart(mon_nam(magr))} cuts deeply into ${hittee}!`;
+                        await update_topl(`${upstart(mon_nam(magr))} cuts deeply into ${hittee}!`);
                     mdmg.d *= 2;
                     return true;
                 }
                 mdmg.d = 2 * mdef.mhp + FATAL_DAMAGE_MODIFIER;
-                game._pending_message = `${wepdesc} cuts ${mon_nam(mdef)} in half!`;
+                await update_topl(`${wepdesc} cuts ${mon_nam(mdef)} in half!`);
                 return true;
             } else {
                 if (bigmonst(youmonst_data())) {
-                    game._pending_message = `${magr ? upstart(mon_nam(magr)) : wepdesc} cuts deeply into you!`;
+                    await update_topl(`${magr ? upstart(mon_nam(magr)) : wepdesc} cuts deeply into you!`);
                     mdmg.d *= 2;
                     return true;
                 }
                 /* a negative-AC hero takes less damage rather than not being
                    hit, so add enough that the reduction can't prevent death */
                 mdmg.d = 2 * (Upolyd() ? game.u.mh : game.u.uhp) + FATAL_DAMAGE_MODIFIER;
-                game._pending_message = `${wepdesc} cuts you in half!`;
+                await update_topl(`${wepdesc} cuts you in half!`);
                 return true;
             }
         } else if (is_art(otmp, ART_VORPAL_BLADE)
@@ -1864,34 +1880,34 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
             if (!youdefend) {
                 if (!has_head(mdef.data) || game.notonhead || game.u?.uswallow) {
                     if (youattack)
-                        game._pending_message = `Somehow, you miss ${mon_nam(mdef)} wildly.`;
+                        await update_topl(`Somehow, you miss ${mon_nam(mdef)} wildly.`);
                     else if (vis)
-                        game._pending_message = `Somehow, ${mon_nam(magr)} misses wildly.`;
+                        await update_topl(`Somehow, ${mon_nam(magr)} misses wildly.`);
                     mdmg.d = 0;
                     return !!(youattack || vis);
                 }
                 if (noncorporeal(mdef.data) || amorphous(mdef.data)) {
-                    game._pending_message =
-                        `${wepdesc} slices through ${mon_nam(mdef)}'s neck.`;
+                    await update_topl(
+                        `${wepdesc} slices through ${mon_nam(mdef)}'s neck.`);
                     return true;
                 }
                 mdmg.d = 2 * mdef.mhp + FATAL_DAMAGE_MODIFIER;
-                game._pending_message =
-                    `${wepdesc} ${behead_msg[rn2(2)]} ${mon_nam(mdef)}!`;
+                await update_topl(
+                    `${wepdesc} ${behead_msg[rn2(2)]} ${mon_nam(mdef)}!`);
                 return true;
             } else {
                 if (!has_head(youmonst_data())) {
-                    game._pending_message =
-                        `Somehow, ${magr ? mon_nam(magr) : wepdesc} misses you wildly.`;
+                    await update_topl(
+                        `Somehow, ${magr ? mon_nam(magr) : wepdesc} misses you wildly.`);
                     mdmg.d = 0;
                     return true;
                 }
                 if (noncorporeal(youmonst_data()) || amorphous(youmonst_data())) {
-                    game._pending_message = `${wepdesc} slices through your neck.`;
+                    await update_topl(`${wepdesc} slices through your neck.`);
                     return true;
                 }
                 mdmg.d = 2 * (Upolyd() ? game.u.mh : game.u.uhp) + FATAL_DAMAGE_MODIFIER;
-                game._pending_message = `${wepdesc} ${behead_msg[rn2(2)]} you!`;
+                await update_topl(`${wepdesc} ${behead_msg[rn2(2)]} you!`);
                 return true;
             }
         }
@@ -1910,9 +1926,9 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
                 drain = (mhpmax > m_lev) ? (mhpmax - (m_lev + 1)) : 0;
 
             if (vis) {
-                game._pending_message = is_art(otmp, ART_STORMBRINGER)
+                await update_topl(is_art(otmp, ART_STORMBRINGER)
                     ? `The black blade draws the ${life} from ${mon_nam(mdef)}!`
-                    : `The ${xname(otmp)} draws the ${life} from ${mon_nam(mdef)}!`;
+                    : `The ${xname(otmp)} draws the ${life} from ${mon_nam(mdef)}!`);
             }
             if (mdef.m_lev === 0) {
                 /* losing a level when at 0 is fatal */
@@ -1931,11 +1947,11 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
             return vis;
         } else {
             const oldhpmax = game.u.uhpmax;
-            game._pending_message = Blind()
+            await update_topl(Blind()
                 ? `You feel an ${is_art(otmp, ART_STORMBRINGER) ? "unholy blade" : "object"} drain your ${life}!`
                 : (is_art(otmp, ART_STORMBRINGER)
                     ? `The black blade drains your ${life}!`
-                    : `The ${xname(otmp)} drains your ${life}!`);
+                    : `The ${xname(otmp)} drains your ${life}!`));
             await losexp("life drainage");
             if (magr && magr.mhp < magr.mhpmax)
                 healmon(magr, Math.trunc((Math.abs(oldhpmax - game.u.uhpmax) + 1) / 2), 0);
@@ -1961,9 +1977,9 @@ export function invoke_ok(obj) {
 }
 
 // C ref: artifact.c nothing_special().
-export function nothing_special(obj) {
+export async function nothing_special(obj) {
     if (carried(obj))
-        game._pending_message = "You feel a surge of power, but nothing seems to happen.";
+        await update_topl("You feel a surge of power, but nothing seems to happen.");
 }
 
 // C ref: artifact.c doinvoke() — the #invoke command.  getobj()'s prompt and
@@ -1973,7 +1989,7 @@ export async function doinvoke() {
     if (!obj) return ECMD_CANCEL;
     const ref = { obj };
     if (!(await retouch_object(ref, false))) return ECMD_TIME;
-    return arti_invoke(ref.obj);
+    return await arti_invoke(ref.obj);
 }
 
 // C ref: artifact.c invoke_taming() — reads as a blessed-neutral scroll of
@@ -1986,7 +2002,7 @@ export function invoke_taming(_obj) {
 const SCR_TAMING = otyp_by_name('taming');
 
 // C ref: artifact.c invoke_healing().  RNG-free.
-export function invoke_healing(obj) {
+export async function invoke_healing(obj) {
     const u = game.u;
     let healamt = Math.trunc((u.uhpmax + 1 - u.uhp) / 2);
     const creamed = u.ucreamed | 0;
@@ -1995,11 +2011,11 @@ export function invoke_healing(obj) {
     if (healamt || uprop('Sick') || uprop('Slimed') || (uprop('Blinded') > creamed)) {
         /* when healing temporary blindness the hero might still be blind from
            PermaBlind or an eyeless form, so vary the message */
-        game._pending_message = `You feel ${
+        await update_topl(`You feel ${
             (!healamt && !uprop('Sick') && !uprop('Slimed')
-             && (uprop('Blinded') & ~TIMEOUT) !== 0) ? "slightly " : ""}better.`;
+             && (uprop('Blinded') & ~TIMEOUT) !== 0) ? "slightly " : ""}better.`);
     } else {
-        nothing_special(obj);
+        await nothing_special(obj);
         return ECMD_TIME;
     }
     if (healamt > 0) {
@@ -2013,7 +2029,7 @@ export function invoke_healing(obj) {
 }
 
 // C ref: artifact.c invoke_energy_boost().  RNG-free.
-export function invoke_energy_boost(obj) {
+export async function invoke_energy_boost(obj) {
     const u = game.u;
     let epboost = Math.trunc((u.uenmax + 1 - u.uen) / 2);
 
@@ -2022,9 +2038,9 @@ export function invoke_energy_boost(obj) {
     if (epboost) {
         u.uen += epboost;
         game.botl = true;
-        game._pending_message = "You feel re-energized.";
+        await update_topl("You feel re-energized.");
     } else {
-        nothing_special(obj);
+        await nothing_special(obj);
         return ECMD_TIME;
     }
     return ECMD_TIME;
@@ -2033,10 +2049,10 @@ export function invoke_energy_boost(obj) {
 // C ref: artifact.c invoke_create_ammo().  RNG: rnd(10) blessed / rnd(5) plain.
 // The created stack is left on game._pending_hold_object for the caller's
 // hold_another_object("Suddenly %s out.", aobjnam(otmp, "fall")).
-export function invoke_create_ammo(obj) {
+export async function invoke_create_ammo(obj) {
     const otmp = mksobj(ARROW, true, false);
 
-    if (!otmp) { nothing_special(obj); return ECMD_TIME; }
+    if (!otmp) { await nothing_special(obj); return ECMD_TIME; }
     otmp.blessed = obj.blessed;
     otmp.cursed = obj.cursed;
     otmp.bknown = obj.bknown;
@@ -2086,7 +2102,7 @@ export function invoke_charge_obj(obj) {
 
 // C ref: artifact.c invoke_create_portal().  The dungeon menu and goto_level()
 // are do.c/dungeon.c; the level arithmetic is this function's.
-export function invoke_create_portal(obj, chosen_dnum) {
+export async function invoke_create_portal(obj, chosen_dnum) {
     const dgns = game.dungeons || [];
     let num_ok_dungeons = 0, last_ok_dungeon = 0;
     for (let i = 0; i < dgns.length; i++) {
@@ -2097,7 +2113,7 @@ export function invoke_create_portal(obj, chosen_dnum) {
     }
     let i;
     if (num_ok_dungeons > 1) {
-        if (chosen_dnum == null) { nothing_special(obj); return ECMD_TIME; }
+        if (chosen_dnum == null) { await nothing_special(obj); return ECMD_TIME; }
         i = chosen_dnum;
     } else {
         i = last_ok_dungeon;   /* also the first & only OK dungeon */
@@ -2111,11 +2127,11 @@ export function invoke_create_portal(obj, chosen_dnum) {
                                                       : dgns[i]?.dunlev_ureached;
 
     if (game.u?.uhave?.amulet || newlev.dnum === game.u?.uz?.dnum) {
-        game._pending_message = "You feel very disoriented for a moment.";
+        await update_topl("You feel very disoriented for a moment.");
     } else {
-        game._pending_message = !Blind()
+        await update_topl(!Blind()
             ? "You are surrounded by a shimmering sphere!"
-            : "You feel weightless for a moment.";
+            : "You feel weightless for a moment.");
         hook('goto_level', undefined, newlev, false, false, false);
     }
     return ECMD_TIME;
@@ -2123,7 +2139,7 @@ export function invoke_create_portal(obj, chosen_dnum) {
 
 // C ref: artifact.c invoke_fling_poison().  RNG: rn2(2) picks the venom, then
 // mksobj() and throwit()'s own draws.
-export function invoke_fling_poison(obj) {
+export async function invoke_fling_poison(obj) {
     if (hook('getdir', 0, null)) {
         const venom = rn2(2) ? BLINDING_VENOM : ACID_VENOM;
         const otmp = mksobj(venom, true, false);
@@ -2132,7 +2148,7 @@ export function invoke_fling_poison(obj) {
         hook('throwit', undefined, otmp, 0, false, null);
     } else {
         /* no direction picked */
-        game._pending_message = "Never mind.";
+        await update_topl("Never mind.");
         obj.age = game.moves | 0;
         return ECMD_CANCEL;
     }
@@ -2164,7 +2180,7 @@ function spell_skilltype(booktype) { return objects[booktype]?.oc_skill ?? 0; }
 
 // C ref: artifact.c invoke_blinding_ray().  RNG: rnd(damg) for the
 // self-zap flash; do_blinding_ray()/litroom()/flashburn() carry the rest.
-export function invoke_blinding_ray(obj) {
+export async function invoke_blinding_ray(obj) {
     if (hook('getdir', 0, null)) {
         const u = game.u;
         if (u.dx || u.dy) {
@@ -2174,8 +2190,8 @@ export function invoke_blinding_ray(obj) {
                Sunsword, except on the Rogue level */
             hook('litroom', undefined, true, obj);
             const loc = game.level?.at?.(u.ux, u.uy);
-            game._pending_message = (!Blind() && loc?.lit && !loc?.waslit)
-                ? "It is lit here now." : NOTHING_SEEMS_TO_HAPPEN;
+            await update_topl((!Blind() && loc?.lit && !loc?.waslit)
+                ? "It is lit here now." : NOTHING_SEEMS_TO_HAPPEN);
         } else {   /* zapyourself() */
             const vulnerable = (u.umonnum === PM_GREMLIN);
             const damg = obj.blessed ? 15 : !obj.cursed ? 10 : 5;
@@ -2184,10 +2200,10 @@ export function invoke_blinding_ray(obj) {
                 hook('lightdamage', undefined, obj, true, 2 * damg);
 
             if (!hook('flashburn', false, damg + rnd(damg), false) && !vulnerable)
-                game._pending_message = NOTHING_SEEMS_TO_HAPPEN;
+                await update_topl(NOTHING_SEEMS_TO_HAPPEN);
         }
     } else {
-        game._pending_message = "Never mind.";
+        await update_topl("Never mind.");
         obj.age = game.moves | 0;
         return ECMD_CANCEL;
     }
@@ -2198,7 +2214,7 @@ const NOTHING_SEEMS_TO_HAPPEN = "Nothing seems to happen.";
 
 // C ref: artifact.c invoke_banish().  RNG: rn2(chance) per demon, then
 // rn2(dunlevs_in_dungeon(&dest)) for each one that vanishes.
-export function invoke_banish(_obj) {
+export async function invoke_banish(_obj) {
     let nvanished = 0, nstayed = 0;
     const dest = find_hell();
 
@@ -2234,7 +2250,7 @@ export function invoke_banish(_obj) {
 
     if (nvanished) {
         const subject = nvanished === 1 ? "demon" : "demons";
-        game._pending_message = `${nstayed ? ((nvanished > nstayed) ? "Most of the" : "Some of the") : "The"} ${subject} ${nvanished === 1 ? "disappears" : "disappear"} in a cloud of brimstone!`;
+        await update_topl(`${nstayed ? ((nvanished > nstayed) ? "Most of the" : "Some of the") : "The"} ${subject} ${nvanished === 1 ? "disappears" : "disappear"} in a cloud of brimstone!`);
     }
     return ECMD_TIME;
 }
@@ -2250,19 +2266,19 @@ export function arti_invoke_cost_pw(obj) {
 
 // C ref: artifact.c arti_invoke_cost().  RNG: d(3, 10) when the artifact is
 // still tired, rnz(100) when the timer is (re)armed.
-export function arti_invoke_cost(obj) {
+export async function arti_invoke_cost(obj) {
     const moves = game.moves | 0;
     if (obj.age > moves) {
         const pw_cost = arti_invoke_cost_pw(obj);
 
         if (pw_cost < 0 || game.u.uen < pw_cost) {
             /* the artifact is tired :-) */
-            game._pending_message = `You feel that the ${xname(obj)} is ignoring you.`;
+            await update_topl(`You feel that the ${xname(obj)} is ignoring you.`);
             obj.age += d(3, 10);   /* and just got more so */
             return false;
         } else {
             /* you pay the invoke cost with your own magic */
-            game._pending_message = "You feel drained...";
+            await update_topl("You feel drained...");
             game.u.uen -= pw_cost;
             game.botl = true;
         }
@@ -2276,40 +2292,40 @@ export function arti_invoke_cost(obj) {
 // invoke_* helpers; the powers whose subsystems this port lacks are listed in
 // the handoff's deferred set rather than being silently no-op'd here, and
 // reaching one records itself on game._artifact_unbound.
-export function arti_invoke(obj) {
+export async function arti_invoke(obj) {
     if (!obj) return ECMD_OK;                    /* C: impossible() */
     const oart = get_artifact(obj);
     if (oart === NONART() || !oart.inv_prop) {
         /* a plain crystal ball goes to apply.c use_crystal_ball() */
         if (obj.otyp !== CRYSTAL_BALL)
-            game._pending_message = NOTHING_HAPPENS;
+            await update_topl(NOTHING_HAPPENS);
         else unbound('use_crystal_ball', undefined);
         return ECMD_TIME;
     }
 
     /* it's a special power, not "just" a property */
     if (oart.inv_prop > LAST_PROP) {
-        if (!arti_invoke_cost(obj)) return ECMD_TIME;
+        if (!(await arti_invoke_cost(obj))) return ECMD_TIME;
 
         switch (oart.inv_prop) {
         case TAMING: return invoke_taming(obj);
-        case HEALING: return invoke_healing(obj);
-        case ENERGY_BOOST: return invoke_energy_boost(obj);
+        case HEALING: return await invoke_healing(obj);
+        case ENERGY_BOOST: return await invoke_energy_boost(obj);
         case UNTRAP: return invoke_untrap(obj);
         case CHARGE_OBJ: return invoke_charge_obj(obj);
         case LEV_TELE: hook('level_tele', undefined); return ECMD_TIME;
-        case CREATE_PORTAL: return invoke_create_portal(obj);
+        case CREATE_PORTAL: return await invoke_create_portal(obj);
         case ENLIGHTENING:
             hook('enlightenment', undefined, /*MAGICENLIGHTENMENT*/ 1,
                  /*ENL_GAMEINPROGRESS*/ 0);
             return ECMD_TIME;
-        case CREATE_AMMO: return invoke_create_ammo(obj);
-        case BANISH: return invoke_banish(obj);
-        case FLING_POISON: return invoke_fling_poison(obj);
+        case CREATE_AMMO: return await invoke_create_ammo(obj);
+        case BANISH: return await invoke_banish(obj);
+        case FLING_POISON: return await invoke_fling_poison(obj);
         case SNOWSTORM:
             /*FALLTHRU*/
         case FIRESTORM: return invoke_storm_spell(obj);
-        case BLINDING_RAY: return invoke_blinding_ray(obj);
+        case BLINDING_RAY: return await invoke_blinding_ray(obj);
         default:
             /* C: impossible("Unknown invoke power %d.", oart->inv_prop) */
             return unbound(`invoke_prop_${oart.inv_prop}`, ECMD_TIME);
@@ -2325,7 +2341,7 @@ export function arti_invoke(obj) {
     if (on && obj.age > (game.moves | 0)) {
         /* the artifact is tired :-) */
         set_extrinsic(oart.inv_prop, eprop ^ W_ARTI);
-        game._pending_message = `You feel that the ${xname(obj)} is ignoring you.`;
+        await update_topl(`You feel that the ${xname(obj)} is ignoring you.`);
         obj.age += d(3, 10);   /* can't just keep repeatedly trying */
         return ECMD_TIME;
     } else if (!on) {
@@ -2335,26 +2351,39 @@ export function arti_invoke(obj) {
 
     if ((eprop & ~W_ARTI) || iprop) {
         /* you had the property from some other source too */
-        nothing_special(obj);
+        await nothing_special(obj);
         return ECMD_TIME;
     }
     switch (oart.inv_prop) {
     case CONFLICT:
-        game._pending_message = on ? "You feel like a rabble-rouser."
-                                   : "You feel the tension decrease around you.";
+        await update_topl(on ? "You feel like a rabble-rouser."
+                             : "You feel the tension decrease around you.");
         break;
     case LEVITATION:
-        /* float_up()/float_down() are do.c's */
-        unbound('float_up_down', undefined);
+        if (on) {
+            const { float_up, spoteffects } = await import('./trap.js');
+            await float_up();
+            // C: spoteffects(FALSE) — trap.js's spoteffects(pickupFn) with no
+            // pickupFn callback is this port's equivalent of pick=FALSE.
+            await spoteffects();
+        } else {
+            // float_down(I_SPECIAL | TIMEOUT, W_ARTI) (trap.c) is a distinct,
+            // still-unported symbol outside this batch's assignment (only the
+            // levitation-timeout-expiry arm is ported, inline, in
+            // js/timeout.js's TIMED_PROPS table); turning OFF a worn/wielded
+            // artifact's own LEVITATION ability is not exercised by any
+            // covered session.
+            unbound('float_down', undefined);
+        }
         break;
     case INVIS:
         /* C: `if (BInvis || Blind)`.  BInvis (invisibility BLOCKED by an
            object) has no counterpart in this port's flat uprops map, so only
            the Blind half is testable. */
-        if (Blind()) { nothing_special(obj); return ECMD_TIME; }
-        game._pending_message = on
+        if (Blind()) { await nothing_special(obj); return ECMD_TIME; }
+        await update_topl(on
             ? `Your body takes on a ${Hallucination() ? "normal" : "strange"} transparency...`
-            : "Your body seems to unfade...";
+            : "Your body seems to unfade...");
         break;
     default:
         break;
@@ -2389,7 +2418,7 @@ function Levitation() {
 
 // C ref: artifact.c arti_speak() — talking artifacts whisper a rumor.  The RNG
 // is getrumor()'s (it picks a line from the rumor file).
-export function arti_speak(obj) {
+export async function arti_speak(obj) {
     const oart = get_artifact(obj);
 
     if (oart === NONART() || !(oart.spfx & SPFX_SPEAK))
@@ -2397,8 +2426,12 @@ export function arti_speak(obj) {
 
     let line = hook('getrumor', "", bcsign(obj), true);
     if (!line) line = "NetHack rumors file closed for renovation.";
-    game._pending_message = `${upstart(xname(obj))} whispers:`;
-    game._pending_message2 = `"${line}"`;   /* verbalize1() */
+    // C: pline("%s:", ...) then verbalize1(line) — two sequential pline()s,
+    // each through update_topl()'s merge-or-page.  The old raw _pending_message
+    // + _pending_message2 pair left the quote in a field nothing ever reads,
+    // so the rumor text itself was never displayed at all.
+    await update_topl(`${upstart(xname(obj))} whispers:`);
+    await update_topl(`"${line}"`);   /* verbalize1() */
     return ECMD_TIME;
 }
 // C ref: obj.h bcsign(obj).
@@ -2512,7 +2545,7 @@ export function glow_verb(count, ingsfx) {
 
 // C ref: artifact.c Sting_effects() — the warning glow for Sting, Orcrist and
 // Grimtooth.  RNG-free; it only decides which message (if any) is given.
-export function Sting_effects(orc_count) {
+export async function Sting_effects(orc_count) {
     const uwep = game.uwep;
     if (!(is_art(uwep, ART_STING) || is_art(uwep, ART_ORCRIST)
           || is_art(uwep, ART_GRIMTOOTH)))
@@ -2523,14 +2556,14 @@ export function Sting_effects(orc_count) {
     if (orc_count === -1 && warn_obj_cnt > 0) {
         /* -1 means blindness has just been toggled: give a 'continue' message
            that the eventual 'stop' message will match */
-        game._pending_message = `${bare_artifactname(uwep)} is ${glow_verb(Blind() ? 0 : warn_obj_cnt, true)}.`;
+        await update_topl(`${bare_artifactname(uwep)} is ${glow_verb(Blind() ? 0 : warn_obj_cnt, true)}.`);
     } else if (newstr > 0 && newstr !== oldstr) {
         if (!Blind())
-            game._pending_message = `${bare_artifactname(uwep)} ${glow_verb(orc_count, false)}s ${glow_color(uwep.oartifact)}${(newstr > oldstr) ? '!' : '.'}`;
+            await update_topl(`${bare_artifactname(uwep)} ${glow_verb(orc_count, false)}s ${glow_color(uwep.oartifact)}${(newstr > oldstr) ? '!' : '.'}`);
         else if (oldstr === 0) /* quivers */
-            game._pending_message = `${bare_artifactname(uwep)} ${glow_verb(0, false)}s slightly.`;
+            await update_topl(`${bare_artifactname(uwep)} ${glow_verb(0, false)}s slightly.`);
     } else if (orc_count === 0 && warn_obj_cnt > 0) {
-        game._pending_message = `${bare_artifactname(uwep)} stops ${glow_verb(Blind() ? 0 : warn_obj_cnt, true)}.`;
+        await update_topl(`${bare_artifactname(uwep)} stops ${glow_verb(Blind() ? 0 : warn_obj_cnt, true)}.`);
     }
 }
 
@@ -2615,12 +2648,12 @@ function is_container(o) { return o.otyp >= LARGE_BOX && o.otyp <= BAG_OF_TRICKS
 // Master Key bare-handed.
 const MKOT_HEAT = ["cool", "slightly warm", "warm", "very warm",
     "hot", "very hot", "like fire"];
-export function mkot_trap_warn() {
+export async function mkot_trap_warn() {
     if (!game.uarmg && is_art(game.uwep, ART_MASTER_KEY_OF_THIEVERY)) {
         const ntraps = count_surround_traps(game.u.ux, game.u.uy);
         if (ntraps !== game.mkot_trap_warn_count) {
             const idx = Math.min(ntraps, MKOT_HEAT.length - 1);
-            game._pending_message = `The Key feels ${MKOT_HEAT[idx]}${(ntraps > 3) ? '!' : '.'}`;
+            await update_topl(`The Key feels ${MKOT_HEAT[idx]}${(ntraps > 3) ? '!' : '.'}`);
         }
         game.mkot_trap_warn_count = ntraps;
     } else {
@@ -2640,7 +2673,7 @@ export async function retouch_object(ref, loseit) {
         && !On_stairs(game.u.ux, game.u.uy))
         return 1;
 
-    if (touch_artifact(obj, youmonst())) {
+    if (await touch_artifact(obj, youmonst())) {
         let dmg = 0;
         const ag = (objects[obj.otyp]?.material === SILVER && Hate_silver());
         const bane = bane_applies(get_artifact(obj), youmonst());
@@ -2650,7 +2683,7 @@ export async function retouch_object(ref, loseit) {
 
         /* the hero can't, but didn't get touch_artifact()'s "evades your
            grasp|control" message, so give an alternate one */
-        game._pending_message = `You can't handle ${xname(obj)}${obj.owornmask ? " anymore" : ""}!`;
+        await update_topl(`You can't handle ${xname(obj)}${obj.owornmask ? " anymore" : ""}!`);
         if (!touch_blasted()) {
             /* half the usual 1d20 physical for silver, 1d10 magical for a
                <foo>bane, potentially both */
@@ -2702,7 +2735,7 @@ export async function untouchable(obj, drop_untouchable) {
         if (!(await retouch_object(ref, drop_untouchable))) {
             /* the item is now unworn/unwielded and possibly dropped; if it is
                still carried, turn the invocation property off here */
-            if (invoked && ref.obj) arti_invoke(ref.obj);   /* reverse #invoke */
+            if (invoked && ref.obj) await arti_invoke(ref.obj);   /* reverse #invoke */
             return true;
         }
     }
@@ -2730,7 +2763,7 @@ export async function retouch_equipment(dropflag) {
     if (game.u?.usteed) {
         const saddle = (game.u.usteed.minvent || [])
             .find((o) => (o.owornmask & W_SADDLE) !== 0);
-        if (saddle && await untouchable(saddle, false)) dismount_steed();
+        if (saddle && await untouchable(saddle, false)) await dismount_steed();
     }
 
     dropit = (dropflag === 1);   /* all untouchable items */
@@ -2747,18 +2780,6 @@ export async function retouch_equipment(dropflag) {
 // ─────────────────────────────────────────────────────────────────────────
 // Remaining cross-file helpers.
 // ─────────────────────────────────────────────────────────────────────────
-// zap.c destroy_items(mon, dmgtyp, dmg) — DRAWS RNG.  js/zap.js:2111 has the
-// real implementation but no `export`.
-async function destroy_items(mon, dmgtyp, dmg) {
-    const fn = artifact_hooks.destroy_items;
-    if (fn) return await fn(mon, dmgtyp, dmg);
-    return unbound('destroy_items', 0);
-}
-function ignite_items(minvent) {
-    const fn = artifact_hooks.ignite_items;
-    if (fn) return fn(minvent);
-    return unbound('ignite_items', undefined);
-}
 // cmd.c wake_nearto() — async in this port, so artifact_hit() awaits it to
 // keep C's statement order.  Loaded with a dynamic import so that a future
 // `import ... from './artifact.js'` inside cmd.js/exper.js/invent.js cannot
@@ -2770,7 +2791,7 @@ async function wake_nearto(x, y, dist) {
 // exper.c losexp(drainer)
 async function losexp(drainer) {
     const { losexp: fn } = await import('./exper.js');
-    return fn(drainer, true);
+    return fn(drainer, update_topl);
 }
 // cmd.c healup(nhp, nxtra, curesick, cureblind) — the nhp half.
 function healup(nhp) {
@@ -2795,8 +2816,13 @@ function dropx(obj) {
     obj.where = OBJ_FLOOR;
     if (Array.isArray(game.level?.objects)) game.level.objects.push(obj);
 }
-// steed.c dismount_steed(reason)
-function dismount_steed() { if (game.u) game.u.usteed = null; }
+// C ref: artifact.c:2680 retouch_equipment() -> dismount_steed(DISMOUNT_THROWN)
+// — delegates to js/steed.js's real port (dynamic import avoids a cycle).
+async function dismount_steed() {
+    const { dismount_steed: fn } = await import('./steed.js');
+    const { DISMOUNT_THROWN } = await import('./const.js');
+    return fn(DISMOUNT_THROWN);
+}
 // dungeon.c invocation_pos(x,y) / On_stairs(x,y)
 function invocation_pos(x, y) {
     const inv = game.level?.invocation_pos;

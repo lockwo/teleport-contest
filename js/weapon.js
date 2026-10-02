@@ -21,7 +21,8 @@ import { P_NONE, P_BARE_HANDED_COMBAT, P_AXE, P_SPEAR, P_PICK_AXE,
          P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_LAST_SPELL, P_NUM_SKILLS,
          P_TWO_WEAPON_COMBAT, P_RIDING, A_STR, A_DEX,
-         W_ARM, W_ARMC, W_ARMU, W_ARMG, W_RINGL, W_RINGR } from './const.js';
+         W_ARM, W_ARMC, W_ARMU, W_ARMG, W_RINGL, W_RINGR,
+         POOL, MOAT, WATER } from './const.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { mon_hates_silver } from './mon.js';
 import { which_armor } from './worn.js';
@@ -115,8 +116,17 @@ function artifact_light(_obj) { return false; }
 function mdata_of(mon) {
     if (!mon) return null;
     if (mon.data) return mon.data;
-    if (mon === game.u || mon._isyou || mon === game.youmonst)
-        return monster_by_pmidx(game.u?.umonnum ?? -1);
+    if (mon === game.u || mon._isyou || mon === game.youmonst) {
+        // u.umonnum holds the 0-based ROLE index in this port, not a mons[]
+        // index, while unpolymorphed — see js/hack.js youmonst_data();
+        // PM_ARCHEOLOGIST == 331.  A raw monster_by_pmidx(umonnum) misread
+        // role 8 (Rogue) as mons[8] (gelatinous cube, MZ_LARGE), so every
+        // small-monst weapon-damage branch below took the bigmonst arm for
+        // an unpolymorphed hero.
+        const u = game.u;
+        if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
+        return monster_by_pmidx(331 + (u?.umonnum ?? 0)) || u?.data || null;
+    }
     return null;
 }
 
@@ -163,7 +173,6 @@ export function hitval(otmp, mon) {
 
 // rm.h is_pool(x,y) — POOL/MOAT/WATER at that square.  Read through the live
 // level map; an off-level or unknown square is dry.
-const POOL = 20, MOAT = 21, WATER = 22; // C ref: rm.h typ values
 function is_pool_at(x, y) {
     if (x == null || y == null) return false;
     const typ = game.level?.locations?.[x]?.[y]?.typ;
@@ -610,11 +619,12 @@ export function mwepgone(mon) {
     }
 }
 
-// C ref: weapon.c:520 autoreturn_weapon(otmp) — the arwep[] table; only the
-// aklys is in it.  Returns { otyp, range2, verbose } or null.
+// C ref: weapon.c:512-528 arwep[] / autoreturn_weapon(otmp) — the
+// throw-and-return table; only the aklys is in it, with range2 =
+// AKLYS_LIM * AKLYS_LIM = 16.  autoreturn_weapon returns the row or null.
 const AKLYS = 80; // mkobj.js otyp
 const BOLT_LIM = 8, AKLYS_LIM = BOLT_LIM / 2;
-const ARWEP = [{ otyp: AKLYS, range2: AKLYS_LIM * AKLYS_LIM, verbose: 1 }];
+export const ARWEP = [{ otyp: AKLYS, range2: AKLYS_LIM * AKLYS_LIM, tethered: 1 }];
 export function autoreturn_weapon(otmp) {
     for (const a of ARWEP) if (otmp?.otyp === a.otyp) return a;
     return null;

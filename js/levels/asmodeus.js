@@ -26,7 +26,7 @@ import {
 } from '../selvar.js';
 import {
     VLY_S_LICH, VLY_S_VAMPIRE, bigrm_wallification, flip_level, lspo_map,
-    quest_place_stair, quest_set_door, remove_boundary_syms, reset_xystart_size,
+    quest_place_stair, quest_set_door, remove_boundary_syms, map_cleanup, reset_xystart_size,
     selection_match, shuffle, splev_map_reset, splev_region_lit,
     vly_monster_class, vly_non_diggable, vly_object, vly_trap,
 } from '../sp_lev.js';
@@ -178,10 +178,11 @@ export async function makemaz_asmodeus() {
         g._full_mon_gen = false;
     }
 
-    // C ref: lspo_finalize_level() — remove_boundary_syms, then wallification
+    // C ref: lspo_finalize_level() — remove_boundary_syms, map_cleanup, wallification
     // (this level is NOT corrmaze), then flip_level_rnd(allow_flips=3), then
     // fixup_special()'s levregion placement.
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

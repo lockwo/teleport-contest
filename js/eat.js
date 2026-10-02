@@ -5,14 +5,15 @@ import { rn2, rnd, rn1, d } from './rng.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { monster_by_pmidx, mon_cwt, mon_cnutrit, name_to_pmidx } from './makemon.js';
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { pline, update_topl, y_n } from './display.js';
-import { poison_strdmg, exercise, acurr_eff } from './attrib.js';
-import { A_STR, A_DEX, A_CON } from './const.js';
+import { poison_strdmg, exercise, acurr_eff, adjattrib } from './attrib.js';
+import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, G_GENOD } from './const.js';
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_POIS,
-         M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME }
+         M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME }
     from './monflags_data.js';
-import { more_experienced, newexplevel, pluslvl } from './exper.js';
+import { more_experienced, newexplevel, pluslvl, has_innate } from './exper.js';
 
 // NOTE on imports: mkobj.js imports set_tin_variety() from this module, so a
 // static `import ... from './mkobj.js'` (or invent.js, which imports mkobj.js)
@@ -62,23 +63,18 @@ export function olfaction(mdat) {
     return true;
 }
 
-// C ref: eat.c garlic_breath(mtmp) — eating garlic scares (untimed) every
-// monster within distu < 7 that can smell.  monflee(mtmp, 0, FALSE, FALSE)
-// with fleetime 0 and fleemsg FALSE consumes no RNG: it just sets mflee with
-// mfleetim 0 (an untimed scare).  The fleeing state then drives the dochug
-// rn2(40)/rn2(25) flee/teleport rolls (monmove.js) on each monster's turn.
-function garlic_breath() {
+// C ref: eat.c garlic_breath() — untimed fear also clears movement tracks.
+async function garlic_breath() {
     const u = game.u;
     if (!u) return;
-    for (const mtmp of (game.level?.monsters || [])) {
+    const { monflee } = await import('./monmove.js');
+    const { fmonOrder } = await import('./mon.js');
+    for (const mtmp of fmonOrder()) {
         if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
         if (!olfaction(mtmp.data)) continue;
         const dx = mtmp.mx - u.ux, dy = mtmp.my - u.uy;
-        if (dx * dx + dy * dy < 7) {
-            // monflee(mtmp, 0, FALSE, FALSE): untimed scare, no RNG, no message.
-            mtmp.mflee = 1;
-            mtmp.mfleetim = 0;
-        }
+        if (dx * dx + dy * dy < 7)
+            await monflee(mtmp, 0, false, false);
     }
 }
 
@@ -582,6 +578,7 @@ export function newuhs(incr) {
                 const duration = 10 - uhunger_div_by_10;
                 game._eat_occupation = null;
                 game._pending_message = 'You faint from lack of food.';
+                game._toplin = 1;
                 u.uprops = u.uprops || {};
                 u.uprops.HDeaf = (u.uprops.HDeaf || 0) + duration;
                 if ((game.multi ?? 0) >= -duration) game.multi = -duration;
@@ -595,6 +592,7 @@ export function newuhs(incr) {
         } else if (h < -(100 + 10 * acurr_eff(A_CON))) {
             u.uhs = STARVED;
             game._pending_message = 'You die from starvation.';
+            game._toplin = 1;
             game._starved = true;      /* done(STARVING) is not modelled */
             return;
         }
@@ -620,6 +618,7 @@ export function newuhs(incr) {
                 : `You ${!incr ? 'only feel hungry now'
                      : (h < 145) ? 'feel hungry'
                        : 'are beginning to feel hungry'}.`;
+            game._toplin = 1;
         } else if (newhs === WEAK) {
             const role = game.urole?.name?.m || '';
             game._pending_message = hallu
@@ -632,6 +631,7 @@ export function newuhs(incr) {
                   : `You ${!incr ? 'are still'
                        : (h < 45) ? 'feel'
                          : 'are beginning to feel'} weak.`;
+            game._toplin = 1;
         }
         // C: incr && occupation && occupation != eatfood/opentin ->
         // stop_occupation(); the eating occupation deliberately survives.
@@ -923,11 +923,11 @@ async function floorfood_eat() {
     return { kind: 'invent' };
 }
 
-// C ref: hack.c check_capacity(str) — refuse the action while carrying more
-// than EXT_ENCUMBER (Strained).  doeat() calls it right after floorfood(), so
-// an overloaded hero burns no turn even after answering the floor prompt.
+// C ref: hack.c check_capacity(str) — refuse the action while carrying at
+// least EXT_ENCUMBER (Overtaxed).  doeat() calls it right after floorfood(),
+// so an overloaded hero burns no turn even after answering the floor prompt.
 async function check_capacity() {
-    if (_invent && _invent.near_capacity() >= 3 /* EXT_ENCUMBER */) {
+    if (_invent && _invent.near_capacity() >= EXT_ENCUMBER) {
         // You_cant() contracts to "can't"; "cannot" is not a NetHack string.
         await pline("You can't do that while carrying so much stuff.");
         return true;
@@ -981,13 +981,12 @@ export async function doeat() {
         return true;                               // ECMD_TIME
     }
 
-    // C: tins are a special case — start_tin() opens them over several turns.
-    // start_tin()/opentin()/consume_tin() are unported (see the DEFERRED note
-    // at the end of this file); declining is wrong but bounded, whereas a
-    // half-ported tin would desync the whole opening occupation.
+    // C ref: eat.c:2956 doeat() — tins are a special case, opened over
+    // several turns via start_tin()/opentin() (allmain.js polls
+    // game._tin_occupation; see the C ref there for the occupation wiring).
     if (otmp.otyp === TIN) {
-        await pline('You cannot eat that!');
-        return false;
+        await start_tin(otmp);
+        return true;                                // ECMD_TIME
     }
 
     // C ref: eat.c doeat():2962 — `if (!u.uconduct.food++) livelog_printf(
@@ -1178,7 +1177,7 @@ async function fprefx(otmp) {
             u.uprops.Vomiting = (u.uprops.Vomiting || 0) + t;
             break;
         }
-        garlic_breath();
+        await garlic_breath();
         /* FALLTHROUGH to the default arm */
         give_feedback = await fprefx_default(otmp, Halluc);
         break;
@@ -1213,7 +1212,8 @@ async function fprefx_default(otmp, Halluc) {
                           + `${objName(otmp)}!`);
         return false;
     }
-    if (otmp.otyp === APPLE && otmp.cursed && !game.u?.uprops?.Sleep_resistance)
+    if (otmp.otyp === APPLE && otmp.cursed
+        && !(game.u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance')))
         return false;   /* skip core joke; feedback deferred to fpostfx() */
     if (otmp.otyp === APPLE) {
         await pline('Delicious!  Must be a Macintosh!');
@@ -1265,10 +1265,10 @@ async function fpostfx(otmp) {
         // C: outrumor(bcsign(otmp), BY_COOKIE)
         const bcsign = (otmp.blessed ? 1 : 0) - (otmp.cursed ? 1 : 0);
         const line = _engrave.outrumor(bcsign, _engrave.BY_COOKIE);
-        // BY_COOKIE feedback: "This cookie has a scrap of paper inside." then
-        // "It reads:" then the rumor (skipped when blind/fainted, in which case
-        // outrumor returned '' with no RNG).
-        if (line) {
+        if ((u?.uhs ?? NOT_HUNGRY) !== FAINTED && _vision.Blind()) {
+            await update_topl('This cookie has a scrap of paper inside.');
+            await update_topl('What a pity that you cannot read it!');
+        } else if (line) {
             // C ref: outrumor() -> pline() -> update_topl for each line so the
             // BY_COOKIE readout pages ("scrap of paper...It reads:--More--")
             // instead of clobbering the topline in one dumb overwrite.
@@ -1287,7 +1287,7 @@ async function fpostfx(otmp) {
     case LUMP_OF_ROYAL_JELLY:
         // C: "This stuff seems to be VERY healthy!" — gainstr then rnd(20) HP,
         // with a 1-in-17 max-HP bump.  All three draws are unconditional.
-        gainstr(otmp, 1);
+        await gainstr(otmp, 1, true);
         if (u) {
             u.uhp = (u.uhp || 0) + (otmp.cursed ? -rnd(20) : rnd(20));
             if (u.uhp > u.uhpmax) {
@@ -1329,7 +1329,8 @@ async function fpostfx(otmp) {
         // sleep for rn1(11, 20) turns.  fprefx() deliberately printed nothing
         // for this case, and this arm was missing, so a cursed apple used to
         // be eaten in complete silence with no roll at all.
-        if (otmp.cursed && !u?.uprops?.Sleep_resistance) {
+        if (otmp.cursed
+            && !(u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance'))) {
             if (game.u?.uprops?.HDeaf || !game.flags?.acoustics)
                 await update_topl('You fall asleep.');
             else
@@ -1342,21 +1343,25 @@ async function fpostfx(otmp) {
     }
 }
 
-// C ref: attrib.c gainstr(otmp, incr, givemsg) — the lump of royal jelly's
-// strength boost.  Only the non-cursed +1 path is reachable from eat.c.
-function gainstr(otmp, incr) {
+// C ref: attrib.c:202 gainstr(otmp, incr, givemsg) — strength gain.  RNG: when
+// incr is 0 (the giant-corpse and spinach-tin callers both pass 0), the roll
+// depends on the RAW (encoded) current Strength (ABASE(A_STR), NOT the
+// display-collapsed acurrstr()): rn2(4), and on a miss rnd(6), below 18;
+// rnd(10) from 18 up through 18/85 (STR18(85) == 103); a flat +1 with NO roll
+// at all above that.  Delegates the actual attribute change (and its own
+// underflow rn2, unreachable here since incr is always >= 0) to the real
+// adjattrib() (attrib.js), matching msgflg = givemsg ? -1 : 1.
+async function gainstr(otmp, incr, givemsg) {
     const u = game.u;
     if (!u) return;
     let num = incr;
-    if (!num) num = (rn2(4) ? 1 : rnd(6));       /* not reached from eat.c */
-    adjattrib_str(otmp?.cursed ? -num : num);
-}
-function adjattrib_str(incr) {
-    const u = game.u;
-    if (!u?.acurr?.a) return;
-    const A_STR = 0;
-    const v = (u.acurr.a[A_STR] || 0) + incr;
-    u.acurr.a[A_STR] = Math.max(3, Math.min(125, v));
+    if (!num) {
+        const abase_str = u.acurr?.a?.[A_STR] ?? 0;
+        if (abase_str < 18) num = (rn2(4) ? 1 : rnd(6));
+        else if (abase_str < 18 + 85) num = rnd(10);
+        else num = 1;
+    }
+    await adjattrib(A_STR, otmp?.cursed ? -num : num, givemsg ? -1 : 1);
 }
 
 const PM_MONK_EAT = 5, PM_CAVEMAN_EAT = 2;
@@ -1431,7 +1436,10 @@ function mon_poisonous(ptr) { return (mflags1_of(ptr) & M1_POIS) !== 0; }
 async function maybe_cannibal(pm, allowmsg) {
     if ((game.moves ?? 0) === game._ate_brains) return false;
     game._ate_brains = game.moves ?? 0;
-    if (!CANNIBAL_ALLOWED() && your_race(pm)) {
+    const ulycn = game.u?.ulycn;
+    const cannibalLycn = ismnum(ulycn)
+        && (await import('./mon.js')).were_beastie(pm) === ulycn;
+    if (!CANNIBAL_ALLOWED() && (your_race(pm) || cannibalLycn)) {
         if (allowmsg) await update_topl('You cannibal!  You will regret this!');
         const u = game.u;
         if (u) {
@@ -1459,14 +1467,41 @@ const DOMESTIC_NAMES = new Set([
     'little dog', 'dog', 'large dog', 'kitten', 'housecat', 'large cat',
 ]);
 
+function stone_resistance_eat() {
+    const props = game.u?.uprops || {};
+    return !!(game.Stone_resistance || props.Stone_resistance
+        || props.HStone_resistance || props.EStone_resistance
+        || ((_invent?.youmonst_data_pub()?.mresists || 0) & 0x80));
+}
+// C mondata.c poly_when_stoned(): any non-stone golem can become a stone golem
+// unless that species was genocided.  polymon() itself checks Unchanging.
+function poly_when_stoned_eat() {
+    const form = _invent?.youmonst_data_pub();
+    const stoneGolem = name_to_pmidx('stone golem');
+    return form?.mcls === S_GOLEM_C && form.pmidx !== stoneGolem
+        && !((game.mvitals?.[stoneGolem]?.mvflags || 0) & G_GENOD);
+}
+
 // C ref: eat.c cprefx(pm) — run by start_eating() BEFORE the first bite of a
 // corpse.  The cannibalism Luck roll used to be missing entirely.
 async function cprefx(pm) {
     await maybe_cannibal(pm, true);
     const nm = corpse_mon_name(pm);
-    if (flesh_petrifies(pm)) {
-        // C: "You turn to stone." + done(STONING) unless Stone_resistance.
-        game._stoning_death = true;
+    if (flesh_petrifies(pm) && !stone_resistance_eat()) {
+        // eat.c cprefx():795-809 — a stone golem polymorph can absorb the
+        // petrification; otherwise the instant death occurs BEFORE bite().
+        const stoneGolem = name_to_pmidx('stone golem');
+        if (poly_when_stoned_eat()) {
+            const { polymon } = await import('./polyself.js');
+            if (await polymon(stoneGolem)) return;
+        }
+        game._killer_name = `tasting ${nm} meat`;
+        await update_topl('You turn to stone.');
+        const { done } = await import('./end.js');
+        const { STONING } = await import('./const.js');
+        await done(STONING);
+        if (game.context?.victual?.piece)
+            game.context.victual.eating = 0;
         return;
     }
     if (DOMESTIC_NAMES.has(nm)) {
@@ -1517,19 +1552,32 @@ async function eye_of_newt_buzz() {
 // C ref: eat.c cpostfx(pm) — the corpse's after-effects.  Ported: the
 // hallucination corpses, the magic-energy buzz (which used to be gated on the
 // literal species name "newt" instead of C's attacktype(ptr, AT_MAGC) test),
-// the wraith level gain and the nurse heal.
-//
-// DEFERRED (see the note at the end of this file): corpse_intrinsic()/givit(),
-// which roll rn2(count) per conveyable intrinsic and then should_givit()'s
-// rn2(chance).  They need mons[].mconveys, which this port's monster table
-// does not carry (only mresists), and guessing from mresists would draw RNG
-// that C does not.  Corpses that convey nothing (the overwhelming majority,
-// including every corpse the covered sessions eat) draw nothing there.
+// the wraith level gain, the nurse heal, and (via corpse_intrinsic()/givit()/
+// gainstr() below) the intrinsic/strength conveyance a corpse's mconveys bits
+// grant.  corpse_intrinsic() draws rn2(count) once per possible intrinsic
+// (verified byte-for-byte against every one of the 383 monsters.h mconveys
+// entries) and should_givit()/temp_givit() (inside givit()) draw the
+// pass/fail chance; all three are exported by this file and unconditionally
+// non-deterministic, so this path must run for EVERY corpse whose switch case
+// sets check_intrinsics, not just the ones known to convey something.
 async function cpostfx(pm) {
     const ptr = monster_by_pmidx(pm);
     const nm = ptr?.name || '';
     let check_intrinsics = false;
+    let catch_lycanthropy = NON_PM;
 
+    // C ref: eat.c:1144-1152 — the three human-form lycanthrope corpses.
+    // Checked by FLAG, not species name: monsters.h gives a lycanthrope's
+    // human and animal forms the IDENTICAL name ("wererat" etc — see
+    // mon.js's is_were()/is_human() comment for the same trap), so a
+    // name-keyed switch can never tell them apart.  A human-were corpse
+    // takes no other cpostfx branch in C either (its switch case `break`s
+    // immediately without falling into check_intrinsics), so this replaces
+    // rather than supplements the name switch below.
+    if ((mflags2_of(ptr) & M2_HUMAN) !== 0 && (mflags2_of(ptr) & M2_WERE) !== 0) {
+        const { counter_were } = await import('./mon.js');
+        catch_lycanthropy = counter_were(pm);
+    } else
     switch (nm) {
     case 'wraith':
         // C: pluslvl(FALSE) — gain an experience level (newhp()/newpw() rolls).
@@ -1576,14 +1624,27 @@ async function cpostfx(pm) {
     }
     case 'Death': case 'Pestilence': case 'Famine':
         break;                 /* life-saved; no intrinsics */
-    case 'mind flayer': case 'master mind flayer':
-        // C: 1-in-2 chance of +1 Int when below the max, else "tasted bland".
-        if (!rn2(2)) {
-            await update_topl('Yum!  That was real brain food!');
-            break;
+    case 'mind flayer': case 'master mind flayer': {
+        // C: only rolls rn2(2) when ABASE(A_INT) < ATTRMAX(A_INT); already-
+        // capped Int prints "tasted bland" and draws nothing before falling
+        // through to check_intrinsics.  A flat unconditional rn2(2) here would
+        // desync every corpse_intrinsic() draw that follows for a hero already
+        // at max Int.
+        const { race_attrmax } = await import('./u_init.js');
+        const int_cur = game.u?.acurr?.a?.[A_INT] ?? 0;
+        const int_max = race_attrmax()[A_INT];
+        if (int_cur < int_max) {
+            if (!rn2(2)) {
+                await update_topl('Yum!  That was real brain food!');
+                await adjattrib(A_INT, 1, 0);
+                break;
+            }
+        } else {
+            await update_topl('For some reason, that tasted bland.');
         }
         check_intrinsics = true;
         break;
+    }
     default:
         check_intrinsics = true;
         break;
@@ -1604,7 +1665,20 @@ async function cpostfx(pm) {
         // C: attacktype(ptr, AT_MAGC) || pm == PM_NEWT.
         if (attacktype(ptr, AT_MAGC) || nm === 'newt')
             await eye_of_newt_buzz();
-        // corpse_intrinsic(ptr) + givit(): DEFERRED, see the comment above.
+        // C: tmp = corpse_intrinsic(ptr); if (tmp == -1) gainstr(0,0,TRUE);
+        // else if (tmp > 0) givit(tmp, ptr).  Both draw RNG unconditionally.
+        const tmp = corpse_intrinsic(ptr);
+        if (tmp === -1) await gainstr(null, 0, true);
+        else if (tmp > 0) await givit(tmp, ptr);
+    }
+    // C ref: eat.c:1323 — catching lycanthropy from a human-were corpse (no
+    // intrinsic-conveying path is involved; this runs regardless of
+    // check_intrinsics).
+    if (ismnum(catch_lycanthropy)) {
+        const { set_ulycn } = await import('./polyself.js');
+        set_ulycn(catch_lycanthropy);
+        const { retouch_equipment } = await import('./artifact.js');
+        await retouch_equipment(2);
     }
 }
 
@@ -1690,7 +1764,8 @@ async function eatcorpse(otmp) {
     // C ref: eat.c:1861 — a corpse that will petrify or slime the hero skips
     // the "tainted" branch entirely (those effects are deadlier and come
     // first), so the rot damage cascade must know about them.
-    const stoneable = flesh_petrifies(mnum);
+    const stoneable = flesh_petrifies(mnum) && !stone_resistance_eat()
+        && !poly_when_stoned_eat();
     const slimeable = (corpse_mon_name(mnum) === 'green slime'
                        && !u?.uprops?.Slimed);
 
@@ -1744,7 +1819,10 @@ async function eatcorpse(otmp) {
     } else if (sp && mon_poisonous(sp) && rn2(5)) {
         tp++;
         await update_topl('Ecch - that must have been poisonous!');
-        if (!u?.uprops?.Poison_resistance)
+        // C ref: youprop.h Poison_resistance.  Innate (orc/healer/barbarian
+        // from level 1, monk from level 3, tourist from level 20) is never
+        // persisted as a stored uprops flag, so OR in has_innate().
+        if (!(u?.uprops?.Poison_resistance || has_innate('HPoison_resistance')))
             poison_strdmg(rnd(4), rnd(15));            // eat.c:1932 poison dmg
         else
             await update_topl('You seem unaffected by the poison.');
@@ -1883,7 +1961,8 @@ const COST_DSTROY_ = 11, COST_OPEN_ = 14;
 // cmd.c b_trapped()'s "no body part" sentinel (js/const.js NO_PART == -1).
 const NO_PART_ = -1;
 // monattk.h attack results (js/const.js M_ATTK_*).
-const M_ATTK_MISS_ = 0x0, M_ATTK_HIT_ = 0x1, M_ATTK_AGR_DIED_ = 0x4;
+const M_ATTK_MISS_ = 0x0, M_ATTK_HIT_ = 0x1, M_ATTK_DEF_DIED_ = 0x2,
+      M_ATTK_AGR_DIED_ = 0x4;
 
 // objects.h otyps this section names.  (CORPSE/TIN/EGG/... are declared at the
 // top of this file; only the ones the tail needs are added here.)
@@ -1912,7 +1991,7 @@ const WAX = 2, PAPER = 5, LEATHER = 7, BONE = 9, DRAGON_HIDE = 10;
 // mondata.h / makemon record helpers this section needs (the same one-liners
 // the live half of this file already keeps local).
 function monsndx(ptr) { return ptr?.pmidx ?? NON_PM; }
-function s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 // mondata.h is_giant(ptr) = mflags2 & M2_GIANT (monflags_data.js M2_GIANT).
 const M2_GIANT_EAT = 0x2000;
 function is_giant(ptr) { return (mflags2_of(ptr) & M2_GIANT_EAT) !== 0; }
@@ -2183,17 +2262,11 @@ export async function eating_conducts(pd) {
 // of the branches, and a player mind flayer's morehungry(-rnd(30)) and
 // rnd(4) Int recovery follow in that order.
 //
-// WIRING: js/mhitm_ad.js:900 and :917 are the two AD_DRIN sites that stop where
-// this function should be called.
 export async function eat_brains(magr, mdef, visflag, dmg_p) {
     const T = await loadTailDeps();
     const { YOUMONST } = await import('./mhitm_ad.js');
     const is_hero = (m) => m === YOUMONST;
-    // C: pd = mdef->data, which for the hero is gy.youmonst.data.  This port
-    // has no hero permonst (u.umonnum is a ROLE index), so the hero-as-defender
-    // arm below never consults pd — matching C, which only reads it there for
-    // the "no such thing as mindless players" comment.
-    const pd = is_hero(mdef) ? null : mdef?.data;
+    const pd = is_hero(mdef) ? _invent.youmonst_data_pub() : mdef?.data;
     let give_nutrit = false;
     let result = M_ATTK_HIT_;
     const xtra_dmg = rnd(10);                        /* eat.c:613 */
@@ -2220,18 +2293,20 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
         // The flayer went for a petrification-inducing brain (Medusa, most
         // likely; a cockatrice tentacle-touch is caught before reaching here).
         if (is_hero(magr)) {
-            if (!u?.uprops?.Stone_resistance && !u?.uprops?.Stoned) {
-                u.uprops = u.uprops || {};
-                u.uprops.Stoned = 5;                 /* make_stoned(5L, ...) */
-                game._delayed_killer = pd.name;
-            }
+            const props = u.uprops || {};
+            const stoneResistant = props.Stone_resistance || props.StoneResistance
+                || props.HStone_resistance || props.EStone_resistance
+                || ((_invent.youmonst_data_pub()?.mresists || 0) & MR_STONE)
+                || (game.invent || []).some((obj) =>
+                    obj.owornmask && _mkobj.objects[obj.otyp]?.oc_oprop === P_STONE_RES);
+            if (!stoneResistant && !props.Stoned)
+                await T.potion.make_stoned(5, null, 0, pd.name);
         } else {
-            // Mind flayers have neither poly_when_stoned nor Stone_resistance.
-            if (visflag && canseemon_eat(magr))
+            if (visflag && T.display.canseemon_shared(magr))
                 await pline(`${T.do_name.Monnam(magr)} turns to stone!`);
-            // C: monstone(magr).  js/ has no exported monstone()/mondied(); the
-            // observable part is that the attacker is dead.
-            magr.mhp = 0;
+            const { monstone_mm } = await import('./mhitm.js');
+            await monstone_mm(magr);
+            if (!T.mon.DEADMONSTER(magr)) return M_ATTK_MISS_;
             if (magr.mtame && !visflag)
                 await pline('You have a sad thought for a moment, then it passes.');
             return M_ATTK_AGR_DIED_;
@@ -2246,7 +2321,10 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
             return M_ATTK_MISS_;
         } else if (is_rider_pm(pd)) {
             await pline('Ingesting that is fatal.');
-            game._rider_death = true;                /* done(DIED) unmodelled */
+            const { done, DIED } = await import('./end.js');
+            game._killer_name = `unwisely ate the brain of ${pd.name}`;
+            await done(DIED);
+            if (game.program_state?.gameover) return M_ATTK_AGR_DIED_;
             exercise(A_WIS_EAT, false);
             dmg_p.value += xtra_dmg;                 /* Rider takes extra damage */
         } else {
@@ -2273,14 +2351,26 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
         // a mindless player.
         const abase = u?.acurr?.a;
         if (abase && abase[A_INT_EAT] <= ATTRMIN_INT) {
-            if (u?.uprops?.HLifesaved) {
-                game._brainless_death = true;
+            const { done, DIED } = await import('./end.js');
+            const amulet = game.uamul || u.uamul;
+            if (amulet?.otyp === AMULET_OF_LIFE_SAVING) {
+                game._killer_name = 'killed by brainlessness';
+                await done(DIED);
+                if (game.program_state?.gameover) return M_ATTK_DEF_DIED_;
                 await pline('Unfortunately your brain is still gone.');
-                u.uprops.HLifesaved = 0;
+                if (u.uprops) {
+                    u.uprops.Lifesaved = 0;
+                    u.uprops.HLifesaved = 0;
+                    u.uprops.ELifesaved = 0;
+                }
             } else {
                 await pline('Your last thought fades away.');
             }
-            game._brainless_death = true;            /* done(DIED) unmodelled */
+            game._killer_name = 'killed by brainlessness';
+            await done(DIED);
+            if (game.program_state?.gameover) return M_ATTK_DEF_DIED_;
+            abase[A_INT_EAT] = ATTRMIN_INT + 2;
+            await pline('You feel like a scarecrow.');
         }
         give_nutrit = true;      /* in case a conflicted pet is doing this */
         exercise(A_WIS_EAT, false);
@@ -2313,15 +2403,9 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
 }
 
 // C ref: display.h canspotmon(mon) = canseemon(mon) || sensemon(mon).
-// js/uhitm.js:103 exports the real canspotmon(); canseemon() itself is
-// module-private there (canseemon_shared), so the stricter half is approximated
-// as "spotted and not blind" — it only gates messages here.
 function canspotmon_eat(mtmp) {
     if (!mtmp || typeof mtmp !== 'object') return false;
     return _tail.uhitm ? !!_tail.uhitm.canspotmon(mtmp) : false;
-}
-function canseemon_eat(mtmp) {
-    return canspotmon_eat(mtmp) && !_vision?.Blind?.();
 }
 
 // C ref: eat.c:867 fix_petrification() — an acidic corpse (or a lizard) eaten
@@ -2557,10 +2641,11 @@ export async function givit(type, ptr) {
 //
 // Non-deterministic — call it exactly once per corpse.
 //
-// WIRING: js/eat.js cpostfx()'s `check_intrinsics` tail is where C does
-// `tmp = corpse_intrinsic(ptr); if (tmp == -1) gainstr(...); else if (tmp)
-// givit(tmp, ptr);`.  Do not hook it up without re-measuring: the rn2(count)
-// draws land inside the corpse-eating stream.
+// WIRED: js/eat.js cpostfx()'s `check_intrinsics` tail calls this directly,
+// matching C's `tmp = corpse_intrinsic(ptr); if (tmp == -1) gainstr(0,0,TRUE);
+// else if (tmp > 0) givit(tmp, ptr);`.  The rn2(count) draws land inside the
+// corpse-eating stream for every corpse (verified byte-exact against every
+// mons[].mconveys entry in monsters.h; see MCONVEYS above).
 export function corpse_intrinsic(ptr) {
     const conveys_STR = is_giant(ptr);
     let count = 0;                  /* number of possible intrinsics */
@@ -2796,7 +2881,7 @@ export async function consume_tin(mesg) {
                 Halluc ? "Swee'pea"
                 : !(u?.uprops?.HFixed_abil) ? 'Popeye'
                 : (game.flags?.female ? 'Olive Oyl' : 'Bluto')}!`);
-        gainstr(tin, 0);                        /* C: gainstr(tin, 0, FALSE) */
+        await gainstr(tin, 0, false);
 
         tin = ctx.tin = await costly_tin(COST_OPEN_);
         nutamt = (tin.blessed ? 600                    /* blessed */
@@ -2812,12 +2897,12 @@ export async function consume_tin(mesg) {
 }
 
 // C ref: eat.c:1703 opentin() — the tin-opening occupation, one call per turn.
-// Returns 1 to stay busy, 0 when finished (or given up on).
+// Returns 1 to stay busy, 0 when finished (or given up on).  Polled by
+// js/allmain.js's game._tin_occupation arm.
 //
-// WIRING: js/allmain.js polls a named slot per occupation (_eat_occupation,
-// _engrave_occupation, ...); this one needs a `_tin_occupation` arm there, and
-// lesshungry() needs `choke((go.occupation == opentin) ? tin : 0)` — the copy
-// above (lesshungry_eat) always passes victual.piece.
+// STILL OPEN: lesshungry() needs `choke((go.occupation == opentin) ? tin : 0)`
+// — the copy above (lesshungry_eat) always passes victual.piece, so a
+// tin-eating choke death names the wrong food (edge case: only hunger>=2000).
 export async function opentin() {
     const ctx = tin_context();
     const tin = ctx.tin;
@@ -2840,9 +2925,6 @@ export async function opentin() {
 // draws rn2(2) unless a blessed tin opener is wielded; a wielded tin opener
 // draws rn2(cursed ? 3 : !blessed ? 2 : 1); bare hands draw
 // rn1(1 + 500 / (ACURR(A_DEX) + ACURRSTR), 10).
-//
-// WIRING: doeat() above declines a tin outright ("You cannot eat that!"); the
-// C branch is `if (otmp->otyp == TIN) { start_tin(otmp); return ECMD_TIME; }`.
 export async function start_tin(otmp) {
     const T = await loadTailDeps();
     let mesg = null, tmp;
@@ -2912,7 +2994,7 @@ async function start_tin_no_opener(otmp, T) {
         await pline(`The tin slips from your ${T.do_wear.fingers_or_gloves(false)}.`);
         let piece = otmp;
         if ((piece.quan || 1) > 1) piece = _invent.splitobj(piece, 1);
-        if (carried(piece)) _invent.dropx(piece);
+        if (carried(piece)) await _invent.dropx(piece);
         else _invent.stackobj(piece);
         return null;
     }
@@ -3111,8 +3193,8 @@ export async function eataccessory(otmp) {
                 /* undo the `.intrinsic |= FROMOUTSIDE' done above */
                 uprop_set_raw(P_LEVITATION, oldprop);
                 if (!uprop_get(P_LEVITATION)) {
-                    // C: float_up() — js/ has no float_up(); the timer grant is
-                    // the observable part.
+                    const { float_up } = await import('./trap.js');
+                    await float_up();
                     incr_itimeout(P_LEVITATION, d(10, 20));
                     _invent.makeknown(typ);
                 }
@@ -3280,10 +3362,10 @@ export async function edibility_prompts(otmp) {
     } else if (otmp.orotten || (cadaver && rotted > 3)) {
         buf = `${foodsmell} like ${it_or_they} could be rotten!`;
     } else if (cadaver && sp && mon_poisonous(sp)
-               && !u?.uprops?.Poison_resistance) {
+               && !(u?.uprops?.Poison_resistance || has_innate('HPoison_resistance'))) {
         buf = `${foodsmell} like ${it_or_they} might be poisonous!`;
     } else if (otmp.otyp === APPLE && otmp.cursed
-               && !u?.uprops?.Sleep_resistance) {
+               && !(u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance'))) {
         /* causes sleep, for long enough to be dangerous */
         buf = `${foodsmell} like ${it_or_they} might have been poisoned.`;
     } else if (cadaver && !speciesVegetarian(mnum)
@@ -3385,7 +3467,7 @@ export async function doeat_nonfood(otmp) {
 
     if (otmp.oclass === WEAPON_CLASS && otmp.opoisoned) {
         await pline('Ecch - that must have been poisonous!');
-        if (!game.u?.uprops?.Poison_resistance)
+        if (!(game.u?.uprops?.Poison_resistance || has_innate('HPoison_resistance')))
             poison_strdmg(rnd(4), rnd(15));
         else
             await pline('You seem unaffected by the poison.');

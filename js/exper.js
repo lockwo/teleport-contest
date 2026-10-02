@@ -10,10 +10,12 @@
 // handled by display.js update_topl(); this module is the RNG/state core.
 
 import { game } from './gstate.js';
-import { rn1, rnd } from './rng.js';
+import { rn1, rn2, rnd } from './rng.js';
 import { A_WIS, A_CON } from './const.js';
-import { MAXULEV } from './const.js';
+import { MAXULEV, LARGEST_INT } from './const.js';
 import { races } from './roles.js';
+import { Goodbye } from './role.js';
+import { LL_MINORAC, livelog_printf } from './livelog.js';
 
 // ── role / race advancement data (C: role.c roles[]/races[]) ──
 // RoleAdvance = {infix, inrnd, lofix, lornd, hifix, hirnd}; xlev is the
@@ -116,6 +118,22 @@ export function newuexp(lev) {
     if (lev < 10) return 10 * (1 << lev);
     if (lev < 20) return 10000 * (1 << (lev - 10));
     return 10000000 * (lev - 19);
+}
+
+// C ref: exper.c rndexp() — keep the draw within rn2's integer range.
+export function rndexp(gaining) {
+    const u = game.u;
+    const minexp = u.ulevel === 1 ? 0 : newuexp(u.ulevel - 1);
+    let diff = newuexp(u.ulevel) - minexp;
+    let factor = 1;
+    while (diff >= LARGEST_INT) {
+        diff = Math.trunc(diff / 2);
+        factor *= 2;
+    }
+    let result = minexp + factor * rn2(diff);
+    if (u.ulevel === MAXULEV && gaining)
+        result = Math.max(u.uexp, result + u.uexp - minexp);
+    return result;
 }
 
 // C ref: exper.c enermod(int en) — role-based energy multiplier.
@@ -363,13 +381,20 @@ export async function pluslvl(incr, emitMsg) {
         // C ref: exper.c:358 — crossing into a new rank is an achievement, and
         // it is the ORDER of u.uachieved that #conduct prints, so this has to
         // run here rather than be derived from the final level.
+        //
+        // Dynamic import: insight.js -> u_init.js -> mkobj.js is a static
+        // cycle this file must not join.
+        const I = await import('./insight.js');
+        const old_ach_cnt = I.count_achievements();
         const newrank = xlev_to_rank(u.ulevel);
-        if (newrank > oldrank) {
-            // Dynamic import: insight.js -> u_init.js -> mkobj.js is a static
-            // cycle this file must not join.
-            const I = await import('./insight.js');
-            I.record_achievement(I.achieve_rank(newrank));
+        if (newrank > oldrank) I.record_achievement(I.achieve_rank(newrank));
+        // C ref: exper.c:365 — log a plain level-gain event, but only when the
+        // rank achievement above (if any) didn't already log one this level-up.
+        if (I.count_achievements() === old_ach_cnt) {
+            livelog_printf(LL_MINORAC,
+                `${u.ulevel <= (u.ulevelpeak || 0) ? 're' : ''}gained experience level ${u.ulevel}`);
         }
+        if (u.ulevel > (u.ulevelpeak || 0)) u.ulevelpeak = u.ulevel;
     }
 }
 
@@ -378,7 +403,7 @@ export async function pluslvl(incr, emitMsg) {
 export async function losexp(drainer, emitMsg) {
     const u = game.u;
     if ((u.ulevel || 0) > 1 || drainer) {
-        if (emitMsg) await emitMsg(`Goodbye level ${u.ulevel}.`);
+        if (emitMsg) await emitMsg(`${Goodbye(game.urole?.mnum)} level ${u.ulevel}.`);
     }
     if ((u.ulevel || 0) > 1) {
         const oldlevel = u.ulevel;

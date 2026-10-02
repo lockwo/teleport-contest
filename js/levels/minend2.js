@@ -14,10 +14,10 @@ import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
 import {
     LOC_DRY, S_HUMANOID, _mktrap_victim, bigrm_load_map, bigrm_wallification, flip_level,
-    percent, quest_level_init_solidfill, quest_place_stair, remove_boundary_syms, shuffle,
+    percent, quest_level_init_solidfill, quest_place_stair, remove_boundary_syms, map_cleanup, shuffle,
     splev_create_monster, splev_door_at, splev_feature, splev_get_location_rnd,
     splev_link_doors_rooms, splev_object_at, splev_region_lit, splev_terrain_area,
-    splev_traptype_rnd, vly_abs, vly_flip_dndest, vly_non_diggable, vly_object,
+    splev_traptype_rnd, vly_abs, vly_flip_dndest, vly_flip_updest, vly_non_diggable, vly_object,
     vly_teleport_region, vly_terrain_at,
 } from '../sp_lev.js';
 
@@ -213,9 +213,10 @@ export async function makemaz_minend2() {
     // C ref: lspo_finalize_level() tail.
     splev_link_doors_rooms();
     remove_boundary_syms();
+    map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975
     if (rn2(2)) flp |= 2;                 // flip_level_rnd sp_lev.c:977
-    if (flp) { flip_level(flp); vly_flip_dndest(flp); }
+    if (flp) { flip_level(flp); vly_flip_dndest(flp); vly_flip_updest(flp); }
 }

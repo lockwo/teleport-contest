@@ -16,7 +16,7 @@ import {
     selection_getbounds,
 } from '../selvar.js';
 import {
-    flip_level, lspo_map, remove_boundary_syms, reset_xystart_size,
+    flip_level, lspo_map, remove_boundary_syms, map_cleanup, reset_xystart_size,
     selection_match, shuffle, splev_link_doors_rooms, splev_object_at,
     quest_set_door, tower_wallification, vly_object, vly_region, vly_trap,
 } from '../sp_lev.js';
@@ -78,6 +78,7 @@ export async function makemaz_wizard2() {
 
     splev_link_doors_rooms();
     remove_boundary_syms();
+    map_cleanup();
     tower_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;

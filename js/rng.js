@@ -29,9 +29,9 @@ let _dbgN = 0;
 const _DBG = process?.env?.RNG_STACK_AT ? process.env.RNG_STACK_AT.split('-').map(Number) : null;
 function RND(x) {
     if (_DBG) {
-        _dbgN++;
+        _dbgN = _rngLogEnabled ? _rngLog.length : _dbgN + 1;
         if (_dbgN >= _DBG[0] && _dbgN <= (_DBG[1] ?? _DBG[0]))
-            console.error(`#${_dbgN} mod=${x}\n` + new Error().stack.split('\n').slice(2, 8).join('\n'));
+            console.error(`#${_dbgN} mod=${x}\n` + new Error().stack.split('\n').slice(2, 12).join('\n'));
     }
     const val = isaac64_next_uint64(game.coreCtx);
     return Number(val % BigInt(x));

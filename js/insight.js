@@ -13,6 +13,7 @@
 // already carry the leading space that C's `Sprintf(" %s%s%s%s.", …)` prepends.
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { roles, align_gname } from './role.js';
 import {
     A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA,
@@ -22,7 +23,6 @@ import {
     P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_SKILLED, P_TWO_WEAPON_COMBAT,
     P_BARE_HANDED_COMBAT, In_quest, In_endgame, Is_knox_level,
 } from './const.js';
-import { objects as mkobjObjects } from './mkobj.js';
 import { weapon_type } from './weapon.js';
 import { p_skill_of } from './enhance.js';
 import { update_topl } from './display.js';
@@ -38,38 +38,123 @@ import { objects as OBJECTS } from './mkobj.js';
 import { MFLAGS2, M2_PNAME } from './monflags_data.js';
 const G_UNIQ = 0x1000; // monflag.h
 import { magic_negation_hero } from './monmove.js';
+import {
+    armor_simple_name, cloak_simple_name, suit_simple_name, shirt_simple_name,
+    helm_simple_name, gloves_simple_name, boots_simple_name, shield_simple_name,
+} from './do_wear.js';
+import {
+    get_artifact, is_art, bare_artifactname, artilist, ART_NONARTIFACT,
+    ART_SUNSWORD, ART_EYES_OF_THE_OVERWORLD,
+    SPFX_SEARCH, SPFX_HALRES, SPFX_ESP, SPFX_STLTH, SPFX_REGEN, SPFX_TCTRL,
+    SPFX_WARN, SPFX_EREGEN, SPFX_HSPDAM, SPFX_HPHDAM, SPFX_REFLECT,
+} from './artifact.js';
 
 // insight.c:1803 mc_types[] — indexed by magic_negation()'s result.
 const MC_TYPES = ['', 'warded', 'guarded', 'protected'];
 const W_ARMOR_MASK = 0x7f; // monst.h W_ARMOR: the seven armour slots
 // C ref: prop.h Antimagic == EAntimagic || HAntimagic.  The extrinsic is worn
 // gear with oc_oprop ANTIMAGIC; no session grants the intrinsic.
-function Antimagic() {
-    for (const o of (game.invent || []))
-        if ((o.owornmask || 0) & W_ARMOR_MASK) {
-            if (OBJECTS[o.otyp]?.oc_oprop === 12 /* ANTIMAGIC */) return true;
+function worn_property_sources() {
+    const seen = new Set();
+    const sources = [];
+    const add = (o) => {
+        if (o && !seen.has(o)) {
+            seen.add(o);
+            sources.push(o);
         }
-    return !!(game.u?.HAntimagic);
+    };
+    // C worn.c's worn[] order.  Saved games can have a valid hero slot before
+    // the inventory list is reconstructed, so do not rely on invent alone.
+    for (const o of [game.uarm, game.uarmc, game.uarmh, game.uarms, game.uarmg,
+        game.uarmf, game.uarmu, game.uleft, game.uright, game.uwep,
+        game.uswapwep, game.uquiver, game.uamul, game.ublindf]) add(o);
+    for (const o of (game.invent || []))
+        if ((o.owornmask || 0) & W_GIVES_PROP) add(o);
+    return sources;
+}
+function Antimagic() {
+    return worn_property_sources().some((o) => OBJECTS[o.otyp]?.oc_oprop === 12)
+        || !!(game.u?.HAntimagic);
 }
 
 // The four owornmask groups from_what()/cause_known() scan.  These are
 // js/invent.js's REMAPPED W_* bits, not prop.h's — see that file's header.
 const W_GIVES_PROP = W_ARMOR_MASK | 0x00020000 /*W_RINGL*/ | 0x00040000 /*W_RINGR*/
                      | 0x00080000 /*W_AMUL*/ | 0x00100000 /*W_TOOL*/;
-// C ref: attrib.c what_gives(&u.uprops[propidx].extrinsic) — the worn item
-// whose oc_oprop is `propidx`, or null.
-function what_gives(propidx) {
-    for (const o of (game.invent || []))
-        if (((o.owornmask || 0) & W_GIVES_PROP) && OBJECTS[o.otyp]?.oc_oprop === propidx)
+// C ref: attrib.c abil_to_adtyp()/abil_to_spfx() — the reverse of what a worn
+// or carried ARTIFACT grants, keyed by prop.h index so what_gives_artifact()
+// below can look up which field of the artifact row to compare.  PROTECTION
+// is deliberately absent from the spfx table: C's own abil_to_spfx() omits it
+// (unlike artifact.js's forward set_artifact_intrinsic() grant table), so an
+// artifact-granted PROTECTION goes unattributed by name in the real game too.
+// Built lazily (not as an eagerly-evaluated top-level object) because
+// js/insight.js sits in an import cycle with js/artifact.js (via
+// monmove.js->invent.js->insight.js), so the SPFX_*/AD_* bindings imported
+// above are not guaranteed initialized yet at insight.js's own module-eval
+// time.
+let _PROP_TO_ADTYP = null, _PROP_TO_SPFX = null;
+function propToAdtyp() {
+    return _PROP_TO_ADTYP || (_PROP_TO_ADTYP = {
+        1 /*FIRE_RES*/: AD_FIRE, 2 /*COLD_RES*/: AD_COLD, 5 /*SHOCK_RES*/: AD_ELEC,
+        12 /*ANTIMAGIC*/: AD_MAGM, 4 /*DISINT_RES*/: AD_DISN,
+        6 /*POISON_RES*/: AD_DRST, 9 /*DRAIN_RES*/: AD_DRLI,
+    });
+}
+function propToSpfx() {
+    return _PROP_TO_SPFX || (_PROP_TO_SPFX = {
+        34 /*SEARCHING*/: SPFX_SEARCH, 24 /*HALLUC_RES*/: SPFX_HALRES,
+        30 /*TELEPAT*/: SPFX_ESP, 42 /*STEALTH*/: SPFX_STLTH,
+        57 /*REGENERATION*/: SPFX_REGEN, 47 /*TELEPORT_CONTROL*/: SPFX_TCTRL,
+        32 /*WARN_OF_MON*/: SPFX_WARN, 31 /*WARNING*/: SPFX_WARN,
+        58 /*ENERGY_REGENERATION*/: SPFX_EREGEN, 55 /*HALF_SPDAM*/: SPFX_HSPDAM,
+        56 /*HALF_PHDAM*/: SPFX_HPHDAM, 65 /*REFLECTING*/: SPFX_REFLECT,
+    });
+}
+const BLND_RES_PROP = 38; // prop.h BLND_RES
+// C ref: artifact.c what_gives()'s `obj->oartifact` branch — a carried
+// artifact's cary/cspfx grants a property regardless of oc_oprop (a defn/spfx
+// grant additionally needs it worn/wielded), independent of whatever
+// bookkeeping set_artifact_intrinsic() did (mirrors C re-deriving from
+// inventory on demand rather than trusting a cache).  Grayswandir's
+// HALLUC_RES is the prototypical case: SILVER_SABER has no oc_oprop at all.
+function what_gives_artifact(propidx) {
+    const dtyp = propToAdtyp()[propidx];
+    const spfx = propToSpfx()[propidx];
+    if (!dtyp && !spfx && propidx !== BLND_RES_PROP) return null;
+    for (const o of (game.invent || [])) {
+        if (!o.oartifact) continue;
+        const art = get_artifact(o);
+        if (art === artilist[ART_NONARTIFACT]) continue;
+        if (dtyp && (art.cary.adtyp === dtyp
+                     || (art.defn.adtyp === dtyp && o.owornmask))) return o;
+        if (spfx && ((art.cspfx & spfx) === spfx
+                     || ((art.spfx & spfx) === spfx && o.owornmask))) return o;
+        // C ref: artifact.c set_artifact_intrinsic() — Sunsword grants
+        // BLND_RES only while wielded, tracked outside the generic spfx table.
+        if (propidx === BLND_RES_PROP && o === game.uwep && is_art(o, ART_SUNSWORD))
             return o;
+    }
     return null;
+}
+// C ref: attrib.c what_gives(&u.uprops[propidx].extrinsic) — the worn item
+// whose oc_oprop is `propidx`, or the artifact granting it, or null.
+function what_gives(propidx) {
+    for (const o of worn_property_sources())
+        if (OBJECTS[o.otyp]?.oc_oprop === propidx)
+            return o;
+    return what_gives_artifact(propidx);
 }
 // C ref: prop.h <Prop> == E<Prop> || H<Prop>.  hkey names the u.uprops mirror
 // this port stores the intrinsic under (several modules write game.u[hkey]
 // directly, so both spellings are read).
 function haveProp(propidx, hkey) {
     if (what_gives(propidx)) return true;
-    if (hkey && ((game.u?.uprops?.[hkey] || 0) || (game.u?.[hkey] || 0))) return true;
+    if (hkey) {
+        const base = hkey.startsWith('H') ? hkey.slice(1) : hkey;
+        const keys = [hkey, base, `H${base}`, `E${base}`];
+        if (keys.some((key) => (game.u?.uprops?.[key] || 0) || (game.u?.[key] || 0)))
+            return true;
+    }
     return !!(hkey && has_innate(hkey));
 }
 const TIMEOUT_MASK = 0x00ffffff; // prop.h TIMEOUT
@@ -82,40 +167,109 @@ function cause_known(propidx) {
             return true;
     return false;
 }
+const BLINDED_PROP = 15, DEAF_PROP = 16, DRAIN_RES_PROP = 9,
+      STRANGLED_PROP = 19, INVIS_PROP = 40, CLAIRVOYANT_PROP = 35;
+// do_wear.js's onames.h numbering (verified against js/mkobj.js OBJECT_DATA).
+const MUMMY_WRAPPING_OTYP = 138, CORNUTHAUM_OTYP = 93;
 // C ref: attrib.c:904 from_what(propidx) — wizard mode only; picks the most
-// significant source.  is_innate() outranks what_gives(), and innately()
-// (attrib.c:864) itself ranks the role/race tables above a FROMOUTSIDE
-// intrinsic.  The three phrasings are attrib.c:939-944: FROM_ROLE (a role row
-// at ulevel 1) and FROM_RACE both read " innately", a FROMOUTSIDE intrinsic
-// reads " intrinsically", and a role row at ulevel 2+ reads " because of your
-// experience".  This had " intrinsically" on the ulevel-1 arm, so a Barbarian's
-// level-1 poison resistance read "intrinsically" instead of "innately"
-// (seed0373 step 119), and an elf's level-4 sleep resistance would have read
-// "because of your experience".
-// NOT ported: attrib.c:949's Very_fast arm, which names the potion/spell or the
-// speed boots; what_gives() below finds worn speed boots by oc_oprop anyway.
+// significant source, in C's own priority order (attrib.c:922-934): birth
+// (uroleplay.blind/deaf), then is_innate() (role/race > outside-intrinsic >
+// experience > lycanthropy > creature-form), then FAST's own arm, then
+// what_gives() (worn item OR carried/worn artifact), then the two
+// BLINDED-only fallbacks (blindfold; goop — the latter is NOT modelled, see
+// below).  is_innate()'s FROM_FORM/BLINDED arm is also not reached here: the
+// one caller that needs it (the "blind" status line) already special-cases
+// !haseyes() itself and never calls from_what() in that case, matching C.
+// Two buffer clean-ups then run over WHATEVER arm fired: strip " pair of "
+// (so "your pair of speed boots" reads "your speed boots" — objnam.c
+// ysimple_name() pluralizes boots/gloves the normal way; this port has it
+// unconditionally, so from_what() strips it back out exactly like C does)
+// and, for STRANGLED, strip " of strangulation".
+// propidx < 0 asks the opposite question — "what BLOCKS this property" — and
+// is only reached from the three call sites gated on B_prop(), which this
+// port's B_prop() always answers false (no `blocked` column is modelled), so
+// the negative branch is unreachable today; ported anyway in case B_prop()
+// ever grows real state.
 function from_what(propidx, hkey) {
     if (!_wizard()) return '';
-    if (hkey) {
-        // C ref: attrib.c:887 is_innate() — "can't become very fast innately",
-        // so worn/timed speed suppresses the innate answer for FAST.
-        const suppress = (propidx === FAST_PROP && youHaveVeryFast());
-        const src = suppress ? null : innate_source(hkey);
-        if (src === 'role' || src === 'race') return ' innately';
-        if (src === 'exp') return ' because of your experience';
-        if (!src && (game.u?.uprops?.[hkey] || game.u?.[hkey])) return ' intrinsically';
+    let buf = '';
+    if (propidx >= 0) {
+        if ((propidx === BLINDED_PROP && game.u?.uroleplay?.blind)
+            || (propidx === DEAF_PROP && game.u?.uroleplay?.deaf)) {
+            buf = ' from birth';
+        } else if (propidx === DRAIN_RES_PROP && ismnum(game.u?.ulycn)) {
+            buf = ' due to your lycanthropy';
+        } else if (propidx === FAST_PROP && youHaveVeryFast()) {
+            const timed = (game.u?.uprops?.HFast || game.u?.HFast || 0) & TIMEOUT_MASK;
+            if (timed) buf = ' because of a potion or spell';
+            else if (game.uarmf?.otyp === 166 /* SPEED_BOOTS */
+                     && game.uarmf.dknown && OBJECTS[166]?.oc_name_known)
+                buf = ` because of ${ysimple_name(game.uarmf)}`;
+            else buf = ' because of worn equipment';
+        } else {
+            // C ref: attrib.c:887 is_innate() — "can't become very fast
+            // innately", so worn/timed speed suppresses the innate answer.
+            const suppress = (propidx === FAST_PROP && youHaveVeryFast());
+            const src = (hkey && !suppress) ? innate_source(hkey) : null;
+            if (src === 'role' || src === 'race') {
+                buf = ' innately';
+            } else if (src === 'exp') {
+                buf = ' because of your experience';
+            } else if (!src && hkey && (game.u?.uprops?.[hkey] || game.u?.[hkey])) {
+                buf = ' intrinsically';
+            } else {
+                const o = what_gives(propidx);
+                if (o)
+                    buf = ` because of ${o.oartifact ? bare_artifactname(o) : ysimple_name(o)}`;
+                else if (propidx === BLINDED_PROP && Blindfolded_only())
+                    buf = ` because of ${ysimple_name(game.ublindf)}`;
+                // C's goop-covered-face BLINDED arm needs HBlinded's
+                // FROMOUTSIDE/timeout bits kept apart from other sources; this
+                // port's flat uprops store doesn't preserve that, so it is
+                // dropped rather than guessed at.
+            }
+        }
+        if (buf.includes(' pair of ')) buf = buf.replace(' pair of ', ' ');
+        else if (propidx === STRANGLED_PROP) buf = buf.replace(' of strangulation', '');
+    } else {
+        switch (-propidx) {
+        case BLINDED_PROP:
+            if (game.ublindf && is_art(game.ublindf, ART_EYES_OF_THE_OVERWORLD))
+                buf = ` because of ${bare_artifactname(game.ublindf)}`;
+            break;
+        case INVIS_PROP:
+            if (game.uarmc?.otyp === MUMMY_WRAPPING_OTYP)
+                buf = ` because of ${ysimple_name(game.uarmc)}`;
+            break;
+        case CLAIRVOYANT_PROP:
+            if (game.uarmh?.otyp === CORNUTHAUM_OTYP)
+                buf = ` because of ${ysimple_name(game.uarmh)}`;
+            break;
+        default:
+            break;
+        }
     }
-    const o = what_gives(propidx);
-    return o ? ` because of ${ysimple_name(o)}` : '';
+    return buf;
+}
+// C ref: zap.c item_what() / insight.c item_resistance_message().  This is
+// only emitted for an equipped oc_oprop source; innate resistance protects the
+// hero but does not shield the inventory.
+function basic_item_resistance_message(propidx, phrase, final, enlLine) {
+    const source = what_gives(propidx);
+    if (!source) return;
+    const simple = source?.oclass === 3 ? armor_simple_name(source)
+        : ysimple_name(source).replace(/^your\s+/, '');
+    enlLine('Your items ', final ? 'were' : 'are', phrase, ` by your ${simple}`);
 }
 // C ref: prop.h FAST = 64.
 const FAST_PROP = 64;
+const PM_KNIGHT = 4;
 import { LL_WISH, LL_ACHIEVE, LL_UMONST, LL_DIVINEGIFT, LL_LIFESAVE,
          LL_ARTIFACT, LL_GENOCIDE, LL_DUMP, LL_SPOILER, LL_MINORAC,
          livelog_printf } from './livelog.js';
 import { nhgetch } from './input.js';
 import { can_pray_quiet } from './pray.js';
-import { inv_weight, ysimple_name } from './invent.js';
+import { currency, inv_weight, ysimple_name } from './invent.js';
 const _wizard = () => !!(game.flags && game.flags.debug);
 const _discover = () => { const f = game.flags || {}; return !!(f.explore || f.discover || f.playmode === 'explore'); };
 
@@ -147,6 +301,29 @@ function _fromWhatAntimagic() {
     return '';
 }
 
+// C ref: attrib.c is_innate(JUMPING).  Knight jumping is an intrinsic
+// exception installed during u_init rather than one of the role ability rows.
+function hasJumping() {
+    return haveProp(45 /* JUMPING */, 'HJumping')
+        || (game.urole?.mnum === PM_KNIGHT);
+}
+function jumpingFromWhat() {
+    const source = from_what(45, 'HJumping');
+    // C ref: attrib.c from_what() is entirely gated on `wizard` (line 914);
+    // this port's hasJumping() special-cases Knight because no HJumping bit
+    // is actually stored for the role-granted ability, but the "intrinsically"
+    // wording it stands in for is itself wizard-only, so the fallback must
+    // respect that gate too (an explore-mode Knight should read plain
+    // "You can jump.", matching bl049's recorded screen).
+    return source || (_wizard() && game.urole?.mnum === PM_KNIGHT ? ' intrinsically' : '');
+}
+function n_times(n) {
+    if (n === 1) return 'once';
+    if (n === 2) return 'twice';
+    if (n === 3) return 'thrice';
+    return `${n} times`;
+}
+
 function alignStr(t) {
     return t === A_LAWFUL ? 'lawful' : t === A_NEUTRAL ? 'neutral' : 'chaotic';
 }
@@ -160,7 +337,14 @@ const GENDER_ADJ = ['male', 'female'];
 // = the end-of-game disclosure (past tense, plus the MAGICENLIGHTENMENT
 // "Final Attributes:" section) -- the only non-zero value the covered
 // sessions reach.
-export function enlightenment_lines(final = 0) {
+// C ref: insight.c enlightenment(mode, final) — `basic` mirrors mode &
+// BASICENLIGHTENMENT (role/race/alignment/HP/AC/characteristics section and
+// the Miscellaneous wizard/bones reminder).  doattributes() (^X) and the
+// end-of-game disclosure always set it; potion.c's peffect_enlightenment /
+// peffect_hallucination and zap.c's do_enlightenment_effect() pass
+// MAGICENLIGHTENMENT alone (mode has no BASICENLIGHTENMENT bit at all), so
+// they must call this with basic=false to skip that whole section.
+export function enlightenment_lines(final = 0, basic = true) {
     const u = game.u || {};
     const rolemnum = game.urole?.mnum ?? u.umonnum ?? 9;
     const roleDef = roles.find((r) => r.mnum === rolemnum) || roles[rolemnum] || {};
@@ -201,7 +385,11 @@ export function enlightenment_lines(final = 0) {
     // window supplies the single selector-column space when rendered.
     out(`${titleName} the ${roleName}'s attributes:`);
 
-    // ── Background ──
+    // ── Background / Basics / Characteristics ── C ref: insight.c
+    // enlightenment() — `if (mode & BASICENLIGHTENMENT) { background_...();
+    // basics_...(); characteristics_...(); }`.  Skipped whole when the caller
+    // (a potion/wand effect) passed MAGICENLIGHTENMENT alone.
+    if (basic) {
     out('');
     out('Background:');
 
@@ -389,13 +577,49 @@ export function enlightenment_lines(final = 0) {
     characteristic(A_INT, 'intelligence');
     characteristic(A_WIS, 'wisdom');
     characteristic(A_CHA, 'charisma');
+    } // if (basic)
 
     // ── Status ──
     out('');
     out(final ? 'Final Status:' : 'Status:');
+    // C ref: insight.c:2372-2377.  Timed Hallucination is represented under
+    // both H- and bare property names across the port, so use the same
+    // effective-property test as the rest of this display.
+    if (haveProp(23 /* HALLUC */, 'HHallucination')
+        && !haveProp(24 /* HALLUC_RES */, 'HHalluc_resistance'))
+        youAre('hallucinating');
+    // C ref: insight.c:1059 — Blind, between hallucinating and deaf.  The
+    // port keeps HBlinded's timeout in u.blinded and its FROMFORM bit in
+    // uprops.BlindedFromForm (FROMOUTSIDE, "permanently", is not modelled).
+    if (Blind()) {
+        const innate = (u.uprops?.BlindedFromForm | 0) > 0;
+        const timeout = u.blinded | 0;
+        let bb = `${innate ? 'innately'
+            : (Blindfolded() && !timeout) ? 'deliberately'
+              : 'temporarily'} blind`;
+        if (_wizard() && !innate && !Blindfolded()) bb += ` (${timeout})`;
+        youAre(bb, !haseyes(game.youmonst?.data) ? '' : from_what(BLINDED_PROP, 'HBlinded'));
+    }
     // C ref: insight.c:1073 — `if (Deaf) you_are("deaf", from_what(DEAF));`,
     // emitted BEFORE the hunger line.
     if (((u.uprops?.HDeaf || 0) > 0) || u.Deaf) youAre('deaf');
+    // C ref: insight.c status_enlightenment() external-trouble block.  These
+    // are live state, not special messages: omitting them changes the number
+    // of tty menu pages whenever a punished or leg-wounded hero uses ^X.
+    if (u.uball) youAre(`chained to ${ansimpleoname(u.uball)}`);
+    {
+        const woundTimer = (u.HWounded_legs | 0)
+            || (u.uprops?.HWounded_legs | 0);
+        // C ref: insight.c:1146-1153 — EWounded_legs carries LEFT_SIDE /
+        // RIGHT_SIDE (the ring slot bits), not 1/2.
+        const sides = ((u.uprops?.EWounded_legs | 0) || (u.EWounded_legs | 0)) & BOTH_SIDES;
+        if (woundTimer || sides) {
+            if (sides === BOTH_SIDES) youHave('wounded legs');
+            // C's enlightenment code reports the right leg when the source
+            // bit has expired but the timed wounded-legs property remains.
+            else youHave(`a wounded ${sides === LEFT_SIDE ? 'left' : 'right'} leg`);
+        }
+    }
     // C ref: insight.c:1181 — Sleepy (worn/eaten amulet of restful sleep),
     // emitted immediately before the hunger line.  cause_known() is bypassed
     // whenever MAGICENLIGHTENMENT is on, which end-of-game disclosure always is.
@@ -435,87 +659,33 @@ export function enlightenment_lines(final = 0) {
         youAre('not wearing any armor');
 
     // ── Attributes (MAGICENLIGHTENMENT) ──  C ref: attributes_enlightenment().
-    // Only reached at end-of-game disclosure (final) for the covered sessions;
-    // limited to what the covered heroes can actually have: alignment piety,
-    // role-granted Searching, racial Infravision, and the mortality line.
     // C ref: insight.c doattributes() — wizard AND explore mode also pass
-    // MAGICENLIGHTENMENT for the LIVE ^X, so the section is not final-only; its
-    // header is then "Attributes:" and it omits the mortality line.
-    const _magic = final ? true : (_wizard() || _discover());
+    // MAGICENLIGHTENMENT for the LIVE ^X, so the section is not final-only.
+    // Delegates to the function-for-function port at attributes_enlightenment()
+    // (below, mirroring insight.c 1:1) via a scratch nhwindow instead of
+    // re-deriving the ~200-line resistances/vision/appearance/transportation/
+    // physical-attributes/miscellany table a second time in this function: that
+    // faithful port already existed in this file but was never wired to the
+    // live ^X path, so worn-armor-granted extrinsics with no dedicated arm here
+    // (e.g. "You are displaced .../You have reflection ...") and
+    // artifact-granted ones (e.g. "You resist hallucinations because of
+    // Grayswandir") were silently omitted from every ^X screen — 34 of the 44
+    // public sessions press ^X.
+    // C ref: enlightenment() `if (mode & MAGICENLIGHTENMENT)`.  doattributes()
+    // (^X, basic=true) only sets that bit for wizard/explore mode (or the
+    // final disclosure); the potion/wand callers (basic=false) pass
+    // MAGICENLIGHTENMENT unconditionally — mode there has NO BASICENLIGHTENMENT
+    // bit at all, so basic can't be reused to mean "wizard-gated" here.
+    const _magic = !basic || final || _wizard() || _discover();
     if (_magic) {
-        out('');
-        out(final ? 'Final Attributes:' : 'Attributes:');
-        const pio = piousness(u.ualign?.record ?? 0);
-        if ((u.ualign?.record ?? 0) >= 0) youAre(pio);
-        else youHave(pio);
-        if (_wizard()) enlLine('Your alignment ', final ? 'was' : 'is', ` ${u.ualign?.record ?? 0}`, '');
-        // /*** Resistances to troubles ***/  insight.c:1520.  The ORDER of this
-        // block through /*** Transportation ***/ is load-bearing: a line in the
-        // wrong place shifts every later line and the text window's page break.
-        // insight.c:1523 — Antimagic is worn gear whose oc_oprop is ANTIMAGIC
-        // (gray DSM/scales, cloak of magic resistance) plus the intrinsic.
-        // from_what() adds a suffix only in wizard mode.
-        if (Antimagic()) youAre('magic-protected', _fromWhatAntimagic());
-        for (const [propidx, hkey, phrase] of [
-            [1, 'HFire_resistance', 'fire resistant'],
-            [2, 'HCold_resistance', 'cold resistant'],
-            [3, 'HSleep_resistance', 'sleep resistant'],
-            [4, 'HDisint_resistance', 'disintegration resistant'],
-            [5, 'HShock_resistance', 'shock resistant'],
-            [6, 'HPoison_resistance', 'poison resistant'],
-            [7, 'HAcid_resistance', 'acid resistant'],
-            [9, 'HDrain_resistance', 'level-drain resistant'],
-            [10, 'HSick_resistance', 'immune to sickness'],
-            [8, 'HStone_resistance', 'petrification resistant'],
-        ]) if (haveProp(propidx, hkey)) youAre(phrase, from_what(propidx, hkey));
-        // /*** Vision and senses ***/  insight.c:1565
-        if (haveProp(29, 'HSee_invisible')) {
-            // C's third arm (PermaBlind) has no source in this port.
-            if (!Blind()) enlLine('You ', final ? 'saw' : 'see', ' invisible', from_what(29, 'HSee_invisible'));
-            else enlLine('You ', final ? 'would have seen' : 'will see', ' invisible when not blind', '');
-        }
-        if (haveProp(31, 'HWarning')) youAre('warned', from_what(31, 'HWarning'));
-        if (youHaveSearching() || haveProp(34, 'HSearching'))
-            youHave('automatic searching', from_what(34, 'HSearching'));
-        if (Infravision() || haveProp(36, 'HInfravision')) youHave('infravision');
-        // /*** Appearance and behavior ***/  insight.c:1643
-        if (haveProp(42, 'HStealth')) youAre('stealthy', from_what(42, 'HStealth'));
-        if (haveProp(43, 'HAggravate_monster'))
-            enlLine('You aggravate', final ? 'd' : '', ' monsters', from_what(43, 'HAggravate_monster'));
-        // /*** Transportation ***/  insight.c:1677
-        if (haveProp(47, 'HTeleport_control'))
-            youHave('teleport control', from_what(47, 'HTeleport_control'));
-        // insight.c:1800 — the worn-armour magic-cancellation level.
-        const armpro = magic_negation_hero();
-        if (armpro > 0) youAre(MC_TYPES[Math.min(armpro, MC_TYPES.length - 1)]);
-        // C ref: insight.c:1896-1898 "movement and non-armor-based protection"
-        // — `if (Fast) you_are(Very_fast ? "very fast" : "fast",
-        // from_what(FAST));`, between the magic-cancellation line and Miscellany.
-        // Omitting it shifted every later line of the ^X page (seed0373 step 119).
-        if (youHaveFast() || youHaveVeryFast())
-            youAre(youHaveVeryFast() ? 'very fast' : 'fast', from_what(FAST_PROP, 'HFast'));
-
-        // C ref: insight.c:1908 /*** Miscellany ***/ — the Luck block, which
-        // was omitted entirely.  Luck = u.uluck + u.moreluck, and it is non-zero
-        // for any full-moon / Friday-13th game (allmain.c:59 change_luck(1)).
-        const luckTot = (u.uluck || 0) + (u.moreluck || 0);
-        if (luckTot) {
-            const lt = Math.abs(luckTot);
-            youAre(`${lt >= 10 ? 'extremely ' : lt >= 5 ? 'very ' : ''}${luckTot < 0 ? 'un' : ''}lucky`);
-        }
-        if ((u.moreluck || 0) > 0) youHave('extra luck');
-        else if ((u.moreluck || 0) < 0) youHave('reduced luck');
-        // insight.c:1917 — wizard mode states a zero Luck explicitly.
-        if (_wizard() && !(u.uluck || 0)) enlLine('Your luck ', final ? 'was' : 'is', ' zero', '');
-        // insight.c:1934 — the live ^X reports whether prayer is safe.
-        if (!final) {
-            let pb = `${can_pray_quiet() ? '' : 'not '}safely pray`;
-            if (_wizard()) pb += ` (${u.ublesscnt ?? 0})`;
-            enlLine('You ', 'can ', pb, '');
-        }
-        // C ref: enlightenment() tail — "have been killed .../are dead" via
-        // u.umortality; the covered death path always has umortality === 1.
-        if (final) out(' You are dead.');
+        const _savedWin = ge.en_win, _savedMenu = ge.en_via_menu;
+        ge.en_win = create_nhwindow(NHW_MENU);
+        ge.en_via_menu = false;
+        attributes_enlightenment(0, final);
+        for (const ln of (_wins.get(ge.en_win)?.lines || [])) out(ln.text);
+        destroy_nhwindow(ge.en_win);
+        ge.en_win = _savedWin;
+        ge.en_via_menu = _savedMenu;
     }
 
     // ── Miscellaneous ──
@@ -524,7 +694,8 @@ export function enlightenment_lines(final = 0) {
     // C ref: enlightenment() — bones-level reminder, shown for BASIC mode in
     // wizard/explore/final; flags.bones defaults on and no session has visited
     // a bones level yet, so this is always the "didn't encounter any" form.
-    if (_wizard() || _discover() || final) {
+    // C ref: `(mode & BASICENLIGHTENMENT) != 0 && (wizard||discover||final)`.
+    if (basic && (_wizard() || _discover() || final)) {
         if (_wizard() || _discover())
             youAre(`running in ${_wizard() ? 'debug' : 'explore'} mode`);
         if (game.flags?.bones === false)
@@ -608,8 +779,17 @@ function weaponInsight(youAre, youHave, enlLine) {
     if (game.u?.twoweap) {
         youAre('wielding two weapons at once');
     } else {
-        const descr = weaponDescr(uwep);
-        youAre(`wielding ${uwep.quan === 1 || uwep.quan == null ? an(descr) : makeplural(descr)}`);
+        let descr = weapon_descr(uwep);
+        if (uwep.otyp === SHIELD_OF_REFLECTION) descr = shield_simple_name(uwep);
+        else if (is_wet_towel(uwep)) descr = 'wet towel';
+        // C ref: insight.c:1297 — a weapon whose skill class falls back to its
+        // object class ("food"/"armor"/"venom") reads as a generic category,
+        // e.g. "wielding some food" rather than naming the specific item.
+        if (strcmpi(descr, 'armor') === 0 || strcmpi(descr, 'food') === 0
+            || strcmpi(descr, 'venom') === 0)
+            youAre(`wielding some ${descr}`);
+        else
+            youAre(`wielding ${uwep.quan === 1 || uwep.quan == null ? an(descr) : objnam_makeplural(descr)}`);
     }
 
     const skName = weaponSkillName(uwep);
@@ -705,10 +885,6 @@ const SKILL_NAME_BY_NUM = {
     20: 'bow', 21: 'sling', 22: 'crossbow', 23: 'dart', 24: 'shuriken',
     25: 'boomerang', 26: 'whip', 27: 'unicorn horn',
 };
-// weapon_type() comes from js/weapon.js (weapon.c:1517).
-function weaponDescr(obj) {
-    return SKILL_NAME_BY_NUM[weapon_type(obj)] || obj.name || mkobjObjects?.[obj.otyp]?.name || 'weapon';
-}
 function weaponSkillName(obj) {
     return SKILL_NAME_BY_NUM[weapon_type(obj)] || null;
 }
@@ -730,8 +906,6 @@ function hungerWord(uhs) {
     return buf;
 }
 
-// C ref: hacklib.c — currency() pluralisation.
-function currency(n) { return n === 1 ? 'zorkmid' : 'zorkmids'; }
 
 // C ref: insight.c fmt_elapsed_time — "none" before any real_time accrues.
 function elapsedTime() { return 'none'; }
@@ -829,7 +1003,10 @@ function is_pname(m) { return ((MFLAGS2[m?.pmidx] ?? 0) & M2_PNAME) !== 0; }
 // C ref: insight.c:2769 dovanquished() — the #vanquished command.
 export async function dovanquished() {
     if (!vanquished_ntypes()) {
-        game._pending_message = 'No creatures have been vanquished.';
+        // C ref: pline() for this "none" case; its sibling dogenocided() right
+        // below already routes through update_topl() -- this raw write skipped
+        // the merge-or-page check, silently dropping a still-pending message.
+        await update_topl('No creatures have been vanquished.');
         return 0;
     }
     await list_vanquished_screen();
@@ -908,8 +1085,9 @@ function N_times(n) {
 
 // C ref: insight.c achieve_msg[] — one {llflag, msg} per you.h ACH_* index.
 // The eight rank entries (23..30) build their text from the role's rank title
-// at record time and ACH_MINE_PRIZE/ACH_SOKO_PRIZE append an identified item
-// name; neither form is reachable from this port, so both are omitted.
+// at record time (handled separately in record_achievement() below) and
+// ACH_MINE_PRIZE/ACH_SOKO_PRIZE append an identified item name; the latter
+// form isn't reachable from this port, so it's omitted.
 const ACHIEVE_MSG = {
     1: [LL_ACHIEVE, 'acquired the Bell of Opening'],
     2: [LL_ACHIEVE, 'entered Gehennom'],
@@ -946,6 +1124,17 @@ export function record_achievement(achidx) {
     if (u.uachieved.some((a) => Math.abs(a) === absidx)) return;
     u.uachieved.push(achidx);
     if (game.program_state_gameover) return;
+    if (absidx >= 23 && absidx <= 30 /* ACH_RNK1..ACH_RNK8, you.h */) {
+        // C ref: insight.c:2449 record_achievement() — rank text/flag isn't
+        // in achieve_msg[]'s static msg (role/gender-specific), built here.
+        // insight.c:57 achieve_msg[] gives RNK1..3 LL_MINORAC|LL_DUMP, RNK4..8
+        // LL_ACHIEVE.
+        const llflag = absidx <= 25 ? (LL_MINORAC | LL_DUMP) : LL_ACHIEVE;
+        const rankname = rank_of(rank_to_xlev(absidx - 22 /* ACH_RNK1 - 1 */),
+            game.urole?.mnum, achidx < 0);
+        livelog_printf(llflag, `attained the rank of ${rankname} (level ${u.ulevel})`);
+        return;
+    }
     const entry = ACHIEVE_MSG[absidx];
     if (!entry || !entry[1]) return;
     livelog_printf(entry[0], entry[1]);
@@ -1232,27 +1421,44 @@ export async function doconduct() {
 // trailing "--More--" right after the last line of the final page (an
 // NHW_MENU window parks its trailing morestr at the current row, not pinned
 // to 23 the way NHW_TEXT's is).
-export async function show_attributes_disclosure(final) {
-    const lines = enlightenment_lines(final);
-    const { renderWindowScreen, dismiss_invent_screen } = await import('./invent.js');
+export async function show_attributes_disclosure(final, basic = true) {
+    const lines = enlightenment_lines(final, basic);
+    const { renderWindowScreen, renderMenuLines, dismiss_invent_screen } =
+        await import('./invent.js');
     const disp = game.nhDisplay;
     const rows = disp?.rows ?? 24;
     const perPage = rows - 1; // 23 content lines; footer parked right after them
+    // C ref: wintty.c tty_end_menu() — cw->maxrow is nitems+1 for a single-page
+    // menu (npages<=1) but lmax+1 (== rows, always) for a multi-page one, so
+    // tty_display_nhwindow's `maxrow >= rows` full-screen-forcing test can only
+    // ever come out FALSE for a single, short page: a live MAGICENLIGHTENMENT
+    // popup (quaffed/zapped enlightenment, basic=false) is short enough to
+    // float as a corner menu over the still-visible map, exactly like any
+    // other NHW_MENU window (renderMenuLines) -- it never reaches this
+    // function's own multi-page path at all.  The end-of-game disclosure
+    // (final!=0, basic=true+MAGICENLIGHTENMENT) always exceeds one page, so it
+    // keeps going through the full-screen branch below unchanged.
+    const npages = Math.max(1, Math.ceil(lines.length / perPage));
     let i = 0;
     while (i < lines.length) {
         const take = Math.min(perPage, lines.length - i);
         const chunk = lines.slice(i, i + take);
         i += take;
-        renderWindowScreen(chunk, {
-            menu: false,
-            footer: '--More--',
-            footerRow: take,
-            // C ref: wintty.c dmore() — offset = (NHW_TEXT) ? 1 : 2; this is an
-            // NHW_MENU window, so the morestr lands one column further right
-            // than content lines (which start at column 0 here, offx==0).
-            footerCol: 1,
-            modal: 'enlightenment',
-        });
+        if (npages === 1 && take + 1 < rows) {
+            renderMenuLines(chunk.map((t) => ({ text: t })), null);
+        } else {
+            renderWindowScreen(chunk, {
+                menu: false,
+                footer: '--More--',
+                footerRow: take,
+                // C ref: wintty.c dmore() — offset = (NHW_TEXT) ? 1 : 2; this is
+                // an NHW_MENU window, so the morestr lands one column further
+                // right than content lines (which start at column 0 here,
+                // offx==0).
+                footerCol: 1,
+                modal: 'enlightenment',
+            });
+        }
         for (;;) {
             const key = await nhgetch();
             if (key === 27) { i = lines.length; break; } // ESC cancels the rest
@@ -1310,13 +1516,12 @@ import { NUMMONS } from './disprng.js';
 import { def_monsyms } from './symbols.js';
 import { enc_stat, botl_score } from './botl.js';
 import { is_pool, is_lava, is_pool_or_lava } from './dbridge.js';
-import { AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_ACID, AD_DGST,
-         dmgtype } from './monattk_data.js';
+import { AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_ACID, AD_DGST, AD_MAGM,
+         AD_DRST, AD_DRLI, dmgtype } from './monattk_data.js';
 import { surface, Is_bigroom } from './dungeon.js';
 import { trap_explanation } from './trap.js';
 import { t_at } from './mkroom.js';
-import { fingers_or_gloves, suit_simple_name, shield_simple_name,
-         stuck_ring } from './do_wear.js';
+import { fingers_or_gloves, stuck_ring } from './do_wear.js';
 import { which_armor } from './worn.js';
 import { weapon_descr, is_wet_towel } from './weapon.js';
 import { can_advance_pub, P_NAME } from './enhance.js';
@@ -1437,9 +1642,7 @@ function ordin(n) {
 }
 // C ref: hacklib.c the() / objnam.c the() — "the <foo>" unless already proper.
 function the_str(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
-// C ref: hacklib.c s_suffix() — possessive.  Five other modules keep a local
-// copy of this (js/invent.js:1369, js/eat.js:1915, ...); same convention here.
-function s_suffix(s) { return /s$/.test(s) ? `${s}'` : `${s}'s`; }
+
 // C ref: objnam.c simpleonames(obj) — the unadorned object-type name.
 // js/invent.js:516 owns the real one but keeps it module-private; the fix is to
 // export that, not to grow this.
@@ -2802,15 +3005,32 @@ function u_adtyp_resistance_obj(dmgtyp) {
         return 90;
     return 0;
 }
-// C ref: zap.c:5722 item_what(dmgtyp) — wizard mode only; names the worn item
-// that protects inventory.  The non-wizard answer (the only one any covered
-// session can see) is the empty string.
+// C ref: zap.c:5722 item_what(dmgtyp) — wizard mode only; names the WORN SLOT
+// that protects inventory, via the same *_simple_name() family the "take off
+// your %s" messages use (e.g. a worn blue dragon scale mail reads "dragon
+// mail", not "blue dragon scale mail") — " by your <name>", not "(from your
+// <name>)".  what_gives(prop) finds the granting object; which slot it
+// occupies picks the naming function, mirroring C's `xtrinsic & W_ARMx` chain
+// since this port has no xtrinsic bitmask to switch on directly.
 function item_what(dmgtyp) {
     if (!_wizard())
         return '';
     const prop = adtyp_to_prop(dmgtyp);
     const o = prop ? what_gives(prop) : null;
-    return o ? ` (from your ${simpleonames(o)})` : '';
+    if (!o) return '';
+    let what;
+    if (o === game.uarmc) what = cloak_simple_name(o);
+    else if (o === game.uarm) what = suit_simple_name(o);
+    else if (o === game.uarmu) what = shirt_simple_name(o);
+    else if (o === game.uarmh) what = helm_simple_name(o);
+    else if (o === game.uarmg) what = gloves_simple_name(o);
+    else if (o === game.uarmf) what = boots_simple_name(o);
+    else if (o === game.uarms) what = shield_simple_name(o);
+    else if (o === game.uamul || o === game.ublindf) what = simpleonames(o);
+    else if (o === game.uleft || o === game.uright) what = simpleonames(o);
+    else if (o === game.uwep) what = simpleonames(o);
+    else what = simpleonames(o); /* carried artifact, not in a named slot */
+    return what ? ` by your ${what}` : '';
 }
 
 // ── insight.c:1486 attributes_enlightenment() ──────────────────────────────
@@ -2942,7 +3162,11 @@ export function attributes_enlightenment(_unused_mode, final) {
         buf = strsubst(buf, ' because of ', ' if not for ');
         enl_msg(You_, 'could be', 'could have been', ' clairvoyant', buf, final);
     }
-    if (Prop(INFRAVISION))
+    // Infravision() (js/vision.js) covers racial infravision (dwarf/orc/elf),
+    // which this port tracks outside u.uprops, so Prop(INFRAVISION) alone
+    // misses it (regression seed0006 step 114: a dwarf's "You had infravision"
+    // line at end-of-game disclosure went missing).
+    if (Infravision() || Prop(INFRAVISION))
         you_have('infravision', from_what_p(INFRAVISION), final);
     if (Prop(DETECT_MONSTERS)) {
         buf = 'sensing the presence of monsters';
@@ -3000,8 +3224,12 @@ export function attributes_enlightenment(_unused_mode, final) {
         enl_msg('You cause', '', 'd', ' conflict', from_what_p(CONFLICT), final);
 
     /*** Transportation ***/
-    if (Prop(JUMPING))
-        you_can('jump', from_what_p(JUMPING), final);
+    // hasJumping()/jumpingFromWhat() (above) fold in is_innate(JUMPING)'s
+    // Role_if(PM_KNIGHT) exception — a knight's innate jumping has no
+    // extrinsic/uprops source for Prop()/from_what_p() to find (regression
+    // seed4500 step 1809: "You can jump intrinsically" went missing).
+    if (hasJumping())
+        you_can('jump', jumpingFromWhat(), final);
     if (Prop(TELEPORT))
         you_can('teleport', from_what_p(TELEPORT), final);
     if (Prop(TELEPORT_CONTROL))

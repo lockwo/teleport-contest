@@ -10,8 +10,9 @@
 // split (getlin shell there, pure logic in the C-file-matching module here).
 
 import { game } from './gstate.js';
+import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d } from './rng.js';
-import { update_topl, newsym, see_monsters } from './display.js';
+import { update_topl, urgent_topl, newsym, see_monsters, y_n } from './display.js';
 // C ref: win/tty/topl.c pline()/update_topl() — this module always uses
 // update_topl() (never the simpler pline()) because every message here can be
 // immediately followed by another one from the same command (polymon()'s
@@ -32,7 +33,7 @@ import { place_object, WEAPON_CLASS, TOOL_CLASS, ARMOR_CLASS, FOOD_CLASS,
     GEM_CLASS, ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
     RING_CLASS, AMULET_CLASS, ILLOBJ_CLASS } from './mkobj.js';
 import { makesingular } from './objnam.js';
-import { newuexp, newhp, newpw, adjabil, update_rank, rank_of } from './exper.js';
+import { rndexp, newhp, newpw, adjabil, update_rank, rank_of } from './exper.js';
 import { newuhs } from './eat.js';
 import { monster_by_pmidx, name_to_pmidx, golemhp_js as golemhp,
     is_home_elemental, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
@@ -50,7 +51,7 @@ import { ARM, EYE, FINGER, FINGERTIP, FOOT, HAND, HANDED, HEAD, LEG, TOE,
 import {
     is_hider_flag, hides_under_flag, is_were_flag, likes_gems_flag,
     strongmonst_flag, is_male_flag, is_flyer_flag, mflags1_of, M1_CLING,
-    M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS,
+    M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS, M1_AMORPHOUS, M1_UNSOLID,
     lays_eggs_flag, mindless, msound_of, is_swimmer_flag,
     is_female_flag, is_neuter_flag, is_orc_flag, is_elf_flag, is_dwarf_flag,
     is_gnome_flag, is_giant_flag, is_undead_flag, nohands, humanoid,
@@ -58,8 +59,9 @@ import {
     M2_PNAME,
 } from './monflags_data.js';
 import { attacktype, mattk_of, AT_BREA, AT_SPIT, AT_GAZE, AT_CLAW,
-    AD_MAGM, AD_CONF, AD_FIRE } from './monattk_data.js';
-import { monsterList, DEADMONSTER, set_ustuck } from './mon.js';
+    AD_MAGM, AD_CONF, AD_FIRE, AD_ELEC } from './monattk_data.js';
+import { monsterList, DEADMONSTER, set_ustuck, were_beastie } from './mon.js';
+import { monster_nearby } from './cmd.js';
 import { races, roles, genders } from './role.js';
 import { Blind } from './vision.js';
 import { surface, In_hell } from './dungeon.js';
@@ -601,9 +603,9 @@ async function drop_weapon(alone) {
             await pline(`You find you must drop ${theYour} ${which}!`);
         }
         const otmp = game.uwep;
-        game.uwep = null;
-        otmp.owornmask = 0;
-        await dropp(otmp);
+        const { uwepgone } = await import('./wield.js');
+        await uwepgone();
+        if (!otmp.in_use) await dropp(otmp);
     }
 }
 
@@ -624,7 +626,8 @@ async function drop_weapon(alone) {
 // (BFlying|I_SPECIAL, and its disp.botl), steed_vs_stealth() and polysense().
 export function set_uasmon() {
     const u = game.u;
-    const mdat = monster_by_pmidx(u.umonnum);
+    u.Upolyd = u.umonnum !== u.umonster;
+    const mdat = youmonst_data_pub();
     // C ref: mondata.c:13 set_mon_data() — leftover movement points are prorated
     // when the new form is SLOWER.  Human->gnome takes u.umovement 12 -> 6, which
     // changes how many turns every later hero command costs.
@@ -637,7 +640,6 @@ export function set_uasmon() {
             u.umovement = Math.trunc((u.umovement * new_speed) / old_speed);
     }
     u.data = mdat;
-    u.Upolyd = u.umonnum !== u.umonster;
 
     u.uprops = u.uprops || {};
     // C ref: polyself.c:99-100 PROPSET(FLYING, (is_flyer(mdat) && !is_floater(mdat))).
@@ -849,6 +851,12 @@ export async function polymon(mntmp) {
     newsym(u.ux, u.uy);
 
     find_ac();
+    if (u.uball && ((mflags1_of(mdatNew) & (M1_AMORPHOUS | M1_UNSOLID))
+                    || is_whirly(mdatNew))) {
+        await pline('You slip out of the iron chain.');
+        const { unpunish } = await import('./read.js');
+        unpunish();
+    }
     game.botl = true;
     // C ref: polyself.c:1016-1018 — vision_full_recalc + see_monsters().  A
     // blind hero keeps a stale monster glyph on screen until something
@@ -889,17 +897,13 @@ export async function newman() {
     const oldlvl = u.ulevel || 1;
     let newlvl = oldlvl + rn1(5, -2);
     if (newlvl > 127 || newlvl < 1) {
-        // C ref: polyself.c:344 `goto dead` — urgent_pline("Your new form
-        // doesn't seem healthy enough to survive.") + done(DIED).  NOT a
-        // clamp: C SKIPS the whole rest of newman() (adjabil, rndexp,
-        // redist_attr, per-level newhp()/newpw(), rn1(500,500)), so every RNG
-        // draw below is wrong on this arm as well as the outcome.
-        //
-        // DEFERRED, and it is REACHABLE: rn1(5,-2) is {-2..+2}, so any hero at
-        // experience level 1 or 2 hits it.  Porting it needs done(DIED) from
-        // end.js, which this module cannot call without dragging the whole
-        // death/bones path in; the same gap blocks the u.uhp<=0 arm below.
-        newlvl = 1;
+        // C ref: polyself.c:343-344 `goto dead` — jumps straight past
+        // u.ulevel's own assignment (line 358) and every reroll below
+        // (adjabil, rndexp, redist_attr, per-level newhp()/newpw(),
+        // rn1(500,500)); the hero's level/HP/attributes are left exactly as
+        // they were ("old level is still intact (in case of lifesaving)").
+        await newman_dead();
+        return;
     }
     const MAXULEV = 30;
     if (newlvl > MAXULEV) newlvl = MAXULEV;
@@ -919,17 +923,7 @@ export async function newman() {
 
     await adjabil(oldlvl, u.ulevel, (msg) => pline(msg));
 
-    // rndexp(FALSE): random XP within the OLD level's threshold band (u.ulevel
-    // at this point is the NEW level; rndexp reads u.ulevel internally in C,
-    // but that call happens before oldlvl's HP/PW rerolls touch u.ulevel
-    // again, so it uses the just-set newlvl there — mirror that: min/max
-    // bracket the NEW level, not the old one).
-    {
-        const minexp = (u.ulevel === 1) ? 0 : newuexp(u.ulevel - 1);
-        const maxexp = newuexp(u.ulevel);
-        const diff = maxexp - minexp;
-        u.uexp = minexp + rn2(diff);
-    }
+    u.uexp = rndexp(false);
 
     redist_attr();
 
@@ -952,6 +946,19 @@ export async function newman() {
 
     u.uhunger = rn1(500, 500);
 
+    // C ref: polyself.c:419-435 — a non-positive rerolled HP either survives
+    // at 1 HP (Polymorph_control, "even when Stunned || Unaware") or falls
+    // into the same dead: arm the out-of-range newlvl check above uses,
+    // except u.ulevel/HP HAVE already been rerolled here (they stay as-is).
+    if (u.uhp <= 0) {
+        if (Polymorph_control()) {
+            if (u.uhp <= 0) u.uhp = 1;
+        } else {
+            await newman_dead();
+            return;
+        }
+    }
+
     newuhs(false);
     update_rank();
 
@@ -967,10 +974,28 @@ export async function newman() {
     await encumber_msg();
 }
 
+// C ref: polyself.c:424-433, the `dead:` label newman() falls into either
+// straight from the out-of-range newlvl check or from a non-positive
+// rerolled HP without Polymorph_control.  done(DIED) is C's own done(), so a
+// declined wizard/explore-mode "Die?" (or an amulet of life saving) survives
+// it exactly the way any other death does; C's comment "must have been
+// life-saved to get here" is why only newuhs()+encumber_msg() follow — no
+// polyman() "You feel like a new %s!", because the level/form roll never
+// took effect.
+async function newman_dead() {
+    await urgent_topl("Your new form doesn't seem healthy enough to survive.");
+    const { done, DIED } = await import('./end.js');
+    game._killer_name = 'unsuccessful polymorph';
+    await done(DIED);
+    newuhs(false);
+    await encumber_msg();
+}
+
 // C ref: polyself.c polyman(fmt, arg) — the shared "return to human form"
 // tail used by both newman() and (eventually) rehumanize().
 async function polyman(fmt, arg) {
     const u = game.u;
+    const was_blind = Blind();
     if (u.Upolyd) {
         u.acurr = { a: (u.macurr.a || []).slice() };
         u.amax = { a: (u.mamax.a || []).slice() };
@@ -989,7 +1014,11 @@ async function polyman(fmt, arg) {
 
     newsym(u.ux, u.uy);
 
-    await pline(fmt.replace('%s', arg));
+    // C's rehumanize() uses urgent_pline here.  It must override WIN_STOP when
+    // the fatal form damage was acknowledged with ESC, otherwise the return
+    // form (and the following sight-restoration message) disappears.
+    await urgent_topl(fmt.replace('%s', arg));
+    if (was_blind && !Blind()) await update_topl('You can see again.');
 }
 
 
@@ -1301,15 +1330,6 @@ function Stunned() {
     const u = game.u;
     return ((u?.uprops?.Stun | 0) > 0) || ((u?.uprops?.HStun | 0) > 0) || !!u?.Stunned;
 }
-// C ref: hack.c losehp(dmg, ...) — the same reduction every other file-local
-// losehp() in this port makes (the done(DIED) half needs end.js).
-function losehp_poly(dmg) {
-    const u = game.u;
-    if (!u || dmg <= 0) return;
-    u.uhp = (u.uhp ?? 0) - dmg;
-    if (u.uhp < 0) u.uhp = 0;
-    game.botl = true;
-}
 // C ref: mondata.h your_race(ptr) == (mflags2 & gu.urace.selfmask).
 const RACE_SELFMASK = { human: M2_HUMAN, elven: M2_ELF, dwarven: M2_DWARF,
     gnomish: M2_GNOME, orcish: M2_ORC };
@@ -1348,6 +1368,89 @@ export async function rehumanize() {
     game.botl = true;
     game.vision_full_recalc = 1;
     await encumber_msg();
+}
+
+// C ref: were.c:230 set_ulycn(which) — lycanthropy is being caught or cured;
+// no shape change happens here (that's you_were()/you_unwere() below).
+// `which` is NON_PM to cure, or the ANIMAL-form pmidx (e.g. PM_WEREWOLF) to
+// infect.  set_uasmon() re-derives every form-based intrinsic (DRAIN_RES
+// among them, via resists_drli()'s u.ulycn test) from the (unchanged)
+// u.umonnum, matching C exactly even though this port's set_uasmon() only
+// tracks a handful of those bits today.
+export function set_ulycn(which) {
+    const u = game.u;
+    if (!u) return;
+    u.ulycn = which;
+    set_uasmon();
+}
+
+// C ref: flag.h PARANOID_WERECHANGE (0x0100) / ParanoidWerechange.  Off by
+// default (flags.paranoia_bits starts as PRAY|SWIM|TRAP), so accepting a
+// were-change prompt normally only needs a single 'y'.
+function ParanoidWerechange() {
+    return (((game.flags?.paranoia_bits) | 0) & 0x0100) !== 0;
+}
+// C ref: cmd.c paranoid_query(be_paranoid, prompt) == paranoid_ynq(...,
+// accept_q=FALSE) === 'y'.  Same shape as eat.js's private copy; this port
+// keeps one per file that needs it rather than threading an export through
+// every combat/effect module (see eat.js's own note on this duplication).
+async function paranoid_query(be_paranoid, prompt) {
+    if (!be_paranoid) return (await y_n(prompt, 'yn\x1b', 'n')) === 'y';
+    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
+    const paranoidConfirm = (((game.flags?.paranoia_bits) | 0) & 0x0001) !== 0;
+    const responsetype = paranoidConfirm ? '[yes|no]' : '[yes|n] (n)';
+    let promptprefix = '', trylimit = 6, ans, c = 'n';
+    do {
+        const raw = await hooked_tty_getlin(`${promptprefix}${prompt} ${responsetype}`, null);
+        ans = String(raw == null ? '\x1b' : raw).replace(/\s+/g, ' ').trim();
+        if (ans.toLowerCase() === 'yes') { c = 'y'; break; }
+        if (ans[0] === '\x1b') { c = 'q'; break; }
+        promptprefix = '"Yes" or "No": ';
+    } while (paranoidConfirm && ans.toLowerCase() !== 'no' && --trylimit);
+    return c === 'y';
+}
+
+// C ref: were.c:191 you_were(void) — the hero (currently human-form
+// lycanthrope) shifts into their animal were-form.  Draws no RNG of its own;
+// the only thing that can consume input is the confirmation prompt under
+// Polymorph_control.
+export async function you_were() {
+    const u = game.u;
+    if (!u) return;
+    if (Unchanging() || u.umonnum === u.ulycn) return;
+    const controllable_poly = Polymorph_control() && !(Stunned() || Unaware());
+    if (controllable_poly) {
+        // C: `pmname(...) + 4` skips the "were" prefix to name just the beast.
+        const beastPtr = monster_by_pmidx(u.ulycn);
+        const beastName = (beastPtr?.name || '').slice(4) || 'creature';
+        if (!(await paranoid_query(ParanoidWerechange(),
+                `Do you want to change into ${an(beastName)}?`)))
+            return;
+    } else if (monster_nearby()) {
+        return;
+    }
+    game.were_changes = (game.were_changes || 0) + 1;
+    await polymon(u.ulycn);
+}
+
+// C ref: were.c:212 you_unwere(purify) — leave animal were-form, or (purify)
+// cure lycanthropy outright (holy water, wolfsbane, prayer).
+export async function you_unwere(purify) {
+    const u = game.u;
+    if (!u) return;
+    if (purify) {
+        await pline('You feel purified.');
+        set_ulycn(NON_PM);                       // C: cure lycanthropy
+    }
+    const controllable_poly = Polymorph_control() && !(Stunned() || Unaware());
+    if (!Unchanging() && is_were_flag(u.data)
+        && !monster_nearby()
+        && (!controllable_poly
+            || !(await paranoid_query(ParanoidWerechange(), 'Remain in beast form?')))) {
+        await rehumanize();
+    } else if (is_were_flag(u.data) && !u.mtimedone) {
+        u.mtimedone = rn1(200, 200);              // 40% of initial were change
+    }
 }
 
 // C ref: polyself.c:729-741, the `made_change:` label every arm converges on.
@@ -1393,9 +1496,11 @@ async function do_merge_dragon_armor(mntmp) {
 //   rn2(5)   polyself.c:712  the "newman() instead" roll, skipped for
 //                            forcecontrol (wizard #polyself) but NOT for a
 //                            ring of polymorph control
-// DEFERRED (no supporting state in this port): the vampire-shifter and
-// lycanthrope arms (u.ulycn / youmonst.cham are never set), retouch_equipment,
-// selftouch and polysense.
+// DEFERRED (no supporting state in this port): the vampire-shifter arm
+// (youmonst.cham is never set to a vampire-form value), retouch_equipment,
+// selftouch and polysense.  The lycanthrope arm below IS wired: were.c
+// set_ulycn() (js/polyself.js) now sets a real u.ulycn from eat.c's
+// were-corpse effect and uhitm.c's AD_WERE bite.
 export async function polyself(psflags) {
     const u = game.u;
     if (!u) return;
@@ -1417,7 +1522,9 @@ export async function polyself(psflags) {
     if (!Polymorph_control() && !forcecontrol && !draconian && !iswere && !isvamp) {
         if (rn2(20) > acurr_eff(A_CON)) {
             await pline('You shudder for a moment.');
-            losehp_poly(rnd(30));
+            const { losehp_do } = await import('./do.js');
+            await losehp_do(rnd(30), 'system shock');
+            if (game.program_state?.gameover) return;
             exercise(A_CON, false);
             return;
         }
@@ -1512,6 +1619,18 @@ export async function polyself(psflags) {
             await polyself_made_change(old_light);
             return;
         }
+    } else if (iswere) {
+        // C ref: polyself.c:664-669 do_shift — an uncontrolled poly (system
+        // shock, wand/potion/trap of polymorph, mind flayer digestion) on a
+        // lycanthrope shifts straight to (or away from) their own were-form:
+        // no random monster is rolled, no rn2(5)/newman() gate runs, and no
+        // further RNG is drawn at all.
+        if (u.Upolyd && were_beastie(mntmp) !== u.ulycn) mntmp = PM_HUMAN;
+        else mntmp = u.ulycn;
+        if (mntmp === PM_HUMAN) await newman();
+        else await polymon(mntmp);
+        await polyself_made_change(old_light);
+        return;
     } else if (draconian) {
         /* special change that doesn't require polyok() */
         const dragon = armor_to_dragon(game.uarm.otyp);
@@ -1618,8 +1737,8 @@ async function doremove() {
         await pline('You are not chained to anything!');
         return ECMD_OK;
     }
-    // unpunish(): invent.js's stub is a no-op and is not exported; a Punished
-    // hero never reaches here in any covered session.  Deferred.
+    const { unpunish } = await import('./read.js');
+    unpunish();
     return ECMD_TIME;
 }
 
@@ -1791,11 +1910,6 @@ function mdistu(mtmp) {
     const u = game.u;
     const dx = mtmp.mx - (u?.ux ?? 0), dy = mtmp.my - (u?.uy ?? 0);
     return dx * dx + dy * dy;
-}
-// C ref: hacklib.c s_suffix().
-function s_suffix(s) {
-    if (/s$/.test(s)) return `${s}'`;
-    return `${s}'s`;
 }
 
 // C ref: polyself.c dospinweb() — #monster for a spider.  The three refusal
@@ -2231,4 +2345,21 @@ export function udeadinside() {
         : !weirdnonliving_poly(ptr)
             ? 'condemned'                       /* undead plus manes */
             : 'empty';                          /* golems plus vortices */
+}
+
+// C ref: polyself.c ugolemeffects().
+export async function ugolemeffects(damtype, dam) {
+    const u = game.u;
+    const ptr = youmonst_data_pub();
+    let heal = 0;
+    if (damtype === AD_ELEC && ptr?.name === 'flesh golem')
+        heal = Math.trunc((dam + 5) / 6);
+    else if (damtype === AD_FIRE && ptr?.name === 'iron golem')
+        heal = dam;
+    if (heal && u.mh < u.mhmax) {
+        u.mh = Math.min(u.mh + heal, u.mhmax);
+        game.botl = true;
+        await pline('Strangely, you feel better than before.');
+        exercise(A_STR, true);
+    }
 }
