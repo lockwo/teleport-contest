@@ -73,14 +73,11 @@ function is_ndemon(ptr) {
 function is_dlord(ptr) { return is_demon(ptr) && is_lord(ptr); }
 function is_dprince(ptr) { return is_demon(ptr) && is_prince(ptr); }
 // C ref: priest.c:280 mon_aligntyp(mon) — the shrine/minion alignment when the
-// monster carries one, else its species alignment, collapsed to the three
-// aligntyp values.  js/artifact.js:534 and js/apply.js:237 both hold same-named
-// private copies; artifact.js's is a DIFFERENT function (it answers the hero's
-// alignment for any tame or peaceful monster) and apply.js's drops the
-// priest/minion arms, so neither can serve is_lminion().
-function mon_aligntyp(mon) {
-    const algn = mon.ispriest ? EPRI(mon)?.shralign
-               : mon.isminion ? EMIN(mon)?.min_align
+// monster carries one, else its species alignment, collapsed to the three types.
+export function mon_aligntyp(mon) {
+    // priestini/makemon use flat records, newepri/newemin also populate mextra.
+    const algn = mon.ispriest ? (EPRI(mon) ?? mon.epri)?.shralign
+               : mon.isminion ? (EMIN(mon) ?? mon.emin)?.min_align
                               : mon.data?.maligntyp;
     if (algn === A_NONE)
         return A_NONE; /* negative but differs from chaotic */

@@ -37,11 +37,10 @@ import { rn2, rnd, rn1, d } from './rng.js';
 import { isok, depth, s_suffix } from './hacklib.js';
 import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
     M1_NEEDPICK, M1_BREATHLESS, M1_NOHEAD, M1_ACID, M1_WALLWALK, M1_AMORPHOUS,
-    M1_UNSOLID, M1_NOEYES, M1_NOLIMBS, M1_NOHANDS, M1_NOTAKE,
-    strongmonst_flag as strongmonst,
+    M1_UNSOLID, M1_NOEYES, M1_NOLIMBS,
     M2_JEWELS, M2_UNDEAD, M2_MERC, M2_WERE } from './monflags_data.js';
 import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
-    AT_ENGL, AD_FIRE, AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
+    AD_FIRE, AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
 import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
     objects as OBJECTS, place_object } from './mkobj.js';
 import { monster_by_pmidx, makemon, little_to_big, name_to_pmidx } from './makemon.js';
@@ -57,7 +56,7 @@ import { onscary, m_next2u, m_lined_up, m_carrying, mon_would_take_item,
     objectsAt, mon_knows_traps, mon_learns_traps, mon_mintrap,
     Trap_Killed_Mon } from './monmove.js';
 // base_mmove() is likewise a hoisted `export function`, so the cycle is safe.
-import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver }
+import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_carry }
     from './mon.js';
 // C ref: pline() -> vpline() -> update_topl(): a new topline message shows
 // --More-- for the UNACKNOWLEDGED previous one first (or appends to it when both
@@ -138,15 +137,12 @@ function OT() {
 const RAY = 3;
 // C ref: objclass.h oc_class values / weapon.h skill ids.
 const WEAPON_CLASS = 2, AMULET_CLASS = 5, TOOL_CLASS = 6, FOOD_CLASS = 7,
-    POTION_CLASS = 8, SCROLL_CLASS = 9, WAND_CLASS = 11, COIN_CLASS = 12,
-    GEM_CLASS = 13, ROCK_CLASS = 14;
-// C ref: weight.h MAX_CARR_CAP / WT_HUMAN, monflag.h MZ_HUMAN (== MZ_MEDIUM).
-const MAX_CARR_CAP = 1000, WT_HUMAN = 1450, MZ_HUMAN = 2;
+    POTION_CLASS = 8, SCROLL_CLASS = 9, WAND_CLASS = 11;
 const P_DAGGER = 1, P_KNIFE = 2;
 // C ref: objclass.h material enum — SILVER is 14 (10 is DRAGON_HIDE).
 const MAT_SILVER = 14;
 // C ref: defsym.h MONSYM() indices (permonst.mcls).
-const S_EYE = 5, S_GHOST = 54, S_KOP = 37, S_NYMPH_MCLS = 14, S_UNICORN = 21,
+const S_EYE = 5, S_GHOST = 54, S_KOP = 37, S_UNICORN = 21,
     S_LIGHT = 25, S_VORTEX = 22, S_EEL = 57, S_GOLEM = 55, S_DRAGON = 30;
 // C ref: monflag.h MS_SILENT / MS_BUZZ.
 const MS_SILENT = 0, MS_BUZZ = 10;
@@ -2222,7 +2218,7 @@ async function mloot_container(mon, container, vismon) {
         /* take xobj out, check whether it can be carried, and put it back if
            it can't be (so its weight isn't counted twice) */
         container.cobj.splice(nitems, 1);
-        if (mon_can_carry(mon, xobj)) {
+        if (can_carry(mon, xobj)) {
             if (vismon) {
                 if (howfar > 2)
                     await update_topl(`${Monnam(mon)} rummages through ${contnr_nam}.`);
@@ -2244,55 +2240,6 @@ async function mloot_container(mon, container, vismon) {
         }
     }
     return res;
-}
-// C ref: mon.c can_carry(mon, obj) — js/mon.js owns the real one; import it
-// lazily through the shared export so the cycle stays safe.
-function mon_can_carry(mon, obj) {
-    const mdat = mon?.data;
-    if (!mdat) return false;
-    if ((mflags1_of(mdat) & M1_NOTAKE) !== 0) return false;
-    // C's can_touch_safely() (gloves vs a petrifying corpse) is not modelled.
-    const iquan = obj.quan || 1;
-    // A handless monster can still take ONE item; C returns early with 1 here,
-    // bypassing the weight check entirely.
-    if (iquan > 1 && (mflags1_of(mdat) & M1_NOHANDS) !== 0
-        && !attacktype(mdat, AT_ENGL)
-        && !(mdat.mcls === S_DRAGON
-             && (obj.oclass === COIN_CLASS || obj.oclass === GEM_CLASS)))
-        return true;
-    if (mon === game.u?.usteed) return false;
-    if (mon.isshk) return true;                 /* no limit */
-    if (mon.mpeaceful && !mon.mtame) return false;
-    if (throws_rocks(mdat) && obj.otyp === BOULDER) return true;
-    if (mdat.mcls === S_NYMPH_MCLS) return obj.oclass !== ROCK_CLASS;
-    return curr_mon_load(mon) + obj_weight(obj) <= max_load(mon);
-}
-function obj_weight(o) {
-    return (o?.owt != null) ? (o.owt | 0)
-        : (OBJECTS[o?.otyp]?.oc_weight ?? 0) * (o?.quan || 1);
-}
-// C ref: mon.c curr_mon_load(mtmp).
-function curr_mon_load(mon) {
-    let load = 0;
-    for (const o of (mon.minvent || []))
-        if (o.otyp !== BOULDER || !throws_rocks(mon.data)) load += obj_weight(o);
-    return load;
-}
-// C ref: mon.c max_mon_load(mtmp).  The old `(msize + 1) * 200` was a guess
-// with no C counterpart: C scales MAX_CARR_CAP by the monster's corpse weight
-// (or by msize when it has none) and halves the result for a non-strong
-// monster, so e.g. a human's cap is 500, not 600.
-function max_load(mon) {
-    const mdat = mon?.data;
-    const strong = strongmonst(mdat);
-    const cwt = mdat?.cwt | 0;
-    let maxload;
-    if (!cwt) maxload = Math.trunc((MAX_CARR_CAP * (mdat?.msize | 0)) / MZ_HUMAN);
-    else if (!strong || cwt > WT_HUMAN)
-        maxload = Math.trunc((MAX_CARR_CAP * cwt) / WT_HUMAN);
-    else maxload = MAX_CARR_CAP;
-    if (!strong) maxload = Math.trunc(maxload / 2);
-    return maxload < 1 ? 1 : maxload;
 }
 
 export async function use_misc(mtmp) {

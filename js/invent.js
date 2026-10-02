@@ -16,6 +16,7 @@ import { cansee, Blind as Blind_for_wear } from './vision.js';
 import { distmin, depth as depth_of_level } from './hacklib.js';
 import { surface } from './dungeon.js';
 import { mmove_of } from './mon.js';
+import { touch_artifact_monster } from './artifact.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE, CLR_GRAY, NO_COLOR } from './terminal.js';
 
@@ -359,9 +360,9 @@ function has_omid(_obj) { return false; }
 function has_omailcmd(_obj) { return false; }
 function OMAILCMD(obj) { return obj?.omailcmd || ''; }
 // C ref: o_init.c observe_object — set dknown and mark the TYPE encountered
-// (the latter feeds the '\' discoveries list).  Delegates the encountered
-// bookkeeping to o_init.js so the discovery state lives in one place.
-function observe_object(obj) { if (obj) { obj.dknown = 1; disco_observe_object(obj); } }
+// (the latter feeds the '\' discoveries list); o_init.js owns both, including
+// the Hallucination guard.
+function observe_object(obj) { if (obj) disco_observe_object(obj); }
 // C ref: objnam.c xname_flags():627 `if (!Blind && !gd.distantname)
 // observe_object(obj)` — every name built through xname()/doname() observes
 // the object, but ONLY when the hero can see; naming one while blind must not
@@ -1158,12 +1159,13 @@ function losehp_invent(n) {
 // rn2(4) at artifact.c:945 under the same short-circuit conditions as C, and —
 // when that lands — the blast's d(Antimagic ? 2 : 4, self_willed ? 10 : 4)
 // damage roll plus the silver rnd(10) bonus, which are RNG draws C makes and
-// no earlier port made.  Only the hero path (mon === &youmonst) is modelled.
-export function touch_artifact(obj, _mon) {
+// no earlier port made. Monster checks use the shared synchronous predicate.
+export function touch_artifact(obj, mon) {
+    if (mon && mon !== game.u && mon !== game.youmonst)
+        return !!touch_artifact_monster(obj, mon);
     const m = obj && obj.oartifact;
     const oart = m && ARTI_TOUCH_PROPS[m];
     if (!oart) return true; // ART_NONARTIFACT
-    // Only hero touches are exercised; treat mon as the hero (yours = true).
     const yours = true;
     const u = game.u;
     const ualignType = u?.ualign?.type ?? 0;
@@ -6781,7 +6783,10 @@ async function throwit(otmp, skillsnap, wep_mask) {
     // C ref: dothrow.c throwit():1838 stackobj(obj) after place_object() —
     // a thrown apple merges into an identical pile already on that square.
     stackobj(otmp);
-    newsym(land.x, land.y);
+    // C ref: dothrow.c:1841-1842. The landing square is redrawn only when the
+    // hero can see it (an unseen square holding a warned monster would
+    // otherwise redraw its warning glyph).
+    if (cansee(land.x, land.y)) newsym(land.x, land.y);
     return ECMD_TIME;
 }
 
@@ -8892,9 +8897,13 @@ export async function spell_menu(prompt, nspells, book, meta) {
     // row is cleared from offx to offx+maxcol before the text is written, so a
     // short row like "(end)" hides the map beneath instead of letting it show.
     const winRight = Math.min(offx + maxcol, 80);
+    // C ref: wintty.c process_menu_window() — the window's own offx is one
+    // column LEFT of the text (tty_curs(window,1,line) + cl_end() + putchar(' ')),
+    // so that column is blanked too; same rule as the dovspell menu above.
+    const winLeft = Math.max(0, offx - 1);
     const totalRows = 3 + itemLines.length + 1;
     for (let r = 0; r < totalRows; r++)
-        for (let c = offx; c < winRight; c++)
+        for (let c = winLeft; c < winRight; c++)
             display.setCell(c, r, ' ', NO_COLOR, 0);
     let row = 0;
     drawHeading(prompt, row++);

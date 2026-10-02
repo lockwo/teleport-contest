@@ -25,6 +25,7 @@ import {
     SET_LIT_NOCHANGE, bigrm_get_location_dry, bigrm_level_init_solidfill,
     bigrm_load_map, bigrm_wallification, flip_level, gx, gy, percent, reset_xystart_size,
     selection_match, set_levltyp_lit, shuffle, splev_map_mark, splev_mkstairs_at,
+    LOC_DRY, good_stair_loc, splev_get_location_rnd,
 } from '../sp_lev.js';
 
 // des.* coordinates are relative to the last des.map()'s origin; get_location()
@@ -219,14 +220,14 @@ function bigrm_wallify_map(x1, y1, x2, y2) {
     }
 }
 
-// C ref: sp_lev.c l_create_stairway() with no coords -> get_location DRY
-// random placement (one or more rn2(xsize)/rn2(ysize) pairs) -> mkstairs().
+// C ref: sp_lev.c l_create_stairway() uses good_stair_loc for random
+// coordinates, then mkstairs(). The callback replaces the DRY predicate.
 // The hand-rolled mkstairs() tail that used to live here registered the stair
 // on a plain ARRAY; every consumer walks the singly-linked gs.stairs chain, so
 // the Big Room's stairs were invisible to all of them (and u_on_upstairs() ->
 // stairway_find_special_dir() threw on the array's absent .tolev).
 function bigrm_stair(up) {
-    const c = bigrm_get_location_dry();
+    const c = splev_get_location_rnd(LOC_DRY, false, good_stair_loc);
     splev_mkstairs_at(c.x, c.y, up);
 }
 

@@ -610,12 +610,14 @@ export function enlightenment_lines(final = 0, basic = true) {
     {
         const woundTimer = (u.HWounded_legs | 0)
             || (u.uprops?.HWounded_legs | 0);
-        const sides = ((u.uprops?.EWounded_legs | 0) || (u.EWounded_legs | 0)) & 0x3;
+        // C ref: insight.c:1146-1153 — EWounded_legs carries LEFT_SIDE /
+        // RIGHT_SIDE (the ring slot bits), not 1/2.
+        const sides = ((u.uprops?.EWounded_legs | 0) || (u.EWounded_legs | 0)) & BOTH_SIDES;
         if (woundTimer || sides) {
-            if (sides === 0x3) youHave('wounded legs');
+            if (sides === BOTH_SIDES) youHave('wounded legs');
             // C's enlightenment code reports the right leg when the source
             // bit has expired but the timed wounded-legs property remains.
-            else youHave(`a wounded ${sides === 1 ? 'left' : 'right'} leg`);
+            else youHave(`a wounded ${sides === LEFT_SIDE ? 'left' : 'right'} leg`);
         }
     }
     // C ref: insight.c:1181 — Sleepy (worn/eaten amulet of restful sleep),

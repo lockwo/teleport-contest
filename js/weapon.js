@@ -619,11 +619,12 @@ export function mwepgone(mon) {
     }
 }
 
-// C ref: weapon.c:520 autoreturn_weapon(otmp) — the arwep[] table; only the
-// aklys is in it.  Returns { otyp, range2, verbose } or null.
+// C ref: weapon.c:512-528 arwep[] / autoreturn_weapon(otmp) — the
+// throw-and-return table; only the aklys is in it, with range2 =
+// AKLYS_LIM * AKLYS_LIM = 16.  autoreturn_weapon returns the row or null.
 const AKLYS = 80; // mkobj.js otyp
 const BOLT_LIM = 8, AKLYS_LIM = BOLT_LIM / 2;
-const ARWEP = [{ otyp: AKLYS, range2: AKLYS_LIM * AKLYS_LIM, verbose: 1 }];
+export const ARWEP = [{ otyp: AKLYS, range2: AKLYS_LIM * AKLYS_LIM, tethered: 1 }];
 export function autoreturn_weapon(otmp) {
     for (const a of ARWEP) if (otmp?.otyp === a.otyp) return a;
     return null;

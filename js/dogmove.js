@@ -20,6 +20,7 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd } from './rng.js';
+import { touch_artifact_monster } from './artifact.js';
 import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
     IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED,
     POOL, MOAT, WATER, LAVAPOOL, LAVAWALL } from './const.js';
@@ -1304,9 +1305,10 @@ export function can_carry(mtmp, obj) {
     if ((mflags1_of(mtmp.data) & M1_NOTAKE) !== 0) return 0;
     // C ref: mon.c:2010 can_touch_safely() — a monster without gloves won't
     // pick up a cockatrice corpse it isn't stoning-proof against, nor (for a
-    // silver-hater) a silver item.  These two are the reachable cases.
+    // silver-hater) a silver item. Artifact permissions precede stack handling.
     if (obj.otyp === CORPSE && flesh_petrifies_data(monster_by_pmidx(obj.corpsenm))
         && !resists_ston_mon(mtmp)) return 0;
+    if (!touch_artifact_monster(obj, mtmp)) return 0;
     // C ref: mon.c:2020-2038 — a NOHANDS non-glomper takes exactly 1 of a stack,
     // BEFORE the steed/shk/load checks.
     if (iquan > 1) {

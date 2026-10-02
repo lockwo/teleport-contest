@@ -797,10 +797,9 @@ export async function losedogs() {
 }
 
 // C ref: dog.c:303 losedogs() steps 1/3/5/6 -- the migrating_mons half of
-// losedogs(), split out so do.js's goto_level() can drive it around its OWN
-// tuned mydogs/With_you placement (do.js keepdogs_capture()/losedogs_place(),
-// which do the equivalent of step 2 with a hand-tuned RNG-critical arrival
-// routine that must not be replaced -- see the comment on that pair).
+// losedogs(), split out so do.js's goto_level() can drive it around its own
+// mydogs step (do.js keepdogs_capture()/losedogs_place(), which run step 2 by
+// calling mon_arrive(With_you) below).
 // deliver_migrating_before() runs the shk kop-dismiss scan and delivers
 // monsters kept accessible via keep_mon_accessible() (the Wizard, an
 // off-level shk/priest/guard) back at their EXACT prior spot;

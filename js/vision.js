@@ -706,7 +706,11 @@ export function vision_recalc(control = 0) {
     // monsters can see the hero), but NO cell becomes IN_SIGHT (the hero sees
     // nothing).  Skipping the IN_SIGHT pass keeps cansee()==false everywhere,
     // which makes newsym() blank out monster glyphs the hero can no longer see.
-    const blind = Blind();
+    // The Blind arm is an `else if` after `u.uswallow || control == 2`: shutting
+    // vision down (docrt's vision_recalc(2)) runs the normal update loop even
+    // for a blind hero, so a formerly could-see square holding a warned
+    // monster is redrawn (one display-RNG draw each while hallucinating).
+    const blind = control !== 2 && !u.uswallow && Blind();
 
     for (let row = 0; row < ROWNO && !blind; row++) {
         const dy = Math.sign(uy - row);

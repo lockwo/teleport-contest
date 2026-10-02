@@ -6,12 +6,14 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
-import { newsym, pline, m_at, update_topl, topl_more, impossible, canseemon_shared } from './display.js';
+import { newsym, pline, m_at, update_topl, topl_more, impossible, canseemon_shared, Hallucination_u } from './display.js';
+import { rn2_on_display_rng } from './disprng.js';
+import { rank_of } from './exper.js';
 import { Blind, recalc_block_point, cansee, couldsee } from './vision.js';
 import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
          Ring_off, off_msg, obj_doname, carried, otense, obj_extract_self,
          obj_resists, useupall, remove_worn_item, is_plural, simpleonames,
-         makeplural, stackobj, freeinv, inventoryArray, welded, worn_extrinsic } from './invent.js';
+         makeplural, stackobj, freeinv, inventoryArray, welded, worn_extrinsic, splitobj } from './invent.js';
 import { observe_object } from './o_init.js';
 import { find_ac } from './u_init.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -46,7 +48,7 @@ import {
     W_BALL, W_ART, W_ARTI, I_SPECIAL, FROM_FORM, IS_SINK, W_ARMG, Has_contents, OMONST,
     TT_INFLOOR, TT_BURIEDBALL,
     NO_TRAP, TRAPNUM, FIRE_RES, TELEDS_ALLOW_DRAG, TELEDS_TELEPORT,
-    ANTIMAGIC, HALF_PHDAM, HALF_SPDAM, PASSES_WALLS,
+    ANTIMAGIC, HALF_PHDAM, HALF_SPDAM, PASSES_WALLS, IRONBARS, IS_OBSTRUCTED,
 } from './const.js';
 import {
     objects, mksobj, weight, place_object, BOULDER, STATUE as STATUE_OTYP, CORPSE,
@@ -59,7 +61,7 @@ import {
 import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx,
          pmname_of_pmidx } from './makemon.js';
 import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
-         amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID } from './monflags_data.js';
+         amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID, throws_rocks_flag } from './monflags_data.js';
 import { AD_FIRE, AD_ELEC, AD_MAGM } from './monattk_data.js';
 import { MM_NOCOUNTBIRTH, MM_NOMSG, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND } from './const.js';
 import { In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
@@ -3764,10 +3766,50 @@ function u_locomotion(def) {
 // C ref: trap.c a_your[]/A_Your[] — indexed by trap->madeby_u.
 function a_your(madeby_u) { return madeby_u ? 'your' : 'a'; }
 
-// C ref: trap.c trapname(ttyp, force_pit).  Hallucination is never set in this
-// port (see cmd.js avoid_trap_andor_region), so the roletrap/halu_trapnames
-// arms are dead and the result is always the defsym explanation.
-function trapname(ttyp, _force_pit) { return trap_explanation(ttyp); }
+// C ref: trap.c:7100 trapname(ttyp, override) — while hallucinating (and not
+// overridden) the name is a display-RNG pick over the real trap types, the
+// halu_trapnames[] riffs and one "<role> trap"; a real-trap pick of NO_TRAP
+// keeps the true type.  The roletrap arm's rn2(3) is a CORE draw, as in C.
+const HALU_TRAPNAMES = [
+    'bottomless pit', 'polymorphism trap', 'devil teleporter',
+    'falling boulder trap', 'anti-anti-magic field', 'weeping gas trap',
+    'queasy board', 'electrified web', 'owlbear trap', 'sand mine',
+    'vacillating triangle',
+    'death trap', 'disintegration trap', 'ice trap', 'monochrome trap',
+    'axeblade trap', 'pool of boiling oil', 'pool of quicksand',
+    'field of caltrops', 'buzzsaw trap', 'spiked floor', 'revolving wall',
+    'uneven floor', 'finger trap', 'jack-in-a-box', 'yellow snow',
+    'booby trap', 'rat trap', 'poisoned nail', 'snare', 'whirlpool',
+    'trip wire', 'roach motel (tm)',
+    'negative space', 'tensor field', 'singularity', 'imperial fleet',
+    'black hole', 'thermal detonator', 'event horizon',
+    'entoptic phenomenon',
+    'sweet-smelling gas vent', 'phone booth', 'exploding runes',
+    'never-ending elevator', 'slime pit', 'warp zone', 'illusory floor',
+    'pile of poo', 'honey trap', 'tourist trap',
+    'banana peel', 'garden rake', 'whoopie cushion', 'box and stick trap',
+    'fly trap', 'legal trap', 'pit of snakes', 'pollywog trap',
+    'slippery slope', 'thirst trap', 'suntrap',
+];
+export function trapname(ttyp, override) {
+    if (Hallucination_u() && !override) {
+        const total_names = TRAPNUM + HALU_TRAPNAMES.length;
+        const nameidx = rn2_on_display_rng(total_names + 1);
+        if (nameidx === total_names) {
+            const u = game.u || {};
+            const fem = !!(u.Upolyd ? u.mfemale : game.flags?.female);
+            const urole = game.urole;
+            /* inspired by "tourist trap"; copynchars() keeps 33 - 6 chars */
+            const role = rn2(3) ? ((fem && urole?.name?.f) ? urole.name.f : urole?.name?.m)
+                : rank_of(u.ulevel || 1, urole?.mnum, fem);
+            return `${String(role ?? '').slice(0, 27)} trap`.toLowerCase();
+        } else if (nameidx >= TRAPNUM) {
+            return HALU_TRAPNAMES[nameidx - TRAPNUM];
+        } /* else use an actual trap type */
+        if (nameidx !== NO_TRAP) ttyp = nameidx;
+    }
+    return trap_explanation(ttyp);
+}
 
 // C ref: trap.c dotrap()'s article for the "step over"/"escape" lines — an
 // arrow trap the hero did not make reads "an arrow trap".
@@ -4628,14 +4670,19 @@ async function trapeffect_rolling_boulder_trap(trap, _trflags) {
     }
 }
 
-// NOT modelled (each is a clean divergence, not a silent desync): the
-// ohitmon() monster-in-path arm and the boulder-hits-boulder arm of
-// trap.c:3319.  Everything that draws RNG on the hero's own path is here.
+// C ref: trap.c:3260 launch_obj() — the single port behind both rolling-
+// boulder triggers (hero above, monster in monmove.js mon_mintrap) and the
+// pushed-boulder-onto-trap path (cmd.js).  Returns 0 = nothing launched,
+// 1 = launched and placed, 2 = launched and used up.  Not modelled: the
+// down_gate()/ship_object() arm and the per-trap switch for traps lying in
+// the path (land mine, teleporters, pits/holes beyond flooreffects()).
 export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     const u = game.u;
     const { thitu, ohitmon } = await import('./monmove.js');
     const { dmgval } = await import('./uhitm.js');
     const { flooreffects } = await import('./do.js');
+    const { flash_obj_glyph, show_glyph_cell, You_hear, Deaf_hero } = await import('./display.js');
+    const { wake_nearto } = await import('./cmd.js');
     let otmp = sobj_at_floor(otyp, x1, y1);
     let otherside = false;
     if (!otmp && otyp === BOULDER) { otherside = true; otmp = sobj_at_floor(otyp, x2, y2); }
@@ -4643,64 +4690,133 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     if (otherside) { const tx = x1, ty = y1; x1 = x2; y1 = y2; x2 = tx; y2 = ty; }
     let singleobj;
     if ((otmp.quan || 1) === 1) {
-        const arr = game.level.objects; const ix = arr.indexOf(otmp);
-        if (ix >= 0) arr.splice(ix, 1);
-        otmp.where = 'free';
+        obj_extract_self(otmp);
         singleobj = otmp;
-        // C's object mutators maintain vision; these JS floor-list operations
-        // do not, so update the blocker cache at both ends of a boulder flight.
-        if (otyp === BOULDER) recalc_block_point(x1, y1);
     } else {
-        singleobj = { ...otmp, quan: 1, where: 'free' }; otmp.quan -= 1;
+        singleobj = splitobj(otmp, 1);
+        obj_extract_self(singleobj);
     }
+    // C's remove_object() recalcs a boulder's blocker; this port's floor
+    // extraction does not, so do it here (and after every extraction below).
+    if (otyp === BOULDER) recalc_block_point(x1, y1);
     newsym(x1, y1);
     let dist = distmin_(x1, y1, x2, y2);
     let x = x1, y = y1;
     const dx = sgn_(x2 - x1), dy = sgn_(y2 - y1);
     let used_up = false;
-    if (style & LAUNCH_KNOWN) { singleobj.otrapped = 1; style &= ~LAUNCH_KNOWN; }
-    style &= ~LAUNCH_UNSEEN;
-    // C ref: trap.c:3361 launch_drop_spot(singleobj, x, y) — recorded at the
-    // TRAP's own square (the start of the flight), matching C's comment that
-    // this is deliberate: the eventual resting spot isn't known yet, and
-    // some paths (bars, &c.) never let the object get there at all.
+    if (style === (ROLL | LAUNCH_UNSEEN)) {
+        if (otyp === BOULDER) {
+            if (cansee(x1, y1)) {
+                await pline(`You see ${an(xname(singleobj))} start to roll.`);
+            } else if (Hallucination_u()) {
+                await You_hear('someone bowling.');
+            } else {
+                const du = (x1 - u.ux) ** 2 + (y1 - u.uy) ** 2;
+                await You_hear(`rumbling ${du <= 4 * 4 ? 'nearby' : 'in the distance'}.`);
+            }
+        }
+        style &= ~LAUNCH_UNSEEN;
+    } else if (style === (ROLL | LAUNCH_KNOWN)) {
+        singleobj.otrapped = 1;   /* a flag for ohitmon */
+        style &= ~LAUNCH_KNOWN;
+    }
+    // tmp_at(DISP_FLASH, obj_to_glyph(singleobj, rn2_on_display_rng)) and
+    // tmp_at(x, y) at the TOP of each step (the PRE-move square), then
+    // tmp_at(DISP_END).  The flash trails one square behind the boulder, so a
+    // --More-- raised mid-roll shows the glyph on that trailing square.
+    const fglyph = flash_obj_glyph(singleobj);
+    let fx = -1, fy = -1;
+    const flash_at = (ax, ay) => {
+        if (fx >= 0) { newsym(fx, fy); fx = fy = -1; }
+        if (!cansee(ax, ay)) return;
+        show_glyph_cell(ax, ay, fglyph.ch, fglyph.color, fglyph.dec);
+        fx = ax; fy = ay;
+    };
+    flash_at(x, y);
+    // C ref: trap.c:3361 launch_drop_spot(singleobj, x, y) — the flight's start.
     launch_drop_spot(singleobj, x, y);
-    while (dist-- > 0) {
+    while (dist-- > 0 && !used_up) {
+        flash_at(x, y);
         if (!isok(x + dx, y + dy)) { x2 = x; y2 = y; break; }
         x += dx; y += dy;
-        // C ref: trap.c:3395-3413 — a monster occupies the next square: resolve
-        // ohitmon() there first (before the hero test).  A FALSE return means
-        // the boulder missed/passed and keeps rolling; TRUE stops it on the spot.
-        const victim = m_at(x, y);
-        if (victim) {
-            if (await ohitmon(victim, singleobj, (style === ROLL) ? -1 : dist, false, x, y, null)) {
+        const mtmp = m_at(x, y);
+        if (mtmp) {
+            if (otyp === BOULDER && throws_rocks_flag(mtmp.data) && rn2(3)) {
+                if (cansee(x, y)) {
+                    const { Monnam } = await import('./do_name.js');
+                    await pline(`${Monnam(mtmp)} snatches the boulder.`);
+                }
+                singleobj.otrapped = 0;
+                const { mpickobj } = await import('./steal.js');
+                mpickobj(mtmp, singleobj);
                 used_up = true;
                 launch_drop_spot(null, 0, 0);
                 break;
             }
+            if (await ohitmon(mtmp, singleobj, (style === ROLL) ? -1 : dist, false, x, y, null)) {
+                used_up = true;
+                launch_drop_spot(null, 0, 0);
+                break;
+            }
+        } else if (u && u.ux === x && u.uy === y) {
+            const { youmonst_data_pub } = await import('./invent.js');
+            const dam = dmgval(singleobj, { data: youmonst_data_pub() });
+            if (game.multi) await trap_nomul();
+            if (await thitu(9 + (singleobj.spe || 0), Maybe_Half_Phys(dam), singleobj)) {
+                const { stop_occupation } = await import('./hack.js');
+                await stop_occupation();
+            }
         }
-        if (u && u.ux === x && u.uy === y) {
-            const dam = dmgval(singleobj, { data: { msize: 0 } });
-            await thitu(9 + (singleobj.spe || 0), dam, singleobj);
+        if (style === ROLL) {
+            if (await flooreffects(singleobj, x, y, 'fall')) {
+                used_up = true;
+                launch_drop_spot(null, 0, 0);
+                break;
+            }
+            const otmp2 = (otyp === BOULDER) ? sobj_at_floor(BOULDER, x, y) : null;
+            if (otmp2) {
+                // C ref: trap.c:3514 — one boulder sets the next in motion.
+                const nx = x + dx, ny = y + dy;
+                const bmsg = (!isok(nx, ny) || !dist
+                              || IS_OBSTRUCTED(game.level?.at(nx, ny)?.typ))
+                    ? ' as one boulder hits another'
+                    : ' as one boulder sets another in motion';
+                await You_hear(`a loud crash${cansee(x, y) ? bmsg : ''}!`);
+                obj_extract_self(otmp2);
+                recalc_block_point(x, y);
+                otmp2.otrapped = singleobj.otrapped;
+                singleobj.otrapped = 0;
+                place_object(singleobj, x, y);
+                singleobj = otmp2;
+                await wake_nearto(x, y, 10 * 10);
+            }
         }
-        // C ref: trap.c:3509 — rolling objects land on every crossed square.
-        if (style === ROLL && await flooreffects(singleobj, x, y, 'fall')) {
-            used_up = true;
-            launch_drop_spot(null, 0, 0);
-            break;
+        if (otyp === BOULDER && closed_door(x, y)) {
+            if (cansee(x, y)) await pline('The boulder crashes through a door.');
+            game.level.at(x, y).doormask = D_BROKEN;
+            if (dist) recalc_block_point(x, y);
         }
         if (dist > 0 && isok(x + dx, y + dy)) {
             const typ = game.level?.at(x + dx, y + dy)?.typ;
-            if (IS_STWALL(typ) || IS_TREE(typ)) { x2 = x; y2 = y; await pline('Thump!'); break; }
+            if (typ === IRONBARS) {
+                x2 = x; y2 = y;
+                const { hits_bars } = await import('./mthrowu.js');
+                if (hits_bars(singleobj, !rn2(20))) break;
+            } else if (IS_STWALL(typ) || IS_TREE(typ)) {
+                x2 = x; y2 = y;
+                if (!Deaf_hero()) await pline('Thump!');
+                await wake_nearto(x2, y2, 16);
+                break;
+            }
         }
     }
+    if (fx >= 0) newsym(fx, fy);   /* tmp_at(DISP_END, 0) */
     // C ref: trap.c:3567 — launch_drop_spot((struct obj *)0,0,0), unconditional,
     // right after the flight loop ends and before the final placement below.
     launch_drop_spot(null, 0, 0);
     if (!used_up) {
         singleobj.otrapped = 0;
         place_object(singleobj, x2, y2);
-        if (otyp === BOULDER) recalc_block_point(x2, y2);
         newsym(x2, y2);
         return 1;
     }

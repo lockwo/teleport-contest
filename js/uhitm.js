@@ -36,6 +36,7 @@ import { dmgval, hitval, abon, dbon, weapon_type, is_axe,
          weapon_dam_bonus_core } from './weapon.js';
 import { register_monnam_hooks, rndmonnam, bogon_is_pname } from './do_name.js';
 import { rn2, rnd, d } from './rng.js';
+import { finish_meating } from './dogmove.js';
 import { cansee, couldsee } from './vision.js';
 import { m_at, newsym, map_invisible, unmap_object, canseemon_shared,
          update_topl } from './display.js';
@@ -49,7 +50,7 @@ import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
 import { Blind } from './vision.js';
 import { exercise, adjalign } from './attrib.js';
 import { DEADMONSTER, Protection_from_shape_changers, mmove_of, base_mmove,
-         healmon, mvitals_died, sensemon, peacefuls_respond, unstuck } from './mon.js';
+         healmon, mvitals_died, sensemon, peacefuls_respond, unstuck, mon_leaving_level } from './mon.js';
 import { MFLAGS1, MFLAGS2, M1_WALLWALK, M2_NASTY, M2_ORC, M2_UNDEAD, M2_DEMON,
          M2_COLLECT, M2_HUMAN, M2_HOSTILE, M2_PNAME, M2_ELF, humanoid } from './monflags_data.js';
 // C ref: include/monflag.h G_UNIQ (0x1000) — generated only once.
@@ -439,12 +440,7 @@ function that_is_a_mimic_message(mtmp) {
     return fmtbuf.replace('%s', mimic_reveal_what(mtmp));
 }
 
-// C ref: mon.c wakeup(mtmp, via_attack) — reduced to what attack_checks
-// needs: the "<Mon> wakes up!"/"." message (gated on canseemon, using the
-// PRE-reset msleeping value) and un-mimicking (the M_AP_MONSTER "keep
-// disguise" exception never applies — this port's mimics never carry that
-// appearance type). The via_attack aftermath (growl/setmangry/ghod_hitsu/
-// hot_pursuit) isn't modeled — no covered session reaches that path yet.
+// C ref: mon.c:4331-4361 wakeup(mtmp, via_attack).
 export async function wakeupAttack(mtmp, viaAttack) {
     const wasSleeping = !!mtmp.msleeping;
     if (wasSleeping && canseemon(mtmp)) {
@@ -458,6 +454,7 @@ export async function wakeupAttack(mtmp, viaAttack) {
     }
     mtmp.msleeping = 0;
     if (mtmp.m_ap_type) seemimicLocal(mtmp);
+    finish_meating(mtmp);
     // C ref: mon.c wakeup() via_attack tail.  ghod_hitsu() needs a temple
     // priest; hot_pursuit() needs `!*u.ushops`, and u.ushops is set the moment
     // the hero steps onto the shop door, so an in-shop shopkeeper skips it.
@@ -1835,12 +1832,6 @@ export async function killed(mon, opts) {
         await update_topl(`You ${nonliving(mon) ? 'destroy' : 'kill'} ${who}!`);
     }
 
-    // C ref: mon.c:3438 unstuck(mtmp), reached via mondead -> m_detach ->
-    // mon_leaving_level (mon.c:2703).  A holder the hero kills gets
-    // mspec_used = rnd(2) so it can't immediately re-grab; that rnd(2) is a
-    // real draw in the kill turn.
-    await unstuck(mon);
-
     // C ref: mon.c:3170 mondead() — `if (glyph_is_invisible(levl[mx][my].glyph))
     // unmap_object(mx, my)` runs just before m_detach.  Killing a monster the
     // hero can only sense (blind / invisible) must drop the remembered 'I';
@@ -1851,6 +1842,10 @@ export async function killed(mon, opts) {
     // mcalcmove realloc (allmain.js) so that loop iterates the post-kill set,
     // matching C (fmon has the dead monster purged by the next round).
     mvitals_died(mon);                 // mon.c:3135
+    // C ref: mon.c:2758 m_detach() -> mon_leaving_level(): unstuck() (a holder
+    // gets mspec_used = rnd(2)), take the monster off the map, and newsym()
+    // its square — under hallucination that redraw is a display-RNG draw.
+    await mon_leaving_level(mon);
     const list = game.level?.monsters;
     if (list) {
         const idx = list.indexOf(mon);
@@ -1941,6 +1936,10 @@ export async function killed(mon, opts) {
         if (leaves_corpse && accessible) {
             make_corpse(mon, x, y);
         }
+        // C ref: mon.c:3641-3642 — "monster is gone, corpse or other object
+        // might now be visible": newsym() BEFORE the cleanup block's luck and
+        // alignment penalties (an XKILL_NOCORPSE kill goto's past it).
+        if (x > 0 && y > 0) newsym(x, y);
     }
 
     // C ref: mon.c:3638 xkilled() "Punish bad behavior", between the corpse
@@ -2005,8 +2004,6 @@ export async function killed(mon, opts) {
         }
         adjalign(mon.malign | 0);
     }
-
-    if (x > 0 && y > 0) newsym(x, y);
 }
 
 // C ref: steal.c relobj(mtmp, 1, FALSE) via mdrop_obj().

@@ -16,7 +16,7 @@
 import { game } from './gstate.js';
 import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, crawl_destination } from './trap.js';
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core } from './cmd.js';
-import { moveloop_turn } from './allmain.js';
+import { moveloop_turn, moveloop_input_redraw } from './allmain.js';
 import { m_at, vobj_at, covers_objects, object_glyph, flush_screen, newsym, pline, update_topl, topl_more, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself } from './display.js';
 import { do_screen_description } from './pager.js';
 import { def_monsyms } from './symbols.js';
@@ -516,6 +516,10 @@ async function run_movement(run) {
         await takeTurn();
 
         if (game.multi <= 0) break;    // nomul triggered -> stop after this turn
+
+        // The next step is a new moveloop_core() iteration in C: its
+        // once-per-input head runs before lookaround()+domove().
+        await moveloop_input_redraw();
 
         lookaround();                  // may stop (multi=0) or turn the path
         if (game.multi <= 0) break;
@@ -1032,6 +1036,8 @@ async function travel_walk() {
         if (!c.move) break;          // blocked move: no turn, travel stops
         await takeTurn();            // the elapsed turn, taken inline
         if ((game.multi ?? 0) <= 0) break;
+
+        await moveloop_input_redraw();  // next moveloop_core() iteration head
 
         lookaround();
         if ((game.multi ?? 0) <= 0) break;

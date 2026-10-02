@@ -2920,31 +2920,33 @@ export function splev_get_location_room(croom, humidity, nowarn = false) {
 // deterministic scan of the map footprint.  With NO_LOC_WARN in `humidity` C
 // returns (-1,-1) instead of the fallback, which is how create_monster asks
 // "is there a wet/solid spot?" before retrying with DRY added.
-export function splev_get_location_rnd(humidity, nowarn = false) {
+export function splev_get_location_rnd(humidity, nowarn = false, accept = null) {
     // C ref: sp_lev.c get_location_coord():1348-1352 — a RANDOM coord reaches
     // get_location() TWICE: first with NO_LOC_WARN forced on, then (only when
     // that came back (-1,-1)) again with the caller's own flags.  Each call is
     // its own 100-draw loop, so collapsing them to one let a water-only species
     // fall through to its DRY retry 200 draws early (seed0373 step 99, pit viper
     // on the Plane of Fire).
-    const r = get_location_rnd_once(humidity, true);
+    const r = get_location_rnd_once(humidity, true, accept);
     if (r.x !== -1 || r.y !== -1) return r;
-    return get_location_rnd_once(humidity, nowarn);
+    return get_location_rnd_once(humidity, nowarn, accept);
 }
 
-function get_location_rnd_once(humidity, nowarn) {
+function get_location_rnd_once(humidity, nowarn, accept) {
     let x = -1, y = -1, cpt = 0;
     do {
         x = gx.xstart + rn2(gx.xsize);   // sp_lev.c:1233
         y = gy.ystart + rn2(gy.ysize);   // sp_lev.c:1234
-        if (is_ok_location(x, y, humidity)) return { x, y };
+        // C ref: sp_lev.c:1287-1288. A caller's location callback overrides
+        // humidity checks, including the ordinary dry-square boulder check.
+        if (accept ? accept(x, y) : is_ok_location(x, y, humidity)) return { x, y };
     } while (++cpt < 100);
     // C ref: sp_lev.c:1242 — the deterministic "last try" scan runs BEFORE the
     // NO_LOC_WARN (-1,-1) bail, not after it.
     for (let xx = 0; xx < gx.xsize; xx++)
         for (let yy = 0; yy < gy.ysize; yy++) {
             x = gx.xstart + xx; y = gy.ystart + yy;
-            if (is_ok_location(x, y, humidity)) return { x, y };
+            if (accept ? accept(x, y) : is_ok_location(x, y, humidity)) return { x, y };
         }
     if (nowarn) return { x: -1, y: -1 };
     return { x: gx.x_maze_max, y: gy.y_maze_max };

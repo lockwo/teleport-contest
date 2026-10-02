@@ -16,6 +16,7 @@
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { dist2, s_suffix } from './hacklib.js';
+import { can_carry } from './mon.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
     AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
 import { PLNMSG_MON_TAKES_OFF_ITEM } from './const.js';
@@ -387,9 +388,6 @@ function welded(obj) { return !!obj && obj === game.uwep && !!obj.cursed; }
 // the animal-thief path, which no covered session exercises.
 function bimanual(_obj) { return false; }
 
-// C ref: mon.c can_carry(mtmp, otmp) — weight/loadstone/Amulet limits.  The
-// monkey path is the only caller; the covered sessions have no monkeys.
-function can_carry(_mtmp, _otmp) { return 1; }
 
 // ===========================================================================
 // steal.c: the remaining top-level functions, translated.  APPEND-ONLY —

@@ -29,6 +29,7 @@ export function resist_conflict(mtmp) {
     return rnd(20) > rc;
 }
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
+import { findgold } from './steal.js';
 // find_offensive/use_offensive: the FULL muse.c ports.  monmove.js used to
 // shadow them with a potion-only stub whose "the wand branches are not reached
 // by the contest's low-level monsters" comment was false — seed0030's angered
@@ -66,8 +67,8 @@ import { quest_talk, com_pager } from './questpgr.js';
 import { In_hell, surface } from './dungeon.js';
 import { COIN_CLASS, ROCK, ROCK_CLASS, GOLD_PIECE, GEM_CLASS, CORPSE, ARROW, DART,
     GLOB_OF_GREEN_SLIME, SCR_SCARE_MONSTER, AMULET_OF_STRANGULATION, mksobj_at,
-    clear_dknown } from './mkobj.js';
-import { t_at, t_missile, Can_fall_thru, maketrap, clamp_hole_destination } from './trap.js';
+    clear_dknown, remove_object } from './mkobj.js';
+import { t_at, t_missile, Can_fall_thru, maketrap, clamp_hole_destination, trapname } from './trap.js';
 import { gettrack } from './track.js';
 import { find_mac as worn_find_mac, which_armor } from './worn.js';
 import { mvitals_died, DEADMONSTER, healmon, base_mmove, curr_mon_load,
@@ -111,7 +112,7 @@ import { dog_move, m_cansee, could_reach_item } from './dogmove.js';
 import { mon_msize, mon_cwt, monster_by_pmidx, makemon, level_difficulty_ext } from './makemon.js';
 // polyself.c mbodypart needs the mlet of a pet, whose .data lacks .mcls.
 const mon_mlet = (pmidx) => monster_by_pmidx(pmidx)?.mcls;
-import { newsym, map_invisible, show_glyph_cell, object_glyph, pline, update_topl, see_with_infrared, bot_snapshot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at, You_hear } from './display.js';
+import { newsym, map_invisible, show_glyph_cell, object_glyph, flash_obj_glyph, pline, update_topl, see_with_infrared, bot_snapshot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at, You_hear } from './display.js';
 import { worm_cross, wormhitu, worm_move, worm_nomove } from './worm.js';
 import { mdig_tunnel, may_dig, in_town } from './dig.js';
 import { picking_lock } from './lock.js';
@@ -130,7 +131,7 @@ import { obj_resists, resists_sleep, sleep_monst, resist, resists_magm } from '.
 import { resists_fire, resists_acid } from './mondata.js';
 import { clear_path, couldsee, cansee, vision_recalc, recalc_block_point, Blind } from './vision.js';
 import { mattackm, mdisplacem } from './mhitm.js';
-import { hitval } from './weapon.js';
+import { hitval, ARWEP, autoreturn_weapon } from './weapon.js';
 import { Monnam, mon_nam, canspotmon, make_corpse, corpse_chance, dmgval,
     setmangry, relobj } from './uhitm.js';
 import { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE, SLT_ENCUMBER, FORCETRAP, Unaware } from './const.js';
@@ -476,6 +477,18 @@ function mon_pmidx(mtmp, is_u) {
 // Now real. RNG order: rn2(5) (bravegremlin) is drawn FIRST, unconditionally —
 // C evaluates it in the declaration initializer before anything else.
 async function distfleeck(mtmp) {
+    if (globalThis.__MOVEMENT_ORACLE) {
+        globalThis.__MOVEMENT_ORACLE({
+            ev: 'fear-input', why: 'distfleeck', m_id: mtmp.m_id,
+            mnum: monsndx_of(mtmp.data), moves: game.moves,
+            from: [mtmp.mx, mtmp.my], mux: [mtmp.mux, mtmp.muy],
+            u: [game.u.ux, game.u.uy], movement: mtmp.movement ?? 0,
+            mflee: Number(mtmp.mflee || 0), mpeaceful: Number(mtmp.mpeaceful || 0),
+            mtame: mtmp.mtame ?? 0, mcansee: Number(mtmp.mcansee || 0),
+            mconf: Number(mtmp.mconf || 0), mstun: Number(mtmp.mstun || 0),
+            meating: mtmp.meating ?? 0,
+        });
+    }
     const bravegremlin = (rn2(5) === 0);
 
     const inrange = dist2(mtmp.mx, mtmp.my, mtmp.mux, mtmp.muy)
@@ -1955,6 +1968,10 @@ export async function hideunder(mtmp) {
         undetected = true;
     }
 
+    // C ref: mon.c:4790 `if (seeit) seenmon = y_monnam(mtmp);` — evaluated
+    // whenever the hero sees the monster, hidden or not; a hallucinating hero
+    // pays its rndmonnam() display-RNG draws even when no message follows.
+    const seenmon = seeit ? y_monnam(mtmp) : null;
     const oldundet = !!mtmp.mundetected;
     // C ref: mon.c hideunder() emits You_see() BEFORE its trailing newsym().  In
     // C the screen shown at the message's --More-- still holds the monster glyph
@@ -1962,12 +1979,12 @@ export async function hideunder(mtmp) {
     // rebuilds each frame from monster state, so we must likewise defer flipping
     // mtmp.mundetected until AFTER the message so the monster is still drawn on
     // the captured --More-- frame, then hide it with newsym().  (No RNG here.)
-    if (undetected && seeit && seenobj) {
+    if (undetected && seenmon && seenobj) {
         // C: `if (!locomo) locomo = locomotion(mtmp->data, "hide");` — the eel
         // arm has already set it to "dive".
         const locomo = seenlocomo || locomotion(ptr, 'hide');
         const { update_topl } = await import('./display.js');
-        await update_topl(`You see ${y_monnam(mtmp)} ${locomo} under ${seenobj}.`);
+        await update_topl(`You see ${seenmon} ${locomo} under ${seenobj}.`);
     }
     mtmp.mundetected = undetected ? 1 : 0;
     if (undetected !== oldundet) newsym(x, y);
@@ -2038,89 +2055,6 @@ export function mon_learns_traps(mtmp, ttyp) {
 // 3 = Trap_Moved_Mon (we never produce the latter two for the modeled types).
 export const Trap_Effect_Finished = 0, Trap_Caught_Mon = 1, Trap_Killed_Mon = 2,
              Trap_Moved_Mon = 3;
-// C ref: trap.c:3260 launch_obj(BOULDER, x1,y1, x2,y2, ROLL).  quan is always 1
-// for a trap boulder, so C's splitobj rnd(2) never fires.
-async function launch_boulder(trap) {
-    const objs = game.level?.objects;
-    if (!objs) return 0;
-    let x1 = trap.launch?.x, y1 = trap.launch?.y;
-    let x2 = trap.launch2?.x, y2 = trap.launch2?.y;
-    if (x1 == null || x2 == null) return 0;
-    const findB = (x, y) => objs.find((o) => o.where === 'floor' && o.ox === x && o.oy === y
-                                          && o.otyp === 475 /*BOULDER*/);
-    let otmp = findB(x1, y1);
-    if (!otmp) {
-        otmp = findB(x2, y2);
-        if (!otmp) return 0;
-        const tx = x1, ty = y1; x1 = x2; y1 = y2; x2 = tx; y2 = ty;
-    }
-    const ix = objs.indexOf(otmp);
-    if (ix >= 0) objs.splice(ix, 1);
-    otmp.where = 'free';
-    // C ref: mkobj.c remove_object() — `if (otmp->otyp == BOULDER)
-    // recalc_block_point(x, y)`.  The launch square stops blocking light the
-    // moment the boulder leaves it; the next pline() flushes that recalc, so
-    // everything the boulder was shadowing is already visible on the frame that
-    // the roll's --More-- freezes.
-    recalc_block_point(x1, y1);
-    newsym(x1, y1);
-    let dist = distmin(x1, y1, x2, y2);
-    let x = x1, y = y1;
-    const dx = Math.sign(x2 - x1), dy = Math.sign(y2 - y1);
-    let used_up = false;
-    // C ref: trap.c:3345 tmp_at(DISP_FLASH, obj_to_glyph(singleobj)) + tmp_at(x,y),
-    // then tmp_at(x, y) at the TOP of each while iteration (i.e. with the
-    // PRE-move position) and tmp_at(DISP_END, 0) after the loop.  The flash
-    // trails one square behind the boulder, so when ohitmon()'s hit message
-    // raises a --More-- the recorded screen shows the boulder glyph on that
-    // trailing square — it is the animation frame, not the resting place.
-    const fglyph = object_glyph(otmp);
-    let fx = -1, fy = -1;
-    const flash_at = (ax, ay) => {
-        if (!fglyph) return;
-        if (fx >= 0) { newsym(fx, fy); fx = fy = -1; }
-        if (!cansee(ax, ay)) return;
-        show_glyph_cell(ax, ay, fglyph.ch, fglyph.color, fglyph.dec);
-        fx = ax; fy = ay;
-    };
-    const flash_end = () => { if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } };
-    const { flooreffects } = await import('./do.js');
-    flash_at(x, y);
-    while (dist-- > 0 && !used_up) {
-        flash_at(x, y);
-        if (!isok(x + dx, y + dy)) { x2 = x; y2 = y; break; }
-        x += dx; y += dy;
-        const victim = m_at(x, y);
-        if (victim) {
-            if (await ohitmon(victim, otmp, -1, false, x, y, null)) { used_up = true; break; }
-        } else if (game.u && game.u.ux === x && game.u.uy === y) {
-            // C ref: trap.c:3414-3422 — the boulder reaches the hero's square.
-            // thitu() resolves the hit (and its own losehp()+exercise(A_STR,
-            // FALSE) [rn2(2)]); the loop then keeps rolling past the hero on
-            // to whatever square comes next, exactly like the monster branch.
-            const { youmonst_data_pub } = await import('./invent.js');
-            const dam = dmgval(otmp, { data: youmonst_data_pub() });
-            if (game.multi) (await import('./hack.js')).nomul(0);
-            if (await thitu(9 + (otmp.spe || 0), dam, otmp)) await stop_occupation();
-        }
-        if (await flooreffects(otmp, x, y, 'fall')) {
-            used_up = true;
-            break;
-        }
-        if (IS_OBSTRUCTED(terrainTyp(x, y))) { x2 = x; y2 = y; break; }
-    }
-    flash_end();
-    if (!used_up) {
-        otmp.owornmask = 0;
-        place_object(otmp, x2, y2);
-        // C ref: mkobj.c place_object() — a BOULDER landing where none already
-        // sits calls block_point(x, y).
-        recalc_block_point(x2, y2);
-        newsym(x2, y2);
-    }
-    return used_up ? 2 : 1;
-}
-
 export async function mon_mintrap(mtmp, mintrapflags = 0) {
     const trap = t_at(mtmp.mx, mtmp.my);
     if (!trap) { mtmp.mtrapped = 0; return Trap_Effect_Finished; }
@@ -2158,7 +2092,7 @@ export async function mon_mintrap(mtmp, mintrapflags = 0) {
                             + `${m_easy_escape_pit(mtmp) ? 'easily ' : ''}out of the pit.`);
                     } else if (trap.ttyp === BEAR_TRAP || trap.ttyp === WEB) {
                         await pline_mon(mtmp, `${Monnam(mtmp)} pulls free of the `
-                            + `${trapname_local(trap.ttyp)}.`);
+                            + `${trapname(trap.ttyp, false)}.`);
                     }
                 }
                 mtmp.mtrapped = 0;
@@ -2846,7 +2780,10 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         if (in_sight)
             await pline_mon(mtmp, `Click!  ${Monnam(mtmp)} triggers `
                 + `${trap.tseen ? 'a rolling boulder trap' : 'something'}.`);
-        const r = await launch_boulder(trap);
+        const { launch_obj, ROLL, LAUNCH_UNSEEN } = await import('./trap.js');
+        const r = await launch_obj(BOULDER, trap.launch.x, trap.launch.y,
+                                   trap.launch2.x, trap.launch2.y,
+                                   ROLL | (in_sight ? 0 : LAUNCH_UNSEEN));
         if (r && in_sight) trap.tseen = true;
         if (DEADMONSTER(mtmp)) return Trap_Killed_Mon;
         return mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished;
@@ -3297,13 +3234,6 @@ async function fill_pit_local(x, y) {
     }
     newsym(x, y);
 }
-// C ref: trap.c:7154 trapname(ttyp, FALSE) — only the two types mintrap's
-// "pulls free of the %s" message can name.  trap.js keeps the full table but
-// does not export it.
-function trapname_local(ttyp) {
-    return ttyp === BEAR_TRAP ? 'bear trap' : ttyp === WEB ? 'web' : 'trap';
-}
-
 // C ref: trap.c deltrap(trap) — remove a trap from the level trap list.  Local
 // helper (trap.js's deltrap is not exported); mirrors its splice + no RNG.
 function deltrap_local(trap) {
@@ -3746,7 +3676,7 @@ async function m_move(mtmp) {
         }
 
         // C ref: monmove.c:1873 — a leprechaun hoarding more gold than the hero
-        // switches from approach to flee (no monster here is a leprechaun).
+        // switches from approach to flee.
         if (appr === 1 && leppie_avoidance(mtmp))
             appr = -1;
 
@@ -3786,10 +3716,15 @@ async function m_move(mtmp) {
     let getitems = false;
     if ((!mtmp.mpeaceful || !rn2(10)) && !Is_rogue_level()) {
         const mux = mtmp.mux ?? game.u.ux, muy = mtmp.muy ?? game.u.uy;
-        // C ref: monmove.c:1896 in_line = lined_up(mtmp) && distmin <= (rocks?20:Str/2+1)
+        // C ref: monmove.c:1892-1895 in_line = lined_up(mtmp) && distmin <=
+        // (throws_rocks(gy.youmonst.data) ? 20 : ACURRSTR / 2 + 1).  The
+        // throws_rocks() test is on the HERO's form, not the monster's: a
+        // frost giant lined up 6 squares from a St:8 hero is NOT in_line, so
+        // it goes on to m_search_items and detours toward a nearby object.
         const in_line = m_lined_up(mtmp)
             && (distmin(mtmp.mx, mtmp.my, mux, muy)
-                <= (throws_rocks_pm(ptr) ? 20 : ((acurrstr() >> 1) + 1)));
+                <= (throws_rocks_pm(youmonst_data_mm()) ? 20
+                                                         : ((acurrstr() >> 1) + 1)));
         if (appr !== 1 || !in_line) getitems = true;
     }
 
@@ -3932,6 +3867,21 @@ async function m_move(mtmp) {
             || (mmoved === MMOVE_NOTHING)) {
             nix = nx; niy = ny; nidist = ndist; chi = i; mmoved = MMOVE_MOVED;
         }
+    }
+    if (globalThis.__MOVEMENT_ORACLE) {
+        globalThis.__MOVEMENT_ORACLE({
+            ev: 'mv', why: 'm_move', m_id: mtmp.m_id,
+            mnum: monsndx_of(mtmp.data), moves: game.moves,
+            from: [omx, omy], mux: [mtmp.mux, mtmp.muy],
+            u: [game.u.ux, game.u.uy],
+            appr, gx: ggx, gy: ggy, flag: `0x${(flag >>> 0).toString(16)}`,
+            to: [nix, niy], chosen: chi,
+            mmoved: mmoved === MMOVE_MOVED ? 1 : 0,
+            cand: poss.map(p => [p.x, p.y, `0x${(p.info >>> 0).toString(16)}`,
+                dist2(p.x, p.y, ggx, ggy)]),
+            mtrack: Array.from({ length: MTSZ }, (_, i) =>
+                [mtrack[i]?.x ?? 0, mtrack[i]?.y ?? 0]),
+        });
     }
 
     if (mmoved === MMOVE_MOVED && (nix !== omx || niy !== omy)) {
@@ -4454,8 +4404,8 @@ export async function dochug(mtmp) {
         // `.mlet` in this port is the display CHARACTER; C's numeric S_* class
         // index lives in `.mcls` (js/makemon.js:620).  Comparing .mlet to
         // S_LEPRECHAUN was vacuously false, so the rn2(2) below never rolled.
-        || (mdat?.mcls === S_LEPRECHAUN && !findgold_invent()
-            && (findgold_minvent(mtmp) || rn2(2)))
+        || (mdat?.mcls === S_LEPRECHAUN && !findgold(game.invent)
+            && (findgold(mtmp.minvent) || rn2(2)))
         || (is_wanderer(mdat) && !rn2(4))
         || (!mtmp.mcansee && !rn2(4))
         || mtmp.mpeaceful;
@@ -4531,10 +4481,6 @@ export async function dochug(mtmp) {
     // Did not enter the move block -> attack with the pre-move flags.
     return await phase_four(mtmp, mdat, status, inrange, nearby, scared, false);
 }
-
-// C ref: invent.c findgold — hero/monster never carries gold in our sessions.
-function findgold_invent() { return false; }
-function findgold_minvent(_mtmp) { return false; }
 
 // C ref: monmove.c dochug PHASE FOUR — the attack step.  mattacku() lives in
 // mhitu.c; its steed-redirect roll (mhitu.c:534 rn2(is_orc?2:4)) and the
@@ -4755,7 +4701,7 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
     if (!canspotmon(mon) && otmp._seen_thrown == null) singleobj._seen_thrown = false;
     // C ref: mthrowu.c:649 — tmp_at(DISP_FLASH, obj_to_glyph(singleobj)).  sym
     // (obj->oclass) is always truthy for a potion; potions are never tethered.
-    const fglyph = (singleobj.oclass ? object_glyph(singleobj) : null);
+    const fglyph = (singleobj.oclass ? flash_obj_glyph(singleobj) : null);
     let fx = -1, fy = -1; // last flashed cell (-1 = none drawn yet)
     const flash_at = (x, y) => {
         if (!fglyph) return;
@@ -4893,19 +4839,12 @@ function m_has_launcher_and_ammo(mtmp) {
     return false;
 }
 
-// C ref: weapon.c:520 autoreturn_weapon(otmp) — the throw-and-return weapon
-// table arwep[] (boomerang commented out): only AKLYS (otyp 80), range 1.
-// Returns the {range} record (or null).  No RNG.
-const AKLYS_OTYP = 80, AKLYS_LIM = 8;
-function autoreturn_weapon(otmp) {
-    if (otmp && otmp.otyp === AKLYS_OTYP) return { range: AKLYS_LIM * AKLYS_LIM };
-    return null;
+// C ref: monmove.c:1139-1149. A leprechaun with more gold than the hero flees.
+function leppie_avoidance(mtmp) {
+    if (monsndx_of(mtmp.data) !== PM_LEPRECHAUN) return false;
+    const gold = findgold(mtmp.minvent);
+    return !!gold && gold.quan > (findgold(game.invent)?.quan ?? 0);
 }
-
-// C ref: monmove.c:1139 leppie_avoidance(mtmp) — a leprechaun carrying more
-// gold than the hero backs off.  No monster in these sessions is a leprechaun
-// (or, if one were, gold accounting is deterministic), so FALSE.  No RNG.
-function leppie_avoidance(_mtmp) { return false; }
 
 // C ref: include/vision.h:45 m_canseeu(m) —
 //   (!Invis || perceives(m->data)) && !Underwater && couldsee(m->mx, m->my)
@@ -4959,7 +4898,7 @@ function m_balks_at_approaching(oldappr, mtmp) {
     let arw;
     if (mwep && (arw = autoreturn_weapon(mwep))) {
         prmin = 2 * 2;
-        prmax = arw.range;
+        prmax = arw.range2;
         return { appr: -2, prmin, prmax };
     }
 
@@ -5471,13 +5410,11 @@ async function mpickstuff(mtmp) {
                 const _far = distant_far(otmp, mtmp.mx, mtmp.my);
                 await update_topl(`${Monnam(mtmp)} picks up ${distant_doname(otmp, _far)}.`);
             }
-            // C ref: mon.c:1901 obj_extract_self(otmp3) — the split fragment was
-            // never inserted into our floor array, so only the whole-stack case
-            // has anything to remove.
-            if (otmp3 === otmp) {
-                const ix = arr.indexOf(otmp);
-                if (ix >= 0) arr.splice(ix, 1);
-            }
+            // C ref: mon.c:1901 obj_extract_self(otmp3) -> remove_object(), which
+            // also re-checks boulder vision: a giant lifting a boulder stops it
+            // blocking light.  The split fragment was never inserted into our
+            // floor array, so only the whole-stack case has anything to remove.
+            if (otmp3 === otmp) remove_object(otmp);
             otmp3.where = 3; // OBJ_MINVENT
             mtmp.minvent = mtmp.minvent || [];
             // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.
@@ -6433,8 +6370,12 @@ export async function mon_wield_item(mon) {
             // daggers", not "a dagger"), so use the real invent.js naming
             // rather than the single-item mshot_xname/an_name pair.
             const { update_topl } = await import('./display.js');
-            const { floor_object_name } = await import('./invent.js');
+            const { floor_object_name, xname } = await import('./invent.js');
             await update_topl(`${Monnam(mon)} wields ${floor_object_name(obj)}!`);
+            // C ref: weapon.c:895-897 — a tethered throw-and-return weapon.
+            const arw = autoreturn_weapon(obj);
+            if (arw && arw.tethered)
+                await update_topl(`${Monnam(mon)} secures the tether on the ${xname(obj)}.`);
         }
         return 1;
     }
@@ -6693,7 +6634,7 @@ function omon_adj(mtmp, obj, mon_notices) {
         }
     }
     // C ref: dothrow.c:1931 omon_adj() switch(obj->otyp) — a thrown boulder
-    // (a giant can throw one, trap.c launch_boulder too) is much easier to
+    // (a giant can throw one, trap.c launch_obj() rolls one) is much easier to
     // land than its weight suggests (+6), and a heavy iron ball gets +2
     // unless it's the hero's own punishment ball.  These cases are reachable:
     // a throws_rocks_pm() monster selects a boulder as its missile.
@@ -6966,7 +6907,7 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
     // sym = obj->oclass (always truthy for a thrown weapon/ammo); the contest
     // throwers (dagger/dart) are never autoreturn/tethered.  The flash glyph is
     // the object's map appearance (obj_to_glyph): ')' for a dagger/dart.
-    const fglyph = (singleobj.oclass ? object_glyph(singleobj) : null);
+    const fglyph = (singleobj.oclass ? flash_obj_glyph(singleobj) : null);
     let fx = -1, fy = -1; // last flashed cell (-1 = none drawn yet)
     // C tmp_at(x,y) for a DISP_FLASH style (display.c:1278-1292): first restore
     // (newsym) the previously flashed cell, then — only if the new square is
@@ -7333,14 +7274,16 @@ export function select_rwep(mtmp) {
             if (otmp && (otmp === mwep || !mweponly)) { _propellor = otmp; return otmp; }
         }
     }
-    // Throw-and-return weapons (arwep[]): only the aklys.
-    if (!mindless(ptr) && !is_animal(ptr) && !mweponly
-        && dist2(mtmp.mx, mtmp.my, mtmp.mux, mtmp.muy) <= AKLYS_LIM * AKLYS_LIM
-        && couldsee(mtmp.mx, mtmp.my)) {
-        if (!hasShield || !BIMANUAL_RWEP.has(AKLYS_OTYP)) {
-            if (!(OBJECTS[AKLYS_OTYP]?.material === MAT_SILVER && mon_hates_silver(mtmp))) {
-                otmp = oselect_mm(mtmp, AKLYS_OTYP);
-                if (otmp && (otmp === mwep || !mweponly)) { _propellor = otmp; return otmp; }
+    // Throw-and-return weapons (arwep[]): only the aklys, within range2 = 16.
+    for (const arw of ARWEP) {
+        if (!mindless(ptr) && !is_animal(ptr) && !mweponly
+            && dist2(mtmp.mx, mtmp.my, mtmp.mux, mtmp.muy) <= arw.range2
+            && couldsee(mtmp.mx, mtmp.my)) {
+            if (!hasShield || !BIMANUAL_RWEP.has(arw.otyp)) {
+                if (!(OBJECTS[arw.otyp]?.material === MAT_SILVER && mon_hates_silver(mtmp))) {
+                    otmp = oselect_mm(mtmp, arw.otyp);
+                    if (otmp && (otmp === mwep || !mweponly)) { _propellor = otmp; return otmp; }
+                }
             }
         }
     }
@@ -7582,13 +7525,23 @@ async function thrwmu(mtmp, mdat) {
     }
     const otmp = select_rwep(mtmp);
     if (!otmp) return;
-    // Not a polearm and not an autoreturn weapon (a plain dagger / dart).
+    // C ref: mthrowu.c:1241-1246 — a throw-and-return weapon (aklys) is only
+    // tossed within its range2 and with a clear view, and is then always
+    // tossed: the hero-retreating rn2() below is skipped.  (The is_pole()
+    // branch before it, mthrowu.c:1206-1240, is not ported.)
+    let always_toss = false;
+    const arw = autoreturn_weapon(otmp);
+    if (arw && !mwelded(otmp)) {
+        if (dist2(mtmp.mx, mtmp.my, mtmp.mux, mtmp.muy) > arw.range2
+            || !couldsee(mtmp.mx, mtmp.my))
+            return;
+        always_toss = true;
+    }
     if (!m_lined_up(mtmp)) return;
     const x = mtmp.mx, y = mtmp.my;
-    if (URETREATING(x, y)) {
+    if (URETREATING(x, y) && !always_toss) {
         // C: && rn2(BOLT_LIM - distmin(...)) -> the roll fires only when
-        // retreating.  Not exercised (hero approaches), so faithfully roll then
-        // bail when non-zero.  (Kept for correctness if a session retreats.)
+        // the hero is retreating; a non-zero roll means "give chase instead".
         const r = BOLT_LIM - distmin(x, y, mtmp.mux ?? u.ux, mtmp.muy ?? u.uy);
         if (r > 0 && rn2(r)) return;
     }

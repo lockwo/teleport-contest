@@ -400,27 +400,6 @@ export async function mnexto_rloc(mtmp, rlocflags = 0) {
     await rloc_to_core(mtmp, mm.x, mm.y, rlocflags);
 }
 
-// C ref: dog.c mon_arrive(mtmp, With_you).  A tame pet either lands on the
-// hero's exact spot (1-in-10 when that square is free) or, far more often,
-// is relocated next to the hero via mnexto()->enexto().
-function mon_arrive_with_you(mtmp) {
-    const u = game.u;
-    // C ref: dog.c mon_arrive() — before placing the arriving monster, clear its
-    // movement track (mon_track_clear) and refresh the apparent-hero position
-    // (mtmp->mux = u.ux, mtmp->muy = u.uy) so the pet's dog_move backtrack
-    // avoidance and goal logic don't reuse coordinates from the level just left.
-    mtmp.mtrack = [];
-    mtmp.mstrategy = (mtmp.mstrategy || 0) | STRAT_ARRIVE;
-    mtmp.mux = u.ux; mtmp.muy = u.uy;
-    if (!m_at(u.ux, u.uy) && !rn2(mtmp.mtame ? 10 : mtmp.mpeaceful ? 5 : 2)) {
-        // rloc_to(mtmp, u.ux, u.uy) — lands on hero's square (no extra rng)
-        mtmp.mx = u.ux; mtmp.my = u.uy;
-    } else {
-        const cc = enexto(u.ux, u.uy, mtmp); // mnexto -> enexto
-        if (cc) { mtmp.mx = cc.x; mtmp.my = cc.y; }
-    }
-}
-
 // C ref: mondata.c:1211 levl_follower(mtmp) — used by keepdogs() to decide
 // whether a nearby monster accompanies a level change.  Tame pets, the Wizard
 // of Yendor and a following shopkeeper always qualify (even while fleeing); a
@@ -469,7 +448,7 @@ function keepdogs_helpless(m) {
 // M2_STALK hostiles (levl_follower), plus the Wizard chasing an
 // amulet-holding hero from anywhere on the level, near the hero before
 // mklev() tears the level down; losedogs_place() re-places them on arrival
-// via the tuned mon_arrive_with_you() below (untouched — see its header).
+// through dog.js mon_arrive(With_you).
 // A follower candidate that is still eating/trapped gets C's escape roll
 // (mintrap()) and, if it still can't come, C's "is still eating/trapped."
 // message instead of silently staying behind; a candidate carrying the real
@@ -479,7 +458,7 @@ function keepdogs_helpless(m) {
 // dog.js's deliver_migrating_before()/deliver_migrating_after() can place it
 // again when the hero reaches its destination.  RNG: the mintrap() escape
 // roll for a trapped follower candidate, then mon_arrive(With_you)'s
-// rn2(10)/rn2(5)/rn2(2) (still in losedogs_place(), unchanged).
+// rn2(10)/rn2(5)/rn2(2) (in dog.js mon_arrive(), via losedogs_place()).
 async function keepdogs_capture() {
     const lev = game.level;
     if (!lev?.monsters) return [];
@@ -553,12 +532,14 @@ async function keepdogs_capture() {
     return kept;
 }
 
-function losedogs_place(kept) {
+// C ref: dog.c losedogs() — `while ((mtmp = gm.mydogs) != 0) { gm.mydogs =
+// mtmp->nmon; mon_arrive(mtmp, With_you); }`.  dog.js mon_arrive() relinks the
+// monster into fmon and places it through rloc_to()/mnexto() -> rloc_to_core(),
+// whose newsym() is drawn before the new level's vision exists.
+async function losedogs_place(kept) {
     if (!game.level.monsters) game.level.monsters = [];
-    for (const m of kept) {
-        mon_arrive_with_you(m);
-        game.level.monsters.push(m);
-    }
+    const { mon_arrive, With_you } = await import('./dog.js');
+    for (const m of kept) await mon_arrive(m, With_you);
 }
 
 // C ref: you.h next2u(px,py) — distu(px,py) <= 2 (within one step of hero).
@@ -1187,13 +1168,13 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // deliver_migrating_after() cover the two migrating_mons halves (the
     // Wizard/off-level shk-priest-guard reappearing at their exact prior
     // spot, then trapdoor/hole fallers, migrate_mon() and Orcish Town's
-    // migrate_orc() arriving) while losedogs_place() keeps driving the
-    // tuned mon_arrive_with_you() placement for `kept` unchanged.
+    // migrate_orc() arriving) while losedogs_place() runs dog.js
+    // mon_arrive(With_you) for `kept`.
     {
         const { deliver_migrating_before, deliver_migrating_after }
             = await import('./dog.js');
         await deliver_migrating_before(kept);
-        losedogs_place(kept);
+        await losedogs_place(kept);
         await deliver_migrating_after();
     }
 

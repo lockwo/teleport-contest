@@ -2511,6 +2511,10 @@ async function help_dir_window(msg) {
     }
     delete game._modal_screen;
     game._pending_message = '';
+    // C ref: wintty.c tty_destroy_nhwindow -> erase_menu_or_text(): the
+    // full-screen (offx == 0) text window is erased with docrt(), a full
+    // vision shutdown/recalc and redraw (display-RNG draws while hallucinating).
+    await docrt();
 }
 
 // C ref: attrib.c acurrstr() — map the encoded A_STR (3..125; 18/01 stored as

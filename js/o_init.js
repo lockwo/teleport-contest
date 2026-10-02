@@ -26,6 +26,7 @@ import { game } from './gstate.js';
 import { exercise } from './attrib.js';
 import { ATR_INVERSE } from './terminal.js';
 import { A_WIS } from './const.js';
+import { Hallucination_u } from './display.js';
 
 // ── Color constants (C ref: include/color.h) ──
 const CLR_BLACK = 0, CLR_RED = 1, CLR_GREEN = 2, CLR_BROWN = 3, CLR_BLUE = 4;
@@ -447,11 +448,14 @@ export function discover_object(oindx, markKnown, markEncountered, creditHero) {
 export function observe_object(obj) {
     if (!obj) return;
     const oindx = obj.otyp;
-    // C ref: o_init.c observe_object() — seeing an object also learns its
+    // C ref: o_init.c:447 observe_object() — seeing an object also learns its
     // APPEARANCE (obj->dknown = 1), which is what tells doname_vague_quan()
-    // that the exact quantity of a stack is known.  (C's !Hallucination guard
-    // covers both statements and is not modelled here either.)
-    if (oindx >= FIRST_OBJECT()) { obj.dknown = 1; discover_object(oindx, false, true); }
+    // that the exact quantity of a stack is known.  A hallucinating hero
+    // learns neither the appearance nor the encountered type.
+    if (oindx >= FIRST_OBJECT() && !Hallucination_u()) {
+        obj.dknown = 1;
+        discover_object(oindx, false, true);
+    }
 }
 
 // C ref: u_init.c knows_object() — mark a type known (not encountered).

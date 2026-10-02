@@ -29,6 +29,7 @@ import { mon_nam, monflee } from './uhitm.js';
 import { resist, destroy_items, ignite_items } from './zap.js';
 import { worn_extrinsic } from './invent.js';
 import { healmon } from './mon.js';
+import { mon_aligntyp } from './minion.js';
 import { nomul } from './hack.js';
 import {
     mflags1_of, mflags2_of, mflags3_of, msound_of,
@@ -520,13 +521,6 @@ function race_hostile(ptr) {
 }
 function ualign_type() { return game.u?.ualign?.type ?? A_NEUTRAL; }
 function ualign_record() { return game.u?.ualign?.record ?? 0; }
-// C ref: mondata.h mon_aligntyp(mon) — a tame or peaceful monster counts as
-// the hero's alignment.
-function mon_aligntyp(mon) {
-    if (is_you(mon)) return ualign_type();
-    if (mon?.mtame || mon?.mpeaceful) return ualign_type();
-    return mon_data(mon)?.maligntyp ?? 0;
-}
 function uprop(name) { return game.u?.uprops?.[name] || 0; }
 function Blind() { return !!(uprop('Blinded') || game.u?.Blinded); }
 function Hallucination() { return !!(uprop('Hallucination') || game.u?.Hallucination); }
@@ -1461,44 +1455,51 @@ function touch_blasted(v) {
     return v;
 }
 
+// C ref: artifact.c:913-950. Monster checks are synchronous and draw no RNG.
+export function touch_artifact_monster(obj, mon) {
+    const oart = get_artifact(obj);
+    touch_blasted(false);
+    if (oart === NONART()) return 1;
+
+    const self_willed = (oart.spfx & SPFX_INTEL) !== 0;
+    let badclass, badalign;
+    if (!is_covetous(mon_data(mon)) && !is_mplayer(mon_data(mon))) {
+        badclass = self_willed && oart.role !== NON_PM
+            && oart !== artilist[ART_EXCALIBUR];
+        badalign = !!(oart.spfx & SPFX_RESTR) && oart.alignment !== A_NONE
+            && oart.alignment !== mon_aligntyp(mon);
+    } else {
+        badclass = badalign = false;
+    }
+    if (!badalign) badalign = bane_applies(oart, mon);
+    return ((badclass || badalign) && self_willed) || badalign ? 0 : 1;
+}
+
 // C ref: artifact.c touch_artifact().  RNG: rn2(4) for a hero touching a
 // badly-aligned artifact, then d(Antimagic ? 2 : 4, self_willed ? 10 : 4) and
 // a silver rnd(10) for the blast.  Returns C's 0/1.
 export async function touch_artifact(obj, mon) {
+    if (!is_you(mon)) return touch_artifact_monster(obj, mon);
     const oart = get_artifact(obj);
 
     touch_blasted(false);
     if (oart === NONART()) return 1;
 
-    const yours = is_you(mon);
     /* every quest artifact is self-willed; if that ever changes, badclass
        has to name them explicitly */
     const self_willed = (oart.spfx & SPFX_INTEL) !== 0;
-    let badclass, badalign;
-    if (yours) {
-        badclass = self_willed
-                   && ((oart.role !== NON_PM && !Role_if(oart.role))
-                       || (oart.race !== NON_PM && !Race_if(oart.race)));
-        badalign = (oart.spfx & SPFX_RESTR) !== 0
-                   && oart.alignment !== A_NONE
-                   && (oart.alignment !== ualign_type() || ualign_record() < 0);
-    } else if (!is_covetous(mon_data(mon)) && !is_mplayer(mon_data(mon))) {
-        badclass = self_willed && oart.role !== NON_PM
-                   && oart !== artilist[ART_EXCALIBUR];
-        badalign = !!(oart.spfx & SPFX_RESTR) && oart.alignment !== A_NONE
-                   && (oart.alignment !== mon_aligntyp(mon));
-    } else {
-        /* an M3_WANTSxxx monster or a fake player can touch anything that
-           isn't a `spec_applies' artifact */
-        badclass = badalign = false;
-    }
+    const badclass = self_willed
+        && ((oart.role !== NON_PM && !Role_if(oart.role))
+            || (oart.race !== NON_PM && !Race_if(oart.race)));
+    let badalign = (oart.spfx & SPFX_RESTR) !== 0
+        && oart.alignment !== A_NONE
+        && (oart.alignment !== ualign_type() || ualign_record() < 0);
     /* weapons that attack specific categories of monster are bad for them
        even when the alignments happen to match */
     if (!badalign) badalign = bane_applies(oart, mon);
 
     if (((badclass || badalign) && self_willed)
-        || (badalign && (!yours || !rn2(4)))) {
-        if (!yours) return 0;
+        || (badalign && !rn2(4))) {
         await update_topl(`You are blasted by the ${xname(obj)}'s power!`);
         touch_blasted(true);
         let dmg = d(Antimagic() ? 2 : 4, self_willed ? 10 : 4);

@@ -18,7 +18,8 @@ import { mattackm } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, MON_MIGRATING } from './const.js';
 import { dochugw, initMonMoveState, m_next2u, hideunder, hides_under_pm, mon_regen,
     m_everyturn_effect, monflee, onscary } from './monmove.js';
-import { cansee, Blind } from './vision.js';
+import { cansee, Blind, vision_recalc } from './vision.js';
+import { any_light_source } from './light.js';
 import { t_at } from './trap.js';
 import { night, FULL_MOON } from './calendar.js';
 import { is_were_flag, is_human_flag, mflags1_of, mflags2_of, mflags3_of,
@@ -35,6 +36,7 @@ import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
     tp_sensemon } from './display.js';
 import { dist2 } from './hacklib.js';
 import { Monnam } from './uhitm.js';
+import { touch_artifact_monster } from './artifact.js';
 import { mhim, mhis } from './do_name.js';
 
 // Additional bindings used ONLY by the "mon.c completion" block at the end of
@@ -737,11 +739,11 @@ async function minliquid(mtmp) {
 async function m_calcdistress(mtmp) {
     // C ref: mon.c:1183-1189 — a sessile species (data->mmove == 0) is checked
     // against water/lava once per turn even though it never moves, because it
-    // can be carried/teleported into liquid.  The `if (gv.vision_full_recalc)
-    // vision_recalc(0);` that precedes it is display bookkeeping and draws
-    // nothing.
-    if (mmove_of(mtmp.data) === 0 && await minliquid(mtmp))
-        return;
+    // can be carried/teleported into liquid; vision is caught up first.
+    if (mmove_of(mtmp.data) === 0) {
+        if (game.vision_full_recalc) vision_recalc(0);
+        if (await minliquid(mtmp)) return;
+    }
     // C ref: mon.c:1193 — regenerate hit points, BEFORE the shapeshift and
     // timeout blocks.  RNG-free but state-critical: see monmove.js mon_regen.
     mon_regen(mtmp, false);
@@ -1378,6 +1380,12 @@ async function movemon_singlemon(mtmp) {
     if (mtmp.movement >= NORMAL_SPEED)
         game._somebody_can_move = true;
 
+    // C ref: mon.c:1258-1259 — catch vision up before this monster acts, so
+    // a boulder a previous monster lifted or dropped is reflected in cansee()/
+    // couldsee() for its m_move, linedup and newsym (hallucinated glyphs draw
+    // from the display RNG only for squares the hero can see).
+    if (game.vision_full_recalc) vision_recalc(0);
+
     // makemon.c sets mcansee=mcanmove=TRUE and mpeaceful=peace_minded() on
     // every monster.  The JS makemon doesn't store those move-loop fields, so
     // materialize the C defaults the first time a monster is driven.  No RNG
@@ -1387,9 +1395,8 @@ async function movemon_singlemon(mtmp) {
 
     // C ref: mon.c:1254 — `if (minliquid(mtmp)) return FALSE;`, run for every
     // monster on every move (see minliquid() above for what is and isn't
-    // ported).  The `if (gv.vision_full_recalc) vision_recalc(0);` and the
-    // clear_bypasses()/clear_splitobjs() that sit between the movement
-    // deduction and this call are obj-flag/display bookkeeping and draw nothing.
+    // ported).  The clear_bypasses()/clear_splitobjs() that sit between the
+    // movement deduction and this call are obj-flag bookkeeping and draw nothing.
     if (await minliquid(mtmp)) return false;
 
     // C ref: mon.c:1269-1284 — after gaining or losing equipment a monster
@@ -1507,14 +1514,17 @@ async function movemon_pass() {
 // `do { monscanmove = await movemon(); } while (monscanmove)`, exactly as in
 // allmain.c:211-215.  An older comment here claimed they were unimplemented.)
 //
-// Not modelled from C's movemon(): any_light_source()/vision_full_recalc,
-// clear_bypasses()/clear_splitobjs() (obj bypass flags aren't tracked),
-// dmonsfree() (dead monsters stay in game.level.monsters and are skipped by
-// DEADMONSTER instead of being unlinked), and the `u.utotype -> deferred_goto()`
-// level-change handoff.  None of them draws; dmonsfree's absence is visible
-// only to code that counts list entries.
+// Not modelled from C's movemon(): clear_bypasses()/clear_splitobjs() (obj
+// bypass flags aren't tracked), dmonsfree() (dead monsters stay in
+// game.level.monsters and are skipped by DEADMONSTER instead of being
+// unlinked), and the `u.utotype -> deferred_goto()` level-change handoff.
+// None of them draws; dmonsfree's absence is visible only to code that counts
+// list entries.
 export async function movemon() {
-    return await movemon_pass();
+    const somebody_can_move = await movemon_pass();
+    // C ref: mon.c:1332-1333 — in case a monster moved with a light source.
+    if (any_light_source()) game.vision_full_recalc = 1;
+    return somebody_can_move;
 }
 
 /* ------------------------------------------------------------------------ *
@@ -1583,25 +1593,6 @@ const MR_STONE = 0x80;
 export function resists_ston(mon) {
     return ((mon?.data?.mresists ?? 0) & MR_STONE) !== 0;
 }
-// C ref: artifact.c:912 touch_artifact(obj, mon).  An ordinary object is always
-// safe (get_artifact returns ART_NONARTIFACT -> 1).  The MONSTER arm is not
-// modelled and always returns "touchable"; C's is:
-//     else if (!is_covetous(mon->data) && !is_mplayer(mon->data)) {
-//         badclass = self_willed && oart->role != NON_PM
-//                    && oart != &artilist[ART_EXCALIBUR];
-//         badalign = (oart->spfx & SPFX_RESTR) && oart->alignment != A_NONE
-//                    && (oart->alignment != mon_aligntyp(mon));
-//     } else badclass = badalign = FALSE;
-//     if (!badalign) badalign = bane_applies(oart, mon);
-//     if (((badclass || badalign) && self_willed) || badalign) return 0;
-// It draws NOTHING for a monster (the rn2(4) at artifact.c:945 is guarded by
-// `badalign && (!yours || !rn2(4))`, and !yours short-circuits it), so this is
-// a state omission, not an RNG one: an unaligned monster that C leaves standing
-// next to Stormbringer picks it up here.  Implementing it needs the artilist
-// SPFX/alignment columns (invent.js has them as a private ARTI_TOUCH_PROPS
-// table), mon_aligntyp(), and bane_applies() — none reachable from mon.js yet.
-function touch_artifact(_otmp, _mtmp) { return true; }
-
 // C ref: mon.c:1960 can_touch_safely(mtmp, otmp).
 export function can_touch_safely(mtmp, otmp) {
     const otyp = otmp.otyp;
@@ -1616,7 +1607,7 @@ export function can_touch_safely(mtmp, otmp) {
     if (OBJECTS[otyp]?.material === SILVER && mon_hates_silver(mtmp)
         && (otyp !== BELL_OF_OPENING || (mflags3_of(mdat) & M3_COVETOUS) === 0))
         return false;
-    if (!touch_artifact(otmp, mtmp))
+    if (!touch_artifact_monster(otmp, mtmp))
         return false;
     return true;
 }

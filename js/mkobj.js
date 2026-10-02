@@ -23,6 +23,7 @@ import {
     undead_to_corpse, mon_has_cnutrit, mon_nocorpse, mon_cwt, mon_msize,
     mon_cnutrit, name_to_pmidx,
 } from './makemon.js';
+import { block_point, recalc_block_point } from './vision.js';
 import { set_tin_variety, SPINACH_TIN, RANDOM_TIN, food_nutrit } from './eat.js';
 import { is_human_flag } from './monflags_data.js';
 
@@ -1943,12 +1944,12 @@ export function place_object(otmp, x, y) {
         for (let i = 0; i < objs.length; i++)
             if (objs[i] !== otmp && objs[i].where === 'floor'
                 && objs[i].ox === x && objs[i].oy === y) idx.push(i);
-        // C: `if (!otmp2 || otmp2->otyp != BOULDER) block_point(x,y)` for a new
-        // boulder, and recalc_block_point() in remove_object().  Both are done
-        // at this port's call sites (cmd.js moverock, dig.c, dbridge.c) because
-        // vision.js cannot be imported here without a module cycle.
+        // C ref: mkobj.c:2331-2334 — a boulder landing on a square whose top
+        // object is not already a boulder blocks light there.  remove_object()
+        // does the matching recalc_block_point().
         const topIsBoulder = idx.length
             && objs[idx[idx.length - 1]].otyp === BOULDER;
+        if (otmp.otyp === BOULDER && !topIsBoulder) block_point(x, y);
         let at = -1;
         if (topIsBoulder && otmp.otyp !== BOULDER) {
             // C: walk down the run of consecutive boulders, then splice in just
@@ -2796,9 +2797,8 @@ export function remove_object(otmp) {
     extract_nexthere(otmp, objs);
     extract_nobj(otmp, null);         /* the pile IS the fobj array here */
     otmp.where = OBJ_FREE;
-    // C: `if (otmp->otyp == BOULDER) recalc_block_point(x, y)` — vision.js is
-    // not importable from this module (cycle); the port's boulder movers
-    // (cmd.js moverock, dig.js, dbridge.js) already do this at their call sites.
+    // C ref: mkobj.c:2517-2518 — a departing boulder may unblock light.
+    if (otmp.otyp === BOULDER) recalc_block_point(x, y);
     if (otmp.timed) obj_timer_checks(otmp, x, y, 0);
 }
 

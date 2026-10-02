@@ -1270,6 +1270,8 @@ export class NethackGame {
             // Step boundary for the display-prng trace (js/disprng.js); inert
             // unless swarm/bin/dispdiff.mjs armed it.
             if (globalThis.__DISPLOG) globalThis.__DISPLOG.push('---STEP---');
+            if (globalThis.__MOVEMENT_ORACLE)
+                globalThis.__MOVEMENT_ORACLE({ ev: 'boundary', step: keyIdx + 1 });
 
             // termcap.c nomux_get_cursor() reports the RAW writer's row/col
             // whenever nomux_raw_active, and that flag is never cleared once a

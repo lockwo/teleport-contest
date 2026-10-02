@@ -12,7 +12,7 @@ import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
 import { makedog } from './dog.js';
 import { rhack, dosearch0, monster_nearby } from './cmd.js';
 import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning } from './display.js';
-import { vision_recalc, vision_reset, init_vision_globals } from './vision.js';
+import { vision_recalc, vision_reset, init_vision_globals, Blind } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
 import { movemon, mcalcdistress, mcalcmove, base_mmove, fmonOrder } from './mon.js';
@@ -1696,6 +1696,54 @@ async function exerchk() {
     }
 }
 
+// C ref: allmain.c moveloop_core():452-470 — the head of the once-per-player-
+// input block: find_ac(), then `if (!svc.context.mv || Blind)` the
+// hallucination / telepathy / warning redraw and its vision_recalc().  C runs
+// it at the top of EVERY moveloop_core() iteration, and each continuation step
+// of a run or travel is its own iteration, so hack.js's inline run/travel loops
+// call this between a step's elapsed turn and the next lookaround()+domove().
+// While running (context.mv) only a Blind hero gets the redraw: a blind,
+// hallucinating runner re-randomises its warnings at every step.
+export async function moveloop_input_redraw() {
+    const g = game;
+    // find_ac() runs once per player input, right after the amulet-wish block
+    // and BEFORE bot(), so any AC change a command or a monster's turn produced
+    // (erosion, a corroded suit, a spe change) is on the status line of the
+    // very next captured screen.  RNG-free and idempotent — find_ac() is this
+    // port's only writer of u.uac apart from the seed8000 fastforward stub
+    // (which has no worn gear, so this recomputes the same base 10).
+    find_ac();
+    if (g.context?.mv && !Blind()) return;
+    const dsp = await import('./display.js');
+    if (Hallucination()) {
+        // `see_monsters(); see_objects(); see_traps(); if (u.uswallow)
+        // swallowed(0);` — a hallucinating hero's map is re-randomised on every
+        // keystroke, and each redraw costs display-RNG draws, which is what
+        // makes the recorded colours advance frame by frame.  While swallowed,
+        // see_monsters()/objects/traps() all go through newsym(), which returns
+        // immediately (display.c "only permit updating the hero when
+        // swallowed"), so swallowed(0)'s eight swallow_to_glyph() picks are
+        // the whole cost.
+        dsp.see_monsters();
+        dsp.see_objects();
+        dsp.see_traps();
+        if (g.u?.uswallow) await dsp.swallowed(0);
+    } else {
+        // The `else if (Unblind_telepat || Warning || Warn_of_mon ||
+        // any_visible_region()) see_monsters();` arm.  Warn_of_mon is not
+        // modelled; the other three are.  Telepathy, warning glyphs and
+        // region-obscured monsters are all keyed on the HERO's position, so
+        // they have to be redrawn once per input or they linger where the
+        // monster no longer sets them (seed0360 wizard1: two '2's stayed put
+        // after a 'k').
+        const { any_visible_region } = await import('./region.js');
+        const { Unblind_telepat } = await import('./worn.js');
+        if (dsp.have_warning() || Unblind_telepat() || any_visible_region())
+            dsp.see_monsters();
+    }
+    if (g.vision_full_recalc) vision_recalc(0);
+}
+
 // C ref: allmain.c moveloop_core()
 export async function moveloop_core() {
     const g = game;
@@ -1760,47 +1808,7 @@ export async function moveloop_core() {
         await makewish();
     }
 
-    // C ref: allmain.c moveloop_core():452 — find_ac() runs once per player
-    // input, right after the amulet-wish block and BEFORE bot(), so any AC
-    // change a command or a monster's turn produced (erosion, a corroded suit,
-    // a spe change) is on the status line of the very next captured screen.
-    // It was missing here; individual sites (fountain.js) had to call it by
-    // hand.  RNG-free and idempotent — find_ac() is this port's only writer of
-    // u.uac apart from the seed8000 fastforward stub (which has no worn gear,
-    // so this recomputes the same base 10).
-    find_ac();
-
-    // C ref: allmain.c moveloop_core():453 — `if (!svc.context.mv || Blind)` then
-    // `if (Hallucination) { see_monsters(); see_objects(); see_traps();
-    //  if (u.uswallow) swallowed(0); }`.  This is ONCE PER PLAYER INPUT, not per
-    // turn, so a hallucinating hero's map is re-randomised on every keystroke —
-    // and each redraw costs display-RNG draws, which is what makes the recorded
-    // colours advance frame by frame.  While swallowed, see_monsters()/objects/
-    // traps() all go through newsym(), which returns immediately (display.c
-    // "only permit updating the hero when swallowed"), so swallowed(0)'s eight
-    // swallow_to_glyph() picks are the whole cost.
-    if (!g.context?.mv || (g.u?.blinded || 0) > 0 || g.ublindf) {
-        if (Hallucination()) {
-            const dsp = await import('./display.js');
-            dsp.see_monsters();
-            dsp.see_objects();
-            dsp.see_traps();
-            if (g.u?.uswallow) await dsp.swallowed(0);
-        } else {
-            // C ref: allmain.c moveloop_core():464 — the `else if
-            // (Unblind_telepat || Warning || Warn_of_mon || any_visible_region())
-            // see_monsters();` arm.  Warn_of_mon is not modelled; the other
-            // three are.  Telepathy, warning glyphs and region-obscured
-            // monsters are all keyed on the HERO's position, so they have to be
-            // redrawn once per input or they linger where the monster no longer
-            // sets them (seed0360 wizard1: two '2's stayed put after a 'k').
-            const dsp = await import('./display.js');
-            const { any_visible_region } = await import('./region.js');
-            const { Unblind_telepat } = await import('./worn.js');
-            if (dsp.have_warning() || Unblind_telepat() || any_visible_region())
-                dsp.see_monsters();
-        }
-    }
+    await moveloop_input_redraw();
 
     // Vision + display
     if (g.vision_full_recalc) {

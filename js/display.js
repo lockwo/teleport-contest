@@ -206,6 +206,17 @@ function halluc_statue_glyph() {
     return { ch: mon?.mlet || 'x', color: mon?.mcolor ?? NO_COLOR, dec: false };
 }
 
+// C ref: display.h obj_to_glyph(obj, rn2_on_display_rng) as passed to
+// tmp_at(DISP_FLASH, ...) for a flying missile: while hallucinating the flash
+// is a freshly drawn random object (or monster, for a statue), costing the
+// same display-RNG draws as map_object().  Returns a display cell.
+export function flash_obj_glyph(otmp) {
+    if (!otmp) return null;
+    if (Hallucination_u())
+        return (otmp.otyp === STATUE_OTYP) ? halluc_statue_glyph() : random_obj_glyph();
+    return object_glyph(otmp);
+}
+
 // C ref: display.h what_mon(monsndx(mon->data), rng) — while Hallucination
 // every monster (pet, detected, worm tail, mimic) is redrawn as a fresh
 // random species.
