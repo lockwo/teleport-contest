@@ -16,7 +16,9 @@ import { cansee, Blind as Blind_for_wear } from './vision.js';
 import { distmin, depth as depth_of_level } from './hacklib.js';
 import { surface } from './dungeon.js';
 import { mmove_of } from './mon.js';
-import { touch_artifact_monster } from './artifact.js';
+import { touch_artifact_monster, touch_artifact_hero_flags, the_artifact_name,
+    confers_luck, set_artifact_intrinsic_core } from './artifact.js';
+import { is_quest_artifact, artitouch } from './questpgr.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE, CLR_GRAY, NO_COLOR } from './terminal.js';
 
@@ -98,11 +100,11 @@ import { enlightenment_lines } from './insight.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { find_ac } from './u_init.js';
 import { moveloop_turn, youHaveFast, youHaveVeryFast } from './allmain.js';
-import { acurr_eff, acurr_str_encoded, exercise } from './attrib.js';
+import { acurr_eff, acurr_str_encoded, exercise, set_moreluck } from './attrib.js';
 import { hitval, dbon, weapon_type, weapon_hit_bonus_core,
          weapon_dam_bonus_core } from './weapon.js';
 import { P_TWO_WEAPON_COMBAT as P_TWO_WEAPON_COMBAT_INV,
-         P_RIDING as P_RIDING_INV } from './const.js';
+         P_RIDING as P_RIDING_INV, W_ART as W_ART_PROP } from './const.js';
 import {
     UNENCUMBERED, OVERLOADED,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
@@ -395,12 +397,6 @@ const PM_MONK = 5;
 const PM_TOURIST = 10;
 const PM_WIZARD = 12;
 const FAKE_AMULET_OF_YENDOR_OTYP = 212; // objects.h FAKE_AMULET_OF_YENDOR
-function confers_luck(obj) { return obj?.otyp === 470; }
-function set_moreluck() {}
-function record_achievement(_ach) {}
-function is_quest_artifact(_obj) { return false; }
-function artitouch(_obj) {}
-function set_artifact_intrinsic(_obj, _on, _mask) {}
 function is_mines_prize(_obj) { return false; }
 function is_soko_prize(_obj) { return false; }
 function Has_contents(obj) { return !!(obj?.cobj && obj.cobj.length); }
@@ -1068,50 +1064,6 @@ function place_object(obj, x, y) {
     }
     return obj;
 }
-// Per-artifact properties needed by touch_artifact (C ref: include/artilist.h).
-// Keyed by obj.oartifact (1-based index into artilist[]).  Only the fields the
-// hero-touch path consults are recorded: SPFX_RESTR / SPFX_INTEL bits, the
-// artifact's alignment, and its restricted role (race is NON_PM for every
-// self-willed artifact, so it never affects badclass and is omitted).
-// Alignment literals match const.js: A_NONE=-128, A_CHAOTIC=-1, A_NEUTRAL=0,
-// A_LAWFUL=1.  role is the urole.mnum value (Archeologist=0 .. Wizard=12) or
-// -1 (NON_PM).
-const ARTI_TOUCH_PROPS = {
-    1:  { restr: true,  intel: true,  align: 1,    role: 4  }, // Excalibur (KNIGHT)
-    2:  { restr: true,  intel: true,  align: -1,   role: -1 }, // Stormbringer
-    3:  { restr: true,  intel: false, align: 0,    role: 11 }, // Mjollnir (VALKYRIE)
-    4:  { restr: true,  intel: false, align: 0,    role: 1  }, // Cleaver (BARBARIAN)
-    5:  { restr: true,  intel: false, align: -1,   role: -1 }, // Grimtooth
-    6:  { restr: false, intel: false, align: -1,   role: -1 }, // Orcrist
-    7:  { restr: false, intel: false, align: -1,   role: -1 }, // Sting
-    8:  { restr: true,  intel: false, align: 0,    role: 12 }, // Magicbane (WIZARD)
-    9:  { restr: true,  intel: false, align: -128, role: -1 }, // Frost Brand
-    10: { restr: true,  intel: false, align: -128, role: -1 }, // Fire Brand
-    11: { restr: true,  intel: false, align: -128, role: -1 }, // Dragonbane
-    12: { restr: true,  intel: false, align: 1,    role: 6  }, // Demonbane (CLERIC)
-    13: { restr: true,  intel: false, align: -128, role: -1 }, // Werebane
-    14: { restr: true,  intel: false, align: 1,    role: -1 }, // Grayswandir
-    15: { restr: true,  intel: false, align: 0,    role: -1 }, // Giantslayer
-    16: { restr: true,  intel: false, align: -128, role: -1 }, // Ogresmasher
-    17: { restr: true,  intel: false, align: -128, role: -1 }, // Trollsbane
-    18: { restr: true,  intel: false, align: 0,    role: -1 }, // Vorpal Blade
-    19: { restr: true,  intel: false, align: 1,    role: 9  }, // Snickersnee (SAMURAI)
-    20: { restr: true,  intel: false, align: 1,    role: -1 }, // Sunsword
-    21: { restr: true,  intel: true,  align: 1,    role: 0  }, // Orb of Detection (ARCHEOLOGIST)
-    22: { restr: true,  intel: true,  align: 0,    role: 1  }, // Heart of Ahriman (BARBARIAN)
-    23: { restr: true,  intel: true,  align: 1,    role: 2  }, // Sceptre of Might (CAVE_DWELLER)
-    24: { restr: true,  intel: true,  align: -1,   role: -1 }, // Palantir (obsolete)
-    25: { restr: true,  intel: true,  align: 0,    role: 3  }, // Staff of Aesculapius (HEALER)
-    26: { restr: true,  intel: true,  align: 1,    role: 4  }, // Magic Mirror of Merlin (KNIGHT)
-    27: { restr: true,  intel: true,  align: 0,    role: 5  }, // Eyes of the Overworld (MONK)
-    28: { restr: true,  intel: true,  align: 1,    role: 6  }, // Mitre of Holiness (CLERIC)
-    29: { restr: true,  intel: true,  align: -1,   role: 7  }, // Longbow of Diana (RANGER)
-    30: { restr: true,  intel: true,  align: -1,   role: 8  }, // Master Key of Thievery (ROGUE)
-    31: { restr: true,  intel: true,  align: 1,    role: 9  }, // Tsurugi of Muramasa (SAMURAI)
-    32: { restr: true,  intel: true,  align: 0,    role: 10 }, // PYEC (TOURIST)
-    33: { restr: true,  intel: true,  align: 0,    role: 11 }, // Orb of Fate (VALKYRIE)
-    34: { restr: true,  intel: true,  align: 0,    role: 12 }, // Eye of the Aethiopica (WIZARD)
-};
 
 // C ref: prop.h Antimagic == HAntimagic || EAntimagic.  This reads only the
 // intrinsic-ish mirrors; the extrinsic word is now maintained by
@@ -1163,29 +1115,11 @@ function losehp_invent(n) {
 export function touch_artifact(obj, mon) {
     if (mon && mon !== game.u && mon !== game.youmonst)
         return !!touch_artifact_monster(obj, mon);
-    const m = obj && obj.oartifact;
-    const oart = m && ARTI_TOUCH_PROPS[m];
-    if (!oart) return true; // ART_NONARTIFACT
-    const yours = true;
-    const u = game.u;
-    const ualignType = u?.ualign?.type ?? 0;
-    const ualignRecord = u?.ualign?.record ?? 0;
-    const uroleMnum = game.urole?.mnum ?? -1;
-
-    const self_willed = oart.intel;
-    // badclass: self-willed artifact whose restricted role/race doesn't match
-    // the hero.  (race is NON_PM for every self-willed artifact, so omitted.)
-    const badclass = self_willed
-        && (oart.role !== -1 /*NON_PM*/ && oart.role !== uroleMnum);
-    // badalign: SPFX_RESTR artifact with a real alignment the hero violates.
-    let badalign = oart.restr
-        && oart.align !== -128 /*A_NONE*/
-        && (oart.align !== ualignType || ualignRecord < 0);
-    // C: if (!badalign) badalign = bane_applies(oart, mon).  bane_applies needs
-    // the hero polymorphed into a bane-target form, which the wish replays never
-    // are, so this stays false.
-
+    const f = touch_artifact_hero_flags(obj);
     game._touch_blasted = false;
+    if (!f) return true; // ART_NONARTIFACT
+    const yours = true;
+    const { self_willed, badclass, badalign } = f;
     // C: if (((badclass || badalign) && self_willed)
     //        || (badalign && (!yours || !rn2(4)))) { ... blast ... }
     // The rn2(4) is evaluated under the same short-circuit ordering as C.
@@ -1202,7 +1136,7 @@ export function touch_artifact(obj, mon) {
         // merge-or-more() check, instead of overwriting it and racing into
         // end-of-turn RNG a keystroke early.
         game._pending_message =
-            `You are blasted by ${s_suffix(`the ${xname(obj)}`)} power!`;
+            `You are blasted by ${s_suffix(the_artifact_name(xname(obj)))} power!`;
         game._toplin = 1;
         game._touch_blasted = true;
         let dmg = d(Antimagic() ? 2 : 4, self_willed ? 10 : 4);
@@ -3145,7 +3079,25 @@ export function addinv_core1(obj) {
         ustate().uhave = { ...(ustate().uhave || {}), bell: 1 };
     } else if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
         ustate().uhave = { ...(ustate().uhave || {}), book: 1 };
+    } else if (obj.oartifact) {
+        // C ref: invent.c addinv_core1(). artitouch()'s quest text is async
+        // here, so it is queued for flush_artitouch(), which the async
+        // addinv callers run before their own inventory message.
+        if (is_quest_artifact(obj)) {
+            ustate().uhave = { ...(ustate().uhave || {}), questart: 1 };
+            game._pending_artitouch = obj;
+        }
+        set_artifact_intrinsic_core(obj, true, W_ART_PROP);
     }
+}
+
+// C ref: quest.c artitouch() as reached from addinv_core1(); see above.
+export async function flush_artitouch() {
+    const obj = game._pending_artitouch;
+    if (!obj) return;
+    game._pending_artitouch = null;
+    observe_object(obj);
+    await artitouch(obj);
 }
 
 export function addinv_core2(obj) {
@@ -3290,6 +3242,7 @@ export async function hold_another_object(obj, drop_fmt, drop_arg, hold_msg) {
     if (prev_encumbr < burden_limit) prev_encumbr = burden_limit;
 
     obj = addinv_core0(obj, null, false);
+    await flush_artitouch();
     await report_merge_discovery();
     if (inv_cnt(false) > invlet_basic
         || ((obj.otyp !== LOADSTONE || !obj.cursed)
@@ -3338,13 +3291,20 @@ export function freeinv_core(obj) {
     if (obj.oclass === COIN_CLASS) {
         game._goldCount = Math.max(0, (game._goldCount || 0) - (obj.quan || 0));
         game.botl = true;
+        return;
     }
     else if (obj.otyp === AMULET_OF_YENDOR && ustate().uhave) ustate().uhave.amulet = 0;
     else if (obj.otyp === CANDELABRUM_OF_INVOCATION && ustate().uhave) ustate().uhave.menorah = 0;
     else if (obj.otyp === BELL_OF_OPENING && ustate().uhave) ustate().uhave.bell = 0;
     else if (obj.otyp === SPE_BOOK_OF_THE_DEAD && ustate().uhave) ustate().uhave.book = 0;
+    else if (obj.oartifact) {
+        // C ref: invent.c freeinv_core(). The arti_invoke() that turns off an
+        // active invoked power is async and is not reached from here.
+        if (is_quest_artifact(obj) && ustate().uhave) ustate().uhave.questart = 0;
+        set_artifact_intrinsic_core(obj, false, W_ART_PROP);
+    }
     if (obj.otyp === LOADSTONE) curse(obj);
-    else if (confers_luck(obj)) set_moreluck();
+    else if (confers_luck(obj)) { set_moreluck(); game.botl = true; }
 }
 
 // C ref: invent.c freeinv(obj):1402 -> mkobj.c extract_nobj():2595 — unlink
@@ -5721,8 +5681,8 @@ function uslinging() {
 // PM_GNOME 3 / PM_ORC 4 as js/role.js races[] numbers them).
 function race_mnum() { return game.urace?.mnum ?? game.initrace ?? 0; }
 
-// Role mnums used by the multishot bonuses (js/invent.js ARTI_TOUCH_PROPS
-// numbers the roles the same way u_init.c does).
+// Role mnums used by the multishot bonuses (urole.mnum numbering, as
+// u_init.c assigns it).
 const PM_CAVE_DWELLER_ROLE = 2, PM_RANGER_ROLE = 7, PM_ROGUE_ROLE = 8,
     PM_SAMURAI_ROLE = 9;
 const YA = 22, YUMI = 86, ELVEN_ARROW = 19, ORCISH_ARROW = 20,
@@ -5807,8 +5767,7 @@ async function multishot_bonus(obj, skill) {
     return bonus;
 }
 
-// C ref: include/artilist.h index of Mjollnir (ARTI_TOUCH_PROPS above numbers
-// the artifacts the same way).
+// C ref: include/artilist.h index of Mjollnir (js/artifact.js ART_MJOLLNIR).
 const ART_MJOLLNIR = 3;
 // C ref: attrib.h STR19(x) == 100 + x, so STR19(25) is the raw ACURR(A_STR)
 // value for strength 25 — the minimum for throwing Mjollnir.

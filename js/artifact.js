@@ -23,7 +23,7 @@ import { fuzzymatch } from './objnam.js';
 import { monster_by_pmidx } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
 import { exercise } from './attrib.js';
-import { isok } from './hacklib.js';
+import { isok, s_suffix } from './hacklib.js';
 import { cansee } from './vision.js';
 import { mon_nam, monflee } from './uhitm.js';
 import { resist, destroy_items, ignite_items } from './zap.js';
@@ -1208,12 +1208,20 @@ function toggle_extrinsic(prop, on, wp_mask) {
     set_extrinsic(prop, on ? (cur | wp_mask) : (cur & ~wp_mask));
 }
 
-// C ref: artifact.c set_artifact_intrinsic() — a potential artifact has just
+// C ref: artifact.c set_artifact_intrinsic() -- a potential artifact has just
 // been worn/wielded/picked-up or the reverse.  Pickup/drop only set/reset the
 // W_ART bit.  RNG-free, but it writes the state that later moduli read.
 export async function set_artifact_intrinsic(otmp, on, wp_mask) {
+    if (set_artifact_intrinsic_core(otmp, on, wp_mask))
+        await arti_invoke(otmp);
+}
+
+// The synchronous body of set_artifact_intrinsic().  Returns true when C would
+// go on to call arti_invoke() to turn off an invoked power (an artifact with
+// an active invoked property leaving inventory); the caller does that part.
+export function set_artifact_intrinsic_core(otmp, on, wp_mask) {
     const oart = get_artifact(otmp);
-    if (oart === NONART()) return;
+    if (oart === NONART()) return false;
 
     /* effects from the defn field (worn/wielded) or cary (merely carried) */
     const dtyp = (wp_mask !== W_ART) ? oart.defn.adtyp : oart.cary.adtyp;
@@ -1265,15 +1273,14 @@ export async function set_artifact_intrinsic(otmp, on, wp_mask) {
     if ((spfx & SPFX_REFLECT) && (wp_mask & W_WEP))
         toggle_extrinsic(REFLECTING, on, wp_mask);
 
-    if (wp_mask === W_ART && !on && oart.inv_prop) {
-        /* might have to turn off the invoked power too */
-        if (oart.inv_prop <= LAST_PROP
-            && (extrinsic_of(oart.inv_prop) & W_ARTI))
-            await arti_invoke(otmp);
-    }
+    /* might have to turn off the invoked power too */
+    const invoke_off = wp_mask === W_ART && !on && !!oart.inv_prop
+        && oart.inv_prop <= LAST_PROP
+        && (extrinsic_of(oart.inv_prop) & W_ARTI) !== 0;
 
     if (wp_mask === W_WEP && is_art(otmp, ART_SUNSWORD))
         toggle_extrinsic(BLND_RES, on, wp_mask);
+    return invoke_off;
 }
 
 // C ref: artifact.c arti_immune() — is the artifact itself immune to an
@@ -1480,16 +1487,12 @@ export function touch_artifact_monster(obj, mon) {
     return ((badclass || badalign) && self_willed) || badalign ? 0 : 1;
 }
 
-// C ref: artifact.c touch_artifact().  RNG: rn2(4) for a hero touching a
-// badly-aligned artifact, then d(Antimagic ? 2 : 4, self_willed ? 10 : 4) and
-// a silver rnd(10) for the blast.  Returns C's 0/1.
-export async function touch_artifact(obj, mon) {
-    if (!is_you(mon)) return touch_artifact_monster(obj, mon);
+// C ref: artifact.c touch_artifact() — the hero's (RNG-free) badclass /
+// badalign / self_willed predicates, shared by invent.js's synchronous copy.
+// Returns null for a non-artifact.
+export function touch_artifact_hero_flags(obj) {
     const oart = get_artifact(obj);
-
-    touch_blasted(false);
-    if (oart === NONART()) return 1;
-
+    if (oart === NONART()) return null;
     /* every quest artifact is self-willed; if that ever changes, badclass
        has to name them explicitly */
     const self_willed = (oart.spfx & SPFX_INTEL) !== 0;
@@ -1501,11 +1504,42 @@ export async function touch_artifact(obj, mon) {
         && (oart.alignment !== ualign_type() || ualign_record() < 0);
     /* weapons that attack specific categories of monster are bad for them
        even when the alignments happen to match */
-    if (!badalign) badalign = bane_applies(oart, mon);
+    if (!badalign) badalign = bane_applies(oart, youmonst());
+    return { self_willed, badclass, badalign };
+}
+
+// C ref: objnam.c the() for a proper (capitalized) name as used by
+// touch_artifact's blast: "The Orb of Fate" -> "the Orb of Fate",
+// "Frost Brand" -> "Frost Brand", "Excalibur" -> "Excalibur".
+export function the_artifact_name(str) {
+    if (/^the /i.test(str)) return str.charAt(0).toLowerCase() + str.slice(1);
+    if (!/^[A-Z]/.test(str)) return `the ${str}`;
+    const sp = str.lastIndexOf(' ');
+    const tmp = sp >= 0 ? sp : str.lastIndexOf('-');
+    if (tmp >= 0 && !/[A-Z]/.test(str.charAt(tmp + 1))) return str.includes("'") ? str : `the ${str}`;
+    if (sp >= 0 && str.indexOf(' ') < sp) {
+        const of = str.indexOf(' of ');
+        let named = str.indexOf(' named ');
+        const called = str.indexOf(' called ');
+        if (called >= 0 && (named < 0 || called < named)) named = called;
+        if (of >= 0 && (named < 0 || of < named)) return `the ${str}`;
+    }
+    return str;
+}
+
+// C ref: artifact.c touch_artifact().  RNG: rn2(4) for a hero touching a
+// badly-aligned artifact, then d(Antimagic ? 2 : 4, self_willed ? 10 : 4) and
+// a silver rnd(10) for the blast.  Returns C's 0/1.
+export async function touch_artifact(obj, mon) {
+    if (!is_you(mon)) return touch_artifact_monster(obj, mon);
+    touch_blasted(false);
+    const f = touch_artifact_hero_flags(obj);
+    if (!f) return 1;
+    const { self_willed, badclass, badalign } = f;
 
     if (((badclass || badalign) && self_willed)
         || (badalign && !rn2(4))) {
-        await update_topl(`You are blasted by the ${xname(obj)}'s power!`);
+        await update_topl(`You are blasted by ${s_suffix(the_artifact_name(xname(obj)))} power!`);
         touch_blasted(true);
         let dmg = d(Antimagic() ? 2 : 4, self_willed ? 10 : 4);
         /* add half (maybe quarter) of the usual silver damage bonus */

@@ -411,6 +411,18 @@ function confers_luck_at(obj) {
     return !!obj.oartifact && SPFX_LUCK_ARTIFACTS.has(obj.oname);
 }
 
+// C ref: attrib.c set_moreluck(). There has just been an inventory change
+// affecting a luck-granting item. LUCKADD is 3 (you.h).
+export function set_moreluck() {
+    const u = game.u;
+    if (!u) return;
+    const luckbon = stone_luck(true);
+    const carrying_luckstone = (game.invent || []).some((o) => o.otyp === LUCKSTONE);
+    if (!luckbon && !carrying_luckstone) u.moreluck = 0;
+    else if (luckbon >= 0) u.moreluck = 3;
+    else u.moreluck = -3;
+}
+
 // ─── attrib.c:455 restore_attrib() ─────────────────────────────────────────
 // C's own comment: "(not used)".  It used to be called by moveloop() every
 // turn, but ATIME() is never set to non-zero anywhere so it never did anything;

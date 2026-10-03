@@ -2879,6 +2879,19 @@ export async function com_pager(msgid) {
     await com_pager_core('common', msgid);
 }
 
+// C ref: quest.c artitouch() — the first time the hero gains the quest
+// artifact (invent.c addinv_core1), page "gotit" and exercise wisdom.  The
+// caller has already done C's observe_object(obj).
+export async function artitouch(_obj) {
+    const q = game.quest_status || (game.quest_status = {});
+    if (!q.touched_artifact) {
+        /* only give this message once */
+        q.touched_artifact = true;
+        await qt_pager('gotit');
+        exercise(A_WIS, true);
+    }
+}
+
 // C ref: questpgr.c deliver_splev_message() (do.c:1858) — ported at the bottom
 // of this file now; js/do.js:1162 still open-codes it inline.  Note that
 // sp_lev.js:5529 DOES fill gl.lev_message from des.message() these days.

@@ -25,7 +25,7 @@ import {
 } from './mkobj.js';
 import {
     invlet_basic, inventoryArray, near_capacity, inv_weight, xname,
-    obj_doname as doname, otense, currency, merge_choice, addinv, freeinv,
+    obj_doname as doname, otense, currency, merge_choice, addinv, freeinv, flush_artitouch,
     obj_here, prinv, is_worn, count_unpaid, count_buc, look_here, tally_BUCX,
     ansimpleoname, display_inventory_interactive,
     describe_decor, sortloot, unsortloot, will_feel_cockatrice, feel_cockatrice,
@@ -1406,7 +1406,9 @@ export async function pick_obj(otmp) {
         const { addtobill } = await import('./shkroom.js');
         await addtobill(otmp, true, false, false);
     }
-    return addinv(otmp);
+    const res = addinv(otmp);
+    await flush_artitouch();     /* C: addinv_core1() -> artitouch() */
+    return res;
 }
 
 /* pickup.c:1948 pickup_prinv() — the added-to-invent message, with the
@@ -1918,6 +1920,7 @@ export async function out_container(obj) {
     }
 
     const otmp = addinv(obj);
+    await flush_artitouch();
     pickup_prinv(otmp, count, 'removing');
 
     if (is_gold) await bot();
