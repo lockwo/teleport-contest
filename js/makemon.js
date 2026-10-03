@@ -4678,6 +4678,11 @@ export async function bagotricks(bag, tipping, seencount) {
             creatcnt += rnd(7);
         do {
             const mtmp = makemon(null, game.u.ux, game.u.uy, 0 /* NO_MM_FLAGS */);
+            // C ref: makemon.c:1472 — makemon()'s own tail announces the new
+            // monster ("A newt suddenly appears next to you!").  makemon() is
+            // sync in this port, so the async announcement runs here, at the
+            // same point in the sequence (see makemon_appears_msg's note).
+            if (mtmp) await makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, 0);
             if (mtmp) {
                 ++moncount;
                 if ((await bagotricks_canseemon(mtmp)

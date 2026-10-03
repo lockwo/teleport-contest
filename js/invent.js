@@ -9850,9 +9850,26 @@ async function select_inventory_menu(rows, byLet) {
         if (repaint) info = renderInventoryMenu(rows, page);
         repaint = true;
         const c = await nhgetch();
-        if (c === 32 && info.multipage && page < info.pages - 1) {
+        // C ref: win/tty/wintty.c process_menu_window() — ' ' and MENU_NEXT_PAGE
+        // ('>') advance a page; ' ' on the last page finishes the menu, '>' does
+        // not.  MENU_PREVIOUS_PAGE ('<'), MENU_FIRST_PAGE ('^') and
+        // MENU_LAST_PAGE ('|') move pages and never finish.
+        if ((c === 32 || c === 62) && info.multipage && page < info.pages - 1) {
             page++;
             continue;
+        }
+        if (c === 62) { repaint = false; continue; }
+        if (c === 60) {
+            if (page > 0) { page--; continue; }
+            repaint = false; continue;
+        }
+        if (c === 94) {
+            if (page !== 0) { page = 0; continue; }
+            repaint = false; continue;
+        }
+        if (c === 124) {
+            if (info.multipage && page !== info.pages - 1) { page = info.pages - 1; continue; }
+            repaint = false; continue;
         }
         if (c === 27 || c === 32 || c === 13 || c === 10) {
             await dismiss_invent_screen();

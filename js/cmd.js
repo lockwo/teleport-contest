@@ -2884,7 +2884,11 @@ export async function pick_lock(pick) {
             else if (picktyp !== LOCK_PICK) { verb = 'unlock'; it = true; }
             else verb = 'pick';
             otmp.lknown = 1;
-            game._yn_need_more = true;
+            // C ref: topl.c tty_yn_function() — ynq() only pages a --More--
+            // when the top line is still TOPLINE_NEED_MORE; the #apply path
+            // reaches this prompt with an empty top line, so forcing one here
+            // inserted a spurious "--More--" frame.
+            game._yn_need_more = (game._toplin === 1);
             const c = await y_n(`There is ${an_obj(otmp.otyp)} here; ${verb} ${it ? 'it' : 'its lock'}?`, 'ynq\x1b', 'q');
             if (c === 'q' || c === '\x1b') return PICKLOCK_DID_NOTHING;
             if (c === 'n') continue; // try next box
@@ -2961,8 +2965,11 @@ export async function pick_lock(pick) {
         usedtime: 0,
         magic_key: false,
     };
+    // C ref: lock.c pick_lock() ends with set_occupation(picklock, ...) and
+    // svc.context.move = 0 — the first rn2(100) is NOT rolled here; the move
+    // loop runs the occupation on its next pass, i.e. after this command's
+    // monster movement.  allmain.js's `_picklock_box` arm is that dispatcher.
     game._picklock_box = target.box || target.door;
-    await (await import('./extcmd-handlers.js')).picklock();
     return PICKLOCK_DID_SOMETHING;
 }
 

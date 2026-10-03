@@ -37,7 +37,7 @@ import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
 import { find_mac, species } from './worn.js';
 import {
     SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED,
-    IS_AIR, IS_ROOM, IS_WALL, IS_DOOR,
+    IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND,
 } from './const.js';
 // C ref: apply.c do_break_wand() — the shared explode() call, its direction
 // table, the dig-a-pit-vs-hole choice, and the room type the digging branch
@@ -73,6 +73,9 @@ const P_SKILLED = 3, P_EXPERT = 4;
 const SKELETON_KEY = 221, LOCK_PICK = 222, CREDIT_CARD = 223;
 // C ref: include/onames.h SACK/OILSKIN_SACK/BAG_OF_HOLDING (mkobj.js rows).
 const SACK_OTYP = 217, OILSKIN_SACK_OTYP = 218, BAG_OF_HOLDING_OTYP = 219;
+// C ref: include/onames.h LARGE_BOX/CHEST/ICE_BOX/BAG_OF_TRICKS.
+const LARGE_BOX_OTYP = 214, CHEST_OTYP = 215, ICE_BOX_OTYP = 216,
+      BAG_OF_TRICKS_OTYP = 220;
 
 // ECMD result codes (cmd.h).  doapply() returns one of these; the caller maps
 // ECMD_TIME -> game turn elapsed.
@@ -747,10 +750,53 @@ export async function doapply() {
     // the "Do what with your bag?" loot menu (use_container(&obj, TRUE, FALSE)).
     // Falling through to the yafm below handed the menu's keystrokes to the
     // command parser instead (seed0012 steps 259-264).
+    // C ref apply.c:4271-4278 `case LARGE_BOX: case CHEST: case ICE_BOX:
+    // case SACK: case BAG_OF_HOLDING: case OILSKIN_SACK: res =
+    // use_container(&obj, TRUE, FALSE);` — applying ANY carried container opens
+    // the loot menu, boxes included (they are carryable and appliable even
+    // though they can only be unlocked on the floor).
     if (obj.otyp === SACK_OTYP || obj.otyp === OILSKIN_SACK_OTYP
-        || obj.otyp === BAG_OF_HOLDING_OTYP) {
+        || obj.otyp === BAG_OF_HOLDING_OTYP
+        || obj.otyp === LARGE_BOX_OTYP || obj.otyp === CHEST_OTYP
+        || obj.otyp === ICE_BOX_OTYP) {
+        // C ref: pickup.c use_container() head — a held container that is
+        // locked never reaches the "Do what with" menu, and a trapped one
+        // springs its trap instead.  (js/extcmd-handlers.js owns the menu
+        // half of use_container(); this preamble is the part a carried BOX
+        // needs, since bags are never locked or trapped.)
+        if (!obj.lknown) {
+            obj.lknown = 1;
+            _invent.update_inventory();
+        }
+        if (obj.olocked) {
+            await _display.pline(`${Tobjnam(obj, 'are')} locked.`);
+            await _display.pline('You must put it down to unlock.');
+            return ECMD_OK;
+        }
+        if (obj.otrapped) {
+            await _display.pline(`You open ${the_of(obj)}...`);
+            const { chest_trap } = await import('./trap.js');
+            await chest_trap(obj, HAND, false);
+            // C: even if the trap fails, this turn is used up.
+            if ((game.multi ?? 0) >= 0) {
+                const { nomul } = await import('./hack.js');
+                nomul(-1);
+                game.multi_reason = 'opening a container';
+                game.nomovemsg = '';
+            }
+            return ECMD_TIME;
+        }
         const { use_container_held } = await import('./extcmd-handlers.js');
         return await use_container_held(obj) ? ECMD_TIME : ECMD_OK;
+    }
+
+    // C ref apply.c:4279 `case BAG_OF_TRICKS: (void) bagotricks(obj, FALSE,
+    // (int *) 0); break;` — res stays ECMD_TIME (the default), so applying it
+    // always costs the turn, empty or not.
+    if (obj.otyp === BAG_OF_TRICKS_OTYP) {
+        const { bagotricks } = await import('./makemon.js');
+        await bagotricks(obj, false, null);
+        return ECMD_TIME;
     }
 
     if (obj.otyp === LOCK_PICK || obj.otyp === SKELETON_KEY || obj.otyp === CREDIT_CARD) {
