@@ -1197,6 +1197,7 @@ export async function rhack(key) {
         const updown = (ch === '<' || ch === '>') ? ' other than up or down' : '';
         await pline(`The '${which}' prefix should be followed by a movement command${updown}.`);
         game.context.forcefight = 0;
+        game.context.stale_run = 0;
         game.context.run_prefix = 0;
         game.context.move = 0;
         return;
@@ -1211,8 +1212,11 @@ export async function rhack(key) {
     const staleRun = game.context.stale_run || 0;
     game.context.stale_run = 0;
     let badCommand = false;
-    // A pending g/G prefix is dropped by ESC or a quitchar with no message.
-    if (game.context.run_prefix && !game._modal_screen && !isMovementKey(ch)) {
+    // Keep a second g/G intact for do_rush()/do_run(): C re-enters the
+    // prefix command with domove_attempting still armed, so it must cancel
+    // rather than silently replace the pending prefix.
+    if (game.context.run_prefix && !game._modal_screen
+        && !isMovementKey(ch) && ch !== 'g' && ch !== 'G') {
         if (!(npBound ?? is_bound_key(ch)))
             game.context.stale_run = game.context.run_prefix || staleRun;
         game.context.run_prefix = 0;
@@ -1250,6 +1254,8 @@ export async function rhack(key) {
     } else if (ch === '\x1b') {
         // Escape: dismiss any open menu/window; a no-op at top level.
         // C ref: cmd.c — ESC produces no message.
+        game.context.run_prefix = 0;
+        game.context.stale_run = 0;
         await dismiss_invent_screen();
         game.context.move = 0;
     } else if (key === 32 || key === 13 || key === 10) {
