@@ -14,7 +14,6 @@
 //   - an edog-less tame minion (guardian Angel: isminion + ispriest instead of
 //     edog) returns MMOVE_NOTHING at the top of dog_move instead of running the
 //     guardian variant of the candidate loop;
-//   - pet_ranged_attk() does not call mattackm() (see the note there);
 //   - the ALLOW_U (attack-the-hero) / m_in_out_region / m_digweapon_check arms
 //     of newdogpos, none of which a pet can currently reach.
 
@@ -1503,15 +1502,29 @@ async function pet_ranged_attk(mtmp, forced) {
         ? ((game.moves || 1) > ((edog.hungrytime || 0) + DOG_HUNGRY)) : false;
     const mtarg = best_target(mtmp, forced);
     if (mtarg && (!hungry || !rn2(5))) {
-        // DEFERRED (measured -1500 public when wired up): C calls
-        // mattackm(mtmp, mtarg) here.  For a melee-only pet at range that makes
-        // no attack and returns M_ATTK_MISS, but it is not a no-op — it sets
-        // magr->mlstmv = moves and clears a confused/helpless defender's
-        // msleeping.  js/mhitm.js's mattackm does not reproduce C's range
-        // short-circuit (it draws to-hit rolls the C never makes at distmin > 1),
-        // so calling it here desyncs; fixing mhitm.js's distance gate is a
-        // prerequisite and belongs to that file's pass.
-        const mstatus = M_ATTK_MISS;
+        let mstatus = M_ATTK_MISS;
+        if (mtarg === HERO_TARG) {
+            // best_target() only returns the hero when forced, which dog_move
+            // never is; C: `if (mattacku(mtmp)) return MMOVE_DIED;` then
+            // treats it as an attack.
+            if (await mattacku(mtmp, mtmp.data)) return MMOVE_DIED;
+            mstatus = M_ATTK_HIT;
+        } else {
+            // C ref: dogmove.c:922 — mattackm() even for a melee-only pet at
+            // range: it makes no attack and returns M_ATTK_MISS, but wakes a
+            // sleeping target (mhitm.c:322) and sets magr->mlstmv.
+            mstatus = await mattackm(mtmp, mtarg);
+            if (mstatus & M_ATTK_AGR_DIED) return MMOVE_DIED;
+            // C ref: dogmove.c:932 — the targeted beast may strike back with
+            // its own ranged attack if it can see.
+            if ((mstatus & M_ATTK_HIT) && !(mstatus & M_ATTK_DEF_DIED)
+                && rn2(4) && mtarg !== HERO_TARG) {
+                if (mtarg.mcansee && haseyes(mtarg.data)) {
+                    const mresp = await mattackm(mtarg, mtmp);
+                    if (mresp & M_ATTK_DEF_DIED) return MMOVE_DIED;
+                }
+            }
+        }
         // C ref: dogmove.c:962 — only a pet that actually attacked loses its move.
         if (mstatus !== M_ATTK_MISS) return MMOVE_DONE;
     }
