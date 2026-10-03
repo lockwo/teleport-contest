@@ -2330,13 +2330,9 @@ export async function do_farlook() {
 
     // do_screen_description: describe the chosen cell.  Monster/object naming
     // is not modelled here; the terrain description covers the recorded cases.
-    const mtmp = m_at(cc.x, cc.y);
-    let desc;
-    if (mtmp && canspotmon(mtmp)) {
-        desc = mtmp.data?.mname || mtmp.data?.pmname || 'a monster';
-    } else {
-        desc = look_pick_description(cc.x, cc.y).text;
-    }
+    // C ref: pager.c do_look(quick) — the same do_screen_description() out_str
+    // as '/' ("<sym>        <class> (<lookat>)"), monsters included.
+    const desc = look_pick_description(cc.x, cc.y).text;
     // C ref: pager.c:1919 `putmixed(WIN_MESSAGE, 0, out_str)` — tty routes that
     // through update_topl(), so a description too wide for one row wraps and
     // blocks on --More-- before do_look returns.
