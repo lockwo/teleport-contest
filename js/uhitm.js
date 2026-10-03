@@ -1584,10 +1584,35 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
 // C ref: uhitm.c passive_obj(mon, obj, mattk) — the passive attack's effect on
 // the striking object.
 export async function passive_obj(mon, obj, mattk) {
-    if (!obj) return;
+    const ptr = mon?.data;
+    /* C ref: uhitm.c:6136 — if the caller hasn't named an object, use uwep,
+       uswapwep or (for AD_ENCH) uarmg. */
+    if (!obj) {
+        obj = (game.u?.twoweap && game.uswapwep && !rn2(2))
+            ? game.uswapwep : game.uwep;
+        if (!obj && mattk?.adtyp === AD_ENCH) obj = game.uarmg;
+        if (!obj) return;
+    }
+    /* C ref: uhitm.c:6146 — if the caller hasn't named an attack, use the
+       monster's first PASSIVE one (mattk[i].aatyp == AT_NONE).  dothrow.c's
+       thitmonst() and mthrowu.c's thitu() both call with a null attack, so
+       without this a thrown weapon never corroded on an acid blob. */
+    if (!mattk) {
+        const attacks = mattk_of(ptr) || [];
+        /* C's mattk[] is a zero-filled fixed array, so a species with a short
+           table has {AT_NONE, AD_PHYS, 0, 0} in the missing slots. */
+        for (let i = 0; ; i++) {
+            if (i >= 6 /*NATTK*/) return;     /* no passive attacks */
+            const a = attacks[i];
+            if (!a) { mattk = { aatyp: AT_NONE, adtyp: AD_PHYS, damn: 0, damd: 0 }; break; }
+            if (a.aatyp === AT_NONE) { mattk = a; break; }
+        }
+    }
     switch (mattk.adtyp) {
     case AD_FIRE:
-        if (!rn2(6) && !mon.mcan) await erode_obj_local(obj, ERODE_BURN);
+        /* steam vortex: fire resistance applies, fire damage doesn't */
+        if (!rn2(6) && !mon.mcan && ptr?.name !== 'steam vortex')
+            await erode_obj_local(obj, ERODE_BURN);
         break;
     case AD_ACID:
         if (!rn2(6)) await erode_obj_local(obj, ERODE_CORRODE);
