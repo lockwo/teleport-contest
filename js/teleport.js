@@ -9,7 +9,7 @@
 //
 // Hero placement is shared by jumping, teleport commands, scrolls, and traps.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
 import { newsym, m_at, update_topl, y_n } from './display.js';
@@ -262,6 +262,28 @@ export async function rloc_to(mtmp, x, y) {
 //
 // RNG: up to 50 tries of `rnd(COLNO - 1)` then `rn2(ROWNO)`, both consumed on
 // every iteration, stopping at the first square rloc_pos_ok() accepts.
+// C ref: teleport.c rloc(mtmp, RLOC_NOMSG) as used by level-creation
+// "insurance" (shknam.c shkinit): during mklev rloc_to_core() prints nothing,
+// so the relocation is synchronous: up to 50 rnd(COLNO-1)/rn2(ROWNO) tries.
+export function rloc_mklev(mtmp) {
+    for (let trycount = 0; trycount < 50; ++trycount) {
+        const x = rnd(COLNO - 1), y = rn2(ROWNO);
+        if (rloc_pos_ok(x, y, mtmp)) {
+            const oldx = mtmp.mx, oldy = mtmp.my;
+            mtmp.mx = 0; mtmp.my = 0;
+            if (oldx) newsym(oldx, oldy);
+            mtmp.mtrack = [];
+            mtmp.mx = x; mtmp.my = y;
+            update_monster_region(mtmp);
+            newsym(x, y);
+            set_apparxy(mtmp);
+            return true;
+        }
+    }
+    return false;
+}
+hooks.rloc_mklev = rloc_mklev;
+
 export async function rloc(mtmp, rlocflags) {
     // The u.usteed / iswiz special cases don't apply here: the teleporting
     // monsters are ordinary hostiles, never the player's steed or the Wizard

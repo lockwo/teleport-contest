@@ -5,7 +5,7 @@
 // circular dependency.  The shop-type table + get_shop_item live in shtypes.js
 // (a leaf module) so makemon.js's set_mimic_sym can share them.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { depth } from './hacklib.js';
 import { distmin } from './hacklib.js';
@@ -324,6 +324,13 @@ function shkinit(shp, sroom) {
     const sd = good_shopdoor(sroom);
     if (sd.di < 0) return -1;
     const { di: sh, sx, sy } = sd;
+    // C ref: shknam.c shkinit() `if (MON_AT(sx, sy)) (void) rloc(m_at(sx, sy),
+    // RLOC_NOMSG); /* insurance */`.
+    {
+        const occ = (game.level?.monsters || []).find((m) => m.mx === sx && m.my === sy
+                                                      && !(m.mhp <= 0));
+        if (occ) hooks.rloc_mklev?.(occ);
+    }
 
     const shkPmidx = name_to_pmidx('shopkeeper');
     const shkPtr = monster_by_pmidx(shkPmidx);
