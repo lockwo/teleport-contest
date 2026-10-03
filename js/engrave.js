@@ -704,7 +704,10 @@ async function doengrave_sfx_item_WAN(de) {
         de.ptext = true;
         de.type = ENGRAVE;
         if (!objects[de.otmp.otyp]?.oc_name_known) {
-            await engravePline(`This ${await xname_of(de.otmp)} is a wand of digging!`);
+            // C ref: engrave.c:688 `if (flags.verbose)` — the naming line is
+            // suppressed under !verbose, but doknown (learnwand) still fires.
+            if (game.flags?.verbose !== false)
+                await engravePline(`This ${await xname_of(de.otmp)} is a wand of digging!`);
             de.doknown = true;
         }
         de.post_engr_text = (Blind && !isDeaf()) ? 'You hear drilling!'
@@ -720,7 +723,8 @@ async function doengrave_sfx_item_WAN(de) {
         de.ptext = true;
         de.type = BURN;
         if (!objects[de.otmp.otyp]?.oc_name_known) {
-            await engravePline(`This ${await xname_of(de.otmp)} is a wand of fire!`);
+            if (game.flags?.verbose !== false)
+                await engravePline(`This ${await xname_of(de.otmp)} is a wand of fire!`);
             de.doknown = true;
         }
         de.post_engr_text = Blind ? 'You feel the wand heat up.' : 'Flames fly from the wand.';
@@ -729,7 +733,8 @@ async function doengrave_sfx_item_WAN(de) {
         de.ptext = true;
         de.type = BURN;
         if (!objects[de.otmp.otyp]?.oc_name_known) {
-            await engravePline(`This ${await xname_of(de.otmp)} is a wand of lightning!`);
+            if (game.flags?.verbose !== false)
+                await engravePline(`This ${await xname_of(de.otmp)} is a wand of lightning!`);
             de.doknown = true;
         }
         if (!Blind) {
