@@ -2514,6 +2514,36 @@ export function renderMenuLines(flat, cursor = [36, 8]) {
     game._modal_screen = 'invent';
 }
 
+// C ref: win/tty/wintty.c process_menu_window() — a menu whose entries don't
+// fit on one page is a FULL-SCREEN window (tty_end_menu sets maxrow = lmax+1 ==
+// ttyDisplay->rows, which forces offx back to 0), drawn one page at a time with
+// a "(N of M)" morestr on the row right after the page's own content.
+//   lines : every menu line, { text, attr }; this picks out `page`'s slice
+//   lmax  : entries per page (min(52, rows-1))
+export function renderPagedMenu(lines, page, npages, lmax) {
+    const display = game.nhDisplay;
+    if (!display?.clearScreen) return;
+    const curPage = Math.max(0, Math.min(page, npages - 1));
+    const pageLines = lines.slice(curPage * lmax, curPage * lmax + lmax);
+    // A full-screen menu's dismissal runs docrt(), which blanks the status
+    // window; a floating overlay's docorner() leaves it intact.
+    game._botl_blanked = true;
+    game._menuDismissSweep = null;
+    display.clearScreen();
+    let row = 0;
+    for (const ln of pageLines) {
+        // The leading pad column is an unconditional plain putchar(' '), so a
+        // heading's ATR_INVERSE never covers it.
+        display.putstr(0, row, ' ', NO_COLOR, 0);
+        display.putstr(1, row, ln.text, NO_COLOR, ln.attr || 0);
+        row++;
+    }
+    const footer = `(${curPage + 1} of ${npages})`;
+    display.putstr(1, pageLines.length, footer, NO_COLOR, 0);
+    display.setCursor(1 + footer.length, pageLines.length);
+    game._modal_screen = 'invent';
+}
+
 // Render a full-screen tty window (NHW_TEXT / multi-page NHW_MENU) directly
 // to the 24x80 grid.  C ref: win/tty/wintty.c process_text_window() /
 // process_menu_window().  Full-screen windows (offx == 0) clear the whole
@@ -7610,12 +7640,57 @@ async function tty_select_menu(items, plan, how) {
             }
     };
 
+    /* C ref: wintty.c tty_end_menu():1986 — lmax = min(52, rows-1) entries per
+       page (52 = 'a'..'z' + 'A'..'Z'), npages = ceil(nitems / lmax).  nitems
+       counts EVERY line in the window (prompt, blank, headings included), and
+       auto-assigned selector letters restart at 'a' on each page. */
+    const lmax = Math.min(52, (game.nhDisplay?.rows ?? 24) - 1);
+    const npages = Math.max(1, Math.ceil(plan.length / lmax));
+    {
+        let menu_ch = 'a';
+        for (let i = 0; i < plan.length; i++) {
+            if ((i % lmax) === 0) menu_ch = 'a';
+            const it = plan[i].item;
+            if (it && !it.selector) {
+                it.selector = menu_ch;
+                menu_ch = (menu_ch === 'z') ? 'A'
+                    : String.fromCharCode(menu_ch.charCodeAt(0) + 1);
+            }
+        }
+    }
+    const page_items = (pg) => plan.slice(pg * lmax, pg * lmax + lmax)
+        .map((p) => p.item).filter(Boolean);
+    /* wintty.c set_all_on_page()/unset_all_on_page(): current page only. */
+    const set_page = (list) => {
+        for (const it of list)
+            if (!it.selected && menuitem_invert_test(1, it.skipinvert, false))
+                it.selected = true;
+    };
+    const unset_page = (list) => {
+        for (const it of list)
+            if (it.selected && menuitem_invert_test(2, it.skipinvert, true)) {
+                it.selected = false; it.count = -1;
+            }
+    };
+    const invert_page = (list, count) => {
+        for (const it of list) {
+            if (!menuitem_invert_test(0, it.skipinvert, it.selected)) continue;
+            if (it.selected) { it.selected = false; it.count = -1; }
+            else { it.selected = true; if (count > 0) it.count = count; }
+        }
+    };
+
     let counting = false, count = 0, reset_count = true, cancelled = false;
+    let curr_page = 0;
     for (;;) {
         if (reset_count) { counting = false; count = 0; } else reset_count = true;
-        renderMenuLines(plan.map((p) => (p.item
+        const onpage = page_items(curr_page);
+        const selectors = new Set(onpage.map((it) => it.selector));
+        const lines = plan.map((p) => (p.item
             ? { text: menu_item_line(p.item), attr: p.item.attr || 0 }
-            : { text: p.str, attr: p.attr || 0 })), null);
+            : { text: p.str, attr: p.attr || 0 }));
+        if (npages > 1) renderPagedMenu(lines, curr_page, npages, lmax);
+        else renderMenuLines(lines, null);
         const key = await nhgetch();
         const ch = String.fromCharCode(key);
         /* an explicit page selector outranks the menu-command mapping */
@@ -7634,17 +7709,39 @@ async function tty_select_menu(items, plan, how) {
             break;
         }
         if (key === 13 || key === 10) break;            /* commit */
-        if (!explicit && ch === ' ') break;             /* last page: finish */
+        /* ' ' advances to the next page and only finishes on the last one. */
+        if (!explicit && ch === ' ') {
+            if (curr_page !== npages - 1) { curr_page++; continue; }
+            break;
+        }
         if (!explicit) {
             /* wintype.h default_menu_cmds[]; gm.mapped_menu_cmds is empty
                unless the config rebinds them, so these are the literals. */
-            if (ch === '^' || ch === '|' || ch === '>' || ch === '<') continue;
-            if (ch === '.' || ch === ',') {             /* SELECT_ALL/_PAGE */
-                if (how === PICK_ANY) set_all();
+            if (ch === '>') {                           /* MENU_NEXT_PAGE */
+                if (curr_page !== npages - 1) curr_page++;
                 continue;
             }
-            if (ch === '-' || ch === '\\') { unset_all(); continue; }
-            if (ch === '@' || ch === '~') {             /* INVERT_ALL/_PAGE */
+            if (ch === '<') {                           /* MENU_PREVIOUS_PAGE */
+                if (curr_page !== 0) curr_page--;
+                continue;
+            }
+            if (ch === '^') { curr_page = 0; continue; }     /* FIRST_PAGE */
+            if (ch === '|') { curr_page = npages - 1; continue; } /* LAST_PAGE */
+            if (ch === ',') {                           /* MENU_SELECT_PAGE */
+                if (how === PICK_ANY) set_page(onpage);
+                continue;
+            }
+            if (ch === '.') {                           /* MENU_SELECT_ALL */
+                if (how === PICK_ANY) { set_page(onpage); set_all(); }
+                continue;
+            }
+            if (ch === '\\') { unset_page(onpage); continue; } /* UNSELECT_PAGE */
+            if (ch === '-') { unset_page(onpage); unset_all(); continue; }
+            if (ch === '~') {                           /* MENU_INVERT_PAGE */
+                if (how === PICK_ANY) invert_page(onpage, -1);
+                continue;
+            }
+            if (ch === '@') {                           /* MENU_INVERT_ALL */
                 if (how === PICK_ANY) invert_all(0, -1);
                 continue;
             }
@@ -7683,7 +7780,9 @@ async function tty_select_menu(items, plan, how) {
             if (how === PICK_ONE) break;
             continue;
         }
-        const hit = items.find((it) => it.selector === ch);
+        /* C ref: wintty.c:1753 — the selector scan walks page_start..page_end,
+           so an invlet that only appears on another page is not accepted. */
+        const hit = onpage.find((it) => it.selector === ch);
         if (hit) {
             toggle_menu_curr(hit, counting, count);
             if (how === PICK_ONE) break;
@@ -7876,13 +7975,7 @@ async function query_objlist_menu(qstr, olist, qflags, how, allow) {
 
     const items = [], plan = [];
     const with_oc_sym = (how !== PICK_NONE) && !!game.iflags?.menu_head_objsym;
-    let menu_ch = 'a', first = true;
-    const nextLetter = () => {
-        const c = menu_ch;
-        menu_ch = (menu_ch === 'z') ? 'A'
-            : String.fromCharCode(menu_ch.charCodeAt(0) + 1);
-        return c;
-    };
+    let first = true;
     for (const oclass of (sorted ? pack : [null])) {
         let printed_type_name = false;
         for (const curr of sortedolist) {
@@ -7898,8 +7991,12 @@ async function query_objlist_menu(qstr, olist, qflags, how, allow) {
             // tty never renders the menu glyph, but while hallucinating it
             // advances the display RNG (random_obj_to_glyph).
             obj_to_glyph(curr);
+            // C ref: pickup.c query_objlist() add_menu(... (qflags & USE_INVLET)
+            // ? curr->invlet : (first && COIN_CLASS) ? '$' : 0 ...) — a 0 here
+            // means "let tty_end_menu() assign a letter", which it does PER
+            // PAGE starting from 'a' (see tty_select_menu).
             const selector = (qflags & USE_INVLET) ? curr.invlet
-                : ((first && curr.oclass === COIN_CLASS) ? GOLD_SYM : nextLetter());
+                : ((first && curr.oclass === COIN_CLASS) ? GOLD_SYM : null);
             items.push({ selector, desc: doname_with_price(curr), obj: curr,
                          selected: false, count: -1,
                          gselector: def_oc_syms[curr.oclass]?.sym,
