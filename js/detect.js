@@ -506,9 +506,11 @@ function magic_map_background(x, y, show) {
     if (!cansee(x, y) && !loc.waslit) {
         if (loc.typ === ROOM && g.ch === defsyms[S_room].sym) {
             // flags.dark_room and iflags.use_color both default on, so the
-            // DARKROOMSYM ('.' at CLR_BLACK, defsyms[S_darkroom]) arm is taken
-            // rather than GLYPH_NOTHING.
-            g = (game.flags?.dark_room !== false && game.flags?.color !== false)
+            // DARKROOMSYM arm is taken rather than GLYPH_NOTHING.  C ref:
+            // sym.h DARKROOMSYM is S_stone on the Rogue level, else
+            // S_darkroom ('.' at CLR_BLACK).
+            g = (game.flags?.dark_room !== false && game.flags?.color !== false
+                 && !Is_rogue_level(game.u?.uz))
                 ? { ch: defsyms[S_darkroom].sym, color: defsyms[S_darkroom].color,
                     dec: false }
                 : { ch: ' ', color: NO_COLOR, dec: false };
