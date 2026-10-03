@@ -176,6 +176,10 @@ prompt appears before the first map/status redraw. Loading those bones
 replaces level generation; a second room-fill pass would overwrite the
 inherited monsters and objects.
 
+If life saving (or a declined wizard death) lets a self-directed
+death-ray zap return, its wand is identified afterward. That discovery
+credits the hero's Wisdom exercise and advances RNG before the next turn.
+
 If you implement your own terminal, output anything that — after
 canonicalization — matches the recorded screen.
 

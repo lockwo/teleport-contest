@@ -2874,11 +2874,9 @@ export async function zapyourself(obj, ordinary) {
         break;
     case WAN_DEATH:
     case SPE_FINGER_OF_DEATH:
-        // nonliving()/is_demon(): the human hero is living and not a demon, so
-        // the "apparently harmless beam" / "no deader than before" branch that
-        // spares such heroes is skipped.  learn_it (makeknown) would run only if
-        // done() returned to zapyourself(), but the contest player accepts death,
-        // so identification is never touched on this path.
+        // C ref: zap.c zapyourself() — identify a seen wand after done(DIED)
+        // returns from life saving or a declined wizard death.
+        learn_it = true;
         // C ref: zap.c:2894 — Sprintf(killer.name, "shot %sself with a death ray",
         // uhim()); killer.format = NO_KILLER_PREFIX.  uhim() is her/him/it by
         // gender; used verbatim by outrip()'s tombstone + the score summary.
