@@ -5067,12 +5067,15 @@ async function domove_swap_with_pet(mtmp, x, y) {
                   + `${trap_explanation(trap.ttyp)}.`);
         return false;
     }
+    const { goodpos } = await import('./teleport.js');
     if (mtmp.mpeaceful
-        && (trap_at(u.ux0, u.uy0) || mtmp.ispriest || mtmp.isshk || mtmp.isgd
+        && (!goodpos(u.ux0, u.uy0, mtmp, 0)
+            || trap_at(u.ux0, u.uy0) || mtmp.ispriest || mtmp.isshk || mtmp.isgd
             || mtmp.data?.name === 'Oracle'
             || mtmp.m_id === game.quest_status?.leader_m_id)) {
-        // displacing a peaceful onto a trapped square, or a shk/priest/guard/
-        // Oracle/quest leader, is refused.  (goodpos() is not ported.)
+        // C ref: hack.c domove_swap_with_pet() — displacing a peaceful into an
+        // unsafe (goodpos) or trapped space, or trying to displace the quest
+        // leader / Oracle / shk / priest / vault guard, is refused.
         await update_topl(`You stop.  ${YMonnam(mtmp)} doesn't want to swap places.`);
         return false;
     }
