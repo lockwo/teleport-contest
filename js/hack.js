@@ -19,6 +19,7 @@ import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, ge
 import { moveloop_turn, moveloop_input_redraw } from './allmain.js';
 import { m_at, vobj_at, covers_objects, object_glyph, flush_screen, newsym, pline, update_topl, topl_more, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself } from './display.js';
 import { do_screen_description } from './pager.js';
+import { fruit_from_name } from './objnam.js';
 import { def_monsyms } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
          inventoryArray, is_pick, ansimpleoname,
@@ -3127,6 +3128,8 @@ async function checkfile(inp, chkflags) {
 
     if (!dbase_str) return false;
 
+    // offset of dbase_str inside C's newstr[] (only front prefixes stripped)
+    const dbase_off = String(inp).length - dbase_str.length;
     // "named"/"called"/", " -> truncate to base name; the tail becomes 'alt'.
     let alt = null;
     let ep = dbase_str.indexOf(' named ');
@@ -3152,6 +3155,14 @@ async function checkfile(inp, chkflags) {
     if (par > 0) dbase_str = dbase_str.slice(0, par);
     if (alt) { par = alt.indexOf(' ('); if (par > 0) alt = alt.slice(0, par); }
 
+    // C ref: pager.c:981 — the hero's fruit name looks up obj_descr[SLIME_MOLD]
+    // .oc_name, which options.c initoptions_finish() renamed to "fruit".
+    // strcpy(newstr, ...) also overwrites the head of dbase_str, which points
+    // into newstr: from the start of the buffer it now reads "fruit" as well.
+    if (!alt && fruit_from_name(dbase_str, true, null)) {
+        alt = 'fruit';
+        if (dbase_off < 6) dbase_str = alt.slice(dbase_off);
+    }
     if (!alt) alt = db_makesingular(dbase_str);
     if (!dbase_str) return false;
 
@@ -3424,7 +3435,20 @@ export async function do_look_full() {
             game.context.move = 0;
             return;
         }
-        // single-char symbol path not modelled; cancel.
+        // C ref: pager.c do_look() — a single character is looked up by symbol
+        // (do_screen_description with looked=FALSE), then checkfile() offers
+        // the data.base entry since flags.help is on.
+        const text = { s: '' }, firstmatch = { s: '' };
+        const found = do_screen_description({ x: 0, y: 0 }, false, out_str, text, firstmatch, {});
+        if (found) {
+            game._pending_message = text.s;
+            game._toplin = 1;        // NEED_MORE
+            game._yn_need_more = true;
+            if (found === 1) await checkfile(firstmatch.s, 0);
+            game._yn_need_more = false;
+        } else {
+            await update_topl("I've never heard of such things.");
+        }
         game.context.move = 0;
         return;
     }
