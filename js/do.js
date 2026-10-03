@@ -1895,6 +1895,9 @@ export async function wiz_level_tele(readLevel) {
             const saved = u.uz;
             u.uz = { dnum: 0, dlevel: newlev <= -10 ? -10 : 0 };
             await done(DEATH);
+            // C's done(DIED) terminates on an accepted death; only a
+            // life-saved or debug-mode survivor reaches the surface escape.
+            if (game.program_state?.gameover) return 0;
             u.uz = saved;
             escape = 'find yourself back on the surface';
         }

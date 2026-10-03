@@ -1041,7 +1041,12 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
             lines.push(`${pets.length ? '' : 'You '}${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
                 + ` with ${urexp} point${plur(urexp)},`);
         } else {
-            lines.push(`You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
+            // C ref: end.c outrip_and_score():1523 — a fatal sky teleport
+            // leaves the hero outside the dungeon, not on dungeon level 0.
+            const outside = uz.dnum === 0 && uz.dlevel <= 0;
+            lines.push(`You ${outside ? (uz.dlevel < 0 ? 'passed away' : ENDS[how]) : ENDS[how]}`
+                + (outside ? ' beyond the confines of the dungeon'
+                   : ` in ${dungeonName} on dungeon level ${depth}`)
                 + ` with ${urexp} point${plur(urexp)},`);
         }
         lines.push(`and ${umoney} piece${plur(umoney)} of gold, after ${moves} move${plur(moves)}.`);
