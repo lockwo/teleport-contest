@@ -28,7 +28,7 @@ import { quest_artifact_num } from './questpgr.js';
 import { cansee } from './vision.js';
 import { mon_nam, monflee } from './uhitm.js';
 import { resist, destroy_items, ignite_items, Antimagic as Antimagic_zap } from './zap.js';
-import { worn_extrinsic, xname, yname, otense } from './invent.js';
+import { worn_extrinsic, xname, yname, otense, killer_xname } from './invent.js';
 import { healmon } from './mon.js';
 import { mon_aligntyp } from './minion.js';
 import { nomul } from './hack.js';
@@ -1565,22 +1565,34 @@ export async function touch_artifact(obj, mon) {
     }
 
     /* can pick it up unless you're totally non-synch'd with the artifact */
-    if (badclass && badalign && self_willed) return 0;
+    if (badclass && badalign && self_willed) {
+        // C ref: artifact.c touch_artifact():1013 — the rejection line was
+        // missing entirely, so the blast message was never paged with --More--
+        // and the player got no feedback about why the artifact stayed put.
+        if (!carried(obj))
+            await update_topl(`${Tobjnam(obj, 'evade')} your grasp!`);
+        else
+            await update_topl(`${Tobjnam(obj, 'are')} beyond your control!`);
+        return 0;
+    }
     return 1;
 }
-// C ref: hack.c losehp() reduced to the hp arithmetic; the death path lives in
-// each caller's own copy elsewhere in this port.
-function losehp(n) {
-    const u = game.u;
-    if (!u) return;
-    if (Upolyd()) { u.mh -= n; if (u.mh < 1) u.mh = 0; }
-    else { u.uhp -= n; if (u.uhp > u.uhpmax) u.uhpmax = u.uhp; if (u.uhp < 1) u.uhp = 0; }
-    game.botl = true;
+// C ref: hack.c losehp(n, knam, k_format) — this file used to keep a reduced
+// copy that only did the hp arithmetic, so a lethal artifact blast or
+// retouch_object() shock left the hero at 0 hp and the game ran on instead of
+// printing "You die..." and running done(DIED).  js/do.js owns the full port.
+async function losehp(n, knam) {
+    await (await import('./do.js')).losehp_do(n, knam, 1 /*KILLED_BY*/);
 }
 // C ref: objnam.c The(str) for the artifact messages below.
 function The(str) { return upstart(the_artifact_name(str)); }
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 function carried(obj) { return invent_list().includes(obj); }
+// C ref: objnam.c Tobjnam(obj, verb) — The(xname(obj)) plus the verb agreeing
+// with the stack size.
+function Tobjnam(obj, verb) {
+    return `${The(xname(obj))} ${otense(obj, verb)}`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Magicbane
@@ -2740,7 +2752,16 @@ export async function retouch_object(ref, loseit) {
                <foo>bane, potentially both */
             if (ag) dmg += Maybe_Half_Phys(rnd(10));
             if (bane) dmg += rnd(10);
-            losehp(dmg);
+            // C ref: artifact.c:2536 `what = killer_xname(obj)`, overridden to
+            // "a silver ring"/"a silver wand" for a non-artifact silver ring or
+            // wand so the tombstone doesn't leak this game's randomized
+            // appearance.
+            let what = killer_xname(obj);
+            if (ag && !obj.oartifact && !bane) {
+                if (obj.oclass === RING_CLASS) what = 'a silver ring';
+                else if (obj.oclass === WAND_CLASS) what = 'a silver wand';
+            }
+            await losehp(dmg, `handling ${what}`);
             exercise(A_CON, false);
         }
     }
