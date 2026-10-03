@@ -4121,10 +4121,16 @@ async function wiz_intrinsic() {
         // update_topl, not pline: the two "Timeout for ..." lines share one
         // topline (C update_topl appends with two spaces while it fits).
         await update_topl(`Timeout for ${it.name} ${oldtimeout ? 'increased by' : 'set to'} ${amount}.`);
+        // C ref: wizcmds.c:1081-1088 — after the timeout change.
         if (it.propId === 'LEVITATION' || it.propId === 'FLYING')
             (await import('./polyself.js')).float_vs_flight();
         else if (it.propId === 'PROT_FROM_SHAPE_CHANGERS')
             await (await import('./mon.js')).rescham();
+        if ((it.propId === 'WWALKING' || it.propId === 'LEVITATION' || it.propId === 'FLYING')
+            && u.uinwater) {
+            await (await import('./trap.js')).pooleffects(false);
+            if (game.program_state?.gameover) return 0;
+        }
     }
     // C ref: display.c docrt():1727 — `if (u.uswallow) { swallowed(1); goto
     // post_map; }`, skipping cls()/the message flush entirely.  This is a

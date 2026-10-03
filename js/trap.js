@@ -6,21 +6,24 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
-import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u } from './display.js';
+import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
+         feel_location, docrt, under_water } from './display.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of } from './exper.js';
-import { Blind, recalc_block_point, cansee, couldsee } from './vision.js';
+import { Blind, recalc_block_point, cansee, couldsee, vision_recalc } from './vision.js';
 import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
          Ring_off, off_msg, obj_doname, carried, otense, obj_extract_self,
          obj_resists, useupall, remove_worn_item, is_plural, simpleonames,
-         makeplural, stackobj, freeinv, inventoryArray, welded, worn_extrinsic, splitobj } from './invent.js';
+         makeplural, stackobj, freeinv, inventoryArray, welded, worn_extrinsic, worn_blocked,
+         splitobj, dropx, carried_weight, youmonst_data_pub } from './invent.js';
+import { shk_blocking_door, block_door_feedback } from './shk.js';
 import { observe_object } from './o_init.js';
 import { find_ac } from './u_init.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { Boots_off, stop_donning, hard_helmet, helm_simple_name } from './do_wear.js';
-import { float_vs_flight } from './polyself.js';
+import { float_vs_flight, selftouch } from './polyself.js';
 import { is_weptool } from './weapon.js';
-import { is_pool } from './dbridge.js';
+import { is_pool, is_lava, is_waterwall } from './dbridge.js';
 import { cxname } from './objnam.js';
 import { vtense } from './dothrow.js';
 import { get_obj_location } from './light.js';
@@ -53,6 +56,9 @@ import {
     NO_TRAP, TRAPNUM, FIRE_RES, TELEDS_ALLOW_DRAG, TELEDS_TELEPORT,
     MIGR_NOWHERE, MIGR_RANDOM,
     ANTIMAGIC, HALF_PHDAM, HALF_SPDAM, PASSES_WALLS, IRONBARS, IS_OBSTRUCTED,
+    TELEPORT, TELEPORT_CONTROL, WWALKING, SWIMMING, MAGICAL_BREATHING, DISMOUNT_FELL,
+    FAINTED, BUFSZ, W_NONPASSWALL, W_NONDIGGABLE, WT_TOOMUCH_DIAGONAL, Unaware, Is_earthlevel,
+    UNENCUMBERED, LEVITATION, FLYING,
 } from './const.js';
 import {
     objects, mksobj, weight, place_object, BOULDER, STATUE as STATUE_OTYP, CORPSE,
@@ -61,19 +67,21 @@ import {
     WEAPON_CLASS, ARMOR_CLASS, SCROLL_CLASS, POTION_CLASS, SPBOOK_CLASS,
     POT_WATER, POT_OIL, COIN_CLASS, GEM_CLASS, LOADSTONE, LEASH, uncurse, blessorcurse,
     WAN_FIRE, FIRE_HORN, SPE_BOOK_OF_THE_DEAD, SCR_BLANK_PAPER, SPE_BLANK_PAPER,
-    SPE_NOVEL, has_omonst,
+    SPE_NOVEL, has_omonst, remove_object,
 } from './mkobj.js';
 import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx,
          pmname_of_pmidx } from './makemon.js';
 import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
-         amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID, throws_rocks_flag } from './monflags_data.js';
+         amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID, throws_rocks_flag,
+         M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
+         is_swimmer_flag, can_teleport_flag } from './monflags_data.js';
 import { AD_FIRE, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
 import { MM_NOCOUNTBIRTH, MM_NOMSG, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND } from './const.js';
 import { In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { check_special_room } from './shkroom.js';
 import { livelog_printf, LL_MINORAC, LL_DUMP } from './livelog.js';
-import { DEADMONSTER, genocided_pm } from './mon.js';
+import { DEADMONSTER, genocided_pm, mmove_of, set_ustuck } from './mon.js';
 
 // C ref: include/onames.h — object type indices (mkobj.js OBJECT_DATA order).
 const DART = 24;
@@ -1318,10 +1326,8 @@ export async function lava_damage(obj, x, y) {
 // trapped in lava; real (only) caller is allmain.c's once-per-hero-took-time
 // block (js/allmain.js moveloop_turn(), wired there, right after the
 // clairvoyance/seer_turn bookkeeping that already matches that C block).  The
-// sibling `else if (!u.umoved) pooleffects(FALSE)` arm of that C block is out
-// of scope here (pooleffects(FALSE), the leaving-water/lava half, has no js/
-// port at all — only pooleffects(TRUE)'s arrival half, js/trap.js
-// pooleffects_enter, exists).
+// sibling `else if (!u.umoved) pooleffects(FALSE)` arm of that C block calls
+// this file's exported pooleffects().
 export async function sink_into_lava() {
     const u = game.u;
     if (!u) return;
@@ -2123,11 +2129,6 @@ function steedintrap(_trap, _otmp) {
     return false; /* Trap_Effect_Finished */
 }
 
-// C ref: trap.c:3883 selftouch(arg) — petrify a hero whose freed hands are
-// holding a cockatrice corpse.  Nothing in this port puts one in uwep/uswapwep,
-// and the function draws no RNG on any path (instapetrify -> done()).
-function selftouch(_arg) { /* no wielded cockatrice corpse is reachable here */ }
-
 // C ref: hack.h Role_if(PM_RANGER)/Role_if(PM_ROGUE) — js/roles.js's mnum, the
 // 0-based role index C's urole.malenum is built from.
 const ROLE_MNUM_RANGER = 7;
@@ -2264,7 +2265,7 @@ async function trapeffect_pit(trap, trflags) {
             await losehp(rnd(adj_pit ? 3 : 6), pitKnam, NO_KILLER_PREFIX);
         }
         // Punished is never set in this port -> no unplacebc/ballfall/placebc.
-        if (!conj_pit) selftouch('Falling, you');
+        if (!conj_pit) await selftouch('Falling, you');
         game.vision_full_recalc = 1;
         exercise(A_STR, false);
         exercise(A_DEX, false);
@@ -2893,10 +2894,7 @@ async function move_into_trap(ttmp) {
     ttmp.tseen = false;
     (game.iflags = game.iflags || {}).failing_untrap =
         (game.iflags.failing_untrap | 0) + 1;
-    // C's spoteffects(TRUE) is pickup(1) + dotrap(); this port passes the
-    // pickup as a callback (cmd.js's domove_core tail).
-    const { pickup_after_move } = await import('./cmd.js');
-    await spoteffects(pickup_after_move);
+    await spoteffects(true);
     game.iflags.failing_untrap--;
     const t2 = t_at(u.ux, u.uy);
     if (t2) t2.tseen = true;
@@ -3822,31 +3820,39 @@ function trap_article(trap) {
     return (trap.ttyp === ARROW_TRAP && !trap.madeby_u) ? 'an' : a_your(trap.madeby_u);
 }
 
-// C ref: trap.c reset_utrap(msg) — module-private copy, matching the same
-// duplicated shape as dig.js:702/dothrow.js:169/do.js:2469 (trap.js does not
-// export a canonical one either).  The `msg` arm (float_vs_flight()) has no
-// counterpart in this port; see float_up() below.
-function reset_utrap_fu(_msg) {
+// C ref: trap.c:1045 reset_utrap(msg) via set_utrap(0, 0) — clearing the trap
+// re-runs float_vs_flight(), which may unblock Levitation/Flying.
+async function reset_utrap_fu(msg) {
     const u = game.u;
     if (!u) return;
+    const was_Lev = Levitation_fu(), was_Fly = Flying_fu();
+    if (u.utrap) game.botl = true;
     u.utrap = 0;
     u.utraptype = 0;
+    float_vs_flight(); /* maybe block Lev and/or Fly */
+    if (msg) {
+        if (!was_Lev && Levitation_fu()) await float_up();
+        if (!was_Fly && Flying_fu()) await pline('You can fly.');
+    }
 }
 
-// C ref: youprop.h Levitation/Flying/Hallucination — local flat-field reads,
-// matching the per-file duplication convention used throughout js/ (e.g.
-// do_wear.js:219-220, botl.js:419-424).
-// C ref: youprop.h Levitation == (HLevitation || ELevitation), same for
-// Flying.  The EXTRINSIC half is invent.js's worn_extrinsic() store
-// (prop.h LEVITATION=48, FLYING=49); the flat u.uprops field only ever holds
-// the intrinsic/timer half, so a worn ring of levitation or levitation boots
-// used to read as "not levitating" everywhere in this file.
+// C ref: youprop.h Levitation == ((HLevitation || ELevitation) && !BLevitation)
+// and Flying == ((HFlying || EFlying || (u.usteed && is_flyer(steed)))
+// && !BFlying).  The INTRINSIC word is the flat u.uprops field (timeout.js
+// TIMED_PROPS, set_uasmon()'s form bit), the EXTRINSIC word invent.js's
+// worn_extrinsic() store, and the BLOCKED word float_vs_flight()'s
+// u.uprops.B<Prop> plus worn_blocked().
 function Levitation_fu() {
-    return !!((game.u?.uprops?.Levitation | 0) || worn_extrinsic(48 /*LEVITATION*/));
+    return !!((game.u?.uprops?.Levitation | 0) || worn_extrinsic(LEVITATION))
+        && !BLevitation_word();
 }
 function Flying_fu() {
-    return !!((game.u?.uprops?.Flying | 0) || worn_extrinsic(49 /*FLYING*/));
+    const u = game.u;
+    return !!((u?.uprops?.Flying | 0) || worn_extrinsic(FLYING)
+              || (u?.usteed && is_flyer_fu(u.usteed.data)))
+        && !((u?.uprops?.BFlying | 0) || worn_blocked(FLYING));
 }
+// C ref: youprop.h Hallucination.
 function Hallucination_fu() {
     const u = game.u || {};
     return !!u.uhallu || !!u.HHallucination || ((u.uprops?.Hallucination | 0) > 0);
@@ -3866,22 +3872,80 @@ async function dismount_steed_fu(reason) {
     return await dismount_steed(reason);
 }
 
+// C ref: youprop.h — the hero properties drown()/pooleffects()/goodpos()
+// consult.  H<Prop> is the u.uprops timer/intrinsic word (timeout.js
+// TIMED_PROPS keys), E<Prop> is invent.js's worn_extrinsic() store, and the
+// FROMFORM bit is polyself.js set_uasmon()'s u.formprops.
+function uprop_word(key) { return game.u?.uprops?.[key] | 0; }
+function Wwalking_fu() {
+    return !!(uprop_word('HWwalking') || uprop_word('EWwalking') || worn_extrinsic(WWALKING))
+        && !Is_waterlevel(game.u?.uz);
+}
+function Swimming_fu() {
+    const u = game.u;
+    return !!(uprop_word('HSwimming') || worn_extrinsic(SWIMMING) || u?.formprops?.Swimming
+              || (u?.usteed && is_swimmer_flag(u.usteed.data)));
+}
+function Magical_breathing_fu() {
+    return !!(uprop_word('HMagical_breathing') || worn_extrinsic(MAGICAL_BREATHING));
+}
+function Amphibious_fu() {
+    return Magical_breathing_fu() || (mflags1_of(youmonst_data_pub()) & M1_AMPHIBIOUS) !== 0;
+}
+function Breathless_fu() {
+    return Magical_breathing_fu() || (mflags1_of(youmonst_data_pub()) & M1_BREATHLESS) !== 0;
+}
+function Teleportation_fu() {
+    return !!(uprop_word('HTeleportation') || worn_extrinsic(TELEPORT)
+              || game.u?.formprops?.Teleportation);
+}
+function Teleport_control_fu() {
+    return !!(uprop_word('HTeleport_control') || worn_extrinsic(TELEPORT_CONTROL)
+              || game.u?.formprops?.Teleport_control);
+}
+function Passes_walls_fu() {
+    return !!(uprop_word('HPasses_walls') || worn_extrinsic(PASSES_WALLS)
+              || game.u?.formprops?.Passes_walls);
+}
+function Fire_resistance_fu() {
+    return !!(uprop_word('HFire_resistance') || worn_extrinsic(FIRE_RES)
+              || game.u?.formprops?.Fire_resistance);
+}
+// C ref: youprop.h Punished == (uball != 0); read.c punish() sets u.uball.
+function Punished_fu() { return !!game.u?.uball; }
+// C ref: hack.h Luck == (u.uluck + u.moreluck).
+function Luck_fu() { return (game.u?.uluck | 0) + (game.u?.moreluck | 0); }
+// C ref: dungeon.c has_ceiling(lev).
+function has_ceiling_fu(lev) { return !(In_endgame(lev) && !Is_earthlevel(lev)); }
+// C ref: mondata.h grounded(ptr).
+function grounded_fu(ptr) {
+    return !is_flyer_fu(ptr) && !is_floater_fu(ptr)
+        && ((mflags1_of(ptr) & M1_CLING) === 0 || !has_ceiling_fu(game.u?.uz));
+}
+// C ref: mondata.h ceiling_hider(ptr) — S_MIMIC is mlet 13.
+function ceiling_hider_fu(ptr) {
+    const f1 = mflags1_of(ptr);
+    return (f1 & M1_HIDE) !== 0
+        && (((f1 & M1_CLING) !== 0 && ptr?.mcls !== 13) || is_flyer_fu(ptr));
+}
+// C ref: display.h feel_newsym(x, y).
+function feel_newsym(x, y) {
+    if (Blind()) feel_location(x, y);
+    else newsym(x, y);
+}
+
 // C ref: trap.c:3937 float_up() — start levitating: pick the right message
 // for the many "why don't I actually float away" states (trapped, in water,
 // swallowed, hallucinating, on the Plane of Air, or the ordinary case), then
-// the steed/flying fallout and the encumbrance recheck (levitation maximizes
-// carrying capacity).  float_vs_flight() (hack.c) has no counterpart in this
-// port (no BLevitation/BFlying "blocked by terrain" masks exist anywhere —
-// switch_terrain() is NOT PORTED, dig.js:868); every real call site here only
-// invokes float_up() when Levitation is actually about to take effect, so
-// that omission has no observable reach.
+// the steed/flying fallout, float_vs_flight() and the encumbrance recheck
+// (levitation maximizes carrying capacity).
 export async function float_up() {
     const u = game.u;
     if (!u) return;
     game.botl = true;
     if (u.utrap) {
         if (u.utraptype === TT_PIT) {
-            reset_utrap_fu(false);
+            await reset_utrap_fu(false);
             await pline(`You float up, out of the ${trapname(PIT, false)}!`);
             game.vision_full_recalc = 1;
             fill_pit(u.ux, u.uy);
@@ -3905,12 +3969,7 @@ export async function float_up() {
             await pline(`You float up slightly, but your ${body_part(LEG)} is still stuck.`);
         }
     } else if (u.uinwater) {
-        // C: spoteffects(TRUE) — this port's spoteffects(pickupFn) has no
-        // pickupFn threaded this deep (no caller here owns the cmd.js
-        // pickup_after_move callback), so the auto-pickup half of C's
-        // pick=TRUE is not reproduced; the pool-exit/trap/special-room
-        // effects are.
-        await spoteffects();
+        await spoteffects(true);
     } else if (u.uswallow) {
         if (is_animal(u.ustuck?.data)) {
             await pline(`You float away from the ${surface(u.ux, u.uy)}.`);
@@ -3934,7 +3993,7 @@ export async function float_up() {
     }
     if (Flying_fu())
         await pline('You are no longer able to control your flight.');
-    // float_vs_flight(): see the function-level comment above.
+    float_vs_flight(); /* set BFlying, also BLevitation if still trapped */
     const { encumber_msg } = await import('./invent.js');
     await encumber_msg();
 }
@@ -3946,20 +4005,40 @@ export async function float_up() {
 // worn_extrinsics_on/off, so the caller that removed the item has already
 // cleared its bit and emask is a no-op here).  If any source remains the hero
 // stays aloft and nothing is printed.
-// NOT PORTED (no reachable call site in this port): the BLevitation
-// terrain-blocked arm and float_vs_flight() (neither mask exists anywhere
-// here, see float_up()), the Punished ball-drag relocation, and
-// drown()/lava_effects() on the landing square (both exist in this file but
-// are driven from the movement code, not from here).
 export async function float_down(hmask = 0, emask = 0) {
     const u = game.u;
     if (!u) return 0;
     if (hmask) u.uprops.Levitation = (u.uprops.Levitation | 0) & ~hmask;
-    void emask;
     if (Levitation_fu()) return 0; /* maybe another ring/potion/boots */
     const { encumber_msg } = await import('./invent.js');
+    if (BLevitation_word()) {
+        /* if blocked by terrain, we haven't actually been levitating so
+           we don't give any end-of-levitation feedback or side-effects,
+           but if blocking is solely due to being trapped in/on floor,
+           do give some feedback but skip other float_down() effects */
+        const trapped = BLevitation_word() === I_SPECIAL;
+        float_vs_flight();
+        if (trapped && u.utrap) /* u.utrap => paranoia */
+            await pline(`You are no longer trying to float up from the ${
+                u.utraptype === TT_BEARTRAP ? "trap's jaws"
+                : u.utraptype === TT_WEB ? 'web'
+                : u.utraptype === TT_BURIEDBALL ? 'chain'
+                : u.utraptype === TT_LAVA ? 'lava'
+                : 'ground'}.`); /* TT_INFLOOR */
+        await encumber_msg(); /* carrying capacity might have changed */
+        return 0;
+    }
     game.botl = true;
     await trap_nomul(); /* stop running or resting */
+    if (uprop_word('BFlying') || worn_blocked(FLYING)) {
+        /* controlled flight no longer overridden by levitation */
+        float_vs_flight(); /* clears BFlying & I_SPECIAL unless stuck in floor */
+        if (Flying_fu()) {
+            await pline('You have stopped levitating and are now flying.');
+            await encumber_msg(); /* carrying capacity might have changed */
+            return 1;
+        }
+    }
     if (u.uswallow) {
         // C ref: mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL,
         // AD_DGST); same private copy as timeout.js:301.
@@ -3969,31 +4048,80 @@ export async function float_down(hmask = 0, emask = 0) {
         await encumber_msg();
         return 1;
     }
-    // C ref: trap.c:4086 `if (!Flying)` — a flying hero keeps hold of (and is
-    // held by) whatever has it, and never falls into the pool/lava below.
-    // NOT PORTED: the is_pool()/is_lava() landing calls to drown()/
-    // lava_effects(), which this port drives from the movement code instead.
-    if (!Flying_fu() && u.ustuck) {
-        await pline(`Startled, ${mon_nam_trap(u.ustuck)} can no longer hold you!`);
-        u.ustuck = null;
+
+    let trap = null;
+    const uball = u.uball, uchain = u.uchain;
+    if (Punished_fu() && !carried(uball) && !m_at(uball.ox, uball.oy)
+        && (is_pool(uball.ox, uball.oy)
+            || ((trap = t_at(uball.ox, uball.oy))
+                && (is_pit(trap.ttyp) || is_hole(trap.ttyp))))) {
+        u.ux0 = u.ux;
+        u.uy0 = u.uy;
+        u.ux = uball.ox;
+        u.uy = uball.oy;
+        movobj_trap(uchain, uball.ox, uball.oy);
+        newsym(u.ux0, u.uy0);
+        game.vision_full_recalc = 1; /* in case the hero moved. */
     }
-    const trap = t_at(u.ux, u.uy);
-    if (Is_airlevel(u.uz)) {
-        await pline('You begin to tumble in place.');
-    } else if (Is_waterlevel(u.uz)) {
-        await pline('You feel heavier.');
-    } else if (!u.uinwater && !(emask & W_SADDLE)) {
-        if (u.usteed && (is_floater_fu(u.usteed.data) || is_flyer_fu(u.usteed.data))) {
-            await pline('You settle more firmly in the saddle.');
-        } else if (Hallucination_fu()) {
-            await pline(`Bummer!  You've ${is_pool(u.ux, u.uy) ? 'splashed down' : 'hit the ground'}.`);
-        } else {
-            await pline(`You float gently to the ${surface(u.ux, u.uy)}.`);
+    /* check for falling into pool - added by GAN 10/20/86 */
+    let no_msg = false;
+    if (!Flying_fu()) {
+        if (!u.uswallow && u.ustuck) {
+            const { sticks } = await import('./uhitm.js');
+            if (sticks(youmonst_data_pub()))
+                await pline(`You aren't able to maintain your hold on ${mon_nam_trap(u.ustuck)}.`);
+            else
+                await pline(`Startled, ${mon_nam_trap(u.ustuck)} can no longer hold you!`);
+            set_ustuck(null);
+        }
+        /* drown() and lava_effects() supply their own landing messages */
+        if (is_pool(u.ux, u.uy) && !Wwalking_fu() && !Swimming_fu() && !u.uinwater)
+            no_msg = await drown();
+        if (game.program_state?.gameover) return 1;
+        if (is_lava(u.ux, u.uy) && !game._in_lava_effects) {
+            await lava_effects();
+            no_msg = true;
+        }
+        if (game.program_state?.gameover) return 1;
+    }
+    if (!trap) {
+        trap = t_at(u.ux, u.uy);
+        if (Is_airlevel(u.uz)) {
+            await pline('You begin to tumble in place.');
+        } else if (Is_waterlevel(u.uz) && !no_msg) {
+            await pline('You feel heavier.');
+        /* u.uinwater msgs already in spoteffects()/drown() */
+        } else if (!u.uinwater && !no_msg) {
+            if (!(emask & W_SADDLE)) {
+                if (game.level?.flags?.sokoban_rules && trap) {
+                    /* the unexpected additional force of the air currents
+                       once levitation ceases knocks you off your feet */
+                    await pline(Hallucination_fu() ? "Bummer!  You've crashed."
+                                                   : 'You fall over.');
+                    await losehp(rnd(2), 'dangerous winds', KILLED_BY);
+                    if (game.program_state?.gameover) return 1;
+                    if (u.usteed) await dismount_steed_fu(DISMOUNT_FELL);
+                    await selftouch('As you fall, you');
+                } else if (u.usteed && (is_floater_fu(u.usteed.data)
+                                        || is_flyer_fu(u.usteed.data))) {
+                    await pline('You settle more firmly in the saddle.');
+                } else if (Hallucination_fu()) {
+                    await pline(`Bummer!  You've ${is_pool(u.ux, u.uy) ? 'splashed down'
+                                                                       : 'hit the ground'}.`);
+                } else {
+                    await pline(`You float gently to the ${surface(u.ux, u.uy)}.`);
+                }
+            }
         }
     }
+
     /* levitation gives maximum carrying capacity, so having it end
-       potentially triggers greater encumbrance */
+       potentially triggers greater encumbrance; do this after
+       'come down' messages, before trap activation or autopickup */
     await encumber_msg();
+
+    /* can't rely on u.uz0 for detecting trap door-induced level change */
+    const dnum0 = u.uz?.dnum, dlevel0 = u.uz?.dlevel;
     if (trap) {
         // C ref: trap.c:4159 — STATUE_TRAP never fires here, a hole/trapdoor
         // only when the hero can actually fall through, everything else goes
@@ -4003,16 +4131,35 @@ export async function float_down(hmask = 0, emask = 0) {
             && !(fallthru && (!Can_fall_thru(u.uz) || u.ustuck))
             && !u.utrap)
             await dotrap(trap, 0);
+        if (game.program_state?.gameover) return 1;
+    }
+    if (!Is_airlevel(u.uz) && !Is_waterlevel(u.uz) && !u.uswallow
+        /* falling through trap door calls goto_level,
+           and goto_level does its own pickup() call */
+        && u.uz?.dnum === dnum0 && u.uz?.dlevel === dlevel0) {
+        const { pickup_after_move } = await import('./cmd.js');
+        await pickup_after_move(u.ux, u.uy);
     }
     return 1;
 }
 
+// C ref: youprop.h BLevitation — the blocked word float_vs_flight() and
+// terrain write, plus any worn blocker.
+function BLevitation_word() { return uprop_word('BLevitation') | worn_blocked(LEVITATION); }
+
+// C ref: mkobj.c movobj(obj, ox, oy) — relocate a floor object in place.
+function movobj_trap(obj, ox, oy) {
+    remove_object(obj);
+    newsym(obj.ox, obj.oy);
+    place_object(obj, ox, oy);
+    newsym(ox, oy);
+}
+
 // C ref: trap.c:4976 back_on_ground(rescued) — the hero has returned to solid
 // ("on"/"over"/"in") footing after levitation/flight/water/a pool ends; picks
-// the right preposition and surface noun.  Both real call sites (hack.c
-// pooleffects()/switch_terrain() and pickup.c describe_decor()) print this
-// with rescued=FALSE; the rescued=TRUE caller (trap.c rescued_from_terrain(),
-// life-saving/divine-rescue only) is not itself in this batch's symbol list.
+// the right preposition and surface noun.  pooleffects() and pickup.c
+// describe_decor() print it with rescued=FALSE; rescued_from_terrain() uses
+// rescued=TRUE after life-saving moved the hero out of hostile terrain.
 export async function back_on_ground(rescued) {
     const u = game.u;
     if (!u) return;
@@ -4181,34 +4328,114 @@ function doorless_door(x, y) {
     return !((loc.doormask || 0) & ~(D_NODOOR | D_BROKEN));
 }
 
-// C ref: teleport.c goodpos(x,y,&youmonst,0), specialized for a hero with no
-// Swimming/Amphibious/Levitation/Flying/water-or-lava-walking (the only case
-// the corpus reaches): a pool or lava square is never "good", nor is a
-// monster-occupied, boulder-covered, or inaccessible one.
+// C ref: mondata.h likes_lava(ptr) / teleport.c goodpos()'s floating-eye arm.
+const PM_FIRE_ELEMENTAL_TRAP = name_to_pmidx('fire elemental');
+const PM_SALAMANDER_TRAP = name_to_pmidx('salamander');
+const PM_FLOATING_EYE_TRAP = name_to_pmidx('floating eye');
+const PM_AIR_ELEMENTAL_TRAP = name_to_pmidx('air elemental');
+const PM_GRID_BUG_TRAP = name_to_pmidx('grid bug');
+const PM_GREMLIN_TRAP = name_to_pmidx('gremlin');
+const PM_IRON_GOLEM_TRAP = name_to_pmidx('iron golem');
+// C ref: monsym.h S_VORTEX / S_GHOST / S_EEL mlet values.
+const S_VORTEX_MCLS = 22, S_GHOST_MCLS = 54, S_EEL_MCLS = 57;
+function likes_lava_trap(ptr) {
+    return ptr?.pmidx === PM_FIRE_ELEMENTAL_TRAP || ptr?.pmidx === PM_SALAMANDER_TRAP;
+}
+// C ref: hack.c may_passwall(x, y).
+function may_passwall_trap(x, y) {
+    const loc = game.level?.at(x, y);
+    return !(loc && IS_STWALL(loc.typ) && ((loc.wall_info | 0) & W_NONPASSWALL));
+}
+// C ref: dig.c may_dig(x, y).
+function may_dig_trap(x, y) {
+    const loc = game.level?.at(x, y);
+    return !(loc && (IS_STWALL(loc.typ) || IS_TREE(loc.typ))
+             && ((loc.wall_info | 0) & W_NONDIGGABLE));
+}
+// C ref: monmove.c accessible(x, y).
+function accessible_trap(x, y) {
+    const loc = game.level?.at(x, y);
+    return ACCESSIBLE(loc ? loc.typ : STONE) && !closed_door(x, y);
+}
+
+// C ref: teleport.c goodpos(x, y, &youmonst, 0).  The S_EEL rn2(13) is
+// drawn whenever an eel-shaped hero is offered a dry square.
 export function goodpos_for_hero(x, y) {
     if (!isok(x, y)) return false;
     if (m_at(x, y)) return false;
-    const loc = game.level?.at(x, y);
-    const typ = loc ? loc.typ : STONE;
-    if (IS_POOL(typ) || IS_LAVA(typ)) return false;
-    if (!ACCESSIBLE(typ)) return false;
-    if (sobj_at_floor(BOULDER, x, y)) return false;
+    const mdat = youmonst_data_pub();
+    if (is_pool(x, y)) {
+        return Swimming_fu() || Amphibious_fu()
+            || (!Is_waterlevel(game.u?.uz) && !is_waterwall(x, y)
+                && (Levitation_fu() || Flying_fu() || Wwalking_fu()));
+    } else if (mdat?.mcls === S_EEL_MCLS && rn2(13)) {
+        return false;
+    } else if (is_lava(x, y)) {
+        if (mdat?.pmidx === PM_FLOATING_EYE_TRAP) return false;
+        return Levitation_fu() || Flying_fu()
+            || (Fire_resistance_fu() && Wwalking_fu() && !!game.uarmf?.oerodeproof)
+            || (!!game.u?.Upolyd && likes_lava_trap(mdat));
+    }
+    if (passes_walls_flag(mdat) && may_passwall_trap(x, y)) return true;
+    if (amorphous_flag(mdat) && closed_door(x, y)) return true;
+    if (!accessible_trap(x, y)) return false;
+    if (sobj_at_floor(BOULDER, x, y) && !throws_rocks_flag(mdat)) return false;
     return true;
 }
 
-// C ref: hack.c crawl_destination(x,y) — drown()'s crawl-out target test, and
-// findtravelpath()'s gate on the travel-to-adjacent fast path.  The diagonal
-// squeeze-through check
-// (bad_rock/cant_squeeze_thru) isn't reached by the corpus (the hero is a
-// normal, unencumbered human), so a diagonal step is allowed once the door
-// restriction clears.
-export function crawl_destination(x, y) {
+// C ref: hack.c:939 bad_rock(youmonst.data, x, y).
+function bad_rock_hero(mdat, x, y) {
+    const loc = game.level?.at(x, y);
+    const f1 = mflags1_of(mdat);
+    return (!!game.level?.flags?.sokoban_rules && !!sobj_at_floor(BOULDER, x, y))
+        || (IS_OBSTRUCTED(loc ? loc.typ : STONE)
+            && ((f1 & M1_TUNNEL) === 0 || (f1 & M1_NEEDPICK) !== 0 || !may_dig_trap(x, y))
+            && !(passes_walls_flag(mdat) && may_passwall_trap(x, y)));
+}
+// C ref: hack.c:953 cant_squeeze_thru(&youmonst) — 0 fits, 1 too big,
+// 2 carrying too much, 3 Sokoban.  The bigmonst exemption's can_fog() term
+// cannot hold for the hero: is_vampshifter(&youmonst) needs set_uasmon()'s
+// u.mcham, which is only kept while the current form is a vampire or one of
+// its shapeshifted forms (bat, fog cloud, wolf), none of which is MZ_LARGE.
+function cant_squeeze_thru_hero() {
+    if (Passes_walls_fu()) return 0;
+    const ptr = youmonst_data_pub();
+    if ((ptr?.msize ?? 0) >= 3 /* MZ_LARGE */
+        && !(amorphous_flag(ptr)
+             || ptr?.mcls === S_VORTEX_MCLS || ptr?.pmidx === PM_AIR_ELEMENTAL_TRAP
+             || ptr?.mcls === S_GHOST_MCLS || (mflags1_of(ptr) & M1_SLITHY) !== 0))
+        return 1;
+    if (carried_weight() > WT_TOOMUCH_DIAGONAL) return 2;
+    if (game.level?.flags?.sokoban_rules) return 3;
+    return 0;
+}
+
+// C ref: hack.c:4079 crawl_destination(x,y) — drown()'s crawl-out target
+// test, and findtravelpath()'s gate on the travel-to-adjacent fast path.
+// C's block_door() both decides and prints "<shk> blocks your way!".  This
+// gate must stay synchronous for travel, so it decides with shk.c's predicate
+// half and reports the blocking shopkeeper through `blockedby.shkp`; the
+// caller publishes it with shk.js block_door_feedback() at that point in its
+// own (asynchronous) flow, as rnd_nextto_goodpos_hero() does below.
+export function crawl_destination(x, y, blockedby = null) {
     if (!goodpos_for_hero(x, y)) return false;
     const u = game.u;
     if (x === u.ux || y === u.uy) return true; // orthogonal: unrestricted
+    if (u.Upolyd && u.umonnum === PM_GRID_BUG_TRAP) return false; /* NODIAG */
+    if (Passes_walls_fu()) return true;
+    /* pool could be next to a door, conceivably even inside a shop */
     const loc = game.level?.at(x, y);
-    if (loc && IS_DOOR(loc.typ) && !doorless_door(x, y)) return false;
-    return true;
+    if (loc && IS_DOOR(loc.typ)) {
+        if (!doorless_door(x, y)) return false;
+        const shkp = shk_blocking_door(x, y);
+        if (shkp) {
+            if (blockedby) blockedby.shkp = shkp;
+            return false;
+        }
+    }
+    const mdat = youmonst_data_pub();
+    return !(bad_rock_hero(mdat, u.ux, y) && bad_rock_hero(mdat, x, u.uy)
+             && cant_squeeze_thru_hero());
 }
 
 // C ref: trap.c rnd_nextto_goodpos(&x,&y,&youmonst) — shuffle the 8 compass
@@ -4217,7 +4444,7 @@ export function crawl_destination(x, y) {
 // crawl_destination(), or null if none do.
 const CRAWL_XDIR = [-1, -1, 0, 1, 1, 1, 0, -1];
 const CRAWL_YDIR = [0, -1, -1, -1, 0, 1, 1, 1];
-function rnd_nextto_goodpos_hero(x0, y0) {
+async function rnd_nextto_goodpos_hero(x0, y0) {
     const dirs = [0, 1, 2, 3, 4, 5, 6, 7];
     for (let i = N_DIRS; i > 0; i--) {
         const j = rn2(i);
@@ -4228,7 +4455,9 @@ function rnd_nextto_goodpos_hero(x0, y0) {
     for (let i = 0; i < N_DIRS; i++) {
         const nx = x0 + CRAWL_XDIR[dirs[i]];
         const ny = y0 + CRAWL_YDIR[dirs[i]];
-        if (crawl_destination(nx, ny)) return { x: nx, y: ny };
+        const blockedby = { shkp: null };
+        if (crawl_destination(nx, ny, blockedby)) return { x: nx, y: ny };
+        if (blockedby.shkp) await block_door_feedback(blockedby.shkp);
     }
     return null;
 }
@@ -4238,23 +4467,16 @@ function rnd_nextto_goodpos_hero(x0, y0) {
 // nothing left to drop).  Returns TRUE once unencumbered, FALSE if items ran
 // out first.  `lostsomeRef`, if given, gets `.v = true` set the first time an
 // item is actually dropped (C's `*lostsome = TRUE`).  RNG: exactly one
-// rn2(invc) draw per while-iteration; the corpus hero is always already
-// unencumbered at every call site, so this never actually draws for the
-// public corpus.  remove_worn_item()/freeinv()/place_object()/stackobj() are
-// the same drop primitives every other dropx()-equivalent in this port uses
-// (js/wield.js:263, js/pickup.js:1621); C's flooreffects() (e.g. water_damage
-// on a fall into water) is not modelled by ANY of those call sites either, so
-// this stays consistent rather than inventing a deeper drop than the rest of
-// the codebase has.
+// rn2(invc) draw per while-iteration, plus whatever dropx()'s
+// flooreffects() draws for the item landing in the water.
 function inv_cnt_disrobe(includeGold) {
     let n = 0;
     for (const obj of inventoryArray()) if (includeGold || obj.oclass !== COIN_CLASS) ++n;
     return n;
 }
-function Punished_disrobe() { return !!game.uball; }
 export async function emergency_disrobe(lostsomeRef) {
     let invc = inv_cnt_disrobe(true);
-    while (near_capacity() > (Punished_disrobe() ? UNENCUMBERED : SLT_ENCUMBER)) {
+    while (near_capacity() > (Punished_fu() ? UNENCUMBERED : SLT_ENCUMBER)) {
         let otmp = null;
         if (invc > 0) {
             let i = rn2(invc);
@@ -4273,59 +4495,168 @@ export async function emergency_disrobe(lostsomeRef) {
         if (!otmp) return false;
         if (otmp.owornmask) await remove_worn_item(otmp, false);
         if (lostsomeRef) lostsomeRef.v = true;
-        const u = game.u;
-        freeinv(otmp);
-        place_object(otmp, u.ux, u.uy);
-        stackobj(otmp);
+        await dropx(otmp);
         invc--;
     }
     return true;
 }
 
-// C ref: teleport.c teleds(nux,nuy,flags) — relocate the hero.  Punished/
-// swallowed/vault-guard handling isn't reached by the corpus (a fresh
-// Tenderfoot crawling out of a tutorial pool), so only the position update,
-// vision refresh, and the re-entrant spoteffects(TRUE) at the new spot are
-// modelled.
-async function teleds_min(nux, nuy, pickupFn) {
+// C ref: trap.c:5059 drown() — the hero is in, or has just entered, water.
+// Returns TRUE iff the hero changed location while surviving (crawled out,
+// teleported, was set down by a dismount, or was life-saved elsewhere), or
+// the game ended.
+export async function drown() {
     const u = game.u;
-    const { vision_recalc } = await import('./vision.js');
-    const oldx = u.ux, oldy = u.uy;
-    u.ux0 = oldx;
-    u.uy0 = oldy;
-    u.ux = nux;
-    u.uy = nuy;
-    newsym(oldx, oldy);
-    vision_recalc(1);
-    newsym(nux, nuy);
-    await spoteffects(pickupFn);
-}
+    const { waterbody_name: waterbody_name_full } = await import('./cmd.js');
+    const is_solid = is_waterwall(u.ux, u.uy);
+    let inpool_ok = false;
 
-// C ref: trap.c drown() — the hero falls into water.  Swimming/Amphibious/
-// Breathless/steed/teleport-intrinsic/the death loop aren't reached by the
-// corpus (a non-swimming Tenderfoot who successfully crawls out on the first
-// attempt), so only that successful-crawl-out path is modelled.
-async function drown(pickupFn) {
-    const u = game.u;
-    const loc = game.level?.at(u.ux, u.uy);
-    const isSolid = !!loc && loc.typ === WATER; // is_waterwall(u.ux,u.uy)
-    await update_topl(`You ${isSolid ? 'plunge' : 'fall'} into the ${waterbody_name(u.ux, u.uy)}!`);
-    if (!isSolid) await update_topl('You sink like a rock.');
+    feel_newsym(u.ux, u.uy); /* in case Blind, map the water here */
+    /* happily wading in the same contiguous pool */
+    if (u.uinwater && is_pool(u.ux - (u.dx | 0), u.uy - (u.dy | 0))
+        && (Swimming_fu() || Amphibious_fu() || Breathless_fu())) {
+        /* water effects on objects every now and then */
+        if (!rn2(5)) inpool_ok = true;
+        else return false;
+    }
 
-    const spot = rnd_nextto_goodpos_hero(u.ux, u.uy);
-    if (spot) {
+    if (!u.uinwater) {
+        await update_topl(`You ${is_solid ? 'plunge' : 'fall'} into the ${
+            waterbody_name_full(u.ux, u.uy)}${
+            (Amphibious_fu() || Swimming_fu() || Breathless_fu()) ? '.' : '!'}`);
+        if (!Swimming_fu() && !is_solid)
+            await update_topl(`You sink like ${Hallucination_u() ? 'the Titanic' : 'a rock'}.`);
+    }
+
+    await water_damage_chain(inventoryArray(), false);
+
+    if (u.Upolyd && u.umonnum === PM_GREMLIN_TRAP && rn2(3)) {
+        const { split_mon } = await import('./potion.js');
+        await split_mon(game.youmonst || u, null);
+    } else if (u.Upolyd && u.umonnum === PM_IRON_GOLEM_TRAP) {
+        await update_topl('You rust!');
+        const dmg = Maybe_Half_Phys(d(2, 6));
+        if (u.mhmax > dmg) u.mhmax -= dmg;
+        await losehp(dmg, 'rusting away', KILLED_BY);
+        if (game.program_state?.gameover) return true;
+    }
+    if (inpool_ok) return false;
+
+    const { number_leashed, unleash_all } = await import('./apply.js');
+    const nleashed = number_leashed();
+    if (nleashed > 0) {
+        await update_topl(`The leash${nleashed > 1 ? 'es' : ''} slip${nleashed > 1 ? '' : 's'} loose.`);
+        unleash_all();
+    }
+
+    if (Amphibious_fu() || Breathless_fu() || Swimming_fu()) {
+        if (Amphibious_fu() || Breathless_fu()) {
+            if (game.flags?.verbose !== false)
+                await update_topl("But you aren't drowning.");
+            if (!Is_waterlevel(u.uz))
+                await update_topl(Hallucination_u() ? 'Your keel hits the bottom.'
+                                                    : 'You touch bottom.');
+        }
+        if (Punished_fu()) {
+            const { unplacebc, placebc } = await import('./ball.js');
+            unplacebc();
+            placebc();
+        }
+        vision_recalc(2); /* unsee old position */
+        const { set_uinwater } = await import('./do.js');
+        set_uinwater(1);
+        await under_water(1);
+        game.vision_full_recalc = 1;
+        return false;
+    }
+    if ((Teleportation_fu() || can_teleport_flag(youmonst_data_pub())) && !Unaware()
+        && (Teleport_control_fu() || rn2(3) < Luck_fu() + 2)) {
+        await update_topl('You attempt a teleport spell.'); /* utcsri!carroll */
+        const { noteleport_level, dotele } = await import('./teleport.js');
+        if (!noteleport_level({ data: youmonst_data_pub() })) {
+            await dotele(false);
+            if (game.program_state?.gameover) return true;
+            if (!is_pool(u.ux, u.uy)) return true;
+        } else {
+            await update_topl('The attempted teleport spell fails.');
+        }
+    }
+    if (u.usteed) {
+        await dismount_steed_fu(DISMOUNT_GENERIC);
+        if (game.program_state?.gameover) return true;
+        if (!is_pool(u.ux, u.uy)) return true;
+    }
+    /* if sleeping, wake up now so that we don't crawl out of water
+       while still asleep; C's unmul() also clears u.usleep and
+       multi_reason, which js/vault.js unmul() leaves to its callers */
+    if (u.usleep) {
+        const { unmul } = await import('./vault.js');
+        await unmul('Suddenly you wake up!');
+        u.usleep = 0;
+        game.multi_reason = null;
+    }
+    /* being doused will revive from fainting */
+    if ((u.uhs ?? 0) === FAINTED) {
+        const { reset_faint } = await import('./vault.js');
+        await reset_faint();
+    }
+
+    /* have to be able to move in order to crawl */
+    let spot = null;
+    if ((game.multi | 0) >= 0 && mmove_of(youmonst_data_pub())
+        && (spot = await rnd_nextto_goodpos_hero(u.ux, u.uy))) {
         const lost = { v: false };
+        /* time to do some strip-tease... */
         const succ = Is_waterlevel(u.uz) ? true : await emergency_disrobe(lost);
-        await update_topl('You try to crawl out of the water.');
+
+        await update_topl(`You try to crawl out of the ${hliquid('water')}.`);
         if (lost.v) await update_topl('You dump some of your gear to lose weight...');
         if (succ) {
             await update_topl('Pheew!  That was close.');
-            await teleds_min(spot.x, spot.y, pickupFn);
+            const { teleds } = await import('./teleport.js');
+            await teleds(spot.x, spot.y, TELEDS_ALLOW_DRAG);
             return true;
         }
+        /* still too much weight */
         await update_topl('But in vain.');
     }
-    // The repeated-drowning/death loop isn't reached by the corpus.
+    const { set_uinwater } = await import('./do.js');
+    set_uinwater(1);
+    await urgent_topl('You drown.');
+    /* first pass is survivable by using up an amulet of life-saving or by
+       answering no to "Die?" in explore|wizard mode; second pass can only
+       be survivable via the latter */
+    const { done } = await import('./end.js');
+    const { formatkiller } = await import('./topten.js');
+    const { safe_teleds } = await import('./teleport.js');
+    for (let i = 0; i < 2; i++) {
+        /* killer format and name are reconstructed every iteration
+           because lifesaving resets them */
+        let pool_of_water = waterbody_name_full(u.ux, u.uy);
+        let format = KILLED_BY_AN;
+        /* avoid "drowned in [a] water" */
+        if (pool_of_water === 'water') {
+            pool_of_water = 'deep water';
+            format = KILLED_BY;
+        } else if (pool_of_water === 'limitless water') {
+            /* avoid "drowned in _a_ limitless water" on Plane of Water */
+            format = KILLED_BY;
+        }
+        game.killer = game.killer || { name: '', format: KILLED_BY_AN, id: 0, next: null };
+        game.killer.format = format;
+        game.killer.name = pool_of_water;
+        game._killer_name = formatkiller(BUFSZ, DROWNING, false);
+        await done(DROWNING);
+        if (game.program_state?.gameover) return true;
+        /* oops, we're still alive.  better get out of the water. */
+        if (await safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT))
+            break; /* successful life-save */
+        /* nowhere safe to land; repeat drowning loop... */
+        await update_topl("You're still drowning.");
+    }
+
+    if (u.uinwater) set_uinwater(0);
+    await rescued_from_terrain(DROWNING);
     return true;
 }
 
@@ -4517,17 +4848,7 @@ function ice_descr_trap(x, y) {
 // them somewhere unexpected or (overfull level) failed to move them at all,
 // so the generic "back on solid ground" line may be wrong; describe whatever
 // terrain the hero is actually standing on/in instead.  Consumes no RNG.
-// NOT YET WIRED to any call site: C's only two callers are the tail of
-// drown()'s two-iteration life-saving loop and lava_effects()'s equivalent
-// (both reached only once the hero actually dies and gets life-saved/
-// explore-mode-reverted) and pray.c's TROUBLE_LAVA fix — all three need
-// safe_teleds()/the full teleport-relocation subsystem, which is unported and
-// out of this batch's scope (js/pray.js:631's GAP comment already flags the
-// TROUBLE_LAVA call site).  This port's simplified drown()/lava_effects()
-// only model the corpus's reachable "survive on the first attempt" or
-// "die outright" paths, neither of which reaches rescued_from_terrain in C
-// either.  Ported here so the function exists, is correct, and is ready to
-// wire in once safe_teleds lands.
+// Called from the tails of drown()'s and lava_effects()'s life-saving loops.
 export async function rescued_from_terrain(how) {
     const u = game.u;
     const find_yourself = 'find yourself';
@@ -4536,7 +4857,7 @@ export async function rescued_from_terrain(how) {
 
     switch (how) {
     case DROWNING:
-        if (isPoolAt(u.ux, u.uy)) {
+        if (is_pool(u.ux, u.uy)) {
             const mid = (Is_waterlevel(u.uz) || IS_WATERWALL(loc.typ))
                 ? 'in the midst' : 'on top';
             await pline(`You ${find_yourself} ${mid} of ${surface_liquid_word()}.`);
@@ -4549,10 +4870,10 @@ export async function rescued_from_terrain(how) {
         break;
     case BURNING:   /* moved onto lava without fire resistance */
     case DISSOLVED: /* sunk into lava while fire resistant */
-        if (isPoolAt(u.ux, u.uy)) {
+        if (is_pool(u.ux, u.uy)) {
             await pline(`You ${find_yourself} ${u.uinwater ? 'in' : 'on'} ${surface_liquid_word()}.`);
             mesggiven = true;
-        } else if (IS_LAVA(loc.typ)) {
+        } else if (is_lava(u.ux, u.uy)) {
             await pline(`You ${find_yourself} on top of molten lava.`);
             mesggiven = true;
         }
@@ -4562,9 +4883,10 @@ export async function rescued_from_terrain(how) {
     }
     if (!mesggiven) await back_on_ground(true);
 
-    game.iflags = game.iflags || {};
-    game.iflags.last_msg = PLNMSG_BACK_ON_GROUND;
+    game.last_msg = PLNMSG_BACK_ON_GROUND; /* for describe_decor() */
+    /* feedback just disclosed this */
     update_lastseentyp(u.ux, u.uy);
+    game.iflags = game.iflags || {};
     game.iflags.prev_decor = game.lastseentyp?.[u.ux]?.[u.uy] ?? STONE;
 }
 // C ref: pager.c waterbody_name()'s "water"/hliquid("water") word, the piece
@@ -4572,40 +4894,87 @@ export async function rescued_from_terrain(how) {
 // is_pool rather than through the full waterbody_name() phrase.
 function surface_liquid_word() { return hliquid('water'); }
 
-// C ref: hack.c pooleffects(newspot) — entering/leaving water or lava.  Only
-// the "hero (no steed, no Levitation/Flying) walks onto a plain pool or into
-// lava" branches are modelled; leaving water/lava and the steed/Wwalking
-// paths aren't reached by the corpus.
-async function pooleffects_enter(pickupFn) {
+// C ref: hack.c:3233 pooleffects(newspot) — leaving water, then entering
+// water or lava.  `newspot` is TRUE when called by spoteffects(), FALSE from
+// the per-turn moveloop check and from property changes made while in water.
+// Returns TRUE when the rest of spoteffects() should be skipped.
+export async function pooleffects(newspot) {
     const u = game.u;
-    if (u.ustuck || u.uprops?.Levitation || u.uprops?.Flying) return false;
-    if (u.usteed) return false;
-    const loc = game.level?.at(u.ux, u.uy);
-    const typ = loc ? loc.typ : STONE;
-    if (!isPoolAt(u.ux, u.uy) && !IS_LAVA(typ)) return false;
-    if (IS_LAVA(typ)) { await lava_effects(); return true; }
-    return drown(pickupFn);
+    /* check for leaving water */
+    if (u.uinwater) {
+        let still_inwater = false; /* assume we're getting out */
+
+        if (!is_pool(u.ux, u.uy)) {
+            if (Is_waterlevel(u.uz)) {
+                await pline('You pop into an air bubble.');
+                game.last_msg = PLNMSG_BACK_ON_GROUND;
+            } else if (is_lava(u.ux, u.uy)) {
+                await pline(`You leave the ${hliquid('water')}...`); /* oops! */
+            } else {
+                await back_on_ground(false);
+            }
+        } else if (Is_waterlevel(u.uz)) {
+            still_inwater = true;
+        } else if (Levitation_fu()) {
+            await pline(`You pop out of the ${hliquid('water')} like a cork!`);
+        } else if (Flying_fu()) {
+            await pline(`You fly out of the ${hliquid('water')}.`);
+        } else if (Wwalking_fu()) {
+            await pline('You slowly rise above the surface.');
+        } else {
+            still_inwater = true;
+        }
+        if (!still_inwater) {
+            const was_underwater = !!u.uinwater && !Is_waterlevel(u.uz);
+            const { set_uinwater } = await import('./do.js');
+            set_uinwater(0); /* leave the water */
+            if (was_underwater) { /* restore vision */
+                await docrt();
+                game.vision_full_recalc = 1;
+            }
+        }
+    }
+
+    /* check for entering water or lava */
+    if (!u.ustuck && !Levitation_fu() && !Flying_fu()
+        && (is_pool(u.ux, u.uy) || is_lava(u.ux, u.uy))) {
+        if (u.usteed && !grounded_fu(u.usteed.data)) {
+            /* floating or clinging steed keeps hero safe */
+            return false;
+        } else if (u.usteed) {
+            /* steed enters pool */
+            await dismount_steed_fu(u.uinwater ? DISMOUNT_FELL : DISMOUNT_GENERIC);
+            /* dismount_steed() -> float_down() -> pickup()
+               (float_down doesn't do autopickup on Air or Water) */
+            if (Is_airlevel(u.uz) || Is_waterlevel(u.uz))
+                return false;
+            /* even if we actually end up at same location, float_down()
+               has already done trap and pickup actions of spoteffects() */
+            if (newspot)
+                await check_special_room(false); /* spoteffects */
+            return true;
+        }
+        /* not mounted */
+
+        /* if hiding on ceiling then don't automatically enter pool */
+        if (u.Upolyd && ceiling_hider_fu(youmonst_data_pub()) && u.uundetected)
+            return false;
+
+        /* drown(),lava_effects() return true if hero changes
+           location while surviving the problem */
+        if (is_lava(u.ux, u.uy)) {
+            if (await lava_effects())
+                return true;
+        } else if ((!Wwalking_fu() || is_waterwall(u.ux, u.uy))
+                   && (newspot || !u.uinwater
+                       || !(Swimming_fu() || Amphibious_fu() || Breathless_fu()))) {
+            if (await drown())
+                return true;
+        }
+    }
+    return false;
 }
 
-// C ref: hack.c spoteffects() — run the per-square effects after the hero
-// arrives on a new tile.  pooleffects(TRUE) runs FIRST; if it reports the
-// hero fell in and was relocated, the rest of spoteffects (pickup/trap) is
-// skipped for this square, matching C's `goto spotdone`.  The full C routine
-// also handles special rooms, sinks and ice; none of those consume PRNG in
-// the owned sessions, so this port covers the pool/pickup/trap ordering (the
-// part that matters):
-//
-//   if (pooleffects(TRUE)) goto spotdone;
-//   pit = (trap && is_pit(trap->ttyp));
-//   if (pick && !pit) pickup(1);     // pickup BEFORE a non-pit trap
-//   if (trap) dotrap(trap, ...);
-//   if (pick && pit) pickup(1);      // pickup AFTER a pit trap
-//
-// `pickupFn` is the caller's pickup(1) (cmd.js pickup_after_move), called
-// with the CURRENT hero position (not fixed coordinates) so a re-entrant
-// call from teleds_min() picks up at the square the hero actually lands on;
-// it is optional so older call sites (with no auto-pickup) still trigger
-// traps.
 const LEVITATION_BOOTS_SF = 172;  // mkobj.js otyp (do_wear.js's own copy)
 const RIN_LEVITATION_SF = 183;    // mkobj.js otyp (invent.js's own copy)
 
@@ -4641,7 +5010,7 @@ async function dosinkfall() {
         const dmg = rn1(8, 25 - acurr_eff(A_CON));
         await losehp(Maybe_Half_Phys(dmg), fell_on_sink, NO_KILLER_PREFIX);
         exercise(A_DEX, false);
-        selftouch('Falling, you');
+        await selftouch('Falling, you');
         for (const obj of (game.level?.objects || [])) {
             if (obj.ox !== u.ux || obj.oy !== u.uy) continue;
             if (obj.where !== 'floor' && obj.where !== 1) continue;
@@ -4685,23 +5054,93 @@ async function dosinkfall() {
     float_vs_flight();
 }
 
-export async function spoteffects(pickupFn) {
+// C ref: hack.c:3312 spoteffects(pick) — run the per-square effects after
+// the hero arrives on (or is changed on) a tile.  `pick` is C's boolean: a
+// truthy value runs pickup(1), i.e. cmd.js pickup_after_move() at the hero's
+// CURRENT position, so re-entrant calls (drown -> teleds -> spoteffects)
+// pick up where the hero actually lands.
+// C's static recursion guards: a hero poly'd into an iron golem who rusts
+// in drown() can rehumanize, whose own spoteffects() must not re-run the
+// pool at the same spot; spottrap stops a fire trap's melt_ice() from
+// re-triggering the same trap.
+let inspoteffects = 0;
+let spotloc = { x: 0, y: 0 };
+let spotterrain = STONE;
+let spottrap = null;
+let spottraptyp = NO_TRAP;
+export async function spoteffects(pick) {
     const u = game.u;
     if (!u) return;
-    if (await pooleffects_enter(pickupFn)) return;
-    // C ref: hack.c spoteffects() — check_special_room(FALSE) runs right after
-    // pooleffects(), i.e. BEFORE the trap and the pickup.
-    await check_special_room(false);
-    // C ref: hack.c:3353 — `if (IS_SINK(...) && Levitation) dosinkfall();`
-    if (IS_SINK(game.level?.at(u.ux, u.uy)?.typ)
-        && ((u.uprops?.Levitation | 0) || (u.uprops?.HLevitation | 0)
-            || (u.uprops?.ELevitation | 0)))
-        await dosinkfall();
     const trap = t_at(u.ux, u.uy);
-    const pit = !!(trap && is_pit_ttyp(trap.ttyp));
-    if (pickupFn && !pit) await pickupFn(u.ux, u.uy);
-    if (trap) await dotrap(trap, 0);
-    if (pickupFn && pit) await pickupFn(u.ux, u.uy);
+    const trapflag = game.iflags?.failing_untrap ? FAILEDUNTRAP : 0;
+    const terrain_here = game.level?.at(u.ux, u.uy)?.typ ?? STONE;
+
+    if (inspoteffects && u.ux === spotloc.x && u.uy === spotloc.y
+        /* except when reason is transformed terrain (ice -> water) */
+        && spotterrain === terrain_here
+        /* or transformed trap (land mine -> pit) */
+        && (!spottrap || !trap || trap.ttyp === spottraptyp))
+        return;
+
+    ++inspoteffects;
+    spotterrain = terrain_here;
+    spotloc = { x: u.ux, y: u.uy };
+    try {
+        if (await pooleffects(true)) return;
+
+        await check_special_room(false);
+        // C ref: hack.c:3353 — `if (IS_SINK(...) && Levitation) dosinkfall();`
+        if (IS_SINK(game.level?.at(u.ux, u.uy)?.typ) && Levitation_fu())
+            await dosinkfall();
+        if (!game.in_steed_dismounting) { /* if dismounting, check again later */
+            let spot_trap = trap;
+            let spot_pick = pick;
+            /* if levitation is due to time out at the end of this turn,
+               allowing it to do so could give the perception that a trap
+               here is being triggered twice, so adjust the timeout */
+            // timeout.js TIMED_PROPS reads the LEVITATION timer; a polymorphed
+            // floater's set_uasmon() form bit is stored as the bare value 1
+            // and counts as a non-timeout source (C's FROMFORM bit).
+            const { timed_prop } = await import('./timeout.js');
+            const levslot = timed_prop('LEVITATION');
+            const hlev = u.uprops?.Levitation | 0;
+            const levtimer = levslot.get(u);
+            const lev_other = (u.Upolyd && hlev === 1) || (hlev & ~(I_SPECIAL | TIMEOUT));
+            if (spot_trap && levtimer === 1
+                && !(worn_extrinsic(LEVITATION) || lev_other)) {
+                if (rn2(2)) { /* defer timeout */
+                    levslot.set(u, levtimer + 1);
+                } else if (await float_down(I_SPECIAL | TIMEOUT, 0)) { /* timeout early */
+                    /* levitation has ended; we've already triggered any
+                       trap and [usually] performed autopickup */
+                    spot_trap = null;
+                    spot_pick = false;
+                }
+                if (game.program_state?.gameover) return;
+            }
+            const pit = !!(spot_trap && is_pit_ttyp(spot_trap.ttyp));
+            const { pickup_after_move } = await import('./cmd.js');
+            /* If not a pit, pickup before triggering trap.
+               If pit, trigger trap before pickup. */
+            if (spot_pick && !pit) await pickup_after_move(u.ux, u.uy);
+            if (spot_trap && (!spottrap || spottraptyp !== spot_trap.ttyp)) {
+                /* dotrap on a fire trap calls melt_ice() which triggers
+                   spoteffects() (again) which can trigger the same fire
+                   trap (again); spottrap prevents that */
+                spottrap = spot_trap;
+                spottraptyp = spot_trap.ttyp;
+                await dotrap(spot_trap, trapflag);
+                spottrap = null;
+                spottraptyp = NO_TRAP;
+            }
+            if (spot_pick && pit) await pickup_after_move(u.ux, u.uy);
+        }
+    } finally {
+        if (!--inspoteffects) {
+            spotterrain = STONE;
+            spotloc = { x: 0, y: 0 };
+        }
+    }
 }
 
 // ── rolling boulder trap (hero) ──────────────────────────────────────────────

@@ -3594,26 +3594,37 @@ export async function costly_gold(x, y, amount, silent) {
 // C's `IS_SHOP(roomno)` here indexes svr.rooms[] with an UNADJUSTED roomno (the
 // ROOMOFFSET is not subtracted, unlike clear_no_charge_obj()'s use of the same
 // macro).  Reproduced as-is: "fixing" it would change which room is tested.
-export async function block_door(x, y) {
+// block_door() is the predicate (shk_blocking_door) followed by the "blocks
+// your way!" feedback (block_door_feedback).  The halves are exported for
+// synchronous callers such as hack.c crawl_destination(), which must decide
+// at once but publish the shopkeeper's line from their asynchronous caller.
+export function shk_blocking_door(x, y) {
     const roomno = in_rooms(x, y, SHOPBASE)[0] ?? 0;
 
-    if (roomno < 0 || !IS_SHOP(roomno)) return false;
-    if (!IS_DOOR(game.level?.at(x, y)?.typ ?? 0)) return false;
-    if (roomno !== (game.u?.ushops || [])[0]) return false;
+    if (roomno < 0 || !IS_SHOP(roomno)) return null;
+    if (!IS_DOOR(game.level?.at(x, y)?.typ ?? 0)) return null;
+    if (roomno !== (game.u?.ushops || [])[0]) return null;
 
     const shkp = shop_keeper(roomno);
-    if (!shkp || !inhishop(shkp)) return false;
+    if (!shkp || !inhishop(shkp)) return null;
 
     const eshkp = shkp.eshk;
     if (shkp.mx === eshkp.shk?.x && shkp.my === eshkp.shk?.y
         && eshkp.shd?.x === x && eshkp.shd?.y === y
         && !helpless(shkp)
-        && (eshkp.debit || eshkp.billct || eshkp.robbed)) {
-        await update_topl(`${Shknam(shkp)}${
-            Invis() ? ' senses your motion and' : ''} blocks your way!`);
-        return true;
-    }
-    return false;
+        && (eshkp.debit || eshkp.billct || eshkp.robbed))
+        return shkp;
+    return null;
+}
+export async function block_door_feedback(shkp) {
+    await update_topl(`${Shknam(shkp)}${
+        Invis() ? ' senses your motion and' : ''} blocks your way!`);
+}
+export async function block_door(x, y) {
+    const shkp = shk_blocking_door(x, y);
+    if (!shkp) return false;
+    await block_door_feedback(shkp);
+    return true;
 }
 
 // C ref: shk.c block_entry(x, y):5826 — the shk blocks a diagonal entry through

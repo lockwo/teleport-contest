@@ -638,7 +638,7 @@ async function seffect_scare_monster(sobj) {
             if (confused || scursed) {
                 mtmp.mflee = 0; mtmp.mfrozen = 0; mtmp.msleeping = 0;
                 mtmp.mcanmove = 1;
-            } else if (!resist(mtmp, SCROLL_CLASS, 0, false)) {
+            } else if (!resist(mtmp, sobj.oclass, 0, false)) {
                 monflee(mtmp, 0, false, false);
             }
             if (!mtmp.mtame) ct++; // pets don't laugh at you

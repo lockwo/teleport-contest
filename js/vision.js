@@ -9,6 +9,7 @@ import {
     D_CLOSED, D_LOCKED, D_TRAPPED,
     SV0, SV1, SV2, SV3, SV4, SV5, SV6, SV7, SVALL,
     IS_WALL, CROSSWALL, TRWALL, TREE, CLOUD, WATER, LAVAWALL, TEMP_LIT,
+    MOAT, DRAWBRIDGE_UP, DB_UNDER, DB_MOAT, Is_juiblex_level, Is_waterlevel,
 } from './const.js';
 import { newsym } from './display.js';
 import { infravision, monster_by_pmidx } from './makemon.js';
@@ -96,6 +97,21 @@ function mark_visible_range(row, left, right) {
     if (game.cs_right[row] < right) game.cs_right[row] = right;
 }
 
+// C ref: dbridge.c is_moat(x, y) / is_pool(x, y).  vision.js keeps private
+// copies: importing dbridge.js here would reorder ESM evaluation (dbridge.js
+// statically imports this module and builds tables from mkobj.js at load).
+function is_moat_v(loc) {
+    if (!loc || Is_juiblex_level(game.u?.uz)) return false;
+    return loc.typ === MOAT
+        || (loc.typ === DRAWBRIDGE_UP && ((loc.drawbridgemask | 0) & DB_UNDER) === DB_MOAT);
+}
+function is_pool_v(x, y) {
+    if (!isok(x, y)) return false;
+    const loc = game.level?.at(x, y);
+    if (!loc) return false;
+    return loc.typ === POOL || loc.typ === MOAT || loc.typ === WATER || is_moat_v(loc);
+}
+
 // C ref: vision.c does_block(x, y, lev) — whether <x,y> obstructs line of
 // sight from its terrain/contents alone (independent of any region overlay).
 // Exported for region.js's remove_region()/expire_gas_cloud() unblock passes,
@@ -117,6 +133,8 @@ function _blocks(level, x, y) {
     // C ref: vision.c does_block — TREE, CLOUD, waterwall (WATER) and LAVAWALL
     // also block line of sight (the Big Room's inner W/Z rings, for instance).
     if (typ === TREE || typ === CLOUD || typ === WATER || typ === LAVAWALL) return true;
+    // C ref: vision.c:175 `(Underwater && is_moat(x, y))`.
+    if (game.u?.uinwater && is_moat_v(loc)) return true;
     // C ref: vision.c does_block — "Boulders block light."  Scan the floor
     // objects at <x,y> for a boulder (otyp 474).  A quest-home rolling-boulder
     // trap, for instance, drops a boulder that casts a real LOS shadow.
@@ -665,7 +683,21 @@ export function vision_recalc(control = 0) {
     // nothing can see you".  The u.uswallow half was missing, so the moveloop's
     // vision_recalc(0) restored full sight on the turn AFTER gulpmu's
     // vision_recalc(2), making canseemon(engulfer) true inside the stomach.
-    if (control !== 2 && !u.uswallow) {
+    // C ref: vision.c:589 — a submerged hero (not on the Plane of Water) who
+    // is not Blind only sees the adjacent squares that are also water, and
+    // has no night vision.
+    const underwater = control !== 2 && !u.uswallow && !Blind()
+        && !!u.uinwater && !Is_waterlevel(u.uz);
+    if (underwater) {
+        const lo_col = Math.max(u.ux - 1, 1);
+        for (let row = u.uy - 1; row <= u.uy + 1; row++)
+            for (let col = lo_col; col <= u.ux + 1; col++) {
+                if (!isok(col, row) || !is_pool_v(col, row)) continue;
+                next_rmin[row] = Math.min(next_rmin[row], col);
+                next_rmax[row] = Math.max(next_rmax[row], col);
+                next[row][col] = IN_SIGHT | COULD_SEE;
+            }
+    } else if (control !== 2 && !u.uswallow) {
         view_from(u.uy, u.ux, next, next_rmin, next_rmax);
     }
 

@@ -1720,8 +1720,11 @@ export function feel_location(x, y) {
     // C ref: display.c:836 — an accurate 'I' memory is left alone so a repeated
     // search doesn't re-detect the same unseen monster every turn.
     if (loc.invisMon && m_at(x, y)) return;
-    // The Underwater arm needs a submerged hero, which no covered session has.
     const u = game.u;
+    // C ref: display.c:769 — the hero can't feel non-pool locations while
+    // underwater except for lava and ice.
+    if (u?.uinwater && !Is_waterlevel(u.uz) && !is_pool_or_lava_d(x, y) && !is_ice_d(x, y))
+        return;
     set_seenv(loc, u?.ux ?? x, u?.uy ?? y, x, y);
 
     if (!can_reach_floor_disp()) {
@@ -1781,6 +1784,13 @@ export function newsym(x, y) {
             show_glyph_cell(x, y, hg.ch, hg.color, false, 0);
         }
         return;
+    }
+    // C ref: display.c:944 — when underwater, don't do anything unless <x,y>
+    // is an adjacent water, lava or ice position.
+    if (game.u?.uinwater && !Is_waterlevel(game.u.uz)) {
+        if (!(is_pool_or_lava_d(x, y) || is_ice_d(x, y))
+            || Math.abs(x - game.u.ux) > 1 || Math.abs(y - game.u.uy) > 1)
+            return;
     }
 
     if (game.u?.ux === x && game.u?.uy === y) {
@@ -2132,6 +2142,12 @@ export async function docrt() {
             const hg = hero_glyph();
             show_glyph_cell(game.u.ux, game.u.uy, hg.ch, hg.color, false);
         }
+        return;
+    }
+    // C ref: display.c:1730 `if (Underwater && !Is_waterlevel(&u.uz))
+    // { under_water(1); goto post_map; }`.
+    if (game.u?.uinwater && !Is_waterlevel(game.u.uz)) {
+        await under_water(1);
         return;
     }
     const { vision_recalc } = await import('./vision.js');
@@ -4573,6 +4589,9 @@ export async function under_water(mode) {
 
     /* full update */
     if (mode === 1 || _uw_dela) {
+        // C ref: display.c cls() opens with display_nhwindow(WIN_MESSAGE,
+        // FALSE); this port's cls() leaves that flush to its callers.
+        await display_nhwindow_message();
         await cls();
         _uw_dela = false;
 
@@ -4714,7 +4733,7 @@ export async function docrt_flags(refresh_flags) {
             await swallowed(1);
             break post_map;
         }
-        if (game.u.uunderwater && !Is_waterlevel(game.u.uz)) {
+        if (game.u.uinwater && !Is_waterlevel(game.u.uz)) {
             await under_water(1);
             break post_map;
         }
