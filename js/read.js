@@ -1986,12 +1986,9 @@ export async function doread() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// read.c breadth port.  Everything below this line is a faithful translation
-// of a read.c function that had no JS counterpart.  NOTHING here is reached
-// from the code above (or from any other file) yet: seffects()' switch still
-// falls through to its default for these otyps.  Wiring one in is a separate,
-// measurable change; what is recorded here is C's control flow, message order
-// and RNG order so that step doesn't have to re-derive them.
+// C read.c helper implementations used by the scroll-effect dispatch above.
+// Individual helpers retain C draw order and are wired as their call paths are
+// ported; recharge() and the existing scroll effects are active.
 // ═════════════════════════════════════════════════════════════════════════
 
 const MAX_ERODE = 3;                       // C ref: include/obj.h MAX_ERODE
