@@ -429,8 +429,8 @@ export async function were_summon(ptr) {
         // branch (x==u.ux, y==u.uy, !in_mklev): the exact square is the
         // HERO's, so it resolves through enexto_spawn (collect_coords ring
         // shuffle) to a nearby free square rather than placing there directly
-        // — makemon() itself has no byyou branch of its own (see
-        // create_particular_monster's note), so the search runs here first.
+        // — makemon() itself has no byyou branch of its own, so the search
+        // runs here first.
         const u = game.u;
         const spot = enexto_spawn(u?.ux ?? 0, u?.uy ?? 0, monster_by_pmidx(name_to_pmidx(typ)));
         const mtmp = spot
@@ -442,8 +442,8 @@ export async function were_summon(ptr) {
             if (canseemon_mon(mtmp)) numseen++;
             // C ref: makemon.c:1472-1501 — every in-game (non-mklev) makemon()
             // prints its own "X suddenly appears next to you!" arrival line;
-            // this port's makemon() defers that to the caller (see
-            // create_particular_monster), so were_summon's own caller-side
+            // this port's makemon() defers that to the caller (as read.js
+            // create_particular_creation does), so were_summon's own caller-side
             // makemon() call needs it too.
             await makemon_appears_msg(mtmp, spot.x, spot.y, 0);
         }

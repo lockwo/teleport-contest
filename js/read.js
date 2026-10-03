@@ -662,16 +662,17 @@ async function seffect_create_monster(sobj) {
 }
 
 // C ref: makemon.c create_critters(cnt, mptr, neverask).
-// The `ask = (wizard && !neverask)` create_particular() prompt is deliberately
-// NOT wired in here: zap.js's copy documents the same gap (a wizard-mode hero
-// gets one "Create what kind of monster?" getlin per critter before makemon()
-// is reached).  Fixing it belongs with that copy, in one place.
-async function create_critters(cnt, mptr, _neverask) {
+async function create_critters(cnt, mptr, neverask) {
     const { makemon } = await import('./makemon.js');
     const { canspotmon } = await import('./uhitm.js');
     const u = game.u;
     let known = false;
+    let ask = (!!game.flags?.debug && !neverask);
     while (cnt-- > 0) {
+        if (ask) {
+            if (await create_particular()) { known = true; continue; }
+            else ask = false;          /* ESC will shut off prompting */
+        }
         // (u.uinwater enexto(GIANT_EEL) relocation isn't modelled.)
         const mon = makemon(mptr, u.ux, u.uy, 0);
         if (!mon) continue;
@@ -3346,12 +3347,7 @@ function has_omonst_read(obj) { return !!(obj?.oextra && obj.oextra.omonst); }
 
 // C ref: read.c:3137 create_particular_parse(str, d) — parse the wizard-mode
 // "Create what kind of monster?" reply into a _create_particular_data.  Fills
-// and returns { ok, d }: C's boolean return with the out-parameter written in
-// place.  RNG-free (monster_census() only counts).
-//
-// The port's extcmd-handlers.js create_particular() at line 1266 skips this
-// parse entirely and resolves the reply as a bare species name, so every
-// quantity/gender/disposition/gear prefix C accepts is currently ignored.
+// d in place and returns C's boolean.  RNG-free (monster_census() only counts).
 export async function create_particular_parse(str, d) {
     let gender_name_var = NEUTRAL;
     let bufp = String(str ?? '');
@@ -3456,6 +3452,44 @@ export async function create_particular_species(which) {
         if (await y_n(q) === 'y') ref.v = which;
     }
     return ref.v;
+}
+
+// C ref: read.c:3372 create_particular() — the wizard-mode "Create what kind
+// of monster?" getlin loop used by ^G and by the scroll/spell of create
+// monster (create_critters()'s `ask` branch).  Returns C's boolean: TRUE when
+// something was made, FALSE on ESC / exhausted tries (which makes
+// create_critters() stop prompting for the remaining critters).
+const CP_TRYLIM = 5;
+export async function create_particular() {
+    let prompt = 'Create what kind of monster?';
+    let tryct = CP_TRYLIM, altmsg = 0;
+    const cpd = {};
+    let ok = false;
+    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
+    do {
+        /* mungspaces */
+        const buf = String(await hooked_tty_getlin(prompt, null) ?? '')
+            .replace(/\s+/g, ' ').replace(/^ | $/g, '');
+        if (buf.length && buf[0] === '\x1b') return false;
+
+        if (await create_particular_parse(buf, cpd)) { ok = true; break; }
+
+        /* no good; try again... */
+        if (buf || altmsg || tryct < 2) {
+            await pline("I've never heard of such monsters.");
+        } else {
+            await pline('Try again (type * for random, ESC to cancel).');
+            ++altmsg;
+        }
+        /* when a second try is needed, expand the prompt */
+        if (tryct === CP_TRYLIM) prompt += ' [type name or symbol]';
+    } while (--tryct > 0);
+
+    if (!ok) {
+        await pline("That's enough tries!");
+        return false;
+    }
+    return await create_particular_creation(cpd);
 }
 
 // C ref: read.c:3252 create_particular_creation(d) — make d.quan monsters from

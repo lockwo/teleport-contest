@@ -381,44 +381,62 @@ export function m_at(x, y) {
 // which calls obj_to_glyph(mappearance) / cmap_to_glyph(mappearance).
 function monster_glyph(mon, reveal = false) {
     if (!mon) return null;
-    // C ref: display.c display_monster — the whole function funnels through
+    const apt = reveal ? M_AP_NOTHING : M_AP_TYPE(mon);
+    // C ref: display.c display_monster() M_AP_FURNITURE arm — show_glyph(x, y,
+    // cmap_to_glyph(mappearance)).  No what_mon(), so no hallucination re-roll:
+    // a mimic posing as a throne shows the throne even while hallucinating.
+    if (apt === M_AP_FURNITURE && mon.mappearance != null)
+        return furniture_mimic_glyph(mon.mappearance | 0);
+    // C ref: display.c display_monster() — the whole function funnels through
     // what_mon()/map_object(), so while Hallucination the species (and, for an
     // M_AP_OBJECT mimic, the fake object) is re-rolled off the display rng on
     // EVERY draw.  One draw per rendered monster, in newsym()'s call order.
     if (Hallucination_u()) {
-        return (!reveal && mon.m_ap_type === 'obj' && mon.mappearance != null)
+        return (apt === M_AP_OBJECT && mon.mappearance != null)
             ? random_obj_glyph() : halluc_mon_glyph();
     }
-    if (!reveal && mon.m_ap_type === 'obj' && mon.mappearance != null) {
-        // Appear as an object: same glyph the floor object would draw.  C ref:
-        // display.c map_object/obj_to_glyph(mappearance) for an M_AP_OBJECT mon.
-        //
-        // C's fake `obj` (cg.zeroobj copy) never sets oclass, so it stays 0 —
-        // obj_is_generic()'s oclass==POTION_CLASS test can't fire (a mimicked
-        // potion always shows true), but its otyp-keyed gem/glass/spellbook
-        // tests still do.  The resulting "generic" glyph then collides with
-        // STRANGE_OBJECT (otyp 0)'s own glyph, decoding to ILLOBJ_CLASS (']')
-        // and falling outside glyph_is_generic_object()'s bound — so the
-        // close-range observe-upgrade never applies either: a mimic disguised
-        // as a gem/glass-gem or spellbook ALWAYS shows as a plain strange
-        // object, at any distance, discovered or not.
-        const ap = mon.mappearance;
-        if ((ap >= FIRST_REAL_GEM && ap <= LAST_GLASS_GEM)
-            || (ap >= FIRST_SPELL && ap <= LAST_SPELL)) {
-            return object_glyph({ otyp: 0, oclass: 1 /* ILLOBJ_CLASS */,
-                                   corpsenm: -1, dknown: 1 });
-        }
-        return object_glyph({
-            otyp: mon.mappearance,
-            oclass: objects[mon.mappearance]?.oclass ?? 1,
-            corpsenm: mon.mcorpsenm ?? -1,
-            dknown: 1,
-        });
+    // C ref: display.c display_monster() M_AP_MONSTER arm —
+    // monnum_to_glyph(what_mon(mappearance), gender).
+    if (apt === M_AP_MONSTER && mon.mappearance != null) {
+        const md = monster_by_pmidx(mon.mappearance | 0);
+        if (md) return { ch: md.mlet || 'x',
+                         color: (md.mcolor != null) ? md.mcolor : NO_COLOR, dec: false };
     }
+    if (apt === M_AP_OBJECT && mon.mappearance != null)
+        return mimic_object_glyph(mon).glyph;
     const d = mon.data || {};
     const sym = d.mlet || 'x';
     const color = (d.mcolor != null) ? d.mcolor : NO_COLOR;
     return { ch: sym, color, dec: false };
+}
+
+// Appear as an object: same glyph the floor object would draw.  C ref:
+// display.c map_object/obj_to_glyph(mappearance) for an M_AP_OBJECT mon.
+// Returns { glyph, otyp }, otyp being what that glyph decodes back to
+// (glyph_to_obj), which pager.c object_from_map() names.
+//
+// C's fake `obj` (cg.zeroobj copy) never sets oclass, so it stays 0 —
+// obj_is_generic()'s oclass==POTION_CLASS test can't fire (a mimicked
+// potion always shows true), but its otyp-keyed gem/glass/spellbook
+// tests still do.  The resulting "generic" glyph then collides with
+// STRANGE_OBJECT (otyp 0)'s own glyph, decoding to ILLOBJ_CLASS (']')
+// and falling outside glyph_is_generic_object()'s bound — so the
+// close-range observe-upgrade never applies either: a mimic disguised
+// as a gem/glass-gem or spellbook ALWAYS shows as a plain strange
+// object, at any distance, discovered or not.
+export function mimic_object_glyph(mon) {
+    const ap = mon.mappearance;
+    if ((ap >= FIRST_REAL_GEM && ap <= LAST_GLASS_GEM)
+        || (ap >= FIRST_SPELL && ap <= LAST_SPELL)) {
+        return { otyp: 0, glyph: object_glyph({ otyp: 0, oclass: 1 /* ILLOBJ_CLASS */,
+                                                corpsenm: -1, dknown: 1 }) };
+    }
+    return { otyp: ap, glyph: object_glyph({
+        otyp: ap,
+        oclass: objects[ap]?.oclass ?? 1,
+        corpsenm: mon.mcorpsenm ?? -1,
+        dknown: 1,
+    }) };
 }
 
 // C ref: display.c display_monster()'s worm_tail arm — a tail square draws the
@@ -438,12 +456,45 @@ function worm_tail_glyph() {
              color: (d.mcolor != null) ? d.mcolor : CLR_BROWN, dec: false };
 }
 
-// C ref: monst.h:71 M_AP_TYPE(mon) == M_AP_OBJECT.  Only this disguise is
-// modelled by monster_glyph() above, so only this one is remembered by newsym()
-// below.  m_ap_type is a string in this port's live paths, numeric elsewhere.
+// C ref: display.c display_monster() M_AP_FURNITURE — cmap_to_glyph(sym) drawn
+// as the terrain that cmap index stands for.  cmap_to_glyph(S_altar) is
+// altar_to_glyph(AM_NEUTRAL), and no stairway lookup is made: the disguise
+// carries its own up/down/branch variant in the index.
+function furniture_mimic_glyph(sym) {
+    const dec = useDECgraphics();
+    if (sym <= S_trwall) return wall_cmap_glyph(sym);
+    if (sym >= S_upstair && sym <= S_brdnladder) {
+        const down = ((sym - S_upstair) & 1) === 1;
+        const branch = sym >= S_brupstair;
+        const ladder = sym === S_upladder || sym === S_dnladder
+            || sym === S_brupladder || sym === S_brdnladder;
+        if (ladder) {
+            const color = branch ? CLR_YELLOW : CLR_BROWN;
+            return { ch: dec ? (down ? 'z' : 'y') : (down ? '>' : '<'), color, dec: false };
+        }
+        const ch = (rogue_symset() && !branch) ? '%' : down ? '>' : '<';
+        return { ch, color: branch ? CLR_YELLOW : NO_COLOR, dec: false };
+    }
+    const fake = {
+        typ: cmap_to_type_d(sym),
+        horizontal: (sym === S_hodoor || sym === S_hcdoor) ? 1 : 0,
+        doormask: (sym === S_vodoor || sym === S_hodoor) ? D_ISOPEN
+            : (sym === S_vcdoor || sym === S_hcdoor) ? D_CLOSED : D_NODOOR,
+        altarmask: AM_NEUTRAL,
+        drawbridgemask: 0,
+        waslit: sym === S_litcorr,
+    };
+    return terrain_glyph(fake, 0, 0);
+}
+
+// C ref: display.c display_monster() — a mimic seen PHYSICALLY_SEEN posing as
+// an object (map_object) or furniture (`lev->glyph = glyph`) overwrites the
+// hero's memory of the square with its disguise, and is not displayed as a
+// monster.  m_ap_type is a string in this port's live paths, numeric elsewhere.
 function mimics_an_object(mon) {
-    return mon?.mappearance != null
-        && (mon.m_ap_type === 'obj' || mon.m_ap_type === M_AP_OBJECT);
+    if (mon?.mappearance == null) return false;
+    const t = M_AP_TYPE(mon);
+    return t === M_AP_OBJECT || t === M_AP_FURNITURE;
 }
 
 // C ref: display.h see_with_infrared(mon) = (!Blind && Infravision &&
@@ -1895,7 +1946,7 @@ export function newsym(x, y) {
             // written just above.  Without this a shop's disguised mimics
             // reverted to bare floor the moment the hero left the level and came
             // back, losing one remembered cell per mimic for the rest of the game.
-            if (see_it && game.level?.flags?.hero_memory && M_AP_TYPE(mon) === M_AP_OBJECT)
+            if (see_it && game.level?.flags?.hero_memory && mimics_an_object(mon))
                 loc.remembered_glyph = { ch: mg.ch, color: mg.color, decgfx: mg.dec };
             // Detection reveals a mimic but preserves its visible disguise in map memory.
             if (detected && see_it && M_AP_TYPE(mon) !== M_AP_NOTHING)

@@ -329,18 +329,21 @@ export async function do_enlightenment_effect() {
 }
 
 // C ref: makemon.c create_critters(cnt, mptr, neverask).
-// DEFERRED, and load-bearing: zapnodir() passes neverask = FALSE, so C's
-// `ask = (wizard && !neverask)` is TRUE in the wizard-mode sessions this corpus
-// records — C prompts "Create what kind of monster?" (read.c create_particular)
-// once per critter and only falls through to makemon() after an ESC.  Wiring
-// that up means exporting extcmd-handlers.js's already-ported create_particular
-// and giving it C's boolean return; until then a wand of create monster reads
-// one fewer line of input than C does.
-async function create_critters(cnt, mptr, _neverask) {
+// zapnodir() passes neverask = FALSE, so C's `ask = (wizard && !neverask)` is
+// TRUE in wizard mode: C prompts "Create what kind of monster?" (read.c
+// create_particular) once per critter and only falls through to makemon()
+// after an ESC.
+async function create_critters(cnt, mptr, neverask) {
     const { makemon } = await import('./makemon.js');
+    const { create_particular } = await import('./read.js');
     const u = game.u;
     let known = false;
+    let ask = (!!game.flags?.debug && !neverask);
     while (cnt-- > 0) {
+        if (ask) {
+            if (await create_particular()) { known = true; continue; }
+            else ask = false;          /* ESC will shut off prompting */
+        }
         // (u.uinwater enexto(GIANT_EEL) relocation isn't modelled: no covered
         // hero zaps while underwater.)
         const mon = makemon(mptr, u.ux, u.uy, 0);

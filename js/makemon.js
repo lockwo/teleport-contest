@@ -41,6 +41,7 @@ import {
     STRAT_CLOSE, STRAT_WAITFORU, STRAT_APPEARMSG, W_SADDLE,
     IS_ALTAR, HEADSTONE, LR_MONGEN, MM_APPARXY_BYYOU,
     NO_MINVENT, MM_NOMSG, MM_NOEXCLAM, M_AP_NOTHING, M_AP_MONSTER,
+    M_AP_FURNITURE, M_AP_OBJECT, M_AP_TYPMASK,
     MHID_ARTICLE, MHID_ALTMON, BOLT_LIM, DF_NONE, NO_NC_FLAGS, NC_SHOW_MSG,
     NC_VIA_WAND_OR_SPELL,
 } from './const.js';
@@ -4276,7 +4277,18 @@ export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
     const D = await import('./display.js');
     const MO = await import('./mon.js');
     const DN = await import('./do_name.js');
-    const apt = mtmp.m_ap_type | 0;
+    // DIVERGENCE: this port stores m_ap_type as a STRING for the appearances
+    // set_mimic_sym() assigns ('obj'/'furniture'), and as the numeric M_AP_*
+    // constant elsewhere (js/display.js M_AP_TYPE normalises both the same
+    // way).  `| 0` read every disguised mimic back as M_AP_NOTHING, so a
+    // `^G giant mimic` announced "A giant mimic appears next to you." where
+    // C names the disguise: "An opulent throne appears next to you."
+    const t_ap = mtmp.m_ap_type;
+    const apt = !t_ap ? M_AP_NOTHING
+        : (typeof t_ap === 'number') ? (t_ap & M_AP_TYPMASK)
+        : (t_ap === 'furniture') ? M_AP_FURNITURE
+        : (t_ap === 'obj') ? M_AP_OBJECT
+        : (t_ap === 'mon') ? M_AP_MONSTER : M_AP_NOTHING;
     let exclaim = !(mmflags & MM_NOEXCLAM);
     let what = null;
     if ((D.canseemon_shared(mtmp) && (apt === M_AP_NOTHING || apt === M_AP_MONSTER))
@@ -4306,26 +4318,6 @@ export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
     // inside #lookaround.  Setting it here is therefore inert for this message
     // but survives to prefix its coordinates onto #lookaround's next pline().
     await D.update_topl(msg);
-}
-
-// C ref: read.c create_particular() minus its getlin loop: parse the ^G
-// (#wizgenesis) reply with create_particular_parse() (quantity, "tame"/
-// "peaceful"/"hostile", "male"/"female", "sleeping"/"invisible"/"hidden"/
-// "saddled", gendered names like "gnome lord"), then run
-// create_particular_creation(), which makemon()s d.quan monsters next to the
-// hero and prints each one's "<Mon> appears next to you." as C's makemon()
-// does (so a second monster's line pushes the first behind --More--).
-//
-// Returns null when the reply names no monster (the caller re-prompts with
-// "I've never heard of such monsters."); otherwise { mtmp: null }: every
-// message has already been printed here, so the caller has nothing to add.
-export async function create_particular_monster(name, _mmflags = 0) {
-    const { create_particular_parse, create_particular_creation }
-        = await import('./read.js');
-    const d = {};
-    if (!(await create_particular_parse(name, d))) return null;
-    await create_particular_creation(d);
-    return { mtmp: null };
 }
 
 // ── adj_erinys (C ref: mon.c:5922) ───────────────────────────────────────

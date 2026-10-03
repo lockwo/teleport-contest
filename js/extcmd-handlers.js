@@ -24,11 +24,10 @@ import {
     doprarm, near_capacity,
 } from './invent.js';
 import { pluslvl, losexp } from './exper.js';
-import { MAXULEV, IS_WALL, SDOOR, MM_NOEXCLAM, BOLT_LIM, STRAT_WAITMASK,
+import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
          QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
          D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE } from './const.js';
-import { create_particular_monster } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
 import { is_undead_flag, is_demon_flag, humanoid, nohands } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
@@ -73,7 +72,7 @@ import { do_mgivenname } from './do_name.js';
 import { dodip, dodrink } from './potion.js';
 import { dogenocided, do_gamelog, doconduct, dovanquished, doborn } from './insight.js';
 import { isok } from './hacklib.js';
-import { Monnam, canspotmon, x_monnam, mon_nam, oc_wldam, killed } from './uhitm.js';
+import { Monnam, canspotmon, mon_nam, oc_wldam, killed } from './uhitm.js';
 import { domonnoise } from './sounds.js';
 import { build_overview_lines, surface, print_dungeon_lines } from './dungeon.js';
 import { doextversion } from './version.js';
@@ -383,6 +382,10 @@ export async function hooked_tty_getlin(query, hook) {
         game._toplin = 0;
         game._toplinSoft = null;
     }
+    // C ref: getline.c:67 custompline(OVERRIDE_MSGTYPE | SUPPRESS_HISTORY,
+    // "%s ", query) — vpline() still copies the prompt into gp.prevmsg, so a
+    // Norep() message identical to the one before this getlin is shown again.
+    game._prevmsg = `${query} `;
 
     let typed = '';   // what the user actually typed (obufp/bufp content)
     let shown = '';   // what is displayed (typed, possibly autocompleted)
@@ -1354,78 +1357,11 @@ function strcmpi_eq(a, b) { return String(a).toLowerCase() === String(b).toLower
 
 // ── #wizgenesis / ^G (wizcmds.c wiz_genesis -> read.c create_particular) ──
 //
-// C ref: wizcmds.c:203 wiz_genesis() clears iflags.debug_mongen then calls
-// create_particular(): prompts "Create what kind of monster?" via getlin,
-// parses the reply (create_particular_parse, RNG-free), and on a valid single
-// named monster calls create_particular_creation() -> makemon(whichpm, u.ux,
-// u.uy, MM_NOEXCLAM).
-//
-// Recorded seed5002 sessions create exactly one named monster per ^G (no
-// quantity/gender/disposition prefixes), so only that common case is modelled:
-// resolve the name, place via enexto next to the hero (collect_coords RNG), run
-// makemon, then print "<Mon> appears next to you."  Unknown names print "I've
-// never heard of such monsters." (the !*bufp branch).
-const CP_TRYLIM = 5;
-async function create_particular() {
-    let prompt = 'Create what kind of monster?';
-    let tryct = CP_TRYLIM, altmsg = 0;
-    let made = null, buf = '';
-    do {
-        buf = mungspaces(await getlin_top(prompt));
-        if (buf === '\x1b' || (buf.length && buf[0] === '\x1b')) return; // ESC -> abort
-
-        made = await create_particular_monster(buf, MM_NOEXCLAM);
-        if (made) break;
-
-        // no good; try again (mirror C's altmsg/prompt expansion)
-        if (buf || altmsg || tryct < 2) {
-            await pline("I've never heard of such monsters.");
-        } else {
-            await pline('Try again (type * for random, ESC to cancel).');
-            ++altmsg;
-        }
-        if (tryct === CP_TRYLIM) prompt += ' [type name or symbol]';
-    } while (--tryct > 0);
-
-    if (!tryct) {
-        await pline("That's enough tries!");
-        return;
-    }
-    if (!made) return;
-
-    // C makemon.c:1473-1508 — "<Mon> appears<place>." (MM_NOEXCLAM: no
-    // " suddenly", trailing '.').  what = Amonnam(mtmp) when spottable.
-    // makemon() already ran newsym()+set_apparxy() at C's exact point (its
-    // byyou tail, makemon.c:1390-1394 via MM_APPARXY_BYYOU — see makemon.js):
-    // calling newsym() again here would double an RNG draw (extra hallucination
-    // glyph pick), and set_apparxy() was missing entirely until that fix,
-    // offsetting every later RNG draw by one.
-    // C ref: makemon.c:1479 — gated on `canseemon(mtmp) || sensemon(mtmp)`: a
-    // BLIND hero who ^G's a monster gets NO message (C leaves the top line
-    // empty); printing unconditionally emitted a phantom "It appears close by."
-    if (canspotmon(made.mtmp)) {
-        const what = capitalize(x_monnam(made.mtmp, /*ARTICLE_A*/ 2, null, 0, false));
-        const place = made.next2u ? ' next to you'
-            : (distu_xy(made.x, made.y) <= BOLT_LIM * BOLT_LIM) ? ' close by' : '';
-        await pline(`${what} appears${place}.`);
-    }
-}
-
-// C ref: hacklib.c upstart() — capitalize first letter.
-function capitalize(s) {
-    return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-}
-
-// C ref: hack.c distu(x,y) — squared distance from the hero.
-function distu_xy(x, y) {
-    const u = game.u;
-    const dx = x - u.ux, dy = y - u.uy;
-    return dx * dx + dy * dy;
-}
-
-// Wizard ^G handler (also reachable via #wizgenesis).  C ref: wiz_genesis().
+// C ref: wizcmds.c:203 wiz_genesis() — create_particular() (read.js owns the
+// getlin loop, parse and creation; create_critters() shares it).
 export async function wiz_genesis() {
     if (!isWizard()) return 0;
+    const { create_particular } = await import('./read.js');
     await create_particular();
     return 0;
 }
