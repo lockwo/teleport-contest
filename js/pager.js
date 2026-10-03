@@ -14,7 +14,7 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { render_map_to_grid, pline, topl_more, flush_screen, canspotself } from './display.js';
+import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen } from './invent.js';
 import { doextversion } from './version.js';
 import { option_help_lines } from './options.js';
@@ -1044,9 +1044,17 @@ function is_cmap_engraving(i) { return i === S_engroom || i === S_engrcorr; }
 // C ref: symbols.c gs.showsyms[] — falls back to the compiled-in default when
 // init_showsyms() has not run (no SYMBOLS= in the rc).
 function showsym(idx, fallback) {
+    // dat/symbols DECgraphics remaps these cmap entries to VT100 line-drawing
+    // codes; no plain map character can equal them.
+    if (idx >= SYM_OFF_P && idx < SYM_OFF_P + MAXPCHARS
+        && DEC_REMAPPED.has(idx - SYM_OFF_P) && useDECgraphics())
+        return '\u0001';
     const v = gs?.showsyms?.[idx];
     return (v && v !== 0) ? v : fallback;
 }
+const DEC_REMAPPED = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18,
+    19, 27, 28, 31, 32, 33, 38, 39, 40, 41, 42, 43, 48, 74, 75, 89, 91, 92, 94,
+    97, 99, 101, 103]);
 
 // C ref: display.h glyph_at(x,y).  See the banner: a tagged descriptor, not an
 // int.  `kind` is 'monster' | 'object' | 'trap' | 'invisible' | 'warning' |

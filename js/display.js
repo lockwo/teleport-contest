@@ -526,7 +526,7 @@ const ANSI_COLOR = [
 // True when the active symset uses VT100 line-drawing (DECgraphics).  C ref:
 // drawing.c symset[] / dat/symbols — without it the default ASCII glyphs
 // (defsym.h PCHAR) are used for walls/floor/doorways.
-function useDECgraphics() {
+export function useDECgraphics() {
     if (rogue_symset()) return false;
     return /^dec/i.test(String(game.symset || ''));
 }

@@ -1807,7 +1807,14 @@ export function gather_locs_interesting(x, y, gloc, validfn) {
         // C excludes BOULDER and ROCK; look_at_object_here() reports the object
         // that is actually DRAWN on the cell.
         if (mtmp && canspotmon(mtmp)) return false;
-        return !!look_at_object_here(x, y) && !covers_objects(x, y);
+        if (!look_at_object_here(x, y) || covers_objects(x, y)) return false;
+        {
+            // glyph_is_object(glyph_at(x,y)): the DISPLAYED glyph must be the
+            // object (a level revealed by mapping shows terrain only).
+            const o = vobj_at(x, y);
+            if (o.otyp === 475 /*BOULDER*/ || o.otyp === 474 /*ROCK*/) return false;
+            return object_glyph(o).ch === loc.disp_ch;
+        }
     case GLOC_DOOR:
         return isDoorSym;
     case GLOC_EXPLORE:
@@ -2835,6 +2842,15 @@ function look_pick_description(x, y) {
         };
     }
 
+    // C ref: pager.c do_screen_description() — every monster class, object
+    // class and cmap entry sharing the displayed symbol ("a spellbook or a
+    // closed door (closed door)").  Cells drawn with DEC line-drawing keep the
+    // single-description fallback.
+    if (!loc.disp_decgfx && loc.disp_ch && loc.disp_ch !== ' ') {
+        const text = { s: '' }, firstmatch = { s: '' };
+        const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
+        if (found) return { text: text.s, firstmatch: firstmatch.s, found };
+    }
     // Fallback: single terrain description with the cmap symbol prefix.
     const desc = terrain_description(x, y);
     return { text: `${prefix}${an(desc)}`, firstmatch: desc, found: 1 };
