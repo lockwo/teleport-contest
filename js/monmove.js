@@ -3139,7 +3139,10 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         } else if (!resists_magm(mtmp) && !resist(mtmp, WAND_CLASS, 0, false)) {
             const { newcham_wizard_aware } = await import('./makemon.js');
             await newcham_wizard_aware(mtmp, null, NC_SHOW_MSG);
-            if (in_sight) seetrap(trap);
+            if (in_sight) {
+                const { seetrap } = await import('./trap.js');
+                seetrap(trap);
+            }
             newsym(mtmp.mx, mtmp.my);
         }
         return Trap_Effect_Finished;
