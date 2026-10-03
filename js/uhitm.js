@@ -871,9 +871,9 @@ const BIMANUAL_OTYPS = new Set([
     55 /*TWO_HANDED_SWORD*/, 57 /*TSURUGI*/, 45 /*BATTLE_AXE*/,
     71 /*DWARVISH_MATTOCK*/, 79 /*QUARTERSTAFF*/,
     59 /*PARTISAN*/, 60 /*RANSEUR*/, 61 /*SPETUM*/, 62 /*GLAIVE*/,
-    63 /*HALBERD*/, 64 /*BARDICHE*/, 65 /*VOULGE*/, 66 /*BEC_DE_CORBIN*/,
+    63 /*HALBERD*/, 64 /*BARDICHE*/, 65 /*VOULGE*/, 66 /*FAUCHARD*/,
     67 /*GUISARME*/, 68 /*BILL_GUISARME*/, 69 /*LUCERN_HAMMER*/,
-    70 /*FAUCHARD*/,
+    70 /*BEC_DE_CORBIN*/, 261 /*UNICORN_HORN (WEPTOOL, oc_bimanual)*/,
 ]);
 function bimanual_wep(otmp) {
     return (otmp?.oclass === WEAPON_CLASS || is_weptool(otmp))

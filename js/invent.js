@@ -5599,8 +5599,9 @@ function wield_ok(obj) {
 // C ref: include/obj.h bimanual(otmp) — a weapon/weapon-tool flagged oc_big
 // (BITS() "big" field == 1 in objects.h).  The JS object table doesn't carry
 // oc_bimanual, so we enumerate every two-handed otyp explicitly: the two big
-// swords, the tsurugi, all the polearms, the dwarvish mattock, and the
-// quarterstaff.  Used both for the wield-with-shield restriction and for the
+// swords, the tsurugi, all the polearms, the dwarvish mattock, the
+// quarterstaff and the unicorn horn (the one WEPTOOL with bi == 1).  Used both
+// for the wield-with-shield restriction and for the
 // "(weapon in hands)" inventory phrasing.
 const BIMANUAL_OTYPS = new Set([
     45 /*BATTLE_AXE*/, 55 /*TWO_HANDED_SWORD*/, 57 /*TSURUGI*/,
@@ -5608,6 +5609,7 @@ const BIMANUAL_OTYPS = new Set([
     63 /*HALBERD*/, 64 /*BARDICHE*/, 65 /*VOULGE*/, 66 /*FAUCHARD*/,
     67 /*GUISARME*/, 68 /*BILL_GUISARME*/, 69 /*LUCERN_HAMMER*/,
     70 /*BEC_DE_CORBIN*/, 71 /*DWARVISH_MATTOCK*/, 79 /*QUARTERSTAFF*/,
+    261 /*UNICORN_HORN*/,
 ]);
 export function bimanual(obj) {
     return !!obj && (obj.oclass === WEAPON_CLASS || obj.oclass === TOOL_CLASS)
