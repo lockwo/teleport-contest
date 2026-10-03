@@ -242,14 +242,23 @@ export async function altar_wrath(x, y) {
     const lev = game.level?.at(x, y);
     const altaralign = Amask2align((lev?.altarmask ?? 0) & AM_MASK);
     if ((u?.ualign?.type ?? 0) === altaralign && (u?.ualign?.record ?? 0) > -rn2(4)) {
-        await pline('"How darest thou desecrate my altar!"');
+        // C ref: pray.c altar_wrath() -> godvoice(altaralign, "How darest ...").
+        // godvoice() names the god and draws ROLL_FROM(godvoices) == rn2(4);
+        // the old inline string had neither.
+        const { godvoice } = await import('./pray.js');
+        await godvoice(altaralign, 'How darest thou desecrate my altar!');
         // adjattrib(A_WIS, -1, FALSE): no RNG, lowers the attribute.
         const a = u?.acurr?.a;
         if (a && a[A_WIS] > 3) a[A_WIS] -= 1;
         if (u?.ualign) u.ualign.record--;
         game.botl = true;
     } else {
-        await pline('A voice whispers:  "Thou shalt pay, infidel!"');
+        // C ref: pray.c altar_wrath() — the whisper names the altar's god, and
+        // goes Deaf-aware ("Despite your deafness, you seem to hear <god> say").
+        const { align_gname } = await import('./role.js');
+        const gname = align_gname(game.urole?.mnum ?? -1, altaralign);
+        await pline(`${!Deaf() ? 'A voice (could it be' : 'Despite your deafness, you seem to hear'} `
+            + `${gname}${!Deaf() ? '?) whispers' : ' say'}:  "Thou shalt pay, infidel!"`);
         // higher luck is more likely to be reduced
         if (Luck() > -5 && rn2(Luck() + 6)) change_luck(rn2(20) ? -1 : -2);
     }

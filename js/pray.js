@@ -322,7 +322,7 @@ async function can_pray(praying) {
 const godvoices = ['booms out', 'thunders', 'rings out', 'booms'];
 
 // C ref: pray.c godvoice(g_align, words).  Emits one rn2(4).
-async function godvoice(g_align, words) {
+export async function godvoice(g_align, words) {
     const quot = words ? '"' : '';
     const which = godvoices[rn2(4)]; // ROLL_FROM(godvoices)
     await update_topl(
