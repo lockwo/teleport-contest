@@ -1304,8 +1304,14 @@ export async function rhack(key) {
         game.context.move = 0;
         await pline(`Unknown command '${npBad}'.`, { suppressHistory: true });
     } else if (ch === '\x12') {
-        // C ref: cmd.c { C('r'), "redraw", doredraw } -> docrt(): repaint the
-        // screen.  ECMD_OK, no message; number_pad also puts it on ^L.
+        // C ref: cmd.c { C('r'), "redraw", doredraw } -> display.c doredraw()
+        // -> docrt(): repaint the screen.  ECMD_OK, no message; number_pad
+        // also puts it on ^L.  docrt() is not a no-op even when the glyph
+        // buffer is unchanged: it re-runs vision_recalc(0) and see_monsters(),
+        // and while hallucinating each of those re-rolls every visible
+        // monster/object glyph off the display RNG, so skipping it left the
+        // display stream (and every later hallucinated glyph) out of step.
+        await docrt();
         game.context.move = 0;
     } else if (ch === 'O') {
         // C ref: cmd.c { 'O', "options", doset_simple, ... CMD_M_PREFIX }.
