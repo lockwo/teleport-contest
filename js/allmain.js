@@ -649,19 +649,74 @@ async function ask_do_tutorial() {
                 disp.putstr(offx + 1, i, lines[i].text, NO_COLOR, lines[i].attr || 0);
         }
         const endRow = lines.length - 1;
+        menuOffx = offx; menuEndRow = endRow;
         disp.setCursor(offx + 7, endRow);
     };
+    let menuOffx = 0, menuEndRow = 0;
+
+    // C ref: getline.c hooked_tty_getlin() ends with
+    // clear_nhwindow(WIN_MESSAGE) ("clean up after ourselves"), which wipes the
+    // message row the prompt occupied (here, the menu's own title row); then
+    // process_menu_window()'s non-redraw arm just puts the cursor back at
+    // tty_curs(window, strlen(morestr) + 2, page_lines).
+    const after_getlin = () => {
+        for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
+        disp.setCursor(menuOffx + 7, menuEndRow);
+    };
+
+    // C ref: win/tty/wintty.c process_menu_window() for this PICK_ONE menu.
+    // resp[] holds the page's selectors ("yn", the explicit choices), then
+    // " 0123456789\033\n\r" and default_menu_cmds; xwaitforspace() bells on
+    // anything else without redrawing.  Digits accumulate a count, and ESC
+    // while counting only stops the count (wintty.c:1604) instead of
+    // cancelling the menu.
+    const SELECTORS = 'yn';
+    const DEFAULT_MENU_CMDS = '^|><.-@,\\~:';
+    const RESP = SELECTORS + ' ' + '0123456789\x1b\n\r' + DEFAULT_MENU_CMDS;
+    const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
+    const ITEMS = [{ sel: 'y', str: 'y - Yes, do a tutorial' },
+                   { sel: 'n', str: 'n - No, just start play' }];
 
     let pass = 0;
     renderMenu(pass++);
+    let counting = false, count = 0, reset_count = true;
     for (;;) {
+        if (reset_count) { counting = false; count = 0; } else reset_count = true;
         const c = await nhgetch();
         const ch = String.fromCharCode(c);
-        if (ch === 'y') { game._tutorial_yes = true; await do_tutorial_goto(); break; }
-        if (ch === 'n' || c === 27) break;       // No / Escape => start play
-        // space / return confirm with no selection => re-prompt; any other
-        // key is ignored (the menu just waits for the next key).
-        if (c === 32 || c === 13 || c === 10) renderMenu(pass++);
+        const idx = RESP.indexOf(ch);
+        if (idx < 0) continue;                  // tty_nhbell(), re-read
+        if (idx < SELECTORS.length) {           // MENU_EXPLICIT_CHOICE
+            if (ch === 'y') { game._tutorial_yes = true; await do_tutorial_goto(); }
+            break;
+        }
+        if (ch >= '0' && ch <= '9') {
+            count = count * 10 + (c - 48);
+            if (count !== 0) { counting = true; reset_count = false; }
+            continue;
+        }
+        if (c === 27) {                         // cancel, or just stop a count
+            if (!counting) break;               // ESC => no tutorial
+            continue;
+        }
+        if (c === 32 || c === 13 || c === 10) { // commit with nothing selected
+            renderMenu(pass++);                 // select_menu() returned 0
+            continue;
+        }
+        if (ch === ':') {                       // MENU_SEARCH
+            const tmpbuf = await hooked_tty_getlin('Search for:', null);
+            after_getlin();
+            if (!tmpbuf || tmpbuf[0] === '\x1b') continue;
+            const searchbuf = '*' + tmpbuf + '*';
+            const hit = ITEMS.find((it) => pmatchi(searchbuf, it.str));
+            if (hit) {                          // PICK_ONE finishes on first hit
+                if (hit.sel === 'y') { game._tutorial_yes = true; await do_tutorial_goto(); }
+                break;
+            }
+            continue;
+        }
+        // The remaining default_menu_cmds are page moves on a one-page menu or
+        // PICK_ANY-only bulk selections: no-ops here.
     }
     game._pending_message = '';
 }
