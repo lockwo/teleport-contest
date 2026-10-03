@@ -460,7 +460,7 @@ const ATTRCURSE_CHAIN = [
     ['HProtection', 'You feel vulnerable.'],
     ['HAggravate_monster', 'You feel less attractive.'],
 ];
-async function attrcurse() {
+export async function attrcurse() {
     const u = game.u;
     const start = rnd(11) - 1;
     // C ref: sit.c attrcurse() tests `HFoo & INTRINSIC`, i.e. FROMEXPER |

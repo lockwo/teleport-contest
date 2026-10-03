@@ -1665,7 +1665,15 @@ async function cpostfx(pm) {
         break;
     case 'nurse': {
         const u = game.u;
-        if (u) { u.uhp = u.uhpmax; u.blinded = 0; game.botl = true; }
+        if (u) {
+            if (u.Upolyd) u.mh = u.mhmax;
+            else u.uhp = u.uhpmax;
+        }
+        {
+            const { make_blinded_hero } = await import('./potion.js');
+            await make_blinded_hero(0, !game.u?.ucreamed);
+        }
+        game.botl = true;
         check_intrinsics = true;
         break;
     }
@@ -1673,13 +1681,69 @@ async function cpostfx(pm) {
     case 'yellow light':
     case 'giant bat':
     case 'bat': {
-        // C: make_stunned((HStun & TIMEOUT) + 30) — twice for yellow
-        // light/giant bat/stalker (they fall through into the bat case).
+        // C ref: eat.c:1176 — the stalker arm grants invisibility and then
+        // FALLS THROUGH into the yellow light/giant bat double make_stunned().
         const u = game.u;
         if (u) {
             u.uprops = u.uprops || {};
-            const inc = (nm === 'bat') ? 30 : 60;
-            u.uprops.Stun = (u.uprops.Stun || 0) + inc;
+            if (nm === 'stalker') {
+                const { self_invis_message } = await import('./potion.js');
+                const { newsym } = await import('./display.js');
+                if (!u.uprops.HInvis) {
+                    u.uprops.HInvis = rn1(100, 50);
+                    if (!_vision.Blind()) await self_invis_message();
+                } else {
+                    // already invisible: make it permanent (FROMOUTSIDE)
+                    if (!u.HInvis) await update_topl('You feel hidden!');
+                    u.HInvis = 1;
+                    u.HSee_invisible = 1;
+                    u.uprops.HSee_invisible = 1;
+                }
+                newsym(u.ux, u.uy);
+            }
+            const { make_stunned_u } = await import('./mhitu.js');
+            // bat: one make_stunned; the other three: two (fallthrough).
+            if (nm !== 'bat')
+                await make_stunned_u((u.uprops.Stun | 0) + 30);
+            await make_stunned_u((u.uprops.Stun | 0) + 30);
+        }
+        break;
+    }
+    case 'small mimic': case 'large mimic': case 'giant mimic': {
+        // C ref: eat.c:1190 — the mimic sizes accumulate `tmp` through
+        // fallthrough: giant 10+20+20=50, large 20+20=40, small 20.
+        let tmp = nm === 'giant mimic' ? 50 : nm === 'large mimic' ? 40 : 20;
+        const u = game.u;
+        const ymcls = (typeof u?.data?.mcls === 'number') ? u.data.mcls : u?.data?.mlet;
+        if (ymcls !== S_MIMIC_CLS && !u?.uprops?.HUnchanging) {
+            const hallu = !!u?.uhallu;
+            const tempshape = !hallu ? 'a pile of gold' : 'an orange';
+            u.uconduct = u.uconduct || {};
+            if (!(u.uconduct.polyselfs | 0))
+                livelog_printf(LL_CONDUCT,
+                    `changed form for the first time by mimicking ${tempshape}`);
+            u.uconduct.polyselfs = (u.uconduct.polyselfs | 0) + 1;
+            await update_topl(`You can't resist the temptation to mimic ${tempshape}.`);
+            if (u.usteed) {
+                const { dismount_steed, DISMOUNT_FELL } = await import('./steed.js');
+                await dismount_steed(DISMOUNT_FELL);
+            }
+            if ((game.multi ?? 0) >= -tmp) game.multi = -tmp;
+            game.multi_reason = 'pretending to be a pile of gold';
+            const { an } = await import('./objnam.js');
+            const selfname = u.Upolyd ? (u.data?.name || 'creature')
+                                      : (game.urace?.noun || 'human');
+            const buf = hallu
+                ? `You suddenly dread being peeled and mimic ${an(selfname)} again!`
+                : `You now prefer mimicking ${an(selfname)} again.`;
+            game._eatmbuf = buf;
+            game.nomovemsg = buf;
+            game.afternmv = eatmdone;
+            const ym = (game.youmonst = game.youmonst || {});
+            ym.m_ap_type = 'obj';
+            ym.mappearance = hallu ? ORANGE : GOLD_PIECE;
+            const { newsym } = await import('./display.js');
+            newsym(u.ux, u.uy);
         }
         break;
     }
@@ -1696,10 +1760,50 @@ async function cpostfx(pm) {
     case 'lizard': {
         const u = game.u;
         if (u?.uprops) {
-            if ((u.uprops.Stun || 0) > 2) u.uprops.Stun = 2;
-            if ((u.uprops.Confusion || 0) > 2) u.uprops.Confusion = 2;
+            const { make_stunned_u } = await import('./mhitu.js');
+            const { make_confused } = await import('./potion.js');
+            if ((u.uprops.Stun | 0) > 2) await make_stunned_u(2);
+            if ((u.uprops.Confusion | 0) > 2) make_confused(2, false);
         }
         check_intrinsics = true;
+        break;
+    }
+    case 'chameleon': case 'doppelganger': case 'sandestin':
+    case 'genetic engineer': {
+        // C ref: eat.c:1244 — polyself corpses.
+        if (game.u?.uprops?.HUnchanging) {
+            await update_topl('You feel momentarily different.');
+        } else {
+            const ctx = (game.context = game.context || {});
+            if (ctx.tin) {
+                use_up_tin(ctx.tin);
+                await lesshungry_eat(200 + (metallivorous_hero() ? 5 : 0));
+            }
+            await update_topl(`You ${nm === 'genetic engineer'
+                ? 'undergo a freakish metamorphosis'
+                : 'feel a change coming over you'}.`);
+            const { polyself } = await import('./polyself.js');
+            await polyself(0);
+        }
+        break;
+    }
+    case 'displacer beast': {
+        const u = game.u;
+        if (u) {
+            u.uprops = u.uprops || {};
+            if (!(u.uprops.HDisplaced
+                  || game.uarmc?.otyp === 149)) {
+                const { toggle_displacement } = await import('./do_wear.js');
+                await toggle_displacement(null, 0, true);
+            }
+            u.uprops.HDisplaced = (u.uprops.HDisplaced | 0) + d(6, 6);
+        }
+        break;
+    }
+    case 'disenchanter': {
+        /* picks an intrinsic at random and removes it */
+        const { attrcurse } = await import('./pray.js');
+        await attrcurse();
         break;
     }
     case 'Death': case 'Pestilence': case 'Famine':
@@ -1735,12 +1839,13 @@ async function cpostfx(pm) {
         if (dmgtype(ptr, AD_STUN) || dmgtype(ptr, AD_HALU)
             || nm === 'violet fungus') {
             await update_topl('Oh wow!  Great stuff!');
-            const u = game.u;
-            if (u) {
-                u.uprops = u.uprops || {};
-                u.uprops.Hallucination = (u.uprops.Hallucination || 0) + 200;
-                u.uhallu = true;
-            }
+            // C ref: eat.c:1297 make_hallucinated(HHallucination+200, FALSE, 0)
+            // — the display refresh inside make_hallucinated() repaints every
+            // monster/object/trap glyph with its hallucinatory pick NOW; a raw
+            // timer bump left the map one turn stale.
+            const { make_hallucinated } = await import('./potion.js');
+            await make_hallucinated((game.u?.uprops?.Hallucination | 0) + 200,
+                                    false, 0);
         }
         // C: attacktype(ptr, AT_MAGC) || pm == PM_NEWT.
         if (attacktype(ptr, AT_MAGC) || nm === 'newt')
@@ -2048,6 +2153,7 @@ const M_ATTK_MISS_ = 0x0, M_ATTK_HIT_ = 0x1, M_ATTK_DEF_DIED_ = 0x2,
 // top of this file; only the ones the tail needs are added here.)
 const ORANGE = 278;                   // the hallucinatory mimic-corpse form
 const GOLD_PIECE = 438;               // the normal mimic-corpse form
+const S_MIMIC_CLS = 13;               // monsym.h S_MIMIC
 const GLOB_OF_GREEN_SLIME = 273;
 const TIN_OPENER = 239, DAGGER = 34, ELVEN_DAGGER = 35, ORCISH_DAGGER = 36,
       SILVER_DAGGER = 37, ATHAME = 38, KNIFE = 40, STILETTO = 41,
