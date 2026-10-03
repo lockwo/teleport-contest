@@ -5,7 +5,7 @@
 
 import { game } from './gstate.js';
 import { pline, newsym, terrain_background_glyph, show_glyph_cell,
-         object_glyph, vobj_at, trap_glyph, engraving_glyph } from './display.js';
+         object_glyph, vobj_at, trap_glyph, engraving_glyph, bg_attr } from './display.js';
 import { engr_at } from './engrave.js';
 import { couldsee } from './vision.js';
 import { exercise } from './attrib.js';
@@ -170,8 +170,9 @@ function show_map_spot(x, y, cnf) {
             ep.erevealed = 1;                     /* map_engraving(ep, 1) */
             const g = engraving_glyph(lev);
             if (game.level?.flags?.hero_memory)
-                lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
-            show_glyph_cell(x, y, g.ch, g.color, g.dec);
+                lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
+                                         bwEngr: g.bwEngr };
+            show_glyph_cell(x, y, g.ch, g.color, g.dec, bg_attr(g));
         } else if (glyph_is_trap(oldglyph) || glyph_is_object(oldglyph)) {
             if (game.level?.flags?.hero_memory) {
                 lev.invisMon = false;
@@ -1681,8 +1682,9 @@ function show_map_spot_cnf(x, y, cnf) {
             ep.erevealed = 1;                       /* map_engraving(ep, 1) */
             const g = engraving_glyph(lev);
             if (game.level?.flags?.hero_memory)
-                lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
-            show_glyph_cell(x, y, g.ch, g.color, g.dec);
+                lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
+                                         bwEngr: g.bwEngr };
+            show_glyph_cell(x, y, g.ch, g.color, g.dec, bg_attr(g));
         } else if (glyph_is_trap(oldglyph) || glyph_is_object(oldglyph)) {
             if (oldglyph.cell)
                 show_glyph_cell(x, y, oldglyph.cell.ch, oldglyph.cell.color,
