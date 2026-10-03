@@ -2537,7 +2537,7 @@ async function maybe_destroy_item(carrier, obj, dmgtyp) {
             const { potionbreathe_hero } = await import('./potion.js');
             await potionbreathe_hero(obj);
         }
-        if (obj.owornmask & W_RING) Ring_gone(obj);
+        if (obj.owornmask & W_RING) await Ring_gone(obj);
         else if (obj.owornmask) setnotworn(obj);
         if (obj === game.current_wand) game.current_wand = null;
     }

@@ -497,8 +497,13 @@ function mon_visible(mtmp) {
 // files in this port spell the hero's copy differently; read all of them.
 function see_invisible() {
     const u = game.u || {}, p = u.uprops || {};
+    // C ref: youprop.h See_invisible == (HSee_invisible || ESee_invisible).
+    // The extrinsic half is invent.js's worn-item store (prop.h SEE_INVIS=29),
+    // which the flat aliases below never mirror; read it directly because
+    // invent.js imports display.js (a static import back would be a cycle).
     return !!(u.see_invis || p.HSee_invisible || u.HSee_invisible
-        || p.ESee_invisible || u.ESee_invisible || p.See_invisible || u.See_invisible);
+        || p.ESee_invisible || u.ESee_invisible || p.See_invisible || u.See_invisible
+        || ((u.uprops_extrinsic || {})[29 /*SEE_INVIS*/] | 0));
 }
 
 // ── ANSI color codes ──
@@ -1540,7 +1545,10 @@ export function canspotself() {
     const u = game.u || {};
     if (Blind() || u.uswallow) return true;
     const p = u.uprops || {};
-    const invis = (p.HInvis || u.HInvis || p.EInvis || u.EInvis || 0) && !(p.BInvis || u.BInvis);
+    // EInvis: the worn-item extrinsic store (prop.h INVIS=40) as well as the
+    // flat aliases, so a worn ring/cloak of invisibility really hides the hero.
+    const invis = (p.HInvis || u.HInvis || p.EInvis || u.EInvis
+        || ((u.uprops_extrinsic || {})[40 /*INVIS*/] | 0)) && !(p.BInvis || u.BInvis);
     if (!(invis && !see_invisible()) && !u.uundetected) return true;
     return !!(p.ETelepat || u.ETelepat || p.Detect_monsters
         || p.HDetect_monsters || p.EDetect_monsters
@@ -2356,14 +2364,22 @@ function _botConditions() {
     // the --More-- frame that carries "You beat a deafening row!" still shows
     // the pre-drum status; bot() clears the flag at the next real refresh.
     if (((u.uprops?.HDeaf || 0) > 0 || u.Deaf) && !game._deafPending) out.push('Deaf');
-    if (u.uprops?.Flying) out.push('Fly');
+    // C ref: youprop.h Flying/Levitation — (H<prop> || E<prop>).  The EXTRINSIC
+    // half lives in u.uprops_extrinsic[prop] (invent.js worn_extrinsics_on/off,
+    // prop.h LEVITATION=48/FLYING=49), a store the flat u.uprops fields never
+    // mirror: without it a worn ring of levitation / levitation boots / amulet
+    // of flying showed no condition at all on the status line.  Read directly
+    // rather than via invent.js's worn_extrinsic() — display.js is imported BY
+    // invent.js, so a static import back would be a cycle.
+    const wornExtrinsic = (prop) => ((u.uprops_extrinsic || {})[prop] | 0);
+    if (u.uprops?.Flying || wornExtrinsic(49 /*FLYING*/)) out.push('Fly');
     // C ref: youprop.h Hallucination — HHallucination && !Halluc_resistance.
     // potion.js set_hallucination() writes the timer to four aliases at once.
     const halluTime = (u.uprops?.Hallucination || 0) || (u.uprops?.HHallucination || 0)
         || (u.HHallucination || 0) || (u.uhallu ? 1 : 0);
     const halluRes = (u.uprops?.HHalluc_resistance || 0) || (u.uprops?.EHalluc_resistance || 0);
     if (halluTime > 0 && !halluRes) out.push('Hallu');
-    if (u.uprops?.Levitation) out.push('Lev');
+    if (u.uprops?.Levitation || wornExtrinsic(48 /*LEVITATION*/)) out.push('Lev');
     if (u.usteed) out.push('Ride');
     // C ref: youprop.h Stunned — HStun (timeout.js STUNNED entry).
     if ((u.uprops?.Stun || 0) > 0 || u.Stunned) out.push('Stun');

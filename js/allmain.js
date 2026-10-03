@@ -34,7 +34,7 @@ import { Unaware,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
     Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA } from './const.js';
-import { near_capacity, reroll_menu, setnotworn, freeinv } from './invent.js';
+import { near_capacity, reroll_menu, setnotworn, freeinv, worn_extrinsic } from './invent.js';
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { settrack } from './track.js';
@@ -788,21 +788,23 @@ function youHaveSearching() {
 }
 export { youHaveSearching };
 
-// C ref: youprop.h Teleportation == (HTeleportation || ETeleportation).
-// Nothing in this port currently sets either half (no role table or item grants
-// it yet), so this always reads false today; kept faithful for moveloop_core's
-// per-turn teleport-intrinsic check below.
+// C ref: youprop.h Teleportation == (HTeleportation || ETeleportation).  The
+// extrinsic half is the worn-item store invent.js maintains
+// (worn_extrinsics_on/off, prop.h TELEPORT=46); the flat u.uprops aliases only
+// ever hold the intrinsic half, so a worn ring of teleportation never rolled
+// moveloop_core()'s per-turn rn2(85).
 function youHaveTeleportationIntrinsic() {
     const p = game.u?.uprops;
     /* FROMFORM bit: polyself.js set_uasmon() u.formprops */
-    return !!(p?.HTeleportation || p?.ETeleportation || game.u?.formprops?.Teleportation);
+    return !!(p?.HTeleportation || p?.ETeleportation || worn_extrinsic(46 /*TELEPORT*/)
+        || game.u?.formprops?.Teleportation);
 }
 
 // C ref: youprop.h Polymorph == (HPolymorph || EPolymorph).  Same story as
-// Teleportation above: never set anywhere in this port yet.
+// Teleportation above (prop.h POLYMORPH=61, i.e. a worn ring of polymorph).
 function youHavePolymorph() {
     const p = game.u?.uprops;
-    return !!(p?.HPolymorph || p?.EPolymorph);
+    return !!(p?.HPolymorph || p?.EPolymorph || worn_extrinsic(61 /*POLYMORPH*/));
 }
 
 // C ref: youprop.h Unchanging == (HUnchanging || EUnchanging).

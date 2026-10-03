@@ -703,8 +703,22 @@ export function find_ac() {
         game.uarms, game.uarmg, game.uarmu]) {
         if (obj) uac -= ARM_BONUS(obj);
     }
-    // C ref: do_wear.c find_ac() — spell protection is separate from armor.
-    uac -= u?.uspellprot || 0;
+    // C ref: do_wear.c find_ac():2492-2502 — the non-armor AC sources.  All of
+    // these were missing, so a worn +N/-N ring of protection, an amulet of
+    // guarding, intrinsic protection (u.ublessed, from a divine gift or a
+    // blessed scroll of remove curse on an altar) and the protection spell's
+    // u.uspellprot never moved the status-line AC at all.
+    const RIN_PROTECTION_OTYP = 178, AMULET_OF_GUARDING_OTYP = 210;
+    for (const ring of [game.uleft, game.uright])
+        if (ring && ring.otyp === RIN_PROTECTION_OTYP) uac -= (ring.spe | 0);
+    if (game.uamul && game.uamul.otyp === AMULET_OF_GUARDING_OTYP) uac -= 2;
+    // C: `if (HProtection & INTRINSIC) uac -= u.ublessed;`  INTRINSIC covers
+    // every non-timeout source bit (FROMOUTSIDE/FROMEXPER/FROMRACE/FROMFORM);
+    // prop.h TIMEOUT is the low 0x00ffffff counter half.
+    if ((u?.uprops?.HProtection | 0) & ~0x00ffffff) uac -= (u?.ublessed | 0);
+    uac -= (u?.uspellprot | 0);
+    // C: `if (abs(uac) > AC_MAX) uac = sgn(uac) * AC_MAX;` with AC_MAX 99.
+    if (Math.abs(uac) > 99) uac = Math.sign(uac) * 99;
     game.u = game.u || {};
     game.u.uac = uac;
     return uac;

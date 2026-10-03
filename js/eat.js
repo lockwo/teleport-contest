@@ -3142,7 +3142,7 @@ export async function eataccessory(otmp) {
     const oldprop = oprop ? uprop_get_raw(oprop) : 0;
 
     if (otmp === game.uleft || otmp === game.uright) {
-        _invent.Ring_gone(otmp);
+        await _invent.Ring_gone(otmp);
         if ((u?.uhp | 0) <= 0) return;        /* died from a sink fall */
     }
     T.o_init.observe_object(otmp);

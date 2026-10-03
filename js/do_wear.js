@@ -21,7 +21,7 @@ import {
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuwep_slot, setuswapwep, setuqwep,
     Ring_off, Ring_on, Amulet_off, off_msg, curse_blocks_removal, oc_delay,
-    otense, weapon_descr_for, makeknown_credit, cmdq_pop,
+    otense, weapon_descr_for, makeknown_credit, cmdq_pop, worn_extrinsic,
 } from './invent.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { acurr_eff } from './attrib.js';
@@ -230,8 +230,17 @@ function Glib() {
     const u = game.u || {};
     return ((u.Glib | 0) > 0) || ((u.uprops?.Glib | 0) > 0) || ((u.uprops?.HGlib | 0) > 0);
 }
-function Levitation() { return !!(game.u?.uprops?.Levitation); }
-function Flying() { return !!(game.u?.uprops?.Flying); }
+// C ref: youprop.h Levitation == (HLevitation || ELevitation), Flying likewise.
+// The EXTRINSIC half is invent.js's worn_extrinsic() store (prop.h
+// LEVITATION=48, FLYING=49); the flat u.uprops field holds only the
+// intrinsic/timer half, so a worn levitation ring or levitation boots used to
+// read as "not levitating" here.
+function Levitation() {
+    return !!((game.u?.uprops?.Levitation | 0) || worn_extrinsic(48 /*LEVITATION*/));
+}
+function Flying() {
+    return !!((game.u?.uprops?.Flying | 0) || worn_extrinsic(49 /*FLYING*/));
+}
 function Blind() { const u = game.u || {}; return !!(u.ublindf_blind || (u.uprops?.Blinded | 0) > 0 || game.ublindf); }
 function Role_if(pm) { return (game.urole?.mnum ?? game.u?.umonnum) === pm; }
 const PM_ARCHEOLOGIST = 0, PM_WIZARD = 12;
@@ -1153,12 +1162,12 @@ export async function glibr() {
         xfl++;
         if (leftfall) {
             const otmp = game.uleft;
-            Ring_off(otmp);
+            await Ring_off(otmp);
             await dropx(otmp);
         }
         if (rightfall) {
             const otmp = game.uright;
-            Ring_off(otmp);
+            await Ring_off(otmp);
             await dropx(otmp);
         }
     }
@@ -1255,10 +1264,10 @@ export async function do_takeoff() {
         if (!(await cursed_blocks(otmp))) await Amulet_off(otmp);
     } else if (doff.what === W_RINGL) {
         otmp = game.uleft;
-        if (!(await cursed_blocks(otmp))) Ring_off(game.uleft);
+        if (!(await cursed_blocks(otmp))) await Ring_off(game.uleft);
     } else if (doff.what === W_RINGR) {
         otmp = game.uright;
-        if (!(await cursed_blocks(otmp))) Ring_off(game.uright);
+        if (!(await cursed_blocks(otmp))) await Ring_off(game.uright);
     }
     doff.mask &= ~I_SPECIAL;
     return otmp;

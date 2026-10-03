@@ -45,7 +45,7 @@ import {
     POOL, MAY_DESTROY, MAY_HIT, MAY_FRACTURE, VIS_EFFECTS,
     ARM, FINGER, D_TRAPPED, D_ISOPEN, A_WIS, TIMEOUT,
     AS_NO_MON, AS_MON_IS_UNIQUE,
-    W_BALL, W_ART, W_ARTI, I_SPECIAL, FROM_FORM, IS_SINK, W_ARMG, Has_contents, OMONST,
+    W_BALL, W_ART, W_ARTI, W_SADDLE, I_SPECIAL, FROM_FORM, IS_SINK, W_ARMG, Has_contents, OMONST,
     TT_INFLOOR, TT_BURIEDBALL,
     NO_TRAP, TRAPNUM, FIRE_RES, TELEDS_ALLOW_DRAG, TELEDS_TELEPORT,
     MIGR_NOWHERE, MIGR_RANDOM,
@@ -63,7 +63,7 @@ import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx,
          pmname_of_pmidx } from './makemon.js';
 import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID, throws_rocks_flag } from './monflags_data.js';
-import { AD_FIRE, AD_ELEC, AD_MAGM } from './monattk_data.js';
+import { AD_FIRE, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
 import { MM_NOCOUNTBIRTH, MM_NOMSG, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND } from './const.js';
 import { In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
@@ -3832,8 +3832,17 @@ function reset_utrap_fu(_msg) {
 // C ref: youprop.h Levitation/Flying/Hallucination — local flat-field reads,
 // matching the per-file duplication convention used throughout js/ (e.g.
 // do_wear.js:219-220, botl.js:419-424).
-function Levitation_fu() { return !!(game.u?.uprops?.Levitation); }
-function Flying_fu() { return !!(game.u?.uprops?.Flying); }
+// C ref: youprop.h Levitation == (HLevitation || ELevitation), same for
+// Flying.  The EXTRINSIC half is invent.js's worn_extrinsic() store
+// (prop.h LEVITATION=48, FLYING=49); the flat u.uprops field only ever holds
+// the intrinsic/timer half, so a worn ring of levitation or levitation boots
+// used to read as "not levitating" everywhere in this file.
+function Levitation_fu() {
+    return !!((game.u?.uprops?.Levitation | 0) || worn_extrinsic(48 /*LEVITATION*/));
+}
+function Flying_fu() {
+    return !!((game.u?.uprops?.Flying | 0) || worn_extrinsic(49 /*FLYING*/));
+}
 function Hallucination_fu() {
     const u = game.u || {};
     return !!u.uhallu || !!u.HHallucination || ((u.uprops?.Hallucination | 0) > 0);
@@ -3924,6 +3933,74 @@ export async function float_up() {
     // float_vs_flight(): see the function-level comment above.
     const { encumber_msg } = await import('./invent.js');
     await encumber_msg();
+}
+
+// C ref: trap.c:4024 float_down(hmask, emask) — stop levitating.  hmask clears
+// bits of the INTRINSIC levitation word (HLevitation, this port's flat
+// game.u.uprops.Levitation) and emask bits of the EXTRINSIC one (ELevitation,
+// this port's worn-extrinsic bitmask, maintained by invent.js's
+// worn_extrinsics_on/off, so the caller that removed the item has already
+// cleared its bit and emask is a no-op here).  If any source remains the hero
+// stays aloft and nothing is printed.
+// NOT PORTED (no reachable call site in this port): the BLevitation
+// terrain-blocked arm and float_vs_flight() (neither mask exists anywhere
+// here, see float_up()), the Punished ball-drag relocation, and
+// drown()/lava_effects() on the landing square (both exist in this file but
+// are driven from the movement code, not from here).
+export async function float_down(hmask = 0, emask = 0) {
+    const u = game.u;
+    if (!u) return 0;
+    if (hmask) u.uprops.Levitation = (u.uprops.Levitation | 0) & ~hmask;
+    void emask;
+    if (Levitation_fu()) return 0; /* maybe another ring/potion/boots */
+    const { encumber_msg } = await import('./invent.js');
+    game.botl = true;
+    await trap_nomul(); /* stop running or resting */
+    if (u.uswallow) {
+        // C ref: mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL,
+        // AD_DGST); same private copy as timeout.js:301.
+        const swallowed = !!attacktype_fordmg(u.ustuck?.data, AT_ENGL, AD_DGST);
+        await pline(`You float down, but you are still ${
+            swallowed ? 'swallowed' : 'engulfed'}.`);
+        await encumber_msg();
+        return 1;
+    }
+    // C ref: trap.c:4086 `if (!Flying)` — a flying hero keeps hold of (and is
+    // held by) whatever has it, and never falls into the pool/lava below.
+    // NOT PORTED: the is_pool()/is_lava() landing calls to drown()/
+    // lava_effects(), which this port drives from the movement code instead.
+    if (!Flying_fu() && u.ustuck) {
+        await pline(`Startled, ${mon_nam_trap(u.ustuck)} can no longer hold you!`);
+        u.ustuck = null;
+    }
+    const trap = t_at(u.ux, u.uy);
+    if (Is_airlevel(u.uz)) {
+        await pline('You begin to tumble in place.');
+    } else if (Is_waterlevel(u.uz)) {
+        await pline('You feel heavier.');
+    } else if (!u.uinwater && !(emask & W_SADDLE)) {
+        if (u.usteed && (is_floater_fu(u.usteed.data) || is_flyer_fu(u.usteed.data))) {
+            await pline('You settle more firmly in the saddle.');
+        } else if (Hallucination_fu()) {
+            await pline(`Bummer!  You've ${is_pool(u.ux, u.uy) ? 'splashed down' : 'hit the ground'}.`);
+        } else {
+            await pline(`You float gently to the ${surface(u.ux, u.uy)}.`);
+        }
+    }
+    /* levitation gives maximum carrying capacity, so having it end
+       potentially triggers greater encumbrance */
+    await encumber_msg();
+    if (trap) {
+        // C ref: trap.c:4159 — STATUE_TRAP never fires here, a hole/trapdoor
+        // only when the hero can actually fall through, everything else goes
+        // off unless the hero is already caught in it.
+        const fallthru = (trap.ttyp === HOLE || trap.ttyp === TRAPDOOR);
+        if (trap.ttyp !== STATUE_TRAP
+            && !(fallthru && (!Can_fall_thru(u.uz) || u.ustuck))
+            && !u.utrap)
+            await dotrap(trap, 0);
+    }
+    return 1;
 }
 
 // C ref: trap.c:4976 back_on_ground(rescued) — the hero has returned to solid
@@ -4588,12 +4665,12 @@ async function dosinkfall() {
     }
     if (game.uleft?.otyp === RIN_LEVITATION_SF) {
         const obj = game.uleft;
-        Ring_off(obj);
+        await Ring_off(obj);
         await off_msg(obj);
     }
     if (game.uright?.otyp === RIN_LEVITATION_SF) {
         const obj = game.uright;
-        Ring_off(obj);
+        await Ring_off(obj);
         await off_msg(obj);
     }
     if (lev_boots) {

@@ -4214,10 +4214,16 @@ function clearworn_accessory(obj) {
 // the relevant stat / AC; every other ring confers its extrinsic purely through
 // the owornmask (no message, no RNG) and falls through the default no-op.
 export async function Ring_on(obj) {
-    // C ref: do_wear.c:1242 — oldprop is the property's extrinsic from the OTHER
-    // hand; C masks W_RING out unless BOTH rings confer it.
-    const other = (obj === game.uleft) ? game.uright : game.uleft;
-    const oldprop = !!other && other.otyp === obj.otyp;
+    // C ref: do_wear.c:1244 — `oldprop = u.uprops[oc_oprop].extrinsic`, taken
+    // AFTER setworn() has already added this ring's own bit, then
+    // `if ((oldprop & W_RING) != W_RING) oldprop &= ~W_RING;` keeps the ring
+    // bits only when BOTH hands confer the property.  Reading the real
+    // extrinsic word (rather than just comparing the other hand's otyp) also
+    // covers the boots/amulet/artifact sources of the same property.
+    const prop = objects[obj.otyp]?.oc_oprop | 0;
+    let oldprop = prop ? worn_extrinsic(prop) : 0;
+    const W_RING_BOTH = W_RINGL | W_RINGR;
+    if ((oldprop & W_RING_BOTH) !== W_RING_BOTH) oldprop &= ~W_RING_BOTH;
     switch (obj.otyp) {
     case RIN_STEALTH:
         await toggle_stealth(obj, oldprop, true);
@@ -4237,27 +4243,30 @@ export async function Ring_on(obj) {
         if (!oldprop && !game.u?.uprops?.HInvis && !Blind_for_wear()) {
             learnring(obj, true);
             newsym(game.u.ux, game.u.uy);
-            await pline('Gee!  All of a sudden, you can see right through yourself.');
+            // C ref: do_wear.c:1303 self_invis_message() (potion.c:471) — the
+            // wording depends on Hallucination and See_invisible; a hard-coded
+            // "can see right through yourself" was the See_invisible variant
+            // only, so an ordinary hero got the wrong line.
+            const { self_invis_message } = await import('./potion.js');
+            await self_invis_message();
         }
         break;
-    case RIN_LEVITATION: {
-        // C ref: do_wear.c:1307 Ring_on() RIN_LEVITATION — oldprop here also
-        // needs the boots slot, not just the other ring hand: C's oldprop is
-        // the property's TOTAL pre-existing extrinsic bitmask across every
-        // worn source.  BLevitation (terrain-blocked, FROMOUTSIDE) is never
-        // set anywhere in this port (switch_terrain() is NOT PORTED, see
-        // js/dig.js:868), so that half of C's gate is always false here.
-        const oldpropLev = oldprop || game.uarmf?.otyp === LEVITATION_BOOTS;
-        if (!oldpropLev) {
+    case RIN_LEVITATION:
+        // C ref: do_wear.c:1307 — `if (!oldprop && !HLevitation &&
+        // !(BLevitation & FROMOUTSIDE))`.  oldprop above now carries every
+        // other worn source (the other hand, levitation boots, an amulet);
+        // BLevitation (terrain-blocked) is never set anywhere in this port
+        // (switch_terrain() is NOT PORTED, see js/dig.js:868).
+        if (!oldprop && !(game.u?.uprops?.Levitation | 0)) {
             const { float_up, spoteffects } = await import('./trap.js');
             await float_up();
             learnring(obj, true);
-            if (game.u?.uprops?.Levitation) await spoteffects();
+            /* C: `if (Levitation) spoteffects(FALSE);` -- for sinks */
+            await spoteffects();
         }
         // else: float_vs_flight() (hack.c) — not ported anywhere in this
         // codebase (no BFlying I_SPECIAL-toggle infra exists).
         break;
-    }
     case RIN_PROTECTION_FROM_SHAPE_CHAN:
         /* rescham() (mon.c): un-mimics/de-chameleons every monster, no RNG */
         break;
@@ -4293,7 +4302,12 @@ export function learnring(ring, observed) {
         else if (ring.dknown) makeknown(ringtype);
     }
     if (ring.dknown && objects[ringtype]?.oc_name_known) {
-        if (objects[ringtype]?.oc_charged) ring.known = 1;
+        // objects[].oc_charged does not exist in this port's object table: the
+        // bit lives in the packed `flags` field (is_oc_charged()).  Reading the
+        // absent property made this test always false, so an observed +N/-N
+        // ring never learned its enchantment and printed as "a ring of
+        // adornment" where C shows "a -1 ring of adornment".
+        if (is_oc_charged(ring)) ring.known = 1;
         update_inventory();
     }
 }
@@ -4524,43 +4538,55 @@ export async function Blindf_off(obj) {
 // (the hero deliberately removes it) and Ring_gone() (it leaves the finger
 // without being taken off: stolen, destroyed, polymorphed).  Both clear the
 // worn slot and then undo whatever on-effect Ring_on() applied.
-function Ring_off_or_gone(obj, _gone) {
-    // C ref: do_wear.c:1347 — takeoff.mask loses this ring's slot bit first.
+async function Ring_off_or_gone(obj, _gone) {
+    // C ref: do_wear.c:1349 — takeoff.mask loses this ring's slot bit first.
     const mask = (obj.owornmask | 0) & (W_RINGL | W_RINGR);
     takeoff_ctx().mask &= ~mask;
     // setnotworn(obj) / setworn(0, owornmask): either way the finger is freed
     // and the extrinsic (carried by the owornmask here) goes with it.
-    const other = (obj === game.uleft) ? game.uright : game.uleft;
-    const still_from_other = !!other && other.otyp === obj.otyp;
     clearworn_accessory(obj);
+    // C ref: do_wear.c:1380 — the post-removal extrinsic word, i.e. whatever
+    // OTHER worn source still confers this property.  C computes it as
+    // `EStealth & ~mask` from the word BEFORE the slot was cleared, which is
+    // the same value as reading it after clearworn_accessory().
+    const prop = objects[obj.otyp]?.oc_oprop | 0;
+    const still_from_other = prop ? worn_extrinsic(prop) : 0;
     const spe = obj.spe | 0;
     switch (obj.otyp) {
     case RIN_STEALTH:
-        toggle_stealth(obj, still_from_other, false);
+        await toggle_stealth(obj, still_from_other, false);
         break;
     case RIN_WARNING:
         break;
     case RIN_SEE_INVISIBLE:
         if (game.u?.uprops?.Invis && !Blind_for_wear()) {
             newsym(game.u.ux, game.u.uy);
-            pline('Suddenly you cannot see yourself.');
+            await pline('Suddenly you cannot see yourself.');
             learnring(obj, true);
         }
         break;
     case RIN_INVISIBILITY:
         if (!still_from_other && !game.u?.uprops?.HInvis && !Blind_for_wear()) {
             newsym(game.u.ux, game.u.uy);
-            pline(`Your body seems to unfade${game.u?.uprops?.See_invisible ? ' completely' : '..'}.`);
+            await pline(`Your body seems to unfade${game.u?.uprops?.See_invisible ? ' completely' : '..'}.`);
             learnring(obj, true);
         }
         break;
-    case RIN_LEVITATION:
-        /* float_down() (hack.c): not ported, see Ring_on(). */
+    case RIN_LEVITATION: {
+        // C ref: do_wear.c:1406 — `float_down(0L, 0L)` then, if that actually
+        // landed the hero, learnring().  BLevitation is never set in this port
+        // so the float_vs_flight() arm is unreachable.
+        const { float_down } = await import('./trap.js');
+        await float_down(0, 0);
+        if (!still_from_other && !(game.u?.uprops?.Levitation | 0))
+            learnring(obj, true);
         break;
+    }
     case RIN_PROTECTION_FROM_SHAPE_CHAN:
         /* restartcham() (mon.c): no RNG */
         break;
     case RIN_PROTECTION:
+        learnring(obj, spe !== 0);
         if (spe) find_ac();
         break;
     case RIN_GAIN_STRENGTH:
@@ -4578,8 +4604,8 @@ function Ring_off_or_gone(obj, _gone) {
     }
 }
 // C ref: do_wear.c Ring_off(obj) / Ring_gone(obj).
-export function Ring_off(obj) { Ring_off_or_gone(obj, false); }
-export function Ring_gone(obj) { Ring_off_or_gone(obj, true); }
+export async function Ring_off(obj) { await Ring_off_or_gone(obj, false); }
+export async function Ring_gone(obj) { await Ring_off_or_gone(obj, true); }
 
 // C ref: do_wear.c off_msg(otmp) — "You were wearing <obj>." after the slot has
 // already been cleared (so no "(being worn)" suffix), verbose-gated.
@@ -4682,7 +4708,7 @@ export async function remove_worn_item(obj, unchain_ball) {
         // happen on theft too.
         await Amulet_off(obj);
     } else if ((obj.owornmask || 0) & (W_RINGL | W_RINGR)) {
-        Ring_gone(obj);
+        await Ring_gone(obj);
     } else if ((obj.owornmask || 0) & W_BLINDF) {
         await Blindf_off(obj);
     } else if ((obj.owornmask || 0) & W_WEAPONS) {
@@ -4741,12 +4767,17 @@ async function on_msg_accessory(obj) {
     // verbose "You are now wearing ..." sentence.
     const verbose = game.flags?.verbose !== false;
     if ((m & (W_RINGL | W_RINGR | W_AMUL)) || ((m & W_BLINDF) && !verbose)) {
-        prinv(null, obj, 0);
-        // C ref: prinv() -> pline() leaves toplin == NEED_MORE, so a following
-        // same-turn message (e.g. a monster's attack on the freed turn)
-        // accumulates onto the worn-confirmation line via update_topl() instead
-        // of replacing it (matches the wield prinv path above).
-        game._toplin = 1;
+        // C ref: do_wear.c on_msg() -> invent.c prinv() -> pline().  Routed
+        // through update_topl() rather than prinv()'s bare setter because the
+        // slot's *_on() routine runs FIRST (do_wear.c:2411 Ring_on() before
+        // on_msg()) and may already have left an unacknowledged topline — e.g.
+        // a ring of levitation's "You start to float in the air!", which C
+        // pages with --More-- before drawing "<let> - a ring of levitation (on
+        // right hand).".  The bare setter silently overwrote it, losing both
+        // the message and the keystroke its --More-- consumes.  update_topl()
+        // leaves toplin == NEED_MORE too, so a later same-turn message still
+        // accumulates onto this line exactly as before.
+        await update_topl(prinv_fmt(null, obj, 0));
         return;
     }
     // C ref: on_msg() verbose branch uses an(xname(otmp)) — no worn-status
@@ -5277,12 +5308,16 @@ async function armor_or_accessory_off(obj) {
     if ((obj.owornmask || 0) & WA_ARMOR_ALL) {
         await armoroff(obj);
     } else if (obj === game.uright || obj === game.uleft) {
-        // C ref: off_msg() BEFORE Ring_off() so the "(on right hand)" suffix
-        // is still present — "You were wearing a clay ring (on right hand)."
-        if (game.flags?.verbose !== false)   // off_msg(): flags.verbose gated
-            await pline(`You were wearing ${doname_invent(obj)}.`);
-        clearworn_accessory(obj);
-        if (obj.otyp === RIN_PROTECTION) find_ac();
+        // C ref: do_wear.c armor_or_accessory_off() calls off_msg() BEFORE
+        // Ring_off() so the "(on right hand)" suffix is still present:
+        // "You were wearing a clay ring (on right hand)."
+        await off_msg(obj);
+        // Ring_off() clears the finger AND undoes the on-effect.  Open-coding
+        // clearworn_accessory() here skipped every one of those: a removed
+        // +N gain-strength/constitution/adornment ring left the stat bonus in
+        // place forever, a levitation ring never floated the hero down, and
+        // the stealth / see-invisible / invisibility messages never printed.
+        await Ring_off(obj);
         if (game._allow_inventory_update !== undefined) update_inventory();
     } else if (obj === game.uamul) {
         // Amulet_off does its own off_msg (after removal -> no "(being worn)").

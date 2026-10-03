@@ -42,7 +42,7 @@ import { GOLD_PIECE, COIN_CLASS, WEAPON_CLASS } from './mkobj.js';
 import { roles } from './role.js';
 import { acurr_eff } from './attrib.js';
 import { newuexp } from './exper.js';
-import { near_capacity, is_sword, bimanual, is_weptool } from './invent.js';
+import { near_capacity, is_sword, bimanual, is_weptool, worn_extrinsic } from './invent.js';
 import { hidden_gold, money_cnt_invent } from './shk.js';
 import { weapon_type, weapon_descr } from './weapon.js';
 import { helm_simple_name } from './do_wear.js';
@@ -420,8 +420,11 @@ function Hallucination() {
     const t = upv('Hallucination') || upv('HHallucination') || (game.u?.uhallu ? 1 : 0);
     return t > 0 && !(upv('HHalluc_resistance') || upv('EHalluc_resistance'));
 }
-function Levitation() { return !!upv('Levitation'); }
-function Flying() { return !!upv('Flying'); }
+// C ref: youprop.h Levitation == (HLevitation || ELevitation), Flying likewise;
+// the extrinsic half is invent.js's worn_extrinsic() store (prop.h
+// LEVITATION=48, FLYING=49), which the flat u.uprops fields never mirror.
+function Levitation() { return !!(upv('Levitation') || worn_extrinsic(48)); }
+function Flying() { return !!(upv('Flying') || worn_extrinsic(49)); }
 function Glib() { return upv('Glib') > 0; }
 function Wounded_legs() { return upv('Wounded_legs') > 0; }
 function Underwater() { return !!game.u?.uinwater; }
