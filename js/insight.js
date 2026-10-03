@@ -1062,15 +1062,13 @@ export async function dovanquished() {
     return 0;
 }
 
-// C ref: insight.c dogenocided() — the M-g / #genocided command.
+// C ref: insight.c:3135 dogenocided() — the M-g / #genocided command.  It is
+// just list_genocided() with no y/n prompt; the 'm' prefix (menu_requested)
+// asks for a sort order first.  This used to short-circuit to the "none"
+// message, so a real genocide never produced its species window.
 export async function dogenocided() {
-    if (!anyGenocidedOrExtinct()) {
-        await update_topl('No creatures have been genocided.');
-        return 0; // ECMD_OK
-    }
-    // The genocided/extinct species menu is unreached by the covered sessions.
-    await update_topl('No creatures have been genocided.');
-    return 0;
+    await list_genocided(game.iflags?.menu_requested ? 'a' : 'y', false);
+    return 0; // ECMD_OK
 }
 
 // C ref: insight.c LL_majors / majorevent()/spoilerevent() — the #chronicle
@@ -1244,7 +1242,10 @@ function conduct_lines(final = 0) {
     if (rp.blind) you_have_been('blind from birth');
     if (rp.deaf) you_have_been('deaf from birth');
     if (rp.pauper)
-        enlLine('You ', (game.invent && game.invent.length) ? 'started' : 'are',
+        // C ref: insight.c show_conduct() enl_msg(You_, invent ? "started"
+        // : "are", "started out", ...) — the past (final) form is fixed.
+        enlLine('You ', final ? 'started out'
+                : ((game.invent && game.invent.length) ? 'started' : 'are'),
                 ' without possessions');
     if (rp.nudist) you_have_been('faithfully nudist');
 
@@ -1292,14 +1293,19 @@ function conduct_lines(final = 0) {
             buf += `for ${uc.wisharti === 1 ? 'an artifact' : 'artifacts'})`;
         }
         you_have_X(buf);
-        if (!uc.wisharti) enlLine('You ', 'have not wished', ' for any artifacts');
+        if (!uc.wisharti)
+            enlLine('You ', final ? 'did not wish' : 'have not wished',
+                    ' for any artifacts');
     }
 
     if (sokoban_in_play()) {
+        // C ref: insight.c show_conduct() presentverb/pastverb pair.
         if (!uc.sokocheat)
-            enlLine('You ', 'have not violated', ' any of the special Sokoban rules');
+            enlLine('You ', final ? 'did not violate' : 'have not violated',
+                    ' any of the special Sokoban rules');
         else
-            enlLine('You ', 'have violated', ` the special Sokoban rules ${N_times(uc.sokocheat)}`);
+            enlLine('You ', final ? 'violated' : 'have violated',
+                    ` the special Sokoban rules ${N_times(uc.sokocheat)}`);
     }
 
     // C ref: insight.c:2230 show_achievements(final) — appended to the SAME

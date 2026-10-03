@@ -1862,7 +1862,11 @@ export async function doread() {
         if (game.flags?.verbose !== false) await pline('It reads:');
         const { monster_by_pmidx } = await import('./makemon.js');
         const pm = monster_by_pmidx(RED_MONS[(scroll.o_id ?? 0) % RED_MONS.length]);
-        await pline(`"Magic Marker(TM) ${(pm?.name || '').toUpperCase()} Red Ink Marker Pen.  Water Soluble."`);
+        // C ref: hacklib.c upwords() — capitalise the first LETTER of each
+        // space-separated word, not the whole string.
+        const upwords = (s) => String(s).replace(/(^|\s)([a-z])/g,
+            (_m, sp, ch) => sp + ch.toUpperCase());
+        await pline(`"Magic Marker(TM) ${upwords(pm?.name || '')} Red Ink Marker Pen.  Water Soluble."`);
         bump_literate('became literate by reading a magic marker');
         return ECMD_TIME;
     }
