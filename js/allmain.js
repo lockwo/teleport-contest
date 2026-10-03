@@ -1808,7 +1808,7 @@ export async function moveloop_core() {
         g.u.uevent.amulet_wish = 1;
         const D = await import('./display.js');
         await D.display_nhwindow_message();
-        await update_topl('The Amulet is bestowing a wish upon you!');
+        await D.urgent_topl('The Amulet is bestowing a wish upon you!');
         // C: makewish() itself; zap.c's wand path adds the verbose
         // "You may wish for an object." line, and so does this one.
         if (game.flags?.verbose !== false)
