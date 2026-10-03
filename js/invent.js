@@ -146,7 +146,7 @@ import { shk_owns } from './shk.js';
 import { xname as on_xname, cxname_singular as on_cxname_singular, doname_base as on_doname_base,
          corpse_xname as on_corpse_xname, simpleonames as on_simpleonames,
          ansimpleoname as on_ansimpleoname, minimal_xname as on_minimal_xname,
-         distantname_adjust, distantname_active } from './objnam.js';
+         distantname_adjust, distantname_active, The as on_The } from './objnam.js';
 import { y_monnam } from './do_name.js';
 // role.js imports only gstate/rng/const, so this is cycle-safe.
 import { roles, align_gname } from './role.js';
@@ -3445,7 +3445,9 @@ export async function hold_another_object(obj, drop_fmt, drop_arg, hold_msg) {
         const fmt = u.uswallow ? 'Oops!  %s out of your reach!'
             : away ? 'Oops!  %s away from you!'
                 : 'Careful! %s on the floor!';
-        const arg = `The ${xname(obj)} ${otense(obj, verb)}`;
+        // C ref: zap.c makewish() drop_arg = The(aobjnam(otmp, verb)); aobjnam
+        // names a corpse with cxname() ("cockatrice corpse").
+        const arg = on_The(`${(obj.quan || 1) !== 1 ? `${obj.quan} ` : ''}${cxname(obj)} ${otense(obj, verb)}`);
         obj = addinv_core0(obj, null, false);
         await pline(fmt.replace('%s', arg));
         obj.nomerge = 0;
