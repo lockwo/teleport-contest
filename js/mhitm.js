@@ -690,6 +690,20 @@ async function killMonster(mdef) {
     // remembered contents instead of keeping the 'I'.
     const loc0 = game.level?.at(mdef.mx, mdef.my);
     if (loc0?.invisMon) unmap_object(mdef.mx, mdef.my);
+    // C ref: mon.c:3147 mondead() — "Dead Kops may come back."  mondied()
+    // runs mondead() (this rnd(5)) before corpse_chance().
+    if (permonst(mdef)?.mcls === 37 /* S_KOP */) {
+        let stway = game.stairs;
+        while (stway && (stway.isladder || stway.up)) stway = stway.next;
+        const r = rnd(5);
+        if (r === 1 || r === 2) {
+            const MK = await import('./makemon.js');
+            const ptr = permonst(mdef);
+            const kop = (r === 1 && stway) ? MK.makemon(ptr, stway.sx, stway.sy, 0)
+                                           : MK.makemon(ptr, 0, 0, 0);
+            if (kop) await MK.makemon_appears_msg(kop, kop.mx, kop.my, 0);
+        }
+    }
     const dropCorpse = await corpse_chance(mdef); // mon.c:3181
     const mx = mdef.mx, my = mdef.my;
     // Detach from the level so the renderer (m_at / MON_AT) stops drawing it.
