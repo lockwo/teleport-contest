@@ -124,7 +124,13 @@ export async function com_pager_legacy() {
     disp.putstr(textCol, moreRow, '--More--', NO_COLOR, 0);
     disp.setCursor(textCol + 8, moreRow);
 
-    await nhgetch();
+    // C ref: win/tty/wintty.c dmore() -> getline.c xwaitforspace(quitchars):
+    // only space/return/escape dismiss a text window's --More--; any other
+    // key just rings the bell and leaves the window up.
+    for (;;) {
+        const c = await nhgetch();
+        if (c === 32 || c === 13 || c === 10 || c === 27) break;
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════
