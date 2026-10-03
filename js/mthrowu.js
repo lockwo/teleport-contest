@@ -763,3 +763,95 @@ export async function hit_bars(objp, objx, objy, barsx, barsy, breakflags,
             await deps.wake_nearto?.(barsx, barsy, noise);
     }
 }
+
+// ── spitmm / breamm (C ref: mthrowu.c:1016, :1093) for a MONSTER target ────
+//
+// js/monmove.js keeps the hero-target forms (spitmu/breamu).  These are the
+// mattackm() AT_SPIT / AT_BREA arms: the same C functions with mtarg a monster,
+// so m_lined_up() draws nothing and the missile/ray is aimed at mtarg.
+
+// C ref: mondata.c get_atkdam_type() — AD_RBRE picks a real type (rn2(8)).
+const AD_MAGM = 1, AD_DRST = 7, AD_BLND = 11,
+      AD_SPC2 = 10, AD_RBRE = 242;
+const RND_BREATH = [1, 2, 3, 4, 5, 6, 7, 8];
+function get_atkdam_type(adtyp) {
+    return adtyp === AD_RBRE ? RND_BREATH[rn2(8)] : adtyp;
+}
+
+export async function spitmm(mtmp, mattk, mtarg, deps = {}) {
+    if (mtmp.mcan) {
+        if (!game.u?.Deaf && dist2(mtmp.mx, mtmp.my, game.u.ux, game.u.uy)
+                             < BOLT_LIM * BOLT_LIM) {
+            const { s_suffix } = await import('./hacklib.js');
+            const { mon_nam } = await import('./do_name.js');
+            const { canspotmon } = await import('./uhitm.js');
+            const { pline } = await import('./display.js');
+            if (canspotmon(mtmp))
+                await pline(`A dry rattle comes from ${s_suffix(mon_nam(mtmp))} throat.`);
+            else
+                await pline('You hear a dry rattle nearby.');
+        }
+        return M_ATTK_MISS;
+    }
+    if (m_lined_up(mtarg, mtmp, deps)) {
+        const tx = mtarg.mx, ty = mtarg.my;
+        const { mksobj } = await import('./mkobj.js');
+        const otmp = mksobj((mattk.adtyp === AD_BLND || mattk.adtyp === AD_DRST)
+                            ? BLINDING_VENOM : ACID_VENOM, true, false);
+        if (!rn2(BOLT_LIM - distmin(mtmp.mx, mtmp.my, tx, ty))) {
+            if (deps.canseemon?.(mtmp)) {
+                const { Monnam } = await import('./do_name.js');
+                const { pline } = await import('./display.js');
+                await pline(`${Monnam(mtmp)} spits venom!`);
+            }
+            game.mtarget = mtarg;
+            await m_throw(mtmp, mtmp.mx, mtmp.my, sgn(game.tbx), sgn(game.tby),
+                          distmin(mtmp.mx, mtmp.my, tx, ty), otmp, deps);
+            game.mtarget = null;
+            deps.nomul?.(0);
+            /* If this is a pet, it'll get hungry. */
+            if (mtmp.mtame && !mtmp.isminion && mtmp.edog
+                && mtmp.edog.hungrytime > 1)
+                mtmp.edog.hungrytime -= 5;
+            return M_ATTK_HIT;
+        }
+        /* obj_extract_self + obfree: the venom just goes away */
+    }
+    return M_ATTK_MISS;
+}
+
+export async function breamm(mtmp, mattk, mtarg, deps = {}) {
+    const typ = get_atkdam_type(mattk.adtyp);
+    if (m_lined_up(mtarg, mtmp, deps)) {
+        const { Monnam } = await import('./do_name.js');
+        const { pline } = await import('./display.js');
+        if (mtmp.mcan) {
+            if (!game.u?.Deaf) {
+                if (deps.canseemon?.(mtmp)) await pline(`${Monnam(mtmp)} coughs.`);
+                else await pline('You hear a cough.');
+            }
+            return M_ATTK_MISS;
+        }
+        if (!mtmp.mspec_used && rn2(3)) {
+            if (typ >= AD_MAGM && typ <= AD_SPC2) {
+                if (deps.canseemon?.(mtmp))
+                    await pline(`${Monnam(mtmp)} breathes ${breathwep_name(typ)}!`);
+                game.buzzer = mtmp;
+                const { dobuzz } = await import('./zap.js');
+                await dobuzz(-20 - (Math.abs(typ - AD_MAGM) % 10), mattk.damn | 0,
+                             mtmp.mx, mtmp.my, sgn(game.tbx), sgn(game.tby),
+                             false, false, false);
+                game.buzzer = null;
+                deps.nomul?.(0);
+                /* breath runs out sometimes (always vs a monster target) */
+                mtmp.mspec_used = 8 + rn2(18);
+                if (mtmp.mtame && !mtmp.isminion && mtmp.edog
+                    && mtmp.edog.hungrytime >= 10)
+                    mtmp.edog.hungrytime -= 10;
+            }
+        } else {
+            return M_ATTK_MISS;
+        }
+    }
+    return M_ATTK_HIT;
+}

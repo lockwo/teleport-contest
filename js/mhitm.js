@@ -347,7 +347,7 @@ function mm_ops() {
 //     isn't currently polymorphed into a stone golem.
 // tmp_at_flash/tmp_at_step/tmp_at_end are cosmetic beam-glyph overlays (no
 // RNG, not part of scored PRNG/screen text) and are likewise left unwired.
-async function thrwmmDeps() {
+export async function thrwmmDeps() {
     const MM = await import('./monmove.js');
     const { shade_miss, passive_obj } = await import('./uhitm.js');
     const { potionhit, make_blinded_hero, BlindedTimeout, make_stoned }
@@ -411,8 +411,22 @@ async function thrwmmDeps() {
         Stone_resistance: () => !!(game.u?.uprops?.StoneResistance),
         make_stoned,
         stop_occupation,
-        // C ref: mthrowu.c:813 pline("%s misses.", The(mshot_xname(singleobj))).
-        miss_msg: async (obj) => { await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} misses.`); },
+        // C ref: mthrowu.c:804-813 — "onto the sink" when a sink stops it in
+        // view, else "%s misses." only for a multishot volley the hero watches.
+        miss_msg: async (obj, pos, range) => {
+            const ms = game.m_shot || {};
+            const typ = game.level?.at?.(pos.x, pos.y)?.typ;
+            const { IS_SINK } = await import('./const.js');
+            const { otense } = await import('./invent.js');
+            if (range && cansee(pos.x, pos.y) && IS_SINK(typ))
+                await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} ${
+                    otense(obj, 'drop')} onto the sink.`);
+            else if ((ms.n | 0) > 1
+                     && (!game.mesg_given || pos.x !== game.u.ux || pos.y !== game.u.uy)
+                     && (cansee(pos.x, pos.y)
+                         || (game.marcher && mm_can_see_mon(game.marcher))))
+                await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} misses.`);
+        },
         make_blinded: make_blinded_hero, BlindedTimeout,
         vision_clears: async () => { await emitMMmsg('Your vision clears.'); },
         pline_slip: async (mon, obj) => {
@@ -1199,12 +1213,22 @@ export async function mattackm(magr, mdef) {
 
         case AT_BREA:
         case AT_SPIT:                                  // mhitm.c:527
-            // Ranged attacks aren't allowed at point blank range, which is the
-            // only distance mon-vs-mon melee reaches here; breamm()/spitmm()
-            // for the non-adjacent case aren't modelled.
-            strike = 0; attk = 0;
+            // Ranged attacks aren't allowed at point blank range.
+            if (distmin(magr.mx, magr.my, mdef.mx, mdef.my) > 1) {
+                const MT = await import('./mthrowu.js');
+                const deps = await thrwmmDeps();
+                const mmtmp = (mattk.aatyp === AT_BREA)
+                    ? await MT.breamm(magr, mattk, mdef, deps)
+                    : await MT.spitmm(magr, mattk, mdef, deps);
+                strike = (mmtmp === M_ATTK_MISS) ? 0 : 1;
+                /* We don't really know if we hit or not; pretend we did. */
+                if (strike) res[i] |= M_ATTK_HIT;
+                if (DEADMONSTER(mdef)) res[i] = M_ATTK_DEF_DIED;
+                if (DEADMONSTER(magr)) res[i] |= M_ATTK_AGR_DIED;
+            } else {
+                strike = 0; attk = 0;
+            }
             break;
-
         default: /* AT_NONE, AT_MAGC, ... — no attack */
             strike = 0; attk = 0;
             break;

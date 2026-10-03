@@ -6161,11 +6161,10 @@ async function spitmm(mtmp, mattk) {
     if (!m_lined_up(mtmp)) return 0;
 
     const tx = mtmp.mux ?? u.ux, ty = mtmp.muy ?? u.uy;
-    // mksobj(BLINDING_VENOM/ACID_VENOM, TRUE, FALSE): the only RNG a venom
-    // object's creation draws is its o_id via next_ident() [rnd(2)].
+    // mksobj(BLINDING_VENOM/ACID_VENOM, TRUE, FALSE).
     const otyp = (mattk.adtyp === AD_ACID_MM) ? ACID_VENOM : BLINDING_VENOM;
-    next_ident();
-    const otmp = { otyp, oclass: VENOM_CLASS, quan: 1, spe: 0 };
+    const { mksobj } = await import('./mkobj.js');
+    const otmp = mksobj(otyp, true, false);
 
     const dm = distmin(mtmp.mx, mtmp.my, tx, ty);
     if (!rn2(BOLT_LIM - dm)) {                        // mthrowu.c:1074
@@ -6173,45 +6172,20 @@ async function spitmm(mtmp, mattk) {
             const { update_topl } = await import('./display.js');
             await update_topl(`${Monnam(mtmp)} spits venom!`);
         }
-        await m_throw_venom(mtmp, mtmp.mx, mtmp.my, sgn(tx - mtmp.mx),
-                            sgn(ty - mtmp.my), dm, otmp);
-        // nomul(0): no RNG.
+        // C ref: mthrowu.c:1078 m_throw() — the full flight: a monster in the
+        // path gets ohitmon(), the hero thitu(), and the venom breaks on landing.
+        const { m_throw } = await import('./mthrowu.js');
+        const { thrwmmDeps } = await import('./mhitm.js');
+        await m_throw(mtmp, mtmp.mx, mtmp.my, sgn(tx - mtmp.mx),
+                      sgn(ty - mtmp.my), dm, otmp, await thrwmmDeps());
+        { const { nomul } = await import('./hack.js'); nomul(0); }
+        if (mtmp.mtame && !mtmp.isminion && mtmp.edog && mtmp.edog.hungrytime > 1)
+            mtmp.edog.hungrytime -= 5;
         return 1;
     }
     // gate non-zero -> obj_extract_self + obfree: the venom is discarded, no
     // throw, no further RNG (seed4500 step-272 fizzle).
     return 0;
-}
-
-// C ref: mthrowu.c:571 m_throw() for a VENOM_CLASS missile aimed at the hero.
-// Scoped to the venom path: fly one square at a time; at the hero's square the
-// blinding/acid venom resolves via thitu(8, 0) (BLINDING_VENOM: tlev 8, dam 0);
-// every non-hit square rolls the forcehit `!rn2(5)` (mthrowu.c:798).  A venom
-// always breaks on landing (drop_throw delobj — no RNG).  (No mid-flight
-// monster in the venom's path in the seed4500 spit, so ohitmon isn't modeled.)
-async function m_throw_venom(mtmp, sx, sy, dx, dy, range, otmp) {
-    const u = game.u;
-    let bx = sx, by = sy;
-    while (range-- > 0) {
-        bx += dx; by += dy;
-        if (bx === u.ux && by === u.uy) {
-            // BLINDING_VENOM: thitu(8, 0, &venom) — to-hit only, no damage.
-            const tlev = 8;
-            const hitu = await thitu(tlev, 0, otmp);
-            if (hitu) {
-                // can_blnd / make_blinded not modeled (the recorded spit misses).
-                // drop_throw(venom, hitu, ...) delobj — no RNG.
-                return;
-            }
-            // miss: the venom flies on (C does NOT break on a hero miss).
-        }
-        // forcehit roll (mthrowu.c:798) fires on every non-hit square crossed.
-        rn2(5);
-    }
-    // reached end of range: the venom lands and breaks.  C rolls a single
-    // obj_resists() rn2(100) here as the venom is disposed of (seed4500 step-274
-    // fires exactly one rn2(100) after the last forcehit).
-    rn2(100);
 }
 
 // ── monster ranged throw at hero (mthrowu.c thrwmu / m_throw / thitu) ───────
@@ -7447,6 +7421,8 @@ export function m_lined_up(mtmp) {
 export function linedup(ax, ay, bx, by, boulderhandling) {
     const u = game.u;
     const tbx = ax - bx, tby = ay - by;
+    /* These two values are set for use after successful return. */
+    game.tbx = tbx; game.tby = tby;
     if (tbx === 0 && tby === 0) return false; // displacement puts target on shooter
     if (!((tbx === 0 || tby === 0 || Math.abs(tbx) === Math.abs(tby))
           && distmin(tbx, tby, 0, 0) < BOLT_LIM))
