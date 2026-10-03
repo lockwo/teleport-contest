@@ -3339,6 +3339,11 @@ export async function domove(dx, dy, attemptTracked = true) {
         // a DOOR at (43,7), key `u` (diagonal) — C doesn't move, no turn; ours
         // swapped to (44,6) (the dump also disproved a guess that C's kitten
         // was asleep: msleep=0, mcanmove=1, mfrozen=0).
+        // C ref: hack.c:2823-2828 — paranoid_confirm:trap is asked after
+        // domove_attackmon_at() lets a safe pet through and BEFORE test_move()
+        // and domove_swap_with_pet(), so a pet standing on a known trap still
+        // triggers "Really step into that pit?".
+        if (await avoid_trap_andor_region(newx, newy)) return;
         if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy)
             || blocksMove(newx, newy)) {
             feel_refused_step(newx, newy, u.dx, u.dy);
