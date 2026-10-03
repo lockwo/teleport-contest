@@ -26,7 +26,18 @@ import {
 } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { shop_price_suffix } from './shk.js';
-import { currency } from './invent.js';
+import { currency, bimanual as inv_bimanual, W_AMUL as INV_W_AMUL } from './invent.js';
+import { body_part } from './polyself.js';
+import { tin_variety, tintxts, vegetarian, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN } from './eat.js';
+import { artifact_name as arti_artifact_name, find_artifact as arti_find_artifact,
+         glow_color as arti_glow_color, glow_verb as arti_glow_verb } from './artifact.js';
+import { artifact_light as light_artifact_light, arti_light_description as light_arti_light_description,
+         find_mid as light_find_mid } from './light.js';
+import { peek_timer as timeout_peek_timer } from './timeout.js';
+import { noit_mon_nam as dn_noit_mon_nam } from './do_name.js';
+import { record_price_quote as oi_record_price_quote, append_price_quote as oi_append_price_quote } from './o_init.js';
+import { CapitalMon } from './rumors.js';
+import { P_BOW, P_CROSSBOW, P_DART, P_SHURIKEN, P_BOOMERANG } from './const.js';
 
 // Additional imports used only by the objnam.c naming core appended at the end
 // of this file.  Each of these six modules is outside the pre-existing
@@ -507,8 +518,10 @@ const W_ARM = 0x1, W_ARMC = 0x2, W_ARMH = 0x4, W_ARMS = 0x8, W_ARMG = 0x10,
       W_ARMF = 0x20, W_ARMU = 0x40,
       W_ARMOR = W_ARM | W_ARMC | W_ARMH | W_ARMS | W_ARMG | W_ARMF | W_ARMU,
       W_WEP = 0x100, W_QUIVER = 0x200, W_SWAPWEP = 0x400,
-      W_AMUL = 0x10000, W_RINGL = 0x20000, W_RINGR = 0x40000,
-      W_RING = W_RINGL | W_RINGR, W_TOOL = 0x80000,
+      W_RINGL = 0x20000, W_RINGR = 0x40000,
+      W_RING = W_RINGL | W_RINGR,
+      /* js/invent.js remaps the amulet and worn-tool (blindfold) bits */
+      W_TOOL = 0x00100000 | 0x00800000,
       W_SADDLE = 0x100000, W_BALL = 0x200000, W_CHAIN = 0x400000;
 
 /* objclass.h:12-35 obj_material_types */
@@ -628,7 +641,7 @@ function ordin(n) {
         : (dd === 1) ? 'st' : (dd === 2) ? 'nd' : 'rd';
 }
 /* polyself.c body_part(HAND) for an unpolymorphed hero */
-function body_part_HAND() { return 'hand'; }
+function body_part_HAND() { return body_part(6 /*HAND*/); }
 
 /* role.c:688 genders[] — the four rows makeplural()/makesingular()/doname_base()
    read (adj is used by doname_base's wizmgender suffix). */
@@ -668,31 +681,21 @@ export function is_poisonable(o) {
     /* obj.h:264 — oc_skill in [-P_SHURIKEN .. -P_BOW]; the port stores the
        negative launcher/ammo skills in oc_skill exactly as C does. */
     const sk = objects[o.otyp]?.oc_skill | 0;
-    return o.oclass === WEAPON_CLASS && sk >= -15 /* -P_SHURIKEN */
-        && sk <= -11 /* -P_BOW */;
+    return o.oclass === WEAPON_CLASS && sk >= -P_SHURIKEN && sk <= -P_BOW;
 }
 function is_ammo(o) {
     const sk = objects[o.otyp]?.oc_skill | 0;
-    return (o.oclass === WEAPON_CLASS || o.oclass === TOOL_CLASS)
-        && sk >= -13 /* -P_CROSSBOW */ && sk <= -11 /* -P_BOW */;
+    return (o.oclass === WEAPON_CLASS || o.oclass === GEM_CLASS)
+        && sk >= -P_CROSSBOW && sk <= -P_BOW;
 }
 function is_missile(o) {
     const sk = objects[o.otyp]?.oc_skill | 0;
     return (o.oclass === WEAPON_CLASS || o.oclass === TOOL_CLASS)
-        && sk >= -17 /* -P_BOOMERANG */ && sk <= -14 /* -P_DART */;
+        && sk >= -P_BOOMERANG && sk <= -P_DART;
 }
-function bimanual(o) {
-    /* objects[].oc_bimanual is not carried by this port's objects[]; the two-
-       handed weapons are a fixed list in objects.h. */
-    return (o.oclass === WEAPON_CLASS || o.oclass === TOOL_CLASS)
-        && BIMANUAL_OTYPS.has(o.otyp);
-}
-/* objects.h `bi` argument == 1: two-handed sword, battle-axe, tsurugi,
-   dwarvish mattock, and the polearms that take both hands. */
-const BIMANUAL_OTYPS = new Set([
-    57 /*TWO_HANDED_SWORD*/, 58 /*TSURUGI*/, 65 /*BATTLE_AXE*/,
-    71 /*DWARVISH_MATTOCK*/,
-]);
+/* objects[].oc_bimanual is not carried by this port's objects[]; js/invent.js
+   holds the objects.h `bi` list. */
+function bimanual(o) { return inv_bimanual(o); }
 function is_shield(o) { return o.oclass === ARMOR_CLASS && oc_armcat(o.otyp) === ARM_SHIELD; }
 function is_helmet(o) { return o.oclass === ARMOR_CLASS && oc_armcat(o.otyp) === ARM_HELM; }
 function is_boots(o) { return o.oclass === ARMOR_CLASS && oc_armcat(o.otyp) === ARM_BOOTS; }
@@ -750,18 +753,35 @@ function mons_at(mndx) { return monster_by_pmidx(mndx); }
 // artifact.js imports objnam.js, so these edges cannot be reversed; timeout.js
 // reaches objnam.js through invent.js.  Named so a later merge can delete the
 // shim and import the real thing if the cycle is ever broken.
-function find_artifact(_obj) { /* artifact.c find_artifact(): livelog only */ }
-function artifact_name(_nam) { return null; } /* artifact.c artifact_name() */
-function artifact_light(_obj) { return false; } /* artifact.c artifact_light() */
-function arti_light_description(_obj) { return 'brilliantly'; }
-function glow_verb(_cnt, _ing) { return 'glowing'; } /* mon.c glow_verb() */
-function glow_color(_arti) { return 'red'; } /* mon.c glow_color() */
-function peek_timer(_kind, _arg) { return 0; } /* timeout.c peek_timer() */
-function find_mid(_id, _fmflags) { return null; } /* mon.c find_mid() */
-function noit_mon_nam(_mtmp) { return 'it'; } /* do_name.c noit_mon_nam() */
-function tin_details(_obj, _mnum, buf) { return buf; } /* eat.c tin_details() */
-function append_price_quote(bp, _otyp) { return bp; } /* o_init.c */
-function record_price_quote(_otyp, _price, _buy) {} /* shk.c */
+function find_artifact(obj) { arti_find_artifact(obj); }
+function artifact_name(nam) { return arti_artifact_name(nam)?.name ?? null; }
+function artifact_light(obj) { return light_artifact_light(obj); }
+function arti_light_description(obj) { return light_arti_light_description(obj); }
+function glow_verb(cnt, ing) { return arti_glow_verb(cnt, ing); }
+function glow_color(arti) { return arti_glow_color(arti); }
+function peek_timer(kind, obj) { return timeout_peek_timer(kind, { a_void: obj, a_obj: obj }); }
+function find_mid(id, fmflags) { return light_find_mid(id, fmflags); }
+function noit_mon_nam(mtmp) { return dn_noit_mon_nam(mtmp); }
+// C ref: eat.c tin_details()
+function tin_details(obj, mnum, buf) {
+    if (!obj || buf == null) return buf;
+    const r = tin_variety(obj, true);
+    if (r === SPINACH_TIN) return `${buf} of spinach`;
+    if (mnum === NON_PM || mnum == null) return 'empty tin';
+    if ((obj.cknown || iflags().override_ID) && obj.spe < 0) {
+        if (r === ROTTEN_TIN || r === HOMEMADE_TIN)
+            buf = `${tintxts[r].txt} ${buf} of `;
+        else
+            buf += ` of ${tintxts[r].txt} `;
+    } else {
+        buf += ' of ';
+    }
+    const ptr = mons_at(mnum);
+    const nm = ptr?.name ?? '';
+    return vegetarian(ptr) ? `${buf}${nm}` : `${buf}${nm} meat`;
+}
+function append_price_quote(bp, otyp) { return bp + oi_append_price_quote(otyp); }
+function record_price_quote(otyp, price, buy) { oi_record_price_quote(otyp, price, buy); }
 function count_contents(container, nested, quantity, everything) {
     /* invent.c count_contents(obj, nested, quantity, everything, newdrop) */
     let count = 0;
@@ -2386,7 +2406,7 @@ export function doname_base(obj, doname_flags) {
                  || ((!known || !oc_charged(obj.otyp)
                       || obj.oclass === ARMOR_CLASS
                       || obj.oclass === RING_CLASS)
-                     && obj.otyp !== 344 /*SCR_MAIL*/
+                     && obj.otyp !== 364 /*SCR_MAIL*/
                      && obj.otyp !== FAKE_AMULET_OF_YENDOR
                      && obj.otyp !== AMULET_OF_YENDOR_
                      && !Role_if(PM_CLERIC)))
@@ -2418,7 +2438,7 @@ export function doname_base(obj, doname_flags) {
     let goto_charges = false, goto_ring = false;
     switch (is_weptool(obj) ? WEAPON_CLASS : obj.oclass) {
     case AMULET_CLASS:
-        if (obj.owornmask & W_AMUL)
+        if (obj.owornmask & INV_W_AMUL)
             bp += ' (being worn)';
         break;
     case ARMOR_CLASS:
@@ -2602,7 +2622,7 @@ export function doname_base(obj, doname_flags) {
         switch (obj.oclass) {
         case WEAPON_CLASS:
             Qtyp = !is_ammo(obj) ? 3 /* not ammo: "at the ready" */
-                : ((objects[obj.otyp]?.oc_skill | 0) !== -11 /*-P_BOW*/) ? 2
+                : ((objects[obj.otyp]?.oc_skill | 0) !== -P_BOW) ? 2
                     : 1; /* ammo for a bow: "in quiver" */
             break;
         case RING_CLASS:
@@ -2690,7 +2710,7 @@ function Glib() { return (game.u?.uprops?.Glib?.intrinsic | 0) > 0
     || (game.u?.Glib | 0) > 0; }
 /* you.h:564 URIGHTY == (u.uhandedness == RIGHT_HANDED(0)); u_init.c sets
    uhandedness with rn2(10) at chargen (see js/bones.js:1066) */
-function URIGHTY() { return (game.u?.uhandedness | 0) === 0; }
+function URIGHTY() { return !game.u?.uleft_handed; }
 /* mvitals[].mvflags — js/mon.js owns the live table */
 function mvitals_mvflags(mndx) { return game.svm?.mvitals?.[mndx]?.mvflags | 0; }
 
@@ -2699,3 +2719,76 @@ function mvitals_mvflags(mndx) { return game.svm?.mvitals?.[mndx]?.mvflags | 0; 
 export function doname_c(obj) { return doname_base(obj, 0); }
 export function doname_with_price_c(obj) { return doname_base(obj, DONAME_WITH_PRICE); }
 export function doname_vague_quan_c(obj) { return doname_base(obj, DONAME_VAGUE_QUAN); }
+
+// objnam.c gd.distantname is shared with js/invent.js distant_name().
+export function distantname_adjust(delta) { gd_distantname += delta; }
+export function distantname_active() { return gd_distantname !== 0; }
+
+export function xname(obj) { return xname_flags(obj, CXN_NORMAL); }
+export { corpse_xname };
+
+// C ref: objnam.c cxname_singular()
+export function cxname_singular(obj) {
+    if (obj.otyp === CORPSE_)
+        return corpse_xname(obj, null, CXN_SINGULAR);
+    return xname_flags(obj, CXN_SINGULAR);
+}
+
+// C ref: objnam.c the()
+export function the(str) {
+    if (!str) {
+        impossible("Alphabet soup: 'the()'.");
+        return 'the []';
+    }
+    let insert_the = false;
+    if (strncmpi(str, 'the ', 4)) {
+        return lowc(str[0]) + str.slice(1);
+    } else if (str[0] < 'A' || str[0] > 'Z'
+               || CapitalMon(str)
+               || (fruit_from_name(str, true, null)
+                   && (artifact_name(str) == null
+                       || strncmpi(artifact_name(str), 'the ', 4)))) {
+        insert_the = true;
+    } else {
+        const sp = str.lastIndexOf(' ');
+        const tmpi = sp >= 0 ? sp : str.lastIndexOf('-');
+        if (tmpi >= 0 && (str[tmpi + 1] < 'A' || str[tmpi + 1] > 'Z')) {
+            insert_the = str.indexOf("'") < 0;
+        } else if (tmpi >= 0 && str.indexOf(' ') >= 0 && str.indexOf(' ') < tmpi) {
+            const of = strstri(str, ' of ');
+            let named = strstri(str, ' named ');
+            const called = strstri(str, ' called ');
+            if (called >= 0 && (named < 0 || called < named))
+                named = called;
+            if (of >= 0 && (named < 0 || of < named))
+                insert_the = true;
+            else if (named < 0 && str.length >= 31
+                     && str.endsWith('Platinum Yendorian Express Card'))
+                insert_the = true;
+        }
+    }
+    return (insert_the ? 'the ' : '') + str;
+}
+export function The(str) { const t = the(str); return t.charAt(0).toUpperCase() + t.slice(1); }
+
+// C ref: objnam.c simpleonames()
+export function simpleonames(obj) {
+    const s = minimal_xname(obj);
+    return obj.quan !== 1 ? makeplural(s) : s;
+}
+
+// C ref: objnam.c ansimpleoname()
+export function ansimpleoname(obj) {
+    const s = simpleonames(obj);
+    let otyp = obj.otyp;
+    if (otyp === FAKE_AMULET_OF_YENDOR)
+        otyp = AMULET_OF_YENDOR_;
+    if (oc_unique(otyp) && OBJ_NAME(objects[otyp]) && s === OBJ_NAME(objects[otyp]))
+        return the(s);
+    if (obj.quan === 1)
+        return an(s);
+    return s;
+}
+
+// C ref: objnam.c thesimpleoname()
+export function thesimpleoname(obj) { return the(simpleonames(obj)); }

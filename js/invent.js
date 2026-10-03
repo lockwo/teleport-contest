@@ -139,6 +139,10 @@ import { costly_spot, addtobill, shkname } from './shkroom.js';
 import { price_suffix, singplur_lookup, add_erosion_words, cxname,
          obj_is_pname, type_is_pname, the_unique_pm } from './objnam.js';
 import { shk_owns } from './shk.js';
+import { xname as on_xname, cxname_singular as on_cxname_singular, doname_base as on_doname_base,
+         corpse_xname as on_corpse_xname, simpleonames as on_simpleonames,
+         ansimpleoname as on_ansimpleoname, minimal_xname as on_minimal_xname,
+         distantname_adjust, distantname_active } from './objnam.js';
 import { y_monnam } from './do_name.js';
 // role.js imports only gstate/rng/const, so this is cycle-safe.
 import { roles, align_gname } from './role.js';
@@ -370,7 +374,7 @@ function observe_object(obj) { if (obj) disco_observe_object(obj); }
 // the object, but ONLY when the hero can see; naming one while blind must not
 // teach its appearance ("o - a potion.", not "a brilliant blue potion.").
 function observe_object_named(obj) {
-    if (!Blind_for_wear() && !gd_distantname) observe_object(obj);
+    if (!Blind_for_wear() && !distantname_active()) observe_object(obj);
 }
 /* objnam.c gd.distantname — set while distant_name() formats a far object. */
 let gd_distantname = 0;
@@ -527,10 +531,10 @@ function dupstr(s) { return String(s ?? ''); }
 // data.base lookups). It DOES observe the object like xname() does — that's
 // what makes a visible monster's weapon read "orcish dagger" rather than
 // "crude dagger".
-export function cxname_singular(obj) { observe_object_named(obj); return simple_obj_name(obj, { article: false, quantity: false, buc: false }); }
+export function cxname_singular(obj) { return on_cxname_singular(obj); }
 // C ref: objnam.c xname() — the bare object name: no "a"/"an" article and no
 // BUC word (unlike doname()), but still quantity-aware for stackable types.
-export function xname(obj) { observe_object_named(obj); return simple_obj_name(obj, { article: false, buc: false }); }
+export function xname(obj) { return on_xname(obj); }
 // C ref: objnam.c yname() and shk.c shk_your().
 export function yname(obj) {
     const name = cxname(obj);
@@ -554,19 +558,16 @@ function minimal_obj(obj) {
     if (!obj) return obj;
     return { ...obj, owt: 0, oeroded: 0, oeroded2: 0, greased: 0, bknown: 0, rknown: 0, quan: 1 };
 }
-export function ansimpleoname(obj) { return with_article(simple_obj_name(minimal_obj(obj), { quantity: false, buc: false })); }
+export function ansimpleoname(obj) { return on_ansimpleoname(obj); }
 // C ref: objnam.c ysimple_name() — shk_your() + minimal_xname().  shk_your()
 // yields "your " for anything the hero carries that is not an unpaid shop item
 // (the only case from_what() can reach).
 export function ysimple_name(obj) {
-    return `your ${simple_obj_name(minimal_obj(obj), { article: false, quantity: false, buc: false })}`;
+    return `your ${on_minimal_xname(obj)}`;
 }
 // C ref: objnam.c simpleonames() — minimal_xname(), then makeplural() whenever
 // quan != 1.  Without the pluralisation a readied stack read "36 dart".
-function simpleonames(obj) {
-    const nm = simple_obj_name(obj, { article: false, quantity: false, buc: false });
-    return (obj?.quan || 1) !== 1 ? makeplural(nm) : nm;
-}
+function simpleonames(obj) { return on_simpleonames(obj); }
 // C ref: objnam.c distant_name(obj, func):370 — a VISIBLE object within
 // neardist is named with the usual side effects (xname_flags() observes it, so
 // its appearance and stack size become known); anything further away bumps
@@ -574,24 +575,20 @@ function simpleonames(obj) {
 function distant_name(obj, fn = doname) {
     const ox = obj?.ox, oy = obj?.oy;
     if (!distant_far(obj, ox, oy) && cansee(ox, oy)) return fn(obj);
-    ++gd_distantname;
-    try { return fn(obj); } finally { --gd_distantname; }
+    distantname_adjust(1);
+    try { return fn(obj); } finally { distantname_adjust(-1); }
 }
 export function distant_name_pub(obj, fn) { return distant_name(obj, fn); }
 // C ref: objnam.c doname() appends the worn-status suffix ("(being worn)",
 // "(wielded)", "(on right hand)", ...) unconditionally — it is not limited to
 // the inventory window, so every doname()/obj_doname() caller (dip/wield/drop
 // prompts included) must see it too.
-function doname(obj) { observe_object_named(obj); return simple_obj_name(obj, { empty: true }) + worn_status_suffix(obj) + unpaid_price_suffix(obj); }
+function doname(obj) { return on_doname_base(obj, 0); }
 // C ref: objnam.c doname_with_price() -> doname_base(obj, DONAME_WITH_PRICE) —
 // an object seen on shop floor reads " (for sale, <N> <currency>)", or
 // " (no charge)" for the shk's own free spot / a no_charge item.  Without this
 // every "You see here ..." line inside a shop dropped the price.
-function doname_with_price(obj) {
-    observe_object_named(obj);
-    return simple_obj_name(obj, { empty: true }) + worn_status_suffix(obj)
-        + price_suffix(obj, true);
-}
+function doname_with_price(obj) { return on_doname_base(obj, 1 /*DONAME_WITH_PRICE*/); }
 // C ref: invent.c look_here():4282 `You("%s here %s.", verb,
 // doname_with_price(otmp))` — the "You see here ..." announcement quotes the
 // shop price, so this is doname_with_price, not bare doname.
@@ -603,11 +600,7 @@ export function obj_doname(obj) { return doname(obj); }
 // C ref: objnam.c doname_vague_quan():1768 -> doname_base(DONAME_VAGUE_QUAN).
 // Farlook's namer: a stack that has not been seen up close (!dknown) reports
 // "some gold pieces" rather than the exact count it has no way to know.
-export function doname_vague_quan(obj) {
-    observe_object_named(obj);
-    return simple_obj_name(obj, { empty: true, vague_quan: true })
-        + worn_status_suffix(obj) + unpaid_price_suffix(obj);
-}
+export function doname_vague_quan(obj) { return on_doname_base(obj, 2 /*DONAME_VAGUE_QUAN*/); }
 
 // C ref: objnam.c short_oname(obj, func, altfunc, lenlimit) — used to build a
 // getobj/y_n prompt's object phrase within a fixed buffer budget.  When the
@@ -704,7 +697,7 @@ export async function wield_tool(obj, verb) {
     if (obj.oclass !== WEAPON_CLASS) game.unweapon = true;
     return true;
 }
-function corpse_xname(obj, _name, flagsArg = 0) { return simple_obj_name(obj, { article: !!(flagsArg & 8) }); }
+function corpse_xname(obj, adj, flagsArg = 0) { return on_corpse_xname(obj, adj, flagsArg); }
 export function killer_xname(obj) { return simple_obj_name(obj, { article: false }); }
 
 // C ref: do_name.c docall_xname(obj) — the bare "a/an <appearance>" name used
@@ -2159,8 +2152,7 @@ function worn_status_suffix(obj) {
 // classes outside this scope so unrelated callers are unaffected.
 export function doname_invent(obj) {
     if (!obj) return 'nothing';
-    observe_object_named(obj);
-    return doname_invent_core(obj);
+    return on_doname_base(obj, 0);
 }
 
 // C ref: objnam.c distant_name(obj, doname):370-404 — name an object seen only
@@ -2172,15 +2164,15 @@ export function doname_invent(obj) {
 // monster grabbing an unidentified item must not add it to '\' discoveries.
 export function distant_doname(obj, far) {
     if (!obj) return 'nothing';
-    if (!far) { observe_object_named(obj); return doname_invent_core(obj); }
+    if (!far) return on_doname_base(obj, 0);
     // This port leaves obj.dknown UNSET on most fresh objects (C uses 0), so
     // stand in for mkobj.c mksobj_init()'s missing clear_dknown() for that
     // unset case only. (C also clears it for shields/oc_merge types; not
     // modelled, no covered session needs it.)
-    if (obj.dknown != null) return doname_invent_core(obj);
     const sav = obj.dknown;
-    obj.dknown = DKNOWNS_CLASSES.has(obj.oclass) ? 0 : 1;
-    try { return doname_invent_core(obj); } finally { obj.dknown = sav; }
+    if (sav == null) obj.dknown = DKNOWNS_CLASSES.has(obj.oclass) ? 0 : 1;
+    distantname_adjust(1);
+    try { return on_doname_base(obj, 0); } finally { distantname_adjust(-1); if (sav == null) obj.dknown = sav; }
 }
 
 // C ref: mkobj.c dknowns[] — the object classes whose appearance must be seen
