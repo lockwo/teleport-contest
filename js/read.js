@@ -69,6 +69,7 @@ const SCR_GOLD_DETECTION = 334;
 const SCR_GENOCIDE = 331;
 const SCR_FOOD_DETECTION = 335;
 const SCR_STINKING_CLOUD = 343;
+const SCR_CHARGING = 342;
 const SPE_DETECT_FOOD = 383;
 const SCR_AMNESIA = 338;
 const SCR_MAIL = 364;
@@ -421,11 +422,10 @@ export async function seffects(sobj) {
         // trycall() prompt.  seffect_mail() itself draws no RNG.
         await seffect_mail(sobj);
         break;
+    case SCR_CHARGING:
+        return await seffect_charging(sobj);
     default:
-        // C ref: read.c seffects default: -> impossible().  The only otyp
-        // that still lands here is SCR_CHARGING: it needs recharge(), which
-        // has no JS port yet (getobj("charge") + a real wand/tool recharge
-        // effect), so a hero who reads one desynchronises from here on.
+        // C ref: read.c seffects default: impossible(); no scroll types remain.
         break;
     }
     return false;
