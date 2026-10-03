@@ -920,11 +920,16 @@ for (const [lo, hi] of OC_MAGIC_RANGES)
 // and only "egg" and "tin" pass 1 there while chrg is always 0.  Deriving it
 // this way rather than listing the otyps that happen to matter here keeps it
 // right for every object the held-out corpus can reach.
+// The rows whose explicit BITS() pass uskn=1 although chrg is 0: the
+// invocation items, both Amulets of Yendor and the novel (objects.h).
+const USKN_EXPLICIT = new Set(['AMULET_OF_YENDOR', 'FAKE_AMULET_OF_YENDOR',
+    'CANDELABRUM_OF_INVOCATION', 'BELL_OF_OPENING', 'SPE_BOOK_OF_THE_DEAD', 'SPE_NOVEL']);
 for (const o of objects) {
     if (!o) continue;
-    o.oc_uses_known = (o.oclass === FOOD_CLASS)
-        ? ((o.otyp === EGG || o.otyp === TIN) ? 1 : 0)
-        : ((o.flags & F_CHARGED) ? 1 : 0);
+    o.oc_uses_known = USKN_EXPLICIT.has(o.sym) ? 1
+        : (o.oclass === FOOD_CLASS)
+            ? ((o.otyp === EGG || o.otyp === TIN) ? 1 : 0)
+            : ((o.flags & F_CHARGED) ? 1 : 0);
 }
 
 const objectsByClass = Array.from({ length: MAXOCLASSES + 1 }, () => []);
