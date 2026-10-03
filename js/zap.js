@@ -5,7 +5,7 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rn1, rnd, rnl, d } from './rng.js';
-import { pline, newsym, m_at, show_glyph_cell, update_topl, topl_more, y_n,
+import { pline, newsym, m_at, show_glyph_cell, update_topl, urgent_topl, topl_more, y_n,
          bot, flush_screen, canseemon_shared, map_invisible, unmap_object,
          impossible, display_nhwindow_message, Hallucination_u as Hallucination } from './display.js';
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
@@ -2667,7 +2667,7 @@ export async function losehp(n, knam, k_format = KILLED_BY_AN) {
         game._killer_name = !knam ? ''
             : k_format === KILLED_BY_AN ? `killed by ${an(knam)}`
             : k_format === KILLED_BY ? `killed by ${knam}` : knam;
-        await update_topl('You die...');   // urgent_pline -> NEED_MORE topline
+        await urgent_topl('You die...');   // urgent_pline -> NEED_MORE topline
         const { done, DIED } = await import('./end.js');
         await done(DIED);
     }
@@ -2891,8 +2891,8 @@ export async function zapyourself(obj, ordinary) {
         // line, which update_topl never combines) fires more() to page the first.
         game._toplin = 0;
         game._pending_message = '';
-        await update_topl('You irradiate yourself with pure energy!');
-        await update_topl('You die.');
+        await urgent_topl('You irradiate yourself with pure energy!');
+        await urgent_topl('You die.');
         await done_selfzap(0 /* DIED */);
         break;
 

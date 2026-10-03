@@ -6,7 +6,7 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
-import { newsym, pline, m_at, update_topl, topl_more, impossible, canseemon_shared, Hallucination_u } from './display.js';
+import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u } from './display.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of } from './exper.js';
 import { Blind, recalc_block_point, cansee, couldsee } from './vision.js';
@@ -1464,7 +1464,7 @@ async function losehp(n, knam, k_format = KILLED_BY_AN) {
         // real losehp() caller announces this before done() runs; done() itself
         // does not (see end.js done_in_by(), which announces the same way for
         // a monster kill).
-        await update_topl('You die...');
+        await urgent_topl('You die...');
         game._killer_name = knam ? format_trap_killer(knam, k_format) : null;
         const { done } = await import('./end.js');
         await done(DIED);

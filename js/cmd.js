@@ -30,7 +30,7 @@ import { dodrink } from './potion.js';
 import { dozap } from './zap.js';
 import { docast } from './spell.js';
 import { doread } from './read.js';
-import { dohelp, dowhatdoes, do_screen_description } from './pager.js';
+import { dohelp, dowhatdoes, do_screen_description, doidtrap } from './pager.js';
 import { rnl, rn2, rnd } from './rng.js';
 import { doextcmd, doddoremarm, hooked_tty_getlin, wiz_wish, wiz_genesis,
          wiz_map_extcmd, run_extcmd_by_name, docallcmd, dooverview } from './extcmd-handlers.js';
@@ -1399,6 +1399,13 @@ export async function rhack(key) {
         game.context.move = 0;
     } else if (ch === '+') {
         await dovspell();
+        game.context.move = 0;
+    } else if (ch === '^') {
+        // C ref: cmd.c { '^', "showtrap", "describe an adjacent, discovered
+        // trap", doidtrap, IFBURIED | GENERALCMD } -> pager.c doidtrap().
+        // Prompts for a direction and names the trap there; never costs time
+        // (ECMD_OK / ECMD_CANCEL only).
+        await doidtrap();
         game.context.move = 0;
     } else if (ch === 'S') {
         // C ref: cmd.c { 'S', "save", ..., dosave, ... } -> save.c dosave().

@@ -63,7 +63,7 @@ import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_ca
 // --More-- for the UNACKNOWLEDGED previous one first (or appends to it when both
 // fit).  js/display.js pline() only overwrites the pending text, so monster
 // messages that land mid-turn must go through update_topl() to get C's boundary.
-import { update_topl, newsym, map_invisible, see_with_infrared, stairway_at, You_hear } from './display.js';
+import { update_topl, urgent_topl, newsym, map_invisible, see_with_infrared, stairway_at, You_hear } from './display.js';
 import { Monnam, mon_nam, monflee } from './uhitm.js';
 import { YMonnam } from './do_name.js';
 import { cansee, couldsee } from './vision.js';
@@ -1826,7 +1826,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
                 learnit = true;
                 if (u.uhp < 1) {
                     const endm = await import('./end.js');
-                    await update_topl('You die...');
+                    await urgent_topl('You die...');
                     game._killer_name = 'killed by a wand';
                     await endm.done(0 /*DIED*/);
                 }

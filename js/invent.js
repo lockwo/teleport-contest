@@ -3274,14 +3274,40 @@ export function addinv_core1(obj) {
 // C ref: quest.c artitouch() as reached from addinv_core1(); see above.
 export async function flush_artitouch() {
     const obj = game._pending_artitouch;
-    if (!obj) return;
-    game._pending_artitouch = null;
-    observe_object(obj);
-    await artitouch(obj);
+    if (obj) {
+        game._pending_artitouch = null;
+        observe_object(obj);
+        await artitouch(obj);
+    }
+    await flush_addinv_plines();
 }
 
+// C ref: invent.c addinv_core2(). Inventory insertion is synchronous here,
+// so async acquisition paths flush the label message before inventory output.
 export function addinv_core2(obj) {
     if (confers_luck(obj)) set_moreluck();
+    if (Role_if(PM_ARCHEOLOGIST) && obj.oclass === SCROLL_CLASS
+        && obj.otyp !== SCR_BLANK_PAPER && !Blind_for_wear()
+        && !objects[obj.otyp]?.oc_name_known) {
+        observe_object(obj);
+        /* name it BEFORE makeknown(), while it is still "scroll labeled FOO" */
+        const msg = `You decipher the label on ${yname(obj)}.`;
+        makeknown(obj.otyp);
+        if (game.u) {
+            const uc = game.u.uconduct || (game.u.uconduct = {});
+            uc.literate = (uc.literate || 0) + 1;
+        }
+        (game._addinv_plines ||= []).push(msg);
+    }
+}
+
+// Flush the messages addinv_core2() queued; call from the async caller right
+// after the addinv*() that may have produced them.
+export async function flush_addinv_plines() {
+    const q = game._addinv_plines;
+    if (!q || !q.length) return;
+    game._addinv_plines = [];
+    for (const m of q) await pline(m);
 }
 
 export function addinv_core0(obj, other_obj = null, update_perm_invent = true) {
@@ -8770,11 +8796,13 @@ export async function pick_one_obj(obj, count = 0) {
     floor_extract_self(obj);
     if (robshop) await addtobill(obj, true, false, false);
     const held = addinv(obj);
+    const deciphered = !!game._addinv_plines?.length;
+    await flush_artitouch();
     // C ref: pickup.c pickup_prinv(held, count, "lifting") — only announce an
     // encumbrance-level change since the last check this pickup() call (reset
     // to 0 by pickup() before lifting anything).
     const liftPrefix = pickup_prinv_prefix('lifting');
-    if (game._merge_discovery_pending || (robshop && obj.unpaid)) {
+    if (deciphered || game._merge_discovery_pending || (robshop && obj.unpaid)) {
         // A merge inside addinv() above discovered new BUC/id info, or
         // addtobill() just printed the shop's price quote.  Either way a
         // message is already on the top line, and C's prinv() -> pline() would

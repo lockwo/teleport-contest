@@ -23,7 +23,7 @@
 import { game } from './gstate.js';
 import { rnd, rn1, rn2 } from './rng.js';
 import { nhgetch } from './input.js';
-import { pline, flush_screen, newsym, update_topl, unmap_object,
+import { pline, flush_screen, newsym, update_topl, urgent_topl, unmap_object,
          canseemon_shared } from './display.js';
 import { m_at } from './display.js';
 import { DEADMONSTER, mvitals_died, m_detach } from './mon.js';
@@ -101,7 +101,7 @@ async function losehp(n) {
         // C pline() marks the top line NEED_MORE; mirror it so update_topl pages
         // the "You slip..." line before printing "You die...".
         game._toplin = 1; // TOPLIN_NEED_MORE
-        await update_topl('You die...');
+        await urgent_topl('You die...');
         const { done, DIED } = await import('./end.js');
         await done(DIED);
     }

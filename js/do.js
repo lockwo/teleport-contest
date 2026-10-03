@@ -59,7 +59,7 @@ import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          UTOTYPE_DEFERRED, UTOTYPE_ATSTAIRS, UTOTYPE_FALLING, UTOTYPE_PORTAL,
          UTOTYPE_RMPORTAL, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX,
          MIGR_EXACT_XY } from './const.js';
-import { docrt, flush_screen, pline, update_topl, topl_more, y_n, newsym,
+import { docrt, flush_screen, pline, update_topl, urgent_topl, topl_more, y_n, newsym,
          see_nearby_objects } from './display.js';
 import { seetrap, dotrap } from './trap.js';
 import { check_special_room } from './shkroom.js';
@@ -610,7 +610,7 @@ export async function losehp_do(n, knam, k_format = KILLED_BY_AN) {
     else game.botl = true;
     if (u.uhp < 1) {
         // C ref: hack.c:4287 `urgent_pline("You die..."); done(DIED);`
-        await update_topl('You die...');
+        await urgent_topl('You die...');
         game._killer_name = knam ? format_do_killer(knam, k_format) : null;
         const { done } = await import('./end.js');
         await done(DIED);

@@ -10,7 +10,7 @@
 
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
-import { pline, newsym, m_at, topl_more, unmap_object, y_n, update_topl } from './display.js';
+import { pline, newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl } from './display.js';
 import { Blind, couldsee, cansee, recalc_block_point, unblock_point } from './vision.js';
 import { exercise, acurr_eff, adjalign } from './attrib.js';
 import {
@@ -421,7 +421,7 @@ export async function kick_ouch(x, y, kickobjnam, maploc) {
         u.uhp = (u.uhp ?? 0) - dmg;
         game.botl = true;
         if (u.uhp < 1) {
-            await update_topl('You die...');
+            await urgent_topl('You die...');
             // C: losehp(..., kickstr(...), KILLED_BY) — KILLED_BY (not
             // KILLED_BY_AN) means the killer text is used verbatim with a
             // plain "killed by " prefix, no article (const.js KILLED_BY=1).

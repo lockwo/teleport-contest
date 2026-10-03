@@ -254,7 +254,10 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
         // below (never lethal via HP directly).  Without this, the death
         // check just below silently opened the "Die?" wizard-mode prompt
         // with no "You die..." line ever shown.
-        if ((u.uhp | 0) < 1) await update_topl('You die...');
+        if ((u.uhp | 0) < 1) {
+            const { urgent_topl } = await import('./display.js');
+            await urgent_topl('You die...');
+        }
     } else {
         loss = (thrown_weapon || !fatal) ? 1 : d(2, 2);              // attrib.c:395
         if (await adjattrib(typ, -loss, 1))

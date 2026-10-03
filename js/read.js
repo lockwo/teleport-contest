@@ -11,7 +11,7 @@
 import { game } from './gstate.js';
 import { LL_CONDUCT, livelog_printf } from './livelog.js';
 import { rnd, rn2, rn1, d } from './rng.js';
-import { pline, topl_more, update_topl, newsym, y_n } from './display.js';
+import { pline, topl_more, update_topl, urgent_topl, newsym, y_n } from './display.js';
 import { getobj, makeknown, useup, useupall, xname, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY,
          GETOBJ_EXCLUDE, GETOBJ_PROMPT, GETOBJ_ALLOWCNT, GETOBJ_EXCLUDE_SELECTABLE,
          identify_pack, trycall, near_capacity, obj_doname, stackobj, obfree,
@@ -253,7 +253,7 @@ async function losehp_read(n, knam, k_format = KILLED_BY_AN) {
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     else game.botl = true;
     if (u.uhp < 1) {
-        await update_topl('You die...');
+        await urgent_topl('You die...');
         // C ref: topten.c formatkiller() prefix handling (do.js:535 has the
         // same three-way switch).
         game._killer_name = !knam ? null
@@ -3059,7 +3059,7 @@ export async function do_class_genocide() {
                 /* Self-genocide if it matches either your race or role. */
                 if (i === urole_mnum || i === urace_mnum) {
                     game.u.uhp = -1;
-                    if (!feel_dead++) await pline_append('You die.');
+                    if (!feel_dead++) await urgent_topl('You die.');
                     gameover = true;
                 }
             } else if (mvitals_mvflags(i) & G_GENOD) {
