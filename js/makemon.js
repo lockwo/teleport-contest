@@ -4293,68 +4293,24 @@ export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
     await D.update_topl(msg);
 }
 
-// C ref: read.c create_particular_creation() for the ^G (#wizgenesis) command
-// with a single named monster.  wiz_genesis() clears iflags.debug_mongen, then
-// create_particular() parses the name and create_particular_creation() loops
-// d->quan (==1 here) times calling makemon(whichpm, u.ux, u.uy, mmflags) with
-// mmflags = MM_NOEXCLAM (no gender term, no surprise).
+// C ref: read.c create_particular() minus its getlin loop: parse the ^G
+// (#wizgenesis) reply with create_particular_parse() (quantity, "tame"/
+// "peaceful"/"hostile", "male"/"female", "sleeping"/"invisible"/"hidden"/
+// "saddled", gendered names like "gnome lord"), then run
+// create_particular_creation(), which makemon()s d.quan monsters next to the
+// hero and prints each one's "<Mon> appears next to you." as C's makemon()
+// does (so a second monster's line pushes the first behind --More--).
 //
-// makemon(ptr, u.ux, u.uy, ...) takes the `byyou && !gi.in_mklev` branch:
-//   enexto_core(&cc, u.ux, u.uy, ptr, GP_CHECKSCARY|GP_AVOID_MONPOS)
-// to find a square next to the hero (collect_coords ring shuffle = the RNG),
-// then proceeds with next_ident -> newmonhp -> gender -> [no group, ptr given]
-// -> m_initweap (if armed) -> m_initinv -> saddle rn2(100).  We reproduce that
-// order by running enexto_spawn() first (placement RNG) and then the existing
-// makemon() with MM_NOGRP (a specific ptr never spawns a group anyway).
-//
-// Returns { mtmp, x, y, next2u } so the caller can print the C "appears"
-// message; null if no monster could be made (bad name, no good spot, genocided).
-export async function create_particular_monster(name, mmflags = 0) {
-    const pmidx = name_to_pmidx(name);
-    let ptr, firstchoice = NON_PM;
-    if (pmidx >= 0) {
-        const { create_particular_species } = await import('./read.js');
-        firstchoice = pmidx;
-        ptr = MONS[await create_particular_species(pmidx)];
-    } else {
-        // C ref: read.c:3231 create_particular_parse() — when `name` does not
-        // exactly name a species, C falls back to name_to_monclass() (a bare
-        // class symbol like 'y' for S_LIGHT, or a class description) before
-        // giving up.  create_particular_creation()'s per-iteration order then
-        // draws mkclass()'s RNG (makemon.c:1934 gn_mask rn2(9), :1969 rnd(num))
-        // BEFORE the placement search below, so that must happen here first.
-        const { create_particular_parse } = await import('./read.js');
-        const d = {};
-        const ok = await create_particular_parse(name, d);
-        if (!ok) return null;
-        ptr = d.randmonst ? rndmonst()
-            : d.monclass !== MAXMCLASSES ? mkclass(d.monclass, 0)
-            : monster_by_pmidx(d.which);
-    }
-    if (!ptr) return null;
-
-    const u = game.u;
-    // makemon byyou branch: enexto_core near the hero (collect_coords RNG).
-    const spot = enexto_spawn(u.ux, u.uy, ptr);
-    if (!spot) return null;
-
-    // The placement RNG has been spent; makemon must not re-run it, so pass the
-    // resolved (x,y).  MM_NOGRP keeps it from drawing group RNG (a named ptr is
-    // anymon==FALSE in C, which already skips groups).
-    // MM_APPARXY_BYYOU tells makemon() that byyou was true in C (this caller
-    // IS the byyou placement search), so it still runs the `if (byyou) {
-    // newsym(); set_apparxy(); }` tail at the right point in its own body.
-    const mtmp = makemon(ptr, spot.x, spot.y,
-                         MM_NOGRP | MM_APPARXY_BYYOU | mmflags);
-    if (!mtmp) return null;
-    placeOnLevel(mtmp, spot.x, spot.y);
-    if (mtmp.cham != null && mtmp.cham !== NON_PM && firstchoice !== NON_PM
-        && mtmp.cham !== firstchoice)
-        newcham(mtmp, monster_by_pmidx(firstchoice));
-
-    // next2u(x,y): chebyshev distance <= 1 from the hero.
-    const next2u = Math.max(Math.abs(spot.x - u.ux), Math.abs(spot.y - u.uy)) <= 1;
-    return { mtmp, x: spot.x, y: spot.y, next2u, ptr };
+// Returns null when the reply names no monster (the caller re-prompts with
+// "I've never heard of such monsters."); otherwise { mtmp: null }: every
+// message has already been printed here, so the caller has nothing to add.
+export async function create_particular_monster(name, _mmflags = 0) {
+    const { create_particular_parse, create_particular_creation }
+        = await import('./read.js');
+    const d = {};
+    if (!(await create_particular_parse(name, d))) return null;
+    await create_particular_creation(d);
+    return { mtmp: null };
 }
 
 // ── adj_erinys (C ref: mon.c:5922) ───────────────────────────────────────

@@ -2003,9 +2003,9 @@ const REALLY = 1, PLAYER = 2, ONTHRONE = 4;
 // G_NOCORPSE; G_GENOD/G_EXTINCT are the mvflags-only bits in const.js).
 const G_NOCORPSE = 0x0010, G_UNIQ = 0x1000, G_GENO = 0x0020;
 const G_GENOD = 0x02, G_EXTINCT = 0x01;
-// C ref: hack.h makemon() flags used by the ports below.
-const MM_MALE = 0x00000010, MM_FEMALE = 0x00000020, MM_NOEXCLAM = 0x00004000,
-      MM_MINVIS = 0x00000002;
+// C ref: hack.h:1162-1168 makemon() flags used by the ports below.
+const MM_MALE = 0x00008000, MM_FEMALE = 0x00010000, MM_NOEXCLAM = 0x00040000,
+      MM_MINVIS = 0x00100000;
 // C ref: include/monflag.h enum mgender { MALE, FEMALE, NEUTRAL }.
 const MALE = 0, FEMALE = 1, NEUTRAL = 2;
 const NON_PM = -1, LOW_PM = 0;             // C ref: permonst.h
@@ -3359,11 +3359,12 @@ export async function create_particular_species(which) {
 // runs the enexto placement walk), then put_saddle_on_mon()'s rn2 and
 // newcham()'s roll for a doppelganger substitution.
 //
-// makemon.js:3903 create_particular_monster() covers the single-named-monster
-// case only (and splits the placement walk out); this is the full loop.
+// The "<mon> appears next to you." line C prints from inside makemon()
+// (makemon.c:1472-1500) is emitted here right after makemon() returns, i.e.
+// before tamedog()/the saddle, as in C.
 export async function create_particular_creation(d) {
-    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign, newcham }
-        = await import('./makemon.js');
+    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign, newcham,
+            makemon_appears_msg } = await import('./makemon.js');
     const u = game.u;
     let whichpm = null;
     let firstchoice = NON_PM;
@@ -3403,6 +3404,7 @@ export async function create_particular_creation(d) {
             continue;                  /* otherwise try again */
         }
         const mx = mtmp.mx, my = mtmp.my;
+        await makemon_appears_msg(mtmp, mx, my, mmflags);
         if (d.maketame) {
             const { tamedog } = await import('./dothrow.js');
             await tamedog(mtmp, null, false);
@@ -3412,10 +3414,10 @@ export async function create_particular_creation(d) {
             set_malign(mtmp);
         }
         if (d.saddled) {
-            // C: can_saddle(mtmp) && !which_armor(mtmp, W_SADDLE) then
-            // put_saddle_on_mon(NULL, mtmp).  Both helpers are private to
-            // makemon.js (:2150 / :2168); the fix is to export them there.
-            void mx;
+            /* NULL obj arg means put_saddle_on_mon() will create the saddle
+               itself; it does the can_saddle()/which_armor() checks */
+            const { put_saddle_on_mon } = await import('./steed.js');
+            await put_saddle_on_mon(null, mtmp);
         }
         if (d.hidden) {
             const { hides_under_pm } = await import('./monmove.js');
