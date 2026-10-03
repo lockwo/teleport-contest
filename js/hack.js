@@ -1149,10 +1149,20 @@ function render_getpos_tip() {
 }
 
 // C ref: hack.c handle_tip(TIP_GETPOS): show the farlook tip the first time
-// getpos() is used.  A tty NHW_TEXT window blocks until a window-dismiss key
-// (space/return/escape); other keys redraw and wait again.  Each redraw is a
-// recorded screen because every readchar fires the capture hook.  Returns
-// TRUE if the tip was shown (so the caller forces the goal message).
+// getpos() is used.  dat/nhcore.lua's show_getpos_tip() routes through
+// nhlua.c nhl_text(), which builds an NHW_MENU and runs it through
+// select_menu(PICK_NONE) -> wintty.c process_menu_window().  That loop is
+// what decides which keys dismiss the window:
+//   * resp[] is " " + "0123456789\033\n\r" + default_menu_cmds ("^|><.-@,\\~:");
+//     xwaitforspace() swallows everything else (bell, wait again) without
+//     advancing the menu state machine.
+//   * digits accumulate a count and set `counting`;
+//   * ESC with `counting` set "only stop[s] count" (wintty.c:1604) — it takes a
+//     SECOND ESC to cancel the window;
+//   * space finishes because this menu is a single page.
+// Each readchar is a recorded screen, so the key accounting has to match
+// exactly.  Returns TRUE if the tip was shown (caller forces the goal message).
+const MENU_RESP_CMDS = '^|><.-@,\\~:';
 async function getpos_tip() {
     const c = game.context;
     c.tips = c.tips || 0;
@@ -1160,10 +1170,26 @@ async function getpos_tip() {
     if (c.tips & TIP_GETPOS) return false;
     c.tips |= TIP_GETPOS;
 
-    for (;;) {
-        render_getpos_tip();
-        const k = await nhgetch();
-        if (k === 32 || k === 13 || k === 10 || k === 27) break;
+    let counting = false, count = 0, reset_count = true, finished = false;
+    while (!finished) {
+        if (reset_count) { counting = false; count = 0; } else reset_count = true;
+        let k;
+        for (;;) { // xwaitforspace(resp)
+            render_getpos_tip();
+            k = await nhgetch();
+            if (k === 32 || k === 13 || k === 10 || k === 27
+                || (k >= 48 && k <= 57)
+                || MENU_RESP_CMDS.includes(String.fromCharCode(k))) break;
+        }
+        if (k >= 48 && k <= 57) {
+            count = count * 10 + (k - 48);
+            if (count !== 0) { counting = true; reset_count = false; }
+        } else if (k === 27) {
+            if (!counting) finished = true; // else only stop count
+        } else if (k === 13 || k === 10 || k === 32) {
+            finished = true;
+        }
+        // every other resp[] member is a menu command that PICK_NONE ignores
     }
     return true;
 }
