@@ -315,7 +315,14 @@ export const SET_LIT_NOCHANGE = -2;
 export function set_levltyp_lit(x, y, typ, lit) {
     const loc = game.level?.at(x, y);
     if (!loc || typ === INVALID_TYPE || typ >= MAX_TYPE) return false;
+    const oldtyp = loc.typ;
     loc.typ = typ;
+    // C ref: mkmaze.c set_levltyp() — `(IS_FOUNTAIN(oldtyp) != IS_FOUNTAIN(newtyp))
+    // || (IS_SINK(oldtyp) != IS_SINK(newtyp))` re-tallies level.flags here, which
+    // is the ONLY way an ordinary level's counters change after mkfount()/mksink().
+    if ((oldtyp === FOUNTAIN) !== (typ === FOUNTAIN)
+        || (oldtyp === SINK) !== (typ === SINK))
+        EXT.count_level_features();
     if (IS_LAVA(typ)) loc.lit = true;   // set_levltyp(): lava is always lit
     if (lit !== SET_LIT_NOCHANGE) {
         if (IS_LAVA(typ)) lit = 1;

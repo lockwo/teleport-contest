@@ -345,12 +345,21 @@ export async function mklev() {
     if (await getbones()) return;   // bones loaded → level already grafted
     g.in_mklev = true;
     await makelevel();
-    recount_level_features();
+    // C ref: sp_lev.c load_special() tail — every makemaz()/special-level path
+    // recounts, the ordinary makerooms() path does not.
+    if (built_by_load_special) count_level_features();
     level_finalize_topology();
     g.in_mklev = false;
 }
 
-function recount_level_features() {
+// C ref: mklev.c count_level_features().  C does NOT call this from mklev():
+// an ordinary level's counters come from mkfount()/mksink() incrementing them
+// and from set_levltyp() recounting when a square's fountain/sink-ness changes.
+// Only load_special()/des.finalize_level() (sp_lev.c) and the wizard terrain
+// wish recount wholesale.  Running it unconditionally here counted themed-room
+// fountains that C never tallies, so dosounds() rolled an rn2(400) ambient
+// check every turn on levels where C rolls nothing.
+export function count_level_features() {
     const lvl = game.level;
     if (!lvl?.flags) return;
     let nfountains = 0, nsinks = 0;
@@ -358,7 +367,7 @@ function recount_level_features() {
         for (let x = 1; x < COLNO; x++) {
             const typ = lvl.at(x, y)?.typ;
             if (typ === FOUNTAIN) nfountains++;
-            if (typ === SINK) nsinks++;
+            else if (typ === SINK) nsinks++;
         }
     lvl.flags.nfountains = nfountains;
     lvl.flags.nsinks = nsinks;
@@ -433,9 +442,16 @@ function litstate_rnd(litstate) {
     return !!litstate;
 }
 
+// C ref: mklev.c makelevel().  Every branch other than the final makerooms()
+// fall-through hands off to makemaz(), which ends in sp_lev.c load_special()
+// -> ... -> count_level_features().  Record which path ran so mklev() can
+// recount exactly where C does.
+let built_by_load_special = false;
+
 // C ref: mklev.c makelevel()
 async function makelevel() {
     const g = game;
+    built_by_load_special = true;
     oinit();
     clear_level_structures();
 
@@ -842,7 +858,10 @@ async function makelevel() {
         return;
     }
 
-    // Regular level generation
+    // Regular level generation — the only makelevel() path that does NOT go
+    // through load_special(), so its fountain/sink tallies stay with
+    // mkfount()/mksink() exactly as in C.
+    built_by_load_special = false;
     // C ref: mklev.c:1294 — the Rogue-emulation level replaces makerooms()
     // wholesale and then jumps to skip0 (no themerms.lua load, no corridors,
     // no niches, no vault, no special room).
@@ -6978,7 +6997,7 @@ function breaktest(otmp) {
 // set_mktrap_victim() is handed over.  This is the ONE binding call in the
 // tree; anything sp_lev.js can import without cycling is imported directly
 // there instead of going through EXT.
-bind_sp_lev_externs({ topologize, mkstairs, stairway_add });
+bind_sp_lev_externs({ topologize, mkstairs, stairway_add, count_level_features });
 
 set_mktrap_victim(mktrap_victim);
 function mktrap_victim(trap) {
