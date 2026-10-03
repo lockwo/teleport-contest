@@ -1552,7 +1552,7 @@ export function stop_object_timer(obj, action) {
 // C ref: timeout.c attach_fig_transform_timeout(figurine):1204 — replace any
 // existing FIG_TRANSFORM timer with one that fires in rnd(9000)+200 turns.
 // The draw is rnd(9000), NOT rn1(9000,1000).
-function attach_fig_transform_timeout(figurine) {
+export function attach_fig_transform_timeout(figurine) {
     if (!figurine) return;
     stop_object_timer(figurine, FIG_TRANSFORM);
     const i = rnd(9000) + 200;

@@ -2202,7 +2202,9 @@ function reluctant_what(x, y) {
         if (o && loc?.remembered_glyph) {
             const og = object_glyph(o);
             if (og && og.ch === loc.remembered_glyph.ch)
-                return floor_object_name(o);
+                // C ref: dogmove.c:1305 `distant_name(o, doname)` — plain
+                // doname(), so a shop item gets NO "(for sale, N zorkmids)".
+                return distant_name_pub(o, obj_doname);
         }
     }
     return 'something';

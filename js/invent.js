@@ -85,6 +85,9 @@ import {
     next_ident,
     place_object as mkobj_place_object,
     base_oc_weight,
+    // C ref: timeout.c attach_fig_transform_timeout() — carry_obj_effects()
+    // starts the real rnd(9000)+200 FIG_TRANSFORM timer, not a flag.
+    attach_fig_transform_timeout,
 } from './mkobj.js';
 
 import { getpos, getpos_render, travel_adjacent_step } from './hack.js';
@@ -443,7 +446,6 @@ export function touch_petrifies(corpsenm) {
     return nm === 'cockatrice' || nm === 'chickatrice';
 }
 function dead_species(_mnum, _force) { return false; }
-function attach_fig_transform_timeout(obj) { if (obj) obj.timed = true; }
 function picked_container(_obj) {}
 // C ref: worn.c setworn() for the W_WEP/W_QUIVER/W_SWAPWEP slots — clear the old
 // occupant's worn bit, install the new object, and keep the matching u-pointer
