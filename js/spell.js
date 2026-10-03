@@ -712,13 +712,14 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
     }
     case SPE_CLAIRVOYANCE:
     case SPE_CREATE_FAMILIAR:
-    case SPE_PROTECTION:
     case SPE_JUMPING:
     case SPE_CHAIN_LIGHTNING:
-        // DEFERRED: do_vicinity_map(), make_familiar(), cast_protection(),
-        // jump() and cast_chain_lightning() have no port yet.  cast_protection
-        // in particular can't land alone: nothing decrements u.usptime in the
-        // move loop, so its AC bonus would never expire.
+        // DEFERRED: do_vicinity_map(), make_familiar(), jump() and
+        // cast_chain_lightning() still require their gameplay integrations.
+        break;
+    case SPE_PROTECTION:
+        // C ref: spell.c spelleffects() SPE_PROTECTION -> cast_protection().
+        await cast_protection();
         break;
     default:
         // C: impossible("Unknown spell %d attempted.", spell) then ECMD_OK.

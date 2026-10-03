@@ -703,6 +703,8 @@ export function find_ac() {
         game.uarms, game.uarmg, game.uarmu]) {
         if (obj) uac -= ARM_BONUS(obj);
     }
+    // C ref: do_wear.c find_ac() — spell protection is separate from armor.
+    uac -= u?.uspellprot || 0;
     game.u = game.u || {};
     game.u.uac = uac;
     return uac;
