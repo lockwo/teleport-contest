@@ -2294,6 +2294,22 @@ export async function start_timer(when, kind, func_index, arg) {
     return true;
 }
 
+// start_timer() for synchronous callers (objnam.c readobjnam's zombifying
+// corpse).  Same queue and bookkeeping; a duplicate timer is refused
+// silently instead of via the async impossible().
+export function start_timer_sync(when, kind, func_index, arg) {
+    for (let dup = timer_base; dup; dup = dup.next)
+        if (dup.kind === kind && dup.func_index === func_index
+            && dup.arg.a_void === arg.a_void)
+            return false;
+    insert_timer({
+        next: null, tid: timer_id++, timeout: (game.moves | 0) + when,
+        kind, needs_fixup: 0, func_index, arg,
+    });
+    if (kind === TIMER_OBJECT) arg.a_obj.timed = (arg.a_obj.timed | 0) + 1;
+    return true;
+}
+
 // C ref: timeout.c:2298 stop_timer(func_index, arg) — returns the turns
 // remaining until it would have gone off, 0 if there was no such timer.
 export async function stop_timer(func_index, arg) {

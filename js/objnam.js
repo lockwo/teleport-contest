@@ -1471,7 +1471,7 @@ export function makeplural(oldstr) {
 // the file) that live callers in js/nhlua.js, js/options.js, js/pickup.js and
 // js/polyself.js import; swapping them is a separate measured change, so the
 // faithful port carries a distinct name rather than shadowing it.
-function makesingular_full(oldstr) {
+export function makesingular_full(oldstr) {
     const ob = nextobuf();
     let bp, excess = null, p;
 

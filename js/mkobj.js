@@ -1290,13 +1290,13 @@ function hasFlag(otmp, flag) {
 // C ref: objclass.h:209 is_damageable(otmp) — the OR of the five erosion
 // predicates.  It used to re-derive all five inline, which is how the
 // is_flammable FIRE_RES arm came to be missing from one copy and not the other.
-function is_damageable(otmp) {
+export function is_damageable(otmp) {
     if (!objects[otmp.otyp]) return false;
     return is_rustprone(otmp) || is_flammable(otmp) || is_rottable(otmp)
         || is_corrodeable(otmp) || is_crackable(otmp);
 }
 
-function erosion_matters(otmp) {
+export function erosion_matters(otmp) {
     return otmp.oclass === WEAPON_CLASS || otmp.oclass === ARMOR_CLASS
         || otmp.oclass === BALL_CLASS || otmp.oclass === CHAIN_CLASS
         || (otmp.oclass === TOOL_CLASS && hasFlag(otmp, F_WEPTOOL));
@@ -1315,23 +1315,23 @@ function may_generate_eroded(otmp) {
 // (they can't take fire damage and can't be fireproofed), and neither is
 // anything whose oc_oprop is FIRE_RES -- the arm the old copy dropped, so a red
 // dragon scale mail / ring of fire resistance answered by material alone.
-function is_flammable(otmp) {
+export function is_flammable(otmp) {
     const obj = objects[otmp.otyp];
     const mat = obj?.material ?? NO_MATERIAL;
     if (otmp.otyp === TALLOW_CANDLE || otmp.otyp === WAX_CANDLE) return false;
     if (obj?.oc_oprop === 1 /* FIRE_RES */ || otmp.otyp === WAN_FIRE) return false;
     return (mat <= WOOD && mat !== LIQUID) || mat === PLASTIC;
 }
-function is_rottable(otmp) {
+export function is_rottable(otmp) {
     const mat = objects[otmp.otyp]?.material ?? NO_MATERIAL;
     return ((mat <= WOOD && mat !== LIQUID) || mat === DRAGON_HIDE);
 }
-function is_rustprone(otmp) { return objects[otmp.otyp]?.material === IRON; }
-function is_corrodeable(otmp) {
+export function is_rustprone(otmp) { return objects[otmp.otyp]?.material === IRON; }
+export function is_corrodeable(otmp) {
     const mat = objects[otmp.otyp]?.material;
     return mat === COPPER || mat === IRON;
 }
-function is_crackable(otmp) {
+export function is_crackable(otmp) {
     return objects[otmp.otyp]?.material === GLASS && otmp.oclass === ARMOR_CLASS;
 }
 

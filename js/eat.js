@@ -337,7 +337,7 @@ export function food_nutrit(otyp) { const p = FOOD_PROPS[otyp]; return p ? p[1] 
 // cnutrit, a glob's is its current weight, everything else is the objects[]
 // table value.  (The corpse/glob arms used to be missing, so eatcorpse()'s
 // caller computed them by hand and every other caller got 50.)
-function obj_nutrition(otmp) {
+export function obj_nutrition(otmp) {
     if (otmp.otyp === CORPSE) return mon_cnutrit(otmp.corpsenm) ?? 0;
     if (otmp.globby) return otmp.owt || 0;
     return food_nutrit(otmp.otyp);
@@ -347,7 +347,7 @@ function obj_nutrition(otmp) {
 // nutrition right by amt, amt < 0 subtracts.  oeaten must never reach 0 (that
 // would restore the item to "untouched"), so it floors at 1 AND cuts the meal
 // short by setting reqtime = usedtime.  Both of those were missing.
-function consume_oeaten(obj, amt) {
+export function consume_oeaten(obj, amt) {
     if (!obj || !obj_nutrition(obj)) return;   /* C: impossible(), no change */
     if (amt > 0) obj.oeaten = (obj.oeaten || 0) >> amt;
     else if ((obj.oeaten || 0) > -amt) obj.oeaten = (obj.oeaten || 0) + amt;
