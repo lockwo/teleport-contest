@@ -1596,10 +1596,14 @@ function m_initweap_angel(mtmp, ptr) {
     // C: `if ((!rn2(20) || is_lord(ptr)) && sgn(...maligntyp) == A_LAWFUL)
     //      otmp = oname(otmp, nam, ONAME_RANDOM);`
     // A non-minion angel uses ptr->maligntyp (we do not model EMIN min_align).
-    // Artifact promotion proper is not modelled — C's oname() only attaches the
-    // name here and consumes no RNG, so recording the name is RNG-faithful.
-    if ((!rn2(20) || is_lord) && Math.sign(ptr.maligntyp ?? 0) === A_LAWFUL)  // makemon.c:338
+    // C ref: do_name.c oname(): skip if that artifact already exists, else
+    // name it and artifact_exists() marks it created (nartifact_exist()
+    // then raises every later random-artifact roll).  No RNG.
+    if ((!rn2(20) || is_lord) && Math.sign(ptr.maligntyp ?? 0) === A_LAWFUL  // makemon.c:338
+        && !otmp.oartifact && !hooks.exist_artifact?.(otmp.otyp, nam)) {
         otmp.oname = nam;
+        hooks.artifact_exists?.(otmp, nam, true, 0x0080 /* ONAME_RANDOM */);
+    }
     bless(otmp);
     otmp.oerodeproof = true;
     // long sword ends up +0..+3, silver mace +3..+6 to offset being much weaker

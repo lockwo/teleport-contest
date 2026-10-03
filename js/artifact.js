@@ -14,7 +14,7 @@
 //   * artilist[].role/.race hold mons[] indices (PM_KNIGHT == 335), not the
 //     0..12 role index this port usually calls `mnum`.  Role_if()/Race_if()
 //     below do the conversion; do not "simplify" the table to 0..12.
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { update_topl } from './display.js';
 import { rn2, rnd, d, rnz } from './rng.js';
 import { objects, mksobj, weight, base_oc_cost } from './mkobj.js';
@@ -920,6 +920,11 @@ export function artifact_exists(otmp, name, mod, flgs = 0) {
             }
         }
 }
+
+// makemon.js m_initweap() reaches these through gstate hooks (no static
+// import: that edge breaks module evaluation order).
+hooks.artifact_exists = artifact_exists;
+hooks.exist_artifact = exist_artifact;
 
 // C ref: artifact.c found_artifact() — mark an artifact 'found'.
 export function found_artifact(a) {
