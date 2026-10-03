@@ -73,6 +73,7 @@ function worn_property_sources() {
     return sources;
 }
 function Antimagic() {
+    if (game.u?.formprops?.Antimagic) return true; /* FROMFORM: polyself.js set_uasmon() */
     return worn_property_sources().some((o) => OBJECTS[o.otyp]?.oc_oprop === 12)
         || !!(game.u?.HAntimagic);
 }

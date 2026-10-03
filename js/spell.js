@@ -879,6 +879,7 @@ async function confused_book(spellbook) {
 // The innate source (elf from level 4, monk from level 1) is never persisted
 // as a stored uprops flag, so OR in has_innate()'s pure derivation.
 function Sleep_resistance_hero() {
+    if (game.u?.formprops?.Sleep_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     return ((u?.uprops?.HSleep_resistance ?? u?.uprops?.Sleep_resistance ?? 0) > 0)
         || has_innate('HSleep_resistance');

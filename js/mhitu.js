@@ -68,6 +68,7 @@ function Invis() {
               || u.uprops?.Invis);
 }
 function See_invisible() {
+    if (game.u?.formprops?.See_invisible) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
     return !!(u.uprops?.See_invisible || u.uprops?.HSee_invisible
               || u.uprops?.ESee_invisible);
@@ -158,6 +159,7 @@ export async function diseasemu(mdat) {
 }
 const SICK_NONVOMITABLE = 0x02;   // C ref: youprop.h
 function Sick_resistance() {
+    if (game.u?.formprops?.Sick_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
     return !!(u.uprops?.Sick_resistance || u.uprops?.Sick_res);
 }
@@ -435,6 +437,7 @@ function resists_cold_mon(mdef) {
     return ((permonst(mdef)?.mresists | 0) & MR_COLD) !== 0;
 }
 function Cold_resistance() {
+    if (game.u?.formprops?.Cold_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
     return !!(u.uprops?.Cold_resistance || u.uprops?.HCold_resistance
               || u.uprops?.ECold_resistance);
@@ -1142,11 +1145,12 @@ function mdistu(mtmp) {
     const dx = mtmp.mx - u.ux, dy = mtmp.my - u.uy;
     return dx * dx + dy * dy;
 }
-function Reflecting() { return !!game.u?.uprops?.Reflecting; }
+function Reflecting() { return !!game.u?.formprops?.Reflecting || !!game.u?.uprops?.Reflecting; }
 function Confusion() { return (game.u?.uprops?.Confusion | 0) || (game.u?.uconf | 0); }
 function HConfusion() { return game.u?.uprops?.Confusion | 0; }
 function HStun() { return game.u?.uprops?.Stun | 0; }
 function Fire_resistance() {
+    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
     return !!(u.uprops?.Fire_resistance || u.uprops?.HFire_resistance
               || u.uprops?.EFire_resistance);

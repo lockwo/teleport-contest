@@ -398,7 +398,7 @@ async function mcast_spell(mtmp, dmg, spellnum) {
 // RNG-free and constant for the heroes these sessions drive.
 function Hallucination() { return !!(game.u?.Hallucination); }
 function Blinded() { return !!(game.u?.Blinded); }
-function See_invisible() { return !!game.u?.See_invisible; }
+function See_invisible() { return !!game.u?.formprops?.See_invisible || !!game.u?.See_invisible; }
 function Invis() { return !!game.u?.uinvis; }
 function Displaced() { return !!game.u?.Displaced; }
 function Deaf() { return !!game.u?.Deaf; }
@@ -1059,14 +1059,14 @@ function flash_str_(_type) { return 'spell'; }
 // ---- hero property / naming shims (all RNG-free) ------------------------
 function Upolyd() { return !!game.u?.Upolyd; }
 function Blind_() { return (game.u?.Blinded | 0) > 0 || !!game.u?.ublindf; }
-function Stunned_() { return !!(game.u?.uprops?.Stun || game.u?.Stunned); }
+function Stunned_() { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.Stun || game.u?.Stunned); }
 function Confusion_() { return HProp_('HConfusion') > 0 || !!game.u?.Confusion; }
 function HConfusion_() { return HProp_('HConfusion'); }
 function HStun_() { return HProp_('HStun'); }
 function Free_action() { return HProp_('HFree_action') > 0 || HProp_('EFree_action') > 0; }
 function Half_spell_damage() { return HProp_('HHalf_spell_damage') > 0; }
 function Half_physical_damage() { return HProp_('HHalf_physical_damage') > 0; }
-function Shock_resistance_() { return HProp_('HShock_resistance') > 0; }
+function Shock_resistance_() { return !!game.u?.formprops?.Shock_resistance || HProp_('HShock_resistance') > 0; }
 function Detect_monsters_() { return HProp_('HDetect_monsters') > 0; }
 function Unaware_() { return !!(game.u?.usleep || game.u?.Unaware); }
 function HProp_(name) { return (game.u?.uprops?.[name] | 0); }

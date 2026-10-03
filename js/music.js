@@ -58,7 +58,7 @@ function uprop(...names) {
     return false;
 }
 function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf'); }
-function Stunned() { return uprop('Stun', 'HStun') || !!game.u?.ustun; }
+function Stunned() { return !!game.u?.formprops?.Stunned || uprop('Stun', 'HStun') || !!game.u?.ustun; }
 function Confusion() { return uprop('Confusion', 'HConfusion') || !!game.u?.uconf; }
 function Hallucination() { return uprop('Hallucination', 'HHallucination') || !!game.u?.uhallu; }
 function Unchanging() { return uprop('Unchanging', 'HUnchanging'); }

@@ -556,6 +556,7 @@ function u_locomotion_std(def) {
 }
 // C ref: youprop.h Stunned.
 function Stunned_std() {
+    if (game.u?.formprops?.Stunned) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     return (u?.uprops?.Stun || u?.ustun || 0) > 0;
 }
@@ -994,7 +995,7 @@ export async function poly_steed(steed, oldshape) {
 function u_handsy_std() { return true; }
 // C ref: you.h Underwater / Stone_resistance / Confusion / Fumbling / Glib.
 function Underwater_std() { return !!game.u?.uprops?.Underwater; }
-function Stone_resistance_std() { return !!game.u?.uprops?.Stone_resistance; }
+function Stone_resistance_std() { return !!game.u?.formprops?.Stone_resistance || !!game.u?.uprops?.Stone_resistance; }
 function Confusion_std() { return !!(game.u?.uconf || game.u?.HConfusion); }
 function Fumbling_std() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
 function Glib_std() { return !!game.u?.uprops?.Glib; }

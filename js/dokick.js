@@ -112,7 +112,7 @@ function Wounded_legs() {
     return !!((u?.HWounded_legs || 0) || (u?.EWounded_legs || 0));
 }
 // C ref: youprop.h Passes_walls.
-function Passes_walls() { return !!game.u?.uprops?.Passes_walls; }
+function Passes_walls() { return !!game.u?.formprops?.Passes_walls || !!game.u?.uprops?.Passes_walls; }
 
 // C ref: dokick.c martial() == (martial_bonus() || is_bigfoot(youmonst)
 //   || (uarmf && uarmf->otyp == KICKING_BOOTS)), where

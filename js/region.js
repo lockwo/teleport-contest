@@ -951,6 +951,7 @@ function Breathless() {
     return !!u?.Upolyd && (mflags1_of(u.data) & M1_BREATHLESS) !== 0;
 }
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const p = game.u?.uprops || {};
     return !!(p.HPoison_resistance || p.EPoison_resistance
               || p.PoisonResistance || p.Poison_resistance);

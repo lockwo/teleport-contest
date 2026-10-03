@@ -2450,9 +2450,11 @@ function Hallucination_do() {
 }
 function Underwater_do() { return !!(game.u?.uinwater || game.u?.uunderwater); }
 function Fire_resistance_do() {
+    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return uprop_do('Fire_resistance', 'HFire_resistance', 'EFire_resistance') > 0;
 }
 function Passes_walls_do() {
+    if (game.u?.formprops?.Passes_walls) return true; /* FROMFORM: polyself.js set_uasmon() */
     return uprop_do('Passes_walls', 'HPasses_walls', 'EPasses_walls') > 0;
 }
 function Stoned_do() { return uprop_do('Stoned') > 0; }

@@ -1119,6 +1119,7 @@ function place_object(obj, x, y) {
 // Antimagic() definitions (and every other property accessor) onto the bitmask
 // is queued separately — do not add a ninth.
 function Antimagic() {
+    if (game.u?.formprops?.Antimagic) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     return !!(u?.uprops?.Antimagic || u?.Antimagic || u?.HAntimagic || u?.EAntimagic);
 }

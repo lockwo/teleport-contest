@@ -270,6 +270,7 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
     await encumber_msg();
 }
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
     // A race-innate grant (e.g. every orc, from level 1) is never persisted as
     // a stored flag anywhere in js/ — OR in the pure has_innate() derivation.

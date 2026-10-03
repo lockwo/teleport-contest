@@ -59,6 +59,7 @@ function morehungry(num) {
 // spreads the intrinsic over three different uprops spellings depending on
 // which subsystem granted it (role intrinsic, race intrinsic, item).
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     if (!u) return false;
     const p = u.uprops || {};
@@ -785,6 +786,7 @@ function Hallucination() { return !!game.u?.uhallu; }
 // role/race grants) or extrinsic.  Same multi-spelling read as
 // Poison_resistance() above.
 function Fire_resistance() {
+    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     if (!u) return false;
     const p = u.uprops || {};

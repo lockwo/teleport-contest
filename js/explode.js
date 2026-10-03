@@ -64,18 +64,19 @@ function uprop(...names) {
     for (const n of names) if ((p[n] | 0) > 0 || p[n] === true) return true;
     return false;
 }
-function Antimagic() { return uprop('Antimagic', 'HAntimagic', 'EAntimagic') || !!game.u?.Antimagic; }
-function Fire_resistance() { return uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance'); }
-function Cold_resistance() { return uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance'); }
-function Shock_resistance() { return uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance'); }
+function Antimagic() { return !!game.u?.formprops?.Antimagic || uprop('Antimagic', 'HAntimagic', 'EAntimagic') || !!game.u?.Antimagic; }
+function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance'); }
+function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance'); }
+function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance'); }
 // A race-innate grant (e.g. every orc, from level 1) is never persisted as a
 // stored flag anywhere in js/ — OR in the pure has_innate() derivation.
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return uprop('Poison_resistance', 'HPoison_resistance', 'EPoison_resistance')
         || has_innate('HPoison_resistance');
 }
-function Acid_resistance() { return uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance'); }
-function Disint_resistance() { return uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance'); }
+function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance'); }
+function Disint_resistance() { return !!game.u?.formprops?.Disint_resistance || uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance'); }
 function Invulnerable() { return uprop('Invulnerable') || !!game.u?.uinvulnerable; }
 function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf') || !!game.u?.Deaf; }
 // C ref: you.h Upolyd == (u.mtimedone != 0).

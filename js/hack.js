@@ -618,7 +618,7 @@ function doorless_door(x, y) {
 // C ref: hack.h Passes_walls.  No polyform in this port sets it, and cmd.js's
 // blocksMove()/domove() ignore phasing too, so the BFS and the actual walk
 // agree; kept as a named predicate so the guards below read like C.
-function Passes_walls() { return !!game.u?.uprops?.Passes_walls; }
+function Passes_walls() { return !!game.u?.formprops?.Passes_walls || !!game.u?.uprops?.Passes_walls; }
 
 // C ref: monst.h gy.youmonst.data == &mons[u.umonnum], where u_init.c:991 sets
 // umonnum = urole.mnum — a real mons[] index.  THIS port stores the 0-based ROLE

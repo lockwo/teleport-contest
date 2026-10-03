@@ -791,7 +791,8 @@ export { youHaveSearching };
 // per-turn teleport-intrinsic check below.
 function youHaveTeleportationIntrinsic() {
     const p = game.u?.uprops;
-    return !!(p?.HTeleportation || p?.ETeleportation);
+    /* FROMFORM bit: polyself.js set_uasmon() u.formprops */
+    return !!(p?.HTeleportation || p?.ETeleportation || game.u?.formprops?.Teleportation);
 }
 
 // C ref: youprop.h Polymorph == (HPolymorph || EPolymorph).  Same story as
@@ -1505,7 +1506,8 @@ const RIN_REGENERATION_OTYP = 179;
 function u_can_regen() {
     const g = game;
     return (g.uleft && g.uleft.otyp === RIN_REGENERATION_OTYP)
-        || (g.uright && g.uright.otyp === RIN_REGENERATION_OTYP);
+        || (g.uright && g.uright.otyp === RIN_REGENERATION_OTYP)
+        || HRegeneration();
 }
 
 const PM_MONK = 5;
@@ -1587,13 +1589,14 @@ function Wounded_legs() {
 }
 function HClairvoyant() { return false; }
 function BClairvoyant() { return false; }
-function HRegeneration() { return false; }
+// HRegeneration: the current polyform's FROMFORM bit (polyself.js set_uasmon).
+function HRegeneration() { return !!game.u?.formprops?.Regeneration; }
 function Sick() { return ((game.u?.uprops?.Sick || 0) > 0) || !!(game.u?.sick); }
 function Vomiting() { return (game.u?.uprops?.Vomiting || 0) > 0; }
-function Confusion() { return !!(game.u?.uconf || game.u?.HConfusion); }
+function Confusion() { return ((game.u?.uprops?.Confusion || 0) > 0) || !!(game.u?.uconf || game.u?.HConfusion); }
 function Hallucination() { return ((game.u?.uprops?.Hallucination || 0) > 0) || !!(game.u?.HHallucination) || !!game.u?.uhallu; }
 function Fumbling() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
-function HStun() { return ((game.u?.uprops?.Stun || 0) > 0) || !!game.u?.Stunned || !!(game.u?.HStun || game.u?.ustun); }
+function HStun() { return ((game.u?.uprops?.Stun || 0) > 0) || !!game.u?.Stunned || !!(game.u?.HStun || game.u?.ustun) || !!game.u?.formprops?.Stunned; }
 
 // C ref: attrib.c plusattr[]/minusattr[] (the adjattrib "You feel <x>!" word)
 // and exertext[A_MAX][2] (exerchk's own explanation, in attribute order).

@@ -1054,6 +1054,7 @@ function slithy_mon(ptr) { return (mflags1_of(ptr) & M1_SLITHY) !== 0; }
 // C ref: youprop.h See_invisible.  js/display.js:335 has the shared reader but
 // does not export it; this port spells the hero's copy several ways.
 function See_invisible_mon() {
+    if (game.u?.formprops?.See_invisible) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {}, p = u.uprops || {};
     return !!(u.see_invis || p.HSee_invisible || u.HSee_invisible
         || p.ESee_invisible || u.ESee_invisible || p.See_invisible || u.See_invisible);

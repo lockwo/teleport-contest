@@ -1756,8 +1756,8 @@ async function erode_obj_local2(obj, hurt) {
 }
 
 // C ref: potion.c Acid_resistance / Cold_resistance intrinsic tests.
-function Acid_resistance() { return (game.u?.uprops?.AcidResistance || 0) > 0; }
-function Cold_resistance() { return (game.u?.uprops?.ColdResistance || 0) > 0; }
+function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || (game.u?.uprops?.AcidResistance || 0) > 0; }
+function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || (game.u?.uprops?.ColdResistance || 0) > 0; }
 
 // C ref: makemon.js MONS_NAMES index of the floating eye.
 const PM_FLOATING_EYE = 28;
@@ -2702,13 +2702,14 @@ function u_of() { return game.u || {}; }
 // C ref: youprop.h Fumbling/Stunned/Blind_telepat/See_invisible/Invisible.
 function Fumbling() { return (u_of().uprops?.Fumbling || 0) > 0; }
 function Stunned_uh() {
+    if (game.u?.formprops?.Stunned) return true; /* FROMFORM: polyself.js set_uasmon() */
     return (u_of().uprops?.Stun || 0) > 0 || !!u_of().Stunned
         || (u_of().ustun | 0) > 0;
 }
 function Blind_telepat() { return (u_of().uprops?.Telepat || 0) > 0; }
-function See_invisible() { return !!u_of().see_invis; }
+function See_invisible() { return !!game.u?.formprops?.See_invisible || !!u_of().see_invis; }
 function Invisible_uh() { return !!u_of().uinvis && !See_invisible(); }
-function Stone_resistance() { return (u_of().uprops?.StoneResistance || 0) > 0; }
+function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || (u_of().uprops?.StoneResistance || 0) > 0; }
 function Slow_digestion() { return (u_of().uprops?.SlowDigestion || 0) > 0; }
 function Deaf_uh() { return (u_of().uprops?.Deaf || 0) > 0; }
 function Upolyd() { return !!u_of().Upolyd; }
@@ -4952,6 +4953,7 @@ async function failed_grab_uh(magr, mdef, mattk) {
 // C ref: youprop.h Sick/Sick_resistance.
 function Sick_uh() { return (u_of().uprops?.Sick || 0) > 0; }
 function Sick_resistance_uh() {
+    if (game.u?.formprops?.Sick_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return (u_of().uprops?.SickResistance || 0) > 0;
 }
 

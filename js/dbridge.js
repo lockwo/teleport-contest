@@ -962,12 +962,12 @@ function HProp(...keys) {
 function Levitation() { return HProp('Levitation', 'HLevitation', 'ELevitation') > 0; }
 function Flying() { return HProp('Flying', 'HFlying', 'EFlying') > 0; }
 function Wwalking() { return HProp('Wwalking', 'HWwalking', 'EWwalking') > 0; }
-function Swimming() { return HProp('Swimming', 'HSwimming', 'ESwimming') > 0; }
+function Swimming() { return !!game.u?.formprops?.Swimming || HProp('Swimming', 'HSwimming', 'ESwimming') > 0; }
 function Breathless() { return HProp('Breathless', 'HBreathless', 'EBreathless') > 0; }
 function Amphibious() { return HProp('Amphibious', 'HAmphibious', 'EAmphibious') > 0; }
-function Passes_walls() { return HProp('Passes_walls', 'HPasses_walls', 'EPasses_walls') > 0; }
+function Passes_walls() { return !!game.u?.formprops?.Passes_walls || HProp('Passes_walls', 'HPasses_walls', 'EPasses_walls') > 0; }
 function Confusion() { return HProp('Confusion', 'HConfusion', 'EConfusion') > 0; }
-function Stunned() { return HProp('Stunned', 'HStun', 'EStun') > 0; }
+function Stunned() { return !!game.u?.formprops?.Stunned || HProp('Stunned', 'HStun', 'EStun') > 0; }
 function Fumbling() { return HProp('Fumbling', 'HFumbling', 'EFumbling') > 0; }
 function Hallucination() { return HProp('Hallucination', 'HHallucination') > 0 || !!game.u?.uhallu; }
 // C ref: youprop.h Unaware — asleep, unconscious or otherwise not perceiving.

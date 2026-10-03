@@ -527,20 +527,23 @@ function Blind() { return !!(uprop('Blinded') || game.u?.Blinded); }
 function Hallucination() { return !!(uprop('Hallucination') || game.u?.Hallucination); }
 // C ref: youprop.h Antimagic -- zap.js's reader also sees worn extrinsics
 // (e.g. the Wizard's cloak of magic resistance).
-function Antimagic() { return !!Antimagic_zap(); }
+function Antimagic() { return !!game.u?.formprops?.Antimagic || !!Antimagic_zap(); }
 function Fire_resistance() {
+    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!(uprop('Fire_resistance') || uprop('HFire_resistance')
         || uprop('EFire_resistance') || game.u?.Fire_resistance
         || worn_extrinsic(FIRE_RES) || has_innate('HFire_resistance')
         || (youmonst_data()?.mresists & MR_FIRE));
 }
 function Cold_resistance() {
+    if (game.u?.formprops?.Cold_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!(uprop('Cold_resistance') || uprop('HCold_resistance')
         || uprop('ECold_resistance') || game.u?.Cold_resistance
         || worn_extrinsic(COLD_RES) || has_innate('HCold_resistance')
         || (youmonst_data()?.mresists & MR_COLD));
 }
 function Shock_resistance() {
+    if (game.u?.formprops?.Shock_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!(uprop('Shock_resistance') || uprop('HShock_resistance')
         || uprop('EShock_resistance') || game.u?.Shock_resistance
         || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
@@ -549,11 +552,12 @@ function Shock_resistance() {
 // A race-innate grant (e.g. every orc, from level 1) is never persisted as a
 // stored flag anywhere in js/ — OR in the pure has_innate() derivation.
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!(uprop('Poison_resistance') || game.u?.Poison_resistance)
         || has_innate('HPoison_resistance');
 }
-function Drain_resistance() { return !!(uprop('Drain_resistance') || game.u?.Drain_resistance); }
-function Stone_resistance() { return !!(uprop('Stone_resistance') || game.u?.Stone_resistance); }
+function Drain_resistance() { return !!game.u?.formprops?.Drain_resistance || !!(uprop('Drain_resistance') || game.u?.Drain_resistance); }
+function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || !!(uprop('Stone_resistance') || game.u?.Stone_resistance); }
 // C ref: youprop.h Hate_silver == (u.ulycn >= LOW_PM || hates_silver(youmonst)).
 function Hate_silver() {
     if ((game.u?.ulycn ?? NON_PM) >= 0) return true;

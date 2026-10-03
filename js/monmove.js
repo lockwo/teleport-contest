@@ -6131,6 +6131,7 @@ function m_seenres_bream(mtmp, _typ) { return ((mtmp.mseenres | 0) !== 0); }
 // C ref: youprop.h Sleep_resistance.  Innate (elf lvl4/monk lvl1) is never a
 // persisted uprops flag — OR in has_innate()'s pure derivation.
 function Sleep_resistance_bream() {
+    if (game.u?.formprops?.Sleep_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!game.u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance');
 }
 
@@ -6528,7 +6529,7 @@ function freehand_mm() {
 const PM_MONK_MM = 5, PM_ROGUE_MM = 8;
 function Role_if_mm(pm) { return (game.urole?.mnum ?? game.u?.umonnum) === pm; }
 function Confusion_mm() { return !!game.u?.uconf; }
-function Stunned_mm() { return !!game.u?.Stunned; }
+function Stunned_mm() { return !!game.u?.formprops?.Stunned || !!game.u?.Stunned; }
 function Fumbling_mm() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
 
 // C ref: mthrowu.c:532 u_catch_thrown_obj(otmp) — catch_chance also drops by

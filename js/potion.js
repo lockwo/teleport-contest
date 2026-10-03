@@ -97,7 +97,7 @@ function set_hallucination(v) {
     u.uhallu = v > 0;                 // display.js / uhitm.js / eat.js
 }
 function Hallucination() { return HHallucination() > 0 && !Halluc_resistance(); }
-function Halluc_resistance() { return HProp('HHalluc_resistance', 'EHalluc_resistance') > 0; }
+function Halluc_resistance() { return !!game.u?.formprops?.Halluc_resistance || HProp('HHalluc_resistance', 'EHalluc_resistance') > 0; }
 function Upolyd() { return !!game.u?.Upolyd; }
 function Unaware() { return !!(game.u?.usleep || game.u?.Unaware); }
 // C ref: attrib.h Fixed_abil — blocks every adjattrib().
@@ -109,12 +109,13 @@ function Fixed_abil() { return HProp('HFixed_abil', 'EFixed_abil') > 0; }
 // pure has_innate() derivation, which js/insight.js's enlightenment screen
 // already uses correctly for this same property.
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return HProp('HPoison_resistance', 'PoisonResistance', 'Poison_resistance') > 0
         || has_innate('HPoison_resistance');
 }
-function Sick_resistance() { return HProp('HSick_resistance') > 0; }
+function Sick_resistance() { return !!game.u?.formprops?.Sick_resistance || HProp('HSick_resistance') > 0; }
 function Invis() { return HProp('HInvis', 'EInvis') > 0; }
-function See_invisible() { return HProp('HSee_invisible', 'ESee_invisible') > 0; }
+function See_invisible() { return !!game.u?.formprops?.See_invisible || HProp('HSee_invisible', 'ESee_invisible') > 0; }
 function Levitation() { return HProp('Levitation', 'HLevitation', 'ELevitation') > 0; }
 function Fast() { return HProp('HFast', 'EFast') > 0; }
 function Wounded_legs() { return HProp('HWounded_legs', 'Wounded_legs') > 0; }
@@ -417,14 +418,15 @@ function Maybe_Half_Phys(dmg) {
 // ones), so an intrinsic granted through either route is honoured here.
 function Free_action() { return HProp('FreeAction', 'HFree_action', 'EFree_action') > 0; }
 function Sleep_resistance() {
+    if (game.u?.formprops?.Sleep_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return HProp('SleepResistance', 'HSleep_resistance') > 0
         || has_innate('HSleep_resistance');
 }
-function Acid_resistance() { return HProp('AcidResistance', 'HAcid_resistance') > 0; }
-function Fire_resistance() { return HProp('FireResistance', 'HFire_resistance', 'EFire_resistance') > 0; }
-function Cold_resistance() { return HProp('ColdResistance', 'HCold_resistance', 'ECold_resistance') > 0; }
+function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || HProp('AcidResistance', 'HAcid_resistance') > 0; }
+function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || HProp('FireResistance', 'HFire_resistance', 'EFire_resistance') > 0; }
+function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || HProp('ColdResistance', 'HCold_resistance', 'ECold_resistance') > 0; }
 function Unchanging() { return HProp('HUnchanging', 'EUnchanging') > 0; }
-function Antimagic() { return HProp('HAntimagic', 'EAntimagic') > 0; }
+function Antimagic() { return !!game.u?.formprops?.Antimagic || HProp('HAntimagic', 'EAntimagic') > 0; }
 
 // C ref: hack.c nomul(nval) — make the hero helpless for |nval| turns (nval<0).
 // Replicated locally (hack.js owns the canonical copy) so the potion CRASH path

@@ -1746,7 +1746,7 @@ function hero_is_naked() {
 }
 // C ref: hack.h Teleport_control — the hero has no control source in the
 // recorded sessions (no ring/intrinsic teleport control).
-function Teleport_control() { return !!game.u?.utelecontrol; }
+function Teleport_control() { return !!game.u?.formprops?.Teleport_control || !!game.u?.utelecontrol; }
 // C ref: mondata.h resists_blnd(&youmonst) / hates_light(youmonst.data).
 function hero_resists_blnd() { return !!game.u?.ublindresist; }
 function hero_hates_light() { return false; }
@@ -1761,6 +1761,7 @@ function hero_hates_light() { return false; }
 // property accessors are converted this collapses to
 // `worn_extrinsic(ANTIMAGIC) || HAntimagic`.
 function Antimagic_muse() {
+    if (game.u?.formprops?.Antimagic) return true; /* FROMFORM: polyself.js set_uasmon() */
     const W_ARMOR_MASK = 0x7f;  // monst.h W_ARMOR: the seven armour slots
     for (const o of (game.invent || []))
         if (((o.owornmask || 0) & W_ARMOR_MASK)
@@ -2171,7 +2172,7 @@ export function find_misc(mtmp) {
 }
 
 // C ref: hack.h See_invisible.
-function See_invisible() { return !!game.u?.see_invis; }
+function See_invisible() { return !!game.u?.formprops?.See_invisible || !!game.u?.see_invis; }
 // C ref: worn.c wearing_iron_shoes(mon).
 function wearing_iron_shoes(mon) {
     const boots = which_armor(mon, W_ARMF);

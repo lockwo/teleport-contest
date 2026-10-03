@@ -1416,9 +1416,9 @@ const S_MIMIC_MCLS = 13;                       /* defsym.h MONSYM(13,'m',MIMIC) 
 function HProp_tp(name) { return (game.u?.uprops?.[name] | 0); }
 function Levitation_() { return HProp_tp('HLevitation') > 0 || HProp_tp('ELevitation') > 0; }
 function Flying_() { return HProp_tp('HFlying') > 0 || HProp_tp('EFlying') > 0; }
-function Passes_walls_() { return HProp_tp('HPasses_walls') > 0; }
+function Passes_walls_() { return !!game.u?.formprops?.Passes_walls || HProp_tp('HPasses_walls') > 0; }
 function Punished_() { return !!game.u?.uball; }
-function Teleportation_() { return HProp_tp('HTeleportation') > 0 || HProp_tp('ETeleportation') > 0; }
+function Teleportation_() { return !!game.u?.formprops?.Teleportation || HProp_tp('HTeleportation') > 0 || HProp_tp('ETeleportation') > 0; }
 function HTeleportation_() { return HProp_tp('HTeleportation'); }
 function ETeleportation_() { return HProp_tp('ETeleportation'); }
 function setHTeleportation_(v) { if (game.u?.uprops) game.u.uprops.HTeleportation = v; }
@@ -1428,7 +1428,7 @@ const I_SPECIAL_TP = 0x20000000;
 function uball_() { return game.u?.uball || null; }
 function uchain_() { return game.u?.uchain || null; }
 function carried_(obj) { return obj?.where === 'invent'; }
-function Stunned_tp() { return !!(game.u?.uprops?.HStun || game.u?.Stunned); }
+function Stunned_tp() { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.HStun || game.u?.Stunned); }
 function HStun_tp() { return HProp_tp('HStun'); }
 function Confusion_tp() { return HProp_tp('HConfusion') > 0; }
 async function make_stunned_tp(_xtime, _talk) { }   /* js/read.js:1538, private */

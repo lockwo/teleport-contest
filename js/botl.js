@@ -414,7 +414,7 @@ function Blind() {
     return (game.u?.blinded | 0) > 0 || !!game.ublindf || upv('BlindedFromForm') > 0;
 }
 function Deaf() { return upv('HDeaf') > 0 || !!game.u?.Deaf; }
-function Stunned() { return upv('Stun') > 0 || !!game.u?.Stunned; }
+function Stunned() { return !!game.u?.formprops?.Stunned || upv('Stun') > 0 || !!game.u?.Stunned; }
 function Confusion() { return upv('Confusion') > 0; }
 function Hallucination() {
     const t = upv('Hallucination') || upv('HHallucination') || (game.u?.uhallu ? 1 : 0);

@@ -3068,6 +3068,7 @@ async function flashburn(duration, _via_lightning) {
 // game.u.uprops (potion.js/cmd.js convention); an unmodelled property reads
 // false, which is what the covered heroes actually have.
 export function Fire_resistance() {
+    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     return !!(u?.uprops?.Fire_resistance || u?.uprops?.HFire_resistance
         || u?.uprops?.EFire_resistance || u?.Fire_resistance
@@ -3075,6 +3076,7 @@ export function Fire_resistance() {
         || (u?.Upolyd && resists_fire(u)));
 }
 export function Cold_resistance() {
+    if (game.u?.formprops?.Cold_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     return !!(u?.uprops?.Cold_resistance || u?.uprops?.HCold_resistance
         || u?.uprops?.ECold_resistance || u?.Cold_resistance
@@ -3082,23 +3084,24 @@ export function Cold_resistance() {
         || (u?.Upolyd && resists_cold(u)));
 }
 function Shock_resistance() {
+    if (game.u?.formprops?.Shock_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     return !!(u?.uprops?.Shock_resistance || u?.uprops?.HShock_resistance
         || u?.uprops?.EShock_resistance || u?.Shock_resistance
         || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
         || (u?.Upolyd && resists_elec(u)));
 }
-function Acid_resistance()  { return (game.u?.uprops?.AcidResistance    || 0) > 0; }
-function Disint_resistance(){ return (game.u?.uprops?.HDisint_resistance|| 0) > 0; }
-function Drain_resistance() { return (game.u?.uprops?.HDrain_resistance || 0) > 0; }
-export function Antimagic() { return !!(game.u?.HAntimagic || game.u?.Antimagic
+function Acid_resistance()  { return !!game.u?.formprops?.Acid_resistance || (game.u?.uprops?.AcidResistance    || 0) > 0; }
+function Disint_resistance(){ return !!game.u?.formprops?.Disint_resistance || (game.u?.uprops?.HDisint_resistance|| 0) > 0; }
+function Drain_resistance() { return !!game.u?.formprops?.Drain_resistance || (game.u?.uprops?.HDrain_resistance || 0) > 0; }
+export function Antimagic() { return !!(game.u?.formprops?.Antimagic || game.u?.HAntimagic || game.u?.Antimagic
                                         || game.u?.uprops?.HAntimagic
                                         || worn_extrinsic(ANTIMAGIC)); }
 function Half_spell_damage(){ return (game.u?.uprops?.HHalf_spell_damage|| 0) > 0; }
 function Unchanging()       { return (game.u?.uprops?.HUnchanging       || 0) > 0; }
 function Invis()            { return !!(game.u?.uprops?.HInvis); }
-function Teleport_control() { return (game.u?.uprops?.HTeleport_control || 0) > 0; }
-function Stunned()          { return !!(game.u?.uprops?.Stun || game.u?.Stunned); }
+function Teleport_control() { return !!game.u?.formprops?.Teleport_control || (game.u?.uprops?.HTeleport_control || 0) > 0; }
+function Stunned()          { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.Stun || game.u?.Stunned); }
 // C ref: hack.h dist2(x0,y0,x1,y1).
 function dist2(x0, y0, x1, y1) { return (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0); }
 
@@ -3109,6 +3112,7 @@ function dist2(x0, y0, x1, y1) { return (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 
 // the same pattern potion.js/artifact.js/fountain.js/explode.js already use
 // for their own H<Prop> reads.
 export function Sleep_resistance() {
+    if (game.u?.formprops?.Sleep_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return (game.u?.uprops?.SleepResistance || 0) > 0
         || has_innate('HSleep_resistance');
 }

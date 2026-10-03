@@ -1431,7 +1431,7 @@ function is_youmonst_mm(mon) {
     return mon === YOUMONST || mon === game.youmonst || mon?.isyou === true;
 }
 // C ref: you.h Passes_walls — the hero's intrinsic/extrinsic wall-walking.
-function Passes_walls_u() { return !!game.u?.uprops?.Passes_walls; }
+function Passes_walls_u() { return !!game.u?.formprops?.Passes_walls || !!game.u?.uprops?.Passes_walls; }
 // C ref: rm.h closed_door(x, y) — IS_DOOR && (D_CLOSED | D_LOCKED).
 function closed_door_mm(x, y) {
     const loc = game.level?.at(x, y);
@@ -1655,7 +1655,7 @@ function pm_to_cham_mm(mon) {
     return (p?.pmidx != null) ? pm_to_cham(p.pmidx) : NON_PM;
 }
 // C ref: you.h Antimagic / Unchanging.
-function Antimagic_u() { return !!game.u?.uprops?.Antimagic; }
+function Antimagic_u() { return !!game.u?.formprops?.Antimagic || !!game.u?.uprops?.Antimagic; }
 function Unchanging_u() { return !!game.u?.uprops?.Unchanging; }
 async function you_were_mm() {
     const { you_were } = await import('./polyself.js');
