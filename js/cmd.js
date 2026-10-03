@@ -1143,7 +1143,11 @@ export async function rhack(key) {
     // so it must resolve through the table even when number_pad is off
     // (reachable via readchar_core()'s altmeta ESC-combining, or a literal
     // Meta keypress).
-    if ((numpad_active(Cmd) || (key & 0x80) !== 0)
+    // C ref: cmd.c:2772 commands_init() bind_key('-', "fight", FALSE) — '-' is
+    // the #fight prefix in BOTH number_pad modes and reset_commands() never
+    // rebinds it, so it must resolve through the table here too; the alphabetic
+    // chain below has no '-' branch and answered "Unknown command '-'.".
+    if ((numpad_active(Cmd) || (key & 0x80) !== 0 || key === 0x2d)
         && !game._modal_screen && npExt === null && npBad === null
         && key !== 0 && key !== 27 && key !== 0xff) {
         const res = numpad_resolve(Cmd, key);
