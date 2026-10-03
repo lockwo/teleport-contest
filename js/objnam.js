@@ -37,6 +37,8 @@ import { peek_timer as timeout_peek_timer } from './timeout.js';
 import { noit_mon_nam as dn_noit_mon_nam } from './do_name.js';
 import { record_price_quote as oi_record_price_quote, append_price_quote as oi_append_price_quote } from './o_init.js';
 import { CapitalMon } from './rumors.js';
+import { tshirt_text as rd_tshirt_text, apron_text as rd_apron_text,
+         candy_wrapper_text as rd_candy_wrapper_text, hawaiian_motif as rd_hawaiian_motif } from './read.js';
 import { P_BOW, P_CROSSBOW, P_DART, P_SHURIKEN, P_BOOMERANG } from './const.js';
 
 // Additional imports used only by the objnam.c naming core appended at the end
@@ -1887,10 +1889,10 @@ export function add_erosion_words(obj, prefix) {
 
 /* end-of-game readable text: js/read.js owns the live tshirt/apron/candy/
    Hawaiian text (it reaches this file through artifact.js). */
-function tshirt_text(_obj) { return ''; }
-function apron_text(_obj) { return ''; }
-function candy_wrapper_text(_obj) { return ''; }
-function hawaiian_motif(_obj) { return 'floral'; }
+function tshirt_text(obj) { return rd_tshirt_text(obj); }
+function apron_text(obj) { return rd_apron_text(obj); }
+function candy_wrapper_text(obj) { return rd_candy_wrapper_text(obj); }
+function hawaiian_motif(obj) { return rd_hawaiian_motif(obj); }
 
 /* objnam.c gx.xnamep — start of the obuf xname()/corpse_xname() is filling. */
 const gx = { xnamep: null };

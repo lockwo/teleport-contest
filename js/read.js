@@ -1810,11 +1810,16 @@ export async function doread() {
         }
         bump_literate(`became literate by reading ${
             otyp === T_SHIRT ? 'a T-shirt' : 'an apron'}`);
-        // (tshirt_text()/apron_text()'s message tables aren't ported; both are
-        // o_id-indexed, so no RNG is lost — only the quoted line is wrong.)
-        if (game.flags?.verbose !== false)
+        // C ref: read.c:402 — tshirt_text()/apron_text(), ending punctuation
+        // added only when verbose.
+        const mesg = (otyp === T_SHIRT) ? tshirt_text(scroll) : apron_text(scroll);
+        let endpunct = '';
+        if (game.flags?.verbose !== false) {
+            if (mesg.length > 0 && !'.!?'.includes(mesg[mesg.length - 1]))
+                endpunct = '.';
             await pline('It reads:');
-        await pline('""');
+        }
+        await pline(`"${mesg}"${endpunct}`);
         return ECMD_TIME;
     }
     if ((otyp === DUNCE_CAP || otyp === CORNUTHAUM) && Role_if_tourist()) {
