@@ -1,11 +1,9 @@
 // read.js — reading scrolls and spellbooks.
 // C ref: read.c.  Ports the 'r' command entry (doread), the scroll dispatch
 // (seffects) and spellbook reading (study_book, in spell.js).
-// Still unported in seffects(): SCR_CHARGING — it needs recharge(), which
-// does not exist yet in the port (getobj("charge") + a real wand/tool
-// recharge effect).  SCR_GENOCIDE, SCR_STINKING_CLOUD and the two detection
-// scrolls are wired below to their already-ported seffect_*/do_*/food_detect/
-// trap_detect helpers.
+// Charging scrolls use read.c recharge() below for wands and chargeable tools.
+// SCR_GENOCIDE, SCR_STINKING_CLOUD and the two detection scrolls are wired to
+// their already-ported seffect_*/do_*/food_detect/trap_detect helpers.
 // SCR_FIRE and SCR_EARTH used to be listed here and were NOT unported at all:
 // seffect_fire()/seffect_earth() and drop_boulder_on_player/monster() were
 // fully written, just missing their `case` arms in the switch below.
@@ -32,7 +30,11 @@ import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          BALL_CLASS, CHAIN_CLASS, HEAVY_IRON_BALL, mkobj, place_object,
          WEAPON_CLASS, ARMOR_CLASS, TOOL_CLASS, COIN_CLASS, WAND_CLASS,
          POTION_CLASS, RING_CLASS, objects, mksobj,
-         bless, curse, uncurse, blessorcurse, weight } from './mkobj.js';
+         bless, curse, uncurse, blessorcurse, weight,
+         WAN_WISHING, CRYSTAL_BALL, TINNING_KIT,
+         EXPENSIVE_CAMERA, BELL_OF_OPENING, HORN_OF_PLENTY, BAG_OF_TRICKS,
+         MAGIC_FLUTE, MAGIC_HARP, FROST_HORN, FIRE_HORN,
+         DRUM_OF_EARTHQUAKE } from './mkobj.js';
 import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          ERODE_NONE, EF_PAY, EF_DESTROY, ER_NOTHING, ER_DESTROYED,
          COLNO, ROWNO, SPE_LIM,
@@ -2700,11 +2702,102 @@ export function charge_ok(obj) {
 // C's `*sobjp = 0` path (the scroll is used up inside, before the getobj), so
 // the caller must skip its own discover/useup handling.
 //
-// BLOCKER: read.c:729 recharge(obj, curse_bless) is NOT ported anywhere in js/
-// (artifact.js:480 registers it as a null hook).  It is the whole RNG payload
-// of the non-confused arm — rn2/rnd per object class plus wand_explode() — so
-// the call site below is left as a comment rather than a silent stub: wiring
-// this seffect in requires porting recharge() first.
+// C ref: read.c:729 recharge(obj, curse_bless) — shared by the charging scroll
+// and wand of charging.  Wands and all chargeable tools preserve C's draw order.
+export async function recharge(obj, curse_bless) {
+    const cursed = curse_bless < 0, blessed = curse_bless > 0;
+    let n;
+    if (obj.oclass === WAND_CLASS) {
+        const lim = obj.otyp === WAN_WISHING ? 1
+            : (objects[obj.otyp]?.dir !== 1 /* NODIR */ ? 8 : 15);
+        if (obj.spe === -1) obj.spe = 0;
+        n = obj.recharged | 0;
+        if (n > 0 && (obj.otyp === WAN_WISHING || n * n * n > rn2(343))) {
+            const Z = await import('./zap.js');
+            await Z.wand_explode(obj, rnd(lim));
+            return;
+        }
+        obj.recharged = n + 1;
+        if (cursed) await stripspe(obj);
+        else {
+            n = lim === 1 ? 1 : rn1(5, lim - 4);
+            if (!blessed) n = rnd(n);
+            obj.spe = obj.spe < n ? n : obj.spe + 1;
+            if (obj.otyp === WAN_WISHING && obj.spe > 3) {
+                const Z = await import('./zap.js');
+                await Z.wand_explode(obj, 1);
+                return;
+            }
+            if (lim === 1) await p_glow3(obj, 'blue');
+            else if (obj.spe >= lim) await p_glow2(obj, 'blue');
+            else await p_glow1(obj);
+        }
+    } else if (obj.oclass === TOOL_CLASS) {
+        const oldrecharged = obj.recharged | 0;
+        if (oc_charged(obj.otyp) && oldrecharged < 7)
+            obj.recharged = oldrecharged + 1;
+        if (obj.otyp === BELL_OF_OPENING) {
+            if (cursed) await stripspe(obj);
+            else obj.spe = Math.min(5, obj.spe + (blessed ? rnd(3) : 1));
+        } else if ([MAGIC_MARKER, TINNING_KIT, EXPENSIVE_CAMERA].includes(obj.otyp)) {
+            if (cursed) await stripspe(obj);
+            else if (oldrecharged && obj.otyp === MAGIC_MARKER) {
+                obj.recharged = 1;
+                await pline_append(obj.spe < 3
+                    ? 'Your marker seems permanently dried out.' : NOTHING_HAPPENS);
+            } else {
+                n = blessed ? rn1(16, 15) : rn1(11, 10);
+                obj.spe = blessed
+                    ? (obj.spe + n <= 50 ? 50 : obj.spe + n <= 75 ? 75
+                        : Math.min(obj.spe + n, 127))
+                    : (obj.spe + n <= 50 ? 50 : Math.min(obj.spe + n, SPE_LIM));
+                await p_glow2(obj, blessed ? 'blue' : 'white');
+            }
+        } else if (obj.otyp === OIL_LAMP || obj.otyp === BRASS_LANTERN) {
+            if (cursed) {
+                await stripspe(obj);
+                if (obj.lamplit) { obj.lamplit = 0; obj.age = 0; }
+            } else if (blessed) {
+                obj.spe = 1; obj.age = 1500;
+                await p_glow2(obj, 'blue');
+            } else {
+                obj.spe = 1; obj.age = Math.min(1500, (obj.age || 0) + 750);
+                await p_glow1(obj);
+            }
+        } else if (obj.otyp === CRYSTAL_BALL) {
+            if (obj.spe === -1) obj.spe = 0;
+            if (cursed) {
+                if (!obj.cursed) { await p_glow2(obj, 'black'); curse(obj); }
+                else await pline_append(`${Yobjnam2_wep(obj, 'vibrate')} briefly.`);
+                obj.spe = 0;
+            } else if (blessed) {
+                obj.spe = 7; await p_glow2(obj, obj.blessed ? 'blue' : 'light blue');
+                bless(obj);
+            } else if (obj.spe < 7 || obj.cursed) {
+                n = rnd(2); obj.spe = Math.min(obj.spe + n, 7);
+                if (obj.cursed) { await p_glow2(obj, 'amber'); uncurse(obj); }
+                else await p_glow1(obj);
+            } else await pline_append(NOTHING_HAPPENS);
+        } else if ([HORN_OF_PLENTY, BAG_OF_TRICKS, CAN_OF_GREASE].includes(obj.otyp)) {
+            if (cursed) await stripspe(obj);
+            else {
+                obj.spe += blessed ? rn1(obj.spe <= 10 ? 10 : 5, 6) : rn1(5, 2);
+                obj.spe = Math.min(obj.spe, 50);
+                if (blessed) await p_glow2(obj, 'blue'); else await p_glow1(obj);
+            }
+        } else if ([MAGIC_FLUTE, MAGIC_HARP, FROST_HORN, FIRE_HORN,
+                    DRUM_OF_EARTHQUAKE].includes(obj.otyp)) {
+            if (cursed) await stripspe(obj);
+            else {
+                obj.spe = Math.min(obj.spe + (blessed ? d(2, 4) : rnd(4)), 20);
+                if (blessed) await p_glow2(obj, 'blue'); else await p_glow1(obj);
+            }
+        } else await pline_append('You have a feeling of loss.');
+    } else {
+        await pline_append('You have a feeling of loss.');
+    }
+    cap_spe(obj);
+}
 export async function seffect_charging(sobj) {
     const otyp = sobj.otyp;
     const sblessed = !!sobj.blessed;
@@ -2744,10 +2837,8 @@ export async function seffect_charging(sobj) {
     // getobj()-cancellation flag js/invent.js just set, or the read's key
     // would wrongly be dropped from CQ_REPEAT (js/cmd.js consumes the flag).
     if (game.context) game.context._getobj_cancelled = false;
-    if (otmp) {
-        // C: recharge(otmp, scursed ? -1 : sblessed ? 1 : 0);
-        void otmp;
-    }
+    if (otmp)
+        await recharge(otmp, scursed ? -1 : sblessed ? 1 : 0);
     return true;                       /* *sobjp = 0 */
 }
 
