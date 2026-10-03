@@ -16,7 +16,7 @@ import {
     obj_doname, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
     name_inventory_object, call_inventory_object, doorganize,
     addinv, prinv, prinv_fmt, let_to_name, report_merge_discovery,
-    wiz_identify, renderWindowScreen, renderMenuLines, useup, xname,
+    wiz_identify, renderWindowScreen, renderMenuLines, select_command_menu, useup, xname,
     doattributes, dodrop, doremring, dotravel_target, dopay, doperminv,
     dopickup, doputon, dowieldquiver, dothrow, dotravel, dowear, dowield,
     doprinuse, dofire, ddoinv, dotypeinv, dodiscovered, dolook, doswapweapon,
@@ -27,7 +27,7 @@ import { pluslvl, losexp } from './exper.js';
 import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
          QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
-         D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE } from './const.js';
+         D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE, TIMEOUT } from './const.js';
 import { mon_mr } from './monmr_data.js';
 import { is_undead_flag, is_demon_flag, humanoid, nohands } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
@@ -35,7 +35,8 @@ import { align_gname } from './role.js';
 import { map_invisible, doredraw } from './display.js';
 import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { delobj, stackobj, doddrop, yname } from './invent.js';
+import { delobj, stackobj, doddrop, yname, ysimple_name,
+         flush_addinv_plines } from './invent.js';
 import { count_unpaid, is_worn, wearing_armor, inventoryArray, takeoff_worn_obj,
          dismiss_invent_screen } from './invent.js';
 import { exercise } from './attrib.js';
@@ -50,7 +51,7 @@ import { dorub, dowipe, doapply, ECMD as APPLY_ECMD } from './apply.js';
 import { readobjnam } from './readobjnam.js';
 import { hold_another_object, encumber_msg, objects_at, otense, will_feel_cockatrice,
          feel_cockatrice, obj_extract_self } from './invent.js';
-import { cxname, The, thesimpleoname, minimal_xname } from './objnam.js';
+import { cxname, The, thesimpleoname } from './objnam.js';
 import { artifact_origin } from './artifact.js';
 import { ONAME_WISH, ONAME_KNOW_ARTI, IRONBARS, ICE, Is_airlevel,
          Is_waterlevel } from './const.js';
@@ -82,7 +83,7 @@ import { polymon, newman, domonability, PM_HUMAN } from './polyself.js';
 import { obj_resists, dozap, wishcmdassist, wish_history_add } from './zap.js';
 import { timed_prop, wiz_timeout_queue } from './timeout.js';
 import { dobugreport } from './report.js';
-import { docast } from './spell.js';
+import { docast, dowizcast } from './spell.js';
 import { dodown, doup } from './do.js';
 import { doengrave } from './engrave.js';
 import { dotogglepickup } from './options.js';
@@ -1648,14 +1649,8 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     game._modal_screen = 'container';
 }
 
-// C ref: objnam.c ysimple_name() — shk_your() + minimal_xname().  yname() is
-// shk_your() + cxname(), so its ownership prefix ("your ", "the ",
-// "Eed-morra's ") is reused rather than re-deriving shop/monster ownership.
-function ysimple_name_c(obj) {
-    const full = yname(obj), cx = cxname(obj);
-    const prefix = full.endsWith(cx) ? full.slice(0, full.length - cx.length) : '';
-    return prefix + minimal_xname(obj);
-}
+// C ref: hacklib.c upstart().
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 // C ref: objnam.c safe_qbuf() — "<prefix><name><suffix>", falling back to the
 // shorter name and then `lastR` when the result would not fit in QBUFSZ - 1.
@@ -1682,10 +1677,10 @@ function render_in_or_out_menu(box, outokay, inokay, alreadyused, more_container
     // which also hides the o/b entries), Yname2()/Ysimple_name2() with " is
     // empty.  Do what with it?" (two spaces after the period).
     const title = outokay
-        ? loot_safe_qbuf('Do what with ', '?', box, yname, ysimple_name_c, 'it')
+        ? loot_safe_qbuf('Do what with ', '?', box, yname, ysimple_name, 'it')
         : loot_safe_qbuf('', ' is empty.  Do what with it?', box,
                          (o) => capitalize(yname(o)),
-                         (o) => capitalize(ysimple_name_c(o)), 'This');
+                         (o) => capitalize(ysimple_name(o)), 'This');
     // C ref: menuselector = flags.lootabc ? abc_chars : lootchars.  With the
     // 'lootabc' option on, the entries are lettered a/b/c/d/e in place of the
     // mnemonic o/i/b/r/s.  a.a_int (1..8) indexes the selector; element [0]
@@ -1845,7 +1840,7 @@ async function use_container(box, more_containers) {
     const loot_in_first = (action === 'r');
     // C ref: use_container() emptymsg — Ysimple_name2(): "Your bag" for a
     // carried container, "The chest" (or "<Shk>'s chest") for one on the floor.
-    const emptymsg = `${capitalize(ysimple_name_c(box))} is empty.`;
+    const emptymsg = `${capitalize(ysimple_name(box))} is empty.`;
     const do_out = async () => {
         if (box.cobj && box.cobj.length) {
             if (await menu_loot_out(box)) used = 1;
@@ -2262,6 +2257,7 @@ async function menu_loot_out(box) {
         obj.where = 'free';
         box.owt = weight(box);
         const otmp = addinv(obj);
+        await flush_addinv_plines();
         await report_merge_discovery();
         // No encumbrance change here, so pickup_prinv's load prefix is absent.
         // prinv_fmt() renders "<letter> - <name>." without touching the topline
@@ -3197,6 +3193,7 @@ const HANDLERS = {
     wizgenesis: wiz_genesis,
     wizidentify: wiz_identify_extcmd,
     wizintrinsic: wiz_intrinsic,
+    wizcast: dowizcast,
     overview: dooverview,
     version: doextversion,
     quit: doquit_extcmd,
@@ -4047,68 +4044,13 @@ function wizIntrinsicEntries() {
     return entries;
 }
 
-// C ref: win/tty/wintty.c process_menu_window() — a multi-page NHW_MENU:
-// lmax == min(52, rows-1) == 23 lines per page, accelerators restart at 'a' on
-// every page and are only spent on selectable entries, the morestr is
-// "(N of M)", and a selected entry's '-' marker becomes '+' (set_item_state;
-// '#' when a count was given, which this port does not model).
-async function wizIntrinsicMenu(entries) {
-    const rows = game.nhDisplay?.rows ?? 24;
-    const lmax = Math.min(52, rows - 1);
-    const npages = Math.ceil(entries.length / lmax) || 1;
-    for (let i = 0; i < entries.length; i++) {
-        if (i % lmax === 0) var acc = 97;                              // 'a'
-        if (entries[i].item) {
-            entries[i].item.sel = String.fromCharCode(acc);
-            acc = (acc === 122) ? 65 : acc + 1;                        // z -> A
-        }
-    }
-    let page = 0;
-    for (;;) {
-        const pageEntries = entries.slice(page * lmax, (page + 1) * lmax);
-        renderWindowScreen(pageEntries.map((e) => ({
-            text: e.item ? `${e.item.sel} ${e.item.selected ? '+' : '-'} ${e.text}` : e.text,
-            attr: e.attr,
-        })), {
-            menu: true,
-            footer: npages > 1 ? `(${page + 1} of ${npages})` : '(end)',
-            footerRow: pageEntries.length,
-            footerCol: 1,
-            modal: 'wizintwin',
-        });
-        const c = await nhgetch();
-        const ch = String.fromCharCode(c);
-        const hit = pageEntries.find((e) => e.item && e.item.sel === ch);
-        if (hit) { hit.item.selected = !hit.item.selected; continue; }
-        if (c === 27) return false;                                    // cancel
-        if (c === 13 || c === 10) return true;                         // commit
-        if (ch === ' ' || ch === '>') {
-            if (page < npages - 1) page++;
-            else if (ch === ' ') return true;   // ' ' finishes, '>' does not
-            continue;
-        }
-        if (ch === '<') { if (page > 0) page--; continue; }
-        if (ch === '^') { page = 0; continue; }
-        if (ch === '|') { page = npages - 1; continue; }
-        if (ch === ',') { for (const e of pageEntries) if (e.item) e.item.selected = true; continue; }
-        if (ch === '\\') { for (const e of pageEntries) if (e.item) e.item.selected = false; continue; }
-        if (ch === '~') { for (const e of pageEntries) if (e.item) e.item.selected = !e.item.selected; continue; }
-        if (ch === '.') { for (const e of entries) if (e.item) e.item.selected = true; continue; }
-        if (ch === '-') { for (const e of entries) if (e.item) e.item.selected = false; continue; }
-        if (ch === '@') { for (const e of entries) if (e.item) e.item.selected = !e.item.selected; continue; }
-        // Digits start a count (which would override DEFAULT_TIMEOUT_INCR) and
-        // ':' opens a search prompt; neither is modelled.  Any other key rings
-        // the bell and leaves the page up.
-    }
-}
-
 // C ref: wizcmds.c wiz_intrinsic() — a PICK_ANY menu of every timeable
 // property; each pick adds DEFAULT_TIMEOUT_INCR to its intrinsic timeout and
 // plines "Timeout for <prop> set to/increased by N.".
 async function wiz_intrinsic() {
     const entries = wizIntrinsicEntries();
-    const committed = await wizIntrinsicMenu(entries);
-    delete game._modal_screen;
+    const committed = await select_command_menu(entries);
+    await dismiss_invent_screen();
     if (!committed) {
         // ESC deselects everything and cancels; the map is repainted.
         await flush_screen(1);
@@ -4122,7 +4064,9 @@ async function wiz_intrinsic() {
         if (!it || !it.selected) continue;
         const slot = timed_prop(it.propId);
         const oldtimeout = slot ? (slot.get(u) || 0) : (u.uprops[it.key] || 0);
-        let newtimeout = oldtimeout + DEFAULT_TIMEOUT_INCR;
+        const amount = it.count == null || it.count === -1 ? DEFAULT_TIMEOUT_INCR : it.count | 0;
+        if (amount <= 0) continue;
+        let newtimeout = Math.min(oldtimeout + amount, TIMEOUT);
         // C: SICK/SLIMED/STONED never have their existing timeout extended.
         if ((it.propId === 'SICK' || it.propId === 'SLIMED' || it.propId === 'STONED')
             && oldtimeout > 0 && newtimeout > oldtimeout)
@@ -4142,11 +4086,45 @@ async function wiz_intrinsic() {
             await make_blinded_hero(newtimeout, true);
             continue;
         }
-        if (slot) slot.set(u, newtimeout); else u.uprops[it.key] = newtimeout;
+        const potion = await import('./potion.js');
+        switch (it.propId) {
+        case 'DEAF':
+            await potion.make_deaf(newtimeout, true);
+            continue;
+        case 'SICK':
+            await potion.make_sick(newtimeout, '#wizintrinsic', true, rn2(2) ? 2 : 1);
+            continue;
+        case 'SLIMED':
+            await potion.make_slimed(newtimeout, `You are${oldtimeout ? ' still' : ''} turning into slime.`);
+            continue;
+        case 'STONED': {
+            const { KILLED_BY } = await import('./const.js');
+            await potion.make_stoned(newtimeout, `You are${oldtimeout ? ' still' : ''} turning into stone.`,
+                                     KILLED_BY, '#wizintrinsic');
+            continue;
+        }
+        case 'STUNNED':
+            await (await import('./mhitu.js')).make_stunned_u(newtimeout);
+            continue;
+        case 'VOMITING':
+            await potion.make_vomiting(newtimeout, false);
+            await update_topl(`You are${oldtimeout ? ' still' : ''} vomiting.`);
+            continue;
+        case 'GLIB':
+            await potion.make_glib(newtimeout);
+            break;
+        default:
+            if (slot) slot.set(u, newtimeout); else u.uprops[it.key] = newtimeout;
+            break;
+        }
         game.botl = true;
         // update_topl, not pline: the two "Timeout for ..." lines share one
         // topline (C update_topl appends with two spaces while it fits).
-        await update_topl(`Timeout for ${it.name} ${oldtimeout ? 'increased by' : 'set to'} ${DEFAULT_TIMEOUT_INCR}.`);
+        await update_topl(`Timeout for ${it.name} ${oldtimeout ? 'increased by' : 'set to'} ${amount}.`);
+        if (it.propId === 'LEVITATION' || it.propId === 'FLYING')
+            (await import('./polyself.js')).float_vs_flight();
+        else if (it.propId === 'PROT_FROM_SHAPE_CHANGERS')
+            await (await import('./mon.js')).rescham();
     }
     // C ref: display.c docrt():1727 — `if (u.uswallow) { swallowed(1); goto
     // post_map; }`, skipping cls()/the message flush entirely.  This is a

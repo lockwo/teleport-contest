@@ -2710,8 +2710,7 @@ function donning(obj) {
     return doffing(obj) || (!!obj && game._dressing_obj === obj && !game._dressing_off);
 }
 /* youprop.h Glib — slippery fingers (js/botl.js:365 reads the same property) */
-function Glib() { return (game.u?.uprops?.Glib?.intrinsic | 0) > 0
-    || (game.u?.Glib | 0) > 0; }
+function Glib() { return (game.u?.uprops?.Glib | 0) > 0; }
 /* you.h:564 URIGHTY == (u.uhandedness == RIGHT_HANDED(0)); u_init.c sets
    uhandedness with rn2(10) at chargen (see js/bones.js:1066) */
 function URIGHTY() { return !game.u?.uleft_handed; }

@@ -1200,22 +1200,12 @@ export { spellid, spellev, spellknow };
 //    studying occupation rather than through a go.occupation function pointer).
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── C ref: windows.c create_nhwindow(NHW_MENU) / start_menu / add_menu /
-// add_menu_heading / add_menu_str / end_menu / select_menu / destroy_nhwindow.
-// This port has no generic menu-window layer (invent.js and
-// extcmd-handlers.js each keep a private tty renderer instead), so — as
-// js/topten.js does with putstr() — the primitives below record into a plain
-// object and select_menu() reports "nothing picked" until a wiring pass
-// installs a driver.  Every add_menu() string handed to them is C's verbatim,
-// so a driver only has to render `win.items` and answer with the picked
-// `item` values.
+// C ref: windows.c menu-window primitives. Keep the C item identifiers in the
+// builder, then use the same tty selection and dismissal path as other menus.
 const ATR_NONE = 0, ATR_INVERSE = 7; // C ref: include/color.h ATR_*
 const NO_COLOR = 8;                  // C ref: include/color.h
 const PICK_NONE = 0, PICK_ONE = 1;   // C ref: include/wintype.h
 const MENU_ITEMFLAGS_NONE = 0x0, MENU_ITEMFLAGS_SELECTED = 0x1;
-let sm_driver = null;
-/* Install the select_menu() driver: (win, how) -> [{ item }, ...]. */
-export function set_spellmenu_driver(fn) { sm_driver = fn || null; }
 function create_nhwindow_menu() { return { items: [], prompt: '' }; }
 function start_menu(win) { win.items.length = 0; }
 function add_menu(win, a_int, ch, gch, attr, clr, str, itemflags) {
@@ -1231,9 +1221,28 @@ function add_menu_str(win, str) {
 }
 function end_menu(win, prompt) { win.prompt = prompt ?? ''; }
 async function select_menu(win, how) {
-    return sm_driver ? (await sm_driver(win, how)) || [] : [];
+    const { select_command_menu, dismiss_invent_screen } = await import('./invent.js');
+    const { ATR_INVERSE: inverse } = await import('./terminal.js');
+    const entries = [
+        ...(win.prompt ? [{ text: win.prompt, attr: inverse }, { text: '', attr: 0 }] : []),
+        ...win.items.map((it) => ({
+            text: it.str,
+            attr: it.attr === ATR_INVERSE ? inverse : 0,
+            item: it.a_int ? {
+                value: it.a_int,
+                sel: it.ch || undefined,
+                selected: !!(it.itemflags & MENU_ITEMFLAGS_SELECTED),
+                count: -1,
+            } : undefined,
+        })),
+    ];
+    const committed = await select_command_menu(entries, { how });
+    const selected = committed
+        ? entries.filter((e) => e.item?.selected).map((e) => ({ item: e.item.value, count: e.item.count }))
+        : [];
+    await dismiss_invent_screen();
+    return selected;
 }
-function destroy_nhwindow(_win) {}
 
 // ── C ref: display.c tmp_at() / display.h cmap_to_glyph() / zapdir_to_glyph()
 // and windows.c nh_delay_output().  The temporary-glyph animation layer has no
@@ -1551,7 +1560,6 @@ export async function dowizcast() {
     }
     end_menu(win, 'Cast which spell?');
     const selected = await select_menu(win, PICK_ONE);
-    destroy_nhwindow(win);
     if (selected.length > 0) {
         i = selected[0].item;
         return await spelleffects(i, false, true);
@@ -2170,7 +2178,6 @@ export async function spellsortmenu() {
     end_menu(tmpwin, 'View known spells list sorted');
 
     const selected = await select_menu(tmpwin, PICK_ONE);
-    destroy_nhwindow(tmpwin);
     n = selected.length;
     if (n > 0) {
         choice = selected[0].item - 1;
@@ -2267,7 +2274,6 @@ export async function dospellmenu(prompt, splaction, spell_no) {
     end_menu(tmpwin, prompt);
 
     const selected = await select_menu(tmpwin, how);
-    destroy_nhwindow(tmpwin);
     n = selected.length;
     if (n > 0) {
         spell_no.value = selected[0].item - 1;

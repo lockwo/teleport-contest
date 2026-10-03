@@ -5097,6 +5097,8 @@ async function domove_swap_with_pet(mtmp, x, y) {
     // monster still knows where the hero is
     mtmp.mux = u.ux;
     mtmp.muy = u.uy;
+    newsym(x, y);
+    newsym(u.ux0, u.uy0);
 
     // C: You("%s %s.", mpeaceful ? "swap places with" : "frighten",
     //        x_monnam(mtmp, ARTICLE_YOUR, ..., SUPPRESS_SADDLE, FALSE));

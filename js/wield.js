@@ -62,7 +62,7 @@ function Upolyd() { return !!game.u?.Upolyd; }
 // js/do_wear.js:215 uses).
 function Glib() {
     const u = game.u || {};
-    return ((u.Glib | 0) > 0) || ((u.uprops?.Glib | 0) > 0) || ((u.uprops?.HGlib | 0) > 0);
+    return (u.uprops?.Glib | 0) > 0;
 }
 
 // C ref: obj.h carried(o) == (o->where == OBJ_INVENT).  js/invent.js:261 spells

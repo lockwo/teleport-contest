@@ -678,6 +678,11 @@ export function enlightenment_lines(final = 0, basic = true) {
             else youHave(`a wounded ${sides === LEFT_SIDE ? 'left' : 'right'} leg`);
         }
     }
+    if (up.Glib) {
+        let slippery = `slippery ${fingers_or_gloves(true)}`;
+        if (_wizard()) slippery += ` (${up.Glib & TIMEOUT_MASK})`;
+        youHave(slippery);
+    }
     // C ref: insight.c:1181 — Sleepy (worn/eaten amulet of restful sleep),
     // emitted immediately before the hunger line.  cause_known() is bypassed
     // whenever MAGICENLIGHTENMENT is on, which end-of-game disclosure always is.

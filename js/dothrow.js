@@ -139,7 +139,7 @@ function closed_door(x, y) {
 }
 // C ref: youprop.h Fumbling / Glib.
 function Fumbling() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
-function Glib() { return ((game.u?.Glib || 0) > 0) || ((game.u?.uprops?.Glib || 0) > 0); }
+function Glib() { return (game.u?.uprops?.Glib || 0) > 0; }
 // C ref: role.c Role_if(PM_ARCHEOLOGIST) — role 0 in u_init.c's ordering.
 const PM_ARCHEOLOGIST = 0;
 // C ref: svl.level.objects[x][y] — the top of the floor pile at (x,y).

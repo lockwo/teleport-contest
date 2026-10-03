@@ -7139,11 +7139,12 @@ async function mktrap_room(croom) {
 function mkfount(croom) {
     const pos = { x: 0, y: 0 };
     if (!find_okay_roompos(croom, pos)) return;
+    // The shared terrain setter recounts features, including themed fountains.
+    // Do not increment again: drying the last fountain must disable its sounds.
     if (!set_levltyp_lit(pos.x, pos.y, FOUNTAIN, SET_LIT_NOCHANGE)) return;
     const loc = game.level?.at(pos.x, pos.y);
     if (loc) {
         if (!rn2(7)) loc.blessedftn = 1;
-        game.level.flags.nfountains++;
     }
 }
 
@@ -8073,8 +8074,6 @@ export function mksink(croom) {
     /* Put a sink at m.x, m.y */
     if (!set_levltyp_lit(m.x, m.y, SINK, SET_LIT_NOCHANGE))
         return;
-
-    game.level.flags.nsinks = (game.level.flags.nsinks || 0) + 1;
 }
 
 // ── C names for ports that already exist under a local name ────────────────

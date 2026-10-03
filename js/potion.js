@@ -33,7 +33,7 @@ import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
 import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
          W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
-         COLNO, ROWNO } from './const.js';
+         COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN } from './const.js';
 import { fruitname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
@@ -46,6 +46,7 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { name_to_pmidx, monster_by_pmidx, enexto_spawn, makemon,
          placeOnLevel, pmname_of_pmidx, MGEND_NEUTRAL } from './makemon.js';
 import { object_detect } from './detect.js';
+import { delayed_killer, find_delayed_killer, dealloc_killer } from './end.js';
 
 // C ref: potion.c make_confused(xtime, talk) — set the HConfusion timeout.  The
 // hero's confusion timer lives on game.u.uprops.Confusion (read by isConfused()
@@ -183,17 +184,19 @@ function Role_if_healer() {
 }
 
 // C ref: potion.c make_vomiting(xtime, talk).  No RNG; Unaware suppresses talk.
-async function make_vomiting(xtime, talk) {
+export async function make_vomiting(xtime, talk) {
     const old = HProp('Vomiting');
     uprops().Vomiting = xtime;
+    game.botl = true;
     if (!xtime && old && talk && !Unaware())
         await update_topl('You feel much less nauseated now.');
 }
 
 // C ref: potion.c make_deaf(xtime, talk).  No RNG.
-async function make_deaf(xtime, talk) {
+export async function make_deaf(xtime, talk) {
     const old = HProp('HDeaf');
     uprops().HDeaf = xtime;
+    if ((xtime !== 0) !== (old !== 0)) game.botl = true;
     if (((xtime !== 0) !== (old !== 0)) && talk && !Unaware())
         await update_topl(old ? 'You can hear again.' : 'You are unable to hear anything.');
 }
@@ -203,7 +206,7 @@ async function make_deaf(xtime, talk) {
 // after the update — so curing sickness (xtime 0, type SICK_ALL) draws nothing
 // but *acquiring* it does.
 const SICK_ALL = 0x03; // youprop.h SICK_VOMITABLE | SICK_NONVOMITABLE
-async function make_sick(xtime, _cause, talk, type) {
+export async function make_sick(xtime, cause, talk, type) {
     const u = game.u;
     if (!u) return;
     const old = HProp('Sick');
@@ -216,6 +219,7 @@ async function make_sick(xtime, _cause, talk, type) {
         uprops().Sick = xtime;
         u.usick_type = (u.usick_type | 0) | type;
         u.sick = true;
+        game.botl = true;
     } else if (old && (type & (u.usick_type | 0))) {
         u.usick_type = (u.usick_type | 0) & ~type;
         if (u.usick_type) {
@@ -226,8 +230,16 @@ async function make_sick(xtime, _cause, talk, type) {
             uprops().Sick = 0;
             u.sick = false;
         }
+        game.botl = true;
     }
-    if (HProp('Sick')) exercise(A_CON, false);   // attrib.c:509 rn2(2)
+    const kptr = find_delayed_killer(SICK);
+    if (HProp('Sick')) {
+        exercise(A_CON, false);
+        if (xtime || !old || !kptr)
+            delayed_killer(SICK, cause === '#wizintrinsic' ? KILLED_BY : KILLED_BY_AN, cause);
+    } else {
+        dealloc_killer(kptr);
+    }
 }
 
 // C ref: potion.c make_blinded(xtime, talk).  No RNG of its own; the observable
@@ -1598,7 +1610,7 @@ function dip_hands_ok(obj) {
     return dip_ok(obj);
 }
 // C ref: youprop.h Glib — "slippery fingers" timer.
-function Glib() { return HProp('Glib', 'HGlib') > 0; }
+function Glib() { return HProp('Glib') > 0; }
 
 // C ref: engrave.c can_reach_floor(check_pit=FALSE).  Beyond swallowed /
 // levitating: a hero held by a hugger, an unskilled rider, and a hiding
@@ -1945,10 +1957,10 @@ export function itimeout(val) {
 }
 
 // C ref: potion.c:461 make_glib(xtime) — set or clear "slippery fingers".  The
-// disp.botl flip is `!Glib ^ !!xtime`, i.e. only when the ON/OFF state changes;
+// status invalidation uses C's `!Glib ^ !!xtime` expression;
 // worn gloves get an inventory refresh because their "(being worn)" suffix
-// becomes "(being worn; slippery)".  RNG-free.  js/apply.js:1739 and
-// js/fountain.js:162 each set the timer inline at their own call sites.
+// becomes "(being worn; slippery)". All acquisition and clearing paths use
+// the same u.uprops.Glib timer that nh_timeout() decrements.
 export async function make_glib(xtime) {
     const oldGlib = uprops().Glib | 0;
     if (game.u) {
@@ -1957,9 +1969,8 @@ export async function make_glib(xtime) {
            written rather than "corrected"; the status line is redrawn, nothing
            else reads it. */
         const flip = ((oldGlib ? 0 : 1) ^ (xtime ? 1 : 0)) !== 0;
-        game.u.disp_botl = game.u.disp_botl || flip;
+        game.botl = game.botl || flip;
         uprops().Glib = itimeout(xtime);   /* set_itimeout(&Glib, xtime) */
-        uprops().HGlib = itimeout(xtime);
     }
     /* may change "(being worn)" to "(being worn; slippery)" or vice versa */
     if (game.uarmg) {
@@ -1990,12 +2001,12 @@ export async function make_slimed(xtime, msg) {
 
     uprops().Slimed = itimeout(xtime);          /* set_itimeout(&Slimed, xtime) */
     if ((xtime !== 0) !== (old !== 0)) {
-        u.disp_botl = true;
+        game.botl = true;
         if (msg)
             await update_topl(String(msg));
     }
     if (!uprops().Slimed) {
-        u.delayed_killer_SLIMED = null;         /* dealloc_killer(find_...) */
+        dealloc_killer(find_delayed_killer(SLIMED));
         /* fake appearance is set late in the turn-to-slime countdown */
         const ym = game.youmonst;
         if (ym && ym.m_ap_type === 3 /* M_AP_MONSTER */
@@ -2019,14 +2030,14 @@ export async function make_stoned(xtime, msg, killedby, killername) {
 
     uprops().Stoned = itimeout(xtime);
     if ((xtime !== 0) !== (old !== 0)) {
-        u.disp_botl = true;
+        game.botl = true;
         if (msg)
             await update_topl(String(msg));
     }
     if (!uprops().Stoned)
-        u.delayed_killer_STONED = null;
+        dealloc_killer(find_delayed_killer(STONED));
     else if (!old)
-        u.delayed_killer_STONED = { killedby, killername };
+        delayed_killer(STONED, killedby, killername);
 }
 
 // C ref: potion.c:336 toggle_blindness() — called by Blindf_on/Blindf_off and

@@ -49,7 +49,7 @@ const TRAP_EXPLANATIONS = [
     'bear trap', 'land mine', 'rolling boulder trap', 'sleeping gas trap',
     'rust trap', 'fire trap', 'pit', 'spiked pit', 'hole', 'trap door',
     'teleportation trap', 'level teleporter', 'magic portal', 'web',
-    'statue trap', 'magic trap', 'anti magic trap', 'polymorph trap',
+    'statue trap', 'magic trap', 'anti-magic field', 'polymorph trap',
     'vibrating square', 'trapped door', 'trapped chest',
 ];
 

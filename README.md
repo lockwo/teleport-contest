@@ -86,10 +86,21 @@ then taking on the other 87 sessions.
 The JavaScript port now includes broader native behavior for ring removal and
 worn properties, artifact restrictions and naming, polymorph forms, prayer,
 corpse effects, inventory and container menus, spells, shops, and special levels.
-Fountain and sink placement preserves upstream's feature-counter updates,
-including recounts that discover fountains placed by themed rooms. Repeated
+Fountain and sink placement uses shared terrain recounts, including fountains
+placed by themed rooms, without incrementing the counters twice. Repeated
 stalker-corpse effects preserve permanent intrinsic bits rather than replacing
 them with temporary one-turn values.
+
+Wizard spellcasting and intrinsic selection share paged, searchable menus with
+native count handling. Timed sickness, petrification, slime, deafness, vomiting,
+stun, and slippery fingers use their property-specific setters. Slippery-finger
+acquisition, expiry, equipment checks, and glove descriptions share one timer.
+Equipment slips are processed before timer decay. Message paging retains the
+last published map and status rows. Status-option changes publish new rows
+before their feedback. Pet displacement updates both glyphs before its message.
+Inline auto-wield turns publish the map before the queued throw prompt.
+Water damage transforms scrolls, spellbooks, and potions rather than reporting
+damage without changing the object.
 
 Local differential campaigns compare both revisions against the same native
 recordings and check exact frame masks as well as RNG streams. These targeted

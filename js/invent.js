@@ -2564,6 +2564,114 @@ export function renderMenuLines(flat, cursor = [36, 8]) {
     game._modal_screen = 'invent';
 }
 
+// C ref: win/tty/wintty.c process_menu_window(). Used by command and spell
+// menus, with page-local automatic selectors and counted PICK_ANY selections.
+export async function select_command_menu(entries, { how = PICK_ANY } = {}) {
+    const rows = game.nhDisplay?.rows ?? 24;
+    const lmax = Math.min(52, rows - 1);
+    const npages = Math.ceil(entries.length / lmax) || 1;
+    for (let i = 0; i < entries.length; i++) {
+        if (i % lmax === 0) var acc = 97;                              // 'a'
+        if (entries[i].item) {
+            if (!entries[i].item.sel) {
+                entries[i].item.sel = String.fromCharCode(acc);
+                acc = (acc === 122) ? 65 : acc + 1;
+            }
+        }
+    }
+    let page = 0;
+    let count = 0;
+    let counting = false;
+    let searchBlankTop = false;
+    let paintedPage = -1;
+    for (;;) {
+        if (paintedPage !== page) searchBlankTop = false;
+        paintedPage = page;
+        const pageEntries = entries.slice(page * lmax, (page + 1) * lmax);
+        const lines = pageEntries.map((e) => ({
+            text: e.item ? `${e.item.sel} ${e.item.selected ? (e.item.count > 0 ? '#' : '+') : '-'} ${e.text}` : e.text,
+            attr: e.attr,
+        }));
+        if (npages > 1) {
+            game._menuOffx = 0;
+            renderWindowScreen(lines, {
+                menu: true,
+                footer: `(${page + 1} of ${npages})`,
+                footerRow: pageEntries.length,
+                footerCol: 1,
+                modal: 'commandmenu',
+            });
+        } else {
+            renderMenuLines(lines, null);
+        }
+        if (searchBlankTop) {
+            for (let x = 0; x < game.nhDisplay.cols; x++)
+                game.nhDisplay.setCell(x, 0, ' ', NO_COLOR, 0);
+        }
+        const c = await nhgetch();
+        const ch = String.fromCharCode(c);
+        const hit = pageEntries.find((e) => e.item && e.item.sel === ch);
+        if (ch >= '0' && ch <= '9') {
+            count = count * 10 + (c - 48);
+            counting = count > 0;
+            continue;
+        }
+        if (hit) {
+            if (how === PICK_NONE) continue;
+            hit.item.selected = counting ? count > 0 : !hit.item.selected;
+            hit.item.count = counting ? count : -1;
+            count = 0;
+            counting = false;
+            if (how === PICK_ONE) return true;
+            continue;
+        }
+        if (c === 27 && counting) {
+            count = 0;
+            counting = false;
+            continue;
+        }
+        if (c === 27) return false;                                    // cancel
+        count = 0;
+        counting = false;
+        if (c === 13 || c === 10) return true;                         // commit
+        if (ch === ' ' || ch === '>') {
+            if (page < npages - 1) page++;
+            else if (ch === ' ') return true;   // ' ' finishes, '>' does not
+            continue;
+        }
+        if (ch === '<') { if (page > 0) page--; continue; }
+        if (ch === '^') { page = 0; continue; }
+        if (ch === '|') { page = npages - 1; continue; }
+        if (ch === ':' && how !== PICK_NONE) {
+            const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
+            const reply = await hooked_tty_getlin('Search for:', null);
+            // tty_getlin erases its query row. Item toggles do not repaint
+            // the menu heading until navigation actually changes the page.
+            searchBlankTop = true;
+            if (!reply || reply[0] === '\x1b') continue;
+            for (const e of entries) {
+                if (!e.item || !pmatchi(`*${reply}*`, `${e.item.sel} - ${e.text}`)) continue;
+                e.item.selected = !e.item.selected;
+                e.item.count = -1;
+                if (how === PICK_ONE) return true;
+            }
+            continue;
+        }
+        if (how !== PICK_NONE && [',', '\\', '~', '.', '-', '@'].includes(ch)) {
+            if (how === PICK_ONE && [',', '~', '.', '@'].includes(ch)) continue;
+            const scope = [',', '\\', '~'].includes(ch) ? pageEntries : entries;
+            for (const e of scope) {
+                if (!e.item) continue;
+                e.item.selected = ch === ',' || ch === '.' ? true
+                    : ch === '\\' || ch === '-' ? false : !e.item.selected;
+                if (!e.item.selected) e.item.count = -1;
+            }
+            continue;
+        }
+        // Any other key rings the bell and leaves the page up.
+    }
+}
+
 // C ref: win/tty/wintty.c process_menu_window() — a menu whose entries don't
 // fit on one page is a FULL-SCREEN window (tty_end_menu sets maxrow = lmax+1 ==
 // ttyDisplay->rows, which forces offx back to 0), drawn one page at a time with
@@ -4907,7 +5015,7 @@ async function accessory_or_armor_on(obj) {
             // C ref: do_wear.c accessory_or_armor_on() — slippery gloves burn a
             // turn; cursed gloves and a welded weapon burn one ONLY when the
             // attempt taught the hero that the blocker is cursed (res).
-            if (game.uarmg && game.u?.Glib) {
+            if (game.uarmg && game.u?.uprops?.Glib) {
                 await pline(`Your ${gloves_simple_name(game.uarmg)} are too slippery to remove, so you cannot put on the ring.`);
                 return ECMD_TIME;
             }
@@ -5183,7 +5291,7 @@ export async function curse_blocks_removal(obj) {
         || obj.otyp === LENSES || (obj.quan || 1) > 1;
     // C ref: do_wear.c:1904 — greased hands get their own refusal, and only for
     // the weapon (gloved) or a weapon/ring (bare-handed).
-    if (game.u?.Glib && obj.bknown
+    if (game.u?.uprops?.Glib && obj.bknown
         && (game.uarmg ? (obj === game.uwep)
                        : ((obj.owornmask | 0) & (W_WEP | W_RINGL | W_RINGR)) !== 0))
         await pline(`Despite your slippery ${fingers_or_gloves(true)}, you can't.`);
@@ -5212,9 +5320,9 @@ async function select_off(obj) {
             && (obj === ring_on_primary || bimanual(game.uwep))) {
             buf = `free a weapon ${body_part(6 /*HAND*/)}`;
             why = game.uwep;
-        } else if (game.uarmg && (game.uarmg.cursed || u?.Glib)) {
-            buf = `take off your ${u?.Glib ? 'slippery ' : ''}${gloves_simple_name(game.uarmg)}`;
-            why = u?.Glib ? null : game.uarmg;
+        } else if (game.uarmg && (game.uarmg.cursed || u?.uprops?.Glib)) {
+            buf = `take off your ${u?.uprops?.Glib ? 'slippery ' : ''}${gloves_simple_name(game.uarmg)}`;
+            why = u?.uprops?.Glib ? null : game.uarmg;
         }
         if (buf) {
             await pline(`You cannot ${buf} to remove the ring.`);
@@ -5228,7 +5336,7 @@ async function select_off(obj) {
             await pline(`You are unable to take off your gloves while wielding that ${is_sword(game.uwep) ? 'sword' : 'weapon'}.`);
             if (game.uwep) game.uwep.bknown = 1;
             return false;
-        } else if (u?.Glib) {
+        } else if (u?.uprops?.Glib) {
             await pline(`${game.uarmg.unpaid ? 'The' : 'Your'} ${gloves_simple_name(game.uarmg)} are too slippery to take off.`);
             return false;
         }
@@ -7480,6 +7588,7 @@ export async function dofire(getDir) {
             game.context.move = 0;
             game._cmdqAbandonRetry = false;
             await moveloop_turn();
+            await flush_screen(1);
             // C ref: dothrow.c:568-569 `cmdq_add_ec(doswapweapon);
             // cmdq_add_ec(dofire); return res;` — the requeued dofire is a
             // SEPARATE top-level command that only runs if it's still in the
@@ -7518,6 +7627,7 @@ export async function dofire(getDir) {
                     if ((await doswapweapon()) === ECMD_TIME) {
                         game.context.move = 0;
                         await moveloop_turn();
+                        await flush_screen(1);
                         // C ref: win/tty/topl.c update_topl():257 `skip =
                         // (flags & (WIN_STOP|WIN_NOSTOP)) == WIN_STOP` —
                         // doswapweapon()'s pending secondary-weapon line needs
@@ -7546,6 +7656,7 @@ export async function dofire(getDir) {
                 if ((await dowield()) === ECMD_TIME) {
                     game.context.move = 0;
                     await moveloop_turn();
+                    await flush_screen(1);
                 }
                 obj = game.uquiver;
             }
@@ -9262,17 +9373,21 @@ export async function spell_menu(prompt, nspells, book, meta) {
     // Cursor parks at the start of the "(end)" line content (offx + 6 observed).
     display.setCursor(offx + 6, row);
     game._modal_screen = 'spellmenu';
+    game._menuOffx = winLeft;
 
     for (;;) {
         const c = await nhgetch();
         const ch = String.fromCharCode(c);
         // C ref: wintty.c tty_select_menu() — '\n' and '\r' end the menu exactly
         // like ' '/ESC (MENU_SELECT_PAGE is not bound to them for PICK_ONE).
-        if (c === 27 || c === 32 || c === 10 || c === 13) { delete game._modal_screen; return -1; }
+        if (c === 27 || c === 32 || c === 10 || c === 13) {
+            await dismiss_invent_screen();
+            return -1;
+        }
         const idx = (ch >= 'a' && ch <= 'z') ? ch.charCodeAt(0) - 97
             : (ch >= 'A' && ch <= 'Z') ? ch.charCodeAt(0) - 65 + 26 : -1;
         if (idx >= 0 && idx < nspells) {
-            delete game._modal_screen;
+            await dismiss_invent_screen();
             return idx;
         }
     }
@@ -10968,6 +11083,7 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
     // (captured as its own frame) and the message line is cleared before the
     // "Things that are here:" menu is laid down.
     if (game._toplin === 1) {
+        await flush_screen(1);
         await topl_more();
         game._pending_message = '';
         game._toplin = 0;

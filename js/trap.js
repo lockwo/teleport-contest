@@ -21,10 +21,13 @@ import { Boots_off, stop_donning, hard_helmet, helm_simple_name } from './do_wea
 import { float_vs_flight } from './polyself.js';
 import { is_weptool } from './weapon.js';
 import { is_pool } from './dbridge.js';
+import { cxname } from './objnam.js';
+import { vtense } from './dothrow.js';
+import { get_obj_location } from './light.js';
 import {
     HOLE, TRAPDOOR, SQKY_BOARD, is_hole, In_quest,
     RUST_TRAP, BEAR_TRAP, DART_TRAP, MAGIC_TRAP, PIT, SPIKED_PIT,
-    TT_BEARTRAP, TT_PIT, TT_LAVA, A_DEX, A_STR, A_CON, A_MAX, FOOT, LEG, HEAD, SPINE, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES,
+    TT_BEARTRAP, TT_PIT, TT_LAVA, A_DEX, A_STR, A_CON, A_CHA, A_MAX, FOOT, LEG, HEAD, SPINE, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES,
     RECURSIVETRAP, POLY_NOFLAGS, ICE,
     FORCETRAP, FORCEBUNGLE, TOOKPLUNGE, VIASITTING, FAILEDUNTRAP, HURTLING, FROMOUTSIDE,
     NOWEBMSG, TT_WEB,
@@ -57,7 +60,8 @@ import {
     mkcorpstat, ROCK, ARROW,
     WEAPON_CLASS, ARMOR_CLASS, SCROLL_CLASS, POTION_CLASS, SPBOOK_CLASS,
     POT_WATER, POT_OIL, COIN_CLASS, GEM_CLASS, LOADSTONE, LEASH, uncurse, blessorcurse,
-    WAN_FIRE, FIRE_HORN, SPE_BOOK_OF_THE_DEAD, SCR_BLANK_PAPER, has_omonst,
+    WAN_FIRE, FIRE_HORN, SPE_BOOK_OF_THE_DEAD, SCR_BLANK_PAPER, SPE_BLANK_PAPER,
+    SPE_NOVEL, has_omonst,
 } from './mkobj.js';
 import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx,
          pmname_of_pmidx } from './makemon.js';
@@ -795,10 +799,8 @@ async function water_damage_chain(list, here) {
 export async function water_damage(obj, ostr, force) {
     if (!obj) return ER_NOTHING;
     if (splash_lit(obj)) return ER_DAMAGED;
-    // C: `if (!ostr) ostr = cxname(obj);` — callers that don't already have a
-    // fixed body-slot word (rust trap) leave ostr null and rely on this default
-    // (the CORPSE special case in cxname() isn't reachable via water_damage).
-    if (!ostr) ostr = xname(obj);
+    // C ref: trap.c water_damage() uses the species-aware stack name.
+    if (!ostr) ostr = cxname(obj);
 
     // C ref: trap.c water_damage() — a full can of grease and a not-yet-soaked
     // towel are handled before the greased/container/luck arms.  Neither is
@@ -856,28 +858,49 @@ export async function water_damage(obj, ostr, force) {
 
     switch (obj.oclass) {
     case SCROLL_CLASS:
-        // C blanks the scroll (SCR_BLANK_PAPER already returns 0/ER_NOTHING);
-        // the reached rust/dip sessions don't carry blank scrolls, so damage.
+        if (obj.otyp === SCR_BLANK_PAPER || obj.otyp === SCR_MAIL_OTYP)
+            return ER_NOTHING;
+        if (carried(obj)) await update_topl(`Your ${ostr} ${vtense(ostr, 'fade')}.`);
+        obj.otyp = SCR_BLANK_PAPER;
+        obj.dknown = 0;
+        obj.spe = 0;
+        if (carried(obj)) update_inventory();
         return ER_DAMAGED;
-    case SPBOOK_CLASS:
+    case SPBOOK_CLASS: {
+        const oldotyp = obj.otyp;
+        if (oldotyp === SPE_BOOK_OF_THE_DEAD) {
+            const loc = get_obj_location(obj, 3);
+            if (loc) { obj.ox = loc.x; obj.oy = loc.y; }
+            if (loc && isok(loc.x, loc.y) && cansee(loc.x, loc.y))
+                await update_topl(`Steam rises from ${the_fu(xname(obj))}.`);
+            return ER_NOTHING;
+        }
+        if (oldotyp === SPE_BLANK_PAPER) return ER_NOTHING;
+        if (carried(obj)) await update_topl(`Your ${ostr} ${vtense(ostr, 'fade')}.`);
+        obj.otyp = SPE_BLANK_PAPER;
+        if (obj.spestudied) obj.spestudied = rn2(obj.spestudied);
+        obj.dknown = 0;
+        if (oldotyp === SPE_NOVEL) await (await import('./zap.js')).blank_novel(obj);
+        if (carried(obj)) update_inventory();
         return ER_DAMAGED;
+    }
     case POTION_CLASS:
-        // C ref: potion of acid always explodes; a diluted potion becomes
-        // water; any other non-water potion dilutes one step (ER_DAMAGED); an
-        // undiluted potion of (holy/plain) water is unaffected (ER_NOTHING).
-        // None of these branches consume RNG.
         if (obj.otyp === POT_ACID_OTYP) {
             await pot_acid_damage(obj, carried(obj), false);
             return ER_DESTROYED;
         } else if (obj.odiluted) {
+            if (carried(obj)) await update_topl(`Your ${ostr} ${vtense(ostr, 'dilute')} further.`);
             obj.otyp = POT_WATER;
             obj.dknown = 0;
             obj.blessed = false;
             obj.cursed = false;
             obj.odiluted = 0;
+            if (carried(obj)) update_inventory();
             return ER_DAMAGED;
         } else if (obj.otyp !== POT_WATER) {
+            if (carried(obj)) await update_topl(`Your ${ostr} ${vtense(ostr, 'dilute')}.`);
             obj.odiluted = (obj.odiluted || 0) + 1;
+            if (carried(obj)) update_inventory();
             return ER_DAMAGED;
         }
         return ER_NOTHING; // undiluted water: no effect
@@ -931,32 +954,6 @@ function inventory_resistance_check(_dmgtyp) { return false; }
 // shop billing itself isn't modeled.
 function costly_alteration(_obj, _alter_type) {}
 
-// C ref: objnam.c vtense(subj, verb) — 3rd-person-singular conjugation of
-// `verb`, unless `subj` is a plural-shaped noun ("gloves", "boots", ending in
-// 's' but not "us"/"ss").  Scoped to the plain armor-name strings erode_obj
-// passes here (no "a "/"an " article, no "of"-clause subjects).
-function vtense_sing(verb) {
-    const last = verb[verb.length - 1]?.toLowerCase();
-    const prev = verb.length >= 2 ? verb[verb.length - 2].toLowerCase() : '';
-    if (verb.toLowerCase() === 'are') return 'is';
-    if (verb.toLowerCase() === 'have') return verb.slice(0, -2) + 's';
-    if (last === 'z' || last === 'x' || last === 's'
-        || (verb.length >= 2 && last === 'h' && (prev === 'c' || prev === 's'))
-        || (verb.length === 2 && last === 'o'))
-        return verb + 'es';
-    if (last === 'y' && !'aeiou'.includes(prev))
-        return verb.slice(0, -1) + 'ies';
-    return verb + 's';
-}
-function vtense(subj, verb) {
-    if (subj && !/^(a |an )/i.test(subj)) {
-        const last = subj[subj.length - 1]?.toLowerCase();
-        const prev = subj.length >= 2 ? subj[subj.length - 2].toLowerCase() : '';
-        if (last === 's' && subj.length > 1 && prev !== 'u' && prev !== 's')
-            return verb; // plural-shaped noun ("gloves", "boots"): unchanged
-    }
-    return vtense_sing(verb);
-}
 
 // Unwear a destroyed armor piece: clear whichever hero armor slot references
 // it and its owornmask.  C's remove_worn_item()/Cloak_off()/&c also recompute
@@ -1982,11 +1979,18 @@ async function domagictrap() {
     case 18:
         await pline('You feel tired.');
         break;
-    case 19:
-        // GAP: adjattrib(A_CHA, 1, FALSE) then tamedog() on the 3x3 box.
-        // tamedog() draws (initedog/rn2 pacify rolls) and adjattrib prints
-        // "You feel charismatic!"; neither is available in this port yet.
+    case 19: {
+        await (await import('./attrib.js')).adjattrib(A_CHA, 1, false);
+        const { tamedog } = await import('./dothrow.js');
+        for (let i = -1; i <= 1; i++) {
+            for (let j = -1; j <= 1; j++) {
+                if (!isok(u.ux + i, u.uy + j)) continue;
+                const mon = m_at(u.ux + i, u.uy + j);
+                if (mon) await tamedog(mon, null, true);
+            }
+        }
         break;
+    }
     case 20:
         // C ref: read.c:2200 seffects() — the pseudo object's caller is
         // seffects(&pseudo), not seffect_remove_curse() directly; its

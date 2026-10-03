@@ -228,7 +228,7 @@ function Hallucination() {
 }
 function Glib() {
     const u = game.u || {};
-    return ((u.Glib | 0) > 0) || ((u.uprops?.Glib | 0) > 0) || ((u.uprops?.HGlib | 0) > 0);
+    return (u.uprops?.Glib | 0) > 0;
 }
 // C ref: youprop.h Levitation == (HLevitation || ELevitation), Flying likewise.
 // The EXTRINSIC half is invent.js's worn_extrinsic() store (prop.h
@@ -705,9 +705,7 @@ export async function Gloves_off() {
     /* encumber_msg(): immediate feedback for gauntlets of power; the caller's
        once-per-input encumbrance check covers it. */
     if (Glib()) {
-        const u = u_();
-        u.Glib = 0;
-        if (u.uprops) { u.uprops.Glib = 0; u.uprops.HGlib = 0; }
+        await (await import('./potion.js')).make_glib(0);
     }
     if (game.uwep && game.uwep.otyp === CORPSE)
         await wielding_corpse(game.uwep, gloves, on_purpose);

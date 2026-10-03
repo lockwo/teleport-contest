@@ -1082,8 +1082,12 @@ function applyBooleanToggle(name, turnOn) {
     case 'fixinv': game.flags.invlet_constant = turnOn; break;
     case 'altmeta': (game.iflags = game.iflags || {}).altmeta = turnOn; break;
     case 'cmdassist':  (game.iflags = game.iflags || {}).cmdassist = turnOn; break;
-    case 'showexp':    game.flags.showexp = turnOn; break;
-    case 'time':       game.flags.time = turnOn; break;
+    case 'showexp':
+    case 'showvers':
+    case 'time':
+        game.flags[name] = turnOn;
+        game.botl = true;
+        break;
     case 'verbose':    game.flags.verbose = turnOn; break;
     default:
         game.flags[name] = turnOn;

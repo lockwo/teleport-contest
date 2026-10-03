@@ -957,7 +957,7 @@ async function flip_coin(obj) {
     await _display.pline(`You flip a ${_invent.cxname_singular(obj)}.`);
     let lose_coin = false;
     // Underwater is never true here.  Glib/Fumbling are the other slip causes.
-    const slippery = ((game.u?.Glib || 0) > 0) || ((game.u?.uprops?.Glib || 0) > 0)
+    const slippery = ((game.u?.uprops?.Glib || 0) > 0)
         || ((game.u?.uprops?.Fumbling || 0) > 0);
     if (slippery || (dex < 10 && !rn2(dex))) {
         await _display.pline(`It slips between your ${
@@ -1848,7 +1848,7 @@ function ap_prop(name) {
 function ap_Underwater() { return !!game.u?.uinwater; }
 function ap_Levitation() { return ap_prop('Levitation') > 0; }
 function ap_Fumbling() { return ap_prop('Fumbling') > 0; }
-function ap_Glib() { return ((game.u?.Glib | 0) > 0) || ap_prop('Glib') > 0; }
+function ap_Glib() { return ap_prop('Glib') > 0; }
 function ap_Confusion() { return ((game.u?.uconf | 0) > 0) || ap_prop('Confusion') > 0; }
 function ap_Stunned() { return ((game.u?.ustun | 0) > 0) || ap_prop('Stun') > 0; }
 function ap_Hallucination() {
@@ -2081,14 +2081,6 @@ function ap_set_occupation(_fn, _txt, _xtime) {}
 // bookkeeping, RNG-free, no port.
 function ap_add_damage(_x, _y, _cost) {}
 function ap_use_unpaid_trapobj(_otmp, _x, _y) {}
-// C ref: potion.c make_glib(xtime) — set the slippery-fingers timer.  RNG-free.
-function ap_make_glib(xtime) {
-    const u = game.u;
-    if (!u) return;
-    u.uprops = u.uprops || {};
-    u.uprops.Glib = xtime;
-    u.Glib = xtime;
-}
 // C ref: timeout.c incr_itimeout/set_itimeout on a named property timer.
 function ap_incr_itimeout(name, incr) {
     const u = game.u;
@@ -2353,7 +2345,7 @@ export async function use_towel(obj) {
         switch (rn2(3)) {
         case 2:
             old = ap_prop('Glib');
-            ap_make_glib(old + rn1(10, 3)); /* + 3..12 */
+            await A.potion.make_glib(old + rn1(10, 3)); /* + 3..12 */
             await A.display.pline(`Your ${A.invent.makeplural(AP_HAND)} ${
                 old ? 'are filthier than ever' : 'get slimy'}!`);
             if (A.weapon.is_wet_towel(obj))
@@ -2391,7 +2383,7 @@ export async function use_towel(obj) {
     }
 
     if (ap_Glib()) {
-        ap_make_glib(0);
+        await A.potion.make_glib(0);
         await A.display.pline(`You wipe off your ${
             !game.uarmg ? A.invent.makeplural(AP_HAND)
                         : A.do_wear.gloves_simple_name(game.uarmg)}.`);
@@ -3434,7 +3426,7 @@ export async function use_lamp(obj) {
         if ((obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP) && !rn2(3)) {
             await A.display.pline(`The lamp spills and covers your ${
                 A.do_wear.fingers_or_gloves(true)} with oil.`);
-            ap_make_glib(ap_prop('Glib') + d(2, 10));
+            await A.potion.make_glib(ap_prop('Glib') + d(2, 10));
         } else if (!A.vision.Blind()) {
             await A.display.pline(`${Tobjnam(obj, 'flicker')} for a moment, then ${
                 A.invent.otense(obj, 'die')}.`);
@@ -3990,12 +3982,12 @@ export async function use_grease(obj) {
             await A.display.pline(`You cover ${A.invent.yname(otmp)} with a thick layer of grease.`);
             otmp.greased = 1;
             if (obj.cursed && !ap_nohands(game.youmonst?.data)) {
-                ap_make_glib(oldglib + rn1(6, 10)); /* + 10..15 */
+                await A.potion.make_glib(oldglib + rn1(6, 10)); /* + 10..15 */
                 await A.display.pline(`Some of the grease gets all over your ${
                     A.do_wear.fingers_or_gloves(true)}.`);
             }
         } else {
-            ap_make_glib(oldglib + rn1(11, 5)); /* + 5..15 */
+            await A.potion.make_glib(oldglib + rn1(11, 5)); /* + 5..15 */
             await A.display.pline(`You coat your ${
                 A.do_wear.fingers_or_gloves(true)} with grease.`);
         }

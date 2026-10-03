@@ -9,11 +9,12 @@ import { game } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { update_topl, vobj_at } from './display.js';
 import { surface, hliquid } from './dungeon.js';
-import { t_at, dotrap } from './trap.js';
+import { t_at, dotrap, water_damage } from './trap.js';
 import { exercise } from './attrib.js';
 import { useupf } from './invent.js';
-import { objects, COIN_CLASS, CORPSE } from './mkobj.js';
+import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags } from './objnam.js';
+import { name_to_pmidx } from './makemon.js';
 import {
     FOUNTAIN, STAIRS, LADDER, DRAWBRIDGE_DOWN, ICE, POOL, MOAT, WATER,
     IS_SINK, IS_ALTAR, IS_GRAVE, IS_THRONE, CXN_NORMAL,
@@ -91,10 +92,11 @@ export async function dosit() {
         // Held by a monster that is beside the hero.
         await update_topl("It won't offer you its lap.");
         return ECMD_OK;
-    } else if (is_pool(u.ux, u.uy) && !u.uprops?.Underwater) {
+    } else if ((is_pool(u.ux, u.uy) && !u.uprops?.Underwater)
+               || (u.Upolyd && u.umonnum === name_to_pmidx('gremlin')
+                   && (typ === FOUNTAIN || is_pool(u.ux, u.uy)))) {
         return await sit_in_water();
     }
-    // Upolyd gremlin-in-fountain path: no Upolyd contest hero.
 
     const obj = vobj_at(u.ux, u.uy);
     if (obj && !(uteetering_at_seen_pit(trap) || uescaped_shaft(trap))) {
@@ -153,7 +155,7 @@ export async function dosit() {
         await update_topl('Your rump gets wet.');
     } else if (IS_ALTAR(typ)) {
         await update_topl('You sit on the altar.');
-        // altar_wrath(u.ux, u.uy): the god's response is not modeled here.
+        await (await import('./dokick.js')).altar_wrath(u.ux, u.uy);
     } else if (IS_GRAVE(typ)) {
         await update_topl('You sit on the headstone.');
     } else if (typ === STAIRS) {
@@ -186,11 +188,17 @@ export async function dosit() {
 async function sit_in_water() {
     const u = game.u;
     await update_topl(`You sit in the ${hliquid('water')}.`);
-    // Upolyd gremlin split / water_damage to worn armor: base hero on the
-    // reached levels wears no armor that fails the rn2(10) checks; C rolls
-    // rn2(10) only when uarm/uarmf are present.
-    if (u.uarm) rn2(10);
-    if (u.uarmf) rn2(10);
+    if (u.Upolyd && u.umonnum === name_to_pmidx('gremlin')) {
+        if (await (await import('./potion.js')).split_mon(game.youmonst || u, null)) {
+            if (game.level?.at(u.ux, u.uy)?.typ === FOUNTAIN)
+                await (await import('./fountain.js')).dryup(u.ux, u.uy, true);
+        }
+    } else {
+        if (!rn2(10) && game.uarm) await water_damage(game.uarm, 'armor', true);
+        // C sit.c intentionally damages the suit again in its boots branch.
+        if (!rn2(10) && game.uarmf && game.uarmf.otyp !== WATER_WALKING_BOOTS)
+            await water_damage(game.uarm, 'armor', true);
+    }
     return ECMD_TIME;
 }
 

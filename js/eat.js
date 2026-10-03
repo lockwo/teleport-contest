@@ -3033,10 +3033,7 @@ export async function consume_tin(mesg) {
             // A normal hero is !Glib (you cannot open tins while Glib), but a
             // metallivorous polyform might already be.
             const alreadyglib = (u?.uprops?.Glib) | 0;
-            if (u) {
-                u.uprops = u.uprops || {};
-                u.uprops.Glib = alreadyglib + rn1(11, 5);   /* 5..15 */
-            }
+            if (u) await T.potion.make_glib(alreadyglib + rn1(11, 5));
             await pline(`Eating ${tintxts[r].txt} food made your `
                 + `${T.do_wear.fingers_or_gloves(true)} `
                 + `${alreadyglib ? 'even more' : 'very'} slippery.`);

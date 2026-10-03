@@ -465,29 +465,10 @@ async function moveloop_preamble_messages() {
 
     if (msgs.length === 0) return false;
 
-    // Each preamble message can't share the top line with the one before it
-    // (the moon "You are lucky!" line starts with "You " so C forces a fresh
-    // line; the Friday-13th warning is too long to concatenate).  So each new
-    // message pages the current top-line message with --More-- first: the
-    // welcome line is paged before the first preamble message, and (when both
-    // hold) the moon message is paged before the Friday-13th warning.
-    // C ref: win/tty/topl.c more():231 — a --More-- dismissed with ESC sets
-    // WIN_STOP, and update_topl() reads `skip` BEFORE calling more(): the
-    // message whose own --More-- was ESC'd is still drawn, every LATER one is
-    // only accumulated into gt.toplines.  Tracked locally rather than off
-    // game._winStop so an ESC that dismissed some earlier window can't leak in.
-    let win_stop = false;
-    for (const m of msgs) {
-        if (win_stop) { game._toplines = m; continue; } // C: skip -> no more(), no redraw
-        // A wrapped welcome line already paged ITSELF (pline()'s own
-        // wrap_topl().length>1 check) and cleared _pending_message; calling
-        // topl_more() again here would consume a second, phantom keystroke.
-        if (game._pending_message) {
-            await topl_more();
-            win_stop = !!game._winStop; // more() set it iff this --More-- was ESC'd
-        }
-        await pline(m);
-    }
+    // C ref: allmain.c moveloop_preamble() -> pline(). The topline writer
+    // snapshots WIN_STOP before paging the previous message. Paging here first
+    // would suppress the new message when that pager is dismissed with ESC.
+    for (const m of msgs) await pline(m);
     return true;
 }
 
@@ -1070,11 +1051,10 @@ export async function moveloop_turn() {
 
             g.moves = (g.moves || 1) + 1;
 
-            // C ref: allmain.c moveloop_core():273 — nh_timeout() runs at the very
-            // top of the once-per-turn block (before run_regions / ublesscnt).  It
-            // expires timed properties; the contest hero's only case is the bear
-            // trap's WOUNDED_LEGS -> heal_legs(0), which restores the -1 Dx BEFORE
-            // the later u_wipe_engr rn2(40 + ACURR(A_DEX)*3) roll depends on it.
+            // C ref: allmain.c:271-273 — slippery fingers drop rings/weapons
+            // before the timer decrements, including its final active turn.
+            if (g.u.uprops?.Glib)
+                await (await import('./do_wear.js')).glibr();
             await nh_timeout();
 
             // C ref: allmain.c moveloop_core():274 — run_regions() ages every

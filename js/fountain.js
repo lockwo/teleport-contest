@@ -135,8 +135,7 @@ async function delobj_invent(obj) {
 // C ref: youprop.h Glib — the "slippery fingers" timer.
 function Glib() {
     const u = game.u;
-    return ((u?.Glib || 0) > 0) || ((u?.uprops?.Glib || 0) > 0)
-        || ((u?.uprops?.HGlib || 0) > 0);
+    return (u?.uprops?.Glib || 0) > 0;
 }
 
 // C ref: hack.h Role_if(PM_KNIGHT) — urole.mnum comparison.
@@ -164,11 +163,7 @@ async function wash_hands() {
     await update_topl(`You wash your ${game.uarmg ? 'gloved ' : ''}hands in the `
                       + `${hliquid('water')}.`);
     if (was_glib) {
-        // make_glib(0): clears the timer (no RNG).
-        if (game.u) {
-            game.u.Glib = 0;
-            if (game.u.uprops) { game.u.uprops.Glib = 0; game.u.uprops.HGlib = 0; }
-        }
+        await (await import('./potion.js')).make_glib(0);
         await update_topl(
             `Your ${game.uarmg ? 'gloves' : 'fingers'} are no longer slippery.`);
     }

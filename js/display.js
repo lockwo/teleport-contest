@@ -3104,6 +3104,7 @@ export async function pline(msg, opts = {}) {
     // flush_screen(), which is what runs bot() when disp.botl is set.
     pline_vision_flush();
     await botl_flush();
+    _buildScreenOutput();
     const cur = game._pending_message || '';
     const softPending = !!cur && game._toplinSoft === cur;
     // C ref: win/tty/topl.c update_topl():273-299 — a second message in the
@@ -3239,13 +3240,17 @@ export async function display_nhwindow_message() {
 export async function topl_more_ext(extraChars) {
     const disp = game?.nhDisplay;
     if (!disp?.setCell) return 0;
-    // Re-render the current frame (message + map + status) to the grid.
-    _buildScreenOutput();
 
     const msg = game._pending_message || '';
     // The message may already span multiple rows (topl.c word-wrap); --More--
     // follows the end of the LAST wrapped row.
     const mlines = wrap_topl(msg);
+    // C more() only writes the message window. A later vision or timer
+    // change must not repaint map or status pixels before this pager ends.
+    for (let y = 0; y < mlines.length; y++) {
+        for (let x = 0; x < disp.cols; x++) disp.setCell(x, y, ' ', NO_COLOR, 0);
+        disp.putstr(0, y, mlines[y], NO_COLOR, 0);
+    }
     let cury = mlines.length - 1;
     let curx = mlines[cury].length;   // 0-based column one past the last line
     // C more(): if there's no room for "--More--" on the line, wrap first.
@@ -3348,6 +3353,7 @@ async function botl_flush() {
     game.botl = false;
     const { near_capacity } = await import('./invent.js');
     game._curcap = near_capacity();
+    bot_snapshot();
 }
 
 export async function update_topl(bp) {
@@ -3363,6 +3369,7 @@ export async function update_topl(bp) {
     // pline() sites, so both happen here too, in that order.
     pline_vision_flush();
     await botl_flush();
+    _buildScreenOutput();
     const n0 = bp.length;
     const cur = game._pending_message || '';
     // C ref: win/tty/topl.c update_topl():257 `skip = (flags & (WIN_STOP |
