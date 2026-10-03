@@ -106,6 +106,11 @@ Death status is published at C's explicit status-update calls. Later dirty
 updates release frozen death rows. Carried corpse decay retains the monster's
 name instead of describing every corpse as a generic corpse.
 
+Spell rays use C's spell damage dice, resistance, and healing paths. Water
+entry, drowning with life-saving, crawling out, and underwater map display
+follow native trap.c and hack.c, and the move loop re-evaluates water under a
+stationary hero. Water-related callers outside trap.js still use older paths.
+
 Local differential campaigns compare both revisions against the same native
 recordings and check exact frame masks as well as RNG streams. These targeted
 scenarios are regression evidence, not a prediction of official held-out scores.
