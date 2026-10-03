@@ -1049,10 +1049,13 @@ async function hitum(mon) {
     const secondwep = u.twoweap ? game.uswapwep : null;
     const wepbefore = game.uwep;
     // C ref: uhitm.c:775 — `gt.twohits = (uwep ? u.twoweap : double_punch())`.
-    // The bare-handed arm was hardcoded FALSE; double_punch() rolls rn2(5) for
-    // any hero whose bare-handed/martial-arts skill is above Basic, and on
-    // success delivers a whole second swing (rnd(20) + hmon + passive).
+    // 0: single hit, 1: first of two hits, 2: second of two.  hmon_hitmon()
+    // copies it into hmd.twohits, where it picks the 3/4 strength bonus and the
+    // bare-handed silver-ring mask.  double_punch() rolls rn2(5) for any hero
+    // whose bare-handed/martial-arts skill is above Basic, and on success
+    // delivers a whole second swing (rnd(20) + hmon + passive).
     const twohits = (game.uwep ? !!u.twoweap : await double_punch());
+    game.twohits = twohits ? 1 : 0;
 
     // ── first swing (uwep) ──
     let tmp = await find_roll_to_hit(mon, AT_WEAP, game.uwep, true);
@@ -1070,6 +1073,7 @@ async function hitum(mon) {
 
     // ── second swing (uswapwep) for two-weapon combat ──
     if (twohits && malive && m_at(x, y) === mon) {
+        game.twohits = 2;                      // second of 2 hits
         tmp = await find_roll_to_hit(mon, AT_WEAP, game.uswapwep, false);
         mon_maybe_unparalyze(mon);
         dieroll = rnd(20);                     // uhitm.c:804
@@ -1082,6 +1086,7 @@ async function hitum(mon) {
         if (mhit) await passive(mon, secondwep, mhit, malive, AT_WEAP,
                                  !!(secondwep && !game.uswapwep));
     }
+    game.twohits = 0;
     return malive;
 }
 
@@ -1113,7 +1118,7 @@ async function known_hitum(mon, weapon, mhit, dieroll) {
     if (weapon && (weapon.oclass === WEAPON_CLASS || is_weptool(weapon)))
         u0.uconduct.weaphit = oldweaphit + 1;
     const oldhp = mon.mhp;
-    const malive = await hmon(mon, weapon, dieroll);
+    const malive = await hmon(mon, weapon, HMON_MELEE, dieroll);
     // C ref: uhitm.c known_hitum():624 — a monster that SURVIVES the hit has a
     // 1/25 chance to flee if reduced below half HP.  The rn2(25) gate fires for
     // every surviving hit; only on a 0 (and mhp < mhpmax/2) does monflee roll
@@ -1159,278 +1164,168 @@ async function missum(mon) {
     if (!mon.msleeping && mon.mcanmove) await wakeupAttack(mon, true);
 }
 
-// C ref: uhitm.c hmon(mon, obj, thrown, dieroll) — thin wrapper around
-// hmon_hitmon(). Was collapsed into hmon_hitmon, dropping an RNG call:
-// hitting a priest rolls rn2(2) regardless of whether ghod_hitsu()'s
-// aftermath does anything (ghod_hitsu() needs in_rooms(TEMPLE), stubbed
-// empty here, so it returns immediately; angry_guards() is RNG-free).
-async function hmon(mon, weapon, dieroll) {
-    const result = await hmon_hitmon(mon, weapon, dieroll);
+// C ref: uhitm.c:819 hmon(mon, obj, thrown, dieroll) — thin wrapper around
+// hmon_hitmon().  Hitting a priest rolls rn2(2) regardless of whether
+// ghod_hitsu()'s aftermath does anything (ghod_hitsu() needs in_rooms(TEMPLE),
+// stubbed empty here, so it returns immediately; angry_guards() is RNG-free).
+export async function hmon(mon, obj, thrown, dieroll) {
+    const result = await hmon_hitmon(mon, obj, thrown, dieroll);
     if (mon.ispriest && !rn2(2)) {
         /* ghod_hitsu(mon): no-op without a TEMPLE room number */
     }
     return result;
 }
 
-// C ref: uhitm.c hmon_hitmon() — the weapon-melee damage path (the only
-// branch the starter sessions reach: a wielded WEAPON_CLASS blade vs an
-// ordinary monster).  Rolls dmgval(weapon, mon), applies STR/skill bonuses,
-// subtracts from mon->mhp, and on a kill runs the xkilled() aftermath.
-async function hmon_hitmon(mon, weapon, dieroll) {
-    const unarmed = !weapon;
-    let dmg;
-    // C ref: uhitm.c:1768 `hmd.use_weapon_skill = FALSE;` — set TRUE by the
-    // ordinary-weapon and bare-handed arms only.
-    let use_weapon_skill = false;
-    // C ref: uhitm.c:1769 `hmd.train_weapon_skill = FALSE;` — only overridden
-    // below for the ordinary hand-to-hand weapon branch.
-    let force_no_train = false;
-    // C ref: uhitm.c:1777 `hmd.hittxt = FALSE;` — set by an arm that already
-    // gave its own feedback, which suppresses hmon_hitmon_msg_hit()'s
-    // "You hit <mon>" (uhitm.c:1642).
-    let hittxt = false;
-    if (unarmed) {
-        // hmon_hitmon_barehands (uhitm.c:847): dmg = rnd(martial ? 4 : 2).
-        dmg = rnd(martial_bonus() ? 4 : 2);
-    } else if (weapon.oclass === WEAPON_CLASS || is_weptool(weapon)) {
-        // C ref: uhitm.c:1070 hmon_hitmon_weapon() — before the ordinary melee
-        // damage, fork off a launcher, a missile/ammo swung in hand, or an
-        // un-mounted pole weapon (this port never calls with thrown!=MELEE, so
-        // the thrown-ammo terms of the C condition are always false here) to
-        // the weak "ranged" 1-2 pt branch.  Was missing: an un-mounted
-        // lance/spear/bow swing dealt full dmgval() melee damage instead.
-        const IV = await import('./invent.js');
-        const A = await import('./artifact.js');
-        const isRangedInMelee = IV.is_launcher(weapon) || IV.is_missile(weapon)
-            || IV.is_ammo(weapon)
-            || (IV.is_pole(weapon) && !game.u?.usteed
-                && !A.is_art(weapon, ART_SNICKERSNEE));
-        if (isRangedInMelee) {
-            // hmon_hitmon_weapon_ranged (uhitm.c:885): dmg = rnd(2), plus a
-            // silver bonus vs. a silver-hating monster.  use_weapon_skill and
-            // train_weapon_skill both stay FALSE (uhitm.c:1479-1483).
-            dmg = rnd(2);
-            force_no_train = true;
-            if ((objects[weapon.otyp]?.material) === MAT_SILVER) {
-                const { mon_hates_silver } = await import('./mon.js');
-                if (mon_hates_silver(mon)) dmg += rnd(dmg ? 20 : 10);
-            }
-        } else {
-            // hmon_hitmon_weapon_melee: dmg = dmgval(weapon, mon).
-            dmg = dmgval(weapon, mon);
-            use_weapon_skill = true;               // C ref: uhitm.c:943
-            // C ref: uhitm.c:947-951 — a Healer's anatomy knowledge: a
-            // knife-skill WEAPON_CLASS item in hand adds
-            // min(3, mvitals[species].died / 6).  The Healer starts with a
-            // scalpel, so this fires as soon as the same species has been
-            // killed six times.
-            if (roleMnum() === PM_HEALER && weapon.oclass === WEAPON_CLASS
-                && (objects[weapon.otyp]?.oc_skill ?? 0) === P_KNIFE) {
-                const died = game.mvitals?.[mon?.data?.pmidx]?.died ?? 0;
-                dmg += Math.min(3, Math.trunc(died / 6));
-            }
-        }
-    } else if (weapon.oclass === POTION_CLASS) {
-        // C ref: uhitm.c:1421 hmon_hitmon_do_hit()'s POTION_CLASS arm — a
-        // wielded potion SHATTERS on the target instead of bludgeoning it.
-        // This arm was missing here (the faithful hmon_hitmon_do_hit() below
-        // has it, but nothing calls that), so bashing with a wielded potion
-        // dealt weight-based damage and skipped potionhit() entirely: no
-        // splitobj() rnd(2), no bottlename() rn2(7) and none of the breakage
-        // or per-otyp effect rolls.
-        const hmd = { hand_to_hand: true, mdat: mon.data, dmg: 0,
-                      hittxt: false, doreturn: false, retval: false };
-        await hmon_hitmon_potion(hmd, mon, weapon);
-        if (hmd.doreturn) return hmd.retval;
-        dmg = hmd.dmg;
-        hittxt = hmd.hittxt;
-    } else {
-        // C ref: uhitm.c hmon_hitmon_misc_obj() `default:` — wielding an
-        // ordinary object still hurts, by its weight.  dmgval() returns 0 for
-        // a non-weapon, so this path used to deal NO damage at all (a wielded
-        // stethoscope could never kill anything).  The per-otyp special cases
-        // (boulder, iron ball, potions, cream pie, corpses, ...) are not
-        // reached by the covered sessions and are left to the default arm.
-        dmg = hmon_misc_obj_dmg(weapon, mon);
-    }
-    const train_weapon_skill = force_no_train ? false : dmg > 1;   // uhitm.c:849 / :946
-
-    // C ref: uhitm.c:1015 hmon_hitmon_do_hit() — `if (obj->oartifact
-    // && artifact_hit(&youmonst, mon, obj, &hmd->dmg, hmd->dieroll))`.  Runs
-    // AFTER the train_weapon_skill snapshot and BEFORE dmg_recalc's STR/skill
-    // bonuses.  js/artifact.js was imported by nothing, so spec_dbon() never
-    // ran: a PHYS(n,0) artifact (Grayswandir, Dragonbane, …) doubles the blow
-    // and every artifact hit was landing for half of C's damage.
-    if (weapon?.oartifact) {
-        const { artifact_hit } = await import('./artifact.js');
-        const mdmg = { d: dmg };
-        // artifact_hit() now routes its own messages through update_topl()
-        // (merge-or-page against whatever was already pending), so no
-        // caller-side capture/replay is needed here any more; doing so would
-        // now double-process the same line (see js/artifact.js's touch_
-        // artifact()/Mb_hit()/artifact_hit() pending_message sweep).
-        const special = await artifact_hit(game.youmonst || game.u, mon,
-                                           weapon, mdmg, dieroll);
-        dmg = mdmg.d;
-        if (special) {
-            /* C: artifact killed the monster / beheading missed a headless one */
-            if (DEADMONSTER(mon)) return false;
-            if (dmg === 0) return true;
-        }
-    }
-
-
-    // hmon_hitmon_dmg_recalc: strength + skill bonuses (get_dmg_bonus).  For a
-    // two-weapon swing the STR bonus is scaled to 3/4; udaminc is 0 for the
-    // starter hero.  weapon_dam_bonus is 0 at P_BASIC for a wielded weapon, and
-    // the martial barehand branch for an unarmed monk/samurai.
-    if (dmg > 0) {
-        let strbonus = dbon();
-        const absb = Math.abs(strbonus);
-        if (game.u?.twoweap) {
-            strbonus = Math.trunc((3 * absb + 2) / 4) * Math.sign(strbonus || 1);
-            if (strbonus === 0 && dbon() !== 0) strbonus = 0;
-        } else if (game.uwep && bimanual_wep(game.uwep)) {
-            // C ref: uhitm.c:1467 — a melee hit with a TWO-HANDED weapon uses a
-            // 3/2 strength bonus (to approximate a two-weapon double hit).
-            // This arm was missing, so every two-handed-sword / battle-axe /
-            // mattock wielder hit for less than C.
-            strbonus = Math.trunc((3 * absb + 1) / 2) * Math.sign(strbonus || 1);
-        }
-        dmg += strbonus;
-        // C ref: uhitm.c:1484-1489 — `if (use_weapon_skill) dmgbonus +=
-        // weapon_dam_bonus(skillwep)`.  Only the bare-handed arm used to be
-        // applied here, so a WIELDED weapon got no skill modifier at all: a
-        // hero swinging something outside their role's skill table should take
-        // -2, and a Skilled/Expert one +1/+2.
-        if (unarmed) {
-            dmg += await weapon_dam_bonus_barehand();
-        } else if (use_weapon_skill) {
-            dmg += await weapon_dam_bonus_wielded(weapon);
-        }
-        if (dmg < 1) dmg = 1;
-    }
-
-    // C ref: uhitm.c:1494 — a hit for more than minimal damage (measured BEFORE
-    // the STR/skill bonuses above) trains the wielded weapon's skill; that
-    // counter is what the wizard-mode #enhance menu prints.  train_weapon_skill
-    // is set from the raw dmgval()/rnd() roll (uhitm.c:849, :946).
-    if (train_weapon_skill) {
-        const { use_skill, uwep_skill_type } = await import('./enhance.js');
-        use_skill(uwep_skill_type(), 1);
-    }
-
-    // C ref uhitm.c:1825-1831 — the stagger/knockback gate, an if/else-if:
-    //   unarmed && dmg>1 && !thrown && !obj && !Upolyd      -> hmon_hitmon_stagger
-    //   !unarmed && dmg>1 && !thrown && !Upolyd && !twoweap && uwep -> maybe_knockback
-    // (jousting omitted — no lance/steed here).  This is evaluated BEFORE the
-    // mhp subtraction; stagger's mhurtle_to_doom() can kill mon outright
-    // (already_killed) before this hit's own damage is ever applied, knockback
-    // is deferred until after a surviving hit (below).
-    // C ref: uhitm.c:1779 `hmd.unarmed = !uwep && !uarm && !uarms;` — this
-    // gate's "unarmed" is NOT the local no-weapon-object flag above: a hero
-    // swinging bare hands while wearing body armor or a shield still counts
-    // as armed here, so the stagger roll never fires for them. Conflating the
-    // two rolled an extra rnd(100) on every >1-damage bare-handed hit landed
-    // while wearing a suit/shield, desyncing the whole rest of the session.
-    const hmdUnarmed = !game.uwep && !game.uarm && !game.uarms;
+// C ref: uhitm.c:1754 hmon_hitmon(mon, obj, thrown, dieroll) — the guts of
+// hmon(); returns TRUE if 'mon' survives.  This is now C's own hmd pipeline
+// (do_hit -> dmg_recalc -> poison -> joust/stagger/knockback -> damage ->
+// pet/splitmon/messages -> kill), driving the staged helpers below instead of
+// the inlined simplification that used to live here (which had no backstab, no
+// weapon shatter, no joust, no silver/light messages and no poison arm).
+async function hmon_hitmon(mon, obj, thrown, dieroll) {
+    const u = game.u;
+    const I = await import('./invent.js');
+    const hmd = {
+        dmg: 0,
+        thrown,
+        twohits: thrown ? 0 : (game.twohits | 0),
+        dieroll,
+        mdat: mon.data,
+        use_weapon_skill: false,
+        train_weapon_skill: false,
+        barehand_silver_rings: 0,
+        silvermsg: false,
+        silverobj: false,
+        lightobj: false,
+        material: obj ? (objects[obj.otyp]?.material ?? NO_MATERIAL)
+                      : NO_MATERIAL,
+        jousting: 0,
+        hittxt: false,
+        get_dmg_bonus: true,
+        unarmed: !game.uwep && !game.uarm && !game.uarms,
+        /* not grapnels; applied implies uwep */
+        hand_to_hand: (thrown === HMON_MELEE
+                       || (thrown === HMON_APPLIED && I.is_pole(game.uwep))),
+        ispoisoned: false,
+        unpoisonmsg: false,
+        needpoismsg: false,
+        poiskilled: false,
+        already_killed: false,
+        offmap: false,
+        destroyed: false,
+        dryit: false,
+        doreturn: false,
+        retval: false,
+        saved_oname: '',
+    };
     let maybe_knockback = false;
-    let staggerAlreadyKilled = false;
-    if (hmdUnarmed && dmg > 1 && !game.u?.Upolyd) {
-        // C ref: uhitm.c:1827-1828 hmon_hitmon_stagger(&hmd, mon, obj) — was
-        // rolling and discarding rnd(100) with no message and no knockback;
-        // the real function (below) was already ported but never called.
-        const hmdS = { mdat: mon.data, dmg, hittxt: false, already_killed: false };
-        await hmon_hitmon_stagger(hmdS, mon, weapon);
-        if (hmdS.hittxt) hittxt = true;
-        staggerAlreadyKilled = hmdS.already_killed;
-    } else if (!unarmed && dmg > 1 && !game.u?.twoweap && game.uwep
-               && !game.u?.Upolyd) {
-        maybe_knockback = true;                // uhitm.c:1831
+
+    await hmon_hitmon_do_hit(hmd, mon, obj);
+    if (hmd.doreturn) return hmd.retval;
+
+    if (hmd.dmg > 0) await hmon_hitmon_dmg_recalc(hmd, obj);
+
+    if (hmd.ispoisoned) await hmon_hitmon_poison(hmd, mon, obj);
+
+    if (hmd.dmg < 1) {
+        const mon_is_shade = (mon.data?.name === 'shade');
+        /* make sure that a negative damage adjustment can't inadvertently
+           boost the victim's hit points */
+        hmd.dmg = (hmd.get_dmg_bonus && !mon_is_shade) ? 1 : 0;
+        if (mon_is_shade && !hmd.hittxt
+            && thrown !== HMON_THROWN && thrown !== HMON_KICKED)
+            hmd.hittxt = await shade_miss(game.youmonst || game.u, mon, obj,
+                                          false, true);
     }
 
-    // C ref: uhitm.c:1841-1844 first_weapon_hit() — logged BEFORE the mhp
-    // subtraction so a same-turn kill's "killed for the first time" gamelog
-    // line always follows this one, never precedes it.  minimal_xname()-style
-    // bare name (cursed prefix only; no BUC/erosion/enchant/call-name) mirrors
-    // first_weapon_hit()'s own avoidance of xname()'s player-supplied name.
-    // C ref: uhitm.c:1835-1843 — the conduct line only fires for a real weapon
-    // or weptool (the same test that gates the weaphit++ in known_hitum); a
-    // wielded stethoscope/tool must not log it.
-    if (!unarmed && (weapon.oclass === WEAPON_CLASS || is_weptool(weapon))
-        && dmg > 0 && (game.u?.uconduct?.weaphit ?? 0) <= 1) {
-        const buf = (weapon.cursed && weapon.bknown ? 'cursed ' : '')
-            + objectBaseName(weapon);
-        livelog_printf(LL_CONDUCT,
-            `hit with a wielded weapon (${buf}) for the first time`);
+    if (hmd.jousting) {
+        await hmon_hitmon_jousting(hmd, mon, obj);
+    } else if (hmd.unarmed && hmd.dmg > 1 && !thrown && !obj && !Upolyd()) {
+        await hmon_hitmon_stagger(hmd, mon, obj);
+    } else if (!hmd.unarmed && hmd.dmg > 1 && !thrown && !Upolyd()
+               && !u.twoweap && game.uwep) {
+        maybe_knockback = true;
     }
 
-    // C ref: uhitm.c:1834 `if (!hmd.already_killed) { ...; mon->mhp -= hmd.dmg; }`
-    // — a stagger hurtle that already killed mon (fatal trap while flying
-    // back) must not have this hit's damage applied a second time.
-    if (!staggerAlreadyKilled) {
-        mon.mhp = (mon.mhp || 0) - dmg;
-        if (mon.mhpmax != null && mon.mhp > mon.mhpmax) mon.mhp = mon.mhpmax;
+    if (!hmd.already_killed) {
+        if (obj && (obj === game.uwep || (obj === game.uswapwep && u.twoweap))
+            /* known_hitum's 'what counts as a weapon' criteria */
+            && (obj.oclass === WEAPON_CLASS || is_weptool(obj))
+            && (thrown === HMON_MELEE || thrown === HMON_APPLIED)
+            /* if jousting, the hit was already logged */
+            && !hmd.jousting
+            /* the caller already incremented u.uconduct.weaphit */
+            && hmd.dmg > 0 && (u.uconduct?.weaphit ?? 0) <= 1)
+            first_weapon_hit(obj);
+        mon.mhp = (mon.mhp || 0) - hmd.dmg;
     }
-    const destroyed = (mon.mhp <= 0 || DEADMONSTER(mon));
+    /* adjustments might have made dmg become less than what a level-draining
+       artifact has already done to max HP */
+    if (mon.mhpmax != null && mon.mhp > mon.mhpmax) mon.mhp = mon.mhpmax;
+    /* jousting can migrate mon off the level (mhurtle -> mintrap -> hole) */
+    if (!mon.mx) hmd.offmap = true;
+    if (DEADMONSTER(mon)) hmd.destroyed = true;
 
-    // C ref: uhitm.c:1866 hmon_hitmon_pet() — runs BEFORE killed(), so abusing
-    // a pet counts even on the blow that kills it.  Both halves draw: abuse_dog
-    // rolls rn2(mtame) to pick yelp vs growl, and a surviving pet's monflee
-    // rolls rnd(dmg).  (hmon_hitmon_splitmon() next needs clone_mon() for the
-    // black/brown pudding iron-weapon split; still unported.)
-    await hmon_hitmon_pet(mon, dmg, destroyed);
+    await hmon_hitmon_pet(mon, hmd.dmg, hmd.destroyed);
 
-    if (destroyed) {
-        // hmon_hitmon_msg_hit is suppressed once destroyed; killed() gives the
-        // "You kill the <mon>!" message and runs the corpse/treasure aftermath.
-        // C ref: uhitm.c:1904-1905 `if (!hmd.already_killed) { ...; killed(mon); }`
-        // — already handled by whatever killed mon during the stagger hurtle.
-        if (!staggerAlreadyKilled) await killed(mon);
-        return false;
+    await hmon_hitmon_splitmon(hmd, mon, obj);
+
+    await hmon_hitmon_msg_hit(hmd, mon, obj);
+
+    if (hmd.dryit) {   /* dryit implies a wet towel, so 'obj' is still intact */
+        const WPN = await import('./weapon.js');
+        await WPN.dry_a_towel(obj, -1, true);
     }
 
-    // C ref: uhitm.c:1644 hmon_hitmon_msg_hit() — the surviving hand-to-hand
-    // hit message.  When flags.verbose is OFF the terse "You hit it." is used
-    // UNCONDITIONALLY (regardless of whether the monster is spotted); only in
-    // verbose mode does it name the monster.  (seed4500 sets `!verbose` in its
-    // nethackrc, so an adjacent, fully-visible earth elemental still prints
-    // "You hit it.")
+    if (hmd.silvermsg) await hmon_hitmon_msg_silver(hmd, mon, obj);
+    if (hmd.lightobj) await hmon_hitmon_msg_lightobj(hmd, mon, obj);
+
+    /* if a "no longer poisoned" message is coming it will be last; reformat
+       the name while obj is still accessible */
+    if (hmd.unpoisonmsg) hmd.saved_oname = I.xname(obj);
+
     const { update_topl } = await import('./display.js');
-    const verbose = game.flags?.verbose !== false;
-    const exclamU = (f) => (f < 0 ? '?' : (f <= 4 ? '.' : '!'));
-    // C ref: uhitm.c:1642 `if (!hmd->hittxt && ...)` — an arm that already
-    // spoke for itself (the potion smash) suppresses this line entirely.
-    if (hittxt) {
-        /* feedback already given by the damage arm */
-    } else if (!verbose)
-        await update_topl('You hit it.');
-    else if (canspotmon(mon))
-        await update_topl(`You ${hit_verb(weapon)} ${mon_nam(mon)}${canseemon(mon) ? exclamU(dmg) : '.'}`);
-    else
-        await update_topl('You hit it.');
-    // C ref: uhitm.c:1925 — `wakeup(mon, TRUE)` for a surviving, on-map hit.
-    // This was reduced to a bare `msleeping = 0`, which dropped the via_attack
-    // half: landing a HIT on a peaceful monster never angered it (only a miss
-    // did, through missum()), so it kept its mpeaceful AI and its peaceful
-    // dochug branch for the rest of the fight.
-    await wakeupAttack(mon, true);
-
-    // C ref uhitm.c:1922-1931 — wakeup(mon) then, for a surviving armed hit,
-    // mhitm_knockback(&youmonst, mon, youmonst.data->mattk, &hitflags, TRUE)
-    // with hitflags seeded to M_ATTK_HIT.  C's `mattk` argument is the FIRST
-    // entry of the hero form's attack table (a bare `->mattk` pointer deref),
-    // which for an ordinary human is AT_WEAP/AD_PHYS and therefore clears the
-    // attack-form gate.
-    if (maybe_knockback) {
-        const hitflags = { v: M_ATTK_HIT };
-        if (await mhitm_knockback(mon, mattk_of(youmonst_data_uh())[0],
-                                  hitflags, true)
-            && (hitflags.v & M_ATTK_DEF_DIED) !== 0)
-            return false;                      // hmd.destroyed = TRUE
+    if (hmd.needpoismsg)
+        await update_topl(`The poison doesn't seem to affect ${mon_nam(mon)}.`);
+    if (hmd.poiskilled) {
+        await update_topl('The poison was deadly...');
+        if (!hmd.already_killed) await killed(mon, { nomsg: true });
+        hmd.destroyed = true;
+    } else if (hmd.destroyed) {
+        /* mondata.c troll_baned(mon, obj) has no port; it only suppresses
+           revival of a troll corpse, which is RNG-free. */
+        if (!hmd.already_killed) await killed(mon);
+    } else if (u.umconf && hmd.hand_to_hand) {
+        await nohandglow(mon);
+        const { resist } = await import('./zap.js');
+        if (!mon.mconf && !resist(mon, SPBOOK_CLASS_UH, 0, 0)) {
+            mon.mconf = 1;
+            if (!mon.mstun && !helpless(mon) && canseemon(mon))
+                await update_topl(`${Monnam(mon)} appears confused.`);
+        }
     }
-    return true;
+    if (hmd.unpoisonmsg)
+        await update_topl(`Your ${hmd.saved_oname} `
+            + `${vtense_uh(hmd.saved_oname, 'are')} no longer poisoned.`);
+
+    if (!hmd.destroyed && !hmd.offmap) {
+        // C ref: uhitm.c:1925 `wakeup(mon, TRUE)` — the via_attack half angers
+        // a peaceful monster that was HIT (not just missed).
+        await wakeupAttack(mon, true);
+        if (maybe_knockback) {
+            const hitflags = { v: M_ATTK_HIT };
+            if (await mhitm_knockback(mon, mattk_of(youmonst_data_uh())[0],
+                                      hitflags, true)
+                && (hitflags.v & M_ATTK_DEF_DIED) !== 0)
+                hmd.destroyed = true;
+        }
+    }
+    return !hmd.destroyed;
 }
+
+// C ref: include/objclass.h SPBOOK_CLASS — the oclass resist() measures a
+// confusion attack against.
+const SPBOOK_CLASS_UH = 10;
 
 // C ref: uhitm.c hmon_hitmon_pet() — the hero struck a pet.
 async function hmon_hitmon_pet(mon, dmg, destroyed) {
