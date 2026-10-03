@@ -4358,6 +4358,33 @@ export async function dochug(mtmp) {
         if (await use_misc(mtmp) !== 0) return 1;
     }
 
+    // C ref: monmove.c:802-824 — "Demonic Blackmail!"  A peaceful, untame
+    // MS_BRIBE demon adjacent to the hero either blackmails him (demon_talk,
+    // which rnd(80)s the demand and may run the bribe prompt) or, if its
+    // believed hero position is wrong, whispers at thin air and gets angry.
+    // minion.js has had demon_talk()/bribe() ported all along but only sounds.c
+    // dosounds() reached them, so every demon lord/prince met in Gehennom
+    // silently attacked instead of demanding payment.
+    if (nearby && msound_of(mdat) === MS_BRIBE && mtmp.mpeaceful && !mtmp.mtame
+        && !game.u?.uswallow) {
+        if (mtmp.mux !== game.u.ux || mtmp.muy !== game.u.uy) {
+            await pline(`${cansee(mtmp.mux, mtmp.muy) ? Monnam(mtmp) : 'It'}`
+                        + ' whispers at thin air.');
+            if (is_demon(youmonst_data_mm())) {
+                const T = await import('./teleport.js');
+                if (!(await T.tele_restrict(mtmp))) await T.rloc(mtmp, T.RLOC_MSG);
+            } else {
+                mtmp.minvis = 0;
+                mtmp.perminvis = 0;
+                await pline(`${Amonnam_mm(mtmp)} gets angry!`);
+                mtmp.mpeaceful = 0;
+                (await import('./makemon.js')).set_malign(mtmp);
+            }
+        } else if (await (await import('./minion.js')).demon_talk(mtmp)) {
+            return 1; /* you paid it off */
+        }
+    }
+
     // C ref: monmove.c:827-835 — the watch looks around, OR (else-if) a mind
     // flayer rolls rn2(20) for a psychic blast.  A successful roll launches the
     // blast before recalculating its apparent target and combat range.
