@@ -196,6 +196,11 @@ export async function newgame() {
         // for every reader in js/ (eat.js your_race, bones.js filecode,
         // invent.js, end.js, display.js showrace).
         if (!g.urace) g.urace = { ...(races[game.initrace] || races[0]) };
+        // C ref: role.c role_init() `gu.urole = roles[flags.initrole]` also
+        // runs before mklev(); mksobj()'s G_NOCORPSE fallback reads
+        // gu.urole.mnum for a corpse made during level creation (makeniche's
+        // iron-bars corpse).  newgame_real() replaces this after mklev.
+        if (roles[game.initrole]) g.urole = { ...roles[game.initrole] };
     }
 
     // C ref: u_init.c u_init_misc() sets u.umonnum = u.umonster =
