@@ -1970,9 +1970,12 @@ function themeroom_water_vault() {
     shuffle(nasty_undead);
     quest_create_monster(nasty_undead[0], 2, 2);
     // des.exclusion({type="teleport", region={2,2,3,3}}) — state only, no RNG.
+    // C ref: sp_lev.c:5529 lspo_exclusion() prepends an LR_TELE zone onto
+    // sve.exclusion_zones, the list is_exclusion_zone() walks.
     const g = game;
-    (g.level.exclusions || (g.level.exclusions = [])).push({
-        type: 'teleport', lx: 2 + gx.xstart, ly: 2 + gy.ystart,
+    if (!g.exclusion_zones) g.exclusion_zones = [];
+    g.exclusion_zones.unshift({
+        zonetype: LR_TELE, lx: 2 + gx.xstart, ly: 2 + gy.ystart,
         hx: 3 + gx.xstart, hy: 3 + gy.ystart,
     });
 }

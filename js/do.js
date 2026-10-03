@@ -1003,6 +1003,12 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         // a revisit lands inside the same des.teleport_region() box as the first
         // arrival.  Stashed here (before goto_level zeroes them) by reference.
         updest: g.updest, dndest: g.dndest,
+        // C ref: save.c savelev_core() -> save_exclusions() / restore.c getlev()
+        // -> load_exclusions(): des.exclusion() zones are part of the LEVEL's
+        // save file.  Stash them by reference (mklev()'s clear_level_structures
+        // frees the live list for a newly generated level) so a revisit still
+        // refuses monster generation / teleport inside the same rectangles.
+        exclusion_zones: g.exclusion_zones,
     };
     clear_regions();
     // C ref: save_track() release_data() -> initrack().  Clear the live ring so
@@ -1508,6 +1514,11 @@ async function getlev_restore(ledger) {
     // rn2(21) over the entire map.
     g.updest = store.updest ?? null;
     g.dndest = store.dndest ?? null;
+
+    // C ref: restore.c getlev() -> load_exclusions(): the level's des.exclusion()
+    // rectangles come back with it, so Sokoban's monster-generation zone (and a
+    // hell prefab's no-teleport keep) is back in force on a revisit.
+    g.exclusion_zones = store.exclusion_zones ?? null;
 
     // C ref: track.c rest_track() (called from getlev()) — restore this level's
     // saved footprint ring.  goto_level() cleared the live ring (initrack) when

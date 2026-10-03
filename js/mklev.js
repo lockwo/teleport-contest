@@ -93,7 +93,7 @@ import {
     WM_C_OUTER, WM_C_INNER,
     WM_X_TL, WM_X_TR, WM_X_BL, WM_X_BR, WM_X_TLBR, WM_X_BLTR,
     A_LAWFUL, A_NONE, Align2amask, AM_SHRINE, AM_NONE,
-    LR_UPTELE, LR_DOWNTELE, LR_TELE, LR_UPSTAIR, LR_DOWNSTAIR,
+    LR_UPTELE, LR_DOWNTELE, LR_TELE, LR_MONGEN, LR_UPSTAIR, LR_DOWNSTAIR,
     LR_PORTAL, LR_BRANCH, LA_UP, LA_DOWN,
     In_endgame, BURN,
     DUST, MARK, HEADSTONE,
@@ -417,6 +417,10 @@ function clear_level_structures() {
     lf.fumaroles = false;
     lf.stormy = false;
     lf.stasis_until = 0;
+    // C ref: mklev.c:921 clear_level_structures() -> free_exclusions(): the
+    // des.exclusion() zones belong to the level being replaced, so a newly
+    // generated level never inherits the previous one's.
+    game.exclusion_zones = null;
     init_rect();
 }
 
@@ -5189,12 +5193,19 @@ function hf_region_lit(sel) {
     });
 }
 
-// C ref: sp_lev.c lspo_exclusion() — registers a no-teleport zone.  No RNG.
-function hf_exclusion(zonetype, x1, y1, x2, y2) {
+// C ref: sp_lev.c lspo_exclusion() — registers an exclusion zone.  No RNG.
+// `kind` is the des.exclusion() `type=` string; it must be stored as the LR_*
+// number mkmaze.c is_exclusion_zone() compares against (it used to be kept as
+// the raw string, which matched nothing), and C PREPENDS onto the list.
+const HF_EZ_TYPES = { 'teleport': LR_TELE, 'teleport-up': LR_UPTELE,
+                      'teleport-down': LR_DOWNTELE,
+                      'monster-generation': LR_MONGEN };
+function hf_exclusion(kind, x1, y1, x2, y2) {
     const a = hf_loc(x1, y1), b = hf_loc(x2, y2);
     const g = game;
     if (!g.exclusion_zones) g.exclusion_zones = [];
-    g.exclusion_zones.push({ zonetype, lx: a.x, ly: a.y, hx: b.x, hy: b.y });
+    g.exclusion_zones.unshift({ zonetype: HF_EZ_TYPES[kind] ?? LR_TELE,
+                                lx: a.x, ly: a.y, hx: b.x, hy: b.y });
 }
 
 // C ref: sp_lev.c create_altar() — with an explicit `type` there is no rn2(2)
