@@ -7,7 +7,7 @@
 import { game } from './gstate.js';
 import { Goodbye } from './role.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
-import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM } from './const.js';
+import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU } from './const.js';
 
 // end.h death codes (subset).  DIED=0; GENOCIDED separates the death codes
 // that leave a tombstone/bones from the ones that don't (QUIT/ESCAPED/
@@ -988,7 +988,23 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     if (how < PANICKED) tmp -= Math.trunc(tmp / 10);
     tmp += 50 * (deepest2 - 1);
     if (deepest2 > 20) tmp += 1000 * ((deepest2 > 30) ? 10 : deepest2 - 20);
-    const urexp = (u?.urexp || 0) + tmp;
+    // C ref: end.c really_done() -> keepdogs(TRUE), then outrip_and_score():
+    // an adjacent living pet escapes with the hero and its current HP adds
+    // to the score.  The JS monster list is insertion-ordered; fmon is newest
+    // first, so walk it in reverse before composing the farewell line.
+    const pets = [];
+    if (how === ESCAPED || how === ASCENDED) {
+        const { monnear } = await import('./dogmove.js');
+        for (let i = (game.level?.monsters?.length || 0) - 1; i >= 0; i--) {
+            const mon = game.level.monsters[i];
+            if (mon.mtame && mon.mhp > 0 && monnear(mon, u.ux, u.uy)
+                && !((mon.mstrategy || 0) & STRAT_WAITFORU)) {
+                pets.push(mon);
+            }
+        }
+    }
+    let urexp = (u?.urexp || 0) + tmp;
+    for (const pet of pets) urexp += pet.mhp;
     u.urexp = urexp; // really_done() persists this before topten() reads it
 
     const deathText = game._killer_name || DEATHS[how] || 'died';
@@ -1017,11 +1033,17 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         }
         lines.push(`${Goodbye(game.urole?.mnum)} ${plname} the ${roleName}...`);
         lines.push('');
-        lines.push((how !== ESCAPED && how !== ASCENDED)
-            ? `You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
-              + ` with ${urexp} point${plur(urexp)},`
-            : `You ${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
-              + ` with ${urexp} point${plur(urexp)},`);
+        if (how === ESCAPED || how === ASCENDED) {
+            if (pets.length) {
+                const { mon_nam } = await import('./do_name.js');
+                lines.push(`You${pets.map((pet) => ` and ${mon_nam(pet)}`).join('')}`);
+            }
+            lines.push(`${pets.length ? '' : 'You '}${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
+                + ` with ${urexp} point${plur(urexp)},`);
+        } else {
+            lines.push(`You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
+                + ` with ${urexp} point${plur(urexp)},`);
+        }
         lines.push(`and ${umoney} piece${plur(umoney)} of gold, after ${moves} move${plur(moves)}.`);
         lines.push(`You were level ${u?.ulevel || 1} with a maximum of ${u?.uhpmax || 0}`
             + ` hit point${plur(u?.uhpmax || 0)} when you ${ENDS[how]}.`);
