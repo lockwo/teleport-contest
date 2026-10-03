@@ -1326,6 +1326,11 @@ export async function rhack(key) {
     } else if (ch === '\\') {
         await dodiscovered();
         game.context.move = 0;
+    } else if (ch === '`') {
+        // C ref: cmd.c { '`', "knownclass", doclassdisco } (o_init.c).
+        const { doclassdisco } = await import('./o_init.js');
+        await doclassdisco();
+        game.context.move = 0;
     } else if (ch === 'v') {
         // C ref: cmd.c { 'v', "chronicle", ..., do_gamelog } — the #chronicle
         // text window.  The key was in CMD_DEFAULT_KEY but had no dispatch
