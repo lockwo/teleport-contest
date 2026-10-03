@@ -51,6 +51,7 @@ import { ACCESSIBLE, IS_POOL, IS_LAVA, In_sokoban,
 import { In_hell, endgamelevelname } from './dungeon.js';
 import { observe_object } from './o_init.js';
 import { xlev_to_rank } from './exper.js';
+import { acurr_eff } from './attrib.js';
 
 const COIN_CLASS = 12;
 const S_EEL_CLS = 57;            // monsym.h S_EEL
@@ -2411,28 +2412,15 @@ function _botFields(order) {
 
     raw[BL_TITLE] = _botTitle();
 
+    // C ref: botl.c bot1() — each field is ACURR(x) == attrib.c acurr(x);
     // acurr.a is stored in attribute order [STR, INT, WIS, DEX, CON, CHA]
     // (A_STR..A_CHA); the status line displays St Dx Co In Wi Ch.
-    // C ref: attrib.c acurr() — the shown value is abon+atemp+acurr clamped to
-    // [3,25] for the non-STR characteristics (e.g. wounded legs set atemp[DEX]
-    // to -1, dropping displayed Dx by one).  abon/atemp default to 0.
-    const a = u.acurr?.a || [];
-    const atemp = u.atemp?.a || [];
-    const abon = u.abon?.a || [];
-    const _eff = (i) => {
-        const v = (a[i] ?? 0) + (atemp[i] || 0) + (abon[i] || 0);
-        return v > 25 ? 25 : v < 3 ? 3 : v;
-    };
-    // C ref: botl.c bot1() reads ACURR(A_STR) == acurr(A_STR), which worn
-    // gauntlets of power pin at 125 ("St:25"); a[0] alone showed the base Str.
-    const encStr = (game.uarmg?.otyp === 161 /* GAUNTLETS_OF_POWER */ && !u.Upolyd)
-        ? 125 : (a[0] ?? 0);
-    raw[BL_STR] = _strengthStr(encStr);
-    raw[BL_DX] = String(_eff(3));
-    raw[BL_CO] = String(_eff(4));
-    raw[BL_IN] = String(_eff(1));
-    raw[BL_WI] = String(_eff(2));
-    raw[BL_CH] = String(_eff(5));
+    raw[BL_STR] = _strengthStr(acurr_eff(0));
+    raw[BL_DX] = String(acurr_eff(3));
+    raw[BL_CO] = String(acurr_eff(4));
+    raw[BL_IN] = String(acurr_eff(1));
+    raw[BL_WI] = String(acurr_eff(2));
+    raw[BL_CH] = String(acurr_eff(5));
     raw[BL_ALIGN] = u.ualign?.type === 0 ? 'Neutral'
                     : u.ualign?.type > 0 ? 'Lawful' : 'Chaotic';
     raw[BL_SCORE] = '0';
