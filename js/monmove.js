@@ -97,7 +97,7 @@ import { is_armed, mattk_of,
     AD_PHYS, AD_ELEC, AD_DRST, AD_STUN, AD_DISE, AD_PEST, AD_FAMN, AD_STCK,
     AD_POLY, AD_ACID, AD_COLD, AD_FIRE, AD_SITM, AD_SEDU, AD_SSEX,
     AD_RUST, AD_CORR, AD_MAGM, AD_RBRE, AD_SPEL, AD_CLRC,
-    AD_SLEE, AD_DISN, AD_DRDX, AD_DRCO, AD_DRIN,
+    AD_SLEE, AD_DISN, AD_DRDX, AD_DRCO, AD_DRIN, AD_DREN,
     AD_BLND, AD_STON, AD_LEGS, AD_WRAP, AD_WERE, AD_DRLI, AD_TLPT,
     AD_DCAY, AD_ENCH } from './monattk_data.js';
 const PM_PAPER_GOLEM_FT = _name_to_pmidx_cf('paper golem');
@@ -5964,30 +5964,44 @@ export async function mattacku(mtmp, mdat) {
 //     AT_HUGS / AD_STCK / AD_POLY to a plain 1d6 claw (or a touch);
 //   * a cancelled weapon-attacker with a non-physical damage type is forced to
 //     AD_PHYS.
-// Not ported (and unreachable for the monsters this port drives): the
-// SEDUCE=0 AD_SSEX substitution (no succubus/incubus), the AD_DREN energy
-// proportioning, and the home-elemental double damage (needs an elemental
-// plane).
+// All attack substitutions in mhitu.c:310 are ported below, including the
+// energy-dependent AD_DREN damage and the native-plane elemental multiplier.
 function getmattk(magr, indx, prev_result) {
     const list = mon_attacks(magr.data);
     const base = list[indx];
     if (!base) return { aatyp: AT_NONE, adtyp: AD_PHYS, damn: 0, damd: 0 };
     const attk = { ...base };
+    let substituted = false;
 
     if (indx > 0 && (prev_result[indx - 1] | 0) > M_ATTK_MISS
         && (attk.adtyp === AD_DISE || attk.adtyp === AD_PEST
             || attk.adtyp === AD_FAMN)
         && attk.adtyp === list[indx - 1].adtyp) {
         attk.adtyp = AD_STUN;
+        substituted = true;
+    } else if (attk.adtyp === AD_DREN) {
+        // C ref mhitu.c:349 — energy drain scales with current and max Pw.
+        const u = game.u || {};
+        const ulev = Math.max(u.ulevel | 0, 6);
+        substituted = true;
+        if ((u.uen | 0) <= 5 * ulev && attk.damn > 1) {
+            attk.damn -= 1;
+            if ((u.uenmax | 0) <= 2 * ulev && attk.damd > 3)
+                attk.damd -= 3;
+        } else if ((u.uen | 0) > 12 * ulev) {
+            attk.damn += 1;
+            if ((u.uenmax | 0) > 20 * ulev) attk.damd += 3;
+        }
     } else if (magr.mspec_used
                && (attk.aatyp === AT_ENGL || attk.aatyp === AT_HUGS
                    || attk.adtyp === AD_STCK || attk.adtyp === AD_POLY)) {
         const wimpy = (attk.damd === 0);   /* lichen, violet fungus */
+        substituted = true;
         if (attk.adtyp === AD_ACID || attk.adtyp === AD_ELEC
             || attk.adtyp === AD_COLD || attk.adtyp === AD_FIRE) {
             attk.aatyp = AT_TUCH;
         } else {
-            attk.aatyp = AT_CLAW;          /* message becomes "<foo> hits" */
+            attk.aatyp = AT_CLAW;
             attk.adtyp = AD_PHYS;
         }
         attk.damn = 1; attk.damd = 6;
@@ -5998,20 +6012,18 @@ function getmattk(magr, indx, prev_result) {
     } else if (indx === 0 && attk.aatyp === AT_WEAP && attk.adtyp !== AD_PHYS
                && !(list[1]?.aatyp === AT_WEAP && list[1]?.adtyp === AD_PHYS)
                && magr.mcan) {
-        // The weap-based half of the guard (petrifying corpse / Stormbringer /
-        // Vorpal Blade wielded) needs artifacts no monster here carries.
         attk.adtyp = AD_PHYS;
+        substituted = true;
     } else if (indx === 0 && attk.aatyp === AT_TUCH && attk.adtyp === AD_COLD
                && cold_resistance_hero()
                && youmonst_data_mm()?.name !== 'shade') {
-        // C ref: mhitu.c:412-433.  Liches otherwise become helpless against a
-        // cold-resistant defender because their spell attack is unavailable in
-        // monster-vs-monster combat.  Convert the touch to a weaker physical
-        // blow before hitmu() rolls its damage.
         attk.adtyp = AD_PHYS;
         attk.damn = Math.trunc((attk.damn + 1) / 2);
         if (attk.damd === 10) attk.damd = 6;
+        substituted = true;
     }
+
+    if (!substituted && is_home_elemental_mm(magr)) attk.damn *= 2;
     return attk;
 }
 
