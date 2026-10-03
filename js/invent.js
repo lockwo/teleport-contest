@@ -2771,6 +2771,12 @@ export async function dovspell() {
         await pline('You don\'t know any spells right now.');
         return ECMD_OK;
     }
+    let swapIndex = -1;
+    for (;;) {
+    // C ref: wintty.c erase_menu_or_text() — remove the previous (possibly
+    // wider) sort menu before painting the view menu on the map.
+    display.clearScreen();
+    render_map_to_grid();
 
     // C ref: spell.c dospellmenu(SPELLMENU_VIEW) — build the menu lines.  In
     // wizard mode an extra "turns" column shows raw sp_know (spellknow).
@@ -2789,21 +2795,26 @@ export async function dovspell() {
     if (wiz) header += ' ' + padStart('turns', 6);
     // Row fmt: "%-20s  %2d   %-12s %3d%% %9s" (+ " %6d" sp_know in wizmode).
     const rows = [];
+    const order = game.spl_orderindx;
     for (let i = 0; i < nspells; i++) {
-        let buf = padEnd(meta.name(i), 20) + '  ' + padStart(String(book[i].sp_lev), 2)
-            + '   ' + padEnd(meta.category(i), 12) + ' ' + padStart(`${meta.fail(i)}%`, 4)
-            + ' ' + padStart(meta.retention(i), 9);
+        const slot = order ? order[i] : i;
+        let buf = padEnd(meta.name(slot), 20) + '  ' + padStart(String(book[slot].sp_lev), 2)
+            + '   ' + padEnd(meta.category(slot), 12) + ' ' + padStart(`${meta.fail(slot)}%`, 4)
+            + ' ' + padStart(meta.retention(slot), 9);
         if (wiz) buf += ' ' + padStart(String(meta.know(i)), 6);
         rows.push(buf);
     }
     const selector = (i) => (i < 26 ? String.fromCharCode(97 + i)
         : String.fromCharCode(65 + i - 26)) + ' - ';
-    const itemLines = rows.map((r, i) => selector(i) + r);
-    // C ref: spell.c dospellmenu — SPELLMENU_VIEW adds a "[sort spells]" entry
-    // when there is more than one spell (otherwise PICK_NONE).
-    const multi = nspells > 1;
+    const itemLines = rows.map((r, i) => {
+        const slot = order ? order[i] : i;
+        return (slot === swapIndex ? selector(slot).replace(' - ', ' * ') : selector(slot)) + r;
+    });
+    // C ref: spell.c dospellmenu — only SPELLMENU_VIEW offers sorting.
+    const multi = nspells > 1 && swapIndex < 0;
     if (multi) itemLines.push('+ - [sort spells]');
-    const prompt = 'Currently known spells';
+    const prompt = swapIndex < 0 ? 'Currently known spells'
+        : `Reordering spells; swap '${String.fromCharCode(swapIndex < 26 ? 97 + swapIndex : 65 + swapIndex - 26)}' with`;
 
     // C ref: win/tty/wintty.c — offx = max(10, cols - maxcol - 1), maxcol =
     // widest (strlen + 2), cols == 81 (matches recorded placement).
@@ -2866,24 +2877,71 @@ export async function dovspell() {
     display.setCursor(offx + 6, row);
     game._modal_screen = 'spellmenu';
 
-    // C ref: dospellmenu select_menu — VIEW with one spell is PICK_NONE, with
-    // >1 spell it's PICK_ONE (only a/b/.../+ select, the reorder path).  No
-    // covered session drives an actual reorder, so any selection or
-    // space/escape dismisses.  wintty.c process_menu_window()'s default case
-    // bells and keeps PICK_NONE menus open on anything but ESC/space/return —
-    // it is NOT "any key dismisses".
+    // C ref: spell.c dovspell() — view, sort, then optionally choose two
+    // casting letters to exchange (the sort order itself is only a view).
+    let choice = null;
     for (;;) {
         const c = await nhgetch();
-        if (c === 27 || c === 32 || c === 13 || c === 10) break; // esc/space/return
-        if (!multi) continue; // PICK_NONE: bell, menu stays shown
+        if (c === 27 || c === 32 || c === 13 || c === 10) break;
+        if (nspells < 2) continue;
         const ch = String.fromCharCode(c);
         const idx = (ch >= 'a' && ch <= 'z') ? ch.charCodeAt(0) - 97
             : (ch >= 'A' && ch <= 'Z') ? ch.charCodeAt(0) - 65 + 26 : -1;
-        if ((idx >= 0 && idx < nspells) || ch === '+') break; // valid selector
-        // otherwise (e.g. '5'): ignored, menu stays shown
+        if (idx >= 0 && idx < nspells) { choice = idx; break; }
+        if (ch === '+' && multi) { choice = '+'; break; }
     }
     delete game._modal_screen;
+    if (choice === '+') {
+        await spellSortMenu(spell);
+    } else if (choice !== null && swapIndex < 0) {
+        swapIndex = choice;
+        continue;
+    } else if (choice !== null && choice !== swapIndex) {
+        [book[swapIndex], book[choice]] = [book[choice], book[swapIndex]];
+        swapIndex = -1;
+        continue;
+    } else if (choice === null || swapIndex >= 0) {
+        break;
+    }
+    }
+    delete game.spl_orderindx;
+    game.spl_sortmode = 0;
     return ECMD_OK;
+}
+
+// C ref: spell.c spellsortmenu() — the choice is temporary until '+' closes;
+// sortspells() changes the displayed index, not the casting letters.
+async function spellSortMenu(spell) {
+    const choices = [
+        'by casting letter', 'alphabetically', 'by level, low to high',
+        'by level, high to low', 'by skill group, alphabetized within each group',
+        'by skill group, low to high level within group',
+        'by skill group, high to low level within group',
+        'maintain current ordering',
+        'reassign casting letters to retain current order',
+    ];
+    const flat = [{ text: 'View known spells list sorted', attr: menuHeadAttr() },
+                  { text: '', attr: 0 }];
+    for (let i = 0; i < choices.length; i++) {
+        if (i === 8) flat.push({ text: '', attr: 0 });
+        const ch = i === 8 ? 'z' : String.fromCharCode(97 + i);
+        flat.push({ text: `${ch} ${i === (game.spl_sortmode | 0) ? '*' : '-'} ${choices[i]}`,
+                    attr: 0 });
+    }
+    game._pending_message = '';
+    renderMenuLines(flat, [32, 12]);
+    for (;;) {
+        const c = await nhgetch();
+        if (c === 27 || c === 32 || c === 13 || c === 10) break;
+        const ch = String.fromCharCode(c);
+        const choice = ch === 'z' ? 8 : ch >= 'a' && ch <= 'h'
+            ? ch.charCodeAt(0) - 97 : -1;
+        if (choice < 0) continue;
+        game.spl_sortmode = choice;
+        spell.sortspells();
+        break;
+    }
+    delete game._modal_screen;
 }
 
 function renderMessageOnMap(msg) {
