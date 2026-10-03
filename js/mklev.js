@@ -6475,7 +6475,18 @@ function oracle_monster(croom) {
 // victim gate.  C ref: sp_lev.c create_trap + mklev.c mktrap.
 async function oracle_trap(croom) {
     const g = game;
-    const c = oracle_get_free_room_loc(croom);      // somexy (get_free_room_loc)
+    // C ref: sp_lev.c get_free_room_loc(): get_location_coord(DRY), then
+    // while the square is not plain ROOM (stairs placed earlier), up to 100
+    // fresh get_room_loc() -> somexy() rolls from the caller's (-1,-1).
+    const c = oracle_get_free_room_loc(croom);
+    if (g.level.at(c.x, c.y)?.typ !== ROOM) {
+        let trycnt = 0;
+        do {
+            const r = { x: -1, y: -1 };
+            somexy(croom, r);
+            c.x = r.x; c.y = r.y;
+        } while (g.level.at(c.x, c.y)?.typ !== ROOM && ++trycnt <= 100);
+    }
     // is_pool_or_lava(tm) check: room floor is never pool here.
     let kind;
     kind = mktrap_random_kind();
