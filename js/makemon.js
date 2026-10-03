@@ -87,6 +87,10 @@ export const MM_ASLEEP = 0x00001000; // monsters should be generated asleep
 export const MM_NOGRP = 0x00002000; // suppress creation of monster groups
 const MM_ANGRY = 0x00000020; // monster is created angry
 const MM_ADJACENTOK = 0x00000010; // C ref: makemon.h — ok to displace to an adjacent square
+const MM_EDOG = 0x00000800; // C ref: makemon.h MM_EDOG — allocate a pet extension.
+// C ref: makemon.c makemon() — dog.js registers newedog via the shared hook,
+// avoiding a makemon.js <-> dog.js static import cycle.
+const newedog_mm = (mtmp) => hooks.newedog(mtmp);
 // C ref: hack.h:1155-1163 — the caller-supplied mextra/gender flags.
 const MM_EPRI = 0x00000100;
 export const MM_EMIN = 0x00000400;
@@ -3473,6 +3477,8 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
 
     const mtmp = { data: ptr, mx: x, my: y, mmflags };
     if (globalThis.__NHMONDBG) globalThis.__NHMONDBG.push([globalThis.__NHRNGLEN(), ptr.name, ptr.mcls, ptr.gcode]);
+    // C ref: makemon.c makemon() — newedog precedes the m_id assignment.
+    if (mmflags & MM_EDOG) newedog_mm(mtmp);
     // C ref: makemon.c:1245 `if (mmflags & MM_ASLEEP) mtmp->msleeping = 1;`.
     // No RNG, but msleeping gates every monster's turn in dochug(), so a caller
     // that asked for a sleeping monster got a wide-awake one instead.

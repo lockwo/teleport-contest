@@ -564,7 +564,7 @@ export function befriend_with_obj(ptr, obj) {
 
 // C ref: dog.c initedog(mtmp, everything) — consumes no RNG.  u.uconduct.pets++
 // and the livelog line are the only side effects outside the edog struct.
-function initedog(mtmp, everything) {
+export function initedog(mtmp, everything) {
     const edogp = mtmp.edog;
     const minhungry = (game.moves || 0) + 1000;
     const minimumtame = is_domestic(mtmp.data) ? 10 : 5;

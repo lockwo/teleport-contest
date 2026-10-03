@@ -5,7 +5,8 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
-import { pline, update_topl, m_at, map_invisible, canseemon_shared } from './display.js';
+import { pline, update_topl, m_at, map_invisible, canseemon_shared,
+         tmp_at, zapdir_to_glyph } from './display.js';
 import { exercise } from './attrib.js';
 import { objects, mksobj, weight, set_bknown, SPE_BLANK_PAPER, SPE_NOVEL } from './mkobj.js';
 import { SPELL_META } from './u_init.js';
@@ -722,10 +723,18 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
         }
         break;
     }
-    case SPE_CREATE_FAMILIAR:
-    case SPE_JUMPING:
+    case SPE_CREATE_FAMILIAR: {
+        // C ref: spell.c spelleffects() SPE_CREATE_FAMILIAR -> dog.c make_familiar().
+        const { make_familiar } = await import('./dog.js');
+        await make_familiar(null, u.ux, u.uy, false);
+        break;
+    }
     case SPE_CHAIN_LIGHTNING:
-        // DEFERRED: make_familiar(), jump(), cast_chain_lightning() integration.
+        // C ref: spell.c spelleffects() SPE_CHAIN_LIGHTNING.
+        await cast_chain_lightning();
+        break;
+    case SPE_JUMPING:
+        // DEFERRED: jump() integration.
         break;
     case SPE_PROTECTION:
         // C ref: spell.c spelleffects() SPE_PROTECTION -> cast_protection().
@@ -931,11 +940,11 @@ export async function study_book(spellbook) {
             // eyecount(youmonst) is 2 for every playable form -> plural.
             await pline("This book is so dull that you can't keep your eyes open.");
             dullbook += rnd(2 * oc_level);
-            // fall_asleep(-dullbook, TRUE): stop_occupation + nomul.
+            // C ref: spell.c study_book() -> timeout.c fall_asleep().
+            // Setting usleep makes gethungry() use its Unaware rn2(10) path.
             game._study_occupation = false;
-            nomul(-dullbook);
-            game.multi_reason = 'sleeping';
-            game.nomovemsg = 'You wake up.';
+            const { fall_asleep } = await import('./zap.js');
+            fall_asleep(-dullbook, true);
             return 1;
         }
     }
@@ -1627,7 +1636,7 @@ function CHAIN_LIGHTNING_POS(x, y) {
 // zap one square forward, then queue it unless it would hit an invalid square
 // or is out of power.  `zap` is passed BY VALUE in C, so the move-forward must
 // not be visible to the caller: copy it here.
-export function propagate_chain_lightning(clq, zap_in) {
+export async function propagate_chain_lightning(clq, zap_in) {
     const zap = { dir: zap_in.dir, x: zap_in.x, y: zap_in.y,
                   strength: zap_in.strength };
 
@@ -1665,9 +1674,9 @@ export function propagate_chain_lightning(clq, zap_in) {
     clq.q[clq.tail++] = zap;
 
     /* Draw it. */
-    sp_tmp_at(DISP_CHANGE, sp_zapdir_to_glyph(xdir[zap.dir], ydir[zap.dir],
+    await tmp_at(DISP_CHANGE, zapdir_to_glyph(xdir[zap.dir], ydir[zap.dir],
                                               clq.displayed_beam));
-    sp_tmp_at(zap.x, zap.y);
+    await tmp_at(zap.x, zap.y);
 }
 
 // C ref: spell.c:1002 cast_chain_lightning() — SPE_CHAIN_LIGHTNING.  The whole
@@ -1690,11 +1699,11 @@ export async function cast_chain_lightning() {
     }
 
     /* set the type of beam we're using; the direction here is arbitrary */
-    sp_tmp_at(DISP_BEAM, sp_zapdir_to_glyph(0, 1, clq.displayed_beam));
+    await tmp_at(DISP_BEAM, zapdir_to_glyph(0, 1, clq.displayed_beam));
 
     /* start by propagating in all directions from the caster */
     for (let dir = 0; dir < N_DIRS; dir++) {
-        propagate_chain_lightning(clq, { dir, x: u.ux, y: u.uy, strength: 2 });
+        await propagate_chain_lightning(clq, { dir, x: u.ux, y: u.uy, strength: 2 });
     }
     sp_nh_delay_output();
 
@@ -1748,24 +1757,24 @@ export async function cast_chain_lightning() {
                 continue; /* upon hitting a shock-resistant monster */
             zap.strength--;
 
-            propagate_chain_lightning(clq, zap);
+            await propagate_chain_lightning(clq, zap);
 
             if (zap.strength < 2)
                 zap.strength = 0;
             else if (u.uen > 0)
                 u.uen--; /* propagating past mons increases Pw cost a bit */
             zap.dir = DIR_LEFT(zap.dir);
-            propagate_chain_lightning(clq, zap);
+            await propagate_chain_lightning(clq, zap);
 
             zap.dir = DIR_RIGHT2(zap.dir);
-            propagate_chain_lightning(clq, zap);
+            await propagate_chain_lightning(clq, zap);
         }
         sp_nh_delay_output();
     }
     sp_nh_delay_output();
     sp_nh_delay_output();
 
-    sp_tmp_at(DISP_END, 0);
+    await tmp_at(DISP_END, 0);
 }
 // C ref: hack.h:658 DIR_LEFT / :661 DIR_RIGHT2.
 function DIR_LEFT(dir) { return (dir + 7) % N_DIRS; }

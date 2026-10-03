@@ -1,7 +1,7 @@
 // dog.js - Pet creation.
 // C ref: dog.c - pet_type, makedog.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
 import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL } from './const.js';
@@ -549,9 +549,11 @@ export function newedog(mtmp) {
             whistletime: 0, hungrytime: 0, ogoal: { x: 0, y: 0 },
             abuse: 0, revivals: 0, mhpmax_penalty: 0, killed_by_u: 0,
         };
-        mtmp.edog.parentmid = mtmp.m_id;
+        mtmp.edog.parentmid = mtmp.m_id | 0;
     }
 }
+// C ref: makemon.c makemon(MM_EDOG) — attach a pet extension without a cycle.
+hooks.newedog = newedog;
 
 // C ref: dog.c:34 free_edog(mtmp) — drop the pet extension and untame.
 export function free_edog(mtmp) {
@@ -596,14 +598,10 @@ export async function pick_familiar_pm(otmp, quietly) {
     return pm;
 }
 
-// C ref: dog.c initedog(mtmp, everything).  The faithful port is MODULE-PRIVATE
-// at js/dothrow.js:563; the wiring fix is to export it there, not to add a
-// second copy here ([[duplicate-reimplementation-shadows-faithful-port]]).
+// C ref: dog.c initedog(mtmp, everything) — reuse dothrow.js's port.
 async function initedog_shared(mtmp, everything) {
-    const M = await import('./dothrow.js');
-    if (typeof M.initedog === 'function')
-        return M.initedog(mtmp, everything);
-    return undefined;   /* GAP: unreachable until dothrow.js exports it */
+    const { initedog } = await import('./dothrow.js');
+    return initedog(mtmp, everything);
 }
 
 // C ref: dog.c:137 make_familiar(otmp, x, y, quietly) — a figurine or the
