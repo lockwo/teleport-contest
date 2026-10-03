@@ -1291,16 +1291,18 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // In_mines / In_sokoban / else.  Only the quest and Knox arms have output
     // here; onquest() draws no RNG (it opens com_pager text windows).
     if (In_endgame(u.uz)) {
-        // C ref: do.c:1881-1890 — the endgame arm.  Astral gets final_level()
-        // (not ported); every other plane entered while carrying the Amulet
-        // forces the confrontation with the Wizard of Yendor.
+        // C ref: do.c goto_level():1882 — only the first Astral visit
+        // populates the final-level adventurers and guardian angel.
         const astral = g.astral_level;
         const onAstral = !!astral && u.uz.dnum === astral.dnum
                          && u.uz.dlevel === astral.dlevel;
         if (newdungeon) await record_ach(7 /* ACH_ENDG */);
-        if (firstVisit && onAstral) await record_ach(8 /* ACH_ASTR */);
-        if (!(firstVisit && onAstral) && newdungeon && u.uhave?.amulet)
+        if (firstVisit && onAstral) {
+            await final_level();
+            await record_ach(8 /* ACH_ASTR */);
+        } else if (newdungeon && u.uhave?.amulet) {
             await resurrect();
+        }
     } else if (In_quest(u.uz)) {
         await onquest(); /* might be reaching locate|goal level */
     } else if (Is_knox_level(u.uz)) {
@@ -3507,18 +3509,18 @@ export async function maybe_lvltport_feedback() {
 // ── final_level (C ref: do.c:2043) ──────────────────────────────────────────
 // Arrival on the Astral Plane.
 export async function final_level() {
-    /* reset monster hostility relative to player */
-    // C ref: do.c:2046 iter_mons(reset_hostility) — mon.c reset_hostility() has
-    // no port in js/; it clears mpeaceful/mtame for player-monsters and Riders.
-    void 0;
+    // C ref: do.c final_level() -> priest.c reset_hostility(), only for
+    // roaming aligned minions (not every peaceful monster).
+    const { reset_hostility } = await import('./priest.js');
+    for (const mon of game.level?.monsters || []) reset_hostility(mon);
 
-    /* create some player-monsters */
-    // C ref: do.c:2049 create_mplayers(rn1(4, 3), TRUE).  The rn1(4,3) count is
-    // C's ARGUMENT, drawn here, so keep the draw even though makemon.c
-    // create_mplayers() has no port in js/ — the stream position is C's.
-    const nplayers = rn1(4, 3);
-    void nplayers;
-
+    // C ref: do.c final_level():2049 -> mplayer.c create_mplayers().
+    // mplayer.js already ports the placement and equipment draw sequence;
+    // use the established makemon inventory helpers instead of silently
+    // omitting each adventurer's fake amulet, weapons and gold.
+    const { create_mplayers } = await import('./mplayer.js');
+    const { mongets_pub, mkmonmoney } = await import('./makemon.js');
+    create_mplayers(rn1(4, 3), true, { mongets: mongets_pub, mkmonmoney });
     /* create a guardian angel next to player, if worthy */
     // C ref: do.c:2052 gain_guardian_angel() — js/minion.js exports the
     // faithful port; dynamic import avoids a static cycle.

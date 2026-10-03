@@ -2,13 +2,10 @@
 //
 // C ref: nethack-c/upstream/src/mplayer.c (NetHack 5.0), translated in full.
 //
-// Two callers exist in C: sp_lev.c's `montype` handler for a level script that
-// names a role monster (js/sp_lev.js:4811 already routes there, through the
-// EXT.mk_mplayer stub) and the Astral Plane / Elemental Planes scripts via
-// create_mplayers().  Neither is reached by any session in the corpora, so this
-// module is INERT: nothing imports it and nothing here is called from
-// elsewhere.  Wiring it up means binding sp_lev.c's EXT table
-// (bind_sp_lev_externs({ mk_mplayer })) — that is a separate change.
+// Called by do.js final_level() when entering the Astral Plane; its
+// create_mplayers() path equips the C-style fake adventurers and preserves
+// Special-level des.monster() also has an EXT.mk_mplayer dispatch point;
+// that caller is separate from Astral arrival.
 //
 // mk_mplayer() is an unbroken run of ~40 RNG draws whose ORDER is the whole
 // point of a faithful port, so every rn2/rnd/rn1/d below sits exactly where C
@@ -29,7 +26,7 @@ import { goodpos } from './teleport.js';
 import { rank_of } from './exper.js';
 import { monmightthrowwep, is_spear } from './weapon.js';
 import { mflags2_of, M2_FEMALE } from './monflags_data.js';
-import { A_NONE, COLNO, ROWNO, MM_NOMSG } from './const.js';
+import { A_NONE, COLNO, ROWNO, MM_NOMSG, In_endgame } from './const.js';
 
 // ── constants ──────────────────────────────────────────────────────────────
 
@@ -540,14 +537,6 @@ export async function mplayer_talk(mtmp) {
     await pline(`Talk? -- "${line}"`);
 }
 
-// C ref: dungeon.h In_endgame(lev) — the endgame dungeon branch.  Resolved off
-// game.dungeons rather than a baked ledger number.
-function In_endgame(lev) {
-    const dnum = lev?.dnum;
-    if (dnum == null) return false;
-    return game.dungeons?.[dnum]?.dname === 'End Game'
-        || dnum === game.endgame_dnum;
-}
 // C ref: rm.h MON_AT(x,y) — a monster (not the hero) occupies the square.
 function MON_AT(x, y) {
     for (const m of fmon())
