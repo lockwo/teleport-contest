@@ -3589,6 +3589,10 @@ export async function domove(dx, dy, attemptTracked = true) {
                 // here was silently discarding it.
                 await update_topl('That door is closed.');
             }
+            // C ref: hack.c domove_core() — a failed test_move() without
+            // context.door_opened does `context.move = 0; nomul(0);`, which
+            // ends a travel/run so the refusal is printed only once.
+            { const { nomul } = await import('./hack.js'); nomul(0); }
             game.context.move = 0;
             return;
         }
