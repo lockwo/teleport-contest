@@ -24,10 +24,11 @@ import { monster_by_pmidx } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
 import { exercise } from './attrib.js';
 import { isok, s_suffix } from './hacklib.js';
+import { quest_artifact_num } from './questpgr.js';
 import { cansee } from './vision.js';
 import { mon_nam, monflee } from './uhitm.js';
-import { resist, destroy_items, ignite_items } from './zap.js';
-import { worn_extrinsic } from './invent.js';
+import { resist, destroy_items, ignite_items, Antimagic as Antimagic_zap } from './zap.js';
+import { worn_extrinsic, xname, yname, otense } from './invent.js';
 import { healmon } from './mon.js';
 import { mon_aligntyp } from './minion.js';
 import { nomul } from './hack.js';
@@ -524,10 +525,9 @@ function ualign_record() { return game.u?.ualign?.record ?? 0; }
 function uprop(name) { return game.u?.uprops?.[name] || 0; }
 function Blind() { return !!(uprop('Blinded') || game.u?.Blinded); }
 function Hallucination() { return !!(uprop('Hallucination') || game.u?.Hallucination); }
-function Antimagic() {
-    const u = game.u;
-    return !!(u?.uprops?.Antimagic || u?.Antimagic || u?.HAntimagic || u?.EAntimagic);
-}
+// C ref: youprop.h Antimagic -- zap.js's reader also sees worn extrinsics
+// (e.g. the Wizard's cloak of magic resistance).
+function Antimagic() { return !!Antimagic_zap(); }
 function Fire_resistance() {
     return !!(uprop('Fire_resistance') || uprop('HFire_resistance')
         || uprop('EFire_resistance') || game.u?.Fire_resistance
@@ -684,11 +684,20 @@ function set_arti_exists(m, on) {
     artiinfo()[m].exists = on ? 1 : 0;
 }
 
-// C ref: artifact.c hack_artifacts() — must run after u_init().  Mutates
-// artilist[] in place exactly as C does.
+// C ref: artifact.c hack_artifacts() -- must run after u_init().  Mutates
+// artilist[] in place exactly as C does.  C runs it on a freshly loaded
+// artilist each game; this module's table lives across games, so the
+// pristine alignment/role are restored first.
 export function hack_artifacts() {
-    const alignmnt = ualign_type();
+    /* C: aligns[flags.initalign].value (lawful, neutral, chaotic) */
+    const alignmnt = [A_LAWFUL, A_NEUTRAL, A_CHAOTIC][game.initalign] ?? ualign_type();
 
+    for (let m = 1; artilist[m] && artilist[m].otyp; m++) {
+        const art = artilist[m];
+        if (art.pristine === undefined) art.pristine = { alignment: art.alignment, role: art.role };
+        art.alignment = art.pristine.alignment;
+        art.role = art.pristine.role;
+    }
     /* fix up the alignments of "gift" artifacts */
     for (let m = 1; artilist[m] && artilist[m].otyp; m++) {
         const art = artilist[m];
@@ -697,7 +706,8 @@ export function hack_artifacts() {
     /* Excalibur can be used by any lawful character, not just knights */
     if (!Role_if(PM_KNIGHT)) artilist[ART_EXCALIBUR].role = NON_PM;
 
-    const questarti = game.urole?.questarti;
+    /* fix up the quest artifact */
+    const questarti = quest_artifact_num();
     if (questarti) {
         artilist[questarti].alignment = alignmnt;
         artilist[questarti].role = ROLE_PM_FIRST + (game.urole?.mnum ?? 0);
@@ -1545,7 +1555,8 @@ export async function touch_artifact(obj, mon) {
         /* add half (maybe quarter) of the usual silver damage bonus */
         if (objects[obj.otyp]?.material === SILVER && Hate_silver())
             dmg += Maybe_Half_Phys(rnd(10));
-        losehp(dmg);        /* magic damage, not physical */
+        /* magic damage, not physical */
+        await (await import('./do.js')).losehp_do(dmg, `touching ${get_artifact(obj).name}`, 1 /*KILLED_BY*/);
         exercise(A_WIS, false);
     }
 
@@ -1562,11 +1573,8 @@ function losehp(n) {
     else { u.uhp -= n; if (u.uhp > u.uhpmax) u.uhpmax = u.uhp; if (u.uhp < 1) u.uhp = 0; }
     game.botl = true;
 }
-// C ref: objnam.c xname() reduced to what the artifact messages need.
-function xname(obj) {
-    if (obj?.oartifact) return artilist[obj.oartifact].name;
-    return obj?.oname || objects[obj?.otyp]?.name || "object";
-}
+// C ref: objnam.c The(str) for the artifact messages below.
+function The(str) { return upstart(the_artifact_name(str)); }
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 function carried(obj) { return invent_list().includes(obj); }
 
@@ -1967,7 +1975,7 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
             if (vis) {
                 await update_topl(is_art(otmp, ART_STORMBRINGER)
                     ? `The black blade draws the ${life} from ${mon_nam(mdef)}!`
-                    : `The ${xname(otmp)} draws the ${life} from ${mon_nam(mdef)}!`);
+                    : `${The(xname(otmp))} draws the ${life} from ${mon_nam(mdef)}!`);
             }
             if (mdef.m_lev === 0) {
                 /* losing a level when at 0 is fatal */
@@ -1990,7 +1998,7 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
                 ? `You feel an ${is_art(otmp, ART_STORMBRINGER) ? "unholy blade" : "object"} drain your ${life}!`
                 : (is_art(otmp, ART_STORMBRINGER)
                     ? `The black blade drains your ${life}!`
-                    : `The ${xname(otmp)} drains your ${life}!`));
+                    : `${The(xname(otmp))} drains your ${life}!`));
             await losexp("life drainage");
             if (magr && magr.mhp < magr.mhpmax)
                 healmon(magr, Math.trunc((Math.abs(oldhpmax - game.u.uhpmax) + 1) / 2), 0);
@@ -2312,7 +2320,7 @@ export async function arti_invoke_cost(obj) {
 
         if (pw_cost < 0 || game.u.uen < pw_cost) {
             /* the artifact is tired :-) */
-            await update_topl(`You feel that the ${xname(obj)} is ignoring you.`);
+            await update_topl(`You feel that ${the_artifact_name(xname(obj))} ${otense(obj, 'are')} ignoring you.`);
             obj.age += d(3, 10);   /* and just got more so */
             return false;
         } else {
@@ -2380,7 +2388,7 @@ export async function arti_invoke(obj) {
     if (on && obj.age > (game.moves | 0)) {
         /* the artifact is tired :-) */
         set_extrinsic(oart.inv_prop, eprop ^ W_ARTI);
-        await update_topl(`You feel that the ${xname(obj)} is ignoring you.`);
+        await update_topl(`You feel that ${the_artifact_name(xname(obj))} ${otense(obj, 'are')} ignoring you.`);
         obj.age += d(3, 10);   /* can't just keep repeatedly trying */
         return ECMD_TIME;
     } else if (!on) {
@@ -2469,7 +2477,7 @@ export async function arti_speak(obj) {
     // each through update_topl()'s merge-or-page.  The old raw _pending_message
     // + _pending_message2 pair left the quote in a field nothing ever reads,
     // so the rumor text itself was never displayed at all.
-    await update_topl(`${upstart(xname(obj))} whispers:`);
+    await update_topl(`${The(xname(obj))} ${otense(obj, 'whisper')}:`);
     await update_topl(`"${line}"`);   /* verbalize1() */
     return ECMD_TIME;
 }
@@ -2722,7 +2730,7 @@ export async function retouch_object(ref, loseit) {
 
         /* the hero can't, but didn't get touch_artifact()'s "evades your
            grasp|control" message, so give an alternate one */
-        await update_topl(`You can't handle ${xname(obj)}${obj.owornmask ? " anymore" : ""}!`);
+        await update_topl(`You can't handle ${yname(obj)}${obj.owornmask ? " anymore" : ""}!`);
         if (!touch_blasted()) {
             /* half the usual 1d20 physical for silver, 1d10 magical for a
                <foo>bane, potentially both */

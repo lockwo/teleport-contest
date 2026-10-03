@@ -3169,6 +3169,8 @@ export async function quest_talk(mtmp) {
 // resolved back out of those strings once, by name.  Resolving by name is the
 // house rule here: a mons[] or artilist[] reshuffle cannot silently re-point it.
 let _qnums = new Map();
+// C ref: gu.urole.questarti -- the hero's quest artifact index (0 if none).
+export function quest_artifact_num() { return quest_nums().questarti; }
 function quest_nums() {
     const code = urole_filecode();
     if (_qnums.has(code)) return _qnums.get(code);

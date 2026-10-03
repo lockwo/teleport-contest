@@ -306,6 +306,10 @@ async function newgame_real() {
     // feed pray.c can_pray()/angrygods() (p_type, maxanger) when the hero prays.
     g.u.ualign = { type: alignType, record: role?.initrecord ?? 0 };
     g.u.ublesscnt = 300;
+    // C ref: allmain.c newgame() init_artifacts() -> artifact.c
+    // hack_artifacts(): the hero's role-gift and quest artifacts take the
+    // hero's alignment.  Existence bookkeeping is left to mklev's own use.
+    (await import('./artifact.js')).hack_artifacts();
     g.u.uluck = g.u.uluck ?? 0;
     g.u.moreluck = g.u.moreluck ?? 0;
     g.u.ugangr = g.u.ugangr ?? 0;
