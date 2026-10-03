@@ -216,7 +216,13 @@ function from_what(propidx, hkey) {
                 buf = ' innately';
             } else if (src === 'exp') {
                 buf = ' because of your experience';
-            } else if (!src && hkey && (game.u?.uprops?.[hkey] || game.u?.[hkey])) {
+            } else if (!src && hkey && H_prop(propidx)) {
+                // C ref: attrib.c:872 `(*ability & FROMOUTSIDE) != 0`.  Read
+                // the intrinsic through H_prop() so the bare-name spelling
+                // several modules write (js/eat.js stores corpse intrinsics as
+                // u.uprops.Aggravate_monster, not HAggravate_monster) is seen:
+                // otherwise wizard-mode enlightenment dropped the
+                // " intrinsically" suffix for every one of them.
                 buf = ' intrinsically';
             } else {
                 const o = what_gives(propidx);
