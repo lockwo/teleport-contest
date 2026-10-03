@@ -322,17 +322,17 @@ const OPT_MENU_ENTRIES = [
     {"t":"x","text":""},
     {"t":"x","text":" Compounds (selecting will prompt for new value):","inv":true},
     {"t":"x","text":"     windowtype              [tty]"},
-    {"t":"x","text":"     playmode                [normal]"},
-    {"t":"x","text":"     name                    [Septor]"},
-    {"t":"x","text":"     role                    [Rogue]"},
-    {"t":"x","text":"     race                    [orc]"},
-    {"t":"x","text":"     gender                  [male]"},
-    {"t":"x","text":"     alignment               [chaotic]"},
-    {"t":"x","text":"     catname                 [(none)]"},
-    {"t":"x","text":"     dogname                 [(none)]"},
-    {"t":"x","text":"     horsename               [(none)]"},
-    {"t":"x","text":"     msghistory              [20]"},
-    {"t":"x","text":"     pettype                 [random]"},
+    {"t":"x","text":"     playmode                [normal]","name":"playmode"},
+    {"t":"x","text":"     name                    [Septor]","name":"name"},
+    {"t":"x","text":"     role                    [Rogue]","name":"role"},
+    {"t":"x","text":"     race                    [orc]","name":"race"},
+    {"t":"x","text":"     gender                  [male]","name":"gender"},
+    {"t":"x","text":"     alignment               [chaotic]","name":"alignment"},
+    {"t":"x","text":"     catname                 [(none)]","name":"catname"},
+    {"t":"x","text":"     dogname                 [(none)]","name":"dogname"},
+    {"t":"x","text":"     horsename               [(none)]","name":"horsename"},
+    {"t":"x","text":"     msghistory              [20]","name":"msghistory"},
+    {"t":"x","text":"     pettype                 [random]","name":"pettype"},
     {"t":"x","text":"     soundlib                [nosound]"},
     {"t":"a","a":"c","body":"autounlock              [apply-key]","name":"autounlock","kind":"compound"},
     {"t":"a","a":"d","body":"boulder                 [`]","name":"boulder","kind":"compound"},
@@ -378,6 +378,163 @@ const OPT_MENU_ENTRIES = [
     {"t":"a","a":"k","body":"status condition fields [(16 currently set)]","name":"status condition fields","kind":"other"},
     {"t":"a","a":"l","body":"status highlight rules  [(0 currently set)]","name":"status highlight rules","kind":"other"},
 ];
+
+// C ref: options.c doset() — allopt[] rows whose setwhere is set_wizonly or
+// set_wiznofuz are skipped entirely in a normal game (`endpass = wizard ?
+// set_wiznofuz : set_in_game`, plus the two explicit `continue`s), so in
+// wizard/debug mode ten extra modifiable booleans join the list in allopt[]'s
+// alphabetical order.  Second field = the option this one sorts in front of
+// (null = after the last boolean, i.e. just before the "Compounds" heading).
+const WIZ_ONLY_BOOLS = [
+    ['debug_hunger', 'dropped_nopick'],
+    ['debug_mongen', 'dropped_nopick'],
+    ['debug_overwrite_stairs', 'dropped_nopick'],
+    ['menu_tab_sep', 'menucolors'],
+    ['monpolycontrol', 'null'],
+    ['montelecontrol', 'null'],
+    ['sanity_check', 'showdamage'],
+    ['travel_debug', 'use_inverse'],
+    ['wizmgender', null],
+    ['wizweight', null],
+];
+
+// doset()'s fmtstr_doset is "%s%-*s [%s]" with the width from
+// longest_option_name(), 23 for this build ("status condition fields").
+function fmtOptBody(name, value) { return name.padEnd(NAMEW, ' ') + ` [${value}]`; }
+
+function flagStr(name, dflt) {
+    const v = game.flags?.[name];
+    return (v === undefined || v === null || v === '') ? dflt : String(v);
+}
+
+// C ref: options.c the per-option `get_val` arms.  Each entry answers what the
+// menu's "[...]" shows for one compound/other option in THIS game; anything not
+// listed keeps the value baked into OPT_MENU_ENTRIES (which is already the
+// build default).
+const OPT_VALUE = {
+    // optfn_playmode(): wizard -> "debug", discover -> "explore", else "normal"
+    playmode: () => (game.flags?.debug ? 'debug'
+                     : game.flags?.explore ? 'explore' : 'normal'),
+    name: () => game.plname || '',
+    role: () => game.urole?.name?.m || '',
+    race: () => game.urace?.noun || '',
+    gender: () => (game.flags?.female ? 'female' : 'male'),
+    alignment: () => ({ 1: 'lawful', 0: 'neutral', '-1': 'chaotic' })[game.u?.ualign?.type] || 'neutral',
+    catname: () => flagStr('catname', '(none)'),
+    dogname: () => flagStr('dogname', '(none)'),
+    horsename: () => flagStr('horsename', '(none)'),
+    // optfn_msghistory(): "%u" of iflags.msg_history (default 20).
+    msghistory: () => String(game.iflags?.msg_history ?? 20),
+    // optfn_pettype(): gp.preferred_pet 'c'/'d'/'h'/'n', else "random".
+    pettype: () => ({ c: 'cat', d: 'dog', h: 'horse', n: 'none' })[game.preferred_pet] || 'random',
+    fruit: () => fruitStr(),
+    number_pad: () => numberPadStr(),
+    symset: () => symsetStr(),
+    // optfn_suppress_alert(): "(none)" when flags.suppress_alert is 0.
+    suppress_alert: () => flagStr('suppress_alert', '(none)'),
+    pickup_types: () => pickupTypesStr(),
+    // optfn_msg_window(): iflags.prevmsg_window s/c/f, anything else reversed.
+    msg_window: () => ({ s: 'single', c: 'combination', f: 'full' }
+        [lowFirst(game.iflags?.prevmsg_window, 's')] || 'reversed'),
+    // optfn_menustyle(): menutype[flags.menu_style][0]; 'n' means traditional.
+    menustyle: () => ({ n: 'traditional', t: 'traditional', c: 'combination',
+                        f: 'full', p: 'partial' }[lowFirst(game.flags?.menustyle, 'f')] || 'full'),
+    // optfn_runmode(): runmodes[flags.runmode].
+    runmode: () => flagStr('runmode', 'run'),
+    // optfn_pickup_burden(): burdentype[flags.pickup_burden].
+    pickup_burden: () => pickupBurdenStr(),
+    // optfn_sortloot(): sortltype[] entry whose first letter matches.
+    sortloot: () => ({ n: 'none', l: 'loot', f: 'full' }[lowFirst(game.flags?.sortloot, 'l')] || 'loot'),
+    // optfn_statushilites() get_val.
+    statushilites: () => {
+        const d = game.iflags?.hilite_delta | 0;
+        return d ? `${d} (on: highlight status for ${d} turns)`
+                 : "0 (off: don't highlight status fields)";
+    },
+    statuslines: () => ((game.iflags?.wc2_statuslines | 0) < 3 ? '2' : '3'),
+    pile_limit: () => String(game.flags?.pile_limit ?? 5),
+    menuinvertmode: () => String(game.iflags?.menuinvertmode ?? 1),
+    // optfn_whatis_coord()/optfn_whatis_filter() get_val.
+    whatis_coord: () => ({ m: 'map', c: 'compass', f: 'full compass', s: 'screen' }
+        [game.iflags?.getpos_coords] || 'none'),
+    whatis_filter: () => ({ v: 'view', a: 'area' }[game.iflags?.getloc_filter] || 'none'),
+    // optfn_disclose() get_val: each flags.end_disclose[] setting followed by
+    // its disclosure_options[] letter, space separated.
+    disclose: () => {
+        const letters = 'iavgco';
+        const end = game.flags?.end_disclose || letters.split('').map(() => 'n');
+        return letters.split('').map((c, i) => `${end[i] || 'n'}${c}`).join(' ');
+    },
+    // optfn_packorder() get_val: oc_to_str(flags.inv_order).
+    packorder: () => (game.flags?.inv_order || DEF_INV_ORDER_OC)
+        .map((oc) => OC_SYMS[oc] || '').join(''),
+    // optfn_boulder() get_val: the override symbol, else the ROCK class symbol.
+    boulder: () => flagStr('boulder', '`'),
+    // The "Other settings:" rows all read "(N currently set)".
+    autocompletions: () => currentlySet((game.autocomplete || []).length),
+    'autopickup exceptions': () => currentlySet((game.apelist || []).length),
+    'bind keys': () => currentlySet(Object.keys(game.keybind || {}).length),
+    'menu colors': () => currentlySet((game.menucolors || []).length),
+    'message types': () => currentlySet((game.msgtypes || []).length),
+    'status highlight rules': () => currentlySet(count_status_hilites()),
+};
+
+function currentlySet(n) { return `(${n} currently set)`; }
+function lowFirst(v, dflt) {
+    const s = (v === undefined || v === null || v === '') ? dflt : String(v);
+    return s[0].toLowerCase();
+}
+// C ref: options.c burdentype[] indexed by flags.pickup_burden; the rc parser
+// keeps the typed word, so map either form.
+const BURDENTYPE = ['unencumbered', 'burdened', 'stressed', 'strained',
+                    'overtaxed', 'overloaded'];
+function pickupBurdenStr() {
+    const v = game.flags?.pickup_burden;
+    if (typeof v === 'number') return BURDENTYPE[v] || 'stressed';
+    if (!v) return 'stressed';
+    const idx = { u: 0, b: 1, s: 2, n: 3, o: 4, t: 4, l: 5 }[String(v)[0].toLowerCase()];
+    return BURDENTYPE[idx ?? 2];
+}
+// C ref: options.c def_inv_order[] + drawing.c def_oc_syms[].sym.
+const DEF_INV_ORDER_OC = [12, 5, 2, 3, 7, 9, 10, 8, 4, 11, 6, 13, 14, 15, 16];
+const OC_SYMS = ['\0', ']', ')', '[', '=', '"', '(', '%', '!', '?',
+                 '+', '/', '$', '*', '`', '0', '_', '.'];
+
+// Build doset()'s live entry list: the baked skeleton plus wizard-only
+// booleans, with every bracketed value refreshed from this game's state and
+// fresh per-page a..z/A..Z accelerators (tty_end_menu() assigns them at
+// display time, so inserting entries renumbers everything after them).
+function buildFullEntries() {
+    const list = OPT_MENU_ENTRIES.map((e) => ({ ...e }));
+    if (game.flags?.debug) {
+        const compoundsAt = () =>
+            list.findIndex((e) => e.t === 'x' && e.inv && /^ Compounds/.test(e.text));
+        for (const [name, before] of WIZ_ONLY_BOOLS) {
+            const idx = before ? list.findIndex((e) => e.name === before)
+                               : compoundsAt() - 1;
+            if (idx >= 0) list.splice(idx, 0, { t: 'a', name, kind: 'bool',
+                                                body: fmtOptBody(name, 'false') });
+        }
+    }
+    for (const e of list) {
+        const live = e.name && OPT_VALUE[e.name];
+        if (!live) continue;
+        const body = fmtOptBody(e.name, live());
+        if (e.t === 'a') e.body = body;
+        else e.text = '     ' + body;
+    }
+    // tty_end_menu(): menu_ch resets to 'a' on every page and only advances
+    // for selectable items that have no explicit selector (the '?' help row).
+    let menu_ch = 'a';
+    for (let i = 0; i < list.length; i++) {
+        if (i % PER_PAGE === 0) menu_ch = 'a';
+        const e = list[i];
+        if (e.t !== 'a' || e.kind === 'help') continue;
+        e.a = menu_ch;
+        menu_ch = nextMenuCh(menu_ch);
+    }
+    return list;
+}
 
 // "Autopickup what?" object-class menu (options.c oc_to_str()/wildcard menu used
 // by the pickup_types handler).  Each item: accelerator, class symbol, label.
@@ -838,7 +995,7 @@ function toggleSimpleBool(name) {
 // C ref: options.c doset() — the 'O' command.  Runs the full options menu,
 // applies the picks, and reports toggled booleans / runs compound handlers.
 export async function doset() {
-    const entries = OPT_MENU_ENTRIES;
+    const entries = buildFullEntries();
     const npages = Math.ceil(entries.length / PER_PAGE);
     const selected = new Set(); // entry indices
 
@@ -853,9 +1010,14 @@ export async function doset() {
         const ch = String.fromCharCode(c);
         if (c === 27) { cancelled = true; break; }    // ESC: cancel whole menu
         if (c === 13 || c === 10) break;               // confirm
-        if (ch === ' ' || ch === '>') {                // next page / confirm on last
+        // C ref: wintty.c process_menu_window() case ' '/MENU_NEXT_PAGE —
+        // both advance a page, but only ' ' finishes the menu once there is
+        // no next page ("' ' finishes menus here, but stop '>' doing the
+        // same"), so '>' on the last page is a no-op.
+        if (ch === ' ' || ch === '>') {
             if (page < npages - 1) { page++; continue; }
-            break;                                     // space past last page = done
+            if (ch === ' ') break;
+            continue;
         }
         if (ch === '<') { if (page > 0) page--; continue; }
         // Toggle the entry on this page whose accelerator matches.

@@ -1747,14 +1747,34 @@ function optfn_disclose(o, negated, opts, op, result) {
     op = string_for_opt(opts, true);
     if (op !== '' && negated) { bad_negation(o.name, true); return OPTN_ERR; }
     keep(o, negated && op === '' ? false : (op === '' ? true : op), result);
-    if (op === '' || strcmpi_eq(op, 'all') || strcmpi_eq(op, 'none')) return OPTN_OK;
+    // C ref: options.c optfn_disclose() — flags.end_disclose[], one setting
+    // per disclosure_options[] letter "iavgco"; initoptions_init() starts them
+    // all at DISCLOSE_PROMPT_DEFAULT_NO ('n').
+    const end = (result.flags.end_disclose
+                 || (result.flags.end_disclose = DISCLOSURE_OPTIONS.split('').map(() => 'n')));
+    if (op === '' || strcmpi_eq(op, 'all') || strcmpi_eq(op, 'none')) {
+        const no = negated || strcmpi_eq(op, 'none');
+        for (let i = 0; i < end.length; i++) end[i] = no ? '-' : 'y';
+        return OPTN_OK;
+    }
     let prefix_val = null;
     for (let i = 0; i < op.length; i++) {
         let c = lowc(op[i]);
         if (c === 'k') c = 'v';
         if (c === 'd') c = 'o';
-        if (DISCLOSURE_OPTIONS.includes(c)) {
-            prefix_val = null;
+        const idx = DISCLOSURE_OPTIONS.indexOf(c);
+        if (idx >= 0) {
+            if (prefix_val !== null) {
+                let pv = prefix_val;
+                if (c !== 'v' && c !== 'g') {
+                    if (pv === '?') pv = 'y';
+                    if (pv === '#') pv = '+';
+                }
+                end[idx] = pv;
+                prefix_val = null;
+            } else {
+                end[idx] = '+';
+            }
         } else if (DISCLOSE_VALID.includes(c)) {
             prefix_val = c;
         } else if (c === ' ') {
