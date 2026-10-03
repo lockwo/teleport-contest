@@ -1874,7 +1874,7 @@ export async function wiz_level_tele(readLevel) {
         game._killer_name = null;
         if (newlev <= -10) {
             await pline('You arrive in heaven.');
-            await pline("Thou art early, but we'll admit thee.");
+            await pline('"Thou art early, but we\'ll admit thee."');
             game._killer_name = 'went to heaven prematurely';
         } else if (newlev === -9) {
             await pline('You feel deliriously happy.');
