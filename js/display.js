@@ -3884,7 +3884,7 @@ function glyph_is_cmap(g) {
     return g >= GLYPH_CMAP_STONE_OFF
         && g < (GLYPH_CMAP_C_OFF + ((S_goodpos - S_digbeam) + 1));
 }
-function glyph_is_swallow(g) { return g >= GLYPH_SWALLOW_OFF && g < ((NUMMONS << 3) + GLYPH_SWALLOW_OFF); }
+export function glyph_is_swallow(g) { return g >= GLYPH_SWALLOW_OFF && g < ((NUMMONS << 3) + GLYPH_SWALLOW_OFF); }
 function glyph_is_trap(g) { return g >= GLYPH_TRAP_OFF && g < GLYPH_TRAP_OFF + MAXTCHARS; }
 function glyph_is_warning(g) { return g >= GLYPH_WARNING_OFF && g < GLYPH_WARNING_OFF + WARNCOUNT; }
 // C ref: display.h:839 — generic objects sit between STRANGE_OBJECT and

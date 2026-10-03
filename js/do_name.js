@@ -290,22 +290,91 @@ export function free_oname(obj) {
     if (obj) { obj.oname = null; if (obj.oextra) obj.oextra.oname = null; }
 }
 
-// C ref: do_name.c:157 alreadynamed(mtmp, monnambuf, usrbuf) — "<mon> is
-// already called <name>." when the new name matches the old one.
-export function alreadynamed(mtmp, monnambuf, usrbuf) {
-    const cur = mtmp?.mgivenname || mtmp?.mextra?.mgivenname || '';
-    if (cur && cur === usrbuf) return `${monnambuf} is already called ${usrbuf}.`;
-    return null;
+// C ref: hacklib.c fuzzymatch(s1, s2, ignore_chars, caseblind) — compare two
+// strings while skipping any character listed in `ignore_chars`.
+function fuzzymatch(s1, s2, ignore_chars, caseblind) {
+    s1 = String(s1 ?? ''); s2 = String(s2 ?? '');
+    let i = 0, j = 0;
+    for (;;) {
+        let c1, c2;
+        do { c1 = s1[i++]; } while (c1 !== undefined && ignore_chars.includes(c1));
+        do { c2 = s2[j++]; } while (c2 !== undefined && ignore_chars.includes(c2));
+        if (c1 === undefined || c2 === undefined) return c1 === c2;
+        if (caseblind) { c1 = c1.toLowerCase(); c2 = c2.toLowerCase(); }
+        if (c1 !== c2) return false;
+    }
+}
+// C ref: hacklib.c strstri(str, sub) — case-insensitive substring search,
+// returning the tail starting at the match (or null).
+function strstri(str, sub) {
+    const k = String(str ?? '').toLowerCase().indexOf(String(sub).toLowerCase());
+    return k < 0 ? null : String(str).slice(k);
+}
+// C ref: you.h mhe(mon).
+function mhe(mon) {
+    return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_HALLU)].he;
 }
 
-// C ref: do_name.c:104 name_from_player(outbuf, prompt, defname) — getlin()
-// with a default, trimming leading blanks and rejecting an escape.
+// C ref: do_name.c:157 alreadynamed(mtmp, monnambuf, usrbuf) — reject message
+// for an unnameable monster when the supplied name matches (or nearly matches)
+// the one it already has, or is an attempt to erase it.  Returns TRUE when it
+// gave the message; the caller stays quiet then.
+export async function alreadynamed(mtmp, monnambuf, usrbuf) {
+    const { pline } = await import('./display.js');
+    let p;
+
+    if (!usrbuf) { /* attempt to erase existing name */
+        const name_not_title = (has_mgivenname(mtmp) || type_is_pname(mtmp.data)
+                                || !!mtmp.isshk);
+        await pline(`${upstart(monnambuf)} would rather keep ${
+            is_rider_mon(mtmp.data) ? 'its' : mhis(mtmp)} existing ${
+            name_not_title ? 'name' : 'title'}.`);
+        return true;
+    } else if (fuzzymatch(usrbuf, monnambuf, ' -_', true)
+               /* catch trying to name "the Oracle" as "Oracle" */
+               || (monnambuf.slice(0, 4).toLowerCase() === 'the '
+                   && fuzzymatch(usrbuf, monnambuf.slice(4), ' -_', true))
+               /* catch trying to name "invisible Orcus" as "Orcus" */
+               || ((p = strstri(monnambuf, 'invisible ')) !== null
+                   && fuzzymatch(usrbuf, p.slice(10), ' -_', true))
+               /* catch trying to name "the priest of Crom" as "Crom" */
+               || ((p = strstri(monnambuf, ' of ')) !== null
+                   && fuzzymatch(usrbuf, p.slice(4), ' -_', true))) {
+        if (is_rider_mon(mtmp.data)) {
+            /* avoid gendered pronoun for riders */
+            await pline(`${upstart(monnambuf)} is already called that.`);
+        } else {
+            await pline(`${upstart(mhe(mtmp))} is already called ${monnambuf}.`);
+        }
+        return true;
+    } else if (mtmp.data?.name === 'Juiblex' && strstri(monnambuf, 'Juiblex')
+               && usrbuf.toLowerCase() === 'jubilex') {
+        await pline(`${upstart(monnambuf)} doesn't like being called ${usrbuf}.`);
+        return true;
+    }
+    return false;
+}
+
+// C ref: monst.h is_rider(ptr) — Death, Pestilence and Famine.
+function is_rider_mon(ptr) {
+    return ptr?.name === 'Death' || ptr?.name === 'Pestilence'
+        || ptr?.name === 'Famine';
+}
+
+// C ref: do_name.c:104 name_from_player(outbuf, prompt, defname) — getlin(),
+// reject an empty answer or an escape, then mungspaces() and truncate to
+// PL_PSIZ-1.  Note C tests emptiness BEFORE mungspaces, so an all-blank answer
+// survives as the empty string (which do_oname/alreadynamed treat as "erase").
+const PL_PSIZ = 32;
 export async function name_from_player(prompt, defname) {
     const { getlin } = await import('./input.js');
     const s = await getlin(`${prompt} `, defname);
-    if (s == null || s === '\x1b') return null;
-    const t = s.replace(/^\s+/, '');
-    return t.length ? t : null;
+    if (s == null || s === '' || s[0] === '\x1b') return null;
+    // C ref: hacklib.c mungspaces() — strip leading/trailing blanks, collapse
+    // internal runs to one space.
+    let t = String(s).replace(/\s+/g, ' ').replace(/^ | $/g, '');
+    if (t.length >= PL_PSIZ) t = t.slice(0, PL_PSIZ - 1);
+    return t;
 }
 
 // C ref: do_name.c christen_monst(mtmp, name).
@@ -317,6 +386,110 @@ export function christen_monst(mtmp, name) {
     mtmp.mextra.mgivenname = name;
     return mtmp;
 }
+
+// C ref: monst.h / youprop.h readers used by do_mgivenname().
+const G_UNIQ = 0x1000;          // mkobj.h / monflag.h G_UNIQ
+const MS_ANIMAL = 17;           // sounds.h MS_ANIMAL
+function See_invisible_dn() {
+    const u = game.u || {}, p = u.uprops || {};
+    return !!(u.see_invis || u.See_invisible || p.See_invisible
+              || p.HSee_invisible || p.ESee_invisible);
+}
+function Deaf_dn() { return !!(game.u?.Deaf || (game.u?.uprops?.HDeaf | 0) > 0); }
+// C ref: monst.h helpless(mon) — asleep, paralyzed/frozen or not yet arrived.
+function helpless_dn(mon) {
+    return !!(mon && (mon.msleeping || !mon.mcanmove));
+}
+
+// C ref: do_name.c:199 do_mgivenname() — the '#name m' / 'C' choice: pick a
+// map square with getpos(), identify the monster there and ask for a name.
+export async function do_mgivenname() {
+    const u = game.u;
+    const D = await import('./display.js');
+    const { pline } = D;
+
+    if (Hallucination()) {
+        await pline('You would never recognize it anyway.');
+        return;
+    }
+    const { getpos } = await import('./hack.js');
+    const cc = await getpos('the monster you want to name', u.ux, u.uy, null,
+                            /*force=*/false, game.flags?.verbose !== false);
+    if (!cc || !isok_dn(cc.x, cc.y))
+        return;
+    const cx = cc.x, cy = cc.y;
+
+    let mtmp = null, do_swallow = false;
+    if (cx === u.ux && cy === u.uy) {
+        const { canspotmon } = await import('./uhitm.js');
+        if (u.usteed && canspotmon(u.usteed)) {
+            mtmp = u.usteed;
+        } else {
+            const { beautiful } = await import('./apply.js');
+            await pline(`This ${await beautiful()} creature is called ${
+                game.plname} and cannot be renamed.`);
+            return;
+        }
+    } else {
+        mtmp = D.m_at(cx, cy);
+    }
+
+    /* Allow you to name the monster that has swallowed you */
+    if (!mtmp && u.uswallow) {
+        if (D.glyph_is_swallow(D.glyph_at(cx, cy))) {
+            mtmp = u.ustuck;
+            do_swallow = true;
+        }
+    }
+
+    if (!do_swallow) {
+        const { sensemon } = await import('./mon.js');
+        const { cansee } = await import('./vision.js');
+        if (!mtmp
+            || (!sensemon(mtmp)
+                && (!(cansee(cx, cy) || D.see_with_infrared(mtmp))
+                    || mtmp.mundetected
+                    || M_AP_TYPE_dn(mtmp) === 1 /* M_AP_FURNITURE */
+                    || M_AP_TYPE_dn(mtmp) === 2 /* M_AP_OBJECT */
+                    || (mtmp.minvis && !See_invisible_dn())))) {
+            await pline('I see no monster there.');
+            return;
+        }
+    }
+
+    /* special case similar to the one in lookat() */
+    const monnambuf = distant_monnam(mtmp, ARTICLE_THE);
+    const qbuf = `What do you want to call ${monnambuf}?`;
+    const buf = await name_from_player(qbuf,
+        has_mgivenname(mtmp) ? (mtmp.mgivenname || mtmp.mextra?.mgivenname) : null);
+    if (buf === null)
+        return;
+
+    /* Unique monsters have their own specific names or titles; shopkeepers,
+       temple priests and other minions ignore user-supplied names. */
+    if (((mtmp.data?.geno | 0) & G_UNIQ) && !mtmp.ispriest) {
+        if (!await alreadynamed(mtmp, monnambuf, buf))
+            await pline(`${upstart(monnambuf)} doesn't like being called names!`);
+    } else if (mtmp.isshk
+               && !(Deaf_dn() || helpless_dn(mtmp)
+                    || (mtmp.data?.msound ?? 99) <= MS_ANIMAL)) {
+        if (!await alreadynamed(mtmp, monnambuf, buf)) {
+            const { shkname } = await import('./shkroom.js');
+            await pline(`"I'm ${shkname(mtmp)}, not ${buf}."`);
+        }
+    } else if (mtmp.ispriest || mtmp.isminion || mtmp.isshk
+               || mtmp.data?.name === 'ghost' || mtmp.mextra?.ebones) {
+        if (!await alreadynamed(mtmp, monnambuf, buf))
+            await pline(`${upstart(monnambuf)} will not accept the name ${buf}.`);
+    } else {
+        christen_monst(mtmp, buf);
+    }
+}
+
+// C ref: hack.h isok(x, y).
+function isok_dn(x, y) { return x >= 1 && x <= 79 && y >= 0 && y <= 20; }
+// C ref: monst.h M_AP_TYPE(mon).
+function M_AP_TYPE_dn(mon) { return mon?.m_ap_type ?? 0; }
 
 // ── hallucination generators ──
 // C ref: do_name.c:1441 hcolors[] — 71 entries; SIZE() is the modulus of the
