@@ -3041,6 +3041,10 @@ export async function pline(msg, opts = {}) {
     }
     const suppressHistory = !!opts.suppressHistory;
     if (msgtype_suppressed(msg)) return;
+    // C ref: win/tty/topl.c update_topl() `skip`: once a --More-- was
+    // dismissed with ESC (WIN_STOP), every later message until the next
+    // input is accumulated into gt.toplines but never drawn.
+    if (game._winStop) return update_topl(msg);
     // C ref: pline.c vpline():266-274 — vision_recalc() FIRST, then
     // flush_screen(), which is what runs bot() when disp.botl is set.
     pline_vision_flush();
