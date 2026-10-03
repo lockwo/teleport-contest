@@ -1700,11 +1700,19 @@ export async function mhitm_ad_sedu(magr, mattk, mdef, mhm, ops) {
         const couldspot = ops.canspotmon(magr);
         const buf = ops.Monnam(magr);
         const mdefnam = ops.mon_nam(mdef);
+        // C ref: uhitm.c mhitm_ad_sedu — extract_from_minvent(mdef, obj, TRUE,
+        // FALSE) unwears/unwields it BEFORE doname(), so no "(weapon in hand)".
+        if (obj.owornmask) {
+            mdef.misc_worn_check = (mdef.misc_worn_check | 0) & ~obj.owornmask;
+            if (mdef.mw === obj) mdef.mw = null;
+            obj.owornmask = 0;
+        }
         const onam = doname_invent(obj);
         mdef.minvent.splice(mdef.minvent.indexOf(obj), 1);
         (magr.minvent = magr.minvent || []).push(obj);
         if (vis && ops.canseemon(mdef))
             await ops.emit(`${buf} steals ${onam} from ${mdefnam}!`);
+        { const { possibly_unwield } = await import('./weapon.js'); possibly_unwield(mdef, false); }
         clear_waitforu(mdef);
         // possibly_unwield()/mselftouch(): no covered defender is harmed by
         // its own stolen gear.
