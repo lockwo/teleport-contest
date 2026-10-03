@@ -538,21 +538,31 @@ export function cxname_singular(obj) { return on_cxname_singular(obj); }
 // C ref: objnam.c xname() — the bare object name: no "a"/"an" article and no
 // BUC word (unlike doname()), but still quantity-aware for stackable types.
 export function xname(obj) { return on_xname(obj); }
+// C ref: shk.c shk_your(buf, obj) — the ownership prefix yname()/ysimple_name()
+// put in front of an object's name: a shopkeeper's name for unpaid shop goods,
+// a monster's for carried-by-monster, else "your"/"the".  Returns the prefix
+// without its trailing space, or '' when the name supplies its own (a corpse
+// of a pname species: "Medusa's corpse").
+function shk_your(obj) {
+    const chk_pm = obj?.otyp === CORPSE && (obj.corpsenm ?? -1) >= 0;
+    if (chk_pm) {
+        const species = monster_by_pmidx(obj.corpsenm);
+        if (type_is_pname(species)) return '';
+        if (the_unique_pm(species)) return 'the';
+    }
+    return shk_owns(obj)
+        || (mcarried(obj) ? s_suffix(y_monnam(obj.ocarry)) : null)
+        || (carried(obj) ? 'your' : 'the');
+}
 // C ref: objnam.c yname() and shk.c shk_your().
 export function yname(obj) {
     const name = cxname(obj);
-    const owned = carried(obj);
-    if (owned && obj_is_pname(obj) && obj.oartifact < 21 /* ART_ORB_OF_DETECTION */)
+    // "your" is left off most of your artifacts, but kept for unique objects
+    // and "foo of bar" quest artifacts.
+    if (carried(obj) && obj_is_pname(obj) && obj.oartifact < 21 /* ART_ORB_OF_DETECTION */)
         return name;
-    if (obj.otyp === CORPSE && obj.corpsenm >= 0) {
-        const species = monster_by_pmidx(obj.corpsenm);
-        if (type_is_pname(species)) return name;
-        if (the_unique_pm(species)) return `the ${name}`;
-    }
-    const owner = shk_owns(obj)
-        || (mcarried(obj) ? s_suffix(y_monnam(obj.ocarry)) : null)
-        || (owned ? 'your' : 'the');
-    return `${owner} ${name}`;
+    const owner = shk_your(obj);
+    return owner ? `${owner} ${name}` : name;
 }
 // C ref: objnam.c minimal_xname() — xname() of a BARE copy (cg.zeroobj with
 // only otyp/oclass/quan/dknown/known copied), so weight-derived prefixes such
@@ -562,11 +572,13 @@ function minimal_obj(obj) {
     return { ...obj, owt: 0, oeroded: 0, oeroded2: 0, greased: 0, bknown: 0, rknown: 0, quan: 1 };
 }
 export function ansimpleoname(obj) { return on_ansimpleoname(obj); }
-// C ref: objnam.c ysimple_name() — shk_your() + minimal_xname().  shk_your()
-// yields "your " for anything the hero carries that is not an unpaid shop item
-// (the only case from_what() can reach).
+// C ref: objnam.c ysimple_name() — shk_your() + minimal_xname(), so a shop's
+// unpaid goods read "Eed-morra's sack" and an object on the floor "the sack",
+// not "your sack".
 export function ysimple_name(obj) {
-    return `your ${on_minimal_xname(obj)}`;
+    const owner = shk_your(obj);
+    const nm = on_minimal_xname(obj);
+    return owner ? `${owner} ${nm}` : nm;
 }
 // C ref: objnam.c simpleonames() — minimal_xname(), then makeplural() whenever
 // quan != 1.  Without the pluralisation a readied stack read "36 dart".
@@ -2372,6 +2384,12 @@ function putStatusLines(display, bandStart = null, menuLastRow = -1) {
     // inherits that already-wrecked line instead of a fresh recompute, so
     // remember the cutoff for whichever corner window renders next.
     if (bandStart != null && menuLastRow >= 22) game._statusTruncCol = Math.max(0, bandStart - 1);
+    // C ref: erase_menu_or_text() -> docorner(offx, cw->maxrow + 1) with
+    // maxrow == nitems + 1: the cl_end() sweep runs over rows 0..nitems, so a
+    // menu with 21 entries (footer on row 21) already wrecks row 22's tail even
+    // though its own content stops above the status window.  Row 23 survives
+    // until the menu is one line taller (the case above).
+    else if (bandStart != null && menuLastRow >= 21) game._statusTrunc22 = Math.max(0, bandStart - 1);
 }
 
 function inventoryRows(lets = null, ofilter = null) {
@@ -9880,23 +9898,32 @@ function itemactions_list(otmp) {
             ? " (same as 'f')" : '';
         add(IA_THROW_OBJ, 't', `${shoot ? 'Shoot' : 'Throw'} ${what}${dup}`);
     }
-    // 'w' (wield): C ref iactions.c:606 — a weapon/weptool is wielded "as your
-    // weapon"; anything else unworn is wielded "in your <hands>"; the stack
-    // wording follows quan.  Skipped entirely for the already-wielded item.
-    if (otmp !== game.uwep) {
-        const stack = quan > 1 ? 'stack' : 'item';
-        if (oclass === WEAPON_CLASS || is_weptool(otmp))
-            add(IA_WIELD_OBJ, 'w', `Wield this ${stack} as your weapon`);
-        else if (!already_worn)
-            // body_part index 6 == HAND (humanoid hero); makeplural -> "hands".
-            add(IA_WIELD_OBJ, 'w', `Wield this ${stack} in your ${makeplural(body_part(6))}`);
-    }
-    // 'T' (take off armor / tip a container): C ref iactions.c:585.
+    // 'T' (take off armor / tip a container): C ref iactions.c:589.
     if ((otmp.owornmask || 0) & W_ARMOR)
         add(IA_TAKEOFF_OBJ, 'T', 'Take off this armor');
     if ((Is_container(otmp) && (Has_contents(otmp) || !otmp.cknown))
         || (otmp.otyp === HORN_OF_PLENTY && ((otmp.spe | 0) > 0 || !otmp.known)))
         add(IA_TIP_CONTAINER, 'T', 'Tip all the contents out of this container');
+    // 'V' (invoke): C ref iactions.c:597 — an un-IDed fake Amulet, any
+    // artifact, any unique object, or a (non-artifact) crystal ball.
+    if ((otmp.otyp === FAKE_AMULET_OF_YENDOR_OTYP && !otmp.known)
+        || otmp.oartifact || objects[otmp.otyp]?.oc_unique
+        || otmp.otyp === CRYSTAL_BALL)
+        add(IA_INVOKE_OBJ, 'V', 'Try to invoke a unique power of this object');
+    // 'w' (wield): C ref iactions.c:606 — a weapon/weptool/wet towel/iron ball
+    // is wielded "as your weapon"; the tin opener gets its own advice; anything
+    // else unworn is wielded "in your <hands>".  Skipped for the wielded item.
+    if (otmp !== game.uwep) {
+        const stack = quan > 1 ? 'stack' : 'item';
+        if (oclass === WEAPON_CLASS || is_weptool(otmp) || is_wet_towel(otmp)
+            || otmp.otyp === HEAVY_IRON_BALL_OTYP)
+            add(IA_WIELD_OBJ, 'w', `Wield this ${stack} as your weapon`);
+        else if (otmp.otyp === TIN_OPENER)
+            add(IA_WIELD_OBJ, 'w', 'Wield the tin opener to easily open tins');
+        else if (!already_worn)
+            // body_part index 6 == HAND (humanoid hero); makeplural -> "hands".
+            add(IA_WIELD_OBJ, 'w', `Wield this ${stack} in your ${makeplural(body_part(6))}`);
+    }
     // 'W' (wear armor): C ref iactions.c:631 — always offered for unworn armor;
     // when that slot is occupied the line is an inert "[already wearing ...]".
     if (!already_worn && oclass === ARMOR_CLASS) {
@@ -9982,7 +10009,9 @@ function renderItemActionsMenu(otmp, entries) {
     render_map_to_grid();
     // C ref: process_menu_window's cl_end() blanks [offx, cols) on every menu row
     // (the leading-space column included); the map shows through only to the LEFT.
-    for (let r = 0; r < lines.length && r < 22; r++)
+    // A tall menu reaches the status rows too: C clears [offx, cols) on EVERY
+    // row it occupies, so the status line survives only to the left of offx.
+    for (let r = 0; r < lines.length && r < (display.rows ?? 24); r++)
         for (let c = offx; c < cols; c++)
             display.setCell(c, r, ' ', NO_COLOR, 0);
     let row = 0;
@@ -10006,7 +10035,25 @@ function renderItemActionsMenu(otmp, entries) {
             display.setCell(c, 23, ' ', NO_COLOR, 0);
         }
     } else {
-        putStatusLines(display);
+        // The menu this submenu replaced wrecked the status window's tail on
+        // the way out (docorner's cl_end from its own left edge) and nothing
+        // redrew it; inherit that cutoff instead of painting a fresh full
+        // status the real terminal never emitted.  _statusTruncCol covers both
+        // status rows, _statusTrunc22 only the first.
+        putStatusLines(display, offx, lines.length - 1);
+        const cut22 = (game._statusTruncCol != null) ? game._statusTruncCol
+                                                     : game._statusTrunc22;
+        if (cut22 != null) {
+            const s1 = statusLine1();
+            display.putstr(0, 22, s1.slice(0, cut22), NO_COLOR);
+            for (let c = cut22; c < cols; c++) display.setCell(c, 22, ' ', NO_COLOR, 0);
+        }
+        if (game._statusTruncCol != null) {
+            const s2 = statusLine2();
+            display.putstr(0, 23, s2.slice(0, game._statusTruncCol), NO_COLOR);
+            for (let c = game._statusTruncCol; c < cols; c++)
+                display.setCell(c, 23, ' ', NO_COLOR, 0);
+        }
     }
     // C tty parks the cursor just past the "(end)" prompt (textx + 5 + 1).
     display.setCursor(textx + '(end)'.length + 1, endRow);
@@ -10108,6 +10155,15 @@ async function itemactions_dispatch(otmp, act, getDir) {
         // C ref: itemactions_pushkeys IA_TWOWEAPON -> cmdq_add_ec(dotwoweapon).
         const { dotwoweapon } = await import('./wield.js');
         return await dotwoweapon();
+    }
+    case IA_INVOKE_OBJ: {
+        // C ref: itemactions_pushkeys IA_INVOKE_OBJ -> cmdq_add_ec(doinvoke)
+        // with the object's invlet pushed ahead of it for getobj().
+        seedInvlet();
+        const { doinvoke } = await import('./artifact.js');
+        const r = await doinvoke();
+        // artifact.js numbers ECMD_TIME 4; this module's is 1.
+        return (r === 4) ? ECMD_TIME : ECMD_OK;
     }
     case IA_ADJUST_OBJ:
         seedInvlet();
