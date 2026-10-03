@@ -132,6 +132,7 @@ import { resists_fire, resists_acid } from './mondata.js';
 import { clear_path, couldsee, cansee, vision_recalc, recalc_block_point, Blind } from './vision.js';
 import { mattackm, mdisplacem } from './mhitm.js';
 import { hitval, ARWEP, autoreturn_weapon, setmnotwielded } from './weapon.js';
+import * as objnam_mod from './objnam.js';
 import { Monnam, mon_nam, canspotmon, make_corpse, corpse_chance, dmgval,
     setmangry, relobj } from './uhitm.js';
 import { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE, SLT_ENCUMBER, FORCETRAP, Unaware } from './const.js';
@@ -6898,8 +6899,9 @@ function mt_flightcheck(bx, by, dx, dy, otmp, forcehit) {
 }
 
 // C ref: objnam.c Tobjnam(obj, verb) — "The dagger slips" / "The daggers slip".
+// C's xname() pluralizes but never prefixes the count (that is doname()'s).
 function Tobjnam_mm(obj, verb) {
-    const nm = xname(obj);
+    const nm = objnam_mod.xname_flags(obj, 0 /* CXN_NORMAL */);
     const named = /^[A-Z]/.test(nm) ? nm : `the ${nm}`;
     return `${named.charAt(0).toUpperCase()}${named.slice(1)} ${otense(obj, verb)}`;
 }
