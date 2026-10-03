@@ -931,6 +931,13 @@ for (const o of objects) {
             ? ((o.otyp === EGG || o.otyp === TIN) ? 1 : 0)
             : ((o.flags & F_CHARGED) ? 1 : 0);
 }
+// The hand-written OBJECT() rows with uskn=1 that the rule above misses:
+// both Amulets of Yendor, the Candelabrum, the novel and the Book of the Dead.
+for (const sym of ['FAKE_AMULET_OF_YENDOR', 'AMULET_OF_YENDOR',
+                   'CANDELABRUM_OF_INVOCATION', 'SPE_NOVEL', 'SPE_BOOK_OF_THE_DEAD']) {
+    const o = objects.find((x) => x?.sym === sym);
+    if (o) o.oc_uses_known = 1;
+}
 
 const objectsByClass = Array.from({ length: MAXOCLASSES + 1 }, () => []);
 for (const obj of objects) {
