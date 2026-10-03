@@ -382,20 +382,22 @@ function mongets_shk(mtmp, otyp) {
     return otmp;
 }
 
-// C ref: shknam.c stock_room_goodpos() — a square eligible for stocking.
+// C ref: shknam.c stock_room_goodpos() — an irregular shop uses room membership
+// and door distance, not the regular room's whole edge row.
 function stock_room_goodpos(sroom, rmno, shDoor, sx, sy) {
-    const doors = game.level?.doors || [];
-    const dd = doors[shDoor];
+    const dd = game.level?.doors?.[shDoor];
     if (!dd) return false;
-    // Regular (non-irregular) shop edge test.
-    if ((sx === sroom.lx && dd.x === sx - 1)
-        || (sx === sroom.hx && dd.x === sx + 1)
-        || (sy === sroom.ly && dd.y === sy - 1)
-        || (sy === sroom.hy && dd.y === sy + 1))
+    const loc = game.level.at(sx, sy);
+    if (sroom.irregular) {
+        if (loc?.edge || loc?.roomno !== rmno
+            || Math.max(Math.abs(sx - dd.x), Math.abs(sy - dd.y)) <= 1)
+            return false;
+    } else if ((sx === sroom.lx && dd.x === sx - 1)
+               || (sx === sroom.hx && dd.x === sx + 1)
+               || (sy === sroom.ly && dd.y === sy - 1)
+               || (sy === sroom.hy && dd.y === sy + 1))
         return false;
-    const loc = game.level?.at(sx, sy);
-    if (!loc || !IS_ROOM(loc.typ)) return false;
-    return true;
+    return !!loc && IS_ROOM(loc.typ);
 }
 
 // C ref: shknam.c stock_room() — stock a newly-created shop room.

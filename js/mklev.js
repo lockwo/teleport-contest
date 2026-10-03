@@ -2211,10 +2211,30 @@ async function do_mkroom(roomtype) {
     }
 }
 
-// C ref: mkroom.c invalid_shop_shape() — irregular or sub-divided shops are
-// rejected.  Regular rectangular rooms (the only kind we generate) are valid.
+// C ref: mkroom.c invalid_shop_shape() — test the actual door's adjacent
+// floor, including irregular rooms; a room's irregular flag alone is not a veto.
 function invalid_shop_shape(sroom) {
-    return !!sroom.irregular || (sroom.nsubrooms ?? 0) > 0;
+    const level = game.level;
+    const door = level.doors[sroom.fdoor];
+    if (!door) return true;
+    let insidex = 0, insidey = 0, insidect = 0;
+    for (let x = Math.max(door.x - 1, sroom.lx); x <= Math.min(door.x + 1, sroom.hx); x++)
+        for (let y = Math.max(door.y - 1, sroom.ly); y <= Math.min(door.y + 1, sroom.hy); y++)
+            if (level.at(x, y)?.typ === ROOM) {
+                insidex = x;
+                insidey = y;
+                insidect++;
+            }
+    if (!insidect) return true;
+    if (insidect === 1) {
+        insidect = 0;
+        for (let x = Math.max(insidex - 1, sroom.lx); x <= Math.min(insidex + 1, sroom.hx); x++)
+            for (let y = Math.max(insidey - 1, sroom.ly); y <= Math.min(insidey + 1, sroom.hy); y++)
+                if ((x !== insidex || y !== insidey) && level.at(x, y)?.typ === ROOM)
+                    insidect++;
+        if (insidect === 1) return true;
+    }
+    return false;
 }
 
 // C ref: mkroom.c isbig() — room area > 20.
