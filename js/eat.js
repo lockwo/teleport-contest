@@ -479,7 +479,12 @@ async function do_reset_eat() {
         if (otmp) { v.o_id = otmp.o_id; recalc_wt(); }
     }
     if (v) v.fullwarn = v.eating = v.doreset = 0;
-    game._eat_occupation = null;
+    // C ref: eat.c do_reset_eat() tail — `stop_occupation(); newuhs(FALSE);`.
+    // stop_occupation() (allmain.c:684) is what prints "You stop eating the
+    // food ration." and clears go.occupation + nomul(0); clearing the port's
+    // occupation handle here instead dropped that line for every abandoned
+    // meal (answering "n" to "Continue eating?", a mid-meal reset_eat()).
+    await (await import('./hack.js')).stop_occupation();
     await newuhs(false);
 }
 
@@ -745,31 +750,106 @@ async function lesshungry_eat(num) {
     newuhs(false);
 }
 
+// C ref: youprop.h Breathless / Hunger / Strangled, as choke() reads them.
+// The port stores intrinsics by name and extrinsics on the worn object, so
+// Hunger also has to look at the ring slots (objects[].oc_oprop HUNGER).
+const RIN_HUNGER_OTYP = 184, AMULET_OF_STRANGULATION_OTYP = 203;
+function u_Breathless() {
+    const p = game.u?.uprops;
+    return !!(p?.Breathless || p?.HBreathless || p?.EBreathless);
+}
+function u_Hunger() {
+    const p = game.u?.uprops;
+    return !!(p?.Hunger || p?.HHunger || p?.EHunger)
+        || game.uleft?.otyp === RIN_HUNGER_OTYP
+        || game.uright?.otyp === RIN_HUNGER_OTYP;
+}
+function u_Strangled() {
+    const p = game.u?.uprops;
+    return !!(p?.Strangled || p?.HStrangled);
+}
+
+// C ref: eat.c vomit() — retching immobilizes the hero for two turns.  The
+// cantvomit() arm ("Your jaw gapes convulsively.") and the spewed arm's
+// acid-breath / altar_wrath / melt_ice follow-ups only apply to polymorphed
+// or altar-standing heroes; the nomul(-2) tail is universal and is what keeps
+// the port's turn count in step with C after a choke or a Vomiting timeout.
+export async function vomit() {
+    const u = game.u;
+    if (!u) return;
+    // mondata.js is imported lazily: a static import from eat.js closes an
+    // initialization cycle through mkobj.js (see the NOTE on imports above).
+    const youmonst = u.Upolyd ? u.data : null;
+    const { cantvomit } = youmonst ? await import('./mondata.js') : {};
+    if (youmonst && cantvomit(youmonst)) {
+        await update_topl('Your jaw gapes convulsively.');
+    } else {
+        // make_sick(0, NULL, TRUE, SICK_VOMITABLE) only when actually sick
+        // from a vomitable cause; this port keeps a single Sick timer.
+        if (u.uprops?.Sick && (u.usick_type | 0) & 1 /* SICK_VOMITABLE */) {
+            u.uprops.Sick = 0;
+            u.usick_type = 0;
+            game.disp_botl = true;
+        }
+        if ((u.uhs ?? NOT_HUNGRY) >= FAINTING)
+            await update_topl('Your stomach heaves convulsively!');
+    }
+    if ((game.multi ?? 0) >= -2) {
+        game.multi = -2;
+        game.multi_reason = 'vomiting';
+        game.context = game.context || {};
+        game.context.travel = game.context.travel1 = game.context.mv = 0;
+        game.nomovemsg = 'You can move again.';
+    }
+}
+
 // C ref: eat.c choke(food) — eating while already satiated.  The vomit arm and
-// the death arm both matter to the stream: the rn2(20) is drawn whenever the
-// hero is neither Breathless nor Hungry-cursed.
+// the death arm both matter to the stream: the rn2(20) is drawn ONLY when the
+// hero is neither Breathless nor Hungry-ringed (C short-circuits before it).
 async function choke(food) {
     const u = game.u;
     if (!u) return;
-    if ((u.uhs ?? NOT_HUNGRY) !== SATIATED) return;   /* AoS case unported */
-    // C: Role_if(PM_KNIGHT) && A_LAWFUL -> adjalign(-1) + "like a glutton!".
-    if (game.urole?.mnum === 4 /* PM_KNIGHT */ && (u.ualign?.type ?? 0) === 1) {
+    if ((u.uhs ?? NOT_HUNGRY) !== SATIATED) {
+        // C: a non-satiated hero only chokes on an amulet of strangulation.
+        if (!food || food.otyp !== AMULET_OF_STRANGULATION_OTYP) return;
+    } else if (game.urole?.mnum === 4 /* PM_KNIGHT */
+               && (u.ualign?.type ?? 0) === 1 /* A_LAWFUL */) {
+        // C: adjalign(-1) + "like a glutton!" — gluttony is unchivalrous.
         if (typeof u.ualign?.record === 'number') u.ualign.record -= 1;
         await update_topl('You feel like a glutton!');
     }
     exercise(A_CON, false);
-    if (!rn2(20)) {
+    if (u_Breathless() || u_Hunger() || (!u_Strangled() && !rn2(20))) {
+        if (food && food.otyp === AMULET_OF_STRANGULATION_OTYP) {
+            await update_topl('You choke, but recover your composure.');
+            return;
+        }
         await update_topl('You stuff yourself and then vomit voluminously.');
         // C: morehungry(Hunger ? (u.uhunger - 60) : 1000) — morehungry()
         // SUBTRACTS its argument from u.uhunger.
-        u.uhunger = (u.uhunger ?? 900) - (u.uprops?.Hunger
+        u.uhunger = (u.uhunger ?? 900) - (u_Hunger()
                                           ? ((u.uhunger ?? 900) - 60) : 1000);
         newuhs(true);
-        // vomit()'s nomul(-2)/"You can move again" is not modelled.
+        await vomit();
     } else {
-        await update_topl(`You choke over your ${food ? foodword(food) : 'food'}.`);
+        // C ref: eat.c choke() death arm.  killer.format starts KILLED_BY_AN
+        // and becomes KILLED_BY for a named food; topten.c formatkiller()
+        // prefixes "choked on ", which this port folds into _killer_name.
+        const I = await import('./invent.js');
+        let kname;
+        if (food) {
+            await update_topl(`You choke over your ${foodword(food)}.`);
+            kname = (food.oclass === 5 /* COIN_CLASS */)
+                ? 'a very rich meal' : I.killer_xname(food);
+        } else {
+            await update_topl('You choke over it.');
+            kname = 'a quick snack';
+        }
         await update_topl('You die...');
-        game._choked = true;                 /* done(CHOKING) not modelled */
+        game._killer_name = `choked on ${kname}`;
+        const { done } = await import('./end.js');
+        const { CHOKING } = await import('./const.js');
+        await done(CHOKING);
     }
 }
 
