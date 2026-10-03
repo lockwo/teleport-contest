@@ -8,7 +8,8 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { pline, update_topl, y_n } from './display.js';
 import { poison_strdmg, exercise, acurr_eff, adjattrib } from './attrib.js';
-import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, G_GENOD } from './const.js';
+import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, G_GENOD,
+         INTRINSIC, INVIS, DISPLACED, UNCHANGING } from './const.js';
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_POIS,
          M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME }
@@ -1689,15 +1690,18 @@ async function cpostfx(pm) {
             if (nm === 'stalker') {
                 const { self_invis_message } = await import('./potion.js');
                 const { newsym } = await import('./display.js');
-                if (!u.uprops.HInvis) {
-                    u.uprops.HInvis = rn1(100, 50);
-                    if (!_vision.Blind()) await self_invis_message();
+                if (!(u.uprops.HInvis || u.HInvis
+                      || u.uprops.EInvis || _invent.worn_extrinsic(INVIS))) {
+                    u.uprops.HInvis = ((u.uprops.HInvis | 0) & ~P_TIMEOUT)
+                        | rn1(100, 50);
+                    if (!_vision.Blind() && !_invent.worn_blocked(INVIS))
+                        await self_invis_message();
                 } else {
-                    // already invisible: make it permanent (FROMOUTSIDE)
-                    if (!u.HInvis) await update_topl('You feel hidden!');
-                    u.HInvis = 1;
-                    u.HSee_invisible = 1;
-                    u.uprops.HSee_invisible = 1;
+                    if (!((u.uprops.HInvis | 0) & INTRINSIC))
+                        await update_topl('You feel hidden!');
+                    u.uprops.HInvis = (u.uprops.HInvis | 0) | P_FROMOUTSIDE;
+                    u.uprops.HSee_invisible = (u.uprops.HSee_invisible | 0)
+                        | P_FROMOUTSIDE;
                 }
                 newsym(u.ux, u.uy);
             }
@@ -1715,7 +1719,9 @@ async function cpostfx(pm) {
         let tmp = nm === 'giant mimic' ? 50 : nm === 'large mimic' ? 40 : 20;
         const u = game.u;
         const ymcls = (typeof u?.data?.mcls === 'number') ? u.data.mcls : u?.data?.mlet;
-        if (ymcls !== S_MIMIC_CLS && !u?.uprops?.HUnchanging) {
+        if (ymcls !== S_MIMIC_CLS
+            && !(u?.uprops?.HUnchanging || u?.uprops?.EUnchanging
+                 || _invent.worn_extrinsic(UNCHANGING))) {
             const hallu = !!u?.uhallu;
             const tempshape = !hallu ? 'a pile of gold' : 'an orange';
             u.uconduct = u.uconduct || {};
@@ -1771,7 +1777,8 @@ async function cpostfx(pm) {
     case 'chameleon': case 'doppelganger': case 'sandestin':
     case 'genetic engineer': {
         // C ref: eat.c:1244 — polyself corpses.
-        if (game.u?.uprops?.HUnchanging) {
+        if (game.u?.uprops?.HUnchanging || game.u?.uprops?.EUnchanging
+            || _invent.worn_extrinsic(UNCHANGING)) {
             await update_topl('You feel momentarily different.');
         } else {
             const ctx = (game.context = game.context || {});
@@ -1791,8 +1798,8 @@ async function cpostfx(pm) {
         const u = game.u;
         if (u) {
             u.uprops = u.uprops || {};
-            if (!(u.uprops.HDisplaced
-                  || game.uarmc?.otyp === 149)) {
+            if (!(u.uprops.HDisplaced || u.uprops.EDisplaced
+                  || _invent.worn_extrinsic(DISPLACED))) {
                 const { toggle_displacement } = await import('./do_wear.js');
                 await toggle_displacement(null, 0, true);
             }
