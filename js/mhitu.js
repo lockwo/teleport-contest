@@ -670,13 +670,31 @@ export async function summonmu(mtmp, youseeit) {
         mdat = mtmp.data;   // form change invalidates the cached value
 
         if (!rn2(10)) {
+            const { Monnam } = await import('./uhitm.js');
+            const { were_summon } = await import('./mon.js');
+            const { makeplural } = await import('./objnam.js');
+            if (youseeit) await emitU(`${Monnam(mtmp)} summons help!`);
+            const { total, numseen, genbuf } = await were_summon(mdat);
             if (youseeit) {
-                const { Monnam } = await import('./uhitm.js');
-                await emitU(`${Monnam(mtmp)} summons help!`);
+                if (total > 0) {
+                    if (numseen === 0) await emitU('You feel hemmed in!');
+                } else {
+                    await emitU('But none comes.');
+                }
+            } else {
+                const { growl_sound } = await import('./sounds.js');
+                const sound = Deaf() ? '' : `${makeplural(growl_sound(mtmp))}!`;
+                if (sound) await emitU(`Something ${sound}`);
+                if (total > 0) {
+                    if (numseen < 1) {
+                        await emitU('You feel hemmed in!');
+                    } else {
+                        const phrase = numseen === 1 ? `${genbuf} appears`
+                            : `${makeplural(genbuf)} appear`;
+                        await emitU(`${phrase[0].toUpperCase()}${phrase.slice(1)}${Deaf() ? ' from nowhere' : ''}!`);
+                    }
+                }
             }
-            // were_summon(): makemon() of 1..5 compatible critters, each with
-            // its own placement rolls.  Not carried, so stop here rather than
-            // invent them; the "But none comes." tail depends on the count.
         }
         return;
     }
@@ -685,11 +703,10 @@ function Inhell() {
     const dnum = game.u?.uz?.dnum;
     return !!game.dungeons?.[dnum]?.flags?.hellish;
 }
-// js/mon.js new_were() is module-private; the shape swap itself draws no RNG
-// (its trailing monflee rn1(9,2) only fires with context.mon_moving set and a
-// scary square adjacent), so a were that changes form here keeps its stream.
 async function new_were_u(mtmp) {
-    void mtmp;
+    // C ref: were.c:96 new_were() — transformation message, data, armor and HP.
+    const { new_were_pub } = await import('./mon.js');
+    await new_were_pub(mtmp);
 }
 
 // ═══ mhitu.c:1273 gulp_blnd_check ═══════════════════════════════════════════
