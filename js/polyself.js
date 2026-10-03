@@ -1490,11 +1490,19 @@ async function pmnameRows() {
     for (let i = 0; i < NUMMONS(); i++) {
         const mdat = monster_by_pmidx(i);
         if (!mdat) continue;
+        // C ref: mondata.c name_to_monplus() `if (!mons[i].pmnames[mgend]) continue;`
+        // — monst.c NAM(name) leaves pmnames[MALE] and pmnames[FEMALE] NULL, so
+        // ONLY a NAMS(m,f,n) species offers a male/female slot.  Pushing the
+        // neutral name as a MALE row made every ordinary species report
+        // gender_name_var == MALE, which create_particular turns into MM_MALE and
+        // makemon() then skips its `female = rn2(2)` roll.
         const male = await pmname_of(mdat, false), female = await pmname_of(mdat, true);
-        if (male) rows.push([male, i, MGEND_MALE]);
-        if (female && female !== male) rows.push([female, i, MGEND_FEMALE]);
-        if (mdat.name && mdat.name !== male && mdat.name !== female)
-            rows.push([mdat.name, i, MGEND_NEUTRAL]);
+        const gendered = (male && male !== mdat.name) || (female && female !== mdat.name);
+        if (gendered) {
+            if (male) rows.push([male, i, MGEND_MALE]);
+            if (female && female !== male) rows.push([female, i, MGEND_FEMALE]);
+        }
+        if (mdat.name) rows.push([mdat.name, i, MGEND_NEUTRAL]);
     }
     _PMNAME_ROWS = rows;
     return rows;
@@ -1504,7 +1512,7 @@ async function pmnameRows() {
 // DEFERRED: title_to_mon()'s rank-title fallback (what makes "lord" resolve to
 // a player monster) — role.js has the rank titles but not the role ->
 // player-monster map it needs.
-async function name_to_mon(in_str) {
+export async function name_to_mon(in_str) {
     let str = String(in_str || '');
     let gvariant = MGEND_NEUTRAL, matchgend = -1;
 

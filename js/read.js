@@ -2862,20 +2862,17 @@ export async function seffect_genocide(sobj) {
         await do_genocide((!scursed ? 1 : 0) | (Confused() ? 2 : 0));
 }
 
-// C ref: mondata.c name_to_mon(in_str, &gender).  polyself.js:1123 holds the
-// faithful (fuzzy: makesingular, plural and partial matching) port, but it is
-// module-private — the fix is to export it there.  Until then this exact-name
-// lookup over makemon.js's name map is what the genocide/create-particular
-// prompts below can reach, so an inexact reply that C would have matched reads
-// as "no such monster" here.
+// C ref: mondata.c name_to_mon(in_str, &gender) — delegates to polyself.js's
+// faithful name_to_monplus() port (article strip, plural fold, alternate
+// spellings, MALE/FEMALE/NEUTRAL pmnames[] slots, case-insensitive longest
+// match).  This used to be an exact-name lookup over makemon.js's name map, so
+// "wizard of Yendor" / "grey dragon" / "cavewomen" all read as "I've never
+// heard of such monsters." at the ^G and genocide prompts.
 async function name_to_mon_read(str) {
-    const { name_to_pmidx, name_gender_hint } = await import('./makemon.js');
-    const { makesingular } = await import('./objnam.js');
+    const { name_to_mon } = await import('./polyself.js');
     const s = String(str || '').replace(/\s+/g, ' ').trim();
-    let mndx = name_to_pmidx(s);
-    if (mndx < 0) mndx = name_to_pmidx(makesingular(s));
-    return { mndx: mndx < 0 ? NON_PM : mndx,
-             gender: mndx < 0 ? NEUTRAL : name_gender_hint(s) };
+    const { mntmp, gvariant } = await name_to_mon(s);
+    return { mndx: mntmp, gender: mntmp === NON_PM ? NEUTRAL : gvariant };
 }
 
 // C ref: monsym.h def_char_to_monclass(ch) — the def_monsyms[] symbol -> class
