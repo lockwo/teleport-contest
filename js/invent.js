@@ -2517,6 +2517,12 @@ export function renderMenuLines(flat, cursor = [36, 8]) {
     // draws a leading space there and the text at offx+1 (== col), so col-1 must
     // be blanked too or a map glyph beneath it shows through the leading space.
     const bandStart = Math.max(0, col - 1);
+    // C ref: win/tty/wintty.c erase_menu_or_text(): tearing this window down
+    // runs docorner() (a pure row_refresh replay of the glyph buffer) when
+    // offx != 0 and the far heavier docrt() only when offx == 0.  Remember
+    // which one applies -- docrt() re-runs vision_recalc()+see_monsters(),
+    // which re-rolls every hallucinated glyph off the display RNG.
+    game._menuOffx = bandStart;
     const totalRows = nitems + 1; // +1 for (end)
     const menuLastRow = totalRows - 1; // row the "(end)" line lands on
     for (let r = 0; r <= menuLastRow && r < 24; r++)
@@ -2599,6 +2605,9 @@ export function renderWindowScreen(lines, opts = {}) {
     // writes the last column (cols-1), truncating any line that would reach it.
     const cols = display.cols ?? 80;
     const maxLen = (cols - 1) - textCol;
+    // A full-screen window has offx == 0, so erase_menu_or_text() tears it
+    // down with docrt() rather than docorner() (see renderMenuLines above).
+    game._menuOffx = 0;
     display.clearScreen();
     let row = 0;
     for (const ln of lines) {
@@ -2991,7 +3000,14 @@ export async function dismiss_invent_screen() {
     // tail; flush_screen's normal full redraw resets that for plain gameplay,
     // so restore it here for the very next corner window to inherit.
     const carriedTrunc = game._statusTruncCol;
-    await docrt();
+    // C ref: win/tty/wintty.c erase_menu_or_text(): docrt() ONLY for a
+    // full-width window (offx == 0).  A corner menu is erased with
+    // docorner(), which just row_refresh()es the glyph buffer back over the
+    // vacated columns — no vision_recalc(), no see_monsters(), and therefore
+    // no display-RNG draws.  Running docrt() here re-rolled three hallucinated
+    // glyphs on every menu dismissal and desynchronised the display stream
+    // (and with it every later hallucinated colour) from C's.
+    if (!(game._menuOffx > 0)) await docrt();
     await flush_screen(1);
     if (carriedTrunc != null) game._statusTruncCol = carriedTrunc;
     return true;
