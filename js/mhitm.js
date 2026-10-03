@@ -30,7 +30,7 @@
 
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { hitval } from './weapon.js';
+import { hitval, possibly_unwield } from './weapon.js';
 import { rn2, rnd, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED,
@@ -256,47 +256,10 @@ function attacktype_at(mon, aatyp) {
 }
 
 // weapon_check states (C ref: monst.h wpn_chk_flags).
-const NO_WEAPON_WANTED = 0, NEED_WEAPON = 1, NEED_RANGED_WEAPON = 2, NEED_HTH_WEAPON = 3;
-// Hand-to-hand weapon priority (C ref: weapon.c hwep[]), restricted to the
-// otyps the contest's armed monsters carry; the orcish "crude" dagger (36) is
-// the only one reachable for the low-level orc/kobold slice.
-const HWEP_PRIORITY_MM = [55, 45, 54, 52, 50, 46, 48, 73, 44, 27, 30, 28, 77,
-    34, 35, 36, 40];
-const ORCISH_DAGGER_MM = 36;
+const NEED_WEAPON = 1, NEED_HTH_WEAPON = 3;
 
 // C ref: mondata.h MON_WEP(mon) — the monster's wielded weapon (mw).
 function MON_WEP_MM(mon) { return mon?.mw || null; }
-
-// C ref: weapon.c select_hwep — first carried weapon in hwep[] priority.  No RNG.
-function select_hwep_mm(mtmp) {
-    for (const otyp of HWEP_PRIORITY_MM)
-        for (const o of (mtmp?.minvent || []))
-            if (o.otyp === otyp) return o;
-    return null;
-}
-
-// C ref: weapon.c mon_wield_item(mon) — wield the best melee weapon.  Returns 1
-// if the monster wielded a (different) weapon this turn, 0 otherwise.  No RNG;
-// only the "<Mon> wields <weapon>!" message + mw set.
-async function mon_wield_item_mm(mon) {
-    if (mon.weapon_check === NO_WEAPON_WANTED) return 0;
-    const obj = select_hwep_mm(mon);
-    if (obj) {
-        const mw_tmp = MON_WEP_MM(mon);
-        if (mw_tmp && mw_tmp.otyp === obj.otyp) {
-            mon.weapon_check = NEED_WEAPON;
-            return 0;
-        }
-        mon.mw = obj;
-        mon.weapon_check = NEED_WEAPON;
-        if (mm_can_see_mon(mon)) {
-            const nm = (obj.otyp === ORCISH_DAGGER_MM) ? 'a crude dagger' : 'a weapon';
-            await emitMMmsg(`${Monnam(mon)} wields ${nm}!`);
-        }
-        return 1;
-    }
-    return 0;
-}
 
 // C ref: canseemon(mon) — (cansee || see_with_infrared) && mon_visible.
 const mm_can_see_mon = canseemon_shared;
@@ -1160,10 +1123,10 @@ export async function mattackm(magr, mdef) {
                 // (the turn was spent wielding).
                 if (magr.weapon_check === NEED_WEAPON || !MON_WEP_MM(magr)) {
                     magr.weapon_check = NEED_HTH_WEAPON;
-                    if (await mon_wield_item_mm(magr)) return M_ATTK_MISS;
+                    const { mon_wield_item } = await import('./monmove.js');
+                    if (await mon_wield_item(magr)) return M_ATTK_MISS;
                 }
-                // possibly_unwield(magr, FALSE) — only fires for a monster
-                // wielding something that isn't a weapon; not modelled.
+                possibly_unwield(magr, false);         // mhitm.c:409
                 mwep = MON_WEP_MM(magr);
                 if (mwep) {
                     if (mm_visible(magr, mdef)) await mswingsm(magr, mdef, mwep);

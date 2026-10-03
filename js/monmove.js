@@ -131,7 +131,7 @@ import { obj_resists, resists_sleep, sleep_monst, resist, resists_magm } from '.
 import { resists_fire, resists_acid } from './mondata.js';
 import { clear_path, couldsee, cansee, vision_recalc, recalc_block_point, Blind } from './vision.js';
 import { mattackm, mdisplacem } from './mhitm.js';
-import { hitval, ARWEP, autoreturn_weapon } from './weapon.js';
+import { hitval, ARWEP, autoreturn_weapon, setmnotwielded } from './weapon.js';
 import { Monnam, mon_nam, canspotmon, make_corpse, corpse_chance, dmgval,
     setmangry, relobj } from './uhitm.js';
 import { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE, SLT_ENCUMBER, FORCETRAP, Unaware } from './const.js';
@@ -6340,20 +6340,43 @@ export function select_hwep(mtmp) {
 export function MON_WEP(mon) { return mon?.mw || null; }
 
 // C ref: weapon.c mon_wield_item(mon) — wield the best weapon per weapon_check.
-// Returns 1 if the monster took time (actually wielded a different weapon), 0
-// otherwise.  No RNG.  Faithful to the NEED_HTH_WEAPON path used by the armed
-// orc/kobold combat (the only weapon_check the contest reaches).
+// Returns 1 if the monster took time (actually wielded a different weapon, or
+// found its current one welded), 0 otherwise.  No RNG.
 export async function mon_wield_item(mon) {
     if (mon.weapon_check === NO_WEAPON_WANTED_MM) return 0;
     let obj;
-    if (mon.weapon_check === NEED_RANGED_WEAPON_MM) {
+    let exclaim = true; /* assume mon is planning to attack */
+    const hasShield = () => (mon.minvent || []).some((o) => ((o.owornmask | 0) & W_ARMS) !== 0);
+    switch (mon.weapon_check) {
+    case NEED_RANGED_WEAPON_MM:
         // C ref: weapon.c:813 — select_rwep sets gp.propellor (the launcher to
         // wield); a &hands_obj propellor (thrown dagger/dart) means no launcher
         // is needed, so nothing is wielded and thrwmu falls through to throw.
         select_rwep(mon);
         obj = (_propellor === HANDS_OBJ) ? null : _propellor;
-    } else {
-        obj = select_hwep(mon);       // NEED_HTH_WEAPON / NEED_WEAPON
+        break;
+    case NEED_PICK_AXE:
+        obj = m_carrying(mon, PICK_AXE_OTYP);
+        if (!obj && !hasShield()) obj = m_carrying(mon, DWARVISH_MATTOCK_OTYP);
+        exclaim = false; /* mon is just planning to dig */
+        break;
+    case NEED_AXE:
+        obj = m_carrying(mon, BATTLE_AXE_OTYP);
+        if (!obj || hasShield()) obj = m_carrying(mon, AXE_OTYP);
+        exclaim = false;
+        break;
+    case NEED_PICK_OR_AXE:
+        obj = m_carrying(mon, DWARVISH_MATTOCK_OTYP);
+        if (!obj) obj = m_carrying(mon, BATTLE_AXE_OTYP);
+        if (!obj || hasShield()) {
+            obj = m_carrying(mon, PICK_AXE_OTYP);
+            if (!obj) obj = m_carrying(mon, AXE_OTYP);
+        }
+        exclaim = false;
+        break;
+    default:
+        obj = select_hwep(mon);       // NEED_HTH_WEAPON
+        break;
     }
     if (obj && obj !== HANDS_OBJ) {
         const mw_tmp = MON_WEP(mon);
@@ -6361,7 +6384,28 @@ export async function mon_wield_item(mon) {
             mon.weapon_check = NEED_WEAPON_MM; // already wielding it
             return 0;
         }
-        mon.mw = obj;                 // wield obj (setmnotwielded old is implicit)
+        const { update_topl } = await import('./display.js');
+        const { floor_object_name, makeplural } = await import('./invent.js');
+        // C ref: weapon.c:860 — a welded current weapon can't be let go of.
+        if (mw_tmp && mwelded(mw_tmp)) {
+            if (canseemon_mm(mon)) {
+                let mon_hand = mbodypart(mon, HAND);
+                if (BIMANUAL_HWEP.has(mw_tmp.otyp)) mon_hand = makeplural(mon_hand);
+                const welded_buf = `${otense(mw_tmp, 'are')} welded to ${mhis(mon)} ${mon_hand}`;
+                if (obj.otyp === PICK_AXE_OTYP) {
+                    await update_topl(`Since ${s_suffix(mon_nam(mon))} weapon${(mw_tmp.quan ?? 1) !== 1 ? 's' : ''} ${welded_buf},`);
+                    await update_topl(`${mon_nam(mon)} cannot wield that ${xname(obj)}.`);
+                } else {
+                    await update_topl(`${Monnam(mon)} tries to wield ${floor_object_name(obj)}.`);
+                    await update_topl(`The ${xname(mw_tmp)} ${welded_buf}!`);
+                }
+                mw_tmp.bknown = 1;
+            }
+            mon.weapon_check = NO_WEAPON_WANTED_MM;
+            return 1;
+        }
+        mon.mw = obj;                 // wield obj
+        setmnotwielded(mon, mw_tmp);
         mon.weapon_check = NEED_WEAPON_MM;
         if (canseemon_mm(mon)) {
             // C ref: weapon.c:892 pline_mon(mon, "%s wields %s%c", Monnam(mon),
@@ -6369,14 +6413,21 @@ export async function mon_wield_item(mon) {
             // multi-object stack like a demon's carried daggers reads "5
             // daggers", not "a dagger"), so use the real invent.js naming
             // rather than the single-item mshot_xname/an_name pair.
-            const { update_topl } = await import('./display.js');
-            const { floor_object_name, xname } = await import('./invent.js');
-            await update_topl(`${Monnam(mon)} wields ${floor_object_name(obj)}!`);
+            await update_topl(`${Monnam(mon)} wields ${floor_object_name(obj)}${exclaim ? '!' : '.'}`);
             // C ref: weapon.c:895-897 — a tethered throw-and-return weapon.
             const arw = autoreturn_weapon(obj);
             if (arw && arw.tethered)
                 await update_topl(`${Monnam(mon)} secures the tether on the ${xname(obj)}.`);
+            // C ref: weapon.c:906 — a cursed weapon welds itself on wielding.
+            if (obj.cursed) {
+                let mon_hand = mbodypart(mon, HAND);
+                if (BIMANUAL_HWEP.has(obj.otyp)) mon_hand = makeplural(mon_hand);
+                const plural = (obj.quan ?? 1) !== 1;
+                await update_topl(`${Tobjnam_mm(obj, 'weld')} ${plural ? 'themselves' : 'itself'} to ${s_suffix(mon_nam(mon))} ${mon_hand}!`);
+                obj.bknown = 1;
+            }
         }
+        obj.owornmask = W_WEP_MM;
         return 1;
     }
     // C ref: weapon.c:932 — the no-object fallthrough (no HTH weapon carried, or
@@ -6386,6 +6437,7 @@ export async function mon_wield_item(mon) {
     mon.weapon_check = NEED_WEAPON_MM;
     return 0;
 }
+const W_WEP_MM = 0x00000100; // prop.h W_WEP
 // weapon_check enum values (C ref: monst.h wpn_chk_flags).
 const NO_WEAPON_WANTED_MM = 0, NEED_WEAPON_MM = 1, NEED_RANGED_WEAPON_MM = 2, NEED_HTH_WEAPON_MM = 3;
 const HANDS_OBJ = null; // C's &hands_obj sentinel — never selected here.
