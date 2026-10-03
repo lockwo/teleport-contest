@@ -567,118 +567,149 @@ function useup_worn(otmp) {
     otmp.owornmask = 0;
     freeinv(otmp);
 }
+// C ref: polyself.c break_armor() — shed worn armor that no longer fits the
+// new form, running each slot's *_off()/Armor_gone() side effects (speed
+// boots "slow down", extrinsics, AC) before the item is used up or dropped.
 async function break_armor() {
-    const mdat = game.u.data;
-    if (breakarm(mdat)) {
-        if (game.uarm) {
-            const otmp = game.uarm;
+    const uptr = game.u.data;
+    const W = await import('./do_wear.js');
+    const { yname, Blindf_off } = await import('./invent.js');
+    const { vtense } = await import('./dothrow.js');
+    const cancel_if_donning = (o) => { if (W.donning(o)) W.cancel_don(); };
+    let otmp;
+
+    if (breakarm(uptr)) {
+        if ((otmp = game.uarm) != null) {
+            cancel_if_donning(otmp);
+            /* for gold DSM, we don't want Armor_gone() to report that it
+               stops shining _after_ we've been told that it is destroyed */
+            if (otmp.lamplit) {
+                const { end_burn } = await import('./light.js');
+                end_burn(otmp, false);
+            }
             await pline('You break out of your armor!');
             exercise(A_STR, false);
-            game.uarm = null;
-            useup_worn(otmp);           /* C: useup(), NOT dropp() */
+            await W.Armor_gone();
+            useup_worn(otmp);
         }
-        if (game.uarmc) {
-            const otmp = game.uarmc;
-            game.uarmc = null;
-            // MUMMY_WRAPPING has no clasp and is used up; ALCHEMY_SMOCK has a
-            // knot; every other cloak's clasp breaks open and it DROPS.
-            const nm = cloak_simple_name(otmp);
-            if (nm === 'mummy wrapping') {
-                await pline(`Your ${nm} tears apart!`);
+        if ((otmp = game.uarmc) != null
+            /* mummy wrapping adapts to small and very big sizes */
+            && (otmp.otyp !== MUMMY_WRAPPING_OTYP || !WrappingAllowed(uptr))) {
+            if (otmp.otyp === MUMMY_WRAPPING_OTYP) {
+                /* doesn't have a clasp to break open */
+                await pline(`Your ${W.cloak_simple_name(otmp)} tears apart!`);
+                await W.Cloak_off();
                 useup_worn(otmp);
-            } else if (nm === 'apron') {
-                await pline(`The knot on your ${nm} is pulled apart!`);
-                otmp.owornmask = 0;
+            } else if (otmp.otyp === ALCHEMY_SMOCK_OTYP) {
+                await pline(`The knot on your ${W.cloak_simple_name(otmp)} is pulled apart!`);
+                await W.Cloak_off();
                 await dropp(otmp);
             } else {
-                await pline(`The clasp on your ${nm} breaks open!`);
-                otmp.owornmask = 0;
+                await pline(`The clasp on your ${W.cloak_simple_name(otmp)} breaks open!`);
+                await W.Cloak_off();
                 await dropp(otmp);
             }
         }
-        if (game.uarmu) {
-            const otmp = game.uarmu;
+        if ((otmp = game.uarmu) != null) {
             await pline('Your shirt rips to shreds!');
             game.uarmu = null;
             useup_worn(otmp);
         }
-    } else if (sliparm(mdat)) {
-        if (game.uarm) {
-            const otmp = game.uarm;
+    } else if (sliparm(uptr)) {
+        if ((otmp = game.uarm) != null && racial_exception_u(otmp) < 1) {
+            cancel_if_donning(otmp);
             await pline('Your armor falls around you!');
-            game.uarm = null;
-            otmp.owornmask = 0;
+            await W.Armor_gone();
             await dropp(otmp);
         }
-        if (game.uarmc) {
-            const otmp = game.uarmc;
-            if (is_whirly(mdat)) await pline(`Your ${cloak_simple_name(otmp)} falls, unsupported!`);
-            else await pline(`You shrink out of your ${cloak_simple_name(otmp)}!`);
-            game.uarmc = null;
-            otmp.owornmask = 0;
+        if ((otmp = game.uarmc) != null
+            && (otmp.otyp !== MUMMY_WRAPPING_OTYP || !WrappingAllowed(uptr))) {
+            if (is_whirly(uptr))
+                await pline(`Your ${W.cloak_simple_name(otmp)} falls, unsupported!`);
+            else
+                await pline(`You shrink out of your ${W.cloak_simple_name(otmp)}!`);
+            await W.Cloak_off();
             await dropp(otmp);
         }
-        if (game.uarmu) {
-            const otmp = game.uarmu;
-            if (is_whirly(mdat)) await pline('You seep right through your shirt!');
+        if ((otmp = game.uarmu) != null) {
+            if (is_whirly(uptr)) await pline('You seep right through your shirt!');
             else await pline('You become much too small for your shirt!');
             game.uarmu = null;
             otmp.owornmask = 0;
             await dropp(otmp);
         }
     }
-    // C ref: polyself.c:1229 — the helmet's FIRST gate is has_horns(), which is
-    // a different set from nohands||verysmall: a minotaur or unicorn keeps its
-    // hands but still cannot wear a hat.
-    if (has_horns(mdat) && game.uarmh) {
-        const otmp = game.uarmh;
-        if (is_flimsy(otmp)) {
-            const hornbuf = `horn${num_horns(mdat) === 1 ? '' : 's'}`;
-            await pline(`Your ${hornbuf} ${num_horns(mdat) === 1 ? 'pierces' : 'pierce'} your ${xname(otmp)}.`);
-        } else {
-            await pline(`Your ${helm_simple_name(otmp)} falls to the ${surface(game.u.ux, game.u.uy)}!`);
-            game.uarmh = null;
-            otmp.owornmask = 0;
-            await dropp(otmp);
+    if (has_horns(uptr)) {
+        if ((otmp = game.uarmh) != null) {
+            if (is_flimsy(otmp) && !W.donning(otmp)) {
+                /* Future possibilities: This could damage/destroy helmet */
+                const hornbuf = `horn${num_horns(uptr) === 1 ? '' : 's'}`;
+                await pline(`Your ${hornbuf} ${vtense(hornbuf, 'pierce')} through ${yname(otmp)}.`);
+            } else {
+                cancel_if_donning(otmp);
+                await pline(`Your ${helm_simple_name(otmp)} falls to the ${surface(game.u.ux, game.u.uy)}!`);
+                await W.Helmet_off();
+                await dropp(otmp);
+            }
         }
     }
-    if (nohands(mdat) || mdat?.verysmall) {
-        if (game.uarmg) {
-            const otmp = game.uarmg;
+    if (nohands(uptr) || uptr?.verysmall) {
+        if ((otmp = game.uarmg) != null) {
+            cancel_if_donning(otmp);
+            /* Drop weapon along with gloves */
             await pline(`You drop your gloves${game.uwep ? ' and weapon' : ''}!`);
             await drop_weapon(0);
-            game.uarmg = null;
-            otmp.owornmask = 0;
+            await W.Gloves_off();
+            /* Glib manipulation (ends immediately) handled by Gloves_off */
             await dropp(otmp);
         }
-        if (game.uarms) {
-            const otmp = game.uarms;
+        if ((otmp = game.uarms) != null) {
             await pline('You can no longer hold your shield!');
-            game.uarms = null;
-            otmp.owornmask = 0;
+            await W.Shield_off();
             await dropp(otmp);
         }
-        if (game.uarmh) {
-            const otmp = game.uarmh;
+        if ((otmp = game.uarmh) != null) {
+            cancel_if_donning(otmp);
             await pline(`Your ${helm_simple_name(otmp)} falls to the ${surface(game.u.ux, game.u.uy)}!`);
-            game.uarmh = null;
-            otmp.owornmask = 0;
+            await W.Helmet_off();
             await dropp(otmp);
         }
     }
-    // C ref: polyself.c:1272 — slithy forms and centaurs shed boots too.
-    if (nohands(mdat) || mdat?.verysmall || slithy(mdat) || mdat?.mlet === 'C') {
-        if (game.uarmf) {
-            const otmp = game.uarmf;
-            if (is_whirly(mdat)) await pline('Your boots fall away!');
-            else await pline(`Your boots ${mdat?.verysmall ? 'slide' : 'are pushed'} off your feet!`);
-            game.uarmf = null;
-            otmp.owornmask = 0;
+    if (nohands(uptr) || uptr?.verysmall || slithy(uptr) || uptr?.mlet === 'C') {
+        if ((otmp = game.uarmf) != null) {
+            cancel_if_donning(otmp);
+            if (is_whirly(uptr)) await pline('Your boots fall away!');
+            else await pline(`Your boots ${uptr?.verysmall ? 'slide' : 'are pushed'} off your feet!`);
+            await W.Boots_off();
             await dropp(otmp);
         }
     }
-    // C ref: polyself.c:1291-1300 — the ublindf arm ("Your blindfold falls
-    // off!", gated on !has_head).  This port has no ublindf slot to shed.
+    /* not armor, but eyewear shouldn't stay worn without a head to wear
+       it/them on; amulet stays worn */
+    if ((otmp = game.ublindf) != null && !has_head_poly(uptr)) {
+        let eyewear = OBJECTS[otmp.otyp]?.oc_name || OBJECTS[otmp.otyp]?.name || 'blindfold';
+        if (eyewear.startsWith('pair of ')) eyewear = eyewear.slice(8);
+        await pline(`Your ${eyewear} ${vtense(eyewear, 'fall')} off!`);
+        await Blindf_off(null); /* Null: skip usual off mesg */
+        await dropp(otmp);
+    }
+    /* rings stay worn even when no hands */
+}
+const MUMMY_WRAPPING_OTYP = 138, ALCHEMY_SMOCK_OTYP = 144;
+// C ref: obj.h WrappingAllowed(mptr).
+function WrappingAllowed(ptr) {
+    const sz = ptr?.msize ?? 0;
+    return humanoid(ptr) && sz >= MZ_SMALL && sz <= MZ_HUGE && !noncorporeal(ptr)
+        && ptr?.mlet !== 'C' && ptr?.pmidx !== PM_WINGED_GARGOYLE
+        && ptr?.pmidx !== PM_MARILITH;
+}
+// C ref: worn.c racial_exception(&youmonst, obj) — raceptr(you) is the
+// current form while polymorphed; hobbits may wear elven armor.
+const ELVEN_ARMOR_OTYPS = new Set([89, 127, 139, 153, 169]); /* helm, mithril, cloak, shield, boots */
+function racial_exception_u(obj) {
+    const ptr = game.u?.Upolyd ? youmonst_data_pub()
+        : monster_by_pmidx(race_mons_row(game.urace?.mnum ?? 0));
+    return (ptr?.name === 'hobbit' && ELVEN_ARMOR_OTYPS.has(obj?.otyp)) ? 1 : 0;
 }
 
 // C ref: polyself.c drop_weapon(alone) — shed a wielded weapon the new form

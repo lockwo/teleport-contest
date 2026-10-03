@@ -749,7 +749,7 @@ export function snuff_light_source(x, y) {
 // below — cannot be taken.  Both arms end with the light source deleted and
 // lamplit cleared, which is what this does.  Replace the body with a call to
 // timeout.js end_burn() once the burn timer exists (see `deferred`).
-function end_burn(obj, timer_attached) {
+export function end_burn(obj, timer_attached) {
     if (!obj.lamplit) {
         impossible('end_burn: obj not lit');
         return;

@@ -4331,10 +4331,13 @@ export async function Blindf_on(obj) {
 export async function Blindf_off(obj) {
     const { Blind, vision_recalc } = await import('./vision.js');
     const was_blind = Blind();
+    // C: a NULL obj means "ublindf, but skip the usual off message".
+    const nooffmsg = !obj;
+    if (!obj) obj = game.ublindf;
     clearworn_accessory(obj);
     // off_msg(): no redundant "(being worn)" suffix after removal.
     // C ref: do_wear.c:68 off_msg() — the whole message is `if (flags.verbose)`.
-    if (game.flags?.verbose !== false)
+    if (!nooffmsg && game.flags?.verbose !== false)
         await update_topl(`You were wearing ${doname_invent(obj)}.`);
     if (!Blind() && was_blind) {
         // gulp_blnd_check() (covered by mouth) is false here.
