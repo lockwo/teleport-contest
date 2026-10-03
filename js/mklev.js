@@ -43,7 +43,7 @@ import { roles, races } from './role.js';
 import { mflags2_of } from './monflags_data.js';
 import { priestini } from './priest.js';
 import { somex, somey, somexy, somexyspace, occupied, has_dnstairs, has_upstairs, inside_room, nexttodoor } from './mkroom.js';
-import { maketrap, Can_fall_thru, Can_dig_down, t_at, Invocation_lev, deltrap } from './trap.js';
+import { maketrap, Can_fall_thru, Can_dig_down, t_at, Invocation_lev, deltrap, undestroyable_trap } from './trap.js';
 import { makemon as make_monster, rndmonst, mkclass,
          name_to_pmidx, monster_by_pmidx, enexto_spawn, placeOnLevel,
          name_gender_hint, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
@@ -6283,14 +6283,20 @@ export async function quest_place_branch() {
             if (await quest_put_lregion_here(x, y, rtype, true)) return;
 }
 
-// C ref: mkmaze.c put_lregion_here() — the two rtypes a des.levregion{} on a
-// quest home level can carry.  LR_*TELE goes through place_lregion() above and
-// LR_*STAIR through castle_place_stair_lregion(), so neither reaches here; C's
-// `oneshot` deltrap() retry has no registered region small enough to need it.
-async function quest_put_lregion_here(x, y, rtype, _oneshot) {
-    // C ref: bad_location() — occupied() plus the ROOM/(CORR on a maze)/AIR
-    // terrain test.  On the quest home levels the registered cell is ROOM.
-    if (mk_bad_branch_location(x, y)) return false;
+// C ref: mkmaze.c put_lregion_here() — the fixed-cell Valley branch can
+// coincide with a random trap.  A one-square levregion removes destroyable
+// traps and retries bad_location() before placing the branch.
+async function quest_put_lregion_here(x, y, rtype, oneshot) {
+    if (mk_bad_branch_location(x, y)) {
+        if (!oneshot) return false;
+        const trap = t_at(x, y);
+        if (trap && !undestroyable_trap(trap.ttyp)) {
+            const mon = m_at(x, y);
+            if (mon?.mtrapped) mon.mtrapped = 0;
+            deltrap(trap);
+        }
+        if (mk_bad_branch_location(x, y)) return false;
+    }
     switch (rtype) {
     case LR_PORTAL: {
         // C: mkportal(x, y, lev->dnum, lev->dlevel) — the destination comes
