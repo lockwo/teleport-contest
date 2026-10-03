@@ -30,7 +30,8 @@ import { currency, bimanual as inv_bimanual, W_AMUL as INV_W_AMUL } from './inve
 import { body_part } from './polyself.js';
 import { tin_variety, tintxts, vegetarian, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN } from './eat.js';
 import { artifact_name as arti_artifact_name, find_artifact as arti_find_artifact,
-         glow_color as arti_glow_color, glow_verb as arti_glow_verb } from './artifact.js';
+         glow_color as arti_glow_color, glow_verb as arti_glow_verb,
+         permapoisoned as arti_permapoisoned } from './artifact.js';
 import { artifact_light as light_artifact_light, arti_light_description as light_arti_light_description,
          find_mid as light_find_mid } from './light.js';
 import { peek_timer as timeout_peek_timer } from './timeout.js';
@@ -683,7 +684,8 @@ export function is_poisonable(o) {
     /* obj.h:264 — oc_skill in [-P_SHURIKEN .. -P_BOW]; the port stores the
        negative launcher/ammo skills in oc_skill exactly as C does. */
     const sk = objects[o.otyp]?.oc_skill | 0;
-    return o.oclass === WEAPON_CLASS && sk >= -P_SHURIKEN && sk <= -P_BOW;
+    return (o.oclass === WEAPON_CLASS && sk >= -P_SHURIKEN && sk <= -P_BOW)
+        || arti_permapoisoned(o);
 }
 function is_ammo(o) {
     const sk = objects[o.otyp]?.oc_skill | 0;
