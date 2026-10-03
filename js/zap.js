@@ -60,7 +60,6 @@ import { CLR_ORANGE, CLR_BLACK, CLR_GREEN, CLR_YELLOW, CLR_WHITE, CLR_BRIGHT_BLU
 // Indexed by the HALLUCINATED damage type, so every beam used to draw orange.
 const ZAPCOLORS = [CLR_BRIGHT_BLUE, CLR_ORANGE, CLR_WHITE, CLR_BRIGHT_BLUE,
                    CLR_BLACK, CLR_WHITE, CLR_GREEN, CLR_YELLOW];
-import { can_make_bones } from './bones.js';
 import { DEADMONSTER, set_ustuck, dealloc_monst, replmon,
          restore_cham, unstuck } from './mon.js';
 import { MON_WEP } from './monmove.js';
@@ -3133,80 +3132,13 @@ export function fall_asleep(how_long, wakeup_msg) {
     game.nomovemsg = wakeup_msg ? 'You wake up.' : 'You can move again.';
 }
 
-// C ref: end.c done(DIED)/really_done(DIED), reached via zapyourself()'s
-// urgent_pline("You die.").  C's done() forces bot() BEFORE zeroing HP
-// (end.c:1046,1077), so the "You die." --More-- frame still shows the old HP
-// and only "Die?" shows HP 0.  Our status line is rebuilt live from u.uhp, so
-// reproduce that ordering: page "You die." while HP is still positive, THEN
-// zero HP, THEN show "Die?".
+// C ref: zap.c zapyourself() -> end.c done(DIED).  There is one death
+// lifecycle for every cause: inventory identification and disclosure run
+// before the corpse, bones, score, and terminal teardown.  Keep the import
+// lazy because end.js and zap.js refer to each other during module setup.
 async function done_selfzap(how) {
-    const DIED_HOW = 0, GENOCIDED = 10; // end.h death codes
-    const u = game.u;
-
-    // Page the pending "You die." line (--More--) with HP still positive.
-    await topl_more();
-
-    // done(): how < PANICKED forces HP to zero (deferred status refresh).
-    u.uhp = 0;
-    if (u.mh != null) u.mh = 0;
-
-    // explore/wizard modes offer "keep playing?" — paranoid_query(ParanoidDie).
-    const wizard = !!game.flags?.debug;
-    const discover = !!(game.flags?.explore || game.flags?.discover
-                        || game.flags?.playmode === 'explore');
-    if (wizard || discover) {
-        const ans = await y_n('Die?', 'yn\x1b', 'n');
-        if (ans !== 'y') {
-            // C ref: end.c done():1113-1116 — pline("OK, so you don't die.")
-            // then savelife(how).  Used to return without savelife() on decline,
-            // leaving uhp at 0 (rolling regen_hp's rn2(100) every later turn)
-            // and no nomovemsg/multi=-1.  update_topl so the caller's next
-            // message shares this topline, like C's two consecutive plines.
-            await update_topl("OK, so you don't die.");
-            const { savelife } = await import('./end.js');
-            await savelife(how);
-            return;
-        }
-    }
-
-    // really_done(how) end.c:1201: bones_ok = (how < GENOCIDED) && can_make_bones()
-    // (rn2(1+(depth>>2)); TRUE in wizard mode, bones.c:355).  In wizard mode,
-    // savebones() runs only if "Save bones?" confirms (end.c:1362); it rewrites
-    // the death level into a bones level (drop inventory, raise a ghost, wipe
-    // remembered display) and stashes it for a later segment's getbones() —
-    // verified against seed5006 seg0's Dlvl:3 death / seg1's ^V-to-3 load.
-    if (how < GENOCIDED && can_make_bones()) {
-        const bones_wiz = !!game.flags?.debug;
-        const bones_ans = bones_wiz ? await y_n('Save bones?', 'yn\x1b', 'n') : 'y';
-        if (!bones_wiz || bones_ans === 'y') {
-            // C ref: end.c really_done() — "grave creation should be after
-            // disclosure" block, gated on the same bones_ok as savebones():
-            // u.ugrave_arise == NON_PM (the ordinary case; an "arise as a
-            // monster"/statue death is not modelled here) leaves a named
-            // corpse of the hero's race at the death spot via
-            // mk_named_object(CORPSE, ...) before savebones() runs.  Its own
-            // mksobj() rolls (next_ident/gender/timer) never reach a scored
-            // screen (each session segment reseeds independently — see the
-            // savebones() call below); what *is* observable is that the
-            // corpse joins the level's floor object list and is carried into
-            // the bones file, so the next segment's getbones()/restobjchn()
-            // re-stamps it too.
-            if (!game._death_corpse) {
-                const x = game.u?.ux ?? 0, y = game.u?.uy ?? 0;
-                game._death_corpse =
-                    mkcorpstat(CORPSE, null, game.u?.umonnum, x, y, CORPSTAT_INIT);
-            }
-            const { savebones } = await import('./bones.js');
-            await savebones(how, game._death_corpse || null);
-        }
-    }
-
-    // C ref: end.c really_done() — the endgame disclosure/tombstone/topten
-    // teardown.  outrip_and_score() renders the tombstone, the tty window
-    // --More-- acknowledgements, and the wizard-mode topten line, driving
-    // nhgetch() at each boundary (the last read ends the segment).
-    const { outrip_and_score } = await import('./end.js');
-    await outrip_and_score(how);
+    const { done } = await import('./end.js');
+    await done(how);
 }
 
 // C ref: zap.c dozap — the 'z' command.  Pick a wand, then apply it.  Directionless

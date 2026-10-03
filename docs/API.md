@@ -165,6 +165,12 @@ rectangle. In particular, automatic end-of-game inventory disclosure
 does not display a new query first: the quit/death message and map glyphs
 remain visible to the left of its menu.
 
+Death from a self-directed wand uses the same endgame sequence as other
+causes: identify possessions, offer disclosure, create any eligible
+corpse/bones, then present the tombstone and score. Those steps produce
+separate input boundaries and RNG calls; a shortcut straight to the
+tombstone loses both.
+
 If you implement your own terminal, output anything that — after
 canonicalization — matches the recorded screen.
 

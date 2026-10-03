@@ -589,9 +589,15 @@ async function done(how) {
             // display_nhwindow(WIN_MESSAGE, FALSE) pages the still-unseen
             // "You die..." top line with --More--, then disclose() offers its
             // six end-of-game queries before the tombstone/topten teardown.
-            if (game._toplin === 1) { // display_nhwindow(WIN_MESSAGE): more()
+            // C ref: end.c really_done() display_nhwindow(WIN_MESSAGE,
+            // FALSE): a death notice or the turn-one "Do not pass Go" is
+            // pending even when its writer used pline's soft topline state.
+            if (game._toplin === 1
+                || (game._pending_message
+                    && game._toplinSoft === game._pending_message)) {
                 await d.topl_more();
                 game._toplin = 0;
+                game._toplinSoft = null;
                 game._pending_message = '';
             }
             // Acking that --More-- is where the deferred status redraw lands:
