@@ -2858,14 +2858,26 @@ async function name_to_monclass_read(str) {
 // SCOPE: list_genocided() ('?'), quest_info() (the leader/nemesis/guardian
 // feedback carve-out) and vampshifted() are not ported; livelog_printf() is
 // score-only and is left out.
+// C's gu.urole.mnum / gu.urace.mnum are mons[] indices; this port stores
+// 0-based role/race indices there (role order matches PM_ARCHEOLOGIST..
+// PM_WIZARD), so map them back for the genocide "is it you?" tests.
+async function hero_genocide_pms() {
+    const { name_to_pmidx } = await import('./makemon.js');
+    const rm = game.urole?.mnum ?? -1;
+    const arch = name_to_pmidx('archeologist');
+    return {
+        role: rm < 0 ? -1 : (rm >= arch ? rm : arch + rm),
+        race: name_to_pmidx(game.urace?.name || 'human') ?? -1,
+    };
+}
+
 export async function do_class_genocide() {
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     const { monster_by_pmidx } = await import('./makemon.js');
     const { kill_genocided_monsters } = await import('./mon.js');
     let feel_dead = 0;
     let gameover = false;              /* true iff killed self */
-    const urole_mnum = game.urole?.mnum ?? -1;
-    const urace_mnum = game.urace?.mnum ?? -1;
+    const { role: urole_mnum, race: urace_mnum } = await hero_genocide_pms();
 
     for (let j = 0; ; j++) {
         if (j >= 5) {
@@ -3005,15 +3017,14 @@ export async function do_genocide(how) {
     const u = game.u;
     let killplayer = 0;
     let mndx, ptr;
-    const urole_mnum = game.urole?.mnum ?? -1;
-    const urace_mnum = game.urace?.mnum ?? -1;
+    const { role: urole_mnum, race: urace_mnum } = await hero_genocide_pms();
 
     if (how & PLAYER) {
         // C: `mndx = u.umonster` — the non-polymorphed mon num, i.e.
         // urole.mnum.  THIS port stores a 0-based ROLE index in u.umonnum /
         // u.umonster ([[umonnum-is-a-role-index]]), so game.urole.mnum is the
         // real mons[] index and u.umonster is only the fallback.
-        mndx = game.urole?.mnum ?? u.umonster;
+        mndx = urole_mnum >= 0 ? urole_mnum : u.umonster;
         ptr = monster_by_pmidx(mndx);
         killplayer++;
     } else {
