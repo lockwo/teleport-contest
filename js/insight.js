@@ -692,7 +692,11 @@ export function enlightenment_lines(final = 0, basic = true) {
         if (cap > 0) {
             const encWords = ['', 'Burdened', 'Stressed', 'Strained', 'Overtaxed', 'Overloaded'];
             const adjs = ['', 'slightly', 'moderately', 'very', 'extremely', 'not possible'];
-            const w = encWords[cap].charAt(0).toLowerCase() + encWords[cap].slice(1);
+            let w = encWords[cap].charAt(0).toLowerCase() + encWords[cap].slice(1);
+            // C ref: insight.c:1234 — the carried weight is appended BEFORE the
+            // "; movement is ..." clause, in wizard mode, on this arm too (not
+            // just the unencumbered one below).
+            if (_wizard()) w += ` <${inv_weight()}>`;
             youAre(`${w}; movement ${final ? 'was' : 'is'} ${adjs[cap]}${cap < 5 ? ' slowed' : ''}`);
         } else {
             // wizard mode appends the carried weight (insight.c:1218).
