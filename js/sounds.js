@@ -26,13 +26,14 @@ import { races } from './roles.js';
 import { rn1 } from './rng.js';
 import { STATUE } from './mkobj.js';
 import {
-    COURT, BEEHIVE, MORGUE, ZOO, HAIR, NECK, HEAD, IRONBARS, BOLT_LIM,
+    COURT, BEEHIVE, MORGUE, ZOO, BARRACKS, HAIR, NECK, HEAD, IRONBARS, BOLT_LIM,
     W_ARMH, A_NONE, STRAT_WAITMASK, nothing_happens, ACCESSIBLE, isok,
     M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER,
 } from './const.js';
 import {
     mflags1_of, M1_FLY, M1_NOEYES, M1_CARNIVORE, M1_HERBIVORE, M1_SEE_INVIS,
     M2_LORD, M2_PRINCE, M2_UNDEAD, is_animal, humanoid,
+    is_mercenary_flag as is_mercenary,
 } from './monflags_data.js';
 // display.js is already a static dependency (update_topl above), so these can
 // be bound at module level and responsive_mon_at() can keep C's synchronous
@@ -96,7 +97,14 @@ export async function dosounds() {
     // C ref: sounds.c:220-225 — sink ambient ("You hear a slow drip.").  Also
     // falls through (no return) in C — see note above.
     if (lf.nsinks && !rn2(300)) { await You_hear(SINK_MSG[rn2(2) + hallu]); }
-    if (lf.has_court && !rn2(200)) { return; }
+    // C ref: sounds.c:226 `if (get_iter_mons(throne_mon_sound)) return;` —
+    // the probe only returns early when a qualifying monster spoke up.
+    if (lf.has_court && !rn2(200)) {
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
+            if (await throne_mon_sound(mon)) return;
+        }
+    }
     // C ref: sounds.c:230-237 — swamp ambient, via You1() not You_hear1().
     if (lf.has_swamp && !rn2(200)) { await You1(SWAMP_MSG[rn2(2) + hallu]); return; }
     // C ref: sounds.c:238-273 — vault ambient.  gd_sound() gates the rn2(2)
@@ -131,18 +139,42 @@ export async function dosounds() {
         }
         return;
     }
-    if (lf.has_beehive && !rn2(200)) { return; }
+    // C ref: sounds.c:278 `if (get_iter_mons(beehive_mon_sound)) return;`
+    if (lf.has_beehive && !rn2(200)) {
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
+            if (await beehive_mon_sound(mon)) return;
+        }
+    }
     if (lf.has_morgue && !rn2(200)) {
         for (const mon of fmonOrder()) {
             if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
             if (await morgue_mon_sound(mon)) return;
         }
     }
-    // C ref: sounds.c:286-307 — barracks ambient.  The rn2(3) message roll only
-    // fires inside the mercenary loop; since the message-bearing path is what
-    // consumes the rn2(3), keep the roll and emit the corresponding text.
-    if (lf.has_barracks && !rn2(200)) { await You_hear(BARRACKS_MSG[rn2(3) + hallu]); return; }
-    if (lf.has_zoo && !rn2(200)) { return; }
+    // C ref: sounds.c:286-307 — barracks ambient.  The rn2(3) message roll
+    // fires only for a mercenary inside the BARRACKS that is either asleep or
+    // the sixth one found; an empty barracks spends the rn2(200) probe alone.
+    if (lf.has_barracks && !rn2(200)) {
+        let count = 0;
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon)) continue;
+            if (is_mercenary(mon.data) && mon_in_room(mon, BARRACKS)
+                && (mon.msleeping || ++count > 5)) {
+                await You_hear(BARRACKS_MSG[rn2(3) + hallu]);
+                return;
+            }
+        }
+    }
+    // C ref: sounds.c:309 `if (get_iter_mons(zoo_mon_sound)) return;` — the
+    // Sokoban prize room is a ZOO, so its sleeping monsters are what make the
+    // rn2(2) message roll happen on this level.
+    if (lf.has_zoo && !rn2(200)) {
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
+            if (await zoo_mon_sound(mon)) return;
+        }
+    }
     // C sounds.c:313-328: a shop probe fires even for an untended shop, but
     // only a resident keeper inside the first shop, with the hero outside it,
     // rolls the message and wakes nearby monsters.
