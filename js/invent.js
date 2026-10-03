@@ -1603,7 +1603,31 @@ function an(s) {
 
 function highc(s) { return String(s).charAt(0).toUpperCase(); }
 function mungspaces(s) { return String(s).replace(/\s+/g, ' ').trim(); }
-function ing_suffix(s) { return `${s.replace(/e$/, '')}ing`; }
+// C ref: hacklib.c ing_suffix() — gerund construction: split off a trailing
+// " on"/" off"/" with" particle, then double a final consonant ("tip"->"tipping"),
+// turn "ie" into "y" ("vie"->"vying"), or drop a final "e" ("grease"->"greasing").
+function ing_suffix(s) {
+    const vowel = (c) => c !== '' && 'aeiouwy'.includes(c.toLowerCase());
+    let buf = String(s), onoff = '';
+    const tail = (n) => (buf.length >= n ? buf.slice(buf.length - n).toLowerCase() : '');
+    if (tail(3) === ' on' || tail(4) === ' off' || tail(5) === ' with') {
+        const sp = buf.lastIndexOf(' ');
+        onoff = buf.slice(sp);
+        buf = buf.slice(0, sp);
+    }
+    const p = buf.length;
+    const at = (i) => (i >= 0 && i < buf.length ? buf.charAt(i) : '');
+    if (p >= 2 && buf.slice(p - 2).toLowerCase() === 'er') {
+        /* slither + ing */
+    } else if (p >= 3 && !vowel(at(p - 1)) && vowel(at(p - 2)) && !vowel(at(p - 3))) {
+        buf += at(p - 1); /* tip -> tipp + ing */
+    } else if (p >= 2 && buf.slice(p - 2).toLowerCase() === 'ie') {
+        buf = `${buf.slice(0, p - 2)}y`; /* vie -> vy + ing */
+    } else if (p >= 1 && at(p - 1) === 'e') {
+        buf = buf.slice(0, p - 1); /* grease -> greas + ing */
+    }
+    return `${buf}ing${onoff}`;
+}
 // C ref: polyself.c body_part(part) == mbodypart(&gy.youmonst, part).  The
 // humanoid-only table this used to carry answered "hand"/"finger" for every
 // polyform, so a poly'd hero's inventory and 'P' prompts named the wrong part.
@@ -9143,8 +9167,25 @@ export function taking_off(action) {
     return action === 'take off' || action === 'remove';
 }
 
+// C ref: invent.c mime_action() — splits " on the <x>" into a suffix, turns
+// "rub the <x> on"/"dip <x> into" into a prefix, and picks one of an "A or B"
+// verb pair with rn2(2) (so this costs a draw for e.g. "use or apply").
 export async function mime_action(word) {
-    await update_topl(`You mime ${ing_suffix(word)} something.`);
+    let buf = String(word), pfx = null, sfx = null, bp;
+    if ((bp = buf.indexOf(' on the ')) >= 0) {
+        sfx = buf.slice(bp + 1);
+        buf = buf.slice(0, bp);
+    }
+    if ((buf.startsWith('rub the ') && buf.slice(8).includes(' on'))
+        || (buf.startsWith('dip ') && buf.slice(4).includes(' into'))) {
+        pfx = buf.slice(4);
+        buf = buf.slice(0, 3);
+    }
+    let verb;
+    if ((bp = buf.indexOf(' or ')) >= 0)
+        verb = rn2(2) ? buf.slice(0, bp) : buf.slice(bp + 4);
+    else verb = buf;
+    await update_topl(`You mime ${ing_suffix(verb)}${pfx ? ' ' + pfx : ''} something${sfx ? ' ' + sfx : ''}.`);
 }
 
 export function any_obj_ok(obj) {

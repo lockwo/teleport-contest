@@ -355,8 +355,12 @@ export function init_objects() {
     shuffle_all(bases);
 
     // WAN_NOTHING direction roll.  C ref: init_objects() last line.
+    // The mutable zap-direction column is objects[].dir (js/mkobj.js's object
+    // table name for oc_dir); writing oc_dir here left every consumer — dozap()'s
+    // need_dir, weffects(), mksobj()'s rn1(5, NODIR ? 11 : 4) charge roll — on
+    // the static IMMEDIATE value, so half of all games zapped nothing wrong.
     if (objects[WAN_NOTHING])
-        objects[WAN_NOTHING].oc_dir = rn2(2) ? NODIR : IMMEDIATE;
+        objects[WAN_NOTHING].dir = rn2(2) ? NODIR : IMMEDIATE;
     else
         rn2(2);
 }
@@ -987,7 +991,7 @@ function save_objclass(o) {
              oc_descr_idx: o.oc_descr_idx | 0, oc_name_idx: o.oc_name_idx | 0,
              oc_color: o.oc_color | 0, oc_tough: o.oc_tough | 0,
              oc_material: o.material | 0, oc_prob: o.oc_prob | 0,
-             oc_dir: o.oc_dir | 0, oc_uname: o.oc_uname ? 1 : 0 };
+             oc_dir: o.dir | 0, oc_uname: o.oc_uname ? 1 : 0 };
 }
 function rest_objclass(o, rec) {
     if (!o || !rec) return;
@@ -999,7 +1003,7 @@ function rest_objclass(o, rec) {
     o.oc_tough = rec.oc_tough;
     o.material = rec.oc_material;
     o.oc_prob = rec.oc_prob;
-    o.oc_dir = rec.oc_dir;
+    o.dir = rec.oc_dir;
     o.oc_uname = rec.oc_uname ? (o.oc_uname || '') : null;
 }
 
