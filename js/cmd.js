@@ -3222,6 +3222,12 @@ export async function domove(dx, dy, attemptTracked = true) {
     // parameters, so this assignment is the equivalent point.
     u.dx = dx;
     u.dy = dy;
+    // C ref: cmd.c movecmd() sets `u.dz = zdir[d]`, which is 0 for every
+    // horizontal direction, so a direction key always clears a u.dz left over
+    // by an earlier '>'/'<' getdir().  use_pick_axe2() (reached from the
+    // force-fight-with-a-pick branch of domove) branches on u.dz, so a stale
+    // u.dz > 0 made it dig downward instead of sideways.
+    u.dz = 0;
     // C ref: hack.c domove_core() — u.umoved is reset FALSE at the top of a
     // hero command and set TRUE only when the hero's position changes
     // (hack.c:2968).  u_calc_moveamt() reads it to decide whether a riding
