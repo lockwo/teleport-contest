@@ -1864,8 +1864,44 @@ export async function wiz_level_tele(readLevel) {
         return 0;
     }
 
-    // Negative levels (heaven/clouds) are not modelled.
-    if (newlev < 0) return 0;
+    // C ref: teleport.c level_tele() negative destination.  Unless levitating
+    // or flying, the hero falls from above the clouds and dies; a lifesaved or
+    // debug-mode survivor then escapes to the surface rather than teleporting
+    // back into the dungeon.  done() handles the "Die?" and disclosure prompts.
+    if (newlev < 0) {
+        const { done, DIED: DEATH, ESCAPED } = await import('./end.js');
+        let escape = null;
+        game._killer_name = null;
+        if (newlev <= -10) {
+            await pline('You arrive in heaven.');
+            await pline("Thou art early, but we'll admit thee.");
+            game._killer_name = 'went to heaven prematurely';
+        } else if (newlev === -9) {
+            await pline('You feel deliriously happy.');
+            await pline("(In fact, you're on Cloud 9!)");
+        } else {
+            await pline('You are now high above the clouds...');
+        }
+        if (!game._killer_name) {
+            if (u.uprops?.Levitation) escape = 'float gently down to earth';
+            else if (u.uprops?.Flying) escape = 'fly down to the ground';
+            else {
+                await pline("Unfortunately, you don't know how to fly.");
+                await pline('You plummet a few thousand feet to your death.');
+                game._killer_name = `teleported out of the dungeon and fell to ${game.flags?.female ? 'her' : 'his'} death`;
+            }
+        }
+        if (game._killer_name) {
+            const saved = u.uz;
+            u.uz = { dnum: 0, dlevel: newlev <= -10 ? -10 : 0 };
+            await done(DEATH);
+            u.uz = saved;
+            escape = 'find yourself back on the surface';
+        }
+        await pline(`You ${escape}.`);
+        await done(ESCAPED);
+        return 0;
+    }
 
     // C ref: teleport.c level_tele() — in Quest the status line shows "Home N"
     // instead of logical depth, so a typed destination is relative to that
