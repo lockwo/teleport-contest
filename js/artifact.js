@@ -973,9 +973,13 @@ function inside_shop(x, y) {
     }
     return false;
 }
-// C ref: do_name.c bare_artifactname() — the name with no article.
+// C ref: objnam.c:2502 bare_artifactname() — the artifact's own name, with a
+// leading "The " downcased to "the " so it reads inside a sentence ("because
+// of the Orb of Fate").
 export function bare_artifactname(obj) {
-    return obj?.oartifact ? artilist[obj.oartifact].name : (obj?.oname || "");
+    if (!obj?.oartifact) return (obj?.oname || "");
+    const nm = artilist[obj.oartifact].name;
+    return nm.startsWith('The ') ? `t${nm.slice(1)}` : nm;
 }
 
 // C ref: artifact.c nartifact_exist().

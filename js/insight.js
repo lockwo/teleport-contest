@@ -28,7 +28,7 @@ import { p_skill_of } from './enhance.js';
 import { update_topl } from './display.js';
 import { phase_of_the_moon, friday_13th, night, NEW_MOON, FULL_MOON } from './calendar.js';
 import { race_attrmax } from './u_init.js';
-import { acurr_eff } from './attrib.js';
+import { acurr_eff, stone_luck } from './attrib.js';
 import { depth } from './hacklib.js';
 import { endgamelevelname } from './dungeon.js';
 import { newuexp, has_innate, innate_source, rank_of } from './exper.js';
@@ -72,11 +72,14 @@ function worn_property_sources() {
         if ((o.owornmask || 0) & W_GIVES_PROP) add(o);
     return sources;
 }
+// C ref: youprop.h:57 Antimagic == (HAntimagic || EAntimagic).  EAntimagic is
+// set by any oc_oprop source AND by a carried artifact with CARY(AD_MAGM)
+// (artifact.c set_artifact_intrinsic), which is what what_gives() walks.
 function Antimagic() {
     if (game.u?.formprops?.Antimagic) return true; /* FROMFORM: polyself.js set_uasmon() */
-    return worn_property_sources().some((o) => OBJECTS[o.otyp]?.oc_oprop === 12)
-        || !!(game.u?.HAntimagic);
+    return !!Prop(ANTIMAGIC);
 }
+
 
 // The four owornmask groups from_what()/cause_known() scan.  These are
 // js/invent.js's REMAPPED W_* bits, not prop.h's — see that file's header.
@@ -3084,7 +3087,7 @@ function item_what(dmgtyp) {
     else if (o === game.uamul || o === game.ublindf) what = simpleonames(o);
     else if (o === game.uleft || o === game.uright) what = simpleonames(o);
     else if (o === game.uwep) what = simpleonames(o);
-    else what = simpleonames(o); /* carried artifact, not in a named slot */
+    else return ''; /* W_ART only (merely carried): C's chain matches no slot */
     return what ? ` by your ${what}` : '';
 }
 
@@ -3592,10 +3595,9 @@ function Fast() { return !!(youHaveFast() || youHaveVeryFast()); }
 function Very_fast() { return !!youHaveVeryFast(); }
 // C ref: youprop.h Luck == (u.uluck + u.moreluck).
 function Luck() { return (game.u?.uluck | 0) + (game.u?.moreluck | 0); }
-// C ref: attrib.c stone_luck(parameter) — the net luck from carried luckstones
-// (and other gray stones).  js/mkobj.js:1005 only cites it; no port exists, so
-// this reports "no luck-bearing stone", which is what every covered hero has.
-function stone_luck(_parameter) { return 0; }
+// C ref: attrib.c:423 stone_luck(include_uncursed) — net luck sign from the
+// luck-conferring items carried (luckstone, or an SPFX_LUCK artifact such as
+// the Orb of Fate / Tsurugi of Muramasa).  js/attrib.js owns the port.
 // C ref: mondata.h is_clinger / dungeon.c has_ceiling.
 function is_clinger(ptr) { return (mflags1_of(ptr) & M1_CLING) !== 0; }
 function has_ceiling(_lev) { return true; } /* only air/water levels lack one */
