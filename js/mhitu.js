@@ -442,6 +442,17 @@ function Cold_resistance() {
     return !!(u.uprops?.Cold_resistance || u.uprops?.HCold_resistance
               || u.uprops?.ECold_resistance);
 }
+function Acid_resistance() {
+    const u = game.u || {};
+    return !!(u.uprops?.Acid_resistance || u.uprops?.HAcid_resistance
+              || u.uprops?.EAcid_resistance || u.Acid_resistance);
+}
+function Shock_resistance() {
+    const u = game.u || {};
+    return !!(u.uprops?.Shock_resistance || u.uprops?.HShock_resistance
+              || u.uprops?.EShock_resistance || u.Shock_resistance
+              || (u.Upolyd && ((youmonst_data()?.mresists | 0) & 0x10)));
+}
 
 // ═══ mhitu.c:448 calc_mattacku_vars ═════════════════════════════════════════
 // Recomputed at the top of mattacku() and again before each attack after the
@@ -734,9 +745,8 @@ export async function gulp_blnd_check() {
 // rn2(20) (AD_DGST digestion timer) or rnd(m_lev + 5) (everything else); then
 // one rn2(2) per AD_ELEC/AD_COLD/AD_FIRE round, and rn2(4) for AD_DREN.
 //
-// NOT modelled and stopped-at rather than approximated: the actual swallow
-// display (vision_recalc(2)/swallowed(1)), the touch_petrifies statue tail, and
-// the leash/ball&chain bookkeeping.  Everything RNG-bearing above them is here.
+// The swallow display and both touch-petrification tails are modelled;
+// leash/ball-and-chain bookkeeping remains outside this attack path.
 export async function gulpmu(mtmp, mattk) {
     const u = game.u || {};
     let tmp = d(mattk.damn | 0, mattk.damd | 0);
@@ -754,7 +764,6 @@ export async function gulpmu(mtmp, mattk) {
         mtmp.mtrapped = 0;               /* no longer on the old trap */
         mtmp.mx = u.ux; mtmp.my = u.uy;
         u.ustuck = mtmp;
-        void omx; void omy;
         // C ref mhitu.c:1315 — only the NEW square is newsym()ed; the engulfer's
         // old tile keeps its stale glyph until the next full redraw, which is
         // what the recorded --More-- frame shows (seed0383 step 140 still has
@@ -778,6 +787,9 @@ export async function gulpmu(mtmp, mattk) {
             const resistston = ((mtmp?.data?.mresists | 0) & 0x80) !== 0;
             if (tp && !resistston) {
                 const { minstapetrify } = await import('./trap.js');
+                // C moves the engulfer back first; its statue is made at the
+                // original monster square, not the hero's square.
+                mtmp.mx = omx; mtmp.my = omy;
                 await minstapetrify(mtmp, true);
                 u.ustuck = null;
                 u.uswallow = 0;
@@ -841,10 +853,18 @@ export async function gulpmu(mtmp, mattk) {
             exercise(A_STR, false);
         }
         break;
-    case AD_ACID:
-        await emitU('You are covered in slime!  It burns!');
-        exercise(A_STR, false);
+    case AD_ACID: {
+        if (Acid_resistance()) {
+            await emitU('You are covered with a seemingly harmless goo.');
+            monstseesu(M_SEEN_ACID);
+            tmp = 0;
+        } else {
+            await emitU("You are covered in slime!  It burns!");
+            exercise(A_STR, false);
+            monstunseesu(M_SEEN_ACID);
+        }
         break;
+    }
     case AD_BLND: {
         const { can_blnd } = await import('./mhitm_ad.js');
         if (can_blnd(mtmp, YOUMONST, mattk.aatyp, null, mhitu_ops())) {
@@ -862,20 +882,57 @@ export async function gulpmu(mtmp, mattk) {
     case AD_ELEC:
         if (!mtmp.mcan && rn2(2)) {
             await emitU('The air around you crackles with electricity.');
+            const { has_innate } = await import('./exper.js');
+            if (Shock_resistance() || has_innate('HShock_resistance')) {
+                const { shieldeff } = await import('./display.js');
+                await shieldeff(u.ux, u.uy);
+                await emitU('You seem unhurt.');
+                monstseesu(M_SEEN_ELEC);
+                const { ugolemeffects } = await import('./polyself.js');
+                await ugolemeffects(AD_ELEC, tmp);
+                tmp = 0;
+            } else {
+                monstunseesu(M_SEEN_ELEC);
+            }
         } else {
             tmp = 0;
         }
         break;
     case AD_COLD:
         if (!mtmp.mcan && rn2(2)) {
-            await emitU('You are freezing to death!');
+            const { has_innate } = await import('./exper.js');
+            if (Cold_resistance() || has_innate('HCold_resistance')) {
+                const { shieldeff } = await import('./display.js');
+                await shieldeff(u.ux, u.uy);
+                await emitU('You feel mildly chilly.');
+                monstseesu(M_SEEN_COLD);
+                const { ugolemeffects } = await import('./polyself.js');
+                await ugolemeffects(AD_COLD, tmp);
+                tmp = 0;
+            } else {
+                await emitU('You are freezing to death!');
+                monstunseesu(M_SEEN_COLD);
+            }
         } else {
             tmp = 0;
         }
         break;
     case AD_FIRE:
         if (!mtmp.mcan && rn2(2)) {
-            await emitU('You are burning to a crisp!');
+            const { has_innate } = await import('./exper.js');
+            if (Fire_resistance() || has_innate('HFire_resistance')) {
+                const { shieldeff } = await import('./display.js');
+                await shieldeff(u.ux, u.uy);
+                await emitU('You feel mildly hot.');
+                monstseesu(M_SEEN_FIRE);
+                const { ugolemeffects } = await import('./polyself.js');
+                await ugolemeffects(AD_FIRE, tmp);
+                tmp = 0;
+            } else {
+                await emitU('You are burning to a crisp!');
+                monstunseesu(M_SEEN_FIRE);
+            }
+            await (await import('./timeout.js')).burn_away_slime();
         } else {
             tmp = 0;
         }
@@ -886,7 +943,8 @@ export async function gulpmu(mtmp, mattk) {
     case AD_DREN:
         // AC magic cancellation doesn't help while engulfed.
         if (!mtmp.mcan && rn2(4)) {
-            // drain_en(tmp, FALSE): the Pw drain.
+            const { drain_en } = await import('./trap.js');
+            await drain_en(tmp, false);
         }
         tmp = 0;
         break;
@@ -908,9 +966,16 @@ export async function gulpmu(mtmp, mattk) {
     game.mswallower = null;
     if (tmp) await (await import('./hack.js')).stop_occupation();
 
+    const ydat = youmonst_data();
     if (!u.uswallow) {
         /* life-saving has already expelled the hero */
-    } else if (!u.uswldtim || (youmonst_data()?.msize | 0) >= MZ_HUGE) {
+    } else if ((ydat?.name === 'cockatrice' || ydat?.name === 'chickatrice')
+               && !((mtmp?.data?.mresists | 0) & 0x80)) {
+        await emitU(`${Monnam(mtmp)} very hurriedly ${
+            digests(mtmp.data) ? 'regurgitates'
+                : enfolds(mtmp.data) ? 'releases' : 'expels'} you!`);
+        await expels(mtmp, mtmp.data, false);
+    } else if (!u.uswldtim || (ydat?.msize | 0) >= MZ_HUGE) {
         await emitU(`You get ${digests(mtmp.data) ? 'regurgitated'
             : enfolds(mtmp.data) ? 'released' : 'expelled'}!`);
         await expels(mtmp, mtmp.data, false);

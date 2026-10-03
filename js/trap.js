@@ -3705,7 +3705,7 @@ async function trapeffect_anti_magic(trap, _trflags) {
 // C ref: trap.c:5195 drain_en(n, max_already_drained).  The throttle
 // `if (n > (uen + uenmax) / 3) n = rnd(n)` is a real draw, and so is the
 // `uenmax -= rnd(-uen)` overdraw.
-async function drain_en(n, max_already_drained) {
+export async function drain_en(n, max_already_drained) {
     const u = game.u;
     let punct = max_already_drained ? '!' : '.';
     let mesg;
