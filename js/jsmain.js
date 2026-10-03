@@ -424,6 +424,15 @@ export class NethackGame {
         // o_init/newgame startup begins.
         await this._startupCharacterSelection(optsel);
 
+        // C ref: win/tty/wintty.c tty_player_selection() —
+        // `if (genl_player_setup(...)) return; bail((char *) 0);`.  Answering
+        // 'q' (or <escape>) to any chargen prompt/menu ENDS the process; it
+        // must not fall through into a randomly rolled game.
+        if (!game._startup_selected_character) {
+            bail(null);
+            return;
+        }
+
         // Run game startup
         await newgame();
     }
@@ -464,83 +473,88 @@ export class NethackGame {
         if (topLine) disp.setCursor(Math.min(topLine.length + 1, 79), 0);
     }
 
-    // Clear the screen and redraw whatever C left on the BASE window beneath
-    // the chargen menus: the startup banner (random 'y' path, before any
-    // full-screen menu), the leftover "Who are you? <name>" getlin line (after
-    // a "choose another name" rename), or nothing (after a full-screen role
-    // menu).  C ref: the menu windows overlay the persistent BASE_WINDOW.
-    _drawChargenBase(disp) {
-        if (this._bannerOnScreen) {
-            this._renderStartupScreen(game.plname || '');
-        } else if (this._renameTextRow != null) {
-            this._renderRenameScreen(game.plname || '', this._renameTextRow);
-        } else {
+    // C ref: win/tty/wintty.c erase_menu_or_text() (called from
+    // tty_destroy_nhwindow when a chargen menu is dismissed).  A full-screen
+    // menu (offx == 0) does term_clear_screen(); a corner menu instead does
+    // docorner(cw->offx, cw->maxrow + 1, 0), and docorner()'s
+    // tty_curs(BASE_WINDOW, xmin, y) lands on column xmin-1 before cl_end() —
+    // so the erased region starts ONE COLUMN LEFT of the menu's own offx and
+    // covers rows 0..maxrow inclusive.  Nothing redraws the startup banner
+    // underneath, so each successive corner menu eats one more banner column.
+    _eraseChargenMenu(disp) {
+        const prev = this._prevChargenMenu;
+        this._prevChargenMenu = null;
+        if (!prev) return;
+        if (prev.offx === 0) {
             disp.clearScreen();
+            this._bannerOnScreen = false;
+            this._renameTextRow = null;
+            return;
         }
+        const x0 = prev.offx - 1;
+        for (let r = 0; r <= prev.rows && r < 24; r++)
+            for (let c = x0; c < 80; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
     }
 
     _renderSelectionOk(sel) {
         const disp = game.nhDisplay;
         if (!disp?.putstr) return;
-        // The confirmation is a corner-overlay menu drawn on the persistent base
-        // layer (banner / rename line / blank).
-        this._drawChargenBase(disp);
-        const female = sel.gender === 1;
-        const role = roleName(sel.role, female);
-        const race = races[sel.race]?.adj || 'human';
-        const gender = genders[sel.gender]?.adj || 'male';
-        const align = aligns[sel.align]?.adj || 'neutral';
-        const nameLine = `${game.plname || 'Hero'} the ${align} ${gender} ${race} ${role}`;
+        // The confirmation overlays whatever is left of the previous menu's
+        // background (C erases the old menu, it never redraws the banner).
+        this._eraseChargenMenu(disp);
         // C ref: role.c genl_player_setup() getconfirmation loop — the
-        // confirmation NHW_MENU: title + blank + unselectable name line + blank
-        // + y/n/[a]/q items + "(end)".  The rename entry (and the 'a' in the
-        // title) exist only when iflags.renameallowed, which C sets in
+        // confirmation menu reuses plsel_startmenu(), so the hero line is the
+        // same "%.20s the %.20s ..." preview.  The rename entry (and the 'a'
+        // in the title) exist only when iflags.renameallowed, which C sets in
         // tty_askname() alone: a name pinned by OPTIONS=name: gives "[ynq]".
         const renameallowed = !!game.iflags?.renameallowed;
         const lines = [
             { text: `Is this ok? [yn${renameallowed ? 'a' : ''}q]`, attr: ATR_INVERSE },
             { text: '' },
-            { text: nameLine },
+            { text: this._plselectionPreview(sel) },
             { text: '' },
-            { sel: 'y', text: 'Yes; start game', preselect: true },
-            { sel: 'n', text: 'No; choose role again' },
+            { sel: 'y', text: 'Yes; start game', preselect: true, act: { k: 'yes' } },
+            { sel: 'n', text: 'No; choose role again', act: { k: 'no' } },
             ...(renameallowed
-                ? [{ sel: 'a', text: 'Not yet; choose another name' }] : []),
-            { sel: 'q', text: 'Quit' },
-            { text: '(end)' },
+                ? [{ sel: 'a', text: 'Not yet; choose another name', act: { k: 'rename' } }] : []),
+            { sel: 'q', text: 'Quit', act: { k: 'quit' } },
+            { text: '(end)', morestr: true },
         ];
         // Row where a subsequent rename getlin would draw (docorner leaves the
         // cursor one row past the menu's last line).
         this._okMenuRenameRow = lines.length + 1;
-        // Overlay on the background just prepared above (banner / rename text /
-        // blank); never re-clear it.
-        this._renderCornerMenu(disp, lines, /*allowOverlay=*/true);
+        this._renderCornerMenu(disp, lines);
     }
 
     // Render an NHW_MENU on the existing screen.  `lines` is an array of
-    // { text, attr?, sel?, preselect? }.  Computes the H2344_BROKEN offx; a
-    // full-screen menu (offx=0, too tall to overlay) first clears the whole
-    // screen, while a corner menu (offx>0) just overlays — clearing each menu
-    // row from offx to EOL and drawing the leading space + text at offx+1.
-    // The `allowOverlay` arg is false for the very first menu of a fresh screen
-    // (so it always clears).  C ref: win/tty/wintty.c tty_display_nhwindow
-    // NHW_MENU + process_menu_window (H2344_BROKEN corner-menu overlay).
-    _renderCornerMenu(disp, lines, allowOverlay = true) {
+    // { text, attr?, sel?, preselect?, morestr? }.  Computes the H2344_BROKEN
+    // offx; a full-screen menu (offx=0) first clears the whole screen, while a
+    // corner menu (offx>0) just overlays — clearing each menu row from offx to
+    // EOL and drawing the leading space + text at offx+1.
+    // C ref: win/tty/wintty.c tty_end_menu (cw->cols = max strlen(str)+2, with
+    // morestr "(end) " counted as 6), tty_display_nhwindow NHW_MENU and
+    // process_menu_window (H2344_BROKEN corner-menu overlay).
+    _renderCornerMenu(disp, lines) {
         const cols = 80, rows = 24;
         let maxcol = 0;
         for (const l of lines) {
-            const w = (l.sel ? 4 + l.text.length : l.text.length) + 2;
+            const w = l.morestr ? l.text.length + 1
+                : (l.sel ? 4 + l.text.length : l.text.length) + 2;
             if (w > maxcol) maxcol = w;
         }
         let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
         if (offx < 0) offx = 0;
         if (lines.length >= rows) offx = 0;
-        // Full-screen menus (offx=0) clear everything; corner menus overlay.
-        if (offx === 0 || !allowOverlay) {
+        // Full-screen menus (offx=0) clear everything; corner menus overlay
+        // but still clear WIN_MESSAGE.  C ref: wintty.c tty_display_nhwindow
+        // NHW_MENU — `else { tty_clear_nhwindow(WIN_MESSAGE); }`.
+        if (offx === 0) {
             disp.clearScreen();
             this._bannerOnScreen = false;
             // A full-screen role menu also wipes any leftover rename getlin line.
-            if (offx === 0) this._renameTextRow = null;
+            this._renameTextRow = null;
+        } else {
+            for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
         }
         for (let r = 0; r < lines.length; r++) {
             const l = lines[r];
@@ -549,6 +563,17 @@ export class NethackGame {
             if (text) disp.putstr(offx + 1, r, text, NO_COLOR, l.attr || 0);
         }
         disp.setCursor(offx + 7, lines.length - 1);
+        this._prevChargenMenu = { offx, rows: lines.length };
+        // C ref: wintty.c process_menu_window — the accepted response set is
+        // exactly the page's selector letters plus the group accelerators;
+        // anything else rings the bell and the menu stays up unchanged.
+        const sels = new Map();
+        for (const l of lines) {
+            if (!l.act) continue;
+            sels.set(l.sel, l.act);
+            if (l.gsel && l.gsel !== l.sel && !sels.has(l.gsel)) sels.set(l.gsel, l.act);
+        }
+        this._curMenuSel = sels;
     }
 
     // C ref: role.c plsel_startmenu() qbuf — the unselectable "role info so
@@ -556,6 +581,8 @@ export class NethackGame {
     // "<role> <race.noun> <gender.adj> <align.adj>" (placeholders for unset
     // facets); otherwise "<name> the <align> <gender> <race.adj> <role>".
     _plselectionPreview(sel) {
+        // C ref: role.c plsel_startmenu() — every field goes through "%.20s".
+        const t20 = (s) => String(s).slice(0, 20);
         const rolename = sel.role >= 0 ? roleName(sel.role, sel.gender === 1) : '<role>';
         if (!game.plname || sel.role < 0 || sel.race < 0 || sel.gender < 0 || sel.align < 0) {
             return [
@@ -563,11 +590,11 @@ export class NethackGame {
                 sel.race >= 0 ? races[sel.race].noun : '<race>',
                 sel.gender >= 0 ? genders[sel.gender].adj : '<gender>',
                 sel.align >= 0 ? aligns[sel.align].adj : '<alignment>',
-            ].join(' ');
+            ].map(t20).join(' ');
         }
         return [
-            game.plname, 'the', aligns[sel.align].adj, genders[sel.gender].adj,
-            races[sel.race].adj, rolename,
+            t20(game.plname), 'the', t20(aligns[sel.align].adj),
+            t20(genders[sel.gender].adj), t20(races[sel.race].adj), t20(rolename),
         ].join(' ');
     }
 
@@ -604,13 +631,22 @@ export class NethackGame {
         // Each entry: { text, attr?, sel? }.  sel present => selectable item.
         const items = [];
         if (kind === 'role') {
+            // C ref: role.c setup_rolemenu() — `lastch` tracks the selector of
+            // the previously EMITTED (i.e. non-filtered) role, so when a role is
+            // filtered out the next one with the same initial takes the
+            // lowercase letter ("r - a Ranger" once Rogue is unavailable).
+            let lastch = '\0';
             for (let i = 0; roles[i]; i++) {
                 if (!(ok_role(i, sel.race, sel.gender, sel.align)
                       && ok_race(i, sel.race, sel.gender, sel.align)
                       && ok_gend(i, sel.race, sel.gender, sel.align)
                       && ok_align(i, sel.race, sel.gender, sel.align)))
                     continue;
-                items.push({ sel: this._roleSelectorChar(i), text: this._roleMenuLabel(i, sel.gender) });
+                let thisch = roles[i].name.m[0].toLowerCase();
+                if (thisch === lastch) thisch = thisch.toUpperCase();
+                items.push({ sel: thisch, text: this._roleMenuLabel(i, sel.gender),
+                    act: { k: 'pick', facet: 'role', idx: i } });
+                lastch = thisch;
             }
         } else if (kind === 'race') {
             for (let i = 0; races[i]; i++) {
@@ -618,7 +654,8 @@ export class NethackGame {
                       && ok_role(sel.role, i, sel.gender, sel.align)
                       && ok_align(sel.role, i, sel.gender, sel.align)))
                     continue;
-                items.push({ sel: races[i].noun[0], text: races[i].noun });
+                items.push({ sel: races[i].noun[0], gsel: races[i].noun[0].toUpperCase(),
+                    text: races[i].noun, act: { k: 'pick', facet: 'race', idx: i } });
             }
         } else if (kind === 'gender') {
             for (let i = 0; i < genders.length; i++) {
@@ -626,7 +663,8 @@ export class NethackGame {
                       && ok_role(sel.role, sel.race, i, sel.align)
                       && ok_race(sel.role, sel.race, i, sel.align)))
                     continue;
-                items.push({ sel: genders[i].adj[0], text: genders[i].adj });
+                items.push({ sel: genders[i].adj[0], gsel: genders[i].adj[0].toUpperCase(),
+                    text: genders[i].adj, act: { k: 'pick', facet: 'gender', idx: i } });
             }
         } else {
             for (let i = 0; i < aligns.length; i++) {
@@ -634,11 +672,12 @@ export class NethackGame {
                       && ok_role(sel.role, sel.race, sel.gender, i)
                       && ok_race(sel.role, sel.race, sel.gender, i)))
                     continue;
-                items.push({ sel: aligns[i].adj[0], text: aligns[i].adj });
+                items.push({ sel: aligns[i].adj[0], gsel: aligns[i].adj[0].toUpperCase(),
+                    text: aligns[i].adj, act: { k: 'pick', facet: 'align', idx: i } });
             }
         }
         // Random (preselected — '*' selector).
-        items.push({ sel: '*', text: 'Random', preselect: true });
+        items.push({ sel: '*', text: 'Random', preselect: true, act: { k: 'random' } });
 
         // role_menu_extra "constrainer" lines: a single forced facet shows an
         // unselectable "X forces Y" line instead of a "Pick Y first" entry.
@@ -659,28 +698,27 @@ export class NethackGame {
         if (!(kind === 'role' && excess >= 1 && excess <= 2))
             lines.push({ text: '' });                     // sep before extras
         for (const e of extras) lines.push(e);
-        lines.push({ text: '(end)' });
+        lines.push({ text: '(end)', morestr: true });
 
-        // The facet menus (role/race/gender/align) always render on a freshly
-        // cleared screen — the full-screen role menu wipes the startup banner
-        // and the corner facet menus follow on that blank background, so force
-        // a clear (allowOverlay=false) to drop any prior menu's footprint.
+        // C ref: win/tty/wintty.c tty_destroy_nhwindow -> erase_menu_or_text()
+        // for the previous chargen menu, then tty_display_nhwindow(NHW_MENU):
+        // a corner menu (offx > 0) overlays whatever survives on the BASE
+        // window (the startup banner); only a full-screen menu wipes it.
         void cols; void rows;
-        this._renderCornerMenu(disp, lines, /*allowOverlay=*/false);
+        this._eraseChargenMenu(disp);
+        this._renderCornerMenu(disp, lines);
     }
 
-    // C ref: role.c setup_rolemenu() — selector is lowercase first letter, but
-    // when two roles share a first letter the second uses the uppercase form
-    // (Rogue 'r' then Ranger 'R').
+    // C ref: role.c setup_rolemenu() with filtering==FALSE — every role is
+    // emitted, so the selector letters follow the unfiltered sequence.
     _roleSelectorChar(i) {
-        const ch = roles[i].name.m[0].toLowerCase();
-        // Find whether an earlier role already used this lowercase letter.
-        for (let j = 0; j < i; j++)
-            if (roles[j].name.m[0].toLowerCase() === ch
-                && ok_role(j, -1, -1, -1)) {
-                return ch.toUpperCase();
-            }
-        return ch;
+        let lastch = '\0', thisch = '\0';
+        for (let j = 0; j <= i; j++) {
+            thisch = roles[j].name.m[0].toLowerCase();
+            if (thisch === lastch) thisch = thisch.toUpperCase();
+            lastch = thisch;
+        }
+        return thisch;
     }
 
     // C ref: role.c maybe_skip_seps() — returns excess line count for RS_ROLE
@@ -710,14 +748,16 @@ export class NethackGame {
         const role = sel.role >= 0 ? roles[sel.role] : null;
         // role facet-switch only appears on non-role menus (added first by C).
         if (kind !== 'role')
-            out.push({ sel: '?', text: `Pick${sel.role >= 0 ? ' another' : ''} role first` });
+            out.push({ sel: '?', text: `Pick${sel.role >= 0 ? ' another' : ''} role first`,
+                act: { k: 'switch', facet: 'role' } });
         // race
         if (kind !== 'race') {
             let forced = null;
             if (role && (role.allow & ROLE_RACEMASK) === MH_HUMAN)
                 forced = { by: 'role', val: 'human' };
             if (forced) out.push({ text: `    ${forced.by} forces ${forced.val}` });
-            else out.push({ sel: '/', text: `Pick${sel.race >= 0 ? ' another' : ''} race first` });
+            else out.push({ sel: '/', text: `Pick${sel.race >= 0 ? ' another' : ''} race first`,
+                act: { k: 'switch', facet: 'race' } });
         }
         // gender
         if (kind !== 'gender') {
@@ -728,7 +768,8 @@ export class NethackGame {
                 else if (m === ROLE_FEMALE) forced = { by: 'role', val: 'female' };
             }
             if (forced) out.push({ text: `    ${forced.by} forces ${forced.val}` });
-            else out.push({ sel: '"', text: `Pick${sel.gender >= 0 ? ' another' : ''} gender first` });
+            else out.push({ sel: '"', text: `Pick${sel.gender >= 0 ? ' another' : ''} gender first`,
+                act: { k: 'switch', facet: 'gender' } });
         }
         // alignment — forced by role first, else by race.
         if (kind !== 'align') {
@@ -746,10 +787,12 @@ export class NethackGame {
                 else if (m === ROLE_CHAOTIC) forced = { by: 'race', val: 'chaotic' };
             }
             if (forced) out.push({ text: `    ${forced.by} forces ${forced.val}` });
-            else out.push({ sel: '[', text: `Pick${sel.align >= 0 ? ' another' : ''} alignment first` });
+            else out.push({ sel: '[', text: `Pick${sel.align >= 0 ? ' another' : ''} alignment first`,
+                act: { k: 'switch', facet: 'align' } });
         }
-        out.push({ sel: '~', text: (gotrolefilter() ? 'Reset' : 'Set') + ' role/race/&c filtering' });
-        out.push({ sel: 'q', text: 'Quit' });
+        out.push({ sel: '~', text: (gotrolefilter() ? 'Reset' : 'Set') + ' role/race/&c filtering',
+            act: { k: 'filter' } });
+        out.push({ sel: 'q', text: 'Quit', act: { k: 'quit' } });
         return out;
     }
 
@@ -892,16 +935,29 @@ export class NethackGame {
         this._renderManualPrompt(sel);
         for (;;) {
             const ch = await this._readPromptKey();
-            const lower = ch.toLowerCase();
+            // C ref: wintty.c process_menu_window — a PICK_ONE menu only reacts
+            // to the selector letters it actually drew (case matters: the role
+            // menu's 'R' for Ranger is a different entry from 'r' for Rogue),
+            // to the group accelerators, and to <escape>/<space>/<return>.
+            // Everything else rings the bell and the menu stays on screen
+            // unchanged — so no re-render either.
+            let act = this._curMenuSel?.get(ch);
+            if (!act) {
+                if (ch === '\x1b') act = { k: 'esc' };
+                else if (ch === ' ' || ch === '\r' || ch === '\n')
+                    act = { k: 'preselected' };
+                else continue; /* tty_nhbell() */
+            }
 
             if (prompt === 'ok') {
-                if (lower === 'y' || ch === '\r' || ch === '\n') return true;
-                if (lower === 'n') {
+                // The preselected entry is "Yes", and <escape> means quit.
+                if (act.k === 'yes' || act.k === 'preselected') return true;
+                if (act.k === 'no') {
                     sel.role = sel.race = sel.gender = sel.align = ROLE_NONE;
-                } else if (lower === 'a' && game.iflags?.renameallowed) {
+                } else if (act.k === 'rename') {
                     await this._promptForName(this._okMenuRenameRow);
-                } else if (lower === 'q') {
-                    return false;
+                } else {
+                    return false; /* 'q' or <escape> */
                 }
                 prompt = this._advanceForcedFacets(sel);
                 this._renderManualPrompt(sel);
@@ -909,10 +965,10 @@ export class NethackGame {
             }
 
             // Quit / escape from any facet menu aborts selection.
-            if (lower === 'q' || ch === '\x1b') return false;
+            if (act.k === 'quit' || act.k === 'esc') return false;
 
             // Filtering menu (multi-select unacceptable roles/races/&c).
-            if (ch === '~') {
+            if (act.k === 'filter') {
                 await this._filterMenu(sel);
                 // After (re)filtering, C restarts the role pick from scratch.
                 sel.role = sel.race = sel.gender = sel.align = ROLE_NONE;
@@ -924,13 +980,13 @@ export class NethackGame {
             // Facet-switch keys: jump to picking a different facet.  C clears
             // that facet (and, since a later facet may have been auto-forced,
             // re-resolves forced facets afterward).
-            const switchTo = { '?': 'role', '/': 'race', '"': 'gender', '[': 'align' }[ch];
-            if (switchTo && switchTo !== prompt) {
+            if (act.k === 'switch' && act.facet !== prompt) {
                 // C ref: makepicks sets nextpick = RS_<facet> and jumps straight
                 // to that facet's menu, leaving any earlier-but-unchosen facets
                 // alone.  Reset the requested facet (so its menu reappears) and
                 // run rigid_role_checks() to fill any single-option facets the
                 // current partial selection now forces.
+                const switchTo = act.facet;
                 if (switchTo === 'role') sel.role = ROLE_NONE;
                 else if (switchTo === 'race') sel.race = ROLE_NONE;
                 else if (switchTo === 'gender') sel.gender = ROLE_NONE;
@@ -942,30 +998,14 @@ export class NethackGame {
                 continue;
             }
 
-            // Random ('*' or space/return select the preselected entry).
-            if (ch === '*' || ch === '\r' || ch === '\n' || ch === ' ') {
+            // Random: the '*' entry is preselected, so <space>/<return> pick it.
+            if (act.k === 'random' || act.k === 'preselected') {
                 this._pickRandomFacet(sel, prompt);
-                prompt = this._advanceForcedFacets(sel);
-                this._renderManualPrompt(sel);
-                continue;
-            }
-
-            if (prompt === 'role') {
-                const role = roleKey(ch);
-                if (role !== undefined)
-                    sel.role = role;
-            } else if (prompt === 'race') {
-                const race = raceKey(ch);
-                if (race !== undefined && ok_race(sel.role, race, sel.gender, sel.align))
-                    sel.race = race;
-            } else if (prompt === 'gender') {
-                const gender = genderKey(ch);
-                if (gender !== undefined && ok_gend(sel.role, sel.race, gender, sel.align))
-                    sel.gender = gender;
-            } else if (prompt === 'align') {
-                const align = alignKey(ch);
-                if (align !== undefined && ok_align(sel.role, sel.race, sel.gender, align))
-                    sel.align = align;
+            } else if (act.k === 'pick') {
+                if (act.facet === 'role') sel.role = act.idx;
+                else if (act.facet === 'race') sel.race = act.idx;
+                else if (act.facet === 'gender') sel.gender = act.idx;
+                else if (act.facet === 'align') sel.align = act.idx;
             }
 
             prompt = this._advanceForcedFacets(sel);
@@ -1003,12 +1043,29 @@ export class NethackGame {
     // to recover it — burning an extra, C-nonexistent RNG draw for whichever
     // facet the discarded clone had already force-resolved.
     _pickRandomFacet(sel, prompt) {
-        if (prompt === 'role') sel.role = ROLE_RANDOM;
-        else if (prompt === 'race') sel.race = ROLE_RANDOM;
-        else if (prompt === 'gender') sel.gender = ROLE_RANDOM;
-        else if (prompt === 'align') sel.align = ROLE_RANDOM;
-        else return;
-        rigid_role_checks(sel);
+        // C ref: role.c genl_player_setup() makepicks — a menu's ROLE_RANDOM
+        // entry calls ONLY that facet's pick_*(PICK_RANDOM) (falling back to
+        // rand*()); it does NOT run rigid_role_checks().  Sibling facets are
+        // resolved afterwards by the RNG-free "count the valid ones" branch, or
+        // by the rigid_role_checks() inside the next plsel_startmenu().
+        let k;
+        if (prompt === 'role') {
+            k = pick_role(sel.race, sel.gender, sel.align, PICK_RANDOM);
+            if (k < 0) k = randrole(false);
+            sel.role = k;
+        } else if (prompt === 'race') {
+            k = pick_race(sel.role, sel.gender, sel.align, PICK_RANDOM);
+            if (k < 0) k = randrace(sel.role);
+            sel.race = k;
+        } else if (prompt === 'gender') {
+            k = pick_gend(sel.role, sel.race, sel.align, PICK_RANDOM);
+            if (k < 0) k = randgend(sel.role, sel.race);
+            sel.gender = k;
+        } else if (prompt === 'align') {
+            k = pick_align(sel.role, sel.race, sel.gender, PICK_RANDOM);
+            if (k < 0) k = randalign(sel.role, sel.race);
+            sel.align = k;
+        }
     }
 
     // Placeholder filtering menu — populated below.
@@ -1223,14 +1280,23 @@ export class NethackGame {
         // when the rc pinned every facet.
         while (picksomething && pick4u !== 'a') {
             this._renderSelectionOk(sel);
-            const answer = await this._readPromptKey();
-            const lower = answer.toLowerCase();
-            // A PICK_ONE menu with a preselected entry returns it for <space>,
-            // <return> and for explicitly re-picking it.
-            if (lower === 'y' || answer === ' ' || answer === '\r'
-                || answer === '\n')
-                break;
-            if (lower === 'n') {
+            // C ref: wintty.c process_menu_window — only the drawn selectors
+            // ('y'/'n'/['a']/'q'), <space>/<return> (the preselected "Yes") and
+            // <escape> (quit) are accepted; any other key bells and re-reads
+            // WITHOUT redrawing the menu.
+            let act;
+            for (;;) {
+                const answer = await this._readPromptKey();
+                act = this._curMenuSel?.get(answer);
+                if (act) break;
+                if (answer === ' ' || answer === '\r' || answer === '\n') {
+                    act = { k: 'yes' };
+                    break;
+                }
+                if (answer === '\x1b') { act = { k: 'quit' }; break; }
+            }
+            if (act.k === 'yes') break;
+            if (act.k === 'no') {
                 // Start fresh with the menus, discarding any partial selection.
                 sel.role = sel.race = sel.gender = sel.align = ROLE_NONE;
                 if (await this._manualCharacterSelection(sel)) {
@@ -1239,11 +1305,11 @@ export class NethackGame {
                 }
                 return;
             }
-            if (lower === 'a' && game.iflags?.renameallowed) {
-                await this._promptForName();
+            if (act.k === 'rename') {
+                await this._promptForName(this._okMenuRenameRow);
                 continue;
             }
-            if (lower === 'q' || answer === '\x1b') return;
+            return; /* 'q' */
         }
         game._startup_selected_character = true;
         apply_selection(sel);
