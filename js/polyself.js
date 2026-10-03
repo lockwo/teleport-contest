@@ -1230,6 +1230,24 @@ export async function polymon(mntmp) {
     return 1;
 }
 
+// C ref: polyself.c change_sex() — the role-title reload (svp.pl_character)
+// is derived from flags.female / u.mfemale on demand in this port.
+export function change_sex() {
+    const u = game.u;
+    const ptr = youmonst_data_pub();
+    if (!u.Upolyd
+        || (!is_male_flag(ptr) && !is_female_flag(ptr) && !is_neuter_flag(ptr)))
+        game.flags.female = !game.flags.female;
+    if (u.Upolyd) /* poly'd: also change saved sex */
+        u.mfemale = !u.mfemale;
+    if (!u.Upolyd) {
+        u.umonnum = u.umonster;
+    } else if (u.umonnum === PM_AMOROUS_DEMON) {
+        game.flags.female = !game.flags.female;
+        set_uasmon();
+    }
+}
+
 // C ref: polyself.c polyman(fmt, arg) + newman() — fail-to-poly / werecritter
 // path: revert to human form, with a level/attribute/HP/PW reroll.
 export async function newman() {
@@ -1252,14 +1270,8 @@ export async function newman() {
     u.ulevel = newlvl;
 
     // C ref: polyself.c newman() — `if (gs.sex_change_ok && !rn2(10))`.
-    if (game.sex_change_ok && !rn2(10)) {
-        // C ref: polyself.c change_sex() — flips flags.female (and u.mfemale
-        // while Upolyd), reloads svp.pl_character from urole.name.f/.m and
-        // re-runs max_rank_sz().  DEFERRED: the visible half is the status
-        // line's rank string, which this port builds from game.flags.female
-        // in exper.js update_rank(); flipping it here without the matching
-        // pl_character reload would desync the two.  RNG-free either way.
-    }
+    if (game.sex_change_ok && !rn2(10))
+        change_sex();
 
     await adjabil(oldlvl, u.ulevel, (msg) => pline(msg));
 
@@ -2069,7 +2081,7 @@ async function u_getdir() {
 // C ref: polyself.c dobreathe() — #monster's breath-weapon action.
 export async function dobreathe() {
     const u = game.u;
-    if (u.Strangled) {
+    if (u.uprops?.Strangled) {
         await pline("You can't breathe.  Sorry.");
         return ECMD_OK;
     }
@@ -2522,13 +2534,14 @@ export async function check_strangling(on) {
     const u = game.u;
     /* on -- maybe resume strangling */
     if (on) {
-        const was_strangled = ((u.Strangled | 0) !== 0);
+        const was_strangled = ((u.uprops?.Strangled | 0) !== 0);
 
         /* when Strangled is already set, polymorphing from one vulnerable form
            into another causes the counter to be reset */
         if (game.uamul && game.uamul.otyp === AMULET_OF_STRANGULATION_OTYP
             && can_be_strangled_u()) {
-            u.Strangled = 6;
+            u.uprops = u.uprops || {};
+            u.uprops.Strangled = 6;
             game.botl = true;
             await pline(`Your ${simpleonames_poly(game.uamul)} ${
                 was_strangled ? 'still constricts' : 'begins constricting'
@@ -2538,8 +2551,8 @@ export async function check_strangling(on) {
 
     /* off -- maybe block strangling */
     } else {
-        if (u.Strangled && !can_be_strangled_u()) {
-            u.Strangled = 0;
+        if (u.uprops?.Strangled && !can_be_strangled_u()) {
+            u.uprops.Strangled = 0;
             game.botl = true;
             await pline('You are no longer being strangled.');
         }
