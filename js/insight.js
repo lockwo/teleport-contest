@@ -352,8 +352,11 @@ export function enlightenment_lines(final = 0, basic = true) {
     // which differs for Rogue/Ranger), so resolve the array index here.
     const roleArrIdx = roles.findIndex((r) => r.mnum === rolemnum);
     const roleIdx = roleArrIdx >= 0 ? roleArrIdx : rolemnum;
-    const female = !!game.flags?.female;
+    // C ref: insight.c background_enlightenment() — while polymorphed the role
+    // gender is the saved u.mfemale, not the current you-as-monster gender.
+    const female = !!(u.Upolyd ? u.mfemale : game.flags?.female);
     const innategend = female ? 1 : 0;
+    const initgend = game.initgend === 1 ? 1 : 0;
 
     const plname = game.flags?.debug ? 'wizard' : (game.plname || 'Player');
     const titleName = capFirst(plname);
@@ -393,16 +396,26 @@ export function enlightenment_lines(final = 0, basic = true) {
     out('');
     out('Background:');
 
+    // C ref: insight.c background_enlightenment() — when polymorphed, report
+    // the current shape (current gender) before the underlying role.
+    if (u.Upolyd) {
+        const uasmon = youmonst_data_pub();
+        const curf = game.flags?.female ? 1 : 0;
+        const gpfx = (!is_male_flag(uasmon) && !is_female_flag(uasmon) && !is_neuter_flag(uasmon))
+            ? `${GENDER_ADJ[curf]} ` : '';
+        youAre(`${!final ? 'currently ' : ''}in ${gpfx}${pmname_of_pmidx(uasmon?.pmidx, curf)} form`);
+    }
     // role + rank
     let gendpfx = '';
     if (!roleDef.name?.f
-        && (((roleDef.allow ?? 0) & ROLE_GENDMASK) === (ROLE_MALE | ROLE_FEMALE)))
+        && ((((roleDef.allow ?? 0) & ROLE_GENDMASK) === (ROLE_MALE | ROLE_FEMALE))
+            || innategend !== initgend))
         gendpfx = `${GENDER_ADJ[innategend]} `;
-    let roleBuf;
+    let roleBuf = u.Upolyd ? 'actually ' : '';
     if (rankName.toLowerCase() === roleName.toLowerCase())
-        roleBuf = `${an(rankName)}, level ${ulevel} ${gendpfx}${raceNoun}`;
+        roleBuf += `${an(rankName)}, level ${ulevel} ${gendpfx}${raceNoun}`;
     else
-        roleBuf = `${an(rankName)}, a level ${ulevel} ${gendpfx}${raceAdj} ${roleName}`;
+        roleBuf += `${an(rankName)}, a level ${ulevel} ${gendpfx}${raceAdj} ${roleName}`;
     youAre(roleBuf);
 
     // alignment + pantheon (bypasses you_are to omit ending period)
@@ -416,9 +429,13 @@ export function enlightenment_lines(final = 0, basic = true) {
         pan += ` ${align_gname(roleIdx, A_CHAOTIC)} (${alignStr(A_CHAOTIC)})`;
     pan += '.';
     out(pan);
+    // C ref: insight.c — "You started out <gender>." after a sex change.
+    if (innategend !== initgend)
+        out(` You started out ${GENDER_ADJ[initgend]}.`);
 
-    // handedness (URIGHTY defaults TRUE)
-    youAre(`${game.u?.uleft_handed ? 'left' : 'right'}-handed`);
+    // handedness (URIGHTY defaults TRUE); "normally" when the current form
+    // has no hands (body_part(HANDED) != "handed").
+    youAre(`${body_part(HANDED) === 'handed' ? '' : 'normally '}${game.u?.uleft_handed ? 'left' : 'right'}-handed`);
 
     // dungeon level  (C ref: insight.c background_enlightenment)
     // The name comes from dungeons[u.uz.dnum].dname, with a leading "The "
@@ -490,12 +507,13 @@ export function enlightenment_lines(final = 0, basic = true) {
         expbuf += `, ${delta} ${uexp > 0 ? 'more ' : ''}${wasWere}`
             + `needed ${xlvl < 18 ? 'to attain' : 'for'} level ${xlvl + 1}`;
     }
-    youHave(expbuf);
+    if (!u.Upolyd) youHave(expbuf);
 
     // ── Basics ──
     out('');
     out('Basics:');
-    const hp = Math.max(0, u.uhp ?? 0), hpmax = u.uhpmax ?? 0;
+    const hp = Math.max(0, (u.Upolyd ? u.mh : u.uhp) ?? 0),
+          hpmax = (u.Upolyd ? u.mhmax : u.uhpmax) ?? 0;
     if (hp === hpmax && hpmax > 1) youHave(`all ${hpmax} hit points`);
     else youHave(`${hp} out of ${hpmax} hit point${hpmax === 1 ? '' : 's'}`);
 
@@ -505,6 +523,12 @@ export function enlightenment_lines(final = 0, basic = true) {
         youHave(`${!pwmax ? 'no' : 'both'} ${Power}`);
     else if (pw === pwmax && pwmax > 2) youHave(`all ${pwmax} ${Power}`);
     else youHave(`${pw} out of ${pwmax} ${Power}`);
+    // C ref: insight.c basics_enlightenment() — polymorphed hit dice.
+    if (u.Upolyd) {
+        const mlvl = youmonst_data_pub()?.mlevel | 0;
+        youHave(mlvl === 0 ? '0 hit dice (actually 1/2)'
+            : mlvl === 1 ? '1 hit die' : `${mlvl} hit dice`);
+    }
 
     // armor class (enl_msg: "Your armor class " + "is " + value)
     enlLine('Your armor class ', final ? 'was ' : 'is ', `${u.uac ?? 0}`, '');
@@ -556,6 +580,12 @@ export function enlightenment_lines(final = 0, basic = true) {
             ? true
             : alimit !== (idx !== A_STR ? 18 : 118 /* STR18(100) */);
         let valubuf = attrval(idx, acurrent);
+        // C ref: one_characteristic() — Upolyd hides base/peak/limit, and
+        // MAGICENLIGHTENMENT only un-hides them when not polymorphed.
+        if (u.Upolyd) {
+            enlLine(`Your ${name} `, final ? 'was ' : 'is ', valubuf, '');
+            return;
+        }
         let paren = final ? ' (' : ' (current; ';
         if (acurrent !== abase) {
             valubuf += `${paren}base:${attrval(idx, abase)}`;
@@ -582,9 +612,27 @@ export function enlightenment_lines(final = 0, basic = true) {
     // ── Status ──
     out('');
     out(final ? 'Final Status:' : 'Status:');
-    // C ref: insight.c:2372-2377.  Timed Hallucination is represented under
-    // both H- and bare property names across the port, so use the same
-    // effective-property test as the rest of this display.
+    // C ref: insight.c status_enlightenment() — "transformed" first, then the
+    // internal troubles in prayer-rank order: Stoned, Slimed, Strangled, Sick,
+    // Vomiting, Stunned, Confusion, Hallucination, Blind, Deaf.
+    const up = u.uprops || {};
+    if (u.Upolyd)
+        youAre(`transformed${ugenocided()
+            ? ` and ${final ? 'felt' : 'feel'} ${udeadinside()} inside` : ''}`);
+    if ((up.Stoned | 0) > 0) youAre('turning to stone');
+    if ((up.Slimed | 0) > 0) youAre('turning into slime');
+    if ((up.Strangled | 0) > 0)
+        youAre(`being strangled${_wizard() ? ` (${up.Strangled & TIMEOUT_MASK})` : ''}`);
+    if ((up.Sick | 0) > 0 || u.sick) {
+        if (u.usick_type & SICK_NONVOMITABLE) youAre('terminally sick from illness');
+        if (u.usick_type & SICK_VOMITABLE) youAre('terminally sick from food poisoning');
+    }
+    if ((up.Vomiting | 0) > 0) youAre('nauseated');
+    if ((up.Stun | 0) > 0 || u.Stunned) youAre('stunned');
+    if ((up.Confusion | 0) > 0) youAre('confused');
+    // Timed Hallucination is represented under both H- and bare property
+    // names across the port, so use the same effective-property test as the
+    // rest of this display.
     if (haveProp(23 /* HALLUC */, 'HHallucination')
         && !haveProp(24 /* HALLUC_RES */, 'HHalluc_resistance'))
         youAre('hallucinating');
@@ -1505,12 +1553,14 @@ import {
     ismnum, Is_rogue_level, MGIVENNAME, has_mgivenname, xdir, ydir,
 } from './const.js';
 import { genders } from './role.js';
-import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
+import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx } from './makemon.js';
+import { ugenocided, udeadinside } from './polyself.js';
 import { is_rider_pm, WEAPON_CLASS, GEM_CLASS } from './mkobj.js';
 import { mbodypart } from './monmove.js';
 import { mflags1_of, mflags2_of, M1_NOEYES, M1_CLING, M1_OVIPAROUS,
          M1_BREATHLESS, M1_AMPHIBIOUS, M2_ORC, M2_ELF, M2_HUMAN, M2_DEMON,
-         M2_WERE, M2_MALE, M2_FEMALE, M2_NEUTER } from './monflags_data.js';
+         M2_WERE, M2_MALE, M2_FEMALE, M2_NEUTER,
+         is_male_flag, is_female_flag, is_neuter_flag } from './monflags_data.js';
 import { MALE, FEMALE } from './do_name.js';
 import { NUMMONS } from './disprng.js';
 import { def_monsyms } from './symbols.js';
@@ -1535,7 +1585,7 @@ import { costly_spot } from './shkroom.js';
 // crude reduced copy that predates it; the fix is to delete the local one and
 // use this everywhere, not to add a third.
 import { makeplural as objnam_makeplural, ansimpleoname,
-         carrying, near_capacity, body_part } from './invent.js';
+         carrying, near_capacity, body_part, youmonst_data_pub } from './invent.js';
 import { y_monnam, a_monnam } from './do_name.js';
 
 // ── window shim (wintty.h / C's ge.en_win) ──────────────────────────────────
@@ -1705,18 +1755,6 @@ function pmname(ptr, _gender) { return ptr?.name || ''; }
 // No covered path sets youmonst.cham, so this is always FALSE here.
 function vampshifted(mon) {
     return !!(mon && ismnum(mon.cham) && mon.cham !== mon.data?.pmidx);
-}
-// C ref: you.h ugenocided() / udeadinside() — a polymorphed hero whose current
-// form has been genocided is "dead inside".
-function ugenocided() {
-    const u = game.u || {};
-    if (!u.Upolyd) return false;
-    const mv = game.mvitals?.[u.umonnum];
-    return !!(mv && (mv.mvflags & G_GENOD));
-}
-function udeadinside() {
-    const u = game.u || {};
-    return (u.Upolyd && (u.mh ?? 0) < 1) ? 'dead' : 'dying';
 }
 // C ref: getpos.c:557 dxdy_to_dist_descr(dx, dy, fulldir).
 const _DIST_DIRNAMES = [['n', 'north'], ['s', 'south'], ['w', 'west'], ['e', 'east']];
