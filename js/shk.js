@@ -56,7 +56,7 @@ const RANDOM_CLASS = 0, WEAPON_CLASS = 2, ARMOR_CLASS = 3, TOOL_CLASS = 6,
 // which is SPBOOK_CLASS — see the deferred note.
 
 // objects.h otyps referenced by name in shk.c.
-const DUNCE_CAP = 94, MIRROR = 218, TALLOW_CANDLE = 224, WAX_CANDLE = 225,
+const DUNCE_CAP = 94, MIRROR = 230, TALLOW_CANDLE = 224, WAX_CANDLE = 225,
       CORPSE = 265, EGG = 266, TIN = 296, POT_WATER = 322;
 const FIRST_REAL_GEM = 439;         // objects.h MARKER(FIRST_REAL_GEM, DILITHIUM_CRYSTAL)
 const FIRST_GLASS_GEM = 461;        // objects.h MARKER(FIRST_GLASS_GEM, WORTHLESS_WHITE_GLASS)
@@ -2012,7 +2012,7 @@ const RING_CLASS = 4, AMULET_CLASS = 5, CHAIN_CLASS = 16;
 // DWARVISH_MATTOCK match js/invent.js:8464 (js/dogmove.js's PICK_AXE = 66 is a
 // different, unrelated numbering).
 const PICK_AXE = 259, DWARVISH_MATTOCK = 71, LAND_MINE = 243, BEARTRAP = 244;
-const LARGE_BOX = 216;
+const LARGE_BOX = 214;
 const MS_HUMANOID = 25;
 const PM_KNIGHT = 4;                /* roles[].mnum, as PM_TOURIST/PM_ROGUE */
 // C ref: mkobj.c SchroedingersBox(obj) — a LARGE_BOX with spe == 1.

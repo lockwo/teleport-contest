@@ -1715,7 +1715,7 @@ export async function burn_floor_objects(x, y, _give_feedback, u_caused) {
 // C ref: youprop.h Hallucination.
 // C ref: muse.c ureflects(fmt, str) — outermost reflection source first.
 // Draws no RNG; the reflection message and the makeknown are the observable.
-const SHIELD_OF_REFLECTION_OTYP = 158, AMULET_OF_REFLECTION_OTYP = 162;
+const SHIELD_OF_REFLECTION_OTYP = 158, AMULET_OF_REFLECTION_OTYP = 208;
 async function ureflects(fmt, str) {
     const { makeknown } = await import('./invent.js');
     if (game.uarms && game.uarms.otyp === SHIELD_OF_REFLECTION_OTYP) {

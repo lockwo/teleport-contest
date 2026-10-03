@@ -2054,11 +2054,11 @@ function with_article_obj(obj, phrase) {
 
 // C ref: objnam.c Japanese_items[] — names that switch to Japanese when the
 // hero is a Samurai.  Keyed by otyp (mkobj.js MONS/object convention).
-const SHORT_SWORD_OTYP = 46, BROADSWORD_OTYP = 50, FLAIL_OTYP = 76,
-      GLAIVE_OTYP = 81, LOCK_PICK_OTYP = 218, WOODEN_HARP_OTYP = 219,
-      MAGIC_HARP_OTYP = 220, KNIFE_OTYP = 63, PLATE_MAIL_OTYP = 121,
-      HELMET_OTYP = 97, LEATHER_GLOVES_OTYP = 159, FOOD_RATION_OTYP = 271,
-      POT_BOOZE_OTYP = 312;
+const SHORT_SWORD_OTYP = 46, BROADSWORD_OTYP = 52, FLAIL_OTYP = 81,
+      GLAIVE_OTYP = 62, LOCK_PICK_OTYP = 222, WOODEN_HARP_OTYP = 253,
+      MAGIC_HARP_OTYP = 254, KNIFE_OTYP = 40, PLATE_MAIL_OTYP = 121,
+      HELMET_OTYP = 97, LEATHER_GLOVES_OTYP = 159, FOOD_RATION_OTYP = 293,
+      POT_BOOZE_OTYP = 317;
 const JAPANESE_ITEM_NAME = new Map([
     [SHORT_SWORD_OTYP, 'wakizashi'], [BROADSWORD_OTYP, 'ninja-to'],
     [FLAIL_OTYP, 'nunchaku'], [GLAIVE_OTYP, 'naginata'],
@@ -6506,7 +6506,7 @@ function Tobjnam_throw(obj, verb) {
 function the_str(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
 function the_name_of(obj) { return the_str(xname(obj)); }
 // C ref: onames.h HEAVY_IRON_BALL (js/mkobj.js OBJECT_DATA otyp).
-const HEAVY_IRON_BALL_OTYP = 484;
+const HEAVY_IRON_BALL_OTYP = 477;
 // C ref: mextra.h dogfood enum — thitmonst()'s pet arm accepts ACCFOOD or better.
 const ACCFOOD = 2;
 

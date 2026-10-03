@@ -119,7 +119,7 @@ export function Mgender(mtmp) {
 // statue or figurine.  (EGG and TIN objects carry a corpsenm too, but
 // objnam.c names those inline off mons[].pmnames[NEUTRAL] directly — they
 // never call obj_pmname(), so it must not handle them here either.)
-const CORPSE = 265, STATUE = 476, FIGURINE = 260;
+const CORPSE = 265, STATUE = 476, FIGURINE = 241;
 // C ref: hack.h:1189 CORPSTAT_NONE/_GENDER/_RANDOM/_FEMALE/_MALE — obj->spe's
 // gender bits.  NOTE these values (RANDOM=0, FEMALE=1, MALE=2) are the
 // OPPOSITE order from do_name.c's own MALE=0/FEMALE=1 mgender enum.

@@ -233,7 +233,7 @@ const HORNED = new Set(['horned devil', 'minotaur', 'Asmodeus', 'balrog',
     'white unicorn', 'gray unicorn', 'black unicorn', 'ki-rin']);
 const has_horns = (p) => HORNED.has(p?.name);
 // C ref: obj.h is_flimsy(otmp) = oc_material <= LEATHER || otyp == RUBBER_HOSE.
-const LEATHER_MATERIAL = 7, RUBBER_HOSE = 250;
+const LEATHER_MATERIAL = 7, RUBBER_HOSE = 78;
 function is_flimsy(o) {
     return (objects[o?.otyp]?.material ?? 99) <= LEATHER_MATERIAL
         || o?.otyp === RUBBER_HOSE;

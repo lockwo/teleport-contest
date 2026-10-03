@@ -53,7 +53,7 @@ import { surface as surface_word } from './dungeon.js';
 // row [237, "STETHOSCOPE", ...]).  Defined locally to avoid threading a new
 // export through mkobj.js.
 const STETHOSCOPE = 237;
-const SPE_NOVEL = 406; // mkobj.js OBJECT_DATA — novel (a spellbook subtype)
+const SPE_NOVEL = 408; // mkobj.js OBJECT_DATA — novel (a spellbook subtype)
 
 // C ref: include/onames.h — lamp/lantern object types rubbed by dorub().
 const BRASS_LANTERN = 226, OIL_LAMP = 227, MAGIC_LAMP = 228;

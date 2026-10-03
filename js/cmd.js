@@ -4287,7 +4287,7 @@ function is_blade_boulder(obj) {
 }
 // C ref: dothrow.c is_flimsy(otmp).  js/mon.js, js/polyself.js, js/uhitm.js,
 // js/worn.js each keep the same private copy.
-const RUBBER_HOSE_OTYP_BOULDER = 250, MAT_LEATHER_BOULDER = 7;
+const RUBBER_HOSE_OTYP_BOULDER = 78, MAT_LEATHER_BOULDER = 7;
 function is_flimsy_boulder(obj) {
     const mat = OBJECTS[obj?.otyp]?.material;
     return (mat !== undefined && mat <= MAT_LEATHER_BOULDER)

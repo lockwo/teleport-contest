@@ -3153,7 +3153,7 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
 // C ref: teleport.c teleport_pet(mtmp, force_it):766.  FALSE only for the
 // hero's steed or a monster held by a CURSED leash (that arm also yelps).
 // C ref: mon.c mon_has_amulet(mtmp) — the real Amulet of Yendor in minvent.
-const AMULET_OF_YENDOR_OTYP = 155;   // objects.js AMULET_OF_YENDOR
+const AMULET_OF_YENDOR_OTYP = 213;   // objects.js AMULET_OF_YENDOR
 function mon_has_amulet_mm(mtmp) {
     return (mtmp.minvent || []).some((o) => o?.otyp === AMULET_OF_YENDOR_OTYP);
 }
@@ -3181,7 +3181,7 @@ function teleport_pet_mm(mtmp) {
 }
 function get_mleash_mm(mtmp) {
     const inv = game.u?.uinvent || [];
-    const LEASH = 227;
+    const LEASH = 236;
     for (const o of inv) if (o.otyp === LEASH && o.leashmon === mtmp.m_id) return o;
     return null;
 }

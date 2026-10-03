@@ -258,7 +258,7 @@ function freehand() {
 }
 /* wield.c welded():1051 -> will_weld():68 — a cursed erodeable weapon (or tin
    opener) in the wielded slot.  welded() also sets bknown. */
-const HEAVY_IRON_BALL = 474, IRON_CHAIN = 473, TIN_OPENER = 250;
+const HEAVY_IRON_BALL = 477, IRON_CHAIN = 478, TIN_OPENER = 239;
 function welded(obj) {
     if (obj && obj === game.uwep && obj.cursed
         && (obj.oclass === WEAPON_CLASS_P || is_weptool(obj)
@@ -313,7 +313,7 @@ function Maybe_Half_Phys(dmg) {
 }
 /* obj.h age_is_relative(o) — only lit/burnable tools track relative age. */
 const TALLOW_CANDLE = 224, WAX_CANDLE = 225, BRASS_LANTERN = 226,
-    OIL_LAMP = 227, MAGIC_LAMP = 228, POT_OIL = 297, LEASH = 236,
+    OIL_LAMP = 227, MAGIC_LAMP = 228, POT_OIL = 321, LEASH = 236,
     CANDELABRUM_OF_INVOCATION = 262, SPE_BOOK_OF_THE_DEAD = 409;
 function age_is_relative(obj) {
     const t = obj?.otyp;

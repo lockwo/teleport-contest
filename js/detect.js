@@ -560,7 +560,7 @@ function map_object(obj, show) {
     if (!loc) return;
     let g;
     const halluc = Hallucination_u();
-    const STATUE_OTYP_D = 481;                 /* objects.h STATUE */
+    const STATUE_OTYP_D = 476;                 /* objects.h STATUE */
     if (halluc) {
         // obj_to_glyph -> random_obj_to_glyph / statue_to_glyph on the display
         // rng; the exact glyph does not matter to the callers here, only that

@@ -573,8 +573,8 @@ function edogApport(edog) {
 }
 
 // C ref: objects.h — the tool otyps droppables() reasons about.
-const DWARVISH_MATTOCK = 78, PICK_AXE = 66, UNICORN_HORN = 246,
-      SKELETON_KEY = 235, LOCK_PICK = 236, CREDIT_CARD = 237;
+const DWARVISH_MATTOCK = 71, PICK_AXE = 259, UNICORN_HORN = 261,
+      SKELETON_KEY = 221, LOCK_PICK = 222, CREDIT_CARD = 223;
 
 // C ref: dogmove.c droppables(mon) — return the first droppable object in the
 // pet's minvent.  Consumes no RNG, but the ANSWER drives dog_invent's drop path

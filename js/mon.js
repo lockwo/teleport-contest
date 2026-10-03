@@ -1739,8 +1739,8 @@ const G_UNIQ_M = 0x1000;
 const D_NODOOR_M = 0x00, D_TRAPPED_M = 0x10;
 // C ref: objects.h SADDLE / CANDELABRUM_OF_INVOCATION /
 // SPE_BOOK_OF_THE_DEAD / SPE_HEALING / SPE_EXTRA_HEALING (js/mkobj.js otyps).
-const SADDLE_OTYP = 322, CANDELABRUM_OTYP = 217, BOOK_OF_THE_DEAD_OTYP = 228,
-    SPE_HEALING_OTYP = 385, SPE_EXTRA_HEALING_OTYP = 386;
+const SADDLE_OTYP = 235, CANDELABRUM_OTYP = 262, BOOK_OF_THE_DEAD_OTYP = 409,
+    SPE_HEALING_OTYP = 374, SPE_EXTRA_HEALING_OTYP = 391;
 // C ref: monattk.h NATTK.  monattk_data.js exports it, but js/const.js (which
 // this file already imports) exports a same-named binding, so it is restated.
 const NATTK_MON = 6;
