@@ -3499,6 +3499,10 @@ async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) 
                 const c = await topl_more_ext(String(invlet));
                 game._pending_message = '';
                 game._toplin = 0;
+                // C ref: wintty.c tty_message_menu() -- here <ESC> cancels the
+                // prompt rather than skipping further messages, so it clears
+                // WIN_CANCELLED ("Never mind." must still show).
+                game._winStop = false;
                 if (c === 27) return '\x1b';
                 if (String.fromCharCode(c) === invlet) return invlet;
                 return '\0';
