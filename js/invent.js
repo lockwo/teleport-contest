@@ -3986,7 +3986,10 @@ async function getobj_get_count(inkey) {
         }
         key = await nhgetch();
     }
-    game._pending_message = '';
+    // C ref: cmd.c get_count() clears WIN_MESSAGE only inside the `cnt > 9 ||
+    // backspaced || echoalways` echo branch above, never on the way out — so a
+    // one-digit count leaves the object prompt standing on the topline.  This
+    // used to blank it unconditionally.
     return { key, cnt };
 }
 
@@ -6380,9 +6383,14 @@ async function thitmonst(mon, obj, skillsnap) {
             // C ref: dothrow.c should_mulch_missile(obj) — only ammo/missiles
             // (excluding boomerangs and magical ones) can shatter on impact.
             if (should_mulch_missile(obj)) { delobj_thrown(obj); return true; }
-            // passive_obj(mon, obj, NULL) follows in C: only an acid/rusting/
-            // corroding/enchantment-draining defender draws there, and none of
-            // the erosion helpers it needs live in this file.
+            // C ref: dothrow.c:2226 `passive_obj(mon, obj, (struct attack *) 0)`
+            // — an acid/rusting/corroding/draining defender erodes the missile
+            // that just hit it.  The NULL attack argument makes passive_obj()
+            // pick the monster's first passive (AT_NONE) attack itself; it also
+            // draws rn2(6) for AD_FIRE/AD_ACID whether or not anything erodes,
+            // so skipping the call desynced the stream on every such hit.
+            const { passive_obj } = await import('./uhitm.js');
+            await passive_obj(mon, obj, null);
         } else {
             await tmiss(obj, mon, true);
         }
