@@ -102,6 +102,10 @@ Inline auto-wield turns publish the map before the queued throw prompt.
 Water damage transforms scrolls, spellbooks, and potions rather than reporting
 damage without changing the object.
 
+Death status is published at C's explicit status-update calls. Later dirty
+updates release frozen death rows. Carried corpse decay retains the monster's
+name instead of describing every corpse as a generic corpse.
+
 Local differential campaigns compare both revisions against the same native
 recordings and check exact frame masks as well as RNG streams. These targeted
 scenarios are regression evidence, not a prediction of official held-out scores.

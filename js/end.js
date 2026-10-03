@@ -453,16 +453,12 @@ async function done(how) {
         await d.bot();
         await d.flush_screen(1);
     }
-    if (how < PANICKED) {
-        // MEASURED NEGATIVE, do not re-add: C's end.c:1071 also sets
-        // disp.botl = TRUE after zeroing HP, so a later refresh redraws the
-        // status with HP:0 even when the bot() above drew nothing (u.uhp was
-        // exactly -1, botl.c's dosave() sentinel).  Re-freezing the botl here
-        // wins seed0030's step 582 but costs seed5002 -12, the held-out proxy
-        // -14 and seed0030's own step 779.  The extra release point is the
-        // botl-is-a-snapshot trap; some other frame must be re-releasing it.
+    if (how < PANICKED
+        && (u.uhp !== 0 || (u.Upolyd && u.mh !== 0))) {
+        // C ref: end.c:1072-1078. A later pline can publish the zeroed HP.
         u.uhp = 0;
         if (u.mh != null) u.mh = 0;
+        game.botl = true;
     }
 
     // C ref: end.c:1081 — `if (Lifesaved && (how <= GENOCIDED))`.  Lifesaved is

@@ -1779,8 +1779,7 @@ function armor_simple_name(armor) {
     }
 }
 
-// corpse_xname(): objnam.c:1823.  Needed by doname_base()'s CORPSE branch;
-// js/invent.js:654 holds the live (reduced) copy.
+// C ref: objnam.c:1823 corpse_xname(), shared by descriptions and decay.
 function corpse_xname(otmp, adjective, cxn_flags) {
     const omndx = otmp.corpsenm;
     const ignore_quan = (cxn_flags & CXN_SINGULAR) !== 0;

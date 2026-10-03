@@ -2837,7 +2837,8 @@ export async function rot_corpse(arg, timeout) {
         if (game.flags?.verbose !== false) {
             const { pline, } = await import('./display.js');
             const { otense } = await import('./invent.js');
-            const cname = await corpse_xname_(obj, CXN_NO_PFX);
+            const { corpse_xname } = await import('./objnam.js');
+            const cname = corpse_xname(obj, null, CXN_NO_PFX);
             await pline(`Your ${obj === game.uwep ? 'wielded ' : ''}${cname} ${
                 otense(obj, 'rot')} away${obj === game.uwep ? '!' : '.'}`);
         }
@@ -2869,10 +2870,6 @@ export async function rot_corpse(arg, timeout) {
         const { update_inventory } = await import('./invent.js');
         update_inventory();
     }
-}
-async function corpse_xname_(obj, _flags) {
-    const { xname } = await import('./invent.js');
-    return xname(obj);
 }
 
 /* ---- dig.c's #if 0 block ------------------------------------------------ *

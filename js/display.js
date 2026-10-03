@@ -2958,6 +2958,8 @@ function _buildScreenOutput() {
 // whatever the last real bot() drew.  freeze_botl() captures that.
 function botl_lines() {
     if (game._botlFrozen) return game._botlFrozen;
+    if (game.u?.uhp === -1 && game._botlLast)
+        return game._botlLast;
     game._botlLast = _renderStatus();
     return game._botlLast;
 }
@@ -2965,30 +2967,24 @@ function botl_lines() {
 // C ref: end.c:1048 `disp.botlx = TRUE; bot();` — the last bot() of the game.
 // When u.uhp is exactly -1 (botl.c:259's dosave() sentinel, which a hit landing
 // HP on -1 collides with) that bot() draws NOTHING, so the frozen text is the
-// previous turn's line: a hero killed from 1 HP by 2 damage keeps showing HP:1
-// through every endgame screen.
+// previous status until a later bot() publishes the forced zero HP.
 export function freeze_botl() {
-    const u = game.u || {};
-    if ((u.Upolyd ? u.mh : u.uhp) !== -1) botl_lines();
+    bot_snapshot();
     game._botlFrozen = game._botlLast || null;
 }
 
-// C ref: botl.c:252 bot() — publish rows 22/23 NOW, subject to the same
-// u.uhp == -1 sentinel.  For a caller mirroring an explicit C bot() call site
-// the visible effect is only on the frozen text freeze_botl() later reuses:
-// two hits in one mattacku() that land the hero on exactly -1 must leave the
-// FIRST hit's numbers on screen, not the previous turn's.
+// C ref: botl.c:252. Publish status pixels now unless HP is the save sentinel.
 export function bot_snapshot() {
-    const u = game.u || {};
-    if ((u.Upolyd ? u.mh : u.uhp) !== -1) botl_lines();
+    if (game.u?.uhp !== -1)
+        renderStatusLines(game.nhDisplay, botl_lines());
 }
 
 // C ref: wintty.c new_status_window() — the status window's offy is
 // rows - statuslines, so 3 status rows start one row higher and steal the
 // map's last row (which CLIPPING then hides).
-export function renderStatusLines(display) {
+export function renderStatusLines(display, rows = null) {
     if (!display?.setCell) return;
-    const rows = botl_lines();
+    rows ??= botl_lines();
     const top = (display.rows ?? 24) - rows.length;
     for (let r = 0; r < rows.length; r++) {
         const cells = rows[r] || [];
@@ -3351,6 +3347,8 @@ const TOPLIN_NEED_MORE = 1; // game._toplin: 0 = empty, 1 = NEED_MORE
 async function botl_flush() {
     if (!game.botl) return;
     game.botl = false;
+    if (game.u?.uhp !== -1)
+        delete game._botlFrozen;
     const { near_capacity } = await import('./invent.js');
     game._curcap = near_capacity();
     bot_snapshot();
