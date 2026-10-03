@@ -480,11 +480,21 @@ const ROLE_ABIL = new Map([
 
 // C ref: attrib.c dwa_abil[]/elf_abil[]/gno_abil[]/orc_abil[]/hum_abil[].
 // adjabil() only walks elf_abil/orc_abil (its switch maps DWARF and GNOME to
-// NULL); the dwarf/gnome Infravision row is unreachable there, so it is not
-// listed here either — vision.js Infravision() derives that from mflags3.
+// NULL), so only those two rows ever set a real FROMRACE intrinsic bit — that
+// is what RACE_ABIL models and what innate_intrinsics() reports.
 const RACE_ABIL = new Map([
     [RC_ELF, [[1, '', '', 'HInfravision'], [4, 'awake', 'tired', 'HSleep_resistance']]],
     [RC_ORC, [[1, '', '', 'HInfravision'], [1, '', '', 'HPoison_resistance']]],
+]);
+
+// C ref: attrib.c check_innate_abil() — its own race switch is the COMPLETE
+// one (DWARF -> dwa_abil, GNOME -> gno_abil), unlike adjabil()'s.  innately()
+// therefore answers FROM_RACE for a dwarf's/gnome's infravision even though
+// adjabil() never set the FROMRACE bit, and from_what() prints " innately".
+const RACE_ABIL_INNATE = new Map([
+    ...RACE_ABIL,
+    [RC_DWARF, [[1, '', '', 'HInfravision']]],
+    [RC_GNOME, [[1, '', '', 'HInfravision']]],
 ]);
 
 // The innate intrinsics the hero holds right now.  C keeps these as
@@ -507,7 +517,7 @@ export function has_innate(prop, ulevel) { return innate_intrinsics(ulevel).has(
 export function innate_source(prop, ulevel = game.u?.ulevel || 0) {
     for (const [ulvl, , , p] of ROLE_ABIL.get(game.urole?.mnum) || [])
         if (p === prop && ulevel >= ulvl) return (ulvl === 1) ? 'role' : 'exp';
-    for (const [ulvl, , , p] of RACE_ABIL.get(urace_mnum()) || [])
+    for (const [ulvl, , , p] of RACE_ABIL_INNATE.get(urace_mnum()) || [])
         if (p === prop && ulevel >= ulvl) return 'race';
     return null;
 }

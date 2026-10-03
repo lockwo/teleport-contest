@@ -1959,11 +1959,15 @@ function optfn_number_pad(o, negated, opts, op, result) {
 
 // C ref: options.c change_inv_order() — every character must name an object
 // class that is already in flags.inv_order, and none may repeat.
-const DEF_INV_ORDER = [12, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 16, 17, 15];
+// C ref: options.c def_inv_order[]:118 — COIN, AMULET, WEAPON, ARMOR, FOOD,
+// SCROLL, SPBOOK, POTION, RING, WAND, TOOL, GEM, ROCK, BALL, CHAIN (objclass
+// enum numbers; ILLOBJ and VENOM are deliberately absent, which is exactly
+// what makes change_inv_order() reject ']' and ')'-adjacent venom).
+const DEF_INV_ORDER = [12, 5, 2, 3, 7, 9, 10, 8, 4, 11, 6, 13, 14, 15, 16];
 function change_inv_order(op, result) {
     let retval = 1;
     const buf = [];
-    const inv_order = result.flags.inv_order_oc || DEF_INV_ORDER;
+    const inv_order = result.flags.inv_order || DEF_INV_ORDER;
     if (!op.includes('$')) buf.push(12 /* COIN_CLASS */);
     for (let i = 0; i < op.length; i++) {
         const ch = op[i];
@@ -1982,7 +1986,7 @@ function change_inv_order(op, result) {
         if (!fail) buf.push(oc_sym);
     }
     for (const oc of inv_order) if (!buf.includes(oc)) buf.push(oc);
-    result.flags.inv_order_oc = buf.slice(0, MAXOCLASSES - 1);
+    result.flags.inv_order = buf.slice(0, MAXOCLASSES - 1);
     return retval;
 }
 
@@ -2511,15 +2515,15 @@ function warning_opts(opts, optype, result) {
     return true;
 }
 
-// C ref: options.c optfn_whatis_coord() — GPCOORDS_* are 'n','c','C','m','s'.
+// C ref: options.c optfn_whatis_coord() — flag.h GPCOORDS_NONE 'n',
+// GPCOORDS_MAP 'm', GPCOORDS_COMPASS 'c', GPCOORDS_COMFULL 'f',
+// GPCOORDS_SCREEN 's'.
 function optfn_whatis_coord(o, negated, opts, op, result) {
     if (negated) { result.iflags.getpos_coords = 'n'; return OPTN_OK; }
     op = string_for_env_opt(o.name, opts, false);
     if (op === '') return OPTN_ERR;
-    /* getpos.c GPCOORDS_NONE/COMPASS/COMFULL/MAP/SCREEN; lowc() means the
-       upper-case COMFULL spelling can never be selected, exactly as in C */
     const c = lowc(op[0]);
-    if (c && 'ncCms'.includes(c)) {
+    if (c && 'ncfms'.includes(c)) {
         result.iflags.getpos_coords = c;
         keep(o, op, result);
         return OPTN_OK;
@@ -6750,6 +6754,20 @@ function fruit_from_name_local(fname, exact) {
 // post-init_objects behaviour follows with no other change.
 function svb_bases_food() {
     return (game.svb && game.svb.bases && game.svb.bases[FOOD_CLASS]) || 0;
+}
+
+// C ref: options.c optfn_fruit() do_set, the !go.opt_initial half: the value a
+// player types at doset()/doset_simple()'s "Set fruit to what?" prompt is
+// munged, sanitized, copied into svp.pl_fruit (empty -> "slime mold") and then
+// registered with fruitadd().  Returns the stored name so the caller can echo
+// C's "Fruit is now \"%s\"." when give_opt_msg is set.
+export function set_pl_fruit(op) {
+    let name = sanitize_name(nmcpy(mungspaces(String(op ?? '')), PL_FSIZ));
+    if (!name) name = 'slime mold';
+    game.svp = game.svp || {};
+    game.svp.pl_fruit = name;
+    fruitadd(name, null);
+    return name;
 }
 
 // C ref: options.c fruitadd().  `str === game.svp.pl_fruit` is C's

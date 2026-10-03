@@ -103,8 +103,8 @@ const REDRAW_ON_TOGGLE = new Set([
 // 'a' again.  See buildSimpleFlat()/paginateSimple().
 const SIMPLE_SECTIONS = [
     { name: 'General', items: [
-        { name: 'fruit',        kind: 'compound', val: () => (game.flags?.pl_fruit) || 'slime mold' },
-        { name: 'number_pad',   kind: 'compound', val: () => '0=off' },
+        { name: 'fruit',        kind: 'compound', val: () => fruitStr() },
+        { name: 'number_pad',   kind: 'compound', val: () => numberPadStr() },
         { name: 'price_quotes', kind: 'bool',     val: () => boolStr('price_quotes', false) },
     ] },
     { name: 'Behavior', items: [
@@ -184,6 +184,28 @@ function symsetStr() {
         if (h) s += `, handler=${h}`;
     }
     return s;
+}
+
+// C ref: options.c optfn_fruit() get_val — the live svp.pl_fruit, which
+// initoptions()/fruitadd() seeds from the rc's `fruit:` value (jsmain.js) and
+// runFruitHandler() replaces when the player retypes it.
+function fruitStr() {
+    return game.svp?.pl_fruit || 'slime mold';
+}
+
+// C ref: options.c optfn_number_pad() get_val — numpadmodes[] indexed off
+// gc.Cmd.num_pad / phone_layout / pcHack_compat / swap_yz, which optfn's
+// do_set half derives from iflags.num_pad + iflags.num_pad_mode (bit 0 =
+// MSDOS/PC-Hack compatibility, bit 1 = phone layout; with num_pad off, a
+// nonzero mode means the German y/z swap).
+function numberPadStr() {
+    const ifl = game.iflags || {};
+    const mode = ifl.num_pad_mode | 0;
+    if (ifl.num_pad)
+        return (mode & 2) ? ((mode & 1) ? '4=on, phone layout, MSDOS compatible'
+                                        : '3=on, phone-style layout')
+                          : ((mode & 1) ? '2=on, MSDOS compatible' : '1=on');
+    return mode ? '-1=off, y & z swapped' : '0=off';
 }
 
 function autopickupOn() {
@@ -603,11 +625,12 @@ async function runFruitHandler() {
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     const ans = await hooked_tty_getlin('Set fruit to what?', null);
     if (ans !== '\x1b') {
-        // parseoptions("fruit:<name>") — set pl_fruit.  Fruit naming is purely
-        // cosmetic (it does not touch the dungeon RNG or the map), so we only
-        // record the new name for the menu's redisplayed value.
-        game.flags = game.flags || {};
-        game.flags.pl_fruit = ans;
+        // parseoptions("fruit:<name>") -> optfn_fruit() do_set: mungspaces,
+        // sanitize_name, store in svp.pl_fruit (empty -> "slime mold"), then
+        // fruitadd() registers the named fruit.  doset_simple() runs with
+        // give_opt_msg FALSE, so C prints no "Fruit is now ..." line here.
+        const { set_pl_fruit } = await import('./options.js');
+        set_pl_fruit(ans);
     }
 }
 
