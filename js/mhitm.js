@@ -345,8 +345,7 @@ function mm_ops() {
 //     omitting both deps here just always takes C's `&&` short-circuit to the
 //     ordinary make_stoned() arm, which is exactly right whenever the hero
 //     isn't currently polymorphed into a stone golem.
-// tmp_at_flash/tmp_at_step/tmp_at_end are cosmetic beam-glyph overlays (no
-// RNG, not part of scored PRNG/screen text) and are likewise left unwired.
+// tmp_at_flash/tmp_at_step/tmp_at_end draw the in-flight missile (DISP_FLASH).
 export async function thrwmmDeps() {
     const MM = await import('./monmove.js');
     const { shade_miss, passive_obj } = await import('./uhitm.js');
@@ -365,6 +364,8 @@ export async function thrwmmDeps() {
     void killer_xname; // reserved for a future poisoned() message refinement
 
     const an_ = (s) => (/^[aeiouAEIOU]/.test(s) ? `an ${s}` : `a ${s}`);
+    const { flash_obj_glyph, show_glyph_cell } = await import('./display.js');
+    const flash = { glyph: null, x: -1, y: -1 };
 
     return {
         // weapon selection / wielding — mon_wield_item() handles the
@@ -436,6 +437,27 @@ export async function thrwmmDeps() {
         delobj,
         flooreffects,
         passive_obj,
+        // C ref: display.c tmp_at() DISP_FLASH (display.c:1278-1292): each step
+        // restores (newsym) the previously flashed cell, then draws the
+        // missile glyph on the new square only when cansee() it; DISP_END
+        // restores the last one.  So thitu()'s "You are hit by ..." --More--
+        // shows the missile on the square just before the hero.  (A tethered
+        // aklys uses DISP_TETHER's trail, not drawn here.)
+        tmp_at_flash: (obj, tethered) => {
+            flash.glyph = tethered ? null : flash_obj_glyph(obj);
+            flash.x = flash.y = -1;
+        },
+        tmp_at_step: (x, y) => {
+            if (!flash.glyph) return;
+            if (flash.x >= 0) { newsym(flash.x, flash.y); flash.x = flash.y = -1; }
+            if (!cansee(x, y)) return;
+            show_glyph_cell(x, y, flash.glyph.ch, flash.glyph.color, flash.glyph.dec);
+            flash.x = x; flash.y = y;
+        },
+        tmp_at_end: () => {
+            if (flash.x >= 0) newsym(flash.x, flash.y);
+            flash.glyph = null; flash.x = flash.y = -1;
+        },
     };
 }
 

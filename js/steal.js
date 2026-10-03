@@ -20,7 +20,9 @@ import { can_carry } from './mon.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
     AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
 import { PLNMSG_MON_TAKES_OFF_ITEM } from './const.js';
-import { update_topl } from './display.js';
+// C's urgent_pline() (steal.c:532/540/603) is display.js urgent_topl(): still
+// shown after ESC dismissed the preceding "<Mon> disarms ..." --More--.
+import { update_topl, urgent_topl } from './display.js';
 import { Blind } from './vision.js';
 import { canspotmon, Monnam } from './uhitm.js';
 import { is_animal, humanoid, throws_rocks_flag } from './monflags_data.js';
@@ -285,13 +287,13 @@ export async function steal(mtmp, objnambuf) {
                 otmp.cursed = 0;
                 const slowly = (armordelay >= 1 || (game.multi ?? 0) < 0);
                 if (game.flags?.female) {
-                    await update_topl(`${!seen ? 'She' : Monnambuf} charms you.  You gladly `
+                    await urgent_topl(`${!seen ? 'She' : Monnambuf} charms you.  You gladly `
                         + `${curssv ? 'let her take'
                             : !slowly ? 'hand over'
                                 : was_doffing ? 'continue removing' : 'start removing'} `
                         + `your ${armor_simple_name(otmp)}.`);
                 } else {
-                    await update_topl(`${!seen ? 'She' : Adjmonnam(mtmp, 'beautiful')} seduces you and `
+                    await urgent_topl(`${!seen ? 'She' : Adjmonnam(mtmp, 'beautiful')} seduces you and `
                         + `${curssv ? 'helps you to take'
                             : !slowly ? 'you take'
                                 : was_doffing ? 'you continue taking' : 'you start taking'} `
@@ -337,7 +339,7 @@ export async function steal(mtmp, objnambuf) {
     if (game.last_msg === PLNMSG_MON_TAKES_OFF_ITEM
         && mtmp.data?.mcls === S_NYMPH_MCLS)
         ++named;
-    await update_topl(`${named ? 'She' : Monnambuf} stole ${doname_invent(otmp)}.`);
+    await urgent_topl(`${named ? 'She' : Monnambuf} stole ${doname_invent(otmp)}.`);
     await encumber_msg();
     const could_petrify = otmp.otyp === CORPSE
         && await (async () => {

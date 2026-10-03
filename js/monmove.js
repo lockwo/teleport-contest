@@ -3475,6 +3475,7 @@ async function m_move(mtmp) {
         if (i === Trap_Killed_Mon) { newsym(mtmp.mx, mtmp.my); return MMOVE_DIED; }
         if (i === Trap_Caught_Mon) return MMOVE_NOTHING;
     }
+    ptr = mtmp.data; /* mintrap() can change mtmp->data -dlc */
 
     // C ref: monmove.c:1764 — door-handling capability flags, consumed by
     // postmov() when the monster ends its move on a door square.
@@ -3534,9 +3535,12 @@ async function m_move(mtmp) {
 
     // C ref: monmove.c:1769-1775 — a long worm jumps straight to not_special,
     // so even a tame one moves by the generic code below; other tame
-    // monsters delegate to dog_move() (dogmove.c).
+    // monsters delegate to dog_move() (dogmove.c), whose result goes through
+    // postmov() with can_tunnel = tunnels(ptr) (no needspick gate here, so a
+    // tame dwarf still rolls mdig_tunnel's rnd(12) on every move).
     if (mtmp.mtame && !mtmp.wormno)
-        return await dog_move(mtmp, 0);
+        return await postmov(mtmp, ptr, omx, omy, await dog_move(mtmp, 0),
+                             seenflgs0, can_tunnel, can_unlock, can_open);
 
     // C ref: monmove.c:1806 — a shopkeeper (isshk) / guard / priest delegates to
     // shk_move() / gd_move() / pri_move() BEFORE the generic getitems rn2(10)

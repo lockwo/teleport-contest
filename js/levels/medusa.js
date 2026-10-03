@@ -18,7 +18,7 @@
 
 import {
     ACCESSIBLE, COLNO, CORR, DOOR, D_CLOSED, D_LOCKED, FOUNTAIN, IS_FURNITURE, IS_LAVA, IS_POOL,
-    LADDER, LA_DOWN, LA_UP, MAGIC_TRAP,
+    LADDER, MAGIC_TRAP,
     MM_NOCOUNTBIRTH, MM_NOMSG, NO_TRAP, OROOM, ROCKTRAP, ROOM, ROWNO, RUST_TRAP, SQKY_BOARD,
     STAIRS, TRAPNUM, is_hole, isok,
 } from '../const.js';
@@ -40,7 +40,7 @@ import {
     LOC_DRY, bigrm_get_level_extends, bigrm_load_map, bigrm_wallification, flip_level, percent,
     pm_to_humidity, quest_level_init_solidfill, quest_place_stair, quest_rndcoord, quest_set_door,
     remove_boundary_syms, map_cleanup, shuffle, splev_door_at, splev_feature, splev_get_location_rnd,
-    splev_link_doors_rooms, splev_region_lit, splev_traptype_rnd, vly_abs, vly_non_diggable,
+    splev_link_doors_rooms, splev_mkstairs_at, splev_region_lit, splev_traptype_rnd, vly_abs, vly_non_diggable,
     vly_region, vly_teleport_region,
 } from '../sp_lev.js';
 import { Can_fall_thru, maketrap, t_at } from '../trap.js';
@@ -418,21 +418,13 @@ function med_bad_location(x, y, r) {
     return !((typ === CORR && !!game.level?.flags?.is_maze_lev) || typ === ROOM);
 }
 
-// C ref: mklev.c mkstairs() — reached from put_lregion_here()'s LR_*STAIR arm.
-// The dungeon-end guard is load-bearing: a level at the top/bottom of its
-// dungeon gets no stair even though the levregion asked for one.
+// C ref: mkmaze.c put_lregion_here()'s LR_*STAIR arm — mkstairs(x, y, rtype,
+// NULL, FALSE).  The shared mklev.js mkstairs() (dungeon-end guard, ladder
+// bits, stairway_add onto the linked gs.stairs list).  This used to push onto
+// a plain array, which every `.next` walker (dog_goal's On_stairs, travel,
+// stairway_find_*) read as "no stairs" on Medusa's level.
 function med_mkstairs(x, y, up) {
-    const g = game;
-    const nlev = g.dungeons?.[g.u?.uz?.dnum ?? 0]?.num_dunlevs ?? 0;
-    if ((g.u?.uz?.dlevel ?? 1) === (up ? 1 : nlev)) return;
-    const loc = g.level?.at(x, y);
-    if (loc) { loc.typ = STAIRS; loc.ladder = up ? LA_UP : LA_DOWN; }
-    if (!Array.isArray(g.stairs)) g.stairs = [];
-    g.stairs.push({ sx: x, sy: y, up: !!up, isladder: false,
-                    tolev: { dnum: g.u?.uz?.dnum ?? 0,
-                             dlevel: (g.u?.uz?.dlevel ?? 1) + (up ? -1 : 1) } });
-    if (up) { g.upstair = { x, y }; if (g.level) g.level.upstair = { x, y }; }
-    else { g.dnstair = { x, y }; if (g.level) g.level.dnstair = { x, y }; }
+    splev_mkstairs_at(x, y, up);
 }
 
 // C ref: mkmaze.c put_lregion_here().  LR_BRANCH lands on place_branch(), which
