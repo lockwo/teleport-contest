@@ -2949,6 +2949,9 @@ function _buildScreenOutput() {
             const sy = _mapRowOnScreen(y);
             if (sy < 0 || sy < msgRows) continue;
             for (let x = 1; x < COLNO; x++) {
+                if (game.u?.uinwater && !Is_waterlevel(game.u.uz)
+                    && (Math.abs(x - game.u.ux) > 1 || Math.abs(y - game.u.uy) > 1
+                        || !(is_pool_or_lava_d(x, y) || is_ice_d(x, y)))) continue;
                 if (clipping && (x <= clipx || x >= clipxmax)) continue;
                 const loc = game.level?.at(x, y);
                 if (!loc?.disp_ch || loc.disp_ch === ' ') continue;

@@ -1285,15 +1285,18 @@ export async function moveloop_turn() {
     if (g.context.seer_turn != null && g.moves >= g.context.seer_turn) {
         g.context.seer_turn = g.moves + rn1(31, 15);
     }
-    // C ref: allmain.c:424 — `if (u.utrap && u.utraptype == TT_LAVA)
-    // sink_into_lava(); else if (!u.umoved) (void) pooleffects(FALSE);`.
-    // Only the sink_into_lava() arm is ported (js/trap.js sink_into_lava);
-    // pooleffects(FALSE), the leaving-water/lava half, has no js/ port at all
-    // (only pooleffects(TRUE)'s arrival half exists, js/trap.js
-    // pooleffects_enter), so the `else` arm is left unwired here.
+    // C ref: allmain.c:424-432 — sink into lava, else re-evaluate water/lava
+    // under a hero who did not move, then redraw the underwater view.
     if (g.u?.utrap && g.u.utraptype === TT_LAVA) {
         const { sink_into_lava } = await import('./trap.js');
         await sink_into_lava();
+    } else if (!g.u?.umoved) {
+        const { pooleffects } = await import('./trap.js');
+        await pooleffects(false);
+    }
+    if (g.u?.uinwater) {
+        const { under_water } = await import('./display.js');
+        await under_water(0);
     }
 }
 
