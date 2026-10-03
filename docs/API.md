@@ -171,6 +171,11 @@ corpse/bones, then present the tombstone and score. Those steps produce
 separate input boundaries and RNG calls; a shortcut straight to the
 tombstone loses both.
 
+When a new game finds bones on its starting level, its "Get bones?"
+prompt appears before the first map/status redraw. Loading those bones
+replaces level generation; a second room-fill pass would overwrite the
+inherited monsters and objects.
+
 If you implement your own terminal, output anything that — after
 canonicalization — matches the recorded screen.
 

@@ -206,6 +206,11 @@ export async function getbones() {
     // to the level being LEFT, so the two wizard y_n() prompts are captured over
     // the old map (matching the recorded C frames), and the actual level graft
     // is deferred to the very end so it can't repaint until docrt().
+    // C ref: allmain.c newgame(): mklev()/getbones() precede docrt()/bot().
+    // On the starting level there is no status or map under "Get bones?".
+    // Mid-game level changes already have a tty backing and must retain it.
+    const atStartup = game.moves === 0;
+    if (atStartup) game._screenBlank = true;
     try {
         const { y_n } = await import('./display.js');
 
@@ -253,6 +258,8 @@ export async function getbones() {
         // path, so this cannot regress a session that merely has a stray blob.
         if (is_wizard()) { try { (await import('./display.js')).pline?.(`bones: ${e}`); } catch { /*noop*/ } }
         return false;
+    } finally {
+        if (atStartup) delete game._screenBlank;
     }
 }
 

@@ -223,9 +223,9 @@ export async function newgame() {
     // Structural phase consumes RNG for rooms/corridors/doors/stairs
     await mklev();
 
-    // Fill rooms + mineralize: replayed by fastforward
-    // These create objects/monsters that don't affect terrain display
-    await fastforward_fill_mineralize();
+    // C ref: mklev.c mklev(): getbones() returns before makelevel() and its
+    // fill/mineralize phase when it loaded a legacy level.
+    if (!g._bones_loaded) await fastforward_fill_mineralize();
 
     // C ref: dog.c makedog() - create the starting pet after level fill.
     u_on_upstairs();
