@@ -599,7 +599,7 @@ export function is_unpaid(obj) {
 
 // C ref: shk.c picked_container(obj) — clear no_charge through every nesting
 // level, not just the top one.
-function picked_container(obj) {
+export function picked_container(obj) {
     for (const otmp of (obj.cobj || [])) {
         if (otmp.no_charge) otmp.no_charge = 0;
         if (Has_contents(otmp)) picked_container(otmp);

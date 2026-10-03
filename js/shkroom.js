@@ -12,7 +12,8 @@ import { shtypes } from './shtypes.js';
 import { Hello } from './role.js';
 import { rn2, rnd } from './rng.js';
 import { newomid } from './mkobj.js';
-import { get_cost, get_pricing_units } from './shk.js';
+import { get_cost, get_pricing_units, contained_cost, contained_gold,
+         bill_box_content, costly_gold, picked_container, is_unpaid } from './shk.js';
 import { makemon, monster_by_pmidx, enexto_spawn, name_to_pmidx } from './makemon.js';
 import { builds_up, room_discovered } from './dungeon.js';
 import { record_price_quote } from './o_init.js';
@@ -805,23 +806,44 @@ function append_honorific() {
     return buf;
 }
 
-// C ref: shk.c addtobill(obj, ininv, dummy, silent) — bill obj and quote the
-// price.  ininv (the pickup case) gets the "For you, ..." line; the rn2(4)
-// inside append_honorific() is the only RNG the function draws.  Containers
-// (bill_box_content) and gold (costly_gold) are not ported.
+// C ref: shk.c addtobill() — bill the top object and every charged content
+// before quoting their combined price; contained gold creates a separate debt.
 export async function addtobill(obj, ininv, dummy, silent) {
-    const u = game.u;
-    const shkp = billable(null, obj, u.ushops?.[0], true);
+    const shkp = billable(null, obj, game.u.ushops?.[0], true);
     if (!shkp) return;
-    if (obj.oclass === COIN_CLASS) return; /* costly_gold() */
+    if (obj.oclass === COIN_CLASS) {
+        await costly_gold(obj.ox, obj.oy, obj.quan, silent);
+        return;
+    }
     if ((shkp.eshk.billct || 0) >= BILLSZ) {
         if (!silent) await update_topl('You got that for free!');
         return;
     }
-    const ltmp = obj.no_charge ? 0 : get_cost(obj, shkp);
-    if (obj.no_charge) { obj.no_charge = 0; return; }
 
-    add_one_tobill(obj, dummy, shkp);
+    const container = !!obj.cobj?.length;
+    let ltmp = obj.no_charge ? 0 : get_cost(obj, shkp);
+    if (obj.globby) ltmp *= get_pricing_units(obj);
+    if (obj.no_charge && !container) {
+        obj.no_charge = 0;
+        return;
+    }
+    let contentscount = false;
+    if (container) {
+        const cltmp = contained_cost(obj, shkp, 0, false, false);
+        const gltmp = contained_gold(obj, true);
+        if (ltmp) add_one_tobill(obj, dummy, shkp);
+        if (cltmp) bill_box_content(obj, ininv, dummy, shkp);
+        picked_container(obj);
+        ltmp += cltmp;
+        if (gltmp) {
+            await costly_gold(obj.ox, obj.oy, gltmp, silent);
+            if (!ltmp) return;
+        }
+        obj.no_charge = 0;
+        contentscount = obj.cobj.some(is_unpaid);
+    } else {
+        add_one_tobill(obj, dummy, shkp);
+    }
     if (silent) return;
 
     const { xname, currency } = await import('./invent.js');
@@ -841,8 +863,10 @@ export async function addtobill(obj, ininv, dummy, silent) {
     obj.quan = 1; /* C fools xname() into the singular */
     const nm = xname(obj);
     obj.quan = save_quan;
-    await update_topl(`${buf} ${ltmp} ${currency(ltmp)} ${
-        save_quan > 1 ? 'per' : 'for this'} ${nm}."`);
+    const qualifier = save_quan > 1 ? 'per'
+        : contentscount && !obj.unpaid ? 'for the contents of this' : 'for this';
+    await update_topl(`${buf} ${ltmp} ${currency(ltmp)} ${qualifier} ${nm}${
+        contentscount && obj.unpaid ? ' and its contents' : ''}."`);
 }
 
 // C ref: shk.c Shknam(shkp) — shkname() with the first letter capitalised.
