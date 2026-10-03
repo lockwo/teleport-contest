@@ -7139,9 +7139,9 @@ async function mktrap_room(croom) {
 function mkfount(croom) {
     const pos = { x: 0, y: 0 };
     if (!find_okay_roompos(croom, pos)) return;
+    if (!set_levltyp_lit(pos.x, pos.y, FOUNTAIN, SET_LIT_NOCHANGE)) return;
     const loc = game.level?.at(pos.x, pos.y);
     if (loc) {
-        loc.typ = FOUNTAIN;
         if (!rn2(7)) loc.blessedftn = 1;
         game.level.flags.nfountains++;
     }
@@ -7242,12 +7242,7 @@ export async function fill_ordinary_room(croom, bonus_items) {
     // Fountain
     if (!rn2(10)) mkfount(croom);
     // Sink
-    if (!rn2(60)) {
-        if (find_okay_roompos(croom, pos)) {
-            const loc = g.level?.at(pos.x, pos.y);
-            if (loc) { loc.typ = SINK; g.level.flags.nsinks = (g.level.flags.nsinks || 0) + 1; }
-        }
-    }
+    if (!rn2(60)) mksink(croom);
     // Altar
     if (!rn2(60)) mkaltar(croom);
     // Grave.  C ref: mklev.c:1000 `x = 80 - (depth(&u.uz) * 2);` — depth(), not

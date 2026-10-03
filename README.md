@@ -81,6 +81,20 @@ of the early-game PRNG and the first dozen-or-so screens. That's
 your hello world: getting it from "partial" to "full pass," and
 then taking on the other 87 sessions.
 
+### Port parity work
+
+The JavaScript port now includes broader native behavior for ring removal and
+worn properties, artifact restrictions and naming, polymorph forms, prayer,
+corpse effects, inventory and container menus, spells, shops, and special levels.
+Fountain and sink placement preserves upstream's feature-counter updates,
+including recounts that discover fountains placed by themed rooms. Repeated
+stalker-corpse effects preserve permanent intrinsic bits rather than replacing
+them with temporary one-turn values.
+
+Local differential campaigns compare both revisions against the same native
+recordings and check exact frame masks as well as RNG streams. These targeted
+scenarios are regression evidence, not a prediction of official held-out scores.
+
 ## What's in this repo
 
 Three things, layered like the Dungeons of Doom themselves.
