@@ -6,6 +6,9 @@ import { roles, align_gname } from './role.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { nhgetch } from './input.js';
 import { ATR_INVERSE, ATR_NONE, NO_COLOR } from './terminal.js';
+// C ref: do_name.c hliquid() — surface() names pools/lava through it, so the
+// Hallucination substitution (and its display-RNG draw) applies there too.
+import { hliquid } from './do_name.js';
 import {
     MAXDUNGEON, MAXLEVEL,
     TBR_STAIR, TBR_NO_UP, TBR_NO_DOWN, TBR_PORTAL,
