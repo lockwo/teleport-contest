@@ -35,6 +35,7 @@ import { dmgval, hitval, abon, dbon, weapon_type, is_axe,
          mon_hates_blessings, weapon_hit_bonus_core,
          weapon_dam_bonus_core } from './weapon.js';
 import { register_monnam_hooks, rndmonnam, bogon_is_pname } from './do_name.js';
+import { priestname } from './priest.js';
 import { rn2, rnd, d } from './rng.js';
 import { finish_meating } from './dogmove.js';
 import { cansee, couldsee } from './vision.js';
@@ -2351,6 +2352,21 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
 
     // ARTICLE_YOUR only applies to tame monsters; otherwise downgrade to THE.
     if (article === 3 && !mtmp.mtame) article = 1;
+
+    // C ref: do_name.c x_monnam "priests and minions: don't even use this
+    // function" -> priestname(), with Hallucination blocked unless do_hallu
+    // and minvis cleared unless do_invis; EXACT_NAME forces "of <deity>".
+    if ((mtmp?.ispriest || mtmp?.isminion)
+        && !(mtmp.m_ap_type === 'mon' && !(_suppress & 0x20 /* SUPPRESS_MAPPEARANCE */))) {
+        const do_hallu = !!game.u?.uhallu && !(_suppress & SUPPRESS_HALLUCINATION);
+        const save_invis = mtmp.minvis;
+        if (!(mtmp.minvis && !(_suppress & SUPPRESS_INVISIBLE))) mtmp.minvis = 0;
+        let name = priestname(mtmp, article, (_suppress & 0x0f) === 0x0f /* EXACT_NAME */,
+                              null, do_hallu);
+        mtmp.minvis = save_invis;
+        if (article === 0 && name.startsWith('the ')) name = name.slice(4);
+        return name;
+    }
 
     // C ref: do_name.c x_monnam "Put the adjectives in the buffer" — the
     // caller-supplied adjective ("peaceful") comes first, then "saddled "

@@ -123,11 +123,12 @@ export function priestini(lvl, sroom, sx, sy, sanctum) {
     return priest;
 }
 
-// ── SCRATCH EXPERIMENT: intemple() ─────────────────────────────────────────
-// C ref: priest.c:410 intemple(roomno) — called from check_special_room().
-import { pline, update_topl, newsym } from './display.js';
+// C ref: priest.c:410 intemple(roomno), called from check_special_room().
+import { pline, update_topl, newsym, canseemon_shared, Deaf_hero } from './display.js';
 import { d } from './rng.js';
-import { TEMPLE } from './const.js';
+import { TEMPLE, ACH_TMPL, SPINE, In_endgame } from './const.js';
+import { roles, align_gname } from './role.js';
+import { rndmonnam, Monnam } from './do_name.js';
 
 // C ref: priest.c:142 temple_occupied(array).
 export function temple_occupied(array) {
@@ -165,51 +166,124 @@ function has_shrine(pri) {
     return (p.shralign === Amask2align(lev.altarmask & ~AM_SHRINE));
 }
 
+// C ref: dungeon.h Is_sanctum(&u.uz).
+function Is_sanctum_() {
+    const uz = game.u?.uz, sl = game.sanctum_level;
+    return !!uz && !!sl && uz.dnum === sl.dnum && uz.dlevel === sl.dlevel;
+}
+
 export async function intemple(roomno) {
     const u = game.u;
+    /* don't do anything if hero is already in the room */
     if (temple_occupied(u.urooms0)) return;
     const priest = findpriest(roomno);
     const moves = game.moves || 0;
+    const Deaf = Deaf_hero();
     if (priest) {
+        /* tended */
+        const { record_achievement } = await import('./insight.js');
+        record_achievement(ACH_TMPL);
         const epri_p = priest.epri;
         const shrined = has_shrine(priest);
-        const sanctum = false; // high cleric + Is_sanctum: not on quest levels
-        const can_speak = true;
-        if (can_speak && moves >= (epri_p.intone_time || 0)) {
-            await update_topl('A nearby voice intones:');
-            epri_p.intone_time = moves + d(10, 500);
+        const sanctum = (priest.data?.name === 'high cleric'
+                         && (Is_sanctum_() || In_endgame(u.uz)));
+        const can_speak = !helpless_(priest);
+        if (can_speak && !Deaf && moves >= (epri_p.intone_time || 0)) {
+            const save_priest = priest.ispriest;
+            /* don't reveal the altar's owner upon temple entry in
+               the endgame; for the Sanctum, the next message names
+               Moloch so suppress the "of Moloch" for him here too */
+            if (sanctum && !Hallucination_()) priest.ispriest = 0;
+            const who = canseemon_shared(priest) ? Monnam(priest) : 'A nearby voice';
+            priest.ispriest = save_priest;
+            await pline(`${who} intones:`);
+            epri_p.intone_time = moves + d(10, 500); /* ~2505 */
+            /* make sure that we don't suppress entry message when
+               we've just given its "priest intones" introduction */
             epri_p.enter_time = 0;
         }
         let msg1 = null, msg2 = null;
-        if (moves >= (epri_p.enter_time || 0)) {
-            msg1 = `"Pilgrim, you enter a ${!shrined ? 'desecrated' : 'sacred'} place!"`;
+        if (sanctum && Is_sanctum_()) {
+            if (priest.mpeaceful) {
+                /* first time inside */
+                msg1 = "Infidel, you have entered Moloch's Sanctum!";
+                msg2 = 'Be gone!';
+                priest.mpeaceful = 0;
+                /* became angry voluntarily; no penalty for attacking him */
+                set_malign(priest);
+            } else {
+                /* repeat visit, or attacked priest before entering */
+                msg1 = 'You desecrate this place by your presence!';
+            }
+        } else if (moves >= (epri_p.enter_time || 0)) {
+            msg1 = `Pilgrim, you enter a ${!shrined ? 'desecrated' : 'sacred'} place!`;
         }
-        if (msg1 && can_speak) {
-            await update_topl(msg1);
-            epri_p.enter_time = moves + d(10, 100);
+        if (msg1 && can_speak && !Deaf) {
+            await verbalize_(msg1);
+            if (msg2) await verbalize_(msg2);
+            epri_p.enter_time = moves + d(10, 100); /* ~505 */
         }
-        let m1, m2, thisKey, otherKey;
-        if (!shrined || !p_coaligned(priest) || (u.ualign?.record ?? 0) <= -4 /* ALGN_SINNED, priest.c */) {
-            m1 = 'have a%s forbidding feeling...'; m2 = (!shrined || !p_coaligned(priest)) ? '' : ' strange';
-            thisKey = 'hostile_time'; otherKey = 'peaceful_time';
-        } else {
-            m1 = 'experience %s sense of peace.'; m2 = ((u.ualign?.record ?? 0) >= 14) ? 'a' : 'an unusual';
-            thisKey = 'peaceful_time'; otherKey = 'hostile_time';
+        if (!sanctum) {
+            let m1, m2, thisKey, otherKey;
+            if (!shrined || !p_coaligned(priest)
+                || (u.ualign?.record ?? 0) <= ALGN_SINNED) {
+                m1 = 'have a%s forbidding feeling...';
+                m2 = (!shrined || !p_coaligned(priest)) ? '' : ' strange';
+                thisKey = 'hostile_time'; otherKey = 'peaceful_time';
+            } else {
+                m1 = 'experience %s sense of peace.';
+                m2 = ((u.ualign?.record ?? 0) >= ALGN_DEVOUT) ? 'a' : 'an unusual';
+                thisKey = 'peaceful_time'; otherKey = 'hostile_time';
+            }
+            /* give message if we haven't seen it recently or
+               if alignment update has caused it to switch from
+               forbidding to sense-of-peace or vice versa */
+            if (moves >= (epri_p[thisKey] || 0)
+                || (epri_p[otherKey] || 0) >= (epri_p[thisKey] || 0)) {
+                await pline('You ' + m1.replace('%s', m2));
+                epri_p[thisKey] = moves + d(10, 20); /* ~55 */
+                /* avoid being tricked by the RNG:  switch might have just
+                   happened and previous random threshold could be larger */
+                if (epri_p[thisKey] <= (epri_p[otherKey] || 0))
+                    epri_p[otherKey] = epri_p[thisKey] - 1;
+            }
         }
-        if (moves >= (epri_p[thisKey] || 0) || (epri_p[otherKey] || 0) >= (epri_p[thisKey] || 0)) {
-            await update_topl('You ' + m1.replace('%s', m2));
-            epri_p[thisKey] = moves + d(10, 20);
-            if (epri_p[thisKey] <= (epri_p[otherKey] || 0)) epri_p[otherKey] = epri_p[thisKey] - 1;
-        }
+        /* recognize the Valley of the Dead and Moloch's Sanctum
+           once hero has encountered the temple priest on those levels */
+        const { mapseen_temple } = await import('./dungeon.js');
+        mapseen_temple(priest);
     } else {
+        /* untended */
         switch (rn2(4)) {
-        case 0: await update_topl('You have an eerie feeling...'); break;
-        case 1: await update_topl('You feel like you are being watched.'); break;
-        case 2: await update_topl('A shiver runs down your spine.'); break;
-        default: break;
+        case 0: await pline('You have an eerie feeling...'); break;
+        case 1: await pline('You feel like you are being watched.'); break;
+        case 2: {
+            const { body_part } = await import('./polyself.js');
+            await pline(`A shiver runs down your ${body_part(SPINE)}.`);
+            break;
+        }
+        default: break; /* no message */
         }
         if (!rn2(5)) {
-            // makemon(PM_GHOST, u.ux, u.uy, MM_NOMSG) — not modelled here
+            const mtmp = makemon(monster_by_pmidx(name_to_pmidx('ghost')),
+                                 u.ux, u.uy, MM_NOMSG_);
+            if (mtmp) {
+                const ngen = game.mvitals?.[mtmp.data?.pmidx]?.born ?? 0;
+                const { canspotmon } = await import('./uhitm.js');
+                if (canspotmon(mtmp))
+                    await pline(`A${ngen < 5 ? 'n enormous' : ''} ghost appears next to you${
+                        ngen < 10 ? '!' : '.'}`);
+                else
+                    await pline('You sense a presence close by!');
+                mtmp.mpeaceful = 0;
+                set_malign(mtmp);
+                if (game.flags?.verbose !== false)
+                    await pline('You are frightened to death, and unable to move.');
+                const { nomul } = await import('./hack.js');
+                nomul(-3);
+                game.multi_reason = 'being terrified of a ghost';
+                game.nomovemsg = 'You regain your composure.';
+            }
         }
     }
 }
@@ -325,12 +399,15 @@ function assign_level_(dst, src) {
 //
 // Hallucination makes rndmonnam() the base name, and that DRAWS (on the display
 // RNG) — so this is not a pure function while hallucinating.
-export async function priestname(mon, article, reveal_high_priest, _pname) {
-    const do_hallu = Hallucination_();
+// `hallu` lets x_monnam() pass its own do_hallu (C toggles EHalluc_resistance
+// around the call to block Hallucination when the true name is wanted).
+export function priestname(mon, article, reveal_high_priest, _pname,
+                           hallu = Hallucination_()) {
+    const do_hallu = hallu;
     const aligned_priest = mon?.data?.name === 'aligned cleric';
     const high_priest = mon?.data?.name === 'high cleric';
     let whatcode = { c: '\0' };
-    let what = do_hallu ? await rndmonnam_(whatcode) : mon_pmname_(mon);
+    let what = do_hallu ? rndmonnam_(whatcode) : mon_pmname_(mon);
 
     if (!mon.ispriest && !mon.isminion)   /* should never happen... */
         return what;                      /* caller must be confused */
@@ -379,7 +456,7 @@ export async function priestname(mon, article, reveal_high_priest, _pname) {
     if (do_hallu || !high_priest || reveal_high_priest
         || !Is_astralevel_() || m_next2u_(mon) || !!game.program_state?.gameover) {
         pname += ' of ';
-        pname += await halu_gname_(mon_aligntyp_(mon));
+        pname += halu_gname_(mon_aligntyp_(mon));
     }
     return pname;
 }
@@ -755,9 +832,9 @@ export function restpriest(mtmp, ghostly) {
 //    port exists but is module-private the fix is to export IT, not to grow
 //    these.  All are RNG-free unless the comment says otherwise.
 // C ref: do_name.h ARTICLE_* (do_name.c's article enum).
-const ARTICLE_NONE_ = 0, ARTICLE_THE_ = 1, ARTICLE_A_ = 2, ARTICLE_YOUR_ = 4;
+const ARTICLE_NONE_ = 0, ARTICLE_THE_ = 1, ARTICLE_A_ = 2, ARTICLE_YOUR_ = 3;
 // C ref: mkobj.h MM_ADJACENTOK / MM_NOMSG, teleport.h RLOC_NOMSG.
-const MM_ADJACENTOK_ = 0x00000040, MM_NOMSG_ = 0x00010000, RLOC_NOMSG_ = 0x01;
+const MM_ADJACENTOK_ = 0x00000010, MM_NOMSG_ = 0x00020000, RLOC_NOMSG_ = 0x01;
 // C ref: attrib.h A_WIS.
 const A_WIS_ = 2;
 // C ref: monattk.h AD_ELEC.
@@ -794,9 +871,7 @@ function mon_aligntyp_(mon) {
 }
 // C ref: pray.c:2577 halu_gname(alignment) — align_gname() unless
 // hallucinating, in which case it picks a random pantheon on the DISPLAY rng.
-// js/sounds.js:800 has the faithful copy (unexported).
-async function halu_gname_(alignment) {
-    const { align_gname, roles } = await import('./role.js');
+function halu_gname_(alignment) {
     /* js/role.js align_gname() takes the roles[] ARRAY index first, which is
        NOT the PM_ mnum (they differ for Rogue/Ranger) — resolve it the way
        js/insight.js:1465 does. */
@@ -804,7 +879,7 @@ async function halu_gname_(alignment) {
     let idx = roles.findIndex((r) => r?.mnum === mnum);
     if (idx < 0) idx = 0;
     /* Hallucination's randrole()/rn2_on_display_rng(9) walk is NOT reproduced
-       here: the display RNG is a separate stream and this is inert code. */
+       here: the display RNG is a separate stream. */
     return align_gname(idx, alignment);
 }
 // C ref: pray.c:2514 a_gname_at(x, y) — the name of an altar's deity, or NULL
@@ -832,8 +907,7 @@ function mon_pmname_(mon) { return mon?.data?.name || 'creature'; }
 // C ref: do_name.c rndmonnam(&charcode) — a random bogus monster name; DRAWS on
 // the display RNG.  js/do_name.js exports it; the charcode out-parameter is
 // C-style, so it is threaded through a box here.
-async function rndmonnam_(whatcode) {
-    const { rndmonnam } = await import('./do_name.js');
+function rndmonnam_(whatcode) {
     const r = rndmonnam();
     if (r && typeof r === 'object') { whatcode.c = r.code ?? '\0'; return r.name; }
     return r;
