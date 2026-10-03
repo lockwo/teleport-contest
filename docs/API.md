@@ -160,6 +160,11 @@ The provided `frozen/terminal.js` has a `serialize()` method that
 produces the canonical format directly from a 24×80 grid; the
 provided `js/jsmain.js` capture hook calls it for you.
 
+For tty menu overlays, preserve the existing screen outside the menu's
+rectangle. In particular, automatic end-of-game inventory disclosure
+does not display a new query first: the quit/death message and map glyphs
+remain visible to the left of its menu.
+
 If you implement your own terminal, output anything that — after
 canonicalization — matches the recorded screen.
 

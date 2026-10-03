@@ -2451,11 +2451,14 @@ function renderMenuScreen(lines, cursor = [36, 8]) {
 export function renderMenuLines(flat, cursor = [36, 8]) {
     const display = game.nhDisplay;
     if (!display?.clearScreen) return;
-    display.clearScreen();
-    // C ref: win/tty/wintty.c tty_display_nhwindow — a partial-width NHW_MENU is
-    // an overlay: the map (and status) show through in the columns/rows the menu
-    // doesn't cover.  Lay the map down first, then draw the menu on top.
-    render_map_to_grid();
+    // C ref: win/tty/wintty.c tty_display_nhwindow(): an automatic
+    // end-of-game inventory menu is drawn over the existing tty display.
+    // Repainting its map would replace surviving DEC glyphs and erase the
+    // prior quit/death message in columns left of the menu window.
+    if (!game._disclose_inventory_auto) {
+        display.clearScreen();
+        render_map_to_grid();
+    }
     let widest = 0;
     for (const ln of flat) if (ln.text.length > widest) widest = ln.text.length;
     const cols = display.cols ?? 80;

@@ -845,7 +845,15 @@ async function disclose(how, taken = false) {
         const c = await query('i', qbuf);
         if (c === 'y') {
             const invmod = await import('./invent.js');
-            await invmod.display_inventory_interactive(null);
+            // C ref: end.c disclose() / wintty.c tty_display_nhwindow(): when
+            // disclosure is automatic, no query clears the prior tty screen.
+            // The menu overlays the existing map and quit/death topline.
+            game._disclose_inventory_auto = !should_query_disclose_option(end_disclose, 'i').ask;
+            try {
+                await invmod.display_inventory_interactive(null);
+            } finally {
+                delete game._disclose_inventory_auto;
+            }
             // C ref: end.c:641 `container_contents(gi.invent, TRUE, TRUE,
             // FALSE)` — one "Contents of the <box>:" window per carried
             // container, recursing into nested ones.
