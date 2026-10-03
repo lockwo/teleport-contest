@@ -1596,6 +1596,9 @@ export async function moveloop_preamble_startup() {
     game.context = game.context || {};
     game.context.rndencode = rnd(9000);
     game.context.seer_turn = rnd(30);
+    // C ref: allmain.c:82 — give hero initial movement points (new game);
+    // set_mon_data() prorates this if the first command is a polymorph.
+    if (game.u) game.u.umovement = 12; /* NORMAL_SPEED */
 
     // C ref: allmain.c:73 `set_wear((struct obj *) 0);` — "for side-effects of
     // starting gear".  u_init's setworn() only sets the worn masks; every
