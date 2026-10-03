@@ -12,6 +12,7 @@ import { game } from './gstate.js';
 import { d, rn2, rnd, rn1 } from './rng.js';
 import {
     isok, A_STR, ZAP_POS,
+    FIRE_RES, COLD_RES, DISINT_RES, SHOCK_RES, POISON_RES, ACID_RES, ANTIMAGIC,
     EXPL_NOXIOUS, EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY,
     MAY_HITMON, MAY_HITYOU, MAY_DESTROY, MAY_FRACTURE,
     N_DIRS, xdir, ydir,
@@ -64,19 +65,26 @@ function uprop(...names) {
     for (const n of names) if ((p[n] | 0) > 0 || p[n] === true) return true;
     return false;
 }
-function Antimagic() { return !!game.u?.formprops?.Antimagic || uprop('Antimagic', 'HAntimagic', 'EAntimagic') || !!game.u?.Antimagic; }
-function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance'); }
-function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance'); }
-function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance'); }
+// C ref: youprop.h E<Prop> — the worn/wielded half of each property, kept in
+// u.uprops_extrinsic (js/invent.js worn_extrinsic()).  Reading only the
+// intrinsic spellings answered FALSE for e.g. a Wizard in a cloak of magic
+// resistance, so explosionmask() never set EXPL_HERO and the hero took the
+// full blast C shrugs off.  Read the store directly: js/invent.js cannot be
+// imported here without an import cycle.
+function wornprop(prop) { return ((game.u?.uprops_extrinsic || {})[prop] | 0) !== 0; }
+function Antimagic() { return !!game.u?.formprops?.Antimagic || uprop('Antimagic', 'HAntimagic', 'EAntimagic') || !!game.u?.Antimagic || wornprop(ANTIMAGIC); }
+function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance') || wornprop(FIRE_RES); }
+function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance') || wornprop(COLD_RES); }
+function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance') || wornprop(SHOCK_RES); }
 // A race-innate grant (e.g. every orc, from level 1) is never persisted as a
 // stored flag anywhere in js/ — OR in the pure has_innate() derivation.
 function Poison_resistance() {
     if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return uprop('Poison_resistance', 'HPoison_resistance', 'EPoison_resistance')
-        || has_innate('HPoison_resistance');
+        || has_innate('HPoison_resistance') || wornprop(POISON_RES);
 }
-function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance'); }
-function Disint_resistance() { return !!game.u?.formprops?.Disint_resistance || uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance'); }
+function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance') || wornprop(ACID_RES); }
+function Disint_resistance() { return !!game.u?.formprops?.Disint_resistance || uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance') || wornprop(DISINT_RES); }
 function Invulnerable() { return uprop('Invulnerable') || !!game.u?.uinvulnerable; }
 function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf') || !!game.u?.Deaf; }
 // C ref: you.h Upolyd == (u.mtimedone != 0).
