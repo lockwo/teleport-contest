@@ -4258,11 +4258,12 @@ async function Amulet_on(amul) {
         break;
     }
     case AMULET_OF_STRANGULATION:
-        // can_be_strangled(): the hero has a head and breathes unless polymorphed
-        // into a breathless/headless form, which this port never does.
-        if (!u?.Strangled) {
+        // C ref: do_wear.c Amulet_on() — `if (can_be_strangled(&youmonst))`;
+        // the timer lives in u.uprops.Strangled (timeout.c / botl read it).
+        if (can_be_strangled_hero()) {
             makeknown(AMULET_OF_STRANGULATION);
-            u.Strangled = 6;
+            u.uprops = u.uprops || {};
+            u.uprops.Strangled = 6;
             game.botl = true;
             await on_msg_accessory(amul);
             on_msg_done = true;
@@ -4328,6 +4329,18 @@ export async function Blindf_on(obj) {
 // C ref: do_wear.c Blindf_off(obj) — clear the eyewear slot (does its own
 // off_msg "You were wearing ..."), then if sight is regained emit "You can see
 // again." and toggle blindness (recompute vision so the room reappears).
+// C ref: mondata.c can_be_strangled(&youmonst) — needs a head, and a
+// brainless form must also be breathless to be immune.
+function can_be_strangled_hero() {
+    const ptr = youmonst_data();
+    if (!ptr || (mflags1_of(ptr) & 0x8000 /* M1_NOHEAD */)) return false;
+    const p = game.u?.uprops || {};
+    const nobrainer = (mflags1_of(ptr) & 0x10000 /* M1_MINDLESS */) !== 0;
+    const nonbreathing = (mflags1_of(ptr) & 0x400 /* M1_BREATHLESS */) !== 0
+        || !!(p.Breathless || p.HBreathless || p.EBreathless)
+        || game.uamul?.otyp === 209 /* AMULET_OF_MAGICAL_BREATHING */;
+    return !nobrainer || !nonbreathing;
+}
 export async function Blindf_off(obj) {
     const { Blind, vision_recalc } = await import('./vision.js');
     const was_blind = Blind();
@@ -4441,8 +4454,8 @@ export async function Amulet_off(amul = game.uamul) {
         break;
     case AMULET_OF_STRANGULATION:
         clearworn_accessory(amul); await off_msg(amul); early_off_msg = true;
-        if (game.u?.Strangled) {
-            game.u.Strangled = 0;
+        if (game.u?.uprops?.Strangled) {
+            game.u.uprops.Strangled = 0;
             game.botl = true;
             // Breathless would say "Your neck is no longer constricted!".
             await pline('You can breathe more easily!');
