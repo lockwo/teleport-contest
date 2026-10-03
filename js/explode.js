@@ -23,10 +23,12 @@ import {
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
     AD_PEST,
 } from './monattk_data.js';
-import { m_at, newsym, update_topl, map_invisible } from './display.js';
+import { m_at, newsym, update_topl, map_invisible, Hallucination_u } from './display.js';
 import { cansee, couldsee } from './vision.js';
 import { is_undead_flag, is_demon_flag } from './monflags_data.js';
 import { has_innate } from './exper.js';
+import { rndmonnam } from './do_name.js';
+import { s_suffix } from './hacklib.js';
 
 // C ref: hack.h:1471 PHYS_EXPL_TYPE; objclass.h:154-156 BURNING_OIL /
 // MON_EXPLODE / TRAP_EXPLODE are MAXOCLASSES+1..+3 and MAXOCLASSES is 18
@@ -246,6 +248,15 @@ function next2u(x, y) {
 }
 function dist2(x0, y0, x1, y1) { return (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0); }
 
+// C ref: explode.c:490,595. Monster targets stop retrying after 20 names.
+function hallucinated_explosion(limit = Infinity) {
+    let str, tries = 0;
+    do {
+        str = `${s_suffix(rndmonnam().name)} explosion`;
+    } while (str[0] !== str[0].toLowerCase() && ++tries < limit);
+    return str;
+}
+
 // C ref: explode.c:199 explode(x, y, type, dam, olet, expltype).
 //
 // `expltype` is a glyph-colour selector; the blast animation (tmp_at DISP_BEAM
@@ -258,7 +269,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
     let damu = dam;
     let str = null, adtyp;
     let mdef = null;
-    let visible = false, didmsg = false, generic = false, uhurt = 0;
+    let visible = false, didmsg = false, generic = false, do_hallu = false, uhurt = 0;
     let exploding_wand_typ = 0;
     const you_exploding = (olet === MON_EXPLODE && type >= 0);
     const explmask = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
@@ -305,6 +316,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
 
     if (olet === MON_EXPLODE && !you_exploding) {
         str = game.killer?.name || null;
+        do_hallu = Hallucination_u() && /(?:'s|s') explosion/i.test(str || '');
     }
     if (type === PHYS_EXPL_TYPE) {
         adtyp = AD_PHYS;
@@ -380,6 +392,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
                 let mtmp = m_at(xx, yy);
                 if (!mtmp && u && xx === u.ux && yy === u.uy) mtmp = u.usteed;
                 if (!mtmp) continue;
+                if (do_hallu) str = hallucinated_explosion(20);
                 if (engulfing_u(mtmp)) {
                     await engulfer_explosion_msg(adtyp, olet);
                 } else if (cansee(xx, yy)) {
@@ -418,6 +431,10 @@ export async function explode(x, y, type, dam, olet, expltype) {
                                       : nonliving(mdata(mtmp)) ? 'destroyed' : 'killed'}!`);
                         await killed(mtmp, { nomsg: true, nocorpse: xkflg });
                     } else {
+                        if (cansee(mtmp.mx, mtmp.my))
+                            await update_topl(`${Monnam(mtmp)} is ${nonliving(mdata(mtmp)) ? 'destroyed' : 'killed'}!`);
+                        else if (mtmp.mtame)
+                            await update_topl('You have a sad feeling for a moment, then it passes.');
                         const { mon_kill_leaving } = await import('./monmove.js');
                         await mon_kill_leaving(mtmp, xkflg);
                     }
@@ -430,6 +447,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
     /* Do your injury last */
     if (uhurt) {
         if (game.flags?.verbose !== false && (type < 0 || olet !== SCROLL_CLASS)) {
+            if (do_hallu) str = hallucinated_explosion();
             await update_topl(`You are caught in the ${str}!`);
             // C ref: explode.c:603 — the fatal line below reads this back to
             // decide between "It is fatal." and "The <str> is fatal.".
