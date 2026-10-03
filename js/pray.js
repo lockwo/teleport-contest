@@ -15,7 +15,7 @@ import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
 import { align_gname } from './role.js';
-import { A_WIS, A_STR, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
+import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     A_ORIGINAL, AM_SHRINE, AM_SANCTUM, AM_CHAOTIC, AM_MASK, Amask2align,
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMIN, LUCKMAX, MM_NOMSG,
     IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE, HALF_SPDAM } from './const.js';
@@ -272,8 +272,14 @@ async function can_pray(praying) {
     gp.aligntyp = on_altar() ? a_align(u.ux, u.uy) : (u.ualign?.type ?? 0);
     gp.trouble = in_trouble();
 
-    // C's is_demon(youmonst.data) refusal needs a demon polyform; the hero is
-    // never polymorphed into one here.
+    const ydat = u.Upolyd ? u.data : null;
+    if (ydat && (mflags2_of(ydat) & 0x100 /* M2_DEMON */) /* ok if chaotic or none (Moloch) */
+        && (gp.aligntyp === A_LAWFUL || gp.aligntyp !== A_NEUTRAL)) {
+        if (praying)
+            await update_topl(`The very idea of praying to a ${gp.aligntyp ? 'lawful' : 'neutral'} god is repugnant to you.`);
+        __canPrayLast = false;
+        return false;
+    }
 
     if (praying) {
         await update_topl(`You begin praying to ${align_gname(roleMnum(), gp.aligntyp)}.`);
@@ -304,8 +310,9 @@ async function can_pray(praying) {
         gp.type = (on_altar() && utype !== gp.aligntyp) ? 2 : 3;
     }
 
-    // C's is_undead(youmonst.data) p_type -1 arm (and its rn2(10) for neutrals)
-    // needs an undead polyform.
+    if (ydat && is_undead_flag(ydat) && !In_hell(u.uz)
+        && (gp.aligntyp === A_LAWFUL || (gp.aligntyp === A_NEUTRAL && !rn2(10))))
+        gp.type = -1;
 
     __canPrayLast = (gp.type === 3 && !In_hell(u.uz));
     return !praying ? __canPrayLast : true;
@@ -1106,6 +1113,20 @@ async function prayer_done() {
             await update_topl('Nothing else happens.');
             return 1;
         }
+    } else if (gp.type === -1) {
+        /* praying while poly'd into an undead creature while non-chaotic */
+        await godvoice(alignment, (alignment === A_LAWFUL)
+            ? 'Vile creature, thou durst call upon me?'
+            : 'Walk no more, perversion of nature!');
+        await update_topl('You feel like you are falling apart.');
+        /* KMH -- Gods have mastery over unchanging */
+        const { rehumanize } = await import('./polyself.js');
+        await rehumanize();
+        /* no Half_physical_damage adjustment here */
+        const { losehp_do } = await import('./do.js');
+        await losehp_do(rnd(20), 'residual undead turning effect');
+        exercise(A_CON, false);
+        return 1;
     }
     if (In_hell(u.uz)) {
         await update_topl(
