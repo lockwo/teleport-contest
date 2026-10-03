@@ -23,6 +23,7 @@ import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
          DRUM_OF_EARTHQUAKE, CAN_OF_GREASE, TINNING_KIT, EXPENSIVE_CAMERA,
          POT_OIL, ROCK, BOULDER, LEASH,
          CANDELABRUM_OF_INVOCATION } from './mkobj.js';
+import { arti_cost } from './artifact.js';
 import { acurr_eff, adjalign, exercise } from './attrib.js';
 import { monster_by_pmidx, mpickobj } from './makemon.js';
 import { rn2 } from './rng.js';
@@ -226,13 +227,6 @@ export function oid_price_adjustment(obj, oid) {
         && (obj.oclass !== GEM_CLASS || o?.material !== GLASS))
         return (oid % 4) === 0 ? 1 : 0;
     return 0;
-}
-
-// C ref: artifact.c arti_cost(otmp).  artilist[] is not ported, so an artifact
-// with no listed cost is the only branch we can evaluate; see the deferred note.
-function arti_cost(obj) {
-    if (!obj.oartifact) return base_oc_cost(obj.otyp);
-    return 100 * base_oc_cost(obj.otyp);
 }
 
 // C ref: shk.c getprice(obj, shk_buying):4318 — list price before the shk's
