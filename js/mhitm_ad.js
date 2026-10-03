@@ -220,7 +220,7 @@ export async function mhitm_mgc_atk_negated(magr, mdef, verbosely, ops) {
 // returns ER_NOTHING (not vulnerable, erodeproof, already maximally eroded);
 // case 1 (cloak, else body armour, else shirt) always ends the loop because
 // the body is a target whether or not it is covered.
-async function erode_armor(mdef, hurt, _ops) {
+export async function erode_armor(mdef, hurt, _ops) {
     const { erode_obj } = await import('./trap.js');
     const hero = is_hero(mdef);
     const HERO_SLOT = { [W_ARMH]: 'uarmh', [W_ARMC]: 'uarmc', [W_ARM]: 'uarm',

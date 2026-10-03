@@ -828,7 +828,10 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
         } else {
             tmp = 0;
         }
-        rn2(30);   /* erode_armor(magr, ERODE_CORRODE) — no monster body armour */
+        if (!rn2(30)) {                        /* mhitm.c:1345 */
+            const { erode_armor } = await import('./mhitm_ad.js');
+            await erode_armor(magr, 3 /* ERODE_CORRODE */);
+        }
         if (!rn2(6)) {
             const { acid_damage } = await import('./trap.js');
             await acid_damage(MON_WEP_MM(magr));
@@ -990,22 +993,25 @@ async function failed_grab(magr, mdef, mattk) {
 // this used to emit that (hero-directed) wording with a hardcoded "crude
 // dagger" as the weapon name.
 async function mswingsm(magr, mdef, otemp) {
-    if (!mm_can_see_mon(magr)) return;
-    // mswings_verb(otemp, bash): SLASH weapons swing, everything else the
-    // monsters here wield thrusts; a polearm used at reach bashes (no monster
-    // in this port wields one).
-    const verb = SLASH_OTYPS_MM.has(otemp.otyp) ? 'swings' : 'thrusts';
-    const hisher = mhis(magr);
-    const many = ((otemp.quan | 0) > 1) ? 'one of ' : '';
-    await emitMMmsg(`${Monnam(magr)} ${verb} ${many}${hisher} ${xname(otemp)}`
-        + ` at ${mon_nam(mdef)}.`);
+    const MM = await import('./monmove.js');
+    const { Blind } = await import('./vision.js');
+    const u = game.u || {};
+    const seeInvis = !!(u.see_invis || u.uprops?.See_invisible
+                        || u.uprops?.HSee_invisible || u.uprops?.ESee_invisible);
+    // C: flags.verbose && !Blind && mon_visible(magr)
+    if (game.flags?.verbose === false || Blind()
+        || (magr.minvis && !seeInvis) || magr.mundetected)
+        return;
+    const bash = MM.is_pole(otemp) && otemp.oartifact !== ART_SNICKERSNEE_MM
+        && dist2_mm(magr.mx, magr.my, mdef.mx, mdef.my) <= 2;
+    const ON = await import('./objnam.js');
+    await emitMMmsg(`${Monnam(magr)} ${MM.mswings_verb(otemp, bash)} `
+        + `${((otemp.quan | 0) > 1) ? 'one of ' : ''}${mhis(magr)} `
+        + `${ON.xname_flags(otemp, 0)} at ${mon_nam(mdef)}.`);
 }
-// C ref: objects[].oc_dir & SLASH for the edged weapons monsters can wield
-// (otyps per mkobj.js).  Everything else they carry is PIERCE.
-const SLASH_OTYPS_MM = new Set([
-    43 /*scimitar*/, 44 /*silver saber*/, 45 /*broadsword*/, 46 /*long sword*/,
-    47 /*two-handed sword*/, 48 /*katana*/, 51 /*axe*/, 52 /*battle-axe*/,
-]);
+// C ref: artilist.h ART_SNICKERSNEE.
+const ART_SNICKERSNEE_MM = 19;
+function dist2_mm(x0, y0, x1, y1) { return (x0 - x1) ** 2 + (y0 - y1) ** 2; }
 
 // C ref: weapon.c hitval(otmp, mon) — spe + oc_hitbon, +2 for a blessed weapon
 // against undead/demons.  (The spear-vs-kebabable, trident-vs-swimmer,

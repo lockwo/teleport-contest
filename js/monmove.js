@@ -6460,7 +6460,7 @@ const WHIP_OTYP = new Set([78, 82]);
 // thrust over the mixed slash/bash alternative) — the rn2(2) only fires for
 // weapons with PIERCE plus another bit set (knife/stiletto/halberd/fauchard/
 // bill-guisarme/lucern hammer/bec de corbin), matching C's short-circuit.
-function mswings_verb(otemp, bash) {
+export function mswings_verb(otemp, bash) {
     const dir = WEAPON_ODIR[otemp?.otyp] ?? 0;
     const lash = WHIP_OTYP.has(otemp?.otyp);
     const thrust = (dir & 1) !== 0 && ((dir & ~1) === 0 || !rn2(2));
