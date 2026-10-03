@@ -49,7 +49,7 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          ROT_CORPSE, SHRINK_GLOB, W_ARMOR, W_ACCESSORY, W_WEP, W_ART,
          W_AMUL, W_TOOL, W_RING, W_RINGL, FIRE_RES, COLD_RES,
          SHOCK_RES, ACID_RES, DISINT_RES, ANTIMAGIC, is_magical_trap, has_oname, ONAME,
-         ESHK, engulfing_u, u_at, M_AP_TYPE, NHW_TEXT, NHW_MENU,
+         ESHK, engulfing_u, u_at, M_AP_TYPE, NHW_MENU,
          PICK_ONE, LEVITATION, FLYING, KILLED_BY, KILLED_BY_AN,
          NO_KILLER_PREFIX, ARM, LAVAWALL, DB_UNDER, DB_FLOOR, VWALL, HWALL,
          TT_LAVA, TT_INFLOOR, PASSES_WALLS } from './const.js';
@@ -374,16 +374,10 @@ async function litroom_zap(on, obj) {
     if (litroom) await litroom(on, obj);
 }
 
-// C ref: zap.c makewish() — the wand-of-wishing prompt.  The whole function is
-// already ported for #wizwish (getlin -> readobjnam -> hold_another_object ->
-// u.ublesscnt += rn1(100, 50)); the wand reaches the SAME C function, so a stub
-// here both left the getlin unread and dropped every one of those draws.
-// C prints "You may wish for an object." only when flags.verbose, and wiz_wish()
-// clears verbose across its own call — hence the line lives here, not in
-// makewish itself.
+// C ref: zap.c makewish() — the wand-of-wishing prompt; same C function as
+// #wizwish, so it lives with the other callers in extcmd-handlers.js
+// (including makewish()'s own verbose "You may wish for an object.").
 async function makewish() {
-    if (game.flags?.verbose !== false)
-        await pline('You may wish for an object.');
     const { makewish: makewish_impl } = await import('./extcmd-handlers.js');
     await makewish_impl();
 }
@@ -4992,29 +4986,32 @@ export async function wishcmdassist(triesleft) {
     const cardinals = ['zero', 'one', 'two', 'three', 'four', 'five'];
     const too_many = 'too many';
 
-    const wt = await import('./wintty.js');
-    const win = wt.tty_create_nhwindow(NHW_TEXT);
-    if (!win)
-        return;
-    for (const line of wishinfo)
-        wt.tty_putstr(win, 0, line);
+    const lines = [...wishinfo];
     if (!game.u?.uconduct?.wishes)
-        wt.tty_putstr(win, 0, preserve_wishless);
-    wt.tty_putstr(win, 0, '');
+        lines.push(preserve_wishless);
+    lines.push('');
     /* C: retry_info[] = "If you specify an unrecognized object name %s%s time%s," */
     const cardinal = (triesleft >= 0 && triesleft < cardinals.length)
         ? cardinals[triesleft] : too_many;
-    wt.tty_putstr(win, 0, `If you specify an unrecognized object name ${cardinal}${
+    lines.push(`If you specify an unrecognized object name ${cardinal}${
         (triesleft < MAXWISHTRY_Z) ? ' more' : ''} time${plur_z(triesleft)},`);
-    wt.tty_putstr(win, 0, retry_too);
-    wt.tty_putstr(win, 0, '');
-    if (game.iflags?.cmdassist)
-        wt.tty_putstr(win, 0, suppress_cmdassist);
-    wt.tty_display_nhwindow(win, true);
-    /* wintty.js requires an explicit dismiss before destroying an active
-       TEXT/MENU window (see its tty_destroy_nhwindow note). */
-    await wt.tty_dismiss_nhwindow(win);
-    wt.tty_destroy_nhwindow(win);
+    lines.push(retry_too);
+    lines.push('');
+    if (game.iflags?.cmdassist !== false)
+        lines.push(suppress_cmdassist);
+    /* NHW_TEXT window: these lines are too wide for a corner overlay, so it
+       is full-screen (offx 0), paged by dmore() on the bottom row and torn
+       down with docrt() by erase_menu_or_text(). */
+    const { renderWindowScreen, dismiss_invent_screen } = await import('./invent.js');
+    const { nhgetch } = await import('./input.js');
+    renderWindowScreen(lines, { footer: '--More--', footerRow: 23, footerCol: 0,
+                                modal: 'textwin' });
+    /* xwaitforspace(quitchars) */
+    for (;;) {
+        const c = await nhgetch();
+        if (c === 32 || c === 13 || c === 10 || c === 27) break;
+    }
+    await dismiss_invent_screen();
 }
 
 // C ref: zap.c:6227 wish_history_add(buf) / :6259 wish_history_flush() /

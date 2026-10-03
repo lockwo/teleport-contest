@@ -2416,11 +2416,15 @@ export async function getdir(s) {
     // C ref: win/tty/topl.c tty_yn_function(): `if (toplin ==
     // TOPLINE_NEED_MORE && !skip) more(); flags &= ~(WIN_STOP|WIN_NOSTOP);`
     // before the new prompt — an unacknowledged pending message (e.g. a pet
-    // dropping an item this turn) gets its own --More-- pause, unless the
+    // dropping an item this turn, or doloot's grave refusal right before its
+    // "Loot in what direction?") gets its own --More-- pause, unless the
     // player already ESC-dismissed a previous one this turn (game._winStop),
-    // in which case it was suppressed outright. Either way, one-shot: clear
-    // it once this prompt is drawn.
-    if (game._toplin === 1 && !game._winStop) await topl_more();
+    // in which case it was suppressed outright. _yn_need_more is that
+    // NEED_MORE as pline() leaves it (see y_n()).  Either way, one-shot:
+    // clear it once this prompt is drawn.
+    if ((game._toplin === 1 || game._yn_need_more) && !game._winStop)
+        await topl_more();
+    game._yn_need_more = false;
     game._winStop = false;
     game._pending_message = prompt;
     await flush_screen(1);

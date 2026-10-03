@@ -40,7 +40,7 @@ import { record_price_quote as oi_record_price_quote, append_price_quote as oi_a
 import { CapitalMon } from './rumors.js';
 import { tshirt_text as rd_tshirt_text, apron_text as rd_apron_text,
          candy_wrapper_text as rd_candy_wrapper_text, hawaiian_motif as rd_hawaiian_motif } from './read.js';
-import { P_BOW, P_CROSSBOW, P_DART, P_SHURIKEN, P_BOOMERANG } from './const.js';
+import { P_BOW, P_CROSSBOW, P_DART, P_SHURIKEN, P_BOOMERANG, BURN_OBJECT } from './const.js';
 
 // Additional imports used only by the objnam.c naming core appended at the end
 // of this file.  Each of these six modules is outside the pre-existing
@@ -2499,7 +2499,7 @@ export function doname_base(obj, doname_flags) {
                 if (obj.lamplit) {
                     /* without this, wishing for "lit candle" yields "partly
                        used candle (lit)" */
-                    turns_left += peek_timer(1 /*BURN_OBJECT*/, obj) - moves();
+                    turns_left += peek_timer(BURN_OBJECT, obj) - moves();
                 }
                 if (turns_left < full_burn_time)
                     prefix += 'partly used ';

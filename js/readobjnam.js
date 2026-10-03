@@ -334,6 +334,7 @@ function newData(bp) {
         contents: TIN_UNDEFINED,
         wetness: 0,
         gsize: 0,
+        lightit: false, globweight: null,
         ftype: game.context?.current_fruit ?? null,   /* C: context.current_fruit */
         zombify: false,
         oclass: 0,
@@ -611,6 +612,36 @@ function postparse1(d) {
     else if (strncmpi(d.bp, 'pairs of ', 9)) { d.bp = d.bp.slice(9); if (d.cnt > 1) d.cnt *= 2; }
     else if (strncmpi(d.bp, 'set of ', 7)) d.bp = d.bp.slice(7);
     else if (strncmpi(d.bp, 'sets of ', 8)) d.bp = d.bp.slice(8);
+
+    // C ref: objnam.c:4337-4368 — intercept pudding globs; they're a valid
+    // wish target but must not be treated like a corpse.  A count magnifies
+    // weight rather than quantity (always 1 for globs).  Checks "glob",
+    // "<foo> glob", and "glob of <foo>".
+    {
+        const bp = d.bp;
+        let gp = -1;
+        if (strcmpi(bp, 'glob') || bstrcmpi_tail(bp, 5, ' glob')
+            || strcmpi(bp, 'globs') || bstrcmpi_tail(bp, 6, ' globs')
+            || (gp = strstri(bp, 'glob of ')) >= 0
+            || (gp = strstri(bp, 'globs of ')) >= 0) {
+            const monstr = gp < 0 ? bp : bp.slice(gp).slice(strstri(bp.slice(gp), ' of ') + 4);
+            let mntmp = matchMonsterPrefix(monstr).pm;
+            /* if we didn't recognize monster type, pick a valid one at random */
+            if (mntmp === NON_PM) {
+                const gray = name_to_pmidx('gray ooze');
+                mntmp = rn1(name_to_pmidx('black pudding') - gray, gray);
+            }
+            /* canonical form here is already singular, so makesingular()
+               won't bump the count */
+            if (d.cnt < 2 && strstri(bp, 'globs') >= 0) d.cnt = 2;
+            /* canonical spelling; an invalid glob type fails object lookup */
+            d.bp = `glob of ${monster_by_pmidx(mntmp).name}`;
+            d.mntmp = NON_PM;
+            d.oclass = FOOD_CLASS;
+            d.actualn = d.bp; d.dn = null;
+            return 1; /* goto srch */
+        }
+    }
 
     // C objnam.c:4370-4433: "corpse of <monster>" is resolved before
     // leading monster names ("<monster> corpse").  Keep the exclusions: an
@@ -1115,7 +1146,7 @@ export function readobjnam(bp, forWish = true) {
 // object class may be a trap or terrain wish.  Messages are handed back
 // rather than printed because this function is synchronous.
 function wiztrap(d) {
-    if (wizard() && !d.oclass) {
+    if (wizard() && !game.program_state?.wizkit_wishing && !d.oclass) {
         const messages = [];
         if (wizterrainwish(d, messages)) return { kind: 'hands', messages };
     }
@@ -1188,9 +1219,16 @@ function finalize(d) {
         if (d.cnt > 1) {
             let rn1cnt = rn1(5, 2); /* 2..6 */
             if (rn1cnt > 6 - d.gsize) rn1cnt = 6 - d.gsize;
-            // C asks wizards y_n("Override glob weight limit?"); this
-            // synchronous parser cannot prompt and takes the default.
-            if (d.cnt > rn1cnt) d.cnt = rn1cnt;
+            // C ref: objnam.c:5062-5066 — a wizard may override the weight cap
+            // via y_n("Override glob weight limit?").  That prompt needs input,
+            // which this synchronous parser cannot do, so the capped weight is
+            // applied here and the choice is handed back to makewish(): it asks
+            // (at the same point in the message stream, right after the parse)
+            // and, on 'y', restores the uncapped weight.
+            const capped = (d.cnt > rn1cnt);
+            if (capped && wizard() && !game.program_state?.wizkit_wishing)
+                d.globweight = { base_owt: otmp.owt, cnt: d.cnt };
+            if (capped) d.cnt = rn1cnt;
             otmp.owt *= d.cnt;
         }
         d.cnt = 0;
@@ -1211,6 +1249,18 @@ function finalize(d) {
                         || (d.oclass === WEAPON_CLASS && is_ammo)))))
             otmp.quan = d.cnt;
     }
+
+    // C ref: objnam.c:5086-5092 — a wished-for "lit" light source is briefly
+    // placed on the hero's square so that begin_burn() can register a light
+    // source and a BURN_OBJECT timer, then extracted again.  begin_burn() is
+    // async in this port (it imports light.js/timeout.js), so the decision is
+    // recorded here and the caller performs it; without it a wished "lit lamp"
+    // never shows doname()'s "(lit)" suffix.
+    if (d.islit && (d.typ === OT('OIL_LAMP') || d.typ === OT('MAGIC_LAMP')
+                    || d.typ === OT('BRASS_LANTERN')
+                    || d.typ === TALLOW_CANDLE || d.typ === WAX_CANDLE
+                    || d.typ === OT('POT_OIL')))
+        d.lightit = true;
 
     if (d.spesgn === 0) {
         /* spe not specified; retain the randomly assigned value */
@@ -1464,7 +1514,10 @@ function finalize(d) {
     otmp.owt = weight(otmp);
     if (d.very && otmp.otyp === OT('HEAVY_IRON_BALL')) otmp.owt += WT_IRON_BALL_INCR;
 
-    return { kind: 'obj', obj: otmp };
+    // `lightit`/`globweight` are the two readobjnam() steps that need input or
+    // async work in this port; makewish() performs them (see above).
+    return { kind: 'obj', obj: otmp, lightit: !!d.lightit,
+             globweight: d.globweight || null };
 }
 
 // C ref: do_name.c oname(obj, name, ONAME_WISH) -- an existing artifact of
