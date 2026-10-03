@@ -104,7 +104,8 @@ import { acurr_eff, acurr_str_encoded, exercise, set_moreluck } from './attrib.j
 import { hitval, dbon, weapon_type, weapon_hit_bonus_core,
          weapon_dam_bonus_core } from './weapon.js';
 import { P_TWO_WEAPON_COMBAT as P_TWO_WEAPON_COMBAT_INV,
-         P_RIDING as P_RIDING_INV, W_ART as W_ART_PROP } from './const.js';
+         P_RIDING as P_RIDING_INV, W_ART as W_ART_PROP, W_WEP as W_WEP_PROP,
+         HAND, ONAME_VIA_NAMING, ONAME_KNOW_ARTI } from './const.js';
 import {
     UNENCUMBERED, OVERLOADED,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
@@ -775,24 +776,69 @@ function call_ok(obj) {
     return GETOBJ_SUGGEST;
 }
 
+// C ref: do_name.c do_oname(obj).
 async function do_oname(obj) {
+    /* Do this now because there's no point in even asking for a name */
     if (obj.otyp === SPE_NOVEL) {
         await pline(`${simple_obj_name(obj)} already has a published name.`);
         return;
     }
-    if (!(game.u?.blinded > 0) && !game.ublindf) observe_object(obj);
-    const target = simple_obj_name(obj, { article: false, quantity: false, buc: false });
     const which = (obj.quan || 1) > 1 ? 'these' : 'this';
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
-    let buf = await hooked_tty_getlin(`What do you want to name ${which} ${target}?`, null);
+    let buf = await hooked_tty_getlin(`What do you want to name ${which} ${xname(obj)}?`, null);
     game._pending_message = '';
-    if (!buf || buf === '\x1b') return;
-    buf = mungspaces(buf).slice(0, 62);
+    if (!buf || buf[0] === '\x1b') return;
+    /* strip leading and trailing spaces, condense internal sequences */
+    buf = mungspaces(buf).slice(0, 62 /* PL_PSIZ - 1 */);
+
     if (obj.oartifact) {
         await pline(`${ONAME(obj) || 'The artifact'} resists the attempt.`);
         return;
     }
+    const A = await import('./artifact.js');
+    /* relax restrictions over proper capitalization for artifacts */
+    const a = A.artifact_name(buf, true);
+    if (a && (A.restrict_name(obj, a.name) || A.exist_artifact(obj.otyp, a.name))) {
+        /* substitute canonical spelling before slippage */
+        const bufcpy = a.name;
+        const { wipeout_text } = await import('./engrave.js');
+        const { rnd_on_display_rng } = await import('./rnd.js');
+        /* for "the Foo of Bar", only scuff "Foo of Bar" part */
+        const pfx = /^the /i.test(bufcpy) ? bufcpy.slice(0, 4) : '';
+        let tail = bufcpy.slice(pfx.length);
+        do {
+            tail = wipeout_text(tail, rnd_on_display_rng(2), 0);
+        } while (pfx + tail === bufcpy);
+        buf = pfx + tail;
+        await pline(`While engraving, your ${body_part(HAND)} slips.`);
+        /* C: display_nhwindow(WIN_MESSAGE, FALSE) -- page the pending line */
+        if (!game._winStop && game._pending_message
+            && (game._toplin === 1 || game._toplinSoft === game._pending_message)) {
+            await topl_more();
+            game._toplin = 0;
+            game._toplinSoft = null;
+            game._pending_message = '';
+        }
+        await pline(`You engrave: "${buf}".`);
+        /* violate illiteracy conduct since hero attempted to write
+           a valid artifact name */
+        if (game.u) game.u.uconduct = { ...(game.u.uconduct || {}),
+            literate: ((game.u.uconduct || {}).literate || 0) + 1 };
+    } else if (a && obj.otyp === a.otyp) {
+        /* naming will change it into an artifact: canonical capitalization */
+        buf = a.name;
+    }
+    /* C ref: do_name.c oname(obj, buf, ONAME_VIA_NAMING | ONAME_KNOW_ARTI) */
+    if (buf && A.exist_artifact(obj.otyp, buf)) return;
     oname(obj, buf);
+    if (buf) A.artifact_exists(obj, buf, true, ONAME_VIA_NAMING | ONAME_KNOW_ARTI);
+    if (obj.oartifact) {
+        /* activate warning if you've just named your weapon "Sting" */
+        if (obj === game.uwep) await A.set_artifact_intrinsic(obj, true, W_WEP_PROP);
+        /* violate illiteracy conduct since successfully wrote arti-name */
+        if (game.u) game.u.uconduct = { ...(game.u.uconduct || {}),
+            literate: ((game.u.uconduct || {}).literate || 0) + 1 };
+    }
     update_inventory();
 }
 
@@ -804,6 +850,12 @@ export async function name_inventory_object() {
 export async function call_inventory_object() {
     const obj = await getobj('call', call_ok, GETOBJ_NOFLAGS);
     if (!obj) return;
+    // C: getobj's prompt is a query, not a message needing --More--; the
+    // "Call ...:" getlin simply replaces it on the top line.
+    if (game._pending_message && game._pending_message.startsWith('What do you want to call?')) {
+        game._pending_message = '';
+        game._toplin = 0;
+    }
     if (!(game.u?.blinded > 0) && !game.ublindf) observe_object(obj);
     if (!obj.dknown)
         await pline('You would never recognize another one.');
