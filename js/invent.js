@@ -5714,11 +5714,19 @@ async function ready_weapon(wep) {
     } else {
         res = ECMD_TIME;
         if (will_weld(wep)) {
-            // Cursed-artifact weld message (not exercised: welded() is false for
-            // the recorded kits).  Kept minimal to avoid unported name helpers.
+            // C ref: wield.c:196 — `tmp = xname(wep)`; the literal "The " is
+            // prefixed only when objnam.c the() would add an article, i.e. the
+            // name is not a proper noun.  An artifact the hero has NOT fully
+            // identified reads "silver mace named Demonbane" (lower case, so
+            // "The " goes in front); a fully identified one is just
+            // "Demonbane" and gets no article.  This used to print
+            // cxname_singular() with no article at all.
+            const nm = xname(wep);
+            const thestr = (!/^The /.test(nm) && /^[a-z]/.test(nm)) ? 'The ' : '';
             await update_topl(
-                `${cxname_singular(wep)} ${wep.quan === 1 ? 'welds itself' : 'weld themselves'} to your `
-                + `${bimanual(wep) ? makeplural(body_part(6)) : `dominant right ${body_part(6)}`}!`);
+                `${thestr}${nm} ${wep.quan === 1 ? 'welds itself' : 'weld themselves'} to your `
+                + `${bimanual(wep) ? makeplural(body_part(6))
+                    : `dominant right ${body_part(6)}`}!`);
             wep.bknown = 1;
         } else {
             // C kludge: temporarily set W_WEP so prinv() prints "(weapon in
