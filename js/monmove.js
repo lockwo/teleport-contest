@@ -4406,7 +4406,7 @@ export async function dochug(mtmp) {
         // S_LEPRECHAUN was vacuously false, so the rn2(2) below never rolled.
         || (mdat?.mcls === S_LEPRECHAUN && !findgold(game.invent)
             && (findgold(mtmp.minvent) || rn2(2)))
-        || (is_wanderer(mdat) && !rn2(4))
+        || (is_wanderer(mdat) && !rn2(4)) || (Conflict() && !mtmp.iswiz)
         || (!mtmp.mcansee && !rn2(4))
         || mtmp.mpeaceful;
 
