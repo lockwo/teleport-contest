@@ -8,6 +8,7 @@ import { depth as depth_of_level } from './hacklib.js';
 import { christen_monst, mhim, mhis } from './do_name.js';
 import { builds_up, In_hell, Is_special, level_difficulty_c } from './dungeon.js';
 import { roles } from './role.js';
+import { has_innate } from './exper.js';
 import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
          rnd_class, objects, set_corpsenm, add_to_container,
          // Both spellings are imported on purpose: the pre-existing call sites
@@ -2116,8 +2117,16 @@ function rnd_misc_item(mtmp) {
     case 0: if (mtmp.isgd) return 0; return rn2(6) ? 302 : 420;
     // POT_INVISIBILITY is 305 (303 is POT_LEVITATION).  C also lets the item
     // through for a peaceful monster when the hero has See_invisible.
-    case 1:
-        if (mtmp.mpeaceful && !game.u?.uprops?.See_invisible) return 0;
+    case 1: {
+        // C ref: youprop.h See_invisible (HSee_invisible || ESee_invisible);
+        // a Monk has the intrinsic from XL1.  The hero's copy is spelled
+        // several ways in this port (see js/mon.js See_invisible_mon).
+        const u = game.u || {}, p = u.uprops || {};
+        const seeInvis = !!(u.see_invis || p.HSee_invisible || u.HSee_invisible
+            || p.ESee_invisible || u.ESee_invisible || p.See_invisible || u.See_invisible
+            || has_innate('HSee_invisible'));
+        if (mtmp.mpeaceful && !seeInvis) return 0;
+    }
         return rn2(6) ? 305 : 418;
     case 2: return 309;
     }
