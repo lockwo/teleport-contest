@@ -1791,7 +1791,11 @@ export async function rhack(key) {
         // whole multi-turn rush inline and leaves game.context.move = 0.
         const rdir = CTRL_RUSH_DIR[key];
         await do_run_prefixed(DIR_DX[rdir], DIR_DY[rdir], 3);
-    } else if (ch === 'F') {
+    } else if (ch === 'F' || ch === '-') {
+        // C ref: cmd.c commands_init() `bind_key('-', "fight")` — '-' is a
+        // second default key for the fight prefix (hidden from the help listing
+        // when number_pad is off, cmd.c:3048, but bound all the same).  Without
+        // it '-' fell through to "Unknown command '-'.".
         // C ref: cmd.c do_fight() — the 'F' fight prefix forces an attack in the
         // direction of the following movement command (attack even when nothing
         // is seen there).  It sets svc.context.forcefight, takes no time, and
