@@ -1077,18 +1077,20 @@ export function welded(obj) {
     return false;
 }
 function can_reach_floor(_pit) { return true; }
-// C ref: do.c dropx(obj):786 — freeinv(), then (unless swallowed) the altar
-// check that reveals BUC via doaltarobj(), then dropy()/dropz() for the real
-// floor-placement/shop-sell dispatch.  ship_object() (dig.c — a dropped item
-// falling through a hole/trap door to the level below) has no port anywhere
-// in js/; js/do.js's flooreffects() already documents the identical gap for
-// its own ship_object() call, so skipping it here is consistent.
+// C ref: do.c dropx(obj):786 — freeinv(), then (unless swallowed) ship_object()
+// (the item rides a hole/trap door/down stairs to the level below and is gone
+// from here), then the altar check that reveals BUC via doaltarobj(), then
+// dropy()/dropz() for the real floor-placement/shop-sell dispatch.
 export async function dropx(obj) {
     freeinv(obj);
     const u = ustate();
-    if (!u.uswallow && IS_ALTAR(game.level?.at(u.ux, u.uy)?.typ)) {
-        const DOm = await import('./do.js');
-        await DOm.doaltarobj(obj); /* set bknown */
+    if (!u.uswallow) {
+        const { ship_object } = await import('./dokick.js');
+        if (await ship_object(obj, u.ux, u.uy, false)) return;
+        if (IS_ALTAR(game.level?.at(u.ux, u.uy)?.typ)) {
+            const DOm = await import('./do.js');
+            await DOm.doaltarobj(obj); /* set bknown */
+        }
     }
     await dropy(obj);
 }
@@ -6743,10 +6745,16 @@ async function throwit(otmp, skillsnap, wep_mask) {
                     losehp_invent(dmg);
                 }
                 otmp.owornmask = 0;
-                mkobj_place_object(otmp, u.ux, u.uy);
-                otmp.where = OBJ_FLOOR;
-                stackobj(otmp);
-                newsym(u.ux, u.uy);
+                // C ref: dothrow.c:1754 `if (!ship_object(obj, u.ux, u.uy,
+                // FALSE)) dropy(obj);` — a boomeranging weapon that lands at
+                // the hero's feet over a hole goes down with it.
+                const { ship_object } = await import('./dokick.js');
+                if (!(await ship_object(otmp, u.ux, u.uy, false))) {
+                    mkobj_place_object(otmp, u.ux, u.uy);
+                    otmp.where = OBJ_FLOOR;
+                    stackobj(otmp);
+                    newsym(u.ux, u.uy);
+                }
             }
             return ECMD_TIME;
         }
@@ -6786,6 +6794,13 @@ async function throwit(otmp, skillsnap, wep_mask) {
     }
     const { flooreffects } = await import('./do.js');
     if (await flooreffects(otmp, land.x, land.y, 'fall')) return ECMD_TIME;
+    // C ref: dothrow.c:1818 — `if (!mon && ship_object(obj, bhitpos.x,
+    // bhitpos.y, FALSE))`: the missile landed on a hole/trap door/down stairs
+    // and rides it to the level below instead of resting here.
+    if (!land.mon) {
+        const { ship_object } = await import('./dokick.js');
+        if (await ship_object(otmp, land.x, land.y, false)) return ECMD_TIME;
+    }
     otmp.owornmask = 0;
     mkobj_place_object(otmp, land.x, land.y);
     otmp.where = OBJ_FLOOR;
@@ -6830,6 +6845,13 @@ export async function hitfloor(otmp, verbosely) {
     if (!soft && (await DT.hero_breaks(otmp, u.ux, u.uy, DT.BRK_FROM_INV))) {
         newsym(u.ux, u.uy);
         return;
+    }
+    // C ref: dothrow.c:644 `if (ship_object(obj, u.ux, u.uy, FALSE)) return;`
+    // — the hero is standing on a hole/trap door/down stairs, so what lands at
+    // their feet keeps going to the level below.
+    {
+        const { ship_object } = await import('./dokick.js');
+        if (await ship_object(otmp, u.ux, u.uy, false)) return;
     }
     mkobj_place_object(otmp, u.ux, u.uy);
     otmp.where = OBJ_FLOOR;

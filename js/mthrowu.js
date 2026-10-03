@@ -292,9 +292,9 @@ export async function drop_throw(obj, ohit, x, y, deps = {}) {
     if (broken) {
         await deps.delobj?.(obj);
     } else {
-        const { down_gate } = await import('./dokick.js');
+        const { down_gate, ship_object } = await import('./dokick.js');
         if (down_gate(x, y) !== -1)
-            broken = !!(await deps.ship_object?.(obj, x, y, false));
+            broken = !!(await ship_object(obj, x, y, false));
         if (!broken) {
             let mtmp = deps.m_at?.(x, y) || null;
             broken = !!(await deps.flooreffects?.(obj, x, y, 'fall'));

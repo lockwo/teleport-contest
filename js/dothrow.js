@@ -772,7 +772,14 @@ export async function throw_gold(obj) {
         } else {
             const land = I.bhit_thrown_landing(u.dx, u.dy, range, obj);
             bx = land.x; by = land.y;
-            if (land.mon && (await ghitm(land.mon, obj))) return ECMD_TIME;
+            if (land.mon) {
+                if (await ghitm(land.mon, obj)) return ECMD_TIME;
+            } else {
+                // C ref: dothrow.c:2715 — thrown gold that lands on a hole or
+                // trap door rides it to the level below.
+                const { ship_object } = await import('./dokick.js');
+                if (await ship_object(obj, bx, by, false)) return ECMD_TIME;
+            }
         }
     }
 

@@ -2855,9 +2855,10 @@ export async function flooreffects(obj, x, y, verb) {
             }
         } else {
             // C ref: do.c:298 `else if (ship_object(obj, x, y, FALSE)) res=TRUE;`
-            // — dig.c ship_object() has no port in js/; it drops the object to
-            // the level below and prints its own message.
-            void 0;
+            // — the hero is teetering at the edge of a hole/trap door, so the
+            // object rides it to the level below (and prints its own message).
+            const { ship_object } = await import('./dokick.js');
+            if (await ship_object(obj, x, y, false)) res = true;
         }
     } else if (obj.globby) {
         /* Globby things like puddings might stick together.  C passes &globbyobj

@@ -48,6 +48,7 @@ import {
     W_BALL, W_ART, W_ARTI, I_SPECIAL, FROM_FORM, IS_SINK, W_ARMG, Has_contents, OMONST,
     TT_INFLOOR, TT_BURIEDBALL,
     NO_TRAP, TRAPNUM, FIRE_RES, TELEDS_ALLOW_DRAG, TELEDS_TELEPORT,
+    MIGR_NOWHERE, MIGR_RANDOM,
     ANTIMAGIC, HALF_PHDAM, HALF_SPDAM, PASSES_WALLS, IRONBARS, IS_OBSTRUCTED,
 } from './const.js';
 import {
@@ -4768,6 +4769,89 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
             }
         }
         if (style === ROLL) {
+            // C ref: trap.c:3421 — an object rolling over a down gate rides it
+            // to the level below.  ship_object() spends its rn2(3) "stays put"
+            // roll even for a boulder, which then returns FALSE and plugs the
+            // hole through flooreffects() below.
+            const { down_gate, ship_object } = await import('./dokick.js');
+            if (down_gate(x, y) !== MIGR_NOWHERE) {
+                if (await ship_object(singleobj, x, y, false)) {
+                    used_up = true;
+                    launch_drop_spot(null, 0, 0);
+                    break;
+                }
+            }
+            // C ref: trap.c:3427 — a rolling BOULDER interacts with the trap it
+            // rolls onto before the generic flooreffects() pass.
+            const t = t_at(x, y);
+            if (t && otyp === BOULDER) {
+                let handled = false, stop = false;
+                if (t.ttyp === LANDMINE) {
+                    if (rn2(10) > 2) {
+                        await pline(`KAABLAMM!!!${cansee(x, y)
+                            ? '  The rolling boulder triggers a land mine.' : ''}`);
+                        deltrap(t);
+                        const { del_engr_at } = await import('./engrave.js');
+                        del_engr_at(x, y);
+                        place_object(singleobj, x, y);
+                        singleobj.otrapped = 0;
+                        const { fracture_rock } = await import('./dig.js');
+                        await fracture_rock(singleobj);
+                        const { scatter } = await import('./explode.js');
+                        await scatter(x, y, 4,
+                                      MAY_DESTROY | MAY_HIT | MAY_FRACTURE | VIS_EFFECTS,
+                                      null);
+                        if (cansee(x, y)) newsym(x, y);
+                        used_up = true;
+                        launch_drop_spot(null, 0, 0);
+                    }
+                    handled = true;
+                } else if (t.ttyp === LEVEL_TELEP || t.ttyp === TELEP_TRAP) {
+                    let newlev = 0, go = true;
+                    if (t.ttyp === LEVEL_TELEP) {
+                        /* 20% chance of picking current level; 100% for that
+                           in a single-level branch or the endgame */
+                        const { random_teleport_level } = await import('./do.js');
+                        newlev = random_teleport_level();
+                        if (newlev === depth(game.u?.uz)) go = false;
+                    }
+                    if (go) {
+                        if (cansee(x, y))
+                            await pline('Suddenly the rolling boulder disappears!');
+                        else if (!Deaf_hero())
+                            await You_hear('a rumbling stop abruptly.');
+                        singleobj.otrapped = 0;
+                        if (t.ttyp === TELEP_TRAP) {
+                            const { rloco } = await import('./teleport.js');
+                            await rloco(singleobj);
+                        } else {
+                            const { add_to_migration } = await import('./mkobj.js');
+                            const { get_level } = await import('./do.js');
+                            add_to_migration(singleobj);
+                            const dest = get_level(newlev);
+                            singleobj.ox = dest.dnum;
+                            singleobj.oy = dest.dlevel;
+                            singleobj.owornmask = MIGR_RANDOM;
+                        }
+                        seetrap(t);
+                        used_up = true;
+                        launch_drop_spot(null, 0, 0);
+                    }
+                    handled = true;
+                } else if (t.ttyp === PIT || t.ttyp === SPIKED_PIT
+                           || t.ttyp === HOLE || t.ttyp === TRAPDOOR) {
+                    /* the boulder won't be used up if there is a monster in
+                       the trap; stop rolling anyway */
+                    x2 = x; y2 = y;
+                    if (await flooreffects(singleobj, x2, y2, 'fall')) {
+                        used_up = true;
+                        launch_drop_spot(null, 0, 0);
+                    }
+                    stop = true;      // C: dist = -1, "stop rolling immediately"
+                    handled = true;
+                }
+                if (handled && (used_up || stop)) break;
+            }
             if (await flooreffects(singleobj, x, y, 'fall')) {
                 used_up = true;
                 launch_drop_spot(null, 0, 0);
