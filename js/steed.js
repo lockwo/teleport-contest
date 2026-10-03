@@ -645,12 +645,25 @@ export async function doride() {
     if (dir && isok(u.ux + dir.dx, u.uy + dir.dy)) {
         u.dx = dir.dx;
         u.dy = dir.dy;
-        // wizard force-mount prompt is skipped (not wizard mode here).
-        const ok = await mount_steed(m_at(u.ux + dir.dx, u.uy + dir.dy), false);
+        // C ref: steed.c doride():185 — `if (wizard && y_n("Force the mount to
+        // succeed?") == 'y') forcemount = TRUE;`.  The prompt fires for EVERY
+        // wizard-mode #ride, so skipping it swallowed a keystroke and shifted
+        // the rest of the session.
+        let forcemount = false;
+        if (is_wizard_steed()) {
+            const { y_n } = await import('./display.js');
+            if (await y_n('Force the mount to succeed?', 'yn\x1b', 'n') === 'y')
+                forcemount = true;
+        }
+        const ok = await mount_steed(m_at(u.ux + dir.dx, u.uy + dir.dy), forcemount);
         return ok ? 1 : 0;
     }
     return 0; // ECMD_CANCEL
 }
+
+// C ref: decl.h `wizard` — debug (wizard) mode, which is what gates #ride's
+// force-mount query.
+function is_wizard_steed() { return !!game.flags?.debug; }
 
 // ===========================================================================
 // steed.c: the remaining top-level functions, translated.  APPEND-ONLY —
