@@ -49,6 +49,7 @@ import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag }
     from './monflags_data.js';
 import { mondied_mm, monkilled_mm } from './mhitm.js';
 import { find_mac as worn_find_mac } from './worn.js';
+import { hard_helmet } from './do_wear.js';
 // onscary() is an `export function` declaration in monmove.js, so the
 // monmove -> muse -> monmove import cycle resolves through a hoisted binding
 // (unlike a `const` arrow, which would be in its temporal dead zone here).
@@ -424,12 +425,6 @@ function SchroedingersBox(obj) {
     // C: (o)->otyp == LARGE_BOX && (o)->spe == 1 — the bones-file cat box.  No
     // level this port generates makes one, but the test costs nothing.
     return obj?.otyp === LARGE_BOX && (obj?.spe | 0) === 1;
-}
-// C ref: obj.h hard_helmet(o) — a metal/hard helm that blocks falling rock.
-function hard_helmet(obj) {
-    if (!obj) return false;
-    const nm = OBJECTS[obj.otyp]?.name || '';
-    return /helmet|helm$|dwarvish iron helm|orcish helm|dented pot/.test(nm);
 }
 // C ref: hack.h Sokoban.
 function Sokoban() {
