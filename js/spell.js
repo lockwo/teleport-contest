@@ -710,12 +710,22 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
         }
         break;
     }
-    case SPE_CLAIRVOYANCE:
+    case SPE_CLAIRVOYANCE: {
+        // C ref: spell.c spelleffects() SPE_CLAIRVOYANCE.
+        if (!(game.uarmh?.otyp === 93 /* CORNUTHAUM */
+              && game.urole?.mnum !== PM_WIZARD)) {
+            if (role_skill >= P_SKILLED) pseudo.blessed = 1;
+            const { do_vicinity_map } = await import('./detect.js');
+            await do_vicinity_map(pseudo);
+        } else {
+            await pline('You sense a pointy hat on top of your head.');
+        }
+        break;
+    }
     case SPE_CREATE_FAMILIAR:
     case SPE_JUMPING:
     case SPE_CHAIN_LIGHTNING:
-        // DEFERRED: do_vicinity_map(), make_familiar(), jump() and
-        // cast_chain_lightning() still require their gameplay integrations.
+        // DEFERRED: make_familiar(), jump(), cast_chain_lightning() integration.
         break;
     case SPE_PROTECTION:
         // C ref: spell.c spelleffects() SPE_PROTECTION -> cast_protection().
