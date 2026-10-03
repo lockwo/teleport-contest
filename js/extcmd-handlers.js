@@ -1184,7 +1184,20 @@ const MAXWISHTRY = 5;
 // addition to the '#wizwish' extended command both route here.
 export async function wiz_wish() {
     if (!isWizard()) return 0;
-    await makewish();
+    // C ref: wizcmds.c:33-39 — wiz_wish() saves flags.verbose, clears it for
+    // the duration of makewish(), then restores it.  Besides suppressing the
+    // "You may wish for an object." line (which makewish() itself prints under
+    // flags.verbose), this silences every other verbose-gated message the wish
+    // reaches, most visibly xprname()'s " (<N> in total)." suffix when the
+    // wished stack merges into one already carried (invent.c prinv/xprname).
+    const flags = (game.flags ||= {});
+    const save_verbose = flags.verbose;
+    flags.verbose = false;
+    try {
+        await makewish();
+    } finally {
+        flags.verbose = save_verbose;
+    }
     // C ref: wizcmds.c:40 — wiz_wish() calls encumber_msg() itself right after
     // makewish() returns.  The wish costs no game time, so the moveloop's own
     // encumber_msg() (allmain.c:208, inside `if (context.move)`) never runs for
