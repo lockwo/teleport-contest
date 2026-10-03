@@ -14,7 +14,7 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
-import { align_gname } from './role.js';
+import { align_gname, roles } from './role.js';
 import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     A_ORIGINAL, AM_SHRINE, AM_SANCTUM, AM_CHAOTIC, AM_MASK, Amask2align,
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMIN, LUCKMAX, MM_NOMSG,
@@ -22,7 +22,7 @@ import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_C
 import { isok } from './hacklib.js';
 import { OMONST, W_BALL, W_CHAIN, FROMOUTSIDE } from './const.js';
 import { adjalign, exercise, adjattrib } from './attrib.js';
-import { losexp, xlev_to_rank, pluslvl } from './exper.js';
+import { losexp, xlev_to_rank, pluslvl, innate_intrinsics } from './exper.js';
 import { heal_legs } from './trap.js';
 import { hcolor, a_monnam } from './do_name.js';
 import { Blind } from './vision.js';
@@ -64,8 +64,15 @@ function praystate() {
     return game._prayer;
 }
 
+// C ref: pray.c u_gname()/align_gname() index roles[] directly (C has no
+// separate mnum there).  This port's align_gname() wants the roles[] ARRAY
+// index, which differs from the PM_ monster number for Rogue (mnum 8, array 7)
+// and Ranger (mnum 7, array 8) — using the mnum gave a chaotic Ranger the
+// Rogue's "Kos" instead of "Mars".
 function roleMnum() {
-    return game.urole?.mnum ?? game.u?.umonnum ?? 0;
+    const mnum = game.urole?.mnum ?? game.u?.umonnum ?? 0;
+    const i = roles.findIndex((r) => r.mnum === mnum);
+    return (i >= 0) ? i : mnum;
 }
 
 function Luck() {
@@ -456,15 +463,22 @@ const ATTRCURSE_CHAIN = [
 async function attrcurse() {
     const u = game.u;
     const start = rnd(11) - 1;
+    // C ref: sit.c attrcurse() tests `HFoo & INTRINSIC`, i.e. FROMEXPER |
+    // FROMRACE | FROMOUTSIDE.  In this port the role/race halves are derived
+    // from the ability tables (js/exper.js innate_intrinsics) and only
+    // FROMOUTSIDE lives in u.uprops, so both have to be consulted — reading
+    // u[field] alone never saw a Barbarian's innate speed and let the whole
+    // chain fall through.
+    const innate = innate_intrinsics();
     for (let i = start; i < ATTRCURSE_CHAIN.length; i++) {
         const [field, msg] = ATTRCURSE_CHAIN[i];
-        // INTRINSIC-only: a timed or worn source doesn't count.
-        if (u[field]) {
-            u[field] = 0;
-            if (u.uprops) u.uprops[field] = 0;
-            await update_topl(msg);
-            return true;
-        }
+        const outside = ((u.uprops?.[field] | 0) | (u[field] | 0)) & INTRINSIC;
+        if (!innate.has(field) && !outside) continue;
+        u[field] = (u[field] | 0) & ~INTRINSIC;
+        if (u.uprops) u.uprops[field] = (u.uprops[field] | 0) & ~INTRINSIC;
+        (u.lost_innate ||= new Set()).add(field);
+        await update_topl(msg);
+        return true;
     }
     return false;
 }
@@ -1224,18 +1238,78 @@ export async function dopray(paranoid_query) {
     return 1; // ECMD_TIME: the move loop advances a turn and runs the occupation
 }
 
-// ── god_zaps_you (pray.c:456) ────────────────────────────────────────────────
+// ── god_zaps_you (pray.c:641) ────────────────────────────────────────────────
 // C ref: pray.c god_zaps_you(resp_god).  Called from angrygods()'s default arm
-// and from desecrate_altar().  The swallowed-hero arm and the Reflecting /
-// Shock_resistance arms need subsystems this port lacks; the bolt itself and
-// its "fry_by_god" death do not run here (end.js exports only done_in_by()),
-// so a smitten hero survives.  Flagged rather than silently dropped: every
-// caller of this is already a lost-cause branch for the recorded corpora.
-async function god_zaps_you(_resp_god) {
-    await update_topl('Suddenly, a bolt of lightning strikes you!');
-    // GAP: destroy_item(RING_CLASS/WAND_CLASS, AD_ELEC), the armour melt loop
-    // and fry_by_god() -> done(DIED).
+// and from desecrate_altar(): a lightning bolt, then "X is not deterred..."
+// and a wide-angle disintegration beam that eats worn armour before killing.
+async function god_zaps_you(resp_god) {
+    const u = game.u;
+    const D = await loadPrayExtras();
+    if (u.uswallow) {
+        await update_topl('Suddenly a bolt of lightning comes down at you'
+            + ' from the heavens!');
+        await update_topl(`It strikes ${D.dnm.mon_nam(u.ustuck)}!`);
+        // C: resists_elec(u.ustuck) ? "seems unaffected" : fries + xkilled().
+        await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
+    } else {
+        await update_topl('Suddenly, a bolt of lightning strikes you!');
+        if (uprops_has_pr('Reflecting')) {
+            await shieldeff_pr();
+            if (Blind()) await update_topl("For some reason you're unaffected.");
+            else await update_topl('It reflects from your shield.');
+        } else if (HProp_pr('HShock_resistance') || HProp_pr('EShock_resistance')
+                   || has_innate_pr('HShock_resistance')) {
+            await shieldeff_pr();
+            await update_topl('It seems not to affect you.');
+        } else {
+            await fry_by_god(resp_god, false);
+        }
+    }
+
+    await update_topl(`${align_gname(roleMnum(), resp_god)} is not deterred...`);
+    if (u.uswallow) {
+        await update_topl('A wide-angle disintegration beam aimed at you hits '
+            + `${D.dnm.mon_nam(u.ustuck)}!`);
+        await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
+        return;
+    }
+    await update_topl('A wide-angle disintegration beam hits you!');
+    // C: shield/cloak/suit/shirt are disintegrated first (like black dragon
+    // breath); EReflecting/EDisint_resistance on the slot would spare it.
+    const DW = await import('./do_wear.js');
+    if (game.uarms) await DW.disintegrate_arm(game.uarms);
+    if (game.uarmc) await DW.disintegrate_arm(game.uarmc);
+    if (game.uarm && !game.uarmc) await DW.disintegrate_arm(game.uarm);
+    if (game.uarmu && !game.uarm && !game.uarmc)
+        await DW.disintegrate_arm(game.uarmu);
+    if (!(HProp_pr('HDisint_resistance') || HProp_pr('EDisint_resistance')
+          || has_innate_pr('HDisint_resistance'))) {
+        await fry_by_god(resp_god, true);
+    } else {
+        await update_topl('You bask in its black glow for a minute...');
+        await godvoice(resp_god, 'I believe it not!');
+    }
+    if (Is_astralevel(u.uz) || Is_sanctum_pr(u.uz)) {
+        await verbalize('Thou cannot escape my wrath, mortal!');
+        const { summon_minion } = await import('./minion.js');
+        await summon_minion(resp_god, false);
+        await summon_minion(resp_god, false);
+        await summon_minion(resp_god, false);
+        await verbalize(`Destroy ${uhim_pr()}, my servants!`);
+    }
 }
+function uprops_has_pr(key) { return !!(game.u?.uprops?.[key] || game.u?.[key]); }
+function has_innate_pr(prop) { return innate_intrinsics().has(prop); }
+async function shieldeff_pr() {
+    const D = await loadPrayExtras();
+    await D.dsp.shieldeff(game.u.ux, game.u.uy);
+}
+// C ref: dungeon.h Is_sanctum(lev) — the Wizard of Yendor's sanctum.
+function Is_sanctum_pr(lev) {
+    return In_hell(lev) && (lev?.dlevel === game.svd?.dungeons?.[lev.dnum]?.dunlev_ureached);
+}
+// C ref: pronoun overrides — uhim() is "him"/"her" for the hero.
+function uhim_pr() { return game.flags?.female ? 'her' : 'him'; }
 
 // ── #offer / dosacrifice (pray.c:1854) ──────────────────────────────────────
 //

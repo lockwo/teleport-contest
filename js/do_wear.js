@@ -1376,6 +1376,64 @@ export async function wornarm_destroyed(wornarm) {
     }
 }
 
+// C ref: do_wear.c:3190 maybe_destroy_armor(armor, atmp, &resisted).
+// obj_resists(armor, 0, 90) is the rn2(100) draw (zap.c:1469).
+async function maybe_destroy_armor(armor, atmp, res) {
+    const Z = await import('./zap.js');
+    if (armor && (!atmp || atmp === armor)
+        && (res.resisted = Z.obj_resists(armor, 0, 90)) === false) {
+        armor.in_use = 1;
+        return armor;
+    }
+    return null;
+}
+
+// C ref: do_wear.c:3201 disintegrate_arm(atmp) — black dragon breath, a
+// wide-angle disintegration beam, &c destroy ONE worn armour piece (the
+// outermost one that fails its save).  Returns true if something was destroyed.
+export async function disintegrate_arm(atmp) {
+    let otmp = null;
+    const rc = { resisted: false }, rs = { resisted: false }, r = { resisted: false };
+    if ((otmp = await maybe_destroy_armor(game.uarmc, atmp, rc)) != null) {
+        await pline(`Your ${cloak_simple_name(otmp)} crumbles and turns to dust!`);
+    } else if (!rc.resisted
+               && (otmp = await maybe_destroy_armor(game.uarm, atmp, rs)) != null) {
+        const suit = suit_simple_name(otmp);
+        if (otmp.lamplit) otmp.lamplit = 0; // light.c end_burn(otmp, FALSE)
+        await pline(`Your ${suit} ${vtense_dw(suit, 'turn')} to dust and `
+            + `${vtense_dw(suit, 'fall')} to the ${await surface_dw()}!`);
+    } else if (!rc.resisted && !rs.resisted
+               && (otmp = await maybe_destroy_armor(game.uarmu, atmp, r)) != null) {
+        await pline(`Your ${shirt_simple_name(otmp)} crumbles into tiny threads`
+            + ' and falls apart!');
+    } else if ((otmp = await maybe_destroy_armor(game.uarmh, atmp, r)) != null) {
+        await pline(`Your ${helm_simple_name(otmp)} turns to dust and is blown away!`);
+    } else if ((otmp = await maybe_destroy_armor(game.uarmg, atmp, r)) != null) {
+        await pline(`Your ${gloves_simple_name(otmp)} vanish!`);
+
+    } else if ((otmp = await maybe_destroy_armor(game.uarmf, atmp, r)) != null) {
+        await pline(`Your ${boots_simple_name(otmp)} disintegrate!`);
+    } else if ((otmp = await maybe_destroy_armor(game.uarms, atmp, r)) != null) {
+        await pline(`Your ${shield_simple_name(otmp)} crumbles away!`);
+    } else {
+        return false;
+    }
+    await wornarm_destroyed(otmp);
+    // C: `if (losing_gloves) selftouch("You");` — js/trap.js's selftouch() is a
+    // no-op in this port (no wielded cockatrice corpse is reachable here), so
+    // the glove branch needs no extra call.
+    return true;
+}
+// C ref: hacklib.c vtense(subj, verb) — only the "turn"/"fall" forms are
+// needed here; a plural subject ("dragon scales") keeps the bare verb.
+function vtense_dw(subj, verb) {
+    return /s$/.test(subj) && !/ss$/.test(subj) ? verb : verb + 's';
+}
+async function surface_dw() {
+    const D = await import('./dungeon.js');
+    return D.surface(game.u.ux, game.u.uy);
+}
+
 // C ref: do_wear.c:3062 remarm_swapwep() — #altunwield / the '-' item action on
 // uswapwep.  Returns ECMD_TIME only when the attempt taught the hero something
 // (a cursed secondary weapon still comes off, but that costs no time).

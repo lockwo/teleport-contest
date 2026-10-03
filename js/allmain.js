@@ -739,6 +739,9 @@ const FAST_AT_LEVEL = Object.freeze({
 // handled separately by youHaveVeryFast(); since Very_fast takes priority in
 // u_calc_moveamt's else-if chain, the two never both fire on the same turn.
 export function youHaveFast() {
+    // sit.c attrcurse() can clear the role-granted FAST (angry god); js/pray.js
+    // records that in u.lost_innate.
+    if (game.u?.lost_innate?.has('HFast')) return false;
     const mnum = gameRoleMnum();
     const lvl = FAST_AT_LEVEL[mnum];
     if (lvl == null) return false;

@@ -499,13 +499,16 @@ const RACE_ABIL_INNATE = new Map([
 
 // The innate intrinsics the hero holds right now.  C keeps these as
 // FROMEXPER/FROMRACE bits in u.uprops[]; here they are a pure function of
-// role/race/ulevel, which is equivalent because nothing else sets or clears
-// those two bits.
+// role/race/ulevel, minus anything explicitly stripped.  sit.c attrcurse()
+// (angry god, intrinsic-stealing attack) clears `HFoo &= ~INTRINSIC`, which
+// takes the role/race bits with it, so those names are remembered in
+// u.lost_innate and subtracted here.
 export function innate_intrinsics(ulevel = game.u?.ulevel || 0) {
     const s = new Set();
     for (const tbl of [ROLE_ABIL.get(game.urole?.mnum), RACE_ABIL.get(urace_mnum())])
         for (const [ulvl, , , prop] of tbl || [])
             if (ulevel >= ulvl) s.add(prop);
+    for (const prop of game.u?.lost_innate || []) s.delete(prop);
     return s;
 }
 export function has_innate(prop, ulevel) { return innate_intrinsics(ulevel).has(prop); }
@@ -515,6 +518,7 @@ export function has_innate(prop, ulevel) { return innate_intrinsics(ulevel).has(
 // FROM_ROLE when its ulevel is 1 and FROM_EXP otherwise; a FROMRACE row is
 // FROM_RACE whatever its level.  Returns null when neither table grants it.
 export function innate_source(prop, ulevel = game.u?.ulevel || 0) {
+    if (game.u?.lost_innate?.has(prop)) return null; // attrcurse() cleared it
     for (const [ulvl, , , p] of ROLE_ABIL.get(game.urole?.mnum) || [])
         if (p === prop && ulevel >= ulvl) return (ulvl === 1) ? 'role' : 'exp';
     for (const [ulvl, , , p] of RACE_ABIL_INNATE.get(urace_mnum()) || [])
