@@ -25,6 +25,7 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { CQ_CANNED } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
+import { begin_burn, end_burn } from './timeout.js';
 
 import {
     TOOL_CLASS, WAND_CLASS, SPBOOK_CLASS, POTION_CLASS, WEAPON_CLASS,
@@ -36,8 +37,8 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
 import { find_mac, species } from './worn.js';
 import {
-    SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED,
-    IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND,
+    SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED, STONE, STATUE_TRAP,
+    ACCESSIBLE, IS_FURNITURE, IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND,
 } from './const.js';
 // C ref: apply.c do_break_wand() — the shared explode() call, its direction
 // table, the dig-a-pit-vs-hole choice, and the room type the digging branch
@@ -47,7 +48,7 @@ import {
     DIGCHECK_FAILED, DIGCHECK_FAIL_BOULDER, PIT, HOLE, ROOM, ICE,
     MELT_ICE_AWAY, NO_MM_FLAGS,
 } from './const.js';
-import { surface as surface_word } from './dungeon.js';
+import { surface as surface_word, ceiling as ceiling_dg } from './dungeon.js';
 
 // C ref: include/onames.h — STETHOSCOPE object type index (mkobj.js OBJECTS
 // row [237, "STETHOSCOPE", ...]).  Defined locally to avoid threading a new
@@ -491,11 +492,7 @@ function confdir_apply(dir) {
 // C ref: trap.c ceiling(x, y) — "ceiling" over a room/wall/door, "rock cavern"
 // elsewhere, "sky" on an air level (js/trap.js keeps the same private copy).
 function ceiling_word(x, y) {
-    const typ = game.level?.at(x, y)?.typ ?? 0;
-    if (IS_AIR(typ)) return 'sky';
-    if (IS_ROOM(typ) || IS_WALL(typ) || IS_DOOR(typ) || typ === SDOOR)
-        return 'ceiling';
-    return 'rock cavern';
+    return ceiling_dg(x, y);
 }
 
 // C ref: apply.c its_dead(rx, ry, resp) — report on a corpse or statue at
@@ -544,10 +541,8 @@ async function its_dead(rx, ry, resp) {
 // C ref: mon.c seemimic(mtmp) — a discovered mimic drops its object/furniture
 // appearance and is redrawn as its true form.
 async function seemimic(mtmp) {
-    const { newsym } = await import('./display.js');
-    mtmp.m_ap_type = 0;
-    mtmp.mappearance = 0;
-    newsym(mtmp.mx, mtmp.my);
+    const { seemimicLocal } = await import('./uhitm.js');
+    seemimicLocal(mtmp);
 }
 
 // C ref: apply.c use_stethoscope() M_AP_OBJECT/M_AP_FURNITURE branch — the
@@ -828,6 +823,14 @@ export async function doapply() {
     // swallowed the direction key that follows.  dothrow.js uses its own ECMD
     // numbering (ECMD_TIME === 3), so translate rather than pass through.
     if (obj.otyp === BULLWHIP_OTYP) {
+        // C ref: apply.c use_whip(): an unwielded whip is wielded first, then
+        // `cmdq_add_ec(CQ_CANNED, doapply); cmdq_add_key(CQ_CANNED,
+        // obj->invlet); return ECMD_TIME;` so the wield's turn elapses (monsters
+        // move) before the queued doapply asks for a direction.
+        if (obj !== game.uwep) {
+            if (await _invent.wield_tool(obj, 'lash')) return await reapply_after_wield(obj);
+            return ECMD_OK;
+        }
         const DT = await import('./dothrow.js');
         const r = await DT.use_whip(obj, () => _cmd.getdir());
         return r === 3 ? ECMD_TIME : (r ? ECMD_CANCEL : ECMD_OK);
@@ -898,6 +901,14 @@ export async function doapply() {
     }
     // C ref apply.c: case TOWEL: res = use_towel(obj);
     if (obj.otyp === TOWEL) return await use_towel(obj);
+
+    // C ref apply.c:4358 `case CRYSTAL_BALL: use_crystal_ball(&obj); break;` —
+    // res is never reassigned, so applying a crystal ball always costs a turn.
+    if (obj.otyp === CRYSTAL_BALL) {
+        const { use_crystal_ball } = await import('./detect.js');
+        await use_crystal_ball({ obj });
+        return ECMD_TIME;
+    }
 
     // Any other tool isn't exercised; mirror C's "I don't know how to use that"
     // (C returns ECMD_FAIL here, which like ECMD_OK costs no turn).
@@ -1612,12 +1623,21 @@ async function reapply_after_wield(obj) {
     const { moveloop_turn } = await import('./allmain.js');
     game.context = game.context || {};
     game.context.move = 0;
+    // C ref: cmd.c rhack(). The wield returned ECMD_TIME from a command
+    // other than dokick, so the kicked location resets before monsters move.
+    game.kickedloc = { x: 0, y: 0 };
     game._cmdqAbandonRetry = false;
+    const moves_before = game.moves;
     await moveloop_turn();
-    // C ref: allmain.c moveloop_core() tail — `if (disp.botl || disp.botlx)
-    // bot();` runs after the turn and before the next rhack(), so the queued
-    // command's first frame already carries the new turn counter.
-    await _display.flush_screen(1);
+    // C ref: allmain.c moveloop_core() tail: `if (disp.botl || disp.botlx)
+    // bot(); else if (disp.time_botl) timebot();` is the only flush after the
+    // turn.  A message printed during the turn already flushed at vpline()
+    // time, before the pet or monster finished moving, and the queued doapply
+    // never reaches parse()'s flush_screen(1).  Otherwise the map a later
+    // --More-- freezes is still the one from the last flush.
+    if (game.botl || game.botlx
+        || (game.flags?.time && !game.context?.run && game.moves !== moves_before))
+        await _display.flush_screen(1);
     if (game._cmdqAbandonRetry) return ECMD_OK;
     // getobj()'s cmdq fast path pops this invlet instead of drawing a prompt.
     _invent.cmdq_add_key(CQ_CANNED, obj.invlet);
@@ -1696,10 +1716,87 @@ export async function use_pole(obj, autohit) {
         return ECMD_OK;
     }
 
-    // A reachable target square: C runs attack_checks()/thitmonst() (or the
-    // statue/boulder/terrain "Thump!" arms).  thitmonst() is not ported, so
-    // stop here rather than invent an RNG stream C does not draw.
-    return ECMD_TIME;
+    // C ref: apply.c:3489-3562 — attack the monster there (thitmonst with the
+    // wielded polearm, HMON_APPLIED), or the statue/boulder/terrain arms.
+    if (game.context) game.context.polearm_hitmon = null;
+    game.bhitpos = { x: cc.x, y: cc.y };
+    const mtmp = _display.m_at(cc.x, cc.y);
+    let freehit = false;
+    if (mtmp) {
+        // rhack() starts every command with svc.context.move = 1; attack_checks
+        // clears it only when the hero declines "Really attack?".
+        if (game.context) game.context.move = 1;
+        if (await _uhitm.attack_checks(mtmp))
+            return game.context?.move ? ECMD_TIME : ECMD_OK;
+        if (await _uhitm.overexertion())
+            return ECMD_TIME; /* burn nutrition; maybe pass out */
+        game.context.polearm_hitmon = mtmp;
+
+        if (snickersnee_used_dist_attk(obj)) {
+            await _display.pline("The blade doesn't reach there!");
+            return ECMD_OK;
+        }
+
+        await _uhitm.check_caitiff(mtmp);
+        game.notonhead = (game.bhitpos.x !== mtmp.mx || game.bhitpos.y !== mtmp.my);
+
+        /* Snickersnee allows one free hit from a distance per turn */
+        if (obj === game.uwep && obj.oartifact === ART_SNICKERSNEE_A) {
+            freehit = (game.moves !== game.context.snickersnee_turn);
+            game.context.snickersnee_turn = game.moves;
+            if (freehit && !Deaf())
+                await _display.pline('Shkinng!'); /* /sha-kin!/ */
+        }
+
+        await _invent.thitmonst(mtmp, game.uwep);
+    } else if (statue_at(cc.x, cc.y)) {
+        const T = await import('./trap.js');
+        const t = T.t_at(cc.x, cc.y);
+        if (t && t.ttyp === STATUE_TRAP
+            && await T.activate_statue_trap(t, t.tx, t.ty, false)) {
+            ; /* feedback has been give by animate_statue() */
+        } else {
+            await _display.pline('Thump!  Your blow bounces harmlessly off the statue.');
+            const { wake_nearto } = await import('./cmd.js');
+            await wake_nearto(cc.x, cc.y, 25);
+        }
+    } else {
+        /* no monster here and no statue seen or remembered here */
+        unmap_invisible_at(cc.x, cc.y);
+        const loc = game.level?.at(cc.x, cc.y);
+        if (_invent.sobj_at(BOULDER, cc.x, cc.y)) {
+            await _display.pline('Thump!  Your blow bounces harmlessly off the boulder.');
+            const { wake_nearto } = await import('./cmd.js');
+            await wake_nearto(cc.x, cc.y, 25);
+        } else if (!ACCESSIBLE(loc?.typ | 0) || IS_FURNITURE(loc?.typ | 0)) {
+            /* similar to 'F'orcefight with a melee weapon; we know that
+               the spot can be seen or we wouldn't have gotten this far */
+            await _display.pline(`You uselessly attack ${await pole_target_name(cc.x, cc.y)}.`);
+        } else {
+            await _display.pline('You miss; there is no one there to hit.');
+        }
+    }
+    const { wipe_engr_at, engr_at } = await import('./engrave.js');
+    if (engr_at(u.ux, u.uy)) wipe_engr_at(u.ux, u.uy, 2, false); /* u_wipe_engr(2) */
+    return freehit ? ECMD_OK : ECMD_TIME;
+}
+
+// C ref: apply.c use_pole() "uselessly attack %s" operand — stone/solid rock,
+// else the displayed terrain's defsyms[] explanation with "the".
+async function pole_target_name(x, y) {
+    const typ = game.level?.at(x, y)?.typ | 0;
+    if (typ === STONE || typ === SCORR) return 'stone';
+    const cmap = await pole_cmap_name(x, y);
+    return cmap ? `the ${cmap}` : 'an unknown obstacle';
+}
+
+// C ref: defsyms[glyph_to_cmap(glyph)].explanation for the DISPLAYED terrain glyph
+// (null when the glyph is not a map-feature glyph).
+async function pole_cmap_name(x, y) {
+    const { glyph_to_cmap } = await import('./glyphs.js');
+    const { defsyms, MAXPCHARS } = await import('./symbols.js');
+    const cm = glyph_to_cmap(_display.glyph_at(x, y));
+    return (cm >= 0 && cm < MAXPCHARS && defsyms[cm]) ? defsyms[cm].explanation : null;
 }
 
 export const ECMD = { ECMD_OK, ECMD_CANCEL, ECMD_TIME };
@@ -1771,7 +1868,7 @@ async function ap_load() {
 // BRASS_LANTERN / POT_OIL / CREAM_PIE / EGG-adjacent food otyps are already
 // declared near the top of this file.
 const TALLOW_CANDLE = 224, WAX_CANDLE = 225, EXPENSIVE_CAMERA = 229,
-      MIRROR = 230, LENSES = 232, BLINDFOLD_OTYP = 233, TOWEL = 234, LEASH = 236,
+      MIRROR = 230, CRYSTAL_BALL = 231, LENSES = 232, BLINDFOLD_OTYP = 233, TOWEL = 234, LEASH = 236,
       TINNING_KIT = 238, CAN_OF_GREASE = 240, FIGURINE = 241,
       LAND_MINE = 243, BEARTRAP_OTYP = 244, TIN_WHISTLE = 245,
       MAGIC_WHISTLE = 246, BELL = 255, GRAPPLING_HOOK = 260,
@@ -1949,39 +2046,6 @@ function ap_cmap_to_glyph(_cmap) { return 0; }
 // keeps no glyph array; poleable_at() above reads the same three cases off the
 // level state, so the display_*_positions() loops below use it directly.
 
-// ── C ref: timeout.c:1712 begin_burn(obj, already_lit) and :1804
-// end_burn(obj, timer_attached).  js/light.js carries a private end_burn() (no
-// BURN_OBJECT timer queue exists, so the timer arm cannot be taken) and no
-// begin_burn at all.  Both are RNG-FREE in C, so these two mirror light.js's
-// own comment: set/clear lamplit and add/drop the object light source.  Named
-// with an ap_ prefix so they do not claim timeout.c coverage.
-async function ap_begin_burn(obj, already_lit) {
-    const A = await ap_load();
-    if (obj.age === 0 && obj.otyp !== MAGIC_LAMP && !A.lightsrc.artifact_light(obj))
-        return;
-    let radius = 3;
-    switch (obj.otyp) {
-    case MAGIC_LAMP: obj.lamplit = 1; break;
-    case POT_OIL: radius = 1; obj.lamplit = 1; break;
-    case BRASS_LANTERN: case OIL_LAMP: obj.lamplit = 1; break;
-    case CANDELABRUM_OF_INVOCATION: case TALLOW_CANDLE: case WAX_CANDLE:
-        radius = A.lightsrc.candle_light_range(obj);
-        obj.lamplit = 1;
-        break;
-    default:
-        obj.lamplit = 1;
-        break;
-    }
-    if (obj.lamplit && !already_lit)
-        A.lightsrc.new_light_source(obj.ox ?? game.u.ux, obj.oy ?? game.u.uy,
-                                    radius, A.lightsrc.LS_OBJECT, obj);
-}
-async function ap_end_burn(obj, _timer_attached) {
-    const A = await ap_load();
-    if (!obj.lamplit) return;
-    A.lightsrc.del_light_source(A.lightsrc.LS_OBJECT, obj);
-    obj.lamplit = 0;
-}
 
 // ── Unported C callees.  Each is kept IN POSITION at its call site so landing
 // the real function later restores its RNG draw without moving anything else.
@@ -3214,7 +3278,7 @@ export async function use_candelabrum(obj) {
 
     if (obj.lamplit) {
         await A.display.pline(`You snuff the ${s}.`);
-        await ap_end_burn(obj, true);
+        await end_burn(obj, true);
         return;
     }
     if ((obj.spe | 0) <= 0) {
@@ -3264,7 +3328,7 @@ export async function use_candelabrum(obj) {
         }
         obj.known = 1;
     }
-    await ap_begin_burn(obj, false);
+    await begin_burn(obj, false);
 }
 
 // C ref: apply.c:1386 use_candle(&obj) — attach candles to the Candelabrum, or
@@ -3308,7 +3372,7 @@ export async function use_candle(optr) {
            in it while it's lit ... end the burn temporarily while attaching. */
         const was_lamplit = obj.lamplit;
         if (was_lamplit)
-            await ap_end_burn(obj, true);
+            await end_burn(obj, true);
 
         await A.display.pline(`You attach ${obj.quan}${
             !otmp.spe ? '' : ' more'} ${s} to ${ap_the(A.invent.xname(otmp))}.`);
@@ -3329,7 +3393,7 @@ export async function use_candle(optr) {
                 otmp.lamplit ? ' lit' : ''} candles attached.`);
         /* candelabrum's light range might increase */
         if (otmp.lamplit)
-            A.lightsrc.obj_merge_light_sources(otmp, otmp);
+            await A.lightsrc.obj_merge_light_sources(otmp, otmp);
         /* candles are now gone */
         A.invent.useupall(obj);
         /* candelabrum's weight is changing */
@@ -3356,7 +3420,7 @@ export async function snuff_candle(otmp) {
             await A.display.pline(`${await ap_Shk_Your(otmp)}${
                 candle ? '' : "candelabrum's "}candle${many ? "s'" : "'s"} flame${
                 many ? 's are' : ' is'} extinguished.`);
-        await ap_end_burn(otmp, true);
+        await end_burn(otmp, true);
         return true;
     }
     return false;
@@ -3375,7 +3439,7 @@ export async function snuff_lit(obj) {
             if (visible)
                 await A.display.pline(`${await ap_Yname2(obj)} ${
                     A.invent.otense(obj, 'go')} out!`);
-            await ap_end_burn(obj, true);
+            await end_burn(obj, true);
             return true;
         }
         if (await snuff_candle(obj))
@@ -3401,7 +3465,7 @@ export async function use_lamp(obj) {
             await A.display.pline(`${await ap_Shk_Your(obj)}${lamp} is now off.`);
         else
             await A.display.pline(`You snuff out ${A.invent.yname(obj)}.`);
-        await ap_end_burn(obj, true);
+        await end_burn(obj, true);
         return;
     }
     if (ap_Underwater()) {
@@ -3448,7 +3512,7 @@ export async function use_lamp(obj) {
                 mkobj_bill_dummy_ap(obj);
             }
         }
-        await ap_begin_burn(obj, false);
+        await begin_burn(obj, false);
     }
 }
 
@@ -3470,7 +3534,7 @@ export async function light_cocktail(optr) {
 
     if (obj.lamplit) {
         await A.display.pline('You snuff the lit potion.');
-        await ap_end_burn(obj, true);
+        await end_burn(obj, true);
         /* Free & add to re-merge potion.  This averages the age of the
            potions ... don't do that unless obj is not worn. */
         if (!obj.owornmask) {
@@ -3498,7 +3562,7 @@ export async function light_cocktail(optr) {
     }
     A.invent.makeknown(obj.otyp);
 
-    await ap_begin_burn(obj, false); /* after shop billing */
+    await begin_burn(obj, false); /* after shop billing */
     if (split1off) {
         A.invent.obj_extract_self(obj); /* free from inv */
         obj.nomerge = 1;
@@ -4478,9 +4542,11 @@ export async function use_grapple(obj) {
     return ECMD_TIME;
 }
 
-// C ref: engrave.c u_wipe_engr(cnt) — js/dokick.js's copy is private; C's DRAWS
-// (wipe_engr_at -> rn2 on the engraving text), so this shim is a known gap.
-async function ap_u_wipe_engr(_cnt) {}
+// C ref: engrave.c u_wipe_engr(cnt) — scuffs the engraving underfoot (rn2 draws
+// via wipe_engr_at) when the hero can reach the floor.
+async function ap_u_wipe_engr(cnt) {
+    (await import('./engrave.js')).u_wipe_engr(cnt);
+}
 // C ref: do.c level_objects / OBJ_FLOOR chain — svl.level.objects[x][y] is the
 // TOP object at <x,y>; this port keeps a flat per-level object list.
 function ap_top_object_at(x, y) {

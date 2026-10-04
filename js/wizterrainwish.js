@@ -64,7 +64,7 @@ function align_str(al) {
     }
 }
 
-function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
+import { an } from './hacklib.js';
 function An(s) { return upstart(an(s)); }
 // C ref: hacklib.c upstart().
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -238,8 +238,11 @@ export function wizterrainwish(d, out) {
         del_engr_at(x, y);
         if (!is_dbridge) {
             out.push(`A ${lev.typ === LAVAPOOL ? 'pool' : 'wall'} of molten lava.`);
-            // GAP: pooleffects(FALSE) — burning/drowning the hero who wished the
-            // ground out from under themself is a whole death path (trap.c).
+            // C ref: objnam.c:3659 `if (!(Levitation || Flying) || lev->typ ==
+            // LAVAWALL) pooleffects(FALSE);` — runs right after the message, so
+            // the caller (pline-ing `out` in order) invokes this function entry
+            // at that point; pooleffects() re-tests Levitation/Flying itself.
+            out.push(async () => (await import('./trap.js')).pooleffects(false));
         } else {
             dbterrainmesg(out, 'Lava', lev);
         }

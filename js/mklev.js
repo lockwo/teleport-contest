@@ -46,7 +46,8 @@ import { somex, somey, somexy, somexyspace, occupied, has_dnstairs, has_upstairs
 import { maketrap, Can_fall_thru, Can_dig_down, t_at, Invocation_lev, deltrap, undestroyable_trap } from './trap.js';
 import { makemon as make_monster, rndmonst, mkclass,
          name_to_pmidx, monster_by_pmidx, enexto_spawn, placeOnLevel,
-         name_gender_hint, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
+         name_gender_hint, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL,
+         newcham as newcham_mk } from './makemon.js';
 import { m_at, newsym, impossible } from './display.js';
 import { wiz_flip_lregions } from './levels/wiz_common.js';
 import { getbones } from './bones.js';
@@ -1897,7 +1898,13 @@ function mk_monster_class_at(classChar, x, y, waiting) {
         mtmp.female = 0;
         // C ref: sp_lev.c create_monster() `mtmp->mstrategy |= STRAT_WAITMASK`
         // for des.monster({waiting=1}); no RNG, but it keeps the monster put.
-        if (waiting) mtmp.mstrategy = (mtmp.mstrategy | 0) | STRAT_WAITMASK_MK;
+        if (waiting) {
+            mtmp.mstrategy = (mtmp.mstrategy | 0) | STRAT_WAITMASK_MK;
+            // C ref: sp_lev.c:2160-2166 — a vampire created already shifted
+            // (bat/fog/wolf) and not asked for that shape shifts back.
+            if (mtmp.cham >= 0 && mtmp.cham !== mtmp.data?.pmidx)
+                newcham_mk(mtmp, monster_by_pmidx(mtmp.cham));
+        }
     }
     return mtmp;
 }
@@ -1926,7 +1933,7 @@ async function themeroom_mausoleum() {
                 // des.object({id="corpse", montype="@", coord={0,0}}) — the
                 // montype class pre-roll (mkclass) precedes mksobj, as in
                 // oracle_place_statue().
-                const pm = mkclass(MK_CLASS_CHAR['@'], 0);
+                const pm = mkclass(MK_CLASS_CHAR['@'], 0x0200 | 0x8000 /* G_NOGEN|G_IGNORE */);
                 const otmp = mksobj_at(CORPSE, sub.lx, sub.ly, true, false);
                 if (pm && otmp) set_corpsenm(otmp, pm.pmidx);
             }
@@ -3092,7 +3099,7 @@ function oracle_get_free_room_loc(croom, pm) {
 // rndmonnum + spellbook rolls inside mksobj_init).  x,y are absolute.
 function oracle_place_statue(x, y, monclass) {
     // C: lspo_object pre-roll — mkclass(monclass, G_NOGEN|G_IGNORE) for montype.
-    const pm = mkclass(monclass, 0);
+    const pm = mkclass(monclass, 0x0200 | 0x8000 /* G_NOGEN|G_IGNORE */);
     // create_object -> mksobj_at(STATUE, x, y, init=true)
     const otmp = mksobj_at(STATUE, x, y, true, true);
     // create_object: o->corpsenm != NON_PM -> set_corpsenm(otmp, montype species)
@@ -5566,7 +5573,7 @@ async function makemaz_castle() {
         }
 
         // des.engraving({ coord=loc, type="burn", text="Elbereth" }) — no RNG.
-        make_engr_at(loc.x, loc.y, 'Elbereth', 0, BURN);
+        make_engr_at(loc.x, loc.y, 'Elbereth', null, 0, BURN);
         // des.object({ id="scroll of scare monster", coord=loc, buc="cursed" })
         {
             const s = mksobj_at(SCR_SCARE_MONSTER, loc.x, loc.y, true, true);
@@ -6524,7 +6531,11 @@ function oracle_monster(croom) {
     }
     // C: if (croom && !inside_room(croom, x, y)) return;
     if (croom && !inside_room(croom, c.x, c.y)) return;
-    make_monster(null, c.x, c.y, 0);
+    const mtmp = make_monster(null, c.x, c.y, 0);
+    // C ref: sp_lev.c:2125 `mtmp->female = m->female;` — a bare des.monster()
+    // leaves tmpmons.female BOOL_RANDOM, which lspo_monster's safety net turns
+    // into 0, so makemon()'s rn2(2) gender roll (still drawn) is overwritten.
+    if (mtmp) mtmp.female = 0;
 }
 
 // des.trap() fully random: create_trap -> get_free_room_loc(somexy) ->
@@ -7386,7 +7397,7 @@ function bury_object(otmp) {
     const lvl = game.level;
     if (lvl) {
         if (!lvl.buriedobjs) lvl.buriedobjs = [];
-        lvl.buriedobjs.push(otmp);
+        lvl.buriedobjs.unshift(otmp); /* C add_to_buried(): head insertion */
     }
     return otmp;
 }

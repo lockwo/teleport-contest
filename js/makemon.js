@@ -3188,6 +3188,10 @@ export function newcham(mtmp, mdat) {
         // mhitm.js/uhitm.js) that may already be wearing armor.
         mhim(mtmp); mhis(mtmp);
         newcham_worm(mtmp, mdat);
+        // C ref: mon.c newcham() — `meverseen = 0; newsym()` so the new form
+        // is what the map shows.
+        mtmp.meverseen = 0;
+        if (mtmp.mx) hooks.newsym?.(mtmp.mx, mtmp.my);
     }
     return changed;
 }
@@ -3248,10 +3252,14 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         }
     }
     if (changed) newcham_worm(mtmp, mdat);
-    if (changed && msg) {
-        const { newsym, update_topl } = await import('./display.js');
+    if (changed) {
+        // C ref: mon.c newcham() — newsym() runs whether or not msg is set.
+        const { newsym } = await import('./display.js');
         mtmp.meverseen = 0;
         newsym(mtmp.mx, mtmp.my);
+    }
+    if (changed && msg) {
+        const { update_topl } = await import('./display.js');
         if (!canspotmon(mtmp)) {
             if (seenorsensed) await update_topl(`${oldname} disappears!`);
             const { usmellmon } = await import('./mon.js');
@@ -3840,7 +3848,10 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // game.level.monsters, an unplaced monster also made that check answer
     // "square is empty" — the fill_zoo hazard mklev.js:5194 already records
     // having hit once at a single site.
-    if (x > 0) placeOnLevel(mtmp, x, y);
+    if (x > 0) {
+        placeOnLevel(mtmp, x, y);
+        hooks.monster_light_source?.(mtmp); /* C ref: makemon.c:1348 */
+    }
     // C ref: makemon.c S_EEL case -> hideunder(mtmp) during mklev; mon.c
     // hideunder() sets `undetected = is_pool(x,y) && !Is_waterlevel(&u.uz)`.
     // js/sp_lev.js already did this for des.monster()-placed eels; mkswamp's
@@ -4190,6 +4201,10 @@ function m_initgrp(mtmp, x, y, n, mmflags) {
                     placeOnLevel(mon, spot.x, spot.y);
                     mon.mpeaceful = false;
                     set_malign(mon);
+                    // C: each member's own makemon() tail prints its arrival
+                    // line / runs dochugw() before the leader's; the sync port
+                    // hands that to makemon_appears_msg() via this list.
+                    if (!game.in_mklev) (mtmp._grpMembers ||= []).push(mon);
                 }
             }
         }
@@ -4273,6 +4288,24 @@ function mm_vtense(subj, verb) {
 // caller's makemon() flags: MM_NOMSG suppresses the line entirely, MM_NOEXCLAM
 // drops " suddenly" and ends with '.' instead of '!' (the ^G #wizgenesis form).
 export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
+    if (!mtmp || game.in_mklev) return;
+    const members = mtmp._grpMembers;
+    if (members) {
+        delete mtmp._grpMembers;
+        for (const m of members)
+            await makemon_appears_msg(m, m.mx, m.my, mmflags | MM_NOGRP);
+    }
+    await makemon_appears_line(mtmp, x, y, mmflags);
+    // C ref: makemon.c:1503 — "if discernable and a threat, stop fiddling while
+    // Rome burns": `if (go.occupation) (void) dochugw(mtmp, FALSE);`, reached
+    // whether or not the arrival line was printed (MM_NOMSG, unseen).
+    const H = await import('./hack.js');
+    if (H.occupation_active()) {
+        const { dochugw } = await import('./monmove.js');
+        await dochugw(mtmp, false);
+    }
+}
+async function makemon_appears_line(mtmp, x, y, mmflags = 0) {
     if (!mtmp || game.in_mklev || (mmflags & MM_NOMSG)) return;
     const D = await import('./display.js');
     const MO = await import('./mon.js');

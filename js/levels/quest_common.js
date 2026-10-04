@@ -18,6 +18,7 @@ import {
     name_gender_hint, name_to_pmidx,
 } from '../makemon.js';
 import { bless, curse, mkobj_at, mksobj_at, unbless, uncurse } from '../mkobj.js';
+import { stackobj } from '../invent.js';
 import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
 import {
@@ -102,11 +103,14 @@ export function quest_monster_named_rnd(name, peacefulOverride) {
     return mtmp;
 }
 
-// C ref: sp_lev.c create_object() for a bare `des.object()` — no class, no id,
-// no coord: get_location_coord(DRY) then mkobj_at(RANDOM_CLASS, x, y, TRUE).
+// C ref: sp_lev.c create_object() for a bare `des.object()`: no class, no id,
+// no coord. get_location_coord(DRY), mkobj_at(RANDOM_CLASS, x, y, TRUE), then
+// stackobj(otmp) merges it into an identical pile already on that square.
 export function quest_object_rnd() {
     const c = quest_getloc_coord_rnd(LOC_DRY, false);
-    return mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true);
+    const otmp = mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true);
+    stackobj(otmp);
+    return otmp;
 }
 
 // C ref: sp_lev.c create_trap() with croom == NULL — the DRY get_location loop

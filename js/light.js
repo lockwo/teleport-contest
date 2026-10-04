@@ -725,7 +725,7 @@ export function any_light_source() {
 
 // C ref: light.c:728 snuff_light_source(x, y) — snuff an object light source at
 // <x,y>.  Only works for burning light sources.
-export function snuff_light_source(x, y) {
+export async function snuff_light_source(x, y) {
     for (const ls of light_base()) {
         /* the positions were refreshed by the last vision update */
         if (ls.type === LS_OBJECT && ls.x === x && ls.y === y) {
@@ -733,7 +733,8 @@ export function snuff_light_source(x, y) {
             if (obj_is_burning(obj)) {
                 /* the only way to snuff Sunsword is to unwield it */
                 if (artifact_light(obj)) continue;
-                end_burn(obj, obj.otyp !== MAGIC_LAMP());
+                const { end_burn } = await import('./timeout.js');
+                await end_burn(obj, obj.otyp !== MAGIC_LAMP());
                 /* the current ls has just been removed; assume one light
                    source per object and return */
                 return;
@@ -742,25 +743,6 @@ export function snuff_light_source(x, y) {
     }
 }
 
-// C ref: timeout.c:1804 end_burn(obj, timer_attached) — DEFERRED in part: this
-// port has no BURN_OBJECT timer (js/timeout.js has no timer queue and
-// js/invent.js:686 stop_timer() is a stub returning 0), so the `timer_attached`
-// arm — which would stop the timer and let cleanup_burn() do exactly the work
-// below — cannot be taken.  Both arms end with the light source deleted and
-// lamplit cleared, which is what this does.  Replace the body with a call to
-// timeout.js end_burn() once the burn timer exists (see `deferred`).
-export function end_burn(obj, timer_attached) {
-    if (!obj.lamplit) {
-        impossible('end_burn: obj not lit');
-        return;
-    }
-    if (obj.otyp === MAGIC_LAMP() || artifact_light(obj)) timer_attached = false;
-    void timer_attached;
-    del_light_source(LS_OBJECT, obj);
-    obj.lamplit = 0;
-    /* C: `if (obj->where == OBJ_INVENT) update_inventory()` — a no-op for a
-       tty window port without perm_invent. */
-}
 
 // C ref: light.c:762 obj_sheds_light(obj).
 export function obj_sheds_light(obj) {
@@ -798,9 +780,12 @@ export function obj_split_light_source(src, dest) {
 
 // C ref: light.c:807 obj_merge_light_sources(src, dest) — src has been folded
 // into dest (merging lit candles, or adding candles to a lit candelabrum).
-export function obj_merge_light_sources(src, dest) {
+export async function obj_merge_light_sources(src, dest) {
     /* src == dest implies adding to candelabrum */
-    if (src !== dest) end_burn(src, true); /* extinguish candles */
+    if (src !== dest) {
+        const { end_burn } = await import('./timeout.js');
+        await end_burn(src, true); /* extinguish candles */
+    }
 
     for (const ls of light_base())
         if (ls.type === LS_OBJECT && ls.id === dest) {
@@ -1022,4 +1007,16 @@ hooks.lightsources = (cs_rows) => {
 hooks.gnomeCandleLight = (x, y, otmp) => {
     otmp.lamplit = true;
     new_light_source(x, y, candle_light_range(otmp), LS_OBJECT, otmp);
+};
+
+// C ref: makemon.c:1348 `if ((ct = emits_light(mtmp->data)) > 0)
+// new_light_source(mtmp->mx, mtmp->my, ct, LS_MONSTER, ...)` — registering the
+// source at creation is what sets vision_full_recalc so a freshly created
+// yellow light / fire vortex lights its surroundings right away.  Exposed via
+// hooks for the same cycle reason as gnomeCandleLight.
+hooks.monster_light_source = (mtmp) => {
+    const range = emits_light(mtmp.data);
+    if (!range) return;
+    if (light_base().some((ls) => ls.type === LS_MONSTER && ls.id === mtmp)) return;
+    new_light_source(mtmp.mx, mtmp.my, range, LS_MONSTER, mtmp);
 };

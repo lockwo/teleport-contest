@@ -15,7 +15,7 @@
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { objects, WEAPON_CLASS, GEM_CLASS, TOOL_CLASS } from './mkobj.js';
-import { renderWindowScreen, dismiss_invent_screen } from './invent.js';
+import { renderWindowScreen, renderMenuLines, dismiss_invent_screen } from './invent.js';
 import { y_n, update_topl, topl_more, docrt } from './display.js';
 import {
     P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
@@ -454,6 +454,16 @@ function paginate_skill_menu(items) {
 // and the string from column 1.
 function render_skill_menu_page(pages, idx) {
     const page = pages[idx];
+    // C ref: wintty.c tty_display_nhwindow NHW_MENU — a one-page menu shorter than
+    // the screen floats as a partial-width overlay (see doenhance's PICK_NONE path).
+    if (pages.length === 1 && page.length + 1 < (game.nhDisplay?.rows ?? 24)) {
+        renderMenuLines(page.map((it) => ({
+            text: it.sel ? `${it.sel} - ${it.text}` : it.text,
+            attr: it.attr || 0,
+        })), null);
+        game._modal_screen = 'skillwin';
+        return;
+    }
     renderWindowScreen(page.map((it) => ({
         text: it.sel ? `${it.sel} - ${it.text}` : it.text,
         attr: it.attr || 0,

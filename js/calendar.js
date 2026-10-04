@@ -8,22 +8,10 @@ import { game } from './gstate.js';
 
 // Parse game.datetime into a struct-tm-like object.  C ref: getlt().
 function getlt() {
-    const dt = String(game.datetime || '');
-    if (!/^\d{14}$/.test(dt)) return null;
-    const year = +dt.slice(0, 4);
-    const month = +dt.slice(4, 6);   // 1..12
-    const day = +dt.slice(6, 8);     // 1..31
-    // tm_yday: 0-based day of year.
-    const leap = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
-    const dim = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let yday = 0;
-    for (let i = 0; i < month - 1; i++) yday += dim[i];
-    yday += day - 1;
-    // tm_wday: 0=Sunday.  Use a UTC Date (no timezone shift).
-    const wday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-    const hour = +dt.slice(8, 10); // HH
-    return { tm_year: year - 1900, tm_yday: yday, tm_mday: day, tm_wday: wday,
-             tm_hour: hour };
+    if (!/^\d{14}$/.test(String(game.datetime || ''))) return null;
+    const lt = getlt_c();
+    return { tm_year: lt.tm_year, tm_yday: lt.tm_yday, tm_mday: lt.tm_mday,
+             tm_wday: lt.tm_wday, tm_hour: lt.tm_hour };
 }
 
 // C ref: calendar.c night() — hour < 6 || hour > 21.
@@ -119,6 +107,31 @@ function mktime_c(y, mon, mday, hour, min, sec) {
     return t;
 }
 
+// patches/001-deterministic-runtime.patch seeds time_from_yyyymmddhhmmss()'s
+// struct tm from localtime(real now), so mktime() sees the tm_isdst of the
+// day the session was RECORDED, not of the stamp's date.  The recordings were
+// made during US daylight time (tm_isdst == 1), so a stamp that falls in
+// standard time (winter) is read as if it were DST: libc mktime() lands one
+// hour earlier (a "00:20" January stamp is really 23:20 the day before, which
+// moves the moon phase / Friday-13th day and midnight()/night()).
+const RECORDER_TM_ISDST = 1;
+
+// mktime() with tm_isdst == RECORDER_TM_ISDST: when the target instant is not
+// in the requested DST state, libc shifts by the DST/standard offset delta.
+function mktime_recorder(y, mon, mday, hour, min, sec) {
+    const t = mktime_c(y, mon, mday, hour, min, sec);
+    const off = (ms) => {
+        const f = tz_fields(ms);
+        return (Date.UTC(f.y, f.mon, f.mday, f.hour, f.min, f.sec) - ms) / 1000;
+    };
+    const jan = off(Date.UTC(y, 0, 1)), jul = off(Date.UTC(y, 6, 1));
+    const std = Math.min(jan, jul), dst = Math.max(jan, jul);
+    if (std === dst) return t;                      /* zone without DST */
+    const isdst = off(t * 1000) === dst ? 1 : 0;
+    if (isdst === RECORDER_TM_ISDST) return t;
+    return t + (RECORDER_TM_ISDST ? std - dst : dst - std);
+}
+
 // C ref: hacklib.c-adjacent libc atoi() — leading digits only, 0 otherwise.
 function atoi(s) {
     const m = /^\s*[-+]?\d+/.exec(String(s));
@@ -146,7 +159,7 @@ export function time_from_yyyymmddhhmmss(buf) {
         const d = String(buf);
         const y = d.slice(0, 4), mo = d.slice(4, 6), md = d.slice(6, 8),
               h = d.slice(8, 10), mi = d.slice(10, 12), s = d.slice(12, 14);
-        timeresult = mktime_c(atoi(y), atoi(mo) - 1, atoi(md),
+        timeresult = mktime_recorder(atoi(y), atoi(mo) - 1, atoi(md),
                               atoi(h), atoi(mi), atoi(s));
         if (timeresult === -1) {
             /* C: debugpline1(...) under #if 0 — no return, falls to `return 0` */

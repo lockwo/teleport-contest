@@ -653,6 +653,9 @@ function ini_inv_wear_armor(obj) {
             if (!game.uquiver) { obj.owornmask = (obj.owornmask || 0) | W_QUIVER; game.uquiver = obj; }
         } else if (!game.uwep && (!game.uarms || !bimanual(obj))) {
             obj.owornmask = (obj.owornmask || 0) | W_WEP; game.uwep = obj;
+            /* C ref: wield.c setuwep() recomputes gu.unweapon; only a
+               non-weptool tool (tin opener) arms the "begin bashing" note */
+            game.unweapon = (obj.oclass === WEAPON_CLASS) ? ini_is_ammo(obj) : !ini_is_weptool(obj);
         } else if (!game.uswapwep) {
             obj.owornmask = (obj.owornmask || 0) | W_SWAPWEP; game.uswapwep = obj;
         }
@@ -720,6 +723,9 @@ export function find_ac() {
     // C: `if (abs(uac) > AC_MAX) uac = sgn(uac) * AC_MAX;` with AC_MAX 99.
     if (Math.abs(uac) > 99) uac = Math.sign(uac) * 99;
     game.u = game.u || {};
+    // C ref: do_wear.c find_ac():2508-2511 `if (uac != u.uac) { u.uac = uac;
+    // disp.botl = TRUE; }`.
+    if (game.u.uac !== uac) game.botl = true;
     game.u.uac = uac;
     return uac;
 }
@@ -1352,6 +1358,9 @@ export function u_init_role() {
     const role = current_role_mnum();
 
     game.moves = 1;
+    // C ref: u_init.c:950 u_init_misc() `flags.beginner = TRUE;` — cleared by
+    // exper.c more_experienced(); strange_feeling() reads it.
+    (game.flags = game.flags || {}).beginner = true;
     // C ref: role_init() sets u.umonnum before inventory creation; mksobj's
     // samurai lacquered-armor branch reads Role_if(PM_SAMURAI) via umonnum.
     // C ref: u_init.c:991 u.umonnum = u.umonster = gu.urole.mnum — umonster is

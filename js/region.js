@@ -221,6 +221,13 @@ export function visible_region_at(x, y) {
     return null;
 }
 
+// C ref: `reg->glyph == cmap_to_glyph(S_poisoncloud)` (mon.c mfndpos,
+// pager.c) — make_gas_cloud() gives a damaging cloud S_poisoncloud (bright
+// green '#') and harmless vapor S_cloud (gray '#').
+export function region_is_poisoncloud(reg) {
+    return reg?.glyph?.color === 10; /* CLR_BRIGHT_GREEN */
+}
+
 // C ref: region.c show_region(reg,x,y) — the glyph a visible region draws.
 export function show_region(reg) {
     return reg.glyph;

@@ -10,10 +10,12 @@ import {
     SV0, SV1, SV2, SV3, SV4, SV5, SV6, SV7, SVALL,
     IS_WALL, CROSSWALL, TRWALL, TREE, CLOUD, WATER, LAVAWALL, TEMP_LIT,
     MOAT, DRAWBRIDGE_UP, DB_UNDER, DB_MOAT, Is_juiblex_level, Is_waterlevel,
+    TT_PIT,
 } from './const.js';
 import { newsym } from './display.js';
 import { infravision, monster_by_pmidx } from './makemon.js';
 import { races } from './roles.js';
+import { has_innate } from './exper.js';
 
 const COULD_SEE = 0x1;
 const IN_SIGHT = 0x2;
@@ -120,6 +122,18 @@ export function does_block(x, y) {
     return _blocks(game.level, x, y);
 }
 
+// C ref: monst.h is_lightblocker_mappear(mon) — mimic appearances that block
+// vision/light: a boulder, or a closed door / wall / tree.
+export function is_lightblocker_mappear(m) {
+    const S_ndoor = 12, S_vcdoor = 15, S_hcdoor = 16, S_tree = 18; // defsym.h
+    if (m.m_ap_type === 'obj' && m.mappearance === 475 /*BOULDER*/) return true;
+    if (m.m_ap_type === 'furniture') {
+        const ap = m.mappearance;
+        return ap === S_hcdoor || ap === S_vcdoor || ap < S_ndoor || ap === S_tree;
+    }
+    return false;
+}
+
 // Simplified blockage check: walls, closed doors, stone
 function _blocks(level, x, y) {
     const loc = level.at(x, y);
@@ -151,16 +165,10 @@ function _blocks(level, x, y) {
     // (des.monster appear_as="obj:boulder") is the case that bites.
     const mons = level.monsters;
     if (mons) {
-        const S_ndoor = 12, S_vcdoor = 15, S_hcdoor = 16, S_tree = 18; // defsym.h
         for (const m of mons) {
             if (!m || m.mx !== x || m.my !== y) continue;
             if (m.minvis && !game.u?.uprops?.See_invisible) continue;
-            if (m.m_ap_type === 'obj' && m.mappearance === 475 /*BOULDER*/) return true;
-            if (m.m_ap_type === 'furniture') {
-                const ap = m.mappearance;
-                if (ap === S_hcdoor || ap === S_vcdoor || ap < S_ndoor || ap === S_tree)
-                    return true;
-            }
+            if (is_lightblocker_mappear(m)) return true;
         }
     }
     // C ref: vision.c does_block() -> visible_region_at().  A visible region
@@ -697,6 +705,17 @@ export function vision_recalc(control = 0) {
                 next_rmax[row] = Math.max(next_rmax[row], col);
                 next[row][col] = IN_SIGHT | COULD_SEE;
             }
+    } else if (control !== 2 && !u.uswallow && !Blind()
+               && u.utrap && u.utraptype === TT_PIT) {
+        // C ref: vision.c:609-622 — in a pit only the adjacent squares.
+        for (let row = u.uy - 1; row <= u.uy + 1; row++) {
+            if (row < 0) continue;
+            if (row >= ROWNO) break;
+            next_rmin[row] = Math.max(1, u.ux - 1);
+            next_rmax[row] = Math.min(COLNO - 1, u.ux + 1);
+            for (let col = next_rmin[row]; col <= next_rmax[row]; col++)
+                next[row][col] = IN_SIGHT | COULD_SEE;
+        }
     } else if (control !== 2 && !u.uswallow) {
         view_from(u.uy, u.ux, next, next_rmin, next_rmax);
     }
@@ -877,7 +896,9 @@ export function Infravision() {
     const u = game.u || {};
     const props = u.uprops || {};
     const intrinsic = (props.Infravision ?? u.Infravision)
-        || (props.HInfravision ?? u.HInfravision);
+        || (props.HInfravision ?? u.HInfravision)
+        // C: adjabil() leaves the orc/elf FROMRACE bit in HInfravision across polymorph.
+        || has_innate('HInfravision');
     const extrinsic = props.EInfravision ?? u.EInfravision;
     const pmidx = u.Upolyd ? u.umonnum : races[game.initrace]?.basepm;
     return !!(intrinsic || extrinsic

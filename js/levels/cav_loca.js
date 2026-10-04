@@ -13,8 +13,8 @@ import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, gx, gy, lspo_region,
     quest_create_monster, quest_level_init_solidfill, quest_place_stair,
-    quest_region_light, quest_set_door, shuffle, splev_link_doors_rooms,
-    vly_non_diggable,
+    quest_region_light, quest_set_door, remove_boundary_syms, shuffle,
+    splev_link_doors_rooms, vly_non_diggable,
 } from '../sp_lev.js';
 import { quest_wallify_map } from './quest_home_common.js';
 import {
@@ -113,9 +113,10 @@ export async function makemaz_cav_loca() {
     quest_wallify_map(gx.xstart - 1, gy.ystart - 1,
                       gx.xstart + gx.xsize + 1, gy.ystart + gy.ysize + 1);
 
-    // C ref: lspo_finalize_level -> link_doors_rooms() then
+    // C ref: lspo_finalize_level -> link_doors_rooms(), remove_boundary_syms(),
     // wallification(1,0,COLNO-1,ROWNO-1) then flip_level_rnd(3, FALSE).
     splev_link_doors_rooms();
+    remove_boundary_syms();               // the 'B' CROSSWALL cells become ROOM
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

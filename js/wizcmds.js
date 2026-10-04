@@ -879,7 +879,8 @@ function body_part_ARM() { return 'arm'; }
 
 // C ref: wizcmds.c:1102 wiz_rumor_check() — verify each rumor access.
 export async function wiz_rumor_check() {
-    await nyi_rumor_check();
+    const { rumor_check } = await import('./rumors.js');
+    await rumor_check();
     return ECMD_OK;
 }
 
@@ -1602,8 +1603,6 @@ async function nyi_mhurtle(_mon, _dx, _dy, _range) {}
 async function nyi_hurtle(_dx, _dy, _range, _verbose) {}
 // panic.c panic(fmt, ...) -> js has no fatal-abort path
 function nyi_panic(_msg) {}
-// rumors.c rumor_check() -> js/rumors.js
-async function nyi_rumor_check() {}
 // dungeon.c get_level(&dest, levnum) -> js/dungeon.js (js/do.js:1976 private)
 function nyi_get_level(levnum) { return { dnum: 0, dlevel: levnum }; }
 // dungeon.c ledger_no(lev) -> js/dungeon.js (js/bones.js:69 private)

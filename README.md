@@ -106,10 +106,26 @@ Death status is published at C's explicit status-update calls. Later dirty
 updates release frozen death rows. Carried corpse decay retains the monster's
 name instead of describing every corpse as a generic corpse.
 
+Explicit searches feel adjacent squares through visible gas clouds. The plain
+symbol set uses `+` for wall corners and junctions while retaining straight-wall
+defaults and explicit symbol overrides. Monster attacks publish dirty status
+at the native per-attack update point. Hiding monsters use knowledge-sensitive
+object names; petrification and sliming remove intrinsic fast movement without
+slowing normal movement or overriding worn speed gear.
+
 Spell rays use C's spell damage dice, resistance, and healing paths. Water
 entry, drowning with life-saving, crawling out, and underwater map display
 follow native trap.c and hack.c, and the move loop re-evaluates water under a
 stationary hero. Water-related callers outside trap.js still use older paths.
+
+The `curses` symbol set uses its own DEC-handled terrain table rather than the
+full DECgraphics table, and `!color` disables map colors. Container insertion
+merges compatible stacks and prepends new stacks in native order; content
+displays no longer reconstruct a separate chain. Applying and snuffing candles
+and lamps uses the shared burn timer queue, including unused-fuel restoration.
+End-of-game disclosure latches nighttime and midnight before showing attributes.
+Unseen room floors retain native darkroom glyph identity, so blindly feeling an
+already-known floor while closing a door does not incorrectly spend a turn.
 
 Local differential campaigns compare both revisions against the same native
 recordings and check exact frame masks as well as RNG streams. These targeted

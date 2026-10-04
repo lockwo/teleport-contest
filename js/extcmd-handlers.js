@@ -10,11 +10,11 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, statusLine1Text, statusLine2Text, newsym } from './display.js';
+import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, putStatusRow, newsym, remember_topl, yn_prompt_history } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import {
     obj_doname, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
-    name_inventory_object, call_inventory_object, doorganize,
+    name_inventory_object, call_inventory_object, doorganize, docall, call_ok, GETOBJ_EXCLUDE,
     addinv, prinv, prinv_fmt, let_to_name, report_merge_discovery,
     wiz_identify, renderWindowScreen, renderMenuLines, select_command_menu, useup, xname,
     doattributes, dodrop, doremring, dotravel_target, dopay, doperminv,
@@ -23,17 +23,17 @@ import {
     dotakeoff, doprring, doprtool, doprwep, doprgold, dovspell, dopramulet,
     doprarm, near_capacity,
 } from './invent.js';
-import { pluslvl, losexp } from './exper.js';
+import { pluslvl, losexp, rank_of } from './exper.js';
 import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
          QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
          D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE, TIMEOUT } from './const.js';
 import { mon_mr } from './monmr_data.js';
-import { is_undead_flag, is_demon_flag, humanoid, nohands } from './monflags_data.js';
+import { is_undead_flag, is_demon_flag, humanoid, nohands, hides_under_flag } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
 import { align_gname } from './role.js';
 import { map_invisible, doredraw } from './display.js';
-import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE } from './mkobj.js';
+import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJECT } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { delobj, stackobj, doddrop, yname, ysimple_name,
          flush_addinv_plines } from './invent.js';
@@ -43,7 +43,7 @@ import { exercise } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { rn2 } from './rng.js';
 import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED, UNENCUMBERED } from './const.js';
-import { getpos, get_valid_jump_position, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full, do_farlook } from './hack.js';
+import { getpos, get_valid_jump_position, set_jumping_is_magic, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full, do_farlook } from './hack.js';
 import { dotwoweapon } from './wield.js';
 import { doride } from './steed.js';
 import { doenhance } from './enhance.js';
@@ -51,7 +51,7 @@ import { dorub, dowipe, doapply, ECMD as APPLY_ECMD } from './apply.js';
 import { readobjnam } from './readobjnam.js';
 import { hold_another_object, encumber_msg, objects_at, otense, will_feel_cockatrice,
          feel_cockatrice, obj_extract_self } from './invent.js';
-import { cxname, The, thesimpleoname } from './objnam.js';
+import { cxname, The, thesimpleoname, simpleonames } from './objnam.js';
 import { artifact_origin } from './artifact.js';
 import { ONAME_WISH, ONAME_KNOW_ARTI, IRONBARS, ICE, Is_airlevel,
          Is_waterlevel } from './const.js';
@@ -69,7 +69,10 @@ import { vtense } from './dothrow.js';
 import { tiphat } from './sounds.js';
 import { dopray as pray_dopray, dosacrifice } from './pray.js';
 import { dosit } from './sit.js';
-import { do_mgivenname } from './do_name.js';
+import { do_mgivenname, bogusmon, roguename } from './do_name.js';
+import { rn2_on_display_rng } from './disprng.js';
+import { glyph_at, Hallucination_u } from './display.js';
+import { object_from_map } from './pager.js';
 import { dodip, dodrink } from './potion.js';
 import { dogenocided, do_gamelog, doconduct, dovanquished, doborn } from './insight.js';
 import { isok } from './hacklib.js';
@@ -87,7 +90,7 @@ import { docast, dowizcast } from './spell.js';
 import { dodown, doup } from './do.js';
 import { doengrave } from './engrave.js';
 import { dotogglepickup } from './options.js';
-import { doclassdisco } from './o_init.js';
+import { doclassdisco, rename_disco } from './o_init.js';
 import { doread } from './read.js';
 import { dotelecmd } from './teleport.js';
 import { doset, dosetSimple } from './doset.js';
@@ -98,7 +101,7 @@ import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
 import { invoke_ok as artifact_invoke_ok } from './artifact.js';
 import { doextlist } from './cmd.js';
-import { mon_beside, loot_mon, reverse_loot } from './pickup.js';
+import { mon_beside, loot_mon, reverse_loot, removed_from_icebox } from './pickup.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -345,10 +348,13 @@ function draw_getlin(query, shown, cursorCol) {
     const line = query + ' ' + shown;
     const rows = Math.max(1, Math.ceil(line.length / TOPL_WRAP));
     // C ref: tty_clear_nhwindow(NHW_MESSAGE) -> docorner(1, cury+1, 0) blanks
-    // the rows the previous (longer) top line spilled onto.
+    // the rows the previous (longer) top line spilled onto and redraws the map
+    // cells on them (row_refresh).
     const clearRows = Math.max(rows, game._getlin_rows || 1);
     for (let r = 0; r < clearRows && r < disp.rows; r++)
         for (let c = 0; c < disp.cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
+    for (let r = Math.max(rows, 1); r < clearRows && r < disp.rows; r++)
+        render_map_row_to_grid(r);
     for (let i = 0; i < line.length; i++) {
         const r = Math.floor(i / TOPL_WRAP);
         if (r >= disp.rows) break;
@@ -377,17 +383,28 @@ export async function hooked_tty_getlin(query, hook) {
     // must catch both.
     const cur = game._pending_message || '';
     const softPending = !!cur && game._toplinSoft === cur;
-    if (game._toplin === 1 || softPending) {
+    if ((game._toplin === 1 || softPending) && !game._winStop) {
         await topl_more();
+    }
+    if (game._toplin === 1 || softPending) {
         game._pending_message = '';
         game._toplin = 0;
         game._toplinSoft = null;
     }
+    game._winStop = false;
+    // C ref: getline.c:67 — the prompt is a SUPPRESS_HISTORY line, which
+    // remember_topl()s whatever was on the top line.
+    remember_topl();
     // C ref: getline.c:67 custompline(OVERRIDE_MSGTYPE | SUPPRESS_HISTORY,
     // "%s ", query) — vpline() still copies the prompt into gp.prevmsg, so a
     // Norep() message identical to the one before this getlin is shown again.
     game._prevmsg = `${query} `;
 
+    // C ref: getline.c: tty_get_ext_cmd() sets suppress_history, so only that
+    // prompt leaves nothing in the ^P history; any other getlin leaves
+    // "<query> <typed text>" as the current message.
+    const suppress_hist = hook === ext_cmd_getlin_hook;
+    remember_topl();
     let typed = '';   // what the user actually typed (obufp/bufp content)
     let shown = '';   // what is displayed (typed, possibly autocompleted)
     const base = (query + ' ').length; // column of first input char
@@ -404,6 +421,7 @@ export async function hooked_tty_getlin(query, hook) {
                 shown = '';
                 continue;
             }
+            if (!suppress_hist) yn_prompt_history(`${query} `, '');
             return '\x1b';
         }
         if (code === 13 || code === 10) { // newline: done
@@ -411,6 +429,7 @@ export async function hooked_tty_getlin(query, hook) {
             // buffer (obufp), so Return returns the completed command name, not
             // just what was typed (e.g. "l" -> "loot").  `shown` already holds
             // that completion (or the raw typed text when none applies).
+            if (!suppress_hist) yn_prompt_history(`${query} `, shown);
             return shown;
         }
         if (code === 8 || code === 127) { // backspace / delete-prev
@@ -699,45 +718,8 @@ export async function yn_function(query, resp, def) {
     // is LEFT on the top line (the addtopl(rtmp) echo is commented out upstream);
     // only gt.toplines' history copy is rewritten.  Routing through display.js
     // y_n() keeps it in game._pending_message so the next frame still shows it.
-    if (resp != null) return await y_n(query, resp, def);
-    let prompt = query;
-    if (resp != null) {
-        prompt += ` [${resp}]`;
-        // C ref: topl.c tty_yn_function():422 `if (def)` — def is a char, so
-        // a NUL default is FALSY there and the " (c)" suffix is omitted.  A JS
-        // '\0' is a truthy 1-char string (wizcmds.js wiz_flip_level passes one).
-        if (def && def !== '\0') prompt += ` (${def})`;
-        prompt += ' ';
-    } else {
-        prompt += ' ';
-    }
-    const disp = game?.nhDisplay;
-    const drawPrompt = () => {
-        if (!disp?.setCell) return;
-        for (let c = 0; c < disp.cols; c++) {
-            const ch = c < prompt.length ? prompt[c] : ' ';
-            disp.setCell(c, 0, ch, NO_COLOR, 0);
-        }
-        disp.setCursor(Math.min(prompt.length, disp.cols - 1), 0);
-    };
-    // C ref: win/tty/topl.c — same "left on the top line" fact as clean_up()
-    // above; writing straight to the grid here (instead of via _pending_message)
-    // let flush_screen() blank row 0 a frame early, erasing the answered prompt.
-    const done = (r) => { game._pending_message = prompt.trimEnd(); game._toplin = 0; return r; };
-    for (;;) {
-        drawPrompt();
-        let q = await nhgetch();
-        if (resp == null) return done(String.fromCharCode(q));
-        let c = String.fromCharCode(q).toLowerCase();
-        if (q === 27) { // ESC
-            if (resp.includes('q')) return done('q');
-            if (resp.includes('n')) return done('n');
-            return done(def || '\0');
-        }
-        if (q === 32 || q === 13 || q === 10) return done(def || '\0');
-        if (resp.includes(c)) return done(c);
-        // otherwise: bell, reloop.
-    }
+    // resp == null (free-form prompt): any single key is accepted and returned.
+    return await y_n(query, resp, def);
 }
 
 // ── individual extended commands ──
@@ -794,6 +776,7 @@ async function doturn() {
     }
 
     u.uconduct ||= {};
+    u.uconduct.gnostic |= 0; // `undefined++` is NaN, which would stay falsy forever
     if (!u.uconduct.gnostic++)
         livelog_printf(LL_CONDUCT, 'rejected atheism by turning undead');
 
@@ -918,15 +901,45 @@ function Jumping() {
 }
 
 async function dojump() {
+    /* Physical jump */
+    return await jump(0);
+}
+
+// C ref: apply.c jump(magic) — magic 0 = physical, otherwise the skill level
+// of the jumping spell.  Returns 1 (ECMD_TIME) when a turn passes, else 0.
+export async function jump(magic) {
+    // C ref: apply.c jump():1990 — attempt the "jumping" spell if the hero has
+    // no innate jumping ability.
+    if (!magic && !Jumping()) {
+        const { known_spell, spe_Fresh, spelleffects_ext } = await import('./spell.js');
+        const SPE_JUMPING = 404;
+        if (known_spell(SPE_JUMPING) >= spe_Fresh)
+            return (await spelleffects_ext(SPE_JUMPING)) & 1; /* ECMD_TIME */
+    }
     // C ref: apply.c jump():2001 `else if (!magic && !Jumping) { You_cant("jump
     // very far"); return ECMD_OK; }` — without innate/worn jumping the prompt
-    // never appears. (The two arms ahead — SPE_JUMPING recast, nolimbs/slithy
-    // check — need known_spell()/polymorph state this port doesn't carry.)
-    if (!Jumping()) {
+    // never appears. (The nolimbs/slithy check needs polymorph state this port
+    // doesn't carry.)
+    if (!magic && !Jumping()) {
         await pline("You can't jump very far.");
         return 0;                                      // ECMD_OK
     }
-    if (near_capacity() > UNENCUMBERED) {
+    if (game.u?.uswallow) {
+        if (magic) { await pline('You bounce around a little.'); return 1; }
+        await pline("You've got to be kidding!");
+        return 0;
+    }
+    if (game.u?.uinwater) {
+        if (magic) { await pline('You swish around a little.'); return 1; }
+        await pline('This calls for swimming, not jumping!');
+        return 0;
+    }
+    if (game.u?.uprops?.Levitation || Is_airlevel(game.u?.uz) || Is_waterlevel(game.u?.uz)) {
+        if (magic) { await pline('You flail around a little.'); return 1; }
+        await pline("You don't have enough traction to jump.");
+        return 0;
+    }
+    if (!magic && near_capacity() > UNENCUMBERED) {
         await pline('You are carrying too much to jump!');
         return 0;
     }
@@ -949,6 +962,9 @@ async function dojump() {
         await topl_more();
     } else {
         await getpos_render('Where do you want to jump?', u.ux, u.uy);
+        // C's pline() left toplin == NEED_MORE, so getpos()'s "(For
+        // instructions type a '?')" MERGES onto this line (see dotravel()).
+        game._toplin = 1; // TOPLIN_NEED_MORE
         // C ref: getpos.c getpos() opening `curs(WIN_MAP,u.ux,u.uy);
         // flush_screen(0)`. jump()'s getpos_sethilite() marks every valid jump
         // position gnew (selection_force_newsyms -> newsym_force); the opening
@@ -960,13 +976,15 @@ async function dojump() {
     }
     // getpos with force=TRUE (jump/teleport targeting): unknown keys keep the
     // loop alive, the '(invalid target)' suffix uses get_valid_jump_position.
+    set_jumping_is_magic(magic);
     const cc = await getpos('the desired position', u.ux, u.uy,
-                            (x, y) => get_valid_jump_position(x, y), /*force=*/true);
+                            (x, y) => get_valid_jump_position(x, y), /*force=*/true,
+                            /*verbose=*/game.flags?.verbose !== false);
     if (!cc) return 0; // ESC -> ECMD_CANCEL (no time)
 
     // is_valid_jump_pos(showmsg=TRUE): emits "Illegal move!" / "Too far!" /
     // "There is an obstacle preventing that jump." on failure -> ECMD_FAIL.
-    if (!(await is_valid_jump_pos(cc.x, cc.y, /*showmsg=*/true))) {
+    if (!(await is_valid_jump_pos(cc.x, cc.y, /*showmsg=*/true, magic))) {
         return 0;
     }
     // (no steed: the "isn't capable of jumping in place" branch is N/A)
@@ -974,6 +992,7 @@ async function dojump() {
     // when not trapped (an in-place jump on empty floor is free, ECMD_OK), and
     // the knight here is never trapped.  Treat a same-spot pick as a free no-op.
     if (cc.x === u.ux && cc.y === u.uy) {
+        await pline(u.uhallu ? 'You hop up and down a bit.' : 'You decide not to jump after all.');
         return 0;
     }
     // Perform the jump: walk_path/hurtle (RNG-inert over open floor) then
@@ -1239,6 +1258,12 @@ export async function wiz_wish() {
     // it; without this call, a wish crossing a capacity threshold would defer
     // its load message to whichever later command finally consumes a move.
     await encumber_msg();
+    // C ref: wizcmds.c:43 returns ECMD_OK; cmd.c:3814 rhack() then runs
+    // reset_cmd_vars(), whose `gm.multi = 0` cancels the multi = -1 a
+    // declined death (end.c:730 savelife) left behind, so no turn passes and
+    // the "You survived..." nomovemsg is never announced.
+    const { reset_cmd_vars } = await import('./cmd.js');
+    reset_cmd_vars(false);
     return 0;
 }
 
@@ -1284,7 +1309,9 @@ export async function makewish() {
             // wizard-mode trap/terrain wish or a denied artifact: no object,
             // so no hold and no ublesscnt bump.  readobjnam() is synchronous,
             // so its pline()s come back as a list.
-            for (const m of r.messages || []) await pline(m);
+            for (const m of r.messages || [])
+                if (typeof m === 'function') await m(); /* deferred effect (pooleffects) */
+                else await pline(m);
             wish_history_add(bufcpy);
             return;
         }
@@ -1380,6 +1407,10 @@ export async function wiz_polyself() {
     if (!isWizard()) return 0;
     const { polyself } = await import('./polyself.js');
     await polyself(POLY_CONTROLLED);
+    // C ref: wizcmds.c:571 returns ECMD_OK -> cmd.c:3814 reset_cmd_vars()
+    // (see wiz_wish above).
+    const { reset_cmd_vars } = await import('./cmd.js');
+    reset_cmd_vars(false);
     return 0;
 }
 
@@ -1501,8 +1532,11 @@ export async function docallcmd() {
     case 'm': // name a visible monster
         await do_mgivenname();
         break;
-    case 'f': // name a type of object on the floor (namefloorobj)
-    case 'd': // rename a discovered type (rename_disco)
+    case 'f': // name a type of object on the floor
+        await namefloorobj();
+        break;
+    case 'd': // rename a discovered type
+        await rename_disco();
         break;
     case 'i': // name an individual object (do_oname)
         await name_inventory_object();
@@ -1515,6 +1549,56 @@ export async function docallcmd() {
         break;
     }
     return 0;
+}
+
+// C ref: do_name.c namefloorobj() — the #name/'C' "the type of an object upon
+// the floor" choice: pick a map square with getpos(), find the object shown
+// there (or under the hero) and offer to call its type.
+async function namefloorobj() {
+    const u = game.u;
+    const hides = u.uundetected && game.youmonst?.data
+        && hides_under_flag(game.youmonst.data);
+    const buf0 = `object on map (or '.' for one ${hides ? 'over' : 'under'} you)`;
+    const cc = await getpos(buf0, u.ux, u.uy, null, /*force=*/false,
+                            game.flags?.verbose !== false);
+    if (!cc || cc.x <= 0) return;
+    let obj = null, fakeobj = false;
+    if (cc.x === u.ux && cc.y === u.uy) {
+        obj = vobj_at(u.ux, u.uy);
+    } else {
+        const glyph = glyph_at(cc.x, cc.y);
+        if (glyph?.kind === 'object') ({ fakeobj, obj } = object_from_map(glyph, cc.x, cc.y));
+    }
+    if (!obj) {
+        await pline(`There doesn't seem to be any object ${
+            cc.x === u.ux && cc.y === u.uy ? 'under you' : 'there'}.`);
+        return;
+    }
+    /* 'obj' might be an instance of STRANGE_OBJECT if target is a mimic */
+    const buf = (obj.otyp !== STRANGE_OBJECT)
+        ? simpleonames(obj) : (objects[STRANGE_OBJECT]?.name ?? 'strange object');
+    const use_plural = (obj.quan ?? 1) > 1;
+    if (Hallucination_u()) {
+        const female = !!(u.upolyd ? u.mfemale : game.flags?.female);
+        const unames = [
+            (female && game.urole?.name?.f) ? game.urole.name.f : game.urole?.name?.m,
+            rank_of(rn2_on_display_rng(30) + 1, game.urole?.mnum, female),
+        ];
+        unames[2] = bogusmon().name;
+        unames[3] = unames[2];
+        unames[4] = roguename();
+        unames[5] = 'Wibbly Wobbly';
+        await pline(`${The(buf)} ${use_plural ? 'decide' : 'decides'} to call you "${
+            unames[rn2_on_display_rng(unames.length)]}."`);
+    } else if (call_ok(obj) === GETOBJ_EXCLUDE) {
+        await pline(`${use_plural ? 'Those' : 'That'} ${buf} can't be assigned a type name.`);
+    } else if (!obj.dknown) {
+        await pline(`You don't know ${use_plural ? 'those' : 'that'} ${buf} well enough to name ${
+            use_plural ? 'them' : 'it'}.`);
+    } else {
+        await docall(obj);
+    }
+    if (fakeobj) obj.where = 'free';
 }
 
 // LARGE_BOX..BAG_OF_TRICKS is the full Is_container() range (objclass.h).
@@ -1580,14 +1664,7 @@ function floor_lockboxes_here() {
         (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy && is_lockbox_otyp(o.otyp));
 }
 
-// Status-line text for the modal container renders (mirrors invent.js's
-// putStatusLines: statusLine1Text carries cursor-forward escapes that must be
-// expanded to spaces for the direct putstr path).
-function _container_status1() {
-    return statusLine1Text().replace(/\x1b\[[0-9;]*[A-Za-z]/g, (m) =>
-        m.match(/\x1b\[\d+C/) ? ' '.repeat(parseInt(m.slice(2), 10)) : '');
-}
-function _container_status2() { return statusLine2Text(); }
+// (the status rows of the modal container renders go through putStatusRow())
 
 // C ref: win/tty/wintty.c tty_display_nhwindow NHW_MENU (H2344_BROKEN offx) +
 // process_menu_window()/process_text_window().  Draw a partial-width corner
@@ -1625,7 +1702,7 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
         if (ln && ln.text) disp.putstr(textCol, r, ln.text, NO_COLOR, ln.attr || 0);
     }
     disp.putstr(textCol, moreRow, morestr, NO_COLOR, 0);
-    const s1 = _container_status1(), s2 = _container_status2();
+    // the status rows are redrawn through putStatusRow() below
     // render_map_to_grid() already laid down a FULL fresh status (its own
     // renderStatusLines() call); putstr() never clears past what it writes,
     // so a truncated re-write below must blank the tail itself or the full
@@ -1640,8 +1717,8 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     } else if (carried != null) {
         cut = carried;
     }
-    disp.putstr(0, 22, cut != null ? s1.slice(0, cut) : s1, NO_COLOR, 0);
-    disp.putstr(0, 23, cut != null ? s2.slice(0, cut) : s2, NO_COLOR, 0);
+    putStatusRow(disp, 1, 22, cut);
+    putStatusRow(disp, 2, 23, cut);
     if (cut != null) {
         for (let c = cut; c < cols; c++) { disp.setCell(c, 22, ' ', NO_COLOR, 0); disp.setCell(c, 23, ' ', NO_COLOR, 0); }
     }
@@ -1709,22 +1786,6 @@ function render_in_or_out_menu(box, outokay, inokay, alreadyused, more_container
     draw_corner_window(lines, maxcol, '(end)', 1);
 }
 
-// Reproduce C's add_to_container() content chain (mkobj.c) on shallow display
-// copies WITHOUT mutating the real objects: prepend each object, merging into
-// an existing mergable stack when possible, to match C's cobj ordering so
-// sortloot's stable-by-index tiebreak (e.g. "2 jackal corpses" before "a jackal
-// corpse") lands identically.  (The live cobj chain stays in creation/push
-// order — the force-lock chest-destruction path elsewhere depends on that.)
-function container_display_stacks(box) {
-    const stacks = [];
-    for (const o of (box.cobj || [])) {
-        let hit = null;
-        for (const s of stacks) if (mergable(s, o)) { hit = s; break; }
-        if (hit) hit.quan = (hit.quan || 1) + (o.quan || 1);
-        else stacks.unshift({ ...o });
-    }
-    return stacks;
-}
 
 // C ref: end.c container_contents(box, FALSE, FALSE, TRUE) + win/tty
 // process_text_window().  Render "Contents of <box>:", a blank line, then the
@@ -1735,7 +1796,7 @@ function render_container_contents(box) {
     const name = `the ${box_basename(box.otyp)}`;
     const lines = [{ text: `Contents of ${name}:` }, { text: '' }];
     // sortflags mirror the default options (sortloot=loot, sortpack=on).
-    const sorted = sortloot(container_display_stacks(box), SORTLOOT_LOOT | SORTLOOT_PACK, false, null);
+    const sorted = sortloot(box.cobj || [], SORTLOOT_LOOT | SORTLOOT_PACK, false, null);
     for (const sli of sorted) {
         if (!sli.obj) break;
         lines.push({ text: '  ' + obj_doname(sli.obj) });
@@ -1890,20 +1951,6 @@ function menuItemLine(it) {
     return `${it.letter} ${it.selected ? '+' : '-'} ${it.desc}`;
 }
 
-// C ref: mkobj.c add_to_container() merges compatible stacks as items are placed;
-// the JS container fill leaves them separate.  Fold mergeable stacks (e.g. two
-// gold piles) so the item menu and take-out messages present one stack per type.
-function consolidate_container(box) {
-    const src = box.cobj || [];
-    const out = [];
-    for (const o of src) {
-        let hit = null;
-        for (const s of out) if (mergable(s, o)) { hit = s; break; }
-        if (hit) { hit.quan = (hit.quan || 1) + (o.quan || 1); hit.owt = weight(hit); }
-        else out.push(o);
-    }
-    box.cobj = out;
-}
 
 // Shared PICK_ANY selection loop for the loot menus: render selection state,
 // read one key, apply a menu command (invert/select/deselect all) or toggle
@@ -2215,8 +2262,6 @@ const WEAPON_SLOT_MASK = 0x100 | 0x200 | 0x400;
 // what?"), then out_container() each.  Returns the number removed (>0 => a turn
 // elapsed).
 async function menu_loot_out(box) {
-    consolidate_container(box);
-
     const picks = await query_category_take_out(box);
     if (!picks || picks.length === 0) return 0;
 
@@ -2256,6 +2301,7 @@ async function menu_loot_out(box) {
         box.cobj.splice(i, 1);
         obj.where = 'free';
         box.owt = weight(box);
+        if (box.otyp === ICE_BOX_OTYP) removed_from_icebox(obj);
         const otmp = addinv(obj);
         await flush_addinv_plines();
         await report_merge_discovery();
@@ -3896,9 +3942,25 @@ const FOOD_CLASS_X = 7;   // js/mkobj.js object classes
 // browse_map() getpos loop and no extra keystroke consumed.
 export async function wiz_map_extcmd() {
     const { do_mapping } = await import('./detect.js');
-    for (const t of (game.level?.traps || [])) t.tseen = 1;
-    for (const ep of (game.level?.engravings || [])) ep.erevealed = 1;
-    await do_mapping();
+    // C ref: wizcmds.c:181-195 — `save_Hconf = HConfusion, save_Hhallu =
+    // HHallucination; HConfusion = HHallucination = 0L; ...; do_mapping();
+    // ...restore`.  The mapping pass therefore redraws every square with
+    // plain glyphs (no hallucinatory display-RNG draws, no confusion skips).
+    // This port keeps those timers in several u / u.uprops fields.
+    const u = game.u;
+    const slots = [[u, 'uhallu'], [u, 'HHallucination'], [u, 'Hallucination'],
+                   [u, 'uconf'], [u, 'HConfusion'],
+                   [u?.uprops, 'Hallucination'], [u?.uprops, 'HHallucination'],
+                   [u?.uprops, 'Confusion']].filter(([o, k]) => o && o[k]);
+    const saved = slots.map(([o, k]) => o[k]);
+    for (const [o, k] of slots) o[k] = typeof o[k] === 'boolean' ? false : 0;
+    try {
+        for (const t of (game.level?.traps || [])) t.tseen = 1;
+        for (const ep of (game.level?.engravings || [])) ep.erevealed = 1;
+        await do_mapping();
+    } finally {
+        slots.forEach(([o, k], i) => { o[k] = saved[i]; });
+    }
     return 0;   /* ECMD_OK — no time passes */
 }
 
@@ -3926,8 +3988,8 @@ async function domonability_extcmd() {
 }
 
 // C ref: wizcmds.c wiz_identify() returns ECMD_OK (no turn elapses).
-function wiz_identify_extcmd() {
-    wiz_identify();
+async function wiz_identify_extcmd() {
+    await wiz_identify();
     return 0;
 }
 
@@ -4104,7 +4166,7 @@ async function wiz_intrinsic() {
             continue;
         }
         case 'STUNNED':
-            await (await import('./mhitu.js')).make_stunned_u(newtimeout);
+            await (await import('./mhitu.js')).make_stunned_u(newtimeout, true);
             continue;
         case 'VOMITING':
             await potion.make_vomiting(newtimeout, false);
@@ -4398,7 +4460,7 @@ async function tipcontainer_c(box) {
 // C ref: pickup.c:3562 dotip() — tip a floor container here (asking about each
 // one, or via a menu when there are several), otherwise fall through to
 // getobj("tip") for a carried container or some other tippable item.
-async function dotip() {
+export async function dotip() {
     const u = game.u;
     /* check floor container(s) first; at most one will be accessed */
     const boxes = container_at(u.ux, u.uy, true);

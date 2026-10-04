@@ -55,6 +55,7 @@ import {
     W_NORTH, W_SOUTH, W_EAST, W_WEST, AM_NONE,
     ARMORSHOP, SCROLLSHOP, POTIONSHOP, WEAPONSHOP, FOODSHOP, RINGSHOP,
     WANDSHOP, TOOLSHOP, BOOKSHOP, FODDERSHOP, CANDLESHOP,
+    ROT_ORGANIC, ROT_CORPSE, ZOMBIFY_MON,
 } from './const.js';
 // readobjnam() is how C's obj.new(<name>) resolves an item name (via the same
 // rnd_otyp_by_namedesc path a wish uses).  readobjnam.js does not import sp_lev,
@@ -66,7 +67,8 @@ import { mkgold, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
          FOOD_CLASS, GOLD_PIECE, add_to_container, weight, mkobj, RANDOM_CLASS,
          OIL_LAMP, ARROW,
          bless, unbless, curse, uncurse, blessorcurse, discard_minvent,
-         GEM_CLASS, COIN_CLASS } from './mkobj.js';
+         GEM_CLASS, COIN_CLASS, stop_object_timer,
+         start_object_timer, start_level_timer } from './mkobj.js';
 import { monster_by_pmidx, name_to_pmidx, level_difficulty_ext, makemon,
          mkclass, mkclass_aligned, mm_mon_at, enexto_spawn, mongets_pub,
          name_gender_hint, MGEND_NEUTRAL, MM_ASLEEP, MM_NOGRP,
@@ -873,6 +875,7 @@ function create_buried_treasure(croom) {
     const chest = mksobj(CHEST, true, true);
     chest.ox = c.x; chest.oy = c.y; chest.where = 'buried';
     chest.cobj = []; // SP_OBJ_CONTAINER -> delete_contents(otmp)
+    (game.level.buriedobjlist ??= []).unshift(chest); /* C add_to_buried(): head insertion */
 
     // bury_an_obj: obj_resists(otmp, 0, 0) can never succeed (ochance 0).
     obj_resists_rng();
@@ -880,7 +883,8 @@ function create_buried_treasure(croom) {
     // (CHEST is oc_material WOOD) gates a second obj_resists(otmp, 5, 95) and a
     // 250 + rnd(250) ROT_ORGANIC timer.
     const under_ice = game.level?.at(c.x, c.y)?.typ === ICE;
-    if (!under_ice && obj_resists_rng() >= 5) rnd(250);
+    if (!under_ice && obj_resists_rng() >= 5)
+        start_object_timer(250 + rnd(250), ROT_ORGANIC, chest);
 
     if (game.level) {
         if (!game.level._themeroom_postprocess)
@@ -1133,8 +1137,12 @@ function create_ice_room(croom) {
         set_levltyp_lit(c.x, c.y, ICE, loc ? loc.lit : false);
     }
     if (percent(25)) {
-        // ice:iterate over the SAME selection order; one rn2(1000) per cell.
-        for (let i = 0; i < cells.length; i++) rn2(1000);
+        // ice:iterate walks the selection y-major (nhlsel.c l_selection_iterate),
+        // one rn2(1000) and one melt-ice timer (nh.start_timer_at) per cell.
+        const mintime = 1000 - level_difficulty_ext() * 100;
+        const ordered = cells.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+        for (const c of ordered)
+            start_level_timer(mintime + rn2(1000), (c.x << 16) | c.y);
     }
 }
 
@@ -1260,6 +1268,10 @@ function create_buried_zombies(croom) {
         if (!somexy(croom, c)) continue;
 
         const otmp = mksobj(CORPSE, true, false); // next_ident + random corpsenm + timer
+        // C ref: sp_lev.c:2230 — des.object's spe (lflags = 0, no male/female
+        // key) overwrites the gender mksobj rolled, so the later revival's
+        // makemon() rolls the gender itself.
+        otmp.spe = 0;
         // set the corpse to the chosen zombifiable species (override) -> a
         // second start_corpse_timeout via set_corpsenm.
         set_corpsenm(otmp, montype);
@@ -1267,11 +1279,13 @@ function create_buried_zombies(croom) {
         // The corpse is buried (not on the floor), so it is deliberately NOT
         // added to the floor object list: it must not render as a corpse glyph.
         otmp.ox = c.x; otmp.oy = c.y; otmp.where = 'buried';
+        (game.level.buriedobjlist ??= []).unshift(otmp); /* C add_to_buried(): head insertion */
         obj_resists_rng();
 
-        // o:start_timer("zombify-mon", math.random(990,1010))
+        // o:stop_timer("rot-corpse"); o:start_timer("zombify-mon", 990 + rn2(21))
         //   math.random(990,1010) = nh.random(990, 21) = 990 + rn2(21)
-        rn2(21);
+        stop_object_timer(otmp, ROT_CORPSE);
+        start_object_timer(990 + rn2(21), ZOMBIFY_MON, otmp);
     }
 }
 
@@ -3362,11 +3376,15 @@ export async function soko_mktrap(mx, my, name) {
     return trap;
 }
 
-// C ref: sp_lev.c create_object — bare class char, no coord -> get_location
-// (DRY, random) then mkobj_at(oclass, x, y, !named).
+// C ref: sp_lev.c create_object: bare class char, no coord -> get_location
+// (DRY, random) then mkobj_at(oclass, x, y, !named), and finally
+// stackobj(otmp) so a random object landing on an identical pile merges
+// into it (two food-ration stacks on one square become one).
 export function soko_create_object_class_random(oclass) {
     const c = bigrm_get_location_dry();
-    return mkobj_at(oclass, c.x, c.y, true);
+    const otmp = mkobj_at(oclass, c.x, c.y, true);
+    stackobj(otmp);
+    return otmp;
 }
 
 // C ref: sp_lev.c lspo_region — the region(selection,"lit") 2-arg form: grow

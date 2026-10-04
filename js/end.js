@@ -6,6 +6,7 @@
 
 import { game } from './gstate.js';
 import { Goodbye } from './role.js';
+import { midnight, night } from './calendar.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
 import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU } from './const.js';
 
@@ -250,7 +251,7 @@ async function savelife(_how) {
     // C ref: eat.c init_uhunger() — a revived hungry hero starts again at the
     // standard nutrition level, which also clears any hunger-derived temporary
     // strength penalty.  It is deterministic and does not consume RNG.
-    if ((u.uhunger ?? 900) < 500) {
+    if ((u.uhunger ?? 900) < 500 || _how === 1 /* CHOKING */) {
         u.uhunger = 900;
         u.uhs = 1; // NOT_HUNGRY
         if ((u.atemp?.a?.[0] || 0) < 0) u.atemp.a[0] = 0;
@@ -519,6 +520,9 @@ async function done(how) {
         // C ref: end.c:1157 — `if (!program_state.panicking) done_object_cleanup()`,
         // run before disclosure and before bones are written.
         await done_object_cleanup();
+        // C ref: end.c really_done():1167-1168 — latch before disclosure.
+        game.iflags.at_night = night();
+        game.iflags.at_midnight = midnight();
         if (game.moves <= 1 && how < PANICKED && !stopprint) {
             const { currency } = await import('./invent.js');
             await d.update_topl(`Do not pass Go.  Do not collect 200 ${currency(200)}.`);
@@ -588,9 +592,11 @@ async function done(how) {
             // C ref: end.c really_done() display_nhwindow(WIN_MESSAGE,
             // FALSE): a death notice or the turn-one "Do not pass Go" is
             // pending even when its writer used pline's soft topline state.
-            if (game._toplin === 1
+            // tty_display_nhwindow() returns at once while WIN_CANCELLED
+            // (== WIN_STOP, set by an ESC'd --More--) is set.
+            if (!game._winStop && (game._toplin === 1
                 || (game._pending_message
-                    && game._toplinSoft === game._pending_message)) {
+                    && game._toplinSoft === game._pending_message))) {
                 await d.topl_more();
                 game._toplin = 0;
                 game._toplinSoft = null;
@@ -817,7 +823,7 @@ function parse_end_disclose() {
 // queries, in disclosure_options order (i, a, v, g, c, o).  Content renderers:
 // 'i' -> invent.js display_inventory_interactive(); 'a'/'c' -> insight.js
 // show_attributes_disclosure()/show_conduct_disclosure(); 'v' -> insight.js
-// list_vanquished_screen(); 'o' -> extcmd-handlers.js
+// list_vanquished(); 'o' -> extcmd-handlers.js
 // show_overview_disclosure().  Every block is gated on !done_stopprint, which a
 // 'q' answer sets — so 'q' suppresses the remaining queries AND (back in
 // really_done) the tombstone window and the score list; returning `false` is how
@@ -891,9 +897,8 @@ async function disclose(how, taken = false) {
                 : defquery;
             if (c === 'q') stopprint = true;
             // 'a' with more than one type first asks for a sort order via
-            // set_vanq_order(); only the default VANQ_MLVL_MNDX ordering is
-            // ported, so both answers render the same list.
-            if (c === 'y' || c === 'a') await insight.list_vanquished_screen();
+            // set_vanq_order() inside list_vanquished().
+            if (c === 'y' || c === 'a') await insight.list_vanquished(c, false);
         }
     }
     if (!stopprint) {
@@ -1129,9 +1134,18 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     const raceFC = races[game.initrace]?.filecode || '?';
     const genderFC = genders[female ? 1 : 0]?.filecode || '?';
     const alignFC = aligns.find(a => a.value === (u?.ualign?.type ?? 0))?.filecode || '?';
+    // C ref: topten.c:694 formatkiller(t0->death, sizeof t0->death, how, TRUE);
+    // its ", while <multi_reason>" tail only lands when it fits in DTHSZ + 1.
+    let tableDeath = deathText;
+    if ((game.multi ?? 0) < 0) {
+        const room = 100 - deathText.length;
+        const why = game.multi_reason;
+        if (why && String(why).length + 9 <= room) tableDeath += `, while ${why}`;
+        else if (17 <= room) tableDeath += ', while helpless';
+    }
     const entry = {
         points: scorePoints, name: plname, plrole: roleFC, plrace: raceFC,
-        plgend: genderFC, plalign: alignFC, death: deathText, dungeonName,
+        plgend: genderFC, plalign: alignFC, death: tableDeath, dungeonName,
         deathdnum: uz.dnum, knoxDnum: -99, // Fort Ludios unreachable here
         deathlev: depth, maxlvl: depth, hp: u?.uhp ?? 0, maxhp: u?.uhpmax ?? 0,
         urexp,
@@ -1392,8 +1406,8 @@ function topten_outentry(rank, entry, so, COLNO) {
     });
 }
 
-// C ref: hack.h an(str) — indefinite article.
-function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
+// C ref: objnam.c an() — indefinite article.
+import { an } from './hacklib.js';
 
 // C ref: end.c done_in_by() — the killer's real species survives a shape change.
 async function killer_text_for_monster(mtmp) {
@@ -1440,8 +1454,35 @@ async function killer_text_for_monster(mtmp) {
         const honorific = raw[0] === '_' ? '' : (mtmp.female ? 'Ms. ' : 'Mr. ');
         return `killed by ${honorific}${shknm}; the shopkeeper`;
     }
-    const name = mtmp?.data?.name || 'monster';
-    return `killed by ${an(name)}`;
+    // C ref: end.c:198-216, 217-222, 260-278 — the plain (non-imitator,
+    // non-shopkeeper) killer: a unique monster is "the <name>" (KILLED_BY, no
+    // article added later), a named ghost "the ghost of <name>", then
+    // "invisible "/"hallucinogen-distorted " adjectives, then a ghost's "of
+    // <name>", a priest/minion's m_monnam(), or the species with " called
+    // <name>" for a named monster.
+    const { m_monnam } = await import('./do_name.js');
+    const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
+    const isghost = ptr?.name === 'ghost';
+    let buf = '', by_an = true;
+    if ((ptr.geno & G_UNIQ) && !(ptr.name === 'high cleric' && !mtmp.ispriest)) {
+        if (!type_is_pname(ptr)) buf += 'the ';
+        by_an = false;
+    }
+    if (isghost && given) { buf += 'the '; by_an = false; }
+    if (mtmp.minvis) buf += 'invisible ';
+    const { Hallucination_u: hallu_u } = await import('./display.js');
+    const { canspotmon: spot_u } = await import('./uhitm.js');
+    if (hallu_u() && spot_u(mtmp)) buf += 'hallucinogen-distorted ';
+    if (isghost) {
+        buf += 'ghost';
+        if (given) buf += ` of ${given}`;
+    } else if (mtmp.ispriest || mtmp.isminion) {
+        buf += m_monnam(mtmp);
+    } else {
+        buf += pmname_of_pmidx(ptr.pmidx, Mgender(mtmp));
+        if (given) buf += ` called ${given}`;
+    }
+    return `killed by ${by_an ? article(buf) : buf}`;
 }
 // shkroom.js imports end.js, so resolve shkname() lazily through the game state
 // the caller already has rather than adding a static cycle.
@@ -1745,7 +1786,7 @@ export async function dump_everything(how, when) {
     const { show_overview_disclosure } = await import('./extcmd-handlers.js');
     await show_overview_disclosure(final, how); // show_overview(final, how)
     putstr(0, 0, '');
-    await insight.list_vanquished_screen(); // list_vanquished('d', FALSE)
+    await insight.list_vanquished('d', false);
     putstr(0, 0, '');
     // unported: list_genocided('d', FALSE) — the "Genocided species:" window.
     putstr(0, 0, '');
@@ -2014,11 +2055,12 @@ export async function container_contents(list, identified, all_containers,
                                 { text: '' }];
                 /* C: buf[0] = buf[1] = ' ' — two leading spaces per item */
                 if (box.cobj.length && !cat) {
-                    const sortloot_opt = game.flags?.sortloot;
+                    // options.c defaults: sortloot 'l' (loot), sortpack on.
+                    const sortloot_opt = game.flags?.sortloot ?? 'l';
                     const sortflags =
                         ((sortloot_opt === 'l' || sortloot_opt === 'f')
                              ? I.SORTLOOT_LOOT : 0)
-                        | (game.flags?.sortpack ? I.SORTLOOT_PACK : 0);
+                        | (game.flags?.sortpack !== false ? I.SORTLOOT_PACK : 0);
                     const sortedcobj = I.sortloot(box.cobj, sortflags, false,
                                                   null);
                     for (const srtc of sortedcobj) {

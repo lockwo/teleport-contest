@@ -500,7 +500,12 @@ export function dmgtype(ptr, dtyp) {
    which C treats as having no attacks: they must not make monster_nearby()
    block a #wait, and dochug() must not run mattacku() for them. */
 export function noattacks(ptr) {
-    for (const a of mattk_of(ptr)) if (a.aatyp) return false;
+    for (const a of mattk_of(ptr)) {
+        /* C ref: mondata.c:67-70 AT_BOOM (gas spore's explosion upon death)
+           isn't an attack as far as noattacks()'s callers are concerned */
+        if (a.aatyp === AT_BOOM) continue;
+        if (a.aatyp) return false;
+    }
     return true;
 }
 

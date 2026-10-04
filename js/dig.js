@@ -9,7 +9,7 @@
 
 import { game } from './gstate.js';
 import { rnd, rn2, rn1 } from './rng.js';
-import { newsym, You_hear, You_feel } from './display.js';
+import { newsym, feel_location, You_hear, You_feel } from './display.js';
 import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, Unaware } from './const.js';
 import { unblock_point, recalc_block_point, cansee } from './vision.js';
 import {
@@ -25,7 +25,7 @@ import {
     DIGTYP_DOOR, DIGTYP_TREE, N_DIRS, N_DIRS_Z, TT_WEB,
 } from './const.js';
 import { is_pick, is_axe } from './weapon.js';
-import { Is_special } from './dungeon.js';
+import { Is_special, ceiling as ceiling_dg } from './dungeon.js';
 import { inside_room } from './mkroom.js';
 
 // C ref: hack.c may_dig(x, y) — "intended to be called only on ROCKs or TREEs".
@@ -302,10 +302,7 @@ function stairway_at(x, y) {
 // C ref: trap.c ceiling(x, y).  Same reduction as trap.js ceiling(): no
 // air/water/quest/earth level is generated here.
 function ceiling(x, y) {
-    const typ = game.level?.at(x, y)?.typ ?? STONE;
-    if (typ === ROOM || IS_WALL(typ) || IS_DOOR(typ) || typ === SDOOR)
-        return 'ceiling';
-    return 'rock cavern';
+    return ceiling_dg(x, y);
 }
 
 // C ref: do_wear.c hard_helmet(obj) = is_helmet(obj)
@@ -836,13 +833,8 @@ function Race_idx_if(idx) { return (game.urace?.mnum ?? -1) === idx; }
 
 // C ref: display.c feel_newsym(x, y) — feel the square when blind, else newsym.
 function feel_newsym(x, y) {
-    if (Blind()) feel_location_(x, y);
+    if (Blind()) feel_location(x, y);
     else newsym(x, y);
-}
-function feel_location_(x, y) {
-    // display.js owns the real feel_location(); imported lazily to stay off
-    // the module-load path (display.js already imports this file's callers).
-    import('./display.js').then((m) => m.feel_location(x, y)).catch(() => {});
 }
 
 // C ref: stairs.c On_stairs(x, y) / On_ladder(x, y).
@@ -1024,9 +1016,6 @@ function is_organic_(otmp) {
     return mat !== undefined && mat > 0 && mat <= MAT_WOOD;
 }
 
-// C ref: light.c end_burn(obj, timer_attached) — js/light.js has it but does
-// not export it; only the lamplit clear matters for a buried light source.
-function end_burn(obj, _timer_attached) { if (obj) obj.lamplit = 0; }
 
 /* ---- subsystems this port does not have -------------------------------- */
 // Each of these keeps C's call site shape so the next porter only has to fill
@@ -1106,8 +1095,8 @@ async function migrate_to_level(mtmp, tolev, xyloc, cc) {
 // js/pray.js has both, unexported.
 async function angry_priest() { /* NOT PORTED (js/pray.js:1300) */ }
 async function desecrate_altar(_highaltar, _alignment) { /* NOT PORTED (js/pray.js:1196) */ }
-// C ref: dokick.c u_wipe_engr(cnt) — js/dokick.js:270 has it, unexported.
-function u_wipe_engr(_cnt) { /* NOT PORTED */ }
+// C ref: engrave.c u_wipe_engr(cnt).
+async function u_wipe_engr(cnt) { (await import('./engrave.js')).u_wipe_engr(cnt); }
 // C ref: shk.c angry_guards(silent) + pline.c verbalize(...) — js/shkroom.js
 // and js/pray.js keep both file-private.
 async function angry_guards(_silent) { return false; /* NOT PORTED */ }
@@ -1709,7 +1698,7 @@ async function in_rooms_(x, y, typewanted) {
     return in_rooms(x, y, typewanted) || [];
 }
 // C ref: hacklib.c an(str).
-function an_(s) { return /^[aeiouAEIOU]/.test(s || '') ? `an ${s}` : `a ${s}`; }
+import { an as an_ } from './hacklib.js';
 // C ref: dig.c:490 SHOP_WALL_DMG (shk.h) — 10 * ROOM_COST, ROOM_COST == 400.
 const SHOP_WALL_DMG = 10 * 400;
 
@@ -2409,7 +2398,7 @@ export async function use_pick_axe2(obj) {
                && (!trap || (trap.ttyp !== LANDMINE && trap.ttyp !== BEAR_TRAP))) {
         const { surface } = await import('./dungeon.js');
         await pline(`Your ${await xname_(obj)} merely scratches the ${surface(u.ux, u.uy)}.`);
-        u_wipe_engr(3);
+        await u_wipe_engr(3);
     } else {
         if (dg.pos.x !== u.ux || dg.pos.y !== u.uy
             || !on_level(dg.level, u.uz) || !dg.down) {
@@ -2718,9 +2707,18 @@ export async function bury_an_obj(otmp, dealloced) {
         await o_unleash(otmp);
     }
 
-    if (otmp.lamplit && otmp.otyp !== POT_OIL) end_burn(otmp, true);
+    if (otmp.lamplit && otmp.otyp !== POT_OIL) {
+        const { end_burn } = await import('./timeout.js');
+        await end_burn(otmp, true);
+    }
 
-    obj_extract_self(otmp);
+    if (otmp.where === 'contained') {
+        /* rot_organic(): a buried container's contents leave it one by one */
+        const { obj_extract_self_mkobj } = await import('./mkobj.js');
+        obj_extract_self_mkobj(otmp);
+    } else {
+        obj_extract_self(otmp);
+    }
 
     const under_ice = is_ice_(otmp.ox, otmp.oy);
     if ((otmp.otyp === ROCK && !under_ice) || otmp.otyp === BOULDER) {

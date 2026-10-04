@@ -3,6 +3,7 @@
 //         rumors.c init_rumors(), getrumor(), get_rnd_line(), get_rnd_text();
 //         hacklib.c xcrypt().
 
+import { ceiling as ceiling_dg } from './dungeon.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK,
@@ -428,6 +429,13 @@ export function can_reach_floor(check_pit) {
         }
     }
     return true;
+}
+
+// C ref: engrave.c u_wipe_engr(cnt) — scuff the engraving under the hero when
+// the hero can reach the floor (not swallowed, held, levitating, ...).
+export function u_wipe_engr(cnt) {
+    if (can_reach_floor(true))
+        wipe_engr_at(game.u.ux, game.u.uy, cnt, false);
 }
 
 export function engr_at(x, y) {
@@ -1480,10 +1488,7 @@ async function maybe_newsym(de) {
 // C ref: trap.c ceiling(x, y).  Same reduction as js/dig.js ceiling(): no
 // air/water/quest/earth level reaches this file.
 function ceiling(x, y) {
-    const typ = game.level?.at(x, y)?.typ ?? STONE;
-    if (typ === ROOM || IS_WALL(typ) || IS_DOOR(typ) || typ === SDOOR)
-        return 'ceiling';
-    return 'rock cavern';
+    return ceiling_dg(x, y);
 }
 
 // C ref: mondata.c resists_blnd(&youmonst) — for the hero this is
@@ -1708,6 +1713,11 @@ export async function save_engravings(mode) {
         const szeach = engr_szeach(ep);
         const engr_alloc = (ep.engr_alloc | 0) || szeach * 3;
         if (engr_alloc && (ep.actualText || '')[0] && update_file(mode)) {
+            /* C: after Sfo_engr(), engr_txt[actual_text] is pointed back at the
+               start of its buffer, undoing wipe_engr_at()'s leading-blank walk;
+               the whole buffer, blanks included, is what gets written. */
+            ep.actualText = ' '.repeat(ep.engr_off | 0) + ep.actualText;
+            ep.engr_off = 0;
             out.engravings.push({
                 engr_alloc,                            /* Sfo_unsigned */
                 engr: {                                /* Sfo_engr */

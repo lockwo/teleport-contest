@@ -14,12 +14,12 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics } from './display.js';
-import { renderWindowScreen, dismiss_invent_screen } from './invent.js';
+import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic } from './display.js';
+import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan } from './invent.js';
 import { doextversion } from './version.js';
 import { option_help_lines } from './options.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
-import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE }
+import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE, KEYHELP }
     from './pager_data.js';
 import { EXTCMD_TABLE } from './cmd_data.js';
 // cmd.js <-> pager.js is a static cycle (cmd.js imports dohelp); both names
@@ -68,7 +68,7 @@ function compress_str(str) {
 // the tail is tty_putstr()'d again with the same attr.  With no such space the
 // scan runs down to i == 0 and the over-long line is stored whole, to be
 // truncated at display time by process_text_window().
-function tty_putstr_text(out, ln) {
+export function tty_putstr_text(out, ln) {
     const isStr = typeof ln === 'string';
     const mk = (t) => (isStr ? t : { ...ln, text: t });
     let str = compress_str(String(isStr ? ln : (ln?.text ?? '')));
@@ -259,7 +259,7 @@ function key2extcmddesc(key) {
 
 // C ref: pager.c dowhatdoes_core() — build the one-line "<key padded to 8><desc>."
 // description for key q, or null if it is not a command.
-function dowhatdoes_core(q) {
+export function dowhatdoes_core(q) {
     const ec_desc = key2extcmddesc(q & 0xff);
     if (ec_desc !== null) {
         const kt = key2txt(q & 0xff);
@@ -300,6 +300,8 @@ export async function dowhatdoes() {
 
     const reslt = dowhatdoes_core(q);
     if (reslt !== null) {
+        // C ref: `if (q == '&' || q == '?') whatdoes_help();`
+        if (q === 0x26 || q === 0x3f) await whatdoes_help();
         // No embedded newline for a single key (the '\n' path is only for the
         // 'm' reqmenu prefix, which isn't queried here).
         await pline(reslt);
@@ -946,7 +948,9 @@ import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
     from './symbols.js';
 import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
          update_topl, Hallucination_u, impossible as pg_impossible_async,
-         stairway_at, known_branch_stairs, stairs_go_down, mimic_object_glyph }
+         stairway_at, known_branch_stairs, stairs_go_down, mimic_object_glyph,
+         is_cmap_engraving_at, engraving_glyph,
+         canseemon_shared, see_with_infrared, tp_sensemon }
     from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { engr_at } from './engrave.js';
@@ -957,8 +961,8 @@ import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
 import { monster_by_pmidx } from './makemon.js';
 import { simpleonames } from './objnam.js';
 import { distant_monnam, ARTICLE_NONE, mon_nam } from './do_name.js';
-import { visible_region_at } from './region.js';
-import { doextlist, cmd_from_func } from './cmd.js';
+import { visible_region_at, region_is_poisoncloud } from './region.js';
+import { doextlist, cmd_from_func, waterbody_name } from './cmd.js';
 import { rn2 } from './rng.js';
 import { NUMMONS } from './disprng.js';
 
@@ -985,11 +989,10 @@ function pg_impossible(msg) { void pg_impossible_async(msg).catch(() => {}); }
 const invisexplain = 'remembered, unseen, creature';
 const altinvisexplain = 'unseen creature';          /* for clairvoyance */
 
-// dat/wizhelp and dat/keyhelp are not transcribed into js/pager_data.js yet.
-// An empty list is C's dlb_fopen() failure, which is exactly what
-// dispfile_debughelp()/whatdoes_help() have to cope with.
+// dat/wizhelp is not transcribed into js/pager_data.js yet.  An empty list is
+// C's dlb_fopen() failure, which is exactly what dispfile_debughelp() has to
+// cope with.
 const DEBUGHELP = [];
-const KEYHELP = [];
 
 // ── local helpers ──────────────────────────────────────────────────────────
 
@@ -1001,10 +1004,7 @@ function pg_distu(x, y) {
     return dx * dx + dy * dy;
 }
 function pg_next2u(x, y) { return pg_distu(x, y) <= 2; }
-function pg_an(s) {
-    if (!s) return s;
-    return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`;
-}
+import { an as pg_an } from './hacklib.js';
 function pg_the(s) { return s ? `the ${s}` : s; }
 function pg_upstart(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
 function pg_strstri(hay, needle) { return String(hay).includes(String(needle)); }
@@ -1049,7 +1049,9 @@ function showsym(idx, fallback) {
     // dat/symbols DECgraphics remaps these cmap entries to VT100 line-drawing
     // codes; no plain map character can equal them.
     if (idx >= SYM_OFF_P && idx < SYM_OFF_P + MAXPCHARS
-        && DEC_REMAPPED.has(idx - SYM_OFF_P) && useDECgraphics())
+        && ((useDECgraphics('S_pool') && DEC_REMAPPED.has(idx - SYM_OFF_P))
+            || (useDECgraphics() && !useDECgraphics('S_pool')
+                && CURSES_REMAPPED.has(idx - SYM_OFF_P))))
         return '\u0001';
     const v = gs?.showsyms?.[idx];
     return (v && v !== 0) ? v : fallback;
@@ -1057,6 +1059,9 @@ function showsym(idx, fallback) {
 const DEC_REMAPPED = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18,
     19, 27, 28, 31, 32, 33, 38, 39, 40, 41, 42, 43, 48, 74, 75, 89, 91, 92, 94,
     97, 99, 101, 103]);
+// dat/symbols: curses overrides fewer cmaps than DECgraphics.
+const CURSES_REMAPPED = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+    17, 18, 19, 22, 23, 24, 39, 42, 43, 74, 75, 91, 92, 99, 101]);
 
 // C ref: display.h glyph_at(x,y).  See the banner: a tagged descriptor, not an
 // int.  `kind` is 'monster' | 'object' | 'trap' | 'invisible' | 'warning' |
@@ -1071,13 +1076,23 @@ function pg_glyph_at(x, y) {
     const mon = m_at(x, y);
     if (mon && sym === (mon.data?.mlet ?? '\0'))
         return { kind: 'monster', mon, sym, x, y };
+    if (mon && mon.mappearance != null && pg_M_AP_TYPE(mon) === M_AP_OBJECT) {
+        const { otyp, glyph: og } = mimic_object_glyph(mon);
+        if (og && og.ch === sym)
+            return { kind: 'object', obj: null, otyp, corpsenm: mon.mcorpsenm, sym, x, y };
+    }
     if (loc.mapped_trap_ttyp)
         return { kind: 'trap', trap: null, ttyp: loc.mapped_trap_ttyp, sym, x, y };
     const otmp = vobj_at(x, y);
     if (otmp && !covers_objects(loc)) {
         const og = object_glyph(otmp);
         if (og && og.ch === sym)
-            return { kind: 'object', obj: otmp, otyp: otmp.otyp,
+            // C ref: display.h generic_obj_to_glyph() — an undescribed potion/
+            // gem/spellbook is drawn as its class's generic object, whose otyp
+            // (the class number) is never the real object's, so lookat()'s
+            // object_from_map() fabricates a stand-in via mksobj().
+            return { kind: 'object', obj: otmp,
+                     otyp: obj_is_generic(otmp) ? otmp.oclass : otmp.otyp,
                      corpsenm: otmp.corpsenm, sym, x, y };
     }
     const tr = t_at(x, y);
@@ -1089,6 +1104,10 @@ function pg_glyph_at(x, y) {
     if (!loc.seenv && loc.remembered_glyph == null)
         return { kind: 'unexplored', sym: ' ', x, y };
     if (sym === ' ') return { kind: 'nothing', sym, x, y };
+    // C ref: display.c _map_location — a revealed engraving is drawn with its own
+    // cmap glyph (S_engroom/S_engrcorr) above the bare terrain.
+    if (is_cmap_engraving_at(x, y) && sym === engraving_glyph(loc).ch)
+        return { kind: 'cmap', sym, cmap: loc.typ === CORR ? S_engrcorr : S_engroom, x, y };
     return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), x, y };
 }
 function pg_glyph_is_monster(g) { return g?.kind === 'monster'; }
@@ -1208,21 +1227,6 @@ function dxdy_to_dist_descr(dx, dy, fulldir) {
                    : `${nsp}${nsp && ewp ? ',' : ''}${ewp}`;
 }
 
-// C ref: mkmaze.c/pager.c waterbody_name(x, y) — js/cmd.js:596 and
-// js/trap.js:3280 each carry a private copy; this is the non-hallucinating
-// core of the same table.
-function pg_waterbody_name(x, y) {
-    if (!isok(x, y)) return 'drink';
-    const ltyp = game.level?.at(x, y)?.typ;
-    if (ltyp === POOL) return 'pool of water';
-    if (ltyp === MOAT) return 'moat';
-    if (ltyp === WATER)
-        return Is_waterlevel(game.u?.uz) ? 'limitless water' : 'wall of water';
-    if (ltyp === LAVAPOOL) return 'molten lava';
-    if (ltyp === LAVAWALL) return 'wall of lava';
-    if (ltyp === ICE) return 'ice';
-    return 'water';
-}
 // C ref: pager.c ice_descr(x, y, outbuf) — js/wizterrainwish.js:406 owns the
 // canonical port; the thaw-timer wording is what it is used for.
 function pg_ice_descr(x, y) {
@@ -1368,7 +1372,7 @@ export function mhidden_description(mon, mhid_flags) {
     if (reg && out.length < BUFSZ - 1) {
         const r = ((game.u?.xray_range ?? 0) > 1) ? game.u.xray_range : 1;
         if (pg_distu(x, y) <= r * (r + 1) || force_region) {
-            const poison_gas = reg.glyph_is_poisoncloud === true;
+            const poison_gas = region_is_poisoncloud(reg);
             out += `, in a cloud of ${poison_gas ? 'poison gas' : 'vapor'}`;
             out = out.slice(0, BUFSZ - 1);
         }
@@ -1537,8 +1541,7 @@ export function look_at_object(x, y, glyph) {
 }
 /* objnam.c distant_name(otmp, otmp->dknown ? doname_with_price : doname_vague_quan) */
 function distant_name_pg(otmp) {
-    const nm = objects[otmp.otyp]?.name || objects[otmp.otyp]?.desc || 'object';
-    return (otmp.quan > 1) ? `${otmp.quan} ${nm}s` : pg_an(nm);
+    return distant_name_pub(otmp, otmp.dknown ? floor_object_name : doname_vague_quan);
 }
 /* mkobj.c is_treefruit(obj) */
 function is_treefruit(obj) {
@@ -1643,10 +1646,26 @@ function pg_digests(ptr) {
 function pg_is_pit(tt) { return tt === PIT || tt === (PIT + 1) /* SPIKED_PIT */; }
 /* objnam.c makeplural() — the general port lives in js/invent.js. */
 function pg_makeplural(s) { return /s$/.test(s) ? s : `${s}s`; }
-/* display.c howmonseen(mon) — the bitmask lookat() decodes. */
+/* vision.c:2152 howmonseen(mon) — the bitmask lookat() decodes.  MATCH_WARN_OF_MON
+   (MONSEEN_WARNMON) is omitted: this port has no warned-of-monster-type state. */
 function howmonseen(mtmp) {
+    const u = game.u || {}, p = u.uprops || {};
+    const useemon = canseemon_shared(mtmp);
+    const xraydist = ((u.xray_range ?? -1) < 0) ? -1 : u.xray_range * u.xray_range;
+    const see_invis = !!(u.see_invis || p.HSee_invisible || p.ESee_invisible
+        || p.See_invisible || ((u.uprops_extrinsic || {})[29 /* SEE_INVIS */] | 0));
     let how = 0;
-    if (cansee(mtmp.mx, mtmp.my) && !mtmp.minvis) how |= 1;   /* NORMAL */
+    /* normal vision (mon_visible is implied by !minvis here) */
+    if (cansee(mtmp.mx, mtmp.my) && couldsee(mtmp.mx, mtmp.my)
+        && !mtmp.mundetected && !mtmp.minvis)
+        how |= 1;                                              /* NORMAL */
+    if (useemon && mtmp.minvis) how |= 2;                      /* SEEINVIS */
+    if ((!mtmp.minvis || see_invis) && see_with_infrared(mtmp)) how |= 4; /* INFRAVIS */
+    if (tp_sensemon(mtmp)) how |= 8;                           /* TELEPAT */
+    const dx = mtmp.mx - (u.ux ?? 0), dy = mtmp.my - (u.uy ?? 0);
+    if (useemon && xraydist > 0 && dx * dx + dy * dy <= xraydist) how |= 16; /* XRAYVIS */
+    if (p.Detect_monsters || p.HDetect_monsters || p.EDetect_monsters
+        || u.HDetect_monsters || u.EDetect_monsters) how |= 32; /* DETECT */
     return how;
 }
 
@@ -1730,7 +1749,7 @@ export function lookat(x, y) {
             buf = Is_airlevel(game.u?.uz) ? 'cloudy area' : 'fog/vapor cloud';
             break;
         case S_pool: case S_water: case S_lava: case S_lavawall: case S_ice:
-            buf = pg_waterbody_name(x, y);
+            buf = waterbody_name(x, y);
             break;
         case S_engroom: case S_engrcorr:
             buf = 'engraving';
@@ -1789,7 +1808,7 @@ export function add_cmap_descr(found, idx, glyph, article, cc, x_str, prefix,
                         : (idx === S_lavawall) ? LAVAWALL : ICE;
         }
         /* EHalluc_resistance = 1 around the call: never hallucinated here */
-        mbuf = pg_waterbody_name(cc.x, cc.y);
+        mbuf = waterbody_name(cc.x, cc.y, true);
         if (loc) loc.typ = save_ltyp;
 
         /* shorten the feedback for farlook/quicklook: "pool or ..." */
@@ -2564,8 +2583,7 @@ export async function doidtrap() {
 function pg_is_hole(tt) { return tt === HOLE || tt === (HOLE + 1) /* TRAPDOOR */; }
 
 // C ref: pager.c:2420 whatdoes_help() — the dat/keyhelp text window shown when
-// dowhatdoes() is asked about '&' or '?'.  dat/keyhelp is not transcribed into
-// js/pager_data.js yet, so KEYHELP is empty, which is C's dlb_fopen() failure.
+// dowhatdoes() is asked about '&' or '?'.
 export async function whatdoes_help() {
     if (!KEYHELP.length) {
         await update_topl('Cannot open "keyhelp" data file!');
@@ -2574,7 +2592,9 @@ export async function whatdoes_help() {
     const win = create_nhwindow_text();
     for (const raw of KEYHELP) {
         if (raw[0] === '#') continue;
-        putstr(win, 0, raw.replace(/^[ \t]+/, ''));
+        /* dlb_fgets() keeps the line's "\n", which makes tty_putstr()'s
+           compress_str() collapse space runs even in short lines */
+        putstr(win, 0, raw.replace(/^[ \t]+/, '') + '\n');
     }
     await display_nhwindow_text(win, true);
 }

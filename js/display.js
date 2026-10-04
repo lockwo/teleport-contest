@@ -136,7 +136,7 @@ const GENERIC_OBJ_COLOR = CLR_GRAY;
 // (e.g. an unidentified potion seen from afar is "a potion", gray, with no
 // distinguishing appearance color) until the hero gets close enough to see it
 // (map_object / see_nearby_objects then set dknown via observe_object).
-function obj_is_generic(otmp) {
+export function obj_is_generic(otmp) {
     if (!otmp || otmp.dknown) return false;
     const otyp = otmp.otyp;
     return otmp.oclass === POTION_CLASS
@@ -461,7 +461,7 @@ function worm_tail_glyph() {
 // altar_to_glyph(AM_NEUTRAL), and no stairway lookup is made: the disguise
 // carries its own up/down/branch variant in the index.
 function furniture_mimic_glyph(sym) {
-    const dec = useDECgraphics();
+    const dec = useDECgraphics('S_upladder');
     if (sym <= S_trwall) return wall_cmap_glyph(sym);
     if (sym >= S_upstair && sym <= S_brdnladder) {
         const down = ((sym - S_upstair) & 1) === 1;
@@ -583,10 +583,22 @@ const ANSI_COLOR = [
 // True when the active symset uses VT100 line-drawing (DECgraphics).  C ref:
 // drawing.c symset[] / dat/symbols — without it the default ASCII glyphs
 // (defsym.h PCHAR) are used for walls/floor/doorways.
-export function useDECgraphics() {
+export function useDECgraphics(symbol) {
     if (rogue_symset()) return false;
-    return /^dec/i.test(String(game.symset || ''));
+    const name = String(game.symset || '');
+    if (/^dec/i.test(name)) return true;
+    // dat/symbols: curses uses DEC handling but leaves doors, ladders,
+    // water, altars, and the top/bottom swallow edges at their defaults.
+    return /^curses$/i.test(name) && (!symbol || CURSES_DEC_SYMBOLS.has(symbol));
 }
+
+const CURSES_DEC_SYMBOLS = new Set([
+    'S_vwall', 'S_hwall', 'S_tlcorn', 'S_trcorn', 'S_blcorn', 'S_brcorn',
+    'S_crwall', 'S_tuwall', 'S_tdwall', 'S_tlwall', 'S_trwall', 'S_ndoor',
+    'S_bars', 'S_tree', 'S_room', 'S_corr', 'S_litcorr', 'S_engrcorr',
+    'S_ice', 'S_vodbridge', 'S_hodbridge', 'S_vbeam', 'S_hbeam',
+    'S_sw_ml', 'S_sw_mr', 'S_expl_ml', 'S_expl_mr',
+]);
 
 // C ref: do.c:1666 `assign_graphics(Is_rogue_level(newlevel) ? ROGUESET : ...)`.
 // symbols.c init_rogue_symbols() builds ROGUESET from the plain ASCII defsyms[]
@@ -825,6 +837,9 @@ function wall_cmap_glyph(idx) {
     if (idx === S_stone || idx == null) return { ch: ' ', color: NO_COLOR, dec: false };
     const ov = symOverrideChar(_WALL_NAME[idx]);
     if (ov) return { ch: ov, color: wall_cmap_color(), dec: false };
+    // C ref: dat/symbols plain changes only the nine corner/junction walls.
+    if (/^plain$/i.test(game.symset || '') && idx >= S_tlcorn && idx <= S_trwall)
+        return { ch: '+', color: wall_cmap_color(), dec: false };
     const dec = useDECgraphics();
     const ch = dec ? _WALL_DEC[idx] : _WALL_ASCII[idx];
     return { ch: ch ?? (dec ? 'q' : '-'), color: wall_cmap_color(), dec };
@@ -947,6 +962,7 @@ function tree_glyph(dec) {
 export function terrain_glyph(loc, x, y) {
     const typ = loc.typ;
     const dec = useDECgraphics();
+    const decFull = useDECgraphics('S_pool');
     switch (typ) {
     // C ref: back_to_glyph SCORR/STONE — `idx = svl.level.flags.arboreal
     // ? S_tree : S_stone` (an arboreal level's undug rock is forest).
@@ -970,7 +986,9 @@ export function terrain_glyph(loc, x, y) {
         const litcorr = !!(loc.waslit || (game.flags && game.flags.lit_corridor));
         const ov = symOverrideChar(litcorr ? 'S_litcorr' : 'S_corr');
         if (ov) return { ch: ov, color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
-        return { ch: '#', color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
+        return useDECgraphics('S_corr') && !decFull
+            ? { ch: 'a', color: litcorr ? CLR_WHITE : NO_COLOR, dec: true }
+            : { ch: '#', color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
     }
     case SDOOR:
         // Secret door shows as the wall it hides in, via wall_angle.
@@ -1004,7 +1022,7 @@ export function terrain_glyph(loc, x, y) {
             // orientations with the same line-drawing glyph ('a').
             const ov = symOverrideChar(loc.horizontal ? 'S_hodoor' : 'S_vodoor');
             if (ov) return { ch: ov, color: CLR_BROWN, dec: false };
-            if (dec)
+            if (useDECgraphics('S_vodoor'))
                 return { ch: 'a', color: CLR_BROWN, dec: true };
             return loc.horizontal
                 ? { ch: '|', color: CLR_BROWN, dec: false }
@@ -1039,7 +1057,7 @@ export function terrain_glyph(loc, x, y) {
         // so (like S_tree) emit the bare letter with dec=false.
         const down = stairs_go_down(loc, x, y);
         const color = known_branch_stairs(stairway_at(x, y)) ? CLR_YELLOW : CLR_BROWN;
-        if (dec) return { ch: down ? 'z' : 'y', color, dec: false };
+        if (useDECgraphics('S_upladder')) return { ch: down ? 'z' : 'y', color, dec: false };
         return { ch: down ? '>' : '<', color, dec: false };
     }
     // C ref: back_to_glyph POOL/MOAT -> S_pool, WATER -> S_water, LAVAPOOL ->
@@ -1055,12 +1073,12 @@ export function terrain_glyph(loc, x, y) {
     case MOAT: {
         const ov = symOverrideChar('S_pool');
         if (ov) return { ch: ov, color: CLR_BLUE, dec: false };
-        return dec ? { ch: '`', color: CLR_BLUE, dec: false }
+        return decFull ? { ch: '`', color: CLR_BLUE, dec: false }
                    : { ch: '}', color: CLR_BLUE, dec: false };
     }
-    case WATER:     return { ch: symOverrideChar('S_water') || (dec ? '`' : '}'), color: CLR_BRIGHT_BLUE, dec: false };
-    case LAVAPOOL:  return { ch: symOverrideChar('S_lava') || (dec ? '`' : '}'), color: CLR_RED, dec: false };
-    case LAVAWALL:  return { ch: symOverrideChar('S_lavawall') || (dec ? '`' : '}'), color: CLR_ORANGE, dec: false };
+    case WATER:     return { ch: symOverrideChar('S_water') || (decFull ? '`' : '}'), color: CLR_BRIGHT_BLUE, dec: false };
+    case LAVAPOOL:  return { ch: symOverrideChar('S_lava') || (decFull ? '`' : '}'), color: CLR_RED, dec: false };
+    case LAVAWALL:  return { ch: symOverrideChar('S_lavawall') || (decFull ? '`' : '}'), color: CLR_ORANGE, dec: false };
     case ICE: {
         const ov = symOverrideChar('S_ice');
         if (ov) return { ch: ov, color: CLR_CYAN, dec: false };
@@ -1096,7 +1114,7 @@ export function terrain_glyph(loc, x, y) {
             : ((amask & AM_MASK) === AM_LAWFUL || (amask & AM_MASK) === AM_NEUTRAL
                || (amask & AM_MASK) === AM_CHAOTIC) ? CLR_GRAY
             : CLR_RED;
-        return dec ? { ch: '{', color: acolor, dec: true }
+        return useDECgraphics('S_altar') ? { ch: '{', color: acolor, dec: true }
                    : { ch: '_', color: acolor, dec: false };
     }
     // C ref: back_to_glyph DBWALL — the raised-drawbridge portcullis, S_hcdbridge
@@ -1115,9 +1133,9 @@ export function terrain_glyph(loc, x, y) {
     // shows whatever is underneath (drawbridgemask & DB_UNDER).
     case DRAWBRIDGE_UP:
         switch (loc.drawbridgemask & DB_UNDER) {
-        case DB_MOAT:  return dec ? { ch: '`', color: CLR_BLUE, dec: false }
+        case DB_MOAT:  return decFull ? { ch: '`', color: CLR_BLUE, dec: false }
                                   : { ch: '}', color: CLR_BLUE, dec: false };
-        case DB_LAVA:  return dec ? { ch: '`', color: CLR_RED, dec: false }
+        case DB_LAVA:  return decFull ? { ch: '`', color: CLR_RED, dec: false }
                                   : { ch: '}', color: CLR_RED, dec: false };
         case DB_ICE:   return dec ? { ch: '~', color: CLR_CYAN, dec: true }
                                   : { ch: '.', color: CLR_CYAN, dec: false };
@@ -1172,7 +1190,7 @@ function has_color_or_default(color) {
     // defined, or rogue level w/o PC graphics": every glyph on the Rogue level
     // loses its colour unless HAS_ROGUE_IBM_GRAPHICS (SYMHANDLING(H_IBM)),
     // which neither the ASCII nor the DECgraphics build is.
-    if (rogue_symset()) return NO_COLOR;
+    if (rogue_symset() || game.iflags?.use_color === false) return NO_COLOR;
     if (color === CLR_BLACK || color === CLR_GRAY) return NO_COLOR;
     return color;
 }
@@ -1190,16 +1208,18 @@ function spot_shows_engravings(loc) {
 export function engraving_glyph(loc) {
     const isCorr = loc?.typ === CORR;
     const ov = symOverrideChar(isCorr ? 'S_engrcorr' : 'S_engroom');
-    const ch = ov || (isCorr ? '#' : '`');
+    const dec = !ov && isCorr && useDECgraphics('S_engrcorr')
+        && !useDECgraphics('S_pool');
+    const ch = ov || (dec ? 'a' : isCorr ? '#' : '`');
     // C ref: display.c reset_glyphmap() sets MG_BW_ENGR whenever a corridor
     // engraving's rendered char collides with plain corridor's/lit-corridor's
     // (true for every built-in symset, since none give S_engrcorr a distinct
     // glyph); win/tty/wintty.c then draws any MG_BW_ENGR glyph in ATR_INVERSE
     // whenever iflags.use_inverse, independent of color mode.
     const bwEngr = isCorr
-        && (ch === (symOverrideChar('S_corr') || '#')
-            || ch === (symOverrideChar('S_litcorr') || '#'));
-    return { ch, color: CLR_BRIGHT_BLUE, dec: false, bwEngr };
+        && (ch === (symOverrideChar('S_corr') || (dec ? 'a' : '#'))
+            || ch === (symOverrideChar('S_litcorr') || (dec ? 'a' : '#')));
+    return { ch, color: CLR_BRIGHT_BLUE, dec, bwEngr };
 }
 
 // C ref: display.h covers_objects(x,y) — a liquid cell hides objects/traps:
@@ -1403,7 +1423,11 @@ export function getpos_find_feature(ch, cx, cy) {
         const typ = (loc.typ === DRAWBRIDGE_UP)
             ? db_under_typ_d(loc.drawbridgemask) : loc.typ;
         const matchCh = tg.dec ? GP_DEC_DEFAULT_CH.get(typ) : tg.ch;
-        if (!GP_EXCLUDED_TYP.has(loc.typ) && matchCh === ch) return true;
+        // C ref: getpos.c matching[] also holds defsyms[sidx].sym, so a staircase
+        // drawn with a symset char (Rogue level's '%') still answers '<' / '>'.
+        const stairCh = (loc.typ === STAIRS || loc.typ === LADDER)
+            ? (stairs_go_down(loc, tx, ty) ? '>' : '<') : null;
+        if (!GP_EXCLUDED_TYP.has(loc.typ) && (matchCh === ch || stairCh === ch)) return true;
         const trap = game.level?.traps?.find((t) => t.tx === tx && t.ty === ty);
         if (trap?.tseen && trap_glyph(trap).ch === ch) return true;
         return false;
@@ -1440,6 +1464,7 @@ export function background_glyph(loc, x, y) {
             if (obj_is_piletop(obj)) og.pile = true;
             if (obj.otyp === STATUE_OTYP && game.level?.flags?.hero_memory)
                 og.mem = random_obj_glyph();
+            og.objotyp = 0;             /* remember_bg(): an OBJECT glyph (random one) */
             return og;
         }
         const og = object_glyph(obj);
@@ -1449,6 +1474,7 @@ export function background_glyph(loc, x, y) {
             // when hilite_pile is on.  Same sym/color as the plain object glyph;
             // only the pile flag (rendered as ATR_INVERSE) is added.
             if (obj_is_piletop(obj)) og.pile = true;
+            og.objotyp = obj.otyp;      /* remember_bg(): the glyph is an OBJECT glyph */
             return og;
         }
     }
@@ -1627,12 +1653,12 @@ export function Hallucination_u() {
 }
 const SWALLOW_SYMS = [
     { ch: '/', dec: false },   // S_sw_tl
-    { ch: 'o', dec: true },    // S_sw_tc  (DEC scan line 1)
+    { ch: 'o', dec: true, asc: '-' },    // S_sw_tc  (DEC scan line 1)
     { ch: '\\', dec: false },  // S_sw_tr
-    { ch: 'x', dec: true },    // S_sw_ml  (DEC vertical rule)
-    { ch: 'x', dec: true },    // S_sw_mr
+    { ch: 'x', dec: true, asc: '|' },    // S_sw_ml  (DEC vertical rule)
+    { ch: 'x', dec: true, asc: '|' },    // S_sw_mr
     { ch: '\\', dec: false },  // S_sw_bl
-    { ch: 's', dec: true },    // S_sw_bc  (DEC scan line 9)
+    { ch: 's', dec: true, asc: '-' },    // S_sw_bc  (DEC scan line 9)
     { ch: '/', dec: false },   // S_sw_br
 ];
 export async function swallowed(first) {
@@ -1667,7 +1693,10 @@ export async function swallowed(first) {
         const color = (mnum != null)
             ? (monster_by_pmidx(mnum)?.mcolor ?? NO_COLOR)
             : (u.ustuck.data?.mcolor ?? NO_COLOR);
-        show_glyph_cell(x, y, s.ch, color, s.dec, 0);
+        /* defsyms' ASCII '-' '|' unless the DECgraphics symset is active */
+        const dec = s.dec && useDECgraphics(
+            idx === 1 ? 'S_sw_tc' : idx === 6 ? 'S_sw_bc' : 'S_sw_ml');
+        show_glyph_cell(x, y, dec ? s.ch : (s.asc ?? s.ch), color, dec, 0);
     };
     const left_ok = isok(u.ux - 1, u.uy), rght_ok = isok(u.ux + 1, u.uy);
     if (isok(u.ux, u.uy - 1)) {
@@ -1691,7 +1720,8 @@ export async function swallowed(first) {
 // (background_glyph hands that back as bg.mem).
 function remember_bg(loc, bg) {
     const m = bg.mem || bg;
-    loc.remembered_glyph = { ch: m.ch, color: m.color, decgfx: m.dec, pile: !!bg.pile, bwEngr: !!bg.bwEngr };
+    loc.remembered_glyph = { ch: m.ch, color: m.color, decgfx: m.dec, pile: !!bg.pile, bwEngr: !!bg.bwEngr,
+                             objotyp: bg.mem ? 0 : bg.objotyp };
 }
 
 // C ref: display.c:3357 seenv_matrix[3][3] — shared with vision.c.
@@ -1731,20 +1761,43 @@ export function feel_location(x, y) {
         // Levitation rules: walls/closed doors, then boulders, then doors, then
         // room/pool, then everything else — all terrain-only (map_background),
         // because the hero cannot reach the floor to feel objects.
+        loc.invisMon = false;
         const bg = terrain_glyph(loc, x, y);
         if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
         show_glyph_cell(x, y, bg.ch, bg.color, bg.dec);
+        update_lastseentyp_d(x, y); // map_background() -> update_lastseentyp()
         return;
     }
 
-    // C ref: display.c:900 — feeling a square reveals an engraving on it.
+    // C ref: display.c:900 — feeling a square reveals an engraving on it, but
+    // engr_can_be_felt() only holds for engraved/burned/headstone text (dust,
+    // marker and blood are not felt).
     const ep = engr_at(x, y);
-    if (ep) ep.erevealed = 1;
+    if (ep && (ep.engr_type === 2 /*ENGRAVE*/ || ep.engr_type === 3 /*BURN*/
+               || ep.engr_type === 6 /*HEADSTONE*/))
+        ep.erevealed = 1;
 
-    // _map_location(x, y, 1): object > trap > engraving > terrain.
+    // _map_location(x, y, 1): object > trap > engraving > terrain.  Mapping the
+    // square overwrites levl[x][y].glyph, so a remembered 'I' for a monster
+    // that has since moved away is forgotten (C display.c feel_location).
+    loc.invisMon = false;
     const bg = background_glyph(loc, x, y);
     if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
     show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
+    // C ref: display.c feel_location tail — a felt plain ROOM floor that isn't
+    // remembered as lit becomes S_darkroom (S_stone without dark_room), even on
+    // the Rogue level, where newsym() later only blanks a remembered S_room.
+    if (game.level?.flags?.hero_memory && loc.typ === ROOM
+        && (!loc.waslit || (game.flags?.dark_room && game.iflags?.use_color))) {
+        const rg = loc.remembered_glyph, floor = terrain_glyph(loc, x, y);
+        if (rg && rg.ch === floor.ch && !!rg.decgfx === !!floor.dec
+            && rg.color === floor.color && !rg.pile && !rg.bwEngr) {
+            if (game.flags?.dark_room) rg.darkroom = true;
+            else loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
+        }
+    }
+
+    update_lastseentyp_d(x, y); // _map_location() -> update_lastseentyp()
 
     // C ref: display.c:912 — which of the ball/chain the hero is touching.
     if (u?.uball && u?.uchain) {
@@ -1845,6 +1898,7 @@ export function newsym(x, y) {
             show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
         }
         remember_bg(loc, bg);
+        update_lastseentyp_d(x, y); // _map_location() -> update_lastseentyp()
         return;
     }
 
@@ -1919,6 +1973,7 @@ export function newsym(x, y) {
             if (game.level?.flags?.hero_memory) {
                 remember_bg(loc, bg);
             }
+            update_lastseentyp_d(x, y); // _map_location(x, y, 0) -> update_lastseentyp()
             // C ref: display.c newsym — showing an actual monster here "also
             // gets rid of any invisibility glyph".
             loc.invisMon = false;
@@ -1944,8 +1999,12 @@ export function newsym(x, y) {
             // C ref: display.c display_monster — `mon->mtame && !Hallucination`:
             // a hallucinated pet takes the plain mon_to_glyph arm, so it carries
             // no MG_PET and loses the highlight along with its own species.
-            const petAttr = (mon.mtame && !Hallucination_u() && game.flags?.hilite_pet)
-                ? ATR_INVERSE : 0;
+            // C ref: wintty.c tty_print_glyph — a DETECTED (not physically
+            // seen) non-pet monster carries MG_DETECT, drawn ATR_INVERSE when
+            // iflags.use_inverse; display_monster picks the pet glyph first.
+            const petAttr = (mon.mtame && !Hallucination_u())
+                ? (game.flags?.hilite_pet ? ATR_INVERSE : 0)
+                : (!see_it && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0;
             // C ref: display.c display_monster() — "We must do the mimic check
             // first.  If the mimic is mimicking something, and the location is
             // in sight, we have to change the hero's memory so that when the
@@ -1957,11 +2016,15 @@ export function newsym(x, y) {
             // reverted to bare floor the moment the hero left the level and came
             // back, losing one remembered cell per mimic for the rest of the game.
             if (see_it && game.level?.flags?.hero_memory && mimics_an_object(mon))
-                loc.remembered_glyph = { ch: mg.ch, color: mg.color, decgfx: mg.dec };
+                loc.remembered_glyph = { ch: mg.ch, color: mg.color, decgfx: mg.dec,
+                    objotyp: M_AP_TYPE(mon) === M_AP_OBJECT ? (mon.mappearance | 0) : 0 };
             // Detection reveals a mimic but preserves its visible disguise in map memory.
             if (detected && see_it && M_AP_TYPE(mon) !== M_AP_NOTHING)
                 mg = monster_glyph(mon, true);
-            show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
+            const detAttr = (detected && !see_it && !worm_tail
+                             && !(mon.mtame && !Hallucination_u())
+                             && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0;
+            show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr || detAttr);
             loc.disp_monster = detected || !mimics_an_object(mon);
         } else if (mon && mon_warning(mon) && !worm_tail) {
             // C ref: display.c newsym:1030 — `else if (mon && mon_warning(mon)
@@ -1979,6 +2042,7 @@ export function newsym(x, y) {
             if (game.level?.flags?.hero_memory) {
                 remember_bg(loc, bg);
             }
+            update_lastseentyp_d(x, y); // _map_location(x, y, 1) -> update_lastseentyp()
             show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
         }
     } else {
@@ -2004,8 +2068,13 @@ export function newsym(x, y) {
             // C ref: display.c:1054 — this arm passes is_worm_tail(mon) too.
             const mg = (dark_worm_tail && !Hallucination_u())
                 ? worm_tail_glyph() : monster_glyph(mon, detect_monsters);
-            const petAttr = (mon.mtame && !Hallucination_u() && game.flags?.hilite_pet)
-                ? ATR_INVERSE : 0;
+            // C ref: display.c:1046 see_it (tp_sensemon / infravision) picks
+            // PHYSICALLY-seen-style 0; otherwise DETECTED -> MG_DETECT ->
+            // ATR_INVERSE (wintty.c tty_print_glyph), pets excepted.
+            const sensed_it = tp_sensemon(mon) || (mon_visible(mon) && see_with_infrared(mon));
+            const petAttr = (mon.mtame && !Hallucination_u())
+                ? (game.flags?.hilite_pet ? ATR_INVERSE : 0)
+                : (!sensed_it && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0;
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
             loc.disp_monster = detect_monsters || !mimics_an_object(mon);
         } else if (mon && mon_warning(mon) && !dark_worm_tail) {
@@ -2031,15 +2100,20 @@ export function newsym(x, y) {
                 && loc.remembered_glyph.color === CLR_WHITE) {
                 loc.remembered_glyph.color = NO_COLOR;
             }
-            // C ref: display.c:1079 — on the Rogue level dark_room never
-            // applies: an unlit room square remembered as plain floor (S_room)
-            // is forgotten back to S_stone once it leaves the hero's sight.
-            if (Is_rogue_level(game.u?.uz) && loc.typ === ROOM && !loc.waslit
-                && !loc.invisMon) {
+            // C ref: display.c:1087-1091 — unseen plain ROOM memory becomes
+            // DARKROOMSYM.  Keep the glyph identity as well as its rendering;
+            // blind doclose() uses that identity to decide if a turn was spent.
+            if (loc.typ === ROOM && (!loc.waslit
+                    || (game.flags?.dark_room && game.iflags?.use_color))
+                && !loc.invisMon && !loc.remembered_glyph.darkroom) {
                 const rg = loc.remembered_glyph, floor = terrain_glyph(loc, x, y);
                 if (rg.ch === floor.ch && !!rg.decgfx === !!floor.dec
-                    && rg.color === floor.color && !rg.pile && !rg.bwEngr)
-                    loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
+                    && rg.color === floor.color && !rg.pile && !rg.bwEngr) {
+                    if (Is_rogue_level(game.u?.uz))
+                        loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
+                    else
+                        rg.darkroom = true;
+                }
             }
             // Out of sight but remembered — show remembered background.  A
             // remembered pile-top keeps its MG_OBJPILE highlight (drawn via the
@@ -2093,19 +2167,26 @@ export function unmap_object(x, y) {
     if (trap && trap.tseen && !covers_objects(loc)) {
         g = trap_glyph(trap);
     } else if (loc.seenv) {
-        // C ref: display.c unmap_object — the second arm is map_background(),
-        // i.e. back_to_glyph terrain ONLY; there is no engraving arm here (that
-        // lives in _map_location, which unmap_object deliberately does not use).
-        g = terrain_glyph(loc, x, y);
+        // C ref: display.c unmap_object — a spot that shows engravings and has
+        // one (even an unrevealed one; revealed now if cansee) is remembered
+        // via map_engraving(); otherwise map_background(), terrain ONLY.
+        const ep = spot_shows_engravings(loc) && !covers_objects(loc)
+            ? engr_at(x, y) : null;
+        if (ep) {
+            if (cansee(x, y)) ep.erevealed = 1;
+            g = engraving_glyph(loc);
+        } else {
+            g = terrain_glyph(loc, x, y);
+        }
         // C: "turn remembered dark room squares dark" — a room floor glyph
         // picked above for a square that isn't currently lit re-darkens to
         // blank, same as an unlit room square that was never specially seen.
-        if (!loc.waslit && loc.typ === ROOM) g = { ch: ' ', color: NO_COLOR, dec: false };
+        if (!ep && !loc.waslit && loc.typ === ROOM) g = { ch: ' ', color: NO_COLOR, dec: false };
     } else {
         g = { ch: ' ', color: NO_COLOR, dec: false };
     }
     loc.invisMon = false;
-    loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, pile: false };
+    loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, pile: false, bwEngr: !!g.bwEngr };
 }
 
 // ── docrt ──
@@ -2129,6 +2210,9 @@ export async function docrt() {
         // an expel (seed0383 steps 172/174/177).
         game._pending_message = '';
     }
+    // C ref: display.c cls():2197 / docrt_flags() post_map — `disp.botlx =
+    // TRUE` on every path; the caller's next flush_screen()/bot() redraws.
+    game.botlx = true;
     // C ref: display.c:1740/1757 — docrt_flags() shuts vision down
     // (vision_recalc(2)), repaints from map memory, then recomputes it
     // (vision_recalc(0)) before see_monsters().  Without the recompute a hero
@@ -2279,6 +2363,7 @@ const BL_FLUSH = -1;
 const MAX_STATUS_ROWS = 3;
 // wins[WIN_STATUS]->cols; tty_putstatusfield() refuses to write at cols-1.
 const STATUS_COLS = 80;
+const CLR_MAX = 16;
 // limit of the player's name in the status window (botl.h BOTL_NSIZ)
 const BOTL_NSIZ = 16;
 // config.h ships SCORE_ON_BOTL commented out, so BL_SCORE is compiled out of
@@ -2423,7 +2508,10 @@ function _botConditions() {
     // C ref: botl.c:1154 — u.utrap with utraptype == TT_LAVA; the generic
     // "trap" condition is opt_in, so a pit/bear trap shows nothing.
     if (u.utrap && u.utraptype === TT_LAVA) out.push('InLava');
-    if ((u.blinded || 0) > 0 || game.ublindf
+    // status_hold('blind', false): polyself.c polyman() re-arms HBlinded = 1 and make_blinded()
+    // prints "You can see again." with it still set, but botl is clean there, so
+    // the --More-- frame keeps the bot() published at "You return to ... form!".
+    if (((u.blinded || 0) > 0 && status_held('blind', true) !== false) || game.ublindf
         || (u.uprops?.BlindedFromForm | 0) > 0) out.push('Blind');
     if ((u.uprops?.Confusion || 0) > 0) out.push('Conf');
     // C ref: youprop.h Deaf — HDeaf || EDeaf (mon.js Deaf()).
@@ -2448,8 +2536,9 @@ function _botConditions() {
     if (halluTime > 0 && !halluRes) out.push('Hallu');
     if (u.uprops?.Levitation || wornExtrinsic(48 /*LEVITATION*/)) out.push('Lev');
     if (u.usteed) out.push('Ride');
-    // C ref: youprop.h Stunned — HStun (timeout.js STUNNED entry).
-    if ((u.uprops?.Stun || 0) > 0 || u.Stunned) out.push('Stun');
+    // C ref: youprop.h Stunned — HStun (timeout.js STUNNED entry) incl. the
+    // FROMFORM bit set_uasmon() puts on a stalker or bat form.
+    if ((u.uprops?.Stun || 0) > 0 || u.Stunned || u.formprops?.Stunned) out.push('Stun');
     return out;
 }
 
@@ -2469,7 +2558,7 @@ export async function warmupBotlStatusFns() {
 }
 
 // Returns { val[], active[], lth[], cond[], hpPct, critHp }.
-function _botFields(order) {
+function _botFields(order, transient = null) {
     const u = game.u || {};
     const raw = new Array(MAXBLSTATS).fill('');
     const active = new Array(MAXBLSTATS).fill(true);
@@ -2489,9 +2578,10 @@ function _botFields(order) {
     // js/botl.js but never wired into the live render path — see
     // warmupBotlStatusFns() above for why this is a cached dynamic import
     // rather than a static one.
-    if (active[BL_WEAPON]) raw[BL_WEAPON] = _botlStatusFns?.weapon_status() ?? '';
-    if (active[BL_ARMOR]) raw[BL_ARMOR] = _botlStatusFns?.armor_status() ?? '';
+    if (active[BL_WEAPON]) raw[BL_WEAPON] = transient ? transient.weapon : _botlStatusFns?.weapon_status() ?? '';
+    if (active[BL_ARMOR]) raw[BL_ARMOR] = transient ? transient.armor : _botlStatusFns?.armor_status() ?? '';
     if (active[BL_TERRAIN]) raw[BL_TERRAIN] = _botlStatusFns?.terrain_status() ?? '';
+    if (active[BL_VERS]) raw[BL_VERS] = _botlStatusFns?.status_version_str(false) ?? '';
 
     raw[BL_TITLE] = _botTitle();
 
@@ -2517,8 +2607,8 @@ function _botFields(order) {
     // prompt).  Our status line is rebuilt live every frame, so reproduce the
     // freeze by caching the last shown value and holding it while uhp===-1.
     // C ref: botl.c bot1() — hp = Upolyd ? u.mh : u.uhp; hpmax likewise u.mhmax.
-    const curHp = u.Upolyd ? u.mh : u.uhp;
-    const curHpMax = (u.Upolyd ? u.mhmax : u.uhpmax) || 0;
+    const curHp = status_held('hp', u.Upolyd ? u.mh : u.uhp);
+    const curHpMax = (status_held('hpmax', u.Upolyd ? u.mhmax : u.uhpmax)) || 0;
     const hpShown = curHp === -1
         ? (game._botlHpShown ?? 0)
         : (game._botlHpShown = Math.max(0, curHp || 0));
@@ -2533,9 +2623,9 @@ function _botFields(order) {
     // ROGUESET (drawing.c def_r_oc_syms: coin shares GEM_SYM) prints "*:0".
     const goldSym = rogue_symset() ? '*' : '$';
     raw[BL_GOLD] = `${goldSym}:${Math.min(Math.max(game._goldCount || 0, 0), 999999)}`;
-    raw[BL_ENE] = String(Math.min(u.uen || 0, 9999));
-    raw[BL_ENEMAX] = String(Math.min(u.uenmax || 0, 9999));
-    raw[BL_AC] = String(u.uac ?? 0);
+    raw[BL_ENE] = String(Math.min(status_held('uen', u.uen) || 0, 9999));
+    raw[BL_ENEMAX] = String(Math.min(status_held('uenmax', u.uenmax) || 0, 9999));
+    raw[BL_AC] = String(transient ? transient.uac : u.uac ?? 0);
     raw[BL_HD] = String(u.data?.mlevel ?? 0);
     raw[BL_XP] = String(u.ulevel || 1);
     raw[BL_EXP] = String(u.uexp || 0);
@@ -2564,11 +2654,17 @@ function _botFields(order) {
     // Do not re-attempt without first modelling C's disp.botl full-redraw
     // triggers (any OTHER bot field changing) as an escape hatch from the
     // freeze, not just gating on context.run in isolation.
-    raw[BL_TIME] = String(game.moves || 1);
+    // C ref: botl.c bot()/timebot() are the only writers of BL_TIME, so the
+    // field shows `moves` as of the last bot()/timebot() (game._shownMoves,
+    // refreshed by botl_flush()/timebot_sync()), not the live counter.
+    raw[BL_TIME] = String(game._shownMoves != null && game._shownMoves <= (game.moves || 1)
+        ? game._shownMoves : (game.moves || 1));
     // C ref: botl.c bot_via_windowport — hu_stat[] (eat.c) = {Satiated, "",
     // Hungry, Weak, Fainting, Fainted, Starved}; NOT_HUNGRY(1) shows nothing.
     const HU_STAT = ['Satiated', '', 'Hungry', 'Weak', 'Fainting', 'Fainted', 'Starved'];
-    const uhs = u.uhs ?? 1;
+    // C ref: eat.c newuhs() updates u.uhs mid-meal WITHOUT disp.botl, so the
+    // status keeps the hunger word of the last bot() until one runs.
+    const uhs = status_held('uhs', u.uhs ?? 1);
     raw[BL_HUNGER] = (uhs !== 1 && HU_STAT[uhs]) ? HU_STAT[uhs] : '';
     // C ref: botl.c bot_via_windowport()/enc_stat[].  botl.c:1106 recomputes
     // near_capacity() inside bot(), and bot() only runs when disp.botl is
@@ -2628,24 +2724,174 @@ function _describeLevel() {
     return `${inTut ? 'Tutorial' : 'Dlvl'}:${dlvlNum}`;
 }
 
-// C ref: wintty.c tty_putstatusfield() — writes text into the status window's
+// C ref: wintty.c tty_putstatusfield() writes text into the status window's
 // row starting at 1-based column x, and never touches the final column.
-function _putStatusField(cells, text, x, attr) {
+function _putStatusField(cells, text, x, attr, color = NO_COLOR) {
     for (let i = 0; i < text.length; i++) {
         const n = i + x;
         if (n >= STATUS_COLS) break;
-        cells[n - 1] = { ch: text[i], attr: attr | 0 };
+        cells[n - 1] = { ch: text[i], attr: attr | 0, color };
     }
 }
 
+// C ref: wintty.c Begin_Attr(): HL_* mask to the terminal attribute bits the
+// recordings can express (bold, underline, inverse).
+function _hlAttr(mask) {
+    return ((mask & 0x02) ? 2 : 0) | ((mask & 0x10) ? 4 : 0) | ((mask & 0x40) ? 1 : 0);
+}
+// The contest's tty has no color escape for black or gray (hilites[] is empty
+// for both), so those render in the terminal default like NO_COLOR.
+function _hlColor(c) {
+    return (c == null || c < 0 || c > 15 || c === NO_COLOR || c === CLR_GRAY
+            || c === CLR_BLACK) ? NO_COLOR : c;
+}
+
+// C ref: wintty.c encvals[][] -- the encumbrance word at shrink levels 0..2.
+const ENCVALS = [
+    ['', 'Burdened', 'Stressed', 'Strained', 'Overtaxed', 'Overloaded'],
+    ['', 'Burden', 'Stress', 'Strain', 'Overtax', 'Overload'],
+    ['', 'Brd', 'Strs', 'Strn', 'Ovtx', 'Ovld'],
+];
+
+// The tty status window's persistent state: what shrink_enc()/shrink_dlvl()
+// left in status_vals[] stays there until the field is next updated.
+function _ttyStatusState() {
+    return (game._ttyStatus ??= {
+        init: false, capVal: '', prevCap: null, enclev: 0, enc_shrinklvl: 0,
+        levVal: '', prevLev: null, dlvl_shrinklvl: 0,
+    });
+}
+
+// C ref: wintty.c set_condition_length()/render_status(): the words for the
+// condition bits, in cond_idx[] order, at one shrink level.
+function _condWords(bits, shrinklvl) {
+    const out = [];
+    const fns = _botlStatusFns;
+    if (!bits || !fns) return out;
+    for (let c = 0; c < fns.conditions.length; ++c) {
+        const cnd = fns.conditions[fns.cond_idx[c]];
+        if ((bits & cnd.mask) !== 0) out.push({ mask: cnd.mask, text: cnd.text[shrinklvl] });
+    }
+    return out;
+}
+
+// C ref: wintty.c tty_status_update() for BL_CAP/BL_LEVELDESC -- a changed
+// field gets its full text back and its shrink level reset.
+function _ttyFieldUpdates(st, val, lth) {
+    const cap = game._curcap | 0;
+    if (st.prevCap !== cap) {
+        st.prevCap = cap;
+        st.enclev = cap;
+        st.enc_shrinklvl = 0;
+        st.capVal = val[BL_CAP] === ' ' ? '' : val[BL_CAP];
+    }
+    if (st.prevLev !== val[BL_LEVELDESC]) {
+        st.prevLev = val[BL_LEVELDESC];
+        st.dlvl_shrinklvl = 0;
+        st.levVal = val[BL_LEVELDESC];
+    }
+    val[BL_CAP] = st.capVal;
+    val[BL_LEVELDESC] = st.levVal;
+    lth[BL_CAP] = st.capVal.length;
+    lth[BL_LEVELDESC] = st.levVal.length;
+}
+
+// C ref: wintty.c make_things_fit().  Shrinks conditions, the encumbrance word
+// and Dlvl: until the last row fits; returns whether truncation is expected.
+function _makeThingsFit(st, order, nrows, active, val, lth, condBits) {
+    const condrow = nrows - 1;
+    let cond_shrinklvl = 0;
+    const setCondLth = () => {
+        lth[BL_CONDITION] = _condWords(condBits, cond_shrinklvl)
+            .reduce((n, w) => n + 1 + w.text.length, 0);
+    };
+    const shrinkEnc = (lvl) => {
+        if (lvl <= 2) {
+            st.enc_shrinklvl = lvl;
+            st.capVal = ' ' + ENCVALS[lvl][st.enclev];
+        }
+        val[BL_CAP] = st.capVal;
+        lth[BL_CAP] = st.capVal.length;
+    };
+    const shrinkDlvl = (lvl) => {
+        const p = st.levVal.indexOf(':');
+        if (p >= 0) {
+            st.dlvl_shrinklvl = lvl;
+            st.levVal = (lvl === 0 ? 'Dlvl' : 'Dl') + st.levVal.slice(p);
+        }
+        val[BL_LEVELDESC] = st.levVal;
+        lth[BL_LEVELDESC] = st.levVal.length;
+    };
+    const rowEnd = () => {
+        let col = 1;
+        for (const idx of order[condrow]) {
+            if (idx === BL_FLUSH) break;
+            if (active[idx]) col += lth[idx];
+        }
+        return col;
+    };
+    if (st.enc_shrinklvl > 0 && nrows === 2) shrinkEnc(0);
+    if (st.dlvl_shrinklvl > 0) shrinkDlvl(0);
+    setCondLth();
+    let fitting = 0, otheroptions = 0;
+    for (let trycnt = 0; trycnt < 6 && !fitting; ++trycnt) {
+        const requirement = rowEnd() - 1;
+        if (requirement <= STATUS_COLS - 1) {
+            fitting = requirement;
+            break;
+        }
+        if (trycnt < 2) {
+            if (cond_shrinklvl < trycnt + 1) {
+                cond_shrinklvl = trycnt + 1;
+                setCondLth();
+            }
+            continue;
+        }
+        if (cond_shrinklvl >= 2) {
+            if (otheroptions < 2) {
+                if (nrows === 2) shrinkEnc(otheroptions + 1);
+            } else if (otheroptions === 2) {
+                shrinkDlvl(1);
+            } else {
+                break; /* truncation_expected */
+            }
+            ++otheroptions;
+        }
+    }
+    return cond_shrinklvl;
+}
+
 // C ref: wintty.c check_fields() + render_status().  Returns one array of
-// { ch, attr } cells per status row (index 0 = topmost status row).
+// { ch, attr, color } cells per status row (index 0 = topmost status row).
 function _renderStatus() {
     const nrows = StatusRows();
     const order = nrows === MAX_STATUS_ROWS ? THREELINEORDER : TWOLINEORDER;
-    const { val, active, lth, cond, hpPct, critHp } = _botFields(order);
+    const st = _ttyStatusState();
+    const fns = _botlStatusFns;
+    if (!st.init && fns && game.u) {
+        /* C ref: the first bot() of a new game runs before u_init_inventory():
+           no weapon, no armor, u.uac still 0.  Its render may overflow and
+           leave shrunk text behind in status_vals[]. */
+        const tr = { uac: 0, weapon: 'Bare-hnds', armor: 'Naked' };
+        fns.status_hilite_poll(tr);
+        const f0 = _botFields(order, tr);
+        _ttyFieldUpdates(st, f0.val, f0.lth);
+        _makeThingsFit(st, order, nrows, f0.active, f0.val, f0.lth,
+                       fns.tty_hl.condbits);
+        st.init = true;
+    }
+    const hl = fns ? fns.status_hilite_poll(null) : null;
+    const hlOn = !!(hl && game.iflags?.hilite_delta);
+    const { val, active, lth, hpPct, critHp } = _botFields(order);
+    /* the drum's Deaf lands inside its own pline, before bot() runs again */
+    let condBits = hl ? (game._deafPending ? hl.condbits & ~0x10 : hl.condbits) : 0;
+    /* polyman()'s HBlinded=1 probe runs before the bot() that toggle_blindness() sets */
+    if (status_held('blind', true) === false) condBits &= ~0x2; /* BL_MASK_BLIND */
+    _ttyFieldUpdates(st, val, lth);
+    const cond_shrinklvl = _makeThingsFit(st, order, nrows, active, val, lth, condBits);
+    const cond = _condWords(condBits, cond_shrinklvl);
     const rows = [];
-    // C ref: check_fields() — x is 1-based and each field abuts the previous.
+    // C ref: check_fields() -- x is 1-based and each field abuts the previous.
     const posx = new Array(MAXBLSTATS).fill(0);
     const posy = new Array(MAXBLSTATS).fill(0);
     for (let row = 0; row < nrows; row++) {
@@ -2669,7 +2915,7 @@ function _renderStatus() {
             if (idx === BL_CONDITION) {
                 if (!cond.length) continue;
                 const tlth = lth[BL_CONDITION];
-                // C ref: render_status() — on the last of three rows the
+                // C ref: render_status() -- on the last of three rows the
                 // conditions are indented to line up with the hunger field on
                 // the row above; if they will not fit there they are right
                 // justified, and only then left where they fall.
@@ -2687,13 +2933,26 @@ function _renderStatus() {
                         cstart = x;
                     if (x < cstart) x = cstart;
                 }
-                for (const word of cond) {
+                for (const w of cond) {
                     _putStatusField(cells, ' ', x++, 0);
-                    _putStatusField(cells, word, x, 0);
-                    x += word.length;
+                    let cattr = 0, ccolor = NO_COLOR;
+                    if (hlOn) {
+                        const cm = hl.colormasks;
+                        if (cm) {
+                            const bits = [[CLR_MAX + 2, 0x02], [CLR_MAX + 3, 0x04],
+                                          [CLR_MAX + 4, 0x08], [CLR_MAX + 5, 0x10],
+                                          [CLR_MAX + 6, 0x20], [CLR_MAX + 7, 0x40]];
+                            for (const [k, m] of bits)
+                                if ((w.mask & cm[k]) !== 0) cattr |= m;
+                            for (let k = 0; k < CLR_MAX; ++k)
+                                if ((w.mask & cm[k]) !== 0) { ccolor = k; break; }
+                        }
+                    }
+                    _putStatusField(cells, w.text, x, _hlAttr(cattr), _hlColor(ccolor));
+                    x += w.text.length;
                 }
             } else if (idx === BL_TITLE && game.flags?.hitpointbar) {
-                // C ref: render_status() "Title with Hitpoint Bar" — the title
+                // C ref: render_status() "Title with Hitpoint Bar" -- the title
                 // is forced to exactly 30 columns inside [ ], and the leading
                 // hpbar_percent% of it is drawn in inverse video.
                 let bar = val[BL_TITLE].slice(0, 30).padEnd(30);
@@ -2706,9 +2965,11 @@ function _renderStatus() {
                     if (barPos >= barLen) barPos = barLen - 1;
                 }
                 const part1 = bar.slice(0, barPos), part2 = bar.slice(barPos);
+                const battr = hl ? _hlAttr(hl.attr[BL_TITLE]) : ATR_INVERSE;
+                const bcolor = hlOn ? _hlColor(hl.color[BL_TITLE]) : NO_COLOR;
                 _putStatusField(cells, '[', x++, 0);
                 if (part1) {
-                    _putStatusField(cells, part1, x, ATR_INVERSE);
+                    _putStatusField(cells, part1, x, battr, bcolor);
                     x += part1.length;
                 }
                 if (part2) {
@@ -2717,7 +2978,23 @@ function _renderStatus() {
                 }
                 _putStatusField(cells, ']', x++, 0);
             } else {
-                _putStatusField(cells, val[idx], x, 0);
+                if (idx === BL_VERS && x < STATUS_COLS - lth[BL_VERS])
+                    x = STATUS_COLS - lth[BL_VERS]; /* right justify version */
+                let text = val[idx];
+                if (hlOn) {
+                    while (text[0] === ' ') {
+                        _putStatusField(cells, ' ', x++, 0);
+                        text = text.slice(1);
+                    }
+                    if (text[0] === '/' && idx === BL_EXP) {
+                        _putStatusField(cells, '/', x++, 0);
+                        text = text.slice(1);
+                    }
+                    _putStatusField(cells, text, x, _hlAttr(hl.attr[idx]),
+                                    _hlColor(hl.color[idx]));
+                } else {
+                    _putStatusField(cells, text, x, 0);
+                }
             }
         }
         rows.push(_dropAttrOnBlankRuns(cells));
@@ -2763,6 +3040,22 @@ export function statusLine1Text() {
 export function statusLine2Text() {
     const rows = botl_lines();
     return _statusRowText(rows[rows.length - 1] || []);
+}
+
+// Write status line 1 or 2 (the last two status rows) onto the display at
+// screen row `row`, with its highlight colors and attributes, stopping at
+// column `cut` when one is given.  Used by the menu/text windows that redraw
+// the status rows underneath themselves.
+export function putStatusRow(display, which, row, cut = null) {
+    const rows = botl_lines();
+    const cells = rows[rows.length - 3 + which] || [];
+    let n = cells.length;
+    while (n > 0 && (!cells[n - 1] || cells[n - 1].ch === ' ')) n--;
+    const end = cut == null ? n : Math.min(n, cut);
+    for (let c = 0; c < end; c++) {
+        const cell = cells[c];
+        display.setCell(c, row, cell ? cell.ch : ' ', cell?.color ?? NO_COLOR, (cell?.attr | 0));
+    }
 }
 
 // ── Serialize terminal grid for screen comparison ──
@@ -2874,6 +3167,25 @@ function _mapRowOnScreen(y) {
     return y + 1 - clipy;
 }
 
+// C ref: wintty.c docorner(1, cury+1, 0) — after a multi-row top line is
+// cleared, each screen row it spilled onto is blanked and its map cells are
+// redrawn from the remembered map (row_refresh).  Redraw screen row `sy` only.
+export function render_map_row_to_grid(sy) {
+    const display = game?.nhDisplay;
+    if (!display?.setCell || !display.grid) return;
+    _syncClipping();
+    for (let y = 0; y < ROWNO; y++) {
+        if (_mapRowOnScreen(y) !== sy) continue;
+        for (let x = 1; x < COLNO; x++) {
+            if (clipping && (x <= clipx || x >= clipxmax)) continue;
+            const loc = game.level?.at(x, y);
+            if (!loc?.disp_ch || loc.disp_ch === ' ') continue;
+            const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
+            display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0);
+        }
+    }
+}
+
 // Draw the map and the status rows onto the grid without touching row 0 (the
 // message line) or clearing the grid first.  Used by the menu/window overlay
 // renderers so a partial-width NHW_MENU shows the underlying map in the
@@ -2906,6 +3218,7 @@ function _buildScreenOutput() {
     // truncation a prior chained corner window (draw_corner_window) needs to
     // carry forward no longer applies once we're back to plain gameplay.
     game._statusTruncCol = null;
+    game._statusTrunc22 = null;
 
     _syncClipping();
     const nstat = StatusRows();
@@ -2931,7 +3244,10 @@ function _buildScreenOutput() {
         // Message line(s): a topline wider than the screen wraps onto row 1+
         // exactly as the tty's update_topl() does (C ref topl.c:284-297).
         const msg = game._pending_message || '';
-        const mlines = wrap_topl(msg);
+        // C ref: tty_yn_function() sends its prompt through custompline(
+        // SUPPRESS_HISTORY) -> tty_putstr -> show_topl(), which skips
+        // update_topl()'s word-wrap: topl_putsym() hard-wraps at column CO-1.
+        const mlines = (game._toplPromptMsg === msg && msg) ? hard_wrap_topl(msg) : wrap_topl(msg);
         for (let li = 0; li < mlines.length; li++) {
             const ln = mlines[li];
             for (let c = 0; c < Math.min(ln.length, display.cols); c++)
@@ -3009,7 +3325,7 @@ export function renderStatusLines(display, rows = null) {
         const cells = rows[r] || [];
         for (let c = 0; c < Math.min(cells.length, display.cols); c++) {
             if (!cells[c]) continue;
-            display.setCell(c, top + r, cells[c].ch, NO_COLOR, cells[c].attr | 0);
+            display.setCell(c, top + r, cells[c].ch, cells[c].color ?? NO_COLOR, cells[c].attr | 0);
         }
     }
 }
@@ -3021,14 +3337,54 @@ export async function flush_screen(mode) {
         delete game._freeze_screen_once;
         return;
     }
+    // C ref: display.c flush_screen() runs bot()/timebot() before the map.
+    await botl_flush();
     _buildScreenOutput();
 }
 
 // ── cls ──
+// C ref: display.c cls() — display_nhwindow(WIN_MESSAGE, FALSE) first, which
+// pages a still-unacknowledged topline (TOPLINE_NEED_MORE) with --More-- before
+// the map is wiped.  Unacknowledged is _toplin === 1 or the text-keyed
+// _toplinSoft that update_topl() leaves behind every pline().
+export async function cls_flush_messages() {
+    if (game._pending_message && !game._winStop
+        && (game._toplin === 1 || game._toplinSoft === game._pending_message)) {
+        await topl_more();
+        game._toplin = 0;
+        game._toplinSoft = null;
+    }
+}
+// C ref: display.c:2189 cls() — clear_nhwindow(WIN_MAP) blanks the physical
+// screen and clear_glyph_buffer() resets the third screen to unexplored, so a
+// later flush_screen() shows only what was drawn since.  This port's third
+// screen is the per-cell loc.disp_* (what _buildScreenOutput paints), so it is
+// blanked here too; remembered glyphs (levl[x][y].glyph) are untouched.
 export async function cls() {
+    await cls_flush_messages();
+    game._toplin = 0;
+    game._toplinSoft = null;
     const display = game?.nhDisplay;
     if (display?.clearScreen) display.clearScreen();
     game._pending_message = '';
+    clear_glyph_buffer();
+    if (game.level)
+        for (let y = 0; y < ROWNO; y++)
+            for (let x = 1; x < COLNO; x++)
+                show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);
+}
+
+// C ref: hit points the core changes WITHOUT setting disp.botl (e.g. mhitu.c
+// passiveum() AD_COLD `u.mh += ...; u.mhmax = ...`) stay unpublished: the status
+// line keeps the HP bot() last drew until some later botl-dirtying event.  Call
+// this just before such a silent change; the held pair is dropped by the next
+// full bot() (botl_flush(), via status_hold()).  A change made while botl is already dirty is
+// published by that pending bot() anyway, so nothing is held then.
+export function hold_botl_hp() {
+    const u = game.u;
+    if (!u || game.botl || game.botlx) return;
+    status_hold('hp', u.Upolyd ? u.mh : u.uhp);
+    status_hold('hpmax', (u.Upolyd ? u.mhmax : u.uhpmax) || 0);
 }
 
 // ── bot ──
@@ -3083,6 +3439,52 @@ function msgtype_suppressed(msg) {
            || (typ === MSGTYP_NOREP && msg === game._prevmsg);
 }
 
+// ── tty message history ring ──
+// C ref: win/tty/wintty.c tty_create_nhwindow(NHW_MESSAGE) / topl.c
+// remember_topl() — the circular buffer behind ^P.  cw->rows is
+// iflags.msg_history clamped to 20..MAX_MSG_HISTORY (128); cw->maxrow is the
+// slot the NEXT remembered line is written to and cw->maxcol is ^P's read
+// cursor (reset to maxrow by every remember_topl()).  Slots never written stay
+// undefined (C's NULL data[i]).
+export function msghist() {
+    if (!game._msghist) {
+        const want = game.iflags?.msg_history ?? 20;
+        game._msghist = { rows: Math.max(20, Math.min(128, want)),
+                          data: [], maxrow: 0, maxcol: 0, locked: false };
+    }
+    return game._msghist;
+}
+
+// C ref: topl.c:169 remember_topl() — flush gt.toplines into the ring and
+// blank it.  update_topl() calls this just before it overwrites gt.toplines;
+// a SUPPRESS_HISTORY putstr and tty_yn_function's prompt call it too.
+export function remember_topl() {
+    const h = msghist();
+    if (h.locked || !game._toplines) return;
+    h.data[h.maxrow] = game._toplines;
+    game._toplines = '';
+    h.maxcol = h.maxrow = (h.maxrow + 1) % h.rows;
+}
+
+// C ref: topl.c tty_yn_function() clean_up: — `Sprintf(gt.toplines, "%s%s",
+// prompt, key2txt(q))`.  The prompt itself was shown with SUPPRESS_HISTORY (so
+// the old topline went into the ring and gt.toplines was blanked); only the
+// answered prompt text lands in gt.toplines afterwards.  `prompt` already has
+// its trailing space.
+export function yn_prompt_history(prompt, answer) {
+    game._toplines = prompt + answer;
+}
+
+// C ref: hacklib.c key2txt() — printable name of a keystroke.
+export function key2txt(c) {
+    if (c === 27) return '<esc>';
+    if (c === 32) return '<space>';
+    if (c === 10 || c === 13) return '<enter>';
+    if (c === 127) return '<del>';
+    if (c < 32) return `^${String.fromCharCode(c + 64)}`;
+    return String.fromCharCode(c);
+}
+
 // ── pline ──
 // C ref: pline.c custompline(SUPPRESS_HISTORY, ...) — used by cmd.c's
 // "Unknown command '%s'." and similarly-flagged callers, printed WITHOUT
@@ -3093,6 +3495,15 @@ function msgtype_suppressed(msg) {
 // must stay unchanged.  Without this, a bad-command message became
 // recallable via ^P even though C's history ring never captured it (C shows
 // blank there instead, since the ring slot was never written).
+// A message written straight onto game._pending_message (bypassing pline())
+// still lands in gt.toplines/the ^P ring: returns `msg` so a call site can
+// wrap its right-hand side.
+export function note_topl(msg) {
+    remember_topl();
+    game._toplines = msg;
+    return msg;
+}
+
 export async function pline(msg, opts = {}) {
     // C ref: pline.c vpline():162-190 — when a11y.accessiblemsg is set (only
     // #lookaround forces it on, in js/cmd.js) and set_msg_xy() left a valid
@@ -3146,6 +3557,10 @@ export async function pline(msg, opts = {}) {
     if (softPending) await topl_more();
     game._pending_message = msg;
     // C ref: pline -> vpline -> update_topl sets gt.toplines.
+    // C ref: topl.c update_topl() calls remember_topl() before overwriting
+    // gt.toplines; tty_putstr()'s SUPPRESS_HISTORY arm calls it and then
+    // show_topl()s without setting gt.toplines.
+    remember_topl();
     if (!suppressHistory) game._toplines = msg;
     // C ref: topl.c update_topl() — pline() leaves toplin == TOPLINE_NEED_MORE,
     // so a message printed later in the SAME command (before the next nhgetch
@@ -3194,6 +3609,11 @@ export async function impossible(msg) {
 // at the next space).  Returns the message split into one string per display
 // row.  Matches the tty's multi-line topline so a long "You read: ..." message
 // (graffiti etc.) lands on the same rows the recorder captured.
+export function hard_wrap_topl(msg) {
+    const lines = [];
+    for (let i = 0; i < msg.length; i += CO - 1) lines.push(msg.slice(i, i + CO - 1));
+    return lines;
+}
 export function wrap_topl(msg) {
     const CO_W = 80;
     const s = String(msg || '');
@@ -3304,10 +3724,17 @@ export async function topl_more_ext(extraChars) {
     // C ref: topl.c more():246 — `ttyDisplay->toplin = TOPLINE_EMPTY;` on every
     // exit path, so a paged line is acknowledged: the next message starts a
     // fresh line instead of being appended to it.
+    // C ref: getline.c xwaitforspace() `c == x` with x = ttyDisplay->dismiss_more:
+    // ESC leaves dismiss_more == 1 (^A) behind, so a later ^A also dismisses.
+    // tty_message_menu() resets it to 0 once its own --More-- is done.
+    const done = (v) => { if (extraChars) game._dismissMore = 0; return v; };
     for (;;) {
-        const c = await nhgetch();
+        let c = await nhgetch();
         game._toplinSoft = null;
-        if (c === 32 || c === 13 || c === 10 || c === 27) {
+        if (c === 32 || c === 13 || c === 10 || c === 27
+            || (game._dismissMore && c === game._dismissMore)) {
+            if (c === 27) game._dismissMore = 1;
+            else if (c !== 32 && c !== 13 && c !== 10) c = 32;
             // C ref: win/tty/topl.c more() — `if (morc == '\033') cw->flags |=
             // WIN_STOP;`.  Dismissing a --More-- with ESC (as opposed to space/
             // return) suppresses every further topline message until the next
@@ -3321,11 +3748,11 @@ export async function topl_more_ext(extraChars) {
             // message line is WIPED (space/return leave it standing).
             if (cury > 0) clear_wrapped_rows();
             else if (c === 27) { game._pending_message = ''; game._toplin = 0; }
-            return c;
+            return done(c);
         }
         if (extraChars && extraChars.includes(String.fromCharCode(c))) {
             clear_wrapped_rows();
-            return c;
+            return done(c);
         }
     }
 }
@@ -3363,14 +3790,57 @@ const TOPLIN_NEED_MORE = 1; // game._toplin: 0 = empty, 1 = NEED_MORE
 // then showed "Burdened" one pline early, on a throw's --More-- after the
 // thrown object already left invent) — the gate must stay; the real gap was
 // addinv_core1()/freeinv_core() not setting game.botl for gold, fixed there.
+// Backstop for C disp.botl sites this port has not ported: the rendered
+// status text minus T:.  Every other field still renders live, and C sets
+// disp.botl wherever a displayed field changes, so a changed signature at a
+// flush point means C's bot() ran there and published `moves` too.
+function _statusSig() {
+    return _renderStatus().map((r) => _statusRowText(r).replace(/ T:\d+/, '')).join('|');
+}
+
+// C sites that change a displayed stat and only set disp.botl (or run bot())
+// AFTER a pline leave the status line showing the stat's previous value at
+// that pline's --More--.  The status renders live, so status_hold() records the
+// value the last bot() published; the next bot() (botl_flush) drops the hold.
+export function status_hold(key, publishedValue) {
+    game._statusHold ??= {};
+    if (!(key in game._statusHold)) game._statusHold[key] = publishedValue;
+}
+function status_held(key, live) {
+    const h = game._statusHold;
+    return h && key in h ? h[key] : live;
+}
+
 async function botl_flush() {
-    if (!game.botl) return;
-    game.botl = false;
+    // C ref: display.c flush_screen():2236 `if (disp.botl || disp.botlx) bot();
+    // else if (disp.time_botl) timebot();` — both publish the current `moves`.
+    if (!game.botl && !game.botlx) {
+        const sig = game.flags?.time ? _statusSig() : null;
+        if (sig !== null && sig !== game._pubSig) {
+            game._pubSig = sig;
+            game.time_botl = true;
+        }
+        timebot_sync();
+        return;
+    }
+    game.botl = game.botlx = false;
+    game.time_botl = false;
+    if (game.flags?.time) game._pubSig = _statusSig();
+    game._shownMoves = game.moves || 1;
+    delete game._statusHold;
     if (game.u?.uhp !== -1)
         delete game._botlFrozen;
     const { near_capacity } = await import('./invent.js');
     game._curcap = near_capacity();
     bot_snapshot();
+}
+
+// C ref: botl.c timebot() — republish the move counter when only
+// disp.time_botl is pending.
+export function timebot_sync() {
+    if (!game.time_botl) return;
+    game.time_botl = false;
+    game._shownMoves = game.moves || 1;
 }
 
 export async function update_topl(bp) {
@@ -3438,6 +3908,7 @@ export async function update_topl(bp) {
             && n0 + hiddenCur.length + 3 < CO - 8
             ? `${hiddenCur}  ${bp}`
             : bp;
+        if (skipped === bp) remember_topl();   /* not appended: new line */
         game._toplines = skipped;
         return;
     }
@@ -3492,6 +3963,7 @@ export async function update_topl(bp) {
     if (!notdied) game._winStop = false;
     game._pending_message = bp;
     game._toplin = TOPLIN_NEED_MORE;
+    remember_topl();
     game._toplines = bp;
     // pline() marks this same write _toplinSoft too (see pline() above);
     // update_topl() models the same underlying gt.toplines write and must
@@ -3595,7 +4067,7 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n') {
     game._winStop = false;
     game._winNoStop = false;
     // Build the displayed prompt (hidden ESC-and-after choices are stripped).
-    const shown = resp.split('\x1b')[0];
+    const shown = resp ? resp.split('\x1b')[0] : '';
     let prompt = query;
     if (resp) {
         prompt += ` [${shown}]`;
@@ -3605,19 +4077,71 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n') {
         if (def && def !== '\0') prompt += ` (${def})`;
     }
     const full = prompt + ' ';
+    // C ref: topl.c tty_yn_function() — the prompt goes out through
+    // custompline(SUPPRESS_HISTORY), whose tty_putstr remember_topl()s the old
+    // topline; clean_up: then rewrites gt.toplines as prompt + answer text.
+    remember_topl();
+    game._toplines = full; /* C: the prompt goes through update_topl() into gt.toplines */
+    let doprev = false;
+    const answered = (r) => {
+        yn_prompt_history(full, key2txt(typeof r === 'string' ? r.charCodeAt(0) : 0));
+        // C ref: topl.c tty_yn_function() clean_up: `if (wins[WIN_MESSAGE]->cury)
+        // tty_clear_nhwindow(WIN_MESSAGE)` — a prompt that wrapped onto a second
+        // row is erased once answered (a one-row prompt stays on screen).
+        if (topl_cursor_after(full)[1] > 0) {
+            game._pending_message = '';
+            game._toplPromptMsg = null;
+        }
+        return r;
+    };
 
     const disp = game?.nhDisplay;
     for (;;) {
-        game._pending_message = full.trimEnd();
+        // C ref: topl.c tty_yn_function() ^P arm — while `doprev` the top line
+        // holds a recalled message rather than the prompt.
+        const shownMsg = doprev ? (game._pending_message || '') : full;
+        if (!doprev) {
+            game._pending_message = full.trimEnd();
+            game._toplPromptMsg = game._pending_message;
+        }
         await flush_screen(1);
         game._modal_screen = 'topl';
         if (disp?.setCursor) {
-            const [curx, cury] = topl_cursor_after(full);
+            const [curx, cury] = topl_cursor_after(shownMsg);
             disp.setCursor(curx, cury);
         }
         const c = await nhgetch();
         delete game._modal_screen;
         const ch = String.fromCharCode(c);
+        if (resp != null && c === 16) {
+            const { doprev_message } = await import('./cmd.js');
+            if (String(game.iflags?.prevmsg_window ?? 's')[0].toLowerCase() !== 's') {
+                await doprev_message();
+                const h = msghist();
+                game._pending_message = full.trimEnd();
+                h.maxcol = h.maxrow;
+            } else {
+                if (!doprev) await doprev_message(); /* need two initially */
+                await doprev_message();
+                doprev = true;
+            }
+            continue;
+        } else if (resp != null && doprev) {
+            /* BUG[?] in C too: the key that ends the recall is discarded */
+            const h = msghist();
+            h.maxcol = h.maxrow;
+            doprev = false;
+            game._pending_message = full.trimEnd();
+            game._toplin = 0;
+            game._toplinSoft = null;
+            continue;
+        }
+        // C ref: topl.c tty_yn_function() resp == NULL — any single character
+        // is accepted and returned as typed (ESC/space/return included).
+        if (resp == null) {
+            game._toplin = 0;
+            return answered(ch);
+        }
         // quitchars (space/return/ESC) -> default.  C ref: topl.c
         // tty_yn_function clean_up: the answered prompt text is left on the
         // top line as-is (only gt.toplines' history bookkeeping is updated,
@@ -3633,16 +4157,16 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n') {
         // inventory-eat prompt C never shows.
         if (c === 27) {
             game._toplin = 0;
-            return resp.includes('q') ? 'q' : resp.includes('n') ? 'n' : def;
+            return answered(resp.includes('q') ? 'q' : resp.includes('n') ? 'n' : def);
         }
         if (c === 32 || c === 13 || c === 10) {
             game._toplin = 0;
-            return def;
+            return answered(def);
         }
         const lc = ch.toLowerCase();
         if (resp.includes(lc)) {
             game._toplin = 0;
-            return lc;
+            return answered(lc);
         }
         // invalid response: re-prompt (no bell modeled).
     }

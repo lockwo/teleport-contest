@@ -291,6 +291,12 @@ function put_saddle_on_mon(saddle, mtmp) {
             return;
         saddle.known = saddle.bknown = saddle.rknown = 1; // fully_identify_obj
         saddle.dknown = 1;
+        // C ref: steal.c mpickobj() — makedog() saddles the pony BEFORE
+        // initedog() sets mtame, and the not-yet-displayed pony isn't seen
+        // (canseemon false), so unknow_object() undoes the identification:
+        // the hero no longer knows the saddle's BUC ("a saddle", not "an
+        // uncursed saddle").
+        saddle.bknown = saddle.rknown = 0;
     }
     // mpickobj(mtmp, saddle): hand the saddle to the (tame) monster.
     // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.

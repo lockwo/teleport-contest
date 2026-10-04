@@ -193,87 +193,6 @@ function strsubst(bp, orig, repl) {
 // mungspaces: collapse internal whitespace and trim (C: hacklib.c).
 function mungspaces(s) { return String(s).replace(/\s+/g, ' ').replace(/^ | $/g, ''); }
 
-// ── makesingular (C ref: objnam.c makesingular()/singplur_lookup()) ───────
-// Faithful enough for the wishlist: honour the `as_is[]` words that stay
-// plural (boots, gloves, gauntlets, lenses, scales, ...) and the common
-// suffix transformations (-ies -> -y, -es removal, -s removal).
-const AS_IS = [
-    'boots', 'shoes', 'gloves', 'lenses', 'scales', 'eyes', 'gauntlets',
-    'iron bars', 'bison', 'deer', 'elk', 'fish', 'fowl', 'tuna', 'yaki',
-    '-hai', 'krill', 'manes', 'moose', 'ninja', 'sheep', 'ronin', 'roshi',
-    'shito', 'tengu', 'ki-rin', 'Nazgul', 'gunyoki', 'piranha', 'samurai',
-    'shuriken', 'haggis', 'Bordeaux',
-];
-const ONE_OFF = [
-    ['child', 'children'], ['foot', 'feet'], ['fungus', 'fungi'],
-    ['goose', 'geese'], ['knife', 'knives'], ['louse', 'lice'],
-    ['mouse', 'mice'], ['ox', 'oxen'], ['staff', 'staves'], ['tooth', 'teeth'],
-];
-function endsWithCI(s, suffix) {
-    return s.length >= suffix.length
-        && s.slice(s.length - suffix.length).toLowerCase() === suffix.toLowerCase();
-}
-// C ref: objnam.c singplur_compound(str) — find where a compound phrase starts
-// ("lump OF royal jelly", "scroll LABELED KIRJE", "lurker ABOVE) so that
-// makesingular()/makeplural() can work on the head noun alone.  Returns the
-// index of the compound marker, or -1.
-const SINGPLUR_COMPOUNDS = [
-    ' of ', ' labeled ', ' called ',
-    ' named ', ' above',            /* lurkers above */
-    ' versus ', ' from ', ' in ',
-    ' on ', ' a la ', ' with',      /* " with "? */
-    ' de ', " d'", ' du ',
-    ' au ', '-in-', '-at-',
-];
-const SINGPLUR_COMPOUND_START = ' -';
-function singplur_compound(str) {
-    for (let p = 0; p < str.length; ++p) {
-        if (!SINGPLUR_COMPOUND_START.includes(str[p])) continue;
-        for (const cmpd of SINGPLUR_COMPOUNDS)
-            if (str.slice(p, p + cmpd.length).toLowerCase() === cmpd) return p;
-    }
-    return -1;
-}
-
-function makesingular_local(oldstr) {
-    if (oldstr == null) return oldstr;
-    let s = oldstr.replace(/^ +/, '');
-    if (!s) return oldstr;
-    // C ref: makesingular() "check for 'foo of bar' so that we can focus on
-    // 'foo'" — singularize the head, then re-append the excess at `bottom:`.
-    // Without this the whole string was inspected and only its TAIL tested, so
-    // "scrolls of punishment" came back unchanged: readobjnam's class search
-    // then matched the word "scroll" inside "scrolls", stripped six characters
-    // and was left with "s of punishment", whose " of " test fails, so actualn
-    // was never set and the wish fell through to a random object.  seed4500's
-    // `#wizwish 3 scrolls of punishment` diverged there.
-    const cut = singplur_compound(s);
-    if (cut >= 0) {
-        const head = s.slice(0, cut), excess = s.slice(cut);
-        return makesingular_local(head) + excess;
-    }
-    const lower = s.toLowerCase();
-    for (const w of AS_IS) if (endsWithCI(s, w)) return s; /* stays plural */
-    for (const [sing, plur] of ONE_OFF) {
-        if (endsWithCI(s, sing)) return s; /* already singular */
-        if (endsWithCI(s, plur)) return s.slice(0, s.length - plur.length) + sing;
-    }
-    if (lower.endsWith('ies')) {
-        // ies -> y, with a few -ie words left alone (cookies/pies/genies/...)
-        if (/(cookies|pies|genies|mbies|yries)$/i.test(s)) {
-            if (lower.endsWith('s')) return s.slice(0, -1);
-            return s;
-        }
-        return s.slice(0, -3) + 'y';
-    }
-    if (lower.endsWith('ses') || lower.endsWith('xes') || lower.endsWith('zes')
-        || lower.endsWith('ches') || lower.endsWith('shes')) {
-        return s.slice(0, -2); /* boxes -> box, etc. */
-    }
-    if (lower.endsWith('s') && !lower.endsWith('ss')) return s.slice(0, -1);
-    return s;
-}
-
 // SPE limit (C objnam.c uses SPE_LIM=99 via the wizard path; honored loosely).
 const SPE_LIM = 99;
 
@@ -748,7 +667,7 @@ const GUARDIAN_CORPSE = {
 function postparse1b(d) {
     // makesingular (C makesingular(bp)); approximate for the exercised wishes.
     if (d.bp && !strcmpi(d.bp, 'tricks') && !strcmpi(d.bp, 'clothes')) {
-        const sng = makesingular_local(d.bp);
+        const sng = makesingular_full(d.bp);
         if (sng !== d.bp) { if (d.cnt === 1) d.cnt = 2; d.bp = sng; }
     }
     // alternate spellings

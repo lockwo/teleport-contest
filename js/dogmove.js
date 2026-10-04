@@ -24,6 +24,7 @@ import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
     IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED,
     POOL, MOAT, WATER, LAVAPOOL, LAVAWALL } from './const.js';
 import { obj_resists } from './zap.js';
+import { is_quest_artifact } from './questpgr.js';
 import { newsym, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at } from './display.js';
 import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision.js';
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
@@ -204,7 +205,7 @@ function corpse_is_vegan(fdat) {
 // C ref: mondata.c same_race(pm1, pm2) — dogfood()'s cannibalism test.  Player
 // races first (each has its own M2 predicate), then the coarser body classes.
 function is_golem_data(ptr) { return ptr?.mcls === S_GOLEM; }
-function same_race(pm1, pm2) {
+export function same_race(pm1, pm2) {
     if (!pm1 || !pm2) return false;
     if (pm1 === pm2 || pm1.pmidx === pm2.pmidx) return true;
     if (is_human_flag(pm1)) return is_human_flag(pm2);
@@ -318,7 +319,7 @@ export function dogfood(mon, obj) {
         return POISON;
     // is_quest_artifact() is false for ordinary objects; obj_resists rolls
     // rn2(100) (always FALSE for non-artifacts with ochance 0).
-    if (obj_resists(obj, 0, 95))
+    if (is_quest_artifact(obj) || obj_resists(obj, 0, 95))
         return obj.cursed ? TABU : APPORT;
 
     switch (obj.oclass) {
@@ -941,7 +942,7 @@ async function mdrop_obj(mtmp, obj, verbosely) {
     // C ref: steal.c:823 — distant_name(obj, doname) is called for its possible
     // side-effects even when the message won't be printed, and BEFORE the
     // extract (doname() -> xname() -> find_artifact() wants obj still held).
-    const obj_name = pet_doname(obj);
+    const obj_name = distant_name_pub(obj, obj_doname, omx, omy);
     // C ref: steal.c:825 extract_from_minvent(mon, obj, FALSE, TRUE).
     const ix = mtmp.minvent ? mtmp.minvent.indexOf(obj) : -1;
     if (ix >= 0) mtmp.minvent.splice(ix, 1);
@@ -1923,7 +1924,11 @@ export async function dog_eat(mtmp, edog, obj, x, y) {
     // eats <obj>." — that second form was missing entirely.
     if (!cri_is_pool(mtmp.mx, mtmp.my)) {
         const seeobj = cansee(mtmp.mx, mtmp.my);
-        const sawpet = cansee(x, y) && canseemon(mtmp);
+        // C ref: dogmove.c:275 `cansee(x, y) && mon_visible(mtmp)` — mon_visible()
+        // is the monster's own visibility flags (not canseemon(), which tests the
+        // pet's NEW square and so lost the message when it moved off-view to eat).
+        const sawpet = cansee(x, y)
+            && !(mtmp.minvis && !game.u?.see_invis) && !mtmp.mundetected;
         const what = pet_doname(obj, true);
         if (sawpet || (seeobj && canspotmon(mtmp))) {
             // C ref: dogmove.c:286 — a tunneller "digs in" instead of eating.
@@ -2130,19 +2135,24 @@ function vtense(verb) {
 }
 
 // C ref: dogmove.c:1302 — the object the pet is reluctantly stepping onto.  Names
-// the top object only when the hero *remembers* an object there (not hallucinating,
-// hero_memory on, the map cell's remembered glyph is that object); else "something".
+// the TOP object ("describe top item of pile, not necessarily cursed item itself")
+// when the hero is not hallucinating, hero_memory is on and the square's remembered
+// glyph is SOME object glyph (glyph_is_object(levl[x][y].glyph)); else "something".
+// Remembered glyphs are stored as display chars here, so "is an object glyph" is
+// the object-class symbol set, minus '+' on a door square (a closed door).
+const OBJ_CLASS_SYMS = ')[="(%!?/*`0$';
+function remembered_is_object(loc) {
+    const ch = loc?.remembered_glyph?.ch;
+    if (!ch || ch === ' ') return false;
+    if (ch === '+') return !IS_DOOR(loc.typ);
+    return OBJ_CLASS_SYMS.includes(ch);
+}
 function reluctant_what(x, y) {
     if (!game.u?.uhallu && game.level?.flags?.hero_memory) {
-        const o = vobj_at(x, y);
-        const loc = game.level?.at(x, y);
-        if (o && loc?.remembered_glyph) {
-            const og = object_glyph(o);
-            if (og && og.ch === loc.remembered_glyph.ch)
-                // C ref: dogmove.c:1305 `distant_name(o, doname)` — plain
-                // doname(), so a shop item gets NO "(for sale, N zorkmids)".
-                return distant_name_pub(o, obj_doname);
-        }
+        const o = remembered_is_object(game.level?.at(x, y)) ? vobj_at(x, y) : null;
+        // C ref: dogmove.c:1305 `distant_name(o, doname)` — plain
+        // doname(), so a shop item gets NO "(for sale, N zorkmids)".
+        if (o) return distant_name_pub(o, obj_doname);
     }
     return 'something';
 }

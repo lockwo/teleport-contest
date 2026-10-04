@@ -755,9 +755,15 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
         // C ref: spell.c spelleffects() SPE_CHAIN_LIGHTNING.
         await cast_chain_lightning();
         break;
-    case SPE_JUMPING:
-        // DEFERRED: jump() integration.
+    case SPE_JUMPING: {
+        // C ref: spell.c spelleffects() SPE_JUMPING -> apply.c jump(max(role_skill, 1)).
+        const { jump } = await import('./extcmd-handlers.js');
+        if (!((await jump(Math.max(role_skill, 1))) & ECMD_TIME)) {
+            const { pline } = await import('./display.js');
+            await pline('Nothing happens.');
+        }
         break;
+    }
     case SPE_PROTECTION:
         // C ref: spell.c spelleffects() SPE_PROTECTION -> cast_protection().
         await cast_protection();
@@ -1718,6 +1724,13 @@ export async function propagate_chain_lightning(clq, zap_in) {
     await tmp_at(DISP_CHANGE, zapdir_to_glyph(xdir[zap.dir], ydir[zap.dir],
                                               clq.displayed_beam));
     await tmp_at(zap.x, zap.y);
+    /* tmp_at(DISP_BEAM) only records cells the hero can see; this port draws
+       the glyph itself (show_glyph() feeds the unused third screen), and
+       tmp_at(DISP_END) newsym()s the recorded cells back. */
+    if (cansee(zap.x, zap.y)) {
+        const { show_beam_cell } = await import('./zap.js');
+        show_beam_cell(zap.x, zap.y, xdir[zap.dir], ydir[zap.dir], clq.displayed_beam);
+    }
 }
 
 // C ref: spell.c:1002 cast_chain_lightning() — SPE_CHAIN_LIGHTNING.  The whole

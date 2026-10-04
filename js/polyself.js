@@ -12,7 +12,7 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d, rnl } from './rng.js';
-import { update_topl, urgent_topl, newsym, see_monsters, y_n } from './display.js';
+import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold } from './display.js';
 // C ref: win/tty/topl.c pline()/update_topl() — this module always uses
 // update_topl() (never the simpler pline()) because every message here can be
 // immediately followed by another one from the same command (polymon()'s
@@ -24,7 +24,7 @@ const pline = update_topl;
 import { exercise, acurr_eff } from './attrib.js';
 import { find_ac, race_attrmax, race_attrmin, race_attrmax_of } from './u_init.js';
 import { encumber_msg, freeinv, xname, makeplural, near_capacity,
-    youmonst_data_pub, makeknown } from './invent.js';
+    youmonst_data_pub, makeknown, simple_typename } from './invent.js';
 import { base_mmove } from './mon.js';
 import { P_NAME, weapon_type } from './enhance.js';
 import { objects as OBJECTS, maybe_adjust_light } from './mkobj.js';
@@ -67,7 +67,7 @@ import { attacktype, mattk_of, AT_BREA, AT_SPIT, AT_GAZE, AT_CLAW, AT_EXPL,
     AD_BLND, AD_STCK, AD_WRAP, dmgtype } from './monattk_data.js';
 import { dmgtype_fromattack } from './mondata.js';
 import { monsterList, DEADMONSTER, set_ustuck, were_beastie, counter_were } from './mon.js';
-import { monster_nearby } from './cmd.js';
+import { monster_nearby, waterbody_name } from './cmd.js';
 import { races, roles, genders } from './role.js';
 import { Blind } from './vision.js';
 import { surface, In_hell } from './dungeon.js';
@@ -160,7 +160,7 @@ function breakarm(mdat) {
         || mdat?.pmidx === PM_MARILITH || mdat?.pmidx === PM_WINGED_GARGOYLE;
 }
 
-function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
+import { an } from './hacklib.js';
 function rounddiv(x, y) {
     let divsgn = 1;
     if (y < 0) { divsgn = -divsgn; y = -y; }
@@ -586,8 +586,8 @@ async function break_armor() {
             /* for gold DSM, we don't want Armor_gone() to report that it
                stops shining _after_ we've been told that it is destroyed */
             if (otmp.lamplit) {
-                const { end_burn } = await import('./light.js');
-                end_burn(otmp, false);
+                const { end_burn } = await import('./timeout.js');
+                await end_burn(otmp, false);
             }
             await pline('You break out of your armor!');
             exercise(A_STR, false);
@@ -745,9 +745,9 @@ async function drop_weapon(alone) {
 // this port's u.uprops is a flat value per property (other sources share the
 // same slot), so the FROMFORM bits live in their own map, u.formprops, read
 // through fromform(<C property name>) by the property predicates.
-export function set_uasmon() {
+export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     const u = game.u;
-    u.Upolyd = u.umonnum !== u.umonster;
+    u.Upolyd = polyd;
     const mdat = youmonst_data_pub();
     const was_vampshifter = valid_vampshiftform(u.mcham, mdat?.pmidx);
     // C ref: mondata.c:13 set_mon_data() — leftover movement points are prorated
@@ -1007,7 +1007,7 @@ export async function polymon(mntmp) {
 
     u.mtimedone = rn1(500, 500);
     u.umonnum = mntmp;
-    set_uasmon();
+    set_uasmon(true);
 
     const newMaxStr = uasmon_maxStr();
     if (strongmonst_flag(mdatNew)) {
@@ -1337,7 +1337,7 @@ export async function newman() {
 async function newman_dead() {
     await urgent_topl("Your new form doesn't seem healthy enough to survive.");
     const { done, DIED } = await import('./end.js');
-    game._killer_name = 'unsuccessful polymorph';
+    game._killer_name = 'killed by an unsuccessful polymorph';  // KILLED_BY_AN
     await done(DIED);
     newuhs(false);
     await encumber_msg();
@@ -1370,7 +1370,14 @@ async function polyman(fmt, arg) {
     // the fatal form damage was acknowledged with ESC, otherwise the return
     // form (and the following sight-restoration message) disappears.
     await urgent_topl(fmt.replace('%s', arg));
-    if (was_blind && !Blind()) await update_topl('You can see again.');
+    if (was_blind && !Blind()) { /* reverting from eyeless */
+        status_hold('blind', false); /* no bot() until toggle_blindness() */
+        u.blinded = 1;           /* set_itimeout(&HBlinded, 1L) */
+        const { make_blinded_hero } = await import('./potion.js');
+        await make_blinded_hero(0, true); /* remove blindness */
+    }
+    await check_strangling(true);
+    see_monsters();
 }
 
 
@@ -1453,8 +1460,8 @@ const ALT_SPELLINGS = [
     ['master mindflayer', 'master mind flayer', 2],
     ['aligned priest', 'aligned cleric', 0], ['aligned priestess', 'aligned cleric', 1],
     ['high priest', 'high cleric', 0], ['high priestess', 'high cleric', 1],
-    ['master of thief', 'master of thieves', 2], ['master thief', 'master of thieves', 2],
-    ['master of assassin', 'master assassin', 2],
+    ['master of thief', 'Master of Thieves', 2], ['master thief', 'Master of Thieves', 2],
+    ['master of assassin', 'Master Assassin', 2],
     ['master-lich', 'master lich', 2], ['masterlich', 'master lich', 2],
     ['invisible stalker', 'stalker', 2], ['high-elf', 'elven monarch', 2],
     ['wood-elf', 'Woodland-elf', 2], ['wood elf', 'Woodland-elf', 2],
@@ -1741,7 +1748,7 @@ export function set_ulycn(which) {
     const u = game.u;
     if (!u) return;
     u.ulycn = which;
-    set_uasmon();
+    set_uasmon(game.u.Upolyd);
 }
 
 // C ref: flag.h PARANOID_WERECHANGE (0x0100) / ParanoidWerechange.  Off by
@@ -2242,15 +2249,25 @@ async function dohide() {
     return ECMD_TIME;
 }
 
-// C ref: sounds.c youhiding(via_enlghtmt=FALSE, msgflag) — the '#monster'
-// phrasing only.  The mimic ("mimicking a <object>") and eel ("in the water")
-// suffixes are deferred with their branches above.
-async function youhiding(msgflag) {
+// C ref: sounds.c youhiding(via_enlghtmt, msgflag) — the shared "hiding ..."
+// phrase.  dohide's '#monster' message and insight.c's ^X Status line both
+// build it; the mimic ("mimicking a <object>") and eel ("in the water") suffixes
+// follow the C arms.
+export function youhiding_buf() {
     const u = game.u;
     const mdat = u.data;
     let buf = 'hiding';
-    if (u.uundetected) {
-        if (hides_under_flag(mdat)) {
+    if (u.m_ap_type) {
+        // mimic; hero is only able to mimic a strange object or gold, so the
+        // furniture and monster cases skip the details (C does the same).
+        buf = 'mimicking';
+        if (u.m_ap_type === 2 /* M_AP_OBJECT */) buf += ` ${an(simple_typename(u.mappearance))}`;
+        else if (u.m_ap_type === 1 /* M_AP_FURNITURE */) buf += ' something';
+        else if (u.m_ap_type === 3 /* M_AP_MONSTER */) buf += ' someone';
+    } else if (u.uundetected) {
+        if (mdat?.mlet === ';') {
+            if (is_pool(u.ux, u.uy)) buf += ` in the ${waterbody_name(u.ux, u.uy)}`;
+        } else if (hides_under_flag(mdat)) {
             // C: ansimpleoname(o) — article + simple object name.
             const o = obj_at_hero();
             if (o) buf += ` underneath ${an(xname(o))}`;
@@ -2262,7 +2279,13 @@ async function youhiding(msgflag) {
             buf += ` on the ${surface(u.ux, u.uy)}`;
         }
     }
-    await pline(`You are ${msgflag ? 'already' : 'now'} ${buf}.`);
+    return buf;
+}
+
+// C ref: sounds.c youhiding(via_enlghtmt=FALSE, msgflag) — the '#monster'
+// phrasing ("You are now/already hiding ...").
+async function youhiding(msgflag) {
+    await pline(`You are ${msgflag ? 'already' : 'now'} ${youhiding_buf()}.`);
 }
 
 // C ref: polyself.c domindblast() — #monster for a mind flayer.  The loop

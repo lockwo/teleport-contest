@@ -221,10 +221,19 @@ function addupbill(shkp) {
 // C ref: shk.c setpaid(shkp) — clear every unpaid flag this shk owns and reset
 // the bill.  The billobjs chain (used-up items) is not modelled.
 function setpaid(shkp) {
-    for (const obj of (game.invent || [])) if (obj) obj.unpaid = 0;
-    for (const obj of (game.level?.objects || [])) if (obj) { obj.unpaid = 0; obj.no_charge = 0; }
-    for (const mon of (game.level?.monsters || []))
-        for (const obj of (mon?.minvent || [])) if (obj) obj.unpaid = 0;
+    // C ref: shk.c clear_unpaid_obj()/clear_no_charge_obj() recurse into
+    // container contents, so a stolen sack's gems stop being "unpaid" too.
+    const clear = (list, noCharge) => {
+        for (const obj of (list || [])) {
+            if (!obj) continue;
+            if (obj.cobj?.length) clear(obj.cobj, noCharge);
+            obj.unpaid = 0;
+            if (noCharge) obj.no_charge = 0;
+        }
+    };
+    clear(game.invent, false);
+    clear(game.level?.objects, true);
+    for (const mon of (game.level?.monsters || [])) clear(mon?.minvent, false);
     if (shkp) {
         shkp.eshk.billct = 0;
         shkp.eshk.bill = [];

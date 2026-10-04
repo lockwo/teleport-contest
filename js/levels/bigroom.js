@@ -14,6 +14,7 @@ import { game } from '../gstate.js';
 import { enexto_spawn, makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { create_maze, walkfrom } from '../mkmaze.js';
 import { BOULDER, mkobj_at, mksobj_at } from '../mkobj.js';
+import { stackobj } from '../invent.js';
 import { rn2, rnd } from '../rng.js';
 import {
     l_selection_fillrect, l_selection_grow, l_selection_line, l_selection_or,
@@ -314,14 +315,14 @@ async function bigrm_trap(boulder = false) {
 }
 
 // C ref: sp_lev.c create_object() (random object, random location).
-//   get_location(DRY); mkobj_at(RANDOM_CLASS, x, y, ...).
+//   get_location(DRY); mkobj_at(RANDOM_CLASS, x, y, ...); stackobj(otmp).
 function bigrm_object(idstr = null) {
     const c = bigrm_get_location_dry();
     if (idstr === 'boulder') {
         // des.object("boulder", x, y) — handled by caller with explicit coords
         return;
     }
-    mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true);
+    stackobj(mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true));
 }
 
 // C ref: sp_lev.c create_monster() (random monster, random location).

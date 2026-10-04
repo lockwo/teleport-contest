@@ -11,7 +11,7 @@ import { phase_of_the_moon, night, FULL_MOON } from './calendar.js';
 import { VAULT, ROOMOFFSET, SHOPBASE, MAXNROFROOMS,
          TEMPLE as TEMPLE_SND, Is_astralevel, MON_FLOOR } from './const.js';
 import { GOLD_PIECE, objects, WEAPON_CLASS } from './mkobj.js';
-import { DEADMONSTER, fmonOrder, wake_nearto_core } from './mon.js';
+import { DEADMONSTER, fmonOrder, wake_nearto_core, genus } from './mon.js';
 import { inhishop } from './shk.js';
 import { in_rooms } from './shkroom.js';
 import { update_topl, You_hear, Deaf_hero } from './display.js';
@@ -443,12 +443,17 @@ export async function domonnoise(mtmp) {
 
     const ptr = mtmp?.data;
     let msound = msound_of(ptr) ?? MS_SILENT;
+    const { quest_info } = await import('./questpgr.js');
     // C: `if (is_silent(ptr) && !mtmp->isshk) return ECMD_OK;`
     if (msound === MS_SILENT && !mtmp?.isshk) return ECMD_OK;
 
-    // msound remaps.  The quest-leader (leader_m_id) and MS_GUARDIAN genus
-    // remaps need quest_status / genus(); neither is reachable here.
-    if (mtmp.isshk) msound = MS_SELL;
+    // msound remaps (C: leader polymorph, other roles' guardians fall back to
+    // the genus' sound).
+    if (mtmp.m_id === game.quest_status?.leader_m_id && msound > MS_ANIMAL)
+        msound = MS_LEADER;
+    else if (msound === MS_GUARDIAN && ptr?.pmidx !== quest_info(MS_GUARDIAN))
+        msound = msound_of(monster_by_pmidx(genus(ptr.pmidx, 1))) ?? MS_SILENT;
+    else if (mtmp.isshk) msound = MS_SELL;
     else if (msound === MS_ORC
              && (same_race(ptr, hero_permonst())
                  || same_race(ptr, hero_race_permonst()) || !!game.u?.uhallu))
@@ -468,8 +473,8 @@ export async function domonnoise(mtmp) {
     case MS_LEADER:
     case MS_NEMESIS:
     case MS_GUARDIAN: {
-        const { quest_talk } = await import('./questpgr.js');
-        await quest_talk(mtmp);
+        const { quest_chat } = await import('./questpgr.js');
+        await quest_chat(mtmp);
         return ECMD_TIME;
     }
     case MS_PRIEST: {

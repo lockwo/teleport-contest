@@ -4,14 +4,14 @@
 // Uses fastforward.js for pre/post-mklev RNG parity on seed8000.
 // Real mklev.js handles level generation for screen parity.
 
-import { game } from './gstate.js';
+import { game, hooks, svc_context_run } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { nhgetch } from './input.js';
 import { ATR_INVERSE, NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
 import { makedog } from './dog.js';
-import { rhack, dosearch0, monster_nearby } from './cmd.js';
-import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning } from './display.js';
+import { rhack, dosearch, dosearch0, donull, monster_nearby } from './cmd.js';
+import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning, m_at } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals, Blind } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
@@ -33,7 +33,7 @@ import { Unaware,
          ROLE_MALE, ROLE_FEMALE, NORMAL_SPEED, A_STR, A_WIS, A_INT, A_DEX, A_CON,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
-    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA } from './const.js';
+    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC } from './const.js';
 import { near_capacity, reroll_menu, setnotworn, freeinv, worn_extrinsic } from './invent.js';
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -41,7 +41,7 @@ import { settrack } from './track.js';
 import { nh_timeout } from './timeout.js';
 import { genTutorialLevel } from './tutorial.js';
 import { find_level } from './dungeon.js';
-import { livelog_printf, LL_ACHIEVE } from './livelog.js';
+import { livelog_printf, LL_ACHIEVE, LL_DEBUG } from './livelog.js';
 import { check_special_room } from './shkroom.js';
 import { runtime_info_init } from './mdlib.js';
 
@@ -232,6 +232,15 @@ export async function newgame() {
     // C ref: allmain.c:810 check_special_room(FALSE) — seeds u.urooms/u.ushops
     // for the starting square before the first move computes an entry delta.
     await check_special_room(false);
+    // C ref: allmain.c:812 `if (MON_AT(u.ux, u.uy)) mnexto(m_at(u.ux, u.uy), RLOC_NOMSG)`
+    // (a bones-level occupant of the arrival square moves aside).
+    {
+        const occupant = m_at(game.u.ux, game.u.uy);
+        if (occupant) {
+            const { mnexto_rloc } = await import('./do.js');
+            await mnexto_rloc(occupant, 0x0004 /* RLOC_NOMSG */);
+        }
+    }
     makedog();
 
     // Fast-forward through post-mklev startup RNG calls.
@@ -297,7 +306,11 @@ async function newgame_real() {
                 mnum,
                 // C ref: role.c roles[] spell-statistics block; drives
                 // spell.c percent_success().
-                spel: role?.spel };
+                spel: role?.spel,
+                // C ref: role.c roles[] ldrnum/guardnum/neminum — read by
+                // domonnoise/mon.c quest-guardian code through gu.urole.
+                ldrnum: hooks.quest_info?.(36), guardnum: hooks.quest_info?.(38),
+                neminum: hooks.quest_info?.(37) };
     g.urace = { ...(races[game.initrace] || races[0]) };
     const alignType = aligns[game.initalign]?.value ?? 0;
     // C ref: attrib.c init_align — u.ualign.record = gu.urole.initrecord; and
@@ -513,6 +526,10 @@ async function enter_tutorial_level() {
     const dest = g._tutorial_dest || { dnum: g.tutorial_dnum, dlevel: 1 };
     g.u.uz = { dnum: dest.dnum, dlevel: dest.dlevel };
 
+    // C ref: do.c goto_level() `if (new)` — describe_level(dloc, 2) logs
+    // "entered level 1, the Tutorial" (LL_DEBUG, still listed by #chronicle).
+    livelog_printf(LL_DEBUG, 'entered level 1, the Tutorial');
+
     // Hero placement: teleport_region {9,3} (Lua) -> abs cell {12,6}.
     g.u.ux = 12; g.u.uy = 6;
     g.u.dx = 0; g.u.dy = 0;
@@ -540,9 +557,11 @@ async function enter_tutorial_level() {
             await pline('Something is burned into the floor here.');
         else
             await pline('Something is engraved here on the floor.');
-        await topl_more();
+        // C ref: topl.c more() — an ESC at the earlier --More-- set WIN_STOP,
+        // so these plines are swallowed and there is nothing to page.
+        if (!g._winStop) await topl_more();
         await pline(`You read: "${ep.actualText}".`);
-        await topl_more();
+        if (!g._winStop) await topl_more();
     }
     g._pending_message = '';
 
@@ -663,10 +682,12 @@ async function ask_do_tutorial() {
     let counting = false, count = 0, reset_count = true;
     for (;;) {
         if (reset_count) { counting = false; count = 0; } else reset_count = true;
-        const c = await nhgetch();
+        // C ref: xwaitforspace(resp) rings the bell and keeps reading INSIDE the
+        // wait, so an ignored key never reaches the reset_count test above.
+        let c, idx;
+        do { c = await nhgetch(); idx = RESP.indexOf(String.fromCharCode(c)); }
+        while (idx < 0);                        // tty_nhbell(), re-read
         const ch = String.fromCharCode(c);
-        const idx = RESP.indexOf(ch);
-        if (idx < 0) continue;                  // tty_nhbell(), re-read
         if (idx < SELECTORS.length) {           // MENU_EXPLICIT_CHOICE
             if (ch === 'y') { game._tutorial_yes = true; await do_tutorial_goto(); }
             break;
@@ -775,6 +796,10 @@ const FAST_AT_LEVEL = Object.freeze({
 // handled separately by youHaveVeryFast(); since Very_fast takes priority in
 // u_calc_moveamt's else-if chain, the two never both fire on the same turn.
 export function youHaveFast() {
+    // HFast & INTRINSIC from a non-role source (FROMOUTSIDE: potion of speed,
+    // quantum mechanic corpse, ...).  Timed-only speed is Very_fast, below.
+    if ((((game.u?.uprops?.HFast | 0) | (game.u?.HFast | 0)) & INTRINSIC) !== 0)
+        return true;
     // sit.c attrcurse() can clear the role-granted FAST (angry god); js/pray.js
     // records that in u.lost_innate.
     if (game.u?.lost_innate?.has('HFast')) return false;
@@ -797,7 +822,7 @@ function youHaveVeryFast() {
     // The (HFast & ~INTRINSIC) term is the TIMEOUT half: a timed FAST (potion of
     // speed, #wizintrinsic) counts as Very_fast, not merely Fast.
     return game.uarmf?.otyp === SPEED_BOOTS || !!game.u?.efastArm
-        || (game.u?.uprops?.HFast || 0) > 0;
+        || ((((game.u?.uprops?.HFast | 0) | (game.u?.HFast | 0)) & TIMEOUT) !== 0);
 }
 export { youHaveVeryFast };
 
@@ -1050,6 +1075,10 @@ export async function moveloop_turn() {
             settrack();
 
             g.moves = (g.moves || 1) + 1;
+            // C ref: allmain.c:262-263 — `if (flags.time && !svc.context.run)
+            // disp.time_botl = TRUE; /* 'moves' just changed */`.
+            if (g.flags?.time && !svc_context_run())
+                g.time_botl = true;
 
             // C ref: allmain.c:271-273 — slippery fingers drop rings/weapons
             // before the timer decrements, including its final active turn.
@@ -1177,7 +1206,16 @@ export async function moveloop_turn() {
             // sessions.)  C order: dosounds, do_storms, gethungry, age_spells,
             // exerchk, invault, ..., u_wipe_engr.
             await dosounds();
+            game._hunger_msgs = [];
             gethungry();
+            const hungerMsgs = game._hunger_msgs;
+            game._hunger_msgs = null;
+            for (const m of hungerMsgs) await update_topl(m);
+            if (hungerMsgs.uhs !== undefined) {
+                g.u.uhs = hungerMsgs.uhs;
+                g.botl = true;     // C newuhs(): `u.uhs = newhs; disp.botl = TRUE; bot();`
+                await bot();
+            }
             age_spells(); // C ref: spell.c age_spells — decrnknow each turn (no RNG)
             await exerchk();
             // C ref: allmain.c:357 invault() — the vault-guard timer.  Runs
@@ -1244,7 +1282,9 @@ export async function moveloop_turn() {
             // already run (skipped, under invulnerability) BEFORE prayer_done.
             if ((g.multi ?? 0) < 0) {
                 if (++g.multi === 0) {
-                    // unmul: hero regains control next command.
+                    // unmul: hero regains control next command.  C ref:
+                    // hack.c unmul() opens with `disp.botl = TRUE`.
+                    g.botl = true;
                     g.context.travel = g.context.travel1 = g.context.mv = 0;
                     // C ref: hack.c unmul() — u.usleep = 0.  Without this, a hero
                     // who fell asleep (zap.js fall_asleep) stays Unaware forever
@@ -1277,12 +1317,22 @@ export async function moveloop_turn() {
 
     // C ref: allmain.c:403 — monster actions and timeouts can change the load.
     if (!g.program_state?.gameover) await encumber_msg();
+    // C ref: allmain.c:406 — expire temporary status highlights.
+    if (g.iflags?.hilite_delta) {
+        const { status_eval_next_unhilite } = await import('./botl.js');
+        status_eval_next_unhilite();
+    }
 
     // C ref: allmain.c:409 — clairvoyance bookkeeping (rn1(31,15)) sits in the
     // "once-per-hero-took-time" block AFTER the do-while, so it fires once per
     // hero move, not once per turn.  A Burdened hero gets 9 movement points per
     // turn, so ~every 4th command loops twice and the two placements differ.
     if (g.context.seer_turn != null && g.moves >= g.context.seer_turn) {
+        if ((g.u?.uhave?.amulet || Clairvoyant()) && !In_endgame(g.u?.uz)
+            && !BClairvoyant()) {
+            const { do_vicinity_map } = await import('./detect.js');
+            await do_vicinity_map(null);
+        }
         g.context.seer_turn = g.moves + rn1(31, 15);
     }
     // C ref: allmain.c:424-432 — sink into lava, else re-evaluate water/lava
@@ -1418,7 +1468,11 @@ export function gethungry() {
 // actions, but not running or travel. Verbose feedback uses Norep semantics.
 async function interrupt_multi(msg) {
     const g = game;
-    if ((g.multi ?? 0) > 0 && !g.context?.travel && !g.context?.run) {
+    // C: `gm.multi > 0 && !context.travel && !context.run`; run_leftover8 is
+    // the run == 8 left behind by a finished travel (hack.js travel_walk) and
+    // stale_run the run == 2/3 left by a g/G prefix whose next key was unbound.
+    if ((g.multi ?? 0) > 0 && !g.context?.travel && !g.context?.run
+        && !g.context?.run_leftover8 && !g.context?.stale_run) {
         // nomul(0), inlined: hack.js imports this module, so importing back
         // would be a cycle.  multi > 0 above already satisfies C's
         // `if (gm.multi < nval) return` guard.
@@ -1456,11 +1510,14 @@ async function regen_hp(wtcap = 0) {
             // rn2 draws, then the Half_physical_damage odd-turn gate) is kept
             // exact for when it is.
             if (u.mh > 1 && !u_can_regen() && rn2(u.mh) > rn2(8)
-                && (!youHaveHalfPhysicalDamage() || !((game.moves || 0) % 2)))
+                && (!youHaveHalfPhysicalDamage() || !((game.moves || 0) % 2))) {
                 u.mh -= 1;
+                game.botl = true; // C ref: allmain.c:646-647
+            }
         } else if (u.mh < u.mhmax) {
             if (u_can_regen() || (encumbrance_ok && !((game.moves || 0) % 20))) {
                 u.mh += 1;
+                game.botl = true; // C ref: allmain.c:646-647
                 if (u.mh === u.mhmax) await interrupt_multi('You are in full health.');
             }
         }
@@ -1478,6 +1535,7 @@ async function regen_hp(wtcap = 0) {
     // sessions, so this is a documented no-op today.
     if (youHaveSleepy() && u.usleep) heal += 1;
     if (heal) {
+        game.botl = true; // C ref: allmain.c:667
         u.uhp += heal;
         if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
         // C ref: allmain.c:673 "stop voluntary multi-turn activity if now
@@ -1521,6 +1579,7 @@ async function regen_pw(wtcap = 0) {
     // no covered hero wears.
     u.uen += rn1(upper, 1);
     if (u.uen > u.uenmax) u.uen = u.uenmax;
+    game.botl = true; // C ref: allmain.c:615
     if (u.uen === u.uenmax) await interrupt_multi('You feel full of energy.');
 }
 
@@ -1630,8 +1689,18 @@ function Wounded_legs() {
     const u = game.u || {};
     return !!((u.HWounded_legs || 0) || (u.EWounded_legs || 0));
 }
-function HClairvoyant() { return false; }
-function BClairvoyant() { return false; }
+// C ref: youprop.h HClairvoyant/BClairvoyant/Clairvoyant.  HClairvoyant carries
+// the intrinsic bits plus the timeout (#wizintrinsic, priest donation);
+// BClairvoyant is set while a non-Wizard wears a cornuthaum (spell.js does the
+// same test); EClairvoyant is the worn-item extrinsic (a Wizard's cornuthaum).
+function HClairvoyant() { return !!((game.u?.uprops?.HClairvoyant | 0) & (INTRINSIC | TIMEOUT)); }
+function BClairvoyant() {
+    return game.uarmh?.otyp === 93 /* CORNUTHAUM */ && gameRoleMnum() !== PM_WIZARD;
+}
+function Clairvoyant() {
+    return (!!((game.u?.uprops?.HClairvoyant | 0) || worn_extrinsic(35 /*CLAIRVOYANT*/)))
+        && !BClairvoyant();
+}
 // HRegeneration: the current polyform's FROMFORM bit (polyself.js set_uasmon).
 function HRegeneration() { return !!game.u?.formprops?.Regeneration; }
 function Sick() { return ((game.u?.uprops?.Sick || 0) > 0) || !!(game.u?.sick); }
@@ -1878,7 +1947,11 @@ export async function moveloop_core() {
         await m_everyturn_effect(g.u);
     }
 
-    await flush_screen(1);
+    // C ref: cmd.c parse() is the only flush_screen(1) before a key is read; a
+    // counted repeat (`multi > 0` -> rhack(cmd_key)) never goes through it, so
+    // map changes from the previous turn stay unflushed until the next pline.
+    if (!((g.multi ?? 0) > 0 && !g.context?.mv && !g.context?.run))
+        await flush_screen(1);
 
     // C ref: allmain.c moveloop_core():513 — `u.umoved = FALSE;` is set BEFORE
     // rhack() dispatches the command, so any command that does not relocate the
@@ -1946,6 +2019,9 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._wipe_occupation = null;
+        // C ref: allmain.c:501-508 — monster_nearby() interrupts the occupation.
+        if (busy && monster_nearby())
+            await (await import('./hack.js')).stop_occupation(true);
         return;
     }
 
@@ -1987,6 +2063,12 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._engrave_occupation = null;
+        // C ref: allmain.c:501-508 — monster_nearby() interrupts the engraving
+        // occupation ("You stop engraving.") like any other.
+        if (busy && monster_nearby()) {
+            await (await import('./hack.js')).stop_occupation(true);
+            g._engrave_occupation = null;
+        }
         return;
     }
 
@@ -2062,9 +2144,14 @@ export async function moveloop_core() {
     // boundary) — unless a monster-combat message overflows the top line, whose
     // blocking --More-- inside the turn's movemon() captures its own frames.
     if (g._search_occupation) {
-        await dosearch0(0); // timed_occ_fn: the per-turn search (RNG-inert in open room)
+        // C: timed_occ_fn is dosearch() itself, so once nomul(0) has zeroed
+        // gm.multi its cmd_safety_prevention() refuses next to a hostile (no
+        // search, "You already found a monster.") yet the turn still elapses.
+        await dosearch();
         // C timed_occupation(): `if (gm.multi > 0) gm.multi--; return multi>0`.
         if ((g.multi ?? 0) > 0) g.multi -= 1;
+        // C ref: allmain.c:509 — runmode_delay_output() after the occupation turn.
+        await (await import('./hack.js')).runmode_delay_output();
         g.context = g.context || {};
         g.context.move = 1;
         g._pendingTurn = true;
@@ -2093,7 +2180,10 @@ export async function moveloop_core() {
     // so an interruption prints "You stop waiting." and a hostile that steps
     // next to the hero ends the rest early.  donull() itself does nothing.
     if (g._wait_occupation) {
+        await donull(); // timed_occ_fn == donull: safe_wait guard once multi == 0
         if ((g.multi ?? 0) > 0) g.multi -= 1;
+        // C ref: allmain.c:509 — runmode_delay_output() after the occupation turn.
+        await (await import('./hack.js')).runmode_delay_output();
         g.context = g.context || {};
         g.context.move = 1;
         g._pendingTurn = true;

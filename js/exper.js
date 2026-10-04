@@ -349,7 +349,15 @@ export async function pluslvl(incr, emitMsg) {
     if (!incr && emitMsg)
         await emitMsg('You feel more experienced.');
 
-    // increase hit points (no Upolyd in the recorded sessions)
+    // increase hit points (when polymorphed, do monster form first
+    // in order to retain normal human/whatever increase for later)
+    if (u.Upolyd) {
+        const { monhp_per_lvl } = await import('./artifact.js');
+        u.mh = (u.mh || 0) + monhp_per_lvl(u);
+        /* C: setuhpmax(u.mhmax, FALSE) acts as setmhmax() — mhmax is
+           unchanged here and only the clamp of u.mh to it applies */
+        if (u.mh > u.mhmax) u.mh = u.mhmax;
+    }
     const hpinc = newhp();
     u.uhp = (u.uhp || 0) + hpinc;
     setuhpmax((u.uhpmax || 0) + hpinc);
@@ -398,19 +406,37 @@ export async function pluslvl(incr, emitMsg) {
     }
 }
 
-// C ref: exper.c losexp(const char *drainer) — lose an experience level.  Only
-// the non-fatal, level>1 branch is needed (wiz_level_change "#levelchange").
+// C ref: exper.c losexp(const char *drainer) — lose an experience level.  A
+// level-1 hero with a `drainer` dies ("Goodbye level 1." + done(DIED));
+// drainer == NULL (divine anger) just resets to 0 experience points.
+// The Upolyd tail (monhp_per_lvl() off u.mhmax/u.mh, rehumanize()) is ported.
 export async function losexp(drainer, emitMsg) {
     const u = game.u;
+    /* override life-drain resistance when handling an explicit wizard mode
+       request to reduce level; never fatal though */
+    if (drainer === '#levelchange') {
+        drainer = null;
+    } else {
+        const { resists_drli } = await import('./artifact.js');
+        if (resists_drli(game.youmonst || u)) return;
+    }
+    if (!emitMsg) ({ update_topl: emitMsg } = await import('./display.js'));
     if ((u.ulevel || 0) > 1 || drainer) {
-        if (emitMsg) await emitMsg(`${Goodbye(game.urole?.mnum)} level ${u.ulevel}.`);
+        await emitMsg(`${Goodbye(game.urole?.mnum)} level ${u.ulevel}.`);
     }
     if ((u.ulevel || 0) > 1) {
         const oldlevel = u.ulevel;
         u.ulevel -= 1;
         update_rank();
         await adjabil(oldlevel, u.ulevel, emitMsg);
-    } else {
+    } else { /* u.ulevel==1 */
+        if (drainer) {
+            const { done, DIED } = await import('./end.js');
+            game._killer_name = `killed by ${drainer}`;
+            await done(DIED);
+        }
+        /* no drainer or lifesaved */
+        if ((u.ulevel || 0) > 1) return;
         u.uexp = 0;
     }
     const uhpmin = minuhpmax(10);
@@ -431,7 +457,19 @@ export async function losexp(drainer, emitMsg) {
     else if (u.uen > u.uenmax) u.uen = u.uenmax;
 
     if ((u.uexp || 0) > 0) u.uexp = newuexp(u.ulevel) - 1;
+
+    if (u.Upolyd) {
+        const { monhp_per_lvl } = await import('./artifact.js');
+        num = monhp_per_lvl(u);
+        u.mhmax = (u.mhmax || 0) - num;
+        u.mh = (u.mh || 0) - num;
+        if (u.mh <= 0) {
+            const { rehumanize } = await import('./polyself.js');
+            await rehumanize();
+        }
+    }
 }
+
 
 // C ref: attrib.c minuhpmax — min uhpmax floor.
 export function minuhpmax(altmin) {
@@ -545,5 +583,11 @@ export async function adjabil(oldlevel, newlevel, emitMsg) {
             }
         }
     }
-    // add_weapon_skill/lose_weapon_skill: no RNG, no topline message.
+    // C ref: attrib.c:1068 — skill slots follow the experience level; a gain
+    // that makes some skill advanceable prints "You feel more confident...".
+    if (oldlevel > 0) {
+        const W = await import('./weapon.js');
+        if (newlevel > oldlevel) await W.add_weapon_skill(newlevel - oldlevel);
+        else await W.lose_weapon_skill(oldlevel - newlevel);
+    }
 }

@@ -6,6 +6,7 @@ import { COLNO, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
 import { enexto_spawn, makemon, mkclass, mm_mon_at } from '../makemon.js';
 import { mkobj_at } from '../mkobj.js';
+import { stackobj } from '../invent.js';
 import { rn2 } from '../rng.js';
 import {
     bigrm_get_location_dry, bigrm_load_map, bigrm_wallification, flip_level, q_absx, q_absy,
@@ -15,11 +16,11 @@ import {
 } from '../sp_lev.js';
 
 // C ref: sp_lev.c create_object() with c==0 (no class given) at an EXPLICIT
-// map-relative coord — mkobj_at(RANDOM_CLASS, x, y, !named); named is always
-// false for these des.object({x=,y=}) calls (no "name" field).
+// map-relative coord: mkobj_at(RANDOM_CLASS, x, y, !named), then stackobj().
+// `named` is always false for these des.object({x=,y=}) calls.
 function quest_create_object_random(mx, my) {
     const x = q_absx(mx), y = q_absy(my);
-    mkobj_at(0 /* RANDOM_CLASS */, x, y, true);
+    stackobj(mkobj_at(0 /* RANDOM_CLASS */, x, y, true));
 }
 
 // C ref: sp_lev.c create_monster — bare class char ("O"/"T"), NO explicit

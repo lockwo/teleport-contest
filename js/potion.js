@@ -33,7 +33,7 @@ import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
 import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
          W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
-         COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN } from './const.js';
+         COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN, Unaware as Unaware_const } from './const.js';
 import { fruitname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
@@ -100,7 +100,7 @@ function set_hallucination(v) {
 function Hallucination() { return HHallucination() > 0 && !Halluc_resistance(); }
 function Halluc_resistance() { return !!game.u?.formprops?.Halluc_resistance || HProp('HHalluc_resistance', 'EHalluc_resistance') > 0; }
 function Upolyd() { return !!game.u?.Upolyd; }
-function Unaware() { return !!(game.u?.usleep || game.u?.Unaware); }
+function Unaware() { return !!(game.u?.usleep || game.u?.Unaware) || Unaware_const(); }
 // C ref: attrib.h Fixed_abil — blocks every adjattrib().
 function Fixed_abil() { return HProp('HFixed_abil', 'EFixed_abil') > 0; }
 // C ref: attrib.c orc_abil[]/RACE_ABIL race-innate poison resistance (e.g.
@@ -276,6 +276,7 @@ async function make_blinded(xtime, talk) {
     // dopotion()'s `if (otmp->dknown && !oc_name_known) makeknown()` was skipped
     // and discover_object's exercise(A_WIS, TRUE) rn2 never drawn.
     if (u_could_see !== can_see_now) {
+        game.botl = true;
         vision_recalc(0);
         if (can_see_now) learn_unseen_invent();
     }
@@ -915,7 +916,7 @@ async function peffect_sickness(otmp) {
         } else {
             const typ = rn2(A_MAX);                       // potion.c:983
             if (!Fixed_abil()) {
-                await poisontell(typ);
+                await poisontell(typ, false);
                 await adjattrib(typ, Poison_resistance() ? -1 : -rn1(4, 3), 1);
             }
             if (!Poison_resistance())
@@ -930,12 +931,7 @@ async function peffect_sickness(otmp) {
         await make_hallucinated(0, false, 0);
     }
 }
-// C ref: attrib.c poisontell(typ, exclaim) — "You feel a little %s." (no RNG).
-const POISON_LOSS = ['weaker', 'dumber', 'more foolish', 'clumsier',
-                     'more sickly', 'ugly'];
-async function poisontell(typ) {
-    await update_topl(`You feel ${POISON_LOSS[typ]}!`);
-}
+import { poisontell } from './attrib.js';
 
 // C ref: potion.c peffect_restore_ability() — POT_RESTORE_ABILITY and the
 // restore-ability spell.  rn2(A_MAX) picks the starting characteristic; a
@@ -2054,7 +2050,7 @@ export async function toggle_blindness() {
     const Stinging = !!(game.uwep && (u?.uprops?.EWarn_of_mon_wep));
 
     /* blindness has just been toggled */
-    if (u) u.disp_botl = true;      /* status conditions need update */
+    game.botl = true;               /* status conditions need update */
     game.vision_full_recalc = 1;    /* vision has changed */
     vision_recalc(0);
     if (Blind_telepat() || Infravision() || Stinging) {
@@ -3298,7 +3294,7 @@ export async function split_mon(mon, mtmp) {
                u.mh -= mtmp2->mhp; halving the max cannot exceed current */
             mtmp2.mhpmax = Math.trunc(u.mhmax / 2);
             u.mhmax -= mtmp2.mhpmax;
-            u.disp_botl = true;
+            game.botl = true;      /* C: disp.botl = TRUE */
             await update_topl(`You multiply${reason}!`);
         }
     } else {

@@ -990,6 +990,8 @@ function toggleSimpleBool(name) {
     const dflt = SIMPLE_BOOL_DEFAULT[name] ?? false;
     const cur = game.flags[name] === undefined ? dflt : !!game.flags[name];
     game.flags[name] = !cur;
+    if (name === 'color')
+        (game.iflags = game.iflags || {}).use_color = !cur;
 }
 
 // C ref: options.c doset() — the 'O' command.  Runs the full options menu,
@@ -1002,12 +1004,27 @@ export async function doset() {
     // Map of accelerator char -> entry index for the *current* page only.
     let page = 0;
     let cancelled = false;
+    // tty_getlin("Search for:") ends with clear_nhwindow(WIN_MESSAGE), wiping the
+    // menu's own title row; only a page change repaints it.
+    let blankTop = false;
+    let count = 0, counting = false;
     for (;;) {
         renderOptionsPage(entries, page, npages, selected);
+        if (blankTop) for (let x = 0; x < COLS; x++) disp().setCell(x, 0, ' ', NO_COLOR, 0);
         game._modal_screen = 'optmenu';
         const c = await nhgetch();
         delete game._modal_screen;
         const ch = String.fromCharCode(c);
+        // C ref: process_menu_window() count prefix: digits accumulate and ESC
+        // while counting only abandons the count; any other key consumes it.
+        if (ch >= '0' && ch <= '9') { count = count * 10 + (c - 48); if (count) counting = true; continue; }
+        if (c === 27 && counting) { count = 0; counting = false; continue; }
+        // xwaitforspace(resp) bells on anything outside the page selectors and
+        // menu commands without returning, so a pending count survives it.
+        if (!entries.slice(page * PER_PAGE, (page + 1) * PER_PAGE).some(e => e.t === 'a' && e.a === ch)
+            && !' \r\n\x1b^|><.-@,\\~:'.includes(ch)) continue;
+        const useCount = counting, useN = count;
+        counting = false; count = 0;
         if (c === 27) { cancelled = true; break; }    // ESC: cancel whole menu
         if (c === 13 || c === 10) break;               // confirm
         // C ref: wintty.c process_menu_window() case ' '/MENU_NEXT_PAGE —
@@ -1015,19 +1032,52 @@ export async function doset() {
         // no next page ("' ' finishes menus here, but stop '>' doing the
         // same"), so '>' on the last page is a no-op.
         if (ch === ' ' || ch === '>') {
-            if (page < npages - 1) { page++; continue; }
+            if (page < npages - 1) { page++; blankTop = false; continue; }
             if (ch === ' ') break;
             continue;
         }
-        if (ch === '<') { if (page > 0) page--; continue; }
+        if (ch === '<') { if (page > 0) { page--; blankTop = false; } continue; }
+        if (ch === '^') { page = 0; blankTop = false; continue; }
+        if (ch === '|') { page = npages - 1; blankTop = false; continue; }
+        // C ref: wintty.c process_menu_window() MENU_SELECT_PAGE ',',
+        // MENU_UNSELECT_PAGE '\\', MENU_INVERT_PAGE '~', MENU_SELECT_ALL '.',
+        // MENU_UNSELECT_ALL '-', MENU_INVERT_ALL '@'.  Every options.c entry is
+        // MENU_ITEMFLAGS_SKIPINVERT and menuinvertmode defaults to 1
+        // (windows.c menuitem_invert_test): bulk select never turns an entry On,
+        // while invert/deselect may only turn a selected entry Off.
+        if (',\\~.-@'.includes(ch)) {
+            if (ch === ',' || ch === '.') continue;
+            const pageOnly = ch === '\\' || ch === '~';
+            const from = pageOnly ? page * PER_PAGE : 0;
+            const to = pageOnly ? Math.min(from + PER_PAGE, entries.length) : entries.length;
+            for (let i = from; i < to; i++) selected.delete(i);
+            continue;
+        }
+        // C ref: process_menu_window() MENU_SEARCH — getlin "Search for:", then
+        // toggle every selectable entry whose "<sel> - <text>" matches "*pat*".
+        if (ch === ':') {
+            const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
+            const reply = await hooked_tty_getlin('Search for:', null);
+            blankTop = true;
+            if (!reply || reply[0] === '\x1b') continue;
+            // (searches every page, not just the displayed one)
+            for (let i = 0; i < entries.length; i++) {
+                const e = entries[i];
+                if (e.t !== 'a' || e.kind === 'help') continue;
+                const body = e.kind === 'bool' ? liveOptValue(e.name, e.body).text : e.body;
+                if (!pmatchi(`*${reply}*`, `${e.a} - ${body}`)) continue;
+                if (selected.has(i)) selected.delete(i); else selected.add(i);
+            }
+            continue;
+        }
         // Toggle the entry on this page whose accelerator matches.
         const start = page * PER_PAGE;
         const end = Math.min(start + PER_PAGE, entries.length);
         for (let i = start; i < end; i++) {
             const e = entries[i];
             if (e.t === 'a' && e.a === ch && e.kind !== 'help') {
-                if (selected.has(i)) selected.delete(i);
-                else selected.add(i);
+                if (useCount ? useN > 0 : !selected.has(i)) selected.add(i);
+                else selected.delete(i);
                 break;
             }
         }
@@ -1066,6 +1116,8 @@ export async function doset() {
         // Other compound/other selections aren't exercised by the recorded
         // sessions; left unhandled (no prompt) on purpose.
     }
+    if (picks.some((e) => e.kind === 'bool' && e.name === 'color'))
+        await docrt();
     return 0;
 }
 
@@ -1082,6 +1134,10 @@ function applyBooleanToggle(name, turnOn) {
     case 'fixinv': game.flags.invlet_constant = turnOn; break;
     case 'altmeta': (game.iflags = game.iflags || {}).altmeta = turnOn; break;
     case 'cmdassist':  (game.iflags = game.iflags || {}).cmdassist = turnOn; break;
+    case 'color':
+        game.flags.color = turnOn;
+        (game.iflags = game.iflags || {}).use_color = turnOn;
+        break;
     case 'showexp':
     case 'showvers':
     case 'time':

@@ -8,6 +8,7 @@
 // seffect_fire()/seffect_earth() and drop_boulder_on_player/monster() were
 // fully written, just missing their `case` arms in the switch below.
 
+import { ceiling as ceiling_dg } from './dungeon.js';
 import { game } from './gstate.js';
 import { LL_CONDUCT, livelog_printf } from './livelog.js';
 import { rnd, rn2, rn1, d } from './rng.js';
@@ -663,7 +664,7 @@ async function seffect_create_monster(sobj) {
 
 // C ref: makemon.c create_critters(cnt, mptr, neverask).
 async function create_critters(cnt, mptr, neverask) {
-    const { makemon } = await import('./makemon.js');
+    const { makemon, makemon_appears_msg } = await import('./makemon.js');
     const { canspotmon } = await import('./uhitm.js');
     const u = game.u;
     let known = false;
@@ -676,6 +677,7 @@ async function create_critters(cnt, mptr, neverask) {
         // (u.uinwater enexto(GIANT_EEL) relocation isn't modelled.)
         const mon = makemon(mptr, u.ux, u.uy, 0);
         if (!mon) continue;
+        await makemon_appears_msg(mon, mon.mx, mon.my, 0); // makemon.c:1474
         if (canspotmon(mon)) known = true;
     }
     return known;
@@ -1452,35 +1454,11 @@ async function p_glow2(otmp, color) {
 }
 
 // C ref: do_wear.c disintegrate_arm(atmp) — destroy one worn armor piece
-// outright.  maybe_destroy_armor() rolls obj_resists(armor, 0, 90) for each
-// candidate slot in order (cloak, suit, shirt, helm, gloves, boots, shield),
-// stopping at the first that doesn't resist, so this is RNG-visible.
+// outright; js/do_wear.js owns the port (per-slot messages, RNG order,
+// wornarm_destroyed(), stop_occupation()).
 async function disintegrate_arm(atmp) {
-    const { obj_resists } = await import('./zap.js');
-    const slots = ['uarmc', 'uarm', 'uarmu', 'uarmh', 'uarmg', 'uarmf', 'uarms'];
-    let resistedc = false, resistedsuit = false;
-    for (const slot of slots) {
-        const armor = game[slot];
-        // C: the cloak resisting shields the suit and shirt beneath it; the
-        // suit resisting shields the shirt.
-        if (slot === 'uarm' && resistedc) continue;
-        if (slot === 'uarmu' && (resistedc || resistedsuit)) continue;
-        if (!armor || (atmp && atmp !== armor)) continue;
-        const resisted = obj_resists(armor, 0, 90);
-        if (resisted) {
-            if (slot === 'uarmc') resistedc = true;
-            else if (slot === 'uarm') resistedsuit = true;
-            continue;
-        }
-        armor.in_use = 1;
-        await pline_append(`${Yname2_wep(armor)} crumbles and turns to dust!`);
-        await remove_worn_item(armor, false);
-        useup(armor);
-        const { stop_occupation } = await import('./hack.js');
-        await stop_occupation();
-        return 1;
-    }
-    return 0;
+    const DW = await import('./do_wear.js');
+    return (await DW.disintegrate_arm(atmp)) ? 1 : 0;
 }
 
 // C ref: read.c disintegrate_cursed_armor() — pick one CURSED worn piece at
@@ -1913,6 +1891,19 @@ export async function doread() {
         }
     }
 
+    // C ref: read.c:578-594 — `confused = (Confusion != 0)`, overridden to FALSE
+    // for a scroll of mail (reading it takes place outside the game); an
+    // illiterate hero is asked first unless the scroll came from bones/a wish.
+    let confused = Confused();
+    if (otyp === SCR_MAIL) {
+        confused = false;
+        if (!(game.u?.uconduct?.literate || 0)) {
+            if (!scroll.spe && (await y_n(
+                'Reading mail will violate "illiterate" conduct.  Read anyway?')) !== 'y')
+                return ECMD_OK;
+        }
+    }
+
     // C ref: read.c doread — literate conduct.  Score/livelog only (no RNG),
     // but the counter is what gates the SCR_MAIL confirmation prompt.
     if (otyp !== SPE_BOOK_OF_THE_DEAD && otyp !== SPE_NOVEL
@@ -1950,7 +1941,7 @@ export async function doread() {
         // pline follows the "disappears" line on the same turn; when the two
         // don't fit on one top line, "...disappears." is paged with --More--
         // (its own captured frame) before the confused line replaces it.
-        if (Confused()) {
+        if (confused) {
             if (Hallucination())
                 await update_topl('Being so trippy, you screw up...');
             else
@@ -2097,10 +2088,7 @@ function avoid_ceiling_read(uz) {
     return !has_ceiling_read(uz);
 }
 function ceiling_read(x, y) {
-    const typ = game.level?.at(x, y)?.typ ?? STONE;
-    if (typ === ROOM || IS_WALL(typ) || IS_DOOR(typ) || typ === SDOOR)
-        return 'ceiling';
-    return 'rock cavern';
+    return ceiling_dg(x, y);
 }
 
 // C ref: trap.c:7038 sokoban_guilt() — a luck penalty for cheating in Sokoban.
@@ -2127,11 +2115,7 @@ function closed_door_read(x, y) {
 }
 
 // C ref: objnam.c an(str).  hack.js:2633 keeps the same private copy.
-function an_read(s) {
-    if (!s) return s;
-    if (/^[aeiouAEIOU]/.test(s)) return `an ${s}`;
-    return `a ${s}`;
-}
+import { an as an_read } from './hacklib.js';
 // C ref: hacklib.c upstart(s) — capitalise the first letter in place.
 function upstart_read(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
@@ -2495,6 +2479,7 @@ export async function drop_boulder_on_player(confused, helmet_protects, byu,
 
     const otmp2 = mksobj(confused ? ROCK : BOULDER, false, false);
     if (!otmp2) return;
+    otmp2.where = 'free';   /* flooreffects() wants a free object */
     otmp2.quan = confused ? rn1(5, 2) : 1;
     otmp2.owt = weight(otmp2);
 
@@ -2539,6 +2524,7 @@ export async function drop_boulder_on_monster(x, y, confused, byu) {
     /* Make the object(s) */
     const otmp2 = mksobj(confused ? ROCK : BOULDER, false, false);
     if (!otmp2) return false;          /* Shouldn't happen */
+    otmp2.where = 'free';              /* flooreffects() wants a free object */
     otmp2.quan = confused ? rn1(5, 2) : 1;
     otmp2.owt = weight(otmp2);
 
@@ -3502,8 +3488,8 @@ export async function create_particular() {
 // (makemon.c:1472-1500) is emitted here right after makemon() returns, i.e.
 // before tamedog()/the saddle, as in C.
 export async function create_particular_creation(d) {
-    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign, newcham,
-            makemon_appears_msg } = await import('./makemon.js');
+    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign,
+            newcham_wizard_aware, makemon_appears_msg } = await import('./makemon.js');
     const u = game.u;
     let whichpm = null;
     let firstchoice = NON_PM;
@@ -3583,7 +3569,7 @@ export async function create_particular_creation(d) {
            start out looking like what was asked for */
         if (mtmp.cham != null && mtmp.cham !== NON_PM && firstchoice !== NON_PM
             && mtmp.cham !== firstchoice)
-            newcham(mtmp, monster_by_pmidx(firstchoice));
+            await newcham_wizard_aware(mtmp, monster_by_pmidx(firstchoice));
     }
     return madeany;
 }

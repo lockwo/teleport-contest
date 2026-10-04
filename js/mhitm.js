@@ -35,19 +35,21 @@ import { rn2, rnd, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED,
     M_ATTK_AGR_DONE, STRAT_WAITMASK, engulfing_u,
-    W_ARMG, W_ARMF, W_ARMH, W_ARMC,
+    W_ARMG, W_ARMF, W_ARMH, W_ARMC, I_SPECIAL,
+    CORPSTAT_NONE, CORPSTAT_FEMALE, CORPSTAT_MALE, CORPSTAT_HISTORIC,
+    MGIVENNAME, has_mgivenname,
 } from './const.js';
-import { DEADMONSTER, mvitals_died, healmon } from './mon.js';
+import { DEADMONSTER, mvitals_died, healmon, unstuck, vamp_stone, lifesaved_monster } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
-import { update_topl } from './display.js';
-import { make_corpse, dmgval, mhitm_knockback } from './uhitm.js';
+import { update_topl, Deaf_hero } from './display.js';
+import { make_corpse, dmgval, mhitm_knockback, seemimicLocal } from './uhitm.js';
 import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './const.js';
 // used only by the appended mhitm.c translations at the bottom of this file
 import { IS_OBSTRUCTED, IS_TREE, IRONBARS, D_CLOSED, D_LOCKED } from './const.js';
 import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
          is_undead_flag, is_demon_flag, unsolid_flag, mflags1_of, M1_NOEYES,
-         M1_THICK_HIDE, M1_WALLWALK, M1_TPORT,
+         M1_THICK_HIDE, M1_WALLWALK, M1_TPORT, is_neuter_flag,
 } from './monflags_data.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { xname, youmonst_data_pub } from './invent.js';
@@ -55,7 +57,7 @@ import { MATTK } from './monattk_data.js';
 import { name_to_pmidx, monster_by_pmidx, is_home_elemental } from './makemon.js';
 // newcham/pm_to_cham: used only by the appended gulpmm()/mon_poly() below
 import { newcham, newcham_wizard_aware, pm_to_cham } from './makemon.js';
-import { mhitm_adtyping, YOUMONST } from './mhitm_ad.js';
+import { mhitm_adtyping, YOUMONST, paralyze_monst, stagger } from './mhitm_ad.js';
 // mhitu.c owns these four (mhitm.c:383/426/85/659 call them across the file
 // boundary); js/mhitu.js is the single faithful copy.
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
@@ -109,9 +111,7 @@ function pre_mm_attack(magr, mdef) {
     const vis = mm_visible(magr, mdef);
     for (const m of [mdef, magr]) {
         if (m.m_ap_type) {                 // mon.c seemimic(m)
-            m.m_ap_type = 0;
-            m.mappearance = 0;
-            newsym(m.mx, m.my);
+            seemimicLocal(m);
             showit = showit || vis;
         } else if (m.mundetected) {
             m.mundetected = 0;
@@ -133,7 +133,7 @@ function pre_mm_attack(magr, mdef) {
 // handles it in its own case), so the sound is always "some noises".
 async function noises(magr, mattk) {
     const u = game.u;
-    if (u?.Deaf) return;
+    if (Deaf_hero()) return;
     const dx = magr.mx - (u?.ux ?? 0), dy = magr.my - (u?.uy ?? 0);
     const farq = (dx * dx + dy * dy) > 15;
     const prevFar = !!game.far_noise;
@@ -273,6 +273,8 @@ const MZ_TINY = 0, MZ_SMALL = 1, MZ_MEDIUM = 2, MZ_HUMAN = MZ_MEDIUM,
 
 // C ref: include/monflag.h G_FREQ — the creation-frequency mask of geno.
 const G_FREQ = 0x0007;
+// C ref: include/monflag.h G_UNIQ — unique monster (statue is "historic").
+const G_UNIQ = 0x1000;
 
 // C ref: mondata.h verysmall(ptr) / bigmonst(ptr).
 function verysmall(ptr) { return (ptr?.msize ?? MZ_MEDIUM) < MZ_SMALL; }
@@ -378,13 +380,14 @@ export async function thrwmmDeps() {
         // monshoot()
         monmulti: MM.monmulti,
         canseemon: MM.canseemon_mm,
-        shoot_msg: async (mtmp, otmp, mwep, multishot) => {
+        shoot_msg: async (mtmp, otmp, mwep, multishot, mtarg) => {
             observe_object(otmp);
             const onm = multishot > 1
                 ? `${multishot} ${MM.mshot_xname(otmp)}s`
                 : an_(MM.mshot_xname(otmp));
             const verb = MM.ammo_and_launcher(otmp, mwep) ? 'shoots' : 'throws';
-            await emitMMmsg(`${Monnam(mtmp)} ${verb} ${onm}!`);
+            const { some_mon_nam } = await import('./do_name.js');
+            await emitMMmsg(`${Monnam(mtmp)} ${verb} ${onm}${mtarg ? ` at ${some_mon_nam(mtarg)}` : ''}!`);
         },
         // m_lined_up() — utarget is always false for a monster target, so the
         // throws_rocks/m_carrying/WAN_STRIKING/U_AP_TYPE fields it also reads
@@ -511,7 +514,17 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
 
     mdef.mhp -= damage;
     if (mdef.mhp < 1) {
+        // C ref: mhitm.c:1083 — a zombie's bare touch/claw/bite kill makes the
+        // victim's corpse start a ZOMBIFY_MON timer (start_corpse_timeout()'s
+        // rn1(15, 5)) instead of the ordinary rot draw.
+        const { zombie_maker } = await import('./monmove.js');
+        const { zombie_form } = await import('./mon.js');
+        game.zombify = (!MON_WEP_MM(magr) && zombie_maker(magr)
+                        && (mattk.aatyp === AT_TUCH || mattk.aatyp === AT_CLAW
+                            || mattk.aatyp === AT_BITE)
+                        && zombie_form(mdef.data) !== NON_PM);
         await monkilled_mm(mdef, mattk.adtyp);
+        game.zombify = false; /* reset */
         if (hitflags === M_ATTK_AGR_DIED)
             return (M_ATTK_DEF_DIED | M_ATTK_AGR_DIED);
         // AD_DGST's post-kill arm (newcham / wraith grow_up / nurse healmon /
@@ -536,7 +549,7 @@ export async function monkilled_mm(mdef, _adtyp, cause = '') {
     else
         be_sad = !!mdef.mtame;
     await killMonster(mdef);
-    if (be_sad) await emitMMmsg('You have a sad feeling for a moment.');
+    if (be_sad) await emitMMmsg('You have a sad feeling for a moment, then it passes.');
 }
 
 // C ref: mhitm.c:970 explmm(magr, mdef, mattk) — an AT_EXPL monster detonates
@@ -562,30 +575,80 @@ async function explmm(magr, mdef, mattk) {
     }
 
     if (!(result & M_ATTK_AGR_DIED)) {
-        await killMonster(magr);                       /* mondead(magr) */
+        await killMonster(magr, false);                /* mondead(magr) */
         result |= M_ATTK_AGR_DIED;
     }
-    if (magr.mtame) await emitMMmsg('You have a melancholy feeling for a moment.');
+    if (magr.mtame) await emitMMmsg('You have a melancholy feeling for a moment, then it passes.');
     return result;
 }
 
-// C ref: mon.c monstone(mdef) — the victim becomes a STATUE.  Unlike
-// mondied() this does NOT run corpse_chance(), so it must not draw its rn2.
+// C ref: mon.c:3287 monstone(mdef) — the victim becomes a STATUE (or, for a
+// tiny monster that fails the rn2(2 + (freq > 2)) roll, a pile of ROCKs).
+// Unlike mondied() this does NOT run corpse_chance().  Carried objects go into
+// the statue except boulders/invocation items, which stay on the floor.
 export async function monstone_mm(mdef) {
-    const mx = mdef.mx, my = mdef.my;
-    const loc0 = game.level?.at(mx, my);
-    if (loc0?.invisMon) unmap_object(mx, my);
-    const list = game.level?.monsters;
-    if (list) {
-        mvitals_died(mdef);
-        const idx = list.indexOf(mdef);
-        if (idx >= 0) list.splice(idx, 1);
-    }
-    mdef.mhp = 0;
-    // mkcorpstat(STATUE, ...) draws no RNG; the statue object itself is not
-    // modelled, so the square just reverts to its remembered contents.
-    { const { relobj } = await import('./uhitm.js'); await relobj(mdef, mx, my); }
-    if (mx > 0 && my > 0) newsym(mx, my);
+    const x = mdef.mx, y = mdef.my;
+    const { vamp_stone, lifesaved_monster } = await import('./mon.js');
+    if (!(await vamp_stone(mdef)))
+        return;
+    mdef.mhp = 0; /* in case caller hasn't done this */
+    await lifesaved_monster(mdef);
+    if (!DEADMONSTER(mdef))
+        return;
+    mdef.mtrapped = 0; /* (see m_detach) */
+
+    const MO = await import('./mkobj.js');
+    const { stackobj } = await import('./invent.js');
+    const ptr = permonst(mdef);
+    let otmp;
+    if ((ptr?.msize ?? MZ_MEDIUM) > MZ_TINY
+        || !rn2(2 + (((ptr?.geno ?? 0) & G_FREQ) > 2 ? 1 : 0))) {
+        const { obj_resists } = await import('./zap.js');
+        const { flooreffects } = await import('./do.js');
+        const kept = [];                    /* C's oldminvent chain */
+        const inv = mdef.minvent || [];
+        while (inv.length) {
+            const obj = inv.shift();
+            // C ref: worn.c extract_from_minvent(mdef, obj, TRUE, TRUE)
+            const unwornmask = obj.owornmask | 0;
+            obj.owornmask = 0;
+            if (unwornmask) {
+                mdef.misc_worn_check = ((mdef.misc_worn_check | 0) & ~unwornmask) | I_SPECIAL;
+                if (obj === mdef.mw) mdef.mw = null;
+            }
+            obj.where = 'free';
+            obj.ocarry = null;
+            if (obj.otyp === MO.BOULDER
+                /* invocation tools resist even with 0% resistance */
+                || obj_resists(obj, 0, 0)) {
+                if (await flooreffects(obj, x, y, 'fall'))
+                    continue;
+                MO.place_object(obj, x, y);
+            } else {
+                if (obj.lamplit) {
+                    const { end_burn } = await import('./timeout.js');
+                    await end_burn(obj, true);
+                }
+                kept.unshift(obj);
+            }
+        }
+        /* defer statue creation until after inventory removal */
+        let corpstatflags = CORPSTAT_NONE;
+        if (mdef.female) corpstatflags |= CORPSTAT_FEMALE;
+        else if (!is_neuter_flag(ptr)) corpstatflags |= CORPSTAT_MALE;
+        /* Archeologists should not break unique statues */
+        if (((ptr?.geno ?? 0) & G_UNIQ) !== 0) corpstatflags |= CORPSTAT_HISTORIC;
+        otmp = MO.mkcorpstat(MO.STATUE, mdef, ptr, x, y, corpstatflags);
+        if (has_mgivenname(mdef)) otmp.oname = MGIVENNAME(mdef);
+        for (const obj of kept) MO.add_to_container(otmp, obj);
+        otmp.owt = MO.weight(otmp);
+    } else
+        otmp = MO.mksobj_at(MO.ROCK, x, y, true, false);
+
+    stackobj(otmp);
+    /* mondead(): unmap_object, m_detach (unstuck, off the map), relobj of
+       whatever is still carried (the rock case), newsym */
+    await killMonster(mdef, false);
 }
 
 // C ref: mondata.h:200 touch_petrifies(ptr) — PM_COCKATRICE || PM_CHICKATRICE.
@@ -700,9 +763,10 @@ function is_pool(x, y) {
 // Remove a dead monster from the level and redraw its square.  C ref: mon.c
 // mondied() -> mondead() [detach] then, if corpse_chance() succeeds and the
 // square is accessible (or a pool), make_corpse() which rolls next_ident,
-// rndmonnum and the corpse-timeout sequence.
+// rndmonnum and the corpse-timeout sequence.  withCorpse=false is a bare
+// mondead(): no corpse_chance() roll and no corpse.
 export async function mondied_mm(mdef) { return await killMonster(mdef); }
-async function killMonster(mdef) {
+async function killMonster(mdef, withCorpse = true) {
     mdef.mhp = 0;
     // C ref: mon.c mondead() — "if (glyph_is_invisible(...)) unmap_object(...)"
     // runs before m_detach.  A defender killed this same attack may have just
@@ -726,7 +790,10 @@ async function killMonster(mdef) {
             if (kop) await MK.makemon_appears_msg(kop, kop.mx, kop.my, 0);
         }
     }
-    const dropCorpse = await corpse_chance(mdef); // mon.c:3181
+    // C ref: mon.c mondead() -> m_detach() -> mon_leaving_level() -> unstuck()
+    // (mon.c:2703), whose re-grab rnd(2) precedes mondied()'s corpse_chance().
+    await unstuck(mdef);
+    const dropCorpse = withCorpse && await corpse_chance(mdef); // mon.c:3181
     const mx = mdef.mx, my = mdef.my;
     // Detach from the level so the renderer (m_at / MON_AT) stops drawing it.
     // The dead monster's coordinates are intentionally left intact: mattackm
@@ -879,29 +946,65 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
                     if (!rn2(4)) tmp = 127;
                     if (magr.mcansee && haseyes(madat) && mdef.mcansee
                         && (perceives_flag(madat) || !mdef.minvis)) {
-                        // mon_reflects()/paralyze_monst() aren't modelled; C
-                        // returns here either way, without further RNG.
+                        // mhitm.c:1374-1385 — mon_reflects() with the
+                        // "<eye>'s gaze is reflected by %s %s." format, else
+                        // the freeze message and paralyze_monst().
+                        const { mon_reflects } = await import('./muse.js');
+                        const rbuf = `${s_suffix(Monnam(mdef))} gaze is reflected by %s %s.`;
+                        if (await mon_reflects(magr, mm_can_see_mon(magr) ? rbuf : null))
+                            return (mdead | mhit);
+                        if (mm_can_see_mon(magr))
+                            await emitMMmsg(`${Monnam(magr)} is frozen by ${s_suffix(mon_nam(mdef))} gaze!`);
+                        paralyze_monst(magr, tmp);
                         return (mdead | mhit);
                     }
-                } else {
+                } else { /* gelatinous cube — mhitm.c:1387-1392 */
+                    if (mm_can_see_mon(magr))
+                        await emitMMmsg(`${Monnam(magr)} is frozen by ${mon_nam(mdef)}.`);
+                    paralyze_monst(magr, tmp);
                     return (mdead | mhit);
                 }
                 return 1;
             case AD_COLD:
-                if (mm_resists_cold(magr)) { tmp = 0; break; }
+                if (mm_resists_cold(magr)) {
+                    if (mm_can_see_mon(magr))
+                        await emitMMmsg(`${Monnam(magr)} is mildly chilly.`);
+                    tmp = 0;
+                    break;
+                }
+                if (mm_can_see_mon(magr))
+                    await emitMMmsg(`${Monnam(magr)} is suddenly very cold!`);
                 healmon(mdef, Math.floor(tmp / 2), Math.floor(tmp / 2));
                 // split_mon() (blue jelly) isn't modelled — it makemon()s a
                 // clone, which is RNG the port would have to reproduce exactly.
                 break;
             case AD_STUN:
-                if (!magr.mstun) magr.mstun = 1;
+                if (!magr.mstun) {
+                    magr.mstun = 1;
+                    if (mm_can_see_mon(magr))
+                        await emitMMmsg(`${Monnam(magr)} ${stagger(permonst(magr), 'stagger')}s...`);
+                }
                 tmp = 0;
                 break;
             case AD_FIRE:
-                if (mm_resists_fire(magr)) tmp = 0;
+                if (mm_resists_fire(magr)) {
+                    if (mm_can_see_mon(magr))
+                        await emitMMmsg(`${Monnam(magr)} is mildly warmed.`);
+                    tmp = 0;
+                    break;
+                }
+                if (mm_can_see_mon(magr))
+                    await emitMMmsg(`${Monnam(magr)} is suddenly very hot!`);
                 break;
             case AD_ELEC:
-                if (mm_resists_elec(magr)) tmp = 0;
+                if (mm_resists_elec(magr)) {
+                    if (mm_can_see_mon(magr))
+                        await emitMMmsg(`${Monnam(magr)} is mildly tingled.`);
+                    tmp = 0;
+                    break;
+                }
+                if (mm_can_see_mon(magr))
+                    await emitMMmsg(`${Monnam(magr)} is jolted with electricity!`);
                 break;
             default:
                 tmp = 0;
@@ -922,7 +1025,7 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
         else
             be_sad = !!magr.mtame;
         await killMonster(magr);
-        if (be_sad) await emitMMmsg('You have a sad feeling for a moment.');
+        if (be_sad) await emitMMmsg('You have a sad feeling for a moment, then it passes.');
         return (mdead | mhit | M_ATTK_AGR_DIED);
     }
     return (mdead | mhit);
@@ -966,9 +1069,7 @@ export async function mdisplacem(magr, mdef, quietly) {
     // would have to reproduce exactly.)
     if (mdef.mundetected) mdef.mundetected = 0;
     if (mdef.m_ap_type && mdef.m_ap_type !== 'mon') {   // seemimic(mdef)
-        mdef.m_ap_type = 0;
-        mdef.mappearance = 0;
-        newsym(mdef.mx, mdef.my);
+        seemimicLocal(mdef);
     }
     mdef.msleeping = 0;
     mdef.mstrategy = (mdef.mstrategy || 0) & ~STRAT_WAITMASK;
@@ -1066,7 +1167,11 @@ async function hitmm(magr, mdef, mattk, mwep, dieroll) {
             await emitMMmsg(`${s_suffix(Monnam(magr))} tentacles suck`
                 + ` ${mon_nam(mdef)}.`);
         } else {
-            await emitMMmsg(`${Monnam(magr)} ${hit_verb(mattk.aatyp)}`
+            // C ref: mhitm.c:691 — a hug by a monster that is not (yet) holding
+            // the hero "squeezes"; otherwise it falls through to "hits".
+            const verb = (mattk.aatyp === AT_HUGS && magr !== game.u?.ustuck)
+                ? 'squeezes' : hit_verb(mattk.aatyp);
+            await emitMMmsg(`${Monnam(magr)} ${verb}`
                 + ` ${mon_nam(mdef)}.`);
         }
     } else {
@@ -1695,8 +1800,8 @@ export async function mon_poly(magr, mdef, dmg) {
                 const { rloc, tele_restrict } = await import('./teleport.js');
                 if (is_youmonst_mm(magr))
                     await tele_mm();
-                else if (!tele_restrict(magr))
-                    await rloc(magr, /*RLOC_MSG*/ 1);
+                else if (!await tele_restrict(magr))
+                    await rloc(magr, 0x02 /* RLOC_MSG */);
             }
         } else {
             if (vis && game.flags?.verbose)

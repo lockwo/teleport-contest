@@ -24,7 +24,7 @@ import {
 } from './const.js';
 import { GameMap } from './game.js';
 import { wallification, set_wall_state } from './mklev.js';
-import { objects, mksobj, next_ident, blessorcurse, curse, set_corpsenm, BOULDER } from './mkobj.js';
+import { objects, mksobj, mksobj_at, next_ident, blessorcurse, curse, set_corpsenm, BOULDER, KELP_FROND } from './mkobj.js';
 import { name_to_pmidx, monster_by_pmidx, newmonhp } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { hole_destination, choose_trapnote } from './trap.js';
@@ -620,10 +620,16 @@ export function genTutorialLevel() {
 
     runTutProgram();
 
-    // fixup_special: water_has_kelp rn2(10) for each WATER cell candidate, then
-    // place_lregion for the teleport_region (rn2(1),rn2(1)).  The map has one
-    // 'W' water cell (Lua {2,13}); C scans the two POOL/WATER pools.
-    rn2(10); rn2(10);   // water_has_kelp (mklev.c:1436)
+    // C ref: mklev.c level_finalize_topology() -> mineralize() kelp scan.
+    // The map has one 'W' water cell (Lua {2,13}); C scans the two POOL/WATER
+    // pools.
+    for (let x = 2; x < COLNO - 2; x++)
+        for (let y = 1; y < ROWNO - 1; y++) {
+            const typ = lvl.at(x, y)?.typ;
+            if (((typ === POOL || typ === WATER) && !rn2(10))
+                || (typ === MOAT && !rn2(30)))
+                mksobj_at(KELP_FROND, x, y, true, false);
+        }
     rn2(1); rn2(1);     // place_lregion teleport_region (mkmaze.c:396,397)
 
     // C ref: lspo_finalize_level -> wallification(1,0,COLNO-1,ROWNO-1) then

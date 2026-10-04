@@ -1,7 +1,7 @@
 // mkobj.js - Object creation.
 // C refs: mkobj.c, objects.h, o_init.c object probability setup.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1, rnz, rne } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { builds_up, In_hell, level_difficulty_c } from './dungeon.js';
@@ -10,7 +10,7 @@ import {
     CORPSTAT_FEMALE, CORPSTAT_MALE, CORPSTAT_NEUTER,
     CORPSTAT_INIT, CORPSTAT_SPE_VAL,
     ROT_AGE, TAINT_AGE, TROLL_REVIVE_CHANCE,
-    TIMER_OBJECT, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON, HATCH_EGG,
+    TIMER_OBJECT, ROT_ORGANIC, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON, HATCH_EGG,
     FIG_TRANSFORM, SHRINK_GLOB,
     OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT,
     OBJ_MIGRATING, OBJ_BURIED, OBJ_ONBILL, OBJ_LUAFREE, OBJ_DELETED,
@@ -1261,6 +1261,11 @@ const ARTIFACTS = [
     [19, 56 /*KATANA*/, 8, -1],          // Snickersnee
     [20, 54 /*LONG_SWORD*/, 6, -1],      // Sunsword
 ];
+// C ref: artilist.h A("<name>", ...) — artilist[m].name, indexed like ARTIFACTS.
+const ARTI_NAMES = [null, 'Excalibur', 'Stormbringer', 'Mjollnir', 'Cleaver',
+    'Grimtooth', 'Orcrist', 'Sting', 'Magicbane', 'Frost Brand', 'Fire Brand',
+    'Dragonbane', 'Demonbane', 'Werebane', 'Grayswandir', 'Giantslayer',
+    'Ogresmasher', 'Trollsbane', 'Vorpal Blade', 'Snickersnee', 'Sunsword'];
 
 function nartifact_exist() {
     const set = game.artiexist;
@@ -1289,6 +1294,7 @@ function mk_artifact(otmp) {
         const m = eligible[rn2(n)];
         otmp.oeroded = 0;
         otmp.oeroded2 = 0;
+        otmp.oname = ARTI_NAMES[m];                /* oname(otmp, a->name) */
         otmp.oartifact = m;
         game.artiexist.add(m);                     // artifact_origin -> exists
     }
@@ -1448,6 +1454,40 @@ function start_timer(when, kind, action, obj) {
     return true;
 }
 
+// C ref: timeout.c start_timer(when, TIMER_OBJECT, action, obj) for callers
+// outside this file (themerms.lua o:start_timer()).
+export function start_object_timer(when, action, obj) {
+    return start_timer(when, TIMER_OBJECT, action, obj);
+}
+
+// C ref: timeout.c start_timer(when, TIMER_LEVEL, MELT_ICE_AWAY, long_to_any(where))
+// (nhlua.c nhl_timer_start_at).  Level timers live on the level they belong to
+// and fire from run_object_timers() with the object timers, in timeout order.
+export function start_level_timer(when, where) {
+    const lev = game.level;
+    if (!lev) return false;
+    (lev.level_timers = lev.level_timers || []).push({
+        when: (game.moves ?? 0) + when, where,
+        tid: game._object_timer_id = (game._object_timer_id ?? 0) + 1,
+    });
+    return true;
+}
+
+// C ref: hack.c disturb_buried_zombies(x, y) — reduce the zombification timeout
+// (to 2/3, min 1 turn) of every buried zombie corpse within one square of x,y.
+export function disturb_buried_zombies(x, y) {
+    for (const otmp of (game.level?.buriedobjlist || [])) {
+        if (otmp.otyp !== CORPSE || !otmp.timed) continue;
+        if (!(otmp.ox >= x - 1 && otmp.ox <= x + 1
+              && otmp.oy >= y - 1 && otmp.oy <= y + 1)) continue;
+        if (otmp.timer?.action !== ZOMBIFY_MON
+            || otmp.timer.when - (game.moves ?? 0) <= 0) continue; /* peek_timer */
+        const t = stop_object_timer(otmp, ZOMBIFY_MON);
+        start_timer(Math.max(1, Math.trunc((t * 2) / 3)), TIMER_OBJECT,
+                    ZOMBIFY_MON, otmp);
+    }
+}
+
 function obj_stop_timers(obj) {
     if (!obj) return;
     obj.timed = false;
@@ -1467,12 +1507,17 @@ export async function run_object_timers() {
         for (const o of list) {
             if (o.timed && o.timer && o.timer.when <= moves
                 && (o.timer.action === SHRINK_GLOB
+                    || o.timer.action === ROT_ORGANIC
                     || o.timer.action === ROT_CORPSE
+                    || o.timer.action === REVIVE_MON
+                    || o.timer.action === ZOMBIFY_MON
                     || o.timer.action === HATCH_EGG))
                 due.push({ obj: o, timer: o.timer });
             if (Array.isArray(o.cobj)) scan(o.cobj);
         }
     };
+    for (const lt of (game.level?.level_timers || []))
+        if (lt.when <= moves) due.push({ level_timer: lt, timer: lt });
     scan(game.level?.objects);
     scan(game.invent);
     scan(game.level?.buriedobjlist);
@@ -1481,7 +1526,17 @@ export async function run_object_timers() {
         scan(mon.minvent);
     due.sort((a, b) => a.timer.when - b.timer.when
         || (b.timer.tid ?? 0) - (a.timer.tid ?? 0));
-    for (const { obj, timer } of due) {
+    for (const { obj, timer, level_timer } of due) {
+        if (level_timer) {
+            /* melt_ice_away may already have cancelled it via spot_stop_timers */
+            const lts = game.level?.level_timers;
+            const ix = lts ? lts.indexOf(level_timer) : -1;
+            if (ix < 0) continue;
+            lts.splice(ix, 1);
+            const { melt_ice_away } = await import('./zap.js');
+            await melt_ice_away({ a_long: level_timer.where }, level_timer.when);
+            continue;
+        }
         if (obj.timer !== timer || !obj.timed) continue;
         obj.timed = false;
         delete obj.timer;
@@ -1489,14 +1544,39 @@ export async function run_object_timers() {
         case SHRINK_GLOB:
             shrink_glob(obj, timer.when);
             break;
+        case ROT_ORGANIC: {
+            const { rot_organic } = await import('./dig.js');
+            await rot_organic({ a_obj: obj }, timer.when);
+            break;
+        }
         case ROT_CORPSE: {
             const { rot_corpse } = await import('./dig.js');
             await rot_corpse({ a_obj: obj }, timer.when);
             break;
         }
+        case REVIVE_MON: {
+            const { revive_mon } = await import('./do.js');
+            await revive_mon({ a_obj: obj }, timer.when);
+            break;
+        }
+        case ZOMBIFY_MON: {
+            const { zombify_mon } = await import('./do.js');
+            await zombify_mon({ a_obj: obj }, timer.when);
+            break;
+        }
         case HATCH_EGG: {
             const { hatch_egg } = await import('./timeout.js');
             await hatch_egg({ a_obj: obj }, timer.when);
+            break;
+        }
+        case REVIVE_MON: {
+            const { revive_mon } = await import('./do.js');
+            await revive_mon({ a_obj: obj }, timer.when);
+            break;
+        }
+        case ZOMBIFY_MON: {
+            const { zombify_mon } = await import('./do.js');
+            await zombify_mon({ a_obj: obj }, timer.when);
             break;
         }
         }
@@ -1692,6 +1772,8 @@ const BASE_OC_WEIGHT = Object.freeze({
     // heavy / structural single items
     [CRYSTAL_BALL]: 150, [TINNING_KIT]: 100,
     [BOULDER]: 6000, [STATUE]: 2500, [HEAVY_IRON_BALL]: 480, [IRON_CHAIN]: 120,
+    // objects.h: the tribute novel is the one spellbook that is not wt 50.
+    [SPE_NOVEL]: 10,
 });
 
 // C ref: objects.h objects[].oc_weight — the per-otyp base encumbrance, dumped
@@ -1989,7 +2071,7 @@ export function place_object(otmp, x, y) {
 }
 
 // C ref: mkobj.c add_to_container(container, obj) — obj must be free; merge
-// into an existing stack if possible, else push onto the container's cobj
+// into an existing stack if possible, else prepend to the container's cobj
 // chain.  Does NOT update the container's weight (callers do).
 export function add_to_container(container, otmp) {
     if (!container || !otmp) return otmp;
@@ -1998,7 +2080,9 @@ export function add_to_container(container, otmp) {
         && container.where !== OBJ_MINVENT && container.where !== 'minvent') {
         otmp.ocarry = null;                    /* obj_no_longer_held */
     }
-    container.cobj.push(otmp);
+    for (const candidate of container.cobj)
+        if (hooks.merged(candidate, otmp)) return candidate;
+    container.cobj.unshift(otmp);
     otmp.where = 'contained';
     otmp.ocontainer = container;
     return otmp;
@@ -2834,7 +2918,7 @@ export function add_to_buried(obj) {
     if (!obj || !game.level) return;
     obj.where = OBJ_BURIED;
     if (!Array.isArray(game.level.buriedobjlist)) game.level.buriedobjlist = [];
-    game.level.buriedobjlist.push(obj);
+    game.level.buriedobjlist.unshift(obj); /* C: obj->nobj = buriedobjlist; buriedobjlist = obj */
 }
 
 // C ref: mkobj.c mksobj_migr_to_species(otyp, mflags2, init, artif) — extra
@@ -2927,7 +3011,7 @@ export function obj_extract_self_mkobj(obj) {
     case OBJ_MIGRATING:
         extract_nobj(obj, game.migrating_objs);
         break;
-    case OBJ_BURIED:
+    case 'buried': case OBJ_BURIED:
         extract_nobj(obj, game.level?.buriedobjlist);
         break;
     case OBJ_ONBILL:

@@ -10,7 +10,7 @@ import { game } from './gstate.js';
 import { hcolor } from './do_name.js';
 import { rnd } from './rng.js';
 import { pline, update_topl, newsym } from './display.js';
-import { objects, ARMOR_CLASS, WEAPON_CLASS, CORPSE } from './mkobj.js';
+import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { A_INT, A_WIS, A_DEX, A_CHA, TT_BEARTRAP, TT_INFLOOR, TT_LAVA, TT_BURIEDBALL,
          TIMEOUT, ICE } from './const.js';
@@ -24,7 +24,10 @@ import {
     otense, weapon_descr_for, makeknown_credit, cmdq_pop, worn_extrinsic,
 } from './invent.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
+import { youmonst_data_pub, nohands_youmonst } from './invent.js';
+import { mflags1_of, M1_HUMANOID, M1_SLITHY } from './monflags_data.js';
 import { acurr_eff } from './attrib.js';
+import { condtests, bl_bareh } from './botl.js';
 
 /* onames.h otyps (this port's objects[] numbering, verified against
    js/mkobj.js OBJECT_DATA). */
@@ -334,7 +337,7 @@ export async function Boots_on() {
         const u = game.u || {};
         if (!oldprop && !((u.HFast | 0) & TIMEOUT)) {
             makeknown_credit(otyp);
-            await update_topl(`You feel yourself speed up${(oldprop || u.HFast) ? ' a bit more' : ''}.`);
+            await update_topl(`You feel yourself speed up${(oldprop || u.HFast || youHaveFast()) ? ' a bit more' : ''}.`);
         }
         break;
     }
@@ -711,7 +714,7 @@ export async function Gloves_off() {
         await wielding_corpse(game.uwep, gloves, on_purpose);
     if (game.u?.twoweap && game.uswapwep && game.uswapwep.otyp === CORPSE)
         await wielding_corpse(game.uswapwep, gloves, on_purpose);
-    game.botl = true; /* condtests[bl_bareh] */
+    if (condtests[bl_bareh].enabled) game.botl = true;
     update_inventory();
     return 0;
 }
@@ -975,6 +978,37 @@ export async function set_wear(obj) {
 }
 /* ---- wearability checks ------------------------------------------------ */
 
+// C ref: mondata.c sliparm()/breakarm(), mondata.h cantweararm()/WrappingAllowed()
+// and obj.h is_flimsy(), applied to the hero's polyform (youmonst.data).
+function cwo_sliparm(ptr) {
+    return ptr.mcls === 22 /* S_VORTEX */ || ptr.pmidx === 154 /* PM_AIR_ELEMENTAL */
+        || (ptr.msize ?? 0) <= 1 /* MZ_SMALL */ || ptr.mcls === 54 /* S_GHOST */;
+}
+function cwo_cantweararm(ptr) {
+    if (cwo_sliparm(ptr)) return true;
+    const sz = ptr.msize ?? 0;
+    const humanoid = (mflags1_of(ptr) & M1_HUMANOID) !== 0;
+    return sz >= 3 /* MZ_LARGE */ || (sz > 1 && !humanoid)
+        || ptr.pmidx === 294 /* PM_MARILITH */ || ptr.pmidx === 42 /* PM_WINGED_GARGOYLE */;
+}
+function cwo_WrappingAllowed(ptr) {
+    const sz = ptr.msize ?? 0;
+    return (mflags1_of(ptr) & M1_HUMANOID) !== 0 && sz >= 1 && sz <= 4
+        && ptr.mcls !== 54 && ptr.mcls !== 29 /* S_CENTAUR */
+        && ptr.pmidx !== 42 && ptr.pmidx !== 294;
+}
+// C ref: mondata.c num_horns(ptr).
+function cwo_num_horns(ptr) {
+    switch (ptr.pmidx) {
+    case 291: case 177: case 309: case 302: return 2;  /* horned devil, minotaur, Asmodeus, Balrog */
+    case 101: case 102: case 103: case 124: return 1;  /* unicorns, ki-rin */
+    default: return 0;
+    }
+}
+function cwo_is_flimsy(otmp) {
+    return (objects[otmp.otyp]?.material ?? 99) <= 7 /* LEATHER */;
+}
+
 // C ref: do_wear.c:2030 canwearobj(otmp, &mask, noisy) — can this piece of armor
 // be worn?  Returns { mask, msgs }: the WA_* slot mask (0 when it can't be worn)
 // plus the messages C prints when noisy.  Split into a sync decision core because
@@ -984,7 +1018,25 @@ export function canwearobj_impl(otmp) {
     const msgs = [];
     let mask = 0, err = 0;
 
-    /* verysmall()/nohands()/cantweararm() only bite while polymorphed */
+    if (u.Upolyd) {
+        const ptr = youmonst_data_pub();
+        if ((ptr?.msize ?? 2) < 1 /* verysmall */ || nohands_youmonst()) {
+            msgs.push("You can't wear any armor in your current form.");
+            return { mask: 0, msgs };
+        }
+        const which = is_cloak(otmp) ? 'cloak' : is_shirt(otmp) ? 'shirt'
+            : is_suit(otmp) ? 'suit' : null;
+        /* racial_exception() is 0 for a polyform except for hobbits */
+        if (which && ptr && cwo_cantweararm(ptr)
+            && (which !== 'cloak'
+                || (objects[otmp.otyp]?.name !== 'mummy wrapping'
+                    ? ptr.msize !== 1 /* MZ_SMALL */
+                    : !cwo_WrappingAllowed(ptr)))
+            && ptr.pmidx !== 43 /* PM_HOBBIT */) {
+            msgs.push(`The ${which} will not fit on your body.`);
+            return { mask: 0, msgs };
+        }
+    }
     if ((otmp.owornmask | 0) & W_ARMOR_WORN) {
         msgs.push('You are already wearing that!');
         return { mask: 0, msgs };
@@ -998,6 +1050,10 @@ export function canwearobj_impl(otmp) {
     if (is_helmet(otmp)) {
         if (game.uarmh) {
             msgs.push(already_wearing_msg(an(helm_simple_name(game.uarmh))));
+            err++;
+        } else if (u.Upolyd && cwo_num_horns(youmonst_data_pub()) > 0 && !cwo_is_flimsy(otmp)) {
+            const n = cwo_num_horns(youmonst_data_pub());
+            msgs.push(`The ${helm_simple_name(otmp)} won't fit over your horn${n === 1 ? '' : 's'}.`);
             err++;
         } else mask = WA_ARMH;
     } else if (is_shield(otmp)) {
@@ -1014,6 +1070,12 @@ export function canwearobj_impl(otmp) {
     } else if (is_boots(otmp)) {
         if (game.uarmf) {
             msgs.push(already_wearing_msg(c_boots));
+            err++;
+        } else if (u.Upolyd && (mflags1_of(youmonst_data_pub()) & M1_SLITHY) !== 0) {
+            msgs.push('You have no feet...');
+            err++;
+        } else if (u.Upolyd && youmonst_data_pub().mcls === 29 /* S_CENTAUR */) {
+            msgs.push(`You have too many hooves to wear ${c_boots}.`);
             err++;
         } else if (u.utrap
                    && (u.utraptype === TT_BEARTRAP || u.utraptype === TT_INFLOOR
@@ -1429,6 +1491,8 @@ export async function disintegrate_arm(atmp) {
     // C: `if (losing_gloves) selftouch("You");` — js/trap.js's selftouch() is a
     // no-op in this port (no wielded cockatrice corpse is reachable here), so
     // the glove branch needs no extra call.
+    const { stop_occupation } = await import('./hack.js');
+    await stop_occupation();   // C: disintegrate_arm() ends with stop_occupation()
     return true;
 }
 // C ref: hacklib.c vtense(subj, verb) — only the "turn"/"fall" forms are
@@ -1462,7 +1526,7 @@ export async function remarm_swapwep() {
 // C ref: do_wear.c:2011 already_wearing(cc) — the trailing '!' belongs to the
 // c_that_ case only.
 function already_wearing_msg(cc) { return `You are already wearing ${cc}.`; }
-function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
+import { an } from './hacklib.js';
 
 // C ref: objnam.c helm_simple_name() — "helm" for hard helmets, else "hat".
 export function helm_simple_name(obj) { return hard_helmet(obj) ? 'helm' : 'hat'; }
@@ -1489,6 +1553,5 @@ export function will_weld(obj) {
         || obj.otyp === TIN_OPENER;
 }
 function is_weptool_dw(obj) {
-    const TOOL_CLASS_DW = 8;
-    return obj?.oclass === TOOL_CLASS_DW && (objects[obj.otyp]?.oc_skill ?? 0) !== 0;
+    return obj?.oclass === TOOL_CLASS && (objects[obj.otyp]?.oc_skill ?? 0) !== 0;
 }

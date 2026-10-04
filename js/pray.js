@@ -425,7 +425,16 @@ export async function rndcurse() {
                 continue;
             }
             if (otmp.blessed) unbless(otmp);
-            else curse(otmp);
+            else {
+                curse(otmp);
+                // C ref: mkobj.c:1800 curse() — a cursed alternate weapon
+                // cannot stay dual-wielded: drop_uswapwep() ("Your left hand
+                // spasms and drops ...!").
+                if (otmp === game.uswapwep && u.twoweap) {
+                    const { drop_uswapwep } = await import('./wield.js');
+                    await drop_uswapwep();
+                }
+            }
         }
     }
     if (u.usteed && !rn2(4)) {
@@ -555,9 +564,9 @@ async function angrygods(resp_god) {
     case 4:
     case 5:
         await gods_angry(resp_god);
-        // C: `if (!Blind && !Antimagic)`; Antimagic needs an intrinsic the
-        // heroes that reach this never have.
-        if (!Blind())
+        // C: `if (!Blind && !Antimagic)` -- a worn cloak of magic resistance
+        // (a Wizard's starting cloak) suppresses the glow message.
+        if (!Blind() && !(await loadPrayExtras()).zap.Antimagic())
             await update_topl('A black glow surrounds you.');
         if (rn2(2) || !(await attrcurse()))
             await rndcurse();
@@ -816,7 +825,7 @@ function ringglow(otmp) {
 
 // C ref: hacklib.c an(str) — indefinite article, lowercase.  Every other file
 // in this port keeps its own copy (js/do.js, js/eat.js, js/dothrow.js, ...).
-function an_pr(s) { return /^[aeiou]/i.test(String(s)) ? `an ${s}` : `a ${s}`; }
+import { an as an_pr } from './hacklib.js';
 
 // C ref: youprop.h H<Name> intrinsic words.  This port has been observed to
 // store the same timer under a bare key ('Fast') and/or an H-prefixed key
@@ -1219,9 +1228,7 @@ export async function dopray(paranoid_query) {
     }
 
     // nomul(-3): the prayer is a 3-turn occupation driven by the move loop.
-    game.multi = -3;
-    game.context = game.context || {};
-    game.context.travel = game.context.travel1 = game.context.mv = 0;
+    (await import('./hack.js')).nomul(-3);
     game.multi_reason = 'praying';
     game.nomovemsg = 'You finish your prayer.';
     game.afternmv = prayer_done;
@@ -2063,7 +2070,7 @@ export async function fry_by_god(resp_god, via_disintegration) {
     // port keeps the already-formatted string on game._killer_name and has no
     // separate format field (js/end.js:1226 documents the same reduction).
     game._killer_format = P_KILLED_BY;
-    game._killer_name = `the wrath of ${align_gname(roleMnum(), resp_god)}`;
+    game._killer_name = `killed by the wrath of ${align_gname(roleMnum(), resp_god)}`;
     await D.end.done(P_DIED);
 }
 
@@ -2362,7 +2369,7 @@ export async function offer_real_amulet(otmp, altaralign) {
         await D.dsp.pline(`${Moloch} shrugs and retains dominion over`
             + ` ${u_gname()},`);
         await D.dsp.pline('then mercilessly snuffs out your life.');
-        game._killer_name = `${s_suffix(Moloch)} indifference`;
+        game._killer_name = `killed by ${s_suffix(Moloch)} indifference`;
         game._killer_format = P_KILLED_BY;
         await D.end.done(P_DIED);
         /* life-saved (or declined to die in wizard/explore mode) */

@@ -40,14 +40,17 @@ export async function nhgetch() {
     const hook = game._preNhgetchHook;
     if (hook) await hook();
 
+    // C ref: wintty.c tty_nhgetch() — `if (!i) i = '\033'`: NUL is read as ESC.
     if (_inputQueue.length > 0) {
-        return _inputQueue.shift();
+        const k = _inputQueue.shift();
+        return k === 0 ? 27 : k;
     }
 
     // Browser mode: wait for keypress from the display
     const display = game?.nhDisplay;
     if (display?.readKey) {
-        return await display.readKey({ bindings: KEY_BINDINGS.VI_KEYS });
+        const k = await display.readKey({ bindings: KEY_BINDINGS.VI_KEYS });
+        return k === 0 ? 27 : k;
     }
 
     throw new Error('Input queue empty - test may be missing keystrokes');

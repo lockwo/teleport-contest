@@ -13,6 +13,7 @@
 // preserving timeout bits beside any persistent-source flags.
 
 import { game } from './gstate.js';
+import { NO_COLOR } from './terminal.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, d } from './rng.js';
 import { heal_legs } from './trap.js';
@@ -20,7 +21,7 @@ import { exercise, stone_luck } from './attrib.js';
 import { A_CON } from './const.js';
 import { nomul, stop_occupation } from './hack.js';
 import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer } from './mkobj.js';
-import { update_topl, see_monsters } from './display.js';
+import { update_topl, urgent_topl, see_monsters } from './display.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
 import { Unaware } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
@@ -81,9 +82,12 @@ function Hallucination() {
 // You_feel("less %s now.", Hallucination ? "trippy" : "confused").
 async function expire_confusion() {
     const u = game.u;
+    // C ref: timeout.c:726 `HConfusion = 1; make_confused(0L, TRUE)` — the timer
+    // is cleared only after the message, so a --More-- it forces still shows Conf.
+    u.uprops.Confusion = 1;
+    await update_topl(`You feel less ${Hallucination() ? 'trippy' : 'confused'} now.`);
     u.uprops.Confusion = 0;
     u.uconf = false;
-    await update_topl(`You feel less ${Hallucination() ? 'trippy' : 'confused'} now.`);
     // C ref: timeout.c:734 `if (!Confusion) stop_occupation();` — clearing the
     // timer also breaks off a run/rush/occupation.  Without it a confused rush
     // kept going past the turn the confusion ran out.
@@ -94,9 +98,11 @@ async function expire_confusion() {
 // You_feel("%s now.", Hallucination ? "less wobbly" : "a bit steadier").
 async function expire_stun() {
     const u = game.u;
+    // C ref: timeout.c:737 `HStun = 1; make_stunned(0L, TRUE)` — see expire_confusion.
+    u.uprops.Stun = 1;
+    await update_topl(`You feel ${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
     u.uprops.Stun = 0;
     u.Stunned = false;
-    await update_topl(`You feel ${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
     // C ref: timeout.c:741 `if (!Stunned) stop_occupation();`.
     if (!(u.uprops.Stun || 0)) await stop_occupation();
 }
@@ -111,8 +117,12 @@ async function expire_blinded() {
     const u = game.u;
     const { Blind } = await import('./vision.js');
     const { make_blinded_hero } = await import('./potion.js');
-    u.blinded = 1;
+    // C ref: timeout.c:744 `boolean was_blind = !!Blind;` is read BEFORE
+    // set_itimeout(&HBlinded, 1L): the loop already decremented the timer to
+    // 0, so a merely timed-out hero reads as sighted and the stop_occupation()
+    // below does not fire (a rush/run keeps going through "You can see again").
     const was_blind = Blind();
+    u.blinded = 1;
     await make_blinded_hero(0, true);
     // C ref: timeout.c:748 `if (was_blind && !Blind) stop_occupation();`.
     if (was_blind && !Blind()) await stop_occupation();
@@ -347,6 +357,7 @@ async function expire_sickness() {
     dealloc_killer(kptr);
     await done_timeout(C.POISONING, C.SICK);
     u.usick_type = 0;
+    u.sick = false;   /* C's Sick is just the intrinsic timeout, now expired */
 }
 
 // C ref: timeout.c cases STONED and SLIMED — retain delayed causes through the
@@ -482,13 +493,17 @@ const TIMED_PROPS = [
     { name: 'DEAF',
       get: (u) => u.uprops?.HDeaf || 0,
       set: (u, v) => { u.uprops.HDeaf = v; },
-      // C make_deaf() suppresses its message while Unaware; occupation stop is
-      // outside that helper and therefore unconditional once Deaf clears.
+      // C timeout.c:757-760: `set_itimeout(&HDeaf, 1L); make_deaf(0L, TRUE);
+      // disp.botl = TRUE; if (!Deaf) stop_occupation();`.  The loop already
+      // decremented the timer to 0; C restores 1 so make_deaf() sees the
+      // hero as deaf (old != 0) and prints "You can hear again." (the
+      // message is suppressed inside make_deaf while Unaware).
       expire: async () => {
           const u = game.u;
-          const old = u?.uprops?.HDeaf || 0;
-          if (u?.uprops) u.uprops.HDeaf = 0;
-          if (!Unaware() && old) await update_topl('You can hear again.');
+          if (u?.uprops) u.uprops.HDeaf = 1;
+          const { make_deaf } = await import('./potion.js');
+          await make_deaf(0, true);
+          game.botl = true;
           if (!(u?.uprops?.HDeaf || 0)) await stop_occupation();
       } },
     timed_uprop('SICK', 'Sick', expire_sickness),
@@ -774,10 +789,10 @@ export async function nh_timeout() {
     const wasFlying = !!(u.uprops?.Flying || u.uprops?.HFlying || u.uprops?.EFlying);
     for (const p of TIMED_PROPS) {
         const cur = p.get(u);
-        if (cur <= 0) continue;      // C: !(intrinsic & TIMEOUT) -> not running
-        const next = cur - 1;
+        if (!(cur & TIMEOUT)) continue; // C: !(intrinsic & TIMEOUT) -> not running
+        const next = cur - 1;           // source bits (FROMOUTSIDE...) ride along
         p.set(u, next);
-        if (next === 0) await p.expire(u, wasFlying);
+        if (!(next & TIMEOUT)) await p.expire(u, wasFlying);
     }
 
     // Sampled AFTER the expiry cases, so a nomul(-N) fired by one of them (the
@@ -816,10 +831,9 @@ function _set_itimeout(key, val) {
 }
 function _incr_itimeout(key, incr) { _set_itimeout(key, _prop(key) + (incr | 0)); }
 
-// C ref: pline.c urgent_pline() — vpline() with PLINE_URGENT.  The tty window
-// port renders that identically to pline(); the flag only matters to interfaces
-// with a separate urgent-message channel.
-const _urgent_pline = (msg) => pline(msg);
+// C ref: pline.c urgent_pline() + wintty.c tty_putstr(ATR_URGENT) — shown even
+// when an ESC at an earlier --More-- suppressed further messages.
+const _urgent_pline = (msg) => urgent_topl(msg);
 
 // C ref: hacklib.c an()/upstart()/vtense().
 function _an(s) {
@@ -1733,9 +1747,6 @@ export async function burn_object(arg, timeout) {
     const { newsym, m_at } = await import('./display.js');
     const { cansee, Blind } = await import('./vision.js');
     const { weight } = await import('./mkobj.js');
-    /* C ref: timeout.c:1804 end_burn(obj, timer_attached) — js/light.js:752
-       keeps its copy PRIVATE, so fall back to the local body below. */
-    const _end_burn = L.end_burn || _end_burn_local;
 
     const menorah = obj.otyp === _CANDELABRUM();
     const many = menorah ? (obj.spe | 0) > 1 : (obj.quan | 0) > 1;
@@ -1746,7 +1757,7 @@ export async function burn_object(arg, timeout) {
 
         if (how_long >= (obj.age | 0)) {
             obj.age = 0;
-            await _end_burn(obj, false);
+            await end_burn(obj, false);
 
             if (menorah) {
                 obj.spe = 0;    /* no more candles */
@@ -1805,7 +1816,7 @@ export async function burn_object(arg, timeout) {
                 break;
             }
         }
-        await _end_burn(obj, false);    /* turn off light source */
+        await end_burn(obj, false);    /* turn off light source */
         if (_carried(obj)) {
             useupall(obj);
         } else {
@@ -1876,7 +1887,7 @@ export async function burn_object(arg, timeout) {
                     break;
                 }
             }
-            await _end_burn(obj, false);
+            await end_burn(obj, false);
             break;
 
         default:
@@ -1966,7 +1977,7 @@ export async function burn_object(arg, timeout) {
                     if (post) await pline(post);
                 }
             }
-            await _end_burn(obj, false);
+            await end_burn(obj, false);
 
             if (menorah) {
                 obj.spe = 0;    /* no candles */
@@ -2005,10 +2016,8 @@ export async function burn_object(arg, timeout) {
     if (need_invupdate) await update_inventory();
 }
 
-// C ref: timeout.c:1804 end_burn(obj, timer_attached).  js/light.js:752 keeps
-// its copy module-private, so this is the fallback the callers above use; it is
-// the same body.
-async function _end_burn_local(obj, timer_attached) {
+// C ref: timeout.c:1804 end_burn(obj, timer_attached).
+export async function end_burn(obj, timer_attached) {
     const { xname, update_inventory } = await import('./invent.js');
     const { del_light_source, artifact_light, LS_OBJECT } = await import('./light.js');
 
@@ -2235,7 +2244,7 @@ function _display_nhwindow(win, _blocking) {
                                    cols - maxcol - 1)) + 1;
     const footerRow = lines.length;
     if (footerRow + 1 >= rows) col = 1;
-    display.putstr(col, footerRow, '--More--');
+    display.putstr(col, footerRow, '--More--', NO_COLOR, 0);
     display.setCursor(col + '--More--'.length, footerRow);
 }
 function _destroy_nhwindow(_win) {}
@@ -2726,6 +2735,11 @@ export function obj_has_timer(object, timer_type) {
 // timer's arg is the packed coordinate, not a pointer.
 export async function spot_stop_timers(x, y, func_index) {
     const where = (x << 16) | y;
+    /* the live level timers (mkobj.js start_level_timer) are MELT_ICE_AWAY only */
+    const lts = game.level?.level_timers;
+    if (lts && func_index === MELT_ICE_AWAY)
+        for (let i = lts.length - 1; i >= 0; i--)
+            if (lts[i].where === where) lts.splice(i, 1);
     let prev = null, next_timer = null;
     for (let curr = timer_base; curr; curr = next_timer) {
         next_timer = curr.next;

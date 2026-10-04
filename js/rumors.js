@@ -242,7 +242,36 @@ function create_nhwindow(type) { return { type, lines: [] }; }
 function putstr(win, _attr, str) {
     if (win && win !== WIN_ERR && Array.isArray(win.lines)) win.lines.push(str);
 }
-function display_nhwindow(_win, _blocking) { /* wiring pass renders win.lines */ }
+// C ref: wintty.c tty_display_nhwindow(NHW_TEXT) — process_text_window(); the
+// WIN_MESSAGE form (win === null) just pages a pending topline.
+async function display_nhwindow(win, _blocking) {
+    if (win) {
+        const inv = await import('./invent.js');
+        const { nhgetch } = await import('./input.js');
+        const { game } = await import('./gstate.js');
+        const rows = game.nhDisplay?.rows ?? 24;
+        const perPage = rows - 1;
+        const pages = [];
+        for (let i = 0; i < win.lines.length; i += perPage)
+            pages.push(win.lines.slice(i, i + perPage));
+        for (let pi = 0; pi < pages.length; pi++) {
+            // full-screen NHW_TEXT (offx 0): "--More--" at column 0 under the page
+            inv.renderWindowScreen(pages[pi], {
+                footer: '--More--', footerRow: pages[pi].length, footerCol: 0,
+                modal: 'textwin',
+            });
+            for (;;) {
+                const c = await nhgetch();
+                if (c === 27) { pi = pages.length; break; }   /* ESC cancels the rest */
+                if (c === 32 || c === 13 || c === 10) break;
+            }
+        }
+        await inv.dismiss_invent_screen();
+    } else {
+        const { display_nhwindow_message } = await import('./display.js');
+        await display_nhwindow_message();
+    }
+}
 function destroy_nhwindow(_win) { }
 
 // C ref: rumors.c:85 init_rumors(fp) — the true/false region header.  The
@@ -305,8 +334,9 @@ export async function rumor_check() {
         /* find last true rumor */
         for (;;) {
             const nxt = dlb_fgets_fh(rumors);
-            if (!nxt || dlb_ftell(rumors) >= meta.true_rumor_end) break;
-            line = nxt;
+            if (!nxt) break;
+            line = nxt;   /* C: fgets() overwrites line before the ftell test */
+            if (dlb_ftell(rumors) >= meta.true_rumor_end) break;
         }
         if ((endp = line.indexOf('\n')) >= 0) line = line.slice(0, endp);
         putstr(tmpwin, 0, `  ${' '.repeat(6)} ${xcrypt(line)}`);
@@ -319,8 +349,9 @@ export async function rumor_check() {
         /* find last false rumor */
         for (;;) {
             const nxt = dlb_fgets_fh(rumors);
-            if (!nxt || dlb_ftell(rumors) >= meta.false_rumor_end) break;
-            line = nxt;
+            if (!nxt) break;
+            line = nxt;   /* C: fgets() overwrites line before the ftell test */
+            if (dlb_ftell(rumors) >= meta.false_rumor_end) break;
         }
         if ((endp = line.indexOf('\n')) >= 0) line = line.slice(0, endp);
         putstr(tmpwin, 0, `  ${' '.repeat(6)} ${xcrypt(line)}`);
@@ -336,7 +367,7 @@ export async function rumor_check() {
     if (no_rumors) {
         await update_topl('rumors not accessible.');
         /* engravings, epitaphs, and bogus monsters will still be shown */
-        display_nhwindow(/*WIN_MESSAGE*/ null, true); /* --more-- */
+        await display_nhwindow(/*WIN_MESSAGE*/ null, true); /* --more-- */
     }
 
     /* initial implementation of default epitaph/engraving/bogusmon
@@ -346,7 +377,7 @@ export async function rumor_check() {
     await others_check('Bogus monsters:', BOGUSMONFILE, winbox);
 
     if (winbox.value !== WIN_ERR) {
-        display_nhwindow(winbox.value, true);
+        await display_nhwindow(winbox.value, true);
         destroy_nhwindow(winbox.value);
     }
     return winbox.value;   /* C is void; returned so a caller can render it */

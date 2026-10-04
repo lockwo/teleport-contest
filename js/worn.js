@@ -724,23 +724,22 @@ export function check_wornmask_slots() {
 // mummy wrapping, invis_blkd) gets perminvis only.  js/mon.js:2250,
 // js/zap.js:929 and js/makemon.js:3286 each record this as unported at their
 // call site; those call sites are left alone.
-export function mon_set_minvis(mon, cursed_potion) {
+export async function mon_set_minvis(mon, cursed_potion) {
     if (!mon) return;
     mon.perminvis = !cursed_potion ? 1 : 0;
     if (!mon.invis_blkd) {
         mon.minvis = mon.perminvis;
-        newsym_worn(mon.mx, mon.my);   /* make it disappear */
-        if (mon.wormno)
-            see_wsegs_worn(mon);       /* and any tail too */
+        // C ref: display.c newsym(x, y) / worm.c see_wsegs(mon).  Resolved
+        // lazily so worn.js gains no module edge to display.js/worm.js, but
+        // awaited: the repaint must land before the caller's next pline()
+        // flushes the map (muse.c "Suddenly you cannot see ...").
+        const { newsym } = await import('./display.js');
+        newsym(mon.mx, mon.my);        /* make it disappear */
+        if (mon.wormno) {
+            const { see_wsegs } = await import('./worm.js');
+            see_wsegs?.(mon);          /* and any tail too */
+        }
     }
-}
-// C ref: display.c newsym(x, y) / worm.c see_wsegs(mon).  Resolved lazily so
-// mon_set_minvis() adds no module edge from worn.js to display.js/worm.js.
-function newsym_worn(x, y) {
-    import('./display.js').then((d) => d.newsym?.(x, y)).catch(() => {});
-}
-function see_wsegs_worn(mon) {
-    import('./worm.js').then((w) => w.see_wsegs?.(mon)).catch(() => {});
 }
 
 // ─── worn.c:1055 clear_bypass(objchn) ──────────────────────────────────────

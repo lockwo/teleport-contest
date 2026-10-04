@@ -63,7 +63,7 @@ import { m_in_out_region } from './region.js';
 import { set_apparxy, noteleport_level, impact_disturbs_zombies } from './monmove.js';
 import { AT_KICK } from './monattk_data.js';
 import { a_monnam, free_oname, christen_orc, mhis } from './do_name.js';
-import { wipe_engr_at } from './engrave.js';
+import { wipe_engr_at, u_wipe_engr } from './engrave.js';
 import { getdir, wake_nearby, wake_nearto, b_trapped } from './cmd.js';
 import { goto_level } from './do.js';
 import { is_pool, is_lava, is_pool_or_lava, is_ice } from './dbridge.js';
@@ -74,7 +74,7 @@ import { costly_spot, addtobill } from './shkroom.js';
 import { canseemon_shared } from './display.js';
 import { finish_meating } from './dogmove.js';
 import { hidden_gold, money_cnt_invent, make_happy_shk, is_unpaid } from './shk.js';
-import { currency } from './invent.js';
+import { currency, youmonst_data_pub as youmonst_data } from './invent.js';
 import { set_voice } from './sounds.js';
 import { corpse_xname } from './objnam.js';
 import { You_hear } from './display.js';
@@ -276,7 +276,7 @@ function species_gone(name) {
 // 2 = none".  So 1 is FEMALE, and dokick's `gend == 1 ? MM_MALE : MM_FEMALE`
 // is deliberate: a female hero summons the male dish washer.
 function poly_gender() {
-    const ydata = game.youmonst?.data;
+    const ydata = youmonst_data();
     if (ydata && (is_neuter_flag(ydata) || !humanoid(ydata))) return 2;
     return game.flags?.female ? 1 : 0;
 }
@@ -289,15 +289,6 @@ function unmap_invisible(x, y) {
     unmap_object(x, y);
     newsym(x, y);
     return true;
-}
-
-// C ref: engrave.c u_wipe_engr(cnt) — scuff the engraving under the hero.
-// wipe_engr_at() draws rn2(1 + 50 / (cnt + 1)) for every engraving type except
-// DUST and blood, so this is an RNG call site on an engraved square.
-function u_wipe_engr(cnt) {
-    const u = game.u;
-    if (u?.uprops?.Levitation || u?.uprops?.Flying) return;
-    wipe_engr_at(u.ux, u.uy, cnt, false);
 }
 
 // C ref: mon.c get_iter_mons(func) / get_iter_mons_xy(func, x, y) — walk fmon
@@ -409,31 +400,13 @@ export async function kick_ouch(x, y, kickobjnam, maploc) {
     // losehp(Maybe_Half_Phys(dmg), kickstr(buf, kickobjnam), KILLED_BY): no hero
     // reaching here carries Half_physical_damage, so dmg passes unhalved.
     if (u) {
-        // C ref: hack.c:4279-4288 losehp() — the HP loss AND the death check
-        // both happen inline, before kick_ouch()/dokick() ever return: a kick
-        // that drops uhp below 1 shows "You die..." and calls done(DIED) right
-        // here.  This used to only set the never-read `u.ukiller` and clamp
-        // uhp at a minimum of 0 with no death check at all, so a hero who
-        // kicked herself to death (e.g. repeatedly kicking a wall) just kept
-        // playing at 0/1 HP forever instead of ending the game — every other
-        // losehp() copy in this port (do.js losehp_do, potion.js, spell.js,
-        // read.js, ...) has this same check; this was the one missing it.
-        u.uhp = (u.uhp ?? 0) - dmg;
-        game.botl = true;
-        if (u.uhp < 1) {
-            await urgent_topl('You die...');
-            // C: losehp(..., kickstr(...), KILLED_BY) — KILLED_BY (not
-            // KILLED_BY_AN) means the killer text is used verbatim with a
-            // plain "killed by " prefix, no article (const.js KILLED_BY=1).
-            game._killer_name = `killed by ${kickstr(kickobjnam, maploc)}`;
-            const { done, DIED } = await import('./end.js');
-            await done(DIED);
-            // C: done(DIED) never returns to its caller (nh_terminate() ends
-            // the process); the trailing Levitation/hurtle roll below is
-            // unreachable code on a real dead-from-kicking hero, so stop here
-            // too rather than fabricating an extra rn1(2,4) draw after death.
-            return;
-        }
+        // C ref: hack.c losehp() — HP loss, death check and maybe_wail() are
+        // do.js's losehp_do().  KILLED_BY (1): the killer text is verbatim.
+        const { losehp_do } = await import('./do.js');
+        await losehp_do(dmg, kickstr(kickobjnam, maploc), 1);
+        // C: done(DIED) never returns; stop here rather than fabricate the
+        // Levitation/hurtle roll below for a dead hero.
+        if (u.uhp < 1) return;
     }
     // C ref: dokick.c — `if (Is_airlevel || Levitation) hurtle(-u.dx, -u.dy,
     // rn1(2, 4), TRUE)`: a levitating kicker is always thrown back, and the
@@ -1148,8 +1121,11 @@ async function really_kick_object(x, y) {
     let shkp = null;
     let slide = false;
 
-    /* uball/uchain are not modelled (no punishment in this port) */
-    if (!gk_kickedobj || gk_kickedobj.otyp === BOULDER) return 0;
+    /* C ref: dokick.c:517-519 — a boulder, the attached ball or its chain
+       cannot be kicked; the caller falls through to kick_ouch(). */
+    if (!gk_kickedobj || gk_kickedobj.otyp === BOULDER
+        || gk_kickedobj === game.u?.uball || gk_kickedobj === game.u?.uchain)
+        return 0;
 
     const trap = t_at(x, y);
     if (trap) {
@@ -1259,7 +1235,7 @@ async function really_kick_object(x, y) {
         const otrp = gk_kickedobj.otrapped;
 
         if (range < 2) await update_topl('THUD!');
-        container_impact_dmg(gk_kickedobj, x, y);
+        await container_impact_dmg(gk_kickedobj, x, y);
         if (gk_kickedobj.olocked) {
             if (!rn2(5) || (martial() && !rn2(2))) {
                 await update_topl('You break open the lock!');
@@ -1489,7 +1465,7 @@ export async function dokick() {
     // Wounded_legs is the one that actually fires: kick_ouch()'s !rn2(3) and
     // kick_dumb()'s "strain a muscle" both set it, so a hero who keeps kicking
     // a wall gets refused for the next 5..10 turns.
-    const ydata = game.youmonst?.data;
+    const ydata = youmonst_data();
     if (ydata && (nolimbs(ydata) || slithy(ydata))) {
         await pline('You have no legs to kick with.');
         no_kick = true;
@@ -1793,7 +1769,7 @@ export async function impact_drop(missile, x, y, dlev) {
     for (const obj of here) {
         if (obj === missile) continue;
         oct += (obj.quan || 1);
-        if (obj === game.uball || obj === game.uchain) continue;
+        if (obj === game.u?.uball || obj === game.u?.uchain) continue;
         /* boulders can fall too, but rarely & never due to rocks */
         if ((isrock && obj.otyp === BOULDER)
             || rn2(obj.otyp === BOULDER ? 30 : 3))
@@ -1868,7 +1844,7 @@ export async function ship_object(otmp, x, y, shop_floor_obj) {
 
     /* objects other than attached iron ball always fall down ladder,
        but have a chance of staying otherwise */
-    const nodrop = (otmp === game.uball) || (otmp === game.uchain)
+    const nodrop = (otmp === game.u?.uball) || (otmp === game.u?.uchain)
                    || (toloc !== MIGR_LADDER_UP && rn2(3) !== 0);
 
     const container = Has_contents(otmp);
@@ -1876,7 +1852,7 @@ export async function ship_object(otmp, x, y, shop_floor_obj) {
 
     let n = 0, chainthere = false;
     for (const obj of objects_at(x, y)) {
-        if (obj === game.uchain) chainthere = true;
+        if (obj === game.u?.uchain) chainthere = true;
         else if (obj !== otmp) n += (obj.quan || 1);
     }
     const impact = n > 0;
@@ -2000,7 +1976,7 @@ hooks.deliver_obj_to_mon = deliver_obj_to_mon;
 // dropped, thrown or otherwise impacted; glass contents shatter and eggs crack.
 // RNG: obj_resists(otmp, 33, 100) per glass item, rn2(3) per egg — in cobj
 // order, which is why this must not be reordered.
-export function container_impact_dmg(obj, x, y) {
+export async function container_impact_dmg(obj, x, y) {
     /* only consider normal containers */
     if (!obj || !Array.isArray(obj.cobj) || !obj.cobj.length) return;
     if (obj.otyp === BAG_OF_HOLDING || obj.otyp === BAG_OF_TRICKS) return;
@@ -2024,6 +2000,7 @@ export function container_impact_dmg(obj, x, y) {
             /* eggs laid by you: -1 per egg, but exactly 1 breaks */
             if (otmp.otyp === EGG && otmp.spe && otmp.corpsenm >= 0)
                 change_luck(-1);
+            await You_hear(`a muffled ${result}.`);
             if (otmp.quan > 1) {
                 useup(otmp);
             } else {

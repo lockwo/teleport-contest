@@ -417,7 +417,8 @@ export function rnd_otyp_by_namedesc(name, oclass, xtra_prob) {
     }
 
     for (let i = lo; i <= hi; ++i) {
-        let zn = OBJ_NAME(objects[i]);
+        // C ref: options.c:7341 — SLIME_MOLD is renamed "fruit".
+        let zn = i === SLIME_MOLD_ ? 'fruit' : OBJ_NAME(objects[i]);
         // don't match extra descriptions (w/o a real name)
         if (zn == null)
             continue;

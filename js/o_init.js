@@ -646,10 +646,26 @@ const DISCO_INV_ORDER = () => [
 // within each class — which for a fresh game equals object order).  Returns
 // null when nothing is discovered (caller prints the "haven't discovered…"
 // message).  C ref: o_init.c dodiscovered().
-export function build_discoveries_rows() {
+export function build_discoveries_rows(artiRows = []) {
     getBases();
     const rows = [];
     let ct = 0;
+    /* C ref: o_init.c dodiscovered() — "unique objects" (relics) and known
+       artifacts are pseudo-classes shown ahead of the real classes. */
+    let dis = 0;
+    for (const uidx of uniq_objs) {
+        if (objects[uidx].oc_name_known
+            || (objects[uidx].oc_encountered && uidx !== AMULET_OF_YENDOR)) {
+            if (!dis++)
+                rows.push({ text: 'Unique items or Relics', header: true });
+            ++ct;
+            rows.push({ text: disco_fmt_uniq(uidx, '') });
+        }
+    }
+    for (const row of artiRows) {
+        ++ct;
+        rows.push(row.startsWith(' ') ? { text: row } : { text: row, header: true });
+    }
     for (const oclass of DISCO_INV_ORDER()) {
         let printedHeader = false;
         for (const i of discoveryOrder.get(oclass) || []) {
@@ -1593,7 +1609,18 @@ function disco_menu_flat(win) {
     if (win.query)
         flat.push({ text: win.query, attr: disco_menu_heading_attr() });
     flat.push({ text: '' });
+    // C ref: wintty.c tty_end_menu() — an item with an identifier but no
+    // accelerator gets 'a'..'z' then 'A'..'Z', restarting at 'a' on every page
+    // of lmax = min(52, rows - 1) rows (the prompt/blank rows count).
+    const lmax = Math.min(52, (game.nhDisplay?.rows ?? 24) - 1);
+    let menu_ch = 'a';
     for (const it of win.items) {
+        const n = flat.length;
+        if ((n % lmax) === 0) menu_ch = 'a';
+        if (it.selectable && !it.accel) {
+            it.accel = menu_ch;
+            menu_ch = menu_ch === 'z' ? 'A' : String.fromCharCode(menu_ch.charCodeAt(0) + 1);
+        }
         if (it.heading) { flat.push({ text: it.str, attr: disco_menu_heading_attr() }); continue; }
         if (!it.selectable) { flat.push({ text: it.str }); continue; }
         const mark = (it.itemflags & MENU_ITEMFLAGS_SELECTED) ? '+' : '-';
@@ -1632,20 +1659,23 @@ async function select_menu(win, how, picks) {
         }
     };
     render();
+    // C ref: wintty.c tty_select_menu() — tty_dismiss_nhwindow() erases the menu
+    // (docrt) as soon as the selection is made, before the caller acts on it.
+    const dismiss = async (r) => { await inv.dismiss_invent_screen(); return r; };
     for (;;) {
         const c = await nhgetch();
-        if (c === 27) return -1;
+        if (c === 27) return await dismiss(-1);
         const ch = String.fromCharCode(c);
         if (fullscreen && ch === ' ' && idx < pages.length - 1) { idx++; render(); continue; }
         if (c === 32 || c === 13 || c === 10) {
             const already = win.items.filter((it) => it.selectable
                 && (it.itemflags & MENU_ITEMFLAGS_SELECTED));
             for (const it of already) picks.push(it.any);
-            return already.length;
+            return await dismiss(already.length);
         }
         const hit = win.items.find((it) => it.selectable
             && (it.accel === ch || it.gacc === ch));
-        if (hit) { picks.push(hit.any); return 1; }
+        if (hit) { picks.push(hit.any); return await dismiss(1); }
         /* unacceptable key (C: tty_nhbell()); menu stays up */
     }
 }
@@ -1663,7 +1693,9 @@ async function display_nhwindow(win, _blocking) {
     if (!pages.length) pages.push([]);
     for (let pi = 0; pi < pages.length; pi++) {
         inv.renderWindowScreen(pages[pi], {
-            footer: pi === pages.length - 1 ? '(end)' : '--More--',
+            // C ref: wintty.c process_text_window() ends EVERY page of an
+            // NHW_TEXT window with dmore() ("--More--"); only menus say "(end)".
+            footer: (pi === pages.length - 1 && win.type !== NHW_TEXT) ? '(end)' : '--More--',
             footerRow: rows - 1, footerCol: 0, modal: 'discotext',
         });
         for (;;) {

@@ -375,6 +375,15 @@ export async function explode(x, y, type, dam, olet, expltype) {
             await update_topl('You hear a blast.');
             didmsg = true;
         }
+    } else {
+        // C: the blast animation's tmp_at(DISP_END) newsym()s every cell of the
+        // 3x3 the hero could see, wiping whatever was drawn there meanwhile
+        // (e.g. chain lightning beams).  The animation itself is not drawn.
+        for (let i = 0; i < 3; i++)
+            for (let j = 0; j < 3; j++) {
+                const xx = x + i - 1, yy = y + j - 1;
+                if (explmask[i][j] !== EXPL_SKIP && cansee(xx, yy)) newsym(xx, yy);
+            }
     }
     if (!Deaf() && !didmsg) await update_topl('Boom!');
 
@@ -729,7 +738,8 @@ export async function explode_oil(obj, x, y) {
     const diluted_oil = !!obj?.odiluted;
     if (!obj?.lamplit) return;
     // end_burn(obj, TRUE) — extinguish before the blast can kill the hero.
-    obj.lamplit = 0;
+    const { end_burn } = await import('./timeout.js');
+    await end_burn(obj, true);
     obj.how_lost = 4 /* LOST_EXPLODING */;
     await splatter_burning_oil(x, y, diluted_oil);
 }

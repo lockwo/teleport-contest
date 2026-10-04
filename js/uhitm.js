@@ -42,23 +42,26 @@ import { cansee, couldsee } from './vision.js';
 import { m_at, newsym, map_invisible, unmap_object, canseemon_shared,
          update_topl } from './display.js';
 import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
-         TAINT_AGE, CORPSTAT_INIT, CORPSTAT_NONE, W_SADDLE, SUPPRESS_SADDLE,
+         TAINT_AGE, CORPSTAT_INIT, CORPSTAT_NONE, CORPSTAT_FEMALE, CORPSTAT_MALE,
+         MGIVENNAME, has_mgivenname, W_SADDLE, SUPPRESS_SADDLE,
          SHOPBASE, engulfing_u, STRAT_WAITMASK, I_SPECIAL, M_ATTK_AGR_DIED,
          P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_BARE_HANDED_COMBAT, P_TWO_WEAPON_COMBAT,
          P_RIDING, ERODE_BURN, ERODE_RUST, ERODE_CORRODE, ER_NOTHING,
          EF_NONE, EF_GREASE, In_endgame } from './const.js';
-import { Blind } from './vision.js';
+import { Blind, does_block, unblock_point, is_lightblocker_mappear } from './vision.js';
 import { exercise, adjalign } from './attrib.js';
 import { DEADMONSTER, Protection_from_shape_changers, mmove_of, base_mmove,
          healmon, mvitals_died, sensemon, peacefuls_respond, unstuck, mon_leaving_level } from './mon.js';
 import { MFLAGS1, MFLAGS2, M1_WALLWALK, M2_NASTY, M2_ORC, M2_UNDEAD, M2_DEMON,
-         M2_COLLECT, M2_HUMAN, M2_HOSTILE, M2_PNAME, M2_ELF, humanoid } from './monflags_data.js';
+         M2_COLLECT, M2_HUMAN, M2_HOSTILE, M2_PNAME, M2_ELF, humanoid, is_neuter_flag } from './monflags_data.js';
 // C ref: include/monflag.h G_UNIQ (0x1000) — generated only once.
 const G_UNIQ_XM = 0x1000;
+// C ref: hack.h CORPSTAT_FEMALE / CORPSTAT_MALE (mkcorpstat's gender flags).
+const CORPSTAT_FEMALE_XM = 1, CORPSTAT_MALE_XM = 2;
 const mflags1_of = (ptr) => (ptr?.pmidx != null ? (MFLAGS1[ptr.pmidx] ?? 0) : 0);
 const mflags2_of = (ptr) => (ptr?.pmidx != null ? (MFLAGS2[ptr.pmidx] ?? 0) : 0);
-import { dmgtype, attacktype, AT_ENGL, AT_HUGS, AD_STCK } from './monattk_data.js';
+import { dmgtype, attacktype, AT_ENGL, AT_HUGS, AD_STCK, AD_SEDU, AD_SSEX } from './monattk_data.js';
 import { mattk_of, AT_NONE, AT_CLAW, AT_BITE, AT_KICK, AT_STNG, AT_BUTT, AT_TUCH,
          AT_WEAP, AT_MAGC, AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_ELEC, AD_ACID,
          AD_BLND, AD_STUN, AD_PLYS, AD_DRLI, AD_STON, AD_SLIM, AD_RUST, AD_CORR,
@@ -74,11 +77,13 @@ import { mon_nocorpse, undead_to_corpse, name_to_pmidx, mon_msize } from './make
 // so it returns the wrong role for exactly those two.
 import { more_experienced, newexplevel, rank_of } from './exper.js';
 import { gethungry } from './allmain.js';
+import { simpleonames, obj_is_pname } from './objnam.js';
+import { bare_artifactname } from './artifact.js';
 import { is_weptool, objectBaseName, simple_typename, is_plural, otense,
          near_capacity, update_inventory, distant_far, distant_doname,
-         mergable } from './invent.js';
-import { livelog_printf, LL_CONDUCT } from './livelog.js';
-import { engr_at, wipe_engr_at } from './engrave.js';
+         mergable, stackobj } from './invent.js';
+import { livelog_printf, LL_CONDUCT, LL_KILLEDPET } from './livelog.js';
+import { engr_at, wipe_engr_at, u_wipe_engr } from './engrave.js';
 import { find_mac as worn_find_mac } from './worn.js';
 import { YOUMONST } from './mhitm_ad.js';
 
@@ -107,8 +112,7 @@ function passes_walls(mdat) {
 
 // C ref: display.c is_safemon() macro (include/display.h:159): flags.safe_dog
 // && mpeaceful && canspotmon && !Confusion && !Hallucination && !Stunned.
-// safe_dog defaults ON and stays so in these sessions; Confusion/Hallucination/
-// Stunned aren't modelled yet, so they read as default-false.
+// safe_dog defaults ON and stays so in these sessions.
 export function canspotmon(mtmp) {
     if (!mtmp) return false;
     // Blind/telepathy not modelled in the starter state; a lit-room adjacent
@@ -126,7 +130,7 @@ export function is_safemon(mtmp) {
     const safe_dog = (flags.safe_dog !== undefined) ? flags.safe_dog : true;
     const Confusion = !!game.u?.uconf;
     const Hallucination = !!game.u?.uhallu;
-    const Stunned = !!game.u?.ustun;
+    const Stunned = Stunned_uh();
     return !!(safe_dog && mtmp.mpeaceful && canspotmon(mtmp)
               && !Confusion && !Hallucination && !Stunned);
 }
@@ -283,8 +287,9 @@ async function check_capacity(str) {
 // C ref: hack.c overexert_hp() — the HP cost of fighting while Strained+.
 async function overexert_hp() {
     const u = game.u;
-    if ((u.uhp ?? 0) > 1) {
-        u.uhp -= 1;
+    const hpKey = u.Upolyd ? 'mh' : 'uhp';   // C: hp = !Upolyd ? &u.uhp : &u.mh
+    if ((u[hpKey] ?? 0) > 1) {
+        u[hpKey] -= 1;
         game.disp = game.disp || {};
         game.disp.botl = true;
     } else {
@@ -381,8 +386,12 @@ function mimic_disguise_collapses_to_strange(otyp) {
 // C ref: mon.c seemimic(mtmp) — a discovered mimic drops its object/furniture
 // appearance and is redrawn as its true form.
 export function seemimicLocal(mtmp) {
+    const is_blocker_appear = is_lightblocker_mappear(mtmp);
     mtmp.m_ap_type = 0;
     mtmp.mappearance = 0;
+    // Discovered mimics don't block light.
+    if (is_blocker_appear && !does_block(mtmp.mx, mtmp.my))
+        unblock_point(mtmp.mx, mtmp.my);
     newsym(mtmp.mx, mtmp.my);
 }
 
@@ -539,6 +548,18 @@ function engraving_says_elbereth(x, y) {
 // disguised mimic: reveal it (message + seemimic), then silently wake it
 // (via_attack=FALSE — "wakes up" framing belongs to a fresh attack, not this
 // reveal). Consumes the whole turn with no swing (attack_checks returns TRUE).
+// C ref: uhitm.c stumble_onto_mimic()/attack_checks() — a sticky (AD_STCK)
+// mimic revealed next to the hero grabs it: `!u.ustuck && !mtmp->mflee &&
+// dmgtype(mtmp->data, AD_STCK) && m_next2u(mtmp)` -> set_ustuck(mtmp).
+async function mimic_grabs_hero(mtmp) {
+    const u = game.u;
+    if (!u.ustuck && !mtmp.mflee && dmgtype(mtmp.data, AD_STCK)
+        && Math.max(Math.abs(mtmp.mx - u.ux), Math.abs(mtmp.my - u.uy)) <= 1) {
+        const { set_ustuck } = await import('./mon.js');
+        set_ustuck(mtmp);
+    }
+}
+
 export async function stumble_onto_mimic(mtmp) {
     const { pline } = await import('./display.js');
     const msg = that_is_a_mimic_message(mtmp);
@@ -548,10 +569,7 @@ export async function stumble_onto_mimic(mtmp) {
     // raises, where C still shows the disguise.
     await pline(msg);
     seemimicLocal(mtmp);
-    // dmgtype(AD_STCK) + set_ustuck (a large/giant mimic "grabs" the hero on
-    // reveal): not modeled — no large/giant mimic reaches this path in the
-    // covered corpus (their AD_STCK claw attack is otherwise ported in
-    // hmon()'s adtyp table for monster-vs-monster fights, not this branch).
+    await mimic_grabs_hero(mtmp);
     await wakeupAttack(mtmp, false);
     // wakeup() -> if hero is blind, the monster still won't display; keep the
     // invisible-monster marker up for a blind hero (uhitm.c:6294-6296).
@@ -589,8 +607,10 @@ export async function attack_checks(mtmp) {
         const { update_topl } = await import('./display.js');
         await update_topl("Wait!  There's something there you can't see!");
         map_invisible(gx, gy);
-        // dmgtype(AD_STCK)+set_ustuck sticky-hold branch: large/giant-mimic
-        // only, not modeled (see stumble_onto_mimic's note above).
+        // if it was an invisible mimic, treat it as if we stumbled onto a
+        // visible mimic
+        if (mtmp.m_ap_type && !Protection_from_shape_changers())
+            await mimic_grabs_hero(mtmp);
         await wakeupAttack(mtmp, true);
         return true;
     }
@@ -658,7 +678,7 @@ export async function attack_checks(mtmp) {
     // matching svc.context.move = 0 at uhitm.c:320).
     {
         const Confusion = !!game.u?.uconf, Hallucination = !!game.u?.uhallu,
-              Stunned = !!game.u?.ustun;
+              Stunned = Stunned_uh();
         if (game.flags?.confirm !== false && mtmp.mpeaceful
             && !Confusion && !Hallucination && !Stunned
             && canspotmon(mtmp)) {
@@ -727,7 +747,7 @@ async function hostile_attack(mtmp) {
                 const base = cxname_singular(game.uwep);
                 const nm = ((game.uwep.quan ?? 1) > 1) ? makeplural(base) : base;
                 await update_topl(`You begin bashing monsters with your ${nm}.`);
-            } else {
+            } else if (!cantwield(youmonst_data_uh())) {
                 await update_topl(`You begin ${Role_if_MONK() ? 'striking' : 'bashing'} monsters with your ${game.uarmg ? 'gloved' : 'bare'} ${makeplural(body_part(6 /*HAND*/))}.`);
             }
         }
@@ -769,17 +789,10 @@ async function atk_done(mtmp) {
 async function untwoweapon() {
     if (game.u?.twoweap) {
         const { pline } = await import('./display.js');
-        await pline('You can no longer use two weapons at once.');
+        await pline('You can no longer wield two weapons at once.');
         game.u.twoweap = false;
         update_inventory();
     }
-}
-
-// C ref: engrave.c u_wipe_engr(cnt) — `if (can_reach_floor(TRUE))
-// wipe_engr_at(u.ux, u.uy, cnt, FALSE)`.  can_reach_floor() is TRUE for a
-// non-levitating, non-swallowed hero (invent.js keeps the same stub).
-function u_wipe_engr(cnt) {
-    wipe_engr_at(game.u.ux, game.u.uy, cnt, false);
 }
 
 // C ref: uhitm.c mon_maybe_unparalyze() — a paralyzed monster gets a 1-in-10
@@ -1061,8 +1074,10 @@ async function hitum(mon) {
     let tmp = await find_roll_to_hit(mon, AT_WEAP, game.uwep, true);
     mon_maybe_unparalyze(mon);
     let dieroll = rnd(20);                     // uhitm.c:780
-    let mhit = (tmp > dieroll);
-    if (mhit) exercise(A_DEX, true);           // uhitm.c:783 (on hit only)
+    // C ref: uhitm.c:781 `mhit = (tmp > dieroll || u.uswallow)` — a swallowed
+    // hero cannot miss, though exercise(A_DEX) still needs a real to-hit success.
+    let mhit = (tmp > dieroll || !!u.uswallow);
+    if (tmp > dieroll) exercise(A_DEX, true);  // uhitm.c:783
     let kh = await known_hitum(mon, game.uwep, mhit, dieroll);
     let malive = kh.malive;
     mhit = kh.mhit;
@@ -1077,7 +1092,7 @@ async function hitum(mon) {
         tmp = await find_roll_to_hit(mon, AT_WEAP, game.uswapwep, false);
         mon_maybe_unparalyze(mon);
         dieroll = rnd(20);                     // uhitm.c:804
-        mhit = (tmp > dieroll);
+        mhit = (tmp > dieroll || !!u.uswallow);
         // note: the second swing does NOT roll exercise(A_DEX) (uhitm.c).
         kh = await known_hitum(mon, secondwep, mhit, dieroll);
         malive = kh.malive;
@@ -1753,6 +1768,20 @@ export async function killed(mon, opts) {
         await update_topl(`You ${nonliving(mon) ? 'destroy' : 'kill'} ${who}!`);
     }
 
+    // C ref: mon.c:3546 xkilled() — `if (gs.stoned) monstone(mtmp); else
+    // mondead(mtmp);`.  A stoned kill leaves a statue (or rocks) and skips the
+    // treasure/corpse block (`goto cleanup`), but still awards experience.
+    const stoned = !!game.stoned;
+    if (stoned) {
+        game.stoned = false;
+        const { monstone_mm } = await import('./mhitm.js');
+        await monstone_mm(mon);
+        if (!DEADMONSTER(mon)) { /* monster lifesaved */
+            if (!cansee(x, y)) await update_topl('Maybe not...');
+            return;
+        }
+    }
+    if (!stoned) {
     // C ref: mon.c:3170 mondead() — `if (glyph_is_invisible(levl[mx][my].glyph))
     // unmap_object(mx, my)` runs just before m_detach.  Killing a monster the
     // hero can only sense (blind / invisible) must drop the remembered 'I';
@@ -1775,8 +1804,9 @@ export async function killed(mon, opts) {
 
     // C: m_detach() releases inventory before creating the corpse.
     await relobj(mon, x, y);
+    }
 
-    if (!skipCorpseBlock) {
+    if (!skipCorpseBlock && !stoned) {
         // illogical-but-traditional treasure drop gate (mon.c:3587).  C also
         // gates on !(mvitals[mndx].mvflags & G_NOCORPSE): a G_NOCORPSE species
         // (grid bug, gas spore, …) never drops the extra item.  The rn2(6)
@@ -1920,6 +1950,12 @@ export async function killed(mon, opts) {
             await update_topl(game.u?.uhallu
                 ? 'You hear the studio audience applaud!'
                 : 'You hear the rumble of distant thunder...');
+            if (!(((mon.data?.geno ?? 0) & G_UNIQ_XM) !== 0)) {
+                const mname = mon.mgivenname || mon.mextra?.mgivenname || '';
+                livelog_printf(LL_KILLEDPET,
+                    `murdered ${mname ? `${mname}, ` : ''}${
+                        game.flags?.female ? 'her' : 'his'} faithful ${mon_pmname(mon)}`);
+            }
         } else if (mon.mpeaceful) {
             adjalign(-5);
         }
@@ -2081,18 +2117,33 @@ export function corpse_chance(mon) {
 export function make_corpse(mon, x, y) {
     const mndx = mon.data?.pmidx;
     if (mndx == null) return;
+    // C ref: mon.c:576 — record the gender in the corpse's overloaded spe field
+    // (mergable() refuses to stack corpses whose spe differs).
+    const gflag = mon.female ? CORPSTAT_FEMALE_XM
+        : (is_neuter_flag(mon.data) ? 0 : CORPSTAT_MALE_XM);
     // C ref: mon.c make_corpse() — zombies, mummies and vampires are handled by
     // their own switch cases BEFORE the default G_NOCORPSE guard: they always
     // leave a corpse of their base living species (undead_to_corpse), and it is
     // an *old* corpse (age -= TAINT_AGE+1).  Their undead form carries G_NOCORPSE
     // (that flag only blocks *random* corpse generation), so without this branch
     // the corpse — and its next_ident/rndmonnum/gender/timeout RNG — was skipped.
+    // C ref: mon.c:572 — gender rides in the corpse's spe (CORPSTAT_FEMALE /
+    // CORPSTAT_MALE; neuter leaves it random).
+    const corpstatflags = mon.female ? CORPSTAT_FEMALE
+        : (!is_neuter_flag(mon.data) ? CORPSTAT_MALE : 0);
+    // C ref: mon.c:889 `if (has_mgivenname(mtmp)) obj = oname(obj, ...)` — the
+    // corpse of a named monster (a pet) carries its name.
+    const named = (obj) => {
+        if (obj != null && has_mgivenname(mon)) obj.oname = MGIVENNAME(mon);
+        return obj;
+    };
     const base = undead_to_corpse(mndx);
     if (base !== mndx) {
-        const obj = mkcorpstat(CORPSE, mon, base, x, y, CORPSTAT_INIT | CORPSTAT_NONE);
+        const obj = mkcorpstat(CORPSE, mon, base, x, y,
+                               CORPSTAT_INIT | CORPSTAT_NONE | corpstatflags);
         if (obj != null)
             obj.age = (obj.age ?? Math.max(game.moves ?? 1, 1)) - (TAINT_AGE + 1);
-        return obj;
+        return named(obj);
     }
     // C ref: mon.c:893 make_corpse default path — a G_NOCORPSE species (grid
     // bug, gas spore, …) returns NULL with NO mksobj rolls.  corpse_chance()
@@ -2101,7 +2152,20 @@ export function make_corpse(mon, x, y) {
     // mkcorpstat(CORPSE, KEEPTRAITS(mon)?mon:0, mdat, x, y, CORPSTAT_INIT):
     // mksobj() rolls next_ident, the rndmonnum() reservoir scan, gender rn2(2),
     // and start_corpse_timeout().  pm (mndx) overrides the rolled corpsenm after.
-    mkcorpstat(CORPSE, mon, mndx, x, y, CORPSTAT_INIT | CORPSTAT_NONE);
+    // C ref: mon.c:549 KEEPTRAITS(mon) — only some monsters carry their full
+    // record (omonst) on the corpse; mergable() refuses to stack those.
+    const mdat = mon.data;
+    const keeptraits = mon.isshk || mon.mtame || ((mdat.geno ?? 0) & G_UNIQ_XM)
+        || is_rider(mdat) || mdat.mcls === 46 /* S_TROLL */
+        || (mon.m_id != null && mon.m_id === game.quest_status?.leader_m_id)
+        || dmgtype(mdat, AD_SEDU) || dmgtype(mdat, AD_SSEX);
+    const obj = mkcorpstat(CORPSE, keeptraits ? mon : null, mndx, x, y,
+                           CORPSTAT_INIT | CORPSTAT_NONE | corpstatflags);
+    named(obj);
+    // C ref: mon.c:933 `stackobj(obj)` — a fresh corpse absorbs a mergable one
+    // already on the square.
+    stackobj(obj);
+    return obj;
 }
 
 // ── dmgval ──
@@ -2239,6 +2303,14 @@ function is_mplayer(mdat) {
     return idx != null && idx >= PM_ARCHEOLOGIST() && idx <= PM_WIZARD();
 }
 export function x_monnam(mtmp, article, _adjective, _suppress, called) {
+    // C ref: do_name.c:846-859 — at game over the true name is wanted, and an
+    // engulfer, the hero's consumer for the moment, always rates "the" and
+    // never "invisible".
+    if (game.program_state?.gameover) _suppress |= SUPPRESS_HALLUCINATION;
+    if (mtmp && game.u?.uswallow && mtmp === game.u.ustuck) {
+        article = 1;
+        _suppress |= 0x02; /* SUPPRESS_INVISIBLE */
+    }
     const base = mon_pmname(mtmp);
     const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
 
@@ -2294,12 +2366,17 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
     // article and the name ("the peaceful gnome", "your saddled pony").
     let adj = '';
     if (_adjective) adj += _adjective + ' ';
+    /* C ref: do_name.c:862 do_invis = mtmp->minvis && !SUPPRESS_INVISIBLE */
+    if (mtmp?.minvis && !(_suppress & 0x02 /* SUPPRESS_INVISIBLE */)) adj += 'invisible ';
     if (!(_suppress & SUPPRESS_SADDLE) && (mtmp?.misc_worn_check & W_SADDLE)
         && !Blind() && !game.u?.uhallu)
         adj += 'saddled ';
     const has_adjectives = adj !== '';
 
-    if (given) {
+    // C ref: do_name.c x_monnam — `if (do_hallu) {...} else if (do_name &&
+    // has_mgivenname(mtmp))`: a hallucinating hero never sees a given name.
+    const do_hallu = !!game.u?.uhallu && !(_suppress & SUPPRESS_HALLUCINATION);
+    if (given && !do_hallu) {
         // A personal name is normally name_at_start: C drops the article for
         // ARTICLE_YOUR or when there are no adjectives, but keeps it otherwise
         // ("the peaceful Slasher").  The `called` spelling puts the species
@@ -2328,7 +2405,6 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
     // of every monster name, and both picks come off the DISPLAY rng, so
     // skipping them left that stream at the wrong offset for the next draw.
     // SUPPRESS_HALLUCINATION (0x04) is how disclosure asks for the true name.
-    const do_hallu = !!game.u?.uhallu && !(_suppress & SUPPRESS_HALLUCINATION);
     if (do_hallu) {
         const { rndmonnam, bogon_is_pname } = halluc_naming();
         const r = rndmonnam();
@@ -2389,10 +2465,8 @@ function halluc_naming() {
 }
 export function register_halluc_naming(m) { _halluc_naming = m; }
 
-// C ref: hacklib.c an() — prepend "a"/"an".
-function an(s) {
-    return (/^[aeiou]/i.test(s) ? 'an ' : 'a ') + s;
-}
+// C ref: objnam.c an() — prepend "a"/"an".
+import { an } from './hacklib.js';
 
 // do_name.c's wrapper family (js/do_name.js) drives x_monnam(); register the
 // implementation here rather than importing uhitm.js from there, so do_name.js
@@ -2413,7 +2487,7 @@ register_halluc_naming({ rndmonnam, bogon_is_pname });
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { ARTICLE_A, ARTICLE_YOUR, SUPPRESS_INVISIBLE, SUPPRESS_NAME,
-         HMON_MELEE, HMON_THROWN, HMON_KICKED,
+         HMON_MELEE, HMON_THROWN, HMON_KICKED, HMON_APPLIED,
          M_ATTK_MISS, M_ATTK_HIT, M_ATTK_DEF_DIED, NATTK,
          M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER,
          MIM_REVEAL, MIM_OMIT_WAIT, W_ARM, W_ARMC, W_ARMU, W_ARMH, W_ARMG,
@@ -3412,7 +3486,7 @@ export async function hmon_hitmon_jousting(hmd, mon, obj) {
 // the "%s %s from your powerful strike!" stagger message.  is_floater/is_flyer
 // (by size)/slithy/amorphous/immobile(mmove==0)/nolimbs each override the
 // literal "stagger" default; makeplural() below then agrees it with Monnam().
-function stagger_verb(ptr) {
+export function stagger_verb(ptr) {
     if (is_floater(ptr)) return 'wobble';
     if (is_flyer(ptr)) return (ptr?.msize ?? 2) <= MZ_SMALL ? 'flutter' : 'stagger';
     if (slithy(ptr)) return 'falter';
@@ -3583,12 +3657,17 @@ export async function mhurtle_to_doom(mon, tmp, hmd) {
 // known_hitum(); this is called from hmon_hitmon().  No RNG.
 export function first_weapon_hit(weapon) {
     let buf = '';
-    /* avoid xname(), which would include a player-supplied "named <foo>" */
-    if (weapon.cursed && weapon.bknown) buf += 'cursed ';
-    /* objnam.c obj_is_pname(weapon) — a fully identified artifact keeps its own
-       name; this port has no ONAME(), so simpleonames() covers both arms and
-       the artifact suffix is appended as C does for the non-pname case. */
-    buf += objectBaseName(weapon);
+    /* avoid xname() since that includes "named <foo>" and we don't want
+       player-supplied <foo> in livelog */
+    /* include "cursed" if known but don't bother with blessed */
+    if (weapon.cursed && weapon.bknown) buf += 'cursed '; /* normally supplied by doname() */
+    if (obj_is_pname(weapon)) {
+        buf += weapon.oname;                    /* fully IDed artifact */
+    } else {
+        buf += simpleonames(weapon);
+        if (weapon.oartifact && weapon.dknown)
+            buf += ` named ${bare_artifactname(weapon)}`;
+    }
     livelog_printf(LL_CONDUCT,
         `hit with a wielded weapon (${buf}) for the first time`);
 }

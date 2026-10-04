@@ -764,6 +764,37 @@ export async function hit_bars(objp, objx, objy, barsx, barsy, breakflags,
     }
 }
 
+// C ref: mthrowu.c:1499 hits_bars(&obj, x, y, barsx, barsy, always_hit,
+// whodidit == 1) — the hero's thrown/kicked object meets iron bars: decide
+// whether it stops (sync hits_bars() above) and, if so, run hit_bars() with the
+// real deps (breakage, the Clink/Clonk noise, wake_nearto).  `objp` is C's
+// `struct obj **`; `objp.obj` is nulled when the object broke.
+export async function hero_hits_bars(objp, x, y, barsx, barsy, always_hit) {
+    if (!hits_bars(objp.obj, always_hit)) return false;
+    const { pline } = await import('./display.js');
+    const { wake_nearto } = await import('./cmd.js');
+    const { dissolve_bars } = await import('./monmove.js');
+    const { harmless_missile } = await import('./invent.js');
+    const LEATHER = 7, RUBBER_HOSE = 78;       /* objclass.h / objects.h */
+    await hit_bars(objp, x, y, barsx, barsy, BRK_BY_HERO, {
+        pline,
+        wake_nearto,
+        harmless_missile,
+        is_flimsy: (o) => (objects[o.otyp]?.material ?? 99) <= LEATHER
+                          || o.otyp === RUBBER_HOSE,
+        dissolve_bars,
+        acid_msg: async (bx, by, nodissolve) => {
+            const { cansee } = await import('./vision.js');
+            if (cansee(bx, by) && !nodissolve)
+                await pline('The iron bars are dissolved!');
+            else if (!game.u?.Deaf)
+                await pline(Hallucination_u() ? 'You hear angry snakes!'
+                                              : 'You hear a hissing noise.');
+        },
+    });
+    return true;
+}
+
 // ── spitmm / breamm (C ref: mthrowu.c:1016, :1093) for a MONSTER target ────
 //
 // js/monmove.js keeps the hero-target forms (spitmu/breamu).  These are the

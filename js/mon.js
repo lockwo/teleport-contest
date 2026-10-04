@@ -24,7 +24,7 @@ import { t_at } from './trap.js';
 import { night, FULL_MOON } from './calendar.js';
 import { is_were_flag, is_human_flag, mflags1_of, mflags2_of, mflags3_of,
     M1_NOTAKE, M1_NOHANDS, M1_AMORPHOUS, M1_HIDE, M1_CLING, M1_FLY, M1_TPORT,
-    M1_BREATHLESS, M1_SLITHY, M2_DEMON, M3_COVETOUS, mindless,
+    M1_BREATHLESS, M1_SWIM, M1_AMPHIBIOUS, M1_SLITHY, M2_DEMON, M3_COVETOUS, mindless,
     humanoid, is_animal, nohands,
     strongmonst_flag, throws_rocks_flag } from './monflags_data.js';
 import { attacktype, dmgtype, AD_STCK, AT_ENGL, AT_HUGS } from './monattk_data.js';
@@ -54,10 +54,10 @@ import { NON_PM, LOW_PM, G_GENOD, MON_FLOOR, MON_OFFMAP, MON_DETACH, MON_LIMBO,
 import { M1_NOHEAD, M2_UNDEAD, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC,
     M2_SHAPESHIFTER } from './monflags_data.js';
 import { AT_GAZE, AT_EXPL, AT_BOOM, mattk_of } from './monattk_data.js';
-import { EGG, ICE_BOX } from './mkobj.js';
+import { EGG, ICE_BOX, disturb_buried_zombies } from './mkobj.js';
 import { name_to_pmidx, pm_to_cham, dead_species, mpickobj,
     is_home_elemental } from './makemon.js';
-import { impossible, m_at } from './display.js';
+import { impossible, m_at, shieldeff } from './display.js';
 import { couldsee } from './vision.js';
 
 // Speed-modifier flags (permonst.mspeed); C ref: monst.h.
@@ -667,7 +667,7 @@ const LAVA_LIKER_NAMES = new Set(['fire elemental', 'salamander']);
 function mon_likes_lava(ptr) { return LAVA_LIKER_NAMES.has(ptr?.name); }
 // C ref: permonst.h MR_FIRE.
 const MR_FIRE_BIT = 0x01;
-async function minliquid(mtmp) {
+export async function minliquid(mtmp) {
     const loc = game.level?.at(mtmp.mx, mtmp.my);
     const typ = loc?.typ;
     if (typ == null) return 0;
@@ -722,8 +722,22 @@ async function minliquid(mtmp) {
             return 0;
         }
     }
-    if (inpool || waterwall)
-        return 0; /* deferred: see the drown arm above */
+    if (inpool || waterwall) {
+        // C ref: mon.c:1064 — most monsters drown in pools: mondied() with
+        // mon_moving leaves a cadaver after corpse_chance()'s roll.  Teleporting
+        // monsters (rloc escape) stay deferred.
+        const f1 = mflags1_of(ptr);
+        const cant_drown = (f1 & (M1_SWIM | M1_AMPHIBIOUS | M1_BREATHLESS)) !== 0;
+        if ((waterwall || (f1 & M1_CLING) === 0) && !cant_drown
+            && (f1 & M1_TPORT) === 0) {
+            if (cansee(mtmp.mx, mtmp.my))
+                await pline(`${Monnam(mtmp)} drowns.`);
+            const { mondied_mm } = await import('./mhitm.js');
+            await mondied_mm(mtmp);
+            return 1;
+        }
+        return 0;
+    }
 
     // C ref: mon.c:1108 — out of liquid entirely; only eels care.
     if (ptr?.mcls === S_EEL_MCLS && !Is_waterlevel(game.u?.uz)
@@ -1826,7 +1840,7 @@ function ordin_mon(n) {
         : (dd === 1) ? 'st' : (dd === 2) ? 'nd' : 'rd';
 }
 // C ref: objnam.c an(str) / The(str).
-function an_mon(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
+import { an as an_mon } from './hacklib.js';
 function The_mon(s) { return /^[A-Z]/.test(s) ? s : `The ${s}`; }
 // C ref: pline.c verbalize(line) — the line in double quotes (js/pray.js:328
 // has the same one-liner, module-private).
@@ -3367,8 +3381,7 @@ export async function wake_nearto_core(x, y, distance, petcall) {
             }
         }
     }
-    /* C ref: zombie.c disturb_buried_zombies(x, y) — js/monmove.js:4296 models
-       it as a no-op (this port has no buried monsters). */
+    disturb_buried_zombies(x, y);
 }
 
 // ── mon.c:4431 normal_shape() ───────────────────────────────────────────────
@@ -3947,9 +3960,8 @@ export async function see_nearby_monsters() {
 // A monster resists something: a shield effect at its square plus a message.
 // The message does NOT depend on seeing the monster — the shield is visible.
 export async function shieldeff_mon(mtmp) {
-    /* C ref: display.c shieldeff(x, y) — the four-frame tmp_at() animation.
-       Unported (nothing in this port draws temporary glyph animations); it
-       consumes no RNG. */
+    await shieldeff(mtmp.mx, mtmp.my);
+    /* does not depend on seeing the monster; the shield effect is visible */
     if (cansee(mtmp.mx, mtmp.my))
         await pline(`${Monnam(mtmp)} resists!`);
 }

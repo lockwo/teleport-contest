@@ -16,7 +16,7 @@
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { dist2, s_suffix } from './hacklib.js';
-import { can_carry } from './mon.js';
+import { can_carry, DEADMONSTER } from './mon.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
     AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
 import { PLNMSG_MON_TAKES_OFF_ITEM } from './const.js';
@@ -28,7 +28,7 @@ import { canspotmon, Monnam } from './uhitm.js';
 import { is_animal, humanoid, throws_rocks_flag } from './monflags_data.js';
 import {
     inv_cnt, freeinv, encumber_msg, doname_invent, remove_worn_item,
-    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN,
+    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname,
 } from './invent.js';
 
 // C ref: defsym.h MONSYM(14, 'n', NYMPH, S_NYMPH, "nymph") — the class whose
@@ -303,16 +303,17 @@ export async function steal(mtmp, objnambuf) {
                 /* set multi for later on */
                 nomul(-armordelay);
                 game.multi_reason = 'taking off clothes';
+                /* C: gn.nomovemsg = 0 here, so unmul() falls back to its
+                   default "You can move again." */
+                game.nomovemsg = 'You can move again.';
                 await remove_worn_item(otmp, true);
                 otmp.cursed = curssv;
                 if ((game.multi ?? 0) < 0) {
                     // The hero keeps taking the piece off over the next turns;
-                    // stealarm() finishes the theft via the afternmv hook, which
-                    // this port doesn't carry.  Record the pending theft so the
-                    // item can't be stolen twice and stop here, exactly as C's
-                    // `return 0` does for this turn.
+                    // stealarm() finishes the theft when unmul() runs afternmv.
                     game.stealoid = otmp.o_id;
                     game.stealmid = mtmp.m_id;
+                    game.afternmv = stealarm;
                     return 0;
                 }
             }
@@ -373,9 +374,6 @@ function armor_simple_name(obj) {
     return 'suit';
 }
 
-// C ref: do_name.c yname(obj) — "your <obj>" for a carried item.
-function yname(obj) { return `your ${objects[obj.otyp]?.name || 'thing'}`; }
-
 // C ref: do_name.c Adjmonnam(mtmp, adj) — "The beautiful nymph".  Only the
 // male-hero seduction message uses it; the covered hero is female.
 function Adjmonnam(mtmp, adj) {
@@ -424,8 +422,8 @@ const BELL_OF_OPENING = otyp_by_name_st('bell of opening');
 const BELL_ST = otyp_by_name_st('bell');
 const SPE_BOOK_OF_THE_DEAD = otyp_by_name_st('Book of the Dead');
 const CANDELABRUM_OF_INVOCATION = otyp_by_name_st('Candelabrum of Invocation');
-// C ref: monattk.h:91 AD_SITM (251) / AD_SAMU (252) — steal-item / steal-Amulet.
-const AD_SITM_ST = 251;
+// C ref: monattk.h:63 AD_SITM (21) — steal-item (nymphs).
+const AD_SITM_ST = 21;
 
 // C ref: mon.c add_to_minv(mon, obj) — js/vault.js:184 holds the private
 // original; the steal.c callers below need the same "merge or append".
@@ -505,8 +503,8 @@ export async function stealgold(mtmp) {
         if (!ygold || !rn2(5)) {
             const { tele_restrict, rloc } = await import('./teleport.js');
             const { monflee } = await import('./monmove.js');
-            if (!tele_restrict(mtmp))
-                await rloc(mtmp, /*RLOC_MSG*/ 1);
+            if (!await tele_restrict(mtmp))
+                await rloc(mtmp, 0x02 /* RLOC_MSG */);
             await monflee(mtmp, 0, false, false);
         }
     } else if (ygold) {
@@ -525,8 +523,8 @@ export async function stealgold(mtmp) {
         freeinv(ygold);
         add_to_minv_st(mtmp, ygold);
         await update_topl('Your purse feels lighter.');
-        if (!tele_restrict(mtmp))
-            await rloc(mtmp, /*RLOC_MSG*/ 1);
+        if (!await tele_restrict(mtmp))
+            await rloc(mtmp, 0x02 /* RLOC_MSG */);
         await monflee(mtmp, 0, false, false);
         game.disp = game.disp || {};
         game.disp.botl = true;
@@ -611,8 +609,8 @@ export async function stealarm() {
                 const { monflee } = await import('./monmove.js');
                 const { tele_restrict, rloc } = await import('./teleport.js');
                 await monflee(mtmp, 0, false, false);
-                if (!tele_restrict(mtmp))
-                    await rloc(mtmp, /*RLOC_MSG*/ 1);
+                if (!await tele_restrict(mtmp))
+                    await rloc(mtmp, 0x02 /* RLOC_MSG */);
             }
             break;
         }
@@ -721,8 +719,8 @@ export async function stealamulet(mtmp) {
         await update_topl(`${Some_Monnam(mtmp)} steals ${buf}!`);
         {
             const { tele_restrict, rloc } = await import('./teleport.js');
-            if (can_teleport_flag(mtmp.data) && !tele_restrict(mtmp))
-                await rloc(mtmp, /*RLOC_MSG*/ 1);
+            if (can_teleport_flag(mtmp.data) && !await tele_restrict(mtmp))
+                await rloc(mtmp, 0x02 /* RLOC_MSG */);
         }
         await encumber_msg();
     }

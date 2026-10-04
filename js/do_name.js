@@ -29,7 +29,7 @@ function x_monnam(mtmp, article, adjective, suppress, called) {
         ? _hooks.x_monnam(mtmp, article, adjective, suppress, called)
         : (mtmp?.data?.name || 'monster');
 }
-function mon_pmname(mtmp) {
+export function mon_pmname(mtmp) {
     return _hooks.mon_pmname ? _hooks.mon_pmname(mtmp)
         : (mtmp?.data?.name || 'monster');
 }

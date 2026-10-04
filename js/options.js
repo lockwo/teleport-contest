@@ -25,6 +25,9 @@ import { pline, impossible } from './display.js';
 import { makeplural } from './invent.js';
 // fruitadd()'s 127-fruit overflow fallback is `return rnd(127)`.
 import { rnd } from './rng.js';
+// condition names and aliases for HILITE_STATUS=condition/...; botl.js imports
+// modules that import this one, so parseNethackrc() loads them dynamically.
+let conditions = [], condition_aliases = [];
 
 // ---------------------------------------------------------------------------
 // option_help() — the "List of game options." help topic ('?g').
@@ -1453,6 +1456,10 @@ function set_boolean(name, value, result) {
     case 'autopickup': result.flags.pickup = value; break;      // C: flags.pickup
     case 'fixinv': result.flags.invlet_constant = value; break; // C: flags.invlet_constant
     case 'cmdassist': result.iflags.cmdassist = value; break;
+    case 'color':
+        result.flags.color = value;
+        result.iflags.use_color = value;
+        break;
     case 'splash_screen': result.iflags.wc_splash_screen = value; break;
     // C: &iflags.sanity_check (optlist.h) — the already-ported sanity-check
     // subsystem (mon.js/mklev.js/wizcmds.js/ball.js/engrave.js/timeout.js/
@@ -1922,7 +1929,7 @@ function optfn_msg_window(o, negated, opts, op, result) {
     }
     switch (tmp) {
     case 's': case 'c': case 'f': case 'r':
-        result.iflags.prevmsg_window = op === '' ? tmp : op;
+        result.iflags.prevmsg_window = tmp;
         keep(o, op === '' ? tmp : op, result);
         return OPTN_OK;
     default:
@@ -3137,11 +3144,25 @@ function has_ltgt_percentnumber(str) {
     return true;
 }
 
-// C ref: botl.c splitsubfields() — '&' or '+' separated, at most 16 pieces.
-function splitsubfields(str) {
+// C ref: botl.c splitsubfields() — '&' or '+' separated pieces; null stands
+// for C's -1 (too many).  A trailing separator does not yield an empty piece.
+function splitsubfields(str, maxsf = 0) {
+    const MAX_SUBFIELDS = 16;
+    if (str === undefined || str === null) return null;
+    maxsf = (maxsf === 0) ? MAX_SUBFIELDS : Math.min(maxsf, MAX_SUBFIELDS);
     if (!str.includes('&') && !str.includes('+')) return [str];
-    const out = str.split(/[&+]/);
-    if (out.length > 16) return null;
+    const out = [];
+    let st = 0, sf = 0, c = 0;
+    while (c < str.length && sf < maxsf) {
+        if (str[c] === '&' || str[c] === '+') {
+            out.push(str.slice(st, c));
+            st = c + 1;
+            sf++;
+        }
+        c++;
+    }
+    if (sf >= maxsf - 1) return null;
+    if (c >= str.length && c !== st) out.push(str.slice(st));
     return out;
 }
 
@@ -3183,9 +3204,109 @@ function parse_status_hl1(op, from_configfile, result) {
     return true;
 }
 
-// C ref: botl.c parse_status_hl2() — validate one "field/behaviour/colour..."
-// rule.  Only the accept/reject decision and the error text are modelled; the
-// renderer does not colour status fields.
+// C ref: botl.h enum relationships, BL_TH_* behaviors, enum hlattribs.
+const REL_EQ = 0, REL_LT = 1, REL_LE = 2, REL_GE = 3, REL_GT = 4, REL_TXT = 5;
+const BLTH_NONE = 0, BLTH_PERCENTAGE = 100, BLTH_ABSOLUTE = 101,
+      BLTH_UPDOWN = 102, BLTH_TEXTMATCH = 104, BLTH_ALWAYS = 105,
+      BLTH_CRITICALHP = 106;
+const HLA_NONE = 0x01, HLA_BOLD = 0x02, HLA_DIM = 0x04, HLA_ITALIC = 0x08,
+      HLA_ULINE = 0x10, HLA_BLINK = 0x20, HLA_INVERSE = 0x40;
+// C ref: botl.h HL_ATTCLR_* offsets in cond_hilites[] (CLR_MAX + n).
+const ATTCLR_BOLD = CLR_MAX + 2, ATTCLR_DIM = CLR_MAX + 3,
+      ATTCLR_ITALIC = CLR_MAX + 4, ATTCLR_ULINE = CLR_MAX + 5,
+      ATTCLR_BLINK = CLR_MAX + 6, ATTCLR_INVERSE = CLR_MAX + 7,
+      BL_ATTCLR_MAX = CLR_MAX + 8;
+
+// C ref: botl.c is_fld_arrayvalues().  Returns the index or -1.
+function is_fld_arrayvalues(str, arr, arrmin, arrmax) {
+    for (let i = arrmin; i < arrmax; i++)
+        if (strcmpi_eq(str, arr[i])) return i;
+    return -1;
+}
+
+// C ref: botl.c match_str2conditionbitmask().
+function match_str2conditionbitmask(str) {
+    let nmatches = 0, mask = 0;
+    if (str && str.length) {
+        for (const c of conditions)
+            if (fuzzymatch(c.text[0], str, ' -_', true)) { mask |= c.mask; nmatches++; }
+        if (!nmatches)
+            for (const a of condition_aliases)
+                if (fuzzymatch(a.id, str, ' -_', true)) { mask |= a.bitmask; nmatches++; }
+        if (!nmatches)
+            for (const a of condition_aliases)
+                if (strncmpi_eq(str, a.id, str.length)) { mask |= a.bitmask; nmatches++; }
+    }
+    return mask >>> 0;
+}
+
+// C ref: botl.c str2conditionbitmask().
+function str2conditionbitmask(str) {
+    let bitmask = 0;
+    const subfields = splitsubfields(str, conditions.length);
+    if (!subfields || subfields.length < 1) return 0;
+    for (const sub of subfields) {
+        const bm = match_str2conditionbitmask(sub);
+        if (!bm) {
+            config_error_add(`Unknown condition '${sub}'`);
+            return 0;
+        }
+        bitmask = (bitmask | bm) >>> 0;
+    }
+    return bitmask;
+}
+
+// C ref: botl.c parse_condition(): "condition/stone+slime/red&inverse".  The
+// choices land in cond_hilites[] (indexed by color, then by attribute).
+function parse_condition(s, sidx, result) {
+    let coloridx = NO_COLOR_IDX, result_ok = false;
+    const ch = (result.cond_hilites ??= new Array(BL_ATTCLR_MAX).fill(0));
+    sidx++;
+    if (!s[sidx]) {
+        config_error_add('Missing condition(s)');
+        return false;
+    }
+    while (s[sidx]) {
+        const bitmask = str2conditionbitmask(s[sidx]);
+        if (!bitmask) return false;
+        sidx++;
+        const how = s[sidx];
+        if (!how) {
+            config_error_add('Missing color+attribute');
+            return false;
+        }
+        const subfields = splitsubfields(how, 0);
+        if (!subfields) return false;
+        for (const sub of subfields) {
+            const a = match_str2attr(sub, false);
+            if (a === ATR_BOLD) ch[ATTCLR_BOLD] = (ch[ATTCLR_BOLD] | bitmask) >>> 0;
+            else if (a === ATR_DIM) ch[ATTCLR_DIM] = (ch[ATTCLR_DIM] | bitmask) >>> 0;
+            else if (a === ATR_ITALIC) ch[ATTCLR_ITALIC] = (ch[ATTCLR_ITALIC] | bitmask) >>> 0;
+            else if (a === ATR_ULINE) ch[ATTCLR_ULINE] = (ch[ATTCLR_ULINE] | bitmask) >>> 0;
+            else if (a === ATR_BLINK) ch[ATTCLR_BLINK] = (ch[ATTCLR_BLINK] | bitmask) >>> 0;
+            else if (a === ATR_INVERSE) ch[ATTCLR_INVERSE] = (ch[ATTCLR_INVERSE] | bitmask) >>> 0;
+            else if (a === ATR_NONE) {
+                for (const k of [ATTCLR_BOLD, ATTCLR_DIM, ATTCLR_ITALIC,
+                                 ATTCLR_ULINE, ATTCLR_BLINK, ATTCLR_INVERSE])
+                    ch[k] = (ch[k] & ~bitmask) >>> 0;
+            } else {
+                const k = match_str2clr(sub, false);
+                if (k >= CLR_MAX) {
+                    config_error_add(`bad color ${k}`);
+                    return false;
+                }
+                coloridx = k;
+            }
+        }
+        ch[coloridx] = (ch[coloridx] | bitmask) >>> 0;
+        result_ok = true;
+        sidx++;
+    }
+    return result_ok;
+}
+
+// C ref: botl.c parse_status_hl2(): parse one "field/behavior/color..." rule
+// into hilite_s records (botl.js hands them to the status engine).
 function parse_status_hl2(s, from_configfile, result) {
     let sidx = 0;
     const fld = fldname_to_bl_indx(s[sidx]);
@@ -3203,58 +3324,77 @@ function parse_status_hl2(s, from_configfile, result) {
         config_error_add(`Unknown status field '${s[sidx]}'`);
         return false;
     }
+    if (fld === 'condition') return parse_condition(s, sidx, result);
     const row = INITBLSTATS.find((r) => r[0] === fld);
-    if (fld === 'condition') {
-        /* C hands this to parse_condition(); a condition name list is a
-           different grammar and our renderer has no condition highlights, so
-           accept it rather than invent an error C would not print */
-        return true;
-    }
 
-    let successes = 0;
+    let successes = 0, dt = null;
     sidx++;
     while (s[sidx]) {
-        let percent = false, numeric = false, txtval = false;
-        let value = 0, rel = 'lt';
+        let percent = false, numeric = false, always = false, down = false,
+            up = false, changed = false, criticalhp = false, grt = false,
+            gte = false, eq = false, le = false, lt = false, txtval = false;
+        let txt = null, kidx;
+        const hilite = { fldname: fld, set: false, anytype: null,
+                         value: { a_int: 0, a_long: 0 }, behavior: BLTH_NONE,
+                         textmatch: '', rel: REL_EQ, coloridx: 0 };
 
         if (!s[sidx + 1] || strcmpi_eq(s[sidx], 'always')) {
+            /* "field/always/color" OR "field/color" */
+            always = true;
             if (!s[sidx + 1]) sidx--;
         } else if (strcmpi_eq(s[sidx], 'up') || strcmpi_eq(s[sidx], 'down')) {
-            /* accepted for every field type */
+            if (row[1] === ANY_STR) {
+                /* 'up' or 'down' for string fields is treated as 'changed' */
+            } else if (strcmpi_eq(s[sidx], 'down')) down = true;
+            else up = true;
+            changed = true;
         } else if (fld === 'carrying-capacity'
-                   && ENC_STAT.slice(1).some((t) => strcmpi_eq(s[sidx], t))) {
+                   && (kidx = is_fld_arrayvalues(s[sidx], ENC_STAT, 1, 6)) >= 0) {
+            txt = ENC_STAT[kidx];
             txtval = true;
-        } else if (fld === 'alignment' && ALIGNTXT.some((t) => strcmpi_eq(s[sidx], t))) {
+        } else if (fld === 'alignment'
+                   && (kidx = is_fld_arrayvalues(s[sidx], ALIGNTXT, 0, 3)) >= 0) {
+            txt = ALIGNTXT[kidx];
             txtval = true;
-        } else if (fld === 'hunger' && HU_TXT.some((t) => t && strcmpi_eq(s[sidx], t))) {
+        } else if (fld === 'hunger'
+                   && (kidx = is_fld_arrayvalues(s[sidx], HU_TXT, 0, 7)) >= 0) {
+            txt = HU_TXT[kidx];
             txtval = true;
         } else if (strcmpi_eq(s[sidx], 'changed')) {
-            /* accepted */
+            changed = true;
         } else if (fld === 'hitpoints' && strcmpi_eq(s[sidx], 'criticalhp')) {
-            /* accepted */
+            criticalhp = true;
         } else if (is_ltgt_percentnumber(s[sidx])) {
             const tmp = s[sidx];
-            percent = tmp.includes('%');
-            if (tmp[0] === '<') rel = (tmp[1] === '=') ? 'le' : 'lt';
-            else if (tmp[0] === '>') rel = (tmp[1] === '=') ? 'ge' : 'gt';
-            else rel = 'eq';
+            if (tmp.includes('%')) percent = true;
+            if (tmp[0] === '<') {
+                if (tmp[1] === '=') le = true; else lt = true;
+            } else if (tmp[0] === '>') {
+                if (tmp[1] === '=') gte = true; else grt = true;
+            }
             const stripped = tmp.replace(/[%<>=+]/g, '');
-            value = parseInt(stripped, 10) || 0;
             numeric = true;
-            const dt = percent ? ANY_INT : row[1];
-            const opTxt = rel === 'gt' ? '>' : rel === 'ge' ? '>=' :
-                          rel === 'lt' ? '<' : rel === 'le' ? '<=' : '=';
+            dt = percent ? ANY_INT : row[1];
+            if (dt === ANY_INT) hilite.value.a_int = parseInt(stripped, 10) || 0;
+            else if (dt === ANY_LONG) hilite.value.a_long = parseInt(stripped, 10) || 0;
+
+            const op = grt ? '>' : gte ? '>=' : lt ? '<' : le ? '<=' : '=';
             if (dt === ANY_INT
-                && (value < ((fld === 'armor-class') ? -128 : rel === 'gt' ? -1 : rel === 'lt' ? 1 : 0)
-                    || value > (percent ? (rel === 'lt' ? 101 : 100) : LARGEST_INT))) {
-                config_error_add(`Threshold value ${opTxt}${value}${percent ? '%' : ''}`
-                                 + ' is out of range');
+                && (hilite.value.a_int
+                    < ((fld === 'armor-class') ? -128 : grt ? -1 : lt ? 1 : 0)
+                    || hilite.value.a_int > (percent ? (lt ? 101 : 100)
+                                                     : LARGEST_INT))) {
+                config_error_add(`hilite_status threshold '${op}${hilite.value.a_int}`
+                                 + `${percent ? '%' : ''}' is out of range`);
                 return false;
-            } else if (dt === ANY_LONG && value < (rel === 'gt' ? -1 : rel === 'lt' ? 1 : 0)) {
-                config_error_add(`Threshold value ${opTxt}${value} is out of range`);
+            } else if (dt === ANY_LONG
+                       && hilite.value.a_long < (grt ? -1 : lt ? 1 : 0)) {
+                config_error_add(`hilite_status threshold '${op}${hilite.value.a_long}'`
+                                 + ' is out of range');
                 return false;
             }
         } else if (row[1] === ANY_STR) {
+            txt = s[sidx];
             txtval = true;
         } else {
             config_error_add(has_ltgt_percentnumber(s[sidx])
@@ -3263,43 +3403,79 @@ function parse_status_hl2(s, from_configfile, result) {
             return false;
         }
 
+        if (grt || up) hilite.rel = REL_GT;
+        else if (lt || down) hilite.rel = REL_LT;
+        else if (gte) hilite.rel = REL_GE;
+        else if (le) hilite.rel = REL_LE;
+        else if (eq || percent || numeric || changed) hilite.rel = REL_EQ;
+        else if (txtval) hilite.rel = REL_TXT;
+        else hilite.rel = REL_LT;
+
         if (row[1] === ANY_STR && (percent || numeric)) {
             config_error_add(`Field '${fld}' does not support numeric values`);
             return false;
         }
+
         if (percent) {
+            const v = hilite.value.a_int;
             if (!row[2]) {
                 config_error_add(`Cannot use percent with '${fld}'`);
                 return false;
-            }
-            if (value < -1 || (value === 0 && rel === 'lt')
-                || (value === 100 && rel === 'gt') || value > 101) {
-                const opTxt = rel === 'lt' ? '<' : rel === 'le' ? '<=' :
-                              rel === 'gt' ? '>' : rel === 'ge' ? '>=' : '=';
-                config_error_add(`hilite_status: invalid percentage value '${opTxt}${value}%'`);
+            } else if (v <= -1 || (v === 0 && hilite.rel === REL_LT)
+                       || (v === 100 && hilite.rel === REL_GT) || v >= 101) {
+                config_error_add(
+                    `hilite_status: invalid percentage value '${
+                        hilite.rel === REL_LT ? '<' : hilite.rel === REL_LE ? '<='
+                        : hilite.rel === REL_GT ? '>' : hilite.rel === REL_GE ? '>='
+                        : '='}${v}%'`);
                 return false;
             }
         }
 
+        /* actions */
         sidx++;
         const how = s[sidx];
         if (how === undefined && !successes) return false;
-        const subfields = splitsubfields(how || '');
+        let coloridx = -1;
+        const subfields = splitsubfields(how ?? '', 0);
         if (!subfields || subfields.length < 1) return false;
 
-        let coloridx = -1;
+        let disp_attrib = 0;
         for (const sub of subfields) {
             const a = match_str2attr(sub, false);
-            if (a !== -1) continue;
-            const c = match_str2clr(sub, false);
-            if (c >= CLR_MAX || coloridx !== -1) {
-                config_error_add(`bad color '${c} ${coloridx}'`);
-                return false;
+            if (a === ATR_BOLD) disp_attrib |= HLA_BOLD;
+            else if (a === ATR_DIM) disp_attrib |= HLA_DIM;
+            else if (a === ATR_ITALIC) disp_attrib |= HLA_ITALIC;
+            else if (a === ATR_ULINE) disp_attrib |= HLA_ULINE;
+            else if (a === ATR_BLINK) disp_attrib |= HLA_BLINK;
+            else if (a === ATR_INVERSE) disp_attrib |= HLA_INVERSE;
+            else if (a === ATR_NONE) disp_attrib = HLA_NONE;
+            else {
+                const c = match_str2clr(sub, false);
+                if (c >= CLR_MAX || coloridx !== -1) {
+                    config_error_add(`bad color '${c} ${coloridx}'`);
+                    return false;
+                }
+                coloridx = c;
             }
-            coloridx = c;
         }
-        result.status_hilites.push({ fld, rel, value, percent, txtval,
-                                     color: coloridx < 0 ? NO_COLOR_IDX : coloridx });
+        if (coloridx === -1) coloridx = NO_COLOR_IDX;
+
+        hilite.coloridx = coloridx | (disp_attrib << 8);
+
+        if (always) hilite.behavior = BLTH_ALWAYS;
+        else if (percent) hilite.behavior = BLTH_PERCENTAGE;
+        else if (changed) hilite.behavior = BLTH_UPDOWN;
+        else if (numeric) hilite.behavior = BLTH_ABSOLUTE;
+        else if (txtval) hilite.behavior = BLTH_TEXTMATCH;
+        else if (criticalhp) hilite.behavior = BLTH_CRITICALHP;
+        else hilite.behavior = BLTH_NONE;
+
+        hilite.anytype = dt;
+        if (hilite.behavior === BLTH_TEXTMATCH && txt)
+            hilite.textmatch = txt.replace(/^\s+|\s+$/g, '');
+
+        result.status_hilites.push(hilite);
         successes++;
         sidx++;
     }
@@ -3985,6 +4161,7 @@ function handle_config_section(buf, st) {
 }
 
 export async function parseNethackrc(rc) {
+    ({ conditions, condition_aliases } = await import('./botl.js'));
     const result = {
         name: '', role: -1, race: -1, gender: -1, align: -1,
         flags: {}, iflags: {}, keybind: {}, symoverride: {}, apelist: [],
@@ -4064,6 +4241,7 @@ export async function parseNethackrc(rc) {
     }
     if (result.menucolors.length) game.menucolors = result.menucolors;
     if (result.status_hilites.length) game.status_hilites = result.status_hilites;
+    if (result.cond_hilites) game.cond_hilites = result.cond_hilites;
     if (Object.keys(result.conds).length) game.conds = result.conds;
     if (result.rfilter) game.rfilter = result.rfilter;
     return result;
@@ -6971,7 +7149,7 @@ export function initoptions_init() {
     flags.paranoia_bits = 0x0400 | 0x2000 | 0x0800;
     flags.versinfo = have_branch ? 4 : 1;
     flags.pile_limit = PILE_LIMIT_DFLT;  /* 5 */
-    flags.runmode = 'teleport';          /* RUN_LEAP; port stores the name */
+    flags.runmode = 'run';               /* RUN_LEAP; port stores the name */
     iflags.msg_history = 20;
 
     /* msg_window has conflicting defaults for multi-interface binary */

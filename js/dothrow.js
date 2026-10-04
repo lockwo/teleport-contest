@@ -14,7 +14,7 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
 import { m_at, newsym, update_topl, map_invisible,
-         canseemon_shared } from './display.js';
+         canseemon_shared, Deaf_hero } from './display.js';
 import { cansee } from './vision.js';
 import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT,
          LAVAPOOL, TT_PIT, P_DAGGER, A_DEX, A_CHA, NEED_HTH_WEAPON,
@@ -72,19 +72,32 @@ function Blind() { return !!(game.u?.uprops?.Blinded || game.u?.Blinded); }
 // haseyes(ptr) == !(mflags1 & M1_NOEYES).
 function breathless(ptr) { return (mflags1_of(ptr) & M1_BREATHLESS) !== 0; }
 function haseyes(ptr) { return (mflags1_of(ptr) & M1_NOEYES) === 0; }
+const VTENSE_SPECIAL_SUBJS = ['erinys', 'manes', 'Cyclops', 'Hippocrates', 'Pelias',
+    'aklys', 'amnesia', 'detect monsters', 'paralysis', 'shape changers', 'nemesis'];
 // C ref: objnam.c vtense(subj, verb) — `verb` arrives in the plural (no
 // trailing s) and is returned unchanged when `subj` reads as plural.
 // Used for thrown body parts and for projectile miss messages.
 export function vtense(subj, verb) {
     if (subj) {
-        const s = String(subj);
+        const s = String(subj), lc = s.toLowerCase();
         if (!/^an? /i.test(s)) {
-            const last = s.charAt(s.length - 1).toLowerCase();
-            const prev = s.length > 1 ? s.charAt(s.length - 2).toLowerCase() : '';
-            if ((last === 's' && s.length > 1 && prev !== 'u' && prev !== 's')
-                || /eeth$|feet$|ia$|ae$/i.test(s))
+            const m = / (?:of|from|called|named|labeled) /i.exec(s);
+            const spot = (m && m.index > 0) ? m.index - 1 : s.length - 1;
+            const tail = (n) => (spot - n + 1 >= 0) ? lc.slice(spot - n + 1, spot + 1) : '';
+            if ((lc.charAt(spot) === 's' && spot > 0 && !'us'.includes(lc.charAt(spot - 1)))
+                || tail(4) === 'eeth' || tail(4) === 'feet'
+                || tail(2) === 'ia' || tail(2) === 'ae') {
+                const len = spot + 1;
+                const special = VTENSE_SPECIAL_SUBJS.some((sp) => {
+                    const l = sp.length, spl = sp.toLowerCase();
+                    return (len === l && lc.slice(0, len) === spl)
+                        || (len > l && lc.charAt(spot - l) === ' '
+                            && lc.slice(spot - l + 1, spot + 1) === spl);
+                });
+                if (!special) return verb;
+            } else if (/^(they|you)$/i.test(s)) {
                 return verb;
-            if (/^(they|you)$/i.test(s)) return verb;
+            }
         }
     }
     const v = String(verb), lc = v.toLowerCase(), end = lc.charAt(v.length - 1);
@@ -113,7 +126,7 @@ function Doname2(obj) {
     return d.charAt(0).toUpperCase() + d.slice(1);
 }
 // C ref: objnam.c an(s) / the(s).
-function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
+import { an } from './hacklib.js';
 function the_str(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
 // C ref: objnam.c Tobjnam(obj, verb) — "The food ration stops".
 function Tobjnam(obj, verb) {
@@ -770,7 +783,7 @@ export async function throw_gold(obj) {
         if (!isok(odx, ody) || !zap_pos(typ_at(odx, ody)) || closed_door(odx, ody)) {
             /* bhitpos stays on the hero */
         } else {
-            const land = I.bhit_thrown_landing(u.dx, u.dy, range, obj);
+            const land = await I.bhit_thrown_landing(u.dx, u.dy, range, obj);
             bx = land.x; by = land.y;
             if (land.mon) {
                 if (await ghitm(land.mon, obj)) return ECMD_TIME;
@@ -804,11 +817,8 @@ export async function use_whip(obj, getDir) {
     const msg_snap = 'Snap!';
     const res = ECMD_OK;
 
-    if (obj !== game.uwep) {
-        // C wields it and re-queues doapply; the wield is what costs the turn.
-        if (await I.wield_tool(obj, 'lash')) return ECMD_TIME;
-        return ECMD_OK;
-    }
+    // The `obj != uwep` wield-and-requeue arm runs in apply.js doapply(),
+    // which owns reapply_after_wield(); dofire() only ever passes uwep.
     const dir = await getDir();
     if (!dir) return res | ECMD_CANCEL;
     u.dx = dir.dx; u.dy = dir.dy; u.dz = dir.dz || 0;
@@ -984,7 +994,7 @@ async function whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap) {
         }
     } else { /* mtmp isn't wielding a weapon; attack it */
         await update_topl(`You flick your bullwhip towards ${U.mon_nam(mtmp)}.`);
-        if (proficient && (await force_attack(mtmp))) return ECMD_TIME;
+        if (proficient && (await force_attack(mtmp, false))) return ECMD_TIME;
         await update_topl(msg_snap);
     }
     /* regardless of mtmp's weapon or hero's proficiency */
@@ -1020,7 +1030,7 @@ export async function boomhit(obj, dx, dy, skillsnap) {
     let nhits = Math.max(1, (obj.spe | 0) + 1);
     let bx = u.ux, by = u.uy;
     let i = xytodir(dx, dy);
-    if (i < 0) return { mon: null };
+    if (i < 0) return { mon: null, x: bx, y: by };
 
     for (let ct = 0; ct < 10; ct++) {
         i = ((i % N_DIRS) + N_DIRS) % N_DIRS;
@@ -1029,12 +1039,14 @@ export async function boomhit(obj, dx, dy, skillsnap) {
         if (!isok(bx, by)) { bx -= dx; by -= dy; break; }
         const mtmp = m_at(bx, by);
         if (mtmp) {
-            // C ref: zap.c:4187 m_respond(mtmp) — a shrieker's shriek (and an
-            // erinys' aggravate) fires here; js/monmove.js keeps m_respond
-            // module-private so it cannot be called from outside that file.
-            if (nhits-- < 0) return { mon: mtmp };
+            // C ref: zap.c:4188 m_respond(mtmp) — a shrieker shrieks, an
+            // erinys aggravates.
+            await (await import('./monmove.js')).m_respond(mtmp);
+            if (nhits-- < 0) return { mon: mtmp, x: bx, y: by };
+            // C ref: zap.c:4192 `else if (throwit_mon_hit(obj, mtmp) ||
+            // !gt.thrownobj) break;` — only a boomerang used up by the hit
+            // stops here; one that survives keeps flying along its curve.
             if (await I.thitmonst(mtmp, obj, skillsnap)) return { gone: true };
-            break;
         }
         if (!zap_pos(typ_at(bx, by)) || closed_door(bx, by)) {
             bx -= dx; by -= dy; break;
@@ -1052,7 +1064,9 @@ export async function boomhit(obj, dx, dy, skillsnap) {
             return { caught: true };
         }
         if (IS_SINK(typ_at(bx, by))) {
-            await update_topl('Klonk!');
+            if (!Deaf_hero()) await update_topl('Klonk!');
+            const { wake_nearto_core } = await import('./mon.js');
+            await wake_nearto_core(bx, by, 20, false);
             break; /* boomerang falls on sink */
         }
         /* ct==0 initial position and ct==5 opposite position repeat the delta */
@@ -1090,11 +1104,13 @@ export async function thitu(tlev, dam, obj, name) {
 }
 
 // C ref: uhitm.c force_attack(mtmp, pacifist) — do_attack() with forcefight set.
-async function force_attack(mtmp) {
+async function force_attack(mtmp, pets_too) {
     const U = await import('./uhitm.js');
     const ctx = game.context || (game.context = {});
     const save = ctx.forcefight;
-    ctx.forcefight = true;
+    /* always set forcefight On for hostiles and peacefuls, maybe for pets */
+    if (pets_too || !mtmp.mtame)
+        ctx.forcefight = true;
     try {
         return await U.do_attack(mtmp);
     } finally {
@@ -1503,8 +1519,11 @@ export async function mhurtle_step(arg, x, y) {
 
     if (will_hurtle(mon, x, y) && m_in_out_region(mon, x, y)) {
         if (mon !== u.usteed) {
-            remove_monster_hurtle(mon.mx, mon.my);
-            newsym(mon.mx, mon.my);
+            // C ref: remove_monster() leaves mon->mx/my intact, so the first
+            // newsym() redraws the VACATED square; ours zeroes them.
+            const ox = mon.mx, oy = mon.my;
+            remove_monster_hurtle(ox, oy);
+            newsym(ox, oy);
             place_monster_hurtle(mon, x, y);
             newsym(mon.mx, mon.my);
         } else {
@@ -1808,7 +1827,10 @@ async function mintrap_hurtle(_mon, _flags) { return Trap_Effect_Finished; }
 async function minliquid_hurtle(_mon) { return false; }
 // C ref: mon.c seemimic(mon) — js/apply.js:533 (unexported).
 async function seemimic_hurtle(mon) {
-    if (mon) { mon.m_ap_type = 0; mon.mappearance = 0; }
+    if (mon) {
+        const { seemimicLocal } = await import('./uhitm.js');
+        seemimicLocal(mon);
+    }
 }
 // C ref: shk.c hot_pursuit(shkp) — js/shkroom.js:273 (unexported).
 async function hot_pursuit_hurtle(shkp) { if (shkp) shkp.mpeaceful = 0; }

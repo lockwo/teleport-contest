@@ -645,7 +645,7 @@ const VAMPSHIFT_CHAM = new Set([pmidx_by_name('vampire'),
 function is_vampshifter(mon) { return VAMPSHIFT_CHAM.has(mon?.cham); }
 // C ref: mondata.c resists_drli().  is_were() misses the hero in human form,
 // which is why u.ulycn is tested separately.
-function resists_drli(mon) {
+export function resists_drli(mon) {
     const ptr = mon_data(mon);
     if (is_undead(ptr) || is_demon(ptr) || is_were(ptr)
         || (is_you(mon) && (game.u?.ulycn ?? NON_PM) >= 0)
@@ -1793,7 +1793,7 @@ const FATAL_DAMAGE_MODIFIER = 200;
 // C ref: makemon.c monhp_per_lvl() — the level-drain HP amount.  js/zap.js:1013
 // has an `rnd(8)`-only copy missing the golem / mlevel>49 / adult-dragon /
 // level-0 arms; this is the whole function.
-function monhp_per_lvl(mon) {
+export function monhp_per_lvl(mon) {
     const ptr = mon_data(mon);
     let hp = rnd(8);   /* default is d8 */
     if (is_golem(ptr)) {

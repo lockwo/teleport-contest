@@ -512,6 +512,7 @@ async function keepdogs_capture() {
                 remain.push(m);
                 continue;
             }
+            m.mx = m.my = 0; /* C ref: dog.c:864, mx==0 implies migrating */
             kept.push(m);
         } else {
             const { keep_mon_accessible, migrate_to_level } = await import('./dog.js');
@@ -1389,6 +1390,11 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         more_experienced(level_difficulty(), 0);
         await newexplevel();
     }
+    // C ref: do.c:1969 `#ifdef INSURANCE save_currentstate();` (config.h defines
+    // INSURANCE).  The checkpoint's savelev(WRITING) has one effect the game can
+    // see: save_engravings() points each engraving's text back at its buffer
+    // start, so the next wipe_engr_at() sees the leading blanks again.
+    await (await import('./engrave.js')).save_engravings(WRITING);
 
     // C ref: do.c:1974 print_level_annotation().
     const annotation = game._level_annotations?.[ledger];
@@ -2435,7 +2441,7 @@ export async function dodown() {
 // because the real ones are module-private in js/invent.js / js/cmd.js.
 
 // C ref: objnam.c an(str) / the(str) / upstart(str).
-function an(s) { return /^[aeiou]/i.test(String(s)) ? `an ${s}` : `a ${s}`; }
+import { an } from './hacklib.js';
 function the(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
 function upstart(s) {
     return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s;
@@ -2760,8 +2766,9 @@ export async function flooreffects(obj, x, y, verb) {
 
     // C: `if (obj->where != OBJ_FREE) panic("flooreffects: obj not free")`.  This
     // port stores obj.where as the lower-cased OBJ_* name (js/invent.js
-    // objects_at(), js/dig.js rot_corpse()); js/ has no panic().
-    if (obj.where !== 'free') {
+    // objects_at(), js/dig.js rot_corpse()); js/ has no panic().  A fresh
+    // mksobj() object has no `where` yet (or the numeric OBJ_FREE, 0).
+    if (obj.where != null && obj.where !== 'free' && obj.where !== 0) {
         await impossible_do('flooreffects: obj not free');
         return false;
     }

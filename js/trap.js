@@ -67,7 +67,7 @@ import {
     WEAPON_CLASS, ARMOR_CLASS, SCROLL_CLASS, POTION_CLASS, SPBOOK_CLASS,
     POT_WATER, POT_OIL, COIN_CLASS, GEM_CLASS, LOADSTONE, LEASH, uncurse, blessorcurse,
     WAN_FIRE, FIRE_HORN, SPE_BOOK_OF_THE_DEAD, SCR_BLANK_PAPER, SPE_BLANK_PAPER,
-    SPE_NOVEL, has_omonst, remove_object,
+    SPE_NOVEL, has_omonst, remove_object, HEAVY_IRON_BALL,
 } from './mkobj.js';
 import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx,
          pmname_of_pmidx } from './makemon.js';
@@ -77,7 +77,7 @@ import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          is_swimmer_flag, can_teleport_flag } from './monflags_data.js';
 import { AD_FIRE, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
 import { MM_NOCOUNTBIRTH, MM_NOMSG, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND } from './const.js';
-import { In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
+import { ceiling as ceiling_dg, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { check_special_room } from './shkroom.js';
 import { livelog_printf, LL_MINORAC, LL_DUMP } from './livelog.js';
@@ -101,7 +101,7 @@ const PM_WOOD_GOLEM = name_to_pmidx('wood golem');
 const PM_LEATHER_GOLEM = name_to_pmidx('leather golem');
 
 // C ref: hacklib.c an(str).
-function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
+import { an } from './hacklib.js';
 // C ref: hacklib.c the(str) — used by back_on_ground() for "the stairs"/"the
 // air" (every noun it's applied to here already lacks its own article).
 function the_fu(s) { return `the ${s}`; }
@@ -720,6 +720,20 @@ export function maketrap(x, y, typ) {
             if (clear_flags) lev.flags = 0;
             recalc_block_point(x, y);
         }
+        // C ref: trap.c maketrap():561 — `unearth_objs(x, y)`: whatever was
+        // buried here (e.g. a second buried zombie) is back on the floor.  The
+        // buried iron ball is left to dig.js's unearth_objs().
+        const buried = game.level?.buriedobjlist;
+        if (buried?.length) {
+            for (const otmp of [...buried]) {
+                if (!otmp || otmp.ox !== x || otmp.oy !== y || otmp.otyp === HEAVY_IRON_BALL)
+                    continue;
+                buried.splice(buried.indexOf(otmp), 1);
+                otmp.where = 'floor';   /* place_object() re-links it */
+                place_object(otmp, x, y);
+                stackobj(otmp);
+            }
+        }
         break;
     }
     default:
@@ -974,6 +988,8 @@ function unwear_armor(otmp) {
 }
 
 const ERODE_ACTION = ['smoulder', 'rust', 'rot', 'corrode', 'crack'];
+const ERODE_MSG = ['burnt', 'rusted', 'rotten', 'corroded', 'cracked'];
+const ERODE_BYTHE = ['heat', 'oxidation', 'decay', 'corrosion', 'impact'];
 
 // C ref: trap.c:360 grease_protect(otmp, ostr, victim) — a greased item shrugs
 // the erosion off; the grease itself wears away on !rn2(2).  Originally scoped
@@ -1027,6 +1043,8 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
     if (!ostr) ostr = xname(otmp);
     if (visobj && /^the /i.test(ostr)) ostr = ostr.slice(4);
     const visible = isYou || vismon || visobj;
+    const verbose = game.flags?.verbose !== false;
+    const print = (ef_flags & EF_VERBOSE) !== 0;
 
     let vulnerable;
     // C ref: trap.c:182 `check_grease = (ef_flags & EF_GREASE)`, cleared again
@@ -1065,10 +1083,19 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
     } else if (!erosion_matters(otmp)) {
         return ER_NOTHING;
     } else if (!vulnerable || (otmp.oerodeproof && otmp.rknown)) {
+        if (verbose && print && (isYou || vismon)) {
+            const owner = isYou ? 'Your' : s_suffix((await import('./do_name.js')).Monnam(victim));
+            await update_topl(`${owner} ${ostr} ${vtense(ostr, 'are')} not affected by ${ERODE_BYTHE[type]}.`);
+        }
         return ER_NOTHING;
     } else if (otmp.oerodeproof || (otmp.blessed && !rnl(4))) {
         // C: blessed objects get a luck-modulated saving roll (rnl(4)); it
         // must fire here (when reached) to stay in sync with C.
+        if (verbose && (print || otmp.oerodeproof) && visible) {
+            const owner = isYou ? 'your' : !vismon ? 'the'
+                : s_suffix((await import('./do_name.js')).mon_nam(victim));
+            await update_topl(`Somehow, ${owner} ${ostr} ${vtense(ostr, 'are')} not affected by the ${ERODE_BYTHE[type]}.`);
+        }
         if (otmp.oerodeproof) {
             otmp.rknown = true;
             if (isYou) update_inventory();
@@ -1102,6 +1129,15 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
         if (otmp.owornmask) unwear_armor(otmp);
         delobj(otmp);
         return ER_DESTROYED;
+    }
+    // C: already at MAX_ERODE and not EF_DESTROY — only EF_VERBOSE callers tell you.
+    if (verbose && print) {
+        if (isYou) {
+            await update_topl(`Your ${ostr} ${vtense(ostr, Blind() ? 'feel' : 'look')} completely ${ERODE_MSG[type]}.`);
+        } else if (vismon || visobj) {
+            const owner = !vismon ? 'The' : s_suffix((await import('./do_name.js')).Monnam(victim));
+            await update_topl(`${owner} ${ostr} ${vtense(ostr, 'look')} completely ${ERODE_MSG[type]}.`);
+        }
     }
     return ER_NOTHING;
 }
@@ -1399,23 +1435,23 @@ async function trapeffect_rust_trap(trap, _trflags) {
 
     switch (rn2(5)) {
     case 0:
-        pline('A gush of water hits you on the head!');
+        await pline('A gush of water hits you on the head!');
         await water_damage(game.uarmh, 'helm', true);
         break;
     case 1:
-        pline('A gush of water hits your left arm!');
+        await pline('A gush of water hits your left arm!');
         if (await water_damage(game.uarms, 'shield', true) !== ER_NOTHING) break;
         if (u?.twoweap || (game.uwep && false /* bimanual unmodeled */))
             await water_damage(u?.twoweap ? game.uswapwep : game.uwep, null, true);
         await water_damage(game.uarmg, 'gloves', true);
         break;
     case 2:
-        pline('A gush of water hits your right arm!');
+        await pline('A gush of water hits your right arm!');
         await water_damage(game.uwep, null, true);
         await water_damage(game.uarmg, 'gloves', true);
         break;
     default:
-        pline('A gush of water hits you!');
+        await pline('A gush of water hits you!');
         // splash any lit light sources (excludes wielded weapons; none of the
         // owned sessions carry a lit source so this consumes no PRNG)
         for (const otmp of (u?.invent || game.invent || [])) {
@@ -1483,8 +1519,8 @@ function format_trap_killer(knam, k_format) {
     return `killed by ${knam}`;
 }
 
-// C ref: hacklib.c exclam(force) — "!" for damage > 5, "." otherwise.
-function exclam(force) { return force > 5 ? '!' : '.'; }
+// C ref: zap.c:3547 exclam(force) — "?" for negative, "." up to 4, else "!".
+function exclam(force) { return force < 0 ? '?' : force <= 4 ? '.' : '!'; }
 
 // C ref: objnam.c an() — indefinite article prefix for a plain noun.
 function an_str(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
@@ -2054,13 +2090,7 @@ async function trapeffect_magic_trap(trap, _trflags) {
 // need in_rooms(), which is stubbed empty across this port (mklev.js:254), so
 // a rock trap inside a shop/temple under-reports as "ceiling".
 function ceiling(x, y) {
-    const typ = game.level?.at(x, y)?.typ ?? STONE;
-    // Is_waterlevel/Is_firelevel/In_quest/Underwater and Is_earthlevel are all
-    // unreachable for the levels this port generates.
-    if (IS_AIR(typ)) return 'sky';
-    if (IS_ROOM(typ) || IS_WALL(typ) || IS_DOOR(typ) || typ === SDOOR)
-        return 'ceiling';
-    return 'rock cavern';
+    return ceiling_dg(x, y);
 }
 
 // C ref: trap.c trapeffect_rocktrap(&youmonst, trap, trflags) — the hero
@@ -4740,7 +4770,7 @@ async function lava_effects() {
         if (!obj.in_use) continue;
         if (obj.owornmask) {
             if (usurvive) {
-                await update_topl(`${Yname2_dmg(obj)} burst into flame!`);
+                await update_topl(`${Yname2_dmg(obj)} ${otense(obj, 'burst')} into flame!`);
                 ++burnmesgcount;
             }
             await remove_worn_item(obj, true);
@@ -5503,16 +5533,12 @@ export async function minstapetrify(mon, byplayer) {
     if (cansee(mon.mx, mon.my))
         await pline(`${Monnam(mon)} turns to stone.`);
     if (byplayer) {
-        // C ref: mon.c:3546 `if (gs.stoned) monstone(mtmp); else mondead(mtmp);`
-        // -- a stoned kill NEVER reaches mondead()'s corpse/treasure RNG block
-        // at all (monstone() is a wholly separate function). killed()'s
-        // existing `nocorpse` option already models exactly this skip (it
-        // exists for C's XKILL_NOCORPSE goto, which bypasses the identical
-        // rn2(6) treasure roll + corpse_chance() block); using it here avoids
-        // drawing RNG for a corpse/treasure that real C never rolls when the
-        // kill turns the victim to stone instead.
+        // C ref: mon.c:3866 `gs.stoned = TRUE; xkilled(mon, XKILL_NOMSG);` --
+        // killed() routes a stoned kill through monstone() and skips the
+        // treasure/corpse block.
         const { killed } = await import('./uhitm.js');
-        await killed(mon, { nomsg: true, nocorpse: true });
+        game.stoned = true;
+        await killed(mon, { nomsg: true });
     } else {
         const { monstone_mm } = await import('./mhitm.js');
         await monstone_mm(mon);

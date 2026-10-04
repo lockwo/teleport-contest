@@ -22,7 +22,7 @@ import {
     COLNO, ROWNO, DOOR, POOL, DRAWBRIDGE_UP, LAVAPOOL, LAVAWALL,
     D_CLOSED, D_LOCKED, STRAT_APPEARMSG, BOLT_LIM, TEMPLE, engulfing_u,
 } from './const.js';
-import { BOULDER } from './mkobj.js';
+import { BOULDER, place_object } from './mkobj.js';
 import {
     is_swimmer_flag, passes_walls_flag, amorphous_flag, throws_rocks_flag,
     control_teleport_flag,
@@ -247,9 +247,16 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
         // for an attack-driven relocation)
     }
 
-    // Resident-shopkeeper anger, shop-goods billing, the go.occupation
-    // dochugw() nudge and the mtrapped mintrap() re-check are all inert for the
-    // monsters these sessions relocate.
+    // Resident-shopkeeper anger, shop-goods billing and the mtrapped
+    // mintrap() re-check are inert for the monsters these sessions relocate.
+
+    // C ref: teleport.c:1762 — if the hero is busy, a relocated threat that
+    // came into view stops the occupation.
+    const H = await import('./hack.js');
+    if (H.occupation_active()) {
+        const { dochugw } = await import('./monmove.js');
+        await dochugw(mtmp, false);
+    }
 }
 
 // C ref: teleport.c rloc_to(mtmp, x, y).
@@ -1518,9 +1525,11 @@ async function spelleffects_(_otyp, _atme, _nomsg) { return 0; }
 // C ref: teleport.c rloc_pos_ok — the live port above is module-private under
 // the same name; this indirection exists only so control_mon_tele() reads like C.
 function rloc_pos_ok_(x, y, mtmp) { return rloc_pos_ok(x, y, mtmp); }
-// C ref: trap.c flooreffects(obj, x, y, verb) — UNPORTED and RNG-BEARING
-// (water/lava destruction rolls).  js/shk.c-side billing helpers are private.
-async function flooreffects_(_obj, _x, _y, _verb) { return false; }
+// C ref: do.c flooreffects(obj, x, y, verb) — ported at js/do.js flooreffects().
+async function flooreffects_(obj, x, y, verb) {
+    const { flooreffects } = await import('./do.js');
+    return await flooreffects(obj, x, y, verb);
+}
 // C ref: do.c:2111 revive_corpse(corpse) — ported at js/do.js revive_corpse().
 async function revive_corpse_(obj) {
     const { revive_corpse } = await import('./do.js');
@@ -1531,7 +1540,7 @@ function costly_adjacent_(_shkp, _x, _y) { return false; }
 async function subfrombill_(_obj, _shkp) { }
 async function addtobill_(_obj, _a, _b, _c) { }
 async function stolen_value_(_obj, _x, _y, _peaceful, _silent) { return 0; }
-function place_object_(obj, x, y) { obj.where = 'floor'; obj.ox = x; obj.oy = y; }
+function place_object_(obj, x, y) { place_object(obj, x, y); }
 // C ref: window.c create_nhwindow/start_menu/add_menu/end_menu/select_menu/
 // destroy_nhwindow — the menu layer; js/invent.js has private no-op stubs.
 function create_nhwindow_(type) { return { type, items: [] }; }

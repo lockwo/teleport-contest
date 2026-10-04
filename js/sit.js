@@ -11,7 +11,8 @@ import { update_topl, vobj_at } from './display.js';
 import { surface, hliquid } from './dungeon.js';
 import { t_at, dotrap, water_damage } from './trap.js';
 import { exercise } from './attrib.js';
-import { useupf } from './invent.js';
+import { useupf, youmonst_data_pub } from './invent.js';
+import { mflags1_of, M1_SLITHY } from './monflags_data.js';
 import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags } from './objnam.js';
 import { name_to_pmidx } from './makemon.js';
@@ -100,13 +101,16 @@ export async function dosit() {
 
     const obj = vobj_at(u.ux, u.uy);
     if (obj && !(uteetering_at_seen_pit(trap) || uescaped_shaft(trap))) {
-        // slithy/dragon coil paths need Upolyd; the base hero "sits on" it.
-        if (obj.oclass === COIN_CLASS && slithy_or_dragon()) {
-            await update_topl('You coil up around your hoard.');
+        if (obj.oclass === COIN_CLASS && is_dragon_form()) {
+            // C: obj->quan + money_cnt(invent) < u.ulevel * 1000 -> "meager "
+            let gold = 0;
+            for (const o of (game.invent || [])) if (o?.oclass === COIN_CLASS) gold += o.quan || 0;
+            await update_topl(`You coil up around your ${
+                ((obj.quan || 1) + gold < (u.ulevel || 1) * 1000) ? 'meager ' : ''}hoard.`);
         } else if (isTowel(obj)) {
             await update_topl("It's probably not a good time for a picnic...");
         } else {
-            await update_topl(`You sit on ${sit_obj_name(obj)}.`);
+            await update_topl(`You ${is_slithy_form() ? 'coil up around' : 'sit on'} ${sit_obj_name(obj)}.`);
             if (obj.otyp === CORPSE && amorphous_corpse(obj)) {
                 await update_topl("It's squishy...");
             } else if (isCreamPie(obj)) {
@@ -205,7 +209,8 @@ async function sit_in_water() {
 // ---- polymorph / hero-monster predicates (all false for the base hero) ----
 
 function sticks() { return false; }                 // sticks(youmonst.data)
-function slithy_or_dragon() { return false; }        // S_DRAGON coil / slithy
+function is_dragon_form() { return youmonst_data_pub()?.mlet === 'D'; }   // S_DRAGON
+function is_slithy_form() { return (mflags1_of(youmonst_data_pub()) & M1_SLITHY) !== 0; }
 function amorphous_corpse(_obj) { return false; }    // amorphous(&mons[corpsenm])
 function lays_eggs() { return false; }               // lays_eggs(youmonst.data)
 function uteetering_at_seen_pit(_t) { return false; }

@@ -288,17 +288,20 @@ export function special_dmgval(magr, mdef, armask) {
     let silverhit = 0;
     let bonus = 0;
     let obj = null;
+    // C ref: which_armor(&gy.youmonst, W) reads u.uarm*; the hero's worn gear
+    // lives in game.invent (owornmask), not in a monster minvent.
+    const armor_of = is_hero(magr) ? { minvent: game.invent || [] } : magr;
 
     if (armask & (W_ARMC | W_ARM | W_ARMU)) {
-        if ((armask & W_ARMC) && (obj = which_armor(magr, W_ARMC))) armask = W_ARMC;
-        else if ((armask & W_ARM) && (obj = which_armor(magr, W_ARM))) armask = W_ARM;
-        else if ((armask & W_ARMU) && (obj = which_armor(magr, W_ARMU))) armask = W_ARMU;
+        if ((armask & W_ARMC) && (obj = which_armor(armor_of, W_ARMC))) armask = W_ARMC;
+        else if ((armask & W_ARM) && (obj = which_armor(armor_of, W_ARM))) armask = W_ARM;
+        else if ((armask & W_ARMU) && (obj = which_armor(armor_of, W_ARMU))) armask = W_ARMU;
         else armask = 0;
     } else if (armask & (W_ARMG | W_RINGL | W_RINGR)) {
-        obj = which_armor(magr, W_ARMG);
+        obj = which_armor(armor_of, W_ARMG);
         armask = obj ? W_ARMG : 0;
     } else {
-        obj = which_armor(magr, armask);
+        obj = which_armor(armor_of, armask);
     }
 
     if (obj) {

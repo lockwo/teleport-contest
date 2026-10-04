@@ -165,7 +165,8 @@ export async function adjattrib(ndx, incr, msgflg) {
     }
     const { update_topl } = await import('./display.js');
     if (acurr_eff(ndx) === old_acurr) {
-        if (msgflg === 0) {
+        // C ref: attrib.c:176 `if (msgflg == 0 && flags.verbose)`
+        if (msgflg === 0 && game.flags?.verbose !== false) {
             if (abase[ndx] === old_abase && amax[ndx] === old_amax)
                 await update_topl(`You're ${abonflg ? 'currently' : 'already'} as ${attrstr} as you can get.`);
             else

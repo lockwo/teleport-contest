@@ -94,7 +94,7 @@ const Your = (s) => update_topl(`Your ${s}`);
 const You_hear = (s) => update_topl(`You hear ${s}`);
 const pline_The = (s) => update_topl(`The ${s}`);
 // C ref: hacklib.c an() / upstart() / mungspaces().
-const an = (s) => (/^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`);
+import { an } from './hacklib.js';
 const upstart = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const mungspaces = (s) => String(s ?? '').replace(/\s+/g, ' ').replace(/^ | $/g, '');
 // C ref: do_name.c noit_Monnam / noit_mon_nam — SUPPRESS_IT, i.e. a guard is
@@ -423,6 +423,7 @@ export async function reset_faint() {
 // run the pending afternmv.  Exported for the same js/minion.js demon_talk()
 // caller (minion.c:284).
 export async function unmul(msg) {
+    game.botl = true; // C ref: hack.c unmul() `disp.botl = TRUE`
     game.multi = 0;
     if (game.context) game.context.travel = game.context.travel1 = game.context.mv = 0;
     const nmsg = msg || game.nomovemsg;

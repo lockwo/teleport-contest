@@ -417,7 +417,7 @@ function improvised_notes() {
 }
 
 // C ref: hacklib.c an(s) / upstart(s).
-function an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
+import { an } from './hacklib.js';
 function upstart(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
 
 // C ref: music.c:503 do_improvisation(instr).

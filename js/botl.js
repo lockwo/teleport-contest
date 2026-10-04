@@ -42,7 +42,7 @@ import { GOLD_PIECE, COIN_CLASS, WEAPON_CLASS } from './mkobj.js';
 import { roles } from './role.js';
 import { acurr_eff } from './attrib.js';
 import { newuexp } from './exper.js';
-import { near_capacity, is_sword, bimanual, is_weptool, worn_extrinsic } from './invent.js';
+import { near_capacity, is_sword, bimanual, is_weptool, worn_extrinsic, youmonst_data_pub } from './invent.js';
 import { hidden_gold, money_cnt_invent } from './shk.js';
 import { weapon_type, weapon_descr } from './weapon.js';
 import { helm_simple_name } from './do_wear.js';
@@ -57,6 +57,7 @@ import {
     tty_create_nhwindow, tty_destroy_nhwindow, tty_start_menu, tty_add_menu,
     tty_end_menu, tty_select_menu, tty_putstr, tty_display_nhwindow,
 } from './wintty.js';
+import { status_version } from './version.js';
 import { hooked_tty_getlin } from './extcmd-handlers.js';
 
 /* ==================================================================== */
@@ -269,12 +270,9 @@ function get_disp_botlx() { return !!(game.disp?.botlx ?? game.botlx); }
    fielded path. */
 function VIA_WINDOWPORT() { return true; }
 
-/* C ref: version.c status_version(buf, bufsz, indent) — private copy so that
-   version.c's own symbol is not shadowed by a stub here. */
-function status_version_str(indent) {
-    const vi = game.flags?.versinfo | 0;
-    if (!vi) return '';
-    return `${indent ? ' ' : ''}NetHack`;
+/* C ref: version.c status_version(buf, bufsz, indent). */
+export function status_version_str(indent) {
+    return status_version('', 0, indent);
 }
 
 /* C ref: hack.c classify_terrain() — computes the #terrainstatus pseudo-type
@@ -695,7 +693,7 @@ export function weapon_status() {
     if (!uwep) {
         /* no weapon; gloves imply hands; humanoid also implies hands */
         res = game.uarmg ? 'Empty-hnd'
-              : humanoid(u.data) ? 'Bare-hnds' : 'No-weapon';
+              : humanoid(youmonst_data_pub()) ? 'Bare-hnds' : 'No-weapon';
     } else if (u.twoweap) {
         res = 'Dual-weps';
         /* dual wielding two lances doesn't produce double joust */
@@ -844,7 +842,7 @@ const initblstats = INITBLSTATS_ROWS.map((r) => ({
 }));
 
 /* C ref: botl.c condition_aliases[] */
-const condition_aliases = [
+export const condition_aliases = [
     { id: 'strangled', bitmask: BL_MASK_STRNGL },
     { id: 'all', bitmask: BL_MASK_BAREH | BL_MASK_BLIND | BL_MASK_BUSY
         | BL_MASK_CONF | BL_MASK_DEAF | BL_MASK_ELF_IRON
@@ -1013,6 +1011,76 @@ function status_update(fld, ptr, chg, percent, color, colormasks) {
 function wincap2_reset_status() { return true; }
 function wincap2_flush_status() { return true; }
 
+/* The tty window port's per-field color/attribute, as tty_status_update()
+   keeps them in tty_status[NOW][].  color holds the low byte of the engine's
+   coloridx, attr the HL_* attribute mask in its second byte. */
+export const tty_hl = {
+    color: new Array(MAXBLSTATS).fill(NO_COLOR),
+    attr: new Array(MAXBLSTATS).fill(0),
+    condbits: 0, colormasks: null, hpbar_percent: 0, hpbar_crit: false,
+};
+function tty_hl_update(fld, ptr, chg, percent, color, colormasks) {
+    if (fld < 0 || fld >= MAXBLSTATS) return;
+    if (fld === BL_CONDITION) {
+        tty_hl.condbits = Number(ptr) >>> 0;
+        tty_hl.colormasks = colormasks;
+        return;
+    }
+    tty_hl.color[fld] = color & 0x00FF;
+    tty_hl.attr[fld] = (color >> 8) & 0x00FF;
+    if (fld === BL_HP && (game.flags?.hitpointbar || game.iflags?.wc2_hitpointbar)) {
+        /* C ref: wintty.c tty_status_update() special hitpointbar processing */
+        tty_hl.hpbar_percent = percent;
+        tty_hl.hpbar_crit = critically_low_hp_p(true);
+        tty_hl.color[BL_TITLE] = color & 0x00FF;
+        tty_hl.attr[BL_TITLE] = HL_INVERSE | (tty_hl.hpbar_crit ? HL_BLINK : 0);
+    }
+}
+
+/* C ref: botl.c status_initialize() minus the window-port half: load the rules
+   options.js parsed into the per-field threshold chains and the cond_xxx
+   choices, then force the first full update. */
+let _engine_ready = false;
+function status_engine_init() {
+    init_blstats();
+    for (const r of game.status_hilites || []) {
+        const row = initblstats.find((x) => x.fldname === r.fldname);
+        if (row) status_hilite_add_threshold(row.fld, r);
+    }
+    for (let k = 0; k < BL_ATTCLR_MAX; k++)
+        gc.cond_hilites[k] = (game.cond_hilites?.[k] ?? 0) >>> 0;
+    condopt(0, null, false);
+    for (const [name, on] of Object.entries(game.conds || {})) {
+        const k = condtests.findIndex((c) => c.useroption === name);
+        if (k >= 0) {
+            condtests[k].enabled = !!on;
+            condtests[k].choice = condtests[k].enabled;
+        }
+    }
+    gu.update_all = true;
+    _engine_ready = true;
+}
+
+/* Run one bot_via_windowport() round for the display and return the window
+   port state.  'transient' substitutes the hero's state at the very first
+   bot() of a new game, which C runs before the starting inventory exists. */
+let _transient = null;
+export function status_hilite_poll(transient) {
+    if (!_engine_ready) status_engine_init();
+    const flags = [game.botl, game.botlx, game.time_botl];
+    const dflags = game.disp ? [game.disp.botl, game.disp.botlx, game.disp.time_botl] : null;
+    status_update_hook.fn = tty_hl_update;
+    _transient = transient || null;
+    try {
+        bot_via_windowport();
+    } finally {
+        _transient = null;
+        [game.botl, game.botlx, game.time_botl] = flags;
+        if (dflags) [game.disp.botl, game.disp.botlx, game.disp.time_botl] = dflags;
+    }
+    return tty_hl;
+}
+
 /* C ref: decl.c cg.zeroany */
 function zeroany() { return { a_void: null, a_int: 0, a_uint: 0, a_long: 0, a_ulong: 0 }; }
 
@@ -1113,7 +1181,7 @@ export function bot_via_windowport() {
     gb.blstats[idx][BL_ENEMAX].a.a_int = min(u.uenmax | 0, 9999);
 
     /* Armor class */
-    gb.blstats[idx][BL_AC].a.a_int = u.uac | 0;
+    gb.blstats[idx][BL_AC].a.a_int = _transient ? _transient.uac : u.uac | 0;
 
     /* Monster level (if Upolyd) */
     gb.blstats[idx][BL_HD].a.a_int = u.Upolyd ? (u.data?.mlevel | 0) : 0;
@@ -1127,7 +1195,7 @@ export function bot_via_windowport() {
 
     /* Hunger.  u.uhs is unsigned in C but treated as plain int here, exactly
        as botl.c does (there is no ANY_UINT handling at all). */
-    gb.blstats[idx][BL_HUNGER].a.a_int = u.uhs | 0;
+    gb.blstats[idx][BL_HUNGER].a.a_int = u.uhs ?? NOT_HUNGRY;
     gb.blstats[idx][BL_HUNGER].val =
         ((u.uhs ?? NOT_HUNGRY) !== NOT_HUNGRY) ? hu_stat[u.uhs] : '';
     gv.valset[BL_HUNGER] = true;
@@ -1242,8 +1310,10 @@ export function bot_via_windowport() {
     }
 
     /* Optionally displayed weapon(s), armor, and terrain. */
-    gb.blstats[idx][BL_WEAPON].val = game.flags?.weaponstatus ? weapon_status() : '';
-    gb.blstats[idx][BL_ARMOR].val = game.flags?.armorstatus ? armor_status() : '';
+    gb.blstats[idx][BL_WEAPON].val = game.flags?.weaponstatus
+        ? (_transient ? _transient.weapon : weapon_status()) : '';
+    gb.blstats[idx][BL_ARMOR].val = game.flags?.armorstatus
+        ? (_transient ? _transient.armor : armor_status()) : '';
 
     if (game.flags?.terrainstatus) {
         if (classify_terrain_typ() === MAX_TYPE) {
@@ -1361,7 +1431,7 @@ export function eval_notify_windowport_field(fld, valsetlist, idx) {
          && curr.percent_matters && curr.thresholds)
         /* when 'hitpointbar' is On, percent matters even if HP hasn't changed
            and has no percentage rules (HPmax may have changed alone) */
-        || (fld === BL_HP && game.iflags?.wc2_hitpointbar)) {
+        || (fld === BL_HP && (game.flags?.hitpointbar || game.iflags?.wc2_hitpointbar))) {
         const fldmax = curr.idxmax;
         pc = (fldmax === BL_EXP) ? exp_percentage()
              : (fldmax >= 0 && fldmax < MAXBLSTATS)

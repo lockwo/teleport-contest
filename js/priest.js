@@ -12,7 +12,7 @@ import { isok, ROOMOFFSET, Amask2align, A_NONE, ALTAR, AM_SHRINE,
          MM_EPRI, MM_EMIN } from './const.js';
 import { mkobj, SPBOOK_no_NOVEL, curse, uncurse,
          AMULET_OF_YENDOR } from './mkobj.js';
-import { makemon, monster_by_pmidx, name_to_pmidx,
+import { makemon, monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
          mongets_pub, mpickobj, set_malign } from './makemon.js';
 import { is_ok_location, pm_to_humidity } from './sp_lev.js';
 
@@ -128,7 +128,7 @@ import { pline, update_topl, newsym, canseemon_shared, Deaf_hero } from './displ
 import { d } from './rng.js';
 import { TEMPLE, ACH_TMPL, SPINE, In_endgame } from './const.js';
 import { roles, align_gname } from './role.js';
-import { rndmonnam, Monnam } from './do_name.js';
+import { rndmonnam, Monnam, mon_pmname } from './do_name.js';
 
 // C ref: priest.c:142 temple_occupied(array).
 export function temple_occupied(array) {
@@ -505,6 +505,7 @@ export async function priest_talk(priest) {
 
     /* KMH, conduct */
     u.uconduct = u.uconduct || {};
+    u.uconduct.gnostic |= 0; // `undefined++` is NaN, which would stay falsy forever
     if (!(u.uconduct.gnostic++))
         livelog_printf_(LL_CONDUCT_,
                         `rejected atheism by consulting with ${mon_nam_(priest)}`);
@@ -903,7 +904,7 @@ function just_an_(str) {
     return /^[aeiouAEIOU]/.test(s) ? 'an ' : 'a ';
 }
 // C ref: mon.c mon_pmname(mon) — the species name honouring M_AP_TYPE.
-function mon_pmname_(mon) { return mon?.data?.name || 'creature'; }
+function mon_pmname_(mon) { return mon_pmname(mon) || 'creature'; }
 // C ref: do_name.c rndmonnam(&charcode) — a random bogus monster name; DRAWS on
 // the display RNG.  js/do_name.js exports it; the charcode out-parameter is
 // C-style, so it is threaded through a box here.

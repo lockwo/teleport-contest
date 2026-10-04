@@ -5,7 +5,7 @@
 // menu code that js/invent.js owns, the selection is delegated there and the
 // branch/count logic stays here, on C's line order.
 
-import { game } from './gstate.js';
+import { game, svc_context_run } from './gstate.js';
 import { Blind } from './vision.js';
 import { read_engr_at } from './engrave.js';
 import { rn2, rnd, d } from './rng.js';
@@ -573,7 +573,7 @@ export async function check_here(picked_some) {
     for (const obj of objects_at(u.ux, u.uy)) if (obj !== u.uchain) ct++;
 
     if (ct) {
-        if (game.context?.run) {
+        if (svc_context_run()) {
             const { nomul } = await import('./hack.js');
             nomul(0);
         }
@@ -729,13 +729,13 @@ export async function pickup(what) {
         const t = t_at(u.ux, u.uy);
         if (!can_reach_floor(!!(t && is_pit(t.ttyp)))) {
             await describe_decor(); /* even when !flags.mention_decor */
-            if (((game.multi ?? 0) && !game.context?.run)
+            if (((game.multi ?? 0) && !svc_context_run())
                 || (autopickup && !flags().pickup)
                 || (t && (uteetering_at_seen_pit(t) || uescaped_shaft(t))))
                 await read_engr_at(u.ux, u.uy);
             return 0;
         }
-        if (((game.multi ?? 0) && !game.context?.run)
+        if (((game.multi ?? 0) && !svc_context_run())
             || (autopickup && !flags().pickup)
             || notake_hero()) {
             await check_here(false);
@@ -743,8 +743,8 @@ export async function pickup(what) {
                 await pline('You are physically incapable of picking anything up.');
             return 0;
         }
-        if (OBJ_AT && game.context?.run && game.context.run !== 8
-            && !game.context.nopick) {
+        const run = svc_context_run();
+        if (OBJ_AT && run && run !== 8 && !game.context.nopick) {
             const { nomul } = await import('./hack.js');
             nomul(0);
         }

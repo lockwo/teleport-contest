@@ -20,8 +20,8 @@ import {
     SDOOR, isok,
     IS_AIR, IS_ALTAR, IS_GRAVE, IS_FOUNTAIN, IS_WALL, IS_DOOR, IS_ROOM,
     IS_THRONE, IS_SINK, TREE, COLNO, ROWNO, NHW_MENU,
-    Is_waterlevel, Is_earthlevel, Is_knox_level,
-    SHOPBASE,
+    Is_waterlevel, Is_earthlevel, Is_knox_level, Is_firelevel,
+    SHOPBASE, VAULT, NO_ROOM, SHARED, SHARED_PLUS,
     /* used only by the dungeon.c tail below (mapseen, lev_by_name, ...) */
     In_endgame, In_quest, In_sokoban, In_V_tower,
     Is_astralevel, Is_rogue_level, Is_stronghold,
@@ -1382,7 +1382,7 @@ function br_string2(br) {
 // (shoptype forced to SHOPBASE-1 by recalc_mapseen).
 // C ref: hacklib.c an() — every shop_string() result starts with a letter, so
 // the vowel test is the whole rule here (no "the"/"some" special cases).
-function an_dg(s) { return (/^[aeiouAEIOU]/.test(s) ? 'an ' : 'a ') + s; }
+import { an as an_dg } from './hacklib.js';
 
 function shop_string(rtype) {
     const idx = rtype - SHOPBASE;
@@ -1585,8 +1585,12 @@ export function build_overview_lines(final = 0, how = 0) {
         // session ever reaches a level that already has bones.
         if (final === 2 && onHere) {
             lines.push({ text: `${OVERVIEW_PREFIX}Final resting place for`, attr: 0 });
+            /* rephrase a few death reasons to work with "you" (C: strsubst) */
+            const killer = (game._killer_name || 'died')
+                .replace(' himself', ' yourself').replace(' herself', ' yourself')
+                .replace(' his ', ' your ').replace(' her ', ' your ');
             lines.push({
-                text: `${OVERVIEW_PREFIX}${OVERVIEW_TAB}you, ${game._killer_name || 'died'}.`,
+                text: `${OVERVIEW_PREFIX}${OVERVIEW_TAB}you, ${killer}.`,
                 attr: 0,
             });
         }
@@ -1663,6 +1667,78 @@ export function surface(x, y) {
         return 'floor';
     else
         return 'ground';
+}
+
+// C ref: hack.c in_rooms(x, y, typewanted) — room numbers covering (x,y) whose
+// rtype is `typewanted` (any shop type for SHOPBASE).  shkroom.js owns the
+// exported copy; it imports this file, so the scan is repeated here.
+function in_rooms_of_type(x, y, typewanted) {
+    const out = [];
+    const lv = game.level;
+    const loc = lv?.at(x, y);
+    if (!loc) return out;
+    const roomAt = (rno) => {
+        const idx = rno - ROOMOFFSET;
+        if (idx < 0) return null;
+        if (idx > MAXNROFROOMS) return (lv.subrooms || [])[idx - (MAXNROFROOMS + 1)] || null;
+        return lv.rooms?.[idx] || null;
+    };
+    const goodtype = (rno) => {
+        const typefound = roomAt(rno)?.rtype ?? 0;
+        return typefound === typewanted
+            || (typewanted === SHOPBASE && typefound > SHOPBASE);
+    };
+    let rno = loc.roomno ?? NO_ROOM;
+    let step;
+    if (rno === NO_ROOM) return out;
+    if (rno === SHARED) step = 2;
+    else if (rno === SHARED_PLUS) step = 1;
+    else {
+        if (goodtype(rno)) out.unshift(rno);
+        return out;
+    }
+    let min_x = x - 1, max_x = x + 1;
+    if (x < 1) min_x += step;
+    else if (x >= COLNO) max_x -= step;
+    let min_y = y - 1, max_y_offset = 2;
+    if (min_y < 0) { min_y += step; max_y_offset -= step; }
+    else if ((min_y + max_y_offset) >= ROWNO) max_y_offset -= step;
+    for (let sx = min_x; sx <= max_x; sx += step) {
+        for (let dy = 0; dy <= max_y_offset; dy += step) {
+            const l = lv.at(sx, min_y + dy);
+            rno = l ? (l.roomno ?? NO_ROOM) : NO_ROOM;
+            if (rno >= ROOMOFFSET && !out.includes(rno) && goodtype(rno))
+                out.unshift(rno);
+        }
+    }
+    return out;
+}
+
+// C ref: dungeon.c:1714 ceiling(x, y) — the noun for what is overhead.
+export function ceiling(x, y) {
+    const u = game.u || {};
+    const uz = u.uz;
+    const levtyp = game.level?.at(x, y)?.typ;
+    if (in_rooms_of_type(x, y, VAULT).length)
+        return "vault's ceiling";
+    if (in_rooms_of_type(x, y, TEMPLE).length)
+        return "temple's ceiling";
+    if (in_rooms_of_type(x, y, SHOPBASE).length)
+        return "shop's ceiling";
+    if (Is_waterlevel(uz))
+        return 'water above';
+    if (IS_AIR(levtyp))
+        return 'sky';
+    if (Is_firelevel(uz))
+        return 'flames above';
+    if (In_quest(uz))
+        return 'expanse above';
+    if (u.uinwater)
+        return "water's surface";
+    if ((IS_ROOM(levtyp) && !Is_earthlevel(uz)) || IS_WALL(levtyp)
+        || IS_DOOR(levtyp) || levtyp === SDOOR)
+        return 'ceiling';
+    return 'rock cavern';
 }
 
 // C ref: dungeon.c:3410 endgamelevelname(outbuf, indx) — name the endgame level

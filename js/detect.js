@@ -21,7 +21,7 @@ import { rnd } from './rng.js';
 import { m_at, docrt, cls, covers_objects, map_invisible, unmap_object,
          terrain_glyph, see_monsters, update_topl, flush_screen,
          Hallucination_u, impossible, warning_of, display_nhwindow_message } from './display.js';
-import { Blind, cansee, unblock_point, clear_area_cells } from './vision.js';
+import { Blind, cansee, unblock_point, recalc_block_point, clear_area_cells } from './vision.js';
 import { TER_DETECT, TER_MAP, TER_TRP, TER_OBJ, TER_MON, TER_FULL, SVALL,
          COULD_SEE, IN_SIGHT, I_SPECIAL, isok, IS_DOOR, ROOM,
          D_NODOOR, D_BROKEN, D_ISOPEN, D_CLOSED, D_LOCKED, D_TRAPPED,
@@ -39,51 +39,89 @@ import { monster_by_pmidx } from './makemon.js';
 import { depth } from './hacklib.js';
 import { S_corr, S_room, S_darkroom, S_litcorr, S_stone, S_vwall, S_ndoor,
          S_vodoor, S_vcdoor, S_upstair, S_upladder, S_fountain, S_throne,
-         S_sink, S_altar, S_grave, defsyms, def_oc_syms } from './symbols.js';
+         S_sink, S_altar, S_grave, defsyms, def_oc_syms, def_monsyms, S_GHOST,
+         MAXPCHARS, MAXMCLASSES, DEF_MIMIC, DEF_MIMIC_DEF, SYM_OFF_X, gs } from './symbols.js';
+import { SYM_BOULDER } from './const.js';
+import { the, The } from './objnam.js';
 
 // objclass.h obj_material_types GOLD == 15 (the blessed-scroll "any gold
 // object" scan, o_material(obj, GOLD)).
 const GOLD_MATERIAL = 15;
 
-// C ref: detect.c findone — reveal a single hidden feature at (zx,zy).
-function findone(zx, zy, found) {
+// C ref: detect.c findone(zx, zy, whatfound) — reveal a single hidden feature
+// at (zx,zy): secret door/corridor, trap, trapped door, trapped chest, hidden
+// or unseen monster.  FOUND_FLASH_COUNT's flash_glyph_at() is display-only.
+async function findone(zx, zy, found) {
+    const { canspotmon, seemimicLocal } = await import('./uhitm.js');
+    const { is_hider_flag, hides_under_flag } = await import('./monflags_data.js');
     const lev = game.level?.at(zx, zy);
     if (!lev) return;
+    const ttmp = d_t_at(zx, zy);
+    let mtmp = m_at(zx, zy);
+    if (mtmp && (d_DEADMONSTER(mtmp) || (mtmp.isgd && !mtmp.mx)))
+        mtmp = null;
+    found.ft_cc = { x: zx, y: zy }; /* needed by detect_obj_traps() */
 
     if (lev.typ === SDOOR) {
-        lev.typ = DOOR;
+        cvt_sdoor_to_door(lev); /* set lev->typ = DOOR */
+        unblock_point(zx, zy);  /* recalc_block_point */
         newsym(zx, zy);
         found.num_sdoors++;
     } else if (lev.typ === SCORR) {
         lev.typ = CORR;
+        unblock_point(zx, zy);
         newsym(zx, zy);
         found.num_scorrs++;
     }
 
-    const ttmp = (game.level?.traps || []).find(t => t.tx === zx && t.ty === zy);
-    if (ttmp && !ttmp.tseen && ttmp.ttyp !== undefined) {
-        ttmp.tseen = true;
-        newsym(zx, zy);
+    if (ttmp && !ttmp.tseen
+        /* [shouldn't successful 'find' reveal and activate statue traps?] */
+        && ttmp.ttyp !== STATUE_TRAP) {
+        ttmp.tseen = 1;
+        sense_trap(ttmp, zx, zy, 0); /* handles Hallucination */
+        foundone(zx, zy, trap_glyph(ttmp));
         found.num_traps++;
     }
-    // Hidden / invisible monster detection is not modeled (no such monsters
-    // on the covered starting levels), so num_mons stays 0.
-}
+    if (lev.typ === DOOR && ((lev.doormask | 0) & (D_CLOSED | D_LOCKED))
+        && ((lev.doormask | 0) & D_TRAPPED) !== 0) { /* closed_door() */
+        dummytrap.ttyp = TRAPPED_DOOR;
+        dummytrap.tx = zx; dummytrap.ty = zy;
+        dummytrap.tseen = 1;
+        sense_trap(dummytrap, zx, zy, 0); /* handles Hallucination */
+        foundone(zx, zy, trap_glyph(dummytrap));
+        found.num_traps++;
+    }
+    /* trapped chests */
+    detect_obj_traps(d_buriedobjs(), true, 0, found);
+    detect_obj_traps(d_fobj(), true, 0, found);
+    if (mtmp)
+        detect_obj_traps(mtmp.minvent || [], true, 0, found);
+    if (d_u_at(zx, zy))
+        detect_obj_traps(game.invent || [], true, 0, found);
 
-// C ref: vision.c do_clear_area — apply findone to each cell within range that
-// the hero couldsee.  Approximated with a square scan clamped to the bolt
-// circle radius; on the covered starts nothing is hidden so exact circle
-// geometry is immaterial.
-function do_clear_area(scol, srow, range, found) {
-    const maxY = Math.min(srow + range, ROWNO - 1);
-    const minY = Math.max(srow - range, 0);
-    for (let y = minY; y <= maxY; y++) {
-        const offset = range;
-        const minX = Math.max(scol - offset, 1);
-        const maxX = Math.min(scol + offset, COLNO - 1);
-        for (let x = minX; x <= maxX; x++)
-            if (couldsee(x, y))
-                findone(x, y, found);
+    if (mtmp && (!canspotmon(mtmp) || mtmp.mundetected || mtmp.m_ap_type)) {
+        if (mtmp.m_ap_type) {
+            seemimicLocal(mtmp);
+            found.num_mons++;
+        } else if (mtmp.mundetected && (is_hider_flag(mtmp.data)
+                                        || hides_under_flag(mtmp.data)
+                                        || mtmp.data?.mcls === 57 /* S_EEL */)) {
+            mtmp.mundetected = 0;
+            newsym(zx, zy);
+            found.num_mons++;
+        }
+        if (!lev.invisMon) {
+            if (!canspotmon(mtmp)) {
+                map_invisible(zx, zy);
+                found.num_invis++;
+            }
+        } else {
+            found.num_kept_invis++;
+        }
+    } else if (lev.invisMon) { /* unmap_invisible() */
+        unmap_object(zx, zy);
+        newsym(zx, zy);
+        found.num_cleared_invis++;
     }
 }
 
@@ -92,9 +130,13 @@ function do_clear_area(scol, srow, range, found) {
 export async function findit() {
     if (game.u?.uswallow) return 0;
 
-    const found = { num_sdoors: 0, num_scorrs: 0, num_traps: 0, num_mons: 0 };
-    do_clear_area(game.u.ux, game.u.uy, BOLT_LIM, found);
+    const found = { num_sdoors: 0, num_scorrs: 0, num_traps: 0, num_mons: 0,
+                    num_invis: 0, num_kept_invis: 0, num_cleared_invis: 0,
+                    ft_cc: { x: 0, y: 0 } };
+    for (const [x, y] of clear_area_cells(game.u.ux, game.u.uy, BOLT_LIM))
+        await findone(x, y, found);
 
+    /* count that controls "reveal" punctuation; 0..4 */
     const k = (found.num_sdoors ? 1 : 0) + (found.num_scorrs ? 1 : 0)
             + (found.num_traps ? 1 : 0) + (found.num_mons ? 1 : 0);
     let buf = '';
@@ -121,6 +163,23 @@ export async function findit() {
     if (buf)
         await pline(`You reveal ${buf}!`);
 
+    if (found.num_invis) {
+        if (found.num_invis > 1)
+            buf = `${found.num_invis}${found.num_kept_invis ? ' other' : ''} unseen monsters`;
+        else
+            buf = `${found.num_kept_invis ? 'another' : 'an'} unseen monster`;
+        await pline(`You detect ${buf}!`);
+        num += found.num_invis;
+    }
+
+    if (found.num_cleared_invis) {
+        /* at least 1 "remembered, unseen monster" marker has been removed */
+        if (!num)
+            await pline(`You feel ${found.num_kept_invis ? 'somewhat ' : ''}less paranoid.`);
+        num += found.num_cleared_invis;
+    }
+    /* note: num_kept_invis is not included in the final result */
+
     if (!num)
         await pline("You don't find anything.");
 
@@ -139,8 +198,10 @@ function show_map_spot(x, y, cnf) {
         pile: lev.remembered_glyph?.pile, bwEngr: lev.remembered_glyph?.bwEngr,
     };
     lev.seenv = 0xff;
-    if (lev.typ === SCORR)
+    if (lev.typ === SCORR) {
         lev.typ = CORR;
+        unblock_point(x, y);
+    }
 
     // C ref: detect.c show_map_spot — force the real background and newsym()
     // it FIRST (magic_map_background() only overwrites an unexplored or
@@ -179,6 +240,7 @@ function show_map_spot(x, y, cnf) {
                 lev.remembered_glyph = {
                     ch: oldcell.ch, color: oldcell.color, decgfx: oldcell.dec,
                     pile: !!oldcell.pile, bwEngr: !!oldcell.bwEngr,
+                    objotyp: glyph_is_object(oldglyph) ? oldglyph.otyp : undefined,
                 };
             }
             show_glyph_cell(x, y, oldcell.ch, oldcell.color, oldcell.dec);
@@ -289,7 +351,7 @@ export function premap_detect() {
             const obj = vobj_at(x, y);
             if (obj && obj.otyp === BOULDER) {
                 const og = object_glyph(obj);
-                if (og) loc.remembered_glyph = { ch: og.ch, color: og.color, decgfx: og.dec };
+                if (og) loc.remembered_glyph = { ch: og.ch, color: og.color, decgfx: og.dec, objotyp: BOULDER };
             }
         }
     }
@@ -409,13 +471,17 @@ const ALL_CLASSES = MAXOCLASSES + 1;
 // C ref: display.h glyph_at(x,y) — the DISPLAYED glyph.  Returned as a tagged
 // descriptor (see the banner) rather than an int; `kind` is one of
 // 'monster' | 'object' | 'trap' | 'invisible' | 'cmap' | 'unexplored'.
-function glyph_at(x, y) {
+function glyph_at(x, y, remembered = false) {
     const loc = game.level?.at(x, y);
     if (!loc) return { kind: 'unexplored', x, y };
-    const sym = (loc.disp_ch != null) ? loc.disp_ch : ' ';
+    // `remembered` answers C's levl[x][y].glyph (what the hero remembers) rather
+    // than the DISPLAYED gbuf glyph: a monster standing on the square is drawn
+    // but never remembered, so it must not read as the square's memory.
+    const sym = remembered ? (loc.remembered_glyph?.ch ?? ' ')
+                           : ((loc.disp_ch != null) ? loc.disp_ch : ' ');
     if (loc.invisMon && sym === 'I') return { kind: 'invisible', x, y };
-    if (d_u_at(x, y)) return { kind: 'monster', mon: null, isyou: true, x, y };
-    const mon = m_at(x, y);
+    if (!remembered && d_u_at(x, y)) return { kind: 'monster', mon: null, isyou: true, x, y };
+    const mon = remembered ? null : m_at(x, y);
     // C ref: display.c glyph_at() just returns gbuf[y][x].glyphinfo.glyph —
     // whatever glyph was ACTUALLY last drawn there, by its numeric range.  A
     // cell nothing has ever been drawn on holds GLYPH_UNEXPLORED regardless
@@ -432,6 +498,12 @@ function glyph_at(x, y) {
     // tail segment lying across never-before-seen ground.  Excluding blank
     // sym from the match is safe: no real monster's drawn glyph is ever a
     // space, so this can only ever have matched the one broken case.
+    // A remembered OBJECT glyph (display.c map_object(): levl[x][y].glyph) stays
+    // an object glyph after the object is gone or moved unseen, and for a mimic
+    // seen posing as an object there was never a real object behind it.
+    const memObj = loc.remembered_glyph?.objotyp;
+    if (memObj != null && sym !== ' ' && sym === loc.remembered_glyph.ch)
+        return { kind: 'object', obj: null, otyp: memObj, x, y };
     if (mon && sym !== ' ' && sym === (mon.data?.mlet ?? '\0'))
         return { kind: 'monster', mon, x, y };
     // C's trap-glyph test comes AFTER objects in _map_location's precedence but
@@ -530,7 +602,7 @@ function magic_map_background(x, y, show) {
     // let every #wizmap/magic-mapping pass permanently stomp a remembered
     // sensed-but-unseen monster with plain floor.
     if (game.level?.flags?.hero_memory) {
-        const old = glyph_at(x, y);
+        const old = glyph_at(x, y, true);
         if (glyph_is_unexplored(old) || glyph_is_cmap(old)) {
             loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
             loc.mapped_trap_ttyp = 0;
@@ -592,7 +664,8 @@ function map_object(obj, show) {
         if (halluc && obj.otyp === STATUE_OTYP_D) {
             random_object_disp(objects.length);   /* remembered as a random OBJECT */
         }
-        loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
+        loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
+                                 objotyp: halluc ? 0 : obj.otyp };
         loc.mapped_trap_ttyp = 0;
     }
     if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec);
@@ -622,6 +695,15 @@ export function reconstrain_map() {
     u.uinwater = iflags.save_uinwater; iflags.save_uinwater = 0;
     u.uburied = iflags.save_uburied;   iflags.save_uburied = 0;
     u.uswallow = iflags.save_uswallow; iflags.save_uswallow = 0;
+}
+
+// C ref: display.c cls() clear_nhwindow(WIN_MAP) + clear_glyph_buffer().  The
+// retained display buffer here backs normal redraws, so blank every map cell
+// explicitly; map_redisplay()'s docrt() restores the real map afterwards.
+function blank_map_cells() {
+    for (let x = 1; x < COLNO; x++)
+        for (let y = 0; y < ROWNO; y++)
+            show_glyph_cell(x, y, ' ', NO_COLOR, false);
 }
 
 // C ref: detect.c:93 map_redisplay() — reconstrain, then redraw the screen to
@@ -866,6 +948,7 @@ export async function food_detect(sobj) {
 
         game.known = true;
         await cls();
+        blank_map_cells();
         unconstrain_map();
         for (const obj of d_fobj()) {
             const temp = o_in(obj, oclass);
@@ -1141,6 +1224,7 @@ export async function display_trap_map(cursed_src) {
     let ter_typ = TER_DETECT | (cursed_src ? TER_OBJ : TER_TRP);
 
     await cls();
+    blank_map_cells();
     unconstrain_map();
     /* chest traps first, buried before floor so floor traps override */
     detect_obj_traps(d_buriedobjs(), true, cursed_src, null);
@@ -1739,12 +1823,18 @@ function findgold(chain) {
     return null;
 }
 
-// C ref: potion.c strange_feeling(obj, txt) — reduced to the message half; the
-// useup/exercise bookkeeping belongs to the caller's own module (js/read.js and
-// js/potion.js each have their own copy of that part).
-async function strange_feeling(_obj, txt) {
-    if (game.flags?.beginner === false || !game.flags?.beginner) await pline(txt);
-    else await pline('You have a strange feeling for a moment, then it passes.');
+// C ref: potion.c strange_feeling(obj, txt).  The detector is used up here,
+// which is why food_detect()/object_detect()/trap_detect() return 1 and their
+// callers (seffects' `*sobjp = 0`, peffects' return 1) skip their own useup.
+export async function strange_feeling(obj, txt) {
+    if (game.flags?.beginner || !txt)
+        await pline(`You have a ${Hallucination_u() ? 'normal' : 'strange'} feeling for a moment, then it passes.`);
+    else
+        await pline(txt);
+    if (!obj) return;
+    const { trycall, useup } = await import('./invent.js');
+    if (obj.dknown) await trycall(obj);
+    useup(obj);
 }
 
 // C ref: drawing.c def_oc_syms[class].sym / .name (js/symbols.js owns the table).
@@ -1830,4 +1920,217 @@ export async function mfind0(mtmp, via_warning) {
         await pline(`You find ${x_monnam(mtmp, article, null, 0, false)}.`);
     }
     return 1;
+}
+
+// C ref: drawing.c def_char_to_objclass(ch) — first class whose symbol is `ch`,
+// MAXOCLASSES when none matches (class 0 is the illegal-object placeholder).
+function def_char_to_objclass_c(ch) {
+    let i;
+    for (i = 1; i < MAXOCLASSES; i++)
+        if (ch === def_oc_syms[i].sym) break;
+    return i;
+}
+
+// C ref: drawing.c def_char_to_monclass(ch) — first class whose symbol is `ch`,
+// MAXMCLASSES when none matches.
+function def_char_to_monclass_c(ch) {
+    let i;
+    for (i = 1; i < MAXMCLASSES; i++)
+        if (ch === def_monsyms[i].sym) break;
+    return i;
+}
+
+// C ref: drawing.c def_char_is_furniture(ch) — index into defsyms[] of the
+// furniture symbol `ch` (the "stair"..."fountain" block), or -1.
+function def_char_is_furniture_c(ch) {
+    let furniture = false;
+    for (let i = 0; i < MAXPCHARS; ++i) {
+        if (!furniture && defsyms[i].explanation.startsWith('stair'))
+            furniture = true;
+        if (furniture) {
+            if (defsyms[i].sym === ch) return i;
+            if (defsyms[i].explanation === 'fountain') break;
+        }
+    }
+    return -1;
+}
+
+const crystal_level_detects = [
+    ['Delphi', 'oracle_level'],
+    ["Medusa's lair", 'medusa_level'],
+    ['a castle', 'stronghold_level'],
+    ["the Wizard of Yendor's tower", 'wiz1_level'],
+];
+
+// C ref: detect.c:1206 use_crystal_ball(optr) — apply a crystal ball.  `box` is
+// C's `struct obj **optr` as a one-field box ({ obj }); box.obj is nulled when
+// the ball is used up.
+export async function use_crystal_ball(box) {
+    const { xname, otense } = await import('./invent.js');
+    const Tobjnam_ball = (o, verb) => `${The(xname(o))} ${otense(o, verb)}`;
+    const xname_ball = xname;
+    const { ACURR } = await import('./weapon.js');
+    const { A_INT } = await import('./const.js');
+    const { consume_obj_charge, useup, makeknown } = await import('./invent.js');
+    const { nomul } = await import('./hack.js');
+    let obj = box.obj;
+    const charged = obj.spe > 0;
+    const u = game.u;
+
+    if (Blind()) {
+        await pline(`Too bad you can't see ${the(xname_ball(obj))}.`);
+        return;
+    }
+    const { is_quest_artifact } = await import('./questpgr.js');
+    const oops = is_quest_artifact(obj) ? 8 : obj.blessed ? 16 : 20;
+    if (charged && (obj.cursed || rnd(oops) > ACURR(A_INT))) {
+        const impair = rnd(100 - 3 * ACURR(A_INT));
+
+        switch (rnd((obj.oartifact || obj.blessed) ? 4 : 5)) {
+        case 1:
+            await pline(`${Tobjnam_ball(obj, 'are')} too much to comprehend!`);
+            break;
+        case 2: {
+            await pline(`${Tobjnam_ball(obj, 'confuse')} you!`);
+            const { make_confused } = await import('./potion.js');
+            make_confused((u.uprops?.Confusion || 0) + impair, false);
+            break;
+        }
+        case 3: {
+            const hero_resists_blnd = Blind() || !!u.usleep;
+            if (!hero_resists_blnd) {
+                await pline(`${Tobjnam_ball(obj, 'damage')} your vision!`);
+                const { make_blinded_hero, BlindedTimeout } = await import('./potion.js');
+                await make_blinded_hero(BlindedTimeout() + impair, false);
+                if (!Blind()) await pline('Your vision clears.');
+            } else {
+                await pline(`${Tobjnam_ball(obj, 'assault')} your vision.`);
+                await pline('You are unaffected!');
+            }
+            break;
+        }
+        case 4: {
+            await pline(`${Tobjnam_ball(obj, 'zap')} your mind!`);
+            const { make_hallucinated } = await import('./potion.js');
+            const hh = u.uprops?.Hallucination || 0;
+            await make_hallucinated(hh + impair, false, 0);
+            break;
+        }
+        case 5: {
+            await pline(`${Tobjnam_ball(obj, 'explode')}!`);
+            useup(obj);
+            box.obj = obj = null;                   /* it's gone */
+            /* physical damage cause by the shards and force */
+            const { Maybe_Half_Phys } = await import('./zap.js');
+            const { losehp } = await import('./zap.js');
+            await losehp(Maybe_Half_Phys(rnd(30)), 'exploding crystal ball', 0);
+            break;
+        }
+        }
+        if (obj) consume_obj_charge(obj, true);
+        return;
+    }
+
+    let implode = false;
+    if (Hallucination_u()) {
+        nomul(-rnd(charged ? 4 : 2));
+        game.multi_reason = 'gazing into a Magic 8-Ball (tm)';
+        game.nomovemsg = '';
+
+        const { hcolor } = await import('./do_name.js');
+        if (!charged) {
+            await pline(`All you see is funky ${hcolor(null)} haze.`);
+            if (obj.spe < 0) implode = true;        /* destroy it when it has been cancelled */
+        } else {
+            switch (rnd(6)) {
+            case 1:
+                await pline('You grok some groovy globs of incandescent lava.');
+                break;
+            case 2: {
+                const { poly_gender } = await import('./invent.js');
+                await pline(`Whoa!  Psychedelic colors, ${poly_gender() === 1 ? 'babe' : 'dude'}!`);
+                break;
+            }
+            case 3:
+                await pline(`The crystal pulses with sinister ${hcolor(null)} light!`);
+                break;
+            case 4:
+                await pline('You see goldfish swimming above fluorescent rocks.');
+                break;
+            case 5:
+                await pline('You see tiny snowflakes spinning around a miniature farmhouse.');
+                break;
+            default:
+                await pline('Oh wow... like a kaleidoscope!');
+                break;
+            }
+            consume_obj_charge(obj, true);
+        }
+        if (!implode) return;
+    }
+
+    if (!implode) {
+        /* read a single character */
+        if (game.flags?.verbose !== false)
+            await pline('You may look for an object, monster, or special map symbol.');
+        const { yn_function } = await import('./extcmd-handlers.js');
+        const ch = await yn_function('What do you look for?', null, '\0');
+        /* Don't filter out ' ' here; it has a use */
+        if (ch !== def_monsyms[S_GHOST].sym && ' \r\n\x1b'.includes(ch)) {
+            if (game.flags?.verbose !== false) await pline('Never mind.');
+            return;
+        }
+
+        await pline(`You peer into ${the(xname(obj))}...`);
+        nomul(-rnd(charged ? 10 : 2));
+        game.multi_reason = 'gazing into a crystal ball';
+        game.nomovemsg = '';
+
+        if (!charged) {
+            await pline('The vision is unclear.');
+            if (obj.spe < 0) implode = true;        /* destroy ball if used after being cancelled */
+        } else {
+            let ch2 = ch;
+            makeknown(obj.otyp);
+            consume_obj_charge(obj, true);
+
+            /* special case: accept ']' as synonym for mimic
+             * we have to do this before the def_char_to_objclass check */
+            if (ch2 === DEF_MIMIC_DEF) ch2 = DEF_MIMIC;
+
+            let ret = 0, klass;
+            const bsym = gs.showsyms[SYM_BOULDER + SYM_OFF_X];
+            /* checking furniture before objects allows '_' to find altars
+               (along with other furniture) instead of finding iron chains */
+            if (def_char_is_furniture_c(ch2) >= 0) {
+                ret = await furniture_detect();
+            } else if ((klass = def_char_to_objclass_c(ch2)) !== MAXOCLASSES) {
+                ret = await object_detect(null, klass);
+            } else if ((klass = def_char_to_monclass_c(ch2)) !== MAXMCLASSES) {
+                const { monster_detect } = await import('./hack.js');
+                ret = (await monster_detect(null, klass)) ? 1 : 0;
+            } else if (bsym && ch2 === (typeof bsym === 'number' ? String.fromCharCode(bsym) : bsym)) {
+                ret = await object_detect(null, ROCK_CLASS);
+            } else if (ch2 === '^') {
+                ret = await trap_detect(null);
+            } else {
+                const i = rn2(crystal_level_detects.length);
+                await pline(`You see ${crystal_level_detects[i][0]}, `
+                            + `${level_distance(game[crystal_level_detects[i][1]])}.`);
+                ret = 0;
+            }
+
+            if (ret) {
+                if (!rn2(100)) /* make them nervous */
+                    await pline('You see the Wizard of Yendor gazing out at you.');
+                else
+                    await pline('The vision is unclear.');
+            }
+        }
+        if (!implode) return;
+    }
+    /* no damage to hero but 'multi' has a small negative value */
+    await pline(`${Tobjnam_ball(obj, 'implode')}!`);
+    useup(obj);
+    box.obj = null;                                 /* it's gone */
 }

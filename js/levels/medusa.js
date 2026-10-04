@@ -34,6 +34,7 @@ import {
     BOULDER, CRYSTAL_BALL, EGG, LEVITATION_BOOTS, SACK, SCR_BLANK_PAPER, STATUE, WAND_CLASS,
     add_to_container, mk_tt_object, mkobj_at, mksobj_at, set_corpsenm, weight,
 } from '../mkobj.js';
+import { stackobj } from '../invent.js';
 import { somex, somey } from '../mkroom.js';
 import { rn1, rn2, rnd } from '../rng.js';
 import {
@@ -282,7 +283,8 @@ function med_statue_petrify(otmp) {
 // except the Medusa statue block at the tail.
 //   o = { otyp, oclass, coord:{x,y}|null, buc, spe, montype, name,
 //         contents: fn|0|undefined }
-function med_object(o) {
+// `contained` is SP_OBJ_CONTENT: such an object skips stackobj().
+function med_object(o, contained = false) {
     const named = !!o.name;
     let x, y;
     if (o.coord) { const c = vly_abs(o.coord.x, o.coord.y); x = c.x; y = c.y; }
@@ -309,6 +311,9 @@ function med_object(o) {
     // throws away the spellbook mksobj_init() may have put inside a statue.
     if (o.contents !== undefined) otmp.cobj = [];
     if (o.otyp === STATUE && o.montype == null) med_statue_petrify(otmp);
+    // C ref: create_object() ends with stackobj(otmp) unless SP_OBJ_CONTENT;
+    // lspo_object runs the `contents` function after create_object() returns.
+    if (!contained) stackobj(otmp);
     if (typeof o.contents === 'function') o.contents(otmp);
     return otmp;
 }
@@ -317,7 +322,7 @@ function med_object(o) {
 // container is on the stack, so the object is made at a random DRY spot (that
 // is where its RNG goes) and only then moved into the container.
 function med_contained(container, spec) {
-    const otmp = med_object(spec);
+    const otmp = med_object(spec, true);
     if (!otmp || !container) return otmp;
     const objs = game.level?.objects;
     if (objs) { const i = objs.indexOf(otmp); if (i >= 0) objs.splice(i, 1); }

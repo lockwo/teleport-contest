@@ -15,6 +15,7 @@ import { pushKey, nhgetch } from './input.js';
 import { newgame, moveloop_core, early_init } from './allmain.js';
 import { parseNethackrc, config_error_report, fruitadd } from './options.js';
 import { flush_screen, IBMGRAPHICS_CHARS, warmupBotlStatusFns } from './display.js';
+import { has_innate } from './exper.js';
 import { GameDisplay } from './game_display.js';
 import {
     ROLE_NONE, ROLE_RANDOM, ROLE_RACEMASK, ROLE_GENDMASK, ROLE_ALIGNMASK,
@@ -293,7 +294,8 @@ export class NethackGame {
         // Parse nethackrc
         const opts = await parseNethackrc(this._nethackrc);
         g.plname = opts.name || '';
-        g.flags = { verbose: true, invlet_constant: true, dark_room: true, ...opts.flags };
+        // C ref: optlist.h NHOPTB(sparkle, ..., On, ...) — default On.
+        g.flags = { verbose: true, invlet_constant: true, dark_room: true, sparkle: true, ...opts.flags };
         // C ref: options.c set_playmode() — when wizard (debug) mode is requested
         // (OPTIONS=playmode:debug) and authorize_wizard_mode() succeeds (the
         // contest sysconf carries WIZARDS=*, so it always does), the player name
@@ -304,7 +306,7 @@ export class NethackGame {
         if (g.flags.debug) g.plname = 'wizard';
         // C initializes cmdassist enabled; an explicit !cmdassist in the rc
         // is applied below through opts.iflags.
-        g.iflags = { cmdassist: true, ...opts.iflags };
+        g.iflags = { cmdassist: true, use_color: true, ...opts.iflags };
         // C ref: cmd.c parsebindings()/reset_commands() — custom key bindings
         // from nethackrc BIND= lines (key char -> command name).  cmd.js rhack()
         // remaps a bound key to the command's default key before dispatch.
@@ -324,13 +326,27 @@ export class NethackGame {
         // C ref: symbols.c do_symset()/load_symset() — a `symset:` line loads
         // a whole prebuilt dat/symbols table; an explicit SYMBOLS= line on top
         // of it must win, so only fill gaps a SYMBOLS= line didn't already
-        // set.  Only IBMgraphics is ported (see IBMGRAPHICS_CHARS in
-        // display.js for why its values are XORed ASCII, not real CP437
-        // bytes); DECgraphics already has its own hand-coded glyph tables in
-        // display.js's terrain_glyph/wall_cmap_glyph.
+        // set.  The named IBM variants have distinct dat/symbols blocks:
+        // IBMgraphics defines the broad map below, while _1 and _2 override
+        // only selected symbols and inherit defaults for omitted entries.
+        // In particular, _2 leaves S_room as '.', unlike IBMgraphics's 'z'.
         if (/^ibm/i.test(g.symset)) {
-            for (const [symname, ch] of Object.entries(IBMGRAPHICS_CHARS))
-                if (!(symname in g.symoverride)) g.symoverride[symname] = ch;
+            const variant = g.symset.toLowerCase();
+            const chars = variant === 'ibmgraphics_1'
+                ? ['S_vwall', 'S_hwall', 'S_tlcorn', 'S_trcorn', 'S_blcorn',
+                   'S_brcorn', 'S_crwall', 'S_tuwall', 'S_tdwall', 'S_tlwall',
+                   'S_trwall', 'S_engroom', 'S_vbeam', 'S_hbeam', 'S_sw_ml',
+                   'S_sw_mr', 'S_expl_ml', 'S_expl_mr']
+                : variant === 'ibmgraphics_2'
+                  ? ['S_vwall', 'S_hwall', 'S_tlcorn', 'S_trcorn', 'S_blcorn',
+                     'S_brcorn', 'S_crwall', 'S_tuwall', 'S_tdwall', 'S_tlwall',
+                     'S_trwall', 'S_vodoor', 'S_hodoor', 'S_engroom', 'S_corr',
+                     'S_litcorr', 'S_engrcorr', 'S_vbeam', 'S_hbeam', 'S_sw_ml',
+                     'S_sw_mr', 'S_expl_ml', 'S_expl_mr']
+                  : Object.keys(IBMGRAPHICS_CHARS);
+            for (const symname of chars)
+                if (!(symname in g.symoverride))
+                    g.symoverride[symname] = IBMGRAPHICS_CHARS[symname];
         }
         // C ref: options.c ga.apelist — the AUTOPICKUP_EXCEPTION list, read by
         // pickup.c check_autopickup_exceptions().
@@ -345,6 +361,13 @@ export class NethackGame {
 
         // Initialize hero struct
         g.u = { ux: 0, uy: 0, ux0: 0, uy0: 0 };
+        // C ref: youprop.h See_invisible (HSee_invisible || ESee_invisible).  The
+        // port's role/race intrinsics are derived from ulevel (exper.js
+        // innate_intrinsics), never stored in u.uprops, yet every canseemon()/
+        // mon_visible() copy reads u.see_invis.  A Monk has See_invisible from
+        // XL1, so serve it from the innate table instead of a never-set flag.
+        Object.defineProperty(g.u, 'see_invis', {
+            get: () => has_innate('HSee_invisible'), configurable: true });
         // C ref: optlist.h NHOPTB(blind/deaf/nudist/pauper/reroll, ...,
         // &u.uroleplay.*, ...) — these are real u.uroleplay fields, not
         // flags.*; parseNethackrc() ran before `g.u` existed, so it staged

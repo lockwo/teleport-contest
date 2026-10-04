@@ -381,7 +381,7 @@ const CREAM_PIE = 287, BLINDING_VENOM = 479, POT_BLINDNESS = 300;
 // line read wrong for every touch/gaze poisoner.
 
 // C ref: mondata.c stagger(ptr, verb) — "stagger"/"stumble"/"slither"/"falter".
-function stagger(ptr, verb) {
+export function stagger(ptr, verb) {
     if ((mflags1_of(ptr) & 0x6000) === 0x6000) return 'falter';   // M1_NOLIMBS
     if (slithy(ptr)) return 'slither';
     return verb;
@@ -1008,7 +1008,15 @@ export async function mhitm_ad_drin(magr, mattk, mdef, mhm, ops) {
             await ops.emit(`${ops.Monnam(mdef)}'s helmet blocks ${ops.mon_nam(magr)}'s attack to its head.`);
         return;
     }
-    // eat_brains(): the mind-flayer INT drain + its own kill tail.
+    const { which_armor } = await import('./worn.js');
+    const amu = which_armor(mdef, W_AMUL);
+    const lifsav = !!amu && OBJECTS[amu.otyp]?.name === 'amulet of life saving';
+    const { eat_brains } = await import('./eat.js');
+    const damage = { value: mhm.damage };
+    mhm.hitflags = await eat_brains(magr, mdef, !!ops.vis, damage);
+    mhm.damage = damage.value;
+    /* skip further AD_DRIN if amulet of life-saving got used up */
+    if (lifsav && !which_armor(mdef, W_AMUL)) ops.set_skipdrin();
 }
 
 export async function mhitm_ad_stck(magr, mattk, mdef, mhm, ops) {
@@ -1131,9 +1139,19 @@ export async function mhitm_ad_plys(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if ((game.multi ?? 0) >= 0 && !rn2(3)
             && !await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
-            // Free_action is off for the covered roles.
-            await ops.emit(`You are frozen by ${ops.mon_nam(magr)}!`);
-            if (ops.nomul) await ops.nomul(-rnd(10));
+            const upr = game.u?.uprops;
+            if (((upr?.HFree_action | 0) > 0) || ((upr?.EFree_action | 0) > 0)) {
+                await ops.emit('You momentarily stiffen.');
+            } else {
+                if (Blind()) await ops.emit('You are frozen!');
+                else await ops.emit(`You are frozen by ${ops.mon_nam(magr)}!`);
+                game.nomovemsg = 'You can move again.';
+                const { nomul } = await import('./hack.js');
+                nomul(-rnd(10));
+                const { dynamic_multi_reason } = await import('./uhitm.js');
+                dynamic_multi_reason(magr, 'paralyzed', false);
+                exercise(A_DEX, false);
+            }
         }
         return;
     }
@@ -1145,10 +1163,12 @@ export async function mhitm_ad_plys(magr, mattk, mdef, mhm, ops) {
     }
     void mhm;
 }
-// C ref: mon.c paralyze_monst(mon, amt) — no RNG of its own.
-function paralyze_monst(mon, amt) {
+// C ref: mhitm.c:1210 paralyze_monst(mon, amt) — no RNG of its own.
+export function paralyze_monst(mon, amt) {
     mon.mcanmove = 0;
     mon.mfrozen = Math.min(amt | 0, 127);
+    mon.meating = 0; /* terminate any meal-in-progress */
+    mon.mstrategy = (mon.mstrategy | 0) & ~STRAT_WAITFORU;
 }
 
 // C ref: uhitm.c:3478 mhitm_ad_slee().
@@ -1220,7 +1240,26 @@ export async function mhitm_ad_slim(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (negated) { if (!magr.mcan) await ops.emit('You escape harm.'); return; }
-        await ops.emit("You don't feel very well.");
+        const pdu = ops.permonst(mdef);   // the hero's own (possibly polyd) form
+        if (FLAMING_NAMES.has(pdu?.name)) {
+            await ops.emit('The slime burns away!');
+            mhm.damage = 0;
+        } else {
+            const { Unchanging_poly } = await import('./polyself.js');
+            if (Unchanging_poly() || pdu?.mcls === S_GHOST || pdu?.name === 'green slime') {
+                await ops.emit('You are unaffected.');
+                mhm.damage = 0;
+            } else if (!((game.u?.uprops?.Slimed | 0) > 0)) {
+                await ops.emit("You don't feel very well.");
+                const { make_slimed } = await import('./potion.js');
+                await make_slimed(10, null);
+                const { delayed_killer } = await import('./end.js');
+                const { SLIMED, KILLED_BY_AN } = await import('./const.js');
+                delayed_killer(SLIMED, KILLED_BY_AN, ops.permonst(magr)?.name || 'monster');
+            } else {
+                await ops.emit('Yuck!');
+            }
+        }
         return;
     }
     if (negated) return;
@@ -1253,7 +1292,10 @@ export async function mhitm_ad_slow(magr, mattk, mdef, mhm, ops) {
     if (defended(mdef, AD_SLOW)) return;
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
-        if (!negated && game.u?.HFast && !rn2(4)) await u_slow_down();
+        // C: `HFast` — any intrinsic source (role-granted innate, outside, timed).
+        const { youHaveFast } = await import('./allmain.js');
+        const hfast = youHaveFast() || (game.u?.uprops?.HFast | 0) || (game.u?.HFast | 0);
+        if (!negated && hfast && !rn2(4)) await u_slow_down();
         return;
     }
     if (!negated && mdef.mspeed !== MSLOW) {
@@ -1305,6 +1347,19 @@ export async function mhitm_ad_poly(magr, mattk, mdef, mhm, ops) {
     }
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
+        const u = game.u;
+        const half = (u?.uprops?.Half_physical_damage | 0) > 0;
+        const maybeHalf = half ? Math.trunc((mhm.damage + 1) / 2) : mhm.damage;
+        if (maybeHalf < (u?.Upolyd ? u.mh : u.uhp)) {
+            if (negated) {
+                if (magr.mcan) await ops.emit("You aren't transformed.");
+            } else {
+                const { mon_poly } = await import('./mhitm.js');
+                mhm.damage = await mon_poly(magr, YOUMONST, mhm.damage);
+                mhm.hitflags |= M_ATTK_HIT;
+                mhm.done = true;
+            }
+        }
         return;
     }
     if (mhm.damage < (mdef.mhp | 0) && !negated) {
@@ -1658,7 +1713,8 @@ export async function mhitm_ad_samu(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (!rn2(20)) {
-            // stealamulet(): the quest-artifact / Amulet theft.
+            const { stealamulet } = await import('./steal.js');
+            await stealamulet(magr);
         }
         return;
     }
