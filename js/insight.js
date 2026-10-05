@@ -4483,14 +4483,13 @@ export async function list_genocided(defquery, ask) {
 
 // ── insight.c:3144 doborn() ────────────────────────────────────────────────
 // #wizborn extended command.
-export function doborn() {
+export async function doborn() {
     const fmt = (died, born, ch, name) =>
         `${String(died).padStart(4)} ${String(born).padStart(4)} ${ch} ${
             String(name).padEnd(30)}`;
     let i;
-    const datawin = create_nhwindow(NHW_TEXT);
+    const datawin = [];
     let buf;
-    let nborn = 0, ndied = 0;
 
     putstr(datawin, 0, 'died born');
     for (i = LOW_PM; i < NUMMONS; i++) {
@@ -4503,18 +4502,12 @@ export function doborn() {
                           : ' ',
                       monster_by_pmidx(i)?.name || '');
             putstr(datawin, 0, buf);
-            nborn += mv.born | 0;
-            ndied += mv.died | 0;
         }
     }
 
     putstr(datawin, 0, '');
-    /* upstream builds the totals line and then never putstr()s it; keeping the
-       dead store documents that the window really does end on a blank line. */
-    buf = fmt(ndied, nborn, ' ', '');
-
-    display_nhwindow(datawin, false);
-    destroy_nhwindow(datawin);
+    const { display_text_window } = await import('./pager.js');
+    await display_text_window(datawin);
 
     return 0; /* ECMD_OK */
 }

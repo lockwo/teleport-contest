@@ -1441,16 +1441,11 @@ export async function destroy_arm() {
     return ret;
 }
 
-// C ref: read.c p_glow2(otmp, color) — "Your <obj> is covered by a mottled
-// <color> glow!" / "feels warm for a moment" when blind.
+// C ref: read.c:673 p_glow2() — unlike enchantment's protective glow,
+// charging and confused destruction only vibrate/glow briefly.
 async function p_glow2(otmp, color) {
-    if (Blind()) {
-        otmp.rknown = false;
-        await pline_append(`${Yobjnam2_wep(otmp, 'feel')} warm for a moment.`);
-    } else {
-        otmp.rknown = true;
-        await pline_append(`${Yobjnam2_wep(otmp, 'are')} covered by a mottled ${hcolor_wep(color)} glow!`);
-    }
+    await pline_append(`${Yobjnam2_wep(otmp, Blind() ? 'vibrate' : 'glow')}${
+        Blind() ? '' : ` ${hcolor_wep(color)}`} for a moment.`);
 }
 
 // C ref: do_wear.c disintegrate_arm(atmp) — destroy one worn armor piece
@@ -2277,8 +2272,7 @@ export async function p_glow1(otmp) {
     await pline_append(`${Yobjnam2_wep(otmp, Blind() ? 'vibrate' : 'glow')} briefly.`);
 }
 
-// C ref: read.c:680 p_glow3(otmp, color).  NOTE: this file's p_glow2() above
-// does NOT match C's p_glow2() — see the divergence note on that function.
+// C ref: read.c:680 p_glow3(otmp, color).
 export async function p_glow3(otmp, color) {
     await pline_append(`${Yobjnam2_wep(otmp, Blind() ? 'vibrate' : 'glow')} feebly${
         Blind() ? '' : ' '}${Blind() ? '' : hcolor_wep(color)} for a moment.`);

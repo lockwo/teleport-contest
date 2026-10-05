@@ -9,7 +9,7 @@ import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
 import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, covers_objects, show_glyph_cell, hero_glyph, glyph_at, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt } from './display.js';
-import { vision_recalc, cansee, recalc_block_point, Blind } from './vision.js';
+import { vision_recalc, cansee, recalc_block_point, Blind, vision_reset } from './vision.js';
 import { hliquid, Some_Monnam, m_monnam, YMonnam, y_monnam } from './do_name.js';
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
          glyph_is_invisible, stumble_onto_mimic } from './uhitm.js';
@@ -35,12 +35,12 @@ import { dohelp, dowhatdoes, dowhatdoes_core, do_screen_description, doidtrap, t
 import { rnl, rn2, rnd } from './rng.js';
 import { doextcmd, doddoremarm, hooked_tty_getlin, wiz_wish, wiz_genesis,
          wiz_map_extcmd, run_extcmd_by_name, docallcmd, dooverview } from './extcmd-handlers.js';
-import { wiz_detect } from './wizcmds.js';
+import { wiz_detect, makemap_remove_mons } from './wizcmds.js';
 import { mfind0 } from './detect.js';
 import { do_gamelog } from './insight.js';
 import { skill_window_advance, uwep_skill_type, p_skill_of, use_skill } from './enhance.js';
 import { wiz_level_tele, dodown, doup, revive_nasty, random_teleport_level,
-         flooreffects, boulder_hits_pool, set_uinwater, danger_uprops } from './do.js';
+         flooreffects, boulder_hits_pool, set_uinwater, danger_uprops, u_on_rndspot, u_collide_m } from './do.js';
 import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation,
          TRAP_CLEARLY_IMMUNE, deltrap, fill_pit, blow_up_landmine, seetrap,
          launch_obj, ROLL, LAUNCH_KNOWN } from './trap.js';
@@ -76,7 +76,7 @@ import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
 import { depth as depth_of_level } from './hacklib.js';
 import { builds_up, level_difficulty_c, surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { HEADSTONE, WT_ELF } from './const.js';
+import { HEADSTONE, WT_ELF, PARANOID_TRAP } from './const.js';
 // C ref: dokick.c — the whole ^D command (kick_dumb/kick_ouch/kick_door/
 // kick_nondoor/dokick).  cmd.js <-> dokick.js is a cycle, but every name
 // crossing it is a hoisted `function` declaration, the same way onscary() above
@@ -893,10 +893,8 @@ function avoid_moving_on_liquid(x, y) {
 // C ref: hack.c:2514-2582 avoid_trap_andor_region(x,y) — the
 // paranoid_confirm:trap gate, called from domove_core() at hack.c:2826 (after
 // u_rooted(), before trapmove()/test_move(DO_MOVE)); TRUE means the hero
-// declined the trap, no move/turn elapsed. options.c:7173 defaults
-// paranoia_bits to PRAY|SWIM|TRAP with nothing overriding it, so ParanoidTrap
-// is always on; ParanoidConfirm is NOT default, so paranoid_query() is the
-// plain yn_function(prompt, "yn", 'n') arm (cmd.c:5645, cmd.c:5657).
+// declined the trap, no move/turn elapsed. The configured PARANOID_TRAP bit
+// controls both known traps and visible hazardous regions.
 // "Really step"/"Step into" is u_locomotion("step") (hack.c:1817) — float
 // while levitating, fly while flying, ride while mounted; but Levitation/
 // Flying make every ground trap CLEARLY_IMMUNE, so only a rider sees a
@@ -904,6 +902,7 @@ function avoid_moving_on_liquid(x, y) {
 // roll must read the same timer every other file writes — see Hallucination()
 // above.
 async function avoid_trap_andor_region(x, y) {
+    if (!((game.flags.paranoia_bits ?? PARANOID_TRAP) & PARANOID_TRAP)) return false;
     const u = game.u;
     const c = game.context;
     const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned;
@@ -1021,6 +1020,7 @@ async function get_count(inkey) {
 export async function rhack(key) {
     // A nonzero key is moveloop_core's count repeat of the previous command.
     const countRepeat = key !== 0;
+    const hadForcefight = !!game.context?.forcefight;
     // C ref: cmd.c rhack() head — `iflags.menu_requested = FALSE;
     // svc.context.nopick = 0;` sit ABOVE the `got_prefix_input:` label, so a
     // PREFIXCMD's re-entry keeps them but every FRESH command starts clean.
@@ -1094,7 +1094,7 @@ export async function rhack(key) {
         const fc = String.fromCharCode(key);
         const startsCount = npCmd.num_pad ? (key === NHKF_COUNT_KEY)
                                           : (fc >= '0' && fc <= '9');
-        if (startsCount) {
+        if (startsCount && !game._modal_screen) {
             key = await get_count(npCmd.num_pad ? await nhgetch() : key);
             // ESC after a count cancels it (C: clears WIN_MESSAGE, multi 0).
             if (key === 27) {
@@ -1115,6 +1115,7 @@ export async function rhack(key) {
         // command without reading another key.
         game._cmd_key = key;
     }
+
 
     let ch = String.fromCharCode(key);
 
@@ -1214,7 +1215,7 @@ export async function rhack(key) {
     // when the option is On, so it must join the complaint rather than stay
     // permanently exempt (bl006, seed700822 step 178: a pending 'g' prefix
     // silently rested on <space>, eating a turn/RNG draw C never took).
-    if ((game.context.forcefight || game.context._prefix_seen)
+    if (game.context._prefix_seen
         && npBound !== false
         && !game._modal_screen && !isMovementKey(ch)
         && ch !== '\x1b' && (key !== 32 || !!game.flags?.rest_on_space)
@@ -1226,7 +1227,8 @@ export async function rhack(key) {
             : (game.context.run_prefix === 3 ? 'do_run' : 'do_rush')));
         const updown = (ch === '<' || ch === '>') ? ' other than up or down' : '';
         await pline(`The '${which}' prefix should be followed by a movement command${updown}.`);
-        game.context.forcefight = 0;
+        // C ref: cmd.c:3810-3813 — failed prefix validation discards the count.
+        reset_cmd_vars(true);
         game.context.stale_run = 0;
         game.context.run_prefix = 0;
         game.context.move = 0;
@@ -1296,10 +1298,11 @@ export async function rhack(key) {
         game.context.stale_run = 0;
         // C ref: cmd.c rhack():3660-3670 — a top-level ESC ends in
         // reset_cmd_vars(TRUE), which zeroes svc.context.run.
-        if (!game._modal_screen) game.context.run_leftover8 = 0;
+        if (!game._modal_screen) reset_cmd_vars(true);
         await dismiss_invent_screen();
         game.context.move = 0;
-    } else if (key === 32 || key === 13 || key === 10) {
+    } else if (key === 32 || ((key === 13 || key === 10)
+        && !npBad && !npExt && !bindExt)) {
         // Space / Return.  A single-page inventory/text window is dismissed by
         // space/return (C tty treats space like a confirm/next that ends a
         // one-page menu).  C ref: cmd.c rhack() / process_menu_window().
@@ -1872,8 +1875,18 @@ export async function rhack(key) {
             game.context.forcefight = 0;
         } else {
             game.context.forcefight = 1;
+            game.context.move = 0;
+            game.multi = 0;
+            // C ref: cmd.c:3769-3773 — prefix_seen belongs to this rhack call,
+            // unlike forcefight, which can survive a rush or an unbound key.
+            const savedSeen = game.context._prefix_seen;
+            game.context._prefix_seen = true;
+            await rhack(0);
+            game.context._prefix_seen = savedSeen;
+            return;
         }
         game.context.move = 0;
+        game.multi = 0;
     } else if (ch === 'm') {
         // C ref: cmd.c do_reqmenu — the 'm' movement prefix sets
         // iflags.menu_requested (move without autopickup / force a menu on the
@@ -1889,6 +1902,7 @@ export async function rhack(key) {
             game.context._m_fresh = 1; // survives exactly the next command
         }
         game.context.move = 0;
+        game.multi = 0; // PREFIXCMD reads another command, even after a count.
     } else if (ch === 'G' || ch === 'g') {
         // C ref: cmd.c do_run()/do_rush() (cmd.c:1585-1610) — a second
         // run/rush prefix while one is still pending (armed as run_prefix, or
@@ -2079,6 +2093,11 @@ export async function rhack(key) {
     // marking squares as already "visited" for the next travel.
     if (!badCommand && !npBad && repeatName && !game.context.move)
         game.travelmap = null;
+    // C ref: cmd.c:3814-3816 — a completed no-time command also ends any
+    // forcefight residue left by an earlier rush or unbound prefix follower.
+    if (hadForcefight && !badCommand && !npBad && repeatName && !game.context.move
+        && !(repeatBind?.flags & (PREFIXCMD | MOVEMENTCMD)))
+        game.context.forcefight = 0;
     if (!badCommand && !npBad && repeatName && !game.context.move
         && (game.multi ?? 0) > 0 && !game._wait_occupation
         && !isMovementKey(ch) && !isRunKey(ch)
@@ -2384,10 +2403,11 @@ function u_wipe_engr_cmd(cnt) {
 }
 
 // C ref: mon.c wake_nearby(petcall) -> wake_nearto_core(u.ux, u.uy, ulevel*20).
-export async function wake_nearby(_petcall) {
+export async function wake_nearby(petcall) {
     const u = game.u;
     if (!u) return;
-    await wake_nearto(u.ux, u.uy, (u.ulevel || 1) * 20);
+    const { wake_nearto_core } = await import('./mon.js');
+    await wake_nearto_core(u.ux, u.uy, (u.ulevel || 1) * 20, petcall);
 }
 
 // C ref: dungeon.c level_difficulty() — depth, bumped in the "builds up"
@@ -2605,11 +2625,12 @@ async function getdir_answer(key, s) {
         return null;                        // decl.c quitchars[] " \r\n\033"
     // C ref: cmd.c getdir() — disabled assistance reports the error without
     // opening a window (and therefore without consuming another input).
-    if (key === (Cmd.spkeys?.[NHKF.GETDIR_HELP] ?? 0x3f)
-        || game.iflags?.cmdassist !== false)
-        await help_dir_window('Invalid direction key!',
+    const help_requested = key === (Cmd.spkeys?.[NHKF.GETDIR_HELP] ?? 0x3f);
+    if (help_requested || game.iflags?.cmdassist !== false) {
+        await help_dir_window(help_requested ? null : 'Invalid direction key!',
                               (s && s[0] === '^') ? key : 0);
-    else
+        if (help_requested) return getdir(s); // C ref: cmd.c:4106 — retry.
+    } else
         await pline('What a strange direction!');
     return null;
 }
@@ -2640,10 +2661,7 @@ async function help_dir_window(msg, sym = 0) {
     const dc = Cmd.dirchars;
     const self = String.fromCharCode(Cmd.num_pad ? NHKF_GETDIR_SELF2
                                                  : NHKF_GETDIR_SELF);
-    const lines = [
-        `cmdassist: ${msg}`,
-        '',
-    ];
+    const lines = msg ? [`cmdassist: ${msg}`, ''] : [];
     // C ref: cmd.c help_dir() — a caller whose prompt starts with '^' (the ^
     // trap-id command) gets "Are you trying to use ^X as specified in the
     // Guidebook?" for a typed letter that is also a control command.
@@ -2669,9 +2687,8 @@ async function help_dir_window(msg, sym = 0) {
         '          <  up',
         '          >  down',
         `          ${self}  direct at yourself`,
-        '',
-        '(Suppress this message with !cmdassist in config file.)',
     );
+    if (msg) lines.push('', '(Suppress this message with !cmdassist in config file.)');
     renderWindowScreen(lines, { footer: '--More--', footerRow: 23, footerCol: 0, modal: 'textwin' });
     await flush_screen(1);
     game._modal_screen = 'topl';
@@ -3118,17 +3135,15 @@ export async function pick_lock(pick) {
         }
         const door = game.level?.at(cx, cy);
         if (!door || !IS_DOOR(door.typ)) {
-            // C ref: lock.c — the not-a-door branch runs update_mapseen_for(cc) +
-            // feel_location(cc) and returns PICKLOCK_LEARNED_SOMETHING when that
-            // examination changes the remembered glyph / seen-vector / lastseentyp
-            // (feel_location() always set_seenv()s the probed tile from the hero's
-            // new vantage), else PICKLOCK_DID_NOTHING.  For the sighted hero
-            // probing an adjacent square this examination registers as LEARNED (a
-            // turn elapses).  This port doesn't keep C's per-tile glyph/seenv
-            // memory to distinguish the rare already-fully-cached DID_NOTHING case,
-            // so it returns LEARNED — matching the recorded turn-consuming apply.
+            // C ref: lock.c:578-592 — only newly learned terrain costs a turn.
+            const oldglyph = JSON.stringify(door?.remembered_glyph ?? null);
+            const { update_mapseen_for } = await import('./dungeon.js');
+            const oldlastseentyp = await update_mapseen_for(cx, cy);
+            feel_location(cx, cy);
+            const learned = JSON.stringify(door?.remembered_glyph ?? null) !== oldglyph
+                || (game.lastseentyp?.[cx]?.[cy] ?? 0) !== oldlastseentyp;
             await pline(`You ${Blind() ? 'feel' : 'see'} no door there.`);
-            return PICKLOCK_LEARNED_SOMETHING;
+            return learned ? PICKLOCK_LEARNED_SOMETHING : PICKLOCK_DID_NOTHING;
         }
         switch (door.doormask) {
         case D_NODOOR: await pline('This doorway has no door.'); return PICKLOCK_LEARNED_SOMETHING;
@@ -3445,8 +3460,8 @@ async function domove_core(dx, dy, attemptTracked) {
         // C: `if (!is_safemon(mtmp) || context.forcefight) nomul(0);` then
         // domove_bump_mon() (no-op for a hostile) then domove_attackmon_at().
         if (!is_safemon(held)) game.multi = 0;
-        await do_attack(held);
         game.context.move = 1;
+        await do_attack(held);
         return;
     }
 
@@ -3534,14 +3549,12 @@ async function domove_core(dx, dy, attemptTracked) {
         // C ref: hack.c domove_attackmon_at() — the hero is displaced (the
         // monster swaps places with them, hack.c:2887) instead of attacking.
         const displaceu = await domove_displaceu(mtmp, newx, newy);
-        // For a normal bump we call do_attack(): it returns TRUE when the hero's
-        // move was used up (a real attack, or "in the way" while running),
-        // FALSE when the monster evaded, falling through to the swap-places
-        // handling below.
+        // TRUE means the attack was resolved, including a declined peaceful
+        // attack.  C preserves attack_checks()'s context.move = 0 (uhitm.c:320).
+        // FALSE lets domove fall through to the swap-places handling below.
+        game.context.move = 1;
         if (!displaceu && await do_attack(mtmp)) {
-            // The attack consumed the turn (C: do_attack returned TRUE); the
-            // hero stays put (no vision recalc — position unchanged).
-            game.context.move = 1;
+            // The hero stays put; preserve whether the attack consumed time.
             return;
         }
         // Monster evaded; if we can't actually move there, stop. C ref:
@@ -3805,7 +3818,7 @@ async function domove_core(dx, dy, attemptTracked) {
             const _stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.Stunned;
             const _confused = !!(u?.uconf || u?.HConfusion);
             const _fumbling = !!(u?.HFumbling || u?.EFumbling);
-            if (!game.context?.run && !game.context?.mv
+            if (game.flags?.autoopen !== false && !game.context?.run
                 && !_confused && !_stunned && !_fumbling) {
                 const odr = await doopen_indir(newx, newy);
                 // The hero never relocates via autoopen (the door square is not
@@ -3816,11 +3829,13 @@ async function domove_core(dx, dy, attemptTracked) {
                 // returns 2 to request that the monster turn run.
                 u.umoved = (u.ux !== _umoved_ux0 || u.uy !== _umoved_uy0);
                 game.context.move = (u.umoved || odr === 2) ? 1 : 0;
-                // C ref: hack.c domove_core() — a failed test_move() with
-                // !context.door_opened (doopen_indir returned ECMD_OK, e.g. "This
-                // door is locked.") does `context.move = 0; nomul(0);`, ending a
-                // counted move so the refusal is printed once.
-                if (!odr) { const { nomul } = await import('./hack.js'); nomul(0); }
+                // C ref: hack.c:1110,2843-2847 — door_opened follows the door
+                // state, not doopen_indir()'s ECMD_TIME result.  Resistance
+                // leaves the door closed and cancels a counted movement.
+                if (tgt.doormask & (D_CLOSED | D_LOCKED)) {
+                    if (odr !== 2) game.context.move = 0;
+                    nomul(0);
+                }
                 return;
             }
             // Running (autoopen disabled) into an orthogonal closed door:
@@ -5183,27 +5198,9 @@ async function autopickup_after_move(x, y) {
     return nPicked;
 }
 
-// Pick up a single floor object, emitting the prinv pickup line.  Mirrors
-// pickup_object -> pickup_prinv with a NULL prefix (the bare "<letter> -
-// <name>." line).  pick_one_obj sets game._pending_message to that bare line.
-// If a message was already pending this turn (e.g. the swap line), we chain the
-// pickup line after it via update_topl(): when the two don't fit on one top
-// line (CO-8 rule), the pending line is paged with --More-- (blocking on the
-// next key) before the pickup line replaces it.  C ref: topl.c update_topl().
+// C ref: pickup_object() -> pickup_prinv(); pick_one_obj owns message chaining.
 async function pickup_one(inv, obj, x, y) {
-    const prior = game._pending_message || '';
-    // An answered y_n prompt stays visible but is no longer pending in C.
-    const pending = prior && (game._toplin === 1 || game._toplinSoft === prior);
-    await inv.pick_one_obj(obj); // sets _pending_message to the pickup line
-    const line = game._pending_message || '';
-    if (pending) {
-        // Restore the pending line + its TL_HAS_MESSAGE state, then chain.
-        game._pending_message = prior;
-        game._toplin = 1;
-        await update_topl(line);
-    } else {
-        game._toplinSoft = line; // prinv's new message awaits acknowledgment.
-    }
+    await inv.pick_one_obj(obj);
     newsym(x, y);
 }
 
@@ -5581,7 +5578,7 @@ function cmd_linedup(ax, ay, bx, by, boulderhandling) {
 }
 // C ref: hacklib.c visctrl() — "^X"/"M-x" rendering.  visctrl_code() above
 // takes a code; this accepts C's `char`.
-function cmd_visctrl(c) {
+export function cmd_visctrl(c) {
     return visctrl_code(typeof c === 'string' ? c.charCodeAt(0) : (c & 0xff));
 }
 // C ref: cmd.c:3225 key2txt(c, txt) — js/pager.js keeps the port's copy.
@@ -5642,7 +5639,6 @@ function cmd_getlin(_query, out) { if (out) out.buf = '\x1b'; return; }
 function cmd_nhbell() {}
 function cmd_mark_synch() {}
 function cmd_putmsghistory(_msg, _restoring) {}
-function cmd_docrt() {}
 // C ref: cmd.c:3517 randomkey() — js/wintty.js keeps the port's copy (iflags
 // .debug_fuzzer is never set here, so the branches guarded by it never run).
 function cmd_randomkey() { return 0x1b; }
@@ -5958,7 +5954,7 @@ function ec_flags(expr) {
     return f;
 }
 
-const extcmdlist = EXTCMD_TABLE.map((e) => ({
+export const extcmdlist = EXTCMD_TABLE.map((e) => ({
     key: e.key | 0,
     ef_txt: e.txt,
     ef_desc: e.desc || null,
@@ -6041,8 +6037,7 @@ const spkeys_binds = [
 // C ref: cmd.c:164 — the #prevmsg command -> win/tty/topl.c
 // tty_doprev_message().  Walks the message-history ring kept by display.js
 // (msghist(): cw->data[]/maxrow/maxcol, filled by remember_topl()).  The
-// 'c' mode's `morc == C('p')` repeat (^P pressed at a wrapped message's
-// --More--) is not modelled; every other branch is.
+// Single and combination modes allow ^P to advance history at a wrapped More.
 export async function doprev_message() {
     const { msghist } = await import('./display.js');
     const { tty_text_window } = await import('./invent.js');
@@ -6058,13 +6053,25 @@ export async function doprev_message() {
            reaches the terminal as a raw high-bit byte and shows as blank. */
         if (str && Object.values(DEC_TO_UNICODE).includes(str[0]))
             str = ' ' + str.slice(1);
-        game._pending_message = str;
-        game._toplinSoft = str || null;
-        if (wrap_topl(str).length > 1) {
-            await topl_more();
+        // C redotoplin() calls putsyms(): hard-wrap at CO-1, including the
+        // unwrapped query+answer stored by getline.c:81.
+        const lines = [];
+        for (const line of str.split('\n')) {
+            if (!line.length) lines.push('');
+            for (let i = 0; i < line.length; i += COLNO - 1)
+                lines.push(line.slice(i, i + COLNO - 1));
+        }
+        game._pending_message = lines.join('\n');
+        game._toplinSoft = game._pending_message || null;
+        if (lines.length > 1) {
+            const key = await topl_more_ext('\x10', lines);
             game._toplinSoft = null;
             game._pending_message = '';
+            return key;
         }
+        await flush_screen(1);
+        game.nhDisplay?.setCursor(Math.min(lines[0].length, COLNO - 1), 0);
+        return 0;
     };
     // C ref: wintty.c tty_putstr() NHW_MENU: each putstr() line is compress_str()'d
     // (a wrapped topline's '\n' becomes one space, runs of spaces collapse) and
@@ -6097,15 +6104,19 @@ export async function doprev_message() {
     if (mode === 'f') {
         await full_window();
     } else if (mode === 'c') {
-        if (h.maxcol === h.maxrow) {
-            await redotoplin(toplines);
-            step_back();
-        } else if (h.maxcol === h.maxrow - 1) {
-            await redotoplin(h.data[h.maxcol] || '');
-            step_back();
-        } else {
-            await full_window();
-        }
+        let key;
+        do {
+            key = 0;
+            if (h.maxcol === h.maxrow) {
+                key = await redotoplin(toplines);
+                step_back();
+            } else if (h.maxcol === h.maxrow - 1) {
+                key = await redotoplin(h.data[h.maxcol] || '');
+                step_back();
+            } else {
+                await full_window();
+            }
+        } while (key === 16);
     } else if (mode !== 's') {            /* reversed */
         const lines = ['Message History', '', toplines];
         h.maxcol = h.maxrow - 1;
@@ -6118,9 +6129,13 @@ export async function doprev_message() {
         } while (h.maxcol !== h.maxrow);
         await tty_text_window(putstr_wrapped(lines));
     } else {                              /* single */
-        if (h.maxcol === h.maxrow) await redotoplin(toplines);
-        else if (h.data[h.maxcol]) await redotoplin(h.data[h.maxcol]);
-        step_back();
+        let key;
+        do {
+            key = 0;
+            if (h.maxcol === h.maxrow) key = await redotoplin(toplines);
+            else if (h.data[h.maxcol]) key = await redotoplin(h.data[h.maxcol]);
+            step_back();
+        } while (key === 16);
     }
     if (mode !== 's' && mode !== 'c' && mode !== 'f') h.maxcol = h.maxrow;
     return ECMD_OK;
@@ -6376,15 +6391,18 @@ async function extlist_select_menu(m) {
     if (game._toplin === 1) { await topl_more(); game._toplin = 0; }
     game._pending_message = '';
     let curr_page = 0;
+    // C ref: cmd.c:600 — 's' selects the ':' search item on any menu page.
+    const searchAlias = m.pages.some((page) => page.some((it) => it.sel === ':'));
     for (;;) {
         extlist_render_page(m, curr_page);
         const page = m.pages[curr_page];
         const sels = page.filter((it) => it.sel).map((it) => it.sel).join('');
         const morc = await extlist_waitforspace(
-            sels + ' \x1b\n\r' + EXTLIST_DEFAULT_MENU_CMDS);
+            sels + (searchAlias ? 's' : '') + ' \x1b\n\r' + EXTLIST_DEFAULT_MENU_CMDS);
         // MENU_EXPLICIT_CHOICE: a page-local selector keeps its own meaning
         // even when it also happens to be a menu command (':' vs a ':' item).
         if (sels.indexOf(morc) >= 0) return morc;
+        if (morc === 's' && searchAlias) return ':';
         switch (morc) {
         case '\x1b':                              // cancel
         case '\0':                                // commit, nothing picked
@@ -6618,31 +6636,43 @@ async function cmd_paranoid_query(be_paranoid, prompt) {
 export async function makemap_prepost(pre, wiztower) {
     let mtmp;
     const u = game.u, svc = game.context || (game.context = {});
+    const { losedogs } = await import('./dog.js');
+    const { dmonsfree, kill_genocided_monsters } = await import('./mon.js');
+    const { dobjsfree } = await import('./mkobj.js');
+    const { rm_mapseen } = await import('./dungeon.js');
+    const { ballrelease, unplacebc, placebc } = await import('./ball.js');
+    const { maybe_reset_pick } = await import('./lock.js');
+    const { check_special_room } = await import('./shkroom.js');
+    const { cls } = await import('./display.js');
+    const { initrack } = await import('./track.js');
+    const { deliver_splev_message } = await import('./questpgr.js');
+    const { remove_achievement } = await import('./insight.js');
+    const { ACH_MINE_PRIZE, ACH_SOKO_PRIZE } = await import('./const.js');
 
     if (pre) {
-        cmd_makemap_remove_mons();
-        cmd_rm_mapseen(cmd_ledger_no(u.uz));
+        await makemap_remove_mons();
+        rm_mapseen(u.uz.dlevel + (game.dungeons?.[u.uz.dnum]?.ledger_start || 0));
         {
             const Unachieve = '%s achievement revoked.';
 
             /* achievement tracking; if replacing a level that has a special
                prize, lose credit for previously finding it */
-            if (cmd_Is_mineend_level(u.uz)) {
-                if (cmd_remove_achievement(/*ACH_MINE_PRIZE*/ 12))
+            if (cmd_on_level(u.uz, game.mineend_level)) {
+                if (remove_achievement(ACH_MINE_PRIZE))
                     await pline(Unachieve.replace('%s', "Mine's-end"));
                 if (svc.achieveo) svc.achieveo.mines_prize_oid = 0;
-            } else if (cmd_Is_sokoend_level(u.uz)) {
-                if (cmd_remove_achievement(/*ACH_SOKO_PRIZE*/ 13))
+            } else if (cmd_on_level(u.uz, game.sokoend_level)) {
+                if (remove_achievement(ACH_SOKO_PRIZE))
                     await pline(Unachieve.replace('%s', 'Soko-prize'));
                 if (svc.achieveo) svc.achieveo.soko_prize_oid = 0;
             }
         }
-        if (u.uswldtim !== undefined && game.Punished) {
-            cmd_ballrelease(false);
-            cmd_unplacebc();
+        if (u.uball) {
+            await ballrelease(false);
+            unplacebc();
         }
         /* reset lock picking unless it's for a carried container */
-        cmd_maybe_reset_pick(null);
+        maybe_reset_pick(null);
         /* reset interrupted digging if it was taking place on this level */
         if (svc.digging && cmd_on_level(svc.digging.level, u.uz))
             svc.digging = {};
@@ -6651,72 +6681,44 @@ export async function makemap_prepost(pre, wiztower) {
         if (svc.polearm) svc.polearm.hitmon = null;
         /* escape from trap */
         reset_utrap_cmd();
-        await cmd_check_special_room(true);   /* room exit */
-        game.dndest = {};
-        game.updest = {};
+        await check_special_room(true);   /* room exit */
+        game.dndest = null;
+        game.updest = null;
         u.ustuck = null;
         u.uswallow = u.uswldtim = 0;
         set_uinwater(0);
         u.uundetected = 0;   /* not hidden, even if means are available */
-        cmd_dmonsfree();
-        cmd_dobjsfree();
-        /* NOT PORTED: C then does savelev(get_freeing_nhfile(), ledger_no())
-           purely to release the level's dynamically allocated data. */
+        await dmonsfree();
+        dobjsfree();
+        // C: savelev(..., FREEING) also releases the departing level's regions.
+        const { clear_regions } = await import('./region.js');
+        clear_regions();
     } else {
-        cmd_vision_reset();
+        vision_reset();
         game.vision_full_recalc = 1;
-        cmd_cls();
+        await cls();
         /* was using safe_teleds() but that doesn't honor arrival region */
-        await cmd_u_on_rndspot((u.uhave?.amulet ? 1 : 0) | (wiztower ? 2 : 0));
-        await cmd_losedogs();
-        cmd_kill_genocided_monsters();
+        await u_on_rndspot((u.uhave?.amulet ? 1 : 0) | (wiztower ? 2 : 0));
+        await losedogs();
+        await kill_genocided_monsters();
         /* u_on_rndspot() might pick a spot that has a monster, or losedogs()
            might pick the hero's spot, so we might have to move one of them */
         if ((mtmp = m_at(u.ux, u.uy)) != null)
-            await cmd_u_collide_m(mtmp);
-        cmd_initrack();
-        if (game.Punished) {
-            cmd_unplacebc();
-            cmd_placebc();
+            u_collide_m(mtmp);
+        initrack();
+        if (u.uball) {
+            unplacebc();
+            placebc();
         }
-        cmd_docrt();
+        await docrt();
         await flush_screen(1);
-        await cmd_deliver_splev_message();   /* level entry */
-        await cmd_check_special_room(false); /* room entry */
+        await deliver_splev_message();   /* level entry */
+        await check_special_room(false); /* room entry */
     }
 }
-// The #wizmakemap helpers this port has no equivalent for; each is a no-op so
-// makemap_prepost() keeps C's exact call sequence without inventing behaviour.
-function cmd_makemap_remove_mons() {}
-function cmd_rm_mapseen(_ledger) {}
-function cmd_ledger_no(_uz) { return 0; }
-function cmd_Is_mineend_level(_uz) { return false; }
-function cmd_Is_sokoend_level(_uz) { return false; }
-function cmd_remove_achievement(_ach) { return false; }
-function cmd_ballrelease(_bc) {}
-function cmd_unplacebc() {}
-function cmd_placebc() {}
-function cmd_maybe_reset_pick(_obj) {}
 function cmd_on_level(a, b) {
     return !!a && !!b && a.dnum === b.dnum && a.dlevel === b.dlevel;
 }
-async function cmd_check_special_room(_newlev) {}
-function cmd_dmonsfree() {}
-function cmd_dobjsfree() {}
-function cmd_vision_reset() {}
-function cmd_cls() {}
-async function cmd_u_on_rndspot(_upflag) {}
-// C ref: dog.c:303 losedogs(), called (via #wizmakemap) with no hand-tuned
-// mydogs placement to preserve here -- makemap_prepost() has no equivalent
-// of do.js's kept/losedogs_place(), so the real port is a direct call.
-async function cmd_losedogs() {
-    const { losedogs } = await import('./dog.js');
-    await losedogs();
-}
-function cmd_kill_genocided_monsters() {}
-async function cmd_u_collide_m(_mtmp) {}
-function cmd_initrack() {}
-async function cmd_deliver_splev_message() {}
 
 // C ref: cmd.c:1072 levltyp[MAX_TYPE + 2] — level type codes aren't the same as
 // screen symbols and only the latter have easily accessible descriptions.

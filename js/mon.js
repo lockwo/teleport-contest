@@ -2538,6 +2538,8 @@ export async function mon_leaving_level(mon) {
 // mptr reflects mtmp->data BEFORE the death (newcham may have changed it).
 export async function m_detach(mtmp, mptr, due_to_death) {
     const mx = mtmp.mx, my = mtmp.my;
+    const fmon = game.level?.monsters;
+    const fmonIndex = fmon?.indexOf(mtmp) ?? -1;
 
     /* C ref: apply.c m_unleash(mtmp, FALSE) — unported; it also drops the
        leash object and prints "Your leash falls slack." */
@@ -2588,6 +2590,11 @@ export async function m_detach(mtmp, mptr, due_to_death) {
         game.iflags = game.iflags || {};
         game.iflags.purge_monsters = (game.iflags.purge_monsters | 0) + 1;
     }
+    // C ref: mon.c:2747-2756 — detaching clears the map slot, not fmon.
+    // mon_leaving_level() unlinks the shared JS map/list; retain the dead
+    // entry until dmonsfree() accounts for and deallocates it.
+    if (fmonIndex >= 0 && !fmon.includes(mtmp))
+        fmon.splice(fmonIndex, 0, mtmp);
 
     /* the hero is thrown from a steed that dies or is genocided */
     if (mtmp === game.u?.usteed) {
@@ -3374,8 +3381,8 @@ export async function wake_nearto_core(x, y, distance, petcall) {
             if (game.context?.mon_moving || !petcall)
                 continue;
             if (mtmp.mtame) {
-                if (!mtmp.isminion && EDOG(mtmp))
-                    EDOG(mtmp).whistletime = game.moves | 0;
+                if (!mtmp.isminion && mtmp.edog)
+                    mtmp.edog.whistletime = game.moves | 0;
                 /* fix up a pet who is stuck "fleeing" its master */
                 mtmp.mtrack = []; /* C: mon_track_clear(mtmp) */
             }

@@ -39,6 +39,7 @@ import { find_mac, species } from './worn.js';
 import {
     SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED, STONE, STATUE_TRAP,
     ACCESSIBLE, IS_FURNITURE, IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND,
+    ZAP_POS, isok, M_AP_OBJECT,
 } from './const.js';
 // C ref: apply.c do_break_wand() — the shared explode() call, its direction
 // table, the dig-a-pit-vs-hole choice, and the room type the digging branch
@@ -698,6 +699,20 @@ export async function doapply() {
     if (obj.otyp === STETHOSCOPE) {
         return await use_stethoscope(obj);
     }
+
+    // C ref: apply.c:4333-4336 — bells spend a turn even if muffled.
+    if (obj.otyp === BELL || obj.otyp === BELL_OF_OPENING) {
+        await use_bell({ obj });
+        return ECMD_TIME;
+    }
+
+    // C ref: apply.c:4349-4351 — applying oil always spends a turn,
+    // including attempts blocked by swallowing or being underwater.
+    if (obj.otyp === POT_OIL) {
+        await light_cocktail({ obj });
+        return ECMD_TIME;
+    }
+    if (obj.otyp === EXPENSIVE_CAMERA) return await use_camera(obj);
 
     // C ref apply.c:4361 — applying a magic marker writes a scroll/spellbook.
     if (obj.otyp === MAGIC_MARKER) {
@@ -1486,15 +1501,6 @@ function rub_ok(obj) {
 }
 
 // C ref: apply.c dorub() — the #rub command.  Returns an ECMD_* code.
-//
-// The recorded seed0108 path rubs a wished magic lamp that is held (not yet
-// wielded) in inventory: getobj() asks "What do you want to rub? [n or ?*]",
-// 'n' selects the lamp, and because obj != uwep dorub wields it via
-// wield_tool() ("You now wield a lamp.") and returns ECMD_TIME, re-queuing
-// itself on the canned-command stack (the re-run, with the lamp now wielded,
-// is not separately exercised in the recorded stream).  The graystone /
-// royal-jelly / already-wielded-lamp (djinni / puff of smoke / nothing) paths
-// are present for faithfulness but consume no RNG in the owned sessions.
 export async function dorub() {
     await loadDeps();
     const obj = await _invent.getobj('rub', rub_ok, _invent.GETOBJ_NOFLAGS);
@@ -1511,10 +1517,9 @@ export async function dorub() {
 
     if (obj !== game.uwep) {
         if (await _invent.wield_tool(obj, 'rub')) {
-            // C: cmdq_add_ec(CQ_CANNED, dorub) + cmdq_add_key(invlet) -> re-runs
-            // dorub with the tool wielded.  The wished-lamp session reaches this
-            // wield-and-time path; the canned re-run isn't separately recorded.
-            return ECMD_TIME;
+            // C ref: apply.c:1807-1810 — spend the wield turn, then run
+            // dorub again with the selected lamp before requesting a new key.
+            return await reapply_after_wield(obj, dorub);
         }
         return ECMD_OK;
     }
@@ -1616,10 +1621,10 @@ function find_poleable_mon(pos, min_range, max_range) {
 //     cmdq_add_ec(CQ_CANNED, doapply); cmdq_add_key(CQ_CANNED, obj->invlet);
 //     return ECMD_TIME;
 // rhack() returns, moveloop_core() spends the turn the wield cost, and the next
-// rhack() dispatches the queued doapply without reading a key — so the whole
+// rhack() dispatches the queued command without reading a key — so the whole
 // thing is ONE input boundary for the player.  invent.js dofire() models the
 // same cmdq_add_ec pair this way.
-async function reapply_after_wield(obj) {
+async function reapply_after_wield(obj, command = doapply) {
     const { moveloop_turn } = await import('./allmain.js');
     game.context = game.context || {};
     game.context.move = 0;
@@ -1632,7 +1637,7 @@ async function reapply_after_wield(obj) {
     // C ref: allmain.c moveloop_core() tail: `if (disp.botl || disp.botlx)
     // bot(); else if (disp.time_botl) timebot();` is the only flush after the
     // turn.  A message printed during the turn already flushed at vpline()
-    // time, before the pet or monster finished moving, and the queued doapply
+    // time, before the pet or monster finished moving, and the queued command
     // never reaches parse()'s flush_screen(1).  Otherwise the map a later
     // --More-- freezes is still the one from the last flush.
     if (game.botl || game.botlx
@@ -1641,7 +1646,7 @@ async function reapply_after_wield(obj) {
     if (game._cmdqAbandonRetry) return ECMD_OK;
     // getobj()'s cmdq fast path pops this invlet instead of drawing a prompt.
     _invent.cmdq_add_key(CQ_CANNED, obj.invlet);
-    return await doapply();
+    return await command();
 }
 
 // C ref: apply.c use_pole(obj, autohit) — reached from dofire() as
@@ -1671,7 +1676,10 @@ export async function use_pole(obj, autohit) {
     }
     const { min_range, max_range } = calc_pole_range();
 
-    if (!autohit) await _display.update_topl('Where do you want to hit?');
+    if (!autohit) {
+        await _display.update_topl('Where do you want to hit?');
+        await _display.flush_screen(1);
+    }
     const cc = { x: u.ux, y: u.uy };
     const hitm = game.context?.polearm_hitmon;
     if (!find_poleable_mon(cc, min_range, max_range) && hitm && !hitm.mdead
@@ -1823,7 +1831,7 @@ export const ECMD = { ECMD_OK, ECMD_CANCEL, ECMD_TIME };
 // another C file's coverage in swarm/bin/coverage.mjs.
 //
 // Callees that are stubbed here (each draws in C, draws nothing here):
-//   mintrap(), make_familiar(), openit(), mkundead(), hurtle(),
+//   mintrap(), make_familiar(), hurtle(),
 //   boulder_hits_pool(), revive_corpse(), floorfood(), tele_to_rnd_pet(),
 //   bhit()/flash_hits_mon() for the camera ray, enexto(), get_adjacent_loc().
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2057,11 +2065,26 @@ async function ap_mintrap(mtmp, _flags) {
 }
 // C ref: makemon.c make_familiar(otmp, x, y, quietly) — DEFERRED (no port).
 async function ap_make_familiar(_otmp, _x, _y, _quietly) { return null; }
-// C ref: lock.c openit() — DEFERRED (no port); returns the count of things
-// opened, so 0 keeps use_bell()'s "Nothing happens." arm.
-async function ap_openit() { return 0; }
-// C ref: makemon.c mkundead(mm, revive_corpses, mmflags) — DEFERRED (no port).
-async function ap_mkundead(_mm, _revive, _mmflags) {}
+// C ref: detect.c openit() — open nearby doors, boxes, or a swallowing monster.
+async function ap_openit() {
+    const A = await ap_load();
+    return await A.detect.openit();
+}
+// C ref: mkroom.c mkundead() — Bell of Opening summons without reviving corpses.
+async function ap_mkundead(mm, revive_corpses, mmflags) {
+    const A = await ap_load();
+    const { morguemon } = await import('./sp_lev.js');
+    return await A.mkroom.mkundead(mm, revive_corpses, mmflags, {
+        level_difficulty: A.makemon.level_difficulty_ext,
+        morguemon,
+        enexto: (x, y, ptr) => A.teleport.enexto_gpflags(x, y, ptr, 0),
+        makemon: async (ptr, x, y, flags) => {
+            const mon = A.makemon.makemon(ptr, x, y, flags);
+            await A.makemon.makemon_appears_msg(mon, x, y, flags);
+            return mon;
+        },
+    });
+}
 // C ref: dothrow.c hurtle(dx, dy, range, verbose) — DEFERRED (no port).
 async function ap_hurtle(_dx, _dy, _range, _verbose) {}
 // C ref: dbridge.c boulder_hits_pool(otmp, rx, ry, newspot) — DEFERRED.
@@ -2111,14 +2134,29 @@ async function ap_floorfood(verb, corpsecheck) {
 }
 // C ref: teleport.c tele_to_rnd_pet() — DEFERRED (no port).
 async function ap_tele_to_rnd_pet() {}
-// C ref: zap.c bhit(dx, dy, range, weapon, fhitm, fhito, &obj) for the
-// FLASHED_LIGHT flavour, and zap.c flash_hits_mon()/mon.c
-// see_monster_closeup()/light.c transient_light_cleanup().  js/zap.js's bhit()
-// is private and only implements the ZAPPED_WAND flavour, so the camera ray
-// finds nothing here.
-async function ap_bhit_flash(_dx, _dy, _range, _obj) { return null; }
-async function ap_flash_hits_mon(_mtmp, _obj) { return 0; }
-async function ap_see_monster_closeup(_mtmp, _photo) {}
+// C ref: zap.c:3861-4093 bhit()'s FLASHED_LIGHT branch.
+async function ap_bhit_flash(dx, dy, range, obj) {
+    const A = await ap_load();
+    let x = game.u.ux, y = game.u.uy;
+    while (range-- > 0) {
+        x += dx; y += dy;
+        if (!isok(x, y)) break;
+        const loc = game.level.at(x, y);
+        if (!ap_Blinded() && !game.ublindf)
+            await A.lightsrc.show_transient_light(null, x, y);
+        const mon = A.display.m_at(x, y);
+        if (mon && mon.m_ap_type !== 'obj' && mon.m_ap_type !== M_AP_OBJECT) {
+            game.notonhead = (x !== mon.mx || y !== mon.my);
+            if (!mon.minvis) return mon;
+            obj.ox = game.u.ux; obj.oy = game.u.uy;
+            await A.uhitm.flash_hits_mon(mon, obj);
+        }
+        if (!ZAP_POS(loc.typ)
+            || (IS_DOOR(loc.typ) && (loc.doormask & (D_CLOSED | D_LOCKED))))
+            break;
+    }
+    return null;
+}
 // C ref: teleport.c enexto(cc, xx, yy, mdat) — js/dog.js's enexto() is private
 // and takes no permonst; DEFERRED so the caller's "no free spot" arm is taken.
 async function ap_enexto(_cc, _xx, _yy, _mdat) { return false; }
@@ -2341,9 +2379,9 @@ export async function do_blinding_ray(obj) {
 
     obj.ox = u.ux; obj.oy = u.uy; /* flash_hits_mon() wants this */
     if (mtmp) {
-        await ap_flash_hits_mon(mtmp, obj);
+        await A.uhitm.flash_hits_mon(mtmp, obj);
         if (obj.otyp === EXPENSIVE_CAMERA)
-            await ap_see_monster_closeup(mtmp, true); /* TRUE for photo */
+            await A.mon.see_monster_closeup(mtmp, true); /* TRUE for photo */
     }
     /* normally bhit() would do this but for FLASHED_LIGHT we want it
        to be deferred until after flash_hits_mon() */
@@ -3221,7 +3259,7 @@ export async function use_bell(optr) {
                 unpunish();
                 res = 1;
             } else if (u.utrap && u.utraptype === TT_BURIEDBALL_A) {
-                ap_buried_ball_to_freedom();
+                await ap_buried_ball_to_freedom();
                 res = 1;
             }
             res += await ap_openit();
@@ -3267,8 +3305,11 @@ function ap_On_stairs(x, y) {
         if (s.sx === x && s.sy === y) return true;
     return false;
 }
-// C ref: ball.c buried_ball_to_freedom() — DEFERRED (no port); RNG-free in C.
-function ap_buried_ball_to_freedom() {}
+// C ref: dig.c buried_ball_to_freedom().
+async function ap_buried_ball_to_freedom() {
+    const { buried_ball_to_freedom } = await import('./dig.js');
+    await buried_ball_to_freedom();
+}
 
 // C ref: apply.c:1318 use_candelabrum(obj).  RNG-free.
 export async function use_candelabrum(obj) {
@@ -4295,7 +4336,7 @@ export async function use_royal_jelly(optr) {
                                        A.invent.GETOBJ_PROMPT);
     if (!eobj) {
         if (splitit) {
-            ap_unsplitobj(obj);
+            A.invent.unsplitobj(obj);
             A.invent.update_inventory();
         } else {
             /* this lump was already separate; prevent merge */
@@ -4351,9 +4392,6 @@ export async function use_royal_jelly(optr) {
     return ECMD_TIME;
 }
 
-// C ref: invent.c unsplitobj(obj) — js/invent.js's copy is private (and is
-// itself a `return obj` stub); RNG-free either way.
-function ap_unsplitobj(obj) { return obj; }
 // C ref: mkobj.c kill_egg(egg) / attach_egg_hatch_timeout(egg, when) —
 // js/mkobj.js's attach_egg_hatch_timeout() is private (and this port has no
 // timer queue), kill_egg() is unported.  attach_egg_hatch_timeout DRAWS in C

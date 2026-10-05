@@ -98,6 +98,21 @@ export async function mount_steed(mtmp, force) {
         return false;
     }
 
+    // C ref: steed.c:229-239 — a wounded hero cannot mount, and this guard
+    // runs before checking whether a monster is at the requested location.
+    if ((u.HWounded_legs || 0) || (u.EWounded_legs || 0)
+        || (u.uprops?.Wounded_legs || 0)) {
+        const { legs_in_no_shape } = await import('./do.js');
+        await legs_in_no_shape('riding', false);
+        const sides = ((u.EWounded_legs || u.uprops?.EWounded_legs || 0) & BOTH_SIDES);
+        if (force && is_wizard_steed()
+            && await y_n(`Heal your leg${sides === BOTH_SIDES ? 's' : ''}?`) === 'y') {
+            await heal_legs(0);
+        } else {
+            return false;
+        }
+    }
+
     // "Can the player reach and see the monster?" — no monster there.
     if (!mtmp) {
         await pline('I see nobody there.');

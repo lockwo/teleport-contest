@@ -7,7 +7,7 @@ import { s_suffix } from './hacklib.js';
 import { rn2, rn1, rnd, rnl, d } from './rng.js';
 import { pline, newsym, m_at, show_glyph_cell, update_topl, urgent_topl, topl_more, y_n,
          bot, flush_screen, canseemon_shared, map_invisible, unmap_object, shieldeff,
-         impossible, display_nhwindow_message, useDECgraphics,
+         impossible, display_nhwindow_message, useDECgraphics, You_hear,
          Hallucination_u as Hallucination } from './display.js';
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_NOFLAGS, xname, near_capacity, splitobj, delobj_core, obfree,
@@ -29,7 +29,7 @@ import { exercise, acurr_eff as ACURR } from './attrib.js';
 import { more_experienced, has_innate } from './exper.js';
 import { findit } from './detect.js';
 import { find_ac } from './u_init.js';
-import { cansee, vision_recalc, Blind } from './vision.js';
+import { cansee, vision_recalc, Blind, recalc_block_point } from './vision.js';
 import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS, ARMOR_CLASS,
          FOOD_CLASS, RING_CLASS, POT_OIL, POT_WATER, GLOB_OF_GREEN_SLIME,
          SPBOOK_CLASS, mkobj as _mkobj, place_object, objects,
@@ -55,8 +55,10 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          PICK_ONE, LEVITATION, FLYING, KILLED_BY, KILLED_BY_AN,
          NO_KILLER_PREFIX, ARM, EYE, LAVAWALL, DB_UNDER, DB_FLOOR, VWALL, HWALL,
          TT_LAVA, TT_INFLOOR, PASSES_WALLS, EXPL_FIERY, STRAT_WAITMASK,
-         Is_airlevel } from './const.js';
+         Is_airlevel, Is_rogue_level, SDOOR, DOOR, WM_MASK, D_NODOOR, D_BROKEN,
+         SHOP_DOOR_COST } from './const.js';
 import { is_pool, is_ice, is_lava } from './dbridge.js';
+import { in_rooms } from './shkroom.js';
 import { create_gas_cloud } from './region.js';
 import { CLR_ORANGE, CLR_BLACK, CLR_GREEN, CLR_YELLOW, CLR_WHITE, CLR_BRIGHT_BLUE } from './terminal.js';
 // C ref: display.c:2661 zapcolors[NUM_ZAP], display.h:280 (HI_ZAP == CLR_BRIGHT_BLUE).
@@ -1433,6 +1435,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
     const damgtype = fltyp % 10;
     const fireball = (type === BZ_U_SPELL(ZT_FIRE)); /* set once */
     let gas_hit = false;
+    const shopdamage = { value: false };
     // C: `int hdmgtype = Hallucination ? rn2(6) : damgtype;` is evaluated in
     // the declarations, before the engulfed early return.  It only picks the
     // beam colour, but a hallucinating hero still pays the rn2(6).
@@ -1579,7 +1582,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
             // trail of 1x1 clouds via zap_over_floor(), deferred until we know
             // whether a reflection happens.
             if (!fireball && !gas_hit) {
-                range += await zap_over_floor(sx, sy, type);
+                range += await zap_over_floor(sx, sy, type, shopdamage, true, 0);
                 /* fire can melt ice and drown the monster found above */
                 mon = m_at(sx, sy);
             }
@@ -1635,7 +1638,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
             /* gas that missed or that hit without being reflected will leave
                a 1x1 cloud here; the earlier zap_over_floor() was deferred */
             if (gas_hit)
-                await zap_over_floor(sx, sy, type);
+                await zap_over_floor(sx, sy, type, shopdamage, true, 0);
 
             bounce = !ZAP_POS(game.level?.at(sx, sy)?.typ ?? STONE)
                 || (closed_door_at(sx, sy) && range >= 0);
@@ -1676,12 +1679,20 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
         const { explode } = await import('./explode.js');
         await explode(sx, sy, type, d(12, 6), 0, EXPL_FIERY);
     }
+    if (shopdamage.value) {
+        const { pay_for_damage } = await import('./shk.js');
+        await pay_for_damage(damgtype === ZT_FIRE ? 'burn away'
+                            : damgtype === ZT_COLD ? 'shatter'
+                            : damgtype === ZT_ACID ? 'damage'
+                            : damgtype === ZT_DEATH ? 'disintegrate' : 'destroy', false);
+    }
     game.bhitpos = save_bhitpos;
 }
 
 // C ref: zap.c zap_over_floor() — terrain and floor-object effects, with
 // range consumed by the terrain change.
-export async function zap_over_floor(x, y, type, _exploding_wand_typ) {
+export async function zap_over_floor(x, y, type, shopdamage = null,
+                                     ignoremon = true, exploding_wand_typ = 0) {
     // C ref: zap.c:5157 — a PHYS_EXPL_TYPE blast (gas spore) has no effect on
     // the floor and returns before anything else.  Without this guard the
     // zaptype(-1)%10 == ZT_FIRE coincidence made a physical explosion burn the
@@ -1799,8 +1810,83 @@ export async function zap_over_floor(x, y, type, _exploding_wand_typ) {
             }
         }
     }
+    // C ref: zap.c:5397-5487.  Doors absorb a ray; destructive rays update
+    // vision before the feedback message, which can pause with --More--.
+    if (lev && (lev.typ === SDOOR || closed_door_at(x, y))) {
+        const see_it = cansee(x, y);
+        const yourzap = type >= 0 && !exploding_wand_typ;
+        const fltyp = zaptype(type);
+        const zapverb = exploding_wand_typ || fltyp >= 20 ? 'blast'
+                      : fltyp >= 10 ? 'spell' : 'bolt';
+        if (exploding_wand_typ === POT_OIL || exploding_wand_typ === SCR_FIRE)
+            exploding_wand_typ = 0;
+        if (lev.typ === SDOOR) {
+            lev.doormask = Is_rogue_level(game.u?.uz) ? D_NODOOR
+                : (lev.doormask & ~WM_MASK) | ((lev.doormask & D_LOCKED) ? 0 : D_CLOSED);
+            lev.typ = DOOR;
+            recalc_block_point(x, y);
+            newsym(x, y);
+            if (see_it)
+                await update_topl(`${yourzap ? 'Your' : 'The'} ${zapverb} reveals a secret door.`);
+            else if (Is_rogue_level(game.u?.uz)) {
+                const { draft_message } = await import('./dig.js');
+                await draft_message(false);
+            }
+        }
+        if (closed_door_at(x, y)) {
+            rangemod = -1000;
+            let newmask = -1, see_txt, sense_txt, hear_txt;
+            switch (damgtype) {
+            case ZT_FIRE:
+                newmask = D_NODOOR; see_txt = 'The door is consumed in flames!';
+                sense_txt = 'You smell smoke.'; break;
+            case ZT_COLD:
+                newmask = D_NODOOR; see_txt = 'The door freezes and shatters!';
+                hear_txt = 'a deep cracking sound.'; break;
+            case ZT_DEATH:
+                if (Math.abs(type) === ZT_BREATH(ZT_DEATH)) {
+                    newmask = D_NODOOR; see_txt = 'The door disintegrates!';
+                    hear_txt = 'crashing wood.';
+                }
+                break;
+            case ZT_LIGHTNING:
+                newmask = D_BROKEN; see_txt = 'The door splinters!';
+                hear_txt = 'crackling.'; break;
+            }
+            if (newmask < 0 && exploding_wand_typ === WAN_STRIKING) {
+                newmask = D_BROKEN; see_txt = 'The door crashes open!';
+                sense_txt = 'You feel a burst of cool air.';
+            }
+            if (newmask >= 0) {
+                if (in_rooms(x, y, SHOPBASE)[0]) {
+                    const { add_damage } = await import('./shk.js');
+                    await add_damage(x, y, type >= 0 ? SHOP_DOOR_COST : 0);
+                    if (type >= 0 && shopdamage) shopdamage.value = true;
+                }
+                lev.doormask = newmask;
+                recalc_block_point(x, y);
+                if (see_it) {
+                    await update_topl(see_txt);
+                    newsym(x, y);
+                } else if (sense_txt) await update_topl(sense_txt);
+                else if (hear_txt) await You_hear(hear_txt);
+                const { picking_at, reset_pick } = await import('./lock.js');
+                if (picking_at(x, y)) {
+                    await stop_occupation_zap();
+                    reset_pick();
+                }
+            } else if (see_it) {
+                await update_topl(exploding_wand_typ ? 'The door remains intact.'
+                    : `The door absorbs ${yourzap ? 'your' : 'the'} ${zapverb}!`);
+            } else await update_topl('You feel vibrations.');
+        }
+    }
     if (damgtype === ZT_FIRE)
         await burn_floor_objects(x, y, false, type > 0);
+    if (!ignoremon) {
+        const mon = m_at(x, y);
+        if (mon) await wakeup(mon, type >= 0);
+    }
     return rangemod;
 }
 
@@ -5134,11 +5220,7 @@ export async function mon_spell_hits_spot(_caster, adtyp, x, y) {
         const zt_typ = adtyp - 1;              /* convert AD_xxxx to ZT_xxxx */
         const zapdmgtyp = -ZT_SPELL_Z(zt_typ); /* damage is from monster spell */
 
-        /* C's signature is zap_over_floor(x, y, type, *shopdamage, ignoremon,
-           exploding_wand_typ); this file's port (js/zap.js:1449) takes only
-           (x, y, type, exploding_wand_typ), so the shopdamage/ignoremon pair
-           lands on an unused parameter.  Called with C's list so the call site
-           stays right when that signature is completed. */
+        // C ref: zap.c:5528 — the spell caster already handles its target.
         await zap_over_floor(x, y, zapdmgtyp, shopdummy, true, 0);
     } else {
         await impossible(

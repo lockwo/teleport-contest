@@ -18,7 +18,7 @@ import { WEAPON_CLASS, WAND_CLASS, GEM_CLASS, RING_CLASS,
          TOOL_CLASS, RANDOM_CLASS, ILLOBJ_CLASS, ARMOR_CLASS, AMULET_CLASS,
          FOOD_CLASS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS, COIN_CLASS,
          ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
-         objects, next_ident } from './mkobj.js';
+         objects } from './mkobj.js';
 import { mflags1_of, M1_ANIMAL } from './monflags_data.js';
 import { attacktype, AT_HUGS } from './monattk_data.js';
 import { exercise } from './attrib.js';
@@ -1359,9 +1359,6 @@ export async function engrave_step() {
         if ((stylus.quan || 1) > 1) {
             if (firsttime)
                 await update_topl(`One of ${await yname_of(stylus)} gets dull.`);
-            // C: splitobj() -> nextoid() -> next_ident() spends one rnd(2);
-            // this port's splitobj() draws nothing, so the call site pays it.
-            next_ident();
             stylus = ctx.stylus = splitobj(stylus, 1);
             stylus.owornmask = 0;   /* the split-off blade isn't wielded/quivered */
             splitstack = true;

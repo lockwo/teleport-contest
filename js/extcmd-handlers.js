@@ -10,7 +10,7 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, putStatusRow, newsym, remember_topl, yn_prompt_history } from './display.js';
+import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, putStatusRow, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import {
     obj_doname, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
@@ -37,7 +37,7 @@ import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJE
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { delobj, stackobj, doddrop, yname, ysimple_name,
          flush_addinv_plines } from './invent.js';
-import { count_unpaid, is_worn, wearing_armor, inventoryArray, takeoff_worn_obj,
+import { count_unpaid, is_worn, wearing_armor, inventoryArray, select_off,
          dismiss_invent_screen } from './invent.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
@@ -54,7 +54,7 @@ import { hold_another_object, encumber_msg, objects_at, otense, will_feel_cockat
 import { cxname, The, thesimpleoname, simpleonames } from './objnam.js';
 import { artifact_origin } from './artifact.js';
 import { ONAME_WISH, ONAME_KNOW_ARTI, IRONBARS, ICE, Is_airlevel,
-         Is_waterlevel } from './const.js';
+         Is_waterlevel, PICK_ONE } from './const.js';
 import { begin_burn } from './timeout.js';
 import { rn1 } from './rng.js';
 import { HORN_OF_PLENTY, TALLOW_CANDLE, WAX_CANDLE, POT_OIL, OIL_LAMP, MAGIC_LAMP,
@@ -78,7 +78,7 @@ import { dogenocided, do_gamelog, doconduct, dovanquished, doborn } from './insi
 import { isok } from './hacklib.js';
 import { Monnam, canspotmon, mon_nam, oc_wldam, killed } from './uhitm.js';
 import { domonnoise } from './sounds.js';
-import { build_overview_lines, surface, print_dungeon_lines } from './dungeon.js';
+import { build_overview_lines, surface, ceiling, print_dungeon_lines } from './dungeon.js';
 import { doextversion } from './version.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { polyok_flag } from './monflags_data.js';
@@ -407,11 +407,14 @@ export async function hooked_tty_getlin(query, hook) {
     remember_topl();
     let typed = '';   // what the user actually typed (obufp/bufp content)
     let shown = '';   // what is displayed (typed, possibly autocompleted)
+    let doprev = false;
     const base = (query + ' ').length; // column of first input char
 
     for (;;) {
         // Cursor sits one past the typed characters.
-        draw_getlin(query, shown, base + typed.length);
+        if (!doprev) draw_getlin(query, shown, base + typed.length);
+        // C ref: getline.c:81 — recall includes the current query and answer.
+        game._toplines = query + ' ' + shown;
         const code = await nhgetch();
 
         if (code === 27) { // ESC
@@ -419,10 +422,39 @@ export async function hooked_tty_getlin(query, hook) {
                 // Clear current contents and keep prompting from the start.
                 typed = '';
                 shown = '';
+                doprev = false;
+                msghist().maxcol = msghist().maxrow;
+                game._pending_message = '';
+                game._toplin = 0;
+                game._toplinSoft = null;
                 continue;
             }
             if (!suppress_hist) yn_prompt_history(`${query} `, '');
+            else game._toplines = ''; // C getline.c:217-220
             return '\x1b';
+        }
+        // C ref: getline.c:106-140 — temporarily leave the reader for ^P.
+        if (code === 16) {
+            const { doprev_message } = await import('./cmd.js');
+            const mode = String(game.iflags?.prevmsg_window ?? 's')[0].toLowerCase();
+            if (mode === 's' || (mode === 'c' && !doprev)) {
+                if (!doprev) await doprev_message(); /* need two initially */
+                await doprev_message();
+                doprev = true;
+            } else {
+                await doprev_message();
+                doprev = false;
+                msghist().maxcol = msghist().maxrow;
+            }
+            continue;
+        }
+        if (doprev) {
+            // Unlike yn_function(), getlin processes the key ending recall.
+            doprev = false;
+            msghist().maxcol = msghist().maxrow;
+            game._pending_message = '';
+            game._toplin = 0;
+            game._toplinSoft = null;
         }
         if (code === 13 || code === 10) { // newline: done
             // C ref: ext_cmd_getlin_hook() writes the unique completion into the
@@ -430,6 +462,7 @@ export async function hooked_tty_getlin(query, hook) {
             // just what was typed (e.g. "l" -> "loot").  `shown` already holds
             // that completion (or the raw typed text when none applies).
             if (!suppress_hist) yn_prompt_history(`${query} `, shown);
+            else game._toplines = ''; // C getline.c:217-220
             return shown;
         }
         if (code === 8 || code === 127) { // backspace / delete-prev
@@ -788,7 +821,7 @@ async function doturn() {
     // vampshifter form, or one whose god is very angry, is ignored: aggravate()
     // and abuse wisdom, using a move.
     const ydata = u?.Upolyd ? (u.data || null) : null;
-    const { is_vampshifter, aggravate } = await import('./monmove.js');
+    const { is_vampshifter, aggravate, monflee } = await import('./monmove.js');
     if (((u?.ualign?.type ?? 0) !== -1 /* A_CHAOTIC */
          && ((ydata && (is_demon_flag(ydata) || is_undead_flag(ydata)))
              || (g.youmonst && is_vampshifter(g.youmonst))))
@@ -851,8 +884,8 @@ async function doturn() {
                     await killed(mtmp);
                 }
             } else {
-                // monflee(mtmp, 0, FALSE, TRUE): untimed scare, no RNG.
-                mtmp.mflee = 1; mtmp.mfleetim = 0;
+                // C ref: pray.c:2405 — includes flee feedback and track reset.
+                await monflee(mtmp, 0, false, true);
             }
         }
     }
@@ -1490,7 +1523,7 @@ async function donamelevel() {
 // C ref: do_name.c docallcmd.  Present the name/call menu, read a single
 // PICK_ONE selection (ESC/space cancels), then dispatch the sub-action.
 export async function docallcmd() {
-    const disp = game?.nhDisplay;
+    const abc = !!game.flags?.lootabc;
     // C: inventory branches are only present when the pack is non-empty.
     const haveInvent = (game.invent || game.gi?.invent || []).length > 0;
     const items = [{ ch: 'm', desc: 'a monster' }];
@@ -1502,28 +1535,18 @@ export async function docallcmd() {
     items.push({ ch: 'd', desc: 'the type of an object on discoveries list' });
     items.push({ ch: 'a', desc: 'record an annotation for the current level' });
 
-    render_corner_menu(disp, 'What do you want to name?', items);
-    // Direct accelerators and the historical group accelerators both select;
-    // invalid input leaves the PICK_ONE menu active.
-    const aliases = { C: 'm', y: 'i', n: 'o', ',': 'f', '\\': 'd', l: 'a' };
-    let ch;
-    for (;;) {
-        const key = await nhgetch();
-        if (key === 27 || key === 32 || key === 13 || key === 10) {
-            ch = 'q';
-            break;
-        }
-        const c = String.fromCharCode(key);
-        const selected = aliases[c] || c;
-        if (items.some((it) => it.ch === selected)) {
-            ch = selected;
-            break;
-        }
-    }
-
-    // The menu is left on the grid; the next rhack() iteration's
-    // flush_screen(1) clears it and redraws the map with the cursor parked at
-    // the hero (matching tty_dismiss_nhwindow -> docorner/docrt).
+    const groups = { m: 'C', i: 'y', o: 'n', f: ',', d: '\\', a: 'l' };
+    const entries = [
+        { text: 'What do you want to name?', attr: ATR_INVERSE },
+        { text: '' },
+        ...items.map(it => ({
+            text: it.desc,
+            item: { value: it.ch, sel: abc ? undefined : it.ch, gsel: groups[it.ch] },
+        })),
+    ];
+    const committed = await select_command_menu(entries, { how: PICK_ONE });
+    const ch = committed ? entries.find(entry => entry.item?.selected)?.item.value : 'q';
+    await dismiss_invent_screen();
 
     switch (ch) {
     case 'q':
@@ -1809,9 +1832,8 @@ function render_container_contents(box) {
 
 // C ref: pickup.c use_container().  Loot an unlocked, untrapped floor container:
 // loop the in/out menu — ':' shows contents (costs a turn), 'q'/ESC quits.
-// Take-out ('o'/'b') and put-in ('i'/'r'/'s') aren't modelled: picking them
-// ends the loop without moving items (container state untouched, no false
-// RNG/screen divergence).  Returns 1 (ECMD_TIME) iff a turn elapsed, else 0.
+// Take-out and put-in use the class/item menus; stash-one uses getobj with a
+// count allowance.  Returns 1 (ECMD_TIME) iff a turn elapsed, else 0.
 async function use_container(box, more_containers) {
     let used = 0;
     box.lknown = 1;
@@ -1918,6 +1940,22 @@ async function use_container(box, more_containers) {
     if (loot_in) {
         if (await menu_loot_in(box)) used = 1;
     }
+    else if (action === 's') {
+        // C ref: pickup.c:3174-3184 — stash a selected stack (or count), undoing
+        // a split if the container rejects it without consuming a turn.
+        delete game._modal_screen;
+        const { stash_ok, in_container } = await import('./pickup.js');
+        const { GETOBJ_ALLOWCNT, unsplitobj } = await import('./invent.js');
+        game._pickup = game._pickup || {};
+        const saved = game._pickup.current_container;
+        game._pickup.current_container = box;
+        const obj = await getobj('stash', stash_ok, GETOBJ_PROMPT | GETOBJ_ALLOWCNT);
+        if (obj) {
+            if (await in_container(obj)) used = 1;
+            else unsplitobj(obj);
+        }
+        game._pickup.current_container = saved;
+    }
     if (loot_out && loot_in_first) await do_out();
     // C ref: use_container() `containerdone:` — anything actually done reveals
     // the contents, which is what makes doname() start saying "containing N".
@@ -1945,10 +1983,10 @@ function nextMenuCh(ch) {
 }
 
 // A PICK_ANY menu item line: "<accel> <sel> <text>", where the selection
-// indicator is '-' (off) or '+' (on; C uses '#' for a counted pick, not reached
-// here).  C ref: wintty.c tty_add_menu "%c - " + set_item_state.
+// indicator is '-' (off), '+' (on), or '#' (counted).
+// C ref: wintty.c tty_add_menu "%c - " + set_item_state.
 function menuItemLine(it) {
-    return `${it.letter} ${it.selected ? '+' : '-'} ${it.desc}`;
+    return `${it.letter} ${it.selected ? (it.count > 0 ? '#' : '+') : '-'} ${it.desc}`;
 }
 
 
@@ -1962,26 +2000,60 @@ async function run_pickany_menu(items, buildLines) {
     // menuitem_invert_test(mode 0) under menuinvertmode 1: non-SKIPINVERT items
     // always toggle; SKIPINVERT items toggle only when already selected.
     const invert_ok = (it) => !it.skipinvert || it.selected;
+    let searchBlankTop = false;
+    let count = 0, counting = false;
+    const toggle = (it, counted, n) => {
+        it.selected = counted ? n > 0 : !it.selected;
+        it.count = it.selected && counted ? n : -1;
+    };
     for (;;) {
         const lines = buildLines();
         let maxcol = '(end) '.length;
         for (const ln of lines) maxcol = Math.max(maxcol, ln.text.length + 2);
+        if (searchBlankTop) lines[0] = { text: '' };
         draw_corner_window(lines, maxcol, '(end)', 1);
+        const gacc = new Set();
+        for (const it of items)
+            if (it.groupacc && (it.groupacc !== it.letter || it.groupacc === '$'))
+                gacc.add(it.groupacc);
         const key = await nhgetch();
-        if (key === 27) return null;             // ESC: cancel
-        if (key === 13 || key === 10) break;     // <return>: confirm
         const ch = String.fromCharCode(key);
+        if (!items.some((it) => it.letter === ch) && !gacc.has(ch)
+            && !" 0123456789\x1b\r\n><^|@~.,-\\:".includes(ch)) continue;
+        // C ref: wintty.c:1563-1615 — Escape stops a pending count first.
+        if (ch >= '0' && ch <= '9' && (counting || !gacc.has(ch))) {
+            count = count * 10 + key - 48;
+            counting = count !== 0;
+            continue;
+        }
+        if (key === 27 && counting) { count = 0; counting = false; continue; }
+        const useCount = counting, useN = count;
+        count = 0; counting = false;
+        if (key === 27) return null;
+        if (key === 13 || key === 10) break;
         if (ch === ' ') break;                   // single-page: space confirms
-        if (ch === '@') {                        // menu_invert_all
-            for (const it of items) if (invert_ok(it)) it.selected = !it.selected;
+        if (ch === ':') {
+            // C ref: wintty.c:1700-1732 — search toggles matching selectable
+            // rows, including SKIPINVERT entries, using their stored text.
+            const reply = await hooked_tty_getlin('Search for:', null);
+            searchBlankTop = true;
+            if (reply && reply[0] !== '\x1b') {
+                for (const it of items)
+                    if (pmatchi(`*${reply}*`, `${it.letter} - ${it.desc}`))
+                        toggle(it, useCount, useN);
+            }
             continue;
         }
-        if (ch === '.') {                        // menu_select_all
-            for (const it of items) if (!it.skipinvert) it.selected = true;
+        if (ch === '@' || ch === '~') {           // invert all / current page
+            for (const it of items) if (invert_ok(it)) toggle(it, false, -1);
             continue;
         }
-        if (ch === '-') {                        // menu_deselect_all
-            for (const it of items) it.selected = false;
+        if (ch === '.' || ch === ',') {           // select all / current page
+            for (const it of items) if (!it.skipinvert) { it.selected = true; it.count = -1; }
+            continue;
+        }
+        if (ch === '-' || ch === '\\') {          // unselect all / current page
+            for (const it of items) { it.selected = false; it.count = -1; }
             continue;
         }
         // C ref: wintty.c process_menu_window() — the gacc[] test runs BEFORE
@@ -1990,16 +2062,15 @@ async function run_pickany_menu(items, buildLines) {
         // accelerator equal to its own item's selector is excluded from gacc,
         // except GOLD_SYM.  Without this, '$' on the "Put in what type of
         // objects?" menu (selector 'b', group '$') selected nothing.
-        const gacc = new Set();
-        for (const it of items)
-            if (it.groupacc && (it.groupacc !== it.letter || it.groupacc === '$'))
-                gacc.add(it.groupacc);
         if (gacc.has(ch)) {
-            for (const it of items) if (it.groupacc === ch) it.selected = !it.selected;
+            for (const it of items) if (it.groupacc === ch) {
+                it.selected = !it.selected;
+                it.count = it.selected && useCount ? useN : -1;
+            }
             continue;
         }
         const hit = items.find((it) => it.letter === ch);
-        if (hit) hit.selected = !hit.selected;   // accelerator toggle
+        if (hit) toggle(hit, useCount, useN);
         // any other key: ignored (PICK_ANY keeps waiting)
     }
     return items.filter((it) => it.selected);
@@ -2213,14 +2284,17 @@ async function query_objlist_takeoff(allow) {
     return picked.map((it) => it.obj);
 }
 
-// C ref: do_wear.c doddoremarm() — the 'A' (#takeoffall) command with the
-// default menustyle:Full, i.e. menu_remarm(0): class-filter menu, then item
-// menu, then take_off().  NOT ported: take_off()'s multi-turn disrobing
-// occupation (per-item oc_delay) — selected items come off on this command's
-// own turn instead.  Rendering both menus keeps their keystrokes out of the
-// command parser.
+// C ref: do_wear.c:3022 doddoremarm() — select removable slots, then start
+// or resume the take_off occupation; the occupation accounts for game time.
 export async function doddoremarm() {
     const g = game;
+    const { takeoff_ctx, take_off } = await import('./do_wear.js');
+    const doff = takeoff_ctx();
+    if (doff.what || doff.mask) {
+        await pline(`You continue ${doff.disrobing}.`);
+        g._takeoff_occupation = true;
+        return 0;
+    }
     if (!g.uwep && !g.uswapwep && !g.uquiver && !g.uamul && !g.ublindf
         && !g.uleft && !g.uright && !wearing_armor()) {
         await pline('You are not wearing anything.');
@@ -2248,10 +2322,11 @@ export async function doddoremarm() {
     const chosen = await query_objlist_takeoff(allow);
     if (chosen === null || !chosen.length) { await dismiss_invent_screen(); return 0; }
     await dismiss_invent_screen();
-    for (const obj of chosen) await takeoff_worn_obj(obj);
-    // C: takeoff.disrobing is "disarming" when only weapon slots are involved.
-    await pline(`You finish ${chosen.some((o) => !((o.owornmask || 0) & WEAPON_SLOT_MASK))
-        ? 'disrobing' : 'disarming'}.`);
+    for (const obj of chosen) await select_off(obj);
+    if (doff.mask) {
+        doff.disrobing = (doff.mask & ~WEAPON_SLOT_MASK) ? 'disrobing' : 'disarming';
+        g._takeoff_occupation = !!(await take_off());
+    }
     return 0; /* ECMD_OK: take_off() accounts for the time itself */
 }
 // Worn-mask bits for the three weapon slots (js/invent.js QW_* convention).
@@ -2677,13 +2752,19 @@ async function doloot() {
     // directional looting for some things."  mon_beside() finds a monster in
     // the 3x3 box; get_adjacent_loc()'s getdir() EATS the following keystroke
     // regardless of what's found there.
-    if (mon_beside(u.ux, u.uy)) {
+    if (mon_beside(u.ux, u.uy) || game.iflags?.menu_requested) {
         const { getdir } = await import('./cmd.js');
         const dir = await getdir('Loot in what direction?');
         if (!dir) { await pline('Never mind.'); return 0; }
         const cx = u.ux + dir.dx, cy = u.uy + dir.dy;
         if (!isok(cx, cy)) { await pline('Invalid loot location'); return 0; }
         const underfoot = (dir.dx === 0 && dir.dy === 0);
+        // C ref: pickup.c:2304-2307. Looking for loot overhead spends a
+        // turn even when there is nothing there, before testing monsters.
+        if (dir.dz < 0) {
+            await pline(`You don't find anything to loot on the ${ceiling(cx, cy)}.`);
+            return 1;
+        }
 
         const mtmp = m_at(cx, cy);
         let looted_mon = false;
@@ -3752,10 +3833,7 @@ async function wizmakemap_extcmd() {
     return await wiz_makemap();
 }
 
-// C ref: wizcmds.c:880 wiz_rumor_check() — #wizrumorcheck. Its own body
-// (nyi_rumor_check()) is an inert stand-in for rumors.c's real sanity check —
-// a separate, pre-existing feature gap; the wiring itself is safe (zero
-// keyboard input either way, byte-identical observable no-op).
+// C ref: wizcmds.c:1102 wiz_rumor_check() — the paged rumor-boundary diagnostic.
 async function wizrumorcheck_extcmd() {
     const { wiz_rumor_check } = await import('./wizcmds.js');
     return await wiz_rumor_check();
@@ -4087,12 +4165,8 @@ function wizIntrinsicEntries() {
         { text: 'Which intrinsics?', attr: ATR_INVERSE },
         { text: '', attr: 0 },
     ];
-    // C ref: wizcmds.c:965 — a subtitle line added BEFORE any item, landing
-    // right after tty_end_menu()'s prompt+blank.  The two recorded
-    // #wizintrinsic menus DISAGREE: seed0383 (verbose on) shows it, seed4500
-    // (`!verbose`) doesn't — so the recorder's guard is the verbose flag, not
-    // this source snapshot's `iflags.cmdassist`.
-    if (game.flags?.verbose !== false)
+    // C ref: wizcmds.c:967 — command assistance, independent of verbose.
+    if (game.iflags?.cmdassist !== false)
         entries.push({ text: `[Precede any selection with a count to increment by other than ${DEFAULT_TIMEOUT_INCR}.]`, attr: 0 });
     for (const [propId, name, key] of WIZINTRINSIC_PROPS) {
         // Grayswandir vs hallucination: never offered.
@@ -4279,6 +4353,17 @@ export async function doextcmd() {
             game.context.move = 0;
             await pline(`Unavailable command '${txt}'.`);
             return 0;
+        }
+        // C ref: cmd.c:507-511. An unsupported m-prefix on a #command
+        // warns and is cleared, but the extended command still executes.
+        if (game.iflags?.menu_requested) {
+            const { extcmdlist, accept_menu_prefix, cmd_from_func, cmd_visctrl } = await import('./cmd.js');
+            const command = extcmdlist.find(ec => ec.ef_txt === txt);
+            if (!accept_menu_prefix(command)) {
+                const prefix = cmd_visctrl(cmd_from_func('do_reqmenu'));
+                await pline(`'${prefix}' prefix has no effect for the ${txt} command.`);
+                game.iflags.menu_requested = false;
+            }
         }
         fn = HANDLERS[txt];
         res = 0;

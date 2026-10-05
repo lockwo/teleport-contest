@@ -23,9 +23,12 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { update_topl, topl_more, render_map_to_grid, docrt } from './display.js';
-import { NO_COLOR, ATR_INVERSE } from './terminal.js';
-import { count_status_hilites } from './options.js';
+import { update_topl, topl_more, render_map_to_grid, docrt, rogue_symset } from './display.js';
+import { NO_COLOR, ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE } from './terminal.js';
+import { OPT_MENU_DRIVER, handler_number_pad,
+         handler_autounlock, autounlock_val, handler_autopickup_exception,
+         handler_menu_colors, handler_statuslines } from './options.js';
+import { count_status_hilites, count_cond } from './botl.js';
 
 // C ref: dat/symbols "Handling:" lines per symset `start:` block — game.symset
 // (jsmain.js) stores only the selected symset NAME (no handling struct, unlike
@@ -41,6 +44,51 @@ const SYMSET_HANDLING = {
     macgraphics: 'MAC',
     enhanced1: 'UTF8', enhanced2: 'UTF8',
 };
+
+// C ref: symbols.c:938-1005. The tty build excludes MAC handling and filters
+// primary/rogue restrictions before assigning the menu's automatic letters.
+const SYMBOL_SETS = [
+    { name: 'plain', desc: "same as default symbols, except '+' for corner walls" },
+    { name: 'Blank', desc: 'completely blank symbols' },
+    { name: 'IBMgraphics', desc: 'special line-drawing characters used for walls' },
+    { name: 'IBMGraphics_1' },
+    { name: 'IBMGraphics_2' },
+    { name: 'RogueIBM', rogue: true },
+    { name: 'RogueEpyx', rogue: true, desc: 'rogue level color symbol set like Epyx Rogue' },
+    { name: 'RogueWindows', rogue: true },
+    { name: 'curses', primary: true, desc: 'approximation of IBMgraphics using DECgraphics' },
+    { name: 'DECgraphics', primary: true, desc: 'special line-drawing characters used for walls' },
+    { name: 'Enhanced1', primary: true, desc: 'Enhanced with Unicode glyphs and 24-bit color' },
+    { name: 'Enhanced2', primary: true, desc: 'Enhanced with more Unicode glyphs and 24-bit color' },
+    { name: 'AmigaFont', desc: 'Amiga hack.font line-drawing and effect characters' },
+];
+
+async function runSymbolSetHandler(rogue = false) {
+    const { select_command_menu, dismiss_invent_screen } = await import('./invent.js');
+    const { PICK_ONE } = await import('./const.js');
+    const sets = SYMBOL_SETS.filter(set => rogue ? !set.primary : !set.rogue);
+    const name = (rogue ? game.roguesymset : game.symset) || '';
+    const width = Math.max('Default Symbols'.length, ...sets.map(set => set.name.length)) + 2;
+    const entries = [
+        { text: `Select ${rogue ? 'rogue level ' : ''}symbol set:`, attr: ATR_INVERSE },
+        { text: '' },
+        { text: 'Default Symbols', item: { value: '', selected: !name } },
+        ...sets.map(set => ({
+            text: set.name.padEnd(width) + ' ' + (set.desc || ''),
+            item: { value: set.name, selected: set.name.toLowerCase() === name.toLowerCase() },
+        })),
+    ];
+    const committed = await select_command_menu(entries, { how: PICK_ONE, blankStatus: true });
+    await dismiss_invent_screen();
+    if (!committed) return;
+    const picks = entries.filter(entry => entry.item?.selected);
+    // PICK_ONE may return both the preselection and a newly selected entry.
+    const pick = picks.find(entry => entry.item.value.toLowerCase() !== name.toLowerCase())
+        || picks[0];
+    if (rogue) game.roguesymset = pick?.item.value ?? name;
+    else game.symset = pick?.item.value ?? name;
+    await docrt();
+}
 
 const COLS = 80;
 const ROWS = 24;
@@ -111,9 +159,9 @@ const SIMPLE_SECTIONS = [
         { name: 'autodig',               kind: 'bool',     val: () => boolStr('autodig', false) },
         { name: 'autoopen',              kind: 'bool',     val: () => boolStr('autoopen', true) },
         { name: 'autopickup',            kind: 'bool',     val: () => boolStr('autopickup', autopickupOn()) },
-        { name: 'autopickup exceptions', kind: 'other',    val: () => '(0 currently set)' },
+        { name: 'autopickup exceptions', kind: 'other',    val: () => currentlySet((game.apelist || []).length) },
         { name: 'autoquiver',            kind: 'bool',     val: () => boolStr('autoquiver', false) },
-        { name: 'autounlock',            kind: 'compound', val: () => 'apply-key' },
+        { name: 'autounlock',            kind: 'compound', val: autounlock_val },
         { name: 'cmdassist',             kind: 'bool',     val: () => boolStr('cmdassist', true) },
         { name: 'dropped_nopick',        kind: 'bool',     val: () => boolStr('dropped_nopick', true), apsuffix: true },
         { name: 'fireassist',            kind: 'bool',     val: () => boolStr('fireassist', true) },
@@ -137,12 +185,48 @@ const SIMPLE_SECTIONS = [
         { name: 'hitpointbar',             kind: 'bool',     val: () => boolStr('hitpointbar', false) },
         { name: 'menu colors',             kind: 'other',    val: () => '(0 currently set)' },
         { name: 'showexp',                 kind: 'bool',     val: () => boolStr('showexp', false) },
-        { name: 'status condition fields', kind: 'other',    val: () => '(16 currently set)' },
+        { name: 'status condition fields', kind: 'other',    val: () => `(${count_cond()} currently set)` },
         { name: 'status highlight rules',  kind: 'other',    val: () => `(${count_status_hilites()} currently set)` },
-        { name: 'statuslines',             kind: 'compound', val: () => '2' },
+        { name: 'statuslines',             kind: 'compound', val: () => ((game.iflags?.wc2_statuslines | 0) < 3 ? '2' : '3') },
         { name: 'time',                    kind: 'bool',     val: () => boolStr('time', false) },
     ] },
 ];
+
+// C ref: optlist.h allopt[].descr, shown by options.c:8635-8638.
+const SIMPLE_DESCRIPTIONS = {
+    fruit: 'name of a fruit you enjoy eating',
+    number_pad: 'use the number pad for movement',
+    price_quotes: 'display prices you have seen for unidentified objects',
+    autodig: 'dig if moving and wielding a digging tool',
+    autoopen: 'walking into a door attempts to open it',
+    autopickup: 'automatically pick up objects',
+    'autopickup exceptions': 'edit autopickup exceptions',
+    autoquiver: 'fill empty quiver automatically when firing',
+    autounlock: 'action to take when encountering locked door or chest',
+    cmdassist: 'give help for errors on direction input',
+    dropped_nopick: "don't autopickup dropped items",
+    fireassist: 'fire-command tries to be helpful',
+    pickup_stolen: 'autopickup stolen items',
+    pickup_thrown: 'autopickup thrown items',
+    pickup_types: 'types of objects to pick up automatically',
+    pushweapon: 'previous weapon goes to secondary slot',
+    bgcolors: 'use background color for some map hilighting',
+    color: 'use color in map',
+    customcolors: 'use custom colors in map',
+    customsymbols: 'use custom utf8 symbols in map',
+    hilite_pet: 'use highlight for pets',
+    hilite_pile: 'highlight piles of items',
+    showrace: 'show your character by race rather than role',
+    sparkle: 'display sparkly effect when resisting magic',
+    symset: 'load a set of display symbols from symbols file',
+    hitpointbar: 'show colored bar for hit points',
+    'menu colors': 'change colors used in menus',
+    showexp: 'show experience points in status line',
+    'status condition fields': 'change status condition highlighting',
+    'status highlight rules': 'change status line highlighting',
+    statuslines: '2 or 3 lines for status display',
+    time: 'display game turns in status line',
+};
 
 // The storage key a boolean option's value actually lives under, when it
 // isn't just game.flags[name].  C ref: options.c set_bool_via_field() &c —
@@ -169,19 +253,14 @@ function boolStr(name, dflt) {
     return v ? 'X' : ' ';
 }
 
-// C ref: options.c optfn_symset() get_val (4200-4209) — name-or-"default",
-// then ", active" (currentgraphics==PRIMARYSET, which this build always is:
-// ROGUESET switching isn't modeled, see js/options.js:571), then
-// ", handler=X" when the set has one.  game.symset is the plain rc-selected
-// name (jsmain.js:305; '' when unset, e.g. an `!DECgraphics` negation is a
-// no-op per optfn_graphics_compat, js/options.js:1676-1688).
-function symsetStr() {
-    const name = game.symset || '';
+// C ref: options.c optfn_symset()/optfn_roguesymset() get_val.
+function symsetStr(rogue = false) {
+    const name = (rogue ? game.roguesymset : game.symset) || '';
     let s = name || 'default';
     if (name) {
-        s += ', active';
+        if (rogue === rogue_symset()) s += ', active';
         const h = SYMSET_HANDLING[name.toLowerCase()];
-        if (h) s += `, handler=${h}`;
+        if (!rogue && h) s += `, handler=${h}`;
     }
     return s;
 }
@@ -429,7 +508,9 @@ const OPT_VALUE = {
     pettype: () => ({ c: 'cat', d: 'dog', h: 'horse', n: 'none' })[game.preferred_pet] || 'random',
     fruit: () => fruitStr(),
     number_pad: () => numberPadStr(),
+    autounlock: autounlock_val,
     symset: () => symsetStr(),
+    roguesymset: () => symsetStr(true),
     // optfn_suppress_alert(): "(none)" when flags.suppress_alert is 0.
     suppress_alert: () => flagStr('suppress_alert', '(none)'),
     pickup_types: () => pickupTypesStr(),
@@ -476,6 +557,7 @@ const OPT_VALUE = {
     'bind keys': () => currentlySet(Object.keys(game.keybind || {}).length),
     'menu colors': () => currentlySet((game.menucolors || []).length),
     'message types': () => currentlySet((game.msgtypes || []).length),
+    'status condition fields': () => currentlySet(count_cond()),
     'status highlight rules': () => currentlySet(count_status_hilites()),
 };
 
@@ -556,6 +638,12 @@ const PICKUP_CLASSES = [
     {a:'n', sym:'0', label:'iron ball'},
     {a:'o', sym:'_', label:'iron chain'},
 ];
+const WIZARD_PICKUP_CLASSES = [...PICKUP_CLASSES,
+    {a:'p', sym:'.', label:'splash of venom'}];
+// C ref: options.c:3358-3359 adds VENOM_SYM only for wizard mode.
+function pickupClasses() {
+    return game.flags?.debug ? WIZARD_PICKUP_CLASSES : PICKUP_CLASSES;
+}
 
 // OPT_MENU_ENTRIES's bracketed value for every plain-boolean line (both the
 // non-modifiable "Booleans" list and the a..z-accelerated ones) is a snapshot
@@ -636,12 +724,12 @@ function renderOptionsPage(entries, page, npages, selected) {
 // C ref: windows.c choose_classes_menu() — the trailing hint line depends on
 // flags.pickup ("Toggle off ... to not pick up anything." when autopickup is
 // on, else "Toggle on ... to automatically pick these things up.").
-function buildPickupLines(selected) {
+function buildPickupLines(selected, preselected) {
     const lines = [];
     lines.push({ text: 'Autopickup what?', inv: true });
     lines.push({ text: '' });
-    for (const cls of PICKUP_CLASSES) {
-        const mark = selected.has(cls.a) ? '+' : '-';
+    for (const cls of pickupClasses()) {
+        const mark = selected.has(cls.a) ? (preselected.has(cls.a) ? '*' : '+') : '-';
         lines.push({ text: `${cls.a} ${mark} ${cls.sym}  ${cls.label}` });
     }
     lines.push({ text: '' });
@@ -670,42 +758,29 @@ function pickupMenuOffx(lines) {
 }
 
 // Render the centered "Autopickup what?" object-class menu (offx > 0 overlay).
-// `clearAll` clears the whole screen first (when invoked from the full-screen
-// doset_simple "Options" menu); otherwise it overlays the map+status.
-function renderPickupMenu(selected, clearAll) {
+function renderPickupMenu(selected, preselected, searchBlankTop, blankStatus) {
     const d = disp();
     if (!d) return;
-    // The overlay leaves the map/status beneath intact; only the menu columns
-    // are repainted.  Build the line list first, then paint rows 0..n.
-    const lines = buildPickupLines(selected);
+    const lines = buildPickupLines(selected, preselected);
     const offx = pickupMenuOffx(lines);
     const morestr = '(end) ';
-    if (clearAll) {
-        // C ref: tty_select_menu() dismisses the parent full-screen Options
-        // window (erase_menu_or_text -> docrt()+flush_screen(1)) right after
-        // the pick loop finishes, BEFORE the pickup_types compound handler
-        // runs choose_classes_menu() — so the map/status are freshly restored
-        // underneath, then this corner-overlay submenu only repaints its own
-        // columns (offx..), leaving the restored map visible to the left.
-        // bot() isn't invoked again by the submenu's own display path, so the
-        // status rows stay blank (matches runFruitHandler's step-237 finding).
-        d.clearScreen();
-        render_map_to_grid();
+    // Parent dismissal restores the map. A preceding pline/More can have
+    // republished status, which the child menu then leaves intact.
+    if (blankStatus) d.clearScreen();
+    else for (let r = 0; r < 22; r++) clearRow(d, 0, r);
+    render_map_to_grid();
+    if (blankStatus) {
         for (let c = 0; c < COLS; c++) {
             d.setCell(c, 22, ' ', NO_COLOR, 0);
             d.setCell(c, 23, ' ', NO_COLOR, 0);
         }
-    } else {
-        // Overlay over the map+status (doset/#optionsfull path): only wipe the
-        // top-line columns left of the overlay so a stale toggle message doesn't
-        // bleed through; the map and status lines (rows 22-23) stay visible.
-        for (let c = 0; c < offx; c++) { d.setCell(c, 0, ' ', NO_COLOR, 0); d.setCell(c, 1, ' ', NO_COLOR, 0); }
     }
     for (let r = 0; r < lines.length; r++) {
         clearRow(d, offx, r);
         const l = lines[r];
         if (l.text) d.putstr(offx + 1, r, l.text, NO_COLOR, l.inv ? ATR_INVERSE : 0);
     }
+    if (searchBlankTop) clearRow(d, 0, 0);
     const footRow = lines.length;
     clearRow(d, offx, footRow);
     d.putstr(offx + 1, footRow, morestr, NO_COLOR, 0);
@@ -714,28 +789,68 @@ function renderPickupMenu(selected, clearAll) {
 
 // PICK_ANY object-class menu for pickup_types.  Returns the set of selected
 // class symbols (or 'all' when none / 'A' chosen), or null on ESC cancel.
-async function pickupTypesMenu(clearAll = false) {
+async function pickupTypesMenu(blankStatus) {
     // offx is computed per-render from the menu width (see pickupMenuOffx).
-    const selected = new Set();
-    const byAccel = new Map(PICKUP_CLASSES.map(c => [c.a, c]));
-    const bySym = new Map(PICKUP_CLASSES.map(c => [c.sym, c]));
+    // C ref: windows.c:1696-1704 — preserve the current pickup class choices.
+    const selected = new Set(pickupClasses()
+        .filter(cls => (game.flags?.pickup_types || '').includes(cls.sym))
+        .map(cls => cls.a));
+    const preselected = new Set(selected);
+    let searchBlankTop = false;
+    const byAccel = new Map(pickupClasses().map(c => [c.a, c]));
+    const menuClasses = [...pickupClasses(),
+        { a: 'A', sym: ' ', label: 'All classes of objects' }];
+    const bySym = new Map(pickupClasses().map(c => [c.sym, c]));
     for (;;) {
-        renderPickupMenu(selected, clearAll);
+        renderPickupMenu(selected, preselected, searchBlankTop, blankStatus);
         game._modal_screen = 'optmenu';
         const c = await nhgetch();
         delete game._modal_screen;
         const ch = String.fromCharCode(c);
         if (c === 27) return null;                 // ESC: cancel
-        if (c === 13 || c === 10) break;           // confirm
-        if (ch === 'A') { selected.clear(); selected.add('A'); continue; }
+        if (c === 13 || c === 10 || ch === ' ') break; // confirm
+        if (ch === ':') {
+            // C ref: wintty.c process_menu_window(), MENU_SEARCH.
+            const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
+            const reply = await hooked_tty_getlin('Search for:', null);
+            searchBlankTop = true;
+            if (!reply || reply[0] === '\x1b') continue;
+            for (const cls of menuClasses) {
+                if (!pmatchi(`*${reply}*`, `${cls.a} - ${cls.sym}  ${cls.label}`)) continue;
+                if (selected.has(cls.a)) selected.delete(cls.a);
+                else selected.add(cls.a);
+                preselected.delete(cls.a);
+            }
+            continue;
+        }
+        if (ch === 'A') {
+            if (selected.has('A')) selected.delete('A');
+            else selected.add('A');
+            continue;
+        }
         const cls = byAccel.get(ch) || bySym.get(ch);
         if (cls) {
             if (selected.has(cls.a)) selected.delete(cls.a);
             else selected.add(cls.a);
-            selected.delete('A');
+            preselected.delete(cls.a);
+            continue;
         }
-        // space on a single-page menu confirms (no further pages); but the
-        // recorded run only confirms via <return>, so unknown keys are ignored.
+        // C ref: wintty.c:1650-1698; windows.c:1562,1715 — bulk changes
+        // obey the All classes entry's SKIPINVERT flag.
+        if ([',', '.', '\\', '-', '~', '@'].includes(ch)) {
+            for (const cls of menuClasses) {
+                const wasSelected = selected.has(cls.a);
+                const mode = game.iflags?.menuinvertmode ?? 1;
+                if (cls.a === 'A' && (mode === 2 || (mode === 1 && !wasSelected)))
+                    continue;
+                const nowSelected = ch === ',' || ch === '.' ? true
+                    : ch === '\\' || ch === '-' ? false : !wasSelected;
+                if (wasSelected === nowSelected) continue;
+                if (nowSelected) selected.add(cls.a);
+                else selected.delete(cls.a);
+                preselected.delete(cls.a);
+            }
+        }
     }
     if (selected.has('A') || selected.size === 0) return 'all';
     return new Set(selected);
@@ -744,14 +859,14 @@ async function pickupTypesMenu(clearAll = false) {
 // Run the "Autopickup what?" menu and commit the result into
 // game.flags.pickup_types as the canonical class-symbol string ('' = all).
 // C ref: optfn_pickup_types() do_handler path.
-async function runPickupTypesHandler() {
-    const result = await pickupTypesMenu(true);
+async function runPickupTypesHandler(blankStatus = true) {
+    const result = await pickupTypesMenu(blankStatus);
     game.flags = game.flags || {};
     if (result === null) return;          // ESC: leave value unchanged
     if (result === 'all') {
         game.flags.pickup_types = '';
     } else {
-        const syms = PICKUP_CLASSES.filter(c => result.has(c.a)).map(c => c.sym).join('');
+        const syms = pickupClasses().filter(c => result.has(c.a)).map(c => c.sym).join('');
         game.flags.pickup_types = syms;
     }
 }
@@ -791,6 +906,90 @@ async function runFruitHandler() {
     }
 }
 
+// C ref: options.c do_handler runs after tty dismisses the parent menu.
+export async function runOptionsHandler(handler) {
+    const { select_command_menu, dismiss_invent_screen } = await import('./invent.js');
+    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
+    if (game._toplin === 1 || game._yn_need_more) await topl_more();
+    game._pending_message = '';
+    game._toplin = 0;
+    game._yn_need_more = false;
+    // The simple/full options menus have already returned their selection.
+    game._modal_screen = 'optmenu';
+    await dismiss_invent_screen();
+    const savedSelect = OPT_MENU_DRIVER.select;
+    const savedGetlin = OPT_MENU_DRIVER.getlin;
+    const savedError = OPT_MENU_DRIVER.error;
+    let blankStatus = true;
+    OPT_MENU_DRIVER.select = async (win, how) => {
+        // tty_display_nhwindow acknowledges a pending pline before a menu.
+        if (game._toplin === 1 || game._yn_need_more) {
+            await topl_more();
+            game._toplin = 0;
+            game._pending_message = '';
+            game._yn_need_more = false;
+            blankStatus = false;
+        }
+        const entries = [
+            ...(win.query ? [{ text: win.query, attr: ATR_INVERSE }, { text: '' }] : []),
+            ...win.items.map((it) => ({
+                text: it.str,
+                attr: it.heading ? ATR_INVERSE
+                    : it.attr === 1 ? ATR_BOLD : it.attr === 4 ? ATR_UNDERLINE
+                        : it.attr === 7 ? ATR_INVERSE : undefined,
+                bodyStyle: it.selectable ? (() => {
+                    const coloring = game.flags?.menucolors
+                        ? game.menucolors?.find((rule) => rule.regex.test(it.str)) : null;
+                    const attr = coloring?.attr ?? it.attr;
+                    const color = coloring?.color ?? it.clr ?? NO_COLOR;
+                    return {
+                        color: color === 7 ? NO_COLOR : color,
+                        attr: attr === 1 ? ATR_BOLD : attr === 4 ? ATR_UNDERLINE
+                            : attr === 7 ? ATR_INVERSE : 0,
+                    };
+                })() : undefined,
+                item: it.selectable && Object.values(it.any).some(Boolean) ? {
+                    value: it.any,
+                    sel: it.accel || undefined,
+                    gsel: it.gacc || undefined,
+                    selected: !!(it.itemflags & 1),
+                    count: -1,
+                } : undefined,
+            })),
+        ];
+        // docrt() erases the full-screen parent's status window; bot()
+        // does not repaint it while options.c remains in its handler.
+        const committed = await select_command_menu(entries, { how, blankStatus });
+        const picks = committed
+            ? entries.filter((e) => e.item?.selected).map((e) => e.item.value)
+            : null;
+        await dismiss_invent_screen();
+        return picks;
+    };
+    OPT_MENU_DRIVER.getlin = (prompt) => {
+        if (blankStatus) {
+            for (let x = 0; x < COLS; x++) {
+                disp().setCell(x, 22, ' ', NO_COLOR, 0);
+                disp().setCell(x, 23, ' ', NO_COLOR, 0);
+            }
+        }
+        return hooked_tty_getlin(prompt, null);
+    };
+    OPT_MENU_DRIVER.error = async (message) => {
+        const punct = '.!?'.includes(message.at(-1)) ? '' : '.';
+        await update_topl(message + punct);
+        await topl_more();
+        blankStatus = false; // pline() republished the status window.
+    };
+    try {
+        return await handler();
+    } finally {
+        OPT_MENU_DRIVER.select = savedSelect;
+        OPT_MENU_DRIVER.getlin = savedGetlin;
+        OPT_MENU_DRIVER.error = savedError;
+    }
+}
+
 // --- doset_simple() "Options" menu rendering ---------------------------------
 
 // Build the flat menu-item list exactly as C assembles it: doset_simple_menu()
@@ -804,9 +1003,12 @@ async function runFruitHandler() {
 // each build so toggled booleans / pickup_types show current values.
 function buildSimpleFlat() {
     const items = [];
+    const showHelp = !!game._simple_options_help;
+    if (showHelp)
+        items.push({ type: 'text', body: "Use command '#optionsfull' to get the complete options list." });
     // help '?': explicit selector (never auto-lettered).
     items.push({ type: 'item', selectable: true, sel: '?', explicit: true,
-                 kind: 'help', body: 'show help' });
+                 kind: 'help', body: showHelp ? 'hide help' : 'show help' });
     for (const sec of SIMPLE_SECTIONS) {
         items.push({ type: 'blank' });
         items.push({ type: 'heading', name: sec.name });
@@ -821,12 +1023,19 @@ function buildSimpleFlat() {
             // effect on the 80x24 capture is exactly ONE blank column, never
             // a real tab stop jump) -- so render one literal space here,
             // not '\t', to match the captured screen byte-for-byte.
+            const rogueSymbols = it.name === 'symset' && rogue_symset();
+            const optName = rogueSymbols ? 'roguesymset' : it.name;
+            const value = rogueSymbols ? symsetStr(true) : it.val();
             let body = game.iflags?.menu_tab_sep
-                ? `${it.name} [${it.val()}]`
-                : it.name.padEnd(NAMEW, ' ') + ' [' + it.val() + ']';
+                ? `${optName} [${value}]`
+                : optName.padEnd(NAMEW, ' ') + ' [' + value + ']';
             if (it.apsuffix) body += '  (for autopickup)';
             items.push({ type: 'item', selectable: true, kind: it.kind,
                          name: it.name, item: it, body });
+            if (showHelp && SIMPLE_DESCRIPTIONS[it.name]) {
+                items.push({ type: 'text', body: '    ' + SIMPLE_DESCRIPTIONS[it.name] });
+                items.push({ type: 'blank' });
+            }
         }
     }
     // tty_end_menu(): prepend a blank, then the title (added in that order so
@@ -892,6 +1101,8 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
             d.putstr(1, r, head, NO_COLOR, ATR_INVERSE);
         } else if (it.type === 'item') {
             d.putstr(0, r, ` ${it.sel} - ${it.body}`, NO_COLOR, 0);
+        } else if (it.type === 'text') {
+            d.putstr(0, r, ' ' + it.body, NO_COLOR, 0);
         }
         // 'blank' rows need no drawing (already cleared).
         r++;
@@ -912,31 +1123,61 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
 // ends the round.  Consumes no dungeon RNG.
 export async function dosetSimple() {
     for (;;) { // doset_simple_menu() loop — one select_menu round per iteration
+        // tty_display_nhwindow() clears WIN_MESSAGE when raising the parent
+        // menu, including any error a compound option just acknowledged.
+        game._pending_message = '';
+        game._toplin = 0;
+        game._yn_need_more = false;
         const items = buildSimpleFlat();
         const pages = paginateSimple(items);
         const npages = pages.length;
         let page = 0;
         let pick = null;
         let cancelled = false;
+        let count = 0;
+        let blankTop = false;
 
         // select_menu(PICK_ONE): show the current page and read one response.
         for (;;) {
             renderSimpleMenuPage(pages[page], page, npages);
+            if (blankTop) clearRow(disp(), 0, 0);
             game._modal_screen = 'optmenu';
             const c = await nhgetch();
             delete game._modal_screen;
             const ch = String.fromCharCode(c);
+            // C ref: wintty.c:1563-1615 — ESC cancels a numeric menu count
+            // before it can cancel the menu.  Invalid input is swallowed by
+            // xwaitforspace(), so it leaves that count pending.
+            if (ch >= '0' && ch <= '9') {
+                count = count * 10 + (c - 48);
+                continue;
+            }
+            if (c === 27 && count) { count = 0; continue; }
+            const hit = pages[page].items.find(it => it.selectable && it.sel === ch);
+            if (!hit && !' \r\n\x1b^|><.-@,\\~:'.includes(ch)) continue;
+            count = 0;
 
             if (c === 27) { cancelled = true; break; }    // ESC: cancel
             if (c === 13 || c === 10) break;              // <return>: finish, no pick
             if (ch === ' ') {                             // space: next page, else finish
-                if (page < npages - 1) { page++; continue; }
+                if (page < npages - 1) { page++; blankTop = false; continue; }
                 break;
             }
-            if (ch === '>') { if (page < npages - 1) page++; continue; } // '>': next page only
-            if (ch === '<') { if (page > 0) page--; continue; }         // '<': previous page
+            if (ch === '>') { if (page < npages - 1) { page++; blankTop = false; } continue; }
+            if (ch === '<') { if (page > 0) { page--; blankTop = false; } continue; }
+            // C ref: wintty.c:1700-1730 — PICK_ONE searches every menu page
+            // and immediately selects the first matching entry.
+            if (ch === ':') {
+                const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
+                const reply = await hooked_tty_getlin('Search for:', null);
+                blankTop = true;
+                if (!reply || reply[0] === '\x1b') continue;
+                pick = items.find(it => it.selectable
+                    && pmatchi(`*${reply}*`, `${it.sel} - ${it.body}`));
+                if (pick) break;
+                continue;
+            }
             // A letter selects that page's option (PICK_ONE ends the round).
-            const hit = pages[page].items.find(it => it.selectable && it.sel === ch);
             if (hit) { pick = hit; break; }
             // unknown accelerator: ignore (tty rings the bell)
         }
@@ -945,7 +1186,6 @@ export async function dosetSimple() {
         if (!pick) return 0;                              // no pick: exit menu
 
         if (pick.kind === 'help') {
-            // Toggle the brief help text (not exercised here beyond the flag).
             game._simple_options_help = !game._simple_options_help;
             continue;
         }
@@ -965,8 +1205,26 @@ export async function dosetSimple() {
             await runPickupTypesHandler();
         } else if (it.name === 'fruit') {
             await runFruitHandler();
+        } else if (it.name === 'number_pad') {
+            await runOptionsHandler(handler_number_pad);
+        } else if (it.name === 'autounlock') {
+            await runOptionsHandler(() => handler_autounlock('autounlock', false));
+        } else if (it.name === 'autopickup exceptions') {
+            await runOptionsHandler(handler_autopickup_exception);
+        } else if (it.name === 'menu colors') {
+            await runOptionsHandler(handler_menu_colors);
+        } else if (it.name === 'status highlight rules') {
+            const { status_hilite_menu } = await import('./botl.js');
+            await runOptionsHandler(status_hilite_menu);
+        } else if (it.name === 'status condition fields') {
+            const { cond_menu } = await import('./botl.js');
+            await runOptionsHandler(cond_menu);
+        } else if (it.name === 'symset') {
+            await runOptionsHandler(() => runSymbolSetHandler(rogue_symset()));
+        } else if (it.name === 'statuslines') {
+            if (await runOptionsHandler(handler_statuslines)) await docrt();
         }
-        // Other compound/other entries aren't exercised; re-show the menu.
+        // Rebuild the parent menu with the updated option values.
     }
 }
 
@@ -1101,17 +1359,31 @@ export async function doset() {
             // The pickup_types handler pops the "Autopickup what?" menu.  C ref:
             // any pending top-line message ("'time' option toggled on.") is
             // acknowledged with --More-- before the new menu replaces it.
+            const blankStatus = !game._toplin;
             if (game._toplin) {
                 await topl_more();
                 game._toplin = 0;
                 game._pending_message = '';
             }
-            const result = await pickupTypesMenu();
-            if (result && result !== 'all') {
-                const syms = PICKUP_CLASSES.filter(c => result.has(c.a)).map(c => c.sym).join('');
-                game.flags = game.flags || {};
-                game.flags.pickup_types = syms;
-            }
+            await runPickupTypesHandler(blankStatus);
+        } else if (e.name === 'number_pad') {
+            await runOptionsHandler(handler_number_pad);
+        } else if (e.name === 'autounlock') {
+            await runOptionsHandler(() => handler_autounlock('autounlock', true));
+        } else if (e.name === 'autopickup exceptions') {
+            await runOptionsHandler(handler_autopickup_exception);
+        } else if (e.name === 'menu colors') {
+            await runOptionsHandler(handler_menu_colors);
+        } else if (e.name === 'status highlight rules' || e.name === 'hilite_status') {
+            const { status_hilite_menu } = await import('./botl.js');
+            await runOptionsHandler(status_hilite_menu);
+        } else if (e.name === 'status condition fields') {
+            const { cond_menu } = await import('./botl.js');
+            await runOptionsHandler(cond_menu);
+        } else if (e.name === 'symset' || e.name === 'roguesymset') {
+            await runOptionsHandler(() => runSymbolSetHandler(e.name === 'roguesymset'));
+        } else if (e.name === 'statuslines') {
+            if (await runOptionsHandler(handler_statuslines)) await docrt();
         }
         // Other compound/other selections aren't exercised by the recorded
         // sessions; left unhandled (no prompt) on purpose.

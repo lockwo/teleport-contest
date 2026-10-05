@@ -176,9 +176,79 @@ prompt appears before the first map/status redraw. Loading those bones
 replaces level generation; a second room-fill pass would overwrite the
 inherited monsters and objects.
 
+Wizard `#wizmakemap` replacements finish room stocking and mineralization
+before choosing the hero's arrival square. Adjacent pets accompany the hero;
+other monsters are unmade, and the replacement resets vision and room-entry
+state before redrawing. As with new-game and level-change generation, loading
+bones skips the deferred stocking pass.
+
+Ctrl-P inside a text-entry prompt recalls message history without discarding
+the typed answer. Recalled multiline prompts retain tty hard wrapping and
+their own `--More--` input boundaries; Ctrl-P at those boundaries advances
+history again. Normal messages retain their tty word wrapping in history;
+extended-command prompts are discarded when text entry finishes.
+
+Forms that cannot carry objects reject pickup with the normal inability
+message when floor objects are present.
+
 If life saving (or a declined wizard death) lets a self-directed
 death-ray zap return, its wand is identified afterward. That discovery
 credits the hero's Wisdom exercise and advances RNG before the next turn.
+
+Declining "Really attack ...?" during movement consumes neither a turn nor
+RNG. The melee handler resolves the command but leaves `context.move` cleared;
+the movement caller must preserve that cancellation (`uhitm.c:318–321`,
+`hack.c:1984–1988`).
+
+The container menu's stash-one action opens the counted object picker.
+Splitting a stack allocates its object ID through `nextoid()` and consumes
+the corresponding `rnd(2)` call; rejecting a stashed split merges it back
+without another RNG draw (`pickup.c:3174–3184`, `mkobj.c:457–481,556–621`).
+
+Menu-color options use the same live menu driver for add/list/remove and their
+nested color and attribute selectors. The selectors retain native defaults,
+item-only styling, and input boundaries rather than falling back to raw tty
+windows.
+
+Status-highlight and status-condition options use the live menu driver, including
+field, behavior, threshold, color, and attribute selection. Counted drop menus reject unknown
+keys before resetting a pending count; Escape first cancels that count,
+and only a subsequent Escape cancels the menu (`wintty.c:1533–1615`).
+Repeated worn-item or welded-weapon drop refusals use the last individual
+message for C's `Norep` suppression (`do.c:665–681`).
+
+The terrain menu consumes `:` searches within its own input loop, selects the
+first matching entry, and keeps its heading cleared after unmatched searches.
+
+Interesting-location targeting includes displayed remembered and hallucinated
+object glyphs, but not floor objects hidden by a terrain-only view
+(`getpos.c:487–503`). Hallucinated object memory retains the sampled object's
+identity separately from its naming marker, so feeling a vanished boulder while
+levitating clears its glyph without another RNG draw (`display.c:840–845`).
+
+The naming menu uses the tty selector's `:` search, count cancellation,
+and group accelerators; `lootabc` changes its displayed accelerators without
+changing the selected naming action. Skill menus honor `^` and `|` for
+first/last-page navigation in both normal and wizard mode.
+
+Changing `statuslines` through either options menu prompts for a value and
+uses the configuration parser's 2-or-3 validation. Invalid values retain the
+old setting and show the normal error acknowledgment before reopening the
+simple options menu.
+The pickup-types submenu includes the splash-of-venom class only in wizard
+mode, matching the extra `VENOM_SYM` choice in `options.c:3358–3359`.
+
+Directional looting checks upward attempts before looking for a monster.
+Trying to loot the ceiling consumes a turn even when nothing can be looted
+(`pickup.c:2296–2307`).
+
+The `m` menu prefix on an extended command warns and is cleared when that
+command does not support it, then executes the command normally. This differs
+from an unsupported prefix on a direct key command, which rejects the command
+(`cmd.c:507–511`, `3693–3711`).
+
+Applying a lock tool to a non-door consumes a turn only when examining that
+square changes its remembered glyph or terrain type (`lock.c:578–592`).
 
 If you implement your own terminal, output anything that — after
 canonicalization — matches the recorded screen.
@@ -409,6 +479,22 @@ that's the multi-segment contract the judge depends on.
 
 **Can I replace `js/display.js`?** Yes. It builds your in-game screens.
 Just make sure they compare equal (after canonicalization) to C's.
+
+**Which map, pet, and inventory details affect C parity?** Looking at
+a mimic's displayed object can create a temporary object (`next_ident`);
+cursor target lists must include that disguise. Timed Conflict applies to
+monster and pet decisions just like a worn ring, and intrinsic regeneration
+exercises Strength on the regular attribute-check cadence. Starting pets must retain
+the `NON_PM` shapechanger sentinel when shape protection is enabled.
+Level regeneration clears arrival regions before constructing the new map,
+and inventory action menus use the same direction prompt as direct Throw/Fire.
+Blocked flight/levitation are omitted from status conditions. Involuntary
+weapon drops use the C skill-category description (for example, a scalpel
+is described as a knife), not the individual object's name.
+Explicit direction help returns to the pending direction prompt, without an
+invalid-input banner. Removing a monster's saddle frees the object before
+inventory transfer. A blind, levitating hero remembers a dropped object's
+location, including hallucinated display-RNG draws.
 
 **Can I add new files under `js/`?** Yes. Anything that helps.
 

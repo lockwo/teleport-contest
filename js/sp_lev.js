@@ -1197,9 +1197,13 @@ function create_massacre(croom) {
             // the stream stays in lockstep even if the name lookup fails.
             set_corpsenm(otmp, otmp.corpsenm);
         }
+        // C sp_lev.c:3707-3715: des.object resets corpse gender to its flags.
+        otmp.spe = 0;
         // Place the corpse as a real floor object so it renders as a %-glyph.
         otmp.ox = c.x; otmp.oy = c.y;
         place_floor_obj(otmp, c.x, c.y);
+        // C sp_lev.c:2423: des.object merges compatible floor stacks.
+        stackobj(otmp);
     }
 }
 
@@ -1447,7 +1451,7 @@ function is_ndemon(ptr) {
 
 // C ref: mkroom.c morguemon() — the graveyard's inhabitants.  BOTH rn2()s are
 // always drawn (C evaluates them in the declaration list before any test).
-function morguemon() {
+export function morguemon() {
     const i = rn2(100), hd = rn2(level_difficulty_ext());
 
     if (hd > 10 && i < 10) {

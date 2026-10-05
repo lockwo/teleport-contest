@@ -14,7 +14,7 @@ import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
 import { newgame, moveloop_core, early_init } from './allmain.js';
 import { parseNethackrc, config_error_report, fruitadd } from './options.js';
-import { flush_screen, IBMGRAPHICS_CHARS, warmupBotlStatusFns } from './display.js';
+import { flush_screen, warmupBotlStatusFns } from './display.js';
 import { has_innate } from './exper.js';
 import { GameDisplay } from './game_display.js';
 import {
@@ -319,35 +319,11 @@ export class NethackGame {
         // symset selects the drawing glyph table; DECgraphics uses VT100
         // line-drawing for walls/floor, otherwise the default ASCII symbols.
         g.symset = opts.symset || '';
+        g.roguesymset = opts.roguesymset || '';
         // C ref: symbols.c parsesymbols()/update_ov_primary_symset() — a
         // SYMBOLS= rc line overrides one cmap glyph's display character,
         // independent of (and layered on top of) the base symset.
         g.symoverride = opts.symoverride || {};
-        // C ref: symbols.c do_symset()/load_symset() — a `symset:` line loads
-        // a whole prebuilt dat/symbols table; an explicit SYMBOLS= line on top
-        // of it must win, so only fill gaps a SYMBOLS= line didn't already
-        // set.  The named IBM variants have distinct dat/symbols blocks:
-        // IBMgraphics defines the broad map below, while _1 and _2 override
-        // only selected symbols and inherit defaults for omitted entries.
-        // In particular, _2 leaves S_room as '.', unlike IBMgraphics's 'z'.
-        if (/^ibm/i.test(g.symset)) {
-            const variant = g.symset.toLowerCase();
-            const chars = variant === 'ibmgraphics_1'
-                ? ['S_vwall', 'S_hwall', 'S_tlcorn', 'S_trcorn', 'S_blcorn',
-                   'S_brcorn', 'S_crwall', 'S_tuwall', 'S_tdwall', 'S_tlwall',
-                   'S_trwall', 'S_engroom', 'S_vbeam', 'S_hbeam', 'S_sw_ml',
-                   'S_sw_mr', 'S_expl_ml', 'S_expl_mr']
-                : variant === 'ibmgraphics_2'
-                  ? ['S_vwall', 'S_hwall', 'S_tlcorn', 'S_trcorn', 'S_blcorn',
-                     'S_brcorn', 'S_crwall', 'S_tuwall', 'S_tdwall', 'S_tlwall',
-                     'S_trwall', 'S_vodoor', 'S_hodoor', 'S_engroom', 'S_corr',
-                     'S_litcorr', 'S_engrcorr', 'S_vbeam', 'S_hbeam', 'S_sw_ml',
-                     'S_sw_mr', 'S_expl_ml', 'S_expl_mr']
-                  : Object.keys(IBMGRAPHICS_CHARS);
-            for (const symname of chars)
-                if (!(symname in g.symoverride))
-                    g.symoverride[symname] = IBMGRAPHICS_CHARS[symname];
-        }
         // C ref: options.c ga.apelist — the AUTOPICKUP_EXCEPTION list, read by
         // pickup.c check_autopickup_exceptions().
         g.apelist = opts.apelist || [];

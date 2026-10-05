@@ -342,7 +342,10 @@ function bigrm_monster() {
         const cc = enexto_spawn(mx, my, null);
         if (cc) { mx = cc.x; my = cc.y; }
     }
-    makemon(null, mx, my, 0);
+    const mtmp = makemon(null, mx, my, 0);
+    // C ref: sp_lev.c:3353-3356,2125 — an unspecified des.monster gender
+    // defaults to male and overwrites makemon's gender, without another draw.
+    if (mtmp) mtmp.female = 0;
 }
 
 // C ref: sp_lev.c create_monster() with an explicit `m->coord` and no id/class:
@@ -357,7 +360,8 @@ function bigrm_monster_at(mrx, mry) {
         const cc = enexto_spawn(mx, my, null);
         if (cc) { mx = cc.x; my = cc.y; }
     }
-    makemon(null, mx, my, 0);
+    const mtmp = makemon(null, mx, my, 0);
+    if (mtmp) mtmp.female = 0; // Same des.monster default as the random-position form.
 }
 
 // C ref: bigrm-3.lua's 28 des.monster({x,y}) calls, in file order.

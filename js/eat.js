@@ -478,8 +478,8 @@ function touchfood(otmp) {
         objs.splice(objs.indexOf(otmp), 0, rest);
     } else if ((otmp.quan || 1) > 1) {
         // C: splitobj(otmp, 1L) -> nextoid() -> next_ident() == one rnd(2).
-        // The JS splitobj() in invent.js does not advance context.ident, so we
-        // mirror the C o_id machinery explicitly here.
+        // This path builds the bitten item directly, so it advances
+        // context.ident here rather than calling invent.js's splitobj().
         _mkobj.next_ident();    // the single rnd(2) the C records at this point
         const stack = otmp;
         otmp = {

@@ -13,11 +13,12 @@
 import { game } from './gstate.js';
 import { rn2, rnd, d } from './rng.js';
 import { objects, WEAPON_CLASS, TOOL_CLASS, GEM_CLASS, BALL_CLASS,
-         CHAIN_CLASS, HEAVY_IRON_BALL } from './mkobj.js';
+         CHAIN_CLASS, HEAVY_IRON_BALL, ROCK, LUCKSTONE } from './mkobj.js';
 import { WEP_SDAM, WEP_LDAM, WEP_HITBON } from './weapondmg_data.js';
 import { mflags1_of, mflags2_of, M1_THICK_HIDE, M1_WALLWALK, M1_SWIM,
          M2_UNDEAD, M2_DEMON } from './monflags_data.js';
 import { P_NONE, P_BARE_HANDED_COMBAT, P_AXE, P_SPEAR, P_PICK_AXE,
+         P_BOW, P_SLING, P_CROSSBOW, P_FLAIL,
          P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_LAST_SPELL, P_NUM_SKILLS,
          P_TWO_WEAPON_COMBAT, P_RIDING, A_STR, A_DEX,
@@ -360,7 +361,7 @@ export async function silver_sears(_magr, mdef, silverhit) {
 // C ref: weapon.c:90 weapon_descr(obj) — the weapon's skill-category name, used
 // to shorten involuntary-drop messages.
 const ODD_SKILL_NAMES = [
-    'no skill', 'bare hands', 'two weapon combat', 'riding', 'polearms',
+    'no skill', 'bare hands', 'two weapon combat', 'riding', 'polearm',
     'saber', 'hammer', 'whip', 'attack spells', 'healing spells',
     'divination spells', 'enchantment spells', 'clerical spells',
     'escape spells', 'matter spells',
@@ -402,6 +403,15 @@ export function weapon_descr(obj) {
             : obj?.globby ? 'glob'
             : (OC_CLASS_NAME[obj?.oclass] || 'weapon');
     }
+    if ((objects[obj?.otyp]?.oc_skill ?? 0) < 0) {
+        if (skill === P_BOW) descr = 'arrow';
+        else if (skill === P_CROSSBOW) descr = 'bolt';
+        else if (skill === P_SLING)
+            descr = obj.otyp === ROCK || (obj.otyp >= LUCKSTONE && obj.otyp < ROCK)
+                ? 'stone' : obj.oclass === GEM_CLASS ? 'gem' : OC_CLASS_NAME[obj.oclass];
+    }
+    if (skill === P_FLAIL && obj.otyp === 260 /* GRAPPLING_HOOK */) descr = 'hook';
+    if (skill === P_PICK_AXE && obj.otyp === W_.DWARVISH_MATTOCK) descr = 'mattock';
     return descr;
 }
 

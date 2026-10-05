@@ -2477,9 +2477,11 @@ export async function maybe_turn_mon_iter(mtmp) {
                     break;
                 }
                 /* else flee — FALLTHRU */
-            default:
-                monflee_pr(mtmp);
+            default: {
+                const { monflee } = await import('./monmove.js');
+                await monflee(mtmp, 0, false, true);
                 break;
+            }
             }
         }
     }
@@ -2488,10 +2490,6 @@ export async function maybe_turn_mon_iter(mtmp) {
 // before its iter_mons() walk so only the first monster prints the falter line.
 let turn_undead_msg_cnt = 0;
 export function reset_turn_undead_msg_cnt() { turn_undead_msg_cnt = 0; }
-// C ref: mon.c monflee(mtmp, 0, FALSE, TRUE) — an untimed scare.  Kept local so
-// maybe_turn_mon_iter() does not have to pick between js/monmove.js's async
-// monflee() and js/uhitm.js's sync copy (they disagree on the message).
-function monflee_pr(mtmp) { mtmp.mflee = 1; mtmp.mfleetim = 0; }
 // C ref: monst.h:217 is_vampshifter(mon) — cham is PM_VAMPIRE,
 // PM_VAMPIRE_LEADER or PM_VLAD_THE_IMPALER.  This port stores cham as a mons[]
 // pmidx, so resolve the three rows by name once.

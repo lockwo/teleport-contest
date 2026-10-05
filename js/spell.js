@@ -215,18 +215,9 @@ async function getspell() {
         return -1;
     }
     if (await rejectcasting()) return -1;
-    const { spell_menu } = await import('./invent.js');
-    const meta = {
-        name: (otyp) => objects[otyp]?.name || '',
-        category: (otyp) => spelltypemnemonic(otyp),
-        fail: (i) => 100 - percent_success(i),  // displayed Fail%
-        retention: (i) => spellretention(i),
-        // wizard-mode "turns" column: C prints spellknow(i) raw (note it uses
-        // the LOOP index i here while the other fields use the sort-order index;
-        // with no custom sort the two coincide).
-        turns: (i) => spellknow(i),
-    };
-    return await spell_menu('Choose which spell to cast', nspells, spl_book(), meta);
+    const chosen = { value: -1 };
+    return await dospellmenu('Choose which spell to cast', SPELLMENU_CAST, chosen)
+        ? chosen.value : -1;
 }
 
 // C ref: spell.c spellretention(idx, outbuf) — retention as a percentage range

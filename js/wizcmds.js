@@ -43,7 +43,7 @@ import { size_wseg } from './worm.js';
 import { light_stats, light_sources_sanity_check } from './light.js';
 import { check_invent_gold, inventoryArray, ynq } from './invent.js';
 import {
-    monsterList, DEADMONSTER, dmonsfree, mon_sanity_check, usmellmon,
+    monsterList, DEADMONSTER, dmonsfree, mon_sanity_check, usmellmon, mongone,
 } from './mon.js';
 import { minimal_monnam } from './do_name.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -60,6 +60,8 @@ import { canspotmon, x_monnam, mon_nam, killed } from './uhitm.js';
 import { is_undead_flag } from './monflags_data.js';
 import { mklev } from './mklev.js';
 import { done } from './end.js';
+import { keepdogs } from './dog.js';
+import { setpaid } from './shk.js';
 
 /* ------------------------------------------------------------------ */
 /*  local helpers                                                     */
@@ -197,7 +199,7 @@ const SIZEOF_NHREGION = 96, SIZEOF_NHRECT = 8, SIZEOF_MAPSEEN = 384;
 
 // C ref: wizcmds.c:73 makemap_unmakemon(mtmp, migratory) — used when
 // wiz_makemap() gets rid of monsters for the old incarnation of a level.
-export function makemap_unmakemon(mtmp, migratory) {
+export async function makemap_unmakemon(mtmp, migratory) {
     const ndx = mtmp?.data?.pmidx ?? mtmp?.pmidx ?? -1;
     const mvitals = (game.mvitals ||= []);
     const mv = (mvitals[ndx] ||= { born: 0, died: 0, mvflags: 0 });
@@ -216,7 +218,7 @@ export function makemap_unmakemon(mtmp, migratory) {
     } else if (DEADMONSTER(mtmp)) {
         return; /* already set to be discarded */
     } else if (mtmp.isshk && on_level(game.u?.uz, ESHK(mtmp)?.shoplevel)) {
-        nyi_setpaid(mtmp);
+        setpaid(mtmp);
     }
     if (migratory) {
         /* caller has removed 'mtmp' from migrating_mons; put it onto fmon so
@@ -225,7 +227,7 @@ export function makemap_unmakemon(mtmp, migratory) {
         mtmp.mstate &= ~(MON_MIGRATING | MON_LIMBO | MON_ENDGAME_MIGR);
         monsterList().push(mtmp);
     }
-    nyi_mongone(mtmp);
+    await mongone(mtmp);
 }
 // include/monst.h geno bits / mstate bits used just above.  G_EXTINCT is an
 // mvitals[].mvflags bit and monflag.h:210 makes it 0x01 (mvflags only ever
@@ -234,17 +236,16 @@ export function makemap_unmakemon(mtmp, migratory) {
 const G_UNIQ = 0x1000, G_EXTINCT = 0x01;
 
 // C ref: wizcmds.c:110 makemap_remove_mons() — get rid of all the monsters
-// on (or intimately involved with) the current level.  js/cmd.js:5326 has a
-// bare `cmd_makemap_remove_mons() {}` no-op standing in for this.
+// on (or intimately involved with) the current level.
 export async function makemap_remove_mons() {
     /* keep steed and other adjacent pets after releasing them from traps,
        stopping eating, &c as if the hero were ascending */
-    nyi_keepdogs(true); /* (pets-only; normally we'd be using 'FALSE') */
+    await keepdogs(true); /* (pets-only; normally we'd be using 'FALSE') */
     /* get rid of all the monsters that didn't make it to 'mydogs' */
     for (const mtmp of monsterList().slice()) {
         /* if already dead, dmonsfree() (below) will get rid of it */
         if (DEADMONSTER(mtmp)) continue;
-        makemap_unmakemon(mtmp, false);
+        await makemap_unmakemon(mtmp, false);
     }
     /* some monsters retain details of this level in mon->mextra; that data
        becomes invalid when the level is replaced, so get rid of them now if
@@ -257,7 +258,7 @@ export async function makemap_remove_mons() {
                 || (mtmp.ispriest && on_level(game.u?.uz, EPRI(mtmp)?.shrlevel))
                 || (mtmp.isgd && on_level(game.u?.uz, EGD(mtmp)?.gdlevel)))) {
             migr.splice(i, 1);
-            makemap_unmakemon(mtmp, true);
+            await makemap_unmakemon(mtmp, true);
         } else {
             i++;
         }
@@ -280,6 +281,10 @@ export async function wiz_makemap() {
         /* create a new level; goto_level()-only side effects (Astral's
            guardian angel, Ft.Ludios' alarm) don't occur for replacements */
         await mklev();
+        // C ref: mklev.c:1404-1420,1561-1570 — finish the deferred room fill
+        // and mineralization before makemap_prepost places the hero and pets.
+        const { fastforward_fill_mineralize } = await import('./fastforward.js');
+        if (!game._bones_loaded) await fastforward_fill_mineralize();
         await makemap_prepost(false, was_in_W_tower);
     } else {
         await unavail('wizmakemap');
@@ -1591,12 +1596,6 @@ export function wizcustom_callback(win, glyphnum, id) {
 /*  porting into the named file, then delete the stub here.            */
 /* ------------------------------------------------------------------ */
 
-// dog.c keepdogs(pets_only) -> js/dog.js
-function nyi_keepdogs(_pets_only) {}
-// mon.c mongone(mtmp) -> js/mon.js
-function nyi_mongone(_mtmp) {}
-// shk.c setpaid(shkp) -> js/shk.js (js/shk.js:1435 has a private copy)
-function nyi_setpaid(_shkp) {}
 // dothrow.c mhurtle(mon, dx, dy, range) -> js/dothrow.js
 async function nyi_mhurtle(_mon, _dx, _dy, _range) {}
 // dothrow.c hurtle(dx, dy, range, verbose) -> js/dothrow.js

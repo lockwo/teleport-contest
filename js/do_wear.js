@@ -20,10 +20,11 @@ import {
     worn_slot_clear, body_part, makeplural, xname, yname, makeknown,
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuwep_slot, setuswapwep, setuqwep,
-    Ring_off, Ring_on, Amulet_off, off_msg, curse_blocks_removal, oc_delay,
-    otense, weapon_descr_for, makeknown_credit, cmdq_pop, worn_extrinsic,
+    Ring_off, Ring_on, Amulet_off, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
+    otense, makeknown_credit, cmdq_pop, worn_extrinsic,
 } from './invent.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
+import { weapon_descr } from './weapon.js';
 import { youmonst_data_pub, nohands_youmonst } from './invent.js';
 import { mflags1_of, M1_HUMANOID, M1_SLITHY } from './monflags_data.js';
 import { acurr_eff } from './attrib.js';
@@ -1235,7 +1236,7 @@ export async function glibr() {
     let otherwep = null, wastwoweap = false;
     let otmp = game.uswapwep;
     if (game.u?.twoweap && otmp) {
-        otherwep = is_sword(otmp) ? c_sword : weapon_descr_for(otmp);
+        otherwep = is_sword(otmp) ? c_sword : weapon_descr(otmp);
         if ((otmp.quan | 0) > 1) otherwep = makeplural(otherwep);
         const which = lefty ? 'right ' : 'left ';
         await pline(`Your ${otherwep} ${xfl ? 'also ' : ''}${otense(otmp, 'slip')} from your ${which}${body_part(6 /*HAND*/)}.`);
@@ -1247,7 +1248,7 @@ export async function glibr() {
     otmp = game.uwep;
     if (otmp && otmp.otyp !== AKLYS && !welded(otmp)) {
         const savequan = otmp.quan;
-        let thiswep = is_sword(otmp) ? c_sword : weapon_descr_for(otmp);
+        let thiswep = is_sword(otmp) ? c_sword : weapon_descr(otmp);
         if (otherwep && thiswep !== makesingular_simple(otherwep)) otherwep = null;
         if ((otmp.quan | 0) > 1) {
             if (thiswep === 'food') otmp.quan = 1;
@@ -1328,6 +1329,8 @@ export async function do_takeoff() {
     } else if (doff.what === W_RINGR) {
         otmp = game.uright;
         if (!(await cursed_blocks(otmp))) await Ring_off(game.uright);
+    } else if (doff.what === 0x00800000 /*WORN_BLINDF*/) {
+        if (!(await cursed_blocks(game.ublindf))) await Blindf_off(game.ublindf);
     }
     doff.mask &= ~I_SPECIAL;
     return otmp;
@@ -1350,9 +1353,8 @@ export function takeoff_order() {
 }
 
 // C ref: do_wear.c:2900 take_off() — the 'A' occupation body: charge each slot
-// its oc_delay, then remove it.  The moveloop hook that re-invokes an occupation
-// each turn lives in allmain.js (deferred), so this computes the per-slot delay
-// and performs one step per call.
+// its oc_delay, then remove it.  allmain.js re-invokes this occupation one
+// step per turn.
 export async function take_off() {
     const doff = takeoff_ctx();
     if (doff.what) {

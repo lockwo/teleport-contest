@@ -29,7 +29,7 @@ import { more_experienced, pluslvl, rndexp, has_innate } from './exper.js';
 import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          POT_HEALING, POT_EXTRA_HEALING, POT_FRUIT_JUICE, POT_BOOZE,
          POT_SICKNESS, POT_WATER, POT_SPEED, POT_GAIN_LEVEL, POT_GAIN_ENERGY,
-         objects, COIN_CLASS, RING_CLASS, mkobj_at, CORPSE, next_ident } from './mkobj.js';
+         objects, COIN_CLASS, RING_CLASS, mkobj_at, CORPSE } from './mkobj.js';
 import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
          W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
@@ -771,7 +771,7 @@ async function peffect_booze(otmp) {
     pline_sync(`Ooph!  This tastes like ${otmp.odiluted ? 'watered down ' : ''}${Hallucination() ? 'dandelion wine' : 'liquid fire'}!`);
     if (!otmp.blessed) {
         make_confused(itimeout_incr(u?.uprops?.Confusion,
-                                    d(2 + (u?.uhs || 0), 8)), false);
+                                    d(2 + (u.uhs ?? 1 /* NOT_HUNGRY */), 8)), false);
     }
     if (!otmp.odiluted) await healup(1, 0, false, false);
     if (u) u.uhunger = (u.uhunger ?? 900) + 10 * (2 + bcsign(otmp));
@@ -1462,7 +1462,7 @@ export async function dopotion(otmp) {
 // / surrounding water at the hero's square and offers to drink from it.
 export async function dodrink() {
     const u = game.u;
-    if (u?.Strangled) {
+    if (HProp('Strangled')) {
         await pline("If you can't breathe air, how can you drink liquid?");
         return ECMD_OK;
     }
@@ -1510,10 +1510,6 @@ export async function dodrink() {
     // renumbers inventory, so the guard has to exist for it to stay that way.
     if (otmp.owornmask) {
         if ((otmp.quan || 1) > 1) {
-            // C splitobj() calls nextoid(), whose trailing next_ident() spends
-            // rnd(2).  The shared JS splitobj deliberately has no RNG side
-            // effects so callers pay that draw at their C-equivalent site.
-            next_ident();
             otmp = splitobj(otmp, 1);
             otmp.owornmask = 0;
         } else {

@@ -22,7 +22,10 @@ const A_CHA_CF = 5, RIN_CONFLICT_CF = 186;
 // C ref: monst.h:255 mon_offmap(mon) == (mon->mstate != MON_FLOOR).
 function mon_offmap(mon) { return (mon?.mstate | 0) !== MON_FLOOR; }
 export function Conflict() {
-    return game.uleft?.otyp === RIN_CONFLICT_CF || game.uright?.otyp === RIN_CONFLICT_CF;
+    const u = game.u, p = u?.uprops;
+    return !!(p?.HConflict || u?.HConflict || p?.EConflict || u?.EConflict
+        || p?.Conflict || u?.Conflict
+        || game.uleft?.otyp === RIN_CONFLICT_CF || game.uright?.otyp === RIN_CONFLICT_CF);
 }
 export function resist_conflict(mtmp) {
     const rc = Math.min(19, _acurr_cf(A_CHA_CF) - (mtmp.m_lev | 0) + (game.u?.ulevel | 0));
@@ -5475,10 +5478,15 @@ async function mpickstuff(mtmp) {
             // blocking light.  The split fragment was never inserted into our
             // floor array, so only the whole-stack case has anything to remove.
             if (otmp3 === otmp) remove_object(otmp);
-            otmp3.where = 3; // OBJ_MINVENT
+            // C ref: mon.c:1902 -> mkobj.c:2655-2663 add_to_minv().
+            // Merge into an existing carried stack before prepending a new one.
+            const { merged } = await import('./invent.js');
             mtmp.minvent = mtmp.minvent || [];
-            // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.
-            mtmp.minvent.unshift(otmp3);
+            if (!mtmp.minvent.some(o => merged(o, otmp3))) {
+                otmp3.where = 3; // OBJ_MINVENT
+                otmp3.ocarry = mtmp;
+                mtmp.minvent.unshift(otmp3);
+            }
             // C ref: mon.c:1904 check_gear_next_turn(mtmp) — mon.c:5915 sets
             // misc_worn_check|I_SPECIAL so movemon_singlemon (js/mon.js) runs
             // m_dowear() next turn and spends that turn equipping.  The
@@ -6577,11 +6585,10 @@ async function mswings_mm(mtmp, otemp, bash) {
     await update_topl(`${Monnam(mtmp)} ${verb} ${oneOf}${hisher} ${name}.`);
 }
 
-// C ref: include/attrib.h ACURR(A_DEX) — the hero's current Dexterity.  Stored
-// as game.u.acurr.a[A_DEX] (A_DEX == 3), matching attrib.js / uhitm.js.
+// C ref: attrib.c acurr() — include bonuses and temporary wounded-leg loss.
 const A_DEX_IDX = 3;
 function ACURR_DEX() {
-    return game.u?.acurr?.a?.[A_DEX_IDX] ?? 0;
+    return _acurr_cf(A_DEX_IDX);
 }
 
 // C ref: wield.c freehand() — `!uwep || !welded(uwep) || (!bimanual(uwep) &&
@@ -6629,10 +6636,15 @@ export async function u_catch_thrown_obj(otmp) {
 export async function thitu(tlev, dam, otmp) {
     const { update_topl } = await import('./display.js');
     const { exercise } = await import('./attrib.js');
+    const { obj_doname } = await import('./invent.js');
+    const { obj_is_pname, the } = await import('./objnam.js');
     const u = game.u;
     const uac = u?.uac ?? 10;
     const dieroll = rnd(20);                         // mthrowu.c:106
-    const onm = mshot_xname(otmp);                   // "crude dagger"
+    const name = (otmp?.quan > 1) ? obj_doname(otmp) : mshot_xname(otmp);
+    // C mthrowu.c:90-103: stacks retain their count; artifacts use "the".
+    const onm = otmp && obj_is_pname(otmp) ? the(name)
+        : otmp?.quan > 1 ? name : an_name(name);
     // C ref: mthrowu.c:86 thitu() — names the missile with
     // doname()/mshot_xname(), both of which route through objnam.c
     // mshot_xname():1093 -> xname() -> xname_flags():628 `if (!Blind &&
@@ -6651,14 +6663,14 @@ export async function thitu(tlev, dam, otmp) {
         // object, onm = an(name) -> "a dart"; the message is
         // pline("%s %s you.", upstart(onmbuf), vtense(onmbuf, "miss")) ->
         // "A dart misses you." (not "The dart ...").
-        else if (uac + tlev <= dieroll - 2) await update_topl(`${upstart_mm(an_name(onm))} misses you.`);
-        else await update_topl(`You are almost hit by ${an_name(onm)}.`);
+        else if (uac + tlev <= dieroll - 2) await update_topl(`${upstart_mm(onm)} ${vtense_mm(onm, 'miss')} you.`);
+        else await update_topl(`You are almost hit by ${onm}.`);
         return 0;
     }
     // Hit.  C: You("are hit by %s%s", onm, exclam(dam)) (verbose) or
     // You("are hit%s", exclam(dam)) (terse).
     if (terse) await update_topl(`You are hit${exclam(dam)}`);
-    else await update_topl(`You are hit by ${an_name(onm)}${exclam(dam)}`);
+    else await update_topl(`You are hit by ${onm}${exclam(dam)}`);
     // C ref: mthrowu.c:122-124 — an acid-resistant hero shrugs off acid venom
     // (no losehp(), no exercise()).
     const is_acid = otmp?.otyp === ACID_VENOM;
@@ -6800,9 +6812,9 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
     // and the `verbose && !gm.mtarget` unseen-feedback branches are live.
     if (tmp < rnd(20)) {                                     // mthrowu.c:350
         if (vis) {
-            const onm = mshot_xname(otmp);
-            await pline_mon(mtmp, `${The_mm(onm)} ${vtense_mm(onm, 'miss')} `
-                + `${mon_nam(mtmp)}.`);
+            // C ref: mthrowu.c:353 uses zap.c miss(), including !verbose.
+            const { miss } = await import('./zap.js');
+            await miss(mshot_xname(otmp), mtmp);
         } else if (verbose) {
             await pline_mon(mtmp, 'It is missed.');
         }

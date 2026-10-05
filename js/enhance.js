@@ -493,6 +493,8 @@ async function select_skill_menu(pages, pickOne) {
         }
         if (ch === '>') { if (idx < pages.length - 1) idx++; continue; }
         if (ch === '<') { if (idx > 0) idx--; continue; }
+        if (ch === '^') { idx = 0; continue; }              // MENU_FIRST_PAGE
+        if (ch === '|') { idx = pages.length - 1; continue; } // MENU_LAST_PAGE
         if (pickOne) {
             const hit = pages[idx].find((it) => it.skill != null && it.sel === ch);
             if (hit) { delete game._modal_screen; return hit.skill; }
@@ -566,6 +568,7 @@ export async function doenhance() {
         await dismiss_invent_screen();
         return ECMD_OK;
     }
+    game._skill_counting = false;
     const state = build_skill_state();
     const { lines, title } = build_skill_menu_lines(state);
 
@@ -602,11 +605,27 @@ export async function doenhance() {
 // active and consumed the key.
 export async function skill_window_advance(key) {
     if (game._modal_screen !== 'skillwin') return false;
+    // C ref: wintty.c:1564-1615 — menu counts never echo on the topline;
+    // ESC cancels a nonzero count before it can cancel the menu.
+    if (key >= '0' && key <= '9') {
+        if (key !== '0') game._skill_counting = true;
+        return true;
+    }
+    if (key === '\x1b' && game._skill_counting) {
+        game._skill_counting = false;
+        return true;
+    }
+    if (' <>^|.-@,\\~:\r\n\x1b'.includes(key)) game._skill_counting = false;
     const pages = game._skill_pages || [];
     const cur = game._skill_page || 0;
     const onLast = cur >= pages.length - 1;
     // C ref: wintty.c process_menu_window(), PICK_NONE.  Only these keys act;
     // everything else is tty_nhbell() and the menu stays up unchanged.
+    if (key === '^' || key === '|') {
+        game._skill_page = key === '^' ? 0 : pages.length - 1;
+        renderSkillPage();
+        return true;
+    }
     if (key === '<') {                              // MENU_PREVIOUS_PAGE
         if (cur > 0) game._skill_page = cur - 1;
         renderSkillPage();
@@ -623,6 +642,7 @@ export async function skill_window_advance(key) {
     }
     delete game._skill_pages;
     delete game._skill_page;
+    delete game._skill_counting;
     await dismiss_invent_screen();
     return true;
 }

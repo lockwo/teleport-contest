@@ -32,11 +32,10 @@ import {
 } from './const.js';
 import { fuzzymatch, strstri } from './objnam.js';
 import { game } from './gstate.js';
-import { match_str2clr, match_str2attr, add_menu_coloring_parsed } from './options.js';
-import {
-    tty_create_nhwindow, tty_destroy_nhwindow, tty_start_menu, tty_add_menu,
-    tty_end_menu, tty_select_menu, tty_procs,
-} from './wintty.js';
+import { match_str2clr, match_str2attr, add_menu_coloring_parsed,
+         create_nhwindow, destroy_nhwindow, start_menu, add_menu,
+         end_menu, select_menu } from './options.js';
+import { tty_procs } from './wintty.js';
 
 // C ref: include/wintype.h:128-134 ATR_*.  Deliberately NOT imported from
 // js/const.js — see the header note.
@@ -368,23 +367,21 @@ export async function query_attr(prompt, dflt_attr) {
     const allow_many = !!(prompt && !strncmpi(prompt, 'Choose', 6));
     const clr = NO_COLOR;
 
-    tmpwin = tty_create_nhwindow(NHW_MENU);
-    tty_start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+    tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
     any = anything_int(0); /* cg.zeroany */
     for (i = 0; i < attrnames.length; i++) {
         if (!attrnames[i].name)
             break;
         any = anything_int(i + 1);
-        /* C passes &nul_glyphinfo; js/wintty.js substitutes { glyph: NO_GLYPH }
-           for a null glyphinfo. */
-        tty_add_menu(tmpwin, null, any, 0, 0,
+        add_menu(tmpwin, null, any, 0, 0,
                      attrnames[i].attr, clr, attrnames[i].name,
                      (attrnames[i].attr === dflt_attr) ? MENU_ITEMFLAGS_SELECTED
                                                        : MENU_ITEMFLAGS_NONE);
     }
-    tty_end_menu(tmpwin, (prompt && prompt.length) ? prompt : 'Pick an attribute');
-    pick_cnt = await tty_select_menu(tmpwin, allow_many ? PICK_ANY : PICK_ONE, picks);
-    tty_destroy_nhwindow(tmpwin);
+    end_menu(tmpwin, (prompt && prompt.length) ? prompt : 'Pick an attribute');
+    pick_cnt = await select_menu(tmpwin, allow_many ? PICK_ANY : PICK_ONE, picks);
+    destroy_nhwindow(tmpwin);
     if (pick_cnt > 0) {
         let j, k = 0;
 
@@ -392,7 +389,7 @@ export async function query_attr(prompt, dflt_attr) {
             /* PICK_ANY, with one preselected entry (ATR_NONE) which
                should be excluded if any other choices were picked */
             for (i = 0; i < pick_cnt; ++i) {
-                j = picks[i].item.a_int - 1;
+                j = picks[i].a_int - 1;
                 if (attrnames[j].attr !== ATR_NONE || pick_cnt === 1) {
                     switch (attrnames[j].attr) {
                     case ATR_NONE:
@@ -421,11 +418,11 @@ export async function query_attr(prompt, dflt_attr) {
             }
         } else {
             /* PICK_ONE, but might get 0 or 2 due to preselected entry */
-            j = picks[0].item.a_int - 1;
+            j = picks[0].a_int - 1;
             /* pick_cnt==2: explicitly picked something other than the
                preselected entry */
             if (pick_cnt === 2 && attrnames[j].attr === dflt_attr)
-                j = picks[1].item.a_int - 1;
+                j = picks[1].a_int - 1;
             k = attrnames[j].attr;
         }
         return k;
@@ -446,32 +443,32 @@ export async function query_color(prompt, dflt_color) {
     /* replace user patterns with color name ones and force 'menucolors' On */
     basic_menu_colors(true);
 
-    tmpwin = tty_create_nhwindow(NHW_MENU);
-    tty_start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+    tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
     any = anything_int(0); /* cg.zeroany */
     for (i = 0; i < colornames.length; i++) {
         if (!colornames[i].name)
             break;
         any = anything_int(i + 1);
-        tty_add_menu(tmpwin, null, any, 0, 0,
+        add_menu(tmpwin, null, any, 0, 0,
                      ATR_NONE, NO_COLOR, colornames[i].name,
                      (colornames[i].color === dflt_color) ? MENU_ITEMFLAGS_SELECTED
                                                           : MENU_ITEMFLAGS_NONE);
     }
-    tty_end_menu(tmpwin, (prompt && prompt.length) ? prompt : 'Pick a color');
-    pick_cnt = await tty_select_menu(tmpwin, PICK_ONE, picks);
-    tty_destroy_nhwindow(tmpwin);
+    end_menu(tmpwin, (prompt && prompt.length) ? prompt : 'Pick a color');
+    pick_cnt = await select_menu(tmpwin, PICK_ONE, picks);
+    destroy_nhwindow(tmpwin);
 
     /* remove temporary color name patterns and restore user-specified ones;
        reset 'menucolors' option to its previous value */
     basic_menu_colors(false);
 
     if (pick_cnt > 0) {
-        i = colornames[picks[0].item.a_int - 1].color;
+        i = colornames[picks[0].a_int - 1].color;
         /* pick_cnt==2: explicitly picked something other than the
            preselected entry */
         if (pick_cnt === 2 && i === NO_COLOR)
-            i = colornames[picks[1].item.a_int - 1].color;
+            i = colornames[picks[1].a_int - 1].color;
         return i;
     } else if (pick_cnt === 0) {
         /* pick_cnt==0: explicitly picking preselected entry toggled it off */

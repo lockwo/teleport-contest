@@ -198,7 +198,7 @@ export async function mkundead(mm, revive_corpses, mm_flags, deps = {}) {
             if (!revive_corpses
                 || !(otmp = deps.sobj_at?.(deps.CORPSE ?? 265, cc.x, cc.y))
                 || !(await deps.revive?.(otmp, false)))
-                deps.makemon?.(mdat, cc.x, cc.y, mm_flags);
+                await deps.makemon?.(mdat, cc.x, cc.y, mm_flags);
         }
     }
     // C: svl.level.flags.graveyard = TRUE — "reduced chance for undead corpse"

@@ -1367,6 +1367,9 @@ const _i_special_props = new Set();
 export async function done_timeout(how, which) {
     _i_special_props.add(which);        /* affects final disclosure */
     const { done } = await import('./end.js');
+    const { formatkiller } = await import('./topten.js');
+    // C ref: topten.c formatkiller(), also used for the tombstone in end.c.
+    game._killer_name = formatkiller(C.BUFSZ, how, false);
     await done(how);
 
     /* life-saved */

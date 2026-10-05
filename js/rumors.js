@@ -255,9 +255,9 @@ async function display_nhwindow(win, _blocking) {
         for (let i = 0; i < win.lines.length; i += perPage)
             pages.push(win.lines.slice(i, i + perPage));
         for (let pi = 0; pi < pages.length; pi++) {
-            // full-screen NHW_TEXT (offx 0): "--More--" at column 0 under the page
+            // C ref: wintty.c:1844-1845 — NHW_TEXT always ends at the bottom row.
             inv.renderWindowScreen(pages[pi], {
-                footer: '--More--', footerRow: pages[pi].length, footerCol: 0,
+                footer: '--More--', footerRow: rows - 1, footerCol: 0,
                 modal: 'textwin',
             });
             for (;;) {

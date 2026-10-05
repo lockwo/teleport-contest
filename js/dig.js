@@ -256,7 +256,7 @@ const sgn = (n) => (n > 0 ? 1 : n < 0 ? -1 : 0);
 // swallow entirely on the secret-corridor path.
 const STRIDENT = 4;   /* dig.c:1497, from pray.c */
 const DRAFT_REACTION = ['enlisting', 'marching', 'protesting', 'fleeing'];
-async function draft_message(unexpected) {
+export async function draft_message(unexpected) {
     const u = game.u || {};
     if (unexpected) {
         if (!Hallucination()) {

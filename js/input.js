@@ -41,17 +41,20 @@ export async function nhgetch() {
     if (hook) await hook();
 
     // C ref: wintty.c tty_nhgetch() — `if (!i) i = '\033'`: NUL is read as ESC.
+    // C tty_nhgetch() folds carriage return into line feed before any command
+    // or prompt sees the key. Replay input may retain the raw CR code.
     if (_inputQueue.length > 0) {
         const k = _inputQueue.shift();
-        return k === 0 ? 27 : k;
+        return k === 0 ? 27 : k === 13 ? 10 : k;
     }
 
     // Browser mode: wait for keypress from the display
     const display = game?.nhDisplay;
     if (display?.readKey) {
         const k = await display.readKey({ bindings: KEY_BINDINGS.VI_KEYS });
-        return k === 0 ? 27 : k;
+        return k === 0 ? 27 : k === 13 ? 10 : k;
     }
+
 
     throw new Error('Input queue empty - test may be missing keystrokes');
 }

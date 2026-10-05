@@ -392,6 +392,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
     const { destroy_items, resist, zap_over_floor, burnarmor, ignite_items }
         = await import('./zap.js');
     const { Monnam, killed, setmangry } = await import('./uhitm.js');
+    const shopdamage = { value: false };
     if (dam) {
         for (let i = 0; i < 3; i++)
             for (let j = 0; j < 3; j++) {
@@ -405,7 +406,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
                     continue;
                 }
                 if (!(u?.uswallow && !game.context?.mon_moving))
-                    await zap_over_floor(xx, yy, type, exploding_wand_typ);
+                    await zap_over_floor(xx, yy, type, shopdamage, false, exploding_wand_typ);
 
                 let mtmp = m_at(xx, yy);
                 if (!mtmp && u && xx === u.ux && yy === u.uy) mtmp = u.usteed;
@@ -543,6 +544,12 @@ export async function explode(x, y, type, dam, olet, expltype) {
         const { exercise } = await import('./attrib.js');
         exercise(A_STR, false);
     }
+    if (shopdamage.value) {
+        const { pay_for_damage } = await import('./shk.js');
+        await pay_for_damage(adtyp === AD_FIRE ? 'burn away'
+                            : adtyp === AD_COLD ? 'shatter'
+                            : adtyp === AD_DISN ? 'disintegrate' : 'destroy', false);
+    }
 
     // C ref: explode.c:687-694 "explosions are noisy" — wake_nearto(x, y,
     // max(dam*dam, 50)).  RNG-free, but it wakes sleeping monsters and a woken
@@ -579,7 +586,7 @@ function unmap_invisible_at(x, y) {
 // and rnd(force) for the range.
 export async function scatter(sx, sy, blastforce, scflags, obj) {
     const { objects_at, splitobj, obj_extract_self, stackobj } = await import('./invent.js');
-    const { place_object, objects, weight, next_ident } = await import('./mkobj.js');
+    const { place_object, objects, weight } = await import('./mkobj.js');
     const { breaks } = await import('./dothrow.js');
     const individual_object = !!obj;
     const schain = [];
@@ -594,11 +601,6 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
         // like any other object here.
         if ((otmp.quan | 0) > 1) {
             const qtmp = rnd((otmp.quan | 0) - 1);
-            // C ref: mkobj.c splitobj() -> nextoid() -> next_ident(): every
-            // stack split spends one rnd(2) on the fragment's o_id.  This
-            // port's splitobj() draws nothing, so each call site pays it (as
-            // js/invent.js:5856, js/monmove.js:6399, js/eat.js:439 do).
-            next_ident();
             otmp = splitobj(otmp, qtmp);
         } else {
             obj = null;                              /* all used */

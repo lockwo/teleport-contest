@@ -6,9 +6,10 @@ import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
 import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
-import { set_malign, monster_by_pmidx } from './makemon.js';
+import { set_malign, monster_by_pmidx, propagate } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
 import { finish_meating } from './dogmove.js';
+import { goodpos_onscary } from './teleport.js';
 
 // C ref: include/onames.h — SADDLE object type index (mkobj.js OBJECTS table
 // row [235, "SADDLE", ...]).  A saddle is a TOOL_CLASS object whose
@@ -62,7 +63,7 @@ function m_at(x, y) {
 
 // C ref: teleport.c goodpos — minimal version for starting-pet placement:
 // accessible terrain, not the hero, no monster already there.
-function goodpos(x, y) {
+function goodpos(x, y, mdat, checkscary) {
     if (x < 1 || x >= COLNO || y < 0 || y >= ROWNO) return false;
     if (game.u?.ux === x && game.u?.uy === y) return false;
     if (m_at(x, y)) return false;
@@ -76,6 +77,7 @@ function goodpos(x, y) {
     // planted inside a shut/locked door instead of the next ring-1 candidate.
     if (typ === DOOR && ((loc.doormask ?? 0) & (D_CLOSED | D_LOCKED)) !== 0)
         return false;
+    if (checkscary && goodpos_onscary(x, y, mdat)) return false;
     return true;
 }
 
@@ -121,14 +123,15 @@ function collect_coords(cx, cy, maxradius) {
 
 // C ref: teleport.c enexto_core — first goodpos spot, nearest rings first
 // (1-3 steps), then whole map.  Returns {x,y} or null.
-function enexto(xx, yy) {
+function enexto(xx, yy, mdat, checkscary = true) {
     const near = collect_coords(xx, yy, 3);
     for (const c of near)
-        if (goodpos(c.x, c.y)) return c;
+        if (goodpos(c.x, c.y, mdat, checkscary)) return c;
     const all = collect_coords(xx, yy, 0);
     for (let i = near.length; i < all.length; i++)
-        if (goodpos(all[i].x, all[i].y)) return all[i];
-    return null;
+        if (goodpos(all[i].x, all[i].y, mdat, checkscary)) return all[i];
+    // C teleport.c:196-202 retries without GP_CHECKSCARY only if no safe spot exists.
+    return checkscary ? enexto(xx, yy, mdat, false) : null;
 }
 
 function logged_d(n, x) {
@@ -217,13 +220,18 @@ function makedog_mon(pettype, x, y) {
     // we're past mklev, relocate to the nearest good position via enexto.
     let mx = x, my = y;
     if (x === (game.u?.ux ?? 0) && y === (game.u?.uy ?? 0) && !game.in_mklev) {
-        const cc = enexto(x, y);
+        const cc = enexto(x, y, monster_by_pmidx(pettype));
         if (cc) { mx = cc.x; my = cc.y; }
     }
+
+    // C ref: dog.c:255 -> makemon.c:1233 — initial pets count as births too.
+    propagate(pettype, true, false);
 
     const mtmp = {
         // C ref: makemon.c — mtmp->data = &mons[mndx], the shared species row.
         data: monster_by_pmidx(pettype),
+        // C ref: makemon.c:1355 — starting pets are not shapechangers.
+        cham: NON_PM,
         // C ref: makemon.c / dog.c initedog() — a tamed monster is peaceful
         // (all mtame are mpeaceful).  is_safemon() in the hero's bump-to-swap
         // path keys off mpeaceful, so set it explicitly at creation (before

@@ -9,7 +9,7 @@
 // armor_status(), terrain_status(). bot() itself lives in display.js and is
 // deliberately not duplicated here (nor are rank/rank_of/xlev_to_rank/
 // rank_to_xlev, status_initialize, stat_cap_indx, repad_with_dashes,
-// count_status_hilites, or the parse_status_hl1/hl2/fldname_to_bl_indx/
+// or the parse_status_hl1/hl2/fldname_to_bl_indx/
 // splitsubfields/is_ltgt_percentnumber/has_ltgt_percentnumber/
 // parse_cond_option group that options.js already owns).
 //
@@ -59,6 +59,7 @@ import {
 } from './wintty.js';
 import { status_version } from './version.js';
 import { hooked_tty_getlin } from './extcmd-handlers.js';
+import { OPT_MENU_DRIVER } from './options.js';
 
 /* ==================================================================== */
 /*  botl.h                                                              */
@@ -418,11 +419,11 @@ function Hallucination() {
     const t = upv('Hallucination') || upv('HHallucination') || (game.u?.uhallu ? 1 : 0);
     return t > 0 && !(upv('HHalluc_resistance') || upv('EHalluc_resistance'));
 }
-// C ref: youprop.h Levitation == (HLevitation || ELevitation), Flying likewise;
+// C ref: youprop.h — intrinsic/extrinsic flight and levitation honor blocked.
 // the extrinsic half is invent.js's worn_extrinsic() store (prop.h
 // LEVITATION=48, FLYING=49), which the flat u.uprops fields never mirror.
-function Levitation() { return !!(upv('Levitation') || worn_extrinsic(48)); }
-function Flying() { return !!(upv('Flying') || worn_extrinsic(49)); }
+function Levitation() { return !!(upv('Levitation') || worn_extrinsic(48)) && !upv('BLevitation'); }
+function Flying() { return !!(upv('Flying') || worn_extrinsic(49)) && !upv('BFlying'); }
 function Glib() { return upv('Glib') > 0; }
 function Wounded_legs() { return upv('Wounded_legs') > 0; }
 function Underwater() { return !!game.u?.uinwater; }
@@ -2334,6 +2335,15 @@ export function status_hilite_linestr_countfield(fld) {
     return count;
 }
 
+/* C ref: botl.c:3477 — include grouped condition rules as well as fields. */
+export function count_status_hilites() {
+    if (!_engine_ready) status_engine_init();
+    status_hilite_linestr_gather();
+    const count = status_hilite_linestr_countfield(BL_FLUSH);
+    status_hilite_linestr_done();
+    return count;
+}
+
 /* C ref: botl.c:3488 — group the conditions that share a colour+attribute
    into one "condition/<names>/<colour>" line apiece. */
 export function status_hilite_linestr_gather_conditions() {
@@ -2527,27 +2537,58 @@ export function all_options_statushilites(sbuf) {
 /* C ref: decl.c nul_glyphinfo */
 const nul_glyphinfo = { glyph: 0, ttychar: ' ', gm: {} };
 
-function create_nhwindow(type) { return tty_create_nhwindow(type); }
-function destroy_nhwindow(win) { return tty_destroy_nhwindow(win); }
-function start_menu(win, mbehavior) { return tty_start_menu(win, mbehavior); }
+function create_nhwindow(type) {
+    return OPT_MENU_DRIVER.select ? { type, items: [], query: '', lines: [] }
+                                 : tty_create_nhwindow(type);
+}
+function destroy_nhwindow(win) {
+    if (typeof win !== 'object') return tty_destroy_nhwindow(win);
+}
+function start_menu(win, mbehavior) {
+    if (typeof win === 'object') { win.items = []; win.behave = mbehavior; }
+    else return tty_start_menu(win, mbehavior);
+}
 function add_menu(win, gi, identifier, ch, gch, attr, clr, str, itemflags) {
-    return tty_add_menu(win, gi, identifier, ch, gch, attr, clr, str, itemflags);
+    if (typeof win === 'object') {
+        win.items.push({ any: identifier, accel: ch, gacc: gch, attr, clr,
+                         str, itemflags,
+                         selectable: Object.values(identifier).some(Boolean) });
+    } else return tty_add_menu(win, gi, identifier, ch, gch, attr, clr, str, itemflags);
 }
 /* C ref: windows.c add_menu_str() / add_menu_heading() — a non-selectable
    line, the heading form with ATR_SUBTITLE and MENU_ITEMFLAGS_SKIPINVERT. */
 function add_menu_str(win, str) {
-    return tty_add_menu(win, nul_glyphinfo, zeroany(), 0, 0, ATR_NONE,
-                        NO_COLOR, str, MENU_ITEMFLAGS_NONE);
+    return add_menu(win, nul_glyphinfo, zeroany(), 0, 0, ATR_NONE,
+                    NO_COLOR, str, MENU_ITEMFLAGS_NONE);
 }
 function add_menu_heading(win, str) {
-    return tty_add_menu(win, nul_glyphinfo, zeroany(), 0, 0, ATR_INVERSE,
-                        NO_COLOR, str, MENU_ITEMFLAGS_SKIPINVERT);
+    return add_menu(win, nul_glyphinfo, zeroany(), 0, 0, ATR_INVERSE,
+                    NO_COLOR, str, MENU_ITEMFLAGS_SKIPINVERT);
 }
-function end_menu(win, prompt) { return tty_end_menu(win, prompt); }
-function select_menu(win, how, picks) { return tty_select_menu(win, how, picks); }
-function putstr(win, attr, str) { return tty_putstr(win, attr, str); }
-function display_nhwindow(win, blocking) { return tty_display_nhwindow(win, blocking); }
-function getlin(query) { return hooked_tty_getlin(query, null); }
+function end_menu(win, prompt) {
+    if (typeof win === 'object') win.query = prompt;
+    else return tty_end_menu(win, prompt);
+}
+async function select_menu(win, how, picks) {
+    if (typeof win !== 'object') return tty_select_menu(win, how, picks);
+    const got = await OPT_MENU_DRIVER.select(win, how);
+    if (!got) return -1;
+    for (const item of got) picks.push({ item, count: -1 });
+    return got.length;
+}
+function putstr(win, attr, str) {
+    if (typeof win === 'object') win.lines.push({ attr, str });
+    else return tty_putstr(win, attr, str);
+}
+async function display_nhwindow(win, blocking) {
+    if (typeof win !== 'object') return tty_display_nhwindow(win, blocking);
+    const { display_text_window } = await import('./pager.js');
+    return display_text_window(win.lines.map((line) => ({ text: line.str, attr: line.attr })));
+}
+function getlin(query) {
+    return OPT_MENU_DRIVER.getlin ? OPT_MENU_DRIVER.getlin(query)
+                                 : hooked_tty_getlin(query, null);
+}
 
 /* C ref: botl.c:3109 — pick a set of conditions for one hilite rule. */
 export async function query_conditions() {
@@ -2674,6 +2715,12 @@ export async function cond_menu() {
             }
     }
     return changed;
+}
+
+/* C ref: botl.c count_cond() — count the currently enabled condition fields. */
+export function count_cond() {
+    if (!_engine_ready) status_engine_init();
+    return condtests.filter((condition) => condition.enabled).length;
 }
 
 /* C ref: botl.c:3672 */
@@ -3240,7 +3287,7 @@ export async function status_hilite_menu_fld(fld) {
 }
 
 /* C ref: botl.c:4456 — dump every rule in config-file form. */
-export function status_hilites_viewall() {
+export async function status_hilites_viewall() {
     let hlstr = status_hilite_str;
 
     const datawin = create_nhwindow(NHW_TEXT);
@@ -3251,7 +3298,7 @@ export function status_hilites_viewall() {
         hlstr = hlstr.next;
     }
 
-    display_nhwindow(datawin, false);
+    await display_nhwindow(datawin, false);
     destroy_nhwindow(datawin);
 }
 
@@ -3304,7 +3351,7 @@ export async function status_hilite_menu() {
         if ((res = await select_menu(tmpwin, PICK_ONE, picks)) > 0) {
             fld = picks[0].item.a_int - 1;
             if (fld < 0) {
-                status_hilites_viewall();
+                await status_hilites_viewall();
             } else {
                 if (await status_hilite_menu_fld(fld)) reset_status_hilites();
             }

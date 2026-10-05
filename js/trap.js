@@ -1540,18 +1540,22 @@ async function thitu_named(tlev, dam, name) {
     const uac = u?.uac ?? 10;
     const dieroll = rnd(20);                     // mthrowu.c:106
     const onm = an_str(name);
+    const terse = Blind() || game.flags?.verbose === false;
     if (uac + tlev <= dieroll) {
         // Miss feedback (verbose).  C: pline("%s %s you.", upstart(onmbuf),
         // vtense(onmbuf, "miss")) where onmbuf = an(name) -> "a little dart"
         // -> "A little dart misses you." (not "The little dart ...").
-        if (uac + tlev <= dieroll - 2)
+        if (terse)
+            await update_topl('It misses.');
+        else if (uac + tlev <= dieroll - 2)
             await update_topl(`${upstart_trap(onm)} ${vtense(onm, 'miss')} you.`);
         else
             await update_topl(`You are almost hit by ${onm}.`);
         return 0;
     }
-    // Hit: You("are hit by %s%s", onm, exclam(dam)).
-    await update_topl(`You are hit by ${onm}${exclam(dam)}`);
+    // C ref: mthrowu.c:118-121 — blind/!verbose omits the missile name.
+    await update_topl(terse ? `You are hit${exclam(dam)}`
+                           : `You are hit by ${onm}${exclam(dam)}`);
     await losehp(dam, name);                     // no RNG
     exercise(0 /*A_STR*/, false);                // rn2(2)
     return 1;
@@ -1988,12 +1992,7 @@ async function domagictrap() {
         newsym(u.ux, u.uy);
         break;
     case 12: /* a flash of fire */
-        // GAP: dofiretrap(NULL) — d(2,4) twice, rn2(min(uhpmax,num+1)),
-        // burnarmor()'s rn2(5) loop, rn2(3), destroy_items(AD_FIRE) and
-        // burn_floor_objects().  burnarmor/destroy_items live unexported in
-        // zap.js and burn_floor_objects has no port at all, so a partial
-        // version here would desync just as hard as the omission.  Same
-        // blocker as trapeffect_fire_trap.
+        await dofiretrap(null);
         break;
     /* odd feelings */
     case 13:

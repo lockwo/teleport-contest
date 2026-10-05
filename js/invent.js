@@ -11,7 +11,7 @@ import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac } from './worn.js';
 import { rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch } from './input.js';
-import { docrt, flush_screen, newsym, pline, putStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, remember_topl, yn_prompt_history, key2txt, note_topl } from './display.js';
+import { docrt, flush_screen, newsym, map_object, pline, putStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl } from './display.js';
 import { hooks } from './gstate.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
 import { distmin, depth as depth_of_level } from './hacklib.js';
@@ -83,7 +83,7 @@ import {
     objects,
     GemStone,
     weight,
-    next_ident,
+    nextoid,
     place_object as mkobj_place_object,
     base_oc_weight,
     // C ref: timeout.c attach_fig_transform_timeout() — carry_obj_effects()
@@ -107,7 +107,7 @@ import { find_ac } from './u_init.js';
 import { moveloop_turn, youHaveFast, youHaveVeryFast } from './allmain.js';
 import { acurr_eff, acurr_str_encoded, exercise, set_moreluck } from './attrib.js';
 import { hitval, dbon, weapon_type, weapon_hit_bonus_core,
-         weapon_dam_bonus_core } from './weapon.js';
+         weapon_dam_bonus_core, weapon_descr } from './weapon.js';
 import { P_TWO_WEAPON_COMBAT as P_TWO_WEAPON_COMBAT_INV,
          P_RIDING as P_RIDING_INV, W_ART as W_ART_PROP, W_WEP as W_WEP_PROP,
          HAND, STOMACH, ONAME_VIA_NAMING, ONAME_KNOW_ARTI, HMON_APPLIED } from './const.js';
@@ -148,7 +148,7 @@ import { shk_owns } from './shk.js';
 import { xname as on_xname, cxname_singular as on_cxname_singular, doname_base as on_doname_base,
          corpse_xname as on_corpse_xname, simpleonames as on_simpleonames,
          ansimpleoname as on_ansimpleoname, minimal_xname as on_minimal_xname,
-         distantname_adjust, distantname_active, The as on_The } from './objnam.js';
+         distantname_adjust, distantname_active, The as on_The, the as on_the } from './objnam.js';
 import { y_monnam } from './do_name.js';
 // role.js imports only gstate/rng/const, so this is cycle-safe.
 import { roles, align_gname } from './role.js';
@@ -899,8 +899,10 @@ export function obfree(obj, _mergeInto) { removeObjectFromAllInventories(obj); }
 // "A +2 elven arrow (in quiver) hits the floor."
 export function splitobj(obj, cnt) {
     if (!obj || cnt <= 0 || cnt >= (obj.quan || 1)) return obj;
-    const split = { ...obj, quan: cnt, o_id: `${obj.o_id || 'obj'}s${Date.now()}`,
-                    owornmask: 0, pickup_prev: 0 };
+    const split = { ...obj, quan: cnt, owornmask: 0, pickup_prev: 0 };
+    if (split.timed) split.timed = 0;
+    if (split.lamplit) split.lamplit = 0;
+    split.o_id = nextoid(obj, split);
     obj.quan -= cnt;
     obj.owt = weight(obj);
     split.owt = weight(split);
@@ -908,10 +910,33 @@ export function splitobj(obj, cnt) {
     const ix = inv.indexOf(obj);
     if (ix >= 0) inv.splice(ix + 1, 0, split);
     syncInventory(inv);
+    const splitContext = game.context.objsplit || (game.context.objsplit = {});
+    splitContext.parent_oid = obj.o_id;
+    splitContext.child_oid = split.o_id;
     return split;
 }
-function unsplitobj(obj) { return obj; }
-function clear_splitobjs() {}
+// C ref: mkobj.c:556-621 — undo the latest split only while both halves
+// remain in the same inventory or container and can still merge.
+export function unsplitobj(obj) {
+    const splitContext = game.context.objsplit;
+    if (!obj || !splitContext) return null;
+    let list;
+    if (obj.where === OBJ_INVENT) list = inventoryArray();
+    else if (obj.where === 'minvent') list = obj.ocarry?.minvent;
+    else if (obj.where === OBJ_CONTAINED)
+        list = (obj.ocontainer || container_of(obj))?.cobj;
+    else return null;
+    if (!list) return null;
+    if (obj.o_id !== splitContext.parent_oid
+        && obj.o_id !== splitContext.child_oid) return null;
+    const parent = list.find(o => o.o_id === splitContext.parent_oid);
+    const child = list.find(o => o.o_id === splitContext.child_oid);
+    return parent && child && merged(parent, child) ? parent : null;
+}
+function clear_splitobjs() {
+    const splitContext = game.context.objsplit;
+    if (splitContext) splitContext.parent_oid = splitContext.child_oid = 0;
+}
 function extract_nobj(obj, listRef) {
     const inv = Array.isArray(listRef) ? listRef : inventoryArray();
     const ix = inv.indexOf(obj);
@@ -2272,13 +2297,12 @@ const DKNOWNS_CLASSES = new Set([WAND_CLASS, RING_CLASS, POTION_CLASS,
     SCROLL_CLASS, GEM_CLASS, SPBOOK_CLASS, WEAPON_CLASS, TOOL_CLASS,
     VENOM_CLASS]);
 
-// C ref: objnam.c distant_name():370-388 — the near/far test.  neardist is the
-// rounded square around the hero (widened by the Eyes of the Overworld's
-// xray_range); artifacts always count as near.  <ox,oy> is get_obj_location(),
+// C ref: objnam.c distant_name():387-388 — only a visible nearby object (or
+// visible artifact) is observed while naming.  <ox,oy> is get_obj_location(),
 // i.e. the carrier's spot for a minvent item.
 export function distant_far(obj, ox, oy) {
+    if (ox == null || oy == null || !cansee(ox, oy)) return true;
     if (obj?.oartifact) return false;
-    if (ox == null || oy == null) return true;
     const r = (game.u?.xray_range > 2) ? game.u.xray_range : 2;
     const neardist = (r * r) * 2 - r;
     const dx = ox - (game.u?.ux ?? 0), dy = oy - (game.u?.uy ?? 0);
@@ -2478,6 +2502,25 @@ function renderMenuScreen(lines, cursor = [36, 8]) {
     renderMenuLines(flat, cursor);
 }
 
+function paintMenuLine(display, x, y, line) {
+    if (!line.bodyStyle) {
+        display.putstr(x, y, line.text, NO_COLOR, line.attr || 0);
+        if (line.attr) {
+            // Tty screen serialization skips long blank runs without attributes.
+            for (const run of line.text.matchAll(/ {5,}/g))
+                for (let i = run.index; i < run.index + run[0].length; i++)
+                    display.setCell(x + i, y, ' ', NO_COLOR, 0);
+        }
+        return;
+    }
+    display.putstr(x, y, line.text.slice(0, 4), NO_COLOR, 0);
+    display.putstr(x + 4, y, line.text.slice(4),
+        line.bodyStyle.color, line.bodyStyle.attr);
+    if (line.text[2] === '+' || line.text[2] === '#')
+        display.putstr(x + 2, y, line.text[2],
+            line.bodyStyle.color, line.bodyStyle.attr);
+}
+
 // The body of renderMenuScreen, over a FLAT list of { text, attr } lines — for
 // menus whose leading lines are add_menu_str()s (ATR_NONE) rather than
 // add_menu_heading()s (e.g. #wizidentify's "Debug Identify" title).
@@ -2534,7 +2577,7 @@ export function renderMenuLines(flat, cursor = [36, 8]) {
             display.setCell(c, r, ' ', NO_COLOR, 0);
     let row = 0;
     for (const ln of flat)
-        display.putstr(col, row++, ln.text, NO_COLOR, ln.attr || 0);
+        paintMenuLine(display, col, row++, ln);
     const endRow = row;
     display.putstr(col, row++, '(end)', NO_COLOR);
     putStatusLines(display, bandStart, menuLastRow);
@@ -2578,7 +2621,9 @@ export async function tty_text_window(lines) {
             /* xwaitforspace(): anything else rings the bell and waits on */
         }
     };
-    if (offx > 0) {
+    // C ref: wintty.c:1924 — a short menu overlays even when its offx is zero.
+    if (lines.length < rows && game.iflags?.menu_overlay !== false) {
+        const carriedTrunc = game._statusTruncCol;
         display.clearScreen();
         render_map_to_grid();
         game._menuOffx = offx;
@@ -2588,8 +2633,16 @@ export async function tty_text_window(lines) {
                 display.setCell(c, r, ' ', NO_COLOR, 0);
         let row = 0;
         for (const t of lines)
-            display.putstr(offx + 1, row++, t.slice(0, cols - 2 - offx), NO_COLOR, 0);
+            display.putstr(offx ? offx + 1 : 0, row++,
+                t.slice(0, cols - 1 - (offx ? offx + 1 : 0)), NO_COLOR, 0);
         putStatusLines(display, offx, lastRow);
+        if (carriedTrunc != null) {
+            for (let row = 22; row < rows; row++)
+                for (let col = carriedTrunc; col < offx; col++)
+                    display.setCell(col, row, ' ', NO_COLOR, 0);
+            game._statusTruncCol = Math.min(carriedTrunc,
+                game._statusTruncCol ?? carriedTrunc);
+        }
         display.putstr(offx + 1, lastRow, '--More--', NO_COLOR, 0);
         display.setCursor(offx + 1 + '--More--'.length, lastRow);
         game._modal_screen = 'invent';
@@ -2608,22 +2661,41 @@ export async function tty_text_window(lines) {
         });
         if (!(await waitquit())) break;
     }
+    // Full-width history dismissal uses docrt(), leaving WIN_STATUS cleared.
+    game._statusTruncCol = 0;
     await dismiss_invent_screen();
 }
 
 // C ref: win/tty/wintty.c process_menu_window(). Used by command and spell
 // menus, with page-local automatic selectors and counted PICK_ANY selections.
-export async function select_command_menu(entries, { how = PICK_ANY } = {}) {
+export async function select_command_menu(entries, { how = PICK_ANY, blankStatus = false } = {}) {
     const rows = game.nhDisplay?.rows ?? 24;
     const lmax = Math.min(52, rows - 1);
     const npages = Math.ceil(entries.length / lmax) || 1;
     for (let i = 0; i < entries.length; i++) {
         if (i % lmax === 0) var acc = 97;                              // 'a'
         if (entries[i].item) {
+            // C tty_add_menu() initializes every item's count to -1.
+            entries[i].item.count ??= -1;
             if (!entries[i].item.sel) {
                 entries[i].item.sel = String.fromCharCode(acc);
                 acc = (acc === 122) ? 65 : acc + 1;
             }
+        }
+    }
+    // C ref: wintty.c:1352-1377 — PICK_ONE accepts only unambiguous
+    // group accelerators; PICK_ANY can toggle a whole group across pages.
+    const groupCounts = new Map();
+    for (const { item } of entries) {
+        if (item?.gsel && item.gsel !== item.sel)
+            groupCounts.set(item.gsel, (groupCounts.get(item.gsel) || 0) + 1);
+    }
+    const groupAccels = new Set();
+    if (how !== PICK_NONE) {
+        for (const { item } of entries) {
+            if (item?.gsel && (item.gsel !== item.sel || item.gsel === GOLD_SYM)
+                && (how === PICK_ANY || groupCounts.get(item.gsel) === 1))
+                groupAccels.add(item.gsel);
         }
     }
     let page = 0;
@@ -2632,13 +2704,20 @@ export async function select_command_menu(entries, { how = PICK_ANY } = {}) {
     let searchBlankTop = false;
     let paintedPage = -1;
     for (;;) {
-        if (paintedPage !== page) searchBlankTop = false;
-        paintedPage = page;
         const pageEntries = entries.slice(page * lmax, (page + 1) * lmax);
-        const lines = pageEntries.map((e) => ({
-            text: e.item ? `${e.item.sel} ${e.item.selected ? (e.item.count > 0 ? '#' : '+') : '-'} ${e.text}` : e.text,
-            attr: e.attr,
-        }));
+        if (paintedPage !== page) {
+            searchBlankTop = false;
+            for (const e of pageEntries) if (e.item) e.item._state = undefined;
+        }
+        paintedPage = page;
+        const lines = pageEntries.map((e) => {
+            if (e.item) menu_note_paint(e.item);
+            return {
+                text: e.item ? `${e.item.sel} ${e.item._shown} ${e.text}` : e.text,
+                attr: e.attr,
+                bodyStyle: e.bodyStyle,
+            };
+        });
         if (npages > 1) {
             game._menuOffx = 0;
             renderWindowScreen(lines, {
@@ -2651,6 +2730,12 @@ export async function select_command_menu(entries, { how = PICK_ANY } = {}) {
         } else {
             renderMenuLines(lines, null);
         }
+        if (blankStatus) {
+            // Status suppression must not erase menu rows or its footer.
+            for (let y = Math.max(22, pageEntries.length + 1); y < 24; y++)
+                for (let x = 0; x < game.nhDisplay.cols; x++)
+                    game.nhDisplay.setCell(x, y, ' ', NO_COLOR, 0);
+        }
         if (searchBlankTop) {
             for (let x = 0; x < game.nhDisplay.cols; x++)
                 game.nhDisplay.setCell(x, 0, ' ', NO_COLOR, 0);
@@ -2658,6 +2743,18 @@ export async function select_command_menu(entries, { how = PICK_ANY } = {}) {
         const c = await nhgetch();
         const ch = String.fromCharCode(c);
         const hit = pageEntries.find((e) => e.item && e.item.sel === ch);
+        // Numeric groups take precedence over starting a count (wintty.c:1577).
+        if (groupAccels.has(ch) && (!counting || ch < '0' || ch > '9')) {
+            for (const { item } of entries) {
+                if (item?.gsel !== ch) continue;
+                item.selected = !item.selected;
+                item.count = item.selected && counting ? count : -1;
+            }
+            count = 0;
+            counting = false;
+            if (how === PICK_ONE) return true;
+            continue;
+        }
         if (ch >= '0' && ch <= '9') {
             count = count * 10 + (c - 48);
             counting = count > 0;
@@ -2678,6 +2775,8 @@ export async function select_command_menu(entries, { how = PICK_ANY } = {}) {
             continue;
         }
         if (c === 27) return false;                                    // cancel
+        // xwaitforspace rejects unknown keys without ending a numeric count.
+        if (c !== 13 && c !== 10 && !' ><^|:,.\\~-@'.includes(ch)) continue;
         count = 0;
         counting = false;
         if (c === 13 || c === 10) return true;                         // commit
@@ -2787,7 +2886,7 @@ export function renderWindowScreen(lines, opts = {}) {
         let text = typeof ln === 'string' ? ln : (ln.text || '');
         if (maxLen >= 0 && text.length > maxLen) text = text.slice(0, maxLen);
         const attr = typeof ln === 'string' ? ATR_NONE : (ln.attr || ATR_NONE);
-        display.putstr(textCol, row++, text, NO_COLOR, attr);
+        paintMenuLine(display, textCol, row++, { ...ln, text, attr });
     }
     const footer = opts.footer || '--More--';
     const footerRow = opts.footerRow != null ? opts.footerRow
@@ -3201,7 +3300,17 @@ export async function dismiss_invent_screen() {
     // (and with it every later hallucinated colour) from C's.
     if (!(game._menuOffx > 0)) await docrt();
     await flush_screen(1);
-    if (carriedTrunc != null) game._statusTruncCol = carriedTrunc;
+    if (carriedTrunc != null) {
+        game._statusTruncCol = carriedTrunc;
+        // getlin redraws only the topline after ^P; keep docorner's cleared
+        // status tails on the grid until the next ordinary screen build.
+        const display = game.nhDisplay;
+        if (display?.setCell) {
+            for (let row = 22; row < display.rows; row++)
+                for (let col = carriedTrunc; col < display.cols; col++)
+                    display.setCell(col, row, ' ', NO_COLOR, 0);
+        }
+    }
     return true;
 }
 
@@ -3971,6 +4080,8 @@ async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) 
             const otmp = invArr.find(o => o.invlet === invlet);
             if (otmp) {
                 game._pending_message = xprname(otmp, null, invlet, true, 0, 0);
+                // C ref: wintty.c tty_message_menu() uses pline() for this item.
+                note_topl(game._pending_message);
                 const c = await topl_more_ext(String(invlet));
                 game._pending_message = '';
                 game._toplin = 0;
@@ -4790,6 +4901,11 @@ export async function Blindf_off(obj) {
     // C: a NULL obj means "ublindf, but skip the usual off message".
     const nooffmsg = !obj;
     if (!obj) obj = game.ublindf;
+    if (!obj) {
+        impossible('Blindf_off without eyewear?');
+        return;
+    }
+    takeoff_ctx().mask &= ~W_BLINDF; // C do_wear.c:1506
     clearworn_accessory(obj);
     // off_msg(): no redundant "(being worn)" suffix after removal.
     // C ref: do_wear.c:68 off_msg() — the whole message is `if (flags.verbose)`.
@@ -5457,7 +5573,7 @@ export async function curse_blocks_removal(obj) {
 // (cursed gloves/weapon blocking a ring, cursed armor) and the basic curse
 // check.  Returns false (and gives feedback) when the item cannot come off;
 // quiver/non-twoweap swap-weapon are removable even when cursed.
-async function select_off(obj) {
+export async function select_off(obj) {
     if (!obj) return false;
     const u = game.u;
     // special ring checks: a welded weapon on that hand, or cursed/slippery
@@ -5514,7 +5630,7 @@ async function select_off(obj) {
         } else if (obj === game.uarmu && game.uarm && game.uarm.cursed) {
             buf = 'remove your suit'; why = game.uarm;
         } else if (welded(game.uwep) && bimanual(game.uwep)) {
-            buf = `release your ${is_sword(game.uwep) ? 'sword' : 'weapon'}`;
+            buf = `release your ${is_sword(game.uwep) ? 'sword' : game.uwep.otyp === 45 /*BATTLE_AXE*/ ? 'axe' : 'weapon'}`;
             why = game.uwep;
         }
         if (why) {
@@ -5613,30 +5729,6 @@ async function armor_or_accessory_off(obj) {
     return ECMD_TIME;
 }
 
-// C ref: do_wear.c do_takeoff() — remove ONE slot's item; the body of the
-// disrobing occupation the 'A' command drives.  NOT ported: take_off()'s
-// per-item oc_delay occupation, so the caller removes everything on its own
-// turn.
-export async function takeoff_worn_obj(obj) {
-    if (!obj) return ECMD_OK;
-    if ((obj.owornmask || 0) & (WA_ARMOR_ALL | W_ACCESSORY))
-        return await armor_or_accessory_off(obj);
-    const was_twoweap = !!game.u?.twoweap;
-    if (obj === game.uwep) {
-        if (welded(obj)) return ECMD_OK;
-        setuwep_slot(null);
-        await pline(was_twoweap ? 'You are no longer wielding either weapon.'
-                                : `You are ${empty_handed()}.`);
-    } else if (obj === game.uswapwep) {
-        setuswapwep(null);
-        await pline(was_twoweap ? 'You are no longer wielding two weapons at once.'
-                                : 'You no longer have a second weapon readied.');
-    } else if (obj === game.uquiver) {
-        setuqwep(null);
-        await pline('You no longer have ammunition readied.');
-    }
-    return ECMD_TIME;
-}
 
 // C ref: do_wear.c dotakeoff() — the 'T' command (armor; accessorizing=FALSE).
 export async function dotakeoff() {
@@ -5831,6 +5923,7 @@ async function doquiver_core(verb) {
         return ECMD_OK;
     }
 
+    clear_splitobjs();
     let newquiver = await getobj(verb, ready_ok, GETOBJ_PROMPT | GETOBJ_ALLOWCNT);
 
     if (!newquiver) {
@@ -5843,6 +5936,19 @@ async function doquiver_core(verb) {
             game._pending_message = note_topl('You already have no ammunition readied!');
         }
         return ECMD_OK;
+    } else if (newquiver.o_id === game.context.objsplit?.child_oid) {
+        // C wield.c:547-560: counted selections need their own inventory slot.
+        if (game.uquiver?.o_id === game.context.objsplit.parent_oid) {
+            unsplitobj(newquiver);
+            await pline('That ammunition is already readied!');
+            return ECMD_OK;
+        }
+        if (newquiver.oclass === COIN_CLASS) {
+            await pline("You can't ready only part of your gold.");
+            unsplitobj(newquiver);
+            return ECMD_OK;
+        }
+        finish_splitting_inv(newquiver);
     } else if (newquiver === game.uquiver) {
         game._pending_message = note_topl('That ammunition is already readied!');
         return ECMD_OK;
@@ -5872,9 +5978,6 @@ async function doquiver_core(verb) {
             const ans = await ynq(qbuf);
             if (ans === 'q') return ECMD_OK;
             if (ans === 'y') {
-                // C: splitobj() -> nextoid() -> next_ident() spends one rnd(2);
-                // this port's splitobj() draws nothing, so the call site pays it.
-                next_ident();
                 newquiver = splitobj(wep, (wep.quan | 0) - 1);
                 finish_splitting_inv(newquiver);
                 quivering = true;
@@ -5904,7 +6007,6 @@ async function doquiver_core(verb) {
             const ans = await ynq(qbuf);
             if (ans === 'q') return ECMD_OK;
             if (ans === 'y') {
-                next_ident();
                 newquiver = splitobj(swap, (swap.quan | 0) - 1);
                 finish_splitting_inv(newquiver);
                 quivering = true;
@@ -7187,7 +7289,6 @@ async function throw_obj(obj, dir, shotlimit = 0) {
     for (game.m_shot.i = 1; game.m_shot.i <= game.m_shot.n; game.m_shot.i++) {
         let otmp = obj;
         if (obj && obj.quan > 1) {
-            next_ident();        // splitobj -> nextoid -> next_ident: rnd(2)
             otmp = splitobj(obj, 1);
         } else {
             otmp = obj;
@@ -7363,7 +7464,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
             } else if (otmp.oclass !== GEM_CLASS) {
                 range = Math.trunc(range / 2); // C: range /= 2 (truncating int division)
                 const launcherName = an(skill_name_for(weapon_type(otmp)));
-                const descr = weapon_descr_for(otmp);
+                const descr = weapon_descr(otmp);
                 // C ref: dothrow.c:1643 calls pline() here, which routes through
                 // update_topl() and its --More-- paging; writing
                 // game._pending_message directly bypassed toplin bookkeeping so
@@ -7670,25 +7771,18 @@ async function toss_up(otmp, hitsroof) {
         if (less_damage && dmg < (game.u.uhp | 0))
             await update_topl('Fortunately, you are wearing a hard helmet.');
         else if (game.flags?.verbose !== false)
-            await update_topl(`Your ${armor_slot_noun(game.uarmh, WA_ARMH)} does not protect you.`);
+            await update_topl(`Your ${armor_simple_name(game.uarmh)} does not protect you.`);
     }
     await hitfloor(otmp, true);
     losehp_invent(dmg);
 }
 
-// Local name helpers for the throw "by hand" message (C skill_name/weapon_descr
-// reduce to these for bow ammo).
+// C ref: weapon.c skill_name() — launcher name for the throw "by hand" message.
 function skill_name_for(skill) {
     if (skill === 20) return 'bow';      // P_BOW
     if (skill === 21) return 'sling';    // P_SLING
     if (skill === 22) return 'crossbow'; // P_CROSSBOW
     return 'weapon';
-}
-export function weapon_descr_for(obj) {
-    const sk = objects[obj.otyp]?.oc_skill ?? 0;
-    if (sk === -20) return 'arrow';      // -P_BOW ammo
-    if (sk === -22) return 'bolt';       // -P_CROSSBOW ammo
-    return objects[obj.otyp]?.name || 'weapon';
 }
 // C ref: attrib.c ACURRSTR — current strength on the 3..25 throwing scale.
 function acurr_str_throw() {
@@ -8393,10 +8487,14 @@ async function tty_select_menu(items, plan, how) {
 
     let counting = false, count = 0, reset_count = true, cancelled = false;
     let curr_page = 0, painted_page = -1;
+    let searchBlankTop = false;
     for (;;) {
         if (reset_count) { counting = false; count = 0; } else reset_count = true;
         const onpage = page_items(curr_page);
-        if (painted_page !== curr_page) for (const it of onpage) it._state = undefined;
+        if (painted_page !== curr_page) {
+            searchBlankTop = false;
+            for (const it of onpage) it._state = undefined;
+        }
         painted_page = curr_page;
         for (const it of onpage) menu_note_paint(it);
         const selectors = new Set(onpage.map((it) => it.selector));
@@ -8405,8 +8503,18 @@ async function tty_select_menu(items, plan, how) {
             : { text: p.str, attr: p.attr || 0 }));
         if (npages > 1) renderPagedMenu(lines, curr_page, npages, lmax);
         else renderMenuLines(lines, null);
-        const key = await nhgetch();
-        const ch = String.fromCharCode(key);
+        if (searchBlankTop) {
+            for (let x = 0; x < game.nhDisplay.cols; x++)
+                game.nhDisplay.setCell(x, 0, ' ', NO_COLOR, 0);
+        }
+        // wintty.c:1533-1551: xwaitforspace rejects keys outside resp before
+        // the loop can reset a pending numeric count.
+        let key, ch;
+        do {
+            key = await nhgetch();
+            ch = String.fromCharCode(key);
+        } while (!selectors.has(ch) && !gacc.has(ch)
+                 && !" 0123456789\x1b\n\r><^|,.-\\~@:".includes(ch));
         /* an explicit page selector outranks the menu-command mapping */
         const explicit = selectors.has(ch);
 
@@ -8476,6 +8584,8 @@ async function tty_select_menu(items, plan, how) {
                 const { hooked_tty_getlin, pmatchi }
                     = await import('./extcmd-handlers.js');
                 const tmpbuf = await hooked_tty_getlin('Search for:', null);
+                // C tty_getlin() erases WIN_MESSAGE without repainting this page.
+                searchBlankTop = true;
                 if (!tmpbuf || tmpbuf[0] === '\x1b') continue;
                 const searchbuf = `*${tmpbuf}*`;
                 let one = false;
@@ -9294,13 +9404,7 @@ export async function dopay() {
 // unswap the object, flooreffects() (water/lava/pit/altar/hot-ground), the
 // shop-sell dispatch, stackobj() and encumber_msg().  x/y are always the
 // hero's current position (every caller passes u.ux/u.uy), mirroring C's
-// implicit use of the globals.  Unwired dependencies, each left as its call
-// site so the control flow matches C: display.c map_object() (a Blind+
-// Levitation redraw refinement; newsym() below is this port's only redraw,
-// the same simplification js/do.js flooreffects() documents for its own
-// map_background() call) and this file's own stolen_value() stub just above
-// (the u.uswallow + carrying-unpaid-goods combination it feeds is not
-// exercised by any covered session).
+// implicit use of the globals.
 async function dropz(obj, x, y, with_impact = false) {
     if (obj === game.uwep) setuwep_slot(null);
     if (obj === game.uquiver) setuqwep(null);
@@ -9335,6 +9439,11 @@ async function dropz(obj, x, y, with_impact = false) {
             await SK.sellobj(obj, x, y);
         }
         stackobj(obj);
+        // C ref: do.c:838-839 — dropping reveals its location even from above.
+        if (Blind_for_wear()
+            && (u.uprops?.Levitation || worn_extrinsic(LEVITATION))
+            && !(u.uprops?.BLevitation || worn_blocked(LEVITATION)))
+            map_object(obj, 0);
         newsym(x, y);
     }
     await encumber_msg();
@@ -9398,21 +9507,11 @@ export async function pick_one_obj(obj, count = 0) {
     if (game.uwep && game.uwep === held) game.gm.mrg_to_wielded = true;
     try {
     if (deciphered || game._merge_discovery_pending || (robshop && obj.unpaid)) {
-        // A merge inside addinv() above discovered new BUC/id info, or
-        // addtobill() just printed the shop's price quote.  Either way a
-        // message is already on the top line, and C's prinv() -> pline() would
-        // page it with --More-- first, so route the pickup line through
-        // update_topl() rather than the bare-setter prinv().
         await report_merge_discovery();
-        await update_topl(prinv_fmt(liftPrefix, held, quan));
-    } else {
-        // C ref: prinv() -> pline() leaves toplin == NEED_MORE, so a following
-        // same-turn message (e.g. a monster opening a door -> "You hear a door
-        // open.") accumulates onto the pickup line via update_topl() instead of
-        // replacing it (matches the wield/wear prinv paths).
-        prinv(liftPrefix, held, quan);
-        game._toplin = 1;
     }
+    // C ref: pickup.c:1883/invent.c prinv() — announce each object with
+    // pline before attempting the next lift or its encumbrance prompt.
+    await update_topl(prinv_fmt(liftPrefix, held, quan));
     } finally {
         game.gm.mrg_to_wielded = false;
     }
@@ -9459,6 +9558,7 @@ export async function pickup_menu_select(here, qstr = 'Pick up what?') {
     }
     // selected[invlet] = true
     const selected = new Map();
+    let searchBlankTop = false;
 
     // C ref: wintty.c tty_end_menu() cw->cols = widest line + 2 ("(end)" floors it at
     // 6), and tty_display_nhwindow()'s H2344_BROKEN offx = min(min(82, cols/2),
@@ -9489,7 +9589,7 @@ export async function pickup_menu_select(here, qstr = 'Pick up what?') {
             for (let c = MENU_OFFX - 1; c < cols; c++)
                 display.setCell(c, r, ' ', NO_COLOR, 0);
         let row = 0;
-        display.putstr(MENU_OFFX, row++, qstr, NO_COLOR, ATR_INVERSE);
+        display.putstr(MENU_OFFX, row++, searchBlankTop ? '' : qstr, NO_COLOR, ATR_INVERSE);
         display.putstr(MENU_OFFX, row++, '', NO_COLOR, ATR_NONE);
         for (const g of groups) {
             display.putstr(MENU_OFFX, row++, g.header, NO_COLOR, ATR_INVERSE);
@@ -9519,6 +9619,20 @@ export async function pickup_menu_select(here, qstr = 'Pick up what?') {
         if (c === 13 || c === 10) { confirmed = true; break; }        // confirm
         if (letterMap.has(ch)) {
             if (selected.get(ch)) selected.delete(ch); else selected.set(ch, true);
+            continue;
+        }
+        // C ref: wintty.c:1700-1732 MENU_SEARCH toggles all matching entries.
+        if (ch === ':') {
+            const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
+            const reply = await hooked_tty_getlin('Search for:', null);
+            searchBlankTop = true;
+            if (reply && reply[0] !== '\x1b') {
+                for (const [letter, it] of letterMap) {
+                    if (!pmatchi(`*${reply}*`, `${letter} - ${doname_with_price(it.obj)}`)) continue;
+                    if (selected.get(letter)) selected.delete(letter);
+                    else selected.set(letter, true);
+                }
+            }
             continue;
         }
         // C ref: win/tty/wintty.c MENU_SELECT_ALL ('.') / MENU_UNSELECT_ALL
@@ -9681,16 +9795,17 @@ export function newsym_force(x, y) { newsym(x, y); }
 export async function canletgo(obj, word) {
     if (!obj) return true;
     if ((obj.owornmask || 0) & (WA_ARMOR_ALL | W_ACCESSORY)) {
-        // C uses Norep(); the port has no repeat-suppressing pline, and the
-        // repeat case needs two identical lines in a row to differ.
-        if (word) await pline(`You cannot ${word} something you are wearing.`);
+        // C ref: do.c:669 — Norep compares the last individual message.
+        const msg = `You cannot ${word} something you are wearing.`;
+        if (word && game._prevmsg !== msg) await pline(msg);
         return false;
     }
     if (obj === game.uwep && welded(game.uwep)) {
         // C ref: do.c canletgo() — no weldmsg(); Norep() (see above).
         if (word) {
             const hand = bimanual(game.uwep) ? makeplural(body_part(6 /*HAND*/)) : body_part(6);
-            await pline(`You cannot ${word} something welded to your ${hand}.`);
+            const msg = `You cannot ${word} something welded to your ${hand}.`;
+            if (game._prevmsg !== msg) await pline(msg);
         }
         return false;
     }
@@ -9718,135 +9833,10 @@ export async function canletgo(obj, word) {
     return true;
 }
 
-// printf-style helpers for the cast menu column layout.
+// printf-style helpers for the spell-view menu column layout.
 function padEnd(s, n) { return s.length >= n ? s : s + ' '.repeat(n - s.length); }
 function padStart(s, n) { return s.length >= n ? s : ' '.repeat(n - s.length) + s; }
 
-// C ref: spell.c dospellmenu — build the menu lines (header + per-spell rows)
-// using the non-tab column format, return { header, rows } (without the "a - "
-// selector prefix, which the tty menu prepends).
-function buildSpellMenuLines(nspells, book, meta) {
-    // Header: "    %-20s Level %-12s Fail Retention" (Name, Category).
-    let header = '    ' + padEnd('Name', 20) + ' Level ' + padEnd('Category', 12)
-        + ' Fail Retention';
-    // C ref: spell.c dospellmenu — `if (wizard) Sprintf(eos(buf), "%c%6s", sep,
-    // "turns");` and, per row, `"%c%6d"` with the raw spellknow() value.
-    // `wizard` is C's debug-mode flag, which options.c set_playmode() sets from
-    // OPTIONS=playmode:debug — the same thing js/options.js records as
-    // flags.debug.  Omitting the column also shifted the whole menu 7 columns
-    // right, because the tty derives offx from the widest line.
-    const wiz = !!game.flags?.debug;
-    if (wiz) header += ' ' + padStart('turns', 6);
-    // Row fmt: "%-20s  %2d   %-12s %3d%% %9s".
-    const rows = [];
-    for (let i = 0; i < nspells; i++) {
-        const ent = book[i];
-        const name = meta.name(ent.sp_id);
-        const lev = ent.sp_lev;
-        const cat = meta.category(ent.sp_id);
-        const fail = meta.fail(i);
-        const reten = meta.retention(i);
-        let buf = padEnd(name, 20) + '  ' + padStart(String(lev), 2) + '   '
-            + padEnd(cat, 12) + ' ' + padStart(`${fail}%`, 4) + ' ' + padStart(reten, 9);
-        if (wiz) buf += ' ' + padStart(String(meta.turns ? meta.turns(i) : 0), 6);
-        rows.push(buf);
-    }
-    return { header, rows };
-}
-
-// C ref: spell.c dospellmenu / win/tty menu.  Render the known-spell list as a
-// menu overlaying the map (offx column, status kept underneath) and return the
-// picked spell index (or -1 on cancel).
-export async function spell_menu(prompt, nspells, book, meta) {
-    const display = game.nhDisplay;
-    if (!display?.setCell) return -1;
-
-    const { header, rows } = buildSpellMenuLines(nspells, book, meta);
-    const selector = (i) => (i < 26 ? String.fromCharCode(97 + i)
-        : String.fromCharCode(65 + i - 26)) + ' - ';
-
-    // Menu item display lines (selector + buf); header has no selector.
-    const itemLines = rows.map((r, i) => selector(i) + r);
-    // C: each menu line's "len" = strlen + 2 (space at beg & end); maxcol is the
-    // widest, capped at cols.  offx = max(10, cols - maxcol - 1).
-    const allLines = [header, ...itemLines, prompt];
-    let maxcol = 0;
-    for (const ln of allLines) maxcol = Math.max(maxcol, ln.length + 2);
-    if (maxcol > 80) maxcol = 80;
-    // C: offx = max(10, ttyDisplay->cols - maxcol - 1).  The recorded sessions
-    // place content one column further right than 80 - maxcol - 1, consistent
-    // with ttyDisplay->cols == 81 (an 80-col map plus the status margin).
-    let offx = Math.max(10, 81 - maxcol - 1);
-    if (offx === 10) offx = 0; // full-screen fallback (matches C menu_overlay)
-
-    // Draw: prompt (inverse) at row 0, blank, header (inverse), rows, (end).
-    const draw = (text, row, attr) => {
-        for (let c = 0; c < text.length && offx + c < 80; c++)
-            display.setCell(offx + c, row, text[c], NO_COLOR, attr);
-    };
-    // C ref: win/tty/wintty.c — a menu heading is shown with ATR_INVERSE, but
-    // the recorder serializes space-runs longer than 4 columns as cursor-forwards
-    // (which decode as default attr) while runs of <= 4 spaces keep the inverse
-    // bit.  Same treatment dovspell's menu already uses.
-    const drawHeading = (text, row) => {
-        const baseAttr = menuHeadAttr();
-        for (let c = 0; c < text.length && offx + c < 80; c++) {
-            let attr = baseAttr;
-            if (text[c] === ' ') {
-                let s = c; while (s > 0 && text[s - 1] === ' ') s--;
-                let e = c; while (e + 1 < text.length && text[e + 1] === ' ') e++;
-                if (e - s + 1 > 4) attr = 0;
-            }
-            display.setCell(offx + c, row, text[c], NO_COLOR, attr);
-        }
-    };
-    // C ref: win/tty/topl.c — displaying the menu clears the message window, so
-    // the previous command's topline is gone rather than showing through to the
-    // left of the prompt.
-    game._pending_message = '';
-    for (let c = 0; c < offx && c < 80; c++)
-        display.setCell(c, 0, ' ', NO_COLOR, 0);
-    // C ref: win/tty/wintty.c — a menu window paints its full rectangle: every
-    // row is cleared from offx to offx+maxcol before the text is written, so a
-    // short row like "(end)" hides the map beneath instead of letting it show.
-    const winRight = Math.min(offx + maxcol, 80);
-    // C ref: wintty.c process_menu_window() — the window's own offx is one
-    // column LEFT of the text (tty_curs(window,1,line) + cl_end() + putchar(' ')),
-    // so that column is blanked too; same rule as the dovspell menu above.
-    const winLeft = Math.max(0, offx - 1);
-    const totalRows = 3 + itemLines.length + 1;
-    for (let r = 0; r < totalRows; r++)
-        for (let c = winLeft; c < winRight; c++)
-            display.setCell(c, r, ' ', NO_COLOR, 0);
-    let row = 0;
-    drawHeading(prompt, row++);
-    draw('', row++, 0);
-    drawHeading(header, row++);
-    for (const ln of itemLines) draw(ln, row++, 0);
-    draw('(end)', row, 0);
-    if (offx > 0) putStatusLines(display);
-    // Cursor parks at the start of the "(end)" line content (offx + 6 observed).
-    display.setCursor(offx + 6, row);
-    game._modal_screen = 'spellmenu';
-    game._menuOffx = winLeft;
-
-    for (;;) {
-        const c = await nhgetch();
-        const ch = String.fromCharCode(c);
-        // C ref: wintty.c tty_select_menu() — '\n' and '\r' end the menu exactly
-        // like ' '/ESC (MENU_SELECT_PAGE is not bound to them for PICK_ONE).
-        if (c === 27 || c === 32 || c === 10 || c === 13) {
-            await dismiss_invent_screen();
-            return -1;
-        }
-        const idx = (ch >= 'a' && ch <= 'z') ? ch.charCodeAt(0) - 97
-            : (ch >= 'A' && ch <= 'Z') ? ch.charCodeAt(0) - 65 + 26 : -1;
-        if (idx >= 0 && idx < nspells) {
-            await dismiss_invent_screen();
-            return idx;
-        }
-    }
-}
 
 export function splittable(obj) {
     return !(obj?.otyp === LOADSTONE && obj.cursed) && !(obj === game.uwep && welded(game.uwep));
@@ -10199,7 +10189,7 @@ export function prinv(prefix, obj, quan = 0) {
     // follow-up (e.g. wizcmds.c wiz_wish()'s encumber_msg()) silently
     // overwrites the item line instead.
     remember_topl();
-    game._toplines = game._pending_message;
+    game._toplines = wrap_topl(game._pending_message).join('\n');
     game._toplin = 1; // TOPLIN_NEED_MORE
 }
 
@@ -10256,13 +10246,6 @@ function surface_underfoot() {
 }
 const SDOOR_TYP = 14, ROOM_TYP = 25;
 
-// C ref: objects.h HARDGEM(n) == (n >= 8) — a gem/ring is "tough" (engrave, not
-// write) only for the hardest gemstones (mohs >= 8: diamond and a handful of
-// gem types).  The objects table here carries no mohs field; none of the
-// exercised rings/gems are HARDGEM, so this conservatively returns false (->
-// "Write").  Hard-gem otyps can be added if a session ever engraves with one.
-function obj_is_hardgem(_obj) { return false; }
-
 // itemactions() action enum (iactions.h IA_*) — the subset the object classes in
 // the recorded sessions can offer.  Each entry carries its menu accelerator and
 // label; itemactions_dispatch() turns the chosen one into the real command.
@@ -10313,8 +10296,6 @@ function is_edible_ia(obj) {
 // C ref: do_wear.c armcat_to_wornmask() + wearmask_to_obj() — the piece already
 // occupying the slot this armor would go into, or null when it is free.
 function worn_in_slot_of(obj) { return worn_slot_get(armor_slot_mask(obj)); }
-// C ref: objnam.c armor_simple_name(armor).
-function armor_simple_name_ia(obj) { return armor_slot_noun(obj, armor_slot_mask(obj)); }
 // C ref: iactions.c ia_checkfile(otmp) — gates the '/' line on the object's
 // singular xname having a data.base entry (pager.c ia_checkfile()).
 function ia_checkfile(otmp) { return ia_checkfile_name(cxname_singular(otmp)); }
@@ -10433,7 +10414,7 @@ function itemactions_list(otmp) {
     } else if (oclass === WEAPON_CLASS || oclass === WAND_CLASS
         || oclass === RING_CLASS || oclass === GEM_CLASS) {
         const tough = (oclass === GEM_CLASS || oclass === RING_CLASS)
-            && obj_is_hardgem(otmp);
+            && objects[otmp.otyp]?.oc_tough;
         const verb = (is_blade(otmp) || oclass === WAND_CLASS || tough)
             ? 'Engrave' : 'Write';
         // C ref: iactions.c:440 — "... with one of these items" for a stack.
@@ -10548,7 +10529,7 @@ function itemactions_list(otmp) {
     if (!already_worn && oclass === ARMOR_CLASS) {
         const occupied = worn_in_slot_of(otmp);
         add(IA_WEAR_OBJ, 'W', occupied
-            ? `[already wearing ${an(armor_simple_name_ia(occupied))}]`
+            ? `[already wearing ${an(armor_simple_name(occupied))}]`
             : 'Wear this armor');
     }
     // 'x' (swap primary/secondary weapon): C ref iactions.c:652.
@@ -10606,7 +10587,7 @@ function item_reading_classification(obj) {
 function renderItemActionsMenu(otmp, entries) {
     const display = game.nhDisplay;
     if (!display?.clearScreen) return;
-    const title = `Do what with ${the_obj(otmp)}?`;
+    const title = `Do what with ${on_the(cxname(otmp))}?`;
     const itemLines = entries.map((e) => `${e.accel} - ${e.label}`);
     const lines = [title, '', ...itemLines, '(end)'];
     // C ref: win/tty/wintty.c tty_end_menu — cw->maxcol = widest entry's
@@ -10677,16 +10658,6 @@ function renderItemActionsMenu(otmp, entries) {
     game._modal_screen = 'itemactions';
 }
 
-// the(cxname(otmp)) — "the <object name>", used in the submenu title.  Real
-// C cxname()/xname() pluralize a stack's base name but never show a leading
-// count (that belongs to doname() alone), so a 3-count stack reads "the food
-// rations", not "the food ration" (cxname_singular) or "the 3 food rations"
-// (this module's own exported xname(), which intentionally shows the count
-// for its 266 other call sites and is left untouched here).
-function the_obj(otmp) {
-    const nm = simple_obj_name(otmp, { article: false, quantity: true, count: false, buc: false });
-    return /^(the |a |an |your |my |[A-Z])/.test(nm) ? nm : `the ${nm}`;
-}
 
 // C ref: iactions.c itemactions(otmp) — show the "Do what with %s?" PICK_ONE
 // submenu, block until the player picks a valid action accelerator (invalid
@@ -10776,7 +10747,7 @@ async function itemactions_dispatch(otmp, act, getDir) {
         return (await dodrop()) ? ECMD_TIME : ECMD_OK;
     case IA_THROW_OBJ:
         seedInvlet();
-        return await dothrow(getDir);
+        return await dothrow(getDir ?? (await import('./cmd.js')).getdir);
     case IA_WIELD_OBJ:
         seedInvlet();
         return await dowield();
@@ -10849,7 +10820,7 @@ async function itemactions_dispatch(otmp, act, getDir) {
         finally { iflags.menu_requested = false; }
     }
     case IA_FIRE_OBJ:
-        return await dofire(getDir);
+        return await dofire(getDir ?? (await import('./cmd.js')).getdir);
     case IA_SACRIFICE: {
         seedInvlet();
         const { dosacrifice } = await import('./pray.js');
@@ -10978,6 +10949,12 @@ async function select_inventory_menu(rows, byLet) {
         }
 
         const ch = String.fromCharCode(c);
+        // C wintty.c:1650-1699 consumes selection commands even for PICK_ONE,
+        // resetting a pending count without selecting anything.
+        if ('.-@,\\~'.includes(ch)) {
+            repaint = false;
+            continue;
+        }
         if (ch === ':') {
             const cursor = game.nhDisplay?.getCursor?.();
             const picked = await search_inventory_menu(rows, byLet);
@@ -10996,10 +10973,11 @@ async function select_inventory_menu(rows, byLet) {
         // C ref: wintty.c:1753 — direct selectors apply only to this page.
         if (!info.lines.some(line => !line.header && line.text[0] === ch)) {
             count = keptCount; counting = keptCounting;
+            repaint = false;
             continue;
         }
         const picked = byLet.get(ch);
-        if (!picked) { count = keptCount; counting = keptCounting; continue; }
+        if (!picked) { count = keptCount; counting = keptCounting; repaint = false; continue; }
         delete game._modal_screen;
         return picked;
     }
@@ -11753,7 +11731,7 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
     // "Things that are here:" menu is laid down.
     if (game._toplin === 1) {
         await flush_screen(1);
-        await topl_more();
+        if (!game._winStop) await topl_more();
         game._pending_message = '';
         game._toplin = 0;
     }
@@ -11868,7 +11846,9 @@ export function mergable(otmp, obj) {
     if (otmp.how_lost && obj.how_lost !== otmp.how_lost) return false;
     if (obj.globby) return true;
     if (obj.unpaid !== otmp.unpaid || obj.spe !== otmp.spe || obj.no_charge !== otmp.no_charge
-        || obj.obroken !== otmp.obroken || obj.otrapped !== otmp.otrapped || obj.lamplit !== otmp.lamplit)
+        || obj.obroken !== otmp.obroken || obj.otrapped !== otmp.otrapped || obj.lamplit !== otmp.lamplit
+        // C obj.h:139 aliases opoisoned to otrapped; JS stores it separately.
+        || !!obj.opoisoned !== !!otmp.opoisoned)
         return false;
     if (obj.oclass === FOOD_CLASS && (obj.oeaten !== otmp.oeaten || obj.orotten !== otmp.orotten)) return false;
     // C ref: invent.c mergable() — the "have they been LOOKED at the same way"

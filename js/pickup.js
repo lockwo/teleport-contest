@@ -739,7 +739,7 @@ export async function pickup(what) {
             || (autopickup && !flags().pickup)
             || notake_hero()) {
             await check_here(false);
-            if (notake_hero() && OBJ_AT(u.ux, u.uy) && (autopickup || flags().pickup))
+            if (notake_hero() && OBJ_AT && (autopickup || flags().pickup))
                 await pline('You are physically incapable of picking anything up.');
             return 0;
         }
@@ -861,19 +861,8 @@ export async function pickup(what) {
         if (n > 0) reset_justpicked(inventoryArray());
         n_tried = n;
         for (let i = 0; i < n; i++) {
-            /* C's pline() chaining: each prinv line accumulates onto the same
-               topline (CO-8 rule) rather than replacing the previous one. */
-            const prior = i > 0 ? (game._pending_message || '') : '';
             const res = await pickup_object(pick_list[i].obj, pick_list[i].count,
                                             false);
-            if (i > 0 && prior) {
-                const line = game._pending_message || '';
-                if (line !== prior) {
-                    game._pending_message = prior;
-                    game._toplin = 1; /* TOPLIN_NEED_MORE */
-                    await update_topl(line);
-                }
-            }
             if (res < 0) break;
             n_picked += res;
         }
@@ -1306,6 +1295,12 @@ export async function lift_object(obj, container, cnt_p, telekinesis) {
                 case 'n': result = 0; break;
                 default: break;   /* 'y' => result == 1 */
                 }
+                // C ref: pickup.c:1787 clears WIN_MESSAGE after ynq().
+                game._pending_message = '';
+                game._toplPromptMsg = null;
+                game._toplin = 0;
+                game._toplinSoft = null;
+                game._yn_need_more = false;
             }
         }
     }
@@ -1647,10 +1642,11 @@ export async function loot_mon(mtmp, passed_info, prev_loot) {
                             + `${mon_nam(mtmp)}.`);
                 return 1;   /* the attempt costs you time */
             }
-            const ix = mtmp.minvent.indexOf(otmp);
-            if (ix >= 0) mtmp.minvent.splice(ix, 1);
+            obj_extract_self(otmp);
+            mtmp.misc_worn_check = (mtmp.misc_worn_check || 0) & ~otmp.owornmask;
             otmp.owornmask = 0;
-            await pline(`You take ${the(xname(otmp))} off of ${mon_nam(mtmp)}.`);
+            if (game.flags?.verbose !== false)
+                await pline(`You take ${the(xname(otmp))} off of ${mon_nam(mtmp)}.`);
             await hold_another_object(otmp, 'You drop %s!', doname(otmp), null);
             timepassed = rnd(3);
             if (prev_loot) prev_loot.value = true;

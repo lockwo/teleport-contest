@@ -33,7 +33,7 @@ import { Unaware,
          ROLE_MALE, ROLE_FEMALE, NORMAL_SPEED, A_STR, A_WIS, A_INT, A_DEX, A_CON,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
-    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC } from './const.js';
+    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC, WRITING } from './const.js';
 import { near_capacity, reroll_menu, setnotworn, freeinv, worn_extrinsic } from './invent.js';
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -380,6 +380,11 @@ async function newgame_real() {
     // and the welcome step onward shows the bumped value (e.g. Healer Pw 3->5).
     find_ac();
     u_init_skills_discoveries();
+
+    // C ref: allmain.c newgame():837-838 save_currentstate() under INSURANCE.
+    // Its initial savelev(WRITING) resets each engraving's text pointer to its
+    // buffer start, so the first later wipe sees any leading blanks again.
+    await (await import('./engrave.js')).save_engravings(WRITING);
 
     // C ref: allmain.c welcome(TRUE).
     await cls();
@@ -1701,8 +1706,8 @@ function Clairvoyant() {
     return (!!((game.u?.uprops?.HClairvoyant | 0) || worn_extrinsic(35 /*CLAIRVOYANT*/)))
         && !BClairvoyant();
 }
-// HRegeneration: the current polyform's FROMFORM bit (polyself.js set_uasmon).
-function HRegeneration() { return !!game.u?.formprops?.Regeneration; }
+// C ref: youprop.h:343 — intrinsic regeneration includes timeout and FROMFORM.
+function HRegeneration() { return !!(game.u?.uprops?.HRegeneration || game.u?.HRegeneration || game.u?.formprops?.Regeneration); }
 function Sick() { return ((game.u?.uprops?.Sick || 0) > 0) || !!(game.u?.sick); }
 function Vomiting() { return (game.u?.uprops?.Vomiting || 0) > 0; }
 function Confusion() { return ((game.u?.uprops?.Confusion || 0) > 0) || !!(game.u?.uconf || game.u?.HConfusion); }
@@ -2005,6 +2010,19 @@ export async function moveloop_core() {
         g.context = g.context || {};
         g.context.move = 1;
         g._pendingTurn = true;
+        return;
+    }
+
+    // C ref: do_wear.c:2900 / allmain.c:485 — remove selected slots in native
+    // order, spending each slot's delay before continuing to the next one.
+    if (g._takeoff_occupation) {
+        const { take_off } = await import('./do_wear.js');
+        const busy = await take_off();
+        g.context.move = 1;
+        g._pendingTurn = true;
+        if (!busy) g._takeoff_occupation = null;
+        if (busy && monster_nearby())
+            await (await import('./hack.js')).stop_occupation(true);
         return;
     }
 

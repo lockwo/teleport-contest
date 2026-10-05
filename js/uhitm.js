@@ -112,7 +112,7 @@ function passes_walls(mdat) {
 
 // C ref: display.c is_safemon() macro (include/display.h:159): flags.safe_dog
 // && mpeaceful && canspotmon && !Confusion && !Hallucination && !Stunned.
-// safe_dog defaults ON and stays so in these sessions.
+// The option parser stores C's safe_dog flag under its public name, safe_pet.
 export function canspotmon(mtmp) {
     if (!mtmp) return false;
     // Blind/telepathy not modelled in the starter state; a lit-room adjacent
@@ -127,11 +127,11 @@ export function canspotmon(mtmp) {
 export function is_safemon(mtmp) {
     if (!mtmp) return false;
     const flags = game.flags || {};
-    const safe_dog = (flags.safe_dog !== undefined) ? flags.safe_dog : true;
+    const safe_pet = (flags.safe_pet !== undefined) ? flags.safe_pet : true;
     const Confusion = !!game.u?.uconf;
     const Hallucination = !!game.u?.uhallu;
     const Stunned = Stunned_uh();
-    return !!(safe_dog && mtmp.mpeaceful && canspotmon(mtmp)
+    return !!(safe_pet && mtmp.mpeaceful && canspotmon(mtmp)
               && !Confusion && !Hallucination && !Stunned);
 }
 
@@ -166,9 +166,9 @@ export function monflee(mtmp, fleetime, first, _fleemsg) {
 
 // ── do_attack ──
 // C ref: uhitm.c do_attack(struct monst *mtmp) — attack the monster at
-// <u.ux+u.dx, u.uy+u.dy> (u.dx/u.dy set by the caller, domove). Returns TRUE
-// if the hero's move is used up, FALSE if the monster evaded (domove falls
-// through to swap-places).
+// <u.ux+u.dx, u.uy+u.dy> (u.dx/u.dy set by the caller, domove). TRUE means
+// the attack is resolved; context.move determines whether it consumed time.
+// FALSE means the monster evaded (domove falls through to swap-places).
 export async function do_attack(mtmp) {
     const u = game.u;
     // C ref: hack.h `#define Punished (uball != 0)`.  This is the FIRST term of
@@ -1166,7 +1166,7 @@ async function known_hitum(mon, weapon, mhit, dieroll) {
 // C ref: uhitm.c missum() — the "You miss the <mon>." top-line message.
 async function missum(mon) {
     const { update_topl } = await import('./display.js');
-    if (canspotmon(mon))
+    if (canspotmon(mon) && game.flags?.verbose !== false)
         await update_topl(`You miss ${mon_nam(mon)}.`);
     else
         await update_topl('You miss it.');
@@ -2503,7 +2503,7 @@ import { attacktype_fordmg, AD_DRIN, AD_WRAP, AD_DGST, AD_HALU, AD_DREN,
          AT_BOOM } from './monattk_data.js';
 import { EGG, BOULDER, HEAVY_IRON_BALL, IRON_CHAIN, EXPENSIVE_CAMERA,
          LOADSTONE, ROCK, WAN_LIGHT, POTION_CLASS, BLINDING_VENOM, ACID_VENOM,
-         weight, next_ident } from './mkobj.js';
+         weight } from './mkobj.js';
 import { rnl, rn1 } from './rng.js';
 import { monster_by_pmidx } from './makemon.js';
 import { Mgender, y_monnam, some_mon_nam } from './do_name.js';
@@ -3046,10 +3046,6 @@ export async function hmon_hitmon_potion(hmd, mon, obj) {
     const { potionhit } = await import('./potion.js');
     if ((obj.quan ?? 1) > 1) {
         obj = I.splitobj(obj, 1);
-        // C ref: mkobj.c splitobj():469 nextoid() -> next_ident() spends one
-        // rnd(2).  js/invent.js splitobj() is draw-free by convention, so each
-        // call site pays it (as eat.js touchfood() and dokick.js do).
-        next_ident();
     } else {
         I.setuwep_slot(null);           /* wield.c setuwep((struct obj *) 0) */
     }

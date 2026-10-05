@@ -1444,7 +1444,7 @@ function find_oid(id) {
 // C ref: shk.c setpaid(shkp):400.  gb.billobjs is an ARRAY in this port, so
 // C's "extract and dealloc each" is a truncation.
 // (Real port: js/shkroom.js, private.)
-function setpaid(shkp) {
+export function setpaid(shkp) {
     clear_unpaid(shkp, game.invent);
     clear_unpaid(shkp, game.level?.objects);
     if (game.level?.buriedobjlist) clear_unpaid(shkp, game.level.buriedobjlist);

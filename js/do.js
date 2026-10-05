@@ -244,7 +244,7 @@ export function u_on_newpos(x, y) {
 // (via fixup_special()'s LR_*TELE arm) can fill the matching one back in, and
 // an unfilled region (.lx==0) makes place_lregion() default to the whole
 // level.  (was_in_W_tower is Vlad's-Tower-only and never reached here.)
-async function u_on_rndspot(upflag) {
+export async function u_on_rndspot(upflag) {
     const up = (upflag & 1);
     const dest = up ? game.updest : game.dndest;
     await place_hero_lregion(dest?.lx || 0, dest?.ly || 0, dest?.hx || 0, dest?.hy || 0,
@@ -568,7 +568,7 @@ function mnexto(mtmp) {
 // square (typically the pet that accompanied the hero and landed on the hero's
 // exact spot in mon_arrive()).  Randomly move the hero to an adjacent spot or,
 // far more often, move the monster to any nearby location.
-function u_collide_m(mtmp) {
+export function u_collide_m(mtmp) {
     const u = game.u;
     // C: if (!rn2(2) && enexto(&cc, u.ux, u.uy, youmonst.data) && next2u(cc.x, cc.y))
     //        u_on_newpos(cc.x, cc.y);  else  mnexto(mtmp, RLOC_NOMSG);
@@ -597,6 +597,10 @@ function u_collide_m(mtmp) {
 export async function losehp_do(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
     if (!u || n <= 0) return;
+    // C ref: hack.c:4265-4266 — damage interrupts counted actions and travel.
+    game.botl = true;
+    const { end_running } = await import('./hack.js');
+    end_running(true);
     if (u.Upolyd) {
         u.mh = (u.mh ?? 0) - n;
         if (u.mh > u.mhmax) u.mhmax = u.mh;

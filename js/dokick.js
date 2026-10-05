@@ -35,11 +35,11 @@ import {
 import { KICKING_BOOTS, BOULDER, ROCK, DILITHIUM_CRYSTAL, LUCKSTONE,
          RING_CLASS, GEM_CLASS, EGG, BAG_OF_HOLDING, BAG_OF_TRICKS,
          COIN_CLASS, CORPSE, LARGE_BOX, CHEST, ICE_BOX, EXPENSIVE_CAMERA,
-         place_object, next_ident, add_to_migration,
+         place_object, add_to_migration,
          mkgold, mksobj_at, mkobj_at, rnd_class, objects, weight, base_oc_cost } from './mkobj.js';
 import { makemon, monster_by_pmidx, name_to_pmidx, enexto_spawn, mpickobj } from './makemon.js';
 import { in_rooms, shop_keeper } from './shkroom.js';
-import { water_damage, set_wounded_legs, t_at } from './trap.js';
+import { water_damage, set_wounded_legs, t_at, chest_trap } from './trap.js';
 import { near_capacity, sobj_at, useup, body_part, inv_weight, makeplural,
          objects_at, obj_extract_self, stackobj, splitobj, xname, otense,
          obfree, remove_worn_item,
@@ -1240,16 +1240,14 @@ async function really_kick_object(x, y) {
             if (!rn2(5) || (martial() && !rn2(2))) {
                 await update_topl('You break open the lock!');
                 await breakchestlock_k(gk_kickedobj);
-                // chest_trap(obj, LEG, FALSE) is not ported; an otrapped box
-                // kicked open leaves its trap dormant here.
-                void otrp;
+                if (otrp) await chest_trap(gk_kickedobj, LEG, false);
                 return 1;
             }
         } else {
             if (!rn2(3) || (martial() && !rn2(2))) {
                 await update_topl('The lid slams open, then falls shut.');
                 gk_kickedobj.lknown = 1;
-                void otrp;
+                if (otrp) await chest_trap(gk_kickedobj, LEG, false);
                 return 1;
             }
         }
@@ -1269,9 +1267,6 @@ async function really_kick_object(x, y) {
 
     if ((gk_kickedobj.quan | 0) > 1) {
         if (!isgold) {
-            // C: splitobj -> nextoid -> next_ident spends one rnd(2) on the
-            // fragment's o_id; this port's splitobj() leaves it to the caller.
-            next_ident();
             gk_kickedobj = splitobj(gk_kickedobj, 1);
         } else {
             if (rn2(20)) {

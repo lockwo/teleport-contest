@@ -267,8 +267,27 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
     if ((u.uhp | 0) < 1) {
         // C ref: attrib.c:405 — done(strstri(pkiller,"poison") ? DIED : POISONING).
         const { done, DIED } = await import('./end.js');
-        game._killer_name = pkiller;
-        await done(/poison/i.test(pkiller || '') ? DIED : POISONING);
+        const { name_to_mon } = await import('./polyself.js');
+        const { type_is_pname, the } = await import('./objnam.js');
+        const { formatkiller } = await import('./topten.js');
+        const { KILLED_BY_AN, KILLED_BY } = await import('./const.js');
+        let kprefix = KILLED_BY_AN;
+        const { mntmp } = await name_to_mon(pkiller);
+        const killerMon = monster_by_pmidx(mntmp);
+        // C ref: attrib.c:345-355 — unique names and existing articles
+        // must not acquire another indefinite article.
+        if (killerMon && (killerMon.geno & 0x1000 /* G_UNIQ */)) {
+            kprefix = KILLED_BY;
+            if (!type_is_pname(killerMon)) pkiller = the(pkiller);
+        } else if (/^(?:the |an |a )/i.test(pkiller)) {
+            kprefix = KILLED_BY;
+        }
+        // The HP-damage arm reaches losehp()->done(DIED) before this
+        // final poison-specific check (attrib.c:391,401-405).
+        const how = i > 5 || /poison/i.test(pkiller || '') ? DIED : POISONING;
+        game.killer = { ...(game.killer || {}), name: pkiller, format: kprefix };
+        game._killer_name = formatkiller(256, how, false);
+        await done(how);
     }
     const { encumber_msg } = await import('./invent.js');
     await encumber_msg();

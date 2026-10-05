@@ -14,12 +14,12 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic } from './display.js';
+import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan } from './invent.js';
 import { doextversion } from './version.js';
 import { option_help_lines } from './options.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
-import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE, KEYHELP }
+import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE, KEYHELP, DEBUGHELP }
     from './pager_data.js';
 import { EXTCMD_TABLE } from './cmd_data.js';
 // cmd.js <-> pager.js is a static cycle (cmd.js imports dohelp); both names
@@ -145,12 +145,12 @@ const HELP_MENU_ITEMS = [
     { text: 'Longer explanation of game options.', fn: dispfile_optionfile },
     { text: "Using the '#optionsfull' or 'm O' command to set options.", fn: dispfile_optmenu },
     { text: 'Full list of keyboard commands.', fn: dokeylist },
-    { text: 'List of extended commands.', fn: null },
+    { text: 'List of extended commands.', fn: hmenu_doextlist },
     { text: 'List menu control keys.', fn: domenucontrols },
     { text: "Description of NetHack's command line.", fn: dispfile_usagehelp },
     { text: 'The NetHack license.', fn: dispfile_license },
     { text: 'Support information.', fn: docontact },
-    { text: 'List of wizard-mode commands.', fn: null, wizonly: true },
+    { text: 'List of wizard-mode commands.', fn: dispfile_debughelp, wizonly: true },
 ];
 
 // C ref: pager.c hmenu_dowhatis() — `do_look(0, (coord *) 0)`, the same full
@@ -257,7 +257,7 @@ function key2extcmddesc(key) {
     return null;
 }
 
-// C ref: pager.c dowhatdoes_core() — build the one-line "<key padded to 8><desc>."
+// C ref: pager.c dowhatdoes_core() — build the one-line "<key padded to 8><desc>"
 // description for key q, or null if it is not a command.
 export function dowhatdoes_core(q) {
     const ec_desc = key2extcmddesc(q & 0xff);
@@ -289,6 +289,7 @@ export async function dowhatdoes() {
     const softPending = !!cur && game._toplinSoft === cur;
     if (game._toplin === 1 || softPending) await topl_more();
     const full = 'What command? ';
+    remember_topl();
     game._pending_message = full;
     game._toplines = full;
     await flush_screen(1);
@@ -297,6 +298,7 @@ export async function dowhatdoes() {
     if (d?.setCursor) d.setCursor(Math.min(full.length, COLS - 1), 0);
     const q = await nhgetch();
     delete game._modal_screen;
+    yn_prompt_history(full, key2txt(q));
 
     const reslt = dowhatdoes_core(q);
     if (reslt !== null) {
@@ -957,7 +959,8 @@ import { engr_at } from './engrave.js';
 import { t_at, trap_explanation } from './trap.js';
 import { trapped_chest_at, trapped_door_at } from './detect.js';
 import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
-         VENOM_CLASS, COIN_CLASS, mksobj, mkobj } from './mkobj.js';
+         VENOM_CLASS, COIN_CLASS, STATUE, CORPSE, SLIME_MOLD, LEASH,
+         mksobj, mkobj } from './mkobj.js';
 import { monster_by_pmidx } from './makemon.js';
 import { simpleonames } from './objnam.js';
 import { distant_monnam, ARTICLE_NONE, mon_nam } from './do_name.js';
@@ -989,10 +992,6 @@ function pg_impossible(msg) { void pg_impossible_async(msg).catch(() => {}); }
 const invisexplain = 'remembered, unseen, creature';
 const altinvisexplain = 'unseen creature';          /* for clairvoyance */
 
-// dat/wizhelp is not transcribed into js/pager_data.js yet.  An empty list is
-// C's dlb_fopen() failure, which is exactly what dispfile_debughelp() has to
-// cope with.
-const DEBUGHELP = [];
 
 // ── local helpers ──────────────────────────────────────────────────────────
 
@@ -1122,10 +1121,10 @@ function pg_glyph_to_obj(g) { return g?.otyp ?? STRANGE_OBJECT; }
 function pg_glyph_to_trap(g) { return g?.ttyp ?? NO_TRAP; }
 function pg_glyph_to_cmap(g) { return pg_glyph_is_cmap(g) ? g.cmap : SYM_NOTHING; }
 function pg_glyph_is_statue(g) {
-    return pg_glyph_is_object(g) && g.otyp === 481 /* objects.h STATUE */;
+    return pg_glyph_is_object(g) && g.otyp === STATUE;
 }
 function pg_glyph_is_body(g) {
-    return pg_glyph_is_object(g) && g.otyp === 259 /* objects.h CORPSE */;
+    return pg_glyph_is_object(g) && g.otyp === CORPSE;
 }
 
 // The cmap index a cell's terrain draws as — C reads it back out of the glyph;
@@ -1481,17 +1480,17 @@ export function object_from_map(glyph, x, y) {
            on the object itself (mkobj.js start_timer), so they die with it */
         fakeobj = true;
         if (otmp.oclass === COIN_CLASS) otmp.quan = 2;   /* force pluralization */
-        else if (otmp.otyp === 419 /* SLIME_MOLD */)
+        else if (otmp.otyp === SLIME_MOLD)
             otmp.spe = game.context?.current_fruit ?? 0;
         if (mtmp && mtmp.mcorpsenm != null && mtmp.mcorpsenm >= 0) {
-            if (otmp.otyp === 419) otmp.spe = mtmp.mcorpsenm;
+            if (otmp.otyp === SLIME_MOLD) otmp.spe = mtmp.mcorpsenm;
             else otmp.corpsenm = mtmp.mcorpsenm;
-        } else if (otmp.otyp === 259 /* CORPSE */ && pg_glyph_is_body(glyph)) {
+        } else if (otmp.otyp === CORPSE && pg_glyph_is_body(glyph)) {
             otmp.corpsenm = glyph.corpsenm;
-        } else if (otmp.otyp === 481 /* STATUE */ && pg_glyph_is_statue(glyph)) {
+        } else if (otmp.otyp === STATUE && pg_glyph_is_statue(glyph)) {
             otmp.corpsenm = glyph.corpsenm;
         }
-        if (otmp.otyp === 218 /* LEASH */) otmp.leashmon = 0;
+        if (otmp.otyp === LEASH) otmp.leashmon = 0;
         /* extra fields needed for shop price with doname() formatting */
         otmp.where = 'floor';
         otmp.ox = x; otmp.oy = y;
@@ -2698,12 +2697,7 @@ export function whatdoes_cond(buf, stack, depth, lnum) {
 
 // C ref: pager.c:2778 dispfile_debughelp() — display_file(DEBUGHELP, TRUE), the
 // "List of wizard-mode commands." help topic (shown only in debug mode).
-// dat/wizhelp is not transcribed into js/pager_data.js yet.
 export async function dispfile_debughelp() {
-    if (!DEBUGHELP.length) {
-        await update_topl('Cannot open data file!');
-        return;
-    }
     await display_file(DEBUGHELP);
 }
 

@@ -763,7 +763,7 @@ function sscanf_ape(mapping, lead) {
 // C ref: options.c add_autopickup_exception().  ape->pattern is a POSIX
 // EXTENDED regex (sys/share/posixregex.c regex_compile passes REG_EXTENDED)
 // matched unanchored against the object description, NOT a glob.
-function add_autopickup_exception(mapping, result) {
+function add_autopickup_exception(mapping, result, report_error = config_error_add) {
     const APE_regex_error = 'regex error in AUTOPICKUP_EXCEPTION';
     const APE_syntax_error = 'syntax error in AUTOPICKUP_EXCEPTION';
     let grab = false;
@@ -778,7 +778,7 @@ function add_autopickup_exception(mapping, result) {
            accepted by the third form with '>' left INSIDE the pattern. */
         if (r.n !== 1) r = sscanf_ape(mapping, '');
         if (!(r.n === 1 || (r.n === 2 && r.end === '#'))) {
-            config_error_add(APE_syntax_error);
+            report_error(APE_syntax_error);
             return 0;
         }
         grab = false;
@@ -791,14 +791,14 @@ function add_autopickup_exception(mapping, result) {
        character classes). */
     const ere = ere_compile(r.text);
     if (ere.error) {
-        config_error_add(`${APE_regex_error}: ${ere.error}`);
+        report_error(`${APE_regex_error}: ${ere.error}`);
         return 0;
     }
     let re;
     try {
         re = new RegExp(ere.jsSource);
     } catch (e) {
-        config_error_add(`${APE_regex_error}: ${e.message}`);
+        report_error(`${APE_regex_error}: ${e.message}`);
         return 0;
     }
     /* ape->next = ga.apelist: newest first, which is the order
@@ -1727,7 +1727,7 @@ function optfn_symset(o, negated, opts, op, result) {
         config_error_add(`Unable to load symbol set "${op}" from "symbols"`);
         return OPTN_ERR;
     }
-    if (o.name === 'symset') result.symset = op;
+    result[o.name] = /^(default|Default symbols)$/i.test(op) ? '' : op;
     return OPTN_OK;
 }
 
@@ -2431,7 +2431,7 @@ function optfn_statushilites(o, negated, opts, op, result) {
 }
 
 // C ref: options.c optfn_statuslines() — 2 or 3, and nothing else.
-function optfn_statuslines(o, negated, opts, op, result) {
+function optfn_statuslines(o, negated, opts, op, result, error = config_error_add) {
     op = string_for_opt(opts, negated);
     let itmp = 0, retval = OPTN_OK;
     if (negated) {
@@ -2442,13 +2442,29 @@ function optfn_statuslines(o, negated, opts, op, result) {
         itmp = parseInt(op, 10) || 0;
     }
     if (itmp < 2 || itmp > 3) {
-        config_error_add(`'${o.name}:${op}' is invalid; must be 2 or 3`);
+        error(`'${o.name}:${op}' is invalid; must be 2 or 3`);
         retval = OPTN_SILENTERR;
     } else {
         result.iflags.wc2_statuslines = itmp;
         keep(o, op, result);
     }
     return retval;
+}
+
+// C ref: options.c doset_simple_menu():8672-8679 feeds the getlin response
+// through the same optfn_statuslines() setter used by the config parser.
+export async function handler_statuslines() {
+    const answer = await getlin('Set statuslines to what?');
+    if (answer[0] === '\x1b') return false;
+    const result = { flags: {}, iflags: {} };
+    const errors = [];
+    const status = optfn_statuslines({ name: 'statuslines' }, false,
+        `statuslines:${answer}`, answer, result, message => errors.push(message));
+    for (const message of errors) await OPT_MENU_DRIVER.error(message);
+    if (status !== OPTN_OK) return false;
+    game.iflags = game.iflags || {};
+    game.iflags.wc2_statuslines = result.iflags.wc2_statuslines;
+    return true;
 }
 
 // C ref: version.c get_feature_notice_ver() — strictly "maj.min.patch".
@@ -3060,19 +3076,7 @@ export function count_menucolors() {
     return game.menucolors ? game.menucolors.length : 0;
 }
 
-// C ref: botl.c count_cond().
-export function count_cond() {
-    const c = game.conds;
-    if (!c) return 0;
-    let n = 0;
-    for (const k of Object.keys(c)) if (c[k]) n++;
-    return n;
-}
 
-// C ref: botl.c count_status_hilites().
-export function count_status_hilites() {
-    return game.status_hilites ? game.status_hilites.length : 0;
-}
 
 // ---------------------------------------------------------------------------
 // HILITE_STATUS= — botl.c parse_status_hl1()/parse_status_hl2().
@@ -4786,7 +4790,7 @@ const MENU_ITEMFLAGS_NONE = 0x0, MENU_ITEMFLAGS_SELECTED = 0x1,
 
 // Install `select` (win, how) -> array of picked `any` values, or null/-1 for
 // ESC; `getlin` (prompt) -> string ('\033' for ESC) to drive these for real.
-export const OPT_MENU_DRIVER = { select: null, getlin: null };
+export const OPT_MENU_DRIVER = { select: null, getlin: null, error: null };
 
 function create_nhwindow(type) {
     return { type, items: [], query: '', lines: [] };
@@ -4815,6 +4819,8 @@ async function select_menu(win, how, picks) {
     for (const g of got) picks.push(g);
     return picks.length;
 }
+
+export { create_nhwindow, destroy_nhwindow, start_menu, add_menu, end_menu, select_menu };
 
 // C ref: getlin() -- returns the typed line, or "\033" when ESC'd.
 async function getlin(prompt) {
@@ -4946,10 +4952,6 @@ const InvOptNone = 0, InvOptOn = 1, InvSparse = 4;
 // C ref: include/global.h COLNO/ROWNO.
 const COLNO = 80, ROWNO = 21;
 
-// C ref: options.c:108 `static boolean give_opt_msg = TRUE` -- doset_simple()
-// clears it around its handler calls so the simple menu stays quiet.
-let give_opt_msg = true;
-
 // ---------------------------------------------------------------------------
 // handler_*() -- the per-option interactive setters the 'O' menus dispatch to.
 // Each is async because the port's input is: C's select_menu()/getlin() block,
@@ -5042,9 +5044,11 @@ export async function handler_align_misc(optidx) {
 
 // C ref: options.c handler_autounlock() -- PICK_ANY over unlocktypes[]; n == 0
 // (everything deselected) means 'none'.
-export async function handler_autounlock(optidx) {
+export async function handler_autounlock(optidx, giveMessages) {
     let tmpwin, chngd, i, n, presel, buf;
     game.flags = game.flags || {};
+    // C ref: options.c:1074 optfn_autounlock(do_init).
+    game.flags.autounlock ??= AUTOUNLOCK_APPLY_KEY;
     const oldflags = game.flags.autounlock | 0;
     const optname = optidx;
     const sep = (game.iflags && game.iflags.menu_tab_sep) ? '\t' : ' ';
@@ -5077,9 +5081,8 @@ export async function handler_autounlock(optidx) {
     }
     destroy_nhwindow(tmpwin);
     chngd = (game.flags.autounlock !== oldflags);
-    if ((chngd || game.flags.verbose) && give_opt_msg) {
-        /* C: optfn_autounlock(optidx, get_val, ...) -- the port's optfn_*()
-           have no get_val mode, so build the same comma list here. */
+    // doset_simple suppresses give_opt_msg; the full menu allows feedback.
+    if ((chngd || game.flags.verbose) && giveMessages) {
         buf = autounlock_val();
         await pline(`'${optname}' ${chngd ? 'changed to' : 'is still'} `
                     + `'${buf}'.`);
@@ -5087,15 +5090,14 @@ export async function handler_autounlock(optidx) {
     return res;
 }
 
-// C ref: options.c optfn_autounlock()'s get_val arm: "none" or the enabled
-// unlocktypes[] names joined with '+'.
-function autounlock_val() {
-    const bits = (game.flags && game.flags.autounlock) | 0;
+// C ref: options.c:1145-1160 optfn_autounlock(get_val).
+export function autounlock_val() {
+    const bits = game.flags?.autounlock ?? AUTOUNLOCK_APPLY_KEY;
     if (!bits) return 'none';
     const parts = [];
     for (let i = 0; i < UNLOCKTYPES.length; ++i)
         if (bits & (1 << i)) parts.push(UNLOCKTYPES[i]);
-    return parts.join('+');
+    return parts.join(' + ');
 }
 
 // C ref: options.c handler_disclose() -- a category menu, then one sub-menu per
@@ -5719,7 +5721,12 @@ export async function handler_autopickup_exception() {
             if (apebuf[0] === '\x1b') return true;
             if (apebuf) {
                 /* guarantee room for \" prefix and \"\0 suffix */
-                add_autopickup_exception(`"${apebuf}"`, result);
+                let error;
+                add_autopickup_exception(`"${apebuf.slice(0, BUFSZ - 1)}"`,
+                                        result, (message) => { error = message; });
+                // C ref: cfgfiles.c:1557-1562 — interactive errors use
+                // pline() followed by wait_synch(), not the config-file log.
+                if (error) await OPT_MENU_DRIVER.error(error);
             }
             continue;
         } else { /* list (1) or remove (2) */
@@ -5793,7 +5800,7 @@ export async function handler_menu_colors() {
                 && (mcclr = await query_color(null, NO_COLOR_IDX)) !== -1
                 && (mcattr = await query_attr(null, ATR_NONE)) !== -1
                 && !add_menu_coloring_parsed(mcbuf, mcclr, mcattr,
-                                             { menucolors: colorings })) {
+                                             { menucolors: colorings, flags: game.flags })) {
                 await pline('Error adding the menu color.');
                 wait_synch();
             }
