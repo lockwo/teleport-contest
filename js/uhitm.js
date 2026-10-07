@@ -1993,9 +1993,10 @@ export async function killed(mon, opts) {
             // Killing a pet always sounds off, and the hallucinatory variant is
             // the longer of the two, which is what pushes the topline past 80
             // columns and forces the --More-- (seed0383 step 178).
-            await update_topl(game.u?.uhallu
-                ? 'You hear the studio audience applaud!'
-                : 'You hear the rumble of distant thunder...');
+            const { You_hear } = await import('./display.js');
+            await You_hear(game.u?.uhallu
+                ? 'the studio audience applaud!'
+                : 'the rumble of distant thunder...');
             if (!(((mon.data?.geno ?? 0) & G_UNIQ_XM) !== 0)) {
                 const mname = mon.mgivenname || mon.mextra?.mgivenname || '';
                 livelog_printf(LL_KILLEDPET,

@@ -1345,6 +1345,14 @@ export function room_discovered(roomno) {
     const uz = game.u?.uz;
     if (!uz) return;
     mapseen_of(`${uz.dnum}:${uz.dlevel}`).msrooms[roomno] = { seen: 1 };
+    // C ref: dungeon.c:3282 also records it on the level's mapseen and calls
+    // recalc_mapseen() at once.  recalc_mapseen() is async, so only the
+    // `seen` mark is set here: the recalculation always runs again before the
+    // level is left (do.c goto_level) and before #overview lists it, and it
+    // recomputes everything from the map plus this mark.
+    const cms = find_mapseen(uz);
+    if (cms && roomno >= 0 && roomno < cms.msrooms.length)
+        cms.msrooms[roomno].seen = 1;
 }
 
 // C ref: dungeon.c:2446 recbranch_mapseen(source, dest) — record that the hero
@@ -1398,7 +1406,11 @@ function shop_string(rtype) {
 // visited level unconditionally.  `how` is the death code, needed only to
 // pick the "<- You are/were/left from here" verb for final==1 (an alive
 // ending); it is unused for final==0/2.
-export function build_overview_lines(final = 0, how = 0) {
+export async function build_overview_lines(final = 0, how = 0) {
+    // C ref: dungeon.c show_overview() — "lazy initialization": recalc_mapseen()
+    // for the current level before anything is listed.  (goto_level() already
+    // ran it for every level the hero has left.)
+    await recalc_mapseen();
     const M = game._full_dungeon || { dungeons: game.dungeons, n_dgns: game.n_dgns };
     const u = game.u;
     const uzLedger = u && u.uz ? `${u.uz.dnum}:${u.uz.dlevel}` : null;
@@ -1457,6 +1469,10 @@ export function build_overview_lines(final = 0, how = 0) {
         } : { nthrone: 0, nfount: 0, nsink: 0, ngrave: 0, ntree: 0,
               naltar: 0, msalign: MSA_NONE };
         const ms = game._mapseen?.[p.ledger] || null;
+        // C ref: struct mapseen's flags (oracle/castle/bigroom/...): the
+        // automatic annotations recalc_mapseen() maintains on the C mapseen
+        // chain that init_mapseen() builds for every level made.
+        const cms = find_mapseen({ dnum: p.dnum, dlevel: p.dlevel });
         // C ref: recalc_mapseen()'s msrooms loop — a shop counts only once the
         // hero has been INSIDE it (room_discovered), and shoptype collapses to 0
         // when two different shop types have been entered on the same level.
@@ -1487,11 +1503,15 @@ export function build_overview_lines(final = 0, how = 0) {
         // C ref: dungeon.c interest_mapseen() last clause — a level is of
         // interest when it is "the furthest level reached in its branch"
         // (mptr->lev.dlevel == dungeons[dnum].dunlev_ureached), even with no
-        // features and no annotation.  GAP: the auto-annotation flags (oracle /
-        // bigroom / roguelevel / castle / valley / msanctum / vibrating_square /
-        // quest_summons / questing) are not tracked here yet.
+        // features and no annotation.
         const isDeepest = p.dlevel === dunlevUreached;
-        if (!final && !onHere && !ofInterest && !custom && !ms?.br && !isDeepest) continue;
+        // interest_mapseen(): "level is of interest if it has an
+        // auto-generated annotation".
+        const fl = cms?.flags;
+        const annotated = !!(fl && (fl.oracle || fl.bigroom || fl.roguelevel
+            || fl.castle || fl.valley || fl.msanctum || fl.vibrating_square
+            || fl.quest_summons || fl.questing));
+        if (!final && !onHere && !ofInterest && !annotated && !custom && !ms?.br && !isDeepest) continue;
         const showheader = p.dnum !== lastdun;
         if (showheader) {
             const buf = (dunlevUreached === dptr.entry_lev)
@@ -1567,6 +1587,10 @@ export function build_overview_lines(final = 0, how = 0) {
             fbuf = fbuf.slice(0, idx) + fbuf[idx].toUpperCase() + fbuf.slice(idx + 1) + '.';
             lines.push({ text: fbuf, attr: 0 });
         }
+
+        if (cms)
+            for (const text of await mapseen_annotations(cms))
+                lines.push({ text, attr: 0 });
 
         // C ref: print_mapseen():3681 — the known branch connection, printed
         // after the feature line.  `, level N` is appended only for an upward
@@ -2013,14 +2037,6 @@ async function inhistemple(priest) {
     /* temple room must still contain properly aligned altar */
     return has_shrine(priest);
 }
-
-// C ref: questpgr.c:50 ldrname() — "the " + mons[urole.ldrnum].pmnames[NEUTRAL].
-// UNPORTED: js/role.js's roles[] carries no ldrnum and questpgr.js's
-// QUEST_ROLE_DATA[].ldr (the identical string, article included) is
-// module-private, so there is no source of truth reachable from here.  Left
-// loud rather than stubbed to a plausible name — the three print_mapseen()
-// lines that interpolate it are the only thing affected.
-function ldrname() { return null; }
 
 // C ref: windows.c:1816 add_menu_heading() / :1832 add_menu_str() — the two
 // wrappers print_mapseen() uses.  windows.c has no js/ counterpart; these call
@@ -3060,7 +3076,11 @@ export async function recalc_mapseen() {
     const { shop_keeper } = await import('./shkroom.js');
     const { inhishop } = await import('./shk.js');
     const { findpriest } = await import('./priest.js');
-    const rooms = game.level?.rooms || [];
+    /* svr.rooms[] is one flat array: rooms, then (from MAXNROFROOMS + 1) the
+       subrooms, which this port keeps in level.subrooms */
+    const roomAt = (i) => (i > MAXNROFROOMS
+        ? (game.level?.subrooms || [])[i - (MAXNROFROOMS + 1)]
+        : (game.level?.rooms || [])[i]);
 
     /* track rooms the hero is in */
     const urooms = game.u?.urooms || [];
@@ -3070,9 +3090,9 @@ export async function recalc_mapseen() {
                - ROOMOFFSET;
         mptr.msrooms[ridx].seen = 1;
         mptr.msrooms[ridx].untended =
-            ((rooms[ridx]?.rtype | 0) >= SHOPBASE)
+            ((roomAt(ridx)?.rtype | 0) >= SHOPBASE)
                 ? ((!(mtmp = shop_keeper(uroom)) || !inhishop(mtmp)) ? 1 : 0)
-                : ((rooms[ridx]?.rtype | 0) === TEMPLE)
+                : ((roomAt(ridx)?.rtype | 0) === TEMPLE)
                       ? ((!(mtmp = findpriest(uroom))
                           || !(await inhistemple(mtmp))) ? 1 : 0)
                       : 0;
@@ -3081,22 +3101,22 @@ export async function recalc_mapseen() {
     /* recalculate room knowledge: for now, just shops and temples */
     for (i = 0; i < MSROOMS_SIZE; ++i) {
         if (mptr.msrooms[i].seen) {
-            if ((rooms[i]?.rtype | 0) >= SHOPBASE) {
+            if ((roomAt(i)?.rtype | 0) >= SHOPBASE) {
                 if (mptr.msrooms[i].untended)
                     mptr.feat.shoptype = SHOPBASE - 1;
                 else if (!mptr.feat.nshop)
-                    mptr.feat.shoptype = rooms[i].rtype;
-                else if (mptr.feat.shoptype !== rooms[i].rtype)
+                    mptr.feat.shoptype = roomAt(i).rtype;
+                else if (mptr.feat.shoptype !== roomAt(i).rtype)
                     mptr.feat.shoptype = 0;
                 count = mptr.feat.nshop + 1;
                 if (count <= 3)
                     mptr.feat.nshop = count;
-            } else if ((rooms[i]?.rtype | 0) === TEMPLE) {
+            } else if ((roomAt(i)?.rtype | 0) === TEMPLE) {
                 /* altar and temple alignment handled below */
                 count = mptr.feat.ntemple + 1;
                 if (count <= 3)
                     mptr.feat.ntemple = count;
-            } else if ((rooms[i]?.orig_rtype | 0) === DELPHI) {
+            } else if ((roomAt(i)?.orig_rtype | 0) === DELPHI) {
                 mptr.flags.oracle = 1;
             }
         }
@@ -3267,6 +3287,52 @@ export function tunesuffix(mptr) {
 const TAB = '   ';    /* three spaces */
 const PREFIX = '      '; /* two TABs + empty BULLET: six spaces */
 
+// C ref: dungeon.c print_mapseen() — the automatic annotation lines: the
+// level's mutually-exclusive special-level note (oracle, sokoban, bigroom,
+// rogue, quest home, ludios, castle, valley, vibrating square, sanctum), then
+// the quest-summons line, which is independent of those.  Shared by
+// print_mapseen() and the live #overview text builder.
+async function mapseen_annotations(mptr) {
+    const out = [];
+    let buf = '';
+    const ldrname = async () => (await import('./questpgr.js')).ldrname();
+    /* we assume that these are mutually exclusive */
+    if (mptr.flags.oracle) {
+        buf = `${PREFIX}Oracle of Delphi.`;
+    } else if (In_sokoban(mptr.lev)) {
+        buf = `${PREFIX}${mptr.flags.sokosolved ? 'Solved' : 'Unsolved'}.`;
+    } else if (mptr.flags.bigroom) {
+        buf = `${PREFIX}A very big room.`;
+    } else if (mptr.flags.roguelevel) {
+        buf = `${PREFIX}A primitive area.`;
+    } else if (on_level(mptr.lev, game.qstart_level)) {
+        buf = `${PREFIX}Home${mptr.flags.notreachable ? ' (no way back...)' : ''}.`;
+        if (game.u?.uevent?.qcompleted)
+            buf = `${PREFIX}Completed quest for ${await ldrname()}.`;
+        else if (mptr.flags.questing)
+            buf = `${PREFIX}Given quest by ${await ldrname()}.`;
+    } else if (mptr.flags.ludios) {
+        /* presence of the ludios branch in #overview output means the player
+           made it onto the level; this annotation means the fort's entrance
+           has been seen (or mapped) */
+        buf = `${PREFIX}Fort Ludios.`;
+    } else if (mptr.flags.castle) {
+        buf = `${PREFIX}The castle${tunesuffix(mptr)}.`;
+    } else if (mptr.flags.valley) {
+        buf = `${PREFIX}Valley of the Dead.`;
+    } else if (mptr.flags.vibrating_square) {
+        buf = `${PREFIX}Gateway to Moloch's Sanctum.`;
+    } else if (mptr.flags.msanctum) {
+        buf = `${PREFIX}Moloch's Sanctum.`;
+    }
+    if (buf)
+        out.push(buf);
+    /* quest entrance is not mutually-exclusive with bigroom or rogue level */
+    if (mptr.flags.quest_summons)
+        out.push(`${PREFIX}Summoned by ${await ldrname()}.`);
+    return out;
+}
+
 // C ref: dungeon.c:3516 print_mapseen(win, mptr, final, how, printdun).
 // `win` is show_overview()'s { wt, win } pair; an ARRAY is accepted too so a
 // caller that only wants the lines (build_overview_lines()'s job today) can
@@ -3404,44 +3470,8 @@ export async function print_mapseen(win, mptr, final, how, printdun) {
         menu_str(buf);
     }
 
-    /* we assume that these are mutually exclusive */
-    buf = '';
-    if (mptr.flags.oracle) {
-        buf = `${PREFIX}Oracle of Delphi.`;
-    } else if (In_sokoban(mptr.lev)) {
-        buf = `${PREFIX}${mptr.flags.sokosolved ? 'Solved' : 'Unsolved'}.`;
-    } else if (mptr.flags.bigroom) {
-        buf = `${PREFIX}A very big room.`;
-    } else if (mptr.flags.roguelevel) {
-        buf = `${PREFIX}A primitive area.`;
-    } else if (on_level(mptr.lev, game.qstart_level)) {
-        buf = `${PREFIX}Home${mptr.flags.notreachable ? ' (no way back...)' : ''}.`;
-        if (game.u?.uevent?.qcompleted)
-            buf = `${PREFIX}Completed quest for ${ldrname()}.`;
-        else if (mptr.flags.questing)
-            buf = `${PREFIX}Given quest by ${ldrname()}.`;
-    } else if (mptr.flags.ludios) {
-        /* presence of the ludios branch in #overview output means the player
-           made it onto the level; this annotation means the fort's entrance
-           has been seen (or mapped) */
-        buf = `${PREFIX}Fort Ludios.`;
-    } else if (mptr.flags.castle) {
-        buf = `${PREFIX}The castle${tunesuffix(mptr)}.`;
-    } else if (mptr.flags.valley) {
-        buf = `${PREFIX}Valley of the Dead.`;
-    } else if (mptr.flags.vibrating_square) {
-        buf = `${PREFIX}Gateway to Moloch's Sanctum.`;
-    } else if (mptr.flags.msanctum) {
-        buf = `${PREFIX}Moloch's Sanctum.`;
-    }
-    if (buf) {
-        menu_str(buf);
-    }
-    /* quest entrance is not mutually-exclusive with bigroom or rogue level */
-    if (mptr.flags.quest_summons) {
-        buf = `${PREFIX}Summoned by ${ldrname()}.`;
-        menu_str(buf);
-    }
+    for (const line of await mapseen_annotations(mptr))
+        menu_str(line);
 
     /* print out branches */
     if (mptr.br) {

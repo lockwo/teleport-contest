@@ -214,8 +214,8 @@ export async function outrip_and_score(how) {
     const wizard = !!game.flags?.debug;
     const msg = `Since you were in ${wizard ? 'wizard' : 'discover'} mode,`
         + ' the score list will not be checked.';
-    disp.putstr(0, 1, msg, NO_COLOR, 0);
-    disp.setCursor(0, 2);
+    disp.putstr(0, 1 + rawPrintBias(), msg, NO_COLOR, 0);
+    setFinalCursor(disp, 2 + rawPrintBias());
     game.program_state = game.program_state || {};
     game.program_state.gameover = true;
     // Final read: consumes the last recorded key (or exhausts the queue, which
@@ -227,6 +227,21 @@ let _display = null;
 async function deps() {
     if (!_display) _display = await import('./display.js');
     return _display;
+}
+
+// C ref: termcap.c nomux_raw_putch() — once an rc error has put the recorder's
+// raw writer in play (game._nomux_raw, never cleared) the topten() raw_print()s
+// land that many rows further down: bl019 (cursor frozen at row 1) records the
+// "score list will not be checked" line on row 3 and ends with the cursor on
+// row 6, i.e. both shifted by raw.row + 1 against the home-cursor layout.
+function rawPrintBias() {
+    return game._nomux_raw ? game._nomux_raw.row + 1 : 0;
+}
+// Park the cursor after the final raw_print()s; the captured cursor of a
+// raw-writer session is the writer's own row/col, so advance that too.
+function setFinalCursor(disp, row) {
+    disp.setCursor(0, row);
+    if (game._nomux_raw) game._nomux_raw = { row, col: 0 };
 }
 
 // C ref: end.c savelife(how) — put the hero back into a viable state after a
@@ -267,6 +282,9 @@ async function savelife(_how) {
     game.context = game.context || {};
     game.context.move = 0;
     game.multi = -1;
+    // C ref: end.c:741 — the arise-as-undead choice done_in_by() made for the
+    // death that was just averted must not leak into a later death.
+    u.ugrave_arise = NON_PM;
     if (u.uswallow) {
         const { expels } = await import('./mhitu.js');
         await expels(u.ustuck, u.ustuck.data, true);
@@ -638,6 +656,15 @@ async function done(how) {
                 }
             }
             const clean = await disclose(how, taken);
+            // C ref: end.c really_done() — "finish_paybill should be called
+            // after disclosure but before bones": the shopkeeper who took the
+            // hero's possessions gets them dropped on the shop floor (the
+            // rn2(5)/rn2(8) drop_upon_death() draws) BEFORE the grave and
+            // corpse are made.
+            if (bones_ok && taken) {
+                const { finish_paybill } = await import('./shk.js');
+                await finish_paybill();
+            }
             const corpse = bones_ok ? await make_hero_corpse_and_grave(how) : null;
             // C ref: end.c:1351-1360 — announce arising even without bones.
             if (clean && (game.u?.ugrave_arise ?? NON_PM) >= LOW_PM) {
@@ -690,11 +717,11 @@ async function quit_final_message() {
     disp.clearScreen();
     const msg = `Since you were in ${wizard ? 'wizard' : 'discover'} mode,`
         + ' the score list will not be checked.';
-    disp.putstr(0, 1, msg, NO_COLOR, 0);
+    disp.putstr(0, 1 + rawPrintBias(), msg, NO_COLOR, 0);
     // C ref: end.c really_done() tail — "if (done_stopprint) { raw_print("");
     // raw_print(""); }" right before nh_terminate(): two more blank-line
     // cursor advances (no visible text change) when quitting via 'q'.
-    disp.setCursor(0, game._done_stopprint ? 4 : 2);
+    setFinalCursor(disp, (game._done_stopprint ? 4 : 2) + rawPrintBias());
     game.program_state = game.program_state || {};
     game.program_state.gameover = true;
     await nhgetch();
@@ -1125,15 +1152,13 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         if (how !== PANICKED) {
             const msg = `Since you were in ${is_wizard() ? 'wizard' : 'discover'} mode,`
                 + ' the score list will not be checked.';
-            disp.putstr(0, 1, msg, NO_COLOR, 0);
-            disp.setCursor(0, stopprint ? 4 : 2);
+            disp.putstr(0, 1 + rawPrintBias(), msg, NO_COLOR, 0);
+            setFinalCursor(disp, (stopprint ? 4 : 2) + rawPrintBias());
         } else {
-            disp.setCursor(0, stopprint ? 2 : 0);
+            setFinalCursor(disp, (stopprint ? 2 : 0) + rawPrintBias());
         }
         game.program_state = game.program_state || {};
         game.program_state.gameover = true;
-        const q = game?.nhDisplay;
-        while ((q?.inputQueueLength ?? 0) > 0) await nhgetch();
         await nhgetch();
         return;
     }
@@ -1158,6 +1183,21 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         urexp,
     };
     const tt = topten_list(entry);
+
+    // C ref: topten.c topten() gates the "You made the top ten list!" banner,
+    // outheader() and every table row on `!done_stopprint`, and end.c
+    // really_done() then raw_print("")s twice before nh_terminate().  A 'q'
+    // (or ESC) answer to any disclose() prompt therefore ends the process with
+    // nothing more to show or read: the recorder's last step is the key that
+    // answered the prompt, and its screen is blank (the tty is gone), which the
+    // score loader drops.  So take no further input boundary here.  The record
+    // file is still updated.
+    if (stopprint) {
+        topten_record_write(tt);
+        game.program_state = game.program_state || {};
+        game.program_state.gameover = true;
+        return;
+    }
 
     // Blank --More-- acknowledgements (endwin teardown): two when the entry
     // makes the list (each of seed0030's diverse deaths scores real points and
@@ -1184,19 +1224,12 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
 
     game.program_state = game.program_state || {};
     game.program_state.gameover = true;
-    // C nh_terminate()s here, so a real session simply stops consuming keys.
-    // A replayed one must not: this port's post-death UI is shorter than C's
-    // (the disclosure prompts are unported), so a hero who dies EARLIER than
-    // the recorded one leaves keys queued.  Segments of one session share a
-    // single flattened screen index, so those unread keys shift every later
-    // segment out of alignment.  Draining them holds the alignment; the
-    // trailing frames themselves can't match content until the missing
-    // prompts are ported.  Bounded by the replay queue rather than by
-    // nhgetch()'s end-of-input throw, so an interactive session (queue empty,
-    // refilled only by a real keypress) still stops at the single read here
-    // instead of swallowing every key the player presses afterwards.
-    const replayq = game?.nhDisplay;
-    while ((replayq?.inputQueueLength ?? 0) > 0) await nhgetch();
+    // C nh_terminate()s here, so a real session simply stops consuming keys:
+    // the recorder's last step is the key that ended the game, and any keys
+    // still queued in the session's `moves` were never delivered.  Only the
+    // one boundary read below is made (it records the final screen); draining
+    // the rest of the queue would append a screen per unread key and shift
+    // every later segment of the flattened session out of alignment.
     await nhgetch();
 }
 

@@ -75,6 +75,21 @@ function tz_fields(ms) {
              hour: +p.hour % 24, min: +p.minute, sec: +p.second };
 }
 
+// C ref: u_init.c ubirthday = getnow() — the game-start clock in seconds for
+// a session `datetime` stamp.  The recordings ran at a FIXED UTC-4 offset
+// (see js/shknam.js for the evidence), independent of the host timezone, so
+// this does not go through the host-dependent getnow() above.  Returns 0 for a
+// missing/malformed stamp.
+const RECORDER_UTC_OFFSET = -4 * 3600;
+export function recorder_ubirthday(datetime) {
+    const dt = String(datetime || '');
+    if (!/^\d{14}$/.test(dt)) return 0;
+    const n = (a, b) => +dt.slice(a, b);
+    return Math.trunc(Date.UTC(n(0, 4), n(4, 6) - 1, n(6, 8),
+                               n(8, 10), n(10, 12), n(12, 14)) / 1000)
+           - RECORDER_UTC_OFFSET;
+}
+
 // C ref: calendar.c:40 getlt() / libc localtime(&date) — a full struct tm for
 // the time_t `date` (seconds since the epoch), in RECORDER_TZ.
 function localtime_c(date) {

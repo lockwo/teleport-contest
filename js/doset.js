@@ -183,7 +183,7 @@ const SIMPLE_SECTIONS = [
     ] },
     { name: 'Status', items: [
         { name: 'hitpointbar',             kind: 'bool',     val: () => boolStr('hitpointbar', false) },
-        { name: 'menu colors',             kind: 'other',    val: () => '(0 currently set)' },
+        { name: 'menu colors',             kind: 'other',    val: () => `(${(game.menucolors || []).length} currently set)` },
         { name: 'showexp',                 kind: 'bool',     val: () => boolStr('showexp', false) },
         { name: 'status condition fields', kind: 'other',    val: () => `(${count_cond()} currently set)` },
         { name: 'status highlight rules',  kind: 'other',    val: () => `(${count_status_hilites()} currently set)` },

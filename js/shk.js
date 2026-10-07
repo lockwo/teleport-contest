@@ -268,8 +268,8 @@ export function getprice(obj, shk_buying) {
 // ubirthday is the game-start wall clock in SECONDS; shknam.c's nameshk() seed
 // derives it the same way (see js/shknam.js ubirthdaySeconds(), which measured
 // the recordings' fixed UTC-4 offset against four recorded shopkeeper names).
-// game.ubirthday is never assigned anywhere in this port, so reading it
-// directly makes the expression 0 and the pseudorandom bit constantly false.
+// game.ubirthday is assigned at game start (jsmain.js) and persisted by the
+// save file; the datetime derivation below is only a fallback for a bare game.
 const UBIRTHDAY_UTC_OFFSET = -4 * 3600;
 function ubirthday() {
     if (typeof game.ubirthday === 'number' && game.ubirthday) return game.ubirthday;
@@ -1780,6 +1780,39 @@ export function shop_debt(eshkp) {
     for (let ct = 0; ct < (eshkp.billct || 0); ct++)
         debt += (eshkp.bill[ct].price || 0) * (eshkp.bill[ct].bquan || 0);
     return debt;
+}
+
+// C ref: shk.c shopper_financial_report() — the credit/debt lines the '$'
+// command appends: first the shop the hero is standing in, then every other
+// shop on the level.
+export async function shopper_financial_report() {
+    let this_shkp = shop_keeper(inside_shop(game.u.ux, game.u.uy));
+    let eshkp = this_shkp ? this_shkp.eshk : null;
+    if (eshkp && !(eshkp.credit || shop_debt(eshkp))) {
+        await update_topl('You have no credit or debt in here.');
+        this_shkp = null; /* skip first pass */
+    }
+
+    /* pass 0: report for the shop we're currently in, if any;
+       pass 1: report for all other shops on this level. */
+    for (let pass = this_shkp ? 0 : 1; pass <= 1; pass++)
+        for (let shkp = next_shkp(fmon()[0], false); shkp;
+             shkp = next_shkp(nmon(shkp), false)) {
+            if ((shkp !== this_shkp) !== (pass === 1))
+                continue;
+            eshkp = shkp.eshk;
+            let amt = eshkp.credit || 0;
+            if (amt !== 0)
+                await update_topl(`You have ${amt} ${currency(amt)} credit at ${
+                    s_suffix(shkname(shkp))} ${shtypes[eshkp.shoptype - SHOPBASE].name}.`);
+            else if (shkp === this_shkp)
+                await update_topl('You have no credit in here.');
+            amt = shop_debt(eshkp);
+            if (amt !== 0)
+                await update_topl(`You owe ${shkname(shkp)} ${amt} ${currency(amt)}.`);
+            else if (shkp === this_shkp)
+                await update_topl("You don't owe any gold here.");
+        }
 }
 
 // C ref: shk.c noisy_shop(sroom):1126.

@@ -91,7 +91,7 @@ import {
     attach_fig_transform_timeout,
 } from './mkobj.js';
 
-import { getpos, getpos_render, travel_adjacent_step, ia_checkfile_name, checkfile } from './hack.js';
+import { getpos, getpos_render, travel_adjacent_step, ia_checkfile_name, checkfile, nomul } from './hack.js';
 import { observe_object as disco_observe_object, build_discoveries_rows, discover_object } from './o_init.js';
 import { monster_by_pmidx, pmname_of_pmidx, name_to_pmidx } from './makemon.js';
 import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag,
@@ -106,7 +106,7 @@ import { base_armcat } from './objarmor_data.js';
 import { find_ac } from './u_init.js';
 import { moveloop_turn, youHaveFast, youHaveVeryFast } from './allmain.js';
 import { acurr_eff, acurr_str_encoded, exercise, set_moreluck } from './attrib.js';
-import { onbill, shk_scan, add_to_billobjs } from './shk.js';
+import { onbill, shk_scan, add_to_billobjs, shopper_financial_report } from './shk.js';
 import { shop_keeper } from './shkroom.js';
 import { hitval, dbon, weapon_type, weapon_hit_bonus_core,
          weapon_dam_bonus_core, weapon_descr } from './weapon.js';
@@ -485,14 +485,17 @@ export function setuswapwep(obj) { setworn_slot(obj, QW_SWAPWEP, () => game.uswa
 export function setuwep_slot(obj) {
     if (obj === game.uwep) return; /* C: "necessary to not set gu.unweapon" */
     setworn_slot(obj, QW_WEP, () => game.uwep, (o) => { game.uwep = o; });
-    if (obj) {
-        game.unweapon = (obj.oclass === WEAPON_CLASS)
-            ? (is_launcher(obj) || is_ammo(obj) || is_missile(obj)
-               || (is_pole(obj) && !game.u?.usteed))
-            : !(is_weptool(obj) || is_wet_towel(obj));
-    } else {
-        game.unweapon = true; /* for "bare hands" message */
-    }
+    game.unweapon = uwep_unweapon(obj);
+}
+// C ref: wield.c setuwep() tail — the gu.unweapon value for a newly wielded
+// `obj` (null = bare hands).  Also used by restore.c dorecover(), which re-runs
+// setuwep() on the restored weapon to re-arm the "bashing" reminder.
+export function uwep_unweapon(obj) {
+    if (!obj) return true; /* for "bare hands" message */
+    return (obj.oclass === WEAPON_CLASS)
+        ? (is_launcher(obj) || is_ammo(obj) || is_missile(obj)
+           || (is_pole(obj) && !game.u?.usteed))
+        : !(is_weptool(obj) || is_wet_towel(obj));
 }
 // C ref: include/obj.h is_ammo/is_launcher/matching_launcher/ammo_and_launcher.
 // Ammunition's oc_skill is the negative of its launcher's (arrow == -P_BOW), so
@@ -1429,7 +1432,6 @@ function money_cnt(list) {
     }
     return sum;
 }
-function shopper_financial_report() {}
 function in_rooms(_x, _y, _shop) { return ''; }
 function u_at(x, y) { return game.u?.ux === x && game.u?.uy === y; }
 function hides_under(_data) { return false; }
@@ -5449,6 +5451,7 @@ function armor_on_fn(mask) {
 // allmain's once-per-hero seer_turn roll.
 async function run_dress_occupation(delay, msg, afternmv) {
     const g = game;
+    nomul(-delay);   /* ends any run/rush in progress (end_running) */
     g.multi = -delay;
     g.multi_reason = 'dressing up';
     g.nomovemsg = msg || '';
@@ -5866,6 +5869,7 @@ function start_occupation(delay, msg, afternmv) {
     // set a POSITIVE multi and a `_afternmv` field nothing reads, so a
     // delay-bearing piece (leather gloves, boots, any real suit) was never
     // actually taken off and its "You finish ..." line never printed.
+    nomul(-delay);   /* ends any run/rush in progress (end_running) */
     game.multi = -delay;
     game.multi_reason = 'disrobing';
     game.nomovemsg = msg;
@@ -11260,6 +11264,22 @@ export function display_pickinv(lets = null, xtra_choice = null, query = null, a
     // caller computes xtra_choice/allowxtra; this port's only OTHER caller,
     // display_inventory(), always passes null/false, so this is a no-op there).
     const usextra = !!(xtra_choice && allowxtra);
+    // C ref: invent.c display_pickinv():3130-3170 — `n` only distinguishes 0, 1
+    // and "more"; with exactly one item of interest and no reply wanted the
+    // listing is a plain pline() (tty_message_menu PICK_NONE), not a menu.
+    // (want_reply's PICK_ONE message_menu variant is not reproduced here.)
+    {
+        const inv = inventoryArray();
+        let n = lets ? String(lets).length : (!inv.length ? 0 : inv.length === 1 ? 1 : 2);
+        if (usextra || (n === 1 && !lets)) ++n;
+        if (n === 1 && !want_reply && !game.flags?.force_invmenu
+            && !game.iflags?.menu_requested) {
+            const otmp = inv.find((o) => !lets || o.invlet === String(lets)[0]);
+            if (otmp) prinv(null, otmp, 0);
+            if (out_cnt) out_cnt.value = -1;
+            return '\0';
+        }
+    }
     const rows = inventoryRows(lets);
     if (usextra) rows.unshift(['Miscellaneous', `${HANDS_SYM} - ${xtra_choice}`]);
     const special = want_reply ? force_invmenu_special(lets) : null;
@@ -11993,7 +12013,7 @@ export async function doprgold() {
         await pline(total ? `You are carrying a total of ${total} ${currency(total)}.`
                           : 'You have no money.');
     }
-    shopper_financial_report();
+    await shopper_financial_report();
     return ECMD_OK;
 }
 

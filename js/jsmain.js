@@ -10,6 +10,7 @@
 // For browser play, see nethack.js (uses NethackGame directly).
 
 import { game, resetGame } from './gstate.js';
+import { recorder_ubirthday } from './calendar.js';
 import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
 import { newgame, moveloop_core, early_init } from './allmain.js';
@@ -276,6 +277,20 @@ export class NethackGame {
         // Fixed in-game datetime "YYYYMMDDHHMMSS" — drives the moon-phase /
         // Friday-the-13th game-start messages.  C ref: calendar.c getnow.
         g.datetime = this._datetime || null;
+        // C ref: u_init.c u_init() `ubirthday = getnow()` — the game-start
+        // clock, fixed for the life of the character.  Kept on `game` so it is
+        // serialized into the save file: a restored game keeps the ORIGINAL
+        // game's ubirthday (read.c hawaiian_design/motif, shk.c get_cost,
+        // nameshk, antholemon all key on it), not the datetime of the segment
+        // that restores it.
+        g.ubirthday = recorder_ubirthday(g.datetime);
+        // C ref: u_init.c u_init() `ubirthday = getnow()` — the game-start
+        // clock, kept for the whole life of the character.  Stored on `game`
+        // so it is serialized into the save file: a restored game keeps the
+        // ORIGINAL game's ubirthday (read.c hawaiian_design/motif, shk.c
+        // get_cost, nameshk, antholemon all key on it), not the datetime of
+        // the segment that restores it.
+        g.ubirthday = recorder_ubirthday(g.datetime);
 
         // Cross-segment persistence handle (save.c/restore.c): the sandbox
         // shares one Web-Storage-shaped object across a session's segments, so

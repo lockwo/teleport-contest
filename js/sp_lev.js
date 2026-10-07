@@ -1478,6 +1478,7 @@ const ANTHOLEMON = ['soldier ant', 'fire ant', 'giant ant'];
 // nameshk() derives the same value and documents why the recording offset is a
 // fixed UTC-4; it is not exported, so the arithmetic is repeated here.
 function ubirthday_seconds() {
+    if (typeof game.ubirthday === 'number' && game.ubirthday) return game.ubirthday;
     const dt = String(game.datetime || '');
     if (!/^\d{14}$/.test(dt)) return 0;
     const y = +dt.slice(0, 4), mo = +dt.slice(4, 6), d = +dt.slice(6, 8);

@@ -218,6 +218,12 @@ export async function castmu(mtmp, mattk, thinks_it_foundyou, foundyou) {
         mtmp.mspec_used = (ml < 8) ? (10 - ml) : 2;
 
     if (!foundyou && thinks_it_foundyou && !is_undirected_spell(spellnum)) {
+        const { canseemon_shared } = await import('./display.js');
+        const { update_topl } = await import('./display.js');
+        const { Monnam } = await import('./uhitm.js');
+        const { is_waterwall } = await import('./dbridge.js');
+        await update_topl(`${canseemon_shared(mtmp) ? Monnam(mtmp) : 'Something'} casts a spell at ${
+            is_waterwall(mtmp.mux, mtmp.muy) ? 'empty water' : 'thin air'}!`);
         return M_ATTK_MISS;
     }
 

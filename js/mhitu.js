@@ -45,7 +45,7 @@ import {
 } from './monflags_data.js';
 import { objects as OBJECTS } from './mkobj.js';
 import { acurr_eff, exercise, adjattrib } from './attrib.js';
-import { newsym, map_invisible, update_topl, urgent_topl, canseemon_shared, Hallucination_u as Hallucination, hold_botl_hp } from './display.js';
+import { newsym, map_invisible, unmap_object, update_topl, urgent_topl, canseemon_shared, Hallucination_u as Hallucination, hold_botl_hp } from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { is_home_elemental, monster_by_pmidx } from './makemon.js';
 import { DEADMONSTER, mvitals_died, m_detach, wake_nearto_core } from './mon.js';
@@ -994,6 +994,13 @@ export async function gulpmu(mtmp, mattk) {
 }
 const MZ_HUGE = 4;   // C ref: monflag.h:182 (MZ_GIGANTIC is 7, not 5)
 
+// C ref: mon.c:3170 mondead() — `if (glyph_is_invisible(levl[mx][my].glyph))
+// unmap_object(mx, my)` just before m_detach: killing a monster the hero only
+// remembered as 'I' drops the marker.
+function mondead_unmap(mtmp) {
+    if (game.level?.at(mtmp.mx, mtmp.my)?.invisMon) unmap_object(mtmp.mx, mtmp.my);
+}
+
 // ═══ mhitu.c:1591 explmu ════════════════════════════════════════════════════
 // A yellow light / gas spore style attacker detonates next to the hero.
 // RNG: d(damn,damd) always; AD_BLND adds rnd(tmp/2) but ONLY when the exploder
@@ -1049,6 +1056,7 @@ export async function explmu(mtmp, mattk, ufound) {
                 await emitU('You are caught in a blast of kaleidoscopic light!');
             // C ref mhitu.c:1645 — mondead(mtmp) BEFORE make_hallucinated(),
             // so the dying light is never itself displayed hallucinated.
+            mondead_unmap(mtmp);
             mvitals_died(mtmp);
             await m_detach(mtmp, mtmp.data, true);
             kill_agr = false;                 /* already killed (maybe lifesaved) */
@@ -1070,6 +1078,7 @@ export async function explmu(mtmp, mattk, ufound) {
     // AD_HALU's mondead); AD_BLND (and any not_affected arm) falls through
     // to here with kill_agr still TRUE.
     if (kill_agr && !DEADMONSTER(mtmp)) {
+        mondead_unmap(mtmp);
         mvitals_died(mtmp);
         await m_detach(mtmp, mtmp.data, true);
     }

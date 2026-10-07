@@ -498,6 +498,14 @@ function mimics_an_object(mon) {
     return t === M_AP_OBJECT || t === M_AP_FURNITURE;
 }
 
+// C ref: display.c display_monster() `sensed` — a disguised monster the hero
+// senses (telepathy, Detect_monsters, Protection_from_shape_changers) shows
+// as itself.
+function mimic_sensed(mon) {
+    return M_AP_TYPE(mon) !== M_AP_NOTHING
+        && !!((game.u?.uprops?.Protection_from_shape_changers ?? 0) || _sensemon(mon));
+}
+
 // C ref: display.h see_with_infrared(mon) = (!Blind && Infravision &&
 // infravisible(mon->data) && couldsee(mon->mx, mon->my)).  TRUE when a
 // warm-blooded monster sits in the hero's line of sight but on a square too
@@ -1745,6 +1753,17 @@ function set_seenv(lev, x0, y0, x, y) {
     lev.seenv = (lev.seenv | 0) | SEENV_MATRIX_D[sgn(dy) + 1][sgn(dx) + 1];
 }
 
+// C ref: display.c map_location(x, y, FALSE) — update the hero's memory of one
+// square without drawing it.  background_glyph() makes the same display-rng
+// draws C's map_object() does while Hallucinating (u_on_newpos() arrival).
+export function map_location(x, y) {
+    const loc = game.level?.at(x, y);
+    if (!loc) return;
+    const bg = background_glyph(loc, x, y);
+    if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
+    update_lastseentyp_d(x, y);
+}
+
 // ── feel_location ──
 // C ref: display.c:822 feel_location(x, y) — "feel the location: the hero
 // cannot see it, but is touching it".  Drives blind searching, blind movement
@@ -2031,6 +2050,10 @@ export function newsym(x, y) {
             // Detection reveals a mimic but preserves its visible disguise in map memory.
             if (detected && see_it && M_AP_TYPE(mon) !== M_AP_NOTHING)
                 mg = monster_glyph(mon, true);
+            // C ref: display.c display_monster() `sensed = mon_mimic &&
+            // (Protection_from_shape_changers || sensemon(mon))` — a mimic the
+            // hero senses (telepathy) is drawn as itself, not its disguise.
+            if (mimic_sensed(mon)) mg = monster_glyph(mon, true);
             const detAttr = (detected && !see_it && !worm_tail
                              && !(mon.mtame && !Hallucination_u())
                              && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0;
@@ -2077,7 +2100,7 @@ export function newsym(x, y) {
             clear_invisible_memory(x, y);
             // C ref: display.c:1054 — this arm passes is_worm_tail(mon) too.
             const mg = (dark_worm_tail && !Hallucination_u())
-                ? worm_tail_glyph() : monster_glyph(mon, detect_monsters);
+                ? worm_tail_glyph() : monster_glyph(mon, detect_monsters || mimic_sensed(mon));
             // C ref: display.c:1046 see_it (tp_sensemon / infravision) picks
             // PHYSICALLY-seen-style 0; otherwise DETECTED -> MG_DETECT ->
             // ATR_INVERSE (wintty.c tty_print_glyph), pets excepted.
@@ -2229,13 +2252,9 @@ export async function docrt() {
     // who was just released from a stomach kept the blanked viz_array, so every
     // monster in the room rendered as a warning glyph instead of itself.
     if (game.u?.uswallow) {
-        for (let y = 0; y < ROWNO; y++)
-            for (let x = 1; x < COLNO; x++)
-                newsym(x, y);
-        if (game.u?.ux > 0 && canspotself()) {
-            const hg = hero_glyph();
-            show_glyph_cell(game.u.ux, game.u.uy, hg.ch, hg.color, false);
-        }
+        // C ref: display.c docrt_flags() `if (u.uswallow) { swallowed(1); ...}`
+        // — redraws the stomach (eight display-rng picks while Hallucinating).
+        await swallowed(1);
         return;
     }
     // C ref: display.c:1730 `if (Underwater && !Is_waterlevel(&u.uz))

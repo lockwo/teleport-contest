@@ -1866,6 +1866,11 @@ export async function moveloop_input_redraw() {
     // (which has no worn gear, so this recomputes the same base 10).
     find_ac();
     if (g.context?.mv && !Blind()) return;
+    // C ref: cmd.c rhack() — the 'm' prefix and its command are ONE rhack()
+    // call (`goto got_prefix_input`), so no moveloop_core() iteration, and no
+    // once-per-input redraw (a hallucinating hero's display-rng draws), runs
+    // between them.  Our do_reqmenu returns early; _m_fresh marks that gap.
+    if (g.context?._m_fresh) return;
     const dsp = await import('./display.js');
     if (Hallucination()) {
         // `see_monsters(); see_objects(); see_traps(); if (u.uswallow)
@@ -1940,6 +1945,13 @@ export async function moveloop_core() {
             await moveloop_turn();
         }
     }
+
+    // C ref: end.c really_done() never returns to moveloop_core() (it ends in
+    // nh_terminate()).  A monster that killed the hero during moveloop_turn()
+    // must not fall through to the redraw / command read below: the recorded
+    // session stops at the key that finished the game, so the keys still queued
+    // after it were never delivered to NetHack.
+    if (g.program_state?.gameover) return;
 
     // C ref: allmain.c moveloop_core():445 — "the Amulet of Yendor gives a wish
     // when initially picked up": once per game, at the first player-input

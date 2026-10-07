@@ -2969,6 +2969,18 @@ function look_pick_description(x, y) {
         // otherwise ever refer to them.  Mirrors js/pager.js's own faithful
         // (but, for this '/' command, unreached) do_screen_description port.
         const self = self_lookat();
+        // C ref: pager.c do_screen_description() keys off the displayed symbol —
+        // a polymorphed hero is drawn as its monster class letter, so the class
+        // explanation is that class's, and "or you" is never tacked on (!Upolyd).
+        if (u.Upolyd && u.data?.mlet) {
+            const pcls = def_monsyms.find((d) => d.sym === u.data.mlet && d.explain);
+            if (pcls)
+                return {
+                    text: `${u.data.mlet}        ${an(pcls.explain)} (${self})`,
+                    firstmatch: self,
+                    found: 1,
+                };
+        }
         const showsYou = !(game.urace?.mnum === 0 /* PM_HUMAN */
                             || game.urace?.mnum === 1 /* PM_ELF */) && !u.Upolyd;
         return {
@@ -2984,20 +2996,30 @@ function look_pick_description(x, y) {
     // supplies the specific "(tame kitten)" parenthetical.  Missing this check
     // fell through to the bare terrain description for any farlooked monster.
     const mtmp = m_at(x, y);
+    const loc0 = game.level?.at(x, y);
     if (shows_mimic_object(mtmp, x, y)) {
         const text = { s: '' }, firstmatch = { s: '' };
         const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
         return { text: text.s, firstmatch: firstmatch.s, found };
     }
     if (mtmp && canspotmon(mtmp)) {
-        const cls = def_monsyms.find((d) => d.sym === mtmp.data?.mlet && d.explain);
+        // C ref: pager.c do_screen_description() keys the class explanation off
+        // the DISPLAYED symbol (glyph_at), which is a random monster letter
+        // while the hero hallucinates, not the monster's own class letter.
+        const shownSym = (game.u?.uhallu && loc0?.disp_ch && loc0.disp_ch !== ' ')
+            ? loc0.disp_ch : mtmp.data?.mlet;
+        const cls = def_monsyms.find((d) => d.sym === shownSym && d.explain);
         const classText = cls ? an(cls.explain) : an(mtmp.data?.mname || 'monster');
-        const specific = look_at_monster_desc(mtmp);
+        // C ref: pager.c lookat() calls look_at_monster() exactly once, so a
+        // hallucinating hero's random monster name (one rndmonnam() draw off the
+        // core rng) is picked once, not once per helper.
+        const lm = look_at_monster(mtmp, x, y, true);
+        const specific = game.u?.uhallu ? lm.buf : look_at_monster_desc(mtmp);
         // C ref: pager.c do_screen_description() — the farlook pick appends
         // " [seen: <how>]" (look_at_monster's monbuf) unless only normal vision.
-        const seen = look_at_monster(mtmp, x, y, true).monbuf;
+        const seen = lm.monbuf;
         return {
-            text: `${mtmp.data?.mlet || '?'}        ${classText} (${specific})`
+            text: `${shownSym || '?'}        ${classText} (${specific})`
                 + (seen ? ` [seen: ${seen}]` : ''),
             firstmatch: specific,
             found: 1,

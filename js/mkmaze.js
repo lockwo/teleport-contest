@@ -1244,7 +1244,7 @@ export async function fixup_special() {
     } else if (mm_on_baalzebub_level(g.u?.uz)) {
         /* custom wallify the "beetle" portion of the level */
         const { baalz_fixup } = await import('./levels/baalz.js');
-        baalz_fixup();
+        await baalz_fixup();
     } else if (g.u?.uz?.dnum === g.mines_dnum && gr.ransacked) {
         await stolen_booty();
     }

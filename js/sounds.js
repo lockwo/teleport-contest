@@ -389,7 +389,10 @@ export async function growl(mtmp) {
         }
     }
     if (!verb) return;
-    await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(verb)}!`);
+    // C ref: growl() — `if (canseemon(mtmp) || !Deaf) pline(...)`; the wake_nearto
+    // below runs either way.
+    if (canseemon_shared(mtmp) || !Deaf_hero())
+        await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(verb)}!`);
     const { wake_nearto } = await import('./cmd.js');
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 18);
 }
@@ -409,7 +412,7 @@ export async function yelp(mtmp) {
     if (game.u?.uhallu) {
         verb = H_SOUNDS[rn2(H_SOUNDS.length)];
     } else {
-        const deaf = false;                           // Deaf is never set here
+        const deaf = Deaf_hero();
         switch (ms) {
         case MS_MEW: verb = deaf ? 'arch' : 'yowl'; break;
         case MS_BARK: case MS_GROWL: verb = deaf ? 'recoil' : 'yelp'; break;

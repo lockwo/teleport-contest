@@ -146,6 +146,7 @@ function ledger_no_of(uz) {
 // (Jan/Feb).  A DST-observing US zone fits only the April/May pair.
 const UBIRTHDAY_UTC_OFFSET = -4 * 3600;
 function ubirthdaySeconds() {
+    if (typeof game.ubirthday === 'number' && game.ubirthday) return game.ubirthday;
     const dt = String(game.datetime || '');
     if (!/^\d{14}$/.test(dt)) return 0;
     const y = +dt.slice(0, 4), mo = +dt.slice(4, 6), d = +dt.slice(6, 8);

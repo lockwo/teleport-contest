@@ -565,7 +565,16 @@ function render_extcmd_page(m, idx) {
     }
     // Only a single-page menu can be an overlay (npages > 1 forces maxrow to
     // the screen height), so renderMenuLines' "(end)" footer is always right.
-    renderMenuLines(page);
+    renderMenuLines(page, null);   // null: cursor parks after "(end)", as tty does
+    // C ref: wintty.c erase_menu_or_text() — the previous (full-screen) menu was
+    // torn down by docrt(), whose cls() blanked the status window and only set
+    // disp.botlx; no bot() runs before this overlay is drawn, so rows 22-23
+    // stay blank until the command finishes.
+    if (m.statusBlank) {
+        const disp = game.nhDisplay;
+        for (const r of [22, 23])
+            for (let c = 0; c < (disp.cols ?? 80); c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
+    }
     game._modal_screen = 'extcmdwin';
 }
 
@@ -651,7 +660,7 @@ async function extcmd_select_menu(m) {
 
 // C ref: cmd.c extcmd_via_menu().
 async function extcmd_via_menu() {
-    let ret = 0, cbuf = '', matchlevel = 0, biggest = 0;
+    let ret = 0, cbuf = '', matchlevel = 0, biggest = 0, statusBlank = false;
     while (ret === 0) {
         const choices = [];
         for (let i = 0; i < EXTCMDLIST.length; i++) {
@@ -705,10 +714,12 @@ async function extcmd_via_menu() {
         if (acount) items.push({ sel: prevaccelerator, text: prompt.padEnd(width) });
 
         const m = extcmd_end_menu(items, 'Extended Command: ' + cbuf);
+        m.statusBlank = statusBlank;
         const picked = await extcmd_select_menu(m);
         // destroy_nhwindow() -> erase_menu_or_text(): a full-screen menu
         // docrt()s the map back before the chosen command runs.
         await dismiss_invent_screen();
+        statusBlank = statusBlank || !!m.fullscreen;   // docorner() of a later overlay doesn't repaint it
         if (picked == null) {
             // C leaves cbuf alone here, so a cancelled sub-menu returns to the
             // top level with its stale text still in the "Extended Command:"
@@ -3198,7 +3209,7 @@ export async function dooverview() {
 // `final`/`how` params threaded through so it lists every visited level and
 // (for a real death) appends the "Final resting place for you, ..." lines.
 export async function show_overview_disclosure(final, how) {
-    const lines = build_overview_lines(final, how);
+    const lines = await build_overview_lines(final, how);
     if (!lines.length) return;
     render_overview_menu(lines);
     for (;;) {
@@ -3742,13 +3753,14 @@ async function debugfuzzer_extcmd() {
     return await wiz_fuzzer();
 }
 
-// C ref: light.c:934 wiz_light_sources() — the function only builds the menu
-// lines; display_text_window (pager.js) draws them. pager.js has its own
-// static import FROM cmd.js, so it's reached dynamically here.
+// C ref: light.c:934 wiz_light_sources() — `win = create_nhwindow(NHW_MENU)`
+// filled by putstr() (a corner text window, not a full-screen NHW_TEXT).  The
+// function only builds the lines; invent.js tty_text_window() draws the
+// NHW_MENU overlay with its "--More--" prompt.
 async function lightsources_extcmd() {
     const lines = wiz_light_sources();
-    const { display_text_window } = await import('./pager.js');
-    await display_text_window(lines);
+    const { tty_text_window } = await import('./invent.js');
+    await tty_text_window(lines);
     return 0;
 }
 

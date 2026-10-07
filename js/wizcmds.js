@@ -166,7 +166,9 @@ async function paranoid_query(be_paranoid, prompt) {
 // a negative int and leaves cc alone.  This adapter keeps the C call shape.
 async function getpos_cc(cc, force, goal) {
     const { getpos } = await import('./hack.js');
-    const pos = await getpos(goal, cc.x, cc.y, null, force, false);
+    // C ref: getpos.c — the "(For instructions ...)" line is gated on flags.verbose
+    // itself (wiz_kill() clears it around the call for its own prompt).
+    const pos = await getpos(goal, cc.x, cc.y, null, force, game.flags?.verbose !== false);
     if (!pos) return -1;
     cc.x = pos.x;
     cc.y = pos.y;
