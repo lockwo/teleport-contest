@@ -881,6 +881,16 @@ export async function doapply() {
         return ECMD_TIME;
     }
 
+    // C ref: apply.c:4303-4308 — either whistle costs a turn.
+    if (obj.otyp === TIN_WHISTLE) {
+        await use_whistle(obj);
+        return ECMD_TIME;
+    }
+    if (obj.otyp === MAGIC_WHISTLE) {
+        await use_magic_whistle(obj);
+        return ECMD_TIME;
+    }
+
     // C ref apply.c:4400 default: — a polearm strikes at a distance, a
     // pick/axe digs.  Both are SUGGESTed by apply_ok(), so both are ordinary
     // picks at the "use or apply" prompt (a Knight's lance is invlet 'b', an

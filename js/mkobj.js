@@ -11,7 +11,7 @@ import {
     CORPSTAT_INIT, CORPSTAT_SPE_VAL,
     ROT_AGE, TAINT_AGE, TROLL_REVIVE_CHANCE,
     TIMER_OBJECT, ROT_ORGANIC, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON, HATCH_EGG,
-    FIG_TRANSFORM, SHRINK_GLOB,
+    FIG_TRANSFORM, SHRINK_GLOB, BURN_OBJECT,
     OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT,
     OBJ_MIGRATING, OBJ_BURIED, OBJ_ONBILL, OBJ_LUAFREE, OBJ_DELETED,
     ICE, DRAWBRIDGE_UP, DB_UNDER, DB_ICE, MAX_OIL_IN_FLASK,
@@ -736,6 +736,8 @@ export const objects = OBJECT_DATA.map(([otyp, sym, oclass, prob, flags, materia
     otyp, sym, oclass, oc_class: oclass, oc_prob: prob, flags, material, dir, name,
     oc_color: OC_COLOR[otyp] != null ? OC_COLOR[otyp] : 8,
     oc_skill: OC_SKILL[otyp] != null ? OC_SKILL[otyp] : 0,
+    // C objects.h HARDGEM(): Mohs hardness >= 8 for these gem types.
+    oc_tough: ((otyp >= 440 && otyp <= 445) || otyp === 448 || otyp === 450) ? 1 : 0,
     oc_subtyp: OC_SKILL[otyp] != null ? OC_SKILL[otyp] : 0,
     oc_magic: 0,
     oc_can: 0,
@@ -900,7 +902,7 @@ for (const o of objects) {
 // init time for the shuffle-range boundary; keeping the full table here makes
 // poly_obj() faithful for every class that can land on a polymorph pile.)
 const OC_MAGIC_RANGES = [
-    [93, 94], [96, 96], [98, 100], [139, 139], [143, 144], [146, 149],
+    [93, 94], [96, 96], [98, 110], [139, 139], [143, 144], [146, 149],
     [151, 152], [158, 158], [160, 162], [166, 211], [219, 220], [228, 228],
     [231, 231], [241, 242], [246, 246], [248, 248], [250, 252], [254, 254],
     [258, 258], [261, 261], [297, 316], [323, 343], [366, 406], [410, 415],
@@ -1298,6 +1300,8 @@ function mk_artifact(otmp) {
         otmp.oartifact = m;
         game.artiexist.add(m);                     // artifact_origin -> exists
     }
+    // C ref: artifact.c:306 — random Grimtooth is permanently poisoned.
+    if (otmp.oartifact === 5 /* ART_GRIMTOOTH */) otmp.opoisoned = 1;
     return otmp;
 }
 
@@ -1511,7 +1515,8 @@ export async function run_object_timers() {
                     || o.timer.action === ROT_CORPSE
                     || o.timer.action === REVIVE_MON
                     || o.timer.action === ZOMBIFY_MON
-                    || o.timer.action === HATCH_EGG))
+                    || o.timer.action === HATCH_EGG
+                    || o.timer.action === BURN_OBJECT))
                 due.push({ obj: o, timer: o.timer });
             if (Array.isArray(o.cobj)) scan(o.cobj);
         }
@@ -1567,6 +1572,11 @@ export async function run_object_timers() {
         case HATCH_EGG: {
             const { hatch_egg } = await import('./timeout.js');
             await hatch_egg({ a_obj: obj }, timer.when);
+            break;
+        }
+        case BURN_OBJECT: {
+            const { burn_object } = await import('./timeout.js');
+            await burn_object({ a_obj: obj }, timer.when);
             break;
         }
         case REVIVE_MON: {
@@ -3371,6 +3381,32 @@ export function obj_meld(o1ref, o2ref) {
             || ((otmp1.owt | 0) === (otmp2.owt | 0) && rn2(2))))
         return obj_absorb(o1ref, o2ref);
     return obj_absorb(o2ref, o1ref);
+}
+
+// C ref: mkobj.c:3818 — the hero notices floor or inventory globs coalescing.
+export async function pudding_merge_message(obj, other) {
+    const { cansee, Blind } = await import('./vision.js');
+    const { pline, You_hear, Hallucination_u } = await import('./display.js');
+    const visible = cansee(obj.ox, obj.oy) || cansee(other.ox, other.oy);
+    const onfloor = [obj, other].some(o => o.where === 'floor' || o.where === OBJ_FLOOR);
+    const inpack = [obj, other].some(o => o.where === 'invent' || o.where === OBJ_INVENT);
+    if ((!Blind() && visible) || inpack) {
+        if (Hallucination_u()) {
+            if (onfloor) await pline('You see parts of the floor melting!');
+            else if (inpack) await pline('Your pack reaches out and grabs something!');
+        } else if (onfloor || inpack) {
+            const { obj_typename } = await import('./objnam.js');
+            const { makeplural } = await import('./invent.js');
+            const u = game.u;
+            const adj = (obj.ox !== u.ux || obj.oy !== u.uy)
+                && (other.ox !== u.ux || other.oy !== u.uy);
+            await pline(`The ${onfloor && adj ? 'adjacent ' : ''}`
+                + `${makeplural(obj_typename(obj.otyp))} coalesce`
+                + `${inpack ? ' inside your pack' : ''}.`);
+        }
+    } else {
+        await You_hear('a faint sloshing sound.');
+    }
 }
 
 /* ---- name / knowledge -------------------------------------------------- */

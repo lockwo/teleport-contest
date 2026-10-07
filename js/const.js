@@ -2917,7 +2917,14 @@ export function Upolyd(player) {
 export function u_at(x, y) { return game?.u?.ux === x && game?.u?.uy === y; }
 export function OBJ_AT(x, y) { return game?.level?.objects?.some(o => o.ox === x && o.oy === y) ?? false; }
 export function Has_contents(obj) { return obj?.cobj != null; }
-export function M_AP_TYPE(mon) { return mon?.m_ap_type ?? 0; }
+export function M_AP_TYPE(mon) {
+    const type = mon?.m_ap_type;
+    if (typeof type === 'number') return type & M_AP_TYPMASK;
+    if (type === 'furniture') return M_AP_FURNITURE;
+    if (type === 'obj') return M_AP_OBJECT;
+    if (type === 'mon') return M_AP_MONSTER;
+    return M_AP_NOTHING;
+}
 export function engulfing_u(mon) { const g = (typeof game !== 'undefined' ? game : null); return g?.u?.uswallow && g?.u?.ustuck === mon; }
 // C ref: permonst.h — ismnum(x) means x is a valid monster index.
 // JS call sites pass integer indices (for example u.ulycn, corpsenm, cham).

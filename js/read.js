@@ -1192,7 +1192,7 @@ export async function litroom(on, obj) {
     const punished = !!(u?.uball && u?.uchain);
     const { move_bc } = await import('./ball.js');
     if (punished && !on && !Blind())
-        move_bc(1, 0, u.uball.ox, u.uball.oy, u.uchain.ox, u.uchain.oy);
+        await move_bc(1, 0, u.uball.ox, u.uball.oy, u.uchain.ox, u.uchain.oy);
 
     if (Is_rogue_level(u.uz)) return; // whole-room rogue relight not ported
 
@@ -1215,13 +1215,13 @@ export async function litroom(on, obj) {
     do_clear_area(u.ux, u.uy, blessed_effect ? 9 : 5, set_lit);
 
     if (!Blind()) {
-        // C uses vision_recalc(2) here (temporary blindness) so previously seen
-        // positions get their waslit bit reset; the port's vision_recalc only
-        // implements the ordinary pass.
-        vision_recalc(0);
+        // C read.c:2612: temporarily shut vision down so the delayed redraw
+        // refreshes every visible glyph, including newly lit corridors.
+        vision_recalc(2);
         if (punished && !on)
-            move_bc(0, 0, u.uball.ox, u.uball.oy, u.uchain.ox, u.uchain.oy);
+            await move_bc(0, 0, u.uball.ox, u.uball.oy, u.uchain.ox, u.uchain.oy);
     }
+    game.vision_full_recalc = 1;
     if (gremlins.length) {
         vision_recalc(0);
         for (const gremlin of gremlins) {

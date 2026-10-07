@@ -431,7 +431,7 @@ export async function mhitm_ad_rust(magr, mattk, mdef, mhm, ops) {
                 await ops.emit(`${ops.Monnam(mdef)} falls to pieces!`);
             await ops.monkilled(mdef, AD_RUST);
             mhm.hitflags = M_ATTK_DEF_DIED
-                | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+                | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
             mhm.done = true;
             return;
         }
@@ -477,7 +477,7 @@ export async function mhitm_ad_dcay(magr, mattk, mdef, mhm, ops) {
                 await ops.emit(`${ops.Monnam(mdef)} falls to pieces!`);
             await ops.monkilled(mdef, AD_DCAY);
             mhm.hitflags = M_ATTK_DEF_DIED
-                | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+                | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
             mhm.done = true;
             return;
         }
@@ -567,7 +567,7 @@ export async function mhitm_ad_fire(magr, mattk, mdef, mhm, ops) {
             await ops.emit(`${ops.Monnam(mdef)} burns completely!`);
         await ops.monkilled(mdef, AD_FIRE);
         mhm.hitflags = M_ATTK_DEF_DIED
-            | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+            | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
         mhm.done = true;
         return;
     }
@@ -829,8 +829,18 @@ export async function mhitm_ad_curs(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if (!night() && pa?.name === 'gremlin') return;
         if (!magr.mcan && !rn2(10)) {
-            if (!game.u?.Deaf) await ops.emit(`${ops.Monnam(magr)} chuckles.`);
-            // mon_give_prop(magr, attrcurse()): the intrinsic-theft table.
+            if (!game.u?.Deaf)
+                await ops.emit(Blind() ? 'You hear laughter.'
+                    : `${ops.Monnam(magr)} chuckles.`);
+            if (pd?.name === 'clay golem') {
+                await ops.emit('Some writing vanishes from your head!');
+                const { rehumanize } = await import('./polyself.js');
+                await rehumanize();
+                return;
+            }
+            const { attrcurse } = await import('./pray.js');
+            const { mon_give_prop } = await import('./mon.js');
+            await mon_give_prop(magr, await attrcurse());
         }
         return;
     }
@@ -846,7 +856,7 @@ export async function mhitm_ad_curs(magr, mattk, mdef, mhm, ops) {
             }
             await ops.mondied(mdef);
             mhm.hitflags = M_ATTK_DEF_DIED
-                | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+                | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
             mhm.done = true;
             return;
         }
@@ -1435,7 +1445,7 @@ export async function do_stone_mon(magr, mattk, mdef, mhm, ops) {
     const { munstone } = await import('./muse.js');
     if (await munstone(mdef, false)) {           // ate a stone-curing corpse
         mhm.hitflags = M_ATTK_DEF_DIED
-            | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+            | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
         mhm.done = true;
         return;
     }
@@ -1451,7 +1461,7 @@ export async function do_stone_mon(magr, mattk, mdef, mhm, ops) {
         // corpse_chance() rn2 — that would be an invented draw.
         await (ops.monstone ? ops.monstone(mdef) : ops.mondied(mdef));
         mhm.hitflags = M_ATTK_DEF_DIED
-            | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+            | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
         mhm.done = true;
         return;
     }

@@ -20,7 +20,7 @@ import { heal_legs } from './trap.js';
 import { exercise, stone_luck } from './attrib.js';
 import { A_CON } from './const.js';
 import { nomul, stop_occupation } from './hack.js';
-import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer } from './mkobj.js';
+import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer } from './mkobj.js';
 import { update_topl, urgent_topl, see_monsters } from './display.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
 import { Unaware } from './const.js';
@@ -30,8 +30,6 @@ import { is_pool, is_ice } from './dbridge.js';
 import { surface } from './dungeon.js';
 import { encumber_msg, inv_weight, body_part, makeplural, renderMenuLines } from './invent.js';
 import { float_vs_flight } from './polyself.js';
-import { attacktype_fordmg, AT_ENGL, AD_DGST } from './monattk_data.js';
-import { mflags1_of, M1_FLY } from './monflags_data.js';
 
 // Imports used only by the timeout.c routines below the "rest of the file"
 // banner.  const.js arrives as a NAMESPACE import on purpose: several names
@@ -297,20 +295,6 @@ async function vomiting_dialogue() {
 // The TIMED_PROPS table below follows prop.h numeric order and maps every
 // C property slot to this port's local timer field.  Its accessors isolate the
 // TIMEOUT count from any persistent-source bits stored alongside it.
-// C ref: mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL, AD_DGST) —
-// float_down()'s swallowed-vs-engulfed wording.  js/insight.js:2770,
-// js/uhitm.js:2559 and js/zap.js:3210 keep the same private copy.
-function _digests(ptr) { return !!attacktype_fordmg(ptr, AT_ENGL, AD_DGST); }
-// C ref: mondata.h is_floater(ptr)/is_flyer(ptr) — mlet == S_EYE/S_LIGHT and
-// M1_FLY, used only to phrase float_down()'s "settle more firmly in the
-// saddle" arm for a floating/flying steed.  js/dbridge.js:918 and friends
-// keep the same private duplicates.
-const _S_EYE = 5, _S_LIGHT = 25;
-function _steed_floats_or_flies(ptr) {
-    return !!ptr && (ptr.mcls === _S_EYE || ptr.mcls === _S_LIGHT
-                      || (mflags1_of(ptr) & M1_FLY) !== 0);
-}
-
 const NO_TIMEOUT_EFFECT = async () => {};
 
 // C stores each timer beside persistent-source bits; replace only TIMEOUT.
@@ -401,7 +385,7 @@ async function expire_sleepy() {
         await pline('You fall asleep.');
         const sleeptime = rnd(20);
         const { fall_asleep } = await import('./zap.js');
-        fall_asleep(-sleeptime, true);
+        await fall_asleep(-sleeptime, true);
         _incr_itimeout('Sleepy', sleeptime + rnd(100));
     }
 }
@@ -574,38 +558,8 @@ const TIMED_PROPS = [
           if (!u) return;
           const flying = timed_prop('FLYING');
           if (flying?.get(u) === 1) flying.set(u, 0);
-          float_vs_flight();
-          game.botl = true;
-          nomul(0);
-          if (u.uprops?.Flying || u.uprops?.HFlying || u.uprops?.EFlying) {
-              await update_topl('You have stopped levitating and are now flying.');
-              await encumber_msg();
-              return;
-          }
-          if (u.uswallow) {
-              await update_topl(`You float down, but you are still ${
-                  _digests(u.ustuck?.data) ? 'swallowed' : 'engulfed'}.`);
-              await encumber_msg();
-              return;
-          }
-          const trap = t_at(u.ux, u.uy);
-          if (C.Is_airlevel(u.uz)) {
-              await update_topl('You begin to tumble in place.');
-          } else if (C.Is_waterlevel(u.uz)) {
-              await update_topl('You feel heavier.');
-          } else if (!u.uinwater) {
-              if (C.In_sokoban(u.uz) && trap) {
-                  // The Sokoban knockdown is only reachable on a trap.
-              } else if (_steed_floats_or_flies(u.usteed?.data)) {
-                  await update_topl('You settle more firmly in the saddle.');
-              } else if (Hallucination()) {
-                  await update_topl(`Bummer!  You've ${
-                      is_pool(u.ux, u.uy) ? 'splashed down' : 'hit the ground'}.`);
-              } else {
-                  await update_topl(`You float gently to the ${surface(u.ux, u.uy)}.`);
-              }
-          }
-          await encumber_msg();
+          const { float_down } = await import('./trap.js');
+          await float_down(C.I_SPECIAL | TIMEOUT, 0);
       } },
     { name: 'FLYING',
       get: (u) => u.Upolyd && u.uprops?.Flying === 1
@@ -679,18 +633,9 @@ export async function nh_timeout() {
     const u = game.u;
     if (!u) return;
     if (!u.uprops) u.uprops = {};
-
-    // C ref: allmain.c moveloop_core():513 `u.umoved = FALSE;` — it runs once
-    // per moveloop_core() iteration, i.e. once per elapsed turn, and only a
-    // domove() sets it back TRUE.  While gm.multi < 0 no command is dispatched
-    // at all, so a HELPLESS turn's nh_timeout() always reads umoved FALSE; that
-    // is what makes C skip slip_or_trip() (and its rn2(4)) on the paralysis
-    // turns FUMBLING's own nomul(-2) creates.  This port takes a run's turns
-    // inline inside ONE moveloop_core iteration (hack.js run_movement ->
-    // moveloop_turn), so that reset is skipped and umoved stays stale-TRUE.
-    // Re-derive it, but only when the PREVIOUS turn already ended helpless: a
-    // nomul(-N) that the hero's own move set up (paralysis trap) must keep
-    // umoved TRUE for the next turn, exactly as C does.
+    // Inline run turns skip moveloop_core's umoved reset.  Only reset after
+    // the hero's movement ration ended that iteration (allmain.c:399,513);
+    // an encumbered hero can cross several timeouts before that boundary.
     if ((game.multi ?? 0) < 0 && game._helpless_at_timeout) u.umoved = false;
 
     // C ref: timeout.c:595-620 — luck drifts toward the calendar/quest/role
@@ -794,11 +739,8 @@ export async function nh_timeout() {
         p.set(u, next);
         if (!(next & TIMEOUT)) await p.expire(u, wasFlying);
     }
-
-    // Sampled AFTER the expiry cases, so a nomul(-N) fired by one of them (the
-    // FUMBLING slip) counts: allmain.c:377 `if (gm.multi < 0) ++gm.multi` sits
-    // later in the same once-per-turn block, and no domove() can follow it.
-    game._helpless_at_timeout = ((game.multi ?? 0) < 0);
+    game._helpless_at_timeout = ((game.multi ?? 0) < 0
+                                && u.umovement >= C.NORMAL_SPEED);
 
     // C ref: timeout.c nh_timeout() ends with run_timers().
     await run_object_timers();
@@ -2035,7 +1977,11 @@ export async function end_burn(obj, timer_attached) {
         del_light_source(LS_OBJECT, obj);
         obj.lamplit = 0;
         if (_where(obj) === 'invent') await update_inventory();
-    } else if (!await stop_timer(BURN_OBJECT, _obj_to_any(obj))) {
+    } else if (obj.timer?.action === BURN_OBJECT) {
+        const expire_time = obj.timer.when;
+        stop_object_timer(obj, BURN_OBJECT);
+        await cleanup_burn(_obj_to_any(obj), expire_time);
+    } else {
         await impossible(`end_burn: obj ${xname(obj)} not timed!`);
     }
 }
@@ -2106,8 +2052,7 @@ export async function begin_burn(obj, already_lit) {
     }
 
     if (do_timer) {
-        if (await start_timer(turns, TIMER_OBJECT, BURN_OBJECT,
-                              _obj_to_any(obj))) {
+        if (start_object_timer(turns, BURN_OBJECT, obj)) {
             obj.lamplit = 1;
             obj.age -= turns;
             if (_carried(obj) && !already_lit) await update_inventory();

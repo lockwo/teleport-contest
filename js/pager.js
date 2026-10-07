@@ -1094,6 +1094,10 @@ function pg_glyph_at(x, y) {
                      otyp: obj_is_generic(otmp) ? otmp.oclass : otmp.otyp,
                      corpsenm: otmp.corpsenm, sym, x, y };
     }
+    const remembered = loc.remembered_glyph;
+    if (remembered?.objotyp && remembered.ch === sym)
+        return { kind: 'object', obj: null, otyp: remembered.objotyp,
+                 corpsenm: remembered.corpsenm, sym, x, y };
     const tr = t_at(x, y);
     if (tr && tr.tseen && !covers_objects(loc)) {
         const tg = trap_glyph(tr);

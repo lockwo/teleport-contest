@@ -206,12 +206,12 @@ export async function dosounds() {
             if (await temple_priest_sound(mon)) return;
         }
     }
-    // C ref: sounds.c:335 — `if (Is_oracle_level(&u.uz) && !rn2(400)) { ... }`.
-    // The Oracle level (placed at dnum 0, base 5 range 5) is reached by these
-    // descend sessions; its dosounds() makes a trailing rn2(400) chant probe
-    // every turn.  get_iter_mons(oracle_sound) (the body) is RNG-inert, so only
-    // the probe itself matters for parity.
-    if (Is_oracle_level(g.u?.uz) && !rn2(400)) { return; }
+    if (Is_oracle_level(g.u?.uz) && !rn2(400)) {
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
+            if (await oracle_sound(mon)) return;
+        }
+    }
 }
 
 // C ref: vault.c gd_sound() = !(vault_occupied(u.urooms) || findgd()).
@@ -881,8 +881,10 @@ function inhistemple(priest) {
 // does not model the DISPLAY rng, so the sober name is used either way.  No
 // core-stream draw is skipped by that.
 async function halu_gname(alignment) {
-    const { align_gname } = await import('./role.js');
-    return align_gname(game.urole?.mnum ?? game.u?.umonnum ?? 0, alignment);
+    const { align_gname, roles } = await import('./role.js');
+    const mnum = game.urole?.mnum ?? game.u?.umonnum ?? 0;
+    const role = roles.findIndex(r => r.mnum === mnum);
+    return align_gname(role >= 0 ? role : mnum, alignment);
 }
 
 // C ref: sounds.c:20 mon_in_room(mon, rmtyp) — is the monster standing in a

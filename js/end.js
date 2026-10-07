@@ -254,7 +254,11 @@ async function savelife(_how) {
     if ((u.uhunger ?? 900) < 500 || _how === 1 /* CHOKING */) {
         u.uhunger = 900;
         u.uhs = 1; // NOT_HUNGRY
-        if ((u.atemp?.a?.[0] || 0) < 0) u.atemp.a[0] = 0;
+        if ((u.atemp?.a?.[0] || 0) < 0) {
+            u.atemp.a[0] = 0;
+            const { encumber_msg } = await import('./invent.js');
+            await encumber_msg();
+        }
     }
     // gn.nomovemsg = "You survived that attempt on your life."; context.move = 0;
     // gm.multi = -1 (can't move again during the current turn).  The moveloop's
@@ -634,17 +638,20 @@ async function done(how) {
                 }
             }
             const clean = await disclose(how, taken);
-            // C ref: end.c:1363 — savebones() runs AFTER disclose(), i.e. after
-            // the "You die..." --More-- has been paged; doing it earlier wiped
-            // the map out from under those frames.
+            const corpse = bones_ok ? await make_hero_corpse_and_grave(how) : null;
+            // C ref: end.c:1351-1360 — announce arising even without bones.
+            if (clean && (game.u?.ugrave_arise ?? NON_PM) >= LOW_PM) {
+                const { monster_by_pmidx } = await import('./makemon.js');
+                const { an } = await import('./objnam.js');
+                const { display_nhwindow_message } = await import('./display.js');
+                const arisen = monster_by_pmidx(game.u.ugrave_arise);
+                if (arisen) {
+                    await d.update_topl(`Your ${arisen.name === 'green slime'
+                        ? 'revenant persists' : 'body rises from the dead'} as ${an(arisen.name)}...`);
+                    await display_nhwindow_message();
+                }
+            }
             if (bones_ok) {
-                // C ref: end.c:1306-1319 — the corpse and grave are built HERE,
-                // ahead of the query below, and their only gate is bones_ok:
-                // the 29 draws mksobj(CORPSE) makes are spent whatever the
-                // player answers.  Building them inside the 'y' arm instead
-                // lost all 29 on every declined save (dp-named-tour-barb step
-                // 214, whose screen IS the unanswered "Save bones?" prompt).
-                const corpse = await make_hero_corpse_and_grave(how);
                 // C ref: end.c:1366 — `if (!wizard || paranoid_query(
                 // ParanoidBones, "Save bones?")) savebones(...)`.  ParanoidBones
                 // is off by default, so this is a plain yn() defaulting to 'n';
@@ -1497,7 +1504,7 @@ function shk_name_for_killer(mtmp) {
 export async function done_in_by(mtmp, how = DIED) {
     const d = await deps();
     // C ref end.c:195 — You((how == STONING) ? "turn to stone..." : "die...").
-    await d.update_topl('You die...');
+    await d.update_topl(how === STONING ? 'You turn to stone...' : 'You die...');
     game._killer_mon = mtmp || null;
     if (mtmp) game._killer_name = await killer_text_for_monster(mtmp);
     // C ref: end.c:326-340 — maintain u.ugrave_arise from the killer's type

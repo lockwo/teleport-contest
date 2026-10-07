@@ -46,6 +46,7 @@ import { near_capacity, sobj_at, useup, body_part, inv_weight, makeplural,
          obj_doname, thitmonst } from './invent.js';
 import { obj_resists } from './zap.js';
 import { surface, hliquid, dunlevs_in_dungeon, Is_special } from './dungeon.js';
+import { inside_room } from './mkroom.js';
 import { attacktype, AT_ENGL } from './monattk_data.js';
 import { nolimbs, nohands, mflags1_of, M1_SLITHY, humanoid,
          M1_THICK_HIDE, M1_NOEYES, M1_FLY, M1_TPORT,
@@ -172,10 +173,6 @@ async function mon_yells(mtmp, msg) {
 // C ref: dungeon.c in_town(x, y).  Same shape as dig.js/makemon.js/fountain.js
 // keep (each file-private): the S_LEVEL `town` flag stands in for
 // svl.level.flags.has_town, which nothing in this port writes.
-function inside_room(croom, x, y) {
-    return x >= croom.lx - 1 && x <= croom.hx + 1
-        && y >= croom.ly - 1 && y <= croom.hy + 1;
-}
 function in_town(x, y) {
     const lvl = game.level;
     const slev = Is_special(game.u?.uz);
@@ -408,11 +405,11 @@ export async function kick_ouch(x, y, kickobjnam, maploc) {
         // Levitation/hurtle roll below for a dead hero.
         if (u.uhp < 1) return;
     }
-    // C ref: dokick.c — `if (Is_airlevel || Levitation) hurtle(-u.dx, -u.dy,
-    // rn1(2, 4), TRUE)`: a levitating kicker is always thrown back, and the
-    // range roll rn1(2,4) == 4 + rn2(2) is drawn before hurtle() runs.  The
-    // flight itself is not ported; the roll is.
-    if (Levitation()) rn1(2, 4);
+    // C ref: dokick.c:905 — a solid obstacle always throws a floating kicker back.
+    if (Levitation() || game.level?.flags?.airlevel) {
+        const { hurtle } = await import('./dothrow.js');
+        await hurtle(-u.dx, -u.dy, rn1(2, 4), true);
+    }
 }
 
 // C ref: dokick.c kick_door(x, y, avrg_attrib) — kick a closed/locked door.
@@ -447,7 +444,7 @@ export async function kick_door(x, y, avrg_attrib) {
         // every door counts as a shop door and never shatters.
         const shopdoor = in_rooms(x, y, SHOPBASE)[0] ? true : false;
         if (dm & D_TRAPPED) {
-            await pline('You kick the door.');
+            if (game.flags?.verbose !== false) await pline('You kick the door.');
             exercise(A_STR, false);
             maploc.doormask = D_NODOOR;
             await b_trapped('door', true); // FOOT != NO_PART
@@ -465,8 +462,12 @@ export async function kick_door(x, y, avrg_attrib) {
         // whatever lies beyond the doorway).
         newsym(x, y);
         recalc_block_point(x, y);
-        // NOT PORTED: add_damage(x, y, SHOP_DOOR_COST) + pay_for_damage("break")
-        // for a shop door — shk.c's damage list has no counterpart here.
+        if (shopdoor) {
+            const { add_damage, pay_for_damage } = await import('./shk.js');
+            const { SHOP_DOOR_COST } = await import('./const.js');
+            add_damage(x, y, SHOP_DOOR_COST);
+            await pay_for_damage('break', false);
+        }
         if (in_town(x, y)) await get_iter_mons(watchman_thief_arrest);
     } else {
         // feel_location(x, y) when Blind: no RNG.

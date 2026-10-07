@@ -165,14 +165,14 @@ export function object_glyph(otmp) {
         const mon = monster_by_pmidx(otmp.corpsenm);
         const sym = mon?.mlet || oc_sym(ROCK_CLASS);
         // C ref: display.c GLYPH_STATUE_* branch — obj_color(STATUE) = CLR_WHITE.
-        return { ch: sym, color: CLR_WHITE, dec: false };
+        return { ch: sym, color: CLR_WHITE, dec: false, corpsenm: otmp.corpsenm };
     }
     // C ref: display.c GLYPH_BODY_* branch — a corpse is drawn with the dead
     // monster's color (mon_color(corpsenm)), NOT the corpse object's material
     // (e.g. a red mold's corpse is red, not the FLESH/brown default).
     if (otmp.otyp === CORPSE_OTYP && otmp.corpsenm != null && otmp.corpsenm >= 0) {
         const mon = monster_by_pmidx(otmp.corpsenm);
-        return { ch: oc_sym(FOOD_CLASS), color: mon?.mcolor ?? NO_COLOR, dec: false };
+        return { ch: oc_sym(FOOD_CLASS), color: mon?.mcolor ?? NO_COLOR, dec: false, corpsenm: otmp.corpsenm };
     }
     // Boulder uses the rock symbol; the generic case below covers it.  A
     // generic object keeps its class symbol (potion '!', gem '*', book '+');
@@ -1729,7 +1729,7 @@ export async function swallowed(first) {
 function remember_bg(loc, bg) {
     const m = bg.mem || bg;
     loc.remembered_glyph = { ch: m.ch, color: m.color, decgfx: m.dec, pile: !!bg.pile, bwEngr: !!bg.bwEngr,
-                             objotyp: bg.mem ? 0 : bg.objotyp, hallucotyp: m.hallucotyp };
+                             objotyp: bg.mem ? 0 : bg.objotyp, hallucotyp: m.hallucotyp, corpsenm: m.corpsenm };
 }
 
 // C ref: display.c:3357 seenv_matrix[3][3] — shared with vision.c.
@@ -1776,7 +1776,6 @@ export function feel_location(x, y) {
         const bg = terrain_glyph(loc, x, y);
         if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
         show_glyph_cell(x, y, bg.ch, bg.color, bg.dec);
-        update_lastseentyp_d(x, y); // map_background() -> update_lastseentyp()
         return;
     }
 
@@ -3288,6 +3287,8 @@ function _buildScreenOutput() {
         }
         // Status rows
         if (game._screenBlank !== true) renderStatusLines(display);
+        else if (game._screenBlankStatus)
+            renderStatusLines(display, game._screenBlankStatus);
         // Cursor at hero
         if (game.u?.ux > 0)
             display.setCursor(game.u.ux - 1 - clipx, game.u.uy + 1 - clipy);
@@ -3321,8 +3322,11 @@ export function freeze_botl() {
 
 // C ref: botl.c:252. Publish status pixels now unless HP is the save sentinel.
 export function bot_snapshot() {
-    if (game.u?.uhp !== -1)
-        renderStatusLines(game.nhDisplay, botl_lines());
+    if (game.u?.uhp !== -1) {
+        const rows = botl_lines();
+        renderStatusLines(game.nhDisplay, rows);
+        if (game._screenBlank) game._screenBlankStatus = rows;
+    }
 }
 
 // C ref: wintty.c new_status_window() — the status window's offy is
@@ -3561,6 +3565,7 @@ export async function pline(msg, opts = {}) {
     // the Norep_topl() dedup reference — that coupling is what the
     // suppressHistory guards above/below would otherwise have broken).
     game._prevmsg = msg;
+    game.last_msg = 0; // C vpline(): PLNMSG_UNKNOWN after a new message.
     if (softPending && !msg.startsWith('You die') && msg.length + cur.length + 3 < CO - 8) {
         game._pending_message = cur + '  ' + msg;
         game._toplinSoft = game._pending_message;
@@ -3829,6 +3834,8 @@ function status_held(key, live) {
 async function botl_flush() {
     // C ref: display.c flush_screen():2236 `if (disp.botl || disp.botlx) bot();
     // else if (disp.time_botl) timebot();` — both publish the current `moves`.
+    // goto_level postpones flush_screen() during drag_down; direct bot() still runs.
+    if (game._screenBlank) return;
     if (!game.botl && !game.botlx) {
         const sig = game.flags?.time ? _statusSig() : null;
         if (sig !== null && sig !== game._pubSig) {
@@ -3865,6 +3872,7 @@ export async function update_topl(bp) {
     // NOT gt.toplines: that holds the whole CONCATENATED top row, so a Norep
     // line that had another message merged in front of it would never dedup.
     game._prevmsg = bp;
+    game.last_msg = 0; // C vpline(): PLNMSG_UNKNOWN after a new message.
     // C ref: pline.c vpline():266 — update_topl() is only ever reached THROUGH
     // vpline(), which flushes a pending vision recalc and then flush_screen()
     // (i.e. bot()); this port calls update_topl() directly at many of C's

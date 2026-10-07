@@ -32,14 +32,6 @@ wall colors) that a plainer terminal type would turn off.
 The screen is 80 columns by 24 rows. Scoring compares the escape
 stream your port emits after rendering it into that grid.
 
-The interactive `symset` and `roguesymset` options use the shipped
-`dat/symbols` catalog, including its primary/rogue restrictions and
-preselected current set. Changing a set keeps explicit `SYMBOLS=`
-overrides separate from the set's own defaults, so switching back to
-Default Symbols removes the old set's characters rather than preserving
-them as overrides. `js/symset-data.js` contains the legacy symbol bytes;
-the tty capture strips their high bit and ignores control-byte output.
-
 ## Clock and timezone
 
 `TZ` was `America/New_York`. Moon phase, Friday the 13th, and

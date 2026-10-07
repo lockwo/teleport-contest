@@ -48,11 +48,11 @@ function fountain_is_looted(loc) { return ((loc?.looted || 0) & F_LOOTED) !== 0;
 // the sink's sewage sip get it here.  RNG-free itself, but u.uhunger steers
 // the botl hunger word AND newuhs()'s fainting rn2, so discarding the roll's
 // value (as this file used to) leaves the hero permanently un-hungered.
-function morehungry(num) {
+async function morehungry(num) {
     const u = game.u;
     if (!u) return;
     u.uhunger = (u.uhunger ?? 900) - num;
-    newuhs(true);
+    await newuhs(true);
 }
 
 // C ref: prop.h Poison_resistance.  Mirrors js/potion.js's reader: the port
@@ -374,7 +374,7 @@ export async function drinkfountain() {
     if (fate < 10) {
         await update_topl('The cool draught refreshes you.');
         u.uhunger = (u.uhunger || 0) + rnd(10); /* don't choke on water */
-        newuhs(false);
+        await newuhs(false);
         if (mgkftn) return;
     } else {
         switch (fate) {
@@ -389,7 +389,7 @@ export async function drinkfountain() {
             break;
         case 20: /* Foul water */
             await update_topl(`The ${hliquid('water')} is foul!  You gag and vomit.`);
-            morehungry(rn1(20, 11));
+            await morehungry(rn1(20, 11));
             vomit();
             break;
         case 21: /* Poisonous */
@@ -416,7 +416,7 @@ export async function drinkfountain() {
             break;
         case 24: { /* Maybe curse some items */
             await update_topl("This water's no good!");
-            morehungry(rn1(20, 11));
+            await morehungry(rn1(20, 11));
             exercise(A_CON, false);
             let buc_changed = 0;
             for (const obj of game.invent || []) {
@@ -966,7 +966,7 @@ export async function drinksink() {
         break;
     case 9:
         await update_topl('Gaggg... this tastes like sewage!  You vomit.');
-        morehungry(rn1(30 - acurr_eff(A_CON), 11));
+        await morehungry(rn1(30 - acurr_eff(A_CON), 11));
         vomit();
         break;
     case 10: {

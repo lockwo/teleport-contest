@@ -21,6 +21,8 @@ import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_C
     IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE, HALF_SPDAM } from './const.js';
 import { isok } from './hacklib.js';
 import { OMONST, W_BALL, W_CHAIN, FROMOUTSIDE } from './const.js';
+import { FIRE_RES, TELEPORT, POISON_RES, TELEPAT, COLD_RES, INVIS, SEE_INVIS,
+    FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER } from './const.js';
 import { adjalign, exercise, adjattrib } from './attrib.js';
 import { losexp, xlev_to_rank, pluslvl, innate_intrinsics } from './exper.js';
 import { heal_legs } from './trap.js';
@@ -33,6 +35,7 @@ import { curse, uncurse, unbless, bless, mkobj, place_object, BALL_CLASS, CHAIN_
 import { livelog_printf, LL_CONDUCT, LL_MINORAC, LL_DIVINEGIFT, LL_ARTIFACT } from './livelog.js';
 import { mflags2_of, is_undead_flag, likes_gems_flag,
     M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC } from './monflags_data.js';
+import { attacktype_fordmg, AT_ENGL, AD_BLND } from './monattk_data.js';
 import { CORPSE, AMULET_OF_YENDOR, FOOD_CLASS, AMULET_CLASS } from './mkobj.js';
 // C ref: objects[] index of the cheap plastic imitation, one slot below the
 // real Amulet (js/mkobj.js:419); mkobj.js exports the real one only.
@@ -232,7 +235,9 @@ function in_trouble() {
     if (worst_cursed_item()) return TROUBLE_CURSED_ITEMS;
     if (u.usteed && u.usteed.saddle && u.usteed.saddle.cursed)
         return TROUBLE_SADDLE;
-    if ((u.blinded | 0) > 1) return TROUBLE_BLIND;
+    if ((u.blinded | 0) > 1 && !u.uprops?.BlindedFromForm
+        && (!u.uswallow || !attacktype_fordmg(u.ustuck?.data, AT_ENGL, AD_BLND)))
+        return TROUBLE_BLIND;
     if (((u.uprops?.HDeaf | 0) || (u.HDeaf | 0)) > 1) return TROUBLE_BLIND;
     for (let i = 0; i < A_MAX; i++)
         if (ABASE(i) < AMAX(i)) return TROUBLE_POISONED;
@@ -457,17 +462,17 @@ export async function rndcurse() {
 // load-bearing part; the fall-through chain then hunts for the first intrinsic
 // the hero actually has at or after the rolled slot.
 const ATTRCURSE_CHAIN = [
-    ['HFire_resistance', 'You feel warmer.'],
-    ['HTeleportation', 'You feel less jumpy.'],
-    ['HPoison_resistance', 'You feel a little sick!'],
-    ['HTelepat', 'Your senses fail!'],
-    ['HCold_resistance', 'You feel cooler.'],
-    ['HInvis', 'You feel paranoid.'],
-    ['HSee_invisible', 'You thought you saw something!'],
-    ['HFast', 'You feel slower.'],
-    ['HStealth', 'You feel clumsy.'],
-    ['HProtection', 'You feel vulnerable.'],
-    ['HAggravate_monster', 'You feel less attractive.'],
+    ['HFire_resistance', 'You feel warmer.', FIRE_RES],
+    ['HTeleportation', 'You feel less jumpy.', TELEPORT],
+    ['HPoison_resistance', 'You feel a little sick!', POISON_RES],
+    ['HTelepat', 'Your senses fail!', TELEPAT],
+    ['HCold_resistance', 'You feel cooler.', COLD_RES],
+    ['HInvis', 'You feel paranoid.', INVIS],
+    ['HSee_invisible', 'You thought you saw something!', SEE_INVIS],
+    ['HFast', 'You feel slower.', FAST],
+    ['HStealth', 'You feel clumsy.', STEALTH],
+    ['HProtection', 'You feel vulnerable.', PROTECTION],
+    ['HAggravate_monster', 'You feel less attractive.', AGGRAVATE_MONSTER],
 ];
 export async function attrcurse() {
     const u = game.u;
@@ -480,16 +485,16 @@ export async function attrcurse() {
     // chain fall through.
     const innate = innate_intrinsics();
     for (let i = start; i < ATTRCURSE_CHAIN.length; i++) {
-        const [field, msg] = ATTRCURSE_CHAIN[i];
+        const [field, msg, prop] = ATTRCURSE_CHAIN[i];
         const outside = ((u.uprops?.[field] | 0) | (u[field] | 0)) & INTRINSIC;
         if (!innate.has(field) && !outside) continue;
         u[field] = (u[field] | 0) & ~INTRINSIC;
         if (u.uprops) u.uprops[field] = (u.uprops[field] | 0) & ~INTRINSIC;
         (u.lost_innate ||= new Set()).add(field);
         await update_topl(msg);
-        return true;
+        return prop;
     }
-    return false;
+    return 0;
 }
 
 // C ref: ball.c punish(otmp) with a null otmp (js/read.js owns the identical
@@ -1252,6 +1257,10 @@ export async function dopray(paranoid_query) {
 async function god_zaps_you(resp_god) {
     const u = game.u;
     const D = await loadPrayExtras();
+    const { worn_extrinsic } = await import('./invent.js');
+    const { REFLECTING, DISINT_RES, W_ARMS, W_ARMC, W_ARM } = await import('./const.js');
+    const reflecting = worn_extrinsic(REFLECTING);
+    const disint = () => worn_extrinsic(DISINT_RES);
     if (u.uswallow) {
         await update_topl('Suddenly a bolt of lightning comes down at you'
             + ' from the heavens!');
@@ -1260,10 +1269,10 @@ async function god_zaps_you(resp_god) {
         await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
     } else {
         await update_topl('Suddenly, a bolt of lightning strikes you!');
-        if (uprops_has_pr('Reflecting')) {
+        if (reflecting || uprops_has_pr('Reflecting') || u.formprops?.Reflecting) {
             await shieldeff_pr();
             if (Blind()) await update_topl("For some reason you're unaffected.");
-            else await update_topl('It reflects from your shield.');
+            else await D.zap.ureflects('%s reflects from your %s.', 'It');
         } else if (HProp_pr('HShock_resistance') || HProp_pr('EShock_resistance')
                    || has_innate_pr('HShock_resistance')) {
             await shieldeff_pr();
@@ -1284,12 +1293,16 @@ async function god_zaps_you(resp_god) {
     // C: shield/cloak/suit/shirt are disintegrated first (like black dragon
     // breath); EReflecting/EDisint_resistance on the slot would spare it.
     const DW = await import('./do_wear.js');
-    if (game.uarms) await DW.disintegrate_arm(game.uarms);
-    if (game.uarmc) await DW.disintegrate_arm(game.uarmc);
-    if (game.uarm && !game.uarmc) await DW.disintegrate_arm(game.uarm);
+    if (game.uarms && !((reflecting | disint()) & W_ARMS))
+        await DW.disintegrate_arm(game.uarms);
+    if (game.uarmc && !((reflecting | disint()) & W_ARMC))
+        await DW.disintegrate_arm(game.uarmc);
+    if (game.uarm && !game.uarmc && !((reflecting | disint()) & W_ARM))
+        await DW.disintegrate_arm(game.uarm);
     if (game.uarmu && !game.uarm && !game.uarmc)
         await DW.disintegrate_arm(game.uarmu);
-    if (!(HProp_pr('HDisint_resistance') || HProp_pr('EDisint_resistance')
+    if (!(disint() || u.formprops?.Disint_resistance
+          || HProp_pr('HDisint_resistance') || HProp_pr('EDisint_resistance')
           || has_innate_pr('HDisint_resistance'))) {
         await fry_by_god(resp_god, true);
     } else {

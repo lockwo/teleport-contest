@@ -5,7 +5,7 @@
 // room placement, corridors, doors, stairs, niches, and fill.
 // Uses the real game PRNG (not a separate layout PRNG) for bit-exact parity.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { finish_map } from './mkmap.js';
@@ -79,7 +79,7 @@ import {
     CROSSWALL, TUWALL, TDWALL, TLWALL, TRWALL,
     D_NODOOR, D_CLOSED, D_ISOPEN, D_LOCKED, D_TRAPPED, D_BROKEN, D_SECRET,
     OROOM, VAULT, THEMEROOM, ROOMOFFSET, MAXNROFROOMS, SHARED, NO_ROOM,
-    SHOPBASE, ARMORSHOP, WEAPONSHOP, COURT, ZOO, BEEHIVE, MORGUE, BARRACKS, SWAMP, TEMPLE,
+    SHOPBASE, ARMORSHOP, WEAPONSHOP, COURT, ZOO, BEEHIVE, MORGUE, BARRACKS, SWAMP, TEMPLE, DELPHI,
     LEPREHALL, COCKNEST, ANTHOLE,
     SDOOR, SCORR, IRONBARS, FOUNTAIN, SINK, ALTAR, GRAVE,
     DIR_N, DIR_S, DIR_E, DIR_W, DIR_180,
@@ -6406,7 +6406,7 @@ async function makemaz_oracle() {
             }
             // delphi subroom: des.room({ type="delphi", lit=1, x=4,y=3, w=3,h=3 })
             rn2(100);                               // build_room chance (subroom)
-            const oksub = create_subroom(room1, 4, 3, 3, 3, OROOM, 1);
+            const oksub = create_subroom(room1, 4, 3, 3, 3, DELPHI, 1);
             if (oksub) {
                 const delphi = room1.sbrooms[room1.nsubrooms - 1];
                 // C ref: sp_lev.c build_room():2826 — topologize() runs for a
@@ -7068,9 +7068,8 @@ function mktrap_victim(trap) {
             otmp.owt = weight(otmp);
             curse(otmp);
             place_object(otmp, x, y);
-            // C begin_burn(otmp, FALSE): mark the candle lit on an unlit square.
-            // No RNG; the light-source list isn't modelled, so just set lamplit.
-            if (!game.level?.at(x, y)?.lit) otmp.lamplit = 1;
+            // C ref: mklev.c:1919 — begin_burn starts both light and fuel timer.
+            if (!game.level?.at(x, y)?.lit) hooks.beginCandleBurn?.(x, y, otmp);
         }
         break;
     default: victim_mnum = PM_HUMAN; break;
@@ -7686,12 +7685,6 @@ function level_finalize_topology() {
     bound_digging();
     // mineralize is consumed by fastforward_fill_mineralize
     game.in_mklev = false;
-    // C ref: mklev.c:1559-1560 — has_morgue implies graveyard (has_morgue is
-    // cleared once the morgue is entered, graveyard is permanent).  This is not
-    // cosmetic: mon.c's LEVEL_SPECIFIC_NOCORPSE macro reads it as
-    // `svl.level.flags.graveyard && is_undead(mdat) && rn2(3)`, so on a morgue
-    // level every undead death rolls an extra rn2(3) before leaving a corpse.
-    if (game.level?.flags?.has_morgue) game.level.flags.graveyard = true;
     // C ref: mklev.c themerooms_post_level_generate() runs the level-wide
     // wallification(1, 0, COLNO-1, ROWNO-1) at the very end of makelevel()
     // (mklev.c:1190), BEFORE mklev()'s topologize + set_wall_state() pass

@@ -9,10 +9,11 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rn1, rnd } from './rng.js';
+import { ROLE_TOURIST } from './role.js';
 import { NORMAL_SPEED, A_NEUTRAL, ROOM, is_pit, MAX_CARR_CAP, WT_HUMAN,
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU, I_SPECIAL,
     IS_DOOR, IS_POOL, IS_LAVA, WATER, Is_waterlevel,
-    D_CLOSED, D_LOCKED, MM_APPARXY_BYYOU } from './const.js';
+    D_CLOSED, D_LOCKED, MM_APPARXY_BYYOU, Is_rogue_level } from './const.js';
 import { Conflict, resist_conflict, m_canseeu } from './monmove.js';
 import { mattackm } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, MON_MIGRATING } from './const.js';
@@ -35,7 +36,7 @@ import { monster_by_pmidx, newcham, newcham_wizard_aware, enexto_spawn,
 import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
     tp_sensemon } from './display.js';
 import { dist2 } from './hacklib.js';
-import { Monnam } from './uhitm.js';
+import { Monnam, mon_nam } from './uhitm.js';
 import { touch_artifact_monster } from './artifact.js';
 import { mhim, mhis } from './do_name.js';
 
@@ -47,7 +48,7 @@ import { mhim, mhis } from './do_name.js';
 import { isok } from './hacklib.js';
 import { NON_PM, LOW_PM, G_GENOD, MON_FLOOR, MON_OFFMAP, MON_DETACH, MON_LIMBO,
     MON_ENDGAME_FREE, MON_ENDGAME_MIGR, MON_OBLITERATE, STRAT_WAITMASK,
-    W_SADDLE, MIGR_APPROX_XY, MIGR_RANDOM, POOL, MOAT, LAVAPOOL, LAVAWALL,
+    W_SADDLE, MIGR_APPROX_XY, MIGR_RANDOM, POOL, MOAT, LAVAPOOL, LAVAWALL, FOUNTAIN,
     ACCESSIBLE, thats_enough_tries, ismnum, engulfing_u, Has_contents,
     M_AP_TYPE, OBJ_AT, EDOG, MGIVENNAME, has_eshk, has_epri, has_emin,
     has_egd, has_edog, In_endgame, Is_astralevel, NC_SHOW_MSG } from './const.js';
@@ -60,6 +61,13 @@ import { name_to_pmidx, pm_to_cham, dead_species, mpickobj,
 import { impossible, m_at, shieldeff } from './display.js';
 import { couldsee } from './vision.js';
 
+
+// C ref: mon.c:44 LEVEL_SPECIFIC_NOCORPSE; evaluated at each C callsite.
+export function level_specific_nocorpse(mdat) {
+    const flags = game.level?.flags;
+    return Is_rogue_level() || flags?.deathdrops === false || flags?.deathdrops === 0
+        || (flags?.graveyard && is_undead_m(mdat) && rn2(3));
+}
 // Speed-modifier flags (permonst.mspeed); C ref: monst.h.
 const MSLOW = 1;
 const MFAST = 2;
@@ -158,11 +166,33 @@ export function mmove_of(data) {
 // (capped at 255) for EVERY monster death, not just the hero's kills; it drives
 // insight.c list_vanquished()'s ntypes/total and extinction.
 export function mvitals_died(mon) {
+    // C ref: mon.c:3113-3122 — deaths use the monster's true species.
+    if (ismnum(mon?.cham)) {
+        mon.data = monster_by_pmidx(mon.cham);
+        mon.cham = NON_PM;
+    } else if ([15, 21, 91].includes(mon?.data?.pmidx)) {
+        mon.data = monster_by_pmidx(counter_were(mon.data.pmidx));
+    }
     const mndx = mon?.data?.pmidx;
     if (mndx == null) return;
     const mv = (game.mvitals = game.mvitals || []);
     const e = (mv[mndx] = mv[mndx] || { died: 0, mvflags: 0 });
     if (e.died < 255) e.died++;
+}
+
+// C ref: mon.c:3147-3165 mondead() — dead Kops sometimes return.
+export async function resurrect_kop(mon) {
+    if (monster_by_pmidx(mon.data?.pmidx)?.mcls !== 37 /* S_KOP */) return;
+    let stway = game.stairs;
+    while (stway && (stway.isladder || stway.up)) stway = stway.next;
+    const r = rnd(5);
+    if (r === 1 || r === 2) {
+        const MK = await import('./makemon.js');
+        const ptr = monster_by_pmidx(mon.data.pmidx);
+        const kop = (r === 1 && stway) ? MK.makemon(ptr, stway.sx, stway.sy, 0)
+                                       : MK.makemon(ptr, 0, 0, 0);
+        if (kop) await MK.makemon_appears_msg(kop, kop.mx, kop.my, 0);
+    }
 }
 
 // C ref: mon.c DEADMONSTER(mon) — hp <= 0.
@@ -363,9 +393,6 @@ function monnear(mon, x, y) {
 // but new_were has three other C call sites (mhitu.c:980/983 when a were bites
 // the hero, potion.c's water-prayer revert) that DO run with mon_moving set, so
 // the guard is ported rather than assumed away.
-// Still not modelled: mon_break_armor()/possibly_unwield() (worn.c) shed armor
-// and weapons that no longer fit the new form.  Neither draws RNG, but both
-// change the monster's AC / wielded weapon, which later attack rolls read.
 async function new_were(mon) {
     // C: the hero's extrinsic pins a were in critter form; it can still revert.
     if (Protection_from_shape_changers() && is_human_were(mon.data)) return;
@@ -389,10 +416,22 @@ async function new_were(mon) {
     // C: healmon(mon, (mhpmax - mhp) / 4, 0) — regain a quarter of lost HP.
     healmon(mon, Math.floor(((mon.mhpmax || 0) - (mon.mhp || 0)) / 4), 0);
     newsym(mon.mx, mon.my);
-    // C ref: were.c:132 — mon_break_armor(mon, FALSE).  possibly_unwield() is
-    // still unported: it only re-checks the WIELDED weapon, which this port
-    // does not give were-forms.
     await mon_break_armor(mon, false);
+    const { possibly_unwield } = await import('./weapon.js');
+    const dropped = possibly_unwield(mon, false);
+    if (dropped) {
+        const { flooreffects } = await import('./do.js');
+        const { stackobj, distant_doname } = await import('./invent.js');
+        if (cansee(mon.mx, mon.my)) {
+            await update_topl(`${Monnam(mon)} drops ${distant_doname(dropped, true)}.`);
+            newsym(mon.mx, mon.my);
+        }
+        dropped.where = 'free';
+        if (!await flooreffects(dropped, mon.mx, mon.my, 'drop')) {
+            place_object(dropped, mon.mx, mon.my);
+            stackobj(dropped);
+        }
+    }
     if (game.context?.mon_moving && !mon.mpeaceful
         && onscary(mon.mux, mon.muy, mon) && monnear(mon, mon.mux, mon.muy))
         await monflee(mon, rn1(9, 2), true, true); /* 2..10 turns */
@@ -649,8 +688,6 @@ function breathless(ptr) { return (mflags1_of(ptr) & M1_BREATHLESS) !== 0; }
 //
 // DEFERRED, and drawing NOTHING rather than half of C's stream (a partial guard
 // would trade one wrong stream for another):
-//   * gremlin in a pool/fountain (mon.c:987): rn2(3), then split_mon() clones
-//     it — makemon-level RNG with no entry point in this port — plus dryup().
 //   * iron golem in a pool (mon.c:994): rn2(5), then d(2,6) rust damage and
 //     possibly mondied().
 //   * the inpool arm (mon.c:1064): mondied() leaves a cadaver, so it needs
@@ -682,6 +719,19 @@ export async function minliquid(mtmp) {
     const inpool = IS_POOL(typ) && (!airborne || Is_waterlevel(game.u?.uz));
     const inlava = IS_LAVA(typ) && !airborne;
 
+    // C ref: mon.c:987 — gremlins split before the drowning/fleeing checks.
+    if (ptr?.name === 'gremlin' && (inpool || typ === FOUNTAIN) && rn2(3)) {
+        const { split_mon } = await import('./potion.js');
+        if (await split_mon(mtmp, null)) {
+            const { dryup } = await import('./fountain.js');
+            await dryup(mtmp.mx, mtmp.my, false);
+        }
+        if (inpool) {
+            const { water_damage_chain } = await import('./trap.js');
+            await water_damage_chain(mtmp.minvent, false);
+        }
+        return 0;
+    }
     if (inlava) {
         // C ref: mon.c:1010 — a ceiling clinger hangs above the lava and a
         // lava-liker is at home in it; everything else burns.
@@ -696,10 +746,12 @@ export async function minliquid(mtmp) {
             if (((ptr?.mresists ?? 0) & MR_FIRE_BIT) === 0) {
                 if (cansee(mtmp.mx, mtmp.my))
                     await pline(`${Monnam(mtmp)} burns to a crisp.`);
-                // C: svc.context.mon_moving is set for every minliquid() call
-                // reached from movemon, so this is mondead() — no corpse, and
-                // no corpse_chance roll.
-                await mon_kill_leaving(mtmp, true);
+                if (game.context?.mon_moving) {
+                    await mon_kill_leaving(mtmp, true);
+                } else {
+                    const { killed } = await import('./uhitm.js');
+                    await killed(mtmp, { nomsg: true });
+                }
                 return 1;
             }
             // Fire-resistant but not a lava-liker: 1 point of damage, then it
@@ -731,9 +783,15 @@ export async function minliquid(mtmp) {
         if ((waterwall || (f1 & M1_CLING) === 0) && !cant_drown
             && (f1 & M1_TPORT) === 0) {
             if (cansee(mtmp.mx, mtmp.my))
-                await pline(`${Monnam(mtmp)} drowns.`);
-            const { mondied_mm } = await import('./mhitm.js');
-            await mondied_mm(mtmp);
+                await pline(game.context?.mon_moving
+                    ? `${Monnam(mtmp)} drowns.` : `You drown ${mon_nam(mtmp)}.`);
+            if (game.context?.mon_moving) {
+                const { mondied_mm } = await import('./mhitm.js');
+                await mondied_mm(mtmp);
+            } else {
+                const { killed } = await import('./uhitm.js');
+                await killed(mtmp, { nomsg: true });
+            }
             return 1;
         }
         return 0;
@@ -2250,7 +2308,7 @@ async function m_consume_obj_unported(_mtmp, _otmp) { /* js/monmove.js:4749 */ }
 // is the caller's job.
 // C ref: prop.h PROP indices and permonst.h MR_* bits; mondata.c res_to_mr()
 // is the mapping between them.
-const FIRE_RES_P = 1, SLEEP_RES_P = 2, COLD_RES_P = 3, DISINT_RES_P = 4,
+const FIRE_RES_P = 1, SLEEP_RES_P = 3, COLD_RES_P = 2, DISINT_RES_P = 4,
     SHOCK_RES_P = 5, POISON_RES_P = 6;
 const MR_FIRE_P = 0x01, MR_COLD_P = 0x02, MR_SLEEP_P = 0x04,
     MR_DISINT_P = 0x08, MR_ELEC_P = 0x10, MR_POISON_P = 0x20;
@@ -3920,15 +3978,15 @@ export async function see_monster_closeup(mtmp, photo) {
 
             /* a Tourist earns EXP (but not score) for the first photo of each
                monster type; the starting pet and a worm tail yield no bonus */
-            if (game.urole?.mnum === PM('tourist')
+            if (game.urole?.mnum === ROLE_TOURIST
                 && (mtmp.m_id !== game.context?.startingpet_mid
                     || mndx !== game.context?.startingpet_typ)
                 /* the monsndx() check covers the worm tail and a disguised
                    Wizard, for which experience() has no sensible value */
                 && mndx === monsndx(mtmp.data)) {
-                /* C ref: exper.c experience(mtmp, 0) — js/uhitm.js:1911 has it,
-                   module-private, so there is no value to award yet. */
-                const { newexplevel } = await import('./exper.js');
+                const { experience } = await import('./uhitm.js');
+                const { more_experienced, newexplevel } = await import('./exper.js');
+                more_experienced(experience(mtmp), 0);
                 await newexplevel();
             }
         }

@@ -13,7 +13,7 @@
 // machinery (moveloop_turn) run between moves — so that the next nhgetch()
 // capture sees the final post-run state with the exact cumulative RNG.
 
-import { game, svc_context_run } from './gstate.js';
+import { game, hooks, svc_context_run } from './gstate.js';
 import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, crawl_destination } from './trap.js';
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw } from './allmain.js';
@@ -193,6 +193,7 @@ export function end_running(and_travel) {
     game.travelmap = null;
     if (game.multi > 0) game.multi = 0;
 }
+hooks.end_running = end_running;
 
 // C ref: hack.c nomul() — interrupt a multi-turn action, or (nval < 0) make the
 // hero helpless/busy for |nval| turns (`if (multi < nval) return; multi = nval`).
@@ -255,6 +256,7 @@ export function occupation_active() {
     for (const [slot] of OCC_SLOTS) if (game[slot]) return true;
     return !!game._eat_occupation;
 }
+hooks.occupation_active = occupation_active;
 
 export async function stop_occupation(append = false) {
     // C allmain.c clears CQ_CANNED even when no occupation is active.
@@ -475,7 +477,7 @@ async function lookaround() {
 // Confusion for every monster, so the pet reads as "hostile" and stops the
 // rush without spending the turn).
 export function run_stop_for_monster_at(x, y) {
-    if (!game.context?.run) return false;
+    if (!svc_context_run()) return false;
     const mtmp = m_at(x, y);
     // C ref: hack.c:2768-2772 — `!Blind && mon_visible(mtmp) && (M_AP_TYPE not
     // FURNITURE/OBJECT ...)` or sensemon().  A mimic posing as an object or
@@ -1659,7 +1661,13 @@ function look_at_object_here(x, y, describing = false) {
     if (!loc.seenv && loc.remembered_glyph == null) return null;
     if (covers_objects(loc)) return null;
     const obj = vobj_at(x, y);
-    if (!obj) return null;
+    if (!obj) {
+        const remembered = loc.remembered_glyph;
+        if (describing && remembered?.objotyp && remembered.ch === loc.disp_ch)
+            return look_at_object(x, y, { kind: 'object', obj: null,
+                otyp: remembered.objotyp, corpsenm: remembered.corpsenm, x, y });
+        return null;
+    }
     // C dispatches on the DISPLAYED glyph: an object lying on a square whose
     // remembered/drawn glyph is something else (stairs the hero has not seen
     // the object on) is not described.  Hallucination draws random glyphs.
@@ -1963,9 +1971,14 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
     case GLOC_OBJS:
         if (shows_mimic_object(mtmp, x, y))
             return mtmp.mappearance !== 475 /*BOULDER*/ && mtmp.mappearance !== 474 /*ROCK*/;
-        // C excludes BOULDER and ROCK; look_at_object_here() reports the object
-        // that is actually DRAWN on the cell.
+        // C excludes only the normal BOULDER and ROCK glyphs, not their
+        // piletop variants (getpos.c:462-464, display.h:943-945).
         if (mtmp && canspotmon(mtmp)) return false;
+        const rememberedObject = loc.remembered_glyph;
+        if (rememberedObject?.objotyp && rememberedObject.ch === loc.disp_ch)
+            return rememberedObject.pile
+                || (rememberedObject.objotyp !== 475 /*BOULDER*/
+                    && rememberedObject.objotyp !== 474 /*ROCK*/);
         if (!look_at_object_here(x, y) || covers_objects(x, y)) return false;
         {
             // glyph_is_object(glyph_at(x,y)): the DISPLAYED glyph must be the
@@ -2831,6 +2844,7 @@ export async function monster_detect(otmp, mclass) {
 
     await update_topl('You sense the presence of monsters.');
     if (woken) await pline('Monsters sense the presence of you.');
+    await flush_screen(1); // getpos's initial input must show the detection message.
 
     if (otmp && otmp.blessed && !unconstrained) {
         // persistent detection--just show updated map
@@ -3873,7 +3887,7 @@ export async function dotele_wizard() {
     (game.iflags = game.iflags || {}).travelcc = { x: 0, y: 0 };
     await scrolltele(null);
     u.uhunger = (u.uhunger ?? 900) - 100;
-    newuhs(true);
+    await newuhs(true);
     return 1;
 }
 
@@ -4309,7 +4323,7 @@ export function monstinroom(mdat, roomno) {
     for (const mtmp of game.level?.monsters || []) {
         if (DEADMONSTER(mtmp))
             continue;
-        if (mtmp.data === mdat
+        if (mtmp.data?.pmidx === mdat?.pmidx
             && in_rooms(mtmp.mx, mtmp.my, 0).includes(roomno + ROOMOFFSET))
             return mtmp;
     }

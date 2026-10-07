@@ -258,6 +258,9 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
         if ((u.uhp | 0) < 1) {
             const { urgent_topl } = await import('./display.js');
             await urgent_topl('You die...');
+        } else if (u.uhp * 10 < u.uhpmax) {
+            const { maybe_wail } = await import('./do.js');
+            await maybe_wail();
         }
     } else {
         loss = (thrown_weapon || !fatal) ? 1 : d(2, 2);              // attrib.c:395

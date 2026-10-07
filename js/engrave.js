@@ -23,7 +23,7 @@ import { mflags1_of, M1_ANIMAL } from './monflags_data.js';
 import { attacktype, AT_HUGS } from './monattk_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
-import { A_WIS } from './const.js';
+import { A_WIS, LEVITATION, FLYING } from './const.js';
 import { Blind as isBlind } from './vision.js';
 
 // Heavy UI/inventory modules (display.js, invent.js, extcmd-handlers.js) are
@@ -419,8 +419,10 @@ export function can_reach_floor(check_pit) {
     if (u.uswallow
         || (u.ustuck && !(u.Upolyd && hooks.sticks(u.data))
             && attacktype(u.ustuck.data, AT_HUGS))) return false;
-    if (u.uprops?.Levitation) return false;
-    if (u.uprops?.Flying) return true;
+    if ((u.uprops?.Levitation || u.uprops_extrinsic?.[LEVITATION])
+        && !(u.uprops?.BLevitation || u.uprops_blocked?.[LEVITATION])) return false;
+    if ((u.uprops?.Flying || u.uprops_extrinsic?.[FLYING])
+        && !(u.uprops?.BFlying || u.uprops_blocked?.[FLYING])) return true;
     if (check_pit) {
         const t = (game.level?.traps || []).find((tr) => tr.tx === u.ux && tr.ty === u.uy);
         if (t && t.tseen) {

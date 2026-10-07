@@ -24,11 +24,11 @@
 import { game, hooks } from './gstate.js';
 import {
     COLNO, ROWNO, MAX_RADIUS, COULD_SEE, TEMP_LIT, RANGE_LEVEL,
-    FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE,
+    FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT,
 } from './const.js';
 import { clear_path, vision_recalc } from './vision.js';
 import { flush_screen, map_invisible, canseemon_shared } from './display.js';
-import { objects, place_object } from './mkobj.js';
+import { objects, place_object, start_object_timer } from './mkobj.js';
 import { DEADMONSTER, monsterList } from './mon.js';
 import { name_to_pmidx } from './makemon.js';
 import { mindless } from './monflags_data.js';
@@ -999,13 +999,17 @@ hooks.lightsources = (cs_rows) => {
     do_light_sources(cs_rows);
 };
 
-// C ref: makemon.c:814-815 — a S_GNOME's freshly-given candle starts burning
-// immediately on unlit ground.  js/makemon.js cannot import this file
-// directly (light.js already imports name_to_pmidx from makemon.js, and the
-// reverse import would cycle), so the effect is exposed through the same
-// hooks indirection vision.js uses above.
-hooks.gnomeCandleLight = (x, y, otmp) => {
+// C refs: makemon.c:814-815, mklev.c:1919 — a candle starts burning
+// immediately on unlit ground.  Exposed through hooks to avoid importing
+// light.js into the synchronous monster and level generators.
+hooks.beginCandleBurn = (x, y, otmp) => {
+    // C ref: timeout.c:1779-1785 — first candle warning is at 75 or 15 fuel.
+    const age = otmp.age | 0;
+    if (!age) return;
+    const turns = age > 75 ? age - 75 : age > 15 ? age - 15 : age;
+    if (!start_object_timer(turns, BURN_OBJECT, otmp)) return;
     otmp.lamplit = true;
+    otmp.age -= turns;
     new_light_source(x, y, candle_light_range(otmp), LS_OBJECT, otmp);
 };
 

@@ -249,6 +249,8 @@ export async function fastforward_fill_mineralize() {
             // deferred teleport traps) after the per-room fill loops.
             await run_themeroom_postprocess();
             mineralize(-1, -1, -1, -1, false);
+            // C mklev.c:1559-1560: this follows room filling, which sets has_morgue.
+            if (game.level?.flags?.has_morgue) game.level.flags.graveyard = true;
         } finally {
             game.in_mklev = was_in_mklev;
         }

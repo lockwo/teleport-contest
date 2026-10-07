@@ -147,17 +147,21 @@ export function uwep_skill_type() {
     return weapon_type(game.uwep);
 }
 
-// C ref: weapon.c use_skill(skill, degree) — practice toward the next
-// enhancement.  give_may_advance_msg()'s "You feel more confident..." arm needs
-// u.weapon_slots, which this port does not track (it reads 0, so can_advance()
-// is false on both sides of the increment and the message can never fire).
-export function use_skill(skill, degree) {
+// C ref: weapon.c use_skill(skill, degree) — practice and announce the first
+// transition to an advanceable skill.
+export async function use_skill(skill, degree) {
     if (skill === P_NONE) return;
     const S = build_skill_state();
     if (S.P_SKILL[skill] === P_ISRESTRICTED) return;
+    const advance_before = can_advance(skill, false, S);
     const u = game.u = game.u || {};
     u.skill_training = u.skill_training || {};
     u.skill_training[skill] = (u.skill_training[skill] || 0) + degree;
+    S.P_ADV[skill] += degree;
+    if (!advance_before && can_advance(skill, false, S)) {
+        const { give_may_advance_msg } = await import('./weapon.js');
+        await give_may_advance_msg(skill);
+    }
 }
 function is_ammo(obj) {
     const sk = objects[obj.otyp]?.oc_skill ?? 0;

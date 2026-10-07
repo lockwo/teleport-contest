@@ -37,6 +37,7 @@ import { name_to_pmidx, monster_by_pmidx, makemon, set_malign,
          is_covetous } from './makemon.js';
 import * as I from './invent.js';
 import { ghitm } from './dokick.js';
+import { goodpos } from './teleport.js';
 
 // C ref: hack.h ECMD_* result codes.
 const ECMD_OK = 0, ECMD_CANCEL = 1, ECMD_TIME = 3;
@@ -1166,7 +1167,7 @@ const SUPPRESS_SADDLE_ = 0x02, AUGMENT_IT_ = 0x20,
 // C ref: hack.h KILLED_BY.
 const KILLED_BY_ = 1;
 // C ref: mkobj.h MM_IGNOREWATER / MM_IGNORELAVA (goodpos gpflags).
-const MM_IGNOREWATER_ = 0x00002000, MM_IGNORELAVA_ = 0x00004000;
+const MM_IGNOREWATER_ = 0x00000008, MM_IGNORELAVA_ = 0x00080000;
 // C ref: hack.h WT_TOOMUCH_DIAGONAL.
 const WT_TOOMUCH_DIAGONAL_ = 600;
 
@@ -1348,7 +1349,8 @@ export async function hurtle_step(arg, x, y) {
         }
         if (why) {
             const dmg = rnd(2 + arg.range);                 /* dothrow.c:835 */
-            I.losehp_throw(Maybe_Half_Phys_hurtle(dmg), why, KILLED_BY_);
+            const { losehp_do } = await import('./do.js');
+            await losehp_do(Maybe_Half_Phys_hurtle(dmg), why, KILLED_BY_);
             wake_nearto_hurtle(x, y, 10);
             return false;
         }
@@ -1404,7 +1406,7 @@ export async function hurtle_step(arg, x, y) {
         const B = await import('./ball.js');
         const bc = await B.drag_ball(x, y, true);
         if (bc)
-            B.move_bc(0, bc.bc_control, bc.ballx, bc.bally, bc.chainx, bc.chainy);
+            await B.move_bc(0, bc.bc_control, bc.ballx, bc.bally, bc.chainx, bc.chainy);
     }
 
     const ox = u.ux, oy = u.uy;
@@ -1492,19 +1494,7 @@ export function will_hurtle(mon, x, y) {
      * C's TODO: treat walls, doors, iron bars, etc. specially rather than just
      * stopping before.
      */
-    return goodpos_hurtle(x, y, mon, MM_IGNOREWATER_ | MM_IGNORELAVA_);
-}
-
-// C ref: teleport.c goodpos(x, y, mtmp, gpflags) — js/teleport.js:105 exports
-// it, but will_hurtle() is synchronous in C and this file resolves cross-module
-// callees asynchronously, so mhurtle() primes this handle before walking the
-// path.  A caller that reaches will_hurtle() without going through mhurtle()
-// gets the reduced answer below (empty, accessible square).
-let _goodpos_impl = null;
-function goodpos_hurtle(x, y, mtmp, gpflags) {
-    if (_goodpos_impl) return _goodpos_impl(x, y, mtmp, gpflags);
-    return !m_at(x, y) && !(x === game.u?.ux && y === game.u?.uy)
-        && typ_at(x, y) >= POOL_TYP;
+    return goodpos(x, y, mon, MM_IGNOREWATER_ | MM_IGNORELAVA_);
 }
 
 // C ref: dothrow.c:992 mhurtle_step(arg, x, y) — a single step of a MONSTER
@@ -1650,12 +1640,6 @@ export async function hurtle(dx, dy, range, verbose) {
 // the air for a few squares.  Draws no RNG itself.
 export async function mhurtle(mon, dx, dy, range) {
     const u = game.u;
-
-    /* prime the goodpos() handle the synchronous will_hurtle() needs */
-    if (!_goodpos_impl) {
-        const { goodpos } = await import('./teleport.js');
-        _goodpos_impl = goodpos;
-    }
 
     await wakeup_hurtle(mon, !game.context?.mon_moving);
     /* At the very least, debilitate the monster */
@@ -1820,11 +1804,16 @@ async function minstapetrify_hurtle(mon, byplayer) {
 function switch_terrain_hurtle() { /* NOT PORTED (js/dig.js:870) */ }
 // C ref: trap.c drown() — js/trap.js:3381 (unexported).
 async function drown_hurtle() { return false; /* NOT PORTED */ }
-// C ref: trap.c mintrap(mon, mintrapflags) — no port anywhere in js/, so the
-// hurtling monster never triggers the trap it lands on.
-async function mintrap_hurtle(_mon, _flags) { return Trap_Effect_Finished; }
-// C ref: mon.c minliquid(mon) — js/mon.js:591 (unexported).
-async function minliquid_hurtle(_mon) { return false; }
+// C ref: trap.c mintrap(mon, mintrapflags).
+async function mintrap_hurtle(mon, flags) {
+    const { mon_mintrap } = await import('./monmove.js');
+    return await mon_mintrap(mon, flags);
+}
+// C ref: mon.c minliquid(mon).
+async function minliquid_hurtle(mon) {
+    const { minliquid } = await import('./mon.js');
+    return await minliquid(mon);
+}
 // C ref: mon.c seemimic(mon) — js/apply.js:533 (unexported).
 async function seemimic_hurtle(mon) {
     if (mon) {

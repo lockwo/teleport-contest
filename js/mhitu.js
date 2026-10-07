@@ -881,10 +881,9 @@ export async function gulpmu(mtmp, mattk) {
         if (can_blnd(mtmp, YOUMONST, mattk.aatyp, null, mhitu_ops())) {
             if (!Blind()) {
                 await emitU("You can't see in here!");
-                await make_blinded_u(tmp);
+                await make_blinded_u(tmp, false);
             } else {
-                const up = (u.uprops = u.uprops || {});
-                up.Blinded = (up.Blinded | 0) + 1;   // blind until disgorged
+                u.blinded = (u.blinded | 0) + 1;   // blind until disgorged
             }
         }
         tmp = 0;
@@ -1837,6 +1836,10 @@ export function mhitu_ops() {
         u_slip_free,
         cloneu,
         mdamageu,
+        stealgold: async (mon) => {
+            const { stealgold } = await import('./steal.js');
+            await stealgold(mon);
+        },
         set_skipdrin: () => { game.skipdrin = true; },
         mpoisons_subj,
         // C ref: exper.c losexp(drainer), including the role-specific farewell.
@@ -1873,7 +1876,7 @@ export function mhitu_ops() {
         // non-resisted hit.
         fall_asleep: async (howlong, wakeupmsg) => {
             const { fall_asleep } = await import('./zap.js');
-            fall_asleep(howlong, wakeupmsg);
+            await fall_asleep(howlong, wakeupmsg);
         },
         // C ref: youprop.h Blind. AD_SLEE's hero-defender arm gates its
         // "put to sleep" message on it (Blind: no attacker name).

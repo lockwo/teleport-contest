@@ -29,7 +29,9 @@ import { Is_special } from './dungeon.js';
 import { roles } from './role.js';
 import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET,
          Is_oracle_level, In_quest } from './const.js';
-import { msound_of, MS_LEADER, MS_NEMESIS } from './monflags_data.js';
+import { msound_of, MS_LEADER, MS_NEMESIS, mflags2_of,
+         M2_GREEDY, M2_JEWELS, M2_COLLECT, M2_MAGIC } from './monflags_data.js';
+import { can_carry, DEADMONSTER } from './mon.js';
 
 // ── small accessors that mirror the C globals/macros bones.c relies on ──
 
@@ -393,15 +395,14 @@ export function can_make_bones() {
 // Ported for completeness; reached only from drop_upon_death()'s 1-in-8 branch
 // during savebones(), which the harness does not exercise.
 function likes_objs_mon(m) {
-    // Approximate the C likes_gold/gems/objs/magic union via flags the JS
-    // monster model carries; default to false so the loop length matches the
-    // common "no greedy monster nearby" case.
-    return !!(m && (m.likes_gold || m.likes_gems || m.likes_objs || m.likes_magic));
+    // C ref: bones.c:243-244 — the union of all four likes_* species flags.
+    return !!(m && (mflags2_of(m.data)
+                    & (M2_GREEDY | M2_JEWELS | M2_COLLECT | M2_MAGIC)));
 }
 
 function m_at(x, y) {
     for (const m of game.level?.monsters ?? [])
-        if (m.mx === x && m.my === y) return m;
+        if (!DEADMONSTER(m) && m.mx === x && m.my === y) return m;
     return null;
 }
 
@@ -420,7 +421,8 @@ export function give_to_nearby_mon(otmp, x, y, place_object) {
             if (!rn2(nmon)) selected = mtmp;   // reservoir pick
         }
     }
-    if (selected && place_object?.toMon) place_object.toMon(selected, otmp);
+    if (selected && can_carry(selected, otmp) && place_object?.toMon)
+        place_object.toMon(selected, otmp);
     else if (place_object?.toFloor) place_object.toFloor(otmp, x, y);
 }
 
@@ -640,43 +642,46 @@ export async function savebones(how = 0, corpse = null) {
             toFloor: (o) => { if (o) { o.owornmask = 0; place_object(o, x, y); } },
             toMon: (m, o) => { if (o) (m.minvent = m.minvent || []).push(o); },
         };
-        drop_upon_death(null, null, x, y, hooks);
-
-        // C ref: bones.c:494-500 —
-        //   gi.in_mklev = TRUE;                       /* allow the hero's square */
-        //   mtmp = makemon(&mons[PM_GHOST], u.ux, u.uy, MM_NONAME);
-        //   gi.in_mklev = FALSE;
-        //   mtmp = christen_monst(mtmp, svp.plname);
-        //   if (corpse) obj_attach_mid(corpse, mtmp->m_id);
-        // then bones.c:506-511 overrides m_lev/mhp/mhpmax/female/msleeping.
-        // The old code hand-rolled the ghost and drew only next_ident, losing
-        // the other 5 calls C makes here (newmonhp d(9,8), makemon.c:1279
-        // rn2(2), m_initinv rn2(50)+rn2(100), makemon.c:1447 rn2(100)) —
-        // seed0030 seg6 step 247 idx 47-52.  MM_NONAME is what suppresses
-        // rndghostname()'s extra rn2(7)/rn2(34).
-        {
-            const { makemon, monster_by_pmidx } = await import('./makemon.js');
-            const { MM_NONAME } = await import('./const.js');
-            const PM_GHOST = 287;
-            const gdata = monster_by_pmidx(PM_GHOST);
-            const saved_in_mklev = g.in_mklev;
-            g.in_mklev = true;
-            let mtmp = null;
-            try { mtmp = makemon(gdata, x, y, MM_NONAME); }
-            finally { g.in_mklev = saved_in_mklev; }
-            if (mtmp) {
-                // C: mtmp = christen_monst(mtmp, svp.plname);
-                const { christen_monst } = await import('./do_name.js');
-                const plname = svp_plname();
-                mtmp.mextra = mtmp.mextra || {};
-                christen_monst(mtmp, plname);
-                mtmp.m_lev = g.u?.ulevel || 1;
-                mtmp.mhp = mtmp.mhpmax = g.u?.uhpmax ?? 1;
-                mtmp.female = !!g.flags?.female;
-                mtmp.msleeping = 1;
-                if (corpse) corpse.corpsenm_mid = mtmp.m_id; // obj_attach_mid
-            }
+        const { makemon, monster_by_pmidx, mongets } = await import('./makemon.js');
+        const { MM_NONAME, NO_MINVENT, NON_PM, LOW_PM, S_MUMMY } = await import('./const.js');
+        const { christen_monst } = await import('./do_name.js');
+        const arise = g.u?.ugrave_arise ?? NON_PM;
+        const arisen = arise >= LOW_PM && !!monster_by_pmidx(arise);
+        let mtmp;
+        if (!arisen) drop_upon_death(null, null, x, y, hooks);
+        const saved_in_mklev = g.in_mklev;
+        g.in_mklev = true;
+        try {
+            mtmp = makemon(monster_by_pmidx(arisen ? arise : 287), x, y,
+                           arisen ? NO_MINVENT : MM_NONAME);
+        } finally {
+            g.in_mklev = saved_in_mklev;
         }
+        if (!mtmp) {
+            if (arisen) {
+                drop_upon_death(null, null, x, y, hooks);
+                g.u.ugrave_arise = NON_PM;
+            }
+            return;
+        }
+        if (arisen)
+            (await import('./mondata.js')).give_u_to_m_resistances(mtmp);
+        christen_monst(mtmp, svp_plname());
+        if (arisen) {
+            (await import('./display.js')).newsym(x, y);
+            drop_upon_death(mtmp, null, x, y, hooks);
+            const { MUMMY_WRAPPING } = await import('./mkobj.js');
+            if (mtmp.data?.mcls === S_MUMMY
+                && !(mtmp.minvent || []).some(o => o.otyp === MUMMY_WRAPPING))
+                mongets(mtmp, MUMMY_WRAPPING);
+            (await import('./worn.js')).m_dowear(mtmp, true);
+        } else if (corpse) {
+            corpse.corpsenm_mid = mtmp.m_id;
+        }
+        mtmp.m_lev = g.u?.ulevel || 1;
+        mtmp.mhp = mtmp.mhpmax = g.u?.uhpmax ?? 1;
+        mtmp.female = !!g.flags?.female;
+        mtmp.msleeping = 1;
 
         // C ref: bones.c:538-546 — per-monster: mark its pack ghostly, resetobjs
         // it, forget the dead hero (mlstmv, tameness, and seen_resistance — "

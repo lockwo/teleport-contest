@@ -450,6 +450,9 @@ async function newgame_real() {
 async function moveloop_preamble_messages() {
     const g = game;
     const moonphase = phase_of_the_moon();
+    g.flags = g.flags || {};
+    g.flags.moonphase = moonphase;
+    g.flags.friday13 = friday_13th();
     const msgs = [];
     // C ref: sys/unix/unixmain.c main():316 — `newgame(); wd_message();` and
     // only THEN moveloop(), so wd_message()'s explore banner is printed BEFORE
@@ -1181,13 +1184,10 @@ export async function moveloop_turn() {
                         if (g.context.mvl_change === 1) {
                             const { polyself } = await import('./polyself.js');
                             await polyself(POLY_NOFLAGS);
+                        } else {
+                            const { you_were } = await import('./polyself.js');
+                            await you_were();
                         }
-                        // else: C ref: polyself.c you_were() — involuntary
-                        // lycanthrope transformation.  DEFERRED: u.ulycn is
-                        // never set to a valid mnum anywhere in this port
-                        // (js/mhitm.js:1646 you_were_mm() documents the same
-                        // gap), so ismnum(g.u.ulycn) above is always false and
-                        // this arm cannot be reached yet.
                         g.context.mvl_change = 0;
                     }
                 }
@@ -1212,10 +1212,25 @@ export async function moveloop_turn() {
             // exerchk, invault, ..., u_wipe_engr.
             await dosounds();
             game._hunger_msgs = [];
-            gethungry();
+            await gethungry();
             const hungerMsgs = game._hunger_msgs;
             game._hunger_msgs = null;
-            for (const m of hungerMsgs) await update_topl(m);
+            if (hungerMsgs.faintDuration !== undefined) {
+                const { stop_occupation, nomul } = await import('./hack.js');
+                const { unfaint } = await import('./eat.js');
+                await stop_occupation(true);
+                await update_topl('You faint from lack of food.');
+                g.u.uprops ||= {};
+                g.u.uprops.HDeaf = (g.u.uprops.HDeaf || 0) + hungerMsgs.faintDuration;
+                nomul(-hungerMsgs.faintDuration);
+                g.multi_reason = 'fainted from lack of food';
+                g.nomovemsg = 'You regain consciousness.';
+                g.afternmv = unfaint;
+            }
+            for (const m of hungerMsgs) {
+                if (m === null) await (await import('./hack.js')).stop_occupation(true);
+                else await update_topl(m);
+            }
             if (hungerMsgs.uhs !== undefined) {
                 g.u.uhs = hungerMsgs.uhs;
                 g.botl = true;     // C newuhs(): `u.uhs = newhs; disp.botl = TRUE; bot();`
@@ -1415,7 +1430,7 @@ function ring_costs_nutrition(ring, otherRing) {
 // Exported: hack.c overexertion() ("combat increases metabolism") calls this
 // SAME function once per melee attack, in addition to the once-per-turn call
 // below — uhitm.js's overexertion() imports it to stay faithful.
-export function gethungry() {
+export async function gethungry() {
     const u = game.u;
     if (!u || u.uinvulnerable) return;
     const consume = Unaware() ? (rn2(10) === 0) : true;
@@ -1459,7 +1474,7 @@ export function gethungry() {
     // several sessions reach.  The real newuhs() also emits the transition
     // messages, sets ATEMP(A_STR) = -1 on WEAK (status line), and draws
     // rn2(20 - uhunger/10) once FAINTING — none of which the inline copy did.
-    newuhs(true);
+    await newuhs(true);
 }
 
 // C ref: allmain.c regen_hp(wtcap) — natural HP regeneration.  Only the
@@ -2244,6 +2259,10 @@ export async function moveloop_core() {
     if (g._lvltport_dest) {
         const { run_deferred_lvltport } = await import('./do.js');
         await run_deferred_lvltport();
+    }
+    if (g.u.utotype) {
+        const { deferred_goto } = await import('./do.js');
+        await deferred_goto();
     }
 
     // A command that took game time schedules the per-turn work for the

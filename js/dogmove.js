@@ -22,7 +22,7 @@ import { rn2, rnd } from './rng.js';
 import { touch_artifact_monster } from './artifact.js';
 import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
     IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED,
-    POOL, MOAT, WATER, LAVAPOOL, LAVAWALL } from './const.js';
+    POOL, MOAT, WATER, LAVAPOOL, LAVAWALL, OBJ_MINVENT } from './const.js';
 import { obj_resists } from './zap.js';
 import { is_quest_artifact } from './questpgr.js';
 import { newsym, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at } from './display.js';
@@ -714,11 +714,7 @@ async function dog_hunger(mtmp, edog) {
     return false;
 }
 
-// C ref: dogmove.c dog_starve(mtmp) — the pet dies of hunger.  PARTIAL: C calls
-// mondied(), whose corpse_chance() rn2 tail this port keeps per-caller (mhitm.js
-// / muse.js each own a copy) and which is not shared; we take the pet off the
-// map so the map and the movemon loop agree, and leave the corpse roll to the
-// completeness pass.  Only reachable ~DOG_STARVE moves past hungrytime.
+// C ref: dogmove.c:357 — starvation uses mondied(), including corpse creation.
 async function dog_starve(mtmp) {
     if (mtmp.mleashed && mtmp !== game.u?.usteed)
         await emit_pet_msg('Your leash goes slack.');
@@ -726,16 +722,8 @@ async function dog_starve(mtmp) {
         await emit_pet_msg(`${Monnam(mtmp)} starves.`);
     else
         await emit_pet_msg(`You feel ${game.u?.uhallu ? 'bummed' : 'sad'} for a moment.`);
-    const mx = mtmp.mx, my = mtmp.my;
-    mtmp.mhp = 0;
-    const list = game.level?.monsters;
-    if (list) {
-        const i = list.indexOf(mtmp);
-        if (i >= 0) list.splice(i, 1);
-    }
-    if (game.u?.ustuck === mtmp) game.u.ustuck = null;
-    mtmp.mtrapped = 0;
-    newsym(mx, my);
+    const { mondied_mm } = await import('./mhitm.js');
+    await mondied_mm(mtmp);
 }
 
 // C ref: allmain.c stop_occupation() — cancels a running multi-turn occupation
@@ -937,7 +925,7 @@ async function relobj(mtmp, x, y) {
 
 // C ref: steal.c mdrop_obj(mon, obj, verbosely) — drop ONE item out of a
 // monster's inventory onto the square the monster stands on.
-async function mdrop_obj(mtmp, obj, verbosely) {
+export async function mdrop_obj(mtmp, obj, verbosely) {
     const omx = mtmp.mx, omy = mtmp.my;
     // C ref: steal.c:823 — distant_name(obj, doname) is called for its possible
     // side-effects even when the message won't be printed, and BEFORE the
@@ -1000,7 +988,8 @@ function pet_extract_floor(obj) {
 // minvent newest-first.
 function mpickobj(mtmp, obj) {
     mtmp.minvent = mtmp.minvent || [];
-    obj.where = 3; // OBJ_MINVENT
+    obj.where = OBJ_MINVENT;
+    obj.ocarry = mtmp;
     mtmp.minvent.unshift(obj);
 }
 

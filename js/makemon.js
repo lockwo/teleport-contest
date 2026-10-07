@@ -35,7 +35,7 @@ import {
     Is_airlevel, Is_firelevel, Is_earthlevel, Is_waterlevel,
     In_mines, In_sokoban, Is_stronghold, In_quest, In_V_tower, Is_knox_level, Align2amask,
     PIT, HOLE, TRAPDOOR, ALL_TRAPS,
-    COLNO, ROWNO, DOOR, IN_SIGHT, POOL, MOAT, WATER, LAVAPOOL,
+    COLNO, ROWNO, DOOR, IN_SIGHT, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     HWALL, TLCORNER, BLCORNER, CROSSWALL, TUWALL, TDWALL, TRWALL, DBWALL,
     SDOOR, SCORR, D_CLOSED, D_LOCKED,
     STRAT_CLOSE, STRAT_WAITFORU, STRAT_APPEARMSG, W_SADDLE,
@@ -2325,14 +2325,12 @@ function m_initinv_full(mtmp) {
                 // first candle never has, so the condition reduces to "square
                 // is unlit": a candle given out on dark ground starts burning
                 // immediately.  Routed through gstate's hooks (js/light.js
-                // registers hooks.gnomeCandleLight) because light.js already
+                // registers hooks.beginCandleBurn) because light.js already
                 // imports name_to_pmidx from this file, so the reverse import
                 // would cycle — the same indirection js/vision.js uses for
-                // hooks.lightsources.  Skips begin_burn()/start_timer()'s
-                // multi-hundred-turn burn-out timer, which stays async and
-                // never fires within any covered recording anyway.
+                // hooks.lightsources.  The hook also starts the burn timer.
                 const loc = game.level?.at(mtmp.mx, mtmp.my);
-                if (loc && !loc.lit) hooks.gnomeCandleLight?.(mtmp.mx, mtmp.my, otmp);
+                if (loc && !loc.lit) hooks.beginCandleBurn?.(mtmp.mx, mtmp.my, otmp);
             }
         }
         break;
@@ -3138,6 +3136,15 @@ function apply_newcham(mtmp, mdat, olddata) {
     if (nhp < 0 || nhp > mtmp.mhpmax) nhp = mtmp.mhpmax;
     mtmp.mhp = nhp || 1;
     hooks.set_mon_data(mtmp, mdat);
+    // C ref: mon.c:5406-5408 — inherent invisibility follows the new form.
+    const pm_invisible = ptr => ptr?.name === 'stalker' || ptr?.name === 'black light';
+    if (!mtmp.perminvis || pm_invisible(olddata))
+        mtmp.perminvis = pm_invisible(mdat);
+    mtmp.minvis = mtmp.invis_blkd ? 0 : mtmp.perminvis;
+    // C ref: mon.c:5409 — the new form must still qualify for concealment.
+    // A currently undetected monster cannot be seen, so hideunder's state
+    // update runs synchronously (its message/await branch is not taken).
+    if (mtmp.mundetected) hooks.hideunder(mtmp);
     return 1;
 }
 
@@ -3274,6 +3281,30 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         }
     }
     if (changed) {
+        // C ref: mon.c:5484 — shed a weapon the new form cannot wield before
+        // checking armor. Other monsters may immediately seek the dropped item.
+        const polyspot = (ncflags & NC_VIA_WAND_OR_SPELL) !== 0;
+        const { possibly_unwield } = await import('./weapon.js');
+        const dropped = possibly_unwield(mtmp, polyspot);
+        if (dropped) {
+            const { update_topl, newsym } = await import('./display.js');
+            const { distant_doname, stackobj } = await import('./invent.js');
+            const { flooreffects } = await import('./do.js');
+            const { place_object } = await import('./mkobj.js');
+            if (mm_cansee(mtmp.mx, mtmp.my)) {
+                await update_topl(`${names.Monnam(mtmp)} drops ${distant_doname(dropped, true)}.`);
+                newsym(mtmp.mx, mtmp.my);
+            }
+            dropped.where = 'free';
+            if (!await flooreffects(dropped, mtmp.mx, mtmp.my, 'drop')) {
+                if (polyspot) {
+                    dropped.bypass = 1;
+                    game.context.bypasses = true;
+                }
+                place_object(dropped, mtmp.mx, mtmp.my);
+                stackobj(dropped);
+            }
+        }
         const { mon_break_armor, check_gear_next_turn } = await import('./mon.js');
         await mon_break_armor(mtmp, (ncflags & NC_VIA_WAND_OR_SPELL) !== 0);
         check_gear_next_turn(mtmp);
@@ -3902,7 +3933,8 @@ function mm_is_pool(x, y) {
     return t === POOL || t === MOAT || t === WATER;
 }
 function mm_is_lava(x, y) {
-    return game.level?.at(x, y)?.typ === LAVAPOOL;
+    const typ = game.level?.at(x, y)?.typ;
+    return typ === LAVAPOOL || typ === LAVAWALL;
 }
 
 // C ref: mon.h MON_AT — a (live) monster occupies <x,y>.
@@ -4070,10 +4102,12 @@ function makemon_rnd_goodpos(ptr) {
         for (let bl = game.in_mklev ? 1 : 0; bl < 2 && !good; bl++) {
             for (let dx = 0; dx < COLNO && !good; dx++) {
                 for (let dy = 0; dy < ROWNO && !good; dy++) {
-                    const cx = ((dx + xofs) % (COLNO - 1)) + 1;
-                    const cy = ((dy + yofs) % (ROWNO - 1)) + 1;
-                    if (bl === 0 && mm_cansee(cx, cy)) continue;
-                    if (goodpos_spawn(cx, cy, ptr)) { nx = cx; ny = cy; good = true; }
+                    // C ref: makemon.c:1107-1108 — leave the last scanned
+                    // coordinate in nx/ny for the following stairway fallback.
+                    nx = ((dx + xofs) % (COLNO - 1)) + 1;
+                    ny = ((dy + yofs) % (ROWNO - 1)) + 1;
+                    if (bl === 0 && mm_cansee(nx, ny)) continue;
+                    if (goodpos_spawn(nx, ny, ptr)) good = true;
                 }
             }
             // C ref: makemon.c:1113-1128 — when the first (skip-visible) pass

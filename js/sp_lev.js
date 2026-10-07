@@ -1389,9 +1389,7 @@ const MACE_OTYP = 73;
 
 // C ref: mkroom.c mk_zoo_thronemon(x, y) — the sleeping monarch who sits on the
 // throne of a COURT.  rnd(level_difficulty()) picks the species; the mace is
-// "a sceptre to pound in judgment".  set_malign() only writes mtmp->malign (the
-// alignment-record delta applied when the hero kills it), which this port does
-// not model and which draws no RNG.
+// "a sceptre to pound in judgment".
 function mk_zoo_thronemon(x, y) {
     const i = rnd(level_difficulty_ext());
     const name = (i > 9) ? 'ogre tyrant'
@@ -1403,6 +1401,7 @@ function mk_zoo_thronemon(x, y) {
     if (mon) {
         mon.msleeping = 1;
         mon.mpeaceful = false;
+        set_malign(mon);
         mongets_pub(mon, MACE_OTYP); /* a sceptre to pound in judgment */
     }
 }
@@ -1629,7 +1628,7 @@ function fill_zoo_core(sroom) {
                 mon.msleeping = 1;
                 if (type === COURT && mon.mpeaceful) {
                     mon.mpeaceful = false;
-                    /* set_malign(mon) — see mk_zoo_thronemon */
+                    set_malign(mon);
                 }
             }
             if (type === ZOO || type === LEPREHALL) {

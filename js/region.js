@@ -5,11 +5,8 @@
 // generic message/callback regions (create_msg_region); nothing in the
 // covered sessions ever creates one (they are used by a handful of special
 // levels and the Vlad's tower slow-force-field trap, neither reachable here).
-// Those, plus save/restore (save_regions/rest_regions), the monster-membership
-// helpers (add_mon_to_reg/remove_mon_from_reg/...) and the wizard-mode #timeout
-// / prayer danger helpers (region_danger/region_safety) are now ported at the
-// bottom of this file but are INERT: no function above calls them and no
-// existing call site was rewired.
+// Monster movement updates gas-cloud membership through m_in_out_region().
+// Force fields, generic regions and other helpers are ported below.
 //
 // The region list is a flat array on `game.regions`.  do.js goto_level() plays
 // save_regions()/rest_regions(): it stashes the list on the departing level's
@@ -23,7 +20,8 @@ import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
 import { cansee, block_point, unblock_point, does_block, Blind } from './vision.js';
 // js/monflags_data.js is a generated LEAF module (no imports of its own), so
 // naming it here cannot create an import cycle or a TDZ edge.
-import { is_undead_flag, mflags1_of, M1_BREATHLESS } from './monflags_data.js';
+import { is_undead_flag, mflags1_of, M1_BREATHLESS, M1_NOEYES,
+         msound_of } from './monflags_data.js';
 import { has_innate } from './exper.js';
 
 const MAX_CLOUD_SIZE = 150;
@@ -125,7 +123,8 @@ export async function remove_region(reg) {
     const list = regions();
     const i = list.indexOf(reg);
     if (i < 0) return;
-    list.splice(i, 1);
+    list[i] = list[list.length - 1];
+    list.pop();
     reg.ttl = -2; // C ref: region.c — sentinel for visible_region_at() below
 
     if (reg.visible) {
@@ -182,11 +181,15 @@ export async function run_regions() {
         if (reg.ttl > 0) reg.ttl--;
         if (reg.insideF !== INSIDE_GAS_CLOUD) continue;
         if (reg.heroInside) await inside_gas_cloud(reg, null);
-        for (let j = reg.monsters.length - 1; j >= 0; j--) {
+        for (let j = 0; j < reg.monsters.length; j++) {
             const mtmp = reg.monsters[j];
             const dead = !mtmp || (mtmp.mhp != null && mtmp.mhp <= 0);
             const died = dead ? true : await inside_gas_cloud(reg, mtmp);
-            if (died) reg.monsters.splice(j, 1);
+            if (died) {
+                reg.monsters[j] = reg.monsters[reg.monsters.length - 1];
+                reg.monsters.pop();
+                j--;
+            }
         }
     }
 
@@ -243,11 +246,7 @@ function is_hero_inside_gas_cloud() {
 // C ref: region.c in_out_region()/m_in_out_region() — called when the hero or
 // a monster moves, to update heroInside/monsters membership (and fire
 // enter_msg/leave_msg + enter_f/leave_f callbacks, unused by gas clouds).
-// NOT currently called from hack.js's domove() or monmove.js's move-commit
-// path (see file header); every region a covered session creates so far sits
-// on its generator's own square and is refreshed there each turn by
-// inside_gas_cloud's ttl bump, so the gap has not been exercised.  Exported so
-// that hook can be added later without touching this module again.
+// monmove.js checks m_in_out_region() before committing a monster's move.
 export function in_out_region(x, y) {
     // C ref: region.c:479 in_out_region() returns TRUE unless a region's
     // can_enter_f/can_leave_f callback vetoes the move — callbacks this port
@@ -271,8 +270,7 @@ export function m_in_out_region(mon, x, y) {
     for (const reg of regions()) {
         if (reg.attach2m === mon) continue;
         if (reg.monsters.includes(mon) && !inside_region(reg, x, y)) {
-            const idx = reg.monsters.indexOf(mon);
-            if (idx >= 0) reg.monsters.splice(idx, 1);
+            remove_mon_from_reg(reg, mon);
         }
     }
     for (const reg of regions()) {
@@ -302,7 +300,7 @@ export function update_monster_region(mon) {
         const inside = inside_region(reg, mon.mx, mon.my);
         const has = reg.monsters.includes(mon);
         if (inside && !has) reg.monsters.push(mon);
-        else if (!inside && has) reg.monsters.splice(reg.monsters.indexOf(mon), 1);
+        else if (!inside && has) remove_mon_from_reg(reg, mon);
     }
 }
 
@@ -342,16 +340,6 @@ function m_poisongas_ok(mtmp, isHero) {
     return M_POISONGAS_BAD;
 }
 
-// C ref: hack.c losehp() — for a non-polymorphed hero this is just HP
-// arithmetic (death handling is not exercised by any covered session that
-// reaches this code path yet); mirrors the same simplification other files
-// (fountain.js, trap.js, ...) already apply to losehp().
-function loseHeroHp(n) {
-    const u = game.u;
-    if (!u) return;
-    u.uhp -= n;
-    if (u.uhp < 1) u.uhp = 0;
-}
 
 // C ref: region.c make_gas_cloud(cloud, damage, inside_cloud) — shared tail of
 // create_gas_cloud()/create_gas_cloud_selection(): mark the region as heros_
@@ -547,11 +535,8 @@ async function inside_gas_cloud(reg, mtmp) {
         if (m_poisongas_ok(null, true) === M_POISONGAS_OK) return false;
         if (!Blind()) {
             await update_topl('Your eyes sting.');
-            // C ref: region.c make_blinded(1L, FALSE) — a 1-turn blindness
-            // timer.  No blindness-timer subsystem exists yet in this port
-            // (see m_poisongas_ok's SCOPE note); the message still fires so
-            // the RNG-inert observable text matches, but the timer itself is
-            // not modeled.
+            const { make_blinded_hero } = await import('./potion.js');
+            await make_blinded_hero(1, false);
         }
         // C ref: region.c:1117 `if (!Poison_resistance)`.  The innate source
         // (orc/healer/barbarian from level 1, monk from level 3, tourist
@@ -562,6 +547,8 @@ async function inside_gas_cloud(reg, mtmp) {
         // poison-resistant hero standing in a gas cloud drew rnd(dam) it
         // should never have drawn.
         const { Half_gas_damage } = await import('./potion.js');
+        const { Maybe_Half_Phys } = await import('./zap.js');
+        const { losehp_do } = await import('./do.js');
         const { monstseesu, monstunseesu } = await import('./mondata.js');
         const { wake_nearto } = await import('./cmd.js');
         const u = game.u;
@@ -570,9 +557,9 @@ async function inside_gas_cloud(reg, mtmp) {
             await update_topl('Something is burning your lungs!');
             await update_topl('You cough and spit blood!');
             await wake_nearto(u?.ux, u?.uy, 2);
-            let dmg = rnd(dam) + 5;
+            let dmg = Maybe_Half_Phys(rnd(dam) + 5);
             if (Half_gas_damage()) dmg = Math.floor((dmg + 1) / 2);
-            loseHeroHp(dmg);
+            await losehp_do(dmg, 'gas cloud');
             await monstunseesu(M_SEEN_POISON);
         } else {
             await update_topl('You cough!');
@@ -581,10 +568,33 @@ async function inside_gas_cloud(reg, mtmp) {
         }
         return false;
     }
-    // SCOPE: monster-in-poison-cloud damage/death is not modeled (no covered
-    // session has a non-hero monster standing in a damaging cloud yet); the
-    // ttl refresh above (the only effect a damage-0 cloud can have) is
-    // faithful for every case reached so far.
+    const { Monnam } = await import('./do_name.js');
+    const { m_poisongas_ok_mon } = await import('./monmove.js');
+    const { wake_nearto } = await import('./cmd.js');
+    const { setmangry, killed } = await import('./uhitm.js');
+    const { monkilled_mm } = await import('./mhitm.js');
+    if (m_poisongas_ok_mon(mtmp) !== M_POISONGAS_OK) {
+        if (msound_of(data) !== 0) {
+            const dx = mtmp.mx - game.u.ux, dy = mtmp.my - game.u.uy;
+            if (cansee(mtmp.mx, mtmp.my) || dx * dx + dy * dy < 8)
+                await update_topl(`${Monnam(mtmp)} coughs!`);
+            await wake_nearto(mtmp.mx, mtmp.my, 2);
+        }
+        if (reg.herosFault) await setmangry(mtmp, true);
+        if (!(mflags1_of(data) & M1_NOEYES) && mtmp.mcansee) {
+            mtmp.mblinded = 1;
+            mtmp.mcansee = 0;
+        }
+        if (((data?.mresists || 0) | (mtmp.mextrinsics || 0)
+             | (mtmp.mintrinsics || 0)) & 0x20 /* MR_POISON */)
+            return false;
+        mtmp.mhp -= rnd(dam) + 5;
+        if (mtmp.mhp <= 0) {
+            if (reg.herosFault) await killed(mtmp);
+            else await monkilled_mm(mtmp, 7 /* AD_DRST */, 'gas cloud');
+            if (mtmp.mhp <= 0) return true;
+        }
+    }
     return false;
 }
 
@@ -635,8 +645,7 @@ export function add_mon_to_reg(reg, mon) {
 // C ref: region.c:192 remove_mon_from_reg(reg, mon) — it left or died.  The
 // removal is a SWAP WITH THE LAST ELEMENT, not a splice: C moves
 // monsters[n_monst-1] into the freed slot.  run_regions() walks the list, so
-// preserving that reorder matters (js/region.js's own m_in_out_region() uses
-// splice, which is the C behaviour of a different function).
+// preserving that reorder matters for both movement and per-turn callbacks.
 export function remove_mon_from_reg(reg, mon) {
     if (!reg || !mon) return;
     for (let i = 0; i < reg.monsters.length; i++)

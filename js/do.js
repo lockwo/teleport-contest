@@ -24,7 +24,7 @@
 import { game } from './gstate.js';
 import { exercise } from './attrib.js';
 import { A_STR } from './const.js';
-import { rn2, rn1, rnd, rnl, d } from './rng.js';
+import { rn2, rn1, rnd, rnl, d, rnz } from './rng.js';
 import { print_dungeon, builds_up, In_hell, Is_valley, surface,
          find_hell, dunlevs_in_dungeon, single_level_branch, level_difficulty_c,
          at_dgn_entrance, Is_bigroom, lev_by_name } from './dungeon.js';
@@ -58,18 +58,18 @@ import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          NON_PM, G_GENOD, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES, UTOTYPE_NONE,
          UTOTYPE_DEFERRED, UTOTYPE_ATSTAIRS, UTOTYPE_FALLING, UTOTYPE_PORTAL,
          UTOTYPE_RMPORTAL, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX,
-         MIGR_EXACT_XY } from './const.js';
+         MIGR_EXACT_XY, I_SPECIAL, TIMEOUT, W_ARTI, LEVITATION } from './const.js';
 import { docrt, flush_screen, pline, update_topl, urgent_topl, topl_more, y_n, newsym,
          see_nearby_objects } from './display.js';
 import { seetrap, dotrap } from './trap.js';
 import { check_special_room } from './shkroom.js';
 import { forget_temple_entry } from './priest.js';
-import { near_capacity, addinv, prinv } from './invent.js';
+import { near_capacity, addinv, prinv, worn_extrinsic, worn_blocked } from './invent.js';
 import { BOULDER, run_object_timers, mksobj, AMULET_OF_YENDOR,
          is_rider_pm } from './mkobj.js';
 import { vision_reset, vision_recalc, Blind, cansee,
          recalc_block_point } from './vision.js';
-import { hide_monst } from './mon.js';
+import { hide_monst, DEADMONSTER } from './mon.js';
 import { mflags2_of, M2_STALK, is_swimmer_flag, throws_rocks_flag,
          is_flyer_flag, mflags1_of, mflags3_of, M1_WALLWALK, M2_UNDEAD,
          M3_DISPLACES, humanoid } from './monflags_data.js';
@@ -633,7 +633,7 @@ function format_do_killer(knam, k_format) {
 
 // C ref: hack.c maybe_wail() — the low-HP warning, throttled to once per 50
 // moves through gw.wailmsg.
-async function maybe_wail() {
+export async function maybe_wail() {
     const u = game.u;
     if ((game.moves ?? 0) <= (game._wailmsg ?? 0) + 50) return;
     game._wailmsg = game.moves ?? 0;
@@ -657,7 +657,10 @@ function Fumbling_do() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
 function Flying_do() {
     return !!(game.u?.HFlying || game.u?.EFlying || game.u?.uprops?.Flying);
 }
-function Levitation_do() { return !!game.u?.uprops?.Levitation; }
+function Levitation_do() {
+    return !!(game.u?.uprops?.Levitation || worn_extrinsic(LEVITATION))
+        && !(game.u?.uprops?.BLevitation || worn_blocked(LEVITATION));
+}
 // C ref: youprop.h Punished — u.uball is set only while punished.
 function Punished_do() { return !!game.u?.uball; }
 
@@ -985,6 +988,11 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // analog (see the comment above), so it is the one place that needs the
     // call — js/save.js's own savemonchn() only runs on a true save-file
     // round trip (segment boundary), never on a within-segment level switch.
+    // C ref: save.c:483-488 — dead monsters are purged before saving a level.
+    // They must not reach getlev_restore's catch-up healing on a later visit.
+    if (g.level?.monsters) {
+        g.level.monsters = g.level.monsters.filter(m => !DEADMONSTER(m) || m.isgd);
+    }
     for (const mtmp of (g.level?.monsters || [])) {
         if (mtmp.ispriest) forget_temple_entry(mtmp);
     }
@@ -1394,6 +1402,8 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         more_experienced(level_difficulty(), 0);
         await newexplevel();
     }
+    // C ref: do.c:1967 — the arrival-only portal guard ends here.
+    u.uz0 = { dnum: u.uz.dnum, dlevel: u.uz.dlevel };
     // C ref: do.c:1969 `#ifdef INSURANCE save_currentstate();` (config.h defines
     // INSURANCE).  The checkpoint's savelev(WRITING) has one effect the game can
     // see: save_engravings() points each engraving's text back at its buffer
@@ -2316,8 +2326,7 @@ function next_to_u() {
 // Covers the on-foot descent, the deliberate plunge into a seen pit/hole
 // (dotrap TOOKPLUNGE), the Gehennom gate confirmation, levitation, the rooted /
 // stuck-steed / held refusals and their ECMD_TIME-vs-ECMD_OK turn cost.  Still
-// missing: flags.autodig (default off), the Upolyd ceiling-hider drop-out, and
-// controlled-levitation float_down().
+// missing: flags.autodig (default off) and the Upolyd ceiling-hider drop-out.
 // C ref: do.c:1110 u_stuck_cannot_go(updn) — a held hero can't take the stairs,
 // and the failed attempt COSTS THE TURN (both callers return ECMD_TIME), so the
 // monsters get a move.  The sticks()/uswallow arms need a polymorphed or
@@ -2349,12 +2358,27 @@ export async function dodown() {
         ladder_down = !stairs_down;
     }
 
-    // C ref: do.c:1153 — a levitating hero floats above the stairs and does not
-    // descend; ECMD_OK, so no turn passes.  The controlled-levitation early-out
-    // above it (HLevitation & I_SPECIAL / ELevitation & W_ARTI -> float_down(),
-    // with its rnz(100) artifact-age bump) needs an artifact or #sit-granted
-    // levitation and is not modelled; nor is the Blind "don't reveal an unknown
-    // staircase" glyph check (it needs the remembered-glyph map).
+    // C ref: do.c:1154-1174 — '>' ends controlled levitation, even when
+    // blocked. Landing uses the turn but does not also descend the stairs.
+    if (((u.uprops?.Levitation | 0) & I_SPECIAL)
+        || (worn_extrinsic(LEVITATION) & W_ARTI)) {
+        if (worn_extrinsic(LEVITATION) & W_ARTI) {
+            const { artifact_has_invprop } = await import('./artifact.js');
+            for (const obj of game.invent || []) {
+                if (obj.oartifact && artifact_has_invprop(obj, LEVITATION)) {
+                    obj.age = Math.max(obj.age || 0, game.moves) + rnz(100);
+                }
+            }
+        }
+        const { float_down } = await import('./trap.js');
+        if (await float_down(I_SPECIAL | TIMEOUT, W_ARTI)) return 1;
+        if (!u.uprops?.Levitation && !worn_extrinsic(LEVITATION)) {
+            await pline('Your latent levitation ceases.');
+            return 1;
+        }
+    }
+
+    // A hero still levitating cannot descend; no turn passes.
     if (Levitation_do()) {
         // C ref: hack.c floating_above(what) — "You are floating high above %s."
         await pline(`You are floating high above the ${
@@ -3568,7 +3592,7 @@ export async function deferred_goto() {
 
         assign_level(dest, u.utolev);
         assign_level(oldlev, u.uz);
-        if (game.dfr_pre_msg) await pline(String(game.dfr_pre_msg));
+        if (game.dfr_pre_msg) await update_topl(String(game.dfr_pre_msg));
         await goto_level(dest, !!(typmask & UTOTYPE_ATSTAIRS),
                          !!(typmask & UTOTYPE_FALLING),
                          !!(typmask & UTOTYPE_PORTAL));
@@ -3581,7 +3605,7 @@ export async function deferred_goto() {
             }
         }
         if (game.dfr_post_msg && !on_level(u.uz, oldlev))
-            await pline(String(game.dfr_post_msg));
+            await update_topl(String(game.dfr_post_msg));
     }
     u.utotype = UTOTYPE_NONE; /* our caller keys off of this */
     if (game.dfr_pre_msg) game.dfr_pre_msg = null;

@@ -311,7 +311,7 @@ function strstri(str, sub) {
     return k < 0 ? null : String(str).slice(k);
 }
 // C ref: you.h mhe(mon).
-function mhe(mon) {
+export function mhe(mon) {
     return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_HALLU)].he;
 }
 

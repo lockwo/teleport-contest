@@ -465,8 +465,9 @@ export async function potionhit_hero(obj, how) {
         `The ${botlnam} crashes on your ${body_part(HEAD)} and breaks into shards.`);
     // losehp(Maybe_Half_Phys(rnd(2)), "thrown potion"/"propelled potion",
     // KILLED_BY_AN); POTHIT_OTHER_THROW (3) is the scatter case.
-    let dmg = Maybe_Half_Phys(rnd(2));                   // potion.c:1638 rnd(2)
-    u.uhp -= dmg;
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(Maybe_Half_Phys(rnd(2)),
+        how === 3 ? 'propelled potion' : 'thrown potion', KILLED_BY_AN);
     // C ref: potion.c:1680-1681 — "oil doesn't instantly evaporate; Neither
     // does a saddle hit".  hit_saddle is always false on the isyou path;
     // cansee(tx,ty) is the hero's own square, true unless Blind.  No RNG.
@@ -489,7 +490,7 @@ export async function potionhit_hero(obj, how) {
             await update_topl(`This burns${
                 obj.blessed ? ' a little' : obj.cursed ? ' a lot' : ''}!`);
             const adm = Maybe_Half_Phys(d(obj.cursed ? 2 : 1, obj.blessed ? 4 : 8));
-            u.uhp -= adm;
+            await losehp_do(adm, 'potion of acid', KILLED_BY_AN);
         }
         break;
     case POT_POLYMORPH:
@@ -504,12 +505,7 @@ export async function potionhit_hero(obj, how) {
     default:
         break; // POT_SLEEPING and others: no direct isyou effect
     }
-    if (u.uhp < 1) {
-        const { done_in_by } = await import('./end.js');
-        await done_in_by(null, 0 /*DIED*/);
-    }
     // distance == 0 for the hero -> always breathe the vapors (potion.c:1903).
-    void how;
     await potionbreathe_hero(obj);
 }
 
@@ -585,7 +581,7 @@ export async function potionbreathe_hero(obj) {
     case POT_CONFUSION:
     case POT_BOOZE:
         if (!Confusion())
-            await update_topl('You feel somewhat dizzy.');
+            await update_topl(`${Unaware() ? 'You dream that you feel' : 'You feel'} somewhat dizzy.`);
         make_confused(itimeout_incr(HProp('Confusion'), rnd(5)), false); // rnd(5)
         break;
     case POT_INVISIBILITY:
@@ -775,7 +771,7 @@ async function peffect_booze(otmp) {
     }
     if (!otmp.odiluted) await healup(1, 0, false, false);
     if (u) u.uhunger = (u.uhunger ?? 900) + 10 * (2 + bcsign(otmp));
-    newuhs(false);
+    await newuhs(false);
     exercise(A_WIS, false);
     if (otmp.cursed) {
         pline_append_sync('You pass out.');
@@ -995,7 +991,7 @@ async function peffect_water(otmp) {
     if (!otmp.blessed && !otmp.cursed) {
         pline_sync(`This tastes like ${hliquid('water')}.`);
         u.uhunger = (u.uhunger ?? 900) + rnd(10);          // potion.c:722
-        newuhs(false);
+        await newuhs(false);
         return;
     }
     game.potion_unkn = (game.potion_unkn || 0) + 1;
@@ -1123,7 +1119,7 @@ async function peffect_see_invisible(otmp) {
     if (otmp.otyp === POT_FRUIT_JUICE) {
         const u = game.u;
         if (u) u.uhunger = (u.uhunger ?? 900) + (otmp.odiluted ? 5 : 10) * (2 + bcsign(otmp));
-        newuhs(false);
+        await newuhs(false);
         return;
     }
     if (!otmp.cursed)
@@ -1529,9 +1525,7 @@ export async function dodrink() {
         return ECMD_TIME;
     } else if (objdescr_is(otmp, 'smoky') && !mvitals_gone('djinni')
                && !rn2(POTION_OCCUPANT_CHANCE(mvitals_born('djinni')))) {
-        // djinni_from_bottle(otmp) rolls rn2(5) for the djinni's mood and then
-        // its wish/gift branch; makemon-ing a named djinni mid-turn is outside
-        // this file's lane, so the object is consumed after the two rolls above.
+        await djinni_from_bottle(otmp);
         useup(otmp);
         return ECMD_TIME;
     }
@@ -3183,7 +3177,6 @@ async function p_mongone(mon) {
 // rn2(5) for the djinni's mood, and then a SECOND roll only for a blessed
 // (rnd(4)) or cursed (rn2(4)) bottle.  The resulting distribution is
 // blessed 80/5/5/5/5, uncursed 20/20/20/20/20, cursed 5/5/5/5/80.
-// js/potion.js:1457 spends the rn2(5) in place at the peffects() call site.
 export async function djinni_from_bottle(obj) {
     const u = game.u;
     const pmidx = name_to_pmidx('djinni');
@@ -3297,7 +3290,7 @@ export async function split_mon(mon, mtmp) {
         if (mon.mhp > mon.mhpmax)  /* sanity precaution */
             mon.mhp = mon.mhpmax;
         const { clone_mon } = await import('./makemon.js');
-        mtmp2 = (mon.mhp > 1) ? clone_mon(mon, 0, 0) : null;
+        mtmp2 = (mon.mhp > 1) ? await clone_mon(mon, 0, 0) : null;
         if (mtmp2) {
             mtmp2.mhpmax = Math.trunc(mon.mhpmax / 2);
             mon.mhpmax -= mtmp2.mhpmax;

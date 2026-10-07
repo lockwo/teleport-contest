@@ -106,6 +106,8 @@ import { base_armcat } from './objarmor_data.js';
 import { find_ac } from './u_init.js';
 import { moveloop_turn, youHaveFast, youHaveVeryFast } from './allmain.js';
 import { acurr_eff, acurr_str_encoded, exercise, set_moreluck } from './attrib.js';
+import { onbill, shk_scan, add_to_billobjs } from './shk.js';
+import { shop_keeper } from './shkroom.js';
 import { hitval, dbon, weapon_type, weapon_hit_bonus_core,
          weapon_dam_bonus_core, weapon_descr } from './weapon.js';
 import { P_TWO_WEAPON_COMBAT as P_TWO_WEAPON_COMBAT_INV,
@@ -526,7 +528,6 @@ function carry_obj_effects_message(_obj) {}
 function obj_merge_light_sources(_from, _to) {}
 function obj_stop_timers(obj) { if (obj) obj.timed = false; }
 function obj_absorb(potmp, pobj) { if (pobj) pobj.obj = null; return potmp?.obj || null; }
-function pudding_merge_message(_otmp, _obj) {}
 function maybereleaseobuf(_str) {}
 function dupstr(s) { return String(s ?? ''); }
 // C ref: objnam.c cxname_singular() == xname_flags(obj, CXN_SINGULAR). xname
@@ -892,7 +893,35 @@ function curse(obj) { if (obj) { obj.cursed = true; obj.blessed = false; } }
 function stop_timer(_kind, _id) { return 0; }
 function obj_to_any(obj) { return obj; }
 function oname(obj, name) { setONAME(obj, name); return obj; }
-export function obfree(obj, _mergeInto) { removeObjectFromAllInventories(obj); }
+export function obfree(obj, merge) {
+    removeObjectFromAllInventories(obj);
+    let shkp = null;
+    if (obj.unpaid) {
+        for (const mon of shk_scan(true)) {
+            if (onbill(obj, mon)) {
+                shkp = mon;
+                break;
+            }
+        }
+    }
+    shkp ||= shop_keeper(game.u?.ushops?.[0]);
+    const bp = onbill(obj, shkp);
+    if (!bp) return;
+    if (!merge) {
+        bp.useup = true;
+        obj.unpaid = 0;
+        obj.where = 'free';
+        add_to_billobjs(obj);
+        return;
+    }
+    const bpm = onbill(merge, shkp);
+    if (!bpm) return;
+    bpm.bquan += bp.bquan;
+    const eshk = shkp.eshk;
+    const index = eshk.bill.indexOf(bp);
+    eshk.bill[index] = eshk.bill[--eshk.billct];
+    eshk.bill.length = eshk.billct;
+}
 // C ref: mkobj.c splitobj():457 — the copy is NOT worn/timed/lit: `otmp->timed
 // = 0; otmp->lamplit = 0; otmp->owornmask = 0L;`.  Carrying owornmask over made
 // a single arrow split off the quiver keep "(in quiver)", so hitfloor() printed
@@ -6613,6 +6642,13 @@ async function bhit_thrown_landing(dx, dy, range, obj) {
         }
         if (mtmp) { hitmon = mtmp; break; }
         if (!throw_zap_pos(typ) || throw_closed_door(loc)) { bx -= dx; by -= dy; break; }
+        // C ref: zap.c:4081-4085 — the missile reveals an empty square
+        // before animation, forgetting a stale invisible-monster marker.
+        if (loc?.invisMon && cansee(bx, by)) {
+            const { unmap_object } = await import('./display.js');
+            unmap_object(bx, by);
+            newsym(bx, by);
+        }
         // C ref: zap.c bhit():4092 `if (IS_SINK(typ) && weapon != FLASHED_LIGHT)
         // break;` — a thrown object always falls right onto a sink it reaches
         // (no revert, unlike the wall/closed-door case above).  js/dothrow.js's
@@ -6823,7 +6859,7 @@ async function hmon_thrown(mon, obj, dieroll, skillsnap) {
             dmg += weapon_dam_bonus_thrown(fired ? skillsnap.wep : skillsnap.obj,
                                           skillsnap,
                                           fired ? skillsnap.wep_type : skillsnap.obj_type);
-            if (train_weapon_skill) use_skill(weapon_type(skillwep), 1);
+            if (train_weapon_skill) await use_skill(weapon_type(skillwep), 1);
         }
     }
     if (dmg < 1) dmg = 1;      /* get_dmg_bonus is TRUE; target is no shade */
@@ -7180,7 +7216,7 @@ function should_mulch_missile(obj) {
         return false;
     const chance = 3 + greatest_erosion(obj) - (obj.spe || 0);
     let broken = chance > 1 ? (rn2(chance) !== 0) : (rn2(4) === 0);
-    if (obj.blessed && (game.context?.mon_moving ? (rn2(3) !== 0) : (rnl(4) !== 0)))
+    if (obj.blessed && (game.context?.mon_moving ? (rn2(3) === 0) : (rnl(4) === 0)))
         broken = false;
     if (((obj.oclass === GEM_CLASS && objects[obj.otyp]?.oc_tough)
          || obj.otyp === FLINT) && rn2(2) === 0)
@@ -7424,8 +7460,12 @@ async function throwit(otmp, skillsnap, wep_mask) {
         return ECMD_TIME;
     }
 
+    const recoil = Is_airlevel()
+        || !!((u.uprops?.Levitation || worn_extrinsic(LEVITATION))
+              && !(u.uprops?.BLevitation || worn_blocked(LEVITATION)));
     let land;
     if (otmp.otyp === BOOMERANG_OTYP && !Underwater) {
+        if (recoil) await DT.hurtle(-u.dx, -u.dy, 1, true);
         // C ref: dothrow.c:1601 — a boomerang does NOT fly in a straight line,
         // so it never reaches bhit(); zap.c boomhit() walks its curve instead.
         const res = await DT.boomhit(otmp, u.dx, u.dy, skillsnap);
@@ -7449,7 +7489,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
         // launcher, non-gem) has its range HALVED (range /= 2) and prints the
         // "by hand" notice.
         const crossbowing = ammo_and_launcher(otmp, game.uwep) && weapon_type(otmp) === 22 /* P_CROSSBOW */;
-        const urange = Math.floor((crossbowing ? 18 : acurr_str_throw()) / 2);
+        let urange = Math.floor((crossbowing ? 18 : acurr_str_throw()) / 2);
         // C ref: dothrow.c:1622 — a HEAVY_IRON_BALL is easy to roll, so its
         // weight is divided by 100 rather than 40; using /40 for it gave range
         // 1 instead of the 5 an ordinary hero gets, so a thrown ball stopped
@@ -7473,6 +7513,10 @@ async function throwit(otmp, skillsnap, wep_mask) {
                 await update_topl(`You aren't wielding ${launcherName}, so you throw your ${descr} by hand.`);
             }
         }
+        if (recoil) {
+            urange = Math.max(urange - range, 1);
+            range = Math.max(range - urange, 1);
+        }
 
         // C ref: dothrow.c:1660 — a boulder is thrown by a giant and flies 20; a
         // thrown Mjollnir is heavy and only makes half the distance.
@@ -7482,6 +7526,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
 
         // Trajectory + landing.
         land = await bhit_thrown_landing(u.dx, u.dy, range, otmp);
+        if (recoil) await DT.hurtle(-u.dx, -u.dy, urange, true);
     }
     // C ref: dothrow.c throwit() — `if (!obj) return;` bhit() already disposed
     // of a missile that broke against iron bars.
@@ -9720,16 +9765,16 @@ async function pickup_checks() {
         // under the hero picks the message; only the final `else` is generic.
         const dmask = game.level?.at(x, y)?.doormask || 0;
         const looted = game.level?.at(x, y)?.looted;
-        if (IS_THRONE(typ0)) game._pending_message = `It must weigh${looted ? ' almost' : ''} a ton!`;
-        else if (IS_SINK(typ0)) game._pending_message = 'The plumbing connects it to the floor.';
-        else if (IS_GRAVE(typ0)) game._pending_message = "You don't need a gravestone.  Yet.";
-        else if (IS_FOUNTAIN(typ0)) game._pending_message = 'You could drink the water...';
-        else if (IS_DOOR(typ0) && (dmask & D_ISOPEN)) game._pending_message = "It won't come off the hinges.";
-        else if (IS_ALTAR(typ0)) game._pending_message = 'Moving the altar would be a very bad idea.';
-        else if (typ0 === STAIRS) game._pending_message = 'The stairs are solidly affixed.';
-        else game._pending_message = 'There is nothing here to pick up.';
-        remember_topl();
-        game._toplines = game._pending_message;
+        let msg;
+        if (IS_THRONE(typ0)) msg = `It must weigh${looted ? ' almost' : ''} a ton!`;
+        else if (IS_SINK(typ0)) msg = 'The plumbing connects it to the floor.';
+        else if (IS_GRAVE(typ0)) msg = "You don't need a gravestone.  Yet.";
+        else if (IS_FOUNTAIN(typ0)) msg = 'You could drink the water...';
+        else if (IS_DOOR(typ0) && (dmask & D_ISOPEN)) msg = "It won't come off the hinges.";
+        else if (IS_ALTAR(typ0)) msg = 'Moving the altar would be a very bad idea.';
+        else if (typ0 === STAIRS) msg = 'The stairs are solidly affixed.';
+        else msg = 'There is nothing here to pick up.';
+        await update_topl(msg);
         return 0;
     }
     // C ref: hack.c pickup_checks():3849 — can_reach_floor() gate.  This
@@ -11845,7 +11890,7 @@ export function mergable(otmp, obj) {
     if (obj.how_lost === LOST_EXPLODING || otmp.how_lost === LOST_EXPLODING) return false;
     if (otmp.how_lost && obj.how_lost !== otmp.how_lost) return false;
     if (obj.globby) return true;
-    if (obj.unpaid !== otmp.unpaid || obj.spe !== otmp.spe || obj.no_charge !== otmp.no_charge
+    if (obj.unpaid !== otmp.unpaid || obj.spe !== otmp.spe || !!obj.no_charge !== !!otmp.no_charge
         || obj.obroken !== otmp.obroken || obj.otrapped !== otmp.otrapped || obj.lamplit !== otmp.lamplit
         // C obj.h:139 aliases opoisoned to otrapped; JS stores it separately.
         || !!obj.opoisoned !== !!otmp.opoisoned)

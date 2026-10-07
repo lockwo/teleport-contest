@@ -43,6 +43,7 @@ import { mflags1_of, mflags2_of, M1_NOTAKE, M1_NOHANDS, M1_NOLIMBS,
 import { makesingular } from './objnam.js';
 import { costly_spot } from './shkroom.js';
 import { hliquid } from './dungeon.js';
+import { can_reach_floor } from './engrave.js';
 
 /* pickup.c:12 */
 export const CONTAINED_SYM = '>';
@@ -270,13 +271,6 @@ function welded(obj) {
     return false;
 }
 const WEAPON_CLASS_P = 2;   /* objclass.h WEAPON_CLASS */
-/* engrave.c can_reach_floor(check_pit) */
-function can_reach_floor(_check_pit) {
-    const u = ustate();
-    if (u.uswallow) return false;
-    if (u.uprops?.Levitation) return false;
-    return true;
-}
 function t_at(x, y) {
     for (const t of (game.level?.traps || [])) if (t.tx === x && t.ty === y) return t;
     return null;
@@ -1630,8 +1624,8 @@ export async function loot_mon(mtmp, passed_info, prev_loot) {
         : null;
     if (otmp) {
         if (passed_info) passed_info.value = 1;
-        const c = await ynq(
-            `Do you want to remove the saddle from ${mon_nam(mtmp)}?`);
+        const c = await y_n(
+            `Do you want to remove the saddle from ${mon_nam(mtmp)}?`, 'ynq', 'n');
         if (c === 'y') {
             if (nolimbs_hero()) {
                 await pline("You can't do that without limbs.");

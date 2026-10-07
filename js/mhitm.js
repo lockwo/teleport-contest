@@ -29,7 +29,7 @@
 // gas-spore explosion (mon_explodes, via js/explode.js) are now wired below.
 
 import { game } from './gstate.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, an } from './hacklib.js';
 import { hitval, possibly_unwield } from './weapon.js';
 import { rn2, rnd, d } from './rng.js';
 import {
@@ -39,7 +39,8 @@ import {
     CORPSTAT_NONE, CORPSTAT_FEMALE, CORPSTAT_MALE, CORPSTAT_HISTORIC,
     MGIVENNAME, has_mgivenname,
 } from './const.js';
-import { DEADMONSTER, mvitals_died, healmon, unstuck, vamp_stone, lifesaved_monster } from './mon.js';
+import { DEADMONSTER, mvitals_died, resurrect_kop, healmon, unstuck, vamp_stone, lifesaved_monster,
+    level_specific_nocorpse } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
 import { update_topl, Deaf_hero } from './display.js';
@@ -51,10 +52,13 @@ import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
          is_undead_flag, is_demon_flag, unsolid_flag, mflags1_of, M1_NOEYES,
          M1_THICK_HIDE, M1_WALLWALK, M1_TPORT, is_neuter_flag,
 } from './monflags_data.js';
+import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag } from './monflags_data.js';
+import { set_mon_data } from './mondata.js';
+import { G_GENOD } from './const.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { xname, youmonst_data_pub } from './invent.js';
 import { MATTK } from './monattk_data.js';
-import { name_to_pmidx, monster_by_pmidx, is_home_elemental } from './makemon.js';
+import { name_to_pmidx, monster_by_pmidx, is_home_elemental, little_to_big, pmname_of_pmidx } from './makemon.js';
 // newcham/pm_to_cham: used only by the appended gulpmm()/mon_poly() below
 import { newcham, newcham_wizard_aware, pm_to_cham } from './makemon.js';
 import { mhitm_adtyping, YOUMONST, paralyze_monst, stagger } from './mhitm_ad.js';
@@ -62,7 +66,7 @@ import { mhitm_adtyping, YOUMONST, paralyze_monst, stagger } from './mhitm_ad.js
 // boundary); js/mhitu.js is the single faithful copy.
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
 import { find_mac as worn_find_mac } from './worn.js';
-import { Monnam, mon_nam, a_monnam, mhis } from './do_name.js';
+import { Monnam, mon_nam, a_monnam, mhis, mhe, YMonnam } from './do_name.js';
 
 // C ref: mhitm.c:358 gv.vis — latched ONCE per mattackm() call, before the
 // attack loop.  Several mhitm_ad_* handlers rloc() a combatant and then still
@@ -210,27 +214,12 @@ const mm_resists_cold = (mon) => mm_resists(mon, MR_COLD);
 const mm_resists_elec = (mon) => mm_resists(mon, MR_ELEC);
 const mm_resists_acid = (mon) => mm_resists(mon, MR_ACID);
 
-// C ref: mon->data — the permonst record.  dog.js builds the starting pet with
-// a MINIMAL data object whose pmidx is the C PM_* value, which is NOT this
-// port's MONS-table index (kitten: C 34 == our jaguar; pony: C 102 == our gray
-// unicorn), and which carries no ac/mlevel/msize/geno at all.  Every
-// pmidx-keyed table (MATTK, MFLAGS1/2/3) therefore answers for the wrong
-// species when handed a pet's data directly.  Re-resolve through the species
-// NAME, which both representations carry, and use the canonical MONS record
-// everywhere mattackm needs species data.
-const _permonst_cache = new Map();
+// C ref: mon->data. Species indices distinguish the human and animal
+// lycanthrope forms, which share a name.
 export function permonst(mon) {
     const dat = is_youmonst_mm(mon) ? youmonst_data_pub() : mon?.data;
     if (!dat) return null;
-    const nm = dat.name;
-    if (!nm) return dat;
-    let rec = _permonst_cache.get(nm);
-    if (rec === undefined) {
-        const p = name_to_pmidx(nm);
-        rec = (p >= 0) ? monster_by_pmidx(p) : null;
-        _permonst_cache.set(nm, rec);
-    }
-    return rec || dat;
+    return dat.pmidx != null ? (monster_by_pmidx(dat.pmidx) || dat) : dat;
 }
 
 // C ref: mons[].mattk[] — the attack list, trailing NO_ATTK slots dropped by
@@ -529,7 +518,7 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
             return (M_ATTK_DEF_DIED | M_ATTK_AGR_DIED);
         // AD_DGST's post-kill arm (newcham / wraith grow_up / nurse healmon /
         // mon_givit) is skipped: mon_givit draws RNG this port can't yet place.
-        const grew = grow_up(magr, mdef);
+        const grew = await grow_up(magr, mdef);
         return M_ATTK_DEF_DIED | (grew ? 0 : M_ATTK_AGR_DIED);
     }
     return (hitflags === M_ATTK_AGR_DIED) ? M_ATTK_AGR_DIED : M_ATTK_HIT;
@@ -735,6 +724,8 @@ async function corpse_chance(mdef) {
         return false;
     }
 
+    if (level_specific_nocorpse(mdat)) return false;
+
     // bigmonst/lizard/golem/mplayer/rider/shopkeeper always leave one: no rn2.
     if (((bigmonst(mdat) || mdat?.name === 'lizard') && !mdef.mcloned)
         || mdat?.mcls === S_GOLEM || is_mplayer(mdat) || is_rider(mdat)
@@ -768,6 +759,8 @@ function is_pool(x, y) {
 export async function mondied_mm(mdef) { return await killMonster(mdef); }
 async function killMonster(mdef, withCorpse = true) {
     mdef.mhp = 0;
+    mvitals_died(mdef);                // mondead restores the true form first
+    await resurrect_kop(mdef);
     // C ref: mon.c mondead() — "if (glyph_is_invisible(...)) unmap_object(...)"
     // runs before m_detach.  A defender killed this same attack may have just
     // had pre_mm_attack() mark its square with the 'I' remembered-unseen-
@@ -776,20 +769,6 @@ async function killMonster(mdef, withCorpse = true) {
     // remembered contents instead of keeping the 'I'.
     const loc0 = game.level?.at(mdef.mx, mdef.my);
     if (loc0?.invisMon) unmap_object(mdef.mx, mdef.my);
-    // C ref: mon.c:3147 mondead() — "Dead Kops may come back."  mondied()
-    // runs mondead() (this rnd(5)) before corpse_chance().
-    if (permonst(mdef)?.mcls === 37 /* S_KOP */) {
-        let stway = game.stairs;
-        while (stway && (stway.isladder || stway.up)) stway = stway.next;
-        const r = rnd(5);
-        if (r === 1 || r === 2) {
-            const MK = await import('./makemon.js');
-            const ptr = permonst(mdef);
-            const kop = (r === 1 && stway) ? MK.makemon(ptr, stway.sx, stway.sy, 0)
-                                           : MK.makemon(ptr, 0, 0, 0);
-            if (kop) await MK.makemon_appears_msg(kop, kop.mx, kop.my, 0);
-        }
-    }
     // C ref: mon.c mondead() -> m_detach() -> mon_leaving_level() -> unstuck()
     // (mon.c:2703), whose re-grab rnd(2) precedes mondied()'s corpse_chance().
     await unstuck(mdef);
@@ -802,7 +781,6 @@ async function killMonster(mdef, withCorpse = true) {
     // make_corpse() places the cadaver at those same coordinates.
     const list = game.level?.monsters;
     if (list) {
-        mvitals_died(mdef);            // mon.c:3135
         const idx = list.indexOf(mdef);
         if (idx >= 0) list.splice(idx, 1);
     }
@@ -812,7 +790,7 @@ async function killMonster(mdef, withCorpse = true) {
     // C ref: mon.c mondied — make_corpse only when corpse_chance passed AND the
     // square can hold a corpse (accessible terrain or a pool).
     if (dropCorpse && mx > 0 && my >= 0 && (accessible(mx, my) || is_pool(mx, my)))
-        make_corpse(mdef, mx, my);
+        await make_corpse(mdef, mx, my);
     if (mx > 0 && my > 0) newsym(mx, my);
 }
 
@@ -824,17 +802,15 @@ async function killMonster(mdef, withCorpse = true) {
 // is not cosmetic: it rewrites max_increase, which is the MODULUS of the
 // rn2(max_increase) on the next line.
 //
-// NOT ported: the little_to_big() species change (kitten -> housecat and the
-// rest of grownups[]) with its "grows up into a housecat" message, gender flip
-// and G_GENOD death.  None of it draws RNG; it needs set_mon_data + the mvitals
-// genocide table, and mutating mon.data mid-game touches the pet's whole
-// (pmidx-mismatched) data representation.
-function grow_up(magr, mdef) {
+async function grow_up(magr, mdef) {
     if (DEADMONSTER(magr)) return false;       // makemon.c:2059
 
     const ptr = permonst(magr);
     const mlev = monLev(magr);
     const victimLev = monLev(mdef);
+    const oldtype = ptr.pmidx;
+    const newtype = little_to_big(oldtype);
+    const newptr = monster_by_pmidx(newtype);
 
     let hp_threshold = mlev * 8;               // makemon.c:2082
     if (!mlev) hp_threshold = 4;
@@ -843,6 +819,8 @@ function grow_up(magr, mdef) {
     else if (is_home_elemental(ptr)) hp_threshold *= 3;
 
     let lev_limit = Math.floor(3 * (ptr?.mlevel ?? 0) / 2); /* adj_lev() */
+    if (oldtype !== newtype && newptr.mlevel > lev_limit)
+        lev_limit = newptr.mlevel;
 
     // max_increase = rnd(victim->m_lev + 1), clamped so the gain stops at the
     // bottom of the next level.                          (makemon.c:2095-2098)
@@ -860,6 +838,29 @@ function grow_up(magr, mdef) {
     else if (lev_limit > 49) lev_limit = ((ptr?.mlevel ?? 0) > 49) ? 50 : 49;
 
     magr.m_lev = (magr.m_lev | 0) + 1;
+    if (magr.m_lev >= newptr.mlevel && newtype !== oldtype) {
+        const fem = is_male_flag(newptr) ? false
+            : is_female_flag(newptr) ? true : !!magr.female;
+        if (((game.mvitals?.[newtype]?.mvflags | 0) & G_GENOD) !== 0) {
+            if (mm_can_see_mon(magr))
+                await emitMMmsg(`As ${mon_nam(magr)} grows up into ${an(pmname_of_pmidx(newtype, fem))}, ${mhe(magr)} ${is_undead_flag(newptr) ? 'expires' : 'dies'}!`);
+            set_mon_data(magr, newptr);
+            await killMonster(magr);
+            return false;
+        } else if (mm_can_see_mon(magr)) {
+            const prefix = (magr.female && !fem) ? 'male '
+                : (fem && !magr.female) ? 'female ' : '';
+            const verb = (fem !== !!magr.female) ? 'changes into'
+                : humanoid(newptr) ? 'becomes' : 'grows up into';
+            await emitMMmsg(`${YMonnam(magr)} ${verb} ${an(prefix + pmname_of_pmidx(newtype, fem))}.`);
+        }
+        set_mon_data(magr, newptr);
+        if (magr.cham === oldtype && is_shapeshifter_flag(newptr))
+            magr.cham = newtype;
+        newsym(magr.mx, magr.my);
+        lev_limit = magr.m_lev;
+        magr.female = fem;
+    }
 
     // sanity checks (makemon.c:2164)
     if (magr.m_lev > lev_limit) {

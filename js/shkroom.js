@@ -75,7 +75,7 @@ function retireSpecialRoom(rno, type) {
     room.rtype = OROOM;
     const flagByType = {
         [COURT]: 'has_court', [SWAMP]: 'has_swamp', [MORGUE]: 'has_morgue',
-        [ZOO]: 'has_zoo', [BARRACKS]: 'has_barracks',
+        [ZOO]: 'has_zoo', [BARRACKS]: 'has_barracks', [BEEHIVE]: 'has_beehive',
         // C's clearing switch also lists TEMPLE, but its case falls through to
         // `default:` first and that sets rt = 0, so the TEMPLE arm is dead code
         // in C too ("temples should remain TEMPLEs") — omitted rather than

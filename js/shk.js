@@ -443,7 +443,7 @@ export function costly_spot(x, y) {
 }
 
 // C ref: shk.c onbill(obj, shkp, silent) — obj's bill entry, if any.
-function onbill(obj, shkp) {
+export function onbill(obj, shkp) {
     const eshk = shkp?.eshk;
     if (!eshk?.bill) return null;
     for (let ct = 0; ct < (eshk.billct || 0); ct++)
@@ -850,9 +850,6 @@ export function hidden_gold(even_if_unknown) {
 }
 
 // C ref: shk.c bp_to_obj(bp) -> o_on(id, gb.billobjs) / find_oid(id).
-// gb.billobjs (the chain holding FULLY used up billed items) is not modelled by
-// this port, so a useup entry whose object is already gone resolves to null and
-// make_itemized_bill() drops it rather than listing a phantom line.
 function oid_scan(list, id, depth) {
     for (const o of (list || [])) {
         if (!o) continue;
@@ -867,6 +864,7 @@ function oid_scan(list, id, depth) {
 export function bp_to_obj(bp) {
     const id = bp?.bo_id;
     if (id == null) return null;
+    if (bp.useup) return oid_scan(game.billobjs, id, 0);
     let r = oid_scan(game.invent, id, 0);
     if (r) return r;
     for (const mon of (game.level?.monsters || [])) {

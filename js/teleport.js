@@ -21,6 +21,7 @@ import { canseemon_shared as canseemon_tele } from './display.js';
 import {
     COLNO, ROWNO, DOOR, POOL, DRAWBRIDGE_UP, LAVAPOOL, LAVAWALL,
     D_CLOSED, D_LOCKED, STRAT_APPEARMSG, BOLT_LIM, TEMPLE, engulfing_u,
+    MM_IGNOREWATER, MM_IGNORELAVA,
 } from './const.js';
 import { BOULDER, place_object } from './mkobj.js';
 import {
@@ -109,6 +110,8 @@ export function goodpos(x, y, mtmp, gpflags) {
     const checkscary = (gpflags & GP_CHECKSCARY) !== 0;
     const allow_u = (gpflags & GP_ALLOW_U) !== 0;
     const avoid_monpos = (gpflags & GP_AVOID_MONPOS) !== 0;
+    const ignorewater = (gpflags & MM_IGNOREWATER) !== 0;
+    const ignorelava = (gpflags & MM_IGNORELAVA) !== 0;
 
     if (!isok(x, y)) return false;
 
@@ -131,22 +134,23 @@ export function goodpos(x, y, mtmp, gpflags) {
         if (mtmp2 && (mtmp2 !== mtmp || mtmp.wormno)) return false;
 
         mdat = mtmp.data;
-        if (is_pool(x, y)) {
+        if (is_pool(x, y) && !ignorewater) {
             // Water: a swimmer may land here; anyone else needs to be airborne.
             // Is_waterlevel()/is_waterwall() are FALSE on ordinary levels.
             return is_swimmer_flag(mdat) || m_in_air(mtmp);
-        } else if (mdat?.mcls === S_EEL_MCLS && rn2(13)) {
+        } else if (mdat?.mcls === S_EEL_MCLS && rn2(13) && !ignorewater) {
             // An eel out of water usually refuses the square — and this rn2(13)
             // fires whenever an eel is offered one, so it must not be skipped.
             return false;
-        } else if (is_lava(x, y)) {
+        } else if (is_lava(x, y) && !ignorelava) {
             return m_in_air(mtmp) || likes_lava(mdat);
         }
         if (passes_walls_flag(mdat) && may_passwall(x, y)) return true;
         if (amorphous_flag(mdat) && closed_door(x, y)) return true;
         if (checkscary && onscary(x, y, mtmp)) return false;
     }
-    if (!accessible(x, y)) return false;   // (pool/lava already returned above)
+    if (!accessible(x, y) && !(is_pool(x, y) && ignorewater)
+        && !(is_lava(x, y) && ignorelava)) return false;
     if (sobj_at_boulder(x, y) && (!mdat || !throws_rocks_flag(mdat)))
         return false;
     // is_exclusion_zone(LR_MONGEN, ...) only applies with GP_AVOID_MONPOS
@@ -690,7 +694,7 @@ export async function teleds(nux, nuy, teleds_flags) {
     if (ball_active && (ball_still_in_range || allow_drag)) {
         const bc = await B.drag_ball(nux, nuy, allow_drag);
         if (bc) {
-            B.move_bc(0, bc.bc_control, bc.ballx, bc.bally, bc.chainx, bc.chainy);
+            await B.move_bc(0, bc.bc_control, bc.ballx, bc.bally, bc.chainx, bc.chainy);
         } else {
             /* dragging fails if hero is encumbered beyond 'burdened'; uball
                might've been cleared via drag_ball -> spoteffects -> dotrap */
@@ -1057,10 +1061,11 @@ export async function domagicportal(ttmp) {
     } else {
         totype = UTOTYPE_PORTAL;
         stunmsg = !Stunned_tp() ? 'You feel slightly dizzy.' : 'You feel dizzier.';
-        await make_stunned_tp(HStun_tp() + 3, false);
+        make_stunned_tp(HStun_tp() + 3);
     }
 
-    await schedule_goto_(target_level, totype, stunmsg, null);
+    const { schedule_goto } = await import('./do.js');
+    schedule_goto(target_level, totype, stunmsg, null);
 }
 
 // C ref: teleport.c:1776 rloc_to_flag(mtmp, x, y, rlocflags).
@@ -1435,10 +1440,17 @@ const I_SPECIAL_TP = 0x20000000;
 function uball_() { return game.u?.uball || null; }
 function uchain_() { return game.u?.uchain || null; }
 function carried_(obj) { return obj?.where === 'invent'; }
-function Stunned_tp() { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.HStun || game.u?.Stunned); }
-function HStun_tp() { return HProp_tp('HStun'); }
+function Stunned_tp() { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.Stun || game.u?.Stunned); }
+function HStun_tp() { return game.u?.uprops?.Stun || 0; }
 function Confusion_tp() { return HProp_tp('HConfusion') > 0; }
-async function make_stunned_tp(_xtime, _talk) { }   /* js/read.js:1538, private */
+// C ref: teleport.c:1485 make_stunned(..., FALSE); timeout.js owns recovery.
+function make_stunned_tp(xtime) {
+    const u = game.u;
+    u.uprops ||= {};
+    u.uprops.Stun = xtime;
+    u.Stunned = xtime > 0;
+    if (game.disp) game.disp.botl = true;
+}
 // C ref: include/hack.h distmin(x0,y0,x1,y1) — port is js/track.js:45, private.
 function distmin_(x0, y0, x1, y1) {
     return Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));

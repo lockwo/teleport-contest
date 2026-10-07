@@ -600,7 +600,7 @@ export function dig_typ(otmp, x, y) {
              : IS_TREE(ltyp) ? DIGTYP_TREE
              : DIGTYP_UNDIGGABLE;
     // is_pick(otmp)
-    if (sobj_at_typ(STATUE, x, y) && pick_can_reach(otmp, x, y))
+    if (sobj_at(STATUE, x, y) && pick_can_reach(otmp, x, y))
         return DIGTYP_STATUE;
     if (sobj_at_boulder(x, y) && pick_can_reach(otmp, x, y))
         return DIGTYP_BOULDER;
@@ -619,11 +619,6 @@ function pick_can_reach(_otmp, _x, _y) {
     return !(u?.uswallow) && !(u?.uprops?.Levitation);
 }
 
-function sobj_at_typ(otyp, x, y) {
-    for (let o = game.level?.at(x, y)?.objects; o; o = o.nexthere)
-        if (o.otyp === otyp) return o;
-    return null;
-}
 
 // C ref: dig.c use_pick_axe(obj) — applying a pick-axe/mattock or an axe.
 // An unwielded tool is wielded first and the command re-queues itself
@@ -1010,10 +1005,10 @@ function stop_timer(_action, arg) {
 function obj_to_any(o) { return { a_obj: o }; }
 
 // C ref: mkobj.c is_organic(otmp) — objects[otyp].oc_material <= WOOD.
-const MAT_WOOD = 7;
+const MAT_WOOD = 8;
 function is_organic_(otmp) {
     const mat = OBJECTS_TBL[otmp?.otyp]?.material;
-    return mat !== undefined && mat > 0 && mat <= MAT_WOOD;
+    return mat !== undefined && mat <= MAT_WOOD;
 }
 
 

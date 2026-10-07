@@ -4,7 +4,7 @@
 import { rn2, rnd, rn1, d } from './rng.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { monster_by_pmidx, mon_cwt, mon_cnutrit, name_to_pmidx } from './makemon.js';
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { pline, update_topl, y_n, note_topl, status_hold } from './display.js';
 import { poison_strdmg, exercise, acurr_eff, adjattrib } from './attrib.js';
@@ -553,7 +553,7 @@ async function do_reset_eat() {
 // NOTE: the live per-turn hook is allmain.js's own gethungry(); this export is
 // the canonical implementation the orchestrator can route allmain through.
 // Do NOT edit allmain.js from here.
-export function gethungry() {
+export async function gethungry() {
     const u = game.u;
     if (!u) return;
 
@@ -581,7 +581,7 @@ export function gethungry() {
         // worn-ring/amulet hunger sources, so only the Amulet case can fire.
         if (accessorytime === 16 && u.uhave?.amulet) u.uhunger--;
     }
-    newuhs(true);
+    await newuhs(true);
 }
 
 // The port has no ring/armor slow digestion and no intrinsic regeneration
@@ -600,7 +600,7 @@ const A_STR_EAT = A_STR;
 // doesn't print "you only feel hungry now"), the FAINTING rn2 roll, the
 // temporary strength loss at WEAK, and the starvation death.
 let _saved_hs = null;   // C: static save_hs / saved_hs
-export function newuhs(incr) {
+export async function newuhs(incr) {
     const u = game.u;
     if (!u) return;
     const h = u.uhunger ?? 900;
@@ -632,24 +632,31 @@ export function newuhs(incr) {
             || rn2(20 - uhunger_div_by_10) >= 19) {
             if ((u.uhs ?? NOT_HUNGRY) !== FAINTED && (game.multi ?? 0) >= 0) {
                 const duration = 10 - uhunger_div_by_10;
-                game._eat_occupation = null;
-                game._pending_message = note_topl('You faint from lack of food.');
-                game._toplin = 1;
-                u.uprops = u.uprops || {};
-                u.uprops.HDeaf = (u.uprops.HDeaf || 0) + duration;
-                if ((game.multi ?? 0) >= -duration) game.multi = -duration;
-                game.multi_reason = 'fainted from lack of food';
-                game.nomovemsg = 'You regain consciousness.';
-                game.afternmv = unfaint;
+                if (Array.isArray(game._hunger_msgs)) {
+                    game._hunger_msgs.faintDuration = duration;
+                } else {
+                    game._eat_occupation = null;
+                    game._pending_message = note_topl('You faint from lack of food.');
+                    game._toplin = 1;
+                    u.uprops = u.uprops || {};
+                    u.uprops.HDeaf = (u.uprops.HDeaf || 0) + duration;
+                    if ((game.multi ?? 0) >= -duration) game.multi = -duration;
+                    game.multi_reason = 'fainted from lack of food';
+                    game.nomovemsg = 'You regain consciousness.';
+                    game.afternmv = unfaint;
+                }
                 newhs = FAINTED;
-                // C also calls selftouch("Falling, you") when not levitating;
-                // that only matters while wielding a cockatrice corpse.
             }
         } else if (h < -(100 + 10 * acurr_eff(A_CON))) {
             u.uhs = STARVED;
-            game._pending_message = note_topl('You die from starvation.');
-            game._toplin = 1;
-            game._starved = true;      /* done(STARVING) is not modelled */
+            game.botl = true;
+            const { bot } = await import('./display.js');
+            await bot();
+            await update_topl('You die from starvation.');
+            game._killer_name = 'starvation';
+            const { done } = await import('./end.js');
+            const { STARVING } = await import('./const.js');
+            await done(STARVING);
             return;
         }
     }
@@ -704,7 +711,11 @@ export function newuhs(incr) {
         }
         // C: incr && occupation && occupation != eatfood/opentin ->
         // stop_occupation(); the eating occupation deliberately survives.
-        if (incr && (newhs === HUNGRY || newhs === WEAK)) {
+        if (incr && (newhs === HUNGRY || newhs === WEAK)
+            && deferred && !game._eat_occupation && !game._tin_occupation
+            && hooks.occupation_active()) {
+            game._hunger_msgs.push(null); /* stop_occupation after the hunger message */
+        } else if (incr && (newhs === HUNGRY || newhs === WEAK)) {
             // stop_occupation(): "You stop <occtxt>." lands on the same topline
             // right after the hunger message, then nomul(0) drops the count.
             for (const [slot, txt] of [['_search_occupation', 'searching'],
@@ -719,11 +730,14 @@ export function newuhs(incr) {
                 break;
             }
         }
+        // C eat.c:3480,3499: hunger also ends running, even without an occupation.
+        if (newhs === HUNGRY || newhs === WEAK) hooks.end_running(true);
         // C: the status line only catches up (botl) after the messages above
         // have been shown, so a --More-- raised by them still shows the old
         // hunger word; moveloop applies the deferred value after its flush.
         // C: `u.uhs = newhs; disp.botl = TRUE; bot();` — the new word is published.
-        if (deferred) game._hunger_msgs.uhs = newhs;
+        if (deferred || game._hunger_msgs?.faintDuration !== undefined)
+            game._hunger_msgs.uhs = newhs;
         else { u.uhs = newhs; delete game._statusHold; game.botl = true; }
         // C ref: eat.c:3505 — dying of hunger and exhaustion when the status
         // change happens at 0 HP; done() is not modelled here.
@@ -826,7 +840,7 @@ async function lesshungry_eat(num) {
             }
         }
     }
-    newuhs(false);
+    await newuhs(false);
 }
 
 // C ref: youprop.h Breathless / Hunger / Strangled, as choke() reads them.
@@ -904,7 +918,7 @@ async function choke(food) {
         // SUBTRACTS its argument from u.uhunger.
         u.uhunger = (u.uhunger ?? 900) - (u_Hunger()
                                           ? ((u.uhunger ?? 900) - 60) : 1000);
-        newuhs(true);
+        await newuhs(true);
         await vomit();
     } else {
         // C ref: eat.c choke() death arm.  killer.format starts KILLED_BY_AN
@@ -993,7 +1007,7 @@ async function done_eating(message) {
     const piece = v.piece;
     piece.in_use = true;
     game._eat_occupation = null;   /* C: go.occupation = 0 before newuhs() */
-    newuhs(false);
+    await newuhs(false);
     if (game.nomovemsg) {
         if (message) await update_topl(game.nomovemsg);
         game.nomovemsg = null;
@@ -2719,7 +2733,7 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
             // negative argument FEEDS the hero.  Cannot choke.
             // (js/fountain.js:50 keeps this port's only morehungry() copy.)
             if (u) u.uhunger = (u.uhunger ?? 900) + rnd(30);
-            newuhs(true);
+            await newuhs(true);
             const abase = u?.acurr?.a, amax = u?.amax?.a;
             if (abase && amax && abase[A_INT_EAT] < amax[A_INT_EAT]) {
                 abase[A_INT_EAT] += rnd(4);          /* recover lost Int */
@@ -4012,6 +4026,6 @@ export async function cant_finish_meal(corpse) {
         game._eat_occupation = null;
         await pline(`You stop ${occtxt}.`);
         await T.hack.stop_occupation();
-        newuhs(false);
+        await newuhs(false);
     }
 }

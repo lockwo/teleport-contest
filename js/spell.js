@@ -502,7 +502,7 @@ async function spelleffects(spell_otyp, atme, force) {
         return rc; /* impossible("Unknown spell %d attempted.") */
     // C ref: spell.c spelleffects tail, "gain skill for successful cast".
     // A forced #wizcast neither paid energy nor earns practice.
-    if (!force) use_skill(skill, spellev(spell));
+    if (!force) await use_skill(skill, spellev(spell));
     return ECMD_TIME;
 }
 
@@ -974,7 +974,7 @@ export async function study_book(spellbook) {
             // Setting usleep makes gethungry() use its Unaware rn2(10) path.
             game._study_occupation = false;
             const { fall_asleep } = await import('./zap.js');
-            fall_asleep(-dullbook, true);
+            await fall_asleep(-dullbook, true);
             return 1;
         }
     }

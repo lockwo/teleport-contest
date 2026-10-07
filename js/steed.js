@@ -607,7 +607,7 @@ async function steed_mondied(mtmp) {
     const x = mtmp.mx, y = mtmp.my;
     await steed_mondead(mtmp);
     if (corpse_chance(mtmp) && (steed_accessible(x, y) || is_pool(x, y)))
-        make_corpse(mtmp, x, y);
+        await make_corpse(mtmp, x, y);
 }
 // C ref: mon.c monkilled(mdef, "", -AD_PHYS) — steed died from an impersonal
 // cause (no adjacent square to flee to).  fltxt="" so the message never gets
@@ -884,7 +884,7 @@ export function can_ride(mtmp) {
 }
 
 // C ref: steed.c:387 exercise_steed() — 100 turns of riding advances P_RIDING.
-export function exercise_steed() {
+export async function exercise_steed() {
     const u = game.u;
     if (!u.usteed)
         return;
@@ -893,7 +893,7 @@ export function exercise_steed() {
     u.urideturns = (u.urideturns | 0) + 1;
     if (u.urideturns >= 100) {
         u.urideturns = 0;
-        use_skill(P_RIDING, 1);
+        await use_skill(P_RIDING, 1);
     }
 }
 

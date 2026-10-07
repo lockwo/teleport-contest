@@ -19,7 +19,7 @@ import { dist2, s_suffix } from './hacklib.js';
 import { can_carry, DEADMONSTER } from './mon.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
     AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
-import { PLNMSG_MON_TAKES_OFF_ITEM } from './const.js';
+import { PLNMSG_MON_TAKES_OFF_ITEM, Unaware } from './const.js';
 // C's urgent_pline() (steal.c:532/540/603) is display.js urgent_topl(): still
 // shown after ESC dismissed the preceding "<Mon> disarms ..." --More--.
 import { update_topl, urgent_topl } from './display.js';
@@ -31,6 +31,7 @@ import {
     worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname,
 } from './invent.js';
 
+import { armor_simple_name } from './do_wear.js';
 // C ref: defsym.h MONSYM(14, 'n', NYMPH, S_NYMPH, "nymph") — the class whose
 // "<Mon> takes off ..." preface makes the follow-up theft message use "She"
 // instead of repeating the name.  (This was 12, which is S_LEPRECHAUN's
@@ -78,7 +79,7 @@ export function findgold(chain) {
 function unresponsive() {
     if ((game.multi ?? 0) >= 0) return false;
     const why = game.multi_reason || '';
-    return why.startsWith('frozen') || why.startsWith('paralyzed');
+    return Unaware() || why.startsWith('frozen') || why.startsWith('paralyzed');
 }
 
 // C ref: do_wear.c doffing(obj) / stop_donning(obj) — is a multi-turn dressing
@@ -361,18 +362,6 @@ export async function steal(mtmp, objnambuf) {
 // C ref: onames.h RIN_ADORNMENT — the ring a thief grabs before rolling.
 const RIN_ADORNMENT = 173;
 
-// C ref: do_wear.c armor_simple_name(obj) — "suit"/"cloak"/"helmet"/"shield"/
-// "gloves"/"boots"/"shirt" for the take-off messages.
-function armor_simple_name(obj) {
-    const name = objects[obj.otyp]?.name || 'armor';
-    if (/shield/.test(name)) return 'shield';
-    if (/helm|hat|cap|pot/.test(name)) return 'helmet';
-    if (/gloves|gauntlets/.test(name)) return 'gloves';
-    if (/boots|shoes/.test(name)) return 'boots';
-    if (/cloak|robe/.test(name)) return 'cloak';
-    if (/shirt/.test(name)) return 'shirt';
-    return 'suit';
-}
 
 // C ref: do_name.c Adjmonnam(mtmp, adj) — "The beautiful nymph".  Only the
 // male-hero seduction message uses it; the covered hero is female.

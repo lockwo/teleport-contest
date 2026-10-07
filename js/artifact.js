@@ -27,7 +27,7 @@ import { isok, s_suffix } from './hacklib.js';
 import { quest_artifact_num } from './questpgr.js';
 import { cansee } from './vision.js';
 import { mon_nam, monflee } from './uhitm.js';
-import { resist, destroy_items, ignite_items, Antimagic as Antimagic_zap } from './zap.js';
+import { resist, cancel_monst, destroy_items, ignite_items, Antimagic as Antimagic_zap } from './zap.js';
 import { worn_extrinsic, xname, yname, otense, killer_xname } from './invent.js';
 import { healmon } from './mon.js';
 import { mon_aligntyp } from './minion.js';
@@ -1663,7 +1663,7 @@ export async function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
         const old_mdat = youdefend ? youmonst_data() : mdef.data;
         /* no mdef->mcan check: even a cancelled monster can be polymorphed
            into a golem, and "cancel" acts as if some magical energy remains */
-        if (!cancel_monst(mdef, mb, youattack, false, false)) {
+        if (!await cancel_monst(mdef, mb, youattack, false, false)) {
             resisted = true;
         } else {
             do_stun = false;
@@ -1751,18 +1751,6 @@ export async function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
 function HStun() { return uprop('Stun') | 0; }
 function HConfusion() { return uprop('Confusion') | 0; }
 
-// C ref: zap.c cancel_monst() restricted to Mb_hit's call
-// (self_cancel = FALSE, allow_cancel_kill = FALSE).  RNG: resist().
-// normal_shape() (forcing a shapeshifter back to its base form) is zap.c's and
-// is not reproduced here.
-function cancel_monst(mdef, obj, youattack, _allow_cancel_kill, _self_cancel) {
-    const youdefend = is_you(mdef);
-    if (youdefend ? (!youattack && Antimagic())
-                  : resist(mdef, obj.oclass, 0, false))
-        return false;   /* resisted cancellation */
-    if (!youdefend) mdef.mcan = 1;
-    return true;
-}
 // detect.c probe_monster(); potion.c make_stunned()/make_confused().
 function probe_monster(mtmp) {
     const fn = artifact_hooks.probe_monster;

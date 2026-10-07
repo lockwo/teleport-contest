@@ -15,6 +15,7 @@ import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCL
          display_minventory, worn_extrinsic, yname, makeplural,
          Ring_gone, setnotworn, body_part, distant_name_pub } from './invent.js';
 import { mon_mr } from './monmr_data.js';
+import { monstseesu, monstunseesu } from './mondata.js';
 import { mflags1_of, M1_NOEYES, M1_BREATHLESS, is_undead_flag, nohands,
          passes_walls_flag, is_swimmer_flag, is_demon_flag,
          is_were_flag } from './monflags_data.js';
@@ -22,14 +23,14 @@ import { mflags1_of, M1_NOEYES, M1_BREATHLESS, is_undead_flag, nohands,
 // (same values), and a duplicate binding is a module-load SyntaxError.
 import { attacktype_fordmg, dmgtype, AT_EXPL, AT_GAZE, AD_BLND,
          AD_RBRE, attacktype, AT_ENGL, AT_HUGS, AD_DRLI, AD_SEDU, AD_SSEX,
-         AD_DGST, AD_STCK, AD_WRAP } from './monattk_data.js';
+         AD_DGST, AD_STCK, AD_WRAP, AD_SPEL } from './monattk_data.js';
 import { observe_object } from './o_init.js';
 // C ref: attrib.h ACURR(x) == acurr(x) (abon + atemp + acurr, clamped).
 import { exercise, acurr_eff as ACURR } from './attrib.js';
 import { more_experienced, has_innate } from './exper.js';
 import { findit } from './detect.js';
 import { find_ac } from './u_init.js';
-import { cansee, vision_recalc, Blind, recalc_block_point } from './vision.js';
+import { cansee, vision_recalc, Blind, recalc_block_point, does_block } from './vision.js';
 import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS, ARMOR_CLASS,
          FOOD_CLASS, RING_CLASS, POT_OIL, POT_WATER, GLOB_OF_GREEN_SLIME,
          SPBOOK_CLASS, mkobj as _mkobj, place_object, objects,
@@ -56,7 +57,7 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          NO_KILLER_PREFIX, ARM, EYE, LAVAWALL, DB_UNDER, DB_FLOOR, VWALL, HWALL,
          TT_LAVA, TT_INFLOOR, PASSES_WALLS, EXPL_FIERY, STRAT_WAITMASK,
          Is_airlevel, Is_rogue_level, SDOOR, DOOR, WM_MASK, D_NODOOR, D_BROKEN,
-         SHOP_DOOR_COST } from './const.js';
+         SHOP_DOOR_COST, M_SEEN_REFL } from './const.js';
 import { is_pool, is_ice, is_lava } from './dbridge.js';
 import { in_rooms } from './shkroom.js';
 import { create_gas_cloud } from './region.js';
@@ -685,19 +686,30 @@ export async function bhito(obj, otmp) {
         res = 0;
         break;
     case WAN_STRIKING:
-    case SPE_FORCE_BOLT:
-        // C ref: zap.c:2297-2309 — an ordinary object is struck: breaks()
-        // (monster zapping) / hero_breaks() run breaktest(), whose
-        // obj_resists(obj, 1, 99) rn2(100) fires for EVERY object hit.
-        // fracture_rock()/break_statue() (boulder/statue arms) are still
-        // deferred; C leaves res = 1 for those two.
-        if (obj.otyp !== BOULDER && obj.otyp !== STATUE) {
+    case SPE_FORCE_BOLT: {
+        const maybelearnit = cansee(obj.ox, obj.oy) || !(await import('./display.js')).Deaf_hero();
+        if (obj.otyp === BOULDER) {
+            if (cansee(obj.ox, obj.oy)) await pline('The boulder falls apart.');
+            else await You_hear('a crumbling sound.');
+            await fracture_rock(obj);
+            if (maybelearnit) learnwand(otmp);
+        } else if (obj.otyp === STATUE) {
+            if (await break_statue(obj)) {
+                if (cansee(obj.ox, obj.oy)) {
+                    const { rndmonnam } = await import('./do_name.js');
+                    await pline(`The ${Hallucination() ? rndmonnam() : 'statue'} shatters.`);
+                }
+                else await You_hear('a crumbling sound.');
+            }
+            if (maybelearnit) learnwand(otmp);
+        } else {
             const DT = await import('./dothrow.js');
             if (game.context?.mon_moving) await DT.breaks(obj, obj.ox, obj.oy);
             else await DT.hero_breaks(obj, obj.ox, obj.oy, 0);
             res = 0;
         }
         break;
+    }
     case WAN_CANCELLATION:
     case SPE_CANCELLATION:
         // cancel_item(obj) — DEFERRED (rn2-bearing for spellbooks/eggs).
@@ -730,6 +742,68 @@ export async function bhito(obj, otmp) {
         break;
     }
     return res;
+}
+
+// C ref: zap.c:5537 — preserve the object while fracturing it into rocks.
+export async function fracture_rock(obj) {
+    const by_you = !game.context?.mon_moving;
+    if (by_you) {
+        const { get_obj_location } = await import('./light.js');
+        const { costly_spot, billable, shkname } = await import('./shk.js');
+        const loc = get_obj_location(obj, 0);
+        if (loc && costly_spot(loc.x, loc.y)) {
+            const shkp = billable(null, obj, in_rooms(loc.x, loc.y, SHOPBASE)[0], false);
+            if (shkp) {
+                const { s_suffix } = await import('./hacklib.js');
+                await pline(`You fracture ${s_suffix(shkname(shkp))} ${xname(obj)}.`);
+                const { breakobj } = await import('./dothrow.js');
+                await breakobj(obj, loc.x, loc.y, true, false);
+            }
+        }
+        if (obj.otyp === BOULDER) {
+            const { sokoban_guilt } = await import('./trap.js');
+            sokoban_guilt();
+        }
+    }
+    obj.otyp = ROCK;
+    obj.oclass = GEM_CLASS;
+    obj.quan = rn1(60, 7);
+    obj.owt = weight_of(obj);
+    obj.dknown = obj.bknown = obj.rknown = 0;
+    obj.known = objects[ROCK]?.oc_uses_known ? 0 : 1;
+    const { dealloc_oextra } = await import('./mkobj.js');
+    dealloc_oextra(obj);
+    if (obj.where === 'floor') {
+        const x = obj.ox, y = obj.oy;
+        obj_extract_self(obj);
+        place_object(obj, x, y);
+        recalc_block_point(x, y);
+        if (!does_block(x, y)) vision_recalc(0);
+        if (cansee(x, y)) newsym(x, y);
+    }
+}
+
+// C ref: zap.c:5582 — statues release their contents before fracturing.
+export async function break_statue(obj) {
+    const { t_at, activate_statue_trap } = await import('./trap.js');
+    const { STATUE_TRAP } = await import('./const.js');
+    const trap = t_at(obj.ox, obj.oy);
+    if (trap?.ttyp === STATUE_TRAP
+        && await activate_statue_trap(trap, obj.ox, obj.oy, true)) return false;
+    for (const item of [...(obj.cobj || [])]) {
+        obj_extract_self(item);
+        place_object(item, obj.ox, obj.oy);
+    }
+    const { CORPSTAT_HISTORIC } = await import('./const.js');
+    if (!game.context?.mon_moving && game.urole?.mnum === 0 /* Archeologist */
+        && (obj.spe & CORPSTAT_HISTORIC)) {
+        await pline('You feel guilty about damaging such a historic statue.');
+        const { adjalign } = await import('./attrib.js');
+        adjalign(-1);
+    }
+    obj.spe = 0;
+    await fracture_rock(obj);
+    return true;
 }
 
 
@@ -844,14 +918,13 @@ function polyuse(pile, mat, minwt) {
 // implemented; ray/thrown/kicked/flash variants are out of scope here.
 async function bhit(ddx, ddy, range, obj) {
     let bx = game.u.ux, by = game.u.uy;
+    let shopdoor = false;
     while (range-- > 0) {
         bx += ddx; by += ddy;
         if (bx < 0 || bx >= COLNO || by < 0 || by >= ROWNO) { bx -= ddx; by -= ddy; break; }
         const loc = game.level?.at?.(bx, by);
+        await zap_map(bx, by, obj);
         const typ = loc?.typ;
-
-        // ZAPPED_WAND: cancellation/opening/locking/striking/probing zap_map()
-        // effects are not exercised here for WAN_POLYMORPH (no-op).
 
         const mtmp = m_at(bx, by);
         if (mtmp) {
@@ -860,7 +933,27 @@ async function bhit(ddx, ddy, range, obj) {
         }
         if (await bhitpile(obj, bx, by)) range--;
 
-        if (!ZAP_POS(typ) || closed_door_at(bx, by)) { bx -= ddx; by -= ddy; break; }
+        if ((IS_DOOR(typ) || typ === SDOOR)
+            && [WAN_OPENING, WAN_LOCKING, WAN_STRIKING, SPE_KNOCK,
+                SPE_WIZARD_LOCK, SPE_FORCE_BOLT].includes(obj.otyp)) {
+            const { doorlock } = await import('./lock.js');
+            if (await doorlock(obj, bx, by)) {
+                if (cansee(bx, by) || (obj.otyp === WAN_STRIKING
+                                      && !(await import('./display.js')).Deaf_hero()))
+                    learnwand(obj);
+                if (loc.doormask === D_BROKEN && in_rooms(bx, by, SHOPBASE)[0]) {
+                    shopdoor = true;
+                    const { add_damage } = await import('./shk.js');
+                    await add_damage(bx, by, SHOP_DOOR_COST);
+                }
+            }
+        }
+
+        if (!ZAP_POS(loc?.typ) || closed_door_at(bx, by)) { bx -= ddx; by -= ddy; break; }
+    }
+    if (shopdoor) {
+        const { pay_for_damage } = await import('./shk.js');
+        await pay_for_damage('destroy', false);
     }
 }
 
@@ -902,7 +995,7 @@ export async function bhitm(mtmp, otmp) {
             if (dbldam) dmg *= 2;
             if (otyp === SPE_FORCE_BOLT) dmg = spell_damage_bonus(dmg);
             await hit(zap_type_text, mtmp, exclam(dmg));
-            await resist_hero_zap(mtmp, otmp.oclass, dmg, true);
+            await resist_damage(mtmp, otmp.oclass, dmg, true);
         } else {
             await miss(zap_type_text, mtmp);
             learn_it = false;
@@ -935,7 +1028,7 @@ export async function bhitm(mtmp, otmp) {
             dmg = rnd(8);
             if (dbldam) dmg *= 2;
             if (otyp === SPE_TURN_UNDEAD) dmg = spell_damage_bonus(dmg);
-            if (!(await resist_hero_zap(mtmp, otmp.oclass, dmg, false))) {
+            if (!(await resist_damage(mtmp, otmp.oclass, dmg, false))) {
                 if (!DEADMONSTER(mtmp))
                     await monflee(mtmp, 0, false, true);
             }
@@ -973,8 +1066,8 @@ export async function bhitm(mtmp, otmp) {
 
     case WAN_CANCELLATION:
     case SPE_CANCELLATION:
-        // cancel_monst(mtmp, otmp, TRUE, TRUE, FALSE) — DEFERRED: the per-item
-        // cancel_item() rolls and the mcan/mspec_used state aren't ported.
+        if (M_AP_TYPE(mtmp)) seemimic_z(mtmp);
+        await cancel_monst(mtmp, otmp, true, true, false);
         break;
 
     case WAN_TELEPORTATION:
@@ -1064,7 +1157,7 @@ export async function bhitm(mtmp, otmp) {
         dmg = spell_damage_bonus(dmg);
         if (await resists_drli_z(mtmp)) {
             await shieldeff(mtmp.mx, mtmp.my);
-        } else if (!(await resist_hero_zap(mtmp, otmp.oclass, dmg, false))
+        } else if (!(await resist_damage(mtmp, otmp.oclass, dmg, false))
                    && !DEADMONSTER(mtmp)) {
             mtmp.mhp = (mtmp.mhp || 0) - dmg;
             mtmp.mhpmax = (mtmp.mhpmax || 0) - dmg;
@@ -1096,15 +1189,16 @@ export async function bhitm(mtmp, otmp) {
     return ret;
 }
 
-// C ref: zap.c resist() tail.  When a damaging resist() leaves its target
-// dead, C calls killed(mtmp), or monkilled() while gm.m_using.  The exported
-// resist() below stays synchronous for its many 0-damage callers, so the
-// hero's damaging zaps in bhitm() finish the kill here.  Monster wand zaps go
-// through muse.js mbhitm(), never through this helper.
-async function resist_hero_zap(mtmp, oclass, damage, tell) {
+// C ref: zap.c:6148-6155 resist()'s damaging tail.  Zero-damage callers
+// use the synchronous saving throw; damaging callers must finish death first.
+export async function resist_damage(mtmp, oclass, damage, tell, monster_using = false) {
     const resisted = resist(mtmp, oclass, damage, tell);
-    if (damage && DEADMONSTER(mtmp))
-        await killed(mtmp);
+    if (damage && DEADMONSTER(mtmp)) {
+        if (monster_using)
+            await (await import('./mhitm.js')).monkilled_mm(mtmp, AD_RBRE, '');
+        else
+            await killed(mtmp);
+    }
     return resisted;
 }
 
@@ -1162,6 +1256,48 @@ export async function zapwrapup() {
     if (game.obj_zapped)
         await pline('You feel shuddering vibrations.');
     game.obj_zapped = false;
+}
+
+// C ref: zap.c:3150 cancel_monst — resistance precedes cancellation and
+// restoration of the target's natural shape; only self-zaps cancel inventory.
+export async function cancel_monst(mdef, obj, youattack, allow_cancel_kill, self_cancel) {
+    const u = game.u;
+    const youdefend = mdef === u || mdef === game.youmonst;
+    if (youdefend ? (!youattack && Antimagic())
+                  : resist(mdef, obj.oclass, 0, false))
+        return false;
+    if (self_cancel) {
+        for (const item of obj_chain(mdef)) await cancel_item(item);
+        if (youdefend) find_ac();
+    }
+    if (youdefend) {
+        if (u.Upolyd) {
+            if (u.umonnum === PM_CLAY_GOLEM) {
+                if (!Blind()) await pline('Some writing vanishes from your head!');
+                else await pline(`You feel ${Hallucination() ? 'dark' : 'light'} headed.`);
+                u.mh = 0;
+            }
+            if (Unchanging() && u.mh > 0) {
+                await pline('Your amulet grows hot for a moment, then cools.');
+            } else {
+                const { rehumanize } = await import('./polyself.js');
+                await rehumanize();
+            }
+        }
+    } else {
+        mdef.mcan = 1;
+        const { normal_shape } = await import('./mon.js');
+        await normal_shape(mdef);
+        if (mdef.data?.pmidx === PM_CLAY_GOLEM) {
+            if (canseemon_z(mdef))
+                await pline(`Some writing vanishes from ${s_suffix(mon_nam(mdef))} head!`);
+            if (allow_cancel_kill) {
+                if (youattack) await killed(mdef);
+                else await (await import('./mhitm.js')).monkilled_mm(mdef, AD_SPEL, '');
+            }
+        }
+    }
+    return true;
 }
 
 // C ref: zap.c weffects — dispatch a wand/spell effect.  Always exercises
@@ -1313,6 +1449,10 @@ async function zap_updown(obj) {
 // d(2, 4) through wipe_engr_at().
 async function zap_map(x, y, obj) {
     const u = game.u;
+    const { t_at } = await import('./trap.js');
+    const learn_it = { value: false };
+    await maybe_explode_trap(t_at(x, y), obj, learn_it);
+    if (learn_it.value) learnwand(obj);
     if ((u.dz | 0) <= 0) return;   /* lateral/up: drawbridge-only, not modelled */
     const { engr_at, wipe_engr_at, make_engr_at, random_engraving } =
         await import('./engrave.js');
@@ -1612,6 +1752,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                                 await ureflects('But %s reflects from your %s!', 'it');
                             else
                                 await update_topl('For some reason you are not affected.');
+                            monstseesu(M_SEEN_REFL);
                             dx = -dx;
                             dy = -dy;
                             await shieldeff(sx, sy);
@@ -1620,6 +1761,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                             /* flash_str here only used for killer; suppress
                              * hallucination */
                             await zhitu(type, nd, flash_killer(type), sx, sy);
+                            monstunseesu(M_SEEN_REFL);
                             if (game.program_state?.gameover) return;
                         }
                     } else if (!Blind()) {
@@ -1989,11 +2131,24 @@ export async function ureflects(fmt, str) {
         }
         return true;
     }
+    const { REFLECTING } = await import('./const.js');
+    const reflecting = worn_extrinsic(REFLECTING);
+    if (reflecting & W_WEP) {
+        if (fmt && str)
+            await update_topl(fmt.replace('%s', str).replace('%s', 'weapon'));
+        return true;
+    }
     if (game.uamul && game.uamul.otyp === AMULET_OF_REFLECTION_OTYP) {
         if (fmt && str) {
             await update_topl(fmt.replace('%s', str).replace('%s', 'medallion'));
             makeknown(AMULET_OF_REFLECTION_OTYP);
         }
+        return true;
+    }
+    if ((reflecting & W_ARM) || game.u?.formprops?.Reflecting) {
+        if (fmt && str)
+            await update_topl(fmt.replace('%s', str).replace('%s',
+                (reflecting & W_ARM) ? (game.uskin ? 'luster' : 'armor') : 'scales'));
         return true;
     }
     return false;
@@ -2173,9 +2328,10 @@ async function hit(str, mon, force) {
 }
 export async function miss(str, mon) {
     const { vtense } = await import('./dothrow.js');
+    const { The } = await import('./objnam.js');
     const verbose = game.flags?.verbose !== false;
     const named = (cansee(mon?.mx, mon?.my) || canspotmon(mon)) && verbose;
-    await update_topl(`The ${str} ${vtense(str, 'miss')} ${named ? mon_nam(mon) : 'it'}.`);
+    await update_topl(`${The(str)} ${vtense(str, 'miss')} ${named ? mon_nam(mon) : 'it'}.`);
 }
 // C ref: mondata.c disguised_as_non_mon — a hiding mimic/mimicking object.  No
 // covered zap target is a mimic.
@@ -2328,7 +2484,7 @@ async function zhitu(type, nd, fltxt, sx, sy) {
             await shieldeff(u.ux, u.uy);
             await update_topl("You don't feel sleepy.");
         } else {
-            fall_asleep(-d(nd, 25), true); /* sleep ray */
+            await fall_asleep(-d(nd, 25), true); /* sleep ray */
         }
         break;
     case ZT_DEATH:
@@ -3125,27 +3281,7 @@ export async function zapyourself(obj, ordinary) {
 
     case WAN_CANCELLATION:
     case SPE_CANCELLATION:
-        // C ref: zap.c cancel_monst(..., self_cancel=TRUE) — cancel every item
-        // before reverting a polymorphed hero, then refresh AC for cancelled
-        // worn equipment. The caller refreshes the inventory display.
-        for (const item of invent_list()) await cancel_item(item);
-        find_ac();
-        if (u.Upolyd) {
-            if (u.umonnum === PM_CLAY_GOLEM) {
-                if (!Blind()) {
-                    await pline('Some writing vanishes from your head!');
-                } else {
-                    await pline(`You feel ${Hallucination() ? 'dark' : 'light'} headed.`);
-                }
-                u.mh = 0;
-            }
-            if (Unchanging() && u.mh > 0) {
-                await pline('Your amulet grows hot for a moment, then cools.');
-            } else {
-                const { rehumanize } = await import('./polyself.js');
-                await rehumanize();
-            }
-        }
+        await cancel_monst(u, obj, true, true, true);
         break;
 
     case SPE_DRAIN_LIFE:
@@ -3200,7 +3336,7 @@ export async function zapyourself(obj, ordinary) {
                 await update_topl('The sleep ray hits you!');
             else
                 await update_topl('You fall asleep!');
-            fall_asleep(-rnd(50), true);
+            await fall_asleep(-rnd(50), true);
         }
         break;
     case WAN_DEATH:
@@ -3479,13 +3615,11 @@ export function Sleep_resistance() {
 // helpless for |how_long| turns (how_long < 0).  nomul(how_long) sets the
 // negative multi the moveloop counts back up; u.usleep marks the hero Unaware
 // (gethungry then burns nutrition at 1/10 via rn2(10)); nomovemsg is announced
-// by unmul() when the countdown reaches 0.  The disabled Hear_again block and
-// stop_occupation() draw no RNG (no occupation is active on the zap path).
-export function fall_asleep(how_long, wakeup_msg) {
-    if ((game.multi ?? 0) < how_long) return;   // nomul(how_long)
-    game.multi = how_long;
-    if (game.context)
-        game.context.travel = game.context.travel1 = game.context.mv = 0;
+// by unmul() when the countdown reaches 0.
+export async function fall_asleep(how_long, wakeup_msg) {
+    const { stop_occupation, nomul } = await import('./hack.js');
+    await stop_occupation();
+    nomul(how_long);
     game.multi_reason = 'sleeping';
     if (game.u) game.u.usleep = game.moves ?? 1;
     game.nomovemsg = wakeup_msg ? 'You wake up.' : 'You can move again.';
@@ -4305,13 +4439,14 @@ export async function revive(corpse, by_hero) {
     else if (cgend === CORPSTAT_FEMALE)
         mmflags |= MM_FEMALE;
 
-    const { makemon, newcham } = await import('./makemon.js');
+    const { makemon, makemon_appears_msg, newcham } = await import('./makemon.js');
     const mt = { mtype: montype };
     if (await cant_revive_z(mt, true, corpse)) {
         /* make a zombie or doppelganger instead; note: montype has changed,
            mptr keeps its old value for newcham() */
         montype = mt.mtype;
         mtmp = makemon(await mons_(montype), x, y, mmflags);
+        await makemon_appears_msg(mtmp, x, y, mmflags);
         if (mtmp) {
             /* skip ghost handling */
             if (has_omid(corpse))
@@ -4337,6 +4472,7 @@ export async function revive(corpse, by_hero) {
     } else {
         /* make a new monster */
         mtmp = makemon(mptr, x, y, mmflags | MM_NOCOUNTBIRTH);
+        await makemon_appears_msg(mtmp, x, y, mmflags | MM_NOCOUNTBIRTH);
     }
     if (!mtmp)
         return null;

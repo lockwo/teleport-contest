@@ -76,7 +76,7 @@ import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
          is_swimmer_flag, can_teleport_flag } from './monflags_data.js';
 import { AD_FIRE, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
-import { MM_NOCOUNTBIRTH, MM_NOMSG, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND } from './const.js';
+import { MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND } from './const.js';
 import { ceiling as ceiling_dg, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { check_special_room } from './shkroom.js';
@@ -800,7 +800,7 @@ function Waterproof_container(o) {
 // a floor pile) and water_damage() each with force=FALSE.  `here` selects the
 // nexthere chain; contents use the nobj chain, which for this port is the
 // container's cobj array in order.
-async function water_damage_chain(list, here) {
+export async function water_damage_chain(list, here) {
     if (!list) return;
     const chain = Array.isArray(list) ? [...list] : [list];
     // C ref: trap.c:4866-4886 — ga.acid_ctx brackets the loop so
@@ -1779,7 +1779,7 @@ async function trapeffect_slp_gas_trap(trap, _trflags) {
         await pline('You are enveloped in a cloud of gas!');
     } else {
         await pline('A cloud of gas puts you to sleep!');
-        fall_asleep(-rnd(25), true);
+        await fall_asleep(-rnd(25), true);
     }
     // steedintrap(trap, NULL): no steed -> returns before any RNG.
 }
@@ -2653,7 +2653,7 @@ export async function animate_statue(statue, x, y, _cause, fail_reason) {
     const mptr = monster_by_pmidx(mnum);
     // cant_revive() rewrites unique/were/zombie corpsenm; a trap statue is
     // built straight from rndmonst_adj(), so it is always revivable as itself.
-    const mon = makemon(mptr, x, y, MM_NOMSG /* | NO_MINVENT */);
+    const mon = makemon(mptr, x, y, NO_MINVENT | MM_NOMSG);
     if (!mon) {
         if (fail_reason)
             fail_reason.v = unique_corpstat(mptr) ? AS_MON_IS_UNIQUE : AS_NO_MON;
@@ -2671,13 +2671,16 @@ export async function animate_statue(statue, x, y, _cause, fail_reason) {
         await pline(`The statue ${comes_to_life}!`);
     else if (!Blind())
         await pline(`${an(pmname_of_pmidx(mnum))} ${comes_to_life}!`);
-    // The statue's contents spill onto the floor and the statue is deleted.
-    for (const o of (statue.cobj || [])) {
-        o.ocontainer = null;
-        place_object(o, x, y);
-        o.where = 'floor'; o.ox = x; o.oy = y;
+    // C ref: trap.c:880-885 — animate with the statue's preserved equipment,
+    // not newly generated inventory or contents spilled onto the floor.
+    const { mpickobj } = await import('./makemon.js');
+    const { m_dowear } = await import('./worn.js');
+    for (const o of [...(statue.cobj || [])]) {
+        obj_extract_self(o);
+        mpickobj(mon, o);
     }
     statue.cobj = [];
+    m_dowear(mon, true);
     delobj(statue);
     newsym(x, y);
     return mon;
@@ -4030,14 +4033,14 @@ export async function float_up() {
 // C ref: trap.c:4024 float_down(hmask, emask) — stop levitating.  hmask clears
 // bits of the INTRINSIC levitation word (HLevitation, this port's flat
 // game.u.uprops.Levitation) and emask bits of the EXTRINSIC one (ELevitation,
-// this port's worn-extrinsic bitmask, maintained by invent.js's
-// worn_extrinsics_on/off, so the caller that removed the item has already
-// cleared its bit and emask is a no-op here).  If any source remains the hero
-// stays aloft and nothing is printed.
+// this port's worn-extrinsic bitmask). If any source remains the hero stays
+// aloft and nothing is printed.
 export async function float_down(hmask = 0, emask = 0) {
     const u = game.u;
     if (!u) return 0;
     if (hmask) u.uprops.Levitation = (u.uprops.Levitation | 0) & ~hmask;
+    if (emask && u.uprops_extrinsic)
+        u.uprops_extrinsic[LEVITATION] = worn_extrinsic(LEVITATION) & ~emask;
     if (Levitation_fu()) return 0; /* maybe another ring/potion/boots */
     const { encumber_msg } = await import('./invent.js');
     if (BLevitation_word()) {
@@ -5163,6 +5166,41 @@ export async function spoteffects(pick) {
                 spottraptyp = NO_TRAP;
             }
             if (spot_pick && pit) await pickup_after_move(u.ux, u.uy);
+        }
+        // C ref: hack.c:3417-3454 — a ceiling hider shares the hero's
+        // destination until its surprise attack is resolved, then moves aside.
+        const mtmp = m_at(u.ux, u.uy);
+        if (mtmp && !u.uswallow) {
+            const { Amonnam, a_monnam, ARTICLE_A } = await import('./do_name.js');
+            const { x_monnam } = await import('./uhitm.js');
+            const { mnexto, sensemon } = await import('./mon.js');
+            const { RLOC_NOMSG } = await import('./teleport.js');
+            mtmp.mundetected = mtmp.msleeping = 0;
+            if (mtmp.data?.mcls === 16 /* S_PIERCER */) {
+                await pline(`${Amonnam(mtmp)} suddenly drops from the ${ceiling(u.ux, u.uy)}!`);
+                if (mtmp.mtame) {
+                    // A tame piercer drops to greet the hero, without attacking.
+                } else if (hard_helmet(game.uarmh)) {
+                    await pline(`Its blow glances off your ${helm_simple_name(game.uarmh)}.`);
+                } else if (u.uac + 3 <= rnd(20)) {
+                    await pline(`You are almost hit by ${x_monnam(mtmp, ARTICLE_A, 'falling', 0, true)}!`);
+                } else {
+                    await pline(`You are hit by ${x_monnam(mtmp, ARTICLE_A, 'falling', 0, true)}!`);
+                    let damage = d(4, 6);
+                    if (u.HHalf_physical_damage || u.EHalf_physical_damage || worn_extrinsic(HALF_PHDAM))
+                        damage = Math.trunc((damage + 1) / 2);
+                    await (await import('./mhitu.js')).mdamageu(mtmp, damage);
+                    if (game.program_state?.gameover) return;
+                }
+            } else if (mtmp.mtame) {
+                await pline(`${Amonnam(mtmp)} jumps near you from the ${ceiling(u.ux, u.uy)}.`);
+            } else if (mtmp.mpeaceful) {
+                await pline(`You surprise ${Blind() && !sensemon(mtmp) ? 'something' : a_monnam(mtmp)}!`);
+                mtmp.mpeaceful = 0;
+            } else {
+                await pline(`${Amonnam(mtmp)} attacks you by surprise!`);
+            }
+            await mnexto(mtmp, RLOC_NOMSG);
         }
     } finally {
         if (!--inspoteffects) {

@@ -1311,7 +1311,7 @@ export async function newman() {
         }
     }
 
-    newuhs(false);
+    await newuhs(false);
     update_rank();
 
     // C ref: polyself.c:446-450 — newform = races[].individual.f/.m, else
@@ -1339,7 +1339,7 @@ async function newman_dead() {
     const { done, DIED } = await import('./end.js');
     game._killer_name = 'killed by an unsuccessful polymorph';  // KILLED_BY_AN
     await done(DIED);
-    newuhs(false);
+    await newuhs(false);
     await encumber_msg();
 }
 

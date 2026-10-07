@@ -10,7 +10,7 @@ import {
     SV0, SV1, SV2, SV3, SV4, SV5, SV6, SV7, SVALL,
     IS_WALL, CROSSWALL, TRWALL, TREE, CLOUD, WATER, LAVAWALL, TEMP_LIT,
     MOAT, DRAWBRIDGE_UP, DB_UNDER, DB_MOAT, Is_juiblex_level, Is_waterlevel,
-    TT_PIT,
+    TT_PIT, Is_rogue_level,
 } from './const.js';
 import { newsym } from './display.js';
 import { infravision, monster_by_pmidx } from './makemon.js';
@@ -694,9 +694,12 @@ export function vision_recalc(control = 0) {
     // C ref: vision.c:589 — a submerged hero (not on the Plane of Water) who
     // is not Blind only sees the adjacent squares that are also water, and
     // has no night vision.
+    const rogue = control !== 2 && !u.uswallow && !Blind() && Is_rogue_level(u.uz);
     const underwater = control !== 2 && !u.uswallow && !Blind()
         && !!u.uinwater && !Is_waterlevel(u.uz);
-    if (underwater) {
+    if (rogue) {
+        rogue_vision(next, next_rmin, next_rmax);
+    } else if (underwater) {
         const lo_col = Math.max(u.ux - 1, 1);
         for (let row = u.uy - 1; row <= u.uy + 1; row++)
             for (let col = lo_col; col <= u.ux + 1; col++) {
@@ -746,7 +749,7 @@ export function vision_recalc(control = 0) {
     // jsmain.js): a direct `import` here reorders ESM evaluation and TDZ-traps
     // mkobj.js through u_init.js.
     const _vfr = game.vision_full_recalc;
-    hooks.lightsources?.(next);
+    if (!rogue) hooks.lightsources?.(next);
     game.vision_full_recalc = _vfr;
 
     // Compute IN_SIGHT from COULD_SEE + lighting
@@ -763,7 +766,7 @@ export function vision_recalc(control = 0) {
     // monster is redrawn (one display-RNG draw each while hallucinating).
     const blind = control !== 2 && !u.uswallow && Blind();
 
-    for (let row = 0; row < ROWNO && !blind; row++) {
+    for (let row = 0; row < ROWNO && !blind && !rogue; row++) {
         const dy = Math.sign(uy - row);
         for (let col = next_rmin[row]; col <= next_rmax[row]; col++) {
             if (!(next[row][col] & COULD_SEE)) continue;
@@ -1057,8 +1060,7 @@ export function get_unused_cs() {
 // boundaries, and always sees the eight adjacent squares.  The in_sight bit is
 // set here too, to dodge a bug caused by the one-sided lit-wall hack.
 //
-// No RNG.  vision_recalc() dispatches to this instead of view_from() when
-// Is_rogue_level(&u.uz); this port's vision_recalc() has no such arm.
+// No RNG.  Rogue levels restrict vision to the current room and adjacent cells.
 export function rogue_vision(next, rmin, rmax) {
     const u = game.u;
     const level = game.level;
