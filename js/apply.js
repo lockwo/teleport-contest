@@ -1513,6 +1513,12 @@ function rub_ok(obj) {
 // C ref: apply.c dorub() — the #rub command.  Returns an ECMD_* code.
 export async function dorub() {
     await loadDeps();
+    // C ref: apply.c:1789 — a handless polymorph form can't rub anything; this
+    // runs BEFORE getobj(), so the refusal consumes no item-letter key.
+    if (_invent.nohands_youmonst()) {
+        await _display.pline("You aren't able to rub anything without hands.");
+        return ECMD_OK;
+    }
     const obj = await _invent.getobj('rub', rub_ok, _invent.GETOBJ_NOFLAGS);
     if (!obj) return ECMD_CANCEL;
 

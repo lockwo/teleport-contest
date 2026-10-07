@@ -36,7 +36,7 @@ import {
     l_selection_or, l_selection_grow, l_selection_fillrect, l_selection_rect,
     l_selection_randline, W_ANY, W_RANDOM, W_NORTH, W_SOUTH, W_EAST, W_WEST,
 } from './selvar.js';
-import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty_c } from './dungeon.js';
+import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty_c, init_mapseen } from './dungeon.js';
 import { In_quest, BR_PORTAL, BR_NO_END1, BR_NO_END2,
          Is_knox_level, Is_earthlevel } from './const.js';
 import { roles, races } from './role.js';
@@ -343,6 +343,7 @@ export function l_nhcore_init() {
 // C ref: mklev.c mklev()
 export async function mklev() {
     const g = game;
+    init_mapseen(g.u.uz);           // C ref: mklev.c:1582, before getbones()
     if (await getbones()) return;   // bones loaded → level already grafted
     g.in_mklev = true;
     await makelevel();
@@ -462,6 +463,13 @@ async function makelevel() {
     // fall through to the regular generator (their sessions diverge earlier
     // anyway, so this cannot regress them).
     const slev = Is_special(g.u?.uz);
+    // C ref: mklev.c:1269 makemaz("tut-1") — a #wizmakemap inside the tutorial
+    // rebuilds tut-1 from its Lua program, not an ordinary random level.
+    if (slev && slev.proto === 'tut-1') {
+        const { makemaz_tutorial } = await import('./tutorial.js');
+        makemaz_tutorial();
+        return;
+    }
     if (slev && slev.proto && slev.proto.toLowerCase() === 'bigrm') {
         await makemaz_bigroom();
         // C ref: bigrm-10.lua's LR_UPSTAIR levregion.  Its map-relative
@@ -7395,8 +7403,8 @@ function bury_object(otmp) {
     otmp.where = 'buried';
     const lvl = game.level;
     if (lvl) {
-        if (!lvl.buriedobjs) lvl.buriedobjs = [];
-        lvl.buriedobjs.unshift(otmp); /* C add_to_buried(): head insertion */
+        if (!lvl.buriedobjlist) lvl.buriedobjlist = [];
+        lvl.buriedobjlist.unshift(otmp); /* C add_to_buried(): head insertion */
     }
     return otmp;
 }

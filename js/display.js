@@ -5348,6 +5348,26 @@ export function reglyph_darkroom() {
        file), so the symbol alias is left to that module. */
 }
 
+// C ref: display.c reglyph_darkroom() as goto_level() (do.c:1715) calls it right
+// after a level is loaded, for the live path's `remembered_glyph` memory (the
+// numeric function above has no live caller).  Without dark_room+use_color, or on
+// the Rogue level, a remembered S_darkroom becomes S_room if the square was lit
+// and GLYPH_NOTHING otherwise, so a Rogue-level floor square the hero felt while
+// leaving (feel_location's S_darkroom) comes back blank on re-entry.
+export function reglyph_remembered_darkroom() {
+    const lvl = game.level;
+    if (!lvl) return;
+    if (game.flags?.dark_room && game.iflags?.use_color
+        && !Is_rogue_level(game.u?.uz)) return;
+    for (let x = 1; x < COLNO; x++)
+        for (let y = 0; y < ROWNO; y++) {
+            const loc = lvl.at(x, y);
+            if (!loc?.remembered_glyph?.darkroom) continue;
+            if (loc.waslit) delete loc.remembered_glyph.darkroom;
+            else loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
+        }
+}
+
 // C ref: display.c:1877 show_glyph(x, y, glyph) — store the glyph in the 3rd
 // screen for later flushing.  This is the NUMERIC-glyph buffer; the live path's
 // painter is show_glyph_cell() above.

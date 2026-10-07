@@ -2931,16 +2931,18 @@ export function restore_timers(nhfp, range, adjust) {
 // '#stats' wizard-mode command.  C's three out-parameters become `{ s }` /
 // `{ v }` boxes; sizeof(timer_element) has no meaning here, so the per-element
 // size is reported as C's field count.
-const _SIZEOF_TIMER_ELEMENT = 7;
+const _SIZEOF_TIMER_ELEMENT = 48;
 
 export function timer_stats(hdrfmt, hdrbuf, count, size) {
     if (hdrbuf) hdrbuf.s = String(hdrfmt).replace('%ld', String(_SIZEOF_TIMER_ELEMENT));
     if (count) count.v = 0;
     if (size) size.v = 0;
-    for (let te = timer_base; te; te = te.next) {
-        if (count) count.v += 1;
-        if (size) size.v += _SIZEOF_TIMER_ELEMENT;
-    }
+    /* C's one gt.timer_base queue is spread over three stores here: timers
+       queued through this file, per-object timers (mkobj.js) and level timers. */
+    let n = _object_timer_queue().length + (game.level?.level_timers?.length | 0);
+    for (let te = timer_base; te; te = te.next) ++n;
+    if (count) count.v = n;
+    if (size) size.v = n * _SIZEOF_TIMER_ELEMENT;
 }
 
 // C ref: timeout.c:2750 relink_timers(ghostly) — turn the saved o_id back into

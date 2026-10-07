@@ -5,7 +5,7 @@
 // handled only LEATHER_DRUM; that arm's RNG (rn2(2) mode roll -> improvised
 // notes -> rn1(20,30) deafness -> awaken_monsters) is preserved exactly here.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import {
     isok, A_STR, A_DEX, A_WIS, COLNO, ROWNO,
@@ -74,6 +74,7 @@ function monsterList() { return (game.level?.monsters || []); }
 function losehp(n) {
     const u = game.u;
     if (!u) return;
+    hooks.end_running?.(true); // hack.c:4266
     u.uhp -= n;
     if (u.uhp < 1) u.uhp = 0;
     game.disp = game.disp || {};

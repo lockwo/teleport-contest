@@ -2,7 +2,7 @@
 // C ref: attrib.c.  Only the RNG-bearing routine exercised by the quaff /
 // zap / cast gameplay sessions is ported here.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rn1, rnd, d } from './rng.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING } from './const.js';
 import { adj_erinys, monster_by_pmidx, name_to_pmidx } from './makemon.js';
@@ -80,12 +80,15 @@ export function exercise(i, inc_or_dec) {
     // encumber_msg() for A_STR/A_CON is display-only; no RNG, omitted.
 }
 
-// C ref: hack.c losehp(dmg,...) — subtract dmg from u.uhp.  Death handling
-// (k_format/knam) isn't reached by the covered sessions, so this is just the
-// HP subtraction (clamped at 0, matching every other file-local losehp()).
+// C ref: hack.c losehp(dmg,...) — end_running(TRUE) (hack.c:4266), then subtract
+// dmg from u.uhp.  Death handling (k_format/knam) isn't reached by the covered
+// sessions, so this is just the HP subtraction (clamped at 0, matching every
+// other file-local losehp()).
 function losehp(dmg) {
     const u = game.u;
-    if (!u || dmg <= 0) return;
+    if (!u) return;
+    hooks.end_running?.(true);
+    if (dmg <= 0) return;
     u.uhp = (u.uhp ?? 0) - dmg;
     if (u.uhp < 0) u.uhp = 0;
 }

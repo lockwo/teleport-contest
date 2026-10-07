@@ -3,7 +3,7 @@
 // Stripped-down version for contest: emits the same rn2/rnd/rne PRNG call
 // sequence as C during level generation so RNG parity is preserved.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
@@ -15,7 +15,7 @@ import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
          Ring_off, off_msg, obj_doname, carried, otense, obj_extract_self,
          obj_resists, useupall, remove_worn_item, is_plural, simpleonames,
          makeplural, stackobj, freeinv, inventoryArray, welded, worn_extrinsic, worn_blocked,
-         splitobj, dropx, carried_weight, youmonst_data_pub } from './invent.js';
+         splitobj, dropx, carried_weight, youmonst_data_pub, bimanual } from './invent.js';
 import { shk_blocking_door, block_door_feedback } from './shk.js';
 import { observe_object } from './o_init.js';
 import { find_ac } from './u_init.js';
@@ -1441,7 +1441,7 @@ async function trapeffect_rust_trap(trap, _trflags) {
     case 1:
         await pline('A gush of water hits your left arm!');
         if (await water_damage(game.uarms, 'shield', true) !== ER_NOTHING) break;
-        if (u?.twoweap || (game.uwep && false /* bimanual unmodeled */))
+        if (u?.twoweap || (game.uwep && bimanual(game.uwep)))
             await water_damage(u?.twoweap ? game.uswapwep : game.uwep, null, true);
         await water_damage(game.uarmg, 'gloves', true);
         break;
@@ -1486,6 +1486,7 @@ async function trapeffect_rust_trap(trap, _trflags) {
 async function losehp(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
     if (!u) return;
+    hooks.end_running?.(true); // hack.c:4266
     if (u.Upolyd) {
         u.mh = (u.mh | 0) - n;
         if (u.mh > u.mhmax) u.mhmax = u.mh;

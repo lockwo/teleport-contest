@@ -5,7 +5,7 @@
 // treasure branches call subsystems (makemon/mkgold specifics) the port does
 // not yet fully model, so they emit their observable framing only.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { update_topl, newsym, m_at, y_n, display_nhwindow_message } from './display.js';
 import { hliquid, builds_up, dunlevs_in_dungeon, Is_special, level_difficulty_c } from './dungeon.js';
@@ -795,6 +795,7 @@ function Fire_resistance() {
 function losehp(n) {
     const u = game.u;
     if (!u) return;
+    hooks.end_running?.(true); // hack.c:4266
     u.uhp -= n;
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     if (u.uhp < 1) u.uhp = 0;

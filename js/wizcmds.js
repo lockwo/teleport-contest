@@ -34,7 +34,10 @@ import {
 import { defsyms, S_fountain, S_sink } from './symbols.js';
 import { objects, MAXOCLASSES, OMAILCMD, obj_sanity_check } from './mkobj.js';
 import { may_dig } from './dig.js';
-import { Is_special } from './dungeon.js';
+import { Is_special, overview_stats } from './dungeon.js';
+import { engr_stats } from './engrave.js';
+import { timer_stats } from './timeout.js';
+import { region_stats } from './region.js';
 import { Invocation_lev } from './trap.js';
 import { display_text_window } from './pager.js';
 import { within_bounded_area } from './rect.js';
@@ -190,8 +193,7 @@ const SIZEOF_MONST = 192, SIZEOF_MEXTRA = 64;
 const SIZEOF_EGD = 640, SIZEOF_EPRI = 56, SIZEOF_ESHK = 4960;
 const SIZEOF_EMIN = 8, SIZEOF_EDOG = 64, SIZEOF_EBONES = 28;
 const SIZEOF_TRAP = 32, SIZEOF_DAMAGE = 32, SIZEOF_KINFO = 272;
-const SIZEOF_CEMETERY = 184, SIZEOF_ENGR = 64, SIZEOF_TIMER_ELEMENT = 48;
-const SIZEOF_NHREGION = 96, SIZEOF_NHRECT = 8, SIZEOF_MAPSEEN = 384;
+const SIZEOF_CEMETERY = 184;
 
 /* ------------------------------------------------------------------ */
 /*  #wizmakemap                                                       */
@@ -1031,7 +1033,11 @@ export function misc_stats(win, totals) {
     totals.size += size;
     win.push(template(`traps, size ${SIZEOF_TRAP}`, count, size));
 
-    ({ hdrbuf, count, size } = nyi_engr_stats('engravings, size %ld+text'));
+    {
+        const hb = { s: '' }, cb = { v: 0 }, sb = { v: 0 };
+        engr_stats('engravings, size %ld+text', hb, cb, sb);
+        hdrbuf = hb.s; count = cb.v; size = sb.v;
+    }
     totals.count += count;
     totals.size += size;
     win.push(template(hdrbuf, count, size));
@@ -1045,7 +1051,11 @@ export function misc_stats(win, totals) {
         }
     }
 
-    ({ hdrbuf, count, size } = nyi_timer_stats('timers, size %ld'));
+    {
+        const hb = { s: '' }, cb = { v: 0 }, sb = { v: 0 };
+        timer_stats('timers, size %ld', hb, cb, sb);
+        hdrbuf = hb.s; count = cb.v; size = sb.v;
+    }
     if (count || size) {
         totals.count += count;
         totals.size += size;
@@ -1063,7 +1073,7 @@ export function misc_stats(win, totals) {
         win.push(template(`shop damage, size ${SIZEOF_DAMAGE}`, count, size));
     }
 
-    ({ hdrbuf, count, size } = nyi_region_stats('regions, size %ld+%ld*rect+N'));
+    ({ hdrbuf, count, size } = region_stats('regions, size %ld+%ld*rect+N'));
     if (count || size) {
         totals.count += count;
         totals.size += size;
@@ -1410,7 +1420,7 @@ export async function wiz_show_stats() {
     const ovr_t = { count: 0, size: 0 };
     win.push('');
     win.push('  Overview');
-    nyi_overview_stats(win, ovr_t);
+    overview_stats(win, template, ovr_t);
     win.push(stats_sep);
     win.push(template('  Over total', ovr_t.count, ovr_t.size));
 
@@ -1608,25 +1618,6 @@ function nyi_get_level(levnum) { return { dnum: 0, dlevel: levnum }; }
 function nyi_ledger_no(_lev) { return 0; }
 // mon.c migrate_to_level(mtmp, tolev, xyloc, cc) -> js/mon.js
 async function nyi_migrate_to_level(_mtmp, _tolev, _xyloc, _cc) {}
-// engrave.c:1626 engr_stats(hdrfmt, hdrbuf, &count, &size) -> js/engrave.js
-function nyi_engr_stats(hdrfmt) {
-    return { hdrbuf: hdrfmt.replace('%ld', String(SIZEOF_ENGR)), count: 0, size: 0 };
-}
-// timeout.c:2735 timer_stats(...) -> js/timeout.js
-function nyi_timer_stats(hdrfmt) {
-    return { hdrbuf: hdrfmt.replace('%ld', String(SIZEOF_TIMER_ELEMENT)),
-             count: 0, size: 0 };
-}
-// region.c:899 region_stats(...) -> js/region.js (takes TWO format args)
-function nyi_region_stats(hdrfmt) {
-    return { hdrbuf: hdrfmt.replace('%ld', String(SIZEOF_NHREGION))
-                           .replace('%ld', String(SIZEOF_NHRECT)),
-             count: 0, size: 0 };
-}
-// dungeon.c:2761 overview_stats(win, statsfmt, &count, &size) -> js/dungeon.js
-function nyi_overview_stats(win, _totals) {
-    win.push(template(`general, size ${SIZEOF_MAPSEEN}`, 0, 0));
-}
 // symbols.c wizcustom_glyphids(win) -> js/symbols.js
 function nyi_wizcustom_glyphids(_win) {}
 // do_wear.c check_wornmask_slots() -> js/do_wear.js

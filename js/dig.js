@@ -7,7 +7,7 @@
 // it moves, driven from monmove.js m_move()/postmov().  The hero-digging
 // occupation (dig_check / dighole) is a separate unported subsystem.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rnd, rn2, rn1 } from './rng.js';
 import { newsym, feel_location, You_hear, You_feel } from './display.js';
 import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, Unaware } from './const.js';
@@ -318,11 +318,14 @@ function hard_helmet(otmp) {
     return (mat >= MAT_IRON && mat <= MAT_MITHRIL) || mat === MAT_GLASS;
 }
 
-// C ref: hack.c losehp(dmg, ...) — HP subtraction only; the death path
-// (done(DIED)) lives in the callers this port does model.
+// C ref: hack.c losehp(dmg, ...) — end_running(TRUE) (hack.c:4266), then HP
+// subtraction only; the death path (done(DIED)) lives in the callers this port
+// does model.
 function losehp(dmg) {
     const u = game.u;
-    if (!u || dmg <= 0) return;
+    if (!u) return;
+    hooks.end_running?.(true);
+    if (dmg <= 0) return;
     u.uhp = (u.uhp ?? 0) - dmg;
     if (u.uhp < 0) u.uhp = 0;
     if (game.disp) game.disp.botl = true;

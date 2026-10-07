@@ -9,7 +9,7 @@
 // fully written, just missing their `case` arms in the switch below.
 
 import { ceiling as ceiling_dg } from './dungeon.js';
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { LL_CONDUCT, livelog_printf } from './livelog.js';
 import { rnd, rn2, rn1, d } from './rng.js';
 import { pline, topl_more, update_topl, urgent_topl, newsym, y_n } from './display.js';
@@ -241,6 +241,7 @@ function resist(mtmp, oclass, damage, _tell) {
 async function losehp_read(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
     if (!u || n <= 0) return;
+    hooks.end_running?.(true); // hack.c:4266
     if (u.Upolyd) {
         u.mh = (u.mh ?? 0) - n;
         if (u.mh > u.mhmax) u.mhmax = u.mh;

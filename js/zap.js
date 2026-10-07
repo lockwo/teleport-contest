@@ -2317,7 +2317,7 @@ function exclam(force) { return force < 0 ? '?' : (force <= 4 ? '.' : '!'); }
 // <mon>."  vtense() pluralization is skipped: every flash_str() here is a
 // singular noun ("bolt of cold", "sleep ray", ...), so the verb is always
 // "hits"/"misses".
-async function hit(str, mon, force) {
+export async function hit(str, mon, force) {
     // C: verbosely = (mtmp == &youmonst) || (flags.verbose && (cansee(bhitpos)
     // || canspotmon(mtmp) || engulfing_u(mtmp))).  The cansee() disjunct was
     // missing, so a hit on an unseen monster standing on a lit square printed
@@ -3859,9 +3859,11 @@ function simpleonames_z(obj) { return obj ? xname(obj) : ''; }
 // keeps the identical no-op under this name.  The "You damage it, you pay for
 // it!" pline and the bknown side effect belong to shk.c's owner.
 function costly_alteration_z(_obj, _alter_type) { /* no RNG */ }
-// C ref: shk.c stolen_value(obj, x, y, peaceful, silent) — unported
-// (js/invent.js:1161 is the same private stub).  Returns the billed amount.
-function stolen_value_z(_obj, _x, _y, _peaceful, _silent) { return 0; }
+// C ref: shk.c stolen_value(obj, x, y, peaceful, silent).  Returns the billed
+// amount; the port lives in js/shk.js (dynamic import, shk.js imports zap.js).
+async function stolen_value_z(obj, x, y, peaceful, silent) {
+    return (await import('./shk.js')).stolen_value(obj, x, y, peaceful, silent);
+}
 // C ref: worn.c:1119 bypass_obj(obj).
 function bypass_obj_z(obj) {
     if (!obj) return;
@@ -4518,7 +4520,7 @@ export async function revive(corpse, by_hero) {
         }
         /* don't charge for shopkeeper's own corpse if we just revived him */
         if (shkp && mtmp !== shkp)
-            stolen_value_z(corpse, x, y, !!shkp.mpeaceful, false);
+            await stolen_value_z(corpse, x, y, !!shkp.mpeaceful, false);
 
         /* [we don't give any comparable message about the corpse for the
            !by_hero case because caller might have already done so] */
@@ -4960,8 +4962,8 @@ export async function stone_to_flesh_obj(obj) {
                     if (costly_spot(oox, ooy)
                         && (carried_z(obj) ? obj.unpaid : !obj.no_charge)) {
                         const shkp = shop_keeper(in_rooms(oox, ooy, SHOPBASE)?.[0]);
-                        stolen_value_z(obj, oox, ooy,
-                                       !!(shkp && shkp.mpeaceful), false);
+                        await stolen_value_z(obj, oox, ooy,
+                                             !!(shkp && shkp.mpeaceful), false);
                     }
                     if (obj.timed) {
                         const { obj_stop_timers } = await import('./timeout.js');

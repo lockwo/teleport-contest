@@ -404,8 +404,7 @@ function d_DEADMONSTER(m) { return (m?.mhp ?? 1) < 1; }
 // C ref: rm.h fmon / svl.level.objects[][] / svl.level.buriedobjlist.  This
 // port keeps floor objects in ONE flat array with .ox/.oy/.where (see
 // js/do.js:628 for why js/invent.js's grid-indexing sobj_at() answers null),
-// and buried objects in TWO unmerged arrays: mkobj.js add_to_buried() pushes
-// `buriedobjlist`, mklev.js:6675 bury() pushes `buriedobjs`.  Read both.
+// and buried objects in `buriedobjlist`.
 function d_fmon() { return game.level?.monsters || []; }
 function d_fobj() {
     return (game.level?.objects || []).filter((o) => o.where === 'floor');
@@ -419,7 +418,7 @@ function d_objs_at(x, y) {
 }
 function d_OBJ_AT(x, y) { return d_objs_at(x, y).length > 0; }
 function d_buriedobjs() {
-    return [...(game.level?.buriedobjlist || []), ...(game.level?.buriedobjs || [])];
+    return game.level?.buriedobjlist || [];
 }
 function d_sobj_at(otyp, x, y) {
     for (const o of d_objs_at(x, y)) if (o.otyp === otyp) return o;

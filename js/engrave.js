@@ -902,9 +902,9 @@ async function freehand() {
 }
 
 // C ref: engrave.c u_can_engrave() — can the hero engrave at their location?
-// The terrain clauses are ported verbatim; the uswallow branch (which needs
-// is_animal()/is_whirly() on the engulfer) and the cantwield()/check_capacity()
-// clauses are treated as "can engrave", as they were before.
+// The uswallow branch (is_animal()/is_whirly() on the engulfer), the terrain
+// clauses, cantwield() (a handless or very small polymorph form) and
+// check_capacity() are all ported.
 async function u_can_engrave() {
     const { pline } = await import('./display.js');
     const { is_pool, is_lava } = await import('./dbridge.js');
@@ -936,6 +936,19 @@ async function u_can_engrave() {
     } else if (!ACCESSIBLE(levtyp)) {
         /* stone, tree, wall, secret corridor, pool, lava, bars */
         await pline("You can't write here.");
+        return false;
+    }
+    // C: cantwield(youmonst.data) = nohands(ptr) || verysmall(ptr); verysmall is msize < MZ_SMALL.
+    const { youmonst_data, near_capacity } = await import('./invent.js');
+    const { M1_NOHANDS } = await import('./monflags_data.js');
+    const ydata = youmonst_data();
+    if (ydata && ((mflags1_of(ydata) & M1_NOHANDS) !== 0 || (ydata.msize ?? 2) < 1)) {
+        await pline("You can't even hold anything!");
+        return false;
+    }
+    /* C check_capacity((char *) 0): refuse when Overtaxed or worse */
+    if (near_capacity() >= 4 /* EXT_ENCUMBER */) {
+        await pline("You can't do that while carrying so much stuff.");
         return false;
     }
     return true;

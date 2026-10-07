@@ -572,13 +572,14 @@ export function restore_light_sources(records) {
 }
 
 // C ref: light.c:500 light_stats(hdrfmt, hdrbuf, &count, &size) — the '#stats'
-// wizard-mode command.  C's `size` is a byte total from sizeof(light_source),
-// which has no JS analogue; report the record count for both, and the header
-// with the struct size substituted as the record count of 1 entry.
+// wizard-mode command.  sizeof(light_source) in the recorder build (LP64,
+// coordxy = int16_t): next 8 + x,y 4 + range,flags,type 6 (+2 pad) + id 8 = 32.
+const SIZEOF_LIGHT_SOURCE = 32;
 export function light_stats(hdrfmt) {
     let count = 0;
     for (const _ls of light_base()) ++count;
-    return { hdrbuf: (hdrfmt || '').replace(/%l?d/, '1'), count, size: count };
+    return { hdrbuf: (hdrfmt || '').replace(/%l?d/, String(SIZEOF_LIGHT_SOURCE)),
+             count, size: count * SIZEOF_LIGHT_SOURCE };
 }
 
 // C ref: light.c:516 relink_light_sources(ghostly).

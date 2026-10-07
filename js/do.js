@@ -60,7 +60,7 @@ import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          UTOTYPE_RMPORTAL, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX,
          MIGR_EXACT_XY, I_SPECIAL, TIMEOUT, W_ARTI, LEVITATION } from './const.js';
 import { docrt, flush_screen, pline, update_topl, urgent_topl, topl_more, y_n, newsym,
-         see_nearby_objects } from './display.js';
+         see_nearby_objects, reglyph_remembered_darkroom } from './display.js';
 import { seetrap, dotrap } from './trap.js';
 import { check_special_room } from './shkroom.js';
 import { forget_temple_entry } from './priest.js';
@@ -1227,6 +1227,8 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // vision_recalc(2) find squares still in sight and spend an extra
     // display-rng draw on each (seed0383 step 195).
     game.vision_full_recalc = 0;
+    // C ref: do.c:1715 reglyph_darkroom() — right after the level is (re)loaded.
+    reglyph_remembered_darkroom();
     vision_reset();
     // C ref: display.c docrt_flags() -> cls() -> display_nhwindow(WIN_MESSAGE,
     // FALSE): an unacknowledged topline (drag_down's "The iron ball smacks into
@@ -1392,11 +1394,11 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // Without this the chronicle window showed only "entered the dungeon".
     if (firstVisit) {
         const major = !!(In_endgame(u.uz) || In_quest(u.uz));
-        const dname = String(game.dungeons?.[u.uz.dnum]?.dname || 'The Dungeons of Doom')
-            .replace(/^The /, 'the ');
+        const { describe_level } = await import('./botl.js');
+        const dloc = { buf: '' };
+        describe_level(dloc, 2);
         const { livelog_printf, LL_ACHIEVE, LL_DEBUG } = await import('./livelog.js');
-        livelog_printf(major ? LL_ACHIEVE : LL_DEBUG,
-                       `entered level ${depth_of_level(u.uz)}, ${dname}`);
+        livelog_printf(major ? LL_ACHIEVE : LL_DEBUG, `entered ${dloc.buf}`);
     }
     if (firstVisit && game.urole?.mnum === PM_TOURIST) {
         more_experienced(level_difficulty(), 0);

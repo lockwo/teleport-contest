@@ -2081,6 +2081,7 @@ function speciesVegetarian(mnum) { return vegetarian(monster_by_pmidx(mnum)); }
 function losehp_eat(n) {
     const u = game.u;
     if (!u) return;
+    hooks.end_running?.(true); // hack.c:4266
     u.uhp -= n;
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     if (u.uhp < 0) u.uhp = 0;

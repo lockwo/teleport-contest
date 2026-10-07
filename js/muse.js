@@ -1849,13 +1849,16 @@ async function mbhitm(mtmp, otmp, hits_you) {
             learnit = true;
         } else if (rnd(20) < 10 + find_mac_muse(mtmp)) {
             const tmp = d(2, 12);
-            if (canseemon(mtmp))
-                await update_topl(`The wand hits ${mon_nam(mtmp)}${exclam(tmp)}`);
-            const { resist_damage } = await import('./zap.js');
+            // C ref: muse.c:1639 hit("wand", mtmp, exclam(tmp)) / :1643
+            // miss("wand", mtmp) — both print for an UNSEEN target too, naming
+            // it "it" (a blind hero still reads "The wand hits it!").
+            const { hit, resist_damage } = await import('./zap.js');
+            await hit('wand', mtmp, exclam(tmp));
             await resist_damage(mtmp, otmp.oclass, tmp, true, m_using);
             learnit = true;
-        } else if (canseemon(mtmp)) {
-            await update_topl(`The wand misses ${mon_nam(mtmp)}.`);
+        } else {
+            const { miss } = await import('./zap.js');
+            await miss('wand', mtmp);
         }
         // C: need to have seen the wand zapped AND the spot where it lands.
         if (learnit && zap_oseen

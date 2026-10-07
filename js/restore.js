@@ -168,6 +168,9 @@ function delete_savefile() {
 // default) deletes the file, 'y' keeps it.
 async function ask_about_keeping_savefile() {
     if (!is_wizard() && !is_discover()) return;
+    // C ref: unixmain.c main() — `wd_message()` runs just before the question;
+    // its discover arm announces the mode (a plain wizard restore prints nothing).
+    if (is_discover()) await pline('You are in non-scoring explore/discovery mode.');
     await topl_more();
     const ans = await y_n('Do you want to keep the save file?', 'yn', 'n');
     if (ans === 'n') delete_savefile();
@@ -255,6 +258,11 @@ export async function dorestore() {
     game.mockStorage = keepMock;
     game.coreCtx = keepCoreCtx;
     game.iflags = keepIflags;
+    // C ref: decl.c gl.luathemes[] is a runtime-only lua_State pointer table (never
+    // saved), so a restored process has no themerms.lua state loaded: the first
+    // makelevel() per dungeon re-runs nhl_init(), whose nhlib.lua shuffle(align)
+    // draws rn2(3),rn2(2).  Drop the saving process's marker blob copy.
+    game._luathemes_loaded = {};
 
     // C ref: restore.c restgamestate() — role_init() runs partway through the
     // state reload, BEFORE restore_luadata()'s Lua-state creation below, so its

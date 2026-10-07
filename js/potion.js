@@ -322,21 +322,15 @@ export async function make_hallucinated(xtime, talk, _mask) {
     return changed;
 }
 
-// C ref: hack.c losehp(dmg, knam, k_format) — the covered heroes have no
-// life-saving, so this is the HP subtraction plus death when it runs out.
-async function losehp(dmg, _knam) {
-    const u = game.u;
-    if (!u) return;
-    if (Upolyd()) {
-        u.mh = (u.mh | 0) - dmg;
-        if (u.mh < 1) { u.mh = 0; }
-        return;
-    }
-    u.uhp = (u.uhp | 0) - dmg;
-    if (u.uhp < 1) {
-        const { done_in_by } = await import('./end.js');
-        await done_in_by(null, 0 /*DIED*/);
-    }
+// C ref: hack.c losehp(dmg, knam, k_format).  Delegates to do.js losehp_do(),
+// the complete port: end_running(TRUE) (which clears a pending g/G prefix's
+// svc.context.run and cancels a counted action), the polymorphed hero's
+// rehumanize() arm, maybe_wail() and the "You die..." death path.  The old
+// local stub only subtracted HP, so a quaffed sickness potion left a stale
+// rush armed that C's losehp() had already ended.
+async function losehp(dmg, knam, k_format = KILLED_BY_AN) {
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(dmg, knam, k_format);
 }
 
 
@@ -731,7 +725,7 @@ async function peffect_oil(otmp) {
         } else {
             await update_topl(`You burn your ${body_part(FACE)}.`);
             const vulnerable = !Fire_resistance() || Cold_resistance();
-            await losehp(d(vulnerable ? 4 : 2, 4), 'quaffing a burning potion of oil');
+            await losehp(d(vulnerable ? 4 : 2, 4), 'quaffing a burning potion of oil', KILLED_BY);
         }
         // burn_away_slime() — needs Slimed, which nothing in this port sets.
     } else if (otmp.cursed) {
@@ -1227,7 +1221,7 @@ async function peffect_levitation(otmp) {
             // has_ceiling arm below is the one that draws.
             const dmg = rnd(!game.uarmh ? 10 : hard_helmet(game.uarmh) ? 3 : 6);
             await update_topl(`You hit your ${body_part(HEAD)} on the ceiling.`);
-            await losehp(Maybe_Half_Phys(dmg), 'colliding with the ceiling');
+            await losehp(Maybe_Half_Phys(dmg), 'colliding with the ceiling', KILLED_BY);
             game.potion_nothing = 0;
         }
     } else if (otmp.blessed) {

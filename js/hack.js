@@ -180,7 +180,12 @@ export function end_running(and_travel) {
     // armed after the meal that interrupted it (no attack, no turn, 11
     // recorded draws lost).  `context.run_prefix` is NOT cleared here: that
     // one stands in for rhack()'s LOCAL prefix_seen, which C's end_running()
-    // cannot reach either.
+    // cannot reach either.  `context.stale_rush` (gd.domove_attempting's
+    // DOMOVE_RUSH bit) is likewise NOT cleared: end_running() never touches
+    // domove_attempting, so a g/G residue keeps its rush arm after the run
+    // value is gone (bl045: a quaffed potion's losehp() ended the run, yet the
+    // next 'k' still became a counted walk that "You are in full health."
+    // interrupts).
     c.stale_run = 0;
     c.cmd_stale_run = 0;
     if (and_travel) {
@@ -515,6 +520,16 @@ async function takeTurn() {
     if (game._lvltport_dest) {
         const { run_deferred_lvltport } = await import('./do.js');
         await run_deferred_lvltport();
+    }
+    // C ref: allmain.c moveloop_core():538 `if (u.utotype) deferred_goto();` —
+    // runs right after the hero's move (rhack() or the context.mv continuation
+    // domove()) and BEFORE the next iteration's once-per-turn monster/turn work,
+    // so a portal step that scheduled a level change leaves the level before the
+    // old level's monsters get their turn.  The inline run/travel loops would
+    // otherwise have taken that turn first (bl000 step 1144, magic portal).
+    if (game.u.utotype) {
+        const { deferred_goto } = await import('./do.js');
+        await deferred_goto();
     }
     await moveloop_turn();
 }

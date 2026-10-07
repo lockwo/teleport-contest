@@ -3180,7 +3180,7 @@ export async function quest_chat(mtmp) {
 
 // C ref: mon.c angry_guards(silent) — anger the Minetown watch; TRUE if any
 // peaceful watchman was found.
-async function angry_guards(silent) {
+export async function angry_guards(silent) {
     const { canspotmon } = await import('./uhitm.js');
     const { m_next2u } = await import('./monmove.js');
     let ct = 0, nct = 0, sct = 0, slct = 0;

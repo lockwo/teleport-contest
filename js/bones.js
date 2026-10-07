@@ -312,10 +312,7 @@ async function bones_getlev(blob) {
         if (Array.isArray(m.minvent)) for (const o of m.minvent) stamp_obj(o);
     }
     // C ref: restore.c getlev() -> restore_buried_uchain()/buriedobjlist chain.
-    // The JS level graph names this array `buriedobjs` (see mklev.js bury()),
-    // not `buriedobjlist` — this was reading the wrong field and silently
-    // skipping every buried object's re-stamp.
-    for (const o of level.buriedobjs || []) stamp_obj(o);
+    for (const o of level.buriedobjlist || []) stamp_obj(o);
 
     // C ref: restore.c:1203 getlev()'s `if (ghostly)` arm — "reset peaceful/malign
     // relative to new character".  The bones level was saved with the DEAD hero's
@@ -714,8 +711,8 @@ export async function savebones(how = 0, corpse = null) {
         // ghostly mark + reset the hero's pack just got.
         set_ghostly_objlist(g.level?.objects || []);
         reset_obj_chain(g.level?.objects, O);
-        set_ghostly_objlist(g.level?.buriedobjs || []);
-        reset_obj_chain(g.level?.buriedobjs, O);
+        set_ghostly_objlist(g.level?.buriedobjlist || []);
+        reset_obj_chain(g.level?.buriedobjlist, O);
 
         // C ref: bones.c:555-560 — wipe every cell's seen/lit/remembered state so
         // the arriving hero explores the legacy level from scratch (this is what

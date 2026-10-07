@@ -5,7 +5,7 @@
 // are kept structurally but rely on subsystems the port does not yet model,
 // which are unreachable for a non-polymorphed contest hero on ordinary terrain.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { update_topl, vobj_at } from './display.js';
 import { surface, hliquid } from './dungeon.js';
@@ -30,6 +30,7 @@ import {
 function losehp(n) {
     const u = game.u;
     if (!u) return;
+    hooks.end_running?.(true); // hack.c:4266
     u.uhp -= n;
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     if (u.uhp < 1) u.uhp = 0;

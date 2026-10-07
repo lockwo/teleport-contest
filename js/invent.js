@@ -1212,6 +1212,7 @@ function Maybe_Half_Phys(dmg) {
 function losehp_invent(n) {
     const u = game.u;
     if (!u) return;
+    hooks.end_running?.(true); // hack.c:4266
     u.uhp -= n;
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     if (u.uhp < 1) u.uhp = 0;
@@ -1429,7 +1430,6 @@ function money_cnt(list) {
     return sum;
 }
 function shopper_financial_report() {}
-function stolen_value(_obj, _x, _y, _a, _b) { return 0; }
 function in_rooms(_x, _y, _shop) { return ''; }
 function u_at(x, y) { return game.u?.ux === x && game.u?.uy === y; }
 function hides_under(_data) { return false; }
@@ -1701,9 +1701,12 @@ export function body_part(part) {
     return poly_body_part(part);
 }
 // C ref: wield.c empty_handed() — gloves imply hands so "empty handed"; a
-// gloveless humanoid is "bare handed"; a paws/handless polyform (never reached
-// here) is "not wielding anything".  The starter heroes are always humanoid.
-function empty_handed() { return game.uarmg ? 'empty handed' : 'bare handed'; }
+// gloveless humanoid is "bare handed"; paws or a lack of hands (an animal
+// polyform) read "not wielding anything".
+export function empty_handed() {
+    return game.uarmg ? 'empty handed'
+        : humanoid_flag(youmonst_data()) ? 'bare handed' : 'not wielding anything';
+}
 // C ref: obj.h:427 pair_of(o) — lenses, gloves or boots (by oc_armcat, not
 // by a name regex: "gauntlets of power" matches neither 'gloves' nor 'boots').
 export function pair_of(obj) { return obj?.otyp === LENSES || is_gloves(obj) || is_boots(obj); }
@@ -6588,6 +6591,16 @@ async function bhit_thrown_landing(dx, dy, range, obj) {
         const nx = bx + dx, ny = by + dy;
         if (!throw_isok(nx, ny)) break;
         bx = nx; by = ny;
+        // C ref: zap.c:3883 bhit() — `if (is_pick(obj) && inside_shop(x, y) &&
+        // (mtmp = shkcatch(obj, x, y)) != 0) { result = mtmp; goto bhit_done; }`
+        // A shopkeeper next to the path nimbly catches a thrown pick-axe.
+        if (is_pick(obj)) {
+            const SK = await import('./shk.js');
+            if (SK.inside_shop(bx, by)) {
+                const shk = await SK.shkcatch(obj, bx, by);
+                if (shk) { hitmon = shk; break; }
+            }
+        }
         const loc = game.level.at(bx, by);
         const typ = loc?.typ ?? 0;
         // C ref: zap.c:3897 bhit() — a "wall of water"/lava wall stops items.
@@ -7536,7 +7549,23 @@ async function throwit(otmp, skillsnap, wep_mask) {
     // — a monster in the path takes the hit (thitmonst); only if the object
     // survives does it go on to break/land.
     if (land.mon) {
-        if (await thitmonst(land.mon, otmp, skillsnap)) return ECMD_TIME;
+        // C ref: dothrow.c throwit_mon_hit() — `if (mon->isshk && obj->where ==
+        // OBJ_MINVENT && obj->ocarry == mon) return TRUE; /* alert shk caught it */`
+        if (land.mon.isshk && otmp.where === 'minvent' && otmp.ocarry === land.mon)
+            return ECMD_TIME;
+        const obj_gone = await thitmonst(land.mon, otmp, skillsnap);
+        // C ref: dothrow.c throwit_mon_hit() — `mon = m_at(bhitpos)`, then "[perhaps
+        // this should be moved into thitmonst or hmon]": a shopkeeper the hero hit
+        // or missed from outside the shop (or while the shk is elsewhere) gives chase.
+        const shk = m_at(land.x, land.y);
+        if (shk && shk.isshk) {
+            const SK = await import('./shk.js');
+            const { in_rooms } = await import('./shkroom.js');
+            if (!SK.inside_shop(game.u.ux, game.u.uy)
+                || !in_rooms(shk.mx, shk.my, 14 /* SHOPBASE */).includes((game.u.ushops || [])[0]))
+                SK.hot_pursuit(shk);
+        }
+        if (obj_gone) return ECMD_TIME;
     }
 
     // C ref: dothrow.c throwit():1710 — a Mjollnir or aklys that reached the end
@@ -7612,6 +7641,18 @@ async function throwit(otmp, skillsnap, wep_mask) {
     }
     const { flooreffects } = await import('./do.js');
     if (await flooreffects(otmp, land.x, land.y, 'fall')) return ECMD_TIME;
+    // C ref: dothrow.c:1813-1820 — a shopkeeper who was in the way (and the
+    // pick-axe missed or was not caught outright) snatches it up.
+    if (land.mon && land.mon.isshk && is_pick(otmp)) {
+        if (cansee(land.x, land.y)) {
+            const { Monnam } = await import('./uhitm.js');
+            await update_topl(`${Monnam(land.mon)} snatches up ${the_name_of(otmp)}.`);
+        }
+        if (((u.ushops || []).length || otmp.unpaid))
+            await DT.check_shop_obj(otmp, land.x, land.y, false);
+        (await import('./steal.js')).mpickobj(land.mon, otmp); /* may merge and free obj */
+        return ECMD_TIME;
+    }
     // C ref: dothrow.c:1818 — `if (!mon && ship_object(obj, bhitpos.x,
     // bhitpos.y, FALSE))`: the missile landed on a hole/trap door/down stairs
     // and rides it to the level below instead of resting here.
@@ -7631,6 +7672,10 @@ async function throwit(otmp, skillsnap, wep_mask) {
         const { impact_disturbs_zombies } = await import('./monmove.js');
         impact_disturbs_zombies(otmp, true);
     }
+    // C ref: dothrow.c:1834-1836 — charge for items thrown out of a shop; the
+    // shk takes possession of items thrown into one (or buys them).
+    if (((u.ushops || []).length || otmp.unpaid) && otmp !== game.uball)
+        await DT.check_shop_obj(otmp, land.x, land.y, false);
     // C ref: dothrow.c throwit():1838 stackobj(obj) after place_object() —
     // a thrown apple merges into an identical pile already on that square.
     stackobj(otmp);
@@ -7647,10 +7692,18 @@ async function throwit(otmp, skillsnap, wep_mask) {
 export async function hitfloor(otmp, verbosely) {
     const u = game.u;
     const hereTyp = game.level.at(u.ux, u.uy)?.typ ?? 0;
-    const soft = IS_SOFT(hereTyp);
     // C ref: dothrow.c:610 — soft ground (air/cloud/water), being underwater or
     // being swallowed all short-circuit to dropy(): no message, no break test.
-    if (!soft && verbosely) {
+    if (IS_SOFT(hereTyp) || u.uinwater || u.uswallow) {
+        otmp.owornmask = 0;
+        otmp.how_lost = LOST_THROWN;
+        await dropy(otmp);
+        return;
+    }
+    if (IS_ALTAR(hereTyp)) {
+        // C ref: dothrow.c:614 `doaltarobj(obj)` replaces the "hits the floor" line.
+        await (await import('./do.js')).doaltarobj(otmp);
+    } else if (verbosely) {
         // C ref: dothrow.c:617 — a wand of striking "strike"s rather than
         // "hit"s, and a SEEN trapdoor/hole/pit renames the surface it lands on.
         const dn = doname_invent(otmp);
@@ -7668,7 +7721,7 @@ export async function hitfloor(otmp, verbosely) {
     // C ref: dothrow.c:642 `if (hero_breaks(obj, u.ux, u.uy, BRK_FROM_INV))
     // return;` — this is where a dropped mirror costs 2 Luck and a smashed
     // camera rolls its demon; the port used to inline a bare delobj().
-    if (!soft && (await DT.hero_breaks(otmp, u.ux, u.uy, DT.BRK_FROM_INV))) {
+    if (await DT.hero_breaks(otmp, u.ux, u.uy, DT.BRK_FROM_INV)) {
         newsym(u.ux, u.uy);
         return;
     }
@@ -7679,11 +7732,10 @@ export async function hitfloor(otmp, verbosely) {
         const { ship_object } = await import('./dokick.js');
         if (await ship_object(otmp, u.ux, u.uy, false)) return;
     }
-    mkobj_place_object(otmp, u.ux, u.uy);
-    otmp.where = OBJ_FLOOR;
+    // C ref: dothrow.c:646 `dropz(obj, TRUE)` — flooreffects, container impact
+    // damage, zombie disturbance and (in a shop) sellobj() all live there.
     otmp.how_lost = LOST_THROWN;
-    stackobj(otmp);
-    newsym(u.ux, u.uy);
+    await dropz(otmp, u.ux, u.uy, true);
 }
 // C ref: trap.c t_at(u.ux, u.uy).
 function trap_at_hero() {
@@ -9459,7 +9511,7 @@ async function dropz(obj, x, y, with_impact = false) {
     if (u.uswallow) {
         if (obj !== game.uball) {
             const SK = await import('./shk.js');
-            if (SK.is_unpaid(obj)) stolen_value(obj, u.ux, u.uy, true, false);
+            if (SK.is_unpaid(obj)) await SK.stolen_value(obj, u.ux, u.uy, true, false);
             const DOm = await import('./do.js');
             if (!(await DOm.engulfer_digests_food(obj))) {
                 const ST = await import('./steal.js');

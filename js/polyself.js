@@ -26,12 +26,9 @@ import { find_ac, race_attrmax, race_attrmin, race_attrmax_of } from './u_init.j
 import { encumber_msg, freeinv, xname, makeplural, near_capacity,
     youmonst_data_pub, makeknown, simple_typename } from './invent.js';
 import { base_mmove } from './mon.js';
-import { P_NAME, weapon_type } from './enhance.js';
+import { weapon_descr } from './weapon.js';
 import { objects as OBJECTS, maybe_adjust_light } from './mkobj.js';
-import { place_object, WEAPON_CLASS, TOOL_CLASS, ARMOR_CLASS, FOOD_CLASS,
-    POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS, WAND_CLASS, COIN_CLASS,
-    GEM_CLASS, ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
-    RING_CLASS, AMULET_CLASS, ILLOBJ_CLASS } from './mkobj.js';
+import { place_object, WEAPON_CLASS } from './mkobj.js';
 import { makesingular, the } from './objnam.js';
 import { rndexp, newhp, newpw, adjabil, update_rank, rank_of } from './exper.js';
 import { newuhs } from './eat.js';
@@ -180,40 +177,6 @@ function cloak_simple_name(obj) {
     return 'cloak';
 }
 
-// C ref: def_oc_syms[].name (objclass.h) — used by weapon_descr()'s P_NONE
-// fallback.  Only the "class name" path is modeled (the CORPSE/TIN/EGG/STATUE/
-// BOULDER/TOWEL/TIN_OPENER and weapon-skill-name special cases in C's
-// weapon_descr() aren't reached by any polyself drop_weapon in the covered
-// sessions, since the only involuntary drop is a plain TOOL_CLASS item).
-const OC_CLASS_NAME = {
-    [ILLOBJ_CLASS]: 'illegal objects', [WEAPON_CLASS]: 'weapons',
-    [ARMOR_CLASS]: 'armor', [RING_CLASS]: 'rings', [AMULET_CLASS]: 'amulets',
-    [TOOL_CLASS]: 'tools', [FOOD_CLASS]: 'food', [POTION_CLASS]: 'potions',
-    [SCROLL_CLASS]: 'scrolls', [SPBOOK_CLASS]: 'spellbooks',
-    [WAND_CLASS]: 'wands', [COIN_CLASS]: 'coins', [GEM_CLASS]: 'rocks',
-    [ROCK_CLASS]: 'large stones', [BALL_CLASS]: 'iron balls',
-    [CHAIN_CLASS]: 'chains', [VENOM_CLASS]: 'venoms',
-};
-// C ref: weapon.c weapon_descr(obj) — shortened "you must drop your X" name.
-// This used to answer a flat "weapon" for every WEAPON_CLASS/weptool item; C
-// answers the SKILL name ("long sword", "dagger", "quarterstaff", ...), which
-// is what the message actually prints for any hero who polymorphs into a
-// nohands/verysmall form while wielding a weapon.
-//
-// Still unported (all inside the P_NONE arm): the CORPSE/TIN/EGG/STATUE/
-// BOULDER/TOWEL/TIN_OPENER overrides that use OBJ_NAME instead of the class
-// name, and the P_SLING/P_BOW/P_CROSSBOW/P_FLAIL/P_PICK_AXE ammo+special
-// renames ("stone"/"gem"/"arrow"/"bolt"/"hook"/"mattock").
-function weapon_descr(obj) {
-    const skill = weapon_type(obj);
-    if (skill === P_NONE) {
-        if (obj.globby) return 'glob';
-        return makesingular(OC_CLASS_NAME[obj.oclass] || 'thing');
-    }
-    // P_NAME's rolemnum arg only matters for P_BARE_HANDED_COMBAT, which
-    // weapon_type() returns only for a NULL obj — unreachable from here.
-    return makesingular(P_NAME(skill, null));
-}
 // C ref: obj.h is_sword(otmp) — a WEAPON_CLASS item whose oc_skill lies in
 // P_SHORT_SWORD(5)..P_SABER(9).  (Note the C macro's low bound is
 // P_SHORT_SWORD, NOT P_DAGGER as the older comment block above it suggests.)

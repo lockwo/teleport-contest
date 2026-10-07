@@ -1239,6 +1239,7 @@ export async function rhack(key) {
         // C ref: cmd.c:3810-3813 — failed prefix validation discards the count.
         reset_cmd_vars(true);
         game.context.stale_run = 0;
+        game.context.stale_rush = false;
         game.context.run_prefix = 0;
         game.context.move = 0;
         return;
@@ -1255,6 +1256,15 @@ export async function rhack(key) {
     // cmd_stale_run) and clear it (end_running() zeroes cmd_stale_run).
     const staleRun = game.context.stale_run || 0;
     game.context.stale_run = 0;
+    // gd.domove_attempting's DOMOVE_RUSH bit, left behind by the same g/G +
+    // unbound-key sequence.  Unlike svc.context.run it is NOT touched by
+    // end_running()/nomul()/losehp() — only domove(), reset_cmd_vars() and the
+    // double-prefix cancel clear it — so it can outlive stale_run.  A later
+    // movement command then finds domove_attempting still set: set_move_cmd()
+    // leaves svc.context.run alone (0 once end_running() has run) and rhack()
+    // takes the DOMOVE_RUSH arm (multi = max(COLNO, ROWNO), context.mv).
+    const staleRush = !!game.context.stale_rush;
+    game.context.stale_rush = false;
     const moveCmd = !game._modal_screen && !game.context.forcefight
         && (isMovementKey(ch) || isRunKey(ch));
     game.context.cmd_stale_run = moveCmd ? 0 : staleRun;
@@ -1268,11 +1278,14 @@ export async function rhack(key) {
     if (game.context.run_prefix && !game._modal_screen
         && !isMovementKey(ch) && ch !== 'g' && ch !== 'G'
         && ch !== 'F' && ch !== '-' && ch !== 'm') {
-        if (!(npBound ?? is_bound_key(ch)))
+        if (!(npBound ?? is_bound_key(ch))) {
             game.context.stale_run = game.context.run_prefix || staleRun;
+            game.context.stale_rush = true;
+        }
         game.context.run_prefix = 0;
     } else if (!(npBound ?? is_bound_key(ch)) && !isMovementKey(ch) && !game._modal_screen) {
         game.context.stale_run = staleRun; // consecutive unbound keys keep it
+        game.context.stale_rush = staleRush;
     }
 
     // A paged ^X attributes window consumes space/return to advance pages and
@@ -1307,6 +1320,7 @@ export async function rhack(key) {
         // C ref: cmd.c — ESC produces no message.
         game.context.run_prefix = 0;
         game.context.stale_run = 0;
+        game.context.stale_rush = false;
         // C ref: cmd.c rhack():3660-3670 — a top-level ESC ends in
         // reset_cmd_vars(TRUE), which zeroes svc.context.run.
         if (!game._modal_screen) reset_cmd_vars(true);
@@ -1857,7 +1871,7 @@ export async function rhack(key) {
         const rprun = game.context.run_prefix || staleRun;
         game.context.nopick = game.iflags?.menu_requested ? 1 : 0; // set_move_cmd()
         game.iflags && (game.iflags.menu_requested = false);
-        if (rprun) {
+        if (rprun || staleRush) {
             game.context.run_prefix = 0;
             await do_run_prefixed(RUN_DX[ch], RUN_DY[ch], rprun);
         } else {
@@ -1911,6 +1925,12 @@ export async function rhack(key) {
             game.iflags = game.iflags || {};
             game.iflags.menu_requested = true;
             game.context._m_fresh = 1; // survives exactly the next command
+            // C ref: cmd.c do_reqmenu() only sets iflags.menu_requested; it
+            // never touches svc.context.run / gd.domove_attempting, so a
+            // residue left by 'g'/'G' + an unbound key survives the 'm' prefix
+            // (and any further unbound keys) into the next movement command.
+            game.context.stale_run = staleRun;
+            game.context.stale_rush = staleRush;
         }
         game.context.move = 0;
         game.multi = 0; // PREFIXCMD reads another command, even after a count.
@@ -1924,7 +1944,7 @@ export async function rhack(key) {
         // turning the FOLLOWING plain step into a multi-tile rush C never
         // took (bl016 ux drift: "g <bad-key> g <bad-key> h" must walk one
         // step west, not rush).
-        if (game.context.run_prefix || staleRun) {
+        if (game.context.run_prefix || staleRun || staleRush) {
             await Norep_topl(`Double ${ch === 'G' ? 'run' : 'rush'} prefix, canceled.`);
             game.context.run_prefix = 0;
             game.context.move = 0;
@@ -1948,7 +1968,12 @@ export async function rhack(key) {
     } else if (isMovementKey(ch)) {
         // staleRun: svc.context.run left over from a g/G whose next key was
         // unbound (see the rhack() head) — the walk still runs at that level.
-        if (game.context.run_prefix || staleRun) {
+        // staleRush: gd.domove_attempting's DOMOVE_RUSH bit survived even if
+        // end_running() (a quaff's losehp(), say) already zeroed the run
+        // value: set_move_cmd() then leaves run at 0 and rhack() still takes
+        // its DOMOVE_RUSH arm, so the step becomes a counted walk (run 0,
+        // multi = max(COLNO, ROWNO)) that interrupt_multi() can end.
+        if (game.context.run_prefix || staleRun || staleRush) {
             const rp = game.context.run_prefix || staleRun;
             game.context.run_prefix = 0;
             // C ref: cmd.c set_move_cmd() — `if (iflags.menu_requested)
@@ -2085,6 +2110,10 @@ export async function rhack(key) {
     // stepped 1.
     if (!badCommand && game.context.move && staleRun && game.context.cmd_stale_run)
         game.context.stale_run = staleRun;
+    // gd.domove_attempting survives the same commands, and ALSO survives the
+    // end_running() that may have zeroed stale_run above (hack.c:4129).
+    if (!badCommand && game.context.move && staleRush)
+        game.context.stale_rush = true;
     game.context.cmd_stale_run = 0;
     // C ref: cmd.c rhack(): the run == 8 a finished travel leaves behind (see
     // hack.js travel_walk) survives bad_command and ECMD_TIME commands; a
@@ -3915,13 +3944,17 @@ async function domove_core(dx, dy, attemptTracked) {
     // elapses.  Closed doors are handled by the autoopen path above (matching
     // C's closed_door-first ordering), so only open/doorless-with-frame doors
     // reach here.  This runs before the generic blocksMove() floor/wall test
-    // because the door square itself is otherwise walkable floor.
-    if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy)) {
+    // because the door square itself is otherwise walkable floor.  A rock/wall
+    // DESTINATION is tested first in C (hack.c:1030, "It's a wall."), so it
+    // falls through to the blocksMove() branch below instead.
+    if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy)
+        && !IS_OBSTRUCTED(game.level?.at(newx, newy)?.typ ?? STONE)) {
         // A refused diagonal out of a doorway still first tests the
         // destination, so a blind hero may feel a wall there.
         feel_refused_step(newx, newy, u.dx, u.dy);
         await mention_diagonal_door(newx, newy);
         game.context.move = 0;
+        nomul(0); // C ref: hack.c domove_core() — a failed test_move() ends a run
         return;
     }
 
@@ -5222,7 +5255,7 @@ async function autopickup_after_move(x, y) {
     // disp.botl, so the next pline's bot() shows the new encumbrance).
     if (game.context?.run && game.context.run !== 8 && !game.context.nopick)
         (await import('./hack.js')).nomul(0);
-    const { autopick_testobj, reset_justpicked } = await import('./pickup.js');
+    const { autopick_testobj, reset_justpicked, pickup_object } = await import('./pickup.js');
     // calc_costly is TRUE for the first object only, as in autopick().
     let check_costly = true;
     const takes = [];
@@ -5238,17 +5271,18 @@ async function autopickup_after_move(x, y) {
     // "Items you just picked up" instead of naming the single new stack.
     if (takes.length) reset_justpicked(inv.inventoryArray());
     let nPicked = 0;
+    // C ref: pickup.c pickup() menu_pickup arm — each autopicked object goes
+    // through pickup_object() (fatal corpse / scare-monster checks, then
+    // lift_object()'s carry_count() + pickup_burden prompt); a negative result
+    // breaks out of the loop.  Calling pick_one_obj() directly skipped the
+    // "You have much trouble lifting X.  Continue?" prompt entirely.
     for (const obj of takes) {
-        await pickup_one(inv, obj, x, y);
-        nPicked++;
+        const res = await pickup_object(obj, obj.quan, false);
+        newsym(x, y);
+        if (res < 0) break;
+        nPicked += res;
     }
     return nPicked;
-}
-
-// C ref: pickup_object() -> pickup_prinv(); pick_one_obj owns message chaining.
-async function pickup_one(inv, obj, x, y) {
-    await inv.pick_one_obj(obj);
-    newsym(x, y);
 }
 
 // C ref: objnam.c an() — indefinite article (just_an() exceptions included).

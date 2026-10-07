@@ -18,7 +18,7 @@ import { m_at, newsym, update_topl, map_invisible,
 import { cansee } from './vision.js';
 import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT,
          LAVAPOOL, TT_PIT, P_DAGGER, A_DEX, A_CHA, NEED_HTH_WEAPON,
-         MM_NOMSG, EYE } from './const.js';
+         MM_NOMSG, EYE, SHOPBASE } from './const.js';
 // C ref: trap.h:57 enum trap_types — used by the hurtle_step() port below.
 import { PIT, SPIKED_PIT, HOLE, TRAPDOOR, MAGIC_PORTAL, FIRE_TRAP,
          VIBRATING_SQUARE } from './const.js';
@@ -464,14 +464,39 @@ export async function breaks(obj, x, y) {
 
 // ── check_shop_obj (C ref: dothrow.c:1180) ───────────────────────────────────
 //
-// Billing for an object that left the hero's hands inside a shop.  js/shkroom.js
-// carries costly_spot()/addtobill() but no stolen_value()/subfrombill()/
-// sellobj(), so only the no_charge marking that the rest of the port reads runs.
+// Billing for an object that left the hero's hands inside a shop: thrown out
+// of (or into a different) shop it is charged for via stolen_value(); thrown
+// onto its own shop's floor it comes off the bill (unpaid) or is offered for
+// sale through sellobj().
 export async function check_shop_obj(obj, x, y, broken) {
-    const { costly_spot } = await import('./shkroom.js');
-    const costly_xy = costly_spot(x, y);
-    if (broken || !costly_xy) {
+    const SR = await import('./shkroom.js');
+    const SK = await import('./shk.js');
+    const u = game.u;
+    const ushops = u.ushops || [];
+    const shkp = SR.shop_keeper(ushops[0]);
+    if (!shkp) return;
+
+    const costly_xy = SK.costly_spot(x, y);
+    if (broken || !costly_xy || SR.in_rooms(x, y, SHOPBASE)[0] !== ushops[0]) {
+        /* thrown out of a shop or into a different shop */
+        if (SK.is_unpaid(obj))
+            await SK.stolen_value(obj, u.ux, u.uy, !!shkp.mpeaceful, false);
         if (broken) obj.no_charge = 1;
+    } else if (costly_xy) {
+        const oshops = SR.in_rooms(x, y, SHOPBASE);
+
+        /* ushops0: in case we threw while levitating and recoiled
+           out of shop (most likely to the shk's spot in front of door) */
+        if (oshops[0] === ushops[0] || oshops[0] === (u.ushops0 || [])[0]) {
+            if (SK.is_unpaid(obj)) {
+                const gtg = (obj.cobj && obj.cobj.length) ? SK.contained_gold(obj, true) : 0;
+
+                SK.subfrombill(obj, shkp);
+                if (gtg > 0) await SK.donate_gold(gtg, shkp, true);
+            } else if (x !== shkp.mx || y !== shkp.my) {
+                await SK.sellobj(obj, x, y);
+            }
+        }
     }
 }
 

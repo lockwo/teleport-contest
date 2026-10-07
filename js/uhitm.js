@@ -422,18 +422,32 @@ function mimic_reveal_what(mtmp) {
 // rolling rnd(2) regardless of the FALSE init arg. This roll is NOT optional:
 // skipping it desyncs every later RNG draw (a previous, reverted attempt hit
 // this). The temp object is never placed/listed, matching C's dealloc_obj().
-function object_from_map_lite(mtmp) {
+async function object_from_map_lite(mtmp) {
     const otyp = mtmp.mappearance;
-    const real = (game.level?.objects || []).find(
-        (o) => o.ox === mtmp.mx && o.oy === mtmp.my && o.otyp === otyp);
-    if (real) return real;
+    // C ref: pager.c:306-311 — a mimic posing as this very type here makes
+    // object_from_map() drop any REAL object it found (`otmp = 0`), so a
+    // stand-in is always fabricated for a disguised mimic.
     const otmp = mksobj(otyp, false, false);
     // C ref: pager.c object_from_map() — "to force pluralization" for coins.
     if (otmp.oclass === COIN_CLASS) otmp.quan = 2;
+    // C ref: pager.c:358-374 — an adjacent object is seen up close, and a
+    // disguise the hero has looked at before stays seen: observe_object()
+    // marks the TYPE encountered, which is what #discoveries lists.  A gem or
+    // spellbook disguise reads back as STRANGE_OBJECT (see above) and is not
+    // a real type to observe.
+    if (!mimic_disguise_collapses_to_strange(otyp)) {
+        const { observe_object } = await import('./o_init.js');
+        if (m_next2u(mtmp) && !Blind() && !game.u?.uhallu)
+            observe_object(otmp);
+        if (otmp.dknown || mtmp.m_ap_dknown) {
+            mtmp.m_ap_dknown = 1;
+            observe_object(otmp);
+        }
+    }
     return otmp;
 }
 
-function that_is_a_mimic_message(mtmp) {
+async function that_is_a_mimic_message(mtmp) {
     if (Blind()) return "Wait!  That's a monster!";
 
     let fmtbuf;
@@ -442,7 +456,7 @@ function that_is_a_mimic_message(mtmp) {
         fmtbuf = `That ${furn} actually is %s!`;
     } else if (mtmp.m_ap_type === 'obj') {
         const otyp = mtmp.mappearance;
-        const otmp = object_from_map_lite(mtmp);
+        const otmp = await object_from_map_lite(mtmp);
         const otmp_name = (otyp && otyp !== STRANGE_OBJECT
                            && !mimic_disguise_collapses_to_strange(otyp))
             ? simple_typename(otyp) : 'strange object';
@@ -559,7 +573,7 @@ async function mimic_grabs_hero(mtmp) {
 
 export async function stumble_onto_mimic(mtmp) {
     const { pline } = await import('./display.js');
-    const msg = that_is_a_mimic_message(mtmp);
+    const msg = await that_is_a_mimic_message(mtmp);
     // uhitm.c:6269-6275 — pline() FIRST, `if (reveal_it) seemimic(mtmp)` after.
     // seemimic -> newsym repaints the cell immediately here, so revealing
     // before the message shows the true glyph on any --More-- the message
@@ -5036,7 +5050,7 @@ export async function that_is_a_mimic(mtmp, mimic_flags) {
        "That/Those <object> is/are %s!", "Wait!  That's %s!") and substitutes
        'what'.  C's Blind_telepat/M_AP_MONSTER branch is absent because
        set_mimic_sym() never assigns M_AP_MONSTER in this port. */
-    let line = that_is_a_mimic_message(mtmp);
+    let line = await that_is_a_mimic_message(mtmp);
     if (omit_wait && line.startsWith('Wait!  '))
         line = line.slice(7);
     const { update_topl } = await import('./display.js');

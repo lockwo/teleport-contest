@@ -25,7 +25,7 @@ import {
 } from './invent.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { weapon_descr } from './weapon.js';
-import { youmonst_data_pub, nohands_youmonst } from './invent.js';
+import { youmonst_data_pub, nohands_youmonst, empty_handed } from './invent.js';
 import { mflags1_of, M1_HUMANOID, M1_SLITHY } from './monflags_data.js';
 import { acurr_eff } from './attrib.js';
 import { condtests, bl_bareh } from './botl.js';
@@ -1291,7 +1291,7 @@ export async function do_takeoff() {
         if (!(await cursed_blocks(game.uwep))) {
             setuwep_slot(null);
             await pline(was_twoweap ? 'You are no longer wielding either weapon.'
-                                    : `You are ${game.uarmg ? 'empty handed' : 'bare handed'}.`);
+                                    : `You are ${empty_handed()}.`);
         }
     } else if (doff.what === 0x400 /*W_SWAPWEP*/) {
         setuswapwep(null);

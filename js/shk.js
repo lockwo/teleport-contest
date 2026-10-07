@@ -1469,7 +1469,7 @@ export function setpaid(shkp) {
 }
 
 // C ref: shk.c hot_pursuit(shkp):1449.  (Real port: js/shkroom.js, private.)
-function hot_pursuit(shkp) {
+export function hot_pursuit(shkp) {
     if (!shkp.isshk) return;
     rile_shk(shkp);
     shkp.eshk.customer = game.plname;
@@ -2292,6 +2292,139 @@ export function stolen_container(obj, shkp, price, ininv) {
     return price;
 }
 
+// C ref: shk.c find_objowner(obj, x, y):1084 — the shopkeeper who owns 'obj';
+// needed to handle shared shop walls.  The caller passes obj's location since
+// obj->ox,oy might be stale.  A used-up item (OBJ_ONBILL) is found through
+// the bills; anything else through each shop room covering (x, y), falling
+// back to the first shk found when obj is on none of their bills.
+export function find_objowner(obj, x, y) {
+    let deflt_shkp = null;
+
+    if (obj.where === OBJ_ONBILL) {
+        for (let shkp = next_shkp(fmon()[0], true); shkp;
+             shkp = next_shkp(nmon(shkp), true))
+            if (onshopbill(obj, shkp, true)) return shkp;
+    } else {
+        for (const rno of in_rooms(x, y, SHOPBASE)) {
+            const shkp = shop_keeper(rno);
+            if (shkp) {
+                if (onshopbill(obj, shkp, true)) return shkp;
+                if (!deflt_shkp) deflt_shkp = shkp;
+            }
+        }
+    }
+    return deflt_shkp;
+}
+
+// C ref: shk.c stolen_value(obj, x, y, peaceful, silent):3754 — the hero got
+// shop goods out of the shop (or gave up billable ones): charge for them.
+// A peaceful shk adds it to the debit, an angry one to `robbed` and the hunt
+// starts.  Returns the amount charged.  RNG: only through hot_pursuit()'s
+// rile_shk() and angry_guards().
+export async function stolen_value(obj, x, y, peaceful, silent) {
+    let value = 0, gvalue = 0, billamt = 0;
+    let c_count = 0, u_count = 0;
+    let roomno;
+    let shkp = find_objowner(obj, x, y);
+
+    if (shkp) roomno = shkp.eshk.shoproom;
+    else roomno = in_rooms(x, y, SHOPBASE)[0] || 0;
+
+    /* gather information for message(s) prior to manipulating bill */
+    const was_unpaid = !!obj.unpaid;
+    if (Has_contents(obj)) {
+        c_count = count_contents(obj, true, false, true, false);
+        u_count = count_contents(obj, true, false, false, false);
+    }
+
+    /* C: billable(&shkp, ...) fills in shkp when it validates the room's shk */
+    shkp = null;
+    if (roomno) {
+        const cand = shop_keeper(roomno);
+        if (cand && inhishop(cand)) shkp = cand;
+    }
+    if (!shkp || !billable(shkp, obj, roomno, true)) {
+        /* things already on the bill yield a not-billable result, so
+           we need to check bill before deciding that shk doesn't care */
+        const bp = shkp ? onbill(obj, shkp) : null;
+        if (bp) {
+            /* shk does care; take obj off bill to avoid double billing */
+            billamt = bp.bquan * bp.price;
+            sub_one_frombill(obj, shkp);
+        }
+        if (!bp && !u_count) return 0;
+    }
+
+    if (obj.oclass === COIN_CLASS) {
+        gvalue += obj.quan;
+    } else {
+        if (billamt) value += billamt;
+        else if (!obj.no_charge)
+            value += get_pricing_units(obj) * get_cost(obj, shkp);
+
+        if (Has_contents(obj)) {
+            const ininv = (obj.where === OBJ_INVENT || obj.where === OBJ_FREE);
+
+            value += stolen_container(obj, shkp, 0, ininv);
+            if (!ininv) gvalue += contained_gold(obj, true);
+        }
+    }
+
+    if (gvalue + value === 0) return 0;
+
+    value += gvalue;
+
+    const eshkp = shkp.eshk;
+    if (peaceful) {
+        const credit_use = !!eshkp.credit;
+
+        value = await check_credit(value, shkp);
+        /* 'peaceful' affects general treatment, but doesn't affect
+         * the fact that other code expects that all charges after the
+         * shopkeeper is angry are included in robbed, not debit */
+        if (ANGRY(shkp)) eshkp.robbed = (eshkp.robbed || 0) + value;
+        else eshkp.debit = (eshkp.debit || 0) + value;
+
+        if (!silent) {
+            let still = '';
+
+            if (credit_use) {
+                if (eshkp.credit) {
+                    await update_topl(`You have ${eshkp.credit} ${
+                        currency(eshkp.credit)} credit remaining.`);
+                    return value;
+                } else if (!value) {
+                    await update_topl('You have no credit remaining.');
+                    return 0;
+                }
+                still = 'still ';
+            }
+            let buf = `${still}owe ${shkname(shkp)} ${value} ${currency(value)}`;
+            if (u_count) /* u_count > 0 implies Has_contents(obj) */
+                buf += ` for ${was_unpaid ? 'it and ' : ''}${
+                    (c_count > u_count) ? 'some of ' : ''}its contents`;
+            else if (obj.oclass !== COIN_CLASS)
+                buf += ` for ${(obj.quan > 1) ? 'them' : 'it'}`;
+
+            await update_topl(`You ${buf}!`); /* "You owe <shk> N zorkmids for it!" */
+        }
+    } else {
+        eshkp.robbed = (eshkp.robbed || 0) + value;
+
+        if (!silent) {
+            if (await canseemon(shkp)) {
+                await update_topl(`${Shknam(shkp)} booms: "${game.plname}, you are a thief!"`);
+            } else if (!Deaf()) {
+                await update_topl('You hear a scream, "Thief!"');
+            }
+        }
+        hot_pursuit(shkp);
+        const { angry_guards } = await import('./questpgr.js');
+        await angry_guards(false);
+    }
+    return value;
+}
+
 // C ref: shk.c donate_gold(gltmp, shkp, selling):3877 — the hero dropped gold
 // in a shop; it pays down debt first, then becomes credit.
 export async function donate_gold(gltmp, shkp, selling) {
@@ -2327,7 +2460,7 @@ export async function donate_gold(gltmp, shkp, selling) {
 // gs.sell_how / ga.auto_credit.  This port has no gs/ga structs; these three
 // module-level values are the C globals, read and written only by
 // sellobj_state() and sellobj() as in C.
-let sell_response = '\0';
+let sell_response = 'a'; /* decl.c: gs.sell_response starts as 'a' (sell without asking) */
 let sell_how = SELL_NORMAL;
 let auto_credit = false;
 export function sellobj_state(deliberate) {
