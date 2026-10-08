@@ -1748,6 +1748,7 @@ async function mdamageu(mtmp, n) {
     const u = game.u;
     if (n < 0) n = 0;
     u.uhp -= n;
+        { const { showdamage } = await import('./hack.js'); await showdamage(n); }
     if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
     game.disp = game.disp || {};
     game.disp.botl = true;

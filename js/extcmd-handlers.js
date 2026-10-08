@@ -79,7 +79,7 @@ import { isok } from './hacklib.js';
 import { Monnam, canspotmon, mon_nam, oc_wldam, killed } from './uhitm.js';
 import { domonnoise } from './sounds.js';
 import { build_overview_lines, surface, ceiling, print_dungeon_lines } from './dungeon.js';
-import { doextversion } from './version.js';
+import { doextversion, doversion } from './version.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { polyok_flag } from './monflags_data.js';
 import { polymon, newman, domonability, PM_HUMAN } from './polyself.js';
@@ -471,6 +471,14 @@ export async function hooked_tty_getlin(query, hook) {
                 const expanded = hook ? hook(typed) : null;
                 shown = expanded != null ? expanded : typed;
             }
+            continue;
+        }
+        // C ref: getline.c:196 `c == kill_char || c == '\177'` — the pty's
+        // VKILL is ^U (unixtty.c kill_char = inittyb.kill_sym); it erases the
+        // whole typed line, echoing "\b \b" per character.
+        if (code === 21) {
+            typed = '';
+            shown = '';
             continue;
         }
         // C ref: getline.c:168 `bufp - obufp < BUFSZ - 1 && bufp - obufp < COLNO`
@@ -3334,6 +3342,7 @@ const HANDLERS = {
     wizcast: dowizcast,
     overview: dooverview,
     version: doextversion,
+    versionshort: doversion,
     quit: doquit_extcmd,
     polyself: wiz_polyself,
     monster: domonability_extcmd,

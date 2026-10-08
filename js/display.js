@@ -3730,6 +3730,10 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
     if (curx >= CO - 8) {
         curx = 0;
         cury += 1;
+        /* topl_putsym('\n') ends with `if (cw->curx == 0) cl_end();`, which
+           blanks the whole new row before "--More--" is written on it. */
+        if (cury < disp.rows)
+            for (let x = 0; x < disp.cols; x++) disp.setCell(x, cury, ' ', NO_COLOR, 0);
     }
     for (let i = 0; i < DEFMORESTR.length && curx + i < CO; i++)
         disp.setCell(curx + i, cury, DEFMORESTR[i], NO_COLOR, 0);

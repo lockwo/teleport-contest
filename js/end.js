@@ -1206,7 +1206,9 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     // (blank trailing page handled by the pager above)
 
     disp.clearScreen();
-    let row = 0;
+    // C ref: termcap.c nomux_raw_emit() — topten()'s raw_print()s continue from
+    // the recorder's raw row once an rc error has activated it (rawPrintBias()).
+    let row = rawPrintBias();
     const printLine = (text, so) => {
         disp.putstr(0, row++, text, NO_COLOR, so ? ATR_BOLD : 0);
     };
@@ -1219,7 +1221,7 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         for (const l of topten_outentry(e.rank, e.entry, e.so, COLNO))
             printLine(l, e.so);
     }
-    disp.setCursor(0, row);
+    setFinalCursor(disp, row);
     topten_record_write(tt);
 
     game.program_state = game.program_state || {};

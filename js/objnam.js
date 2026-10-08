@@ -30,6 +30,7 @@ import { currency, bimanual as inv_bimanual, W_AMUL as INV_W_AMUL } from './inve
 import { body_part } from './polyself.js';
 import { tin_variety, tintxts, vegetarian, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN } from './eat.js';
 import { artifact_name as arti_artifact_name, find_artifact as arti_find_artifact,
+         bare_artifactname as arti_bare_artifactname,
          glow_color as arti_glow_color, glow_verb as arti_glow_verb,
          permapoisoned as arti_permapoisoned } from './artifact.js';
 import { artifact_light as light_artifact_light, arti_light_description as light_arti_light_description,
@@ -2735,6 +2736,66 @@ export function cxname_singular(obj) {
     if (obj.otyp === CORPSE_)
         return corpse_xname(obj, null, CXN_SINGULAR);
     return xname_flags(obj, CXN_SINGULAR);
+}
+
+// C ref: objnam.c:1942 killer_xname() — treat an object as fully ID'd when it
+// might be used as the reason for death (the returned name carries its
+// article, so callers pass it to losehp() with KILLED_BY).
+export function killer_xname(obj) {
+    /* bypass object twiddling for artifacts */
+    if (obj.oartifact)
+        return arti_bare_artifactname(obj);
+
+    const save_obj = { ...obj };
+    const save_oname = has_oname(obj) ? obj.oname : null;
+    let buf;
+
+    /* killer name should be more specific than general xname; however, exact
+       info like blessed/cursed and rustproof makes things be too verbose; set
+       dknown (not observe_object) because dead characters don't observe */
+    obj.known = obj.dknown = 1;
+    obj.bknown = obj.rknown = obj.greased = 0;
+    /* if character is a priest[ess], bknown will get toggled back on */
+    if (obj.otyp !== POT_WATER_)
+        obj.blessed = obj.cursed = 0;
+    else
+        obj.bknown = 1; /* describe holy/unholy water as such */
+    /* "killed by poisoned <obj>" would be misleading when poison is
+       not the cause of death and "poisoned by poisoned <obj>" would
+       be redundant when it is, so suppress "poisoned" prefix */
+    obj.opoisoned = 0;
+    /* strip user-supplied name; artifacts keep theirs */
+    if (save_oname)
+        obj.oname = null;
+    /* temporarily identify the type of object */
+    const save_ocknown = objects[obj.otyp].oc_name_known;
+    objects[obj.otyp].oc_name_known = 1;
+    const save_ocuname = objects[obj.otyp].oc_uname;
+    objects[obj.otyp].oc_uname = 0; /* avoid "foo called bar" */
+
+    try {
+        /* format the object */
+        if (obj.otyp === CORPSE_) {
+            buf = corpse_xname(obj, null, CXN_NORMAL);
+        } else if (obj.otyp === SLIME_MOLD_) {
+            /* concession to "most unique deaths competition" in the annual
+               devnull tournament, suppress player supplied fruit names because
+               those can be used to fake other objects and dungeon features */
+            buf = `deadly slime mold${plur(obj.quan)}`;
+        } else {
+            buf = xname_flags(obj, CXN_NORMAL);
+        }
+        /* apply an article if appropriate; caller should always use KILLED_BY */
+        if (obj.quan === 1 && strstri(buf, "'s ") < 0 && strstri(buf, "s' ") < 0)
+            buf = (obj_is_pname(obj) || the_unique_obj(obj)) ? the(buf) : an(buf);
+    } finally {
+        objects[obj.otyp].oc_name_known = save_ocknown;
+        objects[obj.otyp].oc_uname = save_ocuname;
+        Object.assign(obj, save_obj); /* restore object's core settings */
+        if (save_oname)
+            obj.oname = save_oname;
+    }
+    return buf;
 }
 
 // C ref: objnam.c the()

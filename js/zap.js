@@ -5505,13 +5505,13 @@ export async function wishcmdassist(triesleft) {
        is full-screen (offx 0), paged by dmore() on the bottom row and torn
        down with docrt() by erase_menu_or_text(). */
     const { renderWindowScreen, dismiss_invent_screen } = await import('./invent.js');
-    const { nhgetch } = await import('./input.js');
+    const { nhgetch, xwaitforspace_quit } = await import('./input.js');
     renderWindowScreen(lines, { footer: '--More--', footerRow: 23, footerCol: 0,
                                 modal: 'textwin' });
     /* xwaitforspace(quitchars) */
     for (;;) {
         const c = await nhgetch();
-        if (c === 32 || c === 13 || c === 10 || c === 27) break;
+        if (xwaitforspace_quit(c)) break;
     }
     await dismiss_invent_screen();
 }

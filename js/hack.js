@@ -26,7 +26,7 @@ import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
 import { rnd } from './rng.js';
 import { vision_recalc, Blind, couldsee, cansee } from './vision.js';
-import { nhgetch } from './input.js';
+import { nhgetch, xwaitforspace_quit } from './input.js';
 import { is_safemon, canspotmon } from './uhitm.js';
 import { distant_monnam, ARTICLE_NONE, a_monnam } from './do_name.js';
 import { dist2, distmin } from './hacklib.js';
@@ -1400,7 +1400,7 @@ async function getpos_help(force, goal, doingWhatIs, hasValid, hasHilite) {
     for (;;) {
         render_text_window(lines);
         const k = await nhgetch();               // getline.c xwaitforspace(quitchars)
-        if (k === 32 || k === 13 || k === 10 || k === 27) break;
+        if (xwaitforspace_quit(k)) break;
     }
 }
 
@@ -4386,7 +4386,7 @@ export function furniture_present(furniture, roomno) {
 // ── hack.c:4247  the showdamage option's per-hit line ───────────────────────
 
 // C ref: hack.c:4247 showdamage(dmg) — losehp()'s "[HP -3, 12 left]" trailer.
-// iflags.showdamage is off in every recorded rc (js/options.js:1227).
+// iflags.showdamage is set by OPTIONS=showdamage (options.js set_boolean).
 export async function showdamage(dmg) {
     const iflags = game.iflags, u = game.u;
 

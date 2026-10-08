@@ -1289,6 +1289,7 @@ export async function mdamageu(mtmp, n) {
     game.botl = true;
     if (Upolyd()) {
         u.mh = (u.mh | 0) - n;
+        { const { showdamage } = await import('./hack.js'); await showdamage(n); }
         if (u.mh > u.mhmax) u.mh = u.mhmax;
         if (u.mh < 1) {
             const { rehumanize } = await import('./polyself.js');
@@ -1296,6 +1297,7 @@ export async function mdamageu(mtmp, n) {
         }
     } else {
         u.uhp = (u.uhp | 0) - n;
+        { const { showdamage } = await import('./hack.js'); await showdamage(n); }
         if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
         if (u.uhp < 1) {
             const { done_in_by } = await import('./end.js');

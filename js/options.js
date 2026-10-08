@@ -1465,6 +1465,12 @@ function set_boolean(name, value, result) {
     // subsystem (mon.js/mklev.js/wizcmds.js/ball.js/engrave.js/timeout.js/
     // trap.js) all read game.iflags.sanity_check, not game.flags.
     case 'sanity_check': result.iflags.sanity_check = value; break;
+    // C: &iflags.showdamage (optlist.h) -- hack.js showdamage() reads
+    // game.iflags.showdamage; flags.* keeps the 'O' menu value.
+    case 'showdamage':
+        result.flags.showdamage = value;
+        result.iflags.showdamage = value;
+        break;
     // C: iflags.menu_tab_sep -- read directly (no windowport gating) by
     // weapon.c, region.c, invent.c, spell.c and artifact.c's menu-column
     // formatting; js/invent.js, js/region.js, js/spell.js and this file's own

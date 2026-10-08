@@ -71,6 +71,7 @@ async function losehp(n) {
     if (!u) return;
     hooks.end_running?.(true); // hack.c:4266
     u.uhp -= n;
+    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
     if (u.uhp > u.uhpmax) {
         u.uhpmax = u.uhp;
         return;

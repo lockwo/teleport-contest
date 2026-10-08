@@ -10,7 +10,7 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac } from './worn.js';
 import { rn2, rnd, rnl, d } from './rng.js';
-import { nhgetch } from './input.js';
+import { nhgetch, xwaitforspace_quit } from './input.js';
 import { docrt, flush_screen, newsym, map_object, pline, putStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl } from './display.js';
 import { hooks } from './gstate.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
@@ -150,7 +150,8 @@ import { shk_owns } from './shk.js';
 import { xname as on_xname, cxname_singular as on_cxname_singular, doname_base as on_doname_base,
          corpse_xname as on_corpse_xname, simpleonames as on_simpleonames,
          ansimpleoname as on_ansimpleoname, minimal_xname as on_minimal_xname,
-         distantname_adjust, distantname_active, The as on_The, the as on_the } from './objnam.js';
+         distantname_adjust, distantname_active, The as on_The, the as on_the,
+         killer_xname } from './objnam.js';
 import { y_monnam } from './do_name.js';
 // role.js imports only gstate/rng/const, so this is cycle-safe.
 import { roles, align_gname } from './role.js';
@@ -718,7 +719,7 @@ export async function wield_tool(obj, verb) {
     return true;
 }
 function corpse_xname(obj, adj, flagsArg = 0) { return on_corpse_xname(obj, adj, flagsArg); }
-export function killer_xname(obj) { return simple_obj_name(obj, { article: false }); }
+export { killer_xname };
 
 // C ref: do_name.c docall_xname(obj) — the bare "a/an <appearance>" name used
 // in the "Call <x>:" prompt: a fresh copy with diluted/poison/BUC fixups so it
@@ -1212,7 +1213,20 @@ function Maybe_Half_Phys(dmg) {
 }
 // C ref: hack.c losehp() reduced to the hp arithmetic (death handling lives in
 // the callers' own losehp copies elsewhere in the port).
-function losehp_invent(n) {
+async function losehp_invent(n) {
+    const u = game.u;
+    if (!u) return;
+    hooks.end_running?.(true); // hack.c:4266
+    u.uhp -= n;
+    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
+    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
+    if (u.uhp < 1) u.uhp = 0;
+    game.botl = true;
+}
+// Synchronous variant for this file's sync touch_artifact() (its sync callers
+// cannot await showdamage()'s pline); artifact.js's async touch_artifact()
+// goes through do.js losehp_do(), which does show the damage.
+function losehp_invent_sync(n) {
     const u = game.u;
     if (!u) return;
     hooks.end_running?.(true); // hack.c:4266
@@ -1261,7 +1275,7 @@ export function touch_artifact(obj, mon) {
         // the silver damage bonus never fired for a real silver artifact.
         if (objects[obj.otyp]?.material === 14 /* SILVER */ && Hate_silver())
             dmg += Maybe_Half_Phys(rnd(10));
-        losehp_invent(dmg);
+        losehp_invent_sync(dmg);
         exercise(A_WIS, false);
     }
 
@@ -6174,7 +6188,7 @@ async function retouch_object(obj) {
             let dmg = 0;
             if (ag) dmg += Maybe_Half_Phys(rnd(10));
             if (bane) dmg += rnd(10);
-            losehp_invent(dmg);
+            await losehp_invent(dmg);
             exercise(A_CON, false);
         }
     }
@@ -7593,7 +7607,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
                     dmg += rnd(3);
                     await update_topl(`${Tobjnam_throw(otmp, 'fly')} back toward you, hitting your ${
                         body_part(0 /*ARM*/)}!`);
-                    losehp_invent(dmg);
+                    await losehp_invent(dmg);
                 }
                 otmp.owornmask = 0;
                 // C ref: dothrow.c:1754 `if (!ship_object(obj, u.ux, u.uy,
@@ -7875,7 +7889,7 @@ async function toss_up(otmp, hitsroof) {
             await update_topl(`Your ${armor_simple_name(game.uarmh)} does not protect you.`);
     }
     await hitfloor(otmp, true);
-    losehp_invent(dmg);
+    await losehp_invent(dmg);
 }
 
 // C ref: weapon.c skill_name() — launcher name for the throw "by hand" message.
@@ -11895,7 +11909,7 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
         draw();
         game._modal_screen = 'thingshere';
         const c = await nhgetch();
-        if (c === 32 || c === 13 || c === 10 || c === 27) break;
+        if (xwaitforspace_quit(c)) break;
     }
     delete game._modal_screen;
 }

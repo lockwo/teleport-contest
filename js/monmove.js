@@ -6747,7 +6747,7 @@ export async function thitu(tlev, dam, otmp) {
     // C ref: mthrowu.c thitu() — losehp(dam, killer_xname(obj), KILLED_BY).
     // killer_xname() never carries mshot_xname()'s "the Nth " volley prefix.
     const { losehp_do } = await import('./do.js');
-    await losehp_do(dam, an_name(mshot_basename(otmp)), 1 /* KILLED_BY */);
+    await losehp_do(dam, mv_killer_xname(otmp), 1 /* KILLED_BY */);
     exercise(0 /*A_STR*/, false);
     return 1;
 }
@@ -8735,6 +8735,7 @@ async function mdamageu(mtmp, n) {
     // real hero HP silently drained underneath it.
     if (u.Upolyd) {
         u.mh = (u.mh | 0) - n;
+        { const { showdamage } = await import('./hack.js'); await showdamage(n); }
         if (u.mh > u.mhmax) u.mh = u.mhmax;
         if (u.mh < 1) {
             const { rehumanize } = await import('./polyself.js');
@@ -8743,6 +8744,7 @@ async function mdamageu(mtmp, n) {
         return;
     }
     u.uhp -= n;
+        { const { showdamage } = await import('./hack.js'); await showdamage(n); }
     if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
     // C ref mhitu.c:1925 — `if (u.uhp < 1) done_in_by(mtmp, DIED)`.  A hostile
     // bite that drops the hero to 0 HP triggers the death sequence (in wizard

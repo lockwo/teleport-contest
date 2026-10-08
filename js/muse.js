@@ -1832,6 +1832,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
                 if (Half_spell_damage_muse()) tmp = Math.trunc((tmp + 1) / 2);
                 const u = game.u;
                 u.uhp -= tmp;
+                { const { showdamage } = await import('./hack.js'); await showdamage(tmp); }
                 learnit = true;
                 if (u.uhp < 1) {
                     const endm = await import('./end.js');

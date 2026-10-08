@@ -929,7 +929,7 @@ export async function use_whip(obj, getDir) {
         let dam = rnd(2) + I.dbon() + (obj.spe | 0);
         if (dam <= 0) dam = 1;
         await update_topl(`You hit your ${I.body_part(FOOT)} with your bullwhip.`);
-        I.losehp_throw(dam);
+        await I.losehp_throw(dam);
         return ECMD_TIME;
 
     } else if ((Fumbling() || Glib()) && !rn2(5)) {
@@ -1123,7 +1123,7 @@ export async function thitu(tlev, dam, obj, name) {
         await update_topl(`You are hit${excl}`);
     else
         await update_topl(`You are hit by ${onm}${excl}`);
-    I.losehp_throw(dam);
+    await I.losehp_throw(dam);
     const { exercise } = await import('./attrib.js');
     exercise(0 /* A_STR */, false);
     return 1;

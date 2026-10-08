@@ -2078,11 +2078,12 @@ function speciesVegetarian(mnum) { return vegetarian(monster_by_pmidx(mnum)); }
 
 // C ref: hack.c losehp() — subtract damage from u.uhp (no RNG); the death
 // path is not modelled here.
-function losehp_eat(n) {
+async function losehp_eat(n) {
     const u = game.u;
     if (!u) return;
     hooks.end_running?.(true); // hack.c:4266
     u.uhp -= n;
+    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     if (u.uhp < 0) u.uhp = 0;
 }
@@ -2211,7 +2212,7 @@ async function eatcorpse(otmp) {
     } else if (sp && mon_acidic(sp) && !u?.uprops?.Acid_resistance) {
         tp++;
         await update_topl('You have a very bad case of stomach acid.');
-        losehp_eat(rnd(15));                           // eat.c:1926 acid losehp
+        await losehp_eat(rnd(15));                           // eat.c:1926 acid losehp
     } else if (sp && mon_poisonous(sp) && rn2(5)) {
         tp++;
         await update_topl('Ecch - that must have been poisonous!');
@@ -2226,7 +2227,7 @@ async function eatcorpse(otmp) {
                && !u?.uprops?.Sick_resistance) {       // eat.c:1939
         tp++;
         await update_topl(`You feel ${u?.uprops?.Sick ? 'very ' : ''}sick.`);
-        losehp_eat(rnd(8));                            // eat.c:1942 losehp(rnd(8))
+        await losehp_eat(rnd(8));                            // eat.c:1942 losehp(rnd(8))
     }
 
     // delay is weight dependent: reqtime = 3 + (cwt >> 6); a glob uses its own

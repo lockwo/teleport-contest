@@ -1489,6 +1489,7 @@ async function losehp(n, knam, k_format = KILLED_BY_AN) {
     hooks.end_running?.(true); // hack.c:4266
     if (u.Upolyd) {
         u.mh = (u.mh | 0) - n;
+        { const { showdamage } = await import('./hack.js'); await showdamage(n); }
         if (u.mh > u.mhmax) u.mhmax = u.mh;
         if (u.mh < 1) {
             const { rehumanize } = await import('./polyself.js');
@@ -1497,6 +1498,7 @@ async function losehp(n, knam, k_format = KILLED_BY_AN) {
         return;
     }
     u.uhp -= n;
+    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     else game.botl = true;
     if (u.uhp < 1) {

@@ -59,6 +59,16 @@ export async function nhgetch() {
     throw new Error('Input queue empty - test may be missing keystrokes');
 }
 
+// C ref: win/tty/getline.c xwaitforspace(quitchars) one-key test for a text
+// window's dmore() (quitchars " \r\n\033"): space/return dismiss; ESC dismisses AND
+// leaves ttyDisplay->dismiss_more == 1 (^A) behind, so a later ^A also dismisses
+// a --More-- (`c == x`).  Any other key rings the bell and keeps waiting.
+export function xwaitforspace_quit(c) {
+    if (c === 13 || c === 10 || c === 32) return true;
+    if (c === 27) { game._dismissMore = 1; return true; }
+    return !!game._dismissMore && c === game._dismissMore;
+}
+
 // Reset input state
 export function resetInputState() {
     _inputQueue.length = 0;

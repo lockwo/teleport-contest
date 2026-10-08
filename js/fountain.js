@@ -402,7 +402,7 @@ export async function drinkfountain() {
             if (Poison_resistance()) {
                 await update_topl(
                     `Perhaps it is runoff from the nearby ${fruitname(false)} farm.`);
-                losehp(rnd(4));
+                await losehp(rnd(4));
                 break;
             }
             poison_strdmg(rn1(4, 3), rnd(10));
@@ -792,11 +792,12 @@ function Fire_resistance() {
 // C ref: hack.c losehp() — for a non-polymorphed hero this subtracts the
 // damage from u.uhp (no RNG).  Death handling is not exercised by the covered
 // sessions, so it is reduced to the hp arithmetic + hpmax clamp.
-function losehp(n) {
+async function losehp(n) {
     const u = game.u;
     if (!u) return;
     hooks.end_running?.(true); // hack.c:4266
     u.uhp -= n;
+    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     if (u.uhp < 1) u.uhp = 0;
 }
@@ -904,7 +905,7 @@ export async function drinksink() {
         if (Fire_resistance()) {
             await update_topl('It seems quite tasty.');
         } else {
-            losehp(rnd(6));
+            await losehp(rnd(6));
         }
         break;
     case 3: {
