@@ -89,7 +89,13 @@ function gender(mtmp) {
     return is_neuter_flag(permonst(mtmp)) ? 2 : (mtmp?.female ? 1 : 0);
 }
 
-async function emitU(msg) { if (msg) await update_topl(msg); }
+// `mon` = C's pline_mon(mtmp, ...): the message is about that monster's square,
+// which accessiblemsg turns into a "(north): " prefix.
+async function emitU(msg, mon) {
+    if (!msg) return;
+    if (mon && !is_hero(mon)) (await import('./hack.js')).set_msg_xy(mon.mx, mon.my);
+    await update_topl(msg);
+}
 
 // ── small mondata.h predicates ──────────────────────────────────────────────
 const haseyes = (ptr) => (mflags1_of(ptr) & M1_NOEYES) === 0;
@@ -495,7 +501,7 @@ export async function hitmsg(mtmp, mattk) {
     if (compat && !mtmp.mcan && !mtmp.mspec_used) {
         await emitU(`${Monst_name} ${!Blind() ? 'smiles at'
             : !Deaf() ? 'talks to' : 'touches'} you ${
-            (compat === 2) ? 'engagingly' : 'seductively'}.`);
+            (compat === 2) ? 'engagingly' : 'seductively'}.`, mtmp);
     } else {
         let verb, punct = '!';
         switch (mattk.aatyp) {
@@ -518,7 +524,7 @@ export async function hitmsg(mtmp, mattk) {
         const again = (h.mid === mtmp.m_id && h.slot != null
                        && mattk._slot === h.slot + 1
                        && mattk.aatyp === h.aatyp) ? ' again' : '';
-        await emitU(`${Monst_name} ${verb}${again}${punct}`);
+        await emitU(`${Monst_name} ${verb}${again}${punct}`, mtmp);
     }
     const h = game._hitmsg || (game._hitmsg = {});
     h.mid = mtmp.m_id; h.slot = mattk._slot; h.aatyp = mattk.aatyp;
@@ -535,9 +541,9 @@ export async function missmu(mtmp, nearmiss, mattk) {
     const { Monnam, canspotmon } = await import('./uhitm.js');
     if (!canspotmon(mtmp)) map_invisible(mtmp.mx, mtmp.my);
     if (could_seduce(mtmp, YOUMONST, mattk) && !mtmp.mcan)
-        await emitU(`${Monnam(mtmp)} pretends to be friendly.`);
+        await emitU(`${Monnam(mtmp)} pretends to be friendly.`, mtmp);
     else
-        await emitU(`${Monnam(mtmp)} ${(nearmiss && Verbose()) ? 'just ' : ''}misses!`);
+        await emitU(`${Monnam(mtmp)} ${(nearmiss && Verbose()) ? 'just ' : ''}misses!`, mtmp);
     await (await import('./hack.js')).stop_occupation();
 }
 

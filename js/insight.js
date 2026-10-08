@@ -477,7 +477,12 @@ export function enlightenment_lines(final = 0, basic = true) {
         if (/^the /i.test(dgnName))
             dgnName = dgnName.charAt(0).toLowerCase() + dgnName.slice(1);
         const dgnLevel = In_quest(u.uz) ? (u.uz?.dlevel ?? 1) : depth(u.uz);
-        youAre(`in ${dgnName}, on level ${dgnLevel}`);
+        let lvlbuf = `level ${dgnLevel}`;
+        if (Is_rogue_level(u.uz))
+            lvlbuf += ', a primitive area';
+        else if (Is_bigroom(u.uz) && !Blind())
+            lvlbuf += ', a very big room';
+        youAre(`in ${dgnName}, on ${lvlbuf}`);
     }
 
     // turns

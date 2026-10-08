@@ -24,4 +24,4 @@ export function svc_context_run() {
 // `lightsources` here; js/vision.js calls it from vision_recalc().  js/invent.js
 // registers `merged` for js/mkobj.js container insertion.  Unlike `game`, this
 // object survives resetGame().
-export const hooks = { lightsources: null, merged: null };
+export const hooks = { lightsources: null, merged: null, noticeQueue: null, flushNotices: null };

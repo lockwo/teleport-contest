@@ -1265,6 +1265,9 @@ export async function rhack(key) {
     // takes the DOMOVE_RUSH arm (multi = max(COLNO, ROWNO), context.mv).
     const staleRush = !!game.context.stale_rush;
     game.context.stale_rush = false;
+    // Set by a command whose ECMD_* result makes rhack() run reset_cmd_vars()
+    // (ECMD_CANCEL/ECMD_FAIL), which wipes both residues above.
+    let cmdVarsReset = false;
     const moveCmd = !game._modal_screen && !game.context.forcefight
         && (isMovementKey(ch) || isRunKey(ch));
     game.context.cmd_stale_run = moveCmd ? 0 : staleRun;
@@ -1723,7 +1726,14 @@ export async function rhack(key) {
         // multi-item drop.  Under the default menustyle:Full it opens the
         // query_category() "Drop what type of items?" menu, then the item
         // menu; ECMD_TIME only when something actually left the pack.
-        game.context.move = (await doddrop()) ? 1 : 0;
+        // doddrop() returns the NUMBER of items dropped in traditional mode, and
+        // rhack() reads that count as ECMD_* bits (1 TIME, 2 CANCEL, 4 FAIL):
+        // dropping two items "cancels" (reset_cmd_vars, no game time), three is
+        // TIME|CANCEL (time passes, but the pending g/G prefix is wiped).
+        const rD = await doddrop();
+        game.context.move = 0;
+        if ((rD & 6) !== 0) { cmdVarsReset = true; game.multi = 0; }
+        if ((rD & 1) !== 0) game.context.move = 1;
     } else if (ch === '!') {
         // C ref: cmd.c { '!', "shell", dosh_core, IFBURIED | GENERALCMD |
         // NOFUZZERCMD } -> sys/unix/unixunix.c dosh():349 — with SYSCF and no
@@ -1779,6 +1789,10 @@ export async function rhack(key) {
         game.context.move = (await dopickup()) ? 1 : 0;
     } else if (ch === '#') {
         // C ref: cmd.c doextcmd — read and run an extended command.
+        // C ref: cmd.c rhack():3733-3740 -- `func == doextcmd` clears CQ_REPEAT
+        // BEFORE the extended command runs, so a typed "#repeat" finds nothing
+        // to repeat ("There is no command available to repeat.").
+        if (!game.in_doagain) cmdq_of(CQ_REPEAT).length = 0;
         await doextcmd();
     } else if (ch === '?') {
         // C ref: cmd.c { '?', "help", dohelp, IFBURIED | GENERALCMD } ->
@@ -1985,6 +1999,13 @@ export async function rhack(key) {
             // run sailed past the pile C halts on (wave4 rc-explore step 154).
             game.context.nopick = game.iflags?.menu_requested ? 1 : 0;
             game.iflags && (game.iflags.menu_requested = false);
+            // C ref: cmd.c rhack():3729-3735 — the movement command is recorded as
+            // #repeat's target BEFORE the DOMOVE_RUSH arm runs it, so this early
+            // return must record too (heldout-blind3 bl008: `g <space> u ^A`).
+            if (!game.in_doagain) {
+                if (!game.context._prefix_seen) cmdq_of(CQ_REPEAT).length = 0;
+                cmdq_add_key(CQ_REPEAT, key);
+            }
             await do_run_prefixed(DIR_DX[ch], DIR_DY[ch], rp);
             return;
         }
@@ -2108,11 +2129,11 @@ export async function rhack(key) {
     // NHOBJDUMP on lp-valk-human step 273 (`g <space> w b <ESC>
     // <space><space><space> h`): C rushes 3 squares (56,4)->(53,4), we
     // stepped 1.
-    if (!badCommand && game.context.move && staleRun && game.context.cmd_stale_run)
+    if (!badCommand && !cmdVarsReset && game.context.move && staleRun && game.context.cmd_stale_run)
         game.context.stale_run = staleRun;
     // gd.domove_attempting survives the same commands, and ALSO survives the
     // end_running() that may have zeroed stale_run above (hack.c:4129).
-    if (!badCommand && game.context.move && staleRush)
+    if (!badCommand && !cmdVarsReset && game.context.move && staleRush)
         game.context.stale_rush = true;
     game.context.cmd_stale_run = 0;
     // C ref: cmd.c rhack(): the run == 8 a finished travel leaves behind (see

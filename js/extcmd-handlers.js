@@ -1727,6 +1727,9 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     if (offx < 0) offx = 0;
     const textCol = offx + 1;
     const moreRow = lines.length;
+    // C ref: wintty.c erase_menu_or_text(): dismissal is docorner() (no docrt,
+    // no vision_recalc) unless offx == 0; invent.js dismiss_invent_screen() reads this.
+    game._menuOffx = offx;
     // C ref: win/tty/wintty.c erase_menu_or_text() -> docorner() — dismissing a
     // taller corner window (content reaching row 22) sweeps cl_end() through
     // the status window, wiping the tail of row 22/23 even though this window's

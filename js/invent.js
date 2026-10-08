@@ -112,7 +112,8 @@ import { hitval, dbon, weapon_type, weapon_hit_bonus_core,
          weapon_dam_bonus_core, weapon_descr } from './weapon.js';
 import { P_TWO_WEAPON_COMBAT as P_TWO_WEAPON_COMBAT_INV,
          P_RIDING as P_RIDING_INV, W_ART as W_ART_PROP, W_WEP as W_WEP_PROP,
-         HAND, STOMACH, ONAME_VIA_NAMING, ONAME_KNOW_ARTI, HMON_APPLIED } from './const.js';
+         HAND, STOMACH, ONAME_VIA_NAMING, ONAME_KNOW_ARTI, HMON_APPLIED,
+         ALL_FINISHED } from './const.js';
 import {
     UNENCUMBERED, OVERLOADED,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
@@ -167,7 +168,9 @@ import { pickup, pickup_prinv_prefix, allow_category, add_valid_menu_class,
          SIGNAL_NOMENU, SIGNAL_ESCAPE,
          INCLUDE_VENOM, ALL_TYPES, ALL_TYPES_SELECTED, UNPAID_TYPES,
          WORN_TYPES, BILLED_TYPES, CHOOSE_ALL, BUC_BLESSED_F, BUC_CURSED_F,
-         BUC_UNCURSED_F, BUC_UNKNOWN_F, JUSTPICKED } from './pickup.js';
+         BUC_UNCURSED_F, BUC_UNKNOWN_F, JUSTPICKED,
+         safe_qbuf, yn_pending_more,
+         def_char_to_objclass as pickup_def_char_to_objclass } from './pickup.js';
 // C ref: src/do_wear.c — the per-slot on/off side effects, wearability checks
 // and *_simple_name() family now live in their own module.
 import {
@@ -1211,17 +1214,11 @@ function Maybe_Half_Phys(dmg) {
     return (game.u?.HHalf_physical_damage || game.u?.EHalf_physical_damage)
         ? Math.trunc((dmg + 1) / 2) : dmg;
 }
-// C ref: hack.c losehp() reduced to the hp arithmetic (death handling lives in
-// the callers' own losehp copies elsewhere in the port).
-async function losehp_invent(n) {
-    const u = game.u;
-    if (!u) return;
-    hooks.end_running?.(true); // hack.c:4266
-    u.uhp -= n;
-    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
-    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
-    if (u.uhp < 1) u.uhp = 0;
-    game.botl = true;
+// C ref: hack.c losehp(n, knam, k_format) -- do.js losehp_do() runs the whole
+// thing, including "You die..." / done(DIED) when the hit points run out.
+async function losehp_invent(n, knam, k_format = 0 /* KILLED_BY_AN */) {
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(n, knam, k_format);
 }
 // Synchronous variant for this file's sync touch_artifact() (its sync callers
 // cannot await showdamage()'s pline); artifact.js's async touch_artifact()
@@ -2550,7 +2547,33 @@ function renderMenuScreen(lines, cursor = [36, 8]) {
     renderMenuLines(flat, cursor);
 }
 
-function paintMenuLine(display, x, y, line) {
+// C ref: windows.c add_menu()/get_menu_coloring() — when the `menucolors`
+// option is on, every non-heading menu item's text (without tty's "x - "
+// selector prefix) is matched against the MENUCOLOR= patterns, newest first,
+// and the first hit recolors the whole item.  Returns a bodyStyle or null.
+function menuColorStyle(line) {
+    if (line.attr || !game.flags?.menucolors || !game.menucolors?.length)
+        return null;
+    const m = /^(\S) [-+#] /.exec(line.text);
+    const str = m ? line.text.slice(4) : line.text;
+    const rule = game.menucolors.find((r) => r.regex.test(str));
+    if (!rule) return null;
+    const attr = rule.attr === 1 ? ATR_BOLD : rule.attr === 4 ? ATR_UNDERLINE
+        : rule.attr === 6 ? ATR_INVERSE : 0;
+    return { color: rule.color === CLR_GRAY ? NO_COLOR : rule.color, attr, whole: !m };
+}
+
+function paintMenuLine(display, x, y, line, isMenu = false) {
+    const mc = isMenu && !line.bodyStyle ? menuColorStyle(line) : null;
+    if (mc) {
+        if (mc.whole) {
+            display.putstr(x, y, line.text, mc.color, mc.attr);
+        } else {
+            display.putstr(x, y, line.text.slice(0, 4), NO_COLOR, 0);
+            display.putstr(x + 4, y, line.text.slice(4), mc.color, mc.attr);
+        }
+        return;
+    }
     if (!line.bodyStyle) {
         display.putstr(x, y, line.text, NO_COLOR, line.attr || 0);
         if (line.attr) {
@@ -2625,7 +2648,7 @@ export function renderMenuLines(flat, cursor = [36, 8]) {
             display.setCell(c, r, ' ', NO_COLOR, 0);
     let row = 0;
     for (const ln of flat)
-        paintMenuLine(display, col, row++, ln);
+        paintMenuLine(display, col, row++, ln, true);
     const endRow = row;
     display.putstr(col, row++, '(end)', NO_COLOR);
     putStatusLines(display, bandStart, menuLastRow);
@@ -2934,7 +2957,7 @@ export function renderWindowScreen(lines, opts = {}) {
         let text = typeof ln === 'string' ? ln : (ln.text || '');
         if (maxLen >= 0 && text.length > maxLen) text = text.slice(0, maxLen);
         const attr = typeof ln === 'string' ? ATR_NONE : (ln.attr || ATR_NONE);
-        paintMenuLine(display, textCol, row++, { ...ln, text, attr });
+        paintMenuLine(display, textCol, row++, { ...ln, text, attr }, menu);
     }
     const footer = opts.footer || '--More--';
     const footerRow = opts.footerRow != null ? opts.footerRow
@@ -6188,7 +6211,12 @@ async function retouch_object(obj) {
             let dmg = 0;
             if (ag) dmg += Maybe_Half_Phys(rnd(10));
             if (bane) dmg += rnd(10);
-            await losehp_invent(dmg);
+            let what = killer_xname(obj);
+            if (ag && !obj.oartifact && !bane) {
+                if (obj.oclass === RING_CLASS) what = 'a silver ring';
+                else if (obj.oclass === WAND_CLASS) what = 'a silver wand';
+            }
+            await losehp_invent(dmg, `handling ${what}`, 1 /* KILLED_BY */);
             exercise(A_CON, false);
         }
     }
@@ -7607,7 +7635,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
                     dmg += rnd(3);
                     await update_topl(`${Tobjnam_throw(otmp, 'fly')} back toward you, hitting your ${
                         body_part(0 /*ARM*/)}!`);
-                    await losehp_invent(dmg);
+                    await losehp_invent(Maybe_Half_Phys(dmg), killer_xname(otmp), 1 /* KILLED_BY */);
                 }
                 otmp.owornmask = 0;
                 // C ref: dothrow.c:1754 `if (!ship_object(obj, u.ux, u.uy,
@@ -7881,7 +7909,9 @@ async function toss_up(otmp, hitsroof) {
     }
     const less_damage = hard_helmet(game.uarmh);
     if (dmg > 1 && less_damage) dmg = 1;
+    if (dmg > 0) dmg += (game.u.udaminc | 0);
     if (dmg < 0) dmg = 0;
+    dmg = Maybe_Half_Phys(dmg);
     if (game.uarmh) {
         if (less_damage && dmg < (game.u.uhp | 0))
             await update_topl('Fortunately, you are wearing a hard helmet.');
@@ -7889,7 +7919,7 @@ async function toss_up(otmp, hitsroof) {
             await update_topl(`Your ${armor_simple_name(game.uarmh)} does not protect you.`);
     }
     await hitfloor(otmp, true);
-    await losehp_invent(dmg);
+    await losehp_invent(dmg, 'falling object', 0 /* KILLED_BY_AN */);
 }
 
 // C ref: weapon.c skill_name() — launcher name for the throw "by hand" message.
@@ -10012,12 +10042,275 @@ export function is_inuse(obj) { return carried(obj) && (is_worn(obj) || tool_bei
 export function safeq_xprname(obj) { return xprname(obj, null, safeq_xprn_ctx.let, safeq_xprn_ctx.dot, 0, 0); }
 export function safeq_shortxprname(obj) { return xprname(obj, ansimpleoname(obj), safeq_xprn_ctx.let, safeq_xprn_ctx.dot, 0, 0); }
 
-export function ggetobj(_word, _fn, _mx, _combo, resultflags = null) {
-    if (!inventoryArray().length) { if (resultflags) resultflags.value = 1; return 0; }
-    return 0;
+// C ref: invent.c static removeables[] -- the classes 'A' can take off.
+const REMOVEABLES = [ARMOR_CLASS, WEAPON_CLASS, RING_CLASS, AMULET_CLASS, TOOL_CLASS];
+const ynaqchars = 'ynaq', ynNaqchars = 'yn#aq';
+
+// C ref: invent.c ggetobj() -- the menustyle:Traditional/Combination class
+// prompt used by Drop, Identify and Takeoff (A).  Returns the number of times
+// fn was called successfully (askchain()'s result), 0 when cancelled, -1 for
+// "no further identifications", and -2/-3 when the player asked for the menu
+// with 'm' (all types / only the selected classes).  With combo set it only
+// gathers the category list.
+export async function ggetobj(word, fn, mx, combo, resultflags = null) {
+    const inv = inventoryArray();
+    if (!inv.length) {
+        await pline(`You have nothing to ${word}.`);
+        if (resultflags) resultflags.value = ALL_FINISHED;
+        return 0;
+    }
+    if (resultflags) resultflags.value = 0;
+    let ckfn = null, ofilter = null;
+    let takeoff = false, ident = false, allflag = false, m_seen = false;
+    add_valid_menu_class(0); /* reset */
+    if (taking_off(word)) {
+        takeoff = true;
+        ofilter = is_worn;
+    } else if (word === 'identify') {
+        ident = true;
+        ofilter = not_fully_identified;
+    }
+
+    const iletsArr = [];
+    const itemcount = { count: 0 };
+    let iletct = collect_obj_classes(iletsArr, inv, false, ofilter, itemcount);
+    let ilets = iletsArr.join('');
+    const unpaid = count_unpaid(inv);
+
+    if (ident && !iletct) {
+        return -1; /* no further identifications */
+    } else if (inv.length) {
+        ilets += ' ';
+        if (unpaid) ilets += 'u';
+        if (count_buc(inv, BUC_BLESSED, ofilter)) ilets += 'B';
+        if (count_buc(inv, BUC_UNCURSED, ofilter)) ilets += 'U';
+        if (count_buc(inv, BUC_CURSED, ofilter)) ilets += 'C';
+        if (count_buc(inv, BUC_UNKNOWN, ofilter)) ilets += 'X';
+        if (count_justpicked(inv)) ilets += 'P';
+        ilets += 'a';
+    }
+    ilets += 'i';
+    if (!combo) ilets += 'm'; /* allow menu presentation on request */
+
+    let buf;
+    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
+    for (;;) {
+        buf = String(await hooked_tty_getlin(
+            `What kinds of thing do you want to ${word}? [${ilets}]`, null));
+        if (buf.charAt(0) === '\x1b') return 0;
+        if (buf.includes('i')) {
+            /* applicable inventory letters; if empty, show entire invent */
+            let ailets = '';
+            if (ofilter)
+                for (const otmp of inventoryArray())
+                    if (ofilter(otmp) && !ailets.includes(otmp.invlet))
+                        ailets += otmp.invlet;
+            if ((await display_inventory_interactive(ailets)) === '\x1b')
+                return 0;
+        } else {
+            break;
+        }
+    }
+
+    let extra_removeables = '';
+    if (takeoff) {
+        /* arbitrary types of items can be placed in the weapon slots */
+        if (game.uwep) extra_removeables += String.fromCharCode(game.uwep.oclass);
+        if (game.uswapwep) extra_removeables += String.fromCharCode(game.uswapwep.oclass);
+        if (game.uquiver) extra_removeables += String.fromCharCode(game.uquiver.oclass);
+    }
+
+    const olets = [];            /* object class NUMBERS, in the order typed */
+    for (const sym of buf) {
+        if (sym === ' ') continue;
+        const oc_of_sym = pickup_def_char_to_objclass(sym);
+        if (takeoff && oc_of_sym !== MAXOCLASSES) {
+            if (extra_removeables.includes(String.fromCharCode(oc_of_sym))) {
+                ; /* skip rest of takeoff checks */
+            } else if (!REMOVEABLES.includes(oc_of_sym)) {
+                await pline('Not applicable.');
+                return 0;
+            } else if (oc_of_sym === ARMOR_CLASS && !wearing_armor()) {
+                noarmor(false);
+                return 0;
+            } else if (oc_of_sym === WEAPON_CLASS && !game.uwep && !game.uswapwep
+                       && !game.uquiver) {
+                await pline('You are not wielding anything.');
+                return 0;
+            } else if (oc_of_sym === RING_CLASS && !game.uright && !game.uleft) {
+                await pline('You are not wearing rings.');
+                return 0;
+            } else if (oc_of_sym === AMULET_CLASS && !game.uamul) {
+                await pline('You are not wearing an amulet.');
+                return 0;
+            } else if (oc_of_sym === TOOL_CLASS && !game.ublindf) {
+                await pline('You are not wearing a blindfold.');
+                return 0;
+            }
+        }
+
+        if (sym === 'a') {
+            allflag = true;
+        } else if (sym === 'A') {
+            ; /* same as the default */
+        } else if (sym === 'u') {
+            add_valid_menu_class('u');
+            ckfn = ckunpaid;
+        } else if ('BUCXP'.includes(sym)) {
+            add_valid_menu_class(sym); /* 'B','U','C','X', or 'P' */
+            ckfn = ckvalidcat;
+        } else if (sym === 'm') {
+            m_seen = true;
+        } else if (oc_of_sym === MAXOCLASSES) {
+            await pline(`You don't have any ${sym}'s.`);
+        } else if (!olets.includes(oc_of_sym)) {
+            add_valid_menu_class(sym);   /* this port's classes are SYMBOLS */
+            olets.push(oc_of_sym);
+        }
+    }
+
+    if (m_seen) {
+        return (allflag
+                || (!olets.length && ckfn !== ckunpaid && ckfn !== ckvalidcat))
+               ? -2 : -3;
+    } else if (menu_style() !== MENU_TRADITIONAL && combo && !allflag) {
+        return 0;
+    }
+    const cnt = await askchain(inventoryArray(), olets, allflag, fn, ckfn, mx, word);
+    /* askchain() has already finished the job in this case, so tell the
+       caller not to continue processing */
+    if (combo && allflag && resultflags) resultflags.value |= ALL_FINISHED;
+    return cnt;
 }
 
-export function askchain(_objchn, _olets, _allflag, _fn, _ckfn, _mx, _word) { return 0; }
+// C ref: invent.c askchain() -- walk the chain in the object class order given
+// by olets (class numbers) and ask, item by item, whether fn should be applied
+// (allflag skips the asking).  Returns the sum of fn's results, or -1 when an
+// identify was abandoned.  The chain is always the hero's inventory in this
+// port (the container traditional_loot() path does not go through here yet).
+export async function askchain(objchn, olets, allflag, fn, ckfn, mx, word) {
+    let cnt = 0, dud = 0;
+    const takeoff = taking_off(word);
+    const ident = (word === 'identify');
+    const take_out = (word === 'take out');
+    const put_in = (word === 'put in');
+    const nodot = (word === 'nodot' || word === 'drop' || ident
+                   || takeoff || take_out || put_in);
+    const ininv = (objchn === inventoryArray());
+    const bycat = (menu_class_present('u') || menu_class_present('B')
+                   || menu_class_present('U') || menu_class_present('C')
+                   || menu_class_present('X') || menu_class_present('P'));
+    /* someday maybe we'll sort by 'olets' too, but not yet... */
+    const sortedchn = sortloot(objchn, SORTLOOT_INVLET, false, null);
+    let first = true;
+    let oi = 0;                       /* index into olets (C: *olets++) */
+
+    try {
+        for (;;) {                    /* nextclass: */
+            let ilet = 'a'.charCodeAt(0) - 1;
+            if (objchn.length && objchn[0].oclass === COIN_CLASS)
+                ilet--;               /* extra iteration */
+            /* each object's bypass bit tracks which have been processed, since
+               multiple drop can change the chain while it operates */
+            bypass_objlist(objchn, false);
+            let otmp;
+            while ((otmp = nxt_unbypassed_loot(sortedchn, objchn)) != null) {
+                if (ilet === 122 /* 'z' */) ilet = 65 /* 'A' */;
+                else if (ilet === 90 /* 'Z' */) ilet = 35 /* NOINVSYM '#' */;
+                else ilet++;
+                if (olets.length && otmp.oclass !== olets[oi]) continue;
+                if (takeoff && !is_worn(otmp)) continue;
+                if (ident && !not_fully_identified(otmp)) continue;
+                if (ckfn && !ckfn(otmp)) continue;
+                if (bycat && !ckvalidcat(otmp)) continue;
+                let sym;
+                if (!allflag) {
+                    safeq_xprn_ctx.let = String.fromCharCode(ilet);
+                    safeq_xprn_ctx.dot = !nodot;
+                    let qpfx = '';
+                    if (first) {
+                        /* traditional_loot() skips prompting when only one class
+                           of objects is involved, so prefix the first object
+                           being queried here with an explanation why */
+                        if (take_out || put_in)
+                            qpfx = `${word.charAt(0).toUpperCase()}${word.slice(1)}: `;
+                        first = false;
+                    }
+                    const qbuf = safe_qbuf(qpfx, '?', otmp,
+                        ininv ? safeq_xprname : doname,
+                        ininv ? safeq_shortxprname : ansimpleoname, 'item');
+                    /* nyaq(qbuf) or nyNaq(qbuf), bypassing canned input for ^A */
+                    await yn_pending_more();
+                    sym = await y_n(qbuf,
+                        (takeoff || ident || (otmp.quan | 0) < 2) ? ynaqchars : ynNaqchars,
+                        'n');
+                } else {
+                    sym = 'y';
+                }
+
+                const otmpo = otmp;
+                let target = otmp;
+                if (sym === '#') {
+                    /* Number was entered; split the object unless it
+                       corresponds to 'none' or 'all'.  2 special cases: cursed
+                       loadstones and welded weapons stay merged. */
+                    const yn_number = game.yn_number | 0;
+                    if (!yn_number) {
+                        sym = 'n';
+                    } else {
+                        sym = 'y';
+                        if (yn_number < target.quan && splittable(target))
+                            target = splitobj(target, yn_number);
+                    }
+                }
+                let done = false;
+                switch (sym) {
+                case 'a':
+                    allflag = true;
+                    /* FALLTHRU */
+                case 'y': {
+                    const tmp = await fn(target);
+                    if (tmp <= 0) {
+                        if (container_gone(fn)) {
+                            /* target caused magic bag to explode; both gone */
+                            target = null;
+                        } else if (target && target !== otmpo) {
+                            /* split occurred, merge again */
+                            unsplitobj(target);
+                        }
+                        if (tmp < 0) return cnt;
+                    }
+                    cnt += tmp;
+                    if (--mx === 0) return cnt;
+                    /* FALLTHRU */
+                }
+                case 'n':
+                    if (nodot) dud++;
+                    break;
+                case 'q':
+                    /* special case for seffects() */
+                    if (ident) cnt = -1;
+                    return cnt;
+                default:
+                    break;
+                }
+            }
+            if (olets.length && ++oi < olets.length) continue;   /* goto nextclass */
+            break;
+        }
+
+        if (!takeoff && (dud || cnt))
+            await pline('That was all.');
+        else if (!dud && !cnt)
+            await pline('No applicable objects.');
+        return cnt;
+    } finally {
+        /* can't just clear bypass bit of items in objchn because the action
+           applied to selected ones might move them to a different chain */
+        clear_bypasses();
+        unsortloot(sortedchn);
+    }
+}
 // C ref: wintty.c tty_select_menu(window, PICK_ONE) for callers outside
 // invent.c that build their own `items`/`plan` (see reroll_menu()).
 export async function select_pick_one_menu(items, plan) {
@@ -11059,6 +11352,7 @@ async function select_inventory_menu(rows, byLet) {
             repaint = false; continue;
         }
         if (c === 27 || c === 32 || c === 13 || c === 10) {
+            game._invmenu_esc = (c === 27);   /* display_inventory() == '\033' */
             await dismiss_invent_screen();
             return null;
         }
@@ -11147,8 +11441,11 @@ export async function display_inventory_interactive(lets = null) {
     const byLet = new Map();
     for (const obj of inventoryArray())
         if (!lets || String(lets).includes(obj.invlet)) byLet.set(obj.invlet, obj);
+    game._invmenu_esc = false;
     const picked = await select_inventory_menu(rows, byLet);
     if (picked) await dismiss_invent_screen();
+    /* C: display_inventory(lets, TRUE) yields '\033' when the menu was ESC'd */
+    return game._invmenu_esc ? '\x1b' : '';
 }
 
 // Render the selectable inventory.  When the content fits one page it is a tty

@@ -456,7 +456,7 @@ export async function query_classes(oclasses, one_at_a_time, everything, action,
    caller's doname() is far shorter than the 127-character budget. */
 const QBUFSZ = 128;
 const something = 'something';
-function safe_qbuf(qprefix, qsuffix, obj, func, altfunc, lastR) {
+export function safe_qbuf(qprefix, qsuffix, obj, func, altfunc, lastR) {
     const lenlimit = QBUFSZ - 1;
     const budget = lenlimit - qprefix.length - qsuffix.length;
     let name = String(func(obj));
@@ -472,7 +472,7 @@ function safe_qbuf(qprefix, qsuffix, obj, func, altfunc, lastR) {
    the prompt is drawn (unless a previous --More-- was ESC'd, i.e. WIN_STOP).
    js/display's y_n() keys that off its own _yn_need_more flag, so the
    pline-pending case is handled here. */
-async function yn_pending_more() {
+export async function yn_pending_more() {
     if (game._toplin === 1 && !game._winStop) {
         const { topl_more } = await import('./display.js');
         await topl_more();

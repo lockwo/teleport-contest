@@ -2162,11 +2162,22 @@ async function eatcorpse(otmp) {
 
     // C ref: eatcorpse — conduct: !vegan -> unvegan++ (no RNG/msg here);
     // !vegetarian -> violated_vegetarian() (Monk "feel guilty").
+    // C ref: eat.c:1866-1881 — the first animal product / first meat eaten
+    // also logs a LL_CONDUCT chronicle entry (ll_conduct is eatcorpse-local).
+    let ll_conduct = 0;
     if (!speciesVegan(mnum) && u) {
         u.uconduct = u.uconduct || {};
+        if (!(u.uconduct.unvegan || 0)) {
+            livelog_printf(LL_CONDUCT,
+                `consumed animal products for the first time, by eating ${an(food_xname(otmp, false))}`);
+            ll_conduct++;
+        }
         u.uconduct.unvegan = (u.uconduct.unvegan || 0) + 1;
     }
     if (!speciesVegetarian(mnum)) {
+        if (!(u?.uconduct?.unvegetarian || 0) && !ll_conduct)
+            livelog_printf(LL_CONDUCT,
+                `tasted meat for the first time, by eating ${an(food_xname(otmp, false))}`);
         if (violated_vegetarian()) await update_topl('You feel guilty.');
     }
 

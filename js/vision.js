@@ -877,6 +877,9 @@ export function vision_recalc(control = 0) {
 
     game._viz_rmin = next_rmin;
     game._viz_rmax = next_rmax;
+
+    // C ref: vision.c vision_recalc() tail: notice_all_mons(TRUE).
+    if (game.flags?.spot_monsters) hooks.noticeQueue?.(true);
 }
 
 // C ref: youprop.h Blind ((HBlinded || EBlinded) && !BBlinded).  The JS hero

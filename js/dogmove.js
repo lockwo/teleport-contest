@@ -697,7 +697,7 @@ async function dog_hunger(mtmp, edog) {
                 return true;
             }
             if (cansee(mtmp.mx, mtmp.my))
-                await emit_pet_msg(`${Monnam(mtmp)} is confused from hunger.`);
+                await emit_pet_msg(`${Monnam(mtmp)} is confused from hunger.`, { x: mtmp.mx, y: mtmp.my });
             // C ref: sounds.c beg(mtmp) / You_feel("worried about ...") — the
             // out-of-sight variants; both are toplines with no RNG.
             else if (couldsee(mtmp.mx, mtmp.my))
@@ -719,7 +719,7 @@ async function dog_starve(mtmp) {
     if (mtmp.mleashed && mtmp !== game.u?.usteed)
         await emit_pet_msg('Your leash goes slack.');
     else if (cansee(mtmp.mx, mtmp.my))
-        await emit_pet_msg(`${Monnam(mtmp)} starves.`);
+        await emit_pet_msg(`${Monnam(mtmp)} starves.`, { x: mtmp.mx, y: mtmp.my });
     else
         await emit_pet_msg(`You feel ${game.u?.uhallu ? 'bummed' : 'sad'} for a moment.`);
     const { mondied_mm } = await import('./mhitm.js');
@@ -869,7 +869,7 @@ async function dog_invent(mtmp, edog, udist) {
                         // (e.g. a preceding "The <mon> is killed!") on the same top
                         // line, exactly as C's topl buffer does.
                         if (cansee(omx, omy) && game.flags?.verbose !== false)
-                            await emit_pet_msg(`${Monnam(mtmp)} picks up ${pet_doname(otmp, true)}.`);
+                            await emit_pet_msg(`${Monnam(mtmp)} picks up ${pet_doname(otmp, true)}.`, { x: omx, y: omy });
                         // C ref: dogmove.c:463-464 — obj_extract_self(otmp) then
                         // newsym(omx, omy).  The pet is on the object's tile (omx,omy);
                         // the newsym refreshes the remembered background so the picked-up
@@ -946,7 +946,7 @@ export async function mdrop_obj(mtmp, obj, verbosely) {
     // each drop APPEND after an unacknowledged prior message on the same top
     // line, exactly as C's topl buffer does.
     if (verbosely && cansee(omx, omy))
-        await emit_pet_msg(`${Monnam(mtmp)} drops ${obj_name}.`);
+        await emit_pet_msg(`${Monnam(mtmp)} drops ${obj_name}.`, { x: mtmp.mx, y: mtmp.my });
     // C ref: steal.c:837-840 — `if (!flooreffects(obj, omx, omy, "fall")) {
     // place_object(obj, omx, omy); stackobj(obj); }`.  The stackobj() was
     // missing: a dropped item that duplicates a stack already on the tile MERGES
@@ -1785,7 +1785,7 @@ export async function dog_move(mtmp, after) {
             const verb = vtense(locomotion(mtmp.data, 'step')); // "steps"
             const over = is_flyer(mtmp.data) || is_floater(mtmp.data);
             const what = reluctant_what(nix, niy);
-            await emit_pet_msg(`${noit_Monnam(mtmp)} ${verb} reluctantly ${over ? 'over' : 'onto'} ${what}.`);
+            await emit_pet_msg(`${noit_Monnam(mtmp)} ${verb} reluctantly ${over ? 'over' : 'onto'} ${what}.`, { x: mtmp.mx, y: mtmp.my });
         }
         // C ref: dogmove.c:1350-1357 — "We have to know if the pet's going to do
         // a combined eat and move before moving it, but it can't eat until after
@@ -1922,9 +1922,9 @@ export async function dog_eat(mtmp, edog, obj, x, y) {
         if (sawpet || (seeobj && canspotmon(mtmp))) {
             // C ref: dogmove.c:286 — a tunneller "digs in" instead of eating.
             if (tunnels(mtmp.data))
-                await emit_pet_msg(`${noit_Monnam(mtmp)} digs in.`);
+                await emit_pet_msg(`${noit_Monnam(mtmp)} digs in.`, { x: mtmp.mx, y: mtmp.my });
             else
-                await emit_pet_msg(`${noit_Monnam(mtmp)} eats ${what}.`);
+                await emit_pet_msg(`${noit_Monnam(mtmp)} eats ${what}.`, { x: mtmp.mx, y: mtmp.my });
         } else if (seeobj) {
             await emit_pet_msg(`It eats ${what}.`);
         }
@@ -2058,8 +2058,11 @@ function noit_Monnam(mtmp) {
 
 // Emit a pet topline message, honoring the --More-- pacing that update_topl
 // applies when a previous (e.g. kill) message is still pending acknowledgment.
-async function emit_pet_msg(msg) {
+// `at` = {x, y} is C's pline_mon(mtmp, ...)/pline_xy(x, y, ...): the square the
+// message is about, which accessiblemsg turns into a "(north): " prefix.
+async function emit_pet_msg(msg, at) {
     const { update_topl } = await import('./display.js');
+    if (at) (await import('./hack.js')).set_msg_xy(at.x, at.y);
     await update_topl(msg);
 }
 

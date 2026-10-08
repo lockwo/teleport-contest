@@ -3046,9 +3046,20 @@ function _dropAttrOnBlankRuns(cells) {
         if (run < ANSI_RLE_MIN_RUN) return;
         for (let i = end - run; i < end; i++) if (cells[i]) cells[i].attr = 0;
     };
+    // The encoder sees the SGR escapes the terminal emits where attribute or
+    // color changes, and those break a run of literal spaces, so only blanks
+    // sharing one rendition count toward ANSI_RLE_MIN_RUN.
+    const style = (cell) => (cell ? `${cell.attr || 0}/${cell.color ?? ''}` : '0/');
+    let runStyle = '';
     for (let c = 0; c <= cells.length; c++) {
         const blank = c < cells.length && (!cells[c] || cells[c].ch === ' ');
-        if (blank) { run++; continue; }
+        if (blank) {
+            const st = style(cells[c]);
+            if (run > 0 && st !== runStyle) { clear(c); run = 0; }
+            runStyle = st;
+            run++;
+            continue;
+        }
         clear(c);
         run = 0;
     }
@@ -3541,22 +3552,31 @@ export function note_topl(msg) {
     return msg;
 }
 
-export async function pline(msg, opts = {}) {
-    // C ref: pline.c vpline():162-190 — when a11y.accessiblemsg is set (only
-    // #lookaround forces it on, in js/cmd.js) and set_msg_xy() left a valid
-    // location for THIS message, prefix it with a direction string and reset
-    // the location.  The reset runs unconditionally, exactly like C's, so a
-    // stale location can never leak into a later unrelated message.
+// C ref: pline.c vpline():162-190 -- when a11y.accessiblemsg is set and
+// set_msg_xy()/pline_mon()/pline_xy() left a valid location for THIS message,
+// prefix it with a direction string ("(north): ...") and reset the location.
+// The reset runs unconditionally, exactly like C's, so a stale location can
+// never leak into a later unrelated message.  Both topline writers (pline()
+// and update_topl()) pass through here because C has only one (vpline).  The
+// rc option lands on game.flags.accessiblemsg (options.js set_boolean's default
+// arm); #lookaround forces a11y.accessiblemsg on around its scan (js/cmd.js).
+async function a11y_location_prefix(msg) {
     const a11y = game.a11y;
     const savedMsgLoc = a11y?.msg_loc;
     if (a11y) a11y.msg_loc = { x: 0, y: 0 };
-    if (a11y?.accessiblemsg && savedMsgLoc && isok(savedMsgLoc.x, savedMsgLoc.y)) {
+    if ((a11y?.accessiblemsg ?? game.flags?.accessiblemsg) && savedMsgLoc
+        && isok(savedMsgLoc.x, savedMsgLoc.y) && msg) {
         const { coord_desc } = await import('./getpos.js');
         const gpc = game.iflags?.getpos_coords;
         const cmode = (gpc === undefined || gpc === GPCOORDS_NONE)
             ? GPCOORDS_COMFULL : gpc;
-        msg = `${coord_desc(savedMsgLoc.x, savedMsgLoc.y, '', cmode)}: ${msg}`;
+        return `${coord_desc(savedMsgLoc.x, savedMsgLoc.y, '', cmode)}: ${msg}`;
     }
+    return msg;
+}
+
+export async function pline(msg, opts = {}) {
+    msg = await a11y_location_prefix(msg);
     const suppressHistory = !!opts.suppressHistory;
     if (msgtype_suppressed(msg)) return;
     // C ref: win/tty/topl.c update_topl() `skip`: once a --More-- was
@@ -3566,6 +3586,7 @@ export async function pline(msg, opts = {}) {
     // C ref: pline.c vpline():266-274 — vision_recalc() FIRST, then
     // flush_screen(), which is what runs bot() when disp.botl is set.
     pline_vision_flush();
+    if (game._noticeQueue?.length) await hooks.flushNotices();
     await botl_flush();
     _buildScreenOutput();
     const cur = game._pending_message || '';
@@ -3889,6 +3910,7 @@ export function timebot_sync() {
 }
 
 export async function update_topl(bp) {
+    bp = await a11y_location_prefix(bp);
     if (msgtype_suppressed(bp)) return;
     // C ref: pline.c vpline():129 `strncpy(gp.prevmsg, line, BUFSZ)` — the LAST
     // INDIVIDUAL message, which is what Norep()'s dedup compares against.  It is
@@ -3901,6 +3923,7 @@ export async function update_topl(bp) {
     // (i.e. bot()); this port calls update_topl() directly at many of C's
     // pline() sites, so both happen here too, in that order.
     pline_vision_flush();
+    if (game._noticeQueue?.length) await hooks.flushNotices();
     await botl_flush();
     _buildScreenOutput();
     const n0 = bp.length;
@@ -4101,6 +4124,7 @@ function topl_cursor_after(str) {
 // prompt.  resp lists the allowed letters (an embedded ESC marks hidden,
 // always-acceptable choices); def is returned on space/return/ESC.
 export async function y_n(query, resp = 'yn\x1b', def = 'n') {
+    game.yn_number = 0;
     if (game._yn_need_more && (!game._winStop || game._winNoStop)) {
         await topl_more();
         // Acking a deferred --More-- is where a pending status redraw lands:
@@ -4210,11 +4234,61 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n') {
             return answered(def);
         }
         const lc = ch.toLowerCase();
-        if (resp.includes(lc)) {
-            game._toplin = 0;
-            return answered(lc);
+        // C ref: topl.c tty_yn_function():495-545 -- when '#' is an allowed
+        // response, '#' or a digit starts a count: the typed digits echo after
+        // the prompt until a non-digit ends the number (0 answers 'n', ESC or
+        // a stray key abandons it and re-prompts).  The count lands in
+        // yn_number, which askchain() uses to split a stack.
+        const digit_ok = resp.includes('#') && c >= 48 && c <= 57;
+        if (!resp.includes(lc) && !digit_ok) continue;
+        if (lc === '#' || digit_ok) {
+            let n_len = 1, value = 0, abort = false;
+            let typed = '#';
+            if (lc !== '#') { typed += ch; n_len++; value = c - 48; }
+            const echo = async () => {
+                game._pending_message = full + typed;
+                await flush_screen(1);
+                if (disp?.setCursor) {
+                    const [curx, cury] = topl_cursor_after(full + typed);
+                    disp.setCursor(curx, cury);
+                }
+            };
+            let z;
+            do {
+                await echo();
+                game._modal_screen = 'topl';
+                z = await nhgetch();
+                delete game._modal_screen;
+                if (z >= 48 && z <= 57) {
+                    value = value * 10 + (z - 48);
+                    typed += String.fromCharCode(z); n_len++;
+                } else if (z === 121 /* y */ || z === 27 || z === 32 || z === 13 || z === 10) {
+                    if (z === 27) value = -1;   /* abort */
+                    z = 10;                     /* break */
+                } else if (z === 8 || z === 127) {
+                    if (n_len <= 1) { value = -1; break; }
+                    value = Math.trunc(value / 10);
+                    typed = typed.slice(0, -1); n_len--;
+                } else {
+                    value = -1; abort = true;   /* abort */
+                    break;
+                }
+            } while (z !== 10);
+            if (value > 0) {
+                game.yn_number = value;
+                game._toplin = 0;
+                return answered('#');
+            }
+            if (value === 0 && !abort) {
+                game._toplin = 0;
+                return answered('n');           /* 0 => "no" */
+            }
+            /* remove number from top line, then try again */
+            game._pending_message = full.trimEnd();
+            continue;
         }
-        // invalid response: re-prompt (no bell modeled).
+        game._toplin = 0;
+        return answered(lc);
     }
 }
 

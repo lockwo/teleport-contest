@@ -964,7 +964,7 @@ import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
          mksobj, mkobj } from './mkobj.js';
 import { monster_by_pmidx } from './makemon.js';
 import { simpleonames } from './objnam.js';
-import { distant_monnam, ARTICLE_NONE, mon_nam } from './do_name.js';
+import { distant_monnam, ARTICLE_NONE, mon_nam, coyotename } from './do_name.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
 import { doextlist, cmd_from_func, waterbody_name } from './cmd.js';
 import { rn2 } from './rng.js';
@@ -1638,11 +1638,6 @@ function rndmonnam() {
     return 'creature';
 }
 
-/* do_name.c coyotename(mtmp, buf) */
-function coyotename(mtmp) {
-    const names = ['Wile E.', 'Ralph', 'Road Runner', 'Coyote Kid'];
-    return `coyote called ${names[(mtmp.m_id | 0) % names.length]}`;
-}
 /* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
 function pg_digests(ptr) {
     return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */);

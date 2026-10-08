@@ -113,6 +113,9 @@ function welcomeMessage() {
 // C ref: allmain.c newgame()
 export async function newgame() {
     const g = game;
+    // C ref: allmain.c newgame() `notice_mon_off()` — welcome messages come
+    // before any monster is noticed; notice_mon_on() follows welcome(TRUE).
+    (game.a11y || (game.a11y = {})).mon_notices_blocked = ((game.a11y || {}).mon_notices_blocked || 0) + 1;
 
     // C ref: mons[] is pristine at process start in C, and restore.c:727 calls
     // adj_erinys(u.ualign.abuse) when reloading a save.  This port runs many
@@ -404,7 +407,8 @@ async function newgame_real() {
     // own --More-- ONLY when it actually has something to announce — see
     // hack.js — so this call is a no-op, including its screen effects, for
     // every session that doesn't set spot_monsters.)
-    const { notice_all_mons } = await import('./hack.js');
+    const { notice_all_mons, notice_mon_on } = await import('./hack.js');
+    notice_mon_on();
     await notice_all_mons(true);
     // C ref: allmain.c welcome(TRUE) — "guarantee that 'major' event category
     // is never empty": the very first gamelog line.
@@ -524,7 +528,10 @@ async function maybe_do_tutorial(preambleShownMore) {
         // Step-13 screen: "Entering the tutorial.--More--" over the previous
         // level (game.level not yet swapped).
         await pline('Entering the tutorial.');
-        await topl_more();
+        // C: the --More-- comes from the docrt()/cls() of goto_level() finding
+        // toplin == NEED_MORE.  After an ESC'd --More-- (WIN_STOP) the message
+        // is silently accumulated, toplin stays empty, and no --More-- shows.
+        if (!game._winStop) await topl_more();
         await enter_tutorial_level();
     }
 }
@@ -597,7 +604,10 @@ function sequester_inventory_for_tutorial() {
         setnotworn(obj);
         freeinv(obj);
     }
-    g._tutorial_saved_state = { invent: saved };
+    // nhl_gamestate() also stashes svs.spl_book and zeroes it, so the hero
+    // knows no spells inside the tutorial.
+    g._tutorial_saved_state = { invent: saved, spl_book: g.spl_book };
+    delete g.spl_book;      /* spell.js spl_book() recreates a blank book lazily */
 }
 
 function engr_at_tut(x, y) {

@@ -2366,8 +2366,9 @@ function mon_accessible(x, y) {
 // still-pending "<pet> steps reluctantly onto <obj>." line with --More--, as C
 // records.  _toplin is reset per command (cmd.js rhack), so the paging is
 // confined to the current turn — cross-turn messages start a fresh line.
-async function pline_mon(_mon, msg) {
+async function pline_mon(mon, msg) {
     const { update_topl } = await import('./display.js');
+    if (mon) (await import('./hack.js')).set_msg_xy(mon.mx, mon.my);
     await update_topl(msg);
 }
 
@@ -3399,8 +3400,11 @@ async function m_move_bars(mtmp, ptr) {
     }
 
     if (game.flags?.verbose !== false && canseemon_mm(mtmp)) {
+        // C: makeplural(locomotion(ptr, "pass")) -- "pluralization fakes verb
+        // conjugation", so a flyer's "fly" becomes "flies".
+        const { makeplural } = await import('./objnam.js');
         const msg = `${Monnam(mtmp)} `
-            + `${vtense_mm(null, locomotion(ptr, 'pass'))} `
+            + `${makeplural(locomotion(ptr, 'pass'))} `
             + `${passes_walls(ptr) ? 'through' : 'between'} the iron bars.`;
         // C uses Norep(), which compares against the previous individual
         // message rather than the whole (possibly concatenated) topline.
@@ -3986,6 +3990,11 @@ export async function m_move(mtmp) {
         // mundetected from the monster's OLD (hiding) square is cleared before
         // postmov's re-hide gate below re-evaluates it on the NEW square.
         await maybe_unhide_at(mtmp.mx, mtmp.my);
+        // C ref: monmove.c postmov() first statement `notice_mon(mtmp)` (this
+        // inline move path stands in for postmov): announce a monster that just
+        // stepped into view.
+        if (game.flags?.spot_monsters)
+            await (await import('./hack.js')).notice_mon(mtmp);
         // C ref: monmove.c:1485-1506 postmov() — sequencing quirk: the monster
         // is already committed onto the door square (above) before the door is
         // dealt with, so a vampshifter currently in wolf/bat form that is about
@@ -4139,6 +4148,9 @@ export async function m_move(mtmp) {
     // C ref: monmove.c:2070 — a long worm that failed to move shrinks.
     if (mtmp.wormno)
         worm_nomove(mtmp);
+    // C ref: monmove.c postmov() runs for MMOVE_NOTHING too: notice_mon(mtmp).
+    if (game.flags?.spot_monsters)
+        await (await import('./hack.js')).notice_mon(mtmp);
     return MMOVE_NOTHING;
 }
 
@@ -6644,6 +6656,7 @@ async function mswings_mm(mtmp, otemp, bash) {
     const oneOf = quan > 1 ? 'one of ' : '';
     const base = cxname_singular(otemp);
     const name = quan > 1 ? makeplural(base) : base;
+    (await import('./hack.js')).set_msg_xy(mtmp.mx, mtmp.my);
     await update_topl(`${Monnam(mtmp)} ${verb} ${oneOf}${hisher} ${name}.`);
 }
 
@@ -8776,7 +8789,7 @@ async function hitmsg(mtmp, mattk) {
     const again = (h.mid === mtmp.m_id && h.slot != null
                    && mattk._slot === h.slot + 1 && mattk.aatyp === h.aatyp)
         ? ' again' : '';
-    await emitU(`${name} ${verb}${again}${punct}`);
+    await emitU(`${name} ${verb}${again}${punct}`, mtmp);
     h.mid = mtmp.m_id; h.slot = mattk._slot; h.aatyp = mattk.aatyp;
 }
 
@@ -8789,10 +8802,10 @@ async function missmu(mtmp, nearmiss, mattk) {
     const { could_seduce } = await import('./mhitu.js');
     const { YOUMONST } = await import('./mhitm_ad.js');
     if (could_seduce(mtmp, YOUMONST, mattk) && !mtmp.mcan) {  // mhitu.c:91
-        await emitU(`${Monnam(mtmp)} pretends to be friendly.`);
+        await emitU(`${Monnam(mtmp)} pretends to be friendly.`, mtmp);
     } else {
         const just = (nearmiss && verbose) ? 'just ' : '';
-        await emitU(`${Monnam(mtmp)} ${just}misses!`);
+        await emitU(`${Monnam(mtmp)} ${just}misses!`, mtmp);
     }
     await stop_occupation();            // mhitu.c:99
 }
@@ -8809,8 +8822,11 @@ async function doname_mm(obj) {
     return doname_invent(obj);
 }
 
-async function emitU(msg) {
+// `mon` = C's pline_mon(mtmp, ...): the message is about that monster's square,
+// which accessiblemsg turns into a "(north): " prefix.
+async function emitU(msg, mon) {
     const { update_topl } = await import('./display.js');
+    if (mon) (await import('./hack.js')).set_msg_xy(mon.mx, mon.my);
     await update_topl(msg);
 }
 
