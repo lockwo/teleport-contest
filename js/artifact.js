@@ -14,7 +14,8 @@
 //   * artilist[].role/.race hold mons[] indices (PM_KNIGHT == 335), not the
 //     0..12 role index this port usually calls `mnum`.  Role_if()/Race_if()
 //     below do the conversion; do not "simplify" the table to 0..12.
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
+import { livelog_printf, LL_ARTIFACT } from './livelog.js';
 import { update_topl } from './display.js';
 import { rn2, rnd, d, rnz } from './rng.js';
 import { objects, mksobj, weight, base_oc_cost } from './mkobj.js';
@@ -23,11 +24,12 @@ import { fuzzymatch } from './objnam.js';
 import { monster_by_pmidx } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
 import { exercise } from './attrib.js';
-import { isok } from './hacklib.js';
-import { cansee } from './vision.js';
+import { isok, s_suffix } from './hacklib.js';
+import { quest_artifact_num } from './questpgr.js';
+import { cansee, Blind } from './vision.js';
 import { mon_nam, monflee } from './uhitm.js';
-import { resist, destroy_items, ignite_items } from './zap.js';
-import { worn_extrinsic } from './invent.js';
+import { resist, cancel_monst, destroy_items, ignite_items, Antimagic as Antimagic_zap } from './zap.js';
+import { worn_extrinsic, xname, yname, otense, killer_xname } from './invent.js';
 import { healmon } from './mon.js';
 import { mon_aligntyp } from './minion.js';
 import { nomul } from './hack.js';
@@ -54,8 +56,7 @@ import {
     W_AMUL, W_RINGL, W_RINGR, W_TOOL,
     ONAME_VIA_NAMING, ONAME_WISH, ONAME_GIFT, ONAME_VIA_DIP, ONAME_LEVEL_DEF,
     ONAME_BONES, ONAME_RANDOM, ONAME_KNOW_ARTI,
-    D_TRAPPED, IS_DOOR, A_CON, A_WIS,
-} from './const.js';
+    D_TRAPPED, IS_DOOR, A_CON, A_WIS, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT } from './const.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // artifact.h SPFX_* — special-effect bits
@@ -142,8 +143,6 @@ const WEAPON_CLASS = 2, ARMOR_CLASS = 3, RING_CLASS = 4, AMULET_CLASS = 5,
     WAND_CLASS = 11, GEM_CLASS = 13;
 // objclass.h F_UNIQUE (mkobj.js:160)
 const F_UNIQUE = 64;
-// obj.h where values
-const OBJ_FREE = 0, OBJ_FLOOR = 3, OBJ_CONTAINED = 4, OBJ_MINVENT = 5;
 // prop.h TIMEOUT
 const TIMEOUT = 0x00ffffff;
 // cmd.h ECMD_ result codes
@@ -522,25 +521,26 @@ function race_hostile(ptr) {
 function ualign_type() { return game.u?.ualign?.type ?? A_NEUTRAL; }
 function ualign_record() { return game.u?.ualign?.record ?? 0; }
 function uprop(name) { return game.u?.uprops?.[name] || 0; }
-function Blind() { return !!(uprop('Blinded') || game.u?.Blinded); }
 function Hallucination() { return !!(uprop('Hallucination') || game.u?.Hallucination); }
-function Antimagic() {
-    const u = game.u;
-    return !!(u?.uprops?.Antimagic || u?.Antimagic || u?.HAntimagic || u?.EAntimagic);
-}
+// C ref: youprop.h Antimagic -- zap.js's reader also sees worn extrinsics
+// (e.g. the Wizard's cloak of magic resistance).
+function Antimagic() { return !!game.u?.formprops?.Antimagic || !!Antimagic_zap(); }
 function Fire_resistance() {
+    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!(uprop('Fire_resistance') || uprop('HFire_resistance')
         || uprop('EFire_resistance') || game.u?.Fire_resistance
         || worn_extrinsic(FIRE_RES) || has_innate('HFire_resistance')
         || (youmonst_data()?.mresists & MR_FIRE));
 }
 function Cold_resistance() {
+    if (game.u?.formprops?.Cold_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!(uprop('Cold_resistance') || uprop('HCold_resistance')
         || uprop('ECold_resistance') || game.u?.Cold_resistance
         || worn_extrinsic(COLD_RES) || has_innate('HCold_resistance')
         || (youmonst_data()?.mresists & MR_COLD));
 }
 function Shock_resistance() {
+    if (game.u?.formprops?.Shock_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!(uprop('Shock_resistance') || uprop('HShock_resistance')
         || uprop('EShock_resistance') || game.u?.Shock_resistance
         || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
@@ -549,11 +549,12 @@ function Shock_resistance() {
 // A race-innate grant (e.g. every orc, from level 1) is never persisted as a
 // stored flag anywhere in js/ — OR in the pure has_innate() derivation.
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!(uprop('Poison_resistance') || game.u?.Poison_resistance)
         || has_innate('HPoison_resistance');
 }
-function Drain_resistance() { return !!(uprop('Drain_resistance') || game.u?.Drain_resistance); }
-function Stone_resistance() { return !!(uprop('Stone_resistance') || game.u?.Stone_resistance); }
+function Drain_resistance() { return !!game.u?.formprops?.Drain_resistance || !!(uprop('Drain_resistance') || game.u?.Drain_resistance); }
+function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || !!(uprop('Stone_resistance') || game.u?.Stone_resistance); }
 // C ref: youprop.h Hate_silver == (u.ulycn >= LOW_PM || hates_silver(youmonst)).
 function Hate_silver() {
     if ((game.u?.ulycn ?? NON_PM) >= 0) return true;
@@ -641,7 +642,7 @@ const VAMPSHIFT_CHAM = new Set([pmidx_by_name('vampire'),
 function is_vampshifter(mon) { return VAMPSHIFT_CHAM.has(mon?.cham); }
 // C ref: mondata.c resists_drli().  is_were() misses the hero in human form,
 // which is why u.ulycn is tested separately.
-function resists_drli(mon) {
+export function resists_drli(mon) {
     const ptr = mon_data(mon);
     if (is_undead(ptr) || is_demon(ptr) || is_were(ptr)
         || (is_you(mon) && (game.u?.ulycn ?? NON_PM) >= 0)
@@ -684,11 +685,20 @@ function set_arti_exists(m, on) {
     artiinfo()[m].exists = on ? 1 : 0;
 }
 
-// C ref: artifact.c hack_artifacts() — must run after u_init().  Mutates
-// artilist[] in place exactly as C does.
+// C ref: artifact.c hack_artifacts() -- must run after u_init().  Mutates
+// artilist[] in place exactly as C does.  C runs it on a freshly loaded
+// artilist each game; this module's table lives across games, so the
+// pristine alignment/role are restored first.
 export function hack_artifacts() {
-    const alignmnt = ualign_type();
+    /* C: aligns[flags.initalign].value (lawful, neutral, chaotic) */
+    const alignmnt = [A_LAWFUL, A_NEUTRAL, A_CHAOTIC][game.initalign] ?? ualign_type();
 
+    for (let m = 1; artilist[m] && artilist[m].otyp; m++) {
+        const art = artilist[m];
+        if (art.pristine === undefined) art.pristine = { alignment: art.alignment, role: art.role };
+        art.alignment = art.pristine.alignment;
+        art.role = art.pristine.role;
+    }
     /* fix up the alignments of "gift" artifacts */
     for (let m = 1; artilist[m] && artilist[m].otyp; m++) {
         const art = artilist[m];
@@ -697,7 +707,8 @@ export function hack_artifacts() {
     /* Excalibur can be used by any lawful character, not just knights */
     if (!Role_if(PM_KNIGHT)) artilist[ART_EXCALIBUR].role = NON_PM;
 
-    const questarti = game.urole?.questarti;
+    /* fix up the quest artifact */
+    const questarti = quest_artifact_num();
     if (questarti) {
         artilist[questarti].alignment = alignmnt;
         artilist[questarti].role = ROLE_PM_FIRST + (game.urole?.mnum ?? 0);
@@ -921,6 +932,11 @@ export function artifact_exists(otmp, name, mod, flgs = 0) {
         }
 }
 
+// makemon.js m_initweap() reaches these through gstate hooks (no static
+// import: that edge breaks module evaluation order).
+hooks.artifact_exists = artifact_exists;
+hooks.exist_artifact = exist_artifact;
+
 // C ref: artifact.c found_artifact() — mark an artifact 'found'.
 export function found_artifact(a) {
     if (a < 1 || a > NROFARTIFACTS) return;   /* C: impossible() */
@@ -929,7 +945,7 @@ export function found_artifact(a) {
 }
 
 // C ref: artifact.c find_artifact().  `where` reproduces C's four cases; the
-// livelog line is queued for js/livelog.js.
+// livelog line goes to the chronicle.
 export function find_artifact(otmp) {
     const a = otmp?.oartifact | 0;
     if (a && !artiinfo()[a].found) {
@@ -940,8 +956,7 @@ export function find_artifact(otmp) {
         else if (otmp.where === OBJ_CONTAINED) where = " in a container";
         else if (otmp.where === OBJ_MINVENT) where = " carried by a monster";
         else where = "";
-        game.livelog_pending = game.livelog_pending || [];
-        game.livelog_pending.push(`found ${bare_artifactname(otmp)}${where}`);
+        livelog_printf(LL_ARTIFACT, `found ${bare_artifactname(otmp)}${where}`);
     }
 }
 // C ref: shk.c inside_shop() — unlike costly_spot() this INCLUDES the free
@@ -954,9 +969,13 @@ function inside_shop(x, y) {
     }
     return false;
 }
-// C ref: do_name.c bare_artifactname() — the name with no article.
+// C ref: objnam.c:2502 bare_artifactname() — the artifact's own name, with a
+// leading "The " downcased to "the " so it reads inside a sentence ("because
+// of the Orb of Fate").
 export function bare_artifactname(obj) {
-    return obj?.oartifact ? artilist[obj.oartifact].name : (obj?.oname || "");
+    if (!obj?.oartifact) return (obj?.oname || "");
+    const nm = artilist[obj.oartifact].name;
+    return nm.startsWith('The ') ? `t${nm.slice(1)}` : nm;
 }
 
 // C ref: artifact.c nartifact_exist().
@@ -1203,12 +1222,20 @@ function toggle_extrinsic(prop, on, wp_mask) {
     set_extrinsic(prop, on ? (cur | wp_mask) : (cur & ~wp_mask));
 }
 
-// C ref: artifact.c set_artifact_intrinsic() — a potential artifact has just
+// C ref: artifact.c set_artifact_intrinsic() -- a potential artifact has just
 // been worn/wielded/picked-up or the reverse.  Pickup/drop only set/reset the
 // W_ART bit.  RNG-free, but it writes the state that later moduli read.
 export async function set_artifact_intrinsic(otmp, on, wp_mask) {
+    if (set_artifact_intrinsic_core(otmp, on, wp_mask))
+        await arti_invoke(otmp);
+}
+
+// The synchronous body of set_artifact_intrinsic().  Returns true when C would
+// go on to call arti_invoke() to turn off an invoked power (an artifact with
+// an active invoked property leaving inventory); the caller does that part.
+export function set_artifact_intrinsic_core(otmp, on, wp_mask) {
     const oart = get_artifact(otmp);
-    if (oart === NONART()) return;
+    if (oart === NONART()) return false;
 
     /* effects from the defn field (worn/wielded) or cary (merely carried) */
     const dtyp = (wp_mask !== W_ART) ? oart.defn.adtyp : oart.cary.adtyp;
@@ -1260,15 +1287,14 @@ export async function set_artifact_intrinsic(otmp, on, wp_mask) {
     if ((spfx & SPFX_REFLECT) && (wp_mask & W_WEP))
         toggle_extrinsic(REFLECTING, on, wp_mask);
 
-    if (wp_mask === W_ART && !on && oart.inv_prop) {
-        /* might have to turn off the invoked power too */
-        if (oart.inv_prop <= LAST_PROP
-            && (extrinsic_of(oart.inv_prop) & W_ARTI))
-            await arti_invoke(otmp);
-    }
+    /* might have to turn off the invoked power too */
+    const invoke_off = wp_mask === W_ART && !on && !!oart.inv_prop
+        && oart.inv_prop <= LAST_PROP
+        && (extrinsic_of(oart.inv_prop) & W_ARTI) !== 0;
 
     if (wp_mask === W_WEP && is_art(otmp, ART_SUNSWORD))
         toggle_extrinsic(BLND_RES, on, wp_mask);
+    return invoke_off;
 }
 
 // C ref: artifact.c arti_immune() — is the artifact itself immune to an
@@ -1475,16 +1501,12 @@ export function touch_artifact_monster(obj, mon) {
     return ((badclass || badalign) && self_willed) || badalign ? 0 : 1;
 }
 
-// C ref: artifact.c touch_artifact().  RNG: rn2(4) for a hero touching a
-// badly-aligned artifact, then d(Antimagic ? 2 : 4, self_willed ? 10 : 4) and
-// a silver rnd(10) for the blast.  Returns C's 0/1.
-export async function touch_artifact(obj, mon) {
-    if (!is_you(mon)) return touch_artifact_monster(obj, mon);
+// C ref: artifact.c touch_artifact() — the hero's (RNG-free) badclass /
+// badalign / self_willed predicates, shared by invent.js's synchronous copy.
+// Returns null for a non-artifact.
+export function touch_artifact_hero_flags(obj) {
     const oart = get_artifact(obj);
-
-    touch_blasted(false);
-    if (oart === NONART()) return 1;
-
+    if (oart === NONART()) return null;
     /* every quest artifact is self-willed; if that ever changes, badclass
        has to name them explicitly */
     const self_willed = (oart.spfx & SPFX_INTEL) !== 0;
@@ -1496,40 +1518,81 @@ export async function touch_artifact(obj, mon) {
         && (oart.alignment !== ualign_type() || ualign_record() < 0);
     /* weapons that attack specific categories of monster are bad for them
        even when the alignments happen to match */
-    if (!badalign) badalign = bane_applies(oart, mon);
+    if (!badalign) badalign = bane_applies(oart, youmonst());
+    return { self_willed, badclass, badalign };
+}
+
+// C ref: objnam.c the() for a proper (capitalized) name as used by
+// touch_artifact's blast: "The Orb of Fate" -> "the Orb of Fate",
+// "Frost Brand" -> "Frost Brand", "Excalibur" -> "Excalibur".
+export function the_artifact_name(str) {
+    if (/^the /i.test(str)) return str.charAt(0).toLowerCase() + str.slice(1);
+    if (!/^[A-Z]/.test(str)) return `the ${str}`;
+    const sp = str.lastIndexOf(' ');
+    const tmp = sp >= 0 ? sp : str.lastIndexOf('-');
+    if (tmp >= 0 && !/[A-Z]/.test(str.charAt(tmp + 1))) return str.includes("'") ? str : `the ${str}`;
+    if (sp >= 0 && str.indexOf(' ') < sp) {
+        const of = str.indexOf(' of ');
+        let named = str.indexOf(' named ');
+        const called = str.indexOf(' called ');
+        if (called >= 0 && (named < 0 || called < named)) named = called;
+        if (of >= 0 && (named < 0 || of < named)) return `the ${str}`;
+    }
+    return str;
+}
+
+// C ref: artifact.c touch_artifact().  RNG: rn2(4) for a hero touching a
+// badly-aligned artifact, then d(Antimagic ? 2 : 4, self_willed ? 10 : 4) and
+// a silver rnd(10) for the blast.  Returns C's 0/1.
+export async function touch_artifact(obj, mon) {
+    if (!is_you(mon)) return touch_artifact_monster(obj, mon);
+    touch_blasted(false);
+    const f = touch_artifact_hero_flags(obj);
+    if (!f) return 1;
+    const { self_willed, badclass, badalign } = f;
 
     if (((badclass || badalign) && self_willed)
         || (badalign && !rn2(4))) {
-        await update_topl(`You are blasted by the ${xname(obj)}'s power!`);
+        await update_topl(`You are blasted by ${s_suffix(the_artifact_name(xname(obj)))} power!`);
         touch_blasted(true);
         let dmg = d(Antimagic() ? 2 : 4, self_willed ? 10 : 4);
         /* add half (maybe quarter) of the usual silver damage bonus */
         if (objects[obj.otyp]?.material === SILVER && Hate_silver())
             dmg += Maybe_Half_Phys(rnd(10));
-        losehp(dmg);        /* magic damage, not physical */
+        /* magic damage, not physical */
+        await (await import('./do.js')).losehp_do(dmg, `touching ${get_artifact(obj).name}`, 1 /*KILLED_BY*/);
         exercise(A_WIS, false);
     }
 
     /* can pick it up unless you're totally non-synch'd with the artifact */
-    if (badclass && badalign && self_willed) return 0;
+    if (badclass && badalign && self_willed) {
+        // C ref: artifact.c touch_artifact():1013 — the rejection line was
+        // missing entirely, so the blast message was never paged with --More--
+        // and the player got no feedback about why the artifact stayed put.
+        if (!carried(obj))
+            await update_topl(`${Tobjnam(obj, 'evade')} your grasp!`);
+        else
+            await update_topl(`${Tobjnam(obj, 'are')} beyond your control!`);
+        return 0;
+    }
     return 1;
 }
-// C ref: hack.c losehp() reduced to the hp arithmetic; the death path lives in
-// each caller's own copy elsewhere in this port.
-function losehp(n) {
-    const u = game.u;
-    if (!u) return;
-    if (Upolyd()) { u.mh -= n; if (u.mh < 1) u.mh = 0; }
-    else { u.uhp -= n; if (u.uhp > u.uhpmax) u.uhpmax = u.uhp; if (u.uhp < 1) u.uhp = 0; }
-    game.botl = true;
+// C ref: hack.c losehp(n, knam, k_format) — this file used to keep a reduced
+// copy that only did the hp arithmetic, so a lethal artifact blast or
+// retouch_object() shock left the hero at 0 hp and the game ran on instead of
+// printing "You die..." and running done(DIED).  js/do.js owns the full port.
+async function losehp(n, knam) {
+    await (await import('./do.js')).losehp_do(n, knam, 1 /*KILLED_BY*/);
 }
-// C ref: objnam.c xname() reduced to what the artifact messages need.
-function xname(obj) {
-    if (obj?.oartifact) return artilist[obj.oartifact].name;
-    return obj?.oname || objects[obj?.otyp]?.name || "object";
-}
+// C ref: objnam.c The(str) for the artifact messages below.
+function The(str) { return upstart(the_artifact_name(str)); }
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 function carried(obj) { return invent_list().includes(obj); }
+// C ref: objnam.c Tobjnam(obj, verb) — The(xname(obj)) plus the verb agreeing
+// with the stack size.
+function Tobjnam(obj, verb) {
+    return `${The(xname(obj))} ${otense(obj, verb)}`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Magicbane
@@ -1596,7 +1659,7 @@ export async function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
         const old_mdat = youdefend ? youmonst_data() : mdef.data;
         /* no mdef->mcan check: even a cancelled monster can be polymorphed
            into a golem, and "cancel" acts as if some magical energy remains */
-        if (!cancel_monst(mdef, mb, youattack, false, false)) {
+        if (!await cancel_monst(mdef, mb, youattack, false, false)) {
             resisted = true;
         } else {
             do_stun = false;
@@ -1684,18 +1747,6 @@ export async function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
 function HStun() { return uprop('Stun') | 0; }
 function HConfusion() { return uprop('Confusion') | 0; }
 
-// C ref: zap.c cancel_monst() restricted to Mb_hit's call
-// (self_cancel = FALSE, allow_cancel_kill = FALSE).  RNG: resist().
-// normal_shape() (forcing a shapeshifter back to its base form) is zap.c's and
-// is not reproduced here.
-function cancel_monst(mdef, obj, youattack, _allow_cancel_kill, _self_cancel) {
-    const youdefend = is_you(mdef);
-    if (youdefend ? (!youattack && Antimagic())
-                  : resist(mdef, obj.oclass, 0, false))
-        return false;   /* resisted cancellation */
-    if (!youdefend) mdef.mcan = 1;
-    return true;
-}
 // detect.c probe_monster(); potion.c make_stunned()/make_confused().
 function probe_monster(mtmp) {
     const fn = artifact_hooks.probe_monster;
@@ -1726,7 +1777,7 @@ const FATAL_DAMAGE_MODIFIER = 200;
 // C ref: makemon.c monhp_per_lvl() — the level-drain HP amount.  js/zap.js:1013
 // has an `rnd(8)`-only copy missing the golem / mlevel>49 / adult-dragon /
 // level-0 arms; this is the whole function.
-function monhp_per_lvl(mon) {
+export function monhp_per_lvl(mon) {
     const ptr = mon_data(mon);
     let hp = rnd(8);   /* default is d8 */
     if (is_golem(ptr)) {
@@ -1927,8 +1978,8 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
 
             if (vis) {
                 await update_topl(is_art(otmp, ART_STORMBRINGER)
-                    ? `The black blade draws the ${life} from ${mon_nam(mdef)}!`
-                    : `The ${xname(otmp)} draws the ${life} from ${mon_nam(mdef)}!`);
+                    ? `The ${(await import('./do_name.js')).hcolor('black')} blade draws the ${life} from ${mon_nam(mdef)}!`
+                    : `${The(xname(otmp))} draws the ${life} from ${mon_nam(mdef)}!`);
             }
             if (mdef.m_lev === 0) {
                 /* losing a level when at 0 is fatal */
@@ -1950,8 +2001,8 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
             await update_topl(Blind()
                 ? `You feel an ${is_art(otmp, ART_STORMBRINGER) ? "unholy blade" : "object"} drain your ${life}!`
                 : (is_art(otmp, ART_STORMBRINGER)
-                    ? `The black blade drains your ${life}!`
-                    : `The ${xname(otmp)} drains your ${life}!`));
+                    ? `The ${(await import('./do_name.js')).hcolor('black')} blade drains your ${life}!`
+                    : `${The(xname(otmp))} drains your ${life}!`));
             await losexp("life drainage");
             if (magr && magr.mhp < magr.mhpmax)
                 healmon(magr, Math.trunc((Math.abs(oldhpmax - game.u.uhpmax) + 1) / 2), 0);
@@ -2273,7 +2324,7 @@ export async function arti_invoke_cost(obj) {
 
         if (pw_cost < 0 || game.u.uen < pw_cost) {
             /* the artifact is tired :-) */
-            await update_topl(`You feel that the ${xname(obj)} is ignoring you.`);
+            await update_topl(`You feel that ${the_artifact_name(xname(obj))} ${otense(obj, 'are')} ignoring you.`);
             obj.age += d(3, 10);   /* and just got more so */
             return false;
         } else {
@@ -2341,7 +2392,7 @@ export async function arti_invoke(obj) {
     if (on && obj.age > (game.moves | 0)) {
         /* the artifact is tired :-) */
         set_extrinsic(oart.inv_prop, eprop ^ W_ARTI);
-        await update_topl(`You feel that the ${xname(obj)} is ignoring you.`);
+        await update_topl(`You feel that ${the_artifact_name(xname(obj))} ${otense(obj, 'are')} ignoring you.`);
         obj.age += d(3, 10);   /* can't just keep repeatedly trying */
         return ECMD_TIME;
     } else if (!on) {
@@ -2430,7 +2481,7 @@ export async function arti_speak(obj) {
     // each through update_topl()'s merge-or-page.  The old raw _pending_message
     // + _pending_message2 pair left the quote in a field nothing ever reads,
     // so the rumor text itself was never displayed at all.
-    await update_topl(`${upstart(xname(obj))} whispers:`);
+    await update_topl(`${The(xname(obj))} ${otense(obj, 'whisper')}:`);
     await update_topl(`"${line}"`);   /* verbalize1() */
     return ECMD_TIME;
 }
@@ -2683,13 +2734,22 @@ export async function retouch_object(ref, loseit) {
 
         /* the hero can't, but didn't get touch_artifact()'s "evades your
            grasp|control" message, so give an alternate one */
-        await update_topl(`You can't handle ${xname(obj)}${obj.owornmask ? " anymore" : ""}!`);
+        await update_topl(`You can't handle ${yname(obj)}${obj.owornmask ? " anymore" : ""}!`);
         if (!touch_blasted()) {
             /* half the usual 1d20 physical for silver, 1d10 magical for a
                <foo>bane, potentially both */
             if (ag) dmg += Maybe_Half_Phys(rnd(10));
             if (bane) dmg += rnd(10);
-            losehp(dmg);
+            // C ref: artifact.c:2536 `what = killer_xname(obj)`, overridden to
+            // "a silver ring"/"a silver wand" for a non-artifact silver ring or
+            // wand so the tombstone doesn't leak this game's randomized
+            // appearance.
+            let what = killer_xname(obj);
+            if (ag && !obj.oartifact && !bane) {
+                if (obj.oclass === RING_CLASS) what = 'a silver ring';
+                else if (obj.oclass === WAND_CLASS) what = 'a silver wand';
+            }
+            await losehp(dmg, `handling ${what}`);
             exercise(A_CON, false);
         }
     }

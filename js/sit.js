@@ -5,15 +5,17 @@
 // are kept structurally but rely on subsystems the port does not yet model,
 // which are unreachable for a non-polymorphed contest hero on ordinary terrain.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
-import { update_topl, vobj_at } from './display.js';
+import { update_topl, vobj_at, Hallucination_u } from './display.js';
 import { surface, hliquid } from './dungeon.js';
-import { t_at, dotrap } from './trap.js';
+import { t_at, dotrap, water_damage } from './trap.js';
 import { exercise } from './attrib.js';
-import { useupf } from './invent.js';
-import { objects, COIN_CLASS, CORPSE } from './mkobj.js';
+import { useupf, youmonst_data_pub } from './invent.js';
+import { mflags1_of, M1_SLITHY } from './monflags_data.js';
+import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags } from './objnam.js';
+import { name_to_pmidx } from './makemon.js';
 import {
     FOUNTAIN, STAIRS, LADDER, DRAWBRIDGE_DOWN, ICE, POOL, MOAT, WATER,
     IS_SINK, IS_ALTAR, IS_GRAVE, IS_THRONE, CXN_NORMAL,
@@ -22,15 +24,11 @@ import {
     SPIKED_PIT,
 } from './const.js';
 
-// C ref: hack.c losehp() — for a non-polymorphed hero this subtracts the damage
-// from u.uhp (no RNG).  Death handling isn't exercised by the sit sessions, so
-// it is reduced to the hp arithmetic + hpmax clamp.
-function losehp(n) {
-    const u = game.u;
-    if (!u) return;
-    u.uhp -= n;
-    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
-    if (u.uhp < 1) u.uhp = 0;
+// C ref: hack.c losehp(n, knam, k_format) — do.js owns the complete port
+// (death path, killer text, polymorph arm).
+async function losehp(n, knam, k_format) {
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(n, knam, k_format);
 }
 
 // C ref: rm.h/dbridge.c is_pool(x,y) — POOL/MOAT/WATER (drawbridge-under and
@@ -91,20 +89,24 @@ export async function dosit() {
         // Held by a monster that is beside the hero.
         await update_topl("It won't offer you its lap.");
         return ECMD_OK;
-    } else if (is_pool(u.ux, u.uy) && !u.uprops?.Underwater) {
+    } else if ((is_pool(u.ux, u.uy) && !u.uprops?.Underwater)
+               || (u.Upolyd && u.umonnum === name_to_pmidx('gremlin')
+                   && (typ === FOUNTAIN || is_pool(u.ux, u.uy)))) {
         return await sit_in_water();
     }
-    // Upolyd gremlin-in-fountain path: no Upolyd contest hero.
 
     const obj = vobj_at(u.ux, u.uy);
     if (obj && !(uteetering_at_seen_pit(trap) || uescaped_shaft(trap))) {
-        // slithy/dragon coil paths need Upolyd; the base hero "sits on" it.
-        if (obj.oclass === COIN_CLASS && slithy_or_dragon()) {
-            await update_topl('You coil up around your hoard.');
+        if (obj.oclass === COIN_CLASS && is_dragon_form()) {
+            // C: obj->quan + money_cnt(invent) < u.ulevel * 1000 -> "meager "
+            let gold = 0;
+            for (const o of (game.invent || [])) if (o?.oclass === COIN_CLASS) gold += o.quan || 0;
+            await update_topl(`You coil up around your ${
+                ((obj.quan || 1) + gold < (u.ulevel || 1) * 1000) ? 'meager ' : ''}hoard.`);
         } else if (isTowel(obj)) {
             await update_topl("It's probably not a good time for a picnic...");
         } else {
-            await update_topl(`You sit on ${sit_obj_name(obj)}.`);
+            await update_topl(`You ${is_slithy_form() ? 'coil up around' : 'sit on'} ${sit_obj_name(obj)}.`);
             if (obj.otyp === CORPSE && amorphous_corpse(obj)) {
                 await update_topl("It's squishy...");
             } else if (isCreamPie(obj)) {
@@ -123,7 +125,8 @@ export async function dosit() {
             } else if (u.utraptype === TT_PIT) {
                 if (trap && trap.ttyp === SPIKED_PIT) {
                     await update_topl('You sit down on a spike.  Ouch!');
-                    losehp(Half_physical_damage() ? rn2(2) : 1);
+                    await losehp(Half_physical_damage() ? rn2(2) : 1,
+                                 'sitting on an iron spike', 1 /* KILLED_BY */);
                     exercise(A_STR, false);
                 } else {
                     await update_topl('You sit down in the pit.');
@@ -135,7 +138,7 @@ export async function dosit() {
             } else if (u.utraptype === TT_LAVA) {
                 await update_topl(`You sit in the ${hliquid('lava')}!`);
                 u.utrap += rnd(4);
-                losehp(d(2, 10)); // lava damage
+                await losehp(d(2, 10), 'sitting in lava', 1 /* KILLED_BY */); // lava damage
             } else if (u.utraptype === TT_INFLOOR || u.utraptype === TT_BURIEDBALL) {
                 await update_topl("You can't maneuver to sit!");
                 u.utrap++;
@@ -153,7 +156,7 @@ export async function dosit() {
         await update_topl('Your rump gets wet.');
     } else if (IS_ALTAR(typ)) {
         await update_topl('You sit on the altar.');
-        // altar_wrath(u.ux, u.uy): the god's response is not modeled here.
+        await (await import('./dokick.js')).altar_wrath(u.ux, u.uy);
     } else if (IS_GRAVE(typ)) {
         await update_topl('You sit on the headstone.');
     } else if (typ === STAIRS) {
@@ -164,7 +167,11 @@ export async function dosit() {
         // must be WWalking
         await update_topl(`You sit on the ${hliquid('lava')}.`);
         await update_topl(`The ${hliquid('lava')} burns you!`);
-        losehp(d(10, 10)); // lava damage (no Fire_resistance for base hero)
+        {
+            const { Fire_resistance } = await import('./zap.js');
+            await losehp(d(Fire_resistance() ? 2 : 10, 10), 'sitting on lava',
+                         1 /* KILLED_BY */); // lava damage
+        }
     } else if (is_ice_at(u.ux, u.uy)) {
         await update_topl('You sit on the ice.');
         await update_topl('The ice feels cold.');
@@ -186,18 +193,25 @@ export async function dosit() {
 async function sit_in_water() {
     const u = game.u;
     await update_topl(`You sit in the ${hliquid('water')}.`);
-    // Upolyd gremlin split / water_damage to worn armor: base hero on the
-    // reached levels wears no armor that fails the rn2(10) checks; C rolls
-    // rn2(10) only when uarm/uarmf are present.
-    if (u.uarm) rn2(10);
-    if (u.uarmf) rn2(10);
+    if (u.Upolyd && u.umonnum === name_to_pmidx('gremlin')) {
+        if (await (await import('./potion.js')).split_mon(game.youmonst || u, null)) {
+            if (game.level?.at(u.ux, u.uy)?.typ === FOUNTAIN)
+                await (await import('./fountain.js')).dryup(u.ux, u.uy, true);
+        }
+    } else {
+        if (!rn2(10) && game.uarm) await water_damage(game.uarm, 'armor', true);
+        // C sit.c intentionally damages the suit again in its boots branch.
+        if (!rn2(10) && game.uarmf && game.uarmf.otyp !== WATER_WALKING_BOOTS)
+            await water_damage(game.uarm, 'armor', true);
+    }
     return ECMD_TIME;
 }
 
 // ---- polymorph / hero-monster predicates (all false for the base hero) ----
 
 function sticks() { return false; }                 // sticks(youmonst.data)
-function slithy_or_dragon() { return false; }        // S_DRAGON coil / slithy
+function is_dragon_form() { return youmonst_data_pub()?.mlet === 'D'; }   // S_DRAGON
+function is_slithy_form() { return (mflags1_of(youmonst_data_pub()) & M1_SLITHY) !== 0; }
 function amorphous_corpse(_obj) { return false; }    // amorphous(&mons[corpsenm])
 function lays_eggs() { return false; }               // lays_eggs(youmonst.data)
 function uteetering_at_seen_pit(_t) { return false; }
@@ -247,7 +261,9 @@ async function throne_sit_effect() {
 // messages are kept.
 async function lay_an_egg() {
     if (!game.flags?.female) {
-        await update_topl("Males can't lay eggs!");
+        await update_topl(`${Hallucination_u()
+            ? 'You may think you are a platypus, but a male still'
+            : 'Males'} can't lay eggs!`);
         return ECMD_OK;
     }
     return ECMD_OK;

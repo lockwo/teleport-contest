@@ -5,7 +5,8 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
-import { pline, update_topl, m_at, map_invisible, canseemon_shared } from './display.js';
+import { pline, update_topl, m_at, map_invisible, canseemon_shared,
+         tmp_at, zapdir_to_glyph } from './display.js';
 import { exercise } from './attrib.js';
 import { objects, mksobj, weight, set_bknown, SPE_BLANK_PAPER, SPE_NOVEL } from './mkobj.js';
 import { SPELL_META } from './u_init.js';
@@ -14,10 +15,11 @@ import { A_WIS, A_INT, A_STR, P_UNSKILLED, P_EXPERT, P_SKILLED, P_BASIC,
          isok, u_at, IS_STWALL, IS_DOOR, IS_TREE, ZAP_POS, SPACE_POS,
          D_ISOPEN, D_CLOSED, D_LOCKED, POOL, MOAT, DRAWBRIDGE_UP, LAVAPOOL,
          CLOUD, N_DIRS, xdir, ydir, SPINE, NO_MINVENT, ACH_INVK,
-         Is_waterlevel } from './const.js';
+         Is_waterlevel, NO_KILLER_PREFIX, EXPL_FIERY, EXPL_FROSTY, HEAD,
+         SICK_ALL } from './const.js';
 import { p_skill_of, use_skill } from './enhance.js';
 import { monster_by_pmidx, makemon, set_malign, name_to_pmidx } from './makemon.js';
-import { msound_of, mflags1_of, mflags2_of, M1_NOHEAD, M2_UNDEAD,
+import { mflags2_of, M2_UNDEAD,
          is_animal } from './monflags_data.js';
 import { discover_object, observe_object } from './o_init.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -26,7 +28,7 @@ import { cansee, Blind } from './vision.js';
 import { hcolor, hliquid } from './do_name.js';
 import { find_ac } from './u_init.js';
 import { DEADMONSTER } from './mon.js';
-import { resists_elec } from './mondata.js';
+import { resists_elec, can_chant } from './mondata.js';
 import { has_innate } from './exper.js';
 
 // C ref: objclass.h obj_material_types — is_metallic() = material in [IRON,MITHRIL].
@@ -70,8 +72,6 @@ export function spelltypemnemonic(otyp) {
 export const MAXSPELL = 42;
 export const NO_SPELL = 0;
 export const KEEN = 20000; // C ref: spell.c — full spell retention.
-// C ref: include/monsters.h MS_* — the msound values can_chant() rejects.
-const MS_SILENT = 0, MS_BUZZ = 10, MS_BURBLE = 16;
 
 const ECMD_OK = 0;
 const ECMD_FAIL = 0;
@@ -164,25 +164,6 @@ export async function docast() {
     return ECMD_FAIL;
 }
 
-// C ref: mon.c can_chant(&youmonst) — a Strangled hero, or one polymorphed into
-// a voiceless/headless form, can't chant an incantation.
-function can_chant_hero() {
-    const u = game.u;
-    if (u?.uprops?.Strangled) return false;
-    // u.umonnum holds the ROLE number, not a permonst index, unless the hero is
-    // polymorphed (polyself.js sets Upolyd when umonnum != umonster) — reading
-    // the mons[] tables with a role number names an unrelated monster.  Every
-    // role's player monster is voiced and has a head, so an unpolymorphed hero
-    // can always chant.
-    if (!u?.Upolyd) return true;
-    const ptr = monster_by_pmidx(u.umonnum);
-    if (!ptr) return true;
-    const ms = msound_of(ptr);
-    if (ms === MS_SILENT || ms === MS_BUZZ || ms === MS_BURBLE) return false;
-    if ((mflags1_of(ptr) & M1_NOHEAD) !== 0) return false;   /* !has_head */
-    return true;
-}
-
 // C ref: spell.c rejectcasting() — the pre-selection rejections, checked BEFORE
 // the spell menu opens.  Was missing entirely: a stunned hero pressing 'Z' got
 // our spell menu (C prints one line and takes no turn), so every keystroke the
@@ -194,7 +175,7 @@ async function rejectcasting() {
         await pline('You are too impaired to cast a spell.');
         return true;
     }
-    if (!can_chant_hero()) {
+    if (!can_chant(null)) {
         await pline('You are unable to chant the incantation.');
         return true;
     }
@@ -213,18 +194,9 @@ async function getspell() {
         return -1;
     }
     if (await rejectcasting()) return -1;
-    const { spell_menu } = await import('./invent.js');
-    const meta = {
-        name: (otyp) => objects[otyp]?.name || '',
-        category: (otyp) => spelltypemnemonic(otyp),
-        fail: (i) => 100 - percent_success(i),  // displayed Fail%
-        retention: (i) => spellretention(i),
-        // wizard-mode "turns" column: C prints spellknow(i) raw (note it uses
-        // the LOOP index i here while the other fields use the sort-order index;
-        // with no custom sort the two coincide).
-        turns: (i) => spellknow(i),
-    };
-    return await spell_menu('Choose which spell to cast', nspells, spl_book(), meta);
+    const chosen = { value: -1 };
+    return await dospellmenu('Choose which spell to cast', SPELLMENU_CAST, chosen)
+        ? chosen.value : -1;
 }
 
 // C ref: spell.c spellretention(idx, outbuf) — retention as a percentage range
@@ -501,14 +473,16 @@ async function spelleffects(spell_otyp, atme, force) {
     pseudo.blessed = 0;
     pseudo.cursed = 0;
     pseudo.quan = 20;
-    const role_skill = p_skill_of(spell_skilltype(pseudo.otyp));
-    const rc = await applySpell(pseudo.otyp, atme, pseudo, role_skill, spell);
-    // C ref: spell.c spelleffects tail — "gain skill for successful cast".
-    // use_skill() bumps P_ADVANCE and can print "You feel more confident in
-    // your <school> skills." (and changes what #enhance offers); omitting it
-    // left every caster's spell skills frozen at their chargen value.
-    if (!force) use_skill(spell_skilltype(pseudo.otyp), spellev(spell));
-    return rc;
+    const otyp = pseudo.otyp;
+    const skill = spell_skilltype(otyp);
+    const role_skill = p_skill_of(skill);
+    const rc = await applySpell(otyp, atme, pseudo, role_skill, spell);
+    if (rc !== ECMD_TIME)
+        return rc; /* impossible("Unknown spell %d attempted.") */
+    // C ref: spell.c spelleffects tail, "gain skill for successful cast".
+    // A forced #wizcast neither paid energy nor earns practice.
+    if (!force) await use_skill(skill, spellev(spell));
+    return ECMD_TIME;
 }
 
 function spell_idx(otyp) {
@@ -534,28 +508,13 @@ const SPE_DIG = 366, SPE_MAGIC_MISSILE = 367, SPE_FIREBALL = 368,
 // C ref: objclass.h oc_dir — NODIR/IMMEDIATE/RAY, as carried by objects[].dir.
 const NODIR = 1;
 
-// C ref: hack.c losehp(n, knam, k_format) — the local copy every file that
-// damages the hero keeps (potion.js, dig.js, ...).
-async function losehp_spell(dmg) {
-    const u = game.u;
-    if (!u) return;
-    if (u.Upolyd) {
-        u.mh = (u.mh | 0) - dmg;
-        if (u.mh < 1) u.mh = 0;
-        game.botl = true;
-        return;
-    }
-    u.uhp = (u.uhp | 0) - dmg;
-    game.botl = true;
-    if (u.uhp < 1) {
-        const { done_in_by } = await import('./end.js');
-        await done_in_by(null, 0 /*DIED*/);
-    }
-}
-
-// C ref: youprop.h Maybe_Half_Phys(dmg).
-function Maybe_Half_Phys(dmg) {
-    return (game.u?.uprops?.Half_physical_damage) ? Math.trunc((dmg + 1) / 2) : dmg;
+// C ref: spell.c spelleffects().  zapyourself() damage from a spell aimed at
+// the caster is charged through hack.c losehp() with the killer text
+// "zapped <him>self with a spell" and NO_KILLER_PREFIX.
+async function losehp_self_spell(damage) {
+    const { losehp } = await import('./zap.js');
+    const him = game.flags?.female ? 'her' : 'him';
+    await losehp(damage, `zapped ${him}self with a spell`, NO_KILLER_PREFIX);
 }
 
 // C ref: spell.c spelleffects() switch — the per-otyp effect, split out so the
@@ -582,12 +541,38 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
     case SPE_FIREBALL:
     case SPE_CONE_OF_COLD:
         if (role_skill >= P_SKILLED) {
-            // DEFERRED: C's Skilled+ arm runs throwspell() (a getpos() spot
-            // pick with a highlighted 10-square radius, then walk_path) and
-            // explode()s rnd(8)+1 times around it.  Neither throwspell's
-            // getpos_sethilite overlay nor explode() is ported; falling through
-            // to the beam arm below would draw the WRONG RNG, so leave the
-            // whole cast a no-op until both exist.
+            if (await throwspell()) {
+                const { explode } = await import('./explode.js');
+                const { zapyourself, spell_damage_bonus } = await import('./zap.js');
+                // throwspell() leaves the TARGET COORDINATES in u.dx/u.dy.
+                const cc = { x: u.dx, y: u.dy };
+                let n = rnd(8) + 1;
+                while (n--) {
+                    if (!u.dx && !u.dy && !u.dz) {
+                        const damage = await zapyourself(pseudo, true);
+                        if (damage)
+                            await losehp_self_spell(damage);
+                    } else {
+                        await explode(u.dx, u.dy, otyp - SPE_MAGIC_MISSILE + 10,
+                                      spell_damage_bonus(Math.trunc((u.ulevel | 0) / 2) + 1),
+                                      0,
+                                      (otyp === SPE_CONE_OF_COLD) ? EXPL_FROSTY
+                                                                  : EXPL_FIERY);
+                    }
+                    /* C's done() does not return once the game is over */
+                    if (game.program_state?.gameover)
+                        break;
+                    u.dx = cc.x + rnd(3) - 2;
+                    u.dy = cc.y + rnd(3) - 2;
+                    if (!isok(u.dx, u.dy) || !cansee(u.dx, u.dy)
+                        || IS_STWALL(game.level?.at(u.dx, u.dy)?.typ)
+                        || u.uswallow) {
+                        /* Spell is reflected back to center */
+                        u.dx = cc.x;
+                        u.dy = cc.y;
+                    }
+                }
+            }
             break;
         }
         /* FALLTHRU */
@@ -645,8 +630,11 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
             if (!u.dx && !u.dy && !u.dz) {
                 let damage = await zapyourself(pseudo, true);
                 if (damage) {
-                    if (physical_damage) damage = Maybe_Half_Phys(damage);
-                    await losehp_spell(damage);
+                    if (physical_damage) {
+                        const { Maybe_Half_Phys } = await import('./zap.js');
+                        damage = Maybe_Half_Phys(damage);
+                    }
+                    await losehp_self_spell(damage);
                 }
             } else {
                 await weffects(pseudo);
@@ -699,58 +687,99 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
 
         /* cure conditions (which updates status) before feedback */
         await healup(0, 0, true, false);
+        /*
+         *  Sick + !Slimed -- You are no longer ill.
+         * !Sick + !Slimed -- You are not ill.
+         * !Sick +  Slimed -- The slime disappears.
+         *  Sick +  Slimed -- You are no longer ill.  The slime disappears.
+         */
         if (was_sick || !was_slimed)
             await pline(`You are ${was_sick ? 'no longer' : 'not'} ill.`);
         if (was_slimed) {
-            // C: make_slimed(0L, "The slime disappears!").  potion.c's timer
-            // helper has no port; artifact.js clears u.uprops.Slimed the same
-            // way.  Neither draws RNG.
-            u.uprops.Slimed = 0;
-            await pline('The slime disappears!');
+            const { make_slimed } = await import('./potion.js');
+            await make_slimed(0, 'The slime disappears!');
         }
         break;
     }
-    case SPE_CLAIRVOYANCE:
-    case SPE_CREATE_FAMILIAR:
-    case SPE_PROTECTION:
-    case SPE_JUMPING:
+    case SPE_CLAIRVOYANCE: {
+        // C: BClairvoyant is set while a non-Wizard wears a cornuthaum, the
+        // only thing that blocks clairvoyance.
+        const cornuthaum = game.uarmh?.otyp === 93 /* CORNUTHAUM */;
+        if (!(cornuthaum && game.urole?.mnum !== PM_WIZARD)) {
+            if (role_skill >= P_SKILLED) pseudo.blessed = 1; /* detect monsters as well as map */
+            const { do_vicinity_map } = await import('./detect.js');
+            await do_vicinity_map(pseudo);
+        } else if (cornuthaum) {
+            const { body_part } = await import('./polyself.js');
+            await pline(`You sense a pointy hat on top of your ${body_part(HEAD)}.`);
+        }
+        break;
+    }
+    case SPE_CREATE_FAMILIAR: {
+        // C ref: spell.c spelleffects() SPE_CREATE_FAMILIAR -> dog.c make_familiar().
+        const { make_familiar } = await import('./dog.js');
+        await make_familiar(null, u.ux, u.uy, false);
+        break;
+    }
     case SPE_CHAIN_LIGHTNING:
-        // DEFERRED: do_vicinity_map(), make_familiar(), cast_protection(),
-        // jump() and cast_chain_lightning() have no port yet.  cast_protection
-        // in particular can't land alone: nothing decrements u.usptime in the
-        // move loop, so its AC bonus would never expire.
+        // C ref: spell.c spelleffects() SPE_CHAIN_LIGHTNING.
+        await cast_chain_lightning();
         break;
-    default:
-        // C: impossible("Unknown spell %d attempted.", spell) then ECMD_OK.
+    case SPE_JUMPING: {
+        // C ref: spell.c spelleffects() SPE_JUMPING -> apply.c jump(max(role_skill, 1)).
+        const { jump } = await import('./extcmd-handlers.js');
+        if (!((await jump(Math.max(role_skill, 1))) & ECMD_TIME)) {
+            const { pline } = await import('./display.js');
+            await pline('Nothing happens.');
+        }
         break;
+    }
+    case SPE_PROTECTION:
+        // C ref: spell.c spelleffects() SPE_PROTECTION -> cast_protection().
+        await cast_protection();
+        break;
+    default: {
+        const { impossible } = await import('./display.js');
+        await impossible(`Unknown spell ${spell} attempted.`);
+        return ECMD_OK;
+    }
     }
     return ECMD_TIME;
 }
 
-// C ref: potion.c healup(nhp, nxtra, curesick, cureblind).
-async function healup(nhp, nxtra, curesick, cureblind) {
+// C ref: potion.c healup(nhp, nxtra, curesick, cureblind).  Heal the hero (or
+// the polymorphed form), then cure blindness and deafness, then vomiting and
+// sickness, and mark the status line dirty.  Shared by the cure spells here
+// and by zap.c zapyourself()'s healing arm.
+export async function healup(nhp, nxtra, curesick, cureblind) {
     const u = game.u;
     if (nhp) {
-        u.uhp += nhp;
-        if (u.uhp > u.uhpmax) {
-            u.uhpmax += nxtra;
-            u.uhp = u.uhpmax;
-            if (u.uhpmax > (u.uhppeak || 0)) u.uhppeak = u.uhpmax;
+        if (u.Upolyd) {
+            u.mh = (u.mh | 0) + nhp;
+            if (u.mh > (u.mhmax | 0)) u.mh = (u.mhmax = (u.mhmax | 0) + nxtra);
+        } else {
+            u.uhp = (u.uhp | 0) + nhp;
+            if (u.uhp > u.uhpmax) {
+                u.uhp = (u.uhpmax = (u.uhpmax | 0) + nxtra);
+                if (u.uhpmax > (u.uhppeak || 0)) u.uhppeak = u.uhpmax;
+            }
         }
     }
-    if (!u.uprops) u.uprops = {};
     if (cureblind) {
-        // C: make_blinded(0L, TRUE) + make_deaf(0L, TRUE); u.ucreamed = 0 is
-        // done inside make_blinded.
-        const { make_blinded_hero } = await import('./potion.js');
+        /* 3.6.1: it's debatable whether healing magic should clean off
+           mundane 'dirt', but if it doesn't, blindness isn't cured */
+        u.ucreamed = 0;
+        const { make_blinded_hero, make_deaf } = await import('./potion.js');
         await make_blinded_hero(0, true);
-        u.uprops.HDeaf = 0;
+        /* heal deafness too */
+        await make_deaf(0, true);
     }
     if (curesick) {
-        u.uprops.Sick = 0;
-        u.usick_type = 0;
-        game.botl = true;
+        const { make_vomiting, make_sick } = await import('./potion.js');
+        await make_vomiting(0, true);
+        await make_sick(0, null, true, SICK_ALL);
     }
+    game.botl = true;
 }
 
 // C ref: include/objects.h SPELL(...,delay,...) — objects[otyp].oc_delay, the
@@ -867,7 +896,7 @@ async function confused_book(spellbook) {
         spellbook.in_use = true;             /* in case called from learn() */
         await pline('Being confused you have difficulties in controlling your actions.');
         await pline('You accidentally tear the spellbook to pieces.');
-        trycall(spellbook);
+        await trycall(spellbook);
         useup(spellbook);
         return true;
     }
@@ -879,6 +908,7 @@ async function confused_book(spellbook) {
 // The innate source (elf from level 4, monk from level 1) is never persisted
 // as a stored uprops flag, so OR in has_innate()'s pure derivation.
 function Sleep_resistance_hero() {
+    if (game.u?.formprops?.Sleep_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     return ((u?.uprops?.HSleep_resistance ?? u?.uprops?.Sleep_resistance ?? 0) > 0)
         || has_innate('HSleep_resistance');
@@ -919,11 +949,11 @@ export async function study_book(spellbook) {
             // eyecount(youmonst) is 2 for every playable form -> plural.
             await pline("This book is so dull that you can't keep your eyes open.");
             dullbook += rnd(2 * oc_level);
-            // fall_asleep(-dullbook, TRUE): stop_occupation + nomul.
+            // C ref: spell.c study_book() -> timeout.c fall_asleep().
+            // Setting usleep makes gethungry() use its Unaware rn2(10) path.
             game._study_occupation = false;
-            nomul(-dullbook);
-            game.multi_reason = 'sleeping';
-            game.nomovemsg = 'You wake up.';
+            const { fall_asleep } = await import('./zap.js');
+            await fall_asleep(-dullbook, true);
             return 1;
         }
     }
@@ -1011,7 +1041,7 @@ export async function study_book(spellbook) {
         if (gone || !rn2(3)) {
             if (!gone)
                 await pline('The spellbook crumbles to dust!');
-            trycall(spellbook);
+            await trycall(spellbook);
             useup(spellbook);
         } else {
             spellbook.in_use = false;
@@ -1179,22 +1209,12 @@ export { spellid, spellev, spellknow };
 //    studying occupation rather than through a go.occupation function pointer).
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── C ref: windows.c create_nhwindow(NHW_MENU) / start_menu / add_menu /
-// add_menu_heading / add_menu_str / end_menu / select_menu / destroy_nhwindow.
-// This port has no generic menu-window layer (invent.js and
-// extcmd-handlers.js each keep a private tty renderer instead), so — as
-// js/topten.js does with putstr() — the primitives below record into a plain
-// object and select_menu() reports "nothing picked" until a wiring pass
-// installs a driver.  Every add_menu() string handed to them is C's verbatim,
-// so a driver only has to render `win.items` and answer with the picked
-// `item` values.
+// C ref: windows.c menu-window primitives. Keep the C item identifiers in the
+// builder, then use the same tty selection and dismissal path as other menus.
 const ATR_NONE = 0, ATR_INVERSE = 7; // C ref: include/color.h ATR_*
 const NO_COLOR = 8;                  // C ref: include/color.h
 const PICK_NONE = 0, PICK_ONE = 1;   // C ref: include/wintype.h
 const MENU_ITEMFLAGS_NONE = 0x0, MENU_ITEMFLAGS_SELECTED = 0x1;
-let sm_driver = null;
-/* Install the select_menu() driver: (win, how) -> [{ item }, ...]. */
-export function set_spellmenu_driver(fn) { sm_driver = fn || null; }
 function create_nhwindow_menu() { return { items: [], prompt: '' }; }
 function start_menu(win) { win.items.length = 0; }
 function add_menu(win, a_int, ch, gch, attr, clr, str, itemflags) {
@@ -1210,9 +1230,28 @@ function add_menu_str(win, str) {
 }
 function end_menu(win, prompt) { win.prompt = prompt ?? ''; }
 async function select_menu(win, how) {
-    return sm_driver ? (await sm_driver(win, how)) || [] : [];
+    const { select_command_menu, dismiss_invent_screen } = await import('./invent.js');
+    const { ATR_INVERSE: inverse } = await import('./terminal.js');
+    const entries = [
+        ...(win.prompt ? [{ text: win.prompt, attr: inverse }, { text: '', attr: 0 }] : []),
+        ...win.items.map((it) => ({
+            text: it.str,
+            attr: it.attr === ATR_INVERSE ? inverse : 0,
+            item: it.a_int ? {
+                value: it.a_int,
+                sel: it.ch || undefined,
+                selected: !!(it.itemflags & MENU_ITEMFLAGS_SELECTED),
+                count: -1,
+            } : undefined,
+        })),
+    ];
+    const committed = await select_command_menu(entries, { how });
+    const selected = committed
+        ? entries.filter((e) => e.item?.selected).map((e) => ({ item: e.item.value, count: e.item.count }))
+        : [];
+    await dismiss_invent_screen();
+    return selected;
 }
-function destroy_nhwindow(_win) {}
 
 // ── C ref: display.c tmp_at() / display.h cmap_to_glyph() / zapdir_to_glyph()
 // and windows.c nh_delay_output().  The temporary-glyph animation layer has no
@@ -1530,7 +1569,6 @@ export async function dowizcast() {
     }
     end_menu(win, 'Cast which spell?');
     const selected = await select_menu(win, PICK_ONE);
-    destroy_nhwindow(win);
     if (selected.length > 0) {
         i = selected[0].item;
         return await spelleffects(i, false, true);
@@ -1615,7 +1653,7 @@ function CHAIN_LIGHTNING_POS(x, y) {
 // zap one square forward, then queue it unless it would hit an invalid square
 // or is out of power.  `zap` is passed BY VALUE in C, so the move-forward must
 // not be visible to the caller: copy it here.
-export function propagate_chain_lightning(clq, zap_in) {
+export async function propagate_chain_lightning(clq, zap_in) {
     const zap = { dir: zap_in.dir, x: zap_in.x, y: zap_in.y,
                   strength: zap_in.strength };
 
@@ -1653,9 +1691,16 @@ export function propagate_chain_lightning(clq, zap_in) {
     clq.q[clq.tail++] = zap;
 
     /* Draw it. */
-    sp_tmp_at(DISP_CHANGE, sp_zapdir_to_glyph(xdir[zap.dir], ydir[zap.dir],
+    await tmp_at(DISP_CHANGE, zapdir_to_glyph(xdir[zap.dir], ydir[zap.dir],
                                               clq.displayed_beam));
-    sp_tmp_at(zap.x, zap.y);
+    await tmp_at(zap.x, zap.y);
+    /* tmp_at(DISP_BEAM) only records cells the hero can see; this port draws
+       the glyph itself (show_glyph() feeds the unused third screen), and
+       tmp_at(DISP_END) newsym()s the recorded cells back. */
+    if (cansee(zap.x, zap.y)) {
+        const { show_beam_cell } = await import('./zap.js');
+        show_beam_cell(zap.x, zap.y, xdir[zap.dir], ydir[zap.dir], clq.displayed_beam);
+    }
 }
 
 // C ref: spell.c:1002 cast_chain_lightning() — SPE_CHAIN_LIGHTNING.  The whole
@@ -1678,11 +1723,11 @@ export async function cast_chain_lightning() {
     }
 
     /* set the type of beam we're using; the direction here is arbitrary */
-    sp_tmp_at(DISP_BEAM, sp_zapdir_to_glyph(0, 1, clq.displayed_beam));
+    await tmp_at(DISP_BEAM, zapdir_to_glyph(0, 1, clq.displayed_beam));
 
     /* start by propagating in all directions from the caster */
     for (let dir = 0; dir < N_DIRS; dir++) {
-        propagate_chain_lightning(clq, { dir, x: u.ux, y: u.uy, strength: 2 });
+        await propagate_chain_lightning(clq, { dir, x: u.ux, y: u.uy, strength: 2 });
     }
     sp_nh_delay_output();
 
@@ -1736,24 +1781,24 @@ export async function cast_chain_lightning() {
                 continue; /* upon hitting a shock-resistant monster */
             zap.strength--;
 
-            propagate_chain_lightning(clq, zap);
+            await propagate_chain_lightning(clq, zap);
 
             if (zap.strength < 2)
                 zap.strength = 0;
             else if (u.uen > 0)
                 u.uen--; /* propagating past mons increases Pw cost a bit */
             zap.dir = DIR_LEFT(zap.dir);
-            propagate_chain_lightning(clq, zap);
+            await propagate_chain_lightning(clq, zap);
 
             zap.dir = DIR_RIGHT2(zap.dir);
-            propagate_chain_lightning(clq, zap);
+            await propagate_chain_lightning(clq, zap);
         }
         sp_nh_delay_output();
     }
     sp_nh_delay_output();
     sp_nh_delay_output();
 
-    sp_tmp_at(DISP_END, 0);
+    await tmp_at(DISP_END, 0);
 }
 // C ref: hack.h:658 DIR_LEFT / :661 DIR_RIGHT2.
 function DIR_LEFT(dir) { return (dir + 7) % N_DIRS; }
@@ -1761,23 +1806,16 @@ function DIR_RIGHT2(dir) { return (dir + 2) % N_DIRS; }
 // C ref: monattk.h AD_ELEC and zap.h BZ_U_SPELL(zt) == 10 + (zt).
 const AD_ELEC = 6;
 function BZ_U_SPELL(zt) { return 10 + zt; }
-// C ref: zap.c zhitm(mon, type, nd, &ootmp) / zap.c wakeup(mon, via_attack) /
-// mondata.c defended(mon, adtyp) / zap.c exclam(force) / do_name.c mon_nam().
-// zhitm and wakeup are module-PRIVATE in js/zap.js (js/zap.js:2006 and :1807)
-// and defended is module-private in js/artifact.js:617 — the fix is to EXPORT
-// the originals, not to duplicate them here, so these probe for the export and
-// otherwise report "no damage"/no-op.
+// C ref: zap.c zhitm(mon, type, nd, &ootmp) and zap.c wakeup(mon, via_attack),
+// both exported by js/zap.js.  zhitm() there returns { tmp, otmp }.
 async function sp_zhitm(mon, type, nd) {
-    const Z = await import('./zap.js');
-    if (typeof Z.zhitm === 'function') {
-        const r = await Z.zhitm(mon, type, nd);
-        return (r && typeof r === 'object') ? (r.tmp | 0) : (r | 0);
-    }
-    return 0;
+    const { zhitm } = await import('./zap.js');
+    const { tmp } = await zhitm(mon, type, nd);
+    return tmp;
 }
 async function sp_wakeup(mon, via_attack) {
-    const Z = await import('./zap.js');
-    if (typeof Z.wakeup === 'function') await Z.wakeup(mon, via_attack);
+    const { wakeup } = await import('./zap.js');
+    await wakeup(mon, via_attack);
 }
 function sp_defended_elec(_mon) {
     // js/artifact.js:617, js/mhitm_ad.js:142 and js/zap.js each keep a private
@@ -1893,8 +1931,9 @@ export async function throwspell() {
         return 0;
     }
 
-    // DEFERRED: hack.c walk_path(&uc, &cc, spell_aim_step, 0) has no port; it
-    // is RNG-free (it only truncates the aim at the first blocked square).
+    const uc = { x: u.ux, y: u.uy };
+    const { walk_path } = await import('./dothrow.js');
+    await walk_path(uc, cc, spell_aim_step, null);
     u.dx = cc.x;
     u.dy = cc.y;
     return 1;
@@ -2149,7 +2188,6 @@ export async function spellsortmenu() {
     end_menu(tmpwin, 'View known spells list sorted');
 
     const selected = await select_menu(tmpwin, PICK_ONE);
-    destroy_nhwindow(tmpwin);
     n = selected.length;
     if (n > 0) {
         choice = selected[0].item - 1;
@@ -2246,7 +2284,6 @@ export async function dospellmenu(prompt, splaction, spell_no) {
     end_menu(tmpwin, prompt);
 
     const selected = await select_menu(tmpwin, how);
-    destroy_nhwindow(tmpwin);
     n = selected.length;
     if (n > 0) {
         spell_no.value = selected[0].item - 1;

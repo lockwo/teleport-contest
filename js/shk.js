@@ -23,8 +23,9 @@ import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
          DRUM_OF_EARTHQUAKE, CAN_OF_GREASE, TINNING_KIT, EXPENSIVE_CAMERA,
          POT_OIL, ROCK, BOULDER, LEASH,
          CANDELABRUM_OF_INVOCATION } from './mkobj.js';
+import { arti_cost } from './artifact.js';
 import { acurr_eff, adjalign, exercise } from './attrib.js';
-import { monster_by_pmidx, mpickobj } from './makemon.js';
+import { monster_by_pmidx, mpickobj, add_to_minv } from './makemon.js';
 import { rn2 } from './rng.js';
 import { update_topl, newsym, m_at, map_invisible } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
@@ -44,7 +45,7 @@ import { A_CHA, A_WIS, HUNGRY, SHOPBASE, ROOMOFFSET, NO_ROOM,
          CANDLESHOP, LANDMINE, BEAR_TRAP, HOLE, PIT, SPIKED_PIT,
          SELL_NORMAL, SELL_DONTSELL, M_AP_NOTHING, M_AP_MONSTER,
          ARM, HAND, HEAD, NECK, COLNO, ROWNO, D_LOCKED, TT_PIT,
-         W_SWAPWEP, W_QUIVER } from './const.js';
+         W_SWAPWEP, W_QUIVER, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, OBJ_ONBILL } from './const.js';
 
 // ── constants ────────────────────────────────────────────────────────────────
 // objclass.h object classes.
@@ -56,7 +57,7 @@ const RANDOM_CLASS = 0, WEAPON_CLASS = 2, ARMOR_CLASS = 3, TOOL_CLASS = 6,
 // which is SPBOOK_CLASS — see the deferred note.
 
 // objects.h otyps referenced by name in shk.c.
-const DUNCE_CAP = 94, MIRROR = 218, TALLOW_CANDLE = 224, WAX_CANDLE = 225,
+const DUNCE_CAP = 94, MIRROR = 230, TALLOW_CANDLE = 224, WAX_CANDLE = 225,
       CORPSE = 265, EGG = 266, TIN = 296, POT_WATER = 322;
 const FIRST_REAL_GEM = 439;         // objects.h MARKER(FIRST_REAL_GEM, DILITHIUM_CRYSTAL)
 const FIRST_GLASS_GEM = 461;        // objects.h MARKER(FIRST_GLASS_GEM, WORTHLESS_WHITE_GLASS)
@@ -81,11 +82,6 @@ const BILLSZ = 200;                 // shk.h
 
 // hack.h — unpaid_cost()'s cost_type.
 export const COST_NOCONTENTS = 0, COST_CONTENTS = 1, COST_SINGLEOBJ = 2;
-
-// obj.h obj->where.  This port stores `where` as a STRING (mkobj.js/invent.js),
-// not the C small-int, so compare against these spellings.
-const OBJ_FREE = 'free', OBJ_FLOOR = 'floor', OBJ_CONTAINED = 'contained',
-      OBJ_INVENT = 'invent', OBJ_MINVENT = 'minvent';
 
 const carried = (o) => o.where === OBJ_INVENT;
 // obj.h Has_contents(o) — the Is_container()/STATUE test is commented out in C,
@@ -228,13 +224,6 @@ export function oid_price_adjustment(obj, oid) {
     return 0;
 }
 
-// C ref: artifact.c arti_cost(otmp).  artilist[] is not ported, so an artifact
-// with no listed cost is the only branch we can evaluate; see the deferred note.
-function arti_cost(obj) {
-    if (!obj.oartifact) return base_oc_cost(obj.otyp);
-    return 100 * base_oc_cost(obj.otyp);
-}
-
 // C ref: shk.c getprice(obj, shk_buying):4318 — list price before the shk's
 // charisma / dunce-cap / unidentified multipliers.
 export function getprice(obj, shk_buying) {
@@ -274,8 +263,8 @@ export function getprice(obj, shk_buying) {
 // ubirthday is the game-start wall clock in SECONDS; shknam.c's nameshk() seed
 // derives it the same way (see js/shknam.js ubirthdaySeconds(), which measured
 // the recordings' fixed UTC-4 offset against four recorded shopkeeper names).
-// game.ubirthday is never assigned anywhere in this port, so reading it
-// directly makes the expression 0 and the pseudorandom bit constantly false.
+// game.ubirthday is assigned at game start (jsmain.js) and persisted by the
+// save file; the datetime derivation below is only a fallback for a bare game.
 const UBIRTHDAY_UTC_OFFSET = -4 * 3600;
 function ubirthday() {
     if (typeof game.ubirthday === 'number' && game.ubirthday) return game.ubirthday;
@@ -409,6 +398,22 @@ export function inhishop(shkp) {
     return in_rooms(shkp.mx, shkp.my, SHOPBASE).includes(eshk.shoproom);
 }
 
+// C ref: decl.c `struct mkroom svr.rooms[(MAXNROFROOMS + 1) * 2]` with
+// `gs.subrooms = &svr.rooms[MAXNROFROOMS + 1]` — C's rooms[] and subrooms[]
+// are ONE array, so every `svr.rooms[rno - ROOMOFFSET]` in shk.c resolves a
+// SUBroom's roomno too.  This port keeps two arrays; indexing rooms[] alone
+// made every Mine Town shop (its rooms are subrooms of the town) invisible to
+// inside_shop()/IS_SHOP(), so "You see here a key" lost its "(for sale, 20
+// zorkmids)" suffix, no_charge never cleared, and block_door() never fired.
+const MAXNROFROOMS_SHK = 40;            // global.h MAXNROFROOMS
+function room_by_index(idx) {
+    if (!(idx >= 0)) return null;
+    if (idx > MAXNROFROOMS_SHK)
+        return (game.level?.subrooms || [])[idx - (MAXNROFROOMS_SHK + 1)] || null;
+    return (game.level?.rooms || [])[idx] || null;
+}
+function room_by_rno(rno) { return room_by_index(rno - ROOMOFFSET); }
+
 // C ref: shk.c inside_shop(x, y) — the shop's room number, 0 if not inside.
 // levl[x][y].edge marks the wall ring, which is NOT "inside".
 export function inside_shop(x, y) {
@@ -416,7 +421,7 @@ export function inside_shop(x, y) {
     if (!loc) return 0;
     const rno = loc.roomno ?? NO_ROOM;
     if (rno < ROOMOFFSET || loc.edge) return 0;
-    const rtype = game.level?.rooms?.[rno - ROOMOFFSET]?.rtype ?? 0;
+    const rtype = room_by_rno(rno)?.rtype ?? 0;
     return rtype >= SHOPBASE ? rno : 0;
 }
 
@@ -433,7 +438,7 @@ export function costly_spot(x, y) {
 }
 
 // C ref: shk.c onbill(obj, shkp, silent) — obj's bill entry, if any.
-function onbill(obj, shkp) {
+export function onbill(obj, shkp) {
     const eshk = shkp?.eshk;
     if (!eshk?.bill) return null;
     for (let ct = 0; ct < (eshk.billct || 0); ct++)
@@ -599,7 +604,7 @@ export function is_unpaid(obj) {
 
 // C ref: shk.c picked_container(obj) — clear no_charge through every nesting
 // level, not just the top one.
-function picked_container(obj) {
+export function picked_container(obj) {
     for (const otmp of (obj.cobj || [])) {
         if (otmp.no_charge) otmp.no_charge = 0;
         if (Has_contents(otmp)) picked_container(otmp);
@@ -790,7 +795,6 @@ export const PAY_BUY = 1, PAY_CANT = 0, PAY_SKIP = -1, PAY_BROKE = -2;
 export const FullyUsedUp = 1, PartlyUsedUp = 2, PartlyIntact = 3,
              FullyIntact = 4, KnownContainer = 5, UndisclosedContainer = 6;
 
-const OBJ_ONBILL = 'onbill';
 const PM_ROGUE = 8;                 // roles[].mnum
 
 // C ref: shk.c:57 NOTANGRY(mon)/ANGRY(mon).
@@ -840,9 +844,6 @@ export function hidden_gold(even_if_unknown) {
 }
 
 // C ref: shk.c bp_to_obj(bp) -> o_on(id, gb.billobjs) / find_oid(id).
-// gb.billobjs (the chain holding FULLY used up billed items) is not modelled by
-// this port, so a useup entry whose object is already gone resolves to null and
-// make_itemized_bill() drops it rather than listing a phantom line.
 function oid_scan(list, id, depth) {
     for (const o of (list || [])) {
         if (!o) continue;
@@ -857,6 +858,7 @@ function oid_scan(list, id, depth) {
 export function bp_to_obj(bp) {
     const id = bp?.bo_id;
     if (id == null) return null;
+    if (bp.useup) return oid_scan(game.billobjs, id, 0);
     let r = oid_scan(game.invent, id, 0);
     if (r) return r;
     for (const mon of (game.level?.monsters || [])) {
@@ -976,10 +978,7 @@ export async function money2mon(mon, amount) {
         if (ygold.owornmask) ygold.owornmask = 0; /* remove_worn_item: quiver */
         freeinv(ygold);
     }
-    if (!mon.minvent) mon.minvent = [];
-    mon.minvent.unshift(give);
-    give.where = OBJ_MINVENT;
-    give.ocarry = mon;
+    add_to_minv(mon, give);          /* gold merges with the shk's purse */
     return amount;
 }
 
@@ -1315,11 +1314,7 @@ const and_its_contents = ' and its contents';
 const the_contents_of = 'the contents of ';
 // objclass.h GOLD_SYM.
 const GOLD_SYM = '$';
-// obj.h obj->where.  place_object()/add_to_container() write these strings;
-// mkobj.js's bury/migrate/billobjs paths write the const.js INTEGERS instead,
-// so both spellings have to be accepted for those three.
-const OBJ_BURIED_STR = 'buried';
-const is_buried = (o) => o.where === OBJ_BURIED_STR || o.where === 6;
+const is_buried = (o) => o.where === OBJ_BURIED;
 
 // ── C chain / string / misc primitives ──────────────────────────────────────
 
@@ -1333,7 +1328,7 @@ function nmon(mon) {
 }
 
 // C ref: shk.c:56 IS_SHOP(x) — x is a rooms[] INDEX (roomno - ROOMOFFSET).
-const IS_SHOP = (i) => ((game.level?.rooms?.[i]?.rtype ?? 0) >= SHOPBASE);
+const IS_SHOP = (i) => ((room_by_index(i)?.rtype ?? 0) >= SHOPBASE);
 
 // C ref: dungeon.c on_level(&ESHK(shkp)->shoplevel, &u.uz).  eshk.shoplevel is
 // never populated by this port's shkinit, so a missing one reads as "same
@@ -1434,7 +1429,7 @@ function find_oid(id) {
 // C ref: shk.c setpaid(shkp):400.  gb.billobjs is an ARRAY in this port, so
 // C's "extract and dealloc each" is a truncation.
 // (Real port: js/shkroom.js, private.)
-function setpaid(shkp) {
+export function setpaid(shkp) {
     clear_unpaid(shkp, game.invent);
     clear_unpaid(shkp, game.level?.objects);
     if (game.level?.buriedobjlist) clear_unpaid(shkp, game.level.buriedobjlist);
@@ -1461,7 +1456,7 @@ function setpaid(shkp) {
 }
 
 // C ref: shk.c hot_pursuit(shkp):1449.  (Real port: js/shkroom.js, private.)
-function hot_pursuit(shkp) {
+export function hot_pursuit(shkp) {
     if (!shkp.isshk) return;
     rile_shk(shkp);
     shkp.eshk.customer = game.plname;
@@ -1563,7 +1558,7 @@ export function next_shkp(shkp, withbill) {
 // rooms and ordinary objects.  Called from mon.c.
 export function shkgone(mtmp) {
     const eshk = mtmp.eshk;
-    const sroom = game.level?.rooms?.[eshk.shoproom - ROOMOFFSET];
+    const sroom = room_by_rno(eshk.shoproom);
     if (!on_shoplevel(eshk)) return;
 
     discard_damage_owned_by(mtmp);
@@ -1589,7 +1584,7 @@ export function shkgone(mtmp) {
 // C ref: shk.c set_residency(shkp, zero_out):272.
 export function set_residency(shkp, zero_out) {
     if (!on_shoplevel(shkp.eshk)) return;
-    const room = game.level?.rooms?.[shkp.eshk.shoproom - ROOMOFFSET];
+    const room = room_by_rno(shkp.eshk.shoproom);
     if (room) room.resident = zero_out ? null : shkp;
 }
 
@@ -1597,7 +1592,7 @@ export function set_residency(shkp, zero_out) {
 // new monst struct).  eshk.bill_p is not modelled separately by this port
 // (onbill() reads eshk.bill directly), so the assignment is nominal.
 export function replshk(mtmp, mtmp2) {
-    const room = game.level?.rooms?.[mtmp2.eshk.shoproom - ROOMOFFSET];
+    const room = room_by_rno(mtmp2.eshk.shoproom);
     if (room) room.resident = mtmp2;
     if (inhishop(mtmp) && (game.u?.ushops || [])[0] === mtmp.eshk.shoproom)
         mtmp2.eshk.bill_p = mtmp2.eshk.bill;
@@ -1647,7 +1642,7 @@ export function clear_no_charge_obj(shkp, otmp) {
         || !isok(loc.x, loc.y)
         || rno < ROOMOFFSET
         || !IS_SHOP(rno - ROOMOFFSET)
-        || !(rm_shkp = game.level?.rooms?.[rno - ROOMOFFSET]?.resident)
+        || !(rm_shkp = room_by_rno(rno)?.resident)
         || rm_shkp === shkp)
         otmp.no_charge = 0;
 }
@@ -1717,7 +1712,7 @@ export async function remote_burglary(x, y) {
 // CHARACTER is the roomno; this port passes the roomno itself (u.ushops is an
 // array of numbers here, not a string).
 export async function deserted_shop(enterstring) {
-    const r = game.level?.rooms?.[enterstring - ROOMOFFSET];
+    const r = room_by_rno(enterstring);
     const { sensemon } = await import('./mon.js');
     let m = 0, n = 0;
 
@@ -1772,6 +1767,39 @@ export function shop_debt(eshkp) {
     for (let ct = 0; ct < (eshkp.billct || 0); ct++)
         debt += (eshkp.bill[ct].price || 0) * (eshkp.bill[ct].bquan || 0);
     return debt;
+}
+
+// C ref: shk.c shopper_financial_report() — the credit/debt lines the '$'
+// command appends: first the shop the hero is standing in, then every other
+// shop on the level.
+export async function shopper_financial_report() {
+    let this_shkp = shop_keeper(inside_shop(game.u.ux, game.u.uy));
+    let eshkp = this_shkp ? this_shkp.eshk : null;
+    if (eshkp && !(eshkp.credit || shop_debt(eshkp))) {
+        await update_topl('You have no credit or debt in here.');
+        this_shkp = null; /* skip first pass */
+    }
+
+    /* pass 0: report for the shop we're currently in, if any;
+       pass 1: report for all other shops on this level. */
+    for (let pass = this_shkp ? 0 : 1; pass <= 1; pass++)
+        for (let shkp = next_shkp(fmon()[0], false); shkp;
+             shkp = next_shkp(nmon(shkp), false)) {
+            if ((shkp !== this_shkp) !== (pass === 1))
+                continue;
+            eshkp = shkp.eshk;
+            let amt = eshkp.credit || 0;
+            if (amt !== 0)
+                await update_topl(`You have ${amt} ${currency(amt)} credit at ${
+                    s_suffix(shkname(shkp))} ${shtypes[eshkp.shoptype - SHOPBASE].name}.`);
+            else if (shkp === this_shkp)
+                await update_topl('You have no credit in here.');
+            amt = shop_debt(eshkp);
+            if (amt !== 0)
+                await update_topl(`You owe ${shkname(shkp)} ${amt} ${currency(amt)}.`);
+            else if (shkp === this_shkp)
+                await update_topl("You don't owe any gold here.");
+        }
 }
 
 // C ref: shk.c noisy_shop(sroom):1126.
@@ -1862,8 +1890,6 @@ const repo = { location: { x: 0, y: 0 }, shopkeeper: null };
 // C ref: shk.c inherits(shkp, numsk, croaked, silently):2577 — does this shk
 // take the dead hero's possessions?  RNG: ONE rn2(2) (the head-shake), and
 // only on the numsk > 1 path with the shk in view.
-// js/shkroom.js's exported paybill() carries a reduced inline version of this
-// (single-shk, no rn2(2) arm); this is the full translation.
 export async function inherits(shkp, numsk, croaked, silently) {
     let loss = 0;
     const eshkp = shkp.eshk;
@@ -1958,6 +1984,61 @@ export async function inherits(shkp, numsk, croaked, silently) {
     return taken;
 }
 
+// C ref: shk.c paybill(croaked, silently):2485 — routine called after dying (or
+// quitting): the shopkeepers of the level decide who takes the hero's inventory.
+// croaked: -1 escaped the dungeon, 0 quit, 1 died.  Returns TRUE when a
+// shopkeeper took the possessions.
+export async function paybill(croaked, silently = false) {
+    /* shopkeepers can't reach a hero who escaped the dungeon */
+    if (croaked < 0) return false;
+
+    /* this is where inventory will end up if any shk takes it */
+    repo.location.x = repo.location.y = 0;
+    repo.shopkeeper = null;
+
+    /* priority: 1) keeper of the shop the hero is in who is owed money,
+       2) keeper of that shop owed nothing, 3) other shk who is owed money,
+       4) other shk who is angry, 5) any shk local to this level */
+    let resident = null, creditor = null, hostile = null, localshk = null;
+    const shks = shk_scan(false);
+    for (const mtmp of shks) {
+        const eshkp = mtmp.eshk;
+        const local = on_shoplevel(eshkp);
+        if (local && (game.u?.ushops || []).includes(eshkp.shoproom)) {
+            if (!resident || eshkp.billct || eshkp.debit || eshkp.robbed)
+                resident = mtmp;
+        } else if (eshkp.billct || eshkp.debit || eshkp.robbed) {
+            if (!creditor) creditor = mtmp;
+        } else if (eshkp.following || ANGRY(mtmp)) {
+            if (!hostile) hostile = mtmp;
+        } else if (local) {
+            if (!localshk) localshk = mtmp;
+        }
+    }
+
+    let taken = false, numsk = 0;
+    const firstshk = resident || creditor || hostile || localshk;
+    if (firstshk) {
+        numsk++;
+        taken = await inherits(firstshk, numsk, croaked, silently);
+    }
+
+    /* now handle the rest */
+    for (const mtmp of shk_scan(false)) {
+        const local = on_shoplevel(mtmp.eshk);
+        if (mtmp !== firstshk) {
+            numsk++;
+            taken = (await inherits(mtmp, numsk, croaked, silently)) || taken;
+        }
+        /* for bones: we don't want a shopless shk around */
+        if (!local) {
+            const { mongone } = await import('./mon.js');
+            await mongone(mtmp);
+        }
+    }
+    return taken;
+}
+
 // C ref: shk.c set_repo_loc(shkp):2682 — where the dead hero's gear lands.
 export function set_repo_loc(shkp) {
     const eshkp = shkp.eshk;
@@ -2012,7 +2093,7 @@ const RING_CLASS = 4, AMULET_CLASS = 5, CHAIN_CLASS = 16;
 // DWARVISH_MATTOCK match js/invent.js:8464 (js/dogmove.js's PICK_AXE = 66 is a
 // different, unrelated numbering).
 const PICK_AXE = 259, DWARVISH_MATTOCK = 71, LAND_MINE = 243, BEARTRAP = 244;
-const LARGE_BOX = 216;
+const LARGE_BOX = 214;
 const MS_HUMANOID = 25;
 const PM_KNIGHT = 4;                /* roles[].mnum, as PM_TOURIST/PM_ROGUE */
 // C ref: mkobj.c SchroedingersBox(obj) — a LARGE_BOX with spe == 1.
@@ -2284,6 +2365,139 @@ export function stolen_container(obj, shkp, price, ininv) {
     return price;
 }
 
+// C ref: shk.c find_objowner(obj, x, y):1084 — the shopkeeper who owns 'obj';
+// needed to handle shared shop walls.  The caller passes obj's location since
+// obj->ox,oy might be stale.  A used-up item (OBJ_ONBILL) is found through
+// the bills; anything else through each shop room covering (x, y), falling
+// back to the first shk found when obj is on none of their bills.
+export function find_objowner(obj, x, y) {
+    let deflt_shkp = null;
+
+    if (obj.where === OBJ_ONBILL) {
+        for (let shkp = next_shkp(fmon()[0], true); shkp;
+             shkp = next_shkp(nmon(shkp), true))
+            if (onshopbill(obj, shkp, true)) return shkp;
+    } else {
+        for (const rno of in_rooms(x, y, SHOPBASE)) {
+            const shkp = shop_keeper(rno);
+            if (shkp) {
+                if (onshopbill(obj, shkp, true)) return shkp;
+                if (!deflt_shkp) deflt_shkp = shkp;
+            }
+        }
+    }
+    return deflt_shkp;
+}
+
+// C ref: shk.c stolen_value(obj, x, y, peaceful, silent):3754 — the hero got
+// shop goods out of the shop (or gave up billable ones): charge for them.
+// A peaceful shk adds it to the debit, an angry one to `robbed` and the hunt
+// starts.  Returns the amount charged.  RNG: only through hot_pursuit()'s
+// rile_shk() and angry_guards().
+export async function stolen_value(obj, x, y, peaceful, silent) {
+    let value = 0, gvalue = 0, billamt = 0;
+    let c_count = 0, u_count = 0;
+    let roomno;
+    let shkp = find_objowner(obj, x, y);
+
+    if (shkp) roomno = shkp.eshk.shoproom;
+    else roomno = in_rooms(x, y, SHOPBASE)[0] || 0;
+
+    /* gather information for message(s) prior to manipulating bill */
+    const was_unpaid = !!obj.unpaid;
+    if (Has_contents(obj)) {
+        c_count = count_contents(obj, true, false, true, false);
+        u_count = count_contents(obj, true, false, false, false);
+    }
+
+    /* C: billable(&shkp, ...) fills in shkp when it validates the room's shk */
+    shkp = null;
+    if (roomno) {
+        const cand = shop_keeper(roomno);
+        if (cand && inhishop(cand)) shkp = cand;
+    }
+    if (!shkp || !billable(shkp, obj, roomno, true)) {
+        /* things already on the bill yield a not-billable result, so
+           we need to check bill before deciding that shk doesn't care */
+        const bp = shkp ? onbill(obj, shkp) : null;
+        if (bp) {
+            /* shk does care; take obj off bill to avoid double billing */
+            billamt = bp.bquan * bp.price;
+            sub_one_frombill(obj, shkp);
+        }
+        if (!bp && !u_count) return 0;
+    }
+
+    if (obj.oclass === COIN_CLASS) {
+        gvalue += obj.quan;
+    } else {
+        if (billamt) value += billamt;
+        else if (!obj.no_charge)
+            value += get_pricing_units(obj) * get_cost(obj, shkp);
+
+        if (Has_contents(obj)) {
+            const ininv = (obj.where === OBJ_INVENT || obj.where === OBJ_FREE);
+
+            value += stolen_container(obj, shkp, 0, ininv);
+            if (!ininv) gvalue += contained_gold(obj, true);
+        }
+    }
+
+    if (gvalue + value === 0) return 0;
+
+    value += gvalue;
+
+    const eshkp = shkp.eshk;
+    if (peaceful) {
+        const credit_use = !!eshkp.credit;
+
+        value = await check_credit(value, shkp);
+        /* 'peaceful' affects general treatment, but doesn't affect
+         * the fact that other code expects that all charges after the
+         * shopkeeper is angry are included in robbed, not debit */
+        if (ANGRY(shkp)) eshkp.robbed = (eshkp.robbed || 0) + value;
+        else eshkp.debit = (eshkp.debit || 0) + value;
+
+        if (!silent) {
+            let still = '';
+
+            if (credit_use) {
+                if (eshkp.credit) {
+                    await update_topl(`You have ${eshkp.credit} ${
+                        currency(eshkp.credit)} credit remaining.`);
+                    return value;
+                } else if (!value) {
+                    await update_topl('You have no credit remaining.');
+                    return 0;
+                }
+                still = 'still ';
+            }
+            let buf = `${still}owe ${shkname(shkp)} ${value} ${currency(value)}`;
+            if (u_count) /* u_count > 0 implies Has_contents(obj) */
+                buf += ` for ${was_unpaid ? 'it and ' : ''}${
+                    (c_count > u_count) ? 'some of ' : ''}its contents`;
+            else if (obj.oclass !== COIN_CLASS)
+                buf += ` for ${(obj.quan > 1) ? 'them' : 'it'}`;
+
+            await update_topl(`You ${buf}!`); /* "You owe <shk> N zorkmids for it!" */
+        }
+    } else {
+        eshkp.robbed = (eshkp.robbed || 0) + value;
+
+        if (!silent) {
+            if (await canseemon(shkp)) {
+                await update_topl(`${Shknam(shkp)} booms: "${game.plname}, you are a thief!"`);
+            } else if (!Deaf()) {
+                await update_topl('You hear a scream, "Thief!"');
+            }
+        }
+        hot_pursuit(shkp);
+        const { angry_guards } = await import('./questpgr.js');
+        await angry_guards(false);
+    }
+    return value;
+}
+
 // C ref: shk.c donate_gold(gltmp, shkp, selling):3877 — the hero dropped gold
 // in a shop; it pays down debt first, then becomes credit.
 export async function donate_gold(gltmp, shkp, selling) {
@@ -2319,7 +2533,7 @@ export async function donate_gold(gltmp, shkp, selling) {
 // gs.sell_how / ga.auto_credit.  This port has no gs/ga structs; these three
 // module-level values are the C globals, read and written only by
 // sellobj_state() and sellobj() as in C.
-let sell_response = '\0';
+let sell_response = 'a'; /* decl.c: gs.sell_response starts as 'a' (sell without asking) */
 let sell_how = SELL_NORMAL;
 let auto_credit = false;
 export function sellobj_state(deliberate) {
@@ -2963,7 +3177,7 @@ export async function repair_damage(shkp, tmp_dam, catchup) {
 
     if (stop_picking) {
         const { stop_occupation } = await import('./hack.js');
-        stop_occupation();
+        await stop_occupation();
     }
 
     litter_newsyms(litter, x, y);
@@ -3081,16 +3295,9 @@ export async function shopdig(fall) {
             obj.owornmask = 0;              /* C: setnotworn(obj) */
             freeinv(obj);
             subfrombill(obj, shkp);
-            add_to_minv_(shkp, obj);
+            add_to_minv(shkp, obj);
         }
     }
-}
-// C ref: mon.c add_to_minv(mon, obj).  js/vault.js keeps a private copy.
-function add_to_minv_(mon, obj) {
-    if (!mon.minvent) mon.minvent = [];
-    mon.minvent.unshift(obj);
-    obj.where = OBJ_MINVENT;
-    obj.ocarry = mon;
 }
 
 // C ref: shk.c getcad(shkp, dmgstr, x, y, uinshp, animal, pursue):5138 — the
@@ -3510,8 +3717,11 @@ export function cost_per_charge(shkp, otmp, altusage) {
 // first's decision).  Those draws happen before the Deaf test, so they are
 // spent even when nothing is said.
 export async function check_unpaid_usage(otmp, altusage) {
+    // objects[].oc_charged lives in the row's `flags` word (BITS() bit 1) in
+    // this port, so read the bit rather than a nonexistent column.
+    const F_CHARGED = 1;
     if (!otmp.unpaid || !(game.u?.ushops || []).length
-        || (otmp.spe <= 0 && objects[otmp.otyp]?.oc_charged))
+        || (otmp.spe <= 0 && (objects[otmp.otyp]?.flags & F_CHARGED)))
         return;
     const shkp = shop_keeper((game.u.ushops)[0]);
     if (!shkp || !inhishop(shkp)) return;
@@ -3581,26 +3791,37 @@ export async function costly_gold(x, y, amount, silent) {
 // C's `IS_SHOP(roomno)` here indexes svr.rooms[] with an UNADJUSTED roomno (the
 // ROOMOFFSET is not subtracted, unlike clear_no_charge_obj()'s use of the same
 // macro).  Reproduced as-is: "fixing" it would change which room is tested.
-export async function block_door(x, y) {
+// block_door() is the predicate (shk_blocking_door) followed by the "blocks
+// your way!" feedback (block_door_feedback).  The halves are exported for
+// synchronous callers such as hack.c crawl_destination(), which must decide
+// at once but publish the shopkeeper's line from their asynchronous caller.
+export function shk_blocking_door(x, y) {
     const roomno = in_rooms(x, y, SHOPBASE)[0] ?? 0;
 
-    if (roomno < 0 || !IS_SHOP(roomno)) return false;
-    if (!IS_DOOR(game.level?.at(x, y)?.typ ?? 0)) return false;
-    if (roomno !== (game.u?.ushops || [])[0]) return false;
+    if (roomno < 0 || !IS_SHOP(roomno)) return null;
+    if (!IS_DOOR(game.level?.at(x, y)?.typ ?? 0)) return null;
+    if (roomno !== (game.u?.ushops || [])[0]) return null;
 
     const shkp = shop_keeper(roomno);
-    if (!shkp || !inhishop(shkp)) return false;
+    if (!shkp || !inhishop(shkp)) return null;
 
     const eshkp = shkp.eshk;
     if (shkp.mx === eshkp.shk?.x && shkp.my === eshkp.shk?.y
         && eshkp.shd?.x === x && eshkp.shd?.y === y
         && !helpless(shkp)
-        && (eshkp.debit || eshkp.billct || eshkp.robbed)) {
-        await update_topl(`${Shknam(shkp)}${
-            Invis() ? ' senses your motion and' : ''} blocks your way!`);
-        return true;
-    }
-    return false;
+        && (eshkp.debit || eshkp.billct || eshkp.robbed))
+        return shkp;
+    return null;
+}
+export async function block_door_feedback(shkp) {
+    await update_topl(`${Shknam(shkp)}${
+        Invis() ? ' senses your motion and' : ''} blocks your way!`);
+}
+export async function block_door(x, y) {
+    const shkp = shk_blocking_door(x, y);
+    if (!shkp) return false;
+    await block_door_feedback(shkp);
+    return true;
 }
 
 // C ref: shk.c block_entry(x, y):5826 — the shk blocks a diagonal entry through

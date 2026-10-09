@@ -12,21 +12,24 @@ import { game } from './gstate.js';
 import { d, rn2, rnd, rn1 } from './rng.js';
 import {
     isok, A_STR, ZAP_POS,
+    FIRE_RES, COLD_RES, DISINT_RES, SHOCK_RES, POISON_RES, ACID_RES, ANTIMAGIC,
     EXPL_NOXIOUS, EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY,
     MAY_HITMON, MAY_HITYOU, MAY_DESTROY, MAY_FRACTURE,
     N_DIRS, xdir, ydir,
     DIED, BURNING, PLNMSG_CAUGHT_IN_EXPLOSION, PLNMSG_TOWER_OF_FLAME,
 } from './const.js';
-import { iflags } from './pline.js';
+
 import {
     AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_DRST,
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
     AD_PEST,
 } from './monattk_data.js';
-import { m_at, newsym, update_topl, map_invisible } from './display.js';
+import { m_at, newsym, update_topl, map_invisible, Hallucination_u } from './display.js';
 import { cansee, couldsee } from './vision.js';
 import { is_undead_flag, is_demon_flag } from './monflags_data.js';
 import { has_innate } from './exper.js';
+import { rndmonnam } from './do_name.js';
+import { s_suffix } from './hacklib.js';
 
 // C ref: hack.h:1471 PHYS_EXPL_TYPE; objclass.h:154-156 BURNING_OIL /
 // MON_EXPLODE / TRAP_EXPLODE are MAXOCLASSES+1..+3 and MAXOCLASSES is 18
@@ -62,18 +65,26 @@ function uprop(...names) {
     for (const n of names) if ((p[n] | 0) > 0 || p[n] === true) return true;
     return false;
 }
-function Antimagic() { return uprop('Antimagic', 'HAntimagic', 'EAntimagic') || !!game.u?.Antimagic; }
-function Fire_resistance() { return uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance'); }
-function Cold_resistance() { return uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance'); }
-function Shock_resistance() { return uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance'); }
+// C ref: youprop.h E<Prop> — the worn/wielded half of each property, kept in
+// u.uprops_extrinsic (js/invent.js worn_extrinsic()).  Reading only the
+// intrinsic spellings answered FALSE for e.g. a Wizard in a cloak of magic
+// resistance, so explosionmask() never set EXPL_HERO and the hero took the
+// full blast C shrugs off.  Read the store directly: js/invent.js cannot be
+// imported here without an import cycle.
+function wornprop(prop) { return ((game.u?.uprops_extrinsic || {})[prop] | 0) !== 0; }
+function Antimagic() { return !!game.u?.formprops?.Antimagic || uprop('Antimagic', 'HAntimagic', 'EAntimagic') || !!game.u?.Antimagic || wornprop(ANTIMAGIC); }
+function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance') || wornprop(FIRE_RES); }
+function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance') || wornprop(COLD_RES); }
+function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance') || wornprop(SHOCK_RES); }
 // A race-innate grant (e.g. every orc, from level 1) is never persisted as a
 // stored flag anywhere in js/ — OR in the pure has_innate() derivation.
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return uprop('Poison_resistance', 'HPoison_resistance', 'EPoison_resistance')
-        || has_innate('HPoison_resistance');
+        || has_innate('HPoison_resistance') || wornprop(POISON_RES);
 }
-function Acid_resistance() { return uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance'); }
-function Disint_resistance() { return uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance'); }
+function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance') || wornprop(ACID_RES); }
+function Disint_resistance() { return !!game.u?.formprops?.Disint_resistance || uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance') || wornprop(DISINT_RES); }
 function Invulnerable() { return uprop('Invulnerable') || !!game.u?.uinvulnerable; }
 function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf') || !!game.u?.Deaf; }
 // C ref: you.h Upolyd == (u.mtimedone != 0).
@@ -246,6 +257,15 @@ function next2u(x, y) {
 }
 function dist2(x0, y0, x1, y1) { return (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0); }
 
+// C ref: explode.c:490,595. Monster targets stop retrying after 20 names.
+function hallucinated_explosion(limit = Infinity) {
+    let str, tries = 0;
+    do {
+        str = `${s_suffix(rndmonnam().name)} explosion`;
+    } while (str[0] !== str[0].toLowerCase() && ++tries < limit);
+    return str;
+}
+
 // C ref: explode.c:199 explode(x, y, type, dam, olet, expltype).
 //
 // `expltype` is a glyph-colour selector; the blast animation (tmp_at DISP_BEAM
@@ -258,7 +278,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
     let damu = dam;
     let str = null, adtyp;
     let mdef = null;
-    let visible = false, didmsg = false, generic = false, uhurt = 0;
+    let visible = false, didmsg = false, generic = false, do_hallu = false, uhurt = 0;
     let exploding_wand_typ = 0;
     const you_exploding = (olet === MON_EXPLODE && type >= 0);
     const explmask = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
@@ -305,6 +325,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
 
     if (olet === MON_EXPLODE && !you_exploding) {
         str = game.killer?.name || null;
+        do_hallu = Hallucination_u() && /(?:'s|s') explosion/i.test(str || '');
     }
     if (type === PHYS_EXPL_TYPE) {
         adtyp = AD_PHYS;
@@ -354,6 +375,15 @@ export async function explode(x, y, type, dam, olet, expltype) {
             await update_topl('You hear a blast.');
             didmsg = true;
         }
+    } else {
+        // C: the blast animation's tmp_at(DISP_END) newsym()s every cell of the
+        // 3x3 the hero could see, wiping whatever was drawn there meanwhile
+        // (e.g. chain lightning beams).  The animation itself is not drawn.
+        for (let i = 0; i < 3; i++)
+            for (let j = 0; j < 3; j++) {
+                const xx = x + i - 1, yy = y + j - 1;
+                if (explmask[i][j] !== EXPL_SKIP && cansee(xx, yy)) newsym(xx, yy);
+            }
     }
     if (!Deaf() && !didmsg) await update_topl('Boom!');
 
@@ -362,6 +392,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
     const { destroy_items, resist, zap_over_floor, burnarmor, ignite_items }
         = await import('./zap.js');
     const { Monnam, killed, setmangry } = await import('./uhitm.js');
+    const shopdamage = { value: false };
     if (dam) {
         for (let i = 0; i < 3; i++)
             for (let j = 0; j < 3; j++) {
@@ -375,11 +406,12 @@ export async function explode(x, y, type, dam, olet, expltype) {
                     continue;
                 }
                 if (!(u?.uswallow && !game.context?.mon_moving))
-                    await zap_over_floor(xx, yy, type, exploding_wand_typ);
+                    await zap_over_floor(xx, yy, type, shopdamage, false, exploding_wand_typ);
 
                 let mtmp = m_at(xx, yy);
                 if (!mtmp && u && xx === u.ux && yy === u.uy) mtmp = u.usteed;
                 if (!mtmp) continue;
+                if (do_hallu) str = hallucinated_explosion(20);
                 if (engulfing_u(mtmp)) {
                     await engulfer_explosion_msg(adtyp, olet);
                 } else if (cansee(xx, yy)) {
@@ -418,6 +450,10 @@ export async function explode(x, y, type, dam, olet, expltype) {
                                       : nonliving(mdata(mtmp)) ? 'destroyed' : 'killed'}!`);
                         await killed(mtmp, { nomsg: true, nocorpse: xkflg });
                     } else {
+                        if (cansee(mtmp.mx, mtmp.my))
+                            await update_topl(`${Monnam(mtmp)} is ${nonliving(mdata(mtmp)) ? 'destroyed' : 'killed'}!`);
+                        else if (mtmp.mtame)
+                            await update_topl('You have a sad feeling for a moment, then it passes.');
                         const { mon_kill_leaving } = await import('./monmove.js');
                         await mon_kill_leaving(mtmp, xkflg);
                     }
@@ -430,15 +466,16 @@ export async function explode(x, y, type, dam, olet, expltype) {
     /* Do your injury last */
     if (uhurt) {
         if (game.flags?.verbose !== false && (type < 0 || olet !== SCROLL_CLASS)) {
+            if (do_hallu) str = hallucinated_explosion();
             await update_topl(`You are caught in the ${str}!`);
             // C ref: explode.c:603 — the fatal line below reads this back to
             // decide between "It is fatal." and "The <str> is fatal.".
-            iflags.last_msg = PLNMSG_CAUGHT_IN_EXPLOSION;
+            game.last_msg = PLNMSG_CAUGHT_IN_EXPLOSION;
         }
         if (Invulnerable()) {
             damu = 0;
             await update_topl('You are unharmed!');
-            iflags.last_msg = 0; /* PLNMSG_UNKNOWN — pline() clears it */
+            game.last_msg = 0; /* PLNMSG_UNKNOWN — pline() clears it */
         } else if (adtyp === AD_PHYS || adtyp === AD_ACID) {
             damu = Maybe_Half_Phys(damu);
         }
@@ -487,8 +524,8 @@ export async function explode(x, y, type, dam, olet, expltype) {
                 // explosion again.  The port only ever emitted the second form,
                 // so a gas-spore death read "The gas spore's explosion is
                 // fatal." where C reads "...explosion!  It is fatal.".
-                if (iflags.last_msg === PLNMSG_CAUGHT_IN_EXPLOSION
-                    || iflags.last_msg === PLNMSG_TOWER_OF_FLAME)
+                if (game.last_msg === PLNMSG_CAUGHT_IN_EXPLOSION
+                    || game.last_msg === PLNMSG_TOWER_OF_FLAME)
                     await update_topl('It is fatal.');
                 else
                     await update_topl(`The ${str} is fatal.`);
@@ -506,6 +543,12 @@ export async function explode(x, y, type, dam, olet, expltype) {
         }
         const { exercise } = await import('./attrib.js');
         exercise(A_STR, false);
+    }
+    if (shopdamage.value) {
+        const { pay_for_damage } = await import('./shk.js');
+        await pay_for_damage(adtyp === AD_FIRE ? 'burn away'
+                            : adtyp === AD_COLD ? 'shatter'
+                            : adtyp === AD_DISN ? 'disintegrate' : 'destroy', false);
     }
 
     // C ref: explode.c:687-694 "explosions are noisy" — wake_nearto(x, y,
@@ -543,7 +586,7 @@ function unmap_invisible_at(x, y) {
 // and rnd(force) for the range.
 export async function scatter(sx, sy, blastforce, scflags, obj) {
     const { objects_at, splitobj, obj_extract_self, stackobj } = await import('./invent.js');
-    const { place_object, objects, weight, next_ident } = await import('./mkobj.js');
+    const { place_object, objects, weight } = await import('./mkobj.js');
     const { breaks } = await import('./dothrow.js');
     const individual_object = !!obj;
     const schain = [];
@@ -558,11 +601,6 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
         // like any other object here.
         if ((otmp.quan | 0) > 1) {
             const qtmp = rnd((otmp.quan | 0) - 1);
-            // C ref: mkobj.c splitobj() -> nextoid() -> next_ident(): every
-            // stack split spends one rnd(2) on the fragment's o_id.  This
-            // port's splitobj() draws nothing, so each call site pays it (as
-            // js/invent.js:5856, js/monmove.js:6399, js/eat.js:439 do).
-            next_ident();
             otmp = splitobj(otmp, qtmp);
         } else {
             obj = null;                              /* all used */
@@ -702,7 +740,8 @@ export async function explode_oil(obj, x, y) {
     const diluted_oil = !!obj?.odiluted;
     if (!obj?.lamplit) return;
     // end_burn(obj, TRUE) — extinguish before the blast can kill the hero.
-    obj.lamplit = 0;
+    const { end_burn } = await import('./timeout.js');
+    await end_burn(obj, true);
     obj.how_lost = 4 /* LOST_EXPLODING */;
     await splatter_burning_oil(x, y, diluted_oil);
 }

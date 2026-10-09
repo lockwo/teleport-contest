@@ -11,7 +11,7 @@ import {
     quest_create_monster_at, quest_create_object, quest_create_trap, quest_drop_default_invent,
     quest_flip_branch, quest_floodfill_match, quest_level_init_solidfill, quest_place_stair,
     quest_region_light, quest_register_branch, quest_replace_terrain, quest_rndcoord,
-    quest_set_door, shuffle,
+    quest_set_door, shuffle, splev_create_monster,
 } from '../sp_lev.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -180,7 +180,9 @@ export async function makemaz_bar_strt() {
         }
         for (let i = 0; i < 12; i++) {
             const c = quest_rndcoord(ogrelocs);
-            if (!c) { rn2(1); continue; }
+            // C ref: nhlsel.c l_selection_rndcoord() hands back {x=-1,y=-1} for an
+            // empty selection, which create_monster() treats as a random location.
+            if (!c) { splev_create_monster({ name: 'ogre', peaceful: 0 }); continue; }
             quest_create_monster_at('ogre', c.x, c.y, false);
         }
     } finally {

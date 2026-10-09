@@ -26,7 +26,12 @@ import { mflags2_of, M2_PNAME } from './monflags_data.js';
 import { an, the_unique_pm } from './objnam.js';
 import { Fire_resistance, Cold_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
 import { monstseesu, monstunseesu } from './mondata.js';
-import { shieldeff } from './display.js';
+import { shieldeff, Hallucination_u as Hallucination } from './display.js';
+import { Blind } from './vision.js';
+import { youmonst_data_pub } from './invent.js';
+import { enexto_gpflags } from './teleport.js';
+import { minion_monster_census } from './minion.js';
+import { Invis, Displaced } from './monmove.js';
 
 // ---------------------------------------------------------------------------
 // include/mcastu.h — MONSPELL(def, lvl, flags) in enum order.  The enum VALUE
@@ -214,6 +219,12 @@ export async function castmu(mtmp, mattk, thinks_it_foundyou, foundyou) {
         mtmp.mspec_used = (ml < 8) ? (10 - ml) : 2;
 
     if (!foundyou && thinks_it_foundyou && !is_undirected_spell(spellnum)) {
+        const { canseemon_shared } = await import('./display.js');
+        const { update_topl } = await import('./display.js');
+        const { Monnam } = await import('./uhitm.js');
+        const { is_waterwall } = await import('./dbridge.js');
+        await update_topl(`${canseemon_shared(mtmp) ? Monnam(mtmp) : 'Something'} casts a spell at ${
+            is_waterwall(mtmp.mux, mtmp.muy) ? 'empty water' : 'thin air'}!`);
         return M_ATTK_MISS;
     }
 
@@ -301,82 +312,35 @@ export async function castmu(mtmp, mattk, thinks_it_foundyou, foundyou) {
 // damage application beside each implemented directed spell until every arm
 // has C's explicit dmg=0 handling.
 async function mcast_spell(mtmp, dmg, spellnum) {
+    const { impossible } = await import('./display.js');
+    if (dmg < 0) {
+        await impossible(`monster cast spell (${spellnum}) with negative dmg (${dmg})?`);
+        return;
+    }
+    if (dmg === 0 && !is_undirected_spell(spellnum)) {
+        await impossible(`cast directed wizard spell (${spellnum}) with dmg=0?`);
+        return;
+    }
+
     switch (spellnum) {
-    case MCAST_PSI_BOLT: {
-        dmg = await mcast_psi_bolt(dmg);
-        if (dmg) {
-            const { mdamageu } = await import('./mhitu.js');
-            await mdamageu(mtmp, dmg);
-        }
+    case MCAST_DEATH_TOUCH:
+        await mcast_death_touch(mtmp);
+        dmg = 0;
         break;
-    }
-    case MCAST_CURE_SELF:
-        // mcastu.c:441 m_cure_self: heal 3d6 when hurt.
-        if (mtmp.mhp < mtmp.mhpmax) {
-            const { canseemon_shared } = await import('./display.js');
-            const heal = d(3, 6);
-            if (canseemon_shared(mtmp)) {
-                const { update_topl } = await import('./display.js');
-                const { Monnam } = await import('./uhitm.js');
-                await update_topl(`${Monnam(mtmp)} looks better.`);
-            }
-            healmon(mtmp, heal, 0);
-        }
+    case MCAST_CLONE_WIZ:
+        await mcast_clone_wiz(mtmp);
+        dmg = 0;
         break;
-    case MCAST_HASTE_SELF: {
-        const { mon_adjust_speed } = await import('./muse.js');
-        await mon_adjust_speed(mtmp, 1, null);
-        break;
-    }
-    case MCAST_SUMMON_MONS: {
-        // C ref: mcastu.c:421 mcast_summon_mons(mtmp) — nasty(mtmp) is the
-        // whole effect and it is far from RNG-free (rnd(u.ulevel/3) outer
-        // iterations, an rn2(44) pick_nasty per slot, makemon, rnd(4)).
-        const { nasty } = await import('./wizard.js');
-        const count = await nasty(mtmp);
-        if (count) {
-            const { update_topl } = await import('./display.js');
-            if (mtmp.iswiz) {
-                await update_topl(`"Destroy the thief, my pet${count === 1 ? '' : 's'}!"`);
-            } else {
-                const mappear = (count === 1) ? 'A monster appears' : 'Monsters appear';
-                await update_topl(`${mappear} from nowhere!`);
-            }
-        }
-        break;
-    }
-    case MCAST_WEAKEN_YOU:
-        await mcast_weaken_you(mtmp, dmg);
-        break;
-    case MCAST_DESTRY_ARMR:
-        // C ref: mcastu.c:836 — `mcast_destroy_armor(); dmg = 0;`.  RNG-bearing
-        // through destroy_arm() (rn2(4)+1 hits, armors[rn2(idx)] each).
-        await mcast_destroy_armor();
-        break;
-    case MCAST_CLONE_WIZ: {
-        // C ref: mcastu.c:411 mcast_clone_wiz(mtmp).
-        if (mtmp.iswiz && (game.context?.no_of_wizards | 0) === 1) {
-            const { update_topl } = await import('./display.js');
-            await update_topl('Double Trouble...');
-            const { clonewiz } = await import('./wizard.js');
-            await clonewiz();
-        }
-        break;
-    }
-    case MCAST_DISAPPEAR:
-        // C ref: mcastu.c:844 — `mcast_disappear(mtmp); dmg = 0;`.  RNG-free
-        // itself, but it is the state transition the NEXT cast depends on:
-        // without minvis, spell_would_be_useless() keeps saying DISAPPEAR is
-        // useful, so a caster re-picks it every turn and never advances to
-        // HASTE_SELF — whose mon_adjust_speed() sets permspeed = MFAST and so
-        // changes both later spell choices and the movement allotment.
-        await mcast_disappear(mtmp);
+    case MCAST_SUMMON_MONS:
+        await mcast_summon_mons(mtmp);
+        dmg = 0;
         break;
     case MCAST_AGGRAVATION: {
         const { update_topl } = await import('./display.js');
         const { aggravate } = await import('./monmove.js');
         await update_topl('You feel that monsters are aware of your presence.');
         aggravate();
+        dmg = 0;
         break;
     }
     case MCAST_CURSE_ITEMS: {
@@ -385,22 +349,84 @@ async function mcast_spell(mtmp, dmg, spellnum) {
         const { rndcurse } = await import('./pray.js');
         await update_topl('You feel as if you need some help.');
         await rndcurse();
+        dmg = 0;
         break;
     }
-    default:
-        // INSECTS still needs its insect-swarm makemon loop.
+    case MCAST_DESTRY_ARMR:
+        await mcast_destroy_armor();
+        dmg = 0;
         break;
+    case MCAST_WEAKEN_YOU: /* drain strength */
+        await mcast_weaken_you(mtmp, dmg);
+        dmg = 0;
+        break;
+    case MCAST_DISAPPEAR: /* makes self invisible */
+        await mcast_disappear(mtmp);
+        dmg = 0;
+        break;
+    case MCAST_STUN_YOU:
+        await mcast_stun_you(dmg);
+        dmg = 0;
+        break;
+    case MCAST_HASTE_SELF: {
+        const { mon_adjust_speed } = await import('./muse.js');
+        await mon_adjust_speed(mtmp, 1, null);
+        dmg = 0;
+        break;
+    }
+    case MCAST_CURE_SELF:
+        dmg = await m_cure_self(mtmp, dmg);
+        break;
+    case MCAST_PSI_BOLT:
+        dmg = await mcast_psi_bolt(dmg);
+        break;
+    case MCAST_GEYSER:
+        dmg = await mcast_geyser(dmg);
+        break;
+    case MCAST_FIRE_PILLAR:
+        dmg = await mcast_fire_pillar(mtmp, dmg);
+        break;
+    case MCAST_LIGHTNING:
+        dmg = await mcast_lightning(mtmp, dmg);
+        break;
+    case MCAST_INSECTS:
+        await mcast_insects(mtmp);
+        dmg = 0;
+        break;
+    case MCAST_BLIND_YOU:
+        await mcast_blind_you();
+        dmg = 0;
+        break;
+    case MCAST_PARALYZE:
+        dmg = await mcast_paralyze(mtmp);
+        break;
+    case MCAST_CONFUSE_YOU:
+        await mcast_confuse_you(mtmp);
+        dmg = 0;
+        break;
+    case MCAST_OPEN_WOUNDS:
+        dmg = await mcast_open_wounds(dmg);
+        break;
+    default:
+        await impossible(`mcastu: invalid magic spell (${spellnum})`);
+        dmg = 0;
+        break;
+    }
+
+    if (dmg) {
+        const { mdamageu } = await import('./mhitu.js');
+        await mdamageu(mtmp, dmg);
     }
 }
 
 // ---------------------------------------------------------------------------
 // Small property shims.  Each names the C predicate it stands in for; all are
 // RNG-free and constant for the heroes these sessions drive.
-function Hallucination() { return !!(game.u?.Hallucination); }
-function Blinded() { return !!(game.u?.Blinded); }
-function See_invisible() { return !!game.u?.See_invisible; }
-function Invis() { return !!game.u?.uinvis; }
-function Displaced() { return !!game.u?.Displaced; }
+function Blinded() { return (game.u?.blinded | 0) > 0 || (game.u?.uprops?.BlindedFromForm | 0) > 0; }
+// C ref: youprop.h See_invisible/Invis/Displaced — one copy each: u.see_invis
+// is the hero's canonical See_invisible accessor (jsmain.js), and
+// monmove.js owns Invis()/Displaced() (worn-item extrinsics included).
+function See_invisible() { return !!game.u?.see_invis; }
 function Deaf() { return !!game.u?.Deaf; }
 function perceives(mdat) { return !!(mdat && mdat.perceives); }
 
@@ -459,7 +485,7 @@ function helpless(mon) {
 
 import { rnd } from './rng.js';
 import { AD_SPC2 } from './monattk_data.js';
-import { A_DEX, KILLED_BY, DIED, M_SEEN_REFL, HEAD, EYE } from './const.js';
+import { A_DEX, KILLED_BY, DIED, M_SEEN_REFL, HEAD, EYE, MM_ANGRY, MM_NOMSG } from './const.js';
 
 // C ref: monsym.h — mons[].mlet values mcast_insects() picks its class from.
 const S_ANT_MCLS = 1, S_SNAKE_MCLS = 45;
@@ -629,7 +655,7 @@ export async function mcast_weaken_you(mtmp, dmg) {
         if (Half_spell_damage()) dmg = Math.trunc((dmg + 1) / 2);
         const kbuf = death_inflicted_by('', 'strength loss', mtmp);
         const { losestr } = await import('./attrib.js');
-        losestr(rnd(dmg), kbuf, KILLED_BY);
+        await losestr(rnd(dmg), kbuf, KILLED_BY);
         if (game.killer) game.killer.name = ''; /* not killed if we get here... */
         monstunseesu(M_SEEN_MAGR);
     }
@@ -805,11 +831,11 @@ export async function mcast_insects(mtmp) {
     let success = false;
     let i, quan, oldseen, newseen;
 
-    oldseen = monster_census_(true);
+    oldseen = await monster_census_(true);
     quan = ((mtmp.m_lev | 0) < 2) ? 1 : rnd(Math.trunc((mtmp.m_lev | 0) / 2));
     if (quan < 3) quan = 3;
     for (i = 0; i <= quan; i++) {
-        const bypos = enexto_(mtmp.mux, mtmp.muy, mtmp.data);
+        const bypos = await enexto_(mtmp.mux, mtmp.muy, mtmp.data);
         if (!bypos) return;
         if ((pm = M.mkclass(let_, 0)) != null
             && (mtmp2 = await M.makemon(pm, bypos.x, bypos.y, MM_ANGRY | MM_NOMSG)) != null) {
@@ -818,7 +844,7 @@ export async function mcast_insects(mtmp) {
             M.set_malign(mtmp2);
         }
     }
-    newseen = monster_census_(true);
+    newseen = await monster_census_(true);
 
     /* not canspotmon() which includes unseen things sensed via warning */
     const { canseemon_shared, tp_sensemon, update_topl } = await import('./display.js');
@@ -828,7 +854,7 @@ export async function mcast_insects(mtmp) {
     if (Hallucination()) {
         const { bogusmon } = await import('./do_name.js');
         const { makeplural } = await import('./invent.js');
-        what = makeplural(bogusmon());
+        what = makeplural(bogusmon().name);
         hallu = true;
     }
 
@@ -1009,26 +1035,29 @@ async function destroy_arm_() {
 }
 
 // C ref: zap.c ureflects(fmt, str) — no RNG.  Port is js/zap.js:1566, private.
-async function ureflects_(_fmt, _str) { return false; }
+async function ureflects_(fmt, str) {
+    const { ureflects } = await import('./zap.js');
+    return await ureflects(fmt, str);
+}
 
 // C ref: zap.c flashburn(duration, via_lightning) — port is js/zap.js:2845,
 // private.  The rnd(100) argument is drawn by our caller, as in C.
-async function flashburn_(_duration, _via_lightning) { return false; }
+async function flashburn_(duration, via_lightning) {
+    const { flashburn } = await import('./zap.js');
+    return await flashburn(duration, via_lightning);
+}
 
 // C ref: mon.c monster_census(spotted) — no RNG.  Port is js/wizard.js:111,
 // private (and takes no argument).
-function monster_census_(_spotted) {
-    let count = 0;
-    for (const mtmp of (game.level?.monsters || []))
-        if (mtmp && (mtmp.mhp | 0) >= 1) count++;
-    return count;
+function monster_census_(spotted) {
+    return minion_monster_census(spotted);
 }
 
 // C ref: teleport.c enexto(cc, xx, yy, mdat) — RNG-BEARING (collect_coords
 // shuffles each ring with rn2, and goodpos() draws rn2(13) for eels).  Ports
 // exist at js/do.js:316 and js/dog.js:124, both module-private; exporting one is
 // the fix.  Returns {x,y} or null (C returns a boolean and fills *cc).
-function enexto_(_xx, _yy, _mdat) { return null; }
+function enexto_(xx, yy, mdat) { return enexto_gpflags(xx, yy, mdat, 0 /* GP_NO_FLAGS */); }
 
 // C ref: attrib.c:1182 adjuhploss(loss, olduhp) — UNPORTED (js/attrib.js:219
 // open-codes a comment naming it).  No RNG.
@@ -1044,34 +1073,49 @@ function adjuhploss(loss, olduhp) {
 
 // C ref: uhitm.c losehp(n, knam, k_format) / end.c done(how).  Ports are
 // js/zap.js:2490 and js/end.js:374, both module-private.
-async function losehp_(_n, _knam, _kformat) { /* private in js/zap.js */ }
-async function done_(_how) { /* private in js/end.js */ }
+async function losehp_(n, knam, kformat) {
+    const { losehp } = await import('./zap.js');
+    await losehp(n, knam, kformat);
+}
+async function done_(how) {
+    const { done } = await import('./end.js');
+    await done(how);
+}
 
 // C ref: potion.c make_blinded / read.c make_stunned,make_confused — ports are
 // js/potion.js:222, js/read.js:1538 and js/read.js:143, all module-private.
-async function make_blinded_(_xtime, _talk) { }
-async function make_stunned_(_xtime, _talk) { }
-async function make_confused_(_xtime, _talk) { }
+async function make_blinded_(xtime, talk) {
+    const { make_blinded_hero } = await import('./potion.js');
+    await make_blinded_hero(xtime, talk);
+}
+async function make_stunned_(xtime, talk) {
+    const { make_stunned_u } = await import('./mhitu.js');
+    await make_stunned_u(xtime, talk);
+}
+async function make_confused_(xtime, talk) {
+    const { make_confused } = await import('./potion.js');
+    await make_confused(xtime, talk);
+}
 
 // C ref: zap.c flash_str(type, force_Tulip) — port is js/zap.js:1881, private.
 function flash_str_(_type) { return 'spell'; }
 
 // ---- hero property / naming shims (all RNG-free) ------------------------
 function Upolyd() { return !!game.u?.Upolyd; }
-function Blind_() { return (game.u?.Blinded | 0) > 0 || !!game.u?.ublindf; }
-function Stunned_() { return !!(game.u?.uprops?.Stun || game.u?.Stunned); }
-function Confusion_() { return HProp_('HConfusion') > 0 || !!game.u?.Confusion; }
-function HConfusion_() { return HProp_('HConfusion'); }
-function HStun_() { return HProp_('HStun'); }
-function Free_action() { return HProp_('HFree_action') > 0 || HProp_('EFree_action') > 0; }
+function Blind_() { return Blind(); }
+function Stunned_() { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.Stun || game.u?.Stunned); }
+function Confusion_() { return HProp_('Confusion') > 0; }
+function HConfusion_() { return HProp_('Confusion'); }
+function HStun_() { return HProp_('Stun'); }
+function Free_action() { return HProp_('FreeAction') > 0 || HProp_('HFree_action') > 0 || HProp_('EFree_action') > 0; }
 function Half_spell_damage() { return HProp_('HHalf_spell_damage') > 0; }
 function Half_physical_damage() { return HProp_('HHalf_physical_damage') > 0; }
-function Shock_resistance_() { return HProp_('HShock_resistance') > 0; }
+function Shock_resistance_() { return !!game.u?.formprops?.Shock_resistance || HProp_('HShock_resistance') > 0; }
 function Detect_monsters_() { return HProp_('HDetect_monsters') > 0; }
 function Unaware_() { return !!(game.u?.usleep || game.u?.Unaware); }
 function HProp_(name) { return (game.u?.uprops?.[name] | 0); }
 function ACURR_(i) { return game.u?.acurr?.a?.[i] ?? 0; }
-function youmonst_data() { return game.youmonst?.data || game.u?.data; }
+function youmonst_data() { return youmonst_data_pub(); }
 function invent_() { return Array.isArray(game.invent) ? game.invent : []; }
 
 // C ref: polyself.c body_part(part).  HEAD and EYE are hack.h body-part
@@ -1086,11 +1130,7 @@ function is_demon_(ptr) { return !!ptr?.demon; }
 function mhe_(mtmp) { return mtmp?.female ? 'she' : 'he'; }
 function plur_(n) { return (n === 1) ? '' : 's'; }
 // C ref: objnam.c an(str) — port is js/objnam.js/hack.js:2633, private there.
-function an_(s) {
-    const str = String(s || '');
-    if (!str) return str;
-    return (/^[aeiouAEIOU]/.test(str) ? 'an ' : 'a ') + str;
-}
+import { an as an_ } from './hacklib.js';
 // C ref: hacklib.c vtense(subj, verb) / upstart(str).
 function vtense_(subj, verb) {
     const s = String(subj || '');

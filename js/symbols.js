@@ -1204,7 +1204,7 @@ export function load_symset(s, which_set) {
 
     gs.symset[which_set].name = s;
 
-    if (read_sym_file(which_set)) {
+    if (nyi.read_sym_file(which_set)) {
         switch_symbols(true);
         nyi.apply_customizations(gc.currentgraphics,
                              do_custom_symbols | do_custom_colors);
@@ -1438,11 +1438,11 @@ export async function do_symset(rogueflag) {
     if (gs.symset[which_set].name) {
         /* non-default symbols */
         let ok;
-        if (!glyphid_cache_status()) {
+        if (!nyi.glyphid_cache_status()) {
             nyi.fill_glyphid_cache();
         }
         ok = nyi.read_sym_file(which_set);
-        if (glyphid_cache_status()) {
+        if (nyi.glyphid_cache_status()) {
             nyi.free_glyphid_cache();
         }
         if (ok) {

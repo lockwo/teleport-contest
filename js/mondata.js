@@ -13,7 +13,7 @@ import { mattk_of, AT_NONE, AT_BOOM, AT_CLAW, AT_BITE, AT_KICK, AT_BUTT,
     from './monattk_data.js';
 import { game, hooks } from './gstate.js';
 import { rn2 } from './rng.js';
-import { mflags2_of, humanoid, is_undead_flag, is_demon_flag, is_neuter_flag,
+import { mflags1_of, msound_of, M1_NOHEAD, mflags2_of, humanoid, is_undead_flag, is_demon_flag, is_neuter_flag,
     M2_STRONG, M2_PNAME } from './monflags_data.js';
 import { monster_by_pmidx } from './makemon.js';
 import { NON_PM, PRONOUN_NO_IT, PRONOUN_HALLU,
@@ -297,6 +297,28 @@ export function mstrength(ptr) {
 // own call site; this is mondata.c's symbol.
 export function hates_blessings(ptr) {
     return is_undead_flag(ptr) || is_demon_flag(ptr);
+}
+
+// C ref: mondata.c:579 can_chant(mtmp) — for casting spells and reading scrolls
+// while blind: false for a Strangled hero, a silent / headless form, or a
+// buzzing / burbling one.  mtmp === null means &youmonst.  An unpolymorphed hero
+// is a role monster (voiced, has a head) so only a polymorphed hero needs the
+// table lookup (u.umonnum is a role index, not a mons[] index, unless Upolyd).
+const MS_SILENT = 0, MS_BUZZ = 10, MS_BURBLE = 16; // C ref: monflag.h
+export function can_chant(mtmp = null) {
+    const u = game.u;
+    let ptr;
+    if (!mtmp) {
+        if ((u?.uprops?.Strangled || 0) > 0) return false;
+        if (!u?.Upolyd) return true;
+        ptr = monster_by_pmidx(u.umonnum);
+    } else {
+        ptr = mtmp.data;
+    }
+    if (!ptr) return true;
+    const snd = msound_of(ptr);
+    return !(snd === MS_SILENT || snd === MS_BUZZ || snd === MS_BURBLE
+             || (mflags1_of(ptr) & M1_NOHEAD) !== 0);
 }
 
 // C ref: mondata.c:663 cantvomit(ptr) — rats, mice and horses can't vomit.

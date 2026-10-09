@@ -33,6 +33,33 @@ export function s_suffix(s) {
     return str.endsWith('s') ? `${str}'` : `${str}'s`;
 }
 
+// C ref: objnam.c just_an(outbuf, str) / an(str) — indefinite article with the
+// "wun"/long-u/x exceptions.  Lives in this leaf module so files low in the
+// import graph can use it without pulling in objnam.js.
+export function just_an(str) {
+    const c0 = str[0].toLowerCase();
+    if (!str[1] || str[1] === ' ')
+        return 'aefhilmnosx'.includes(c0) ? 'an ' : 'a ';
+    const low = str.toLowerCase();
+    if (low.startsWith('the ') || low === 'molten lava' || low === 'iron bars'
+        || low === 'ice')
+        return '';
+    const vowel = 'aeiou'.includes(c0);
+    if ((vowel
+         && (!low.startsWith('one') || (str[3] && !'-_ '.includes(str[3])))
+         && !low.startsWith('eu') && !low.startsWith('uke')
+         && !low.startsWith('ukulele')
+         && !low.startsWith('unicorn') && !low.startsWith('uranium')
+         && !low.startsWith('useful'))
+        || (c0 === 'x' && !'aeiou'.includes(str[1].toLowerCase())))
+        return 'an ';
+    return 'a ';
+}
+export function an(str) {
+    if (!str) return 'an []';
+    return just_an(String(str)) + str;
+}
+
 export function depth(uz) {
     const dnum = uz?.dnum ?? 0;
     const dlevel = uz?.dlevel ?? 1;

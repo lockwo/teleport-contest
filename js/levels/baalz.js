@@ -7,8 +7,9 @@
 // the bug legs away (sp_lev.c:6013 `if (!svl.level.flags.corrmaze)`).
 
 import {
-    ANTI_MAGIC, COLNO, FIRE_TRAP, HWALL, IRONBARS, MAGIC_TRAP, POOL, ROWNO,
-    SLP_GAS_TRAP, SPIKED_PIT, STONE, W_NONDIGGABLE, isok,
+    ANTI_MAGIC, BLCORNER, BRCORNER, COLNO, FIRE_TRAP, HWALL, IRONBARS, MAGIC_TRAP,
+    POOL, RLOC_ERR, RLOC_NOMSG, ROWNO, SLP_GAS_TRAP, SPIKED_PIT, STONE, TDWALL,
+    TLCORNER, TLWALL, TRCORNER, TRWALL, TUWALL, W_NONDIGGABLE, isok,
 } from '../const.js';
 import { game } from '../gstate.js';
 import {
@@ -18,7 +19,7 @@ import { rn2 } from '../rng.js';
 import {
     VLY_S_LICH, VLY_S_VAMPIRE, flip_level, lspo_map, quest_place_stair,
     quest_set_door, remove_boundary_syms, map_cleanup, reset_xystart_size, shuffle,
-    splev_map_reset, vly_monster_class, vly_non_diggable, vly_object, vly_trap,
+    splev_link_doors_rooms, splev_map_reset, vly_monster_class, vly_non_diggable, vly_object, vly_trap,
 } from '../sp_lev.js';
 import {
     LR_BRANCH, LR_TELE, LR_UPSTAIR, W_WEST, geh_flip_lregions, geh_lvlfill_solid,
@@ -125,6 +126,7 @@ export async function makemaz_baalz() {
     // C ref: lspo_finalize_level() — link_doors_rooms/remove_boundary_syms/
     // map_cleanup, then wallification ONLY when !corrmaze (skipped here), then
     // flip_level_rnd(allow_flips=3), then fixup_special().
+    splev_link_doors_rooms();   // set/clear .horizontal for the map's 'S'/'+' doors
     remove_boundary_syms();
     map_cleanup();
     let flp = 0;
@@ -134,41 +136,40 @@ export async function makemaz_baalz() {
     // fixup_special(): place the registered levregions in registration order.
     geh_place_lregions(lregions);
     // ...then the baalzebub_level arm, mkmaze.c baalz_fixup().  No RNG.
-    baalz_fixup();
+    await baalz_fixup();
 }
 
 // C ref: mkmaze.c baalz_fixup() — custom wallification of the "beetle" portion
 // of the level.  The two POOL cells are markers for post-wallify corner fixes
 // and the two IRONBARS "eyes" make the squares to their left diggable.
-//
-// KNOWN GAP: js/mklev.js level_finalize_topology() runs an unconditional
-// wallification(1, 0, COLNO-1, ROWNO-1) after every builder, which C skips on a
-// corrmaze level; the bug legs are therefore still cleaned afterwards.  No RNG
-// either way, so this is a rendering difference only.
-export function baalz_fixup() {
+// lspo_finalize_level() skips its level-wide wallification on a corrmaze level
+// (so these legs are not cleaned away); this is the only wallification the
+// insect gets, with bughack.inarea steering wall_cleanup()/fix_wall_spines().
+export async function baalz_fixup() {
     const lvl = game.level;
     if (!lvl) return;
+    const { wallification, bughack, bughack_reset } = await import('../mklev.js');
     const nondig = (x, y) => !!(lvl.at(x, y)?.wall_info & W_NONDIGGABLE);
-    const bug = { x1: COLNO, y1: ROWNO, x2: 0, y2: 0 };
-    const del = { x1: COLNO, y1: ROWNO, x2: 0, y2: 0 };
+    bughack_reset();
+    const bug0 = bughack.inarea, del0 = bughack.delarea;
 
     let y = Math.trunc(ROWNO / 2), x, lastx = 0, lasty = 0;
     for (x = 0; x < COLNO; ++x)
-        if (nondig(x, y)) { if (!lastx) bug.x1 = x + 1; lastx = x; }
-    bug.x2 = ((lastx > bug.x1) ? lastx : x) - 1;
-    x = bug.x1;
+        if (nondig(x, y)) { if (!lastx) bug0.x1 = x + 1; lastx = x; }
+    bug0.x2 = ((lastx > bug0.x1) ? lastx : x) - 1;
+    x = bug0.x1;
     for (y = 0; y < ROWNO; ++y)
-        if (nondig(x, y)) { if (!lasty) bug.y1 = y + 1; lasty = y; }
-    bug.y2 = ((lasty > bug.y1) ? lasty : y) - 1;
+        if (nondig(x, y)) { if (!lasty) bug0.y1 = y + 1; lasty = y; }
+    bug0.y2 = ((lasty > bug0.y1) ? lasty : y) - 1;
 
-    for (x = bug.x1; x <= bug.x2; ++x)
-        for (y = bug.y1; y <= bug.y2; ++y) {
+    for (x = bug0.x1; x <= bug0.x2; ++x)
+        for (y = bug0.y1; y <= bug0.y2; ++y) {
             const loc = lvl.at(x, y);
             if (!loc) continue;
             if (loc.typ === POOL) {
                 loc.typ = HWALL;
-                if (del.x1 === COLNO) { del.x1 = x; del.y1 = y; }
-                else { del.x2 = x; del.y2 = y; }
+                if (del0.x1 === COLNO) { del0.x1 = x; del0.y1 = y; }
+                else { del0.x2 = x; del0.y2 = y; }
             } else if (loc.typ === IRONBARS) {
                 // novelty effect; allow digging in front of the 'eyes'
                 if (isok(x - 1, y) && nondig(x - 1, y)) {
@@ -180,4 +181,37 @@ export function baalz_fixup() {
                 }
             }
         }
+
+    wallification(Math.max(bug0.x1 - 2, 1), Math.max(bug0.y1 - 2, 0),
+                  Math.min(bug0.x2 + 2, COLNO - 1), Math.min(bug0.y2 + 2, ROWNO - 1));
+
+    // bughack hack for the rear-most legs: the first joint on both top and
+    // bottom gets a bogus extra connection to the room area, producing unwanted
+    // rectangles; change back to separated legs.
+    const { rloc } = await import('../teleport.js');
+    const m_at_ = async (px, py) => {
+        const { m_at } = await import('../display.js');
+        return m_at(px, py);
+    };
+    x = del0.x1; y = del0.y1;
+    if (isok(x, y) && (lvl.at(x, y).typ === TLWALL || lvl.at(x, y).typ === TRWALL)
+        && isok(x, y + 1) && lvl.at(x, y + 1).typ === TUWALL) {
+        lvl.at(x, y).typ = (lvl.at(x, y).typ === TLWALL) ? BRCORNER : BLCORNER;
+        lvl.at(x, y + 1).typ = HWALL;
+        const mtmp = await m_at_(x, y);   /* something at temporary pool... */
+        if (mtmp) await rloc(mtmp, RLOC_ERR | RLOC_NOMSG);
+    }
+
+    x = del0.x2; y = del0.y2;
+    if (isok(x, y) && (lvl.at(x, y).typ === TLWALL || lvl.at(x, y).typ === TRWALL)
+        && isok(x, y - 1) && lvl.at(x, y - 1).typ === TDWALL) {
+        lvl.at(x, y).typ = (lvl.at(x, y).typ === TLWALL) ? TRCORNER : TLCORNER;
+        lvl.at(x, y - 1).typ = HWALL;
+        const mtmp = await m_at_(x, y);
+        if (mtmp) await rloc(mtmp, RLOC_ERR | RLOC_NOMSG);
+    }
+
+    /* reset bughack region so later levels' wall_cleanup()/fix_wall_spines()
+       fail within_bounded_area() on its first test */
+    bughack_reset();
 }

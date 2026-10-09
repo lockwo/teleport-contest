@@ -61,7 +61,7 @@ export function rn1(x, y) { return rn2(x) + y; }
 // roll; non-zero Luck adds the secondary rn2(37+|adj|) bias roll.
 export function rnl(x) {
     if (x <= 0) return 0;
-    let adjustment = game.u?.uluck || 0;
+    let adjustment = (game.u?.uluck || 0) + (game.u?.moreluck || 0);  // Luck
     if (x <= 15)
         adjustment = Math.trunc((Math.abs(adjustment) + 1) / 3) * Math.sign(adjustment);
     let i = RND(x);

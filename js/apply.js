@@ -25,6 +25,7 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { CQ_CANNED } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
+import { begin_burn, end_burn } from './timeout.js';
 
 import {
     TOOL_CLASS, WAND_CLASS, SPBOOK_CLASS, POTION_CLASS, WEAPON_CLASS,
@@ -36,8 +37,9 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
 import { find_mac, species } from './worn.js';
 import {
-    SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED,
-    IS_AIR, IS_ROOM, IS_WALL, IS_DOOR,
+    SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED, STONE, STATUE_TRAP,
+    ACCESSIBLE, IS_FURNITURE, IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND,
+    ZAP_POS, isok, M_AP_OBJECT,
 } from './const.js';
 // C ref: apply.c do_break_wand() — the shared explode() call, its direction
 // table, the dig-a-pit-vs-hole choice, and the room type the digging branch
@@ -45,15 +47,14 @@ import {
 import {
     EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY, N_DIRS, xdir, ydir,
     DIGCHECK_FAILED, DIGCHECK_FAIL_BOULDER, PIT, HOLE, ROOM, ICE,
-    MELT_ICE_AWAY, NO_MM_FLAGS,
-} from './const.js';
-import { surface as surface_word } from './dungeon.js';
+    MELT_ICE_AWAY, NO_MM_FLAGS, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_MINVENT } from './const.js';
+import { surface as surface_word, ceiling as ceiling_dg } from './dungeon.js';
 
 // C ref: include/onames.h — STETHOSCOPE object type index (mkobj.js OBJECTS
 // row [237, "STETHOSCOPE", ...]).  Defined locally to avoid threading a new
 // export through mkobj.js.
 const STETHOSCOPE = 237;
-const SPE_NOVEL = 406; // mkobj.js OBJECT_DATA — novel (a spellbook subtype)
+const SPE_NOVEL = 408; // mkobj.js OBJECT_DATA — novel (a spellbook subtype)
 
 // C ref: include/onames.h — lamp/lantern object types rubbed by dorub().
 const BRASS_LANTERN = 226, OIL_LAMP = 227, MAGIC_LAMP = 228;
@@ -73,6 +74,9 @@ const P_SKILLED = 3, P_EXPERT = 4;
 const SKELETON_KEY = 221, LOCK_PICK = 222, CREDIT_CARD = 223;
 // C ref: include/onames.h SACK/OILSKIN_SACK/BAG_OF_HOLDING (mkobj.js rows).
 const SACK_OTYP = 217, OILSKIN_SACK_OTYP = 218, BAG_OF_HOLDING_OTYP = 219;
+// C ref: include/onames.h LARGE_BOX/CHEST/ICE_BOX/BAG_OF_TRICKS.
+const LARGE_BOX_OTYP = 214, CHEST_OTYP = 215, ICE_BOX_OTYP = 216,
+      BAG_OF_TRICKS_OTYP = 220;
 
 // ECMD result codes (cmd.h).  doapply() returns one of these; the caller maps
 // ECMD_TIME -> game turn elapsed.
@@ -488,11 +492,7 @@ function confdir_apply(dir) {
 // C ref: trap.c ceiling(x, y) — "ceiling" over a room/wall/door, "rock cavern"
 // elsewhere, "sky" on an air level (js/trap.js keeps the same private copy).
 function ceiling_word(x, y) {
-    const typ = game.level?.at(x, y)?.typ ?? 0;
-    if (IS_AIR(typ)) return 'sky';
-    if (IS_ROOM(typ) || IS_WALL(typ) || IS_DOOR(typ) || typ === SDOOR)
-        return 'ceiling';
-    return 'rock cavern';
+    return ceiling_dg(x, y);
 }
 
 // C ref: apply.c its_dead(rx, ry, resp) — report on a corpse or statue at
@@ -506,7 +506,7 @@ async function its_dead(rx, ry, resp) {
     const CORPSE_OTYP = 265; // mkobj.js OBJECT_DATA — corpse
     const objs = [];
     for (const o of (game.level?.objects || []))
-        if (o && o.where === 'floor' && o.ox === rx && o.oy === ry) objs.push(o);
+        if (o && o.where === OBJ_FLOOR && o.ox === rx && o.oy === ry) objs.push(o);
     let corpse = objs.find((o) => o.otyp === CORPSE_OTYP) || null;
     let statue = objs.find((o) => o.otyp === STATUE_OTYP) || null;
     if (corpse && statue) {
@@ -541,10 +541,8 @@ async function its_dead(rx, ry, resp) {
 // C ref: mon.c seemimic(mtmp) — a discovered mimic drops its object/furniture
 // appearance and is redrawn as its true form.
 async function seemimic(mtmp) {
-    const { newsym } = await import('./display.js');
-    mtmp.m_ap_type = 0;
-    mtmp.mappearance = 0;
-    newsym(mtmp.mx, mtmp.my);
+    const { seemimicLocal } = await import('./uhitm.js');
+    seemimicLocal(mtmp);
 }
 
 // C ref: apply.c use_stethoscope() M_AP_OBJECT/M_AP_FURNITURE branch — the
@@ -701,6 +699,20 @@ export async function doapply() {
         return await use_stethoscope(obj);
     }
 
+    // C ref: apply.c:4333-4336 — bells spend a turn even if muffled.
+    if (obj.otyp === BELL || obj.otyp === BELL_OF_OPENING) {
+        await use_bell({ obj });
+        return ECMD_TIME;
+    }
+
+    // C ref: apply.c:4349-4351 — applying oil always spends a turn,
+    // including attempts blocked by swallowing or being underwater.
+    if (obj.otyp === POT_OIL) {
+        await light_cocktail({ obj });
+        return ECMD_TIME;
+    }
+    if (obj.otyp === EXPENSIVE_CAMERA) return await use_camera(obj);
+
     // C ref apply.c:4361 — applying a magic marker writes a scroll/spellbook.
     if (obj.otyp === MAGIC_MARKER) {
         return await dowrite(obj);
@@ -747,10 +759,53 @@ export async function doapply() {
     // the "Do what with your bag?" loot menu (use_container(&obj, TRUE, FALSE)).
     // Falling through to the yafm below handed the menu's keystrokes to the
     // command parser instead (seed0012 steps 259-264).
+    // C ref apply.c:4271-4278 `case LARGE_BOX: case CHEST: case ICE_BOX:
+    // case SACK: case BAG_OF_HOLDING: case OILSKIN_SACK: res =
+    // use_container(&obj, TRUE, FALSE);` — applying ANY carried container opens
+    // the loot menu, boxes included (they are carryable and appliable even
+    // though they can only be unlocked on the floor).
     if (obj.otyp === SACK_OTYP || obj.otyp === OILSKIN_SACK_OTYP
-        || obj.otyp === BAG_OF_HOLDING_OTYP) {
+        || obj.otyp === BAG_OF_HOLDING_OTYP
+        || obj.otyp === LARGE_BOX_OTYP || obj.otyp === CHEST_OTYP
+        || obj.otyp === ICE_BOX_OTYP) {
+        // C ref: pickup.c use_container() head — a held container that is
+        // locked never reaches the "Do what with" menu, and a trapped one
+        // springs its trap instead.  (js/extcmd-handlers.js owns the menu
+        // half of use_container(); this preamble is the part a carried BOX
+        // needs, since bags are never locked or trapped.)
+        if (!obj.lknown) {
+            obj.lknown = 1;
+            _invent.update_inventory();
+        }
+        if (obj.olocked) {
+            await _display.pline(`${Tobjnam(obj, 'are')} locked.`);
+            await _display.pline('You must put it down to unlock.');
+            return ECMD_OK;
+        }
+        if (obj.otrapped) {
+            await _display.pline(`You open ${the_of(obj)}...`);
+            const { chest_trap } = await import('./trap.js');
+            await chest_trap(obj, HAND, false);
+            // C: even if the trap fails, this turn is used up.
+            if ((game.multi ?? 0) >= 0) {
+                const { nomul } = await import('./hack.js');
+                nomul(-1);
+                game.multi_reason = 'opening a container';
+                game.nomovemsg = '';
+            }
+            return ECMD_TIME;
+        }
         const { use_container_held } = await import('./extcmd-handlers.js');
         return await use_container_held(obj) ? ECMD_TIME : ECMD_OK;
+    }
+
+    // C ref apply.c:4279 `case BAG_OF_TRICKS: (void) bagotricks(obj, FALSE,
+    // (int *) 0); break;` — res stays ECMD_TIME (the default), so applying it
+    // always costs the turn, empty or not.
+    if (obj.otyp === BAG_OF_TRICKS_OTYP) {
+        const { bagotricks } = await import('./makemon.js');
+        await bagotricks(obj, false, null);
+        return ECMD_TIME;
     }
 
     if (obj.otyp === LOCK_PICK || obj.otyp === SKELETON_KEY || obj.otyp === CREDIT_CARD) {
@@ -782,6 +837,14 @@ export async function doapply() {
     // swallowed the direction key that follows.  dothrow.js uses its own ECMD
     // numbering (ECMD_TIME === 3), so translate rather than pass through.
     if (obj.otyp === BULLWHIP_OTYP) {
+        // C ref: apply.c use_whip(): an unwielded whip is wielded first, then
+        // `cmdq_add_ec(CQ_CANNED, doapply); cmdq_add_key(CQ_CANNED,
+        // obj->invlet); return ECMD_TIME;` so the wield's turn elapses (monsters
+        // move) before the queued doapply asks for a direction.
+        if (obj !== game.uwep) {
+            if (await _invent.wield_tool(obj, 'lash')) return await reapply_after_wield(obj);
+            return ECMD_OK;
+        }
         const DT = await import('./dothrow.js');
         const r = await DT.use_whip(obj, () => _cmd.getdir());
         return r === 3 ? ECMD_TIME : (r ? ECMD_CANCEL : ECMD_OK);
@@ -814,6 +877,16 @@ export async function doapply() {
     // "Sorry, I don't know how to use that." instead.
     if (obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP || obj.otyp === BRASS_LANTERN) {
         await use_lamp(obj);
+        return ECMD_TIME;
+    }
+
+    // C ref: apply.c:4303-4308 — either whistle costs a turn.
+    if (obj.otyp === TIN_WHISTLE) {
+        await use_whistle(obj);
+        return ECMD_TIME;
+    }
+    if (obj.otyp === MAGIC_WHISTLE) {
+        await use_magic_whistle(obj);
         return ECMD_TIME;
     }
 
@@ -852,6 +925,14 @@ export async function doapply() {
     }
     // C ref apply.c: case TOWEL: res = use_towel(obj);
     if (obj.otyp === TOWEL) return await use_towel(obj);
+
+    // C ref apply.c:4358 `case CRYSTAL_BALL: use_crystal_ball(&obj); break;` —
+    // res is never reassigned, so applying a crystal ball always costs a turn.
+    if (obj.otyp === CRYSTAL_BALL) {
+        const { use_crystal_ball } = await import('./detect.js');
+        await use_crystal_ball({ obj });
+        return ECMD_TIME;
+    }
 
     // Any other tool isn't exercised; mirror C's "I don't know how to use that"
     // (C returns ECMD_FAIL here, which like ECMD_OK costs no turn).
@@ -911,7 +992,7 @@ async function flip_coin(obj) {
     await _display.pline(`You flip a ${_invent.cxname_singular(obj)}.`);
     let lose_coin = false;
     // Underwater is never true here.  Glib/Fumbling are the other slip causes.
-    const slippery = ((game.u?.Glib || 0) > 0) || ((game.u?.uprops?.Glib || 0) > 0)
+    const slippery = ((game.u?.uprops?.Glib || 0) > 0)
         || ((game.u?.uprops?.Fumbling || 0) > 0);
     if (slippery || (dex < 10 && !rn2(dex))) {
         await _display.pline(`It slips between your ${
@@ -1141,33 +1222,40 @@ async function do_break_wand(obj) {
 async function use_cream_pie(obj) {
     await loadDeps();
     const { update_topl } = await import('./display.js');
-    const { vision_recalc } = await import('./vision.js');
+    const { Blind } = await import('./vision.js');
     const u = game.u;
-    const wasblind = (u?.blinded || 0) > 0; // Blind before
-    // (quan > 1 split not needed: wished pie has quan 1.)
-    await update_topl('You immerse your face in the cream pie.');
-    // can_blnd(0, youmonst, AT_WEAP, cream pie) is TRUE for a cream pie.
-    const blindinc = rnd(25);
-    if (u) {
-        u.ucreamed = (u.ucreamed || 0) + blindinc;
-        // make_blinded(Blinded + blindinc, FALSE): set the blind timer, then
-        // toggle_blindness() -> vision_recalc(0) so the now-unseen monsters are
-        // blanked from the display this turn.
-        u.blinded = (u.blinded || 0) + blindinc;
+    const wasblind = Blind(); // Blind before
+    // C ref: apply.c use_cream_pie() — a stack is split first (splitobj()'s
+    // nextoid() draws rnd(2)) and only ONE pie is smeared and used up.
+    let several = false;
+    if ((obj.quan || 1) > 1) {
+        several = true;
+        obj = _invent.splitobj(obj, 1);
     }
-    // C ref apply.c:3588 — make_blinded() (which runs toggle_blindness ->
-    // vision_recalc(0)) fires BEFORE the "can't see through the goop" pline.
-    // The vision recalc must therefore happen between the two messages: the
-    // second pline triggers the "--More--" prompt, and the screen captured at
-    // that prompt must already show the now-unseen monsters blanked.  Doing the
-    // recalc after both plines (as before) left the stale monster glyphs on the
-    // --More-- screen, diverging from C (seed0108 step-55).
-    if (!wasblind) { try { vision_recalc(0); } catch (e) { /* ignore */ } }
-    // !wasblind && now Blind -> the "can't see through the goop" line.
-    if (!wasblind) {
-        await update_topl(`You can't see through all the sticky goop on your face.`);
+    if (ap_Hallucination()) {
+        await update_topl('You give yourself a facial.');
     } else {
-        await update_topl(`There's more sticky goop all over your face.`);
+        const { xname, the, makeplural } = await import('./objnam.js');
+        await update_topl(`You immerse your face in ${several ? 'one of ' : ''}${
+            several ? makeplural(the(xname(obj))) : the(xname(obj))}.`);
+    }
+    // can_blnd(0, youmonst, AT_WEAP, cream pie): FALSE with no eyes or when
+    // Blindfolded (ublindf other than LENSES).
+    const { youmonst_data } = await import('./invent.js');
+    const { eyecount } = await import('./polyself.js');
+    const blindfolded = !!(game.ublindf && game.ublindf.otyp !== 232 /* LENSES */);
+    if (eyecount(youmonst_data()) !== 0 && !blindfolded) {
+        const blindinc = rnd(25);
+        const wascreamed = (u.ucreamed || 0) > 0;
+        u.ucreamed = (u.ucreamed || 0) + blindinc;
+        // make_blinded() runs toggle_blindness -> vision_recalc(0) BEFORE the
+        // goop pline, so the --More-- screen already has monsters blanked.
+        const { make_blinded_hero } = await import('./potion.js');
+        await make_blinded_hero((u.blinded || 0) + blindinc, false);
+        if (!Blind() || (Blind() && wasblind))
+            await update_topl(`There's ${wascreamed ? 'more ' : ''}sticky goop all over your face.`);
+        else
+            await update_topl(`You can't see through all the sticky goop on your face.`);
     }
     // setnotworn + costly_alteration (no RNG, no cost) + use up the pie.
     consume_applied_pie(obj);
@@ -1192,7 +1280,7 @@ function consume_applied_pie(obj) {
             _invent.useupall(obj);
             // delobj() -> obj_resists(obj, 0, 0): plain rn2(100) for a cream pie.
             rn2(100);
-        } else { obj.where = 'free'; rn2(100); }
+        } else { obj.where = OBJ_FREE; rn2(100); }
     } catch (e) { /* ignore */ }
 }
 
@@ -1241,9 +1329,12 @@ export async function wipeoff() {
     if ((u?.blinded || 0) <= 0) {
         if (u) { u.blinded = 0; u.ucreamed = 0; }
         await update_topl(`You've got the glop off.`);
-        // make_blinded(0, TRUE): regaining sight -> "You can see again."
-        await update_topl(`You can see again.`);
-        try { vision_recalc(0); } catch (e) { /* ignore */ }
+        const { gulp_blnd_check } = await import('./mhitu.js');
+        if (!await gulp_blnd_check()) {
+            u.blinded = 1;
+            const { make_blinded_hero } = await import('./potion.js');
+            await make_blinded_hero(0, true);
+        }
         return 0; // occupation finished
     } else if ((u?.ucreamed || 0) === 0) {
         await update_topl(`Your face feels clean now.`);
@@ -1429,17 +1520,14 @@ function rub_ok(obj) {
 }
 
 // C ref: apply.c dorub() — the #rub command.  Returns an ECMD_* code.
-//
-// The recorded seed0108 path rubs a wished magic lamp that is held (not yet
-// wielded) in inventory: getobj() asks "What do you want to rub? [n or ?*]",
-// 'n' selects the lamp, and because obj != uwep dorub wields it via
-// wield_tool() ("You now wield a lamp.") and returns ECMD_TIME, re-queuing
-// itself on the canned-command stack (the re-run, with the lamp now wielded,
-// is not separately exercised in the recorded stream).  The graystone /
-// royal-jelly / already-wielded-lamp (djinni / puff of smoke / nothing) paths
-// are present for faithfulness but consume no RNG in the owned sessions.
 export async function dorub() {
     await loadDeps();
+    // C ref: apply.c:1789 — a handless polymorph form can't rub anything; this
+    // runs BEFORE getobj(), so the refusal consumes no item-letter key.
+    if (_invent.nohands_youmonst()) {
+        await _display.pline("You aren't able to rub anything without hands.");
+        return ECMD_OK;
+    }
     const obj = await _invent.getobj('rub', rub_ok, _invent.GETOBJ_NOFLAGS);
     if (!obj) return ECMD_CANCEL;
 
@@ -1454,10 +1542,9 @@ export async function dorub() {
 
     if (obj !== game.uwep) {
         if (await _invent.wield_tool(obj, 'rub')) {
-            // C: cmdq_add_ec(CQ_CANNED, dorub) + cmdq_add_key(invlet) -> re-runs
-            // dorub with the tool wielded.  The wished-lamp session reaches this
-            // wield-and-time path; the canned re-run isn't separately recorded.
-            return ECMD_TIME;
+            // C ref: apply.c:1807-1810 — spend the wield turn, then run
+            // dorub again with the selected lamp before requesting a new key.
+            return await reapply_after_wield(obj, dorub);
         }
         return ECMD_OK;
     }
@@ -1559,23 +1646,32 @@ function find_poleable_mon(pos, min_range, max_range) {
 //     cmdq_add_ec(CQ_CANNED, doapply); cmdq_add_key(CQ_CANNED, obj->invlet);
 //     return ECMD_TIME;
 // rhack() returns, moveloop_core() spends the turn the wield cost, and the next
-// rhack() dispatches the queued doapply without reading a key — so the whole
+// rhack() dispatches the queued command without reading a key — so the whole
 // thing is ONE input boundary for the player.  invent.js dofire() models the
 // same cmdq_add_ec pair this way.
-async function reapply_after_wield(obj) {
+async function reapply_after_wield(obj, command = doapply) {
     const { moveloop_turn } = await import('./allmain.js');
     game.context = game.context || {};
     game.context.move = 0;
+    // C ref: cmd.c rhack(). The wield returned ECMD_TIME from a command
+    // other than dokick, so the kicked location resets before monsters move.
+    game.kickedloc = { x: 0, y: 0 };
     game._cmdqAbandonRetry = false;
+    const moves_before = game.moves;
     await moveloop_turn();
-    // C ref: allmain.c moveloop_core() tail — `if (disp.botl || disp.botlx)
-    // bot();` runs after the turn and before the next rhack(), so the queued
-    // command's first frame already carries the new turn counter.
-    await _display.flush_screen(1);
+    // C ref: allmain.c moveloop_core() tail: `if (disp.botl || disp.botlx)
+    // bot(); else if (disp.time_botl) timebot();` is the only flush after the
+    // turn.  A message printed during the turn already flushed at vpline()
+    // time, before the pet or monster finished moving, and the queued command
+    // never reaches parse()'s flush_screen(1).  Otherwise the map a later
+    // --More-- freezes is still the one from the last flush.
+    if (game.botl || game.botlx
+        || (game.flags?.time && !game.context?.run && game.moves !== moves_before))
+        await _display.flush_screen(1);
     if (game._cmdqAbandonRetry) return ECMD_OK;
     // getobj()'s cmdq fast path pops this invlet instead of drawing a prompt.
     _invent.cmdq_add_key(CQ_CANNED, obj.invlet);
-    return await doapply();
+    return await command();
 }
 
 // C ref: apply.c use_pole(obj, autohit) — reached from dofire() as
@@ -1605,7 +1701,10 @@ export async function use_pole(obj, autohit) {
     }
     const { min_range, max_range } = calc_pole_range();
 
-    if (!autohit) await _display.update_topl('Where do you want to hit?');
+    if (!autohit) {
+        await _display.update_topl('Where do you want to hit?');
+        await _display.flush_screen(1);
+    }
     const cc = { x: u.ux, y: u.uy };
     const hitm = game.context?.polearm_hitmon;
     if (!find_poleable_mon(cc, min_range, max_range) && hitm && !hitm.mdead
@@ -1650,10 +1749,87 @@ export async function use_pole(obj, autohit) {
         return ECMD_OK;
     }
 
-    // A reachable target square: C runs attack_checks()/thitmonst() (or the
-    // statue/boulder/terrain "Thump!" arms).  thitmonst() is not ported, so
-    // stop here rather than invent an RNG stream C does not draw.
-    return ECMD_TIME;
+    // C ref: apply.c:3489-3562 — attack the monster there (thitmonst with the
+    // wielded polearm, HMON_APPLIED), or the statue/boulder/terrain arms.
+    if (game.context) game.context.polearm_hitmon = null;
+    game.bhitpos = { x: cc.x, y: cc.y };
+    const mtmp = _display.m_at(cc.x, cc.y);
+    let freehit = false;
+    if (mtmp) {
+        // rhack() starts every command with svc.context.move = 1; attack_checks
+        // clears it only when the hero declines "Really attack?".
+        if (game.context) game.context.move = 1;
+        if (await _uhitm.attack_checks(mtmp))
+            return game.context?.move ? ECMD_TIME : ECMD_OK;
+        if (await _uhitm.overexertion())
+            return ECMD_TIME; /* burn nutrition; maybe pass out */
+        game.context.polearm_hitmon = mtmp;
+
+        if (snickersnee_used_dist_attk(obj)) {
+            await _display.pline("The blade doesn't reach there!");
+            return ECMD_OK;
+        }
+
+        await _uhitm.check_caitiff(mtmp);
+        game.notonhead = (game.bhitpos.x !== mtmp.mx || game.bhitpos.y !== mtmp.my);
+
+        /* Snickersnee allows one free hit from a distance per turn */
+        if (obj === game.uwep && obj.oartifact === ART_SNICKERSNEE_A) {
+            freehit = (game.moves !== game.context.snickersnee_turn);
+            game.context.snickersnee_turn = game.moves;
+            if (freehit && !Deaf())
+                await _display.pline('Shkinng!'); /* /sha-kin!/ */
+        }
+
+        await _invent.thitmonst(mtmp, game.uwep);
+    } else if (statue_at(cc.x, cc.y)) {
+        const T = await import('./trap.js');
+        const t = T.t_at(cc.x, cc.y);
+        if (t && t.ttyp === STATUE_TRAP
+            && await T.activate_statue_trap(t, t.tx, t.ty, false)) {
+            ; /* feedback has been give by animate_statue() */
+        } else {
+            await _display.pline('Thump!  Your blow bounces harmlessly off the statue.');
+            const { wake_nearto } = await import('./cmd.js');
+            await wake_nearto(cc.x, cc.y, 25);
+        }
+    } else {
+        /* no monster here and no statue seen or remembered here */
+        unmap_invisible_at(cc.x, cc.y);
+        const loc = game.level?.at(cc.x, cc.y);
+        if (_invent.sobj_at(BOULDER, cc.x, cc.y)) {
+            await _display.pline('Thump!  Your blow bounces harmlessly off the boulder.');
+            const { wake_nearto } = await import('./cmd.js');
+            await wake_nearto(cc.x, cc.y, 25);
+        } else if (!ACCESSIBLE(loc?.typ | 0) || IS_FURNITURE(loc?.typ | 0)) {
+            /* similar to 'F'orcefight with a melee weapon; we know that
+               the spot can be seen or we wouldn't have gotten this far */
+            await _display.pline(`You uselessly attack ${await pole_target_name(cc.x, cc.y)}.`);
+        } else {
+            await _display.pline('You miss; there is no one there to hit.');
+        }
+    }
+    const { wipe_engr_at, engr_at } = await import('./engrave.js');
+    if (engr_at(u.ux, u.uy)) wipe_engr_at(u.ux, u.uy, 2, false); /* u_wipe_engr(2) */
+    return freehit ? ECMD_OK : ECMD_TIME;
+}
+
+// C ref: apply.c use_pole() "uselessly attack %s" operand — stone/solid rock,
+// else the displayed terrain's defsyms[] explanation with "the".
+async function pole_target_name(x, y) {
+    const typ = game.level?.at(x, y)?.typ | 0;
+    if (typ === STONE || typ === SCORR) return 'stone';
+    const cmap = await pole_cmap_name(x, y);
+    return cmap ? `the ${cmap}` : 'an unknown obstacle';
+}
+
+// C ref: defsyms[glyph_to_cmap(glyph)].explanation for the DISPLAYED terrain glyph
+// (null when the glyph is not a map-feature glyph).
+async function pole_cmap_name(x, y) {
+    const { glyph_to_cmap } = await import('./glyphs.js');
+    const { defsyms, MAXPCHARS } = await import('./symbols.js');
+    const cm = glyph_to_cmap(_display.glyph_at(x, y));
+    return (cm >= 0 && cm < MAXPCHARS && defsyms[cm]) ? defsyms[cm].explanation : null;
 }
 
 export const ECMD = { ECMD_OK, ECMD_CANCEL, ECMD_TIME };
@@ -1680,7 +1856,7 @@ export const ECMD = { ECMD_OK, ECMD_CANCEL, ECMD_TIME };
 // another C file's coverage in swarm/bin/coverage.mjs.
 //
 // Callees that are stubbed here (each draws in C, draws nothing here):
-//   mintrap(), make_familiar(), openit(), mkundead(), hurtle(),
+//   mintrap(), make_familiar(), hurtle(),
 //   boulder_hits_pool(), revive_corpse(), floorfood(), tele_to_rnd_pet(),
 //   bhit()/flash_hits_mon() for the camera ray, enexto(), get_adjacent_loc().
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1725,7 +1901,7 @@ async function ap_load() {
 // BRASS_LANTERN / POT_OIL / CREAM_PIE / EGG-adjacent food otyps are already
 // declared near the top of this file.
 const TALLOW_CANDLE = 224, WAX_CANDLE = 225, EXPENSIVE_CAMERA = 229,
-      MIRROR = 230, LENSES = 232, BLINDFOLD_OTYP = 233, TOWEL = 234, LEASH = 236,
+      MIRROR = 230, CRYSTAL_BALL = 231, LENSES = 232, BLINDFOLD_OTYP = 233, TOWEL = 234, LEASH = 236,
       TINNING_KIT = 238, CAN_OF_GREASE = 240, FIGURINE = 241,
       LAND_MINE = 243, BEARTRAP_OTYP = 244, TIN_WHISTLE = 245,
       MAGIC_WHISTLE = 246, BELL = 255, GRAPPLING_HOOK = 260,
@@ -1802,7 +1978,7 @@ function ap_prop(name) {
 function ap_Underwater() { return !!game.u?.uinwater; }
 function ap_Levitation() { return ap_prop('Levitation') > 0; }
 function ap_Fumbling() { return ap_prop('Fumbling') > 0; }
-function ap_Glib() { return ((game.u?.Glib | 0) > 0) || ap_prop('Glib') > 0; }
+function ap_Glib() { return ap_prop('Glib') > 0; }
 function ap_Confusion() { return ((game.u?.uconf | 0) > 0) || ap_prop('Confusion') > 0; }
 function ap_Stunned() { return ((game.u?.ustun | 0) > 0) || ap_prop('Stun') > 0; }
 function ap_Hallucination() {
@@ -1903,39 +2079,6 @@ function ap_cmap_to_glyph(_cmap) { return 0; }
 // keeps no glyph array; poleable_at() above reads the same three cases off the
 // level state, so the display_*_positions() loops below use it directly.
 
-// ── C ref: timeout.c:1712 begin_burn(obj, already_lit) and :1804
-// end_burn(obj, timer_attached).  js/light.js carries a private end_burn() (no
-// BURN_OBJECT timer queue exists, so the timer arm cannot be taken) and no
-// begin_burn at all.  Both are RNG-FREE in C, so these two mirror light.js's
-// own comment: set/clear lamplit and add/drop the object light source.  Named
-// with an ap_ prefix so they do not claim timeout.c coverage.
-async function ap_begin_burn(obj, already_lit) {
-    const A = await ap_load();
-    if (obj.age === 0 && obj.otyp !== MAGIC_LAMP && !A.lightsrc.artifact_light(obj))
-        return;
-    let radius = 3;
-    switch (obj.otyp) {
-    case MAGIC_LAMP: obj.lamplit = 1; break;
-    case POT_OIL: radius = 1; obj.lamplit = 1; break;
-    case BRASS_LANTERN: case OIL_LAMP: obj.lamplit = 1; break;
-    case CANDELABRUM_OF_INVOCATION: case TALLOW_CANDLE: case WAX_CANDLE:
-        radius = A.lightsrc.candle_light_range(obj);
-        obj.lamplit = 1;
-        break;
-    default:
-        obj.lamplit = 1;
-        break;
-    }
-    if (obj.lamplit && !already_lit)
-        A.lightsrc.new_light_source(obj.ox ?? game.u.ux, obj.oy ?? game.u.uy,
-                                    radius, A.lightsrc.LS_OBJECT, obj);
-}
-async function ap_end_burn(obj, _timer_attached) {
-    const A = await ap_load();
-    if (!obj.lamplit) return;
-    A.lightsrc.del_light_source(A.lightsrc.LS_OBJECT, obj);
-    obj.lamplit = 0;
-}
 
 // ── Unported C callees.  Each is kept IN POSITION at its call site so landing
 // the real function later restores its RNG draw without moving anything else.
@@ -1947,11 +2090,26 @@ async function ap_mintrap(mtmp, _flags) {
 }
 // C ref: makemon.c make_familiar(otmp, x, y, quietly) — DEFERRED (no port).
 async function ap_make_familiar(_otmp, _x, _y, _quietly) { return null; }
-// C ref: lock.c openit() — DEFERRED (no port); returns the count of things
-// opened, so 0 keeps use_bell()'s "Nothing happens." arm.
-async function ap_openit() { return 0; }
-// C ref: makemon.c mkundead(mm, revive_corpses, mmflags) — DEFERRED (no port).
-async function ap_mkundead(_mm, _revive, _mmflags) {}
+// C ref: detect.c openit() — open nearby doors, boxes, or a swallowing monster.
+async function ap_openit() {
+    const A = await ap_load();
+    return await A.detect.openit();
+}
+// C ref: mkroom.c mkundead() — Bell of Opening summons without reviving corpses.
+async function ap_mkundead(mm, revive_corpses, mmflags) {
+    const A = await ap_load();
+    const { morguemon } = await import('./sp_lev.js');
+    return await A.mkroom.mkundead(mm, revive_corpses, mmflags, {
+        level_difficulty: A.makemon.level_difficulty_ext,
+        morguemon,
+        enexto: (x, y, ptr) => A.teleport.enexto_gpflags(x, y, ptr, 0),
+        makemon: async (ptr, x, y, flags) => {
+            const mon = A.makemon.makemon(ptr, x, y, flags);
+            await A.makemon.makemon_appears_msg(mon, x, y, flags);
+            return mon;
+        },
+    });
+}
 // C ref: dothrow.c hurtle(dx, dy, range, verbose) — DEFERRED (no port).
 async function ap_hurtle(_dx, _dy, _range, _verbose) {}
 // C ref: dbridge.c boulder_hits_pool(otmp, rx, ry, newspot) — DEFERRED.
@@ -1977,7 +2135,7 @@ async function ap_floorfood(verb, corpsecheck) {
     // call site can only observe menu_requested among those.
     if (!game.iflags?.menu_requested && corpsecheck === 2) {
         const objs = (game.level?.objects || []).filter(
-            (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy
+            (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy
                 && o.otyp === CORPSE_A && tinnable(o));
         for (const otmp of objs) {
             const one = (otmp.quan || 1) === 1;
@@ -2001,14 +2159,46 @@ async function ap_floorfood(verb, corpsecheck) {
 }
 // C ref: teleport.c tele_to_rnd_pet() — DEFERRED (no port).
 async function ap_tele_to_rnd_pet() {}
-// C ref: zap.c bhit(dx, dy, range, weapon, fhitm, fhito, &obj) for the
-// FLASHED_LIGHT flavour, and zap.c flash_hits_mon()/mon.c
-// see_monster_closeup()/light.c transient_light_cleanup().  js/zap.js's bhit()
-// is private and only implements the ZAPPED_WAND flavour, so the camera ray
-// finds nothing here.
-async function ap_bhit_flash(_dx, _dy, _range, _obj) { return null; }
-async function ap_flash_hits_mon(_mtmp, _obj) { return 0; }
-async function ap_see_monster_closeup(_mtmp, _photo) {}
+// C ref: zap.c:3861-4093 bhit()'s FLASHED_LIGHT branch.  The S_flashbeam beam
+// (tmp_at(DISP_BEAM, ...)) records each square the hero can see, and
+// tmp_at(DISP_END) newsym()s every one of them back — which while hallucinating
+// draws the display RNG for each monster/object re-seen there.
+async function ap_bhit_flash(dx, dy, range, obj) {
+    const A = await ap_load();
+    const D = A.display;
+    let x = game.u.ux, y = game.u.uy;
+    await D.tmp_at(DISP_BEAM_A, D.fn_cmap_to_glyph(79 /* S_flashbeam */));
+    while (range-- > 0) {
+        x += dx; y += dy;
+        if (!isok(x, y)) break;
+        const loc = game.level.at(x, y);
+        if (!ap_Blinded() && !game.ublindf)
+            await A.lightsrc.show_transient_light(null, x, y);
+        const mon = A.display.m_at(x, y);
+        if (mon && mon.m_ap_type !== 'obj' && mon.m_ap_type !== M_AP_OBJECT) {
+            game.notonhead = (x !== mon.mx || y !== mon.my);
+            if (!mon.minvis) {
+                await D.tmp_at(DISP_END_A, 0);
+                return mon;
+            }
+            obj.ox = game.u.ux; obj.oy = game.u.uy;
+            await A.uhitm.flash_hits_mon(mon, obj);
+        }
+        if (!ZAP_POS(loc.typ)
+            || (IS_DOOR(loc.typ) && (loc.doormask & (D_CLOSED | D_LOCKED))))
+            break;
+        /* 'I' present but no monster: erase; do this before tmp_at() */
+        if (loc.invisMon && A.vision.cansee(x, y)) {
+            D.unmap_object(x, y);
+            D.newsym(x, y);
+        }
+        await D.tmp_at(x, y);
+        if (A.vision.cansee(x, y))
+            D.show_glyph_cell(x, y, '!', 15 /* CLR_WHITE */, false);
+    }
+    await D.tmp_at(DISP_END_A, 0);
+    return null;
+}
 // C ref: teleport.c enexto(cc, xx, yy, mdat) — js/dog.js's enexto() is private
 // and takes no permonst; DEFERRED so the caller's "no free spot" arm is taken.
 async function ap_enexto(_cc, _xx, _yy, _mdat) { return false; }
@@ -2035,14 +2225,6 @@ function ap_set_occupation(_fn, _txt, _xtime) {}
 // bookkeeping, RNG-free, no port.
 function ap_add_damage(_x, _y, _cost) {}
 function ap_use_unpaid_trapobj(_otmp, _x, _y) {}
-// C ref: potion.c make_glib(xtime) — set the slippery-fingers timer.  RNG-free.
-function ap_make_glib(xtime) {
-    const u = game.u;
-    if (!u) return;
-    u.uprops = u.uprops || {};
-    u.uprops.Glib = xtime;
-    u.Glib = xtime;
-}
 // C ref: timeout.c incr_itimeout/set_itimeout on a named property timer.
 function ap_incr_itimeout(name, incr) {
     const u = game.u;
@@ -2239,9 +2421,9 @@ export async function do_blinding_ray(obj) {
 
     obj.ox = u.ux; obj.oy = u.uy; /* flash_hits_mon() wants this */
     if (mtmp) {
-        await ap_flash_hits_mon(mtmp, obj);
+        await A.uhitm.flash_hits_mon(mtmp, obj);
         if (obj.otyp === EXPENSIVE_CAMERA)
-            await ap_see_monster_closeup(mtmp, true); /* TRUE for photo */
+            await A.mon.see_monster_closeup(mtmp, true); /* TRUE for photo */
     }
     /* normally bhit() would do this but for FLASHED_LIGHT we want it
        to be deferred until after flash_hits_mon() */
@@ -2307,7 +2489,7 @@ export async function use_towel(obj) {
         switch (rn2(3)) {
         case 2:
             old = ap_prop('Glib');
-            ap_make_glib(old + rn1(10, 3)); /* + 3..12 */
+            await A.potion.make_glib(old + rn1(10, 3)); /* + 3..12 */
             await A.display.pline(`Your ${A.invent.makeplural(AP_HAND)} ${
                 old ? 'are filthier than ever' : 'get slimy'}!`);
             if (A.weapon.is_wet_towel(obj))
@@ -2345,7 +2527,7 @@ export async function use_towel(obj) {
     }
 
     if (ap_Glib()) {
-        ap_make_glib(0);
+        await A.potion.make_glib(0);
         await A.display.pline(`You wipe off your ${
             !game.uarmg ? A.invent.makeplural(AP_HAND)
                         : A.do_wear.gloves_simple_name(game.uarmg)}.`);
@@ -3021,9 +3203,6 @@ function setnotworn_ap(obj) { if (obj) obj.owornmask = 0; }
 // C ref: include/timeout.h TIMER_OBJECT / FIG_TRANSFORM, include/trap.h
 // TT_BURIEDBALL (verified against js/const.js's own values).
 const TIMER_OBJECT_A = 3, FIG_TRANSFORM_A = 6, TT_BURIEDBALL_A = 6;
-// C ref: include/obj.h:75 — obj->where.
-const OBJ_FREE_A = 0, OBJ_FLOOR_A = 1, OBJ_CONTAINED_A = 2,
-      OBJ_INVENT_A = 3, OBJ_MINVENT_A = 4;
 // C ref: include/mkroom.h SHOPBASE.
 const SHOPBASE_A = 2;
 // C ref: timers.c start_timer/stop_timer — js/mkobj.js's start_timer() and
@@ -3119,7 +3298,7 @@ export async function use_bell(optr) {
                 unpunish();
                 res = 1;
             } else if (u.utrap && u.utraptype === TT_BURIEDBALL_A) {
-                ap_buried_ball_to_freedom();
+                await ap_buried_ball_to_freedom();
                 res = 1;
             }
             res += await ap_openit();
@@ -3165,8 +3344,11 @@ function ap_On_stairs(x, y) {
         if (s.sx === x && s.sy === y) return true;
     return false;
 }
-// C ref: ball.c buried_ball_to_freedom() — DEFERRED (no port); RNG-free in C.
-function ap_buried_ball_to_freedom() {}
+// C ref: dig.c buried_ball_to_freedom().
+async function ap_buried_ball_to_freedom() {
+    const { buried_ball_to_freedom } = await import('./dig.js');
+    await buried_ball_to_freedom();
+}
 
 // C ref: apply.c:1318 use_candelabrum(obj).  RNG-free.
 export async function use_candelabrum(obj) {
@@ -3176,7 +3358,7 @@ export async function use_candelabrum(obj) {
 
     if (obj.lamplit) {
         await A.display.pline(`You snuff the ${s}.`);
-        await ap_end_burn(obj, true);
+        await end_burn(obj, true);
         return;
     }
     if ((obj.spe | 0) <= 0) {
@@ -3226,7 +3408,7 @@ export async function use_candelabrum(obj) {
         }
         obj.known = 1;
     }
-    await ap_begin_burn(obj, false);
+    await begin_burn(obj, false);
 }
 
 // C ref: apply.c:1386 use_candle(&obj) — attach candles to the Candelabrum, or
@@ -3270,7 +3452,7 @@ export async function use_candle(optr) {
            in it while it's lit ... end the burn temporarily while attaching. */
         const was_lamplit = obj.lamplit;
         if (was_lamplit)
-            await ap_end_burn(obj, true);
+            await end_burn(obj, true);
 
         await A.display.pline(`You attach ${obj.quan}${
             !otmp.spe ? '' : ' more'} ${s} to ${ap_the(A.invent.xname(otmp))}.`);
@@ -3291,7 +3473,7 @@ export async function use_candle(optr) {
                 otmp.lamplit ? ' lit' : ''} candles attached.`);
         /* candelabrum's light range might increase */
         if (otmp.lamplit)
-            A.lightsrc.obj_merge_light_sources(otmp, otmp);
+            await A.lightsrc.obj_merge_light_sources(otmp, otmp);
         /* candles are now gone */
         A.invent.useupall(obj);
         /* candelabrum's weight is changing */
@@ -3312,13 +3494,13 @@ export async function snuff_candle(otmp) {
         // monster's pack and its square is visible, or (any other `where`) when
         // the hero is not blind.  js/light.js's get_obj_location() is private,
         // so read the object's own ox/oy, which it keeps in sync.
-        const visible = (otmp.where === OBJ_MINVENT_A)
+        const visible = (otmp.where === OBJ_MINVENT)
             ? A.vision.cansee(otmp.ox | 0, otmp.oy | 0) : !A.vision.Blind();
         if (visible)
             await A.display.pline(`${await ap_Shk_Your(otmp)}${
                 candle ? '' : "candelabrum's "}candle${many ? "s'" : "'s"} flame${
                 many ? 's are' : ' is'} extinguished.`);
-        await ap_end_burn(otmp, true);
+        await end_burn(otmp, true);
         return true;
     }
     return false;
@@ -3332,12 +3514,12 @@ export async function snuff_lit(obj) {
     if (obj.lamplit) {
         if (obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP
             || obj.otyp === BRASS_LANTERN || obj.otyp === POT_OIL) {
-            const visible = (obj.where === OBJ_MINVENT_A)
+            const visible = (obj.where === OBJ_MINVENT)
                 ? A.vision.cansee(obj.ox | 0, obj.oy | 0) : !A.vision.Blind();
             if (visible)
                 await A.display.pline(`${await ap_Yname2(obj)} ${
                     A.invent.otense(obj, 'go')} out!`);
-            await ap_end_burn(obj, true);
+            await end_burn(obj, true);
             return true;
         }
         if (await snuff_candle(obj))
@@ -3363,7 +3545,7 @@ export async function use_lamp(obj) {
             await A.display.pline(`${await ap_Shk_Your(obj)}${lamp} is now off.`);
         else
             await A.display.pline(`You snuff out ${A.invent.yname(obj)}.`);
-        await ap_end_burn(obj, true);
+        await end_burn(obj, true);
         return;
     }
     if (ap_Underwater()) {
@@ -3388,7 +3570,7 @@ export async function use_lamp(obj) {
         if ((obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP) && !rn2(3)) {
             await A.display.pline(`The lamp spills and covers your ${
                 A.do_wear.fingers_or_gloves(true)} with oil.`);
-            ap_make_glib(ap_prop('Glib') + d(2, 10));
+            await A.potion.make_glib(ap_prop('Glib') + d(2, 10));
         } else if (!A.vision.Blind()) {
             await A.display.pline(`${Tobjnam(obj, 'flicker')} for a moment, then ${
                 A.invent.otense(obj, 'die')}.`);
@@ -3410,7 +3592,7 @@ export async function use_lamp(obj) {
                 mkobj_bill_dummy_ap(obj);
             }
         }
-        await ap_begin_burn(obj, false);
+        await begin_burn(obj, false);
     }
 }
 
@@ -3432,7 +3614,7 @@ export async function light_cocktail(optr) {
 
     if (obj.lamplit) {
         await A.display.pline('You snuff the lit potion.');
-        await ap_end_burn(obj, true);
+        await end_burn(obj, true);
         /* Free & add to re-merge potion.  This averages the age of the
            potions ... don't do that unless obj is not worn. */
         if (!obj.owornmask) {
@@ -3460,7 +3642,7 @@ export async function light_cocktail(optr) {
     }
     A.invent.makeknown(obj.otyp);
 
-    await ap_begin_burn(obj, false); /* after shop billing */
+    await begin_burn(obj, false); /* after shop billing */
     if (split1off) {
         A.invent.obj_extract_self(obj); /* free from inv */
         obj.nomerge = 1;
@@ -3718,7 +3900,7 @@ export async function fig_transform(arg, timeout) {
     // keeps in sync) and use isok() as the "found a location" test.
     const cc = { x: figurine.ox | 0, y: figurine.oy | 0 };
     let okay_spot = ap_isok(cc.x, cc.y);
-    if (figurine.where === OBJ_INVENT_A || figurine.where === OBJ_MINVENT_A)
+    if (figurine.where === OBJ_INVENT || figurine.where === OBJ_MINVENT)
         okay_spot = await ap_enexto(cc, cc.x, cc.y,
                                     A.makemon.monster_by_pmidx(figurine.corpsenm));
     if (!okay_spot || !figurine_location_checks(figurine, cc, true)) {
@@ -3753,7 +3935,7 @@ export async function fig_transform(arg, timeout) {
         }
 
         switch (figurine.where) {
-        case OBJ_INVENT_A:
+        case OBJ_INVENT:
             if (A.vision.Blind() || suppress_see)
                 await A.display.pline(`You feel ${c_something} drop from your pack!`);
             else
@@ -3761,7 +3943,7 @@ export async function fig_transform(arg, timeout) {
                     and_vanish}!`);
             break;
 
-        case OBJ_FLOOR_A:
+        case OBJ_FLOOR:
             if (cansee_spot && !silent) {
                 if (suppress_see)
                     await A.display.pline(`${ap_an(A.invent.xname(figurine))} suddenly vanishes!`);
@@ -3772,7 +3954,7 @@ export async function fig_transform(arg, timeout) {
             }
             break;
 
-        case OBJ_MINVENT_A: {
+        case OBJ_MINVENT: {
             // C names the carrier ("<mon>'s pack" / "empty water" / "thin air");
             // canseemon(figurine->ocarry) picks between them.
             if (cansee_spot && !silent && !suppress_see) {
@@ -3944,12 +4126,12 @@ export async function use_grease(obj) {
             await A.display.pline(`You cover ${A.invent.yname(otmp)} with a thick layer of grease.`);
             otmp.greased = 1;
             if (obj.cursed && !ap_nohands(game.youmonst?.data)) {
-                ap_make_glib(oldglib + rn1(6, 10)); /* + 10..15 */
+                await A.potion.make_glib(oldglib + rn1(6, 10)); /* + 10..15 */
                 await A.display.pline(`Some of the grease gets all over your ${
                     A.do_wear.fingers_or_gloves(true)}.`);
             }
         } else {
-            ap_make_glib(oldglib + rn1(11, 5)); /* + 5..15 */
+            await A.potion.make_glib(oldglib + rn1(11, 5)); /* + 5..15 */
             await A.display.pline(`You coat your ${
                 A.do_wear.fingers_or_gloves(true)} with grease.`);
         }
@@ -4193,7 +4375,7 @@ export async function use_royal_jelly(optr) {
                                        A.invent.GETOBJ_PROMPT);
     if (!eobj) {
         if (splitit) {
-            ap_unsplitobj(obj);
+            A.invent.unsplitobj(obj);
             A.invent.update_inventory();
         } else {
             /* this lump was already separate; prevent merge */
@@ -4249,9 +4431,6 @@ export async function use_royal_jelly(optr) {
     return ECMD_TIME;
 }
 
-// C ref: invent.c unsplitobj(obj) — js/invent.js's copy is private (and is
-// itself a `return obj` stub); RNG-free either way.
-function ap_unsplitobj(obj) { return obj; }
 // C ref: mkobj.c kill_egg(egg) / attach_egg_hatch_timeout(egg, when) —
 // js/mkobj.js's attach_egg_hatch_timeout() is private (and this port has no
 // timer queue), kill_egg() is unported.  attach_egg_hatch_timeout DRAWS in C
@@ -4440,9 +4619,11 @@ export async function use_grapple(obj) {
     return ECMD_TIME;
 }
 
-// C ref: engrave.c u_wipe_engr(cnt) — js/dokick.js's copy is private; C's DRAWS
-// (wipe_engr_at -> rn2 on the engraving text), so this shim is a known gap.
-async function ap_u_wipe_engr(_cnt) {}
+// C ref: engrave.c u_wipe_engr(cnt) — scuffs the engraving underfoot (rn2 draws
+// via wipe_engr_at) when the hero can reach the floor.
+async function ap_u_wipe_engr(cnt) {
+    (await import('./engrave.js')).u_wipe_engr(cnt);
+}
 // C ref: do.c level_objects / OBJ_FLOOR chain — svl.level.objects[x][y] is the
 // TOP object at <x,y>; this port keeps a flat per-level object list.
 function ap_top_object_at(x, y) {

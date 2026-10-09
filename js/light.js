@@ -24,11 +24,10 @@
 import { game, hooks } from './gstate.js';
 import {
     COLNO, ROWNO, MAX_RADIUS, COULD_SEE, TEMP_LIT, RANGE_LEVEL,
-    FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE,
-} from './const.js';
+    FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { clear_path, vision_recalc } from './vision.js';
 import { flush_screen, map_invisible, canseemon_shared } from './display.js';
-import { objects, place_object } from './mkobj.js';
+import { objects, place_object, start_object_timer } from './mkobj.js';
 import { DEADMONSTER, monsterList } from './mon.js';
 import { name_to_pmidx } from './makemon.js';
 import { mindless } from './monflags_data.js';
@@ -167,21 +166,21 @@ export function artifact_light(obj) {
 // (js/invent.js:1077 has a private copy that reads obj.ox/obj.oy for every
 // `where`; this is the full switch.  Belongs to zap.c's owner.)
 const BURIED_TOO = 0x2, CONTAINED_TOO = 0x1;
-function get_obj_location(obj, locflags) {
+export function get_obj_location(obj, locflags) {
     if (!obj) return null;
     switch (obj.where) {
-    case 'invent':
+    case OBJ_INVENT:
         return { x: game.u?.ux, y: game.u?.uy };
-    case 'floor':
+    case OBJ_FLOOR:
         return { x: obj.ox, y: obj.oy };
-    case 'minvent':
+    case OBJ_MINVENT:
         if (obj.ocarry?.mx)
             return { x: obj.ocarry.mx, y: obj.ocarry.my };
         break; /* !mx => migrating monster */
-    case 'buried':
+    case OBJ_BURIED:
         if (locflags & BURIED_TOO) return { x: obj.ox, y: obj.oy };
         break;
-    case 'contained':
+    case OBJ_CONTAINED:
         if (locflags & CONTAINED_TOO)
             return get_obj_location(obj.ocontainer, locflags);
         break;
@@ -226,7 +225,7 @@ function remove_object(obj) {
     if (!arr) return;
     const ix = arr.indexOf(obj);
     if (ix >= 0) arr.splice(ix, 1);
-    obj.where = 'free';
+    obj.where = OBJ_FREE;
 }
 
 // C ref: vision.c circle_data[] / circle_start[] — the same table js/vision.js
@@ -424,7 +423,7 @@ export async function show_transient_light(obj, x, y) {
             if (cand.type !== LS_OBJECT) continue;
             if (cand.id === obj) { ls = cand; break; }
         }
-        if (!ls || obj.where !== 'free') {
+        if (!ls || obj.where !== OBJ_FREE) {
             impossible('transient light not a light source / not free');
             return;
         }
@@ -572,13 +571,14 @@ export function restore_light_sources(records) {
 }
 
 // C ref: light.c:500 light_stats(hdrfmt, hdrbuf, &count, &size) — the '#stats'
-// wizard-mode command.  C's `size` is a byte total from sizeof(light_source),
-// which has no JS analogue; report the record count for both, and the header
-// with the struct size substituted as the record count of 1 entry.
+// wizard-mode command.  sizeof(light_source) in the recorder build (LP64,
+// coordxy = int16_t): next 8 + x,y 4 + range,flags,type 6 (+2 pad) + id 8 = 32.
+const SIZEOF_LIGHT_SOURCE = 32;
 export function light_stats(hdrfmt) {
     let count = 0;
     for (const _ls of light_base()) ++count;
-    return { hdrbuf: (hdrfmt || '').replace(/%l?d/, '1'), count, size: count };
+    return { hdrbuf: (hdrfmt || '').replace(/%l?d/, String(SIZEOF_LIGHT_SOURCE)),
+             count, size: count * SIZEOF_LIGHT_SOURCE };
 }
 
 // C ref: light.c:516 relink_light_sources(ghostly).
@@ -723,9 +723,30 @@ export function any_light_source() {
     return light_base().length > 0;
 }
 
+// C ref: light.c save_light_sources(RANGE_LEVEL) + do.c goto_level().  C keeps
+// ONE chain: leaving a level writes out only the RANGE_LEVEL entries and the
+// RANGE_GLOBAL ones (a lit lamp in the hero's, or a following pet's,
+// inventory) stay on the chain, so they keep shining on the destination.  This
+// port hangs the list off game.level, so the globals are moved across by hand.
+// They are removed from the departing level's list so a revisit does not see
+// them twice.  LS_MONSTER entries are re-derived per level by
+// sync_monster_light_sources().  Call after the destination level is installed
+// and BEFORE the pets are delivered (a migrating pet's mx is still 0).
+export function carry_global_light_sources(prevLevel) {
+    const from = prevLevel?.light_base;
+    if (!from || prevLevel === game.level) return;
+    const dest = light_base();
+    const kept = [];
+    for (const ls of from) {
+        if (ls.type === LS_OBJECT && ls.id && !obj_is_local(ls.id)) dest.push(ls);
+        else kept.push(ls);
+    }
+    prevLevel.light_base = kept;
+}
+
 // C ref: light.c:728 snuff_light_source(x, y) — snuff an object light source at
 // <x,y>.  Only works for burning light sources.
-export function snuff_light_source(x, y) {
+export async function snuff_light_source(x, y) {
     for (const ls of light_base()) {
         /* the positions were refreshed by the last vision update */
         if (ls.type === LS_OBJECT && ls.x === x && ls.y === y) {
@@ -733,7 +754,8 @@ export function snuff_light_source(x, y) {
             if (obj_is_burning(obj)) {
                 /* the only way to snuff Sunsword is to unwield it */
                 if (artifact_light(obj)) continue;
-                end_burn(obj, obj.otyp !== MAGIC_LAMP());
+                const { end_burn } = await import('./timeout.js');
+                await end_burn(obj, obj.otyp !== MAGIC_LAMP());
                 /* the current ls has just been removed; assume one light
                    source per object and return */
                 return;
@@ -742,25 +764,6 @@ export function snuff_light_source(x, y) {
     }
 }
 
-// C ref: timeout.c:1804 end_burn(obj, timer_attached) — DEFERRED in part: this
-// port has no BURN_OBJECT timer (js/timeout.js has no timer queue and
-// js/invent.js:686 stop_timer() is a stub returning 0), so the `timer_attached`
-// arm — which would stop the timer and let cleanup_burn() do exactly the work
-// below — cannot be taken.  Both arms end with the light source deleted and
-// lamplit cleared, which is what this does.  Replace the body with a call to
-// timeout.js end_burn() once the burn timer exists (see `deferred`).
-function end_burn(obj, timer_attached) {
-    if (!obj.lamplit) {
-        impossible('end_burn: obj not lit');
-        return;
-    }
-    if (obj.otyp === MAGIC_LAMP() || artifact_light(obj)) timer_attached = false;
-    void timer_attached;
-    del_light_source(LS_OBJECT, obj);
-    obj.lamplit = 0;
-    /* C: `if (obj->where == OBJ_INVENT) update_inventory()` — a no-op for a
-       tty window port without perm_invent. */
-}
 
 // C ref: light.c:762 obj_sheds_light(obj).
 export function obj_sheds_light(obj) {
@@ -798,9 +801,12 @@ export function obj_split_light_source(src, dest) {
 
 // C ref: light.c:807 obj_merge_light_sources(src, dest) — src has been folded
 // into dest (merging lit candles, or adding candles to a lit candelabrum).
-export function obj_merge_light_sources(src, dest) {
+export async function obj_merge_light_sources(src, dest) {
     /* src == dest implies adding to candelabrum */
-    if (src !== dest) end_burn(src, true); /* extinguish candles */
+    if (src !== dest) {
+        const { end_burn } = await import('./timeout.js');
+        await end_burn(src, true); /* extinguish candles */
+    }
 
     for (const ls of light_base())
         if (ls.type === LS_OBJECT && ls.id === dest) {
@@ -913,15 +919,15 @@ function pad2(n) { return String(n ?? 0).padStart(2, ' '); }
 // 'free' objects are mid-transit, so treat them as C's OBJ_FLOOR.)
 function obj_is_local(obj) {
     switch (obj?.where) {
-    case 'invent':
-    case 'migrating':
+    case OBJ_INVENT:
+    case OBJ_MIGRATING:
         return false;
-    case 'floor':
-    case 'buried':
+    case OBJ_FLOOR:
+    case OBJ_BURIED:
         return true;
-    case 'contained':
+    case OBJ_CONTAINED:
         return obj_is_local(obj.ocontainer);
-    case 'minvent':
+    case OBJ_MINVENT:
         return mon_is_local(obj.ocarry);
     default:
         break;
@@ -1014,12 +1020,28 @@ hooks.lightsources = (cs_rows) => {
     do_light_sources(cs_rows);
 };
 
-// C ref: makemon.c:814-815 — a S_GNOME's freshly-given candle starts burning
-// immediately on unlit ground.  js/makemon.js cannot import this file
-// directly (light.js already imports name_to_pmidx from makemon.js, and the
-// reverse import would cycle), so the effect is exposed through the same
-// hooks indirection vision.js uses above.
-hooks.gnomeCandleLight = (x, y, otmp) => {
+// C refs: makemon.c:814-815, mklev.c:1919 — a candle starts burning
+// immediately on unlit ground.  Exposed through hooks to avoid importing
+// light.js into the synchronous monster and level generators.
+hooks.beginCandleBurn = (x, y, otmp) => {
+    // C ref: timeout.c:1779-1785 — first candle warning is at 75 or 15 fuel.
+    const age = otmp.age | 0;
+    if (!age) return;
+    const turns = age > 75 ? age - 75 : age > 15 ? age - 15 : age;
+    if (!start_object_timer(turns, BURN_OBJECT, otmp)) return;
     otmp.lamplit = true;
+    otmp.age -= turns;
     new_light_source(x, y, candle_light_range(otmp), LS_OBJECT, otmp);
+};
+
+// C ref: makemon.c:1348 `if ((ct = emits_light(mtmp->data)) > 0)
+// new_light_source(mtmp->mx, mtmp->my, ct, LS_MONSTER, ...)` — registering the
+// source at creation is what sets vision_full_recalc so a freshly created
+// yellow light / fire vortex lights its surroundings right away.  Exposed via
+// hooks for the same cycle reason as gnomeCandleLight.
+hooks.monster_light_source = (mtmp) => {
+    const range = emits_light(mtmp.data);
+    if (!range) return;
+    if (light_base().some((ls) => ls.type === LS_MONSTER && ls.id === mtmp)) return;
+    new_light_source(mtmp.mx, mtmp.my, range, LS_MONSTER, mtmp);
 };

@@ -34,7 +34,10 @@ import {
 import { defsyms, S_fountain, S_sink } from './symbols.js';
 import { objects, MAXOCLASSES, OMAILCMD, obj_sanity_check } from './mkobj.js';
 import { may_dig } from './dig.js';
-import { Is_special } from './dungeon.js';
+import { Is_special, overview_stats } from './dungeon.js';
+import { engr_stats } from './engrave.js';
+import { timer_stats } from './timeout.js';
+import { region_stats } from './region.js';
 import { Invocation_lev } from './trap.js';
 import { display_text_window } from './pager.js';
 import { within_bounded_area } from './rect.js';
@@ -43,7 +46,7 @@ import { size_wseg } from './worm.js';
 import { light_stats, light_sources_sanity_check } from './light.js';
 import { check_invent_gold, inventoryArray, ynq } from './invent.js';
 import {
-    monsterList, DEADMONSTER, dmonsfree, mon_sanity_check, usmellmon,
+    monsterList, DEADMONSTER, dmonsfree, mon_sanity_check, usmellmon, mongone,
 } from './mon.js';
 import { minimal_monnam } from './do_name.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -60,6 +63,8 @@ import { canspotmon, x_monnam, mon_nam, killed } from './uhitm.js';
 import { is_undead_flag } from './monflags_data.js';
 import { mklev } from './mklev.js';
 import { done } from './end.js';
+import { keepdogs } from './dog.js';
+import { setpaid } from './shk.js';
 
 /* ------------------------------------------------------------------ */
 /*  local helpers                                                     */
@@ -161,7 +166,9 @@ async function paranoid_query(be_paranoid, prompt) {
 // a negative int and leaves cc alone.  This adapter keeps the C call shape.
 async function getpos_cc(cc, force, goal) {
     const { getpos } = await import('./hack.js');
-    const pos = await getpos(goal, cc.x, cc.y, null, force, false);
+    // C ref: getpos.c — the "(For instructions ...)" line is gated on flags.verbose
+    // itself (wiz_kill() clears it around the call for its own prompt).
+    const pos = await getpos(goal, cc.x, cc.y, null, force, game.flags?.verbose !== false);
     if (!pos) return -1;
     cc.x = pos.x;
     cc.y = pos.y;
@@ -188,8 +195,7 @@ const SIZEOF_MONST = 192, SIZEOF_MEXTRA = 64;
 const SIZEOF_EGD = 640, SIZEOF_EPRI = 56, SIZEOF_ESHK = 4960;
 const SIZEOF_EMIN = 8, SIZEOF_EDOG = 64, SIZEOF_EBONES = 28;
 const SIZEOF_TRAP = 32, SIZEOF_DAMAGE = 32, SIZEOF_KINFO = 272;
-const SIZEOF_CEMETERY = 184, SIZEOF_ENGR = 64, SIZEOF_TIMER_ELEMENT = 48;
-const SIZEOF_NHREGION = 96, SIZEOF_NHRECT = 8, SIZEOF_MAPSEEN = 384;
+const SIZEOF_CEMETERY = 184;
 
 /* ------------------------------------------------------------------ */
 /*  #wizmakemap                                                       */
@@ -197,7 +203,7 @@ const SIZEOF_NHREGION = 96, SIZEOF_NHRECT = 8, SIZEOF_MAPSEEN = 384;
 
 // C ref: wizcmds.c:73 makemap_unmakemon(mtmp, migratory) — used when
 // wiz_makemap() gets rid of monsters for the old incarnation of a level.
-export function makemap_unmakemon(mtmp, migratory) {
+export async function makemap_unmakemon(mtmp, migratory) {
     const ndx = mtmp?.data?.pmidx ?? mtmp?.pmidx ?? -1;
     const mvitals = (game.mvitals ||= []);
     const mv = (mvitals[ndx] ||= { born: 0, died: 0, mvflags: 0 });
@@ -216,7 +222,7 @@ export function makemap_unmakemon(mtmp, migratory) {
     } else if (DEADMONSTER(mtmp)) {
         return; /* already set to be discarded */
     } else if (mtmp.isshk && on_level(game.u?.uz, ESHK(mtmp)?.shoplevel)) {
-        nyi_setpaid(mtmp);
+        setpaid(mtmp);
     }
     if (migratory) {
         /* caller has removed 'mtmp' from migrating_mons; put it onto fmon so
@@ -225,7 +231,7 @@ export function makemap_unmakemon(mtmp, migratory) {
         mtmp.mstate &= ~(MON_MIGRATING | MON_LIMBO | MON_ENDGAME_MIGR);
         monsterList().push(mtmp);
     }
-    nyi_mongone(mtmp);
+    await mongone(mtmp);
 }
 // include/monst.h geno bits / mstate bits used just above.  G_EXTINCT is an
 // mvitals[].mvflags bit and monflag.h:210 makes it 0x01 (mvflags only ever
@@ -234,17 +240,16 @@ export function makemap_unmakemon(mtmp, migratory) {
 const G_UNIQ = 0x1000, G_EXTINCT = 0x01;
 
 // C ref: wizcmds.c:110 makemap_remove_mons() — get rid of all the monsters
-// on (or intimately involved with) the current level.  js/cmd.js:5326 has a
-// bare `cmd_makemap_remove_mons() {}` no-op standing in for this.
+// on (or intimately involved with) the current level.
 export async function makemap_remove_mons() {
     /* keep steed and other adjacent pets after releasing them from traps,
        stopping eating, &c as if the hero were ascending */
-    nyi_keepdogs(true); /* (pets-only; normally we'd be using 'FALSE') */
+    await keepdogs(true); /* (pets-only; normally we'd be using 'FALSE') */
     /* get rid of all the monsters that didn't make it to 'mydogs' */
     for (const mtmp of monsterList().slice()) {
         /* if already dead, dmonsfree() (below) will get rid of it */
         if (DEADMONSTER(mtmp)) continue;
-        makemap_unmakemon(mtmp, false);
+        await makemap_unmakemon(mtmp, false);
     }
     /* some monsters retain details of this level in mon->mextra; that data
        becomes invalid when the level is replaced, so get rid of them now if
@@ -257,7 +262,7 @@ export async function makemap_remove_mons() {
                 || (mtmp.ispriest && on_level(game.u?.uz, EPRI(mtmp)?.shrlevel))
                 || (mtmp.isgd && on_level(game.u?.uz, EGD(mtmp)?.gdlevel)))) {
             migr.splice(i, 1);
-            makemap_unmakemon(mtmp, true);
+            await makemap_unmakemon(mtmp, true);
         } else {
             i++;
         }
@@ -280,6 +285,10 @@ export async function wiz_makemap() {
         /* create a new level; goto_level()-only side effects (Astral's
            guardian angel, Ft.Ludios' alarm) don't occur for replacements */
         await mklev();
+        // C ref: mklev.c:1404-1420,1561-1570 — finish the deferred room fill
+        // and mineralization before makemap_prepost places the hero and pets.
+        const { fastforward_fill_mineralize } = await import('./fastforward.js');
+        if (!game._bones_loaded) await fastforward_fill_mineralize();
         await makemap_prepost(false, was_in_W_tower);
     } else {
         await unavail('wizmakemap');
@@ -879,7 +888,8 @@ function body_part_ARM() { return 'arm'; }
 
 // C ref: wizcmds.c:1102 wiz_rumor_check() — verify each rumor access.
 export async function wiz_rumor_check() {
-    await nyi_rumor_check();
+    const { rumor_check } = await import('./rumors.js');
+    await rumor_check();
     return ECMD_OK;
 }
 
@@ -1025,7 +1035,11 @@ export function misc_stats(win, totals) {
     totals.size += size;
     win.push(template(`traps, size ${SIZEOF_TRAP}`, count, size));
 
-    ({ hdrbuf, count, size } = nyi_engr_stats('engravings, size %ld+text'));
+    {
+        const hb = { s: '' }, cb = { v: 0 }, sb = { v: 0 };
+        engr_stats('engravings, size %ld+text', hb, cb, sb);
+        hdrbuf = hb.s; count = cb.v; size = sb.v;
+    }
     totals.count += count;
     totals.size += size;
     win.push(template(hdrbuf, count, size));
@@ -1039,7 +1053,11 @@ export function misc_stats(win, totals) {
         }
     }
 
-    ({ hdrbuf, count, size } = nyi_timer_stats('timers, size %ld'));
+    {
+        const hb = { s: '' }, cb = { v: 0 }, sb = { v: 0 };
+        timer_stats('timers, size %ld', hb, cb, sb);
+        hdrbuf = hb.s; count = cb.v; size = sb.v;
+    }
     if (count || size) {
         totals.count += count;
         totals.size += size;
@@ -1057,7 +1075,7 @@ export function misc_stats(win, totals) {
         win.push(template(`shop damage, size ${SIZEOF_DAMAGE}`, count, size));
     }
 
-    ({ hdrbuf, count, size } = nyi_region_stats('regions, size %ld+%ld*rect+N'));
+    ({ hdrbuf, count, size } = region_stats('regions, size %ld+%ld*rect+N'));
     if (count || size) {
         totals.count += count;
         totals.size += size;
@@ -1404,7 +1422,7 @@ export async function wiz_show_stats() {
     const ovr_t = { count: 0, size: 0 };
     win.push('');
     win.push('  Overview');
-    nyi_overview_stats(win, ovr_t);
+    overview_stats(win, template, ovr_t);
     win.push(stats_sep);
     win.push(template('  Over total', ovr_t.count, ovr_t.size));
 
@@ -1590,45 +1608,18 @@ export function wizcustom_callback(win, glyphnum, id) {
 /*  porting into the named file, then delete the stub here.            */
 /* ------------------------------------------------------------------ */
 
-// dog.c keepdogs(pets_only) -> js/dog.js
-function nyi_keepdogs(_pets_only) {}
-// mon.c mongone(mtmp) -> js/mon.js
-function nyi_mongone(_mtmp) {}
-// shk.c setpaid(shkp) -> js/shk.js (js/shk.js:1435 has a private copy)
-function nyi_setpaid(_shkp) {}
 // dothrow.c mhurtle(mon, dx, dy, range) -> js/dothrow.js
 async function nyi_mhurtle(_mon, _dx, _dy, _range) {}
 // dothrow.c hurtle(dx, dy, range, verbose) -> js/dothrow.js
 async function nyi_hurtle(_dx, _dy, _range, _verbose) {}
 // panic.c panic(fmt, ...) -> js has no fatal-abort path
 function nyi_panic(_msg) {}
-// rumors.c rumor_check() -> js/rumors.js
-async function nyi_rumor_check() {}
 // dungeon.c get_level(&dest, levnum) -> js/dungeon.js (js/do.js:1976 private)
 function nyi_get_level(levnum) { return { dnum: 0, dlevel: levnum }; }
 // dungeon.c ledger_no(lev) -> js/dungeon.js (js/bones.js:69 private)
 function nyi_ledger_no(_lev) { return 0; }
 // mon.c migrate_to_level(mtmp, tolev, xyloc, cc) -> js/mon.js
 async function nyi_migrate_to_level(_mtmp, _tolev, _xyloc, _cc) {}
-// engrave.c:1626 engr_stats(hdrfmt, hdrbuf, &count, &size) -> js/engrave.js
-function nyi_engr_stats(hdrfmt) {
-    return { hdrbuf: hdrfmt.replace('%ld', String(SIZEOF_ENGR)), count: 0, size: 0 };
-}
-// timeout.c:2735 timer_stats(...) -> js/timeout.js
-function nyi_timer_stats(hdrfmt) {
-    return { hdrbuf: hdrfmt.replace('%ld', String(SIZEOF_TIMER_ELEMENT)),
-             count: 0, size: 0 };
-}
-// region.c:899 region_stats(...) -> js/region.js (takes TWO format args)
-function nyi_region_stats(hdrfmt) {
-    return { hdrbuf: hdrfmt.replace('%ld', String(SIZEOF_NHREGION))
-                           .replace('%ld', String(SIZEOF_NHRECT)),
-             count: 0, size: 0 };
-}
-// dungeon.c:2761 overview_stats(win, statsfmt, &count, &size) -> js/dungeon.js
-function nyi_overview_stats(win, _totals) {
-    win.push(template(`general, size ${SIZEOF_MAPSEEN}`, 0, 0));
-}
 // symbols.c wizcustom_glyphids(win) -> js/symbols.js
 function nyi_wizcustom_glyphids(_win) {}
 // do_wear.c check_wornmask_slots() -> js/do_wear.js

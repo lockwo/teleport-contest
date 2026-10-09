@@ -9,7 +9,7 @@
 // fill_special_room, flip_level, and the `quest_*`/`bigrm_*`/`vly_*`/`soko_*`/
 // `tower_*`/`splev_*` families that several levels call.  A helper that only one
 // level uses belongs in that level's file.
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { depth as depth_of_level, dist2, distmin } from './hacklib.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { somexyspace } from './mkroom.js';
@@ -55,7 +55,7 @@ import {
     W_NORTH, W_SOUTH, W_EAST, W_WEST, AM_NONE,
     ARMORSHOP, SCROLLSHOP, POTIONSHOP, WEAPONSHOP, FOODSHOP, RINGSHOP,
     WANDSHOP, TOOLSHOP, BOOKSHOP, FODDERSHOP, CANDLESHOP,
-} from './const.js';
+    ROT_ORGANIC, ROT_CORPSE, ZOMBIFY_MON, OBJ_FLOOR, OBJ_CONTAINED, OBJ_BURIED } from './const.js';
 // readobjnam() is how C's obj.new(<name>) resolves an item name (via the same
 // rnd_otyp_by_namedesc path a wish uses).  readobjnam.js does not import sp_lev,
 // so this is not a cycle.
@@ -66,7 +66,8 @@ import { mkgold, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
          FOOD_CLASS, GOLD_PIECE, add_to_container, weight, mkobj, RANDOM_CLASS,
          OIL_LAMP, ARROW,
          bless, unbless, curse, uncurse, blessorcurse, discard_minvent,
-         GEM_CLASS, COIN_CLASS } from './mkobj.js';
+         GEM_CLASS, COIN_CLASS, stop_object_timer,
+         start_object_timer, start_level_timer } from './mkobj.js';
 import { monster_by_pmidx, name_to_pmidx, level_difficulty_ext, makemon,
          mkclass, mkclass_aligned, mm_mon_at, enexto_spawn, mongets_pub,
          name_gender_hint, MGEND_NEUTRAL, MM_ASLEEP, MM_NOGRP,
@@ -203,6 +204,7 @@ export { makemaz_wiz_goal } from './levels/wiz_goal.js';
 // set_mktrap_victim() from its own body, so the edge would run mklev's body
 // first and assign into `_mktrap_victim`'s TDZ.
 import { sobj_at, stackobj, obj_extract_self, obfree } from './invent.js';
+import { flip_worm_segs_vertical, flip_worm_segs_horizontal } from './worm.js';
 import { does_block, block_point } from './vision.js';
 import { walkfrom, create_maze } from './mkmaze.js';
 import { m_dowear, resists_ston,
@@ -315,7 +317,14 @@ export const SET_LIT_NOCHANGE = -2;
 export function set_levltyp_lit(x, y, typ, lit) {
     const loc = game.level?.at(x, y);
     if (!loc || typ === INVALID_TYPE || typ >= MAX_TYPE) return false;
+    const oldtyp = loc.typ;
     loc.typ = typ;
+    // C ref: mkmaze.c set_levltyp() — `(IS_FOUNTAIN(oldtyp) != IS_FOUNTAIN(newtyp))
+    // || (IS_SINK(oldtyp) != IS_SINK(newtyp))` re-tallies level.flags here, which
+    // is the ONLY way an ordinary level's counters change after mkfount()/mksink().
+    if ((oldtyp === FOUNTAIN) !== (typ === FOUNTAIN)
+        || (oldtyp === SINK) !== (typ === SINK))
+        EXT.count_level_features();
     if (IS_LAVA(typ)) loc.lit = true;   // set_levltyp(): lava is always lit
     if (lit !== SET_LIT_NOCHANGE) {
         if (IS_LAVA(typ)) lit = 1;
@@ -864,8 +873,9 @@ function create_buried_treasure(croom) {
     // mksobj_at(CHEST, x, y, TRUE, !named) — no name is supplied, so artif is
     // TRUE.  Never reaches the floor: bury_an_obj() obj_extract_self()s it.
     const chest = mksobj(CHEST, true, true);
-    chest.ox = c.x; chest.oy = c.y; chest.where = 'buried';
+    chest.ox = c.x; chest.oy = c.y; chest.where = OBJ_BURIED;
     chest.cobj = []; // SP_OBJ_CONTAINER -> delete_contents(otmp)
+    (game.level.buriedobjlist ??= []).unshift(chest); /* C add_to_buried(): head insertion */
 
     // bury_an_obj: obj_resists(otmp, 0, 0) can never succeed (ochance 0).
     obj_resists_rng();
@@ -873,7 +883,8 @@ function create_buried_treasure(croom) {
     // (CHEST is oc_material WOOD) gates a second obj_resists(otmp, 5, 95) and a
     // 250 + rnd(250) ROT_ORGANIC timer.
     const under_ice = game.level?.at(c.x, c.y)?.typ === ICE;
-    if (!under_ice && obj_resists_rng() >= 5) rnd(250);
+    if (!under_ice && obj_resists_rng() >= 5)
+        start_object_timer(250 + rnd(250), ROT_ORGANIC, chest);
 
     if (game.level) {
         if (!game.level._themeroom_postprocess)
@@ -1126,8 +1137,12 @@ function create_ice_room(croom) {
         set_levltyp_lit(c.x, c.y, ICE, loc ? loc.lit : false);
     }
     if (percent(25)) {
-        // ice:iterate over the SAME selection order; one rn2(1000) per cell.
-        for (let i = 0; i < cells.length; i++) rn2(1000);
+        // ice:iterate walks the selection y-major (nhlsel.c l_selection_iterate),
+        // one rn2(1000) and one melt-ice timer (nh.start_timer_at) per cell.
+        const mintime = 1000 - level_difficulty_ext() * 100;
+        const ordered = cells.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+        for (const c of ordered)
+            start_level_timer(mintime + rn2(1000), (c.x << 16) | c.y);
     }
 }
 
@@ -1182,9 +1197,13 @@ function create_massacre(croom) {
             // the stream stays in lockstep even if the name lookup fails.
             set_corpsenm(otmp, otmp.corpsenm);
         }
+        // C sp_lev.c:3707-3715: des.object resets corpse gender to its flags.
+        otmp.spe = 0;
         // Place the corpse as a real floor object so it renders as a %-glyph.
         otmp.ox = c.x; otmp.oy = c.y;
         place_floor_obj(otmp, c.x, c.y);
+        // C sp_lev.c:2423: des.object merges compatible floor stacks.
+        stackobj(otmp);
     }
 }
 
@@ -1193,7 +1212,7 @@ function create_massacre(croom) {
 // the fobj scans that level-gen and the pet AI perform.
 function place_floor_obj(otmp, x, y) {
     if (!otmp || !game.level) return;
-    otmp.ox = x; otmp.oy = y; otmp.where = 'floor';
+    otmp.ox = x; otmp.oy = y; otmp.where = OBJ_FLOOR;
     const loc = game.level.at(x, y);
     if (loc) {
         otmp.nexthere = loc.objects || null;
@@ -1253,18 +1272,24 @@ function create_buried_zombies(croom) {
         if (!somexy(croom, c)) continue;
 
         const otmp = mksobj(CORPSE, true, false); // next_ident + random corpsenm + timer
+        // C ref: sp_lev.c:2230 — des.object's spe (lflags = 0, no male/female
+        // key) overwrites the gender mksobj rolled, so the later revival's
+        // makemon() rolls the gender itself.
+        otmp.spe = 0;
         // set the corpse to the chosen zombifiable species (override) -> a
         // second start_corpse_timeout via set_corpsenm.
         set_corpsenm(otmp, montype);
         // buried = true -> bury_an_obj -> obj_resists(otmp,0,0) -> rn2(100).
         // The corpse is buried (not on the floor), so it is deliberately NOT
         // added to the floor object list: it must not render as a corpse glyph.
-        otmp.ox = c.x; otmp.oy = c.y; otmp.where = 'buried';
+        otmp.ox = c.x; otmp.oy = c.y; otmp.where = OBJ_BURIED;
+        (game.level.buriedobjlist ??= []).unshift(otmp); /* C add_to_buried(): head insertion */
         obj_resists_rng();
 
-        // o:start_timer("zombify-mon", math.random(990,1010))
+        // o:stop_timer("rot-corpse"); o:start_timer("zombify-mon", 990 + rn2(21))
         //   math.random(990,1010) = nh.random(990, 21) = 990 + rn2(21)
-        rn2(21);
+        stop_object_timer(otmp, ROT_CORPSE);
+        start_object_timer(990 + rn2(21), ZOMBIFY_MON, otmp);
     }
 }
 
@@ -1364,9 +1389,7 @@ const MACE_OTYP = 73;
 
 // C ref: mkroom.c mk_zoo_thronemon(x, y) — the sleeping monarch who sits on the
 // throne of a COURT.  rnd(level_difficulty()) picks the species; the mace is
-// "a sceptre to pound in judgment".  set_malign() only writes mtmp->malign (the
-// alignment-record delta applied when the hero kills it), which this port does
-// not model and which draws no RNG.
+// "a sceptre to pound in judgment".
 function mk_zoo_thronemon(x, y) {
     const i = rnd(level_difficulty_ext());
     const name = (i > 9) ? 'ogre tyrant'
@@ -1378,6 +1401,7 @@ function mk_zoo_thronemon(x, y) {
     if (mon) {
         mon.msleeping = 1;
         mon.mpeaceful = false;
+        set_malign(mon);
         mongets_pub(mon, MACE_OTYP); /* a sceptre to pound in judgment */
     }
 }
@@ -1426,7 +1450,7 @@ function is_ndemon(ptr) {
 
 // C ref: mkroom.c morguemon() — the graveyard's inhabitants.  BOTH rn2()s are
 // always drawn (C evaluates them in the declaration list before any test).
-function morguemon() {
+export function morguemon() {
     const i = rn2(100), hd = rn2(level_difficulty_ext());
 
     if (hd > 10 && i < 10) {
@@ -1454,6 +1478,7 @@ const ANTHOLEMON = ['soldier ant', 'fire ant', 'giant ant'];
 // nameshk() derives the same value and documents why the recording offset is a
 // fixed UTC-4; it is not exported, so the arithmetic is repeated here.
 function ubirthday_seconds() {
+    if (typeof game.ubirthday === 'number' && game.ubirthday) return game.ubirthday;
     const dt = String(game.datetime || '');
     if (!/^\d{14}$/.test(dt)) return 0;
     const y = +dt.slice(0, 4), mo = +dt.slice(4, 6), d = +dt.slice(6, 8);
@@ -1604,7 +1629,7 @@ function fill_zoo_core(sroom) {
                 mon.msleeping = 1;
                 if (type === COURT && mon.mpeaceful) {
                     mon.mpeaceful = false;
-                    /* set_malign(mon) — see mk_zoo_thronemon */
+                    set_malign(mon);
                 }
             }
             if (type === ZOO || type === LEPREHALL) {
@@ -1961,7 +1986,7 @@ function themeroom_water_vault() {
     // box:addcontent(itm) — no RNG; the item leaves the floor for the chest.
     if (boxes[0] && itm) {
         if (!Array.isArray(boxes[0].cobj)) boxes[0].cobj = [];
-        itm.where = 'contained';
+        itm.where = OBJ_CONTAINED;
         itm.ocontainer = boxes[0];
         boxes[0].cobj.push(itm);
     }
@@ -1970,9 +1995,12 @@ function themeroom_water_vault() {
     shuffle(nasty_undead);
     quest_create_monster(nasty_undead[0], 2, 2);
     // des.exclusion({type="teleport", region={2,2,3,3}}) — state only, no RNG.
+    // C ref: sp_lev.c:5529 lspo_exclusion() prepends an LR_TELE zone onto
+    // sve.exclusion_zones, the list is_exclusion_zone() walks.
     const g = game;
-    (g.level.exclusions || (g.level.exclusions = [])).push({
-        type: 'teleport', lx: 2 + gx.xstart, ly: 2 + gy.ystart,
+    if (!g.exclusion_zones) g.exclusion_zones = [];
+    g.exclusion_zones.unshift({
+        zonetype: LR_TELE, lx: 2 + gx.xstart, ly: 2 + gy.ystart,
         hx: 3 + gx.xstart, hy: 3 + gy.ystart,
     });
 }
@@ -2338,8 +2366,7 @@ export function quest_create_object(otyp, mx, my, spe, carryingMon) {
     if (carryingMon) {
         otmp = mksobj(otyp, true, true);           // not placed on floor
         if (spe != null) otmp.spe = spe;
-        if (!carryingMon.minvent) carryingMon.minvent = [];
-        carryingMon.minvent.unshift(otmp);
+        mpickobj(carryingMon, otmp);               // add_to_minv(): merges
     } else {
         otmp = mksobj_at(otyp, x, y, true, true);
         if (spe != null) otmp.spe = spe;
@@ -3245,6 +3272,12 @@ export function flip_level(flp) {
         if (flp & 1) o.oy = FlipY(o.oy);
         if (flp & 2) o.ox = FlipX(o.ox);
     }
+    // buried objects — C ref: sp_lev.c:628-636, same in-area test as floor objects.
+    for (const o of (map.buriedobjlist || [])) {
+        if (!inArea(o.ox, o.oy)) continue;
+        if (flp & 1) o.oy = FlipY(o.oy);
+        if (flp & 2) o.ox = FlipX(o.ox);
+    }
     // monsters
     for (const m of (map.monsters || [])) {
         if (!inArea(m.mx, m.my)) continue;
@@ -3257,8 +3290,23 @@ export function flip_level(flp) {
         // left alone.  Without this a flipped Mine Town leaves every shopkeeper
         // walking toward the pre-flip door and pri_move() at the wrong altar.
         const flipCoord = (cc) => { if (cc && cc.x && inArea(cc.x, cc.y)) flipPt(cc, 'x', 'y'); };
+        flipCoord(m.mgoal);
         if (m.ispriest) flipCoord(m.epri?.shrpos);
         else if (m.isshk && m.eshk) { flipCoord(m.eshk.shk); flipCoord(m.eshk.shd); }
+        else if (m.wormno) {
+            // C ref: sp_lev.c:661-666 flip_worm_segs_{vertical,horizontal}().
+            // C's single monster grid is swapped cell-by-cell with the map, so
+            // the tail squares move with it; this port's `wormsegs` side list
+            // (worm.js place_worm_seg) is that grid's tail half and is mirrored
+            // here for the same worm.
+            if (flp & 1) flip_worm_segs_vertical(m, miny, maxy);
+            if (flp & 2) flip_worm_segs_horizontal(m, minx, maxx);
+            for (const s of (map.wormsegs || [])) {
+                if (s.worm !== m) continue;
+                if (flp & 1) s.y = FlipY(s.y);
+                if (flp & 2) s.x = FlipX(s.x);
+            }
+        }
     }
     // engravings — C ref: sp_lev.c:689-694, flipped unconditionally.
     for (const e of (map.engravings || [])) {
@@ -3304,6 +3352,10 @@ export function flip_level(flp) {
                 map.locations[nx][y] = tmp;
             }
     }
+
+    // timed effects — C ref: sp_lev.c:862-874, MELT_ICE_AWAY timers flip with
+    // the map (arg is the packed (x << 16 | y) location).
+    hooks.flip_melt_ice_timers?.(flp, FlipX, FlipY);
 
     // C ref: sp_lev.c:915 — flip_level() ends with fix_wall_spines() over the
     // whole grid.  Mirroring moves the cells but leaves every corner/T glyph
@@ -3352,11 +3404,15 @@ export async function soko_mktrap(mx, my, name) {
     return trap;
 }
 
-// C ref: sp_lev.c create_object — bare class char, no coord -> get_location
-// (DRY, random) then mkobj_at(oclass, x, y, !named).
+// C ref: sp_lev.c create_object: bare class char, no coord -> get_location
+// (DRY, random) then mkobj_at(oclass, x, y, !named), and finally
+// stackobj(otmp) so a random object landing on an identical pile merges
+// into it (two food-ration stacks on one square become one).
 export function soko_create_object_class_random(oclass) {
     const c = bigrm_get_location_dry();
-    return mkobj_at(oclass, c.x, c.y, true);
+    const otmp = mkobj_at(oclass, c.x, c.y, true);
+    stackobj(otmp);
+    return otmp;
 }
 
 // C ref: sp_lev.c lspo_region — the region(selection,"lit") 2-arg form: grow

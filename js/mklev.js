@@ -5,7 +5,7 @@
 // room placement, corridors, doors, stairs, niches, and fill.
 // Uses the real game PRNG (not a separate layout PRNG) for bit-exact parity.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { finish_map } from './mkmap.js';
@@ -36,18 +36,19 @@ import {
     l_selection_or, l_selection_grow, l_selection_fillrect, l_selection_rect,
     l_selection_randline, W_ANY, W_RANDOM, W_NORTH, W_SOUTH, W_EAST, W_WEST,
 } from './selvar.js';
-import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty_c } from './dungeon.js';
+import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty_c, init_mapseen } from './dungeon.js';
 import { In_quest, BR_PORTAL, BR_NO_END1, BR_NO_END2,
          Is_knox_level, Is_earthlevel } from './const.js';
 import { roles, races } from './role.js';
 import { mflags2_of } from './monflags_data.js';
 import { priestini } from './priest.js';
 import { somex, somey, somexy, somexyspace, occupied, has_dnstairs, has_upstairs, inside_room, nexttodoor } from './mkroom.js';
-import { maketrap, Can_fall_thru, Can_dig_down, t_at, Invocation_lev, deltrap } from './trap.js';
+import { maketrap, Can_fall_thru, Can_dig_down, t_at, Invocation_lev, deltrap, undestroyable_trap } from './trap.js';
 import { makemon as make_monster, rndmonst, mkclass,
          name_to_pmidx, monster_by_pmidx, enexto_spawn, placeOnLevel,
-         name_gender_hint, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
-import { m_at, newsym, impossible } from './display.js';
+         name_gender_hint, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL,
+         newcham as newcham_mk } from './makemon.js';
+import { m_at, newsym, impossible, map_location } from './display.js';
 import { wiz_flip_lregions } from './levels/wiz_common.js';
 import { getbones } from './bones.js';
 import { set_corpsenm } from './mkobj.js';
@@ -78,7 +79,7 @@ import {
     CROSSWALL, TUWALL, TDWALL, TLWALL, TRWALL,
     D_NODOOR, D_CLOSED, D_ISOPEN, D_LOCKED, D_TRAPPED, D_BROKEN, D_SECRET,
     OROOM, VAULT, THEMEROOM, ROOMOFFSET, MAXNROFROOMS, SHARED, NO_ROOM,
-    SHOPBASE, ARMORSHOP, WEAPONSHOP, COURT, ZOO, BEEHIVE, MORGUE, BARRACKS, SWAMP, TEMPLE,
+    SHOPBASE, ARMORSHOP, WEAPONSHOP, COURT, ZOO, BEEHIVE, MORGUE, BARRACKS, SWAMP, TEMPLE, DELPHI,
     LEPREHALL, COCKNEST, ANTHOLE,
     SDOOR, SCORR, IRONBARS, FOUNTAIN, SINK, ALTAR, GRAVE,
     DIR_N, DIR_S, DIR_E, DIR_W, DIR_180,
@@ -93,13 +94,12 @@ import {
     WM_C_OUTER, WM_C_INNER,
     WM_X_TL, WM_X_TR, WM_X_BL, WM_X_BR, WM_X_TLBR, WM_X_BLTR,
     A_LAWFUL, A_NONE, Align2amask, AM_SHRINE, AM_NONE,
-    LR_UPTELE, LR_DOWNTELE, LR_TELE, LR_UPSTAIR, LR_DOWNSTAIR,
+    LR_UPTELE, LR_DOWNTELE, LR_TELE, LR_MONGEN, LR_UPSTAIR, LR_DOWNSTAIR,
     LR_PORTAL, LR_BRANCH, LA_UP, LA_DOWN,
     In_endgame, BURN,
     DUST, MARK, HEADSTONE,
     TAINT_AGE,
-    COULD_SEE, IN_SIGHT,
-} from './const.js';
+    COULD_SEE, IN_SIGHT, OBJ_FLOOR, OBJ_BURIED } from './const.js';
 
 const XLIM = 4;
 const YLIM = 3;
@@ -183,9 +183,19 @@ function stairway_find_special_dir(up) {
 
 // ── Hero placement (C ref: stairs.c, mkmaze.c) ──
 
+// C ref: dungeon.c u_on_newpos() — the level-change arm (u.uz != u.uz0)
+// map_location()s the arrival square, which makes display-rng draws while
+// Hallucinating.
 function u_on_newpos(x, y) {
-    game.u.ux = x;
-    game.u.uy = y;
+    const u = game.u;
+    u.ux = x;
+    u.uy = y;
+    u.uundetected = 0;
+    if (u.usteed) { u.usteed.mx = x; u.usteed.my = y; }
+    if (u.uz?.dnum !== u.uz0?.dnum || u.uz?.dlevel !== u.uz0?.dlevel) {
+        u.ux0 = x; u.uy0 = y;
+        map_location(x, y);
+    }
 }
 
 // C ref: mkmaze.c bad_location() — full predicate; two missing terms restored:
@@ -342,15 +352,25 @@ export function l_nhcore_init() {
 // C ref: mklev.c mklev()
 export async function mklev() {
     const g = game;
+    init_mapseen(g.u.uz);           // C ref: mklev.c:1582, before getbones()
     if (await getbones()) return;   // bones loaded → level already grafted
     g.in_mklev = true;
     await makelevel();
-    recount_level_features();
+    // C ref: sp_lev.c load_special() tail — every makemaz()/special-level path
+    // recounts, the ordinary makerooms() path does not.
+    if (built_by_load_special) count_level_features();
     level_finalize_topology();
     g.in_mklev = false;
 }
 
-function recount_level_features() {
+// C ref: mklev.c count_level_features().  C does NOT call this from mklev():
+// an ordinary level's counters come from mkfount()/mksink() incrementing them
+// and from set_levltyp() recounting when a square's fountain/sink-ness changes.
+// Only load_special()/des.finalize_level() (sp_lev.c) and the wizard terrain
+// wish recount wholesale.  Running it unconditionally here counted themed-room
+// fountains that C never tallies, so dosounds() rolled an rn2(400) ambient
+// check every turn on levels where C rolls nothing.
+export function count_level_features() {
     const lvl = game.level;
     if (!lvl?.flags) return;
     let nfountains = 0, nsinks = 0;
@@ -358,7 +378,7 @@ function recount_level_features() {
         for (let x = 1; x < COLNO; x++) {
             const typ = lvl.at(x, y)?.typ;
             if (typ === FOUNTAIN) nfountains++;
-            if (typ === SINK) nsinks++;
+            else if (typ === SINK) nsinks++;
         }
     lvl.flags.nfountains = nfountains;
     lvl.flags.nsinks = nsinks;
@@ -417,6 +437,10 @@ function clear_level_structures() {
     lf.fumaroles = false;
     lf.stormy = false;
     lf.stasis_until = 0;
+    // C ref: mklev.c:921 clear_level_structures() -> free_exclusions(): the
+    // des.exclusion() zones belong to the level being replaced, so a newly
+    // generated level never inherits the previous one's.
+    game.exclusion_zones = null;
     init_rect();
 }
 
@@ -429,9 +453,16 @@ function litstate_rnd(litstate) {
     return !!litstate;
 }
 
+// C ref: mklev.c makelevel().  Every branch other than the final makerooms()
+// fall-through hands off to makemaz(), which ends in sp_lev.c load_special()
+// -> ... -> count_level_features().  Record which path ran so mklev() can
+// recount exactly where C does.
+let built_by_load_special = false;
+
 // C ref: mklev.c makelevel()
 async function makelevel() {
     const g = game;
+    built_by_load_special = true;
     oinit();
     clear_level_structures();
 
@@ -441,6 +472,13 @@ async function makelevel() {
     // fall through to the regular generator (their sessions diverge earlier
     // anyway, so this cannot regress them).
     const slev = Is_special(g.u?.uz);
+    // C ref: mklev.c:1269 makemaz("tut-1") — a #wizmakemap inside the tutorial
+    // rebuilds tut-1 from its Lua program, not an ordinary random level.
+    if (slev && slev.proto === 'tut-1') {
+        const { makemaz_tutorial } = await import('./tutorial.js');
+        makemaz_tutorial();
+        return;
+    }
     if (slev && slev.proto && slev.proto.toLowerCase() === 'bigrm') {
         await makemaz_bigroom();
         // C ref: bigrm-10.lua's LR_UPSTAIR levregion.  Its map-relative
@@ -838,7 +876,10 @@ async function makelevel() {
         return;
     }
 
-    // Regular level generation
+    // Regular level generation — the only makelevel() path that does NOT go
+    // through load_special(), so its fountain/sink tallies stay with
+    // mkfount()/mksink() exactly as in C.
+    built_by_load_special = false;
     // C ref: mklev.c:1294 — the Rogue-emulation level replaces makerooms()
     // wholesale and then jumps to skip0 (no themerms.lua load, no corridors,
     // no niches, no vault, no special room).
@@ -1874,7 +1915,13 @@ function mk_monster_class_at(classChar, x, y, waiting) {
         mtmp.female = 0;
         // C ref: sp_lev.c create_monster() `mtmp->mstrategy |= STRAT_WAITMASK`
         // for des.monster({waiting=1}); no RNG, but it keeps the monster put.
-        if (waiting) mtmp.mstrategy = (mtmp.mstrategy | 0) | STRAT_WAITMASK_MK;
+        if (waiting) {
+            mtmp.mstrategy = (mtmp.mstrategy | 0) | STRAT_WAITMASK_MK;
+            // C ref: sp_lev.c:2160-2166 — a vampire created already shifted
+            // (bat/fog/wolf) and not asked for that shape shifts back.
+            if (mtmp.cham >= 0 && mtmp.cham !== mtmp.data?.pmidx)
+                newcham_mk(mtmp, monster_by_pmidx(mtmp.cham));
+        }
     }
     return mtmp;
 }
@@ -1903,7 +1950,7 @@ async function themeroom_mausoleum() {
                 // des.object({id="corpse", montype="@", coord={0,0}}) — the
                 // montype class pre-roll (mkclass) precedes mksobj, as in
                 // oracle_place_statue().
-                const pm = mkclass(MK_CLASS_CHAR['@'], 0);
+                const pm = mkclass(MK_CLASS_CHAR['@'], 0x0200 | 0x8000 /* G_NOGEN|G_IGNORE */);
                 const otmp = mksobj_at(CORPSE, sub.lx, sub.ly, true, false);
                 if (pm && otmp) set_corpsenm(otmp, pm.pmidx);
             }
@@ -2207,10 +2254,30 @@ async function do_mkroom(roomtype) {
     }
 }
 
-// C ref: mkroom.c invalid_shop_shape() — irregular or sub-divided shops are
-// rejected.  Regular rectangular rooms (the only kind we generate) are valid.
+// C ref: mkroom.c invalid_shop_shape() — test the actual door's adjacent
+// floor, including irregular rooms; a room's irregular flag alone is not a veto.
 function invalid_shop_shape(sroom) {
-    return !!sroom.irregular || (sroom.nsubrooms ?? 0) > 0;
+    const level = game.level;
+    const door = level.doors[sroom.fdoor];
+    if (!door) return true;
+    let insidex = 0, insidey = 0, insidect = 0;
+    for (let x = Math.max(door.x - 1, sroom.lx); x <= Math.min(door.x + 1, sroom.hx); x++)
+        for (let y = Math.max(door.y - 1, sroom.ly); y <= Math.min(door.y + 1, sroom.hy); y++)
+            if (level.at(x, y)?.typ === ROOM) {
+                insidex = x;
+                insidey = y;
+                insidect++;
+            }
+    if (!insidect) return true;
+    if (insidect === 1) {
+        insidect = 0;
+        for (let x = Math.max(insidex - 1, sroom.lx); x <= Math.min(insidex + 1, sroom.hx); x++)
+            for (let y = Math.max(insidey - 1, sroom.ly); y <= Math.min(insidey + 1, sroom.hy); y++)
+                if ((x !== insidex || y !== insidey) && level.at(x, y)?.typ === ROOM)
+                    insidect++;
+        if (insidect === 1) return true;
+    }
+    return false;
 }
 
 // C ref: mkroom.c isbig() — room area > 20.
@@ -3049,7 +3116,7 @@ function oracle_get_free_room_loc(croom, pm) {
 // rndmonnum + spellbook rolls inside mksobj_init).  x,y are absolute.
 function oracle_place_statue(x, y, monclass) {
     // C: lspo_object pre-roll — mkclass(monclass, G_NOGEN|G_IGNORE) for montype.
-    const pm = mkclass(monclass, 0);
+    const pm = mkclass(monclass, 0x0200 | 0x8000 /* G_NOGEN|G_IGNORE */);
     // create_object -> mksobj_at(STATUE, x, y, init=true)
     const otmp = mksobj_at(STATUE, x, y, true, true);
     // create_object: o->corpsenm != NON_PM -> set_corpsenm(otmp, montype species)
@@ -3677,7 +3744,8 @@ const MT4_SHOP_RTYPE = {
 
 // C ref: dat/nhlib.lua:47 monkfoodshop() — role-dependent, no RNG.
 function mt4_monkfoodshop() {
-    return (roles[game.initrole]?.name === 'Monk')
+    // nhlua.c:2009 pushes gu.urole.name.m for lua's u.role, so compare .name.m.
+    return (roles[game.initrole]?.name?.m === 'Monk')
         ? 'health food shop' : 'food shop';
 }
 
@@ -5189,12 +5257,19 @@ function hf_region_lit(sel) {
     });
 }
 
-// C ref: sp_lev.c lspo_exclusion() — registers a no-teleport zone.  No RNG.
-function hf_exclusion(zonetype, x1, y1, x2, y2) {
+// C ref: sp_lev.c lspo_exclusion() — registers an exclusion zone.  No RNG.
+// `kind` is the des.exclusion() `type=` string; it must be stored as the LR_*
+// number mkmaze.c is_exclusion_zone() compares against (it used to be kept as
+// the raw string, which matched nothing), and C PREPENDS onto the list.
+const HF_EZ_TYPES = { 'teleport': LR_TELE, 'teleport-up': LR_UPTELE,
+                      'teleport-down': LR_DOWNTELE,
+                      'monster-generation': LR_MONGEN };
+function hf_exclusion(kind, x1, y1, x2, y2) {
     const a = hf_loc(x1, y1), b = hf_loc(x2, y2);
     const g = game;
     if (!g.exclusion_zones) g.exclusion_zones = [];
-    g.exclusion_zones.push({ zonetype, lx: a.x, ly: a.y, hx: b.x, hy: b.y });
+    g.exclusion_zones.unshift({ zonetype: HF_EZ_TYPES[kind] ?? LR_TELE,
+                                lx: a.x, ly: a.y, hx: b.x, hy: b.y });
 }
 
 // C ref: sp_lev.c create_altar() — with an explicit `type` there is no rn2(2)
@@ -5515,7 +5590,7 @@ async function makemaz_castle() {
         }
 
         // des.engraving({ coord=loc, type="burn", text="Elbereth" }) — no RNG.
-        make_engr_at(loc.x, loc.y, 'Elbereth', 0, BURN);
+        make_engr_at(loc.x, loc.y, 'Elbereth', null, 0, BURN);
         // des.object({ id="scroll of scare monster", coord=loc, buc="cursed" })
         {
             const s = mksobj_at(SCR_SCARE_MONSTER, loc.x, loc.y, true, true);
@@ -6186,7 +6261,7 @@ async function makemaz_bar_filb() {
         // des.level_init({ style="mines", fg=".", bg=" ", smoothed=true,
         //                  joined=true, lit=0, walled=true })
         //   lit is an explicit boolean (0): litstate_rnd draws NO rn2.
-        mk_mkmap(false, STONE, ROOM, true);
+        await mk_mkmap(false, STONE, ROOM, true);
 
         // des.stair("up"); des.stair("down")
         mk_stair(true);
@@ -6272,14 +6347,20 @@ export async function quest_place_branch() {
             if (await quest_put_lregion_here(x, y, rtype, true)) return;
 }
 
-// C ref: mkmaze.c put_lregion_here() — the two rtypes a des.levregion{} on a
-// quest home level can carry.  LR_*TELE goes through place_lregion() above and
-// LR_*STAIR through castle_place_stair_lregion(), so neither reaches here; C's
-// `oneshot` deltrap() retry has no registered region small enough to need it.
-async function quest_put_lregion_here(x, y, rtype, _oneshot) {
-    // C ref: bad_location() — occupied() plus the ROOM/(CORR on a maze)/AIR
-    // terrain test.  On the quest home levels the registered cell is ROOM.
-    if (mk_bad_branch_location(x, y)) return false;
+// C ref: mkmaze.c put_lregion_here() — the fixed-cell Valley branch can
+// coincide with a random trap.  A one-square levregion removes destroyable
+// traps and retries bad_location() before placing the branch.
+async function quest_put_lregion_here(x, y, rtype, oneshot) {
+    if (mk_bad_branch_location(x, y)) {
+        if (!oneshot) return false;
+        const trap = t_at(x, y);
+        if (trap && !undestroyable_trap(trap.ttyp)) {
+            const mon = m_at(x, y);
+            if (mon?.mtrapped) mon.mtrapped = 0;
+            deltrap(trap);
+        }
+        if (mk_bad_branch_location(x, y)) return false;
+    }
     switch (rtype) {
     case LR_PORTAL: {
         // C: mkportal(x, y, lev->dnum, lev->dlevel) — the destination comes
@@ -6342,7 +6423,7 @@ async function makemaz_oracle() {
             }
             // delphi subroom: des.room({ type="delphi", lit=1, x=4,y=3, w=3,h=3 })
             rn2(100);                               // build_room chance (subroom)
-            const oksub = create_subroom(room1, 4, 3, 3, 3, OROOM, 1);
+            const oksub = create_subroom(room1, 4, 3, 3, 3, DELPHI, 1);
             if (oksub) {
                 const delphi = room1.sbrooms[room1.nsubrooms - 1];
                 // C ref: sp_lev.c build_room():2826 — topologize() runs for a
@@ -6467,7 +6548,11 @@ function oracle_monster(croom) {
     }
     // C: if (croom && !inside_room(croom, x, y)) return;
     if (croom && !inside_room(croom, c.x, c.y)) return;
-    make_monster(null, c.x, c.y, 0);
+    const mtmp = make_monster(null, c.x, c.y, 0);
+    // C ref: sp_lev.c:2125 `mtmp->female = m->female;` — a bare des.monster()
+    // leaves tmpmons.female BOOL_RANDOM, which lspo_monster's safety net turns
+    // into 0, so makemon()'s rn2(2) gender roll (still drawn) is overwritten.
+    if (mtmp) mtmp.female = 0;
 }
 
 // des.trap() fully random: create_trap -> get_free_room_loc(somexy) ->
@@ -6475,7 +6560,18 @@ function oracle_monster(croom) {
 // victim gate.  C ref: sp_lev.c create_trap + mklev.c mktrap.
 async function oracle_trap(croom) {
     const g = game;
-    const c = oracle_get_free_room_loc(croom);      // somexy (get_free_room_loc)
+    // C ref: sp_lev.c get_free_room_loc(): get_location_coord(DRY), then
+    // while the square is not plain ROOM (stairs placed earlier), up to 100
+    // fresh get_room_loc() -> somexy() rolls from the caller's (-1,-1).
+    const c = oracle_get_free_room_loc(croom);
+    if (g.level.at(c.x, c.y)?.typ !== ROOM) {
+        let trycnt = 0;
+        do {
+            const r = { x: -1, y: -1 };
+            somexy(croom, r);
+            c.x = r.x; c.y = r.y;
+        } while (g.level.at(c.x, c.y)?.typ !== ROOM && ++trycnt <= 100);
+    }
     // is_pool_or_lava(tm) check: room floor is never pool here.
     let kind;
     kind = mktrap_random_kind();
@@ -6798,11 +6894,29 @@ function extend_spine(locale, wall_there, dx, dy) {
     if (locale[0][1] && locale[2][1] && locale[0][ny] && locale[2][ny]) return 0;
     return 1;
 }
+// C ref: decl.c gb.bughack — the Baalzebub "insect" region that wall_cleanup()
+// and fix_wall_spines() treat specially while baalz_fixup() wallifies it.
+// x1/y1 start at COLNO/ROWNO so within_bounded_area() fails on its first test
+// everywhere else.  See js/levels/baalz.js.
+export const bughack = {
+    inarea: { x1: COLNO, y1: ROWNO, x2: 0, y2: 0 },
+    delarea: { x1: COLNO, y1: ROWNO, x2: 0, y2: 0 },
+};
+export function bughack_reset() {
+    bughack.inarea = { x1: COLNO, y1: ROWNO, x2: 0, y2: 0 };
+    bughack.delarea = { x1: COLNO, y1: ROWNO, x2: 0, y2: 0 };
+}
+function in_bughack_area(x, y) {
+    const a = bughack.inarea;
+    return x >= a.x1 && x <= a.x2 && y >= a.y1 && y <= a.y2;
+}
+
 function wall_cleanup(x1, y1, x2, y2) {
     const map = game.level;
     if (!map) return;
     for (let x = x1; x <= x2; x++)
         for (let y = y1; y <= y2; y++) {
+            if (in_bughack_area(x, y)) continue;
             const loc = map.at(x, y);
             const typ = loc?.typ ?? STONE;
             if (!(IS_WALL(typ) && typ !== DBWALL)) continue;
@@ -6824,10 +6938,12 @@ export function fix_wall_spines(x1, y1, x2, y2) {
             const loc = map.at(x, y);
             const typ = loc?.typ ?? STONE;
             if (!(IS_WALL(typ) && typ !== DBWALL)) continue;
+            // C: loc_f is iswall inside the baalz insect, iswall_or_stone elsewhere.
+            const lf = in_bughack_area(x, y) ? isWallTile : isWallOrStone;
             const locale = [
-                [isWallOrStone(x-1,y-1), isWallOrStone(x-1,y), isWallOrStone(x-1,y+1)],
-                [isWallOrStone(x,y-1), 0, isWallOrStone(x,y+1)],
-                [isWallOrStone(x+1,y-1), isWallOrStone(x+1,y), isWallOrStone(x+1,y+1)],
+                [lf(x-1,y-1), lf(x-1,y), lf(x-1,y+1)],
+                [lf(x,y-1), 0, lf(x,y+1)],
+                [lf(x+1,y-1), lf(x+1,y), lf(x+1,y+1)],
             ];
             const bits = (extend_spine(locale, isWallTile(x,y-1), 0, -1) << 3)
                 | (extend_spine(locale, isWallTile(x,y+1), 0, 1) << 2)
@@ -6930,7 +7046,7 @@ function breaktest(otmp) {
 // set_mktrap_victim() is handed over.  This is the ONE binding call in the
 // tree; anything sp_lev.js can import without cycling is imported directly
 // there instead of going through EXT.
-bind_sp_lev_externs({ topologize, mkstairs, stairway_add });
+bind_sp_lev_externs({ topologize, mkstairs, stairway_add, count_level_features });
 
 set_mktrap_victim(mktrap_victim);
 function mktrap_victim(trap) {
@@ -6989,9 +7105,8 @@ function mktrap_victim(trap) {
             otmp.owt = weight(otmp);
             curse(otmp);
             place_object(otmp, x, y);
-            // C begin_burn(otmp, FALSE): mark the candle lit on an unlit square.
-            // No RNG; the light-source list isn't modelled, so just set lamplit.
-            if (!game.level?.at(x, y)?.lit) otmp.lamplit = 1;
+            // C ref: mklev.c:1919 — begin_burn starts both light and fuel timer.
+            if (!game.level?.at(x, y)?.lit) hooks.beginCandleBurn?.(x, y, otmp);
         }
         break;
     default: victim_mnum = PM_HUMAN; break;
@@ -7007,7 +7122,7 @@ function mktrap_victim(trap) {
 // C ref: invent.c sobj_at(BOULDER, x, y) — mktrap()'s pit/hole placement test.
 function mk_sobj_at_boulder(x, y) {
     for (const o of game.level?.objects ?? [])
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === BOULDER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === BOULDER)
             return true;
     return false;
 }
@@ -7071,11 +7186,12 @@ async function mktrap_room(croom) {
 function mkfount(croom) {
     const pos = { x: 0, y: 0 };
     if (!find_okay_roompos(croom, pos)) return;
+    // The shared terrain setter recounts features, including themed fountains.
+    // Do not increment again: drying the last fountain must disable its sounds.
+    if (!set_levltyp_lit(pos.x, pos.y, FOUNTAIN, SET_LIT_NOCHANGE)) return;
     const loc = game.level?.at(pos.x, pos.y);
     if (loc) {
-        loc.typ = FOUNTAIN;
         if (!rn2(7)) loc.blessedftn = 1;
-        game.level.flags.nfountains++;
     }
 }
 
@@ -7174,12 +7290,7 @@ export async function fill_ordinary_room(croom, bonus_items) {
     // Fountain
     if (!rn2(10)) mkfount(croom);
     // Sink
-    if (!rn2(60)) {
-        if (find_okay_roompos(croom, pos)) {
-            const loc = g.level?.at(pos.x, pos.y);
-            if (loc) { loc.typ = SINK; g.level.flags.nsinks = (g.level.flags.nsinks || 0) + 1; }
-        }
-    }
+    if (!rn2(60)) mksink(croom);
     // Altar
     if (!rn2(60)) mkaltar(croom);
     // Grave.  C ref: mklev.c:1000 `x = 80 - (depth(&u.uz) * 2);` — depth(), not
@@ -7318,11 +7429,11 @@ function mineralize_kelp(kelp_pool, kelp_moat) {
 // Tracking them keeps weight/RNG bookkeeping faithful without affecting display.
 function bury_object(otmp) {
     if (!otmp) return otmp;
-    otmp.where = 'buried';
+    otmp.where = OBJ_BURIED;
     const lvl = game.level;
     if (lvl) {
-        if (!lvl.buriedobjs) lvl.buriedobjs = [];
-        lvl.buriedobjs.push(otmp);
+        if (!lvl.buriedobjlist) lvl.buriedobjlist = [];
+        lvl.buriedobjlist.unshift(otmp); /* C add_to_buried(): head insertion */
     }
     return otmp;
 }
@@ -7611,12 +7722,6 @@ function level_finalize_topology() {
     bound_digging();
     // mineralize is consumed by fastforward_fill_mineralize
     game.in_mklev = false;
-    // C ref: mklev.c:1559-1560 — has_morgue implies graveyard (has_morgue is
-    // cleared once the morgue is entered, graveyard is permanent).  This is not
-    // cosmetic: mon.c's LEVEL_SPECIFIC_NOCORPSE macro reads it as
-    // `svl.level.flags.graveyard && is_undead(mdat) && rn2(3)`, so on a morgue
-    // level every undead death rolls an extra rn2(3) before leaving a corpse.
-    if (game.level?.flags?.has_morgue) game.level.flags.graveyard = true;
     // C ref: mklev.c themerooms_post_level_generate() runs the level-wide
     // wallification(1, 0, COLNO-1, ROWNO-1) at the very end of makelevel()
     // (mklev.c:1190), BEFORE mklev()'s topologize + set_wall_state() pass
@@ -7628,14 +7733,20 @@ function level_finalize_topology() {
     // consumes no RNG, so running it here is terrain-equivalent and keeps the
     // PRNG aligned.  Without it, irregular lit rooms render straight walls
     // instead of corners.  C ref: mklev.c wallification().
-    wallification(1, 0, COLNO - 1, ROWNO - 1);
+    // C ref: sp_lev.c lspo_finalize_level() skips its level-wide wallification
+    // on a corrmaze level so the Baalzebub insect legs survive.
+    if (!game.level?.flags?.corrmaze)
+        wallification(1, 0, COLNO - 1, ROWNO - 1);
     if (!game.level?.flags?.is_maze_lev) {
         const nroom = game.level?.nroom ?? 0;
         for (let i = 0; i < nroom; i++)
             topologize(game.level.rooms?.[i]);
     }
     set_wall_state();
-    const rooms = game.level?.rooms ?? [];
+    // C: `for (ridx = 0; ridx < SIZE(svr.rooms); ridx++)` — the flat array also
+    // holds the subrooms (rooms[MAXNROFROOMS + 1 ...]), which is where the
+    // Oracle's Delphi chamber lives.
+    const rooms = [...(game.level?.rooms ?? []), ...(game.level?.subrooms ?? [])];
     for (let i = 0; i < rooms.length; i++) {
         const rm = rooms[i];
         if (rm && rm.rtype != null) rm.orig_rtype = rm.rtype;
@@ -8010,8 +8121,6 @@ export function mksink(croom) {
     /* Put a sink at m.x, m.y */
     if (!set_levltyp_lit(m.x, m.y, SINK, SET_LIT_NOCHANGE))
         return;
-
-    game.level.flags.nsinks = (game.level.flags.nsinks || 0) + 1;
 }
 
 // ── C names for ports that already exist under a local name ────────────────
@@ -8149,7 +8258,7 @@ function mkinv_fracture_rock(obj) {
     obj.dknown = obj.bknown = obj.rknown = 0;
     obj.known = 1;                       /* rocks have no oc_uses_known */
     dealloc_oextra(obj);
-    if (obj.where === 'floor') {
+    if (obj.where === OBJ_FLOOR) {
         const ox = obj.ox, oy = obj.oy;
         obj_extract_self_mkobj(obj);
         place_object(obj, ox, oy);
@@ -8161,7 +8270,7 @@ function mkinv_fracture_rock(obj) {
 // mkinvpos() needs the object itself so it can fracture or free it.
 function mkinv_sobj_at(otyp, x, y) {
     for (const o of game.level?.objects ?? [])
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === otyp)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === otyp)
             return o;
     return null;
 }

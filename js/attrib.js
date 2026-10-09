@@ -5,8 +5,8 @@
 import { game } from './gstate.js';
 import { rn2, rn1, rnd, d } from './rng.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING } from './const.js';
-import { adj_erinys } from './makemon.js';
-import { has_innate } from './exper.js';
+import { adj_erinys, monster_by_pmidx, name_to_pmidx } from './makemon.js';
+import { has_innate, minuhpmax, setuhpmax } from './exper.js';
 
 const AVAL = 50; // C ref: attrib.c — tune value for exercise gains.
 
@@ -14,35 +14,45 @@ const AVAL = 50; // C ref: attrib.c — tune value for exercise gains.
 // currently-modeled race (role.c races[].attrmin is uniformly {3,3,3,3,3,3}).
 const ATTRMIN_STR = 3;
 
-// C ref: attrib.h ACURR(x) — current attribute value.  acurr.a is in
-// [Str,Int,Wis,Dex,Con,Cha] order.
+// C ref: attrib.h ACURR(x) == acurr(x) — current effective attribute.
 function ACURR(i) {
-    return game.u?.acurr?.a?.[i] ?? 0;
+    return acurr_eff(i);
 }
 
-// C ref: attrib.c acurr(chridx) — the effective attribute = abon+atemp+acurr,
-// clamped to [3,25] for the non-STR characteristics.  Wounded legs lower
-// atemp[A_DEX] by 1, so the effective Dex (used by e.g. the allmain.c:360
-// u_wipe_engr roll) drops accordingly.  STR's encoded value is not adjusted
-// here (its hunger/loss path is modelled elsewhere); callers that need STR use
-// acurrstr().  abon/atemp default to 0 so this is a no-op for unaffected heroes.
-// C ref: attrib.c acurr() `if (x == A_STR) { if (uarmg && uarmg->otyp ==
-// GAUNTLETS_OF_POWER && !Upolyd) return 125; ... }` — worn gauntlets of power
-// PIN the encoded strength at 125 (displayed "St:25"), overriding abase/abon
-// entirely.  Missing here, the status line kept showing the hero's own Str and
-// every ACURR(A_STR) predicate read the wrong number.
-const GAUNTLETS_OF_POWER_OTYP = 161;
+// C ref: attrib.c acurr(chridx) — the effective attribute = abon+atemp+acurr.
+// Strength is encoded (3..18, 19..118 for 18/xx, 119..125 for 19..25) and is
+// pinned at STR19(25) by worn gauntlets of power (polymorphed or not); the
+// others clamp to [3,25] after their special cases: a nymph or amorous-demon
+// form has at least 18 Cha, Ogresmasher fixes Con at 25, a dunce cap fixes
+// Int and Wis at 6.
+const GAUNTLETS_OF_POWER_OTYP = 161, DUNCE_CAP_OTYP = 94, ART_OGRESMASHER = 16;
+let _pmAmorousDemon = null;
 export function acurr_str_encoded() {
-    const u = game.u;
-    if (game.uarmg?.otyp === GAUNTLETS_OF_POWER_OTYP && !u?.Upolyd) return 125;
-    return u?.acurr?.a?.[A_STR] ?? 0;
+    return acurr_eff(A_STR);
 }
 export function acurr_eff(i) {
     const u = game.u;
-    const base = u?.acurr?.a?.[i] ?? 0;
-    if (i === A_STR) return acurr_str_encoded();
-    const v = base + (u?.atemp?.a?.[i] || 0) + (u?.abon?.a?.[i] || 0);
-    return v > 25 ? 25 : v < 3 ? 3 : v;
+    const tmp = (u?.abon?.a?.[i] || 0) + (u?.atemp?.a?.[i] || 0) + (u?.acurr?.a?.[i] ?? 0);
+    let result = 0;
+    if (i === A_STR) {
+        result = (tmp >= 125 || game.uarmg?.otyp === GAUNTLETS_OF_POWER_OTYP)
+            ? 125 : Math.max(tmp, 3);
+    } else if (i === A_CHA) {
+        if (tmp < 18 && u?.Upolyd) {
+            _pmAmorousDemon ??= name_to_pmidx('amorous demon');
+            if (monster_by_pmidx(u.umonnum)?.mlet === 'n' || u.umonnum === _pmAmorousDemon)
+                result = 18;
+        }
+    } else if (i === A_CON) {
+        if (game.uwep?.oartifact === ART_OGRESMASHER)
+            result = 25;
+    } else if (i === A_INT || i === A_WIS) {
+        if (game.uarmh?.otyp === DUNCE_CAP_OTYP)
+            result = 6;
+    }
+    if (result === 0)
+        result = (tmp >= 25) ? 25 : (tmp <= 3) ? 3 : tmp;
+    return result;
 }
 
 // C ref: attrib.h AEXE(x) — exercise accumulator; lazily allocated to zeros.
@@ -70,43 +80,63 @@ export function exercise(i, inc_or_dec) {
     // encumber_msg() for A_STR/A_CON is display-only; no RNG, omitted.
 }
 
-// C ref: hack.c losehp(dmg,...) — subtract dmg from u.uhp.  Death handling
-// (k_format/knam) isn't reached by the covered sessions, so this is just the
-// HP subtraction (clamped at 0, matching every other file-local losehp()).
-function losehp(dmg) {
+// C ref: attrib.c:221 losestr(num, knam, k_format) — Strength loss (poison,
+// certain monster hits), "may kill you".  ABASE(A_STR) drops by num; if that
+// would take it below ATTRMIN(A_STR), the while loop walks the excess up to the
+// floor one point at a time, each point adding rn1(4,3) HP damage.  That damage
+// goes through the real losehp() (death, botl, maybe_wail), also costs max HP
+// (Upolyd: mhmax), and the remaining `num` goes through adjattrib(A_STR, -num, 1)
+// (silent: msgflg > 0).
+export async function losestr(num, knam, k_format) {
     const u = game.u;
-    if (!u || dmg <= 0) return;
-    u.uhp = (u.uhp ?? 0) - dmg;
-    if (u.uhp < 0) u.uhp = 0;
-}
-
-// C ref: attrib.c losestr(num,...) — Strength loss (poison, certain monster
-// hits).  ABASE(A_STR) drops by num; if that would take it below
-// ATTRMIN(A_STR), C's while loop (attrib.c:232-237) walks the excess up to
-// the floor one point at a time, each point rolling rn1(4,3) extra HP damage
-// (via losehp) before the (now-clamped) adjattrib(A_STR,-num,1) call, which is
-// silent (msgflg>0 suppresses "You feel weaker!").
-export function losestr(num) {
-    const u = game.u;
-    if (!u?.acurr || num <= 0) return;
-    const abase = u.acurr.a;
-    let ustr = (abase[A_STR] ?? 0) - num;
+    if (!u?.acurr) return;
+    const uhpmin = minuhpmax(1);
+    let ustr = (u.acurr.a[A_STR] ?? 0) - num;
+    const waspolyd = !!u.Upolyd;
+    if (num <= 0 || (u.acurr.a[A_STR] ?? 0) < ATTRMIN_STR) {
+        const { impossible } = await import('./display.js');
+        await impossible(`losestr: ${u.acurr.a[A_STR] ?? 0} - ${num}`);
+        return;
+    }
     let dmg = 0;
     while (ustr < ATTRMIN_STR) {
-        ustr++;
-        num--;
-        dmg += rn1(4, 3); // eat.c:1932-via-attrib.c:235 amt = rn1(4,3) => 3..6
+        ++ustr;
+        --num;
+        dmg += rn1(4, 3); /* (0..(4-1))+3 => 3..6; used to use flat 6 here */
     }
-    if (dmg) losehp(dmg);
-    if (num > 0) abase[A_STR] = Math.max(ATTRMIN_STR, (abase[A_STR] ?? 0) - num);
+    if (dmg) {
+        /* in case damage is fatal and caller didn't supply killer reason */
+        if (!knam) {
+            knam = 'terminal frailty';
+            k_format = 1; /* KILLED_BY */
+        }
+        const { losehp_do } = await import('./do.js');
+        await losehp_do(dmg, knam, k_format);
+
+        if (u.Upolyd) {
+            /* when still poly'd, reduce you-as-monst maxHP; never below 1 */
+            setuhpmax(Math.max((u.mhmax | 0) - dmg, 1), false); /* acts as setmhmax() */
+        } else if (!waspolyd) {
+            /* not polymorphed now and didn't rehumanize when taking damage;
+               reduce max HP, but not below uhpmin */
+            if (u.uhpmax > uhpmin)
+                setuhpmax(Math.max(u.uhpmax - dmg, uhpmin), false);
+        }
+        game.botl = true;
+    }
+    /* 'num' could have been reduced to 0 in the minimum strength loop;
+       '(Upolyd || !waspolyd)' is True unless damage caused rehumanization */
+    if (num > 0 && (u.Upolyd || !waspolyd))
+        await adjattrib(A_STR, -num, 1);
 }
 
-// C ref: attrib.c poison_strdmg(strloss, dmg,...) — combined Strength loss +
-// HP damage from poison (eat.c eatcorpse poisonous-corpse branch, fountain.c
-// contamination, spell.c miscast, etc.).
-export function poison_strdmg(strloss, dmg) {
-    losestr(strloss);
-    losehp(dmg);
+// C ref: attrib.c:274 poison_strdmg(strloss, dmg, knam, k_format) — combined
+// strength loss and damage from some poisons (eat.c eatcorpse/poisoned weapon,
+// fountain.c contamination, spell.c contact-poisoned spellbook).
+export async function poison_strdmg(strloss, dmg, knam, k_format) {
+    await losestr(strloss, knam, k_format);
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(dmg, knam, k_format);
 }
 
 // ═══ attrib.c:114 adjattrib(ndx, incr, msgflg) ══════════════════════════════
@@ -155,7 +185,8 @@ export async function adjattrib(ndx, incr, msgflg) {
     }
     const { update_topl } = await import('./display.js');
     if (acurr_eff(ndx) === old_acurr) {
-        if (msgflg === 0) {
+        // C ref: attrib.c:176 `if (msgflg == 0 && flags.verbose)`
+        if (msgflg === 0 && game.flags?.verbose !== false) {
             if (abase[ndx] === old_abase && amax[ndx] === old_amax)
                 await update_topl(`You're ${abonflg ? 'currently' : 'already'} as ${attrstr} as you can get.`);
             else
@@ -244,7 +275,13 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
         // below (never lethal via HP directly).  Without this, the death
         // check just below silently opened the "Die?" wizard-mode prompt
         // with no "You die..." line ever shown.
-        if ((u.uhp | 0) < 1) await update_topl('You die...');
+        if ((u.uhp | 0) < 1) {
+            const { urgent_topl } = await import('./display.js');
+            await urgent_topl('You die...');
+        } else if (u.uhp * 10 < u.uhpmax) {
+            const { maybe_wail } = await import('./do.js');
+            await maybe_wail();
+        }
     } else {
         loss = (thrown_weapon || !fatal) ? 1 : d(2, 2);              // attrib.c:395
         if (await adjattrib(typ, -loss, 1))
@@ -253,13 +290,33 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
     if ((u.uhp | 0) < 1) {
         // C ref: attrib.c:405 — done(strstri(pkiller,"poison") ? DIED : POISONING).
         const { done, DIED } = await import('./end.js');
-        game._killer_name = pkiller;
-        await done(/poison/i.test(pkiller || '') ? DIED : POISONING);
+        const { name_to_mon } = await import('./polyself.js');
+        const { type_is_pname, the } = await import('./objnam.js');
+        const { formatkiller } = await import('./topten.js');
+        const { KILLED_BY_AN, KILLED_BY } = await import('./const.js');
+        let kprefix = KILLED_BY_AN;
+        const { mntmp } = await name_to_mon(pkiller);
+        const killerMon = monster_by_pmidx(mntmp);
+        // C ref: attrib.c:345-355 — unique names and existing articles
+        // must not acquire another indefinite article.
+        if (killerMon && (killerMon.geno & 0x1000 /* G_UNIQ */)) {
+            kprefix = KILLED_BY;
+            if (!type_is_pname(killerMon)) pkiller = the(pkiller);
+        } else if (/^(?:the |an |a )/i.test(pkiller)) {
+            kprefix = KILLED_BY;
+        }
+        // The HP-damage arm reaches losehp()->done(DIED) before this
+        // final poison-specific check (attrib.c:391,401-405).
+        const how = i > 5 || /poison/i.test(pkiller || '') ? DIED : POISONING;
+        game.killer = { ...(game.killer || {}), name: pkiller, format: kprefix };
+        game._killer_name = formatkiller(256, how, false);
+        await done(how);
     }
     const { encumber_msg } = await import('./invent.js');
     await encumber_msg();
 }
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
     // A race-innate grant (e.g. every orc, from level 1) is never persisted as
     // a stored flag anywhere in js/ — OR in the pure has_innate() derivation.
@@ -409,6 +466,18 @@ function confers_luck_at(obj) {
     if (!obj) return false;
     if (obj.otyp === LUCKSTONE) return true;
     return !!obj.oartifact && SPFX_LUCK_ARTIFACTS.has(obj.oname);
+}
+
+// C ref: attrib.c set_moreluck(). There has just been an inventory change
+// affecting a luck-granting item. LUCKADD is 3 (you.h).
+export function set_moreluck() {
+    const u = game.u;
+    if (!u) return;
+    const luckbon = stone_luck(true);
+    const carrying_luckstone = (game.invent || []).some((o) => o.otyp === LUCKSTONE);
+    if (!luckbon && !carrying_luckstone) u.moreluck = 0;
+    else if (luckbon >= 0) u.moreluck = 3;
+    else u.moreluck = -3;
 }
 
 // ─── attrib.c:455 restore_attrib() ─────────────────────────────────────────

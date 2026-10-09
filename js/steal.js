@@ -16,19 +16,24 @@
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { dist2, s_suffix } from './hacklib.js';
-import { can_carry } from './mon.js';
+import { can_carry, DEADMONSTER } from './mon.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
     AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
-import { PLNMSG_MON_TAKES_OFF_ITEM } from './const.js';
-import { update_topl } from './display.js';
+import { PLNMSG_MON_TAKES_OFF_ITEM, Unaware } from './const.js';
+// C's urgent_pline() (steal.c:532/540/603) is display.js urgent_topl(): still
+// shown after ESC dismissed the preceding "<Mon> disarms ..." --More--.
+import { update_topl, urgent_topl } from './display.js';
 import { Blind } from './vision.js';
 import { canspotmon, Monnam } from './uhitm.js';
+import { Some_Monnam } from './do_name.js';
+import { add_to_minv } from './makemon.js';
 import { is_animal, humanoid, throws_rocks_flag } from './monflags_data.js';
 import {
     inv_cnt, freeinv, encumber_msg, doname_invent, remove_worn_item,
-    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN,
+    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname,
 } from './invent.js';
 
+import { armor_simple_name } from './do_wear.js';
 // C ref: defsym.h MONSYM(14, 'n', NYMPH, S_NYMPH, "nymph") — the class whose
 // "<Mon> takes off ..." preface makes the follow-up theft message use "She"
 // instead of repeating the name.  (This was 12, which is S_LEPRECHAUN's
@@ -40,13 +45,6 @@ const LOST_NONE = 0, LOST_STOLEN = 3;
 // C ref: mon.c monnear(mon, x, y) — is the monster close enough to attack?
 // (The NODIAG grid-bug refinement doesn't matter for a thief.)
 function monnear(mon, x, y) { return dist2(mon.mx, mon.my, x, y) < 3; }
-
-// C ref: do_name.c some_mon_nam()/Some_Monnam() — like Monnam(), but an unseen
-// thief is "Someone" (humanoid) or "Something" rather than "It".
-export function Some_Monnam(mtmp) {
-    if (!canspotmon(mtmp)) return humanoid(mtmp?.data) ? 'Someone' : 'Something';
-    return Monnam(mtmp);
-}
 
 // C ref: steal.c somegold(lmoney) — the proportional slice of the hero's purse
 // a leprechaun grabs.
@@ -76,7 +74,7 @@ export function findgold(chain) {
 function unresponsive() {
     if ((game.multi ?? 0) >= 0) return false;
     const why = game.multi_reason || '';
-    return why.startsWith('frozen') || why.startsWith('paralyzed');
+    return Unaware() || why.startsWith('frozen') || why.startsWith('paralyzed');
 }
 
 // C ref: do_wear.c doffing(obj) / stop_donning(obj) — is a multi-turn dressing
@@ -112,39 +110,12 @@ export function mpickobj(mtmp, otmp) {
         if (otmp.how_lost === LOST_THROWN) otmp.how_lost = LOST_STOLEN;
         else if (otmp.how_lost === LOST_DROPPED) otmp.how_lost = LOST_NONE;
     }
-    // add_to_minv(): merge with an identical stack already carried, else
-    // PREPEND (mkobj.c:2648 `obj->nobj = mon->minvent; mon->minvent = obj;`)
-    // so mon.minvent stays newest-first, matching every other producer.
-    mtmp.minvent = mtmp.minvent || [];
-    for (const o of mtmp.minvent) {
-        if (mergable(o, otmp)) {
-            o.quan = (o.quan || 1) + (otmp.quan || 1);
-            return 1;                                  /* otmp was freed */
-        }
-    }
-    otmp.where = 'minvent';
-    otmp.ocarry = mtmp;
-    mtmp.minvent.unshift(otmp);
-    return 0;
+    return add_to_minv(mtmp, otmp);       /* 1: otmp merged and was freed */
 }
 // C ref: obj.h how_lost values used by mpickobj's autopickup bookkeeping.
 // obj.h:481-484 — LOST_NONE 0, LOST_THROWN 1, LOST_DROPPED 2, LOST_STOLEN 3.
 // LOST_DROPPED was 3, which is LOST_STOLEN: dropped objects were bookkept as stolen.
 const LOST_THROWN = 1, LOST_DROPPED = 2;
-
-// C ref: mkobj.c mergable(otmp, obj) — reduced to the identity tests that
-// matter for a stolen item: same type/enchantment/BUC, and only for the classes
-// that actually stack (a corpse never merges; armor/rings/amulets/tools are
-// one-per-object).  A wrong "yes" here would silently destroy the theft, so the
-// test is deliberately conservative.
-function mergable(o, otmp) {
-    if (o.otyp !== otmp.otyp || o.oclass !== otmp.oclass) return false;
-    if (o.oclass === ARMOR_CLASS || o.oclass === RING_CLASS
-        || o.oclass === AMULET_CLASS || o.oclass === TOOL_CLASS
-        || o.otyp === CORPSE) return false;
-    return (o.spe | 0) === (otmp.spe | 0)
-        && !!o.cursed === !!otmp.cursed && !!o.blessed === !!otmp.blessed;
-}
 
 // C ref: steal.c steal(mtmp, objnambuf) — a monster steals one item from the
 // hero.  Returns 1 when something was taken (or at least when the thief should
@@ -285,13 +256,13 @@ export async function steal(mtmp, objnambuf) {
                 otmp.cursed = 0;
                 const slowly = (armordelay >= 1 || (game.multi ?? 0) < 0);
                 if (game.flags?.female) {
-                    await update_topl(`${!seen ? 'She' : Monnambuf} charms you.  You gladly `
+                    await urgent_topl(`${!seen ? 'She' : Monnambuf} charms you.  You gladly `
                         + `${curssv ? 'let her take'
                             : !slowly ? 'hand over'
                                 : was_doffing ? 'continue removing' : 'start removing'} `
                         + `your ${armor_simple_name(otmp)}.`);
                 } else {
-                    await update_topl(`${!seen ? 'She' : Adjmonnam(mtmp, 'beautiful')} seduces you and `
+                    await urgent_topl(`${!seen ? 'She' : Adjmonnam(mtmp, 'beautiful')} seduces you and `
                         + `${curssv ? 'helps you to take'
                             : !slowly ? 'you take'
                                 : was_doffing ? 'you continue taking' : 'you start taking'} `
@@ -301,16 +272,17 @@ export async function steal(mtmp, objnambuf) {
                 /* set multi for later on */
                 nomul(-armordelay);
                 game.multi_reason = 'taking off clothes';
+                /* C: gn.nomovemsg = 0 here, so unmul() falls back to its
+                   default "You can move again." */
+                game.nomovemsg = 'You can move again.';
                 await remove_worn_item(otmp, true);
                 otmp.cursed = curssv;
                 if ((game.multi ?? 0) < 0) {
                     // The hero keeps taking the piece off over the next turns;
-                    // stealarm() finishes the theft via the afternmv hook, which
-                    // this port doesn't carry.  Record the pending theft so the
-                    // item can't be stolen twice and stop here, exactly as C's
-                    // `return 0` does for this turn.
+                    // stealarm() finishes the theft when unmul() runs afternmv.
                     game.stealoid = otmp.o_id;
                     game.stealmid = mtmp.m_id;
+                    game.afternmv = stealarm;
                     return 0;
                 }
             }
@@ -337,7 +309,7 @@ export async function steal(mtmp, objnambuf) {
     if (game.last_msg === PLNMSG_MON_TAKES_OFF_ITEM
         && mtmp.data?.mcls === S_NYMPH_MCLS)
         ++named;
-    await update_topl(`${named ? 'She' : Monnambuf} stole ${doname_invent(otmp)}.`);
+    await urgent_topl(`${named ? 'She' : Monnambuf} stole ${doname_invent(otmp)}.`);
     await encumber_msg();
     const could_petrify = otmp.otyp === CORPSE
         && await (async () => {
@@ -358,21 +330,6 @@ export async function steal(mtmp, objnambuf) {
 // C ref: onames.h RIN_ADORNMENT — the ring a thief grabs before rolling.
 const RIN_ADORNMENT = 173;
 
-// C ref: do_wear.c armor_simple_name(obj) — "suit"/"cloak"/"helmet"/"shield"/
-// "gloves"/"boots"/"shirt" for the take-off messages.
-function armor_simple_name(obj) {
-    const name = objects[obj.otyp]?.name || 'armor';
-    if (/shield/.test(name)) return 'shield';
-    if (/helm|hat|cap|pot/.test(name)) return 'helmet';
-    if (/gloves|gauntlets/.test(name)) return 'gloves';
-    if (/boots|shoes/.test(name)) return 'boots';
-    if (/cloak|robe/.test(name)) return 'cloak';
-    if (/shirt/.test(name)) return 'shirt';
-    return 'suit';
-}
-
-// C ref: do_name.c yname(obj) — "your <obj>" for a carried item.
-function yname(obj) { return `your ${objects[obj.otyp]?.name || 'thing'}`; }
 
 // C ref: do_name.c Adjmonnam(mtmp, adj) — "The beautiful nymph".  Only the
 // male-hero seduction message uses it; the covered hero is female.
@@ -407,7 +364,7 @@ import { cansee } from './vision.js';
 import { GOLD_PIECE, ROCK_CLASS, AMULET_OF_YENDOR,
          base_oc_cost, place_object } from './mkobj.js';
 import { mflags1_of, M1_SLITHY, can_teleport_flag } from './monflags_data.js';
-import { W_SADDLE, W_ARMG } from './const.js';
+import { W_SADDLE, W_ARMG, OBJ_FREE, OBJ_INVENT } from './const.js';
 
 // C ref: onames.h — the four "special interest" targets of an AD_SAMU theft,
 // resolved by NAME so an objects[] shift can't silently re-point them.
@@ -422,17 +379,9 @@ const BELL_OF_OPENING = otyp_by_name_st('bell of opening');
 const BELL_ST = otyp_by_name_st('bell');
 const SPE_BOOK_OF_THE_DEAD = otyp_by_name_st('Book of the Dead');
 const CANDELABRUM_OF_INVOCATION = otyp_by_name_st('Candelabrum of Invocation');
-// C ref: monattk.h:91 AD_SITM (251) / AD_SAMU (252) — steal-item / steal-Amulet.
-const AD_SITM_ST = 251;
+// C ref: monattk.h:63 AD_SITM (21) — steal-item (nymphs).
+const AD_SITM_ST = 21;
 
-// C ref: mon.c add_to_minv(mon, obj) — js/vault.js:184 holds the private
-// original; the steal.c callers below need the same "merge or append".
-function add_to_minv_st(mon, obj) {
-    mon.minvent = mon.minvent || [];
-    obj.where = 'minvent';
-    obj.ocarry = mon;
-    mon.minvent.push(obj);
-}
 // C ref: invent.c money_cnt(list) — js/invent.js:1155 (private).
 function money_cnt_st(list) {
     let sum = 0;
@@ -478,7 +427,7 @@ export async function stealgold(mtmp) {
     if (fgold && (!ygold || fgold.quan > ygold.quan || !rn2(5))) {
         const { obj_extract_self } = await import('./invent.js');
         obj_extract_self(fgold);
-        add_to_minv_st(mtmp, fgold);
+        add_to_minv(mtmp, fgold);
         newsym(u.ux, u.uy);
         const { y_monnam } = await import('./do_name.js');
         const { makeplural, body_part } = await import('./invent.js');
@@ -503,8 +452,8 @@ export async function stealgold(mtmp) {
         if (!ygold || !rn2(5)) {
             const { tele_restrict, rloc } = await import('./teleport.js');
             const { monflee } = await import('./monmove.js');
-            if (!tele_restrict(mtmp))
-                await rloc(mtmp, /*RLOC_MSG*/ 1);
+            if (!await tele_restrict(mtmp))
+                await rloc(mtmp, 0x02 /* RLOC_MSG */);
             await monflee(mtmp, 0, false, false);
         }
     } else if (ygold) {
@@ -521,10 +470,10 @@ export async function stealgold(mtmp) {
         else
             setnotworn_st(ygold);
         freeinv(ygold);
-        add_to_minv_st(mtmp, ygold);
+        add_to_minv(mtmp, ygold);
         await update_topl('Your purse feels lighter.');
-        if (!tele_restrict(mtmp))
-            await rloc(mtmp, /*RLOC_MSG*/ 1);
+        if (!await tele_restrict(mtmp))
+            await rloc(mtmp, 0x02 /* RLOC_MSG */);
         await monflee(mtmp, 0, false, false);
         game.disp = game.disp || {};
         game.disp.botl = true;
@@ -609,8 +558,8 @@ export async function stealarm() {
                 const { monflee } = await import('./monmove.js');
                 const { tele_restrict, rloc } = await import('./teleport.js');
                 await monflee(mtmp, 0, false, false);
-                if (!tele_restrict(mtmp))
-                    await rloc(mtmp, /*RLOC_MSG*/ 1);
+                if (!await tele_restrict(mtmp))
+                    await rloc(mtmp, 0x02 /* RLOC_MSG */);
             }
             break;
         }
@@ -719,8 +668,8 @@ export async function stealamulet(mtmp) {
         await update_topl(`${Some_Monnam(mtmp)} steals ${buf}!`);
         {
             const { tele_restrict, rloc } = await import('./teleport.js');
-            if (can_teleport_flag(mtmp.data) && !tele_restrict(mtmp))
-                await rloc(mtmp, /*RLOC_MSG*/ 1);
+            if (can_teleport_flag(mtmp.data) && !await tele_restrict(mtmp))
+                await rloc(mtmp, 0x02 /* RLOC_MSG */);
         }
         await encumber_msg();
     }
@@ -767,7 +716,7 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
 
 // C ref: obj.h carried(obj) — obj->where == OBJ_INVENT.
 function carried_st(obj) {
-    return obj?.where === 'invent' || inventoryArray_st().includes(obj);
+    return obj?.where === OBJ_INVENT || inventoryArray_st().includes(obj);
 }
 // C ref: objclass.h bimanual(otmp) — objects[].oc_bimanual.  The file already
 // carries a FALSE stub for the animal-thief path; this reads the real flag when
@@ -832,6 +781,6 @@ function extract_from_minvent_st(mon, obj, _do_intrinsics, _silently) {
     const i = inv.indexOf(obj);
     if (i >= 0) inv.splice(i, 1);
     obj.owornmask = 0;
-    obj.where = 'free';
+    obj.where = OBJ_FREE;
     obj.ocarry = null;
 }

@@ -13,18 +13,19 @@
 import { game } from './gstate.js';
 import { rn2, rnd, d } from './rng.js';
 import { objects, WEAPON_CLASS, TOOL_CLASS, GEM_CLASS, BALL_CLASS,
-         CHAIN_CLASS, HEAVY_IRON_BALL } from './mkobj.js';
+         CHAIN_CLASS, HEAVY_IRON_BALL, ROCK, LUCKSTONE } from './mkobj.js';
 import { WEP_SDAM, WEP_LDAM, WEP_HITBON } from './weapondmg_data.js';
 import { mflags1_of, mflags2_of, M1_THICK_HIDE, M1_WALLWALK, M1_SWIM,
          M2_UNDEAD, M2_DEMON } from './monflags_data.js';
 import { P_NONE, P_BARE_HANDED_COMBAT, P_AXE, P_SPEAR, P_PICK_AXE,
+         P_BOW, P_SLING, P_CROSSBOW, P_FLAIL,
          P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_LAST_SPELL, P_NUM_SKILLS,
          P_TWO_WEAPON_COMBAT, P_RIDING, A_STR, A_DEX,
          W_ARM, W_ARMC, W_ARMU, W_ARMG, W_RINGL, W_RINGR,
-         POOL, MOAT, WATER } from './const.js';
+         POOL, MOAT, WATER, OBJ_INVENT } from './const.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
-import { mon_hates_silver } from './mon.js';
+import { mon_hates_silver, is_vampshifter } from './mon.js';
 import { which_armor } from './worn.js';
 import { attacktype, AT_WEAP } from './monattk_data.js';
 import { acurr_eff } from './attrib.js';
@@ -80,9 +81,11 @@ function thick_skinned(ptr) { return (mflags1_of(ptr) & M1_THICK_HIDE) !== 0; }
 function passes_walls(ptr) { return (mflags1_of(ptr) & M1_WALLWALK) !== 0; }
 function is_swimmer(ptr) { return (mflags1_of(ptr) & M1_SWIM) !== 0; }
 // C ref: mondata.c hates_blessings(ptr) = is_undead(ptr) || is_demon(ptr);
-// mon_hates_blessings(mon) adds is_vampshifter(mon) (mon->cham, untracked).
+// mon_hates_blessings(mon) adds is_vampshifter(mon): a vampire in fog cloud /
+// bat / wolf form still hates blessed weapons.
 export function mon_hates_blessings(mon) {
-    return (mflags2_of(mdata_of(mon)) & (M2_UNDEAD | M2_DEMON)) !== 0;
+    return (mon?.cham != null && is_vampshifter(mon))
+        || (mflags2_of(mdata_of(mon)) & (M2_UNDEAD | M2_DEMON)) !== 0;
 }
 // C ref: mondata.h is_wooden(ptr) — the wood golem alone.
 let _PM_WOOD_GOLEM = -1;
@@ -288,17 +291,20 @@ export function special_dmgval(magr, mdef, armask) {
     let silverhit = 0;
     let bonus = 0;
     let obj = null;
+    // C ref: which_armor(&gy.youmonst, W) reads u.uarm*; the hero's worn gear
+    // lives in game.invent (owornmask), not in a monster minvent.
+    const armor_of = is_hero(magr) ? { minvent: game.invent || [] } : magr;
 
     if (armask & (W_ARMC | W_ARM | W_ARMU)) {
-        if ((armask & W_ARMC) && (obj = which_armor(magr, W_ARMC))) armask = W_ARMC;
-        else if ((armask & W_ARM) && (obj = which_armor(magr, W_ARM))) armask = W_ARM;
-        else if ((armask & W_ARMU) && (obj = which_armor(magr, W_ARMU))) armask = W_ARMU;
+        if ((armask & W_ARMC) && (obj = which_armor(armor_of, W_ARMC))) armask = W_ARMC;
+        else if ((armask & W_ARM) && (obj = which_armor(armor_of, W_ARM))) armask = W_ARM;
+        else if ((armask & W_ARMU) && (obj = which_armor(armor_of, W_ARMU))) armask = W_ARMU;
         else armask = 0;
     } else if (armask & (W_ARMG | W_RINGL | W_RINGR)) {
-        obj = which_armor(magr, W_ARMG);
+        obj = which_armor(armor_of, W_ARMG);
         armask = obj ? W_ARMG : 0;
     } else {
-        obj = which_armor(magr, armask);
+        obj = which_armor(armor_of, armask);
     }
 
     if (obj) {
@@ -357,7 +363,7 @@ export async function silver_sears(_magr, mdef, silverhit) {
 // C ref: weapon.c:90 weapon_descr(obj) — the weapon's skill-category name, used
 // to shorten involuntary-drop messages.
 const ODD_SKILL_NAMES = [
-    'no skill', 'bare hands', 'two weapon combat', 'riding', 'polearms',
+    'no skill', 'bare hands', 'two weapon combat', 'riding', 'polearm',
     'saber', 'hammer', 'whip', 'attack spells', 'healing spells',
     'divination spells', 'enchantment spells', 'clerical spells',
     'escape spells', 'matter spells',
@@ -399,6 +405,15 @@ export function weapon_descr(obj) {
             : obj?.globby ? 'glob'
             : (OC_CLASS_NAME[obj?.oclass] || 'weapon');
     }
+    if ((objects[obj?.otyp]?.oc_skill ?? 0) < 0) {
+        if (skill === P_BOW) descr = 'arrow';
+        else if (skill === P_CROSSBOW) descr = 'bolt';
+        else if (skill === P_SLING)
+            descr = obj.otyp === ROCK || (obj.otyp >= LUCKSTONE && obj.otyp < ROCK)
+                ? 'stone' : obj.oclass === GEM_CLASS ? 'gem' : OC_CLASS_NAME[obj.oclass];
+    }
+    if (skill === P_FLAIL && obj.otyp === 260 /* GRAPPLING_HOOK */) descr = 'hook';
+    if (skill === P_PICK_AXE && obj.otyp === W_.DWARVISH_MATTOCK) descr = 'mattock';
     return descr;
 }
 
@@ -644,7 +659,7 @@ async function finish_towel_change(obj, newspe) {
     newspe = Math.min(newspe, 7);
     obj.spe = Math.max(newspe, 0);
     if (obj === game.uwep) game.unweapon = !is_wet_towel(obj);
-    if (obj.where === 3 /* OBJ_INVENT */ || obj.carried) {
+    if (obj.where === OBJ_INVENT || obj.carried) {
         const { update_inventory } = await import('./invent.js');
         update_inventory();
     }

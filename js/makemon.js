@@ -8,6 +8,7 @@ import { depth as depth_of_level } from './hacklib.js';
 import { christen_monst, mhim, mhis } from './do_name.js';
 import { builds_up, In_hell, Is_special, level_difficulty_c } from './dungeon.js';
 import { roles } from './role.js';
+import { has_innate } from './exper.js';
 import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
          rnd_class, objects, set_corpsenm, add_to_container,
          // Both spellings are imported on purpose: the pre-existing call sites
@@ -34,15 +35,16 @@ import {
     Is_airlevel, Is_firelevel, Is_earthlevel, Is_waterlevel,
     In_mines, In_sokoban, Is_stronghold, In_quest, In_V_tower, Is_knox_level, Align2amask,
     PIT, HOLE, TRAPDOOR, ALL_TRAPS,
-    COLNO, ROWNO, DOOR, IN_SIGHT, POOL, MOAT, WATER, LAVAPOOL,
+    COLNO, ROWNO, DOOR, IN_SIGHT, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     HWALL, TLCORNER, BLCORNER, CROSSWALL, TUWALL, TDWALL, TRWALL, DBWALL,
     SDOOR, SCORR, D_CLOSED, D_LOCKED,
     STRAT_CLOSE, STRAT_WAITFORU, STRAT_APPEARMSG, W_SADDLE,
     IS_ALTAR, HEADSTONE, LR_MONGEN, MM_APPARXY_BYYOU,
     NO_MINVENT, MM_NOMSG, MM_NOEXCLAM, M_AP_NOTHING, M_AP_MONSTER,
+    M_AP_FURNITURE, M_AP_OBJECT, M_AP_TYPMASK,
     MHID_ARTICLE, MHID_ALTMON, BOLT_LIM, DF_NONE, NO_NC_FLAGS, NC_SHOW_MSG,
-    NC_VIA_WAND_OR_SPELL,
-} from './const.js';
+    NC_VIA_WAND_OR_SPELL, OBJ_FREE, OBJ_FLOOR, OBJ_MINVENT,
+    IS_WATERWALL } from './const.js';
 // set_mimic_sym() needs the room/trap/vision helpers.  These modules sit below
 // makemon.js in the import graph except vision.js, which imports two function
 // declarations from here — a cycle that resolves cleanly because both sides are
@@ -86,6 +88,10 @@ export const MM_ASLEEP = 0x00001000; // monsters should be generated asleep
 export const MM_NOGRP = 0x00002000; // suppress creation of monster groups
 const MM_ANGRY = 0x00000020; // monster is created angry
 const MM_ADJACENTOK = 0x00000010; // C ref: makemon.h — ok to displace to an adjacent square
+const MM_EDOG = 0x00000800; // C ref: makemon.h MM_EDOG — allocate a pet extension.
+// C ref: makemon.c makemon() — dog.js registers newedog via the shared hook,
+// avoiding a makemon.js <-> dog.js static import cycle.
+const newedog_mm = (mtmp) => hooks.newedog(mtmp);
 // C ref: hack.h:1155-1163 — the caller-supplied mextra/gender flags.
 const MM_EPRI = 0x00000100;
 export const MM_EMIN = 0x00000400;
@@ -1419,7 +1425,10 @@ function mongets(_mtmp, otyp) {
     // inventory so the Big Room m_initinv gold uses d(ld, minvent?5:10), and
     // keep the object itself so it can be dropped (relobj) when the monster
     // dies (mon.c m_detach -> relobj drops mtmp->minvent onto the map).
-    if (_mtmp) { _mtmp._hasinv = true; mpickobj(_mtmp, otmp); }
+    if (_mtmp) {
+        _mtmp._hasinv = true;
+        if (mpickobj(_mtmp, otmp)) return null;   // otmp was freed via merging
+    }
     return otmp;   // C mongets() returns the created obj (used by ARM_BONUS math)
 }
 const BELL_OF_OPENING_OTYP = 263, SPE_BOOK_OF_THE_DEAD_OTYP = 409;
@@ -1448,11 +1457,26 @@ function m_initthrow(_mtmp, otyp, oquan) {
 // order directly — both picked the wrong item (seed0030 mirror44: wrong
 // glyph on object-detection, wrong item on top of the death-drop pile).
 export function mpickobj(mtmp, otmp) {
-    if (!mtmp || !otmp) return;
-    if (!mtmp.minvent) mtmp.minvent = [];
-    otmp.where = 'minvent';
-    otmp.ocarry = mtmp;
-    mtmp.minvent.unshift(otmp);
+    if (!mtmp || !otmp) return 0;
+    return add_to_minv(mtmp, otmp);
+}
+
+// C ref: mkobj.c:2648 add_to_minv(mon, obj) — the one place an object joins a
+// monster's inventory: merge into an identical carried stack first (returns 1:
+// obj was freed), else PREPEND (newest-first chain, no forcing to the end).
+// (mongets()/m_initinv gem stacks merge, e.g. a giant's two rolls of the same
+// gem type; a vault guard's gold merges with what he already holds.)
+// invent.js's merged() is reached through hooks because invent.js imports this
+// module.
+export function add_to_minv(mon, obj) {
+    if (!mon.minvent) mon.minvent = [];
+    for (const o of mon.minvent)
+        if (hooks.merged(o, obj)) return 1;
+    obj.where = OBJ_MINVENT;
+    obj.ocarry = mon;
+    obj.ocontainer = null;
+    mon.minvent.unshift(obj);
+    return 0;
 }
 
 // C ref: makemon.c golemhp(type) — fixed HP per golem species (no RNG).  pmidx
@@ -1596,10 +1620,14 @@ function m_initweap_angel(mtmp, ptr) {
     // C: `if ((!rn2(20) || is_lord(ptr)) && sgn(...maligntyp) == A_LAWFUL)
     //      otmp = oname(otmp, nam, ONAME_RANDOM);`
     // A non-minion angel uses ptr->maligntyp (we do not model EMIN min_align).
-    // Artifact promotion proper is not modelled — C's oname() only attaches the
-    // name here and consumes no RNG, so recording the name is RNG-faithful.
-    if ((!rn2(20) || is_lord) && Math.sign(ptr.maligntyp ?? 0) === A_LAWFUL)  // makemon.c:338
+    // C ref: do_name.c oname(): skip if that artifact already exists, else
+    // name it and artifact_exists() marks it created (nartifact_exist()
+    // then raises every later random-artifact roll).  No RNG.
+    if ((!rn2(20) || is_lord) && Math.sign(ptr.maligntyp ?? 0) === A_LAWFUL  // makemon.c:338
+        && !otmp.oartifact && !hooks.exist_artifact?.(otmp.otyp, nam)) {
         otmp.oname = nam;
+        hooks.artifact_exists?.(otmp, nam, true, 0x0080 /* ONAME_RANDOM */);
+    }
     bless(otmp);
     otmp.oerodeproof = true;
     // long sword ends up +0..+3, silver mace +3..+6 to offset being much weaker
@@ -2112,8 +2140,16 @@ function rnd_misc_item(mtmp) {
     case 0: if (mtmp.isgd) return 0; return rn2(6) ? 302 : 420;
     // POT_INVISIBILITY is 305 (303 is POT_LEVITATION).  C also lets the item
     // through for a peaceful monster when the hero has See_invisible.
-    case 1:
-        if (mtmp.mpeaceful && !game.u?.uprops?.See_invisible) return 0;
+    case 1: {
+        // C ref: youprop.h See_invisible (HSee_invisible || ESee_invisible);
+        // a Monk has the intrinsic from XL1.  The hero's copy is spelled
+        // several ways in this port (see js/mon.js See_invisible_mon).
+        const u = game.u || {}, p = u.uprops || {};
+        const seeInvis = !!(u.see_invis || p.HSee_invisible || u.HSee_invisible
+            || p.ESee_invisible || u.ESee_invisible || p.See_invisible || u.See_invisible
+            || has_innate('HSee_invisible'));
+        if (mtmp.mpeaceful && !seeInvis) return 0;
+    }
         return rn2(6) ? 305 : 418;
     case 2: return 309;
     }
@@ -2307,14 +2343,12 @@ function m_initinv_full(mtmp) {
                 // first candle never has, so the condition reduces to "square
                 // is unlit": a candle given out on dark ground starts burning
                 // immediately.  Routed through gstate's hooks (js/light.js
-                // registers hooks.gnomeCandleLight) because light.js already
+                // registers hooks.beginCandleBurn) because light.js already
                 // imports name_to_pmidx from this file, so the reverse import
                 // would cycle — the same indirection js/vision.js uses for
-                // hooks.lightsources.  Skips begin_burn()/start_timer()'s
-                // multi-hundred-turn burn-out timer, which stays async and
-                // never fires within any covered recording anyway.
+                // hooks.lightsources.  The hook also starts the burn timer.
                 const loc = game.level?.at(mtmp.mx, mtmp.my);
-                if (loc && !loc.lit) hooks.gnomeCandleLight?.(mtmp.mx, mtmp.my, otmp);
+                if (loc && !loc.lit) hooks.beginCandleBurn?.(mtmp.mx, mtmp.my, otmp);
             }
         }
         break;
@@ -2541,7 +2575,7 @@ export function set_mimic_sym(mtmp) {
         if (fobj) {
             for (let i = fobj.length - 1; i >= 0; i--) {
                 const o = fobj[i];
-                if (o.where === 'floor' && o.ox === mx && o.oy === my) {
+                if (o.where === OBJ_FLOOR && o.ox === mx && o.oy === my) {
                     topobj = o; break;
                 }
             }
@@ -3120,6 +3154,15 @@ function apply_newcham(mtmp, mdat, olddata) {
     if (nhp < 0 || nhp > mtmp.mhpmax) nhp = mtmp.mhpmax;
     mtmp.mhp = nhp || 1;
     hooks.set_mon_data(mtmp, mdat);
+    // C ref: mon.c:5406-5408 — inherent invisibility follows the new form.
+    const pm_invisible = ptr => ptr?.name === 'stalker' || ptr?.name === 'black light';
+    if (!mtmp.perminvis || pm_invisible(olddata))
+        mtmp.perminvis = pm_invisible(mdat);
+    mtmp.minvis = mtmp.invis_blkd ? 0 : mtmp.perminvis;
+    // C ref: mon.c:5409 — the new form must still qualify for concealment.
+    // A currently undetected monster cannot be seen, so hideunder's state
+    // update runs synchronously (its message/await branch is not taken).
+    if (mtmp.mundetected) hooks.hideunder(mtmp);
     return 1;
 }
 
@@ -3170,6 +3213,10 @@ export function newcham(mtmp, mdat) {
         // mhitm.js/uhitm.js) that may already be wearing armor.
         mhim(mtmp); mhis(mtmp);
         newcham_worm(mtmp, mdat);
+        // C ref: mon.c newcham() — `meverseen = 0; newsym()` so the new form
+        // is what the map shows.
+        mtmp.meverseen = 0;
+        if (mtmp.mx) hooks.newsym?.(mtmp.mx, mtmp.my);
     }
     return changed;
 }
@@ -3230,10 +3277,14 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         }
     }
     if (changed) newcham_worm(mtmp, mdat);
-    if (changed && msg) {
-        const { newsym, update_topl } = await import('./display.js');
+    if (changed) {
+        // C ref: mon.c newcham() — newsym() runs whether or not msg is set.
+        const { newsym } = await import('./display.js');
         mtmp.meverseen = 0;
         newsym(mtmp.mx, mtmp.my);
+    }
+    if (changed && msg) {
+        const { update_topl } = await import('./display.js');
         if (!canspotmon(mtmp)) {
             if (seenorsensed) await update_topl(`${oldname} disappears!`);
             const { usmellmon } = await import('./mon.js');
@@ -3248,6 +3299,30 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         }
     }
     if (changed) {
+        // C ref: mon.c:5484 — shed a weapon the new form cannot wield before
+        // checking armor. Other monsters may immediately seek the dropped item.
+        const polyspot = (ncflags & NC_VIA_WAND_OR_SPELL) !== 0;
+        const { possibly_unwield } = await import('./weapon.js');
+        const dropped = possibly_unwield(mtmp, polyspot);
+        if (dropped) {
+            const { update_topl, newsym } = await import('./display.js');
+            const { distant_doname, stackobj } = await import('./invent.js');
+            const { flooreffects } = await import('./do.js');
+            const { place_object } = await import('./mkobj.js');
+            if (mm_cansee(mtmp.mx, mtmp.my)) {
+                await update_topl(`${names.Monnam(mtmp)} drops ${distant_doname(dropped, true)}.`);
+                newsym(mtmp.mx, mtmp.my);
+            }
+            dropped.where = OBJ_FREE;
+            if (!await flooreffects(dropped, mtmp.mx, mtmp.my, 'drop')) {
+                if (polyspot) {
+                    dropped.bypass = 1;
+                    game.context.bypasses = true;
+                }
+                place_object(dropped, mtmp.mx, mtmp.my);
+                stackobj(dropped);
+            }
+        }
         const { mon_break_armor, check_gear_next_turn } = await import('./mon.js');
         await mon_break_armor(mtmp, (ncflags & NC_VIA_WAND_OR_SPELL) !== 0);
         check_gear_next_turn(mtmp);
@@ -3460,6 +3535,8 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
 
     const mtmp = { data: ptr, mx: x, my: y, mmflags };
     if (globalThis.__NHMONDBG) globalThis.__NHMONDBG.push([globalThis.__NHRNGLEN(), ptr.name, ptr.mcls, ptr.gcode]);
+    // C ref: makemon.c makemon() — newedog precedes the m_id assignment.
+    if (mmflags & MM_EDOG) newedog_mm(mtmp);
     // C ref: makemon.c:1245 `if (mmflags & MM_ASLEEP) mtmp->msleeping = 1;`.
     // No RNG, but msleeping gates every monster's turn in dochug(), so a caller
     // that asked for a sleeping monster got a wide-awake one instead.
@@ -3578,7 +3655,7 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
         const objs = game.level?.objects;
         let hasObj = false, hasNonCoin = false, coinQuan = 0;
         if (objs) for (const o of objs) {
-            if (o.where === 'floor' && o.ox === x && o.oy === y) {
+            if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y) {
                 hasObj = true;
                 if (o.oclass === COIN_CLASS) coinQuan += (o.quan || 1); else hasNonCoin = true;
             }
@@ -3820,7 +3897,10 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // game.level.monsters, an unplaced monster also made that check answer
     // "square is empty" — the fill_zoo hazard mklev.js:5194 already records
     // having hit once at a single site.
-    if (x > 0) placeOnLevel(mtmp, x, y);
+    if (x > 0) {
+        placeOnLevel(mtmp, x, y);
+        hooks.monster_light_source?.(mtmp); /* C ref: makemon.c:1348 */
+    }
     // C ref: makemon.c S_EEL case -> hideunder(mtmp) during mklev; mon.c
     // hideunder() sets `undetected = is_pool(x,y) && !Is_waterlevel(&u.uz)`.
     // js/sp_lev.js already did this for des.monster()-placed eels; mkswamp's
@@ -3871,7 +3951,8 @@ function mm_is_pool(x, y) {
     return t === POOL || t === MOAT || t === WATER;
 }
 function mm_is_lava(x, y) {
-    return game.level?.at(x, y)?.typ === LAVAPOOL;
+    const typ = game.level?.at(x, y)?.typ;
+    return typ === LAVAPOOL || typ === LAVAWALL;
 }
 
 // C ref: mon.h MON_AT — a (live) monster occupies <x,y>.
@@ -3902,16 +3983,21 @@ function goodpos_spawn(x, y, ptr) {
     if (mm_mon_at(x, y)) return false;                            // GP_AVOID_MONPOS
     if (ptr) {
         if (mm_is_pool(x, y)) {
-            // a swimmer may land in water; anyone else must be airborne, and a
-            // freshly rolled monster never is (m_in_air is levitation/flight
-            // state it does not have yet).
-            return is_swimmer_flag(ptr) || is_flyer_flag(ptr);
+            // C ref: teleport.c goodpos() — `is_swimmer(mdat) || (!Is_waterlevel
+            // && !is_waterwall(x, y) && m_in_air(mtmp))`.  The stand-in monster
+            // has no mundetected, so m_in_air is is_flyer || is_floater.  A WATER
+            // square (rm.h IS_WATERWALL) is never standable from the air.
+            return is_swimmer_flag(ptr)
+                || (!Is_waterlevel(game.u?.uz) && !IS_WATERWALL(game.level?.at(x, y)?.typ)
+                    && mm_in_air_ptr(ptr));
         } else if (ptr.mcls === S_EEL_CLS && rn2(13)) {
             // C: an eel out of water usually refuses — and this rn2(13) fires
             // whenever an eel is offered a square, so it must not be skipped.
             return false;
         } else if (mm_is_lava(x, y)) {
-            return is_flyer_flag(ptr) || mm_likes_lava(ptr);
+            // C: a floating eye avoids lava even though it floats.
+            if (ptr.name === 'floating eye') return false;
+            return mm_in_air_ptr(ptr) || mm_likes_lava(ptr);
         }
         if (passes_walls_flag(ptr) && mm_may_passwall(x, y)) return true;
         if (amorphous_flag(ptr) && mm_closed_door(x, y)) return true;
@@ -3962,7 +4048,7 @@ function mm_scaremon_at(x, y) {
     const objs = game.level?.objects;
     if (!objs) return false;
     for (const o of objs)
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === SCR_SCARE_MONSTER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === SCR_SCARE_MONSTER)
             return true;
     return false;
 }
@@ -3986,6 +4072,11 @@ function mm_is_mongen_exclusion(x, y) {
 
 // C ref: mondata.h likes_lava(ptr) — the fire elemental and the salamander,
 // which C spells out as two mons[] pointer comparisons rather than a flag.
+// C ref: mon.c m_in_air(mtmp) for a stand-in monster (never mundetected):
+// is_flyer || is_floater (mlet S_EYE or S_LIGHT).
+function mm_in_air_ptr(ptr) {
+    return is_flyer_flag(ptr) || ptr.mcls === S_EYE_CLS || ptr.mcls === S_LIGHT_CLS;
+}
 function mm_likes_lava(ptr) {
     return ptr?.name === 'fire elemental' || ptr?.name === 'salamander';
 }
@@ -4009,7 +4100,7 @@ function mm_boulder_at(x, y) {
     const objs = game.level?.objects;
     if (!objs) return false;
     for (const o of objs)
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === SMS_BOULDER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === SMS_BOULDER)
             return true;
     return false;
 }
@@ -4039,10 +4130,12 @@ function makemon_rnd_goodpos(ptr) {
         for (let bl = game.in_mklev ? 1 : 0; bl < 2 && !good; bl++) {
             for (let dx = 0; dx < COLNO && !good; dx++) {
                 for (let dy = 0; dy < ROWNO && !good; dy++) {
-                    const cx = ((dx + xofs) % (COLNO - 1)) + 1;
-                    const cy = ((dy + yofs) % (ROWNO - 1)) + 1;
-                    if (bl === 0 && mm_cansee(cx, cy)) continue;
-                    if (goodpos_spawn(cx, cy, ptr)) { nx = cx; ny = cy; good = true; }
+                    // C ref: makemon.c:1107-1108 — leave the last scanned
+                    // coordinate in nx/ny for the following stairway fallback.
+                    nx = ((dx + xofs) % (COLNO - 1)) + 1;
+                    ny = ((dy + yofs) % (ROWNO - 1)) + 1;
+                    if (bl === 0 && mm_cansee(nx, ny)) continue;
+                    if (goodpos_spawn(nx, ny, ptr)) good = true;
                 }
             }
             // C ref: makemon.c:1113-1128 — when the first (skip-visible) pass
@@ -4170,6 +4263,10 @@ function m_initgrp(mtmp, x, y, n, mmflags) {
                     placeOnLevel(mon, spot.x, spot.y);
                     mon.mpeaceful = false;
                     set_malign(mon);
+                    // C: each member's own makemon() tail prints its arrival
+                    // line / runs dochugw() before the leader's; the sync port
+                    // hands that to makemon_appears_msg() via this list.
+                    if (!game.in_mklev) (mtmp._grpMembers ||= []).push(mon);
                 }
             }
         }
@@ -4253,11 +4350,40 @@ function mm_vtense(subj, verb) {
 // caller's makemon() flags: MM_NOMSG suppresses the line entirely, MM_NOEXCLAM
 // drops " suddenly" and ends with '.' instead of '!' (the ^G #wizgenesis form).
 export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
+    if (!mtmp || game.in_mklev) return;
+    const members = mtmp._grpMembers;
+    if (members) {
+        delete mtmp._grpMembers;
+        for (const m of members)
+            await makemon_appears_msg(m, m.mx, m.my, mmflags | MM_NOGRP);
+    }
+    await makemon_appears_line(mtmp, x, y, mmflags);
+    // C ref: makemon.c:1503 — "if discernable and a threat, stop fiddling while
+    // Rome burns": `if (go.occupation) (void) dochugw(mtmp, FALSE);`, reached
+    // whether or not the arrival line was printed (MM_NOMSG, unseen).
+    const H = await import('./hack.js');
+    if (H.occupation_active()) {
+        const { dochugw } = await import('./monmove.js');
+        await dochugw(mtmp, false);
+    }
+}
+async function makemon_appears_line(mtmp, x, y, mmflags = 0) {
     if (!mtmp || game.in_mklev || (mmflags & MM_NOMSG)) return;
     const D = await import('./display.js');
     const MO = await import('./mon.js');
     const DN = await import('./do_name.js');
-    const apt = mtmp.m_ap_type | 0;
+    // DIVERGENCE: this port stores m_ap_type as a STRING for the appearances
+    // set_mimic_sym() assigns ('obj'/'furniture'), and as the numeric M_AP_*
+    // constant elsewhere (js/display.js M_AP_TYPE normalises both the same
+    // way).  `| 0` read every disguised mimic back as M_AP_NOTHING, so a
+    // `^G giant mimic` announced "A giant mimic appears next to you." where
+    // C names the disguise: "An opulent throne appears next to you."
+    const t_ap = mtmp.m_ap_type;
+    const apt = !t_ap ? M_AP_NOTHING
+        : (typeof t_ap === 'number') ? (t_ap & M_AP_TYPMASK)
+        : (t_ap === 'furniture') ? M_AP_FURNITURE
+        : (t_ap === 'obj') ? M_AP_OBJECT
+        : (t_ap === 'mon') ? M_AP_MONSTER : M_AP_NOTHING;
     let exclaim = !(mmflags & MM_NOEXCLAM);
     let what = null;
     if ((D.canseemon_shared(mtmp) && (apt === M_AP_NOTHING || apt === M_AP_MONSTER))
@@ -4287,70 +4413,6 @@ export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
     // inside #lookaround.  Setting it here is therefore inert for this message
     // but survives to prefix its coordinates onto #lookaround's next pline().
     await D.update_topl(msg);
-}
-
-// C ref: read.c create_particular_creation() for the ^G (#wizgenesis) command
-// with a single named monster.  wiz_genesis() clears iflags.debug_mongen, then
-// create_particular() parses the name and create_particular_creation() loops
-// d->quan (==1 here) times calling makemon(whichpm, u.ux, u.uy, mmflags) with
-// mmflags = MM_NOEXCLAM (no gender term, no surprise).
-//
-// makemon(ptr, u.ux, u.uy, ...) takes the `byyou && !gi.in_mklev` branch:
-//   enexto_core(&cc, u.ux, u.uy, ptr, GP_CHECKSCARY|GP_AVOID_MONPOS)
-// to find a square next to the hero (collect_coords ring shuffle = the RNG),
-// then proceeds with next_ident -> newmonhp -> gender -> [no group, ptr given]
-// -> m_initweap (if armed) -> m_initinv -> saddle rn2(100).  We reproduce that
-// order by running enexto_spawn() first (placement RNG) and then the existing
-// makemon() with MM_NOGRP (a specific ptr never spawns a group anyway).
-//
-// Returns { mtmp, x, y, next2u } so the caller can print the C "appears"
-// message; null if no monster could be made (bad name, no good spot, genocided).
-export async function create_particular_monster(name, mmflags = 0) {
-    const pmidx = name_to_pmidx(name);
-    let ptr, firstchoice = NON_PM;
-    if (pmidx >= 0) {
-        const { create_particular_species } = await import('./read.js');
-        firstchoice = pmidx;
-        ptr = MONS[await create_particular_species(pmidx)];
-    } else {
-        // C ref: read.c:3231 create_particular_parse() — when `name` does not
-        // exactly name a species, C falls back to name_to_monclass() (a bare
-        // class symbol like 'y' for S_LIGHT, or a class description) before
-        // giving up.  create_particular_creation()'s per-iteration order then
-        // draws mkclass()'s RNG (makemon.c:1934 gn_mask rn2(9), :1969 rnd(num))
-        // BEFORE the placement search below, so that must happen here first.
-        const { create_particular_parse } = await import('./read.js');
-        const d = {};
-        const ok = await create_particular_parse(name, d);
-        if (!ok) return null;
-        ptr = d.randmonst ? rndmonst()
-            : d.monclass !== MAXMCLASSES ? mkclass(d.monclass, 0)
-            : monster_by_pmidx(d.which);
-    }
-    if (!ptr) return null;
-
-    const u = game.u;
-    // makemon byyou branch: enexto_core near the hero (collect_coords RNG).
-    const spot = enexto_spawn(u.ux, u.uy, ptr);
-    if (!spot) return null;
-
-    // The placement RNG has been spent; makemon must not re-run it, so pass the
-    // resolved (x,y).  MM_NOGRP keeps it from drawing group RNG (a named ptr is
-    // anymon==FALSE in C, which already skips groups).
-    // MM_APPARXY_BYYOU tells makemon() that byyou was true in C (this caller
-    // IS the byyou placement search), so it still runs the `if (byyou) {
-    // newsym(); set_apparxy(); }` tail at the right point in its own body.
-    const mtmp = makemon(ptr, spot.x, spot.y,
-                         MM_NOGRP | MM_APPARXY_BYYOU | mmflags);
-    if (!mtmp) return null;
-    placeOnLevel(mtmp, spot.x, spot.y);
-    if (mtmp.cham != null && mtmp.cham !== NON_PM && firstchoice !== NON_PM
-        && mtmp.cham !== firstchoice)
-        newcham(mtmp, monster_by_pmidx(firstchoice));
-
-    // next2u(x,y): chebyshev distance <= 1 from the hero.
-    const next2u = Math.max(Math.abs(spot.x - u.ux), Math.abs(spot.y - u.uy)) <= 1;
-    return { mtmp, x: spot.x, y: spot.y, next2u, ptr };
 }
 
 // ── adj_erinys (C ref: mon.c:5922) ───────────────────────────────────────
@@ -4709,6 +4771,11 @@ export async function bagotricks(bag, tipping, seencount) {
             creatcnt += rnd(7);
         do {
             const mtmp = makemon(null, game.u.ux, game.u.uy, 0 /* NO_MM_FLAGS */);
+            // C ref: makemon.c:1472 — makemon()'s own tail announces the new
+            // monster ("A newt suddenly appears next to you!").  makemon() is
+            // sync in this port, so the async announcement runs here, at the
+            // same point in the sequence (see makemon_appears_msg's note).
+            if (mtmp) await makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, 0);
             if (mtmp) {
                 ++moncount;
                 if ((await bagotricks_canseemon(mtmp)

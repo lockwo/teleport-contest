@@ -349,7 +349,15 @@ export async function pluslvl(incr, emitMsg) {
     if (!incr && emitMsg)
         await emitMsg('You feel more experienced.');
 
-    // increase hit points (no Upolyd in the recorded sessions)
+    // increase hit points (when polymorphed, do monster form first
+    // in order to retain normal human/whatever increase for later)
+    if (u.Upolyd) {
+        const { monhp_per_lvl } = await import('./artifact.js');
+        u.mh = (u.mh || 0) + monhp_per_lvl(u);
+        /* C: setuhpmax(u.mhmax, FALSE) acts as setmhmax() — mhmax is
+           unchanged here and only the clamp of u.mh to it applies */
+        if (u.mh > u.mhmax) u.mh = u.mhmax;
+    }
     const hpinc = newhp();
     u.uhp = (u.uhp || 0) + hpinc;
     setuhpmax((u.uhpmax || 0) + hpinc);
@@ -398,19 +406,37 @@ export async function pluslvl(incr, emitMsg) {
     }
 }
 
-// C ref: exper.c losexp(const char *drainer) — lose an experience level.  Only
-// the non-fatal, level>1 branch is needed (wiz_level_change "#levelchange").
+// C ref: exper.c losexp(const char *drainer) — lose an experience level.  A
+// level-1 hero with a `drainer` dies ("Goodbye level 1." + done(DIED));
+// drainer == NULL (divine anger) just resets to 0 experience points.
+// The Upolyd tail (monhp_per_lvl() off u.mhmax/u.mh, rehumanize()) is ported.
 export async function losexp(drainer, emitMsg) {
     const u = game.u;
+    /* override life-drain resistance when handling an explicit wizard mode
+       request to reduce level; never fatal though */
+    if (drainer === '#levelchange') {
+        drainer = null;
+    } else {
+        const { resists_drli } = await import('./artifact.js');
+        if (resists_drli(game.youmonst || u)) return;
+    }
+    if (!emitMsg) ({ update_topl: emitMsg } = await import('./display.js'));
     if ((u.ulevel || 0) > 1 || drainer) {
-        if (emitMsg) await emitMsg(`${Goodbye(game.urole?.mnum)} level ${u.ulevel}.`);
+        await emitMsg(`${Goodbye(game.urole?.mnum)} level ${u.ulevel}.`);
     }
     if ((u.ulevel || 0) > 1) {
         const oldlevel = u.ulevel;
         u.ulevel -= 1;
         update_rank();
         await adjabil(oldlevel, u.ulevel, emitMsg);
-    } else {
+    } else { /* u.ulevel==1 */
+        if (drainer) {
+            const { done, DIED } = await import('./end.js');
+            game._killer_name = `killed by ${drainer}`;
+            await done(DIED);
+        }
+        /* no drainer or lifesaved */
+        if ((u.ulevel || 0) > 1) return;
         u.uexp = 0;
     }
     const uhpmin = minuhpmax(10);
@@ -431,7 +457,19 @@ export async function losexp(drainer, emitMsg) {
     else if (u.uen > u.uenmax) u.uen = u.uenmax;
 
     if ((u.uexp || 0) > 0) u.uexp = newuexp(u.ulevel) - 1;
+
+    if (u.Upolyd) {
+        const { monhp_per_lvl } = await import('./artifact.js');
+        num = monhp_per_lvl(u);
+        u.mhmax = (u.mhmax || 0) - num;
+        u.mh = (u.mh || 0) - num;
+        if (u.mh <= 0) {
+            const { rehumanize } = await import('./polyself.js');
+            await rehumanize();
+        }
+    }
 }
+
 
 // C ref: attrib.c minuhpmax — min uhpmax floor.
 export function minuhpmax(altmin) {
@@ -439,11 +477,25 @@ export function minuhpmax(altmin) {
     return Math.max(game.u.ulevel || 1, altmin);
 }
 
-// C ref: attrib.c setuhpmax — set uhpmax, clamp uhp.
-export function setuhpmax(newmax) {
+// C ref: attrib.c:1157 setuhpmax(newmax, even_when_polyd) — update u.uhpmax
+// (or u.mhmax while polymorphed, unless even_when_polyd) and clamp the matching
+// current HP, flagging the status line.
+export function setuhpmax(newmax, even_when_polyd = true) {
     const u = game.u;
-    u.uhpmax = newmax;
-    if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
+    if (!u.Upolyd || even_when_polyd) {
+        if (newmax !== u.uhpmax) {
+            u.uhpmax = newmax;
+            if (u.uhpmax > (u.uhppeak || 0)) u.uhppeak = u.uhpmax;
+            game.botl = true;
+        }
+        if (u.uhp > u.uhpmax) { u.uhp = u.uhpmax; game.botl = true; }
+    } else {
+        if (newmax !== u.mhmax) {
+            u.mhmax = newmax;
+            game.botl = true;
+        }
+        if (u.mh > u.mhmax) { u.mh = u.mhmax; game.botl = true; }
+    }
 }
 
 // ── innate intrinsics (C: attrib.c adjabil + the *_abil[] tables) ──
@@ -480,22 +532,35 @@ const ROLE_ABIL = new Map([
 
 // C ref: attrib.c dwa_abil[]/elf_abil[]/gno_abil[]/orc_abil[]/hum_abil[].
 // adjabil() only walks elf_abil/orc_abil (its switch maps DWARF and GNOME to
-// NULL); the dwarf/gnome Infravision row is unreachable there, so it is not
-// listed here either — vision.js Infravision() derives that from mflags3.
+// NULL), so only those two rows ever set a real FROMRACE intrinsic bit — that
+// is what RACE_ABIL models and what innate_intrinsics() reports.
 const RACE_ABIL = new Map([
     [RC_ELF, [[1, '', '', 'HInfravision'], [4, 'awake', 'tired', 'HSleep_resistance']]],
     [RC_ORC, [[1, '', '', 'HInfravision'], [1, '', '', 'HPoison_resistance']]],
 ]);
 
+// C ref: attrib.c check_innate_abil() — its own race switch is the COMPLETE
+// one (DWARF -> dwa_abil, GNOME -> gno_abil), unlike adjabil()'s.  innately()
+// therefore answers FROM_RACE for a dwarf's/gnome's infravision even though
+// adjabil() never set the FROMRACE bit, and from_what() prints " innately".
+const RACE_ABIL_INNATE = new Map([
+    ...RACE_ABIL,
+    [RC_DWARF, [[1, '', '', 'HInfravision']]],
+    [RC_GNOME, [[1, '', '', 'HInfravision']]],
+]);
+
 // The innate intrinsics the hero holds right now.  C keeps these as
 // FROMEXPER/FROMRACE bits in u.uprops[]; here they are a pure function of
-// role/race/ulevel, which is equivalent because nothing else sets or clears
-// those two bits.
+// role/race/ulevel, minus anything explicitly stripped.  sit.c attrcurse()
+// (angry god, intrinsic-stealing attack) clears `HFoo &= ~INTRINSIC`, which
+// takes the role/race bits with it, so those names are remembered in
+// u.lost_innate and subtracted here.
 export function innate_intrinsics(ulevel = game.u?.ulevel || 0) {
     const s = new Set();
     for (const tbl of [ROLE_ABIL.get(game.urole?.mnum), RACE_ABIL.get(urace_mnum())])
         for (const [ulvl, , , prop] of tbl || [])
             if (ulevel >= ulvl) s.add(prop);
+    for (const prop of game.u?.lost_innate || []) s.delete(prop);
     return s;
 }
 export function has_innate(prop, ulevel) { return innate_intrinsics(ulevel).has(prop); }
@@ -505,9 +570,10 @@ export function has_innate(prop, ulevel) { return innate_intrinsics(ulevel).has(
 // FROM_ROLE when its ulevel is 1 and FROM_EXP otherwise; a FROMRACE row is
 // FROM_RACE whatever its level.  Returns null when neither table grants it.
 export function innate_source(prop, ulevel = game.u?.ulevel || 0) {
+    if (game.u?.lost_innate?.has(prop)) return null; // attrcurse() cleared it
     for (const [ulvl, , , p] of ROLE_ABIL.get(game.urole?.mnum) || [])
         if (p === prop && ulevel >= ulvl) return (ulvl === 1) ? 'role' : 'exp';
-    for (const [ulvl, , , p] of RACE_ABIL.get(urace_mnum()) || [])
+    for (const [ulvl, , , p] of RACE_ABIL_INNATE.get(urace_mnum()) || [])
         if (p === prop && ulevel >= ulvl) return 'race';
     return null;
 }
@@ -531,5 +597,11 @@ export async function adjabil(oldlevel, newlevel, emitMsg) {
             }
         }
     }
-    // add_weapon_skill/lose_weapon_skill: no RNG, no topline message.
+    // C ref: attrib.c:1068 — skill slots follow the experience level; a gain
+    // that makes some skill advanceable prints "You feel more confident...".
+    if (oldlevel > 0) {
+        const W = await import('./weapon.js');
+        if (newlevel > oldlevel) await W.add_weapon_skill(newlevel - oldlevel);
+        else await W.lose_weapon_skill(oldlevel - newlevel);
+    }
 }

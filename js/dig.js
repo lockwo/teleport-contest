@@ -7,10 +7,10 @@
 // it moves, driven from monmove.js m_move()/postmov().  The hero-digging
 // occupation (dig_check / dighole) is a separate unported subsystem.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rnd, rn2, rn1 } from './rng.js';
-import { newsym, You_hear, You_feel } from './display.js';
-import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, Unaware } from './const.js';
+import { newsym, feel_location, feel_newsym, You_hear, You_feel, tmp_at, fn_cmap_to_glyph } from './display.js';
+import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, FOOT, Unaware, DISP_BEAM, DISP_END } from './const.js';
 import { unblock_point, recalc_block_point, cansee } from './vision.js';
 import {
     IS_WALL, IS_TREE, IS_OBSTRUCTED, IS_STWALL, IS_DOOR,
@@ -25,7 +25,7 @@ import {
     DIGTYP_DOOR, DIGTYP_TREE, N_DIRS, N_DIRS_Z, TT_WEB,
 } from './const.js';
 import { is_pick, is_axe } from './weapon.js';
-import { Is_special } from './dungeon.js';
+import { Is_special, ceiling as ceiling_dg } from './dungeon.js';
 import { inside_room } from './mkroom.js';
 
 // C ref: hack.c may_dig(x, y) — "intended to be called only on ROCKs or TREEs".
@@ -234,7 +234,7 @@ function sobj_at_boulder(x, y) {
     const objs = game.level?.objects;
     if (!objs) return false;
     for (const o of objs)
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === BOULDER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === BOULDER)
             return true;
     return false;
 }
@@ -256,7 +256,7 @@ const sgn = (n) => (n > 0 ? 1 : n < 0 ? -1 : 0);
 // swallow entirely on the secret-corridor path.
 const STRIDENT = 4;   /* dig.c:1497, from pray.c */
 const DRAFT_REACTION = ['enlisting', 'marching', 'protesting', 'fleeing'];
-async function draft_message(unexpected) {
+export async function draft_message(unexpected) {
     const u = game.u || {};
     if (unexpected) {
         if (!Hallucination()) {
@@ -302,10 +302,7 @@ function stairway_at(x, y) {
 // C ref: trap.c ceiling(x, y).  Same reduction as trap.js ceiling(): no
 // air/water/quest/earth level is generated here.
 function ceiling(x, y) {
-    const typ = game.level?.at(x, y)?.typ ?? STONE;
-    if (typ === ROOM || IS_WALL(typ) || IS_DOOR(typ) || typ === SDOOR)
-        return 'ceiling';
-    return 'rock cavern';
+    return ceiling_dg(x, y);
 }
 
 // C ref: do_wear.c hard_helmet(obj) = is_helmet(obj)
@@ -321,14 +318,13 @@ function hard_helmet(otmp) {
     return (mat >= MAT_IRON && mat <= MAT_MITHRIL) || mat === MAT_GLASS;
 }
 
-// C ref: hack.c losehp(dmg, ...) — HP subtraction only; the death path
-// (done(DIED)) lives in the callers this port does model.
-function losehp(dmg) {
-    const u = game.u;
-    if (!u || dmg <= 0) return;
-    u.uhp = (u.uhp ?? 0) - dmg;
-    if (u.uhp < 0) u.uhp = 0;
-    if (game.disp) game.disp.botl = true;
+// C ref: hack.c losehp(n, knam, k_format) — delegates to do.js's complete port
+// (end_running, Upolyd rehumanize, killer text, "You die...", done(DIED)).
+// C callers pass Maybe_Half_Phys(dmg), which is applied here.
+async function losehp(dmg, knam, k_format) {
+    const { losehp_do } = await import('./do.js');
+    const { Maybe_Half_Phys } = await import('./zap.js');
+    await losehp_do(Maybe_Half_Phys(dmg), knam, k_format);
 }
 
 // C ref: dig.c mdig_tunnel(mtmp) — a tunnelling monster carves the cell it now
@@ -460,7 +456,7 @@ export async function zap_dig() {
             // not the rock lands on a helmet.  Maybe_Half_Phys() is the identity
             // for a hero without Half_physical_damage (none of these have it).
             const dmg = rnd(hard_helmet(game.uarmh) ? 2 : 6);
-            losehp(dmg);
+            await losehp(dmg, 'falling rock', 0 /* KILLED_BY_AN */);
             const otmp = mksobj_at(ROCK, u.ux, u.uy, false, false);
             if (otmp) {
                 _invent.xname(otmp);       /* sets dknown / maybe bknown */
@@ -487,13 +483,15 @@ export async function zap_dig() {
     // pit-dig (zapping laterally while trapped in a pit, u.utraptype==TT_PIT)
     // is not exercised; pitdig stays FALSE.
     let digdepth = rn1(18, 8);
-    // tmp_at(DISP_BEAM, S_digbeam): beam animation is display-only (no RNG) and
-    // leaves no residue in the final grid, so it is omitted.
+    // C ref: dig.c:1623 tmp_at(DISP_BEAM, cmap_to_glyph(S_digbeam)); the beam
+    // glyph itself is display-only, the DISP_END restore is not (see below).
+    await tmp_at(DISP_BEAM, fn_cmap_to_glyph(78 /* S_digbeam */));
 
     while (--digdepth >= 0) {
         if (!isok(zx, zy)) break;
         const room = lvl.at(zx, zy);
         if (!room) break;
+        await tmp_at(zx, zy);
 
         if (closed_door(zx, zy) || room.typ === SDOOR) {
             // C ref: dig.c:1669 — raze a door / expose+raze a secret door.
@@ -560,7 +558,10 @@ export async function zap_dig() {
         zx += dx;
         zy += dy;
     }
-    // tmp_at(DISP_END, 0): closing beam call — display-only, omitted.
+    // C ref: dig.c:1738 tmp_at(DISP_END, 0) — newsym()s every beam square the
+    // hero could see; while hallucinating each monster/object redrawn there
+    // draws the display RNG.
+    await tmp_at(DISP_END, 0);
 
     // pit_flow / pay_for_damage: unreachable (no pit dug, no shop) here.
     void shopdoor; void shopwall;
@@ -603,7 +604,7 @@ export function dig_typ(otmp, x, y) {
              : IS_TREE(ltyp) ? DIGTYP_TREE
              : DIGTYP_UNDIGGABLE;
     // is_pick(otmp)
-    if (sobj_at_typ(STATUE, x, y) && pick_can_reach(otmp, x, y))
+    if (sobj_at(STATUE, x, y) && pick_can_reach(otmp, x, y))
         return DIGTYP_STATUE;
     if (sobj_at_boulder(x, y) && pick_can_reach(otmp, x, y))
         return DIGTYP_BOULDER;
@@ -622,11 +623,6 @@ function pick_can_reach(_otmp, _x, _y) {
     return !(u?.uswallow) && !(u?.uprops?.Levitation);
 }
 
-function sobj_at_typ(otyp, x, y) {
-    for (let o = game.level?.at(x, y)?.objects; o; o = o.nexthere)
-        if (o.otyp === otyp) return o;
-    return null;
-}
 
 // C ref: dig.c use_pick_axe(obj) — applying a pick-axe/mattock or an axe.
 // An unwielded tool is wielded first and the command re-queues itself
@@ -769,8 +765,7 @@ import {
     DIGCHECK_FAIL_CANTDIG, DIGCHECK_FAIL_OBJ_POOL_OR_TRAP,
     DIGCHECK_FAIL_ONLADDER, DIGCHECK_FAIL_ONSTAIRS, DIGCHECK_FAIL_THRONE,
     DIGCHECK_FAIL_TOOHARD, DIGCHECK_FAIL_UNDESTROYABLETRAP,
-    DIGCHECK_FAIL_WATERLEVEL,
-} from './const.js';
+    DIGCHECK_FAIL_WATERLEVEL, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING } from './const.js';
 
 /* ---- local copies of helpers their owning module does not export --------- */
 
@@ -834,17 +829,6 @@ const RACE_DWARF = 2, RACE_ELF = 1;
 function Role_idx_if(idx) { return (game.urole?.mnum ?? -1) === idx; }
 function Race_idx_if(idx) { return (game.urace?.mnum ?? -1) === idx; }
 
-// C ref: display.c feel_newsym(x, y) — feel the square when blind, else newsym.
-function feel_newsym(x, y) {
-    if (Blind()) feel_location_(x, y);
-    else newsym(x, y);
-}
-function feel_location_(x, y) {
-    // display.js owns the real feel_location(); imported lazily to stay off
-    // the module-load path (display.js already imports this file's callers).
-    import('./display.js').then((m) => m.feel_location(x, y)).catch(() => {});
-}
-
 // C ref: stairs.c On_stairs(x, y) / On_ladder(x, y).
 function On_stairs(x, y) { return stairway_at(x, y) != null; }
 function On_ladder(x, y) { const s = stairway_at(x, y); return !!s && !!s.isladder; }
@@ -884,7 +868,7 @@ function floor_pile(x, y) {
     const out = [];
     for (let i = objs.length - 1; i >= 0; i--) {
         const o = objs[i];
-        if (o && o.where === 'floor' && o.ox === x && o.oy === y) out.push(o);
+        if (o && o.where === OBJ_FLOOR && o.ox === x && o.oy === y) out.push(o);
     }
     return out;                       /* C's chain order: topmost first */
 }
@@ -1018,15 +1002,12 @@ function stop_timer(_action, arg) {
 function obj_to_any(o) { return { a_obj: o }; }
 
 // C ref: mkobj.c is_organic(otmp) — objects[otyp].oc_material <= WOOD.
-const MAT_WOOD = 7;
+const MAT_WOOD = 8;
 function is_organic_(otmp) {
     const mat = OBJECTS_TBL[otmp?.otyp]?.material;
-    return mat !== undefined && mat > 0 && mat <= MAT_WOOD;
+    return mat !== undefined && mat <= MAT_WOOD;
 }
 
-// C ref: light.c end_burn(obj, timer_attached) — js/light.js has it but does
-// not export it; only the lamplit clear matters for a buried light source.
-function end_burn(obj, _timer_attached) { if (obj) obj.lamplit = 0; }
 
 /* ---- subsystems this port does not have -------------------------------- */
 // Each of these keeps C's call site shape so the next porter only has to fill
@@ -1106,8 +1087,8 @@ async function migrate_to_level(mtmp, tolev, xyloc, cc) {
 // js/pray.js has both, unexported.
 async function angry_priest() { /* NOT PORTED (js/pray.js:1300) */ }
 async function desecrate_altar(_highaltar, _alignment) { /* NOT PORTED (js/pray.js:1196) */ }
-// C ref: dokick.c u_wipe_engr(cnt) — js/dokick.js:270 has it, unexported.
-function u_wipe_engr(_cnt) { /* NOT PORTED */ }
+// C ref: engrave.c u_wipe_engr(cnt).
+async function u_wipe_engr(cnt) { (await import('./engrave.js')).u_wipe_engr(cnt); }
 // C ref: shk.c angry_guards(silent) + pline.c verbalize(...) — js/shkroom.js
 // and js/pray.js keep both file-private.
 async function angry_guards(_silent) { return false; /* NOT PORTED */ }
@@ -1158,7 +1139,7 @@ async function fracture_rock(obj) {
     obj.dknown = obj.bknown = obj.rknown = 0;
     obj.known = 1;                       /* rocks have no oc_uses_known */
     dealloc_oextra(obj);
-    if (obj.where === 'floor') {
+    if (obj.where === OBJ_FLOOR) {
         const ox = obj.ox, oy = obj.oy;
         obj_extract_self(obj);
         place_object(obj, ox, oy);
@@ -1520,9 +1501,9 @@ export async function dig() {
                 if (dmg < 1) dmg = 1;
                 else if (game.uarmf) dmg = Math.trunc((dmg + 1) / 2);
                 await pline('You hit yourself in the foot.');
-                /* C: losehp(Maybe_Half_Phys(dmg), "chopping off <his> own
-                   foot", KILLED_BY); this file's losehp() carries no killer. */
-                losehp(dmg);
+                // C: Sprintf(kbuf, "chopping off %s own %s", uhis(), body_part(FOOT))
+                await losehp(dmg, `chopping off ${game.flags?.female ? 'her' : 'his'} own ${
+                    _invent.body_part(FOOT)}`, 1 /* KILLED_BY */);
             } else {
                 const { xname } = await import('./invent.js');
                 await pline(`You destroy the bear trap with your ${xname(uwep)}.`);
@@ -1709,7 +1690,7 @@ async function in_rooms_(x, y, typewanted) {
     return in_rooms(x, y, typewanted) || [];
 }
 // C ref: hacklib.c an(str).
-function an_(s) { return /^[aeiouAEIOU]/.test(s || '') ? `an ${s}` : `a ${s}`; }
+import { an as an_ } from './hacklib.js';
 // C ref: dig.c:490 SHOP_WALL_DMG (shk.h) — 10 * ROOM_COST, ROOM_COST == 400.
 const SHOP_WALL_DMG = 10 * 400;
 
@@ -2271,8 +2252,9 @@ export async function use_pick_axe2(obj) {
         let dam = rnd(2) + dbon() + (obj.spe | 0);
         if (dam <= 0) dam = 1;
         await pline(`You hit yourself with ${yname(game.uwep)}.`);
-        /* C: losehp(Maybe_Half_Phys(dam), "<his> own <pick-axe>", KILLED_BY) */
-        losehp(dam);
+        // C: Sprintf(buf, "%s own %s", uhis(), OBJ_NAME(objects[obj->otyp]))
+        await losehp(dam, `${game.flags?.female ? 'her' : 'his'} own ${
+            OBJECTS_TBL[obj.otyp].name}`, 1 /* KILLED_BY */);
         if (game.disp) game.disp.botl = true;
         return ECMD_TIME;
     } else if (u.dz === 0) {
@@ -2325,7 +2307,7 @@ export async function use_pick_axe2(obj) {
                     const vibrate = !rn2(3);
                     await pline(`Sparks fly as you whack the ${what}.${
                         vibrate ? '  The axe-handle vibrates violently!' : ''}`);
-                    if (vibrate) losehp(2);   /* C: Maybe_Half_Phys(2) */
+                    if (vibrate) await losehp(2, 'axing a hard object', 1 /* KILLED_BY */);
                     const { wake_nearby } = await import('./cmd.js');
                     await wake_nearby(false);
                 } else {
@@ -2409,7 +2391,7 @@ export async function use_pick_axe2(obj) {
                && (!trap || (trap.ttyp !== LANDMINE && trap.ttyp !== BEAR_TRAP))) {
         const { surface } = await import('./dungeon.js');
         await pline(`Your ${await xname_(obj)} merely scratches the ${surface(u.ux, u.uy)}.`);
-        u_wipe_engr(3);
+        await u_wipe_engr(3);
     } else {
         if (dg.pos.x !== u.ux || dg.pos.y !== u.uy
             || !on_level(dg.level, u.uz) || !dg.down) {
@@ -2718,9 +2700,18 @@ export async function bury_an_obj(otmp, dealloced) {
         await o_unleash(otmp);
     }
 
-    if (otmp.lamplit && otmp.otyp !== POT_OIL) end_burn(otmp, true);
+    if (otmp.lamplit && otmp.otyp !== POT_OIL) {
+        const { end_burn } = await import('./timeout.js');
+        await end_burn(otmp, true);
+    }
 
-    obj_extract_self(otmp);
+    if (otmp.where === OBJ_CONTAINED) {
+        /* rot_organic(): a buried container's contents leave it one by one */
+        const { obj_extract_self_mkobj } = await import('./mkobj.js');
+        obj_extract_self_mkobj(otmp);
+    } else {
+        obj_extract_self(otmp);
+    }
 
     const under_ice = is_ice_(otmp.ox, otmp.oy);
     if ((otmp.otyp === ROCK && !under_ice) || otmp.otyp === BOULDER) {
@@ -2828,7 +2819,7 @@ export async function rot_corpse(arg, timeout) {
     const obj = arg?.a_obj;
     if (!obj) return;
     let x = 0, y = 0;
-    const on_floor = obj.where === 'floor', in_invent = obj.where === 'invent';
+    const on_floor = obj.where === OBJ_FLOOR, in_invent = obj.where === OBJ_INVENT;
 
     if (on_floor) {
         x = obj.ox;
@@ -2837,7 +2828,8 @@ export async function rot_corpse(arg, timeout) {
         if (game.flags?.verbose !== false) {
             const { pline, } = await import('./display.js');
             const { otense } = await import('./invent.js');
-            const cname = await corpse_xname_(obj, CXN_NO_PFX);
+            const { corpse_xname } = await import('./objnam.js');
+            const cname = corpse_xname(obj, null, CXN_NO_PFX);
             await pline(`Your ${obj === game.uwep ? 'wielded ' : ''}${cname} ${
                 otense(obj, 'rot')} away${obj === game.uwep ? '!' : '.'}`);
         }
@@ -2847,10 +2839,10 @@ export async function rot_corpse(arg, timeout) {
             const { stop_occupation } = await import('./hack.js');
             await stop_occupation();
         }
-    } else if (obj.where === 'minvent') {
+    } else if (obj.where === OBJ_MINVENT) {
         if (obj.owornmask && obj.ocarry && obj === obj.ocarry.mw)
             obj.owornmask = 0;           /* C: setmnotwielded() */
-    } else if (obj.where === 'migrating') {
+    } else if (obj.where === OBJ_MIGRATING) {
         /* clear destination flag so that obfree()'s check for freeing a worn
            object doesn't get a false hit */
         obj.owornmask = 0;
@@ -2869,10 +2861,6 @@ export async function rot_corpse(arg, timeout) {
         const { update_inventory } = await import('./invent.js');
         update_inventory();
     }
-}
-async function corpse_xname_(obj, _flags) {
-    const { xname } = await import('./invent.js');
-    return xname(obj);
 }
 
 /* ---- dig.c's #if 0 block ------------------------------------------------ *

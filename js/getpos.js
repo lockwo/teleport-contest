@@ -804,11 +804,7 @@ function strsubst_(bp, orig, replacement) {
     return String(bp).replace(orig, replacement);
 }
 // C ref: objnam.c an(str) — js/hack.js:2633 / js/objnam.js copies are private.
-function an_(s) {
-    const str = String(s || '');
-    if (!str) return str;
-    return (/^[aeiouAEIOU]/.test(str) ? 'an ' : 'a ') + str;
-}
+import { an as an_ } from './hacklib.js';
 // C ref: window.c putstr / create_nhwindow / start_menu / add_menu / end_menu /
 // select_menu / destroy_nhwindow.  js/end.js:1375 and js/invent.js:1238 have
 // private no-op stubs of the same shape.

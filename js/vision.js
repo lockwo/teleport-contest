@@ -9,10 +9,12 @@ import {
     D_CLOSED, D_LOCKED, D_TRAPPED,
     SV0, SV1, SV2, SV3, SV4, SV5, SV6, SV7, SVALL,
     IS_WALL, CROSSWALL, TRWALL, TREE, CLOUD, WATER, LAVAWALL, TEMP_LIT,
-} from './const.js';
+    MOAT, DRAWBRIDGE_UP, DB_UNDER, DB_MOAT, Is_juiblex_level, Is_waterlevel,
+    TT_PIT, Is_rogue_level, OBJ_FLOOR } from './const.js';
 import { newsym } from './display.js';
 import { infravision, monster_by_pmidx } from './makemon.js';
 import { races } from './roles.js';
+import { has_innate } from './exper.js';
 
 const COULD_SEE = 0x1;
 const IN_SIGHT = 0x2;
@@ -96,12 +98,39 @@ function mark_visible_range(row, left, right) {
     if (game.cs_right[row] < right) game.cs_right[row] = right;
 }
 
+// C ref: dbridge.c is_moat(x, y) / is_pool(x, y).  vision.js keeps private
+// copies: importing dbridge.js here would reorder ESM evaluation (dbridge.js
+// statically imports this module and builds tables from mkobj.js at load).
+function is_moat_v(loc) {
+    if (!loc || Is_juiblex_level(game.u?.uz)) return false;
+    return loc.typ === MOAT
+        || (loc.typ === DRAWBRIDGE_UP && ((loc.drawbridgemask | 0) & DB_UNDER) === DB_MOAT);
+}
+function is_pool_v(x, y) {
+    if (!isok(x, y)) return false;
+    const loc = game.level?.at(x, y);
+    if (!loc) return false;
+    return loc.typ === POOL || loc.typ === MOAT || loc.typ === WATER || is_moat_v(loc);
+}
+
 // C ref: vision.c does_block(x, y, lev) — whether <x,y> obstructs line of
 // sight from its terrain/contents alone (independent of any region overlay).
 // Exported for region.js's remove_region()/expire_gas_cloud() unblock passes,
 // which must not unblock a point still legitimately blocked by real terrain.
 export function does_block(x, y) {
     return _blocks(game.level, x, y);
+}
+
+// C ref: monst.h is_lightblocker_mappear(mon) — mimic appearances that block
+// vision/light: a boulder, or a closed door / wall / tree.
+export function is_lightblocker_mappear(m) {
+    const S_ndoor = 12, S_vcdoor = 15, S_hcdoor = 16, S_tree = 18; // defsym.h
+    if (m.m_ap_type === 'obj' && m.mappearance === 475 /*BOULDER*/) return true;
+    if (m.m_ap_type === 'furniture') {
+        const ap = m.mappearance;
+        return ap === S_hcdoor || ap === S_vcdoor || ap < S_ndoor || ap === S_tree;
+    }
+    return false;
 }
 
 // Simplified blockage check: walls, closed doors, stone
@@ -117,13 +146,15 @@ function _blocks(level, x, y) {
     // C ref: vision.c does_block — TREE, CLOUD, waterwall (WATER) and LAVAWALL
     // also block line of sight (the Big Room's inner W/Z rings, for instance).
     if (typ === TREE || typ === CLOUD || typ === WATER || typ === LAVAWALL) return true;
+    // C ref: vision.c:175 `(Underwater && is_moat(x, y))`.
+    if (game.u?.uinwater && is_moat_v(loc)) return true;
     // C ref: vision.c does_block — "Boulders block light."  Scan the floor
     // objects at <x,y> for a boulder (otyp 474).  A quest-home rolling-boulder
     // trap, for instance, drops a boulder that casts a real LOS shadow.
     const objs = level.objects;
     if (objs) {
         for (const o of objs) {
-            if (o.otyp === 475 /*BOULDER*/ && o.where === 'floor'
+            if (o.otyp === 475 /*BOULDER*/ && o.where === OBJ_FLOOR
                 && o.ox === x && o.oy === y) return true;
         }
     }
@@ -133,16 +164,10 @@ function _blocks(level, x, y) {
     // (des.monster appear_as="obj:boulder") is the case that bites.
     const mons = level.monsters;
     if (mons) {
-        const S_ndoor = 12, S_vcdoor = 15, S_hcdoor = 16, S_tree = 18; // defsym.h
         for (const m of mons) {
             if (!m || m.mx !== x || m.my !== y) continue;
             if (m.minvis && !game.u?.uprops?.See_invisible) continue;
-            if (m.m_ap_type === 'obj' && m.mappearance === 475 /*BOULDER*/) return true;
-            if (m.m_ap_type === 'furniture') {
-                const ap = m.mappearance;
-                if (ap === S_hcdoor || ap === S_vcdoor || ap < S_ndoor || ap === S_tree)
-                    return true;
-            }
+            if (is_lightblocker_mappear(m)) return true;
         }
     }
     // C ref: vision.c does_block() -> visible_region_at().  A visible region
@@ -648,7 +673,11 @@ export function vision_recalc(control = 0) {
     const u = game.u;
     if (!u || !game.level) return;
     game.vision_full_recalc = 0;
-    if (game.in_mklev) return;
+    // C ref: vision.c:533 `if (gi.in_mklev || program_state.in_getlev ||
+    // !iflags.vision_inited) return;` — end.c really_done() renders the vision
+    // subsystem inoperative before disclosure, so the docrt() that follows a
+    // disclosure menu neither blanks nor recomputes sight.
+    if (game.in_mklev || game.iflags?.vision_inited === false) return;
 
     // Swap to unused buffer
     const next = game.active_buf === 0 ? cs_buf1 : cs_buf0;
@@ -665,7 +694,35 @@ export function vision_recalc(control = 0) {
     // nothing can see you".  The u.uswallow half was missing, so the moveloop's
     // vision_recalc(0) restored full sight on the turn AFTER gulpmu's
     // vision_recalc(2), making canseemon(engulfer) true inside the stomach.
-    if (control !== 2 && !u.uswallow) {
+    // C ref: vision.c:589 — a submerged hero (not on the Plane of Water) who
+    // is not Blind only sees the adjacent squares that are also water, and
+    // has no night vision.
+    const rogue = control !== 2 && !u.uswallow && !Blind() && Is_rogue_level(u.uz);
+    const underwater = control !== 2 && !u.uswallow && !Blind()
+        && !!u.uinwater && !Is_waterlevel(u.uz);
+    if (rogue) {
+        rogue_vision(next, next_rmin, next_rmax);
+    } else if (underwater) {
+        const lo_col = Math.max(u.ux - 1, 1);
+        for (let row = u.uy - 1; row <= u.uy + 1; row++)
+            for (let col = lo_col; col <= u.ux + 1; col++) {
+                if (!isok(col, row) || !is_pool_v(col, row)) continue;
+                next_rmin[row] = Math.min(next_rmin[row], col);
+                next_rmax[row] = Math.max(next_rmax[row], col);
+                next[row][col] = IN_SIGHT | COULD_SEE;
+            }
+    } else if (control !== 2 && !u.uswallow && !Blind()
+               && u.utrap && u.utraptype === TT_PIT) {
+        // C ref: vision.c:609-622 — in a pit only the adjacent squares.
+        for (let row = u.uy - 1; row <= u.uy + 1; row++) {
+            if (row < 0) continue;
+            if (row >= ROWNO) break;
+            next_rmin[row] = Math.max(1, u.ux - 1);
+            next_rmax[row] = Math.min(COLNO - 1, u.ux + 1);
+            for (let col = next_rmin[row]; col <= next_rmax[row]; col++)
+                next[row][col] = IN_SIGHT | COULD_SEE;
+        }
+    } else if (control !== 2 && !u.uswallow) {
         view_from(u.uy, u.ux, next, next_rmin, next_rmax);
     }
 
@@ -695,7 +752,7 @@ export function vision_recalc(control = 0) {
     // jsmain.js): a direct `import` here reorders ESM evaluation and TDZ-traps
     // mkobj.js through u_init.js.
     const _vfr = game.vision_full_recalc;
-    hooks.lightsources?.(next);
+    if (!rogue) hooks.lightsources?.(next);
     game.vision_full_recalc = _vfr;
 
     // Compute IN_SIGHT from COULD_SEE + lighting
@@ -712,7 +769,7 @@ export function vision_recalc(control = 0) {
     // monster is redrawn (one display-RNG draw each while hallucinating).
     const blind = control !== 2 && !u.uswallow && Blind();
 
-    for (let row = 0; row < ROWNO && !blind; row++) {
+    for (let row = 0; row < ROWNO && !blind && !rogue; row++) {
         const dy = Math.sign(uy - row);
         for (let col = next_rmin[row]; col <= next_rmax[row]; col++) {
             if (!(next[row][col] & COULD_SEE)) continue;
@@ -823,6 +880,9 @@ export function vision_recalc(control = 0) {
 
     game._viz_rmin = next_rmin;
     game._viz_rmax = next_rmax;
+
+    // C ref: vision.c vision_recalc() tail: notice_all_mons(TRUE).
+    if (game.flags?.spot_monsters) hooks.noticeQueue?.(true);
 }
 
 // C ref: youprop.h Blind ((HBlinded || EBlinded) && !BBlinded).  The JS hero
@@ -845,7 +905,9 @@ export function Infravision() {
     const u = game.u || {};
     const props = u.uprops || {};
     const intrinsic = (props.Infravision ?? u.Infravision)
-        || (props.HInfravision ?? u.HInfravision);
+        || (props.HInfravision ?? u.HInfravision)
+        // C: adjabil() leaves the orc/elf FROMRACE bit in HInfravision across polymorph.
+        || has_innate('HInfravision');
     const extrinsic = props.EInfravision ?? u.EInfravision;
     const pmidx = u.Upolyd ? u.umonnum : races[game.initrace]?.basepm;
     return !!(intrinsic || extrinsic
@@ -894,6 +956,9 @@ export function clear_area_cells(scol, srow, range) {
 }
 
 export function init_vision_globals() {
+    // C ref: vision.c:263 `iflags.vision_inited = TRUE` (end.c:1152 clears it
+    // once the hero is really dead; a fresh game must start with it set).
+    (game.iflags = game.iflags || {}).vision_inited = true;
     game.viz_array = cs_buf0;
     game.active_buf = 0;
     game.vis_step = 0;
@@ -1004,8 +1069,7 @@ export function get_unused_cs() {
 // boundaries, and always sees the eight adjacent squares.  The in_sight bit is
 // set here too, to dodge a bug caused by the one-sided lit-wall hack.
 //
-// No RNG.  vision_recalc() dispatches to this instead of view_from() when
-// Is_rogue_level(&u.uz); this port's vision_recalc() has no such arm.
+// No RNG.  Rogue levels restrict vision to the current room and adjacent cells.
 export function rogue_vision(next, rmin, rmax) {
     const u = game.u;
     const level = game.level;

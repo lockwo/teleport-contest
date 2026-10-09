@@ -36,9 +36,6 @@
 //   * a container's contents are an ARRAY (obj.cobj), not a ->cobj chain, so
 //     `obj->cobj` (the first content) is cobj[0] and Has_contents(o) is a
 //     non-empty array.
-//   * obj->where is a NUMBER in js/mkobj.js (const.js OBJ_*) but a STRING in
-//     js/invent.js ('free'/'floor'/'contained'/...).  _where_is() below accepts
-//     both spellings rather than picking one and being wrong half the time.
 //   * objects[] rows here carry only part of C's struct objclass (see
 //     l_obj_objects_to_table).
 //
@@ -212,15 +209,8 @@ function _stop_timer(_func_index, _arg) { return 0; }
 function _obj_stop_timers(obj) { if (obj) obj.timed = false; }
 function _bury_an_obj(_otmp, box) { if (box) box.dealloced = false; return null; }
 
-/* obj->where, which is numeric in js/mkobj.js and a lowercase string in
-   js/invent.js.  Both spellings answer here. */
-const _WHERE_NAMES = {
-    [OBJ_FREE]: 'free', [OBJ_FLOOR]: 'floor', [OBJ_CONTAINED]: 'contained',
-    [OBJ_INVENT]: 'invent', [OBJ_MINVENT]: 'minvent',
-    [OBJ_LUAFREE]: 'luafree',
-};
 function _where_is(obj, where) {
-    return !!obj && (obj.where === where || obj.where === _WHERE_NAMES[where]);
+    return !!obj && obj.where === where;
 }
 
 /* C ref: nhlobj.c:8 struct _lua_obj.  `state` is UNUSED in the C too. */

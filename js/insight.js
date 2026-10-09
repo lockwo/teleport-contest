@@ -26,16 +26,16 @@ import {
 import { weapon_type } from './weapon.js';
 import { p_skill_of } from './enhance.js';
 import { update_topl } from './display.js';
-import { phase_of_the_moon, friday_13th, night, NEW_MOON, FULL_MOON } from './calendar.js';
+import { phase_of_the_moon, friday_13th, night, midnight as midnight_cal, NEW_MOON, FULL_MOON } from './calendar.js';
 import { race_attrmax } from './u_init.js';
-import { acurr_eff } from './attrib.js';
+import { acurr_eff, stone_luck } from './attrib.js';
 import { depth } from './hacklib.js';
 import { endgamelevelname } from './dungeon.js';
 import { newuexp, has_innate, innate_source, rank_of } from './exper.js';
 import { youHaveSearching, youHaveFast, youHaveVeryFast } from './allmain.js';
 import { Infravision, Blind } from './vision.js';
 import { objects as OBJECTS } from './mkobj.js';
-import { MFLAGS2, M2_PNAME } from './monflags_data.js';
+import { MFLAGS2, M2_PNAME, humanoid } from './monflags_data.js';
 const G_UNIQ = 0x1000; // monflag.h
 import { magic_negation_hero } from './monmove.js';
 import {
@@ -66,16 +66,25 @@ function worn_property_sources() {
     // C worn.c's worn[] order.  Saved games can have a valid hero slot before
     // the inventory list is reconstructed, so do not rely on invent alone.
     for (const o of [game.uarm, game.uarmc, game.uarmh, game.uarms, game.uarmg,
-        game.uarmf, game.uarmu, game.uleft, game.uright, game.uwep,
-        game.uswapwep, game.uquiver, game.uamul, game.ublindf]) add(o);
+        game.uarmf, game.uarmu, game.uleft, game.uright, game.uamul,
+        game.ublindf]) add(o);
+    // C ref: worn.c setworn() — W_SWAPWEP/W_QUIVER confer nothing, and a wielded
+    // object only confers its oc_oprop when it is a weapon or weptool (a wielded
+    // amulet of life saving is not saving anyone).
+    if (game.uwep && (game.uwep.oclass === WEAPON_CLASS || is_weptool(game.uwep)))
+        add(game.uwep);
     for (const o of (game.invent || []))
         if ((o.owornmask || 0) & W_GIVES_PROP) add(o);
     return sources;
 }
+// C ref: youprop.h:57 Antimagic == (HAntimagic || EAntimagic).  EAntimagic is
+// set by any oc_oprop source AND by a carried artifact with CARY(AD_MAGM)
+// (artifact.c set_artifact_intrinsic), which is what what_gives() walks.
 function Antimagic() {
-    return worn_property_sources().some((o) => OBJECTS[o.otyp]?.oc_oprop === 12)
-        || !!(game.u?.HAntimagic);
+    if (game.u?.formprops?.Antimagic) return true; /* FROMFORM: polyself.js set_uasmon() */
+    return !!Prop(ANTIMAGIC);
 }
+
 
 // The four owornmask groups from_what()/cause_known() scan.  These are
 // js/invent.js's REMAPPED W_* bits, not prop.h's — see that file's header.
@@ -215,18 +224,35 @@ function from_what(propidx, hkey) {
                 buf = ' innately';
             } else if (src === 'exp') {
                 buf = ' because of your experience';
-            } else if (!src && hkey && (game.u?.uprops?.[hkey] || game.u?.[hkey])) {
+            } else if (!src && hkey && H_prop(propidx) && H_prop(propidx) !== FROMFORM
+                       /* FROMRACE alone (polysense()'s HWarn_of_mon) is not FROMOUTSIDE */
+                       && !((H_prop(propidx) & FROMRACE) && !(H_prop(propidx) & FROMOUTSIDE))
+                       && !temp_resist(propidx) /* timed only: no FROMOUTSIDE bit */
+                       /* HInvis keeps its timeout and FROMOUTSIDE bit in one word */
+                       && !(propidx === INVIS_PROP && !((game.u?.uprops?.HInvis | 0) & FROMOUTSIDE))) {
+                // C ref: attrib.c:872 `(*ability & FROMOUTSIDE) != 0`.  Read
+                // the intrinsic through H_prop() so the bare-name spelling
+                // several modules write (js/eat.js stores corpse intrinsics as
+                // u.uprops.Aggravate_monster, not HAggravate_monster) is seen:
+                // otherwise wizard-mode enlightenment dropped the
+                // " intrinsically" suffix for every one of them.
                 buf = ' intrinsically';
+            } else if (!src && F_prop(propidx)) {
+                buf = ' from your creature form';
             } else {
                 const o = what_gives(propidx);
                 if (o)
                     buf = ` because of ${o.oartifact ? bare_artifactname(o) : ysimple_name(o)}`;
                 else if (propidx === BLINDED_PROP && Blindfolded_only())
                     buf = ` because of ${ysimple_name(game.ublindf)}`;
-                // C's goop-covered-face BLINDED arm needs HBlinded's
-                // FROMOUTSIDE/timeout bits kept apart from other sources; this
-                // port's flat uprops store doesn't preserve that, so it is
-                // dropped rather than guessed at.
+                // C ref: attrib.c:964-968 — goop (a cream pie) covering the
+                // face is the whole of the timeout, with no outside source.
+                // The C format string has no leading space, which the
+                // "(timeout)" suffix in front of it hides.
+                else if (propidx === BLINDED_PROP && (game.u?.ucreamed | 0)
+                         && (game.u?.blinded | 0) === (game.u.ucreamed | 0)
+                         && !(H_prop(BLINDED_PROP) & ~TIMEOUT_MASK))
+                    buf = `due to goop covering your ${body_part(FACE)}`;
             }
         }
         if (buf.includes(' pair of ')) buf = buf.replace(' pair of ', ' ');
@@ -269,7 +295,7 @@ import { LL_WISH, LL_ACHIEVE, LL_UMONST, LL_DIVINEGIFT, LL_LIFESAVE,
          livelog_printf } from './livelog.js';
 import { nhgetch } from './input.js';
 import { can_pray_quiet } from './pray.js';
-import { currency, inv_weight, ysimple_name } from './invent.js';
+import { currency, inv_weight, ysimple_name, is_weptool } from './invent.js';
 const _wizard = () => !!(game.flags && game.flags.debug);
 const _discover = () => { const f = game.flags || {}; return !!(f.explore || f.discover || f.playmode === 'explore'); };
 
@@ -284,12 +310,8 @@ function attrval(attrindx, v) {
     return `18/${String(v - 18).padStart(2, '0')}`;
 }
 
-// C ref: hacklib.c an() — indefinite article (sufficient for the role rank,
-// dungeon and weapon strings reached here).
-function an(s) {
-    if (!s) return s;
-    return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`;
-}
+// C ref: objnam.c an() — indefinite article.
+import { an } from './hacklib.js';
 
 // C ref: attrib.c from_what(ANTIMAGIC) — wizard mode only; the worn item that
 // grants it (what_gives -> ysimple_name).
@@ -352,8 +374,11 @@ export function enlightenment_lines(final = 0, basic = true) {
     // which differs for Rogue/Ranger), so resolve the array index here.
     const roleArrIdx = roles.findIndex((r) => r.mnum === rolemnum);
     const roleIdx = roleArrIdx >= 0 ? roleArrIdx : rolemnum;
-    const female = !!game.flags?.female;
+    // C ref: insight.c background_enlightenment() — while polymorphed the role
+    // gender is the saved u.mfemale, not the current you-as-monster gender.
+    const female = !!(u.Upolyd ? u.mfemale : game.flags?.female);
     const innategend = female ? 1 : 0;
+    const initgend = game.initgend === 1 ? 1 : 0;
 
     const plname = game.flags?.debug ? 'wizard' : (game.plname || 'Player');
     const titleName = capFirst(plname);
@@ -393,16 +418,29 @@ export function enlightenment_lines(final = 0, basic = true) {
     out('');
     out('Background:');
 
+    // C ref: insight.c background_enlightenment() — when polymorphed, report
+    // the current shape (current gender) before the underlying role.
+    if (u.Upolyd) {
+        const uasmon = youmonst_data_pub();
+        const curf = game.flags?.female ? 1 : 0;
+        const gpfx = (!is_male_flag(uasmon) && !is_female_flag(uasmon) && !is_neuter_flag(uasmon))
+            ? `${GENDER_ADJ[curf]} ` : '';
+        const altphrasing = vampshifted(game.youmonst);
+        const tmp = altphrasing
+            ? `${gpfx}${pmname_of_pmidx(game.u.mcham, curf)} in ` : gpfx;
+        youAre(`${!final ? 'currently ' : ''}${altphrasing ? just_an(tmp) : 'in '}${tmp}${pmname_of_pmidx(uasmon?.pmidx, curf)} form`);
+    }
     // role + rank
     let gendpfx = '';
     if (!roleDef.name?.f
-        && (((roleDef.allow ?? 0) & ROLE_GENDMASK) === (ROLE_MALE | ROLE_FEMALE)))
+        && ((((roleDef.allow ?? 0) & ROLE_GENDMASK) === (ROLE_MALE | ROLE_FEMALE))
+            || innategend !== initgend))
         gendpfx = `${GENDER_ADJ[innategend]} `;
-    let roleBuf;
+    let roleBuf = u.Upolyd ? 'actually ' : '';
     if (rankName.toLowerCase() === roleName.toLowerCase())
-        roleBuf = `${an(rankName)}, level ${ulevel} ${gendpfx}${raceNoun}`;
+        roleBuf += `${an(rankName)}, level ${ulevel} ${gendpfx}${raceNoun}`;
     else
-        roleBuf = `${an(rankName)}, a level ${ulevel} ${gendpfx}${raceAdj} ${roleName}`;
+        roleBuf += `${an(rankName)}, a level ${ulevel} ${gendpfx}${raceAdj} ${roleName}`;
     youAre(roleBuf);
 
     // alignment + pantheon (bypasses you_are to omit ending period)
@@ -416,9 +454,13 @@ export function enlightenment_lines(final = 0, basic = true) {
         pan += ` ${align_gname(roleIdx, A_CHAOTIC)} (${alignStr(A_CHAOTIC)})`;
     pan += '.';
     out(pan);
+    // C ref: insight.c — "You started out <gender>." after a sex change.
+    if (innategend !== initgend)
+        out(` You started out ${GENDER_ADJ[initgend]}.`);
 
-    // handedness (URIGHTY defaults TRUE)
-    youAre(`${game.u?.uleft_handed ? 'left' : 'right'}-handed`);
+    // handedness (URIGHTY defaults TRUE); "normally" when the current form
+    // has no hands (body_part(HANDED) != "handed").
+    youAre(`${body_part(HANDED) === 'handed' ? '' : 'normally '}${game.u?.uleft_handed ? 'left' : 'right'}-handed`);
 
     // dungeon level  (C ref: insight.c background_enlightenment)
     // The name comes from dungeons[u.uz.dnum].dname, with a leading "The "
@@ -444,7 +486,12 @@ export function enlightenment_lines(final = 0, basic = true) {
         if (/^the /i.test(dgnName))
             dgnName = dgnName.charAt(0).toLowerCase() + dgnName.slice(1);
         const dgnLevel = In_quest(u.uz) ? (u.uz?.dlevel ?? 1) : depth(u.uz);
-        youAre(`in ${dgnName}, on level ${dgnLevel}`);
+        let lvlbuf = `level ${dgnLevel}`;
+        if (Is_rogue_level(u.uz))
+            lvlbuf += ', a primitive area';
+        else if (Is_bigroom(u.uz) && !Blind())
+            lvlbuf += ', a very big room';
+        youAre(`in ${dgnName}, on ${lvlbuf}`);
     }
 
     // turns
@@ -452,12 +499,13 @@ export function enlightenment_lines(final = 0, basic = true) {
     else enlLine('You ', 'entered ', `the dungeon ${moves} turn${moves === 1 ? '' : 's'} ago`, '');
 
     // ── other environmental factors ──  C ref: insight.c
-    // background_enlightenment().  C tests midnight()/night() first (the
-    // "midnight hour"/"nighttime" line); midnight() has no JS helper, so only
-    // the nighttime line is modeled (a no-op for daytime sessions).  Then the
+    // background_enlightenment().  C tests midnight() then night() (the
+    // "midnight hour"/"nighttime" line).  Then the
     // moon phase and Friday-the-13th status are reported, in that order, BEFORE
     // the experience-point line.
-    if (night())
+    if (final ? game.iflags?.at_midnight : midnight_cal())
+        enlLine('It ', final ? 'was ' : 'is ', 'the midnight hour', '');
+    else if (final ? game.iflags?.at_night : night())
         enlLine('It ', final ? 'was ' : 'is ', 'nighttime', '');
     const moonphase = phase_of_the_moon();
     if (moonphase === FULL_MOON || moonphase === NEW_MOON) {
@@ -490,12 +538,13 @@ export function enlightenment_lines(final = 0, basic = true) {
         expbuf += `, ${delta} ${uexp > 0 ? 'more ' : ''}${wasWere}`
             + `needed ${xlvl < 18 ? 'to attain' : 'for'} level ${xlvl + 1}`;
     }
-    youHave(expbuf);
+    if (!u.Upolyd) youHave(expbuf);
 
     // ── Basics ──
     out('');
     out('Basics:');
-    const hp = Math.max(0, u.uhp ?? 0), hpmax = u.uhpmax ?? 0;
+    const hp = Math.max(0, (u.Upolyd ? u.mh : u.uhp) ?? 0),
+          hpmax = (u.Upolyd ? u.mhmax : u.uhpmax) ?? 0;
     if (hp === hpmax && hpmax > 1) youHave(`all ${hpmax} hit points`);
     else youHave(`${hp} out of ${hpmax} hit point${hpmax === 1 ? '' : 's'}`);
 
@@ -505,9 +554,21 @@ export function enlightenment_lines(final = 0, basic = true) {
         youHave(`${!pwmax ? 'no' : 'both'} ${Power}`);
     else if (pw === pwmax && pwmax > 2) youHave(`all ${pwmax} ${Power}`);
     else youHave(`${pw} out of ${pwmax} ${Power}`);
+    // C ref: insight.c basics_enlightenment() — polymorphed hit dice.
+    if (u.Upolyd) {
+        const mlvl = youmonst_data_pub()?.mlevel | 0;
+        youHave(mlvl === 0 ? '0 hit dice (actually 1/2)'
+            : mlvl === 1 ? '1 hit die' : `${mlvl} hit dice`);
+    }
 
-    // armor class (enl_msg: "Your armor class " + "is " + value)
-    enlLine('Your armor class ', final ? 'was ' : 'is ', `${u.uac ?? 0}`, '');
+    // armor class (enl_msg: "Your armor class " + "is " + value); C ref:
+    // insight.c basics_enlightenment() runs find_ac() first, refreshing the
+    // u.uac snapshot (and enforcing AC_MAX) before reading it.
+    find_ac();
+    let acbuf = `${u.uac | 0}`;
+    if (Math.abs(u.uac | 0) === AC_MAX)
+        acbuf += `, the ${((u.uac | 0) < 0) ? 'best' : 'worst'} possible`;
+    enlLine('Your armor class ', final ? 'was ' : 'is ', acbuf, '');
 
     // wallet (bypasses you_have; leading space already supplied)
     const umoney = game._goldCount ?? u.umoney ?? 0;
@@ -556,6 +617,12 @@ export function enlightenment_lines(final = 0, basic = true) {
             ? true
             : alimit !== (idx !== A_STR ? 18 : 118 /* STR18(100) */);
         let valubuf = attrval(idx, acurrent);
+        // C ref: one_characteristic() — Upolyd hides base/peak/limit, and
+        // MAGICENLIGHTENMENT only un-hides them when not polymorphed.
+        if (u.Upolyd) {
+            enlLine(`Your ${name} `, final ? 'was ' : 'is ', valubuf, '');
+            return;
+        }
         let paren = final ? ' (' : ' (current; ';
         if (acurrent !== abase) {
             valubuf += `${paren}base:${attrval(idx, abase)}`;
@@ -582,9 +649,56 @@ export function enlightenment_lines(final = 0, basic = true) {
     // ── Status ──
     out('');
     out(final ? 'Final Status:' : 'Status:');
-    // C ref: insight.c:2372-2377.  Timed Hallucination is represented under
-    // both H- and bare property names across the port, so use the same
-    // effective-property test as the rest of this display.
+    // C ref: insight.c status_enlightenment() — "transformed" first, then the
+    // internal troubles in prayer-rank order: Stoned, Slimed, Strangled, Sick,
+    // Vomiting, Stunned, Confusion, Hallucination, Blind, Deaf.
+    const up = u.uprops || {};
+    if (u.Upolyd)
+        youAre(`transformed${ugenocided()
+            ? ` and ${final ? 'felt' : 'feel'} ${udeadinside()} inside` : ''}`);
+    // C ref: insight.c status_enlightenment() — riding, then the movement
+    // situations the hero always knows (levitating/flying, underwater,
+    // swimming, walking on water), before the internal troubles.
+    let youtoo = 'You ';
+    if (u.usteed) {
+        const steedname = y_monnam(u.usteed);
+        youAre(`riding ${steedname}`);
+        youtoo += `and ${steedname} `;
+    }
+    if (Prop(LEVITATION)) {
+        if (Lev_at_will() && (!basic || final || _wizard() || _discover()))
+            youAre('levitating, at will');
+        else
+            enlLine(youtoo, final ? 'were ' : 'are ', 'levitating', from_what_p(LEVITATION));
+    } else if (Prop(FLYING)) { /* can only fly when not levitating */
+        enlLine(youtoo, final ? 'were ' : 'are ', 'flying', from_what_p(FLYING));
+    }
+    if (Underwater()) {
+        youAre('underwater');
+    } else if (u.uinwater) {
+        youAre(Prop(SWIMMING) ? 'swimming' : 'in water', from_what_p(SWIMMING));
+    } else if (walking_on_water()) {
+        youAre(`walking on ${is_pool(u.ux, u.uy) ? 'water'
+            : is_lava(u.ux, u.uy) ? 'lava' : surface(u.ux, u.uy)}`, from_what_p(WWALKING));
+    }
+    // C ref: insight.c:1002 — `if (Upolyd && (u.uundetected || U_AP_TYPE !=
+    // M_AP_NOTHING)) youhiding(TRUE, final);`, after the movement lines and
+    // before the internal troubles.
+    if (u.Upolyd && (u.uundetected || U_AP_TYPE() !== 0)) youAre(youhiding_buf());
+    if ((up.Stoned | 0) > 0) youAre('turning to stone');
+    if ((up.Slimed | 0) > 0) youAre('turning into slime');
+    if ((up.Strangled | 0) > 0)
+        youAre(`being strangled${_wizard() ? ` (${up.Strangled & TIMEOUT_MASK})` : ''}`);
+    if ((up.Sick | 0) > 0 || u.sick) {
+        if (u.usick_type & SICK_NONVOMITABLE) youAre('terminally sick from illness');
+        if (u.usick_type & SICK_VOMITABLE) youAre('terminally sick from food poisoning');
+    }
+    if ((up.Vomiting | 0) > 0) youAre('nauseated');
+    if ((up.Stun | 0) > 0 || u.Stunned) youAre('stunned');
+    if ((up.Confusion | 0) > 0) youAre('confused');
+    // Timed Hallucination is represented under both H- and bare property
+    // names across the port, so use the same effective-property test as the
+    // rest of this display.
     if (haveProp(23 /* HALLUC */, 'HHallucination')
         && !haveProp(24 /* HALLUC_RES */, 'HHalluc_resistance'))
         youAre('hallucinating');
@@ -598,7 +712,7 @@ export function enlightenment_lines(final = 0, basic = true) {
             : (Blindfolded() && !timeout) ? 'deliberately'
               : 'temporarily'} blind`;
         if (_wizard() && !innate && !Blindfolded()) bb += ` (${timeout})`;
-        youAre(bb, !haseyes(game.youmonst?.data) ? '' : from_what(BLINDED_PROP, 'HBlinded'));
+        youAre(bb, !haseyes(youmonst_data_pub()) ? '' : from_what(BLINDED_PROP, 'HBlinded'));
     }
     // C ref: insight.c:1073 — `if (Deaf) you_are("deaf", from_what(DEAF));`,
     // emitted BEFORE the hunger line.
@@ -607,6 +721,25 @@ export function enlightenment_lines(final = 0, basic = true) {
     // are live state, not special messages: omitting them changes the number
     // of tty menu pages whenever a punished or leg-wounded hero uses ^X.
     if (u.uball) youAre(`chained to ${ansimpleoname(u.uball)}`);
+    // C ref: insight.c:1124 — held by (or swallowed by) the creature u.ustuck.
+    if (u.ustuck) {
+        let heldmon = a_monnam(u.ustuck);
+        if (heldmon === 'it'
+            && (!has_mgivenname(u.ustuck) || MGIVENNAME(u.ustuck) !== 'it'))
+            heldmon = 'an unseen creature';
+        if (u.uswallow) {
+            let sb = `${digests(u.ustuck.data) ? 'swallowed' : 'engulfed'} by ${heldmon}`;
+            if (dmgtype(u.ustuck.data, AD_DGST))
+                sb += (final && !u.uswldtim) ? ' and got totally digested'
+                    : ` and ${final ? 'were' : 'are'} being digested`;
+            if (_wizard()) sb += ` (${u.uswldtim | 0})`;
+            youAre(sb);
+        } else {
+            const ustick = !!(u.Upolyd && sticks(youmonst_data_pub()));
+            youAre(`${ustick ? 'holding' : 'held by'} ${heldmon} (${
+                dxdy_to_dist_descr(u.ustuck.mx - u.ux, u.ustuck.my - u.uy, true)})`);
+        }
+    }
     {
         const woundTimer = (u.HWounded_legs | 0)
             || (u.uprops?.HWounded_legs | 0);
@@ -620,6 +753,11 @@ export function enlightenment_lines(final = 0, basic = true) {
             else youHave(`a wounded ${sides === LEFT_SIDE ? 'left' : 'right'} leg`);
         }
     }
+    if (up.Glib) {
+        let slippery = `slippery ${fingers_or_gloves(true)}`;
+        if (_wizard()) slippery += ` (${up.Glib & TIMEOUT_MASK})`;
+        youHave(slippery);
+    }
     // C ref: insight.c:1181 — Sleepy (worn/eaten amulet of restful sleep),
     // emitted immediately before the hunger line.  cause_known() is bypassed
     // whenever MAGICENLIGHTENMENT is on, which end-of-game disclosure always is.
@@ -629,6 +767,11 @@ export function enlightenment_lines(final = 0, basic = true) {
         if (_wizard()) sb += ` (${(u.HSleepy || 0) & TIMEOUT_MASK})`;
         enlLine('You ', final ? 'fell' : 'fall', ' asleep uncontrollably', sb);
     }
+    // C ref: insight.c:1190 — Hunger (worn ring of hunger / amulet / hunger
+    // intrinsic), emitted right before the hu_stat[] line.
+    if (haveProp(28 /*HUNGER*/, 'HHunger')
+        && (final || _wizard() || _discover() || cause_known(28)))
+        enlLine('You ', final ? 'hungered' : 'hunger', ' rapidly', from_what(28, 'HHunger'));
     // hunger: hu_stat[u.uhs]; NOT_HUNGRY (1) -> "not hungry" at game start.
     // C ref: insight.c:1146 — wizard mode appends the raw u.uhunger.
     {
@@ -643,7 +786,11 @@ export function enlightenment_lines(final = 0, basic = true) {
         if (cap > 0) {
             const encWords = ['', 'Burdened', 'Stressed', 'Strained', 'Overtaxed', 'Overloaded'];
             const adjs = ['', 'slightly', 'moderately', 'very', 'extremely', 'not possible'];
-            const w = encWords[cap].charAt(0).toLowerCase() + encWords[cap].slice(1);
+            let w = encWords[cap].charAt(0).toLowerCase() + encWords[cap].slice(1);
+            // C ref: insight.c:1234 — the carried weight is appended BEFORE the
+            // "; movement is ..." clause, in wizard mode, on this arm too (not
+            // just the unencumbered one below).
+            if (_wizard()) w += ` <${inv_weight()}>`;
             youAre(`${w}; movement ${final ? 'was' : 'is'} ${adjs[cap]}${cap < 5 ? ' slowed' : ''}`);
         } else {
             // wizard mode appends the carried weight (insight.c:1218).
@@ -736,16 +883,16 @@ function piousness(record) {
 // wielding anything".
 function empty_handed() {
     if (game.uarmg) return 'empty handed';
-    // The starter heroes are humanoid (only an exotic polyself would not be).
-    return 'bare handed';
+    return humanoid(youmonst_data_pub()) ? 'bare handed' : 'not wielding anything';
 }
 
-// C ref: weapon.c is a Monk-only discipline — martial arts is the only role
-// that trains P_MARTIAL_ARTS, so the bare-handed skill reads "martial arts" for
-// a Monk and "bare handed combat" for everyone else.
+// C ref: weapon.c P_NAME() indexes barehands_or_martial[] with martial_bonus()
+// (skills.h: Role_if(PM_SAMURAI) || Role_if(PM_MONK)), so the bare-handed skill
+// reads "martial arts" for a Monk or Samurai and "bare handed combat" for
+// everyone else.
 function isMartialArtsRole() {
     const rn = (game.urole?.name?.m || '').toLowerCase();
-    return rn === 'monk';
+    return rn === 'monk' || rn === 'samurai';
 }
 
 // C ref: weapon.c skill_level_name() lower-cased — proficiency-level word.
@@ -941,87 +1088,23 @@ export function vanquished_ntypes() {
 }
 export function anyVanquished() { return vanquished_ntypes() > 0; }
 
-// C ref: insight.c:2784 list_vanquished(defquery, ask) — the "Vanquished
-// creatures:" menu.  Only the DEFAULT sort (VANQ_MLVL_MNDX: mlevel high to low,
-// tiebreak mndx low to high) is implemented; that is the only mode reachable
-// without the 'a' answer's set_vanq_order() menu, and with it class_header and
-// uniq_header are both false so there are no class/uniq separator lines.
-export async function list_vanquished_screen() {
-    const { monster_by_pmidx } = await import('./makemon.js');
-    const { makeplural } = await import('./invent.js');
-    const mv = game.mvitals || [];
-    const idx = [];
-    let total = 0;
-    for (let i = 0; i < mv.length; i++)
-        if (mv[i]?.died) { idx.push(i); total += mv[i].died; }
-    if (!idx.length) return;
-    idx.sort((a, b) => {
-        const ma = monster_by_pmidx(a), mb = monster_by_pmidx(b);
-        const r = (mb?.mlevel ?? 0) - (ma?.mlevel ?? 0);   // mlevel high to low
-        return r !== 0 ? r : a - b;                        // tiebreak: mndx
-    });
-    const lines = ['Vanquished creatures:', ''];
-    for (const i of idx) {
-        const m = monster_by_pmidx(i);
-        const name = m?.name || '';
-        const n = mv[i].died;
-        let buf;
-        if ((m?.geno ?? 0) & G_UNIQ) {
-            // type_is_pname() (M2_PNAME) suppresses the article.
-            buf = `${is_pname(m) ? '' : 'the '}${name}`;
-            if (n > 1) buf += ` (${N_times(n)})`;
-        } else if (n === 1) {
-            buf = an_word(name);
-        } else {
-            buf = `${String(n).padStart(3, ' ')} ${makeplural(name)}`;
-        }
-        // insight.c:2910 — leading spaces so the article lines up with a 3-digit
-        // count column.
-        const pfx = /^the /i.test(buf) ? 0 : /^an /i.test(buf) ? 1
-            : /^a /i.test(buf) ? 2 : !/[0-9]/.test(buf[2] ?? '') ? 4 : 0;
-        lines.push(' '.repeat(pfx) + buf);
-    }
-    if (idx.length > 1) {
-        lines.push('');
-        lines.push(`${total} creatures vanquished.`);
-    }
-    // C ref: insight.c:2862 list_vanquished() builds an NHW_MENU with putstr()
-    // ONLY (no menu items), and tty_display_nhwindow() routes such a window
-    // through process_text_window() — i.e. --More--, not "(end)".
-    await render_menu_window(lines);
-    for (;;) {
-        const key = await nhgetch();
-        if (key === 27 || key === 13 || key === 10 || key === 32) break;
-    }
-    const { flush_screen } = await import('./display.js');
-    await flush_screen(1);
-}
-function an_word(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
 // C ref: mondata.h type_is_pname(ptr) == (mflags2 & M2_PNAME).
 function is_pname(m) { return ((MFLAGS2[m?.pmidx] ?? 0) & M2_PNAME) !== 0; }
 
 // C ref: insight.c:2769 dovanquished() — the #vanquished command.
 export async function dovanquished() {
-    if (!vanquished_ntypes()) {
-        // C ref: pline() for this "none" case; its sibling dogenocided() right
-        // below already routes through update_topl() -- this raw write skipped
-        // the merge-or-page check, silently dropping a still-pending message.
-        await update_topl('No creatures have been vanquished.');
-        return 0;
-    }
-    await list_vanquished_screen();
+    await list_vanquished(game.iflags?.menu_requested ? 'A' : 'y', false);
+    if (game.iflags) game.iflags.menu_requested = false;
     return 0;
 }
 
-// C ref: insight.c dogenocided() — the M-g / #genocided command.
+// C ref: insight.c:3135 dogenocided() — the M-g / #genocided command.  It is
+// just list_genocided() with no y/n prompt; the 'm' prefix (menu_requested)
+// asks for a sort order first.  This used to short-circuit to the "none"
+// message, so a real genocide never produced its species window.
 export async function dogenocided() {
-    if (!anyGenocidedOrExtinct()) {
-        await update_topl('No creatures have been genocided.');
-        return 0; // ECMD_OK
-    }
-    // The genocided/extinct species menu is unreached by the covered sessions.
-    await update_topl('No creatures have been genocided.');
-    return 0;
+    await list_genocided(game.iflags?.menu_requested ? 'a' : 'y', false);
+    return 0; // ECMD_OK
 }
 
 // C ref: insight.c LL_majors / majorevent()/spoilerevent() — the #chronicle
@@ -1195,7 +1278,10 @@ function conduct_lines(final = 0) {
     if (rp.blind) you_have_been('blind from birth');
     if (rp.deaf) you_have_been('deaf from birth');
     if (rp.pauper)
-        enlLine('You ', (game.invent && game.invent.length) ? 'started' : 'are',
+        // C ref: insight.c show_conduct() enl_msg(You_, invent ? "started"
+        // : "are", "started out", ...) — the past (final) form is fixed.
+        enlLine('You ', final ? 'started out'
+                : ((game.invent && game.invent.length) ? 'started' : 'are'),
                 ' without possessions');
     if (rp.nudist) you_have_been('faithfully nudist');
 
@@ -1243,14 +1329,19 @@ function conduct_lines(final = 0) {
             buf += `for ${uc.wisharti === 1 ? 'an artifact' : 'artifacts'})`;
         }
         you_have_X(buf);
-        if (!uc.wisharti) enlLine('You ', 'have not wished', ' for any artifacts');
+        if (!uc.wisharti)
+            enlLine('You ', final ? 'did not wish' : 'have not wished',
+                    ' for any artifacts');
     }
 
     if (sokoban_in_play()) {
+        // C ref: insight.c show_conduct() presentverb/pastverb pair.
         if (!uc.sokocheat)
-            enlLine('You ', 'have not violated', ' any of the special Sokoban rules');
+            enlLine('You ', final ? 'did not violate' : 'have not violated',
+                    ' any of the special Sokoban rules');
         else
-            enlLine('You ', 'have violated', ` the special Sokoban rules ${N_times(uc.sokocheat)}`);
+            enlLine('You ', final ? 'violated' : 'have violated',
+                    ` the special Sokoban rules ${N_times(uc.sokocheat)}`);
     }
 
     // C ref: insight.c:2230 show_achievements(final) — appended to the SAME
@@ -1311,24 +1402,24 @@ function show_achievement_lines(final) {
             you_have_X("learned the tune to open and close the Castle's drawbridge");
             break;
         case 1 /* ACH_BELL */:
-            enlLine('You ', u.uhave?.bell ? (final ? 'had ' : 'have ')
+            enlLine('You ', u.uhave?.bell ? (final ? 'had' : 'have')
                     : (final ? 'handled' : 'have handled'), ' the Bell of Opening');
             break;
         case 2 /* ACH_HELL */:
             enlLine('You ', final ? '' : 'have ', 'entered Gehennom');
             break;
         case 3 /* ACH_CNDL */:
-            enlLine('You ', u.uhave?.menorah ? (final ? 'had ' : 'have ')
+            enlLine('You ', u.uhave?.menorah ? (final ? 'had' : 'have')
                     : (final ? 'handled' : 'have handled'),
                     ' the Candelabrum of Invocation');
             break;
         case 4 /* ACH_BOOK */:
-            enlLine('You ', u.uhave?.book ? (final ? 'had ' : 'have ')
+            enlLine('You ', u.uhave?.book ? (final ? 'had' : 'have')
                     : (final ? 'handled' : 'have handled'), ' the Book of the Dead');
             break;
         case 5 /* ACH_INVK */: you_have_X("gained access to Moloch's Sanctum"); break;
         case 6 /* ACH_AMUL */:
-            enlLine('You ', u.uhave?.amulet ? (final ? 'had ' : 'have ')
+            enlLine('You ', u.uhave?.amulet ? (final ? 'had' : 'have')
                     : (final ? 'had obtained' : 'have obtained'),
                     ' the Amulet of Yendor');
             break;
@@ -1490,7 +1581,7 @@ export async function show_attributes_disclosure(final, basic = true) {
 import {
     A_CURRENT, A_ORIGINAL, A_NONE, AC_MAX, LOW_PM,
     TT_LAVA, TT_INFLOOR, TT_BURIEDBALL,
-    HANDED, LEG, I_SPECIAL, FROMFORM, FROMOUTSIDE,
+    HANDED, LEG, FACE, I_SPECIAL, FROMFORM, FROMOUTSIDE,
     SICK_VOMITABLE, SICK_NONVOMITABLE, LEFT_SIDE, BOTH_SIDES, M_AP_NOTHING,
     UNENCUMBERED, SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     OVERLOADED, BASICENLIGHTENMENT, MAGICENLIGHTENMENT, ENL_GAMEOVERALIVE,
@@ -1505,12 +1596,14 @@ import {
     ismnum, Is_rogue_level, MGIVENNAME, has_mgivenname, xdir, ydir,
 } from './const.js';
 import { genders } from './role.js';
-import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
+import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx } from './makemon.js';
+import { ugenocided, udeadinside, youhiding_buf } from './polyself.js';
 import { is_rider_pm, WEAPON_CLASS, GEM_CLASS } from './mkobj.js';
 import { mbodypart } from './monmove.js';
 import { mflags1_of, mflags2_of, M1_NOEYES, M1_CLING, M1_OVIPAROUS,
          M1_BREATHLESS, M1_AMPHIBIOUS, M2_ORC, M2_ELF, M2_HUMAN, M2_DEMON,
-         M2_WERE, M2_MALE, M2_FEMALE, M2_NEUTER } from './monflags_data.js';
+         M2_WERE, M2_MALE, M2_FEMALE, M2_NEUTER,
+         is_male_flag, is_female_flag, is_neuter_flag } from './monflags_data.js';
 import { MALE, FEMALE } from './do_name.js';
 import { NUMMONS } from './disprng.js';
 import { def_monsyms } from './symbols.js';
@@ -1535,7 +1628,7 @@ import { costly_spot } from './shkroom.js';
 // crude reduced copy that predates it; the fix is to delete the local one and
 // use this everywhere, not to add a third.
 import { makeplural as objnam_makeplural, ansimpleoname,
-         carrying, near_capacity, body_part } from './invent.js';
+         carrying, near_capacity, body_part, youmonst_data_pub } from './invent.js';
 import { y_monnam, a_monnam } from './do_name.js';
 
 // ── window shim (wintty.h / C's ge.en_win) ──────────────────────────────────
@@ -1561,9 +1654,26 @@ function create_nhwindow(type) {
     return id;
 }
 function putstr(win, attr, s) {
+    if (Array.isArray(win)) { win.push(s); return; } /* live text window */
     if (!win) { insight_dumplog.push({ text: s, attr }); return; }
     const w = _wins.get(win);
     if (w) w.lines.push({ text: s, attr });
+}
+// C ref: display_nhwindow(win, TRUE) on an NHW_MENU filled only by putstr():
+// tty routes it through process_text_window() ("--More--"); a dump window
+// (end.c dump_everything) just collects the lines.
+async function show_putstr_window(lines, dumping) {
+    if (dumping) {
+        for (const s of lines) insight_dumplog.push({ text: s, attr: 0 });
+        return;
+    }
+    await render_menu_window(lines);
+    for (;;) {
+        const key = await nhgetch();
+        if (key === 27 || key === 13 || key === 10 || key === 32) break;
+    }
+    const { flush_screen } = await import('./display.js');
+    await flush_screen(1);
 }
 function start_menu(win, behave) { const w = _wins.get(win); if (w) w.behave = behave; }
 function add_menu_str(win, s) { putstr(win, ATR_NONE, s); }
@@ -1697,26 +1807,24 @@ function observable_depth(lev) { return depth(lev); }
 function is_male(ptr) { return (mflags2_of(ptr) & M2_MALE) !== 0; }
 function is_female(ptr) { return (mflags2_of(ptr) & M2_FEMALE) !== 0; }
 function is_neuter(ptr) { return (mflags2_of(ptr) & M2_NEUTER) !== 0; }
-// C ref: mon.c pmname(ptr, gender) — the gendered player-monster name.  This
-// port's mons[] rows carry a single `name` (makemon.js MONS_NAMES), so the
-// male/female split collapses to that name.
-function pmname(ptr, _gender) { return ptr?.name || ''; }
-// C ref: mon.c vampshifted(mon) — a vampire currently in bat/fog/wolf shape.
-// No covered path sets youmonst.cham, so this is always FALSE here.
+// C ref: mon.c pmname(ptr, gender) — the gendered name of a NAMS() species
+// (makemon.js pmname_of_pmidx); NEUTRAL (2) and unpaired species use ptr->name.
+function pmname(ptr, gender) {
+    if (!ptr) return '';
+    return gender === 2 ? ptr.name : pmname_of_pmidx(ptr.pmidx, gender === 1);
+}
+// C ref: monst.h vampshifted(mon) — `is_vampshifter(mon) && !is_vampire(mon->data)`:
+// a vampire currently in bat/fog/wolf shape.  The hero's youmonst.cham is u.mcham
+// (polyself.js set_uasmon()) and youmonst.data is youmonst_data_pub().
 function vampshifted(mon) {
-    return !!(mon && ismnum(mon.cham) && mon.cham !== mon.data?.pmidx);
-}
-// C ref: you.h ugenocided() / udeadinside() — a polymorphed hero whose current
-// form has been genocided is "dead inside".
-function ugenocided() {
-    const u = game.u || {};
-    if (!u.Upolyd) return false;
-    const mv = game.mvitals?.[u.umonnum];
-    return !!(mv && (mv.mvflags & G_GENOD));
-}
-function udeadinside() {
-    const u = game.u || {};
-    return (u.Upolyd && (u.mh ?? 0) < 1) ? 'dead' : 'dying';
+    const hero = !mon || mon === game.youmonst;
+    const cham = hero ? game.u?.mcham : mon.cham;
+    if (!ismnum(cham)) return false;
+    const nm = monster_by_pmidx(cham)?.name;
+    if (nm !== 'vampire' && nm !== 'vampire leader' && nm !== 'Vlad the Impaler')
+        return false;
+    const data = hero ? youmonst_data_pub() : mon.data;
+    return !(data && data.mlet === 'V');
 }
 // C ref: getpos.c:557 dxdy_to_dist_descr(dx, dy, fulldir).
 const _DIST_DIRNAMES = [['n', 'north'], ['s', 'south'], ['w', 'west'], ['e', 'east']];
@@ -1824,9 +1932,19 @@ function H_prop(propidx) {
     const key = PROPKEY[propidx];
     if (!key) return 0;
     const p = game.u?.uprops || {};
+    // polyself.js set_uasmon() mirrors a flying/floating FORM into the bare
+    // u.uprops.Flying/Levitation (value 1) for trap.c; that is the FROMFORM bit,
+    // not an intrinsic, so it must not read as FROMOUTSIDE here.
+    if (propidx === FLYING || propidx === LEVITATION) {
+        const bare = key.replace(/^H/, '');
+        if (game.u?.formprops?.[bare] && (p[bare] | 0) === 1
+            && !(p[`H${bare}`] | 0) && !(game.u?.[`H${bare}`] | 0)) return FROMFORM;
+    }
     return (p[key] | 0) || (game.u?.[key] | 0)
         || (p[_propAltKey(key)] | 0) || (game.u?.[_propAltKey(key)] | 0)
-        || (has_innate(key) ? 1 : 0);
+        || (has_innate(key) ? 1 : 0)
+        /* polyself.js set_uasmon() keeps the FROMFORM bits in u.formprops */
+        || (game.u?.formprops?.[key.replace(/^H/, '')] ? FROMFORM : 0);
 }
 // C ref: youprop.h E<Prop> — worn/wielded gear whose oc_oprop is `propidx`.
 function E_prop(propidx) { return what_gives(propidx) ? 1 : 0; }
@@ -1834,7 +1952,14 @@ function E_prop(propidx) { return what_gives(propidx) ? 1 : 0; }
 // model (see the block comment above): always 0.
 function B_prop(_propidx) { return 0; }
 // C ref: youprop.h <Prop> == E<Prop> || H<Prop>, minus B<Prop>.
-function Prop(propidx) { return !B_prop(propidx) && (E_prop(propidx) || H_prop(propidx)); }
+// C ref: youprop.h FROMFORM bit of u.uprops[propidx].intrinsic, which polyself.js
+// set_uasmon() keeps in u.formprops under the C property name.
+function F_prop(propidx) {
+    const key = PROPKEY[propidx];
+    if (!key) return 0;
+    return game.u?.formprops?.[propidx === STUNNED ? 'Stunned' : key.replace(/^H/, '')] ? 1 : 0;
+}
+function Prop(propidx) { return !B_prop(propidx) && (E_prop(propidx) || H_prop(propidx) || F_prop(propidx)); }
 // C ref: attrib.c from_what(propidx); the port's from_what() (above) wants the
 // u.uprops key as its second argument.
 function from_what_p(propidx) { return from_what(propidx, PROPKEY[propidx] || ''); }
@@ -2085,7 +2210,7 @@ export function background_enlightenment(_unused_mode, final) {
 
     /* if polymorphed, report current shape before underlying role */
     if (u.Upolyd) {
-        const uasmon = game.youmonst?.data;
+        const uasmon = youmonst_data_pub();
         const altphrasing = vampshifted(game.youmonst);
 
         tmpbuf = '';
@@ -2093,7 +2218,7 @@ export function background_enlightenment(_unused_mode, final) {
         if (!is_male(uasmon) && !is_female(uasmon) && !is_neuter(uasmon))
             tmpbuf = `${genders[game.flags?.female ? 1 : 0].adj} `;
         if (altphrasing)
-            tmpbuf += `${pmname(monster_by_pmidx(game.youmonst?.cham),
+            tmpbuf += `${pmname(monster_by_pmidx(game.u?.mcham),
                                 game.flags?.female ? FEMALE : MALE)} in `;
         buf = `${!final ? 'currently ' : ''}${
             altphrasing ? just_an(tmpbuf) : 'in '}${tmpbuf}${
@@ -2574,7 +2699,7 @@ export function status_enlightenment(mode, final) {
         if (_wizard() && (H_prop(BLINDED) === BlindedTimeout() && !Blindfolded()))
             buf += ` (${BlindedTimeout()})`;
         /* !haseyes: avoid "you are innately blind innately" */
-        you_are(buf, !haseyes(game.youmonst?.data) ? '' : from_what_p(BLINDED),
+        you_are(buf, !haseyes(youmonst_data_pub()) ? '' : from_what_p(BLINDED),
                 final);
     }
     if (Prop(DEAF))
@@ -2624,7 +2749,7 @@ export function status_enlightenment(mode, final) {
             buf += ` (${u.uswldtim | 0})`;
         you_are(buf, '', final);
     } else if (u.ustuck) {
-        const ustick = !!(u.Upolyd && sticks(game.youmonst?.data));
+        const ustick = !!(u.Upolyd && sticks(youmonst_data_pub()));
         const dx = u.ustuck.mx - u.ux, dy = u.ustuck.my - u.uy;
 
         buf = `${ustick ? 'holding' : 'held by'} ${heldmon} (${
@@ -2775,8 +2900,9 @@ function BlindedTimeout() { return H_prop(BLINDED) & TIMEOUT_MASK; }
 // (an unpolymorphed hero: u.umonnum is a ROLE index here, so youmonst.data is
 // not a valid mons[] row — [[umonnum-is-a-role-index]]) reads as having eyes.
 function haseyes(ptr) { return !ptr || ((mflags1_of(ptr) & M1_NOEYES) === 0); }
-// C ref: mondata.h U_AP_TYPE == gy.youmonst.m_ap_type.
-function U_AP_TYPE() { return game.youmonst?.m_ap_type | 0; }
+// C ref: mondata.h U_AP_TYPE == gy.youmonst.m_ap_type (the hero's mimic
+// disguise lives on game.u in this port; dohide() sets u.m_ap_type).
+function U_AP_TYPE() { return game.u?.m_ap_type | 0; }
 // C ref: mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL, AD_DGST).
 function digests(ptr) { return dmgtype(ptr, AD_DGST); }
 // C ref: mondata.h sticks(ptr) — a form that grabs rather than being grabbed.
@@ -2785,9 +2911,9 @@ function sticks(ptr) { return !!ptr?.sticky; }
 function EWounded_legs() {
     return (game.u?.uprops?.EWounded_legs | 0) || (game.u?.EWounded_legs | 0);
 }
-// C ref: sounds.c youhiding(via_enlghtmt, msgflag).  js/polyself.js:1720 has
-// the (async, msgflag-only) reduced copy; the fix is to widen and export that.
-function youhiding(_via_enlghtmt, _final) { /* no covered path is Upolyd */ }
+// C ref: insight.c youhiding(TRUE, final) — the enlightenment line; the phrase
+// itself is shared with the '#monster' message (polyself.js youhiding_buf).
+function youhiding(_via_enlghtmt, final) { you_are(youhiding_buf(), '', final); }
 
 // ── insight.c:1269 weapon_insight() ────────────────────────────────────────
 const SHIELD_OF_REFLECTION = 158; // js/do_wear.js:56
@@ -3029,7 +3155,7 @@ function item_what(dmgtyp) {
     else if (o === game.uamul || o === game.ublindf) what = simpleonames(o);
     else if (o === game.uleft || o === game.uright) what = simpleonames(o);
     else if (o === game.uwep) what = simpleonames(o);
-    else what = simpleonames(o); /* carried artifact, not in a named slot */
+    else return ''; /* W_ART only (merely carried): C's chain matches no slot */
     return what ? ` by your ${what}` : '';
 }
 
@@ -3267,7 +3393,7 @@ export function attributes_enlightenment(_unused_mode, final) {
         }
     }
     /* ceiling clinging */
-    if (is_clinger(game.youmonst?.data)) {
+    if (is_clinger(youmonst_data_pub())) {
         const has_lid = has_ceiling(u.uz);
 
         if (has_lid && !u.uinwater) {
@@ -3390,17 +3516,17 @@ export function attributes_enlightenment(_unused_mode, final) {
              && u.umonnum === PM_GREEN_SLIME() && !Prop(UNCHANGING))) {
         /* foreign shape (except were-form which is handled below) */
         if (!vampshifted(game.youmonst))
-            buf = `polymorphed into ${an(pmname(game.youmonst?.data,
+            buf = `polymorphed into ${an(pmname(youmonst_data_pub(),
                        game.flags?.female ? FEMALE : MALE))}`;
         else
-            buf = `polymorphed into ${an(pmname(monster_by_pmidx(game.youmonst?.cham),
+            buf = `polymorphed into ${an(pmname(monster_by_pmidx(game.u?.mcham),
                        game.flags?.female ? FEMALE : MALE))} in ${
-                   pmname(game.youmonst?.data, game.flags?.female ? FEMALE : MALE)} form`;
+                   pmname(youmonst_data_pub(), game.flags?.female ? FEMALE : MALE)} form`;
         if (_wizard())
             buf += ` (${u.mtimedone | 0})`;
         you_are(buf, '', final);
     }
-    if (lays_eggs(game.youmonst?.data) && game.flags?.female) /* Upolyd */
+    if (lays_eggs(youmonst_data_pub()) && game.flags?.female) /* Upolyd */
         you_can('lay eggs', '', final);
     if (ismnum(u.ulycn)) {
         /* "you are a werecreature [in beast form]" */
@@ -3506,17 +3632,18 @@ const NO_SPELL = 0;                     // spell.h
 const something = 'something';
 // C ref: youprop.h Invisible == (Invis && !See_invisible) — visible to self?
 function Invisible() { return !!(Prop(INVIS) && !Prop(SEE_INVIS)); }
-// C ref: youprop.h PermaBlind == (Blinded && !BlindedTimeout).
-function PermaBlind() { return !!(Blind() && !BlindedTimeout()); }
+// C ref: youprop.h PermaBlind == ((HBlinded & FROMOUTSIDE) != 0), i.e. only
+// OPTIONS:blind; an eyeless form's FROMFORM blindness is not permanent.
+function PermaBlind() { return !!((H_prop(BLINDED) & FROMOUTSIDE) || game.u?.uroleplay?.blind); }
 // C ref: youprop.h Breathless / Amphibious — MAGICAL_BREATHING plus the form's
 // M1_BREATHLESS / M1_AMPHIBIOUS bits.
 function Breathless() {
     return !!(Prop(MAGICAL_BREATHING)
-              || (mflags1_of(game.youmonst?.data) & M1_BREATHLESS));
+              || (mflags1_of(youmonst_data_pub()) & M1_BREATHLESS));
 }
 function Amphibious() {
     return !!(Prop(MAGICAL_BREATHING)
-              || (mflags1_of(game.youmonst?.data) & M1_AMPHIBIOUS));
+              || (mflags1_of(youmonst_data_pub()) & M1_AMPHIBIOUS));
 }
 // C ref: youprop.h Half_gas_damage — worn/intrinsic poison-gas mitigation; no
 // covered path grants it and this port keeps no u.uprops slot for it.
@@ -3530,17 +3657,16 @@ function hates_silver(ptr) {
               || (ptr.mcls === S_IMP_CLS && ptr.name !== 'tengu'));
 }
 function Hate_silver() {
-    return !!(ismnum(game.u?.ulycn) || hates_silver(game.youmonst?.data));
+    return !!(ismnum(game.u?.ulycn) || hates_silver(youmonst_data_pub()));
 }
 // C ref: youprop.h Fast/Very_fast.  js/allmain.js owns the port's readers.
 function Fast() { return !!(youHaveFast() || youHaveVeryFast()); }
 function Very_fast() { return !!youHaveVeryFast(); }
 // C ref: youprop.h Luck == (u.uluck + u.moreluck).
 function Luck() { return (game.u?.uluck | 0) + (game.u?.moreluck | 0); }
-// C ref: attrib.c stone_luck(parameter) — the net luck from carried luckstones
-// (and other gray stones).  js/mkobj.js:1005 only cites it; no port exists, so
-// this reports "no luck-bearing stone", which is what every covered hero has.
-function stone_luck(_parameter) { return 0; }
+// C ref: attrib.c:423 stone_luck(include_uncursed) — net luck sign from the
+// luck-conferring items carried (luckstone, or an SPFX_LUCK artifact such as
+// the Orb of Fate / Tsurugi of Muramasa).  js/attrib.js owns the port.
 // C ref: mondata.h is_clinger / dungeon.c has_ceiling.
 function is_clinger(ptr) { return (mflags1_of(ptr) & M1_CLING) !== 0; }
 function has_ceiling(_lev) { return true; } /* only air/water levels lack one */
@@ -4006,21 +4132,15 @@ export function vanqsort_cmp(vptr1, vptr2) {
 }
 
 // ── insight.c:2717 set_vanq_order() ────────────────────────────────────────
-// Returns -1 if cancelled via ESC.  The window shim's select_menu() has no key
-// source, so a PICK_ONE menu always reports "cancelled" and flags.vanq_sortmode
-// is left alone; a wiring pass has to supply the real menu.
-export function set_vanq_order(for_vanq) {
-    let tmpwin;
-    let selected;
-    let any;
-    let buf, desc;
-    let i, n, choice;
-    const clr = 0; /* NO_COLOR */
+// Returns -1 if cancelled via ESC.
+export async function set_vanq_order(for_vanq) {
+    const { select_pick_one_menu } = await import('./invent.js');
+    const { ATR_INVERSE: MENU_PROMPT_ATTR } = await import('./terminal.js');
+    const cur = game.flags?.vanq_sortmode | 0;
+    const items = [], plan = [];
+    let desc;
 
-    tmpwin = create_nhwindow(NHW_MENU);
-    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
-    any = {}; /* cg.zeroany */
-    for (i = 0; i < vanqorders.length; i++) {
+    for (let i = 0; i < vanqorders.length; i++) {
         if (i === VANQ_ALPHA_MIX || i === VANQ_MCLS_HTOL) /* skip these */
             continue;
         /* suppress some orderings if this menu is for 'm #genocided' */
@@ -4030,24 +4150,29 @@ export function set_vanq_order(for_vanq) {
         /* unique monsters can't be genocided */
         if (!for_vanq && i === VANQ_ALPHA_SEP)
             desc = 'alphabetically';
-        any.a_int = i + 1;
-        add_menu(tmpwin, null, any, vanqorders[i][0], 0, ATR_NONE, clr, desc,
-                 (i === (game.flags?.vanq_sortmode | 0)) ? MENU_ITEMFLAGS_SELECTED
-                                                         : MENU_ITEMFLAGS_NONE);
+        const item = { selector: vanqorders[i][0], desc, a_int: i + 1,
+                       selected: i === cur, count: -1, gselector: 0,
+                       skipinvert: false };
+        items.push(item);
+        plan.push({ item });
     }
-    buf = `Sort order for ${
+    plan.unshift({ str: `Sort order for ${
         for_vanq ? 'vanquished monster counts (also genocided types)'
-                 : 'genocided monster types (also vanquished counts)'}`;
-    end_menu(tmpwin, buf);
+                 : 'genocided monster types (also vanquished counts)'}`,
+                   attr: MENU_PROMPT_ATTR }, { str: '' });
 
-    selected = [];
-    n = select_menu(tmpwin, PICK_ONE, selected);
-    destroy_nhwindow(tmpwin);
+    const selected = await select_pick_one_menu(items, plan);
+    const n = selected.cancelled ? -1 : selected.length;
+    /* destroy_nhwindow() puts the map back under the menu */
+    delete game._modal_screen;
+    const { docrt, flush_screen } = await import('./display.js');
+    await docrt();
+    await flush_screen(1);
     if (n > 0) {
-        choice = selected[0].item.a_int - 1;
+        let choice = selected[0].a_int - 1;
         /* skip preselected entry if we have more than one item chosen */
-        if (n > 1 && choice === (game.flags?.vanq_sortmode | 0))
-            choice = selected[1].item.a_int - 1;
+        if (n > 1 && choice === cur)
+            choice = selected[1].a_int - 1;
         if (game.flags) game.flags.vanq_sortmode = choice;
     }
     return (n < 0) ? -1 : (game.flags?.vanq_sortmode | 0);
@@ -4072,7 +4197,7 @@ export async function list_vanquished(defquery, ask) {
     /* normally we don't ask about sort order unless the list has at least two
        entries; with explicit 'm #vanquished', choose order no matter what */
     if (force_sort) { /* iflags.menu_requested via dovanquished() */
-        set_vanq_order(true);
+        await set_vanq_order(true);
     }
     if (dumping || force_sort) {
         defquery = 'y';
@@ -4115,7 +4240,7 @@ export async function list_vanquished(defquery, ask) {
             done_stopprint_inc();
         if (c === 'y' || c === 'a') {
             if (c === 'a' && ntypes > 1) { /* ask user to choose sort order */
-                if (set_vanq_order(true) < 0)
+                if ((await set_vanq_order(true)) < 0)
                     return;
             }
             uniq_header = ((game.flags?.vanq_sortmode | 0) === VANQ_ALPHA_SEP);
@@ -4123,7 +4248,7 @@ export async function list_vanquished(defquery, ask) {
                              || (game.flags?.vanq_sortmode | 0) === VANQ_MCLS_HTOL)
                             && ntypes > 1);
 
-            klwin = create_nhwindow(NHW_MENU);
+            klwin = [];
             putstr(klwin, 0, 'Vanquished creatures:');
             if (!dumping)
                 putstr(klwin, 0, '');
@@ -4184,8 +4309,7 @@ export async function list_vanquished(defquery, ask) {
                 buf = `${total_killed} creatures vanquished.`;
                 putstr(klwin, 0, buf);
             }
-            display_nhwindow(klwin, true);
-            destroy_nhwindow(klwin);
+            await show_putstr_window(klwin, dumping);
         }
 
     /*
@@ -4304,7 +4428,7 @@ export async function list_genocided(defquery, ask) {
             if (ngone > 1) {
                 if (c === 'a') { /* ask player to choose sort order */
                     /* #genocided shares #vanquished's sort order */
-                    if (set_vanq_order(false) < 0)
+                    if ((await set_vanq_order(false)) < 0)
                         return;
                 }
                 /* count-high-to-low or count-low-to-high don't make sense for
@@ -4320,7 +4444,7 @@ export async function list_genocided(defquery, ask) {
                 if (game.flags) game.flags.vanq_sortmode = save_sortmode;
             }
 
-            klwin = create_nhwindow(NHW_MENU);
+            klwin = [];
             buf = `${(ngenocided) ? 'Genocided' : 'Extinct'}${
                 (nextinct && ngenocided) ? ' or extinct' : ''} species:`;
             putstr(klwin, 0, buf);
@@ -4358,8 +4482,7 @@ export async function list_genocided(defquery, ask) {
                 putstr(klwin, 0, buf);
             }
 
-            display_nhwindow(klwin, true);
-            destroy_nhwindow(klwin);
+            await show_putstr_window(klwin, dumping);
         }
 
     /* See the comment for similar code near the end of list_vanquished(). */
@@ -4374,14 +4497,13 @@ export async function list_genocided(defquery, ask) {
 
 // ── insight.c:3144 doborn() ────────────────────────────────────────────────
 // #wizborn extended command.
-export function doborn() {
+export async function doborn() {
     const fmt = (died, born, ch, name) =>
         `${String(died).padStart(4)} ${String(born).padStart(4)} ${ch} ${
             String(name).padEnd(30)}`;
     let i;
-    const datawin = create_nhwindow(NHW_TEXT);
+    const datawin = [];
     let buf;
-    let nborn = 0, ndied = 0;
 
     putstr(datawin, 0, 'died born');
     for (i = LOW_PM; i < NUMMONS; i++) {
@@ -4394,18 +4516,12 @@ export function doborn() {
                           : ' ',
                       monster_by_pmidx(i)?.name || '');
             putstr(datawin, 0, buf);
-            nborn += mv.born | 0;
-            ndied += mv.died | 0;
         }
     }
 
     putstr(datawin, 0, '');
-    /* upstream builds the totals line and then never putstr()s it; keeping the
-       dead store documents that the window really does end on a blank line. */
-    buf = fmt(ndied, nborn, ' ', '');
-
-    display_nhwindow(datawin, false);
-    destroy_nhwindow(datawin);
+    const { display_text_window } = await import('./pager.js');
+    await display_text_window(datawin);
 
     return 0; /* ECMD_OK */
 }

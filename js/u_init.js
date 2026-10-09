@@ -653,6 +653,9 @@ function ini_inv_wear_armor(obj) {
             if (!game.uquiver) { obj.owornmask = (obj.owornmask || 0) | W_QUIVER; game.uquiver = obj; }
         } else if (!game.uwep && (!game.uarms || !bimanual(obj))) {
             obj.owornmask = (obj.owornmask || 0) | W_WEP; game.uwep = obj;
+            /* C ref: wield.c setuwep() recomputes gu.unweapon; only a
+               non-weptool tool (tin opener) arms the "begin bashing" note */
+            game.unweapon = (obj.oclass === WEAPON_CLASS) ? ini_is_ammo(obj) : !ini_is_weptool(obj);
         } else if (!game.uswapwep) {
             obj.owornmask = (obj.owornmask || 0) | W_SWAPWEP; game.uswapwep = obj;
         }
@@ -703,7 +706,26 @@ export function find_ac() {
         game.uarms, game.uarmg, game.uarmu]) {
         if (obj) uac -= ARM_BONUS(obj);
     }
+    // C ref: do_wear.c find_ac():2492-2502 — the non-armor AC sources.  All of
+    // these were missing, so a worn +N/-N ring of protection, an amulet of
+    // guarding, intrinsic protection (u.ublessed, from a divine gift or a
+    // blessed scroll of remove curse on an altar) and the protection spell's
+    // u.uspellprot never moved the status-line AC at all.
+    const RIN_PROTECTION_OTYP = 178, AMULET_OF_GUARDING_OTYP = 210;
+    for (const ring of [game.uleft, game.uright])
+        if (ring && ring.otyp === RIN_PROTECTION_OTYP) uac -= (ring.spe | 0);
+    if (game.uamul && game.uamul.otyp === AMULET_OF_GUARDING_OTYP) uac -= 2;
+    // C: `if (HProtection & INTRINSIC) uac -= u.ublessed;`  INTRINSIC covers
+    // every non-timeout source bit (FROMOUTSIDE/FROMEXPER/FROMRACE/FROMFORM);
+    // prop.h TIMEOUT is the low 0x00ffffff counter half.
+    if ((u?.uprops?.HProtection | 0) & ~0x00ffffff) uac -= (u?.ublessed | 0);
+    uac -= (u?.uspellprot | 0);
+    // C: `if (abs(uac) > AC_MAX) uac = sgn(uac) * AC_MAX;` with AC_MAX 99.
+    if (Math.abs(uac) > 99) uac = Math.sign(uac) * 99;
     game.u = game.u || {};
+    // C ref: do_wear.c find_ac():2508-2511 `if (uac != u.uac) { u.uac = uac;
+    // disp.botl = TRUE; }`.
+    if (game.u.uac !== uac) game.botl = true;
     game.u.uac = uac;
     return uac;
 }
@@ -1336,6 +1358,9 @@ export function u_init_role() {
     const role = current_role_mnum();
 
     game.moves = 1;
+    // C ref: u_init.c:950 u_init_misc() `flags.beginner = TRUE;` — cleared by
+    // exper.c more_experienced(); strange_feeling() reads it.
+    (game.flags = game.flags || {}).beginner = true;
     // C ref: role_init() sets u.umonnum before inventory creation; mksobj's
     // samurai lacquered-armor branch reads Role_if(PM_SAMURAI) via umonnum.
     // C ref: u_init.c:991 u.umonnum = u.umonster = gu.urole.mnum — umonster is
@@ -1403,7 +1428,7 @@ export function u_init_role() {
         else if (!rn2(10))
             ini_inv(Lamp);
         // C ref: u_init.c — priests know holy/unholy water (no RNG).
-        knows_object(322 /*POT_WATER*/);
+        knows_object(322 /*POT_WATER*/, true); /* override pauper */
         break;
     case PM_RANGER:
         ini_inv(Ranger);
@@ -1566,6 +1591,26 @@ function ini_inv_use_obj_discover(obj) {
         discover_object(POT_OIL, true, true);
 }
 
+// C ref: u_init.c pauper_reinit() — skills drop to Unskilled (enhance.js
+// build_skill_state() applies that), 2 unspent slots, and a key item per role
+// is pre-recognized.
+function pauper_reinit() {
+    let preknown = -1;
+    game.u.weapon_slots = 2;
+    switch (current_role_mnum()) {
+    case PM_HEALER: preknown = SPE_HEALING; break;
+    case PM_CLERIC: case PM_KNIGHT: case PM_MONK: preknown = SPE_PROTECTION; break;
+    case PM_WIZARD: preknown = SPE_FORCE_BOLT; break;
+    case PM_ARCHEOLOGIST: preknown = TOUCHSTONE; break;
+    case PM_CAVE_DWELLER: preknown = FLINT; break;
+    case PM_ROGUE: case PM_TOURIST: preknown = 217 /*SACK*/; break;
+    case PM_SAMURAI: preknown = FOOD_RATION; break;
+    default: break;
+    }
+    if (preknown >= 0)
+        knows_object(preknown, true);
+}
+
 export function u_init_skills_discoveries() {
     game.u = game.u || {};
     // C ref: u_init.c u_init_skills_discoveries — `for (otmp = gi.invent; otmp;
@@ -1577,7 +1622,11 @@ export function u_init_skills_discoveries() {
         for (const obj of game.invent)
             ini_inv_use_obj_discover(obj);
     skill_init_snapshot();
-    skill_based_spellbook_id();
+    // C ref: weapon.c skill_init() — paupers lack advanced access to books.
+    if (!game.u.uroleplay?.pauper)
+        skill_based_spellbook_id();
+    if (game.u.uroleplay?.pauper)
+        pauper_reinit();
     if (num_spells() && (game.u.uenmax ?? 0) < SPELL_LEV_PW_1) {
         game.u.uen = game.u.uenmax = game.u.uenpeak = SPELL_LEV_PW_1;
         if (Array.isArray(game.u.ueninc) && game.u.ulevel != null)
@@ -1596,6 +1645,9 @@ export async function moveloop_preamble_startup() {
     game.context = game.context || {};
     game.context.rndencode = rnd(9000);
     game.context.seer_turn = rnd(30);
+    // C ref: allmain.c:82 — give hero initial movement points (new game);
+    // set_mon_data() prorates this if the first command is a polymorph.
+    if (game.u) game.u.umovement = 12; /* NORMAL_SPEED */
 
     // C ref: allmain.c:73 `set_wear((struct obj *) 0);` — "for side-effects of
     // starting gear".  u_init's setworn() only sets the worn masks; every

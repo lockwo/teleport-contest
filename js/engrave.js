@@ -3,6 +3,7 @@
 //         rumors.c init_rumors(), getrumor(), get_rnd_line(), get_rnd_text();
 //         hacklib.c xcrypt().
 
+import { ceiling as ceiling_dg } from './dungeon.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK,
@@ -17,12 +18,12 @@ import { WEAPON_CLASS, WAND_CLASS, GEM_CLASS, RING_CLASS,
          TOOL_CLASS, RANDOM_CLASS, ILLOBJ_CLASS, ARMOR_CLASS, AMULET_CLASS,
          FOOD_CLASS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS, COIN_CLASS,
          ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
-         objects, next_ident } from './mkobj.js';
+         objects } from './mkobj.js';
 import { mflags1_of, M1_ANIMAL } from './monflags_data.js';
 import { attacktype, AT_HUGS } from './monattk_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
-import { A_WIS } from './const.js';
+import { A_WIS, LEVITATION, FLYING } from './const.js';
 import { Blind as isBlind } from './vision.js';
 
 // Heavy UI/inventory modules (display.js, invent.js, extcmd-handlers.js) are
@@ -418,8 +419,10 @@ export function can_reach_floor(check_pit) {
     if (u.uswallow
         || (u.ustuck && !(u.Upolyd && hooks.sticks(u.data))
             && attacktype(u.ustuck.data, AT_HUGS))) return false;
-    if (u.uprops?.Levitation) return false;
-    if (u.uprops?.Flying) return true;
+    if ((u.uprops?.Levitation || u.uprops_extrinsic?.[LEVITATION])
+        && !(u.uprops?.BLevitation || u.uprops_blocked?.[LEVITATION])) return false;
+    if ((u.uprops?.Flying || u.uprops_extrinsic?.[FLYING])
+        && !(u.uprops?.BFlying || u.uprops_blocked?.[FLYING])) return true;
     if (check_pit) {
         const t = (game.level?.traps || []).find((tr) => tr.tx === u.ux && tr.ty === u.uy);
         if (t && t.tseen) {
@@ -428,6 +431,13 @@ export function can_reach_floor(check_pit) {
         }
     }
     return true;
+}
+
+// C ref: engrave.c u_wipe_engr(cnt) — scuff the engraving under the hero when
+// the hero can reach the floor (not swallowed, held, levitating, ...).
+export function u_wipe_engr(cnt) {
+    if (can_reach_floor(true))
+        wipe_engr_at(game.u.ux, game.u.uy, cnt, false);
 }
 
 export function engr_at(x, y) {
@@ -704,7 +714,10 @@ async function doengrave_sfx_item_WAN(de) {
         de.ptext = true;
         de.type = ENGRAVE;
         if (!objects[de.otmp.otyp]?.oc_name_known) {
-            await engravePline(`This ${await xname_of(de.otmp)} is a wand of digging!`);
+            // C ref: engrave.c:688 `if (flags.verbose)` — the naming line is
+            // suppressed under !verbose, but doknown (learnwand) still fires.
+            if (game.flags?.verbose !== false)
+                await engravePline(`This ${await xname_of(de.otmp)} is a wand of digging!`);
             de.doknown = true;
         }
         de.post_engr_text = (Blind && !isDeaf()) ? 'You hear drilling!'
@@ -720,7 +733,8 @@ async function doengrave_sfx_item_WAN(de) {
         de.ptext = true;
         de.type = BURN;
         if (!objects[de.otmp.otyp]?.oc_name_known) {
-            await engravePline(`This ${await xname_of(de.otmp)} is a wand of fire!`);
+            if (game.flags?.verbose !== false)
+                await engravePline(`This ${await xname_of(de.otmp)} is a wand of fire!`);
             de.doknown = true;
         }
         de.post_engr_text = Blind ? 'You feel the wand heat up.' : 'Flames fly from the wand.';
@@ -729,7 +743,8 @@ async function doengrave_sfx_item_WAN(de) {
         de.ptext = true;
         de.type = BURN;
         if (!objects[de.otmp.otyp]?.oc_name_known) {
-            await engravePline(`This ${await xname_of(de.otmp)} is a wand of lightning!`);
+            if (game.flags?.verbose !== false)
+                await engravePline(`This ${await xname_of(de.otmp)} is a wand of lightning!`);
             de.doknown = true;
         }
         if (!Blind) {
@@ -887,9 +902,9 @@ async function freehand() {
 }
 
 // C ref: engrave.c u_can_engrave() — can the hero engrave at their location?
-// The terrain clauses are ported verbatim; the uswallow branch (which needs
-// is_animal()/is_whirly() on the engulfer) and the cantwield()/check_capacity()
-// clauses are treated as "can engrave", as they were before.
+// The uswallow branch (is_animal()/is_whirly() on the engulfer), the terrain
+// clauses, cantwield() (a handless or very small polymorph form) and
+// check_capacity() are all ported.
 async function u_can_engrave() {
     const { pline } = await import('./display.js');
     const { is_pool, is_lava } = await import('./dbridge.js');
@@ -921,6 +936,19 @@ async function u_can_engrave() {
     } else if (!ACCESSIBLE(levtyp)) {
         /* stone, tree, wall, secret corridor, pool, lava, bars */
         await pline("You can't write here.");
+        return false;
+    }
+    // C: cantwield(youmonst.data) = nohands(ptr) || verysmall(ptr); verysmall is msize < MZ_SMALL.
+    const { youmonst_data, near_capacity } = await import('./invent.js');
+    const { M1_NOHANDS } = await import('./monflags_data.js');
+    const ydata = youmonst_data();
+    if (ydata && ((mflags1_of(ydata) & M1_NOHANDS) !== 0 || (ydata.msize ?? 2) < 1)) {
+        await pline("You can't even hold anything!");
+        return false;
+    }
+    /* C check_capacity((char *) 0): refuse when Overtaxed or worse */
+    if (near_capacity() >= 4 /* EXT_ENCUMBER */) {
+        await pline("You can't do that while carrying so much stuff.");
         return false;
     }
     return true;
@@ -1346,9 +1374,6 @@ export async function engrave_step() {
         if ((stylus.quan || 1) > 1) {
             if (firsttime)
                 await update_topl(`One of ${await yname_of(stylus)} gets dull.`);
-            // C: splitobj() -> nextoid() -> next_ident() spends one rnd(2);
-            // this port's splitobj() draws nothing, so the call site pays it.
-            next_ident();
             stylus = ctx.stylus = splitobj(stylus, 1);
             stylus.owornmask = 0;   /* the split-off blade isn't wielded/quivered */
             splitstack = true;
@@ -1475,10 +1500,7 @@ async function maybe_newsym(de) {
 // C ref: trap.c ceiling(x, y).  Same reduction as js/dig.js ceiling(): no
 // air/water/quest/earth level reaches this file.
 function ceiling(x, y) {
-    const typ = game.level?.at(x, y)?.typ ?? STONE;
-    if (typ === ROOM || IS_WALL(typ) || IS_DOOR(typ) || typ === SDOOR)
-        return 'ceiling';
-    return 'rock cavern';
+    return ceiling_dg(x, y);
 }
 
 // C ref: mondata.c resists_blnd(&youmonst) — for the hero this is
@@ -1586,20 +1608,17 @@ export async function feel_engraving(ep) {
     if (engr_can_be_felt(ep)) {
         ep.eread = 1;
         ep.erevealed = 1;
-        // UNPORTED: map_engraving(ep, 1) (display.c:313) has no js/ counterpart;
-        // its two statements are `if (level.flags.hero_memory) levl[x][y].glyph
-        // = engraving_to_glyph(ep)` then `show_glyph(x, y, glyph)`.  Spelled out
-        // here with display.js's exported pieces rather than stubbed; when
-        // display.js gains map_engraving() this should call it instead.
-        const { newsym, engraving_glyph, show_glyph_cell }
+        const { newsym, engraving_glyph, show_glyph_cell, bg_attr }
             = await import('./display.js');
         const loc = game.level?.at(ep.engr_x, ep.engr_y);
         if (loc) {
             const g = engraving_glyph(loc);
             if (game.level?.flags?.hero_memory)
                 loc.remembered_glyph = { ch: g.ch, color: g.color,
-                                         decgfx: g.dec, pile: false };
-            show_glyph_cell(ep.engr_x, ep.engr_y, g.ch, g.color, g.dec);
+                                         decgfx: g.dec, pile: false,
+                                         bwEngr: g.bwEngr };
+            show_glyph_cell(ep.engr_x, ep.engr_y, g.ch, g.color, g.dec,
+                            bg_attr(g));
         }
         /* in case it's beneath something, redisplay the something */
         newsym(ep.engr_x, ep.engr_y);
@@ -1706,6 +1725,11 @@ export async function save_engravings(mode) {
         const szeach = engr_szeach(ep);
         const engr_alloc = (ep.engr_alloc | 0) || szeach * 3;
         if (engr_alloc && (ep.actualText || '')[0] && update_file(mode)) {
+            /* C: after Sfo_engr(), engr_txt[actual_text] is pointed back at the
+               start of its buffer, undoing wipe_engr_at()'s leading-blank walk;
+               the whole buffer, blanks included, is what gets written. */
+            ep.actualText = ' '.repeat(ep.engr_off | 0) + ep.actualText;
+            ep.engr_off = 0;
             out.engravings.push({
                 engr_alloc,                            /* Sfo_unsigned */
                 engr: {                                /* Sfo_engr */

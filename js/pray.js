@@ -14,15 +14,21 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
-import { align_gname } from './role.js';
-import { A_WIS, A_STR, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
+import { align_gname, roles, aligns } from './role.js';
+import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF } from './const.js';
+import { make_confused } from './potion.js';
+import { summon_furies } from './makemon.js';
+import { retouch_equipment } from './artifact.js';
+import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     A_ORIGINAL, AM_SHRINE, AM_SANCTUM, AM_CHAOTIC, AM_MASK, Amask2align,
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMIN, LUCKMAX, MM_NOMSG,
     IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE, HALF_SPDAM } from './const.js';
 import { isok } from './hacklib.js';
 import { OMONST, W_BALL, W_CHAIN, FROMOUTSIDE } from './const.js';
+import { FIRE_RES, TELEPORT, POISON_RES, TELEPAT, COLD_RES, INVIS, SEE_INVIS,
+    FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { adjalign, exercise, adjattrib } from './attrib.js';
-import { losexp, xlev_to_rank, pluslvl } from './exper.js';
+import { losexp, xlev_to_rank, pluslvl, innate_intrinsics } from './exper.js';
 import { heal_legs } from './trap.js';
 import { hcolor, a_monnam } from './do_name.js';
 import { Blind } from './vision.js';
@@ -30,9 +36,10 @@ import { In_hell } from './dungeon.js';
 import { curse, uncurse, unbless, bless, mkobj, place_object, BALL_CLASS, CHAIN_CLASS,
     COIN_CLASS, POTION_CLASS, POT_WATER, HELM_OF_OPPOSITE_ALIGNMENT,
     objects as OBJECTS } from './mkobj.js';
-import { livelog_printf, LL_CONDUCT, LL_MINORAC, LL_DIVINEGIFT, LL_ARTIFACT } from './livelog.js';
+import { livelog_printf, LL_ALIGNMENT, LL_CONDUCT, LL_MINORAC, LL_DIVINEGIFT, LL_ARTIFACT } from './livelog.js';
 import { mflags2_of, is_undead_flag, likes_gems_flag,
     M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC } from './monflags_data.js';
+import { attacktype_fordmg, AT_ENGL, AD_BLND } from './monattk_data.js';
 import { CORPSE, AMULET_OF_YENDOR, FOOD_CLASS, AMULET_CLASS } from './mkobj.js';
 // C ref: objects[] index of the cheap plastic imitation, one slot below the
 // real Amulet (js/mkobj.js:419); mkobj.js exports the real one only.
@@ -64,8 +71,15 @@ function praystate() {
     return game._prayer;
 }
 
+// C ref: pray.c u_gname()/align_gname() index roles[] directly (C has no
+// separate mnum there).  This port's align_gname() wants the roles[] ARRAY
+// index, which differs from the PM_ monster number for Rogue (mnum 8, array 7)
+// and Ranger (mnum 7, array 8) — using the mnum gave a chaotic Ranger the
+// Rogue's "Kos" instead of "Mars".
 function roleMnum() {
-    return game.urole?.mnum ?? game.u?.umonnum ?? 0;
+    const mnum = game.urole?.mnum ?? game.u?.umonnum ?? 0;
+    const i = roles.findIndex((r) => r.mnum === mnum);
+    return (i >= 0) ? i : mnum;
 }
 
 function Luck() {
@@ -225,7 +239,9 @@ function in_trouble() {
     if (worst_cursed_item()) return TROUBLE_CURSED_ITEMS;
     if (u.usteed && u.usteed.saddle && u.usteed.saddle.cursed)
         return TROUBLE_SADDLE;
-    if ((u.blinded | 0) > 1) return TROUBLE_BLIND;
+    if ((u.blinded | 0) > 1 && !u.uprops?.BlindedFromForm
+        && (!u.uswallow || !attacktype_fordmg(u.ustuck?.data, AT_ENGL, AD_BLND)))
+        return TROUBLE_BLIND;
     if (((u.uprops?.HDeaf | 0) || (u.HDeaf | 0)) > 1) return TROUBLE_BLIND;
     for (let i = 0; i < A_MAX; i++)
         if (ABASE(i) < AMAX(i)) return TROUBLE_POISONED;
@@ -272,8 +288,14 @@ async function can_pray(praying) {
     gp.aligntyp = on_altar() ? a_align(u.ux, u.uy) : (u.ualign?.type ?? 0);
     gp.trouble = in_trouble();
 
-    // C's is_demon(youmonst.data) refusal needs a demon polyform; the hero is
-    // never polymorphed into one here.
+    const ydat = u.Upolyd ? u.data : null;
+    if (ydat && (mflags2_of(ydat) & 0x100 /* M2_DEMON */) /* ok if chaotic or none (Moloch) */
+        && (gp.aligntyp === A_LAWFUL || gp.aligntyp !== A_NEUTRAL)) {
+        if (praying)
+            await update_topl(`The very idea of praying to a ${gp.aligntyp ? 'lawful' : 'neutral'} god is repugnant to you.`);
+        __canPrayLast = false;
+        return false;
+    }
 
     if (praying) {
         await update_topl(`You begin praying to ${align_gname(roleMnum(), gp.aligntyp)}.`);
@@ -304,8 +326,9 @@ async function can_pray(praying) {
         gp.type = (on_altar() && utype !== gp.aligntyp) ? 2 : 3;
     }
 
-    // C's is_undead(youmonst.data) p_type -1 arm (and its rn2(10) for neutrals)
-    // needs an undead polyform.
+    if (ydat && is_undead_flag(ydat) && !In_hell(u.uz)
+        && (gp.aligntyp === A_LAWFUL || (gp.aligntyp === A_NEUTRAL && !rn2(10))))
+        gp.type = -1;
 
     __canPrayLast = (gp.type === 3 && !In_hell(u.uz));
     return !praying ? __canPrayLast : true;
@@ -315,7 +338,7 @@ async function can_pray(praying) {
 const godvoices = ['booms out', 'thunders', 'rings out', 'booms'];
 
 // C ref: pray.c godvoice(g_align, words).  Emits one rn2(4).
-async function godvoice(g_align, words) {
+export async function godvoice(g_align, words) {
     const quot = words ? '"' : '';
     const which = godvoices[rn2(4)]; // ROLL_FROM(godvoices)
     await update_topl(
@@ -411,7 +434,16 @@ export async function rndcurse() {
                 continue;
             }
             if (otmp.blessed) unbless(otmp);
-            else curse(otmp);
+            else {
+                curse(otmp);
+                // C ref: mkobj.c:1800 curse() — a cursed alternate weapon
+                // cannot stay dual-wielded: drop_uswapwep() ("Your left hand
+                // spasms and drops ...!").
+                if (otmp === game.uswapwep && u.twoweap) {
+                    const { drop_uswapwep } = await import('./wield.js');
+                    await drop_uswapwep();
+                }
+            }
         }
     }
     if (u.usteed && !rn2(4)) {
@@ -420,8 +452,7 @@ export async function rndcurse() {
             if (saddle.blessed) unbless(saddle);
             else curse(saddle);
             if (!Blind()) {
-                await update_topl(`${saddle.cursed ? 'Your saddle glows black.'
-                    : 'Your saddle glows brown.'}`);
+                await update_topl(`Your saddle glows ${hcolor(saddle.cursed ? 'black' : 'brown')}.`);
                 saddle.bknown = Hallucination() ? 0 : 1;
             } else {
                 saddle.bknown = 0;
@@ -434,32 +465,40 @@ export async function rndcurse() {
 // load-bearing part; the fall-through chain then hunts for the first intrinsic
 // the hero actually has at or after the rolled slot.
 const ATTRCURSE_CHAIN = [
-    ['HFire_resistance', 'You feel warmer.'],
-    ['HTeleportation', 'You feel less jumpy.'],
-    ['HPoison_resistance', 'You feel a little sick!'],
-    ['HTelepat', 'Your senses fail!'],
-    ['HCold_resistance', 'You feel cooler.'],
-    ['HInvis', 'You feel paranoid.'],
-    ['HSee_invisible', 'You thought you saw something!'],
-    ['HFast', 'You feel slower.'],
-    ['HStealth', 'You feel clumsy.'],
-    ['HProtection', 'You feel vulnerable.'],
-    ['HAggravate_monster', 'You feel less attractive.'],
+    ['HFire_resistance', 'You feel warmer.', FIRE_RES],
+    ['HTeleportation', 'You feel less jumpy.', TELEPORT],
+    ['HPoison_resistance', 'You feel a little sick!', POISON_RES],
+    ['HTelepat', 'Your senses fail!', TELEPAT],
+    ['HCold_resistance', 'You feel cooler.', COLD_RES],
+    ['HInvis', 'You feel paranoid.', INVIS],
+    ['HSee_invisible', 'You thought you saw something!', SEE_INVIS],
+    ['HFast', 'You feel slower.', FAST],
+    ['HStealth', 'You feel clumsy.', STEALTH],
+    ['HProtection', 'You feel vulnerable.', PROTECTION],
+    ['HAggravate_monster', 'You feel less attractive.', AGGRAVATE_MONSTER],
 ];
-async function attrcurse() {
+export async function attrcurse() {
     const u = game.u;
     const start = rnd(11) - 1;
+    // C ref: sit.c attrcurse() tests `HFoo & INTRINSIC`, i.e. FROMEXPER |
+    // FROMRACE | FROMOUTSIDE.  In this port the role/race halves are derived
+    // from the ability tables (js/exper.js innate_intrinsics) and only
+    // FROMOUTSIDE lives in u.uprops, so both have to be consulted — reading
+    // u[field] alone never saw a Barbarian's innate speed and let the whole
+    // chain fall through.
+    const innate = innate_intrinsics();
     for (let i = start; i < ATTRCURSE_CHAIN.length; i++) {
-        const [field, msg] = ATTRCURSE_CHAIN[i];
-        // INTRINSIC-only: a timed or worn source doesn't count.
-        if (u[field]) {
-            u[field] = 0;
-            if (u.uprops) u.uprops[field] = 0;
-            await update_topl(msg);
-            return true;
-        }
+        const [field, msg, prop] = ATTRCURSE_CHAIN[i];
+        const outside = ((u.uprops?.[field] | 0) | (u[field] | 0)) & INTRINSIC;
+        if (!innate.has(field) && !outside) continue;
+        u[field] = (u[field] | 0) & ~INTRINSIC;
+        if (u.uprops) u.uprops[field] = (u.uprops[field] | 0) & ~INTRINSIC;
+        (u.lost_innate ||= new Set()).add(field);
+        await update_topl(prop === SEE_INVIS && Hallucination()
+            ? 'You tawt you taw a puttie tat!' : msg);
+        return prop;
     }
-    return false;
+    return 0;
 }
 
 // C ref: ball.c punish(otmp) with a null otmp (js/read.js owns the identical
@@ -534,10 +573,10 @@ async function angrygods(resp_god) {
     case 4:
     case 5:
         await gods_angry(resp_god);
-        // C: `if (!Blind && !Antimagic)`; Antimagic needs an intrinsic the
-        // heroes that reach this never have.
-        if (!Blind())
-            await update_topl('A black glow surrounds you.');
+        // C: `if (!Blind && !Antimagic)` -- a worn cloak of magic resistance
+        // (a Wizard's starting cloak) suppresses the glow message.
+        if (!Blind() && !(await loadPrayExtras()).zap.Antimagic())
+            await update_topl(`${upstart_pr(an_pr(hcolor('black')))} glow surrounds you.`);
         if (rn2(2) || !(await attrcurse()))
             await rndcurse();
         break;
@@ -795,7 +834,7 @@ function ringglow(otmp) {
 
 // C ref: hacklib.c an(str) — indefinite article, lowercase.  Every other file
 // in this port keeps its own copy (js/do.js, js/eat.js, js/dothrow.js, ...).
-function an_pr(s) { return /^[aeiou]/i.test(String(s)) ? `an ${s}` : `a ${s}`; }
+import { an as an_pr } from './hacklib.js';
 
 // C ref: youprop.h H<Name> intrinsic words.  This port has been observed to
 // store the same timer under a bare key ('Fast') and/or an H-prefixed key
@@ -1063,7 +1102,7 @@ async function water_prayer(bless_water) {
     const bc_known = !Blind() && !Hallucination();
     let changed = 0, other = false;
     for (const otmp of (game.level?.objects || [])) {
-        if (otmp.where !== 'floor' || otmp.ox !== u.ux || otmp.oy !== u.uy)
+        if (otmp.where !== OBJ_FLOOR || otmp.ox !== u.ux || otmp.oy !== u.uy)
             continue;
         if (otmp.otyp === POT_WATER
             && (bless_water ? !otmp.blessed : !otmp.cursed)) {
@@ -1079,7 +1118,7 @@ async function water_prayer(bless_water) {
         await update_topl(
             `${(other && changed > 1) ? 'Some of the' : other ? 'One of the' : 'The'}`
             + ` potion${(other || changed > 1) ? 's' : ''} on the altar`
-            + ` glow${changed > 1 ? '' : 's'} ${bless_water ? 'light blue' : 'black'}`
+            + ` glow${changed > 1 ? '' : 's'} ${bless_water ? hcolor('light blue') : hcolor('black')}`
             + ' for a moment.');
     }
     return changed > 0;
@@ -1106,6 +1145,20 @@ async function prayer_done() {
             await update_topl('Nothing else happens.');
             return 1;
         }
+    } else if (gp.type === -1) {
+        /* praying while poly'd into an undead creature while non-chaotic */
+        await godvoice(alignment, (alignment === A_LAWFUL)
+            ? 'Vile creature, thou durst call upon me?'
+            : 'Walk no more, perversion of nature!');
+        await update_topl('You feel like you are falling apart.');
+        /* KMH -- Gods have mastery over unchanging */
+        const { rehumanize } = await import('./polyself.js');
+        await rehumanize();
+        /* no Half_physical_damage adjustment here */
+        const { losehp_do } = await import('./do.js');
+        await losehp_do(rnd(20), 'residual undead turning effect');
+        exercise(A_CON, false);
+        return 1;
     }
     if (In_hell(u.uz)) {
         await update_topl(
@@ -1184,9 +1237,7 @@ export async function dopray(paranoid_query) {
     }
 
     // nomul(-3): the prayer is a 3-turn occupation driven by the move loop.
-    game.multi = -3;
-    game.context = game.context || {};
-    game.context.travel = game.context.travel1 = game.context.mv = 0;
+    (await import('./hack.js')).nomul(-3);
     game.multi_reason = 'praying';
     game.nomovemsg = 'You finish your prayer.';
     game.afternmv = prayer_done;
@@ -1203,18 +1254,86 @@ export async function dopray(paranoid_query) {
     return 1; // ECMD_TIME: the move loop advances a turn and runs the occupation
 }
 
-// ── god_zaps_you (pray.c:456) ────────────────────────────────────────────────
+// ── god_zaps_you (pray.c:641) ────────────────────────────────────────────────
 // C ref: pray.c god_zaps_you(resp_god).  Called from angrygods()'s default arm
-// and from desecrate_altar().  The swallowed-hero arm and the Reflecting /
-// Shock_resistance arms need subsystems this port lacks; the bolt itself and
-// its "fry_by_god" death do not run here (end.js exports only done_in_by()),
-// so a smitten hero survives.  Flagged rather than silently dropped: every
-// caller of this is already a lost-cause branch for the recorded corpora.
-async function god_zaps_you(_resp_god) {
-    await update_topl('Suddenly, a bolt of lightning strikes you!');
-    // GAP: destroy_item(RING_CLASS/WAND_CLASS, AD_ELEC), the armour melt loop
-    // and fry_by_god() -> done(DIED).
+// and from desecrate_altar(): a lightning bolt, then "X is not deterred..."
+// and a wide-angle disintegration beam that eats worn armour before killing.
+async function god_zaps_you(resp_god) {
+    const u = game.u;
+    const D = await loadPrayExtras();
+    const { worn_extrinsic } = await import('./invent.js');
+    const { REFLECTING, DISINT_RES, W_ARMS, W_ARMC, W_ARM } = await import('./const.js');
+    const reflecting = worn_extrinsic(REFLECTING);
+    const disint = () => worn_extrinsic(DISINT_RES);
+    if (u.uswallow) {
+        await update_topl('Suddenly a bolt of lightning comes down at you'
+            + ' from the heavens!');
+        await update_topl(`It strikes ${D.dnm.mon_nam(u.ustuck)}!`);
+        // C: resists_elec(u.ustuck) ? "seems unaffected" : fries + xkilled().
+        await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
+    } else {
+        await update_topl('Suddenly, a bolt of lightning strikes you!');
+        if (reflecting || uprops_has_pr('Reflecting') || u.formprops?.Reflecting) {
+            await shieldeff_pr();
+            if (Blind()) await update_topl("For some reason you're unaffected.");
+            else await D.zap.ureflects('%s reflects from your %s.', 'It');
+        } else if (HProp_pr('HShock_resistance') || HProp_pr('EShock_resistance')
+                   || has_innate_pr('HShock_resistance')) {
+            await shieldeff_pr();
+            await update_topl('It seems not to affect you.');
+        } else {
+            await fry_by_god(resp_god, false);
+        }
+    }
+
+    await update_topl(`${align_gname(roleMnum(), resp_god)} is not deterred...`);
+    if (u.uswallow) {
+        await update_topl('A wide-angle disintegration beam aimed at you hits '
+            + `${D.dnm.mon_nam(u.ustuck)}!`);
+        await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
+        return;
+    }
+    await update_topl('A wide-angle disintegration beam hits you!');
+    // C: shield/cloak/suit/shirt are disintegrated first (like black dragon
+    // breath); EReflecting/EDisint_resistance on the slot would spare it.
+    const DW = await import('./do_wear.js');
+    if (game.uarms && !((reflecting | disint()) & W_ARMS))
+        await DW.disintegrate_arm(game.uarms);
+    if (game.uarmc && !((reflecting | disint()) & W_ARMC))
+        await DW.disintegrate_arm(game.uarmc);
+    if (game.uarm && !game.uarmc && !((reflecting | disint()) & W_ARM))
+        await DW.disintegrate_arm(game.uarm);
+    if (game.uarmu && !game.uarm && !game.uarmc)
+        await DW.disintegrate_arm(game.uarmu);
+    if (!(disint() || u.formprops?.Disint_resistance
+          || HProp_pr('HDisint_resistance') || HProp_pr('EDisint_resistance')
+          || has_innate_pr('HDisint_resistance'))) {
+        await fry_by_god(resp_god, true);
+    } else {
+        await update_topl('You bask in its black glow for a minute...');
+        await godvoice(resp_god, 'I believe it not!');
+    }
+    if (Is_astralevel(u.uz) || Is_sanctum_pr(u.uz)) {
+        await verbalize('Thou cannot escape my wrath, mortal!');
+        const { summon_minion } = await import('./minion.js');
+        await summon_minion(resp_god, false);
+        await summon_minion(resp_god, false);
+        await summon_minion(resp_god, false);
+        await verbalize(`Destroy ${uhim_pr()}, my servants!`);
+    }
 }
+function uprops_has_pr(key) { return !!(game.u?.uprops?.[key] || game.u?.[key]); }
+function has_innate_pr(prop) { return innate_intrinsics().has(prop); }
+async function shieldeff_pr() {
+    const D = await loadPrayExtras();
+    await D.dsp.shieldeff(game.u.ux, game.u.uy);
+}
+// C ref: dungeon.h Is_sanctum(lev) — the Wizard of Yendor's sanctum.
+function Is_sanctum_pr(lev) {
+    return In_hell(lev) && (lev?.dlevel === game.svd?.dungeons?.[lev.dnum]?.dunlev_ureached);
+}
+// C ref: pronoun overrides — uhim() is "him"/"her" for the hero.
+function uhim_pr() { return game.flags?.female ? 'her' : 'him'; }
 
 // ── #offer / dosacrifice (pray.c:1854) ──────────────────────────────────────
 //
@@ -1245,7 +1364,7 @@ async function loadSacDeps() {
 }
 
 // C ref: obj.h carried(obj).
-function carried(otmp) { return otmp?.where === 'invent'; }
+function carried(otmp) { return otmp?.where === OBJ_INVENT; }
 // C ref: role.c a_gname() / u_gname() — the god who owns the altar underfoot,
 // and the hero's own god.
 function a_gname() { return align_gname(roleMnum(), a_align(game.u.ux, game.u.uy)); }
@@ -1304,7 +1423,7 @@ async function floorfood_sacrifice() {
     const skipfloor = !!game.iflags?.menu_requested;
     if (!skipfloor) {
         const objs = (game.level?.objects || []).filter(
-            (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy);
+            (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy);
         for (const otmp of objs) {
             if (otmp.otyp !== CORPSE) continue;
             // GAP: will_feel_cockatrice()/feel_cockatrice() — a blind, bare-
@@ -1446,7 +1565,7 @@ async function offer_different_alignment_altar(otmp, altaralign) {
             await update_topl(`You have a strong feeling that ${u_gname()} is angry...`);
             await consume_offering(otmp);
             await update_topl(`${a_gname()} accepts your allegiance.`);
-            uchangealign(altaralign);
+            await uchangealign(altaralign, A_CG_CONVERT);
             /* Beware, Conversion is costly */
             change_luck(-3);
             u.ublesscnt = (u.ublesscnt | 0) + 300;
@@ -1506,16 +1625,40 @@ async function angry_priest() {
     pri.mpeaceful = 0;
 }
 
-// C ref: attrib.c uchangealign(newalign, reason) reduced to the A_CG_CONVERT
-// path taken here: the record resets and the base alignment follows.
-function uchangealign(newalign) {
+// C ref: attrib.c uchangealign(newalign, reason) — change the hero's
+// alignment type, possibly losing use of artifacts.
+export async function uchangealign(newalign, reason) {
     const u = game.u;
     if (!u.ualignbase) u.ualignbase = { [A_CURRENT]: u.ualign?.type ?? 0, [A_ORIGINAL]: u.ualign?.type ?? 0 };
-    u.ualignbase[A_CURRENT] = newalign;
-    u.ualign.type = newalign;
-    u.ualign.record = 0;
-    u.ublesscnt = 300;
+    const oldalign = u.ualign.type;
+    u.ublessed = 0; /* lose divine protection */
     game.botl = true;
+    if (reason === A_CG_CONVERT) {
+        livelog_printf(LL_ALIGNMENT, `permanently converted to ${aligns[1 - newalign].adj}`);
+        u.ualignbase[A_CURRENT] = newalign;
+        /* worn helm of opposite alignment might block change */
+        if (!game.uarmh || game.uarmh.otyp !== HELM_OF_OPPOSITE_ALIGNMENT)
+            u.ualign.type = u.ualignbase[A_CURRENT];
+        await update_topl(`You have a ${u.ualign.type !== oldalign ? 'sudden ' : ''}sense of a new direction.`);
+    } else {
+        /* putting on or taking off a helm of opposite alignment */
+        u.ualign.type = newalign;
+        if (reason === A_CG_HELM_ON) {
+            adjalign(-7); /* for abuse -- record will be cleared shortly */
+            await update_topl(`Your mind oscillates ${Hallucination() ? 'wildly' : 'briefly'}.`);
+            make_confused(rn1(2, 3), false);
+            if (Is_astralevel() || rn2(50) < (u.ualign.abuse | 0))
+                summon_furies(Is_astralevel() ? 0 : 1);
+            livelog_printf(LL_ALIGNMENT, `used a helm to turn ${aligns[1 - newalign].adj}`);
+        } else if (reason === A_CG_HELM_OFF) {
+            await update_topl(`Your mind is ${Hallucination()
+                ? 'much of a muchness' : 'back in sync with your body'}.`);
+        }
+    }
+    if (u.ualign.type !== oldalign) {
+        u.ualign.record = 0; /* slate is wiped clean */
+        await retouch_equipment(0);
+    }
 }
 
 // C ref: minion.c:405 dlord(atyp) — a demon lord of the given alignment; 20
@@ -1968,7 +2111,7 @@ export async function fry_by_god(resp_god, via_disintegration) {
     // port keeps the already-formatted string on game._killer_name and has no
     // separate format field (js/end.js:1226 documents the same reduction).
     game._killer_format = P_KILLED_BY;
-    game._killer_name = `the wrath of ${align_gname(roleMnum(), resp_god)}`;
+    game._killer_name = `killed by the wrath of ${align_gname(roleMnum(), resp_god)}`;
     await D.end.done(P_DIED);
 }
 
@@ -2267,7 +2410,7 @@ export async function offer_real_amulet(otmp, altaralign) {
         await D.dsp.pline(`${Moloch} shrugs and retains dominion over`
             + ` ${u_gname()},`);
         await D.dsp.pline('then mercilessly snuffs out your life.');
-        game._killer_name = `${s_suffix(Moloch)} indifference`;
+        game._killer_name = `killed by ${s_suffix(Moloch)} indifference`;
         game._killer_format = P_KILLED_BY;
         await D.end.done(P_DIED);
         /* life-saved (or declined to die in wizard/explore mode) */
@@ -2308,7 +2451,7 @@ export async function pray_revive() {
     const u = game.u;
     let otmp = null;
     for (const o of (game.level?.objects || [])) {
-        if (o.where !== 'floor' || o.ox !== u.ux || o.oy !== u.uy) continue;
+        if (o.where !== OBJ_FLOOR || o.ox !== u.ux || o.oy !== u.uy) continue;
         if ((o.otyp === CORPSE || o.otyp === P_STATUE)
             && D.mkb.has_omonst(o)
             && OMONST(o)?.mtame && !OMONST(o)?.isminion) {
@@ -2375,9 +2518,11 @@ export async function maybe_turn_mon_iter(mtmp) {
                     break;
                 }
                 /* else flee — FALLTHRU */
-            default:
-                monflee_pr(mtmp);
+            default: {
+                const { monflee } = await import('./monmove.js');
+                await monflee(mtmp, 0, false, true);
                 break;
+            }
             }
         }
     }
@@ -2386,10 +2531,6 @@ export async function maybe_turn_mon_iter(mtmp) {
 // before its iter_mons() walk so only the first monster prints the falter line.
 let turn_undead_msg_cnt = 0;
 export function reset_turn_undead_msg_cnt() { turn_undead_msg_cnt = 0; }
-// C ref: mon.c monflee(mtmp, 0, FALSE, TRUE) — an untimed scare.  Kept local so
-// maybe_turn_mon_iter() does not have to pick between js/monmove.js's async
-// monflee() and js/uhitm.js's sync copy (they disagree on the message).
-function monflee_pr(mtmp) { mtmp.mflee = 1; mtmp.mfleetim = 0; }
 // C ref: monst.h:217 is_vampshifter(mon) — cham is PM_VAMPIRE,
 // PM_VAMPIRE_LEADER or PM_VLAD_THE_IMPALER.  This port stores cham as a mons[]
 // pmidx, so resolve the three rows by name once.
@@ -2418,7 +2559,7 @@ export async function blocked_boulder(dx, dy) {
     const u = game.u;
     let count = 0;
     for (const otmp of (game.level?.objects || [])) {
-        if (otmp.where !== 'floor') continue;
+        if (otmp.where !== OBJ_FLOOR) continue;
         if (otmp.ox !== u.ux + dx || otmp.oy !== u.uy + dy) continue;
         if (otmp.otyp === P_BOULDER) count += (otmp.quan || 1);
     }

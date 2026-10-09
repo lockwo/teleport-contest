@@ -15,7 +15,7 @@
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
 import { objects, WEAPON_CLASS, GEM_CLASS, TOOL_CLASS } from './mkobj.js';
-import { renderWindowScreen, dismiss_invent_screen } from './invent.js';
+import { renderWindowScreen, renderMenuLines, dismiss_invent_screen } from './invent.js';
 import { y_n, update_topl, topl_more, docrt } from './display.js';
 import {
     P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
@@ -147,17 +147,21 @@ export function uwep_skill_type() {
     return weapon_type(game.uwep);
 }
 
-// C ref: weapon.c use_skill(skill, degree) — practice toward the next
-// enhancement.  give_may_advance_msg()'s "You feel more confident..." arm needs
-// u.weapon_slots, which this port does not track (it reads 0, so can_advance()
-// is false on both sides of the increment and the message can never fire).
-export function use_skill(skill, degree) {
+// C ref: weapon.c use_skill(skill, degree) — practice and announce the first
+// transition to an advanceable skill.
+export async function use_skill(skill, degree) {
     if (skill === P_NONE) return;
     const S = build_skill_state();
     if (S.P_SKILL[skill] === P_ISRESTRICTED) return;
+    const advance_before = can_advance(skill, false, S);
     const u = game.u = game.u || {};
     u.skill_training = u.skill_training || {};
     u.skill_training[skill] = (u.skill_training[skill] || 0) + degree;
+    S.P_ADV[skill] += degree;
+    if (!advance_before && can_advance(skill, false, S)) {
+        const { give_may_advance_msg } = await import('./weapon.js');
+        await give_may_advance_msg(skill);
+    }
 }
 function is_ammo(obj) {
     const sk = objects[obj.otyp]?.oc_skill ?? 0;
@@ -215,6 +219,12 @@ function build_skill_state() {
     if (P_MAX[P_BARE_HANDED_COMBAT] > P_EXPERT) P_SKILL[P_BARE_HANDED_COMBAT] = P_BASIC;
     // Roles starting with a horse (Knight's pony) know how to ride it.
     if (rolemnum === PM_KNIGHT) P_SKILL[P_RIDING] = P_BASIC;
+
+    // C ref: u_init.c pauper_reinit() — a pauper loses every skill better
+    // than Unskilled (P_ADVANCE reset below via the unskilled formula = 0).
+    if (game.u?.uroleplay?.pauper)
+        for (let i = 0; i < P_NUM_SKILLS; i++)
+            if (P_SKILL[i] > P_UNSKILLED) P_SKILL[i] = P_UNSKILLED;
 
     // C ref: u_init.c skill_init():1795-1801 — the tail loop seeds every
     // unrestricted skill's training counter to the amount already "spent"
@@ -454,6 +464,16 @@ function paginate_skill_menu(items) {
 // and the string from column 1.
 function render_skill_menu_page(pages, idx) {
     const page = pages[idx];
+    // C ref: wintty.c tty_display_nhwindow NHW_MENU — a one-page menu shorter than
+    // the screen floats as a partial-width overlay (see doenhance's PICK_NONE path).
+    if (pages.length === 1 && page.length + 1 < (game.nhDisplay?.rows ?? 24)) {
+        renderMenuLines(page.map((it) => ({
+            text: it.sel ? `${it.sel} - ${it.text}` : it.text,
+            attr: it.attr || 0,
+        })), null);
+        game._modal_screen = 'skillwin';
+        return;
+    }
     renderWindowScreen(page.map((it) => ({
         text: it.sel ? `${it.sel} - ${it.text}` : it.text,
         attr: it.attr || 0,
@@ -483,6 +503,8 @@ async function select_skill_menu(pages, pickOne) {
         }
         if (ch === '>') { if (idx < pages.length - 1) idx++; continue; }
         if (ch === '<') { if (idx > 0) idx--; continue; }
+        if (ch === '^') { idx = 0; continue; }              // MENU_FIRST_PAGE
+        if (ch === '|') { idx = pages.length - 1; continue; } // MENU_LAST_PAGE
         if (pickOne) {
             const hit = pages[idx].find((it) => it.skill != null && it.sel === ch);
             if (hit) { delete game._modal_screen; return hit.skill; }
@@ -556,6 +578,7 @@ export async function doenhance() {
         await dismiss_invent_screen();
         return ECMD_OK;
     }
+    game._skill_counting = false;
     const state = build_skill_state();
     const { lines, title } = build_skill_menu_lines(state);
 
@@ -592,11 +615,27 @@ export async function doenhance() {
 // active and consumed the key.
 export async function skill_window_advance(key) {
     if (game._modal_screen !== 'skillwin') return false;
+    // C ref: wintty.c:1564-1615 — menu counts never echo on the topline;
+    // ESC cancels a nonzero count before it can cancel the menu.
+    if (key >= '0' && key <= '9') {
+        if (key !== '0') game._skill_counting = true;
+        return true;
+    }
+    if (key === '\x1b' && game._skill_counting) {
+        game._skill_counting = false;
+        return true;
+    }
+    if (' <>^|.-@,\\~:\r\n\x1b'.includes(key)) game._skill_counting = false;
     const pages = game._skill_pages || [];
     const cur = game._skill_page || 0;
     const onLast = cur >= pages.length - 1;
     // C ref: wintty.c process_menu_window(), PICK_NONE.  Only these keys act;
     // everything else is tty_nhbell() and the menu stays up unchanged.
+    if (key === '^' || key === '|') {
+        game._skill_page = key === '^' ? 0 : pages.length - 1;
+        renderSkillPage();
+        return true;
+    }
     if (key === '<') {                              // MENU_PREVIOUS_PAGE
         if (cur > 0) game._skill_page = cur - 1;
         renderSkillPage();
@@ -613,6 +652,7 @@ export async function skill_window_advance(key) {
     }
     delete game._skill_pages;
     delete game._skill_page;
+    delete game._skill_counting;
     await dismiss_invent_screen();
     return true;
 }

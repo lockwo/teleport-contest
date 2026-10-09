@@ -28,8 +28,10 @@ import { depth as depth_of_level } from './hacklib.js';
 import { Is_special } from './dungeon.js';
 import { roles } from './role.js';
 import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET,
-         Is_oracle_level, In_quest } from './const.js';
-import { msound_of, MS_LEADER, MS_NEMESIS } from './monflags_data.js';
+         Is_oracle_level, In_quest, OBJ_FLOOR, OBJ_CONTAINED } from './const.js';
+import { msound_of, MS_LEADER, MS_NEMESIS, mflags2_of,
+         M2_GREEDY, M2_JEWELS, M2_COLLECT, M2_MAGIC } from './monflags_data.js';
+import { can_carry, DEADMONSTER } from './mon.js';
 
 // ── small accessors that mirror the C globals/macros bones.c relies on ──
 
@@ -206,6 +208,11 @@ export async function getbones() {
     // to the level being LEFT, so the two wizard y_n() prompts are captured over
     // the old map (matching the recorded C frames), and the actual level graft
     // is deferred to the very end so it can't repaint until docrt().
+    // C ref: allmain.c newgame(): mklev()/getbones() precede docrt()/bot().
+    // On the starting level there is no status or map under "Get bones?".
+    // Mid-game level changes already have a tty backing and must retain it.
+    const atStartup = game.moves === 0;
+    if (atStartup) game._screenBlank = true;
     try {
         const { y_n } = await import('./display.js');
 
@@ -253,6 +260,8 @@ export async function getbones() {
         // path, so this cannot regress a session that merely has a stray blob.
         if (is_wizard()) { try { (await import('./display.js')).pline?.(`bones: ${e}`); } catch { /*noop*/ } }
         return false;
+    } finally {
+        if (atStartup) delete game._screenBlank;
     }
 }
 
@@ -303,10 +312,7 @@ async function bones_getlev(blob) {
         if (Array.isArray(m.minvent)) for (const o of m.minvent) stamp_obj(o);
     }
     // C ref: restore.c getlev() -> restore_buried_uchain()/buriedobjlist chain.
-    // The JS level graph names this array `buriedobjs` (see mklev.js bury()),
-    // not `buriedobjlist` — this was reading the wrong field and silently
-    // skipping every buried object's re-stamp.
-    for (const o of level.buriedobjs || []) stamp_obj(o);
+    for (const o of level.buriedobjlist || []) stamp_obj(o);
 
     // C ref: restore.c:1203 getlev()'s `if (ghostly)` arm — "reset peaceful/malign
     // relative to new character".  The bones level was saved with the DEAD hero's
@@ -386,15 +392,14 @@ export function can_make_bones() {
 // Ported for completeness; reached only from drop_upon_death()'s 1-in-8 branch
 // during savebones(), which the harness does not exercise.
 function likes_objs_mon(m) {
-    // Approximate the C likes_gold/gems/objs/magic union via flags the JS
-    // monster model carries; default to false so the loop length matches the
-    // common "no greedy monster nearby" case.
-    return !!(m && (m.likes_gold || m.likes_gems || m.likes_objs || m.likes_magic));
+    // C ref: bones.c:243-244 — the union of all four likes_* species flags.
+    return !!(m && (mflags2_of(m.data)
+                    & (M2_GREEDY | M2_JEWELS | M2_COLLECT | M2_MAGIC)));
 }
 
 function m_at(x, y) {
     for (const m of game.level?.monsters ?? [])
-        if (m.mx === x && m.my === y) return m;
+        if (!DEADMONSTER(m) && m.mx === x && m.my === y) return m;
     return null;
 }
 
@@ -413,7 +418,8 @@ export function give_to_nearby_mon(otmp, x, y, place_object) {
             if (!rn2(nmon)) selected = mtmp;   // reservoir pick
         }
     }
-    if (selected && place_object?.toMon) place_object.toMon(selected, otmp);
+    if (selected && can_carry(selected, otmp) && place_object?.toMon)
+        place_object.toMon(selected, otmp);
     else if (place_object?.toFloor) place_object.toFloor(otmp, x, y);
 }
 
@@ -633,43 +639,46 @@ export async function savebones(how = 0, corpse = null) {
             toFloor: (o) => { if (o) { o.owornmask = 0; place_object(o, x, y); } },
             toMon: (m, o) => { if (o) (m.minvent = m.minvent || []).push(o); },
         };
-        drop_upon_death(null, null, x, y, hooks);
-
-        // C ref: bones.c:494-500 —
-        //   gi.in_mklev = TRUE;                       /* allow the hero's square */
-        //   mtmp = makemon(&mons[PM_GHOST], u.ux, u.uy, MM_NONAME);
-        //   gi.in_mklev = FALSE;
-        //   mtmp = christen_monst(mtmp, svp.plname);
-        //   if (corpse) obj_attach_mid(corpse, mtmp->m_id);
-        // then bones.c:506-511 overrides m_lev/mhp/mhpmax/female/msleeping.
-        // The old code hand-rolled the ghost and drew only next_ident, losing
-        // the other 5 calls C makes here (newmonhp d(9,8), makemon.c:1279
-        // rn2(2), m_initinv rn2(50)+rn2(100), makemon.c:1447 rn2(100)) —
-        // seed0030 seg6 step 247 idx 47-52.  MM_NONAME is what suppresses
-        // rndghostname()'s extra rn2(7)/rn2(34).
-        {
-            const { makemon, monster_by_pmidx } = await import('./makemon.js');
-            const { MM_NONAME } = await import('./const.js');
-            const PM_GHOST = 287;
-            const gdata = monster_by_pmidx(PM_GHOST);
-            const saved_in_mklev = g.in_mklev;
-            g.in_mklev = true;
-            let mtmp = null;
-            try { mtmp = makemon(gdata, x, y, MM_NONAME); }
-            finally { g.in_mklev = saved_in_mklev; }
-            if (mtmp) {
-                // C: mtmp = christen_monst(mtmp, svp.plname);
-                const { christen_monst } = await import('./do_name.js');
-                const plname = svp_plname();
-                mtmp.mextra = mtmp.mextra || {};
-                christen_monst(mtmp, plname);
-                mtmp.m_lev = g.u?.ulevel || 1;
-                mtmp.mhp = mtmp.mhpmax = g.u?.uhpmax ?? 1;
-                mtmp.female = !!g.flags?.female;
-                mtmp.msleeping = 1;
-                if (corpse) corpse.corpsenm_mid = mtmp.m_id; // obj_attach_mid
-            }
+        const { makemon, monster_by_pmidx, mongets } = await import('./makemon.js');
+        const { MM_NONAME, NO_MINVENT, NON_PM, LOW_PM, S_MUMMY } = await import('./const.js');
+        const { christen_monst } = await import('./do_name.js');
+        const arise = g.u?.ugrave_arise ?? NON_PM;
+        const arisen = arise >= LOW_PM && !!monster_by_pmidx(arise);
+        let mtmp;
+        if (!arisen) drop_upon_death(null, null, x, y, hooks);
+        const saved_in_mklev = g.in_mklev;
+        g.in_mklev = true;
+        try {
+            mtmp = makemon(monster_by_pmidx(arisen ? arise : 287), x, y,
+                           arisen ? NO_MINVENT : MM_NONAME);
+        } finally {
+            g.in_mklev = saved_in_mklev;
         }
+        if (!mtmp) {
+            if (arisen) {
+                drop_upon_death(null, null, x, y, hooks);
+                g.u.ugrave_arise = NON_PM;
+            }
+            return;
+        }
+        if (arisen)
+            (await import('./mondata.js')).give_u_to_m_resistances(mtmp);
+        christen_monst(mtmp, svp_plname());
+        if (arisen) {
+            (await import('./display.js')).newsym(x, y);
+            drop_upon_death(mtmp, null, x, y, hooks);
+            const { MUMMY_WRAPPING } = await import('./mkobj.js');
+            if (mtmp.data?.mcls === S_MUMMY
+                && !(mtmp.minvent || []).some(o => o.otyp === MUMMY_WRAPPING))
+                mongets(mtmp, MUMMY_WRAPPING);
+            (await import('./worn.js')).m_dowear(mtmp, true);
+        } else if (corpse) {
+            corpse.corpsenm_mid = mtmp.m_id;
+        }
+        mtmp.m_lev = g.u?.ulevel || 1;
+        mtmp.mhp = mtmp.mhpmax = g.u?.uhpmax ?? 1;
+        mtmp.female = !!g.flags?.female;
+        mtmp.msleeping = 1;
 
         // C ref: bones.c:538-546 — per-monster: mark its pack ghostly, resetobjs
         // it, forget the dead hero (mlstmv, tameness, and seen_resistance — "
@@ -702,8 +711,8 @@ export async function savebones(how = 0, corpse = null) {
         // ghostly mark + reset the hero's pack just got.
         set_ghostly_objlist(g.level?.objects || []);
         reset_obj_chain(g.level?.objects, O);
-        set_ghostly_objlist(g.level?.buriedobjs || []);
-        reset_obj_chain(g.level?.buriedobjs, O);
+        set_ghostly_objlist(g.level?.buriedobjlist || []);
+        reset_obj_chain(g.level?.buriedobjlist, O);
 
         // C ref: bones.c:555-560 — wipe every cell's seen/lit/remembered state so
         // the arriving hero explores the legacy level from scratch (this is what
@@ -889,10 +898,10 @@ export function resetobjs(ochain, restore, deps = {}) {
                 let top = otmp;
                 // C: `for (top = otmp; top->where == OBJ_CONTAINED;
                 //       top = top->ocontainer) continue;`
-                while (top.where === 'contained' && top.ocontainer)
+                while (top.where === OBJ_CONTAINED && top.ocontainer)
                     top = top.ocontainer;
                 const loc = { x: 0, y: 0 };
-                otmp.no_charge = (top.where === 'floor'
+                otmp.no_charge = (top.where === OBJ_FLOOR
                                   && deps.get_obj_location?.(top, loc, 0)
                                   /* can't use costly_spot(): its result
                                      depends on the hero's location */

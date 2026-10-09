@@ -11,7 +11,7 @@ const { runSegment } = await import(join(ROOT, 'js/jsmain.js'));
 
 const sessionName = process.argv[2];
 const forceStep = process.argv[3] != null ? +process.argv[3] : -1;
-const sessionData = JSON.parse(readFileSync(join(ROOT, 'sessions', sessionName), 'utf8'));
+const sessionData = JSON.parse(readFileSync((sessionName.startsWith("/")?sessionName:join(ROOT,"sessions",sessionName)), 'utf8'));
 const segments = normalizeSession(sessionData).segments;
 const gridOf = (s) => decodeScreen(s || '');
 

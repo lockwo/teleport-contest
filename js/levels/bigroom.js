@@ -14,6 +14,7 @@ import { game } from '../gstate.js';
 import { enexto_spawn, makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { create_maze, walkfrom } from '../mkmaze.js';
 import { BOULDER, mkobj_at, mksobj_at } from '../mkobj.js';
+import { stackobj } from '../invent.js';
 import { rn2, rnd } from '../rng.js';
 import {
     l_selection_fillrect, l_selection_grow, l_selection_line, l_selection_or,
@@ -314,14 +315,14 @@ async function bigrm_trap(boulder = false) {
 }
 
 // C ref: sp_lev.c create_object() (random object, random location).
-//   get_location(DRY); mkobj_at(RANDOM_CLASS, x, y, ...).
+//   get_location(DRY); mkobj_at(RANDOM_CLASS, x, y, ...); stackobj(otmp).
 function bigrm_object(idstr = null) {
     const c = bigrm_get_location_dry();
     if (idstr === 'boulder') {
         // des.object("boulder", x, y) — handled by caller with explicit coords
         return;
     }
-    mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true);
+    stackobj(mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true));
 }
 
 // C ref: sp_lev.c create_monster() (random monster, random location).
@@ -341,7 +342,10 @@ function bigrm_monster() {
         const cc = enexto_spawn(mx, my, null);
         if (cc) { mx = cc.x; my = cc.y; }
     }
-    makemon(null, mx, my, 0);
+    const mtmp = makemon(null, mx, my, 0);
+    // C ref: sp_lev.c:3353-3356,2125 — an unspecified des.monster gender
+    // defaults to male and overwrites makemon's gender, without another draw.
+    if (mtmp) mtmp.female = 0;
 }
 
 // C ref: sp_lev.c create_monster() with an explicit `m->coord` and no id/class:
@@ -356,7 +360,8 @@ function bigrm_monster_at(mrx, mry) {
         const cc = enexto_spawn(mx, my, null);
         if (cc) { mx = cc.x; my = cc.y; }
     }
-    makemon(null, mx, my, 0);
+    const mtmp = makemon(null, mx, my, 0);
+    if (mtmp) mtmp.female = 0; // Same des.monster default as the random-position form.
 }
 
 // C ref: bigrm-3.lua's 28 des.monster({x,y}) calls, in file order.
@@ -525,18 +530,11 @@ const BIGRM_VARIANTS = {
         }
         if (darkness) {
             bigrm_region_sel(darkness, false);
-            // KNOWN-WRONG, DELIBERATE, MEASURED.  C scopes this replace to
-            // `darkness:grow()`, i.e.
-            //     bigrm_replace_terrain_sel(l_selection_grow(darkness), ROOM, ICE, 100)
-            // which for choice 1 draws 464 rn2(100)s instead of the 1168 the
-            // whole-map form draws.  Switching to it is the C-faithful call and
-            // costs 18 public screens on seed0360, whose RNG is already diverged
-            // at step 263 (mcalcmove) — so those 18 are coincidence downstream of
-            // a wrong stream, but the merge gate counts them.  Flip this line the
-            // moment seed0360's step-263 divergence is fixed.  bigrm-2's public
-            // ground truth (seed0116 step 109) takes choice 3 == no darkness, so
-            // it does not discriminate between the two.
-            if (percent(25)) bigrm_replace_terrain(ROOM, ICE, 100);
+            // C ref: bigrm-2.lua `des.replace_terrain({ selection =
+            // darkness:grow(), fromterrain=".", toterrain="I" })`: one rn2(100)
+            // per cell of the grown selection, not the whole map.
+            if (percent(25))
+                bigrm_replace_terrain_sel(l_selection_grow(darkness), ROOM, ICE, 100);
         }
         await bigrm_common_tail();
     },

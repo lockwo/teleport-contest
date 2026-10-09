@@ -5,7 +5,7 @@
 // circular dependency.  The shop-type table + get_shop_item live in shtypes.js
 // (a leaf module) so makemon.js's set_mimic_sym can share them.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { depth } from './hacklib.js';
 import { distmin } from './hacklib.js';
@@ -124,7 +124,7 @@ const shkgeneral = [
 
 // C ref: shknam.c shtypes[].shknms field — map the shtypes.js identity tag to
 // the actual name pool.
-const SHKNAME_POOL = {
+export const SHKNAME_POOL = {
     general: shkgeneral, armors: shkarmors, books: shkbooks,
     liquors: shkliquors, weapons: shkweapons, foods: shkfoods,
     rings: shkrings, wands: shkwands, tools: shktools,
@@ -146,6 +146,7 @@ function ledger_no_of(uz) {
 // (Jan/Feb).  A DST-observing US zone fits only the April/May pair.
 const UBIRTHDAY_UTC_OFFSET = -4 * 3600;
 function ubirthdaySeconds() {
+    if (typeof game.ubirthday === 'number' && game.ubirthday) return game.ubirthday;
     const dt = String(game.datetime || '');
     if (!/^\d{14}$/.test(dt)) return 0;
     const y = +dt.slice(0, 4), mo = +dt.slice(4, 6), d = +dt.slice(6, 8);
@@ -308,8 +309,22 @@ function good_shopdoor(sroom) {
         const d = doors[di];
         if (!d) continue;
         let sx = d.x, sy = d.y;
+        if (sroom.irregular) {
+            // C ref: shknam.c good_shopdoor() irregular branch — step to the
+            // orthogonal neighbour that is a non-edge square of this room.
+            const rmno = (sroom.roomnoidx ?? 0) + ROOMOFFSET;
+            const inRoom = (x, y) => {
+                if (x < 1 || x > 79 || y < 0 || y > 20) return false;
+                const l = game.level.at(x, y);
+                return !!l && !l.edge && l.roomno === rmno;
+            };
+            if (inRoom(sx - 1, sy)) sx--;
+            else if (inRoom(sx + 1, sy)) sx++;
+            else if (inRoom(sx, sy - 1)) sy--;
+            else if (inRoom(sx, sy + 1)) sy++;
+            else continue;
         // Regular rectangular shop: shift the door coordinate one square inside.
-        if (sx === sroom.lx - 1) sx++;
+        } else if (sx === sroom.lx - 1) sx++;
         else if (sx === sroom.hx + 1) sx--;
         else if (sy === sroom.ly - 1) sy++;
         else if (sy === sroom.hy + 1) sy--;
@@ -324,6 +339,13 @@ function shkinit(shp, sroom) {
     const sd = good_shopdoor(sroom);
     if (sd.di < 0) return -1;
     const { di: sh, sx, sy } = sd;
+    // C ref: shknam.c shkinit() `if (MON_AT(sx, sy)) (void) rloc(m_at(sx, sy),
+    // RLOC_NOMSG); /* insurance */`.
+    {
+        const occ = (game.level?.monsters || []).find((m) => m.mx === sx && m.my === sy
+                                                      && !(m.mhp <= 0));
+        if (occ) hooks.rloc_mklev?.(occ);
+    }
 
     const shkPmidx = name_to_pmidx('shopkeeper');
     const shkPtr = monster_by_pmidx(shkPmidx);
@@ -336,6 +358,10 @@ function shkinit(shp, sroom) {
     shk.eshk.shoproom = (sroom.roomnoidx ?? 0) + ROOMOFFSET;
     sroom.resident = shk;
     shk.eshk.shoptype = sroom.rtype;
+    // C ref: shknam.c shkinit() `assign_level(&eshkp->shoplevel, &u.uz)`.  Without
+    // it a shopkeeper who followed the hero off-level still counted as local to
+    // the new level (shk.js on_shoplevel), so paybill() skipped its mongone().
+    shk.eshk.shoplevel = { dnum: game.u.uz.dnum, dlevel: game.u.uz.dlevel };
     // C ref: shknam.c:674 `eshkp->shd = svd.doors[sh]` — a struct copy BY VALUE.
     // Storing the reference makes flip_level() flip this coord twice (once via
     // level.doors[], once via eshk.shd) and leaves the other alias unflipped.
@@ -375,20 +401,22 @@ function mongets_shk(mtmp, otyp) {
     return otmp;
 }
 
-// C ref: shknam.c stock_room_goodpos() — a square eligible for stocking.
+// C ref: shknam.c stock_room_goodpos() — an irregular shop uses room membership
+// and door distance, not the regular room's whole edge row.
 function stock_room_goodpos(sroom, rmno, shDoor, sx, sy) {
-    const doors = game.level?.doors || [];
-    const dd = doors[shDoor];
+    const dd = game.level?.doors?.[shDoor];
     if (!dd) return false;
-    // Regular (non-irregular) shop edge test.
-    if ((sx === sroom.lx && dd.x === sx - 1)
-        || (sx === sroom.hx && dd.x === sx + 1)
-        || (sy === sroom.ly && dd.y === sy - 1)
-        || (sy === sroom.hy && dd.y === sy + 1))
+    const loc = game.level.at(sx, sy);
+    if (sroom.irregular) {
+        if (loc?.edge || loc?.roomno !== rmno
+            || Math.max(Math.abs(sx - dd.x), Math.abs(sy - dd.y)) <= 1)
+            return false;
+    } else if ((sx === sroom.lx && dd.x === sx - 1)
+               || (sx === sroom.hx && dd.x === sx + 1)
+               || (sy === sroom.ly && dd.y === sy - 1)
+               || (sy === sroom.hy && dd.y === sy + 1))
         return false;
-    const loc = game.level?.at(sx, sy);
-    if (!loc || !IS_ROOM(loc.typ)) return false;
-    return true;
+    return !!loc && IS_ROOM(loc.typ);
 }
 
 // C ref: shknam.c stock_room() — stock a newly-created shop room.

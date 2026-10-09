@@ -7,12 +7,14 @@
 
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { pline, update_topl } from './display.js';
+import { pline, update_topl, Hallucination_u } from './display.js';
+import { SHKNAME_POOL } from './shknam.js';
 import { shtypes } from './shtypes.js';
 import { Hello } from './role.js';
 import { rn2, rnd } from './rng.js';
 import { newomid } from './mkobj.js';
-import { get_cost, get_pricing_units } from './shk.js';
+import { get_cost, get_pricing_units, contained_cost, contained_gold,
+         bill_box_content, costly_gold, picked_container, is_unpaid } from './shk.js';
 import { makemon, monster_by_pmidx, enexto_spawn, name_to_pmidx } from './makemon.js';
 import { builds_up, room_discovered } from './dungeon.js';
 import { record_price_quote } from './o_init.js';
@@ -21,8 +23,7 @@ import {
     ROOMOFFSET, NO_ROOM, SHARED, SHARED_PLUS, SHOPBASE, COLNO, ROWNO,
     TEMPLE, MORGUE, OROOM, MAXNROFROOMS, G_GONE,
     THRONE, ZOO, SWAMP, COURT, LEPREHALL, BEEHIVE, COCKNEST, ANTHOLE,
-    BARRACKS, DELPHI, STEALTH,
-} from './const.js';
+    BARRACKS, DELPHI, STEALTH, OBJ_FLOOR } from './const.js';
 import { midnight } from './calendar.js';
 import { Blind } from './vision.js';
 import { has_innate } from './exper.js';
@@ -74,7 +75,7 @@ function retireSpecialRoom(rno, type) {
     room.rtype = OROOM;
     const flagByType = {
         [COURT]: 'has_court', [SWAMP]: 'has_swamp', [MORGUE]: 'has_morgue',
-        [ZOO]: 'has_zoo', [BARRACKS]: 'has_barracks',
+        [ZOO]: 'has_zoo', [BARRACKS]: 'has_barracks', [BEEHIVE]: 'has_beehive',
         // C's clearing switch also lists TEMPLE, but its case falls through to
         // `default:` first and that sets rt = 0, so the TEMPLE arm is dead code
         // in C too ("temples should remain TEMPLEs") — omitted rather than
@@ -135,6 +136,9 @@ export function shop_keeper(rno) {
     if (!(rno >= ROOMOFFSET)) return null;
     const shkp = roomAt(rno)?.resident || null;
     if (!shkp || (shkp.mhp != null && shkp.mhp <= 0)) return null;
+    // C ref: shk.c shop_keeper() — an angry shopkeeper not yet surcharged is
+    // riled the first time anything looks them up.
+    if (shkp.eshk && !shkp.mpeaceful && !shkp.eshk.surcharge) rile_shk(shkp);
     return shkp;
 }
 
@@ -157,8 +161,20 @@ function inside_shop(x, y) {
 // C ref: shknam.c shkname() — the personal name with its prefix character
 // stripped ('+'/'-'/'|'/'_' encode gender in the shknms[] tables).
 export function shkname(shkp) {
-    const nm = shkp.eshk?.shknam;
+    let nm = shkp.eshk?.shknam;
     if (!nm) return shkp.data?.name || 'shopkeeper';
+    if (Hallucination_u() && !game.program_state?.gameover) {
+        /* count the number of non-unique shop types; pick one randomly,
+           ignoring shop generation probabilities; pick a name at random
+           from that shop type's list */
+        let num;
+        for (num = 0; num < shtypes.length; num++)
+            if (shtypes[num].prob === 0) break;
+        if (num > 0) {
+            const nlp = SHKNAME_POOL[shtypes[rn2(num)].shknms] || [];
+            if (nlp.length > 0) nm = nlp[rn2(nlp.length)];
+        }
+    }
     return /[A-Za-z]/.test(nm[0]) ? nm : nm.slice(1);
 }
 
@@ -220,10 +236,19 @@ function addupbill(shkp) {
 // C ref: shk.c setpaid(shkp) — clear every unpaid flag this shk owns and reset
 // the bill.  The billobjs chain (used-up items) is not modelled.
 function setpaid(shkp) {
-    for (const obj of (game.invent || [])) if (obj) obj.unpaid = 0;
-    for (const obj of (game.level?.objects || [])) if (obj) { obj.unpaid = 0; obj.no_charge = 0; }
-    for (const mon of (game.level?.monsters || []))
-        for (const obj of (mon?.minvent || [])) if (obj) obj.unpaid = 0;
+    // C ref: shk.c clear_unpaid_obj()/clear_no_charge_obj() recurse into
+    // container contents, so a stolen sack's gems stop being "unpaid" too.
+    const clear = (list, noCharge) => {
+        for (const obj of (list || [])) {
+            if (!obj) continue;
+            if (obj.cobj?.length) clear(obj.cobj, noCharge);
+            obj.unpaid = 0;
+            if (noCharge) obj.no_charge = 0;
+        }
+    };
+    clear(game.invent, false);
+    clear(game.level?.objects, true);
+    for (const mon of (game.level?.monsters || [])) clear(mon?.minvent, false);
     if (shkp) {
         shkp.eshk.billct = 0;
         shkp.eshk.bill = [];
@@ -231,66 +256,6 @@ function setpaid(shkp) {
         shkp.eshk.debit = 0;
         shkp.eshk.loan = 0;
     }
-}
-
-// C ref: shk.c:2485 paybill(croaked, silently) -> shk.c:2577 inherits().  Ported
-// only as far as the message the death screen needs: the hero dies inside a shop
-// with exactly one shopkeeper on the level, so numsk == 1 (no rn2(2) head-shake)
-// and money2mon() is skipped when the hero carries no gold.  Zero RNG.
-// C's shopkeeper-priority scan, the multi-shk branch, the partial-payment arm
-// and set_repo_loc()/paygd() are not modelled; they need state this port does
-// not track and none of them can fire for a single-shk in-shop death.
-export async function paybill(croaked) {
-    if (croaked < 0) return false;   /* escaped the dungeon: shks can't reach */
-    const shks = (game.level?.monsters || []).filter((m) => m?.isshk && m.eshk);
-    if (shks.length !== 1) return false;
-    const shkp = shks[0];
-    const eshk = shkp.eshk;
-    const uinshop = (game.u?.ushops || []).includes(eshk.shoproom);
-    const invent = game.invent || [];
-
-    // The peaceful "gratefully inherits" case.
-    if (uinshop && inhishop(shkp) && !eshk.billct && !eshk.robbed && !eshk.debit
-        && shkp.mpeaceful && !eshk.following) {
-        const taken = invent.length > 0;
-        if (taken) await update_topl(`${Shknam(shkp)} gratefully inherits all your possessions.`);
-        setpaid(shkp);
-        return taken;
-    }
-
-    let loss = 0, take = false;
-    if (eshk.billct || eshk.debit || eshk.robbed) {
-        if (uinshop && inhishop(shkp)) loss = addupbill(shkp) + (eshk.debit || 0);
-        if (loss < (eshk.robbed || 0)) loss = eshk.robbed || 0;
-        take = true;
-    }
-    let taken = false;
-    if (eshk.following || !shkp.mpeaceful || take) {
-        if (!invent.length) { setpaid(shkp); return false; }
-        const umoney = money_cnt_inv(invent);
-        let takes = '';
-        if (shkp.msleeping || shkp.mfrozen || !shkp.mcanmove) takes += 'wakes up and ';
-        if (!m_next2u_shk(shkp)) takes += 'comes and ';
-        takes += 'takes';
-        if (loss > umoney || !loss || uinshop) {
-            eshk.robbed = Math.max(0, (eshk.robbed || 0) - umoney);
-            await update_topl(`${Shknam(shkp)} ${takes} all your possessions.`);
-            taken = true;
-        }
-        rouse_shk(shkp, false);
-    }
-    setpaid(shkp);
-    return taken;
-}
-function money_cnt_inv(invent) {
-    let n = 0;
-    for (const o of invent) if (o?.oclass === 12 /* COIN_CLASS */) n += (o.quan || 0);
-    return n;
-}
-// C ref: mon.c m_next2u(mtmp) — distmin(mx,my,ux,uy) <= 1.
-function m_next2u_shk(mtmp) {
-    const u = game.u;
-    return Math.max(Math.abs(mtmp.mx - u.ux), Math.abs(mtmp.my - u.uy)) <= 1;
 }
 
 // C ref: shk.c rouse_shk(shkp, verbosely) — greed-induced recovery.  No RNG.
@@ -537,7 +502,7 @@ async function u_entered_shop(enterstring) {
         should_block = true;
     } else {
         const here = (game.level?.objects || []).filter(
-            (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy);
+            (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy);
         should_block = !!(u.Fast
             && here.some((o) => o.otyp === PICK_AXE || o.otyp === DWARVISH_MATTOCK));
     }
@@ -663,7 +628,7 @@ export async function check_special_room(newlev) {
             break;
         }
 
-        if (msg_given) room_discovered(roomno);
+        if (msg_given) await room_discovered(roomno);
 
         if (rt !== 0) {
             retireSpecialRoom(c, rt);
@@ -805,23 +770,44 @@ function append_honorific() {
     return buf;
 }
 
-// C ref: shk.c addtobill(obj, ininv, dummy, silent) — bill obj and quote the
-// price.  ininv (the pickup case) gets the "For you, ..." line; the rn2(4)
-// inside append_honorific() is the only RNG the function draws.  Containers
-// (bill_box_content) and gold (costly_gold) are not ported.
+// C ref: shk.c addtobill() — bill the top object and every charged content
+// before quoting their combined price; contained gold creates a separate debt.
 export async function addtobill(obj, ininv, dummy, silent) {
-    const u = game.u;
-    const shkp = billable(null, obj, u.ushops?.[0], true);
+    const shkp = billable(null, obj, game.u.ushops?.[0], true);
     if (!shkp) return;
-    if (obj.oclass === COIN_CLASS) return; /* costly_gold() */
+    if (obj.oclass === COIN_CLASS) {
+        await costly_gold(obj.ox, obj.oy, obj.quan, silent);
+        return;
+    }
     if ((shkp.eshk.billct || 0) >= BILLSZ) {
         if (!silent) await update_topl('You got that for free!');
         return;
     }
-    const ltmp = obj.no_charge ? 0 : get_cost(obj, shkp);
-    if (obj.no_charge) { obj.no_charge = 0; return; }
 
-    add_one_tobill(obj, dummy, shkp);
+    const container = !!obj.cobj?.length;
+    let ltmp = obj.no_charge ? 0 : get_cost(obj, shkp);
+    if (obj.globby) ltmp *= get_pricing_units(obj);
+    if (obj.no_charge && !container) {
+        obj.no_charge = 0;
+        return;
+    }
+    let contentscount = false;
+    if (container) {
+        const cltmp = contained_cost(obj, shkp, 0, false, false);
+        const gltmp = contained_gold(obj, true);
+        if (ltmp) add_one_tobill(obj, dummy, shkp);
+        if (cltmp) bill_box_content(obj, ininv, dummy, shkp);
+        picked_container(obj);
+        ltmp += cltmp;
+        if (gltmp) {
+            await costly_gold(obj.ox, obj.oy, gltmp, silent);
+            if (!ltmp) return;
+        }
+        obj.no_charge = 0;
+        contentscount = obj.cobj.some(is_unpaid);
+    } else {
+        add_one_tobill(obj, dummy, shkp);
+    }
     if (silent) return;
 
     const { xname, currency } = await import('./invent.js');
@@ -841,8 +827,10 @@ export async function addtobill(obj, ininv, dummy, silent) {
     obj.quan = 1; /* C fools xname() into the singular */
     const nm = xname(obj);
     obj.quan = save_quan;
-    await update_topl(`${buf} ${ltmp} ${currency(ltmp)} ${
-        save_quan > 1 ? 'per' : 'for this'} ${nm}."`);
+    const qualifier = save_quan > 1 ? 'per'
+        : contentscount && !obj.unpaid ? 'for the contents of this' : 'for this';
+    await update_topl(`${buf} ${ltmp} ${currency(ltmp)} ${qualifier} ${nm}${
+        contentscount && obj.unpaid ? ' and its contents' : ''}."`);
 }
 
 // C ref: shk.c Shknam(shkp) — shkname() with the first letter capitalised.
@@ -876,7 +864,7 @@ export function get_cost_of_shop_item(obj) {
     const shkp = shop_keeper(inside_shop_rno(x, y));
     if (!shkp || !inhishop(shkp)) return res;
     const eshk = shkp.eshk;
-    const onfloor = obj.where === 'floor';
+    const onfloor = obj.where === OBJ_FLOOR;
     const freespot = onfloor && x === eshk.shk?.x && y === eshk.shk?.y;
     res.nochrg = (onfloor && (obj.no_charge || freespot)) ? 1 : 0;
     if (onfloor ? !res.nochrg : !!obj.unpaid)

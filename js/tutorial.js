@@ -20,11 +20,10 @@ import {
     LAVAPOOL, LAVAWALL, IRONBARS, DOOR, CORR, ROOM, STAIRS, FOUNTAIN, THRONE, ALTAR, ICE,
     MAX_TYPE, INVALID_TYPE, NO_ROOM, D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED,
     W_NONDIGGABLE, LA_DOWN, ENGRAVE, BURN, NON_PM, SPACE_POS,
-    MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP,
-} from './const.js';
+    MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP, OBJ_FLOOR } from './const.js';
 import { GameMap } from './game.js';
 import { wallification, set_wall_state } from './mklev.js';
-import { objects, mksobj, next_ident, blessorcurse, curse, set_corpsenm, BOULDER } from './mkobj.js';
+import { objects, mksobj, mksobj_at, next_ident, blessorcurse, curse, set_corpsenm, BOULDER, KELP_FROND } from './mkobj.js';
 import { name_to_pmidx, monster_by_pmidx, newmonhp } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { hole_destination, choose_trapnote } from './trap.js';
@@ -252,7 +251,7 @@ function createObject(cx, cy, name, opts = {}) {
     // Place the object on the floor (so it renders & joins fobj).
     if (cx != null && cy != null) {
         const { x, y } = A(cx, cy);
-        otmp.ox = x; otmp.oy = y; otmp.where = 'floor';
+        otmp.ox = x; otmp.oy = y; otmp.where = OBJ_FLOOR;
         if (!game.level.objects) game.level.objects = [];
         game.level.objects.push(otmp);
         const loc = game.level.at(x, y);
@@ -317,7 +316,15 @@ function runTutProgram() {
             if (loc) loc.wall_info |= W_NONDIGGABLE;
         }
 
-    // des.teleport_region({ region={9,3,9,3} }) — recorded later by fixup.
+    // des.teleport_region({ region={9,3,9,3} }) — dir defaults to "both"
+    // (LR_TELE), which fixup_special() copies into BOTH svu.updest and
+    // svd.dndest; goto_level()/u_on_rndspot() later place the hero there.
+    {
+        const p = A(9, 3);
+        const rgn = { lx: p.x, ly: p.y, hx: p.x, hy: p.y, nlx: 0, nly: 0, nhx: 0, nhy: 0 };
+        game.updest = { ...rgn };
+        game.dndest = { ...rgn };
+    }
 
     // C ref: tut-1.lua:65-67 — nh.parse_config turns on some newbie-friendly
     // OPTIONS for the tutorial (no PRNG).  mention_walls: bumping a wall/stone
@@ -544,7 +551,7 @@ function createBoxWithScroll(cx, cy) {
     const box = mksobj(otypByName('large box'), true, true);
     box.obroken = 1; box.olocked = 0; box.otrapped = 0;
     const { x, y } = A(cx, cy);
-    box.ox = x; box.oy = y; box.where = 'floor';
+    box.ox = x; box.oy = y; box.where = OBJ_FLOOR;
     if (!game.level.objects) game.level.objects = [];
     game.level.objects.push(box);
     const loc = game.level.at(x, y);
@@ -578,53 +585,31 @@ function nhlibAlignShuffle() {
     }
 }
 
-// ── Build the tut-1 level into a fresh GameMap, consuming the full PRNG
-//    sequence C generates at the tutorial-yes step. Returns the new level. ──
-export function genTutorialLevel() {
-    // getbones() inside mklev() (rn2(3)).
-    getbones();
-    // nhlib.lua align shuffle (rn2(3),rn2(2)) on lua prelude load.
-    nhlibAlignShuffle();
-
-    // Build the tutorial level into a fresh GameMap WITHOUT disturbing the
-    // currently-displayed level (game.level): the des.* helpers operate on
-    // game.level, so we temporarily point it at the new map during generation
-    // and restore the previous level afterwards.  The caller swaps it in for
-    // real at the --More-- acknowledgement.
-    const prevLevel = game.level;
-    const prevFmon = game.fmon;
-    const prevInMklev = game.in_mklev;
-    const lvl = new GameMap();
-    // C ref: dat/tut-1.lua:30 des.level_flags("mazelevel", "noflip",
-    // "nomongen", "nodeathdrops", "noautosearch") -> sp_lev.c lspo_level_flags().
-    // "nomongen" is the load-bearing one: makemon.c:1167 makes
-    // makemon(NULL,...) a no-op on this level, so allmain.c
-    // maybe_generate_rnd_mon()'s !rn2(70) spawns NOTHING inside the tutorial.
-    // Without it every 1-in-70 turn built a whole random monster here (~20 RNG
-    // draws) that C never built.  "noflip" is a level-loader flag, not a level
-    // flag, and the tutorial generator does not flip.
-    lvl.flags.is_maze_lev = true;
-    lvl.flags.rndmongen = false;
-    lvl.flags.deathdrops = false;
-    lvl.flags.noautosearch = true;
-    lvl.flags.hero_memory = true;
-    lvl.flags.noteleport = false;
-    game.level = lvl;
-    game.fmon = null;
-    // C: gi.in_mklev is TRUE throughout makemaz/load_special — this gates
-    // mkobj_erosions (may_generate_eroded) and the mktrap victim roll.
-    game.in_mklev = true;
-
+// Shared tut-1 body: the des.* program plus level finalization.  game.level
+// must already be the fresh GameMap `lvl` and game.in_mklev set.
+// viaGoto: the level is entered by goto_level() (first entry), so its
+// mineralize() kelp scan and u_on_rndspot()'s place_lregion draws happen inside
+// this call; a #wizmakemap replacement draws them from
+// fastforward_fill_mineralize() and makemap_prepost() instead.
+function buildTutorialLevel(lvl, viaGoto) {
     // splev_initlev solidfill: linit->lit = rn2(2) (BOOL_RANDOM).
     rn2(2);
 
     runTutProgram();
 
-    // fixup_special: water_has_kelp rn2(10) for each WATER cell candidate, then
-    // place_lregion for the teleport_region (rn2(1),rn2(1)).  The map has one
-    // 'W' water cell (Lua {2,13}); C scans the two POOL/WATER pools.
-    rn2(10); rn2(10);   // water_has_kelp (mklev.c:1436)
-    rn2(1); rn2(1);     // place_lregion teleport_region (mkmaze.c:396,397)
+    if (viaGoto) {
+        // C ref: mklev.c level_finalize_topology() -> mineralize() kelp scan.
+        // The map has one 'W' water cell (Lua {2,13}); C scans the two
+        // POOL/WATER pools.
+        for (let x = 2; x < COLNO - 2; x++)
+            for (let y = 1; y < ROWNO - 1; y++) {
+                const typ = lvl.at(x, y)?.typ;
+                if (((typ === POOL || typ === WATER) && !rn2(10))
+                    || (typ === MOAT && !rn2(30)))
+                    mksobj_at(KELP_FROND, x, y, true, false);
+            }
+        rn2(1); rn2(1);     // place_lregion teleport_region (mkmaze.c:396,397)
+    }
 
     // C ref: lspo_finalize_level -> wallification(1,0,COLNO-1,ROWNO-1) then
     // level_finalize_topology -> set_wall_state().  No PRNG; converts the flat
@@ -663,6 +648,50 @@ export function genTutorialLevel() {
             }
         }
     }
+}
+
+// C ref: dat/tut-1.lua:30 des.level_flags("mazelevel", "noflip",
+// "nomongen", "nodeathdrops", "noautosearch") -> sp_lev.c lspo_level_flags().
+// "nomongen" is the load-bearing one: makemon.c:1167 makes
+// makemon(NULL,...) a no-op on this level, so allmain.c
+// maybe_generate_rnd_mon()'s !rn2(70) spawns NOTHING inside the tutorial.
+// Without it every 1-in-70 turn built a whole random monster here (~20 RNG
+// draws) that C never built.  "noflip" is a level-loader flag, not a level
+// flag, and the tutorial generator does not flip.
+function setTutorialLevelFlags(lvl) {
+    lvl.flags.is_maze_lev = true;
+    lvl.flags.rndmongen = false;
+    lvl.flags.deathdrops = false;
+    lvl.flags.noautosearch = true;
+    lvl.flags.hero_memory = true;
+    lvl.flags.noteleport = false;
+}
+
+// ── Build the tut-1 level into a fresh GameMap, consuming the full PRNG
+//    sequence C generates at the tutorial-yes step. Returns the new level. ──
+export function genTutorialLevel() {
+    // getbones() inside mklev() (rn2(3)).
+    getbones();
+    // nhlib.lua align shuffle (rn2(3),rn2(2)) on lua prelude load.
+    nhlibAlignShuffle();
+
+    // Build the tutorial level into a fresh GameMap WITHOUT disturbing the
+    // currently-displayed level (game.level): the des.* helpers operate on
+    // game.level, so we temporarily point it at the new map during generation
+    // and restore the previous level afterwards.  The caller swaps it in for
+    // real at the --More-- acknowledgement.
+    const prevLevel = game.level;
+    const prevFmon = game.fmon;
+    const prevInMklev = game.in_mklev;
+    const lvl = new GameMap();
+    setTutorialLevelFlags(lvl);
+    game.level = lvl;
+    game.fmon = null;
+    // C: gi.in_mklev is TRUE throughout makemaz/load_special — this gates
+    // mkobj_erosions (may_generate_eroded) and the mktrap victim roll.
+    game.in_mklev = true;
+
+    buildTutorialLevel(lvl, true);
 
     // Restore the previously-displayed level; stash the tutorial level for the
     // deferred enter.
@@ -671,4 +700,16 @@ export function genTutorialLevel() {
     game.in_mklev = prevInMklev;
     game._tutorial_level = lvl;
     return lvl;
+}
+
+// C ref: mklev.c makelevel() -> makemaz("tut-1") -> sp_lev.c load_special().
+// The in-place builder for a level REPLACING the current one (wizard-mode
+// #wizmakemap while in the tutorial): mklev() has already drawn getbones(), and
+// makelevel() has cleared game.level into a fresh GameMap with in_mklev set.
+// The kelp scan and hero placement draws that genTutorialLevel() makes inline
+// come later here, from mineralize() and makemap_prepost()'s u_on_rndspot().
+export function makemaz_tutorial() {
+    nhlibAlignShuffle();
+    setTutorialLevelFlags(game.level);
+    buildTutorialLevel(game.level, false);
 }

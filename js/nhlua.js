@@ -327,7 +327,10 @@ function _init_uhunger() {
 }
 
 /* mon.c mongone(mtmp) */
-function _mongone(_mtmp) {}
+async function _mongone(mtmp) {
+    const { mongone } = await import('./mon.js');
+    await mongone(mtmp);
+}
 
 /* nhlobj.c nhl_push_obj(L, otmp) / nhl_obj_u_giveobj(L) */
 function _nhl_push_obj(otmp) { return otmp; }
@@ -1440,7 +1443,7 @@ export async function nhl_doturn(...args) {
 
 /* nh.debug_flags({ mongen = false, hunger = false,
                     overwrite_stairs = true });  debugging use only. */
-export function nhl_debug_flags(...args) {
+export async function nhl_debug_flags(...args) {
     let val;
 
     const t = lcheck_param_table(args);
@@ -1457,7 +1460,7 @@ export function nhl_debug_flags(...args) {
             for (const mtmp of [...(game.fmon || game.level?.monsters || [])]) {
                 if ((mtmp.mhp ?? 0) < 1)        /* DEADMONSTER() */
                     continue;
-                _mongone(mtmp);
+                await _mongone(mtmp);
             }
         }
     }

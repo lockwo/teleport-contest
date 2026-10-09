@@ -5,7 +5,7 @@
 // treasure branches call subsystems (makemon/mkgold specifics) the port does
 // not yet fully model, so they emit their observable framing only.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { update_topl, newsym, m_at, y_n, display_nhwindow_message } from './display.js';
 import { hliquid, builds_up, dunlevs_in_dungeon, Is_special, level_difficulty_c } from './dungeon.js';
@@ -14,7 +14,8 @@ import { find_ac } from './u_init.js';
 import { curse, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
     mkgold, rnd_class, DILITHIUM_CRYSTAL, LUCKSTONE, BOULDER } from './mkobj.js';
 import { exercise, acurr_eff, poison_strdmg, adjattrib } from './attrib.js';
-import { fruitname } from './objnam.js';
+import { fruitname, makeplural } from './objnam.js';
+import { hcolor, rndmonnam } from './do_name.js';
 import { more_experienced, newexplevel, has_innate } from './exper.js';
 import { newuhs } from './eat.js';
 import { Blind, cansee, couldsee } from './vision.js';
@@ -31,8 +32,7 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import {
     ER_NOTHING, ER_GREASED, ER_DESTROYED, F_LOOTED, F_WARNED, FROMOUTSIDE,
     FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE, MM_NOMSG,
-    POLY_NOFLAGS,
-} from './const.js';
+    POLY_NOFLAGS, OBJ_FLOOR } from './const.js';
 
 // C ref: include/onames.h — long sword otyp (mkobj.js OBJECT_DATA order).
 const LONG_SWORD = 54;
@@ -48,17 +48,18 @@ function fountain_is_looted(loc) { return ((loc?.looted || 0) & F_LOOTED) !== 0;
 // the sink's sewage sip get it here.  RNG-free itself, but u.uhunger steers
 // the botl hunger word AND newuhs()'s fainting rn2, so discarding the roll's
 // value (as this file used to) leaves the hero permanently un-hungered.
-function morehungry(num) {
+async function morehungry(num) {
     const u = game.u;
     if (!u) return;
     u.uhunger = (u.uhunger ?? 900) - num;
-    newuhs(true);
+    await newuhs(true);
 }
 
 // C ref: prop.h Poison_resistance.  Mirrors js/potion.js's reader: the port
 // spreads the intrinsic over three different uprops spellings depending on
 // which subsystem granted it (role intrinsic, race intrinsic, item).
 function Poison_resistance() {
+    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     if (!u) return false;
     const p = u.uprops || {};
@@ -134,8 +135,7 @@ async function delobj_invent(obj) {
 // C ref: youprop.h Glib — the "slippery fingers" timer.
 function Glib() {
     const u = game.u;
-    return ((u?.Glib || 0) > 0) || ((u?.uprops?.Glib || 0) > 0)
-        || ((u?.uprops?.HGlib || 0) > 0);
+    return (u?.uprops?.Glib || 0) > 0;
 }
 
 // C ref: hack.h Role_if(PM_KNIGHT) — urole.mnum comparison.
@@ -163,11 +163,7 @@ async function wash_hands() {
     await update_topl(`You wash your ${game.uarmg ? 'gloved ' : ''}hands in the `
                       + `${hliquid('water')}.`);
     if (was_glib) {
-        // make_glib(0): clears the timer (no RNG).
-        if (game.u) {
-            game.u.Glib = 0;
-            if (game.u.uprops) { game.u.uprops.Glib = 0; game.u.uprops.HGlib = 0; }
-        }
+        await (await import('./potion.js')).make_glib(0);
         await update_topl(
             `Your ${game.uarmg ? 'gloves' : 'fingers'} are no longer slippery.`);
     }
@@ -378,7 +374,7 @@ export async function drinkfountain() {
     if (fate < 10) {
         await update_topl('The cool draught refreshes you.');
         u.uhunger = (u.uhunger || 0) + rnd(10); /* don't choke on water */
-        newuhs(false);
+        await newuhs(false);
         if (mgkftn) return;
     } else {
         switch (fate) {
@@ -393,7 +389,7 @@ export async function drinkfountain() {
             break;
         case 20: /* Foul water */
             await update_topl(`The ${hliquid('water')} is foul!  You gag and vomit.`);
-            morehungry(rn1(20, 11));
+            await morehungry(rn1(20, 11));
             vomit();
             break;
         case 21: /* Poisonous */
@@ -406,10 +402,10 @@ export async function drinkfountain() {
             if (Poison_resistance()) {
                 await update_topl(
                     `Perhaps it is runoff from the nearby ${fruitname(false)} farm.`);
-                losehp(rnd(4));
+                await losehp(rnd(4), 'unrefrigerated sip of juice', 0 /* KILLED_BY_AN */);
                 break;
             }
-            poison_strdmg(rn1(4, 3), rnd(10));
+            await poison_strdmg(rn1(4, 3), rnd(10), 'contaminated water', 1 /* KILLED_BY */);
             exercise(A_CON, false);
             break;
         case 22: /* Fountain of snakes! */
@@ -420,7 +416,7 @@ export async function drinkfountain() {
             break;
         case 24: { /* Maybe curse some items */
             await update_topl("This water's no good!");
-            morehungry(rn1(20, 11));
+            await morehungry(rn1(20, 11));
             exercise(A_CON, false);
             let buc_changed = 0;
             for (const obj of game.invent || []) {
@@ -620,9 +616,8 @@ async function dowatersnakes() {
         return;
     }
     if (!Blind()) {
-        // Hallucination substitutes makeplural(rndmonnam(NULL)), which draws;
-        // rndmonnam() is not ported anywhere in js/ yet.
-        await update_topl('An endless stream of snakes pours forth!');
+        await update_topl(`An endless stream of ${
+            Hallucination() ? makeplural(rndmonnam().name) : 'snakes'} pours forth!`);
     } else {
         await update_topl('You hear something hissing!');
     }
@@ -661,7 +656,7 @@ async function dofindgem() {
 // on the floor at (x, y)?
 function floor_boulder_at(x, y) {
     for (const o of game.level?.objects || [])
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === BOULDER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === BOULDER)
             return true;
     return false;
 }
@@ -701,7 +696,7 @@ async function gush(x, y, poolcnt) {
     // invent.js objects_at()); the unreversed filter ran water_damage() bottom-up
     // and every erosion roll landed on the wrong object.
     const here = (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y).reverse();
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y).reverse();
     for (const obj of here) await water_damage(obj, null, false);
 
     // minliquid(mtmp) (monster drowning in the new pool) isn't modeled: no
@@ -785,6 +780,7 @@ function Hallucination() { return !!game.u?.uhallu; }
 // role/race grants) or extrinsic.  Same multi-spelling read as
 // Poison_resistance() above.
 function Fire_resistance() {
+    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     if (!u) return false;
     const p = u.uprops || {};
@@ -792,15 +788,11 @@ function Fire_resistance() {
               || p.FireResistance);
 }
 
-// C ref: hack.c losehp() — for a non-polymorphed hero this subtracts the
-// damage from u.uhp (no RNG).  Death handling is not exercised by the covered
-// sessions, so it is reduced to the hp arithmetic + hpmax clamp.
-function losehp(n) {
-    const u = game.u;
-    if (!u) return;
-    u.uhp -= n;
-    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
-    if (u.uhp < 1) u.uhp = 0;
+// C ref: hack.c losehp(n, knam, k_format) — do.js owns the complete port
+// (death path, killer text, polymorph arm).
+async function losehp(n, knam, k_format) {
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(n, knam, k_format);
 }
 
 // C ref: objclass.h OBJ_DESCR(obj) — the shuffled appearance word for obj's
@@ -811,14 +803,8 @@ function OBJ_DESCR(obj) {
     return DESCR_BY_OTYP[idx] ?? null;
 }
 
-// C ref: do_name.c hcolor(colorpref) — colorpref unless hallucinating, in
-// which case a random nonsense word replaces it.  The hallucination table
-// isn't ported (not reached by the covered sessions' non-hallucinating hero);
-// the roll still needs to fire to keep the PRNG faithful if that ever
-// changes, but none of the covered sessions hallucinate while at a sink.
-function hcolor(colorpref) {
-    return colorpref;
-}
+// C ref: do_name.c hcolor(colorpref) — js/do_name.js (a random nonsense word off
+// the DISPLAY rng while hallucinating).
 
 // C ref: fountain.c breaksink(x, y) — converts a sink into a fountain (used
 // by both drinksink's "pipes break" case and dipsink).  Both call sites have
@@ -906,7 +892,7 @@ export async function drinksink() {
         if (Fire_resistance()) {
             await update_topl('It seems quite tasty.');
         } else {
-            losehp(rnd(6));
+            await losehp(rnd(6), 'sipping boiling water', 1 /* KILLED_BY */);
         }
         break;
     case 3: {
@@ -969,7 +955,7 @@ export async function drinksink() {
         break;
     case 9:
         await update_topl('Gaggg... this tastes like sewage!  You vomit.');
-        morehungry(rn1(30 - acurr_eff(A_CON), 11));
+        await morehungry(rn1(30 - acurr_eff(A_CON), 11));
         vomit();
         break;
     case 10: {

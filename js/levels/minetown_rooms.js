@@ -47,7 +47,8 @@ const G_NOGEN = 0x0200;                       // include/monflag.h
 
 // C ref: dat/nhlib.lua:47 monkfoodshop() — role-dependent, no RNG.
 function mt_monkfoodshop() {
-    return (roles[game.initrole]?.name === 'Monk')
+    // nhlua.c:2009 pushes gu.urole.name.m for lua's u.role, so compare .name.m.
+    return (roles[game.initrole]?.name?.m === 'Monk')
         ? 'health food shop' : 'food shop';
 }
 

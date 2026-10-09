@@ -1,19 +1,18 @@
 // read.js — reading scrolls and spellbooks.
 // C ref: read.c.  Ports the 'r' command entry (doread), the scroll dispatch
 // (seffects) and spellbook reading (study_book, in spell.js).
-// Still unported in seffects(): SCR_CHARGING — it needs recharge(), which
-// does not exist yet in the port (getobj("charge") + a real wand/tool
-// recharge effect).  SCR_GENOCIDE, SCR_STINKING_CLOUD and the two detection
-// scrolls are wired below to their already-ported seffect_*/do_*/food_detect/
-// trap_detect helpers.
+// Charging scrolls use read.c recharge() below for wands and chargeable tools.
+// SCR_GENOCIDE, SCR_STINKING_CLOUD and the two detection scrolls are wired to
+// their already-ported seffect_*/do_*/food_detect/trap_detect helpers.
 // SCR_FIRE and SCR_EARTH used to be listed here and were NOT unported at all:
 // seffect_fire()/seffect_earth() and drop_boulder_on_player/monster() were
 // fully written, just missing their `case` arms in the switch below.
 
-import { game } from './gstate.js';
+import { ceiling as ceiling_dg } from './dungeon.js';
+import { game, hooks } from './gstate.js';
 import { LL_CONDUCT, livelog_printf } from './livelog.js';
 import { rnd, rn2, rn1, d } from './rng.js';
-import { pline, topl_more, update_topl, newsym, y_n } from './display.js';
+import { pline, topl_more, update_topl, urgent_topl, newsym, y_n } from './display.js';
 import { getobj, makeknown, useup, useupall, xname, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY,
          GETOBJ_EXCLUDE, GETOBJ_PROMPT, GETOBJ_ALLOWCNT, GETOBJ_EXCLUDE_SELECTABLE,
          identify_pack, trycall, near_capacity, obj_doname, stackobj, obfree,
@@ -32,7 +31,11 @@ import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          BALL_CLASS, CHAIN_CLASS, HEAVY_IRON_BALL, mkobj, place_object,
          WEAPON_CLASS, ARMOR_CLASS, TOOL_CLASS, COIN_CLASS, WAND_CLASS,
          POTION_CLASS, RING_CLASS, objects, mksobj,
-         bless, curse, uncurse, blessorcurse, weight } from './mkobj.js';
+         bless, curse, uncurse, blessorcurse, weight,
+         WAN_WISHING, CRYSTAL_BALL, TINNING_KIT,
+         EXPENSIVE_CAMERA, BELL_OF_OPENING, HORN_OF_PLENTY, BAG_OF_TRICKS,
+         MAGIC_FLUTE, MAGIC_HARP, FROST_HORN, FIRE_HORN,
+         DRUM_OF_EARTHQUAKE } from './mkobj.js';
 import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          ERODE_NONE, EF_PAY, EF_DESTROY, ER_NOTHING, ER_DESTROYED,
          COLNO, ROWNO, SPE_LIM,
@@ -40,7 +43,7 @@ import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
          In_endgame, Is_earthlevel, GENOCIDED, KILLED_BY,
          KILLED_BY_AN, NO_KILLER_PREFIX, DIED, ROOM, STONE, IS_WALL, IS_DOOR,
-         G_GONE, TELEDS_TELEPORT } from './const.js';
+         G_GONE, TELEDS_TELEPORT, OBJ_FREE, PLNMSG_TOWER_OF_FLAME } from './const.js';
 import { S_invisible, S_WORM_TAIL, S_MIMIC_DEF, S_MIMIC, S_WORM, S_DEMON,
          S_XAN, S_EEL, S_GHOST, def_monsyms, MAXMCLASSES } from './symbols.js';
 import { wipeout_text } from './engrave.js';
@@ -49,6 +52,8 @@ import { mflags1_of, mflags2_of, msound_of, M1_NOHEAD, M1_AMORPHOUS,
          M1_UNSOLID, M1_WALLWALK, M1_HIDE,
          M2_PNAME, M2_HUMAN, M2_DEMON, M2_MALE, M2_FEMALE } from './monflags_data.js';
 import { mon_mr } from './monmr_data.js';
+import { can_chant } from './mondata.js';
+import { hcolor } from './do_name.js';
 import { NUMMONS } from './disprng.js';
 
 const ECMD_CANCEL = 0;
@@ -67,6 +72,7 @@ const SCR_GOLD_DETECTION = 334;
 const SCR_GENOCIDE = 331;
 const SCR_FOOD_DETECTION = 335;
 const SCR_STINKING_CLOUD = 343;
+const SCR_CHARGING = 342;
 const SPE_DETECT_FOOD = 383;
 const SCR_AMNESIA = 338;
 const SCR_MAIL = 364;
@@ -117,27 +123,6 @@ function Confused() { return (game.u?.uprops?.Confusion || 0) > 0; }
 // C ref: youprop.h Hallucination — the hero's hallucination timer (uhallu),
 // as read by u_init.js/potion.js's Hallucination() convention.
 function Hallucination() { return !!game.u?.uhallu; }
-
-// C ref: mondata.c can_chant(&youmonst) — whether the hero can speak the words
-// (for casting / reading aloud):
-//   !((mtmp == &youmonst && Strangled) || is_silent(data) || !has_head(data)
-//     || data->msound == MS_BUZZ || data->msound == MS_BURBLE)
-// A polymorphed hero really can be a silent/headless/buzzing form, so the whole
-// predicate is ported; game.youmonst.data is only present once the hero has
-// polymorphed, and an unpolymorphed hero is a humanoid that passes every test.
-const MS_SILENT = 0, MS_BUZZ = 10, MS_BURBLE = 16; // C ref: monflag.h MS_*
-function can_chant() {
-    if (game.u?.Strangled) return false;
-    // youmonst.data only differs from the hero's race while polymorphed; an
-    // unpolymorphed hero is a humanoid that passes every remaining test.
-    const data = game.youmonst?.data;
-    if (!data) return true;
-    const snd = msound_of(data);
-    if (snd === MS_SILENT || snd === MS_BUZZ || snd === MS_BURBLE) return false;
-    // C ref: mondata.h has_head(ptr) — !(mflags1 & M1_NOHEAD).
-    if ((mflags1_of(data) & M1_NOHEAD) !== 0) return false;
-    return true;
-}
 
 // C ref: youprop.h Invisible — the hero being unable to see their own hands
 // changes seffect_confuse_monster's feedback (and nothing else).
@@ -237,6 +222,7 @@ function resist(mtmp, oclass, damage, _tell) {
 async function losehp_read(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
     if (!u || n <= 0) return;
+    hooks.end_running?.(true); // hack.c:4266
     if (u.Upolyd) {
         u.mh = (u.mh ?? 0) - n;
         if (u.mh > u.mhmax) u.mhmax = u.mh;
@@ -250,7 +236,7 @@ async function losehp_read(n, knam, k_format = KILLED_BY_AN) {
     if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
     else game.botl = true;
     if (u.uhp < 1) {
-        await update_topl('You die...');
+        await urgent_topl('You die...');
         // C ref: topten.c formatkiller() prefix handling (do.js:535 has the
         // same three-way switch).
         game._killer_name = !knam ? null
@@ -419,11 +405,10 @@ export async function seffects(sobj) {
         // trycall() prompt.  seffect_mail() itself draws no RNG.
         await seffect_mail(sobj);
         break;
+    case SCR_CHARGING:
+        return await seffect_charging(sobj);
     default:
-        // C ref: read.c seffects default: -> impossible().  The only otyp
-        // that still lands here is SCR_CHARGING: it needs recharge(), which
-        // has no JS port yet (getobj("charge") + a real wand/tool recharge
-        // effect), so a hero who reads one desynchronises from here on.
+        // C ref: read.c seffects default: impossible(); no scroll types remain.
         break;
     }
     return false;
@@ -636,7 +621,7 @@ async function seffect_scare_monster(sobj) {
             if (confused || scursed) {
                 mtmp.mflee = 0; mtmp.mfrozen = 0; mtmp.msleeping = 0;
                 mtmp.mcanmove = 1;
-            } else if (!resist(mtmp, SCROLL_CLASS, 0, false)) {
+            } else if (!resist(mtmp, sobj.oclass, 0, false)) {
                 monflee(mtmp, 0, false, false);
             }
             if (!mtmp.mtame) ct++; // pets don't laugh at you
@@ -660,19 +645,21 @@ async function seffect_create_monster(sobj) {
 }
 
 // C ref: makemon.c create_critters(cnt, mptr, neverask).
-// The `ask = (wizard && !neverask)` create_particular() prompt is deliberately
-// NOT wired in here: zap.js's copy documents the same gap (a wizard-mode hero
-// gets one "Create what kind of monster?" getlin per critter before makemon()
-// is reached).  Fixing it belongs with that copy, in one place.
-async function create_critters(cnt, mptr, _neverask) {
-    const { makemon } = await import('./makemon.js');
+async function create_critters(cnt, mptr, neverask) {
+    const { makemon, makemon_appears_msg } = await import('./makemon.js');
     const { canspotmon } = await import('./uhitm.js');
     const u = game.u;
     let known = false;
+    let ask = (!!game.flags?.debug && !neverask);
     while (cnt-- > 0) {
+        if (ask) {
+            if (await create_particular()) { known = true; continue; }
+            else ask = false;          /* ESC will shut off prompting */
+        }
         // (u.uinwater enexto(GIANT_EEL) relocation isn't modelled.)
         const mon = makemon(mptr, u.ux, u.uy, 0);
         if (!mon) continue;
+        await makemon_appears_msg(mon, mon.mx, mon.my, 0); // makemon.c:1474
         if (canspotmon(mon)) known = true;
     }
     return known;
@@ -897,13 +884,9 @@ function is_weptool_wep(obj) {
     return obj?.oclass === TOOL_CLASS && (objects[obj.otyp]?.oc_skill ?? 0) !== 0;
 }
 
-// C ref: do_name.c hcolor(colorpref) — `(Hallucination || !colorpref)
-// ? hcolors[rn2_on_display_rng(SIZE(hcolors))] : colorpref`.  The hallucinating
-// pick uses the DISPLAY rng, not the main one, so this stub costs no PRNG
-// desync — only a wrong colour word in the message while hallucinating.
-// (Same stub as fountain.js's hcolor(); every call site here passes a non-null
-// colorpref, so the !colorpref half never applies.)
-function hcolor_wep(colorpref) { return colorpref; }
+// C ref: do_name.c hcolor(colorpref) — a hallucinating hero draws the DISPLAY
+// rng for a random colour name (js/do_name.js hcolor()).
+function hcolor_wep(colorpref) { return hcolor(colorpref); }
 
 // C ref: objnam.c vtense(0, verb) — singular 3rd-person conjugation, scoped
 // to the plain present-tense verbs chwepon uses ("glow", "violently glow",
@@ -954,8 +937,26 @@ const WORM_TOOTH = 42, CRYSKNIFE = 43; // C ref: objects.h otyp
 // support).
 async function chwepon(otmp, amount) {
     const uwep = game.uwep;
+    // C ref: wield.c:920 — hcolor() is drawn at entry, before any branch.
+    const color = hcolor_wep(amount < 0 ? 'black' : 'blue');
     if (!uwep || (uwep.oclass !== WEAPON_CLASS && !is_weptool_wep(uwep))) {
-        await strange_feeling(otmp, `Your hands ${amount >= 0 ? 'twitch' : 'itch'}.`);
+        let buf;
+        const { will_weld } = await import('./do_wear.js');
+        if (amount >= 0 && uwep && will_weld(uwep)) { /* cursed tin opener */
+            if (!Blind()) {
+                buf = `${Yobjnam2_wep(uwep, 'glow')} with ${an_read(hcolor_wep('amber'))} aura.`;
+                uwep.bknown = !Hallucination();
+            } else {
+                const { body_part } = await import('./invent.js');
+                const { HAND } = await import('./const.js');
+                buf = `Your right ${body_part(HAND)} tingles.`;
+            }
+            uncurse(uwep);
+            update_inventory();
+        } else {
+            buf = `Your hands ${amount >= 0 ? 'twitch' : 'itch'}.`;
+        }
+        await strange_feeling(otmp, buf);
         exercise(A_DEX, amount >= 0);
         return false;
     }
@@ -983,7 +984,14 @@ async function chwepon(otmp, amount) {
         return true;
     }
 
-    const color = hcolor_wep(amount < 0 ? 'black' : 'blue');
+    {
+        const { restrict_name } = await import('./artifact.js');
+        if (amount < 0 && uwep.oartifact && restrict_name(uwep, uwep.oname || '')) {
+            if (!Blind())
+                await pline_append(`${Yobjnam2_wep(uwep, 'faintly glow')} ${color}.`);
+            return true;
+        }
+    }
     if ((((uwep.spe || 0) > 5 && amount >= 0)
          || ((uwep.spe || 0) < -5 && amount < 0)) && rn2(3)) {
         if (!Blind())
@@ -1187,7 +1195,7 @@ export async function litroom(on, obj) {
     const punished = !!(u?.uball && u?.uchain);
     const { move_bc } = await import('./ball.js');
     if (punished && !on && !Blind())
-        move_bc(1, 0, u.uball.ox, u.uball.oy, u.uchain.ox, u.uchain.oy);
+        await move_bc(1, 0, u.uball.ox, u.uball.oy, u.uchain.ox, u.uchain.oy);
 
     if (Is_rogue_level(u.uz)) return; // whole-room rogue relight not ported
 
@@ -1210,13 +1218,13 @@ export async function litroom(on, obj) {
     do_clear_area(u.ux, u.uy, blessed_effect ? 9 : 5, set_lit);
 
     if (!Blind()) {
-        // C uses vision_recalc(2) here (temporary blindness) so previously seen
-        // positions get their waslit bit reset; the port's vision_recalc only
-        // implements the ordinary pass.
-        vision_recalc(0);
+        // C read.c:2612: temporarily shut vision down so the delayed redraw
+        // refreshes every visible glyph, including newly lit corridors.
+        vision_recalc(2);
         if (punished && !on)
-            move_bc(0, 0, u.uball.ox, u.uball.oy, u.uchain.ox, u.uchain.oy);
+            await move_bc(0, 0, u.uball.ox, u.uball.oy, u.uchain.ox, u.uchain.oy);
     }
+    game.vision_full_recalc = 1;
     if (gremlins.length) {
         vision_recalc(0);
         for (const gremlin of gremlins) {
@@ -1280,6 +1288,28 @@ async function seffect_remove_curse(sobj) {
                 }
             }
         }
+        // if riding, treat steed's saddle as if part of hero's invent
+        let saddle = null;
+        if (game.u?.usteed) {
+            const { which_armor } = await import('./worn.js');
+            const { W_SADDLE } = await import('./const.js');
+            saddle = which_armor(game.u.usteed, W_SADDLE);
+        }
+        if (saddle) {
+            if (confused) {
+                blessorcurse(saddle, 2);
+                saddle.bknown = 0;
+            } else if (saddle.cursed) {
+                uncurse(saddle);
+                // like rndcurse(sit.c), the saddle shows the glow
+                if (!Blind()) {
+                    await update_topl(`${Yobjnam2_wep(saddle, 'glow')} ${hcolor_wep('amber')}.`);
+                    saddle.bknown = Hallucination() ? 0 : 1;
+                } else {
+                    saddle.bknown = 0;
+                }
+            }
+        }
     }
     // C ref: ball.c unpunish() — the ball & chain fall away.  Not conditional
     // on the scroll's curse status in C.
@@ -1322,26 +1352,55 @@ async function seffect_fire(sobj) {
     useup(sobj);
     if (!already_known) learnscrolltyp(SCR_FIRE_OTYP);
     if (confused) {
-        // Fire_resistance / Underwater are not reachable for the covered
-        // heroes; the ordinary confused arm burns a hand for 1 HP (no RNG).
-        await pline(`The scroll catches fire and you burn your ${
-            body_part_hands()}.`);
-        u.uhp = (u.uhp | 0) - 1;
-        game.disp = game.disp || {};
-        game.disp.botl = true;
+        const underwater = !!u.uprops?.Underwater;
+        const { Fire_resistance } = await import('./zap.js');
+        const { monstseesu, monstunseesu } = await import('./mondata.js');
+        const { M_SEEN_FIRE } = await import('./const.js');
+        if (underwater) {
+            const { hliquid } = await import('./do_name.js');
+            await pline(`A little ${hliquid('water')} around you vaporizes.`);
+        } else if (Fire_resistance()) {
+            const { shieldeff } = await import('./display.js');
+            await shieldeff(u.ux, u.uy);
+            monstseesu(M_SEEN_FIRE);
+            if (!Blind())
+                await pline(`Oh, look, what a pretty fire in your ${body_part_hands()}.`);
+            else
+                await pline(`You feel a pleasant warmth in your ${body_part_hands()}.`);
+        } else {
+            monstunseesu(M_SEEN_FIRE);
+            await pline(`The scroll catches fire and you burn your ${
+                body_part_hands()}.`);
+            await losehp_read(1, 'scroll of fire', KILLED_BY_AN);
+        }
         return;
     }
-    if (sblessed) {
-        if (!already_known) await pline('This is a scroll of fire!');
-        dam *= 5;
-        await pline('Where do you want to center the explosion?');
-        const { getpos } = await import('./hack.js');
-        const pos = await getpos('the desired position', u.ux, u.uy, null, true, true);
-        if (pos && pos.x != null) { cc.x = pos.x; cc.y = pos.y; }
-    }
-    if (cc.x === u.ux && cc.y === u.uy) {
-        await pline('The scroll erupts in a tower of flame!');
-        // burn_away_slime(): only matters to a sliming hero, and draws no RNG.
+    if (u.uprops?.Underwater) {
+        const { hliquid } = await import('./do_name.js');
+        await pline(`The ${hliquid('water')} around you vaporizes violently!`);
+    } else {
+        if (sblessed) {
+            if (!already_known) await pline('This is a scroll of fire!');
+            dam *= 5;
+            await pline('Where do you want to center the explosion?');
+            const { getpos } = await import('./hack.js');
+            // getpos_sethilite(display_stinking_cloud_positions, can_center_cloud)
+            // installs can_center_cloud as the validity callback, which getpos()
+            // uses for its "(invalid target)" autodescribe suffix.
+            const pos = await getpos('the desired position', u.ux, u.uy,
+                                     can_center_cloud, true, true);
+            if (pos && pos.x != null) { cc.x = pos.x; cc.y = pos.y; }
+            if (!can_center_cloud(cc.x, cc.y)) {
+                /* try to reach too far, get burned */
+                cc.x = u.ux;
+                cc.y = u.uy;
+            }
+        }
+        if (cc.x === u.ux && cc.y === u.uy) {
+            await pline('The scroll erupts in a tower of flame!');
+            game.last_msg = PLNMSG_TOWER_OF_FLAME; /* for explode() */
+            // burn_away_slime(): only matters to a sliming hero, and draws no RNG.
+        }
     }
     const { explode } = await import('./explode.js');
     const { EXPL_FIERY } = await import('./const.js');
@@ -1436,48 +1495,19 @@ export async function destroy_arm() {
     return ret;
 }
 
-// C ref: read.c p_glow2(otmp, color) — "Your <obj> is covered by a mottled
-// <color> glow!" / "feels warm for a moment" when blind.
+// C ref: read.c:673 p_glow2() — unlike enchantment's protective glow,
+// charging and confused destruction only vibrate/glow briefly.
 async function p_glow2(otmp, color) {
-    if (Blind()) {
-        otmp.rknown = false;
-        await pline_append(`${Yobjnam2_wep(otmp, 'feel')} warm for a moment.`);
-    } else {
-        otmp.rknown = true;
-        await pline_append(`${Yobjnam2_wep(otmp, 'are')} covered by a mottled ${hcolor_wep(color)} glow!`);
-    }
+    await pline_append(`${Yobjnam2_wep(otmp, Blind() ? 'vibrate' : 'glow')}${
+        Blind() ? '' : ` ${hcolor_wep(color)}`} for a moment.`);
 }
 
 // C ref: do_wear.c disintegrate_arm(atmp) — destroy one worn armor piece
-// outright.  maybe_destroy_armor() rolls obj_resists(armor, 0, 90) for each
-// candidate slot in order (cloak, suit, shirt, helm, gloves, boots, shield),
-// stopping at the first that doesn't resist, so this is RNG-visible.
+// outright; js/do_wear.js owns the port (per-slot messages, RNG order,
+// wornarm_destroyed(), stop_occupation()).
 async function disintegrate_arm(atmp) {
-    const { obj_resists } = await import('./zap.js');
-    const slots = ['uarmc', 'uarm', 'uarmu', 'uarmh', 'uarmg', 'uarmf', 'uarms'];
-    let resistedc = false, resistedsuit = false;
-    for (const slot of slots) {
-        const armor = game[slot];
-        // C: the cloak resisting shields the suit and shirt beneath it; the
-        // suit resisting shields the shirt.
-        if (slot === 'uarm' && resistedc) continue;
-        if (slot === 'uarmu' && (resistedc || resistedsuit)) continue;
-        if (!armor || (atmp && atmp !== armor)) continue;
-        const resisted = obj_resists(armor, 0, 90);
-        if (resisted) {
-            if (slot === 'uarmc') resistedc = true;
-            else if (slot === 'uarm') resistedsuit = true;
-            continue;
-        }
-        armor.in_use = 1;
-        await pline_append(`${Yname2_wep(armor)} crumbles and turns to dust!`);
-        await remove_worn_item(armor, false);
-        useup(armor);
-        const { stop_occupation } = await import('./hack.js');
-        await stop_occupation();
-        return 1;
-    }
-    return 0;
+    const DW = await import('./do_wear.js');
+    return (await DW.disintegrate_arm(atmp)) ? 1 : 0;
 }
 
 // C ref: read.c disintegrate_cursed_armor() — pick one CURSED worn piece at
@@ -1810,11 +1840,16 @@ export async function doread() {
         }
         bump_literate(`became literate by reading ${
             otyp === T_SHIRT ? 'a T-shirt' : 'an apron'}`);
-        // (tshirt_text()/apron_text()'s message tables aren't ported; both are
-        // o_id-indexed, so no RNG is lost — only the quoted line is wrong.)
-        if (game.flags?.verbose !== false)
+        // C ref: read.c:402 — tshirt_text()/apron_text(), ending punctuation
+        // added only when verbose.
+        const mesg = (otyp === T_SHIRT) ? tshirt_text(scroll) : apron_text(scroll);
+        let endpunct = '';
+        if (game.flags?.verbose !== false) {
+            if (mesg.length > 0 && !'.!?'.includes(mesg[mesg.length - 1]))
+                endpunct = '.';
             await pline('It reads:');
-        await pline('""');
+        }
+        await pline(`"${mesg}"${endpunct}`);
         return ECMD_TIME;
     }
     if ((otyp === DUNCE_CAP || otyp === CORNUTHAUM) && Role_if_tourist()) {
@@ -1855,7 +1890,11 @@ export async function doread() {
         if (game.flags?.verbose !== false) await pline('It reads:');
         const { monster_by_pmidx } = await import('./makemon.js');
         const pm = monster_by_pmidx(RED_MONS[(scroll.o_id ?? 0) % RED_MONS.length]);
-        await pline(`"Magic Marker(TM) ${(pm?.name || '').toUpperCase()} Red Ink Marker Pen.  Water Soluble."`);
+        // C ref: hacklib.c upwords() — capitalise the first LETTER of each
+        // space-separated word, not the whole string.
+        const upwords = (s) => String(s).replace(/(^|\s)([a-z])/g,
+            (_m, sp, ch) => sp + ch.toUpperCase());
+        await pline(`"Magic Marker(TM) ${upwords(pm?.name || '')} Red Ink Marker Pen.  Water Soluble."`);
         bump_literate('became literate by reading a magic marker');
         return ECMD_TIME;
     }
@@ -1901,6 +1940,19 @@ export async function doread() {
         }
     }
 
+    // C ref: read.c:578-594 — `confused = (Confusion != 0)`, overridden to FALSE
+    // for a scroll of mail (reading it takes place outside the game); an
+    // illiterate hero is asked first unless the scroll came from bones/a wish.
+    let confused = Confused();
+    if (otyp === SCR_MAIL) {
+        confused = false;
+        if (!(game.u?.uconduct?.literate || 0)) {
+            if (!scroll.spe && (await y_n(
+                'Reading mail will violate "illiterate" conduct.  Read anyway?')) !== 'y')
+                return ECMD_OK;
+        }
+    }
+
     // C ref: read.c doread — literate conduct.  Score/livelog only (no RNG),
     // but the counter is what gates the SCR_MAIL confirmation prompt.
     if (otyp !== SPE_BOOK_OF_THE_DEAD && otyp !== SPE_NOVEL
@@ -1938,7 +1990,7 @@ export async function doread() {
         // pline follows the "disappears" line on the same turn; when the two
         // don't fit on one top line, "...disappears." is paged with --More--
         // (its own captured frame) before the confused line replaces it.
-        if (Confused()) {
+        if (confused) {
             if (Hallucination())
                 await update_topl('Being so trippy, you screw up...');
             else
@@ -1979,12 +2031,9 @@ export async function doread() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// read.c breadth port.  Everything below this line is a faithful translation
-// of a read.c function that had no JS counterpart.  NOTHING here is reached
-// from the code above (or from any other file) yet: seffects()' switch still
-// falls through to its default for these otyps.  Wiring one in is a separate,
-// measurable change; what is recorded here is C's control flow, message order
-// and RNG order so that step doesn't have to re-derive them.
+// C read.c helper implementations used by the scroll-effect dispatch above.
+// Individual helpers retain C draw order and are wired as their call paths are
+// ported; recharge() and the existing scroll effects are active.
 // ═════════════════════════════════════════════════════════════════════════
 
 const MAX_ERODE = 3;                       // C ref: include/obj.h MAX_ERODE
@@ -2003,9 +2052,9 @@ const REALLY = 1, PLAYER = 2, ONTHRONE = 4;
 // G_NOCORPSE; G_GENOD/G_EXTINCT are the mvflags-only bits in const.js).
 const G_NOCORPSE = 0x0010, G_UNIQ = 0x1000, G_GENO = 0x0020;
 const G_GENOD = 0x02, G_EXTINCT = 0x01;
-// C ref: hack.h makemon() flags used by the ports below.
-const MM_MALE = 0x00000010, MM_FEMALE = 0x00000020, MM_NOEXCLAM = 0x00004000,
-      MM_MINVIS = 0x00000002;
+// C ref: hack.h:1162-1168 makemon() flags used by the ports below.
+const MM_MALE = 0x00008000, MM_FEMALE = 0x00010000, MM_NOEXCLAM = 0x00040000,
+      MM_MINVIS = 0x00100000;
 // C ref: include/monflag.h enum mgender { MALE, FEMALE, NEUTRAL }.
 const MALE = 0, FEMALE = 1, NEUTRAL = 2;
 const NON_PM = -1, LOW_PM = 0;             // C ref: permonst.h
@@ -2088,10 +2137,7 @@ function avoid_ceiling_read(uz) {
     return !has_ceiling_read(uz);
 }
 function ceiling_read(x, y) {
-    const typ = game.level?.at(x, y)?.typ ?? STONE;
-    if (typ === ROOM || IS_WALL(typ) || IS_DOOR(typ) || typ === SDOOR)
-        return 'ceiling';
-    return 'rock cavern';
+    return ceiling_dg(x, y);
 }
 
 // C ref: trap.c:7038 sokoban_guilt() — a luck penalty for cheating in Sokoban.
@@ -2118,11 +2164,7 @@ function closed_door_read(x, y) {
 }
 
 // C ref: objnam.c an(str).  hack.js:2633 keeps the same private copy.
-function an_read(s) {
-    if (!s) return s;
-    if (/^[aeiouAEIOU]/.test(s)) return `an ${s}`;
-    return `a ${s}`;
-}
+import { an as an_read } from './hacklib.js';
 // C ref: hacklib.c upstart(s) — capitalise the first letter in place.
 function upstart_read(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
@@ -2284,8 +2326,7 @@ export async function p_glow1(otmp) {
     await pline_append(`${Yobjnam2_wep(otmp, Blind() ? 'vibrate' : 'glow')} briefly.`);
 }
 
-// C ref: read.c:680 p_glow3(otmp, color).  NOTE: this file's p_glow2() above
-// does NOT match C's p_glow2() — see the divergence note on that function.
+// C ref: read.c:680 p_glow3(otmp, color).
 export async function p_glow3(otmp, color) {
     await pline_append(`${Yobjnam2_wep(otmp, Blind() ? 'vibrate' : 'glow')} feebly${
         Blind() ? '' : ' '}${Blind() ? '' : hcolor_wep(color)} for a moment.`);
@@ -2486,6 +2527,7 @@ export async function drop_boulder_on_player(confused, helmet_protects, byu,
 
     const otmp2 = mksobj(confused ? ROCK : BOULDER, false, false);
     if (!otmp2) return;
+    otmp2.where = OBJ_FREE;   /* flooreffects() wants a free object */
     otmp2.quan = confused ? rn1(5, 2) : 1;
     otmp2.owt = weight(otmp2);
 
@@ -2530,6 +2572,7 @@ export async function drop_boulder_on_monster(x, y, confused, byu) {
     /* Make the object(s) */
     const otmp2 = mksobj(confused ? ROCK : BOULDER, false, false);
     if (!otmp2) return false;          /* Shouldn't happen */
+    otmp2.where = OBJ_FREE;              /* flooreffects() wants a free object */
     otmp2.quan = confused ? rn1(5, 2) : 1;
     otmp2.owt = weight(otmp2);
 
@@ -2695,11 +2738,102 @@ export function charge_ok(obj) {
 // C's `*sobjp = 0` path (the scroll is used up inside, before the getobj), so
 // the caller must skip its own discover/useup handling.
 //
-// BLOCKER: read.c:729 recharge(obj, curse_bless) is NOT ported anywhere in js/
-// (artifact.js:480 registers it as a null hook).  It is the whole RNG payload
-// of the non-confused arm — rn2/rnd per object class plus wand_explode() — so
-// the call site below is left as a comment rather than a silent stub: wiring
-// this seffect in requires porting recharge() first.
+// C ref: read.c:729 recharge(obj, curse_bless) — shared by the charging scroll
+// and wand of charging.  Wands and all chargeable tools preserve C's draw order.
+export async function recharge(obj, curse_bless) {
+    const cursed = curse_bless < 0, blessed = curse_bless > 0;
+    let n;
+    if (obj.oclass === WAND_CLASS) {
+        const lim = obj.otyp === WAN_WISHING ? 1
+            : (objects[obj.otyp]?.dir !== 1 /* NODIR */ ? 8 : 15);
+        if (obj.spe === -1) obj.spe = 0;
+        n = obj.recharged | 0;
+        if (n > 0 && (obj.otyp === WAN_WISHING || n * n * n > rn2(343))) {
+            const Z = await import('./zap.js');
+            await Z.wand_explode(obj, rnd(lim));
+            return;
+        }
+        obj.recharged = n + 1;
+        if (cursed) await stripspe(obj);
+        else {
+            n = lim === 1 ? 1 : rn1(5, lim - 4);
+            if (!blessed) n = rnd(n);
+            obj.spe = obj.spe < n ? n : obj.spe + 1;
+            if (obj.otyp === WAN_WISHING && obj.spe > 3) {
+                const Z = await import('./zap.js');
+                await Z.wand_explode(obj, 1);
+                return;
+            }
+            if (lim === 1) await p_glow3(obj, 'blue');
+            else if (obj.spe >= lim) await p_glow2(obj, 'blue');
+            else await p_glow1(obj);
+        }
+    } else if (obj.oclass === TOOL_CLASS) {
+        const oldrecharged = obj.recharged | 0;
+        if (oc_charged(obj.otyp) && oldrecharged < 7)
+            obj.recharged = oldrecharged + 1;
+        if (obj.otyp === BELL_OF_OPENING) {
+            if (cursed) await stripspe(obj);
+            else obj.spe = Math.min(5, obj.spe + (blessed ? rnd(3) : 1));
+        } else if ([MAGIC_MARKER, TINNING_KIT, EXPENSIVE_CAMERA].includes(obj.otyp)) {
+            if (cursed) await stripspe(obj);
+            else if (oldrecharged && obj.otyp === MAGIC_MARKER) {
+                obj.recharged = 1;
+                await pline_append(obj.spe < 3
+                    ? 'Your marker seems permanently dried out.' : NOTHING_HAPPENS);
+            } else {
+                n = blessed ? rn1(16, 15) : rn1(11, 10);
+                obj.spe = blessed
+                    ? (obj.spe + n <= 50 ? 50 : obj.spe + n <= 75 ? 75
+                        : Math.min(obj.spe + n, 127))
+                    : (obj.spe + n <= 50 ? 50 : Math.min(obj.spe + n, SPE_LIM));
+                await p_glow2(obj, blessed ? 'blue' : 'white');
+            }
+        } else if (obj.otyp === OIL_LAMP || obj.otyp === BRASS_LANTERN) {
+            if (cursed) {
+                await stripspe(obj);
+                if (obj.lamplit) { obj.lamplit = 0; obj.age = 0; }
+            } else if (blessed) {
+                obj.spe = 1; obj.age = 1500;
+                await p_glow2(obj, 'blue');
+            } else {
+                obj.spe = 1; obj.age = Math.min(1500, (obj.age || 0) + 750);
+                await p_glow1(obj);
+            }
+        } else if (obj.otyp === CRYSTAL_BALL) {
+            if (obj.spe === -1) obj.spe = 0;
+            if (cursed) {
+                if (!obj.cursed) { await p_glow2(obj, 'black'); curse(obj); }
+                else await pline_append(`${Yobjnam2_wep(obj, 'vibrate')} briefly.`);
+                obj.spe = 0;
+            } else if (blessed) {
+                obj.spe = 7; await p_glow2(obj, obj.blessed ? 'blue' : 'light blue');
+                bless(obj);
+            } else if (obj.spe < 7 || obj.cursed) {
+                n = rnd(2); obj.spe = Math.min(obj.spe + n, 7);
+                if (obj.cursed) { await p_glow2(obj, 'amber'); uncurse(obj); }
+                else await p_glow1(obj);
+            } else await pline_append(NOTHING_HAPPENS);
+        } else if ([HORN_OF_PLENTY, BAG_OF_TRICKS, CAN_OF_GREASE].includes(obj.otyp)) {
+            if (cursed) await stripspe(obj);
+            else {
+                obj.spe += blessed ? rn1(obj.spe <= 10 ? 10 : 5, 6) : rn1(5, 2);
+                obj.spe = Math.min(obj.spe, 50);
+                if (blessed) await p_glow2(obj, 'blue'); else await p_glow1(obj);
+            }
+        } else if ([MAGIC_FLUTE, MAGIC_HARP, FROST_HORN, FIRE_HORN,
+                    DRUM_OF_EARTHQUAKE].includes(obj.otyp)) {
+            if (cursed) await stripspe(obj);
+            else {
+                obj.spe = Math.min(obj.spe + (blessed ? d(2, 4) : rnd(4)), 20);
+                if (blessed) await p_glow2(obj, 'blue'); else await p_glow1(obj);
+            }
+        } else await pline_append('You have a feeling of loss.');
+    } else {
+        await pline_append('You have a feeling of loss.');
+    }
+    cap_spe(obj);
+}
 export async function seffect_charging(sobj) {
     const otyp = sobj.otyp;
     const sblessed = !!sobj.blessed;
@@ -2739,10 +2873,8 @@ export async function seffect_charging(sobj) {
     // getobj()-cancellation flag js/invent.js just set, or the read's key
     // would wrongly be dropped from CQ_REPEAT (js/cmd.js consumes the flag).
     if (game.context) game.context._getobj_cancelled = false;
-    if (otmp) {
-        // C: recharge(otmp, scursed ? -1 : sblessed ? 1 : 0);
-        void otmp;
-    }
+    if (otmp)
+        await recharge(otmp, scursed ? -1 : sblessed ? 1 : 0);
     return true;                       /* *sobjp = 0 */
 }
 
@@ -2765,20 +2897,17 @@ export async function seffect_genocide(sobj) {
         await do_genocide((!scursed ? 1 : 0) | (Confused() ? 2 : 0));
 }
 
-// C ref: mondata.c name_to_mon(in_str, &gender).  polyself.js:1123 holds the
-// faithful (fuzzy: makesingular, plural and partial matching) port, but it is
-// module-private — the fix is to export it there.  Until then this exact-name
-// lookup over makemon.js's name map is what the genocide/create-particular
-// prompts below can reach, so an inexact reply that C would have matched reads
-// as "no such monster" here.
+// C ref: mondata.c name_to_mon(in_str, &gender) — delegates to polyself.js's
+// faithful name_to_monplus() port (article strip, plural fold, alternate
+// spellings, MALE/FEMALE/NEUTRAL pmnames[] slots, case-insensitive longest
+// match).  This used to be an exact-name lookup over makemon.js's name map, so
+// "wizard of Yendor" / "grey dragon" / "cavewomen" all read as "I've never
+// heard of such monsters." at the ^G and genocide prompts.
 async function name_to_mon_read(str) {
-    const { name_to_pmidx, name_gender_hint } = await import('./makemon.js');
-    const { makesingular } = await import('./objnam.js');
+    const { name_to_mon } = await import('./polyself.js');
     const s = String(str || '').replace(/\s+/g, ' ').trim();
-    let mndx = name_to_pmidx(s);
-    if (mndx < 0) mndx = name_to_pmidx(makesingular(s));
-    return { mndx: mndx < 0 ? NON_PM : mndx,
-             gender: mndx < 0 ? NEUTRAL : name_gender_hint(s) };
+    const { mntmp, gvariant } = await name_to_mon(s);
+    return { mndx: mntmp, gender: mntmp === NON_PM ? NEUTRAL : gvariant };
 }
 
 // C ref: monsym.h def_char_to_monclass(ch) — the def_monsyms[] symbol -> class
@@ -2853,14 +2982,26 @@ async function name_to_monclass_read(str) {
 // SCOPE: list_genocided() ('?'), quest_info() (the leader/nemesis/guardian
 // feedback carve-out) and vampshifted() are not ported; livelog_printf() is
 // score-only and is left out.
+// C's gu.urole.mnum / gu.urace.mnum are mons[] indices; this port stores
+// 0-based role/race indices there (role order matches PM_ARCHEOLOGIST..
+// PM_WIZARD), so map them back for the genocide "is it you?" tests.
+async function hero_genocide_pms() {
+    const { name_to_pmidx } = await import('./makemon.js');
+    const rm = game.urole?.mnum ?? -1;
+    const arch = name_to_pmidx('archeologist');
+    return {
+        role: rm < 0 ? -1 : (rm >= arch ? rm : arch + rm),
+        race: name_to_pmidx(game.urace?.name || 'human') ?? -1,
+    };
+}
+
 export async function do_class_genocide() {
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     const { monster_by_pmidx } = await import('./makemon.js');
     const { kill_genocided_monsters } = await import('./mon.js');
     let feel_dead = 0;
     let gameover = false;              /* true iff killed self */
-    const urole_mnum = game.urole?.mnum ?? -1;
-    const urace_mnum = game.urace?.mnum ?? -1;
+    const { role: urole_mnum, race: urace_mnum } = await hero_genocide_pms();
 
     for (let j = 0; ; j++) {
         if (j >= 5) {
@@ -2914,11 +3055,11 @@ export async function do_class_genocide() {
             } else if (immunecnt || klass === S_invisible) {
                 await pline_append("You aren't permitted to genocide such monsters.");
             } else if (game.flags?.debug && buf[0] === '*') {
-                const { DEADMONSTER } = await import('./mon.js');
+                const { DEADMONSTER, mongone } = await import('./mon.js');
                 gonecnt = 0;
                 for (const mtmp of [...(game.level?.monsters || [])]) {
                     if (DEADMONSTER(mtmp)) continue;
-                    mtmp.mhp = 0;      // C: mongone(mtmp) — not exported
+                    await mongone(mtmp);
                     gonecnt++;
                 }
                 await pline_append(`Eliminated ${gonecnt} monster${
@@ -2950,7 +3091,7 @@ export async function do_class_genocide() {
                 /* Self-genocide if it matches either your race or role. */
                 if (i === urole_mnum || i === urace_mnum) {
                     game.u.uhp = -1;
-                    if (!feel_dead++) await pline_append('You die.');
+                    if (!feel_dead++) await urgent_topl('You die.');
                     gameover = true;
                 }
             } else if (mvitals_mvflags(i) & G_GENOD) {
@@ -3000,15 +3141,14 @@ export async function do_genocide(how) {
     const u = game.u;
     let killplayer = 0;
     let mndx, ptr;
-    const urole_mnum = game.urole?.mnum ?? -1;
-    const urace_mnum = game.urace?.mnum ?? -1;
+    const { role: urole_mnum, race: urace_mnum } = await hero_genocide_pms();
 
     if (how & PLAYER) {
         // C: `mndx = u.umonster` — the non-polymorphed mon num, i.e.
         // urole.mnum.  THIS port stores a 0-based ROLE index in u.umonnum /
         // u.umonster ([[umonnum-is-a-role-index]]), so game.urole.mnum is the
         // real mons[] index and u.umonster is only the fallback.
-        mndx = game.urole?.mnum ?? u.umonster;
+        mndx = urole_mnum >= 0 ? urole_mnum : u.umonster;
         ptr = monster_by_pmidx(mndx);
         killplayer++;
     } else {
@@ -3241,12 +3381,7 @@ function has_omonst_read(obj) { return !!(obj?.oextra && obj.oextra.omonst); }
 
 // C ref: read.c:3137 create_particular_parse(str, d) — parse the wizard-mode
 // "Create what kind of monster?" reply into a _create_particular_data.  Fills
-// and returns { ok, d }: C's boolean return with the out-parameter written in
-// place.  RNG-free (monster_census() only counts).
-//
-// The port's extcmd-handlers.js create_particular() at line 1266 skips this
-// parse entirely and resolves the reply as a bare species name, so every
-// quantity/gender/disposition/gear prefix C accepts is currently ignored.
+// d in place and returns C's boolean.  RNG-free (monster_census() only counts).
 export async function create_particular_parse(str, d) {
     let gender_name_var = NEUTRAL;
     let bufp = String(str ?? '');
@@ -3353,17 +3488,56 @@ export async function create_particular_species(which) {
     return ref.v;
 }
 
+// C ref: read.c:3372 create_particular() — the wizard-mode "Create what kind
+// of monster?" getlin loop used by ^G and by the scroll/spell of create
+// monster (create_critters()'s `ask` branch).  Returns C's boolean: TRUE when
+// something was made, FALSE on ESC / exhausted tries (which makes
+// create_critters() stop prompting for the remaining critters).
+const CP_TRYLIM = 5;
+export async function create_particular() {
+    let prompt = 'Create what kind of monster?';
+    let tryct = CP_TRYLIM, altmsg = 0;
+    const cpd = {};
+    let ok = false;
+    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
+    do {
+        /* mungspaces */
+        const buf = String(await hooked_tty_getlin(prompt, null) ?? '')
+            .replace(/\s+/g, ' ').replace(/^ | $/g, '');
+        if (buf.length && buf[0] === '\x1b') return false;
+
+        if (await create_particular_parse(buf, cpd)) { ok = true; break; }
+
+        /* no good; try again... */
+        if (buf || altmsg || tryct < 2) {
+            await pline("I've never heard of such monsters.");
+        } else {
+            await pline('Try again (type * for random, ESC to cancel).');
+            ++altmsg;
+        }
+        /* when a second try is needed, expand the prompt */
+        if (tryct === CP_TRYLIM) prompt += ' [type name or symbol]';
+    } while (--tryct > 0);
+
+    if (!ok) {
+        await pline("That's enough tries!");
+        return false;
+    }
+    return await create_particular_creation(cpd);
+}
+
 // C ref: read.c:3252 create_particular_creation(d) — make d.quan monsters from
 // a parsed create-particular request.  RNG order per iteration: mkclass()/
 // rndmonst() when a class or random was asked for, then makemon() (which itself
 // runs the enexto placement walk), then put_saddle_on_mon()'s rn2 and
 // newcham()'s roll for a doppelganger substitution.
 //
-// makemon.js:3903 create_particular_monster() covers the single-named-monster
-// case only (and splits the placement walk out); this is the full loop.
+// The "<mon> appears next to you." line C prints from inside makemon()
+// (makemon.c:1472-1500) is emitted here right after makemon() returns, i.e.
+// before tamedog()/the saddle, as in C.
 export async function create_particular_creation(d) {
-    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign, newcham }
-        = await import('./makemon.js');
+    const { makemon, mkclass, rndmonst, monster_by_pmidx, set_malign,
+            newcham_wizard_aware, makemon_appears_msg } = await import('./makemon.js');
     const u = game.u;
     let whichpm = null;
     let firstchoice = NON_PM;
@@ -3403,6 +3577,7 @@ export async function create_particular_creation(d) {
             continue;                  /* otherwise try again */
         }
         const mx = mtmp.mx, my = mtmp.my;
+        await makemon_appears_msg(mtmp, mx, my, mmflags);
         if (d.maketame) {
             const { tamedog } = await import('./dothrow.js');
             await tamedog(mtmp, null, false);
@@ -3412,10 +3587,10 @@ export async function create_particular_creation(d) {
             set_malign(mtmp);
         }
         if (d.saddled) {
-            // C: can_saddle(mtmp) && !which_armor(mtmp, W_SADDLE) then
-            // put_saddle_on_mon(NULL, mtmp).  Both helpers are private to
-            // makemon.js (:2150 / :2168); the fix is to export them there.
-            void mx;
+            /* NULL obj arg means put_saddle_on_mon() will create the saddle
+               itself; it does the can_saddle()/which_armor() checks */
+            const { put_saddle_on_mon } = await import('./steed.js');
+            await put_saddle_on_mon(null, mtmp);
         }
         if (d.hidden) {
             const { hides_under_pm } = await import('./monmove.js');
@@ -3442,7 +3617,7 @@ export async function create_particular_creation(d) {
            start out looking like what was asked for */
         if (mtmp.cham != null && mtmp.cham !== NON_PM && firstchoice !== NON_PM
             && mtmp.cham !== firstchoice)
-            newcham(mtmp, monster_by_pmidx(firstchoice));
+            await newcham_wizard_aware(mtmp, monster_by_pmidx(firstchoice));
     }
     return madeany;
 }

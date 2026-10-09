@@ -220,7 +220,7 @@ export async function mhitm_mgc_atk_negated(magr, mdef, verbosely, ops) {
 // returns ER_NOTHING (not vulnerable, erodeproof, already maximally eroded);
 // case 1 (cloak, else body armour, else shirt) always ends the loop because
 // the body is a target whether or not it is covered.
-async function erode_armor(mdef, hurt, _ops) {
+export async function erode_armor(mdef, hurt, _ops) {
     const { erode_obj } = await import('./trap.js');
     const hero = is_hero(mdef);
     const HERO_SLOT = { [W_ARMH]: 'uarmh', [W_ARMC]: 'uarmc', [W_ARM]: 'uarm',
@@ -381,7 +381,7 @@ const CREAM_PIE = 287, BLINDING_VENOM = 479, POT_BLINDNESS = 300;
 // line read wrong for every touch/gaze poisoner.
 
 // C ref: mondata.c stagger(ptr, verb) — "stagger"/"stumble"/"slither"/"falter".
-function stagger(ptr, verb) {
+export function stagger(ptr, verb) {
     if ((mflags1_of(ptr) & 0x6000) === 0x6000) return 'falter';   // M1_NOLIMBS
     if (slithy(ptr)) return 'slither';
     return verb;
@@ -391,17 +391,31 @@ const makeplural_stagger = (s) => `${s}s`;
 
 // C ref: mon.c golemeffects() — flesh/iron golems heal or slow from the
 // elemental type instead of taking it.  No RNG.
-function golemeffects(mon, damtype, dam, ops) {
+async function golemeffects(mon, damtype, dam, ops) {
     const ptr = ops.permonst(mon);
-    let heal = 0;
+    let heal = 0, slow = 0;
     if (ptr?.name === 'flesh golem') {
         if (damtype === AD_ELEC) heal = Math.floor((dam + 5) / 6);
+        else if (damtype === AD_FIRE || damtype === AD_COLD) slow = 1;
     } else if (ptr?.name === 'iron golem') {
-        if (damtype === AD_FIRE) heal = dam;
+        if (damtype === AD_ELEC) slow = 1;
+        else if (damtype === AD_FIRE) heal = dam;
     } else {
         return;
     }
-    if (heal) healmon(mon, heal, 0);
+    if (slow) {
+        if (mon.mspeed !== MSLOW) {
+            const { mon_adjust_speed } = await import('./muse.js');
+            await mon_adjust_speed(mon, -1, null);
+        }
+    }
+    if (heal) {
+        if (healmon(mon, heal, 0)) {
+            const { cansee } = await import('./vision.js');
+            if (cansee(mon.mx, mon.my))
+                await ops.emit(`${ops.Monnam(mon)} seems healthier.`);
+        }
+    }
 }
 
 // ── the damage-type handlers ────────────────────────────────────────────────
@@ -431,7 +445,7 @@ export async function mhitm_ad_rust(magr, mattk, mdef, mhm, ops) {
                 await ops.emit(`${ops.Monnam(mdef)} falls to pieces!`);
             await ops.monkilled(mdef, AD_RUST);
             mhm.hitflags = M_ATTK_DEF_DIED
-                | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+                | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
             mhm.done = true;
             return;
         }
@@ -477,7 +491,7 @@ export async function mhitm_ad_dcay(magr, mattk, mdef, mhm, ops) {
                 await ops.emit(`${ops.Monnam(mdef)} falls to pieces!`);
             await ops.monkilled(mdef, AD_DCAY);
             mhm.hitflags = M_ATTK_DEF_DIED
-                | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+                | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
             mhm.done = true;
             return;
         }
@@ -567,14 +581,14 @@ export async function mhitm_ad_fire(magr, mattk, mdef, mhm, ops) {
             await ops.emit(`${ops.Monnam(mdef)} burns completely!`);
         await ops.monkilled(mdef, AD_FIRE);
         mhm.hitflags = M_ATTK_DEF_DIED
-            | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+            | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
         mhm.done = true;
         return;
     }
     if (resists_fire(ops, mdef) || defended(mdef, AD_FIRE)) {
         if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`The fire doesn't seem to burn ${ops.mon_nam(mdef)}!`);
-        golemeffects(mdef, AD_FIRE, mhm.damage, ops);
+        await golemeffects(mdef, AD_FIRE, mhm.damage, ops);
         mhm.damage = 0;
     }
     mhm.damage += await destroy_items_mon(mdef, AD_FIRE, orig_dmg, ops);
@@ -603,7 +617,7 @@ export async function mhitm_ad_cold(magr, mattk, mdef, mhm, ops) {
     if (resists_cold(ops, mdef) || defended(mdef, AD_COLD)) {
         if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`The frost doesn't seem to chill ${ops.mon_nam(mdef)}!`);
-        golemeffects(mdef, AD_COLD, mhm.damage, ops);
+        await golemeffects(mdef, AD_COLD, mhm.damage, ops);
         mhm.damage = 0;
     }
     mhm.damage += await destroy_items_mon(mdef, AD_COLD, orig_dmg, ops);
@@ -631,7 +645,7 @@ export async function mhitm_ad_elec(magr, mattk, mdef, mhm, ops) {
     if (resists_elec(ops, mdef) || defended(mdef, AD_ELEC)) {
         if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`The zap doesn't shock ${ops.mon_nam(mdef)}!`);
-        golemeffects(mdef, AD_ELEC, mhm.damage, ops);
+        await golemeffects(mdef, AD_ELEC, mhm.damage, ops);
         mhm.damage = 0;
     }
     mhm.damage += await destroy_items_mon(mdef, AD_ELEC, orig_dmg, ops);
@@ -829,8 +843,18 @@ export async function mhitm_ad_curs(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if (!night() && pa?.name === 'gremlin') return;
         if (!magr.mcan && !rn2(10)) {
-            if (!game.u?.Deaf) await ops.emit(`${ops.Monnam(magr)} chuckles.`);
-            // mon_give_prop(magr, attrcurse()): the intrinsic-theft table.
+            if (!game.u?.Deaf)
+                await ops.emit(Blind() ? 'You hear laughter.'
+                    : `${ops.Monnam(magr)} chuckles.`);
+            if (pd?.name === 'clay golem') {
+                await ops.emit('Some writing vanishes from your head!');
+                const { rehumanize } = await import('./polyself.js');
+                await rehumanize();
+                return;
+            }
+            const { attrcurse } = await import('./pray.js');
+            const { mon_give_prop } = await import('./mon.js');
+            await mon_give_prop(magr, await attrcurse());
         }
         return;
     }
@@ -846,7 +870,7 @@ export async function mhitm_ad_curs(magr, mattk, mdef, mhm, ops) {
             }
             await ops.mondied(mdef);
             mhm.hitflags = M_ATTK_DEF_DIED
-                | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+                | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
             mhm.done = true;
             return;
         }
@@ -1008,7 +1032,15 @@ export async function mhitm_ad_drin(magr, mattk, mdef, mhm, ops) {
             await ops.emit(`${ops.Monnam(mdef)}'s helmet blocks ${ops.mon_nam(magr)}'s attack to its head.`);
         return;
     }
-    // eat_brains(): the mind-flayer INT drain + its own kill tail.
+    const { which_armor } = await import('./worn.js');
+    const amu = which_armor(mdef, W_AMUL);
+    const lifsav = !!amu && OBJECTS[amu.otyp]?.name === 'amulet of life saving';
+    const { eat_brains } = await import('./eat.js');
+    const damage = { value: mhm.damage };
+    mhm.hitflags = await eat_brains(magr, mdef, !!ops.vis, damage);
+    mhm.damage = damage.value;
+    /* skip further AD_DRIN if amulet of life-saving got used up */
+    if (lifsav && !which_armor(mdef, W_AMUL)) ops.set_skipdrin();
 }
 
 export async function mhitm_ad_stck(magr, mattk, mdef, mhm, ops) {
@@ -1131,9 +1163,19 @@ export async function mhitm_ad_plys(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if ((game.multi ?? 0) >= 0 && !rn2(3)
             && !await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
-            // Free_action is off for the covered roles.
-            await ops.emit(`You are frozen by ${ops.mon_nam(magr)}!`);
-            if (ops.nomul) await ops.nomul(-rnd(10));
+            const upr = game.u?.uprops;
+            if (((upr?.HFree_action | 0) > 0) || ((upr?.EFree_action | 0) > 0)) {
+                await ops.emit('You momentarily stiffen.');
+            } else {
+                if (Blind()) await ops.emit('You are frozen!');
+                else await ops.emit(`You are frozen by ${ops.mon_nam(magr)}!`);
+                game.nomovemsg = 'You can move again.';
+                const { nomul } = await import('./hack.js');
+                nomul(-rnd(10));
+                const { dynamic_multi_reason } = await import('./uhitm.js');
+                dynamic_multi_reason(magr, 'paralyzed', false);
+                exercise(A_DEX, false);
+            }
         }
         return;
     }
@@ -1145,10 +1187,12 @@ export async function mhitm_ad_plys(magr, mattk, mdef, mhm, ops) {
     }
     void mhm;
 }
-// C ref: mon.c paralyze_monst(mon, amt) — no RNG of its own.
-function paralyze_monst(mon, amt) {
+// C ref: mhitm.c:1210 paralyze_monst(mon, amt) — no RNG of its own.
+export function paralyze_monst(mon, amt) {
     mon.mcanmove = 0;
     mon.mfrozen = Math.min(amt | 0, 127);
+    mon.meating = 0; /* terminate any meal-in-progress */
+    mon.mstrategy = (mon.mstrategy | 0) & ~STRAT_WAITFORU;
 }
 
 // C ref: uhitm.c:3478 mhitm_ad_slee().
@@ -1220,7 +1264,26 @@ export async function mhitm_ad_slim(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (negated) { if (!magr.mcan) await ops.emit('You escape harm.'); return; }
-        await ops.emit("You don't feel very well.");
+        const pdu = ops.permonst(mdef);   // the hero's own (possibly polyd) form
+        if (FLAMING_NAMES.has(pdu?.name)) {
+            await ops.emit('The slime burns away!');
+            mhm.damage = 0;
+        } else {
+            const { Unchanging_poly } = await import('./polyself.js');
+            if (Unchanging_poly() || pdu?.mcls === S_GHOST || pdu?.name === 'green slime') {
+                await ops.emit('You are unaffected.');
+                mhm.damage = 0;
+            } else if (!((game.u?.uprops?.Slimed | 0) > 0)) {
+                await ops.emit("You don't feel very well.");
+                const { make_slimed } = await import('./potion.js');
+                await make_slimed(10, null);
+                const { delayed_killer } = await import('./end.js');
+                const { SLIMED, KILLED_BY_AN } = await import('./const.js');
+                delayed_killer(SLIMED, KILLED_BY_AN, ops.permonst(magr)?.name || 'monster');
+            } else {
+                await ops.emit('Yuck!');
+            }
+        }
         return;
     }
     if (negated) return;
@@ -1253,7 +1316,10 @@ export async function mhitm_ad_slow(magr, mattk, mdef, mhm, ops) {
     if (defended(mdef, AD_SLOW)) return;
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
-        if (!negated && game.u?.HFast && !rn2(4)) await u_slow_down();
+        // C: `HFast` — any intrinsic source (role-granted innate, outside, timed).
+        const { youHaveFast } = await import('./allmain.js');
+        const hfast = youHaveFast() || (game.u?.uprops?.HFast | 0) || (game.u?.HFast | 0);
+        if (!negated && hfast && !rn2(4)) await u_slow_down();
         return;
     }
     if (!negated && mdef.mspeed !== MSLOW) {
@@ -1272,7 +1338,8 @@ export async function mhitm_ad_conf(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if (!magr.mcan && !rn2(4) && !magr.mspec_used) {
             magr.mspec_used = (magr.mspec_used | 0) + (mhm.damage + rn2(6));
-            await ops.emit('You are getting confused.');
+            await ops.emit(ops.Confusion && ops.Confusion() ? 'You are getting even more confused.'
+                                                            : 'You are getting confused.');
             if (ops.make_confused) await ops.make_confused(mhm.damage);
         }
         mhm.damage = 0;
@@ -1305,6 +1372,19 @@ export async function mhitm_ad_poly(magr, mattk, mdef, mhm, ops) {
     }
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
+        const u = game.u;
+        const half = (u?.uprops?.Half_physical_damage | 0) > 0;
+        const maybeHalf = half ? Math.trunc((mhm.damage + 1) / 2) : mhm.damage;
+        if (maybeHalf < (u?.Upolyd ? u.mh : u.uhp)) {
+            if (negated) {
+                if (magr.mcan) await ops.emit("You aren't transformed.");
+            } else {
+                const { mon_poly } = await import('./mhitm.js');
+                mhm.damage = await mon_poly(magr, YOUMONST, mhm.damage);
+                mhm.hitflags |= M_ATTK_HIT;
+                mhm.done = true;
+            }
+        }
         return;
     }
     if (mhm.damage < (mdef.mhp | 0) && !negated) {
@@ -1316,7 +1396,8 @@ export async function mhitm_ad_famn(magr, mattk, mdef, mhm, ops) {
     const pd = ops.permonst(mdef);
     if (is_hero(mdef)) {
         await ops.emit(`${ops.Monnam(magr)} reaches out, and your body shrivels.`);
-        if (ops.morehungry) await ops.morehungry(rn1(40, 40));
+        exercise(A_CON, false);
+        if (game.u?.uhs !== 5 /* FAINTED */ && ops.morehungry) await ops.morehungry(rn1(40, 40));
         return;
     }
     if (!(carnivorous(pd) || herbivorous(pd) || metallivorous(pd)))
@@ -1340,19 +1421,34 @@ export async function mhitm_ad_deth(magr, mattk, mdef, mhm, ops) {
     const pd = ops.permonst(mdef);
     if (is_hero(mdef)) {
         await ops.emit(`${ops.Monnam(magr)} reaches out with its deadly touch.`);
-        // The hero is never undead here, so the rn2(20) below always fires.
+        if (is_undead(pd)) {
+            /* still does some damage */
+            mhm.damage = Math.trunc((mhm.damage + 1) / 2);
+            await ops.emit('Was that the touch of death?');
+            return;
+        }
+        const { Antimagic: Antimagic_hero } = await import('./zap.js');
+        const am = !!Antimagic_hero();
         switch (rn2(20)) {
         case 19: case 18: case 17:
-            // touch_of_death() (no Antimagic on the covered roles).
-            mhm.damage = 0;
+            if (!am) {
+                const { touch_of_death } = await import('./mcastu.js');
+                await touch_of_death(magr);
+                mhm.damage = 0;
+                return;
+            }
+            /* FALLTHRU */
+        default: /* case 16: ... case 5: */
+            await ops.emit('You feel your life force draining away...');
+            mhm.permdmg = 1; /* actual damage done by caller */
             return;
         case 4: case 3: case 2: case 1: case 0:
+            if (am) {
+                const { shieldeff } = await import('./display.js');
+                await shieldeff(game.u.ux, game.u.uy);
+            }
             await ops.emit("Lucky for you, it didn't work!");
             mhm.damage = 0;
-            return;
-        default:
-            await ops.emit('You feel your life force draining away...');
-            mhm.permdmg = 1;
             return;
         }
     }
@@ -1380,7 +1476,7 @@ export async function do_stone_mon(magr, mattk, mdef, mhm, ops) {
     const { munstone } = await import('./muse.js');
     if (await munstone(mdef, false)) {           // ate a stone-curing corpse
         mhm.hitflags = M_ATTK_DEF_DIED
-            | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+            | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
         mhm.done = true;
         return;
     }
@@ -1396,7 +1492,7 @@ export async function do_stone_mon(magr, mattk, mdef, mhm, ops) {
         // corpse_chance() rn2 — that would be an invented draw.
         await (ops.monstone ? ops.monstone(mdef) : ops.mondied(mdef));
         mhm.hitflags = M_ATTK_DEF_DIED
-            | (ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
+            | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
         mhm.done = true;
         return;
     }
@@ -1534,40 +1630,63 @@ export async function mhitm_ad_were(magr, mattk, mdef, mhm, ops) {
 
 export async function mhitm_ad_heal(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
-        const pd = ops.permonst(mdef);
+        const u = game.u;
+        /* a cancelled nurse is just an ordinary monster,
+         * nurses don't heal those that cause petrification */
         if (magr.mcan) { await ops.hitmsg(magr, mattk); return; }
         // The nurse only heals a hero carrying no weapon and wearing no armor.
-        if (ops.nurse_undressed && ops.nurse_undressed()) {
+        if (ops.nurse_undressed && await ops.nurse_undressed()) {
+            let goaway = false;
             await ops.emit(`${ops.Monnam(magr)} hits!  (I hope you don't mind.)`);
-            const u = game.u;
-            u.uhp = (u.uhp | 0) + rnd(7);
-            if (!rn2(7)) {
-                if ((u.uhpmax | 0) < 5 * (u.ulevel | 0) + d(2 * (u.ulevel | 0), 10))
-                    u.uhpmax = (u.uhpmax | 0) + 1;
-                if (!rn2(13)) {
-                    if (ops.mongone) await ops.mongone(magr);
-                    mhm.done = true;
-                    mhm.hitflags = M_ATTK_DEF_DIED;
-                    return;
+            if (u.Upolyd) {
+                u.mh = (u.mh | 0) + rnd(7);
+                if (!rn2(7)) {
+                    /* no upper limit necessary; effect is temporary */
+                    u.mhmax = (u.mhmax | 0) + 1;
+                    if (!rn2(13)) goaway = true;
                 }
+                if (u.mh > u.mhmax) u.mh = u.mhmax;
+            } else {
+                u.uhp = (u.uhp | 0) + rnd(7);
+                if (!rn2(7)) {
+                    /* hard upper limit via nurse care: 25 * ulevel */
+                    if ((u.uhpmax | 0) < 5 * (u.ulevel | 0) + d(2 * (u.ulevel | 0), 10)) {
+                        u.uhpmax = (u.uhpmax | 0) + 1;
+                        if (u.uhpmax > (u.uhppeak | 0)) u.uhppeak = u.uhpmax;
+                    }
+                    if (!rn2(13)) goaway = true;
+                }
+                if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
             }
-            if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
-            if (!rn2(3)) { /* exercise(A_STR) */ }
-            if (!rn2(3)) { /* exercise(A_CON) */ }
+            if (!rn2(3)) exercise(A_STR, true);
+            if (!rn2(3)) exercise(A_CON, true);
+            if ((u.uprops?.Sick | 0) > 0) {
+                const { make_sick } = await import('./potion.js');
+                await make_sick(0, null, false, 0x03 /* SICK_ALL */);
+            }
             game.disp_botl = true;
-            if (!rn2(33)) {
+            if (goaway) {
+                if (ops.mongone) await ops.mongone(magr);
+                mhm.done = true;
+                mhm.hitflags = M_ATTK_DEF_DIED;
+                return;
+            } else if (!rn2(33)) {
                 const { rloc, tele_restrict, RLOC_MSG } = await import('./teleport.js');
                 if (!await tele_restrict(magr)) await rloc(magr, RLOC_MSG);
-                if (ops.monflee) await ops.monflee(magr, d(3, 6));
+                if (ops.monflee) await ops.monflee(magr, d(3, 6), true, false);
                 mhm.done = true;
                 mhm.hitflags = M_ATTK_HIT | M_ATTK_DEF_DIED;
                 return;
             }
             mhm.damage = 0;
+        } else if (game.urole?.mnum === 3 /* Healer */) {
+            const { Deaf_hero } = await import('./display.js');
+            if (!Deaf_hero() && !((game.moves | 0) % 5))
+                await ops.emit('"Doc, I can\'t help you unless you cooperate."');
+            mhm.damage = 0;
         } else {
             await ops.hitmsg(magr, mattk);
         }
-        void pd;
         return;
     }
     await mhitm_ad_phys(magr, mattk, mdef, mhm, ops);
@@ -1658,7 +1777,8 @@ export async function mhitm_ad_samu(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (!rn2(20)) {
-            // stealamulet(): the quest-artifact / Amulet theft.
+            const { stealamulet } = await import('./steal.js');
+            await stealamulet(magr);
         }
         return;
     }
@@ -1700,11 +1820,19 @@ export async function mhitm_ad_sedu(magr, mattk, mdef, mhm, ops) {
         const couldspot = ops.canspotmon(magr);
         const buf = ops.Monnam(magr);
         const mdefnam = ops.mon_nam(mdef);
+        // C ref: uhitm.c mhitm_ad_sedu — extract_from_minvent(mdef, obj, TRUE,
+        // FALSE) unwears/unwields it BEFORE doname(), so no "(weapon in hand)".
+        if (obj.owornmask) {
+            mdef.misc_worn_check = (mdef.misc_worn_check | 0) & ~obj.owornmask;
+            if (mdef.mw === obj) mdef.mw = null;
+            obj.owornmask = 0;
+        }
         const onam = doname_invent(obj);
         mdef.minvent.splice(mdef.minvent.indexOf(obj), 1);
         (magr.minvent = magr.minvent || []).push(obj);
         if (vis && ops.canseemon(mdef))
             await ops.emit(`${buf} steals ${onam} from ${mdefnam}!`);
+        { const { possibly_unwield } = await import('./weapon.js'); possibly_unwield(mdef, false); }
         clear_waitforu(mdef);
         // possibly_unwield()/mselftouch(): no covered defender is harmed by
         // its own stolen gear.

@@ -33,7 +33,7 @@ import { l_nhcore_init } from './mklev.js';
 import { rn2 } from './rng.js';
 import { quest_nemgend_or_null } from './questpgr.js';
 import { check_special_room } from './shkroom.js';
-import { encumber_msg, xname, useup } from './invent.js';
+import { encumber_msg, xname, useup, uwep_unweapon } from './invent.js';
 import { read_engr_at } from './engrave.js';
 import { run_object_timers, place_object, next_ident, newoextra, newomonst,
          newomid, new_omailcmd, OMID, has_omid, has_omonst, free_omid,
@@ -168,6 +168,9 @@ function delete_savefile() {
 // default) deletes the file, 'y' keeps it.
 async function ask_about_keeping_savefile() {
     if (!is_wizard() && !is_discover()) return;
+    // C ref: unixmain.c main() — `wd_message()` runs just before the question;
+    // its discover arm announces the mode (a plain wizard restore prints nothing).
+    if (is_discover()) await pline('You are in non-scoring explore/discovery mode.');
     await topl_more();
     const ans = await y_n('Do you want to keep the save file?', 'yn', 'n');
     if (ans === 'n') delete_savefile();
@@ -204,6 +207,14 @@ async function restore_preamble_messages() {
     const u = game.u || (game.u = {});
     const moonphase = phase_of_the_moon();
     const msgs = [];
+    // C ref: allmain.c:57/64 — flags.moonphase and flags.friday13 are
+    // re-stamped for the RESTORING process's date, and dosave0() later undoes
+    // exactly those luck adjustments.  Left stale (as the saving segment
+    // wrote them), a restore on a non-full-moon date followed by another save
+    // would wrongly subtract a Luck point.
+    game.flags = game.flags || {};
+    game.flags.moonphase = moonphase;
+    game.flags.friday13 = friday_13th();
     if (moonphase === FULL_MOON) {
         msgs.push('You are lucky!  Full moon tonight.');
         u.uluck = (u.uluck || 0) + 1; // change_luck(1)
@@ -255,6 +266,17 @@ export async function dorestore() {
     game.mockStorage = keepMock;
     game.coreCtx = keepCoreCtx;
     game.iflags = keepIflags;
+    // C ref: decl.h `int lastinvnr; /* 0 ... 51 (never saved&restored) */` —
+    // a restored process starts with gl.lastinvnr == 0 (zero-initialized
+    // globals; only u_init() sets it to 51), NOT the saving process's cursor,
+    // so the first newly-lettered item after a restore searches from 'b'.
+    game.gl = game.gl || {};
+    game.gl.lastinvnr = 0;
+    // C ref: decl.c gl.luathemes[] is a runtime-only lua_State pointer table (never
+    // saved), so a restored process has no themerms.lua state loaded: the first
+    // makelevel() per dungeon re-runs nhl_init(), whose nhlib.lua shuffle(align)
+    // draws rn2(3),rn2(2).  Drop the saving process's marker blob copy.
+    game._luathemes_loaded = {};
 
     // C ref: restore.c restgamestate() — role_init() runs partway through the
     // state reload, BEFORE restore_luadata()'s Lua-state creation below, so its
@@ -265,13 +287,13 @@ export async function dorestore() {
     // get a reminder about 'bashing' during next fight when bare-handed or
     // wielding an unconventional item; for pick-axe, we aren't able to
     // distinguish between having applied or wielded it, so be conservative
-    // and assume the former".  This ALWAYS re-arms the one-shot gu.unweapon
-    // notice across a restore when bare-handed or wielding a pick-axe/
-    // grappling hook, regardless of whether the saving segment had already
-    // consumed it — this port's reference-preserving splice above restores
-    // `unweapon` as saved (already consumed), so without this a restored
-    // pick-axe-wielding hero silently lost its "You begin bashing monsters
-    // with your pick-axe." notice on the next swing.
+    // and assume the former".  The C code clears uwep and re-runs setuwep(),
+    // which recomputes gu.unweapon from the wielded object (an unconventional
+    // item such as a food ration is TRUE); this port's reference-preserving
+    // splice above restores `unweapon` as saved (already consumed), so it
+    // is recomputed here instead, then forced TRUE for bare hands / pick-axe /
+    // grappling hook.
+    game.unweapon = uwep_unweapon(game.uwep);
     if (!game.uwep || game.uwep.otyp === PICK_AXE_RST
         || game.uwep.otyp === GRAPPLING_HOOK_RST)
         game.unweapon = true;
@@ -582,9 +604,6 @@ export function find_lev_obj() {
     while (Array.isArray(fobj) && fobj.length) {
         otmp = fobj.pop();          /* otmp = fobj; fobj = otmp->nobj */
         otmp.nobj = fobjtmp[0] ?? null;
-        /* js/mkobj.js place_object() stamps obj.where as the STRING 'floor',
-           not objclass.h's numeric enum; js/save.js's saveobjchn() writes the
-           numeric OBJ_FREE here too, so the mismatch is pre-existing. */
         otmp.where = OBJ_FREE;
         fobjtmp.unshift(otmp);      /* fobjtmp = otmp */
     }

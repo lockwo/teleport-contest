@@ -11,7 +11,7 @@ import { phase_of_the_moon, night, FULL_MOON } from './calendar.js';
 import { VAULT, ROOMOFFSET, SHOPBASE, MAXNROFROOMS,
          TEMPLE as TEMPLE_SND, Is_astralevel, MON_FLOOR } from './const.js';
 import { GOLD_PIECE, objects, WEAPON_CLASS } from './mkobj.js';
-import { DEADMONSTER, fmonOrder, wake_nearto_core } from './mon.js';
+import { DEADMONSTER, fmonOrder, wake_nearto_core, genus } from './mon.js';
 import { inhishop } from './shk.js';
 import { in_rooms } from './shkroom.js';
 import { update_topl, You_hear, Deaf_hero } from './display.js';
@@ -26,13 +26,13 @@ import { races } from './roles.js';
 import { rn1 } from './rng.js';
 import { STATUE } from './mkobj.js';
 import {
-    COURT, BEEHIVE, MORGUE, ZOO, HAIR, NECK, HEAD, IRONBARS, BOLT_LIM,
+    COURT, BEEHIVE, MORGUE, ZOO, BARRACKS, HAIR, NECK, HEAD, IRONBARS, BOLT_LIM,
     W_ARMH, A_NONE, STRAT_WAITMASK, nothing_happens, ACCESSIBLE, isok,
-    M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER,
-} from './const.js';
+    M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, OBJ_FLOOR } from './const.js';
 import {
     mflags1_of, M1_FLY, M1_NOEYES, M1_CARNIVORE, M1_HERBIVORE, M1_SEE_INVIS,
     M2_LORD, M2_PRINCE, M2_UNDEAD, is_animal, humanoid,
+    is_mercenary_flag as is_mercenary,
 } from './monflags_data.js';
 // display.js is already a static dependency (update_topl above), so these can
 // be bound at module level and responsive_mon_at() can keep C's synchronous
@@ -85,7 +85,7 @@ export async function dosounds() {
         return;
 
     const lf = g.level?.flags || {};
-    const hallu = 0; // Hallucination not modeled in the move loop
+    const hallu = Hallucination() ? 1 : 0;
 
     // C ref: sounds.c:213-219 — fountain ambient.  rn2(3) selects the message.
     // NOTE: C does NOT return here — nsinks/has_court/etc. below are still
@@ -96,7 +96,14 @@ export async function dosounds() {
     // C ref: sounds.c:220-225 — sink ambient ("You hear a slow drip.").  Also
     // falls through (no return) in C — see note above.
     if (lf.nsinks && !rn2(300)) { await You_hear(SINK_MSG[rn2(2) + hallu]); }
-    if (lf.has_court && !rn2(200)) { return; }
+    // C ref: sounds.c:226 `if (get_iter_mons(throne_mon_sound)) return;` —
+    // the probe only returns early when a qualifying monster spoke up.
+    if (lf.has_court && !rn2(200)) {
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
+            if (await throne_mon_sound(mon)) return;
+        }
+    }
     // C ref: sounds.c:230-237 — swamp ambient, via You1() not You_hear1().
     if (lf.has_swamp && !rn2(200)) { await You1(SWAMP_MSG[rn2(2) + hallu]); return; }
     // C ref: sounds.c:238-273 — vault ambient.  gd_sound() gates the rn2(2)
@@ -131,18 +138,42 @@ export async function dosounds() {
         }
         return;
     }
-    if (lf.has_beehive && !rn2(200)) { return; }
+    // C ref: sounds.c:278 `if (get_iter_mons(beehive_mon_sound)) return;`
+    if (lf.has_beehive && !rn2(200)) {
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
+            if (await beehive_mon_sound(mon)) return;
+        }
+    }
     if (lf.has_morgue && !rn2(200)) {
         for (const mon of fmonOrder()) {
             if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
             if (await morgue_mon_sound(mon)) return;
         }
     }
-    // C ref: sounds.c:286-307 — barracks ambient.  The rn2(3) message roll only
-    // fires inside the mercenary loop; since the message-bearing path is what
-    // consumes the rn2(3), keep the roll and emit the corresponding text.
-    if (lf.has_barracks && !rn2(200)) { await You_hear(BARRACKS_MSG[rn2(3) + hallu]); return; }
-    if (lf.has_zoo && !rn2(200)) { return; }
+    // C ref: sounds.c:286-307 — barracks ambient.  The rn2(3) message roll
+    // fires only for a mercenary inside the BARRACKS that is either asleep or
+    // the sixth one found; an empty barracks spends the rn2(200) probe alone.
+    if (lf.has_barracks && !rn2(200)) {
+        let count = 0;
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon)) continue;
+            if (is_mercenary(mon.data) && mon_in_room(mon, BARRACKS)
+                && (mon.msleeping || ++count > 5)) {
+                await You_hear(BARRACKS_MSG[rn2(3) + hallu]);
+                return;
+            }
+        }
+    }
+    // C ref: sounds.c:309 `if (get_iter_mons(zoo_mon_sound)) return;` — the
+    // Sokoban prize room is a ZOO, so its sleeping monsters are what make the
+    // rn2(2) message roll happen on this level.
+    if (lf.has_zoo && !rn2(200)) {
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
+            if (await zoo_mon_sound(mon)) return;
+        }
+    }
     // C sounds.c:313-328: a shop probe fires even for an untended shop, but
     // only a resident keeper inside the first shop, with the hero outside it,
     // rolls the message and wakes nearby monsters.
@@ -174,12 +205,12 @@ export async function dosounds() {
             if (await temple_priest_sound(mon)) return;
         }
     }
-    // C ref: sounds.c:335 — `if (Is_oracle_level(&u.uz) && !rn2(400)) { ... }`.
-    // The Oracle level (placed at dnum 0, base 5 range 5) is reached by these
-    // descend sessions; its dosounds() makes a trailing rn2(400) chant probe
-    // every turn.  get_iter_mons(oracle_sound) (the body) is RNG-inert, so only
-    // the probe itself matters for parity.
-    if (Is_oracle_level(g.u?.uz) && !rn2(400)) { return; }
+    if (Is_oracle_level(g.u?.uz) && !rn2(400)) {
+        for (const mon of fmonOrder()) {
+            if (DEADMONSTER(mon) || (mon.mstate | 0) !== MON_FLOOR) continue;
+            if (await oracle_sound(mon)) return;
+        }
+    }
 }
 
 // C ref: vault.c gd_sound() = !(vault_occupied(u.urooms) || findgd()).
@@ -203,7 +234,7 @@ function gold_at(x, y) {
     const objs = game.level?.objects;
     if (!objs) return false;
     for (const o of objs)
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === GOLD_PIECE)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === GOLD_PIECE)
             return true;
     return false;
 }
@@ -357,7 +388,10 @@ export async function growl(mtmp) {
         }
     }
     if (!verb) return;
-    await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(verb)}!`);
+    // C ref: growl() — `if (canseemon(mtmp) || !Deaf) pline(...)`; the wake_nearto
+    // below runs either way.
+    if (canseemon_shared(mtmp) || !Deaf_hero())
+        await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(verb)}!`);
     const { wake_nearto } = await import('./cmd.js');
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 18);
 }
@@ -377,7 +411,7 @@ export async function yelp(mtmp) {
     if (game.u?.uhallu) {
         verb = H_SOUNDS[rn2(H_SOUNDS.length)];
     } else {
-        const deaf = false;                           // Deaf is never set here
+        const deaf = Deaf_hero();
         switch (ms) {
         case MS_MEW: verb = deaf ? 'arch' : 'yowl'; break;
         case MS_BARK: case MS_GROWL: verb = deaf ? 'recoil' : 'yelp'; break;
@@ -411,12 +445,17 @@ export async function domonnoise(mtmp) {
 
     const ptr = mtmp?.data;
     let msound = msound_of(ptr) ?? MS_SILENT;
+    const { quest_info } = await import('./questpgr.js');
     // C: `if (is_silent(ptr) && !mtmp->isshk) return ECMD_OK;`
     if (msound === MS_SILENT && !mtmp?.isshk) return ECMD_OK;
 
-    // msound remaps.  The quest-leader (leader_m_id) and MS_GUARDIAN genus
-    // remaps need quest_status / genus(); neither is reachable here.
-    if (mtmp.isshk) msound = MS_SELL;
+    // msound remaps (C: leader polymorph, other roles' guardians fall back to
+    // the genus' sound).
+    if (mtmp.m_id === game.quest_status?.leader_m_id && msound > MS_ANIMAL)
+        msound = MS_LEADER;
+    else if (msound === MS_GUARDIAN && ptr?.pmidx !== quest_info(MS_GUARDIAN))
+        msound = msound_of(monster_by_pmidx(genus(ptr.pmidx, 1))) ?? MS_SILENT;
+    else if (mtmp.isshk) msound = MS_SELL;
     else if (msound === MS_ORC
              && (same_race(ptr, hero_permonst())
                  || same_race(ptr, hero_race_permonst()) || !!game.u?.uhallu))
@@ -436,8 +475,8 @@ export async function domonnoise(mtmp) {
     case MS_LEADER:
     case MS_NEMESIS:
     case MS_GUARDIAN: {
-        const { quest_talk } = await import('./questpgr.js');
-        await quest_talk(mtmp);
+        const { quest_chat } = await import('./questpgr.js');
+        await quest_chat(mtmp);
         return ECMD_TIME;
     }
     case MS_PRIEST: {
@@ -838,14 +877,11 @@ function inhistemple(priest) {
     if (!histemple_at(priest, priest.mx, priest.my)) return false;
     return has_shrine(priest);
 }
-// C ref: pray.c halu_gname(alignment) — a random god while hallucinating,
-// otherwise align_gname().  GAP: the hallucinating branch draws randrole(TRUE)
-// plus rn2_on_display_rng(9) (and possibly a second display draw); this port
-// does not model the DISPLAY rng, so the sober name is used either way.  No
-// core-stream draw is skipped by that.
+// C ref: pray.c halu_gname(alignment) — js/role.js (a random god on the DISPLAY
+// rng while hallucinating, otherwise align_gname()).
 async function halu_gname(alignment) {
-    const { align_gname } = await import('./role.js');
-    return align_gname(game.urole?.mnum ?? game.u?.umonnum ?? 0, alignment);
+    const { halu_gname: hg } = await import('./role.js');
+    return hg(alignment);
 }
 
 // C ref: sounds.c:20 mon_in_room(mon, rmtyp) — is the monster standing in a

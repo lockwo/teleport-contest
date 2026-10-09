@@ -63,8 +63,8 @@ function fastforward_newpw() {
     if (role === 'knight' || REAL_UINIT_ROLES.has(role)) {
         game.u = game.u || {};
         game.u.ulevel = 0;
-        game.u.uhp = game.u.uhpmax = newhp();
-        game.u.uen = game.u.uenmax = newpw();
+        game.u.uhp = game.u.uhpmax = game.u.uhppeak = newhp();
+        game.u.uen = game.u.uenmax = game.u.uenpeak = newpw();
     }
 }
 
@@ -154,6 +154,7 @@ export function fastforward_pre_mklev() {
     // Store the result so the ^X attributes display reports handedness correctly.
     game.u = game.u || {};
     game.u.uleft_handed = (rn2(10) === 0);
+    game.u.uhandedness = game.u.uleft_handed ? 1 /* LEFT_HANDED */ : 0 /* RIGHT_HANDED */;
 }
 
 // Post-mklev startup: u_init_role, ini_inv, attributes, moveloop_preamble
@@ -248,6 +249,8 @@ export async function fastforward_fill_mineralize() {
             // deferred teleport traps) after the per-room fill loops.
             await run_themeroom_postprocess();
             mineralize(-1, -1, -1, -1, false);
+            // C mklev.c:1559-1560: this follows room filling, which sets has_morgue.
+            if (game.level?.flags?.has_morgue) game.level.flags.graveyard = true;
         } finally {
             game.in_mklev = was_in_mklev;
         }

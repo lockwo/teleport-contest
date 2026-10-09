@@ -9,20 +9,21 @@
 //
 // Hero placement is shared by jumping, teleport commands, scrolls, and traps.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
 import { newsym, m_at, update_topl, y_n } from './display.js';
 import { Blind, couldsee, vision_recalc } from './vision.js';
 import { update_monster_region } from './region.js';
-import { onscary, set_apparxy, noteleport_level } from './monmove.js';
+import { onscary, set_apparxy, noteleport_level, m_in_air } from './monmove.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
 import { canseemon_shared as canseemon_tele } from './display.js';
 import {
     COLNO, ROWNO, DOOR, POOL, DRAWBRIDGE_UP, LAVAPOOL, LAVAWALL,
     D_CLOSED, D_LOCKED, STRAT_APPEARMSG, BOLT_LIM, TEMPLE, engulfing_u,
+    MM_IGNOREWATER, MM_IGNORELAVA, IS_WATERWALL, Is_waterlevel,
 } from './const.js';
-import { BOULDER } from './mkobj.js';
+import { BOULDER, place_object } from './mkobj.js';
 import {
     is_swimmer_flag, passes_walls_flag, amorphous_flag, throws_rocks_flag,
     control_teleport_flag,
@@ -82,8 +83,6 @@ function may_passwall(x, y) {
     return x >= 1 && x < COLNO - 1 && y >= 1 && y < ROWNO - 1;
 }
 
-// C ref: mondata.h m_in_air(mon) — flying or levitating.
-function m_in_air(mtmp) { return !!mtmp?.mflying || !!mtmp?.mlevitating; }
 // C ref: mondata.h:190 likes_lava(ptr) == (ptr == &mons[PM_FIRE_ELEMENTAL]
 // || ptr == &mons[PM_SALAMANDER]).  Was a constant FALSE, which makes goodpos()
 // reject every lava square for the two species C lets stand on one.
@@ -95,7 +94,7 @@ function likes_lava(mdat) {
 // C ref: mkobj.c sobj_at(BOULDER, x, y).
 function sobj_at_boulder(x, y) {
     for (const o of (game.level?.objects || []))
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === BOULDER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === BOULDER)
             return true;
     return false;
 }
@@ -109,6 +108,8 @@ export function goodpos(x, y, mtmp, gpflags) {
     const checkscary = (gpflags & GP_CHECKSCARY) !== 0;
     const allow_u = (gpflags & GP_ALLOW_U) !== 0;
     const avoid_monpos = (gpflags & GP_AVOID_MONPOS) !== 0;
+    const ignorewater = (gpflags & MM_IGNOREWATER) !== 0;
+    const ignorelava = (gpflags & MM_IGNORELAVA) !== 0;
 
     if (!isok(x, y)) return false;
 
@@ -131,22 +132,28 @@ export function goodpos(x, y, mtmp, gpflags) {
         if (mtmp2 && (mtmp2 !== mtmp || mtmp.wormno)) return false;
 
         mdat = mtmp.data;
-        if (is_pool(x, y)) {
-            // Water: a swimmer may land here; anyone else needs to be airborne.
-            // Is_waterlevel()/is_waterwall() are FALSE on ordinary levels.
-            return is_swimmer_flag(mdat) || m_in_air(mtmp);
-        } else if (mdat?.mcls === S_EEL_MCLS && rn2(13)) {
+        if (is_pool(x, y) && !ignorewater) {
+            // Water: a swimmer may land here; anyone else needs to be airborne
+            // and the square must not be a WATER wall (rm.h IS_WATERWALL).
+            return is_swimmer_flag(mdat)
+                || (!Is_waterlevel(game.u?.uz)
+                    && !IS_WATERWALL(terrainTyp(x, y))
+                    && m_in_air(mtmp));
+        } else if (mdat?.mcls === S_EEL_MCLS && rn2(13) && !ignorewater) {
             // An eel out of water usually refuses the square — and this rn2(13)
             // fires whenever an eel is offered one, so it must not be skipped.
             return false;
-        } else if (is_lava(x, y)) {
+        } else if (is_lava(x, y) && !ignorelava) {
+            // C: a floating eye avoids lava even though it can levitate.
+            if (mdat?.name === 'floating eye') return false;
             return m_in_air(mtmp) || likes_lava(mdat);
         }
         if (passes_walls_flag(mdat) && may_passwall(x, y)) return true;
         if (amorphous_flag(mdat) && closed_door(x, y)) return true;
         if (checkscary && onscary(x, y, mtmp)) return false;
     }
-    if (!accessible(x, y)) return false;   // (pool/lava already returned above)
+    if (!accessible(x, y) && !(is_pool(x, y) && ignorewater)
+        && !(is_lava(x, y) && ignorelava)) return false;
     if (sobj_at_boulder(x, y) && (!mdat || !throws_rocks_flag(mdat)))
         return false;
     // is_exclusion_zone(LR_MONGEN, ...) only applies with GP_AVOID_MONPOS
@@ -247,9 +254,16 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
         // for an attack-driven relocation)
     }
 
-    // Resident-shopkeeper anger, shop-goods billing, the go.occupation
-    // dochugw() nudge and the mtrapped mintrap() re-check are all inert for the
-    // monsters these sessions relocate.
+    // Resident-shopkeeper anger, shop-goods billing and the mtrapped
+    // mintrap() re-check are inert for the monsters these sessions relocate.
+
+    // C ref: teleport.c:1762 — if the hero is busy, a relocated threat that
+    // came into view stops the occupation.
+    const H = await import('./hack.js');
+    if (H.occupation_active()) {
+        const { dochugw } = await import('./monmove.js');
+        await dochugw(mtmp, false);
+    }
 }
 
 // C ref: teleport.c rloc_to(mtmp, x, y).
@@ -262,6 +276,28 @@ export async function rloc_to(mtmp, x, y) {
 //
 // RNG: up to 50 tries of `rnd(COLNO - 1)` then `rn2(ROWNO)`, both consumed on
 // every iteration, stopping at the first square rloc_pos_ok() accepts.
+// C ref: teleport.c rloc(mtmp, RLOC_NOMSG) as used by level-creation
+// "insurance" (shknam.c shkinit): during mklev rloc_to_core() prints nothing,
+// so the relocation is synchronous: up to 50 rnd(COLNO-1)/rn2(ROWNO) tries.
+export function rloc_mklev(mtmp) {
+    for (let trycount = 0; trycount < 50; ++trycount) {
+        const x = rnd(COLNO - 1), y = rn2(ROWNO);
+        if (rloc_pos_ok(x, y, mtmp)) {
+            const oldx = mtmp.mx, oldy = mtmp.my;
+            mtmp.mx = 0; mtmp.my = 0;
+            if (oldx) newsym(oldx, oldy);
+            mtmp.mtrack = [];
+            mtmp.mx = x; mtmp.my = y;
+            update_monster_region(mtmp);
+            newsym(x, y);
+            set_apparxy(mtmp);
+            return true;
+        }
+    }
+    return false;
+}
+hooks.rloc_mklev = rloc_mklev;
+
 export async function rloc(mtmp, rlocflags) {
     // The u.usteed / iswiz special cases don't apply here: the teleporting
     // monsters are ordinary hostiles, never the player's steed or the Wizard
@@ -382,13 +418,12 @@ import {
     UTOTYPE_PORTAL, UTOTYPE_ATSTAIRS, VAULT, SHOPBASE,
     ECMD_OK, ECMD_TIME, FORCETRAP, NHW_MENU, PICK_ONE,
     A_STR, A_WIS,
-    is_pit, is_hole, is_xport, IS_ALTAR, ZAP_POS,
-} from './const.js';
+    is_pit, is_hole, is_xport, IS_ALTAR, ZAP_POS, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { CORPSE, SCR_SCARE_MONSTER } from './mkobj.js';
 import { M1_NOEYES, M2_LORD, M2_PRINCE } from './monflags_data.js';
 import { within_bounded_area } from './rect.js';
 import { in_out_region } from './region.js';
-import { see_monsters } from './display.js';
+import { see_monsters, see_nearby_objects } from './display.js';
 
 // C ref: trap.h:96 enum trap_result.
 const Trap_Effect_Finished = 0, Trap_Moved_Mon = 3;
@@ -620,7 +655,7 @@ export async function teleds(nux, nuy, teleds_flags) {
         const { buried_ball_to_punishment } = await import('./dig.js');
         await buried_ball_to_punishment();
     }
-    ball_active = (Punished_() && uball_()?.where !== 'free');
+    ball_active = (Punished_() && uball_()?.where !== OBJ_FREE);
     const { near_capacity } = await import('./invent.js');
     if (!ball_active
         || near_capacity() > SLT_ENCUMBER
@@ -661,11 +696,11 @@ export async function teleds(nux, nuy, teleds_flags) {
     if (ball_active && (ball_still_in_range || allow_drag)) {
         const bc = await B.drag_ball(nux, nuy, allow_drag);
         if (bc) {
-            B.move_bc(0, bc.bc_control, bc.ballx, bc.bally, bc.chainx, bc.chainy);
+            await B.move_bc(0, bc.bc_control, bc.ballx, bc.bally, bc.chainx, bc.chainy);
         } else {
             /* dragging fails if hero is encumbered beyond 'burdened'; uball
                might've been cleared via drag_ball -> spoteffects -> dotrap */
-            ball_active = (Punished_() && uball_()?.where !== 'free');
+            ball_active = (Punished_() && uball_()?.where !== OBJ_FREE);
             if (ball_active) B.unplacebc();  /* to match placebc() below */
         }
     }
@@ -674,7 +709,7 @@ export async function teleds(nux, nuy, teleds_flags) {
     u_on_newpos_(nux, nuy);   /* set u.<x,y>, usteed-><mx,my>; cliparound() */
     const { fill_pit } = await import('./trap.js');
     fill_pit(u.ux0, u.uy0);
-    if (ball_active && uchain_() && uchain_().where === 'free')
+    if (ball_active && uchain_() && uchain_().where === OBJ_FREE)
         B.placebc();          /* put back the ball&chain if taken off map */
     const { update_player_regions } = await import('./region.js');
     update_player_regions();
@@ -1028,10 +1063,11 @@ export async function domagicportal(ttmp) {
     } else {
         totype = UTOTYPE_PORTAL;
         stunmsg = !Stunned_tp() ? 'You feel slightly dizzy.' : 'You feel dizzier.';
-        await make_stunned_tp(HStun_tp() + 3, false);
+        make_stunned_tp(HStun_tp() + 3);
     }
 
-    await schedule_goto_(target_level, totype, stunmsg, null);
+    const { schedule_goto } = await import('./do.js');
+    schedule_goto(target_level, totype, stunmsg, null);
 }
 
 // C ref: teleport.c:1776 rloc_to_flag(mtmp, x, y, rlocflags).
@@ -1343,7 +1379,7 @@ function mflags2_of_(ptr) { return (ptr?.mflags2 ?? ptr?.mflags?.[1] ?? 0) | 0; 
 // C ref: mkobj.c sobj_at(otyp, x, y) — port is js/muse.js:240, private.
 function sobj_at_(otyp, x, y) {
     for (const o of (game.level?.objects || []))
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === otyp)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === otyp)
             return o;
     return null;
 }
@@ -1394,9 +1430,9 @@ const S_MIMIC_MCLS = 13;                       /* defsym.h MONSYM(13,'m',MIMIC) 
 function HProp_tp(name) { return (game.u?.uprops?.[name] | 0); }
 function Levitation_() { return HProp_tp('HLevitation') > 0 || HProp_tp('ELevitation') > 0; }
 function Flying_() { return HProp_tp('HFlying') > 0 || HProp_tp('EFlying') > 0; }
-function Passes_walls_() { return HProp_tp('HPasses_walls') > 0; }
+function Passes_walls_() { return !!game.u?.formprops?.Passes_walls || HProp_tp('HPasses_walls') > 0; }
 function Punished_() { return !!game.u?.uball; }
-function Teleportation_() { return HProp_tp('HTeleportation') > 0 || HProp_tp('ETeleportation') > 0; }
+function Teleportation_() { return !!game.u?.formprops?.Teleportation || HProp_tp('HTeleportation') > 0 || HProp_tp('ETeleportation') > 0; }
 function HTeleportation_() { return HProp_tp('HTeleportation'); }
 function ETeleportation_() { return HProp_tp('ETeleportation'); }
 function setHTeleportation_(v) { if (game.u?.uprops) game.u.uprops.HTeleportation = v; }
@@ -1405,11 +1441,18 @@ function setETeleportation_(v) { if (game.u?.uprops) game.u.uprops.ETeleportatio
 const I_SPECIAL_TP = 0x20000000;
 function uball_() { return game.u?.uball || null; }
 function uchain_() { return game.u?.uchain || null; }
-function carried_(obj) { return obj?.where === 'invent'; }
-function Stunned_tp() { return !!(game.u?.uprops?.HStun || game.u?.Stunned); }
-function HStun_tp() { return HProp_tp('HStun'); }
+function carried_(obj) { return obj?.where === OBJ_INVENT; }
+function Stunned_tp() { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.Stun || game.u?.Stunned); }
+function HStun_tp() { return game.u?.uprops?.Stun || 0; }
 function Confusion_tp() { return HProp_tp('HConfusion') > 0; }
-async function make_stunned_tp(_xtime, _talk) { }   /* js/read.js:1538, private */
+// C ref: teleport.c:1485 make_stunned(..., FALSE); timeout.js owns recovery.
+function make_stunned_tp(xtime) {
+    const u = game.u;
+    u.uprops ||= {};
+    u.uprops.Stun = xtime;
+    u.Stunned = xtime > 0;
+    if (game.disp) game.disp.botl = true;
+}
 // C ref: include/hack.h distmin(x0,y0,x1,y1) — port is js/track.js:45, private.
 function distmin_(x0, y0, x1, y1) {
     return Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
@@ -1420,7 +1463,14 @@ function findgd_() { return null; }
 // C ref: trap.c reset_utrap(msg) — the FALSE arm used by teleportation.
 function reset_utrap_(_msg) { const u = game.u; if (u) { u.utrap = 0; u.utraptype = 0; } }
 // C ref: hack.c u_on_newpos(x, y) — js/mklev.js:170, private.
-function u_on_newpos_(x, y) { const u = game.u; if (u) { u.ux = x; u.uy = y; } }
+function u_on_newpos_(x, y) {
+    const u = game.u;
+    if (!u) return;
+    u.ux = x; u.uy = y;
+    /* C dungeon.c u_on_newpos(): a same-level relocation lets nearby generic
+       objects be observed up close (feeds the '\' discoveries list). */
+    see_nearby_objects();
+}
 // C ref: display.c see_monsters() / notice_mon_off()/on() (mon.c) /
 // vision.c vision_recalc(control) / detect.c switch_terrain().
 function see_monsters_() { see_monsters(); }
@@ -1496,9 +1546,11 @@ async function spelleffects_(_otyp, _atme, _nomsg) { return 0; }
 // C ref: teleport.c rloc_pos_ok — the live port above is module-private under
 // the same name; this indirection exists only so control_mon_tele() reads like C.
 function rloc_pos_ok_(x, y, mtmp) { return rloc_pos_ok(x, y, mtmp); }
-// C ref: trap.c flooreffects(obj, x, y, verb) — UNPORTED and RNG-BEARING
-// (water/lava destruction rolls).  js/shk.c-side billing helpers are private.
-async function flooreffects_(_obj, _x, _y, _verb) { return false; }
+// C ref: do.c flooreffects(obj, x, y, verb) — ported at js/do.js flooreffects().
+async function flooreffects_(obj, x, y, verb) {
+    const { flooreffects } = await import('./do.js');
+    return await flooreffects(obj, x, y, verb);
+}
 // C ref: do.c:2111 revive_corpse(corpse) — ported at js/do.js revive_corpse().
 async function revive_corpse_(obj) {
     const { revive_corpse } = await import('./do.js');
@@ -1509,7 +1561,7 @@ function costly_adjacent_(_shkp, _x, _y) { return false; }
 async function subfrombill_(_obj, _shkp) { }
 async function addtobill_(_obj, _a, _b, _c) { }
 async function stolen_value_(_obj, _x, _y, _peaceful, _silent) { return 0; }
-function place_object_(obj, x, y) { obj.where = 'floor'; obj.ox = x; obj.oy = y; }
+function place_object_(obj, x, y) { place_object(obj, x, y); }
 // C ref: window.c create_nhwindow/start_menu/add_menu/end_menu/select_menu/
 // destroy_nhwindow — the menu layer; js/invent.js has private no-op stubs.
 function create_nhwindow_(type) { return { type, items: [] }; }

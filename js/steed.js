@@ -20,11 +20,11 @@
 // through to the slip roll.  They are kept as guards (matching C order) but
 // consume no RNG, so leaving them un-modelled in detail is RNG-faithful.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rnd, rn1, rn2 } from './rng.js';
 import { nhgetch } from './input.js';
-import { pline, flush_screen, newsym, update_topl, unmap_object,
-         canseemon_shared } from './display.js';
+import { pline, flush_screen, newsym, update_topl, urgent_topl, unmap_object,
+         canseemon_shared, y_n } from './display.js';
 import { m_at } from './display.js';
 import { DEADMONSTER, mvitals_died, m_detach } from './mon.js';
 import { killed, corpse_chance, make_corpse } from './uhitm.js';
@@ -40,35 +40,17 @@ import { mon_mintrap } from './monmove.js';
 import { vision_recalc } from './vision.js';
 import { x_monnam } from './uhitm.js';
 import { isok, MAXULEV, W_SADDLE, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED,
-         D_NODOOR, D_BROKEN, Is_rogue_level } from './const.js';
-import { pickup_after_move, getdir_confdir } from './cmd.js';
+         D_NODOOR, D_BROKEN, Is_rogue_level, SUPPRESS_IT, SUPPRESS_INVISIBLE,
+         SUPPRESS_HALLUCINATION, NO_KILLER_PREFIX, KILLED_BY_AN } from './const.js';
 
-// C ref: cmd.c getdir() — read a direction.  Renders "In what direction?",
-// reads one key; '.'/'s' = self.  Returns {dx,dy,dz} or null on cancel/ESC.
-// Ends with confdir(FALSE) like C's (cmd.c:4116) — see cmd.js getdir_confdir.
-async function getdir() {
-    const prompt = 'In what direction?';
-    game._pending_message = prompt;
-    await flush_screen(1);
-    game._modal_screen = 'topl';
-    const disp = game.nhDisplay;
-    // C tty yn_function parks the cursor one column past the prompt + space.
-    if (disp?.setCursor) disp.setCursor(Math.min(prompt.length + 1, 79), 0);
-    const key = await nhgetch();
-    delete game._modal_screen;
-    game._pending_message = '';
-    const ch = String.fromCharCode(key);
-    if (ch === '.' || ch === 's')
-        return getdir_confdir({ dx: 0, dy: 0, dz: 0 });
-    if (ch === '\x1b' || ch === ' ')
-        return null;
-    const DX = { h: -1, l: 1, j: 0, k: 0, y: -1, u: 1, b: -1, n: 1, '<': 0, '>': 0 };
-    const DY = { h: 0, l: 0, j: 1, k: -1, y: -1, u: -1, b: 1, n: 1, '<': 0, '>': 0 };
-    const DZ = { '<': -1, '>': 1 };
-    if (ch in DX)
-        return getdir_confdir({ dx: DX[ch], dy: DY[ch], dz: DZ[ch] || 0 });
-    return null;
-}
+import { Maybe_Half_Phys } from './zap.js';
+import { losehp_do } from './do.js';
+import { pickup_after_move, getdir } from './cmd.js';
+
+// C ref: steed.c doride()/kick_steed() call the SHARED cmd.c getdir(); this
+// file used to carry a cut-down copy that ignored the command queue, the
+// number_pad keymap, '\r'/'\n' quitchars and the cmdassist "Invalid direction
+// key!" window.  Use the real one.
 
 // C ref: do_name.c mon_nam() == x_monnam(ARTICLE_THE).  x_monnam now models the
 // "saddled " adjective for a saddle-wearing steed, so this is a thin wrapper.
@@ -83,29 +65,6 @@ function Monnam_steed(mtmp) {
     return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// C ref: hack.c losehp() — for a non-polymorphed hero this subtracts the damage
-// from u.uhp (no RNG).  When the blow drops HP below 1 the hero dies: You("die...")
-// is a pline that follows the still-unacknowledged "You slip..." top line, so the
-// tty pages the slip message with --More-- (topl.c more()) before showing
-// "You die...", then done(DIED) runs the end-of-game sequence.
-async function losehp(n) {
-    const u = game.u;
-    if (!u) return;
-    u.uhp -= n;
-    if (u.uhp > u.uhpmax) {
-        u.uhpmax = u.uhp;
-        return;
-    }
-    if (u.uhp < 1) {
-        u.uhp = 0;
-        // C pline() marks the top line NEED_MORE; mirror it so update_topl pages
-        // the "You slip..." line before printing "You die...".
-        game._toplin = 1; // TOPLIN_NEED_MORE
-        await update_topl('You die...');
-        const { done, DIED } = await import('./end.js');
-        await done(DIED);
-    }
-}
 
 // C ref: steed.c mount_steed() — start riding the given monster.  Returns true
 // (the mount succeeded) or false.  Only the RNG-bearing slip path and the
@@ -118,6 +77,21 @@ export async function mount_steed(mtmp, force) {
     if (u.usteed) {
         await pline(`You are already riding ${mon_nam(u.usteed)}.`);
         return false;
+    }
+
+    // C ref: steed.c:229-239 — a wounded hero cannot mount, and this guard
+    // runs before checking whether a monster is at the requested location.
+    if ((u.HWounded_legs || 0) || (u.EWounded_legs || 0)
+        || (u.uprops?.Wounded_legs || 0)) {
+        const { legs_in_no_shape } = await import('./do.js');
+        await legs_in_no_shape('riding', false);
+        const sides = ((u.EWounded_legs || u.uprops?.EWounded_legs || 0) & BOTH_SIDES);
+        if (force && is_wizard_steed()
+            && await y_n(`Heal your leg${sides === BOTH_SIDES ? 's' : ''}?`) === 'y') {
+            await heal_legs(0);
+        } else {
+            return false;
+        }
     }
 
     // "Can the player reach and see the monster?" — no monster there.
@@ -133,16 +107,29 @@ export async function mount_steed(mtmp, force) {
         return false;
     }
 
-    // C ref: steed.c:338-356 — the impaired/slip check.  For the recorded
-    // Knight none of (Confusion, Fumbling, Glib, Wounded_legs, saddle cursed,
-    // saddle greased) hold, so the only term that can fire is the level/tame
-    // vs rnd(MAXULEV/2 + 5) comparison, which always rolls.
+    // C ref: steed.c:338-356 — the impaired/slip check.  Confusion, Fumbling,
+    // Glib, Wounded_legs, a cursed or greased saddle, or a failed
+    // level/tameness roll all make the hero slip.  Short-circuit order matters:
+    // rnd() is only drawn when every earlier term is false.
+    const saddle = which_armor(mtmp, W_SADDLE);
     if (!force
-        && (u.ulevel + (mtmp.mtame || 0) < rnd(MAXULEV / 2 + 5))) {
-        // (Levitation is false here, so the normal "slip" branch applies.)
+        && (Confusion_std() || Fumbling_std() || Glib_std()
+            || (u.HWounded_legs || 0) || (u.EWounded_legs || 0)
+            || (u.uprops?.Wounded_legs || 0)
+            || saddle?.cursed || saddle?.greased
+            || (u.ulevel + (mtmp.mtame || 0) < rnd(MAXULEV / 2 + 5)))) {
+        if (u.uprops?.Levitation) {
+            await pline(`${Monnam_steed(mtmp)} slips away from you.`);
+            return false;
+        }
         await pline(`You slip while trying to get on ${mon_nam(mtmp)}.`);
-        // losehp(Maybe_Half_Phys(rn1(5, 10)), ...) — rn1(5,10) == rn2(5)+10.
-        await losehp(rn1(5, 10));
+        // C: x_monnam(mtmp, ARTICLE_A, NULL, SUPPRESS_IT | SUPPRESS_INVISIBLE
+        // | SUPPRESS_HALLUCINATION, TRUE) -> "a saddled pony".
+        const buf = `slipped while mounting ${x_monnam(mtmp, /*ARTICLE_A*/ 2, null,
+            SUPPRESS_IT | SUPPRESS_INVISIBLE | SUPPRESS_HALLUCINATION, true)}`;
+        // losehp(Maybe_Half_Phys(rn1(5, 10)), buf, NO_KILLER_PREFIX).
+
+        await losehp_do(Maybe_Half_Phys(rn1(5, 10)), buf, NO_KILLER_PREFIX);
         return false;
     }
 
@@ -463,7 +450,7 @@ export async function dismount_steed(reason) {
         await pline(`You ${verb} off of ${mon_nam(mtmp)}!`);
         if (!have_spot) { cc = landing_spot(reason, 1); have_spot = !!cc; }
         if (!ulev && !ufly) {
-            await losehp(rn1(10, 10)); // "riding accident"
+            await losehp_do(Maybe_Half_Phys(rn1(10, 10)), 'riding accident', KILLED_BY_AN);
             await set_wounded_legs(BOTH_SIDES, (u.HWounded_legs || 0) + rn1(5, 5));
             repair_leg_damage = false;
         }
@@ -556,6 +543,7 @@ function u_locomotion_std(def) {
 }
 // C ref: youprop.h Stunned.
 function Stunned_std() {
+    if (game.u?.formprops?.Stunned) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     return (u?.uprops?.Stun || u?.ustun || 0) > 0;
 }
@@ -613,7 +601,7 @@ async function steed_mondied(mtmp) {
     const x = mtmp.mx, y = mtmp.my;
     await steed_mondead(mtmp);
     if (corpse_chance(mtmp) && (steed_accessible(x, y) || is_pool(x, y)))
-        make_corpse(mtmp, x, y);
+        await make_corpse(mtmp, x, y);
 }
 // C ref: mon.c monkilled(mdef, "", -AD_PHYS) — steed died from an impersonal
 // cause (no adjacent square to flee to).  fltxt="" so the message never gets
@@ -644,12 +632,23 @@ export async function doride() {
     if (dir && isok(u.ux + dir.dx, u.uy + dir.dy)) {
         u.dx = dir.dx;
         u.dy = dir.dy;
-        // wizard force-mount prompt is skipped (not wizard mode here).
-        const ok = await mount_steed(m_at(u.ux + dir.dx, u.uy + dir.dy), false);
+        // C ref: steed.c doride():185 — `if (wizard && y_n("Force the mount to
+        // succeed?") == 'y') forcemount = TRUE;`.  The prompt fires for EVERY
+        // wizard-mode #ride, so skipping it swallowed a keystroke and shifted
+        // the rest of the session.
+        let forcemount = false;
+        if (is_wizard_steed()
+            && await y_n('Force the mount to succeed?', 'yn\x1b', 'n') === 'y')
+            forcemount = true;
+        const ok = await mount_steed(m_at(u.ux + dir.dx, u.uy + dir.dy), forcemount);
         return ok ? 1 : 0;
     }
     return 0; // ECMD_CANCEL
 }
+
+// C ref: decl.h `wizard` — debug (wizard) mode, which is what gates #ride's
+// force-mount query.
+function is_wizard_steed() { return !!game.flags?.debug; }
 
 // ===========================================================================
 // steed.c: the remaining top-level functions, translated.  APPEND-ONLY —
@@ -879,7 +878,7 @@ export function can_ride(mtmp) {
 }
 
 // C ref: steed.c:387 exercise_steed() — 100 turns of riding advances P_RIDING.
-export function exercise_steed() {
+export async function exercise_steed() {
     const u = game.u;
     if (!u.usteed)
         return;
@@ -888,7 +887,7 @@ export function exercise_steed() {
     u.urideturns = (u.urideturns | 0) + 1;
     if (u.urideturns >= 100) {
         u.urideturns = 0;
-        use_skill(P_RIDING, 1);
+        await use_skill(P_RIDING, 1);
     }
 }
 
@@ -994,7 +993,7 @@ export async function poly_steed(steed, oldshape) {
 function u_handsy_std() { return true; }
 // C ref: you.h Underwater / Stone_resistance / Confusion / Fumbling / Glib.
 function Underwater_std() { return !!game.u?.uprops?.Underwater; }
-function Stone_resistance_std() { return !!game.u?.uprops?.Stone_resistance; }
+function Stone_resistance_std() { return !!game.u?.formprops?.Stone_resistance || !!game.u?.uprops?.Stone_resistance; }
 function Confusion_std() { return !!(game.u?.uconf || game.u?.HConfusion); }
 function Fumbling_std() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
 function Glib_std() { return !!game.u?.uprops?.Glib; }

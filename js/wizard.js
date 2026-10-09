@@ -9,8 +9,9 @@
 import { game } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { update_topl } from './display.js';
+import { Blind } from './vision.js';
 import { AT_MAGC, attacktype } from './monattk_data.js';
-import { MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT } from './const.js';
+import { MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR } from './const.js';
 
 const AMULET_OF_YENDOR = 213;           // js/mkobj.js OBJECT_DATA index
 const STRAT_WAITMASK = 0x30000000;
@@ -235,7 +236,10 @@ export async function intervene() {
         await update_topl('You feel vaguely nervous.');
         break;
     case 2: {
-        if (!Blind()) await update_topl('You notice a black glow surrounding you.');
+        if (!Blind()) {
+            const { hcolor } = await import('./do_name.js');
+            await update_topl(`You notice a ${hcolor('black')} glow surrounding you.`);
+        }
         const { rndcurse } = await import('./pray.js');
         await rndcurse();
         break;
@@ -331,7 +335,6 @@ function uprop(...names) {
     return false;
 }
 function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf'); }
-function Blind() { return uprop('Blinded') || !!game.u?.Blinded; }
 function In_hell() { return !!game.level?.flags?.hellish || !!game.u?.uz?.inhell; }
 function Is_astralevel() { return !!game.level?.flags?.is_astral; }
 // C ref: dungeon.c In_endgame(&u.uz) — the Planes (dnum == the endgame dnum).
@@ -370,7 +373,7 @@ function M_Wants(mtmp, mask) { return ((mdata(mtmp)?.mflags3 | 0) & mask) !== 0;
 // C ref: mkobj.c fobj — every object lying on the level's floor, in chain
 // order.  This port keeps one array per level and tags each entry's location.
 function floorObjects() {
-    return (game.level?.objects || []).filter((o) => o.where === 'floor');
+    return (game.level?.objects || []).filter((o) => o.where === OBJ_FLOOR);
 }
 // C ref: display.h u_at(x, y).
 function u_at(x, y) { return game.u?.ux === x && game.u?.uy === y; }

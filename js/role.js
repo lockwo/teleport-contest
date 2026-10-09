@@ -4,6 +4,7 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2 } from './rng.js';
+import { rn2_on_display_rng } from './disprng.js';
 import {
     A_CHAOTIC, A_LAWFUL, A_NEUTRAL, A_NONE,
     PICK_RANDOM, PICK_RIGID,
@@ -287,9 +288,10 @@ export function validrole(rolenum) {
     return IndexOkT(rolenum, roles);
 }
 
+// C ref: role.c:716 randrole(for_display) — a display-only pick comes off the
+// DISPLAY rng stream so it cannot perturb the core one.
 export function randrole(for_display = false) {
-    void for_display;
-    return rn2(roles.length);
+    return for_display ? rn2_on_display_rng(roles.length) : rn2(roles.length);
 }
 
 export function randrole_filtered() {
@@ -782,6 +784,49 @@ export function align_gname(rolenum, alignType) {
     if (!gnam) return 'someone';
     if (gnam[0] === '_') gnam = gnam.slice(1);
     return gnam;
+}
+
+// C ref: pray.c:2557 hallu_gods[].
+const HALLU_GODS = [
+    'the Flying Spaghetti Monster', 'Eris', 'the Martians', 'Xom',
+    'AnDoR dRaKoN', 'the Central Bank of Yendor', 'Tooth Fairy', 'Om',
+    'Yawgmoth', 'Morgoth', 'Cthulhu', 'the Ori', 'destiny',
+    'your Friend the Computer',
+];
+
+// C ref: pray.c:2577 halu_gname(alignment) — hallucination handling for
+// priest/minion names: select a random god iff the hero is hallucinating, every
+// pick off the DISPLAY rng.  The hero's own pantheon is addressed by the
+// roles[] ARRAY index (not the PM_ mnum, which differs for Rogue/Ranger).
+export function halu_gname(alignment) {
+    const u = game.u;
+    const hallu = !!u && !((u.HHalluc_resistance || 0) > 0)
+        && !!(u.uhallu || u.HHallucination || u.uprops?.Hallucination);
+    if (!hallu) {
+        const mnum = game.urole?.mnum ?? u?.umonnum ?? 0;
+        const i = roles.findIndex((r) => r.mnum === mnum);
+        return align_gname(i >= 0 ? i : mnum, alignment);
+    }
+
+    /* Some roles (Priest) don't have a pantheon (roles[].lgod is NULL), so
+       keep trying until we get a role which does. */
+    let which;
+    do
+        which = randrole(true);
+    while (!roles[which].gods);
+
+    const gods = roles[which].gods;
+    let gnam;
+    switch (rn2_on_display_rng(9)) {
+    case 0: case 1: gnam = gods[0]; break;
+    case 2: case 3: gnam = gods[1]; break;
+    case 4: case 5: gnam = gods[2]; break;
+    case 6: case 7:
+        gnam = HALLU_GODS[rn2_on_display_rng(HALLU_GODS.length)];
+        break;
+    default: gnam = 'Moloch'; break;
+    }
+    return gnam[0] === '_' ? gnam.slice(1) : gnam;
 }
 
 // C ref: pray.c align_gtitle() — "god" or "goddess" (goddess marked by '_').

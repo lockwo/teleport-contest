@@ -22,7 +22,7 @@ import { place_object } from './mkobj.js';
 import { t_at } from './trap.js';
 import { losehp_do } from './do.js';
 import { IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED, is_pit, is_hole, POOL,
-         DRAWBRIDGE_UP, SLT_ENCUMBER } from './const.js';
+         DRAWBRIDGE_UP, SLT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 
 // C ref: you.h — bit masks for u.bc_felt and the bc_control argument.
 export const BC_BALL = 0x01;
@@ -41,7 +41,7 @@ function remove_object(obj) {
     if (!arr) return;
     const ix = arr.indexOf(obj);
     if (ix >= 0) arr.splice(ix, 1);
-    obj.where = 'free';
+    obj.where = OBJ_FREE;
 }
 
 const at = (x, y) => game.level?.at(x, y) || null;
@@ -61,7 +61,7 @@ function IS_CHAIN_ROCK(x, y) {
     return IS_DOOR(typ) && ((loc.doormask ?? 0) & (D_CLOSED | D_LOCKED)) !== 0;
 }
 // C ref: obj.h carried(obj) — in the hero's inventory rather than on the floor.
-const carried = (obj) => obj?.where === 'invent';
+const carried = (obj) => obj?.where === OBJ_INVENT;
 
 // C ref: ball.c bc_order() — which object is nearer the top of the pile when
 // the ball and chain share a square.
@@ -80,7 +80,7 @@ function bc_order() {
     const objs = game.level?.objects || [];
     for (let i = objs.length - 1; i >= 0; i--) {
         const o = objs[i];
-        if (o.where !== 'floor' || o.ox !== uball.ox || o.oy !== uball.oy) continue;
+        if (o.where !== OBJ_FLOOR || o.ox !== uball.ox || o.oy !== uball.oy) continue;
         if (o === uchain) return BCPOS_CHAIN;
         if (o === uball) return BCPOS_BALL;
     }
@@ -99,7 +99,7 @@ export function placebc() {
     // { impossible("bc already placed?"); return; }`.  Without the guard a
     // second placebc() puts a SECOND chain+ball on the pile, and look_here()
     // then lists each of them twice.
-    if (u.uchain.where !== 'free') return;
+    if (u.uchain.where !== OBJ_FREE) return;
     if (carried(u.uball)) {
         u.bc_order = BCPOS_DIFFER;
     } else {
@@ -151,7 +151,7 @@ function setMemGlyph(x, y, g) { const loc = at(x, y); if (loc) loc.remembered_gl
 // visible: a blind punished hero who steps off the square holding the chain
 // keeps seeing '_' there (seed4500 step 1098), where the lift-then-drop arm
 // erases the memory while the objects are off the map.  No RNG in either arm.
-export function move_bc(before, control, ballx, bally, chainx, chainy) {
+export async function move_bc(before, control, ballx, bally, chainx, chainy) {
     const u = game.u;
     const uball = u?.uball, uchain = u?.uchain;
     if (!uball || !uchain) return;
@@ -208,9 +208,11 @@ export function move_bc(before, control, ballx, bally, chainx, chainy) {
             u.bc_order = bc_order();
         }
         remove_object(uchain);
+        await maybe_unhide_at_bc(uchain.ox, uchain.oy);
         newsym(uchain.ox, uchain.oy);
         if (!carried(uball)) {
             remove_object(uball);
+            await maybe_unhide_at_bc(uball.ox, uball.oy);
             newsym(uball.ox, uball.oy);
         }
     } else {
@@ -245,7 +247,7 @@ export async function drag_ball(x, y, allow_drag = true) {
     let cause_delay = false;
 
     if (dist2(x, y, uchain.ox, uchain.oy) <= 2) {   /* nothing moved */
-        move_bc(1, bc_control, ballx, bally, chainx, chainy);
+        await move_bc(1, bc_control, ballx, bally, chainx, chainy);
         return { bc_control, ballx, bally, chainx, chainy, cause_delay };
     }
 
@@ -254,7 +256,7 @@ export async function drag_ball(x, y, allow_drag = true) {
     if (carried(uball) || distmin(x, y, uball.ox, uball.oy) <= 2) {
         const oldchainx = uchain.ox, oldchainy = uchain.oy;
         bc_control = BC_CHAIN;
-        move_bc(1, bc_control, ballx, bally, chainx, chainy);
+        await move_bc(1, bc_control, ballx, bally, chainx, chainy);
         if (carried(uball)) {
             /* move chain only if necessary */
             if (distmin(x, y, uchain.ox, uchain.oy) > 1) {
@@ -267,9 +269,9 @@ export async function drag_ball(x, y, allow_drag = true) {
             distmin(x, y, chx, chy) <= 1
             && distmin(chx, chy, uball.ox, uball.oy) <= 1;
         // C's SKIP_TO_DRAG: undo the move_bc() and fall through to the drag code.
-        const skip_to_drag = () => {
+        const skip_to_drag = async () => {
             chainx = oldchainx; chainy = oldchainy;
-            move_bc(0, bc_control, ballx, bally, chainx, chainy);
+            await move_bc(0, bc_control, ballx, bally, chainx, chainy);
             goto_drag = true;
         };
         const already_in_rock = IS_CHAIN_ROCK(u.ux, u.uy)
@@ -281,7 +283,7 @@ export async function drag_ball(x, y, allow_drag = true) {
             /* two spaces diagonal from ball: chain goes in between */
             chainx = Math.trunc((uball.ox + x) / 2);
             chainy = Math.trunc((uball.oy + y) / 2);
-            if (IS_CHAIN_ROCK(chainx, chainy) && !already_in_rock) skip_to_drag();
+            if (IS_CHAIN_ROCK(chainx, chainy) && !already_in_rock) await skip_to_drag();
             break;
         case 5: {
             /* distance 2/1 from the ball: chain goes to one of the two squares
@@ -299,21 +301,21 @@ export async function drag_ball(x, y, allow_drag = true) {
             if (rock1 && !rock2 && !already_in_rock) {
                 if (allow_drag) {
                     if (dist2(u.ux, u.uy, uball.ox, uball.oy) === 5
-                        && dist2(x, y, tempx, tempy) === 1) { skip_to_drag(); break; }
+                        && dist2(x, y, tempx, tempy) === 1) { await skip_to_drag(); break; }
                     if (dist2(u.ux, u.uy, uball.ox, uball.oy) === 4
-                        && dist2(x, y, tempx, tempy) === 2) { skip_to_drag(); break; }
+                        && dist2(x, y, tempx, tempy) === 2) { await skip_to_drag(); break; }
                 }
                 chainx = tempx2; chainy = tempy2;
             } else if (!rock1 && rock2 && !already_in_rock) {
                 if (allow_drag) {
                     if (dist2(u.ux, u.uy, uball.ox, uball.oy) === 5
-                        && dist2(x, y, tempx2, tempy2) === 1) { skip_to_drag(); break; }
+                        && dist2(x, y, tempx2, tempy2) === 1) { await skip_to_drag(); break; }
                     if (dist2(u.ux, u.uy, uball.ox, uball.oy) === 4
-                        && dist2(x, y, tempx2, tempy2) === 2) { skip_to_drag(); break; }
+                        && dist2(x, y, tempx2, tempy2) === 2) { await skip_to_drag(); break; }
                 }
                 chainx = tempx; chainy = tempy;
             } else if (rock1 && rock2 && !already_in_rock) {
-                skip_to_drag();
+                await skip_to_drag();
             } else {
                 // Tie-break between the two candidate squares.  The rn2(2) is
                 // only drawn when both are equidistant from the chain's current
@@ -333,14 +335,14 @@ export async function drag_ball(x, y, allow_drag = true) {
             if (CHAIN_IN_MIDDLE(uchain.ox, uchain.oy)) break;
             chainx = Math.trunc((x + uball.ox) / 2);
             chainy = Math.trunc((y + uball.oy) / 2);
-            if (IS_CHAIN_ROCK(chainx, chainy) && !already_in_rock) skip_to_drag();
+            if (IS_CHAIN_ROCK(chainx, chainy) && !already_in_rock) await skip_to_drag();
             break;
         case 2:
             if (dist2(x, y, uball.ox, uball.oy) === 2
                 && dist2(x, y, uchain.ox, uchain.oy) === 4) {
                 if (uchain.oy === y) chainx = uball.ox;
                 else chainy = uball.oy;
-                if (IS_CHAIN_ROCK(chainx, chainy) && !already_in_rock) skip_to_drag();
+                if (IS_CHAIN_ROCK(chainx, chainy) && !already_in_rock) await skip_to_drag();
                 break;
             }
             /* FALLTHROUGH */
@@ -401,15 +403,15 @@ export async function drag_ball(x, y, allow_drag = true) {
             newsym(u.ux0 ?? u.ux, u.uy0 ?? u.uy);
             nomul0();
             bc_control = BC_BALL;
-            move_bc(1, bc_control, ballx, bally, chainx, chainy);
+            await move_bc(1, bc_control, ballx, bally, chainx, chainy);
             ballx = uchain.ox; bally = uchain.oy;
-            move_bc(0, bc_control, ballx, bally, chainx, chainy);
+            await move_bc(0, bc_control, ballx, bally, chainx, chainy);
             return null;
         }
     }
 
     bc_control = BC_BALL | BC_CHAIN;
-    move_bc(1, bc_control, ballx, bally, chainx, chainy);
+    await move_bc(1, bc_control, ballx, bally, chainx, chainy);
     if (dist2(x, y, u.ux, u.uy) > 2) {
         /* teleported out of drag range after all — behave like a teleport */
         ballx = chainx = x;
@@ -495,13 +497,10 @@ function Punished() { return !!game.u?.uball; }
 // C ref: include/youprop.h Levitation.
 function Levitation() { return !!game.u?.uprops?.Levitation; }
 
-// C ref: mon.c maybe_unhide_at(x, y) — the faithful port is module-private at
-// js/monmove.js:1910 (js/invent.js:1170 is a stub); export that one when wiring.
+// C ref: mon.c maybe_unhide_at(x, y).
 async function maybe_unhide_at_bc(x, y) {
-    const MM = await import('./monmove.js');
-    if (typeof MM.maybe_unhide_at === 'function')
-        return MM.maybe_unhide_at(x, y);
-    return undefined;   /* GAP: monmove.js does not export it */
+    const { maybe_unhide_at } = await import('./monmove.js');
+    return await maybe_unhide_at(x, y);
 }
 
 // C ref: attrib.c Maybe_Half_Phys(dmg) — halved by Half_physical_damage.
@@ -684,7 +683,7 @@ export async function lift_covet_and_placebc(pin) {
            restriction in effect>") */
         return;
     }
-    if (u.uchain && u.uchain.where !== 'free') {
+    if (u.uchain && u.uchain.where !== OBJ_FREE) {
         const { impossible } = await import('./display.js');
         await impossible('bc already placed?');
         return;
@@ -901,6 +900,7 @@ export async function drag_down() {
         game._toplinSoft = null;
     }
     game._screenBlank = true;
+    game._screenBlankStatus = false;
 
     if (forward) {
         if (rn2(6)) {
@@ -951,14 +951,14 @@ export async function bc_sanity_check() {
     }
     /* ball is free when swallowed, when changing levels or during air bubble
        management on Plane of Water, other times? */
-    freechain = (!u.uchain || u.uchain.where === 'free');
-    freeball = (!u.uball || u.uball.where === 'free'
+    freechain = (!u.uchain || u.uchain.where === OBJ_FREE);
+    freeball = (!u.uball || u.uball.where === OBJ_FREE
                 /* lie to simplify the testing logic */
-                || (freechain && u.uball.where === 'invent'));
+                || (freechain && u.uball.where === OBJ_INVENT));
     if (u.uball && (u.uball.otyp !== HEAVY_IRON_BALL
-                    || (u.uball.where !== 'floor'
-                        && u.uball.where !== 'invent'
-                        && u.uball.where !== 'free')
+                    || (u.uball.where !== OBJ_FLOOR
+                        && u.uball.where !== OBJ_INVENT
+                        && u.uball.where !== OBJ_FREE)
                     || (!!freeball !== !!freechain)      /* freeball ^ freechain */
                     || ((u.uball.owornmask & W_BALL) === 0)
                     || ((u.uball.owornmask & ~(W_BALL | W_WEAPONS)) !== 0))) {
@@ -972,8 +972,8 @@ export async function bc_sanity_check() {
     }
     /* similar check to ball except can't be in inventory */
     if (u.uchain && (u.uchain.otyp !== IRON_CHAIN
-                     || (u.uchain.where !== 'floor'
-                         && u.uchain.where !== 'free')
+                     || (u.uchain.where !== OBJ_FLOOR
+                         && u.uchain.where !== OBJ_FREE)
                      || (!!freechain !== !!freeball)
                      /* [could simplify this to owornmask != W_CHAIN] */
                      || ((u.uchain.owornmask & W_CHAIN) === 0)
@@ -992,7 +992,7 @@ export async function bc_sanity_check() {
         cx = u.uchain.ox; cy = u.uchain.oy;
         cdx = cx - u.ux; cdy = cy - u.uy;
         cdx = Math.abs(cdx); cdy = Math.abs(cdy);
-        if (u.uball.where === 'invent') /* carried(uball) */
+        if (u.uball.where === OBJ_INVENT) /* carried(uball) */
             { bx = u.ux; by = u.uy; }   /* get_obj_location() */
         else
             { bx = u.uball.ox; by = u.uball.oy; }

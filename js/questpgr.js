@@ -7,12 +7,13 @@
 
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { nhgetch } from './input.js';
+import { nhgetch, xwaitforspace_quit } from './input.js';
 import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle } from './role.js';
 import { A_LAWFUL, A_NEUTRAL, A_CHAOTIC, In_quest } from './const.js';
 import { rn2 } from './rng.js';
-import { flush_screen, topl_more, update_topl, impossible } from './display.js';
+import { flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, note_topl } from './display.js';
+import { QUEST_SYNOPSIS } from './quest_synopsis_data.js';
 import { renderWindowScreen } from './invent.js';
 import { Blind } from './vision.js';
 import { msound_of, MS_LEADER, MS_NEMESIS, MS_GUARDIAN,
@@ -28,7 +29,7 @@ import { artilist } from './artifact.js';
 // the readiness-gate texts below are delivered at XL>=14, where %r must be the
 // hero's actual current title ("a Spelunker" at XL 20, not "a Digger").
 import { rank_of as rank_at_level } from './exper.js';
-import { exercise } from './attrib.js';
+import { exercise, adjalign } from './attrib.js';
 import { A_WIS } from './const.js';
 
 // dat/quest.lua questtext.common.legacy.text
@@ -124,7 +125,16 @@ export async function com_pager_legacy() {
     disp.putstr(textCol, moreRow, '--More--', NO_COLOR, 0);
     disp.setCursor(textCol + 8, moreRow);
 
-    await nhgetch();
+    // C ref: win/tty/wintty.c dmore() -> getline.c xwaitforspace(quitchars):
+    // only space/return/escape dismiss a text window's --More--; any other
+    // key just rings the bell and leaves the window up.
+    for (;;) {
+        const c = await nhgetch();
+        if (xwaitforspace_quit(c)) break;
+    }
+    // C ref: questpgr.c com_pager_core() — the `synopsis` bypasses delivery and
+    // goes to putmsghistory() so ^P can recall it.
+    note_topl(qt_convert_line(QUEST_SYNOPSIS.common.legacy));
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -2819,15 +2829,16 @@ async function deliver_by_window(lines) {
     const g = game;
     // create_nhwindow()/display_nhwindow() implicitly flush any pending
     // NEED_MORE topline (e.g. teleds' "You materialize...") before painting
-    // over it.
-    if (g._toplin === 1) await topl_more();
+    // over it.  tty_display_nhwindow(WIN_MESSAGE) is a no-op while an
+    // ESC-dismissed --More-- left WIN_STOP set (WIN_STOP == WIN_CANCELLED).
+    await display_nhwindow_message();
     renderWindowScreen(lines.map(qt_convert_line),
                        { footer: '--More--', footerRow: 23, footerCol: 0, modal: 'textwin' });
     await flush_screen(1);
     g._modal_screen = 'topl';
     for (;;) {
         const c = await nhgetch();
-        if (c === 32 || c === 13 || c === 10 || c === 27) break;
+        if (xwaitforspace_quit(c)) break;
     }
     delete g._modal_screen;
     g._pending_message = '';
@@ -2847,7 +2858,8 @@ async function com_pager_core(section, msgid) {
     let m = sec?.[msgid];
     // C: questtext.msg_fallbacks[msgid] names an alternate id to retry in the
     // SAME section before giving up.
-    if (!m && MSG_FALLBACKS[msgid]) m = sec?.[MSG_FALLBACKS[msgid]];
+    let usedId = msgid;
+    if (!m && MSG_FALLBACKS[msgid]) { usedId = MSG_FALLBACKS[msgid]; m = sec?.[usedId]; }
     if (!m) return false;
     let lines = m.t;
     if (!lines) {
@@ -2858,11 +2870,16 @@ async function com_pager_core(section, msgid) {
     // C: howtoput2i — 0 "default" becomes a window as soon as the raw text has
     // an embedded newline; 1 "pline" stays a pline even then.
     let output = m.o || 0;
-    if (output === 0 && lines.length > 1) output = 2;
-    // The `synopsis` field goes to putmsghistory() (^P recall only, never
-    // displayed); the port carries no message history, so it is dropped.
+    let synopsis = QUEST_SYNOPSIS[section]?.[usedId];
+    if (output === 0 && lines.length > 1) {
+        output = 2;
+        // C: FIXME-fallback synopsis — "[" + text + "]" with newlines as spaces.
+        if (!synopsis) synopsis = `[${lines.join(' ')}]`;
+    }
     if (output === 0 || output === 1) await deliver_by_pline(lines);
     else await deliver_by_window(lines);
+    // C: the synopsis bypasses message delivery but is available for ^P recall.
+    if (synopsis) note_topl(qt_convert_line(synopsis));
     return true;
 }
 
@@ -2877,6 +2894,19 @@ async function qt_pager(msgid) {
 // "quest_portal" / "quest_portal_again" / "quest_portal_demand").
 export async function com_pager(msgid) {
     await com_pager_core('common', msgid);
+}
+
+// C ref: quest.c artitouch() — the first time the hero gains the quest
+// artifact (invent.c addinv_core1), page "gotit" and exercise wisdom.  The
+// caller has already done C's observe_object(obj).
+export async function artitouch(_obj) {
+    const q = game.quest_status || (game.quest_status = {});
+    if (!q.touched_artifact) {
+        /* only give this message once */
+        q.touched_artifact = true;
+        await qt_pager('gotit');
+        exercise(A_WIS, true);
+    }
 }
 
 // C ref: questpgr.c deliver_splev_message() (do.c:1858) — ported at the bottom
@@ -3092,27 +3122,23 @@ async function chat_with_guardian() {
 
 // C ref: quest.c quest_stat_check() — monmove.c:715 runs this at the top of
 // EVERY dochug pass; Qstat(in_battle) is the only thing it writes and
-// nemesis_speaks() below is its only reader.  monmove.js's dochug does not call
-// it yet (see the note at js/monmove.js:3631), so `_quest_in_battle` stays
-// undefined and nemesis_speaks takes its non-battle branch.
+// nemesis_speaks() below is its only reader.
 export function quest_stat_check(mtmp, helpless, near) {
     if (msound_of(mtmp?.data) === MS_NEMESIS)
         game._quest_in_battle = (!helpless && !!near);
 }
 
 // C ref: quest.c nemesis_speaks() — the nemesis's own turn, from dochug()'s
-// STRAT_WAITFORU release rather than from #chat.  NOT wired into quest_talk()
-// below: without quest_stat_check() the in_battle test answers FALSE where C
-// answers TRUE, which would open a full text window where C draws one rn2(5).
+// quest_talk() (phase four, hero-adjacent and not helpless).
 export async function nemesis_speaks() {
     const g = game;
     if (!g._quest_in_battle) {
-        if (g._quest_have_questart) await qt_pager('nemesis_wantsit');
+        if (g.u?.uhave?.questart) await qt_pager('nemesis_wantsit');
         else if (g._quest_made_goal === 1 || !g._quest_met_nemesis) await qt_pager('nemesis_first');
-        else if (g._quest_made_goal < 4) await qt_pager('nemesis_next');
+        else if ((g._quest_made_goal ?? 0) < 4) await qt_pager('nemesis_next');
         else if (g._quest_made_goal < 7) await qt_pager('nemesis_other');
         else if (!rn2(5)) await qt_pager('discourage');
-        if (g._quest_made_goal < 7) g._quest_made_goal = (g._quest_made_goal ?? 0) + 1;
+        if ((g._quest_made_goal ?? 0) < 7) g._quest_made_goal = (g._quest_made_goal ?? 0) + 1;
         g._quest_met_nemesis = true;
     } else if (!rn2(5)) {
         await qt_pager('discourage');
@@ -3134,20 +3160,86 @@ function is_quest_leader(mtmp) {
 // C ref: quest.c quest_chat() — the #chat entry point (sounds.c domonnoise's
 // MS_LEADER/MS_NEMESIS/MS_GUARDIAN arm).
 export async function quest_chat(mtmp) {
-    if (is_quest_leader(mtmp)) { await chat_with_leader(mtmp); return; }
+    if (is_quest_leader(mtmp)) {
+        await chat_with_leader(mtmp);
+        /* leader might have become pissed during the chat */
+        if (game._quest_pissed_off) {
+            const { setmangry } = await import('./uhitm.js');
+            await setmangry(mtmp, false);
+        }
+        return;
+    }
     const ms = msound_of(mtmp?.data);
     if (ms === MS_NEMESIS) await chat_with_nemesis();
     else if (ms === MS_GUARDIAN) await chat_with_guardian();
+    else {
+        const { mon_nam } = await import('./do_name.js');
+        await impossible(`quest_chat: Unknown quest character ${mon_nam(mtmp)}.`);
+    }
+}
+
+// C ref: mon.c angry_guards(silent) — anger the Minetown watch; TRUE if any
+// peaceful watchman was found.
+export async function angry_guards(silent) {
+    const { canspotmon } = await import('./uhitm.js');
+    const { m_next2u } = await import('./monmove.js');
+    let ct = 0, nct = 0, sct = 0, slct = 0;
+    for (const mtmp of (game.level?.monsters || [])) {
+        if (!mtmp || mtmp.mhp <= 0) continue;
+        const nm = mtmp.data?.name;
+        if (!((nm === 'watchman' || nm === 'watch captain') && mtmp.mpeaceful)) continue;
+        ct++;
+        if (canspotmon(mtmp) && mtmp.mcanmove) {
+            if (m_next2u(mtmp)) nct++;
+            else sct++;
+        }
+        if (mtmp.msleeping || mtmp.mfrozen) {
+            slct++;
+            mtmp.msleeping = 0;
+            mtmp.mfrozen = 0;
+        }
+        mtmp.mpeaceful = 0;
+    }
+    if (!ct) return false;
+    if (!silent) {
+        if (slct)
+            await update_topl(`The guard${slct > 1 ? 's' : ''} wake${slct === 1 ? 's' : ''} up.`);
+        if (nct)
+            await update_topl(`The guard${nct === 1 ? '' : 's'} get${nct === 1 ? 's' : ''} angry!`);
+        else if (sct)
+            await update_topl(`${sct === 1 ? 'An angry' : 'Angry'} guard${sct === 1 ? '' : 's'} ${
+                sct === 1 ? 'is' : 'are'} approaching!`);
+        else
+            await update_topl(`You hear the shrill sound of ${ct === 1 ? "a guard's" : "guards'"} whistle${ct === 1 ? '' : 's'}.`);
+    }
+    return true;
+}
+
+// C ref: quest.c prisoner_speaks(mtmp) — a freed (STRAT_WAITMASK) prisoner
+// wakes, turns peaceful and angers the guards.
+async function prisoner_speaks(mtmp) {
+    const STRAT_WAITMASK = 0x30000000;
+    if (mtmp.data?.name === 'prisoner' && (mtmp.mstrategy & STRAT_WAITMASK)) {
+        const { canseemon_shared } = await import('./display.js');
+        const { Monnam } = await import('./do_name.js');
+        if (canseemon_shared(mtmp)) await update_topl(`${Monnam(mtmp)} speaks:`);
+        await update_topl('"I\'m finally free!"');
+        mtmp.mstrategy &= ~STRAT_WAITMASK;
+        mtmp.mpeaceful = 1;
+        adjalign(3);
+        await angry_guards(false);
+    }
 }
 
 // C ref: quest.c quest_talk() — the monster's-own-turn entry point (monmove.c
-// dochug, once the STRAT_CLOSE/STRAT_WAITFORU freeze is released).  C's
-// MS_NEMESIS arm (nemesis_speaks) and MS_DJINNI arm (prisoner_speaks) are left
-// out: the first needs quest_stat_check() wired into dochug (see above), the
-// second needs the prisoner's verbalize/adjalign/angry_guards chain.
+// dochug, once the STRAT_CLOSE/STRAT_WAITFORU freeze is released): leader,
+// nemesis and prisoner arms.
 export async function quest_talk(mtmp) {
-    if (is_quest_leader(mtmp)) await leader_speaks(mtmp);
+    if (is_quest_leader(mtmp)) { await leader_speaks(mtmp); return; }
+    if (msound_of(mtmp?.data) === MS_NEMESIS) await nemesis_speaks();
+    else if (msound_of(mtmp?.data) === MS_DJINNI_Q) await prisoner_speaks(mtmp);
 }
+const MS_DJINNI_Q = 29;   // monflag.h MS_DJINNI
 
 
 // C ref: role.c roles[] — the four quest columns quest_info() reads.  js/role.js
@@ -3156,6 +3248,8 @@ export async function quest_talk(mtmp) {
 // resolved back out of those strings once, by name.  Resolving by name is the
 // house rule here: a mons[] or artilist[] reshuffle cannot silently re-point it.
 let _qnums = new Map();
+// C ref: gu.urole.questarti -- the hero's quest artifact index (0 if none).
+export function quest_artifact_num() { return quest_nums().questarti; }
 function quest_nums() {
     const code = urole_filecode();
     if (_qnums.has(code)) return _qnums.get(code);

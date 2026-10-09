@@ -25,6 +25,9 @@ import { pline, impossible } from './display.js';
 import { makeplural } from './invent.js';
 // fruitadd()'s 127-fruit overflow fallback is `return rnd(127)`.
 import { rnd } from './rng.js';
+// condition names and aliases for HILITE_STATUS=condition/...; botl.js imports
+// modules that import this one, so parseNethackrc() loads them dynamically.
+let conditions = [], condition_aliases = [];
 
 // ---------------------------------------------------------------------------
 // option_help() — the "List of game options." help topic ('?g').
@@ -760,7 +763,7 @@ function sscanf_ape(mapping, lead) {
 // C ref: options.c add_autopickup_exception().  ape->pattern is a POSIX
 // EXTENDED regex (sys/share/posixregex.c regex_compile passes REG_EXTENDED)
 // matched unanchored against the object description, NOT a glob.
-function add_autopickup_exception(mapping, result) {
+function add_autopickup_exception(mapping, result, report_error = config_error_add) {
     const APE_regex_error = 'regex error in AUTOPICKUP_EXCEPTION';
     const APE_syntax_error = 'syntax error in AUTOPICKUP_EXCEPTION';
     let grab = false;
@@ -775,7 +778,7 @@ function add_autopickup_exception(mapping, result) {
            accepted by the third form with '>' left INSIDE the pattern. */
         if (r.n !== 1) r = sscanf_ape(mapping, '');
         if (!(r.n === 1 || (r.n === 2 && r.end === '#'))) {
-            config_error_add(APE_syntax_error);
+            report_error(APE_syntax_error);
             return 0;
         }
         grab = false;
@@ -788,14 +791,14 @@ function add_autopickup_exception(mapping, result) {
        character classes). */
     const ere = ere_compile(r.text);
     if (ere.error) {
-        config_error_add(`${APE_regex_error}: ${ere.error}`);
+        report_error(`${APE_regex_error}: ${ere.error}`);
         return 0;
     }
     let re;
     try {
         re = new RegExp(ere.jsSource);
     } catch (e) {
-        config_error_add(`${APE_regex_error}: ${e.message}`);
+        report_error(`${APE_regex_error}: ${e.message}`);
         return 0;
     }
     /* ape->next = ga.apelist: newest first, which is the order
@@ -1453,11 +1456,21 @@ function set_boolean(name, value, result) {
     case 'autopickup': result.flags.pickup = value; break;      // C: flags.pickup
     case 'fixinv': result.flags.invlet_constant = value; break; // C: flags.invlet_constant
     case 'cmdassist': result.iflags.cmdassist = value; break;
+    case 'color':
+        result.flags.color = value;
+        result.iflags.use_color = value;
+        break;
     case 'splash_screen': result.iflags.wc_splash_screen = value; break;
     // C: &iflags.sanity_check (optlist.h) — the already-ported sanity-check
     // subsystem (mon.js/mklev.js/wizcmds.js/ball.js/engrave.js/timeout.js/
     // trap.js) all read game.iflags.sanity_check, not game.flags.
     case 'sanity_check': result.iflags.sanity_check = value; break;
+    // C: &iflags.showdamage (optlist.h) -- hack.js showdamage() reads
+    // game.iflags.showdamage; flags.* keeps the 'O' menu value.
+    case 'showdamage':
+        result.flags.showdamage = value;
+        result.iflags.showdamage = value;
+        break;
     // C: iflags.menu_tab_sep -- read directly (no windowport gating) by
     // weapon.c, region.c, invent.c, spell.c and artifact.c's menu-column
     // formatting; js/invent.js, js/region.js, js/spell.js and this file's own
@@ -1533,6 +1546,11 @@ function optfn_boolean(o, negated, opts, op, result) {
     if (o.name === 'pauper') set_boolean('nudist', !negated, result);
     else if (o.name === 'ascii_map') result.iflags.wc_tiled_map = negated;
     else if (o.name === 'tiled_map') result.iflags.wc_ascii_map = negated;
+    else if (o.name === 'idlecheckpoint') {
+        /* #ifndef IDLECHECKPOINT: pline() before window init is raw_print() */
+        raw_print("There is no underlying support for 'idlecheckpoint' compiled in.");
+        result.flags.idlecheckpoint = false;
+    }
     return OPTN_OK;
 }
 
@@ -1720,7 +1738,7 @@ function optfn_symset(o, negated, opts, op, result) {
         config_error_add(`Unable to load symbol set "${op}" from "symbols"`);
         return OPTN_ERR;
     }
-    if (o.name === 'symset') result.symset = op;
+    result[o.name] = /^(default|Default symbols)$/i.test(op) ? '' : op;
     return OPTN_OK;
 }
 
@@ -1747,14 +1765,34 @@ function optfn_disclose(o, negated, opts, op, result) {
     op = string_for_opt(opts, true);
     if (op !== '' && negated) { bad_negation(o.name, true); return OPTN_ERR; }
     keep(o, negated && op === '' ? false : (op === '' ? true : op), result);
-    if (op === '' || strcmpi_eq(op, 'all') || strcmpi_eq(op, 'none')) return OPTN_OK;
+    // C ref: options.c optfn_disclose() — flags.end_disclose[], one setting
+    // per disclosure_options[] letter "iavgco"; initoptions_init() starts them
+    // all at DISCLOSE_PROMPT_DEFAULT_NO ('n').
+    const end = (result.flags.end_disclose
+                 || (result.flags.end_disclose = DISCLOSURE_OPTIONS.split('').map(() => 'n')));
+    if (op === '' || strcmpi_eq(op, 'all') || strcmpi_eq(op, 'none')) {
+        const no = negated || strcmpi_eq(op, 'none');
+        for (let i = 0; i < end.length; i++) end[i] = no ? '-' : 'y';
+        return OPTN_OK;
+    }
     let prefix_val = null;
     for (let i = 0; i < op.length; i++) {
         let c = lowc(op[i]);
         if (c === 'k') c = 'v';
         if (c === 'd') c = 'o';
-        if (DISCLOSURE_OPTIONS.includes(c)) {
-            prefix_val = null;
+        const idx = DISCLOSURE_OPTIONS.indexOf(c);
+        if (idx >= 0) {
+            if (prefix_val !== null) {
+                let pv = prefix_val;
+                if (c !== 'v' && c !== 'g') {
+                    if (pv === '?') pv = 'y';
+                    if (pv === '#') pv = '+';
+                }
+                end[idx] = pv;
+                prefix_val = null;
+            } else {
+                end[idx] = '+';
+            }
         } else if (DISCLOSE_VALID.includes(c)) {
             prefix_val = c;
         } else if (c === ' ') {
@@ -1902,7 +1940,7 @@ function optfn_msg_window(o, negated, opts, op, result) {
     }
     switch (tmp) {
     case 's': case 'c': case 'f': case 'r':
-        result.iflags.prevmsg_window = op === '' ? tmp : op;
+        result.iflags.prevmsg_window = tmp;
         keep(o, op === '' ? tmp : op, result);
         return OPTN_OK;
     default:
@@ -1959,11 +1997,15 @@ function optfn_number_pad(o, negated, opts, op, result) {
 
 // C ref: options.c change_inv_order() — every character must name an object
 // class that is already in flags.inv_order, and none may repeat.
-const DEF_INV_ORDER = [12, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 16, 17, 15];
+// C ref: options.c def_inv_order[]:118 — COIN, AMULET, WEAPON, ARMOR, FOOD,
+// SCROLL, SPBOOK, POTION, RING, WAND, TOOL, GEM, ROCK, BALL, CHAIN (objclass
+// enum numbers; ILLOBJ and VENOM are deliberately absent, which is exactly
+// what makes change_inv_order() reject ']' and ')'-adjacent venom).
+const DEF_INV_ORDER = [12, 5, 2, 3, 7, 9, 10, 8, 4, 11, 6, 13, 14, 15, 16];
 function change_inv_order(op, result) {
     let retval = 1;
     const buf = [];
-    const inv_order = result.flags.inv_order_oc || DEF_INV_ORDER;
+    const inv_order = result.flags.inv_order || DEF_INV_ORDER;
     if (!op.includes('$')) buf.push(12 /* COIN_CLASS */);
     for (let i = 0; i < op.length; i++) {
         const ch = op[i];
@@ -1982,7 +2024,7 @@ function change_inv_order(op, result) {
         if (!fail) buf.push(oc_sym);
     }
     for (const oc of inv_order) if (!buf.includes(oc)) buf.push(oc);
-    result.flags.inv_order_oc = buf.slice(0, MAXOCLASSES - 1);
+    result.flags.inv_order = buf.slice(0, MAXOCLASSES - 1);
     return retval;
 }
 
@@ -2400,7 +2442,7 @@ function optfn_statushilites(o, negated, opts, op, result) {
 }
 
 // C ref: options.c optfn_statuslines() — 2 or 3, and nothing else.
-function optfn_statuslines(o, negated, opts, op, result) {
+function optfn_statuslines(o, negated, opts, op, result, error = config_error_add) {
     op = string_for_opt(opts, negated);
     let itmp = 0, retval = OPTN_OK;
     if (negated) {
@@ -2411,13 +2453,29 @@ function optfn_statuslines(o, negated, opts, op, result) {
         itmp = parseInt(op, 10) || 0;
     }
     if (itmp < 2 || itmp > 3) {
-        config_error_add(`'${o.name}:${op}' is invalid; must be 2 or 3`);
+        error(`'${o.name}:${op}' is invalid; must be 2 or 3`);
         retval = OPTN_SILENTERR;
     } else {
         result.iflags.wc2_statuslines = itmp;
         keep(o, op, result);
     }
     return retval;
+}
+
+// C ref: options.c doset_simple_menu():8672-8679 feeds the getlin response
+// through the same optfn_statuslines() setter used by the config parser.
+export async function handler_statuslines() {
+    const answer = await getlin('Set statuslines to what?');
+    if (answer[0] === '\x1b') return false;
+    const result = { flags: {}, iflags: {} };
+    const errors = [];
+    const status = optfn_statuslines({ name: 'statuslines' }, false,
+        `statuslines:${answer}`, answer, result, message => errors.push(message));
+    for (const message of errors) await OPT_MENU_DRIVER.error(message);
+    if (status !== OPTN_OK) return false;
+    game.iflags = game.iflags || {};
+    game.iflags.wc2_statuslines = result.iflags.wc2_statuslines;
+    return true;
 }
 
 // C ref: version.c get_feature_notice_ver() — strictly "maj.min.patch".
@@ -2511,15 +2569,15 @@ function warning_opts(opts, optype, result) {
     return true;
 }
 
-// C ref: options.c optfn_whatis_coord() — GPCOORDS_* are 'n','c','C','m','s'.
+// C ref: options.c optfn_whatis_coord() — flag.h GPCOORDS_NONE 'n',
+// GPCOORDS_MAP 'm', GPCOORDS_COMPASS 'c', GPCOORDS_COMFULL 'f',
+// GPCOORDS_SCREEN 's'.
 function optfn_whatis_coord(o, negated, opts, op, result) {
     if (negated) { result.iflags.getpos_coords = 'n'; return OPTN_OK; }
     op = string_for_env_opt(o.name, opts, false);
     if (op === '') return OPTN_ERR;
-    /* getpos.c GPCOORDS_NONE/COMPASS/COMFULL/MAP/SCREEN; lowc() means the
-       upper-case COMFULL spelling can never be selected, exactly as in C */
     const c = lowc(op[0]);
-    if (c && 'ncCms'.includes(c)) {
+    if (c && 'ncfms'.includes(c)) {
         result.iflags.getpos_coords = c;
         keep(o, op, result);
         return OPTN_OK;
@@ -3029,19 +3087,7 @@ export function count_menucolors() {
     return game.menucolors ? game.menucolors.length : 0;
 }
 
-// C ref: botl.c count_cond().
-export function count_cond() {
-    const c = game.conds;
-    if (!c) return 0;
-    let n = 0;
-    for (const k of Object.keys(c)) if (c[k]) n++;
-    return n;
-}
 
-// C ref: botl.c count_status_hilites().
-export function count_status_hilites() {
-    return game.status_hilites ? game.status_hilites.length : 0;
-}
 
 // ---------------------------------------------------------------------------
 // HILITE_STATUS= — botl.c parse_status_hl1()/parse_status_hl2().
@@ -3113,11 +3159,25 @@ function has_ltgt_percentnumber(str) {
     return true;
 }
 
-// C ref: botl.c splitsubfields() — '&' or '+' separated, at most 16 pieces.
-function splitsubfields(str) {
+// C ref: botl.c splitsubfields() — '&' or '+' separated pieces; null stands
+// for C's -1 (too many).  A trailing separator does not yield an empty piece.
+function splitsubfields(str, maxsf = 0) {
+    const MAX_SUBFIELDS = 16;
+    if (str === undefined || str === null) return null;
+    maxsf = (maxsf === 0) ? MAX_SUBFIELDS : Math.min(maxsf, MAX_SUBFIELDS);
     if (!str.includes('&') && !str.includes('+')) return [str];
-    const out = str.split(/[&+]/);
-    if (out.length > 16) return null;
+    const out = [];
+    let st = 0, sf = 0, c = 0;
+    while (c < str.length && sf < maxsf) {
+        if (str[c] === '&' || str[c] === '+') {
+            out.push(str.slice(st, c));
+            st = c + 1;
+            sf++;
+        }
+        c++;
+    }
+    if (sf >= maxsf - 1) return null;
+    if (c >= str.length && c !== st) out.push(str.slice(st));
     return out;
 }
 
@@ -3159,9 +3219,109 @@ function parse_status_hl1(op, from_configfile, result) {
     return true;
 }
 
-// C ref: botl.c parse_status_hl2() — validate one "field/behaviour/colour..."
-// rule.  Only the accept/reject decision and the error text are modelled; the
-// renderer does not colour status fields.
+// C ref: botl.h enum relationships, BL_TH_* behaviors, enum hlattribs.
+const REL_EQ = 0, REL_LT = 1, REL_LE = 2, REL_GE = 3, REL_GT = 4, REL_TXT = 5;
+const BLTH_NONE = 0, BLTH_PERCENTAGE = 100, BLTH_ABSOLUTE = 101,
+      BLTH_UPDOWN = 102, BLTH_TEXTMATCH = 104, BLTH_ALWAYS = 105,
+      BLTH_CRITICALHP = 106;
+const HLA_NONE = 0x01, HLA_BOLD = 0x02, HLA_DIM = 0x04, HLA_ITALIC = 0x08,
+      HLA_ULINE = 0x10, HLA_BLINK = 0x20, HLA_INVERSE = 0x40;
+// C ref: botl.h HL_ATTCLR_* offsets in cond_hilites[] (CLR_MAX + n).
+const ATTCLR_BOLD = CLR_MAX + 2, ATTCLR_DIM = CLR_MAX + 3,
+      ATTCLR_ITALIC = CLR_MAX + 4, ATTCLR_ULINE = CLR_MAX + 5,
+      ATTCLR_BLINK = CLR_MAX + 6, ATTCLR_INVERSE = CLR_MAX + 7,
+      BL_ATTCLR_MAX = CLR_MAX + 8;
+
+// C ref: botl.c is_fld_arrayvalues().  Returns the index or -1.
+function is_fld_arrayvalues(str, arr, arrmin, arrmax) {
+    for (let i = arrmin; i < arrmax; i++)
+        if (strcmpi_eq(str, arr[i])) return i;
+    return -1;
+}
+
+// C ref: botl.c match_str2conditionbitmask().
+function match_str2conditionbitmask(str) {
+    let nmatches = 0, mask = 0;
+    if (str && str.length) {
+        for (const c of conditions)
+            if (fuzzymatch(c.text[0], str, ' -_', true)) { mask |= c.mask; nmatches++; }
+        if (!nmatches)
+            for (const a of condition_aliases)
+                if (fuzzymatch(a.id, str, ' -_', true)) { mask |= a.bitmask; nmatches++; }
+        if (!nmatches)
+            for (const a of condition_aliases)
+                if (strncmpi_eq(str, a.id, str.length)) { mask |= a.bitmask; nmatches++; }
+    }
+    return mask >>> 0;
+}
+
+// C ref: botl.c str2conditionbitmask().
+function str2conditionbitmask(str) {
+    let bitmask = 0;
+    const subfields = splitsubfields(str, conditions.length);
+    if (!subfields || subfields.length < 1) return 0;
+    for (const sub of subfields) {
+        const bm = match_str2conditionbitmask(sub);
+        if (!bm) {
+            config_error_add(`Unknown condition '${sub}'`);
+            return 0;
+        }
+        bitmask = (bitmask | bm) >>> 0;
+    }
+    return bitmask;
+}
+
+// C ref: botl.c parse_condition(): "condition/stone+slime/red&inverse".  The
+// choices land in cond_hilites[] (indexed by color, then by attribute).
+function parse_condition(s, sidx, result) {
+    let coloridx = NO_COLOR_IDX, result_ok = false;
+    const ch = (result.cond_hilites ??= new Array(BL_ATTCLR_MAX).fill(0));
+    sidx++;
+    if (!s[sidx]) {
+        config_error_add('Missing condition(s)');
+        return false;
+    }
+    while (s[sidx]) {
+        const bitmask = str2conditionbitmask(s[sidx]);
+        if (!bitmask) return false;
+        sidx++;
+        const how = s[sidx];
+        if (!how) {
+            config_error_add('Missing color+attribute');
+            return false;
+        }
+        const subfields = splitsubfields(how, 0);
+        if (!subfields) return false;
+        for (const sub of subfields) {
+            const a = match_str2attr(sub, false);
+            if (a === ATR_BOLD) ch[ATTCLR_BOLD] = (ch[ATTCLR_BOLD] | bitmask) >>> 0;
+            else if (a === ATR_DIM) ch[ATTCLR_DIM] = (ch[ATTCLR_DIM] | bitmask) >>> 0;
+            else if (a === ATR_ITALIC) ch[ATTCLR_ITALIC] = (ch[ATTCLR_ITALIC] | bitmask) >>> 0;
+            else if (a === ATR_ULINE) ch[ATTCLR_ULINE] = (ch[ATTCLR_ULINE] | bitmask) >>> 0;
+            else if (a === ATR_BLINK) ch[ATTCLR_BLINK] = (ch[ATTCLR_BLINK] | bitmask) >>> 0;
+            else if (a === ATR_INVERSE) ch[ATTCLR_INVERSE] = (ch[ATTCLR_INVERSE] | bitmask) >>> 0;
+            else if (a === ATR_NONE) {
+                for (const k of [ATTCLR_BOLD, ATTCLR_DIM, ATTCLR_ITALIC,
+                                 ATTCLR_ULINE, ATTCLR_BLINK, ATTCLR_INVERSE])
+                    ch[k] = (ch[k] & ~bitmask) >>> 0;
+            } else {
+                const k = match_str2clr(sub, false);
+                if (k >= CLR_MAX) {
+                    config_error_add(`bad color ${k}`);
+                    return false;
+                }
+                coloridx = k;
+            }
+        }
+        ch[coloridx] = (ch[coloridx] | bitmask) >>> 0;
+        result_ok = true;
+        sidx++;
+    }
+    return result_ok;
+}
+
+// C ref: botl.c parse_status_hl2(): parse one "field/behavior/color..." rule
+// into hilite_s records (botl.js hands them to the status engine).
 function parse_status_hl2(s, from_configfile, result) {
     let sidx = 0;
     const fld = fldname_to_bl_indx(s[sidx]);
@@ -3179,58 +3339,77 @@ function parse_status_hl2(s, from_configfile, result) {
         config_error_add(`Unknown status field '${s[sidx]}'`);
         return false;
     }
+    if (fld === 'condition') return parse_condition(s, sidx, result);
     const row = INITBLSTATS.find((r) => r[0] === fld);
-    if (fld === 'condition') {
-        /* C hands this to parse_condition(); a condition name list is a
-           different grammar and our renderer has no condition highlights, so
-           accept it rather than invent an error C would not print */
-        return true;
-    }
 
-    let successes = 0;
+    let successes = 0, dt = null;
     sidx++;
     while (s[sidx]) {
-        let percent = false, numeric = false, txtval = false;
-        let value = 0, rel = 'lt';
+        let percent = false, numeric = false, always = false, down = false,
+            up = false, changed = false, criticalhp = false, grt = false,
+            gte = false, eq = false, le = false, lt = false, txtval = false;
+        let txt = null, kidx;
+        const hilite = { fldname: fld, set: false, anytype: null,
+                         value: { a_int: 0, a_long: 0 }, behavior: BLTH_NONE,
+                         textmatch: '', rel: REL_EQ, coloridx: 0 };
 
         if (!s[sidx + 1] || strcmpi_eq(s[sidx], 'always')) {
+            /* "field/always/color" OR "field/color" */
+            always = true;
             if (!s[sidx + 1]) sidx--;
         } else if (strcmpi_eq(s[sidx], 'up') || strcmpi_eq(s[sidx], 'down')) {
-            /* accepted for every field type */
+            if (row[1] === ANY_STR) {
+                /* 'up' or 'down' for string fields is treated as 'changed' */
+            } else if (strcmpi_eq(s[sidx], 'down')) down = true;
+            else up = true;
+            changed = true;
         } else if (fld === 'carrying-capacity'
-                   && ENC_STAT.slice(1).some((t) => strcmpi_eq(s[sidx], t))) {
+                   && (kidx = is_fld_arrayvalues(s[sidx], ENC_STAT, 1, 6)) >= 0) {
+            txt = ENC_STAT[kidx];
             txtval = true;
-        } else if (fld === 'alignment' && ALIGNTXT.some((t) => strcmpi_eq(s[sidx], t))) {
+        } else if (fld === 'alignment'
+                   && (kidx = is_fld_arrayvalues(s[sidx], ALIGNTXT, 0, 3)) >= 0) {
+            txt = ALIGNTXT[kidx];
             txtval = true;
-        } else if (fld === 'hunger' && HU_TXT.some((t) => t && strcmpi_eq(s[sidx], t))) {
+        } else if (fld === 'hunger'
+                   && (kidx = is_fld_arrayvalues(s[sidx], HU_TXT, 0, 7)) >= 0) {
+            txt = HU_TXT[kidx];
             txtval = true;
         } else if (strcmpi_eq(s[sidx], 'changed')) {
-            /* accepted */
+            changed = true;
         } else if (fld === 'hitpoints' && strcmpi_eq(s[sidx], 'criticalhp')) {
-            /* accepted */
+            criticalhp = true;
         } else if (is_ltgt_percentnumber(s[sidx])) {
             const tmp = s[sidx];
-            percent = tmp.includes('%');
-            if (tmp[0] === '<') rel = (tmp[1] === '=') ? 'le' : 'lt';
-            else if (tmp[0] === '>') rel = (tmp[1] === '=') ? 'ge' : 'gt';
-            else rel = 'eq';
+            if (tmp.includes('%')) percent = true;
+            if (tmp[0] === '<') {
+                if (tmp[1] === '=') le = true; else lt = true;
+            } else if (tmp[0] === '>') {
+                if (tmp[1] === '=') gte = true; else grt = true;
+            }
             const stripped = tmp.replace(/[%<>=+]/g, '');
-            value = parseInt(stripped, 10) || 0;
             numeric = true;
-            const dt = percent ? ANY_INT : row[1];
-            const opTxt = rel === 'gt' ? '>' : rel === 'ge' ? '>=' :
-                          rel === 'lt' ? '<' : rel === 'le' ? '<=' : '=';
+            dt = percent ? ANY_INT : row[1];
+            if (dt === ANY_INT) hilite.value.a_int = parseInt(stripped, 10) || 0;
+            else if (dt === ANY_LONG) hilite.value.a_long = parseInt(stripped, 10) || 0;
+
+            const op = grt ? '>' : gte ? '>=' : lt ? '<' : le ? '<=' : '=';
             if (dt === ANY_INT
-                && (value < ((fld === 'armor-class') ? -128 : rel === 'gt' ? -1 : rel === 'lt' ? 1 : 0)
-                    || value > (percent ? (rel === 'lt' ? 101 : 100) : LARGEST_INT))) {
-                config_error_add(`Threshold value ${opTxt}${value}${percent ? '%' : ''}`
-                                 + ' is out of range');
+                && (hilite.value.a_int
+                    < ((fld === 'armor-class') ? -128 : grt ? -1 : lt ? 1 : 0)
+                    || hilite.value.a_int > (percent ? (lt ? 101 : 100)
+                                                     : LARGEST_INT))) {
+                config_error_add(`hilite_status threshold '${op}${hilite.value.a_int}`
+                                 + `${percent ? '%' : ''}' is out of range`);
                 return false;
-            } else if (dt === ANY_LONG && value < (rel === 'gt' ? -1 : rel === 'lt' ? 1 : 0)) {
-                config_error_add(`Threshold value ${opTxt}${value} is out of range`);
+            } else if (dt === ANY_LONG
+                       && hilite.value.a_long < (grt ? -1 : lt ? 1 : 0)) {
+                config_error_add(`hilite_status threshold '${op}${hilite.value.a_long}'`
+                                 + ' is out of range');
                 return false;
             }
         } else if (row[1] === ANY_STR) {
+            txt = s[sidx];
             txtval = true;
         } else {
             config_error_add(has_ltgt_percentnumber(s[sidx])
@@ -3239,43 +3418,79 @@ function parse_status_hl2(s, from_configfile, result) {
             return false;
         }
 
+        if (grt || up) hilite.rel = REL_GT;
+        else if (lt || down) hilite.rel = REL_LT;
+        else if (gte) hilite.rel = REL_GE;
+        else if (le) hilite.rel = REL_LE;
+        else if (eq || percent || numeric || changed) hilite.rel = REL_EQ;
+        else if (txtval) hilite.rel = REL_TXT;
+        else hilite.rel = REL_LT;
+
         if (row[1] === ANY_STR && (percent || numeric)) {
             config_error_add(`Field '${fld}' does not support numeric values`);
             return false;
         }
+
         if (percent) {
+            const v = hilite.value.a_int;
             if (!row[2]) {
                 config_error_add(`Cannot use percent with '${fld}'`);
                 return false;
-            }
-            if (value < -1 || (value === 0 && rel === 'lt')
-                || (value === 100 && rel === 'gt') || value > 101) {
-                const opTxt = rel === 'lt' ? '<' : rel === 'le' ? '<=' :
-                              rel === 'gt' ? '>' : rel === 'ge' ? '>=' : '=';
-                config_error_add(`hilite_status: invalid percentage value '${opTxt}${value}%'`);
+            } else if (v <= -1 || (v === 0 && hilite.rel === REL_LT)
+                       || (v === 100 && hilite.rel === REL_GT) || v >= 101) {
+                config_error_add(
+                    `hilite_status: invalid percentage value '${
+                        hilite.rel === REL_LT ? '<' : hilite.rel === REL_LE ? '<='
+                        : hilite.rel === REL_GT ? '>' : hilite.rel === REL_GE ? '>='
+                        : '='}${v}%'`);
                 return false;
             }
         }
 
+        /* actions */
         sidx++;
         const how = s[sidx];
         if (how === undefined && !successes) return false;
-        const subfields = splitsubfields(how || '');
+        let coloridx = -1;
+        const subfields = splitsubfields(how ?? '', 0);
         if (!subfields || subfields.length < 1) return false;
 
-        let coloridx = -1;
+        let disp_attrib = 0;
         for (const sub of subfields) {
             const a = match_str2attr(sub, false);
-            if (a !== -1) continue;
-            const c = match_str2clr(sub, false);
-            if (c >= CLR_MAX || coloridx !== -1) {
-                config_error_add(`bad color '${c} ${coloridx}'`);
-                return false;
+            if (a === ATR_BOLD) disp_attrib |= HLA_BOLD;
+            else if (a === ATR_DIM) disp_attrib |= HLA_DIM;
+            else if (a === ATR_ITALIC) disp_attrib |= HLA_ITALIC;
+            else if (a === ATR_ULINE) disp_attrib |= HLA_ULINE;
+            else if (a === ATR_BLINK) disp_attrib |= HLA_BLINK;
+            else if (a === ATR_INVERSE) disp_attrib |= HLA_INVERSE;
+            else if (a === ATR_NONE) disp_attrib = HLA_NONE;
+            else {
+                const c = match_str2clr(sub, false);
+                if (c >= CLR_MAX || coloridx !== -1) {
+                    config_error_add(`bad color '${c} ${coloridx}'`);
+                    return false;
+                }
+                coloridx = c;
             }
-            coloridx = c;
         }
-        result.status_hilites.push({ fld, rel, value, percent, txtval,
-                                     color: coloridx < 0 ? NO_COLOR_IDX : coloridx });
+        if (coloridx === -1) coloridx = NO_COLOR_IDX;
+
+        hilite.coloridx = coloridx | (disp_attrib << 8);
+
+        if (always) hilite.behavior = BLTH_ALWAYS;
+        else if (percent) hilite.behavior = BLTH_PERCENTAGE;
+        else if (changed) hilite.behavior = BLTH_UPDOWN;
+        else if (numeric) hilite.behavior = BLTH_ABSOLUTE;
+        else if (txtval) hilite.behavior = BLTH_TEXTMATCH;
+        else if (criticalhp) hilite.behavior = BLTH_CRITICALHP;
+        else hilite.behavior = BLTH_NONE;
+
+        hilite.anytype = dt;
+        if (hilite.behavior === BLTH_TEXTMATCH && txt)
+            hilite.textmatch = txt.replace(/^\s+|\s+$/g, '');
+
+        result.status_hilites.push(hilite);
         successes++;
         sidx++;
     }
@@ -3515,6 +3730,7 @@ function optfn_compound(o, negated, opts, op, result, duplicate) {
 function set_playmode(mode, result) {
     result.flags.playmode = mode;
     if (mode === 'debug') result.flags.debug = true;
+    if (mode === 'explore') result.flags.explore = true;
 }
 
 // C ref: options.c set_menuobjsyms_flags().
@@ -3961,6 +4177,7 @@ function handle_config_section(buf, st) {
 }
 
 export async function parseNethackrc(rc) {
+    ({ conditions, condition_aliases } = await import('./botl.js'));
     const result = {
         name: '', role: -1, race: -1, gender: -1, align: -1,
         flags: {}, iflags: {}, keybind: {}, symoverride: {}, apelist: [],
@@ -4040,6 +4257,7 @@ export async function parseNethackrc(rc) {
     }
     if (result.menucolors.length) game.menucolors = result.menucolors;
     if (result.status_hilites.length) game.status_hilites = result.status_hilites;
+    if (result.cond_hilites) game.cond_hilites = result.cond_hilites;
     if (Object.keys(result.conds).length) game.conds = result.conds;
     if (result.rfilter) game.rfilter = result.rfilter;
     return result;
@@ -4584,7 +4802,7 @@ const MENU_ITEMFLAGS_NONE = 0x0, MENU_ITEMFLAGS_SELECTED = 0x1,
 
 // Install `select` (win, how) -> array of picked `any` values, or null/-1 for
 // ESC; `getlin` (prompt) -> string ('\033' for ESC) to drive these for real.
-export const OPT_MENU_DRIVER = { select: null, getlin: null };
+export const OPT_MENU_DRIVER = { select: null, getlin: null, error: null };
 
 function create_nhwindow(type) {
     return { type, items: [], query: '', lines: [] };
@@ -4613,6 +4831,8 @@ async function select_menu(win, how, picks) {
     for (const g of got) picks.push(g);
     return picks.length;
 }
+
+export { create_nhwindow, destroy_nhwindow, start_menu, add_menu, end_menu, select_menu };
 
 // C ref: getlin() -- returns the typed line, or "\033" when ESC'd.
 async function getlin(prompt) {
@@ -4744,10 +4964,6 @@ const InvOptNone = 0, InvOptOn = 1, InvSparse = 4;
 // C ref: include/global.h COLNO/ROWNO.
 const COLNO = 80, ROWNO = 21;
 
-// C ref: options.c:108 `static boolean give_opt_msg = TRUE` -- doset_simple()
-// clears it around its handler calls so the simple menu stays quiet.
-let give_opt_msg = true;
-
 // ---------------------------------------------------------------------------
 // handler_*() -- the per-option interactive setters the 'O' menus dispatch to.
 // Each is async because the port's input is: C's select_menu()/getlin() block,
@@ -4840,9 +5056,11 @@ export async function handler_align_misc(optidx) {
 
 // C ref: options.c handler_autounlock() -- PICK_ANY over unlocktypes[]; n == 0
 // (everything deselected) means 'none'.
-export async function handler_autounlock(optidx) {
+export async function handler_autounlock(optidx, giveMessages) {
     let tmpwin, chngd, i, n, presel, buf;
     game.flags = game.flags || {};
+    // C ref: options.c:1074 optfn_autounlock(do_init).
+    game.flags.autounlock ??= AUTOUNLOCK_APPLY_KEY;
     const oldflags = game.flags.autounlock | 0;
     const optname = optidx;
     const sep = (game.iflags && game.iflags.menu_tab_sep) ? '\t' : ' ';
@@ -4875,9 +5093,8 @@ export async function handler_autounlock(optidx) {
     }
     destroy_nhwindow(tmpwin);
     chngd = (game.flags.autounlock !== oldflags);
-    if ((chngd || game.flags.verbose) && give_opt_msg) {
-        /* C: optfn_autounlock(optidx, get_val, ...) -- the port's optfn_*()
-           have no get_val mode, so build the same comma list here. */
+    // doset_simple suppresses give_opt_msg; the full menu allows feedback.
+    if ((chngd || game.flags.verbose) && giveMessages) {
         buf = autounlock_val();
         await pline(`'${optname}' ${chngd ? 'changed to' : 'is still'} `
                     + `'${buf}'.`);
@@ -4885,15 +5102,14 @@ export async function handler_autounlock(optidx) {
     return res;
 }
 
-// C ref: options.c optfn_autounlock()'s get_val arm: "none" or the enabled
-// unlocktypes[] names joined with '+'.
-function autounlock_val() {
-    const bits = (game.flags && game.flags.autounlock) | 0;
+// C ref: options.c:1145-1160 optfn_autounlock(get_val).
+export function autounlock_val() {
+    const bits = game.flags?.autounlock ?? AUTOUNLOCK_APPLY_KEY;
     if (!bits) return 'none';
     const parts = [];
     for (let i = 0; i < UNLOCKTYPES.length; ++i)
         if (bits & (1 << i)) parts.push(UNLOCKTYPES[i]);
-    return parts.join('+');
+    return parts.join(' + ');
 }
 
 // C ref: options.c handler_disclose() -- a category menu, then one sub-menu per
@@ -5517,7 +5733,12 @@ export async function handler_autopickup_exception() {
             if (apebuf[0] === '\x1b') return true;
             if (apebuf) {
                 /* guarantee room for \" prefix and \"\0 suffix */
-                add_autopickup_exception(`"${apebuf}"`, result);
+                let error;
+                add_autopickup_exception(`"${apebuf.slice(0, BUFSZ - 1)}"`,
+                                        result, (message) => { error = message; });
+                // C ref: cfgfiles.c:1557-1562 — interactive errors use
+                // pline() followed by wait_synch(), not the config-file log.
+                if (error) await OPT_MENU_DRIVER.error(error);
             }
             continue;
         } else { /* list (1) or remove (2) */
@@ -5591,7 +5812,7 @@ export async function handler_menu_colors() {
                 && (mcclr = await query_color(null, NO_COLOR_IDX)) !== -1
                 && (mcattr = await query_attr(null, ATR_NONE)) !== -1
                 && !add_menu_coloring_parsed(mcbuf, mcclr, mcattr,
-                                             { menucolors: colorings })) {
+                                             { menucolors: colorings, flags: game.flags })) {
                 await pline('Error adding the menu color.');
                 wait_synch();
             }
@@ -6752,6 +6973,20 @@ function svb_bases_food() {
     return (game.svb && game.svb.bases && game.svb.bases[FOOD_CLASS]) || 0;
 }
 
+// C ref: options.c optfn_fruit() do_set, the !go.opt_initial half: the value a
+// player types at doset()/doset_simple()'s "Set fruit to what?" prompt is
+// munged, sanitized, copied into svp.pl_fruit (empty -> "slime mold") and then
+// registered with fruitadd().  Returns the stored name so the caller can echo
+// C's "Fruit is now \"%s\"." when give_opt_msg is set.
+export function set_pl_fruit(op) {
+    let name = sanitize_name(nmcpy(mungspaces(String(op ?? '')), PL_FSIZ));
+    if (!name) name = 'slime mold';
+    game.svp = game.svp || {};
+    game.svp.pl_fruit = name;
+    fruitadd(name, null);
+    return name;
+}
+
 // C ref: options.c fruitadd().  `str === game.svp.pl_fruit` is C's
 // `user_specified` test: the option's own buffer, not a copy.
 export function fruitadd(str, replace_fruit) {
@@ -6933,7 +7168,7 @@ export function initoptions_init() {
     flags.paranoia_bits = 0x0400 | 0x2000 | 0x0800;
     flags.versinfo = have_branch ? 4 : 1;
     flags.pile_limit = PILE_LIMIT_DFLT;  /* 5 */
-    flags.runmode = 'teleport';          /* RUN_LEAP; port stores the name */
+    flags.runmode = 'run';               /* RUN_LEAP; port stores the name */
     iflags.msg_history = 20;
 
     /* msg_window has conflicting defaults for multi-interface binary */

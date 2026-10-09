@@ -14,7 +14,7 @@ import { rn2, rnd } from '../rng.js';
 import { maketrap, t_at } from '../trap.js';
 import {
     LOC_ANY, LOC_DRY, SET_LIT_NOCHANGE, bigrm_wallification, flip_level, gx, gy,
-    q_absx, q_absy, quest_flip_branch, set_levltyp_lit, shuffle,
+    q_absx, q_absy, quest_flip_branch, remove_boundary_syms, set_levltyp_lit, shuffle,
     splev_create_monster, splev_get_location_rnd, splev_traptype_rnd,
 } from '../sp_lev.js';
 
@@ -218,9 +218,12 @@ function quest_trap_placeable(x, y, typ) {
 }
 
 // C ref: sp_lev.c lspo_finalize_level() tail shared by every quest home:
-// wallification(1, 0, COLNO-1, ROWNO-1) (no level sets corrmaze) then
+// remove_boundary_syms(), wallification(1, 0, COLNO-1, ROWNO-1) (no level sets corrmaze) then
 // flip_level_rnd(allow_flips = 3, FALSE) — one rn2(2) per enabled axis.
 export function quest_finalize() {
+    // C ref: lspo_finalize_level() runs remove_boundary_syms() (the 'B' map
+    // symbol's CROSSWALL cells become ROOM) before wallification().
+    remove_boundary_syms();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                            // flip_level_rnd sp_lev.c:975

@@ -2,7 +2,7 @@
 // sp_lev.js re-exports makemaz_soko1 so existing importers are unaffected; the
 // shared special-level machinery still lives there and is imported below.
 
-import { BURN, COLNO, DOOR, FILL_NORMAL, ROOMOFFSET, ROWNO, SDOOR, ZOO } from '../const.js';
+import { BURN, COLNO, DOOR, FILL_NORMAL, LR_MONGEN, ROOMOFFSET, ROWNO, SDOOR, ZOO } from '../const.js';
 import { premap_detect } from '../detect.js';
 import { Is_special } from '../dungeon.js';
 import { make_engr_at } from '../engrave.js';
@@ -97,8 +97,13 @@ function soko_create_mimic_boulder() {
 export function soko_exclusion_mongen(x1, y1, x2, y2) {
     const g = game;
     if (!g.level) return;
-    (g.level.exclusions || (g.level.exclusions = [])).push({
-        type: 'monster-generation',
+    // C ref: sp_lev.c:5529 — `ez->next = sve.exclusion_zones; sve.exclusion_zones
+    // = ez;` prepends onto the one global list mkmaze.c is_exclusion_zone()
+    // walks.  (An earlier version kept a private per-level array that nothing
+    // ever read, so every Sokoban monster-generation zone was inert.)
+    if (!g.exclusion_zones) g.exclusion_zones = [];
+    g.exclusion_zones.unshift({
+        zonetype: LR_MONGEN,
         lx: q_absx(x1), ly: q_absy(y1), hx: q_absx(x2), hy: q_absy(y2),
     });
 }
@@ -106,7 +111,7 @@ export function soko_exclusion_mongen(x1, y1, x2, y2) {
 // C ref: sp_lev.c:876 flip_level() — exclusion zones are mirrored with the map
 // and then re-sorted, because FlipX/FlipY turn a lo/hi pair into hi/lo.
 export function soko_flip_exclusions(flp) {
-    const zones = game.level?.exclusions;
+    const zones = game.exclusion_zones;
     if (!zones || !zones.length) return;
     const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
     for (const ez of zones) {

@@ -14,12 +14,13 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { render_map_to_grid, pline, topl_more, flush_screen, canspotself } from './display.js';
-import { renderWindowScreen, dismiss_invent_screen } from './invent.js';
+import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history } from './display.js';
+import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan } from './invent.js';
+import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
 import { option_help_lines } from './options.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
-import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE }
+import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE, KEYHELP, DEBUGHELP }
     from './pager_data.js';
 import { EXTCMD_TABLE } from './cmd_data.js';
 // cmd.js <-> pager.js is a static cycle (cmd.js imports dohelp); both names
@@ -68,7 +69,7 @@ function compress_str(str) {
 // the tail is tty_putstr()'d again with the same attr.  With no such space the
 // scan runs down to i == 0 and the over-long line is stored whole, to be
 // truncated at display time by process_text_window().
-function tty_putstr_text(out, ln) {
+export function tty_putstr_text(out, ln) {
     const isStr = typeof ln === 'string';
     const mk = (t) => (isStr ? t : { ...ln, text: t });
     let str = compress_str(String(isStr ? ln : (ln?.text ?? '')));
@@ -145,12 +146,12 @@ const HELP_MENU_ITEMS = [
     { text: 'Longer explanation of game options.', fn: dispfile_optionfile },
     { text: "Using the '#optionsfull' or 'm O' command to set options.", fn: dispfile_optmenu },
     { text: 'Full list of keyboard commands.', fn: dokeylist },
-    { text: 'List of extended commands.', fn: null },
+    { text: 'List of extended commands.', fn: hmenu_doextlist },
     { text: 'List menu control keys.', fn: domenucontrols },
     { text: "Description of NetHack's command line.", fn: dispfile_usagehelp },
     { text: 'The NetHack license.', fn: dispfile_license },
     { text: 'Support information.', fn: docontact },
-    { text: 'List of wizard-mode commands.', fn: null, wizonly: true },
+    { text: 'List of wizard-mode commands.', fn: dispfile_debughelp, wizonly: true },
 ];
 
 // C ref: pager.c hmenu_dowhatis() — `do_look(0, (coord *) 0)`, the same full
@@ -257,9 +258,9 @@ function key2extcmddesc(key) {
     return null;
 }
 
-// C ref: pager.c dowhatdoes_core() — build the one-line "<key padded to 8><desc>."
+// C ref: pager.c dowhatdoes_core() — build the one-line "<key padded to 8><desc>"
 // description for key q, or null if it is not a command.
-function dowhatdoes_core(q) {
+export function dowhatdoes_core(q) {
     const ec_desc = key2extcmddesc(q & 0xff);
     if (ec_desc !== null) {
         const kt = key2txt(q & 0xff);
@@ -289,6 +290,7 @@ export async function dowhatdoes() {
     const softPending = !!cur && game._toplinSoft === cur;
     if (game._toplin === 1 || softPending) await topl_more();
     const full = 'What command? ';
+    remember_topl();
     game._pending_message = full;
     game._toplines = full;
     await flush_screen(1);
@@ -297,9 +299,12 @@ export async function dowhatdoes() {
     if (d?.setCursor) d.setCursor(Math.min(full.length, COLS - 1), 0);
     const q = await nhgetch();
     delete game._modal_screen;
+    yn_prompt_history(full, key2txt(q));
 
     const reslt = dowhatdoes_core(q);
     if (reslt !== null) {
+        // C ref: `if (q == '&' || q == '?') whatdoes_help();`
+        if (q === 0x26 || q === 0x3f) await whatdoes_help();
         // No embedded newline for a single key (the '\n' path is only for the
         // 'm' reqmenu prefix, which isn't queried here).
         await pline(reslt);
@@ -928,11 +933,12 @@ import { COLNO, ROWNO, BOLT_LIM, BUFSZ, isok, STONE, SCORR, SDOOR, ROOM, CORR,
          NO_TRAP, BEAR_TRAP, TRAPPED_DOOR, TRAPPED_CHEST, ROCKTRAP, HOLE, PIT,
          WEB, VIBRATING_SQUARE, STRAT_WAITMASK, I_SPECIAL,
          MHID_PREFIX, MHID_ARTICLE, MHID_ALTMON, MHID_REGION,
+         M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, M_AP_TYPMASK,
          GPCOORDS_NONE, GPCOORDS_MAP, GPCOORDS_SCREEN, GPCOORDS_COMPASS,
          GPCOORDS_COMFULL, WARNCOUNT, TRAPNUM, def_warnsyms, Is_waterlevel,
          Is_airlevel, SYM_OFF_P, SYM_NOTHING, SYM_UNEXPLORED, SYM_BOULDER,
          AM_MASK, AM_SANCTUM, Amask2align, A_CHAOTIC,
-         A_NEUTRAL, A_LAWFUL, A_NONE } from './const.js';
+         A_NEUTRAL, A_LAWFUL, A_NONE, OBJ_FLOOR, OBJ_BURIED } from './const.js';
 import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
          MAXOCLASSES, DEF_INVISIBLE, S_stone, S_room, S_darkroom, S_corr,
          S_litcorr, S_ndoor, S_altar, S_grave, S_cloud, S_ice, S_pool,
@@ -945,18 +951,22 @@ import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
     from './symbols.js';
 import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
          update_topl, Hallucination_u, impossible as pg_impossible_async,
-         stairway_at, known_branch_stairs, stairs_go_down }
+         stairway_at, known_branch_stairs, stairs_go_down, mimic_object_glyph,
+         is_cmap_engraving_at, engraving_glyph,
+         canseemon_shared, see_with_infrared, tp_sensemon }
     from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { engr_at } from './engrave.js';
 import { t_at, trap_explanation } from './trap.js';
 import { trapped_chest_at, trapped_door_at } from './detect.js';
 import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
-         VENOM_CLASS, COIN_CLASS } from './mkobj.js';
+         VENOM_CLASS, COIN_CLASS, STATUE, CORPSE, SLIME_MOLD, LEASH,
+         mksobj, mkobj } from './mkobj.js';
 import { monster_by_pmidx } from './makemon.js';
-import { distant_monnam, ARTICLE_NONE, mon_nam } from './do_name.js';
-import { visible_region_at } from './region.js';
-import { doextlist, cmd_from_func } from './cmd.js';
+import { simpleonames } from './objnam.js';
+import { rndmonnam as rndmonnam_dn, distant_monnam, ARTICLE_NONE, mon_nam, coyotename } from './do_name.js';
+import { visible_region_at, region_is_poisoncloud } from './region.js';
+import { doextlist, cmd_from_func, waterbody_name } from './cmd.js';
 import { rn2 } from './rng.js';
 import { NUMMONS } from './disprng.js';
 
@@ -983,11 +993,6 @@ function pg_impossible(msg) { void pg_impossible_async(msg).catch(() => {}); }
 const invisexplain = 'remembered, unseen, creature';
 const altinvisexplain = 'unseen creature';          /* for clairvoyance */
 
-// dat/wizhelp and dat/keyhelp are not transcribed into js/pager_data.js yet.
-// An empty list is C's dlb_fopen() failure, which is exactly what
-// dispfile_debughelp()/whatdoes_help() have to cope with.
-const DEBUGHELP = [];
-const KEYHELP = [];
 
 // ── local helpers ──────────────────────────────────────────────────────────
 
@@ -999,17 +1004,14 @@ function pg_distu(x, y) {
     return dx * dx + dy * dy;
 }
 function pg_next2u(x, y) { return pg_distu(x, y) <= 2; }
-function pg_an(s) {
-    if (!s) return s;
-    return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`;
-}
+import { an as pg_an } from './hacklib.js';
 function pg_the(s) { return s ? `the ${s}` : s; }
 function pg_upstart(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
 function pg_strstri(hay, needle) { return String(hay).includes(String(needle)); }
 function pg_Has_contents(o) { return !!(o && Array.isArray(o.cobj) && o.cobj.length); }
 function pg_objs_at(x, y) {
     return (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y);
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
 }
 function pg_sobj_at(otyp, x, y) {
     for (const o of pg_objs_at(x, y)) if (o.otyp === otyp) return o;
@@ -1044,9 +1046,22 @@ function is_cmap_engraving(i) { return i === S_engroom || i === S_engrcorr; }
 // C ref: symbols.c gs.showsyms[] — falls back to the compiled-in default when
 // init_showsyms() has not run (no SYMBOLS= in the rc).
 function showsym(idx, fallback) {
+    // dat/symbols DECgraphics remaps these cmap entries to VT100 line-drawing
+    // codes; no plain map character can equal them.
+    if (idx >= SYM_OFF_P && idx < SYM_OFF_P + MAXPCHARS
+        && ((useDECgraphics('S_pool') && DEC_REMAPPED.has(idx - SYM_OFF_P))
+            || (useDECgraphics() && !useDECgraphics('S_pool')
+                && CURSES_REMAPPED.has(idx - SYM_OFF_P))))
+        return '\u0001';
     const v = gs?.showsyms?.[idx];
     return (v && v !== 0) ? v : fallback;
 }
+const DEC_REMAPPED = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18,
+    19, 27, 28, 31, 32, 33, 38, 39, 40, 41, 42, 43, 48, 74, 75, 89, 91, 92, 94,
+    97, 99, 101, 103]);
+// dat/symbols: curses overrides fewer cmaps than DECgraphics.
+const CURSES_REMAPPED = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+    17, 18, 19, 22, 23, 24, 39, 42, 43, 74, 75, 91, 92, 99, 101]);
 
 // C ref: display.h glyph_at(x,y).  See the banner: a tagged descriptor, not an
 // int.  `kind` is 'monster' | 'object' | 'trap' | 'invisible' | 'warning' |
@@ -1061,15 +1076,29 @@ function pg_glyph_at(x, y) {
     const mon = m_at(x, y);
     if (mon && sym === (mon.data?.mlet ?? '\0'))
         return { kind: 'monster', mon, sym, x, y };
+    if (mon && mon.mappearance != null && pg_M_AP_TYPE(mon) === M_AP_OBJECT) {
+        const { otyp, glyph: og } = mimic_object_glyph(mon);
+        if (og && og.ch === sym)
+            return { kind: 'object', obj: null, otyp, corpsenm: mon.mcorpsenm, sym, x, y };
+    }
     if (loc.mapped_trap_ttyp)
         return { kind: 'trap', trap: null, ttyp: loc.mapped_trap_ttyp, sym, x, y };
     const otmp = vobj_at(x, y);
     if (otmp && !covers_objects(loc)) {
         const og = object_glyph(otmp);
         if (og && og.ch === sym)
-            return { kind: 'object', obj: otmp, otyp: otmp.otyp,
+            // C ref: display.h generic_obj_to_glyph() — an undescribed potion/
+            // gem/spellbook is drawn as its class's generic object, whose otyp
+            // (the class number) is never the real object's, so lookat()'s
+            // object_from_map() fabricates a stand-in via mksobj().
+            return { kind: 'object', obj: otmp,
+                     otyp: obj_is_generic(otmp) ? otmp.oclass : otmp.otyp,
                      corpsenm: otmp.corpsenm, sym, x, y };
     }
+    const remembered = loc.remembered_glyph;
+    if (remembered?.objotyp && remembered.ch === sym)
+        return { kind: 'object', obj: null, otyp: remembered.objotyp,
+                 corpsenm: remembered.corpsenm, sym, x, y };
     const tr = t_at(x, y);
     if (tr && tr.tseen && !covers_objects(loc)) {
         const tg = trap_glyph(tr);
@@ -1079,6 +1108,10 @@ function pg_glyph_at(x, y) {
     if (!loc.seenv && loc.remembered_glyph == null)
         return { kind: 'unexplored', sym: ' ', x, y };
     if (sym === ' ') return { kind: 'nothing', sym, x, y };
+    // C ref: display.c _map_location — a revealed engraving is drawn with its own
+    // cmap glyph (S_engroom/S_engrcorr) above the bare terrain.
+    if (is_cmap_engraving_at(x, y) && sym === engraving_glyph(loc).ch)
+        return { kind: 'cmap', sym, cmap: loc.typ === CORR ? S_engrcorr : S_engroom, x, y };
     return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), x, y };
 }
 function pg_glyph_is_monster(g) { return g?.kind === 'monster'; }
@@ -1093,10 +1126,10 @@ function pg_glyph_to_obj(g) { return g?.otyp ?? STRANGE_OBJECT; }
 function pg_glyph_to_trap(g) { return g?.ttyp ?? NO_TRAP; }
 function pg_glyph_to_cmap(g) { return pg_glyph_is_cmap(g) ? g.cmap : SYM_NOTHING; }
 function pg_glyph_is_statue(g) {
-    return pg_glyph_is_object(g) && g.otyp === 481 /* objects.h STATUE */;
+    return pg_glyph_is_object(g) && g.otyp === STATUE;
 }
 function pg_glyph_is_body(g) {
-    return pg_glyph_is_object(g) && g.otyp === 259 /* objects.h CORPSE */;
+    return pg_glyph_is_object(g) && g.otyp === CORPSE;
 }
 
 // The cmap index a cell's terrain draws as — C reads it back out of the glyph;
@@ -1198,21 +1231,6 @@ function dxdy_to_dist_descr(dx, dy, fulldir) {
                    : `${nsp}${nsp && ewp ? ',' : ''}${ewp}`;
 }
 
-// C ref: mkmaze.c/pager.c waterbody_name(x, y) — js/cmd.js:596 and
-// js/trap.js:3280 each carry a private copy; this is the non-hallucinating
-// core of the same table.
-function pg_waterbody_name(x, y) {
-    if (!isok(x, y)) return 'drink';
-    const ltyp = game.level?.at(x, y)?.typ;
-    if (ltyp === POOL) return 'pool of water';
-    if (ltyp === MOAT) return 'moat';
-    if (ltyp === WATER)
-        return Is_waterlevel(game.u?.uz) ? 'limitless water' : 'wall of water';
-    if (ltyp === LAVAPOOL) return 'molten lava';
-    if (ltyp === LAVAWALL) return 'wall of lava';
-    if (ltyp === ICE) return 'ice';
-    return 'water';
-}
 // C ref: pager.c ice_descr(x, y, outbuf) — js/wizterrainwish.js:406 owns the
 // canonical port; the thaw-timer wording is what it is used for.
 function pg_ice_descr(x, y) {
@@ -1320,18 +1338,19 @@ export function mhidden_description(mon, mhid_flags) {
         /* C dealloc_obj()s the fake object here; nothing to do in JS. */
     };
 
-    if (mon.m_ap_type === 'furniture' || mon.m_ap_type === 'obj') {
+    const apt = pg_M_AP_TYPE(mon);
+    if (apt === M_AP_FURNITURE || apt === M_AP_OBJECT) {
         if (incl_prefix) out = ', mimicking ';
-        if (mon.m_ap_type === 'furniture') {
+        if (apt === M_AP_FURNITURE) {
             let what = defsyms[mon.mappearance]?.explanation || 'something';
             if (incl_article) what = pg_an(what);
             out += what;
-        } else if (mon.m_ap_type === 'obj' && pg_glyph_is_object(glyph)) {
+        } else if (apt === M_AP_OBJECT && pg_glyph_is_object(glyph)) {
             objfrommap();
         } else {
             out += 'something';
         }
-    } else if (mon.m_ap_type === 'monster') {
+    } else if (apt === M_AP_MONSTER) {
         if (show_altmon) {
             if (incl_prefix) out += ', masquerading as ';
             let what = monster_by_pmidx(mon.mappearance)?.name || 'creature';
@@ -1357,12 +1376,22 @@ export function mhidden_description(mon, mhid_flags) {
     if (reg && out.length < BUFSZ - 1) {
         const r = ((game.u?.xray_range ?? 0) > 1) ? game.u.xray_range : 1;
         if (pg_distu(x, y) <= r * (r + 1) || force_region) {
-            const poison_gas = reg.glyph_is_poisoncloud === true;
+            const poison_gas = region_is_poisoncloud(reg);
             out += `, in a cloud of ${poison_gas ? 'poison gas' : 'vapor'}`;
             out = out.slice(0, BUFSZ - 1);
         }
     }
     return out;
+}
+
+// C ref: monst.h M_AP_TYPE(mon).  This port stores m_ap_type as the numeric
+// M_AP_* constant on some paths and as 'furniture'/'obj'/'mon' on others.
+function pg_M_AP_TYPE(mon) {
+    const t = mon?.m_ap_type;
+    if (!t) return M_AP_NOTHING;
+    if (typeof t === 'number') return t & M_AP_TYPMASK;
+    return t === 'furniture' ? M_AP_FURNITURE : t === 'obj' ? M_AP_OBJECT
+        : t === 'mon' ? M_AP_MONSTER : M_AP_NOTHING;
 }
 
 // The REMEMBERED glyph at <x,y> (levl[x][y].glyph), which "will never be a
@@ -1375,6 +1404,17 @@ function pg_remembered_glyph(x, y) {
     if (!rg) return { kind: 'unexplored', sym: ' ', x, y };
     if (loc.mapped_trap_ttyp)
         return { kind: 'trap', trap: null, ttyp: loc.mapped_trap_ttyp, sym: rg.ch, x, y };
+    // C ref: display.c display_monster() M_AP_OBJECT -> map_object(): a seen
+    // mimic posing as an object wrote its fake object's glyph into
+    // levl[x][y].glyph, so the memory decodes to that object type
+    // (glyph_to_obj), not to whatever really lies on the square.
+    const mtmp = m_at(x, y);
+    if (mtmp && mtmp.mappearance != null && pg_M_AP_TYPE(mtmp) === M_AP_OBJECT) {
+        const { otyp, glyph: og } = mimic_object_glyph(mtmp);
+        if (og && og.ch === rg.ch && og.color === rg.color)
+            return { kind: 'object', obj: null, otyp,
+                     corpsenm: mtmp.mcorpsenm, sym: rg.ch, x, y };
+    }
     const otmp = vobj_at(x, y);
     if (otmp && !covers_objects(loc)) {
         const og = object_glyph(otmp);
@@ -1403,10 +1443,6 @@ function pg_surface(x, y) {
     if (t === ICE) return 'ice';
     return 'floor';
 }
-/* objnam.c simpleonames(obj) */
-function simpleonames(obj) {
-    return objects[obj?.otyp]?.name || objects[obj?.otyp]?.desc || 'something';
-}
 
 // C ref: pager.c:284 object_from_map(glyph, x, y, &obj_p) — "extracted from
 // lookat(); also used by namefloorobj()".  Returns { fakeobj, obj }: when
@@ -1421,13 +1457,12 @@ export function object_from_map(glyph, x, y) {
 
     let otmp = pg_sobj_at(glyphotyp, x, y);
     if (!otmp)
-        for (const o of [...(game.level?.buriedobjlist || []),
-                         ...(game.level?.buriedobjs || [])])
+        for (const o of (game.level?.buriedobjlist || []))
             if (o.ox === x && o.oy === y && o.otyp === glyphotyp) { otmp = o; break; }
 
     /* there might be a mimic here posing as an object */
     let mtmp = m_at(x, y);
-    if (mtmp && mtmp.m_ap_type === 'obj' && mtmp.mappearance === glyphotyp) {
+    if (mtmp && pg_M_AP_TYPE(mtmp) === M_AP_OBJECT && mtmp.mappearance === glyphotyp) {
         otmp = null;
         mimic_obj = true;
     } else {
@@ -1435,31 +1470,39 @@ export function object_from_map(glyph, x, y) {
     }
 
     if (!otmp || otmp.otyp !== glyphotyp) {
-        // C mksobj()s (or mkobj()s, for a class placeholder otyp) a temporary
-        // object to name.  Both consume RNG, which is why C stops the timers
-        // and frees it again; this port synthesises a plain descriptor instead,
-        // so a wiring pass has to decide whether the RNG draws matter here.
-        otmp = { otyp: glyphotyp, oclass: objects[glyphotyp]?.oc_class,
-                 quan: 1, spe: 0, corpsenm: -1, dknown: 0, where: 'floor',
-                 ox: x, oy: y };
+        /* this used to exclude STRANGE_OBJECT; now caller deals with it */
+        if (objects[glyphotyp]?.name) {
+            /* map shows a regular object, but one that's not actually here */
+            otmp = mksobj(glyphotyp, false, false);
+        } else {
+            /* a non-item that holds an extra object type: pick another item
+               that is a regular one in same object class */
+            otmp = mkobj(objects[glyphotyp]?.oclass, false);
+        }
+        /* C obj_stop_timers()es the corpse-rot / egg-hatch / figurine timers
+           mksobj() starts even with init False; this port keeps those timers
+           on the object itself (mkobj.js start_timer), so they die with it */
         fakeobj = true;
         if (otmp.oclass === COIN_CLASS) otmp.quan = 2;   /* force pluralization */
-        else if (otmp.otyp === 419 /* SLIME_MOLD */)
+        else if (otmp.otyp === SLIME_MOLD)
             otmp.spe = game.context?.current_fruit ?? 0;
         if (mtmp && mtmp.mcorpsenm != null && mtmp.mcorpsenm >= 0) {
-            if (otmp.otyp === 419) otmp.spe = mtmp.mcorpsenm;
+            if (otmp.otyp === SLIME_MOLD) otmp.spe = mtmp.mcorpsenm;
             else otmp.corpsenm = mtmp.mcorpsenm;
-        } else if (otmp.otyp === 259 /* CORPSE */ && pg_glyph_is_body(glyph)) {
+        } else if (otmp.otyp === CORPSE && pg_glyph_is_body(glyph)) {
             otmp.corpsenm = glyph.corpsenm;
-        } else if (otmp.otyp === 481 /* STATUE */ && pg_glyph_is_statue(glyph)) {
+        } else if (otmp.otyp === STATUE && pg_glyph_is_statue(glyph)) {
             otmp.corpsenm = glyph.corpsenm;
         }
-        if (otmp.otyp === 218 /* LEASH */) otmp.leashmon = 0;
+        if (otmp.otyp === LEASH) otmp.leashmon = 0;
+        /* extra fields needed for shop price with doname() formatting */
+        otmp.where = OBJ_FLOOR;
+        otmp.ox = x; otmp.oy = y;
         otmp.no_charge = (otmp.otyp === STRANGE_OBJECT) && costly_spot(x, y);
     }
     /* mark an adjacent object as having been seen up close */
     if (otmp && pg_next2u(x, y) && !Blind() && !Hallucination_u()
-        && (fakeobj || otmp.where === 'floor')
+        && (fakeobj || otmp.where === OBJ_FLOOR)
         && !pg_iflags().terrainmode)
         observe_object_pg(otmp);
     if (fakeobj && mtmp && mimic_obj
@@ -1469,7 +1512,9 @@ export function object_from_map(glyph, x, y) {
     }
     return { fakeobj, obj: otmp };
 }
-function observe_object_pg(obj) { if (obj) obj.dknown = 1; }
+// o_init.c observe_object(): dknown AND the type's oc_encountered flag (what
+// #discoveries lists), not just the per-object dknown bit.
+function observe_object_pg(obj) { observe_object(obj); }
 /* shk.c costly_spot(x, y) — inside a shop the hero has not paid in. */
 function costly_spot(_x, _y) { return false; }
 
@@ -1488,7 +1533,7 @@ export function look_at_object(x, y, glyph) {
     }
 
     const typ = game.level?.at(x, y)?.typ;
-    if (otmp && !fakeobj && otmp.where === 'buried') buf += ' (buried)';
+    if (otmp && !fakeobj && otmp.where === OBJ_BURIED) buf += ' (buried)';
     /* check TREE before STONE due to level.flags.arboreal */
     else if (IS_TREE(typ))
         buf += ` ${(otmp && is_treefruit(otmp)) ? 'dangling' : 'stuck'} in a tree`;
@@ -1501,8 +1546,7 @@ export function look_at_object(x, y, glyph) {
 }
 /* objnam.c distant_name(otmp, otmp->dknown ? doname_with_price : doname_vague_quan) */
 function distant_name_pg(otmp) {
-    const nm = objects[otmp.otyp]?.name || objects[otmp.otyp]?.desc || 'object';
-    return (otmp.quan > 1) ? `${otmp.quan} ${nm}s` : pg_an(nm);
+    return distant_name_pub(otmp, otmp.dknown ? floor_object_name : doname_vague_quan);
 }
 /* mkobj.c is_treefruit(obj) */
 function is_treefruit(obj) {
@@ -1582,23 +1626,12 @@ export function look_at_monster(mtmp, x, y, wantMonbuf = true) {
     }
     return { buf: buf.slice(0, BUFSZ - 1), monbuf };
 }
-// C ref: do_name.c rndmonnam(adjective) — a random monster name off the CORE
-// rng (rn2), used when hallucinating.  C rerolls until it gets a non-unique,
-// non-placeholder species; this keeps the single draw and the reroll loop.
+// C ref: do_name.c rndmonnam(adjective) — draws off the DISPLAY rng; the real
+// port (js/do_name.js) owns the reroll loop, bogusmon fallback and gender pick.
 function rndmonnam() {
-    for (let tries = 0; tries < 100; tries++) {
-        const mon = monster_by_pmidx(rn2(NUMMONS));
-        if (mon && mon.name && !(mon.mflags2 & 0x00080000 /* M2_PNAME */))
-            return mon.name;
-    }
-    return 'creature';
+    return rndmonnam_dn().name;
 }
 
-/* do_name.c coyotename(mtmp, buf) */
-function coyotename(mtmp) {
-    const names = ['Wile E.', 'Ralph', 'Road Runner', 'Coyote Kid'];
-    return `coyote called ${names[(mtmp.m_id | 0) % names.length]}`;
-}
 /* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
 function pg_digests(ptr) {
     return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */);
@@ -1607,10 +1640,26 @@ function pg_digests(ptr) {
 function pg_is_pit(tt) { return tt === PIT || tt === (PIT + 1) /* SPIKED_PIT */; }
 /* objnam.c makeplural() — the general port lives in js/invent.js. */
 function pg_makeplural(s) { return /s$/.test(s) ? s : `${s}s`; }
-/* display.c howmonseen(mon) — the bitmask lookat() decodes. */
+/* vision.c:2152 howmonseen(mon) — the bitmask lookat() decodes.  MATCH_WARN_OF_MON
+   (MONSEEN_WARNMON) is omitted: this port has no warned-of-monster-type state. */
 function howmonseen(mtmp) {
+    const u = game.u || {}, p = u.uprops || {};
+    const useemon = canseemon_shared(mtmp);
+    const xraydist = ((u.xray_range ?? -1) < 0) ? -1 : u.xray_range * u.xray_range;
+    const see_invis = !!(u.see_invis || p.HSee_invisible || p.ESee_invisible
+        || p.See_invisible || ((u.uprops_extrinsic || {})[29 /* SEE_INVIS */] | 0));
     let how = 0;
-    if (cansee(mtmp.mx, mtmp.my) && !mtmp.minvis) how |= 1;   /* NORMAL */
+    /* normal vision (mon_visible is implied by !minvis here) */
+    if (cansee(mtmp.mx, mtmp.my) && couldsee(mtmp.mx, mtmp.my)
+        && !mtmp.mundetected && !mtmp.minvis)
+        how |= 1;                                              /* NORMAL */
+    if (useemon && mtmp.minvis) how |= 2;                      /* SEEINVIS */
+    if ((!mtmp.minvis || see_invis) && see_with_infrared(mtmp)) how |= 4; /* INFRAVIS */
+    if (tp_sensemon(mtmp)) how |= 8;                           /* TELEPAT */
+    const dx = mtmp.mx - (u.ux ?? 0), dy = mtmp.my - (u.uy ?? 0);
+    if (useemon && xraydist > 0 && dx * dx + dy * dy <= xraydist) how |= 16; /* XRAYVIS */
+    if (p.Detect_monsters || p.HDetect_monsters || p.EDetect_monsters
+        || u.HDetect_monsters || u.EDetect_monsters) how |= 32; /* DETECT */
     return how;
 }
 
@@ -1694,7 +1743,7 @@ export function lookat(x, y) {
             buf = Is_airlevel(game.u?.uz) ? 'cloudy area' : 'fog/vapor cloud';
             break;
         case S_pool: case S_water: case S_lava: case S_lavawall: case S_ice:
-            buf = pg_waterbody_name(x, y);
+            buf = waterbody_name(x, y);
             break;
         case S_engroom: case S_engrcorr:
             buf = 'engraving';
@@ -1753,7 +1802,7 @@ export function add_cmap_descr(found, idx, glyph, article, cc, x_str, prefix,
                         : (idx === S_lavawall) ? LAVAWALL : ICE;
         }
         /* EHalluc_resistance = 1 around the call: never hallucinated here */
-        mbuf = pg_waterbody_name(cc.x, cc.y);
+        mbuf = waterbody_name(cc.x, cc.y, true);
         if (loc) loc.typ = save_ltyp;
 
         /* shorten the feedback for farlook/quicklook: "pool or ..." */
@@ -2528,8 +2577,7 @@ export async function doidtrap() {
 function pg_is_hole(tt) { return tt === HOLE || tt === (HOLE + 1) /* TRAPDOOR */; }
 
 // C ref: pager.c:2420 whatdoes_help() — the dat/keyhelp text window shown when
-// dowhatdoes() is asked about '&' or '?'.  dat/keyhelp is not transcribed into
-// js/pager_data.js yet, so KEYHELP is empty, which is C's dlb_fopen() failure.
+// dowhatdoes() is asked about '&' or '?'.
 export async function whatdoes_help() {
     if (!KEYHELP.length) {
         await update_topl('Cannot open "keyhelp" data file!');
@@ -2538,7 +2586,9 @@ export async function whatdoes_help() {
     const win = create_nhwindow_text();
     for (const raw of KEYHELP) {
         if (raw[0] === '#') continue;
-        putstr(win, 0, raw.replace(/^[ \t]+/, ''));
+        /* dlb_fgets() keeps the line's "\n", which makes tty_putstr()'s
+           compress_str() collapse space runs even in short lines */
+        putstr(win, 0, raw.replace(/^[ \t]+/, '') + '\n');
     }
     await display_nhwindow_text(win, true);
 }
@@ -2642,12 +2692,7 @@ export function whatdoes_cond(buf, stack, depth, lnum) {
 
 // C ref: pager.c:2778 dispfile_debughelp() — display_file(DEBUGHELP, TRUE), the
 // "List of wizard-mode commands." help topic (shown only in debug mode).
-// dat/wizhelp is not transcribed into js/pager_data.js yet.
 export async function dispfile_debughelp() {
-    if (!DEBUGHELP.length) {
-        await update_topl('Cannot open data file!');
-        return;
-    }
     await display_file(DEBUGHELP);
 }
 
