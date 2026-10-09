@@ -47,7 +47,7 @@ import { TT_BEARTRAP, TT_WEB, TT_LAVA, TT_INFLOOR, SICK_ALL,
 import { Unaware } from './const.js';
 // C ref: hack.h enum bodypart_types — mbodypart()/body_part() selectors.
 import { ARM, EYE, FINGER, FINGERTIP, FOOT, HAND, HANDED, HEAD, LEG, TOE,
-    HAIR, NOSE, STOMACH } from './const.js';
+    HAIR, NOSE, STOMACH, OBJ_FLOOR } from './const.js';
 import {
     is_hider_flag, hides_under_flag, is_were_flag, likes_gems_flag,
     strongmonst_flag, is_male_flag, is_flyer_flag, mflags1_of, M1_CLING,
@@ -2349,7 +2349,7 @@ function obj_at_hero() {
     const list = game.level?.objects || [];
     for (let i = list.length - 1; i >= 0; i--) {
         const o = list[i];
-        if (o.where === 'floor' && o.ox === u.ux && o.oy === u.uy) return o;
+        if (o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy) return o;
     }
     return null;
 }

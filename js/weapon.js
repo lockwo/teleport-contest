@@ -23,9 +23,9 @@ import { P_NONE, P_BARE_HANDED_COMBAT, P_AXE, P_SPEAR, P_PICK_AXE,
          P_LAST_WEAPON, P_LAST_SPELL, P_NUM_SKILLS,
          P_TWO_WEAPON_COMBAT, P_RIDING, A_STR, A_DEX,
          W_ARM, W_ARMC, W_ARMU, W_ARMG, W_RINGL, W_RINGR,
-         POOL, MOAT, WATER } from './const.js';
+         POOL, MOAT, WATER, OBJ_INVENT } from './const.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
-import { mon_hates_silver } from './mon.js';
+import { mon_hates_silver, is_vampshifter } from './mon.js';
 import { which_armor } from './worn.js';
 import { attacktype, AT_WEAP } from './monattk_data.js';
 import { acurr_eff } from './attrib.js';
@@ -81,9 +81,11 @@ function thick_skinned(ptr) { return (mflags1_of(ptr) & M1_THICK_HIDE) !== 0; }
 function passes_walls(ptr) { return (mflags1_of(ptr) & M1_WALLWALK) !== 0; }
 function is_swimmer(ptr) { return (mflags1_of(ptr) & M1_SWIM) !== 0; }
 // C ref: mondata.c hates_blessings(ptr) = is_undead(ptr) || is_demon(ptr);
-// mon_hates_blessings(mon) adds is_vampshifter(mon) (mon->cham, untracked).
+// mon_hates_blessings(mon) adds is_vampshifter(mon): a vampire in fog cloud /
+// bat / wolf form still hates blessed weapons.
 export function mon_hates_blessings(mon) {
-    return (mflags2_of(mdata_of(mon)) & (M2_UNDEAD | M2_DEMON)) !== 0;
+    return (mon?.cham != null && is_vampshifter(mon))
+        || (mflags2_of(mdata_of(mon)) & (M2_UNDEAD | M2_DEMON)) !== 0;
 }
 // C ref: mondata.h is_wooden(ptr) — the wood golem alone.
 let _PM_WOOD_GOLEM = -1;
@@ -657,7 +659,7 @@ async function finish_towel_change(obj, newspe) {
     newspe = Math.min(newspe, 7);
     obj.spe = Math.max(newspe, 0);
     if (obj === game.uwep) game.unweapon = !is_wet_towel(obj);
-    if (obj.where === 3 /* OBJ_INVENT */ || obj.carried) {
+    if (obj.where === OBJ_INVENT || obj.carried) {
         const { update_inventory } = await import('./invent.js');
         update_inventory();
     }

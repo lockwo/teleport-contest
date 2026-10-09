@@ -9,7 +9,7 @@
 // fill_special_room, flip_level, and the `quest_*`/`bigrm_*`/`vly_*`/`soko_*`/
 // `tower_*`/`splev_*` families that several levels call.  A helper that only one
 // level uses belongs in that level's file.
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { depth as depth_of_level, dist2, distmin } from './hacklib.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { somexyspace } from './mkroom.js';
@@ -55,8 +55,7 @@ import {
     W_NORTH, W_SOUTH, W_EAST, W_WEST, AM_NONE,
     ARMORSHOP, SCROLLSHOP, POTIONSHOP, WEAPONSHOP, FOODSHOP, RINGSHOP,
     WANDSHOP, TOOLSHOP, BOOKSHOP, FODDERSHOP, CANDLESHOP,
-    ROT_ORGANIC, ROT_CORPSE, ZOMBIFY_MON,
-} from './const.js';
+    ROT_ORGANIC, ROT_CORPSE, ZOMBIFY_MON, OBJ_FLOOR, OBJ_CONTAINED, OBJ_BURIED } from './const.js';
 // readobjnam() is how C's obj.new(<name>) resolves an item name (via the same
 // rnd_otyp_by_namedesc path a wish uses).  readobjnam.js does not import sp_lev,
 // so this is not a cycle.
@@ -205,6 +204,7 @@ export { makemaz_wiz_goal } from './levels/wiz_goal.js';
 // set_mktrap_victim() from its own body, so the edge would run mklev's body
 // first and assign into `_mktrap_victim`'s TDZ.
 import { sobj_at, stackobj, obj_extract_self, obfree } from './invent.js';
+import { flip_worm_segs_vertical, flip_worm_segs_horizontal } from './worm.js';
 import { does_block, block_point } from './vision.js';
 import { walkfrom, create_maze } from './mkmaze.js';
 import { m_dowear, resists_ston,
@@ -873,7 +873,7 @@ function create_buried_treasure(croom) {
     // mksobj_at(CHEST, x, y, TRUE, !named) — no name is supplied, so artif is
     // TRUE.  Never reaches the floor: bury_an_obj() obj_extract_self()s it.
     const chest = mksobj(CHEST, true, true);
-    chest.ox = c.x; chest.oy = c.y; chest.where = 'buried';
+    chest.ox = c.x; chest.oy = c.y; chest.where = OBJ_BURIED;
     chest.cobj = []; // SP_OBJ_CONTAINER -> delete_contents(otmp)
     (game.level.buriedobjlist ??= []).unshift(chest); /* C add_to_buried(): head insertion */
 
@@ -1212,7 +1212,7 @@ function create_massacre(croom) {
 // the fobj scans that level-gen and the pet AI perform.
 function place_floor_obj(otmp, x, y) {
     if (!otmp || !game.level) return;
-    otmp.ox = x; otmp.oy = y; otmp.where = 'floor';
+    otmp.ox = x; otmp.oy = y; otmp.where = OBJ_FLOOR;
     const loc = game.level.at(x, y);
     if (loc) {
         otmp.nexthere = loc.objects || null;
@@ -1282,7 +1282,7 @@ function create_buried_zombies(croom) {
         // buried = true -> bury_an_obj -> obj_resists(otmp,0,0) -> rn2(100).
         // The corpse is buried (not on the floor), so it is deliberately NOT
         // added to the floor object list: it must not render as a corpse glyph.
-        otmp.ox = c.x; otmp.oy = c.y; otmp.where = 'buried';
+        otmp.ox = c.x; otmp.oy = c.y; otmp.where = OBJ_BURIED;
         (game.level.buriedobjlist ??= []).unshift(otmp); /* C add_to_buried(): head insertion */
         obj_resists_rng();
 
@@ -1986,7 +1986,7 @@ function themeroom_water_vault() {
     // box:addcontent(itm) — no RNG; the item leaves the floor for the chest.
     if (boxes[0] && itm) {
         if (!Array.isArray(boxes[0].cobj)) boxes[0].cobj = [];
-        itm.where = 'contained';
+        itm.where = OBJ_CONTAINED;
         itm.ocontainer = boxes[0];
         boxes[0].cobj.push(itm);
     }
@@ -2366,8 +2366,7 @@ export function quest_create_object(otyp, mx, my, spe, carryingMon) {
     if (carryingMon) {
         otmp = mksobj(otyp, true, true);           // not placed on floor
         if (spe != null) otmp.spe = spe;
-        if (!carryingMon.minvent) carryingMon.minvent = [];
-        carryingMon.minvent.unshift(otmp);
+        mpickobj(carryingMon, otmp);               // add_to_minv(): merges
     } else {
         otmp = mksobj_at(otyp, x, y, true, true);
         if (spe != null) otmp.spe = spe;
@@ -3273,6 +3272,12 @@ export function flip_level(flp) {
         if (flp & 1) o.oy = FlipY(o.oy);
         if (flp & 2) o.ox = FlipX(o.ox);
     }
+    // buried objects — C ref: sp_lev.c:628-636, same in-area test as floor objects.
+    for (const o of (map.buriedobjlist || [])) {
+        if (!inArea(o.ox, o.oy)) continue;
+        if (flp & 1) o.oy = FlipY(o.oy);
+        if (flp & 2) o.ox = FlipX(o.ox);
+    }
     // monsters
     for (const m of (map.monsters || [])) {
         if (!inArea(m.mx, m.my)) continue;
@@ -3285,8 +3290,23 @@ export function flip_level(flp) {
         // left alone.  Without this a flipped Mine Town leaves every shopkeeper
         // walking toward the pre-flip door and pri_move() at the wrong altar.
         const flipCoord = (cc) => { if (cc && cc.x && inArea(cc.x, cc.y)) flipPt(cc, 'x', 'y'); };
+        flipCoord(m.mgoal);
         if (m.ispriest) flipCoord(m.epri?.shrpos);
         else if (m.isshk && m.eshk) { flipCoord(m.eshk.shk); flipCoord(m.eshk.shd); }
+        else if (m.wormno) {
+            // C ref: sp_lev.c:661-666 flip_worm_segs_{vertical,horizontal}().
+            // C's single monster grid is swapped cell-by-cell with the map, so
+            // the tail squares move with it; this port's `wormsegs` side list
+            // (worm.js place_worm_seg) is that grid's tail half and is mirrored
+            // here for the same worm.
+            if (flp & 1) flip_worm_segs_vertical(m, miny, maxy);
+            if (flp & 2) flip_worm_segs_horizontal(m, minx, maxx);
+            for (const s of (map.wormsegs || [])) {
+                if (s.worm !== m) continue;
+                if (flp & 1) s.y = FlipY(s.y);
+                if (flp & 2) s.x = FlipX(s.x);
+            }
+        }
     }
     // engravings — C ref: sp_lev.c:689-694, flipped unconditionally.
     for (const e of (map.engravings || [])) {
@@ -3332,6 +3352,10 @@ export function flip_level(flp) {
                 map.locations[nx][y] = tmp;
             }
     }
+
+    // timed effects — C ref: sp_lev.c:862-874, MELT_ICE_AWAY timers flip with
+    // the map (arg is the packed (x << 16 | y) location).
+    hooks.flip_melt_ice_timers?.(flp, FlipX, FlipY);
 
     // C ref: sp_lev.c:915 — flip_level() ends with fix_wall_spines() over the
     // whole grid.  Mirroring moves the cells but leaves every corner/T glyph

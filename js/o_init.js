@@ -463,13 +463,15 @@ export function observe_object(obj) {
 }
 
 // C ref: u_init.c knows_object() — mark a type known (not encountered).
-export function knows_object(otyp) {
+export function knows_object(otyp, override_pauper = false) {
+    if (game.u?.uroleplay?.pauper && !override_pauper) return;
     discover_object(otyp, true, false);
 }
 
 // C ref: u_init.c knows_class() — pre-discover every ordinary (non-magic)
 // object of a class.  Consumes no RNG.
 export function knows_class(oclass) {
+    if (game.u?.uroleplay?.pauper) return;
     const bases = getBases();
     const samurai = disco_is_samurai();
     const roleMnum = game.urole?.mnum ?? game.u?.umonnum;

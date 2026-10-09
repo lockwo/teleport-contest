@@ -65,9 +65,7 @@ function Glib() {
     return (u.uprops?.Glib | 0) > 0;
 }
 
-// C ref: obj.h carried(o) == (o->where == OBJ_INVENT).  js/invent.js:261 spells
-// OBJ_INVENT as the string 'invent' while js/const.js:1107 carries C's 3, so
-// match on the inventory chain itself (js/invent.js:293's own fallback).
+// C ref: obj.h carried(o) == (o->where == OBJ_INVENT).
 function carried(obj) { return !!obj && inventoryArray().includes(obj); }
 
 // C ref: obj.h is_weptool(o) / wield.c:74 TWOWEAPOK(obj).

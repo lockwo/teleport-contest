@@ -54,7 +54,7 @@ import { Blind, does_block, unblock_point, is_lightblocker_mappear } from './vis
 import { exercise, adjalign } from './attrib.js';
 import { DEADMONSTER, Protection_from_shape_changers, mmove_of, base_mmove,
          healmon, mvitals_died, resurrect_kop, sensemon, peacefuls_respond, unstuck, mon_leaving_level,
-         level_specific_nocorpse } from './mon.js';
+         level_specific_nocorpse, vamprises } from './mon.js';
 import { MFLAGS1, MFLAGS2, M1_WALLWALK, M2_NASTY, M2_ORC, M2_UNDEAD, M2_DEMON,
          M2_COLLECT, M2_HUMAN, M2_HOSTILE, M2_PNAME, M2_ELF, humanoid, is_neuter_flag, likes_gems_flag } from './monflags_data.js';
 // C ref: include/monflag.h G_UNIQ (0x1000) — generated only once.
@@ -86,6 +86,7 @@ import { mon_nocorpse, undead_to_corpse, name_to_pmidx, mon_msize } from './make
 import { more_experienced, newexplevel, rank_of } from './exper.js';
 import { gethungry } from './allmain.js';
 import { simpleonames, obj_is_pname } from './objnam.js';
+import { S_NYMPH } from './symbols.js';
 import { bare_artifactname } from './artifact.js';
 import { is_weptool, objectBaseName, simple_typename, is_plural, otense,
          near_capacity, update_inventory, distant_far, distant_doname,
@@ -654,15 +655,20 @@ export async function attack_checks(mtmp) {
             return false;
         }
         const { pline } = await import('./display.js');
-        if (Blind()) {
+        const { l_monnam } = await import('./do_name.js');
+        const { is_pool } = await import('./dbridge.js');
+        const lmonbuf = l_monnam(mtmp);
+        const notseen = lmonbuf === 'it';
+        if (!Blind() && game.u?.uhallu) {
+            await pline(`A ${mtmp.mtame ? 'tame' : 'wild'} ${notseen ? 'creature' : lmonbuf} ${notseen ? 'is present' : 'appears'}!`);
+        } else if (Blind() || (is_pool(mtmp.mx, mtmp.my) && !game.u?.uinwater)) {
             await pline("Wait!  There's a hidden monster there!");
         } else {
             const objAtSquare = game.level?.at(mtmp.mx, mtmp.my)?.objects;
             const obj = Array.isArray(objAtSquare) ? objAtSquare[0] : objAtSquare;
             if (obj) {
-                await pline(`Wait!  There's something hiding under ${objectBaseName(obj)}!`);
-            } else {
-                await pline("Wait!  There's something there you can't see!");
+                const { obj_doname } = await import('./invent.js');
+                await pline(`Wait!  There's ${notseen ? 'something' : an(lmonbuf)} hiding under ${await obj_doname(obj)}!`);
             }
         }
         return true;
@@ -1363,7 +1369,7 @@ async function hmon_hitmon(mon, obj, thrown, dieroll) {
 const SPBOOK_CLASS_UH = 10;
 
 // C ref: uhitm.c hmon_hitmon_pet() — the hero struck a pet.
-async function hmon_hitmon_pet(mon, dmg, destroyed) {
+export async function hmon_hitmon_pet(mon, dmg, destroyed) {
     if (!mon.mtame || dmg <= 0) return;
     await abuse_dog(mon);
     if (mon.mtame && !destroyed) {
@@ -1673,7 +1679,7 @@ export async function passive_obj(mon, obj, mattk) {
         if (!mon.mcan) {
             const { drain_item } = await import('./zap.js');
             const drained = await drain_item(obj, true);
-            const carried = obj.where === 'invent' || obj.where === 3 /* OBJ_INVENT */;
+            const carried = obj.where === OBJ_INVENT;
             if (drained && carried && (obj.known || obj.oclass === ARMOR_CLASS)) {
                 const { pline } = await import('./display.js');
                 const { cxname_singular, makeplural } = await import('./invent.js');
@@ -1817,6 +1823,19 @@ export async function killed(mon, opts) {
     // before mondead detaches it; a saved monster gives no kill aftermath.
     const { lifesaved_monster } = await import('./mon.js');
     await lifesaved_monster(mon);
+    // C ref: mon.c:3097 mondead() — a vampire in bat/fog/wolf form reverts to
+    // vampire instead of dying; xkilled() then skips the whole kill aftermath
+    // (and the "Maybe not..." line when the rise message was shown).
+    if (DEADMONSTER(mon) && is_vampshifter(mon)) {
+        game.vamp_rise_msg = false;
+        game.disintegested = !!skipCorpseBlock;
+        const rose = await vamprises(mon);
+        game.disintegested = false;
+        if (rose) {
+            if (!cansee(x, y) && !game.vamp_rise_msg) await update_topl('Maybe not...');
+            return;
+        }
+    }
     if (!DEADMONSTER(mon)) {
         if (!cansee(x, y)) await update_topl('Maybe not...');
         return;
@@ -2026,7 +2045,7 @@ export async function relobj(mon, x, y) {
     for (const otmp of [...inv]) {
         distant_doname(otmp, distant_far(otmp, x, y));
         inv.splice(inv.indexOf(otmp), 1);
-        otmp.where = 'free';
+        otmp.where = OBJ_FREE;
         otmp.ocarry = null;
         // C ref: worn.c extract_from_minvent().  An object stops being worn
         // before it reaches the floor; otherwise a pet which later picks it
@@ -2575,7 +2594,7 @@ import { ARTICLE_A, ARTICLE_YOUR, SUPPRESS_INVISIBLE, SUPPRESS_NAME,
          W_ARMF, W_RINGL, W_RINGR, W_WEP, STRAT_WAITFORU,
          POTHIT_HERO_BASH, POTHIT_HERO_THROW, MON_EXPLODE, EXPL_FIERY,
          NO_TRAP_FLAGS, M_AP_TYPE, ismnum, FACE, HAND, STOMACH,
-         xdir, ydir, IS_DOOR, D_NODOOR, D_BROKEN } from './const.js';
+         xdir, ydir, IS_DOOR, D_NODOOR, D_BROKEN, OBJ_FREE, OBJ_INVENT } from './const.js';
 import { M1_AMORPHOUS, M1_UNSOLID, M1_NOEYES, M1_NOHEAD, M1_NOHANDS, M1_FLY,
          M1_BREATHLESS, M1_AMPHIBIOUS, M1_THICK_HIDE, M1_ANIMAL, M1_SLITHY,
          M1_NOLIMBS, mindless } from './monflags_data.js';
@@ -2731,7 +2750,7 @@ function passes_rocks(ptr) { return passes_walls(ptr) && !unsolid(ptr); }
 // C ref: mondata.h hates_light(ptr) — the gremlin.
 function mon_hates_light(mon) { return mon?.data?.name === 'gremlin'; }
 // C ref: obj.h:418 is_flimsy(otmp) — oc_material <= LEATHER, or a rubber hose.
-function is_flimsy(otmp) {
+export function is_flimsy(otmp) {
     return (objects[otmp?.otyp]?.material ?? NO_MATERIAL) <= MAT_LEATHER
         || otmp?.otyp === RUBBER_HOSE;
 }
@@ -4123,8 +4142,11 @@ export async function start_engulf(mdef) {
     const form = youmonst_data_uh();
     const u_digest = digests(form);
     const u_enfold = enfolds(form);
-    /* display.c map_location()/tmp_at()/mon_to_glyph() have no port: the
-       swallow animation is display-only. */
+    /* display.c map_location()/tmp_at() have no port: the swallow animation is
+       display-only.  tmp_at(DISP_ALWAYS, mon_to_glyph(&youmonst,
+       rn2_on_display_rng)) still draws one display-RNG monster pick while
+       hallucinating. */
+    if (!Invisible_uh() && u?.uhallu) (await import('./disprng.js')).random_monster();
     const { update_topl } = await import('./display.js');
     await update_topl(`You `
         + `${u_digest ? 'swallow' : u_enfold ? 'enclose' : 'engulf'} `
@@ -4167,7 +4189,7 @@ export async function gulpum(mdef, mattk) {
     if (!(u_digest && (u.uhunger | 0) >= 1500) && !u.uswallow) {
         if (!flaming(ydata)) {
             const { snuff_lit } = await import('./apply.js');
-            for (const otmp of (mdef.minvent || [])) snuff_lit(otmp);
+            for (const otmp of (mdef.minvent || [])) await snuff_lit(otmp);
         }
 
         /* force a vampire in bat, cloud or wolf form back to vampire form now,
@@ -4441,7 +4463,7 @@ const WHACK_OTYPS = new Set([
     81 /* flail */, 259 /* pick-axe */, 260 /* grappling hook */,
 ]);
 // C ref: obj.h:253 is_blunt_weapon(o) — (WEAPON_CLASS || is_weptool) && WHACK.
-function is_blunt_weapon_uh(o) {
+export function is_blunt_weapon_uh(o) {
     if (!o) return false;
     if (o.oclass !== WEAPON_CLASS && !is_weptool(o)) return false;
     return WHACK_OTYPS.has(o.otyp);

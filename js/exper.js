@@ -477,11 +477,25 @@ export function minuhpmax(altmin) {
     return Math.max(game.u.ulevel || 1, altmin);
 }
 
-// C ref: attrib.c setuhpmax — set uhpmax, clamp uhp.
-export function setuhpmax(newmax) {
+// C ref: attrib.c:1157 setuhpmax(newmax, even_when_polyd) — update u.uhpmax
+// (or u.mhmax while polymorphed, unless even_when_polyd) and clamp the matching
+// current HP, flagging the status line.
+export function setuhpmax(newmax, even_when_polyd = true) {
     const u = game.u;
-    u.uhpmax = newmax;
-    if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
+    if (!u.Upolyd || even_when_polyd) {
+        if (newmax !== u.uhpmax) {
+            u.uhpmax = newmax;
+            if (u.uhpmax > (u.uhppeak || 0)) u.uhppeak = u.uhpmax;
+            game.botl = true;
+        }
+        if (u.uhp > u.uhpmax) { u.uhp = u.uhpmax; game.botl = true; }
+    } else {
+        if (newmax !== u.mhmax) {
+            u.mhmax = newmax;
+            game.botl = true;
+        }
+        if (u.mh > u.mhmax) { u.mh = u.mhmax; game.botl = true; }
+    }
 }
 
 // ── innate intrinsics (C: attrib.c adjabil + the *_abil[] tables) ──

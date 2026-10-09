@@ -605,6 +605,23 @@ function buildFullEntries() {
         if (e.t === 'a') e.body = body;
         else e.text = '     ' + body;
     }
+    // C ref: options.c doset() — with iflags.menu_tab_sep, fmtstr_doset is
+    // "%s%s\t[%s]" (no name padding) and the non-selectable Booleans lose their
+    // 4-space indent.  The raw tab is dropped by the capture but still advances
+    // the cursor one column, so render a single space (see the simple menu).
+    if (game.iflags?.menu_tab_sep) {
+        let inBooleans = false;
+        for (const e of list) {
+            if (e.t === 'x' && e.inv) inBooleans = /^ Booleans/.test(e.text);
+            const src = e.t === 'a' ? e.body : e.text;
+            const m = e.t === 'a' || (e.t === 'x' && !e.inv)
+                ? /^ *(\S+) +(\[.*)$/.exec(src || '') : null;
+            if (!m) continue;
+            const body = `${m[1]} ${m[2]}`;
+            if (e.t === 'a') e.body = body;
+            else e.text = (inBooleans ? ' ' : '     ') + body;
+        }
+    }
     // tty_end_menu(): menu_ch resets to 'a' on every page and only advances
     // for selectable items that have no explicit selector (the '?' help row).
     let menu_ch = 'a';

@@ -13,7 +13,7 @@ import {
     FOUNTAIN, SINK, ALTAR, GRAVE, THRONE, SCORR, ROOM, SDOOR, DOOR,
 } from './const.js';
 import { m_at, newsym, update_topl } from './display.js';
-import { cansee } from './vision.js';
+import { cansee, Blind } from './vision.js';
 import { Is_stronghold, In_sokoban } from './const.js';
 import {
     mindless, humanoid, is_flyer_flag, is_mercenary_flag, mflags1_of,
@@ -62,7 +62,6 @@ function Stunned() { return !!game.u?.formprops?.Stunned || uprop('Stun', 'HStun
 function Confusion() { return uprop('Confusion', 'HConfusion') || !!game.u?.uconf; }
 function Hallucination() { return uprop('Hallucination', 'HHallucination') || !!game.u?.uhallu; }
 function Unchanging() { return uprop('Unchanging', 'HUnchanging'); }
-function Blind() { return uprop('Blinded') || !!game.u?.Blinded; }
 function Underwater() { return !!game.u?.uinwater; }
 function Levitation() { return uprop('Levitation', 'HLevitation', 'ELevitation'); }
 function Flying() { return uprop('Flying', 'HFlying', 'EFlying'); }
@@ -70,16 +69,11 @@ function Fumbling() { return uprop('Fumbling', 'HFumbling', 'EFumbling'); }
 function ACURR(a) { return game.u?.acurr?.[a] ?? game.u?.attrib?.[a] ?? 10; }
 function monsterList() { return (game.level?.monsters || []); }
 
-// C ref: hack.c losehp(n, knam, k_format) — no RNG.
-async function losehp(n) {
-    const u = game.u;
-    if (!u) return;
-    hooks.end_running?.(true); // hack.c:4266
-    u.uhp -= n;
-    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
-    if (u.uhp < 1) u.uhp = 0;
-    game.disp = game.disp || {};
-    game.disp.botl = true;
+// C ref: hack.c losehp(n, knam, k_format) — do.js owns the complete port
+// (death path, killer text, polymorph arm).
+async function losehp(n, knam, k_format) {
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(n, knam, k_format);
 }
 // C ref: trap.c set_utrap(tim, typ).
 function set_utrap(tim, typ) {
@@ -276,14 +270,14 @@ async function do_pit(x, y, tu_pit) {
         } else if (!tu_pit || !u.utrap || u.utraptype !== TT_PIT) {
             await update_topl('You fall into a chasm!');
             set_utrap(rn1(6, 2), TT_PIT);
-            await losehp(Maybe_Half_Phys(rnd(6)));
+            await losehp(Maybe_Half_Phys(rnd(6)), 'fell into a chasm', 2 /* NO_KILLER_PREFIX */);
         } else if (u.utrap && u.utraptype === TT_PIT) {
             const keepfooting = (!(Fumbling() && rn2(5))
                 && (!(rnl(game.urole?.mnum === PM_ARCHEOLOGIST ? 3 : 9))
                     || ((ACURR(A_DEX) > 7) && rn2(5))));
             await update_topl('You are jostled around violently!');
             set_utrap(rn1(6, 2), TT_PIT);
-            await losehp(Maybe_Half_Phys(rnd(keepfooting ? 2 : 4)));
+            await losehp(Maybe_Half_Phys(rnd(keepfooting ? 2 : 4)), 'hurt in a chasm', 2 /* NO_KILLER_PREFIX */);
             if (keepfooting) {
                 const { exercise } = await import('./attrib.js');
                 exercise(A_DEX, true);
@@ -502,7 +496,7 @@ async function do_improvisation(instr) {
         if (!u.dx && !u.dy && !u.dz) {
             if (zapyourself) {
                 damage = await zapyourself(instr, true);
-                if (damage) await losehp(damage);
+                if (damage) await losehp(damage, `using a magical horn on ${game.flags?.female ? 'her' : 'him'}self`, 1 /* KILLED_BY */);
             }
         } else {
             // C ref: zap.h BZ_OFS_AD(ad) == ad - 1; BZ_U_WAND(t) == t (0-9).

@@ -38,7 +38,7 @@ import { monster_by_pmidx, makemon, makemon_appears_msg, little_to_big, name_to_
 import { set_mon_data } from './mondata.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag }
     from './monflags_data.js';
-import { mondied_mm, monkilled_mm } from './mhitm.js';
+import { mondied_mm, monkilled_mm, mondead_mm as mondead } from './mhitm.js';
 import { find_mac as worn_find_mac, mon_set_minvis } from './worn.js';
 import { hard_helmet } from './do_wear.js';
 // onscary() is an `export function` declaration in monmove.js, so the
@@ -55,12 +55,12 @@ import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_ca
 // fit).  js/display.js pline() only overwrites the pending text, so monster
 // messages that land mid-turn must go through update_topl() to get C's boundary.
 import { update_topl, urgent_topl, newsym, map_invisible, see_with_infrared, stairway_at, You_hear,
-    Hallucination_u } from './display.js';
+    Hallucination_u, Hallucination_u as Hallucination } from './display.js';
 import { Monnam, mon_nam, monflee, x_monnam } from './uhitm.js';
 import { ARTICLE_A, SUPPRESS_INVISIBLE, SUPPRESS_SADDLE, SUPPRESS_IT, AUGMENT_IT } from './do_name.js';
 import { same_race } from './dogmove.js';
 import { YMonnam } from './do_name.js';
-import { cansee, couldsee } from './vision.js';
+import { cansee, couldsee, Blind } from './vision.js';
 import { obj_doname, xname, makeknown, trycall, hands_obj,
     W_ARMOR_WORN, W_ACCESSORY_WORN, youmonst_data }
     from './invent.js';
@@ -75,9 +75,9 @@ import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     ZAP_POS, SDOOR, DRAWBRIDGE_UP, is_hole, is_pit, In_endgame, Is_botlevel, Is_knox_level,
     M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP, M_SEEN_ELEC,
     M_SEEN_ACID, M_SEEN_REFL, G_GENOD, MON_MIGRATING,
-    MIGR_RANDOM, MIGR_STAIRS_UP, MIGR_STAIRS_DOWN, MIGR_LADDER_UP,
+    MIGR_RANDOM, MIGR_STAIRS_UP, MIGR_STAIRS_DOWN, MIGR_LADDER_UP, MIGR_LADDER_DOWN,
     MIGR_SSTAIRS, STRAT_WAITFORU, FORCETRAP, Unaware, FAST,
-    NC_SHOW_MSG, NC_VIA_WAND_OR_SPELL } from './const.js';
+    NC_SHOW_MSG, NC_VIA_WAND_OR_SPELL, OBJ_FLOOR, OBJ_MINVENT } from './const.js';
 import { surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 
@@ -268,8 +268,6 @@ function canseemon(mtmp) {
 function canspotmon(mtmp) { return canseemon(mtmp) || sensemon(mtmp); }
 // C ref: hack.h Deaf / Blind / Hallucination.
 function Deaf() { return !!game.u?.Deaf; }
-function Blind() { return !!game.u?.Blinded || !!game.u?.ublindf; }
-function Hallucination() { return !!game.u?.Hallucination; }
 
 // C ref: objnam.c singular(otmp, doname) — name the stack as if quan were 1.
 function singular_doname(obj) {
@@ -565,7 +563,7 @@ async function precheck(mon, obj) {
             } else if (occupant === 'ghost') {
                 if (vis) {
                     const { rndmonnam } = await import('./do_name.js');
-                    const name = Hallucination_u() ? rndmonnam(null) : 'ghost';
+                    const name = Hallucination_u() ? rndmonnam(null).name : 'ghost';
                     await update_topl(`As ${mon_nam(mon)} opens the bottle, an enormous ${name} emerges!`);
                     await update_topl(`${Monnam(mon)} is frightened to death, and unable to move.`);
                 }
@@ -606,7 +604,7 @@ async function precheck(mon, obj) {
         m_useup(mon, obj);
         mon.mhp -= dam;
         if (DEADMONSTER(mon)) {
-            await monkilled(mon);
+            await monkilled_mm(mon, AD_RBRE, '');
             return 1;
         }
         m.has_defense = m.has_offense = m.has_misc = 0;
@@ -654,32 +652,6 @@ function pm_index_by_name(name) {
     return PM_BY_NAME.get(name) ?? -1;
 }
 
-// C ref: mon.c monkilled(mon, fltxt, how) — the muse callers pass an empty
-// message, so this is just "remove the corpse-less monster from the level".
-async function monkilled(mon) {
-    if (canseemon(mon)) await update_topl(`${Monnam(mon)} is killed!`);
-    await mondead(mon);
-}
-// C ref: mon.c mondead(mon) — take it off the map.  Corpse-leaving and the
-// experience/alignment bookkeeping belong to mon.c's own port; muse only needs
-// the monster gone so the map and the movemon loop agree.
-async function mondead(mon) {
-    mon.mhp = 0;
-    relmon(mon);
-    newsym(mon.mx, mon.my);
-}
-// C ref: mon.c relmon() + mon_leaving_level() — unlink from the level's
-// monster chain.  migrate_to_level() below is the same operation as far as
-// this level's screen is concerned (the monster reappears on another level,
-// which no scored screen of this level can show).
-function relmon(mon) {
-    const list = game.level?.monsters;
-    if (!list) return;
-    const i = list.indexOf(mon);
-    if (i >= 0) list.splice(i, 1);
-    if (game.u?.ustuck === mon) game.u.ustuck = null;
-    mon.mtrapped = 0;
-}
 // C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
 // js/dog.js:530, js/dig.js:1097 and js/save.js:287 keep the same private
 // copy for the same import-order reason.
@@ -1891,11 +1863,11 @@ async function fhito_loc(obj, tx, ty) {
     const here = [];
     for (let i = arr.length - 1; i >= 0; i--) {
         const o = arr[i];
-        if (o.where === 'floor' && o.ox === tx && o.oy === ty) here.push(o);
+        if (o.where === OBJ_FLOOR && o.ox === tx && o.oy === ty) here.push(o);
     }
     let hitanything = 0;
     for (const otmp of here) {
-        if (otmp.where !== 'floor' || otmp.ox !== tx || otmp.oy !== ty) continue;
+        if (otmp.where !== OBJ_FLOOR || otmp.ox !== tx || otmp.oy !== ty) continue;
         hitanything += await bhito(otmp, obj);
     }
     return hitanything !== 0;
@@ -2028,10 +2000,24 @@ export async function use_offensive(mtmp, throw_potion) {
         /* GAP: drop_boulder_on_monster()/drop_boulder_on_player() are trap.c
            machinery this port does not have. */
         return 0;
-    case MUSE_CAMERA:
-        /* GAP: lightdamage() and make_blinded() for a monster-sourced flash
-           are unported. */
-        return 0;
+    case MUSE_CAMERA: {
+        if (Hallucination_u()) {
+            await update_topl('"Say cheese!"');
+        } else if (!Blind()) {
+            await update_topl(`${Monnam(mtmp)} takes a picture of you with ${an(xname(otmp))}!`);
+        }
+        /* resists_blnd(&youmonst): Blind || Unaware (polyform/artifact
+           clauses are not modelled, as in engrave.js). */
+        if (!Blind() && !hero_resists_blnd()) {
+            await update_topl('You are blinded by the flash of light!');
+            const { make_blinded_hero, BlindedTimeout } = await import('./potion.js');
+            await make_blinded_hero(BlindedTimeout() + rnd(1 + 50), false);
+        }
+        /* lightdamage(otmp, TRUE, 5): only affects a light-hating polyform
+           hero, which this port does not model. */
+        otmp.spe--;
+        return 1;
+    }
     case MUSE_POT_PARALYSIS:
     case MUSE_POT_BLINDNESS:
     case MUSE_POT_CONFUSION:
@@ -2290,7 +2276,7 @@ async function mloot_container(mon, container, vismon) {
             if (container.otyp === OT().ICE_BOX)
                 removed_from_icebox(xobj);
             (mon.minvent || (mon.minvent = [])).unshift(xobj);
-            xobj.where = 'minvent';
+            xobj.where = OBJ_MINVENT;
             xobj.ocarry = mon;
             res = 2;
         } else {
@@ -2485,7 +2471,7 @@ export async function use_misc(mtmp) {
         case 3: /* into mon's inventory */
             await update_topl(`${Monnam(mtmp)} snatches ${the_weapon}!`);
             (mtmp.minvent || (mtmp.minvent = [])).push(obj);
-            obj.where = 'minvent';
+            obj.where = OBJ_MINVENT;
             break;
         default:
             break;
@@ -2612,6 +2598,9 @@ async function you_aggravate(mtmp) {
     /* C then does cls()/show_glyph()/display_nhwindow()/docrt(); the net effect
        on a captured screen is the map redrawn with the monster shown, which
        newsym() below achieves without tearing down the window. */
+    /* show_glyph(mon_to_glyph(mtmp, rn2_on_display_rng)): what_mon() draws one
+       display-RNG monster pick while hallucinating. */
+    if (Hallucination_u()) (await import('./disprng.js')).random_monster();
     newsym(mtmp.mx, mtmp.my);
     await update_topl(`You feel aggravated at ${mon_nam(mtmp)}.`);
     if (!canspotmon(mtmp)) map_invisible(mtmp.mx, mtmp.my);
@@ -2663,7 +2652,7 @@ export function searches_for_item(mon, obj) {
     const typ = obj.otyp;
 
     /* don't let monsters interact with protected items on the floor */
-    if (obj.where === 'floor' && obj.ox === mon.mx && obj.oy === mon.my
+    if (obj.where === OBJ_FLOOR && obj.ox === mon.mx && obj.oy === mon.my
         && onscary(obj.ox, obj.oy, mon))
         return false;
 

@@ -5,7 +5,7 @@
 // mkroom.c mktemple() and from sp_lev.c create_altar() (des.altar with
 // type="shrine"/"sanctum"), and it is the sole RNG consumer of the temple fill.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rn1 } from './rng.js';
 import { isok, ROOMOFFSET, Amask2align, A_NONE, ALTAR, AM_SHRINE,
@@ -77,12 +77,15 @@ export function priestini(lvl, sroom, sx, sy, sanctum) {
     }
     if (i === N_DIRS) { px = sx; py = sy; }
 
-    // C: `if (MON_AT(px, py)) rloc(m_at(px, py), RLOC_NOMSG);` — insurance for
-    // a monster already standing on the chosen square.  rloc() would draw, but
-    // the temple is stocked before any monster is placed on a special level, so
-    // this is unreachable there; leave the square to makemon's own handling
-    // rather than guess at rloc's stream.
-    if (m_at(px, py)) return null;
+    // C ref: priest.c:229+ `if (MON_AT(px, py)) (void) rloc(m_at(px, py),
+    // RLOC_NOMSG); /* insurance */` — a monster already standing on the chosen
+    // square is moved away (rnd(COLNO-1)/rn2(ROWNO) per try) before the cleric
+    // is made.  A random-level temple is stocked while ordinary monsters can
+    // already be on the floor, so this does happen (seed0367 Dlvl 8).
+    {
+        const occ = m_at(px, py);
+        if (occ) hooks.rloc_mklev?.(occ);
+    }
 
     const priest = makemon(prim, px, py, MM_EPRI);
     if (!priest) return null;
@@ -127,7 +130,7 @@ export function priestini(lvl, sroom, sx, sy, sanctum) {
 import { pline, update_topl, newsym, canseemon_shared, Deaf_hero } from './display.js';
 import { d } from './rng.js';
 import { TEMPLE, ACH_TMPL, SPINE, In_endgame } from './const.js';
-import { roles, align_gname } from './role.js';
+import { roles, align_gname, halu_gname } from './role.js';
 import { rndmonnam, Monnam, mon_pmname } from './do_name.js';
 
 // C ref: priest.c:142 temple_occupied(array).
@@ -800,7 +803,7 @@ export async function ghod_hitsu(priest) {
                  sgn_(game.tbx | 0), sgn_(game.tby | 0), true);
     game.buzzer = oldbuzzer;
     game.current_wand = oldcurrwand;
-    exercise_(A_WIS_, false);
+    await exercise_(A_WIS_, false);
 }
 
 // C ref: priest.c:919 clearpriests() — when saving bones, drop every priest
@@ -870,18 +873,10 @@ function mon_aligntyp_(mon) {
     if (mon?.ispriest && EPRI_(mon)) return EPRI_(mon).shralign;
     return mon?.data?.maligntyp ?? 0;
 }
-// C ref: pray.c:2577 halu_gname(alignment) — align_gname() unless
-// hallucinating, in which case it picks a random pantheon on the DISPLAY rng.
+// C ref: pray.c:2577 halu_gname(alignment) — js/role.js (random pantheon on the
+// DISPLAY rng while hallucinating).
 function halu_gname_(alignment) {
-    /* js/role.js align_gname() takes the roles[] ARRAY index first, which is
-       NOT the PM_ mnum (they differ for Rogue/Ranger) — resolve it the way
-       js/insight.js:1465 does. */
-    const mnum = game.urole?.mnum;
-    let idx = roles.findIndex((r) => r?.mnum === mnum);
-    if (idx < 0) idx = 0;
-    /* Hallucination's randrole()/rn2_on_display_rng(9) walk is NOT reproduced
-       here: the display RNG is a separate stream. */
-    return align_gname(idx, alignment);
+    return halu_gname(alignment);
 }
 // C ref: pray.c:2514 a_gname_at(x, y) — the name of an altar's deity, or NULL
 // when <x,y> is not an altar.
@@ -941,11 +936,9 @@ async function verbalize_(line) { await update_topl(`"${line}"`); }
 function invent_() { return game.invent || game.u?.invent || []; }
 // C ref: invent.c money_cnt(objchain) — js/invent.js:1155 (unexported).
 function money_cnt_(list) {
-    let amt = 0;
     for (const o of list || [])
-        if (o && (o.oclass === 19 /* COIN_CLASS */ || o.otyp === 1 /* GOLD_PIECE */))
-            amt += (o.quan | 0);
-    return amt;
+        if (o && o.oclass === 12 /* COIN_CLASS */) return o.quan | 0;
+    return 0;
 }
 // C ref: shk.c money2u(mon, amount) — js/shk.js exports it.
 async function money2u_(mon, amount) {

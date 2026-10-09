@@ -22,7 +22,7 @@ import { place_object } from './mkobj.js';
 import { t_at } from './trap.js';
 import { losehp_do } from './do.js';
 import { IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED, is_pit, is_hole, POOL,
-         DRAWBRIDGE_UP, SLT_ENCUMBER } from './const.js';
+         DRAWBRIDGE_UP, SLT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 
 // C ref: you.h — bit masks for u.bc_felt and the bc_control argument.
 export const BC_BALL = 0x01;
@@ -41,7 +41,7 @@ function remove_object(obj) {
     if (!arr) return;
     const ix = arr.indexOf(obj);
     if (ix >= 0) arr.splice(ix, 1);
-    obj.where = 'free';
+    obj.where = OBJ_FREE;
 }
 
 const at = (x, y) => game.level?.at(x, y) || null;
@@ -61,7 +61,7 @@ function IS_CHAIN_ROCK(x, y) {
     return IS_DOOR(typ) && ((loc.doormask ?? 0) & (D_CLOSED | D_LOCKED)) !== 0;
 }
 // C ref: obj.h carried(obj) — in the hero's inventory rather than on the floor.
-const carried = (obj) => obj?.where === 'invent';
+const carried = (obj) => obj?.where === OBJ_INVENT;
 
 // C ref: ball.c bc_order() — which object is nearer the top of the pile when
 // the ball and chain share a square.
@@ -80,7 +80,7 @@ function bc_order() {
     const objs = game.level?.objects || [];
     for (let i = objs.length - 1; i >= 0; i--) {
         const o = objs[i];
-        if (o.where !== 'floor' || o.ox !== uball.ox || o.oy !== uball.oy) continue;
+        if (o.where !== OBJ_FLOOR || o.ox !== uball.ox || o.oy !== uball.oy) continue;
         if (o === uchain) return BCPOS_CHAIN;
         if (o === uball) return BCPOS_BALL;
     }
@@ -99,7 +99,7 @@ export function placebc() {
     // { impossible("bc already placed?"); return; }`.  Without the guard a
     // second placebc() puts a SECOND chain+ball on the pile, and look_here()
     // then lists each of them twice.
-    if (u.uchain.where !== 'free') return;
+    if (u.uchain.where !== OBJ_FREE) return;
     if (carried(u.uball)) {
         u.bc_order = BCPOS_DIFFER;
     } else {
@@ -683,7 +683,7 @@ export async function lift_covet_and_placebc(pin) {
            restriction in effect>") */
         return;
     }
-    if (u.uchain && u.uchain.where !== 'free') {
+    if (u.uchain && u.uchain.where !== OBJ_FREE) {
         const { impossible } = await import('./display.js');
         await impossible('bc already placed?');
         return;
@@ -951,14 +951,14 @@ export async function bc_sanity_check() {
     }
     /* ball is free when swallowed, when changing levels or during air bubble
        management on Plane of Water, other times? */
-    freechain = (!u.uchain || u.uchain.where === 'free');
-    freeball = (!u.uball || u.uball.where === 'free'
+    freechain = (!u.uchain || u.uchain.where === OBJ_FREE);
+    freeball = (!u.uball || u.uball.where === OBJ_FREE
                 /* lie to simplify the testing logic */
-                || (freechain && u.uball.where === 'invent'));
+                || (freechain && u.uball.where === OBJ_INVENT));
     if (u.uball && (u.uball.otyp !== HEAVY_IRON_BALL
-                    || (u.uball.where !== 'floor'
-                        && u.uball.where !== 'invent'
-                        && u.uball.where !== 'free')
+                    || (u.uball.where !== OBJ_FLOOR
+                        && u.uball.where !== OBJ_INVENT
+                        && u.uball.where !== OBJ_FREE)
                     || (!!freeball !== !!freechain)      /* freeball ^ freechain */
                     || ((u.uball.owornmask & W_BALL) === 0)
                     || ((u.uball.owornmask & ~(W_BALL | W_WEAPONS)) !== 0))) {
@@ -972,8 +972,8 @@ export async function bc_sanity_check() {
     }
     /* similar check to ball except can't be in inventory */
     if (u.uchain && (u.uchain.otyp !== IRON_CHAIN
-                     || (u.uchain.where !== 'floor'
-                         && u.uchain.where !== 'free')
+                     || (u.uchain.where !== OBJ_FLOOR
+                         && u.uchain.where !== OBJ_FREE)
                      || (!!freechain !== !!freeball)
                      /* [could simplify this to owornmask != W_CHAIN] */
                      || ((u.uchain.owornmask & W_CHAIN) === 0)
@@ -992,7 +992,7 @@ export async function bc_sanity_check() {
         cx = u.uchain.ox; cy = u.uchain.oy;
         cdx = cx - u.ux; cdy = cy - u.uy;
         cdx = Math.abs(cdx); cdy = Math.abs(cdy);
-        if (u.uball.where === 'invent') /* carried(uball) */
+        if (u.uball.where === OBJ_INVENT) /* carried(uball) */
             { bx = u.ux; by = u.uy; }   /* get_obj_location() */
         else
             { bx = u.uball.ox; by = u.uball.oy; }

@@ -43,8 +43,8 @@ import {
     NO_MINVENT, MM_NOMSG, MM_NOEXCLAM, M_AP_NOTHING, M_AP_MONSTER,
     M_AP_FURNITURE, M_AP_OBJECT, M_AP_TYPMASK,
     MHID_ARTICLE, MHID_ALTMON, BOLT_LIM, DF_NONE, NO_NC_FLAGS, NC_SHOW_MSG,
-    NC_VIA_WAND_OR_SPELL,
-} from './const.js';
+    NC_VIA_WAND_OR_SPELL, OBJ_FREE, OBJ_FLOOR, OBJ_MINVENT,
+    IS_WATERWALL } from './const.js';
 // set_mimic_sym() needs the room/trap/vision helpers.  These modules sit below
 // makemon.js in the import graph except vision.js, which imports two function
 // declarations from here — a cycle that resolves cleanly because both sides are
@@ -1425,7 +1425,10 @@ function mongets(_mtmp, otyp) {
     // inventory so the Big Room m_initinv gold uses d(ld, minvent?5:10), and
     // keep the object itself so it can be dropped (relobj) when the monster
     // dies (mon.c m_detach -> relobj drops mtmp->minvent onto the map).
-    if (_mtmp) { _mtmp._hasinv = true; mpickobj(_mtmp, otmp); }
+    if (_mtmp) {
+        _mtmp._hasinv = true;
+        if (mpickobj(_mtmp, otmp)) return null;   // otmp was freed via merging
+    }
     return otmp;   // C mongets() returns the created obj (used by ARM_BONUS math)
 }
 const BELL_OF_OPENING_OTYP = 263, SPE_BOOK_OF_THE_DEAD_OTYP = 409;
@@ -1454,11 +1457,26 @@ function m_initthrow(_mtmp, otyp, oquan) {
 // order directly — both picked the wrong item (seed0030 mirror44: wrong
 // glyph on object-detection, wrong item on top of the death-drop pile).
 export function mpickobj(mtmp, otmp) {
-    if (!mtmp || !otmp) return;
-    if (!mtmp.minvent) mtmp.minvent = [];
-    otmp.where = 'minvent';
-    otmp.ocarry = mtmp;
-    mtmp.minvent.unshift(otmp);
+    if (!mtmp || !otmp) return 0;
+    return add_to_minv(mtmp, otmp);
+}
+
+// C ref: mkobj.c:2648 add_to_minv(mon, obj) — the one place an object joins a
+// monster's inventory: merge into an identical carried stack first (returns 1:
+// obj was freed), else PREPEND (newest-first chain, no forcing to the end).
+// (mongets()/m_initinv gem stacks merge, e.g. a giant's two rolls of the same
+// gem type; a vault guard's gold merges with what he already holds.)
+// invent.js's merged() is reached through hooks because invent.js imports this
+// module.
+export function add_to_minv(mon, obj) {
+    if (!mon.minvent) mon.minvent = [];
+    for (const o of mon.minvent)
+        if (hooks.merged(o, obj)) return 1;
+    obj.where = OBJ_MINVENT;
+    obj.ocarry = mon;
+    obj.ocontainer = null;
+    mon.minvent.unshift(obj);
+    return 0;
 }
 
 // C ref: makemon.c golemhp(type) — fixed HP per golem species (no RNG).  pmidx
@@ -2557,7 +2575,7 @@ export function set_mimic_sym(mtmp) {
         if (fobj) {
             for (let i = fobj.length - 1; i >= 0; i--) {
                 const o = fobj[i];
-                if (o.where === 'floor' && o.ox === mx && o.oy === my) {
+                if (o.where === OBJ_FLOOR && o.ox === mx && o.oy === my) {
                     topobj = o; break;
                 }
             }
@@ -3295,7 +3313,7 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
                 await update_topl(`${names.Monnam(mtmp)} drops ${distant_doname(dropped, true)}.`);
                 newsym(mtmp.mx, mtmp.my);
             }
-            dropped.where = 'free';
+            dropped.where = OBJ_FREE;
             if (!await flooreffects(dropped, mtmp.mx, mtmp.my, 'drop')) {
                 if (polyspot) {
                     dropped.bypass = 1;
@@ -3637,7 +3655,7 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
         const objs = game.level?.objects;
         let hasObj = false, hasNonCoin = false, coinQuan = 0;
         if (objs) for (const o of objs) {
-            if (o.where === 'floor' && o.ox === x && o.oy === y) {
+            if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y) {
                 hasObj = true;
                 if (o.oclass === COIN_CLASS) coinQuan += (o.quan || 1); else hasNonCoin = true;
             }
@@ -3965,16 +3983,21 @@ function goodpos_spawn(x, y, ptr) {
     if (mm_mon_at(x, y)) return false;                            // GP_AVOID_MONPOS
     if (ptr) {
         if (mm_is_pool(x, y)) {
-            // a swimmer may land in water; anyone else must be airborne, and a
-            // freshly rolled monster never is (m_in_air is levitation/flight
-            // state it does not have yet).
-            return is_swimmer_flag(ptr) || is_flyer_flag(ptr);
+            // C ref: teleport.c goodpos() — `is_swimmer(mdat) || (!Is_waterlevel
+            // && !is_waterwall(x, y) && m_in_air(mtmp))`.  The stand-in monster
+            // has no mundetected, so m_in_air is is_flyer || is_floater.  A WATER
+            // square (rm.h IS_WATERWALL) is never standable from the air.
+            return is_swimmer_flag(ptr)
+                || (!Is_waterlevel(game.u?.uz) && !IS_WATERWALL(game.level?.at(x, y)?.typ)
+                    && mm_in_air_ptr(ptr));
         } else if (ptr.mcls === S_EEL_CLS && rn2(13)) {
             // C: an eel out of water usually refuses — and this rn2(13) fires
             // whenever an eel is offered a square, so it must not be skipped.
             return false;
         } else if (mm_is_lava(x, y)) {
-            return is_flyer_flag(ptr) || mm_likes_lava(ptr);
+            // C: a floating eye avoids lava even though it floats.
+            if (ptr.name === 'floating eye') return false;
+            return mm_in_air_ptr(ptr) || mm_likes_lava(ptr);
         }
         if (passes_walls_flag(ptr) && mm_may_passwall(x, y)) return true;
         if (amorphous_flag(ptr) && mm_closed_door(x, y)) return true;
@@ -4025,7 +4048,7 @@ function mm_scaremon_at(x, y) {
     const objs = game.level?.objects;
     if (!objs) return false;
     for (const o of objs)
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === SCR_SCARE_MONSTER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === SCR_SCARE_MONSTER)
             return true;
     return false;
 }
@@ -4049,6 +4072,11 @@ function mm_is_mongen_exclusion(x, y) {
 
 // C ref: mondata.h likes_lava(ptr) — the fire elemental and the salamander,
 // which C spells out as two mons[] pointer comparisons rather than a flag.
+// C ref: mon.c m_in_air(mtmp) for a stand-in monster (never mundetected):
+// is_flyer || is_floater (mlet S_EYE or S_LIGHT).
+function mm_in_air_ptr(ptr) {
+    return is_flyer_flag(ptr) || ptr.mcls === S_EYE_CLS || ptr.mcls === S_LIGHT_CLS;
+}
 function mm_likes_lava(ptr) {
     return ptr?.name === 'fire elemental' || ptr?.name === 'salamander';
 }
@@ -4072,7 +4100,7 @@ function mm_boulder_at(x, y) {
     const objs = game.level?.objects;
     if (!objs) return false;
     for (const o of objs)
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === SMS_BOULDER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === SMS_BOULDER)
             return true;
     return false;
 }

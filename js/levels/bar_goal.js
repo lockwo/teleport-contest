@@ -13,9 +13,9 @@ import { game } from '../gstate.js';
 import { LUCKSTONE } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
-    bigrm_load_map, bigrm_wallification, flip_level, quest_create_monster,
+    bigrm_load_map, bigrm_wallification, flip_level, gx, gy, quest_create_monster,
     quest_level_init_solidfill, quest_place_stair, quest_region_light, quest_set_door,
-    shuffle, vly_altar, vly_non_diggable,
+    shuffle, vly_altar, vly_non_diggable, wallify_map,
 } from '../sp_lev.js';
 import {
     quest_monster_class_rnd, quest_monster_named_rnd, quest_named_object_at,
@@ -93,9 +93,12 @@ export async function makemaz_bar_goal() {
         for (let i = 0; i < 2; i++) quest_monster_class_rnd(S_OGRE, false);
         for (let i = 0; i < 8; i++) quest_monster_named_rnd('rock troll', false);
         quest_monster_class_rnd(S_TROLL, false);
-        // des.wallify() — explicit, and RNG-free; the finalize pass below
-        // repeats it over the same area.
-        bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
+        // des.wallify() with no arguments — sp_lev.c wallify_map() over the
+        // des.map footprint grown by one: every STONE square beside a ROOM
+        // square becomes the cave's wall.  RNG-free; the finalize pass below
+        // then fixes corners/spines.
+        wallify_map(gx.xstart - 1, gy.ystart - 1,
+                    gx.xstart + gx.xsize + 1, gy.ystart + gy.ysize + 1);
     } finally {
         g._quest_gen = false;
         g._full_mon_gen = false;

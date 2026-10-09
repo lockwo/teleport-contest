@@ -13,15 +13,15 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
-import { m_at, newsym, update_topl, map_invisible,
+import { m_at, newsym, update_topl, map_invisible, tmp_at_flash, tmp_at_flash_cell,
          canseemon_shared, Deaf_hero } from './display.js';
-import { cansee } from './vision.js';
+import { cansee, Blind } from './vision.js';
 import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT,
          LAVAPOOL, TT_PIT, P_DAGGER, A_DEX, A_CHA, NEED_HTH_WEAPON,
          MM_NOMSG, EYE, SHOPBASE } from './const.js';
 // C ref: trap.h:57 enum trap_types — used by the hurtle_step() port below.
 import { PIT, SPIKED_PIT, HOLE, TRAPDOOR, MAGIC_PORTAL, FIRE_TRAP,
-         VIBRATING_SQUARE } from './const.js';
+         VIBRATING_SQUARE, OBJ_FLOOR, OBJ_MINVENT } from './const.js';
 import { mflags1_of, mflags2_of, mflags3_of, msound_of, M1_BREATHLESS,
          M1_NOEYES, M1_WALLWALK, M2_DOMESTIC, M3_WANTSARTI, MS_LEADER,
          is_human_flag, is_demon_flag } from './monflags_data.js';
@@ -38,6 +38,7 @@ import { name_to_pmidx, monster_by_pmidx, makemon, set_malign,
 import * as I from './invent.js';
 import { ghitm } from './dokick.js';
 import { goodpos } from './teleport.js';
+import { is_pool, is_lava } from './dbridge.js';
 
 // C ref: hack.h ECMD_* result codes.
 const ECMD_OK = 0, ECMD_CANCEL = 1, ECMD_TIME = 3;
@@ -65,10 +66,11 @@ const FOOT = 5, HAND = 6, HEAD = 8;
 // C ref: rm.h IS_WATERWALL(typ).
 function IS_WATERWALL(typ) { return typ === WATER; }
 function typ_at(x, y) { return game.level?.at?.(x, y)?.typ ?? 0; }
-function is_lava_at(x, y) { const t = typ_at(x, y); return t === LAVAPOOL || t === LAVAWALL; }
-function is_pool_at(x, y) { const t = typ_at(x, y); return t === POOL || t === MOAT || t === WATER; }
+// C ref: dbridge.c is_lava()/is_pool(): js/dbridge.js owns the one copy (it
+// also covers a raised drawbridge's underlying moat/lava).
+const is_lava_at = (x, y) => is_lava(x, y);
+const is_pool_at = (x, y) => is_pool(x, y);
 function is_pool_or_lava_at(x, y) { return is_pool_at(x, y) || is_lava_at(x, y); }
-function Blind() { return !!(game.u?.uprops?.Blinded || game.u?.Blinded); }
 // C ref: mondata.h breathless(ptr) == (mflags1 & M1_BREATHLESS),
 // haseyes(ptr) == !(mflags1 & M1_NOEYES).
 function breathless(ptr) { return (mflags1_of(ptr) & M1_BREATHLESS) !== 0; }
@@ -368,9 +370,20 @@ export async function release_camera_demon(obj, x, y) {
         const mtmp = (idx >= 0) ? makemon(monster_by_pmidx(idx), x, y, MM_NOMSG) : null;
         if (mtmp) {
             const U = await import('./uhitm.js');
-            if (U.canspotmon(mtmp))
-                await update_topl('The picture-painting demon is released!');
+            if (U.canspotmon(mtmp)) {
+                // C: Hallucination ? An(rndmonnam(NULL)) : "The picture-painting demon"
+                const D = await import('./display.js');
+                let who = 'The picture-painting demon';
+                if (D.Hallucination_u()) {
+                    const { rndmonnam } = await import('./do_name.js');
+                    const nm = an(rndmonnam().name);
+                    who = nm[0].toUpperCase() + nm.slice(1);
+                }
+                await update_topl(`${who} is released!`);
+            }
             mtmp.mpeaceful = obj.cursed ? 0 : 1;
+            const { set_malign } = await import('./makemon.js');
+            set_malign(mtmp);
         }
     }
 }
@@ -1000,7 +1013,7 @@ async function whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap) {
                 await update_topl(`You yank ${I.yname(otmp)} to the ${
                     surface(game.u.ux, game.u.uy)}!`);
                 place_object(otmp, game.u.ux, game.u.uy);
-                otmp.where = 3 /* OBJ_FLOOR */;
+                otmp.where = OBJ_FLOOR;
                 I.stackobj(otmp);
                 break;
             case 3: /* right into your inventory */
@@ -1011,7 +1024,7 @@ async function whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap) {
                 await update_topl(`You yank ${the_str(I.cxname_singular(otmp))} from ${
                     s_suffix(U.mon_nam(mtmp))} ${await mon_hand_noun(mtmp, otmp)}!`);
                 place_object(otmp, mtmp.mx, mtmp.my);
-                otmp.where = 3 /* OBJ_FLOOR */;
+                otmp.where = OBJ_FLOOR;
                 I.stackobj(otmp);
                 break;
             }
@@ -1055,27 +1068,36 @@ export async function boomhit(obj, dx, dy, skillsnap) {
     const counterclockwise = (u.uhandedness | 0) === 0 /* RIGHT_HANDED */;
     let nhits = Math.max(1, (obj.spe | 0) + 1);
     let bx = u.ux, by = u.uy;
+    game.bhitpos = { x: bx, y: by };
     let i = xytodir(dx, dy);
     if (i < 0) return { mon: null, x: bx, y: by };
+    // C ref: zap.c:4171-4177 — the S_boomleft ')' / S_boomright '(' cmap glyph
+    // (HI_WOOD == CLR_BROWN) flashes along the curve and toggles each step.
+    let boom = counterclockwise ? 80 /* S_boomleft */ : 81 /* S_boomright */;
+    const boom_cell = (b) => ({ ch: b === 80 ? ')' : '(', color: 3 /* CLR_BROWN */, dec: false });
+    const flash = tmp_at_flash_cell(boom_cell(boom));
 
     for (let ct = 0; ct < 10; ct++) {
         i = ((i % N_DIRS) + N_DIRS) % N_DIRS;
+        boom = 80 + 81 - boom; /* toggle */
+        flash.change(boom_cell(boom));
         dx = XDIR[i]; dy = YDIR[i];
         bx += dx; by += dy;
-        if (!isok(bx, by)) { bx -= dx; by -= dy; break; }
+        game.bhitpos = { x: bx, y: by };
+        if (!isok(bx, by)) { bx -= dx; by -= dy; game.bhitpos = { x: bx, y: by }; break; }
         const mtmp = m_at(bx, by);
         if (mtmp) {
             // C ref: zap.c:4188 m_respond(mtmp) — a shrieker shrieks, an
             // erinys aggravates.
             await (await import('./monmove.js')).m_respond(mtmp);
-            if (nhits-- < 0) return { mon: mtmp, x: bx, y: by };
+            if (nhits-- < 0) { await flash.end(); return { mon: mtmp, x: bx, y: by }; }
             // C ref: zap.c:4192 `else if (throwit_mon_hit(obj, mtmp) ||
             // !gt.thrownobj) break;` — only a boomerang used up by the hit
             // stops here; one that survives keeps flying along its curve.
-            if (await I.thitmonst(mtmp, obj, skillsnap)) return { gone: true };
+            if (await I.thitmonst(mtmp, obj, skillsnap)) { await flash.end(); return { gone: true }; }
         }
         if (!zap_pos(typ_at(bx, by)) || closed_door(bx, by)) {
-            bx -= dx; by -= dy; break;
+            bx -= dx; by -= dy; game.bhitpos = { x: bx, y: by }; break;
         }
         if (bx === u.ux && by === u.uy) { /* ct == 9 */
             if (Fumbling() || rn2(20) >= acurr_eff(A_DEX)) {
@@ -1086,9 +1108,12 @@ export async function boomhit(obj, dx, dy, skillsnap) {
                 break;
             }
             /* we catch it */
+            await flash.end();
             await update_topl('You skillfully catch the boomerang.');
             return { caught: true };
         }
+        await flash.step(bx, by);
+        await nh_delay_output_hurtle();
         if (IS_SINK(typ_at(bx, by))) {
             if (!Deaf_hero()) await update_topl('Klonk!');
             const { wake_nearto_core } = await import('./mon.js');
@@ -1098,6 +1123,7 @@ export async function boomhit(obj, dx, dy, skillsnap) {
         /* ct==0 initial position and ct==5 opposite position repeat the delta */
         if (ct % 5 !== 0) i = counterclockwise ? (i + 7) : (i + 1);
     }
+    await flash.end(); /* do not leave last symbol */
     return { mon: null, x: bx, y: by };
 }
 
@@ -1183,8 +1209,6 @@ const NO_TRAP_FLAGS_ = 0, FORCEBUNGLE_FLAG = 1, HURTLING_FLAG = 4;
 // ([[worn-mask-remap-collision]] — do NOT "correct" these to prop.h's values).
 const W_ARM_MASK = 0x00000001, W_ARMC_MASK = 0x00000002,
       W_ARMU_MASK = 0x00000020;
-// C ref: display.h DISP_FLASH / DISP_END (tmp_at modes).
-const DISP_FLASH_MODE = -4, DISP_END_MODE = -1;
 // C ref: do_name.h ARTICLE_A / ARTICLE_YOUR and the x_monnam() suppress bits.
 const ARTICLE_A_ = 2, ARTICLE_YOUR_ = 4;
 const SUPPRESS_SADDLE_ = 0x02, AUGMENT_IT_ = 0x20,
@@ -1376,7 +1400,7 @@ export async function hurtle_step(arg, x, y) {
             const dmg = rnd(2 + arg.range);                 /* dothrow.c:835 */
             const { losehp_do } = await import('./do.js');
             await losehp_do(Maybe_Half_Phys_hurtle(dmg), why, KILLED_BY_);
-            wake_nearto_hurtle(x, y, 10);
+            await wake_nearto_hurtle(x, y, 10);
             return false;
         }
     }
@@ -1411,7 +1435,7 @@ export async function hurtle_step(arg, x, y) {
         if (touch_petrifies_ptr(ydat)
             && !which_armor_mask(mon, W_ARMU_MASK | W_ARM_MASK | W_ARMC_MASK))
             await minstapetrify_hurtle(mon, true);
-        wake_nearto_hurtle(x, y, 10);
+        await wake_nearto_hurtle(x, y, 10);
         return false;
     }
 
@@ -1714,8 +1738,9 @@ export async function mhurtle(mon, dx, dy, range) {
 
 // C ref: dothrow.c:1442 sho_obj_return_to_u(obj) — animate a thrown weapon's
 // flight BACK to the hero (Mjollnir / aklys; boomerangs use boomhit()).
-// Display only: obj_to_glyph()'s rng argument is rn2_on_display_rng, never the
-// core RNG.
+// Display only, but while hallucinating the glyph pick (obj_to_glyph with
+// rn2_on_display_rng) and the newsym()s that restore each flashed cell draw
+// the DISPLAY rng.
 export async function sho_obj_return_to_u(obj) {
     const u = game.u;
     const bh = game.bhitpos || { x: u.ux, y: u.uy };
@@ -1723,14 +1748,14 @@ export async function sho_obj_return_to_u(obj) {
     if ((u.dx || u.dy) && (bh.x !== u.ux || bh.y !== u.uy)) {
         let x = bh.x - u.dx, y = bh.y - u.dy;
 
-        await tmp_at_hurtle(DISP_FLASH_MODE, obj_to_glyph_hurtle(obj));
+        const flash = tmp_at_flash(obj);
         while (isok(x, y) && (x !== u.ux || y !== u.uy)) {
-            await tmp_at_hurtle(x, y);
+            await flash.step(x, y);
             await nh_delay_output_hurtle();
             x -= u.dx;
             y -= u.dy;
         }
-        await tmp_at_hurtle(DISP_END_MODE, 0);
+        await flash.end();
     }
 }
 
@@ -1764,7 +1789,7 @@ export async function throwit_mon_hit(obj, mon) {
     if (mon) {
         const u = game.u;
 
-        if (mon.isshk && obj.where === 'minvent' && obj.ocarry === mon)
+        if (mon.isshk && obj.where === OBJ_MINVENT && obj.ocarry === mon)
             return true;
 
         await snuff_candle_hurtle(obj);
@@ -1806,15 +1831,12 @@ async function wakeup_hurtle(mon, via_attack) {
 function Maybe_Half_Phys_hurtle(dmg) {
     return uprop_any('Half_physical_damage') ? Math.floor((dmg + 1) / 2) : dmg;
 }
-// C ref: monmove.c wake_nearto(x, y, distance) — `distance` is a SQUARED
-// distance (dist2), and 0 means "everything on the level".  js/monmove.js:4285
-// has the faithful copy (unexported); js/cmd.js exports its own.
-function wake_nearto_hurtle(x, y, distance) {
-    for (const m of game.level?.monsters || []) {
-        if (!m || (m.mhp != null && m.mhp <= 0)) continue;
-        const d2 = (m.mx - x) * (m.mx - x) + (m.my - y) * (m.my - y);
-        if (distance === 0 || d2 < distance) { m.msleeping = 0; m.meating = 0; }
-    }
+// C ref: mon.c wake_nearto(x, y, distance) == wake_nearto_core(x, y, distance,
+// FALSE): `distance` is a SQUARED distance (dist2), 0 means "everything on the
+// level", and wake_msg() names every visible sleeper it wakes.
+async function wake_nearto_hurtle(x, y, distance) {
+    const { wake_nearto_core } = await import('./mon.js');
+    await wake_nearto_core(x, y, distance, false);
 }
 // C ref: trap.c instapetrify(str) — js/invent.js:1396 is an empty stub too.
 async function instapetrify_hurtle(_why) { /* NOT PORTED (js/invent.js:1396) */ }
@@ -1827,8 +1849,8 @@ async function minstapetrify_hurtle(mon, byplayer) {
 // C ref: hack.c switch_terrain() — js/dig.js:870 is an empty stub because the
 // port has no B<prop> masks (see js/polyself.js float_vs_flight()).
 function switch_terrain_hurtle() { /* NOT PORTED (js/dig.js:870) */ }
-// C ref: trap.c drown() — js/trap.js:3381 (unexported).
-async function drown_hurtle() { return false; /* NOT PORTED */ }
+// C ref: trap.c drown() — js/trap.js owns the one copy.
+async function drown_hurtle() { const { drown } = await import('./trap.js'); return await drown(); }
 // C ref: trap.c mintrap(mon, mintrapflags).
 async function mintrap_hurtle(mon, flags) {
     const { mon_mintrap } = await import('./monmove.js');
@@ -1858,13 +1880,6 @@ async function flush_screen_hurtle(mode) {
     const { flush_screen } = await import('./display.js');
     return flush_screen(mode);
 }
-// C ref: display.c tmp_at(x, y) — exported, reached dynamically.
-async function tmp_at_hurtle(x, y) {
-    const { tmp_at } = await import('./display.js');
-    return tmp_at(x, y);
-}
-// C ref: display.c obj_to_glyph(obj, rng) — js/invent.js:1397 also returns 0.
-function obj_to_glyph_hurtle(_obj) { return 0; }
 // C ref: do_name.c noit_mhim(mon) — "him"/"her"/"it", with "it" suppressed for
 // a named or seen monster.
 function noit_mhim_hurtle(mon) { return mon?.female ? 'her' : 'him'; }

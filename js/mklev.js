@@ -99,8 +99,7 @@ import {
     In_endgame, BURN,
     DUST, MARK, HEADSTONE,
     TAINT_AGE,
-    COULD_SEE, IN_SIGHT,
-} from './const.js';
+    COULD_SEE, IN_SIGHT, OBJ_FLOOR, OBJ_BURIED } from './const.js';
 
 const XLIM = 4;
 const YLIM = 3;
@@ -6262,7 +6261,7 @@ async function makemaz_bar_filb() {
         // des.level_init({ style="mines", fg=".", bg=" ", smoothed=true,
         //                  joined=true, lit=0, walled=true })
         //   lit is an explicit boolean (0): litstate_rnd draws NO rn2.
-        mk_mkmap(false, STONE, ROOM, true);
+        await mk_mkmap(false, STONE, ROOM, true);
 
         // des.stair("up"); des.stair("down")
         mk_stair(true);
@@ -7123,7 +7122,7 @@ function mktrap_victim(trap) {
 // C ref: invent.c sobj_at(BOULDER, x, y) — mktrap()'s pit/hole placement test.
 function mk_sobj_at_boulder(x, y) {
     for (const o of game.level?.objects ?? [])
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === BOULDER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === BOULDER)
             return true;
     return false;
 }
@@ -7430,7 +7429,7 @@ function mineralize_kelp(kelp_pool, kelp_moat) {
 // Tracking them keeps weight/RNG bookkeeping faithful without affecting display.
 function bury_object(otmp) {
     if (!otmp) return otmp;
-    otmp.where = 'buried';
+    otmp.where = OBJ_BURIED;
     const lvl = game.level;
     if (lvl) {
         if (!lvl.buriedobjlist) lvl.buriedobjlist = [];
@@ -8259,7 +8258,7 @@ function mkinv_fracture_rock(obj) {
     obj.dknown = obj.bknown = obj.rknown = 0;
     obj.known = 1;                       /* rocks have no oc_uses_known */
     dealloc_oextra(obj);
-    if (obj.where === 'floor') {
+    if (obj.where === OBJ_FLOOR) {
         const ox = obj.ox, oy = obj.oy;
         obj_extract_self_mkobj(obj);
         place_object(obj, ox, oy);
@@ -8271,7 +8270,7 @@ function mkinv_fracture_rock(obj) {
 // mkinvpos() needs the object itself so it can fracture or free it.
 function mkinv_sobj_at(otyp, x, y) {
     for (const o of game.level?.objects ?? [])
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === otyp)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === otyp)
             return o;
     return null;
 }

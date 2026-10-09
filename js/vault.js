@@ -30,18 +30,17 @@ import {
     IS_WALL, IS_STWALL, IS_ROOM, IS_OBSTRUCTED, ACCESSIBLE,
     ROOMOFFSET, VAULT, VAULT_GUARD_TIME, FCSIZ, GD_EATGOLD, GD_DESTROYGOLD,
     SV0, SV1, SV7, SVALL, COULD_SEE, IN_SIGHT, A_LAWFUL, NEED_HTH_WEAPON,
-    EGD, u_at, Upolyd,
-} from './const.js';
+    EGD, u_at, Upolyd, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { ATR_INVERSE } from './terminal.js';
 import {
     newsym, update_topl, m_at, background_glyph, show_glyph_cell, map_invisible,
 } from './display.js';
 import { cansee, couldsee, block_point, unblock_point, recalc_block_point } from './vision.js';
 import { Monnam, mon_nam, canspotmon, setmangry, relobj } from './uhitm.js';
-import { noit_Monnam, noit_mon_nam } from './do_name.js';
+import { noit_Monnam, noit_mon_nam, Some_Monnam } from './do_name.js';
 import { m_carrying, m_canseeu, mon_wield_item } from './monmove.js';
 import { rloc, rloc_to, RLOC_MSG, RLOC_ERR } from './teleport.js';
-import { makemon, set_malign, monster_by_pmidx, enexto_spawn } from './makemon.js';
+import { makemon, set_malign, monster_by_pmidx, enexto_spawn, add_to_minv } from './makemon.js';
 import { place_object, objects, weight, COIN_CLASS, BOULDER, ROCK } from './mkobj.js';
 import { stackobj, makeplural, xname, currency } from './invent.js';
 import { money_cnt_invent, hidden_gold as shk_hidden_gold } from './shk.js';
@@ -69,11 +68,6 @@ const MM_NOMSG = 0x00020000;
 // C ref: monflag.h MS_SILENT / the msound values yelp() switches on.
 const MS_SILENT = 0, MS_BARK = 1, MS_MEW = 2, MS_ROAR = 3, MS_GROWL = 5,
     MS_SQEEK = 6, MS_SQAWK = 7, MS_WAIL = 14;
-// C ref: obj.h OBJ_FLOOR / OBJ_MINVENT.  js/mkobj.js place_object() writes the
-// string form of "on the floor"; js/dogmove.js mpickobj() writes the numeric
-// OBJ_MINVENT.  Both spellings are used verbatim so the shared readers agree.
-const OBJ_FLOOR = 'floor';
-const OBJ_MINVENT = 4;
 
 /* ------------------------------------------------------------------ *
  * house-local helpers (the shape the rest of js/ uses)
@@ -102,8 +96,6 @@ const mungspaces = (s) => String(s ?? '').replace(/\s+/g, ' ').replace(/^ | $/g,
 // which was indistinguishable only while x_monnam() ignored canspotmon().
 const mhe = (m) => (m?.female ? 'she' : 'he');
 const noit_mhis = (m) => (m?.female ? 'her' : 'his');
-// C ref: do_name.c Some_Monnam(mon) — "Someone" when the hero can't spot it.
-const Some_Monnam = (mon) => (canspotmon(mon) ? Monnam(mon) : 'Someone');
 // C ref: hack.h um_dist(x,y,n) — further than n from the hero on EITHER axis.
 const um_dist = (x, y, n) => Math.abs(x - (game.u?.ux ?? 0)) > n
     || Math.abs(y - (game.u?.uy ?? 0)) > n;
@@ -180,12 +172,6 @@ function obj_extract_self(obj) {
 }
 const remove_object = obj_extract_self;
 const obfree = obj_extract_self;
-// C ref: mon.c add_to_minv(mon, obj).
-function add_to_minv(mon, obj) {
-    mon.minvent = mon.minvent || [];
-    obj.where = OBJ_MINVENT;
-    mon.minvent.push(obj);
-}
 // C ref: engrave.c del_engr_at(x,y).
 function del_engr_at(x, y) {
     if (!game.level?.engravings) return;
@@ -508,7 +494,7 @@ export async function clear_fcorr(grd, forceshow) {
         const uball = u.uball;
         if ((u_at(fcx, fcy) && !DEADMONSTER(grd))
             || (!forceshow && couldsee(fcx, fcy))
-            || ((u.uprops?.Punished || 0) > 0 && uball && uball.where !== 'invent'
+            || ((u.uprops?.Punished || 0) > 0 && uball && uball.where !== OBJ_INVENT
                 && uball.ox === fcx && uball.oy === fcy))
             return false;
 

@@ -124,7 +124,7 @@ const shkgeneral = [
 
 // C ref: shknam.c shtypes[].shknms field — map the shtypes.js identity tag to
 // the actual name pool.
-const SHKNAME_POOL = {
+export const SHKNAME_POOL = {
     general: shkgeneral, armors: shkarmors, books: shkbooks,
     liquors: shkliquors, weapons: shkweapons, foods: shkfoods,
     rings: shkrings, wands: shkwands, tools: shktools,
@@ -309,8 +309,22 @@ function good_shopdoor(sroom) {
         const d = doors[di];
         if (!d) continue;
         let sx = d.x, sy = d.y;
+        if (sroom.irregular) {
+            // C ref: shknam.c good_shopdoor() irregular branch — step to the
+            // orthogonal neighbour that is a non-edge square of this room.
+            const rmno = (sroom.roomnoidx ?? 0) + ROOMOFFSET;
+            const inRoom = (x, y) => {
+                if (x < 1 || x > 79 || y < 0 || y > 20) return false;
+                const l = game.level.at(x, y);
+                return !!l && !l.edge && l.roomno === rmno;
+            };
+            if (inRoom(sx - 1, sy)) sx--;
+            else if (inRoom(sx + 1, sy)) sx++;
+            else if (inRoom(sx, sy - 1)) sy--;
+            else if (inRoom(sx, sy + 1)) sy++;
+            else continue;
         // Regular rectangular shop: shift the door coordinate one square inside.
-        if (sx === sroom.lx - 1) sx++;
+        } else if (sx === sroom.lx - 1) sx++;
         else if (sx === sroom.hx + 1) sx--;
         else if (sy === sroom.ly - 1) sy++;
         else if (sy === sroom.hy + 1) sy--;
@@ -344,6 +358,10 @@ function shkinit(shp, sroom) {
     shk.eshk.shoproom = (sroom.roomnoidx ?? 0) + ROOMOFFSET;
     sroom.resident = shk;
     shk.eshk.shoptype = sroom.rtype;
+    // C ref: shknam.c shkinit() `assign_level(&eshkp->shoplevel, &u.uz)`.  Without
+    // it a shopkeeper who followed the hero off-level still counted as local to
+    // the new level (shk.js on_shoplevel), so paybill() skipped its mongone().
+    shk.eshk.shoplevel = { dnum: game.u.uz.dnum, dlevel: game.u.uz.dlevel };
     // C ref: shknam.c:674 `eshkp->shd = svd.doors[sh]` — a struct copy BY VALUE.
     // Storing the reference makes flip_level() flip this coord twice (once via
     // level.doors[], once via eshk.shd) and leaves the other alias unflipped.

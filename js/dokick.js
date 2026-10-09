@@ -10,7 +10,7 @@
 
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
-import { pline, newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl } from './display.js';
+import { pline, newsym, feel_location, feel_newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl, tmp_at_flash } from './display.js';
 import { Blind, couldsee, cansee, recalc_block_point, unblock_point } from './vision.js';
 import { exercise, acurr_eff, adjalign } from './attrib.js';
 import {
@@ -30,8 +30,7 @@ import {
     MM_ANGRY, MM_NOMSG, MM_MALE, MM_FEMALE, ER_NOTHING,
     AM_MASK, Amask2align, W_ARMF,
     PIT, SPIKED_PIT, WEB, WATER, ZAP_POS, FOOT, VIS_EFFECTS, MAY_HIT,
-    ER_DESTROYED,
-} from './const.js';
+    ER_DESTROYED, OBJ_MINVENT } from './const.js';
 import { KICKING_BOOTS, BOULDER, ROCK, DILITHIUM_CRYSTAL, LUCKSTONE,
          RING_CLASS, GEM_CLASS, EGG, BAG_OF_HOLDING, BAG_OF_TRICKS,
          COIN_CLASS, CORPSE, LARGE_BOX, CHEST, ICE_BOX, EXPENSIVE_CAMERA,
@@ -365,7 +364,7 @@ export async function kick_dumb(x, y) {
     exercise(A_DEX, false);
     if (martial() || ACURR(A_DEX) >= 16 || rn2(3)) {
         await pline('You kick at empty space.');
-        // feel_location(x, y) when Blind: map bookkeeping only, no RNG.
+        if (Blind()) feel_location(x, y);
     } else {
         await pline('Dumb move!  You strain a muscle.');
         exercise(A_STR, false);
@@ -385,6 +384,7 @@ export async function kick_ouch(x, y, kickobjnam, maploc) {
     exercise(A_DEX, false);
     exercise(A_STR, false);
     if (isok(x, y)) {
+        if (Blind()) feel_location(x, y); /* we know we hit it */
         // C ref: dokick.c:898 — the noise wakes anything within 5*5; no RNG
         // here, but the monsters it wakes go on to take (RNG-drawing) turns.
         // is_drawbridge_wall()/find_drawbridge() only retarget gm.maploc for
@@ -460,17 +460,17 @@ export async function kick_door(x, y, avrg_attrib) {
         // C ref: dokick.c:951-952 feel_newsym(x,y); recalc_block_point(x,y) —
         // the broken/gone door is now transparent, so re-run vision (reveals
         // whatever lies beyond the doorway).
-        newsym(x, y);
+        feel_newsym(x, y); /* we know we broke it */
         recalc_block_point(x, y);
         if (shopdoor) {
             const { add_damage, pay_for_damage } = await import('./shk.js');
             const { SHOP_DOOR_COST } = await import('./const.js');
-            add_damage(x, y, SHOP_DOOR_COST);
+            await add_damage(x, y, SHOP_DOOR_COST);
             await pay_for_damage('break', false);
         }
         if (in_town(x, y)) await get_iter_mons(watchman_thief_arrest);
     } else {
-        // feel_location(x, y) when Blind: no RNG.
+        if (Blind()) feel_location(x, y); /* we know we hit it */
         exercise(A_STR, true);
         // C ref: dokick.c:966 pline("%s!!", (Deaf || !rn2(3)) ? "Thwack" :
         // "Whammm") — Thwack when rn2(3)==0 (or Deaf), else Whammm.
@@ -535,7 +535,7 @@ export async function kick_nondoor(x, y, avrg_attrib) {
                        && !(maploc.doormask & D_LOCKED)) {
                 maploc.doormask = D_ISOPEN;
             }
-            newsym(x, y); /* feel_newsym: we know it's gone */
+            feel_newsym(x, y); /* we know it's gone */
             if (maploc.doormask === D_ISOPEN || maploc.doormask === D_NODOOR)
                 unblock_point(x, y);
             return ECMD_TIME;
@@ -548,7 +548,7 @@ export async function kick_nondoor(x, y, avrg_attrib) {
             await pline('Crash!  You kick open a secret passage!');
             exercise(A_DEX, true);
             maploc.typ = CORR;
-            newsym(x, y);
+            feel_newsym(x, y); /* we know it's gone */
             unblock_point(x, y);
             return ECMD_TIME;
         }
@@ -1044,13 +1044,18 @@ async function kick_flooreffects(obj, x, y) {
 // starts one square in front of the hero (range--), a web catches it on !rn2(3),
 // coins stop on any square that already holds objects, and pool / lava / sink
 // squares end the flight WITH the object on them (a thrown one reverts).
-// hits_bars() (IRONBARS) and ship_object() are not ported; an IRONBARS square
-// still stops the flight below, via ZAP_POS.
+// Iron bars go through mthrowu.js hits_bars() (whodidit 1): a missile too big
+// to slip between them stops, may break, and clinks.  When it breaks
+// gk_kickedobj is nulled and the caller must stop.
 async function bhit_kicked(ddx, ddy, range, obj) {
     const u = game.u;
     let bx = u.ux + ddx, by = u.uy + ddy;
     range--;
     let result = null;
+    let point_blank = true;
+    // C ref: zap.c:3868 — tmp_at(DISP_FLASH, obj_to_glyph(obj, rn2_on_display_rng))
+    // before the loop; DISP_END (flash.end) runs on every way out below.
+    const flash = tmp_at_flash(obj);
     while (range-- > 0) {
         bx += ddx; by += ddy;
         if (!isok(bx, by)) { bx -= ddx; by -= ddy; break; }
@@ -1058,6 +1063,17 @@ async function bhit_kicked(ddx, ddy, range, obj) {
         const typ = loc ? loc.typ : 0 /* STONE */;
         /* "wall of water" and lava wall stop items */
         if (typ === WATER || typ === LAVAWALL) break;
+
+        /* C ref: zap.c:3905 — iron bars block anything big enough and break
+           some things; the !rn2(5) always_hit roll is skipped at point blank. */
+        if (typ === IRONBARS) {
+            const { hits_bars } = await import('./mthrowu.js');
+            const objp = { obj };
+            const hit = await hits_bars(objp, bx - ddx, by - ddy, bx, by,
+                                        point_blank ? 0 : !rn2(5), 1);
+            obj = gk_kickedobj = objp.obj;      /* obj might now be null */
+            if (hit) { bx -= ddx; by -= ddy; break; }
+        }
 
         const mtmp = m_at(bx, by);
         const ttmp = t_at(bx, by);
@@ -1084,10 +1100,20 @@ async function bhit_kicked(ddx, ddy, range, obj) {
             || (await ship_object(obj, bx, by, costly_spot(bx, by))))
             break;
         if (!ZAP_POS(typ) || closed_door(bx, by)) { bx -= ddx; by -= ddy; break; }
+        /* C ref: zap.c:4083 — 'I' present but no monster: erase it before
+           tmp_at() */
+        if (loc?.invisMon && cansee(bx, by)) {
+            unmap_object(bx, by);
+            newsym(bx, by);
+        }
+        await flash.step(bx, by);
         /* kicked objects fall in pools; physical objects fall onto sinks */
         if (is_pool_or_lava(bx, by)) break;
         if (IS_SINK(typ)) break;
+        /* thrown/kicked missile has moved away from its starting spot */
+        point_blank = false;        /* affects passing through iron bars */
     }
+    await flash.end();
     return { x: bx, y: by, mon: result };
 }
 
@@ -1296,10 +1322,11 @@ async function really_kick_object(x, y) {
     // snuff_candle(gk.kickedobj): the light-source list isn't modelled; no RNG.
     newsym(x, y);
     const land = await bhit_kicked(u.dx, u.dy, range, gk_kickedobj);
+    if (!gk_kickedobj) return 1; /* object broken */
     const mon = land.mon;
 
     if (mon) {
-        if (mon.isshk && gk_kickedobj.where === 'minvent' && gk_kickedobj.ocarry === mon)
+        if (mon.isshk && gk_kickedobj.where === OBJ_MINVENT && gk_kickedobj.ocarry === mon)
             return 1; /* alert shk caught it */
         game.notonhead = (mon.mx !== land.x || mon.my !== land.y);
         if (isgold ? await ghitm(mon, gk_kickedobj)

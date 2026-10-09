@@ -28,8 +28,7 @@ import { STATUE } from './mkobj.js';
 import {
     COURT, BEEHIVE, MORGUE, ZOO, BARRACKS, HAIR, NECK, HEAD, IRONBARS, BOLT_LIM,
     W_ARMH, A_NONE, STRAT_WAITMASK, nothing_happens, ACCESSIBLE, isok,
-    M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER,
-} from './const.js';
+    M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, OBJ_FLOOR } from './const.js';
 import {
     mflags1_of, M1_FLY, M1_NOEYES, M1_CARNIVORE, M1_HERBIVORE, M1_SEE_INVIS,
     M2_LORD, M2_PRINCE, M2_UNDEAD, is_animal, humanoid,
@@ -86,7 +85,7 @@ export async function dosounds() {
         return;
 
     const lf = g.level?.flags || {};
-    const hallu = 0; // Hallucination not modeled in the move loop
+    const hallu = Hallucination() ? 1 : 0;
 
     // C ref: sounds.c:213-219 — fountain ambient.  rn2(3) selects the message.
     // NOTE: C does NOT return here — nsinks/has_court/etc. below are still
@@ -235,7 +234,7 @@ function gold_at(x, y) {
     const objs = game.level?.objects;
     if (!objs) return false;
     for (const o of objs)
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === GOLD_PIECE)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === GOLD_PIECE)
             return true;
     return false;
 }
@@ -878,16 +877,11 @@ function inhistemple(priest) {
     if (!histemple_at(priest, priest.mx, priest.my)) return false;
     return has_shrine(priest);
 }
-// C ref: pray.c halu_gname(alignment) — a random god while hallucinating,
-// otherwise align_gname().  GAP: the hallucinating branch draws randrole(TRUE)
-// plus rn2_on_display_rng(9) (and possibly a second display draw); this port
-// does not model the DISPLAY rng, so the sober name is used either way.  No
-// core-stream draw is skipped by that.
+// C ref: pray.c halu_gname(alignment) — js/role.js (a random god on the DISPLAY
+// rng while hallucinating, otherwise align_gname()).
 async function halu_gname(alignment) {
-    const { align_gname, roles } = await import('./role.js');
-    const mnum = game.urole?.mnum ?? game.u?.umonnum ?? 0;
-    const role = roles.findIndex(r => r.mnum === mnum);
-    return align_gname(role >= 0 ? role : mnum, alignment);
+    const { halu_gname: hg } = await import('./role.js');
+    return hg(alignment);
 }
 
 // C ref: sounds.c:20 mon_in_room(mon, rmtyp) — is the monster standing in a

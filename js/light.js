@@ -24,8 +24,7 @@
 import { game, hooks } from './gstate.js';
 import {
     COLNO, ROWNO, MAX_RADIUS, COULD_SEE, TEMP_LIT, RANGE_LEVEL,
-    FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT,
-} from './const.js';
+    FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { clear_path, vision_recalc } from './vision.js';
 import { flush_screen, map_invisible, canseemon_shared } from './display.js';
 import { objects, place_object, start_object_timer } from './mkobj.js';
@@ -170,18 +169,18 @@ const BURIED_TOO = 0x2, CONTAINED_TOO = 0x1;
 export function get_obj_location(obj, locflags) {
     if (!obj) return null;
     switch (obj.where) {
-    case 'invent':
+    case OBJ_INVENT:
         return { x: game.u?.ux, y: game.u?.uy };
-    case 'floor':
+    case OBJ_FLOOR:
         return { x: obj.ox, y: obj.oy };
-    case 'minvent':
+    case OBJ_MINVENT:
         if (obj.ocarry?.mx)
             return { x: obj.ocarry.mx, y: obj.ocarry.my };
         break; /* !mx => migrating monster */
-    case 'buried':
+    case OBJ_BURIED:
         if (locflags & BURIED_TOO) return { x: obj.ox, y: obj.oy };
         break;
-    case 'contained':
+    case OBJ_CONTAINED:
         if (locflags & CONTAINED_TOO)
             return get_obj_location(obj.ocontainer, locflags);
         break;
@@ -226,7 +225,7 @@ function remove_object(obj) {
     if (!arr) return;
     const ix = arr.indexOf(obj);
     if (ix >= 0) arr.splice(ix, 1);
-    obj.where = 'free';
+    obj.where = OBJ_FREE;
 }
 
 // C ref: vision.c circle_data[] / circle_start[] — the same table js/vision.js
@@ -424,7 +423,7 @@ export async function show_transient_light(obj, x, y) {
             if (cand.type !== LS_OBJECT) continue;
             if (cand.id === obj) { ls = cand; break; }
         }
-        if (!ls || obj.where !== 'free') {
+        if (!ls || obj.where !== OBJ_FREE) {
             impossible('transient light not a light source / not free');
             return;
         }
@@ -724,6 +723,27 @@ export function any_light_source() {
     return light_base().length > 0;
 }
 
+// C ref: light.c save_light_sources(RANGE_LEVEL) + do.c goto_level().  C keeps
+// ONE chain: leaving a level writes out only the RANGE_LEVEL entries and the
+// RANGE_GLOBAL ones (a lit lamp in the hero's, or a following pet's,
+// inventory) stay on the chain, so they keep shining on the destination.  This
+// port hangs the list off game.level, so the globals are moved across by hand.
+// They are removed from the departing level's list so a revisit does not see
+// them twice.  LS_MONSTER entries are re-derived per level by
+// sync_monster_light_sources().  Call after the destination level is installed
+// and BEFORE the pets are delivered (a migrating pet's mx is still 0).
+export function carry_global_light_sources(prevLevel) {
+    const from = prevLevel?.light_base;
+    if (!from || prevLevel === game.level) return;
+    const dest = light_base();
+    const kept = [];
+    for (const ls of from) {
+        if (ls.type === LS_OBJECT && ls.id && !obj_is_local(ls.id)) dest.push(ls);
+        else kept.push(ls);
+    }
+    prevLevel.light_base = kept;
+}
+
 // C ref: light.c:728 snuff_light_source(x, y) — snuff an object light source at
 // <x,y>.  Only works for burning light sources.
 export async function snuff_light_source(x, y) {
@@ -899,15 +919,15 @@ function pad2(n) { return String(n ?? 0).padStart(2, ' '); }
 // 'free' objects are mid-transit, so treat them as C's OBJ_FLOOR.)
 function obj_is_local(obj) {
     switch (obj?.where) {
-    case 'invent':
-    case 'migrating':
+    case OBJ_INVENT:
+    case OBJ_MIGRATING:
         return false;
-    case 'floor':
-    case 'buried':
+    case OBJ_FLOOR:
+    case OBJ_BURIED:
         return true;
-    case 'contained':
+    case OBJ_CONTAINED:
         return obj_is_local(obj.ocontainer);
-    case 'minvent':
+    case OBJ_MINVENT:
         return mon_is_local(obj.ocarry);
     default:
         break;

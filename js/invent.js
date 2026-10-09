@@ -11,7 +11,7 @@ import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac } from './worn.js';
 import { rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
-import { docrt, flush_screen, newsym, map_object, pline, putStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl } from './display.js';
+import { docrt, flush_screen, newsym, map_object, pline, putStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl, show_glyph_cell, tmp_at_flash } from './display.js';
 import { hooks } from './gstate.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
 import { distmin, depth as depth_of_level } from './hacklib.js';
@@ -100,13 +100,14 @@ import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag,
          M1_NOHEAD, M1_NOTAKE, M1_NOHANDS,
          M2_DEMON, M2_UNDEAD, M2_ORC } from './monflags_data.js';
 import { tin_variety, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN, tintxts, vegetarian } from './eat.js';
-import { enlightenment_lines } from './insight.js';
+import { enlightenment_lines, record_achievement } from './insight.js';
+import { ACH_BELL, ACH_CNDL, ACH_BOOK, ACH_AMUL, ACH_MINE_PRIZE, ACH_SOKO_PRIZE } from './const.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { base_armcat } from './objarmor_data.js';
 import { find_ac } from './u_init.js';
-import { moveloop_turn, youHaveFast, youHaveVeryFast } from './allmain.js';
+import { moveloop_turn, moveloop_input_redraw, youHaveFast, youHaveVeryFast } from './allmain.js';
 import { acurr_eff, acurr_str_encoded, exercise, set_moreluck } from './attrib.js';
-import { onbill, shk_scan, add_to_billobjs, shopper_financial_report } from './shk.js';
+import { onbill, shk_scan, add_to_billobjs, shopper_financial_report, money_cnt_invent, hidden_gold } from './shk.js';
 import { shop_keeper } from './shkroom.js';
 import { hitval, dbon, weapon_type, weapon_hit_bonus_core,
          weapon_dam_bonus_core, weapon_descr } from './weapon.js';
@@ -127,20 +128,19 @@ import {
     IS_FOUNTAIN, IS_THRONE, IS_SINK, IS_GRAVE, IS_ALTAR,
     TT_BEARTRAP, TT_INFLOOR, is_pit,
     AM_SHRINE, AM_SANCTUM, Amask2align, A_LAWFUL, A_NEUTRAL, A_CHAOTIC, A_NONE,
-    TREE, IRONBARS, DRAWBRIDGE_DOWN, DBWALL, LAVAPOOL, LAVAWALL, ICE,
+    TREE, IRONBARS, DRAWBRIDGE_DOWN, DBWALL, LAVAPOOL, LAVAWALL, ICE, WEB,
     POOL, MOAT, WATER,
     IS_DOOR, IS_FURNITURE, STONE, STAIRS, D_NODOOR, D_ISOPEN, D_BROKEN,
     Is_airlevel, Is_waterlevel,
-    PLNMSG_MON_TAKES_OFF_ITEM, PLNMSG_BACK_ON_GROUND,
-    MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL,
+    PLNMSG_MON_TAKES_OFF_ITEM, PLNMSG_BACK_ON_GROUND, PLNMSG_ONE_ITEM_HERE,
+    MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, MENU_PARTIAL,
     TIMEOUT, isok, STRAT_WAITMASK, SELL_NORMAL, SELL_DELIBERATE,
     // prop.h property indices, for the setworn()/setnotworn() extrinsic
     // bookkeeping below.  W_AMUL/W_TOOL are imported under CW_ names because
     // this file's own W_AMUL/W_TOOL constants are REMAPPED bits (see the
     // worn-mask block at line 240) and the extrinsic word must speak prop.h.
     INVIS, CLAIRVOYANT, BLINDED, LEVITATION,
-    W_AMUL as CW_AMUL, W_TOOL as CW_TOOL,
-} from './const.js';
+    W_AMUL as CW_AMUL, W_TOOL as CW_TOOL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED } from './const.js';
 import { engr_at, wipe_engr_at, read_engr_at, u_wipe_engr } from './engrave.js';
 import { costly_spot, addtobill, shkname } from './shkroom.js';
 // C ref: objnam.c doname_base():1648 — the shop-price suffix is formatted in
@@ -316,10 +316,6 @@ const WORN_BLINDF = W_BLINDF;
 const W_SADDLE = 0x00008000;
 const W_ART = 0x00010000;
 
-const OBJ_FREE = 'free';
-const OBJ_FLOOR = 'floor';
-const OBJ_INVENT = 'invent';
-const OBJ_CONTAINED = 'contained';
 // C ref: obj.h:481-486 — LOST_NONE 0, LOST_THROWN 1, LOST_DROPPED 2,
 // LOST_STOLEN 3, LOST_EXPLODING 4.  LOST_EXPLODING was 2 (i.e. LOST_DROPPED),
 // so every dropped object read as "exploding" to the merge/addinv guards below,
@@ -357,7 +353,7 @@ function glState() { game.gl = game.gl || {}; return game.gl; }
 // with a punished hero (previously unreachable — see js/region.js's
 // in_out_region() fix, which is what let any hurtle() finish at all).
 export function carried(obj) { return !!obj && (obj.where === OBJ_INVENT || inventoryArray().includes(obj)); }
-function mcarried(obj) { return !!obj && obj.where === 'minvent'; }
+function mcarried(obj) { return !!obj && obj.where === OBJ_MINVENT; }
 function has_oname(obj) { return !!obj?.oname; }
 function ONAME(obj) { return obj?.oname || ''; }
 function setONAME(obj, name) { if (obj) obj.oname = name || ''; }
@@ -413,8 +409,14 @@ const PM_MONK = 5;
 const PM_TOURIST = 10;
 const PM_WIZARD = 12;
 const FAKE_AMULET_OF_YENDOR_OTYP = 212; // objects.h FAKE_AMULET_OF_YENDOR
-function is_mines_prize(_obj) { return false; }
-function is_soko_prize(_obj) { return false; }
+// C ref: obj.h is_mines_prize(o) / is_soko_prize(o) — the o_id sp_lev.c recorded
+// in svc.context.achieveo for the Mines' End luckstone / Sokoban prize.
+function is_mines_prize(obj) {
+    return obj.o_id != null && obj.o_id === game.context?.achieveo?.mines_prize_oid;
+}
+function is_soko_prize(obj) {
+    return obj.o_id != null && obj.o_id === game.context?.achieveo?.soko_prize_oid;
+}
 function Has_contents(obj) { return !!(obj?.cobj && obj.cobj.length); }
 // C ref: obj.h:337 `Is_container(o) ((o)->otyp >= LARGE_BOX
 // && (o)->otyp <= BAG_OF_TRICKS)` — the enumerated list stopped at
@@ -917,7 +919,7 @@ export function obfree(obj, merge) {
     if (!merge) {
         bp.useup = true;
         obj.unpaid = 0;
-        obj.where = 'free';
+        obj.where = OBJ_FREE;
         add_to_billobjs(obj);
         return;
     }
@@ -958,7 +960,7 @@ export function unsplitobj(obj) {
     if (!obj || !splitContext) return null;
     let list;
     if (obj.where === OBJ_INVENT) list = inventoryArray();
-    else if (obj.where === 'minvent') list = obj.ocarry?.minvent;
+    else if (obj.where === OBJ_MINVENT) list = obj.ocarry?.minvent;
     else if (obj.where === OBJ_CONTAINED)
         list = (obj.ocontainer || container_of(obj))?.cobj;
     else return null;
@@ -989,7 +991,7 @@ function extract_nobj(obj, listRef) {
 export function obj_extract_self(obj) {
     if (!obj) return;
     if (obj.where === OBJ_FLOOR) { floor_extract_self(obj); return; }
-    if (obj.where === 'buried' || obj.where === 6 /* OBJ_BURIED */) {
+    if (obj.where === OBJ_BURIED) {
         /* C: extract_nobj(obj, &svl.level.buriedobjlist) */
         const blist = game.level?.buriedobjlist;
         const bix = Array.isArray(blist) ? blist.indexOf(obj) : -1;
@@ -1433,15 +1435,6 @@ function inv_cnt(includeGold = true) {
     let n = 0;
     for (const obj of inventoryArray()) if (includeGold || obj.oclass !== COIN_CLASS) ++n;
     return n;
-}
-function hidden_gold(_known) { return 0; }
-function money_cnt(list) {
-    let sum = 0;
-    for (const obj of iterateObjects(list || inventoryArray())) {
-        if (obj.oclass === COIN_CLASS) sum += obj.quan || 0;
-        if (Has_contents(obj)) sum += money_cnt(obj.cobj);
-    }
-    return sum;
 }
 function in_rooms(_x, _y, _shop) { return ''; }
 function u_at(x, y) { return game.u?.ux === x && game.u?.uy === y; }
@@ -2982,7 +2975,7 @@ function discoveriesRows() {
         { text: '' },
     ];
     for (const r of classRows)
-        rows.push(r.header ? { text: r.text, attr: ATR_INVERSE }
+        rows.push(r.header ? { text: r.text, attr: menuHeadAttr() }
                            : { text: r.text });
     return rows;
 }
@@ -3554,6 +3547,70 @@ export function sortloot_cmp(sli1, sli2) {
     return sli1.indx - sli2.indx;
 }
 
+// C ref: libc qsort() as shipped with the recorder's platform (macOS, the
+// FreeBSD qsort.c with swap_cnt).  sortloot_cmp() is not pure: loot_classify()
+// and loot_xname() call observe_object() lazily, so the ORDER in which qsort
+// hands pairs to the comparator decides which object type is "encountered"
+// first and therefore the order of the '\\' discoveries list.  V8's
+// Array.prototype.sort compares in a different sequence, so reproduce C's.
+export function c_qsort(arr, cmp) {
+    const swap = (i, j) => { const t = arr[i]; arr[i] = arr[j]; arr[j] = t; };
+    const vecswap = (i, j, n) => { for (; n > 0; n--, i++, j++) swap(i, j); };
+    const CMP = (i, j) => cmp(arr[i], arr[j]);
+    const med3 = (a, b, c) => (CMP(a, b) < 0
+        ? (CMP(b, c) < 0 ? b : (CMP(a, c) < 0 ? c : a))
+        : (CMP(b, c) > 0 ? b : (CMP(a, c) < 0 ? a : c)));
+    const insertion = (a, n) => {
+        for (let pm = a + 1; pm < a + n; pm++)
+            for (let pl = pm; pl > a && CMP(pl - 1, pl) > 0; pl--) swap(pl, pl - 1);
+    };
+    const qs = (a, n) => {
+        for (;;) {
+            let swap_cnt = 0;
+            if (n < 7) { insertion(a, n); return; }
+            let pm = a + Math.trunc(n / 2);
+            if (n > 7) {
+                let pl = a, pn = a + n - 1;
+                if (n > 40) {
+                    const d = Math.trunc(n / 8);
+                    pl = med3(pl, pl + d, pl + 2 * d);
+                    pm = med3(pm - d, pm, pm + d);
+                    pn = med3(pn - 2 * d, pn - d, pn);
+                }
+                pm = med3(pl, pm, pn);
+            }
+            swap(a, pm);
+            let pa = a + 1, pb = pa, pc = a + n - 1, pd = pc, r;
+            for (;;) {
+                let c;
+                while (pb <= pc && (c = CMP(pb, a)) <= 0) {
+                    if (c === 0) { swap_cnt = 1; swap(pa, pb); pa++; }
+                    pb++;
+                }
+                while (pb <= pc && (c = CMP(pc, a)) >= 0) {
+                    if (c === 0) { swap_cnt = 1; swap(pc, pd); pd--; }
+                    pc--;
+                }
+                if (pb > pc) break;
+                swap(pb, pc);
+                swap_cnt = 1;
+                pb++; pc--;
+            }
+            if (swap_cnt === 0) { insertion(a, n); return; }
+            const pn = a + n;
+            r = Math.min(pa - a, pb - pa);
+            vecswap(a, pb - r, r);
+            r = Math.min(pd - pc, pn - pd - 1);
+            vecswap(pb, pn - r, r);
+            if ((r = pb - pa) > 1) qs(a, r);
+            if ((r = pd - pc) > 1) { a = pn - r; n = r; continue; }
+            return;
+        }
+    };
+    qs(0, arr.length);
+    return arr;
+}
+
 export function sortloot(olist, mode = 0, by_nexthere = false, filterfunc = null) {
     const list = Array.isArray(olist) ? olist : olist?.obj ?? olist;
     const arr = [];
@@ -3568,7 +3625,7 @@ export function sortloot(olist, mode = 0, by_nexthere = false, filterfunc = null
     }
     if (mode && arr.length > 1) {
         game.sortlootmode = mode;
-        arr.sort(sortloot_cmp);
+        c_qsort(arr, sortloot_cmp);
         game.sortlootmode = 0;
         for (const item of arr) item.str = null;
     }
@@ -3679,12 +3736,16 @@ export function addinv_core1(obj) {
         game.botl = true;
     } else if (obj.otyp === AMULET_OF_YENDOR) {
         ustate().uhave = { ...(ustate().uhave || {}), amulet: 1 };
+        record_achievement(ACH_AMUL);
     } else if (obj.otyp === CANDELABRUM_OF_INVOCATION) {
         ustate().uhave = { ...(ustate().uhave || {}), menorah: 1 };
+        record_achievement(ACH_CNDL);
     } else if (obj.otyp === BELL_OF_OPENING) {
         ustate().uhave = { ...(ustate().uhave || {}), bell: 1 };
+        record_achievement(ACH_BELL);
     } else if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
         ustate().uhave = { ...(ustate().uhave || {}), book: 1 };
+        record_achievement(ACH_BOOK);
     } else if (obj.oartifact) {
         // C ref: invent.c addinv_core1(). artitouch()'s quest text is async
         // here, so it is queued for flush_artitouch(), which the async
@@ -3694,6 +3755,17 @@ export function addinv_core1(obj) {
             game._pending_artitouch = obj;
         }
         set_artifact_intrinsic_core(obj, true, W_ART_PROP);
+    }
+
+    /* "special achievements"; revealed in end of game disclosure and dumplog */
+    if (is_mines_prize(obj)) {
+        record_achievement(ACH_MINE_PRIZE);
+        game.context.achieveo.mines_prize_oid = 0; /* done w/ luckstone o_id */
+        obj.nomerge = 0; /* was set in create_object(sp_lev.c) */
+    } else if (is_soko_prize(obj)) {
+        record_achievement(ACH_SOKO_PRIZE);
+        game.context.achieveo.soko_prize_oid = 0; /* done w/ bag/amulet o_id */
+        obj.nomerge = 0; /* (got set in sp_lev.c) */
     }
 }
 
@@ -4640,7 +4712,7 @@ async function already_wearing2(what1, what2) {
 
 // C ref: worn.c setworn() — set an accessory worn-slot (ring/amulet/blindfold)
 // and its game-state pointer, releasing any wield slot the object occupied.
-function setworn_accessory(obj, mask) {
+export function setworn_accessory(obj, mask) {
     if (obj === game.uwep) setuwep_slot(null);
     else if (obj === game.uswapwep) setuswapwep(null);
     else if (obj === game.uquiver) setuqwep(null);
@@ -5200,7 +5272,7 @@ export async function worn_item_removal(mon, obj) {
     const verb = (worn & W_WEAPONS) ? 'disarms'
         : (worn & W_ACCESSORY) ? 'removes'
             : 'takes off';
-    const { Some_Monnam } = await import('./steal.js');
+    const { Some_Monnam } = await import('./do_name.js');
     await update_topl(`${Some_Monnam(mon)} ${verb} ${objbuf}.`);
     game.last_msg = PLNMSG_MON_TAKES_OFF_ITEM;
     // Removal might trigger more messages (loss of Lev|Fly); not reachable for
@@ -5500,9 +5572,15 @@ async function run_dress_occupation(delay, msg, afternmv) {
     // only its own multi countdown determines when the occupation completes.
     while (g.multi < 0 && guard++ < 60) {
         await moveloop_turn();
-        // C ref: allmain.c:453 — find_ac() is once per player-input loop; an
-        // inline occupation re-enters that loop for every elapsed turn.
-        find_ac();
+        // C ref: allmain.c:452-470 — each elapsed turn is its own
+        // moveloop_core() iteration, whose once-per-input head runs find_ac()
+        // and, for a hallucinating / telepathic / warned hero, the see_monsters()
+        // redraw (a warned monster that just went invisible shows its warning
+        // number, not the 'I' map_invisible() stamped).  The iteration after the
+        // LAST turn is the caller's own moveloop_core(), so only redraw here
+        // while the hero is still helpless.
+        if (g.multi < 0) await moveloop_input_redraw();
+        else find_ac();
     }
     if (g.multi < 0) g.multi = 0; // safety: never leave the hero stuck busy
     g.multi_reason = null;
@@ -6614,7 +6692,7 @@ function throw_closed_door(loc) {
 // path and reports it (gb.bhitpos stays on that monster's square).  This used to
 // walk straight through every monster, so a thrown weapon never rolled
 // thitmonst()'s rnd(20) and simply landed behind its target.
-async function bhit_thrown_landing(dx, dy, range, obj) {
+async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returning = false) {
     let bx = game.u.ux, by = game.u.uy;
     let hitmon = null;
     let point_blank = true;
@@ -6629,10 +6707,17 @@ async function bhit_thrown_landing(dx, dy, range, obj) {
         Z.skiprange(range, skip);
         allow_skip = !rn2(3);
     }
-    // C ref: zap.c:3868 bhit() — `tmp_at(DISP_FLASH, obj_to_glyph(obj,
-    // rn2_on_display_rng))` before the flight loop; while hallucinating the
-    // glyph pick advances the display RNG.
-    obj_to_glyph(obj);
+    // C ref: zap.c:3866-3868 bhit() — `tmp_at(DISP_TETHER | DISP_FLASH,
+    // obj_to_glyph(obj, rn2_on_display_rng))` before the flight loop; while
+    // hallucinating the glyph pick advances the display RNG.  Each tmp_at(x, y)
+    // restores (newsym) the previously flashed cell and flashes the missile on
+    // the new square only when the hero can see it; DISP_END restores the last
+    // one.  The newsym()s matter while hallucinating: every remembered object
+    // they redraw rolls a fresh random_object() off the display RNG.  A
+    // tethered weapon's DISP_END is left to throwit() (flash is returned).
+    const flash = tmp_at_flash(obj, tethered);
+    let end_flash = !tethered;
+    let stuck = false;
     for (let r = range; r > 0; r--) {
         const nx = bx + dx, ny = by + dy;
         if (!throw_isok(nx, ny)) break;
@@ -6644,7 +6729,7 @@ async function bhit_thrown_landing(dx, dy, range, obj) {
             const SK = await import('./shk.js');
             if (SK.inside_shop(bx, by)) {
                 const shk = await SK.shkcatch(obj, bx, by);
-                if (shk) { hitmon = shk; break; }
+                if (shk) { hitmon = shk; end_flash = true; break; }
             }
         }
         const loc = game.level.at(bx, by);
@@ -6655,9 +6740,9 @@ async function bhit_thrown_landing(dx, dy, range, obj) {
         // some things; `!rn2(5)` (the always_hit roll) is only drawn once the
         // missile has left the hero's square.  obj may be gone afterwards.
         if (typ === IRONBARS) {
-            const { hero_hits_bars } = await import('./mthrowu.js');
-            if (await hero_hits_bars(objp, bx - dx, by - dy, bx, by,
-                                     point_blank ? 0 : !rn2(5))) {
+            const { hits_bars } = await import('./mthrowu.js');
+            if (await hits_bars(objp, bx - dx, by - dy, bx, by,
+                                point_blank ? 0 : !rn2(5), 1)) {
                 bx -= dx; by -= dy;
                 break;
             }
@@ -6666,6 +6751,18 @@ async function bhit_thrown_landing(dx, dy, range, obj) {
         // comes BEFORE the ZAP_POS/closed-door test, so a monster standing in a
         // doorway is still hit.
         let mtmp = m_at(bx, by);
+        // C ref: zap.c:3928-3939 — a web catches a thrown missile on !rn2(3).
+        const ttmp = !mtmp ? (await import('./trap.js')).t_at(bx, by) : null;
+        if (ttmp && ttmp.ttyp === WEB && !rn2(3)) {
+            if (cansee(bx, by)) {
+                const yn = yname(obj);
+                await pline(`${yn.charAt(0).toUpperCase()}${yn.slice(1)} gets stuck in a web!`);
+                ttmp.tseen = 1;
+                newsym(bx, by);
+            }
+            if (returning) stuck = true; /* iflags.returning_missile = 0 */
+            break;
+        }
         // C ref: zap.c:3946-3970 — C tests its post-decrement `range`
         // (`while (range-- > 0)`), which is r - 1 here.
         const crange = r - 1;
@@ -6713,12 +6810,14 @@ async function bhit_thrown_landing(dx, dy, range, obj) {
         // (no revert, unlike the wall/closed-door case above).  js/dothrow.js's
         // boomhit(), js/dokick.js's kicked-object walker and js/mthrowu.js's
         // monster-throw walker already do this; this hero-throw walker didn't.
+        await flash.step(bx, by);
         if (IS_SINK(typ)) break;
         /* thrown missile has moved away from its starting spot */
         point_blank = false; /* affects passing through iron bars */
     }
-    if (hitmon) return { x: bx, y: by, mon: hitmon, gone: !objp.obj };
-    return { x: bx, y: by, mon: null, gone: !objp.obj };
+    if (stuck) end_flash = true;
+    if (end_flash) await flash.end();
+    return { x: bx, y: by, mon: hitmon, gone: !objp.obj, flash, stuck };
 }
 
 // ── thrown-object combat (C ref: dothrow.c thitmonst / uhitm.c hmon) ────────
@@ -6854,22 +6953,6 @@ async function tmiss(obj, mon, maybe_wakeup) {
     if (maybe_wakeup && !rn2(3)) await wakeupAttack(mon, true);
 }
 
-// C ref: dog.c abuse_dog(mtmp), reached from uhitm.c hmon_hitmon_pet().
-// Projectile attacks need the same pet complaint and wake-up side effects as
-// hand-to-hand attacks; keeping this local preserves the thrown-path ordering.
-async function abuse_dog_thrown(mtmp) {
-    if (!mtmp.mtame) return;
-    mtmp.mtame--;
-    if (mtmp.mtame && !mtmp.isminion && mtmp.edog)
-        mtmp.edog.abuse = (mtmp.edog.abuse || 0) + 1;
-    if (mtmp.mx !== 0) {
-        const { yelp, growl } = await import('./sounds.js');
-        if (mtmp.mtame && rn2(mtmp.mtame)) await yelp(mtmp);
-        else await growl(mtmp);
-        if (!mtmp.mtame) newsym(mtmp.mx, mtmp.my);
-    }
-}
-
 // C ref: uhitm.c hmon()/hmon_hitmon(mon, obj, HMON_THROWN, dieroll) — the
 // thrown-object slice.  Returns TRUE when `mon` survives.
 async function hmon_thrown(mon, obj, dieroll, skillsnap) {
@@ -6928,11 +7011,7 @@ async function hmon_thrown(mon, obj, dieroll, skillsnap) {
     const destroyed = mon.mhp <= 0;
 
     // C ref: uhitm.c hmon_hitmon_pet() — runs BEFORE killed().
-    if (mon.mtame && dmg > 0) {
-        await abuse_dog_thrown(mon);
-        if (mon.mtame && !destroyed)
-            await U.monflee(mon, 10 * rnd(dmg), false, false);
-    }
+    await U.hmon_hitmon_pet(mon, dmg, destroyed);
 
     // C ref: uhitm.c hmon_hitmon_msg_hit() — a killing blow still reports the
     // hit when it is part of a multishot volley of the same missile.
@@ -7252,6 +7331,9 @@ async function hmon_misc_thrown(mon, obj) {
         mon.mhp = (mon.mhp || 0) - dmg;
         if (mon.mhpmax != null && mon.mhp > mon.mhpmax) mon.mhp = mon.mhpmax;
     }
+    // C ref: uhitm.c hmon_hitmon_pet() — runs BEFORE killed(); a struck pet
+    // loses tameness (abuse_dog's rn2(mtame) yelp roll) and flees.
+    await U.hmon_hitmon_pet(mon, dmg, mon.mhp <= 0);
     // C ref: uhitm.c useup_eggs()/obfree() for a THROWN object — gone with no
     // obj_resists roll (unlike delobj()).
     delobj_thrown(obj);
@@ -7498,6 +7580,8 @@ async function throwit(otmp, skillsnap, wep_mask) {
     // C ref: dothrow.c:1564 `iflags.returning_missile = AutoReturn(obj,wep_mask)`
     // — an aklys/Mjollnir wielded when thrown, or any boomerang, comes back.
     let returning_missile = AutoReturn(otmp, wep_mask);
+    // C ref: dothrow.c:1523 — a wielded aklys stays tied to the hero.
+    const tethered_weapon = otmp.otyp === AKLYS_OTYP && ((wep_mask | 0) & QW_WEP) !== 0;
 
     // C ref: dothrow.c throwit():1580 `} else if (u.dz) {` — a throw straight
     // up or down never enters the trajectory block at all.
@@ -7581,15 +7665,23 @@ async function throwit(otmp, skillsnap, wep_mask) {
         // thrown Mjollnir is heavy and only makes half the distance.
         if (otmp.otyp === BOULDER) range = 20;
         else if (otmp.oartifact === ART_MJOLLNIR) range = Math.floor((range + 1) / 2);
+        else if (tethered_weapon) range = Math.min(range, 4); /* isqrt(AKLYS_LIM^2) */
         if (Underwater) range = 1;
 
         // Trajectory + landing.
-        land = await bhit_thrown_landing(u.dx, u.dy, range, otmp);
+        land = await bhit_thrown_landing(u.dx, u.dy, range, otmp,
+                                         tethered_weapon, returning_missile);
+        if (land.stuck) returning_missile = false; /* web: iflags.returning_missile = 0 */
+        game.bhitpos = { x: land.x, y: land.y };
         if (recoil) await DT.hurtle(-u.dx, -u.dy, urange, true);
     }
     // C ref: dothrow.c throwit() — `if (!obj) return;` bhit() already disposed
     // of a missile that broke against iron bars.
-    if (land.gone) return ECMD_TIME;
+    if (land.gone) {
+        /* bhit display cleanup was left with this caller for tethered_weapon */
+        if (tethered_weapon) await land.flash.end();
+        return ECMD_TIME;
+    }
 
     // C ref: dothrow.c throwit():1691 `if (throwit_mon_hit(obj, mon)) return;`
     // — a monster in the path takes the hit (thitmonst); only if the object
@@ -7597,7 +7689,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
     if (land.mon) {
         // C ref: dothrow.c throwit_mon_hit() — `if (mon->isshk && obj->where ==
         // OBJ_MINVENT && obj->ocarry == mon) return TRUE; /* alert shk caught it */`
-        if (land.mon.isshk && otmp.where === 'minvent' && otmp.ocarry === land.mon)
+        if (land.mon.isshk && otmp.where === OBJ_MINVENT && otmp.ocarry === land.mon)
             return ECMD_TIME;
         const obj_gone = await thitmonst(land.mon, otmp, skillsnap);
         // C ref: dothrow.c throwit_mon_hit() — `mon = m_at(bhitpos)`, then "[perhaps
@@ -7611,7 +7703,10 @@ async function throwit(otmp, skillsnap, wep_mask) {
                 || !in_rooms(shk.mx, shk.my, 14 /* SHOPBASE */).includes((game.u.ushops || [])[0]))
                 SK.hot_pursuit(shk);
         }
-        if (obj_gone) return ECMD_TIME;
+        if (obj_gone) {
+            if (tethered_weapon) await land.flash.end();
+            return ECMD_TIME;
+        }
     }
 
     // C ref: dothrow.c throwit():1710 — a Mjollnir or aklys that reached the end
@@ -7620,11 +7715,14 @@ async function throwit(otmp, skillsnap, wep_mask) {
     // None of these draws happened before, so throwing an aklys desynced.
     if (returning_missile) {
         if (rn2(100)) {
+            if (tethered_weapon) await land.flash.end(true); /* BACKTRACK */
+            else await DT.sho_obj_return_to_u(otmp); /* display its flight */
             if (!impaired && rn2(100)) {
                 await update_topl(`${Tobjnam_throw(otmp, 'return')} to your hand!`);
                 if (((otmp.owornmask | 0) & QW_QUIVER) !== 0) setuqwep(null);
                 const back = await return_throw_to_inv(otmp, wep_mask);
                 setuwep_slot(back);
+                if (cansee(land.x, land.y)) newsym(land.x, land.y);
             } else {
                 let dmg = rn2(2);
                 if (!dmg) {
@@ -7653,6 +7751,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
         }
         // C ref: dothrow.c:1770 — the 1-in-100 failure; the weapon falls where
         // it landed and is picked up again by walking over it (how_lost).
+        if (tethered_weapon) await land.flash.end();
         await update_topl(`${Tobjnam_throw(otmp, 'fail')} to return!`);
     }
 
@@ -7664,6 +7763,12 @@ async function throwit(otmp, skillsnap, wep_mask) {
     const typ = game.level.at(land.x, land.y)?.typ ?? 0;
     const broke = (!IS_SOFT(typ) && DT.breaktest(otmp)) || otmp.oclass === VENOM_CLASS;
     if (broke) {
+        // C ref: dothrow.c:1784-1787 — the breaking missile is flashed once at
+        // its landing square: tmp_at(DISP_FLASH, obj_to_glyph(obj,
+        // rn2_on_display_rng)); tmp_at(bhitpos); nh_delay_output(); DISP_END.
+        const bflash = tmp_at_flash(otmp);
+        await bflash.step(land.x, land.y);
+        await bflash.end();
         await DT.breakmsg(otmp, cansee(land.x, land.y));
         otmp.owornmask = 0;
         if (await DT.breakobj(otmp, land.x, land.y, true, true)) {
@@ -7805,7 +7910,7 @@ function ceiling_of(x, y) {
 export function harmless_missile(obj) {
     const otyp = obj.otyp;
     switch (otyp) {
-    case 83:  /* SLING */
+    case 87:  /* SLING (83 is BOW) */
     case 275: /* KELP_FROND */
     case 276: /* EUCALYPTUS_LEAF */
     case 283: /* SPRIG_OF_WOLFSBANE */
@@ -8892,7 +8997,7 @@ async function query_category_menu(qstr, olist, qflags, how) {
                     : 'Items you just picked up', 'P', { skipinvert: true });
 
     /* end_menu(win, qstr): the query heads the window, then a blank line */
-    plan.unshift({ str: qstr, attr: ATR_INVERSE }, { str: '' });
+    plan.unshift({ str: qstr, attr: menuHeadAttr() }, { str: '' });
 
     let picked = await tty_select_menu(items, plan, how);
 
@@ -8952,7 +9057,7 @@ async function query_objlist_menu(qstr, olist, qflags, how, allow) {
             if (!allow(curr)) continue;
             if (sorted && !printed_type_name) {
                 plan.push({ str: let_to_name(curr.oclass, false, with_oc_sym),
-                            attr: ATR_INVERSE });
+                            attr: menuHeadAttr() });
                 printed_type_name = true;
             }
             // C ref: pickup.c:1131 query_objlist() — `tmpglyph =
@@ -8978,7 +9083,7 @@ async function query_objlist_menu(qstr, olist, qflags, how, allow) {
        deliberately without the menu_headings highlight attribute. */
     if (game.this_title) plan.unshift({ str: game.this_title });
     /* end_menu(win, qstr) skips the prompt line entirely when qstr is NULL */
-    if (qstr) plan.unshift({ str: qstr, attr: ATR_INVERSE }, { str: '' });
+    if (qstr) plan.unshift({ str: qstr, attr: menuHeadAttr() }, { str: '' });
     const picked = await tty_select_menu(items, plan, how);
 
     const result = picked.map((it) => ({
@@ -9136,7 +9241,7 @@ async function menu_pick_pay_items(ibill) {
     // C ref: windows.c add_menu_heading() — ATR_INVERSE unless the game is over.
     const headAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
     // end_menu(win, "Pay for which items?") prepends the prompt + a blank line.
-    const flat = [{ text: 'Pay for which items?', attr: ATR_INVERSE },
+    const flat = [{ text: 'Pay for which items?', attr: menuHeadAttr() },
                   { text: '', attr: 0 }];
     const entries = new Map();          // accelerator -> ibill index
     let li = 0;
@@ -9697,8 +9802,12 @@ export async function pickup_menu_select(here, qstr = 'Pick up what?') {
         const g = { header: let_to_name(oclass, false, false), items: [] };
         // C ref: pickup.c query_objlist() — the first (only) coin stack's
         // selector is always '$' (GOLD_SYM), never a lettered accelerator.
-        for (const o of sorted)
+        for (const o of sorted) {
+            // C ref: pickup.c:1131 — `tmpglyph = obj_to_glyph(curr,
+            // rn2_on_display_rng)` per listed item; display RNG while hallucinating.
+            obj_to_glyph(o);
             g.items.push({ obj: o, letter: oclass === COIN_CLASS ? GOLD_SYM : nextLetter() });
+        }
         groups.push(g);
     }
     // selected[invlet] = true
@@ -9734,10 +9843,10 @@ export async function pickup_menu_select(here, qstr = 'Pick up what?') {
             for (let c = MENU_OFFX - 1; c < cols; c++)
                 display.setCell(c, r, ' ', NO_COLOR, 0);
         let row = 0;
-        display.putstr(MENU_OFFX, row++, searchBlankTop ? '' : qstr, NO_COLOR, ATR_INVERSE);
+        display.putstr(MENU_OFFX, row++, searchBlankTop ? '' : qstr, NO_COLOR, menuHeadAttr());
         display.putstr(MENU_OFFX, row++, '', NO_COLOR, ATR_NONE);
         for (const g of groups) {
-            display.putstr(MENU_OFFX, row++, g.header, NO_COLOR, ATR_INVERSE);
+            display.putstr(MENU_OFFX, row++, g.header, NO_COLOR, menuHeadAttr());
             for (const it of g.items) {
                 const sep = selected.get(it.letter) ? ' + ' : ' - ';
                 const line = `${it.letter}${sep}${doname_with_price(it.obj)}`;
@@ -9844,7 +9953,7 @@ async function pickup_checks() {
     const typ0 = game.level?.at(x, y)?.typ;
     if (IS_POOL_TYP(typ0)) {
         if (u.uprops?.Wwalking || u.uprops?.Flying) {
-            game._pending_message = note_topl('You cannot dive into the water to pick things up.');
+            game._pending_message = note_topl(`You cannot dive into the ${(await import('./do_name.js')).hliquid('water')} to pick things up.`);
             return 0;
         } else if (!game.Underwater) {
             game._pending_message =
@@ -10335,7 +10444,7 @@ export async function reroll_menu() {
           selected: false, count: -1, gselector: null, skipinvert: false },
     ];
     const plan = [
-        { str: 'Reroll this character?', attr: ATR_INVERSE }, { str: '' },
+        { str: 'Reroll this character?', attr: menuHeadAttr() }, { str: '' },
         { item: items[0] }, { item: items[1] }, { str: '' },
     ];
     // C ref: u_init.c — starting gear isn't setworn()/setuwep()'d until
@@ -11012,6 +11121,7 @@ function renderItemActionsMenu(otmp, entries) {
     // putchar(' ') then the entry text, so the text starts at screen column
     // offx+1 (the leading space occupies offx).
     const textx = offx + 1;
+    game._menuOffx = offx;
 
     display.clearScreen();
     render_map_to_grid();
@@ -11026,7 +11136,7 @@ function renderItemActionsMenu(otmp, entries) {
     // Row 0: the query title, drawn with the menu prompt style (= menu_headings,
     // ATR_INVERSE).
     for (let c = 0; c < title.length && textx + c < 80; c++)
-        display.setCell(textx + c, row, title[c], NO_COLOR, ATR_INVERSE);
+        display.setCell(textx + c, row, title[c], NO_COLOR, menuHeadAttr());
     row++;
     display.putstr(textx, row++, '', NO_COLOR, 0); // blank separator row
     for (const ln of itemLines) display.putstr(textx, row++, ln, NO_COLOR, 0);
@@ -11114,7 +11224,7 @@ async function itemactions(otmp, getDir) {
             const hit = entries.find((e) => e.act !== IA_NONE
                 && pmatchi(`*${reply}*`, `${e.accel} - ${e.label}`));
             if (!hit) continue;
-            delete game._modal_screen;
+            await dismiss_invent_screen();
             return await itemactions_dispatch(otmp, hit.act, getDir);
         }
         // Return/Enter commits with nothing selected -> cancel.  C ref
@@ -11126,7 +11236,9 @@ async function itemactions(otmp, getDir) {
         }
         const chosen = sel.get(ch);
         if (!chosen) continue; // invalid selector: bell, menu stays (re-render)
-        delete game._modal_screen;
+        // C: the menu is torn down (erase_menu_or_text) and moveloop's
+        // flush_screen()/bot() runs before the canned command executes.
+        await dismiss_invent_screen();
         return await itemactions_dispatch(otmp, chosen.act, getDir);
     }
 }
@@ -11991,7 +12103,7 @@ export function objects_at(x, y) {
     const objs = game.level?.objects;
     if (!Array.isArray(objs)) return [];
     const here = [];
-    for (const o of objs) if (o.where === 'floor' && o.ox === x && o.oy === y) here.unshift(o);
+    for (const o of objs) if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y) here.unshift(o);
     return here; // topmost (last placed) first
 }
 
@@ -12110,6 +12222,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
         if (dfeature) await update_topl(`There is ${an(dfeature)} here.`);
         await read_engr_at(x, y);
         await update_topl(`You ${verb} here ${doname_with_price(otmp)}.`);
+        game.last_msg = PLNMSG_ONE_ITEM_HERE;
         return Blind_for_wear() ? ECMD_TIME : ECMD_OK;
     }
     // Multiple objects (and obj_cnt < pile_limit, the default 5).  C ref:
@@ -12306,11 +12419,11 @@ export function mergable(otmp, obj) {
 }
 
 // C ref: invent.c doprgold() — the '$' command.  Reports wallet gold
-// (money_cnt over invent incl. containers) + any hidden_gold(); flags.verbose
+// (money_cnt over invent, top level only) + any hidden_gold(); flags.verbose
 // (the default / covered path) uses the "Your wallet ..." phrasing.  A plain
 // pline (not a blocking window), so the following key is a normal command.
 export async function doprgold() {
-    const umoney = money_cnt(inventoryArray()) || game._goldCount || 0;
+    const umoney = money_cnt_invent();
     const hmoney = hidden_gold(false);
     if (game.flags?.verbose !== false) {
         let buf = umoney ? `Your wallet contains ${umoney} ${currency(umoney)}`

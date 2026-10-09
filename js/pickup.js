@@ -9,14 +9,14 @@ import { game, hooks, svc_context_run } from './gstate.js';
 import { Blind } from './vision.js';
 import { read_engr_at } from './engrave.js';
 import { rn2, rnd, d } from './rng.js';
-import { pline, bot, m_at, newsym, flush_screen, y_n, update_topl } from './display.js';
+import { pline, bot, m_at, newsym, flush_screen, y_n, update_topl, Hallucination_u } from './display.js';
+import { rndmonnam } from './do_name.js';
 import {
     isok, is_pit, is_hole, TT_PIT,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     UNENCUMBERED, OVERLOADED,
     IS_ALTAR, IS_GRAVE, IS_THRONE, STONE, POOL, MOAT, WATER, LAVAPOOL,
-    MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, MENU_PARTIAL,
-} from './const.js';
+    MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, MENU_PARTIAL, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT } from './const.js';
 import {
     COIN_CLASS, MAXOCLASSES, CORPSE, STATUE, BOULDER, LOADSTONE, GOLD_PIECE,
     SCR_SCARE_MONSTER, WAN_CANCELLATION, AMULET_OF_YENDOR, BELL_OF_OPENING,
@@ -158,15 +158,14 @@ function SchroedingersBox(obj) {
     return obj?.otyp === LARGE_BOX && (obj?.spe | 0) === 1;
 }
 function carried(obj) {
-    return !!obj && (obj.where === 'invent' || inventoryArray().includes(obj));
+    return !!obj && (obj.where === OBJ_INVENT || inventoryArray().includes(obj));
 }
+// C ref: hack.c money_cnt(otmp) — the quan of the FIRST coin stack in the
+// chain; gold inside containers is hidden_gold()'s business.
 function money_cnt(list) {
-    let sum = 0;
-    for (const obj of objchain(list)) {
-        if (obj.oclass === COIN_CLASS) sum += obj.quan || 0;
-        if (Has_contents(obj)) sum += money_cnt(obj.cobj);
-    }
-    return sum;
+    for (const obj of objchain(list))
+        if (obj.oclass === COIN_CLASS) return obj.quan || 0;
+    return 0;
 }
 /* hack.c max_capacity() — inv_weight() also refreshes gw.wc (game._wc). */
 function max_capacity() {
@@ -292,14 +291,11 @@ function is_pool(x, y) {
     return typ === POOL || typ === MOAT || typ === WATER;
 }
 function is_lava(x, y) { return game.level?.at?.(x, y)?.typ === LAVAPOOL; }
-/* hack.c losehp() reduced to the hp arithmetic, matching the other per-file
-   copies in this port.  C's `disp.botl = TRUE` is omitted for the reason
-   js/trap.js:864 records (an extra botl release point costs a screen). */
-async function losehp(n, _knam) {
-    hooks.end_running?.(true); // hack.c:4266
-    const u = ustate();
-    u.uhp = (u.uhp || 0) - n;
-    if (u.uhp < 1) u.uhp = 0;
+/* hack.c losehp(n, knam, k_format) — do.js owns the complete port (botl,
+   death path, killer text, polymorph arm). */
+async function losehp(n, knam, k_format) {
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(n, knam, k_format);
 }
 /* hack.h Maybe_Half_Phys(dmg) */
 function Maybe_Half_Phys(dmg) {
@@ -369,7 +365,7 @@ export async function query_classes(oclasses, one_at_a_time, everything, action,
     } else {
         /* C: objs == gi.invent picks 'i', anything else ':'.  A pointer
            compare there; here the chain's own where field says the same. */
-        ilets += ' aA' + (chain_to_array(objs, here)[0]?.where === 'invent' ? 'i' : ':');
+        ilets += ' aA' + (chain_to_array(objs, here)[0]?.where === OBJ_INVENT ? 'i' : ':');
     }
     if (itemcount.count && menu_on_demand) ilets += 'm';
     if (count_unpaid(objs)) ilets += 'u';
@@ -404,7 +400,7 @@ export async function query_classes(oclasses, one_at_a_time, everything, action,
                 } else if (sym === ':') {
                     await simple_look(objs, here); /* dumb if objs==invent */
                     const head = chain_to_array(objs, here)[0];
-                    if (head?.where === 'contained' && head.ocontainer)
+                    if (head?.where === OBJ_CONTAINED && head.ocontainer)
                         head.ocontainer.cknown = 1;
                     continue ask_again;
                 } else if (sym === 'i') {
@@ -953,7 +949,7 @@ export function autopick_testobj(otmp, calc_costly) {
     const otypes = pickup_types();
 
     if (calc_costly)
-        autopick_costly = (otmp.where === 'floor'
+        autopick_costly = (otmp.where === OBJ_FLOOR
                            && !!costly_spot(otmp.ox, otmp.oy));
 
     /* an unpaid item in a shop is never auto-picked */
@@ -1015,7 +1011,7 @@ export async function query_objlist(qstr, olist_p, qflags, pick_list, how,
     let n = 0, last = null;
     for (const curr of olist) if (allow(curr)) { last = curr; n++; }
 
-    const engulfer_minvent = olist.length > 0 && olist[0].where === 'minvent';
+    const engulfer_minvent = olist.length > 0 && olist[0].where === OBJ_MINVENT;
     if (engulfer_minvent && n === 1 && olist[0].owornmask)
         qflags &= ~AUTOSELECT_SINGLE;
     if (engulfer) { ++n; qflags &= ~AUTOSELECT_SINGLE; }
@@ -1309,7 +1305,7 @@ function carrying_otyp(otyp) {
 }
 /* invent.c nxtobj(obj, GOLD_PIECE, obj->where == OBJ_FLOOR) */
 function nxtobj_gold(obj) {
-    if (obj.where === 'floor') {
+    if (obj.where === OBJ_FLOOR) {
         for (const o of objects_at(obj.ox, obj.oy))
             if (o !== obj && o.otyp === GOLD_PIECE) return true;
         return false;
@@ -1333,7 +1329,7 @@ export async function pickup_object(obj, count, telekinesis) {
 
     if (obj === game.u?.uchain) {
         return 0;   /* do not pick up attached chain */
-    } else if (obj.where === 'minvent' && obj.owornmask) {
+    } else if (obj.where === OBJ_MINVENT && obj.owornmask) {
         await pline(`You can't pick ${xname(obj)} up.`);
         return 0;
     } else if (obj.oartifact && !touch_artifact(obj, game.u)) {
@@ -1386,7 +1382,7 @@ export async function pickup_object(obj, count, telekinesis) {
    bill it, and add it to inventory.  Returns the merged inventory object. */
 export async function pick_obj(otmp) {
     const u = ustate();
-    const fromfloor = otmp.where === 'floor';
+    const fromfloor = otmp.where === OBJ_FLOOR;
     const ox = otmp.ox, oy = otmp.oy;
     const robshop = !u.uswallow && otmp !== u.uball && !!costly_spot(ox, oy);
 
@@ -1725,7 +1721,7 @@ export async function observe_quantum_cat(box, makecat, givemsg) {
     const sc = "Schroedinger's Cat";
     const itsalive = !rn2(2);
     const u = ustate();
-    if (box.where !== 'floor') { box.ox = u.ux; box.oy = u.uy; }
+    if (box.where !== OBJ_FLOOR) { box.ox = u.ux; box.oy = u.uy; }
 
     const deadcat = (box.cobj || [])[0] || null;
     if (itsalive) {
@@ -1748,7 +1744,7 @@ export async function observe_quantum_cat(box, makecat, givemsg) {
         }
     } else {
         box.spe = 0;   /* now an ordinary box with a cat corpse inside */
-        if (givemsg) await pline('The housecat inside the box is dead!');
+        if (givemsg) await pline(`The ${Hallucination_u() ? rndmonnam().name : 'housecat'} inside the box is dead!`);
         if (deadcat) {
             deadcat.age = game.moves || 0;
             deadcat.corpsenm = pmidx_by_name('housecat');
@@ -2058,7 +2054,7 @@ export async function tipcontainer_checks(box, targetbox, allowempty) {
 export async function tipcontainer(box, targetbox = null) {
     const u = ustate();
     let ox = u.ux, oy = u.uy;
-    if (box.where === 'floor') { ox = box.ox; oy = box.oy; }
+    if (box.where === OBJ_FLOOR) { ox = box.ox; oy = box.oy; }
     box.ox = ox; box.oy = oy;
 
     if ((await tipcontainer_checks(box, targetbox, false)) !== TIPCHECK_OK)

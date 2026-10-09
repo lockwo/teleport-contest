@@ -60,7 +60,7 @@ export function m_useupall(mon, obj) {
         const i = inv.indexOf(obj);
         if (i >= 0) inv.splice(i, 1);
     }
-    obj.where = 'free';
+    obj.where = OBJ_FREE;
     obj.ocarry = null;
 }
 
@@ -76,14 +76,11 @@ const SKELETON_KEY = 221, LOCK_PICK = 222, CREDIT_CARD = 223,
       MEAT_STICK = 268, ENORMOUS_MEATBALL = 269;
 const MZ_TINY = 0;
 
-// C ref: mthrowu.c:1499 hits_bars(&obj, x, y, barsx, barsy, always_hit,
-// whodidit) — does a thrown/kicked/rolled object stop at iron bars?  A dart, an
-// arrow, a spear, a knife or a pair of gloves slips between them; almost
-// everything else does not.  `whodidit === -1` asks the question WITHOUT
-// running the breakage side effect, which is the only form monmove.js's
-// MT_FLIGHTCHECK needs (C passes 0 there, but the breakage half needs
-// dothrow.c's breaks()/hero_breaks(), which live in another module).
-export function hits_bars(otmp, always_hit) {
+// C ref: mthrowu.c:1499 hits_bars() — the pure half: does a thrown/kicked/rolled
+// object stop at iron bars?  A dart, an arrow, a spear, a knife or a pair of
+// gloves slips between them unless `always_hit`; almost everything else does
+// not.  No side effects: the breakage/noise half is hits_bars() below.
+function hits_bars_test(otmp, always_hit) {
     if (!otmp) return false;
     const obj_type = otmp.otyp;
     let hits = !!always_hit;
@@ -241,7 +238,7 @@ export function return_from_mtoss(magr, otmp, _tethered_weapon) {
 
 import { isok, IS_OBSTRUCTED, IS_SINK, IRONBARS, BOLT_LIM,
          W_NONDIGGABLE, BRK_BY_HERO, BRK_MELEE, PET_MISSILE_RANGE2,
-         M_ATTK_MISS, M_ATTK_HIT, NEED_WEAPON, NEED_RANGED_WEAPON } from './const.js';
+         M_ATTK_MISS, M_ATTK_HIT, NEED_WEAPON, NEED_RANGED_WEAPON, OBJ_FREE } from './const.js';
 import { distmin, dist2 } from './hacklib.js';
 import { COIN_CLASS, VENOM_CLASS, POTION_CLASS, GEM_CLASS, EGG,
          clear_dknown } from './mkobj.js';
@@ -394,7 +391,7 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
     // C ref: mthrowu.c:546 MT_FLIGHTCHECK(pre, forcehit) — expanded verbatim.
     // `hits_bars` is the only clause with a side effect (it can destroy the
     // missile) and the only one that can roll.
-    const MT_FLIGHTCHECK = (pre, fh) => {
+    const MT_FLIGHTCHECK = async (pre, fh) => {
         const nx = bhitpos.x + dx, ny = bhitpos.y + dy;
         /* missile hits edge of screen */
         if (!isok(nx, ny)) return true;
@@ -404,16 +401,21 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
         if (deps.closed_door?.(nx, ny)) return true;
         /* missile might hit iron bars.  The random chance for small objects
            hitting bars is skipped when reaching them at point blank range. */
-        if (terrain_typ(nx, ny) === IRONBARS
-            && hits_bars(singleobj, pre ? 0 : fh))
-            return true;
+        if (terrain_typ(nx, ny) === IRONBARS) {
+            const objp = { obj: singleobj };
+            const hit = await hits_bars(objp, bhitpos.x, bhitpos.y, nx, ny,
+                                        pre ? 0 : fh, 0);
+            singleobj = objp.obj;       /* hits_bars might have destroyed it */
+            if (hit) return true;
+        }
         /* Thrown objects "sink" */
         if (!pre && IS_SINK(terrain_typ(bhitpos.x, bhitpos.y))) return true;
         return false;
     };
 
-    if (MT_FLIGHTCHECK(true, 0)) {
-        await drop_throw(singleobj, 0, bhitpos.x, bhitpos.y, deps);
+    if (await MT_FLIGHTCHECK(true, 0)) {
+        if (singleobj)      /* hits_bars might have destroyed it */
+            await drop_throw(singleobj, 0, bhitpos.x, bhitpos.y, deps);
         return;
     }
     game.mesg_given = 0;  /* a 'missile misses' message has not yet been shown */
@@ -531,7 +533,7 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
         }
 
         forcehit = !rn2(5);
-        if (!range || MT_FLIGHTCHECK(false, forcehit)) {
+        if (!range || await MT_FLIGHTCHECK(false, forcehit)) {
             /* end of path or blocked */
             if (singleobj) {    /* hits_bars might have destroyed it */
                 await deps.miss_msg?.(singleobj, bhitpos, range);
@@ -765,34 +767,38 @@ export async function hit_bars(objp, objx, objy, barsx, barsy, breakflags,
 }
 
 // C ref: mthrowu.c:1499 hits_bars(&obj, x, y, barsx, barsy, always_hit,
-// whodidit == 1) — the hero's thrown/kicked object meets iron bars: decide
-// whether it stops (sync hits_bars() above) and, if so, run hit_bars() with the
-// real deps (breakage, the Clink/Clonk noise, wake_nearto).  `objp` is C's
-// `struct obj **`; `objp.obj` is nulled when the object broke.
-export async function hero_hits_bars(objp, x, y, barsx, barsy, always_hit) {
-    if (!hits_bars(objp.obj, always_hit)) return false;
-    const { pline } = await import('./display.js');
-    const { wake_nearto } = await import('./cmd.js');
-    const { dissolve_bars } = await import('./monmove.js');
-    const { harmless_missile } = await import('./invent.js');
-    const LEATHER = 7, RUBBER_HOSE = 78;       /* objclass.h / objects.h */
-    await hit_bars(objp, x, y, barsx, barsy, BRK_BY_HERO, {
-        pline,
-        wake_nearto,
-        harmless_missile,
-        is_flimsy: (o) => (objects[o.otyp]?.material ?? 99) <= LEATHER
-                          || o.otyp === RUBBER_HOSE,
-        dissolve_bars,
-        acid_msg: async (bx, by, nodissolve) => {
-            const { cansee } = await import('./vision.js');
-            if (cansee(bx, by) && !nodissolve)
-                await pline('The iron bars are dissolved!');
-            else if (!game.u?.Deaf)
-                await pline(Hallucination_u() ? 'You hear angry snakes!'
-                                              : 'You hear a hissing noise.');
-        },
-    });
-    return true;
+// whodidit) — an object meets iron bars: decide whether it stops (a hit) and,
+// unless `whodidit === -1` (just check), run hit_bars() for the breakage test
+// (breaks()/hero_breaks(), whose obj_resists() draws rn2(100)) and the
+// Clink/Clonk noise.  `objp` is C's `struct obj **`; `objp.obj` is nulled when
+// the object broke.  whodidit: 1 == hero, 0 == other, -1 == check only.
+export async function hits_bars(objp, x, y, barsx, barsy, always_hit, whodidit) {
+    const hits = hits_bars_test(objp.obj, always_hit);
+    if (hits && whodidit !== -1) {
+        const { pline } = await import('./display.js');
+        const { wake_nearto } = await import('./cmd.js');
+        const { dissolve_bars } = await import('./monmove.js');
+        const { harmless_missile } = await import('./invent.js');
+        const LEATHER = 7, RUBBER_HOSE = 78;       /* objclass.h / objects.h */
+        await hit_bars(objp, x, y, barsx, barsy,
+                       (whodidit === 1) ? BRK_BY_HERO : 0, {
+            pline,
+            wake_nearto,
+            harmless_missile,
+            is_flimsy: (o) => (objects[o.otyp]?.material ?? 99) <= LEATHER
+                              || o.otyp === RUBBER_HOSE,
+            dissolve_bars,
+            acid_msg: async (bx, by, nodissolve) => {
+                const { cansee } = await import('./vision.js');
+                if (cansee(bx, by) && !nodissolve)
+                    await pline('The iron bars are dissolved!');
+                else if (!game.u?.Deaf)
+                    await pline(Hallucination_u() ? 'You hear angry snakes!'
+                                                  : 'You hear a hissing noise.');
+            },
+        });
+    }
+    return hits;
 }
 
 // ── spitmm / breamm (C ref: mthrowu.c:1016, :1093) for a MONSTER target ────

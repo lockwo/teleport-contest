@@ -26,11 +26,12 @@ import { mflags2_of, M2_PNAME } from './monflags_data.js';
 import { an, the_unique_pm } from './objnam.js';
 import { Fire_resistance, Cold_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
 import { monstseesu, monstunseesu } from './mondata.js';
-import { shieldeff } from './display.js';
+import { shieldeff, Hallucination_u as Hallucination } from './display.js';
 import { Blind } from './vision.js';
 import { youmonst_data_pub } from './invent.js';
 import { enexto_gpflags } from './teleport.js';
 import { minion_monster_census } from './minion.js';
+import { Invis, Displaced } from './monmove.js';
 
 // ---------------------------------------------------------------------------
 // include/mcastu.h — MONSPELL(def, lvl, flags) in enum order.  The enum VALUE
@@ -421,11 +422,11 @@ async function mcast_spell(mtmp, dmg, spellnum) {
 // ---------------------------------------------------------------------------
 // Small property shims.  Each names the C predicate it stands in for; all are
 // RNG-free and constant for the heroes these sessions drive.
-function Hallucination() { return !!(game.u?.Hallucination); }
 function Blinded() { return (game.u?.blinded | 0) > 0 || (game.u?.uprops?.BlindedFromForm | 0) > 0; }
-function See_invisible() { return !!game.u?.formprops?.See_invisible || !!game.u?.See_invisible; }
-function Invis() { return !!game.u?.uinvis; }
-function Displaced() { return !!game.u?.Displaced; }
+// C ref: youprop.h See_invisible/Invis/Displaced — one copy each: u.see_invis
+// is the hero's canonical See_invisible accessor (jsmain.js), and
+// monmove.js owns Invis()/Displaced() (worn-item extrinsics included).
+function See_invisible() { return !!game.u?.see_invis; }
 function Deaf() { return !!game.u?.Deaf; }
 function perceives(mdat) { return !!(mdat && mdat.perceives); }
 
@@ -654,7 +655,7 @@ export async function mcast_weaken_you(mtmp, dmg) {
         if (Half_spell_damage()) dmg = Math.trunc((dmg + 1) / 2);
         const kbuf = death_inflicted_by('', 'strength loss', mtmp);
         const { losestr } = await import('./attrib.js');
-        losestr(rnd(dmg), kbuf, KILLED_BY);
+        await losestr(rnd(dmg), kbuf, KILLED_BY);
         if (game.killer) game.killer.name = ''; /* not killed if we get here... */
         monstunseesu(M_SEEN_MAGR);
     }
@@ -853,7 +854,7 @@ export async function mcast_insects(mtmp) {
     if (Hallucination()) {
         const { bogusmon } = await import('./do_name.js');
         const { makeplural } = await import('./invent.js');
-        what = makeplural(bogusmon());
+        what = makeplural(bogusmon().name);
         hallu = true;
     }
 

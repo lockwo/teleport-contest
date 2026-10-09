@@ -40,7 +40,11 @@ import { mon_mintrap } from './monmove.js';
 import { vision_recalc } from './vision.js';
 import { x_monnam } from './uhitm.js';
 import { isok, MAXULEV, W_SADDLE, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED,
-         D_NODOOR, D_BROKEN, Is_rogue_level } from './const.js';
+         D_NODOOR, D_BROKEN, Is_rogue_level, SUPPRESS_IT, SUPPRESS_INVISIBLE,
+         SUPPRESS_HALLUCINATION, NO_KILLER_PREFIX, KILLED_BY_AN } from './const.js';
+
+import { Maybe_Half_Phys } from './zap.js';
+import { losehp_do } from './do.js';
 import { pickup_after_move, getdir } from './cmd.js';
 
 // C ref: steed.c doride()/kick_steed() call the SHARED cmd.c getdir(); this
@@ -61,31 +65,6 @@ function Monnam_steed(mtmp) {
     return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// C ref: hack.c losehp() — for a non-polymorphed hero this subtracts the damage
-// from u.uhp (no RNG).  When the blow drops HP below 1 the hero dies: You("die...")
-// is a pline that follows the still-unacknowledged "You slip..." top line, so the
-// tty pages the slip message with --More-- (topl.c more()) before showing
-// "You die...", then done(DIED) runs the end-of-game sequence.
-async function losehp(n) {
-    const u = game.u;
-    if (!u) return;
-    hooks.end_running?.(true); // hack.c:4266
-    u.uhp -= n;
-    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
-    if (u.uhp > u.uhpmax) {
-        u.uhpmax = u.uhp;
-        return;
-    }
-    if (u.uhp < 1) {
-        u.uhp = 0;
-        // C pline() marks the top line NEED_MORE; mirror it so update_topl pages
-        // the "You slip..." line before printing "You die...".
-        game._toplin = 1; // TOPLIN_NEED_MORE
-        await urgent_topl('You die...');
-        const { done, DIED } = await import('./end.js');
-        await done(DIED);
-    }
-}
 
 // C ref: steed.c mount_steed() — start riding the given monster.  Returns true
 // (the mount succeeded) or false.  Only the RNG-bearing slip path and the
@@ -128,16 +107,29 @@ export async function mount_steed(mtmp, force) {
         return false;
     }
 
-    // C ref: steed.c:338-356 — the impaired/slip check.  For the recorded
-    // Knight none of (Confusion, Fumbling, Glib, Wounded_legs, saddle cursed,
-    // saddle greased) hold, so the only term that can fire is the level/tame
-    // vs rnd(MAXULEV/2 + 5) comparison, which always rolls.
+    // C ref: steed.c:338-356 — the impaired/slip check.  Confusion, Fumbling,
+    // Glib, Wounded_legs, a cursed or greased saddle, or a failed
+    // level/tameness roll all make the hero slip.  Short-circuit order matters:
+    // rnd() is only drawn when every earlier term is false.
+    const saddle = which_armor(mtmp, W_SADDLE);
     if (!force
-        && (u.ulevel + (mtmp.mtame || 0) < rnd(MAXULEV / 2 + 5))) {
-        // (Levitation is false here, so the normal "slip" branch applies.)
+        && (Confusion_std() || Fumbling_std() || Glib_std()
+            || (u.HWounded_legs || 0) || (u.EWounded_legs || 0)
+            || (u.uprops?.Wounded_legs || 0)
+            || saddle?.cursed || saddle?.greased
+            || (u.ulevel + (mtmp.mtame || 0) < rnd(MAXULEV / 2 + 5)))) {
+        if (u.uprops?.Levitation) {
+            await pline(`${Monnam_steed(mtmp)} slips away from you.`);
+            return false;
+        }
         await pline(`You slip while trying to get on ${mon_nam(mtmp)}.`);
-        // losehp(Maybe_Half_Phys(rn1(5, 10)), ...) — rn1(5,10) == rn2(5)+10.
-        await losehp(rn1(5, 10));
+        // C: x_monnam(mtmp, ARTICLE_A, NULL, SUPPRESS_IT | SUPPRESS_INVISIBLE
+        // | SUPPRESS_HALLUCINATION, TRUE) -> "a saddled pony".
+        const buf = `slipped while mounting ${x_monnam(mtmp, /*ARTICLE_A*/ 2, null,
+            SUPPRESS_IT | SUPPRESS_INVISIBLE | SUPPRESS_HALLUCINATION, true)}`;
+        // losehp(Maybe_Half_Phys(rn1(5, 10)), buf, NO_KILLER_PREFIX).
+
+        await losehp_do(Maybe_Half_Phys(rn1(5, 10)), buf, NO_KILLER_PREFIX);
         return false;
     }
 
@@ -458,7 +450,7 @@ export async function dismount_steed(reason) {
         await pline(`You ${verb} off of ${mon_nam(mtmp)}!`);
         if (!have_spot) { cc = landing_spot(reason, 1); have_spot = !!cc; }
         if (!ulev && !ufly) {
-            await losehp(rn1(10, 10)); // "riding accident"
+            await losehp_do(Maybe_Half_Phys(rn1(10, 10)), 'riding accident', KILLED_BY_AN);
             await set_wounded_legs(BOTH_SIDES, (u.HWounded_legs || 0) + rn1(5, 5));
             repair_leg_damage = false;
         }

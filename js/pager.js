@@ -938,7 +938,7 @@ import { COLNO, ROWNO, BOLT_LIM, BUFSZ, isok, STONE, SCORR, SDOOR, ROOM, CORR,
          GPCOORDS_COMFULL, WARNCOUNT, TRAPNUM, def_warnsyms, Is_waterlevel,
          Is_airlevel, SYM_OFF_P, SYM_NOTHING, SYM_UNEXPLORED, SYM_BOULDER,
          AM_MASK, AM_SANCTUM, Amask2align, A_CHAOTIC,
-         A_NEUTRAL, A_LAWFUL, A_NONE } from './const.js';
+         A_NEUTRAL, A_LAWFUL, A_NONE, OBJ_FLOOR, OBJ_BURIED } from './const.js';
 import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
          MAXOCLASSES, DEF_INVISIBLE, S_stone, S_room, S_darkroom, S_corr,
          S_litcorr, S_ndoor, S_altar, S_grave, S_cloud, S_ice, S_pool,
@@ -964,7 +964,7 @@ import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
          mksobj, mkobj } from './mkobj.js';
 import { monster_by_pmidx } from './makemon.js';
 import { simpleonames } from './objnam.js';
-import { distant_monnam, ARTICLE_NONE, mon_nam, coyotename } from './do_name.js';
+import { rndmonnam as rndmonnam_dn, distant_monnam, ARTICLE_NONE, mon_nam, coyotename } from './do_name.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
 import { doextlist, cmd_from_func, waterbody_name } from './cmd.js';
 import { rn2 } from './rng.js';
@@ -1011,7 +1011,7 @@ function pg_strstri(hay, needle) { return String(hay).includes(String(needle)); 
 function pg_Has_contents(o) { return !!(o && Array.isArray(o.cobj) && o.cobj.length); }
 function pg_objs_at(x, y) {
     return (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y);
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
 }
 function pg_sobj_at(otyp, x, y) {
     for (const o of pg_objs_at(x, y)) if (o.otyp === otyp) return o;
@@ -1496,13 +1496,13 @@ export function object_from_map(glyph, x, y) {
         }
         if (otmp.otyp === LEASH) otmp.leashmon = 0;
         /* extra fields needed for shop price with doname() formatting */
-        otmp.where = 'floor';
+        otmp.where = OBJ_FLOOR;
         otmp.ox = x; otmp.oy = y;
         otmp.no_charge = (otmp.otyp === STRANGE_OBJECT) && costly_spot(x, y);
     }
     /* mark an adjacent object as having been seen up close */
     if (otmp && pg_next2u(x, y) && !Blind() && !Hallucination_u()
-        && (fakeobj || otmp.where === 'floor')
+        && (fakeobj || otmp.where === OBJ_FLOOR)
         && !pg_iflags().terrainmode)
         observe_object_pg(otmp);
     if (fakeobj && mtmp && mimic_obj
@@ -1533,7 +1533,7 @@ export function look_at_object(x, y, glyph) {
     }
 
     const typ = game.level?.at(x, y)?.typ;
-    if (otmp && !fakeobj && otmp.where === 'buried') buf += ' (buried)';
+    if (otmp && !fakeobj && otmp.where === OBJ_BURIED) buf += ' (buried)';
     /* check TREE before STONE due to level.flags.arboreal */
     else if (IS_TREE(typ))
         buf += ` ${(otmp && is_treefruit(otmp)) ? 'dangling' : 'stuck'} in a tree`;
@@ -1626,16 +1626,10 @@ export function look_at_monster(mtmp, x, y, wantMonbuf = true) {
     }
     return { buf: buf.slice(0, BUFSZ - 1), monbuf };
 }
-// C ref: do_name.c rndmonnam(adjective) — a random monster name off the CORE
-// rng (rn2), used when hallucinating.  C rerolls until it gets a non-unique,
-// non-placeholder species; this keeps the single draw and the reroll loop.
+// C ref: do_name.c rndmonnam(adjective) — draws off the DISPLAY rng; the real
+// port (js/do_name.js) owns the reroll loop, bogusmon fallback and gender pick.
 function rndmonnam() {
-    for (let tries = 0; tries < 100; tries++) {
-        const mon = monster_by_pmidx(rn2(NUMMONS));
-        if (mon && mon.name && !(mon.mflags2 & 0x00080000 /* M2_PNAME */))
-            return mon.name;
-    }
-    return 'creature';
+    return rndmonnam_dn().name;
 }
 
 /* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */

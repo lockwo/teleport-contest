@@ -8,7 +8,7 @@
 import { game, svc_context_run } from './gstate.js';
 import { nhgetch } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
-import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, covers_objects, show_glyph_cell, hero_glyph, glyph_at, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt } from './display.js';
+import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, glyph_at, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt } from './display.js';
 import { vision_recalc, cansee, recalc_block_point, Blind, vision_reset } from './vision.js';
 import { hliquid, Some_Monnam, m_monnam, YMonnam, y_monnam } from './do_name.js';
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
@@ -102,7 +102,7 @@ import { CMDQ_KEY, CMDQ_EXTCMD, CMDQ_DIR, CMDQ_USER_INPUT, CMDQ_INT,
          has_mgivenname, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT,
          MENU_FIRST_PAGE, MENU_LAST_PAGE, MENU_NEXT_PAGE, MENU_PREVIOUS_PAGE,
          MENU_SELECT_ALL, MENU_UNSELECT_ALL, MENU_INVERT_ALL, MENU_SELECT_PAGE,
-         MENU_UNSELECT_PAGE, MENU_INVERT_PAGE, MENU_SEARCH } from './const.js';
+         MENU_UNSELECT_PAGE, MENU_INVERT_PAGE, MENU_SEARCH, OBJ_FREE, OBJ_FLOOR } from './const.js';
 // C ref: cmd.c extcmdlist[] — key/name/description/flags, build-constant.
 import { EXTCMD_TABLE } from './cmd_data.js';
 // C ref: selvar.c — the selection accessors #lookaround's room description uses.
@@ -111,9 +111,9 @@ import { selection_new, selection_getbounds,
          set_selection_floodfillchk,
          selection_size_description } from './selvar.js';
 import { carrying, objects_at, inventoryArray,
-         cmdq_add_key, cmdq_pop, doperminv } from './invent.js';
+         cmdq_add_key, cmdq_pop, doperminv, useupf } from './invent.js';
 import { num_spells } from './spell.js';
-import { vobj_at, msghist, topl_more_ext, useDECgraphics } from './display.js';
+import { vobj_at, msghist, topl_more_ext, useDECgraphics, terrain_glyph } from './display.js';
 import { dist2 } from './hacklib.js';
 import { M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID } from './monflags_data.js';
 import { NO_COLOR, ATR_INVERSE, DEC_TO_UNICODE } from './terminal.js';
@@ -867,7 +867,7 @@ async function avoid_running_into_trap(x, y) {
             if (t) await pline(`You stop in front of ${an(trap_explanation(t.ttyp))}.`);
         } else {
             await pline(`You stop at the edge of the ${
-                isPoolTerrain(x, y) ? 'water' : 'lava'}.`);
+                hliquid(isPoolTerrain(x, y) ? 'water' : 'lava')}.`);
         }
     }
     nomul(0);
@@ -2249,7 +2249,7 @@ async function find_trap(trap) {
         const u = game.u;
         if (u?.ux > 0) {
             const hg = hero_glyph();
-            show_glyph_cell(u.ux, u.uy, hg.ch, hg.color, false);
+            show_glyph_cell(u.ux, u.uy, hg.ch, hg.color, false, hg.attr);
         }
     }
     await update_topl(`You find ${an(trap_explanation(trap.ttyp))}.`);
@@ -2427,29 +2427,12 @@ export async function dosearch() {
     return true;
 }
 
-// C ref: mon.c wake_nearto_core(x, y, distance, FALSE) — every non-dead monster
-// within `distance` (a SQUARED distance) of <x,y> loses msleeping and its
-// STRAT_WAITMASK "meditation".  Consumes no RNG itself, but a monster that C
-// woke and this port left asleep skips its whole dochug() turn — every m_move
-// rn2 in it, every attack roll — so the streams diverge from the next monster
-// phase onward.  wake_msg() also prints "<Monster> wakes up." for a sleeping
-// monster the hero can see, which lands on the top line before the kick text.
+// C ref: mon.c:4402 wake_nearto(x, y, distance) == wake_nearto_core(x, y,
+// distance, FALSE).  A monster C woke and this port left asleep would skip its
+// whole dochug() turn, so the streams diverge from the next monster phase on.
 export async function wake_nearto(x, y, distance) {
-    const { fmonOrder } = await import('./mon.js');
-    for (const mtmp of fmonOrder()) {
-        if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
-        const d2 = (mtmp.mx - x) * (mtmp.mx - x) + (mtmp.my - y) * (mtmp.my - y);
-        if (distance !== 0 && d2 >= distance) continue;
-        // C's wake_msg() pline() is update_topl(), and monmove.js's copy of
-        // wake_msg already uses it: this line APPENDS to whatever the noise
-        // that woke the monster printed, rather than replacing it.
-        if (mtmp.msleeping && canseemon_shared(mtmp))
-            await update_topl(`${Monnam(mtmp)} wakes up.`);
-        mtmp.msleeping = 0;
-        // C: `if (!(mtmp->data->geno & G_UNIQ)) mtmp->mstrategy &= ~STRAT_WAITMASK;`
-        if (mtmp.mstrategy != null) mtmp.mstrategy &= ~0x00ff0000;
-    }
-    disturb_buried_zombies(x, y);
+    const { wake_nearto_core } = await import('./mon.js');
+    await wake_nearto_core(x, y, distance, false);
 }
 
 // C ref: mondata.h digests(ptr) == attacktype(ptr, AT_ENGL).
@@ -2920,7 +2903,7 @@ export async function doopen_indir(x, y) {
         } else {
             door.doormask = D_ISOPEN;
         }
-        newsym(cx, cy);
+        feel_newsym(cx, cy); /* the hero knows she opened it */
         recalc_block_point(cx, cy);
     } else {
         exercise(A_STR, true); // -> rn2(19)
@@ -3046,7 +3029,7 @@ export async function doclose() {
             || rn2(25) < Math.trunc((acurrstr() + ACURR(A_DEX) + ACURR(A_CON)) / 3)) {
             await pline('The door closes.');
             door.doormask = D_CLOSED;
-            newsym(x, y);
+            feel_newsym(x, y); /* the hero knows she closed it */
             vision_recalc(0);
         } else {
             exercise(A_STR, true); // -> rn2(19)
@@ -3163,7 +3146,7 @@ export async function pick_lock(pick) {
         // C walks svl.level.objects[x][y] head-first (newest first); this port's
         // level.objects is a flat, push-ordered array, so reverse for that order.
         const pile = (game.level?.objects || [])
-            .filter((o) => o.where === 'floor' && o.ox === cx && o.oy === cy)
+            .filter((o) => o.where === OBJ_FLOOR && o.ox === cx && o.oy === cy)
             .reverse();
         let count = 0;
         for (const otmp of pile) {
@@ -3694,6 +3677,9 @@ async function domove_core(dx, dy, attemptTracked) {
         // swap/displace branch too, so a generic potion/gem/book now within
         // neardist of the hero becomes specific (before vision_recalc(1)).
         see_nearby_objects();
+        // C ref: hack.c:2945 — the same tread-disturbs-zombies call closes the
+        // swap/displace path too (even when the swap was refused).
+        hero_tread_disturbs_zombies();
         u.umoved = (u.ux !== _umoved_ux0 || u.uy !== _umoved_uy0);
         newsym(u.ux0, u.uy0);
         vision_recalc(1);
@@ -4132,9 +4118,7 @@ async function domove_core(dx, dy, attemptTracked) {
 
     // C ref: hack.c:2945 — your tread on the ground may disturb the slumber of
     // nearby (buried) zombies.
-    if (!u.uprops?.Levitation && !u.uprops?.Flying && !Stealth()
-        && (youmonst_data_pub()?.cwt ?? 0) >= WT_ELF / 2)
-        disturb_buried_zombies(u.ux, u.uy);
+    hero_tread_disturbs_zombies();
 
     // Update display.  C ref: hack.c:2969-2972 — "Clean old position --
     // vision_recalc() will print our new one": vision_recalc() ends with its
@@ -4436,7 +4420,7 @@ async function trapmove(x, y) {
             u.utrap--;
             if ((u.utrap & 0xff) === 0) {
                 u.utrap = 0;
-                await pline(`You pull yourself to the edge of the lava.`);
+                await pline(`You pull yourself to the edge of the ${hliquid('lava')}.`);
             }
         }
         u.umoved = true;
@@ -4566,7 +4550,7 @@ function fill_pit_cmd(x, y) {
         const i = objs.indexOf(otmp);
         if (i >= 0) objs.splice(i, 1);
     }
-    otmp.where = 'free';
+    otmp.where = OBJ_FREE;
     // flooreffects(otmp, x, y, "settle") fills the pit: the trap is removed.
     game.level.traps = (game.level.traps || []).filter((tr) => tr !== t);
     newsym(x, y);
@@ -4606,7 +4590,7 @@ async function cant_squeeze_thru_hero() {
 function boulder_at(x, y) {
     let found = null;
     for (const o of (game.level?.objects || []))
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === 475)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === 475)
             found = o;
     return found;
 }
@@ -5143,7 +5127,7 @@ export async function pickup_after_move(x, y) {
     // "You see here an iron chain." — seed4500 step 517 shows an empty topline.
     const not_uchain = (o) => o !== game.u?.uchain;
     const hasObj = (game.level?.objects || []).filter(not_uchain).some(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y);
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
     // C ref: hack.c spoteffects() -> pickup(1) -> describe_decor() (pickup.c),
     // and check_here() -> describe_decor(): with 'mention_decor' on, an
     // unobscured dungeon feature under the hero is announced ("There is a
@@ -5207,7 +5191,7 @@ export async function pickup_after_move(x, y) {
     // C's nomul(0): also dirties the status line and end_running()s the run.
     const stop_run = () => nomul(0);
     const obj_at = (game.level?.objects || []).some(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y);
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
     if (obj_at && ctx.run && ctx.run !== 8 && !ctx.nopick
         && game.flags?.pickup && !notake_youmonst()) stop_run();
     // C ref: pickup.c:724 — a notake polyform still gets check_here() (so the
@@ -5232,7 +5216,7 @@ export async function pickup_after_move(x, y) {
         // so an item can remain even with autopickup on.  When nothing is left,
         // C reads any engraving instead.
         const remain = (game.level?.objects || []).filter(
-            (o) => not_uchain(o) && o.where === 'floor' && o.ox === x && o.oy === y);
+            (o) => not_uchain(o) && o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
         if (remain.length > 0) {
             await look_here_after_move(x, y, nPicked > 0, decorAnnounced);
         } else {
@@ -5313,7 +5297,7 @@ import { an } from './hacklib.js';
 // describe a single floor object.  Blind and multi-object cases use look_here().
 async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = false) {
     const objs = (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y);
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
     if (objs.length === 0) return;
     // check_here() excludes the attached chain from the pile-limit count.
     const objCount = objs.length - Number(objs.includes(game.u?.uchain));
@@ -5395,6 +5379,15 @@ async function objDoname(obj) {
     return 'an object';
 }
 
+// C ref: hack.c:2945 — "your tread on the ground may disturb the slumber of
+// nearby zombies" (domove_core's common tail).
+function hero_tread_disturbs_zombies() {
+    const u = game.u;
+    if (!u.uprops?.Levitation && !u.uprops?.Flying && !Stealth()
+        && (youmonst_data_pub()?.cwt ?? 0) >= WT_ELF / 2)
+        disturb_buried_zombies(u.ux, u.uy);
+}
+
 // C ref: hack.c domove_swap_with_pet(mtmp, x, y) — swap the hero and a tame
 // pet.  Returns TRUE if the swap happened.  The starter sessions always take
 // the simple swap branch (floor destination, untrapped pet, no boulder); the
@@ -5453,9 +5446,6 @@ async function domove_swap_with_pet(mtmp, x, y) {
     mtmp.mtrapped = 0;
     mtmp.mx = u.ux0;
     mtmp.my = u.uy0;
-    // monster still knows where the hero is
-    mtmp.mux = u.ux;
-    mtmp.muy = u.uy;
     newsym(x, y);
     newsym(u.ux0, u.uy0);
 
@@ -6991,10 +6981,16 @@ export async function dolookaround() {
     iflags.getloc_filter = /*GFILTER_VIEW*/ 1;
     for (y = 0; y < ROWNO; y++)
         for (x = 1; x < COLNO; x++) {
-            // C dispatches on glyph_at(); this port's remembered cmap symbol is
-            // the display char, so "is this a (lit) corridor" reads it directly.
-            const dch = cmd_levl(x, y)?.disp_ch;
-            const iscorr = (corr_next2u && dch === '#');
+            // C dispatches on glyph_at() == S_corr/S_litcorr; this port's remembered
+            // cmap symbol is the display cell, so compare it with what the active
+            // symset draws for each corridor flavour (DECgraphics/SYMBOLS= remap
+            // '#', so the literal char cannot be tested).
+            const cell = cmd_levl(x, y);
+            const iscorr = corr_next2u && !!cell && !cell.disp_monster
+                && [false, true].some((waslit) => {
+                    const g = terrain_glyph({ typ: CORR, waslit }, x, y);
+                    return cell.disp_ch === g.ch && !!cell.disp_decgfx === !!g.dec;
+                });
 
             if (!cmd_u_at(x, y)
                 && (gather_locs_interesting(x, y, GLOC_INTERESTING) || iscorr)) {
@@ -8838,8 +8834,8 @@ export async function end_of_input() {
     return;
 }
 function cmd_In_tutorial() { return !!game.u?.uz?.tutorial; }
-function cmd_exit_nhwindows(_str) {}
 function cmd_clearlocks() {}
+function cmd_exit_nhwindows(_str) {}
 function cmd_nh_terminate(_status) {}
 
 // C ref: cmd.c:5213 readchar_core(x, y, mod) — C's three out-params are

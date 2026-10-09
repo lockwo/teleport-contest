@@ -58,14 +58,16 @@ import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          NON_PM, G_GENOD, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES, UTOTYPE_NONE,
          UTOTYPE_DEFERRED, UTOTYPE_ATSTAIRS, UTOTYPE_FALLING, UTOTYPE_PORTAL,
          UTOTYPE_RMPORTAL, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX,
-         MIGR_EXACT_XY, I_SPECIAL, TIMEOUT, W_ARTI, LEVITATION } from './const.js';
+         MIGR_EXACT_XY, I_SPECIAL, TIMEOUT, W_ARTI, LEVITATION, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED } from './const.js';
 import { docrt, flush_screen, pline, update_topl, urgent_topl, topl_more, y_n, newsym,
-         see_nearby_objects, reglyph_remembered_darkroom, map_location } from './display.js';
+         see_nearby_objects, reglyph_remembered_darkroom, map_location,
+         capture_screen_for_level_change, freeze_screen_for_level_change,
+         thaw_screen_for_level_change } from './display.js';
 import { seetrap, dotrap } from './trap.js';
 import { check_special_room } from './shkroom.js';
 import { forget_temple_entry } from './priest.js';
 import { near_capacity, addinv, prinv, worn_extrinsic, worn_blocked } from './invent.js';
-import { BOULDER, run_object_timers, mksobj, AMULET_OF_YENDOR,
+import { BOULDER, run_object_timers, requeue_level_timers, mksobj, AMULET_OF_YENDOR,
          is_rider_pm } from './mkobj.js';
 import { vision_reset, vision_recalc, Blind, cansee,
          recalc_block_point } from './vision.js';
@@ -85,6 +87,7 @@ function level_difficulty() { return level_difficulty_c(); }
 import { mon_catchup_elapsed_time, monnear } from './dogmove.js';
 import { onquest, com_pager } from './questpgr.js';
 import { initrack } from './track.js';
+import { carry_global_light_sources } from './light.js';
 
 // ── small geometry / occupancy helpers (C ref: mklev.c occupied,
 //    mkmaze.c bad_location, teleport.c goodpos/collect_coords/enexto) ──
@@ -294,7 +297,10 @@ function goodpos_mon(x, y, mtmp) {
     const mdat = mtmp?.data ?? null;
     const typ = game.level?.at(x, y)?.typ;
     if (typ === POOL || typ === MOAT || typ === WATER)
-        return is_swimmer_flag(mdat) || m_in_air_do(mtmp);
+        // C ref: teleport.c goodpos() — airborne only counts off the Plane of
+        // Water and when the square is not a WATER wall (rm.h IS_WATERWALL).
+        return is_swimmer_flag(mdat)
+            || (!Is_waterlevel(game.u?.uz) && typ !== WATER && m_in_air_do(mtmp));
     // C ref: teleport.c goodpos() — an out-of-water eel usually refuses the
     // square, and this rn2(13) FIRES whenever an eel is offered one.
     if (mdat?.mcls === S_EEL_DO && rn2(13)) return false;
@@ -598,7 +604,7 @@ export function u_collide_m(mtmp) {
 // its C-matching killer text.
 export async function losehp_do(n, knam, k_format = KILLED_BY_AN) {
     const u = game.u;
-    if (!u || n <= 0) return;
+    if (!u) return;
     // C ref: hack.c:4265-4266 — damage interrupts counted actions and travel.
     game.botl = true;
     const { end_running } = await import('./hack.js');
@@ -610,6 +616,9 @@ export async function losehp_do(n, knam, k_format = KILLED_BY_AN) {
         if (u.mh < 1) {
             const { rehumanize } = await import('./polyself.js');
             if (rehumanize) await rehumanize();
+        } else if (n > 0 && u.mh * 10 < u.mhmax
+                   && (u.uprops?.Unchanging || u.HUnchanging || u.EUnchanging)) {
+            await maybe_wail();
         }
         return;
     }
@@ -736,7 +745,7 @@ async function Norep_do(msg) {
 // doesn't matter.
 function sobj_at(otyp, x, y) {
     for (const o of game.level?.objects ?? [])
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === otyp)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === otyp)
             return o;
     return null;
 }
@@ -856,14 +865,10 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // the level being left so the arrival scan below sees a clean slate.
     await check_special_room(true);
 
-    // C ref: do.c:1616-1617 `if (Punished) unplacebc();` — lift the ball and
-    // chain off the DEPARTING level, before it is stashed below, so placebc()
-    // can put them back down on the arrival square.  Without this pair they stay
-    // linked into the old level's object list at the old coordinates: the
-    // arrival square holds nothing, so goto_level's closing pickup(1) draws no
-    // "Things that are here:" menu (seed4500 step 772) and the first move on the
-    // new level takes drag_ball()'s teleport arm instead of "nothing moved".
-    if (Punished_do()) unplacebc();
+    // C ref: do.c:1616-1617 `if (Punished) unplacebc();` — lifts the ball and
+    // chain off the DEPARTING level; done below, right after the departing
+    // screen capture, because its newsym()s only reach gbuf in C: the tty keeps
+    // showing the ball and chain until the first flush (seed4500 step 929).
 
     // C ref: do.c:1618-1623 — reset_utrap(FALSE); fill_pit(u.ux, u.uy);
     // set_ustuck(0) (clears u.ustuck AND u.uswallow); set_uinwater(0);
@@ -943,6 +948,19 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // bones?", which has no transit frame) already shows the pet gone, as C
     // does.  u.uz still names the departing level, so vision/terrain here
     // are correct.
+    // C's tty only shows what was last FLUSHED: the pet-removal newsym() below
+    // and vision_recalc(2) only touch gbuf, so the departing-level frame the
+    // arrival messages (Plane of Fire "You hear a whoosh!") page over is the
+    // screen as it stood BEFORE them — pet still drawn (seed0373 step 99).
+    capture_screen_for_level_change();
+    // Lift the ball and chain off the DEPARTING level, before it is stashed
+    // below, so placebc() can put them back down on the arrival square.  Without
+    // this they stay linked into the old level's object list at the old
+    // coordinates: the arrival square holds nothing, so goto_level's closing
+    // pickup(1) draws no "Things that are here:" menu (seed4500 step 772) and
+    // the first move on the new level takes drag_ball()'s teleport arm instead
+    // of "nothing moved".
+    if (Punished_do()) unplacebc();
     for (const m of kept) newsym(m.mx, m.my);
 
     // C ref: do.c goto_level():1637 `vision_recalc(2)` — shuts down vision for
@@ -1115,6 +1133,15 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         await getlev_restore(ledger);
     }
 
+    // C ref: save_light_sources(RANGE_LEVEL) leaves RANGE_GLOBAL entries (lit
+    // lamps carried by the hero / her pets) on the one global chain, so they
+    // shine on the new level too.  The per-level lists here need them moved.
+    carry_global_light_sources(g._level_store[oldLedger]?.level);
+
+    // C ref: do.c:1720 flush_screen(-1) — from here on map/status flushes are
+    // postponed until docrt(), so the tty keeps showing the departing level.
+    freeze_screen_for_level_change();
+
     // Hero placement.  C ref: do.c goto_level() arrival block, whose three arms
     // are tested in this order: portal, then at_stairs, then everything else.
     if (portal && !In_endgame(u.uz)) {
@@ -1249,6 +1276,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         game._toplin = 0;
     }
     delete game._screenBlank;
+    thaw_screen_for_level_change();
     await docrt();
     await flush_screen(-1);
 
@@ -1534,6 +1562,7 @@ async function getlev_restore(ledger) {
     g.level = store.level;
     g.stairs = store.stairs;
     g.fmon = g.level.monsters;
+    requeue_level_timers(); // restore_timers(): insert_timer() reverses equal-timeout ties
 
     // C ref: restore.c:1114 getlev() — `Sfi_dest_area(nhfp, &svu.updest)` /
     // `&svd.dndest`, read back straight after save_stairs' counterpart.
@@ -2804,11 +2833,9 @@ export async function flooreffects(obj, x, y, verb) {
     let ttyp = NO_TRAP, res = false;
     let deletedwithboulder = false;
 
-    // C: `if (obj->where != OBJ_FREE) panic("flooreffects: obj not free")`.  This
-    // port stores obj.where as the lower-cased OBJ_* name (js/invent.js
-    // objects_at(), js/dig.js rot_corpse()); js/ has no panic().  A fresh
-    // mksobj() object has no `where` yet (or the numeric OBJ_FREE, 0).
-    if (obj.where != null && obj.where !== 'free' && obj.where !== 0) {
+    // C: `if (obj->where != OBJ_FREE) panic("flooreffects: obj not free")`;
+    // js/ has no panic().
+    if (obj.where !== OBJ_FREE) {
         await impossible_do('flooreffects: obj not free');
         return false;
     }
@@ -3635,7 +3662,7 @@ export async function revive_corpse(corpse) {
     const DN = await import('./do_name.js');
 
     let container = null;
-    let container_where = 0;
+    let container_where = OBJ_FREE;
     let mcarry;
 
     const where = corpse.where;
@@ -3644,7 +3671,7 @@ export async function revive_corpse(corpse) {
        dig itself out of the ground if it revives */
     const mons_row = MK.monster_by_pmidx(montype);
     const is_zomb = (mons_row?.mcls === S_ZOMBIE)
-                 || (where === 'buried' && await is_reviver_do(mons_row));
+                 || (where === OBJ_BURIED && await is_reviver_do(mons_row));
     const is_uwep = (corpse === game.u.uwep);
     const chewed = (corpse.oeaten | 0) !== 0;
     // C ref: do.c:2131 corpse_xname(corpse, chewed ? "bite-covered" : NULL,
@@ -3652,13 +3679,13 @@ export async function revive_corpse(corpse) {
     // and drops the adjective; reduced here the same way zap.js's private
     // corpse_xname_z() does (adjective prefix, no CXN_SINGULAR nuance).
     const cname = chewed ? `bite-covered ${I.xname(corpse)}` : I.xname(corpse);
-    mcarry = (where === 'minvent') ? corpse.ocarry : null;
+    mcarry = (where === OBJ_MINVENT) ? corpse.ocarry : null;
     /* mcarry is NULL for 'buried' and 'contained' now */
 
     /* C: get_obj_location(corpse, &corpsex, &corpsey, CONTAINED_TOO|BURIED_TOO) */
     const corpsex = corpse.ox, corpsey = corpse.oy;
 
-    if (where === 'contained') {
+    if (where === OBJ_CONTAINED) {
         container = corpse.ocontainer;
         // C ref: zap.c:841 get_container_location(container, &container_where,
         // NULL) — walk out to the outermost container and report where that
@@ -3666,22 +3693,22 @@ export async function revive_corpse(corpse) {
         const { get_container_location } = await import('./zap.js');
         const nesting = {};
         const carrier = get_container_location(container, nesting);
-        container_where = nesting.loc || 0;
-        if (container_where === 'minvent' && carrier)
+        container_where = nesting.loc;
+        if (container_where === OBJ_MINVENT && carrier)
             mcarry = carrier;
     }
     const mtmp = await revive_unported(corpse, false); /* corpse gone on success */
 
     if (mtmp) {
         switch (where) {
-        case 'invent':
+        case OBJ_INVENT:
             if (is_uwep)
                 await pline(`The ${cname} writhes out of your grasp!`);
             else
                 await pline('You feel squirming in your backpack!');
             break;
 
-        case 'floor':
+        case OBJ_FLOOR:
             if (cansee(corpsex, corpsey) || await canseemon_do(mtmp)) {
                 let effect = '';
 
@@ -3702,7 +3729,7 @@ export async function revive_corpse(corpse) {
             }
             break;
 
-        case 'minvent': /* probably a nymph's */
+        case OBJ_MINVENT: /* probably a nymph's */
             if (cansee(mtmp.mx, mtmp.my)) {
                 if (mcarry && await canseemon_do(mcarry))
                     await pline(`Startled, ${DN.mon_nam(mcarry)} drops `
@@ -3713,7 +3740,7 @@ export async function revive_corpse(corpse) {
                                           : DN.Monnam(mtmp)} suddenly appears!`);
             }
             break;
-        case 'contained': {
+        case OBJ_CONTAINED: {
             /* Could use x_monnam(..., AUGMENT_IT) but that would say "someone"
                for humanoid monsters, a distinction the hero cannot make here. */
             const mnam = U.canspotmon(mtmp) ? DN.Amonnam(mtmp) : 'Something';
@@ -3722,15 +3749,15 @@ export async function revive_corpse(corpse) {
                 await impossible_do('reviving corpse from non-existent container');
             } else if (mcarry && await canseemon_do(mcarry)) {
                 await pline(`${mnam} writhes out of ${I.yname(container)}!`);
-            } else if (container_where === 'invent') {
+            } else if (container_where === OBJ_INVENT) {
                 await pline(`${mnam} ${locomotion_do(mtmp.data, 'writhes')} `
                             + `out of ${an(I.xname(container))} in your pack!`);
-            } else if (container_where === 'floor' && cansee(corpsex, corpsey)) {
+            } else if (container_where === OBJ_FLOOR && cansee(corpsex, corpsey)) {
                 await pline(`${mnam} escapes from ${an(I.xname(container))}!`);
             }
             break;
         }
-        case 'buried':
+        case OBJ_BURIED:
             if (is_zomb) {
                 const T = await import('./trap.js');
                 T.maketrap(mtmp.mx, mtmp.my, PIT);
@@ -3771,7 +3798,7 @@ export async function revive_nasty(x, y, msg) {
     let revived = false;
     const objs = (game.level?.objects || [])
         .filter((o) => o.ox === x && o.oy === y
-                     && (o.where === 'floor' || o.where === 1));
+                     && (o.where === OBJ_FLOOR));
     for (const otmp of objs) {
         if (otmp.otyp === CORPSE
             && (is_rider_pm(otmp.corpsenm)
@@ -3815,7 +3842,7 @@ export async function revive_mon(arg, timeout) {
 
     /* corpse will revive somewhere else if there is a monster in the way;
        Riders get a chance to try to bump the obstacle out of their way */
-    if (is_displacer_do(mptr) && body.where === 'floor'
+    if (is_displacer_do(mptr) && body.where === OBJ_FLOOR
         && (mtmp = m_at(body.ox, body.oy)) != null
         && (game.level?.flags?.stasis_until | 0) < (game.moves | 0)) {
         const U = await import('./uhitm.js');

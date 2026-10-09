@@ -12,7 +12,7 @@
 // port's C-index-ordered table maps those slots onto existing hero fields while
 // preserving timeout bits beside any persistent-source flags.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { NO_COLOR } from './terminal.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, d } from './rng.js';
@@ -23,7 +23,7 @@ import { nomul, stop_occupation } from './hack.js';
 import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer } from './mkobj.js';
 import { update_topl, urgent_topl, see_monsters } from './display.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
-import { Unaware } from './const.js';
+import { Unaware, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { t_at } from './trap.js';
 import { is_pool, is_ice } from './dbridge.js';
@@ -143,8 +143,34 @@ async function slip_or_trip() {
     const onFoot = !u.usteed;
     if (otmp && onFoot && !u.uinwater && is_pool(u.ux, u.uy)) otmp = null;
     if (otmp && onFoot) {
-        const { doname_invent } = await import('./invent.js');
-        await update_topl(`You trip over ${doname_invent(otmp)}.`);
+        const { doname_invent, touch_petrifies } = await import('./invent.js');
+        const { PLNMSG_ONE_ITEM_HERE } = await import('./const.js');
+        const { Blind } = await import('./vision.js');
+        let what;
+        if (game.last_msg === PLNMSG_ONE_ITEM_HERE) {
+            what = (otmp.quan === 1) ? 'it' : Hallucination() ? 'they' : 'them';
+        } else if (otmp.dknown || !Blind()) {
+            what = doname_invent(otmp);
+        } else {
+            const { sobj_at } = await import('./invent.js');
+            const { ROCK } = await import('./mkobj.js');
+            const otmp2 = sobj_at(ROCK, u.ux, u.uy);
+            what = !otmp2 ? 'something' : (otmp2.quan === 1 ? 'a rock' : 'some rocks');
+        }
+        if (Hallucination()) {
+            what = what.charAt(0).toUpperCase() + what.slice(1);
+            await update_topl(`Egads!  ${what} bite${(!otmp || otmp.quan === 1) ? 's' : ''} your ${body_part(FOOT)}!`);
+        } else {
+            await update_topl(`You trip over ${what}.`);
+        }
+        const { CORPSE } = await import('./mkobj.js');
+        if (!game.uarmf && otmp.otyp === CORPSE
+            && touch_petrifies(otmp.corpsenm)) {
+            const { instapetrify } = await import('./polyself.js');
+            const { monster_by_pmidx } = await import('./makemon.js');
+            const nm = `tripping over ${_an(monster_by_pmidx(otmp.corpsenm)?.name)} corpse`;
+            await instapetrify(nm);
+        }
         return;
     }
     if ((u.HFumbling & FROMOUTSIDE) || (is_ice(u.ux, u.uy) && !rn2(3))) {
@@ -275,11 +301,18 @@ async function vomiting_dialogue() {
         break;
     case 2:
         txt = VOMITING_TEXTS[4];
+        {
+            const { cantvomit } = await import('./mondata.js');
+            const { youmonst_data } = await import('./invent.js');
+            if (cantvomit(youmonst_data())) txt = 'gag uncontrollably.';
+            else if (Hallucination()) txt = 'are about to hurl!';
+        }
         break;
     case 0:
         await stop_occupation();
         u.uhunger = (u.uhunger || 0) - 20;
-        await update_topl('You vomit!');
+        if ((u.uhs | 0) < C.FAINTING)
+            await update_topl(`You ${Hallucination() ? 'hurl chunks' : 'vomit'}!`);
         u.uprops.Vomiting = 0;
         nomul(-2);
         game.multi_reason = 'vomiting';
@@ -718,8 +751,11 @@ export async function nh_timeout() {
             find_ac();
             const { Blind } = await import('./vision.js');
             if (!Blind())
-                await update_topl(`The golden haze around you ${
-                    u.uspellprot ? 'becomes less dense' : 'disappears'}.`);
+                {
+                    const { hcolor } = await import('./do_name.js');
+                    await update_topl(`The ${hcolor('golden')} haze around you ${
+                        u.uspellprot ? 'becomes less dense' : 'disappears'}.`);
+                }
         }
     }
 
@@ -856,8 +892,8 @@ function _region_danger() {
 // shk_your() followed by cxname().
 async function _Shk_Your(obj) {
     if (!obj) return 'The ';
-    if (_where(obj) === 'invent') return 'Your ';
-    if (_where(obj) === 'minvent' && obj.ocarry) {
+    if (obj.where === OBJ_INVENT) return 'Your ';
+    if (obj.where === OBJ_MINVENT && obj.ocarry) {
         const { Monnam } = await import('./do_name.js');
         return `${s_suffix(Monnam(obj.ocarry))} `;
     }
@@ -1201,7 +1237,7 @@ export async function slime_dialogue() {
                 if (!Blind()) await _urgent_pline(buf.replace('%s', hcolor('green')));
             } else {
                 await _urgent_pline(buf.replace('%s',
-                    _an(Hallucination() ? rndmonnam() : 'green slime')));
+                    _an(Hallucination() ? rndmonnam().name : 'green slime')));
             }
         } else {
             await _urgent_pline(buf);
@@ -1380,41 +1416,25 @@ export async function slimed_to_death(kptr) {
 
 // ── eggs ───────────────────────────────────────────────────────────────────
 
-// C ref: obj.h enum obj_where.  js/ is INCONSISTENT about this field: js/const.js
-// (and js/mkobj.js's import list) use the numeric enum, but js/mkobj.js:1879
-// place_object() writes the STRING 'floor' and js/light.js / js/eat.js /
-// js/invent.js:270 test the strings.  Normalise so these routines read either
-// spelling; the field itself belongs to mkobj.c's owner.
-const _WHERE_NAME = {
-    [C.OBJ_FREE]: 'free', [C.OBJ_FLOOR]: 'floor',
-    [C.OBJ_CONTAINED]: 'contained', [C.OBJ_INVENT]: 'invent',
-    [C.OBJ_MINVENT]: 'minvent', [C.OBJ_MIGRATING]: 'migrating',
-    [C.OBJ_BURIED]: 'buried', [C.OBJ_ONBILL]: 'onbill',
-};
-function _where(obj) {
-    const w = obj?.where;
-    return (typeof w === 'number') ? (_WHERE_NAME[w] ?? String(w))
-                                   : String(w ?? '');
-}
-function _carried(obj) { return _where(obj) === 'invent'; }
+function _carried(obj) { return obj?.where === OBJ_INVENT; }
 
 // C ref: mkobj.c get_obj_location(obj, xp, yp, locflags) — the full switch, as
 // {x,y} or null (js/light.js:170 keeps the same private copy; js/invent.js:1192
 // has a broken one that returns obj.ox/oy for every `where`).
 function _get_obj_location(obj, locflags) {
     if (!obj) return null;
-    switch (_where(obj)) {
-    case 'invent':
+    switch (obj.where) {
+    case OBJ_INVENT:
         return { x: game.u?.ux, y: game.u?.uy };
-    case 'floor':
+    case OBJ_FLOOR:
         return { x: obj.ox, y: obj.oy };
-    case 'minvent':
+    case OBJ_MINVENT:
         if (obj.ocarry?.mx) return { x: obj.ocarry.mx, y: obj.ocarry.my };
         break;      /* !mx => migrating monster */
-    case 'buried':
+    case OBJ_BURIED:
         if (locflags & C.BURIED_TOO) return { x: obj.ox, y: obj.oy };
         break;
-    case 'contained':
+    case OBJ_CONTAINED:
         if (locflags & C.CONTAINED_TOO)
             return _get_obj_location(obj.ocontainer, locflags);
         break;
@@ -1545,8 +1565,8 @@ export async function hatch_egg(arg, timeout) {
                egg hatch or already being familiar with it, plus being able to
                see the resulting monster (checked below) */
         }
-        switch (_where(egg)) {
-        case 'invent':
+        switch (egg.where) {
+        case OBJ_INVENT:
             knows_egg = true;   /* true even if you are blind */
             if (!cansee_hatchspot)
                 await pline(`You feel something ${await _locomotion(mon.data, 'drop')} from your pack!`);
@@ -1560,7 +1580,7 @@ export async function hatch_egg(arg, timeout) {
             }
             break;
 
-        case 'floor':
+        case OBJ_FLOOR:
             if (cansee_hatchspot) {
                 knows_egg = true;
                 await pline(`You see ${monnambuf} hatch.`);
@@ -1568,7 +1588,7 @@ export async function hatch_egg(arg, timeout) {
             }
             break;
 
-        case 'minvent':
+        case OBJ_MINVENT:
             if (cansee_hatchspot) {
                 /* the egg-carrying monster might be invisible */
                 mon2 = egg.ocarry;
@@ -1586,7 +1606,7 @@ export async function hatch_egg(arg, timeout) {
             break;
 
         default:
-            await impossible(`egg hatched where? (${_where(egg)})`);
+            await impossible(`egg hatched where? (${egg.where})`);
             break;
         }
 
@@ -1645,12 +1665,12 @@ function _ing_suffix(s) { return `${String(s).replace(/e$/, '')}ing`; }
 // C ref: timeout.c:1344 see_lamp_flicker(obj, tailer) — only called if seen.
 export async function see_lamp_flicker(obj, tailer) {
     const { xname } = await import('./invent.js');
-    switch (_where(obj)) {
-    case 'invent':
-    case 'minvent':
+    switch (obj.where) {
+    case OBJ_INVENT:
+    case OBJ_MINVENT:
         await pline(`${await _Yname2(obj)} flickers${tailer}.`);
         break;
-    case 'floor':
+    case OBJ_FLOOR:
         await pline(`You see ${_an(xname(obj))} flicker${tailer}.`);
         break;
     default:
@@ -1661,16 +1681,16 @@ export async function see_lamp_flicker(obj, tailer) {
 // C ref: timeout.c:1359 lantern_message(obj) — the dimming message for brass
 // lanterns.  Only called if seen.  ("from adventure")
 export async function lantern_message(obj) {
-    switch (_where(obj)) {
-    case 'invent':
+    switch (obj.where) {
+    case OBJ_INVENT:
         await pline('Your lantern is getting dim.');
         if (Hallucination())
             await pline('Batteries have not been invented yet.');
         break;
-    case 'floor':
+    case OBJ_FLOOR:
         await pline('You see a lantern getting dim.');
         break;
-    case 'minvent': {
+    case OBJ_MINVENT: {
         const { Monnam } = await import('./do_name.js');
         await pline(`${s_suffix(Monnam(obj.ocarry))} lantern is getting dim.`);
         break;
@@ -1709,7 +1729,7 @@ export async function burn_object(arg, timeout) {
                 obj.owt = weight(obj);
             } else if (_Is_candle(obj) || obj.otyp === _POT_OIL()) {
                 let mtmp = null;
-                if (_where(obj) === 'floor') mtmp = m_at(obj.ox, obj.oy);
+                if (obj.where === OBJ_FLOOR) mtmp = m_at(obj.ox, obj.oy);
                 /* get rid of candles and burning oil potions; we know this
                    object isn't carried by the hero, nor is it migrating */
                 obj_extract_self(obj);
@@ -1738,7 +1758,7 @@ export async function burn_object(arg, timeout) {
     /* when carrying the light source you can feel the heat from a lit lamp or
        candle, so you're notified when it burns out even if blind at the time;
        a brass lantern doesn't radiate enough heat for that */
-    const bytouch = (_where(obj) === 'invent' && obj.otyp !== _BRASS_LANTERN());
+    const bytouch = (obj.where === OBJ_INVENT && obj.otyp !== _BRASS_LANTERN());
     let need_newsym = false, need_invupdate = false;
 
     /* obj->age is the age REMAINING at this point */
@@ -1746,14 +1766,14 @@ export async function burn_object(arg, timeout) {
     case _POT_OIL():
         /* this should only be called when we run out */
         if (canseeit) {
-            switch (_where(obj)) {
-            case 'invent':
+            switch (obj.where) {
+            case OBJ_INVENT:
                 need_invupdate = true;
                 /* FALLTHROUGH */
-            case 'minvent':
+            case OBJ_MINVENT:
                 await pline(`${whose}potion of oil has burnt away.`);
                 break;
-            case 'floor':
+            case OBJ_FLOOR:
                 await pline('You see a burning potion of oil go out.');
                 need_newsym = true;
                 break;
@@ -1767,7 +1787,7 @@ export async function burn_object(arg, timeout) {
         } else {
             /* clear a migrating obj's destination code before obfree so it
                doesn't complain about deleting a worn item */
-            if (_where(obj) === 'migrating') obj.owornmask = 0;
+            if (obj.where === OBJ_MIGRATING) obj.owornmask = 0;
             obj_extract_self(obj);
             obfree(obj, null);
         }
@@ -1794,12 +1814,12 @@ export async function burn_object(arg, timeout) {
                 if (obj.otyp === _BRASS_LANTERN()) {
                     await lantern_message(obj);
                 } else {
-                    switch (_where(obj)) {
-                    case 'invent':
-                    case 'minvent':
+                    switch (obj.where) {
+                    case OBJ_INVENT:
+                    case OBJ_MINVENT:
                         await pline(`${await _Yname2(obj)} seems about to go out.`);
                         break;
-                    case 'floor':
+                    case OBJ_FLOOR:
                         await pline(`You see ${_an(xname(obj))} about to go out.`);
                         break;
                     default:
@@ -1812,17 +1832,17 @@ export async function burn_object(arg, timeout) {
         case 0:
             /* even if blind you'll know if you're holding it */
             if (canseeit || bytouch) {
-                switch (_where(obj)) {
-                case 'invent':
+                switch (obj.where) {
+                case OBJ_INVENT:
                     need_invupdate = true;
                     /* FALLTHROUGH */
-                case 'minvent':
+                case OBJ_MINVENT:
                     if (obj.otyp === _BRASS_LANTERN())
                         await pline(`${whose}lantern has run out of power.`);
                     else
                         await pline(`${await _Yname2(obj)} has gone out.`);
                     break;
-                case 'floor':
+                case OBJ_FLOOR:
                     if (obj.otyp === _BRASS_LANTERN())
                         await pline('You see a lantern run out of power.');
                     else
@@ -1850,12 +1870,12 @@ export async function burn_object(arg, timeout) {
         switch (obj.age | 0) {
         case 75:
             if (canseeit) {
-                switch (_where(obj)) {
-                case 'invent':
-                case 'minvent':
+                switch (obj.where) {
+                case OBJ_INVENT:
+                case OBJ_MINVENT:
                     await pline(`${whose}${menorah ? "candelabrum's " : ''}candle${many ? 's are' : ' is'} getting short.`);
                     break;
-                case 'floor':
+                case OBJ_FLOOR:
                     await pline(`You see ${menorah ? "a candelabrum's " : many ? 'some ' : 'a '}candle${many ? 's' : ''} getting short.`);
                     break;
                 default:
@@ -1866,12 +1886,12 @@ export async function burn_object(arg, timeout) {
 
         case 15:
             if (canseeit) {
-                switch (_where(obj)) {
-                case 'invent':
-                case 'minvent':
+                switch (obj.where) {
+                case OBJ_INVENT:
+                case OBJ_MINVENT:
                     await pline(`${whose}${menorah ? "candelabrum's " : ''}candle${many ? "s'" : "'s"} flame${many ? 's' : ''} flicker${many ? '' : 's'} low!`);
                     break;
-                case 'floor':
+                case OBJ_FLOOR:
                     await pline(`You see ${menorah ? "a candelabrum's " : many ? 'some ' : 'a '}candle${many ? "s'" : "'s"} flame${many ? 's' : ''} flicker low!`);
                     break;
                 default:
@@ -1884,28 +1904,28 @@ export async function burn_object(arg, timeout) {
             /* we know even if blind and in our inventory */
             if (canseeit || bytouch) {
                 if (menorah) {
-                    switch (_where(obj)) {
-                    case 'invent':
+                    switch (obj.where) {
+                    case OBJ_INVENT:
                         need_invupdate = true;
                         /* FALLTHROUGH */
-                    case 'minvent':
+                    case OBJ_MINVENT:
                         await pline(`${whose}candelabrum's flame${many ? 's die' : ' dies'}.`);
                         break;
-                    case 'floor':
+                    case OBJ_FLOOR:
                         await pline(`You see a candelabrum's flame${many ? 's' : ''} die.`);
                         break;
                     default:
                         break;
                     }
                 } else {
-                    switch (_where(obj)) {
-                    case 'invent':
+                    switch (obj.where) {
+                    case OBJ_INVENT:
                         /* no need_invupdate: useupall() -> freeinv() does it */
                         /* FALLTHROUGH */
-                    case 'minvent':
+                    case OBJ_MINVENT:
                         await pline(`${await _Yname2(obj)} ${many ? 'are' : 'is'} consumed!`);
                         break;
-                    case 'floor':
+                    case OBJ_FLOOR:
                         await pline(`You see ${many ? 'some ' : ''}${many ? xname(obj) : _an(xname(obj))} consumed!`);
                         need_newsym = true;
                         break;
@@ -1932,10 +1952,10 @@ export async function burn_object(arg, timeout) {
                 if (_carried(obj)) {
                     useupall(obj);
                 } else {
-                    const onfloor = (_where(obj) === 'floor');
+                    const onfloor = (obj.where === OBJ_FLOOR);
                     /* clear a migrating obj's destination code so obfree won't
                        think this item is worn */
-                    if (_where(obj) === 'migrating') obj.owornmask = 0;
+                    if (obj.where === OBJ_MIGRATING) obj.owornmask = 0;
                     obj_extract_self(obj);
                     if (onfloor) await _maybe_unhide_at(x, y);
                     obfree(obj, null);
@@ -1976,7 +1996,7 @@ export async function end_burn(obj, timer_attached) {
         /* [DS] clean up explicitly, since timer cleanup won't happen */
         del_light_source(LS_OBJECT, obj);
         obj.lamplit = 0;
-        if (_where(obj) === 'invent') await update_inventory();
+        if (obj.where === OBJ_INVENT) await update_inventory();
     } else if (obj.timer?.action === BURN_OBJECT) {
         const expire_time = obj.timer.when;
         stop_object_timer(obj, BURN_OBJECT);
@@ -2091,7 +2111,7 @@ async function cleanup_burn(arg, expire_time) {
     obj.age = (obj.age | 0) + expire_time - (game.moves | 0);
     obj.lamplit = 0;
 
-    if (_where(obj) === 'invent') await update_inventory();
+    if (obj.where === OBJ_INVENT) await update_inventory();
 }
 
 // ── storms ─────────────────────────────────────────────────────────────────
@@ -2475,16 +2495,16 @@ export async function timer_sanity_check() {
         case TIMER_OBJECT: {
             const obj = curr.arg?.a_obj;
             const obj_adr = _fmt_ptr(obj);
-            let owhere = _where(obj);
+            let owhere = obj.where;
 
             if (!obj.timed)
                 await impossible(`timer sanity: untimed obj ${obj_adr}, timer ${t_id}`);
             /* if obj is in a (possibly nested) container, find the outermost */
             let top = obj;
             for (; top; top = top.ocontainer)
-                if ((owhere = _where(top)) !== 'contained') break;
-            if (owhere === 'migrating'
-                || (owhere === 'minvent' && !mon_is_local(top.ocarry))) {
+                if ((owhere = top.where) !== OBJ_CONTAINED) break;
+            if (owhere === OBJ_MIGRATING
+                || (owhere === OBJ_MINVENT && !mon_is_local(top.ocarry))) {
                 /* migrating directly, or carried by a migrating monster: not
                    able to validate the location, so skip the checks */
                 break;
@@ -2493,9 +2513,9 @@ export async function timer_sanity_check() {
             if (!loc) {
                 /* free? or on a shop's used-up bill? */
                 await impossible(`timer sanity: can't locate obj ${obj_adr}`
-                                 + ` [where=${_where(obj)}], timer ${t_id}`);
+                                 + ` [where=${obj.where}], timer ${t_id}`);
             } else if (!C.isok(loc.x, loc.y)) {
-                await impossible(`timer sanity: obj ${obj_adr} [where=${_where(obj)}]`
+                await impossible(`timer sanity: obj ${obj_adr} [where=${obj.where}]`
                                  + ` located at <${loc.x},${loc.y}>, timer ${t_id}`);
             }
             break;
@@ -2713,6 +2733,29 @@ export function spot_time_expires(x, y, func_index) {
     return 0;
 }
 
+// C ref: sp_lev.c:862-874 flip_level() "timed effects" — a MELT_ICE_AWAY timer's
+// packed (x << 16 | y) arg flips with the map.  Called through hooks (sp_lev.js
+// cannot take a static edge into this module); covers both the queued timers
+// here and mkobj.js's live level timers.
+hooks.flip_melt_ice_timers = (flp, FlipX, FlipY) => {
+    const flip_where = (where) => {
+        let ty = where & 0xffff;
+        let tx = (where >> 16) & 0xffff;
+        if (flp & 1) ty = FlipY(ty);
+        if (flp & 2) tx = FlipX(tx);
+        return (tx << 16) | ty;
+    };
+    for (let curr = timer_base; curr; curr = curr.next) {
+        if (curr.func_index === MELT_ICE_AWAY && curr.arg) {
+            const where = flip_where(curr.arg.a_long | 0);
+            curr.arg.a_long = where;
+            curr.arg.a_void = where;
+        }
+    }
+    for (const lt of (game.level?.level_timers || []))
+        lt.where = flip_where(lt.where | 0);
+};
+
 // C ref: timeout.c:2458 spot_time_left(x, y, func_index).
 export function spot_time_left(x, y, func_index) {
     const expires = spot_time_expires(x, y, func_index);
@@ -2796,16 +2839,16 @@ export function write_timer(nhfp, timer) {
 // C ref: timeout.c:2559 obj_is_local(obj) — TRUE if the object stays with the
 // level when the level is saved.  js/light.js:914 keeps a private copy.
 export function obj_is_local(obj) {
-    switch (_where(obj)) {
-    case 'invent':
-    case 'migrating':
+    switch (obj.where) {
+    case OBJ_INVENT:
+    case OBJ_MIGRATING:
         return false;
-    case 'floor':
-    case 'buried':
+    case OBJ_FLOOR:
+    case OBJ_BURIED:
         return true;
-    case 'contained':
+    case OBJ_CONTAINED:
         return obj_is_local(obj.ocontainer);
-    case 'minvent':
+    case OBJ_MINVENT:
         return mon_is_local(obj.ocarry);
     default:
         break;

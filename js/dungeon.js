@@ -5,6 +5,7 @@ import { game } from './gstate.js';
 import { roles, align_gname } from './role.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { nhgetch } from './input.js';
+import { Blind } from './vision.js';
 import { ATR_INVERSE, ATR_NONE, NO_COLOR } from './terminal.js';
 // C ref: do_name.c hliquid() — surface() names pools/lava through it, so the
 // Hallucination substitution (and its display-RNG draw) applies there too.
@@ -1341,18 +1342,20 @@ function mapseen_of(ledger) {
 // C ref: dungeon.c:3282 room_discovered(roomno) — "room entry message has just
 // been delivered so learn room even if blind".  Called from hack.c
 // check_special_room() for every TEMPLE or shop the hero enters.
-export function room_discovered(roomno) {
+export async function room_discovered(roomno) {
     const uz = game.u?.uz;
     if (!uz) return;
     mapseen_of(`${uz.dnum}:${uz.dlevel}`).msrooms[roomno] = { seen: 1 };
-    // C ref: dungeon.c:3282 also records it on the level's mapseen and calls
-    // recalc_mapseen() at once.  recalc_mapseen() is async, so only the
-    // `seen` mark is set here: the recalculation always runs again before the
-    // level is left (do.c goto_level) and before #overview lists it, and it
-    // recomputes everything from the map plus this mark.
+    // C ref: dungeon.c:3282 records it on the level's mapseen and calls
+    // recalc_mapseen() AT ONCE, but only the first time (`!seen`).  The
+    // immediate recalc is observable: every recalc bumps feat.nshop/ntemple
+    // once per seen shop/temple room, so "Some shops" in #overview needs one
+    // recalc per newly discovered room, not one per level exit.
     const cms = find_mapseen(uz);
-    if (cms && roomno >= 0 && roomno < cms.msrooms.length)
+    if (cms && roomno >= 0 && roomno < cms.msrooms.length && !cms.msrooms[roomno].seen) {
         cms.msrooms[roomno].seen = 1;
+        await recalc_mapseen();
+    }
 }
 
 // C ref: dungeon.c:2446 recbranch_mapseen(source, dest) — record that the hero
@@ -1477,7 +1480,15 @@ export async function build_overview_lines(final = 0, how = 0) {
         // hero has been INSIDE it (room_discovered), and shoptype collapses to 0
         // when two different shop types have been entered on the same level.
         feat.nshop = 0; feat.shoptype = 0; feat.ntemple = 0;
-        if (level && ms) {
+        if (cms?.feat) {
+            // recalc_mapseen() keeps the real counters.  They are NOT a pure
+            // function of the map: every recalc bumps nshop/ntemple once per
+            // seen shop/temple room (capped at 3), which is how one visited
+            // shop reads as "Some shops".
+            feat.nshop = cms.feat.nshop | 0;
+            feat.shoptype = cms.feat.shoptype | 0;
+            feat.ntemple = cms.feat.ntemple | 0;
+        } else if (level && ms) {
             for (const key of Object.keys(ms.msrooms)) {
                 const rt = level.rooms?.[+key]?.rtype | 0;
                 if (rt >= SHOPBASE) {
@@ -1816,10 +1827,6 @@ function maxledgerno() {
 
 // C ref: youprop.h:103/240 Blind / Levitation / Flying, rm.h:538 Sokoban,
 // you.h Upolyd.  Six other files keep the same one-line private copies.
-function Blind() {
-    const u = game.u || {};
-    return !!(u.ublindf_blind || (u.uprops?.Blinded | 0) > 0 || game.ublindf);
-}
 function Levitation() { return !!game.u?.uprops?.Levitation; }
 function Flying() { return !!game.u?.uprops?.Flying; }
 function Upolyd() { return !!game.u?.Upolyd; }

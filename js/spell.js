@@ -19,7 +19,7 @@ import { A_WIS, A_INT, A_STR, P_UNSKILLED, P_EXPERT, P_SKILLED, P_BASIC,
          SICK_ALL } from './const.js';
 import { p_skill_of, use_skill } from './enhance.js';
 import { monster_by_pmidx, makemon, set_malign, name_to_pmidx } from './makemon.js';
-import { msound_of, mflags1_of, mflags2_of, M1_NOHEAD, M2_UNDEAD,
+import { mflags2_of, M2_UNDEAD,
          is_animal } from './monflags_data.js';
 import { discover_object, observe_object } from './o_init.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -28,7 +28,7 @@ import { cansee, Blind } from './vision.js';
 import { hcolor, hliquid } from './do_name.js';
 import { find_ac } from './u_init.js';
 import { DEADMONSTER } from './mon.js';
-import { resists_elec } from './mondata.js';
+import { resists_elec, can_chant } from './mondata.js';
 import { has_innate } from './exper.js';
 
 // C ref: objclass.h obj_material_types — is_metallic() = material in [IRON,MITHRIL].
@@ -72,8 +72,6 @@ export function spelltypemnemonic(otyp) {
 export const MAXSPELL = 42;
 export const NO_SPELL = 0;
 export const KEEN = 20000; // C ref: spell.c — full spell retention.
-// C ref: include/monsters.h MS_* — the msound values can_chant() rejects.
-const MS_SILENT = 0, MS_BUZZ = 10, MS_BURBLE = 16;
 
 const ECMD_OK = 0;
 const ECMD_FAIL = 0;
@@ -166,25 +164,6 @@ export async function docast() {
     return ECMD_FAIL;
 }
 
-// C ref: mon.c can_chant(&youmonst) — a Strangled hero, or one polymorphed into
-// a voiceless/headless form, can't chant an incantation.
-function can_chant_hero() {
-    const u = game.u;
-    if (u?.uprops?.Strangled) return false;
-    // u.umonnum holds the ROLE number, not a permonst index, unless the hero is
-    // polymorphed (polyself.js sets Upolyd when umonnum != umonster) — reading
-    // the mons[] tables with a role number names an unrelated monster.  Every
-    // role's player monster is voiced and has a head, so an unpolymorphed hero
-    // can always chant.
-    if (!u?.Upolyd) return true;
-    const ptr = monster_by_pmidx(u.umonnum);
-    if (!ptr) return true;
-    const ms = msound_of(ptr);
-    if (ms === MS_SILENT || ms === MS_BUZZ || ms === MS_BURBLE) return false;
-    if ((mflags1_of(ptr) & M1_NOHEAD) !== 0) return false;   /* !has_head */
-    return true;
-}
-
 // C ref: spell.c rejectcasting() — the pre-selection rejections, checked BEFORE
 // the spell menu opens.  Was missing entirely: a stunned hero pressing 'Z' got
 // our spell menu (C prints one line and takes no turn), so every keystroke the
@@ -196,7 +175,7 @@ async function rejectcasting() {
         await pline('You are too impaired to cast a spell.');
         return true;
     }
-    if (!can_chant_hero()) {
+    if (!can_chant(null)) {
         await pline('You are unable to chant the incantation.');
         return true;
     }
@@ -917,7 +896,7 @@ async function confused_book(spellbook) {
         spellbook.in_use = true;             /* in case called from learn() */
         await pline('Being confused you have difficulties in controlling your actions.');
         await pline('You accidentally tear the spellbook to pieces.');
-        trycall(spellbook);
+        await trycall(spellbook);
         useup(spellbook);
         return true;
     }
@@ -1062,7 +1041,7 @@ export async function study_book(spellbook) {
         if (gone || !rn2(3)) {
             if (!gone)
                 await pline('The spellbook crumbles to dust!');
-            trycall(spellbook);
+            await trycall(spellbook);
             useup(spellbook);
         } else {
             spellbook.in_use = false;

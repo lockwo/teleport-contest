@@ -41,7 +41,7 @@ import { S_corr, S_room, S_darkroom, S_litcorr, S_stone, S_vwall, S_ndoor,
          S_vodoor, S_vcdoor, S_upstair, S_upladder, S_fountain, S_throne,
          S_sink, S_altar, S_grave, defsyms, def_oc_syms, def_monsyms, S_GHOST,
          MAXPCHARS, MAXMCLASSES, DEF_MIMIC, DEF_MIMIC_DEF, SYM_OFF_X, gs } from './symbols.js';
-import { SYM_BOULDER } from './const.js';
+import { SYM_BOULDER, OBJ_FLOOR, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED } from './const.js';
 import { the, The } from './objnam.js';
 
 // objclass.h obj_material_types GOLD == 15 (the blessed-scroll "any gold
@@ -188,7 +188,7 @@ export async function findit() {
 
 // C ref: detect.c show_map_spot: furniture, known traps and engravings take
 // precedence over previously displayed objects and traps during mapping.
-function show_map_spot(x, y, cnf) {
+export async function show_map_spot(x, y, cnf) {
     if (cnf && rn2(7)) return;
     const lev = game.level?.at(x, y);
     if (!lev) return;
@@ -196,6 +196,7 @@ function show_map_spot(x, y, cnf) {
     const oldcell = {
         ch: lev.disp_ch, color: lev.disp_color, dec: lev.disp_decgfx,
         pile: lev.remembered_glyph?.pile, bwEngr: lev.remembered_glyph?.bwEngr,
+        female: lev.remembered_glyph?.female,
     };
     lev.seenv = 0xff;
     if (lev.typ === SCORR) {
@@ -228,7 +229,7 @@ function show_map_spot(x, y, cnf) {
         if (t && t.tseen) {
             map_trap(t, 1);
         } else if (ep && !cnf) {                  /* C: `ep != 0 && !cnf` */
-            ep.erevealed = 1;                     /* map_engraving(ep, 1) */
+            /* C map_engraving(ep, 1) sets only the glyph, never ep->erevealed */
             const g = engraving_glyph(lev);
             if (game.level?.flags?.hero_memory)
                 lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
@@ -239,7 +240,7 @@ function show_map_spot(x, y, cnf) {
                 lev.invisMon = false;
                 lev.remembered_glyph = {
                     ch: oldcell.ch, color: oldcell.color, decgfx: oldcell.dec,
-                    pile: !!oldcell.pile, bwEngr: !!oldcell.bwEngr,
+                    pile: !!oldcell.pile, bwEngr: !!oldcell.bwEngr, female: !!oldcell.female,
                     objotyp: glyph_is_object(oldglyph) ? oldglyph.otyp : undefined,
                 };
             }
@@ -250,7 +251,7 @@ function show_map_spot(x, y, cnf) {
     // every room on the level, which is how #overview names a shop the hero
     // never walked into.  C's guard is `!cnf && lev->roomno >= ROOMOFFSET`.
     if (!cnf && (lev.roomno ?? 0) >= ROOMOFFSET)
-        room_discovered(lev.roomno - ROOMOFFSET);
+        await room_discovered(lev.roomno - ROOMOFFSET);
 }
 
 // C ref: detect.c do_mapping — reveal the whole level into hero memory, then
@@ -260,7 +261,7 @@ export async function do_mapping() {
     const cnf = d_Confusion();
     for (let x = 1; x < COLNO; x++)
         for (let y = 0; y < ROWNO; y++)
-            show_map_spot(x, y, cnf);
+            await show_map_spot(x, y, cnf);
     exercise(A_WIS, true);
 }
 
@@ -269,7 +270,7 @@ export async function do_mapping() {
 // strange_feeling()/useup); FALSE when the gold map was shown.
 export async function gold_detect(sobj) {
     const u = game.u;
-    const objs = (game.level?.objects || []).filter((o) => o.where === 'floor');
+    const objs = (game.level?.objects || []).filter((o) => o.where === OBJ_FLOOR);
     const gold = objs.filter((o) => o.oclass === COIN_CLASS
                                  || (sobj?.blessed && objects[o.otyp]?.material === GOLD_MATERIAL));
     // C: monsters carrying gold map a synthetic pile at their square, whose
@@ -407,14 +408,14 @@ function d_DEADMONSTER(m) { return (m?.mhp ?? 1) < 1; }
 // and buried objects in `buriedobjlist`.
 function d_fmon() { return game.level?.monsters || []; }
 function d_fobj() {
-    return (game.level?.objects || []).filter((o) => o.where === 'floor');
+    return (game.level?.objects || []).filter((o) => o.where === OBJ_FLOOR);
 }
 function d_objs_at(x, y) {
     // place_object() appends to the flat store, while C prepends each object
     // to levl[x][y]'s nexthere chain.  Expose C's pile-head-first order to
     // detection: the first mapped object is what the tty leaves visible.
     return (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y).reverse();
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y).reverse();
 }
 function d_OBJ_AT(x, y) { return d_objs_at(x, y).length > 0; }
 function d_buriedobjs() {
@@ -1420,7 +1421,7 @@ export async function do_vicinity_map(sobj) {
         for (let zy = lo_y; zy <= hi_y; zy++) {
             const oldglyph = glyph_at(zx, zy);
             /* this will remove 'remembered, unseen mon' (and objects) */
-            show_map_spot_cnf(zx, zy, d_Confusion());
+            await show_map_spot_cnf(zx, zy, d_Confusion());
             /* if there are any objects here, see the top one.  NOT vobj_at():
                "this is not vision-based access; unlike object detection, we
                don't notice buried items". */
@@ -1744,7 +1745,7 @@ export function dump_map() {
 // this file's existing show_map_spot() does not take: a confused mapping skips
 // 6 cells out of 7, and the engraving arm plus the #overview update are gated
 // off.  rn2(7) is a CORE-stream draw and happens for EVERY cell.
-function show_map_spot_cnf(x, y, cnf) {
+async function show_map_spot_cnf(x, y, cnf) {
     if (cnf && rn2(7)) return;
     const lev = game.level?.at(x, y);
     if (!lev) return;
@@ -1764,7 +1765,7 @@ function show_map_spot_cnf(x, y, cnf) {
         if (t && t.tseen) {
             map_trap(t, 1);
         } else if (ep && !cnf) {
-            ep.erevealed = 1;                       /* map_engraving(ep, 1) */
+            /* C map_engraving(ep, 1) sets only the glyph, never ep->erevealed */
             const g = engraving_glyph(lev);
             if (game.level?.flags?.hero_memory)
                 lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
@@ -1781,7 +1782,7 @@ function show_map_spot_cnf(x, y, cnf) {
         }
     }
     if (!cnf && (lev.roomno ?? 0) >= ROOMOFFSET)
-        room_discovered(lev.roomno - ROOMOFFSET);
+        await room_discovered(lev.roomno - ROOMOFFSET);
 }
 
 // C ref: detect.c:1589 cvt_sdoor_to_door(lev) — js/dokick.js:181 owns the same
@@ -1803,12 +1804,12 @@ function cvt_sdoor_to_door(lev) {
 function get_obj_location(obj) {
     let o = obj;
     for (let guard = 0; o && guard < 32; guard++) {
-        if (o.where === 'floor' || o.where === 1 /* OBJ_FLOOR */
-            || o.where === 'buried' || o.where === 6 /* OBJ_BURIED */)
+        if (o.where === OBJ_FLOOR
+            || o.where === OBJ_BURIED)
             return { x: o.ox, y: o.oy };
-        if (o.where === 'invent' || o.where === 3 /* OBJ_INVENT */)
+        if (o.where === OBJ_INVENT)
             return { x: game.u?.ux, y: game.u?.uy };
-        if (o.where === 'minvent' || o.where === 4 /* OBJ_MINVENT */)
+        if (o.where === OBJ_MINVENT)
             return o.ocarry ? { x: o.ocarry.mx, y: o.ocarry.my } : null;
         o = o.ocontainer;                           /* OBJ_CONTAINED */
         if (!o) return null;

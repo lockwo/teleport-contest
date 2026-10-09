@@ -13,7 +13,7 @@ import {
     TIMER_OBJECT, ROT_ORGANIC, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON, HATCH_EGG,
     FIG_TRANSFORM, SHRINK_GLOB, BURN_OBJECT,
     OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT,
-    OBJ_MIGRATING, OBJ_BURIED, OBJ_ONBILL, OBJ_LUAFREE, OBJ_DELETED,
+    OBJ_MIGRATING, OBJ_BURIED, OBJ_ONBILL, OBJ_LUAFREE, OBJ_DELETED, NOBJ_STATES,
     ICE, DRAWBRIDGE_UP, DB_UNDER, DB_ICE, MAX_OIL_IN_FLASK,
     COLNO, ROWNO, LUCKADD, MIGR_TO_SPECIES,
     ONAME, has_oname, OMONST, Has_contents, ismnum, isok,
@@ -1113,7 +1113,7 @@ function set_moreluck() {
     else u.moreluck = -LUCKADD;
 }
 
-function carried(obj) { return obj?.where === 'invent' || obj?.where === OBJ_INVENT; }
+function carried(obj) { return obj?.where === OBJ_INVENT; }
 
 // C ref: artifact.c arti_light_radius(obj) — only artifacts light up, and the
 // radius varies with bless/curse state.  Returns 0 for everything mkobj.c can
@@ -1181,8 +1181,7 @@ export function curse(otmp) {
         // C: a cursed figurine of a still-living species gets a transform timer.
         if (otmp.corpsenm != null && otmp.corpsenm !== NON_PM
             && !dead_species(otmp.corpsenm, true)
-            && (carried(otmp) || otmp.where === 'minvent'
-                || otmp.where === OBJ_MINVENT))
+            && (carried(otmp) || otmp.where === OBJ_MINVENT))
             attach_fig_transform_timeout(otmp);
     } else if (otmp.oclass === SPBOOK_CLASS) {
         // C: `if (!already_cursed) book_cursed(otmp);` — read.c interrupts the
@@ -1218,7 +1217,7 @@ export function set_bknown(obj, onoff) {
     const v = onoff ? 1 : 0;
     if ((obj.bknown ? 1 : 0) !== v) {
         obj.bknown = v;
-        if ((obj.where === 'invent' || obj.where === OBJ_INVENT)
+        if ((obj.where === OBJ_INVENT)
             && (game.moves ?? 0) > 1)
             game._invent_dirty = true;   /* update_inventory() */
     }
@@ -1484,8 +1483,9 @@ export function disturb_buried_zombies(x, y) {
         if (otmp.otyp !== CORPSE || !otmp.timed) continue;
         if (!(otmp.ox >= x - 1 && otmp.ox <= x + 1
               && otmp.oy >= y - 1 && otmp.oy <= y + 1)) continue;
-        if (otmp.timer?.action !== ZOMBIFY_MON
-            || otmp.timer.when - (game.moves ?? 0) <= 0) continue; /* peek_timer */
+        /* peek_timer() returns the ABSOLUTE timeout (0 only when there is no
+           such timer), so a timer already due this turn is still restarted. */
+        if (otmp.timer?.action !== ZOMBIFY_MON) continue;
         const t = stop_object_timer(otmp, ZOMBIFY_MON);
         start_timer(Math.max(1, Math.trunc((t * 2) / 3)), TIMER_OBJECT,
                     ZOMBIFY_MON, otmp);
@@ -1496,6 +1496,32 @@ function obj_stop_timers(obj) {
     if (!obj) return;
     obj.timed = false;
     delete obj.timer;
+}
+
+// C ref: timeout.c save_timers(RANGE_LEVEL) + restore_timers() — leaving a level
+// writes its timers out in queue order (soonest first, newest first among equal
+// deadlines), and getlev() re-inserts them one by one with insert_timer(), which
+// puts each BEFORE any equal-timeout entry.  Timers that share a deadline thus
+// come back in the REVERSE of their saved order.  Our timers live on the objects
+// of the level kept in the per-ledger store, so a revisit re-issues their tids
+// in saved order: later tid == nearer the head == fires first among ties.
+export function requeue_level_timers() {
+    const timers = [];
+    const scan = (list) => {
+        if (!Array.isArray(list)) return;
+        for (const o of list) {
+            if (o.timed && o.timer) timers.push(o.timer);
+            if (Array.isArray(o.cobj)) scan(o.cobj);
+        }
+    };
+    scan(game.level?.objects);
+    scan(game.level?.buriedobjlist);
+    for (const mon of (Array.isArray(game.level?.monsters) ? game.level.monsters : []))
+        scan(mon.minvent);
+    for (const lt of (game.level?.level_timers || [])) timers.push(lt);
+    timers.sort((a, b) => a.when - b.when || (b.tid ?? 0) - (a.tid ?? 0));
+    for (const t of timers)
+        t.tid = game._object_timer_id = (game._object_timer_id ?? 0) + 1;
 }
 
 // C ref: timeout.c run_timers() — expire object timers in timeout order,
@@ -1577,16 +1603,6 @@ export async function run_object_timers() {
         case BURN_OBJECT: {
             const { burn_object } = await import('./timeout.js');
             await burn_object({ a_obj: obj }, timer.when);
-            break;
-        }
-        case REVIVE_MON: {
-            const { revive_mon } = await import('./do.js');
-            await revive_mon({ a_obj: obj }, timer.when);
-            break;
-        }
-        case ZOMBIFY_MON: {
-            const { zombify_mon } = await import('./do.js');
-            await zombify_mon({ a_obj: obj }, timer.when);
             break;
         }
         }
@@ -1743,8 +1759,8 @@ export function set_corpsenm(obj, id) {
         // C ref: mkobj.c:1353 — a figurine of a still-living species that the
         // hero or a monster is CARRYING gets a transform timer (rnd(9000)+200).
         if (id != null && id !== NON_PM && !dead_species(id, true)
-            && (obj.where === 'invent' || obj.where === OBJ_INVENT
-                || obj.where === 'minvent' || obj.where === OBJ_MINVENT))
+            && (obj.where === OBJ_INVENT
+                || obj.where === OBJ_MINVENT))
             attach_fig_transform_timeout(obj);
         obj.owt = weight(obj);
     } else if (obj.otyp === EGG) {
@@ -2046,7 +2062,7 @@ export function place_object(otmp, x, y) {
         // indices of the tile's pile, deepest first (== C's chain, reversed)
         const idx = [];
         for (let i = 0; i < objs.length; i++)
-            if (objs[i] !== otmp && objs[i].where === 'floor'
+            if (objs[i] !== otmp && objs[i].where === OBJ_FLOOR
                 && objs[i].ox === x && objs[i].oy === y) idx.push(i);
         // C ref: mkobj.c:2331-2334 — a boulder landing on a square whose top
         // object is not already a boulder blocks light there.  remove_object()
@@ -2070,7 +2086,7 @@ export function place_object(otmp, x, y) {
     }
     // set the object's new location (after the splice, so the scan above sees
     // the pile as it stood BEFORE this object arrived)
-    otmp.ox = x; otmp.oy = y; otmp.where = 'floor';
+    otmp.ox = x; otmp.oy = y; otmp.where = OBJ_FLOOR;
     otmp.ocarry = null; otmp.ocontainer = null; /* obj_no_longer_held */
     // C: `if (otmp->no_charge && !costly_spot(x,y) && !costly_adjacent(...))
     // otmp->no_charge = 0;`  shk.js owns costly_spot; leaving no_charge set
@@ -2086,14 +2102,14 @@ export function place_object(otmp, x, y) {
 export function add_to_container(container, otmp) {
     if (!container || !otmp) return otmp;
     if (!Array.isArray(container.cobj)) container.cobj = [];
-    if (container.where !== OBJ_INVENT && container.where !== 'invent'
-        && container.where !== OBJ_MINVENT && container.where !== 'minvent') {
+    if (container.where !== OBJ_INVENT
+        && container.where !== OBJ_MINVENT) {
         otmp.ocarry = null;                    /* obj_no_longer_held */
     }
     for (const candidate of container.cobj)
         if (hooks.merged(candidate, otmp)) return candidate;
     container.cobj.unshift(otmp);
-    otmp.where = 'contained';
+    otmp.where = OBJ_CONTAINED;
     otmp.ocontainer = container;
     return otmp;
 }
@@ -2103,7 +2119,7 @@ export function add_to_container(container, otmp) {
 export function container_weight(object) {
     if (!object) return;
     object.owt = weight(object);
-    if (object.where === 'contained' || object.where === OBJ_CONTAINED)
+    if (object.where === OBJ_CONTAINED)
         container_weight(object.ocontainer);
 }
 
@@ -2480,7 +2496,7 @@ export function mksobj(otyp, init = true, artif = false) {
         // punishment keeps its increased weight).  With owt seeded to 1 the
         // kludge fired during mksobj itself and every iron ball weighed 1
         // instead of 480, so it never became a "very heavy iron ball".
-        otyp, oclass: obj.oclass, ox: 0, oy: 0, quan: 1, owt: 0, cursed: false,
+        otyp, oclass: obj.oclass, where: OBJ_FREE, ox: 0, oy: 0, quan: 1, owt: 0, cursed: false,
         blessed: false, olocked: false, otrapped: false, spe: 0, age: Math.max(game.moves ?? 1, 1),
         corpsenm: null,
     };
@@ -2634,7 +2650,7 @@ export function mkcorpstat(objtype, mtmp, pm, x, y, corpstatflags = 0) {
 // in the fill loop) doesn't duplicate the pile or emit an extra next_ident.
 function g_at(x, y) {
     for (const o of (game.level?.objects || []))
-        if (o.where === 'floor' && o.ox === x && o.oy === y
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y
             && o.oclass === COIN_CLASS) return o;
     return null;
 }
@@ -2957,18 +2973,18 @@ export function replace_object(obj, otmp) {
     switch (obj.where) {
     case OBJ_FREE:
         break;
-    case 'invent': case OBJ_INVENT:
+    case OBJ_INVENT:
         swapIn(game.invent);
         break;
-    case 'contained': case OBJ_CONTAINED:
+    case OBJ_CONTAINED:
         otmp.ocontainer = obj.ocontainer;
         swapIn(obj.ocontainer?.cobj);
         break;
-    case 'minvent': case OBJ_MINVENT:
+    case OBJ_MINVENT:
         otmp.ocarry = obj.ocarry;
         swapIn(obj.ocarry?.minvent);
         break;
-    case 'floor': case OBJ_FLOOR:
+    case OBJ_FLOOR:
         otmp.ox = obj.ox; otmp.oy = obj.oy;
         swapIn(game.level?.objects);
         break;
@@ -2987,7 +3003,7 @@ export function recreate_pile_at(x, y) {
     /* C walks the nexthere chain top-down into `reversed`, i.e. bottom-up. */
     const pile = [];
     for (const o of objs)
-        if (o.where === 'floor' && o.ox === x && o.oy === y) pile.push(o);
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y) pile.push(o);
     for (const o of pile) remove_object(o);
     for (const o of pile) place_object(o, x, y);
 }
@@ -3001,27 +3017,27 @@ export function obj_extract_self_mkobj(obj) {
     switch (obj.where) {
     case OBJ_FREE: case OBJ_LUAFREE: case OBJ_DELETED:
         break;
-    case 'floor': case OBJ_FLOOR:
+    case OBJ_FLOOR:
         remove_object(obj);
         break;
-    case 'contained': case OBJ_CONTAINED: {
+    case OBJ_CONTAINED: {
         const c = obj.ocontainer;
         extract_nobj(obj, c?.cobj);
         if (c) container_weight(c);
         obj.ocontainer = null;
         break;
     }
-    case 'invent': case OBJ_INVENT:
+    case OBJ_INVENT:
         extract_nobj(obj, game.invent);
         break;
-    case 'minvent': case OBJ_MINVENT:
+    case OBJ_MINVENT:
         extract_nobj(obj, obj.ocarry?.minvent);
         obj.ocarry = null;
         break;
     case OBJ_MIGRATING:
         extract_nobj(obj, game.migrating_objs);
         break;
-    case 'buried': case OBJ_BURIED:
+    case OBJ_BURIED:
         extract_nobj(obj, game.level?.buriedobjlist);
         break;
     case OBJ_ONBILL:
@@ -3131,11 +3147,11 @@ function is_ice_at(x, y) {
 export const NOT_ON_ICE = 0, SET_ON_ICE = 1, BURIED_UNDER_ICE = 2;
 export function item_on_ice(item) {
     let otmp = item;
-    while (otmp && (otmp.where === 'contained' || otmp.where === OBJ_CONTAINED))
+    while (otmp && (otmp.where === OBJ_CONTAINED))
         otmp = otmp.ocontainer;
     if (!otmp) return NOT_ON_ICE;
     const ox = otmp.ox, oy = otmp.oy;
-    if (otmp.where === 'floor' || otmp.where === OBJ_FLOOR) {
+    if (otmp.where === OBJ_FLOOR) {
         if (is_ice_at(ox, oy)) return SET_ON_ICE;
     } else if (otmp.where === OBJ_BURIED) {
         if (is_ice_at(ox, oy)) return BURIED_UNDER_ICE;
@@ -3167,7 +3183,7 @@ export function obj_timer_checks(otmp, x, y, force) {
     let tleft = 0;
     let action = ROT_CORPSE;
     let restart_timer = false;
-    const on_floor = (otmp.where === 'floor' || otmp.where === OBJ_FLOOR);
+    const on_floor = (otmp.where === OBJ_FLOOR);
     const buried = (otmp.where === OBJ_BURIED);
 
     if (otmp.otyp === CORPSE && (on_floor || buried) && is_ice_at(x, y)) {
@@ -3207,7 +3223,7 @@ export function obj_timer_checks(otmp, x, y, force) {
 // every timed object at (x,y) after the terrain there froze or melted.
 export function obj_ice_effects(x, y, do_buried) {
     for (const otmp of (game.level?.objects || []))
-        if (otmp.where === 'floor' && otmp.ox === x && otmp.oy === y && otmp.timed)
+        if (otmp.where === OBJ_FLOOR && otmp.ox === x && otmp.oy === y && otmp.timed)
             obj_timer_checks(otmp, x, y, 0);
     if (do_buried) {
         for (const otmp of (game.level?.buriedobjlist || []))
@@ -3238,7 +3254,7 @@ export function check_glob(obj, mesg) {
     if ((obj.quan || 1) !== 1 || !obj.owt
         || obj.otyp < LOWEST_GLOB || obj.otyp > HIGHEST_GLOB)
         insane_object(obj, 'ofmt0', ` glob ${obj.otyp},quan=${obj.quan},owt=${obj.owt} ${mesg}`,
-                      (obj.where === OBJ_MINVENT || obj.where === 'minvent') ? obj.ocarry : null);
+                      (obj.where === OBJ_MINVENT) ? obj.ocarry : null);
 }
 
 // C ref: mkobj.c shrinking_glob_gone(obj) — the glob shrank to nothing; take it
@@ -3260,7 +3276,7 @@ export function shrink_glob(obj, expire_time) {
     check_glob(obj, 'shrink obj ');
     const moves = game.moves ?? 0;
     const globloc = item_on_ice(obj);
-    const contnr = (obj.where === 'contained' || obj.where === OBJ_CONTAINED)
+    const contnr = (obj.where === OBJ_CONTAINED)
         ? obj.ocontainer : null;
 
     if (expire_time < moves && globloc !== BURIED_UNDER_ICE) {
@@ -3309,7 +3325,7 @@ export function obj_nexto_xy(obj, x, y, recurs) {
     if (!obj) return null;
     const otyp = obj.otyp;
     for (const otmp of (game.level?.objects || []))
-        if (otmp !== obj && otmp.where === 'floor' && otmp.ox === x && otmp.oy === y
+        if (otmp !== obj && otmp.where === OBJ_FLOOR && otmp.ox === x && otmp.oy === y
             && otmp.otyp === otyp && mergable_glob(otmp, obj))
             return otmp;
     if (!recurs) return null;
@@ -3374,7 +3390,7 @@ export function obj_absorb(o1ref, o2ref) {
 export function obj_meld(o1ref, o2ref) {
     const otmp1 = o1ref?.obj, otmp2 = o2ref?.obj;
     if (!otmp1 || !otmp2 || otmp1 === otmp2) return null;
-    const isfloor = (o) => o.where === 'floor' || o.where === OBJ_FLOOR;
+    const isfloor = (o) => o.where === OBJ_FLOOR;
     const isfree = (o) => o.where === OBJ_FREE;
     if (!(isfloor(otmp2) && isfree(otmp1))
         && ((otmp1.owt | 0) > (otmp2.owt | 0)
@@ -3388,8 +3404,8 @@ export async function pudding_merge_message(obj, other) {
     const { cansee, Blind } = await import('./vision.js');
     const { pline, You_hear, Hallucination_u } = await import('./display.js');
     const visible = cansee(obj.ox, obj.oy) || cansee(other.ox, other.oy);
-    const onfloor = [obj, other].some(o => o.where === 'floor' || o.where === OBJ_FLOOR);
-    const inpack = [obj, other].some(o => o.where === 'invent' || o.where === OBJ_INVENT);
+    const onfloor = [obj, other].some(o => o.where === OBJ_FLOOR);
+    const inpack = [obj, other].some(o => o.where === OBJ_INVENT);
     if ((!Blind() && visible) || inpack) {
         if (Hallucination_u()) {
             if (onfloor) await pline('You see parts of the floor melting!');
@@ -3426,7 +3442,7 @@ export function unknow_object(obj) {
 // container whose contents the hero has not seen, or null.
 export function unknwn_contnr_contents(obj) {
     let result = null, o = obj;
-    while (o && (o.where === 'contained' || o.where === OBJ_CONTAINED)) {
+    while (o && (o.where === OBJ_CONTAINED)) {
         const parent = o.ocontainer;
         if (!parent) break;
         if (!parent.cknown) result = parent;
@@ -3485,8 +3501,8 @@ export function bill_dummy_object(otmp) {
     if (!Array.isArray(game.billobjs)) game.billobjs = [];
     dummy.where = OBJ_ONBILL;
     game.billobjs.push(dummy);                 /* addtobill() */
-    otmp.no_charge = (otmp.where === 'floor' || otmp.where === OBJ_FLOOR
-                      || otmp.where === 'contained' || otmp.where === OBJ_CONTAINED)
+    otmp.no_charge = (otmp.where === OBJ_FLOOR
+                      || otmp.where === OBJ_CONTAINED)
         ? 1 : 0;
     otmp.unpaid = 0;
 }
@@ -3584,16 +3600,15 @@ export function init_dummyobj(obj, otyp, oquan) {
 /* C ref: obj.h NOBJ_STATES names, used by insane_object()'s feedback. */
 const OBJ_STATE_NAMES = ['free', 'floor', 'contained', 'invent',
                          'minvent', 'migrating', 'buried', 'onbill',
-                         'luafree', 'deleted'];
+                         'luafree', 'deleted'];  /* indexed by OBJ_* */
 
 // C ref: mkobj.c where_name(obj).
 export function where_name(obj) {
     if (!obj) return 'nowhere';
     const w = obj.where;
-    if (typeof w === 'string' && OBJ_STATE_NAMES.includes(w)) return w;
-    const i = w | 0;
-    if (i < 0 || i >= OBJ_STATE_NAMES.length) return `unknown[${w}]`;
-    return OBJ_STATE_NAMES[i];
+    if (!Number.isInteger(w) || w < 0 || w >= NOBJ_STATES)
+        return `unknown[${w}]`;
+    return OBJ_STATE_NAMES[w];
 }
 
 // C ref: mkobj.c nomerge_exception(obj) — mines/Sokoban prize objects legally
@@ -3635,7 +3650,7 @@ export function check_contained(container, mesg) {
     if (!String(m).includes('contained')) m = `contained ${m}`;
     for (const obj of (container.cobj || [])) {
         if (obj === container) return;         /* panic() in C */
-        if (obj.where !== 'contained' && obj.where !== OBJ_CONTAINED)
+        if (obj.where !== OBJ_CONTAINED)
             insane_object(obj, 'ofmt0', m, null);
         else if (obj.ocontainer !== container)
             insane_object(obj, 'ofmt0', `${m} wrong container`, null);
@@ -3676,7 +3691,7 @@ export function shop_obj_sanity(obj, mesg) {
 export function mon_obj_sanity(monlist, mesg) {
     for (const mon of (monlist || [])) {
         for (const obj of (mon.minvent || [])) {
-            if (obj.where !== 'minvent' && obj.where !== OBJ_MINVENT)
+            if (obj.where !== OBJ_MINVENT)
                 insane_object(obj, 'mfmt1', mesg, mon);
             else if (obj.ocarry !== mon)
                 insane_object(obj, 'mfmt2', mesg, mon);
@@ -3691,8 +3706,8 @@ export function mon_obj_sanity(monlist, mesg) {
 // C ref: mkobj.c obj_sanity_check() — walk every object list the game owns.
 export function obj_sanity_check() {
     game._insane_objects = [];
-    objlist_sanity(game.level?.objects, 'floor', 'floor sanity');
-    objlist_sanity(game.invent, 'invent', 'invent sanity');
+    objlist_sanity(game.level?.objects, OBJ_FLOOR, 'floor sanity');
+    objlist_sanity(game.invent, OBJ_INVENT, 'invent sanity');
     objlist_sanity(game.migrating_objs, OBJ_MIGRATING, 'migrating sanity');
     objlist_sanity(game.level?.buriedobjlist, OBJ_BURIED, 'buried sanity');
     objlist_sanity(game.billobjs, OBJ_ONBILL, 'bill sanity');

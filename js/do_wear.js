@@ -10,6 +10,7 @@ import { game } from './gstate.js';
 import { hcolor } from './do_name.js';
 import { rnd } from './rng.js';
 import { pline, update_topl, newsym } from './display.js';
+import { Blind } from './vision.js';
 import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { A_INT, A_WIS, A_DEX, A_CHA, TT_BEARTRAP, TT_INFLOOR, TT_LAVA, TT_BURIEDBALL,
@@ -28,6 +29,8 @@ import { weapon_descr } from './weapon.js';
 import { youmonst_data_pub, nohands_youmonst, empty_handed } from './invent.js';
 import { mflags1_of, M1_HUMANOID, M1_SLITHY } from './monflags_data.js';
 import { acurr_eff } from './attrib.js';
+import { uchangealign } from './pray.js';
+import { A_CG_HELM_ON, A_CG_HELM_OFF, A_CURRENT, A_NEUTRAL, A_CHAOTIC, A_LAWFUL } from './const.js';
 import { condtests, bl_bareh } from './botl.js';
 
 /* onames.h otyps (this port's objects[] numbering, verified against
@@ -245,7 +248,6 @@ function Levitation() {
 function Flying() {
     return !!((game.u?.uprops?.Flying | 0) || worn_extrinsic(49 /*FLYING*/));
 }
-function Blind() { const u = game.u || {}; return !!(u.ublindf_blind || (u.uprops?.Blinded | 0) > 0 || game.ublindf); }
 function Role_if(pm) { return (game.urole?.mnum ?? game.u?.umonnum) === pm; }
 const PM_ARCHEOLOGIST = 0, PM_WIZARD = 12;
 
@@ -547,8 +549,9 @@ export async function Helmet_on() {
         break;
     case HELM_OF_OPPOSITE_ALIGNMENT:
         uarmh.known = 1;
-        /* uchangealign() (align.c) has no JS equivalent — the alignment flip and
-           its messages are deferred; the shared curse below still applies. */
+        await uchangealign((game.u.ualign.type !== A_NEUTRAL)
+            ? -game.u.ualign.type
+            : (uarmh.o_id % 2) ? A_CHAOTIC : A_LAWFUL, A_CG_HELM_ON);
         fallthru_dunce = true;
         /* FALLTHRU */
     case DUNCE_CAP:
@@ -625,7 +628,7 @@ export async function Helmet_off() {
         if (!game.context?.takeoff?.cancelled_don) adj_abon(uarmh, -(uarmh.spe | 0));
         break;
     case HELM_OF_OPPOSITE_ALIGNMENT:
-        /* uchangealign(u.ualignbase[A_CURRENT]): deferred, see Helmet_on(). */
+        await uchangealign(game.u.ualignbase?.[A_CURRENT] ?? game.u.ualign.type, A_CG_HELM_OFF);
         break;
     default:
         break;

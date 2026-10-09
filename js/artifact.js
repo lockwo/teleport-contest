@@ -15,6 +15,7 @@
 //     0..12 role index this port usually calls `mnum`.  Role_if()/Race_if()
 //     below do the conversion; do not "simplify" the table to 0..12.
 import { game, hooks } from './gstate.js';
+import { livelog_printf, LL_ARTIFACT } from './livelog.js';
 import { update_topl } from './display.js';
 import { rn2, rnd, d, rnz } from './rng.js';
 import { objects, mksobj, weight, base_oc_cost } from './mkobj.js';
@@ -25,7 +26,7 @@ import { mon_mr } from './monmr_data.js';
 import { exercise } from './attrib.js';
 import { isok, s_suffix } from './hacklib.js';
 import { quest_artifact_num } from './questpgr.js';
-import { cansee } from './vision.js';
+import { cansee, Blind } from './vision.js';
 import { mon_nam, monflee } from './uhitm.js';
 import { resist, cancel_monst, destroy_items, ignite_items, Antimagic as Antimagic_zap } from './zap.js';
 import { worn_extrinsic, xname, yname, otense, killer_xname } from './invent.js';
@@ -55,8 +56,7 @@ import {
     W_AMUL, W_RINGL, W_RINGR, W_TOOL,
     ONAME_VIA_NAMING, ONAME_WISH, ONAME_GIFT, ONAME_VIA_DIP, ONAME_LEVEL_DEF,
     ONAME_BONES, ONAME_RANDOM, ONAME_KNOW_ARTI,
-    D_TRAPPED, IS_DOOR, A_CON, A_WIS,
-} from './const.js';
+    D_TRAPPED, IS_DOOR, A_CON, A_WIS, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT } from './const.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // artifact.h SPFX_* — special-effect bits
@@ -143,8 +143,6 @@ const WEAPON_CLASS = 2, ARMOR_CLASS = 3, RING_CLASS = 4, AMULET_CLASS = 5,
     WAND_CLASS = 11, GEM_CLASS = 13;
 // objclass.h F_UNIQUE (mkobj.js:160)
 const F_UNIQUE = 64;
-// obj.h where values
-const OBJ_FREE = 0, OBJ_FLOOR = 3, OBJ_CONTAINED = 4, OBJ_MINVENT = 5;
 // prop.h TIMEOUT
 const TIMEOUT = 0x00ffffff;
 // cmd.h ECMD_ result codes
@@ -523,7 +521,6 @@ function race_hostile(ptr) {
 function ualign_type() { return game.u?.ualign?.type ?? A_NEUTRAL; }
 function ualign_record() { return game.u?.ualign?.record ?? 0; }
 function uprop(name) { return game.u?.uprops?.[name] || 0; }
-function Blind() { return !!(uprop('Blinded') || game.u?.Blinded); }
 function Hallucination() { return !!(uprop('Hallucination') || game.u?.Hallucination); }
 // C ref: youprop.h Antimagic -- zap.js's reader also sees worn extrinsics
 // (e.g. the Wizard's cloak of magic resistance).
@@ -948,7 +945,7 @@ export function found_artifact(a) {
 }
 
 // C ref: artifact.c find_artifact().  `where` reproduces C's four cases; the
-// livelog line is queued for js/livelog.js.
+// livelog line goes to the chronicle.
 export function find_artifact(otmp) {
     const a = otmp?.oartifact | 0;
     if (a && !artiinfo()[a].found) {
@@ -959,8 +956,7 @@ export function find_artifact(otmp) {
         else if (otmp.where === OBJ_CONTAINED) where = " in a container";
         else if (otmp.where === OBJ_MINVENT) where = " carried by a monster";
         else where = "";
-        game.livelog_pending = game.livelog_pending || [];
-        game.livelog_pending.push(`found ${bare_artifactname(otmp)}${where}`);
+        livelog_printf(LL_ARTIFACT, `found ${bare_artifactname(otmp)}${where}`);
     }
 }
 // C ref: shk.c inside_shop() — unlike costly_spot() this INCLUDES the free
@@ -1982,7 +1978,7 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
 
             if (vis) {
                 await update_topl(is_art(otmp, ART_STORMBRINGER)
-                    ? `The black blade draws the ${life} from ${mon_nam(mdef)}!`
+                    ? `The ${(await import('./do_name.js')).hcolor('black')} blade draws the ${life} from ${mon_nam(mdef)}!`
                     : `${The(xname(otmp))} draws the ${life} from ${mon_nam(mdef)}!`);
             }
             if (mdef.m_lev === 0) {
@@ -2005,7 +2001,7 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
             await update_topl(Blind()
                 ? `You feel an ${is_art(otmp, ART_STORMBRINGER) ? "unholy blade" : "object"} drain your ${life}!`
                 : (is_art(otmp, ART_STORMBRINGER)
-                    ? `The black blade drains your ${life}!`
+                    ? `The ${(await import('./do_name.js')).hcolor('black')} blade drains your ${life}!`
                     : `${The(xname(otmp))} drains your ${life}!`));
             await losexp("life drainage");
             if (magr && magr.mhp < magr.mhpmax)

@@ -20,8 +20,7 @@ import {
     LAVAPOOL, LAVAWALL, IRONBARS, DOOR, CORR, ROOM, STAIRS, FOUNTAIN, THRONE, ALTAR, ICE,
     MAX_TYPE, INVALID_TYPE, NO_ROOM, D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED,
     W_NONDIGGABLE, LA_DOWN, ENGRAVE, BURN, NON_PM, SPACE_POS,
-    MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP,
-} from './const.js';
+    MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP, OBJ_FLOOR } from './const.js';
 import { GameMap } from './game.js';
 import { wallification, set_wall_state } from './mklev.js';
 import { objects, mksobj, mksobj_at, next_ident, blessorcurse, curse, set_corpsenm, BOULDER, KELP_FROND } from './mkobj.js';
@@ -252,7 +251,7 @@ function createObject(cx, cy, name, opts = {}) {
     // Place the object on the floor (so it renders & joins fobj).
     if (cx != null && cy != null) {
         const { x, y } = A(cx, cy);
-        otmp.ox = x; otmp.oy = y; otmp.where = 'floor';
+        otmp.ox = x; otmp.oy = y; otmp.where = OBJ_FLOOR;
         if (!game.level.objects) game.level.objects = [];
         game.level.objects.push(otmp);
         const loc = game.level.at(x, y);
@@ -552,7 +551,7 @@ function createBoxWithScroll(cx, cy) {
     const box = mksobj(otypByName('large box'), true, true);
     box.obroken = 1; box.olocked = 0; box.otrapped = 0;
     const { x, y } = A(cx, cy);
-    box.ox = x; box.oy = y; box.where = 'floor';
+    box.ox = x; box.oy = y; box.where = OBJ_FLOOR;
     if (!game.level.objects) game.level.objects = [];
     game.level.objects.push(box);
     const loc = game.level.at(x, y);

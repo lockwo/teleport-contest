@@ -14,7 +14,11 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
-import { align_gname, roles } from './role.js';
+import { align_gname, roles, aligns } from './role.js';
+import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF } from './const.js';
+import { make_confused } from './potion.js';
+import { summon_furies } from './makemon.js';
+import { retouch_equipment } from './artifact.js';
 import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     A_ORIGINAL, AM_SHRINE, AM_SANCTUM, AM_CHAOTIC, AM_MASK, Amask2align,
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMIN, LUCKMAX, MM_NOMSG,
@@ -22,7 +26,7 @@ import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_C
 import { isok } from './hacklib.js';
 import { OMONST, W_BALL, W_CHAIN, FROMOUTSIDE } from './const.js';
 import { FIRE_RES, TELEPORT, POISON_RES, TELEPAT, COLD_RES, INVIS, SEE_INVIS,
-    FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER } from './const.js';
+    FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { adjalign, exercise, adjattrib } from './attrib.js';
 import { losexp, xlev_to_rank, pluslvl, innate_intrinsics } from './exper.js';
 import { heal_legs } from './trap.js';
@@ -32,7 +36,7 @@ import { In_hell } from './dungeon.js';
 import { curse, uncurse, unbless, bless, mkobj, place_object, BALL_CLASS, CHAIN_CLASS,
     COIN_CLASS, POTION_CLASS, POT_WATER, HELM_OF_OPPOSITE_ALIGNMENT,
     objects as OBJECTS } from './mkobj.js';
-import { livelog_printf, LL_CONDUCT, LL_MINORAC, LL_DIVINEGIFT, LL_ARTIFACT } from './livelog.js';
+import { livelog_printf, LL_ALIGNMENT, LL_CONDUCT, LL_MINORAC, LL_DIVINEGIFT, LL_ARTIFACT } from './livelog.js';
 import { mflags2_of, is_undead_flag, likes_gems_flag,
     M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC } from './monflags_data.js';
 import { attacktype_fordmg, AT_ENGL, AD_BLND } from './monattk_data.js';
@@ -448,8 +452,7 @@ export async function rndcurse() {
             if (saddle.blessed) unbless(saddle);
             else curse(saddle);
             if (!Blind()) {
-                await update_topl(`${saddle.cursed ? 'Your saddle glows black.'
-                    : 'Your saddle glows brown.'}`);
+                await update_topl(`Your saddle glows ${hcolor(saddle.cursed ? 'black' : 'brown')}.`);
                 saddle.bknown = Hallucination() ? 0 : 1;
             } else {
                 saddle.bknown = 0;
@@ -491,7 +494,8 @@ export async function attrcurse() {
         u[field] = (u[field] | 0) & ~INTRINSIC;
         if (u.uprops) u.uprops[field] = (u.uprops[field] | 0) & ~INTRINSIC;
         (u.lost_innate ||= new Set()).add(field);
-        await update_topl(msg);
+        await update_topl(prop === SEE_INVIS && Hallucination()
+            ? 'You tawt you taw a puttie tat!' : msg);
         return prop;
     }
     return 0;
@@ -572,7 +576,7 @@ async function angrygods(resp_god) {
         // C: `if (!Blind && !Antimagic)` -- a worn cloak of magic resistance
         // (a Wizard's starting cloak) suppresses the glow message.
         if (!Blind() && !(await loadPrayExtras()).zap.Antimagic())
-            await update_topl('A black glow surrounds you.');
+            await update_topl(`${upstart_pr(an_pr(hcolor('black')))} glow surrounds you.`);
         if (rn2(2) || !(await attrcurse()))
             await rndcurse();
         break;
@@ -1098,7 +1102,7 @@ async function water_prayer(bless_water) {
     const bc_known = !Blind() && !Hallucination();
     let changed = 0, other = false;
     for (const otmp of (game.level?.objects || [])) {
-        if (otmp.where !== 'floor' || otmp.ox !== u.ux || otmp.oy !== u.uy)
+        if (otmp.where !== OBJ_FLOOR || otmp.ox !== u.ux || otmp.oy !== u.uy)
             continue;
         if (otmp.otyp === POT_WATER
             && (bless_water ? !otmp.blessed : !otmp.cursed)) {
@@ -1114,7 +1118,7 @@ async function water_prayer(bless_water) {
         await update_topl(
             `${(other && changed > 1) ? 'Some of the' : other ? 'One of the' : 'The'}`
             + ` potion${(other || changed > 1) ? 's' : ''} on the altar`
-            + ` glow${changed > 1 ? '' : 's'} ${bless_water ? 'light blue' : 'black'}`
+            + ` glow${changed > 1 ? '' : 's'} ${bless_water ? hcolor('light blue') : hcolor('black')}`
             + ' for a moment.');
     }
     return changed > 0;
@@ -1360,7 +1364,7 @@ async function loadSacDeps() {
 }
 
 // C ref: obj.h carried(obj).
-function carried(otmp) { return otmp?.where === 'invent'; }
+function carried(otmp) { return otmp?.where === OBJ_INVENT; }
 // C ref: role.c a_gname() / u_gname() — the god who owns the altar underfoot,
 // and the hero's own god.
 function a_gname() { return align_gname(roleMnum(), a_align(game.u.ux, game.u.uy)); }
@@ -1419,7 +1423,7 @@ async function floorfood_sacrifice() {
     const skipfloor = !!game.iflags?.menu_requested;
     if (!skipfloor) {
         const objs = (game.level?.objects || []).filter(
-            (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy);
+            (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy);
         for (const otmp of objs) {
             if (otmp.otyp !== CORPSE) continue;
             // GAP: will_feel_cockatrice()/feel_cockatrice() — a blind, bare-
@@ -1561,7 +1565,7 @@ async function offer_different_alignment_altar(otmp, altaralign) {
             await update_topl(`You have a strong feeling that ${u_gname()} is angry...`);
             await consume_offering(otmp);
             await update_topl(`${a_gname()} accepts your allegiance.`);
-            uchangealign(altaralign);
+            await uchangealign(altaralign, A_CG_CONVERT);
             /* Beware, Conversion is costly */
             change_luck(-3);
             u.ublesscnt = (u.ublesscnt | 0) + 300;
@@ -1621,16 +1625,40 @@ async function angry_priest() {
     pri.mpeaceful = 0;
 }
 
-// C ref: attrib.c uchangealign(newalign, reason) reduced to the A_CG_CONVERT
-// path taken here: the record resets and the base alignment follows.
-function uchangealign(newalign) {
+// C ref: attrib.c uchangealign(newalign, reason) — change the hero's
+// alignment type, possibly losing use of artifacts.
+export async function uchangealign(newalign, reason) {
     const u = game.u;
     if (!u.ualignbase) u.ualignbase = { [A_CURRENT]: u.ualign?.type ?? 0, [A_ORIGINAL]: u.ualign?.type ?? 0 };
-    u.ualignbase[A_CURRENT] = newalign;
-    u.ualign.type = newalign;
-    u.ualign.record = 0;
-    u.ublesscnt = 300;
+    const oldalign = u.ualign.type;
+    u.ublessed = 0; /* lose divine protection */
     game.botl = true;
+    if (reason === A_CG_CONVERT) {
+        livelog_printf(LL_ALIGNMENT, `permanently converted to ${aligns[1 - newalign].adj}`);
+        u.ualignbase[A_CURRENT] = newalign;
+        /* worn helm of opposite alignment might block change */
+        if (!game.uarmh || game.uarmh.otyp !== HELM_OF_OPPOSITE_ALIGNMENT)
+            u.ualign.type = u.ualignbase[A_CURRENT];
+        await update_topl(`You have a ${u.ualign.type !== oldalign ? 'sudden ' : ''}sense of a new direction.`);
+    } else {
+        /* putting on or taking off a helm of opposite alignment */
+        u.ualign.type = newalign;
+        if (reason === A_CG_HELM_ON) {
+            adjalign(-7); /* for abuse -- record will be cleared shortly */
+            await update_topl(`Your mind oscillates ${Hallucination() ? 'wildly' : 'briefly'}.`);
+            make_confused(rn1(2, 3), false);
+            if (Is_astralevel() || rn2(50) < (u.ualign.abuse | 0))
+                summon_furies(Is_astralevel() ? 0 : 1);
+            livelog_printf(LL_ALIGNMENT, `used a helm to turn ${aligns[1 - newalign].adj}`);
+        } else if (reason === A_CG_HELM_OFF) {
+            await update_topl(`Your mind is ${Hallucination()
+                ? 'much of a muchness' : 'back in sync with your body'}.`);
+        }
+    }
+    if (u.ualign.type !== oldalign) {
+        u.ualign.record = 0; /* slate is wiped clean */
+        await retouch_equipment(0);
+    }
 }
 
 // C ref: minion.c:405 dlord(atyp) — a demon lord of the given alignment; 20
@@ -2423,7 +2451,7 @@ export async function pray_revive() {
     const u = game.u;
     let otmp = null;
     for (const o of (game.level?.objects || [])) {
-        if (o.where !== 'floor' || o.ox !== u.ux || o.oy !== u.uy) continue;
+        if (o.where !== OBJ_FLOOR || o.ox !== u.ux || o.oy !== u.uy) continue;
         if ((o.otyp === CORPSE || o.otyp === P_STATUE)
             && D.mkb.has_omonst(o)
             && OMONST(o)?.mtame && !OMONST(o)?.isminion) {
@@ -2531,7 +2559,7 @@ export async function blocked_boulder(dx, dy) {
     const u = game.u;
     let count = 0;
     for (const otmp of (game.level?.objects || [])) {
-        if (otmp.where !== 'floor') continue;
+        if (otmp.where !== OBJ_FLOOR) continue;
         if (otmp.ox !== u.ux + dx || otmp.oy !== u.uy + dy) continue;
         if (otmp.otyp === P_BOULDER) count += (otmp.quan || 1);
     }

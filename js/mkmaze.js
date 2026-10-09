@@ -5,6 +5,7 @@
 // des.mazewalk(), by the .lua special levels (hellfill.lua in particular).
 
 import { game } from './gstate.js';
+import { dist2 } from './hacklib.js';
 import { rn2, rn1, rnd } from './rng.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, HWALL, isok, IS_DOOR, ACCESSIBLE,
@@ -12,7 +13,7 @@ import {
     Is_firelevel, Is_waterlevel, Is_airlevel,
 } from './const.js';
 import { maketrap, t_at, Invocation_lev } from './trap.js';
-import { m_at, newsym, pline, terrain_glyph } from './display.js';
+import { m_at, newsym, pline, terrain_glyph, update_topl, Deaf_hero } from './display.js';
 import {
     block_point, recalc_block_point, unblock_point, vision_recalc,
 } from './vision.js';
@@ -258,13 +259,21 @@ export async function fumaroles() {
     let sizemin = 5;
     if (Is_firelevel(g.u?.uz)) { nmax++; sizemin += 5; }
     if ((g.level?.flags?.temperature ?? 0) > 0) { nmax++; sizemin += 5; }
+    let snd = false, loud = false;
     for (let n = nmax; n; n--) {
         const x = rn2(COLNO - 4) + 3;                    // mkmaze.c:1500
         const y = rn2(ROWNO - 4) + 3;                    // mkmaze.c:1501
         if (g.level?.at(x, y)?.typ === LAVAPOOL) {
             const r = await create_gas_cloud(x, y, rn1(10, sizemin), rn1(10, 5));
             if (r) r.herosFault = false; /* clear_heros_fault(r): mkmaze.c:1506 */
+            snd = true;
+            if (dist2(x, y, g.u.ux, g.u.uy) < 15) loud = true;
         }
+    }
+    // C ref: mkmaze.c:1513 — Norep("You hear a %swhoosh!", loud ? "loud " : "").
+    if (snd && !Deaf_hero()) {
+        const msg = `You hear a ${loud ? 'loud ' : ''}whoosh!`;
+        if (g._prevmsg !== msg) await update_topl(msg);
     }
 }
 
@@ -791,8 +800,7 @@ import {
     LR_TELE, LR_UPTELE, LR_DOWNTELE,
     MIGR_RANDOM, MIGR_LEFTOVERS,
     Is_medusa_level, Is_stronghold, In_quest,
-    COUNTING as MM_COUNTING, WRITING as MM_WRITING, FREEING as MM_FREEING,
-} from './const.js';
+    COUNTING as MM_COUNTING, WRITING as MM_WRITING, FREEING as MM_FREEING, OBJ_FLOOR } from './const.js';
 import { depth as mm_depth, distmin as mm_distmin } from './hacklib.js';
 import { within_bounded_area as mm_within_bounded_area } from './rect.js';
 import { occupied as mm_occupied, somex as mm_somex, somey as mm_somey } from './mkroom.js';
@@ -1465,7 +1473,7 @@ function mm_Can_fall_thru(uz) {
 // C ref: invent.c sobj_at(BOULDER, x, y) — js/mklev.js:6371 has a copy.
 function mm_sobj_at_boulder(x, y) {
     for (const o of (game.level?.objects || []))
-        if (o.where === 'floor' && o.ox === x && o.oy === y
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y
             && o.otyp === MM_BOULDER) return true;
     return false;
 }

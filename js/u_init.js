@@ -1428,7 +1428,7 @@ export function u_init_role() {
         else if (!rn2(10))
             ini_inv(Lamp);
         // C ref: u_init.c — priests know holy/unholy water (no RNG).
-        knows_object(322 /*POT_WATER*/);
+        knows_object(322 /*POT_WATER*/, true); /* override pauper */
         break;
     case PM_RANGER:
         ini_inv(Ranger);
@@ -1591,6 +1591,26 @@ function ini_inv_use_obj_discover(obj) {
         discover_object(POT_OIL, true, true);
 }
 
+// C ref: u_init.c pauper_reinit() — skills drop to Unskilled (enhance.js
+// build_skill_state() applies that), 2 unspent slots, and a key item per role
+// is pre-recognized.
+function pauper_reinit() {
+    let preknown = -1;
+    game.u.weapon_slots = 2;
+    switch (current_role_mnum()) {
+    case PM_HEALER: preknown = SPE_HEALING; break;
+    case PM_CLERIC: case PM_KNIGHT: case PM_MONK: preknown = SPE_PROTECTION; break;
+    case PM_WIZARD: preknown = SPE_FORCE_BOLT; break;
+    case PM_ARCHEOLOGIST: preknown = TOUCHSTONE; break;
+    case PM_CAVE_DWELLER: preknown = FLINT; break;
+    case PM_ROGUE: case PM_TOURIST: preknown = 217 /*SACK*/; break;
+    case PM_SAMURAI: preknown = FOOD_RATION; break;
+    default: break;
+    }
+    if (preknown >= 0)
+        knows_object(preknown, true);
+}
+
 export function u_init_skills_discoveries() {
     game.u = game.u || {};
     // C ref: u_init.c u_init_skills_discoveries — `for (otmp = gi.invent; otmp;
@@ -1602,7 +1622,11 @@ export function u_init_skills_discoveries() {
         for (const obj of game.invent)
             ini_inv_use_obj_discover(obj);
     skill_init_snapshot();
-    skill_based_spellbook_id();
+    // C ref: weapon.c skill_init() — paupers lack advanced access to books.
+    if (!game.u.uroleplay?.pauper)
+        skill_based_spellbook_id();
+    if (game.u.uroleplay?.pauper)
+        pauper_reinit();
     if (num_spells() && (game.u.uenmax ?? 0) < SPELL_LEV_PW_1) {
         game.u.uen = game.u.uenmax = game.u.uenpeak = SPELL_LEV_PW_1;
         if (Array.isArray(game.u.ueninc) && game.u.ulevel != null)

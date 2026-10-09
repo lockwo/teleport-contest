@@ -43,7 +43,7 @@ import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
          In_endgame, Is_earthlevel, GENOCIDED, KILLED_BY,
          KILLED_BY_AN, NO_KILLER_PREFIX, DIED, ROOM, STONE, IS_WALL, IS_DOOR,
-         G_GONE, TELEDS_TELEPORT } from './const.js';
+         G_GONE, TELEDS_TELEPORT, OBJ_FREE, PLNMSG_TOWER_OF_FLAME } from './const.js';
 import { S_invisible, S_WORM_TAIL, S_MIMIC_DEF, S_MIMIC, S_WORM, S_DEMON,
          S_XAN, S_EEL, S_GHOST, def_monsyms, MAXMCLASSES } from './symbols.js';
 import { wipeout_text } from './engrave.js';
@@ -52,6 +52,8 @@ import { mflags1_of, mflags2_of, msound_of, M1_NOHEAD, M1_AMORPHOUS,
          M1_UNSOLID, M1_WALLWALK, M1_HIDE,
          M2_PNAME, M2_HUMAN, M2_DEMON, M2_MALE, M2_FEMALE } from './monflags_data.js';
 import { mon_mr } from './monmr_data.js';
+import { can_chant } from './mondata.js';
+import { hcolor } from './do_name.js';
 import { NUMMONS } from './disprng.js';
 
 const ECMD_CANCEL = 0;
@@ -121,27 +123,6 @@ function Confused() { return (game.u?.uprops?.Confusion || 0) > 0; }
 // C ref: youprop.h Hallucination — the hero's hallucination timer (uhallu),
 // as read by u_init.js/potion.js's Hallucination() convention.
 function Hallucination() { return !!game.u?.uhallu; }
-
-// C ref: mondata.c can_chant(&youmonst) — whether the hero can speak the words
-// (for casting / reading aloud):
-//   !((mtmp == &youmonst && Strangled) || is_silent(data) || !has_head(data)
-//     || data->msound == MS_BUZZ || data->msound == MS_BURBLE)
-// A polymorphed hero really can be a silent/headless/buzzing form, so the whole
-// predicate is ported; game.youmonst.data is only present once the hero has
-// polymorphed, and an unpolymorphed hero is a humanoid that passes every test.
-const MS_SILENT = 0, MS_BUZZ = 10, MS_BURBLE = 16; // C ref: monflag.h MS_*
-function can_chant() {
-    if (game.u?.Strangled) return false;
-    // youmonst.data only differs from the hero's race while polymorphed; an
-    // unpolymorphed hero is a humanoid that passes every remaining test.
-    const data = game.youmonst?.data;
-    if (!data) return true;
-    const snd = msound_of(data);
-    if (snd === MS_SILENT || snd === MS_BUZZ || snd === MS_BURBLE) return false;
-    // C ref: mondata.h has_head(ptr) — !(mflags1 & M1_NOHEAD).
-    if ((mflags1_of(data) & M1_NOHEAD) !== 0) return false;
-    return true;
-}
 
 // C ref: youprop.h Invisible — the hero being unable to see their own hands
 // changes seffect_confuse_monster's feedback (and nothing else).
@@ -903,13 +884,9 @@ function is_weptool_wep(obj) {
     return obj?.oclass === TOOL_CLASS && (objects[obj.otyp]?.oc_skill ?? 0) !== 0;
 }
 
-// C ref: do_name.c hcolor(colorpref) — `(Hallucination || !colorpref)
-// ? hcolors[rn2_on_display_rng(SIZE(hcolors))] : colorpref`.  The hallucinating
-// pick uses the DISPLAY rng, not the main one, so this stub costs no PRNG
-// desync — only a wrong colour word in the message while hallucinating.
-// (Same stub as fountain.js's hcolor(); every call site here passes a non-null
-// colorpref, so the !colorpref half never applies.)
-function hcolor_wep(colorpref) { return colorpref; }
+// C ref: do_name.c hcolor(colorpref) — a hallucinating hero draws the DISPLAY
+// rng for a random colour name (js/do_name.js hcolor()).
+function hcolor_wep(colorpref) { return hcolor(colorpref); }
 
 // C ref: objnam.c vtense(0, verb) — singular 3rd-person conjugation, scoped
 // to the plain present-tense verbs chwepon uses ("glow", "violently glow",
@@ -960,8 +937,26 @@ const WORM_TOOTH = 42, CRYSKNIFE = 43; // C ref: objects.h otyp
 // support).
 async function chwepon(otmp, amount) {
     const uwep = game.uwep;
+    // C ref: wield.c:920 — hcolor() is drawn at entry, before any branch.
+    const color = hcolor_wep(amount < 0 ? 'black' : 'blue');
     if (!uwep || (uwep.oclass !== WEAPON_CLASS && !is_weptool_wep(uwep))) {
-        await strange_feeling(otmp, `Your hands ${amount >= 0 ? 'twitch' : 'itch'}.`);
+        let buf;
+        const { will_weld } = await import('./do_wear.js');
+        if (amount >= 0 && uwep && will_weld(uwep)) { /* cursed tin opener */
+            if (!Blind()) {
+                buf = `${Yobjnam2_wep(uwep, 'glow')} with ${an_read(hcolor_wep('amber'))} aura.`;
+                uwep.bknown = !Hallucination();
+            } else {
+                const { body_part } = await import('./invent.js');
+                const { HAND } = await import('./const.js');
+                buf = `Your right ${body_part(HAND)} tingles.`;
+            }
+            uncurse(uwep);
+            update_inventory();
+        } else {
+            buf = `Your hands ${amount >= 0 ? 'twitch' : 'itch'}.`;
+        }
+        await strange_feeling(otmp, buf);
         exercise(A_DEX, amount >= 0);
         return false;
     }
@@ -989,7 +984,14 @@ async function chwepon(otmp, amount) {
         return true;
     }
 
-    const color = hcolor_wep(amount < 0 ? 'black' : 'blue');
+    {
+        const { restrict_name } = await import('./artifact.js');
+        if (amount < 0 && uwep.oartifact && restrict_name(uwep, uwep.oname || '')) {
+            if (!Blind())
+                await pline_append(`${Yobjnam2_wep(uwep, 'faintly glow')} ${color}.`);
+            return true;
+        }
+    }
     if ((((uwep.spe || 0) > 5 && amount >= 0)
          || ((uwep.spe || 0) < -5 && amount < 0)) && rn2(3)) {
         if (!Blind())
@@ -1286,6 +1288,28 @@ async function seffect_remove_curse(sobj) {
                 }
             }
         }
+        // if riding, treat steed's saddle as if part of hero's invent
+        let saddle = null;
+        if (game.u?.usteed) {
+            const { which_armor } = await import('./worn.js');
+            const { W_SADDLE } = await import('./const.js');
+            saddle = which_armor(game.u.usteed, W_SADDLE);
+        }
+        if (saddle) {
+            if (confused) {
+                blessorcurse(saddle, 2);
+                saddle.bknown = 0;
+            } else if (saddle.cursed) {
+                uncurse(saddle);
+                // like rndcurse(sit.c), the saddle shows the glow
+                if (!Blind()) {
+                    await update_topl(`${Yobjnam2_wep(saddle, 'glow')} ${hcolor_wep('amber')}.`);
+                    saddle.bknown = Hallucination() ? 0 : 1;
+                } else {
+                    saddle.bknown = 0;
+                }
+            }
+        }
     }
     // C ref: ball.c unpunish() — the ball & chain fall away.  Not conditional
     // on the scroll's curse status in C.
@@ -1328,26 +1352,55 @@ async function seffect_fire(sobj) {
     useup(sobj);
     if (!already_known) learnscrolltyp(SCR_FIRE_OTYP);
     if (confused) {
-        // Fire_resistance / Underwater are not reachable for the covered
-        // heroes; the ordinary confused arm burns a hand for 1 HP (no RNG).
-        await pline(`The scroll catches fire and you burn your ${
-            body_part_hands()}.`);
-        u.uhp = (u.uhp | 0) - 1;
-        game.disp = game.disp || {};
-        game.disp.botl = true;
+        const underwater = !!u.uprops?.Underwater;
+        const { Fire_resistance } = await import('./zap.js');
+        const { monstseesu, monstunseesu } = await import('./mondata.js');
+        const { M_SEEN_FIRE } = await import('./const.js');
+        if (underwater) {
+            const { hliquid } = await import('./do_name.js');
+            await pline(`A little ${hliquid('water')} around you vaporizes.`);
+        } else if (Fire_resistance()) {
+            const { shieldeff } = await import('./display.js');
+            await shieldeff(u.ux, u.uy);
+            monstseesu(M_SEEN_FIRE);
+            if (!Blind())
+                await pline(`Oh, look, what a pretty fire in your ${body_part_hands()}.`);
+            else
+                await pline(`You feel a pleasant warmth in your ${body_part_hands()}.`);
+        } else {
+            monstunseesu(M_SEEN_FIRE);
+            await pline(`The scroll catches fire and you burn your ${
+                body_part_hands()}.`);
+            await losehp_read(1, 'scroll of fire', KILLED_BY_AN);
+        }
         return;
     }
-    if (sblessed) {
-        if (!already_known) await pline('This is a scroll of fire!');
-        dam *= 5;
-        await pline('Where do you want to center the explosion?');
-        const { getpos } = await import('./hack.js');
-        const pos = await getpos('the desired position', u.ux, u.uy, null, true, true);
-        if (pos && pos.x != null) { cc.x = pos.x; cc.y = pos.y; }
-    }
-    if (cc.x === u.ux && cc.y === u.uy) {
-        await pline('The scroll erupts in a tower of flame!');
-        // burn_away_slime(): only matters to a sliming hero, and draws no RNG.
+    if (u.uprops?.Underwater) {
+        const { hliquid } = await import('./do_name.js');
+        await pline(`The ${hliquid('water')} around you vaporizes violently!`);
+    } else {
+        if (sblessed) {
+            if (!already_known) await pline('This is a scroll of fire!');
+            dam *= 5;
+            await pline('Where do you want to center the explosion?');
+            const { getpos } = await import('./hack.js');
+            // getpos_sethilite(display_stinking_cloud_positions, can_center_cloud)
+            // installs can_center_cloud as the validity callback, which getpos()
+            // uses for its "(invalid target)" autodescribe suffix.
+            const pos = await getpos('the desired position', u.ux, u.uy,
+                                     can_center_cloud, true, true);
+            if (pos && pos.x != null) { cc.x = pos.x; cc.y = pos.y; }
+            if (!can_center_cloud(cc.x, cc.y)) {
+                /* try to reach too far, get burned */
+                cc.x = u.ux;
+                cc.y = u.uy;
+            }
+        }
+        if (cc.x === u.ux && cc.y === u.uy) {
+            await pline('The scroll erupts in a tower of flame!');
+            game.last_msg = PLNMSG_TOWER_OF_FLAME; /* for explode() */
+            // burn_away_slime(): only matters to a sliming hero, and draws no RNG.
+        }
     }
     const { explode } = await import('./explode.js');
     const { EXPL_FIERY } = await import('./const.js');
@@ -2474,7 +2527,7 @@ export async function drop_boulder_on_player(confused, helmet_protects, byu,
 
     const otmp2 = mksobj(confused ? ROCK : BOULDER, false, false);
     if (!otmp2) return;
-    otmp2.where = 'free';   /* flooreffects() wants a free object */
+    otmp2.where = OBJ_FREE;   /* flooreffects() wants a free object */
     otmp2.quan = confused ? rn1(5, 2) : 1;
     otmp2.owt = weight(otmp2);
 
@@ -2519,7 +2572,7 @@ export async function drop_boulder_on_monster(x, y, confused, byu) {
     /* Make the object(s) */
     const otmp2 = mksobj(confused ? ROCK : BOULDER, false, false);
     if (!otmp2) return false;          /* Shouldn't happen */
-    otmp2.where = 'free';              /* flooreffects() wants a free object */
+    otmp2.where = OBJ_FREE;              /* flooreffects() wants a free object */
     otmp2.quan = confused ? rn1(5, 2) : 1;
     otmp2.owt = weight(otmp2);
 
@@ -3002,11 +3055,11 @@ export async function do_class_genocide() {
             } else if (immunecnt || klass === S_invisible) {
                 await pline_append("You aren't permitted to genocide such monsters.");
             } else if (game.flags?.debug && buf[0] === '*') {
-                const { DEADMONSTER } = await import('./mon.js');
+                const { DEADMONSTER, mongone } = await import('./mon.js');
                 gonecnt = 0;
                 for (const mtmp of [...(game.level?.monsters || [])]) {
                     if (DEADMONSTER(mtmp)) continue;
-                    mtmp.mhp = 0;      // C: mongone(mtmp) — not exported
+                    await mongone(mtmp);
                     gonecnt++;
                 }
                 await pline_append(`Eliminated ${gonecnt} monster${

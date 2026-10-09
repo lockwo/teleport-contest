@@ -29,7 +29,7 @@ import {
     MGEND_NEUTRAL, enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
     name_gender_hint, name_to_pmidx, propagate, rndmonst,
 } from '../makemon.js';
-import { resists_ston } from '../mon.js';
+import { mongone, resists_ston } from '../mon.js';
 import {
     BOULDER, CRYSTAL_BALL, EGG, LEVITATION_BOOTS, SACK, SCR_BLANK_PAPER, STATUE, WAND_CLASS,
     add_to_container, mk_tt_object, mkobj_at, mksobj_at, set_corpsenm, weight,
@@ -45,7 +45,6 @@ import {
     vly_region, vly_teleport_region,
 } from '../sp_lev.js';
 import { Can_fall_thru, maketrap, t_at } from '../trap.js';
-import { obj_resists } from '../zap.js';
 
 // C ref: obj.h — a statue's spe carries the CORPSTAT_* bits lspo_object builds
 // from the historic/male/female table keys before create_object() writes it.
@@ -221,19 +220,13 @@ function med_monster({ name = null, cls = 0, mx = null, my = null,
 }
 
 // C ref: mon.c:3267 mongone() — the monster leaves without dying or a corpse.
-// Its pack has already been emptied into the statue by the successful caller;
-// rejected statues still pass every inventory item through mdrop_special_objs(),
-// which calls obj_resists() before discarding the remainder.
-function med_mongone(mtmp) {
+// Its pack has already been emptied into the statue by the successful caller.
+// The real mongone() runs mdrop_special_objs() (obj_resists per item),
+// discard_minvent() and m_detach(), which also releases a long worm's tail
+// segments (wormgone) and clears the map slot.
+async function med_mongone(mtmp) {
     if (!mtmp) return;
-    mtmp.mhp = 0;
-    for (const obj of mtmp.minvent || []) obj_resists(obj, 0, 0);
-    mtmp.minvent = [];
-    const lvl = game.level;
-    if (lvl?.monsters) {
-        const i = lvl.monsters.indexOf(mtmp);
-        if (i >= 0) lvl.monsters.splice(i, 1);
-    }
+    await mongone(mtmp);
 }
 
 // C ref: mondata.c:80 poly_when_stoned(ptr) — a golem other than the stone
@@ -249,7 +242,7 @@ function med_poly_when_stoned(ptr) {
 // here are petrified monsters: generate the real monster (a full makemon at a
 // random spot), reject stone-resistant species, then move its inventory into
 // the statue and remove it.
-function med_statue_petrify(otmp) {
+async function med_statue_petrify(otmp) {
     let was = null, wastyp = otmp.corpsenm ?? 0;
     for (let i = 0; i < 1000; i++, wastyp = med_rndmonnum()) {
         const ptr = monster_by_pmidx(wastyp);
@@ -259,7 +252,7 @@ function med_statue_petrify(otmp) {
                 propagate(wastyp, true, false);    // makemon was told not to
                 break;
             }
-            med_mongone(was);
+            await med_mongone(was);
             was = null;
         }
     }
@@ -272,7 +265,7 @@ function med_statue_petrify(otmp) {
         add_to_container(otmp, obj);
     }
     otmp.owt = weight(otmp);
-    med_mongone(was);
+    await med_mongone(was);
 }
 
 // ── objects ──────────────────────────────────────────────────────────────
@@ -284,7 +277,7 @@ function med_statue_petrify(otmp) {
 //   o = { otyp, oclass, coord:{x,y}|null, buc, spe, montype, name,
 //         contents: fn|0|undefined }
 // `contained` is SP_OBJ_CONTENT: such an object skips stackobj().
-function med_object(o, contained = false) {
+async function med_object(o, contained = false) {
     const named = !!o.name;
     let x, y;
     if (o.coord) { const c = vly_abs(o.coord.x, o.coord.y); x = c.x; y = c.y; }
@@ -310,19 +303,19 @@ function med_object(o, contained = false) {
     // SP_OBJ_CONTAINER, whose first act is delete_contents() — that is what
     // throws away the spellbook mksobj_init() may have put inside a statue.
     if (o.contents !== undefined) otmp.cobj = [];
-    if (o.otyp === STATUE && o.montype == null) med_statue_petrify(otmp);
+    if (o.otyp === STATUE && o.montype == null) await med_statue_petrify(otmp);
     // C ref: create_object() ends with stackobj(otmp) unless SP_OBJ_CONTENT;
     // lspo_object runs the `contents` function after create_object() returns.
     if (!contained) stackobj(otmp);
-    if (typeof o.contents === 'function') o.contents(otmp);
+    if (typeof o.contents === 'function') await o.contents(otmp);
     return otmp;
 }
 
 // C ref: create_object() for an object inside a `contents` function: the
 // container is on the stack, so the object is made at a random DRY spot (that
 // is where its RNG goes) and only then moved into the container.
-function med_contained(container, spec) {
-    const otmp = med_object(spec, true);
+async function med_contained(container, spec) {
+    const otmp = await med_object(spec, true);
     if (!otmp || !container) return otmp;
     const objs = game.level?.objects;
     if (objs) { const i = objs.indexOf(otmp); if (i >= 0) objs.splice(i, 1); }
@@ -334,20 +327,20 @@ function med_contained(container, spec) {
 // C ref: medusa-*.lua — the Perseus statue's contents function.  All four
 // percent() gates draw a real rn2(100) whatever they decide; medusa-1/3/4 use
 // 75/25 for shield/boots, medusa-2 swaps them to 25/75.
-function med_perseus_statue(coord, shieldPct, bootsPct) {
-    return med_object({
+async function med_perseus_statue(coord, shieldPct, bootsPct) {
+    return await med_object({
         otyp: STATUE, coord, buc: 'uncursed', montype: 'knight',
         spe: CORPSTAT_HISTORIC | CORPSTAT_MALE, name: 'Perseus',
-        contents: (statue) => {
+        contents: async (statue) => {
             if (percent(shieldPct))
-                med_contained(statue, { otyp: SHIELD_OF_REFLECTION,
-                                        buc: 'cursed', spe: 0 });
+                await med_contained(statue, { otyp: SHIELD_OF_REFLECTION,
+                                              buc: 'cursed', spe: 0 });
             if (percent(bootsPct))
-                med_contained(statue, { otyp: LEVITATION_BOOTS, spe: 0 });
+                await med_contained(statue, { otyp: LEVITATION_BOOTS, spe: 0 });
             if (percent(50))
-                med_contained(statue, { otyp: SCIMITAR, buc: 'blessed', spe: 2 });
+                await med_contained(statue, { otyp: SCIMITAR, buc: 'blessed', spe: 2 });
             if (percent(50))
-                med_contained(statue, { otyp: SACK });
+                await med_contained(statue, { otyp: SACK });
         },
     });
 }
@@ -642,9 +635,9 @@ export async function makemaz_medusa1() {
     const lregions = [med_lregion(LR_BRANCH, 1, 0, 79, 20, [30, 6, 46, 13])];
     vly_non_diggable(30, 6, 46, 13);
 
-    med_perseus_statue({ x: 36, y: 10 }, 75, 25);
-    for (let i = 0; i < 7; i++) med_object({ otyp: STATUE, spe: 0, contents: 0 });
-    for (let i = 0; i < 8; i++) med_object({});
+    await med_perseus_statue({ x: 36, y: 10 }, 75, 25);
+    for (let i = 0; i < 7; i++) await med_object({ otyp: STATUE, spe: 0, contents: 0 });
+    for (let i = 0; i < 8; i++) await med_object({});
 
     for (let i = 0; i < 5; i++) await med_trap(-1);
     await med_trap(SQKY_BOARD, 38, 7);
@@ -690,14 +683,14 @@ export async function makemaz_medusa2() {
     vly_non_diggable(1, 2, 6, 17);
     vly_non_diggable(60, 2, 73, 17);
 
-    med_perseus_statue({ x: 68, y: 10 }, 25, 75);
+    await med_perseus_statue({ x: 68, y: 10 }, 25, 75);
     for (const [sx, sy] of [[64, 8], [65, 8], [64, 9], [65, 9],
                             [64, 10], [65, 10], [64, 11], [65, 11]])
-        med_object({ otyp: STATUE, spe: 0, coord: { x: sx, y: sy }, contents: 0 });
-    med_object({ otyp: BOULDER, coord: { x: 4, y: 4 } });
-    med_object({ oclass: WAND_CLASS, coord: { x: 52, y: 9 } });   // des.object("/")
-    med_object({ otyp: BOULDER, coord: { x: 52, y: 9 } });
-    for (let i = 0; i < 6; i++) med_object({});
+        await med_object({ otyp: STATUE, spe: 0, coord: { x: sx, y: sy }, contents: 0 });
+    await med_object({ otyp: BOULDER, coord: { x: 4, y: 4 } });
+    await med_object({ oclass: WAND_CLASS, coord: { x: 52, y: 9 } });   // des.object("/")
+    await med_object({ otyp: BOULDER, coord: { x: 52, y: 9 } });
+    for (let i = 0; i < 6; i++) await med_object({});
 
     await med_trap(MAGIC_TRAP, 3, 12);
     for (let i = 0; i < 4; i++) await med_trap(-1);
@@ -761,12 +754,12 @@ export async function makemaz_medusa3() {
 
     splev_feature(othloc.x, othloc.y, FOUNTAIN);
 
-    med_perseus_statue(medloc, 75, 25);
-    med_object({ otyp: STATUE, spe: 0, coord: altloc, contents: 0 });
-    for (let i = 0; i < 6; i++) med_object({ otyp: STATUE, spe: 0, contents: 0 });
-    for (let i = 0; i < 8; i++) med_object({});
-    med_object({ otyp: SCR_BLANK_PAPER, coord: { x: 48, y: 18 } });
-    med_object({ otyp: SCR_BLANK_PAPER, coord: { x: 48, y: 18 } });
+    await med_perseus_statue(medloc, 75, 25);
+    await med_object({ otyp: STATUE, spe: 0, coord: altloc, contents: 0 });
+    for (let i = 0; i < 6; i++) await med_object({ otyp: STATUE, spe: 0, contents: 0 });
+    for (let i = 0; i < 8; i++) await med_object({});
+    await med_object({ otyp: SCR_BLANK_PAPER, coord: { x: 48, y: 18 } });
+    await med_object({ otyp: SCR_BLANK_PAPER, coord: { x: 48, y: 18 } });
 
     await med_trap(RUST_TRAP);
     await med_trap(RUST_TRAP);
@@ -817,11 +810,11 @@ export async function makemaz_medusa4() {
     lregions.push(med_lregion(LR_BRANCH, 27, 0, 79, 20));
     vly_non_diggable(1, 1, 22, 14);
 
-    med_object({ otyp: CRYSTAL_BALL, coord: { x: 7, y: 8 } });
-    med_perseus_statue(medloc, 75, 25);
-    med_object({ otyp: STATUE, spe: 0, coord: altloc, contents: 0 });
-    for (let i = 0; i < 6; i++) med_object({ otyp: STATUE, spe: 0, contents: 0 });
-    for (let i = 0; i < 8; i++) med_object({});
+    await med_object({ otyp: CRYSTAL_BALL, coord: { x: 7, y: 8 } });
+    await med_perseus_statue(medloc, 75, 25);
+    await med_object({ otyp: STATUE, spe: 0, coord: altloc, contents: 0 });
+    for (let i = 0; i < 6; i++) await med_object({ otyp: STATUE, spe: 0, contents: 0 });
+    for (let i = 0; i < 8; i++) await med_object({});
 
     for (let i = 0; i < 7; i++) await med_trap(-1);
 
@@ -833,11 +826,11 @@ export async function makemaz_medusa4() {
         med_monster({ name: 'baby yellow dragon', mx: 4, my: 4, asleep: 1 });
     if (percent(25))
         med_monster({ name: 'baby yellow dragon', mx: 4, my: 5, asleep: 1 });
-    med_object({ otyp: EGG, coord: { x: 5, y: 4 }, montype: 'yellow dragon', spe: 0 });
+    await med_object({ otyp: EGG, coord: { x: 5, y: 4 }, montype: 'yellow dragon', spe: 0 });
     if (percent(50))
-        med_object({ otyp: EGG, coord: { x: 5, y: 4 }, montype: 'yellow dragon', spe: 0 });
+        await med_object({ otyp: EGG, coord: { x: 5, y: 4 }, montype: 'yellow dragon', spe: 0 });
     if (percent(25))
-        med_object({ otyp: EGG, coord: { x: 5, y: 4 }, montype: 'yellow dragon', spe: 0 });
+        await med_object({ otyp: EGG, coord: { x: 5, y: 4 }, montype: 'yellow dragon', spe: 0 });
 
     med_monster({ name: 'giant eel' });
     med_monster({ name: 'giant eel' });

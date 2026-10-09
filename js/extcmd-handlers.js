@@ -31,7 +31,7 @@ import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK,
 import { mon_mr } from './monmr_data.js';
 import { is_undead_flag, is_demon_flag, humanoid, nohands, hides_under_flag } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
-import { align_gname } from './role.js';
+import { align_gname, halu_gname } from './role.js';
 import { map_invisible, doredraw } from './display.js';
 import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJECT } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -60,16 +60,20 @@ import { rn1 } from './rng.js';
 import { HORN_OF_PLENTY, TALLOW_CANDLE, WAX_CANDLE, POT_OIL, OIL_LAMP, MAGIC_LAMP,
          CAN_OF_GREASE, FOOD_RATION, CRAM_RATION, LEMBAS_WAFER, VENOM_CLASS,
          POTION_CLASS } from './mkobj.js';
-import { getobj, GETOBJ_PROMPT, consume_obj_charge, ansimpleoname } from './invent.js';
+import { getobj, GETOBJ_PROMPT, consume_obj_charge, ansimpleoname, count_buc,
+         BUC_BLESSED, BUC_CURSED, BUC_UNCURSED, BUC_UNKNOWN } from './invent.js';
+// query_category's BUC menu tokens -> pickup.c BUC_* classes (count_buc() types).
+const BUC_OF_TOKEN = { get B() { return BUC_BLESSED; }, get C() { return BUC_CURSED; },
+    get U() { return BUC_UNCURSED; }, get X() { return BUC_UNKNOWN; } };
 import { container_at, able_to_loot, tipcontainer, tip_ok, menu_style,
-         u_handsy } from './pickup.js';
-import { MENU_TRADITIONAL, EXT_ENCUMBER } from './const.js';
+         u_handsy, add_valid_menu_class, allow_category } from './pickup.js';
+import { MENU_TRADITIONAL, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR } from './const.js';
 import { is_pool, is_lava } from './dbridge.js';
 import { vtense } from './dothrow.js';
 import { tiphat } from './sounds.js';
 import { dopray as pray_dopray, dosacrifice } from './pray.js';
 import { dosit } from './sit.js';
-import { do_mgivenname, bogusmon, roguename } from './do_name.js';
+import { do_mgivenname, bogusmon, roguename, rndmonnam } from './do_name.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { glyph_at, Hallucination_u } from './display.js';
 import { object_from_map } from './pager.js';
@@ -534,11 +538,13 @@ function extcmd_end_menu(items, promptStr) {
     const cols = game.nhDisplay?.cols ?? 80;
     // tty_menu_promptstyle is iflags.menu_headings (allmain.c:728), whose
     // default is no-color&inverse.
-    const flat = [
+    // end_menu(win, (char *) 0) — no prompt, so no blank + prompt entries.
+    const body = items.map((it) => ({ ...it, text: (it.sel ? it.sel + ' - ' : '') + it.text,
+                                      sel: it.sel }));
+    const flat = promptStr == null ? body : [
         { text: promptStr, attr: ATR_INVERSE },
         { text: '' },
-        ...items.map((it) => ({ text: (it.sel ? it.sel + ' - ' : '') + it.text,
-                                sel: it.sel })),
+        ...body,
     ];
     const lmax = Math.min(52, rows - 1);
     const npages = Math.ceil(flat.length / lmax);
@@ -740,6 +746,15 @@ async function extcmd_via_menu() {
             matchlevel++;
         }
     }
+    // docrt()'s cls() blanked the status window; the next bot() (flush_screen)
+    // repaints it, which a command's own getlin prompt does not trigger.
+    if (statusBlank) {
+        game._statusClsBlank = true;
+        game.botlx = true;
+        const disp = game.nhDisplay;
+        for (const r of [22, 23])
+            for (let c = 0; c < (disp.cols ?? 80); c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
+    }
     return ret;
 }
 
@@ -832,9 +847,8 @@ async function doturn() {
     if (!u.uconduct.gnostic++)
         livelog_printf(LL_CONDUCT, 'rejected atheism by turning undead');
 
-    // halu_gname(): the hero's god, or a hallucinatory one.  align_gname()
-    // takes the roles[] index (flags.initrole), not urole.mnum.
-    const Gname = align_gname(g.initrole ?? 0, u?.ualign?.type ?? 0);
+    // halu_gname(): the hero's god, or a hallucinatory one (display rng).
+    const Gname = halu_gname(u?.ualign?.type ?? 0);
 
     // C ref: pray.c doturn(). A lawful or neutral hero in demon, undead or
     // vampshifter form, or one whose god is very angry, is ignored: aggravate()
@@ -1177,12 +1191,10 @@ async function dochat() {
         // statue / wall talk: a STATUE on the floor, or a wall/SDOOR.
         const otmp = vobj_at(tx, ty);
         if (otmp && otmp.otyp === STATUE) {
-            // C guards the message with !Blind.  GAP: a hallucinating hero sees
-            // rndmonnam() instead of "statue"; that name comes from the DISPLAY
-            // rng (rn2_on_display_rng), which this port does not model, so the
-            // plain word is kept rather than inventing a core-rng draw.
+            // C guards the message with !Blind; a hallucinating hero sees a
+            // rndmonnam() (display rng) instead of "statue".
             if (!Blind())
-                await update_topl('The statue seems not to notice you.');
+                await update_topl(`The ${Hallucination_u() ? rndmonnam().name : 'statue'} seems not to notice you.`);
             return 0;
         }
         const tgt = game.level?.at(tx, ty);
@@ -1529,7 +1541,6 @@ async function donamelevel() {
     const query = current
         ? `Replace annotation "${current.slice(0, 30)}${current.length > 30 ? '...' : ''}" with?`
         : 'What do you want to call this dungeon level?';
-    await flush_screen(1);
     const raw = await hooked_tty_getlin(query, null);
     game._pending_message = '';
     if (!raw || raw === '\x1b') return 0;
@@ -1640,7 +1651,7 @@ async function namefloorobj() {
     } else {
         await docall(obj);
     }
-    if (fakeobj) obj.where = 'free';
+    if (fakeobj) obj.where = OBJ_FREE;
 }
 
 // LARGE_BOX..BAG_OF_TRICKS is the full Is_container() range (objclass.h).
@@ -1674,7 +1685,7 @@ function floor_obj_here(pred) {
     const u = game.u;
     if (!u) return null;
     const objs = (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy && pred(o.otyp));
+        (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy && pred(o.otyp));
     return objs.length ? objs[0] : null;
 }
 // Return every floor container at the hero's square (in floor-chain order),
@@ -1685,14 +1696,14 @@ function floor_boxes_here() {
     const u = game.u;
     if (!u) return [];
     return (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy && is_container_otyp(o.otyp));
+        (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy && is_container_otyp(o.otyp));
 }
 // C ref: pickup.c doloot_core() lootmon: label — container_at(cc.x, cc.y,
 // FALSE) at an arbitrary (not-necessarily-hero) square, used to decide
 // whether directional looting found a container instead of a monster.
 function has_container_at(x, y) {
     return (game.level?.objects || []).some(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y && is_container_otyp(o.otyp));
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y && is_container_otyp(o.otyp));
 }
 // C ref: lock.c doforce() — scans for Is_box() (large box/chest) only.
 function floor_lockbox_here() { return floor_obj_here(is_lockbox_otyp); }
@@ -1703,7 +1714,7 @@ function floor_lockboxes_here() {
     const u = game.u;
     if (!u) return [];
     return (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy && is_lockbox_otyp(o.otyp));
+        (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy && is_lockbox_otyp(o.otyp));
 }
 
 // (the status rows of the modal container renders go through putStatusRow())
@@ -2109,16 +2120,7 @@ async function query_category_take_out(box) {
 
     // C count_buc(): gold counts as Uncursed (or Unknown when goldX), other
     // items by bknown/blessed/cursed.
-    const goldX = !!(game?.flags?.goldX);
-    const bucCount = (type) => {
-        let n = 0;
-        for (const o of cobj) {
-            if (o.oclass === COIN_CLASS) { if (type === (goldX ? 'X' : 'U')) n++; continue; }
-            const actual = !o.bknown ? 'X' : o.blessed ? 'B' : o.cursed ? 'C' : 'U';
-            if (actual === type) n++;
-        }
-        return n;
-    };
+    const bucCount = (type) => count_buc(cobj, BUC_OF_TOKEN[type]);
     const do_blessed = bucCount('B') > 0, do_cursed = bucCount('C') > 0;
     const do_uncursed = bucCount('U') > 0, do_unknown = bucCount('X') > 0;
     const anyBUC = do_blessed || do_cursed || do_uncursed || do_unknown;
@@ -2138,7 +2140,7 @@ async function query_category_take_out(box) {
                  desc: 'Auto-select every relevant item' });
     if (show_a) items.push({ letter: 'a', token: 'ALL', skipinvert: true, selected: false,
                              desc: 'All types' });
-    let invlet = 'b';
+    let invlet = show_a ? 'b' : 'a';
     for (const oc of presentClasses) {
         items.push({ letter: invlet, token: oc, skipinvert: false, selected: false,
                      groupacc: DEF_OC_SYMS[oc], desc: let_to_name(oc, false, false) });
@@ -2223,10 +2225,7 @@ async function query_category_takeoff() {
     const presentClasses = order.filter((oc) => worn.some((o) => o.oclass === oc));
     const ccount = presentClasses.length;
 
-    const goldX = !!(game?.flags?.goldX);
-    const bucCount = (type) => worn.filter((o) => (o.oclass === COIN_CLASS)
-        ? type === (goldX ? 'X' : 'U')
-        : type === (!o.bknown ? 'X' : o.blessed ? 'B' : o.cursed ? 'C' : 'U')).length;
+    const bucCount = (type) => count_buc(worn, BUC_OF_TOKEN[type]);
     const do_blessed = bucCount('B') > 0, do_cursed = bucCount('C') > 0;
     const do_uncursed = bucCount('U') > 0, do_unknown = bucCount('X') > 0;
     const num_buc_types = [do_blessed, do_cursed, do_uncursed, do_unknown].filter(Boolean).length;
@@ -2362,24 +2361,27 @@ async function menu_loot_out(box) {
     const picks = await query_category_take_out(box);
     if (!picks || picks.length === 0) return 0;
 
-    let autopick = false, all_categories = false;
-    const validClasses = new Set();
+    // C ref: pickup.c menu_loot() — the picks feed add_valid_menu_class(), and
+    // allow_category() then ANDs the class / BUC filter types together.
+    let autopick = false, all_categories = false, loot_everything = false;
+    add_valid_menu_class(0);
     for (const p of picks) {
-        if (p === 'A') autopick = true;
+        if (p === 'A') loot_everything = autopick = true;
         else if (p === 'ALL') all_categories = true;
-        else if (typeof p === 'number') validClasses.add(p);
-        // 'B'/'C'/'U'/'X' BUC filters are not reached by the recorded sessions;
-        // treat them as no additional class filter (fall through to item menu).
+        else {
+            add_valid_menu_class(typeof p === 'number' ? DEF_OC_SYMS[p] : p);
+            loot_everything = false;
+        }
     }
-    const allow = (autopick || all_categories)
-        ? () => true
-        : (o) => validClasses.has(o.oclass);
+    const allow = (o) => loot_everything || all_categories || allow_category(o);
 
     let chosen;
     if (autopick) {
+        box.cknown = 1;   // C: menu_loot(): !put_in -> current_container->cknown = 1
         chosen = (box.cobj || []).filter(allow);
     } else {
-        chosen = await query_objlist_take_out(box, allow);
+        box.cknown = 1;   // C: set just before query_objlist() on the take-out side
+        chosen = await query_objlist_take_out(box, all_categories ? () => true : allow);
         if (chosen === null) return 0; // ESC cancelled
     }
     if (!chosen.length) return 0;
@@ -2396,7 +2398,7 @@ async function menu_loot_out(box) {
         if (i < 0) continue;
         const count = obj.quan;
         box.cobj.splice(i, 1);
-        obj.where = 'free';
+        obj.where = OBJ_FREE;
         box.owt = weight(box);
         if (box.otyp === ICE_BOX_OTYP) removed_from_icebox(obj);
         const otmp = addinv(obj);
@@ -2422,16 +2424,7 @@ async function query_category_put_in() {
     const presentClasses = order.filter((oc) => inv.some((o) => o.oclass === oc));
     const ccount = presentClasses.length;
 
-    const goldX = !!(game?.flags?.goldX);
-    const bucCount = (type) => {
-        let n = 0;
-        for (const o of inv) {
-            if (o.oclass === COIN_CLASS) { if (type === (goldX ? 'X' : 'U')) n++; continue; }
-            const actual = !o.bknown ? 'X' : o.blessed ? 'B' : o.cursed ? 'C' : 'U';
-            if (actual === type) n++;
-        }
-        return n;
-    };
+    const bucCount = (type) => count_buc(inv, BUC_OF_TOKEN[type]);
     const do_blessed = bucCount('B') > 0, do_cursed = bucCount('C') > 0;
     const do_uncursed = bucCount('U') > 0, do_unknown = bucCount('X') > 0;
     const anyBUC = do_blessed || do_cursed || do_uncursed || do_unknown;
@@ -2450,7 +2443,7 @@ async function query_category_put_in() {
                  desc: 'Auto-select every relevant item' });
     if (show_a) items.push({ letter: 'a', token: 'ALL', skipinvert: true, selected: false,
                              desc: 'All types' });
-    let invlet = 'b';
+    let invlet = show_a ? 'b' : 'a';
     for (const oc of presentClasses) {
         items.push({ letter: invlet, token: oc, skipinvert: false, selected: false,
                      groupacc: DEF_OC_SYMS[oc], desc: let_to_name(oc, false, false) });
@@ -2527,22 +2520,28 @@ async function menu_loot_in(box) {
     const picks = await query_category_put_in();
     if (!picks || picks.length === 0) return 0;
 
+    // C ref: pickup.c menu_loot() pick handling (see menu_loot_out).
     let autopick = false, all_categories = false, loot_justpicked = false;
-    const validClasses = new Set();
+    let loot_everything = false;
+    add_valid_menu_class(0);
     for (const p of picks) {
-        if (p === 'A') autopick = true;
-        else if (p === 'P') { loot_justpicked = true; autopick = false; }
-        else if (p === 'ALL') all_categories = true;
-        else if (typeof p === 'number') { validClasses.add(p); autopick = false; }
+        if (p === 'A') loot_everything = autopick = true;
+        else if (p === 'P') {
+            loot_justpicked = true;
+            add_valid_menu_class('P');
+            loot_everything = false;
+        } else if (p === 'ALL') all_categories = true;
+        else {
+            add_valid_menu_class(typeof p === 'number' ? DEF_OC_SYMS[p] : p);
+            loot_everything = false;
+        }
     }
-    const allow = (autopick || all_categories)
-        ? () => true
-        : (o) => validClasses.has(o.oclass) || (loot_justpicked && !!o.pickup_prev);
+    const allow = (o) => loot_everything || all_categories || allow_category(o);
 
     let chosen;
     if (autopick) {
         chosen = inventoryArray().filter(allow);
-    } else if (loot_justpicked && validClasses.size === 0
+    } else if (loot_justpicked
                && inventoryArray().filter((o) => o.pickup_prev).length === 1) {
         // C: the lone just-picked item goes in without an item menu.
         chosen = inventoryArray().filter((o) => o.pickup_prev);
@@ -2834,7 +2833,7 @@ export async function picklock() {
 
     if (xl.box) {
         // C lock.c:70-74 — you or the floor box moved.
-        if (xl.box.where !== 'floor' || xl.box.ox !== u.ux || xl.box.oy !== u.uy) {
+        if (xl.box.where !== OBJ_FLOOR || xl.box.ox !== u.ux || xl.box.oy !== u.uy) {
             game._picklock_box = null;
             game.xlock = null;
             return 0;
@@ -3041,27 +3040,6 @@ function force_yname(uwep) {
     return `your ${xname(uwep)}`;
 }
 
-// C ref: mon.c wake_nearby(FALSE) -> wake_nearto_core(u.ux, u.uy, ulevel*20,
-// FALSE).  Wakes nearby monsters without angering them: clears msleeping and the
-// 'meditation' STRAT_WAITMASK strategy.  No RNG.  (wake_msg prints "X wakes up."
-// only for a *sleeping*, visible monster; the goblin here is already awake.)
-function wake_nearby_force() {
-    const u = game.u;
-    if (!u) return;
-    const dist = (u.ulevel || 1) * 20;
-    const dist2 = (x1, y1, x2, y2) => (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
-    for (const mtmp of (game.level?.monsters || [])) {
-        if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
-        if (dist === 0 || dist2(mtmp.mx, mtmp.my, u.ux, u.uy) < dist) {
-            mtmp.msleeping = 0;
-            // wake 'meditation' (STRAT_WAITMASK) unless G_UNIQ; the starter
-            // goblin/sewer rat are not unique.  mstrategy isn't otherwise
-            // modelled; clearing a wait flag if present is harmless.
-            if (mtmp.mstrategy != null) mtmp.mstrategy &= ~0x00ff0000; /* STRAT_WAITMASK */
-        }
-    }
-}
-
 // C ref: lock.c chest_shatter_msg(otmp) — message for a forced-open chest's
 // destroyed contents.  Disposition depends on oc_material (a PAPER spellbook
 // "is torn to shreds"); the name is the *blind* unidentified singular, e.g.
@@ -3162,7 +3140,9 @@ export async function forcelock() {
             return 0;
         }
     } else {
-        wake_nearby_force(); // blunt weapon: hammering wakes nearby monsters.
+        // blunt weapon: hammering wakes nearby monsters (lock.c forcelock()).
+        const { wake_nearby } = await import('./cmd.js');
+        await wake_nearby(false);
     }
 
     // rn2(100) >= chance -> still busy.  C ref: lock.c:244.
@@ -3222,6 +3202,15 @@ export async function dooverview() {
 export async function show_overview_disclosure(final, how) {
     const lines = await build_overview_lines(final, how);
     if (!lines.length) return;
+    // C ref: wintty.c tty_display_nhwindow() — a menu whose maxrow reaches the
+    // screen height (23+ entries, or several pages) takes the whole screen
+    // (offx == 0) and is torn down with docrt() instead of docorner().
+    const m = extcmd_end_menu(lines, null);
+    if (m.fullscreen) {
+        await extcmd_select_menu(m);
+        await dismiss_invent_screen();
+        return;
+    }
     render_overview_menu(lines);
     for (;;) {
         const key = await nhgetch();
@@ -3633,6 +3622,9 @@ async function dotravel_target_extcmd() {
 async function do_run_extcmd() {
     const { do_run_prefix } = await import('./cmd.js');
     const res = await do_run_prefix();
+    // Same pending-prefix state the 'G' key arms (cmd.js rhack): the next key
+    // is the direction, or a bad key that leaves the prefix pending.
+    if (res === 0) game.context.run_prefix = 3;
     return res === 1 ? 1 : 0;
 }
 
@@ -3642,6 +3634,8 @@ async function do_run_extcmd() {
 async function do_rush_extcmd() {
     const { do_rush } = await import('./cmd.js');
     const res = await do_rush();
+    // Same pending-prefix state the 'g' key arms (cmd.js rhack).
+    if (res === 0) game.context.run_prefix = 2;
     return res === 1 ? 1 : 0;
 }
 
@@ -4058,7 +4052,19 @@ export async function wiz_map_extcmd() {
     for (const [o, k] of slots) o[k] = typeof o[k] === 'boolean' ? false : 0;
     try {
         for (const t of (game.level?.traps || [])) t.tseen = 1;
-        for (const ep of (game.level?.engravings || [])) ep.erevealed = 1;
+        // C ref: wizcmds.c:189-191 `map_engraving(ep, TRUE)` — maps and shows the
+        // engraving glyph; it never sets ep->erevealed (only seeing or feeling
+        // the square does), so a later out-of-sight redraw still shows floor.
+        const { engraving_glyph, show_glyph_cell, bg_attr } = await import('./display.js');
+        for (const ep of (game.level?.engravings || [])) {
+            const lev = game.level.at(ep.engr_x, ep.engr_y);
+            if (!lev) continue;
+            const g = engraving_glyph(lev);
+            if (game.level.flags?.hero_memory)
+                lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
+                                         bwEngr: g.bwEngr };
+            show_glyph_cell(ep.engr_x, ep.engr_y, g.ch, g.color, g.dec, bg_attr(g));
+        }
         await do_mapping();
     } finally {
         slots.forEach(([o, k], i) => { o[k] = saved[i]; });

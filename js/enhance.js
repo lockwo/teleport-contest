@@ -220,6 +220,12 @@ function build_skill_state() {
     // Roles starting with a horse (Knight's pony) know how to ride it.
     if (rolemnum === PM_KNIGHT) P_SKILL[P_RIDING] = P_BASIC;
 
+    // C ref: u_init.c pauper_reinit() — a pauper loses every skill better
+    // than Unskilled (P_ADVANCE reset below via the unskilled formula = 0).
+    if (game.u?.uroleplay?.pauper)
+        for (let i = 0; i < P_NUM_SKILLS; i++)
+            if (P_SKILL[i] > P_UNSKILLED) P_SKILL[i] = P_UNSKILLED;
+
     // C ref: u_init.c skill_init():1795-1801 — the tail loop seeds every
     // unrestricted skill's training counter to the amount already "spent"
     // reaching its starting level, so a Basic skill starts at 20 rather than 0.

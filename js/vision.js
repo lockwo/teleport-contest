@@ -10,8 +10,7 @@ import {
     SV0, SV1, SV2, SV3, SV4, SV5, SV6, SV7, SVALL,
     IS_WALL, CROSSWALL, TRWALL, TREE, CLOUD, WATER, LAVAWALL, TEMP_LIT,
     MOAT, DRAWBRIDGE_UP, DB_UNDER, DB_MOAT, Is_juiblex_level, Is_waterlevel,
-    TT_PIT, Is_rogue_level,
-} from './const.js';
+    TT_PIT, Is_rogue_level, OBJ_FLOOR } from './const.js';
 import { newsym } from './display.js';
 import { infravision, monster_by_pmidx } from './makemon.js';
 import { races } from './roles.js';
@@ -155,7 +154,7 @@ function _blocks(level, x, y) {
     const objs = level.objects;
     if (objs) {
         for (const o of objs) {
-            if (o.otyp === 475 /*BOULDER*/ && o.where === 'floor'
+            if (o.otyp === 475 /*BOULDER*/ && o.where === OBJ_FLOOR
                 && o.ox === x && o.oy === y) return true;
         }
     }
@@ -674,7 +673,11 @@ export function vision_recalc(control = 0) {
     const u = game.u;
     if (!u || !game.level) return;
     game.vision_full_recalc = 0;
-    if (game.in_mklev) return;
+    // C ref: vision.c:533 `if (gi.in_mklev || program_state.in_getlev ||
+    // !iflags.vision_inited) return;` — end.c really_done() renders the vision
+    // subsystem inoperative before disclosure, so the docrt() that follows a
+    // disclosure menu neither blanks nor recomputes sight.
+    if (game.in_mklev || game.iflags?.vision_inited === false) return;
 
     // Swap to unused buffer
     const next = game.active_buf === 0 ? cs_buf1 : cs_buf0;
@@ -953,6 +956,9 @@ export function clear_area_cells(scol, srow, range) {
 }
 
 export function init_vision_globals() {
+    // C ref: vision.c:263 `iflags.vision_inited = TRUE` (end.c:1152 clears it
+    // once the hero is really dead; a fresh game must start with it set).
+    (game.iflags = game.iflags || {}).vision_inited = true;
     game.viz_array = cs_buf0;
     game.active_buf = 0;
     game.vis_step = 0;

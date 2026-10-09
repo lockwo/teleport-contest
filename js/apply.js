@@ -47,8 +47,7 @@ import {
 import {
     EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY, N_DIRS, xdir, ydir,
     DIGCHECK_FAILED, DIGCHECK_FAIL_BOULDER, PIT, HOLE, ROOM, ICE,
-    MELT_ICE_AWAY, NO_MM_FLAGS,
-} from './const.js';
+    MELT_ICE_AWAY, NO_MM_FLAGS, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_MINVENT } from './const.js';
 import { surface as surface_word, ceiling as ceiling_dg } from './dungeon.js';
 
 // C ref: include/onames.h — STETHOSCOPE object type index (mkobj.js OBJECTS
@@ -507,7 +506,7 @@ async function its_dead(rx, ry, resp) {
     const CORPSE_OTYP = 265; // mkobj.js OBJECT_DATA — corpse
     const objs = [];
     for (const o of (game.level?.objects || []))
-        if (o && o.where === 'floor' && o.ox === rx && o.oy === ry) objs.push(o);
+        if (o && o.where === OBJ_FLOOR && o.ox === rx && o.oy === ry) objs.push(o);
     let corpse = objs.find((o) => o.otyp === CORPSE_OTYP) || null;
     let statue = objs.find((o) => o.otyp === STATUE_OTYP) || null;
     if (corpse && statue) {
@@ -1223,9 +1222,9 @@ async function do_break_wand(obj) {
 async function use_cream_pie(obj) {
     await loadDeps();
     const { update_topl } = await import('./display.js');
-    const { vision_recalc } = await import('./vision.js');
+    const { Blind } = await import('./vision.js');
     const u = game.u;
-    const wasblind = (u?.blinded || 0) > 0; // Blind before
+    const wasblind = Blind(); // Blind before
     // C ref: apply.c use_cream_pie() — a stack is split first (splitobj()'s
     // nextoid() draws rnd(2)) and only ONE pie is smeared and used up.
     let several = false;
@@ -1240,28 +1239,23 @@ async function use_cream_pie(obj) {
         await update_topl(`You immerse your face in ${several ? 'one of ' : ''}${
             several ? makeplural(the(xname(obj))) : the(xname(obj))}.`);
     }
-    // can_blnd(0, youmonst, AT_WEAP, cream pie) is TRUE for a cream pie.
-    const blindinc = rnd(25);
-    if (u) {
+    // can_blnd(0, youmonst, AT_WEAP, cream pie): FALSE with no eyes or when
+    // Blindfolded (ublindf other than LENSES).
+    const { youmonst_data } = await import('./invent.js');
+    const { eyecount } = await import('./polyself.js');
+    const blindfolded = !!(game.ublindf && game.ublindf.otyp !== 232 /* LENSES */);
+    if (eyecount(youmonst_data()) !== 0 && !blindfolded) {
+        const blindinc = rnd(25);
+        const wascreamed = (u.ucreamed || 0) > 0;
         u.ucreamed = (u.ucreamed || 0) + blindinc;
-        // make_blinded(Blinded + blindinc, FALSE): set the blind timer, then
-        // toggle_blindness() -> vision_recalc(0) so the now-unseen monsters are
-        // blanked from the display this turn.
-        u.blinded = (u.blinded || 0) + blindinc;
-    }
-    // C ref apply.c:3588 — make_blinded() (which runs toggle_blindness ->
-    // vision_recalc(0)) fires BEFORE the "can't see through the goop" pline.
-    // The vision recalc must therefore happen between the two messages: the
-    // second pline triggers the "--More--" prompt, and the screen captured at
-    // that prompt must already show the now-unseen monsters blanked.  Doing the
-    // recalc after both plines (as before) left the stale monster glyphs on the
-    // --More-- screen, diverging from C (seed0108 step-55).
-    if (!wasblind) { try { vision_recalc(0); } catch (e) { /* ignore */ } }
-    // !wasblind && now Blind -> the "can't see through the goop" line.
-    if (!wasblind) {
-        await update_topl(`You can't see through all the sticky goop on your face.`);
-    } else {
-        await update_topl(`There's more sticky goop all over your face.`);
+        // make_blinded() runs toggle_blindness -> vision_recalc(0) BEFORE the
+        // goop pline, so the --More-- screen already has monsters blanked.
+        const { make_blinded_hero } = await import('./potion.js');
+        await make_blinded_hero((u.blinded || 0) + blindinc, false);
+        if (!Blind() || (Blind() && wasblind))
+            await update_topl(`There's ${wascreamed ? 'more ' : ''}sticky goop all over your face.`);
+        else
+            await update_topl(`You can't see through all the sticky goop on your face.`);
     }
     // setnotworn + costly_alteration (no RNG, no cost) + use up the pie.
     consume_applied_pie(obj);
@@ -1286,7 +1280,7 @@ function consume_applied_pie(obj) {
             _invent.useupall(obj);
             // delobj() -> obj_resists(obj, 0, 0): plain rn2(100) for a cream pie.
             rn2(100);
-        } else { obj.where = 'free'; rn2(100); }
+        } else { obj.where = OBJ_FREE; rn2(100); }
     } catch (e) { /* ignore */ }
 }
 
@@ -1335,9 +1329,12 @@ export async function wipeoff() {
     if ((u?.blinded || 0) <= 0) {
         if (u) { u.blinded = 0; u.ucreamed = 0; }
         await update_topl(`You've got the glop off.`);
-        // make_blinded(0, TRUE): regaining sight -> "You can see again."
-        await update_topl(`You can see again.`);
-        try { vision_recalc(0); } catch (e) { /* ignore */ }
+        const { gulp_blnd_check } = await import('./mhitu.js');
+        if (!await gulp_blnd_check()) {
+            u.blinded = 1;
+            const { make_blinded_hero } = await import('./potion.js');
+            await make_blinded_hero(0, true);
+        }
         return 0; // occupation finished
     } else if ((u?.ucreamed || 0) === 0) {
         await update_topl(`Your face feels clean now.`);
@@ -2138,7 +2135,7 @@ async function ap_floorfood(verb, corpsecheck) {
     // call site can only observe menu_requested among those.
     if (!game.iflags?.menu_requested && corpsecheck === 2) {
         const objs = (game.level?.objects || []).filter(
-            (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy
+            (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy
                 && o.otyp === CORPSE_A && tinnable(o));
         for (const otmp of objs) {
             const one = (otmp.quan || 1) === 1;
@@ -2162,10 +2159,15 @@ async function ap_floorfood(verb, corpsecheck) {
 }
 // C ref: teleport.c tele_to_rnd_pet() — DEFERRED (no port).
 async function ap_tele_to_rnd_pet() {}
-// C ref: zap.c:3861-4093 bhit()'s FLASHED_LIGHT branch.
+// C ref: zap.c:3861-4093 bhit()'s FLASHED_LIGHT branch.  The S_flashbeam beam
+// (tmp_at(DISP_BEAM, ...)) records each square the hero can see, and
+// tmp_at(DISP_END) newsym()s every one of them back — which while hallucinating
+// draws the display RNG for each monster/object re-seen there.
 async function ap_bhit_flash(dx, dy, range, obj) {
     const A = await ap_load();
+    const D = A.display;
     let x = game.u.ux, y = game.u.uy;
+    await D.tmp_at(DISP_BEAM_A, D.fn_cmap_to_glyph(79 /* S_flashbeam */));
     while (range-- > 0) {
         x += dx; y += dy;
         if (!isok(x, y)) break;
@@ -2175,14 +2177,26 @@ async function ap_bhit_flash(dx, dy, range, obj) {
         const mon = A.display.m_at(x, y);
         if (mon && mon.m_ap_type !== 'obj' && mon.m_ap_type !== M_AP_OBJECT) {
             game.notonhead = (x !== mon.mx || y !== mon.my);
-            if (!mon.minvis) return mon;
+            if (!mon.minvis) {
+                await D.tmp_at(DISP_END_A, 0);
+                return mon;
+            }
             obj.ox = game.u.ux; obj.oy = game.u.uy;
             await A.uhitm.flash_hits_mon(mon, obj);
         }
         if (!ZAP_POS(loc.typ)
             || (IS_DOOR(loc.typ) && (loc.doormask & (D_CLOSED | D_LOCKED))))
             break;
+        /* 'I' present but no monster: erase; do this before tmp_at() */
+        if (loc.invisMon && A.vision.cansee(x, y)) {
+            D.unmap_object(x, y);
+            D.newsym(x, y);
+        }
+        await D.tmp_at(x, y);
+        if (A.vision.cansee(x, y))
+            D.show_glyph_cell(x, y, '!', 15 /* CLR_WHITE */, false);
     }
+    await D.tmp_at(DISP_END_A, 0);
     return null;
 }
 // C ref: teleport.c enexto(cc, xx, yy, mdat) — js/dog.js's enexto() is private
@@ -3189,9 +3203,6 @@ function setnotworn_ap(obj) { if (obj) obj.owornmask = 0; }
 // C ref: include/timeout.h TIMER_OBJECT / FIG_TRANSFORM, include/trap.h
 // TT_BURIEDBALL (verified against js/const.js's own values).
 const TIMER_OBJECT_A = 3, FIG_TRANSFORM_A = 6, TT_BURIEDBALL_A = 6;
-// C ref: include/obj.h:75 — obj->where.
-const OBJ_FREE_A = 0, OBJ_FLOOR_A = 1, OBJ_CONTAINED_A = 2,
-      OBJ_INVENT_A = 3, OBJ_MINVENT_A = 4;
 // C ref: include/mkroom.h SHOPBASE.
 const SHOPBASE_A = 2;
 // C ref: timers.c start_timer/stop_timer — js/mkobj.js's start_timer() and
@@ -3483,7 +3494,7 @@ export async function snuff_candle(otmp) {
         // monster's pack and its square is visible, or (any other `where`) when
         // the hero is not blind.  js/light.js's get_obj_location() is private,
         // so read the object's own ox/oy, which it keeps in sync.
-        const visible = (otmp.where === OBJ_MINVENT_A)
+        const visible = (otmp.where === OBJ_MINVENT)
             ? A.vision.cansee(otmp.ox | 0, otmp.oy | 0) : !A.vision.Blind();
         if (visible)
             await A.display.pline(`${await ap_Shk_Your(otmp)}${
@@ -3503,7 +3514,7 @@ export async function snuff_lit(obj) {
     if (obj.lamplit) {
         if (obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP
             || obj.otyp === BRASS_LANTERN || obj.otyp === POT_OIL) {
-            const visible = (obj.where === OBJ_MINVENT_A)
+            const visible = (obj.where === OBJ_MINVENT)
                 ? A.vision.cansee(obj.ox | 0, obj.oy | 0) : !A.vision.Blind();
             if (visible)
                 await A.display.pline(`${await ap_Yname2(obj)} ${
@@ -3889,7 +3900,7 @@ export async function fig_transform(arg, timeout) {
     // keeps in sync) and use isok() as the "found a location" test.
     const cc = { x: figurine.ox | 0, y: figurine.oy | 0 };
     let okay_spot = ap_isok(cc.x, cc.y);
-    if (figurine.where === OBJ_INVENT_A || figurine.where === OBJ_MINVENT_A)
+    if (figurine.where === OBJ_INVENT || figurine.where === OBJ_MINVENT)
         okay_spot = await ap_enexto(cc, cc.x, cc.y,
                                     A.makemon.monster_by_pmidx(figurine.corpsenm));
     if (!okay_spot || !figurine_location_checks(figurine, cc, true)) {
@@ -3924,7 +3935,7 @@ export async function fig_transform(arg, timeout) {
         }
 
         switch (figurine.where) {
-        case OBJ_INVENT_A:
+        case OBJ_INVENT:
             if (A.vision.Blind() || suppress_see)
                 await A.display.pline(`You feel ${c_something} drop from your pack!`);
             else
@@ -3932,7 +3943,7 @@ export async function fig_transform(arg, timeout) {
                     and_vanish}!`);
             break;
 
-        case OBJ_FLOOR_A:
+        case OBJ_FLOOR:
             if (cansee_spot && !silent) {
                 if (suppress_see)
                     await A.display.pline(`${ap_an(A.invent.xname(figurine))} suddenly vanishes!`);
@@ -3943,7 +3954,7 @@ export async function fig_transform(arg, timeout) {
             }
             break;
 
-        case OBJ_MINVENT_A: {
+        case OBJ_MINVENT: {
             // C names the carrier ("<mon>'s pack" / "empty water" / "thin air");
             // canseemon(figurine->ocarry) picks between them.
             if (cansee_spot && !silent && !suppress_see) {

@@ -352,13 +352,23 @@ export class NethackGame {
 
         // Initialize hero struct
         g.u = { ux: 0, uy: 0, ux0: 0, uy0: 0 };
-        // C ref: youprop.h See_invisible (HSee_invisible || ESee_invisible).  The
-        // port's role/race intrinsics are derived from ulevel (exper.js
-        // innate_intrinsics), never stored in u.uprops, yet every canseemon()/
-        // mon_visible() copy reads u.see_invis.  A Monk has See_invisible from
-        // XL1, so serve it from the innate table instead of a never-set flag.
+        // C ref: youprop.h See_invisible == (HSee_invisible || ESee_invisible).
+        // The port spells the hero's copy several ways (u.uprops.HSee_invisible
+        // from a quaffed potion, u.See_invisible from a fountain, the worn-item
+        // store uprops_extrinsic[SEE_INVIS], u.formprops, and the role/race
+        // innate table), yet most canseemon()/mon_visible() copies read only
+        // u.see_invis.  Serve ALL of them from this one accessor so every copy
+        // answers the same question (bl012: a see-invisible potion left the
+        // monmove.js canseemon copy blind to an invisible titan's boulder).
         Object.defineProperty(g.u, 'see_invis', {
-            get: () => has_innate('HSee_invisible'), configurable: true });
+            get: () => {
+                const u = g.u, p = u.uprops || {};
+                return has_innate('HSee_invisible')
+                    || !!(p.HSee_invisible || p.ESee_invisible || p.See_invisible
+                          || u.HSee_invisible || u.ESee_invisible || u.See_invisible
+                          || u.formprops?.See_invisible
+                          || ((u.uprops_extrinsic || {})[29 /*SEE_INVIS*/] | 0));
+            }, configurable: true });
         // C ref: optlist.h NHOPTB(blind/deaf/nudist/pauper/reroll, ...,
         // &u.uroleplay.*, ...) — these are real u.uroleplay fields, not
         // flags.*; parseNethackrc() ran before `g.u` existed, so it staged
@@ -1443,17 +1453,22 @@ export async function runSegment(input) {
     // role-filter sub-menu). Treat that like the moveloop does: stop driving
     // input and keep whatever screens were captured up to that point, rather
     // than letting the whole segment fail.
+    let startup_exhausted = false;
     try {
         await nhGame.start();
     } catch (e) {
         if (!String(e?.message || '').includes('Input queue empty'))
             throw e;
+        startup_exhausted = true;
     }
 
     // Drive the game loop until input is exhausted. The judge looks
     // at game.getScreens() afterwards; whatever the contestant
-    // captured is what gets compared.
-    const maxIter = Math.max(moves.length * 8, 1024);
+    // captured is what gets compared.  A startup that already ran out of keys
+    // (the process is blocked in a startup prompt) has nothing left to drive:
+    // another moveloop_core() would only capture one more boundary the C
+    // recording never had, shifting every later segment of the flat session.
+    const maxIter = startup_exhausted ? 0 : Math.max(moves.length * 8, 1024);
     for (let iter = 0; iter < maxIter; iter++) {
         try {
             await moveloop_core();

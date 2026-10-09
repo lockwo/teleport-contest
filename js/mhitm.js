@@ -40,10 +40,10 @@ import {
     MGIVENNAME, has_mgivenname,
 } from './const.js';
 import { DEADMONSTER, mvitals_died, resurrect_kop, healmon, unstuck, vamp_stone, lifesaved_monster,
-    level_specific_nocorpse } from './mon.js';
+    level_specific_nocorpse, vamprises } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
-import { update_topl, Deaf_hero } from './display.js';
+import { update_topl, Deaf_hero, Hallucination_u } from './display.js';
 import { make_corpse, dmgval, mhitm_knockback, seemimicLocal } from './uhitm.js';
 import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './const.js';
 // used only by the appended mhitm.c translations at the bottom of this file
@@ -54,7 +54,7 @@ import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
 } from './monflags_data.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag } from './monflags_data.js';
 import { set_mon_data } from './mondata.js';
-import { G_GENOD } from './const.js';
+import { G_GENOD, OBJ_FREE } from './const.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { xname, youmonst_data_pub } from './invent.js';
 import { MATTK } from './monattk_data.js';
@@ -413,7 +413,7 @@ export async function thrwmmDeps() {
             const { otense } = await import('./invent.js');
             if (range && cansee(pos.x, pos.y) && IS_SINK(typ))
                 await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} ${
-                    otense(obj, 'drop')} onto the sink.`);
+                    otense(obj, Hallucination_u() ? 'plop' : 'drop')} onto the sink.`);
             else if ((ms.n | 0) > 1
                      && (!game.mesg_given || pos.x !== game.u.ux || pos.y !== game.u.uy)
                      && (cansee(pos.x, pos.y)
@@ -530,15 +530,22 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
 // previous combat line's --More-- shows the doomed defender still drawn;
 // killMonster() then removes it for the final frame.  When the square ISN'T
 // visible and the victim was tame, C prints "You have a sad feeling for a
-// moment." AFTER mondied() instead.
-export async function monkilled_mm(mdef, _adtyp, cause = '') {
+// moment." from mondead(), i.e. before the corpse_chance() roll.
+export async function monkilled_mm(mdef, adtyp, cause = '') {
     let be_sad = false;
-    if (cansee(mdef.mx, mdef.my))
+    // C: `fltxt != NULL && cansee` prints the death line; a NULL fltxt (the
+    // disintegration path) is silent and defers the pet sad feeling.
+    if (cause !== null && cansee(mdef.mx, mdef.my))
         await emitMMmsg(`${Monnam(mdef)} is ${nonliving(mdef) ? 'destroyed' : 'killed'}${cause ? ` by the ${cause}` : ''}!`);
     else
         be_sad = !!mdef.mtame;
-    await killMonster(mdef);
-    if (be_sad) await emitMMmsg('You have a sad feeling for a moment, then it passes.');
+    // C: gd.disintegested = (how == AD_DGST || how == -AD_RBRE
+    //                        || (how == AD_FIRE && completelyburns(mptr)))
+    // -> mondead() (never leaves a corpse) instead of mondied().
+    const { completelyburns } = await import('./mondata.js');
+    const disintegested = adtyp === AD_DGST || adtyp === -AD_RBRE
+        || (adtyp === AD_FIRE && completelyburns(mdef.data));
+    await killMonster(mdef, !disintegested, be_sad);
 }
 
 // C ref: mhitm.c:970 explmm(magr, mdef, mattk) — an AT_EXPL monster detonates
@@ -605,7 +612,7 @@ export async function monstone_mm(mdef) {
                 mdef.misc_worn_check = ((mdef.misc_worn_check | 0) & ~unwornmask) | I_SPECIAL;
                 if (obj === mdef.mw) mdef.mw = null;
             }
-            obj.where = 'free';
+            obj.where = OBJ_FREE;
             obj.ocarry = null;
             if (obj.otyp === MO.BOULDER
                 /* invocation tools resist even with 0% resistance */
@@ -757,9 +764,24 @@ function is_pool(x, y) {
 // rndmonnum and the corpse-timeout sequence.  withCorpse=false is a bare
 // mondead(): no corpse_chance() roll and no corpse.
 export async function mondied_mm(mdef) { return await killMonster(mdef); }
-async function killMonster(mdef, withCorpse = true) {
+export async function mondead_mm(mdef) { return await killMonster(mdef, false); }
+async function killMonster(mdef, withCorpse = true, be_sad = false) {
     mdef.mhp = 0;
+    // C ref: mon.c:3092-3098 mondead() — life-saving first, then a shapeshifted
+    // vampire reverts to vampire form instead of dying.
+    await lifesaved_monster(mdef);
+    if (!DEADMONSTER(mdef)) return;
+    if (is_vampshifter_mm(mdef)) {
+        game.disintegested = !withCorpse;
+        const rose = await vamprises(mdef);
+        game.disintegested = false;
+        if (rose) return;
+    }
     mvitals_died(mdef);                // mondead restores the true form first
+    // C ref: mon.c:3100 mondead() — the deferred pet-death message prints
+    // right after the lifesaving check, BEFORE m_detach() and mondied()'s
+    // corpse_chance() rolls (so any --More-- it forces lands ahead of them).
+    if (be_sad) await emitMMmsg('You have a sad feeling for a moment, then it passes.');
     await resurrect_kop(mdef);
     // C ref: mon.c mondead() — "if (glyph_is_invisible(...)) unmap_object(...)"
     // runs before m_detach.  A defender killed this same attack may have just

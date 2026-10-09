@@ -25,8 +25,7 @@ import {
     DB_ICE, DB_UNDER, IS_WALL, IS_DRAWBRIDGE, IS_WATERWALL, isok,
     Is_juiblex_level, Is_stronghold,
     KILLED_BY_AN, NO_KILLER_PREFIX, CRUSHING, DROWNING, BURNING,
-    XKILL_GIVEMSG, XKILL_NOMSG, XKILL_NOCORPSE, XKILL_NOCONDUCT,
-} from './const.js';
+    XKILL_GIVEMSG, XKILL_NOMSG, XKILL_NOCORPSE, XKILL_NOCONDUCT, OBJ_FREE, OBJ_FLOOR } from './const.js';
 import { rn2, rnd } from './rng.js';
 import { m_at, newsym, pline, canseemon_shared } from './display.js';
 import { block_point, unblock_point, does_block, vision_recalc, cansee } from './vision.js';
@@ -876,7 +875,7 @@ function OBJ_AT(x, y) {
 function floor_pile(x, y) {
     const out = [];
     for (const o of (game.level?.objects || []))
-        if (o.where === 'floor' && o.ox === x && o.oy === y) out.unshift(o);
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y) out.unshift(o);
     return out;
 }
 
@@ -893,7 +892,7 @@ function delallobj(x, y) {
     for (const o of floor_pile(x, y)) {
         const ix = arr.indexOf(o);
         if (ix >= 0) arr.splice(ix, 1);
-        o.where = 'free';
+        o.where = OBJ_FREE;
     }
     newsym(x, y);
 }

@@ -7,7 +7,7 @@
 // picklock()/forcelock() occupations and writes game.xlock; this file is the
 // read side, so nothing has to reach into that module's state by hand.
 import { game } from './gstate.js';
-import { SDOOR, DOOR } from './const.js';
+import { SDOOR, DOOR, OBJ_INVENT } from './const.js';
 
 // C ref: lock.c:17 picking_lock(&x, &y) — TRUE while the picklock occupation is
 // armed against a DOOR; the coordinates are the square the hero is facing.
@@ -47,7 +47,7 @@ export function maybe_reset_pick(container) {
 // C ref: hack.h carried(obj) — obj->where == OBJ_INVENT.
 function carried(obj) {
     if (!obj) return false;
-    if (obj.where === 'invent' || obj.where === 3) return true;
+    if (obj.where === OBJ_INVENT) return true;
     const inv = game.invent || game.gi?.invent;
     return Array.isArray(inv) && inv.includes(obj);
 }

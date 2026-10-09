@@ -4,7 +4,7 @@
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
-import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL } from './const.js';
+import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL, OBJ_FREE, OBJ_MINVENT } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
 import { set_malign, monster_by_pmidx, propagate } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
@@ -309,7 +309,7 @@ function put_saddle_on_mon(saddle, mtmp) {
     // mpickobj(mtmp, saddle): hand the saddle to the (tame) monster.
     // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.
     if (!mtmp.minvent) mtmp.minvent = [];
-    saddle.where = 'minvent';
+    saddle.where = OBJ_MINVENT;
     mtmp.minvent.unshift(saddle);
     // misc_worn_check |= W_SADDLE; saddle->owornmask = W_SADDLE; ...
     mtmp.misc_worn_check = (mtmp.misc_worn_check || 0) | W_SADDLE;
@@ -1409,7 +1409,7 @@ export async function discard_migrations() {
             /* bypass obj_extract_self() */
             g.migrating_objs.splice(i, 1);
             otmp.nobj = null;
-            otmp.where = 'free';                /* OBJ_FREE */
+            otmp.where = OBJ_FREE;                /* OBJ_FREE */
             otmp.owornmask = 0;                 /* overloaded for destination */
             obfree(otmp, null);                 /* releases any contents too */
         }

@@ -539,6 +539,9 @@ async function done(how) {
     }
 
     if (!survive) {
+        // C ref: end.c:1152 really_done() — "render vision subsystem
+        // inoperative" (vision_recalc() early-returns from here on).
+        (game.iflags = game.iflags || {}).vision_inited = false;
         // C ref: end.c:1157 — `if (!program_state.panicking) done_object_cleanup()`,
         // run before disclosure and before bones are written.
         await done_object_cleanup();
@@ -579,9 +582,9 @@ async function done(how) {
         // everything, and that message shares the death topline.
         let taken = false;
         if (how !== PANICKED && !stopprint) {
-            const { paybill } = await import('./shkroom.js');
+            const { paybill } = await import('./shk.js');
             const before = game._pending_message;
-            taken = !!await paybill(how === ESCAPED ? -1 : (how !== QUIT ? 1 : 0));
+            taken = !!await paybill(how === ESCAPED ? -1 : (how !== QUIT ? 1 : 0), !!stopprint);
             // C ref: pline.c vpline() `if (u.ux) flush_screen(1)` ->
             // display.c:2236 `if (disp.botl || disp.botlx) bot()`.  done() has
             // just forced u.uhp to 0 and set disp.botl, so the shopkeeper's

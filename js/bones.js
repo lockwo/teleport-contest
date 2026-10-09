@@ -28,7 +28,7 @@ import { depth as depth_of_level } from './hacklib.js';
 import { Is_special } from './dungeon.js';
 import { roles } from './role.js';
 import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET,
-         Is_oracle_level, In_quest } from './const.js';
+         Is_oracle_level, In_quest, OBJ_FLOOR, OBJ_CONTAINED } from './const.js';
 import { msound_of, MS_LEADER, MS_NEMESIS, mflags2_of,
          M2_GREEDY, M2_JEWELS, M2_COLLECT, M2_MAGIC } from './monflags_data.js';
 import { can_carry, DEADMONSTER } from './mon.js';
@@ -898,10 +898,10 @@ export function resetobjs(ochain, restore, deps = {}) {
                 let top = otmp;
                 // C: `for (top = otmp; top->where == OBJ_CONTAINED;
                 //       top = top->ocontainer) continue;`
-                while (top.where === 'contained' && top.ocontainer)
+                while (top.where === OBJ_CONTAINED && top.ocontainer)
                     top = top.ocontainer;
                 const loc = { x: 0, y: 0 };
-                otmp.no_charge = (top.where === 'floor'
+                otmp.no_charge = (top.where === OBJ_FLOOR
                                   && deps.get_obj_location?.(top, loc, 0)
                                   /* can't use costly_spot(): its result
                                      depends on the hero's location */

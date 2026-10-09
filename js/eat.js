@@ -9,7 +9,7 @@ import { s_suffix } from './hacklib.js';
 import { pline, update_topl, y_n, note_topl, status_hold } from './display.js';
 import { poison_strdmg, exercise, acurr_eff, adjattrib } from './attrib.js';
 import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, G_GENOD, Has_contents,
-         INTRINSIC, INVIS, DISPLACED, UNCHANGING } from './const.js';
+         INTRINSIC, INVIS, DISPLACED, UNCHANGING, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_POIS, M1_METALLIVORE, M1_NOHANDS,
          M1_CARNIVORE, M1_HERBIVORE, M1_HUMANOID,
@@ -446,7 +446,7 @@ export function eat_ok(obj) {
 }
 
 // C ref: obj.h carried(obj) — the object is in the hero's inventory.
-function carried(otmp) { return otmp?.where === 'invent'; }
+function carried(otmp) { return otmp?.where === OBJ_INVENT; }
 
 // C ref: eat.c touchfood() — split a single item off a stack (consuming the
 // rnd(2) inside next_ident via splitobj/nextoid), mark its initial nutrition,
@@ -459,7 +459,7 @@ function carried(otmp) { return otmp?.where === 'invent'; }
 // and abort the meal) is not modelled: the port has no inv_cnt().
 function touchfood(otmp) {
     const was_carried = carried(otmp);
-    if ((otmp.quan || 1) > 1 && !was_carried && otmp.where === 'floor'
+    if ((otmp.quan || 1) > 1 && !was_carried && otmp.where === OBJ_FLOOR
         && Array.isArray(game.level?.objects)) {
         // C: `if (!carried(otmp)) (void) splitobj(otmp, otmp->quan - 1L);` —
         // the bitten piece (quan 1) STAYS on the floor, and the remaining
@@ -487,7 +487,7 @@ function touchfood(otmp) {
             quan: 1,
             owt: 0,
             owornmask: 0,
-            where: 'free',
+            where: OBJ_FREE,
             o_id: `${stack.o_id || 'food'}-bite`,
         };
         otmp.owt = _mkobj.weight(otmp);
@@ -499,7 +499,7 @@ function touchfood(otmp) {
     // freeinv + addinv_nomerge.  For a quan==1 item this is letter-neutral
     // (nothing else holds its letter, so assigninvlet keeps it and leaves
     // lastinvnr alone), so only the split piece actually needs re-adding.
-    if (was_carried && otmp.where === 'free') otmp = _invent.addinv_nomerge(otmp);
+    if (was_carried && otmp.where === OBJ_FREE) otmp = _invent.addinv_nomerge(otmp);
     return otmp;
 }
 
@@ -1123,7 +1123,7 @@ async function floorfood_eat() {
                 ++_getobj_else;
             }
             const gold = (game.level?.objects || []).find(
-                (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy
+                (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy
                        && o.oclass === COIN_CLASS);
             if (!hero_is_pm('rust monster') && gold) {
                 const c = await y_n((gold.quan | 0) === 1
@@ -1489,25 +1489,17 @@ async function fpostfx(otmp) {
         // u.ulycn source.
         break;
     case CARROT:
-        // C: make_blinded(u.ucreamed, TRUE) — a carrot SETS the blindness
-        // timer to however much cream is on your face (normally 0), so it
-        // cures blindness.  Blind gates a large number of later rn2
-        // predicates, so this is not display-only.  make_blinded() only
-        // announces when sight is actually regained, hence the was_blind
-        // guard (C: can_see_now && !u_could_see).
-        // C's guard is `!u.uswallow || !attacktype_fordmg(ustuck, AT_ENGL,
-        // AD_BLND)`; nothing in this port engulfs the hero.
-        if (u && !u.uswallow) {
-            const was_blind = _vision.Blind();
-            u.blinded = u.ucreamed || 0;
-            u.ucreamed = 0;
-            if (was_blind && !_vision.Blind()) {
-                await update_topl(u.uhallu
-                    ? 'Far out!  Everything is all cosmic again!'
-                    : 'You can see again.');
-                try { _vision.vision_recalc(0); } catch (e) { /* ignore */ }
-            }
-        }
+        // C ref: eat.c fprefx() — make_blinded((long) u.ucreamed, TRUE): a
+        // carrot SETS the blindness timer to however much cream is on your
+        // face (normally 0), so it cures blindness.  Going through
+        // make_blinded() matters: its toggle_blindness() recalculates vision
+        // and runs learn_unseen_invent(), which gives everything wished for
+        // or picked up while blind its appearance (and so its place in the
+        // '\\' discoveries order).  C's guard is `!u.uswallow ||
+        // !attacktype_fordmg(ustuck, AT_ENGL, AD_BLND)`; nothing in this port
+        // engulfs the hero.
+        if (u && !u.uswallow)
+            await (await import('./potion.js')).make_blinded_hero(u.ucreamed || 0, true);
         break;
     case FORTUNE_COOKIE: {
         // C: outrumor(bcsign(otmp), BY_COOKIE)
@@ -1582,7 +1574,9 @@ async function fpostfx(otmp) {
         // be eaten in complete silence with no roll at all.
         if (otmp.cursed
             && !(u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance'))) {
-            if (game.u?.uprops?.HDeaf || !game.flags?.acoustics)
+            if (game.urace?.adj === 'dwarven' && game.u?.uhallu)
+                await update_topl('"Heigh-ho, ho-hum, I think I\'ll skip work today."');
+            else if (game.u?.uprops?.HDeaf || !game.flags?.acoustics)
                 await update_topl('You fall asleep.');
             else
                 await update_topl('You hear sinister laughter as you fall asleep...');
@@ -2076,16 +2070,11 @@ async function cpostfx(pm) {
 function speciesVegan(mnum) { return vegan(monster_by_pmidx(mnum)); }
 function speciesVegetarian(mnum) { return vegetarian(monster_by_pmidx(mnum)); }
 
-// C ref: hack.c losehp() — subtract damage from u.uhp (no RNG); the death
-// path is not modelled here.
-async function losehp_eat(n) {
-    const u = game.u;
-    if (!u) return;
-    hooks.end_running?.(true); // hack.c:4266
-    u.uhp -= n;
-    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
-    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
-    if (u.uhp < 0) u.uhp = 0;
+// C ref: hack.c losehp(n, knam, k_format) — do.js owns the complete port
+// (death path, killer text, polymorph arm).
+async function losehp_eat(n, knam, k_format) {
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(n, knam, k_format);
 }
 
 // C ref: eat.c rottenfood(obj) — "first bite" of rotten food.  Rolls, in
@@ -2223,7 +2212,8 @@ async function eatcorpse(otmp) {
     } else if (sp && mon_acidic(sp) && !u?.uprops?.Acid_resistance) {
         tp++;
         await update_topl('You have a very bad case of stomach acid.');
-        await losehp_eat(rnd(15));                           // eat.c:1926 acid losehp
+        await losehp_eat(rnd(15), !glob ? 'acidic corpse' : 'acidic glob',
+                         0 /* KILLED_BY_AN */);              // eat.c:1926 acid losehp
     } else if (sp && mon_poisonous(sp) && rn2(5)) {
         tp++;
         await update_topl('Ecch - that must have been poisonous!');
@@ -2231,14 +2221,16 @@ async function eatcorpse(otmp) {
         // from level 1, monk from level 3, tourist from level 20) is never
         // persisted as a stored uprops flag, so OR in has_innate().
         if (!(u?.uprops?.Poison_resistance || has_innate('HPoison_resistance')))
-            poison_strdmg(rnd(4), rnd(15));            // eat.c:1932 poison dmg
+            await poison_strdmg(rnd(4), rnd(15), !otmp.globby ? 'poisonous corpse' : 'poisonous glob',
+                                0 /* KILLED_BY_AN */);       // eat.c:1932 poison dmg
         else
             await update_topl('You seem unaffected by the poison.');
     } else if ((rotted > 5 || (rotted > 3 && rn2(5)))
                && !u?.uprops?.Sick_resistance) {       // eat.c:1939
         tp++;
         await update_topl(`You feel ${u?.uprops?.Sick ? 'very ' : ''}sick.`);
-        await losehp_eat(rnd(8));                            // eat.c:1942 losehp(rnd(8))
+        await losehp_eat(rnd(8), !glob ? 'cadaver' : 'rotted glob',
+                         0 /* KILLED_BY_AN */);              // eat.c:1942 losehp(rnd(8))
     }
 
     // delay is weight dependent: reqtime = 3 + (cwt >> 6); a glob uses its own
@@ -2293,7 +2285,8 @@ async function eatcorpse(otmp) {
         const prefix = type_is_pname(mnum) ? ''
             : the_unique_pm(mnum) ? 'The ' : 'This ';
         const tasteWord = hallu
-            ? (yummy ? 'gnarly' : palatable ? 'copacetic' : 'grody')
+            ? (yummy ? (hero_is_pm('tiger') ? 'gr-r-reat' : 'gnarly')
+                     : palatable ? 'copacetic' : 'grody')
             : (yummy ? 'delicious' : palatable ? palat.slice(1) : 'terrible');
         const endCh = (yummy || !palatable) ? '!' : '.';
         // "This goblin corpse tastes terrible!"  update_topl combines with the
@@ -2619,7 +2612,7 @@ export function eating_dangerous_corpse(res) {
     if (!ismnum(mnum)) return false;
     // C: carried(food) || obj_here(food, u.ux, u.uy).
     if (!carried(food)
-        && !(food.where === 'floor' && food.ox === u.ux && food.oy === u.uy))
+        && !(food.where === OBJ_FLOOR && food.ox === u.ux && food.oy === u.uy))
         return false;
     if (res === P_ACID_RES && mon_acidic(monster_by_pmidx(mnum))) return true;
     // flesh_petrifies() covers Medusa as well as touch_petrifies().
@@ -3879,7 +3872,7 @@ export async function doeat_nonfood(otmp) {
     if (otmp.oclass === WEAPON_CLASS && otmp.opoisoned) {
         await pline('Ecch - that must have been poisonous!');
         if (!(game.u?.uprops?.Poison_resistance || has_innate('HPoison_resistance')))
-            poison_strdmg(rnd(4), rnd(15));
+            await poison_strdmg(rnd(4), rnd(15), _objnam.xname(otmp), 0 /* KILLED_BY_AN */);
         else
             await pline('You seem unaffected by the poison.');
     } else if (!nodelicious) {

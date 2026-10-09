@@ -66,8 +66,13 @@ function worn_property_sources() {
     // C worn.c's worn[] order.  Saved games can have a valid hero slot before
     // the inventory list is reconstructed, so do not rely on invent alone.
     for (const o of [game.uarm, game.uarmc, game.uarmh, game.uarms, game.uarmg,
-        game.uarmf, game.uarmu, game.uleft, game.uright, game.uwep,
-        game.uswapwep, game.uquiver, game.uamul, game.ublindf]) add(o);
+        game.uarmf, game.uarmu, game.uleft, game.uright, game.uamul,
+        game.ublindf]) add(o);
+    // C ref: worn.c setworn() — W_SWAPWEP/W_QUIVER confer nothing, and a wielded
+    // object only confers its oc_oprop when it is a weapon or weptool (a wielded
+    // amulet of life saving is not saving anyone).
+    if (game.uwep && (game.uwep.oclass === WEAPON_CLASS || is_weptool(game.uwep)))
+        add(game.uwep);
     for (const o of (game.invent || []))
         if ((o.owornmask || 0) & W_GIVES_PROP) add(o);
     return sources;
@@ -240,10 +245,14 @@ function from_what(propidx, hkey) {
                     buf = ` because of ${o.oartifact ? bare_artifactname(o) : ysimple_name(o)}`;
                 else if (propidx === BLINDED_PROP && Blindfolded_only())
                     buf = ` because of ${ysimple_name(game.ublindf)}`;
-                // C's goop-covered-face BLINDED arm needs HBlinded's
-                // FROMOUTSIDE/timeout bits kept apart from other sources; this
-                // port's flat uprops store doesn't preserve that, so it is
-                // dropped rather than guessed at.
+                // C ref: attrib.c:964-968 — goop (a cream pie) covering the
+                // face is the whole of the timeout, with no outside source.
+                // The C format string has no leading space, which the
+                // "(timeout)" suffix in front of it hides.
+                else if (propidx === BLINDED_PROP && (game.u?.ucreamed | 0)
+                         && (game.u?.blinded | 0) === (game.u.ucreamed | 0)
+                         && !(H_prop(BLINDED_PROP) & ~TIMEOUT_MASK))
+                    buf = `due to goop covering your ${body_part(FACE)}`;
             }
         }
         if (buf.includes(' pair of ')) buf = buf.replace(' pair of ', ' ');
@@ -286,7 +295,7 @@ import { LL_WISH, LL_ACHIEVE, LL_UMONST, LL_DIVINEGIFT, LL_LIFESAVE,
          livelog_printf } from './livelog.js';
 import { nhgetch } from './input.js';
 import { can_pray_quiet } from './pray.js';
-import { currency, inv_weight, ysimple_name } from './invent.js';
+import { currency, inv_weight, ysimple_name, is_weptool } from './invent.js';
 const _wizard = () => !!(game.flags && game.flags.debug);
 const _discover = () => { const f = game.flags || {}; return !!(f.explore || f.discover || f.playmode === 'explore'); };
 
@@ -1393,24 +1402,24 @@ function show_achievement_lines(final) {
             you_have_X("learned the tune to open and close the Castle's drawbridge");
             break;
         case 1 /* ACH_BELL */:
-            enlLine('You ', u.uhave?.bell ? (final ? 'had ' : 'have ')
+            enlLine('You ', u.uhave?.bell ? (final ? 'had' : 'have')
                     : (final ? 'handled' : 'have handled'), ' the Bell of Opening');
             break;
         case 2 /* ACH_HELL */:
             enlLine('You ', final ? '' : 'have ', 'entered Gehennom');
             break;
         case 3 /* ACH_CNDL */:
-            enlLine('You ', u.uhave?.menorah ? (final ? 'had ' : 'have ')
+            enlLine('You ', u.uhave?.menorah ? (final ? 'had' : 'have')
                     : (final ? 'handled' : 'have handled'),
                     ' the Candelabrum of Invocation');
             break;
         case 4 /* ACH_BOOK */:
-            enlLine('You ', u.uhave?.book ? (final ? 'had ' : 'have ')
+            enlLine('You ', u.uhave?.book ? (final ? 'had' : 'have')
                     : (final ? 'handled' : 'have handled'), ' the Book of the Dead');
             break;
         case 5 /* ACH_INVK */: you_have_X("gained access to Moloch's Sanctum"); break;
         case 6 /* ACH_AMUL */:
-            enlLine('You ', u.uhave?.amulet ? (final ? 'had ' : 'have ')
+            enlLine('You ', u.uhave?.amulet ? (final ? 'had' : 'have')
                     : (final ? 'had obtained' : 'have obtained'),
                     ' the Amulet of Yendor');
             break;
@@ -1572,7 +1581,7 @@ export async function show_attributes_disclosure(final, basic = true) {
 import {
     A_CURRENT, A_ORIGINAL, A_NONE, AC_MAX, LOW_PM,
     TT_LAVA, TT_INFLOOR, TT_BURIEDBALL,
-    HANDED, LEG, I_SPECIAL, FROMFORM, FROMOUTSIDE,
+    HANDED, LEG, FACE, I_SPECIAL, FROMFORM, FROMOUTSIDE,
     SICK_VOMITABLE, SICK_NONVOMITABLE, LEFT_SIDE, BOTH_SIDES, M_AP_NOTHING,
     UNENCUMBERED, SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     OVERLOADED, BASICENLIGHTENMENT, MAGICENLIGHTENMENT, ENL_GAMEOVERALIVE,

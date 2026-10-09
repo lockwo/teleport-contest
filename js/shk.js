@@ -25,7 +25,7 @@ import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
          CANDELABRUM_OF_INVOCATION } from './mkobj.js';
 import { arti_cost } from './artifact.js';
 import { acurr_eff, adjalign, exercise } from './attrib.js';
-import { monster_by_pmidx, mpickobj } from './makemon.js';
+import { monster_by_pmidx, mpickobj, add_to_minv } from './makemon.js';
 import { rn2 } from './rng.js';
 import { update_topl, newsym, m_at, map_invisible } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
@@ -45,7 +45,7 @@ import { A_CHA, A_WIS, HUNGRY, SHOPBASE, ROOMOFFSET, NO_ROOM,
          CANDLESHOP, LANDMINE, BEAR_TRAP, HOLE, PIT, SPIKED_PIT,
          SELL_NORMAL, SELL_DONTSELL, M_AP_NOTHING, M_AP_MONSTER,
          ARM, HAND, HEAD, NECK, COLNO, ROWNO, D_LOCKED, TT_PIT,
-         W_SWAPWEP, W_QUIVER } from './const.js';
+         W_SWAPWEP, W_QUIVER, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, OBJ_ONBILL } from './const.js';
 
 // ── constants ────────────────────────────────────────────────────────────────
 // objclass.h object classes.
@@ -82,11 +82,6 @@ const BILLSZ = 200;                 // shk.h
 
 // hack.h — unpaid_cost()'s cost_type.
 export const COST_NOCONTENTS = 0, COST_CONTENTS = 1, COST_SINGLEOBJ = 2;
-
-// obj.h obj->where.  This port stores `where` as a STRING (mkobj.js/invent.js),
-// not the C small-int, so compare against these spellings.
-const OBJ_FREE = 'free', OBJ_FLOOR = 'floor', OBJ_CONTAINED = 'contained',
-      OBJ_INVENT = 'invent', OBJ_MINVENT = 'minvent';
 
 const carried = (o) => o.where === OBJ_INVENT;
 // obj.h Has_contents(o) — the Is_container()/STATUE test is commented out in C,
@@ -800,7 +795,6 @@ export const PAY_BUY = 1, PAY_CANT = 0, PAY_SKIP = -1, PAY_BROKE = -2;
 export const FullyUsedUp = 1, PartlyUsedUp = 2, PartlyIntact = 3,
              FullyIntact = 4, KnownContainer = 5, UndisclosedContainer = 6;
 
-const OBJ_ONBILL = 'onbill';
 const PM_ROGUE = 8;                 // roles[].mnum
 
 // C ref: shk.c:57 NOTANGRY(mon)/ANGRY(mon).
@@ -984,10 +978,7 @@ export async function money2mon(mon, amount) {
         if (ygold.owornmask) ygold.owornmask = 0; /* remove_worn_item: quiver */
         freeinv(ygold);
     }
-    if (!mon.minvent) mon.minvent = [];
-    mon.minvent.unshift(give);
-    give.where = OBJ_MINVENT;
-    give.ocarry = mon;
+    add_to_minv(mon, give);          /* gold merges with the shk's purse */
     return amount;
 }
 
@@ -1323,11 +1314,7 @@ const and_its_contents = ' and its contents';
 const the_contents_of = 'the contents of ';
 // objclass.h GOLD_SYM.
 const GOLD_SYM = '$';
-// obj.h obj->where.  place_object()/add_to_container() write these strings;
-// mkobj.js's bury/migrate/billobjs paths write the const.js INTEGERS instead,
-// so both spellings have to be accepted for those three.
-const OBJ_BURIED_STR = 'buried';
-const is_buried = (o) => o.where === OBJ_BURIED_STR || o.where === 6;
+const is_buried = (o) => o.where === OBJ_BURIED;
 
 // ── C chain / string / misc primitives ──────────────────────────────────────
 
@@ -1903,8 +1890,6 @@ const repo = { location: { x: 0, y: 0 }, shopkeeper: null };
 // C ref: shk.c inherits(shkp, numsk, croaked, silently):2577 — does this shk
 // take the dead hero's possessions?  RNG: ONE rn2(2) (the head-shake), and
 // only on the numsk > 1 path with the shk in view.
-// js/shkroom.js's exported paybill() carries a reduced inline version of this
-// (single-shk, no rn2(2) arm); this is the full translation.
 export async function inherits(shkp, numsk, croaked, silently) {
     let loss = 0;
     const eshkp = shkp.eshk;
@@ -1996,6 +1981,61 @@ export async function inherits(shkp, numsk, croaked, silently) {
     /* clear: */
     setpaid(shkp); /* clear this shk's bill */
     if (taken) set_repo_loc(shkp);
+    return taken;
+}
+
+// C ref: shk.c paybill(croaked, silently):2485 — routine called after dying (or
+// quitting): the shopkeepers of the level decide who takes the hero's inventory.
+// croaked: -1 escaped the dungeon, 0 quit, 1 died.  Returns TRUE when a
+// shopkeeper took the possessions.
+export async function paybill(croaked, silently = false) {
+    /* shopkeepers can't reach a hero who escaped the dungeon */
+    if (croaked < 0) return false;
+
+    /* this is where inventory will end up if any shk takes it */
+    repo.location.x = repo.location.y = 0;
+    repo.shopkeeper = null;
+
+    /* priority: 1) keeper of the shop the hero is in who is owed money,
+       2) keeper of that shop owed nothing, 3) other shk who is owed money,
+       4) other shk who is angry, 5) any shk local to this level */
+    let resident = null, creditor = null, hostile = null, localshk = null;
+    const shks = shk_scan(false);
+    for (const mtmp of shks) {
+        const eshkp = mtmp.eshk;
+        const local = on_shoplevel(eshkp);
+        if (local && (game.u?.ushops || []).includes(eshkp.shoproom)) {
+            if (!resident || eshkp.billct || eshkp.debit || eshkp.robbed)
+                resident = mtmp;
+        } else if (eshkp.billct || eshkp.debit || eshkp.robbed) {
+            if (!creditor) creditor = mtmp;
+        } else if (eshkp.following || ANGRY(mtmp)) {
+            if (!hostile) hostile = mtmp;
+        } else if (local) {
+            if (!localshk) localshk = mtmp;
+        }
+    }
+
+    let taken = false, numsk = 0;
+    const firstshk = resident || creditor || hostile || localshk;
+    if (firstshk) {
+        numsk++;
+        taken = await inherits(firstshk, numsk, croaked, silently);
+    }
+
+    /* now handle the rest */
+    for (const mtmp of shk_scan(false)) {
+        const local = on_shoplevel(mtmp.eshk);
+        if (mtmp !== firstshk) {
+            numsk++;
+            taken = (await inherits(mtmp, numsk, croaked, silently)) || taken;
+        }
+        /* for bones: we don't want a shopless shk around */
+        if (!local) {
+            const { mongone } = await import('./mon.js');
+            await mongone(mtmp);
+        }
+    }
     return taken;
 }
 
@@ -3137,7 +3177,7 @@ export async function repair_damage(shkp, tmp_dam, catchup) {
 
     if (stop_picking) {
         const { stop_occupation } = await import('./hack.js');
-        stop_occupation();
+        await stop_occupation();
     }
 
     litter_newsyms(litter, x, y);
@@ -3255,16 +3295,9 @@ export async function shopdig(fall) {
             obj.owornmask = 0;              /* C: setnotworn(obj) */
             freeinv(obj);
             subfrombill(obj, shkp);
-            add_to_minv_(shkp, obj);
+            add_to_minv(shkp, obj);
         }
     }
-}
-// C ref: mon.c add_to_minv(mon, obj).  js/vault.js keeps a private copy.
-function add_to_minv_(mon, obj) {
-    if (!mon.minvent) mon.minvent = [];
-    mon.minvent.unshift(obj);
-    obj.where = OBJ_MINVENT;
-    obj.ocarry = mon;
 }
 
 // C ref: shk.c getcad(shkp, dmgstr, x, y, uinshp, animal, pursue):5138 — the

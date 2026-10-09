@@ -14,7 +14,8 @@ import { find_ac } from './u_init.js';
 import { curse, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
     mkgold, rnd_class, DILITHIUM_CRYSTAL, LUCKSTONE, BOULDER } from './mkobj.js';
 import { exercise, acurr_eff, poison_strdmg, adjattrib } from './attrib.js';
-import { fruitname } from './objnam.js';
+import { fruitname, makeplural } from './objnam.js';
+import { hcolor, rndmonnam } from './do_name.js';
 import { more_experienced, newexplevel, has_innate } from './exper.js';
 import { newuhs } from './eat.js';
 import { Blind, cansee, couldsee } from './vision.js';
@@ -31,8 +32,7 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import {
     ER_NOTHING, ER_GREASED, ER_DESTROYED, F_LOOTED, F_WARNED, FROMOUTSIDE,
     FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE, MM_NOMSG,
-    POLY_NOFLAGS,
-} from './const.js';
+    POLY_NOFLAGS, OBJ_FLOOR } from './const.js';
 
 // C ref: include/onames.h — long sword otyp (mkobj.js OBJECT_DATA order).
 const LONG_SWORD = 54;
@@ -402,10 +402,10 @@ export async function drinkfountain() {
             if (Poison_resistance()) {
                 await update_topl(
                     `Perhaps it is runoff from the nearby ${fruitname(false)} farm.`);
-                await losehp(rnd(4));
+                await losehp(rnd(4), 'unrefrigerated sip of juice', 0 /* KILLED_BY_AN */);
                 break;
             }
-            poison_strdmg(rn1(4, 3), rnd(10));
+            await poison_strdmg(rn1(4, 3), rnd(10), 'contaminated water', 1 /* KILLED_BY */);
             exercise(A_CON, false);
             break;
         case 22: /* Fountain of snakes! */
@@ -616,9 +616,8 @@ async function dowatersnakes() {
         return;
     }
     if (!Blind()) {
-        // Hallucination substitutes makeplural(rndmonnam(NULL)), which draws;
-        // rndmonnam() is not ported anywhere in js/ yet.
-        await update_topl('An endless stream of snakes pours forth!');
+        await update_topl(`An endless stream of ${
+            Hallucination() ? makeplural(rndmonnam().name) : 'snakes'} pours forth!`);
     } else {
         await update_topl('You hear something hissing!');
     }
@@ -657,7 +656,7 @@ async function dofindgem() {
 // on the floor at (x, y)?
 function floor_boulder_at(x, y) {
     for (const o of game.level?.objects || [])
-        if (o.where === 'floor' && o.ox === x && o.oy === y && o.otyp === BOULDER)
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === BOULDER)
             return true;
     return false;
 }
@@ -697,7 +696,7 @@ async function gush(x, y, poolcnt) {
     // invent.js objects_at()); the unreversed filter ran water_damage() bottom-up
     // and every erosion roll landed on the wrong object.
     const here = (game.level?.objects || []).filter(
-        (o) => o.where === 'floor' && o.ox === x && o.oy === y).reverse();
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y).reverse();
     for (const obj of here) await water_damage(obj, null, false);
 
     // minliquid(mtmp) (monster drowning in the new pool) isn't modeled: no
@@ -789,17 +788,11 @@ function Fire_resistance() {
               || p.FireResistance);
 }
 
-// C ref: hack.c losehp() — for a non-polymorphed hero this subtracts the
-// damage from u.uhp (no RNG).  Death handling is not exercised by the covered
-// sessions, so it is reduced to the hp arithmetic + hpmax clamp.
-async function losehp(n) {
-    const u = game.u;
-    if (!u) return;
-    hooks.end_running?.(true); // hack.c:4266
-    u.uhp -= n;
-    { const { showdamage } = await import('./hack.js'); await showdamage(n); }
-    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
-    if (u.uhp < 1) u.uhp = 0;
+// C ref: hack.c losehp(n, knam, k_format) — do.js owns the complete port
+// (death path, killer text, polymorph arm).
+async function losehp(n, knam, k_format) {
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(n, knam, k_format);
 }
 
 // C ref: objclass.h OBJ_DESCR(obj) — the shuffled appearance word for obj's
@@ -810,14 +803,8 @@ function OBJ_DESCR(obj) {
     return DESCR_BY_OTYP[idx] ?? null;
 }
 
-// C ref: do_name.c hcolor(colorpref) — colorpref unless hallucinating, in
-// which case a random nonsense word replaces it.  The hallucination table
-// isn't ported (not reached by the covered sessions' non-hallucinating hero);
-// the roll still needs to fire to keep the PRNG faithful if that ever
-// changes, but none of the covered sessions hallucinate while at a sink.
-function hcolor(colorpref) {
-    return colorpref;
-}
+// C ref: do_name.c hcolor(colorpref) — js/do_name.js (a random nonsense word off
+// the DISPLAY rng while hallucinating).
 
 // C ref: fountain.c breaksink(x, y) — converts a sink into a fountain (used
 // by both drinksink's "pipes break" case and dipsink).  Both call sites have
@@ -905,7 +892,7 @@ export async function drinksink() {
         if (Fire_resistance()) {
             await update_topl('It seems quite tasty.');
         } else {
-            await losehp(rnd(6));
+            await losehp(rnd(6), 'sipping boiling water', 1 /* KILLED_BY */);
         }
         break;
     case 3: {

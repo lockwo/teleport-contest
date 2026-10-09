@@ -21,7 +21,7 @@ import {
 // Cycle with makemon.js (which imports m_dowear from here) is safe: both sides
 // only touch the other's bindings from inside function bodies.
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
-import { mon_nam, Monnam as Monnam_u } from './do_name.js';
+import { mon_nam, Monnam as Monnam_u, hcolor as hcolor_wn } from './do_name.js';
 
 const ARMOR_CLASS = 3, AMULET_CLASS = 5, WEAPON_CLASS = 2, TOOL_CLASS = 6;
 
@@ -483,7 +483,7 @@ export async function print_m_dowear(pending) {
         }
         await pline(`${Monnam(mon)}${buf} puts on ${newarm}.`);
         if (autocurse)
-            await pline(`${s_suffix(Monnam(mon))} ${objects[best.otyp]?.name} glows black for a moment.`);
+            await pline(`${s_suffix(Monnam(mon))} ${objects[best.otyp]?.name} glows ${hcolor_wn('black')} for a moment.`);
     }
 }
 

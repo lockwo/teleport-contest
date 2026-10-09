@@ -53,7 +53,7 @@ import { ROOMOFFSET, MOD_ENCUMBER, SLT_ENCUMBER, FOOT, WT_SQUEEZABLE_INV,
          TIP_ENHANCE, TIP_SWIM, TIP_UNTRAP_MON, TIP_GETPOS, NUM_TIPS,
          NHCORE_GETPOS_TIP, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT,
          GFILTER_VIEW, RUN_TPORT, RUN_LEAP, RUN_CRAWL,
-         has_mgivenname } from './const.js';
+         has_mgivenname, OBJ_FLOOR } from './const.js';
 import { in_rooms } from './shkroom.js';
 import { inside_room } from './mkroom.js';
 import { DEADMONSTER, sensemon } from './mon.js';
@@ -63,7 +63,7 @@ import { xname, carrying, makeplural, near_capacity } from './invent.js';
 import { body_part } from './polyself.js';
 import { y_monnam, ARTICLE_A, ARTICLE_YOUR, SUPPRESS_SADDLE } from './do_name.js';
 import { x_monnam } from './uhitm.js';
-import { canseemon_shared, bot } from './display.js';
+import { canseemon_shared, bot, stairs_go_down, hero_glyph } from './display.js';
 import { mflags2_of, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
@@ -661,7 +661,7 @@ function t_at(x, y) {
 function boulder_at(x, y) {
     for (const o of (game.level?.objects || []))
         if (o.otyp === BOULDER && o.ox === x && o.oy === y
-            && (o.where === 'floor' || o.where === 1)) return true;
+            && (o.where === OBJ_FLOOR)) return true;
     return false;
 }
 
@@ -1447,6 +1447,8 @@ function truncate_to_map(cx, cy, dx, dy) {
 function gp_glyph_at(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return ' ';
+    // GLYPH_UNEXPLORED and a seen S_stone both draw blank but are distinct glyphs.
+    if ((loc.disp_ch ?? ' ') === ' ' && gloc_unexplored(x, y)) return 'unexplored';
     return `${loc.disp_ch ?? ' '}|${loc.disp_color ?? -1}|${loc.disp_decgfx ? 1 : 0}`;
 }
 
@@ -1731,7 +1733,9 @@ function on_qstart_level_hk() {
 function ok_to_quest_hk() { return !!game._quest_got_quest; }
 
 function stair_descr(x, y) {
-    const up = (game.level?.upstair?.x === x && game.level?.upstair?.y === y);
+    const loc = game.level?.at(x, y);
+    const up = loc ? !stairs_go_down(loc, x, y)
+                   : (game.level?.upstair?.x === x && game.level?.upstair?.y === y);
     const sway = stairway_at_local(x, y);
     const branch = known_branch_stairs_local(sway);
     if (branch) return up ? 'branch staircase up' : 'branch staircase down';
@@ -2859,7 +2863,7 @@ export async function monster_detect(otmp, mclass) {
             woken = true;
         }
     }
-    if (!swallowed && u?.ux > 0) show_glyph_cell(u.ux, u.uy, '@', CLR_WHITE, false);
+    if (!swallowed && u?.ux > 0) { const hg = hero_glyph(); show_glyph_cell(u.ux, u.uy, hg.ch, hg.color, false, hg.attr); }
     await flush_screen(1);
 
     await update_topl('You sense the presence of monsters.');
@@ -3719,13 +3723,25 @@ async function do_look_all(nearby, do_mons) {
                 // (C: glyph_is_object(glyph_at)).  vobj_at finds any object on
                 // the cell, but an out-of-sight/unremembered one isn't shown, so
                 // require the cell's current symbol to equal the object glyph.
-                if (!(x === u.ux && y === u.uy) && !m_at(x, y)) {
+                const mimic = m_at(x, y);
+                if (!(x === u.ux && y === u.uy) && mimic && shows_mimic_object(mimic, x, y)) {
+                    // C: a mimic posing as an object draws that object's glyph,
+                    // so glyph_is_object() holds and look_at_object() names the
+                    // stand-in object_from_map() fabricates from the glyph.
+                    lookbuf = look_at_object(x, y, { kind: 'object', obj: null,
+                        otyp: mimic.mappearance | 0, x, y });
+                    sym = cellSym(loc);
+                } else if (!(x === u.ux && y === u.uy) && !(mimic && canspotmon(mimic))) {
+                    // C tests glyph_at(): an UNSEEN monster (an unseen pet standing
+                    // on a remembered chest) leaves the remembered object glyph.
                     const otmp = vobj_at(x, y);
                     if (otmp && !covers_objects(loc)) {
                         const og = object_glyph(otmp);
                         const ogch = og.dec ? (DEC_TO_UNICODE[og.ch] || og.ch) : og.ch;
                         if (cellSym(loc) === ogch) {
-                            lookbuf = obj_doname(otmp);
+                            // C look_at_object(): distant_name(otmp, dknown ?
+                            // doname_with_price : doname_vague_quan) — NOT doname.
+                            lookbuf = look_at_object_here(x, y, true) || '';
                             sym = cellSym(loc);
                         }
                     }
@@ -4056,7 +4072,7 @@ export async function rock_disappear_msg(otmp) {
 export function moverock_done(sx, sy) {
     for (const otmp of game.level?.objects || []) {
         if (otmp.ox === sx && otmp.oy === sy
-            && (otmp.where === 'floor' || otmp.where === 1)
+            && (otmp.where === OBJ_FLOOR)
             && otmp.otyp === BOULDER)
             otmp.next_boulder = 0;
     }
@@ -4386,8 +4402,11 @@ export async function runmode_delay_output() {
             game.time_botl = time_botl;
             if (game.disp) game.disp.time_botl = time_botl;
             // C ref: display.c curs_on_u() == flush_screen(1), which runs
-            // bot()/timebot() right now (consuming disp.botl/time_botl).
-            await bot();
+            // bot()/timebot() right now (consuming disp.botl/time_botl) AND
+            // paints every pending map glyph.  While the hero sleeps or is
+            // paralysed this every-7th-turn flush is the only map update the
+            // terminal gets, so a --More-- raised mid-turn shows that frame.
+            await flush_screen(1);
             curs_on_u();
             await nh_delay_output();
             if (runmode === RUN_CRAWL) {

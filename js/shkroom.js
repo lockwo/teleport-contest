@@ -7,7 +7,8 @@
 
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { pline, update_topl } from './display.js';
+import { pline, update_topl, Hallucination_u } from './display.js';
+import { SHKNAME_POOL } from './shknam.js';
 import { shtypes } from './shtypes.js';
 import { Hello } from './role.js';
 import { rn2, rnd } from './rng.js';
@@ -22,8 +23,7 @@ import {
     ROOMOFFSET, NO_ROOM, SHARED, SHARED_PLUS, SHOPBASE, COLNO, ROWNO,
     TEMPLE, MORGUE, OROOM, MAXNROFROOMS, G_GONE,
     THRONE, ZOO, SWAMP, COURT, LEPREHALL, BEEHIVE, COCKNEST, ANTHOLE,
-    BARRACKS, DELPHI, STEALTH,
-} from './const.js';
+    BARRACKS, DELPHI, STEALTH, OBJ_FLOOR } from './const.js';
 import { midnight } from './calendar.js';
 import { Blind } from './vision.js';
 import { has_innate } from './exper.js';
@@ -136,6 +136,9 @@ export function shop_keeper(rno) {
     if (!(rno >= ROOMOFFSET)) return null;
     const shkp = roomAt(rno)?.resident || null;
     if (!shkp || (shkp.mhp != null && shkp.mhp <= 0)) return null;
+    // C ref: shk.c shop_keeper() — an angry shopkeeper not yet surcharged is
+    // riled the first time anything looks them up.
+    if (shkp.eshk && !shkp.mpeaceful && !shkp.eshk.surcharge) rile_shk(shkp);
     return shkp;
 }
 
@@ -158,8 +161,20 @@ function inside_shop(x, y) {
 // C ref: shknam.c shkname() — the personal name with its prefix character
 // stripped ('+'/'-'/'|'/'_' encode gender in the shknms[] tables).
 export function shkname(shkp) {
-    const nm = shkp.eshk?.shknam;
+    let nm = shkp.eshk?.shknam;
     if (!nm) return shkp.data?.name || 'shopkeeper';
+    if (Hallucination_u() && !game.program_state?.gameover) {
+        /* count the number of non-unique shop types; pick one randomly,
+           ignoring shop generation probabilities; pick a name at random
+           from that shop type's list */
+        let num;
+        for (num = 0; num < shtypes.length; num++)
+            if (shtypes[num].prob === 0) break;
+        if (num > 0) {
+            const nlp = SHKNAME_POOL[shtypes[rn2(num)].shknms] || [];
+            if (nlp.length > 0) nm = nlp[rn2(nlp.length)];
+        }
+    }
     return /[A-Za-z]/.test(nm[0]) ? nm : nm.slice(1);
 }
 
@@ -241,66 +256,6 @@ function setpaid(shkp) {
         shkp.eshk.debit = 0;
         shkp.eshk.loan = 0;
     }
-}
-
-// C ref: shk.c:2485 paybill(croaked, silently) -> shk.c:2577 inherits().  Ported
-// only as far as the message the death screen needs: the hero dies inside a shop
-// with exactly one shopkeeper on the level, so numsk == 1 (no rn2(2) head-shake)
-// and money2mon() is skipped when the hero carries no gold.  Zero RNG.
-// C's shopkeeper-priority scan, the multi-shk branch, the partial-payment arm
-// and set_repo_loc()/paygd() are not modelled; they need state this port does
-// not track and none of them can fire for a single-shk in-shop death.
-export async function paybill(croaked) {
-    if (croaked < 0) return false;   /* escaped the dungeon: shks can't reach */
-    const shks = (game.level?.monsters || []).filter((m) => m?.isshk && m.eshk);
-    if (shks.length !== 1) return false;
-    const shkp = shks[0];
-    const eshk = shkp.eshk;
-    const uinshop = (game.u?.ushops || []).includes(eshk.shoproom);
-    const invent = game.invent || [];
-
-    // The peaceful "gratefully inherits" case.
-    if (uinshop && inhishop(shkp) && !eshk.billct && !eshk.robbed && !eshk.debit
-        && shkp.mpeaceful && !eshk.following) {
-        const taken = invent.length > 0;
-        if (taken) await update_topl(`${Shknam(shkp)} gratefully inherits all your possessions.`);
-        setpaid(shkp);
-        return taken;
-    }
-
-    let loss = 0, take = false;
-    if (eshk.billct || eshk.debit || eshk.robbed) {
-        if (uinshop && inhishop(shkp)) loss = addupbill(shkp) + (eshk.debit || 0);
-        if (loss < (eshk.robbed || 0)) loss = eshk.robbed || 0;
-        take = true;
-    }
-    let taken = false;
-    if (eshk.following || !shkp.mpeaceful || take) {
-        if (!invent.length) { setpaid(shkp); return false; }
-        const umoney = money_cnt_inv(invent);
-        let takes = '';
-        if (shkp.msleeping || shkp.mfrozen || !shkp.mcanmove) takes += 'wakes up and ';
-        if (!m_next2u_shk(shkp)) takes += 'comes and ';
-        takes += 'takes';
-        if (loss > umoney || !loss || uinshop) {
-            eshk.robbed = Math.max(0, (eshk.robbed || 0) - umoney);
-            await update_topl(`${Shknam(shkp)} ${takes} all your possessions.`);
-            taken = true;
-        }
-        rouse_shk(shkp, false);
-    }
-    setpaid(shkp);
-    return taken;
-}
-function money_cnt_inv(invent) {
-    let n = 0;
-    for (const o of invent) if (o?.oclass === 12 /* COIN_CLASS */) n += (o.quan || 0);
-    return n;
-}
-// C ref: mon.c m_next2u(mtmp) — distmin(mx,my,ux,uy) <= 1.
-function m_next2u_shk(mtmp) {
-    const u = game.u;
-    return Math.max(Math.abs(mtmp.mx - u.ux), Math.abs(mtmp.my - u.uy)) <= 1;
 }
 
 // C ref: shk.c rouse_shk(shkp, verbosely) — greed-induced recovery.  No RNG.
@@ -547,7 +502,7 @@ async function u_entered_shop(enterstring) {
         should_block = true;
     } else {
         const here = (game.level?.objects || []).filter(
-            (o) => o.where === 'floor' && o.ox === u.ux && o.oy === u.uy);
+            (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy);
         should_block = !!(u.Fast
             && here.some((o) => o.otyp === PICK_AXE || o.otyp === DWARVISH_MATTOCK));
     }
@@ -673,7 +628,7 @@ export async function check_special_room(newlev) {
             break;
         }
 
-        if (msg_given) room_discovered(roomno);
+        if (msg_given) await room_discovered(roomno);
 
         if (rt !== 0) {
             retireSpecialRoom(c, rt);
@@ -909,7 +864,7 @@ export function get_cost_of_shop_item(obj) {
     const shkp = shop_keeper(inside_shop_rno(x, y));
     if (!shkp || !inhishop(shkp)) return res;
     const eshk = shkp.eshk;
-    const onfloor = obj.where === 'floor';
+    const onfloor = obj.where === OBJ_FLOOR;
     const freespot = onfloor && x === eshk.shk?.x && y === eshk.shk?.y;
     res.nochrg = (onfloor && (obj.no_charge || freespot)) ? 1 : 0;
     if (onfloor ? !res.nochrg : !!obj.unpaid)

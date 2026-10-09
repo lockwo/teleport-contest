@@ -109,11 +109,9 @@ const FAINTED = 5;
 function is_fainted() { return (game.u?.uhs ?? 0) === FAINTED; }
 // C ref: invent.c money_cnt(invent) — the hero's gold.
 function money_cnt(list) {
-    let total = 0;
     for (const o of (list || []))
-        if (o.oclass === 19 /* COIN_CLASS */ || o.otyp === 601 /* GOLD_PIECE */)
-            total += (o.quan | 0);
-    return total;
+        if (o.oclass === 12 /* COIN_CLASS */) return o.quan | 0;
+    return 0;
 }
 // C ref: attrib.h ACURR(x) = acurr(x).
 function ACURR(i) { return game.u?.acurr?.a?.[i] ?? 0; }

@@ -604,9 +604,6 @@ export function find_lev_obj() {
     while (Array.isArray(fobj) && fobj.length) {
         otmp = fobj.pop();          /* otmp = fobj; fobj = otmp->nobj */
         otmp.nobj = fobjtmp[0] ?? null;
-        /* js/mkobj.js place_object() stamps obj.where as the STRING 'floor',
-           not objclass.h's numeric enum; js/save.js's saveobjchn() writes the
-           numeric OBJ_FREE here too, so the mismatch is pre-existing. */
         otmp.where = OBJ_FREE;
         fobjtmp.unshift(otmp);      /* fobjtmp = otmp */
     }

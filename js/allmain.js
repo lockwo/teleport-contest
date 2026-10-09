@@ -1319,6 +1319,10 @@ export async function moveloop_turn() {
             // u.uinvulnerable — the turn's dosounds/regen_hp/gethungry must have
             // already run (skipped, under invulnerability) BEFORE prayer_done.
             if ((g.multi ?? 0) < 0) {
+                // C ref: allmain.c:381 — runmode_delay_output() BEFORE the
+                // countdown: its every-7th-turn flush_screen() is the only map
+                // repaint a sleeping/paralysed hero's terminal gets.
+                await (await import('./hack.js')).runmode_delay_output();
                 if (++g.multi === 0) {
                     // unmul: hero regains control next command.  C ref:
                     // hack.c unmul() opens with `disp.botl = TRUE`.
@@ -2000,7 +2004,11 @@ export async function moveloop_core() {
     // C ref: cmd.c parse() is the only flush_screen(1) before a key is read; a
     // counted repeat (`multi > 0` -> rhack(cmd_key)) never goes through it, so
     // map changes from the previous turn stay unflushed until the next pline.
-    if (!((g.multi ?? 0) > 0 && !g.context?.mv && !g.context?.run))
+    // A helpless hero (multi < 0: asleep, paralysed) reads no key, so parse()
+    // is never reached either; only plines and runmode_delay_output()'s
+    // every-7th-turn flush repaint the map until the hero can act again.
+    if (!((g.multi ?? 0) > 0 && !g.context?.mv && !g.context?.run)
+        && (g.multi ?? 0) >= 0)
         await flush_screen(1);
 
     // C ref: allmain.c moveloop_core():513 — `u.umoved = FALSE;` is set BEFORE

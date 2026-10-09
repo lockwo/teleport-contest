@@ -25,6 +25,8 @@ import { PLNMSG_MON_TAKES_OFF_ITEM, Unaware } from './const.js';
 import { update_topl, urgent_topl } from './display.js';
 import { Blind } from './vision.js';
 import { canspotmon, Monnam } from './uhitm.js';
+import { Some_Monnam } from './do_name.js';
+import { add_to_minv } from './makemon.js';
 import { is_animal, humanoid, throws_rocks_flag } from './monflags_data.js';
 import {
     inv_cnt, freeinv, encumber_msg, doname_invent, remove_worn_item,
@@ -43,13 +45,6 @@ const LOST_NONE = 0, LOST_STOLEN = 3;
 // C ref: mon.c monnear(mon, x, y) — is the monster close enough to attack?
 // (The NODIAG grid-bug refinement doesn't matter for a thief.)
 function monnear(mon, x, y) { return dist2(mon.mx, mon.my, x, y) < 3; }
-
-// C ref: do_name.c some_mon_nam()/Some_Monnam() — like Monnam(), but an unseen
-// thief is "Someone" (humanoid) or "Something" rather than "It".
-export function Some_Monnam(mtmp) {
-    if (!canspotmon(mtmp)) return humanoid(mtmp?.data) ? 'Someone' : 'Something';
-    return Monnam(mtmp);
-}
 
 // C ref: steal.c somegold(lmoney) — the proportional slice of the hero's purse
 // a leprechaun grabs.
@@ -115,39 +110,12 @@ export function mpickobj(mtmp, otmp) {
         if (otmp.how_lost === LOST_THROWN) otmp.how_lost = LOST_STOLEN;
         else if (otmp.how_lost === LOST_DROPPED) otmp.how_lost = LOST_NONE;
     }
-    // add_to_minv(): merge with an identical stack already carried, else
-    // PREPEND (mkobj.c:2648 `obj->nobj = mon->minvent; mon->minvent = obj;`)
-    // so mon.minvent stays newest-first, matching every other producer.
-    mtmp.minvent = mtmp.minvent || [];
-    for (const o of mtmp.minvent) {
-        if (mergable(o, otmp)) {
-            o.quan = (o.quan || 1) + (otmp.quan || 1);
-            return 1;                                  /* otmp was freed */
-        }
-    }
-    otmp.where = 'minvent';
-    otmp.ocarry = mtmp;
-    mtmp.minvent.unshift(otmp);
-    return 0;
+    return add_to_minv(mtmp, otmp);       /* 1: otmp merged and was freed */
 }
 // C ref: obj.h how_lost values used by mpickobj's autopickup bookkeeping.
 // obj.h:481-484 — LOST_NONE 0, LOST_THROWN 1, LOST_DROPPED 2, LOST_STOLEN 3.
 // LOST_DROPPED was 3, which is LOST_STOLEN: dropped objects were bookkept as stolen.
 const LOST_THROWN = 1, LOST_DROPPED = 2;
-
-// C ref: mkobj.c mergable(otmp, obj) — reduced to the identity tests that
-// matter for a stolen item: same type/enchantment/BUC, and only for the classes
-// that actually stack (a corpse never merges; armor/rings/amulets/tools are
-// one-per-object).  A wrong "yes" here would silently destroy the theft, so the
-// test is deliberately conservative.
-function mergable(o, otmp) {
-    if (o.otyp !== otmp.otyp || o.oclass !== otmp.oclass) return false;
-    if (o.oclass === ARMOR_CLASS || o.oclass === RING_CLASS
-        || o.oclass === AMULET_CLASS || o.oclass === TOOL_CLASS
-        || o.otyp === CORPSE) return false;
-    return (o.spe | 0) === (otmp.spe | 0)
-        && !!o.cursed === !!otmp.cursed && !!o.blessed === !!otmp.blessed;
-}
 
 // C ref: steal.c steal(mtmp, objnambuf) — a monster steals one item from the
 // hero.  Returns 1 when something was taken (or at least when the thief should
@@ -396,7 +364,7 @@ import { cansee } from './vision.js';
 import { GOLD_PIECE, ROCK_CLASS, AMULET_OF_YENDOR,
          base_oc_cost, place_object } from './mkobj.js';
 import { mflags1_of, M1_SLITHY, can_teleport_flag } from './monflags_data.js';
-import { W_SADDLE, W_ARMG } from './const.js';
+import { W_SADDLE, W_ARMG, OBJ_FREE, OBJ_INVENT } from './const.js';
 
 // C ref: onames.h — the four "special interest" targets of an AD_SAMU theft,
 // resolved by NAME so an objects[] shift can't silently re-point them.
@@ -414,14 +382,6 @@ const CANDELABRUM_OF_INVOCATION = otyp_by_name_st('Candelabrum of Invocation');
 // C ref: monattk.h:63 AD_SITM (21) — steal-item (nymphs).
 const AD_SITM_ST = 21;
 
-// C ref: mon.c add_to_minv(mon, obj) — js/vault.js:184 holds the private
-// original; the steal.c callers below need the same "merge or append".
-function add_to_minv_st(mon, obj) {
-    mon.minvent = mon.minvent || [];
-    obj.where = 'minvent';
-    obj.ocarry = mon;
-    mon.minvent.push(obj);
-}
 // C ref: invent.c money_cnt(list) — js/invent.js:1155 (private).
 function money_cnt_st(list) {
     let sum = 0;
@@ -467,7 +427,7 @@ export async function stealgold(mtmp) {
     if (fgold && (!ygold || fgold.quan > ygold.quan || !rn2(5))) {
         const { obj_extract_self } = await import('./invent.js');
         obj_extract_self(fgold);
-        add_to_minv_st(mtmp, fgold);
+        add_to_minv(mtmp, fgold);
         newsym(u.ux, u.uy);
         const { y_monnam } = await import('./do_name.js');
         const { makeplural, body_part } = await import('./invent.js');
@@ -510,7 +470,7 @@ export async function stealgold(mtmp) {
         else
             setnotworn_st(ygold);
         freeinv(ygold);
-        add_to_minv_st(mtmp, ygold);
+        add_to_minv(mtmp, ygold);
         await update_topl('Your purse feels lighter.');
         if (!await tele_restrict(mtmp))
             await rloc(mtmp, 0x02 /* RLOC_MSG */);
@@ -756,7 +716,7 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
 
 // C ref: obj.h carried(obj) — obj->where == OBJ_INVENT.
 function carried_st(obj) {
-    return obj?.where === 'invent' || inventoryArray_st().includes(obj);
+    return obj?.where === OBJ_INVENT || inventoryArray_st().includes(obj);
 }
 // C ref: objclass.h bimanual(otmp) — objects[].oc_bimanual.  The file already
 // carries a FALSE stub for the animal-thief path; this reads the real flag when
@@ -821,6 +781,6 @@ function extract_from_minvent_st(mon, obj, _do_intrinsics, _silently) {
     const i = inv.indexOf(obj);
     if (i >= 0) inv.splice(i, 1);
     obj.owornmask = 0;
-    obj.where = 'free';
+    obj.where = OBJ_FREE;
     obj.ocarry = null;
 }

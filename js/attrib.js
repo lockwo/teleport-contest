@@ -2,11 +2,11 @@
 // C ref: attrib.c.  Only the RNG-bearing routine exercised by the quaff /
 // zap / cast gameplay sessions is ported here.
 
-import { game, hooks } from './gstate.js';
+import { game } from './gstate.js';
 import { rn2, rn1, rnd, d } from './rng.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING } from './const.js';
 import { adj_erinys, monster_by_pmidx, name_to_pmidx } from './makemon.js';
-import { has_innate } from './exper.js';
+import { has_innate, minuhpmax, setuhpmax } from './exper.js';
 
 const AVAL = 50; // C ref: attrib.c — tune value for exercise gains.
 
@@ -80,46 +80,63 @@ export function exercise(i, inc_or_dec) {
     // encumber_msg() for A_STR/A_CON is display-only; no RNG, omitted.
 }
 
-// C ref: hack.c losehp(dmg,...) — end_running(TRUE) (hack.c:4266), then subtract
-// dmg from u.uhp.  Death handling (k_format/knam) isn't reached by the covered
-// sessions, so this is just the HP subtraction (clamped at 0, matching every
-// other file-local losehp()).
-function losehp(dmg) {
+// C ref: attrib.c:221 losestr(num, knam, k_format) — Strength loss (poison,
+// certain monster hits), "may kill you".  ABASE(A_STR) drops by num; if that
+// would take it below ATTRMIN(A_STR), the while loop walks the excess up to the
+// floor one point at a time, each point adding rn1(4,3) HP damage.  That damage
+// goes through the real losehp() (death, botl, maybe_wail), also costs max HP
+// (Upolyd: mhmax), and the remaining `num` goes through adjattrib(A_STR, -num, 1)
+// (silent: msgflg > 0).
+export async function losestr(num, knam, k_format) {
     const u = game.u;
-    if (!u) return;
-    hooks.end_running?.(true);
-    if (dmg <= 0) return;
-    u.uhp = (u.uhp ?? 0) - dmg;
-    if (u.uhp < 0) u.uhp = 0;
-}
-
-// C ref: attrib.c losestr(num,...) — Strength loss (poison, certain monster
-// hits).  ABASE(A_STR) drops by num; if that would take it below
-// ATTRMIN(A_STR), C's while loop (attrib.c:232-237) walks the excess up to
-// the floor one point at a time, each point rolling rn1(4,3) extra HP damage
-// (via losehp) before the (now-clamped) adjattrib(A_STR,-num,1) call, which is
-// silent (msgflg>0 suppresses "You feel weaker!").
-export function losestr(num) {
-    const u = game.u;
-    if (!u?.acurr || num <= 0) return;
-    const abase = u.acurr.a;
-    let ustr = (abase[A_STR] ?? 0) - num;
+    if (!u?.acurr) return;
+    const uhpmin = minuhpmax(1);
+    let ustr = (u.acurr.a[A_STR] ?? 0) - num;
+    const waspolyd = !!u.Upolyd;
+    if (num <= 0 || (u.acurr.a[A_STR] ?? 0) < ATTRMIN_STR) {
+        const { impossible } = await import('./display.js');
+        await impossible(`losestr: ${u.acurr.a[A_STR] ?? 0} - ${num}`);
+        return;
+    }
     let dmg = 0;
     while (ustr < ATTRMIN_STR) {
-        ustr++;
-        num--;
-        dmg += rn1(4, 3); // eat.c:1932-via-attrib.c:235 amt = rn1(4,3) => 3..6
+        ++ustr;
+        --num;
+        dmg += rn1(4, 3); /* (0..(4-1))+3 => 3..6; used to use flat 6 here */
     }
-    if (dmg) losehp(dmg);
-    if (num > 0) abase[A_STR] = Math.max(ATTRMIN_STR, (abase[A_STR] ?? 0) - num);
+    if (dmg) {
+        /* in case damage is fatal and caller didn't supply killer reason */
+        if (!knam) {
+            knam = 'terminal frailty';
+            k_format = 1; /* KILLED_BY */
+        }
+        const { losehp_do } = await import('./do.js');
+        await losehp_do(dmg, knam, k_format);
+
+        if (u.Upolyd) {
+            /* when still poly'd, reduce you-as-monst maxHP; never below 1 */
+            setuhpmax(Math.max((u.mhmax | 0) - dmg, 1), false); /* acts as setmhmax() */
+        } else if (!waspolyd) {
+            /* not polymorphed now and didn't rehumanize when taking damage;
+               reduce max HP, but not below uhpmin */
+            if (u.uhpmax > uhpmin)
+                setuhpmax(Math.max(u.uhpmax - dmg, uhpmin), false);
+        }
+        game.botl = true;
+    }
+    /* 'num' could have been reduced to 0 in the minimum strength loop;
+       '(Upolyd || !waspolyd)' is True unless damage caused rehumanization */
+    if (num > 0 && (u.Upolyd || !waspolyd))
+        await adjattrib(A_STR, -num, 1);
 }
 
-// C ref: attrib.c poison_strdmg(strloss, dmg,...) — combined Strength loss +
-// HP damage from poison (eat.c eatcorpse poisonous-corpse branch, fountain.c
-// contamination, spell.c miscast, etc.).
-export function poison_strdmg(strloss, dmg) {
-    losestr(strloss);
-    losehp(dmg);
+// C ref: attrib.c:274 poison_strdmg(strloss, dmg, knam, k_format) — combined
+// strength loss and damage from some poisons (eat.c eatcorpse/poisoned weapon,
+// fountain.c contamination, spell.c contact-poisoned spellbook).
+export async function poison_strdmg(strloss, dmg, knam, k_format) {
+    await losestr(strloss, knam, k_format);
+    const { losehp_do } = await import('./do.js');
+    await losehp_do(dmg, knam, k_format);
 }
 
 // ═══ attrib.c:114 adjattrib(ndx, incr, msgflg) ══════════════════════════════

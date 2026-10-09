@@ -1546,6 +1546,11 @@ function optfn_boolean(o, negated, opts, op, result) {
     if (o.name === 'pauper') set_boolean('nudist', !negated, result);
     else if (o.name === 'ascii_map') result.iflags.wc_tiled_map = negated;
     else if (o.name === 'tiled_map') result.iflags.wc_ascii_map = negated;
+    else if (o.name === 'idlecheckpoint') {
+        /* #ifndef IDLECHECKPOINT: pline() before window init is raw_print() */
+        raw_print("There is no underlying support for 'idlecheckpoint' compiled in.");
+        result.flags.idlecheckpoint = false;
+    }
     return OPTN_OK;
 }
 
@@ -3725,6 +3730,7 @@ function optfn_compound(o, negated, opts, op, result, duplicate) {
 function set_playmode(mode, result) {
     result.flags.playmode = mode;
     if (mode === 'debug') result.flags.debug = true;
+    if (mode === 'explore') result.flags.explore = true;
 }
 
 // C ref: options.c set_menuobjsyms_flags().

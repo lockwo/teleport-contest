@@ -8,7 +8,7 @@
 
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { rn2, rn1, rnd } from './rng.js';
+import { rn2, rn1, rnd, d } from './rng.js';
 import { ROLE_TOURIST } from './role.js';
 import { NORMAL_SPEED, A_NEUTRAL, ROOM, is_pit, MAX_CARR_CAP, WT_HUMAN,
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU, I_SPECIAL,
@@ -34,11 +34,11 @@ import { objects as OBJECTS, CORPSE, BOULDER, BELL_OF_OPENING,
 import { monster_by_pmidx, newcham, newcham_wizard_aware, enexto_spawn,
     pickvampshape_pub, set_mimic_sym, makemon, makemon_appears_msg } from './makemon.js';
 import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
-    tp_sensemon } from './display.js';
+    tp_sensemon, Hallucination_u, Deaf_hero } from './display.js';
 import { dist2 } from './hacklib.js';
 import { Monnam, mon_nam } from './uhitm.js';
 import { touch_artifact_monster } from './artifact.js';
-import { mhim, mhis } from './do_name.js';
+import { mhim, mhis, hcolor as hcolor_mon } from './do_name.js';
 
 // Additional bindings used ONLY by the "mon.c completion" block at the end of
 // this file.  They are separate import statements from modules mon.js already
@@ -51,7 +51,7 @@ import { NON_PM, LOW_PM, G_GENOD, MON_FLOOR, MON_OFFMAP, MON_DETACH, MON_LIMBO,
     W_SADDLE, MIGR_APPROX_XY, MIGR_RANDOM, POOL, MOAT, LAVAPOOL, LAVAWALL, FOUNTAIN,
     ACCESSIBLE, thats_enough_tries, ismnum, engulfing_u, Has_contents,
     M_AP_TYPE, OBJ_AT, EDOG, MGIVENNAME, has_eshk, has_epri, has_emin,
-    has_egd, has_edog, In_endgame, Is_astralevel, NC_SHOW_MSG } from './const.js';
+    has_egd, has_edog, In_endgame, Is_astralevel, NC_SHOW_MSG, OBJ_FREE, OBJ_FLOOR } from './const.js';
 import { M1_NOHEAD, M2_UNDEAD, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC,
     M2_SHAPESHIFTER } from './monflags_data.js';
 import { AT_GAZE, AT_EXPL, AT_BOOM, mattk_of } from './monattk_data.js';
@@ -426,7 +426,7 @@ async function new_were(mon) {
             await update_topl(`${Monnam(mon)} drops ${distant_doname(dropped, true)}.`);
             newsym(mon.mx, mon.my);
         }
-        dropped.where = 'free';
+        dropped.where = OBJ_FREE;
         if (!await flooreffects(dropped, mon.mx, mon.my, 'drop')) {
             place_object(dropped, mon.mx, mon.my);
             stackobj(dropped);
@@ -502,10 +502,7 @@ export async function were_summon(ptr) {
 // animal branch tests !rn2(30) first (so the draw ALWAYS happens).
 // C ref: youprop.h Deaf — HDeaf (a timed intrinsic) or EDeaf (worn).  Same
 // shape as display.js Deaf_hero(); only the timed intrinsic is reachable.
-function Deaf() {
-    const u = game.u;
-    return ((u?.uprops?.HDeaf ?? 0) > 0) || !!u?.Deaf;
-}
+function Deaf() { return Deaf_hero(); }
 
 // C ref: makemon MONS-table indices of the ANIMAL lycanthrope forms (the human
 // forms are 261/262/263).  were.c's howl switch names only PM_WEREWOLF and
@@ -629,11 +626,15 @@ async function decide_to_shapeshift(mon) {
                 }
             }
             // C: an amorphous form standing in a closed doorway steps aside
-            // first, because its new shape would not fit.  enexto() draws.
+            // first, because its new shape would not fit.  enexto() draws,
+            // and rloc_to() ends with set_apparxy() (its notseen/notthere draws).
             if (dochng && (mflags1_of(mon.data) & M1_AMORPHOUS)
                 && closed_door_at(mon.mx, mon.my)) {
                 const cc = enexto_spawn(mon.mx, mon.my, ptr);
-                if (cc) { mon.mx = cc.x; mon.my = cc.y; newsym(cc.x, cc.y); }
+                if (cc) {
+                    const { rloc_to } = await import('./teleport.js');
+                    await rloc_to(mon, cc.x, cc.y);
+                }
             }
         } else if (mon.mhp >= Math.floor(9 * mon.mhpmax / 10) && !rn2(6)  // mon.c:4921
                    && far_or_unseen()) {
@@ -732,6 +733,23 @@ export async function minliquid(mtmp) {
         }
         return 0;
     }
+    if (ptr?.name === 'iron golem' && inpool && !rn2(5)) {
+        const dam = d(2, 6);
+        if (cansee(mtmp.mx, mtmp.my))
+            await pline(`${Monnam(mtmp)} rusts.`);
+        mtmp.mhp -= dam;
+        if (mtmp.mhpmax > dam)
+            mtmp.mhpmax -= dam;
+        if (DEADMONSTER(mtmp)) {
+            const { mondied_mm } = await import('./mhitm.js');
+            await mondied_mm(mtmp);
+            if (DEADMONSTER(mtmp))
+                return 1;
+        }
+        const { water_damage_chain } = await import('./trap.js');
+        await water_damage_chain(mtmp.minvent, false);
+        return 0;
+    }
     if (inlava) {
         // C ref: mon.c:1010 — a ceiling clinger hangs above the lava and a
         // lava-liker is at home in it; everything else burns.
@@ -744,53 +762,77 @@ export async function minliquid(mtmp) {
             }
             const { mon_kill_leaving } = await import('./monmove.js');
             if (((ptr?.mresists ?? 0) & MR_FIRE_BIT) === 0) {
-                if (cansee(mtmp.mx, mtmp.my))
-                    await pline(`${Monnam(mtmp)} burns to a crisp.`);
+                if (cansee(mtmp.mx, mtmp.my)) {
+                    const { on_fire } = await import('./mondata.js');
+                    const how = on_fire(ptr, mattk_of(ptr)[0] || {});
+                    await pline(`${Monnam(mtmp)} ${how === 'boiling' ? 'boils away'
+                        : how === 'melting' ? 'melts away' : 'burns to a crisp'}.`);
+                }
                 if (game.context?.mon_moving) {
                     await mon_kill_leaving(mtmp, true);
                 } else {
                     const { killed } = await import('./uhitm.js');
                     await killed(mtmp, { nomsg: true });
                 }
-                return 1;
+            } else {
+                // Fire-resistant but not a lava-liker: 1 point of damage.
+                mtmp.mhp -= 1;
+                if (DEADMONSTER(mtmp)) {
+                    if (cansee(mtmp.mx, mtmp.my))
+                        await pline(`${Monnam(mtmp)} surrenders to the fire.`);
+                    await mon_kill_leaving(mtmp, true);
+                } else if (cansee(mtmp.mx, mtmp.my)) {
+                    await pline(`${Monnam(mtmp)} burns slightly.`);
+                }
             }
-            // Fire-resistant but not a lava-liker: 1 point of damage, then it
-            // is teleported clear of the lava (rloc draws).
-            mtmp.mhp -= 1;
-            if (mtmp.mhp <= 0) {
-                if (cansee(mtmp.mx, mtmp.my))
-                    await pline(`${Monnam(mtmp)} surrenders to the fire.`);
-                await mon_kill_leaving(mtmp, true);
-                return 1;
+            if (!DEADMONSTER(mtmp)) {
+                if (!(is_flyer_m(ptr) || mtmp.mlevitating)) {
+                    const { fire_damage_chain } = await import('./trap.js');
+                    await fire_damage_chain(mtmp.minvent, false, false, mtmp.mx, mtmp.my);
+                    const { rloc, RLOC_MSG } = await import('./teleport.js');
+                    if (!(await rloc(mtmp, RLOC_MSG)))
+                        await deal_with_overcrowding(mtmp);
+                }
+                return 0;
             }
-            if (cansee(mtmp.mx, mtmp.my))
-                await pline(`${Monnam(mtmp)} burns slightly.`);
-            if (!(is_flyer_m(ptr) || mtmp.mlevitating)) {
-                const { fire_damage_chain } = await import('./trap.js');
-                await fire_damage_chain(mtmp.minvent, false, false, mtmp.mx, mtmp.my);
-                const { rloc, RLOC_MSG } = await import('./teleport.js');
-                await rloc(mtmp, RLOC_MSG);
-            }
-            return 0;
+            return 1;
         }
-    }
-    if (inpool || waterwall) {
+    } else if (inpool || waterwall) {
         // C ref: mon.c:1064 — most monsters drown in pools: mondied() with
-        // mon_moving leaves a cadaver after corpse_chance()'s roll.  Teleporting
-        // monsters (rloc escape) stay deferred.
+        // mon_moving leaves a cadaver after corpse_chance()'s roll.
         const f1 = mflags1_of(ptr);
         const cant_drown = (f1 & (M1_SWIM | M1_AMPHIBIOUS | M1_BREATHLESS)) !== 0;
-        if ((waterwall || (f1 & M1_CLING) === 0) && !cant_drown
-            && (f1 & M1_TPORT) === 0) {
+        if ((waterwall || (f1 & M1_CLING) === 0) && !cant_drown) {
+            /* like hero with teleport intrinsic or spell, teleport away
+               if possible */
+            if ((f1 & M1_TPORT) !== 0) {
+                const { rloc, tele_restrict, RLOC_MSG } = await import('./teleport.js');
+                if (!(await tele_restrict(mtmp)) && await rloc(mtmp, RLOC_MSG))
+                    return 0;
+            }
             if (cansee(mtmp.mx, mtmp.my))
                 await pline(game.context?.mon_moving
                     ? `${Monnam(mtmp)} drowns.` : `You drown ${mon_nam(mtmp)}.`);
+            if (engulfing_u(mtmp)) {
+                const { hliquid } = await import('./do_name.js');
+                await pline(`${Monnam(mtmp)} sinks as ${hliquid('water')} rushes in and flushes you out.`);
+            }
             if (game.context?.mon_moving) {
                 const { mondied_mm } = await import('./mhitm.js');
                 await mondied_mm(mtmp);
             } else {
                 const { killed } = await import('./uhitm.js');
                 await killed(mtmp, { nomsg: true });
+            }
+            if (!DEADMONSTER(mtmp)) {
+                if (!(is_flyer_m(ptr) || mtmp.mlevitating)) {
+                    const { water_damage_chain } = await import('./trap.js');
+                    await water_damage_chain(mtmp.minvent, false);
+                    const { rloc, RLOC_NOMSG } = await import('./teleport.js');
+                    if (!(await rloc(mtmp, RLOC_NOMSG)))
+                        await deal_with_overcrowding(mtmp);
+                }
+                return 0;
             }
             return 1;
         }
@@ -1220,7 +1262,7 @@ async function m_dowear_type(mon, flag, creation, racialexception) {
             await update_topl(`${Monnam(mon)}${buf} puts on ${newarm}.`);
             if (autocurse)
                 await pline(`${Monnam(mon)}'s ${OBJECTS[best.otyp]?.name
-                             || 'armor'} glows black for a moment.`);
+                             || 'armor'} glows ${hcolor_mon('black')} for a moment.`);
         }
         m_delay += oc_delay_arm(best.otyp);
         mon.mfrozen = m_delay;
@@ -1638,7 +1680,7 @@ function is_rider_pm(corpsenm) {
 // three pmidx monmove.js uses; kept local so mon.js does not have to reach into
 // monmove.js for a two-line predicate.
 const PM_VAMPIRE = 226, PM_VAMPIRE_LEADER = 227, PM_VLAD_THE_IMPALER = 228;
-function is_vampshifter(mon) {
+export function is_vampshifter(mon) {
     return mon.cham === PM_VAMPIRE || mon.cham === PM_VAMPIRE_LEADER
         || mon.cham === PM_VLAD_THE_IMPALER;
 }
@@ -1906,11 +1948,7 @@ async function verbalize_mon(line) { await update_topl(`"${line}"`); }
 
 // C ref: youprop.h Hallucination / Blind_telepat, spelled the way the rest of
 // the port spells them (js/allmain.js:1415, js/mhitu.js:987).
-function Hallucination_mon() {
-    const u = game.u;
-    return ((u?.uprops?.Hallucination || 0) > 0) || !!u?.HHallucination
-        || !!u?.uhallu;
-}
+function Hallucination_mon() { return Hallucination_u(); }
 function Blind_telepat_mon() {
     return !!(game.u?.ublindf || game.u?.uprops?.Blind_telepat);
 }
@@ -2388,7 +2426,7 @@ export async function mon_givit(mtmp, ptr) {
             // C ref: mon.c:1806 mon_set_minvis(mtmp, FALSE) — the real,
             // byte-exact port lives in worn.js (perminvis/minvis + newsym).
             const { mon_set_minvis } = await import('./worn.js');
-            mon_set_minvis(mtmp, false);
+            await mon_set_minvis(mtmp, false);
             if (vis) {
                 const { canspotmon } = await import('./uhitm.js');
                 await pline(`${mtmpbuf} ${!canspotmon(mtmp) ? 'vanishes'
@@ -2969,7 +3007,7 @@ export async function unstuck(mtmp) {
         game.mswallower = null;
         u.ux = mtmp.mx;
         u.uy = mtmp.my;
-        if (u.uball && u.uchain && u.uchain.where !== 'floor') {
+        if (u.uball && u.uchain && u.uchain.where !== OBJ_FLOOR) {
             const { placebc } = await import('./ball.js');
             placebc();
         }
@@ -3318,6 +3356,7 @@ function quest_leader_pm() {
 // peacefuls_respond(mtmp);`).
 export async function peacefuls_respond(mtmp) {
     const mndx = monsndx(mtmp.data);
+    const { big_little_match } = await import('./mondata.js');
 
     for (const mon of fmonOrder()) {
         if (DEADMONSTER(mon))
@@ -3335,9 +3374,8 @@ export async function peacefuls_respond(mtmp) {
             if (humanoid(mon.data) || mon.isshk || mon.ispriest) {
                 if (is_watch_m(mon.data)) {
                     await verbalize_mon("Halt!  You're under arrest!");
-                    /* C ref: mon.c:4185 angry_guards(!!Deaf) — js/dokick.js,
-                       js/fountain.js and js/shkroom.js each carry a private
-                       copy, so the call is named rather than duplicated. */
+                    const { angry_guards } = await import('./questpgr.js');
+                    await angry_guards(!!Deaf());
                 } else {
                     if (!Deaf() && !rn2(5)) {
                         const { maybe_gasp } = await import('./sounds.js');
@@ -3394,7 +3432,7 @@ export async function peacefuls_respond(mtmp) {
                     }
                 }
             } else if (mon.data?.mcls === mtmp.data?.mcls
-                       && big_little_match_mon(mndx, monsndx(mon.data))
+                       && big_little_match(mndx, monsndx(mon.data))
                        && !rn2(3)) {
                 if (!rn2(4)) {
                     const { growl } = await import('./sounds.js');
@@ -3413,14 +3451,6 @@ export async function peacefuls_respond(mtmp) {
         }
     }
 }
-// C ref: makemon.c big_little_match(montype, magic) — true when the two indices
-// are the small and large form of one species (or the same species).
-// js/makemon.js's little_to_big / big_to_little are module-private, so only the
-// identity case — which is the common one — can be answered here.
-function big_little_match_mon(a, b) {
-    return a === b;
-}
-
 // ── mon.c:4374 wake_nearto_core() ───────────────────────────────────────────
 // Wake monsters near a location.  distance == 0 means "the whole level".  No
 // RNG, but clearing msleeping decides whether each monster runs a whole

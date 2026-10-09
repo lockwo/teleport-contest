@@ -391,17 +391,31 @@ const makeplural_stagger = (s) => `${s}s`;
 
 // C ref: mon.c golemeffects() — flesh/iron golems heal or slow from the
 // elemental type instead of taking it.  No RNG.
-function golemeffects(mon, damtype, dam, ops) {
+async function golemeffects(mon, damtype, dam, ops) {
     const ptr = ops.permonst(mon);
-    let heal = 0;
+    let heal = 0, slow = 0;
     if (ptr?.name === 'flesh golem') {
         if (damtype === AD_ELEC) heal = Math.floor((dam + 5) / 6);
+        else if (damtype === AD_FIRE || damtype === AD_COLD) slow = 1;
     } else if (ptr?.name === 'iron golem') {
-        if (damtype === AD_FIRE) heal = dam;
+        if (damtype === AD_ELEC) slow = 1;
+        else if (damtype === AD_FIRE) heal = dam;
     } else {
         return;
     }
-    if (heal) healmon(mon, heal, 0);
+    if (slow) {
+        if (mon.mspeed !== MSLOW) {
+            const { mon_adjust_speed } = await import('./muse.js');
+            await mon_adjust_speed(mon, -1, null);
+        }
+    }
+    if (heal) {
+        if (healmon(mon, heal, 0)) {
+            const { cansee } = await import('./vision.js');
+            if (cansee(mon.mx, mon.my))
+                await ops.emit(`${ops.Monnam(mon)} seems healthier.`);
+        }
+    }
 }
 
 // ── the damage-type handlers ────────────────────────────────────────────────
@@ -574,7 +588,7 @@ export async function mhitm_ad_fire(magr, mattk, mdef, mhm, ops) {
     if (resists_fire(ops, mdef) || defended(mdef, AD_FIRE)) {
         if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`The fire doesn't seem to burn ${ops.mon_nam(mdef)}!`);
-        golemeffects(mdef, AD_FIRE, mhm.damage, ops);
+        await golemeffects(mdef, AD_FIRE, mhm.damage, ops);
         mhm.damage = 0;
     }
     mhm.damage += await destroy_items_mon(mdef, AD_FIRE, orig_dmg, ops);
@@ -603,7 +617,7 @@ export async function mhitm_ad_cold(magr, mattk, mdef, mhm, ops) {
     if (resists_cold(ops, mdef) || defended(mdef, AD_COLD)) {
         if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`The frost doesn't seem to chill ${ops.mon_nam(mdef)}!`);
-        golemeffects(mdef, AD_COLD, mhm.damage, ops);
+        await golemeffects(mdef, AD_COLD, mhm.damage, ops);
         mhm.damage = 0;
     }
     mhm.damage += await destroy_items_mon(mdef, AD_COLD, orig_dmg, ops);
@@ -631,7 +645,7 @@ export async function mhitm_ad_elec(magr, mattk, mdef, mhm, ops) {
     if (resists_elec(ops, mdef) || defended(mdef, AD_ELEC)) {
         if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`The zap doesn't shock ${ops.mon_nam(mdef)}!`);
-        golemeffects(mdef, AD_ELEC, mhm.damage, ops);
+        await golemeffects(mdef, AD_ELEC, mhm.damage, ops);
         mhm.damage = 0;
     }
     mhm.damage += await destroy_items_mon(mdef, AD_ELEC, orig_dmg, ops);
@@ -1324,7 +1338,8 @@ export async function mhitm_ad_conf(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if (!magr.mcan && !rn2(4) && !magr.mspec_used) {
             magr.mspec_used = (magr.mspec_used | 0) + (mhm.damage + rn2(6));
-            await ops.emit('You are getting confused.');
+            await ops.emit(ops.Confusion && ops.Confusion() ? 'You are getting even more confused.'
+                                                            : 'You are getting confused.');
             if (ops.make_confused) await ops.make_confused(mhm.damage);
         }
         mhm.damage = 0;
@@ -1381,7 +1396,8 @@ export async function mhitm_ad_famn(magr, mattk, mdef, mhm, ops) {
     const pd = ops.permonst(mdef);
     if (is_hero(mdef)) {
         await ops.emit(`${ops.Monnam(magr)} reaches out, and your body shrivels.`);
-        if (ops.morehungry) await ops.morehungry(rn1(40, 40));
+        exercise(A_CON, false);
+        if (game.u?.uhs !== 5 /* FAINTED */ && ops.morehungry) await ops.morehungry(rn1(40, 40));
         return;
     }
     if (!(carnivorous(pd) || herbivorous(pd) || metallivorous(pd)))
@@ -1405,19 +1421,34 @@ export async function mhitm_ad_deth(magr, mattk, mdef, mhm, ops) {
     const pd = ops.permonst(mdef);
     if (is_hero(mdef)) {
         await ops.emit(`${ops.Monnam(magr)} reaches out with its deadly touch.`);
-        // The hero is never undead here, so the rn2(20) below always fires.
+        if (is_undead(pd)) {
+            /* still does some damage */
+            mhm.damage = Math.trunc((mhm.damage + 1) / 2);
+            await ops.emit('Was that the touch of death?');
+            return;
+        }
+        const { Antimagic: Antimagic_hero } = await import('./zap.js');
+        const am = !!Antimagic_hero();
         switch (rn2(20)) {
         case 19: case 18: case 17:
-            // touch_of_death() (no Antimagic on the covered roles).
-            mhm.damage = 0;
+            if (!am) {
+                const { touch_of_death } = await import('./mcastu.js');
+                await touch_of_death(magr);
+                mhm.damage = 0;
+                return;
+            }
+            /* FALLTHRU */
+        default: /* case 16: ... case 5: */
+            await ops.emit('You feel your life force draining away...');
+            mhm.permdmg = 1; /* actual damage done by caller */
             return;
         case 4: case 3: case 2: case 1: case 0:
+            if (am) {
+                const { shieldeff } = await import('./display.js');
+                await shieldeff(game.u.ux, game.u.uy);
+            }
             await ops.emit("Lucky for you, it didn't work!");
             mhm.damage = 0;
-            return;
-        default:
-            await ops.emit('You feel your life force draining away...');
-            mhm.permdmg = 1;
             return;
         }
     }
@@ -1599,40 +1630,63 @@ export async function mhitm_ad_were(magr, mattk, mdef, mhm, ops) {
 
 export async function mhitm_ad_heal(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
-        const pd = ops.permonst(mdef);
+        const u = game.u;
+        /* a cancelled nurse is just an ordinary monster,
+         * nurses don't heal those that cause petrification */
         if (magr.mcan) { await ops.hitmsg(magr, mattk); return; }
         // The nurse only heals a hero carrying no weapon and wearing no armor.
-        if (ops.nurse_undressed && ops.nurse_undressed()) {
+        if (ops.nurse_undressed && await ops.nurse_undressed()) {
+            let goaway = false;
             await ops.emit(`${ops.Monnam(magr)} hits!  (I hope you don't mind.)`);
-            const u = game.u;
-            u.uhp = (u.uhp | 0) + rnd(7);
-            if (!rn2(7)) {
-                if ((u.uhpmax | 0) < 5 * (u.ulevel | 0) + d(2 * (u.ulevel | 0), 10))
-                    u.uhpmax = (u.uhpmax | 0) + 1;
-                if (!rn2(13)) {
-                    if (ops.mongone) await ops.mongone(magr);
-                    mhm.done = true;
-                    mhm.hitflags = M_ATTK_DEF_DIED;
-                    return;
+            if (u.Upolyd) {
+                u.mh = (u.mh | 0) + rnd(7);
+                if (!rn2(7)) {
+                    /* no upper limit necessary; effect is temporary */
+                    u.mhmax = (u.mhmax | 0) + 1;
+                    if (!rn2(13)) goaway = true;
                 }
+                if (u.mh > u.mhmax) u.mh = u.mhmax;
+            } else {
+                u.uhp = (u.uhp | 0) + rnd(7);
+                if (!rn2(7)) {
+                    /* hard upper limit via nurse care: 25 * ulevel */
+                    if ((u.uhpmax | 0) < 5 * (u.ulevel | 0) + d(2 * (u.ulevel | 0), 10)) {
+                        u.uhpmax = (u.uhpmax | 0) + 1;
+                        if (u.uhpmax > (u.uhppeak | 0)) u.uhppeak = u.uhpmax;
+                    }
+                    if (!rn2(13)) goaway = true;
+                }
+                if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
             }
-            if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
-            if (!rn2(3)) { /* exercise(A_STR) */ }
-            if (!rn2(3)) { /* exercise(A_CON) */ }
+            if (!rn2(3)) exercise(A_STR, true);
+            if (!rn2(3)) exercise(A_CON, true);
+            if ((u.uprops?.Sick | 0) > 0) {
+                const { make_sick } = await import('./potion.js');
+                await make_sick(0, null, false, 0x03 /* SICK_ALL */);
+            }
             game.disp_botl = true;
-            if (!rn2(33)) {
+            if (goaway) {
+                if (ops.mongone) await ops.mongone(magr);
+                mhm.done = true;
+                mhm.hitflags = M_ATTK_DEF_DIED;
+                return;
+            } else if (!rn2(33)) {
                 const { rloc, tele_restrict, RLOC_MSG } = await import('./teleport.js');
                 if (!await tele_restrict(magr)) await rloc(magr, RLOC_MSG);
-                if (ops.monflee) await ops.monflee(magr, d(3, 6));
+                if (ops.monflee) await ops.monflee(magr, d(3, 6), true, false);
                 mhm.done = true;
                 mhm.hitflags = M_ATTK_HIT | M_ATTK_DEF_DIED;
                 return;
             }
             mhm.damage = 0;
+        } else if (game.urole?.mnum === 3 /* Healer */) {
+            const { Deaf_hero } = await import('./display.js');
+            if (!Deaf_hero() && !((game.moves | 0) % 5))
+                await ops.emit('"Doc, I can\'t help you unless you cooperate."');
+            mhm.damage = 0;
         } else {
             await ops.hitmsg(magr, mattk);
         }
-        void pd;
         return;
     }
     await mhitm_ad_phys(magr, mattk, mdef, mhm, ops);

@@ -22,10 +22,10 @@ import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE,
-    W_ARMOR, W_AMUL, W_ARMG, TT_PIT, is_pit, BOLT_LIM,
+    W_ARMOR, W_AMUL, W_ARMG, TT_PIT, TT_WEB, is_pit, BOLT_LIM,
     M_SEEN_NOTHING, M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP,
     M_SEEN_DISINT, M_SEEN_ELEC, M_SEEN_POISON, M_SEEN_ACID,
-    A_CON, A_CHA, A_DEX, A_STR, HAIR, KILLED_BY,
+    A_CON, A_CHA, A_DEX, A_STR, HAIR, HAND, W_RINGL, W_RINGR, KILLED_BY,
     NO_MINVENT, MM_EDOG, MM_NOMSG, Unaware,
 } from './const.js';
 import {
@@ -40,14 +40,13 @@ import {
 import {
     mflags1_of, mflags2_of, is_animal, is_neuter_flag, perceives_flag,
     humanoid as humanoid_flag,
-    is_demon_flag, is_were_flag, is_human_flag,
-    M1_NOEYES, M1_NOLIMBS, M1_THICK_HIDE, M1_SLITHY, M2_MINION,
+    M1_NOEYES, M1_NOLIMBS, M1_THICK_HIDE, M1_SLITHY, M2_MINION, M1_BREATHLESS, M1_AMPHIBIOUS,
 } from './monflags_data.js';
 import { objects as OBJECTS } from './mkobj.js';
 import { acurr_eff, exercise, adjattrib } from './attrib.js';
-import { newsym, map_invisible, unmap_object, update_topl, urgent_topl, canseemon_shared, Hallucination_u as Hallucination, hold_botl_hp } from './display.js';
+import { newsym, map_invisible, unmap_object, impossible, update_topl, urgent_topl, canseemon_shared, Hallucination_u as Hallucination, hold_botl_hp } from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
-import { is_home_elemental, monster_by_pmidx } from './makemon.js';
+import { is_home_elemental, monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { DEADMONSTER, mvitals_died, m_detach, wake_nearto_core } from './mon.js';
 import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
@@ -55,7 +54,7 @@ import { YOUMONST } from './mhitm_ad.js';
 import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u } from './potion.js';
 import { youmonst_data_pub as youmonst_data } from './invent.js';
 import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu } from './mondata.js';
-import { Monnam, mon_nam } from './do_name.js';
+import { Monnam, mon_nam, mhis } from './do_name.js';
 
 const is_hero = (m) => m === YOUMONST;
 
@@ -577,7 +576,12 @@ export async function wildmiss(mtmp, mattk) {
             switch (rn2(3)) {
             case 0: await emitU(`${Monst_name} ${swings} wildly and misses!`); break;
             case 1: await emitU(`${Monst_name} attacks a spot beside you.`); break;
-            case 2: await emitU(`${Monst_name} strikes at thin air!`); break;
+            case 2: {
+                const { is_waterwall } = await import('./dbridge.js');
+                await emitU(`${Monst_name} strikes at ${
+                    is_waterwall(mtmp.mux, mtmp.muy) ? 'empty water' : 'thin air'}!`);
+                break;
+            }
             default: await emitU(`${Monst_name} ${swings} wildly!`); break;
             }
         }
@@ -661,77 +665,6 @@ const enfolds = (mdat) => mdat?.name === 'trapper' || mdat?.name === 'lurker abo
 function um_dist(x, y, n) {
     const u = game.u || {};
     return Math.abs(x - u.ux) > n || Math.abs(y - u.uy) > n;
-}
-
-// ═══ mhitu.c:956 summonmu ═══════════════════════════════════════════════════
-// A non-cancelled, non-shapechanged demon summons help; a were flips form and
-// may call critters.  Every branch is a bare rn2 gate, and the `||` in the
-// were->human arm SHORT-CIRCUITS, so Protection_from_shape_changers suppresses
-// the rn2(30) entirely.
-export async function summonmu(mtmp, youseeit) {
-    let mdat = mtmp.data;
-
-    if (is_demon_flag(mdat)) {
-        if (mdat.name !== 'Balrog' && mdat.name !== 'amorous demon') {
-            if (!rn2(Inhell() ? 10 : 16)) {
-                // C ref: minion.c:59 msummon(mtmp) — js/minion.js exports the
-                // faithful port; dynamic import avoids a static cycle.
-                const { msummon } = await import('./minion.js');
-                await msummon(mtmp);
-            }
-        }
-        return;   // no such thing as a demon were creature
-    }
-
-    if (is_were_flag(mdat)) {
-        const { Protection_from_shape_changers } = await import('./mon.js');
-        const prot = Protection_from_shape_changers();
-        const { night } = await import('./calendar.js');
-        if (is_human_flag(mdat)) {
-            if (!prot && !rn2(5 - (night() ? 2 : 0))) await new_were_u(mtmp);
-        } else {
-            if (prot || !rn2(30)) await new_were_u(mtmp);
-        }
-        mdat = mtmp.data;   // form change invalidates the cached value
-
-        if (!rn2(10)) {
-            const { Monnam } = await import('./uhitm.js');
-            const { were_summon } = await import('./mon.js');
-            const { makeplural } = await import('./objnam.js');
-            if (youseeit) await emitU(`${Monnam(mtmp)} summons help!`);
-            const { total, numseen, genbuf } = await were_summon(mdat);
-            if (youseeit) {
-                if (total > 0) {
-                    if (numseen === 0) await emitU('You feel hemmed in!');
-                } else {
-                    await emitU('But none comes.');
-                }
-            } else {
-                const { growl_sound } = await import('./sounds.js');
-                const sound = Deaf() ? '' : `${makeplural(growl_sound(mtmp))}!`;
-                if (sound) await emitU(`Something ${sound}`);
-                if (total > 0) {
-                    if (numseen < 1) {
-                        await emitU('You feel hemmed in!');
-                    } else {
-                        const phrase = numseen === 1 ? `${genbuf} appears`
-                            : `${makeplural(genbuf)} appear`;
-                        await emitU(`${phrase[0].toUpperCase()}${phrase.slice(1)}${Deaf() ? ' from nowhere' : ''}!`);
-                    }
-                }
-            }
-        }
-        return;
-    }
-}
-function Inhell() {
-    const dnum = game.u?.uz?.dnum;
-    return !!game.dungeons?.[dnum]?.flags?.hellish;
-}
-async function new_were_u(mtmp) {
-    // C ref: were.c:96 new_were() — transformation message, data, armor and HP.
-    const { new_were_pub } = await import('./mon.js');
-    await new_were_pub(mtmp);
 }
 
 // ═══ mhitu.c:1273 gulp_blnd_check ═══════════════════════════════════════════
@@ -851,9 +784,14 @@ export async function gulpmu(mtmp, mattk) {
     switch (mattk.adtyp) {
     case AD_DGST:
         physical_damage = true;
-        if (u.uswldtim === 0) {
+        if (Slow_digestion_u()) {
+            /* Messages are handled below */
+            u.uswldtim = 0;
+            tmp = 0;
+        } else if (u.uswldtim === 0) {
             await emitU(`${Monnam(mtmp)} totally digests you!`);
             tmp = u.uhp | 0;
+            if (Half_physical_damage_u()) tmp *= 2; /* sorry */
         } else {
             await emitU(`${Monnam(mtmp)}${(u.uswldtim === 2) ? ' thoroughly'
                 : (u.uswldtim === 1) ? ' utterly' : ''} digests you!`);
@@ -863,7 +801,15 @@ export async function gulpmu(mtmp, mattk) {
     case AD_PHYS:
         physical_damage = true;
         if (mtmp.data?.name === 'fog cloud') {
-            await emitU('You are laden with moisture and can barely breathe!');
+            const ep = u.uprops || {};
+            const breathless = !!(ep.Breathless || ep.HBreathless || ep.EBreathless)
+                || (mflags1_of(youmonst_data()) & M1_BREATHLESS) !== 0;
+            const amphibious = !!(ep.Amphibious || ep.HAmphibious || ep.EAmphibious)
+                || (mflags1_of(youmonst_data()) & M1_AMPHIBIOUS) !== 0;
+            await emitU(`You are laden with moisture and ${breathless ? 'find it mildly uncomfortable.'
+                : amphibious ? 'feel comforted.' : 'can barely breathe!'}`);
+            /* NB: Amphibious includes Breathless */
+            if (amphibious || breathless) tmp = 0;
         } else {
             await emitU(`You are ${enfolds(mtmp.data) ? 'being squashed'
                 : 'pummeled with debris'}!`);
@@ -876,7 +822,8 @@ export async function gulpmu(mtmp, mattk) {
             monstseesu(M_SEEN_ACID);
             tmp = 0;
         } else {
-            await emitU("You are covered in slime!  It burns!");
+            await emitU(Hallucination() ? "Ouch!  You've been slimed!"
+                                        : "You are covered in slime!  It burns!");
             exercise(A_STR, false);
             monstunseesu(M_SEEN_ACID);
         }
@@ -975,6 +922,7 @@ export async function gulpmu(mtmp, mattk) {
         // it clamps NEGATIVE damage up to 1, it does not clamp zero.
         if ((u.uac | 0) < 0) tmp -= rnd(-(u.uac | 0));
         if (tmp < 0) tmp = 1;
+        if (Half_physical_damage_u()) tmp = Math.trunc((tmp + 1) / 2);
     }
 
     game.mswallower = mtmp;                     // match gulpmm()
@@ -994,6 +942,8 @@ export async function gulpmu(mtmp, mattk) {
     } else if (!u.uswldtim || (ydat?.msize | 0) >= MZ_HUGE) {
         await emitU(`You get ${digests(mtmp.data) ? 'regurgitated'
             : enfolds(mtmp.data) ? 'released' : 'expelled'}!`);
+        if (Verbose() && digests(mtmp.data) && Slow_digestion_u())
+            await emitU(`Obviously ${mon_nam(mtmp)} doesn't like your taste.`);
         await expels(mtmp, mtmp.data, false);
     }
     return M_ATTK_HIT;
@@ -1130,9 +1080,43 @@ export async function gazemu(mtmp, mattk) {
                     ? "doesn't look all that ugly" : 'gazes ineffectually'}.`);
             break;
         }
-        // The reflection / stoning tail needs ureflects(), polymon(PM_STONE_GOLEM)
-        // and done(STONING); Medusa is not reachable in the covered dungeon
-        // range, so stop before inventing that sequence.
+        if (reflectable) {
+            /* hero has line of sight to Medusa and she's not blind */
+            const useeit = canseemon_shared(mtmp);
+            if (useeit) {
+                const { ureflects } = await import('./zap.js');
+                await ureflects('%s gaze is reflected by your %s.', s_suffix(Monnam(mtmp)));
+            }
+            const { mon_reflects } = await import('./muse.js');
+            if (await mon_reflects(mtmp, !useeit ? null
+                                   : 'The gaze is reflected away by %s %s!'))
+                break;
+            const { m_canseeu } = await import('./monmove.js');
+            if (!m_canseeu(mtmp)) { /* probably you're invisible */
+                if (useeit)
+                    await emitU(`${Monnam(mtmp)} doesn't seem to notice that ${mhis(mtmp)} gaze was reflected.`);
+                break;
+            }
+            if (useeit)
+                await emitU(`${Monnam(mtmp)} is turned to stone!`);
+            game.stoned = true;
+            const { killed } = await import('./uhitm.js');
+            await killed(mtmp);
+            if (!DEADMONSTER(mtmp)) break;
+            return M_ATTK_AGR_DIED;
+        }
+        if (canseemon_shared(mtmp) && couldsee(mtmp.mx, mtmp.my)
+            && !Stone_resistance_u() && !Unaware()) {
+            await emitU(`You meet ${s_suffix(mon_nam(mtmp))} gaze.`);
+            await (await import('./hack.js')).stop_occupation();
+            const yd = youmonst_data();
+            if (yd?.mcls === 55 /* S_GOLEM */ && yd?.name !== 'stone golem') {
+                const { polymon } = await import('./polyself.js');
+                if (await polymon(name_to_pmidx('stone golem'))) break;
+            }
+            const { done_in_by } = await import('./end.js');
+            await done_in_by(mtmp, 8 /* STONING */);
+        }
         break;
     case AD_CONF:
         if (mcanseeu && !mtmp.mspec_used && rn2(5)) {
@@ -1377,43 +1361,85 @@ export async function doseduce(mon) {
     else await emitU(`You feel very attracted to ${mon_nam(mon)}.`);
     const Who = !seewho ? (fem ? 'She' : 'He') : Monnam(mon);
 
-    // stop_donning(): the multi-turn armour timer, not carried.
-    let tried_gloves = 0;
-    // welded(uwep): a cursed two-hander pins the gloves on.
+    /* if in the process of putting armor on or taking armor off,
+       interrupt that activity now */
+    { const { stop_donning } = await import('./do_wear.js'); await stop_donning(null); }
+    const inv = await import('./invent.js');
+    /* don't try to take off gloves if cursed weapon blocks them */
+    let tried_gloves = inv.welded(game.uwep) ? 1 : 0;
 
     const { y_n } = await import('./display.js');
-    const { xname } = await import('./invent.js');
+    const { xname } = inv;
+    const { mpickobj } = await import('./makemon.js');
     for (const ring of [...(game.invent || [])]) {
         if (ring.otyp !== RIN_ADORNMENT) continue;
         if (fem) {
             if (ring.owornmask && game.uarmg) {
+                /* don't take off worn ring if gloves are in the way */
                 if (!tried_gloves++) await mayberem(mon, Who, game.uarmg, 'gloves');
-                if (game.uarmg) continue;
+                if (game.uarmg) continue; /* next ring might not be worn */
             }
+            /* confirmation prompt when charisma is high bypassed if deaf */
             if (!Deaf() && rn2(20) < acurr_eff(A_CHA)) {
+                inv.makeknown(RIN_ADORNMENT);
                 if (await y_n(`"That ${xname(ring)} looks pretty.  May I have it?"`) === 'n')
                     continue;
             } else {
-                await emitU(`${Who} decides she'd like your ${xname(ring)}, and takes it.`);
+                await emitU(`${Who} decides she'd like ${inv.yname(ring)}, and takes it.`);
             }
-            // freeinv + mpickobj: the ring changes owner.
+            inv.makeknown(RIN_ADORNMENT);
+            /* might be in left or right ring slot or weapon/alt-wep/quiver */
+            if (ring.owornmask) await inv.remove_worn_item(ring, false);
+            inv.freeinv(ring);
+            mpickobj(mon, ring);
         } else {
             if (game.uleft && game.uright
                 && game.uleft.otyp === RIN_ADORNMENT
                 && game.uright.otyp === RIN_ADORNMENT) break;
             if (ring === game.uleft || ring === game.uright) continue;
             if (game.uarmg) {
+                /* don't put on ring if gloves are in the way */
                 if (!tried_gloves++) await mayberem(mon, Who, game.uarmg, 'gloves');
-                if (game.uarmg) break;
+                if (game.uarmg) break; /* no point trying further rings */
             }
+            /* confirmation prompt when charisma is high bypassed if deaf */
             if (!Deaf() && rn2(20) < acurr_eff(A_CHA)) {
+                inv.makeknown(RIN_ADORNMENT);
                 if (await y_n(`"That ${xname(ring)} looks pretty.  Would you wear it for me?"`) === 'n')
                     continue;
             } else {
-                await emitU(`${Who} decides you'd look prettier wearing your ${xname(ring)},`);
+                await emitU(`${Who} decides you'd look prettier wearing ${inv.yname(ring)},`);
                 await emitU('and puts it on your finger.');
             }
-            // setworn(RIGHT_RING/LEFT_RING) + Ring_on(): the ring slot machinery.
+            inv.makeknown(RIN_ADORNMENT);
+            const { the } = await import('./objnam.js');
+            const { setworn_accessory } = inv;
+            if (!game.uright) {
+                await emitU(`${Who} puts ${the(xname(ring))} on your right ${inv.body_part(HAND)}.`);
+                setworn_accessory(ring, W_RINGR);
+            } else if (!game.uleft) {
+                await emitU(`${Who} puts ${the(xname(ring))} on your left ${inv.body_part(HAND)}.`);
+                setworn_accessory(ring, W_RINGL);
+            } else if (game.uright && game.uright.otyp !== RIN_ADORNMENT) {
+                /* note: the "replaces" message might be inaccurate if
+                   hero's location changes and the process gets interrupted */
+                await emitU(`${Who} replaces ${inv.yname(game.uright)} with ${inv.yname(ring)}.`);
+                await inv.Ring_gone(game.uright);
+                /* ring removal might cause loss of levitation which could
+                   drop hero onto trap that transports hero somewhere else */
+                if (u.utotype || !await m_next2u_u(mon)) return 1;
+                setworn_accessory(ring, W_RINGR);
+            } else if (game.uleft && game.uleft.otyp !== RIN_ADORNMENT) {
+                /* see "replaces" note above */
+                await emitU(`${Who} replaces ${inv.yname(game.uleft)} with ${inv.yname(ring)}.`);
+                await inv.Ring_gone(game.uleft);
+                if (u.utotype || !await m_next2u_u(mon)) return 1;
+                setworn_accessory(ring, W_RINGL);
+            } else {
+                await impossible('ring replacement');
+            }
+            await inv.Ring_on(ring);
+            inv.prinv(null, ring, 0);
         }
     }
 
@@ -1557,6 +1583,19 @@ export async function doseduce(mon) {
     if (!rn2(25)) mon.mcan = 1;                  // monster is worn out
     if (!await tele_restrict(mon)) await rloc(mon, RLOC_MSG);
     return 1;
+}
+// C ref: youprop.h Slow_digestion — a worn ring of slow digestion, or white
+// dragon scales/mail worn as the suit (otyp numbers as in allmain.js).
+function Stone_resistance_u() {
+    const u = game.u || {};
+    return !!(u.formprops?.Stone_resistance || u.uprops?.Stone_resistance
+              || u.uprops?.HStone_resistance || u.uprops?.EStone_resistance
+              || u.Stone_resistance);
+}
+function Slow_digestion_u() {
+    return game.uleft?.otyp === 193 || game.uright?.otyp === 193
+        || game.uarm?.otyp === 105 || game.uarm?.otyp === 115
+        || !!game.u?.uprops?.HSlow_digestion || !!game.u?.uprops?.ESlow_digestion;
 }
 // C ref: youprop.h Half_physical_damage.
 function Half_physical_damage_u() {
@@ -1910,6 +1949,31 @@ export function mhitu_ops() {
         monstunseesu: async (bit) => {
             const { monstunseesu } = await import('./mondata.js');
             monstunseesu(bit);
+        },
+        // C ref: potion.c make_confused(HConfusion + n, FALSE) — AD_CONF.
+        Confusion: () => Confusion(),
+        make_confused: async (n) => { await make_confused_u(HConfusion() + n, false); },
+        // C ref: potion.c make_stunned((HStun & TIMEOUT) + n, TRUE) — AD_STUN.
+        make_stunned: async (n) => { await make_stunned_u((HStun() & 0x00FFFFFF) + n, true); },
+        // C ref: eat.c morehungry(num) — `u.uhunger -= num; newuhs(TRUE);`.
+        morehungry: async (num) => {
+            const u = game.u;
+            u.uhunger = (u.uhunger ?? 900) - num;
+            const { newuhs } = await import('./eat.js');
+            await newuhs(true);
+        },
+        // C ref: uhitm.c mhitm_ad_heal() weapon/armor check, shared with
+        // sounds.c MS_NURSE.
+        nurse_undressed: async () => {
+            const { is_weptool } = await import('./weapon.js');
+            const w = game.uwep;
+            const weptool = !!w && (w.oclass === 2 /* WEAPON_CLASS */ || is_weptool(w));
+            return !weptool && !game.uarmu && !game.uarm && !game.uarmc
+                && !game.uarms && !game.uarmg && !game.uarmf && !game.uarmh;
+        },
+        mongone: async (mon) => { await (await import('./mon.js')).mongone(mon); },
+        monflee: async (mon, fleetime, first, fleemsg) => {
+            await (await import('./monmove.js')).monflee(mon, fleetime, first, fleemsg);
         },
     };
     return _ops;

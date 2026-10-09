@@ -18,7 +18,7 @@ import {
     N_DIRS, xdir, ydir,
     DIED, BURNING, PLNMSG_CAUGHT_IN_EXPLOSION, PLNMSG_TOWER_OF_FLAME,
 } from './const.js';
-import { iflags } from './pline.js';
+
 import {
     AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_DRST,
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
@@ -470,12 +470,12 @@ export async function explode(x, y, type, dam, olet, expltype) {
             await update_topl(`You are caught in the ${str}!`);
             // C ref: explode.c:603 — the fatal line below reads this back to
             // decide between "It is fatal." and "The <str> is fatal.".
-            iflags.last_msg = PLNMSG_CAUGHT_IN_EXPLOSION;
+            game.last_msg = PLNMSG_CAUGHT_IN_EXPLOSION;
         }
         if (Invulnerable()) {
             damu = 0;
             await update_topl('You are unharmed!');
-            iflags.last_msg = 0; /* PLNMSG_UNKNOWN — pline() clears it */
+            game.last_msg = 0; /* PLNMSG_UNKNOWN — pline() clears it */
         } else if (adtyp === AD_PHYS || adtyp === AD_ACID) {
             damu = Maybe_Half_Phys(damu);
         }
@@ -524,8 +524,8 @@ export async function explode(x, y, type, dam, olet, expltype) {
                 // explosion again.  The port only ever emitted the second form,
                 // so a gas-spore death read "The gas spore's explosion is
                 // fatal." where C reads "...explosion!  It is fatal.".
-                if (iflags.last_msg === PLNMSG_CAUGHT_IN_EXPLOSION
-                    || iflags.last_msg === PLNMSG_TOWER_OF_FLAME)
+                if (game.last_msg === PLNMSG_CAUGHT_IN_EXPLOSION
+                    || game.last_msg === PLNMSG_TOWER_OF_FLAME)
                     await update_topl('It is fatal.');
                 else
                     await update_topl(`The ${str} is fatal.`);

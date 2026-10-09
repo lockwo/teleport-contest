@@ -33,7 +33,7 @@ import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
 import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
          W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
-         COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN, Unaware as Unaware_const } from './const.js';
+         COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN, Unaware as Unaware_const, OBJ_INVENT } from './const.js';
 import { fruitname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
@@ -248,6 +248,29 @@ export async function make_sick(xtime, cause, talk, type) {
 // Exported as make_blinded_hero for callers outside potion.c's file family
 // (monmove.js's AD_BLND arm); the name make_blinded is already taken by local
 // copies in eat.js/apply.js.
+// C ref: potion.c make_blinded() temporary-blindness arms that don't toggle
+// sight: eyeless/PermaBlind strange feeling, blindfolded itch/twitch, or the
+// Eyes of the Overworld "vision seems to brighten/dim" message.
+async function blind_toggle_msg(clearing) {
+    const { youmonst_data, body_part } = await import('./invent.js');
+    const { eyecount } = await import('./polyself.js');
+    const { strange_feeling } = await import('./detect.js');
+    const u = game.u;
+    const ptr = youmonst_data();
+    const permaBlind = !!((u?.uprops?.HBlinded | 0) & 0x04000000) || !!u?.uroleplay?.blind;
+    if (eyecount(ptr) === 0 || permaBlind) {
+        await strange_feeling(null, null);
+    } else if (game.ublindf && game.ublindf.otyp !== 232 /* LENSES */) {
+        let eyes = body_part(1 /* EYE */);
+        const plural = eyecount(ptr) !== 1;
+        if (plural) eyes = makeplural(eyes);
+        const v = clearing ? 'itch' : 'twitch';
+        await update_topl(`Your ${eyes} momentarily ${plural ? v : v + 'es'}.`);
+    } else {
+        await update_topl(`Your vision seems to ${clearing ? 'brighten' : 'dim'} for a moment but is ${
+            Hallucination() ? (clearing ? 'sadder' : 'happier') : 'normal'} now.`);
+    }
+}
 export async function make_blinded_hero(xtime, talk) { return await make_blinded(xtime, talk); }
 async function make_blinded(xtime, talk) {
     const old = BlindedTimeout();
@@ -262,12 +285,16 @@ async function make_blinded(xtime, talk) {
             await update_topl(Hallucination()
                 ? 'Far out!  Everything is all cosmic again!'
                 : 'You can see again.');
+    } else if (old && !xtime) {
+        if (talk) await blind_toggle_msg(true);
     }
     if (u_could_see && !can_see_now) {
         if (talk)
             await update_topl(Hallucination()
                 ? 'Oh, bummer!  Everything is dark!  Help!'
                 : 'A cloud of darkness falls upon you.');
+    } else if (!old && xtime) {
+        if (talk) await blind_toggle_msg(false);
     }
     set_blinded(xtime);
     // C ref: potion.c:336 toggle_blindness() — vision_recalc(0), then
@@ -1560,9 +1587,9 @@ async function ghost_from_bottle() {
         await update_topl('As you open the bottle, something emerges.');
         return;
     }
-    // Hallucination substitutes rndmonnam(NULL), which draws; the plain "ghost"
-    // is the non-hallucinating text.
-    await update_topl('As you open the bottle, an enormous ghost emerges!');
+    // Hallucination substitutes rndmonnam(NULL), which draws display RNG.
+    const ghost = Hallucination() ? (await import('./do_name.js')).rndmonnam().name : 'ghost';
+    await update_topl(`As you open the bottle, an enormous ${ghost} emerges!`);
     if (game.flags?.verbose !== false)
         await update_topl('You are frightened to death, and unable to move.');
     nomul_local(-3);
@@ -1915,7 +1942,7 @@ function p_permapoisoned(_obj) { return false; }
 // C ref: obj.h carried(obj) — the object is in the hero's inventory.
 function p_carried(obj) {
     if (!obj) return false;
-    return obj.where === 3 /* OBJ_INVENT */
+    return obj.where === OBJ_INVENT
         || (Array.isArray(game.invent) && game.invent.includes(obj));
 }
 // C ref: hack.h distu(x,y) — squared distance from the hero.
@@ -3155,15 +3182,11 @@ export async function mongrantswish(monp) {
     await D.tmp_at(P_DISP_END, 0);
 }
 // C ref: mon.c mongone(mtmp) — the monster leaves the game (no corpse, no
-// experience).  js/muse.js:672 and js/vault.js:228 each keep a private copy; neither
-// is exported, so this drops it off the level list the way they do.
+// experience); js/mon.js holds the faithful port (unstuck, special items,
+// m_detach).
 async function p_mongone(mon) {
-    const list = game.level?.monsters;
-    if (Array.isArray(list)) {
-        const i = list.indexOf(mon);
-        if (i >= 0) list.splice(i, 1);
-    }
-    if (mon) mon.mhp = 0;
+    const { mongone } = await import('./mon.js');
+    await mongone(mon);
 }
 
 // C ref: potion.c:2815 djinni_from_bottle(obj) — rubbing/quaffing a smoky

@@ -22,7 +22,7 @@ import { rn2, rnd } from './rng.js';
 import { touch_artifact_monster } from './artifact.js';
 import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
     IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED,
-    POOL, MOAT, WATER, LAVAPOOL, LAVAWALL, OBJ_MINVENT } from './const.js';
+    POOL, MOAT, WATER, LAVAPOOL, LAVAWALL } from './const.js';
 import { obj_resists } from './zap.js';
 import { is_quest_artifact } from './questpgr.js';
 import { newsym, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at } from './display.js';
@@ -54,7 +54,7 @@ import { healmon, mon_hates_silver, mon_givit, max_mon_load } from './mon.js';
 import { max_passive_dmg } from './mondata.js';
 import { attacktype, dmgtype, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
 import { gettrack } from './track.js';
-import { monster_by_pmidx, mon_msize, mon_cwt, mon_cnutrit, pm_to_cham } from './makemon.js';
+import { monster_by_pmidx, mon_msize, mon_cwt, mon_cnutrit, pm_to_cham, mpickobj } from './makemon.js';
 
 // dogfood quality enum (mextra.h): lower == more desirable.
 const DOGFOOD = 0, CADAVER = 1, ACCFOOD = 2, MANFOOD = 3,
@@ -981,16 +981,6 @@ function pet_extract_floor(obj) {
     if (!arr) return;
     const ix = arr.indexOf(obj);
     if (ix >= 0) arr.splice(ix, 1);
-}
-
-// C ref: mon.c mpickobj(mtmp,otmp) — add an object to the monster's minvent.
-// No RNG for ordinary items.  add_to_minv() prepends (mkobj.c:2648); keep
-// minvent newest-first.
-function mpickobj(mtmp, obj) {
-    mtmp.minvent = mtmp.minvent || [];
-    obj.where = OBJ_MINVENT;
-    obj.ocarry = mtmp;
-    mtmp.minvent.unshift(obj);
 }
 
 // C ref: dogmove.c dog_goal(...).  Returns the approach desire (-1/0/1) or -2
