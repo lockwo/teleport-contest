@@ -19,7 +19,7 @@ import { game } from '../gstate.js';
 import { somexy } from '../mkroom.js';
 import { rn2, rnd } from '../rng.js';
 import {
-    add_sp_room, bigrm_wallification, gx, gy, quest_level_init_solidfill,
+    add_sp_room, bigrm_wallification, gx, gy, quest_level_init_solidfill, reset_xystart_size,
     splev_link_doors_rooms, splev_mkstairs_at,
 } from '../sp_lev.js';
 import { quest_align_shuffle } from './quest_home_common.js';
@@ -436,6 +436,10 @@ export async function makemaz_cav_fila() {
     const g = game;
     // load_special -> nhlib.lua top-level shuffle(align): rn2(3), rn2(2).
     quest_align_shuffle();
+    // sp_level_coder_init (sp_lev.c:6373) — no des.map runs on this level, so
+    // gx/gy must be back at the full-level bounds, not the previous level's
+    // des.map footprint (cav_stair_random() reads them for its get_location).
+    reset_xystart_size();
 
     // des.level_init({ style="solidfill", fg=" " }) — rn2(2), then a STONE
     // fill fully overwritten by the mines init below.

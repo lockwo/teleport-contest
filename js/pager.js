@@ -12,10 +12,12 @@
 //
 // No dungeon RNG is consumed and no game time elapses (dohelp returns ECMD_OK).
 
+import { makeplural } from './plural.js';
 import { game } from './gstate.js';
+import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch } from './input.js';
 import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history } from './display.js';
-import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan } from './invent.js';
+import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
 import { option_help_lines } from './options.js';
@@ -175,10 +177,12 @@ async function dispfile_usagehelp() { await display_file(USAGEHELP); }
 async function dispfile_license() { await display_file(LICENSE); }
 
 // C ref: pager.c docontact() — "Support information." full-screen text window.
-// The sysopt.support / SYSCF-WIZARDS branches print a "local support" line only
-// when the build's sysconf sets them; this build sets neither, so only the
-// development-team lines show.  DEVTEAM_EMAIL / DEVTEAM_URL are build-constant
-// macros from include/hack.h.
+// DO NOT add a "To contact local support," line.  The CONTEST recorder (all public
+// sessions, e.g. sessions/seed2200-wizard-quaff-zap-read step 216, and so the
+// hidden ones) has no sysopt.support, so only the development-team lines show.
+// A locally rebuilt nethack-c/recorder whose sysconf says `SUPPORT=` prints the
+// extra line (fuzz sessions recorded locally diverge here): recorder-environment
+// artifact, not a port bug.  DEVTEAM_EMAIL / DEVTEAM_URL are hack.h macros.
 const DEVTEAM_EMAIL = 'devteam@nethack.org';
 const DEVTEAM_URL = 'https://www.nethack.org/';
 async function docontact() {
@@ -1231,12 +1235,8 @@ function dxdy_to_dist_descr(dx, dy, fulldir) {
                    : `${nsp}${nsp && ewp ? ',' : ''}${ewp}`;
 }
 
-// C ref: pager.c ice_descr(x, y, outbuf) — js/wizterrainwish.js:406 owns the
-// canonical port; the thaw-timer wording is what it is used for.
-function pg_ice_descr(x, y) {
-    const loc = game.level?.at(x, y);
-    return (loc && loc.icedpool) ? 'solid ice' : 'ice';
-}
+// C ref: pager.c ice_descr(x, y, outbuf) — canonical port lives in invent.js.
+const pg_ice_descr = (x, y) => ice_descr(x, y);
 // C ref: pager.c self_lookat(outbuf) — js/hack.js:1356 owns the canonical port
 // (role/race/plname assembly plus the ball and trap suffixes).
 function pg_self_lookat() {
@@ -1614,7 +1614,7 @@ export function look_at_monster(mtmp, x, y, wantMonbuf = true) {
             step(MONSEEN_DETECT, 'monster detection');
             if (hs & MONSEEN_WARNMON) {
                 if (Hallucination_u()) push('paranoid delusion');
-                else push(`warned of ${pg_makeplural(data.name || 'creature')}`);
+                else push(`warned of ${makeplural(data.name || 'creature')}`);
                 hs &= ~MONSEEN_WARNMON;
                 if (hs) push(', ');
             }
@@ -1638,8 +1638,6 @@ function pg_digests(ptr) {
 }
 /* trap.h is_pit(ttyp) */
 function pg_is_pit(tt) { return tt === PIT || tt === (PIT + 1) /* SPIKED_PIT */; }
-/* objnam.c makeplural() — the general port lives in js/invent.js. */
-function pg_makeplural(s) { return /s$/.test(s) ? s : `${s}s`; }
 /* vision.c:2152 howmonseen(mon) — the bitmask lookat() decodes.  MATCH_WARN_OF_MON
    (MONSEEN_WARNMON) is omitted: this port has no warned-of-monster-type state. */
 function howmonseen(mtmp) {
@@ -2108,9 +2106,9 @@ function didlook(cc, looked, found, need_to_look, out_str, firstmatch,
     }
     return found;
 }
-/* quest.c on_level(&u.uz, &qstart_level) / ok_to_quest() */
-function on_qstart_level_pg() { return false; }
-function ok_to_quest_pg() { return true; }
+/* quest.c on_level(&u.uz, &qstart_level) / ok_to_quest() (js/questok.js) */
+const on_qstart_level_pg = on_qstart_level;
+const ok_to_quest_pg = ok_to_quest;
 
 // C ref: pager.c:1630 add_quoted_engraving(x, y, buf, force) — when farlook is
 // reporting on an engraving, include its text.  `buf` is a box; the caller
@@ -2456,14 +2454,10 @@ export async function look_engrs(nearby) {
     if (count) await display_nhwindow_text(win, true);
     else await update_topl(`No engravings seen or remembered${nearby ? ' nearby' : ''}.`);
 }
-/* svl.lastseentyp[x][y] — flat COLNO*ROWNO array where the level graph keeps it */
+/* svl.lastseentyp[x][y] — game.lastseentyp[x][y] (dungeon.js update_lastseentyp) */
 function pg_lastseentyp(x, y) {
-    const arr = game.level?.lastseentyp;
-    if (Array.isArray(arr)) {
-        const v = arr[x + y * 80];
-        if (v != null) return v;
-    }
-    return game.level?.at(x, y)?.typ;
+    const v = game.lastseentyp?.[x]?.[y];
+    return (v != null) ? v : game.level?.at(x, y)?.typ;
 }
 
 /* pager.c:2216 suptext1[] / suptext2[] */

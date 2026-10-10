@@ -10,6 +10,12 @@ export function pushKey(key) {
     _inputQueue.push(typeof key === 'number' ? key : key.charCodeAt(0));
 }
 
+// C ref: cmd.c cmdq_add_key(CQ_CANNED, ...) — keys the next prompts read before
+// any real input (used by the #herecmdmenu action dispatch).
+export function unshiftKeys(keys) {
+    _inputQueue.unshift(...[...keys].map((k) => k.charCodeAt(0)));
+}
+
 export function pushKeys(keys) {
     for (const k of keys) pushKey(k);
 }

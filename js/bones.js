@@ -22,6 +22,7 @@
 //   give_to_nearby_mon()  bones.c:225  — rn2(nmon) reservoir pick
 //   drop_upon_death()     bones.c:258  — rn2(5) curse + rn2(8) give-to-mon
 
+import { m_at } from './display.js';
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
@@ -397,11 +398,6 @@ function likes_objs_mon(m) {
                     & (M2_GREEDY | M2_JEWELS | M2_COLLECT | M2_MAGIC)));
 }
 
-function m_at(x, y) {
-    for (const m of game.level?.monsters ?? [])
-        if (!DEADMONSTER(m) && m.mx === x && m.my === y) return m;
-    return null;
-}
 
 export function give_to_nearby_mon(otmp, x, y, place_object) {
     let selected = null;
@@ -445,76 +441,6 @@ export function drop_upon_death(mtmp, cont, x, y, hooks = {}) {
             give_to_nearby_mon(otmp, x, y, hooks);
         } else {
             hooks.toFloor?.(otmp, x, y);
-        }
-    }
-}
-
-// ── resetobjs (C ref: bones.c:50), saving arm ──
-//
-// Every object that goes into a bones file is stripped of what the DEAD hero
-// knew about it and of the few types that must not survive into another game.
-// None of it draws RNG, but all of it is what the next hero sees: without the
-// *known flags being cleared the reloaded loot renders with the previous
-// hero's identifications ("a scroll of magic mapping" instead of "a scroll
-// labeled FOOBIE BLETCH").
-//
-// The `restore` arm (artifact re-registration, shop no_charge for part-eaten
-// food) is deliberately not ported: getbones() re-stamps o_ids itself and the
-// artifact registry lives outside this module.
-// `O` is the js/mkobj.js namespace, imported once by savebones() — a static
-// import would close a cycle through mkobj.js -> eat.js.
-function reset_obj_chain(chain, O, container) {
-    if (!Array.isArray(chain)) return;
-    for (const otmp of [...chain]) {
-        if (!otmp) continue;
-        if (Array.isArray(otmp.cobj)) reset_obj_chain(otmp.cobj, O, otmp);
-
-        // C: if (otmp->in_use) { obj_extract_self(otmp); dealloc_obj(otmp); }
-        if (otmp.in_use) {
-            const host = container ? container.cobj : chain;
-            const i = host.indexOf(otmp);
-            if (i >= 0) host.splice(i, 1);
-            continue;
-        }
-
-        // C: otmp->dknown = otmp->bknown = otmp->rknown = otmp->lknown
-        //      = otmp->cknown = otmp->tknown = 0; invlet = 0; no_charge = 0;
-        //      how_lost = LOST_NONE.
-        // (The `if (objects[otyp].oc_uses_known) otmp->known = 0;` line above
-        // them has no counterpart here: js/mkobj.js's objects[] carries no
-        // oc_uses_known bit, and guessing which types have it would answer
-        // wrong for every type not in front of me.)
-        otmp.dknown = 0; otmp.bknown = 0; otmp.rknown = 0;
-        otmp.lknown = 0; otmp.cknown = 0; otmp.tknown = 0;
-        otmp.invlet = 0;
-        otmp.no_charge = 0;
-        otmp.how_lost = 0;                       // LOST_NONE
-
-        // C: strip user-supplied names, but keep them on artifacts, statues,
-        // novels and corpses of unique monsters (those came from a score file).
-        if (otmp.oname
-            && !(otmp.oartifact || otmp.otyp === O.STATUE || otmp.otyp === O.SPE_NOVEL
-                 || (otmp.otyp === O.CORPSE && otmp.corpsenm >= O.SPECIAL_PM)))
-            otmp.oname = null;
-
-        if (otmp.otyp === O.EGG) {
-            otmp.spe = 0;                        // not "laid by you" next game
-        } else if (otmp.otyp === O.AMULET_OF_YENDOR) {
-            otmp.otyp = O.FAKE_AMULET_OF_YENDOR; // no longer the real Amulet
-            O.curse(otmp);
-        } else if (otmp.otyp === O.CANDELABRUM_OF_INVOCATION) {
-            otmp.otyp = O.WAX_CANDLE;
-            otmp.age = 50;                       // assume used
-            if (otmp.spe > 0) otmp.quan = otmp.spe;
-            otmp.spe = 0;
-            otmp.owt = O.weight(otmp);
-            O.curse(otmp);
-        } else if (otmp.otyp === O.BELL_OF_OPENING) {
-            otmp.otyp = O.BELL;
-            O.curse(otmp);
-        } else if (otmp.otyp === O.SPE_BOOK_OF_THE_DEAD) {
-            otmp.otyp = O.SPE_BLANK_PAPER;
-            O.curse(otmp);
         }
     }
 }
@@ -640,7 +566,8 @@ export async function savebones(how = 0, corpse = null) {
             toMon: (m, o) => { if (o) (m.minvent = m.minvent || []).push(o); },
         };
         const { makemon, monster_by_pmidx, mongets } = await import('./makemon.js');
-        const { MM_NONAME, NO_MINVENT, NON_PM, LOW_PM, S_MUMMY } = await import('./const.js');
+        const { MM_NONAME, NO_MINVENT, NON_PM, LOW_PM } = await import('./const.js');
+        const { S_MUMMY } = await import('./symbols.js');
         const { christen_monst } = await import('./do_name.js');
         const arise = g.u?.ugrave_arise ?? NON_PM;
         const arisen = arise >= LOW_PM && !!monster_by_pmidx(arise);
@@ -683,20 +610,36 @@ export async function savebones(how = 0, corpse = null) {
         // C ref: bones.c:538-546 — per-monster: mark its pack ghostly, resetobjs
         // it, forget the dead hero (mlstmv, tameness, and seen_resistance — "
         // observations about the current hero won't apply to future game").
-        // js/mkobj.js exports every otyp resetobjs() names except
-        // FAKE_AMULET_OF_YENDOR and permonst.h's SPECIAL_PM; both are looked up
-        // symbolically (objects[] carries the C enum name in `sym`, and
-        // SPECIAL_PM is mons[PM_LONG_WORM_TAIL]) rather than pasted as numbers.
         const mk = await import('./mkobj.js');
         const { name_to_pmidx: n2p } = await import('./makemon.js');
+        const { monster_by_pmidx: mbp } = await import('./makemon.js');
+        const inv = await import('./invent.js');
         const O = Object.assign(Object.create(null), mk, {
             FAKE_AMULET_OF_YENDOR:
                 mk.objects.find((o) => o.sym === 'FAKE_AMULET_OF_YENDOR')?.otyp,
             SPECIAL_PM: n2p('long worm tail') ?? Infinity,
         });
+        const deps = {
+            O,
+            obj_extract_self: inv.obj_extract_self,
+            dealloc_obj: mk.dealloc_obj,
+            free_oname: (await import('./do_name.js')).free_oname,
+            free_omonst: mk.free_omonst,
+            set_corpsenm: mk.set_corpsenm,
+            curse: mk.curse,
+            weight: mk.weight,
+            end_burn: (await import('./timeout.js')).end_burn,
+            cant_revive: (await import('./read.js')).cant_revive,
+            PM_DOPPELGANGER: n2p('doppelganger'),
+            unique_corpstat: (pm) => !!((mbp(pm)?.geno | 0) & 0x1000), /* G_UNIQ */
+            is_mines_prize: (o) => o.o_id != null
+                && o.o_id === g.context?.achieveo?.mines_prize_oid,
+            is_soko_prize: (o) => o.o_id != null
+                && o.o_id === g.context?.achieveo?.soko_prize_oid,
+        };
         for (const m of g.level?.monsters || []) {
             set_ghostly_objlist(m.minvent || []);
-            reset_obj_chain(m.minvent, O);
+            await resetobjs(m.minvent, false, deps);
             m.mlstmv = 0;
             if (m.mtame) { m.mtame = 0; m.mpeaceful = 0; }
             m.seen_resistance = 0;               // M_SEEN_NOTHING
@@ -710,9 +653,9 @@ export async function savebones(how = 0, corpse = null) {
         // C ref: bones.c:552-555 — the floor and buried chains get the same
         // ghostly mark + reset the hero's pack just got.
         set_ghostly_objlist(g.level?.objects || []);
-        reset_obj_chain(g.level?.objects, O);
+        await resetobjs(g.level?.objects, false, deps);
         set_ghostly_objlist(g.level?.buriedobjlist || []);
-        reset_obj_chain(g.level?.buriedobjlist, O);
+        await resetobjs(g.level?.buriedobjlist, false, deps);
 
         // C ref: bones.c:555-560 — wipe every cell's seen/lit/remembered state so
         // the arriving hero explores the legacy level from scratch (this is what
@@ -807,9 +750,8 @@ export default { getbones, can_make_bones, no_bones_level, bones_include_name,
 // add a second import of getbones there.
 
 // ═══════════════════════════════════════════════════════════════════════════
-// The remaining bones.c entry points, translated verbatim.  ADDITIVE ONLY:
-// nothing above this line calls them (savebones() still uses its own
-// reset_obj_chain(); see the note on resetobjs() below).
+// The remaining bones.c entry points, translated verbatim.
+// savebones() calls resetobjs() below.
 //
 // The callees these need — obj_extract_self(), curse(), artifact_exists(),
 // cant_revive(), enexto(), ... — are either module-private stubs elsewhere in
@@ -849,15 +791,8 @@ export function goodfruit(id) {
 // survive into another game.  Recursive over containers, and it can delete the
 // object it is looking at (the in_use arm), which is why C caches nobj first.
 //
-// NOTE for whoever wires bones up: reset_obj_chain() at js/bones.js:440 is the
-// incomplete predecessor of this function (saving arm only; no oc_uses_known,
-// SLIME_MOLD, SCR_MAIL, TIN, CORPSE/STATUE or prize handling) and savebones()
-// still calls it.  Move that call here once `deps` can be filled in; do not
-// "fix" reset_obj_chain, delete it.
-//
-// C's `nobj` chain is an array in this port (the same representation
-// reset_obj_chain and savebones already use), and `cobj` likewise.
-export function resetobjs(ochain, restore, deps = {}) {
+// C's `nobj` chain is an array in this port, and `cobj` likewise.
+export async function resetobjs(ochain, restore, deps = {}) {
     const O = deps.O || {};
     const objects = O.objects || [];
 
@@ -867,7 +802,7 @@ export function resetobjs(ochain, restore, deps = {}) {
     for (const otmp of [...ochain]) {
         if (!otmp) continue;
         if (Array.isArray(otmp.cobj) && otmp.cobj.length)
-            resetobjs(otmp.cobj, restore, deps);
+            await resetobjs(otmp.cobj, restore, deps);
 
         if (otmp.in_use) {
             deps.obj_extract_self?.(otmp);
@@ -951,17 +886,17 @@ export function resetobjs(ochain, restore, deps = {}) {
                    null instead of otmp for object), shopkeepers (by passing
                    false for the revival flag), temple priests and vault guards,
                    to prevent corpse revival / statue reanimation. */
-                const mnumRef = { value: otmp.corpsenm };
+                const mnumRef = { v: otmp.corpsenm };
                 if (has_omonst(otmp)
-                    && deps.cant_revive?.(mnumRef, false, null)) {
+                    && await deps.cant_revive?.(mnumRef, false, null)) {
                     deps.free_omonst?.(otmp);
                     /* mnum is now either human_zombie or doppelganger; for
                        corpses of uniques the transformation has to happen NOW
                        rather than at a revival attempt, otherwise eating this
                        corpse would behave as if it remains unique */
-                    if (mnumRef.value === deps.PM_DOPPELGANGER
+                    if (mnumRef.v === deps.PM_DOPPELGANGER
                         && otmp.otyp === O.CORPSE)
-                        deps.set_corpsenm?.(otmp, mnumRef.value);
+                        deps.set_corpsenm?.(otmp, mnumRef.v);
                 }
             } else if (deps.is_mines_prize?.(otmp) || deps.is_soko_prize?.(otmp)) {
                 /* achievement tracking; in case the prize was moved off its
@@ -972,7 +907,7 @@ export function resetobjs(ochain, restore, deps = {}) {
                 deps.curse?.(otmp);
             } else if (otmp.otyp === O.CANDELABRUM_OF_INVOCATION) {
                 if (otmp.lamplit)
-                    deps.end_burn?.(otmp, true);
+                    await deps.end_burn?.(otmp, true);
                 otmp.otyp = O.WAX_CANDLE;
                 otmp.age = 50;                        /* assume used */
                 if (otmp.spe > 0)

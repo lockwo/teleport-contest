@@ -5,6 +5,9 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2 } from './rng.js';
 import { rn2_on_display_rng } from './disprng.js';
+import { MFLAGS2, MFLAGS3, MSOUND, MS_LEADER, MS_NEMESIS,
+         M2_PEACEFUL, M2_HOSTILE, M2_NASTY, M2_STALK,
+         M3_CLOSE, M3_WANTSARTI, M3_WAITFORU } from './monflags_data.js';
 import {
     A_CHAOTIC, A_LAWFUL, A_NEUTRAL, A_NONE,
     PICK_RANDOM, PICK_RIGID,
@@ -1561,9 +1564,6 @@ const AM_LAWFUL = ROLE_LAWFUL, AM_NEUTRAL = ROLE_NEUTRAL,
 //     which runs for the Priest (the only role with no gods of its own).
 export async function role_init() {
     const g = game;
-    const { MFLAGS2, MFLAGS3, MSOUND, MS_LEADER, MS_NEMESIS,
-            M2_PEACEFUL, M2_HOSTILE, M2_NASTY, M2_STALK,
-            M3_CLOSE, M3_WANTSARTI, M3_WAITFORU } = await import('./monflags_data.js');
     const { name_to_pmidx } = await import('./makemon.js');
     let alignmnt;
 
@@ -1618,12 +1618,10 @@ export async function role_init() {
     const ldrnum = q.ldr ? name_to_pmidx(q.ldr) : -1;
     const guardnum = q.guard ? name_to_pmidx(q.guard) : -1;
     const neminum = q.nemesis ? name_to_pmidx(q.nemesis) : -1;
+    quest_monster_flag_fixups(ldrnum, neminum);
 
     /* Fix up the quest leader */
     if (ldrnum >= 0) {
-        MSOUND[ldrnum] = MS_LEADER;
-        MFLAGS2[ldrnum] |= M2_PEACEFUL;
-        MFLAGS3[ldrnum] |= M3_CLOSE;
         rs_set_maligntyp(ldrnum, alignmnt * 3);
         /* if gender is random, we choose it now instead of waiting until the
            leader monster is created */
@@ -1640,11 +1638,6 @@ export async function role_init() {
 
     /* Fix up the quest nemesis */
     if (neminum >= 0) {
-        MSOUND[neminum] = MS_NEMESIS;
-        MFLAGS2[neminum] &= ~M2_PEACEFUL;
-        MFLAGS2[neminum] |= (M2_NASTY | M2_STALK | M2_HOSTILE);
-        MFLAGS3[neminum] &= ~M3_CLOSE;
-        MFLAGS3[neminum] |= M3_WANTSARTI | M3_WAITFORU;
         /* if gender is random, we choose it now instead of waiting until the
            nemesis monster is created */
         g.quest_status.nemgend =
@@ -1704,6 +1697,53 @@ const ROLE_QUEST = [
     { ldr: 'Norn', guard: 'warrior', nemesis: 'Lord Surtur' },
     { ldr: 'Neferet the Green', guard: 'apprentice', nemesis: 'Dark One' },
 ];
+
+// C ref: role.c role_init() "Fix up the quest leader" / "Fix up the quest
+// nemesis" — the mons[] msound/flag rewrites (no RNG).  The static tables
+// already carry them for every monster that serves ONE role, but the Master of
+// Thieves is the Rogue's leader AND the Tourist's nemesis: in a Tourist game C
+// turns it into MS_NEMESIS (hostile, wants the Amulet-style artifact, waits for
+// you), which is what makemon.c:1378 keys the Bell of Opening off.
+export function quest_monster_flag_fixups(ldrnum, neminum) {
+    if (ldrnum >= 0) {
+        MSOUND[ldrnum] = MS_LEADER;
+        MFLAGS2[ldrnum] |= M2_PEACEFUL;
+        MFLAGS3[ldrnum] |= M3_CLOSE;
+    }
+    if (neminum >= 0) {
+        MSOUND[neminum] = MS_NEMESIS;
+        MFLAGS2[neminum] &= ~M2_PEACEFUL;
+        MFLAGS2[neminum] |= (M2_NASTY | M2_STALK | M2_HOSTILE);
+        MFLAGS3[neminum] &= ~M3_CLOSE;
+        MFLAGS3[neminum] |= M3_WANTSARTI | M3_WAITFORU;
+    }
+}
+
+// Live-game entry: resolve the hero's quest leader/nemesis by name and apply
+// the flag fixups (fastforward_role_init runs this where C runs role_init()).
+let _questMonPristine = null;
+export function quest_monster_fixups_for_role(roleIdx, name_to_pmidx) {
+    const q = ROLE_QUEST[roleIdx];
+    if (!q) return;
+    // C starts every process from the pristine const mons[]; this port keeps
+    // the tables in one process across games, so put every quest leader and
+    // nemesis back before applying this hero's role (the Master of Thieves
+    // flips between Rogue leader and Tourist nemesis).
+    if (!_questMonPristine) {
+        _questMonPristine = new Map();
+        for (const r of ROLE_QUEST)
+            for (const nm of [r.ldr, r.nemesis]) {
+                const i = name_to_pmidx(nm);
+                if (i >= 0 && !_questMonPristine.has(i))
+                    _questMonPristine.set(i, [MSOUND[i], MFLAGS2[i], MFLAGS3[i]]);
+            }
+    }
+    for (const [i, [snd, f2, f3]] of _questMonPristine) {
+        MSOUND[i] = snd; MFLAGS2[i] = f2; MFLAGS3[i] = f3;
+    }
+    quest_monster_flag_fixups(q.ldr ? name_to_pmidx(q.ldr) : -1,
+                              q.nemesis ? name_to_pmidx(q.nemesis) : -1);
+}
 
 // C ref: mondata.h is_neuter/is_female/is_male (ptr->mflags2 & M2_NEUTER etc.)
 // and permonst.maligntyp.  The generated tables are the port's mons[] columns.

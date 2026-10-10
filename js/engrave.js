@@ -19,7 +19,7 @@ import { WEAPON_CLASS, WAND_CLASS, GEM_CLASS, RING_CLASS,
          FOOD_CLASS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS, COIN_CLASS,
          ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
          objects } from './mkobj.js';
-import { mflags1_of, M1_ANIMAL } from './monflags_data.js';
+import { mflags1_of, M1_ANIMAL, is_whirly } from './monflags_data.js';
 import { attacktype, AT_HUGS } from './monattk_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
@@ -245,7 +245,7 @@ export function make_grave(x, y, text) {
 }
 
 // C ref: rumors.c getrumor(). truth: 1=true, -1=false, 0=either.
-function getrumor(truth, exclude_cookie) {
+export function getrumor(truth, exclude_cookie) {
     const cookie_marker = '[cookie] ';
     const marklen = cookie_marker.length;
     const meta = init_rumors();
@@ -402,7 +402,7 @@ export async function rloc_engr(ep) {
 }
 
 // C ref: engrave.c cant_reach_floor(x, y, up, check_pit, wand_engraving).
-async function cant_reach_floor(x, y, up, check_pit, wand_engraving) {
+export async function cant_reach_floor(x, y, up, check_pit, wand_engraving) {
     const { pline } = await import('./display.js');
     const { surface } = await import('./dungeon.js');
     const who = wand_engraving
@@ -581,7 +581,8 @@ function stylus_ok(obj) {
 // stack but (unlike doname) carries no count and no BUC word, so a stack of
 // nine apples is "your apples", not "your 9 uncursed apples".
 async function Yname2(obj) {
-    const { cxname_singular, makeplural } = await import('./invent.js');
+    const { cxname_singular } = await import('./invent.js');
+    const { makeplural } = await import('./plural.js');
     const base = cxname_singular(obj);
     const s = ((obj?.quan ?? 1) > 1) ? makeplural(base) : base;
     return `Your ${s}`;
@@ -589,7 +590,8 @@ async function Yname2(obj) {
 // C ref: objnam.c yname(obj) — shk_your() + cxname(); the lowercase sibling of
 // Yname2() above.
 async function yname_of(obj) {
-    const { cxname_singular, makeplural } = await import('./invent.js');
+    const { cxname_singular } = await import('./invent.js');
+    const { makeplural } = await import('./plural.js');
     const base = cxname_singular(obj);
     const nm = ((obj?.quan ?? 1) > 1) ? makeplural(base) : base;
     return `your ${nm}`;
@@ -881,18 +883,6 @@ async function engraveEnv() {
 
 // C ref: mondata.h is_animal(ptr) — M1_ANIMAL, from the generated flag table.
 function is_animal(ptr) { return !!ptr && (mflags1_of(ptr) & M1_ANIMAL) !== 0; }
-// C ref: mondata.h is_whirly(ptr) — S_VORTEX ('v') or mons[PM_AIR_ELEMENTAL].
-let _pm_air_elemental = -1;
-async function is_whirly(ptr) {
-    if (!ptr) return false;
-    if (ptr.mlet === 'v') return true;
-    if (_pm_air_elemental < 0) {
-        const { name_to_pmidx } = await import('./makemon.js');
-        _pm_air_elemental = name_to_pmidx('air elemental');
-    }
-    return ptr.pmidx === _pm_air_elemental;
-}
-
 // C ref: engrave.c freehand() — does the hero have a hand free to write with?
 async function freehand() {
     const { welded, bimanual } = await import('./invent.js');
@@ -918,7 +908,7 @@ async function u_can_engrave() {
         if (is_animal(ptr)) {
             await pline('What would you write?  "Jonah was here"?');
             return false;
-        } else if (await is_whirly(ptr)) {
+        } else if (is_whirly(ptr)) {
             await cant_reach_floor(u.ux, u.uy, false, false, false);
             return false;
         }
@@ -1025,7 +1015,7 @@ export async function doengrave() {
     // C ref: engrave.c doengrave_ctx_init() — an amorphous engulfer (u_can_engrave
     // already refused the animal and whirly ones) gets tickled instead.
     de.jello = !!(u.uswallow && !(is_animal(u.ustuck?.data)
-                                  || await is_whirly(u.ustuck?.data)));
+                                  || is_whirly(u.ustuck?.data)));
 
     // C ref: engrave.c doengrave():995 — "There's no reason you should be able
     // to write with a wand while both your hands are tied up."
@@ -1868,7 +1858,7 @@ export async function doengrave_ctx_init(de) {
         de.type = ENGR_BLOOD;
 
     de.jello = !!(u.uswallow && !(is_animal(u.ustuck?.data)
-                                  || await is_whirly(u.ustuck?.data)));
+                                  || is_whirly(u.ustuck?.data)));
     de.frosted = (game.level?.at(u.ux, u.uy)?.typ === ICE);
 }
 // C ref: monsym.h S_VAMPIRE.

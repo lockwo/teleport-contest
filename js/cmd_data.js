@@ -50,7 +50,7 @@ export const EXTCMD_TABLE = [
     { key: 58, txt: "look", desc: "look at what is here", flags: "IFBURIED" },
     { key: 0, txt: "lookaround", desc: "describe what you can see", flags: "IFBURIED | GENERALCMD" },
     { key: 236, txt: "loot", desc: "loot a box on the floor", flags: "AUTOCOMPLETE | CMD_M_PREFIX" },
-    { key: 0, txt: "migratemons", desc: "show migrating monsters", flags: "IFBURIED | AUTOCOMPLETE | WIZMODECMD" },
+    { key: 0, txt: "migratemons", desc: "show migrating monsters and migrate N random ones", flags: "IFBURIED | AUTOCOMPLETE | WIZMODECMD" },
     { key: 237, txt: "monster", desc: "use monster's special ability", flags: "IFBURIED | AUTOCOMPLETE" },
     { key: 238, txt: "name", desc: "same as call; name a monster or object or object type", flags: "IFBURIED | AUTOCOMPLETE | GENERALCMD" },
     { key: 239, txt: "offer", desc: "offer a sacrifice to the gods", flags: "AUTOCOMPLETE | CMD_M_PREFIX" },

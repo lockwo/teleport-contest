@@ -11,7 +11,7 @@ import {
 import { game } from '../gstate.js';
 import { depth as depth_of_level } from '../hacklib.js';
 import { enexto_spawn, makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx,
-         name_gender_hint, MGEND_NEUTRAL, MM_EMIN } from '../makemon.js';
+         MM_EMIN } from '../makemon.js';
 import { somexy } from '../mkroom.js';
 import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
@@ -20,7 +20,7 @@ import {
     bigrm_wallification, q_absx, q_absy,
     quest_level_init_solidfill, quest_place_stair, quest_set_door, shuffle,
     splev_get_location_rnd, splev_object_at, splev_traptype_rnd, vly_altar,
-    vly_non_diggable, vly_region, LOC_DRY,
+    vly_non_diggable, vly_region, LOC_DRY, splev_find_montype,
 } from '../sp_lev.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -436,12 +436,9 @@ export function pri_region_rect(mx1, my1, mx2, my2, rlit, rtype, needfill) {
 // find_montype's gender rn2(2) still is.  The tail is mk_roamer() (priest.c:724)
 // — plain makemon plus bookkeeping, no further RNG.
 function pri_create_roamer(name, mx, my, peaceful) {
-    const pmidx = name_to_pmidx(name);
+    const { pmidx, female } = splev_find_montype(name);   // sp_lev.c:3156
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    if (ptr.gcode !== 1 && ptr.gcode !== 2
-        && name_gender_hint(name) === MGEND_NEUTRAL)
-        rn2(2);                                 // find_montype sp_lev.c:3156
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
         const cc = enexto_spawn(x, y, ptr);
@@ -452,6 +449,7 @@ function pri_create_roamer(name, mx, my, peaceful) {
     // sets min_align itself, so C passes the flag and skips them.
     const mtmp = makemon(ptr, x, y, MM_ADJACENTOK | MM_EMIN | MM_NOMSG);
     if (!mtmp) return null;
+    mtmp.female = female;                       // sp_lev.c:2125
     mtmp.isminion = 1;
     mtmp.ispriest = 0;
     mtmp.emin = { min_align: A_NONE, renegade: false };

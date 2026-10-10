@@ -14,16 +14,17 @@ import { make_engr_at } from '../engrave.js';
 import { game } from '../gstate.js';
 import { artilist } from '../artifact.js';
 import {
-    MGEND_NEUTRAL, enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
-    name_gender_hint, name_to_pmidx,
+    enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
+    mongets_pub, name_to_pmidx, set_malign,
 } from '../makemon.js';
-import { bless, curse, mkobj_at, mksobj_at, unbless, uncurse } from '../mkobj.js';
+import { mk_mplayer } from '../mplayer.js';
+import { bless, curse, des_object_defaults, mkobj_at, mksobj_at, unbless, uncurse } from '../mkobj.js';
 import { stackobj } from '../invent.js';
 import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
 import {
     Align2amask_noncoalignment, LOC_DRY, pm_to_humidity, q_absx, q_absy,
-    splev_get_location_rnd, splev_traptype_rnd,
+    splev_find_montype, splev_get_location_rnd, splev_traptype_rnd,
 } from '../sp_lev.js';
 
 // C ref: monflags.h G_NOGEN — mkclass()'s "ignore the never-generate flag" arg.
@@ -73,6 +74,10 @@ export function quest_place_monster(ptr) {
         const cc = enexto_spawn(x, y, ptr);
         if (cc) { x = cc.x; y = cc.y; }
     }
+    // C ref: sp_lev.c:1985 `PM_ARCHEOLOGIST <= m->id && m->id <= PM_WIZARD` ->
+    // mk_mplayer(pm, x, y, FALSE) (the Samurai goal's "samurai" fighters).
+    if (ptr.pmidx >= name_to_pmidx('archeologist') && ptr.pmidx <= name_to_pmidx('wizard'))
+        return mk_mplayer(ptr, x, y, false, { mongets: mongets_pub });
     return makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
 }
 
@@ -84,7 +89,11 @@ export function quest_monster_class_rnd(classNum, peacefulOverride) {
     const ptr = mkclass(classNum, G_NOGEN);
     if (!ptr) return null;
     const mtmp = quest_place_monster(ptr);
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp) mtmp.female = 0;       // sp_lev.c:2125 m->female stays 0 for a class char
+    if (mtmp && peacefulOverride != null) {            // sp_lev.c:2126-2129
+        mtmp.mpeaceful = !!peacefulOverride;
+        set_malign(mtmp);
+    }
     return mtmp;
 }
 
@@ -92,14 +101,16 @@ export function quest_monster_class_rnd(classNum, peacefulOverride) {
 // find_montype's rn2(2) gender roll comes first (skipped for a fixed-gender
 // species or a gendered NAMS() name), then induced_align, then the placement.
 export function quest_monster_named_rnd(name, peacefulOverride) {
-    const pmidx = name_to_pmidx(name);
+    const { pmidx, female } = splev_find_montype(name);   // sp_lev.c:3156
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    if (ptr.gcode !== 1 && ptr.gcode !== 2 && name_gender_hint(name) === MGEND_NEUTRAL)
-        rn2(2);                                        // find_montype (sp_lev.c:3156)
     rn2(3);                                            // induced_align (dungeon.c:2012)
     const mtmp = quest_place_monster(ptr);
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp) mtmp.female = female;                    // sp_lev.c:2125
+    if (mtmp && peacefulOverride != null) {            // sp_lev.c:2126-2129
+        mtmp.mpeaceful = !!peacefulOverride;
+        set_malign(mtmp);
+    }
     return mtmp;
 }
 
@@ -108,7 +119,7 @@ export function quest_monster_named_rnd(name, peacefulOverride) {
 // stackobj(otmp) merges it into an identical pile already on that square.
 export function quest_object_rnd() {
     const c = quest_getloc_coord_rnd(LOC_DRY, false);
-    const otmp = mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true);
+    const otmp = des_object_defaults(mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true));
     stackobj(otmp);
     return otmp;
 }

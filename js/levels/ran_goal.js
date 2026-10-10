@@ -19,7 +19,7 @@ import {
     quest_region_light, quest_set_door, shuffle, splev_link_doors_rooms,
     splev_object_at, vly_non_diggable,
 } from '../sp_lev.js';
-import { S_CENTAUR, S_SNAKE, quest_wallify_map } from './quest_home_common.js';
+import { S_CENTAUR, S_SPIDER, quest_wallify_map } from './quest_home_common.js';
 import { quest_monster_class_rnd, quest_monster_named_rnd, quest_named_object_at,
          quest_object_rnd, quest_trap_random } from './quest_common.js';
 
@@ -140,8 +140,8 @@ export async function makemaz_ran_goal() {
             quest_create_monster('scorpion', mx, my, 0);
         // des.monster({id="scorpion",peaceful=0}) x2 — random position.
         for (let i = 0; i < 2; i++) quest_monster_named_rnd('scorpion', 0);
-        // des.monster({class="s",peaceful=0}) — random S_SNAKE species.
-        quest_monster_class_rnd(S_SNAKE, 0);
+        // des.monster({class="s",peaceful=0}) — random S_SPIDER species.
+        quest_monster_class_rnd(S_SPIDER, 0);
     } finally {
         g._quest_gen = false;
         g._full_mon_gen = false;

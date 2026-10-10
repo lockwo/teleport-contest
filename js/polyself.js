@@ -23,16 +23,19 @@ import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold } from
 const pline = update_topl;
 import { exercise, acurr_eff } from './attrib.js';
 import { find_ac, race_attrmax, race_attrmin, race_attrmax_of } from './u_init.js';
-import { encumber_msg, freeinv, xname, makeplural, near_capacity,
+import { encumber_msg, freeinv, xname, near_capacity,
     youmonst_data_pub, makeknown, simple_typename } from './invent.js';
+import { makeplural } from './plural.js';
+import { title_to_mon } from './botl.js';
 import { base_mmove } from './mon.js';
 import { weapon_descr } from './weapon.js';
 import { objects as OBJECTS, maybe_adjust_light } from './mkobj.js';
 import { place_object, WEAPON_CLASS } from './mkobj.js';
-import { makesingular, the } from './objnam.js';
+import { the } from './objnam.js';
+import { makesingular } from './plural.js';
 import { rndexp, newhp, newpw, adjabil, update_rank, rank_of } from './exper.js';
 import { newuhs } from './eat.js';
-import { monster_by_pmidx, name_to_pmidx, golemhp_js as golemhp,
+import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx, golemhp_js as golemhp,
     is_home_elemental, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL,
     infravision } from './makemon.js';
 import { livelog_printf, LL_CONDUCT, LL_MINORAC } from './livelog.js';
@@ -48,21 +51,11 @@ import { Unaware } from './const.js';
 // C ref: hack.h enum bodypart_types — mbodypart()/body_part() selectors.
 import { ARM, EYE, FINGER, FINGERTIP, FOOT, HAND, HANDED, HEAD, LEG, TOE,
     HAIR, NOSE, STOMACH, OBJ_FLOOR } from './const.js';
-import {
-    is_hider_flag, hides_under_flag, is_were_flag, likes_gems_flag,
-    strongmonst_flag, is_male_flag, is_flyer_flag, mflags1_of, M1_CLING,
-    M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS, M1_AMORPHOUS, M1_UNSOLID,
-    lays_eggs_flag, mindless, msound_of, is_swimmer_flag,
-    is_female_flag, is_neuter_flag, is_orc_flag, is_elf_flag, is_dwarf_flag,
-    is_gnome_flag, is_giant_flag, is_undead_flag, nohands, humanoid,
-    polyok_flag, mflags2_of, M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC,
-    M2_PNAME, is_demon_flag, M1_SEE_INVIS, M1_TPORT, M1_TPORT_CNTRL, M1_SWIM,
-    M1_WALLWALK, M1_REGEN,
-} from './monflags_data.js';
+import { is_hider_flag, hides_under_flag, is_were_flag, likes_gems_flag, strongmonst_flag, is_male_flag, is_flyer_flag, mflags1_of, M1_CLING, M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS, M1_AMORPHOUS, M1_UNSOLID, lays_eggs_flag, mindless, msound_of, is_swimmer_flag, is_female_flag, is_neuter_flag, is_orc_flag, is_elf_flag, is_dwarf_flag, is_gnome_flag, is_giant_flag, is_undead_flag, nohands, humanoid, polyok_flag, mflags2_of, M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, is_demon_flag, M1_SEE_INVIS, M1_TPORT, M1_TPORT_CNTRL, M1_SWIM, M1_WALLWALK, M1_REGEN, is_whirly, noncorporeal, is_golem, flaming, touch_petrifies } from './monflags_data.js';
 import { attacktype, mattk_of, AT_BREA, AT_SPIT, AT_GAZE, AT_CLAW, AT_EXPL,
     AT_ENGL, AT_HUGS, AD_MAGM, AD_CONF, AD_FIRE, AD_ELEC, AD_HALU, AD_RBRE,
     AD_BLND, AD_STCK, AD_WRAP, dmgtype } from './monattk_data.js';
-import { dmgtype_fromattack } from './mondata.js';
+import { dmgtype_fromattack, poly_when_stoned } from './mondata.js';
 import { monsterList, DEADMONSTER, set_ustuck, were_beastie, counter_were } from './mon.js';
 import { monster_nearby, waterbody_name } from './cmd.js';
 import { races, roles, genders } from './role.js';
@@ -113,10 +106,7 @@ const MZ_SMALL = 1, MZ_LARGE = 3;
 export function can_breathe(mdat) { return attacktype(mdat, AT_BREA); }
 function has_spit(mdat) { return attacktype(mdat, AT_SPIT); }
 function has_gaze(mdat) { return attacktype(mdat, AT_GAZE); }
-function is_whirly(mdat) { return !!mdat && (mdat.mlet === 'v' || mdat.pmidx === PM_AIR_ELEMENTAL); }
 function is_floater(mdat) { return !!mdat && (mdat.mlet === 'e' || mdat.mlet === 'y'); }
-function noncorporeal(mdat) { return !!mdat && mdat.mlet === ' '; }
-function is_golem(mdat) { return !!mdat && mdat.mlet === '\''; }
 function is_unicorn_pm(mdat) { return !!mdat && mdat.mlet === 'u' && likes_gems_flag(mdat); }
 function is_mind_flayer_pm(mdat) {
     return !!mdat && (mdat.pmidx === PM_MIND_FLAYER || mdat.pmidx === PM_MASTER_MIND_FLAYER);
@@ -398,24 +388,10 @@ function Sick_resistance_u() {
     return fromform('Sick_resistance')
         || uprop_any('Sick_resistance', 'HSick_resistance', 'ESick_resistance');
 }
-// C ref: mondata.h poly_when_stoned(ptr).
-function poly_when_stoned(ptr) {
-    return is_golem(ptr) && ptr?.pmidx !== PM_STONE_GOLEM
-        && !((game.mvitals?.[PM_STONE_GOLEM]?.mvflags ?? 0) & 0x02 /* G_GENOD */);
-}
-// C ref: mondata.h flaming(ptr) / touch_petrifies(ptr).
-function flaming(ptr) {
-    const i = ptr?.pmidx;
-    return i === PM_FIRE_VORTEX || i === PM_FLAMING_SPHERE
-        || i === PM_FIRE_ELEMENTAL || i === PM_SALAMANDER;
-}
 // C ref: mondata.h sticks(ptr).
 function sticks(ptr) {
     return dmgtype(ptr, AD_STCK) || (dmgtype(ptr, AD_WRAP) && !attacktype(ptr, AT_ENGL))
         || attacktype(ptr, AT_HUGS);
-}
-function touch_petrifies(ptr) {
-    return ptr?.pmidx === PM_COCKATRICE || ptr?.pmidx === PM_CHICKATRICE;
 }
 // C ref: trap.c instapetrify(str).
 export async function instapetrify(str) {
@@ -1068,7 +1044,7 @@ export async function polymon(mntmp) {
             || ((u.ustuck.data?.msize ?? 0) < usiz && !is_whirly(u.ustuck.data))) {
             let expels_mesg = true;
             if (unsolid_new) {
-                const { canspotmon } = await import('./mon.js');
+                const { canspotmon } = await import('./uhitm.js');
                 if (canspotmon(u.ustuck)) {
                     const { Monnam } = await import('./do_name.js');
                     ustuckNam = Monnam(u.ustuck);
@@ -1082,7 +1058,7 @@ export async function polymon(mntmp) {
         }
     } else if (u.ustuck && !sticking && (sticks(newdat) || unsolid_new)) {
         /* being held; if now capable of holding, make holder release */
-        const { canspotmon } = await import('./mon.js');
+        const { canspotmon } = await import('./uhitm.js');
         if (canspotmon(u.ustuck)) {
             const { Monnam } = await import('./do_name.js');
             ustuckNam = Monnam(u.ustuck);
@@ -1260,6 +1236,14 @@ export async function newman() {
     u.uenmax = enmax;
 
     u.uhunger = rn1(500, 500);
+    if (Sick_u()) {
+        const { make_sick } = await import('./potion.js');
+        await make_sick(0, null, false, SICK_ALL);
+    }
+    if (Stoned_u()) {
+        const { make_stoned } = await import('./potion.js');
+        await make_stoned(0, null, 0, null);
+    }
 
     // C ref: polyself.c:419-435 — a non-positive rerolled HP either survives
     // at 1 HP (Polymorph_control, "even when Stunned || Unaware") or falls
@@ -1285,8 +1269,20 @@ export async function newman() {
     const newform = urace_newform(u.Upolyd ? !!u.mfemale : !!game.flags.female);
     await polyman('You feel like a new %s!', newform);
 
+    if (Slimed_u()) {
+        await pline('Your body transforms, but there is still slime on you.');
+        const { make_slimed } = await import('./potion.js');
+        await make_slimed(10, null);
+    }
+
     game.botl = true;
+    see_monsters();
     await encumber_msg();
+
+    const { retouch_equipment } = await import('./artifact.js');
+    await retouch_equipment(2);
+    if (!game.uarmg)
+        await selftouch(no_longer_petrify_resistant);
 }
 
 // C ref: polyself.c:424-433, the `dead:` label newman() falls into either
@@ -1454,7 +1450,7 @@ const ALT_SPELLINGS = [
 // then FEMALE then NEUTRAL, keeping the LONGEST match — so build the rows in
 // that same order.
 let _PMNAME_ROWS = null;
-async function pmnameRows() {
+function pmnameRows() {
     if (_PMNAME_ROWS) return _PMNAME_ROWS;
     const rows = [];
     for (let i = 0; i < NUMMONS(); i++) {
@@ -1466,7 +1462,7 @@ async function pmnameRows() {
         // neutral name as a MALE row made every ordinary species report
         // gender_name_var == MALE, which create_particular turns into MM_MALE and
         // makemon() then skips its `female = rn2(2)` roll.
-        const male = await pmname_of(mdat, false), female = await pmname_of(mdat, true);
+        const male = pmname_of_pmidx(i, MGEND_MALE), female = pmname_of_pmidx(i, MGEND_FEMALE);
         const gendered = (male && male !== mdat.name) || (female && female !== mdat.name);
         if (gendered) {
             if (male) rows.push([male, i, MGEND_MALE]);
@@ -1478,17 +1474,21 @@ async function pmnameRows() {
     return rows;
 }
 
-// C ref: mondata.c name_to_monplus(in_str, remainder_p, gender_name_var).
-// DEFERRED: title_to_mon()'s rank-title fallback (what makes "lord" resolve to
-// a player monster) — role.js has the rank titles but not the role ->
-// player-monster map it needs.
-export async function name_to_mon(in_str) {
-    let str = String(in_str || '');
-    let gvariant = MGEND_NEUTRAL, matchgend = -1;
+// C ref: mondata.c name_to_monplus(in_str, &remainder, &gender).  Returns
+// { mntmp, gvariant, rest }: `rest` is the part of in_str after the matched
+// name (C's *remainder_p), or null when nothing was matched/consumed.
+// `gvariant` is the matched pmnames[] slot, or -1 when no monster matched.
+// `forced` marks an alt_spl[] hit, which overwrites a caller's gender outright
+// (a pmnames[] hit never lets NEUTRAL override an explicit male/female).
+export function name_to_monplus(in_str) {
+    in_str = String(in_str || '');
+    let str = in_str, off = 0;
+    let gvariant = -1, matchgend = -1;
 
-    if (str.startsWith('a ')) str = str.slice(2);
-    else if (str.startsWith('an ')) str = str.slice(3);
-    else if (str.startsWith('the ')) str = str.slice(4);
+    if (str.startsWith('a ')) off = 2;
+    else if (str.startsWith('an ')) off = 3;
+    else if (str.startsWith('the ')) off = 4;
+    str = str.slice(off);
 
     const vi = str.toLowerCase().indexOf('vortices');
     if (vi >= 0) str = str.slice(0, vi + 4) + 'ex';
@@ -1504,11 +1504,12 @@ export async function name_to_mon(in_str) {
         if (c !== undefined && c !== ' ' && c !== "'") continue;
         const pm = Array.isArray(real) ? nth_pmidx_by_name(real[0], real[1])
                                        : name_to_pmidx(real);
-        if (pm >= LOW_PM_IDX) return { mntmp: pm, gvariant: gh };
+        if (pm >= LOW_PM_IDX)
+            return { mntmp: pm, gvariant: gh, forced: true, rest: in_str.slice(off + alt.length) };
     }
 
     let mntmp = NON_PM, len = 0;
-    for (const [nm, idx, mgend] of await pmnameRows()) {
+    for (const [nm, idx, mgend] of pmnameRows()) {
         const nl = nm.length;
         if (nl <= len || !lower.startsWith(nm.toLowerCase())) continue;
         const rest = lower.slice(nl);
@@ -1519,8 +1520,20 @@ export async function name_to_mon(in_str) {
             mntmp = idx; len = nl; matchgend = mgend;
         }
     }
+    if (mntmp === NON_PM) {
+        const out = { title_length: 0 };
+        mntmp = title_to_mon(str, out);
+        len = out.title_length;
+    }
     if (matchgend !== -1) gvariant = matchgend;
-    return { mntmp, gvariant };
+    return { mntmp, gvariant, rest: len ? in_str.slice(off + len) : null };
+}
+
+// C ref: mondata.c name_to_mon(in_str, &gender); gvariant is NEUTRAL when
+// nothing set the gender (callers that pass no gender variable ignore it).
+export function name_to_mon(in_str) {
+    const r = name_to_monplus(in_str);
+    return { mntmp: r.mntmp, gvariant: r.gvariant === -1 ? MGEND_NEUTRAL : r.gvariant };
 }
 
 // C ref: mondata.c name_to_monclass(in_str, mndx_p).  klass is 0 for no match.
@@ -1562,7 +1575,7 @@ async function name_to_monclass(in_str) {
         const after = x[p + lower.length];
         if (after === undefined || after === ' ') return { klass: idx, mndx };
     }
-    const found = await name_to_mon(sing);
+    const found = name_to_mon(sing);
     if (found.mntmp !== NON_PM)
         return { klass: monster_by_pmidx(found.mntmp)?.mcls ?? 0, mndx: found.mntmp };
     return { klass: 0, mndx };
@@ -1683,21 +1696,52 @@ function mungspaces_poly(s) {
 // be beaten past 0 monster HP and stay in the form.
 export async function rehumanize() {
     const u = game.u;
+    const fp = u.uprops || {};
+    const was_flying = !!(fp.Flying || fp.HFlying || fp.EFlying);
+
+    /* You can't revert back while unchanging */
     if (Unchanging()) {
-        /* C's u.mh < 1 arm is done(DIED); deferred with the rest of the death
-           path.  The amulet arm is the observable one. */
-        const uamul = game.uamul;
-        if (uamul && OBJECTS[uamul.otyp]?.oc_oprop === PROP_UNCHANGING)
-            await pline(`Your ${xname(uamul)} fails!`);
-        return;
+        if ((u.mh | 0) < 1) {
+            game._killer_name = 'killed while stuck in creature form'; /* NO_KILLER_PREFIX */
+            const { done, DIED } = await import('./end.js');
+            await done(DIED);
+            /* can get to here if declining to die in explore or wizard mode;
+               since we're wearing an amulet of unchanging we can't be wearing
+               an amulet of life-saving */
+            return; /* don't rehumanize after all */
+        } else if (game.uamul && OBJECTS[game.uamul.otyp]?.oc_oprop === PROP_UNCHANGING) {
+            await pline(`Your ${simpleonames_poly(game.uamul)} fails!`);
+            (await import('./o_init.js')).observe_object(game.uamul);
+            makeknown(game.uamul.otyp);
+        }
     }
+
     if (emits_light(u.data)) del_light_source(LS_MONSTER, HERO);
     await polyman('You return to %s form!', game.urace?.adj || 'human');
+
+    if ((u.uhp | 0) < 1) {
+        /* can only happen if some bit of code reduces u.uhp instead of u.mh
+           while poly'd */
+        await pline('Your old form was not healthy enough to survive.');
+        game._killer_name = `killed by reverting to unhealthy ${game.urace?.adj || 'human'} form`;
+        const { done, DIED } = await import('./end.js');
+        await done(DIED);
+    }
     /* nomul(0) */
     game.multi = 0;
+
     game.botl = true;
     game.vision_full_recalc = 1;
     await encumber_msg();
+    const { update_inventory } = await import('./invent.js');
+    await update_inventory();
+    const fp2 = u.uprops || {};
+    if (was_flying && !(fp2.Flying || fp2.HFlying || fp2.EFlying) && u.usteed)
+        await pline(`You and ${mon_nam(u.usteed)} return gently to the ${surface(u.ux, u.uy)}.`);
+    const { retouch_equipment } = await import('./artifact.js');
+    await retouch_equipment(2);
+    if (!game.uarmg)
+        await selftouch(no_longer_petrify_resistant);
 }
 
 // C ref: were.c:230 set_ulycn(which) — lycanthropy is being caught or cured;
@@ -1895,7 +1939,7 @@ export async function polyself(psflags) {
                 continue;
             }
             let klass = 0;
-            ({ mntmp } = await name_to_mon(buf));
+            ({ mntmp } = name_to_mon(buf));
             let by_class = (mntmp < LOW_PM_IDX);
             if (!by_class && is_placeholder_pm(mntmp)
                 && !your_race_pm(monster_by_pmidx(mntmp)) && mntmp !== PM_HUMAN) {
@@ -2155,10 +2199,9 @@ async function dosummon() {
     game.botl = true;
     await pline('You call upon your brethren for help!');
     exercise(A_WIS, true);
-    // were_summon(): DRAWS rnd(5) + per-helper rn2()s + makemon() + tamedog().
-    // Deferred because tamedog() does not exist in this port and were_summon's
-    // `yours` arm calls it for every helper; a summon without it would leave
-    // hostile lycanthropes and still desync.  Bug, not a no-op.
+    const { were_summon } = await import('./mon.js');
+    const { total } = await were_summon(u.data, true);
+    if (!total) await pline('But none arrive.');
     return ECMD_TIME;
 }
 

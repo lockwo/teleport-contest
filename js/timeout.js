@@ -20,15 +20,16 @@ import { heal_legs } from './trap.js';
 import { exercise, stone_luck } from './attrib.js';
 import { A_CON } from './const.js';
 import { nomul, stop_occupation } from './hack.js';
-import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer } from './mkobj.js';
-import { update_topl, urgent_topl, see_monsters } from './display.js';
+import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer, clear_object_timer } from './mkobj.js';
+import { update_topl, urgent_topl, see_monsters, status_hold } from './display.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
 import { Unaware, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { t_at } from './trap.js';
 import { is_pool, is_ice } from './dbridge.js';
 import { surface } from './dungeon.js';
-import { encumber_msg, inv_weight, body_part, makeplural, renderMenuLines } from './invent.js';
+import { encumber_msg, inv_weight, body_part, renderMenuLines } from './invent.js';
+import { makeplural } from './plural.js';
 import { float_vs_flight } from './polyself.js';
 
 // Imports used only by the timeout.c routines below the "rest of the file"
@@ -380,6 +381,7 @@ async function expire_sickness() {
 // C ref: timeout.c cases STONED and SLIMED — retain delayed causes through the
 // fatal timeout and let the existing end-game path handle life-saving.
 async function expire_stoned() {
+    status_hold('stoned', true);
     const { find_delayed_killer, dealloc_killer } = await import('./end.js');
     const kptr = find_delayed_killer(C.STONED);
     game.killer = game.killer || {};
@@ -638,13 +640,10 @@ const TIMED_PROPS = [
     timed_uprop('POLYMORPH', 'HPolymorph'),
     timed_uprop('POLYMORPH_CONTROL', 'HPolymorph_control'),
     timed_uprop('UNCHANGING', 'HUnchanging'),
-    { name: 'FAST',
-      get: (u) => u.uprops?.HFast || 0,
-      set: (u, v) => { u.uprops.HFast = v; },
-      expire: async () => {
-          if (youHaveVeryFast()) return;
-          await update_topl(`You feel yourself slow down${youHaveFast() ? ' a bit' : ''}.`);
-      } },
+    timed_uprop('FAST', 'HFast', async () => {
+        if (youHaveVeryFast()) return;
+        await update_topl(`You feel yourself slow down${youHaveFast() ? ' a bit' : ''}.`);
+    }),
     timed_uprop('REFLECTING', 'HReflecting'),
     timed_uprop('FREE_ACTION', 'HFree_action'),
     timed_uprop('FIXED_ABIL', 'HFixed_abil'),
@@ -1338,12 +1337,11 @@ export async function region_dialogue() {
 // on the bottom line through the end-of-game rundown and dumplog.  The
 // I_SPECIAL bit C ORs into u.uprops[which].intrinsic cannot live in this port's
 // storage (a plain integer countdown; setting a high bit would corrupt it), so
-// it is tracked in a module-local set.  Its only C reader is the final
-// disclosure, which is unported.
-const _i_special_props = new Set();
+// it is tracked in game._i_special_props.  Its only C reader is the final
+// disclosure (insight.c:1007-1048 `final && (Sick & I_SPECIAL)` etc.).
 
 export async function done_timeout(how, which) {
-    _i_special_props.add(which);        /* affects final disclosure */
+    (game._i_special_props ||= new Set()).add(which);   /* affects final disclosure */
     const { done } = await import('./end.js');
     const { formatkiller } = await import('./topten.js');
     // C ref: topten.c formatkiller(), also used for the tombstone in end.c.
@@ -1351,7 +1349,7 @@ export async function done_timeout(how, which) {
     await done(how);
 
     /* life-saved */
-    _i_special_props.delete(which);
+    game._i_special_props.delete(which);
     _set_botl();
 }
 
@@ -1496,7 +1494,8 @@ export async function hatch_egg(arg, timeout) {
     const { enexto_gpflags } = await import('./teleport.js');
     const { tamedog } = await import('./dothrow.js');
     const { m_monnam, a_monnam } = await import('./do_name.js');
-    const { makeplural, useup, obfree } = await import('./invent.js');
+    const { useup, obfree } = await import('./invent.js');
+    const { makeplural } = await import('./plural.js');
     const { cansee } = await import('./vision.js');
     const { newsym, m_at, canseemon_shared } = await import('./display.js');
     const { cry_sound } = await import('./sounds.js');
@@ -2641,6 +2640,11 @@ export async function stop_timer(func_index, arg) {
 // C ref: timeout.c:2323 peek_timer(type, arg) — the ABSOLUTE expiry turn.  Note
 // that C does not check `kind` here, only func_index and the arg identity.
 export function peek_timer(type, arg) {
+    /* object timers live on the object itself (mkobj.js start_timer/obj.timer),
+       not in timer_base */
+    const o = arg?.a_void;
+    if (o && typeof o === 'object' && o.timed && o.timer && o.timer.action === type)
+        return o.timer.when;
     for (let curr = timer_base; curr; curr = curr.next)
         if (curr.func_index === type && curr.arg.a_void === arg.a_void)
             return curr.timeout;
@@ -2675,8 +2679,7 @@ export async function obj_split_timers(src, dest) {
 }
 
 // C ref: timeout.c:2376 obj_stop_timers(obj) — stop every timer attached to
-// obj.  This works because all object pointers are unique.  js/invent.js:480 and
-// js/mkobj.js:1360 keep one-line private stubs of the C name.
+// obj.  This works because all object pointers are unique.
 export async function obj_stop_timers(obj) {
     let prev = null, next_timer = null;
     for (let curr = timer_base; curr; curr = next_timer) {
@@ -2689,6 +2692,13 @@ export async function obj_stop_timers(obj) {
         } else {
             prev = curr;
         }
+    }
+    /* the per-object timer record (mkobj.js start_timer) lives on obj itself */
+    if (obj.timer) {
+        const cleanup_func = timeout_funcs[obj.timer.action]?.cleanup;
+        const expire = obj.timer.when;
+        clear_object_timer(obj);
+        if (cleanup_func) await cleanup_func(_obj_to_any(obj), expire);
     }
     obj.timed = 0;
 }
@@ -3002,7 +3012,7 @@ export async function relink_timers(ghostly) {
                     const box = {};
                     if (!lookup_id_mapping(curr.arg.a_uint, box))
                         _panic('relink_timers 1');
-                    nid = box.v ?? box.nid;
+                    nid = box.v;
                 } else {
                     nid = curr.arg.a_uint;
                 }

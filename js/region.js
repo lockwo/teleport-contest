@@ -16,12 +16,13 @@
 import { game } from './gstate.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
-         M_SEEN_POISON, TELEDS_TELEPORT } from './const.js';
+         M_SEEN_POISON, TELEDS_TELEPORT, Is_waterlevel } from './const.js';
 import { cansee, block_point, unblock_point, does_block, Blind } from './vision.js';
 // js/monflags_data.js is a generated LEAF module (no imports of its own), so
 // naming it here cannot create an import cycle or a TDZ edge.
-import { is_undead_flag, mflags1_of, M1_BREATHLESS, M1_NOEYES,
+import { nonliving, immune_poisongas, mflags1_of, M1_BREATHLESS, M1_NOEYES,
          msound_of } from './monflags_data.js';
+import { attacktype_fordmg, AT_BREA, AD_DRST, AD_RBRE } from './monattk_data.js';
 import { has_innate } from './exper.js';
 
 const MAX_CLOUD_SIZE = 150;
@@ -315,28 +316,33 @@ function valid_cloud_pos(x, y) {
     return ACCESSIBLE(loc.typ) || IS_POOL(loc.typ) || IS_LAVA(loc.typ);
 }
 
-// C ref: mondata.h nonliving/breathless — simplified to a name-based check
-// over the small set of monster types the contest's covered sessions can put
-// inside a gas cloud; mirrors mhitm.js's identical simplification.
-function nonliving_name(name) {
-    return /\bzombie\b|\bmummy\b|\bskeleton\b|\bwraith\b|\bghost\b|\blich\b|golem\b|\bvortex\b|\belemental\b|\bshade\b/.test(name || '');
-}
-function breathless_name(name) {
-    return /\bjelly\b|\bpudding\b|\bslime\b|\bgolem\b|\bvortex\b|\belemental\b|\bgas spore\b/.test(name || '');
-}
-
-// C ref: mon.c m_poisongas_ok(mtmp) — M_POISONGAS_OK(2)/MINOR(1)/BAD(0).
-// SCOPE: the swimmer/eel-in-water and breath-weapon exclusions, and hero/
-// monster poison-resistance lookups, are not modeled by any other subsystem
-// yet, so a living, breathing target always falls through to BAD — true for
-// every monster the covered sessions can put inside a (so far always
-// damage-0) gas cloud.
+// C ref: mon.c m_poisongas_ok(mtmp), hero half (is_you) — M_POISONGAS_OK(2)/
+// MINOR(1)/BAD(0).  Does not check for actual poison gas at the location.
+// Monsters use monmove.js m_poisongas_ok_mon().  `youmonst.data` is only a
+// valid mons[] row while polyd in this port (u.umonnum is a role index), and no
+// unpolymorphed race/role is nonliving, breathless or a gas-breather, so the
+// form arms are gated on Upolyd.
 const M_POISONGAS_BAD = 0;
+const M_POISONGAS_MINOR = 1;
 const M_POISONGAS_OK = 2;
-function m_poisongas_ok(mtmp, isHero) {
-    const data = isHero ? game.u?.data : mtmp?.data;
-    const name = data?.name || '';
-    if (nonliving_name(name) || breathless_name(name)) return M_POISONGAS_OK;
+function m_poisongas_ok_u() {
+    const u = game.u;
+    const ptr = u?.Upolyd ? u.data : null;
+    /* Non living, non breathing, immune monsters are not concerned */
+    if (ptr && (nonliving(ptr) || (mflags1_of(ptr) & M1_BREATHLESS) !== 0
+                || immune_poisongas(ptr)))
+        return M_POISONGAS_OK;
+    const loc = game.level?.at(u.ux, u.uy);
+    if (((ptr && ptr.mcls === S_EEL) || Is_waterlevel(u.uz))
+        && loc && IS_POOL(loc.typ))
+        return M_POISONGAS_OK;
+    /* exclude monsters with poison gas breath attack */
+    if (ptr && (attacktype_fordmg(ptr, AT_BREA, AD_DRST)
+                || attacktype_fordmg(ptr, AT_BREA, AD_RBRE)))
+        return M_POISONGAS_OK;
+    if (u.uinvulnerable || Breathless() || u.uinwater)
+        return M_POISONGAS_OK;
+    if (Poison_resistance()) return M_POISONGAS_MINOR;
     return M_POISONGAS_BAD;
 }
 
@@ -418,7 +424,7 @@ export async function create_gas_cloud(x, y, cloudsize, damage) {
     // damage (or the hero is poison-gas-immune) is silent: presumably a side
     // effect of a benign polyform, not worth a message.
     if (!game.context?.mon_moving && u_at(x, y) && cloudsize === 1
-        && (!damage || m_poisongas_ok(null, true) === M_POISONGAS_OK))
+        && (!damage || m_poisongas_ok_u() === M_POISONGAS_OK))
         insideCloud = true;
 
     if (cloudsize > MAX_CLOUD_SIZE) cloudsize = MAX_CLOUD_SIZE;
@@ -532,7 +538,7 @@ async function inside_gas_cloud(reg, mtmp) {
 
     const { update_topl } = await import('./display.js');
     if (isHero) {
-        if (m_poisongas_ok(null, true) === M_POISONGAS_OK) return false;
+        if (m_poisongas_ok_u() === M_POISONGAS_OK) return false;
         if (!Blind()) {
             await update_topl('Your eyes sting.');
             const { make_blinded_hero } = await import('./potion.js');
@@ -615,7 +621,7 @@ async function inside_gas_cloud(reg, mtmp) {
 // NOTE mons[].mlet is the display CHARACTER in this port (js/makemon.js:621);
 // the numeric S_* class index is `.mcls` (:620), so every C `ptr->mlet == S_FOO`
 // is written `ptr.mcls === S_FOO` here.
-const S_VORTEX = 22, S_GOLEM = 55;
+const S_EEL = 57;
 
 // C ref: region.c:210 mon_in_region(reg, mon) — "It's probably quicker to check
 // with the region internal list than to check for coordinates."
@@ -948,13 +954,6 @@ export async function create_force_field(x, y, radius, ttl) {
     return ff;
 }
 
-// C ref: mondata.h:219 nonliving(ptr) — is_undead || PM_MANES || is_golem ||
-// mlet == S_VORTEX.  region.js's own nonliving_name() above is a NAME-REGEX
-// reduction of this used by inside_gas_cloud(); this is the flag/class form.
-function nonliving(ptr) {
-    return is_undead_flag(ptr) || ptr?.name === 'manes'
-        || ptr?.mcls === S_GOLEM || ptr?.mcls === S_VORTEX;
-}
 // C ref: youprop.h:276 Breathless — HMagical_breathing || EMagical_breathing ||
 // breathless(gy.youmonst.data).  u.data is a bogus mons[] row while
 // unpolymorphed in this port (u.umonnum is a ROLE index), and no player-monster
@@ -1047,7 +1046,7 @@ export async function region_safety() {
     }
     /* maybe cure blindness too */
     if ((game.u?.blinded | 0) === 1) {
-        const { make_blinded } = await import('./potion.js');
-        await make_blinded(0, true);
+        const { make_blinded_hero } = await import('./potion.js');
+        await make_blinded_hero(0, true);
     }
 }

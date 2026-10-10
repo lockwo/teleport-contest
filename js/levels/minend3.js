@@ -2,13 +2,14 @@
 // The shared special-level machinery lives in js/sp_lev.js and is imported below;
 // sp_lev.js re-exports makemaz_minend3 so js/mklev.js can dispatch to it.
 
+import { level_difficulty } from '../dungeon.js';
 import {
     COLNO, CROSSWALL, FOUNTAIN, HOLE, HWALL, IS_DOOR, IS_ROOM, LADDER, LEVEL_TELEP,
     MAGIC_TRAP, NO_TRAP, ROCKTRAP, ROOM, ROWNO, RUST_TRAP, SQKY_BOARD, STAIRS, STONE,
     TRAPDOOR, VWALL, WEB, is_pit,
 } from '../const.js';
 import { game } from '../gstate.js';
-import { level_difficulty_ext, makemon, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
+import { makemon, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { walkfrom } from '../mkmaze.js';
 import { GEM_CLASS, SCROLL_CLASS, SPBOOK_CLASS, uncurse } from '../mkobj.js';
 import { rn2, rnd } from '../rng.js';
@@ -145,7 +146,7 @@ async function minend3_trap_random() {
         const spider = monster_by_pmidx(name_to_pmidx('giant spider'));
         if (spider) makemon(spider, x, y, 0 /* NO_MM_FLAGS */);
     }
-    const lvl = level_difficulty_ext();
+    const lvl = level_difficulty();
     if (k !== NO_TRAP && lvl <= rnd(4)                // mklev.c:2137
         && k !== SQKY_BOARD && k !== RUST_TRAP
         && !is_pit(k) && (k < HOLE || k === MAGIC_TRAP)

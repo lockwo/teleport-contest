@@ -4,7 +4,7 @@
 
 import { AM_NONE, COLNO, CROSSWALL, FILL_NORMAL, HWALL, MORGUE, ROWNO, VWALL } from '../const.js';
 import { game } from '../gstate.js';
-import { monster_by_pmidx, name_to_pmidx } from '../makemon.js';
+import { monster_by_pmidx } from '../makemon.js';
 import {
     ARMOR_CLASS, CORPSE, GEM_CLASS, POTION_CLASS, RING_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
     TOOL_CLASS, WAND_CLASS, WEAPON_CLASS,
@@ -15,7 +15,7 @@ import {
     bigrm_wallification, flip_level, percent, quest_flip_branch, quest_level_init_solidfill,
     quest_place_stair, quest_register_branch, quest_set_door, remove_boundary_syms, map_cleanup, shuffle,
     vly_altar, vly_flip_dndest, vly_flip_updest, vly_monster_class, vly_non_diggable, vly_object,
-    vly_place_monster, vly_region, vly_teleport_region, vly_terrain_at, vly_terrain_line,
+    splev_find_montype, vly_place_monster, vly_region, vly_teleport_region, vly_terrain_at, vly_terrain_line,
     vly_trap,
 } from '../sp_lev.js';
 
@@ -64,12 +64,11 @@ const VALLEY_MAP = [
 // the pm_to_humidity get_location (retried with DRY added if the first,
 // NO_LOC_WARN pass finds nothing), the MON_AT/enexto relocate, and makemon.
 function vly_monster_named(name) {
-    const pmidx = name_to_pmidx(name);
+    const { pmidx, female } = splev_find_montype(name);   // find_montype gender
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    if (ptr.gcode !== 1 && ptr.gcode !== 2) rn2(2);   // find_montype gender
     rn2(3);                                           // induced_align
-    return vly_place_monster(ptr);
+    return vly_place_monster(ptr, female);
 }
 
 // C ref: mkroom.h TEMPLE room type + include/align.h AM_SHRINE, plus the

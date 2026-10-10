@@ -598,9 +598,11 @@ async function replace_bubble_contents(b, dx, dy) {
             break;
         case 'mon': {
             const mon = cons.list;
-            // C: `if (!mnearto(mon, cons->x, cons->y, TRUE, RLOC_NOMSG))
-            //         elemental_clog(mon);`
-            await mnearto_bubble(mon, cons.x, cons.y);
+            // C ref: mkmaze.c:2052 `if (!mnearto(mon, cons->x, cons->y, TRUE,
+            // RLOC_NOMSG)) elemental_clog(mon);`
+            const { mnearto, elemental_clog } = await import('./mon.js');
+            if (!(await mnearto(mon, cons.x, cons.y, true, RLOC_NOMSG)))
+                await elemental_clog(mon);
             break;
         }
         case 'hero': {
@@ -623,34 +625,6 @@ async function replace_bubble_contents(b, dx, dy) {
         }
     }
     b.cons = [];
-}
-
-// C ref: mon.c:4030 mnearto(mtmp, x, y, move_other=TRUE, RLOC_NOMSG), reached
-// only from mv_bubble().  NOT ported: the deal_with_overcrowding() ->
-// elemental_clog() tail that runs when enexto() cannot find any square at all
-// (it needs the whole "besieged" elemental-obliteration walk of mon.c:3878).
-// Every other path — already-there, occupied-so-displace-the-other, goodpos,
-// enexto fallback — is C's.
-async function mnearto_bubble(mtmp, x, y) {
-    if (mtmp.mx === x && mtmp.my === y && m_at(x, y) === mtmp) return 1;
-
-    const othermon = m_at(x, y);
-    /* take othermon off the map; it might end up immediately returning
-       but for the moment it is leaving */
-    if (othermon) othermon.mx = othermon.my = 0;
-    let newx = x, newy = y;
-    if (!goodpos(newx, newy, mtmp, 0)) {
-        const mm = enexto_spawn(newx, newy, mtmp.data);
-        if (!mm || !isok(mm.x, mm.y)) return 0;
-        newx = mm.x; newy = mm.y;
-    }
-    await rloc_to(mtmp, newx, newy);   /* rloc_to_flag(..., RLOC_NOMSG) */
-    if (othermon) {
-        /* 'move_other'==FALSE this time; fail rather than recurse */
-        await mnearto_bubble(othermon, x, y);
-        return 2;
-    }
-    return 1;
 }
 
 // C ref: mkmaze.c:1538 movebubbles() — "augment the Planes of Water (for
@@ -808,8 +782,8 @@ import { is_orc_flag as mm_is_orc } from './monflags_data.js';
 import { makemon as mm_makemon, set_malign as mm_set_malign,
          monster_by_pmidx as mm_monster_by_pm,
          name_to_pmidx as mm_name_to_pmidx,
-         level_difficulty_ext as mm_level_difficulty,
          mpickobj as mm_mpickobj } from './makemon.js';
+import { level_difficulty as mm_level_difficulty } from './dungeon.js';
 import {
     objects as MM_OBJECTS, mksobj as mm_mksobj, mkobj as mm_mkobj,
     mkobj_at as mm_mkobj_at, mksobj_at as mm_mksobj_at, mkgold as mm_mkgold,

@@ -339,3 +339,27 @@ export const is_undead_flag = (ptr) => (f2(ptr) & M2_UNDEAD) !== 0;
 // and friends that are not in that class).
 export const is_demon_flag = (ptr) => (f2(ptr) & M2_DEMON) !== 0;
 export const is_mercenary_flag = (ptr) => (f2(ptr) & M2_MERC) !== 0;
+
+// C ref: include/mondata.h — class- and species-based predicates.  C tests
+// `ptr->mlet == S_xxx` (ptr.mcls here, the defsym.h class number) and
+// `ptr == &mons[PM_xxx]` (species identity; permonst names are unique, so the
+// name is the identity here).  These are the canonical copies: do not add
+// private name/regex approximations of them.
+const S_IMP_C = 9, S_VORTEX_C = 22, S_VAMPIRE_C = 48, S_GHOST_C = 54, S_GOLEM_C = 55;
+export const is_golem = (ptr) => ptr?.mcls === S_GOLEM_C;
+export const is_vampire = (ptr) => ptr?.mcls === S_VAMPIRE_C;
+export const noncorporeal = (ptr) => ptr?.mcls === S_GHOST_C;
+export const weirdnonliving = (ptr) => is_golem(ptr) || ptr?.mcls === S_VORTEX_C;
+export const nonliving = (ptr) =>
+    is_undead_flag(ptr) || ptr?.name === 'manes' || weirdnonliving(ptr);
+export const is_whirly = (ptr) => ptr?.mcls === S_VORTEX_C || ptr?.name === 'air elemental';
+export const flaming = (ptr) => ptr?.name === 'fire vortex' || ptr?.name === 'flaming sphere'
+    || ptr?.name === 'fire elemental' || ptr?.name === 'salamander';
+export const hug_throttles = (ptr) => ptr?.name === 'rope golem';
+export const touch_petrifies = (ptr) => ptr?.name === 'cockatrice' || ptr?.name === 'chickatrice';
+export const is_rider = (ptr) => ptr?.name === 'Death' || ptr?.name === 'Famine'
+    || ptr?.name === 'Pestilence';
+export const immune_poisongas = (ptr) => ptr?.name === 'hezrou' || ptr?.name === 'vrock';
+// C ref: mondata.c:524 hates_silver(ptr).
+export const hates_silver = (ptr) => is_were_flag(ptr) || is_vampire(ptr) || is_demon_flag(ptr)
+    || ptr?.name === 'shade' || (ptr?.mcls === S_IMP_C && ptr?.name !== 'tengu');

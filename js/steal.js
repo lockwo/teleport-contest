@@ -430,7 +430,8 @@ export async function stealgold(mtmp) {
         add_to_minv(mtmp, fgold);
         newsym(u.ux, u.uy);
         const { y_monnam } = await import('./do_name.js');
-        const { makeplural, body_part } = await import('./invent.js');
+        const { body_part } = await import('./invent.js');
+        const { makeplural } = await import('./plural.js');
         const { mbodypart } = await import('./monmove.js');
         if (u.usteed) {
             who = u.usteed;
@@ -697,7 +698,8 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
             await update_topl(`${Some_Monnam(mon)} pulls ${yname_st(obj)} away`
                 + ` from you and absorbs ${(obj.quan | 0) > 1 ? 'them' : 'it'}!`);
         } else {
-            const { body_part, makeplural, otense } = await import('./invent.js');
+            const { body_part, otense } = await import('./invent.js');
+            const { makeplural } = await import('./plural.js');
             let hand_s = body_part(HAND_ST);
             if (bimanual_st(obj)) hand_s = makeplural(hand_s);
             await update_topl(`${upstart_st(yname_st(obj))} ${
@@ -740,47 +742,13 @@ export async function mdrop_special_objs(mon) {
            for the other roles are not */
         if (obj_resists(obj, 0, 0) || is_quest_artifact_st(obj)) {
             if (mon.mx) {
-                await mdrop_obj_st(mon, obj, false);
+                const { mdrop_obj } = await import('./dogmove.js');
+                await mdrop_obj(mon, obj, false);
             } else { /* migrating monster not on map */
-                extract_from_minvent_st(mon, obj, true, true);
+                const { extract_from_minvent } = await import('./worn.js');
+                await extract_from_minvent(mon, obj, true, true);
                 await rloco(obj);
             }
         }
     }
-}
-
-// C ref: steal.c:814 mdrop_obj(mon, obj, verbosely) — the faithful port is
-// PRIVATE at js/dogmove.js:940 (a pet dropping loot).  This adapter is the
-// no-message subset mdrop_special_objs() needs; the fix is to export the
-// original, not to grow this one.
-async function mdrop_obj_st(mon, obj, verbosely) {
-    const omx = mon.mx, omy = mon.my;
-    const unwornmask = obj.owornmask | 0;
-
-    extract_from_minvent_st(mon, obj, false, true);
-    /* don't charge for an owned saddle on a dead steed */
-    if (unwornmask && mon.mtame && (unwornmask & W_SADDLE) !== 0 && !obj.unpaid)
-        obj.no_charge = 1;
-    if (verbosely && cansee(omx, omy))
-        await update_topl(`${Monnam(mon)} drops ${doname_invent(obj)}.`);
-    const { flooreffects } = await import('./do.js');
-    if (!await flooreffects(obj, omx, omy, 'fall')) {
-        const { stackobj } = await import('./invent.js');
-        place_object(obj, omx, omy);
-        stackobj(obj);
-    }
-    /* C also calls update_mon_extrinsics(mon, obj, FALSE, TRUE) here, after the
-       object is on the floor (removing a steed's saddle throws the rider); that
-       function has no port. */
-}
-
-// C ref: mon.c extract_from_minvent(mon, obj, do_intrinsics, silently) — no
-// port; the list-unlink half is all mdrop_special_objs() needs.
-function extract_from_minvent_st(mon, obj, _do_intrinsics, _silently) {
-    const inv = mon.minvent || [];
-    const i = inv.indexOf(obj);
-    if (i >= 0) inv.splice(i, 1);
-    obj.owornmask = 0;
-    obj.where = OBJ_FREE;
-    obj.ocarry = null;
 }

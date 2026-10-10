@@ -550,6 +550,16 @@ export const AMII_LOUDER_VOLUME = 80;
 // ===== monflag.h =====
 export const NEUTRAL = (FEMALE + 1);
 export const NUM_MGENDERS = (NEUTRAL + 1);
+export const G_UNIQ = 0x1000;
+export const G_NOHELL = 0x0800;
+export const G_HELL = 0x0400;
+export const G_NOGEN = 0x0200;
+export const G_SGROUP = 0x0080;
+export const G_LGROUP = 0x0040;
+export const G_GENO = 0x0020;
+export const G_NOCORPSE = 0x0010;
+export const G_FREQ = 0x0007;
+export const G_IGNORE = 0x8000;
 export const G_KNOWN = 0x04;
 export const G_GENOD = 0x02;
 export const G_EXTINCT = 0x01;
@@ -2972,6 +2982,16 @@ export function Is_botlevel(uz) {
 export function Is_rogue_level(uz) { const g = game; return g?.rogue_level && (uz ?? g?.u?.uz)?.dnum === g.rogue_level.dnum && (uz ?? g?.u?.uz)?.dlevel === g.rogue_level.dlevel; }
 export function Is_oracle_level(uz) { const g = game; return g?.oracle_level && (uz ?? g?.u?.uz)?.dnum === g.oracle_level.dnum && (uz ?? g?.u?.uz)?.dlevel === g.oracle_level.dlevel; }
 export function Is_knox_level(uz) { const g = game; return g?.knox_level && (uz ?? g?.u?.uz)?.dnum === g.knox_level.dnum && (uz ?? g?.u?.uz)?.dlevel === g.knox_level.dlevel; }
-export function Is_juiblex_level(uz) { return false; /* TODO */ }
+// C ref: dungeon.h Is_juiblex_level(lev) — on_level(lev, &svd.juiblex_level).
+export function Is_juiblex_level(uz) { const g = game; const lev = uz ?? g?.u?.uz; return !!(g?.juiblex_level && lev && lev.dnum === g.juiblex_level.dnum && lev.dlevel === g.juiblex_level.dlevel); }
 // C ref: dungeon.h Is_medusa_level(lev) — on_level(lev, &svd.medusa_level).
 export function Is_medusa_level(uz) { const g = game; return g?.medusa_level && (uz ?? g?.u?.uz)?.dnum === g.medusa_level.dnum && (uz ?? g?.u?.uz)?.dlevel === g.medusa_level.dlevel; }
+// C ref: decl.c:90 materialnm[] — indexed by oc_material (objclass.h order).
+export const materialnm = [
+    'mysterious', 'liquid', 'wax', 'organic',
+    'flesh', 'paper', 'cloth', 'leather',
+    'wooden', 'bone', 'dragonhide', 'iron',
+    'metal', 'copper', 'silver', 'gold',
+    'platinum', 'mithril', 'plastic', 'glass',
+    'gemstone', 'stone',
+];

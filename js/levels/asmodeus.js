@@ -188,5 +188,5 @@ export async function makemaz_asmodeus() {
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975
     if (rn2(2)) flp |= 2;                 // flip_level_rnd sp_lev.c:977
     if (flp) { flip_level(flp); geh_flip_lregions(flp, lregions); }
-    geh_place_lregions(lregions);
+    await geh_place_lregions(lregions);
 }

@@ -81,12 +81,14 @@ import {
 import { NUMMONS } from './disprng.js';
 import { t_at, deltrap, Invocation_lev } from './trap.js';
 import { depth } from './hacklib.js';
-import { level_difficulty_c } from './dungeon.js';
+import { level_difficulty } from './dungeon.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { objects, extract_nobj } from './mkobj.js';
-import { makesingular } from './objnam.js';
-import { makeplural, cmdq_add_key, useupall, freeinv, addinv_nomerge,
-         update_inventory, obfree } from './invent.js';
+import { disco_view, disco_commit } from './o_init.js';
+import { makesingular } from './plural.js';
+import { cmdq_add_key, useupall, freeinv, addinv_nomerge,
+         update_inventory, obfree, setnotworn, setworn_mask } from './invent.js';
+import { makeplural } from './plural.js';
 import { flip_level } from './sp_lev.js';
 import { gx, gy } from './sp_lev.js';
 import { parse_conf_str, l_get_config_errors } from './cfgfiles.js';
@@ -296,7 +298,12 @@ function _destroy_nhwindow(_win) {}
 /* windows.c display_nhwindow(WIN_MESSAGE, TRUE) — the message window's flush
    plus more(); display.js topl_more() is this port's --More--. */
 async function _display_nhwindow(window, blocking) {
-    if (window === WIN_MESSAGE && blocking) await topl_more();
+    /* wintty.c tty_display_nhwindow(NHW_MESSAGE): more() only when the top
+       line is still owed a --More--, then the line counts as acknowledged. */
+    if (window === WIN_MESSAGE && blocking) {
+        const { display_nhwindow_message } = await import('./display.js');
+        await display_nhwindow_message();
+    }
 }
 
 /* options.c get_option_value(name, unambiguous) */
@@ -318,12 +325,17 @@ function _start_timer(_when, _kind, _func_index, _arg) { return 0; }
 function _long_to_any(v) { return { a_long: v }; }
 
 /* worn.c setworn / setnotworn */
-function _setworn(_obj, _mask) {}
-function _setnotworn(_obj) {}
+function _setworn(obj, mask) { setworn_mask(obj, mask); }
+function _setnotworn(obj) { setnotworn(obj); }
 
 /* eat.c init_uhunger() */
 function _init_uhunger() {
-    if (game.u) { game.u.uhunger = 900; game.u.uhs = 1; }  /* NOT_HUNGRY */
+    const u = game.u;
+    if (!u) return;
+    game.botl = true;
+    u.uhunger = 900;
+    u.uhs = 1;                                          /* NOT_HUNGRY */
+    if ((u.atemp?.a?.[0] | 0) < 0) u.atemp.a[0] = 0;    /* ATEMP(A_STR) */
 }
 
 /* mon.c mongone(mtmp) */
@@ -1022,7 +1034,7 @@ export function nhl_random(...args) {
 export function nhl_level_difficulty(...args) {
     const argc = args.length;
     if (argc === 0)
-        return level_difficulty_c();
+        return level_difficulty();
     nhl_error(null, 'level_difficulty should not have any args');
     return undefined;
 }
@@ -1681,7 +1693,7 @@ export async function nhl_gamestate(...args) {
         await pline(`Resetting time to move #${game.moves}.`);
         gg.gmst_moves = 0;
 
-        game.lastinvnr = 51;
+        (game.gl ||= {}).lastinvnr = 51;
         while (game.invent.length)
             useupall(game.invent[0]);
         while ((otmp = gg.gmst_invent?.[0]) !== undefined) {
@@ -1692,20 +1704,24 @@ export async function nhl_gamestate(...args) {
             if (wornmask)
                 _setworn(otmp, wornmask);
         }
-        game.u = { ...gg.gmst_ubak };            /* memcpy(&u, gmst_ubak) */
-        game.disco = [...gg.gmst_disco];
-        game.mvitals = gg.gmst_mvitals.map((m) => ({ ...m }));
+        /* memcpy(&u, gmst_ubak, sizeof u): in place, every holder of the hero
+           record keeps pointing at it */
+        for (const k of Object.keys(u))
+            if (!(k in gg.gmst_ubak)) delete u[k];
+        Object.assign(u, _clone_data(gg.gmst_ubak));
+        disco_commit(gg.gmst_disco);
+        game.mvitals = _clone_data(gg.gmst_mvitals);
         /* clear user-given object type names */
         for (otyp = 0; otyp < NUM_OBJECTS; otyp++)
             if (objects[otyp].oc_uname) {
                 objects[otyp].oc_uname = null;
             }
         /* some restored state would confuse the level change in progress */
-        game.u.uz = cur_uz; game.u.uz0 = cur_uz0;
+        u.uz = cur_uz; u.uz0 = cur_uz0;
         _init_uhunger();
         free_tutorial();                         /* release gg.gmst_XYZ */
         gg.gmst_stored = FALSE;
-        game.spl_book = [...gg.gmst_spl_book];
+        game.spl_book = gg.gmst_spl_book;
     } else if (!reststate && !gg.gmst_stored) {
         /* store game state */
         gg.gmst_moves = game.moves;
@@ -1717,12 +1733,14 @@ export async function nhl_gamestate(...args) {
             otmp.owornmask = wornmask;           /* flag for later restore */
             gg.gmst_invent.unshift(otmp);        /* otmp->nobj = gmst_invent */
         }
-        game.lastinvnr = 51;   /* next inv letter to try to use will be 'a' */
-        gg.gmst_ubak = { ...u };
-        gg.gmst_disco = [...(game.disco || [])];
-        gg.gmst_mvitals = (game.mvitals || []).map((m) => ({ ...m }));
-        gg.gmst_spl_book = [...(game.spl_book || [])];
-        game.spl_book = [];
+        (game.gl ||= {}).lastinvnr = 51;   /* next inv letter to try to use will be 'a' */
+        gg.gmst_ubak = _clone_data(u);
+        gg.gmst_disco = disco_view();
+        gg.gmst_mvitals = _clone_data(game.mvitals || []);
+        /* the hero knows no spells inside the tutorial; spell.js spl_book()
+           recreates a blank book lazily */
+        gg.gmst_spl_book = game.spl_book;
+        delete game.spl_book;
         gg.gmst_stored = TRUE;
     } else {
         _impossible(`nhl_gamestate: inconsistent state (${
@@ -1731,6 +1749,22 @@ export async function nhl_gamestate(...args) {
     }
     update_inventory();
     return undefined;
+}
+
+/* A by-value copy of plain data (memcpy of a C struct): plain objects and
+   arrays are copied recursively, anything else (monsters, objects) is shared. */
+function _clone_data(v) {
+    if (Array.isArray(v)) {
+        const out = new Array(v.length);
+        for (const i of Object.keys(v)) out[i] = _clone_data(v[i]);
+        return out;
+    }
+    if (v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+        const out = {};
+        for (const k of Object.keys(v)) out[k] = _clone_data(v[k]);
+        return out;
+    }
+    return v;
 }
 
 /* nhlua.c:1809 — free the state allocated on tutorial entry; called on a normal
@@ -1757,14 +1791,47 @@ export function free_tutorial() {
     if (gg.gmst_mvitals) gg.gmst_mvitals = null;
 }
 
-/* called from gotolevel(do.c) */
-export function tutorial(entering) {
-    l_nhcore_call(entering ? NHCORE_ENTER_TUTORIAL : NHCORE_LEAVE_TUTORIAL);
-
-    if (!entering) {   /* after leaving, can't go back */
-        nhcore_call_available[NHCORE_ENTER_TUTORIAL] = FALSE;
-        nhcore_call_available[NHCORE_LEAVE_TUTORIAL] = FALSE;
+/* nhlua.c:1837 tutorial(entering), called from goto_level().  C reaches
+   dat/nhlib.lua tutorial_enter()/tutorial_leave() through the nhcore table;
+   this port has no Lua core, so their bodies run here: tutorial_enter()
+   registers the cmd_before/end_turn callbacks (cmd.js and allmain.js test
+   game._tutorial_active for them) and calls nh.gamestate(), tutorial_leave()
+   unregisters them and calls nh.gamestate(true).  After leaving, the nhcore
+   entries are disabled for the rest of the game, so the tutorial can't be
+   re-entered with state saving. */
+export async function tutorial(entering) {
+    if (game._tutorial_gone) return;
+    if (entering) {
+        game._tutorial_active = TRUE;
+        await nhl_gamestate();
+    } else {
+        game._tutorial_active = FALSE;
+        await nhl_gamestate(TRUE);
+        game._tutorial_gone = TRUE;   /* after leaving, can't go back */
     }
+}
+
+/* dat/nhlib.lua tutorial_turn() — the tutorial's "end_turn" callback, run by
+   allmain.c:558 at the end of every moveloop_core() while nhcb_counts[END_TURN]
+   is non-zero.  Its one event (tutorial_events[1], removed after it fires):
+   when u.uhunger < 148, drop a blessed food ration under the hero and tell
+   them how to eat it (nh.pline(msg, true) pages each message with --More--). */
+export async function tutorial_turn() {
+    if (!game._tutorial_active || game._tutorial_hunger_event_done) return;
+    if (!(game.u.uhunger < 148)) return;
+    /* obj.new(name):placeobj(u.ux, u.uy).  C's cvt_to_abscoord() adds
+       gx.xstart/gy.ystart, which mklev.c:1555 has reset to 0 by now (this
+       port keeps them at 1 after mklev), so the hero's square is used as-is. */
+    const { readobjnam } = await import('./readobjnam.js');
+    const { place_object } = await import('./mkobj.js');
+    const { newsym } = await import('./display.js');
+    const r = readobjnam('blessed food ration', false);
+    place_object(r.obj, game.u.ux, game.u.uy);
+    newsym(game.u.ux, game.u.uy);
+    await nhl_pline("Looks like you're getting hungry.  You'll starve to death, unless you eat something.", true);
+    const { cmd_from_ecname } = await import('./cmd.js');
+    await nhl_pline(`Comestibles are eaten with '${cmd_from_ecname('eat')}'`, true);
+    game._tutorial_hunger_event_done = true;
 }
 
 /* ------------------------------------------------------------------------

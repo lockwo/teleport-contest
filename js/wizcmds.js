@@ -29,7 +29,7 @@ import {
     MIGR_EXACT_XY, MIGR_RANDOM, In_sokoban, In_endgame, Is_stronghold, Is_botlevel,
     Is_knox_level,
     MON_OFFMAP, MON_MIGRATING, MON_LIMBO, MON_ENDGAME_MIGR,
-    NHL_SB_SAFE, NHL_SB_DEBUGGING,
+    NHL_SB_SAFE, NHL_SB_DEBUGGING, MM_NOMSG,
 } from './const.js';
 import { defsyms, S_fountain, S_sink } from './symbols.js';
 import { objects, MAXOCLASSES, OMAILCMD, obj_sanity_check } from './mkobj.js';
@@ -60,7 +60,7 @@ import { load_lua } from './nhlua.js';
 import { findit } from './detect.js';
 import { olfaction } from './eat.js';
 import { canspotmon, x_monnam, mon_nam, killed } from './uhitm.js';
-import { is_undead_flag } from './monflags_data.js';
+import { is_undead_flag, nonliving } from './monflags_data.js';
 import { mklev } from './mklev.js';
 import { done } from './end.js';
 import { keepdogs } from './dog.js';
@@ -90,10 +90,6 @@ function plur(n) { return (n === 1) ? '' : 's'; }
 // C ref: mondata.h nonliving(ptr) == is_undead || PM_MANES || weirdnonliving
 // (is_golem || mlet == S_VORTEX); same decomposition js/explode.js uses.
 const S_VORTEX = 22, S_GOLEM = 55;
-function nonliving(p) {
-    return is_undead_flag(p) || p?.name === 'manes'
-        || p?.mcls === S_GOLEM || p?.mcls === S_VORTEX;
-}
 
 // C ref: you.h:316 `#define uhis() (genders[flags.female ? 1 : 0].his)`.
 function uhis() { return game.flags?.female ? 'her' : 'his'; }
@@ -540,10 +536,9 @@ export async function wiz_telekinesis() {
                 cc.x = u.ux; cc.y = u.uy;
             }
         }
-    } while (u.utotype === UTOTYPE_NONE);
+    } while (!u.utotype); // UTOTYPE_NONE (u.utotype may be undefined until first set)
     return ECMD_OK;
 }
-const UTOTYPE_NONE = 0;   // include/you.h
 
 /* ------------------------------------------------------------------ */
 /*  #panic / #debugfuzzer                                             */
@@ -1241,7 +1236,7 @@ export function migrsort_cmp(m1, m2) {
 // displays a count of migrating monsters and optionally lists them.
 export async function list_migrating_mons(nextlevl) {
     const u = game.u;
-    const migr = game.migrating_mons || [];
+    const migr = game.gm?.migrating_mons || []; /* dog.js gm_chains() */
     let here = 0, nxtlv = 0, other = 0;
 
     for (const mtmp of migr) {
@@ -1332,7 +1327,8 @@ export async function wiz_migrate_mons() {
         tolevel.dnum = vl?.dnum ?? 0;
         tolevel.dlevel = vl?.dlevel ?? 0;
     } else if (!Is_botlevel(u.uz)) {
-        const lv = nyi_get_level(depth(u.uz) + 1);
+        const { get_level } = await import('./do.js');
+        const lv = get_level(depth(u.uz) + 1);
         tolevel.dnum = lv.dnum;
         tolevel.dlevel = lv.dlevel;
     } else {
@@ -1362,21 +1358,23 @@ export async function wiz_migrate_mons() {
     if (mcount < 1) mcount = 0;
     else if (mcount > ((COLNO - 1) * ROWNO)) mcount = (COLNO - 1) * ROWNO;
 
+    const { migrate_to_level } = await import('./dog.js');
+    /* C ref: dungeon.c ledger_no() */
+    const ledger_no = (lev) => (lev.dlevel | 0) + (game.dungeons?.[lev.dnum]?.ledger_start | 0);
     const iflags = (game.iflags ||= {});
     const mongen_saved = iflags.debug_mongen;
     iflags.debug_mongen = false;
     while (mcount > 0) {
         let mtmp;
         if (use_random_mon) {
-            const { rndmonst, makemon, MM_NOMSG } = await import('./makemon.js');
+            const { rndmonst, makemon } = await import('./makemon.js');
             const ptr = await rndmonst();
             mtmp = await makemon(ptr, 0, 0, MM_NOMSG);
         } else {
             mtmp = monsterList()[0];
         }
         if (mtmp)
-            await nyi_migrate_to_level(mtmp, nyi_ledger_no(tolevel),
-                                      MIGR_RANDOM, null);
+            await migrate_to_level(mtmp, ledger_no(tolevel), MIGR_RANDOM, null);
         mcount--;
     }
     iflags.debug_mongen = mongen_saved;
@@ -1511,9 +1509,12 @@ export async function wiz_objprobs() {
     const win = [];
     const probsum = new Array(MAXOCLASSES).fill(0);
     let oclass = objects[FIRST_OBJECT].oc_class;
+    /* C: oinit() -> setgemprobs(&u.uz) rewrites the gems' oc_prob per level; js/mkobj.js
+       computes that lazily, so read the effective probability from there */
+    const { object_probability } = await import('./mkobj.js');
 
     for (let otyp = FIRST_OBJECT; otyp < objects.length; otyp++)
-        probsum[objects[otyp].oc_class | 0] += objects[otyp].oc_prob | 0;
+        probsum[objects[otyp].oc_class | 0] += object_probability(objects[otyp]) | 0;
 
     for (let otyp = FIRST_OBJECT; otyp < objects.length; otyp++) {
         /* placeholders for extra descriptions aren't generatable objects */
@@ -1523,10 +1524,12 @@ export async function wiz_objprobs() {
             win.push('');
         oclass = objects[otyp].oc_class;
 
-        const prob = objects[otyp].oc_prob | 0, sum = probsum[oclass] | 0;
+        const prob = object_probability(objects[otyp]) | 0, sum = probsum[oclass] | 0;
         const pct = sum ? (prob * 100 / sum) : 0;
         win.push(`${padLeft(prob, 4)} / ${padLeft(sum, 4)} (${
-            padLeft(pct.toFixed(2), 6)}%): ${objects[otyp].name}`);
+            padLeft(pct.toFixed(2), 6)}%): ${
+            /* C: initoptions_finish() renames obj_descr[SLIME_MOLD].oc_name to "fruit" */
+            objects[otyp].name === 'slime mold' ? 'fruit' : objects[otyp].name}`);
     }
     await display_text_window(win);
     return ECMD_OK;
@@ -1608,18 +1611,16 @@ export function wizcustom_callback(win, glyphnum, id) {
 /*  porting into the named file, then delete the stub here.            */
 /* ------------------------------------------------------------------ */
 
-// dothrow.c mhurtle(mon, dx, dy, range) -> js/dothrow.js
-async function nyi_mhurtle(_mon, _dx, _dy, _range) {}
-// dothrow.c hurtle(dx, dy, range, verbose) -> js/dothrow.js
-async function nyi_hurtle(_dx, _dy, _range, _verbose) {}
+async function nyi_mhurtle(mon, dx, dy, range) {
+    const { mhurtle } = await import('./dothrow.js');
+    return mhurtle(mon, dx, dy, range);
+}
+async function nyi_hurtle(dx, dy, range, verbose) {
+    const { hurtle } = await import('./dothrow.js');
+    return hurtle(dx, dy, range, verbose);
+}
 // panic.c panic(fmt, ...) -> js has no fatal-abort path
 function nyi_panic(_msg) {}
-// dungeon.c get_level(&dest, levnum) -> js/dungeon.js (js/do.js:1976 private)
-function nyi_get_level(levnum) { return { dnum: 0, dlevel: levnum }; }
-// dungeon.c ledger_no(lev) -> js/dungeon.js (js/bones.js:69 private)
-function nyi_ledger_no(_lev) { return 0; }
-// mon.c migrate_to_level(mtmp, tolev, xyloc, cc) -> js/mon.js
-async function nyi_migrate_to_level(_mtmp, _tolev, _xyloc, _cc) {}
 // symbols.c wizcustom_glyphids(win) -> js/symbols.js
 function nyi_wizcustom_glyphids(_win) {}
 // do_wear.c check_wornmask_slots() -> js/do_wear.js

@@ -6,6 +6,7 @@
 // matching the C order exactly; the first probe that "fires" returns.
 
 import { game } from './gstate.js';
+import { roomAt } from './roomat.js';
 import { rn2 } from './rng.js';
 import { phase_of_the_moon, night, FULL_MOON } from './calendar.js';
 import { VAULT, ROOMOFFSET, SHOPBASE, MAXNROFROOMS,
@@ -14,6 +15,7 @@ import { GOLD_PIECE, objects, WEAPON_CLASS } from './mkobj.js';
 import { DEADMONSTER, fmonOrder, wake_nearto_core, genus } from './mon.js';
 import { inhishop } from './shk.js';
 import { in_rooms } from './shkroom.js';
+import { findgd } from './vault.js';
 import { update_topl, You_hear, Deaf_hero } from './display.js';
 import {
     msound_of, mflags2_of, M2_MAGIC, is_elf_flag, is_dwarf_flag, is_gnome_flag,
@@ -219,15 +221,8 @@ function gd_sound() { return !(vault_occupied() || findgd()); }
 // hero is standing in, else 0.  js/shkroom.js move_update() keeps u.urooms.
 function vault_occupied() {
     for (const rno of (game.u?.urooms || []))
-        if (game.level?.rooms?.[rno - ROOMOFFSET]?.rtype === VAULT) return rno;
+        if (roomAt(rno)?.rtype === VAULT) return rno;
     return 0;
-}
-// C ref: vault.c findgd() — is a vault guard monster on this level (placed or
-// migrating in)?
-function findgd() {
-    for (const m of game.level?.monsters || [])
-        if (!DEADMONSTER(m) && m.isgd) return true;
-    return false;
 }
 // C ref: mkobj.c sobj_at(GOLD_PIECE, x, y) — is there floor gold at (x,y)?
 function gold_at(x, y) {
@@ -822,23 +817,8 @@ function closed_door(x, y) {
     return !!loc && loc.typ === DOOR_TYP_SND
         && (loc.doormask & (D_LOCKED_SND | D_CLOSED_SND)) !== 0;
 }
-// C ref: objnam.c vtense(subj, verb) — `verb` arrives in the plural.  Same
-// reduced port as js/dothrow.js's copy: the only subjects passed here are
-// body_part() nouns, which trip none of the special_subjs[] false matches.
-function vtense(subj, verb) {
-    if (subj) {
-        const s = String(subj);
-        if (!/^an? /i.test(s)) {
-            const last = s.charAt(s.length - 1).toLowerCase();
-            const prev = s.length > 1 ? s.charAt(s.length - 2).toLowerCase() : '';
-            if ((last === 's' && s.length > 1 && prev !== 'u' && prev !== 's')
-                || /eeth$|feet$|ia$|ae$/i.test(s))
-                return verb;
-            if (/^(they|you)$/i.test(s)) return verb;
-        }
-    }
-    return vtense_sing_snd(verb);
-}
+// C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js.
+import { vtense } from './plural.js';
 // C ref: monsym.h S_ANT / S_EEL — mons[].mlet values.  makemon.js keeps the
 // numeric class index in `mcls` (`mlet` there is the display CHARACTER), so
 // every C `ptr->mlet == S_FOO` test reads `ptr.mcls` here.
@@ -889,7 +869,7 @@ async function halu_gname(alignment) {
 export function mon_in_room(mon, rmtyp) {
     const rno = game.level?.at?.(mon?.mx, mon?.my)?.roomno ?? 0;
     if (rno >= ROOMOFFSET)
-        return game.level?.rooms?.[rno - ROOMOFFSET]?.rtype === rmtyp;
+        return roomAt(rno)?.rtype === rmtyp;
     return false;
 }
 

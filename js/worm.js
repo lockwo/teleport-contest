@@ -501,10 +501,8 @@ export async function wormhitu(worm) {
 // then clone_mon()'s own draws; then d(m_lev, 8) for the new worm followed by
 // d(m_lev, 8) for the old one, both AFTER the m_lev decrement.
 //
-// mon.c clone_mon() is not ported yet, so it arrives as `clone_monfn` the way
-// place_worm_tail_randomly() above takes `goodposfn`.  Without it the call
-// takes C's own "clone_mon() failed" arm, which draws nothing extra.
-export async function cutworm(worm, x, y, cuttier, clone_monfn) {
+// mon.c clone_mon() is js/makemon.js's.
+export async function cutworm(worm, x, y, cuttier) {
     const lev = worm_state();
     if (!lev) return;
     const wnum = worm.wormno;
@@ -561,7 +559,8 @@ export async function cutworm(worm, x, y, cuttier, clone_monfn) {
         /* clone_mon() will fail if enough long worms have been created to
            have them be marked as extinct or if the hit that cut the current
            one has dropped it down to 1 HP */
-        new_worm = clone_monfn ? await clone_monfn(worm, x, y) : null;
+        const { clone_mon } = await import('./makemon.js');
+        new_worm = await clone_mon(worm, x, y);
     }
 
     /* Sometimes the tail end dies. */

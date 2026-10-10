@@ -1394,6 +1394,20 @@ export function clear_all_glyphmap_colors() {
     }
 }
 
+/* C ref: utf8map.c:59 free_all_glyphmap_u().  (gg.gbuf holds no glyphmap
+   pointers in this port, so only glyphmap[].u needs clearing.) */
+export function free_all_glyphmap_u() {
+    const gm = glyphmap();
+    for (let glyph = 0; glyph < MAX_GLYPH; ++glyph)
+        if (gm[glyph].u) gm[glyph].u = null;
+}
+
+/* C ref: utf8map.c:211 reset_customsymbols() (ENHANCED_SYMBOLS) */
+export function reset_customsymbols() {
+    free_all_glyphmap_u();
+    apply_customizations(gc.currentgraphics, do_custom_symbols);
+}
+
 /* C ref: glyphs.c:1179 */
 export function reset_customcolors() {
     clear_all_glyphmap_colors();

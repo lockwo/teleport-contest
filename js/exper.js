@@ -15,6 +15,7 @@ import { A_WIS, A_CON } from './const.js';
 import { MAXULEV, LARGEST_INT } from './const.js';
 import { races } from './roles.js';
 import { Goodbye } from './role.js';
+import { acurr_eff } from './attrib.js';
 import { LL_MINORAC, livelog_printf } from './livelog.js';
 
 // ── role / race advancement data (C: role.c roles[]/races[]) ──
@@ -110,7 +111,8 @@ function urace_adv() {
     return RACE_ADVANCE.get(urace_mnum()) || RACE_ADVANCE.get(RC_HUMAN);
 }
 
-function ACURR(i) { return game.u?.acurr?.a?.[i] ?? 0; }
+// C ref: attrib.h ACURR(x) == acurr(x): abase+abon+atemp, not just u.acurr.a (ABASE).
+const ACURR = acurr_eff;
 
 // C ref: exper.c newuexp(int lev) — XP threshold to reach experience level lev.
 export function newuexp(lev) {
@@ -426,6 +428,7 @@ export async function losexp(drainer, emitMsg) {
     }
     if ((u.ulevel || 0) > 1) {
         const oldlevel = u.ulevel;
+        (await import('./display.js')).hold_botl_xl();
         u.ulevel -= 1;
         update_rank();
         await adjabil(oldlevel, u.ulevel, emitMsg);
@@ -468,6 +471,7 @@ export async function losexp(drainer, emitMsg) {
             await rehumanize();
         }
     }
+    game.botl = true;
 }
 
 

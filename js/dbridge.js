@@ -25,7 +25,8 @@ import {
     DB_ICE, DB_UNDER, IS_WALL, IS_DRAWBRIDGE, IS_WATERWALL, isok,
     Is_juiblex_level, Is_stronghold,
     KILLED_BY_AN, NO_KILLER_PREFIX, CRUSHING, DROWNING, BURNING,
-    XKILL_GIVEMSG, XKILL_NOMSG, XKILL_NOCORPSE, XKILL_NOCONDUCT, OBJ_FREE, OBJ_FLOOR } from './const.js';
+    XKILL_GIVEMSG, XKILL_NOMSG, XKILL_NOCORPSE, XKILL_NOCONDUCT, OBJ_FREE, OBJ_FLOOR,
+    MAY_HIT } from './const.js';
 import { rn2, rnd } from './rng.js';
 import { m_at, newsym, pline, canseemon_shared } from './display.js';
 import { block_point, unblock_point, does_block, vision_recalc, cansee } from './vision.js';
@@ -35,7 +36,7 @@ import { DEADMONSTER, mmove_of } from './mon.js';
 import { killed, mon_nam, Monnam } from './uhitm.js';
 import { update_monster_region } from './region.js';
 import { wake_nearto } from './cmd.js';
-import { mflags1_of, M1_FLY, M1_SWIM, M1_WALLWALK } from './monflags_data.js';
+import { mflags1_of, M1_FLY, M1_SWIM, M1_WALLWALK, noncorporeal } from './monflags_data.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { revive_nasty } from './do.js';
 
@@ -340,19 +341,25 @@ function e_survives_at(etmp, x, y) {
 // C ref: dbridge.c:401 e_died(etmp, xkill_flags, how).
 async function e_died(etmp, xkill_flags, how) {
     if (is_u(etmp)) {
-        // DEFERRED (end.c done(), trap.c drown()/lava_effects()): the hero-death
-        // path needs end.c's done(), which js/end.js keeps private, and the
-        // drown()/lava_effects() pair, which js/trap.js also keeps private.  All
-        // three consume RNG (bones/attribute rolls, crawl-out-of-water rolls);
-        // calling a partial version would emit a different stream, so the hero
-        // branch stops at recording the killer, exactly the state C has when it
-        // enters done().  See `deferred`.
-        if (how !== DROWNING && how !== BURNING) {
-            if (!killer_name()) {
-                set_killer('falling drawbridge', KILLED_BY_AN);
-            }
+        if (how === DROWNING) {
+            set_killer('', 0); /* drown() sets its own killer */
+            await (await import('./trap.js')).drown();
+        } else if (how === BURNING) {
+            set_killer('', 0); /* lava_effects() sets its own killer */
+            await (await import('./trap.js')).lava_effects();
         } else {
-            set_killer('', 0); /* drown()/lava_effects() set their own killer */
+            if (!killer_name())
+                set_killer('falling drawbridge', KILLED_BY_AN);
+            await (await import('./end.js')).done(how);
+            /* So, you didn't die. */
+            if (!e_survives_at(etmp, etmp.ex, etmp.ey)) {
+                const { enexto_core, teleds } = await import('./teleport.js');
+                const xy = enexto_core(etmp.ex, etmp.ey, etmp.edata, 0);
+                if (xy) {
+                    await pline(`A ${Hallucination() ? 'normal' : 'strange'} force teleports you away...`);
+                    await teleds(xy.x, xy.y, 0);
+                }
+            }
         }
         /* we might have crawled out of the moat to survive */
         etmp.ex = game.u?.ux; etmp.ey = game.u?.uy;
@@ -776,10 +783,10 @@ export async function destroy_drawbridge(x, y) {
            on x vs y is not.  Probed the recorder's compiler (clang, -O0 and
            -O2, macOS arm64): arguments evaluate LEFT TO RIGHT, i.e. the x draw
            comes first, which is what this line does. */
-        mksobj_at(IRON_CHAIN, rn2(2) ? x : x2, rn2(2) ? y : y2, true, false);
-        // DEFERRED (explode.c:721 scatter): C follows each chain with
-        // scatter(otmp->ox, otmp->oy, 1, MAY_HIT, otmp), which draws RNG per
-        // scattered object.  js/ has no scatter(); see `deferred`.
+        const chain = mksobj_at(IRON_CHAIN, rn2(2) ? x : x2, rn2(2) ? y : y2,
+                                 true, false);
+        await (await import('./explode.js')).scatter(chain.ox, chain.oy, 1,
+                                                       MAY_HIT, chain);
     }
     newsym(x, y);
     newsym(x2, y2);
@@ -808,9 +815,7 @@ export async function destroy_drawbridge(x, y) {
             if (is_u(etmp1)) {
                 await spoteffects(null);
             } else {
-                // DEFERRED (mon.c minliquid): js/mon.js:555 has minliquid() but
-                // keeps it private, and its pool/lava death arms are themselves
-                // deferred there.
+                await (await import('./mon.js')).minliquid(etmp1.emon);
             }
         } else {
             if (e_inview) {
@@ -924,7 +929,6 @@ function passes_walls(ptr) { return (mflags1_of(ptr) & M1_WALLWALK) !== 0; }
 // defsym.h MONSYM idx (enum mon_syms in sym.h): S_EYE=5, S_LIGHT=25, S_GHOST=54.
 const S_EYE = 5, S_LIGHT = 25, S_GHOST = 54;
 function is_floater(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIGHT; }
-function noncorporeal(ptr) { return ptr?.mcls === S_GHOST; }
 // C ref: mondata.h:190 likes_lava(ptr) — fire elemental and salamander, looked
 // up by NAME in the generated monster table rather than by a literal pmidx.
 const LAVA_LIKERS = new Set([name_to_pmidx('fire elemental'),

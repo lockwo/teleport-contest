@@ -10,13 +10,12 @@ import {
 } from '../const.js';
 import { game } from '../gstate.js';
 import {
-    MGEND_NEUTRAL, MM_EMIN, enexto_spawn, makemon, mm_mon_at, monster_by_pmidx,
-    name_gender_hint, name_to_pmidx,
+    MM_EMIN, enexto_spawn, makemon, mm_mon_at, monster_by_pmidx,
 } from '../makemon.js';
 import { rn2 } from '../rng.js';
 import {
-    SET_LIT_NOCHANGE, TEMPLE_RTYPE, bigrm_load_map, bigrm_wallification, flip_level,
-    percent, quest_floodfill_match, quest_level_init_solidfill, quest_rndcoord,
+    SET_LIT_NOCHANGE, TEMPLE_RTYPE, splev_find_montype, bigrm_load_map, bigrm_wallification, flip_level,
+    vly_flip_dndest, vly_flip_updest, percent, quest_floodfill_match, quest_level_init_solidfill, quest_rndcoord,
     quest_set_door, set_levltyp_lit, shuffle, splev_map_at, vly_abs, vly_altar,
     vly_region,
 } from '../sp_lev.js';
@@ -55,11 +54,9 @@ const ASTRAL_MAP = [
 // rn2(3)s.  Same shape as sanctum.js's sanc_monster().
 function astral_monster(name, mx, my, opts = {}) {
     const { sp_align = null, peaceful = null, coord = null } = opts;
-    const pmidx = name_to_pmidx(name);
+    const { pmidx, female } = splev_find_montype(name);   // sp_lev.c:3156
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    if (ptr.gcode !== 1 && ptr.gcode !== 2 && name_gender_hint(name) === MGEND_NEUTRAL)
-        rn2(2);                                   // find_montype (sp_lev.c:3156)
     if (sp_align === null) rn2(3);                // induced_align (dungeon.c:2012)
     let x, y;
     if (coord) { x = coord.x; y = coord.y; }      // already absolute (rndcoord)
@@ -70,6 +67,7 @@ function astral_monster(name, mx, my, opts = {}) {
     }
     const mtmp = makemon(ptr, x, y, sp_align !== null ? MM_EMIN : 0);
     if (!mtmp) return null;
+    mtmp.female = female;                         // sp_lev.c:2125
     if (sp_align !== null) {
         mtmp.emin = mtmp.emin || {};
         mtmp.emin.min_align = sp_align;
@@ -217,6 +215,7 @@ export async function makemaz_astral() {
                             if (cc) { x = cc.x; y = cc.y; }
                         }
                         const mt = makemon(null, x, y, 0);
+                        if (mt) mt.female = 0;    // sp_lev.c:2125, id-less default
                         if (mt) mt.mpeaceful = 0;
                     }
                 }
@@ -283,6 +282,7 @@ export async function makemaz_astral() {
     let flp = 0;
     if (rn2(2)) flp |= 1;
     if (rn2(2)) flp |= 2;
-    if (flp) flip_level(flp);
+    // C ref: sp_lev.c flip_level() mirrors the teleport regions too.
+    if (flp) { flip_level(flp); vly_flip_dndest(flp); vly_flip_updest(flp); }
     await plane_place_lregions();
 }

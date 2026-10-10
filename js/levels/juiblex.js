@@ -226,7 +226,7 @@ export async function makemaz_juiblex() {
     remove_boundary_syms();
     map_cleanup();
     bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
-    geh_place_lregions(lregions);
+    await geh_place_lregions(lregions);
 }
 
 // defsym.h S_fountain — the M_AP_FURNITURE appearance "ter:fountain" resolves to.

@@ -42,6 +42,7 @@
 // last faithful step and says so, rather than inventing a roll: an explicit
 // screen divergence beats a silent PRNG desync.
 
+import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { exercise } from './attrib.js';
@@ -57,14 +58,14 @@ import { DEADMONSTER, healmon, Protection_from_shape_changers,
 import {
     STRAT_WAITFORU, W_ARMOR, W_AMUL, W_ARMH, W_ARMS, W_ARMG, W_ARMF,
     A_STR, A_INT, A_DEX, A_CON, LEFT_SIDE, RIGHT_SIDE, MSLOW, LEG,
-    ERODE_RUST, ERODE_CORRODE, ERODE_ROT, M_SEEN_SLEEP,
+    ERODE_RUST, ERODE_CORRODE, ERODE_ROT, M_SEEN_SLEEP, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_ELEC, M_SEEN_ACID,
     W_ARM, W_ARMC, W_ARMU, EF_GREASE, EF_VERBOSE, ER_NOTHING,
 } from './const.js';
 import { has_innate } from './exper.js';
 import { dmgval, sticks, m_slips_free } from './uhitm.js';
 import { monster_by_pmidx } from './makemon.js';
-import { on_fire } from './mondata.js';
-import { defends } from './artifact.js';
+import { on_fire, dmgtype_fromattack, resists_blnd_by_arti, slimeproof } from './mondata.js';
+import { defends, artifact_hit, permapoisoned } from './artifact.js';
 import {
     objects as OBJECTS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
     RING_CLASS, WAND_CLASS, COIN_CLASS, FOOD_CLASS,
@@ -76,6 +77,8 @@ import {
 import { magic_negation, mpoisons_subj, diseasemu, u_slip_free,
     u_slow_down } from './mhitu.js';
 import { Blind } from './vision.js';
+import { DESCR_BY_OTYP } from './o_descr_data.js';
+import { Unaware } from './const.js';
 import { night } from './calendar.js';
 
 // ── include/monattk.h ────────────────────────────────────────────────────────
@@ -169,16 +172,6 @@ const completelyrots = (ptr) => ptr?.name === 'wood golem'
 // stone golem instead of dying.
 const poly_when_stoned = (ptr) => ptr?.mcls === S_GOLEM
     && ptr?.name !== 'stone golem';
-// C ref: mondata.h:75 slimeproof(ptr) — green slime || flaming() ||
-// noncorporeal().  It is NOT "acidic or a golem": a straw golem IS slimeable.
-const FLAMING_NAMES = new Set(['fire vortex', 'flaming sphere',
-    'fire elemental', 'salamander']);            // mondata.h:59 flaming()
-// defsym.h:358 MONSYM(54, ' ', GHOST, S_GHOST) — 24 is S_XAN, so slimeproof()
-// used to answer TRUE for a xan and FALSE for a ghost.
-const S_GHOST = 54;
-const slimeproof = (ptr) => ptr?.name === 'green slime'
-    || FLAMING_NAMES.has(ptr?.name) || ptr?.mcls === S_GHOST;
-
 // C ref: mondata.h:200 touch_petrifies(ptr) — PM_COCKATRICE || PM_CHICKATRICE
 // ONLY.  Medusa is flesh_petrifies(), a strictly wider macro; including her
 // here would stone anything that bit her, which C does not do.
@@ -345,35 +338,97 @@ async function maybe_destroy_item_mon(mon, obj, dmgtyp, ops) {
 // ── mondata.c:305 can_blnd ──────────────────────────────────────────────────
 // No RNG, but it decides whether AD_BLND's d(damn,damd) is drawn at all.
 export function can_blnd(magr, mdef, aatyp, obj, ops) {
+    const is_you = is_hero(mdef);
+    let check_visor = false;
     const pd = ops.permonst(mdef);
-    if (!is_hero(mdef) && !haseyes(pd)) return false;
-    if (is_hero(mdef) && false) return false;   // hero always has eyes here
-    // "a crow will not pluck out the eye of another crow"
+
+    /* no eyes protect against all attacks for now */
+    if (!haseyes(pd)) return false;
+    /* if monster has been permanently blinded, the deed is already done */
+    if (!is_you && !mdef.mcansee && !(mdef.mblinded | 0)) return false;
+    /* "a crow will not pluck out the eye of another crow" */
     if (magr && !is_hero(magr) && ops.permonst(magr)?.name === 'raven'
         && pd?.name === 'raven') return false;
+
+    const ublindf = game.ublindf;
+    const Blindfolded = !!ublindf && ublindf.otyp !== LENSES_OTYP;
     switch (aatyp) {
     case AT_EXPL: case AT_BOOM: case AT_GAZE: case AT_MAGC: case AT_BREA:
+        /* light-based attacks may be cancelled or resisted */
         if (magr && !is_hero(magr) && magr.mcan) return false;
-        return true;                            // !resists_blnd(mdef)
+        return !resists_blnd(mdef, pd);
+
     case AT_WEAP: case AT_SPIT: case AT_NONE:
-        // Only a cream pie / blinding venom / potion of blindness blinds here.
-        return !!obj && (obj.otyp === CREAM_PIE || obj.otyp === BLINDING_VENOM
-                         || obj.otyp === POT_BLINDNESS);
+        /* an object is used (thrown/spit/other) */
+        if (obj && obj.otyp === CREAM_PIE) {
+            if (is_you && Blindfolded) return false;
+        } else if (obj && obj.otyp === BLINDING_VENOM) {
+            /* all ublindf, including LENSES, protect, cream-pies too */
+            if (is_you && (ublindf || game.u?.ucreamed)) return false;
+            check_visor = true;
+        } else if (obj && obj.otyp === POT_BLINDNESS) {
+            return true; /* no defense */
+        } else
+            return false; /* other objects cannot cause blindness yet */
+        if (magr === YOUMONST && game.u?.uswallow)
+            return false; /* can't affect eyes while inside monster */
+        break;
+
     case AT_ENGL:
-        if (!is_hero(mdef) && mdef.msleeping) return false;
-        return true;
+        if (is_you && (Blindfolded || Unaware() || game.u?.ucreamed))
+            return false;
+        if (!is_you && mdef.msleeping) return false;
+        break;
+
     case AT_CLAW:
-        // e.g. raven: every ublindf, LENSES included, protects the hero.
-        if (is_hero(mdef) && (game.u?.ublindf || game.ublindf)) return false;
-        return true;
+        /* e.g. raven: all ublindf, including LENSES, protect */
+        if (is_you && ublindf) return false;
+        if (magr === YOUMONST && game.u?.uswallow) return false;
+        check_visor = true;
+        break;
+
     case AT_TUCH: case AT_STNG:
+        /* some physical, blind-inducing attacks can be cancelled */
         if (magr && !is_hero(magr) && magr.mcan) return false;
-        return true;
+        break;
+
     default:
-        return true;
+        break;
     }
+
+    /* check if wearing a visor (only checked if visor might help) */
+    if (check_visor) {
+        const inv = is_you ? (game.invent || []) : (mdef.minvent || []);
+        for (const o of inv)
+            if (((o.owornmask | 0) & W_ARMH) && is_visored_helmet(o))
+                return false;
+    }
+    return true;
+}
+// C ref: mondata.c:248 resists_blnd(mon).
+function resists_blnd(mon, ptr) {
+    const is_you = is_hero(mon);
+    if (is_you ? (Blind() || Unaware())
+               : (mon.mblinded || !mon.mcansee || !haseyes(ptr) || mon.msleeping))
+        return true;
+    /* yellow light, Archon; !dust vortex, !cobra, !raven */
+    if (dmgtype_fromattack(ptr, AD_BLND, AT_EXPL)
+        || dmgtype_fromattack(ptr, AD_BLND, AT_GAZE))
+        return true;
+    /* Sunsword */
+    if (resists_blnd_by_arti(is_you ? game.youmonst : mon)) return true;
+    return false;
 }
 const CREAM_PIE = 287, BLINDING_VENOM = 479, POT_BLINDNESS = 300;
+const LENSES_OTYP = 232;
+// C ref: mondata.h:59 flaming(ptr).
+const flaming_pd = (ptr) => ['fire vortex', 'flaming sphere', 'fire elemental', 'salamander'].includes(ptr?.name);
+// C ref: objnam.c objdescr_is(o, "visored helmet") — the SHUFFLED appearance
+// (o_init.js OBJ_DESCR(); inlined because o_init.js would close an import cycle).
+function is_visored_helmet(o) {
+    const idx = OBJECTS[o.otyp]?.oc_descr_idx ?? o.otyp;
+    return DESCR_BY_OTYP[idx] === 'visored helmet';
+}
 
 // mpoisons_subj() now lives in js/mhitu.js (its C home, mhitu.c:145).  The copy
 // that used to be here had three of the five arms: an AT_TUCH poisoner (C says
@@ -386,7 +441,6 @@ export function stagger(ptr, verb) {
     if (slithy(ptr)) return 'slither';
     return verb;
 }
-const makeplural_stagger = (s) => `${s}s`;
 
 
 // C ref: mon.c golemeffects() — flesh/iron golems heal or slow from the
@@ -552,13 +606,25 @@ export async function mhitm_ad_fire(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if (!await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
             await ops.emit(`You're ${on_fire(pd, mattk)}!`);
-            // Fire_resistance is off for the covered roles; the hero is never
-            // a paper/straw golem, so rehumanize() can't fire.
+            if (completelyburns(pd)) { /* paper or straw golem */
+                await ops.emit('You go up in flames!');
+                if (ops.monstunseesu) await ops.monstunseesu(M_SEEN_FIRE);
+                /* KMH -- this is okay with unchanging */
+                await ops.rehumanize();
+                return;
+            } else if (ops.Fire_resistance()) {
+                await ops.emit("The fire doesn't feel hot!");
+                if (ops.monstseesu) await ops.monstseesu(M_SEEN_FIRE);
+                mhm.damage = 0;
+            } else if (ops.monstunseesu) {
+                await ops.monstunseesu(M_SEEN_FIRE);
+            }
             if (ops.monLev(magr) > rn2(20)) {
                 if (ops.destroy_items_hero)
                     await ops.destroy_items_hero(AD_FIRE, orig_dmg);
+                await ops.ignite_items_hero();
             }
-            // burn_away_slime(): needs Slimed, never set here.
+            await ops.burn_away_slime();
         } else {
             mhm.damage = 0;
         }
@@ -601,7 +667,13 @@ export async function mhitm_ad_cold(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if (!await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
             await ops.emit("You're covered in frost!");
-            // Cold_resistance is off for the covered roles.
+            if (ops.Cold_resistance()) {
+                await ops.emit("The frost doesn't seem cold!");
+                if (ops.monstseesu) await ops.monstseesu(M_SEEN_COLD);
+                mhm.damage = 0;
+            } else if (ops.monstunseesu) {
+                await ops.monstunseesu(M_SEEN_COLD);
+            }
             if (ops.monLev(magr) > rn2(20)) {
                 if (ops.destroy_items_hero)
                     await ops.destroy_items_hero(AD_COLD, orig_dmg);
@@ -629,7 +701,13 @@ export async function mhitm_ad_elec(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);           // "The grid bug bites!"
         if (!await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
             await ops.emit('You get zapped!');
-            // Shock_resistance is off for the covered roles.
+            if (ops.Shock_resistance()) {
+                await ops.emit("The zap doesn't shock you!");
+                if (ops.monstseesu) await ops.monstseesu(M_SEEN_ELEC);
+                mhm.damage = 0;
+            } else if (ops.monstunseesu) {
+                await ops.monstunseesu(M_SEEN_ELEC);
+            }
             if (ops.monLev(magr) > rn2(20)) {
                 if (ops.destroy_items_hero)
                     await ops.destroy_items_hero(AD_ELEC, orig_dmg);
@@ -655,8 +733,15 @@ export async function mhitm_ad_acid(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (!magr.mcan && !rn2(3)) {
-            // Acid_resistance is off for the covered roles.
-            await ops.emit("You're covered in acid!  It burns!");
+            if (ops.Acid_resistance()) {
+                await ops.emit("You're covered in acid, but it seems harmless.");
+                if (ops.monstseesu) await ops.monstseesu(M_SEEN_ACID);
+                mhm.damage = 0;
+            } else {
+                await ops.emit("You're covered in acid!  It burns!");
+                ops.exercise(A_STR, false);
+                if (ops.monstunseesu) await ops.monstunseesu(M_SEEN_ACID);
+            }
         } else {
             mhm.damage = 0;
         }
@@ -1058,11 +1143,10 @@ export async function mhitm_ad_stck(magr, mattk, mdef, mhm, ops) {
     }
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
-        const u = game.u;
-        // sticks(youmonst.data) is FALSE for every playable role's base form.
-        if (!negated && !u.ustuck) {
-            u.ustuck = magr;
-            game.disp_botl = true;
+        if (!negated && !game.u.ustuck && !sticks(ops.permonst(mdef))) {
+            set_ustuck(magr);
+            if (ops.permonst(magr)?.name === 'barbed devil')
+                await ops.emit('The barbs stick to you!');
         }
         return;
     }
@@ -1163,8 +1247,7 @@ export async function mhitm_ad_plys(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if ((game.multi ?? 0) >= 0 && !rn2(3)
             && !await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
-            const upr = game.u?.uprops;
-            if (((upr?.HFree_action | 0) > 0) || ((upr?.EFree_action | 0) > 0)) {
+            if ((await import('./invent.js')).Free_action()) {
                 await ops.emit('You momentarily stiffen.');
             } else {
                 if (Blind()) await ops.emit('You are frozen!');
@@ -1265,12 +1348,12 @@ export async function mhitm_ad_slim(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if (negated) { if (!magr.mcan) await ops.emit('You escape harm.'); return; }
         const pdu = ops.permonst(mdef);   // the hero's own (possibly polyd) form
-        if (FLAMING_NAMES.has(pdu?.name)) {
+        if (flaming_pd(pdu)) {
             await ops.emit('The slime burns away!');
             mhm.damage = 0;
         } else {
             const { Unchanging_poly } = await import('./polyself.js');
-            if (Unchanging_poly() || pdu?.mcls === S_GHOST || pdu?.name === 'green slime') {
+            if (Unchanging_poly() || pdu?.mcls === 54 /* S_GHOST */ || pdu?.name === 'green slime') {
                 await ops.emit('You are unaffected.');
                 mhm.damage = 0;
             } else if (!((game.u?.uprops?.Slimed | 0) > 0)) {
@@ -1297,11 +1380,26 @@ export async function mhitm_ad_ench(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if (!negated) {
             // some_armor(hero); when the hero wears none, C picks a ring /
-            // amulet / blindfold slot with rn2(5) — the roll fires either way
-            // only when there is no armor, so it is gated on that.
-            const armored = (game.invent || []).some((o) => (o.owornmask || 0) & W_ARMOR);
-            if (!armored) rn2(5);
-            // drain_item(): the enchantment decrement.
+            // amulet / blindfold slot with rn2(5).
+            const { some_armor } = await import('./read.js');
+            let obj = some_armor();
+            if (!obj) {
+                switch (rn2(5)) {
+                case 1: obj = game.uright; break;
+                case 2: obj = game.uleft; break;
+                case 3: obj = game.uamul; break;
+                case 4: obj = game.ublindf; break;
+                default: break;
+                }
+            }
+            if (obj) {
+                const { drain_item } = await import('./zap.js');
+                if (await drain_item(obj, false)) {
+                    const { yname, otense } = await import('./invent.js');
+                    const nm = yname(obj);
+                    await ops.emit(`${nm.charAt(0).toUpperCase()}${nm.slice(1)} ${otense(obj, 'seem')} less effective.`);
+                }
+            }
         }
         return;
     }
@@ -1550,9 +1648,12 @@ export async function mhitm_ad_phys(magr, mattk, mdef, mhm, ops) {
     }
     // mhitm
     let mwep = ops.MON_WEP(magr);
+    const vis = ops.canseemon(magr) && ops.canseemon(mdef);
     if (mattk.aatyp !== AT_WEAP && mattk.aatyp !== AT_CLAW) mwep = null;
-    // shade_miss(): no shade reaches mon-vs-mon melee in this port.
-    if (mattk.aatyp === AT_KICK && thick_skinned(pd)) {
+    const { shade_miss } = await import('./uhitm.js');
+    if (await shade_miss(magr, mdef, mwep, false, vis)) {
+        mhm.damage = 0;
+    } else if (mattk.aatyp === AT_KICK && thick_skinned(pd)) {
         mhm.damage = 0;
     } else if (mwep) {
         if (mwep.otyp === CORPSE_OTYP && mwep.corpsenm != null
@@ -1561,9 +1662,40 @@ export async function mhitm_ad_phys(magr, mattk, mdef, mhm, ops) {
             if (mhm.done) return;
         }
         mhm.damage += dmgval(mwep, { data: pd });
-        // GAUNTLETS_OF_POWER rn1(4,3) / artifact_hit(): no monster here has them.
-        if (mhm.damage < 1) mhm.damage = 1;
-        // rustm(): erodes the defender's armor; no RNG.
+        const { which_armor } = await import('./worn.js');
+        const marmg = which_armor(magr, W_ARMG);
+        if (marmg && marmg.otyp === GAUNTLETS_OF_POWER_OTYP)
+            mhm.damage += rn1(4, 3); /* 3..6 */
+        if (mhm.damage < 1) /* is this necessary?  mhitu.c has it... */
+            mhm.damage = 1;
+        if (mwep.oartifact) {
+            /* when magr's weapon is an artifact, caller suppressed its usual
+               'hit' message in case artifact_hit() delivers one; now we'll know
+               and might need to deliver skipped message */
+            const dmg = { d: mhm.damage };
+            const special = await artifact_hit(magr, mdef, mwep, dmg, mhm.dieroll);
+            mhm.damage = dmg.d;
+            if (!special) {
+                if (ops.vis) {
+                    const { mon_nam_too } = await import('./do_name.js');
+                    await ops.emit(`${ops.Monnam(magr)} hits ${mon_nam_too(mdef, magr)}.`);
+                }
+                mhm.hitflags |= M_ATTK_HIT;
+            }
+            /* artifact_hit updates 'tmp' but doesn't inflict any damage;
+               however, it might cause carried items to be destroyed and they
+               might do so */
+            if (DEADMONSTER(mdef)) {
+                mhm.hitflags = M_ATTK_DEF_DIED
+                    | ((await ops.grow_up(magr, mdef)) ? 0 : M_ATTK_AGR_DIED);
+                mhm.done = true;
+                return;
+            }
+        }
+        if (mhm.damage) {
+            const { rustm } = await import('./mhitm.js');
+            await rustm(mdef, mwep);
+        }
         if ((mwep.opoisoned || permapoisoned(mwep)) && !rn2(4))
             await mhitm_really_poison(magr, mattk, mdef, mhm, ops);
     } else if (pa?.name === 'purple worm' && pd?.name === 'shrieker') {
@@ -1573,8 +1705,7 @@ export async function mhitm_ad_phys(magr, mattk, mdef, mhm, ops) {
     }
 }
 const CORPSE_OTYP = 265;   // js/mkobj.js objects[] index
-// C ref: obj.h permapoisoned(obj) — permanently poisoned weapons (none here).
-const permapoisoned = (_obj) => false;
+const GAUNTLETS_OF_POWER_OTYP = 161;
 
 export async function mhitm_ad_ston(magr, mattk, mdef, mhm, ops) {
     if (is_hero(magr)) {
@@ -1704,7 +1835,7 @@ export async function mhitm_ad_stun(magr, mattk, mdef, mhm, ops) {
     }
     if (magr.mcan) return;
     if (ops.canseemon(mdef))
-        await ops.emit(`${ops.Monnam(mdef)} ${makeplural_stagger(stagger(pd, 'stagger'))} for a moment.`);
+        await ops.emit(`${ops.Monnam(mdef)} ${makeplural(stagger(pd, 'stagger'))} for a moment.`);
     mdef.mstun = 1;
     await mhitm_ad_phys(magr, mattk, mdef, mhm, ops);
 }
@@ -1832,7 +1963,7 @@ export async function mhitm_ad_sedu(magr, mattk, mdef, mhm, ops) {
         (magr.minvent = magr.minvent || []).push(obj);
         if (vis && ops.canseemon(mdef))
             await ops.emit(`${buf} steals ${onam} from ${mdefnam}!`);
-        { const { possibly_unwield } = await import('./weapon.js'); possibly_unwield(mdef, false); }
+        { const { possibly_unwield } = await import('./weapon.js'); await possibly_unwield(mdef, false); }
         clear_waitforu(mdef);
         // possibly_unwield()/mselftouch(): no covered defender is harmed by
         // its own stolen gear.

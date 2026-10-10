@@ -855,6 +855,14 @@ export function vision_recalc(control = 0) {
                             loc.seenv = (loc.seenv || 0) | new_angle(loc, sv, row, col);
                             if (!(ov & IN_SIGHT) || oldseenv !== loc.seenv)
                                 newsym(col, row);
+                        } else if ((ov & IN_SIGHT)
+                                   || ((nv & COULD_SEE) ^ (ov & COULD_SEE))) {
+                            // C ref: vision.c:784 `goto not_in_sight` — a lit
+                            // wall/door whose neighbour toward the hero is dark
+                            // is not seen, but a square that WAS in sight must
+                            // still be newsym()'d so it reverts to its
+                            // remembered glyph (a gas cloud blocks light too).
+                            newsym(col, row);
                         }
                     } else {
                         next_row[col] |= IN_SIGHT;
@@ -895,8 +903,16 @@ export function Blind() {
     // C ref: youprop.h Blinded — HBlinded carries a FROMFORM bit that
     // polyself.c set_uasmon() sets for an eyeless polymorph form; js/polyself.js
     // keeps that source in its own field because u.blinded is a countdown.
-    return !!u && ((u.blinded || 0) > 0 || !!game.ublindf
-                   || (u.uprops?.BlindedFromForm | 0) > 0);
+    // C ref: youprop.h:95 "worn blindfold (or towel; lenses don't set
+    // [BLINDED].extrinsic)", and the Eyes of the Overworld (artifact lenses,
+    // oartifact 26) set BBlinded, which overrides every other source.
+    const bf = game.ublindf;
+    const blindfolded = !!bf && (bf.otyp === 233 /* BLINDFOLD */
+                                 || bf.otyp === 234 /* TOWEL */);
+    const eyes_of_overworld = !!bf && bf.oartifact === 26;
+    return !!u && !eyes_of_overworld
+        && ((u.blinded || 0) > 0 || blindfolded
+            || (u.uprops?.BlindedFromForm | 0) > 0);
 }
 
 // C ref: youprop.h Infravision and polyself.c set_uasmon().  The form source

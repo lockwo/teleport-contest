@@ -38,6 +38,7 @@ function quest_create_monster_class_randpos(classNum, peacefulOverride) {
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0);
+    if (mtmp) mtmp.female = 0;                          // sp_lev.c:2125, id-less default
     if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
     return mtmp;
 }

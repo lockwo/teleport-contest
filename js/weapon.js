@@ -23,8 +23,8 @@ import { P_NONE, P_BARE_HANDED_COMBAT, P_AXE, P_SPEAR, P_PICK_AXE,
          P_LAST_WEAPON, P_LAST_SPELL, P_NUM_SKILLS,
          P_TWO_WEAPON_COMBAT, P_RIDING, A_STR, A_DEX,
          W_ARM, W_ARMC, W_ARMU, W_ARMG, W_RINGL, W_RINGR,
-         POOL, MOAT, WATER, OBJ_INVENT } from './const.js';
-import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
+         POOL, MOAT, WATER, OBJ_INVENT, TIP_ENHANCE } from './const.js';
+import { name_to_pmidx, monster_by_pmidx, adj_lev } from './makemon.js';
 import { mon_hates_silver, is_vampshifter } from './mon.js';
 import { which_armor } from './worn.js';
 import { attacktype, AT_WEAP } from './monattk_data.js';
@@ -111,8 +111,8 @@ export function greatest_erosion(otmp) {
 function shade_glare(obj) {
     return objects[obj?.otyp]?.material === MAT_SILVER;
 }
-// artifact.c artifact_light(obj) — no artifact is wired into the live paths.
-function artifact_light(_obj) { return false; }
+// artifact.c artifact_light(obj): the real predicate lives in light.js.
+import { artifact_light } from './light.js';
 
 // The defender's permonst.  Callers pass a real monster (mon.data), the
 // youmonst pseudo-monster, or bare game.u; C always has &youmonst.data.
@@ -431,7 +431,7 @@ export const ACURR = acurr_eff;
 export function abon() {
     const u = game.u;
     const str = ACURR(A_STR), dex = ACURR(A_DEX);
-    if (u?.Upolyd) return adj_lev_pm(monster_by_pmidx(u.umonnum ?? -1)) - 3;
+    if (u?.Upolyd) return adj_lev(monster_by_pmidx(u.umonnum ?? -1)) - 3;
     let sbon;
     if (str < 6) sbon = -2;
     else if (str < 8) sbon = -1;
@@ -459,23 +459,6 @@ export function dbon() {
     if (str <= STR18(90)) return 4;        /* up to 18/90 */
     if (str < STR18(100)) return 5;        /* up to 18/99 */
     return 6;
-}
-
-// C ref: makemon.c:2016 adj_lev(ptr) — the Upolyd arm of abon() needs it.
-function adj_lev_pm(ptr) {
-    if (!ptr) return 0;
-    const u = game.u;
-    let tmp = ptr.mlevel | 0;
-    if (tmp > 49) return 50;
-    const depth = u?.uz?.dlevel ?? 1;
-    const tmp2 = depth - tmp;
-    if (tmp2 < 0) tmp--;
-    else tmp += Math.trunc(tmp2 / 5);
-    const udiff = (u?.ulevel || 1) - (ptr.mlevel | 0);
-    if (udiff > 0) tmp += Math.trunc(udiff / 4);
-    let cap = Math.trunc((3 * (ptr.mlevel | 0)) / 2);
-    if (cap > 49) cap = 49;
-    return tmp > cap ? cap : (tmp > 0 ? tmp : 0);
 }
 
 // ── skill-slot bookkeeping (weapon.c:1414-1516) ──
@@ -573,6 +556,9 @@ export async function give_may_advance_msg(skill) {
         : skill <= P_LAST_WEAPON ? 'weapon '
         : skill <= P_LAST_SPELL ? 'spell casting '
         : 'fighting '}skills.`);
+    /* C ref: weapon.c:83 (void) handle_tip(TIP_ENHANCE) */
+    const { handle_tip } = await import('./hack.js');
+    await handle_tip(TIP_ENHANCE);
 }
 
 // C ref: skills.h:106 practice_needed_to_advance(level) == level * level * 20.
@@ -617,19 +603,32 @@ const RWEP_OTYPS = new Set([
 ]);
 
 // C ref: weapon.c:1814 setmnotwielded(mon, obj) — clear the wielded flags when
-// a monster stops holding a weapon.
-export function setmnotwielded(mon, obj) {
+// a monster stops holding a weapon.  A lit Sunsword stops shining (end_burn).
+export async function setmnotwielded(mon, obj) {
     if (!obj) return;
+    if (artifact_light(obj) && obj.lamplit) {
+        const { end_burn } = await import('./timeout.js');
+        await end_burn(obj, false);
+        const { canseemon_mm, mbodypart } = await import('./monmove.js');
+        if (canseemon_mm(mon)) {
+            const { xname, otense } = await import('./invent.js');
+            const { mon_nam } = await import('./uhitm.js');
+            const { s_suffix } = await import('./hacklib.js');
+            const { The } = await import('./objnam.js');
+            const { pline } = await import('./display.js');
+            await pline(`${The(xname(obj))} in ${s_suffix(mon_nam(mon))} ${mbodypart(mon, 6 /* HAND */)} ${otense(obj, 'stop')} shining.`);
+        }
+    }
     if (obj.oartifact) obj.owornmask = (obj.owornmask | 0) & ~0x1000 /* W_ART */;
     obj.owornmask = (obj.owornmask | 0) & ~0x00000100 /* W_WEP */;
     if (mon && mon.mw === obj) mon.mw = null;
 }
 
 // C ref: weapon.c:938 mwepgone(mon) — the monster's weapon left its hands.
-export function mwepgone(mon) {
+export async function mwepgone(mon) {
     const mwep = mon?.mw || null;
     if (mwep) {
-        setmnotwielded(mon, mwep);
+        await setmnotwielded(mon, mwep);
         mon.weapon_check = 1; /* NEED_WEAPON */
     }
 }
@@ -820,7 +819,7 @@ export async function show_skills() {
 // weapon left its inventory, or the monster can no longer use weapons at all.
 // Returns the object it dropped (null otherwise) so the caller can place it;
 // the flooreffects()/stackobj() tail belongs to the caller's module.
-export function possibly_unwield(mon, _polyspot) {
+export async function possibly_unwield(mon, _polyspot) {
     const mw_tmp = mon?.mw || null;
     if (!mw_tmp) return null;
     const inv = mon.minvent || [];
@@ -830,7 +829,7 @@ export function possibly_unwield(mon, _polyspot) {
         return null;
     }
     if (!attacktype_weap(mon.data)) {
-        setmnotwielded(mon, mw_tmp);
+        await setmnotwielded(mon, mw_tmp);
         mon.weapon_check = 0;      /* NO_WEAPON_WANTED */
         const i = inv.indexOf(mw_tmp);
         if (i >= 0) inv.splice(i, 1);

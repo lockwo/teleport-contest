@@ -8,13 +8,12 @@ import {
 } from '../const.js';
 import { game } from '../gstate.js';
 import {
-    MGEND_NEUTRAL, MM_EMIN, enexto_spawn, makemon, mm_mon_at, monster_by_pmidx,
-    name_gender_hint, name_to_pmidx,
+    MM_EMIN, enexto_spawn, makemon, mm_mon_at, monster_by_pmidx,
 } from '../makemon.js';
 import { ARMOR_CLASS, GEM_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
-    TEMPLE_RTYPE, VLY_S_LICH, VLY_S_VAMPIRE, bigrm_load_map, bigrm_wallification, flip_level,
+    TEMPLE_RTYPE, splev_find_montype, VLY_S_LICH, VLY_S_VAMPIRE, bigrm_load_map, bigrm_wallification, flip_level,
     lspo_door_relative, quest_level_init_solidfill, quest_place_stair, quest_set_door,
     remove_boundary_syms, map_cleanup, shuffle, vly_abs, vly_altar, vly_flip_dndest, vly_flip_updest, vly_monster_class,
     vly_non_diggable, vly_object, vly_region, vly_teleport_region, vly_trap,
@@ -68,12 +67,9 @@ function vly_non_passwall(mx1, my1, mx2, my2) {
 // ptr went directly to next_ident while C invokes rndmonst_adj().
 function sanc_monster(name, mx, my, opts = {}) {
     const { sp_align = null, peaceful = null } = opts;
-    const pmidx = name_to_pmidx(name);
+    const { pmidx, female } = splev_find_montype(name);   // sp_lev.c:3156
     const named = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!named) return null;
-    if (named.gcode !== 1 && named.gcode !== 2
-        && name_gender_hint(name) === MGEND_NEUTRAL)
-        rn2(2);                                   // find_montype (sp_lev.c:3156)
     const ptr = (game.mvitals?.[pmidx]?.mvflags & G_GONE) ? null : named;
     if (sp_align === null) rn2(3);                // induced_align (dungeon.c:2012)
     let x = mx, y = my;
@@ -84,6 +80,7 @@ function sanc_monster(name, mx, my, opts = {}) {
     // C's G_GONE arm passes NULL to makemon(), starting its rndmonst() scan.
     const mtmp = makemon(ptr, x, y, sp_align !== null ? MM_EMIN : 0);
     if (!mtmp) return null;
+    mtmp.female = female;                         // sp_lev.c:2125
     if (sp_align !== null) {
         mtmp.emin = mtmp.emin || {};
         mtmp.emin.min_align = sp_align;

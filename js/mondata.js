@@ -15,8 +15,8 @@ import { game, hooks } from './gstate.js';
 import { rn2 } from './rng.js';
 import { mflags1_of, msound_of, M1_NOHEAD, mflags2_of, humanoid, is_undead_flag, is_demon_flag, is_neuter_flag,
     M2_STRONG, M2_PNAME } from './monflags_data.js';
-import { monster_by_pmidx } from './makemon.js';
-import { NON_PM, PRONOUN_NO_IT, PRONOUN_HALLU,
+import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
+import { G_GENOD, NON_PM, PRONOUN_NO_IT, PRONOUN_HALLU,
     M_SEEN_NOTHING, M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP,
     M_SEEN_DISINT, M_SEEN_ELEC, M_SEEN_POISON, M_SEEN_ACID, M_SEEN_REFL,
     FIRE_RES, COLD_RES, SLEEP_RES, DISINT_RES, SHOCK_RES, POISON_RES,
@@ -37,13 +37,19 @@ const MR_FIRE = 0x01, MR_COLD = 0x02, MR_ELEC = 0x10, MR_ACID = 0x40;
 
 // C ref: monst.h resists_*(mon) == Resists_Elem(mon, X) ==
 // (mresists | mextrinsics | mintrinsics) & X.  Monster extrinsics/intrinsics
-// (worn gear, eaten corpses) are not tracked on our monster record, so these
-// read the species bit only.
-const resists_bit = (mon, bit) => (((mon?.data?.mresists ?? 0) & bit) !== 0);
+// (worn gear -> worn.js update_mon_extrinsics, eaten corpses -> mon_givit)
+// are tracked on the monster record in mextrinsics/mintrinsics.
+const resists_bit = (mon, bit) =>
+    ((((mon?.data?.mresists ?? 0) | (mon?.mextrinsics ?? 0)
+       | (mon?.mintrinsics ?? 0)) & bit) !== 0);
 export const resists_fire = (mon) => resists_bit(mon, MR_FIRE);
 export const resists_cold = (mon) => resists_bit(mon, MR_COLD);
 export const resists_elec = (mon) => resists_bit(mon, MR_ELEC);
 export const resists_acid = (mon) => resists_bit(mon, MR_ACID);
+export const resists_sleep = (mon) => resists_bit(mon, 0x04);
+export const resists_disint = (mon) => resists_bit(mon, 0x08);
+export const resists_poison = (mon) => resists_bit(mon, 0x20);
+export const resists_ston = (mon) => resists_bit(mon, 0x80);
 
 // C ref: mondata.h completelyburns/completelyrots/completelyrusts — the golems
 // a passive element destroys outright.
@@ -52,6 +58,32 @@ const ROTS_NAMES = new Set(['wood golem', 'leather golem']);
 export const completelyburns = (ptr) => BURNS_NAMES.has(ptr?.name);
 export const completelyrots = (ptr) => ROTS_NAMES.has(ptr?.name);
 export const completelyrusts = (ptr) => ptr?.name === 'iron golem';
+
+// C ref: mondata.c:79 poly_when_stoned(ptr) — non-stone golems turn into stone
+// golems when petrified unless that species is genocided (G_EXTINCT allowed).
+export function poly_when_stoned(ptr) {
+    if (!ptr || ptr.mcls !== 55 /* S_GOLEM */ || ptr.name === 'stone golem')
+        return false;
+    const mv = game.mvitals?.[name_to_pmidx('stone golem')];
+    return !((mv?.mvflags ?? 0) & G_GENOD);
+}
+
+// C ref: mondata.h:75 slimeproof(ptr) — green slime || flaming(ptr) ||
+// noncorporeal(ptr).  flaming: fire vortex, flaming sphere, fire elemental,
+// salamander; noncorporeal: mlet == S_GHOST (54).
+const FLAMING_NAMES = new Set(['fire vortex', 'flaming sphere',
+    'fire elemental', 'salamander']);
+export function slimeproof(ptr) {
+    return ptr?.name === 'green slime' || FLAMING_NAMES.has(ptr?.name)
+        || ptr?.mcls === 54;
+}
+
+// C ref: monst.h:247 troll_baned(m, o) — is mon m (presumably just killed) a
+// troll and obj o Trollsbane?  (S_TROLL == 46; ART_TROLLSBANE == 17, the
+// artilist.h ordinal js/artifact.js uses.)
+export function troll_baned(mon, obj) {
+    return mon?.data?.mcls === 46 && !!obj && obj.oartifact === 17;
+}
 
 // C ref: mondata.c on_fire() — describe the defender's response to fire.
 export function on_fire(ptr, mattk) {

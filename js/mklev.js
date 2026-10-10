@@ -18,13 +18,14 @@ import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_r
          vly_flip_updest, vly_flip_dndest,
          okdoor, bydoor, create_door, lspo_door_relative,
          is_ok_location, pm_to_humidity, LOC_DRY, splev_get_location_room,
-         run_themeroom_postprocess,
+         run_themeroom_postprocess, antholemon,
          q_absx, q_absy, quest_floodfill_match, splev_object_at, splev_feature,
          splev_door_at, vly_altar, vly_region, splev_region_lit,
          splev_create_monster, splev_link_doors_rooms, remove_boundary_syms,
          ensure_way_out,
          bigrm_get_location_dry, lspo_replace_terrain, bigrm_load_map,
          SET_LIT_NOCHANGE } from './sp_lev.js';
+import { splev_finish_object } from './sp_lev.js';
 import { create_maze, walkfrom, mz, reset_maze_bounds, mkportal, makemaz,
          check_ransacked, stolen_booty, gr as mm_gr } from './mkmaze.js';
 import {
@@ -36,9 +37,9 @@ import {
     l_selection_or, l_selection_grow, l_selection_fillrect, l_selection_rect,
     l_selection_randline, W_ANY, W_RANDOM, W_NORTH, W_SOUTH, W_EAST, W_WEST,
 } from './selvar.js';
-import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty_c, init_mapseen } from './dungeon.js';
+import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty, init_mapseen } from './dungeon.js';
 import { In_quest, BR_PORTAL, BR_NO_END1, BR_NO_END2,
-         Is_knox_level, Is_earthlevel } from './const.js';
+         Is_knox_level, Is_earthlevel, Is_botlevel } from './const.js';
 import { roles, races } from './role.js';
 import { mflags2_of } from './monflags_data.js';
 import { priestini } from './priest.js';
@@ -47,7 +48,8 @@ import { maketrap, Can_fall_thru, Can_dig_down, t_at, Invocation_lev, deltrap, u
 import { makemon as make_monster, rndmonst, mkclass,
          name_to_pmidx, monster_by_pmidx, enexto_spawn, placeOnLevel,
          name_gender_hint, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL,
-         newcham as newcham_mk } from './makemon.js';
+         newcham as newcham_mk, mongets_pub, set_malign } from './makemon.js';
+import { mk_mplayer } from './mplayer.js';
 import { m_at, newsym, impossible, map_location } from './display.js';
 import { wiz_flip_lregions } from './levels/wiz_common.js';
 import { getbones } from './bones.js';
@@ -292,11 +294,6 @@ export function u_on_upstairs() {
 // oinit stub (level-dependent object probability reset)
 function oinit() { /* no-op for contest */ }
 
-// C ref: dungeon.c level_difficulty() — depth(&u.uz), plus a compensating
-// bump in a "builds up" branch (Vlad's Tower, Sokoban); see makemon.js's copy
-// of this same C function for the full rationale.
-function level_difficulty() { return level_difficulty_c(); }
-
 // ============================================================
 // Stub functions for monster/trap/engraving creation.
 // Object creation lives in mkobj.js.
@@ -477,6 +474,12 @@ async function makelevel() {
     if (slev && slev.proto === 'tut-1') {
         const { makemaz_tutorial } = await import('./tutorial.js');
         makemaz_tutorial();
+        return;
+    }
+    // C ref: mklev.c:1269 makemaz("tut-2") — the second tutorial level.
+    if (slev && slev.proto === 'tut-2') {
+        const { makemaz_tutorial2 } = await import('./tutorial.js');
+        makemaz_tutorial2();
         return;
     }
     if (slev && slev.proto && slev.proto.toLowerCase() === 'bigrm') {
@@ -2221,18 +2224,6 @@ function mvitals_gone(mndx) {
     return ((game.mvitals?.[mndx]?.mvflags ?? 0) & G_GONE_MV) !== 0;
 }
 
-// C ref: mkroom.c antholemon() — picks SOLDIER_ANT/FIRE_ANT/GIANT_ANT from
-// ((ubirthday%3) + level_difficulty() + trycnt) % 3, retrying past an extinct
-// species up to 3x, NULL only if all three are gone. No RNG. makelevel() only
-// uses this as a truthiness gate on the ANTHOLE arm, which this constant
-// satisfies correctly (see mvitals_gone above). The chosen SPECIES only
-// matters to mkroom.c fill_zoo()'s ANTHOLE arm, which is unported (sp_lev.js's
-// fill_special_room leaves ANTHOLE a no-op) — porting it needs a real
-// permonst return here, which needs ubirthday threaded through.
-function antholemon() {
-    return true;
-}
-
 // C ref: mkroom.c do_mkroom()
 async function do_mkroom(roomtype) {
     if (roomtype >= SHOPBASE) {
@@ -2957,8 +2948,6 @@ export function mkstairs(x, y, up, croom) {
     // Fires on des-file stairs at a dungeon end (minefill's des.stair("up") on
     // Mines 1, minend's des.stair("down") on Mines 8) as well as on
     // generate_stairs().  MEASURED 2026-08-14: +18 seed4500, seed0360 flat.
-    // Deliberately WITHOUT mklev.c:2258's Is_botlevel guard in
-    // generate_stairs() — see the note there; adding that costs 4 more.
     if ((g.u?.uz?.dlevel ?? 1) === (up ? 1 : dunlevs_in_dungeon(g.u?.uz)))
         return;
     const loc = g.level.at(x, y);
@@ -2978,22 +2967,9 @@ export function mkstairs(x, y, up, croom) {
 async function generate_stairs() {
     const g = game;
     const pos = { x: 0, y: 0 };
-    // Down stairs.
-    //
-    // NOT PORTED — C ref: mklev.c:2258 wraps this whole block in
-    // `if (!Is_botlevel(&u.uz))`, so on a dungeon's last level neither
-    // generate_stairs_find_room()'s rn2 nor somexyspace()'s draws happen.
-    // The guard is genuinely C-faithful, but it only fires on the two levels
-    // that reach this generator and shouldn't: Wiz-goal {3,6} (the non-Bar
-    // quest "{filecode}-filb" filler is unported) and Vlad's-Tower-bottom
-    // {6,3} (makemaz("tower3") is written but not dispatched — see makelevel).
-    // On those two, EVERY draw we make is already off C's stream, so removing
-    // three of them is a coin flip.
-    // MEASURED 2026-08-14 on top of the mkstairs() guard below, i.e. exactly
-    // the "land the pair together" this comment used to prescribe: seed0360
-    // 290 -> 287, seed4500 845 -> 844.  Both worse.  Land it only with a real
-    // tower3 / quest-filb dispatch, and re-measure — do not re-test the pair.
-    {
+    // Down stairs.  C ref: mklev.c:2259 `if (!Is_botlevel(&u.uz))` — on a
+    // dungeon's last level neither the room search nor somexyspace() draws.
+    if (!Is_botlevel(g.u?.uz)) {
         const croom = generate_stairs_find_room();
         if (croom) {
             if (!somexyspace(croom, pos)) {
@@ -3465,12 +3441,13 @@ function mk_stair(up) {
 // RANDOM_CLASS / BOULDER(specific id).  C ref: create_object().
 function mk_object(oclass, specificId) {
     const c = mk_get_location_random(mk_ok_dry);
+    // C ref: sp_lev.c create_object() tail — erosion/grease wipe + stackobj().
     if (specificId != null) {
-        mksobj_at(specificId, c.x, c.y, true, true);
+        splev_finish_object(mksobj_at(specificId, c.x, c.y, true, true));
     } else if (oclass === RANDOM_CLASS) {
-        mkobj_at(RANDOM_CLASS, c.x, c.y, true);
+        splev_finish_object(mkobj_at(RANDOM_CLASS, c.x, c.y, true));
     } else {
-        mkobj_at(oclass, c.x, c.y, true);
+        splev_finish_object(mkobj_at(oclass, c.x, c.y, true));
     }
 }
 
@@ -6071,7 +6048,7 @@ function qf_stair(croom, up) {
 // C ref: sp_lev.c create_object() with no id/class -- mkobj_at(RANDOM_CLASS).
 function qf_object(croom) {
     const c = qf_getloc_coord(mk_ok_dry, croom, false);
-    mkobj_at(RANDOM_CLASS, c.x, c.y, true);
+    splev_finish_object(mkobj_at(RANDOM_CLASS, c.x, c.y, true));
 }
 
 // C ref: sp_lev.c create_trap() -> get_free_room_loc() (DRY, then a ROOM-only
@@ -6110,14 +6087,20 @@ function qf_monster(croom, spec, peacefulOverride) {
         if (mtmp) mtmp.female = 0;
         // C ref: sp_lev.c create_monster() -- `peaceful=0` in the des table
         // overrides makemon's own answer (no RNG).
-        if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+        if (mtmp && peacefulOverride != null) {
+            mtmp.mpeaceful = !!peacefulOverride;
+            set_malign(mtmp);                        // sp_lev.c:2129
+        }
         return mtmp;
     }
     const { data, mgend } = mk_find_montype(spec);
     oracle_induced_align();
     const mtmp = qf_place_monster(mk_mines_race_suppress(data), croom);
     if (mtmp) mtmp.female = mgend;
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp && peacefulOverride != null) {
+        mtmp.mpeaceful = !!peacefulOverride;
+        set_malign(mtmp);                            // sp_lev.c:2129
+    }
     return mtmp;
 }
 
@@ -6530,7 +6513,7 @@ async function oracle_stair(croom, up) {
 // des.object() fully random: get_location(random)->somexy, then mkobj_at(RANDOM).
 function oracle_object(croom) {
     const c = oracle_get_free_room_loc(croom);
-    mkobj_at(RANDOM_CLASS, c.x, c.y, true);
+    splev_finish_object(mkobj_at(RANDOM_CLASS, c.x, c.y, true));
 }
 
 // des.monster() fully random: induced_align, somexy, makemon(rndmonst). C ref:
@@ -6735,7 +6718,7 @@ async function make_niches() {
 // Branch placement
 // ============================================================
 
-function is_branchlev() {
+export function is_branchlev() {
     const g = game;
     if (!g.branches) return null;
     for (const br of g.branches) {
@@ -7046,7 +7029,9 @@ function breaktest(otmp) {
 // set_mktrap_victim() is handed over.  This is the ONE binding call in the
 // tree; anything sp_lev.js can import without cycling is imported directly
 // there instead of going through EXT.
-bind_sp_lev_externs({ topologize, mkstairs, stairway_add, count_level_features });
+bind_sp_lev_externs({ topologize, mkstairs, stairway_add, count_level_features,
+    // sp_lev.c:1985 create_monster(): `PM_ARCHEOLOGIST <= id <= PM_WIZARD` -> mk_mplayer(pm, x, y, FALSE)
+    mk_mplayer: (pm, x, y, special) => mk_mplayer(pm, x, y, special, { mongets: mongets_pub }) });
 
 set_mktrap_victim(mktrap_victim);
 function mktrap_victim(trap) {

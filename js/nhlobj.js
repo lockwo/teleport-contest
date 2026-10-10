@@ -55,7 +55,7 @@ import {
     has_oname, ONAME, isok,
 } from './const.js';
 import {
-    objects, mksobj, mkobj, add_to_container, place_object, weight, dealloc_obj,
+    objects, mksobj, mkobj, add_to_container, place_object, weight, dealloc_obj, clear_object_timer,
     RANDOM_CLASS, MAXOCLASSES, WEAPON_CLASS, POTION_CLASS,
     LARGE_BOX, BAG_OF_TRICKS, CORPSE, EGG, TIN, FIGURINE, STATUE,
 } from './mkobj.js';
@@ -123,16 +123,7 @@ const FIRST_OBJECT = 18;
 /* C ref: skills.h:43/:47 — the ammunition oc_skill window is_poisonable() uses. */
 const P_BOW = 20, P_SHURIKEN = 24;
 
-/* C ref: decl.c:90 materialnm[] — the order matches objclass.h's oc_material
-   #defines exactly, so this is indexed by oc_material. */
-const _materialnm = [
-    'mysterious', 'liquid', 'wax', 'organic',
-    'flesh', 'paper', 'cloth', 'leather',
-    'wooden', 'bone', 'dragonhide', 'iron',
-    'metal', 'copper', 'silver', 'gold',
-    'platinum', 'mithril', 'plastic', 'glass',
-    'gemstone', 'stone',
-];
+import { materialnm as _materialnm } from './const.js';
 
 /* C ref: objclass.h def_oc_syms[].sym — the class symbols, indexed by oclass.
    js/nhlua.js:1193 and js/invent.js:1400 carry the same table as file-locals. */
@@ -206,7 +197,6 @@ function _obj_to_any(obj) { return obj; }
  * ------------------------------------------------------------------------- */
 function _start_timer(_when, _kind, _func_index, _arg) { return 0; }
 function _stop_timer(_func_index, _arg) { return 0; }
-function _obj_stop_timers(obj) { if (obj) obj.timed = false; }
 function _bury_an_obj(_otmp, box) { if (box) box.dealloced = false; return null; }
 
 function _where_is(obj, where) {
@@ -763,7 +753,7 @@ export function l_obj_timer_stop(...args) {
         const lo = l_obj_check(args, 1);
 
         if (lo && lo.obj)
-            _obj_stop_timers(lo.obj);
+            clear_object_timer(lo.obj);
         return undefined;
 
     } else if (argc === 2) {

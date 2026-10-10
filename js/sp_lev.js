@@ -17,7 +17,7 @@ import {
     COLNO, ROWNO, STONE, ROOM, CORR, HWALL, VWALL, SDOOR, DOOR,
     IRONBARS, POOL, MOAT, WATER, LAVAPOOL, TREE, FOUNTAIN, THRONE,
     ALTAR, ICE, MAX_TYPE, INVALID_TYPE, NO_ROOM, SHARED,
-    OROOM, THEMEROOM, ZOO, ROOMOFFSET, isok, IS_DOOR,
+    OROOM, MAXNROFROOMS, THEMEROOM, ZOO, ROOMOFFSET, isok, IS_DOOR,
     VAULT, SHOPBASE, BEEHIVE, FILL_NONE, FILL_NORMAL,
     COURT, SWAMP, MORGUE, BARRACKS, TEMPLE, ANTHOLE, COCKNEST, LEPREHALL, DELPHI,
     Align2amask, CLOUD, LAVAWALL, AIR, SCORR, SINK, STAIRS, LADDER,
@@ -60,7 +60,7 @@ import {
 // rnd_otyp_by_namedesc path a wish uses).  readobjnam.js does not import sp_lev,
 // so this is not a cycle.
 import { readobjnam } from './readobjnam.js';
-import { objects as OBJDATA } from './mkobj.js';
+import { objects as OBJDATA, des_object_defaults } from './mkobj.js';
 import { mkgold, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
          CORPSE, CHEST, LARGE_BOX, STATUE, mk_tt_object, mkobj_at, BOULDER,
          FOOD_CLASS, GOLD_PIECE, add_to_container, weight, mkobj, RANDOM_CLASS,
@@ -68,11 +68,12 @@ import { mkgold, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
          bless, unbless, curse, uncurse, blessorcurse, discard_minvent,
          GEM_CLASS, COIN_CLASS, stop_object_timer,
          start_object_timer, start_level_timer } from './mkobj.js';
-import { monster_by_pmidx, name_to_pmidx, level_difficulty_ext, makemon,
+import { monster_by_pmidx, name_to_pmidx, makemon,
          mkclass, mkclass_aligned, mm_mon_at, enexto_spawn, mongets_pub,
          name_gender_hint, MGEND_NEUTRAL, MM_ASLEEP, MM_NOGRP,
          set_mimic_sym, propagate, mpickobj, set_malign,
          newcham } from './makemon.js';
+import { level_difficulty } from './dungeon.js';
 import { somexy, inside_room, occupied } from './mkroom.js';
 import { create_gas_cloud_selection, create_gas_cloud } from './region.js';
 import { is_flyer_flag, is_swimmer_flag, passes_walls_flag,
@@ -207,8 +208,9 @@ import { sobj_at, stackobj, obj_extract_self, obfree } from './invent.js';
 import { flip_worm_segs_vertical, flip_worm_segs_horizontal } from './worm.js';
 import { does_block, block_point } from './vision.js';
 import { walkfrom, create_maze } from './mkmaze.js';
-import { m_dowear, resists_ston,
+import { resists_ston,
          Protection_from_shape_changers } from './mon.js';
+import { m_dowear } from './worn.js';
 import { christen_monst, lookup_novel } from './do_name.js';
 import { in_rooms } from './shkroom.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -528,7 +530,7 @@ function fill_trap_room(croom) {
     const kind = traps[0];
     const sel = [];
     for (const c of selection_room(croom)) if (rn2(100) < 30) sel.push(c);
-    const lvl = level_difficulty_ext();
+    const lvl = level_difficulty();
     // sel:percentage() filtered in x-major order; sel:iterate() runs the
     // callback in y-major order (see selection_iterate_order).
     for (const c of selection_iterate_order(sel)) {
@@ -571,7 +573,7 @@ function splev_mktrap_at(num, x, y, mktrapflags) {
         if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
     }
     if (t && (mktrapflags & MKTRAP_SEEN)) t.tseen = true;
-    const lvl = level_difficulty_ext();
+    const lvl = level_difficulty();
     if (kind !== NO_TRAP && !(mktrapflags & MKTRAP_NOVICTIM)
         && lvl <= rnd(4)
         && kind !== SQKY_BOARD && kind !== RUST_TRAP
@@ -691,7 +693,7 @@ function create_boulder_room(croom) {
 // never drawn at all.  spider_on_web unset also means create_trap passes
 // MKTRAP_NOSPIDERONWEB, which is what lets a web exist below Dlvl 7.
 function create_spider_nest(croom) {
-    const spooders = level_difficulty_ext() > 8;
+    const spooders = level_difficulty() > 8;
     const sel = [];
     for (const c of selection_room(croom)) if (rn2(100) < 30) sel.push(c);
     for (const c of selection_iterate_order(sel)) {
@@ -791,7 +793,7 @@ export function themeroom_fill(croom) {
     // dungeon.c level_difficulty() (amulet / builds_up / aggravate-monster
     // adjusted) — NOT a bare depth().  The value picks the eligible SET, so it
     // also decides the reservoir modulus.
-    const diff = level_difficulty_ext();
+    const diff = level_difficulty();
     let pick = null;
     let total_frequency = 0;
     for (const fill of fills) {
@@ -1139,7 +1141,7 @@ function create_ice_room(croom) {
     if (percent(25)) {
         // ice:iterate walks the selection y-major (nhlsel.c l_selection_iterate),
         // one rn2(1000) and one melt-ice timer (nh.start_timer_at) per cell.
-        const mintime = 1000 - level_difficulty_ext() * 100;
+        const mintime = 1000 - level_difficulty() * 100;
         const ordered = cells.slice().sort((a, b) => a.y - b.y || a.x - b.x);
         for (const c of ordered)
             start_level_timer(mintime + rn2(1000), (c.x << 16) | c.y);
@@ -1237,7 +1239,7 @@ function place_floor_obj(otmp, x, y) {
 //     bury_an_obj -> obj_resists(0,0) -> rn2(100)
 //   o:start_timer("zombify-mon", math.random(990,1010)) -> rn2(21)
 function create_buried_zombies(croom) {
-    const diff = level_difficulty_ext();
+    const diff = level_difficulty();
     // themerms.lua: { "kobold","gnome","orc","dwarf" } for low difficulty,
     // +elf,human at diff>3, +ettin,giant at diff>6.  Only the list LENGTH is
     // load-bearing for the shuffle RNG; the names drive set_corpsenm's
@@ -1391,7 +1393,7 @@ const MACE_OTYP = 73;
 // throne of a COURT.  rnd(level_difficulty()) picks the species; the mace is
 // "a sceptre to pound in judgment".
 function mk_zoo_thronemon(x, y) {
-    const i = rnd(level_difficulty_ext());
+    const i = rnd(level_difficulty());
     const name = (i > 9) ? 'ogre tyrant'
         : (i > 5) ? 'elven monarch'
             : (i > 2) ? 'dwarf ruler'
@@ -1409,8 +1411,8 @@ function mk_zoo_thronemon(x, y) {
 // C ref: mkroom.c courtmon() — the throne room's rank and file.  Both rn2()s
 // are always drawn (C sums them before any test), and each mkclass() draw
 // happens inside mkclass_aligned().
-function courtmon() {
-    const i = rn2(60) + rn2(3 * level_difficulty_ext());
+export function courtmon() {
+    const i = rn2(60) + rn2(3 * level_difficulty());
     if (i > 100) return mkclass(S_DRAGON, 0);
     if (i > 95) return mkclass(S_GIANT, 0);
     if (i > 85) return mkclass(S_TROLL, 0);
@@ -1451,7 +1453,7 @@ function is_ndemon(ptr) {
 // C ref: mkroom.c morguemon() — the graveyard's inhabitants.  BOTH rn2()s are
 // always drawn (C evaluates them in the declaration list before any test).
 export function morguemon() {
-    const i = rn2(100), hd = rn2(level_difficulty_ext());
+    const i = rn2(100), hd = rn2(level_difficulty());
 
     if (hd > 10 && i < 10) {
         if (Inhell_lev() || In_endgame_lev()) return mkclass(S_DEMON, 0);
@@ -1485,9 +1487,16 @@ function ubirthday_seconds() {
     const h = +dt.slice(8, 10), mi = +dt.slice(10, 12), s = +dt.slice(12, 14);
     return Math.trunc(Date.UTC(y, mo - 1, d, h, mi, s) / 1000) + 4 * 3600;
 }
-function antholemon() {
-    const indx = (ubirthday_seconds() % 3) + level_difficulty_ext();
-    return monster_by_pmidx(name_to_pmidx(ANTHOLEMON[((indx % 3) + 3) % 3]));
+export function antholemon() {
+    // C ref: mkroom.c:502 antholemon() — same ant within a level; retry the
+    // next type up to 3 times past a genocided/extinct species, NULL if all gone.
+    const indx = (ubirthday_seconds() % 3) + level_difficulty();
+    let trycnt = 0, mndx;
+    do {
+        mndx = name_to_pmidx(ANTHOLEMON[(((indx + trycnt) % 3) + 3) % 3]);
+    } while (++trycnt < 3 && ((game.mvitals?.[mndx]?.mvflags || 0) & G_GONE));
+    if ((game.mvitals?.[mndx]?.mvflags || 0) & G_GONE) return null;
+    return monster_by_pmidx(mndx);
 }
 
 // C ref: mkroom.c fill_zoo(sroom) head — the per-type preamble that runs before
@@ -1530,7 +1539,7 @@ function fill_zoo_head(sroom, type, rmno) {
         return { x: tx, y: ty, goldlim: 0 };
     }
     if (type === ZOO || type === LEPREHALL)
-        return { x: 0, y: 0, goldlim: 500 * level_difficulty_ext() };
+        return { x: 0, y: 0, goldlim: 500 * level_difficulty() };
     // MORGUE / BARRACKS / COCKNEST / ANTHOLE have no case in C's preamble
     // switch at all, so the stocking loop starts straight away and tx/ty stay 0
     // (only the COURT/BEEHIVE arms ever read them).
@@ -1538,8 +1547,7 @@ function fill_zoo_head(sroom, type, rmno) {
 }
 
 // C ref: mkroom.c fill_zoo(sroom) — stock a special room.  Every type C's
-// fill_special_room() routes here is handled except BARRACKS, which this port
-// keeps in its own fill_zoo_barracks().
+// fill_special_room() routes here is handled.
 //
 // BEEHIVE consumes NO RNG in the head unless the room is irregular and its
 // arithmetic centre is not its own; otherwise tx/ty is that centre.
@@ -1623,7 +1631,8 @@ function fill_zoo_core(sroom) {
                         : (type === LEPREHALL) ? leprechaun
                             : (type === COCKNEST) ? cockatrice
                                 : (type === ANTHOLE) ? antholemon()
-                                    : null;
+                                    : (type === BARRACKS) ? squadmon()
+                                        : null;
             const mon = makemon(ptr, sx, sy, MM_ASLEEP | MM_NOGRP);
             if (mon) {
                 mon.msleeping = 1;
@@ -1645,7 +1654,7 @@ function fill_zoo_core(sroom) {
                 } else {
                     i = goldlim;
                 }
-                if (i >= goldlim) i = 5 * level_difficulty_ext();
+                if (i >= goldlim) i = 5 * level_difficulty();
                 goldlim -= i;
                 mkgold(rn1(i, 10), sx, sy);
             }
@@ -1671,6 +1680,8 @@ function fill_zoo_core(sroom) {
             }
             if (type === ANTHOLE && !rn2(3))                     // mkroom.c:412
                 mkobj_at(FOOD_CLASS, sx, sy, false);
+            if (type === BARRACKS && !rn2(20))                   // mkroom.c:397
+                mksobj_at(rn2(3) ? LARGE_BOX : CHEST, sx, sy, true, false);
         }
     }
 
@@ -1681,7 +1692,7 @@ function fill_zoo_core(sroom) {
         const mm = { x: 0, y: 0 };
         somexyspace(sroom, mm);
         const gold = mksobj(GOLD_PIECE, true, false);
-        gold.quan = 10 + rn2(50 * level_difficulty_ext()); // rn1(50*ld, 10)
+        gold.quan = 10 + rn2(50 * level_difficulty()); // rn1(50*ld, 10)
         gold.owt = weight(gold);
         const chest = mksobj_at(CHEST, mm.x, mm.y, true, false);
         add_to_container(chest, gold);
@@ -1690,6 +1701,8 @@ function fill_zoo_core(sroom) {
         if (g.level?.flags) g.level.flags.has_court = true;
     } else if (type === BEEHIVE) {
         if (g.level?.flags) g.level.flags.has_beehive = true;
+    } else if (type === BARRACKS) {
+        if (g.level?.flags) g.level.flags.has_barracks = true;
     }
 }
 
@@ -1702,42 +1715,17 @@ const SQUADPROB = [
 // off the cumulative table; a roll past the table's total falls back to a flat
 // rn2(SIZE) pick (the ROLL_FROM macro).
 function squadmon() {
-    const sel_prob = rnd(80 + level_difficulty_ext());
-    let cpro = 0;
-    for (const [name, prob] of SQUADPROB) {
+    const sel_prob = rnd(80 + level_difficulty());
+    let cpro = 0, name = null;
+    for (const [nm, prob] of SQUADPROB) {
         cpro += prob;
-        if (cpro > sel_prob) return monster_by_pmidx(name_to_pmidx(name));
+        if (cpro > sel_prob) { name = nm; break; }
     }
-    return monster_by_pmidx(name_to_pmidx(SQUADPROB[rn2(SQUADPROB.length)][0]));
-}
-
-// C ref: mkroom.c fill_zoo() — the BARRACKS case.  Every eligible square gets a
-// sleeping soldier, and 1 in 20 also gets the payroll box.  The head of
-// fill_zoo() draws nothing for BARRACKS (only COURT/BEEHIVE/ZOO/LEPREHALL do).
-function fill_zoo_barracks(sroom) {
-    const g = game;
-    const sh = sroom.fdoor;
-    const door = g.level?.doors?.[sh];
-    for (let sx = sroom.lx; sx <= sroom.hx; sx++) {
-        for (let sy = sroom.ly; sy <= sroom.hy; sy++) {
-            // C ref: fill_zoo() mkroom.c:331-340 — the non-irregular skip.  Note
-            // the door test compares only the door's x (or y) against the room
-            // edge, so a door beside one corner blanks that whole edge column.
-            const typ = g.level?.at(sx, sy)?.typ;
-            if (typ == null || !SPACE_POS(typ)) continue;
-            if (sroom.doorct && door
-                && ((sx === sroom.lx && door.x === sx - 1)
-                    || (sx === sroom.hx && door.x === sx + 1)
-                    || (sy === sroom.ly && door.y === sy - 1)
-                    || (sy === sroom.hy && door.y === sy + 1)))
-                continue;
-            const mon = makemon(squadmon(), sx, sy, MM_ASLEEP | MM_NOGRP);
-            if (mon) mon.msleeping = 1;
-            if (!rn2(20))
-                mksobj_at(rn2(3) ? LARGE_BOX : CHEST, sx, sy, true, false);
-        }
-    }
-    if (g.level?.flags) g.level.flags.has_barracks = true;
+    if (name === null) name = SQUADPROB[rn2(SQUADPROB.length)][0];
+    const mndx = name_to_pmidx(name);
+    // mkroom.c:833 — a genocided/extinct rank yields NULL (makemon picks any).
+    if ((game.mvitals?.[mndx]?.mvflags || 0) & G_GONE) return null;
+    return monster_by_pmidx(mndx);
 }
 
 // C ref: sp_lev.c add_doors_to_room() — register every door on (or just
@@ -1821,13 +1809,9 @@ export function fill_special_room(croom) {
         case COCKNEST:
         case LEPREHALL:
         case MORGUE:
+        case BARRACKS:
             // C ref: sp_lev.c fill_special_room() -> fill_zoo(croom).
             fill_zoo(croom);
-            break;
-        case BARRACKS:
-            // C ref: mkroom.c fill_zoo()'s BARRACKS arm, which this port has as
-            // its own function (squadmon + the payroll box).
-            fill_zoo_barracks(croom);
             break;
         default:
             // C ref: sp_lev.c:2758-2773 — the switch has no other cases.
@@ -1878,6 +1862,15 @@ export function lspo_region({ region, type = 'ordinary', irregular = false,
     dy1 += gy.ystart;
     dx2 += gx.xstart;
     dy2 += gy.ystart;
+
+    // C ref: sp_lev.c:5651 room_not_needed — a plain rectangular ordinary
+    // region only sets lighting (light_region()); no room is created.
+    // arrival_room (not modelled here) is passed by callers as irregular.
+    if (rtype === OROOM && !irregular && !game.in_mk_themerooms
+        && (game.level?.nroom ?? 0) < MAXNROFROOMS) {
+        light_region({ rlit, x1: dx1, y1: dy1, x2: dx2, y2: dy2 });
+        return null;
+    }
 
     let croom;
     if (irregular) {
@@ -2309,10 +2302,11 @@ export function quest_region_light(x1, y1, x2, y2, lit) {
             if (loc) loc.lit = true;
         }
     } else {
+        // sel_set_lit(): lava stays lit even when the region is "unlit".
         for (const k of cells) {
             const [x, y] = k.split(',').map(Number);
             const loc = game.level?.at(x, y);
-            if (loc) loc.lit = false;
+            if (loc) loc.lit = IS_LAVA(loc.typ) ? true : false;
         }
     }
 }
@@ -2322,21 +2316,14 @@ export function quest_region_light(x1, y1, x2, y2, lit) {
 // rn2(3) -> get_location_coord (explicit coord: no RNG) -> MON_AT/enexto ->
 // makemon(pm, x, y, 0).  peacefulOverride (if not null) is applied afterwards.
 export function quest_create_monster(name, mx, my, peacefulOverride) {
-    const pmidx = name_to_pmidx(name);
+    // C ref: sp_lev.c:3156 find_montype() decides the gender (fixed for an
+    // is_male/is_female species, the NAMS() slot the name matched, else
+    // rn2(2)); lspo_monster stores it in tmpmons.female and create_monster
+    // :2125 overwrites makemon's own roll with it.
+    const gender = { v: NEUTRAL };
+    const pmidx = find_montype(name, gender);
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    // C ref: sp_lev.c:3156 find_montype() —
-    //   mgend = name_to_monplus(s, 0, &mgend);      /* the matched name's slot */
-    //   if (is_male || is_female)  mgend = fixed;
-    //   else mgend = (mgend == FEMALE) ? FEMALE : (mgend == MALE) ? MALE : rn2(2);
-    // so the rn2(2) is skipped BOTH for a fixed-gender species (gcode 1/2) AND
-    // when the NAME itself is a NAMS() male/female form ("vampire lord" vs the
-    // neutral "vampire leader").  lspo_monster's own
-    // `tmpmons.female = ... : rn2(2)` never rolls either, because find_montype
-    // has already reduced mgend to MALE or FEMALE.
-    if (ptr.gcode !== 1 && ptr.gcode !== 2
-        && name_gender_hint(name) === MGEND_NEUTRAL)
-        rn2(2);
     rn2(3);                                            // induced_align (dungeon.c:2012)
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
@@ -2344,6 +2331,7 @@ export function quest_create_monster(name, mx, my, peacefulOverride) {
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0);
+    if (mtmp) mtmp.female = gender.v;                  // sp_lev.c:2125
     if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
     // C ref: makemon.c S_EEL case -> hideunder(mtmp) during mklev: an eel on a
     // pool becomes mundetected (submerged), so it renders as water.  No RNG.
@@ -2581,10 +2569,12 @@ export function quest_flip_branch(flp) {
 // rn2(ysize) draw; then the MON_AT/enexto relocate-if-occupied check; then
 // makemon().
 export function quest_create_monster_randpos(name, peacefulOverride) {
-    const pmidx = name_to_pmidx(name);
+    // C ref: sp_lev.c:3156 find_montype() — the rolled/fixed gender is kept in
+    // tmpmons.female and overwrites makemon's own roll (sp_lev.c:2125).
+    const gender = { v: NEUTRAL };
+    const pmidx = find_montype(name, gender);
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    if (ptr.gcode !== 1 && ptr.gcode !== 2) rn2(2);    // find_montype gender
     rn2(3);                                             // induced_align (dungeon.c:2012)
     const c = bigrm_get_location_dry();
     let x = c.x, y = c.y;
@@ -2593,6 +2583,7 @@ export function quest_create_monster_randpos(name, peacefulOverride) {
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0);
+    if (mtmp) mtmp.female = gender.v;                  // sp_lev.c:2125
     if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
     return mtmp;
 }
@@ -2675,6 +2666,8 @@ export function quest_create_monster_class(classNum, mx, my) {
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) { const cc = enexto_spawn(x, y, ptr); if (cc) { x = cc.x; y = cc.y; } }
     const mtmp = makemon(ptr, x, y, 0);
+    // C ref: sp_lev.c:2125 — an id-less des.monster keeps tmpmons.female = 0.
+    if (mtmp) mtmp.female = 0;
     if (mtmp && ptr.mcls === 57 /* S_EEL */) {
         const t = game.level?.at(x, y)?.typ;
         if (t === POOL || t === MOAT || t === WATER) mtmp.mundetected = true;
@@ -2749,6 +2742,7 @@ export function tower1_load_map(mapstr, lit, halignLeft = false) {
             if (mptyp === HWALL || mptyp === IRONBARS) {
                 loc.horizontal = true;
             } else if (mptyp === SDOOR || IS_DOOR(mptyp)) {
+                if (mptyp === SDOOR) loc.doormask = D_CLOSED; // sel_set_ter()
                 const left = game.level?.at(x - 1, y);
                 loc.horizontal = !!(x > 0 && left
                     && (IS_WALL(left.typ) || left.horizontal));
@@ -3384,7 +3378,7 @@ const SOKO_TRAP_NAME = {
 // (which for HOLE/TRAPDOOR draws hole_destination()'s rn2(4) internally),
 // then the victim-gate rnd(4) (mklev.c:2135-2144), ALWAYS drawn when
 // kind!=NO_TRAP.  At this level's difficulty (13 — Sokoban's builds-up
-// adjustment on top of depth 5, see level_difficulty_ext()) `lvl <= rnd(4)`
+// adjustment on top of depth 5, see level_difficulty()) `lvl <= rnd(4)`
 // can never pass (rnd(4)'s max is 4), so mktrap_victim() is never reachable
 // here and is intentionally not ported — porting it on a guess with no
 // recorded stream that exercises it would risk an unverified RNG count.
@@ -3392,7 +3386,7 @@ export async function soko_mktrap(mx, my, name) {
     const x = q_absx(mx), y = q_absy(my);
     const trap = await maketrap(x, y, SOKO_TRAP_NAME[name]);
     const kind = trap ? trap.ttyp : NO_TRAP;
-    const lvl = level_difficulty_ext();
+    const lvl = level_difficulty();
     if (kind !== NO_TRAP
         && lvl <= rnd(4)
         && kind !== SQKY_BOARD && kind !== RUST_TRAP
@@ -3410,7 +3404,7 @@ export async function soko_mktrap(mx, my, name) {
 // into it (two food-ration stacks on one square become one).
 export function soko_create_object_class_random(oclass) {
     const c = bigrm_get_location_dry();
-    const otmp = mkobj_at(oclass, c.x, c.y, true);
+    const otmp = des_object_defaults(mkobj_at(oclass, c.x, c.y, true));
     stackobj(otmp);
     return otmp;
 }
@@ -3827,6 +3821,16 @@ export function vly_object({ otyp = null, oclass = null, montype = null }) {
         const pmidx = name_to_pmidx(montype);
         if (pmidx >= 0) set_corpsenm(otmp, pmidx);
     }
+    if (otmp) { des_object_defaults(otmp); stackobj(otmp); }
+    return otmp;
+}
+
+// C ref: sp_lev.c create_object() tail for a plain (non-container) des.object():
+// the default erosion/grease wipe, then stackobj() into an identical pile.
+export function splev_finish_object(otmp) {
+    if (!otmp) return otmp;
+    des_object_defaults(otmp);
+    stackobj(otmp);
     return otmp;
 }
 
@@ -3874,7 +3878,9 @@ export function vly_monster_class(classNum) {
     return vly_place_monster(ptr);
 }
 
-export function vly_place_monster(ptr) {
+// `female` is create_monster()'s final `mtmp->female = m->female` (sp_lev.c:2125):
+// 0 for an id-less/class des.monster, find_montype()'s pick for a named one.
+export function vly_place_monster(ptr, female = 0) {
     const hum = pm_to_humidity(ptr);
     let { x, y } = splev_get_location_rnd(hum, true);
     if (x === -1 && y === -1) {
@@ -3885,7 +3891,9 @@ export function vly_place_monster(ptr) {
         const cc = enexto_spawn(x, y, ptr);
         if (cc) { x = cc.x; y = cc.y; }
     }
-    return makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
+    const mtmp = makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
+    if (mtmp) mtmp.female = female;
+    return mtmp;
 }
 export const VLY_S_LICH = 38, VLY_S_MUMMY = 39, VLY_S_VAMPIRE = 48, VLY_S_ZOMBIE = 52;
 
@@ -4071,7 +4079,9 @@ function splev_your_race(ptr) {
 export function splev_create_monster({ name = null, cls = 0, mx = null, my = null,
                                 peaceful = null, croom = null, asleep = null }) {
     let ptr = null;
-    let female = null;
+    // C ref: sp_lev.c:2125 `mtmp->female = m->female` — tmpmons.female stays 0
+    // unless find_montype() picked a gender for a named species.
+    let female = 0;
     if (name != null) {
         const gender = { v: NEUTRAL };
         const pmidx = find_montype(name, gender);
@@ -4104,9 +4114,17 @@ export function splev_create_monster({ name = null, cls = 0, mx = null, my = nul
     // C ref: sp_lev.c create_monster:1981 — a (possibly enexto-relocated) spot
     // outside croom aborts the monster entirely, before makemon.
     if (croom && !inside_room(croom, x, y)) return null;
-    const mtmp = makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
-    if (mtmp && female != null) mtmp.female = female;
-    if (mtmp && peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
+    // C ref: sp_lev.c:1985 `PM_ARCHEOLOGIST <= m->id && m->id <= PM_WIZARD`
+    // -> mk_mplayer(pm, x, y, FALSE) (Sam-loca's "samurai", Kni-strt's "knight"...).
+    const mtmp = (ptr && ptr.pmidx >= name_to_pmidx('archeologist')
+                  && ptr.pmidx <= name_to_pmidx('wizard'))
+        ? EXT.mk_mplayer(ptr, x, y, false)
+        : makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
+    if (mtmp) mtmp.female = female;
+    if (mtmp && peaceful != null) {                    // sp_lev.c:2126-2129
+        mtmp.mpeaceful = peaceful ? 1 : 0;
+        set_malign(mtmp);
+    }
     if (mtmp && asleep != null) mtmp.msleeping = asleep ? 1 : 0;
     return mtmp;
 }
@@ -4126,6 +4144,7 @@ export function splev_object_at({ otyp = null, oclass = null, montype = null,
         const pmidx = name_to_pmidx(montype);
         if (pmidx >= 0) set_corpsenm(otmp, pmidx);
     }
+    if (otmp) { des_object_defaults(otmp); stackobj(otmp); }
     return otmp;
 }
 
@@ -4137,7 +4156,7 @@ export function splev_object_at({ otyp = null, oclass = null, montype = null,
 // ANY level difficulty — the depth gate only exists to keep the free giant
 // spider off shallow levels.
 export function splev_traptype_rnd(mktrapflags) {
-    const lvl = level_difficulty_ext();
+    const lvl = level_difficulty();
     const noteleport = !!game.level?.flags?.noteleport;
     let kind = rnd(TRAPNUM - 1);                      // mklev.c:1941
     switch (kind) {
@@ -5775,6 +5794,16 @@ export function find_montype(s, mgender) {
     }
     if (mgender) mgender.v = NEUTRAL;
     return NON_PM;
+}
+
+// find_montype() for callers that need the species AND the gender it chose:
+// lspo_monster keeps it in tmpmons.female and create_monster overwrites
+// makemon's own roll with it (sp_lev.c:2125).  Returns { pmidx, female }, with
+// female = 0 when the name is not a monster (the id-less default).
+export function splev_find_montype(name) {
+    const gender = { v: NEUTRAL };
+    const pmidx = find_montype(name, gender);
+    return { pmidx, female: gender.v === FEMALE ? FEMALE : 0 };
 }
 
 // C ref: sp_lev.c:3166 -- `id = "giant eel"`.  Absent id costs no draw.

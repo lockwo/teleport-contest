@@ -7,18 +7,18 @@
 // This file exports no makemaz_*; the five per-plane modules import it.
 
 import {
-    AIR, COLNO, CORR, IS_FURNITURE, IS_LAVA, MOAT, POOL, ROOM, ROWNO, WATER, isok,
+    AIR, COLNO, CORR, LR_BRANCH, LR_PORTAL, IS_FURNITURE, IS_LAVA, MOAT, POOL, ROOM, ROWNO, WATER, isok,
     Is_airlevel, Is_waterlevel,
 } from '../const.js';
-import { setup_waterlevel } from '../mkmaze.js';
+import { setup_waterlevel, mkportal } from '../mkmaze.js';
+import { find_level } from '../dungeon.js';
 import { game } from '../gstate.js';
 import {
-    MGEND_NEUTRAL, enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
-    name_gender_hint, name_to_pmidx,
+    enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
 } from '../makemon.js';
 import { rn1, rn2 } from '../rng.js';
 import {
-    LOC_DRY, flip_lregion_dest, gx, gy, pm_to_humidity, reset_xystart_size,
+    LOC_DRY, splev_find_montype, flip_lregion_dest, gx, gy, pm_to_humidity, reset_xystart_size,
     splev_get_location_rnd,
 } from '../sp_lev.js';
 
@@ -74,12 +74,11 @@ export function plane_level_flags(...flags) {
 export function plane_monster(spec = {}) {
     const { name = null, cls = null, x = null, y = null, peaceful = null } = spec;
     let ptr = null;
+    let female = 0;                               // sp_lev.c:2125 id-less default
     if (name) {
-        const pmidx = name_to_pmidx(name);
-        ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
-        if (ptr && ptr.gcode !== 1 && ptr.gcode !== 2
-            && name_gender_hint(name) === MGEND_NEUTRAL)
-            rn2(2);                               // find_montype (sp_lev.c:3156)
+        const found = splev_find_montype(name);   // sp_lev.c:3156
+        ptr = found.pmidx >= 0 ? monster_by_pmidx(found.pmidx) : null;
+        if (ptr) female = found.female;
     }
     rn2(3);                                       // induced_align (dungeon.c:2012)
     if (cls != null) ptr = mkclass(cls, 0x0200 /* G_NOGEN */);
@@ -103,6 +102,7 @@ export function plane_monster(spec = {}) {
         if (cc) { mx = cc.x; my = cc.y; }
     }
     const mtmp = makemon(ptr, mx, my, 0 /* NO_MM_FLAGS */);
+    if (mtmp) mtmp.female = female;               // sp_lev.c:2125
     if (mtmp && peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
     return mtmp;
 }
@@ -124,7 +124,7 @@ export function plane_region_lit(x1, y1, x2, y2, lit = true) {
 // placement happens in fixup_special() once the script has finished.
 // `islev` marks the region coords as whole-level absolute (air.lua's
 // region_islev=1); otherwise they are map-relative.
-export function plane_levregion_add(rtype, region, exclude, islev = false) {
+export function plane_levregion_add(name, region, exclude, islev = false) {
     const g = game;
     if (!g.lregions) g.lregions = [];
     const a = islev ? { x: region[0], y: region[1] } : plane_abs(region[0], region[1]);
@@ -134,7 +134,7 @@ export function plane_levregion_add(rtype, region, exclude, islev = false) {
         e1 = islev ? { x: exclude[0], y: exclude[1] } : plane_abs(exclude[0], exclude[1]);
         e2 = islev ? { x: exclude[2], y: exclude[3] } : plane_abs(exclude[2], exclude[3]);
     }
-    g.lregions.push({ rtype, lx: a.x, ly: a.y, hx: b.x, hy: b.y,
+    g.lregions.push({ name, lx: a.x, ly: a.y, hx: b.x, hy: b.y,
                       nlx: e1.x, nly: e1.y, nhx: e2.x, nhy: e2.y });
 }
 
@@ -159,7 +159,7 @@ export function plane_teleport_region(region, exclude = null, islev = false, dir
     if (dir === 'both' || dir === 'down') game.dndest = { ...rgn };
 }
 
-// C ref: mkmaze.c occupied().
+// C ref: mklev.c occupied().
 function plane_occupied(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return true;
@@ -172,23 +172,66 @@ function plane_occupied(x, y) {
 
 // C ref: mkmaze.c bad_location() — AIR counts as placeable, which is what makes
 // the Plane of Air's rn1 loop terminate on its first try instead of burning all
-// 200 iterations.
+// 200 iterations.  within_bounded_area() is an unconditional macro in C.
 function plane_bad_location(x, y, nlx, nly, nhx, nhy) {
     const loc = game.level?.at(x, y);
     if (!loc) return true;
     if (plane_occupied(x, y)) return true;
-    if (nlx && x >= nlx && x <= nhx && y >= nly && y <= nhy) return true;
+    if (x >= nlx && x <= nhx && y >= nly && y <= nhy) return true;
     return !((loc.typ === CORR && !!game.level?.flags?.is_maze_lev)
              || loc.typ === ROOM || loc.typ === AIR);
 }
 
+// C ref: mkmaze.c put_lregion_here() for LR_PORTAL / LR_BRANCH (the only types a
+// plane registers or defaults to).  A bad square is retried unless `oneshot`,
+// in which case a destroyable trap on it is deleted and the square re-tested.
+async function plane_put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev) {
+    if (plane_bad_location(x, y, nlx, nly, nhx, nhy)) {
+        if (!oneshot) return false;              /* caller should try again */
+        const { t_at, deltrap, undestroyable_trap } = await import('../trap.js');
+        const t = t_at(x, y);
+        if (t && !undestroyable_trap(t.ttyp)) {
+            const mtmp = mm_mon_at(x, y);
+            if (mtmp && mtmp.mtrapped) mtmp.mtrapped = 0;
+            deltrap(t);
+        }
+        if (plane_bad_location(x, y, nlx, nly, nhx, nhy)) return false;
+    }
+    if (rtype === LR_PORTAL) {
+        await mkportal(x, y, lev.dnum, lev.dlevel);
+    } else if (rtype === LR_BRANCH) {
+        const { place_branch, is_branchlev } = await import('../mklev.js');
+        await place_branch(is_branchlev(), x, y);
+    }
+    return true;
+}
+
 // C ref: mkmaze.c place_lregion() — up to 200 rn1() pairs looking for a square
-// put_lregion_here() accepts, then a deterministic scan.  Only the portal type
-// is registered by a plane, and this port cannot build the portal trap from a
-// levels/ module (mkportal lives behind mklev.js), so the accepted square is
-// recorded on the lregion instead.  Returning "accepted" at the same moment C
-// does is what keeps the rn1 loop the right length, which is the part of this
-// the RNG stream can see.
+// put_lregion_here() accepts, then a deterministic scan with oneshot forced on.
+// A plane has no rooms, so LR_BRANCH never takes place_lregion()'s
+// place_branch() shortcut and runs the whole-level loop.
+async function plane_place_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy, rtype, lev) {
+    if (!lx) { lx = 1; hx = COLNO - 1; ly = 0; hy = ROWNO - 1; }
+    if (lx < 1) lx = 1;
+    if (hx > COLNO - 1) hx = COLNO - 1;
+    if (ly < 0) ly = 0;
+    if (hy > ROWNO - 1) hy = ROWNO - 1;
+    const oneshot = (lx === hx && ly === hy);
+    for (let trycnt = 0; trycnt < 200; trycnt++) {
+        const x = rn1((hx - lx) + 1, lx);
+        const y = rn1((hy - ly) + 1, ly);
+        if (await plane_put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev))
+            return;
+    }
+    for (let x = lx; x <= hx; x++)
+        for (let y = ly; y <= hy; y++)
+            if (await plane_put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, true, lev))
+                return;
+}
+
+// C ref: mkmaze.c fixup_special() — walk gl.lregions placing each portal, then
+// "place dungeon branch if not placed above" (the Plane of Earth is end2 of the
+// Elemental Planes branch, so it gets the LR_BRANCH whole-level placement).
 export async function plane_place_lregions() {
     // C ref: mkmaze.c fixup_special():580 — "water level is an odd beast, it has
     // to be set up before calling place_lregions etc."  setup_waterlevel() turns
@@ -200,27 +243,13 @@ export async function plane_place_lregions() {
         await setup_waterlevel();
     }
     for (const lr of (game.lregions || [])) {
-        let { lx, ly, hx, hy } = lr;
-        if (!lx) { lx = 1; hx = COLNO - 1; ly = 0; hy = ROWNO - 1; }
-        if (lx < 1) lx = 1;
-        if (hx > COLNO - 1) hx = COLNO - 1;
-        if (ly < 0) ly = 0;
-        if (hy > ROWNO - 1) hy = ROWNO - 1;
-        const oneshot = (lx === hx && ly === hy);
-        let placed = false;
-        for (let trycnt = 0; trycnt < 200 && !placed; trycnt++) {
-            const x = rn1((hx - lx) + 1, lx);
-            const y = rn1((hy - ly) + 1, ly);
-            if (!plane_bad_location(x, y, lr.nlx, lr.nly, lr.nhx, lr.nhy) || oneshot) {
-                lr.px = x; lr.py = y; placed = true;
-            }
-        }
-        if (!placed) {
-            for (let x = lx; x <= hx && !placed; x++)
-                for (let y = ly; y <= hy && !placed; y++)
-                    if (isok(x, y)) { lr.px = x; lr.py = y; placed = true; }
-        }
+        const sp = find_level(lr.name);
+        await plane_place_lregion(lr.lx, lr.ly, lr.hx, lr.hy, lr.nlx, lr.nly, lr.nhx, lr.nhy,
+                                  LR_PORTAL, sp?.dlevel);
     }
+    const { is_branchlev } = await import('../mklev.js');
+    if (is_branchlev())
+        await plane_place_lregion(0, 0, 0, 0, 0, 0, 0, 0, LR_BRANCH, null);
     game.lregions = [];
 }
 

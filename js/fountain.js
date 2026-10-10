@@ -8,13 +8,14 @@
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { update_topl, newsym, m_at, y_n, display_nhwindow_message } from './display.js';
-import { hliquid, builds_up, dunlevs_in_dungeon, Is_special, level_difficulty_c } from './dungeon.js';
+import { hliquid, builds_up, dunlevs_in_dungeon, Is_special, level_difficulty } from './dungeon.js';
 import { water_damage, t_at, delfloortrap } from './trap.js';
 import { find_ac } from './u_init.js';
 import { curse, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
     mkgold, rnd_class, DILITHIUM_CRYSTAL, LUCKSTONE, BOULDER } from './mkobj.js';
 import { exercise, acurr_eff, poison_strdmg, adjattrib } from './attrib.js';
-import { fruitname, makeplural } from './objnam.js';
+import { fruitname } from './objnam.js';
+import { makeplural } from './plural.js';
 import { hcolor, rndmonnam } from './do_name.js';
 import { more_experienced, newexplevel, has_innate } from './exper.js';
 import { newuhs } from './eat.js';
@@ -101,20 +102,9 @@ function in_town(x, y) {
     return !has_subrooms;
 }
 
-// C ref: mon.c angry_guards(silent) — wake and anger every peaceful watchman;
-// returns TRUE if there was one.  No RNG, but clearing mpeaceful redirects
-// every later watchman move.  (js/shkroom.js keeps a private copy of the same
-// C function; it is not exported, and this file may not edit that one.)
-function angry_guards(_silent) {
-    let ct = 0;
-    for (const mtmp of (game.level?.monsters || [])) {
-        if (!mtmp || mtmp.mhp <= 0) continue;
-        if (!is_watch(mtmp.data) || !mtmp.mpeaceful) continue;
-        ct++;
-        if (mtmp.msleeping || mtmp.mfrozen) { mtmp.msleeping = 0; mtmp.mfrozen = 0; }
-        mtmp.mpeaceful = 0;
-    }
-    return ct > 0;
+// C ref: mon.c angry_guards(silent), delegated to the shared faithful port.
+async function angry_guards(silent) {
+    return await (await import('./questpgr.js')).angry_guards(silent);
 }
 
 // C ref: hack.c money_cnt(otmp) — the quan of the FIRST coin stack in the
@@ -218,7 +208,7 @@ export async function dipfountain(obj) {
         if (game.level?.flags && typeof game.level.flags.nfountains === 'number')
             game.level.flags.nfountains = Math.max(0, game.level.flags.nfountains - 1);
         newsym(u.ux, u.uy);
-        if (in_town(u.ux, u.uy)) angry_guards(false);
+        if (in_town(u.ux, u.uy)) await angry_guards(false);
         return;
     }
 
@@ -495,11 +485,6 @@ export async function drinkfountain() {
 function mhe(mtmp) { return mtmp?.female ? 'she' : 'he'; }
 function mhis(mtmp) { return mtmp?.female ? 'her' : 'his'; }
 
-// C ref: dungeon.c level_difficulty() — depth-based difficulty, plus a
-// compensating bump in a "builds up" branch (Vlad's Tower, Sokoban); see
-// makemon.js's copy of this same C function for the full rationale.
-function level_difficulty() { return level_difficulty_c(); }
-
 // C ref: fountain.c dowaterdemon() — unless the species is extinct/genocided,
 // makemon a water demon at the hero's square (MM_NOMSG).  Since the hero
 // occupies that square, makemon.c's byyou && !in_mklev branch fires first:
@@ -542,16 +527,16 @@ async function dowaterdemon() {
             await update_topl(`You unleash ${x_monnam(mtmp, 2 /*ARTICLE_A*/, null, 0, false)}!`);
         else
             await update_topl('You feel the presence of evil.');
-        // Low-level survival chance: the roll always fires; a high roll grants a
-        // wish (mongrantswish), otherwise a trap at the demon's square may snare
-        // it (mintrap).  Neither follow-up is reached by the recorded roll.
+        // Low-level survival chance (fountain.c:75).
         if (rnd(100) > (80 + level_difficulty())) {
-            // C ref: fountain.c:79 — "Grateful for his release, he grants you
-            // a wish!" then mongrantswish() (a getlin wish prompt, unported).
             await update_topl(
                 `Grateful for ${mhis(mtmp)} release, ${mhe(mtmp)} grants you a wish!`);
-        } else {
-            // mintrap(mtmp) if t_at(demon square) — no trap on the fountain.
+            /* give a wish and discard the monster (mon avoids stuck state) */
+            const { mongrantswish } = await import('./potion.js');
+            await mongrantswish({ v: mtmp });
+        } else if (t_at(mtmp.mx, mtmp.my)) {
+            const { mon_mintrap } = await import('./monmove.js');
+            await mon_mintrap(mtmp, 0);
         }
     }
 }
@@ -588,7 +573,11 @@ async function dowaternymph() {
         else
             await update_topl('You hear a seductive voice.');
         mtmp.msleeping = 0;
-        // mintrap(mtmp) if t_at(nymph square) — no trap on the fountain.
+        if (t_at(mtmp.mx, mtmp.my)) {
+            /* C ref: fountain.c:141 mintrap(mtmp, NO_TRAP_FLAGS) */
+            const { mon_mintrap } = await import('./monmove.js');
+            await mon_mintrap(mtmp, 0);
+        }
         return;
     }
     if (!Blind())
@@ -630,7 +619,11 @@ async function dowatersnakes() {
         if (!mtmp) continue;
         placeOnLevel(mtmp, spot.x, spot.y);
         newsym(spot.x, spot.y);
-        // mintrap(mtmp) when t_at(mtmp->mx, mtmp->my): mintrap is unported.
+        if (t_at(mtmp.mx, mtmp.my)) {
+            /* C ref: fountain.c:42 mintrap(mtmp, NO_TRAP_FLAGS) */
+            const { mon_mintrap } = await import('./monmove.js');
+            await mon_mintrap(mtmp, 0);
+        }
     }
 }
 // C ref: fountain.c dofindgem() — quaffing/dipping turns up a random gem.
@@ -704,7 +697,7 @@ async function gush(x, y, poolcnt) {
     if (!m_at(x, y)) newsym(x, y);
 }
 
-async function dogushforth(drinking) {
+export async function dogushforth(drinking) {
     const u = game.u;
     const poolcnt = { n: 0 };
     for (const [x, y] of clear_area_cells(u.ux, u.uy, 7))
@@ -769,7 +762,7 @@ export async function dryup(x, y, isyou) {
     if (game.level?.flags && typeof game.level.flags.nfountains === 'number')
         game.level.flags.nfountains = Math.max(0, game.level.flags.nfountains - 1);
     newsym(x, y);
-    if (isyou && in_town(x, y)) angry_guards(false);
+    if (isyou && in_town(x, y)) await angry_guards(false);
 }
 
 // ── sink interactions (fountain.c drinksink/breaksink) ──

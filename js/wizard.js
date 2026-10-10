@@ -8,11 +8,13 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
-import { update_topl } from './display.js';
+import { update_topl, pline, newsym } from './display.js';
 import { Blind } from './vision.js';
 import { AT_MAGC, attacktype } from './monattk_data.js';
-import { MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR } from './const.js';
+import { In_W_tower } from './teleport.js';
+import { M_AP_MONSTER, MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR } from './const.js';
 
+const FAKE_AMULET_OF_YENDOR = 212;
 const AMULET_OF_YENDOR = 213;           // js/mkobj.js OBJECT_DATA index
 const STRAT_WAITMASK = 0x30000000;
 const MAXNASTIES = 10;
@@ -44,7 +46,7 @@ export function mon_has_special(mtmp) {
             || otmp.otyp === CANDELABRUM_OF_INVOCATION
             || otmp.otyp === BELL_OF_OPENING
             || otmp.otyp === SPE_BOOK_OF_THE_DEAD
-            || otmp.oartifact)
+            || any_quest_artifact(otmp))
             return true;
     }
     return false;
@@ -56,15 +58,18 @@ export function mon_has_special(mtmp) {
 export async function amulet() {
     const u = game.u;
     let amu = null;
-    if (u?.uamul && u.uamul.otyp === AMULET_OF_YENDOR) amu = u.uamul;
-    else if (u?.uwep && u.uwep.otyp === AMULET_OF_YENDOR) amu = u.uwep;
+    if (game.uamul && game.uamul.otyp === AMULET_OF_YENDOR) amu = game.uamul;
+    else if (game.uwep && game.uwep.otyp === AMULET_OF_YENDOR) amu = game.uwep;
     if (amu && !rn2(15)) {
         for (const ttmp of (game.level?.traps || [])) {
             if (ttmp.ttyp === MAGIC_PORTAL) {
                 const du = distu(ttmp.tx, ttmp.ty);
-                if (du <= 9) await update_topl('Your amulet feels hot!');
-                else if (du <= 64) await update_topl('Your amulet feels very warm.');
-                else if (du <= 144) await update_topl('Your amulet feels warm.');
+                const { xname, otense } = await import('./invent.js');
+                const { The } = await import('./objnam.js');
+                const Tobjnam = (v) => `${The(xname(amu))} ${otense(amu, v)}`;
+                if (du <= 9) await pline(`${Tobjnam('feel')} hot!`);
+                else if (du <= 64) await pline(`${Tobjnam('feel')} very warm.`);
+                else if (du <= 144) await pline(`${Tobjnam('feel')} warm.`);
                 break;
             }
         }
@@ -75,7 +80,7 @@ export async function amulet() {
         if (mtmp.iswiz && mtmp.msleeping && !rn2(40)) {
             mtmp.msleeping = 0;
             if (!m_next2u(mtmp))
-                await update_topl('You get the creepy feeling that somebody '
+                await pline('You get the creepy feeling that somebody '
                                   + 'noticed your taking the Amulet.');
             return;
         }
@@ -91,21 +96,29 @@ function m_next2u(mtmp) {
 // C ref: wizard.c:517 clonewiz() — the Wizard's double.  The clone carries no
 // Amulet (a fake one instead) and cannot itself clone.
 export async function clonewiz() {
-    const { makemon, monster_by_pmidx, name_to_pmidx } = await import('./makemon.js');
-    const pmidx = name_to_pmidx('Wizard of Yendor');
-    const mtmp2 = makemon(monster_by_pmidx(pmidx), game.u.ux, game.u.uy, MM_NOMSG);
+    const M = await import('./makemon.js');
+    const mtmp2 = M.makemon(M.monster_by_pmidx(M.name_to_pmidx('Wizard of Yendor')),
+                            game.u.ux, game.u.uy, MM_NOWAIT);
     if (mtmp2) {
-        mtmp2.msleeping = 0;
-        mtmp2.mtame = 0;
-        mtmp2.mpeaceful = 0;
-        // C: "won't be able to make more clones"; the fake Amulet keeps his
-        // strategy code targeting the hero.
-        mtmp2.iswiz = 1;
-        game.context = game.context || {};
-        game.context.no_of_wizards = (game.context.no_of_wizards | 0) + 1;
+        await M.makemon_appears_msg(mtmp2, mtmp2.mx, mtmp2.my, MM_NOWAIT);
+        mtmp2.msleeping = 0; mtmp2.mtame = 0; mtmp2.mpeaceful = 0;
+        if (!game.u.uhave?.amulet && rn2(2)) { /* give clone a fake */
+            const { mksobj } = await import('./mkobj.js');
+            M.add_to_minv(mtmp2, mksobj(FAKE_AMULET_OF_YENDOR, true, false));
+        }
+        const { Protection_from_shape_changers } = await import('./mon.js');
+        if (!Protection_from_shape_changers()) {
+            mtmp2.m_ap_type = M_AP_MONSTER;
+            mtmp2.mappearance = M.name_to_pmidx(WIZAPP[rn2(WIZAPP.length)]);
+        }
+        newsym(mtmp2.mx, mtmp2.my);
     }
     return mtmp2;
 }
+// C ref: wizard.c:49 wizapp[] — what the Wizard's double may look like.
+const WIZAPP = ['human', 'water demon', 'vampire', 'red dragon', 'troll',
+    'umber hulk', 'xorn', 'xan', 'cockatrice', 'floating eye',
+    'guardian naga', 'trapper'];
 
 // C ref: mon.c monster_census(spotted) — how many monsters are on the level.
 function monster_census() {
@@ -164,12 +177,14 @@ export async function nasty(summoner) {
                     bypos.x = spot.x; bypos.y = spot.y;
                 }
                 let mtmp = M.makemon(mp, bypos.x, bypos.y, mmflags);
+                if (mtmp) await M.makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, mmflags);
                 if (mtmp) {
                     mtmp.msleeping = 0; mtmp.mpeaceful = 0; mtmp.mtame = 0;
                     M.set_malign(mtmp);
                 } else {
                     // Random substitute for a genocided selection.
                     mtmp = M.makemon(null, bypos.x, bypos.y, mmflags);
+                    if (mtmp) await M.makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, mmflags);
                     if (mtmp) {
                         m_cls = mdata(mtmp)?.mcls | 0;
                         if ((difcap > 0 && (mdata(mtmp)?.difficulty | 0) >= difcap
@@ -233,27 +248,19 @@ export async function intervene() {
     switch (which) {
     case 0:
     case 1:
-        await update_topl('You feel vaguely nervous.');
+        await pline('You feel vaguely nervous.');
         break;
     case 2: {
         if (!Blind()) {
             const { hcolor } = await import('./do_name.js');
-            await update_topl(`You notice a ${hcolor('black')} glow surrounding you.`);
+            await pline(`You notice a ${hcolor('black')} glow surrounding you.`);
         }
         const { rndcurse } = await import('./pray.js');
         await rndcurse();
         break;
     }
     case 3:
-        // C ref: wizard.c:494 aggravate() — one rn2(5) per immobilised monster.
-        // js/monmove.js and js/spell.js each keep a private copy; inlined here
-        // rather than exporting a third caller into either of them.
-        for (const mtmp of monsterList()) {
-            if (DEADMONSTER(mtmp)) continue;
-            mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
-            mtmp.msleeping = 0;
-            if (!mtmp.mcanmove && !rn2(5)) { mtmp.mfrozen = 0; mtmp.mcanmove = 1; }
-        }
+        (await import('./monmove.js')).aggravate();
         break;
     case 4:
         await nasty(null);
@@ -283,7 +290,11 @@ export async function resurrect() {
             = await import('./makemon.js');
         mtmp = makemon(monster_by_pmidx(name_to_pmidx('Wizard of Yendor')),
                        game.u.ux, game.u.uy, MM_NOWAIT);
-        if (mtmp) mtmp.mrevived = 1;
+        if (mtmp) {
+            await (await import('./makemon.js')).makemon_appears_msg(
+                mtmp, mtmp.mx, mtmp.my, MM_NOWAIT);
+            mtmp.mrevived = 1;
+        }
     } else {
         /* look for a migrating Wizard */
         verb = 'elude';
@@ -317,8 +328,8 @@ export async function resurrect() {
         const { set_malign } = await import('./makemon.js');
         set_malign(mtmp);
         if (!Deaf()) {
-            await update_topl('A voice booms out...');
-            await update_topl(`"So thou thought thou couldst ${verb} me, fool."`);
+            await pline('A voice booms out...');
+            await pline(`"So thou thought thou couldst ${verb} me, fool."`);
         }
     }
 }
@@ -482,16 +493,10 @@ export async function target_on(mask, mtmp) {
     mtmp.mgoal = { x: 0, y: 0 };
     return STRAT_NONE;
 }
-// C ref: priest.c inhistemple(priest).  js/dungeon.js:1876 holds the port but
-// keeps it module-private and async; resolved lazily here rather than making
-// dungeon.js export a third copy.
+// C ref: priest.c inhistemple(priest) — priest.js's port (sync, no RNG).
 async function inhistemple_wiz(mon) {
-    if (!mon?.ispriest) return false;
-    const dgn = await import('./dungeon.js');
-    if (typeof dgn.inhistemple === 'function') return !!await dgn.inhistemple(mon);
-    // Reduced: a temple priest is "in his temple" when he is standing in the
-    // room his temple occupies (C also checks the temple's alignment record).
-    return !!mon.inhistemple;
+    const { inhistemple } = await import('./priest.js');
+    return inhistemple(mon);
 }
 // C ref: shk.c inhishop(shkp).  js/shk.js:399 exports the port.
 async function inhishop_wiz(mon) {
@@ -657,11 +662,8 @@ export async function tactics(mtmp) {
     } /* default case */
     } /* switch */
 }
-// C ref: dungeon.c In_W_tower(x, y, &u.uz) — inside the Wizard's tower on the
-// current level.  This port has no wizard-tower region test; the level flag is
-// the closest thing it carries.
-function In_W_tower_wiz(_x, _y) {
-    return !!game.level?.flags?.is_wiztower;
+function In_W_tower_wiz(x, y) {
+    return In_W_tower(x, y, game.u?.uz);
 }
 // C ref: teleport.c mnexto(mtmp, rlocflags) — js/do.js:467 and js/vault.js:442
 // each keep a private copy; js/do.js exports mnexto_rloc(), which is the same

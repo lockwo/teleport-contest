@@ -2,11 +2,12 @@
 // C ref: makemon.c - rndmonst_adj, rndmonst, mkclass, mkclass_aligned,
 //        makemon, newmonhp, m_initweap.
 
+import { vtense } from './plural.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, d, rn1 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { christen_monst, mhim, mhis } from './do_name.js';
-import { builds_up, In_hell, Is_special, level_difficulty_c } from './dungeon.js';
+import { builds_up, In_hell, Is_special, level_difficulty } from './dungeon.js';
 import { roles } from './role.js';
 import { has_innate } from './exper.js';
 import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
@@ -17,7 +18,7 @@ import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
          WAN_DIGGING, WAN_DIGGING as WAN_DIGGING_OTYP,
          DILITHIUM_CRYSTAL, DILITHIUM_CRYSTAL as DILITHIUM_CRYSTAL_OTYP,
          LUCKSTONE, LUCKSTONE as LUCKSTONE_OTYP,
-         SCR_SCARE_MONSTER } from './mkobj.js';
+         SCR_SCARE_MONSTER, clear_object_timer } from './mkobj.js';
 import { get_shop_item, FODDERSHOP, VEGETARIAN_CLASS } from './shtypes.js';
 import { within_bounded_area } from './rect.js';
 import { get_wormno, initworm, count_wsegs, worm_seg_at, wormgone,
@@ -798,12 +799,6 @@ export function name_gender_hint(name) {
     return v == null ? MGEND_NEUTRAL : v;
 }
 
-// C ref: dungeon.c level_difficulty() — exported for themed-room fills that
-// branch on difficulty (themerms.lua nh.level_difficulty()).
-export function level_difficulty_ext() {
-    return level_difficulty();
-}
-
 // C ref: monsters.h SIZ(wt, nutr, ...) — the per-monster corpse weight (cwt)
 // and body size (msize, MZ_*).  mkobj.c weight() uses these for CORPSE and
 // STATUE objects.  The full mons[] cwt/msize column is large and only matters
@@ -929,12 +924,6 @@ export function mon_has_cnutrit(mndx) {
 export function mon_nocorpse(mndx) {
     return (MONS[mndx]?.geno & G_NOCORPSE) !== 0;
 }
-
-// C ref: dungeon.c level_difficulty() — depth(&u.uz), plus a compensating
-// bump in a "builds up" branch (Vlad's Tower, Sokoban): depth() alone would
-// make the harder-to-reach levels there look easier since their dlevel counts
-// down as you climb, so add 2 per level of extra effort spent reaching them.
-function level_difficulty() { return level_difficulty_c(); }
 
 function monmin_difficulty(levdif) {
     return Math.trunc(levdif / 6);
@@ -1378,7 +1367,7 @@ function is_sword_obj(o) {
 }
 const WEAPON_CLASS_MM = 2, ARMOR_CLASS_MM = 3;
 
-function mongets(_mtmp, otyp) {
+export function mongets(_mtmp, otyp) {
     if (!otyp) return null;
     const otmp = mksobj(otyp, true, false);
     // C ref: makemon.c:2188-2221 — the recipient-specific fixups.  Only the
@@ -2391,8 +2380,7 @@ function m_initinv_full(mtmp) {
                 box.spe = 1;            /* flag for special SchroedingersBox */
                 set_corpsenm(catcorpse, 16 /*PM_HOUSECAT*/);
                 // The unobserved cat does not rot inside Schroedinger's box.
-                catcorpse.timed = false;
-                delete catcorpse.timer;
+                clear_object_timer(catcorpse);
                 add_to_container(box, catcorpse);
                 box.owt = weight(box);
             }
@@ -2409,7 +2397,7 @@ function m_initinv_full(mtmp) {
         }
         break;
     case 12: { // S_LEPRECHAUN — mkmonmoney(d(level_difficulty(), 30))
-        const amt = d(level_difficulty_ext(), 30);
+        const amt = d(level_difficulty(), 30);
         if (amt > 0) {
             const gold = mksobj(438 /*GOLD_PIECE*/, false, false); // next_ident rnd(2)
             if (gold) {
@@ -2431,7 +2419,7 @@ function m_initinv_full(mtmp) {
         // C ref: mkmonmoney(d(level_difficulty(), mtmp->minvent ? 5 : 10)).
         // Use the dice helper d() so it records a single d(n,x) RNG-log entry,
         // matching the C engine (rather than n separate rn2 calls).
-        const amt = d(level_difficulty_ext(), mtmp._hasinv ? 5 : 10);
+        const amt = d(level_difficulty(), mtmp._hasinv ? 5 : 10);
         // C ref: mkmonmoney -> if (amount>0) mksobj(GOLD_PIECE, FALSE, FALSE)
         // (one next_ident rnd(2); no mksobj_init since init==FALSE) followed by
         // add_to_minv(), which is what makes the pile drop on death.
@@ -3254,6 +3242,14 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         return 0;
     }
     const changed = apply_newcham(mtmp, mdat, olddata);
+    if (changed && mtmp.mleashed) {
+        /* C ref: mon.c:5387 — a form that can't be leashed slips its leash */
+        const A = await import('./apply.js');
+        if (!A.leashable(mtmp))
+            await A.m_unleash(mtmp, true);
+        else
+            (await import('./invent.js')).update_inventory();
+    }
     if (changed && game.u?.ustuck === mtmp && game.u.uswallow) {
         if (!attacktype(mdat, AT_ENGL)) {
             const whirly = ptr => ptr.mcls === S_VORTEX_CLS
@@ -3303,7 +3299,7 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         // checking armor. Other monsters may immediately seek the dropped item.
         const polyspot = (ncflags & NC_VIA_WAND_OR_SPELL) !== 0;
         const { possibly_unwield } = await import('./weapon.js');
-        const dropped = possibly_unwield(mtmp, polyspot);
+        const dropped = await possibly_unwield(mtmp, polyspot);
         if (dropped) {
             const { update_topl, newsym } = await import('./display.js');
             const { distant_doname, stackobj } = await import('./invent.js');
@@ -3363,6 +3359,12 @@ function worm_goodpos(x, y, worm) {
     if (mm_is_pool(x, y) || mm_is_lava(x, y)) return false;
     const typ = game.level?.at(x, y)?.typ;
     if (typ == null || typ < DOOR) return false;   // !accessible
+    // C ref: monmove.c accessible() = ACCESSIBLE(typ) && !closed_door(x, y).
+    // A tail segment can't be laid across a shut door (soko1's zoo doors are
+    // closed/locked: the first-shuffled direction is often one).
+    if (mm_closed_door(x, y)) return false;
+    // teleport.c:178 `sobj_at(BOULDER, x, y) && (!mdat || !throws_rocks(mdat))`.
+    if (mm_boulder_at(x, y)) return false;
     return true;
 }
 
@@ -3568,8 +3570,10 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // roll rn2(2) for it.  Every leader and every nemesis but Arc's Minion of
     // Huhetotl and Wiz's Dark One is fixed-gender, so those two are the only
     // species this arm actually saves a draw for.
-    else if (msound_of(ptr) === MS_LEADER) mtmp.female = game.quest_ldrgend | 0;
-    else if (msound_of(ptr) === MS_NEMESIS) mtmp.female = game.quest_nemgend | 0;
+    else if (msound_of(ptr) === MS_LEADER && hooks.quest_info(MS_LEADER) === ptr.pmidx)
+        mtmp.female = game.quest_ldrgend | 0;
+    else if (msound_of(ptr) === MS_NEMESIS && hooks.quest_info(MS_NEMESIS) === ptr.pmidx)
+        mtmp.female = game.quest_nemgend | 0;
     else mtmp.female = rn2(2);
 
     // C ref: makemon.c:1281-1289 — trap knowledge is granted at CREATION; no
@@ -3624,10 +3628,12 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
         || In_endgame(game.u?.uz) || In_hell(game.u?.uz)
         || In_V_tower(game.u?.uz) || In_quest(game.u?.uz))
         mtmp.mwandexp = true;
-    // C ref: makemon.c:1301 — `if (mmflags & MM_MINVIS) mon_set_minvis(mtmp)`,
-    // used by #wizgenesis (^G).  mon_set_minvis sets minvis; perminvis is for
-    // species that are permanently invisible (the S_LIGHT/S_ELEMENTAL case).
-    if (mmflags & MM_MINVIS) mtmp.minvis = 1;
+    // C ref: makemon.c:1300 — `if (mmflags & MM_MINVIS) mon_set_minvis(mtmp,
+    // FALSE)` (worn.c:474), used by #wizgenesis (^G).  It sets perminvis as
+    // well as minvis (a fresh monster has invis_blkd clear): newcham()'s
+    // `minvis = perminvis` reset (mon.c:5406-5408) must keep the monster
+    // invisible when a doppelganger takes its first shape.
+    if (mmflags & MM_MINVIS) { mtmp.perminvis = 1; mtmp.minvis = 1; }
 
     // C ref: makemon.c:1307-1312 — the per-mlet switch.  S_SPIDER and S_SNAKE
     // monsters generated during level creation (gi.in_mklev) at a real position
@@ -3917,8 +3923,27 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // what reveals a spawn the hero can see or (as an orc) infravise.  The
     // "appears" Norep() and dochugw() that follow it in C need an async topline
     // and are done by the callers (see js/allmain.js maybe_generate_rnd_mon).
-    if (!game.in_mklev && x > 0) hooks.newsym?.(mtmp.mx, mtmp.my);
+    // A group leader's own newsym comes AFTER its members' complete makemon()
+    // tails in C (m_initgrp runs earlier in the function), i.e. after each
+    // member's arrival line has already been flushed.  Callers run those lines
+    // later via makemon_appears_msg(), so the leader's draw waits for it
+    // (flush_group_newsyms() is the backstop for callers that never print one).
+    if (!game.in_mklev && x > 0) {
+        if (mtmp._grpMembers?.length || _mmGroupMember) (game._pendingGrpNewsym ||= []).push(mtmp);
+        else hooks.newsym?.(mtmp.mx, mtmp.my);
+    }
     return mtmp;
+}
+
+let _mmGroupMember = false;   // set by m_initgrp around each member's makemon()
+
+// Draw every group leader whose newsym() makemon() deferred (see above).
+export function flush_group_newsyms(only = null) {
+    const q = game._pendingGrpNewsym;
+    if (!q?.length) return;
+    game._pendingGrpNewsym = only ? q.filter((m) => m !== only) : [];
+    for (const m of (only ? q.filter((x) => x === only) : q))
+        if (m.mx) hooks.newsym?.(m.mx, m.my);
 }
 
 // ── In-game random spawn: makemon((permonst*)0, 0, 0, NO_MM_FLAGS) ──────────
@@ -4081,12 +4106,14 @@ function mm_likes_lava(ptr) {
     return ptr?.name === 'fire elemental' || ptr?.name === 'salamander';
 }
 
-// C ref: rm.h may_passwall(x,y) — a wall-walker still can't enter solid stone
-// that has no room behind it; on the generated levels here the relevant test is
-// simply "is this a wall/stone square inside the level".
+// C ref: hack.c may_passwall(x,y) = !(IS_STWALL(typ) && (wall_info & W_NONPASSWALL)).
+// Every non-wall square (a plain room floor included) is passable, so a xorn
+// offered an occupied-by-scare-monster ROOM square is accepted by goodpos()
+// before the onscary test runs.
 function mm_may_passwall(x, y) {
-    const typ = game.level?.at(x, y)?.typ;
-    return typ != null && typ <= DBWALL;
+    const loc = game.level?.at(x, y);
+    if (!loc) return false;
+    return !(loc.typ <= DBWALL && ((loc.wall_info || 0) & 0x10 /* W_NONPASSWALL */));
 }
 // C ref: rm.h closed_door(x,y) — a DOOR whose doormask has D_CLOSED|D_LOCKED.
 function mm_closed_door(x, y) {
@@ -4258,7 +4285,13 @@ function m_initgrp(mtmp, x, y, n, mmflags) {
             const spot = enexto_spawn(mx, my, mtmp.data);  // enexto_gpflags
             if (spot) {
                 mx = spot.x; my = spot.y;
-                const mon = makemon(mtmp.data, spot.x, spot.y, mmflags | MM_NOGRP);
+                // C: the member's makemon.c:1473 newsym comes BEFORE its own arrival
+                // line (whose --More-- can block with later members undrawn), so
+                // defer it to makemon_appears_msg() instead of drawing it here.
+                _mmGroupMember = true;
+                let mon;
+                try { mon = makemon(mtmp.data, spot.x, spot.y, mmflags | MM_NOGRP); }
+                finally { _mmGroupMember = false; }
                 if (mon) {
                     placeOnLevel(mon, spot.x, spot.y);
                     mon.mpeaceful = false;
@@ -4325,22 +4358,6 @@ export function makemon_rnd_spawn() {
     return makemon(null, 0, 0, 0);
 }
 
-// C ref: objnam.c vtense(subj, verb) — same reduced port as js/dothrow.js's and
-// js/sounds.js's copies.  The subjects reaching here are Amonnam()/
-// mhidden_description() strings, so only the leading "a "/"an " singular test
-// and the trailing-'s' plural test matter; special_subjs[] cannot false-match a
-// monster name that already carries an article.
-function mm_vtense(subj, verb) {
-    const s = String(subj ?? '');
-    if (s && !/^an? /i.test(s)) {
-        const last = s.charAt(s.length - 1).toLowerCase();
-        const prev = s.length > 1 ? s.charAt(s.length - 2).toLowerCase() : '';
-        if ((last === 's' && s.length > 1 && prev !== 'u' && prev !== 's')
-            || /eeth$|feet$|ia$|ae$/i.test(s))
-            return verb;
-    }
-    return `${verb}s`;
-}
 
 // C ref: makemon.c:1474-1500 — the arrival line every in-game makemon() prints
 // ("A grid bug suddenly appears!"), plus the " next to you"/" close by"
@@ -4357,6 +4374,7 @@ export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
         for (const m of members)
             await makemon_appears_msg(m, m.mx, m.my, mmflags | MM_NOGRP);
     }
+    flush_group_newsyms(mtmp);          // the leader's own makemon.c:1473 newsym
     await makemon_appears_line(mtmp, x, y, mmflags);
     // C ref: makemon.c:1503 — "if discernable and a threat, stop fiddling while
     // Rome burns": `if (go.occupation) (void) dochugw(mtmp, FALSE);`, reached
@@ -4402,7 +4420,7 @@ async function makemon_appears_line(mtmp, x, y, mmflags = 0) {
     const place = (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) ? ' next to you'
         : (dx * dx + dy * dy <= BOLT_LIM * BOLT_LIM) ? ' close by' : '';
     const msg = `${what}${exclaim ? ' suddenly' : ''} `
-        + `${mm_vtense(what, 'appear')}${place}${exclaim ? '!' : '.'}`;
+        + `${vtense(what, 'appear')}${place}${exclaim ? '!' : '.'}`;
     // C ref: pline.c Norep() — vpline() with PLINE_NOREPEAT, suppressed when the
     // text equals gp.prevmsg (the last INDIVIDUAL message, game._prevmsg here).
     if (game._prevmsg === msg) return;
@@ -4612,8 +4630,7 @@ export function dump_mongen() {
 }
 
 // C ref: makemon.c:836 clone_mon(mon, x, y) — x==0 means "near mon".  Note: for
-// long worms always call cutworm(), which calls this (js/worm.js:482 already
-// takes it as the `clone_monfn` argument and awaits it).
+// long worms always call cutworm(), which calls this.
 //
 // RNG: enexto() when the target square is taken, then at most two rn2() —
 // `rn2(max(2 + u.uluck, 2))` for the tame case OR the peaceful case, never

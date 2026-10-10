@@ -15,8 +15,7 @@ import {
 } from '../const.js';
 import { game } from '../gstate.js';
 import { depth as depth_of_level } from '../hacklib.js';
-import { makemon, mkclass, monster_by_pmidx, name_gender_hint, name_to_pmidx,
-         MGEND_NEUTRAL } from '../makemon.js';
+import { makemon, mkclass, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { walkfrom, mz } from '../mkmaze.js';
 import { BOULDER, GEM_CLASS, RANDOM_CLASS, mkgold, mkobj_at, mksobj_at } from '../mkobj.js';
 import { occupied } from '../mkroom.js';
@@ -24,7 +23,7 @@ import { rn1, rn2, rnd } from '../rng.js';
 import {
     SET_LIT_NOCHANGE, bigrm_get_level_extends, is_ok_location, percent,
     selection_match, set_levltyp_lit, splev_map_at, splev_map_mark,
-    splev_map_origin, splev_mkstairs_at, LOC_DRY,
+    splev_map_origin, splev_mkstairs_at, splev_find_montype, LOC_DRY,
 } from '../sp_lev.js';
 import {
     W_ANY, W_EAST, W_NORTH, W_RANDOM, W_SOUTH, W_WEST, l_selection_and,
@@ -375,10 +374,10 @@ function geh_bad_location(x, y, nlx, nly, nhx, nhy) {
 }
 
 // C ref: mkmaze.c put_lregion_here().  The lairs' rtypes are LR_UPSTAIR (a
-// plain mkstairs) and LR_BRANCH; none of asmodeus/juiblex/baalz/orcus is a
-// branch level, so place_branch(Is_branchlev(), ...) is a no-op there and the
-// only observable effect is the accept/reject that ends the rn1 retry loop.
-function geh_put_lregion_here(x, y, reg, oneshot) {
+// plain mkstairs) and LR_BRANCH, which is place_branch(Is_branchlev(&u.uz), ..):
+// a no-op unless the lair happens to be the Gehennom level holding Vlad's Tower
+// branch, in which case it lays the branch staircase.
+async function geh_put_lregion_here(x, y, reg, oneshot) {
     if (geh_bad_location(x, y, reg.nlx, reg.nly, reg.nhx, reg.nhy)) {
         if (!oneshot) return false;
         return false;
@@ -389,6 +388,9 @@ function geh_put_lregion_here(x, y, reg, oneshot) {
         // Open-coding mkstairs()'s tail here also open-coded its bug: the
         // stair went onto a plain ARRAY that no gs.stairs consumer can see.
         splev_mkstairs_at(x, y, reg.rtype === LR_UPSTAIR);
+    } else if (reg.rtype === LR_BRANCH) {
+        const { place_branch, is_branchlev } = await import('../mklev.js');
+        await place_branch(is_branchlev(), x, y);
     }
     return true;
 }
@@ -427,7 +429,7 @@ export function geh_flip_lregions(flp, regions) {
 
 // C ref: mkmaze.c place_lregion() — clamp the area to the map, then 200
 // probabilistic tries (two rn1 draws each), then a deterministic scan.
-export function geh_place_lregion(reg) {
+export async function geh_place_lregion(reg) {
     let { lx, ly, hx, hy } = reg;
     if (lx < 1) lx = 1;
     if (hx > COLNO - 1) hx = COLNO - 1;
@@ -437,18 +439,18 @@ export function geh_place_lregion(reg) {
     for (let trycnt = 0; trycnt < 200; trycnt++) {
         const x = rn1((hx - lx) + 1, lx);        // mkmaze.c:396
         const y = rn1((hy - ly) + 1, ly);        // mkmaze.c:397
-        if (geh_put_lregion_here(x, y, reg, oneshot)) return;
+        if (await geh_put_lregion_here(x, y, reg, oneshot)) return;
     }
     for (let x = lx; x <= hx; x++)
         for (let y = ly; y <= hy; y++)
-            if (geh_put_lregion_here(x, y, reg, true)) return;
+            if (await geh_put_lregion_here(x, y, reg, true)) return;
 }
 
 // C ref: mkmaze.c fixup_special() — walk the registered levregions in
 // registration order.  LR_*TELE entries are only SAVED (goto_level() runs their
 // place_lregion itself, and it re-reads the exclusion rectangle, which is why
 // the region is stored whole rather than as bare corners).
-export function geh_place_lregions(regions) {
+export async function geh_place_lregions(regions) {
     for (const reg of regions) {
         if (reg.rtype === LR_TELE || reg.rtype === LR_UPTELE
             || reg.rtype === LR_DOWNTELE) {
@@ -460,7 +462,7 @@ export function geh_place_lregions(regions) {
                 game.dndest = { ...box };
             continue;
         }
-        geh_place_lregion(reg);
+        await geh_place_lregion(reg);
     }
 }
 
@@ -473,17 +475,17 @@ export function geh_place_lregions(regions) {
 export function geh_monster_at(spec, mx, my, peaceful = null) {
     const isClass = spec.length === 1;
     let ptr = null;
+    let female = 0;                                 // sp_lev.c:2125 id-less default
     if (!isClass) {
-        const pmidx = name_to_pmidx(spec);
-        ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
-        if (ptr && ptr.gcode !== 1 && ptr.gcode !== 2
-            && name_gender_hint(spec) === MGEND_NEUTRAL)
-            rn2(2);                                 // find_montype sp_lev.c:3156
+        const found = splev_find_montype(spec);     // find_montype sp_lev.c:3156
+        ptr = found.pmidx >= 0 ? monster_by_pmidx(found.pmidx) : null;
+        if (ptr) female = found.female;
     }
     rn2(3);                                         // induced_align dungeon.c:2012
     if (isClass) ptr = mkclass(GEH_MONSYM[spec] ?? 0, 0x0200 /* G_NOGEN */);
     const c = geh_loc(mx, my);
     const mtmp = makemon(ptr, c.x, c.y, 0);
+    if (mtmp) mtmp.female = female;                 // sp_lev.c:2125
     if (mtmp && peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
     return mtmp;
 }

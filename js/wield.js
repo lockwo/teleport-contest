@@ -13,9 +13,9 @@ import { game } from './gstate.js';
 import { pline } from './display.js';
 import { rnd } from './rng.js';
 import {
-    update_inventory, xname, is_plural, bimanual, otense, makeplural,
-    body_part, setuswapwep, freeinv, inventoryArray,
+    update_inventory, xname, is_plural, bimanual, otense, body_part, setuswapwep, freeinv, inventoryArray,
 } from './invent.js';
+import { makeplural } from './plural.js';
 import { objects, WEAPON_CLASS, TOOL_CLASS } from './mkobj.js';
 import { monster_by_pmidx } from './makemon.js';
 import { MATTK, AT_WEAP } from './monattk_data.js';
@@ -169,38 +169,6 @@ function highc(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 function Yobjnam2(obj, verb) { return highc(yobjnam(obj, verb)); }
 function Yname2(obj) { return highc(yname(obj)); }
 
-// C ref: objnam.c badman(basestr, TRUE) — the *man prefixes with no *men
-// plural.  Each entry must sit at the very start of the word (or right after a
-// space), which is why "caveman" is NOT excluded.
-const NO_MEN = [
-    'albu', 'antihu', 'anti', 'ata', 'auto', 'bildungsro', 'cai', 'cay',
-    'ceru', 'corner', 'decu', 'des', 'dura', 'fir', 'hanu', 'het',
-    'infrahu', 'inhu', 'nonhu', 'otto', 'out', 'prehu', 'protohu',
-    'subhu', 'superhu', 'talis', 'unhu', 'sha',
-    'hu', 'un', 'le', 're', 'so', 'to', 'at', 'a',
-];
-function badman(basestr) {
-    if (!basestr || basestr.length < 4) return false;
-    const s = basestr.toLowerCase();
-    for (const pre of NO_MEN) {
-        const at = s.length - (pre.length + 3);
-        if (at < 0 || s.substr(at, pre.length) !== pre) continue;
-        if (at === 0 || s.charAt(at - 1) === ' ') return true;
-    }
-    return false;
-}
-
-// C ref: objnam.c makeplural() — the man/men arm, which js/invent.js's
-// makeplural() skips for every [aeiou]man, so it answers "Cavemans" where the
-// recorder says "Cavemen".  Applied here to the role name before delegating;
-// remove once invent.js carries badman() itself.
-function makeplural_c(oldstr) {
-    const s = String(oldstr || '');
-    if (s.length >= 3 && s.slice(-3).toLowerCase() === 'man' && !badman(s))
-        return `${s.slice(0, -2)}en`;
-    return makeplural(s);
-}
-
 // C ref: wield.c:761 can_twoweapon().  Decide whether the hero may dual-wield;
 // every rejection prints its own reason.
 export async function can_twoweapon() {
@@ -215,7 +183,7 @@ export async function can_twoweapon() {
             // "Wizards aren't able to use two weapons at once."
             const nm = (game.flags?.female && game.urole?.name?.f)
                 ? game.urole.name.f : game.urole?.name?.m;
-            await pline(`${makeplural_c(nm)} aren't able to use two weapons at once.`);
+            await pline(`${makeplural(nm)} aren't able to use two weapons at once.`);
         }
     } else if (!uwep || !uswapwep) {
         // "Your hands are empty" or "Your {left|right} hand is empty"; C
@@ -395,7 +363,7 @@ export async function setuwep(obj, deps = {}) {
      * Sunsword is unwielded, from whatever cause. */
     if (game.uwep === obj && artifact_light(olduwep) && olduwep.lamplit) {
         await deps.end_burn?.(olduwep, false);
-        if (!game.u?.Blinded)
+        if (!(await import('./vision.js')).Blind())   /* C: `if (!Blind)` */
             await pline(`${Tobjnam(olduwep, 'stop')} shining.`);
     }
     if (game.uwep === obj
@@ -434,12 +402,12 @@ export async function cant_wield_corpse(obj, deps = {}) {
 
     await pline(`You wield ${deps.corpse_xname?.(obj, null, /* CXN_PFX_THE */ 4)
                              ?? `the ${xname_c(obj)}`} in your bare `
-                + `${makeplural_c(body_part(HAND))}.`);
+                + `${makeplural(body_part(HAND))}.`);
     const kbuf = `wielding ${deps.killer_xname?.(obj) ?? xname_c(obj)} bare-handed`;
     await deps.instapetrify?.(kbuf);
     return true;
 }
-// C ref: objects.h CORPSE.  (makeplural_c()/body_part()/HAND are already in
+// C ref: objects.h CORPSE.  (makeplural()/body_part()/HAND are already in
 // this file, at lines 187, 32 and the invent.js import.)
 const CORPSE_OTYP = 265;
 
@@ -468,7 +436,7 @@ export async function uwepgone(deps = {}) {
     if (game.uwep) {
         if (artifact_light(game.uwep) && game.uwep.lamplit) {
             await deps.end_burn?.(game.uwep, false);
-            if (!game.u?.Blinded)
+            if (!(await import('./vision.js')).Blind())   /* C: `if (!Blind)` */
                 await pline(`${Tobjnam(game.uwep, 'stop')} shining.`);
         }
         setuwep_slot(null);             /* setworn(0, W_WEP) */

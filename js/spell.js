@@ -161,6 +161,9 @@ export async function docast() {
     const spellNo = await getspell();
     if (spellNo >= 0)
         return await spelleffects(spellid(spellNo), false, false);
+    // C: docast() returns ECMD_FAIL, so rhack() runs reset_cmd_vars(TRUE) and drops
+    // CQ_REPEAT; js/cmd.js consumes this flag for the same effect (see getobj()).
+    if (game.context) game.context._getobj_cancelled = true;
     return ECMD_FAIL;
 }
 
@@ -811,24 +814,6 @@ function nomul(nval) {
     game.context.travel = game.context.travel1 = game.context.mv = 0;
 }
 
-// C ref: wizard.c aggravate() — wake every monster on the level and clear its
-// "wait for you" / "appear message" strategy; a frozen monster gets a 1-in-5
-// chance to become able to move again.  In_W_tower is irrelevant off the Wizard
-// tower (both hero and monsters test FALSE), so no monster is skipped.
-function aggravate() {
-    const mons = game.fmon || game.level?.monsters || [];
-    for (const mtmp of mons) {
-        if (!mtmp) continue;
-        if (mtmp.mhp != null && mtmp.mhp < 1) // DEADMONSTER(mtmp)
-            continue;
-        mtmp.mstrategy = (mtmp.mstrategy | 0) & ~(STRAT_WAITFORU | STRAT_APPEARMSG);
-        mtmp.msleeping = 0;
-        if (!mtmp.mcanmove && !rn2(5)) {
-            mtmp.mfrozen = 0;
-            mtmp.mcanmove = 1;
-        }
-    }
-}
 
 // C ref: spell.c cursed_book() — malign effects when reading a book that's too
 // hard (or cursed).  Selector is rn2(oc_level); with oc_level <= 7 the switch
@@ -836,50 +821,72 @@ function aggravate() {
 // destroyed (only the exploding-rune arm, reachable for level-7 books).
 async function cursed_book(bp) {
     const lev = spell_level_of(bp.otyp); // objects[bp->otyp].oc_level
-    let dmg = 0;
     switch (rn2(lev)) {
     case 0: {
         await update_topl('You feel a wrenching sensation.');
-        // C ref: tele(void) == scrolltele((struct obj *)0) — teleport the
-        // hero (possibly a controlled teleport prompt, "Where do you want to
-        // be teleported?", when Teleport_control is active).
         const { scrolltele } = await import('./read.js');
-        await scrolltele(null);
+        await scrolltele(null); // C tele(void)
         break;
     }
-    case 1:
+    case 1: {
         await update_topl('You feel threatened.');
+        const { aggravate } = await import('./monmove.js');
         aggravate();
         break;
-    case 2:
-        // make_blinded(BlindedTimeout + rn1(100, 250), TRUE)
-        rn1(100, 250);
-        break;
-    case 3:
-        // take_gold(): remove all carried coins (no RNG); effect omitted here.
-        break;
-    case 4:
-        await update_topl('These runes were just too much to comprehend.');
-        // make_confused(HConfusion + rn1(7, 16), FALSE)
-        rn1(7, 16);
-        break;
-    case 5: {
-        await update_topl('The book was coated with contact poison!');
-        // uarmg erode path (no hero gloves in the covered flow); else poison.
-        const Poison_resistance = !!game.u?.Poison_resistance;
-        rn1(Poison_resistance ? 2 : 4, Poison_resistance ? 1 : 3);
-        rnd(Poison_resistance ? 6 : 10);
+    }
+    case 2: {
+        const { make_blinded_hero, BlindedTimeout } = await import('./potion.js');
+        await make_blinded_hero(BlindedTimeout() + rn1(100, 250), true);
         break;
     }
-    case 6:
-        if (game.u?.Antimagic) {
-            await update_topl('The book explodes, but you are unharmed!');
+    case 3: {
+        const { take_gold } = await import('./sit.js');
+        await take_gold();
+        break;
+    }
+    case 4: {
+        await update_topl('These runes were just too much to comprehend.');
+        const { make_confused } = await import('./potion.js');
+        make_confused((game.u?.uprops?.Confusion || 0) + rn1(7, 16), false);
+        break;
+    }
+    case 5: {
+        await update_topl('The book was coated with contact poison!');
+        if (game.uarmg) {
+            const { erode_obj } = await import('./trap.js');
+            const { ERODE_CORRODE, EF_GREASE, EF_VERBOSE } = await import('./const.js');
+            await erode_obj(game.uarmg, 'gloves', ERODE_CORRODE,
+                            EF_GREASE | EF_VERBOSE);
+            break;
+        }
+        /* Temp disable in_use so a death does not destroy the book. */
+        const was_in_use = bp.in_use;
+        bp.in_use = false;
+        const { poison_strdmg } = await import('./attrib.js');
+        const { Poison_resistance } = await import('./potion.js');
+        const pres = Poison_resistance();
+        const { KILLED_BY_AN } = await import('./const.js');
+        await poison_strdmg(pres ? rn1(2, 1) : rn1(4, 3),
+                            rnd(pres ? 6 : 10),
+                            'contact-poisoned spellbook', KILLED_BY_AN);
+        bp.in_use = was_in_use;
+        break;
+    }
+    case 6: {
+        const { Antimagic, Maybe_Half_Phys, losehp } = await import('./zap.js');
+        const { KILLED_BY_AN, FACE } = await import('./const.js');
+        if (Antimagic()) {
+            const { shieldeff } = await import('./display.js');
+            await shieldeff(game.u.ux, game.u.uy);
+            await update_topl('The book radiates explosive energy, but you are unharmed!');
         } else {
-            await update_topl('As you read the book, it explodes in your face!');
-            dmg = 2 * rnd(10) + 5;
-            void dmg; // losehp() not ported for this arm
+            const { body_part } = await import('./invent.js');
+            await update_topl(`As you read the book, it radiates explosive energy in your ${body_part(FACE)}!`);
+            const dmg = 2 * rnd(10) + 5;
+            await losehp(Maybe_Half_Phys(dmg), 'exploding rune', KILLED_BY_AN);
         }
         return true;
+    }
     default:
         // rndcurse(): unreachable for spellbooks (oc_level <= 7).
         break;
@@ -1090,7 +1097,8 @@ export async function study_book(spellbook) {
 // C ref: spell.c learn() — the studying occupation.  Returns 1 while still busy,
 // 0 when the study is over (the move loop then clears go.occupation).
 export async function learn_step() {
-    const { makeknown, useup, trycall, check_unpaid } = await import('./invent.js');
+    const { makeknown, useup, trycall } = await import('./invent.js');
+    const { check_unpaid } = await import('./shk.js');
     const g = game;
     const sb = g.context?.spbook;
     const book = sb?.book;
@@ -1176,7 +1184,7 @@ export async function learn_step() {
             return 0;
         }
     }
-    if (check_unpaid) check_unpaid(book);
+    await check_unpaid(book);
     sb.book = 0; sb.o_id = 0;
     return 0;
 }
@@ -1401,15 +1409,24 @@ export async function deadbook(book2) {
             mtmp.mpeaceful = 0;
             set_malign(mtmp);
         }
-        /* next handle the affect on things you're carrying */
-        // DEFERRED: mon.c unturn_dead(&youmonst) has no port; it is RNG-free
-        // for a hero carrying no corpses/figurines and otherwise draws
-        // revive()'s makemon.
+        /* next handle the effect on things you're carrying */
+        {
+            const { unturn_dead } = await import('./zap.js');
+            await unturn_dead(game.youmonst || u);
+        }
         /* last place some monsters around you */
-        const mm = { x: u.ux, y: u.uy };
-        // DEFERRED: makemon.c mkundead(&mm, TRUE, NO_MINVENT) has no port
-        // (js/apply.js:1692 keeps the same stub); it draws rn2/makemon.
-        void mm;
+        {
+            const { mkundead } = await import('./mkroom.js');
+            const { morguemon } = await import('./sp_lev.js');
+            const { enexto_spawn } = await import('./makemon.js');
+            const { level_difficulty } = await import('./dungeon.js');
+            const { sobj_at } = await import('./invent.js');
+            const { revive } = await import('./zap.js');
+            await mkundead({ x: u.ux, y: u.uy }, true, NO_MINVENT, {
+                level_difficulty: level_difficulty,
+                morguemon, enexto: enexto_spawn, sobj_at, revive, makemon,
+            });
+        }
     };
 
     await pline('You turn the pages of the Book of the Dead...');
@@ -1466,8 +1483,8 @@ export async function deadbook(book2) {
             const soon = d(2, 6); /* time til next intervene() */
 
             /* successful invocation */
-            // DEFERRED: mkmaze.c mkinvokearea() has no port; it is RNG-free
-            // (it rewrites the sanctum terrain and prints the four messages).
+            const { mkinvokearea } = await import('./mklev.js');
+            await mkinvokearea();
             u.uevent = u.uevent || {};
             u.uevent.invoked = 1;
             const { record_achievement } = await import('./insight.js');

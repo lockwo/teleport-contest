@@ -21,7 +21,7 @@ import { mkmap_mines, pri_create_trap, pri_region_rect } from './pri_loca.js';
 // ════════════════════════════════════════════════════════════════════════
 
 // C ref: monsym.h S_* class indices (def_char_to_monclass()).
-const S_RODENT = 18, S_EEL = 57, S_DRAGON = 30, S_SPIDER = 19;
+const S_RODENT = 18, S_EEL = 57, S_DRAGON = 30, S_SNAKE = 45;
 
 const HEA_LOCA_MAP = [
     'PPPPPPPPPPPPP.......PPPPPPPPPPP',
@@ -108,7 +108,7 @@ export async function makemaz_hea_loca() {
         for (let i = 0; i < 2; i++) quest_monster({ name: 'shark' });
         for (let i = 0; i < 2; i++) quest_monster({ cls: S_EEL, peaceful: 0 });
         for (let i = 0; i < 5; i++) quest_monster({ cls: S_DRAGON, peaceful: 0 });
-        for (let i = 0; i < 9; i++) quest_monster({ cls: S_SPIDER, peaceful: 0 });
+        for (let i = 0; i < 9; i++) quest_monster({ cls: S_SNAKE, peaceful: 0 });
     } finally {
         g._quest_gen = false;
         g._full_mon_gen = false;

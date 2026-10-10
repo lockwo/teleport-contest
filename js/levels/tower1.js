@@ -3,6 +3,7 @@
 // shared special-level machinery still lives there and is imported below.
 
 import { COLNO, ROWNO } from '../const.js';
+import { christen_monst } from '../do_name.js';
 import { game } from '../gstate.js';
 import {
     enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx, newcham_vamp,
@@ -14,6 +15,7 @@ import {
     quest_create_object, quest_level_init_solidfill, quest_set_door, shuffle, tower1_load_map,
     tower_place_ladder, tower_wallification,
 } from '../sp_lev.js';
+import { quest_non_diggable } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
 // Vlad's Tower upper stage (dat/tower1.lua).
@@ -56,7 +58,9 @@ function tower_create_V(mx, my) {
         const cc = enexto_spawn(x, y, ptr);
         if (cc) { x = cc.x; y = cc.y; }
     }
-    return makemon(ptr, x, y, 0);
+    const mtmp = makemon(ptr, x, y, 0);
+    if (mtmp) mtmp.female = 0;                       // sp_lev.c:2125, id-less default
+    return mtmp;
 }
 
 // C ref: sp_lev.c create_monster for { id="vampire lady", name, waiting=1 }.
@@ -78,7 +82,7 @@ function tower_create_vampire_lady(name, mx, my) {
     const mtmp = makemon(ptr, x, y, 0);
     if (!mtmp) return null;
     mtmp.female = 1;                                 // "lady" -> female (no RNG)
-    if (name) mtmp.mname = name;                     // christen (no RNG)
+    if (name) christen_monst(mtmp, name);            // christen (no RNG)
     // C ref: monst.h:177 STRAT_WAITFORU — tower1.lua's waiting=1.  decide_to_
     // shapeshift() tests !(mstrategy & STRAT_WAITFORU); with STRAT_ARRIVE here
     // instead, all three vampire ladies drew an rn2(6) C never draws.
@@ -173,6 +177,7 @@ export async function makemaz_tower1() {
     }
 
     // des.non_diggable(selection.area(0,0,14,10)) — no RNG.
+    quest_non_diggable(0, 0, 14, 10);
 
     // C ref: lspo_finalize_level -> wallification then flip_level_rnd(3, FALSE).
     tower_wallification(1, 0, COLNO - 1, ROWNO - 1);

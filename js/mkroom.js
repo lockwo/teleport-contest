@@ -126,7 +126,9 @@ export function somexy(croom, c) {
             }
         }
         if (in_subroom) continue;
-        return true;
+        /* C: `break`, then `if (try_cnt >= 100) return FALSE` — a hit on the
+           100th attempt (try_cnt already 100) still counts as failure. */
+        return try_cnt < 100;
     }
     return false;
 }

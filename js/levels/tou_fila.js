@@ -34,7 +34,7 @@ import {
     OROOM, ROOM, ROOMOFFSET, ROWNO, STONE, TREE,
 } from '../const.js';
 import { game } from '../gstate.js';
-import { depth, isok } from '../hacklib.js';
+import { isok } from '../hacklib.js';
 import { somexy } from '../mkroom.js';
 import { rn2, rnd } from '../rng.js';
 import {
@@ -52,13 +52,6 @@ const MK_WIDTH = COLNO - 2, MK_HEIGHT = ROWNO - 1;
 // mkmap.c:62 dirs[16].
 const MK_DIRS = [[-1, -1], [-1, 0], [-1, 1], [0, -1],
                  [0, 1], [1, -1], [1, 0], [1, 1]];
-
-// mkmap.c:442 litstate_rnd(litstate).
-function tou_litstate_rnd(litstate) {
-    if (litstate < 0)
-        return (rnd(1 + Math.abs(depth(game.u?.uz))) < 11 && rn2(77)) ? true : false;
-    return !!litstate;
-}
 
 function tou_init_map(bg_typ) {
     for (let x = 1; x < COLNO; x++)
@@ -334,11 +327,12 @@ function tou_finish_map(fg_typ, bg_typ, lit, walled) {
         }
 }
 
-// C ref: sp_lev.c splev_initlev() LVLINIT_MINES -> mkmap.c mkmap(init_lev).
+// C ref: sp_lev.c:3005-3006 splev_initlev() LVLINIT_MINES -> mkmap.c mkmap(init_lev).
 // `lit` is never given by Tou-fila/Tou-filb's des.level_init table, so it stays
-// BOOL_RANDOM and litstate_rnd() draws.
+// BOOL_RANDOM and splev_initlev resolves it with ONE rn2(2) before mkmap() runs
+// (mkmap's own litstate_rnd() is then a no-draw pass-through).
 export function tou_mkmap_mines(bg_typ, fg_typ, smooth, join, walled) {
-    const lit = tou_litstate_rnd(-1);
+    const lit = rn2(2) !== 0;
     tou_init_map(bg_typ);
     tou_init_fill(bg_typ, fg_typ);
     tou_pass_one(bg_typ, fg_typ);                          // N_P1_ITER 1

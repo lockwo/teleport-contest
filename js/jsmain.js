@@ -13,6 +13,7 @@ import { game, resetGame } from './gstate.js';
 import { recorder_ubirthday } from './calendar.js';
 import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
+import { NetHackPanic } from './panic.js';
 import { newgame, moveloop_core, early_init } from './allmain.js';
 import { parseNethackrc, config_error_report, fruitadd } from './options.js';
 import { flush_screen, warmupBotlStatusFns } from './display.js';
@@ -310,7 +311,7 @@ export class NethackGame {
         const opts = await parseNethackrc(this._nethackrc);
         g.plname = opts.name || '';
         // C ref: optlist.h NHOPTB(sparkle, ..., On, ...) — default On.
-        g.flags = { verbose: true, invlet_constant: true, dark_room: true, sparkle: true, ...opts.flags };
+        g.flags = { verbose: true, invlet_constant: true, dark_room: true, tips: true, sparkle: true, ...opts.flags };
         // C ref: options.c set_playmode() — when wizard (debug) mode is requested
         // (OPTIONS=playmode:debug) and authorize_wizard_mode() succeeds (the
         // contest sysconf carries WIZARDS=*, so it always does), the player name
@@ -1474,6 +1475,18 @@ export async function runSegment(input) {
             await moveloop_core();
         } catch (e) {
             if (String(e?.message || '').includes('Input queue empty')) break;
+            if (e instanceof NetHackPanic) {
+                // C ref: end.c panic() never returns: the process is gone, so
+                // every remaining recorded keystroke just re-captures the final
+                // "Oops..." screen.  Reading them through nhgetch() fires the
+                // same per-key capture hook C's recorder ran.
+                try {
+                    for (;;) await nhgetch();
+                } catch (e2) {
+                    if (!String(e2?.message || '').includes('Input queue empty')) throw e2;
+                }
+                break;
+            }
             throw e;
         }
     }

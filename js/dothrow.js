@@ -10,13 +10,15 @@
 // use_whip() belongs to apply.c but is reached ONLY from dofire()'s empty-quiver
 // arm in this port, and js/apply.js is a separate write-lease, so it lives here
 // beside its caller.
+import { makeplural, vtense } from './plural.js';
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
 import { m_at, newsym, update_topl, map_invisible, tmp_at_flash, tmp_at_flash_cell,
          canseemon_shared, Deaf_hero } from './display.js';
 import { cansee, Blind } from './vision.js';
-import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT,
+import { BRK_FROM_INV, BRK_KNOWN_OUTCOME, BRK_KNOWN2BREAK, BRK_KNOWN2NOTBREAK } from './const.js';
+import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT, IS_STWALL, W_NONPASSWALL,
          LAVAPOOL, TT_PIT, P_DAGGER, A_DEX, A_CHA, NEED_HTH_WEAPON,
          MM_NOMSG, EYE, SHOPBASE } from './const.js';
 // C ref: trap.h:57 enum trap_types — used by the hurtle_step() port below.
@@ -75,45 +77,9 @@ function is_pool_or_lava_at(x, y) { return is_pool_at(x, y) || is_lava_at(x, y);
 // haseyes(ptr) == !(mflags1 & M1_NOEYES).
 function breathless(ptr) { return (mflags1_of(ptr) & M1_BREATHLESS) !== 0; }
 function haseyes(ptr) { return (mflags1_of(ptr) & M1_NOEYES) === 0; }
-const VTENSE_SPECIAL_SUBJS = ['erinys', 'manes', 'Cyclops', 'Hippocrates', 'Pelias',
-    'aklys', 'amnesia', 'detect monsters', 'paralysis', 'shape changers', 'nemesis'];
-// C ref: objnam.c vtense(subj, verb) — `verb` arrives in the plural (no
-// trailing s) and is returned unchanged when `subj` reads as plural.
-// Used for thrown body parts and for projectile miss messages.
-export function vtense(subj, verb) {
-    if (subj) {
-        const s = String(subj), lc = s.toLowerCase();
-        if (!/^an? /i.test(s)) {
-            const m = / (?:of|from|called|named|labeled) /i.exec(s);
-            const spot = (m && m.index > 0) ? m.index - 1 : s.length - 1;
-            const tail = (n) => (spot - n + 1 >= 0) ? lc.slice(spot - n + 1, spot + 1) : '';
-            if ((lc.charAt(spot) === 's' && spot > 0 && !'us'.includes(lc.charAt(spot - 1)))
-                || tail(4) === 'eeth' || tail(4) === 'feet'
-                || tail(2) === 'ia' || tail(2) === 'ae') {
-                const len = spot + 1;
-                const special = VTENSE_SPECIAL_SUBJS.some((sp) => {
-                    const l = sp.length, spl = sp.toLowerCase();
-                    return (len === l && lc.slice(0, len) === spl)
-                        || (len > l && lc.charAt(spot - l) === ' '
-                            && lc.slice(spot - l + 1, spot + 1) === spl);
-                });
-                if (!special) return verb;
-            } else if (/^(they|you)$/i.test(s)) {
-                return verb;
-            }
-        }
-    }
-    const v = String(verb), lc = v.toLowerCase(), end = lc.charAt(v.length - 1);
-    if (lc === 'are') return 'is';
-    if (lc === 'have') return `${v.slice(0, -2)}s`;
-    if ('zxs'.includes(end)
-        || (v.length >= 2 && end === 'h' && 'cs'.includes(lc.charAt(v.length - 2)))
-        || (v.length === 2 && end === 'o'))
-        return `${v}es`;
-    if (end === 'y' && !'aeiou'.includes(lc.charAt(v.length - 2)))
-        return `${v.slice(0, -1)}ies`;
-    return `${v}s`;
-}
+// C ref: objnam.c vtense(subj, verb) lives in the leaf module js/plural.js (the
+// one faithful copy, with special_subjs[]); re-exported for the existing importers.
+export { vtense };
 // C ref: hack.h next2u(x,y).
 function next2u(x, y) {
     const u = game.u;
@@ -171,7 +137,7 @@ function corpse_is_horse(otmp) {
 async function mon_hand_noun(mtmp, otmp) {
     const { mbodypart } = await import('./monmove.js');
     const hand = mbodypart(mtmp, HAND);
-    return I.bimanual(otmp) ? I.makeplural(hand) : hand;
+    return I.bimanual(otmp) ? makeplural(hand) : hand;
 }
 // C ref: pickup.c pickup_object(obj, count, telekinesis) reduced to the single
 // floor-object case the whip snare uses.  Returns 1 when the object was picked
@@ -424,7 +390,7 @@ export async function breakobj(obj, x, y, hero_caused, from_invent) {
                     } else {
                         const PS = await import('./polyself.js');
                         let eyes = PS.body_part(EYE);
-                        if (PS.eyecount(ptr) !== 1) eyes = I.makeplural(eyes);
+                        if (PS.eyecount(ptr) !== 1) eyes = makeplural(eyes);
                         await update_topl(`Your ${eyes} ${vtense(eyes, 'water')}.`);
                     }
                 }
@@ -456,13 +422,17 @@ export async function breakobj(obj, x, y, hero_caused, from_invent) {
     return 1;
 }
 
-// C ref: dothrow.c hero_breaks(obj, x, y, breakflags) — breaktest + breakmsg +
-// breakobj for something the hero did.
-export const BRK_FROM_INV = 0x01;
+// C ref: dothrow.c:2417 hero_breaks(obj, x, y, breakflags) — breaktest +
+// breakmsg + breakobj for something the hero did.  Callers that already ran
+// breaktest() pass BRK_KNOWN2BREAK / BRK_KNOWN2NOTBREAK so it is not re-rolled
+// (breaktest's obj_resists draws rn2(100)).
 export async function hero_breaks(obj, x, y, breakflags) {
     const from_invent = (breakflags & BRK_FROM_INV) !== 0;
     const in_view = Blind() ? false : (from_invent || cansee(x, y));
-    if (!breaktest(obj)) return 0;
+    let brk = (breakflags & BRK_KNOWN_OUTCOME);
+    /* only call breaktest if caller hasn't already specified the outcome */
+    if (!brk) brk = breaktest(obj) ? BRK_KNOWN2BREAK : BRK_KNOWN2NOTBREAK;
+    if (brk === BRK_KNOWN2NOTBREAK) return 0;
     await breakmsg(obj, in_view);
     return await breakobj(obj, x, y, true, from_invent);
 }
@@ -554,15 +524,15 @@ export async function gem_accept(mon, obj) {
     }
     if (!nopick) {
         buf += acceptgift;
-        if (obj.unpaid) await check_shop_obj(obj, mon.mx, mon.my, true);
+        if ((game.u.ushops && game.u.ushops[0]) || obj.unpaid)
+            await check_shop_obj(obj, mon.mx, mon.my, true);
         const { mpickobj } = await import('./steal.js');
         mpickobj(mon, obj);
         ret = 1;
     }
     if (!Blind()) await update_topl(buf);
-    // C: `if (!tele_restrict(mon)) rloc(mon, RLOC_MSG)`.
     const T = await import('./teleport.js');
-    if (T.rloc) await T.rloc(mon, true);
+    if (!(await T.tele_restrict(mon))) await T.rloc(mon, T.RLOC_MSG);
     return ret;
 }
 
@@ -754,10 +724,10 @@ export async function tamedog(mtmp, obj, givemsg) {
         || (obj && DM.dogfood(mtmp, obj) >= MANFOOD))
         return false;
 
-    // C: `mtmp->m_id == svq.quest_status.leader_m_id`.  This port carries no
-    // leader_m_id; monsters.h marks every quest-leader species MS_LEADER, which
-    // js/questpgr.js already uses as the leader identity (no RNG either way).
-    if (msound_of(mtmp.data) === MS_LEADER)
+    // C ref: dog.c tamedog() `mtmp->m_id == svq.quest_status.leader_m_id`
+    // (makemon.js records leader_m_id when the quest leader is created).
+    if (game.quest_status?.leader_m_id != null
+        && mtmp.m_id === game.quest_status.leader_m_id)
         return false;
 
     /* add the pet extension */
@@ -1061,7 +1031,7 @@ function xytodir(x, y) {
         if (x === XDIR[dd] && y === YDIR[dd]) return dd;
     return -1; /* DIR_ERR */
 }
-export async function boomhit(obj, dx, dy, skillsnap) {
+export async function boomhit(obj, dx, dy) {
     const u = game.u;
     // C ref: you.h URIGHTY — a right-handed hero's boomerang curves
     // counterclockwise.  u_init.c sets uhandedness with rn2(10) at chargen.
@@ -1094,7 +1064,7 @@ export async function boomhit(obj, dx, dy, skillsnap) {
             // C ref: zap.c:4192 `else if (throwit_mon_hit(obj, mtmp) ||
             // !gt.thrownobj) break;` — only a boomerang used up by the hit
             // stops here; one that survives keeps flying along its curve.
-            if (await I.thitmonst(mtmp, obj, skillsnap)) { await flash.end(); return { gone: true }; }
+            if (await I.thitmonst(mtmp, obj)) { await flash.end(); return { gone: true }; }
         }
         if (!zap_pos(typ_at(bx, by)) || closed_door(bx, by)) {
             bx -= dx; by -= dy; game.bhitpos = { x: bx, y: by }; break;
@@ -1249,7 +1219,7 @@ const Sokoban_hurtle = () => game.u?.uz?.dnum === game.sokoban_dnum;
 function may_passwall_hurtle(x, y) {
     const loc = game.level?.at?.(x, y);
     if (!loc) return false;
-    return !((loc.typ | 0) <= 12 /* SDOOR */ && ((loc.wall_info | 0) & 0x08));
+    return !(IS_STWALL(loc.typ) && ((loc.wall_info | 0) & W_NONPASSWALL));
 }
 
 // C ref: hack.c:937 bad_rock(mdat, x, y).  js/hack.js:621 holds a hero-only
@@ -1468,7 +1438,7 @@ export async function hurtle_step(arg, x, y) {
     /* if terrain type changes, levitation or flying might become blocked or
        unblocked; do this AFTER map+vision has been updated for the new spot */
     if (ltyp !== (game.level?.at?.(ox, oy)?.typ | 0))
-        switch_terrain_hurtle();
+        await switch_terrain_hurtle();
 
     /* might be entering a special room (treasure zoo, throne room, &c) with a
        first-time entry message, or leaving a shop with unpaid goods */
@@ -1485,12 +1455,14 @@ export async function hurtle_step(arg, x, y) {
             await drown_hurtle();
             return false;
         } else if (!Is_waterlevel(u.uz) && !stopping_short) {
-            /* Norep(): the port has no repeat suppression here */
-            await update_topl(`You move over ${
-                an(typ_at(x, y) === MOAT ? 'moat' : 'pool')}.`);
+            /* Norep(): suppressed when identical to the previous message */
+            const mv_msg = `You move over ${
+                an(typ_at(x, y) === MOAT ? 'moat' : 'pool')}.`;
+            if (game._prevmsg !== mv_msg) await update_topl(mv_msg);
         }
     } else if (is_lava_at(x, y) && !stopping_short) {
-        await update_topl('You move over some lava.');
+        if (game._prevmsg !== 'You move over some lava.')
+            await update_topl('You move over some lava.');
     }
 
     /* C's FIXME: each trap should really trigger on the recoil if it would
@@ -1650,7 +1622,7 @@ export async function hurtle(dx, dy, range, verbose) {
      */
     if (Punished_hurtle() && !I.carried(uball_of())) {
         await update_topl('You feel a tug from the iron ball.');
-        nomul_hurtle(0);
+        await nomul_hurtle(0);
         return;
     } else if (u.utrap) {
         const { hliquid } = await import('./do_name.js');
@@ -1660,7 +1632,7 @@ export async function hurtle(dx, dy, range, verbose) {
             : (u.utraptype === TT_INFLOOR_TYPE) ? surface(u.ux, u.uy)
             : (u.utraptype === TT_BURIEDBALL_TYPE) ? 'buried ball'
             : 'trap'}.`);
-        nomul_hurtle(0);
+        await nomul_hurtle(0);
         return;
     }
 
@@ -1671,7 +1643,7 @@ export async function hurtle(dx, dy, range, verbose) {
     if (!range || (!dx && !dy) || u.ustuck)
         return; /* paranoia */
 
-    nomul_hurtle(-range);
+    await nomul_hurtle(-range);
     game.multi_reason = 'moving through the air';
     game.nomovemsg = ''; /* it just happens */
     if (verbose)
@@ -1805,8 +1777,8 @@ export async function throwit_mon_hit(obj, mon) {
         if (mon && mon.isshk
             && (!inside_shop(u.ux, u.uy)
                 /* C: !strchr(in_rooms(mon->mx, mon->my, SHOPBASE), *u.ushops) */
-                || !Array.from(in_rooms(mon.mx, mon.my, 17 /* SHOPBASE */) || [])
-                        .includes(String(u.ushops || '')[0])))
+                || !Array.from(in_rooms(mon.mx, mon.my, SHOPBASE) || [])
+                        .includes((u.ushops || [])[0])))
             await hot_pursuit_hurtle(mon);
 
         if (obj_gone)
@@ -1838,17 +1810,22 @@ async function wake_nearto_hurtle(x, y, distance) {
     const { wake_nearto_core } = await import('./mon.js');
     await wake_nearto_core(x, y, distance, false);
 }
-// C ref: trap.c instapetrify(str) — js/invent.js:1396 is an empty stub too.
-async function instapetrify_hurtle(_why) { /* NOT PORTED (js/invent.js:1396) */ }
+// C ref: trap.c instapetrify(str) — js/polyself.js owns the port.
+async function instapetrify_hurtle(why) {
+    const { instapetrify } = await import('./polyself.js');
+    await instapetrify(why);
+}
 // C ref: mon.c minstapetrify(mon, byplayer) — a monster is instantly
 // petrified; ported at js/trap.js.
 async function minstapetrify_hurtle(mon, byplayer) {
     const { minstapetrify } = await import('./trap.js');
     await minstapetrify(mon, byplayer);
 }
-// C ref: hack.c switch_terrain() — js/dig.js:870 is an empty stub because the
-// port has no B<prop> masks (see js/polyself.js float_vs_flight()).
-function switch_terrain_hurtle() { /* NOT PORTED (js/dig.js:870) */ }
+// C ref: hack.c switch_terrain() — js/trap.js owns the port.
+async function switch_terrain_hurtle() {
+    const { switch_terrain } = await import('./trap.js');
+    await switch_terrain();
+}
 // C ref: trap.c drown() — js/trap.js owns the one copy.
 async function drown_hurtle() { const { drown } = await import('./trap.js'); return await drown(); }
 // C ref: trap.c mintrap(mon, mintrapflags).
@@ -1868,8 +1845,11 @@ async function seemimic_hurtle(mon) {
         seemimicLocal(mon);
     }
 }
-// C ref: shk.c hot_pursuit(shkp) — js/shkroom.js:273 (unexported).
-async function hot_pursuit_hurtle(shkp) { if (shkp) shkp.mpeaceful = 0; }
+// C ref: shk.c hot_pursuit(shkp).
+async function hot_pursuit_hurtle(shkp) {
+    const { hot_pursuit } = await import('./shk.js');
+    hot_pursuit(shkp);
+}
 // C ref: apply.c snuff_candle(otmp) — exported, reached dynamically.
 async function snuff_candle_hurtle(obj) {
     const { snuff_candle } = await import('./apply.js');
@@ -1883,9 +1863,11 @@ async function flush_screen_hurtle(mode) {
 // C ref: do_name.c noit_mhim(mon) — "him"/"her"/"it", with "it" suppressed for
 // a named or seen monster.
 function noit_mhim_hurtle(mon) { return mon?.female ? 'her' : 'him'; }
-// C ref: hack.c nomul(nval) — js/hack.js exports it; only the multi write
-// matters for an inert call site.
-function nomul_hurtle(nval) { game.multi = nval; }
+// C ref: hack.c nomul(nval).
+async function nomul_hurtle(nval) {
+    const { nomul } = await import('./hack.js');
+    nomul(nval);
+}
 // C ref: tty nh_delay_output() — js/hack.js:3734 (unexported).
 async function nh_delay_output_hurtle() { await Promise.resolve(); }
 // C ref: mon.c remove_monster(x, y) — js/worm.js:206 (unexported).

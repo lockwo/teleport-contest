@@ -17,7 +17,7 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
          MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
 import { mflags2_of, M2_PNAME } from './monflags_data.js';
 import { objects } from './mkobj.js';
-import { PRONOUN_HALLU } from './const.js';
+import { PRONOUN_HALLU, PL_PSIZ } from './const.js';
 import { PRONOUN_GENDERS } from './role.js';
 
 // Keep higher-level naming dependencies behind registration: a static import
@@ -365,10 +365,9 @@ function is_rider_mon(ptr) {
 // reject an empty answer or an escape, then mungspaces() and truncate to
 // PL_PSIZ-1.  Note C tests emptiness BEFORE mungspaces, so an all-blank answer
 // survives as the empty string (which do_oname/alreadynamed treat as "erase").
-const PL_PSIZ = 32;
-export async function name_from_player(prompt, defname) {
-    const { getlin } = await import('./input.js');
-    const s = await getlin(`${prompt} `, defname);
+export async function name_from_player(prompt, _defname /* EDIT_GETLIN is off */) {
+    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
+    const s = await hooked_tty_getlin(prompt, null);
     if (s == null || s === '' || s[0] === '\x1b') return null;
     // C ref: hacklib.c mungspaces() — strip leading/trailing blanks, collapse
     // internal runs to one space.

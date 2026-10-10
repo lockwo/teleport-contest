@@ -25,7 +25,7 @@ import { game, hooks } from './gstate.js';
 import {
     COLNO, ROWNO, MAX_RADIUS, COULD_SEE, TEMP_LIT, RANGE_LEVEL,
     FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
-import { clear_path, vision_recalc } from './vision.js';
+import { clear_path, vision_recalc, Blind } from './vision.js';
 import { flush_screen, map_invisible, canseemon_shared } from './display.js';
 import { objects, place_object, start_object_timer } from './mkobj.js';
 import { DEADMONSTER, monsterList } from './mon.js';
@@ -588,10 +588,10 @@ export function relink_light_sources(ghostly) {
             if (ls.type === LS_OBJECT || ls.type === LS_MONSTER) {
                 let nid = ls.id;
                 if (ghostly) {
-                    const mapped = lookup_id_mapping(nid);
-                    if (mapped == null)
+                    const box = {};
+                    if (!lookup_id_mapping(nid, box))
                         throw new Error('relink_light_sources: no id mapping');
-                    nid = mapped;
+                    nid = box.v;
                 }
 
                 let which = '';
@@ -939,7 +939,7 @@ function obj_is_local(obj) {
 // full C version also walks the migrating/buried/bones chains; this walks the
 // chains this port actually has (floor pile, hero inventory and its containers,
 // monster inventories).  Belongs in shk.c's module (see `deferred`).
-function find_oid(id) {
+export function find_oid(id) {
     const seen = (list) => {
         for (const o of (list || [])) {
             if (o.o_id === id) return o;
@@ -962,11 +962,13 @@ function find_oid(id) {
 // C ref: restore.c lookup_id_mapping(gid, nid) — the bones-file id remap.  This
 // port does not load bones from another game, so the map is empty and every
 // lookup fails (C panics, which relink_light_sources() turns into a throw).
-function lookup_id_mapping(gid) {
+export function lookup_id_mapping(gid, nidp) {
     const map = game.id_map;
-    if (!map) return null;
+    if (!map) return false;
     const nid = map.get ? map.get(gid) : map[gid];
-    return nid == null ? null : nid;
+    if (nid == null) return false;
+    nidp.v = nid;
+    return true;
 }
 
 // C ref: display.h:129 canspotmon(mon) = canseemon(mon) || sensemon(mon).
@@ -984,7 +986,7 @@ function tp_sensemon(mon) {
     const u = game.u, p = u?.uprops || {};
     if (mindless(mon.data)) return false;
     /* Blind_telepat is the INTRINSIC half; it only works while blind */
-    const blind = (u?.blinded || 0) > 0 || !!game.ublindf;
+    const blind = Blind();
     if (blind && ((p.Telepat ?? 0) || (p.HTelepat ?? 0))) return true;
     /* Unblind_telepat is the EXTRINSIC (worn/wielded) half only */
     return !!p.ETelepat

@@ -337,14 +337,14 @@ function ran_finish_map(fg_typ, bg_typ, lit, walled, icedpools) {
         }
 }
 
-// C ref: mkmap.c litstate_rnd().  `litstate` mirrors get_table_boolean_opt's
-// BOOL_RANDOM sentinel: pass `null` (no explicit lit= key in the .lua) or any
-// negative number to draw; an explicit true/false costs no RNG.
+// C ref: sp_lev.c splev_initlev() LVLINIT_MINES arm: a BOOL_RANDOM lit (no
+// explicit lit= key in the .lua) is resolved HERE with a single rn2(2) BEFORE
+// mkmap() runs, so mkmap()'s own litstate_rnd() is then a no-draw pass-through
+// (the depth-weighted rnd(1+depth)/rn2(77) roll is NOT used on this path).
+// Pass `null` or any negative number for BOOL_RANDOM; an explicit true/false
+// costs no RNG.
 function ran_litstate_rnd(litstate) {
-    if (litstate == null || litstate < 0) {
-        const d = depth(game.u?.uz);
-        return (rnd(1 + Math.abs(d)) < 11 && rn2(77)) ? true : false;
-    }
+    if (litstate == null || litstate < 0) return rn2(2) !== 0;   // sp_lev.c:3006
     return !!litstate;
 }
 
@@ -352,7 +352,7 @@ function ran_litstate_rnd(litstate) {
 // explicit des.level_init lit=... key, as in both Ran-fila.lua and
 // Ran-filb.lua) — pass an explicit true/false otherwise.
 export function ran_mkmap({ bg_typ, fg_typ, smooth, join, lit = null, walled }) {
-    const resolvedLit = ran_litstate_rnd(lit);        // mkmap.c:458, drawn FIRST
+    const resolvedLit = ran_litstate_rnd(lit);        // sp_lev.c:3006 rn2(2), drawn FIRST
     ran_mk_init_map(bg_typ);
     ran_mk_init_fill(bg_typ, fg_typ);
     ran_mk_pass_one(bg_typ, fg_typ);                          // N_P1_ITER 1

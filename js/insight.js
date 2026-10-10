@@ -37,7 +37,8 @@ import { Infravision, Blind } from './vision.js';
 import { objects as OBJECTS } from './mkobj.js';
 import { MFLAGS2, M2_PNAME, humanoid } from './monflags_data.js';
 const G_UNIQ = 0x1000; // monflag.h
-import { magic_negation_hero } from './monmove.js';
+import { magic_negation } from './mhitu.js';
+import { YOUMONST } from './mhitm_ad.js';
 import {
     armor_simple_name, cloak_simple_name, suit_simple_name, shirt_simple_name,
     helm_simple_name, gloves_simple_name, boots_simple_name, shield_simple_name,
@@ -444,7 +445,14 @@ export function enlightenment_lines(final = 0, basic = true) {
     youAre(roleBuf);
 
     // alignment + pantheon (bypasses you_are to omit ending period)
-    out(` You ${final ? 'were' : 'are'} ${alignStr(aligntype)}, on a mission for ${align_gname(roleIdx, aligntype)}`);
+    // C ref: insight.c:532-549 — adverb before "on a mission": helm of opposite
+    // alignment, permanent conversion, or (after turn 1000) an atheist hero.
+    const algnAdv = (u.ualign?.type !== u.ualignbase?.[A_CURRENT])
+        ? (!final ? 'currently ' : 'temporarily ')
+        : (u.ualign?.type !== u.ualignbase?.[A_ORIGINAL])
+            ? (!final ? 'now ' : 'belatedly ')
+            : (!u.uconduct?.gnostic && (game.moves | 0) > 1000) ? 'nominally ' : '';
+    out(` You ${final ? 'were' : 'are'} ${alignStr(aligntype)}, ${algnAdv}on a mission for ${align_gname(roleIdx, aligntype)}`);
     let pan = ` who ${final ? 'was' : 'is'} opposed by`;
     if (aligntype !== A_LAWFUL)
         pan += ` ${align_gname(roleIdx, A_LAWFUL)} (${alignStr(A_LAWFUL)}) and`;
@@ -685,13 +693,30 @@ export function enlightenment_lines(final = 0, basic = true) {
     // M_AP_NOTHING)) youhiding(TRUE, final);`, after the movement lines and
     // before the internal troubles.
     if (u.Upolyd && (u.uundetected || U_AP_TYPE() !== 0)) youAre(youhiding_buf());
-    if ((up.Stoned | 0) > 0) youAre('turning to stone');
-    if ((up.Slimed | 0) > 0) youAre('turning into slime');
-    if ((up.Strangled | 0) > 0)
-        youAre(`being strangled${_wizard() ? ` (${up.Strangled & TIMEOUT_MASK})` : ''}`);
+    // C ref: timeout.c:579 done_timeout() ORs I_SPECIAL into the fatal property
+    // (kept in game._i_special_props here); insight.c:1007-1048 reports it
+    // as "You died from ..." in the final disclosure.
+    const ispec = (w) => !!final && !!game._i_special_props?.has(w);
+    if ((up.Stoned | 0) > 0) {
+        if (ispec(STONED)) out(' You turned into stone.');
+        else youAre('turning to stone');
+    }
+    if ((up.Slimed | 0) > 0) {
+        if (ispec(SLIMED)) out(' You turned into slime.');
+        else youAre('turning into slime');
+    }
+    if ((up.Strangled | 0) > 0) {
+        if (ispec(STRANGLED)) out(' You died from strangulation.');
+        else youAre(`being strangled${_wizard() ? ` (${up.Strangled & TIMEOUT_MASK})` : ''}`);
+    }
     if ((up.Sick | 0) > 0 || u.sick) {
-        if (u.usick_type & SICK_NONVOMITABLE) youAre('terminally sick from illness');
-        if (u.usick_type & SICK_VOMITABLE) youAre('terminally sick from food poisoning');
+        if (ispec(SICK)) {
+            out(` You died from ${(u.usick_type & SICK_NONVOMITABLE)
+                ? 'terminal illness' : 'food poisoning'}.`);
+        } else {
+            if (u.usick_type & SICK_NONVOMITABLE) youAre('terminally sick from illness');
+            if (u.usick_type & SICK_VOMITABLE) youAre('terminally sick from food poisoning');
+        }
     }
     if ((up.Vomiting | 0) > 0) youAre('nauseated');
     if ((up.Stun | 0) > 0 || u.Stunned) youAre('stunned');
@@ -721,6 +746,22 @@ export function enlightenment_lines(final = 0, basic = true) {
     // are live state, not special messages: omitting them changes the number
     // of tty menu pages whenever a punished or leg-wounded hero uses ^X.
     if (u.uball) youAre(`chained to ${ansimpleoname(u.uball)}`);
+    // C ref: insight.c:1086-1098 — `if (u.utrap)`: the trap predicament
+    // ("trapped in a bear trap {5}" in wizard mode), reported for the hero or
+    // "<steed> is/was" when riding, after the ball-and-chain line and before
+    // the held-by line.
+    if (u.utrap) {
+        const anchored = (u.utraptype === TT_BURIEDBALL);
+        const predicament = trap_predicament(null, final, _wizard());
+        if (u.usteed) { /* not `Riding' here */
+            let sb = `${anchored ? 'you and ' : ''}${y_monnam(u.usteed)} `;
+            sb = sb.charAt(0).toUpperCase() + sb.slice(1);
+            enlLine(sb, anchored ? (final ? 'were ' : 'are ') : (final ? 'was ' : 'is '),
+                    predicament, '');
+        } else {
+            youAre(predicament);
+        }
+    }
     // C ref: insight.c:1124 — held by (or swallowed by) the creature u.ustuck.
     if (u.ustuck) {
         let heldmon = a_monnam(u.ustuck);
@@ -798,7 +839,7 @@ export function enlightenment_lines(final = 0, basic = true) {
         }
     }
     // current weapon + skill
-    weaponInsight(youAre, youHave, enlLine);
+    weaponInsight(youAre, youHave, enlLine, final);
     // C ref: status_enlightenment() tail — "report 'nudity'": no armor worn at
     // all (the covered heroes never have uroleplay.nudist set).
     if (!game.uarm && !game.uarmu && !game.uarmc && !game.uarms
@@ -903,7 +944,7 @@ const SKILL_LVL_NAME = {
 function skillLevelNameLc(lvl) { return SKILL_LVL_NAME[lvl] || 'unknown'; }
 
 // C ref: insight.c weapon_insight() — wielding line + weapon skill level.
-function weaponInsight(youAre, youHave, enlLine) {
+function weaponInsight(youAre, youHave, enlLine, final = 0) {
     const uwep = game.uwep;
     if (!uwep) {
         // C: you_are(empty_handed(), "").
@@ -916,8 +957,11 @@ function weaponInsight(youAre, youHave, enlLine) {
         const skName = isMartialArtsRole() ? 'martial arts' : 'bare handed combat';
         const lvl = skillLevelNameLc(p_skill_of(P_BARE_HANDED_COMBAT));
         const hav = lvl !== 'unskilled' && lvl !== 'skilled';
-        if (hav) youHave(`${lvl} skill with ${skName}`);
-        else youAre(`${lvl} in ${skName}`);
+        // C ref: insight.c:1326 can_advance(wtype, FALSE) appends the hint.
+        const adv = can_advance_pub(P_BARE_HANDED_COMBAT, false)
+            ? ` and ${!final ? 'can enhance' : 'could have enhanced'} that` : '';
+        if (hav) youHave(`${lvl} skill with ${skName}${adv}`);
+        else youAre(`${lvl} in ${skName}${adv}`);
         return;
     }
 
@@ -936,11 +980,14 @@ function weaponInsight(youAre, youHave, enlLine) {
             || strcmpi(descr, 'venom') === 0)
             youAre(`wielding some ${descr}`);
         else
-            youAre(`wielding ${uwep.quan === 1 || uwep.quan == null ? an(descr) : objnam_makeplural(descr)}`);
+            youAre(`wielding ${uwep.quan === 1 || uwep.quan == null ? an(descr) : makeplural(descr)}`);
     }
 
     const skName = weaponSkillName(uwep);
     if (!skName) return;
+    // C ref: insight.c:1311 `(!uwep || !is_ammo(uwep))` — no skill line for
+    // wielded ammo (arrows, rocks, ...).
+    if (is_ammo(uwep)) return;
 
     if (!game.u?.twoweap) {
         // C ref: insight.c:1315 — sklvl = P_SKILL(wtype); P_ISRESTRICTED prints
@@ -948,7 +995,10 @@ function weaponInsight(youAre, youHave, enlLine) {
         const sklvl = p_skill_of(weapon_type(uwep));
         const hav = (sklvl !== P_UNSKILLED && sklvl !== P_SKILLED);
         const lvl = (sklvl === P_ISRESTRICTED) ? 'no' : skillLevelNameLc(sklvl);
-        const buf = `${lvl} ${hav ? 'skill with' : 'in'} ${skName}`;
+        let buf = `${lvl} ${hav ? 'skill with' : 'in'} ${skName}`;
+        // C ref: insight.c:1326 can_advance(wtype, FALSE) appends the hint.
+        if (can_advance_pub(weapon_type(uwep), false))
+            buf += ` and ${!final ? 'can enhance' : 'could have enhanced'} that`;
         if (hav) youHave(buf); else youAre(buf);
         return;
     }
@@ -1034,12 +1084,6 @@ const SKILL_NAME_BY_NUM = {
 };
 function weaponSkillName(obj) {
     return SKILL_NAME_BY_NUM[weapon_type(obj)] || null;
-}
-
-function makeplural(s) {
-    if (/(s|x|z|ch|sh)$/.test(s)) return `${s}es`;
-    if (/[^aeiou]y$/.test(s)) return `${s.slice(0, -1)}ies`;
-    return `${s}s`;
 }
 
 // C ref: eat.c hu_stat[] (lower-cased; "" -> "not hungry").
@@ -1622,13 +1666,10 @@ import { temp_resist } from './eat.js';
 import { spellid } from './spell.js';
 import { hliquid } from './do_name.js';
 import { find_ac } from './u_init.js';
-import { money_cnt_invent, hidden_gold } from './shk.js';
-import { costly_spot } from './shkroom.js';
-// C ref: objnam.c makeplural().  insight.js's local makeplural() (above) is a
-// crude reduced copy that predates it; the fix is to delete the local one and
-// use this everywhere, not to add a third.
-import { makeplural as objnam_makeplural, ansimpleoname,
-         carrying, near_capacity, body_part, youmonst_data_pub } from './invent.js';
+import { money_cnt_invent, hidden_gold, costly_spot } from './shk.js';
+import { ansimpleoname,
+         carrying, near_capacity, body_part, youmonst_data_pub, Hate_silver } from './invent.js';
+import { makeplural } from './plural.js';
 import { y_monnam, a_monnam } from './do_name.js';
 
 // ── window shim (wintty.h / C's ge.en_win) ──────────────────────────────────
@@ -1816,7 +1857,7 @@ function pmname(ptr, gender) {
 // C ref: monst.h vampshifted(mon) — `is_vampshifter(mon) && !is_vampire(mon->data)`:
 // a vampire currently in bat/fog/wolf shape.  The hero's youmonst.cham is u.mcham
 // (polyself.js set_uasmon()) and youmonst.data is youmonst_data_pub().
-function vampshifted(mon) {
+export function vampshifted(mon) {
     const hero = !mon || mon === game.youmonst;
     const cham = hero ? game.u?.mcham : mon.cham;
     if (!ismnum(cham)) return false;
@@ -2773,7 +2814,7 @@ export function status_enlightenment(mode, final) {
             leftright = '';
 
         if (whichleg === BOTH_SIDES) {
-            bp = objnam_makeplural(bp); article = '';
+            bp = makeplural(bp); article = '';
         } else {
             leftright = (whichleg === LEFT_SIDE) ? 'left ' : 'right ';
         }
@@ -2942,7 +2983,7 @@ export function weapon_insight(final) {
             || strcmpi(what, 'venom') === 0)
             buf = `wielding some ${what}`;
         else
-            buf = `wielding ${(uwep.quan === 1) ? an(what) : objnam_makeplural(what)}`;
+            buf = `wielding ${(uwep.quan === 1) ? an(what) : makeplural(what)}`;
         you_are(buf, '', final);
     }
 
@@ -3274,7 +3315,7 @@ export function attributes_enlightenment(_unused_mode, final) {
     warnspecies = game.context?.warntype?.speciesidx;
     if (Prop(WARN_OF_MON) && ismnum(warnspecies)) {
         buf = `aware of the presence of ${
-            objnam_makeplural(monster_by_pmidx(warnspecies)?.name || '')}`;
+            makeplural(monster_by_pmidx(warnspecies)?.name || '')}`;
         you_are(buf, from_what_p(WARN_OF_MON), final);
     }
     if (Prop(WARN_UNDEAD))
@@ -3454,7 +3495,7 @@ export function attributes_enlightenment(_unused_mode, final) {
         if (prot)
             you_have(enlght_combatinc('defense', prot, final, null), '', final);
     }
-    if ((armpro = magic_negation_hero()) > 0) {
+    if ((armpro = magic_negation(YOUMONST)) > 0) {
         /* magic cancellation factor, conferred by worn armor */
         const mc_types = ['' /*ordinary*/, 'warded', 'guarded', 'protected'];
         /* sanity check */
@@ -3648,17 +3689,6 @@ function Amphibious() {
 // C ref: youprop.h Half_gas_damage — worn/intrinsic poison-gas mitigation; no
 // covered path grants it and this port keeps no u.uprops slot for it.
 function Half_gas_damage() { return false; }
-// C ref: mondata.c hates_silver(ptr) / youprop.h Hate_silver ==
-// (ismnum(u.ulycn) || hates_silver(youmonst.data)).
-function hates_silver(ptr) {
-    if (!ptr) return false;
-    return !!((mflags2_of(ptr) & M2_WERE) || ptr.mcls === S_VAMPIRE_CLS
-              || (mflags2_of(ptr) & M2_DEMON) || ptr.name === 'shade'
-              || (ptr.mcls === S_IMP_CLS && ptr.name !== 'tengu'));
-}
-function Hate_silver() {
-    return !!(ismnum(game.u?.ulycn) || hates_silver(youmonst_data_pub()));
-}
 // C ref: youprop.h Fast/Very_fast.  js/allmain.js owns the port's readers.
 function Fast() { return !!(youHaveFast() || youHaveVeryFast()); }
 function Very_fast() { return !!youHaveVeryFast(); }
@@ -4291,7 +4321,7 @@ export async function list_vanquished(defquery, ask) {
                         buf = an(mi?.name || '');
                     else
                         buf = `${String(nkilled).padStart(3, ' ')} ${
-                            objnam_makeplural(mi?.name || '')}`;
+                            makeplural(mi?.name || '')}`;
                 }
                 /* number of leading spaces to match 3 digit prefix */
                 pfx = /^the /i.test(buf) ? 0
@@ -4463,7 +4493,7 @@ export async function list_genocided(defquery, ask) {
                            upstart(buf));
                     prev_mlet = mlet;
                 }
-                buf = ` ${objnam_makeplural(mi?.name || '')}`;
+                buf = ` ${makeplural(mi?.name || '')}`;
                 /*
                  * We only append "(extinct)" if the G_GENOD bit is clear.
                  */

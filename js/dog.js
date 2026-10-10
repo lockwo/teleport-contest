@@ -2,6 +2,7 @@
 // C ref: dog.c - pet_type, makedog.
 
 import { game, hooks } from './gstate.js';
+import { roomAt } from './roomat.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
 import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL, OBJ_FREE, OBJ_MINVENT } from './const.js';
@@ -10,6 +11,7 @@ import { set_malign, monster_by_pmidx, propagate } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
 import { finish_meating } from './dogmove.js';
 import { goodpos_onscary } from './teleport.js';
+import { m_at } from './display.js';
 
 // C ref: include/onames.h — SADDLE object type index (mkobj.js OBJECTS table
 // row [235, "SADDLE", ...]).  A saddle is a TOOL_CLASS object whose
@@ -52,13 +54,6 @@ export function pet_type() {
     if (game.preferred_pet === 'd')
         return PM_LITTLE_DOG;
     return rn2(2) ? PM_KITTEN : PM_LITTLE_DOG;
-}
-
-// C ref: mon.c m_at — monster at <x,y>.
-function m_at(x, y) {
-    for (const m of game.level?.monsters || [])
-        if (m.mx === x && m.my === y) return m;
-    return null;
 }
 
 // C ref: teleport.c goodpos — minimal version for starting-pet placement:
@@ -1075,7 +1070,7 @@ export async function mon_arrive(mtmp, when) {
         if (r && r.length) {
             const { somexy } = await import('./mkroom.js');
             const c = { x: 0, y: 0 };
-            const croom = game.level?.rooms?.[r[0] - 3 /*ROOMOFFSET*/];
+            const croom = roomAt(r[0]);
 
             /* somexy() handles irregular rooms */
             if (croom && somexy(croom, c)) {
@@ -1220,16 +1215,16 @@ export async function keepdogs(pets_only) {
             let stay_behind = false;
 
             if (mtmp.mtrapped) {
-                /* C ref: trap.c mintrap(mtmp, NO_TRAP_FLAGS) — try to escape.
-                   UNPORTED (no mintrap in js/), so the escape roll is skipped
-                   rather than mis-ordered; wiring this up needs mintrap. */
-                void NO_TRAP_FLAGS;
+                /* C ref: dog.c:826 mintrap(mtmp, NO_TRAP_FLAGS) — try to escape */
+                const { mon_mintrap } = await import('./monmove.js');
+                await mon_mintrap(mtmp, NO_TRAP_FLAGS);
             }
             if (mtmp === u.usteed) {
                 /* make sure steed is eligible to accompany hero */
                 mtmp.mtrapped = 0;       /* escape trap */
                 mtmp.meating = 0;        /* terminate eating */
-                /* C ref: steal.c mdrop_special_objs(mtmp) — UNPORTED */
+                const { mdrop_special_objs } = await import('./steal.js');
+                await mdrop_special_objs(mtmp);
             } else if (mtmp.meating || mtmp.mtrapped) {
                 if (await canseemon_shared(mtmp))
                     await pline(`${await Monnam_shared(mtmp)} is still `
@@ -1334,13 +1329,16 @@ export async function migrate_to_level(mtmp, tolev, xyloc, cc) {
 
     const { ledger_to_dnum, ledger_to_dlev } = await import('./dungeon.js');
     const { depth } = await import('./hacklib.js');
+    /* A trap whose dst was never filled in (a tutorial portal keeps
+       maketrap()'s -1,-1) gives ledger_no() <= 0, which no dungeon contains:
+       C's ledger_to_dnum() panic()s, ending the game. */
     new_lev.dnum = ledger_to_dnum(tolev);
     new_lev.dlevel = ledger_to_dlev(tolev);
+    xyflags = (depth(new_lev) < depth(u.uz)) ? 1 : 0; /* 1 => up */
     /* overload mtmp->[mx,my], mtmp->[mux,muy] and mtmp->mtrack[] as
        destination codes */
-    xyflags = (depth(new_lev) < depth(u.uz)) ? 1 : 0; /* 1 => up */
-    /* C ref: dungeon.c In_W_tower(mx, my, &u.uz) — UNPORTED; the |= 2 flag is
-       Vlad's tower only. */
+    if ((await import('./teleport.js')).In_W_tower(mx, my, u.uz))
+        xyflags |= 2;
     mtmp.wormno = num_segs;
     mtmp.mlstmv = game.moves;
     if (!Array.isArray(mtmp.mtrack)) mtmp.mtrack = [];

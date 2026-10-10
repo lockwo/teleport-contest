@@ -12,6 +12,7 @@ import { objects, WEAPON_CLASS, ARMOR_CLASS, TOOL_CLASS, ROCK_CLASS,
          CORPSE, BOULDER, STATUE, HEAVY_IRON_BALL } from './mkobj.js';
 import { OBJ_ARMCAT } from './objarmor_data.js';
 import { monster_by_pmidx } from './makemon.js';
+import { acurr_eff } from './attrib.js';
 import { Hallucination_u } from './display.js';
 
 // C ref: mthrowu.c:24 breathwep[] — indexed by BZ_OFS_AD(typ), i.e. adtyp - 1.
@@ -149,7 +150,7 @@ export function hit_bars_break_check(otmp, your_fault, melee_attk) {
 }
 // C ref: attrib.c:1245 acurrstr() — ACURR(A_STR) folded back into 3..25.
 function acurrstr() {
-    const str = game.u?.acurr?.a?.[0] ?? 0;
+    const str = acurr_eff(0 /* A_STR */);
     if (str <= 18) return Math.max(str, 3);
     if (str <= 121) return 19 + Math.trunc(str / 50);
     return Math.min(str, 125) - 100;
@@ -273,7 +274,7 @@ function terrain_typ(x, y) { return levl_at(x, y)?.typ ?? 0; }
 // pie, any venom, and a hit egg break unconditionally and skip that roll
 // entirely; delobj() behind the break rolls obj_resists() [rn2(100)].
 //
-// js/monmove.js:6482 drop_thrown_missile() is the hero-path subset of this
+// js/monmove.js drop_thrown_missile() is the hero-path subset of this
 // (no down_gate/ship_object, no flooreffects, no passive_obj); it is what
 // monmove.js's flight loop still calls.
 export async function drop_throw(obj, ohit, x, y, deps = {}) {
@@ -296,7 +297,8 @@ export async function drop_throw(obj, ohit, x, y, deps = {}) {
             let mtmp = deps.m_at?.(x, y) || null;
             broken = !!(await deps.flooreffects?.(obj, x, y, 'fall'));
             if (!broken) {
-                const { place_object, stackobj } = await import('./mkobj.js');
+                const { place_object } = await import('./mkobj.js');
+                const { stackobj } = await import('./invent.js');
                 place_object(obj, x, y);
                 if (!mtmp && u_at(x, y))
                     mtmp = game.youmonst;
@@ -360,7 +362,7 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
         /* not possibly_unwield(), which checks the object's location, not its
            existence */
         if (MM.MON_WEP(mon) === obj)
-            setmnotwielded(mon, obj);
+            await setmnotwielded(mon, obj);
         obj_extract_self(obj);
         singleobj = obj;
         obj = null;
@@ -507,7 +509,7 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
                                       ((game.u?.umortality | 0) > oldumort)
                                           ? 0 : 10, true);
             }
-            if (hitu && deps.can_blnd?.(null, game.youmonst,
+            if (hitu && deps.can_blnd?.(null, deps.YOUMONST,
                                         singleobj.otyp === BLINDING_VENOM
                                             ? (deps.AT_SPIT ?? 0)
                                             : (deps.AT_WEAP ?? 0),
@@ -558,7 +560,9 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
     if (blindinc) {
         game.u.ucreamed = (game.u.ucreamed | 0) + blindinc;
         await deps.make_blinded?.((deps.BlindedTimeout?.() | 0) + blindinc, false);
-        if (!game.u?.Blinded)
+        /* C ref: mthrowu.c `if (!Blind)` -- the youprop.h macro, not a u.Blinded field
+           (there is none; the countdown is u.blinded) */
+        if (!(await import('./vision.js')).Blind())
             await deps.vision_clears?.();
     }
     /* note: all early returns follow drop_throw(), which clears thrownobj */

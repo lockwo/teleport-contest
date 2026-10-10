@@ -5,8 +5,7 @@ import { artifact_exists } from '../artifact.js';
 import { ONAME_LEVEL_DEF, ROOM } from '../const.js';
 import { game } from '../gstate.js';
 import {
-    MGEND_NEUTRAL, makemon, mongets_pub, monster_by_pmidx, name_gender_hint,
-    name_to_pmidx, set_malign,
+    makemon, mongets_pub, monster_by_pmidx, name_to_pmidx, set_malign,
 } from '../makemon.js';
 import { CHEST, mksobj } from '../mkobj.js';
 import { mk_mplayer } from '../mplayer.js';
@@ -14,7 +13,7 @@ import {
     bigrm_get_location_dry, bigrm_load_map, lspo_region, percent,
     quest_create_object, quest_drop_default_invent, quest_place_stair,
     quest_region_light, quest_register_branch, quest_set_door,
-    reset_xystart_size, vly_abs,
+    reset_xystart_size, splev_find_montype, vly_abs,
 } from '../sp_lev.js';
 import { rn2 } from '../rng.js';
 import {
@@ -53,12 +52,9 @@ function quest_create_named_weapon(otyp, spe, carryingMon) {
 const PM_ARCHEOLOGIST_IDX = name_to_pmidx('archeologist');
 const PM_WIZARD_IDX = name_to_pmidx('wizard');
 function quest_knight_guard(mx, my, peaceful) {
-    const pmidx = name_to_pmidx('knight');
+    const { pmidx, female } = splev_find_montype('knight');   // sp_lev.c:3156
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    if (ptr.gcode !== 1 && ptr.gcode !== 2
-        && name_gender_hint('knight') === MGEND_NEUTRAL)
-        rn2(2);                                        // find_montype sp_lev.c:3156
     rn2(3);                                             // induced_align dungeon.c:2012
     const { x, y } = vly_abs(mx, my);
     // No mm_mon_at/enexto check: the four guard squares are fixed and empty
@@ -66,6 +62,7 @@ function quest_knight_guard(mx, my, peaceful) {
     const mtmp = (pmidx >= PM_ARCHEOLOGIST_IDX && pmidx <= PM_WIZARD_IDX)
         ? mk_mplayer(ptr, x, y, false, { mongets: mongets_pub })
         : makemon(ptr, x, y, 0);
+    if (mtmp) mtmp.female = female;                    // sp_lev.c:2125
     if (mtmp && peaceful != null) {
         mtmp.mpeaceful = peaceful ? 1 : 0;
         set_malign(mtmp);           // sp_lev.c:2129 — mpeaceful changed again

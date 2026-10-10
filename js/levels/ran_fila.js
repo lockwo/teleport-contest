@@ -3,7 +3,7 @@
 // (Ran-loca).  A "mines"-style cave whose background typ is TREE rather than
 // STONE (fg=".", bg="T"): the cave floor is carved out of forest instead of
 // solid rock.  `lit` is NOT given explicitly in the .lua, so it draws
-// litstate_rnd()'s RNG.
+// splev_initlev()'s single rn2(2).
 //
 // C ref: mklev.c makelevel() -> In_quest(&u.uz) branch -> makemaz("Ran-fila")
 // -> load_special("Ran-fila.lua").
@@ -33,7 +33,7 @@ export async function makemaz_ran_fila() {
     }
     // des.level_init({ style="mines", fg=".", bg="T", smoothed=true,
     //                  joined=true, walled=true }) — no explicit lit=, so
-    // litstate_rnd() draws; walled&&join makes the level cavernous afterward.
+    // splev_initlev() resolves it with one rn2(2); walled&&join makes the level cavernous afterward.
     ran_mkmap({ bg_typ: TREE, fg_typ: ROOM, smooth: true, join: true, walled: true });
 
     g._quest_gen = true;
@@ -44,6 +44,11 @@ export async function makemaz_ran_fila() {
         ran_stair(false);
         // des.object() x7 — mkobj_at(RANDOM_CLASS) at a random DRY spot.
         for (let i = 0; i < 7; i++) quest_object_rnd();
+        // des.trap() x4 — random type at a random DRY spot.  No "hardfloor"
+        // shortcut here: this level does NOT set hardfloor, and
+        // quest_trap_random() reads the real Can_fall_thru() state.
+        // (Ran-fila.lua places all 4 traps BEFORE any monster.)
+        for (let i = 0; i < 4; i++) await quest_trap_random();
         // des.monster({id="mountain centaur",peaceful=0}) x2 — random position.
         for (let i = 0; i < 2; i++) quest_monster_named_rnd('mountain centaur', 0);
         // des.monster({id="forest centaur",peaceful=0}) x3 — random position.
@@ -52,10 +57,6 @@ export async function makemaz_ran_fila() {
         quest_monster_class_rnd(S_CENTAUR, 0);
         // des.monster({id="scorpion",peaceful=0}) — random position.
         quest_monster_named_rnd('scorpion', 0);
-        // des.trap() x4 — random type at a random DRY spot.  No "hardfloor"
-        // shortcut here: this level does NOT set hardfloor, and
-        // quest_trap_random() reads the real Can_fall_thru() state.
-        for (let i = 0; i < 4; i++) await quest_trap_random();
     } finally {
         g._quest_gen = false;
         g._full_mon_gen = false;

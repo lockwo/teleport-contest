@@ -3,6 +3,7 @@
 // the gameplay sessions are ported here.
 
 import { game } from './gstate.js';
+import { ok_to_quest } from './questok.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rn1, rnd, rnl, d } from './rng.js';
 import { pline, newsym, m_at, show_glyph_cell, update_topl, urgent_topl, topl_more, y_n,
@@ -12,11 +13,12 @@ import { pline, newsym, m_at, show_glyph_cell, update_topl, urgent_topl, topl_mo
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_NOFLAGS, xname, near_capacity, splitobj, delobj_core, obfree,
          obj_extract_self, sobj_at, encumber_msg, is_weptool, update_inventory,
-         display_minventory, worn_extrinsic, yname, makeplural,
-         Ring_gone, setnotworn, body_part, distant_name_pub, display_cinventory,
+         display_minventory, worn_extrinsic, yname, Ring_gone, setnotworn, body_part, distant_name_pub, display_cinventory,
          set_cknown_lknown, newsym_force, display_binventory, stackobj } from './invent.js';
+import { makeplural } from './plural.js';
 import { mon_mr } from './monmr_data.js';
-import { monstseesu, monstunseesu } from './mondata.js';
+import { monstseesu, monstunseesu, resists_fire, resists_cold, resists_sleep, resists_disint,
+         resists_elec, resists_poison, resists_acid } from './mondata.js';
 import { mflags1_of, hides_under_flag, mflags2_of, M2_PNAME, is_animal, M1_MINDLESS, M1_NOEYES, M1_BREATHLESS, is_undead_flag, nohands,
          passes_walls_flag, is_swimmer_flag, is_demon_flag,
          is_were_flag } from './monflags_data.js';
@@ -39,7 +41,7 @@ import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_C
          CANDELABRUM_OF_INVOCATION, SPE_BOOK_OF_THE_DEAD,
          is_rider_pm, ROCK_CLASS, unbless, uncurse, container_weight,
          has_omonst, get_mtraits, has_omid, OMID, free_omid, free_omonst,
-         obj_ice_effects, dealloc_obj } from './mkobj.js';
+         obj_ice_effects, dealloc_obj, eaten_stat } from './mkobj.js';
 import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOOR, IS_ROOM, IS_WALL, isok, ROOM, STONE,
          D_CLOSED, D_LOCKED, CORPSTAT_INIT, EXT_ENCUMBER, HEADSTONE, ENGRAVE, TELEDS_TELEPORT,
          DUST, MM_NOMSG, In_mines, W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG,
@@ -62,7 +64,7 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          PICK_ONE, LEVITATION, FLYING, KILLED_BY, KILLED_BY_AN,
          NO_KILLER_PREFIX, ARM, EYE, LAVAWALL, DB_UNDER, DB_FLOOR, VWALL, HWALL,
          TT_LAVA, TT_INFLOOR, PASSES_WALLS, EXPL_FIERY, STRAT_WAITMASK,
-         Is_airlevel, Is_rogue_level, SDOOR, DOOR, WM_MASK, D_NODOOR, D_BROKEN,
+         Is_airlevel, Is_rogue_level, SDOOR, SCORR, DOOR, WM_MASK, D_NODOOR, D_BROKEN,
          SHOP_DOOR_COST, M_SEEN_REFL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED } from './const.js';
 import { is_pool, is_ice, is_lava, is_moat } from './dbridge.js';
 import { in_rooms } from './shkroom.js';
@@ -489,7 +491,7 @@ async function do_osshock(obj) {
     const shk = await import('./shk.js');
     if (shk.costly_spot(target.ox, target.oy)) {
         if (game.u?.ushops && game.u.ushops[0])
-            await (await import('./shkroom.js')).addtobill(target, false, false, false);
+            await (await import('./shk.js')).addtobill(target, false, false, false);
         else
             await shk.stolen_value(target, target.ox, target.oy, false, false);
     }
@@ -1097,7 +1099,8 @@ export async function fracture_rock(obj) {
     const by_you = !game.context?.mon_moving;
     if (by_you) {
         const { get_obj_location } = await import('./light.js');
-        const { costly_spot, billable, shkname } = await import('./shk.js');
+        const { costly_spot, billable } = await import('./shk.js');
+        const { shkname } = await import('./shkroom.js');
         const loc = get_obj_location(obj, 0);
         if (loc && costly_spot(loc.x, loc.y)) {
             const shkp = billable(null, obj, in_rooms(loc.x, loc.y, SHOPBASE)[0], false);
@@ -1321,7 +1324,7 @@ async function polyuse(pile, mat, minwt) {
             const shk = await import('./shk.js');
             if (shk.costly_spot(otmp.ox, otmp.oy)) {
                 if (game.u?.ushops && game.u.ushops[0])
-                    await (await import('./shkroom.js')).addtobill(otmp, false, false, false);
+                    await (await import('./shk.js')).addtobill(otmp, false, false, false);
                 else
                     await shk.stolen_value(otmp, otmp.ox, otmp.oy, false, false);
             }
@@ -2119,7 +2122,7 @@ async function zap_updown(obj) {
         } else if (u.dz > 0 && stway && stway.sx === x && stway.sy === y
                    /* can't use the stairs down to quest level 2 until
                       leader "unlocks" them; give feedback if you try */
-                   && Is_qstart_z() && !game._quest_got_quest) {
+                   && Is_qstart_z() && !ok_to_quest()) {
             await pline('The stairs seem to ripple momentarily.');
             disclose = true;
         }
@@ -2931,7 +2934,7 @@ export async function zap_over_floor(x, y, type, shopdamage = null,
                 if (u_at(x, y)) {
                     if (u.uinwater) { /* not just `if (Underwater)' */
                         /* leave the no longer existent water */
-                        (await import('./do.js')).set_uinwater(0); /* u.uinwater = 0 */
+                        await (await import("./do.js")).set_uinwater(0); /* u.uinwater = 0 */
                         u.uundetected = 0;
                         const { docrt } = await import('./display.js');
                         await docrt();
@@ -3168,9 +3171,8 @@ async function useupf_z(obj, numused) {
     const otmp = ((obj.quan || 1) > numused) ? splitobj(obj, numused) : obj;
     const shk = await import('./shk.js');
     if (!game.context?.mon_moving && shk.costly_spot(otmp.ox, otmp.oy)) {
-        const shkroom = await import('./shkroom.js');
         if ((game.u?.urooms || []).includes(in_rooms(otmp.ox, otmp.oy, 0)[0]))
-            await shkroom.addtobill(otmp, false, false, false);
+            await shk.addtobill(otmp, false, false, false);
         else
             await shk.stolen_value(otmp, otmp.ox, otmp.oy, false, false);
     }
@@ -3292,20 +3294,6 @@ function zaptype(type) {
 const MAGIC_COOKIE = 1000;
 
 // ── monster resistance/defense predicates (mondata.c) ───────────────────────
-// C ref: monflag.h MR_* bits, mons[].mresists (already ported per-species in
-// makemon.js's MONS table).  Only the *innate* half of Resists_Elem() is
-// modelled: none of the covered sessions' zap targets wear or wield gear that
-// grants elemental resistance, so the worn/wielded-item scan is not needed.
-const MR_FIRE = 0x01, MR_COLD = 0x02, MR_SLEEP = 0x04, MR_DISINT = 0x08,
-      MR_ELEC = 0x10, MR_POISON = 0x20, MR_ACID = 0x40;
-function mresists_of(mon) { return mon?.data?.mresists || 0; }
-function resists_fire(mon) { return !!(mresists_of(mon) & MR_FIRE); }
-function resists_cold(mon) { return !!(mresists_of(mon) & MR_COLD); }
-export function resists_sleep(mon) { return !!(mresists_of(mon) & MR_SLEEP); }
-function resists_disint(mon) { return !!(mresists_of(mon) & MR_DISINT); }
-function resists_elec(mon) { return !!(mresists_of(mon) & MR_ELEC); }
-function resists_poison(mon) { return !!(mresists_of(mon) & MR_POISON); }
-function resists_acid(mon) { return !!(mresists_of(mon) & MR_ACID); }
 // C ref: mondata.c resists_magm — the innate test is generic, NOT a species
 // list: dmgtype(ptr, AD_MAGM) || ptr == baby gray dragon || dmgtype(ptr,
 // AD_RBRE).  C's "gray dragons, Angels, Oracle, Yeenoghu" comment describes the
@@ -3546,7 +3534,7 @@ const FLASH_NAME = [
     'blast of disintegration', 'blast of lightning',
     'blast of poison gas', 'blast of acid', '', '',
 ];
-function flash_str(type, nohallu = false) {
+export function flash_str(type, nohallu = false) {
     return Hallucination() && !nohallu
         ? `blast of ${rnd_hallublast()}`
         : FLASH_NAME[zaptype(type)] || 'bolt';
@@ -3934,14 +3922,24 @@ export async function burnarmor(victim) {
     for (;;) {
         switch (rn2(5)) {
         case 0:
-            if (await erode_burn(victim, 'uarmh', 'helmet')) break;
+            {
+                // C ref: trap.c:115-121 — "<material> <helm|hat>" for a worn helmet.
+                const h = worn_slot(victim, 'uarmh');
+                let descr = 'helmet';
+                if (h) {
+                    const { materialnm } = await import('./const.js');
+                    const { helm_simple_name } = await import('./do_wear.js');
+                    descr = `${materialnm[objects[h.otyp]?.material | 0]} ${helm_simple_name(h)}`;
+                }
+                if (await erode_burn(victim, 'uarmh', descr)) break;
+            }
             continue;
         case 1: {
             if (worn_slot(victim, 'uarmc')) {
                 await erode_burn(victim, 'uarmc', cloak_simple_name(worn_slot(victim, 'uarmc')));
                 return true;
             }
-            if (worn_slot(victim, 'uarm')) { await erode_burn(victim, 'uarm', 'suit'); return true; }
+            if (worn_slot(victim, 'uarm')) { await erode_burn(victim, 'uarm', xname(worn_slot(victim, 'uarm'))); return true; }
             if (worn_slot(victim, 'uarmu')) await erode_burn(victim, 'uarmu', 'shirt');
             return true;
         }
@@ -4000,10 +3998,10 @@ function is_flammable_obj(obj) {
 function erosion_matters_obj(obj) {
     return obj?.oclass === WEAPON_CLASS || obj?.oclass === ARMOR_CLASS;
 }
-// C ref: pline.c vtense(subj, verb) — "gloves smoulder" but "helmet smoulders".
-function vtense_burn(ostr, verb) {
-    return /s$/.test(ostr || '') ? verb : verb + 's';
-}
+// C ref: objnam.c vtense(subj, verb) — "gloves smoulder" but "helmet smoulders";
+// the faithful copy lives in js/plural.js.
+import { vtense } from './plural.js';
+const vtense_burn = vtense;
 async function erode_burn(victim, slot, ostr) {
     const obj = worn_slot(victim, slot);
     if (!obj) return ER_NOTHING;
@@ -4161,10 +4159,9 @@ async function maybe_destroy_item(carrier, obj, dmgtyp) {
             if (((obj.owornmask & W_RING) !== 0) && gloves && !glovesMetallic) {
                 skip = 1;
             } else if ((objects[obj.otyp]?.flags & 1 /* F_CHARGED */) && rn2(3)) {
-                // C: chargeit -> recharge(obj, 0).  recharge() is NOT ported
-                // anywhere in this codebase (read.js:2733's SCR_CHARGING
-                // blocker); the rn2(3) gate above is faithful, the ring's
-                // enchant-adjust/explode effect inside recharge() is not.
+                // C ref: zap.c:5869/5887 chargeit -> recharge(obj, 0), hero's
+                // own inventory only ("FIXME: recharge only handles items in
+                // hero's inventory").
                 chargeit = true;
             } else {
                 dindx = 5;
@@ -4173,7 +4170,13 @@ async function maybe_destroy_item(carrier, obj, dmgtyp) {
         break;
     default: skip = 1; break;
     }
-    if (chargeit) return dmg;
+    if (chargeit) {
+        if (u_carry) {
+            const { recharge } = await import('./read.js');
+            await recharge(obj, 0);
+        }
+        return dmg;
+    }
     if (skip) return dmg;
 
     let cnt = 0;
@@ -4771,7 +4774,7 @@ export function Cold_resistance() {
         || worn_extrinsic(COLD_RES) || has_innate('HCold_resistance')
         || (u?.Upolyd && resists_cold(u)));
 }
-function Shock_resistance() {
+export function Shock_resistance() {
     if (game.u?.formprops?.Shock_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u;
     return !!(u?.uprops?.Shock_resistance || u?.uprops?.HShock_resistance
@@ -4781,7 +4784,7 @@ function Shock_resistance() {
 }
 function Acid_resistance()  { return !!game.u?.formprops?.Acid_resistance || (game.u?.uprops?.AcidResistance    || 0) > 0; }
 function Disint_resistance(){ return !!game.u?.formprops?.Disint_resistance || (game.u?.uprops?.HDisint_resistance|| 0) > 0; }
-function Drain_resistance() { return !!game.u?.formprops?.Drain_resistance || (game.u?.uprops?.HDrain_resistance || 0) > 0; }
+export function Drain_resistance() { return !!game.u?.formprops?.Drain_resistance || (game.u?.uprops?.HDrain_resistance || 0) > 0; }
 export function Antimagic() { return !!(game.u?.formprops?.Antimagic || game.u?.HAntimagic || game.u?.Antimagic
                                         || game.u?.uprops?.HAntimagic
                                         || worn_extrinsic(ANTIMAGIC)); }
@@ -5048,16 +5051,8 @@ function corpse_xname_z(obj, adjective, cxn_flags) {
 // enchantment.  js/invent.js:513 owns the full version privately.
 function simpleonames_z(obj) { return obj ? xname(obj) : ''; }
 
-// C ref: mkobj.c:752 costly_alteration(obj, alter_type) — bills the shopkeeper
-// for a modification.  Draws NO RNG (checked against mkobj.c); js/trap.js:829
-// keeps the identical no-op under this name.  The "You damage it, you pay for
-// it!" pline and the bknown side effect belong to shk.c's owner.
-function costly_alteration_z(_obj, _alter_type) { /* no RNG */ }
-// C ref: shk.c stolen_value(obj, x, y, peaceful, silent).  Returns the billed
-// amount; the port lives in js/shk.js (dynamic import, shk.js imports zap.js).
-async function stolen_value_z(obj, x, y, peaceful, silent) {
-    return (await import('./shk.js')).stolen_value(obj, x, y, peaceful, silent);
-}
+// Shop billing is owned by shk.js.  Call sites import it dynamically because
+// shk.js imports zap.js.
 // C ref: worn.c:1119 bypass_obj(obj).
 function bypass_obj_z(obj) {
     if (!obj) return;
@@ -5214,18 +5209,7 @@ function mongone_z(mdef) {
     }
     newsym(mdef.mx, mdef.my);
 }
-// C ref: eat.c eaten_stat(base, obj) — scale `base` by the fraction of the
-// item's nutrition still left, never below 1.  js/mkobj.js:987 owns the full
-// version (it needs mon_cnutrit/food_nutrit, both private there); without
-// those tables the ratio cannot be formed, so the reduction is SKIPPED rather
-// than guessed.  No RNG either way.
-function eaten_stat_z(base, obj) {
-    if (!(obj?.oeaten | 0)) return base;
-    return base;
-}
-// C ref: dog.c:1292 wary_dog(mtmp, was_dead) — a revived pet becomes wary and
-// its edog timers reset.  Unported (dog.c's edog allocation).  No RNG.
-function wary_dog_z(_mtmp, _was_dead) { /* no RNG */ }
+// C ref: dog.c:1292 wary_dog(mtmp, was_dead) is owned by dog.js.
 // C ref: mon.c seemimic(mtmp) — stop mimicking; display only, no RNG.
 // js/apply.js:533 keeps a private async copy.
 function seemimic_z(mtmp) {
@@ -5234,9 +5218,7 @@ function seemimic_z(mtmp) {
     mtmp.mappearance = 0;
     newsym(mtmp.mx, mtmp.my);
 }
-// C ref: mon.c minliquid(mtmp) — js/mon.js:591 owns the real one but does not
-// export it (js/dig.js:882 keeps a NOT-PORTED stub under the same name).
-async function minliquid_z(mtmp) { return (await import('./mon.js')).minliquid(mtmp); }
+// C ref: mon.c minliquid(mtmp) is owned by mon.js.
 // C ref: vision.h couldsee(x, y).
 async function couldsee_z(x, y) {
     const { couldsee } = await import('./vision.js');
@@ -5330,7 +5312,7 @@ export async function mstatusline(mtmp) {
         if (game.flags?.debug || game.wizard) {
             info += ` (${mtmp.mtame}`;
             if (!mtmp.isminion)
-                info += `; hungry ${mtmp.edog?.hungrytime}; apport ${mtmp.edog?.apport}`;
+                info += `; hungry ${mtmp.edog?.hungrytime}; apport ${mtmp.edog?.apport ?? 3}`;
             info += ')';
         }
     } else if (mtmp.mpeaceful) info += ', peaceful';
@@ -5827,8 +5809,10 @@ export async function revive(corpse, by_hero) {
     } else if (has_omonst(corpse)) {
         /* use saved traits */
         mtmp = await montraits(corpse, { x, y }, false);
-        if (mtmp && mtmp.mtame && !mtmp.isminion)
-            wary_dog_z(mtmp, true);
+        if (mtmp && mtmp.mtame && !mtmp.isminion) {
+            const { wary_dog } = await import('./dog.js');
+            await wary_dog(mtmp, true);
+        }
     } else {
         /* make a new monster */
         mtmp = makemon(mptr, x, y, mmflags | MM_NOCOUNTBIRTH);
@@ -5854,7 +5838,8 @@ export async function revive(corpse, by_hero) {
         let shkp = null;
 
         x = corpse.ox; y = corpse.oy;
-        const { costly_spot, shop_keeper, in_rooms } = await import('./shkroom.js');
+        const { costly_spot } = await import('./shk.js');
+        const { shop_keeper, in_rooms } = await import('./shkroom.js');
         if (costly_spot(x, y)
             && (carried_z(corpse) ? corpse.unpaid : !corpse.no_charge))
             shkp = shop_keeper(in_rooms(x, y, SHOPBASE)?.[0]);
@@ -5878,7 +5863,7 @@ export async function revive(corpse, by_hero) {
         }
         /* don't charge for shopkeeper's own corpse if we just revived him */
         if (shkp && mtmp !== shkp)
-            await stolen_value_z(corpse, x, y, !!shkp.mpeaceful, false);
+            await (await import('./shk.js')).stolen_value(corpse, x, y, !!shkp.mpeaceful, false);
 
         /* [we don't give any comparable message about the corpse for the
            !by_hero case because caller might have already done so] */
@@ -5895,6 +5880,7 @@ export async function revive(corpse, by_hero) {
                 await pline(
                     `${Monnam(ghost)} is suddenly drawn into its former body!`);
             /* transfer the ghost's inventory along with it */
+            const { add_to_minv } = await import('./makemon.js');
             for (;;) {
                 const otmp = Array.isArray(ghost.minvent) ? ghost.minvent[0] : null;
                 if (!otmp) break;
@@ -5924,7 +5910,7 @@ export async function revive(corpse, by_hero) {
     }
     /* partially eaten corpse yields wounded monster */
     if (corpse.oeaten)
-        mtmp.mhp = eaten_stat_z(mtmp.mhp, corpse);
+        mtmp.mhp = eaten_stat(mtmp.mhp, corpse);
     /* track that this monster was revived at least once */
     mtmp.mrevived = 1;
 
@@ -6054,9 +6040,9 @@ export async function unturn_dead(mon) {
 // C ref: zap.c:1239 cancel_item(obj) — strip an object's magic.  No RNG; the
 // corpse arm swaps a REVIVE_MON timer for a ROT_CORPSE one of the same length.
 export async function cancel_item(obj) {
+    const { costly_alteration } = await import('./shk.js');
     const otyp = obj.otyp;
     const u = game.u;
-
     if (carried_z(obj)) {
         /* handle items being worn by hero */
         switch (otyp) {
@@ -6126,18 +6112,18 @@ export async function cancel_item(obj) {
             && otyp !== WAN_CANCELLATION /* can't cancel cancellation */
             && otyp !== MAGIC_LAMP /* cancelling doesn't remove djinni */
             && otyp !== CANDELABRUM_OF_INVOCATION) {
-            costly_alteration_z(obj, COST_CANCEL);
+            await costly_alteration(obj, COST_CANCEL);
             obj.spe = cancelled_spe;
         }
         switch (obj.oclass) {
         case SCROLL_CLASS:
-            costly_alteration_z(obj, COST_CANCEL);
+            await costly_alteration(obj, COST_CANCEL);
             obj.otyp = SCR_BLANK_PAPER;
             obj.spe = 0;
             break;
         case SPBOOK_CLASS:
             if (otyp !== SPE_CANCELLATION && otyp !== SPE_BOOK_OF_THE_DEAD) {
-                costly_alteration_z(obj, COST_CANCEL);
+                await costly_alteration(obj, COST_CANCEL);
                 obj.otyp = SPE_BLANK_PAPER;
                 /* cancelling a novel is more involved than a spellbook */
                 if (otyp === SPE_NOVEL) /* old type */
@@ -6145,8 +6131,8 @@ export async function cancel_item(obj) {
             }
             break;
         case POTION_CLASS:
-            costly_alteration_z(obj, (otyp !== POT_WATER) ? COST_CANCEL
-                                     : obj.cursed ? COST_UNCURS : COST_UNBLSS);
+            await costly_alteration(obj, (otyp !== POT_WATER) ? COST_CANCEL
+                                        : obj.cursed ? COST_UNCURS : COST_UNBLSS);
             if (otyp === POT_SICKNESS || otyp === POT_SEE_INVISIBLE) {
                 /* sickness is "biologically contaminated" fruit juice; cancel
                    it and it just becomes fruit juice... whereas see invisible
@@ -6209,8 +6195,10 @@ export async function drain_item(obj, by_you) {
         return false;
 
     /* Charge for the cost of the object */
-    if (by_you)
-        costly_alteration_z(obj, COST_DRAIN);
+    if (by_you) {
+        const { costly_alteration } = await import('./shk.js');
+        await costly_alteration(obj, COST_DRAIN);
+    }
 
     /* Drain the object and any implied effects */
     obj.spe--;
@@ -6315,12 +6303,12 @@ export async function stone_to_flesh_obj(obj) {
                     ptr = await mons_(PM_FLESH_GOLEM_Z);
                 mon = makemon(ptr, oox, ooy, NO_MINVENT | MM_NOMSG);
                 if (mon) {
-                    const { costly_spot, shop_keeper, in_rooms } =
-                        await import('./shkroom.js');
+                    const { shop_keeper, in_rooms } = await import('./shkroom.js');
+                    const { costly_spot } = await import('./shk.js');
                     if (costly_spot(oox, ooy)
                         && (carried_z(obj) ? obj.unpaid : !obj.no_charge)) {
                         const shkp = shop_keeper(in_rooms(oox, ooy, SHOPBASE)?.[0]);
-                        await stolen_value_z(obj, oox, ooy,
+                        await (await import('./shk.js')).stolen_value(obj, oox, ooy,
                                              !!(shkp && shkp.mpeaceful), false);
                     }
                     if (obj.timed) {
@@ -6601,7 +6589,7 @@ export async function melt_ice(x, y, msg) {
     await tmo.spot_stop_timers(x, y, MELT_ICE_AWAY_Z);
     const { t_at, spoteffects, trap_ice_effects } = await import('./trap.js');
     if (t_at(x, y))
-        trap_ice_effects(x, y, true); /* TRUE because ice_is_melting */
+        await trap_ice_effects(x, y, true); /* TRUE because ice_is_melting */
     obj_ice_effects(x, y, false);
     const { unearth_objs } = await import('./dig.js');
     await unearth_objs(x, y);
@@ -6628,7 +6616,10 @@ export async function melt_ice(x, y, msg) {
         await spoteffects(true); /* possibly drown, notice objects */
     } else if (is_pool(x, y)) {
         const mtmp = m_at(x, y);
-        if (mtmp) await minliquid_z(mtmp);
+        if (mtmp) {
+            const { minliquid } = await import('./mon.js');
+            await minliquid(mtmp);
+        }
     }
 }
 

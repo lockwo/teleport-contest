@@ -15,18 +15,18 @@
 // dumped from the recorder's own objects.o) via mkobj.js base_oc_cost().
 
 import { game } from './gstate.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, depth as depth_of_level } from './hacklib.js';
 import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
          mksobj, place_object, remove_object, dealloc_obj, bill_dummy_object,
          newomid, MAGIC_LAMP, OIL_LAMP, BRASS_LANTERN, MAGIC_MARKER,
          BAG_OF_TRICKS, HORN_OF_PLENTY, CRYSTAL_BALL, MAGIC_FLUTE,
          DRUM_OF_EARTHQUAKE, CAN_OF_GREASE, TINNING_KIT, EXPENSIVE_CAMERA,
          POT_OIL, ROCK, BOULDER, LEASH,
-         CANDELABRUM_OF_INVOCATION } from './mkobj.js';
+         CANDELABRUM_OF_INVOCATION, clear_object_timer } from './mkobj.js';
 import { arti_cost } from './artifact.js';
 import { acurr_eff, adjalign, exercise } from './attrib.js';
-import { monster_by_pmidx, mpickobj, add_to_minv } from './makemon.js';
-import { rn2 } from './rng.js';
+import { monster_by_pmidx, mpickobj, add_to_minv, makemon, enexto_spawn } from './makemon.js';
+import { rn2, rnd } from './rng.js';
 import { update_topl, newsym, m_at, map_invisible } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
          M2_NEUTER, msound_of, passes_walls_flag } from './monflags_data.js';
@@ -45,7 +45,8 @@ import { A_CHA, A_WIS, HUNGRY, SHOPBASE, ROOMOFFSET, NO_ROOM,
          CANDLESHOP, LANDMINE, BEAR_TRAP, HOLE, PIT, SPIKED_PIT,
          SELL_NORMAL, SELL_DONTSELL, M_AP_NOTHING, M_AP_MONSTER,
          ARM, HAND, HEAD, NECK, COLNO, ROWNO, D_LOCKED, TT_PIT,
-         W_SWAPWEP, W_QUIVER, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, OBJ_ONBILL } from './const.js';
+         W_SWAPWEP, W_QUIVER, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, OBJ_ONBILL,
+         COST_UNBLSS, COST_UNCURS, G_GONE } from './const.js';
 
 // ── constants ────────────────────────────────────────────────────────────────
 // objclass.h object classes.
@@ -74,7 +75,7 @@ const S_BLOB = 2, S_JELLY = 10, S_VORTEX = 22, S_LIGHT = 25,
 const PM_STALKER = 153, PM_BLACK_PUDDING = 209, PM_LEATHER_GOLEM = 253,
       PM_FLESH_GOLEM = 255;
 
-const PM_TOURIST = 10;              // roles[].mnum
+const PM_TOURIST = 10, PM_ELF_RACE = 1; // roles[].mnum, races[].mnum
 const MAXULEV = 30;                 // you.h
 const G_UNIQ = 0x1000;              // monflag.h
 const NUMMONS = 383;                // mons[] size in the recorder build
@@ -1162,7 +1163,8 @@ export function update_bill(indx, ibillct, ibill, eshkp, bp, paiditem) {
     if (paiditem.where === OBJ_ONBILL) paiditem.where = OBJ_FREE;
     const slot = eshkp.bill.indexOf(bp);
     const newebillct = (eshkp.billct || 0) - 1;
-    eshkp.bill[slot] = eshkp.bill[newebillct];
+    // C: `*bp = eshkp->bill_p[eshkp->billct]` is a struct copy, not an alias.
+    if (slot !== newebillct) Object.assign(eshkp.bill[slot], eshkp.bill[newebillct]);
     for (let j = 0; j < ibillct; ++j)
         if (ibill[j].bidx === newebillct) ibill[j].bidx = slot;
     eshkp.billct = newebillct;
@@ -1279,19 +1281,10 @@ export const not_enough_money = (shkp) =>
 export { helpless, muteshk, Deaf, verbalize, plur, noit_mhe, noit_mhim, noit_mhis };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// THE REST OF shk.c — INERT
+// THE REST OF shk.c
 //
-// Every function below is a faithful translation of a shk.c function that had
-// no same-named JS definition.  None of it is reachable: nothing above this
-// line changed and no other module imports any of it.
-//
-// SHARED-HELPER NOTE.  shk.c's setpaid(), addupbill(), hot_pursuit(),
-// rob_shop(), call_kops(), makekops() and add_one_tobill() ARE already ported
-// — module-PRIVATELY, in js/shkroom.js — and this file may not edit that file
-// to export them.  find_oid() is likewise private in js/light.js and
-// money_cnt()/doname() in js/invent.js.  The file-local copies below exist
-// only so these translations are executable and their control flow reads
-// true.  When this code is made live, export the originals and delete these.
+// These are the live shopkeeper, billing, theft, damage, and dialog routines.
+// Room discovery stays in shkroom.js, while all shk.c mechanics belong here.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // C ref: shk.c:139 angrytexts[] and :5508 Izchak_speaks[].  ROLL_FROM(arr) is
@@ -1499,9 +1492,8 @@ async function is_izchak(shkp, override_hallucination) {
 
 // C ref: shk.c rob_shop(shkp):687 — settle-or-steal when the hero leaves with
 // unpaid goods; TRUE means an actual robbery, which is what calls the Kops.
-// livelog_printf() has no effect on the screen.  No RNG.
-// (Real port: js/shkroom.js, private.)
-async function rob_shop(shkp) {
+// livelog_printf() feeds #chronicle.  No RNG.
+export async function rob_shop(shkp) {
     const eshkp = shkp.eshk;
     await rouse_shk(shkp, true);
     let total = addupbill(shkp) + (eshkp.debit || 0);
@@ -1518,21 +1510,65 @@ async function rob_shop(shkp) {
 
     eshkp.robbed = (eshkp.robbed || 0) + total;
     await update_topl(`You stole ${total} ${currency(total)} worth of merchandise.`);
+    const { livelog_printf, LL_ACHIEVE } = await import('./livelog.js');
+    livelog_printf(LL_ACHIEVE, `stole ${total} ${currency(total)} worth of merchandise from ${
+        s_suffix(shkname(shkp))} ${shtypes[eshkp.shoptype - SHOPBASE]?.name || 'store'}`);
     if ((game.urole?.mnum ?? -1) !== PM_ROGUE) /* stealing is unlawful */
         adjalign(-sgn(game.u?.ualign?.type || 0));
     hot_pursuit(shkp);
     return true;
 }
 
-// C ref: shk.c call_kops(shkp, nearshop):510.  GAP: the Keystone Kop spawn is
-// makekops(), which is module-private in js/shkroom.js; duplicating it here
-// would duplicate its rnd(5)/enexto()/makemon() draws, so this stops at the
-// alarm.  mvitals[] (the G_GONE test that decides whether any Kop can appear
-// at all) is not modelled by this port either.
-async function call_kops(shkp, _nearshop) {
+// C ref: shk.c makekops(mm):374.  rnd(5) MUST happen before any placement.
+// enexto_spawn's successive origin is the mutable C `coord mm`.
+const KEYSTONE_KOP = 179, KOP_SERGEANT = 180, KOP_LIEUTENANT = 181,
+      KOP_KAPTAIN = 182, MM_NOMSG = 0x00020000;
+function mvitals_gone(mndx) {
+    return !!(game.mvitals?.[mndx]?.mvflags & G_GONE);
+}
+export function makekops(mm) {
+    const k_mndx = [KEYSTONE_KOP, KOP_SERGEANT, KOP_LIEUTENANT, KOP_KAPTAIN];
+    let cnt = Math.abs(depth_of_level(game.u?.uz)) + rnd(5);
+    const k_cnt = [cnt, Math.trunc(cnt / 3) + 1, Math.trunc(cnt / 6),
+                   Math.trunc(cnt / 9)];
+    for (let k = 0; k < k_mndx.length; ++k) {
+        cnt = k_cnt[k];
+        if (!cnt) break;
+        const ptr = monster_by_pmidx(k_mndx[k]);
+        if (!ptr || mvitals_gone(k_mndx[k])) continue;
+        while (cnt--) {
+            const spot = enexto_spawn(mm.x, mm.y, ptr);
+            if (!spot) continue;
+            mm.x = spot.x;
+            mm.y = spot.y;
+            makemon(ptr, mm.x, mm.y, MM_NOMSG);
+        }
+    }
+}
+
+// C ref: shk.c call_kops(shkp, nearshop):510.
+export async function call_kops(shkp, nearshop) {
     if (!shkp) return;
     if (!Deaf()) await update_topl('An alarm sounds!');
-    /* GAP: nokops / angry_guards() / makekops() — see js/shkroom.js. */
+    const nokops = mvitals_gone(KEYSTONE_KOP) && mvitals_gone(KOP_SERGEANT)
+        && mvitals_gone(KOP_LIEUTENANT) && mvitals_gone(KOP_KAPTAIN);
+    const { angry_guards } = await import('./questpgr.js');
+    if (!(await angry_guards(Deaf())) && nokops) {
+        if (game.flags?.verbose !== false && !Deaf())
+            await update_topl('But no one seems to respond to it.');
+        return;
+    }
+    if (nokops) return;
+    const { choose_stairs } = await import('./shkroom.js');
+    const st = choose_stairs(true);
+    if (nearshop) {
+        if (game.flags?.verbose !== false) await update_topl('The Keystone Kops appear!');
+        makekops({ x: game.u.ux, y: game.u.uy });
+        return;
+    }
+    if (game.flags?.verbose !== false) await update_topl('The Keystone Kops are after you!');
+    if (st) makekops({ x: st.x, y: st.y });
+    makekops({ x: shkp.mx, y: shkp.my });
 }
 
 // ── shk.c:214 .. :1200 ──────────────────────────────────────────────────────
@@ -2201,9 +2237,8 @@ export function alter_cost(obj, amt) {
     }
 }
 
-// C ref: shk.c add_one_tobill(obj, dummy, shkp):3309.  (Real port:
-// js/shkroom.js, private.)  No RNG.
-function add_one_tobill(obj, dummy, shkp) {
+// C ref: shk.c add_one_tobill(obj, dummy, shkp):3309.  No RNG.
+export function add_one_tobill(obj, dummy, shkp) {
     const eshkp = shkp.eshk;
     let unbilled = false;
 
@@ -2222,7 +2257,7 @@ function add_one_tobill(obj, dummy, shkp) {
     }
     shkp = owner;
 
-    const bct = eshkp.billct;
+    const bct = eshkp.billct || 0;   /* shk.eshk starts without a billct */
     if (!Array.isArray(eshkp.bill)) eshkp.bill = [];
     const bp = eshkp.bill[bct] || (eshkp.bill[bct] = {});
     bp.bo_id = obj.o_id;
@@ -2240,9 +2275,89 @@ function add_one_tobill(obj, dummy, shkp) {
         newomid(obj);
         if (obj.oextra) obj.oextra.omid = obj.owt;
     }
-    eshkp.billct++;
+    eshkp.billct = bct + 1;
     obj.unpaid = 1;
     record_price_quote(obj.otyp, bp.price, true);
+}
+
+// C ref: shk.c append_honorific(): rn2(SIZE(honored) - 1) is part of the
+// quoted in-inventory price path.
+function append_honorific() {
+    const honored = ['good', 'honored', 'most gracious', 'esteemed',
+                     'most renowned and sacred'];
+    let result = honored[rn2(honored.length - 1) + (game.u?.uevent?.udemigod ? 1 : 0)];
+    if ((game.urace?.mnum ?? 0) === PM_ELF_RACE) result += game.flags?.female ? ' hiril' : ' hir';
+    else result += game.flags?.female ? ' lady' : ' sir';
+    return result;
+}
+
+// C ref: shk.c addtobill(obj, ininv, dummy, silent):3451.
+export async function addtobill(obj, ininv, dummy, silent) {
+    const shkp = billable(null, obj, (game.u?.ushops || [])[0], true);
+    if (!shkp) return;
+    if (obj.oclass === COIN_CLASS) {
+        await costly_gold(obj.ox, obj.oy, obj.quan, silent);
+        return;
+    }
+    if ((shkp.eshk.billct || 0) >= BILLSZ) {
+        if (!silent) await update_topl('You got that for free!');
+        return;
+    }
+    const container = Has_contents(obj);
+    let ltmp = 0;
+    if (!obj.no_charge) {
+        ltmp = get_cost(obj, shkp);
+        if (obj.globby) ltmp *= get_pricing_units(obj);
+    }
+    if (obj.no_charge && !container) {
+        obj.no_charge = 0;
+        return;
+    }
+    let contentscount = 0;
+    if (container) {
+        const cltmp = contained_cost(obj, shkp, 0, false, false);
+        const gltmp = contained_gold(obj, true);
+        if (ltmp) add_one_tobill(obj, dummy, shkp);
+        if (cltmp) bill_box_content(obj, ininv, dummy, shkp);
+        picked_container(obj);
+        ltmp += cltmp;
+        if (gltmp) {
+            await costly_gold(obj.ox, obj.oy, gltmp, silent);
+            if (!ltmp) return;
+        }
+        obj.no_charge = 0;
+        contentscount = (obj.cobj || []).filter(is_unpaid).length;
+    } else {
+        add_one_tobill(obj, dummy, shkp);
+    }
+    if (silent) return;
+    if (!Deaf() && !muteshk(shkp)) {
+        if (!ltmp) {
+            await update_topl(`${Shknam(shkp)} has no interest in the ${xname(obj)}.`);
+        } else if (!ininv) {
+            await update_topl(`The ${xname(obj)} will cost you ${ltmp} ${currency(ltmp)}${
+                obj.quan > 1 ? ' each' : ''}.`);
+        } else {
+            const save_quan = obj.quan;
+            let buf = '"For you,';
+            if (ANGRY(shkp)) buf += ' scum;';
+            else if (!shkp.eshk.surcharge) buf += ` ${append_honorific()}; only`;
+            obj.quan = 1;
+            const name = xname(obj);
+            obj.quan = save_quan;
+            await update_topl(`${buf} ${ltmp} ${currency(ltmp)} ${
+                save_quan > 1 ? 'per' : contentscount && !obj.unpaid
+                    ? 'for the contents of this' : 'for this'} ${name}${
+                contentscount && obj.unpaid ? ' and its contents' : ''}."`);
+        }
+    } else if (!ltmp) {
+        await update_topl(`${Shknam(shkp)} does not notice.`);
+    } else {
+        await update_topl(`The list price of ${
+            contentscount && !obj.unpaid ? 'the contents of ' : ''}${xname(obj)}${
+            contentscount && obj.unpaid ? ' and its contents' : ''} is ${ltmp} ${
+            currency(ltmp)}${obj.quan > 1 ? ' each' : ''}.`);
+    }
 }
 
 // C ref: shk.c add_to_billobjs(obj):3366 — the chain of FULLY used-up billed
@@ -2250,7 +2365,7 @@ function add_one_tobill(obj, dummy, shkp) {
 // scan order differs, and no RNG depends on it).
 export function add_to_billobjs(obj) {
     if (obj.where !== OBJ_FREE) return; /* C: panic("obj not free") */
-    if (obj.timed) obj.timed = 0;       /* C: obj_stop_timers(obj) */
+    clear_object_timer(obj);
 
     if (!Array.isArray(game.billobjs)) game.billobjs = [];
     game.billobjs.push(obj);
@@ -2321,7 +2436,9 @@ export function sub_one_frombill(obj, shkp) {
         }
         const eshkp = shkp.eshk;
         eshkp.billct--;
-        eshkp.bill[eshkp.bill.indexOf(bp)] = eshkp.bill[eshkp.billct];
+        // C: `*bp = eshkp->bill_p[eshkp->billct]` copies the struct; a JS
+        // reference copy would alias two bill slots.
+        if (bp !== eshkp.bill[eshkp.billct]) Object.assign(bp, eshkp.bill[eshkp.billct]);
         return;
     }
     if (obj.unpaid) obj.unpaid = 0;         /* C: impossible() first */
@@ -2496,6 +2613,71 @@ export async function stolen_value(obj, x, y, peaceful, silent) {
         await angry_guards(false);
     }
     return value;
+}
+
+// C ref: mkobj.c:752 costly_alteration(obj, alter_type).  Keep its billing
+// here with the rest of shk.c so every alteration reaches the one bill flow.
+const alteration_verbs = [
+    'cancel', 'drain', 'uncharge', 'unbless', 'uncurse', 'disenchant',
+    'degrade', 'dilute', 'erase', 'burn', 'neutralize', 'destroy', 'splatter',
+    'bite', 'open', 'break the lock on', 'rust', 'rot', 'tarnish', 'crack',
+];
+async function bill_dummy_object_for_alteration(otmp) {
+    let cost = 0;
+    if (otmp.unpaid) {
+        cost = unpaid_cost(otmp, COST_SINGLEOBJ);
+        const shkp = shop_keeper((game.u?.ushops || [])[0]);
+        if (shkp) subfrombill(otmp, shkp);
+    }
+    const dummy = { ...otmp, oextra: otmp.oextra ? { ...otmp.oextra } : null };
+    dummy.where = OBJ_FREE;
+    dummy.o_id = nextoid(otmp, dummy);
+    dummy.timed = 0;
+    dummy.owornmask = 0;
+    if (Is_candle(dummy)) dummy.lamplit = 0;
+    const shkp = billable(null, dummy, (game.u?.ushops || [])[0], true);
+    if (shkp) add_one_tobill(dummy, true, shkp);
+    if (cost) alter_cost(dummy, -cost);
+    otmp.no_charge = (otmp.where === OBJ_FLOOR || otmp.where === OBJ_CONTAINED) ? 1 : 0;
+    otmp.unpaid = 0;
+}
+export async function costly_alteration(obj, alter_type) {
+    if (!(alter_type >= 0 && alter_type < alteration_verbs.length)) alter_type = 0;
+    let ox = 0, oy = 0, objroom = 0, shkp = null;
+    if (carried(obj) || obj.where === OBJ_FREE) {
+        if (!obj.unpaid) return;
+    } else {
+        const { get_obj_location } = await import('./light.js');
+        const loc = get_obj_location(obj, 1 /* CONTAINED_TOO */);
+        ox = loc?.x ?? game.u?.ux;
+        oy = loc?.y ?? game.u?.uy;
+        if (!costly_spot(ox, oy)) return;
+        objroom = in_rooms(ox, oy, SHOPBASE)[0] || 0;
+        shkp = billable(null, obj, objroom, false);
+        if (!shkp) return;
+    }
+    const those = obj.quan === 1 ? 'that' : 'those';
+    const them = obj.quan === 1 ? 'it' : 'them';
+    const learn_bknown = alter_type === COST_UNCURS || alter_type === COST_UNBLSS;
+    if (obj.where === OBJ_FREE || obj.where === OBJ_INVENT) {
+        if (learn_bknown) {
+            const { set_bknown } = await import('./mkobj.js');
+            set_bknown(obj, 1);
+        }
+        const { simpleonames } = await import('./objnam.js');
+        await verbalize(`You ${alteration_verbs[alter_type]} ${those} ${
+            simpleonames(obj)}, you pay for ${them}!`);
+        await bill_dummy_object_for_alteration(obj);
+    } else if (obj.where === OBJ_FLOOR) {
+        if (learn_bknown) obj.bknown = 1;
+        if (costly_spot(game.u?.ux, game.u?.uy)
+            && objroom === (game.u?.ushops || [])[0]) {
+            await verbalize(`You ${alteration_verbs[alter_type]} ${those}, you pay for ${them}!`);
+            await bill_dummy_object_for_alteration(obj);
+        } else {
+            await stolen_value(obj, ox, oy, false, false);
+        }
+    }
 }
 
 // C ref: shk.c donate_gold(gltmp, shkp, selling):3877 — the hero dropped gold
@@ -3755,6 +3937,11 @@ export async function check_unpaid_usage(otmp, altusage) {
     shkp.eshk.debit = (shkp.eshk.debit || 0) + tmp;
 }
 
+// C ref: shk.c:5739 check_unpaid(otmp).
+export async function check_unpaid(otmp) {
+    await check_unpaid_usage(otmp, false);
+}
+
 // C ref: shk.c costly_gold(x, y, amount, silent):5745 — the hero picked up the
 // shop's own gold.
 export async function costly_gold(x, y, amount, silent) {
@@ -3931,7 +4118,7 @@ export async function globby_bill_fixup(obj_absorber, obj_absorbed) {
                || billable(shkp, obj_absorber, eshkp.shoproom, false))) {
         amount = bp.price;
         eshkp.billct--;
-        eshkp.bill[eshkp.bill.indexOf(bp)] = eshkp.bill[eshkp.billct];
+        if (bp !== eshkp.bill[eshkp.billct]) Object.assign(bp, eshkp.bill[eshkp.billct]);
         clear_unpaid_obj(shkp, obj_absorbed);
 
         if (bp_absorber) bp_absorber.price += amount;

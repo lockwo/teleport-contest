@@ -4,6 +4,7 @@
 // Uses fastforward.js for pre/post-mklev RNG parity on seed8000.
 // Real mklev.js handles level generation for screen parity.
 
+import { NetHackPanic } from './panic.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { nhgetch } from './input.js';
@@ -17,7 +18,7 @@ import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './ca
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
 import { movemon, mcalcdistress, mcalcmove, base_mmove, fmonOrder } from './mon.js';
 import { run_regions } from './region.js';
-import { makemon_rnd_spawn, makemon_appears_msg } from './makemon.js';
+import { makemon_rnd_spawn, makemon_appears_msg, flush_group_newsyms } from './makemon.js';
 import { SPEED_BOOTS, objects } from './mkobj.js';
 import { mflags1_of, M1_CARNIVORE, M1_HERBIVORE, M1_METALLIVORE }
     from './monflags_data.js';
@@ -38,7 +39,7 @@ import { near_capacity, reroll_menu, setnotworn, freeinv, worn_extrinsic } from 
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { settrack } from './track.js';
-import { nh_timeout } from './timeout.js';
+import { nh_timeout, do_storms } from './timeout.js';
 import { genTutorialLevel } from './tutorial.js';
 import { find_level } from './dungeon.js';
 import { livelog_printf, LL_ACHIEVE, LL_DEBUG } from './livelog.js';
@@ -321,6 +322,8 @@ async function newgame_real() {
     // 0.  ugangr (number of times the god has been angered) starts at 0.  These
     // feed pray.c can_pray()/angrygods() (p_type, maxanger) when the hero prays.
     g.u.ualign = { type: alignType, record: role?.initrecord ?? 0 };
+    // C ref: u_init.c u_init_misc() — u.ualignbase[A_CURRENT] = u.ualignbase[A_ORIGINAL] = u.ualign.type.
+    g.u.ualignbase = { [A_CURRENT]: alignType, [A_ORIGINAL]: alignType };
     g.u.ublesscnt = 300;
     // C ref: allmain.c newgame() init_artifacts() -> artifact.c
     // hack_artifacts(): the hero's role-gift and quest artifacts take the
@@ -532,6 +535,10 @@ async function maybe_do_tutorial(preambleShownMore) {
         // toplin == NEED_MORE.  After an ESC'd --More-- (WIN_STOP) the message
         // is silently accumulated, toplin stays empty, and no --More-- shows.
         if (!game._winStop) await topl_more();
+        // C more(): ttyDisplay->toplin = TOPLINE_EMPTY once the line is paged, so
+        // the arrival's first message starts a fresh line instead of paging this
+        // one a second time.
+        game._toplin = 0;
         await enter_tutorial_level();
     }
 }
@@ -552,6 +559,17 @@ async function enter_tutorial_level() {
     // C ref: do.c goto_level() `if (new)` — describe_level(dloc, 2) logs
     // "entered level 1, the Tutorial" (LL_DEBUG, still listed by #chronicle).
     livelog_printf(LL_DEBUG, 'entered level 1, the Tutorial');
+    // C ref: do.c:1961 goto_level() `if (new)` — a Tourist gets reward XP of
+    // level_difficulty() for each new level, the tutorial included.
+    {
+        const PM_TOURIST = 10;   /* role index, as in do.js goto_level() */
+        if (g.urole?.mnum === PM_TOURIST) {
+            const { level_difficulty } = await import('./dungeon.js');
+            const { more_experienced, newexplevel } = await import('./exper.js');
+            more_experienced(level_difficulty(), 0);
+            await newexplevel();
+        }
+    }
 
     // Hero placement: teleport_region {9,3} (Lua) -> abs cell {12,6}.
     g.u.ux = 12; g.u.uy = 6;
@@ -559,7 +577,7 @@ async function enter_tutorial_level() {
     if (g.u.umovement == null) g.u.umovement = NORMAL_SPEED;
 
     // C ref: nhlib.lua tutorial_enter() sequesters inventory before arrival.
-    sequester_inventory_for_tutorial();
+    await sequester_inventory_for_tutorial();
 
     // Reset vision for the new level and redraw.  C ref: goto_level() ->
     // vision_reset(); docrt(); flush_screen(-1).
@@ -593,21 +611,10 @@ async function enter_tutorial_level() {
     find_ac();
 }
 
-// C ref: nhlua.c nhl_gamestate() — preserve worn masks while removing items
-// through the inventory hooks, including gold and equipment extrinsics.
-function sequester_inventory_for_tutorial() {
-    const g = game;
-    const saved = [];
-    while (g.invent.length) {
-        const obj = g.invent[0];
-        saved.push({ obj, wornmask: obj.owornmask || 0 });
-        setnotworn(obj);
-        freeinv(obj);
-    }
-    // nhl_gamestate() also stashes svs.spl_book and zeroes it, so the hero
-    // knows no spells inside the tutorial.
-    g._tutorial_saved_state = { invent: saved, spl_book: g.spl_book };
-    delete g.spl_book;      /* spell.js spl_book() recreates a blank book lazily */
+// C ref: nhlib.lua tutorial_enter() -> nhlua.c nhl_gamestate() — stash the
+// hero's inventory and state (js/nhlua.js tutorial()).
+async function sequester_inventory_for_tutorial() {
+    await (await import('./nhlua.js')).tutorial(true);
 }
 
 function engr_at_tut(x, y) {
@@ -1078,15 +1085,33 @@ export async function moveloop_turn() {
 
         if (!monscanmove && g.u.umovement < NORMAL_SPEED) {
             // Both hero and all monsters are out of steam -> advance a turn.
+            // C ref: allmain.c:229-233 — the movement-reallocation loop walks
+            // fmon with NO deadness filter ("dead monsters will have been
+            // purged at end of their previous round of moving").  That holds
+            // for everything killed while monsters move, but a monster killed
+            // INSIDE mcalcdistress() (a sessile one standing in lava, via
+            // m_calcdistress -> minliquid -> xkilled) is still linked in fmon
+            // and still takes its mcalcmove() rn2(NORMAL_SPEED) draw.  Snapshot
+            // the live monsters first so those victims keep their slot.
+            const preDistress = fmonOrder().filter((m) => !(m.mhp != null && m.mhp <= 0));
+            const preSet = new Set(preDistress);
             await mcalcdistress();
             // C walks the fmon chain here, which is newest-first because
             // makemon prepends each monster.  The level array is creation
             // order, so use the same shared ordering as movemon(); assigning
             // the six rounding draws to the wrong monsters changes who gets
             // the next action even when the raw RNG stream is unchanged.
-            for (const mtmp of fmonOrder()) {
-                if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
-                mtmp.movement = (mtmp.movement || 0) + mcalcmove(mtmp, true);
+            const postSet = new Set(game.level?.monsters || []);
+            const realloc = [
+                // monsters made during mcalcdistress sit at the head of fmon
+                ...fmonOrder().filter((m) => !preSet.has(m) && !(m.mhp != null && m.mhp <= 0)),
+                // pre-existing ones: still linked, or killed (not migrated away)
+                ...preDistress.filter((m) => postSet.has(m) || (m.mhp != null && m.mhp <= 0)),
+            ];
+            for (const mtmp of realloc) {
+                const mmove = mcalcmove(mtmp, true);
+                if (!(mtmp.mhp != null && mtmp.mhp <= 0))
+                    mtmp.movement = (mtmp.movement || 0) + mmove;
             }
             await maybe_generate_rnd_mon();
 
@@ -1147,7 +1172,8 @@ export async function moveloop_turn() {
             // exerper() encumbrance branch that was worth 1202 screens.
             if (turn_wtcap > MOD_ENCUMBER && g.u.umoved) {
                 const period = (turn_wtcap < EXT_ENCUMBER) ? 30 : 10;
-                if (!((g.moves || 0) % period)) overexert_hp();
+                if (!((g.moves || 0) % period))
+                    await (await import('./hack.js')).overexert_hp();
             }
 
             // C ref: allmain.c:305 regen_pw(wtcap) — power regeneration, called
@@ -1173,10 +1199,12 @@ export async function moveloop_turn() {
                     const { scrolltele } = await import('./read.js');
                     await scrolltele(null);
                     if (g.u.ux !== old_ux || g.u.uy !== old_uy) {
-                        // C ref: apply.c next_to_u() — FALSE only for a leashed
-                        // pet left behind.  Leashes are not modelled anywhere in
-                        // this port (do.js/dig.js/trap.js keep the same always-
-                        // true stub), so check_leash() never fires here.
+                        // C ref: allmain.c:321 — `if (!next_to_u()) check_leash(...)`.
+                        {
+                            const A = await import('./apply.js');
+                            if (!(await A.next_to_u()))
+                                await A.check_leash(old_ux, old_uy);
+                        }
                         // C ref: allmain.c — "clear doagain keystrokes"; these
                         // run unconditionally once the hero's position changed.
                         if (g._cmdq_canned) g._cmdq_canned.length = 0;
@@ -1228,7 +1256,10 @@ export async function moveloop_turn() {
             // periodic exercise.  (nh_timeout consumes no RNG for the starter
             // sessions.)  C order: dosounds, do_storms, gethungry, age_spells,
             // exerchk, invault, ..., u_wipe_engr.
+            // C ref: allmain.c:343-345 — mkot_trap_warn(); dosounds(); do_storms();
+            await (await import('./artifact.js')).mkot_trap_warn();
             await dosounds();
+            await do_storms();
             game._hunger_msgs = [];
             await gethungry();
             const hungerMsgs = game._hunger_msgs;
@@ -1567,7 +1598,7 @@ async function regen_hp(wtcap = 0) {
     }
     if (!(u.uhp < u.uhpmax)) return;            // C: guarded call (allmain.c:290)
     if (!encumbrance_ok && !u_can_regen()) return; // C ref: allmain.c:652
-    const con = u.acurr?.a?.[A_CON] ?? 12;
+    const con = acurr_eff(A_CON);
     let heal = ((u.ulevel || 1) + con) > rn2(100) ? 1 : 0;
     // C ref: U_CAN_REGEN() == Regeneration — a worn ring of regeneration grants
     // an extra +1 heal each turn (so the hero recovers every turn).
@@ -1607,7 +1638,8 @@ async function regen_pw(wtcap = 0) {
     const wizard_role = (g.urole?.mnum ?? -1) === PM_WIZARD_ROLE;
     const period = Math.trunc((MAXULEV + 8 - (u.ulevel || 1))
                               * (wizard_role ? 3 : 4) / 6);
-    const energy_regen = !!u.uprops?.Energy_regeneration;
+    const energy_regen = !!(u.uprops?.Energy_regeneration || u.uprops?.HEnergy_regeneration
+                            || worn_extrinsic(58 /* ENERGY_REGENERATION */));
     // C: `(wtcap < MOD_ENCUMBER && !(moves % period)) || Energy_regeneration`.
     // The wtcap half used to be dropped as "always UNENCUMBERED", so a Stressed
     // hero below max Pw drew an rn1(upper,1) that C never draws.  A period of 0
@@ -1615,32 +1647,14 @@ async function regen_pw(wtcap = 0) {
     const due = wtcap < MOD_ENCUMBER
         && period > 0 && ((g.moves ?? 0) % period) === 0;
     if (!due && !energy_regen) return;
-    let upper = Math.trunc(((u.acurr?.a?.[A_WIS] ?? 0)
-                            + (u.acurr?.a?.[A_INT] ?? 0)) / 15) + 1;
-    // EMagical_breathing (+2) comes from an amulet of magical breathing, which
-    // no covered hero wears.
+    let upper = Math.trunc((acurr_eff(A_WIS) + acurr_eff(A_INT)) / 15) + 1;
+    // C: `if (EMagical_breathing) upper += 2;` — the EXTRINSIC word only (a worn
+    // amulet of magical breathing), not the intrinsic/timed one.
+    if (worn_extrinsic(52 /* MAGICAL_BREATHING */)) upper += 2;
     u.uen += rn1(upper, 1);
     if (u.uen > u.uenmax) u.uen = u.uenmax;
     game.botl = true; // C ref: allmain.c:615
     if (u.uen === u.uenmax) await interrupt_multi('You feel full of energy.');
-}
-
-// C ref: hack.c overexert_hp() — "HP loss or passing out from overexerting
-// yourself".  Costs 1 HP; at 1 HP the hero passes out instead (exercise(A_CON,
-// FALSE) rolls rn2(2), then fall_asleep(-10)).  fall_asleep is left to the
-// generic sleep machinery (nomul/usleep), which no covered session reaches from
-// here; the HP decrement is the part that steers regen_hp on later turns.
-function overexert_hp() {
-    const u = game.u;
-    if (!u) return;
-    const polyd = !!u.Upolyd;
-    const hp = polyd ? (u.mh ?? 0) : (u.uhp ?? 0);
-    if (hp > 1) {
-        if (polyd) u.mh = hp - 1;
-        else u.uhp = hp - 1;
-    } else {
-        exercise(A_CON, false);
-    }
 }
 
 // C ref: youprop.h Regeneration — the hero has the REGENERATION extrinsic.  For
@@ -1926,6 +1940,7 @@ export async function moveloop_core() {
     // (monster moves, encumber_msg, ...) over a corpse, fabricating RNG really_
     // done() never reaches.  Matches moveloop()'s own post-death stop.
     if (g.program_state?.gameover) return;
+    flush_group_newsyms();      // backstop: leaders whose arrival line never ran
 
     // C ref: allmain.c moveloop_core() — `if (iflags.sanity_check ||
     // iflags.debug_fuzzer) sanity_check();`, once per player-input boundary,
@@ -2074,6 +2089,21 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._takeoff_occupation = null;
+        if (busy && monster_nearby())
+            await (await import('./hack.js')).stop_occupation(true);
+        return;
+    }
+
+    // C ref: allmain.c moveloop_core():485 — the set_trap() occupation (apply.c
+    // use_trap() arming a bear trap / land mine): one step per turn until the
+    // time_needed countdown finishes, interrupted by an adjacent monster.
+    if (g._trap_occupation) {
+        const { set_trap } = await import('./apply.js');
+        const busy = await set_trap();
+        g.context = g.context || {};
+        g.context.move = 1;
+        g._pendingTurn = true;
+        if (!busy) g._trap_occupation = null;
         if (busy && monster_nearby())
             await (await import('./hack.js')).stop_occupation(true);
         return;
@@ -2303,6 +2333,11 @@ export async function moveloop_core() {
         await deferred_goto();
     }
 
+    // C ref: allmain.c:558 — `if (gl.luacore && nhcb_counts[NHCB_END_TURN])`
+    // run nh_callback_run("end_turn") at the tail of moveloop_core(); only the
+    // tutorial registers one (nhlib.lua tutorial_turn()).
+    if (g._tutorial_active) await (await import('./nhlua.js')).tutorial_turn();
+
     // A command that took game time schedules the per-turn work for the
     // next iteration (so the status line / map reflect the elapsed turn
     // when the next screen is captured).
@@ -2318,7 +2353,12 @@ export async function moveloop(resuming) {
     await flush_screen(1);
 
     for (;;) {
-        await moveloop_core();
+        try {
+            await moveloop_core();
+        } catch (e) {
+            if (e instanceof NetHackPanic) break;   // panic() ends the process
+            throw e;
+        }
         if (game.program_state?.gameover) break;
     }
 }
@@ -2629,7 +2669,7 @@ export async function welcome(new_game) {
     } else {
         /* if restoring in Gehennom, give same hot/smoky message as when
            first entering it */
-        await hellish_smoke_mesg();
+        await (await import('./do.js')).hellish_smoke_mesg();
         /* remind player of the level annotation, like in goto_level() */
         const { print_level_annotation } = await import('./dungeon.js');
         await print_level_annotation();
@@ -2648,10 +2688,6 @@ function align_str_wel(alignment) {
 // port: genocide of the hero's polyform is unreachable in this port's play.
 function ugenocided() { return false; }
 function udeadinside() { return 'dead'; }
-// C ref: dungeon.c hellish_smoke_mesg() — "It is hot here.  You smell smoke..."
-// on arrival in Gehennom.  js/mklev.js:394 tracks the level temperature this
-// keys off, but the message itself has no port yet.
-async function hellish_smoke_mesg() { /* dungeon.c; unported */ }
 
 // C ref: allmain.c:933 do_positionbar() — build the msdos POSITIONBAR string:
 // pairs of (marker, x) for every mapped staircase, then the hero.  Not compiled

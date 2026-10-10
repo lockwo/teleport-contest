@@ -22,7 +22,7 @@ import {
     P_MASTER, P_GRAND_MASTER, P_NUM_SKILLS,
     P_FIRST_WEAPON, P_LAST_WEAPON, P_FIRST_SPELL, P_LAST_SPELL,
     P_FIRST_H_TO_H, P_LAST_H_TO_H,
-    P_BARE_HANDED_COMBAT, P_RIDING, P_TWO_WEAPON_COMBAT,
+    P_BARE_HANDED_COMBAT, P_RIDING, P_TWO_WEAPON_COMBAT, TIP_ENHANCE,
 } from './const.js';
 
 const ECMD_OK = 0;
@@ -534,6 +534,8 @@ async function skill_advance(skill, S) {
 // single-shot PICK_NONE listing that the move loop pages (skill_window_advance).
 export async function doenhance() {
     // svc.context.tips |= (1 << TIP_ENHANCE) — player now knows about #enhance.
+    game.context = game.context || {};
+    game.context.tips = (game.context.tips || 0) | (1 << TIP_ENHANCE);
     if (is_wizard()) {
         let speedy = false;
         if (await y_n('Advance skills without practice?') === 'y')

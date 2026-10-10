@@ -24,7 +24,7 @@ import { mkmap_mines, pri_create_trap } from './pri_loca.js';
 // ════════════════════════════════════════════════════════════════════════
 
 // C ref: monsym.h S_* class indices (def_char_to_monclass()).
-const S_RODENT = 18, S_DRAGON = 30, S_SPIDER = 19;
+const S_RODENT = 18, S_DRAGON = 30, S_SNAKE = 45;
 
 // C ref: sp_lev.c:4138 good_stair_loc() — the is_ok_location_func installed
 // only while a des.stair()/des.ladder() with no explicit coord searches for a
@@ -109,18 +109,18 @@ export async function makemaz_hea_fila() {
     // 8 x des.object() — fully random class at a random DRY square.
     for (let i = 0; i < 8; i++) vly_object({});
 
-    // 4 x des.trap() — fully random type and location.  hardfloor is NOT set
-    // on this level, so pri_create_trap's Can_fall_thru() check leaves any
-    // hole/trapdoor roll alone.
-    for (let i = 0; i < 4; i++) await pri_create_trap(0, null, null);
-
     // Random monsters.
     quest_monster({ name: 'rabid rat' });
     for (let i = 0; i < 2; i++) quest_monster({ cls: S_RODENT, peaceful: 0 });
     for (let i = 0; i < 2; i++) quest_monster({ name: 'giant eel' });
     quest_monster({ name: 'electric eel' });
     for (let i = 0; i < 4; i++) quest_monster({ cls: S_DRAGON, peaceful: 0 });
-    for (let i = 0; i < 3; i++) quest_monster({ cls: S_SPIDER, peaceful: 0 });
+    for (let i = 0; i < 3; i++) quest_monster({ cls: S_SNAKE, peaceful: 0 });
+
+    // 4 x des.trap() — fully random type and location.  hardfloor is NOT set
+    // on this level, so pri_create_trap's Can_fall_thru() check leaves any
+    // hole/trapdoor roll alone.
+    for (let i = 0; i < 4; i++) await pri_create_trap(0, null, null);
 
     // lspo_finalize_level: wallification only — noflip is set, so
     // flip_level_rnd() draws nothing.

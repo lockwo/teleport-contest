@@ -27,6 +27,7 @@
 // real port, and the header comment says which original to export instead.
 
 import { game } from './gstate.js';
+import { Blind } from './vision.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import {
@@ -95,14 +96,13 @@ const G_UNIQ = 0x1000;
 const S_ANGEL = 27, S_DEMON = 56;
 // C ref: youprop.h Blind / Deaf / Conflict.  Same readings as js/engrave.js
 // isBlind() and js/eat.js's Deaf: potion.js writes blindness to u.blinded.
-function Blind() {
-    const u = game.u;
-    return !!u && ((u.blinded || 0) > 0 || !!game.ublindf);
-}
 function Deaf() { const u = game.u; return !!(u?.uprops?.Deaf || u?.Deaf); }
 function Conflict() {
     const u = game.u;
-    return !!(u?.uprops?.Conflict || u?.HConflict || u?.EConflict);
+    // C ref: youprop.h Conflict -- (HConflict || EConflict); a worn ring of
+    // conflict (otyp 186) supplies EConflict.
+    return !!(u?.uprops?.Conflict || u?.HConflict || u?.EConflict
+        || game.uleft?.otyp === 186 || game.uright?.otyp === 186);
 }
 // C ref: eat.h is_fainted() — uhs == FAINTED.
 const FAINTED = 5;

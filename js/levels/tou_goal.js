@@ -5,9 +5,9 @@ import { COLNO, ROOM, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
 import { rn2 } from '../rng.js';
 import {
-    bigrm_load_map, bigrm_wallification, gx, gy, lspo_region, quest_create_monster,
+    bigrm_load_map, gx, gy, lspo_region, quest_create_monster,
     quest_place_stair, quest_region_light, quest_rndcoord, quest_set_door,
-    reset_xystart_size,
+    reset_xystart_size, wallify_map,
 } from '../sp_lev.js';
 import { quest_named_object_at, quest_object_rnd } from './quest_common.js';
 import {
@@ -169,9 +169,13 @@ export async function makemaz_tou_goal() {
         quest_create_monster('prisoner', 21, 13, null);
         quest_create_monster('prisoner', 24, 13, null);
         quest_create_monster('watchman', 33, 10, false);
-        // des.wallify() -- explicit, RNG-free; the finalize pass below repeats
-        // it over the same area (matches js/levels/bar_goal.js's ending).
-        bigrm_wallification(1, 0, COLNO - 1, ROWNO - 1);
+        // des.wallify() with no arguments -- sp_lev.c lspo_wallify() ->
+        // wallify_map() over the des.map footprint grown by one: every STONE
+        // square beside a ROOM/CROSSWALL square becomes HWALL/VWALL (this is
+        // what turns the gap between the S.S secret doors into wall).  RNG-free;
+        // the finalize pass below then fixes corners/spines.
+        wallify_map(gx.xstart - 1, gy.ystart - 1,
+                    gx.xstart + gx.xsize + 1, gy.ystart + gy.ysize + 1);
     } finally {
         g._quest_gen = false;
         g._full_mon_gen = false;

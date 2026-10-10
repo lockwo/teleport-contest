@@ -2,13 +2,14 @@
 // sp_lev.js re-exports makemaz_soko1 so existing importers are unaffected; the
 // shared special-level machinery still lives there and is imported below.
 
+import { level_difficulty } from '../dungeon.js';
 import { BURN, COLNO, DOOR, FILL_NORMAL, LR_MONGEN, ROOMOFFSET, ROWNO, SDOOR, ZOO } from '../const.js';
 import { premap_detect } from '../detect.js';
 import { Is_special } from '../dungeon.js';
 import { make_engr_at } from '../engrave.js';
 import { game } from '../gstate.js';
 import { dist2, distmin } from '../hacklib.js';
-import { MM_ASLEEP, MM_NOGRP, level_difficulty_ext, makemon } from '../makemon.js';
+import { MM_ASLEEP, MM_NOGRP, makemon } from '../makemon.js';
 import {
     BAG_OF_HOLDING, BOULDER, FOOD_CLASS, RING_CLASS, SCR_SCARE_MONSTER, WAND_CLASS, curse,
     mkgold, mksobj_at, uncurse,
@@ -191,7 +192,7 @@ function soko_fill_zoo(croom) {
     if (!croom.fdoor && croom.doorct == null) soko_link_doors_to_room(croom);
     if (process.env.NH_DEBUG_ZOO) console.error('DEBUG zoo', JSON.stringify({ lx: croom.lx, ly: croom.ly, hx: croom.hx, hy: croom.hy, doorct: croom.doorct, fdoor: croom.fdoor }));
     const rmno = croom.roomnoidx + ROOMOFFSET;
-    const lvl = level_difficulty_ext();
+    const lvl = level_difficulty();
     let goldlim = 500 * lvl;
     for (let sx = croom.lx; sx <= croom.hx; sx++) {
         for (let sy = croom.ly; sy <= croom.hy; sy++) {

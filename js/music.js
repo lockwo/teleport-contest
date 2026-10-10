@@ -12,6 +12,8 @@ import {
     PIT, SPIKED_PIT, CORR, DRAWBRIDGE_UP, DRAWBRIDGE_DOWN,
     FOUNTAIN, SINK, ALTAR, GRAVE, THRONE, SCORR, ROOM, SDOOR, DOOR,
 } from './const.js';
+import { acurr_eff } from './attrib.js';
+import { fmonOrder } from './mon.js';
 import { m_at, newsym, update_topl } from './display.js';
 import { cansee, Blind } from './vision.js';
 import { Is_stronghold, In_sokoban } from './const.js';
@@ -66,14 +68,17 @@ function Underwater() { return !!game.u?.uinwater; }
 function Levitation() { return uprop('Levitation', 'HLevitation', 'ELevitation'); }
 function Flying() { return uprop('Flying', 'HFlying', 'EFlying'); }
 function Fumbling() { return uprop('Fumbling', 'HFumbling', 'EFumbling'); }
-function ACURR(a) { return game.u?.acurr?.[a] ?? game.u?.attrib?.[a] ?? 10; }
-function monsterList() { return (game.level?.monsters || []); }
+// C ref: attrib.h ACURR(x) == acurr(x), the effective attribute (not the raw u.acurr.a base).
+function ACURR(a) { return acurr_eff(a); }
+// C ref: the `fmon` chain visits monsters newest-first (makemon prepends); the
+// level array holds creation order, so every C `for (mtmp = fmon; ...)` loop
+// iterates the reversed snapshot.
+function monsterList() { return fmonOrder(); }
 
-// C ref: hack.c losehp(n, knam, k_format) — do.js owns the complete port
-// (death path, killer text, polymorph arm).
+// C ref: hack.c losehp(n, knam, k_format).
 async function losehp(n, knam, k_format) {
-    const { losehp_do } = await import('./do.js');
-    await losehp_do(n, knam, k_format);
+    const { losehp: losehp_zap } = await import('./zap.js');
+    await losehp_zap(n, knam, k_format);
 }
 // C ref: trap.c set_utrap(tim, typ).
 function set_utrap(tim, typ) {
@@ -177,16 +182,19 @@ export async function awaken_soldiers(bugler) {
     const distance = (isYou ? (game.u?.ulevel | 0) : (mdata(bugler)?.mlevel | 0)) * 30;
     for (const mtmp of monsterList().slice()) {
         if (DEADMONSTER(mtmp)) continue;
-        if (is_mercenary(mdata(mtmp)) && mdata(mtmp)?.name !== 'watchman'
-            && mdata(mtmp)?.name !== 'watch captain') {
+        if (is_mercenary(mdata(mtmp)) && mdata(mtmp)?.name !== 'guard') {
             if (!mtmp.mtame) mtmp.mpeaceful = 0;
             mtmp.msleeping = 0; mtmp.mfrozen = 0;
             mtmp.mcanmove = 1;
             mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
             if (canspotmon(mtmp))
                 await update_topl(`${Monnam(mtmp)} is now ready for battle!`);
-            else if (!Deaf())
-                await update_topl('You hear the rattle of battle gear being readied.');
+            else if (!Deaf()) {
+                /* Norep(): pline.c PLINE_NOREPEAT drops an exact repeat of the
+                   previous message (several soldiers wake in one bugle call). */
+                const msg = 'You hear the rattle of battle gear being readied.';
+                if (game._prevmsg !== msg) await update_topl(msg);
+            }
         } else {
             const distm = isYou ? mdistu(mtmp)
                                 : dist2(bugler.mx, bugler.my, mtmp.mx, mtmp.my);
@@ -201,12 +209,12 @@ function is_mercenary(p) { return is_mercenary_flag(p); }
 // C ref: music.c:192 charm_monsters(distance).
 async function charm_monsters(distance) {
     if (game.u?.uswallow) distance = 0;
-    const { tamedog } = await import('./dog.js').catch(() => ({ tamedog: null }));
+    const { tamedog } = await import('./dothrow.js');
     for (const mtmp of monsterList().slice()) {
         if (DEADMONSTER(mtmp)) continue;
         if (mdistu(mtmp) <= distance) {
             const resisted = await resist_tool(mtmp);
-            if ((!resisted || mtmp.isshk) && tamedog) await tamedog(mtmp, null, true);
+            if (!resisted || mtmp.isshk) await tamedog(mtmp, null, true);
         }
     }
 }
@@ -335,12 +343,19 @@ async function do_earthquake(force) {
                 if (cansee(x, y)) await update_topl('The kitchen sink falls into a chasm.');
                 await do_pit(x, y, tu_pit);
                 break;
-            case ALTAR:
-                // The high altars (AM_SANCTUM) are preserved; desecrate_altar()
-                // is not ported, so an ordinary altar just becomes a chasm.
-                if (cansee(x, y)) await update_topl('The altar falls into a chasm.');
+            case ALTAR: {
+                const { AM_SANCTUM, AM_MASK, Amask2align } = await import('./const.js');
+                const amsk = (loc.altarmask ?? loc.flags ?? 0) | 0;
+                /* High altars are preserved. */
+                if (amsk & AM_SANCTUM) break;
+                const algn = Amask2align(amsk & AM_MASK);
+                if (cansee(x, y))
+                    await update_topl(`The ${['chaotic', 'neutral', 'lawful'][algn + 1] || ''} altar falls into a chasm.`);
+                const { desecrate_altar } = await import('./pray.js');
+                await desecrate_altar(false, algn);
                 await do_pit(x, y, tu_pit);
                 break;
+            }
             case GRAVE:
                 if (cansee(x, y)) await update_topl('The headstone topples into a chasm.');
                 await do_pit(x, y, tu_pit);
@@ -420,7 +435,7 @@ function upstart(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
 async function do_improvisation(instr) {
     const u = game.u;
     const { exercise } = await import('./attrib.js');
-    const { xname, makeknown, consume_obj_charge } = await import('./invent.js');
+    const { xname, yname, Tobjnam, Yname2, makeknown, consume_obj_charge } = await import('./invent.js');
     let damage;
     let do_spec = !(Stunned() || Confusion());
     let mundane = false;
@@ -476,10 +491,10 @@ async function do_improvisation(instr) {
     case WOODEN_FLUTE:                               /* may charm snakes */
         do_spec = do_spec && (rn2(ACURR(A_DEX)) + (u.ulevel | 0) > 25);
         if (!Deaf())
-            await update_topl(`Your ${xname(instr)} ${do_spec ? 'trills' : 'toots'}${
+            await update_topl(`${Tobjnam(instr, do_spec ? 'trill' : 'toot')}${
                 same_old_song ? ' a familiar tune' : ''}.`);
         else
-            await update_topl(`You feel your ${xname(instr)} ${do_spec ? 'trill' : 'toot'}.`);
+            await update_topl(`You feel ${yname(instr)} ${do_spec ? 'trill' : 'toot'}.`);
         if (do_spec) await charm_snakes((u.ulevel | 0) * 3);
         exercise(A_DEX, true);
         break;
@@ -489,7 +504,7 @@ async function do_improvisation(instr) {
         const { getdir } = await import('./cmd.js');
         const got = await getdir(null);
         if (!got) {
-            await update_topl(`Your ${xname(instr)} vibrates.`);
+            await update_topl(`${Tobjnam(instr, 'vibrate')}.`);
             break;
         }
         const { zapyourself, ubuzz } = await import('./zap.js');
@@ -522,7 +537,7 @@ async function do_improvisation(instr) {
     case BUGLE:                                      /* awaken soldiers */
         if (!Deaf())
             await update_topl(`You extract a loud${same_old_song ? ', familiar' : ''
-                } noise from your ${xname(instr)}.`);
+                } noise from ${yname(instr)}.`);
         else
             await update_topl('You blow into the bugle.');
         await awaken_soldiers(null);
@@ -531,7 +546,7 @@ async function do_improvisation(instr) {
     case MAGIC_HARP:                                 /* charm monsters */
         consume_obj_charge(instr, true);
         if (!Deaf())
-            await update_topl(`Your ${xname(instr)} produces very attractive${
+            await update_topl(`${Tobjnam(instr, 'produce')} very attractive${
                 same_old_song ? ' and familiar' : ''} music.`);
         else
             await update_topl('You feel very soothing vibrations.');
@@ -541,7 +556,7 @@ async function do_improvisation(instr) {
     case WOODEN_HARP:                                /* may calm nymphs */
         do_spec = do_spec && (rn2(ACURR(A_DEX)) + (u.ulevel | 0) > 25);
         if (!Deaf())
-            await update_topl(`Your ${xname(instr)} ${
+            await update_topl(`${Yname2(instr)} ${
                 (do_spec && same_old_song) ? 'produces a familiar, lilting melody'
                 : do_spec ? 'produces a lilting melody'
                 : same_old_song ? 'twangs a familiar tune' : 'twangs'}.`);
@@ -617,9 +632,8 @@ export async function do_play_instrument(instr) {
     if (c === 'y') {
         buf = game.tune || '';
     } else {
-        const { getlin_top } = await import('./extcmd-handlers.js')
-            .catch(() => ({ getlin_top: null }));
-        buf = getlin_top ? (await getlin_top('What tune are you playing? [5 notes, A-G]') || '') : '';
+        const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
+        buf = (await hooked_tty_getlin('What tune are you playing? [5 notes, A-G]', null)) || '';
         if (buf === '\x1b') { await update_topl('Never mind.'); return ECMD_OK; }
         buf = buf.replace(/\s+/g, ' ').trim().toUpperCase().replace(/H/g, 'B');
     }

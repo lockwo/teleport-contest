@@ -9,8 +9,8 @@ import { init_objects } from "./o_init.js";
 import { init_dungeons } from "./dungeon.js";
 import { game } from "./gstate.js";
 import { somexyspace } from "./mkroom.js";
-import { makemon } from "./makemon.js";
-import { ROLE_PRIEST, randrole, roles } from "./role.js";
+import { makemon, name_to_pmidx } from "./makemon.js";
+import { ROLE_PRIEST, randrole, roles, quest_monster_fixups_for_role } from "./role.js";
 import { fill_ordinary_room, mineralize } from "./mklev.js";
 import { fill_special_room, run_themeroom_postprocess } from "./sp_lev.js";
 import { OROOM, THEMEROOM, FILL_NORMAL } from "./const.js";
@@ -34,6 +34,10 @@ const REAL_UINIT_ROLES = new Set([
 
 function fastforward_role_init() {
     const role = initrole_name();
+    // C ref: role.c role_init() "Fix up the quest leader/nemesis": the Master of
+    // Thieves is the Tourist's nemesis, so its msound/flags must change.
+    if (Number.isInteger(game.initrole) && game.initrole >= 0)
+        quest_monster_fixups_for_role(game.initrole, name_to_pmidx);
     // C ref: role.c:2059 — the Arc/Wiz nemesis is the only quest monster with no
     // gender flag, so role_init picks it here with rn2(100) < 50 and stores it
     // in quest_status.nemgend.  makemon() then does NOT roll rn2(2) for it.
