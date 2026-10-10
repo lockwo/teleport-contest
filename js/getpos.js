@@ -449,13 +449,10 @@ export async function auto_describe(cx, cy) {
 // The menu's a_int is `i + 1`, and the pick is read back as
 // garr[picks->item.a_int - 1] — an off-by-one that cancels; do not "fix" it.
 //
-// BLOCKER: gather_locs() is module-private in js/hack.js:1809 (and has a
-// different signature: it RETURNS the array instead of filling out-params).
-// The fix is to export hack.js's, not to fork it here — so this returns FALSE
-// until that export exists.
+// gather_locs() is hack.js's exported one (it RETURNS the sorted array
+// instead of filling out-params).
 export async function getpos_menu(ccp, gloc) {
     const H = await import('./hack.js');
-    if (typeof H.gather_locs !== 'function') return false;  /* see BLOCKER */
     const garr = H.gather_locs(gloc, getpos_getvalid);
     const gcount = garr.length;
     let i, pick_cnt;

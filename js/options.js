@@ -16,13 +16,13 @@ import { ROLE_NONE, ROLE_RANDOM } from './const.js';
 // this file).  All three modules are already evaluated before this one's body
 // runs -- pickup.js above imports makesingular, objects and makemon.js -- so
 // these edges add no module and change no evaluation order.
-import { makesingular } from './objnam.js';
+import { makesingular } from './plural.js';
 import { objects } from './mkobj.js';
 import { name_to_pmidx } from './makemon.js';
 // pline()/impossible() for the same section: C's interactive option handlers
 // report through them.  display.js is likewise already evaluated (pickup.js).
 import { pline, impossible } from './display.js';
-import { makeplural } from './invent.js';
+import { makeplural } from './plural.js';
 // fruitadd()'s 127-fruit overflow fallback is `return rnd(127)`.
 import { rnd } from './rng.js';
 // condition names and aliases for HILITE_STATUS=condition/...; botl.js imports
@@ -1465,6 +1465,16 @@ function set_boolean(name, value, result) {
     // subsystem (mon.js/mklev.js/wizcmds.js/ball.js/engrave.js/timeout.js/
     // trap.js) all read game.iflags.sanity_check, not game.flags.
     case 'sanity_check': result.iflags.sanity_check = value; break;
+    // C: &iflags.getloc_usemenu / &iflags.getloc_moveskip (optlist.h whatis_menu,
+    // whatis_moveskip) -- hack.js getpos() reads game.iflags.getloc_*.
+    case 'whatis_menu':
+        result.flags.whatis_menu = value;
+        result.iflags.getloc_usemenu = value;
+        break;
+    case 'whatis_moveskip':
+        result.flags.whatis_moveskip = value;
+        result.iflags.getloc_moveskip = value;
+        break;
     // C: &iflags.showdamage (optlist.h) -- hack.js showdamage() reads
     // game.iflags.showdamage; flags.* keeps the 'O' menu value.
     case 'showdamage':
@@ -2296,11 +2306,11 @@ function optfn_playmode(o, negated, opts, op, result, duplicate) {
     if (duplicate || negated) return OPTN_ERR;
     if (op === '') return OPTN_ERR;
     if (strncmpi_eq(op, 'normal', 6) || strcmpi_eq(op, 'play')) {
-        set_playmode('normal', result);
+        set_playmode_opt('normal', result);
     } else if (strncmpi_eq(op, 'explore', 6) || strncmpi_eq(op, 'discovery', 6)) {
-        set_playmode('explore', result);
+        set_playmode_opt('explore', result);
     } else if (strncmpi_eq(op, 'debug', 5) || strncmpi_eq(op, 'wizard', 6)) {
-        set_playmode('debug', result);
+        set_playmode_opt('debug', result);
     } else {
         config_error_add(`Invalid value for "${o.name}":${op}`);
         return OPTN_ERR;
@@ -3725,12 +3735,28 @@ function optfn_compound(o, negated, opts, op, result, duplicate) {
     return fn(o, negated, opts, op, result);
 }
 
-// C ref: options.c set_playmode() — wizard/discover, and authorize_wizard_mode()
-// always succeeds because the recorder's sysconf carries WIZARDS=*.
-function set_playmode(mode, result) {
+// optfn_playmode()'s effect on the parse result (the OPTIONS= half of
+// options.c set_playmode()'s inputs).
+function set_playmode_opt(mode, result) {
     result.flags.playmode = mode;
     if (mode === 'debug') result.flags.debug = true;
     if (mode === 'explore') result.flags.explore = true;
+}
+
+// C ref: options.c:10133 set_playmode(void) — called from dorecover()'s
+// restgamestate() when the save file was made in wizard/explore mode.
+// authorize_wizard_mode()/authorize_explore_mode() always succeed because the
+// recorder's sysconf carries WIZARDS=* and explore mode is allowed.
+export function set_playmode() {
+    const fl = (game.flags = game.flags || {});
+    const ifl = (game.iflags = game.iflags || {});
+    if (fl.debug) {
+        game.plname = 'wizard';
+        /* try explore mode if we didn't make it into wizard mode */
+        fl.explore = false;
+        ifl.deferred_X = false;
+    }
+    /* discover && !authorize_explore_mode() never fires here */
 }
 
 // C ref: options.c set_menuobjsyms_flags().
@@ -6256,14 +6282,12 @@ export function enhance_menu_text(buf, sz, whichpass, bool_p, thisopt) {
 }
 
 // C ref: options.c reset_needed_visuals() -- run after a doset() round to apply
-// whatever the picks invalidated.  reset_glyphmap()/reset_customcolors()/
-// reset_customsymbols()/check_gold_symbol() live in js/symbols.js and
-// js/display.js, both of which are on the far side of an import cycle from
-// here, so they load on demand.
+// whatever the picks invalidated.  display.js / glyphs.js / botl.js sit on the
+// far side of import cycles from here, so they load on demand.
 export async function reset_needed_visuals() {
+    const disp = await import('./display.js');
     if (opt_need_glyph_reset) {
-        const sym = await import('./symbols.js');
-        if (sym.reset_glyphmap) sym.reset_glyphmap('gm_optionchange');
+        disp.reset_glyphmap(3 /* gm_optionchange */);
     }
     if (opt_reset_customcolors || opt_update_basic_palette
         || opt_reset_customsymbols || opt_need_redraw) {
@@ -6271,18 +6295,16 @@ export async function reset_needed_visuals() {
             /* #ifdef CHANGE_COLOR change_palette() -- not this build */
             opt_update_basic_palette = false;
         }
-        const sym = await import('./symbols.js');
-        if (opt_reset_customcolors && sym.reset_customcolors)
-            sym.reset_customcolors();
-        if (opt_reset_customsymbols && sym.reset_customsymbols)
-            sym.reset_customsymbols();
-        if (opt_need_redraw) {
-            if (sym.check_gold_symbol) sym.check_gold_symbol();
-            const disp = await import('./display.js');
-            if (disp.reglyph_darkroom) disp.reglyph_darkroom();
+        if (opt_reset_customcolors || opt_reset_customsymbols) {
+            const gl = await import('./glyphs.js');
+            if (opt_reset_customcolors) gl.reset_customcolors();
+            if (opt_reset_customsymbols) gl.reset_customsymbols();
         }
-        const disp = await import('./display.js');
-        if (disp.docrt) await disp.docrt();
+        if (opt_need_redraw) {
+            (await import('./botl.js')).check_gold_symbol();
+            disp.reglyph_darkroom();
+        }
+        await disp.docrt();
     }
     if (opt_need_promptstyle)
         adjust_menu_promptstyle(null, game.iflags && game.iflags.menu_headings);

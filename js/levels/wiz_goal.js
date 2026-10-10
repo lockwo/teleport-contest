@@ -49,7 +49,7 @@ import { dunlevs_in_dungeon } from '../dungeon.js';
 import { game } from '../gstate.js';
 import {
     enexto_spawn, makemon, mm_mon_at, mongets_pub, monster_by_pmidx,
-    name_gender_hint, name_to_pmidx, set_malign, MGEND_NEUTRAL,
+    name_to_pmidx, set_malign,
 } from '../makemon.js';
 import { mk_mplayer } from '../mplayer.js';
 import { rn2 } from '../rng.js';
@@ -57,7 +57,7 @@ import {
     bigrm_load_map, bigrm_wallification, flip_level, map_cleanup,
     quest_create_monster, quest_level_init_solidfill, quest_region_light,
     quest_set_door, remove_boundary_syms, shuffle, splev_link_doors_rooms,
-    vly_abs, vly_altar, vly_non_diggable, vly_region, TEMPLE_RTYPE,
+    splev_find_montype, vly_abs, vly_altar, vly_non_diggable, vly_region, TEMPLE_RTYPE,
 } from '../sp_lev.js';
 import {
     quest_monster_class_rnd, quest_monster_named_rnd, quest_named_object_at,
@@ -127,11 +127,9 @@ function wiz_goal_induced_align() {
 // christen_monst()/peaceful/asleep are applied last, exactly matching
 // create_monster()'s post-make tail.
 function wiz_goal_captive({ id, mx, my, peaceful = null, asleep = null, name = null }) {
-    const pmidx = name_to_pmidx(id);
+    const { pmidx, female } = splev_find_montype(id);     // find_montype sp_lev.c:3156
     const pm = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!pm) return null;
-    if (pm.gcode !== 1 && pm.gcode !== 2 && name_gender_hint(id) === MGEND_NEUTRAL)
-        rn2(2);                                           // find_montype sp_lev.c:3156
     wiz_goal_induced_align();                             // induced_align rn2(3), always drawn
     const { x: ax, y: ay } = vly_abs(mx, my);
     let x = ax, y = ay;
@@ -144,6 +142,7 @@ function wiz_goal_captive({ id, mx, my, peaceful = null, asleep = null, name = n
         ? mk_mplayer(pm, x, y, false, { mongets: mongets_pub })
         : makemon(pm, x, y, 0 /* NO_MM_FLAGS */);
     if (!mtmp) return null;
+    mtmp.female = female;                                 // sp_lev.c:2125
     let mon = mtmp;
     if (name) mon = christen_monst(mon, name);
     if (peaceful != null) { mon.mpeaceful = peaceful ? 1 : 0; set_malign(mon); }

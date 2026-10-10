@@ -14,10 +14,14 @@
 // capture sees the final post-run state with the exact cumulative RNG.
 
 import { game, hooks, svc_context_run } from './gstate.js';
-import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, crawl_destination } from './trap.js';
+import { ok_to_quest } from './questok.js';
+import { trap_predicament } from './insight.js';
+import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, crawl_destination, Levitation_fu, Flying_fu } from './trap.js';
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw } from './allmain.js';
-import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u } from './display.js';
+import { exercise } from './attrib.js';
+import { A_CON } from './const.js';
+import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, terrain_glyph } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster } from './pager.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, S_WORM_TAIL } from './symbols.js';
@@ -59,7 +63,8 @@ import { inside_room } from './mkroom.js';
 import { DEADMONSTER, sensemon } from './mon.js';
 import { is_pool } from './dbridge.js';
 import { water_friction } from './mkmaze.js';
-import { xname, carrying, makeplural, near_capacity } from './invent.js';
+import { xname, carrying, near_capacity } from './invent.js';
+import { makeplural } from './plural.js';
 import { body_part } from './polyself.js';
 import { y_monnam, ARTICLE_A, ARTICLE_YOUR, SUPPRESS_SADDLE } from './do_name.js';
 import { x_monnam } from './uhitm.js';
@@ -132,7 +137,7 @@ function avoid_moving_on_liquid(x, y) {
     const loc = game.level?.at(x, y);
     const typ = loc ? loc.typ : STONE;
     const hereTyp = game.level?.at(u.ux, u.uy)?.typ ?? STONE;
-    const in_air = !!(u.uprops?.Levitation || u.uprops?.Flying);
+    const in_air = !!(Levitation_fu() || Flying_fu());
     const run = game.context?.run || 0;
     if ((typ === hereTyp
          || (run < 2 && (!IS_LAVA(typ) || in_air))
@@ -210,7 +215,12 @@ export function nomul(nval = 0) {
     if ((game.multi ?? 0) < nval) return;
     // C ref: hack.c nomul() `disp.botl |= (gm.multi >= 0);`
     if ((game.multi ?? 0) >= 0) game.botl = true;
+    // C ref: hack.c:4166-4167 — u.uinvulnerable = FALSE (ctrl-C kludge) and
+    // u.usleep = 0.  Without the usleep reset a hero who wakes or whose
+    // sleep is cut short stays Unaware() (gethungry's extra rn2(10)).
+    if (game.u) { game.u.uinvulnerable = false; game.u.usleep = 0; }
     game.multi = nval;
+    if (nval === 0) game.multi_reason = null;
     // C ref: hack.c nomul() `end_running(TRUE)` — the travel/mv clear used to
     // be inlined here, which dropped end_running()'s OTHER half: the run
     // itself.  stop_occupation() -> nomul(0) is how C ends a run when a meal
@@ -237,6 +247,7 @@ const OCC_SLOTS = [
     ['_engrave_occupation', 'engraving'],          // engrave.c:1244 doengrave()
     ['_dig_occupation', () => game.occupation_txt || 'digging'], // dig.c:1311/1356 use_pick_axe2()
     ['_takeoff_occupation', () => game.context.takeoff.disrobing], // do_wear.c:2985
+    ['_trap_occupation', () => game.occupation_txt || 'setting the trap'], // apply.c:2864/2910 use_trap()
 ];
 
 // C ref: eat.c food_xname(food, the_pfx) — reimplemented here (eat.js keeps its
@@ -506,6 +517,9 @@ function runOntoStopTerrain() {
     const u = game.u;
     const c = game.context;
     if (!c.run || c.run >= 8) return false;
+    // C: this tail sits after the u.utrap/trapmove() early return, so a hero who
+    // only struggled (or was refused) in place never reaches it.
+    if (u.ux === u.ux0 && u.uy === u.uy0) return false;
     const loc = game.level?.at(u.ux, u.uy);
     if (!loc) return false;
     if (IS_DOOR(loc.typ) || IS_OBSTRUCTED(loc.typ) || IS_FURNITURE(loc.typ)) {
@@ -786,7 +800,7 @@ function test_move_trav(ux, uy, dx, dy, mode) {
         // Known_wwalking / Known_lwalking are FALSE for a hero without the
         // boots, so the "liquid is safe" escape reduces to being airborne.
         if ((tmpr?.seenv || 0) && is_pool_or_lava(x, y)) {
-            const airborne = !!(game.u?.uprops?.Levitation || game.u?.uprops?.Flying);
+            const airborne = !!(Levitation_fu() || Flying_fu());
             if (IS_WATERWALL(typ) || typ === LAVAWALL || !airborne)
                 return (mode === TEST_TRAP);
         }
@@ -1493,6 +1507,8 @@ function self_lookat() {
     // ansimpleoname() names a BARE ball, so a ball made heavier by a second
     // scroll of punishment still reads "a heavy iron ball", not "a very heavy".
     if (game.u?.uball) buf += `, chained to ${ansimpleoname(game.u.uball)}`;
+    /* C ref: pager.c:130 `if (u.utrap) ", <trap_predicament>"` */
+    if (u.utrap) buf += `, ${trap_predicament(null, false, false)}`;
     return buf;
 }
 
@@ -1524,9 +1540,20 @@ function unseen_creature_desc(x, y, terrainMode) {
 // (glyph_is_unexplored) regardless of what's actually there.  Our model:
 // loc.disp_ch unset == GLYPH_UNEXPLORED; "never revealed" == seenv==0 with no
 // remembered_glyph (such cells are only ever painted as blank S_stone).
-function terrain_description(x, y) {
+function terrain_description(x, y, full = false) {
     const loc = game.level?.at(x, y);
     if (!loc) return 'solid stone';
+    // C ref: detect.c reveal_terrain_getglyph() TER_FULL -- the browsed glyph is
+    // back_to_glyph() with seenv forced to SVALL, so unexplored squares read as
+    // the real terrain.  (typ === STONE reads "stone" below.)
+    if (full) {
+        const typ = loc.typ;
+        /* pager.c:779 S_stone arm still tests the REAL levl[x][y].seenv */
+        if (typ === STONE || typ === SCORR) return loc.seenv ? 'stone' : 'unexplored';
+        const saved = loc.seenv;
+        loc.seenv = 0xff;
+        try { return terrain_description(x, y); } finally { loc.seenv = saved; }
+    }
     if (!loc.seenv && loc.remembered_glyph == null) return 'unexplored area';
     // A square drawn BLANK is S_stone (S_darkroom's symbol is '.', not ' ', so
     // it can't collide here).  Reading levl[][].typ instead of the displayed
@@ -1727,10 +1754,8 @@ function on_qstart_level_hk() {
     return !!(uz && q && uz.dnum === q.dnum && uz.dlevel === q.dlevel);
 }
 
-// C ref: quest.c ok_to_quest() — `((got_quest || got_thanks) && is_pure() > 0)
-// || killed_leader`.  questpgr.js tracks got_quest; the other two flags have no
-// counterpart here, and neither can be true before got_quest is.
-function ok_to_quest_hk() { return !!game._quest_got_quest; }
+// C ref: quest.c ok_to_quest() lives in js/questok.js (leaf module).
+const ok_to_quest_hk = ok_to_quest;
 
 function stair_descr(x, y) {
     const loc = game.level?.at(x, y);
@@ -2070,7 +2095,7 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
 // C ref: getpos.c gather_locs() — every matching spot plus the hero's own,
 // sorted by cmp_coord_distu (chebyshev distance from the hero, ties by y then
 // x).  The hero's spot always sorts to index 0.
-function gather_locs(gloc, validfn, detectMode = false) {
+export function gather_locs(gloc, validfn, detectMode = false) {
     const u = game.u;
     const arr = [];
     for (let x = 1; x < COLNO; x++)
@@ -2136,6 +2161,16 @@ async function getpos_render(message, cx, cy, hist = 'append') {
 // targeting prompt) reuses this same cursor loop via a dynamic import rather
 // than forking a second copy.
 async function getpos(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false) {
+    // C ref: getpos_sethilite(f, validf) / the teardown getpos_sethilite(0, 0):
+    // callers with a validity callback highlight its valid spots (framecolor).
+    game._getposFrameValid = (validfn && game.iflags?.bgcolors !== false && !detectMode) ? validfn : null;
+    try {
+        return await getpos_inner(goalText, startx, starty, validfn, force, verbose, detectMode, terrainMode);
+    } finally {
+        game._getposFrameValid = null;
+    }
+}
+async function getpos_inner(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false) {
     const u = game.u;
     let cx = startx, cy = starty;
 
@@ -2200,7 +2235,7 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
 
     // C: auto_describe(cx,cy) — message for the current cell (self or terrain),
     // with the optional "(invalid target)" suffix from getpos_getvalid.
-    const describe = (x, y) => {
+    const describe = (x, y, menuForm = false) => {
         let desc;
         // C ref: pager.c:668 lookat() gates the self case on
         // `!iflags.terrainmode || (iflags.terrainmode & TER_MON) != 0`. The
@@ -2228,9 +2263,12 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
             // the remembered-unseen-creature 'I', then a floor object (e.g. a
             // STATUE drawn as the petrified monster's class letter), then the
             // terrain underneath.
-            const mtmp = m_at(x, y);
+            // C ref: detect.c reveal_terrain_getglyph() -- a terrain browse
+            // displays monsters/objects only for the TER_MON/TER_OBJ subsets.
+            const tmode = terrainMode ? gp_iflags().terrainmode : 0x08 | 0x04;
+            const mtmp = (tmode & 0x08) ? m_at(x, y) : null;
             const shown = game.level?.at(x, y);
-            const warnlev = shown?.disp_warning ? Number(shown.disp_ch) : 0;
+            const warnlev = ((tmode & 0x08) && shown?.disp_warning) ? Number(shown.disp_ch) : 0;
             const fm = { s: '' };
             if (shows_mimic_object(mtmp, x, y))
                 do_screen_description({ x, y }, true, '', { s: '' }, fm, {});
@@ -2239,7 +2277,8 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
                  ? look_at_monster_desc(mtmp)
                  : (warnlev >= 1 && def_warnsyms[warnlev]) ? def_warnsyms[warnlev].desc
                  : (unseen_creature_desc(x, y, terrainMode)
-                    || look_at_object_here(x, y, true) || terrain_description(x, y));
+                    || ((tmode & 0x04) && look_at_object_here(x, y, true))
+                    || terrain_description(x, y, terrainMode && !!(gp_iflags().terrainmode & TER_FULL)));
             // C ref: detect.c reveal_terrain_getglyph() — while browsing a
             // revealed map, S_darkroom is rewritten to S_room and S_litcorr to
             // S_corr, and do_screen_description() dispatches on that DISPLAYED
@@ -2254,6 +2293,7 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
         // whatis_coord option (nothing, and no space, under GPCOORDS_NONE).
         const coords = coord_desc(x, y, '', gp_iflags().getpos_coords);
         if (coords) desc += ` ${coords}`;
+        if (menuForm) return desc;
         if (validfn && !validfn(x, y)) desc += ' (invalid target)';
         // C ref: getpos.c auto_describe():657 — gated on the GLOBAL
         // iflags.getloc_travelmode, not on which command opened getpos().
@@ -2462,6 +2502,39 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
         // without them 'd' (a door jump) fell through to "Unknown direction".
         {
             const gtmp = GLOC_KEYS.indexOf(ch);
+            if (gtmp >= 0 && gp_iflags().getloc_usemenu && (gtmp >> 1) < 4) {
+                // C getpos.c:1016 `if (iflags.getloc_usemenu)` -> getpos_menu()
+                // (only the m/o/d/x classes have menu forms).
+                const gloc = gtmp >> 1;
+                const gdescr = [['any monsters', 'monster'], ['any items', 'item'],
+                                ['any doors', 'door'], ['any unexplored areas', 'unexplored area']][gloc];
+                const arr = gather_locs(gloc, validfn, detectMode);
+                const filt = ['', ' in view', ' in this area'][gp_iflags().getloc_filter | 0];
+                if (arr.length < 2) { /* gcount always includes the hero */
+                    await update_topl(`You cannot ${gp_iflags().getloc_filter === GFILTER_VIEW ? 'see' : 'detect'} ${gdescr[0]}.`);
+                    msgGiven = true;
+                    continue;
+                }
+                const { extcmd_end_menu, extcmd_select_menu } = await import('./extcmd-handlers.js');
+                const items = [];
+                for (let i = 1; i < arr.length; i++)
+                    items.push({ text: describe(arr[i].x, arr[i].y, true), idx: i });
+                const lmax = Math.min(52, (game.nhDisplay?.rows ?? 24) - 1);
+                const letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                // tty_end_menu() prepends a prompt + blank entry to page 0.
+                const pageOf = (n) => (n < lmax - 2) ? 0 : 1 + Math.floor((n - (lmax - 2)) / lmax);
+                const firstOf = (pg) => pg === 0 ? 0 : (lmax - 2) + (pg - 1) * lmax;
+                items.forEach((it, n) => { it.sel = letters[n - firstOf(pageOf(n))]; it.pg = pageOf(n); });
+                const m = extcmd_end_menu(items,
+                    `Pick ${an(gdescr[1])}${filt}${game.iflags?.getloc_travelmode ? ' for travel destination' : ''}`);
+                const sel = await extcmd_select_menu(m);
+                await (await import("./invent.js")).dismiss_invent_screen();
+                if (sel) {
+                    const hit = items.find((it) => it.sel === sel && it.pg === m.lastPage);
+                    if (hit) { cx = arr[hit.idx].x; cy = arr[hit.idx].y; }
+                }
+                continue;
+            }
             if (gtmp >= 0) {
                 const gloc = gtmp >> 1;
                 if (!garr[gloc]) { garr[gloc] = gather_locs(gloc, validfn, detectMode); gidx[gloc] = 0; }
@@ -2670,6 +2743,13 @@ async function terrain_menu() {
             if (match >= 0) return match + 1;
             continue;
         }
+        if (ch === '-') {
+            // C ref: wintty.c MENU_UNSELECT_ALL ('-') clears the preselected
+            // entry; a later <space> then reports n == 0 (doterrain: which = 1).
+            for (const it of items) it.sel = false;
+            render_terrain_menu(items);
+            continue;
+        }
         const i = items.findIndex((it) => it.ch === ch);
         if (i >= 0) return i + 1; // accelerator -> a_int (1-based menu order)
         // invalid key: PICK_ONE stays open (the menu is still on the grid).
@@ -2706,15 +2786,19 @@ export async function doterrain() {
 // still-pending topline such as getpos's "Done.").
 export async function reveal_terrain(which_subset) {
     const u = game.u;
-    // C: (Hallucination || Stunned || Confusion) && !full => "You are too
-    // disoriented for this."  None of the recorded uses are impaired, so the
-    // normal branch is the only one modelled.
     const keep_traps = (which_subset & TER_TRP) !== 0;
     const keep_objs = (which_subset & TER_OBJ) !== 0;
     // C ref: detect.c reveal_terrain_getglyph — 'full' (the explore/wizard-mode
     // "full map" entry) forces seenv = SVALL, so the real terrain shows even
     // where the hero has never been; it also overrides the impairment check.
     const full = (which_subset & TER_FULL) !== 0;
+    // C ref: detect.c:2362 (Hallucination || Stunned || Confusion) && !full
+    const upv = (k) => u?.uprops?.[k] || 0;
+    if (!full && (Hallucination_u() || upv('Stun') > 0 || !!u?.Stunned
+                  || !!u?.formprops?.Stunned || upv('Confusion') > 0)) {
+        await pline('You are too disoriented for this.');
+        return;
+    }
     const { reveal_terrain_getglyph } = await import('./detect.js');
 
     // C reveal_terrain_getglyph retains the requested remembered overlays
@@ -2759,10 +2843,29 @@ export async function reveal_terrain(which_subset) {
             // corridor's) — the closing "dirty hack" normalizes S_darkroom and
             // S_litcorr but deliberately not these.  Reading pure terrain here
             // drew every engraved square as plain floor/corridor.
+            // The remembered glyph may be an engraving that no longer exists
+            // (wiped/erased since it was seen); glyph_at() still reports that
+            // engraving cmap glyph, which is none of the stripped kinds.
+            if (rg && !rg.objotyp && !loc.invisMon && rg.color === 12 /* CLR_BRIGHT_BLUE */
+                && (rg.bwEngr || rg.ch === '`' || rg.ch === 'a')
+                && !is_cmap_engraving_at(x, y)) {
+                show_glyph_cell(x, y, rg.ch, rg.color, rg.decgfx, bg_attr(rg));
+                continue;
+            }
             if (is_cmap_engraving_at(x, y) && !vobj_at(x, y)
                 && !t_at_hk(x, y)?.tseen) {
                 const eg = engraving_glyph(loc);
                 show_glyph_cell(x, y, eg.ch, eg.color, eg.dec, bg_attr(eg));
+                continue;
+            }
+            // C ref: detect.c:2229-2258 — a remembered-unseen 'I' is replaced by
+            // the terrain the hero last SAW there (lastseentyp), or by the blank
+            // default glyph when the spot was never seen (seenv == 0).
+            if (loc.invisMon) {
+                const dg = { kind: 'cmap', sym: ' ', cell: { ch: ' ', color: NO_COLOR, dec: false } };
+                const g = reveal_terrain_getglyph(x, y, u?.uswallow, dg, which_subset);
+                const gc = g.cell || dg.cell;
+                show_glyph_cell(x, y, gc.ch, gc.color, gc.dec, bg_attr(gc));
                 continue;
             }
             const bg = terrain_background_glyph(loc, x, y);
@@ -2886,11 +2989,17 @@ export async function monster_detect(otmp, mclass) {
     const props = (game.u.uprops = game.u.uprops || {});
     const saveE = props.EDetect_monsters;
     props.EDetect_monsters = (saveE | 0) | I_SPECIAL;
+    // C ref: detect.c browse_map() — `save_autodescribe = iflags.autodescribe;
+    // iflags.autodescribe = TRUE; getpos(...); iflags.autodescribe = save`.
+    game.iflags = game.iflags || {};
+    const saveAutodescribe = game.iflags.autodescribe;
+    game.iflags.autodescribe = true;
     try {
         await getpos('monster of interest', u.ux, u.uy, null, /*force=*/false,
                      verbose, /*detectMode=*/true);
     } finally {
         props.EDetect_monsters = saveE;
+        game.iflags.autodescribe = saveAutodescribe;
     }
 
     reconstrain_map();
@@ -3533,23 +3642,54 @@ export async function checkfile(inp, chkflags) {
     return res;
 }
 
-// C ref: pager.c look_region_nearby() + look_traps() — count seen/remembered
-// traps inside the look region.  nearby => a BOLT_LIM (8) box clamped to the
-// map around the hero; otherwise the whole level.  Only the count is needed to
-// decide the "No traps seen or remembered[ nearby]." message.
-function count_seen_traps(nearby) {
+// C ref: pager.c:2078 look_traps(nearby) (+ look_region_nearby()) — list the
+// seen/remembered traps in the look region (nearby => a BOLT_LIM box around the
+// hero, else the whole level) as an NHW_TEXT window, or print "No traps seen or
+// remembered[ nearby]." when none.  A trap whose glyph is covered by something
+// else (the hero, an object, a monster) gets ", obscured by <coverglyph>".
+async function do_look_traps(nearby) {
     const u = game.u;
     const BOLT_LIM = 8;
     const lo_y = nearby ? Math.max(u.uy - BOLT_LIM, 0) : 0;
     const lo_x = nearby ? Math.max(u.ux - BOLT_LIM, 1) : 1;
     const hi_y = nearby ? Math.min(u.uy + BOLT_LIM, ROWNO - 1) : ROWNO - 1;
     const hi_x = nearby ? Math.min(u.ux + BOLT_LIM, COLNO - 1) : COLNO - 1;
+    const { trap_description } = await import('./pager.js');
+    const { trapname, t_at } = await import('./trap.js');
+    const lines = [];
     let count = 0;
-    for (const t of (game.level?.traps || [])) {
-        if (!t.tseen) continue;
-        if (t.tx >= lo_x && t.tx <= hi_x && t.ty >= lo_y && t.ty <= hi_y) count++;
+    for (let y = lo_y; y <= hi_y; y++) {
+        for (let x = lo_x; x <= hi_x; x++) {
+            const t = t_at(x, y);
+            if (!t || !t.tseen) continue;
+            const loc = game.level?.at(x, y);
+            const tg = trap_glyph(t);
+            // The displayed symbol; the hero (not stored in the map memory) is
+            // drawn as '@'.
+            const cover = (x === u.ux && y === u.uy) ? '@'
+                : (loc && loc.disp_ch)
+                    ? (loc.disp_decgfx ? (DEC_TO_UNICODE[loc.disp_ch] || loc.disp_ch) : loc.disp_ch)
+                    : ' ';
+            let lookbuf;
+            if (cover === tg.ch) {
+                lookbuf = trap_description(t.ttyp, x, y);
+            } else {
+                lookbuf = `${trapname(t.ttyp, false)}, obscured by ${cover}`;
+            }
+            ++count;
+            if (count === 1) {
+                lines.push(upstart(`${nearby ? 'nearby ' : ''}seen or remembered traps${nearby ? '' : ' on this level'}:`));
+                lines.push('    '); // Qt fixed-width separator
+            }
+            // cmode GPCOORDS_MAP: "%8s  " + glyph + two spaces + description
+            const coord = `<${x},${y}>`;
+            lines.push(`${coord.padStart(8)}  ${tg.ch}  ${lookbuf}`);
+        }
     }
-    return count;
+    if (count)
+        await display_dbase_window(lines, /*forceFull=*/true);
+    else
+        await pline(`No traps seen or remembered${nearby ? ' nearby' : ''}.`);
 }
 
 // C ref: pager.c look_engrs() — list seen/remembered engravings in the look
@@ -3569,23 +3709,26 @@ async function do_look_engrs(nearby) {
 
     const lines = [];
     let count = 0;
-    const ENGR_SYM = '`'; // S_engroom cmap symbol
     for (let y = lo_y; y <= hi_y; y++) {
         for (let x = lo_x; x <= hi_x; x++) {
             const loc = game.level?.at(x, y);
             if (!loc || !loc.seenv) continue;
             const e = engr_at(x, y);
             if (!e) continue;
-            // C builds " (engraving" + add_quoted_engraving(), then strsubst.
-            // Headstone/grave variants are not distinguished here (starter
-            // levels have no graves).
-            let full = ' (engraving';
+            // C ref: pager.c look_engrs() — " (grave"/" (engraving" +
+            // add_quoted_engraving(), then strsubst to drop the paren.
+            const isHeadstone = (game.lastseentyp?.[x]?.[y]) === GRAVE;
+            let full = isHeadstone ? ' (grave' : ' (engraving';
             if (e.eread)
-                full += ` with remembered text: "${e.rememberedText}"`;
+                full += ` with ${isHeadstone ? 'headstone reading' : 'remembered text'}: "${e.rememberedText}"`;
             else
-                full += ' that you haven\'t read';
-            full = full.replace('(engraving with ', '');
-            full = full.replace('(engraving ', 'engraving ');
+                full += ` ${isHeadstone ? 'whose headstone' : 'that'} you haven't read`;
+            if (isHeadstone) {
+                full = full.replace('(grave with ', '').replace('(grave whose ', '');
+            } else {
+                full = full.replace('(engraving with ', '');
+                full = full.replace('(engraving ', 'engraving ');
+            }
             // Determine whether the engraving glyph is what is actually shown,
             // or something covers it.  The hero (drawn as an overlay, not in the
             // map memory) covers when standing on the cell; otherwise the map
@@ -3598,7 +3741,14 @@ async function do_look_engrs(nearby) {
                                             : loc.disp_ch;
                 coverChar = dch;
             }
-            const shown = (coverChar === ENGR_SYM);
+            // C: shown iff the glyph is an engraving cmap or S_grave.
+            const graveCh = terrain_glyph({ typ: GRAVE }, x, y)?.ch;
+            // C ref: engraving_to_defsym(e) — S_engrcorr ('#') on a corridor,
+            // S_engroom ('`') elsewhere.
+            const eg = engraving_glyph(loc);
+            const engrCh = eg.dec ? (DEC_TO_UNICODE[eg.ch] || eg.ch) : eg.ch;
+            const shown = (coverChar === engrCh) || (isHeadstone && coverChar === graveCh);
+            const symCh = isHeadstone ? graveCh : engrCh;
             if (!shown) full += `, obscured by ${coverChar}`;
             count++;
             if (count === 1) {
@@ -3607,7 +3757,7 @@ async function do_look_engrs(nearby) {
                 lines.push('    '); // Qt fixed-width separator (renders blank)
             }
             const coord = `<${x},${y}>`;
-            lines.push(`${coord.padStart(8)}  ${ENGR_SYM} ${full}`);
+            lines.push(`${coord.padStart(8)}  ${symCh} ${full}`);
         }
     }
     if (count)
@@ -3716,6 +3866,14 @@ async function do_look_all(nearby, do_mons) {
                     if (mtmp && canspotmon(mtmp)) {
                         lookbuf = look_at_monster_desc(mtmp);
                         sym = cellSym(loc);
+                    } else if (loc?.invisMon) {
+                        // C ref: pager.c:2005 glyph_is_invisible -> invisexplain
+                        lookbuf = 'remembered, unseen, creature';
+                        sym = cellSym(loc);
+                    } else if (loc?.disp_warning && def_warnsyms[Number(loc.disp_ch)]) {
+                        // C ref: pager.c:2009 glyph_is_warning
+                        lookbuf = def_warnsyms[Number(loc.disp_ch)].desc;
+                        sym = cellSym(loc);
                     }
                 }
             } else {
@@ -3744,6 +3902,12 @@ async function do_look_all(nearby, do_mons) {
                             lookbuf = look_at_object_here(x, y, true) || '';
                             sym = cellSym(loc);
                         }
+                    } else if (!otmp) {
+                        // C glyph_at() is a remembered object glyph with no such
+                        // object here any more: look_at_object() fabricates a
+                        // stand-in via object_from_map() (pager.c:317 mksobj).
+                        lookbuf = look_at_object_here(x, y, true) || '';
+                        if (lookbuf) sym = cellSym(loc);
                     }
                 }
             }
@@ -3840,16 +4004,8 @@ export async function do_look_full() {
     }
 
     if (i === 't' || i === 'T') {
-        // C do_look case 't'/'T' -> look_traps(nearby).  Scan the look region
-        // (nearby => BOLT_LIM=8 box around the hero, else the whole map) for
-        // seen/remembered traps.  When none are found the command just prints
-        // "No traps seen or remembered[ nearby]." (no window).  The trap-listing
-        // window for count>0 is not modelled; that case falls through to the
-        // same no-time-passing cancel as before (no message), which is what the
-        // unimplemented sub-modes already did.
-        const nearby = (i === 't');
-        if (count_seen_traps(nearby) === 0)
-            await pline(`No traps seen or remembered${nearby ? ' nearby' : ''}.`);
+        // C do_look case 't'/'T' -> look_traps(nearby).
+        await do_look_traps(i === 't');
         game.context.move = 0;
         return;
     }
@@ -4389,6 +4545,24 @@ function curs_on_u() { /* no-op */ }
 // `disp.time_botl = flags.time`: moveloop() suppresses time_botl while running,
 // and this is the only thing that puts it back, so without it T: never
 // refreshes during a run.
+// C ref: hack.c:3035 overexert_hp() — HP loss or passing out from overexerting
+// yourself (encumbrance in the turn loop, combat via overexertion()).
+export async function overexert_hp() {
+    const u = game.u;
+    const polyd = !!u.Upolyd;
+    const hp = polyd ? (u.mh ?? 0) : (u.uhp ?? 0);
+    if (hp > 1) {
+        if (polyd) u.mh = hp - 1;
+        else u.uhp = hp - 1;
+        game.botl = true;
+    } else {
+        await pline('You pass out from exertion!');
+        exercise(A_CON, false);
+        const { fall_asleep } = await import('./zap.js');
+        await fall_asleep(-10, false);
+    }
+}
+
 export async function runmode_delay_output() {
     const runmode = runmode_value();
 
@@ -4448,7 +4622,7 @@ export async function invocation_message() {
         nomul(0); /* stop running or travelling */
         if (u.usteed)
             buf = `beneath ${y_monnam(u.usteed)}`;
-        else if (u.uprops?.Levitation || u.uprops?.Flying)
+        else if (Levitation_fu() || Flying_fu())
             buf = 'beneath you';
         else
             buf = `under your ${makeplural(body_part(FOOT))}`;

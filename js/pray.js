@@ -12,7 +12,7 @@
 
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { rn2, rnz, rn1, rnl, rnd } from './rng.js';
+import { rn2, rnz, rn1, rnl, rnd, d } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
 import { align_gname, roles, aligns } from './role.js';
 import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF } from './const.js';
@@ -690,11 +690,16 @@ async function fix_worst_trouble(trouble) {
         clear_uprop('Strangled');
         game.botl = true;
         break;
-    case TROUBLE_LAVA:
-        // GAP: teleport.c safe_teleds(TELEDS_NO_FLAGS) then
-        // rescued_from_terrain(DISSOLVED); both need the teleport subsystem.
-        u.utrap = 0;
+    case TROUBLE_LAVA: {
+        // C ref: pray.c:397 — teleport should always succeed, but if not,
+        // release the lava trap, then clear DISSOLVED's pending death.
+        const { safe_teleds } = await import('./teleport.js');
+        const { rescued_from_terrain } = await import('./trap.js');
+        const { TELEDS_NO_FLAGS, DISSOLVED } = await import('./const.js');
+        if (!(await safe_teleds(TELEDS_NO_FLAGS))) u.utrap = 0; // reset_utrap(TRUE)
+        await rescued_from_terrain(DISSOLVED);
         break;
+    }
     case TROUBLE_STARVING:
         /* FALLTHRU — C shares the arm with TROUBLE_HUNGRY */
     case TROUBLE_HUNGRY:
@@ -721,9 +726,18 @@ async function fix_worst_trouble(trouble) {
         game.botl = true;
         break;
     }
-    case TROUBLE_STUCK_IN_WALL:
-        // GAP: safe_teleds() then, if that fails, HPasses_walls = d(4,4)+4.
+    case TROUBLE_STUCK_IN_WALL: {
+        // C ref: pray.c:461 — works even on a no-teleport level.
+        const { safe_teleds } = await import('./teleport.js');
+        const { TELEDS_NO_FLAGS } = await import('./const.js');
+        if (await safe_teleds(TELEDS_NO_FLAGS)) {
+            await update_topl('Your surroundings change.');
+        } else {
+            u.uprops = u.uprops || {};
+            u.uprops.HPasses_walls = d(4, 4) + 4;
+        }
         break;
+    }
     case TROUBLE_CURSED_LEVITATION: {
         let otmp = null;
         if (Cursed_obj(game.uarmf, 'LEVITATION_BOOTS')) otmp = game.uarmf;
@@ -1426,8 +1440,11 @@ async function floorfood_sacrifice() {
             (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy);
         for (const otmp of objs) {
             if (otmp.otyp !== CORPSE) continue;
-            // GAP: will_feel_cockatrice()/feel_cockatrice() — a blind, bare-
-            // handed hero touching a cockatrice corpse dies before the prompt.
+            const { will_feel_cockatrice, killer_xname } = await import('./invent.js');
+            if (will_feel_cockatrice(otmp, false)) {
+                const { instapetrify } = await import('./polyself.js');
+                await instapetrify(`touching ${killer_xname(otmp)} bare-handed`);
+            }
             const one = (otmp.quan || 1) === 1;
             const nm = _inv.obj_doname(otmp);
             const qbuf = `There ${one ? 'is' : 'are'} ${nm} here;`
@@ -1512,7 +1529,7 @@ async function offer_too_soon(altaralign) {
 }
 
 // C ref: pray.c:1501 desecrate_altar(highaltar, altaralign).
-async function desecrate_altar(highaltar, altaralign) {
+export async function desecrate_altar(highaltar, altaralign) {
     const u = game.u;
     if (altaralign === (u.ualign?.type ?? 0)) {
         adjalign(-20);
@@ -1619,7 +1636,7 @@ async function offer_different_alignment_altar(otmp, altaralign) {
 
 // C ref: priest.c angry_priest() — the temple priest underfoot turns hostile.
 // Gated exactly as C gates it: only a priest of a now-different alignment.
-async function angry_priest() {
+export async function angry_priest() {
     const pri = _pri.findpriest(_pri.temple_occupied(game.u?.urooms || ''));
     if (!pri || _pri.p_coaligned(pri)) return;
     pri.mpeaceful = 0;
@@ -1840,7 +1857,15 @@ async function offer_corpse(otmp, highaltar, altaralign) {
             `rejected atheism by offering ${corpse_article_name(otmp)} on an altar of ${a_gname()}`);
     u.uconduct.gnostic = (u.uconduct.gnostic || 0) + 1;
 
-    // GAP: feel_cockatrice(otmp, TRUE) and rider_corpse_revival(otmp, FALSE).
+    {
+        const { will_feel_cockatrice, killer_xname } = await import('./invent.js');
+        if (will_feel_cockatrice(otmp, true)) {
+            const { instapetrify } = await import('./polyself.js');
+            await instapetrify(`touching ${killer_xname(otmp)} bare-handed`);
+        }
+        const { rider_corpse_revival } = await import('./pickup.js');
+        if (await rider_corpse_revival(otmp, false)) return;
+    }
     const ptr = _mkm.monster_by_pmidx(otmp.corpsenm);
 
     /* same-race and former-pet results apply even to a corpse too old to
@@ -2049,18 +2074,9 @@ async function loadPrayExtras() {
     return _pxd;
 }
 
-// C ref: objnam.c:2563 vtense(subj, verb) — the plural-subject test reduced to
-// what at_your_feet() can pass it (an object description, "Something", or a
-// "A <foo>"/"An <foo>" phrase).  Three other files keep the same local copy
-// (js/timeout.js:453, js/monmove.js:6075, js/muse.js:304).
-function vtense_pr(subj, verb) {
-    const s = String(subj || '');
-    if (/^an? /i.test(s)) return `${verb}s`;                     /* C: goto sing */
-    // C: plural is anything ending in 's' that is not '*us'/'*ss', plus the
-    // makeplural specials "...eeth"/"...feet"/"...ia"/"...ae".
-    if ((/[^us]s$/i.test(s)) || /(eeth|feet|ia|ae)$/i.test(s)) return verb;
-    return `${verb}s`;
-}
+// C ref: objnam.c:2563 vtense(subj, verb) — the faithful copy lives in js/plural.js.
+import { vtense } from './plural.js';
+const vtense_pr = vtense;
 // C ref: hacklib.c upstart().
 function upstart_pr(s) { return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s; }
 // C ref: hacklib.c An(str) — capitalised indefinite article.
@@ -2462,9 +2478,8 @@ export async function pray_revive() {
     if (!otmp) return false;
 
     if (otmp.otyp === CORPSE) {
-        // GAP: mon.c revive(obj, TRUE) is unported (js/apply.js:1697 records the
-        // same gap for revive_corpse()); the scan above is the whole decision.
-        return false;
+        const { revive } = await import('./zap.js');
+        return (await revive(otmp, true)) != null;
     }
     const ANIMATE_SPELL = 2;   /* trap.h */
     return (await D.trp.animate_statue(otmp, u.ux, u.uy, ANIMATE_SPELL, null)) != null;

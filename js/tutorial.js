@@ -18,11 +18,11 @@ import { rn2, rnd } from './rng.js';
 import {
     COLNO, ROWNO, STONE, VWALL, HWALL, DBWALL, TREE, SDOOR, POOL, MOAT, WATER,
     LAVAPOOL, LAVAWALL, IRONBARS, DOOR, CORR, ROOM, STAIRS, FOUNTAIN, THRONE, ALTAR, ICE,
-    MAX_TYPE, INVALID_TYPE, NO_ROOM, D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED,
+    MAX_TYPE, INVALID_TYPE, NO_ROOM, D_NODOOR, D_BROKEN, D_ISOPEN, D_CLOSED, D_LOCKED,
     W_NONDIGGABLE, LA_DOWN, ENGRAVE, BURN, NON_PM, SPACE_POS,
     MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP, OBJ_FLOOR } from './const.js';
 import { GameMap } from './game.js';
-import { wallification, set_wall_state } from './mklev.js';
+import { wallification, set_wall_state, mkstairs } from './mklev.js';
 import { objects, mksobj, mksobj_at, next_ident, blessorcurse, curse, set_corpsenm, BOULDER, KELP_FROND } from './mkobj.js';
 import { name_to_pmidx, monster_by_pmidx, newmonhp } from './makemon.js';
 import { make_engr_at } from './engrave.js';
@@ -65,6 +65,10 @@ const TUT_MAP = [
 // (rx+OFF, ry+OFF), OFF=3, and the renderer draws absolute (x,y) at terminal
 // (x-1, y+1).  So des {cx,cy} -> abs (cx+3, cy+3) -> terminal (cx+2, cy+4).
 const OFF = 3;
+// Origin of the des.map fragment being built.  tut-1's 75x18 map is centered at
+// (3,3) (OFF); tut-2's 14x8 map centers at sp_lev.c's xstart/ystart =
+// 2 + (78-2-14)/2 = 33 and 2 + (20-2-8)/2 = 7 (both odd, so not bumped).
+let ORG_X = OFF, ORG_Y = OFF;
 
 // C ref: sp_lev.c splev_chr2typ — map char -> terrain type.
 function chr2typ(ch) {
@@ -87,22 +91,22 @@ function chr2typ(ch) {
     case 'I': return ICE;
     case '"': return IRONBARS;
     case 'Z': return LAVAWALL;   // C ref: nhlua.c char2typ — 'Z' -> LAVAWALL (wall of lava)
-    case 'F': return TREE;   // 'F' is a tree in tut-1 (forest decoration)
+    case 'F': return IRONBARS;   // C ref: nhlua.c char2typ — { 'F', IRONBARS } (Fe = iron)
     default: return ROOM;
     }
 }
 
 // Convert a des map coordinate (0-based map index) to an absolute level cell.
-function A(cx, cy) { return { x: cx + OFF, y: cy + OFF }; }
+function A(cx, cy) { return { x: cx + ORG_X, y: cy + ORG_Y }; }
 
-function setTerrain(lvl) {
-    for (let ry = 0; ry < TUT_MAP.length; ry++) {
-        const row = TUT_MAP[ry];
+function setTerrain(lvl, map = TUT_MAP) {
+    for (let ry = 0; ry < map.length; ry++) {
+        const row = map[ry];
         for (let rx = 0; rx < row.length; rx++) {
             const ch = row[rx];
             const typ = chr2typ(ch);
-            const x = rx + OFF;
-            const y = ry + OFF;
+            const x = rx + ORG_X;
+            const y = ry + ORG_Y;
             const loc = lvl.at(x, y);
             if (!loc) continue;
             loc.typ = typ;
@@ -221,10 +225,12 @@ function createTrap(cx, cy, typ, opts = {}) {
     lvl.traps.push(trap);
     // mktrap victim roll (mklev.c:2137): rnd(4) when not novictim.
     if (!novictim) rnd(4);
-    if (typ === MAGIC_PORTAL) {
-        // assign_level(&t->dst, &u.ucamefrom) — destination is where we came
-        // from (the level we left to enter the tutorial).  No PRNG.
-        trap.dst = { ...(game.u?.ucamefrom || { dnum: 0, dlevel: 1 }) };
+    const cf = game.u?.ucamefrom;
+    if (typ === MAGIC_PORTAL && cf && (cf.dnum || cf.dlevel)) {
+        // mklev.c:2108 — assign_level(&t->dst, &u.ucamefrom) only once the hero
+        // has a recorded origin (a tutorial entered by level teleport has none,
+        // and the portal keeps maketrap()'s dst of -1,-1).  No PRNG.
+        trap.dst = { dnum: cf.dnum, dlevel: cf.dlevel };
     }
     return trap;
 }
@@ -368,7 +374,16 @@ function runTutProgram() {
 
     engrave(10, 10, ENGRAVE, 'Behind this door is a dark corridor');
     setDoor(10, 9, percent(50) ? D_LOCKED : D_CLOSED);   // percent rn2(100)
-    // des.region(selection.match("#"), "unlit") + match(" ") — no PRNG
+    // des.region(selection.match("#"), "unlit") + match(" ") — no PRNG.
+    // C ref: nhlsel.c l_selection_match() selects every cell of the level whose
+    // terrain is CORR / STONE and lspo_region() (argc == 2, "unlit") runs
+    // sel_set_lit(.., 0) on each, so the corridors stay dark (seen only when
+    // adjacent) even though the whole map was lit above.
+    for (let y = 0; y < ROWNO; y++)
+        for (let x = 1; x < COLNO; x++) {
+            const loc = lvl.at(x, y);
+            if (loc && (loc.typ === CORR || loc.typ === STONE)) loc.lit = false;
+        }
     setDoor(15, 10, percent(50) ? D_LOCKED : D_CLOSED);  // percent rn2(100)
 
     engrave(15, 11, ENGRAVE, 'There are four traps next to you! Search for them.');
@@ -385,7 +400,9 @@ function runTutProgram() {
 
     setDoor(18, 13, D_CLOSED);
     engrave(19, 13, ENGRAVE, "Pick up items with ','");
-    createObject(19, 14, 'leather armor', { spe: 0, buc: 'cursed' });
+    // tut-1.lua:145 — `(u.role == "Monk") and "leather gloves" or "leather armor"`
+    createObject(19, 14, game.urole?.name?.m === 'Monk' ? 'leather gloves' : 'leather armor',
+                 { spe: 0, buc: 'cursed' });
 
     engrave(19, 15, ENGRAVE, "Wear armor with 'W'");
     createObject(21, 15, 'dagger', { spe: 0, buc: 'not-cursed' });
@@ -489,8 +506,9 @@ function runTutProgram() {
     createTrap(73, 15, TRAPDOOR, {});                    // hole_destination rn2(4) + rnd(4)
 
     engrave(60, 2, ENGRAVE, 'Spellcasting');
-    // u.uenmax < 5 (Ranger Pw 3) -> extra engraving.
-    engrave(59, 2, ENGRAVE, "Unfortunately you don't have enough energy to cast spells.");
+    // tut-1.lua:316 — `if (u.uenmax < 5)` only a hero too weak to cast gets the note.
+    if ((game.u?.uenmax | 0) < 5)
+        engrave(59, 2, ENGRAVE, "Unfortunately you don't have enough energy to cast spells.");
     engrave(57, 2, ENGRAVE, "Pick up the spellbook with ','");
     createObject(57, 2, 'light', { oclass: 10, buc: 'blessed' });  // SPBOOK_CLASS; blessorcurse rn2(17)
     engrave(55, 2, ENGRAVE, "Read the spellbook with 'r'");
@@ -504,7 +522,7 @@ function runTutProgram() {
 // des.door state="random" -> rnddoor() (sp_lev.c:1152) rolls rn2(5) over the
 // door-state weight table; returns a concrete mask.
 function rndDoorState() {
-    const states = [D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED, D_NODOOR];
+    const states = [D_NODOOR, D_BROKEN, D_ISOPEN, D_CLOSED, D_LOCKED]; // sp_lev.c:1150 state[]
     return states[rn2(5)];
 }
 
@@ -592,6 +610,7 @@ function nhlibAlignShuffle() {
 // this call; a #wizmakemap replacement draws them from
 // fastforward_fill_mineralize() and makemap_prepost() instead.
 function buildTutorialLevel(lvl, viaGoto) {
+    ORG_X = ORG_Y = OFF;
     // splev_initlev solidfill: linit->lit = rn2(2) (BOOL_RANDOM).
     rn2(2);
 
@@ -618,14 +637,18 @@ function buildTutorialLevel(lvl, viaGoto) {
     wallification(1, 0, COLNO - 1, ROWNO - 1);
     set_wall_state();
 
-    // C ref: sp_lev.c lspo_region — des.region(selection, "lit") grows the lit
-    // selection by 1 in all directions (selection_do_grow(W_ANY)) BEFORE
-    // sel_set_lit, so the 1-cell ring bounding the lit area (including the
-    // level's edge rows/cols) is lit too.  The JS vision (vision.js) only marks
-    // a wall/door IN_SIGHT when the wall cell ITSELF is lit AND the adjacent
-    // floor toward the hero is lit, so light every wall / door / secret-door
-    // cell that borders a lit ROOM/CORR/DOOR cell — spanning the full map so the
-    // bottom/right border walls (y=ROWNO-1, x=COLNO-1) light too.  No PRNG.
+    lightBorderWalls(lvl);
+}
+
+// C ref: sp_lev.c lspo_region — des.region(selection, "lit") grows the lit
+// selection by 1 in all directions (selection_do_grow(W_ANY)) BEFORE
+// sel_set_lit, so the 1-cell ring bounding the lit area (including the
+// level's edge rows/cols) is lit too.  The JS vision (vision.js) only marks
+// a wall/door IN_SIGHT when the wall cell ITSELF is lit AND the adjacent
+// floor toward the hero is lit, so light every wall / door / secret-door
+// cell that borders a lit ROOM/CORR/DOOR cell — spanning the full map so the
+// bottom/right border walls (y=ROWNO-1, x=COLNO-1) light too.  No PRNG.
+function lightBorderWalls(lvl) {
     for (let y = 1; y < ROWNO; y++) {
         for (let x = 1; x < COLNO; x++) {
             const loc = lvl.at(x, y);
@@ -634,8 +657,10 @@ function buildTutorialLevel(lvl, viaGoto) {
             // Any wall variant (VWALL..DBWALL = 1..12), door, secret door,
             // iron bars, or stone bordering a lit room cell becomes lit so the
             // renderer reveals it (corners included).
+            // STONE is excluded: tut-1.lua's des.region(selection.match(" "),
+            // "unlit") leaves every STONE cell dark (runTutProgram above).
             const isWall = ((t >= VWALL && t <= DBWALL) || t === DOOR
-                            || t === SDOOR || t === IRONBARS || t === STONE);
+                            || t === SDOOR || t === IRONBARS);
             if (!isWall || loc.lit) continue;
             for (const [ddx, ddy] of [[1, 0], [-1, 0], [0, 1], [0, -1],
                                       [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
@@ -648,6 +673,68 @@ function buildTutorialLevel(lvl, viaGoto) {
             }
         }
     }
+}
+
+// ── dat/tut-2.lua, the second (and last) tutorial level: a lit 12x6 room with
+//    the up stairs, a "go up" engraving and a magic portal. ──
+const TUT2_MAP = [
+    '--------------',
+    '|............|',
+    '|............|',
+    '|............|',
+    '|............|',
+    '|............|',
+    '|............|',
+    '--------------',
+];
+
+// C ref: mklev.c makelevel() -> makemaz("tut-2") -> sp_lev.c load_special() for
+// the level a goto_level() is arriving on.  mklev() has already drawn
+// getbones(); the nhlib.lua align shuffle comes from loading the Lua library
+// for the level script.  Hero placement (u_on_rndspot's place_lregion draws:
+// tut-2 has no teleport_region) happens later in goto_level().
+export function makemaz_tutorial2() {
+    const lvl = game.level;
+    nhlibAlignShuffle();
+    setTutorialLevelFlags(lvl);
+    // des.level_init({ style = "solidfill", fg = " " }): linit->lit = rn2(2).
+    rn2(2);
+
+    ORG_X = 33; ORG_Y = 7;
+    // des.map([[...]]) — default halign/valign "center".
+    setTerrain(lvl, TUT2_MAP);
+
+    // des.region(selection.area(01,01, 73, 16), "lit"): the area, relative to
+    // the map origin, runs off the map, so every cell from the (grown) region's
+    // top-left corner to the level's edge is lit.
+    for (let y = ORG_Y; y < ROWNO; y++)
+        for (let x = ORG_X; x < COLNO; x++) {
+            const loc = lvl.at(x, y);
+            if (loc) loc.lit = true;
+        }
+
+    // des.stair({ dir = "up", coord = { 2,2 } })
+    {
+        const { x, y } = A(2, 2);
+        mkstairs(x, y, 1, null);
+    }
+
+    // des.engraving({ coord = { 1,1 }, type = "burn", text = "Use '<' ..." })
+    engrave(1, 1, BURN, `Use '${cmd_from_ecname('up')}' to go up the stairs`);
+
+    // des.trap({ type = "magic portal", coord = { 11,5 }, seen = true })
+    createTrap(11, 5, MAGIC_PORTAL, { seen: true });    // mktrap rnd(4)
+
+    // des.non_diggable()
+    for (let y = 0; y < ROWNO; y++)
+        for (let x = 1; x < COLNO; x++) {
+            const loc = lvl.at(x, y);
+            if (loc) loc.wall_info |= W_NONDIGGABLE;
+        }
+
+    wallification(1, 0, COLNO - 1, ROWNO - 1);
+    set_wall_state();
+    lightBorderWalls(lvl);
 }
 
 // C ref: dat/tut-1.lua:30 des.level_flags("mazelevel", "noflip",

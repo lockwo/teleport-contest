@@ -20,25 +20,20 @@ import { update_topl } from './display.js';
 import { rn2, rnd, d, rnz } from './rng.js';
 import { objects, mksobj, weight, base_oc_cost } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { fuzzymatch } from './objnam.js';
+import { fuzzymatch, simple_typename } from './objnam.js';
 import { monster_by_pmidx } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
 import { exercise } from './attrib.js';
-import { isok, s_suffix } from './hacklib.js';
+import { isok, s_suffix, depth } from './hacklib.js';
 import { quest_artifact_num } from './questpgr.js';
 import { cansee, Blind } from './vision.js';
 import { mon_nam, monflee } from './uhitm.js';
 import { resist, cancel_monst, destroy_items, ignite_items, Antimagic as Antimagic_zap } from './zap.js';
-import { worn_extrinsic, xname, yname, otense, killer_xname } from './invent.js';
+import { worn_extrinsic, xname, yname, otense, killer_xname, Hate_silver } from './invent.js';
 import { healmon } from './mon.js';
 import { mon_aligntyp } from './minion.js';
 import { nomul } from './hack.js';
-import {
-    mflags1_of, mflags2_of, mflags3_of, msound_of,
-    M1_AMORPHOUS, M1_NOHEAD,
-    M2_UNDEAD, M2_WERE, M2_ELF, M2_ORC, M2_DEMON, M2_GIANT, M2_LORD, M2_PRINCE,
-    M2_HUMAN, M2_DWARF, M2_GNOME,
-} from './monflags_data.js';
+import { mflags1_of, mflags2_of, mflags3_of, msound_of, M1_AMORPHOUS, M1_NOHEAD, M2_UNDEAD, M2_WERE, M2_ELF, M2_ORC, M2_DEMON, M2_GIANT, M2_LORD, M2_PRINCE, M2_HUMAN, M2_DWARF, M2_GNOME, noncorporeal, is_undead_flag as is_undead, is_were_flag as is_were, is_demon_flag as is_demon, is_golem, nonliving } from './monflags_data.js';
 import {
     MATTK,
     AT_ENGL, AT_HUGS, AT_MAGC,
@@ -555,18 +550,6 @@ function Poison_resistance() {
 }
 function Drain_resistance() { return !!game.u?.formprops?.Drain_resistance || !!(uprop('Drain_resistance') || game.u?.Drain_resistance); }
 function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || !!(uprop('Stone_resistance') || game.u?.Stone_resistance); }
-// C ref: youprop.h Hate_silver == (u.ulycn >= LOW_PM || hates_silver(youmonst)).
-function Hate_silver() {
-    if ((game.u?.ulycn ?? NON_PM) >= 0) return true;
-    const ptr = youmonst_data();
-    if (!ptr) return false;
-    if ((mflags2_of(ptr) & M2_WERE) !== 0) return true;
-    if (ptr.mcls === S_VAMPIRE) return true;
-    if ((mflags2_of(ptr) & M2_DEMON) !== 0) return true;
-    if (ptr.name === 'shade') return true;
-    if (ptr.mcls === S_IMP && ptr.name !== 'tengu') return true;
-    return false;
-}
 // C ref: hack.h Maybe_Half_Phys(dmg) — halve, rounding up, under HALF_PHDAM.
 function Maybe_Half_Phys(dmg) {
     return (game.u?.HHalf_physical_damage || game.u?.EHalf_physical_damage)
@@ -584,21 +567,11 @@ function floor_objects_at(x, y) {
 function bigmonst(ptr) { return (ptr?.msize ?? 0) >= 3 /* MZ_LARGE */; }
 function has_head(ptr) { return (mflags1_of(ptr) & M1_NOHEAD) === 0; }
 function amorphous(ptr) { return (mflags1_of(ptr) & M1_AMORPHOUS) !== 0; }
-function noncorporeal(ptr) { return ptr?.mcls === S_GHOST; }
-function is_undead(ptr) { return (mflags2_of(ptr) & M2_UNDEAD) !== 0; }
-function is_were(ptr) { return (mflags2_of(ptr) & M2_WERE) !== 0; }
-function is_demon(ptr) { return (mflags2_of(ptr) & M2_DEMON) !== 0; }
-function is_golem(ptr) { return ptr?.mcls === S_GOLEM; }
 function is_dlord(ptr) { return is_demon(ptr) && (mflags2_of(ptr) & M2_LORD) !== 0; }
 function is_dprince(ptr) { return is_demon(ptr) && (mflags2_of(ptr) & M2_PRINCE) !== 0; }
 function is_covetous(ptr) { return !!ptr && (mflags3_of(ptr) & M3_COVETOUS) !== 0; }
 function is_mplayer(ptr) {
     return !!ptr && ptr.pmidx >= PM_ARCHEOLOGIST && ptr.pmidx <= PM_WIZARD;
-}
-// C ref: mondata.h weirdnonliving/nonliving.
-function nonliving(ptr) {
-    return is_undead(ptr) || ptr?.pmidx === PM_MANES
-        || is_golem(ptr) || ptr?.mcls === S_VORTEX;
 }
 function mattk_rows(ptr) { return ptr?.pmidx != null ? (MATTK[ptr.pmidx] || []) : []; }
 // C ref: mondata.c attacktype()/dmgtype() — [aatyp, adtyp, damn, damd].
@@ -1442,16 +1415,6 @@ function align_str(alignment) {
     default: return "unknown";
     }
 }
-// C ref: objnam.c simple_typename() — the actual name with any "<class> of "
-// prefix dropped, or the description when unidentified.
-function simple_typename(otyp) {
-    const o = objects[otyp];
-    if (!o) return "";
-    const nm = o.name || DESCR_BY_OTYP[otyp] || "";
-    const cut = nm.indexOf(" of ");
-    return cut >= 0 ? nm.slice(cut + 4) : nm;
-}
-
 // C ref: artifact.c dump_artifact_info() — wizard-mode listing of the nine
 // tracking bits per artifact.
 export function dump_artifact_info() {
@@ -2173,11 +2136,14 @@ export async function invoke_create_portal(obj, chosen_dnum) {
     /* the closest level in that dungeon is either its entry or the deepest
        level the hero has reached there */
     const newlev = { dnum: i, dlevel: 0 };
-    const uzdepth = game.u?.uz?.dlevel ?? 1;
+    const uzdepth = depth(game.u?.uz);
     newlev.dlevel = (dgns[i]?.depth_start >= uzdepth) ? dgns[i].entry_lev
                                                       : dgns[i]?.dunlev_ureached;
 
-    if (game.u?.uhave?.amulet || newlev.dnum === game.u?.uz?.dnum) {
+    const { In_endgame } = await import('./const.js');
+    const { next_to_u } = await import('./apply.js');
+    if (game.u?.uhave?.amulet || In_endgame(game.u?.uz) || In_endgame(newlev)
+        || newlev.dnum === game.u?.uz?.dnum || !(await next_to_u())) {
         await update_topl("You feel very disoriented for a moment.");
     } else {
         await update_topl(!Blind()
@@ -2350,7 +2316,10 @@ export async function arti_invoke(obj) {
         /* a plain crystal ball goes to apply.c use_crystal_ball() */
         if (obj.otyp !== CRYSTAL_BALL)
             await update_topl(NOTHING_HAPPENS);
-        else unbound('use_crystal_ball', undefined);
+        else {
+            const { use_crystal_ball } = await import('./detect.js');
+            await use_crystal_ball({ obj });
+        }
         return ECMD_TIME;
     }
 
@@ -2418,13 +2387,9 @@ export async function arti_invoke(obj) {
             // pickupFn callback is this port's equivalent of pick=FALSE.
             await spoteffects();
         } else {
-            // float_down(I_SPECIAL | TIMEOUT, W_ARTI) (trap.c) is a distinct,
-            // still-unported symbol outside this batch's assignment (only the
-            // levitation-timeout-expiry arm is ported, inline, in
-            // js/timeout.js's TIMED_PROPS table); turning OFF a worn/wielded
-            // artifact's own LEVITATION ability is not exercised by any
-            // covered session.
-            unbound('float_down', undefined);
+            const { float_down } = await import('./trap.js');
+            const { I_SPECIAL, TIMEOUT, W_ARTI } = await import('./const.js');
+            await float_down(I_SPECIAL | TIMEOUT, W_ARTI);
         }
         break;
     case INVIS:
@@ -2475,7 +2440,10 @@ export async function arti_speak(obj) {
     if (oart === NONART() || !(oart.spfx & SPFX_SPEAK))
         return ECMD_OK;   /* nothing happened */
 
-    let line = hook('getrumor', "", bcsign(obj), true);
+    // C ref: artifact.c:2287 getrumor(bcsign(obj), buf, TRUE) -- real rumors.c
+    // port lives in engrave.js (dynamic import: engrave.js imports this file).
+    const { getrumor } = await import('./engrave.js');
+    let line = getrumor(bcsign(obj), true);
     if (!line) line = "NetHack rumors file closed for renovation.";
     // C: pline("%s:", ...) then verbalize1(line) — two sequential pline()s,
     // each through update_topl()'s merge-or-page.  The old raw _pending_message

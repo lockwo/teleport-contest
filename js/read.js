@@ -16,8 +16,9 @@ import { pline, topl_more, update_topl, urgent_topl, newsym, y_n } from './displ
 import { getobj, makeknown, useup, useupall, xname, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY,
          GETOBJ_EXCLUDE, GETOBJ_PROMPT, GETOBJ_ALLOWCNT, GETOBJ_EXCLUDE_SELECTABLE,
          identify_pack, trycall, near_capacity, obj_doname, stackobj, obfree,
-         update_inventory, remove_worn_item, makeplural, delobj,
-         worn_extrinsics_off } from './invent.js';
+         update_inventory, remove_worn_item, delobj,
+         worn_extrinsics_off, youmonst_data_pub } from './invent.js';
+import { makeplural } from './plural.js';
 import { exercise } from './attrib.js';
 import { discover_object } from './o_init.js';
 import { do_mapping } from './detect.js';
@@ -41,7 +42,7 @@ import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          COLNO, ROWNO, SPE_LIM,
          W_BALL, W_CHAIN, W_ARMH, SDOOR, DOOR, D_CLOSED, D_LOCKED, isok,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
-         In_endgame, Is_earthlevel, GENOCIDED, KILLED_BY,
+         In_endgame, In_quest, POLY_REVERT, Is_earthlevel, GENOCIDED, KILLED_BY,
          KILLED_BY_AN, NO_KILLER_PREFIX, DIED, ROOM, STONE, IS_WALL, IS_DOOR,
          G_GONE, TELEDS_TELEPORT, OBJ_FREE, PLNMSG_TOWER_OF_FLAME } from './const.js';
 import { S_invisible, S_WORM_TAIL, S_MIMIC_DEF, S_MIMIC, S_WORM, S_DEMON,
@@ -681,22 +682,23 @@ async function seffect_amnesia(sobj) {
     exercise(A_WIS, false);
 }
 
-// C ref: read.c forget(howmuch).  losespells() (spell.c) and
-// drain_weapon_skill() (weapon.c) are not ported; the rnd() that picks how many
-// skills to drain is C's, and it fires before drain_weapon_skill() is entered,
-// so it belongs here regardless.  drain_weapon_skill()'s own rn2(skills_advanced)
-// / rn2(curradv - prevadv) draws are deferred with it.
+// C ref: read.c:1020 forget(howmuch).
 async function forget(howmuch) {
     const u = game.u;
     if (u?.uball) u.bc_felt = 0; // Punished: forget felt ball&chain
     if (howmuch & ALL_SPELLS) {
         const spell = await import('./spell.js');
-        if (spell.losespells) spell.losespells();
+        spell.losespells();
     }
-    rnd(howmuch ? 5 : 3); // drain_weapon_skill(rnd(...)) argument
+    /* Forget some skills. */
+    const { drain_weapon_skill } = await import('./weapon.js');
+    await drain_weapon_skill(rnd(howmuch ? 5 : 3));
+    /* forget having seen monsts (affects recognizing unseen ones by sound) */
     for (const mtmp of (game.level?.monsters || []))
         if (mtmp !== game.u?.usteed && mtmp !== game.u?.ustuck)
             mtmp.meverseen = 0;
+    for (const mtmp of (game.migrating_mons || []))
+        mtmp.meverseen = 0;
 }
 
 // C ref: read.c seffect_enchant_armor() — scroll of enchant armor.  This was
@@ -823,7 +825,7 @@ function cap_spe(obj) {
 // ball — each worth rnd(1000) for the in-class probability walk plus next_ident
 // and mkobj_erosions' four draws) while we drew none, and the ball and chain
 // never appeared on the floor or in the "Things that are here" list.
-async function punish(sobj) {
+export async function punish(sobj) {
     const u = game.u;
     // angrygods() passes a null sobj; only the HEAVY_IRON_BALL re-use case
     // recycles the object it was handed.
@@ -932,9 +934,8 @@ const WORM_TOOTH = 42, CRYSKNIFE = 43; // C ref: objects.h otyp
 // (amount<0) the wielded weapon; otmp is the scroll causing it.  Returns
 // false only for the "no weapon wielded" fallback (matching C's `return 0`,
 // which signals the caller to treat the scroll as already consumed).
-// Unported: the cursed-tin-opener uncurse-with-aura branch (needs will_weld())
-// and the artifact "faintly glow"/Magicbane clue branches (need artifact
-// support).
+// Shop-bill adjustments (costly_alteration/alter_cost) are RNG-free and
+// not modelled here.
 async function chwepon(otmp, amount) {
     const uwep = game.uwep;
     // C ref: wield.c:920 — hcolor() is drawn at entry, before any branch.
@@ -1015,6 +1016,15 @@ async function chwepon(otmp, amount) {
     uwep.spe = (uwep.spe || 0) + amount;
     if (amount > 0 && uwep.cursed) uncurse(uwep);
 
+    // C ref: wield.c:1035 — Magicbane's obscure enchantment clue.
+    {
+        const { ART_MAGICBANE } = await import('./artifact.js');
+        if (uwep.oartifact === ART_MAGICBANE && (uwep.spe || 0) >= 0) {
+            const { body_part } = await import('./invent.js');
+            const { HAND } = await import('./const.js');
+            await pline_append(`Your right ${body_part(HAND)} ${((amount > 1) && (uwep.spe > 1)) ? 'flin' : 'it'}ches!`);
+        }
+    }
     // an elven magic clue: elven weapons vibrate warningly when enchanted
     // beyond a limit.  The rn2(7) is a real draw for any non-elven,
     // non-artifact weapon taken above +5.
@@ -1144,32 +1154,29 @@ function learnscroll(sobj) {
 }
 
 
-// C ref: read.c litroom(on, obj) — light (on) or darken (!on, a cursed scroll)
-// the area around the hero.  C lights every couldsee cell within radius
-// (do_clear_area + set_lit, 9 for a blessed scroll else 5) and forces a redraw
-// so newly-lit corridor cells outside the hero's own room become visible.
-//
-// set_lit() is NOT RNG-free: it collects every gremlin standing on a
-// newly-lit square, and after the vision recalc each one takes
-// light_hits_gremlin(mon, rnd(5)).  The darkening half also snuffs the hero's
-// lit lamps/candles and (when Punished and not blind) has to pick the ball &
-// chain up and put them back so they aren't remembered out of sight.
-// Still unported: the rogue-level whole-room relight (needs svr.rooms[] +
-// rlit), the Sunsword #invoke radius-0 case, and impact_arti_light() on
-// artifact lights.
+// C ref: read.c:2491 litroom(on, obj) — light (on) or darken (!on, a cursed
+// scroll) the area around the hero, plus set_lit() (read.c:2471).
+// set_lit() collects every gremlin standing on a newly-lit square, and after
+// the vision recalc each one takes light_hits_gremlin(mon, rnd(5)).
 export async function litroom(on, obj) {
     const u = game.u;
     const no_op = !!(u?.uswallow || u?.uprops?.Underwater || Is_waterlevel(u?.uz));
     const blessed_effect = !!(obj?.oclass === SCROLL_CLASS && obj.blessed);
     const loc0 = game.level?.at(u.ux, u.uy);
+    const { artifact_light } = await import('./light.js');
+    const { ART_SUNSWORD } = await import('./artifact.js');
 
     if (!on) {
         let still_lit = 0;
+        const { snuff_lit } = await import('./apply.js');
+        const { impact_arti_light } = await import('./potion.js');
         for (const otmp of [...(game.invent || [])]) {
             if (otmp.lamplit) {
-                // (artifact_light() -> impact_arti_light() not modelled; the
-                // ordinary case just snuffs the flame.  No RNG either way.)
-                otmp.lamplit = 0;
+                if (!artifact_light(otmp))
+                    await snuff_lit(otmp);
+                else
+                    /* wielded Sunsword or worn gold dragon scales/mail */
+                    await impact_arti_light(otmp, true, !Blind());
                 if (otmp.lamplit) ++still_lit;
             }
         }
@@ -1182,10 +1189,31 @@ export async function litroom(on, obj) {
                 await pline_append('You are surrounded by darkness!');
         }
     } else {
-        if (!u?.uswallow && !Blind()
-            && !(Is_rogue_level(u.uz) && loc0?.typ === CORR))
+        if (blessed_effect) {
+            const { impact_arti_light } = await import('./potion.js');
+            for (const otmp of [...(game.invent || [])])
+                if (otmp.lamplit && artifact_light(otmp))
+                    await impact_arti_light(otmp, false, !Blind());
+        }
+        if (u?.uswallow) {
+            if (!Blind()) {
+                const { Monnam } = await import('./do_name.js');
+                const { s_suffix } = await import('./hacklib.js');
+                const { mbodypart } = await import('./monmove.js');
+                const { STOMACH } = await import('./const.js');
+                const { attacktype_fordmg, AT_ENGL, AD_DGST } = await import('./monattk_data.js');
+                const { S_VORTEX } = await import('./symbols.js');
+                const ptr = u.ustuck?.data;
+                if (attacktype_fordmg(ptr, AT_ENGL, AD_DGST))
+                    await pline_append(`${s_suffix(Monnam(u.ustuck))} ${mbodypart(u.ustuck, STOMACH)} is lit.`);
+                else if (ptr?.mcls === S_VORTEX || ptr?.name === 'air elemental')
+                    await pline_append(`${Monnam(u.ustuck)} shines briefly.`);
+                else
+                    await pline_append(`${Monnam(u.ustuck)} glistens.`);
+            }
+        } else if (!Blind() && (!Is_rogue_level(u.uz) || loc0?.typ !== CORR)) {
             await pline_append(`A lit field ${no_op ? 'briefly ' : ''}surrounds you!`);
-        // (the swallowed "<Mon>'s stomach is lit" variants need mbodypart().)
+        }
     }
 
     if (no_op) return;
@@ -1197,9 +1225,8 @@ export async function litroom(on, obj) {
     if (punished && !on && !Blind())
         await move_bc(1, 0, u.uball.ox, u.uball.oy, u.uchain.ox, u.uchain.oy);
 
-    if (Is_rogue_level(u.uz)) return; // whole-room rogue relight not ported
-
     const gremlins = [];
+    const unlit = [];
     const PM_GREMLIN = 40; // makemon.js MONS index
     const { m_at } = await import('./display.js');
     const set_lit = (x, y) => {
@@ -1208,14 +1235,40 @@ export async function litroom(on, obj) {
         if (on) {
             loc.lit = 1;
             const mtmp = m_at(x, y);
-            if (mtmp && mtmp.data?.pmidx === PM_GREMLIN) gremlins.push(mtmp);
+            if (mtmp && mtmp.data?.pmidx === PM_GREMLIN) gremlins.unshift(mtmp);
         } else {
             loc.lit = 0;
-            // (snuff_light_source(x, y): the light-source list isn't modelled.)
+            unlit.push([x, y]);
         }
     };
     const { do_clear_area, vision_recalc } = await import('./vision.js');
-    do_clear_area(u.ux, u.uy, blessed_effect ? 9 : 5, set_lit);
+    if (Is_rogue_level(u.uz)) {
+        /* rogue lighting must light the entire room (do_clear_area's radius
+           is too small); hallways remain dark on the rogue level */
+        const { ROOMOFFSET } = await import("./const.js");
+        const rnum = (loc0?.roomno ?? 0) - ROOMOFFSET;
+        const room = rnum >= 0 ? game.level?.rooms?.[rnum] : null;
+        if (room) {
+            for (let rx = room.lx - 1; rx <= room.hx + 1; rx++)
+                for (let ry = room.ly - 1; ry <= room.hy + 1; ry++)
+                    set_lit(rx, ry);
+            room.rlit = on ? 1 : 0;
+        }
+    } else if (obj && obj.oartifact === ART_SUNSWORD) {
+        /* Sunsword's #invoke power directed up or down lights hero's spot */
+        const loc = game.level?.at(u.ux, u.uy);
+        if (loc) {
+            loc.lit = 1;
+            const mtmp = m_at(u.ux, u.uy);
+            if (mtmp && mtmp.data?.pmidx === PM_GREMLIN) gremlins.unshift(mtmp);
+        }
+    } else {
+        do_clear_area(u.ux, u.uy, blessed_effect ? 9 : 5, set_lit);
+    }
+    if (unlit.length) {
+        const { snuff_light_source } = await import('./light.js');
+        for (const [x, y] of unlit) await snuff_light_source(x, y);
+    }
 
     if (!Blind()) {
         // C read.c:2612: temporarily shut vision down so the delayed redraw
@@ -1227,11 +1280,9 @@ export async function litroom(on, obj) {
     game.vision_full_recalc = 1;
     if (gremlins.length) {
         vision_recalc(0);
-        for (const gremlin of gremlins) {
-            // C ref: zap.c light_hits_gremlin(mon, rnd(5)) — the rnd(5) fires
-            // for each gremlin the light reached, before any damage handling.
-            rnd(5);
-        }
+        const { light_hits_gremlin } = await import('./uhitm.js');
+        for (const gremlin of gremlins)
+            await light_hits_gremlin(gremlin, rnd(5));
     }
 }
 
@@ -1445,7 +1496,7 @@ async function strange_feeling(obj, txt) {
 // armor piece (cloak/suit/shirt first, each of helm/gloves/boots/shield with a
 // 1-in-4 chance to override).  seffect_destroy_armor calls this unconditionally
 // for its RNG side effects even on paths that don't use the result.
-function some_armor() {
+export function some_armor() {
     let otmph = game.uarmc || game.uarm || game.uarmu || null;
     for (const slot of ['uarmh', 'uarmg', 'uarmf', 'uarms']) {
         const otmp = game[slot];
@@ -1469,9 +1520,8 @@ function count_worn_armor() {
 export async function destroy_arm() {
     const armors = ['uarm', 'uarmc', 'uarmh', 'uarms', 'uarmg', 'uarmf', 'uarmu']
         .map((slot) => game[slot]).filter(Boolean);
+    const hits = rn2(4) + 1;   /* C: drawn in the declaration, before the idx check */
     if (!armors.length) return false;
-
-    const hits = rn2(4) + 1;
     let ret = false;
     for (let i = 0; i < hits; i++) {
         const otmp = armors[rn2(armors.length)];
@@ -1484,14 +1534,9 @@ export async function destroy_arm() {
             }
         }
     }
-    // C ref: allmain.c moveloop_core() — find_ac() runs once per player input
-    // (not from erode_obj itself), so an eroded piece's AC penalty shows up
-    // starting with the NEXT screen, not mid-turn between destroy_arm's hits.
-    // (C's own tail here is `if (ret) stop_occupation();` — deliberately NOT
-    // ported: the port's stop_occupation() ends in nomul(0), whose "must leave
-    // the occupation armed" behaviour differs, and no scroll can be read while
-    // an occupation is running anyway.)
-    if (ret) find_ac();
+    // C ref: destroy_arm() ends with `if (ret) stop_occupation();` (deliberately
+    // NOT ported, see below) and never calls find_ac(): u.uac (hence the status
+    // line) stays stale until the next moveloop_core() head runs find_ac().
     return ret;
 }
 
@@ -2133,8 +2178,8 @@ function has_ceiling_read(uz) {
     return true;
 }
 function avoid_ceiling_read(uz) {
-    // C: `In_quest(lev) || !has_ceiling(lev)`.  In_quest() is not ported here.
-    return !has_ceiling_read(uz);
+    // C ref: dungeon.c avoid_ceiling: `In_quest(lev) || !has_ceiling(lev)`.
+    return In_quest(uz) || !has_ceiling_read(uz);
 }
 function ceiling_read(x, y) {
     return ceiling_dg(x, y);
@@ -2168,14 +2213,9 @@ import { an as an_read } from './hacklib.js';
 // C ref: hacklib.c upstart(s) — capitalise the first letter in place.
 function upstart_read(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
-// C ref: objnam.c vtense(subj, verb) — plural subject keeps the bare verb.
-// Only the two seffect_earth call sites ("avalanches materialize" vs "an
-// avalanche materializes") reach this.
-function vtense_read(subj, verb) {
-    const s = String(subj || '');
-    const plural = /s$/.test(s) && !/ss$/.test(s);
-    return plural ? verb : vtense_sing_wep(verb);
-}
+// C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js.
+import { vtense } from './plural.js';
+const vtense_read = vtense;
 
 // ── read.c:89 erode_obj_text / the o_id-indexed slogan tables ─────────────
 
@@ -2925,7 +2965,7 @@ function def_char_to_monclass_read(ch) {
 // here, which is what do_class_genocide()'s prompt and create_particular_parse
 // actually need.
 async function name_to_monclass_read(str) {
-    const { makesingular } = await import('./objnam.js');
+    const { makesingular } = await import('./plural.js');
     const s = String(str || '');
     if (!s) return { klass: 0, mndx: NON_PM };
     if (s.length === 1) {
@@ -2979,9 +3019,7 @@ async function name_to_monclass_read(str) {
 // "?" re-prompts without consuming a try.  RNG-free: the whole cost is the
 // input it consumes and the mvitals writes.
 //
-// SCOPE: list_genocided() ('?'), quest_info() (the leader/nemesis/guardian
-// feedback carve-out) and vampshifted() are not ported; livelog_printf() is
-// score-only and is left out.
+// livelog_printf() is score-only and is left out.
 // C's gu.urole.mnum / gu.urace.mnum are mons[] indices; this port stores
 // 0-based role/race indices there (role order matches PM_ARCHEOLOGIST..
 // PM_WIZARD), so map them back for the genocide "is it you?" tests.
@@ -3029,7 +3067,8 @@ export async function do_class_genocide() {
             return;
         /* "?" runs #genocided to show existing genocides, then re-prompts */
         if (buf === '?' || buf === "'?'") {
-            // C: list_genocided('g', FALSE) — not ported.
+            const { list_genocided } = await import('./insight.js');
+            await list_genocided('g', false);
             --j;                       /* don't count this as one of the tries */
             continue;
         }
@@ -3086,24 +3125,48 @@ export async function do_class_genocide() {
                 await kill_genocided_monsters();
                 update_inventory();    /* eggs & tins */
                 await pline_append(`Wiped out all ${nam}.`);
-                // C: the Upolyd vampshifter revert / u.mh = -1 / rehumanize()
-                // block needs vampshifted() + Unchanging, neither ported.
+                const PS = await import('./polyself.js');
+                const { vampshifted } = await import('./insight.js');
+                const u = game.u;
+                if (u.Upolyd && vampshifted(game.youmonst)
+                    /* current shifted form or base vampire form */
+                    && (i === u.umonnum || i === game.youmonst?.cham))
+                    await PS.polyself(POLY_REVERT); /* vampshifter to vampire */
+                if (u.Upolyd && i === u.umonnum) {
+                    u.mh = -1;
+                    if (PS.Unchanging_poly()) {
+                        if (!feel_dead++) await urgent_topl('You die.');
+                        /* finish genociding this class of monsters
+                           before ultimately dying */
+                        gameover = true;
+                    } else
+                        await PS.rehumanize();
+                }
                 /* Self-genocide if it matches either your race or role. */
                 if (i === urole_mnum || i === urace_mnum) {
-                    game.u.uhp = -1;
-                    if (!feel_dead++) await urgent_topl('You die.');
-                    gameover = true;
+                    u.uhp = -1;
+                    if (u.Upolyd) {
+                        if (!feel_dead++)
+                            await pline_append(`You feel ${PS.udeadinside()} inside.`);
+                    } else {
+                        if (!feel_dead++) await urgent_topl('You die.');
+                        gameover = true;
+                    }
                 }
             } else if (mvitals_mvflags(i) & G_GENOD) {
                 if (!gameover)
                     await pline_append(`${upstart_read(nam)} are already nonexistent.`);
             } else if (!gameover) {
                 /* suppress feedback about quest beings except for those
-                   applicable to our own role (quest_info() is not ported, so
-                   the leader/nemesis/guardian arms all suppress) */
+                   applicable to our own role */
+                const { quest_info } = await import('./questpgr.js');
                 const snd = msound_of(ptr);
-                if (snd !== MS_LEADER && snd !== MS_NEMESIS && snd !== MS_GUARDIAN
-                    && ptr.name !== 'ninja') {
+                const samurai = (game.u?.urole?.name?.m || game.u?.urole?.name || '') === 'Samurai';
+                if ((snd !== MS_LEADER || quest_info(MS_LEADER) === i)
+                    && (snd !== MS_NEMESIS || quest_info(MS_NEMESIS) === i)
+                    && (snd !== MS_GUARDIAN || quest_info(MS_GUARDIAN) === i)
+                    /* non-leader/nemesis/guardian role-specific monster */
+                    && (ptr.name !== 'ninja' || samurai)) {
                     const named = type_is_pname_read(ptr);
                     let uniq = (ptr.geno & G_UNIQ) !== 0;
                     if (ptr.name === 'high cleric') uniq = false; /* one special case */
@@ -3132,9 +3195,7 @@ export async function do_class_genocide() {
 // RNG: the cursed arm's rn1(3, 4) count and one makemon() per creature; the
 // "no free pass" fallbacks each draw an rndmonst().
 //
-// SCOPE: list_genocided(), quest/vampshifter reverts, SetVoice()/verbalize()
-// and livelog are not ported (none draws RNG); adjalign() IS ported and is
-// wired, since it is real state.
+// SetVoice() and livelog are not modelled (none draws RNG).
 export async function do_genocide(how) {
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     const { monster_by_pmidx, rndmonst, makemon } = await import('./makemon.js');
@@ -3185,7 +3246,8 @@ export async function do_genocide(how) {
             }
             /* "?" or "'?'" runs #genocided to show existing genocides */
             if (buf === '?' || buf === "'?'") {
-                // C: list_genocided('g', FALSE) — not ported.
+                const { list_genocided } = await import('./insight.js');
+                await list_genocided('g', false);
                 --i;                   /* don't count this as one of the tries */
                 continue;
             }
@@ -3197,7 +3259,15 @@ export async function do_genocide(how) {
                 continue;
             }
             ptr = monster_by_pmidx(mndx);
-            // C: the Upolyd vampshifter revert needs vampshifted() — not ported.
+            /* first revert if current shifted form or base vampire form */
+            {
+                const { vampshifted } = await import('./insight.js');
+                if (u.Upolyd && vampshifted(game.youmonst)
+                    && (mndx === u.umonnum || mndx === game.youmonst?.cham)) {
+                    const { polyself } = await import('./polyself.js');
+                    await polyself(POLY_REVERT); /* vampshifter (bat, &c) to vampire */
+                }
+            }
             /* Although "genus" is Latin for race, the hero benefits from both
                race and role; thus genocide affects either. */
             if (mndx === urole_mnum || mndx === urace_mnum) {
@@ -3217,7 +3287,11 @@ export async function do_genocide(how) {
                 }
                 continue;
             }
-            // C: `if (Unchanging && ptr == youmonst.data) killplayer++;`
+            /* KMH -- Unchanging prevents rehumanization */
+            {
+                const PS = await import('./polyself.js');
+                if (PS.Unchanging_poly() && ptr === youmonst_data_pub()) killplayer++;
+            }
             break;
         }
         mndx = ptr?.pmidx ?? NON_PM;   /* monsndx(ptr): needed for 'no free pass' */
@@ -3258,11 +3332,19 @@ export async function do_genocide(how) {
                 game.killer.format = KILLED_BY_AN;
                 game.killer.name = 'scroll of genocide';
             }
-            // C: the Upolyd delayed_killer(POLYMORPH, ...) arm needs
-            // youmonst.data; an unpolymorphed hero takes done() directly.
-            const { done } = await import('./end.js');
-            await done(GENOCIDED);
-        } else if (u.Upolyd && ptr === game.youmonst?.data) {
+            /* Polymorphed characters will die as soon as they're rehumanized.
+               KMH -- Unchanging prevents rehumanization. */
+            if (u.Upolyd && ptr !== youmonst_data_pub()) {
+                const { delayed_killer } = await import('./end.js');
+                const { udeadinside } = await import('./polyself.js');
+                const { POLYMORPH } = await import('./const.js');
+                delayed_killer(POLYMORPH, game.killer.format, game.killer.name);
+                await pline_append(`You feel ${udeadinside()} inside.`);
+            } else {
+                const { done } = await import('./end.js');
+                await done(GENOCIDED);
+            }
+        } else if (ptr === youmonst_data_pub()) {
             const { rehumanize } = await import('./polyself.js');
             await rehumanize();
         }
@@ -3299,15 +3381,10 @@ export async function do_genocide(how) {
 // C ref: read.c:2046 seffect_food_detection().  Returns true on C's
 // `*sobjp = 0` (nothing detected: strange_feeling -> useup).
 //
-// BLOCKER: detect.c food_detect() is not ported — js/detect.js carries only
-// gold_detect()/do_mapping()/findit().  Its browse_map()/getpos() loop consumes
-// real input and its "nothing detected" arm decides whether the scroll is used
-// up here, so the call is left named rather than stubbed.
+// C ref: detect.c:479 food_detect() (js/detect.js).
 export async function seffect_food_detection(sobj) {
     const D = await import('./detect.js');
-    if (typeof D.food_detect !== 'function') return false;
-    if (await D.food_detect(sobj)) return true; /* *sobjp = 0 */
-    return false;
+    return !!(await D.food_detect(sobj)); /* nothing detected: *sobjp = 0 */
 }
 
 // C ref: read.c:2157 seffect_mail() — a scroll of mail.  spe 2 is a marker-made

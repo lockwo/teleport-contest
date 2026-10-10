@@ -4,11 +4,20 @@
 // Life saving restores HP and releases any holder or engulfer before the
 // interrupted turn resumes.
 
+import { rawPrintBias, setFinalCursor } from './rawprint.js';
 import { game } from './gstate.js';
 import { Goodbye } from './role.js';
 import { midnight, night } from './calendar.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
-import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU } from './const.js';
+import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU, In_quest, In_endgame, Is_knox_level } from './const.js';
+
+// C ref: end.c:1536 -- " on dungeon level N" is omitted in the endgame and in
+// single-level branches (Fort Ludios); the quest reports its own dunlev(), not
+// its depth.
+function dungeon_level_phrase(uz, depth) {
+    if (In_endgame(uz) || Is_knox_level(uz)) return '';
+    return ` on dungeon level ${In_quest(uz) ? (uz.dlevel | 0) : depth}`;
+}
 
 // end.h death codes (subset).  DIED=0; GENOCIDED separates the death codes
 // that leave a tombstone/bones from the ones that don't (QUIT/ESCAPED/
@@ -163,7 +172,7 @@ export async function outrip_and_score(how) {
     lines.push(`${Goodbye(game.urole?.mnum)} ${plname} the ${roleName}...`); // 18
     lines.push('');                                    // 19
     lines.push((how !== ESCAPED && how !== ASCENDED)
-        ? `You ${ENDS[how]} in ${dungeonName} on dungeon level ${depth}`
+        ? `You ${ENDS[how]} in ${dungeonName}${dungeon_level_phrase(uz, depth)}`
           + ` with ${urexp} point${plur(urexp)},`
         : `You ${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
           + ` with ${urexp} point${plur(urexp)},`);    // 20
@@ -229,21 +238,6 @@ async function deps() {
     return _display;
 }
 
-// C ref: termcap.c nomux_raw_putch() — once an rc error has put the recorder's
-// raw writer in play (game._nomux_raw, never cleared) the topten() raw_print()s
-// land that many rows further down: bl019 (cursor frozen at row 1) records the
-// "score list will not be checked" line on row 3 and ends with the cursor on
-// row 6, i.e. both shifted by raw.row + 1 against the home-cursor layout.
-function rawPrintBias() {
-    return game._nomux_raw ? game._nomux_raw.row + 1 : 0;
-}
-// Park the cursor after the final raw_print()s; the captured cursor of a
-// raw-writer session is the writer's own row/col, so advance that too.
-function setFinalCursor(disp, row) {
-    disp.setCursor(0, row);
-    if (game._nomux_raw) game._nomux_raw = { row, col: 0 };
-}
-
 // C ref: end.c savelife(how) — put the hero back into a viable state after a
 // declined death.  givehp = 50 + 10*(ACURR(A_CON)/2), clamped to uhpmax; the
 // hero is immobilized for the rest of the turn (multi = -1) and unmul() will
@@ -274,6 +268,12 @@ async function savelife(_how) {
             const { encumber_msg } = await import('./invent.js');
             await encumber_msg();
         }
+    }
+    // C ref: end.c:722-726 — cure impending doom of sickness the hero won't
+    // have time to fix.
+    if ((((u.uprops?.Sick | 0) & 0x00ffffff /* TIMEOUT */)) === 1) {
+        const { make_sick } = await import('./potion.js');
+        await make_sick(0, null, false, 0x03 /* SICK_ALL */);
     }
     // gn.nomovemsg = "You survived that attempt on your life."; context.move = 0;
     // gm.multi = -1 (can't move again during the current turn).  The moveloop's
@@ -429,6 +429,10 @@ async function done_object_cleanup() {
     try {
         const u = game.u;
         if (!u) return;
+        // C ref: end.c:857 — killed while using a disposable item (quaffing a
+        // potion of holy water as a chaotic hero): make sure it is gone prior to
+        // inventory disclosure and bones creation.
+        await (await import('./restore.js')).inven_inuse(true);
         const { place_object } = await import('./mkobj.js');
         const { stackobj } = await import('./invent.js');
         const { isok, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED } = await import('./const.js');
@@ -1090,7 +1094,7 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
             const outside = uz.dnum === 0 && uz.dlevel <= 0;
             lines.push(`You ${outside ? (uz.dlevel < 0 ? 'passed away' : ENDS[how]) : ENDS[how]}`
                 + (outside ? ' beyond the confines of the dungeon'
-                   : ` in ${dungeonName} on dungeon level ${depth}`)
+                   : ` in ${dungeonName}${dungeon_level_phrase(uz, depth)}`)
                 + ` with ${urexp} point${plur(urexp)},`);
         }
         lines.push(`and ${umoney} piece${plur(umoney)} of gold, after ${moves} move${plur(moves)}.`);
@@ -1178,11 +1182,12 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         if (why && String(why).length + 9 <= room) tableDeath += `, while ${why}`;
         else if (17 <= room) tableDeath += ', while helpless';
     }
+    // C ref: topten.c:684 t0->maxlvl = deepest_lev_reached(TRUE).
     const entry = {
         points: scorePoints, name: plname, plrole: roleFC, plrace: raceFC,
         plgend: genderFC, plalign: alignFC, death: tableDeath, dungeonName,
         deathdnum: uz.dnum, knoxDnum: -99, // Fort Ludios unreachable here
-        deathlev: depth, maxlvl: depth, hp: u?.uhp ?? 0, maxhp: u?.uhpmax ?? 0,
+        deathlev: depth, maxlvl: deepest_lev_reached_js(true) || depth, hp: u?.uhp ?? 0, maxhp: u?.uhpmax ?? 0,
         urexp,
     };
     const tt = topten_list(entry);

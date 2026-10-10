@@ -2,6 +2,7 @@
 
 import { COLNO, FIRE_TRAP, LAVAPOOL, ROOM, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
+import { ART_MITRE_OF_HOLINESS } from '../artifact.js';
 import { bless, mksobj_at } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
@@ -38,12 +39,12 @@ const PRI_GOAL_MAP = [
 ].join('\n');
 
 const HELM_OF_BRILLIANCE = 96;
-// artilist.h index of "The Mitre of Holiness" (0 = the STRANGE_OBJECT sentinel,
-// 1 = Excalibur, 21..34 the quest artifacts).  Load-bearing for RNG, not just
-// for naming: oname(ONAME_LEVEL_DEF) marks the artifact as existing, and every
-// later mksobj_init() weapon rolls rn2(20 + 10 * nartifact_exist()) — 30, not
-// 20, from the very next des.object() on this level.
-const ART_MITRE_OF_HOLINESS = 28;
+// Load-bearing for RNG, not just for naming: oname(ONAME_LEVEL_DEF) marks the
+// artifact as existing, and every later mksobj_init() weapon rolls
+// rn2(20 + 10 * nartifact_exist()) — 30, not 20, from the very next
+// des.object() on this level.  The index is artifact.js's ART_MITRE_OF_HOLINESS
+// (27, artilist.h row order); a hand-typed 28 here was the Longbow of Diana, so
+// is_quest_artifact()/artifact lookups on the Mitre silently failed.
 
 export async function makemaz_pri_goal() {
     const g = game;

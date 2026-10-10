@@ -33,7 +33,7 @@ export async function makemaz_water() {
     plane_message('You find yourself suspended in an air bubble surrounded by water.');
     bigrm_load_map(WATER_MAP, false);
     plane_teleport_region([0, 0, 25, 19]);
-    plane_levregion_add('portal', [51, 0, 75, 19], null);
+    plane_levregion_add('astral', [51, 0, 75, 19], null);
     game._full_mon_gen = true;
     try {
         for (const [name, peaceful] of WATER_MONSTERS) plane_monster({ name, peaceful });

@@ -8,6 +8,7 @@
 // handled, plus scatter(), splatter_burning_oil(), explode_oil() and
 // adtyp_to_expltype().
 
+import { resists_fire, resists_cold, resists_elec, resists_acid, resists_disint, resists_poison } from './mondata.js';
 import { game } from './gstate.js';
 import { d, rn2, rnd, rn1 } from './rng.js';
 import {
@@ -26,7 +27,7 @@ import {
 } from './monattk_data.js';
 import { m_at, newsym, update_topl, map_invisible, Hallucination_u } from './display.js';
 import { cansee, couldsee } from './vision.js';
-import { is_undead_flag, is_demon_flag } from './monflags_data.js';
+import { is_undead_flag, is_demon_flag, nonliving, is_demon_flag as is_demon } from './monflags_data.js';
 import { has_innate } from './exper.js';
 import { rndmonnam } from './do_name.js';
 import { s_suffix } from './hacklib.js';
@@ -75,7 +76,7 @@ function wornprop(prop) { return ((game.u?.uprops_extrinsic || {})[prop] | 0) !=
 function Antimagic() { return !!game.u?.formprops?.Antimagic || uprop('Antimagic', 'HAntimagic', 'EAntimagic') || !!game.u?.Antimagic || wornprop(ANTIMAGIC); }
 function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance') || wornprop(FIRE_RES); }
 function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance') || wornprop(COLD_RES); }
-function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance') || wornprop(SHOCK_RES); }
+export function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance') || wornprop(SHOCK_RES); }
 // A race-innate grant (e.g. every orc, from level 1) is never persisted as a
 // stored flag anywhere in js/ — OR in the pure has_innate() derivation.
 function Poison_resistance() {
@@ -83,7 +84,7 @@ function Poison_resistance() {
     return uprop('Poison_resistance', 'HPoison_resistance', 'EPoison_resistance')
         || has_innate('HPoison_resistance') || wornprop(POISON_RES);
 }
-function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance') || wornprop(ACID_RES); }
+export function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance') || wornprop(ACID_RES); }
 function Disint_resistance() { return !!game.u?.formprops?.Disint_resistance || uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance') || wornprop(DISINT_RES); }
 function Invulnerable() { return uprop('Invulnerable') || !!game.u?.uinvulnerable; }
 function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf') || !!game.u?.Deaf; }
@@ -94,16 +95,6 @@ function Maybe_Half_Phys(dmg) {
     return uprop('Half_physical_damage', 'HHalf_physical_damage') ? Math.trunc((dmg + 1) / 2) : dmg;
 }
 
-// C ref: mondata.h resists_*(mon) — the innate MR_* bits.
-const MR_FIRE = 0x01, MR_COLD = 0x02, MR_DISINT = 0x08, MR_ELEC = 0x10,
-      MR_POISON = 0x20, MR_ACID = 0x40, MR_STONE = 0x80;
-function mresists_of(mon) { return mdata(mon)?.mresists || 0; }
-function resists_fire(m) { return !!(mresists_of(m) & MR_FIRE); }
-function resists_cold(m) { return !!(mresists_of(m) & MR_COLD); }
-function resists_elec(m) { return !!(mresists_of(m) & MR_ELEC); }
-function resists_acid(m) { return !!(mresists_of(m) & MR_ACID); }
-function resists_disint(m) { return !!(mresists_of(m) & MR_DISINT); }
-function resists_poison(m) { return !!(mresists_of(m) & MR_POISON); }
 // C ref: mondata.h resists_magm(mon) — MR_MAGIC via mon_mr() percentage 100,
 // or a MAGIC-resistant species flag.  mons[].mr is the percentage column.
 function resists_magm(mon) {
@@ -118,11 +109,6 @@ function resists_magm(mon) {
 // (is_golem || mlet == S_VORTEX).  The flag tests come from monflags_data so a
 // species added to the table is picked up automatically.
 const S_VORTEX = 22, S_GOLEM = 55;      // defsym.h mlet classes
-function nonliving(p) {
-    return is_undead_flag(p) || p?.name === 'manes'
-        || p?.mcls === S_GOLEM || p?.mcls === S_VORTEX;
-}
-function is_demon(p) { return is_demon_flag(p); }
 // C ref: mondata.h completelyburns(ptr) — ONLY the paper and straw golems.
 // (completelyrots covers wood/leather, completelyrusts covers iron; neither is
 // a fire case, so listing the wood golem here would be wrong.)

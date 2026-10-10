@@ -5,6 +5,7 @@
 //        (onquest / chat_with_leader / quest_talk / quest_chat), and the tty
 //        NHW_MENU window display in win/tty/wintty.c for the "legacy" intro.
 
+import { makeplural } from './plural.js';
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
@@ -12,7 +13,7 @@ import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle } from './role.js';
 import { A_LAWFUL, A_NEUTRAL, A_CHAOTIC, In_quest } from './const.js';
 import { rn2 } from './rng.js';
-import { flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, note_topl } from './display.js';
+import { flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, note_topl, Deaf_hero } from './display.js';
 import { QUEST_SYNOPSIS } from './quest_synopsis_data.js';
 import { renderWindowScreen } from './invent.js';
 import { Blind } from './vision.js';
@@ -30,7 +31,9 @@ import { artilist } from './artifact.js';
 // hero's actual current title ("a Spelunker" at XL 20, not "a Digger").
 import { rank_of as rank_at_level } from './exper.js';
 import { exercise, adjalign } from './attrib.js';
-import { A_WIS } from './const.js';
+import { A_WIS, UTOTYPE_NONE, UTOTYPE_PORTAL, UTOTYPE_RMPORTAL, MAGIC_PORTAL,
+         STRAT_WAITMASK } from './const.js';
+import { livelog_printf, LL_ACHIEVE } from './livelog.js';
 
 // dat/quest.lua questtext.common.legacy.text
 const LEGACY_TEXT = [
@@ -2657,21 +2660,14 @@ export function quest_nemgend_or_null() {
 
 // ── the readiness gate (C ref: quest.c chat_with_leader "Rule 5" tail) ───────
 // C ref: include/quest.h
-const MIN_QUEST_ALIGN = 20; // at least this align.record to start
+import { MIN_QUEST_ALIGN, align_original, purity_of, ok_to_quest } from './questok.js';
+export { ok_to_quest };
 const MIN_QUEST_LEVEL = 14; // at least this u.ulevel to start
 
 // C ref: align.h/pray.c align_str() — the adjective form of an aligntyp.
 const ALIGN_STR = { [A_LAWFUL]: 'lawful', [A_NEUTRAL]: 'neutral', [A_CHAOTIC]: 'chaotic' };
 
-// C ref: u.ualignbase[A_ORIGINAL] — the alignment the hero STARTED with, which
-// only diverges from u.ualign.type via conversion (a converted altar / crowning
-// path we do not model). With no conversion tracking the two are identical, so
-// A_ORIGINAL reads fall back to the current type rather than inventing state.
-function align_original() {
-    const u = game.u || {};
-    return u.ualignbase?.[1 /* A_ORIGINAL */] ?? u.ualign?.type ?? A_NEUTRAL;
-}
-
+// C ref: u.ualignbase[A_ORIGINAL] — see js/questok.js align_original().
 // C ref: objnam.c just_an() — the article for a noun phrase. Only the general
 // rule and the "wun"/long-'u' exceptions matter for rank titles.
 function just_an(str) {
@@ -2768,8 +2764,6 @@ function qtext_pronoun(who, which, argText) {
 // from convert_line() above: that one is the 3-code partial the legacy intro
 // screen already matches with, and widening its coverage would change text it
 // currently renders correctly.
-function makeplural(s) { return /s$/.test(s) ? s + 'es' : s + 's'; }
-
 function qt_convert_line(line) {
     let out = '';
     for (let i = 0; i < line.length; i++) {
@@ -2917,6 +2911,15 @@ export async function artitouch(_obj) {
 // quest.c — the arrival hooks and the leader/nemesis/guardian dialogue.
 // ════════════════════════════════════════════════════════════════════════
 
+// C ref: quest.h `#define Qstat(x) (svq.quest_status.x)` — every quest.c flag
+// lives in game.quest_status under its C field name (first_start, met_leader,
+// got_quest, got_thanks, not_ready, pissed_off, killed_nemesis, killed_leader,
+// made_goal, met_nemesis, first_locate, in_battle, cheater, touched_artifact,
+// leader_m_id).  save.js/restore.js already round-trip that object.
+function Qstat() {
+    return game.quest_status || (game.quest_status = {});
+}
+
 function on_level(a, b) {
     return !!a && !!b && a.dnum === b.dnum && a.dlevel === b.dlevel;
 }
@@ -2925,12 +2928,12 @@ function on_level(a, b) {
 // quest home level, then "nexttime"/"othertime" on any later arrival that came
 // from a shallower level or another dungeon branch.
 async function on_start() {
-    const g = game;
-    if (!g._quest_first_start) {
+    const g = game, q = Qstat();
+    if (!q.first_start) {
         await qt_pager('firsttime');
-        g._quest_first_start = true;
+        q.first_start = true;
     } else if ((g.u.uz0?.dnum !== g.u.uz.dnum) || (g.u.uz0?.dlevel < g.u.uz.dlevel)) {
-        await qt_pager((g._quest_not_ready ?? 0) <= 2 ? 'nexttime' : 'othertime');
+        await qt_pager((q.not_ready ?? 0) <= 2 ? 'nexttime' : 'othertime');
     }
 }
 
@@ -2938,12 +2941,12 @@ async function on_start() {
 // from above, but first_locate is set either way ("if we've arrived from below
 // this will be a lie, but ... the level has now been seen").
 async function on_locate() {
-    const g = game;
+    const g = game, q = Qstat();
     const from_above = (g.u.uz0?.dlevel ?? 0) < g.u.uz.dlevel;
-    if (g._quest_killed_nemesis) return;
-    if (!g._quest_first_locate) {
+    if (q.killed_nemesis) return;
+    if (!q.first_locate) {
         if (from_above) await qt_pager('locate_first');
-        g._quest_first_locate = true;
+        q.first_locate = true;
     } else if (from_above) {
         await qt_pager('locate_next');
     }
@@ -2951,19 +2954,22 @@ async function on_locate() {
 
 // C ref: quest.c on_goal().
 async function on_goal() {
-    const g = game;
-    if (g._quest_killed_nemesis) return;
-    if (!g._quest_made_goal) {
+    const q = Qstat();
+    if (q.killed_nemesis) return;
+    if (!q.made_goal) {
         await qt_pager('goal_first');
-        g._quest_made_goal = 1;
+        q.made_goal = 1;
     } else {
-        // C picks qt_pager(qarti ? "goal_next" : "goal_alt") on whether the
-        // quest artifact is still on this level.  No role section defines
-        // goal_alt, so msg_fallbacks resolves it straight back to goal_next —
-        // same text and the same single lua reload either way, which is why
-        // the artifact scan is not needed to reproduce this.
-        await qt_pager('goal_next');
-        if (g._quest_made_goal < 7) g._quest_made_goal++;
+        /* Some QT_NEXTGOAL messages reference the quest artifact; find out if
+           it is still present.  If not, request the alternate message
+           (qt_pager() reverts to goal_next through msg_fallbacks when the role
+           has no goal_alt; Arc/Sam/Ran/Val etc. do have one).  A hero who is
+           already carrying it counts as absent from the level. */
+        const whichobjchains = (1 << OBJ_FLOOR_Q) | (1 << OBJ_MINVENT_Q)
+                               | (1 << OBJ_BURIED_Q);
+        const qarti = find_quest_artifact(whichobjchains);
+        await qt_pager(qarti ? 'goal_next' : 'goal_alt');
+        if (q.made_goal < 7) q.made_goal++;
     }
 }
 
@@ -3017,6 +3023,9 @@ function not_capable() {
     return (game.u?.ulevel ?? 1) < MIN_QUEST_LEVEL;
 }
 
+// C ref: quest.c ok_to_quest() and is_pure()'s result live in js/questok.js (a
+// leaf module, so early-loaded callers need not import this file).
+
 // C ref: quest.c is_pure(). The wizard-mode `talk` block is NOT debug noise we
 // can skip: it prints to the topline and PROMPTS, so it owns input boundaries.
 // yn_function(query, (char *) 0, 'y', TRUE) with a NULL response set takes tty
@@ -3038,86 +3047,265 @@ async function is_pure(talk) {
             if (await yn_unrestricted('adjust?') === 'y') u.ualign.record = MIN_QUEST_ALIGN;
         }
     }
-    const rec = u.ualign?.record ?? 0;
-    const cur = u.ualignbase?.[0 /* A_CURRENT */] ?? orig;
-    return (rec >= MIN_QUEST_ALIGN && u.ualign?.type === orig && cur === orig) ? 1
-        : (cur !== orig) ? -1 : 0;
+    return purity_of();
 }
 
-// C ref: quest.c expulsion() — throw the hero out of the quest branch onto the
-// parent-dungeon side of its single branch. C uses schedule_goto(UTOTYPE_PORTAL)
-// so the move lands at the end of the current move rather than mid-chat; our
-// goto_level is awaited here, which puts it at the same point in the sequence
-// because nothing else follows in chat_with_leader.
+// C ref: quest.c expulsion(seal) — expel the hero to the stairs on the parent
+// of the quest dungeon.  Assumes the hero is in the quest dungeon and that
+// there is a single branch to and from it.  The move is SCHEDULED
+// (schedule_goto), so it lands after the current command, in moveloop_core's
+// `if (u.utotype) deferred_goto()`.
 async function expulsion(seal) {
-    const g = game;
-    const here = g.u?.uz;
-    if (!here) return;
-    const br = (g.branches || []).find((b) => b.end1?.dnum === here.dnum || b.end2?.dnum === here.dnum);
+    const g = game, u = g.u;
+    const { dungeon_branch, remdun_mapseen } = await import('./dungeon.js');
+    const { nomul } = await import('./hack.js');
+    const br = dungeon_branch('The Quest');
     if (!br) return;
-    const dest = (br.end1.dnum === here.dnum) ? br.end2 : br.end1;
-    // Cycle break: do.js imports this module for onquest(), so goto_level has
-    // to be pulled in at call time (the pattern allmain.js/apply.js already use).
-    const { goto_level } = await import('./do.js');
-    await goto_level({ dnum: dest.dnum, dlevel: dest.dlevel }, false, false, true /* portal */);
-    if (seal) g._quest_expelled = true;
+    const dest = (br.end1.dnum === u.uz.dnum) ? br.end2 : br.end1;
+    let portal_flag = u.uevent?.qexpelled ? UTOTYPE_NONE : UTOTYPE_PORTAL;
+    if (seal) portal_flag |= UTOTYPE_RMPORTAL;
+    nomul(0); /* stop running */
+    // Cycle break: do.js imports this module for onquest().
+    const { schedule_goto } = await import('./do.js');
+    schedule_goto(dest, portal_flag, null, null);
+    if (seal) { /* remove the portal to the quest - sealing it off */
+        if (!u.uevent) u.uevent = {};
+        const reexpelled = u.uevent.qexpelled;
+
+        u.uevent.qexpelled = 1;
+        remdun_mapseen(game.quest_dnum);
+        /* Delete the near portal now; the far (main dungeon side) portal will
+           be deleted as part of arrival on that level. */
+        const { deltrap } = await import('./trap.js');
+        const t = (g.level?.traps || []).find((tr) => tr.ttyp === MAGIC_PORTAL);
+        if (t) deltrap(t); /* (display might be briefly out of sync) */
+        else if (!reexpelled)
+            await impossible('quest portal already gone?');
+    }
 }
 
-// C ref: quest.c chat_with_leader().  Rules 0-4 (cheater check, the amulet /
-// quest-artifact hand-back, and the post-assignment "encourage" banter) need
-// u.uhave.questart / u.uhave.amulet, neither of which the port tracks; Rule 5
-// is the branch every covered session takes.
-async function chat_with_leader(mtmp) {
-    const g = game;
-    if (!mtmp.mpeaceful || g._quest_pissed_off) return;
-    if (g._quest_got_quest) { await qt_pager('encourage'); return; }
-
-    if (!g._quest_met_leader) {
-        await qt_pager('leader_first');
-        g._quest_met_leader = true;
-        g._quest_not_ready = 0;
-    } else {
-        await qt_pager('leader_next');
-    }
-
-    // C ref: quest.c — "the quest leader might have passed through the portal
-    // into the regular dungeon; none of the remaining make sense there".
-    if (!on_level(g.u?.uz, g.qstart_level)) return;
-
-    if (not_capable()) {
-        await qt_pager('badlevel');
-        exercise(A_WIS, true);
-        await expulsion(false);
+// C ref: quest.c finish_quest(obj) — either you've returned to the quest
+// leader while carrying the quest artifact or you've just thrown it to/at
+// him or her.  If quest completion text hasn't been given yet, give it now.
+// Otherwise give another message about the character keeping the artifact and
+// using the magic portal to return to the dungeon.  Also called if the hero
+// throws or kicks an invocation item (probably the Bell) at the leader.
+// `obj` is the quest artifact or thrown unique item or faux AoY; possibly null
+// if carrying the Amulet.
+export async function finish_quest(obj) {
+    const u = game.u;
+    const O = await import('./mkobj.js');
+    const I = await import('./invent.js');
+    if (obj && !is_quest_artifact(obj)) {
+        /* tossed an invocation item (or [fake] AoY) at the quest leader */
+        if (Deaf_hero())
+            return; /* optional (unlike quest completion) so skip if deaf */
+        /* do ID first so that the message identifying the item will refer to
+           it by name (and so justify the ID we already gave...) */
+        I.fully_identify_obj(obj);
+        /* update_inventory() is not necessary or helpful here because item
+           was thrown, so isn't currently in inventory anyway */
+        if (obj.otyp === O.AMULET_OF_YENDOR) {
+            await qt_pager('hasamulet');
+        } else if (obj.otyp === await fake_amulet_otyp()) {
+            await update_topl('"Sorry to say, this is a mere imitation of the true Amulet of Yendor."');
+        } else {
+            const { the } = await import('./objnam.js');
+            await update_topl(`"Ah, I see you've found ${the(I.xname(obj))}."`);
+        }
         return;
     }
-    const purity = await is_pure(true);
-    if (purity < 0) {
-        await com_pager('banished');
-        g._quest_pissed_off = true;
-        await expulsion(false);
-    } else if (purity === 0) {
-        await qt_pager('badalign');
-        g._quest_not_ready = 1;
-        exercise(A_WIS, true);
-        await expulsion(false);
+
+    const q = Qstat();
+    let otmp;
+    if (u.uhave?.amulet) {
+        /* has the amulet in inventory -- most likely the player has already
+           completed the quest and stopped in on her way back up, but it's not
+           impossible to have gotten the amulet before formally presenting the
+           quest artifact to the leader. */
+        await qt_pager('hasamulet');
+        /* leader IDs the real amulet but ignores any fakes */
+        if ((otmp = I.carrying(O.AMULET_OF_YENDOR))) {
+            I.fully_identify_obj(otmp);
+            I.update_inventory();
+        }
     } else {
-        await qt_pager('assignquest');
-        exercise(A_WIS, true);
-        g._quest_got_quest = true;
+        /* normal quest completion; threw artifact or walked up carrying it */
+        await qt_pager(!q.got_thanks ? 'offeredit' : 'offeredit2');
+        /* should have obtained bell during quest;
+           if not, suggest returning for it now */
+        if (!I.carrying(O.BELL_OF_OPENING))
+            await com_pager('quest_complete_no_bell');
     }
+    q.got_thanks = true;
+
+    if (obj) {
+        if (!u.uevent) u.uevent = {};
+        u.uevent.qcompleted = 1; /* you did it! */
+        /* behave as if leader imparts sufficient info about the
+           quest artifact */
+        I.fully_identify_obj(obj);
+        I.update_inventory();
+    }
+}
+
+// C ref: objects.h FAKE_AMULET_OF_YENDOR resolved by name (mkobj.js does not
+// export it).
+async function fake_amulet_otyp() {
+    const { objects } = await import('./mkobj.js');
+    return objects.findIndex((o) => o && o.name === 'cheap plastic imitation of the Amulet of Yendor');
+}
+
+// C ref: quest.c chat_with_leader().
+async function chat_with_leader(mtmp) {
+    const g = game, u = g.u, q = Qstat();
+    if (!mtmp.mpeaceful || q.pissed_off) return;
+
+    /*  Rule 0: Cheater checks. */
+    if (u.uhave?.questart && !q.met_nemesis)
+        q.cheater = true;
+
+    /*  It is possible for you to get the amulet without completing
+     *  the quest.  If so, try to induce the player to quest.
+     */
+    if (q.got_thanks) {
+        /* Rule 1: You've gone back with/without the amulet. */
+        if (u.uhave?.amulet)
+            await finish_quest(null);
+
+        /* Rule 2: You've gone back before going for the amulet. */
+        else
+            await qt_pager('posthanks');
+
+    /* Rule 3: You've got the artifact and are back to return it. */
+    } else if (u.uhave?.questart) {
+        const otmp = (g.invent || []).find((o) => is_quest_artifact(o));
+        await finish_quest(otmp);
+
+    /* Rule 4: You haven't got the artifact yet. */
+    } else if (q.got_quest) {
+        await qt_pager('encourage');
+
+    /* Rule 5: You aren't yet acceptable - or are you? */
+    } else {
+        let purity = 0;
+
+        if (!q.met_leader) {
+            await qt_pager('leader_first');
+            q.met_leader = true;
+            q.not_ready = 0;
+        } else
+            await qt_pager('leader_next');
+
+        /* the quest leader might have passed through the portal into
+           the regular dungeon; none of the remaining make sense there */
+        if (!on_level(u.uz, g.qstart_level))
+            return;
+
+        const { noit_mon_nam } = await import('./do_name.js');
+        if (not_capable()) {
+            await qt_pager('badlevel');
+            exercise(A_WIS, true);
+            await expulsion(false);
+        } else if ((purity = await is_pure(true)) < 0) {
+            if (!q.pissed_off) {
+                await com_pager('banished');
+                q.pissed_off = true;
+                await expulsion(false);
+
+                /* being expelled is hardly an achievement but none of the
+                   other livelog classifications fit */
+                livelog_printf(LL_ACHIEVE,
+                    `${noit_mon_nam(mtmp)} has expelled you from the quest`);
+            }
+        } else if (purity === 0) {
+            await qt_pager('badalign');
+            q.not_ready = 1;
+            exercise(A_WIS, true);
+            await expulsion(false);
+        } else { /* You are worthy! */
+            await qt_pager('assignquest');
+            exercise(A_WIS, true);
+            q.got_quest = true;
+
+            /* phrasing is a bit clumsy but allows #chronicle to provide a
+               clue to players who are reaching the quest for first time;
+               matters most for Home 1 that has stairs down which aren't
+               easily found */
+            livelog_printf(LL_ACHIEVE,
+                `${noit_mon_nam(mtmp)} has granted access to proceed deeper into the quest`);
+        }
+    }
+}
+
+// C ref: quest.c nemdead() — called from mon.c m_detach() when the hero's
+// nemesis dies; delivers the "killed_nemesis" text once.
+export async function nemdead() {
+    const q = Qstat();
+    if (!q.killed_nemesis) {
+        q.killed_nemesis = true;
+        await qt_pager('killed_nemesis');
+    }
+}
+
+// C ref: quest.c leaddead() — called from mon.c m_detach() when a quest leader
+// dies.  (C's own TODO: no killed_leader text.)
+export function leaddead() {
+    const q = Qstat();
+    if (!q.killed_leader) q.killed_leader = true;
+}
+
+// C ref: quest.c nemesis_stinks(mx, my) — cloud of stinking gas around a dying
+// nemesis.  The hero is not made responsible for the cloud even if the hero
+// just killed the nemesis.
+export async function nemesis_stinks(mx, my) {
+    const save_mon_moving = game.context?.mon_moving;
+    if (!game.context) game.context = {};
+    game.context.mon_moving = true;
+    const { create_gas_cloud } = await import('./region.js');
+    await create_gas_cloud(mx, my, 5, 8);
+    game.context.mon_moving = save_mon_moving;
+}
+
+// C ref: quest.c leader_speaks(mtmp) — the leader's own turn (dochug ->
+// quest_talk) once it is released from STRAT_WAITFORU.
+export async function leader_speaks(mtmp) {
+    const q = Qstat();
+    /* maybe you attacked leader? */
+    if (!mtmp.mpeaceful) {
+        if (!q.pissed_off) {
+            /* again, don't end it permanently if the leader gets angry
+             * since you're going to have to kill him to go questing... :)
+             * ...but do only show this crap once. */
+            await qt_pager('leader_last');
+        }
+        q.pissed_off = true;
+        mtmp.mstrategy &= ~STRAT_WAITMASK; /* end the inaction */
+    }
+    /* the quest leader might have passed through the portal into the
+       regular dungeon; if so, mustn't perform "backwards expulsion" */
+    if (!on_level(game.u?.uz, game.qstart_level))
+        return;
+
+    if (!q.pissed_off)
+        await chat_with_leader(mtmp);
 }
 
 // C ref: quest.c chat_with_nemesis() — #chat with the nemesis.
 async function chat_with_nemesis() {
+    /*  The nemesis will do most of the talking, but... */
     await qt_pager('discourage');
-    if (!game._quest_met_nemesis) game._quest_met_nemesis = 1;
+    const q = Qstat();
+    if (!q.met_nemesis) q.met_nemesis = 1;
 }
 
-// C ref: quest.c chat_with_guardian().  u.uhave.questart is not tracked, so the
-// "after" variant (which needs both it and a dead nemesis) never fires.
+// C ref: quest.c chat_with_guardian().
 async function chat_with_guardian() {
-    await qt_pager(game._quest_killed_nemesis && game._quest_have_questart
-                   ? 'guardtalk_after' : 'guardtalk_before');
+    /*  These guys/gals really don't have much to say... */
+    if (game.u?.uhave?.questart && Qstat().killed_nemesis)
+        await qt_pager('guardtalk_after');
+    else
+        await qt_pager('guardtalk_before');
 }
 
 // C ref: quest.c quest_stat_check() — monmove.c:715 runs this at the top of
@@ -3125,31 +3313,24 @@ async function chat_with_guardian() {
 // nemesis_speaks() below is its only reader.
 export function quest_stat_check(mtmp, helpless, near) {
     if (msound_of(mtmp?.data) === MS_NEMESIS)
-        game._quest_in_battle = (!helpless && !!near);
+        Qstat().in_battle = (!helpless && !!near);
 }
 
 // C ref: quest.c nemesis_speaks() — the nemesis's own turn, from dochug()'s
 // quest_talk() (phase four, hero-adjacent and not helpless).
 export async function nemesis_speaks() {
-    const g = game;
-    if (!g._quest_in_battle) {
-        if (g.u?.uhave?.questart) await qt_pager('nemesis_wantsit');
-        else if (g._quest_made_goal === 1 || !g._quest_met_nemesis) await qt_pager('nemesis_first');
-        else if ((g._quest_made_goal ?? 0) < 4) await qt_pager('nemesis_next');
-        else if (g._quest_made_goal < 7) await qt_pager('nemesis_other');
+    const q = Qstat();
+    if (!q.in_battle) {
+        if (game.u?.uhave?.questart) await qt_pager('nemesis_wantsit');
+        else if (q.made_goal === 1 || !q.met_nemesis) await qt_pager('nemesis_first');
+        else if ((q.made_goal ?? 0) < 4) await qt_pager('nemesis_next');
+        else if (q.made_goal < 7) await qt_pager('nemesis_other');
         else if (!rn2(5)) await qt_pager('discourage');
-        if ((g._quest_made_goal ?? 0) < 7) g._quest_made_goal = (g._quest_made_goal ?? 0) + 1;
-        g._quest_met_nemesis = true;
-    } else if (!rn2(5)) {
+        if ((q.made_goal ?? 0) < 7) q.made_goal = (q.made_goal ?? 0) + 1;
+        q.met_nemesis = true;
+    } else if (!rn2(5)) { /* he will spit out random maledictions */
         await qt_pager('discourage');
     }
-}
-
-// C ref: quest.c leader_speaks() — the "maybe you attacked leader?" branch
-// is not modeled: chat_with_leader() itself already no-ops when !mpeaceful.
-async function leader_speaks(mtmp) {
-    if (!on_level(game.u?.uz, game.qstart_level)) return;
-    await chat_with_leader(mtmp);
 }
 
 // C ref: quest.c — identity survives polymorph and is assigned by makemon().
@@ -3163,7 +3344,7 @@ export async function quest_chat(mtmp) {
     if (is_quest_leader(mtmp)) {
         await chat_with_leader(mtmp);
         /* leader might have become pissed during the chat */
-        if (game._quest_pissed_off) {
+        if (Qstat().pissed_off) {
             const { setmangry } = await import('./uhitm.js');
             await setmangry(mtmp, false);
         }
@@ -3218,7 +3399,7 @@ export async function angry_guards(silent) {
 // C ref: quest.c prisoner_speaks(mtmp) — a freed (STRAT_WAITMASK) prisoner
 // wakes, turns peaceful and angers the guards.
 async function prisoner_speaks(mtmp) {
-    const STRAT_WAITMASK = 0x30000000;
+    // STRAT_WAITMASK: const.js (== monflag.h STRAT_CLOSE | STRAT_WAITFORU)
     if (mtmp.data?.name === 'prisoner' && (mtmp.mstrategy & STRAT_WAITMASK)) {
         const { canseemon_shared } = await import('./display.js');
         const { Monnam } = await import('./do_name.js');

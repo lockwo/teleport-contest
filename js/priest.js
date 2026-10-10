@@ -7,6 +7,7 @@
 
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
+import { roomAt } from './roomat.js';
 import { rn2, rn1 } from './rng.js';
 import { isok, ROOMOFFSET, Amask2align, A_NONE, ALTAR, AM_SHRINE,
          MM_EPRI, MM_EMIN } from './const.js';
@@ -30,12 +31,6 @@ function pm_good_location(x, y, pm) {
     return is_ok_location(x, y, pm_to_humidity(pm));
 }
 
-// C ref: rm.h MON_AT / mon.c m_at.
-function m_at(x, y) {
-    for (const m of game.level?.monsters || [])
-        if (m.mx === x && m.my === y && (m.mhp == null || m.mhp > 0)) return m;
-    return null;
-}
 
 // C ref: mon.c p_coaligned() — the priest's shrine alignment matches the
 // hero's.  No RNG.
@@ -127,7 +122,7 @@ export function priestini(lvl, sroom, sx, sy, sanctum) {
 }
 
 // C ref: priest.c:410 intemple(roomno), called from check_special_room().
-import { pline, update_topl, newsym, canseemon_shared, Deaf_hero } from './display.js';
+import { pline, update_topl, newsym, canseemon_shared, Deaf_hero, m_at } from './display.js';
 import { d } from './rng.js';
 import { TEMPLE, ACH_TMPL, SPINE, In_endgame } from './const.js';
 import { roles, align_gname, halu_gname } from './role.js';
@@ -136,7 +131,7 @@ import { rndmonnam, Monnam, mon_pmname } from './do_name.js';
 // C ref: priest.c:142 temple_occupied(array).
 export function temple_occupied(array) {
     for (const c of (array || [])) {
-        const r = game.level?.rooms?.[c - ROOMOFFSET];
+        const r = roomAt(c);
         if (r && r.rtype === TEMPLE) return c;
     }
     return 0;
@@ -150,7 +145,7 @@ export function findpriest(roomno) {
         if ((m.epri?.shroom ?? -1) !== roomno) continue;
         const loc = game.level?.at(m.mx, m.my);
         const here = (loc?.roomno ?? 0);
-        const hr = game.level?.rooms?.[here - ROOMOFFSET];
+        const hr = roomAt(here);
         if (!hr || hr.rtype !== TEMPLE || here !== roomno) continue;
         const sl = m.epri?.shrlevel, uz = game.u?.uz;
         if (!sl || !uz || sl.dnum !== uz.dnum || sl.dlevel !== uz.dlevel) continue;
@@ -160,7 +155,7 @@ export function findpriest(roomno) {
 }
 
 // C ref: priest.c:376 has_shrine(pri).
-function has_shrine(pri) {
+export function has_shrine(pri) {
     if (!pri || !pri.ispriest) return false;
     const p = pri.epri;
     const lev = game.level?.at(p?.shrpos?.x, p?.shrpos?.y);
@@ -379,7 +374,7 @@ function histemple_at_(priest, x, y) {
     if (!p) return false;
     const loc = game.level?.at(x, y);
     const here = loc?.roomno ?? 0;
-    const hr = game.level?.rooms?.[here - ROOMOFFSET];
+    const hr = roomAt(here);
     if (!hr || hr.rtype !== TEMPLE) return false;
     if (p.shroom !== here) return false;
     return on_level_(p.shrlevel, game.u?.uz);
@@ -753,7 +748,7 @@ export async function ghod_hitsu(priest) {
     const p = EPRI_(priest);
     const ax = p.shrpos.x, ay = p.shrpos.y;
     let x = ax, y = ay;
-    const troom = game.level?.rooms?.[roomno - ROOMOFFSET];
+    const troom = roomAt(roomno);
     if (!troom) return;
 
     if ((u.ux === x && u.uy === y) || !linedup_(u.ux, u.uy, x, y, 1)) {
@@ -997,7 +992,7 @@ function mon_learns_traps_(mon, mask) {
 // C ref: mkroom.c *in_rooms(x, y, TEMPLE) — nonempty means "inside a temple".
 function in_temple_room_(x, y) {
     const here = game.level?.at(x, y)?.roomno ?? 0;
-    const r = game.level?.rooms?.[here - ROOMOFFSET];
+    const r = roomAt(here);
     return !!r && r.rtype === TEMPLE;
 }
 // C ref: mthrowu.c linedup(ax, ay, bx, by, boulderhandling) — sets gt.tbx/gt.tby

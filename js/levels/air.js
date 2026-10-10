@@ -51,7 +51,7 @@ export async function makemaz_air() {
     game.updest = { lx: 1, ly: 0, hx: 24, hy: 20,
                     nlx: 25, nly: 0, nhx: 79, nhy: 20 };
     plane_teleport_region([56, 0, 79, 20], [1, 0, 55, 20], true, 'down');
-    plane_levregion_add('portal', [57, 1, 78, 19], null, true);
+    plane_levregion_add('fire', [57, 1, 78, 19], null, true);
     plane_region_lit(0, 0, 75, 19);
     game._full_mon_gen = true;
     try {

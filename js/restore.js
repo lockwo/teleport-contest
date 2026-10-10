@@ -1104,7 +1104,7 @@ export async function restgamestate(nhfp) {
     } else if (restoring_special) {
         /* specified by save file; check authorization now. */
         const { set_playmode } = await import('./options.js');
-        set_playmode(game.flags?.playmode, {});
+        set_playmode();
     }
     /* role_init() — role.c is UNPORTED as a whole; role_init_nemgend() above is
        this file's copy of the only PRNG-visible part of it, and dorestore()

@@ -75,7 +75,7 @@ export async function makemaz_fire() {
                       'hot', 'fumaroles');
     bigrm_load_map(FIRE_MAP, false);
     plane_teleport_region([71, 16, 71, 16]);
-    plane_levregion_add('portal', [0, 0, 78, 19], [67, 13, 78, 19]);
+    plane_levregion_add('water', [0, 0, 78, 19], [67, 13, 78, 19]);
     game._full_mon_gen = true;
     try {
         for (let i = 0; i < 40; i++) await vly_trap(FIRE_TRAP);

@@ -134,7 +134,7 @@ export async function makemaz_baalz() {
     if (rn2(2)) flp |= 2;                 // flip_level_rnd sp_lev.c:977
     if (flp) { flip_level(flp); geh_flip_lregions(flp, lregions); }
     // fixup_special(): place the registered levregions in registration order.
-    geh_place_lregions(lregions);
+    await geh_place_lregions(lregions);
     // ...then the baalzebub_level arm, mkmaze.c baalz_fixup().  No RNG.
     await baalz_fixup();
 }

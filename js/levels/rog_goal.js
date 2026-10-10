@@ -34,7 +34,7 @@ import { TIN } from '../mkobj.js';
 import { occupied } from '../mkroom.js';
 import { rn1, rn2 } from '../rng.js';
 import {
-    bigrm_load_map, bigrm_wallification, flip_level, map_cleanup,
+    bigrm_load_map, bigrm_wallification, flip_level, flip_lregion_dest, map_cleanup,
     quest_create_monster, quest_level_init_solidfill, quest_region_light,
     remove_boundary_syms, shuffle, splev_link_doors_rooms, splev_object_at,
     vly_abs, vly_non_diggable,
@@ -160,8 +160,8 @@ export async function makemaz_rog_goal() {
         // des.object({ id="tin", x=26,y=12, montype="chameleon" }) — a plain
         // typed object at a fixed coord, no buc/spe/name.
         splev_object_at({ otyp: TIN, montype: 'chameleon' }, 26, 12);
-        // des.object() x14 — mkobj_at(RANDOM_CLASS) at a random DRY spot.
-        for (let i = 0; i < 14; i++) quest_object_rnd();
+        // des.object() x13 (dat/Rog-goal.lua:20-32) — mkobj_at(RANDOM_CLASS) at a random DRY spot.
+        for (let i = 0; i < 13; i++) quest_object_rnd();
         // des.trap() x11 — random type at a random DRY spot.
         for (let i = 0; i < 11; i++) await quest_trap_random();
         // des.monster({ id="Master Assassin", x=38,y=10, peaceful=0 }).
@@ -201,6 +201,13 @@ export async function makemaz_rog_goal() {
     if (flp) flip_level(flp);
     // fixup_special(): place the registered LR_UPSTAIR (region_islev=1, so
     // the main rectangle is used as-is; the exclude corners were already
-    // converted to absolute above).
-    rog_goal_place_upstair(1, 0, 15, 20, upEx1.x, upEx1.y, upEx2.x, upEx2.y);
+    // converted to absolute above).  C ref: sp_lev.c flip_level():697 mirrors
+    // gl.lregions[] (inarea AND delarea) with the map, so a flipped level's
+    // region is the mirrored rectangle (then clamped by place_lregion to
+    // x >= 1, which is what shrinks rn1(15, lx) to rn1(14, lx) when
+    // FlipX(15) is column 0).
+    const up = { lx: 1, ly: 0, hx: 15, hy: 20,
+                 nlx: upEx1.x, nly: upEx1.y, nhx: upEx2.x, nhy: upEx2.y };
+    if (flp) flip_lregion_dest(flp, up);
+    rog_goal_place_upstair(up.lx, up.ly, up.hx, up.hy, up.nlx, up.nly, up.nhx, up.nhy);
 }

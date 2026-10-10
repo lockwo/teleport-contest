@@ -65,7 +65,9 @@ function loca_monster_class_at(classNum, mx, my) {
         const cc = enexto_spawn(x, y, ptr);
         if (cc) { x = cc.x; y = cc.y; }
     }
-    return makemon(ptr, x, y, 0);
+    const mtmp = makemon(ptr, x, y, 0);
+    if (mtmp) mtmp.female = 0;                 // sp_lev.c:2125, id-less default
+    return mtmp;
 }
 
 export async function makemaz_sam_loca() {

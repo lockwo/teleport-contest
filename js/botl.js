@@ -18,6 +18,7 @@
 // sentinel).  Nothing here tries to improve on that.
 
 import { game } from './gstate.js';
+import { Blind } from './vision.js';
 import {
     ANY_INT, ANY_UINT, ANY_LONG, ANY_ULONG, ANY_STR, ANY_MASK32,
     ANY_IPTR, ANY_UPTR, ANY_LPTR, ANY_ULPTR,
@@ -405,13 +406,13 @@ function poly_pmname() {
 /* youprop.h predicates.  The port stores these as u.uprops.<name> timers; the
    readings mirror js/display.js _botConditions(), which is the measured set. */
 const upv = (nm) => (game.u?.uprops?.[nm] || 0);
-function Stoned() { return upv('Stoned') > 0; }
-function Slimed() { return upv('Slimed') > 0; }
+// C ref: timeout.c:579 done_timeout() sets I_SPECIAL in the property while done()
+// runs, so Stoned/Slimed stay true (and the status keeps showing them) there;
+// this port tracks that bit in game._i_special_props (js/timeout.js).
+function Stoned() { return upv('Stoned') > 0 || !!game._i_special_props?.has(18 /* STONED */); }
+function Slimed() { return upv('Slimed') > 0 || !!game._i_special_props?.has(22 /* SLIMED */); }
 function Strangled() { return upv('Strangled') > 0; }
 function Sick() { return upv('Sick') > 0 || !!game.u?.sick; }
-function Blind() {
-    return (game.u?.blinded | 0) > 0 || !!game.ublindf || upv('BlindedFromForm') > 0;
-}
 function Deaf() { return upv('HDeaf') > 0 || !!game.u?.Deaf; }
 function Stunned() { return !!game.u?.formprops?.Stunned || upv('Stun') > 0 || !!game.u?.Stunned; }
 function Confusion() { return upv('Confusion') > 0; }

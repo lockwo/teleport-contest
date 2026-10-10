@@ -9,7 +9,7 @@
 // #levelchange, #pray, #enhance, #chat, #sit).
 
 import { game } from './gstate.js';
-import { nhgetch } from './input.js';
+import { nhgetch, unshiftKeys } from './input.js';
 import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, putStatusRow, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import {
@@ -60,14 +60,16 @@ import { rn1 } from './rng.js';
 import { HORN_OF_PLENTY, TALLOW_CANDLE, WAX_CANDLE, POT_OIL, OIL_LAMP, MAGIC_LAMP,
          CAN_OF_GREASE, FOOD_RATION, CRAM_RATION, LEMBAS_WAFER, VENOM_CLASS,
          POTION_CLASS } from './mkobj.js';
-import { getobj, GETOBJ_PROMPT, consume_obj_charge, ansimpleoname, count_buc,
+import { getobj, GETOBJ_PROMPT, consume_obj_charge, ansimpleoname, count_buc, askchain, ggetobj, currency,
          BUC_BLESSED, BUC_CURSED, BUC_UNCURSED, BUC_UNKNOWN } from './invent.js';
 // query_category's BUC menu tokens -> pickup.c BUC_* classes (count_buc() types).
 const BUC_OF_TOKEN = { get B() { return BUC_BLESSED; }, get C() { return BUC_CURSED; },
     get U() { return BUC_UNCURSED; }, get X() { return BUC_UNKNOWN; } };
 import { container_at, able_to_loot, tipcontainer, tip_ok, menu_style,
-         u_handsy, add_valid_menu_class, allow_category } from './pickup.js';
-import { MENU_TRADITIONAL, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR } from './const.js';
+         u_handsy, add_valid_menu_class, allow_category,
+         explain_container_prompt, out_container, in_container, query_classes,
+         ck_bag, is_worn_by_type, menu_class_present } from './pickup.js';
+import { MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { is_pool, is_lava } from './dbridge.js';
 import { vtense } from './dothrow.js';
 import { tiphat } from './sounds.js';
@@ -75,7 +77,7 @@ import { dopray as pray_dopray, dosacrifice } from './pray.js';
 import { dosit } from './sit.js';
 import { do_mgivenname, bogusmon, roguename, rndmonnam } from './do_name.js';
 import { rn2_on_display_rng } from './disprng.js';
-import { glyph_at, Hallucination_u } from './display.js';
+import { glyph_at, Hallucination_u, canspotself } from './display.js';
 import { object_from_map } from './pager.js';
 import { dodip, dodrink } from './potion.js';
 import { dogenocided, do_gamelog, doconduct, dovanquished, doborn } from './insight.js';
@@ -105,7 +107,7 @@ import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
 import { invoke_ok as artifact_invoke_ok } from './artifact.js';
 import { doextlist } from './cmd.js';
-import { mon_beside, loot_mon, reverse_loot, removed_from_icebox } from './pickup.js';
+import { mon_beside, loot_mon, reverse_loot, removed_from_icebox, observe_quantum_cat, boh_loss } from './pickup.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -533,7 +535,7 @@ export function pmatchi(patrn, strng) {
 // cols-2, and cw->cols is the widest entry + 2 but never below the morestr.
 // Then tty_display_nhwindow(NHW_MENU): a menu whose maxrow reaches the screen
 // height takes the whole screen, anything shorter floats as an overlay.
-function extcmd_end_menu(items, promptStr) {
+export function extcmd_end_menu(items, promptStr) {
     const rows = game.nhDisplay?.rows ?? 24;
     const cols = game.nhDisplay?.cols ?? 80;
     // tty_menu_promptstyle is iflags.menu_headings (allmain.c:728), whose
@@ -610,7 +612,7 @@ async function xwaitforspace(s) {
 // PICK_ONE round.  Returns the picked entry's accelerator, or null when the
 // menu was cancelled or committed with nothing selected (C's n == -1 / n == 0,
 // which extcmd_via_menu() handles identically).
-async function extcmd_select_menu(m) {
+export async function extcmd_select_menu(m) {
     // tty_display_nhwindow(): an unacknowledged top line is --More--'d before
     // the menu paints over it.
     if (game._toplin === 1) {
@@ -628,7 +630,7 @@ async function extcmd_select_menu(m) {
                                         + DEFAULT_MENU_CMDS);
         // An explicit menu choice is never re-read as a menu command; with no
         // menu_* rebinding map_menu_cmd() is the identity for everything else.
-        if (sels.indexOf(morc) >= 0) return morc;
+        if (sels.indexOf(morc) >= 0) { m.lastPage = curr_page; return morc; }
         if (morc >= '0' && morc <= '9') {
             count = count * 10 + (morc.charCodeAt(0) - 48);
             if (count !== 0) { counting = true; reset_count = false; }
@@ -1656,7 +1658,7 @@ async function namefloorobj() {
 
 // LARGE_BOX..BAG_OF_TRICKS is the full Is_container() range (objclass.h).
 const LARGE_BOX_OTYP = 214, CHEST_OTYP = 215, ICE_BOX_OTYP = 216,
-      BAG_OF_TRICKS_OTYP = 220;
+      BAG_OF_HOLDING_OTYP = 219, BAG_OF_TRICKS_OTYP = 220;
 // Unlocking tools (objclass.h otyp values from mkobj.js).
 const SKELETON_KEY = 221, LOCK_PICK = 222, CREDIT_CARD = 223;
 const PM_ROGUE = 8;
@@ -1795,6 +1797,19 @@ function loot_safe_qbuf(qprefix, qsuffix, obj, func, altfunc, lastR) {
     return qprefix + name + qsuffix;
 }
 
+// C ref: use_container():3075-3082 — the prompt is safe_qbuf() over
+// yname()/ysimple_name() ("Do what with <the/your/Shk's box>?"), or, when
+// nothing can be taken out and contents are already known (`outmaybe` false,
+// which also hides the o/b entries), Yname2()/Ysimple_name2() with " is
+// empty.  Do what with it?" (two spaces after the period).
+function loot_prompt_text(box, outmaybe) {
+    return outmaybe
+        ? loot_safe_qbuf('Do what with ', '?', box, yname, ysimple_name, 'it')
+        : loot_safe_qbuf('', ' is empty.  Do what with it?', box,
+                         (o) => capitalize(yname(o)),
+                         (o) => capitalize(ysimple_name(o)), 'This');
+}
+
 // C ref: pickup.c in_or_out_menu().  Build and render the "Do what with <box>?"
 // PICK_ONE corner menu.  The menu always offers ':' (look inside) and 'q'
 // (quit, pre-selected default when there is no next container); 'o'/'b' appear
@@ -1804,16 +1819,7 @@ function render_in_or_out_menu(box, outokay, inokay, alreadyused, more_container
                                deselected = false) {
     // C ref: in_or_out_menu()'s entries name the box with thesimpleoname().
     const name = thesimpleoname(box);
-    // C ref: use_container():3075-3082 — the prompt is safe_qbuf() over
-    // yname()/ysimple_name() ("Do what with <the/your/Shk's box>?"), or, when
-    // nothing can be taken out and contents are already known (`outmaybe`,
-    // which also hides the o/b entries), Yname2()/Ysimple_name2() with " is
-    // empty.  Do what with it?" (two spaces after the period).
-    const title = outokay
-        ? loot_safe_qbuf('Do what with ', '?', box, yname, ysimple_name, 'it')
-        : loot_safe_qbuf('', ' is empty.  Do what with it?', box,
-                         (o) => capitalize(yname(o)),
-                         (o) => capitalize(ysimple_name(o)), 'This');
+    const title = loot_prompt_text(box, outokay);
     // C ref: menuselector = flags.lootabc ? abc_chars : lootchars.  With the
     // 'lootabc' option on, the entries are lettered a/b/c/d/e in place of the
     // mnemonic o/i/b/r/s.  a.a_int (1..8) indexes the selector; element [0]
@@ -1863,6 +1869,53 @@ function render_container_contents(box) {
     draw_corner_window(lines, maxcol, '--More--', 0);
 }
 
+// C ref: use_container() inokay — the hero carries something other than the
+// container itself.
+function inv_other_than(box) {
+    const inv = Array.isArray(game.invent) ? game.invent : [];
+    return inv.some((o) => o !== box);
+}
+
+// C ref: pickup.c traditional_loot() — menustyle:Traditional looting by
+// prompts: query_classes() then askchain() over the hero's inventory (put in)
+// or the container's contents (take out).  'm' on the class prompt falls back
+// to menu_loot() via menu_on_request.  Returns true iff something was moved.
+async function traditional_loot(box, put_in) {
+    game._pickup = game._pickup || {};
+    const saved = game._pickup.current_container;
+    game._pickup.current_container = box;
+    try {
+        let action, objlist, actionfunc, checkfunc;
+        if (put_in) {
+            action = 'put in';
+            objlist = inventoryArray();
+            actionfunc = in_container;
+            checkfunc = ck_bag;
+        } else {
+            action = 'take out';
+            objlist = box.cobj;
+            actionfunc = out_container;
+            checkfunc = null;
+            game._pickup_encumbrance = 0; /* used to limit verbosity */
+        }
+        const selection = { buf: '' }, one_by_one = { value: false },
+              allflag = { value: false }, menu_on_request = { value: 0 };
+        if (await query_classes(selection, one_by_one, allflag, action, objlist,
+                                false, menu_on_request)) {
+            const olets = one_by_one.value ? []
+                : [...selection.buf].map((ch) => ch.charCodeAt(0));
+            return (await askchain(objlist, olets, allflag.value, actionfunc,
+                                   checkfunc, 0, action)) > 0;
+        } else if (menu_on_request.value < 0) {
+            return (put_in ? await menu_loot_in(box, menu_on_request.value)
+                           : await menu_loot_out(box, menu_on_request.value)) > 0;
+        }
+        return false;
+    } finally {
+        game._pickup.current_container = saved;
+    }
+}
+
 // C ref: pickup.c use_container().  Loot an unlocked, untrapped floor container:
 // loop the in/out menu — ':' shows contents (costs a turn), 'q'/ESC quits.
 // Take-out and put-in use the class/item menus; stash-one uses getobj with a
@@ -1870,96 +1923,152 @@ function render_container_contents(box) {
 async function use_container(box, more_containers) {
     let used = 0;
     box.lknown = 1;
+    // C ref: pickup.c:3014-3036 — check for Schroedinger's Cat, then a cursed
+    // bag of holding (or tricks) with contents loses items (is_boh_item_gone's
+    // rn2(13) per item) before the what-to-do prompt is built.
+    const quantum_cat = box.otyp === LARGE_BOX_OTYP && (box.spe | 0) === 1;
+    if (quantum_cat) {
+        await observe_quantum_cat(box, true, true);
+        used = 1;
+    }
+    const cursed_mbag = (box.otyp === BAG_OF_HOLDING_OTYP || box.otyp === BAG_OF_TRICKS_OTYP)
+        && !!box.cursed && !!(box.cobj && box.cobj.length);
+    if (cursed_mbag) {
+        const loss = await boh_loss(box, box.where === OBJ_INVENT);
+        if (loss) {
+            used = 1;
+            await pline(`You owe ${loss} ${currency(loss)} for lost merchandise.`);
+            box.owt = weight(box);
+        }
+    }
     // C ref: use_container() outmaybe = outokay || !cknown — the take-out
     // choices ('o'/'b') still appear for a container whose contents aren't
     // known yet, even if it turns out to be empty; only a container already
     // known-empty (cknown && !Has_contents) hides them.
     const outmaybe = !!(box.cobj && box.cobj.length) || !box.cknown;
-    const inv = Array.isArray(game.invent) ? game.invent : [];
     // C: inokay = invent && (invent != container || invent->nobj) — the hero
     // carries something OTHER than the container itself.
-    const inokay = inv.some((o) => o !== box);
+    let inokay = inv_other_than(box);
     const sel = game?.flags?.lootabc ? '_:abcdenq' : '_:oibrsnq';
-    // C ref: win/tty/wintty.c process_menu_window() builds `resp` from the
-    // selectors of the entries ACTUALLY on the page, plus " 0123456789\033\n\r"
-    // + default_menu_cmds; dmore()->xwaitforspace() bells and re-reads for
-    // anything outside it.  So a stray key over an open loot menu neither
-    // closes it nor leaks into rhack() as a command — the screen just doesn't
-    // change.
-    let respsel = sel[1]; // ':' look inside is always present
-    if (outmaybe) respsel += sel[2] + sel[4];
-    if (inokay) respsel += sel[3] + sel[5] + sel[6];
-    if (more_containers) respsel += sel[7];
-    respsel += sel[8];
-    // wintype.h MENU_FIRST_PAGE/LAST/NEXT/PREVIOUS, SELECT_ALL/UNSELECT_ALL/
-    // INVERT_ALL, SELECT_PAGE/UNSELECT_PAGE/INVERT_PAGE, SEARCH.
-    const MENU_CMDS = '^|><.-@,\\~:';
-    // C ref: wintty.c tty_display_nhwindow() NHW_MENU, corner (offx != 0) arm —
-    // an unacknowledged top line is paged first, then tty_clear_nhwindow
-    // (WIN_MESSAGE) blanks the message window outright: the getobj/#loot
-    // prompt that preceded the menu is GONE once it closes; without this the
-    // next flush_screen() repainted it.
-    if (game._toplin === 1) await topl_more();
-    game._pending_message = '';
-    game._toplin = 0;
-    let deselected = false;
-    let c = 'q';
-    for (;;) { // repeats iff ':' (look inside) gets chosen
-        render_in_or_out_menu(box, outmaybe, inokay, used !== 0, !!more_containers,
-                              deselected);
-        let ch = '';
-        for (;;) { // xwaitforspace(resp): ignore keys outside the response set
-            const key = await nhgetch();
-            ch = (key === 27) ? '\x1b' : String.fromCharCode(key);
-            if (respsel.includes(ch)) break;             // explicit menu choice
-            if (ch === '\x1b' || ch === '\n' || ch === '\r' || ch === ' ') break;
-            if (ch >= '0' && ch <= '9') continue;        // count prefix: no redraw
-            if (ch === '-' || ch === '\\') {             // deselect the default
-                if (!deselected) { deselected = true; break; }
+    const ms = menu_style();
+    let action;
+    if (ms === MENU_TRADITIONAL || ms === MENU_COMBINATION) {
+        // C ref: use_container() TRADITIONAL|COMBINATION arm — a tty_yn_function
+        // prompt, "Do what with <box>? [:oibrs nq or ?] (q)".
+        let pbuf = ':', xbuf = '';
+        if (outmaybe) pbuf += 'o'; else xbuf += 'o';
+        if (inokay) pbuf += 'i'; else xbuf += 'i';
+        if (outmaybe) pbuf += 'b'; else xbuf += 'b';
+        if (inokay) pbuf += 'rs'; else xbuf += 'rs';
+        pbuf += ' ';
+        if (more_containers) pbuf += 'n'; else xbuf += 'n';
+        pbuf += 'q';
+        if (game.iflags?.cmdassist !== false) pbuf += ' or ?'; else xbuf += '?';
+        if (xbuf) pbuf += '\x1b' + xbuf;
+        for (;;) { // repeats iff '?' or ':' gets chosen
+            const qbuf = loot_prompt_text(box, outmaybe);
+            const c = await yn_function(qbuf, pbuf, more_containers ? 'n' : 'q');
+            if (c === '?') {
+                await explain_container_prompt(!!more_containers);
+            } else if (c === ':') {
+                if (!box.cknown) used = 1; // gaining info costs a turn
+                render_container_contents(box);
+                for (;;) {
+                    const k = await nhgetch();
+                    if (k === 32 || k === 13 || k === 10 || k === 27) break;
+                }
+            } else {
+                action = c;
+                break;
+            }
+        }
+    } else if (!inokay && !outmaybe) {
+        // nothing to take out, nothing to put in; trying to do both will
+        // yield proper feedback
+        action = 'b';
+    } else {
+        // C ref: win/tty/wintty.c process_menu_window() builds `resp` from the
+        // selectors of the entries ACTUALLY on the page, plus " 0123456789\033\n\r"
+        // + default_menu_cmds; dmore()->xwaitforspace() bells and re-reads for
+        // anything outside it.  So a stray key over an open loot menu neither
+        // closes it nor leaks into rhack() as a command — the screen just doesn't
+        // change.
+        let respsel = sel[1]; // ':' look inside is always present
+        if (outmaybe) respsel += sel[2] + sel[4];
+        if (inokay) respsel += sel[3] + sel[5] + sel[6];
+        if (more_containers) respsel += sel[7];
+        respsel += sel[8];
+        // wintype.h MENU_FIRST_PAGE/LAST/NEXT/PREVIOUS, SELECT_ALL/UNSELECT_ALL/
+        // INVERT_ALL, SELECT_PAGE/UNSELECT_PAGE/INVERT_PAGE, SEARCH.
+        const MENU_CMDS = '^|><.-@,\\~:';
+        // C ref: wintty.c tty_display_nhwindow() NHW_MENU, corner (offx != 0) arm —
+        // an unacknowledged top line is paged first, then tty_clear_nhwindow
+        // (WIN_MESSAGE) blanks the message window outright: the getobj/#loot
+        // prompt that preceded the menu is GONE once it closes; without this the
+        // next flush_screen() repainted it.
+        if (game._toplin === 1) await topl_more();
+        game._pending_message = '';
+        game._toplin = 0;
+        let deselected = false;
+        let c = 'q';
+        for (;;) { // repeats iff ':' (look inside) gets chosen
+            render_in_or_out_menu(box, outmaybe, inokay, used !== 0, !!more_containers,
+                                  deselected);
+            let ch = '';
+            for (;;) { // xwaitforspace(resp): ignore keys outside the response set
+                const key = await nhgetch();
+                ch = (key === 27) ? '\x1b' : String.fromCharCode(key);
+                if (respsel.includes(ch)) break;             // explicit menu choice
+                if (ch === '\x1b' || ch === '\n' || ch === '\r' || ch === ' ') break;
+                if (ch >= '0' && ch <= '9') continue;        // count prefix: no redraw
+                if (ch === '-' || ch === '\\') {             // deselect the default
+                    if (!deselected) { deselected = true; break; }
+                    continue;
+                }
+                if (MENU_CMDS.includes(ch)) continue;       // no-op on a 1-page PICK_ONE
+                // not in resp: tty_nhbell() and read the next key
+            }
+            if (ch === '-' || ch === '\\') continue;         // redraw with '-' marker
+            if (ch === sel[1]) { // ':' look inside
+                if (!box.cknown) used = 1; // gaining info costs a turn
+                render_container_contents(box);
+                // C ref: process_text_window() -> dmore(cw, quitchars): only
+                // " \r\n\033" dismiss the contents window.
+                for (;;) {
+                    const k = await nhgetch();
+                    const kc = (k === 27) ? '\x1b' : String.fromCharCode(k);
+                    if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b') break;
+                }
                 continue;
             }
-            if (MENU_CMDS.includes(ch)) continue;       // no-op on a 1-page PICK_ONE
-            // not in resp: tty_nhbell() and read the next key
+            // C ref: '\033' cancels (select_menu -> -1 -> 'q'); ' ', '\n' and '\r'
+            // commit the pre-selected default entry, which is 'n' when there is
+            // another container and 'q' otherwise.
+            if (ch === '\x1b') c = 'q';
+            else if (ch === ' ' || ch === '\n' || ch === '\r') c = more_containers ? sel[7] : sel[8];
+            else c = ch;
+            break;
         }
-        if (ch === '-' || ch === '\\') continue;         // redraw with '-' marker
-        if (ch === sel[1]) { // ':' look inside
-            if (!box.cknown) used = 1; // gaining info costs a turn
-            render_container_contents(box);
-            // C ref: process_text_window() -> dmore(cw, quitchars): only
-            // " \r\n\033" dismiss the contents window.
-            for (;;) {
-                const k = await nhgetch();
-                const kc = (k === 27) ? '\x1b' : String.fromCharCode(k);
-                if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b') break;
-            }
-            continue;
-        }
-        // C ref: '\033' cancels (select_menu -> -1 -> 'q'); ' ', '\n' and '\r'
-        // commit the pre-selected default entry, which is 'n' when there is
-        // another container and 'q' otherwise.
-        if (ch === '\x1b') c = 'q';
-        else if (ch === ' ' || ch === '\n' || ch === '\r') c = more_containers ? sel[7] : sel[8];
-        else c = ch;
-        break;
+        // Map the chosen accelerator back to the canonical loot action.  The menu is
+        // rendered with the same accelerators (lootabc's a/b/c/d/e or the mnemonic
+        // o/i/b/r/s), and the picked slot maps to lootchars[slot].  C ref: pickup.c
+        // in_or_out_menu() return -> use_container() c.
+        const lootchars = '_:oibrsnq';
+        const idx = sel.indexOf(c);
+        action = idx >= 1 ? lootchars[idx] : 'q';
     }
-    // Map the chosen accelerator back to the canonical loot action.  The menu is
-    // rendered with the same accelerators (lootabc's a/b/c/d/e or the mnemonic
-    // o/i/b/r/s), and the picked slot maps to lootchars[slot].  C ref: pickup.c
-    // in_or_out_menu() return -> use_container() c.
-    const lootchars = '_:oibrsnq';
-    const idx = sel.indexOf(c);
-    const action = idx >= 1 ? lootchars[idx] : 'q';
     // C ref: use_container() loot_out/loot_in/loot_in_first.  'r' is "both
     // reversed", so its put-in half runs FIRST.
     const loot_out = (action === 'o' || action === 'b' || action === 'r');
-    const loot_in = (action === 'i' || action === 'b' || action === 'r');
+    const loot_in0 = (action === 'i' || action === 'b' || action === 'r');
     const loot_in_first = (action === 'r');
     // C ref: use_container() emptymsg — Ysimple_name2(): "Your bag" for a
     // carried container, "The chest" (or "<Shk>'s chest") for one on the floor.
-    const emptymsg = `${capitalize(ysimple_name(box))} is empty.`;
+    const emptymsg = `${capitalize(ysimple_name(box))} is ${(quantum_cat || cursed_mbag) ? 'now ' : ''}empty.`;
     const do_out = async () => {
         if (box.cobj && box.cobj.length) {
-            if (await menu_loot_out(box)) used = 1;
+            if (menu_style() === MENU_TRADITIONAL ? await traditional_loot(box, false)
+                                                  : await menu_loot_out(box)) used = 1;
         } else {
             // C ref: use_container() — Has_contents() false: pline1(emptymsg)
             // ("The <box> is empty."); gaining that info costs a turn the first
@@ -1968,12 +2077,22 @@ async function use_container(box, more_containers) {
             await pline(emptymsg);
             box.cknown = 1;
         }
+        // C: recalculate `inokay` in case something was just taken out and
+        // inventory is no longer empty or no longer just the container.
+        inokay = inv_other_than(box);
     };
     if (loot_out && !loot_in_first) await do_out();
-    if (loot_in) {
-        if (await menu_loot_in(box)) used = 1;
+    let loot_in = loot_in0, stash_one = (action === 's');
+    if ((loot_in || stash_one) && !inokay) {
+        const invn = Array.isArray(game.invent) ? game.invent : [];
+        await pline(`You don't have anything${invn.length ? ' else' : ''} to ${stash_one ? 'stash' : 'put in'}.`);
+        loot_in = stash_one = false;
     }
-    else if (action === 's') {
+    if (loot_in) {
+        if (menu_style() === MENU_TRADITIONAL ? await traditional_loot(box, true)
+                                              : await menu_loot_in(box)) used = 1;
+    }
+    else if (stash_one) {
         // C ref: pickup.c:3174-3184 — stash a selected stack (or count), undoing
         // a split if the container rejects it without consuming a turn.
         delete game._modal_screen;
@@ -2321,35 +2440,55 @@ export async function doddoremarm() {
         await pline('You are not wearing anything.');
         return 0;
     }
-    const picks = await query_category_takeoff();
-    if (!picks || !picks.length) { await dismiss_invent_screen(); return 0; }
+    add_valid_menu_class(0); /* reset (do_wear.c:3036) */
+    // C ref: doddoremarm() — menustyle:Traditional asks the class prompt
+    // first (ggetobj); a result below -1 ('m') or any other style opens the
+    // menu_remarm() path.
+    let result = 0;
+    if (menu_style() !== MENU_TRADITIONAL
+        || (result = await ggetobj('take off', select_off, 0, false, null)) < -1)
+        await menu_remarm(result);
 
-    let all_worn_categories = false;
-    const validClasses = new Set(), bucFilters = new Set();
-    for (const p of picks) {
-        if (p === 'ALL') all_worn_categories = true;
-        else if (typeof p === 'number') validClasses.add(p);
-        else bucFilters.add(p);
-    }
-    // C: a BUC pick clears all_worn_categories (is_worn_by_type applies both).
-    if (bucFilters.size) all_worn_categories = false;
-    const bucOf = (o) => (o.oclass === COIN_CLASS ? (game?.flags?.goldX ? 'X' : 'U')
-        : !o.bknown ? 'X' : o.blessed ? 'B' : o.cursed ? 'C' : 'U');
-    const allow = (o) => is_worn(o)
-        && (all_worn_categories
-            || ((!validClasses.size || validClasses.has(o.oclass))
-                && (!bucFilters.size || bucFilters.has(bucOf(o)))));
-
-    const chosen = await query_objlist_takeoff(allow);
-    if (chosen === null || !chosen.length) { await dismiss_invent_screen(); return 0; }
-    await dismiss_invent_screen();
-    for (const obj of chosen) await select_off(obj);
     if (doff.mask) {
         doff.disrobing = (doff.mask & ~WEAPON_SLOT_MASK) ? 'disrobing' : 'disarming';
         g._takeoff_occupation = !!(await take_off());
     }
     return 0; /* ECMD_OK: take_off() accounts for the time itself */
 }
+
+// C ref: do_wear.c menu_remarm(retry) — the take-off item menu, preceded by the
+// class menu (Full) or ggetobj()'s class prompt (Combination).
+async function menu_remarm(retry) {
+    const ms = menu_style();
+    let all_worn_categories = true;
+    if (retry) {
+        all_worn_categories = (retry === -2);
+    } else if (ms === MENU_FULL) {
+        all_worn_categories = false;
+        const picks = await query_category_takeoff();
+        if (!picks || !picks.length) { await dismiss_invent_screen(); return 0; }
+        for (const p of picks) {
+            if (p === 'ALL') all_worn_categories = true;
+            else add_valid_menu_class(typeof p === 'number' ? DEF_OC_SYMS[p] : p);
+        }
+    } else if (ms === MENU_COMBINATION) {
+        const ggofeedback = { value: 0 };
+        const i = await ggetobj('take off', select_off, 0, true, ggofeedback);
+        if (ggofeedback.value & ALL_FINISHED) return 0;
+        all_worn_categories = (i === -2);
+    }
+    if (menu_class_present('u') || menu_class_present('B')
+        || menu_class_present('U') || menu_class_present('C')
+        || menu_class_present('X'))
+        all_worn_categories = false;
+
+    const chosen = await query_objlist_takeoff(all_worn_categories ? is_worn : is_worn_by_type);
+    if (chosen === null || !chosen.length) { await dismiss_invent_screen(); return 0; }
+    await dismiss_invent_screen();
+    for (const obj of chosen) await select_off(obj);
+    return 0;
+}
+
 // Worn-mask bits for the three weapon slots (js/invent.js QW_* convention).
 const WEAPON_SLOT_MASK = 0x100 | 0x200 | 0x400;
 
@@ -2357,14 +2496,20 @@ const WEAPON_SLOT_MASK = 0x100 | 0x200 | 0x400;
 // object classes ("Take out what type of objects?"), then the items ("Take out
 // what?"), then out_container() each.  Returns the number removed (>0 => a turn
 // elapsed).
-async function menu_loot_out(box) {
-    const picks = await query_category_take_out(box);
-    if (!picks || picks.length === 0) return 0;
+async function menu_loot_out(box, retry = 0) {
+    // C ref: menu_loot(): the class menu (query_category) only under
+    // menustyle:Full and a first try; otherwise all_categories = (retry == -2)
+    // or TRUE, and the classes query_classes() collected stay valid.
+    let picks;
+    if (retry) picks = retry === -2 ? ['ALL'] : [];
+    else if (menu_style() === MENU_FULL) picks = await query_category_take_out(box);
+    else picks = ['ALL'];
+    if (!picks || (picks.length === 0 && !retry)) return 0;
 
     // C ref: pickup.c menu_loot() — the picks feed add_valid_menu_class(), and
     // allow_category() then ANDs the class / BUC filter types together.
     let autopick = false, all_categories = false, loot_everything = false;
-    add_valid_menu_class(0);
+    if (!retry) add_valid_menu_class(0);
     for (const p of picks) {
         if (p === 'A') loot_everything = autopick = true;
         else if (p === 'ALL') all_categories = true;
@@ -2516,14 +2661,17 @@ async function query_objlist_put_in(allow) {
 // C ref: pickup.c menu_loot(retry=0, put_in=TRUE) for menustyle:Full — the
 // class menu, then the item menu, then in_container() each.  Returns the number
 // inserted (>0 => the command elapses a turn).
-async function menu_loot_in(box) {
-    const picks = await query_category_put_in();
-    if (!picks || picks.length === 0) return 0;
+async function menu_loot_in(box, retry = 0) {
+    let picks;
+    if (retry) picks = retry === -2 ? ['ALL'] : [];
+    else if (menu_style() === MENU_FULL) picks = await query_category_put_in();
+    else picks = ['ALL'];
+    if (!picks || (picks.length === 0 && !retry)) return 0;
 
     // C ref: pickup.c menu_loot() pick handling (see menu_loot_out).
     let autopick = false, all_categories = false, loot_justpicked = false;
     let loot_everything = false;
-    add_valid_menu_class(0);
+    if (!retry) add_valid_menu_class(0);
     for (const p of picks) {
         if (p === 'A') loot_everything = autopick = true;
         else if (p === 'P') {
@@ -2740,7 +2888,7 @@ async function doloot() {
         if (Blind() && !game.uarmg) {
             for (const nobj of objects_at(u.ux, u.uy)) {
                 if (nobj.otyp === CORPSE && will_feel_cockatrice(nobj, false)) {
-                    feel_cockatrice(nobj, false);
+                    await feel_cockatrice(nobj, false);
                     return 1; // ECMD_TIME
                 }
             }
@@ -3396,11 +3544,11 @@ const HANDLERS = {
     quaff: dodrink,
     read: doread,
     redraw: doredraw,
-    seeamulet: dopramulet,
-    seearmor: doprarm,
-    seerings: doprring,
-    seetools: doprtool,
-    seeweapon: doprwep,
+    seeamulet: itemaction_time(dopramulet),
+    seearmor: itemaction_time(doprarm),
+    seerings: itemaction_time(doprring),
+    seetools: itemaction_time(doprtool),
+    seeweapon: itemaction_time(doprwep),
     showgold: doprgold,
     showspells: dovspell,
     takeoffall: doddoremarm,
@@ -3485,7 +3633,14 @@ const HANDLERS = {
 // already in scope, matching the raw-key call site exactly.
 async function wizlevelport_extcmd() {
     const { wiz_level_tele } = await import('./do.js');
-    return await wiz_level_tele((q) => hooked_tty_getlin(q, null));
+    const res = await wiz_level_tele((q) => hooked_tty_getlin(q, null));
+    // C ref: cmd.c:3814 — ECMD_OK -> reset_cmd_vars(gm.multi < 0), cancelling the
+    // multi = -1 of a survived "Go to Nowhere".
+    if (res !== 1) {
+        const { reset_cmd_vars } = await import('./cmd.js');
+        reset_cmd_vars(game.multi < 0);
+    }
+    return res;
 }
 
 // ── #apply .. #zap: the ~90-entry HANDLERS/EXTCMDLIST gap, found by an 8-agent
@@ -3661,14 +3816,15 @@ async function dosearch_extcmd() {
     return searched ? 1 : 0;
 }
 
-// C ref: invent.c doprinuse() — real C discards its return value and never
-// spends a turn; mirrors the '*' raw-key site's unconditional move=0 exactly
-// rather than translating doprinuse()'s own (unused) return value.
+// C ref: invent.c doprinuse() returns ECMD_OK, but the item action picked from
+// its menu is queued by itemactions() and runs as its own timed command; this
+// port runs it inline, so invent.js's ECMD_TIME (3) maps to doextcmd()'s "time
+// used" sentinel 1 (same translation as ddoinv_extcmd below).
 async function doprinuse_extcmd() {
     const { getdir } = await import('./cmd.js');
-    await doprinuse(getdir);
-    return 0;
+    return (await doprinuse(getdir)) === 3 ? 1 : 0;
 }
+function itemaction_time(fn) { return async () => ((await fn()) === 3 ? 1 : 0); }
 
 // C ref: pager.c doidtrap() — no raw-key call site exists for '^' at all.
 // doidtrap()'s own CANCEL value happens to be the literal 1 (doextcmd()'s
@@ -3716,12 +3872,16 @@ async function dotoggleoption_extcmd() {
     return await dotoggleoption();
 }
 
-// C ref: hack.c dotravel() — invent.js's own ECMD_TIME is 3.  No raw-key
-// translation to mirror: cmd.js's '_' site hardcodes move=0 unconditionally
-// (the tested public sessions all cancel at the destination prompt), so this
-// is read from dotravel()'s own declared return convention instead.
+// C ref: hack.c dotravel() — invent.js's own ECMD_TIME is 3.  cmd.js's '_' site
+// hardcodes move=0 because hack.js travel_walk()/travel_adjacent_step() take
+// every elapsed turn (the first forced one included) inline; returning the
+// ECMD_TIME as move=1 made moveloop_core() run ONE MORE monster turn after the
+// travel finished (fz04 step 118: C stops at turn 10, JS ran turn 11).  Only a
+// helpless hero (ball drag, multi < 0) leaves context.move set for the
+// moveloop to continue, so honour that and nothing else.
 async function dotravel_extcmd() {
-    return (await dotravel()) === 3 ? 1 : 0;
+    const res = await dotravel();
+    return (res === 3 && game.context?.move) ? 1 : 0;
 }
 
 // C ref: do_wear.c dowear() — mirrors js/cmd.js's 'W' key translation
@@ -3958,23 +4118,25 @@ async function doherecmdmenu() {
     const x = u.ux, y = u.uy;
     const typ = game.level?.at?.(x, y)?.typ | 0;
     const items = [];
-    const push = (ch, desc) => items.push({ ch, desc });
+    // `cmd` is the HANDLERS key of the command act_on_act() queues for the item
+    // and `keys` the CQ_CANNED keys it queues after it (cmd.c:4658-4880).
+    const push = (ch, desc, cmd, keys = '') => items.push({ ch, desc, cmd, keys });
     // Accelerators are assigned by the tty menu in add order: a, b, c, ...
     const nextCh = () => String.fromCharCode(97 + items.length);
 
     // C ref: cmd.c:4448 — can_reach_floor(FALSE) is unconditionally true here
     // (js/invent.js can_reach_floor).
     if (IS_FOUNTAIN(typ) || IS_SINK(typ))
-        push(nextCh(), `Drink from the ${IS_FOUNTAIN(typ) ? 'fountain' : 'sink'}`);
-    if (IS_FOUNTAIN(typ)) push(nextCh(), 'Dip something into the fountain');
-    if (IS_THRONE(typ)) push(nextCh(), 'Sit on the throne');
-    if (IS_ALTAR(typ)) push(nextCh(), 'Sacrifice something on the altar');
+        push(nextCh(), `Drink from the ${IS_FOUNTAIN(typ) ? 'fountain' : 'sink'}`, 'drink', 'y');
+    if (IS_FOUNTAIN(typ)) push(nextCh(), 'Dip something into the fountain', 'dip');
+    if (IS_THRONE(typ)) push(nextCh(), 'Sit on the throne', 'sit');
+    if (IS_ALTAR(typ)) push(nextCh(), 'Sacrifice something on the altar', 'offer');
 
     const stway = herecmd_stairway_at(x, y);
     if (stway && stway.up)
-        push(nextCh(), `Go up the ${stway.isladder ? 'ladder' : 'stairs'}`);
+        push(nextCh(), `Go up the ${stway.isladder ? 'ladder' : 'stairs'}`, 'up');
     if (stway && !stway.up)
-        push(nextCh(), `Go down the ${stway.isladder ? 'ladder' : 'stairs'}`);
+        push(nextCh(), `Go down the ${stway.isladder ? 'ladder' : 'stairs'}`, 'down');
 
     // C ref: cmd.c:4482 OBJ_AT(x,y) — svl.level.objects[x][y] is the raw top of
     // the pile (not vobj_at), and `otmp->nexthere` means "more than one here".
@@ -3982,39 +4144,47 @@ async function doherecmdmenu() {
     const pile = objects_at(x, y) || [];
     const otmp = pile[0];
     if (otmp) {
-        push(nextCh(), `Pick up ${pile.length > 1 ? 'items' : obj_doname(otmp)}`);
+        push(nextCh(), `Pick up ${pile.length > 1 ? 'items' : obj_doname(otmp)}`, 'pickup');
         if (is_container_otyp(otmp.otyp)) {
-            push(nextCh(), `Loot ${obj_doname(otmp)}`);
-            push(nextCh(), `Tip ${obj_doname(otmp)}`);
+            push(nextCh(), `Loot ${obj_doname(otmp)}`, 'loot');
+            push(nextCh(), `Tip ${obj_doname(otmp)}`, 'tip', 'y');
         }
         if (otmp.oclass === FOOD_CLASS_X)
-            push(nextCh(), `Eat ${obj_doname(otmp)}`);
+            push(nextCh(), `Eat ${obj_doname(otmp)}`, 'eat', 'y');
     }
     if (inventoryArray().length) {
-        push(nextCh(), 'Inventory');
-        push(nextCh(), 'Drop items');
+        push(nextCh(), 'Inventory', 'inventory');
+        push(nextCh(), 'Drop items', 'drop');
     }
-    push(nextCh(), 'Rest one turn');
-    push(nextCh(), 'Search around you');
-    push(nextCh(), 'Look at what is here');
+    push(nextCh(), 'Rest one turn', 'wait');
+    push(nextCh(), 'Search around you', 'search');
+    push(nextCh(), 'Look at what is here', 'look');
     const { num_spells } = await import('./spell.js');
-    if (num_spells() > 0) push(nextCh(), 'Cast a spell');
+    if (num_spells() > 0) push(nextCh(), 'Cast a spell', 'cast');
     const ttmp = herecmd_t_at(x, y);
     if (ttmp && ttmp.tseen && ttmp.ttyp !== VIBRATING_SQUARE)
-        push(nextCh(), 'Attempt to disarm trap');
+        push(nextCh(), 'Attempt to disarm trap', 'untrap', '>');
     // C ref: cmd.c:4646 there_cmd_menu_common() — for self, "Look at map symbol"
     // only when the square does not show the ordinary hero glyph.
-    if (u?.Upolyd) push(nextCh(), 'Look at map symbol');
+    // (the hero glyph is not drawn when !canspotself(): invisible w/o see invisible)
+    if (u?.Upolyd || u?.usteed || !canspotself()) push(nextCh(), 'Look at map symbol');
 
     // C ref: cmd.c:4880 — K==0 falls through to a move/travel, never a menu.
     if (!items.length) return 0;
     render_corner_menu(disp, 'What do you want to do?', items);
+    let picked = null;
     for (;;) {
         const key = await nhgetch();
         if (key === 27 || key === 32 || key === 13 || key === 10) break;
-        if (items.some((it) => it.ch === String.fromCharCode(key))) break;
+        picked = items.find((it) => it.ch === String.fromCharCode(key));
+        if (picked) break;
     }
-    return 0;   /* ECMD_OK — the dismissed menu costs no time */
+    /* C ref: cmd.c:4658 act_on_act() queues the chosen command (plus canned
+       answers) and rhack() runs it next; a dismissed menu costs no time. */
+    if (!picked) return 0;
+    if (picked.keys) unshiftKeys(picked.keys);
+    const fn = HANDLERS[picked.cmd];
+    return fn ? await fn() : 0;
 }
 
 // C ref: stairs.c stairway_at(x, y) (js/do.js keeps the other copy private).
@@ -4361,8 +4531,18 @@ async function dowipe_extcmd() {
 // the keystrokes the recording sends to that second "#" prompt (and any
 // prompt after it, for as long as the answer keeps being "?") leak into
 // rhack() as fresh top-level commands and desync the rest of the session.
+// C ref: cmd.c rhack() do_cmdq_extcmd -- a CMDQ_EXTCMD entry (queued by an
+// earlier doextcmd() for #repeat) runs its command directly, no '#' prompt.
+export async function run_extcmd_txt(txt) {
+    const fn = HANDLERS[txt];
+    let res = 0;
+    if (fn) res = await fn();
+    game.context.move = res === 1 ? 1 : 0;
+    return res;
+}
+
 export async function doextcmd() {
-    let fn, res = 0;
+    let fn, res = 0, lastTxt = '';
     for (;;) {
         const idx = await tty_get_ext_cmd();
         if (idx < 0) {
@@ -4396,11 +4576,34 @@ export async function doextcmd() {
             }
         }
         fn = HANDLERS[txt];
+        lastTxt = txt;
         res = 0;
+        // C ref: cmd.c doextcmd() `ge.ext_tlist = &extcmdlist[idx]` -- tell
+        // rhack() what command is actually executing so it can queue it for ^A.
+        game._ext_tlist = txt;
         if (fn) {
             res = await fn();
         }
         if (fn !== doextlist) break;
+    }
+    // C ref: cmd.c rhack():3762-3773 — a PREFIXCMD run through doextcmd() marks
+    // prefix_seen and loops back to read ANOTHER command (got_prefix_input),
+    // which a non-movement key then refuses with "The 'F' prefix should be
+    // followed by a movement command." (3717-3722).  The F/g/G keys do this
+    // inline in cmd.js rhack(); the #fight/#run/#rush/#reqmenu spellings only
+    // armed the flag and let the next key run as an ordinary command.
+    const armed = (lastTxt === 'fight' && game.context.forcefight)
+        || ((lastTxt === 'run' || lastTxt === 'rush') && game.context.run_prefix)
+        || (lastTxt === 'reqmenu' && game.iflags?.menu_requested);
+    if (armed && res !== 1) {
+        const { rhack } = await import('./cmd.js');
+        game.context.move = 0;
+        game.multi = 0;
+        const savedSeen = game.context._prefix_seen;
+        game.context._prefix_seen = true;
+        await rhack(0);
+        game.context._prefix_seen = savedSeen;
+        return res;
     }
     // C ref: doextcmd returns the command's ECMD_* result; ECMD_TIME (1)
     // makes the move loop advance a turn.  Commands we don't model return 0.
@@ -4432,14 +4635,15 @@ function invoke_ok(obj) {
 }
 
 // C ref: artifact.c:1749 doinvoke() -> retouch_object() -> :2131 arti_invoke().
-// An artifact whose inv_prop is 0 (Mjollnir) reaches pline1(nothing_happens).
+// artifact.js numbers ECMD_TIME 4; this module's convention is 1.
 async function doinvoke() {
     const inv = await import('./invent.js');
+    const art = await import('./artifact.js');
     const obj = await inv.getobj('invoke', invoke_ok, inv.GETOBJ_PROMPT);
     if (!obj) return 0;                                  // ECMD_CANCEL
-    if (!inv.touch_artifact(obj, null)) return 1;        // ECMD_TIME
-    await pline('Nothing happens.');
-    return 1;                                            // ECMD_TIME
+    const ref = { obj };
+    if (!(await art.retouch_object(ref, false))) return 1; // ECMD_TIME
+    return (await art.arti_invoke(ref.obj)) === 4 ? 1 : 0;
 }
 
 // C ref: pickup.c:3505 choose_tip_container_menu() — PICK_ONE over the floor
@@ -4670,17 +4874,8 @@ export async function dotip() {
 // PM_GIANT_SPIDER — there is no M1_WEBMAKER bit (0x400000 is M1_OVIPAROUS here,
 // and a red dragon has it, which would silence the message).
 async function dountrap() {
-    const { nohands } = await import('./monflags_data.js');
-    const { near_capacity } = await import('./invent.js');
-    const { base_mmove } = await import('./mon.js');
-    const data = game.u?.data;
-    const webmaker = data?.name === 'cave spider' || data?.name === 'giant spider';
-    let buf = '';
-    if (near_capacity() >= 3 /* HVY_ENCUMBER */)
-        buf = "You're too strained to do that.";
-    else if ((data && nohands(data) && !webmaker) || !base_mmove({ data }))
-        buf = 'And just how do you expect to do that?';
-    if (buf) { await pline(buf); return 0; }
+    const { could_untrap } = await import('./trap.js');
+    if (!(await could_untrap(true, false))) return 0;
 
     // C ref: trap.c:5253 `untrap(FALSE, 0, 0, (struct obj *) 0)`.  With no rx/ry
     // and no container, untrap() opens with the usual-case prompt

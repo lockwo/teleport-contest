@@ -35,14 +35,15 @@ import { ATR_INVERSE } from './terminal.js';
 import {
     newsym, update_topl, m_at, background_glyph, show_glyph_cell, map_invisible,
 } from './display.js';
-import { cansee, couldsee, block_point, unblock_point, recalc_block_point } from './vision.js';
+import { cansee, couldsee, block_point, unblock_point, recalc_block_point, Blind } from './vision.js';
 import { Monnam, mon_nam, canspotmon, setmangry, relobj } from './uhitm.js';
 import { noit_Monnam, noit_mon_nam, Some_Monnam } from './do_name.js';
 import { m_carrying, m_canseeu, mon_wield_item } from './monmove.js';
 import { rloc, rloc_to, RLOC_MSG, RLOC_ERR } from './teleport.js';
 import { makemon, set_malign, monster_by_pmidx, enexto_spawn, add_to_minv } from './makemon.js';
 import { place_object, objects, weight, COIN_CLASS, BOULDER, ROCK } from './mkobj.js';
-import { stackobj, makeplural, xname, currency } from './invent.js';
+import { stackobj, xname, currency } from './invent.js';
+import { makeplural } from './plural.js';
 import { money_cnt_invent, hidden_gold as shk_hidden_gold } from './shk.js';
 import { in_rooms } from './shkroom.js';
 import { t_at } from './mkroom.js';
@@ -78,7 +79,7 @@ const DEADMONSTER = (mon) => !mon || (mon.mhp != null && mon.mhp < 1);
 // C ref: youprop.h Deaf.
 const Deaf = () => ((game.u?.uprops?.HDeaf ?? 0) > 0) || !!game.u?.Deaf;
 // C ref: youprop.h Blind.
-const Blind_hero = () => (game.u?.blinded || 0) > 0 || !!game.u?.ublindf;
+const Blind_hero = () => Blind();
 // C ref: youprop.h Strangled — u.uprops[STRANGLED].
 const Strangled = () => (game.u?.uprops?.Strangled || 0) > 0;
 // C ref: pline.c verbalize() / You() / Your() / You_hear() / pline_The().

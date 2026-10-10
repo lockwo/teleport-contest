@@ -9,7 +9,7 @@
 import { game } from './gstate.js';
 import { hcolor } from './do_name.js';
 import { rnd } from './rng.js';
-import { pline, update_topl, newsym } from './display.js';
+import { pline, update_topl, newsym, see_monsters } from './display.js';
 import { Blind } from './vision.js';
 import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
@@ -18,12 +18,13 @@ import { A_INT, A_WIS, A_DEX, A_CHA, TT_BEARTRAP, TT_INFLOOR, TT_LAVA, TT_BURIED
 import {
     WA_ARM, WA_ARMC, WA_ARMH, WA_ARMS, WA_ARMG, WA_ARMF, WA_ARMU,
     W_ARMOR_WORN, W_RINGL, W_RINGR, W_AMUL,
-    worn_slot_clear, body_part, makeplural, xname, yname, makeknown,
+    worn_slot_clear, body_part, xname, yname, makeknown,
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuwep_slot, setuswapwep, setuqwep,
     Ring_off, Ring_on, Amulet_off, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
     otense, makeknown_credit, cmdq_pop, worn_extrinsic,
 } from './invent.js';
+import { makeplural } from './plural.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { weapon_descr } from './weapon.js';
 import { youmonst_data_pub, nohands_youmonst, empty_handed } from './invent.js';
@@ -269,10 +270,6 @@ export function change_luck(n) {
 
 function newsym_here() { newsym(game.u?.ux, game.u?.uy); }
 
-// C ref: display.c see_monsters() — a redisplay pass for telepathy/warning/
-// see-invisible changes.  No JS equivalent exists (deferred); it draws no RNG.
-function see_monsters() {}
-
 /* ---- toggles ----------------------------------------------------------- */
 
 // C ref: do_wear.c:107 toggle_stealth(obj, oldprop, on)
@@ -327,8 +324,6 @@ export async function Boots_on() {
     case JUMPING_BOOTS: case KICKING_BOOTS:
         break;
     case WATER_WALKING_BOOTS:
-        /* spoteffects()/u.uinwater: the underwater-to-surface transition is not
-           modelled; gw.wasinwater is recorded by the caller for the makeknown. */
         if (game.wasinwater) {
             if (!game.u?.uinwater) makeknown(WATER_WALKING_BOOTS);
             game.wasinwater = 0;
@@ -356,11 +351,6 @@ export async function Boots_on() {
         break;
     }
     case LEVITATION_BOOTS: {
-        // C ref: do_wear.c:236 Boots_on() LEVITATION_BOOTS — oldprop is
-        // Levitation already active from another worn source (a levitation
-        // ring).  BLevitation (terrain-blocked levitation via FROMOUTSIDE) is
-        // never set anywhere in this port (switch_terrain() is NOT PORTED,
-        // see js/dig.js:868), so that half of C's gate is always false here.
         const oldprop = extrinsic_levitation_except(uarmf);
         if (!oldprop) {
             uarmf.known = 1;
@@ -369,9 +359,9 @@ export async function Boots_on() {
             const { float_up, spoteffects } = await import('./trap.js');
             await float_up();
             if (Levitation()) await spoteffects();
+        } else {
+            (await import('./polyself.js')).float_vs_flight();
         }
-        // else: float_vs_flight() (hack.c) — not ported anywhere in this
-        // codebase (no BFlying I_SPECIAL-toggle infra exists).
         break;
     }
     default:
@@ -403,7 +393,7 @@ export async function Boots_off() {
         }
         break;
     case WATER_WALKING_BOOTS:
-        /* spoteffects() drowning/lava check: not modelled (deferred). */
+        await (await import('./trap.js')).spoteffects();
         break;
     case ELVEN_BOOTS:
         await toggle_stealth(otmp, oldprop_stealth, false);
@@ -417,7 +407,7 @@ export async function Boots_off() {
         break;
     }
     case LEVITATION_BOOTS:
-        /* float_down() (hack.c): deferred with the rest of levitation. */
+        await (await import('./trap.js')).float_down(0, WA_ARMF);
         makeknown(otyp);
         break;
     default:
@@ -1500,11 +1490,9 @@ export async function disintegrate_arm(atmp) {
     await stop_occupation();   // C: disintegrate_arm() ends with stop_occupation()
     return true;
 }
-// C ref: hacklib.c vtense(subj, verb) — only the "turn"/"fall" forms are
-// needed here; a plural subject ("dragon scales") keeps the bare verb.
-function vtense_dw(subj, verb) {
-    return /s$/.test(subj) && !/ss$/.test(subj) ? verb : verb + 's';
-}
+// C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js.
+import { vtense } from './plural.js';
+const vtense_dw = vtense;
 async function surface_dw() {
     const D = await import('./dungeon.js');
     return D.surface(game.u.ux, game.u.uy);

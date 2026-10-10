@@ -3,6 +3,9 @@
 // spell), which scans the area around the hero for hidden doors, corridors,
 // traps and monsters, reveals them, and reports what (if anything) was found.
 
+import { FOOT } from './const.js';
+import { body_part } from './polyself.js';
+import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { pline, newsym, terrain_background_glyph, show_glyph_cell,
          object_glyph, vobj_at, trap_glyph, engraving_glyph, bg_attr } from './display.js';
@@ -14,7 +17,7 @@ import { COLNO, ROWNO, BOLT_LIM, SDOOR, SCORR, DOOR, CORR, A_WIS, IS_FURNITURE,
          Is_rogue_level } from './const.js';
 import { room_discovered } from './dungeon.js';
 import { BOULDER, COIN_CLASS, GOLD_PIECE, objects } from './mkobj.js';
-import { NO_COLOR, CLR_WHITE } from './terminal.js';
+import { NO_COLOR, CLR_WHITE, ATR_INVERSE } from './terminal.js';
 import { rnd } from './rng.js';
 
 // Additional imports used only by the translated block at the end of this file.
@@ -285,7 +288,7 @@ export async function gold_detect(sobj) {
     const offSelf = gold.some((o) => o.ox !== u.ux || o.oy !== u.uy);
     if (!gold.length && !goldmons.length) return true;
     if (!offSelf && !goldmons.length) {
-        await update_topl(`You notice some gold between your ${makeplural_foot()}.`);
+        await update_topl(`You notice some gold between your ${makeplural(body_part(FOOT))}.`);
         return false;
     }
 
@@ -320,9 +323,6 @@ export async function gold_detect(sobj) {
     await map_redisplay();
     return false;
 }
-
-// C ref: body_part(FOOT) pluralised — the hero is always humanoid here.
-function makeplural_foot() { return 'feet'; }
 
 // C ref: detect.c skip_premap_detect — a STONE cell flagged both nondiggable
 // and nonpasswall is outside the special level's own map footprint (the rest
@@ -480,7 +480,15 @@ function glyph_at(x, y, remembered = false) {
     const sym = remembered ? (loc.remembered_glyph?.ch ?? ' ')
                            : ((loc.disp_ch != null) ? loc.disp_ch : ' ');
     if (loc.invisMon && sym === 'I') return { kind: 'invisible', x, y };
-    if (!remembered && d_u_at(x, y)) return { kind: 'monster', mon: null, isyou: true, x, y };
+    if (!remembered && d_u_at(x, y)) {
+        // The hero's square reads as the hero unless something else was drawn
+        // over it (object_detect() maps a pile onto the hero's own spot and
+        // C's glyph_at() then reports that object glyph, detect.c:772).
+        const here = vobj_at(x, y);
+        const og = here && !covers_objects(loc) ? object_glyph(here) : null;
+        if (!(og && sym !== '@' && og.ch === sym))
+            return { kind: 'monster', mon: null, isyou: true, x, y };
+    }
     const mon = remembered ? null : m_at(x, y);
     // C ref: display.c glyph_at() just returns gbuf[y][x].glyphinfo.glyph —
     // whatever glyph was ACTUALLY last drawn there, by its numeric range.  A
@@ -744,7 +752,13 @@ export function map_monst(mtmp, showtail) {
     // detected monster re-rolls off the display rng.
     if (Hallucination_u()) mon = monster_by_pmidx(random_monster_disp()) || data;
     const g = { ch: mon.mlet || 'x', color: (mon.mcolor != null) ? mon.mcolor : NO_COLOR };
-    show_glyph_cell(mtmp.mx, mtmp.my, g.ch, g.color, false);
+    // C ref: wintty.c tty_print_glyph — pet_to_glyph carries MG_PET (drawn with
+    // wc2_petattr when hilite_pet); detected_mon_to_glyph carries MG_DETECT
+    // (ATR_INVERSE when use_inverse).
+    const attr = (mon.mlet === ' ' || !mtmp.mtame)
+        ? ((mon.mlet === ' ' && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0)
+        : (game.flags?.hilite_pet && !Hallucination_u() ? ATR_INVERSE : 0);
+    show_glyph_cell(mtmp.mx, mtmp.my, g.ch, g.color, false, attr);
 
     if (showtail && data.mlet === 'w' && data.name === 'long worm') {
         // detect_wsegs(mtmp, 0) — dynamic import: worm.js is a leaf here.
@@ -1787,7 +1801,7 @@ async function show_map_spot_cnf(x, y, cnf) {
 
 // C ref: detect.c:1589 cvt_sdoor_to_door(lev) — js/dokick.js:181 owns the same
 // port; repeated here because this module cannot import that file's private copy.
-function cvt_sdoor_to_door(lev) {
+export function cvt_sdoor_to_door(lev) {
     let newmask = (lev.doormask | 0) & ~(0x07 /* WM_MASK */);
     if (Is_rogue_level(game.u?.uz)) {
         newmask = D_NODOOR;
@@ -1855,16 +1869,11 @@ function canspotmon_lite(mon) {
     return !!mon && !mon.mundetected && !mon.minvis && cansee(mon.mx, mon.my);
 }
 
-// C ref: svl.lastseentyp[x][y] — the terrain the hero last SAW at a spot.  The
-// level graph keeps it as a flat COLNO*ROWNO array when it keeps it at all
-// (js/pickup.js:544 writes it); fall back to the live typ.
+// C ref: svl.lastseentyp[x][y] — the terrain the hero last SAW at a spot,
+// kept as game.lastseentyp[x][y] (dungeon.js update_lastseentyp()).
 function lastseentyp(x, y) {
-    const arr = game.level?.lastseentyp;
-    if (Array.isArray(arr)) {
-        const v = arr[x + y * 80];
-        if (v != null) return v;
-    }
-    return game.level?.at(x, y)?.typ;
+    const v = game.lastseentyp?.[x]?.[y];
+    return (v != null) ? v : game.level?.at(x, y)?.typ;
 }
 
 function same_glyph(a, b) {

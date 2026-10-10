@@ -1,6 +1,7 @@
 // dungeon.js - Dungeon initialization.
 // C ref: dungeon.c - init_dungeons, init_dungeon_dungeons, place_level.
 
+import { panic } from './panic.js';
 import { game } from './gstate.js';
 import { roles, align_gname } from './role.js';
 import { rn2, rn1, rnd } from './rng.js';
@@ -382,7 +383,7 @@ export function builds_up(lev) {
 // used to keep a private copy that implemented only the third arm; the endgame
 // planes sit at negative dlevels, so those copies handed d(level_difficulty(),N)
 // a negative dice count and it silently rolled nothing (seed0373 step 99).
-export function level_difficulty_c() {
+export function level_difficulty() {
     const uz = game.u?.uz;
     if (!uz) return 1;
     if (In_endgame_dg(uz))
@@ -901,10 +902,11 @@ function unplaced_floater(M, dnum) {
     return false;
 }
 
-// C ref: dungeon.c unreachable_level().  In_endgame is never the case for the
-// recorded ^V sessions; the "dummy" Plane-of-Earth filler level is unreachable.
+// C ref: dungeon.c unreachable_level(): from the endgame only endgame levels
+// are reachable; the "dummy" Plane-of-Earth filler level is never reachable.
 function unreachable_level(M, dlev, unplaced) {
     if (unplaced) return true;
+    if (In_endgame_dg(game.u?.uz) && !In_endgame_dg(dlev)) return true;
     const dummy = (M.sp_levchn || []).find((l) => l.proto === 'dummy');
     if (dummy && dummy.dlevel.dnum === dlev.dnum
         && dummy.dlevel.dlevel === dlev.dlevel)
@@ -960,6 +962,7 @@ function build_levtport_menu(M) {
     };
 
     for (let i = 0; i < M.n_dgns; i++) {
+        if (In_endgame_dg(game.u?.uz) && i !== game.astral_level?.dnum) continue;
         const dptr = M.dungeons[i];
         const unplaced = unplaced_floater(M, i);
         const descr = unplaced ? 'depth' : 'level';
@@ -1172,26 +1175,32 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
     const renderPage = (pageNo) => {
         if (!disp || !disp.setCell) return;
         const cols = disp.cols || 80;
+        // C ref: wintty.c process_menu_window — a short menu that fits is a
+        // corner window at cw->offx: every row is cl_end()ed from that column
+        // and the text starts one column past it, leaving the map to its left
+        // (and the rows below it) untouched.  Full-screen (offx == 0) pages
+        // clear everything.
+        const offx = wt.wins[win].offx | 0;
         const start = (pageNo - 1) * perPage;
         const end = Math.min(start + perPage, lines.length);
-        const clearRow = (r) => { for (let c = 0; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0); };
+        const clearRow = (r) => { for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0); };
         let row = 0;
         for (let i = start; i < end; i++, row++) {
             const e = lines[i];
             clearRow(row);
             if (e.blank) continue;
-            if (e.title) { disp.putstr(1, row, e.text, NO_COLOR, ATR_INVERSE); continue; }
+            if (e.title) { disp.putstr(offx + 1, row, e.text, NO_COLOR, ATR_INVERSE); continue; }
             // C ref: tport_menu — an unreachable level is added with a_int==0
             // (zeroany), so the tty windowport shows no accelerator; its entry
             // text already carries the 4-space padding in place of "X - ".
-            disp.putstr(1, row, lineText(e), NO_COLOR, e.heading ? ATR_INVERSE : 0);
+            disp.putstr(offx + 1, row, lineText(e), NO_COLOR, e.heading ? ATR_INVERSE : 0);
         }
         const morestr = npages > 1 ? `(${pageNo} of ${npages})` : '(end) ';
         clearRow(row);
-        disp.putstr(1, row, morestr, NO_COLOR, 0);
-        for (let r = row + 1; r < rows; r++) clearRow(r);
+        disp.putstr(offx + 1, row, morestr, NO_COLOR, 0);
+        if (offx === 0) for (let r = row + 1; r < rows; r++) clearRow(r);
         // C dmore parks the cursor just past the morestr (col 1 + its length).
-        disp.setCursor(1 + morestr.length, row);
+        disp.setCursor(offx + 1 + morestr.length, row);
     };
 
     // C ref: dungeon.c print_dungeon() `win = create_nhwindow(NHW_MENU)` ...
@@ -1204,6 +1213,20 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
     const win = wt.tty_create_nhwindow(NHW_MENU);
     Object.assign(wt.wins[win], wt.tty_menu_layout(lines.map(lineText)));
     wt.wins[win].active = true;
+    // C ref: wintty.c tty_display_nhwindow() NHW_MENU, the `else` of the
+    // full-screen test: a corner menu leaves the map showing and only wipes the
+    // message window (tty_clear_nhwindow(WIN_MESSAGE)), so the pending
+    // "To what level do you want to teleport?" line does not stay behind it.
+    if (wt.wins[win].offx > 0) {
+        const { display_nhwindow_message } = await import('./display.js');
+        await display_nhwindow_message();
+        if (game.nhDisplay?.setCell)
+            for (let c = 0; c < (game.nhDisplay.cols || 80); c++)
+                game.nhDisplay.setCell(c, 0, ' ', NO_COLOR, 0);
+        game._toplin = 0;
+        game._toplinSoft = null;
+        game._pending_message = '';
+    }
 
     let result = 0;
     let pageNo = 1;
@@ -1215,24 +1238,27 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
         // Cancel: ESC.
         if (key === 27) break pick;
 
-        // Accelerator selection: a letter that maps to a reachable entry on
-        // ANY page selects it immediately (tty PICK_ONE behavior).
-        const sel = entries.find((e) => !e.heading && e.reachable && e.menuletter === ch);
+        // C ref: wintty.c process_menu_window(): `resp` holds only the selectors
+        // of the CURRENT page, so a letter on another page is ignored (bell).
+        const pstart = (pageNo - 1) * perPage;
+        const sel = lines.slice(pstart, pstart + perPage).find(
+            (e) => !e.heading && !e.title && !e.blank && e.reachable && e.menuletter === ch);
         if (sel) {
             result = { playerlev: sel.playerlev, destlev: sel.lev, destdnum: sel.dgn };
             break pick;
         }
 
-        // Paging keys: space / '>' / return advance; '<' goes back.
-        if (key === 32 || ch === '>' || key === 13 || key === 10) {
+        // Return/Enter commits (nothing selected => none).
+        if (key === 13 || key === 10) break pick;
+        // ' ' pages forward and finishes the menu on the last page; '>' only pages.
+        if (key === 32 || ch === '>') {
             if (pageNo < npages) pageNo++;
-            else break pick; // past the last page with no selection: cancel
+            else if (key === 32) break pick;
             continue;
         }
-        if (ch === '<') {
-            if (pageNo > 1) pageNo--;
-            continue;
-        }
+        if (ch === '<') { if (pageNo > 1) pageNo--; continue; }
+        if (ch === '^') { pageNo = 1; continue; }
+        if (ch === '|') { pageNo = npages; continue; }
         // Any other key: ignore and redraw.
     }
 
@@ -1241,7 +1267,14 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
     // tty_init_nhwindows), but this port drives the terminal directly and never
     // runs that init, so go straight to the erase instead of through a flag
     // that is permanently unset here.
-    await wt.erase_menu_or_text(win, wt.wins[win], false);
+    if (wt.wins[win].offx === 0) {
+        await wt.erase_menu_or_text(win, wt.wins[win], false);
+    } else {
+        // A corner menu (the short endgame list): docorner() addresses the NHW_BASE
+        // window, which gameplay sessions never create, so repaint the level.
+        const { docrt } = await import('./display.js');
+        await docrt();
+    }
     wt.wins[win].active = false;
     wt.tty_destroy_nhwindow(win);
     return result;
@@ -1452,8 +1485,11 @@ export async function build_overview_lines(final = 0, how = 0) {
     // normally bumps dunlev_ureached, so the tracked field can understate it;
     // this recovers the invariant instead of trusting the possibly-stale field.
     const maxDlevelByDnum = new Map();
-    for (const p of parsed)
+    const minDlevelByDnum = new Map();
+    for (const p of parsed) {
         maxDlevelByDnum.set(p.dnum, Math.max(maxDlevelByDnum.get(p.dnum) ?? 0, p.dlevel));
+        minDlevelByDnum.set(p.dnum, Math.min(minDlevelByDnum.get(p.dnum) ?? 1e9, p.dlevel));
+    }
 
     const lines = [];
     let lastdun = -1;
@@ -1510,7 +1546,11 @@ export async function build_overview_lines(final = 0, how = 0) {
                               || feat.naltar || feat.ntemple);
         const dptr = M.dungeons[p.dnum];
         if (!dptr) continue;
-        const dunlevUreached = Math.max(dptr.dunlev_ureached ?? 0, maxDlevelByDnum.get(p.dnum) ?? 0);
+        // C ref: do.c:1679-1684 — a dungeon built upward (Sokoban) records the
+        // LOWEST dlevel reached (nearest the top), not the highest.
+        const dunlevUreached = builds_up({ dnum: p.dnum, dlevel: p.dlevel })
+            ? Math.min(dptr.dunlev_ureached || 1e9, minDlevelByDnum.get(p.dnum) ?? 1e9)
+            : Math.max(dptr.dunlev_ureached ?? 0, maxDlevelByDnum.get(p.dnum) ?? 0);
         // C ref: dungeon.c interest_mapseen() last clause — a level is of
         // interest when it is "the furthest level reached in its branch"
         // (mptr->lev.dlevel == dungeons[dnum].dunlev_ureached), even with no
@@ -1522,13 +1562,29 @@ export async function build_overview_lines(final = 0, how = 0) {
         const annotated = !!(fl && (fl.oracle || fl.bigroom || fl.roguelevel
             || fl.castle || fl.valley || fl.msanctum || fl.vibrating_square
             || fl.quest_summons || fl.questing));
-        if (!final && !onHere && !ofInterest && !annotated && !custom && !ms?.br && !isDeepest) continue;
+        // C ref: dungeon.c:2914 interest_mapseen() — "when in Sokoban, list all
+        // sokoban levels visited; when not in it, list any visited Sokoban
+        // level which remains unsolved".
+        const soko_interest = In_sokoban({ dnum: p.dnum, dlevel: p.dlevel })
+            && (In_sokoban(game.u?.uz) || !cms?.flags?.sokosolved);
+        if (!final && !onHere && !ofInterest && !annotated && !custom && !ms?.br && !isDeepest
+            && !soko_interest) continue;
         const showheader = p.dnum !== lastdun;
+        // C: the quest and Fort Ludios levels are numbered as if level 1.
+        const depthstart = (p.dnum === game.quest_dnum || p.dnum === game.knox_level?.dnum)
+            ? 1 : dptr.depth_start;
         if (showheader) {
-            const buf = (dunlevUreached === dptr.entry_lev)
+            // C ref: dungeon.c print_mapseen():3537 — the entry-level-only case
+            // and the endgame print just "<name>:"; a dungeon built upward
+            // (Sokoban) counts "levels <entry> up to <reached>".
+            const lev = { dnum: p.dnum, dlevel: p.dlevel };
+            const buf = (dunlevUreached === dptr.entry_lev || In_endgame(lev))
                 ? `${dptr.dname}:`
-                : `${dptr.dname}: levels ${dptr.depth_start} to `
-                  + `${dptr.depth_start + dunlevUreached - 1}`;
+                : builds_up(lev)
+                    ? `${dptr.dname}: levels ${depthstart + dptr.entry_lev - 1} up to `
+                      + `${depthstart + dunlevUreached - 1}`
+                    : `${dptr.dname}: levels ${depthstart} to `
+                      + `${depthstart + dunlevUreached - 1}`;
             // C ref: windows.c add_menu_heading() — "suppress highlighting
             // during end-of-game disclosure": program_state.gameover forces
             // ATR_NONE there, so only the live '#overview' command (final==0)
@@ -1537,9 +1593,6 @@ export async function build_overview_lines(final = 0, how = 0) {
             lastdun = p.dnum;
         }
 
-        // C: the quest and Fort Ludios levels are numbered as if level 1.
-        const depthstart = (p.dnum === game.quest_dnum || p.dnum === game.knox_level?.dnum)
-            ? 1 : dptr.depth_start;
         let lbuf = `${OVERVIEW_TAB}Level ${depthstart + p.dlevel - 1}:`;
         // C ref: print_mapseen():3567 — "wizmode prints out proto dungeon names
         // for clarity".  Sits BEFORE the custom annotation.
@@ -1621,7 +1674,17 @@ export async function build_overview_lines(final = 0, how = 0) {
         if (final === 2 && onHere) {
             lines.push({ text: `${OVERVIEW_PREFIX}Final resting place for`, attr: 0 });
             /* rephrase a few death reasons to work with "you" (C: strsubst) */
-            const killer = (game._killer_name || 'died')
+            /* C ref: dungeon.c:3709 formatkiller(.., how, TRUE): this port's
+               parallel killer string already carries the "killed by" prefix;
+               the ", while <multi_reason>" tail is topten.c formatkiller's. */
+            let kbuf = game._killer_name || 'died';
+            if ((game.multi ?? 0) < 0) {
+                const room = BUFSZ - kbuf.length;
+                const why = game.multi_reason;
+                if (why && String(why).length + 9 <= room) kbuf += `, while ${why}`;
+                else if (17 <= room) kbuf += ', while helpless';
+            }
+            const killer = kbuf
                 .replace(' himself', ' yourself').replace(' herself', ' yourself')
                 .replace(' his ', ' your ').replace(' her ', ' your ');
             lines.push({
@@ -2302,7 +2365,7 @@ export function free_proto_dungeon(pd) {
 /* ── dungeon.c:1339 deepest_lev_reached, :1402 ledger_to_dnum, :1422 ─────── */
 
 // C ref: dungeon.c:1339 deepest_lev_reached(noquest).  The body already sits
-// above as deepest_lev_reached_dg() (level_difficulty_c()'s callee); this is
+// above as deepest_lev_reached_dg() (level_difficulty()'s callee); this is
 // the C name for it, not a second copy.
 export function deepest_lev_reached(noquest) {
     return deepest_lev_reached_dg(noquest);
@@ -2319,7 +2382,8 @@ export function ledger_to_dnum(ledgerno) {
                             + game.dungeons[i].num_dunlevs))
             return i;
 
-    throw new Error(`level number out of range [ledger_to_dnum(${ledgerno})]`);
+    panic(`level number out of range [ledger_to_dnum(${ledgerno})]`);
+    return 0; /* NOT REACHED */
 }
 
 // C ref: dungeon.c:1422 ledger_to_dlev(ledgerno).
@@ -2346,7 +2410,8 @@ export async function earth_sense() {
     for (const otmp of (game.level?.buriedobjlist || []))
         if (otmp.ox === u.ux && otmp.oy === u.uy) {
             const { pline } = await import('./display.js');
-            const { body_part, makeplural } = await import('./invent.js');
+            const { body_part } = await import('./invent.js');
+            const { makeplural } = await import('./plural.js');
             await pline(`You sense something below your ${makeplural(body_part(FOOT))}.`);
             return;
         }

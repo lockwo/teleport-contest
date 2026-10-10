@@ -18,8 +18,9 @@ import { pline, update_topl, y_n, newsym, display_nhwindow_message,
 import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
-         makeplural, remove_worn_item, is_plural, pair_of, otense,
-         learn_unseen_invent, yname, worn_blocked } from './invent.js';
+         remove_worn_item, is_plural, pair_of, otense,
+         learn_unseen_invent, yname, worn_blocked, Free_action } from './invent.js';
+import { makeplural } from './plural.js';
 import { surface, hliquid } from './dungeon.js';
 import { heal_legs, water_damage, float_up, spoteffects } from './trap.js';
 import { monster_detect } from './hack.js';
@@ -55,6 +56,10 @@ export function make_confused(xtime, _talk) {
     const u = game.u;
     if (!u) return;
     if (!u.uprops) u.uprops = {};
+    // C ref: potion.c:100-101 — the status line is republished when the
+    // property flips on or off.
+    const old = u.uprops.Confusion || 0;
+    if ((xtime && !old) || (!xtime && old)) game.botl = true;
     u.uprops.Confusion = xtime;
     u.uconf = xtime > 0;
 }
@@ -109,7 +114,7 @@ function Fixed_abil() { return HProp('HFixed_abil', 'EFixed_abil') > 0; }
 // never called at chargen — so a bare H*/E* read always missed it.  OR in the
 // pure has_innate() derivation, which js/insight.js's enlightenment screen
 // already uses correctly for this same property.
-function Poison_resistance() {
+export function Poison_resistance() {
     if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return HProp('HPoison_resistance', 'PoisonResistance', 'Poison_resistance') > 0
         || has_innate('HPoison_resistance');
@@ -128,44 +133,6 @@ export function Half_gas_damage() {
     const bf = game.ublindf;
     return !!bf && bf.otyp === TOWEL_OTYP && (bf.spe | 0) > 0;
 }
-// C ref: objnam.c makeplural() -> singplur_lookup(str, eos, TRUE, ...) — the
-// PRE-PASS that invent.js's makeplural() does not implement: as_is[] words are
-// left alone and one_off[] pairs are transformed outright (foot->feet,
-// tooth->teeth, ...).  Without it "foot" formula-pluralises to "foots" and
-// peffect_paralysis renders the wrong topline.  Kept local because invent.js is
-// another lane's file; the gap is on the handoff list.
-const SINGPLUR_AS_IS = [
-    'boots', 'shoes', 'gloves', 'lenses', 'scales', 'eyes', 'gauntlets',
-    'iron bars', 'bison', 'deer', 'elk', 'fish', 'fowl', 'tuna', 'yaki',
-    '-hai', 'krill', 'manes', 'moose', 'ninja', 'sheep', 'ronin', 'roshi',
-    'shito', 'tengu', 'ki-rin', 'Nazgul', 'gunyoki', 'piranha', 'samurai',
-    'shuriken', 'haggis', 'Bordeaux',
-];
-const SINGPLUR_ONE_OFF = [
-    ['child', 'children'], ['cubus', 'cubi'], ['culus', 'culi'],
-    ['Cyclops', 'Cyclopes'], ['djinni', 'djinn'], ['erinys', 'erinyes'],
-    ['foot', 'feet'], ['fungus', 'fungi'], ['goose', 'geese'],
-    ['knife', 'knives'], ['labrum', 'labra'], ['louse', 'lice'],
-    ['mouse', 'mice'], ['mumak', 'mumakil'], ['nemesis', 'nemeses'],
-    ['ovum', 'ova'], ['ox', 'oxen'], ['passerby', 'passersby'],
-    ['rtex', 'rtices'], ['serum', 'sera'], ['staff', 'staves'],
-    ['tooth', 'teeth'],
-];
-function makeplural_c(str) {
-    const s = String(str ?? '');
-    const lc = s.toLowerCase();
-    for (const w of SINGPLUR_AS_IS) if (lc.endsWith(w.toLowerCase())) return s;
-    if (lc.length > 5 && lc.endsWith('craft')) return s;
-    if (lc === 'slice' || lc === 'mongoose') return `${s}s`;
-    if (lc.length > 2 && lc.endsWith('ox') && !lc.endsWith('muskox')) return `${s}es`;
-    for (const [sing, plur] of SINGPLUR_ONE_OFF) {
-        if (lc.endsWith(plur.toLowerCase())) return s;
-        if (lc.endsWith(sing.toLowerCase()))
-            return s.slice(0, s.length - sing.length) + plur;
-    }
-    return makeplural(s);
-}
-
 // C ref: attrib.h ABASE(x) / AMAX(x) — the base and peak arrays this port keeps
 // on u.acurr.a and u.amax.a in [Str,Int,Wis,Dex,Con,Cha] order.
 function abase_of(i) { return game.u?.acurr?.a?.[i] | 0; }
@@ -297,16 +264,8 @@ async function make_blinded(xtime, talk) {
         if (talk) await blind_toggle_msg(false);
     }
     set_blinded(xtime);
-    // C ref: potion.c:336 toggle_blindness() — vision_recalc(0), then
-    // `if (!Blind) learn_unseen_invent()`.  Without that tail an item picked up
-    // (or wished for) while blind kept dknown clear after sight returned, so
-    // dopotion()'s `if (otmp->dknown && !oc_name_known) makeknown()` was skipped
-    // and discover_object's exercise(A_WIS, TRUE) rn2 never drawn.
-    if (u_could_see !== can_see_now) {
-        game.botl = true;
-        vision_recalc(0);
-        if (can_see_now) learn_unseen_invent();
-    }
+    // C ref: potion.c:336 `if (u_could_see ^ can_see_now) toggle_blindness();`
+    if (u_could_see !== can_see_now) await toggle_blindness();
 }
 
 // C ref: potion.c make_hallucinated(xtime, talk, mask).  No RNG.  Only the
@@ -450,7 +409,7 @@ function Maybe_Half_Phys(dmg) {
 // These read both spellings this port has used for the same u.uprops[] slot
 // (zap.js/uhitm.js write the camel names, extcmd-handlers.js the H-prefixed
 // ones), so an intrinsic granted through either route is honoured here.
-function Free_action() { return HProp('FreeAction', 'HFree_action', 'EFree_action') > 0; }
+// (Free_action itself is the shared accessor imported from invent.js.)
 function Sleep_resistance() {
     if (game.u?.formprops?.Sleep_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return HProp('SleepResistance', 'HSleep_resistance') > 0
@@ -836,7 +795,7 @@ function peffect_paralysis(otmp) {
     else if (game.u?.usteed)
         pline_sync('You are frozen in place!');
     else
-        pline_sync(`Your ${makeplural_c(body_part(FOOT))} are frozen to the ${
+        pline_sync(`Your ${makeplural(body_part(FOOT))} are frozen to the ${
             surface(game.u.ux, game.u.uy)}!`);
     game.multi = -rn1(10, 25 - 12 * bcsign(otmp));
     game.multi_reason = 'frozen by a potion';
@@ -1664,7 +1623,7 @@ export async function dodip() {
     drink_ok_extra = 0;
     // C: Sprintf(obuf, "your %s", makeplural(body_part(HAND))).  hack.h HAND is
     // 6, not 0 (0 is ARM) — the old literal rendered "your arms".
-    const obuf = is_hands ? `your ${makeplural_c(body_part(HAND))}` : short_oname(obj, DIP_OBUF_LENLIMIT);
+    const obuf = is_hands ? `your ${makeplural(body_part(HAND))}` : short_oname(obj, DIP_OBUF_LENLIMIT);
     const named = verbose ? obuf : shortestname;
 
     if (!menu_requested) {
@@ -2257,7 +2216,8 @@ export async function H2Opotion_dip(potion, targobj, useeit, objphrase) {
                 const { alter_cost } = await import('./shk.js');
                 await alter_cost(targobj, 0);
             } else if (costchange !== P_COST_NONE) {
-                await p_costly_alteration(targobj, costchange);
+                const { costly_alteration } = await import('./shk.js');
+                await costly_alteration(targobj, costchange);
             }
         }
         /* finally, change curse/bless state */
@@ -2273,11 +2233,8 @@ function p_an(str) {
     const s = String(str || '');
     return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`;
 }
-// C ref: shk.c costly_alteration(obj, alter_type) — bill the hero for
-// degrading shop goods.  js/trap.js:829 keeps a private no-op copy; the shop-bill
-// subsystem is not reachable from this file, so this is the no-op stand-in and
-// the gap is named rather than half-implemented.
-async function p_costly_alteration(_obj, _alter_type) { /* shk.c, unported here */ }
+// C ref: shk.c costly_alteration(obj, alter_type) is called directly from the
+// mutation sites below.  It is async because billing can update shop state.
 
 // C ref: potion.c:1595 impact_arti_light(obj, worsen, seeit) — a blessed or
 // cursed scroll of light hitting an artifact light source (wielded Sunsword,
@@ -2410,7 +2367,7 @@ export async function potionhit(mon, obj, how) {
         }
     } else if (hit_saddle && saddle) {
         let affected = false;
-        const useeit = !Blind() && UH.canspotmon(mon) && cansee_p(tx, ty);
+        const useeit = !Blind() && D.canseemon_shared(mon) && cansee_p(tx, ty);
         const mnam = UH.x_monnam(mon, 2, null, 0x04 | 0x40, false);
         const buf = p_upstart(s_suffix(mnam));
 
@@ -2464,7 +2421,7 @@ export async function potionhit(mon, obj, how) {
                 || dmgtype(mon.data, AD_PEST)
                 /* most common case */
                 || p_resists_poison(mon)) {
-                if (UH.canspotmon(mon))
+                if (D.canseemon_shared(mon))
                     await update_topl(`${UH.Monnam(mon)} looks unharmed.`);
                 break;
             }
@@ -2480,7 +2437,10 @@ export async function potionhit(mon, obj, how) {
             const cursed_potion = !!obj.cursed;
 
             angermon = mon.minvis && cursed_potion;
-            await p_mon_set_minvis(mon, cursed_potion);
+            {
+                const { mon_set_minvis } = await import('./worn.js');
+                await mon_set_minvis(mon, cursed_potion);
+            }
             if (sawit && !UH.canspotmon(mon)) {
                 if (cansee_p(mon.mx, mon.my))
                     D.map_invisible(mon.mx, mon.my);
@@ -2533,22 +2493,26 @@ export async function potionhit(mon, obj, how) {
                     /* should only be by you */
                     if (DEADMONSTER(mon))
                         await UH.killed(mon);
-                    else if (p_is_were(mon.data) && !p_is_human(mon.data))
-                        await p_new_were(mon); /* revert to human */
+                    else if (p_is_were(mon.data) && !p_is_human(mon.data)) {
+                        const { new_were_pub } = await import('./mon.js');
+                        await new_were_pub(mon); /* revert to human */
+                    }
                 } else if (obj.cursed) {
                     angermon = false;
-                    if (UH.canspotmon(mon))
+                    if (D.canseemon_shared(mon))
                         await update_topl(`${UH.Monnam(mon)} looks healthier.`);
                     MON.healmon(mon, d(2, 6), 0);
                     if (p_is_were(mon.data) && p_is_human(mon.data)
-                        && !Protection_from_shape_changers())
-                        await p_new_were(mon); /* transform into beast */
+                        && !Protection_from_shape_changers()) {
+                        const { new_were_pub } = await import('./mon.js');
+                        await new_were_pub(mon); /* transform into beast */
+                    }
                 }
             } else if (mon.data?.pmidx === PM_GREMLIN) {
                 angermon = false;
                 await split_mon(mon, null);
             } else if (mon.data?.pmidx === PM_IRON_GOLEM) {
-                if (UH.canspotmon(mon))
+                if (D.canseemon_shared(mon))
                     await update_topl(`${UH.Monnam(mon)} rusts.`);
                 mon.mhp -= d(1, 6);
                 /* should only be by you */
@@ -2574,8 +2538,10 @@ export async function potionhit(mon, obj, how) {
                 if (DEADMONSTER(mon)) {
                     if (your_fault)
                         await UH.killed(mon);
-                    else
-                        await p_monkilled(mon, '', 8 /* AD_ACID */);
+                    else {
+                        const { monkilled_mm } = await import('./mhitm.js');
+                        await monkilled_mm(mon, 8 /* AD_ACID */, '');
+                    }
                 }
             }
             break;
@@ -2593,24 +2559,26 @@ export async function potionhit(mon, obj, how) {
             angermon = false;
             if (mon.mhp < mon.mhpmax) {
                 MON.healmon(mon, mon.mhpmax, 0);
-                if (UH.canspotmon(mon))
+                if (D.canseemon_shared(mon))
                     await update_topl(
                         `${UH.Monnam(mon)} looks sound and hale again.`);
             }
             if (cureblind)
-                await MU.mcureblindness(mon, UH.canspotmon(mon));
+                await MU.mcureblindness(mon, D.canseemon_shared(mon));
         } else if (phase === 'illness') {
             if (mon.mhp > 2) {
                 mon.mhp = Math.trunc(mon.mhp / 2);
-                if (UH.canspotmon(mon))
+                if (D.canseemon_shared(mon))
                     await update_topl(`${UH.Monnam(mon)} looks rather ill.`);
             }
         }
 
         /* target might have been killed */
         if (!DEADMONSTER(mon)) {
-            if (angermon)
-                await p_wakeup(mon, true);
+            if (angermon) {
+                const { wakeup } = await import('./zap.js');
+                await wakeup(mon, true);
+            }
             else
                 mon.msleeping = 0;
         }
@@ -2658,15 +2626,7 @@ function p_aobjnam(obj, verb) {
 function p_Tobjnam(obj, verb) {
     return `The ${xname(obj)} ${p_otense(obj, verb)}`;
 }
-// C ref: mon.c wakeup(mtmp, via_attack) / mon.c monkilled() / were.c new_were()
-// / mon.c mon_set_minvis() / mhitm_ad.c paralyze_monst().
-// None is exported by any js/ module (js/mon.js:331 documents new_were as
-// module-private, js/mhitm_ad.js has the only paralyze_monst); each is named
-// here so the gap is explicit rather than silently dropped.
-async function p_wakeup(mon, _via_attack) { if (mon) mon.msleeping = 0; }
-async function p_monkilled(_mon, _fltxt, _how) { /* mon.c, unported here */ }
-async function p_new_were(_mon) { /* were.c, module-private in js/mon.js */ }
-async function p_mon_set_minvis(mon, invis) { if (mon) mon.minvis = !!invis; }
+// C ref: mhitm_ad.c paralyze_monst().
 async function p_paralyze_monst(mon, ntmp) {
     if (!mon) return;
     mon.mcanmove = 0;
@@ -3039,7 +2999,10 @@ export async function potion_dip(obj, potion) {
         else
             singlepotion = potion;
 
-        await p_costly_alteration(singlepotion, 10 /* COST_NUTRLZ */);
+        {
+            const { costly_alteration } = await import('./shk.js');
+            await costly_alteration(singlepotion, 10 /* COST_NUTRLZ */);
+        }
         singlepotion.otyp = mixture;
         singlepotion.blessed = 0;
         if (mixture === POT_WATER)

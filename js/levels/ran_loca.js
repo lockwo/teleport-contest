@@ -16,7 +16,7 @@ import {
     quest_place_stair, quest_region_light, shuffle, splev_create_monster,
     splev_link_doors_rooms, vly_non_diggable,
 } from '../sp_lev.js';
-import { ARROW_TRAP, S_SNAKE, SPIKED_PIT } from './quest_home_common.js';
+import { ARROW_TRAP, S_SPIDER, SPIKED_PIT } from './quest_home_common.js';
 import { quest_monster_class_rnd, quest_monster_named_rnd, quest_object_rnd,
          quest_trap_typed_random } from './quest_common.js';
 
@@ -91,8 +91,8 @@ export async function makemaz_ran_loca() {
         for (let i = 0; i < 8; i++) quest_monster_named_rnd('mountain centaur', 0);
         // des.monster({id="scorpion",peaceful=0}) x4 — random position.
         for (let i = 0; i < 4; i++) quest_monster_named_rnd('scorpion', 0);
-        // des.monster({class="s",peaceful=0}) x2 — random S_SNAKE species.
-        for (let i = 0; i < 2; i++) quest_monster_class_rnd(S_SNAKE, 0);
+        // des.monster({class="s",peaceful=0}) x2 — random S_SPIDER species.
+        for (let i = 0; i < 2; i++) quest_monster_class_rnd(S_SPIDER, 0);
     } finally {
         g._quest_gen = false;
         g._full_mon_gen = false;

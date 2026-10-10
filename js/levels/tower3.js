@@ -7,9 +7,9 @@ import {
     ROLLING_BOULDER_TRAP, ROWNO, SLP_GAS_TRAP, SPIKED_PIT, STATUE_TRAP, TELEP_TRAP, TRAPDOOR,
     TRAPNUM, TRAPPED_CHEST, TRAPPED_DOOR, VIBRATING_SQUARE, WEB,
 } from '../const.js';
-import { In_hell } from '../dungeon.js';
+import { In_hell, level_difficulty } from '../dungeon.js';
 import { game } from '../gstate.js';
-import { enexto_spawn, level_difficulty_ext, makemon, mm_mon_at,
+import { enexto_spawn, makemon, mm_mon_at,
          monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
@@ -19,6 +19,7 @@ import {
     quest_level_init_solidfill, quest_register_branch, quest_set_door, shuffle, tower1_load_map,
     tower_place_ladder, tower_wallification,
 } from '../sp_lev.js';
+import { quest_non_diggable } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
 // Vlad's Tower entry stage (dat/tower3.lua) — the branch level reached from
@@ -57,14 +58,18 @@ function tower_create_monster_random(mx, my) {
         const cc = enexto_spawn(x, y, null);
         if (cc) { x = cc.x; y = cc.y; }
     }
-    return makemon(null, x, y, 0);
+    const mtmp = makemon(null, x, y, 0);
+    // C ref: sp_lev.c:3353-3356,2125 — an id-less des.monster keeps
+    // tmpmons.female = 0, overwriting makemon's own gender roll.
+    if (mtmp) mtmp.female = 0;
+    return mtmp;
 }
 
 // C ref: mklev.c traptype_rnd() as reached from sp_lev.c create_trap with no
 // type.  lvl is level_difficulty() (not dlevel — Vlad's Tower builds up, so
 // the two differ), and FIRE_TRAP is only allowed In_hell.
 function tower_traptype_rnd() {
-    const lvl = level_difficulty_ext();
+    const lvl = level_difficulty();
     const noteleport = !!game.level?.flags?.noteleport;
     let kind = rnd(TRAPNUM - 1);                     // mklev.c:1941
     switch (kind) {
@@ -167,6 +172,7 @@ export async function makemaz_tower3() {
     }
 
     // des.non_diggable(selection.area(0,0,18,12)) — no RNG.
+    quest_non_diggable(0, 0, 18, 12);
     tower_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

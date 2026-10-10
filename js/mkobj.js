@@ -4,7 +4,7 @@
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1, rnz, rne } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { builds_up, In_hell, level_difficulty_c } from './dungeon.js';
+import { builds_up, In_hell, level_difficulty } from './dungeon.js';
 import {
     Is_rogue_level,
     CORPSTAT_FEMALE, CORPSTAT_MALE, CORPSTAT_NEUTER,
@@ -16,7 +16,7 @@ import {
     OBJ_MIGRATING, OBJ_BURIED, OBJ_ONBILL, OBJ_LUAFREE, OBJ_DELETED, NOBJ_STATES,
     ICE, DRAWBRIDGE_UP, DB_UNDER, DB_ICE, MAX_OIL_IN_FLASK,
     COLNO, ROWNO, LUCKADD, MIGR_TO_SPECIES,
-    ONAME, has_oname, OMONST, Has_contents, ismnum, isok,
+    ONAME, has_oname, OMONST, Has_contents, ismnum, isok, In_quest,
 } from './const.js';
 import {
     rndmonst_adj, monster_by_pmidx, can_be_hatched, dead_species,
@@ -24,7 +24,7 @@ import {
     mon_cnutrit, name_to_pmidx,
 } from './makemon.js';
 import { block_point, recalc_block_point } from './vision.js';
-import { set_tin_variety, SPINACH_TIN, RANDOM_TIN, food_nutrit } from './eat.js';
+import { set_tin_variety, SPINACH_TIN, RANDOM_TIN, obj_nutrition, eating_glob } from './eat.js';
 import { is_human_flag } from './monflags_data.js';
 
 export const RANDOM_CLASS = 0;
@@ -139,6 +139,7 @@ export const FROST_HORN = 250;
 export const FIRE_HORN = 251;
 export const DRUM_OF_EARTHQUAKE = 258;
 export const UNICORN_HORN = 261;
+export const MUMMY_WRAPPING = 138;
 export const LEASH = 236;
 export const LUMP_OF_ROYAL_JELLY = 286;
 export const SPEED_BOOTS = 166;
@@ -415,17 +416,17 @@ const OBJECT_DATA = [
   [198, "RIN_INVISIBILITY", 4, 1, 0, 11, 0, "invisibility"],
   [199, "RIN_SEE_INVISIBLE", 4, 1, 0, 11, 0, "see invisible"],
   [200, "RIN_PROTECTION_FROM_SHAPE_CHAN", 4, 1, 0, 11, 0, "protection from shape changers"],
-  [201, "AMULET_OF_ESP", 5, 120, 0, 0, 0, "amulet of ESP"],
-  [202, "AMULET_OF_LIFE_SAVING", 5, 75, 0, 0, 0, "amulet of life saving"],
-  [203, "AMULET_OF_STRANGULATION", 5, 115, 0, 0, 0, "amulet of strangulation"],
-  [204, "AMULET_OF_RESTFUL_SLEEP", 5, 115, 0, 0, 0, "amulet of restful sleep"],
-  [205, "AMULET_VERSUS_POISON", 5, 115, 0, 0, 0, "amulet versus poison"],
-  [206, "AMULET_OF_CHANGE", 5, 115, 0, 0, 0, "amulet of change"],
-  [207, "AMULET_OF_UNCHANGING", 5, 60, 0, 0, 0, "amulet of unchanging"],
-  [208, "AMULET_OF_REFLECTION", 5, 75, 0, 0, 0, "amulet of reflection"],
-  [209, "AMULET_OF_MAGICAL_BREATHING", 5, 75, 0, 0, 0, "amulet of magical breathing"],
-  [210, "AMULET_OF_GUARDING", 5, 75, 0, 0, 0, "amulet of guarding"],
-  [211, "AMULET_OF_FLYING", 5, 60, 0, 0, 0, "amulet of flying"],
+  [201, "AMULET_OF_ESP", 5, 120, 0, 11, 0, "amulet of ESP"],
+  [202, "AMULET_OF_LIFE_SAVING", 5, 75, 0, 11, 0, "amulet of life saving"],
+  [203, "AMULET_OF_STRANGULATION", 5, 115, 0, 11, 0, "amulet of strangulation"],
+  [204, "AMULET_OF_RESTFUL_SLEEP", 5, 115, 0, 11, 0, "amulet of restful sleep"],
+  [205, "AMULET_VERSUS_POISON", 5, 115, 0, 11, 0, "amulet versus poison"],
+  [206, "AMULET_OF_CHANGE", 5, 115, 0, 11, 0, "amulet of change"],
+  [207, "AMULET_OF_UNCHANGING", 5, 60, 0, 11, 0, "amulet of unchanging"],
+  [208, "AMULET_OF_REFLECTION", 5, 75, 0, 11, 0, "amulet of reflection"],
+  [209, "AMULET_OF_MAGICAL_BREATHING", 5, 75, 0, 11, 0, "amulet of magical breathing"],
+  [210, "AMULET_OF_GUARDING", 5, 75, 0, 11, 0, "amulet of guarding"],
+  [211, "AMULET_OF_FLYING", 5, 60, 0, 11, 0, "amulet of flying"],
   [212, "FAKE_AMULET_OF_YENDOR", 5, 0, 0, 18, 0, "cheap plastic imitation of the Amulet of Yendor"],
   [213, "AMULET_OF_YENDOR", 5, 0, 64, 17, 0, "Amulet of Yendor"],
   [214, "LARGE_BOX", 6, 40, 8, 8, 0, "large box"],
@@ -580,8 +581,8 @@ const OBJECT_DATA = [
   [363, "SC20", 9, 0, 32, 5, 0, ""],
   [364, "SCR_MAIL", 9, 0, 32, 5, 0, "mail"],
   [365, "SCR_BLANK_PAPER", 9, 28, 32, 5, 0, "blank paper"],
-  [366, "SPE_DIG", 10, 20, 0, 5, 3, "dig"],
-  [367, "SPE_MAGIC_MISSILE", 10, 45, 0, 5, 3, "magic missile"],
+  [366, "SPE_DIG", 10, 20, 0, 7, 3, "dig"],
+  [367, "SPE_MAGIC_MISSILE", 10, 45, 0, 7, 3, "magic missile"],
   [368, "SPE_FIREBALL", 10, 20, 0, 5, 3, "fireball"],
   [369, "SPE_CONE_OF_COLD", 10, 10, 0, 5, 3, "cone of cold"],
   [370, "SPE_SLEEP", 10, 30, 0, 5, 3, "sleep"],
@@ -791,7 +792,7 @@ const OC_OPROP_BY_NAME = {
     'regeneration': 57, 'searching': 34, 'stealth': 42,
     'sustain ability': 67 /*FIXED_ABIL*/, 'levitation': 48, 'hunger': 28,
     'aggravate monster': 43, 'conflict': 44, 'warning': 31,
-    'poison resistance': 6, 'fire resistance': 1, 'cold resistance': 3,
+    'poison resistance': 6, 'fire resistance': 1, 'cold resistance': 2,
     'shock resistance': 5, 'free action': 66, 'slow digestion': 54,
     'teleportation': 46, 'teleport control': 47, 'polymorph': 61,
     'polymorph control': 62, 'invisibility': 40, 'see invisible': 29,
@@ -977,11 +978,6 @@ function Inhell() {
     return In_hell(game.u?.uz);
 }
 
-// C ref: dungeon.c level_difficulty() — depth(&u.uz), plus a compensating
-// bump in a "builds up" branch (Vlad's Tower, Sokoban); see makemon.js's copy
-// of this same C function for the full rationale.
-function level_difficulty() { return level_difficulty_c(); }
-
 // C ref: o_init.c:53 setgemprobs(dlev), reached from oinit() with &u.uz.  Its
 // `lev` is the LEDGER number (dungeon.c ledger_no: dlevel + the dungeon's
 // ledger_start), capped at maxledgerno() — NOT depth(): every Gnomish Mines
@@ -1008,7 +1004,7 @@ function gem_probability(obj) {
     return Math.trunc((171 + obj.otyp - first) / (LAST_REAL_GEM + 1 - first));
 }
 
-function object_probability(obj) {
+export function object_probability(obj) {
     return obj.oclass === GEM_CLASS ? gem_probability(obj) : obj.oc_prob;
 }
 
@@ -1074,10 +1070,9 @@ export function next_ident() {
 
 // C ref: eat.c eaten_stat(base, obj) — scale `base` by the fraction of the
 // item's nutrition that is still left, never below 1.
-function eaten_stat(base, obj) {
-    const full = (obj.otyp === CORPSE)
-        ? mon_cnutrit(obj.corpsenm)
-        : food_nutrit(obj.otyp);
+export function eaten_stat(base, obj) {
+    // C: full_amount = obj_nutrition(obj) (corpse cnutrit, glob owt, else oc_nutrition)
+    const full = obj_nutrition(obj);
     let uneaten = obj.oeaten | 0;
     if (full && uneaten > full) uneaten = full;
     const v = full ? Math.trunc(base * uneaten / full) : 0;
@@ -1151,6 +1146,18 @@ export function bless(otmp) {
     else if (otmp.otyp === FIGURINE && otmp.timed)
         stop_object_timer(otmp, FIG_TRANSFORM);
     if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
+}
+
+// C ref: sp_lev.c create_object() — a des.object() with no `eroded`/`greased`
+// key (the default for every level file here) takes the `else` arm that wipes
+// whatever erosion mksobj() rolled (sp_lev.c:2280-2283) and `greased = 0`
+// (:2296).  The mksobj() draws themselves already happened.
+export function des_object_defaults(otmp) {
+    if (!otmp) return otmp;
+    otmp.oeroded = otmp.oeroded2 = 0;
+    otmp.oerodeproof = 0;
+    otmp.greased = 0;
+    return otmp;
 }
 
 // C ref: mkobj.c unbless(otmp) — no COIN_CLASS early-out (unlike bless).
@@ -1492,7 +1499,12 @@ export function disturb_buried_zombies(x, y) {
     }
 }
 
-function obj_stop_timers(obj) {
+// Drop the per-object timer record (obj.timer) that this module's private
+// start_timer() keeps for corpse/egg/figurine/glob timers.  This is only the
+// record half of timeout.c:2376 obj_stop_timers(): callers that can await use
+// timeout.js obj_stop_timers(), which also walks the queue and runs the cleanup
+// hooks.  The sync corpse/figurine paths below have no queue entries or hooks.
+export function clear_object_timer(obj) {
     if (!obj) return;
     obj.timed = false;
     delete obj.timer;
@@ -1573,7 +1585,7 @@ export async function run_object_timers() {
         delete obj.timer;
         switch (timer.action) {
         case SHRINK_GLOB:
-            shrink_glob(obj, timer.when);
+            await shrink_glob(obj, timer.when);
             break;
         case ROT_ORGANIC: {
             const { rot_organic } = await import('./dig.js');
@@ -1740,7 +1752,7 @@ export function set_corpsenm(obj, id) {
     let when = 0;
     if (obj.timed) {
         if (obj.otyp === EGG) when = stop_object_timer(obj, HATCH_EGG);
-        else obj_stop_timers(obj);              /* corpse or figurine */
+        else clear_object_timer(obj);           /* corpse or figurine */
     }
     // C ref: mkobj.c:1334 — oeaten is "nutrition left" AND the basis for the
     // HP a monster revived from a partly eaten corpse gets, so re-typing a
@@ -2374,7 +2386,7 @@ function mksobj_init(otmp, artif) {
         }
         break;
     case AMULET_CLASS:
-        if (otmp.otyp === AMULET_OF_YENDOR) game.made_amulet = true;
+        if (otmp.otyp === AMULET_OF_YENDOR) (game.context ??= {}).made_amulet = true;
         if (rn2(10) && (otmp.otyp === AMULET_OF_STRANGULATION
             || otmp.otyp === AMULET_OF_CHANGE
             || otmp.otyp === AMULET_OF_RESTFUL_SLEEP)) {
@@ -2411,8 +2423,10 @@ function mksobj_init(otmp, artif) {
         // Consumes no RNG.  Role check uses the resolved player monster number
         // (PM_SAMURAI == 9); the splint mail only gets lacquered at game start
         // (svm.moves <= 1) or in the quest, exactly as in C.
-        if ((game.u?.umonnum === 9) && otmp.otyp === SPLINT_MAIL
-            && (game.moves ?? 1) <= 1) {
+        // Role_if(PM_SAMURAI) is urole.mnum, not umonnum (which polymorph changes).
+        if ((game.urole?.mnum === 9 || (game.urole?.mnum == null && game.u?.umonnum === 9))
+            && otmp.otyp === SPLINT_MAIL
+            && ((game.moves ?? 1) <= 1 || In_quest(game.u?.uz))) {
             otmp.oerodeproof = true;
             otmp.rknown = 1;
         }
@@ -2637,7 +2651,7 @@ export function mkcorpstat(objtype, mtmp, pm, x, y, corpstatflags = 0) {
             && ((game.gz?.zombify || game.zombify)
                 || special_corpse(old_corpsenm)
                 || special_corpse(otmp.corpsenm))) {
-            obj_stop_timers(otmp);
+            clear_object_timer(otmp);
             start_corpse_timeout(otmp);
         }
     }
@@ -3061,7 +3075,11 @@ export function dealloc_obj(obj) {
     // obj_extract_self() first; record the violation rather than aborting.
     if (obj.where !== OBJ_FREE && obj.where !== OBJ_LUAFREE)
         insane_object(obj, 'ofmt0', 'dealloc_obj: obj not free', null);
-    if (obj.timed) obj_stop_timers(obj);
+    /* C: obj_stop_timers(obj).  This path is synchronous (level generation and
+       sp_lev.js reach it), so only the per-object record is dropped here;
+       callers that can await run timeout.js obj_stop_timers() first, which
+       also removes queued BURN_OBJECT timers and runs their cleanup. */
+    if (obj.timed) clear_object_timer(obj);
     if (obj.lamplit) obj.lamplit = 0;          /* del_light_source() */
     if (game.thrownobj === obj) game.thrownobj = null;
     if (game.gk_kickedobj === obj) game.gk_kickedobj = null;
@@ -3259,11 +3277,25 @@ export function check_glob(obj, mesg) {
 
 // C ref: mkobj.c shrinking_glob_gone(obj) — the glob shrank to nothing; take it
 // off whatever list holds it and delete it.
-export function shrinking_glob_gone(obj) {
+export async function shrinking_glob_gone(obj) {
     if (!obj) return;
     const owhere = obj.where;
+    if (owhere === OBJ_INVENT) {
+        const I = await import('./invent.js');
+        if (obj.owornmask) {
+            await I.remove_worn_item(obj, false);
+            const { stop_occupation } = await import('./hack.js');
+            await stop_occupation();
+        }
+        I.useupall(obj);                       /* freeinv()+obfree() */
+        return;
+    }
     if (owhere === OBJ_MIGRATING) obj.owornmask = 0;
     obj_extract_self_mkobj(obj);
+    if (owhere === OBJ_FLOOR) {
+        const { maybe_unhide_at } = await import('./monmove.js');
+        await maybe_unhide_at(obj.ox, obj.oy);
+    }
     dealloc_obj(obj);                          /* obfree() in C */
 }
 
@@ -3271,11 +3303,12 @@ export function shrinking_glob_gone(obj) {
 // up for turns spent on another level, skips shrinking while on/under ice or
 // while being eaten, then removes one unit of weight (and one unit of remaining
 // nutrition when partly eaten), rescheduling or deleting the glob.
-export function shrink_glob(obj, expire_time) {
+export async function shrink_glob(obj, expire_time) {
     if (!obj?.globby) return;
     check_glob(obj, 'shrink obj ');
     const moves = game.moves ?? 0;
     const globloc = item_on_ice(obj);
+    const ininv = obj.where === OBJ_INVENT;
     const contnr = (obj.where === OBJ_CONTAINED)
         ? obj.ocontainer : null;
 
@@ -3285,7 +3318,7 @@ export function shrink_glob(obj, expire_time) {
         if (globloc === SET_ON_ICE) delta = Math.trunc((delta + 2) / 3);
         if (delta >= (obj.owt | 0)) {
             obj.owt = 0;
-            shrinking_glob_gone(obj);
+            await shrinking_glob_gone(obj);
         } else {
             obj.owt = (obj.owt | 0) - delta;
             if (contnr) container_weight(contnr);
@@ -3294,20 +3327,70 @@ export function shrink_glob(obj, expire_time) {
         return;
     }
 
-    if (globloc === BURIED_UNDER_ICE
+    if (eating_glob(obj)
+        || globloc === BURIED_UNDER_ICE
         || (globloc === SET_ON_ICE && (moves % 3) === 1)) {
         start_glob_timeout(obj, 0);
         return;
     }
 
+    /* "Your/The [partly eaten] glob of <goo>", formatted before shrinking */
+    const I = await import('./invent.js');
+    const ifl = (game.iflags = game.iflags || {});
+    ifl.partly_eaten_hack = true;
+    let globnambuf = I.yname(obj);
+    ifl.partly_eaten_hack = false;
+    globnambuf = globnambuf.charAt(0).toUpperCase() + globnambuf.slice(1);
+
+    let shrink = false, updinv = false, topcontnr = null, old_top_owt = 0;
     if ((obj.owt | 0) > 0) {
+        const basewt = base_oc_weight(obj);       /* 20 */
+        const msgwt = Math.trunc((Math.max(basewt, 1) + 1) / 2);   /* 10 */
+        shrink = ((obj.owt | 0) % msgwt) === 0;
         obj.owt = (obj.owt | 0) - 1;
         if ((obj.oeaten | 0) > 1) obj.oeaten = (obj.oeaten | 0) - 1;
     }
-    if (!obj.owt) shrinking_glob_gone(obj);
-    else {
-        if (contnr) container_weight(contnr);
+    const gone = !obj.owt;
+    const { pline } = await import('./display.js');
+
+    if (ininv) {
+        if (shrink || gone)
+            await pline(`${globnambuf} ${gone ? 'dissolves completely' : 'shrinks'}.`);
+        updinv = true;
+    } else if (contnr) {
+        topcontnr = contnr;
+        while (topcontnr.where === OBJ_CONTAINED) topcontnr = topcontnr.ocontainer;
+        old_top_owt = topcontnr.owt;
+        container_weight(contnr);
+        if (topcontnr.where === OBJ_INVENT) {
+            if (gone || (shrink && topcontnr.owt !== old_top_owt)
+                || I.near_capacity() !== (game._oldcap || 0)) {
+                let nm = I.yname(topcontnr);
+                nm = nm.charAt(0).toUpperCase() + nm.slice(1);
+                await pline(`${nm} ${(topcontnr.owt !== old_top_owt) ? 'becomes' : 'seems'}${!gone ? ' slightly' : ''} lighter.`);
+            }
+            updinv = true;
+        }
+    }
+
+    if (gone) {
+        const loc = obj.where === OBJ_FLOOR ? { x: obj.ox, y: obj.oy } : null;
+        const { cansee } = await import('./vision.js');
+        const seeit = !!loc && cansee(loc.x, loc.y);
+        await shrinking_glob_gone(obj);
+        if (seeit) {
+            const { newsym } = await import('./display.js');
+            newsym(loc.x, loc.y);
+            if ((loc.x !== game.u.ux || loc.y !== game.u.uy) && globnambuf.startsWith('The '))
+                globnambuf = 'A ' + globnambuf.slice(4);
+            await pline(`${globnambuf} fades away.`);
+        }
+    } else {
         start_glob_timeout(obj, 0);
+    }
+    if (updinv) {
+        I.update_inventory();
+        await I.encumber_msg();
     }
 }
 
@@ -3412,7 +3495,7 @@ export async function pudding_merge_message(obj, other) {
             else if (inpack) await pline('Your pack reaches out and grabs something!');
         } else if (onfloor || inpack) {
             const { obj_typename } = await import('./objnam.js');
-            const { makeplural } = await import('./invent.js');
+            const { makeplural } = await import('./plural.js');
             const u = game.u;
             const adj = (obj.ox !== u.ux || obj.oy !== u.uy)
                 && (other.ox !== u.ux || other.oy !== u.uy);
@@ -3718,33 +3801,98 @@ export function obj_sanity_check() {
 
 /* ---- horn of plenty ---------------------------------------------------- */
 
-// C ref: mkobj.c hornoplenty(horn, tipping, targetbox) — mirrors bagotricks():
-// spend a charge, then 1-in-13 a random non-magic potion (magic ones are
-// re-rolled into the booze..water range, never sickness, with fixup_oil for
-// oil) and otherwise a random comestible (a food ration becomes a lump of royal
-// jelly 1-in-7).  The new item inherits the horn's bless/curse state.
-// RNG order: consume_obj_charge, rn2(13), mkobj(class), [rnd_class loop | rn2(7)].
-// Returns the created object plus the message the caller must print, so the
-// (async) drop/put-in-container half stays with the caller in apply.js.
-export function hornoplenty(horn) {
-    if (!horn || horn.otyp !== HORN_OF_PLENTY) return null;
-    let obj, what;
-    if (!rn2(13)) {
-        obj = mkobj(POTION_CLASS, false);
-        if (objects[obj.otyp]?.oc_magic) {
-            do {
-                obj.otyp = rnd_class(POT_BOOZE, POT_WATER);
-            } while (obj.otyp === POT_SICKNESS);
-            if (obj.otyp === POT_OIL) fixup_oil(obj, null);
+// C ref: mkobj.c:2847 hornoplenty(horn, tipping, targetbox) — create an object
+// from a horn of plenty; mirrors bagotricks().  RNG order: rn2(13),
+// mkobj(class), [rnd_class loop | rn2(7)], then whatever the drop/hold path
+// draws.  Returns the number of objects created (0 or 1).
+export async function hornoplenty(horn, tipping, targetbox) {
+    const { pline } = await import('./display.js');
+    let objcount = 0;
+
+    if (!horn || horn.otyp !== HORN_OF_PLENTY) {
+        const { impossible } = await import('./display.js');
+        await impossible("bad horn o' plenty");
+    } else if ((horn.spe | 0) < 1) {
+        const { update_inventory } = await import('./invent.js');
+        await pline('Nothing happens.');
+        if (!horn.cknown) {
+            horn.cknown = 1;
+            update_inventory();
         }
-        what = (obj.quan > 1) ? 'Some potions' : 'A potion';
     } else {
-        obj = mkobj(FOOD_CLASS, false);
-        if (obj.otyp === FOOD_RATION && !rn2(7)) obj.otyp = LUMP_OF_ROYAL_JELLY;
-        what = 'Some food';
+        const I = await import('./invent.js');
+        const O = await import('./objnam.js');
+        const { vtense } = await import('./dothrow.js');
+        let obj, what;
+
+        I.consume_obj_charge(horn, !tipping);
+        if (!rn2(13)) {
+            obj = mkobj(POTION_CLASS, false);
+            if (objects[obj.otyp]?.oc_magic) {
+                do {
+                    obj.otyp = rnd_class(POT_BOOZE, POT_WATER);
+                } while (obj.otyp === POT_SICKNESS);
+                /* oil uses obj->age field differently from other potions */
+                if (obj.otyp === POT_OIL) fixup_oil(obj, null);
+            }
+            what = (obj.quan > 1) ? 'Some potions' : 'A potion';
+        } else {
+            obj = mkobj(FOOD_CLASS, false);
+            if (obj.otyp === FOOD_RATION && !rn2(7)) obj.otyp = LUMP_OF_ROYAL_JELLY;
+            what = 'Some food';
+        }
+        ++objcount;
+        await pline(`${what} ${vtense(what, 'spill')} out.`);
+        obj.blessed = horn.blessed;
+        obj.cursed = horn.cursed;
+        obj.owt = weight(obj);
+        /* using a shop's horn of plenty entails a usage fee and also
+           confers ownership of the created item to the shopkeeper */
+        if (horn.unpaid) {
+            const { addtobill } = await import('./shk.js');
+            await addtobill(obj, false, false, !!tipping);
+        }
+        const u = game.u;
+        if (!tipping) {
+            const typ = game.level?.at(u.ux, u.uy)?.typ;
+            const { Is_airlevel, Is_waterlevel, IRONBARS } = await import('./const.js');
+            const aname = `${(obj.quan || 1) !== 1 ? `${obj.quan} ` : ''}${O.cxname(obj)} ${I.otense(obj, 'slip')}`;
+            await I.hold_another_object(
+                obj,
+                u.uswallow ? 'Oops!  %s out of your reach!'
+                : (Is_airlevel(u.uz) || Is_waterlevel(u.uz)
+                   || typ < IRONBARS || typ >= ICE)
+                  ? 'Oops!  %s away from you!'
+                  : 'Oops!  %s to the floor!',
+                O.The(aname), null);
+        } else if (targetbox) {
+            add_to_container(targetbox, obj);
+            /* add to container doesn't update the weight */
+            targetbox.owt = weight(targetbox);
+            if (targetbox.where === OBJ_INVENT) {
+                await I.encumber_msg();
+                I.update_inventory();
+            }
+        } else {
+            /* assumes this is taking place at hero's location */
+            const { can_reach_floor } = await import('./engrave.js');
+            if (!can_reach_floor(true)) {
+                await I.hitfloor(obj, true); /* does altar check, message, drop */
+            } else {
+                const { IS_ALTAR } = await import('./const.js');
+                if (IS_ALTAR(game.level?.at(u.ux, u.uy)?.typ)) {
+                    const { doaltarobj } = await import('./do.js');
+                    await doaltarobj(obj); /* does its own drop message */
+                } else {
+                    const { surface } = await import('./dungeon.js');
+                    const nm = I.obj_doname(obj);
+                    await pline(`${nm.charAt(0).toUpperCase() + nm.slice(1)} ${
+                        I.otense(obj, 'drop')} to the ${surface(u.ux, u.uy)}.`);
+                    await I.dropy(obj);
+                }
+            }
+        }
+        if (horn.dknown) I.makeknown(HORN_OF_PLENTY);
     }
-    obj.blessed = horn.blessed;
-    obj.cursed = horn.cursed;
-    obj.owt = weight(obj);
-    return { obj, what };
+    return objcount;
 }

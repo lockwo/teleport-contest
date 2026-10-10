@@ -14,6 +14,7 @@ import {
     quest_level_init_solidfill, quest_set_door, shuffle, tower1_load_map, tower_place_ladder,
     tower_wallification,
 } from '../sp_lev.js';
+import { quest_non_diggable } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
 // Vlad's Tower middle stage (dat/tower2.lua).
@@ -110,6 +111,7 @@ export async function makemaz_tower2() {
     }
 
     // des.non_diggable(selection.area(0,0,14,10)) — no RNG.
+    quest_non_diggable(0, 0, 14, 10);
     tower_wallification(1, 0, COLNO - 1, ROWNO - 1);
     let flp = 0;
     if (rn2(2)) flp |= 1;                 // flip_level_rnd sp_lev.c:975

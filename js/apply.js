@@ -21,7 +21,9 @@
 // very first action before any turn has elapsed, stethoscope_seq (init 0) and
 // hero_seq differ on the first use, giving the free ECMD_OK.
 
+import { makeplural } from './plural.js';
 import { game } from './gstate.js';
+import { Blind as Blind_vision } from './vision.js';
 import { s_suffix } from './hacklib.js';
 import { CQ_CANNED } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
@@ -177,52 +179,6 @@ function apply_ok(obj) {
     return EXCLUDE_SELECTABLE;
 }
 
-// C ref: insight.c ustatusline() — one-line self status produced when the
-// stethoscope (or probing) is aimed at the hero.  Status-effect suffixes
-// (Sick/Confusion/Blind/...) are omitted: the starter hero has none here, so
-// `info` is empty and the line is exactly
-//   "Status of <name> (<piousness> <align>):  Level L  HP h(m)  AC a."
-function align_str(type) {
-    return type === 0 ? 'neutral' : type > 0 ? 'lawful' : 'chaotic';
-}
-
-// C ref: insight.c piousness() — pious adverb from u.ualign.record, with the
-// alignment word appended as a suffix (a lone space is dropped when record==3).
-function piousness(record, suffix) {
-    let pio;
-    if (record >= 20) pio = 'piously';
-    else if (record > 13) pio = 'devoutly';
-    else if (record > 8) pio = 'fervently';
-    else if (record > 3) pio = 'stridently';
-    else if (record === 3) pio = '';
-    else if (record > 0) pio = 'haltingly';
-    else if (record === 0) pio = 'nominally';
-    else if (record >= -3) pio = 'strayed';
-    else if (record >= -8) pio = 'sinned';
-    else pio = 'transgressed';
-
-    let buf = pio;
-    if (suffix && record >= 0) {
-        if (record !== 3) buf += ' ';
-        buf += suffix;
-    }
-    return buf;
-}
-
-async function ustatusline() {
-    const u = game.u;
-    const name = game.plname || 'Hero';
-    const align = u?.ualign?.type ?? 0;
-    const record = u?.ualign?.record ?? 0;
-    const pio = piousness(record, align_str(align));
-    const lvl = u?.ulevel ?? 1;
-    const hp = u?.uhp ?? 0;
-    const hpmax = u?.uhpmax ?? 0;
-    const ac = u?.uac ?? 0;
-    await _display.pline(
-        `Status of ${name} (${pio}):  Level ${lvl}  HP ${hp}(${hpmax})  AC ${ac}.`);
-}
-
 // C ref: allmain.c — gh.hero_seq is `svm.moves << 3`.  `svm.moves` (the turn
 // counter) is game.moves in the port; before the first turn elapses it is the
 // startup value, distinct from the init-0 stethoscope_seq below.
@@ -230,55 +186,8 @@ function hero_seq() {
     return (game.moves || 0) << 3;
 }
 
-// C ref: insight.c size_str(msize) — body-size word for a monster's status.
 const MZ_TINY = 0, MZ_SMALL = 1, MZ_MEDIUM = 2, MZ_LARGE = 3, MZ_HUGE = 4,
       MZ_GIGANTIC = 7;
-function size_str(msize) {
-    switch (msize) {
-    case MZ_TINY: return 'tiny';
-    case MZ_SMALL: return 'small';
-    case MZ_MEDIUM: return 'medium';
-    case MZ_LARGE: return 'large';
-    case MZ_HUGE: return 'huge';
-    case MZ_GIGANTIC: return 'gigantic';
-    default: return `unknown size (${msize})`;
-    }
-}
-
-// C ref: align.h sgn-style — mon_aligntyp(mtmp) collapses the data alignment to
-// A_LAWFUL(1)/A_NEUTRAL(0)/A_CHAOTIC(-1) (priest.c:280).  Our stethoscope only
-// targets ordinary hostiles, so the ispriest/isminion branches don't apply.
-function mon_aligntyp(mtmp) {
-    const algn = mtmp?.data?.maligntyp ?? 0;
-    return algn > 0 ? 1 : algn < 0 ? -1 : 0;
-}
-
-// C ref: insight.c mstatusline(mtmp), used by the stethoscope and probing.
-async function mstatusline(mtmp, update_topl) {
-    let info = '';
-    if (mtmp.mtame) {
-        info += ', tame';
-        if (game.flags?.debug) {
-            info += ` (${mtmp.mtame}`;
-            if (!mtmp.isminion)
-                info += `; hungry ${mtmp.edog.hungrytime}; apport ${mtmp.edog.apport}`;
-            info += ')';
-        }
-    } else if (mtmp.mpeaceful) info += ', peaceful';
-    if (mtmp.mcan) info += ', cancelled';
-    if (mtmp.mconf) info += ', confused';
-    if (mtmp.mflee) info += ', scared';
-
-    const name = x_monnam(mtmp, /*ARTICLE_YOUR*/ 3, null, 0, false);
-    const align = align_str(mon_aligntyp(mtmp));
-    const sz = size_str(species(mtmp)?.msize ?? MZ_MEDIUM);
-    const mlev = mtmp.m_lev ?? mtmp.data?.mlevel ?? 0;
-    const mhp = mtmp.mhp ?? 0;
-    const mhpmax = mtmp.mhpmax ?? mhp;
-    const mac = find_mac(mtmp);
-    await update_topl(
-        `Status of ${name} (${align}, ${sz}):  Level ${mlev}  HP ${mhp}(${mhpmax})  AC ${mac}${info}.`);
-}
 
 // ── music.c ────────────────────────────────────────────────────────────────
 const LEATHER_DRUM_OTYP = 257;
@@ -319,6 +228,9 @@ function freehand() {
 // hero (self), an adjacent monster (mstatusline, with the mimic/hidden reveal),
 // or the empty square ("You hear nothing special.").
 async function use_stethoscope(obj) {
+    const { is_whirly } = await import('./monflags_data.js');
+    const interference = !!(game.u?.uswallow && is_whirly(game.u.ustuck?.data)
+                            && !rn2(role_is(3 /* PM_HEALER */) ? 10 : 3));
     // C ref: apply.c:326 — three guards BEFORE getdir(), each returning ECMD_OK
     // WITHOUT reading a direction key.  Getting that wrong is a keystroke-count
     // bug, not a message bug: the direction key would be handed to the command
@@ -354,10 +266,32 @@ async function use_stethoscope(obj) {
     // can't reach the ceiling.  The old port ignored dz entirely, so `a<tool><`
     // fell through to the adjacent-square scan (rx,ry == the hero's own square)
     // and printed "You hear nothing special.".
-    if (dir.dz) {
-        if (dir.dz < 0) {
-            await update_topl(`You can't reach the ${ceiling_word(u.ux, u.uy)}.`);
-        } else if (!await its_dead(u.ux, u.uy, res)) {
+    const mstat = (await import('./zap.js')).mstatusline;
+    const { Monnam } = await import('./do_name.js');
+    if (u.usteed && dir.dz > 0) {
+        if (interference) {
+            await update_topl(`${Monnam(u.ustuck)} interferes.`);
+            await mstat(u.ustuck);
+        } else await mstat(u.usteed);
+        return res.v;
+    } else if (u.uswallow && (dir.dx || dir.dy || dir.dz)) {
+        await mstat(u.ustuck);
+        return res.v;
+    } else if (u.uswallow && interference) {
+        await update_topl(`${Monnam(u.ustuck)} interferes.`);
+        await mstat(u.ustuck);
+        return res.v;
+    } else if (dir.dz) {
+        const { can_reach_floor, cant_reach_floor } = await import('./engrave.js');
+        if (ap_Underwater()) {
+            await _display.You_hear('faint splashing.');
+        } else if (dir.dz < 0 || !can_reach_floor(true)) {
+            await cant_reach_floor(u.ux, u.uy, dir.dz < 0, true, false);
+        } else if (await its_dead(u.ux, u.uy, res)) {
+            /* message already given */
+        } else if ((await import('./const.js')).Is_stronghold(u.uz)) {
+            await _display.You_hear('the crackling of hellfire.');
+        } else {
             await update_topl(`The ${surface_word(u.ux, u.uy)} seems healthy enough.`);
         }
         return res.v;
@@ -367,7 +301,7 @@ async function use_stethoscope(obj) {
     // reporting the hero's own heartbeat instead, and that rn2(2) is drawn on
     // every use of a cursed one.  It was missing entirely.
     if (obj?.cursed && !rn2(2)) {
-        await update_topl('You hear your heart beat.');
+        await _display.You_hear('your heart beat.');
         return res.v;
     }
 
@@ -377,7 +311,7 @@ async function use_stethoscope(obj) {
 
     // Self (dx==dy==0): ustatusline().
     if (!d.dx && !d.dy) {
-        await ustatusline();
+        await (await import('./zap.js')).ustatusline();
         return res.v;
     }
 
@@ -385,7 +319,7 @@ async function use_stethoscope(obj) {
 
     // C ref: apply.c:407 — isok() bounds check.  Off-map -> "faint typing noise".
     if (rx < 0 || rx > 79 || ry < 0 || ry > 21) {
-        await update_topl('You hear a faint typing noise.');
+        await _display.You_hear('a faint typing noise.');
         return ECMD_OK;
     }
 
@@ -412,7 +346,7 @@ async function use_stethoscope(obj) {
             // verbose is on by default.
             await update_topl(`There is ${mnm} there.`);
         }
-        await mstatusline(mtmp, update_topl);
+        await (await import('./zap.js')).mstatusline(mtmp);
         // C ref: apply.c:466 — an unspottable monster leaves an 'I' mark.
         if (!spotted) { try { map_invisible(rx, ry); } catch (_e) { /* ignore */ } }
         return res.v;
@@ -496,47 +430,102 @@ function ceiling_word(x, y) {
 }
 
 // C ref: apply.c its_dead(rx, ry, resp) — report on a corpse or statue at
-// (rx, ry).  Returns TRUE when it said something.  The Hallucination arm's
-// obj_to_glyph(corpse, rn2) roll and the Blind map_object() are not modelled;
-// the two ordinary arms (which is what a non-hallucinating hero always gets)
-// are exact.  This whole function was missing, so `a<stethoscope>>` on a
-// corpse pile printed "You hear nothing special." and never set ECMD_TIME.
+// (rx, ry).  Returns TRUE when it said something (and, for the Hallucination
+// arm, sets resp.v = ECMD_TIME).
 async function its_dead(rx, ry, resp) {
     await loadDeps();
     const CORPSE_OTYP = 265; // mkobj.js OBJECT_DATA — corpse
+    const { monster_by_pmidx } = await import('./makemon.js');
+    const { can_reach_floor } = await import('./engrave.js');
     const objs = [];
     for (const o of (game.level?.objects || []))
         if (o && o.where === OBJ_FLOOR && o.ox === rx && o.oy === ry) objs.push(o);
     let corpse = objs.find((o) => o.otyp === CORPSE_OTYP) || null;
     let statue = objs.find((o) => o.otyp === STATUE_OTYP) || null;
+    if (!can_reach_floor(true)) { /* levitation or unskilled riding */
+        corpse = null;
+        /* you can't reach tiny statues */
+        while (statue && (monster_by_pmidx(statue.corpsenm)?.msize | 0) === MZ_TINY)
+            statue = objs.slice(objs.indexOf(statue) + 1).find((o) => o.otyp === STATUE_OTYP) || null;
+    }
+    /* when both corpse and statue are present, pick the uppermost one */
     if (corpse && statue) {
-        // "when both are present, pick the uppermost one" — objs is already in
-        // nexthere order, so whichever comes first wins.
         if (objs.indexOf(statue) < objs.indexOf(corpse)) corpse = null;
         else statue = null;
     }
-    const more_corpses = corpse
-        && objs.some((o) => o !== corpse && o.otyp === CORPSE_OTYP);
+    const more_corpses = !!corpse
+        && objs.slice(objs.indexOf(corpse) + 1).some((o) => o.otyp === CORPSE_OTYP);
     if (!corpse && !statue) return false;
 
-    const here = (game.u?.ux === rx && game.u?.uy === ry);
-    if (corpse) {
-        const one = ((corpse.quan || 1) === 1) && !more_corpses;
-        // Role_if(PM_HEALER)'s REVIVE_MON timer check needs the timer subsystem.
-        await _display.update_topl(
-            `You determine that ${one ? (here ? 'this' : 'that')
-                                     : (here ? 'these' : 'those')}`
-            + ` unfortunate being${one ? '' : 's'} ${one ? 'is' : 'are'} dead.`);
+    const Blind = ap_Blinded();
+    const healer = role_is(3 /* PM_HEALER */);
+    if (ap_Hallucination()) {
+        let buf;
+        if (!corpse) {
+            buf = "You're both stoned";
+        } else if ((corpse.quan || 1) === 1 && !more_corpses) {
+            let gndr = 2; /* neuter: "it" */
+            const mtmp = (await import('./mkobj.js')).get_mtraits(corpse, false);
+            const ptr = monster_by_pmidx(corpse.corpsenm);
+            if (mtmp) {
+                const m2 = mflags2_of(monster_by_pmidx(mtmp.mnum ?? corpse.corpsenm));
+                gndr = mtmp.female ? 1 : (m2 & 0x40000 /* M2_NEUTER */) ? 2 : 0;
+            } else {
+                const m2 = mflags2_of(ptr);
+                if (m2 & 0x20000 /* M2_FEMALE */) gndr = 1;
+                else if (m2 & 0x10000 /* M2_MALE */) gndr = 0;
+            }
+            buf = `${['He', 'She', 'It'][gndr]}'s dead`;
+        } else {
+            buf = "They're dead";
+        }
+        await _display.You_hear(`a voice say, "${buf}, Jim."`);
+        resp.v = ECMD_TIME;
         return true;
     }
-    // C ref: apply.c:281 — the statue is named by its petrified MONSTER
-    // (obj_pmname), not by the object type.  Blind / type_is_pname (a unique
-    // monster, which takes no article) are not modelled.
-    const { monster_by_pmidx } = await import('./makemon.js');
-    const what = monster_by_pmidx(statue.corpsenm)?.name || 'statue';
-    await _display.update_topl(`The ${what} is in fine health for a statue.`);
+    if (corpse) {
+        const here = (game.u?.ux === rx && game.u?.uy === ry);
+        let one = ((corpse.quan || 1) === 1) && !more_corpses, reviver = false;
+        if (Blind) _display.map_object(corpse, true);
+        if (healer) {
+            const { obj_has_timer } = await import('./timeout.js');
+            const { REVIVE_MON } = await import('./const.js');
+            let c = corpse;
+            do {
+                if (obj_has_timer(c, REVIVE_MON)) reviver = true;
+                else c = objs.slice(objs.indexOf(c) + 1).find((o) => o.otyp === CORPSE_OTYP) || null;
+            } while (c && !reviver);
+        }
+        await _display.pline(
+            `You determine that ${one ? (here ? 'this' : 'that')
+                                     : (here ? 'these' : 'those')}`
+            + ` unfortunate being${one ? '' : 's'} ${one ? 'is' : 'are'}${reviver ? ' mostly' : ''} dead.`);
+        return true;
+    }
+    // statue
+    const mptr = monster_by_pmidx(statue.corpsenm);
+    const { humanoid } = await import('./monflags_data.js');
+    let what;
+    if (Blind) {
+        what = `${(game.u?.ux === rx && game.u?.uy === ry) ? 'This' : 'That'} ${
+            humanoid(mptr) ? 'person' : 'creature'}`;
+    } else {
+        const { obj_pmname } = await import('./do_name.js');
+        const { type_is_pname } = await import('./objnam.js');
+        what = obj_pmname(statue);
+        if (!type_is_pname(mptr)) what = ap_The(what);
+    }
+    let how = 'fine';
+    if (healer) {
+        const { t_at } = await import('./trap.js');
+        const ttmp = t_at(rx, ry);
+        if (ttmp && ttmp.ttyp === STATUE_TRAP) how = 'extraordinary';
+        else if (statue.cobj && (statue.cobj.length ?? 0) > 0) how = 'remarkable';
+    }
+    await _display.pline(`${what} is in ${how} health for a statue.`);
     return true;
 }
+
 
 // C ref: mon.c seemimic(mtmp) — a discovered mimic drops its object/furniture
 // appearance and is redrawn as its true form.
@@ -685,6 +674,22 @@ export async function doapply() {
     if (await _invent.check_capacity_throw()) return ECMD_OK;
     const obj = await _invent.getobj('use or apply', apply_ok);
     if (!obj) return ECMD_CANCEL;
+
+    const ref = { obj };
+    const { retouch_object, arti_speak } = await import('./artifact.js');
+    if (!(await retouch_object(ref, false)))
+        return ECMD_TIME; /* evading your grasp costs a turn */
+    let res = await doapply_obj(ref.obj);
+    /* This assumes that anything that potentially destroyed obj has kept
+     * track of it and cleared oartifact before this point. */
+    if (ref.obj.oartifact && res !== ECMD_CANCEL
+        && ((await arti_speak(ref.obj)) & 0x01))
+        res = ECMD_TIME; /* sets the time bit if the artifact speaks */
+    return res;
+}
+
+// C ref: apply.c doapply()'s otyp switch for the chosen tool.
+async function doapply_obj(obj) {
 
     // C ref apply.c:4232-4240 — three class-level dispatches BEFORE the otyp
     // switch.  "You cannot apply that here." is not a NetHack string: printing
@@ -934,6 +939,60 @@ export async function doapply() {
         return ECMD_TIME;
     }
 
+    // C ref: apply.c:4263-4300 — the remaining otyp arms.  Each use_*() below
+    // is ported in this file (or steed.js / mkobj.js) and returns this file's
+    // ECMD numbering except where noted.
+    if (obj.otyp === MIRROR) return await use_mirror(obj);
+    if (obj.otyp === LEASH) return await use_leash(obj);
+    if (obj.otyp === SADDLE_OTYP) {
+        const { use_saddle } = await import('./steed.js');
+        // steed.js returns the hack.h bits (ECMD_TIME 0x01, ECMD_CANCEL 0x02)
+        const r = await use_saddle(obj);
+        return (r & 0x01) ? ECMD_TIME : (r & 0x02) ? ECMD_CANCEL : ECMD_OK;
+    }
+    if (obj.otyp === CAN_OF_GREASE) return await use_grease(obj);
+    if (obj.otyp === GRAPPLING_HOOK) return await use_grapple(obj);
+    if (obj.otyp === FIGURINE) return await use_figurine({ obj });
+    if (obj.otyp === LUMP_OF_ROYAL_JELLY_OTYP) return await use_royal_jelly({ obj });
+    if (obj.otyp === UNICORN_HORN) {
+        await use_unicorn_horn({ obj });
+        return ECMD_TIME;
+    }
+    if (obj.otyp === HORN_OF_PLENTY_OTYP) { /* not a musical instrument */
+        const { hornoplenty } = await import('./mkobj.js');
+        await hornoplenty(obj, false, null);
+        return ECMD_TIME;
+    }
+    if (obj.otyp === LAND_MINE || obj.otyp === BEARTRAP_OTYP) {
+        await use_trap(obj);
+        return ECMD_TIME;
+    }
+    if (obj.otyp === EUCALYPTUS_LEAF) {
+        /* MRKR: Every Australian knows that a gum leaf makes an excellent
+         * whistle, especially if your pet is a tame kangaroo named Skippy. */
+        if (obj.blessed) {
+            await use_magic_whistle(obj);
+            /* sometimes the blessing will be worn off */
+            if (!rn2(49)) {
+                if (!_vision.Blind()) {
+                    const { hcolor } = await import('./do_name.js');
+                    await _display.pline(`Your ${_invent.xname(obj)} ${
+                        _invent.otense(obj, 'glow')} ${hcolor('brown')}.`);
+                    const { set_bknown } = await import('./mkobj.js');
+                    set_bknown(obj, 1);
+                }
+                const { unbless } = await import('./mkobj.js');
+                unbless(obj);
+            }
+        } else {
+            await use_whistle(obj);
+        }
+        return ECMD_TIME;
+    }
+    if (obj.otyp === BANANA && ap_Hallucination()) {
+        await _display.pline('It rings! ... But no-one answers.');
+        return ECMD_TIME;
+    }
     // Any other tool isn't exercised; mirror C's "I don't know how to use that"
     // (C returns ECMD_FAIL here, which like ECMD_OK costs no turn).
     await _display.pline("Sorry, I don't know how to use that.");
@@ -946,7 +1005,7 @@ export async function doapply() {
 async function flip_through_book(obj) {
     await loadDeps();
     const hallu = !!game.u?.uhallu;
-    const blind = (game.u?.blinded || 0) > 0 || !!game.ublindf;
+    const blind = Blind_vision();
     // C ref: objnam.c thesimpleoname(obj) — "the " + minimal_xname(), which
     // respects identification (an unknown book stays "the spellbook").
     // invent.js's xname() calls observe_object() as a side effect, which C's
@@ -971,10 +1030,10 @@ async function flip_through_book(obj) {
         await _display.pline('This looks like it might be interesting to read.');
     } else {
         // C ref: apply.c:4510 fadeness[] indexed by min(spestudied,
-        // MAX_SPELL_STUDY); MAX_SPELL_STUDY is 4 (spell.h).
+        // MAX_SPELL_STUDY); MAX_SPELL_STUDY is 3 (spell.h).
         const fadeness = ['fresh', 'slightly faded', 'very faded',
                           'extremely faded', 'barely visible'];
-        const findx = Math.min(obj.spestudied || 0, 4);
+        const findx = Math.min(obj.spestudied || 0, 3);
         await _display.pline(`The${objects[obj.otyp]?.oc_magic ? ' magical' : ''
             } ink in this spellbook is ${fadeness[findx]}.`);
     }
@@ -989,19 +1048,21 @@ async function flip_coin(obj) {
     const { acurr_eff } = await import('./attrib.js');
     const A_DEX = 3; // attrib.h — [Str,Int,Wis,Dex,Con,Cha]
     const dex = acurr_eff(A_DEX);
-    await _display.pline(`You flip a ${_invent.cxname_singular(obj)}.`);
+    await _display.pline(`You flip ${ap_an(_invent.cxname_singular(obj))}.`);
     let lose_coin = false;
-    // Underwater is never true here.  Glib/Fumbling are the other slip causes.
-    const slippery = ((game.u?.uprops?.Glib || 0) > 0)
-        || ((game.u?.uprops?.Fumbling || 0) > 0);
-    if (slippery || (dex < 10 && !rn2(dex))) {
+    if (game.u?.uinwater) {
+        await _display.pline('It tumbles away.');
+        lose_coin = true;
+    } else if (ap_Glib() || ap_Fumbling() || (dex < 10 && !rn2(dex))) {
+        const A = await ap_load();
         await _display.pline(`It slips between your ${
-            game.uarmg ? 'gloves' : 'fingers'}.`);
+            !game.uarmg ? makeplural('finger') : A.do_wear.gloves_simple_name(game.uarmg)}.`);
         lose_coin = true;
     }
     if (lose_coin) {
-        // splitobj(otmp, 1) + dropx(otmp): dropping is not modelled here, so
-        // the coin stays in the pack.  The message and the turn are right.
+        let otmp = obj;
+        if ((otmp.quan || 1) > 1) otmp = _invent.splitobj(otmp, 1);
+        await _invent.dropx(otmp);
         return ECMD_TIME;
     }
     if (game.u?.uhallu) {
@@ -1142,7 +1203,7 @@ async function do_break_wand(obj) {
         if (!ap_isok(x, y)) continue;
 
         if (obj.otyp === WAN_DIGGING_OTYP) {
-            const { dig_check, fillholetyp, digactualhole, liquid_flow, BY_OBJECT }
+            const { dig_check, fillholetyp, digactualhole, liquid_flow, BY_OBJECT, watch_dig }
                 = await import('./dig.js');
             const dcres = dig_check(BY_OBJECT, x, y);
             if (dcres < DIGCHECK_FAILED || dcres === DIGCHECK_FAIL_BOULDER) {
@@ -1151,7 +1212,7 @@ async function do_break_wand(obj) {
                 if (IS_WALL(typ0) || IS_DOOR(typ0)) {
                     /* normally pits/holes don't anger guards, but a dug
                        wall/door does */
-                    await A.trap.watch_dig(null, x, y, true);
+                    await watch_dig(null, x, y, true);
                     if (A.shkroom.in_rooms(x, y, SHOPBASE_A)?.length)
                         shop_damage = true;
                 }
@@ -1235,7 +1296,8 @@ async function use_cream_pie(obj) {
     if (ap_Hallucination()) {
         await update_topl('You give yourself a facial.');
     } else {
-        const { xname, the, makeplural } = await import('./objnam.js');
+        const { xname, the } = await import('./objnam.js');
+        const { makeplural } = await import('./plural.js');
         await update_topl(`You immerse your face in ${several ? 'one of ' : ''}${
             several ? makeplural(the(xname(obj))) : the(xname(obj))}.`);
     }
@@ -1533,9 +1595,10 @@ export async function dorub() {
 
     if (obj.oclass === GEM_CLASS || obj.oclass === FOOD_CLASS) {
         // C ref: apply.c dorub() — graystone -> use_stone, royal jelly ->
-        // use_royal_jelly (unmodelled); any other gem/food: "Sorry, I don't know
-        // how to use that." (no turn).
+        // use_royal_jelly; any other gem/food: "Sorry, I don't know how to
+        // use that." (no turn).
         if (is_graystone_otyp(obj.otyp)) return await use_stone(obj);
+        if (obj.otyp === LUMP_OF_ROYAL_JELLY) return await use_royal_jelly({ obj });
         await _display.pline("Sorry, I don't know how to use that.");
         return ECMD_OK;
     }
@@ -1759,7 +1822,7 @@ export async function use_pole(obj, autohit) {
         // rhack() starts every command with svc.context.move = 1; attack_checks
         // clears it only when the hero declines "Really attack?".
         if (game.context) game.context.move = 1;
-        if (await _uhitm.attack_checks(mtmp))
+        if (await _uhitm.attack_checks(mtmp, game.uwep))
             return game.context?.move ? ECMD_TIME : ECMD_OK;
         if (await _uhitm.overexertion())
             return ECMD_TIME; /* burn nutrition; maybe pass out */
@@ -1855,10 +1918,9 @@ export const ECMD = { ECMD_OK, ECMD_CANCEL, ECMD_TIME };
 // moving anything else.  A shim never takes a C name, so it cannot claim
 // another C file's coverage in swarm/bin/coverage.mjs.
 //
-// Callees that are stubbed here (each draws in C, draws nothing here):
-//   mintrap(), make_familiar(), hurtle(),
-//   boulder_hits_pool(), revive_corpse(), floorfood(), tele_to_rnd_pet(),
-//   bhit()/flash_hits_mon() for the camera ray, enexto(), get_adjacent_loc().
+// The ap_ shims below now delegate to the real ports (mintrap, make_familiar,
+// hurtle, boulder_hits_pool, revive_corpse, tele_to_rnd_pet, enexto, timers).
+// Still display-only stand-ins: ap_tmp_at()/ap_cmap_to_glyph() (see below).
 // ═════════════════════════════════════════════════════════════════════════════
 
 // Lazily-imported modules for the block above's C callees.  Loaded on first use
@@ -1875,7 +1937,7 @@ async function ap_load() {
         invent, display, cmd, uhitm, vision, enhance, makemon, mon, monmove,
         trap, teleport, potion, lightsrc, zap, sounds, do_name, attrib,
         do_wear, hackmod, pickup, explodemod, muse, shkroom, detect, vault,
-        eat, dbridge, mkroom, monattk, weapon, mhitu,
+        eat, dbridge, mkroom, monattk, weapon, mhitu, shk,
     ] = await Promise.all([
         import('./invent.js'), import('./display.js'), import('./cmd.js'),
         import('./uhitm.js'), import('./vision.js'), import('./enhance.js'),
@@ -1887,12 +1949,12 @@ async function ap_load() {
         import('./muse.js'), import('./shkroom.js'), import('./detect.js'),
         import('./vault.js'), import('./eat.js'), import('./dbridge.js'),
         import('./mkroom.js'), import('./monattk_data.js'), import('./weapon.js'),
-        import('./mhitu.js'),
+        import('./mhitu.js'), import('./shk.js'),
     ]);
     _ap = { invent, display, cmd, uhitm, vision, enhance, makemon, mon, monmove,
             trap, teleport, potion, lightsrc, zap, sounds, do_name, attrib,
             do_wear, hackmod, pickup, explodemod, muse, shkroom, detect, vault,
-            eat, dbridge, mkroom, monattk, weapon, mhitu };
+            eat, dbridge, mkroom, monattk, weapon, mhitu, shk };
     return _ap;
 }
 
@@ -1900,6 +1962,7 @@ async function ap_load() {
 // indices (read off the loaded table, not guessed).  OIL_LAMP / MAGIC_LAMP /
 // BRASS_LANTERN / POT_OIL / CREAM_PIE / EGG-adjacent food otyps are already
 // declared near the top of this file.
+const SADDLE_OTYP = 235, HORN_OF_PLENTY_OTYP = 252;
 const TALLOW_CANDLE = 224, WAX_CANDLE = 225, EXPENSIVE_CAMERA = 229,
       MIRROR = 230, CRYSTAL_BALL = 231, LENSES = 232, BLINDFOLD_OTYP = 233, TOWEL = 234, LEASH = 236,
       TINNING_KIT = 238, CAN_OF_GREASE = 240, FIGURINE = 241,
@@ -1947,9 +2010,9 @@ const P_NONE_A = 0, P_BASIC_A = 2, P_RIDING_A = 37;
 // C ref: include/rm.h — the typ codes use_trap() and figurine_location_checks()
 // test.  AIR/CLOUD are the two Plane-of-Air/Water catch-alls; POOL is the first
 // non-obstructing typ, so IS_OBSTRUCTED(t) is (t < POOL).
-const POOL_A = 21, TREE_A = 20, AIR_A = 35, CLOUD_A = 36;
-const STAIRS_A = 24, LADDER_A = 25, FOUNTAIN_A = 26, THRONE_A = 27,
-      SINK_A = 28, GRAVE_A = 29, ALTAR_A = 30;
+const POOL_A = 16, TREE_A = 13, AIR_A = 35, CLOUD_A = 36;
+const STAIRS_A = 26, LADDER_A = 27, FOUNTAIN_A = 28, THRONE_A = 29,
+      SINK_A = 30, GRAVE_A = 31, ALTAR_A = 32;
 // C ref: include/decl.h c_common_strings (src/decl.c:39).
 const nothing_happens = 'Nothing happens.';
 const nothing_seems_to_happen = 'Nothing seems to happen.';
@@ -1984,10 +2047,10 @@ function ap_Stunned() { return ((game.u?.ustun | 0) > 0) || ap_prop('Stun') > 0;
 function ap_Hallucination() {
     return !!game.Hallucination || !!game.u?.uhallu || ap_prop('Hallucination') > 0;
 }
-function ap_Blinded() { return ((game.u?.blinded | 0) > 0) || ap_prop('Blinded') > 0; }
+function ap_Blinded() { return (game.u?.blinded | 0) > 0; }
 function ap_Invis() { return ap_prop('Invis') > 0; }
 function ap_See_invisible() { return ap_prop('See_invisible') > 0; }
-function ap_Free_action() { return ap_prop('Free_action') > 0; }
+function ap_Free_action() { return ap_prop('Free_action') > 0 || !!_invent?.Free_action(); }
 function ap_Passes_walls() { return ap_prop('Passes_walls') > 0; }
 function ap_Upolyd() { return !!game.u?.Upolyd; }
 function ap_ucreamed() { return game.u?.ucreamed | 0; }
@@ -2080,16 +2143,16 @@ function ap_cmap_to_glyph(_cmap) { return 0; }
 // level state, so the display_*_positions() loops below use it directly.
 
 
-// ── Unported C callees.  Each is kept IN POSITION at its call site so landing
-// the real function later restores its RNG draw without moving anything else.
-// C ref: trap.c mintrap(mtmp, mintrapflags) — js/monmove.js mon_mintrap() is the
-// port, but it takes no flag argument; use it and note the difference.
-async function ap_mintrap(mtmp, _flags) {
+// C ref: trap.c mintrap(mtmp, mintrapflags) — js/monmove.js mon_mintrap().
+async function ap_mintrap(mtmp, flags) {
     const A = await ap_load();
-    return await A.monmove.mon_mintrap(mtmp);
+    return await A.monmove.mon_mintrap(mtmp, flags);
 }
-// C ref: makemon.c make_familiar(otmp, x, y, quietly) — DEFERRED (no port).
-async function ap_make_familiar(_otmp, _x, _y, _quietly) { return null; }
+// C ref: dog.c make_familiar(otmp, x, y, quietly) — js/dog.js owns the port.
+async function ap_make_familiar(otmp, x, y, quietly) {
+    const { make_familiar } = await import('./dog.js');
+    return await make_familiar(otmp, x, y, quietly);
+}
 // C ref: detect.c openit() — open nearby doors, boxes, or a swallowing monster.
 async function ap_openit() {
     const A = await ap_load();
@@ -2100,7 +2163,7 @@ async function ap_mkundead(mm, revive_corpses, mmflags) {
     const A = await ap_load();
     const { morguemon } = await import('./sp_lev.js');
     return await A.mkroom.mkundead(mm, revive_corpses, mmflags, {
-        level_difficulty: A.makemon.level_difficulty_ext,
+        level_difficulty: (await import('./dungeon.js')).level_difficulty,
         morguemon,
         enexto: (x, y, ptr) => A.teleport.enexto_gpflags(x, y, ptr, 0),
         makemon: async (ptr, x, y, flags) => {
@@ -2110,10 +2173,16 @@ async function ap_mkundead(mm, revive_corpses, mmflags) {
         },
     });
 }
-// C ref: dothrow.c hurtle(dx, dy, range, verbose) — DEFERRED (no port).
-async function ap_hurtle(_dx, _dy, _range, _verbose) {}
-// C ref: dbridge.c boulder_hits_pool(otmp, rx, ry, newspot) — DEFERRED.
-async function ap_boulder_hits_pool(_otmp, _rx, _ry, _newspot) { return false; }
+// C ref: dothrow.c hurtle(dx, dy, range, verbose).
+async function ap_hurtle(dx, dy, range, verbose) {
+    const { hurtle } = await import('./dothrow.js');
+    await hurtle(dx, dy, range, verbose);
+}
+// C ref: dbridge.c boulder_hits_pool(otmp, rx, ry, pushing) — js/do.js owns it.
+async function ap_boulder_hits_pool(otmp, rx, ry, pushing) {
+    const { boulder_hits_pool } = await import('./do.js');
+    return await boulder_hits_pool(otmp, rx, ry, pushing);
+}
 // C ref: do.c:2111 revive_corpse(corpse) — ported at js/do.js revive_corpse().
 async function ap_revive_corpse(corpse) {
     const { revive_corpse } = await import('./do.js');
@@ -2157,8 +2226,11 @@ async function ap_floorfood(verb, corpsecheck) {
     }
     return otmp;
 }
-// C ref: teleport.c tele_to_rnd_pet() — DEFERRED (no port).
-async function ap_tele_to_rnd_pet() {}
+// C ref: teleport.c tele_to_rnd_pet().
+async function ap_tele_to_rnd_pet() {
+    const { tele_to_rnd_pet } = await import('./teleport.js');
+    await tele_to_rnd_pet();
+}
 // C ref: zap.c:3861-4093 bhit()'s FLASHED_LIGHT branch.  The S_flashbeam beam
 // (tmp_at(DISP_BEAM, ...)) records each square the hero can see, and
 // tmp_at(DISP_END) newsym()s every one of them back — which while hallucinating
@@ -2199,9 +2271,16 @@ async function ap_bhit_flash(dx, dy, range, obj) {
     await D.tmp_at(DISP_END_A, 0);
     return null;
 }
-// C ref: teleport.c enexto(cc, xx, yy, mdat) — js/dog.js's enexto() is private
-// and takes no permonst; DEFERRED so the caller's "no free spot" arm is taken.
-async function ap_enexto(_cc, _xx, _yy, _mdat) { return false; }
+// C ref: teleport.c enexto(cc, xx, yy, mdat) == enexto_gpflags(.., NO_MM_FLAGS);
+// the result is written into the caller's `cc` out-parameter.
+async function ap_enexto(cc, xx, yy, mdat) {
+    const { enexto_gpflags } = await import('./teleport.js');
+    const r = enexto_gpflags(xx, yy, mdat, 0);
+    if (!r) return false;
+    cc.x = r.x;
+    cc.y = r.y;
+    return true;
+}
 // C ref: getpos.c get_adjacent_loc(prompt, emsg, x, y, cc) — getdir() plus a
 // bounds check.  Ported here (it is the only thing use_leash() needs) rather
 // than stubbed, so the leash path really reads one direction key.
@@ -2218,13 +2297,19 @@ async function ap_get_adjacent_loc(prompt, emsg, x, y, cc) {
     cc.dx = dir.dx; cc.dy = dir.dy; cc.dz = dir.dz;
     return true;
 }
-// C ref: allmain.c set_occupation(fn, txt, xtime) — js/invent.js keeps the
-// occupation slot; nothing here may arm it, so record the intent only.
-function ap_set_occupation(_fn, _txt, _xtime) {}
-// C ref: shk.c add_damage(x, y, cost) / apply.c use_unpaid_trapobj() — shop
-// bookkeeping, RNG-free, no port.
-function ap_add_damage(_x, _y, _cost) {}
-function ap_use_unpaid_trapobj(_otmp, _x, _y) {}
+// C ref: cmd.c set_occupation(set_trap, txt, 0) — allmain.js's moveloop runs
+// set_trap() each turn while game._trap_occupation is set (hack.js OCC_SLOTS
+// supplies the "You stop setting the trap." interrupt text).
+function ap_set_occupation(_fn, txt, _xtime) {
+    game._trap_occupation = true;
+    game.occupation_txt = txt;
+}
+async function ap_add_damage(x, y, cost) {
+    await (await import('./shk.js')).add_damage(x, y, cost);
+}
+async function ap_use_unpaid_trapobj(otmp, x, y) {
+    await (await import('./shk.js')).use_unpaid_trapobj(otmp, x, y);
+}
 // C ref: timeout.c incr_itimeout/set_itimeout on a named property timer.
 function ap_incr_itimeout(name, incr) {
     const u = game.u;
@@ -2250,13 +2335,10 @@ async function ap_feeltrap(trap) {
     trap.tseen = true;
     A.display.newsym(trap.tx, trap.ty);
 }
-// C ref: mon.c mnexto(mtmp, rlocflags) — js/do.js's copy is private and takes
-// no flags, so the RLOC_MSG/RLOC_NONE distinction magic_whistled() relies on is
-// lost here (it only controls whether rloc() prints, never RNG).
-async function ap_mnexto(mtmp, _rlocflags) {
-    const D = await import('./do.js');
-    if (typeof D.mnexto === 'function') return D.mnexto(mtmp);
-    return undefined;
+// C ref: mon.c mnexto(mtmp, rlocflags).
+async function ap_mnexto(mtmp, rlocflags) {
+    const { mnexto } = await import('./mon.js');
+    return mnexto(mtmp, rlocflags);
 }
 // C ref: mon.c xkilled(mtmp, xkill_flags) — js/uhitm.js killed() is this port's
 // xkilled (see its own comment); XKILL_NOMSG maps to { nomsg: true }.
@@ -2273,14 +2355,10 @@ function ap_upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; 
 function ap_an(s) { return /^[aeiouAEIOU]/.test(s || '') ? `an ${s}` : `a ${s}`; }
 function ap_the(s) { return /^[A-Z]/.test(s || '') ? s : `the ${s}`; }
 function ap_The(s) { return ap_upstart(ap_the(s)); }
-// C ref: objnam.c vtense(subj, verb) — plural subject takes the bare verb.
-function ap_vtense(subj, verb) {
-    const plural = !subj || /s$/.test(subj);
-    if (plural) return verb;
-    if (verb === 'are') return 'is';
-    if (/(s|x|z|ch|sh)$/.test(verb)) return `${verb}es`;
-    return `${verb}s`;
-}
+// C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js
+// (an absent subject is treated as plural by this file's callers).
+import { vtense } from './plural.js';
+const ap_vtense = (subj, verb) => (!subj ? verb : vtense(subj, verb));
 // C ref: do_name.c mhis(mtmp) / mhe(mtmp).
 function ap_mhis(mtmp) {
     if (mtmp?.female) return 'her';
@@ -2370,23 +2448,33 @@ function ap_carried(obj) { return ap_invent().includes(obj); }
 // body_part() is the real port; these string constants only feed messages.
 const AP_HAND = 'hand', AP_FACE = 'face', AP_NOSE = 'nose', AP_STOMACH = 'stomach';
 
-// C ref: potion.c make_sick/make_blinded/make_vomiting/make_deaf/vomit and
-// potion.c make_confused/make_stunned.  All SEVEN are RNG-free in C (each is a
-// set_itimeout/incr_itimeout plus feedback); js/potion.js and js/artifact.js
-// keep private copies, so these set this port's timer and skip the feedback.
-function ap_make_sick(xtime, _cause, _talk, _type) { ap_set_itimeout('Sick', xtime); }
-function ap_make_blinded(xtime, _talk) { ap_set_itimeout('Blinded', xtime); }
-function ap_make_confused(xtime, _talk) { ap_set_itimeout('Confusion', xtime); }
-function ap_make_stunned(xtime, _talk) { ap_set_itimeout('Stun', xtime); }
-function ap_make_vomiting(xtime, _talk) { ap_set_itimeout('Vomiting', xtime); }
-function ap_make_deaf(xtime, _talk) { ap_set_itimeout('Deaf', xtime); }
-function ap_make_hallucinated(xtime, _talk, _mask) {
-    ap_set_itimeout('Hallucination', xtime);
-    return 0;
+// C ref: potion.c make_sick/make_blinded/make_confused/make_stunned/
+// make_vomiting/make_deaf/make_hallucinated and eat.c vomit(): the real ports
+// (each prints its own feedback); dynamic imports avoid module-init cycles.
+async function ap_make_sick(xtime, cause, talk, type) {
+    await (await import('./potion.js')).make_sick(xtime, cause, talk, type);
 }
-function ap_vomit() { ap_set_itimeout('Vomiting', 0); }
+async function ap_make_blinded(xtime, talk) {
+    await (await import('./potion.js')).make_blinded_hero(xtime, talk);
+}
+async function ap_make_confused(xtime, talk) {
+    await (await import('./potion.js')).make_confused(xtime, talk);
+}
+async function ap_make_stunned(xtime, talk) {
+    await (await import('./mhitu.js')).make_stunned_u(xtime, talk);
+}
+async function ap_make_vomiting(xtime, talk) {
+    await (await import('./potion.js')).make_vomiting(xtime, talk);
+}
+async function ap_make_deaf(xtime, talk) {
+    await (await import('./potion.js')).make_deaf(xtime, talk);
+}
+async function ap_make_hallucinated(xtime, talk, mask) {
+    return await (await import('./potion.js')).make_hallucinated(xtime, talk, mask);
+}
+async function ap_vomit() { await (await import('./eat.js')).vomit(); }
 // C ref: invent.c Blindf_off(otmp) — js/invent.js's copy is private.
-async function ap_Blindf_off(_obj) { game.ublindf = null; }
+async function ap_Blindf_off(obj) { await (await import('./invent.js')).Blindf_off(obj); }
 // C ref: mhitu.c gulp_blnd_check() — js/mhitu.js exports the real one.
 async function ap_gulp_blnd_check() {
     const A = await ap_load();
@@ -2490,7 +2578,7 @@ export async function use_towel(obj) {
         case 2:
             old = ap_prop('Glib');
             await A.potion.make_glib(old + rn1(10, 3)); /* + 3..12 */
-            await A.display.pline(`Your ${A.invent.makeplural(AP_HAND)} ${
+            await A.display.pline(`Your ${makeplural(AP_HAND)} ${
                 old ? 'are filthier than ever' : 'get slimy'}!`);
             if (A.weapon.is_wet_towel(obj))
                 A.weapon.dry_a_towel(obj, -1, drying_feedback);
@@ -2501,7 +2589,7 @@ export async function use_towel(obj) {
                 u.ucreamed = old + rn1(10, 3);
                 await A.display.pline(`Yecch!  Your ${AP_FACE} ${
                     old ? 'has more' : 'now has'} gunk on it!`);
-                ap_make_blinded(ap_prop('Blinded') + u.ucreamed - old, true);
+                await ap_make_blinded((game.u?.blinded | 0) + u.ucreamed - old, true);
             } else {
                 const what = (game.ublindf.otyp === LENSES) ? 'lenses'
                     : (obj.otyp === game.ublindf.otyp) ? 'other towel'
@@ -2529,19 +2617,19 @@ export async function use_towel(obj) {
     if (ap_Glib()) {
         await A.potion.make_glib(0);
         await A.display.pline(`You wipe off your ${
-            !game.uarmg ? A.invent.makeplural(AP_HAND)
+            !game.uarmg ? makeplural(AP_HAND)
                         : A.do_wear.gloves_simple_name(game.uarmg)}.`);
         if (A.weapon.is_wet_towel(obj))
             A.weapon.dry_a_towel(obj, -1, drying_feedback);
         return ECMD_TIME;
     } else if (ap_ucreamed()) {
-        ap_incr_itimeout('Blinded', -1 * ap_ucreamed());
+        game.u.blinded = Math.max(0, (game.u.blinded | 0) - ap_ucreamed());
         u.ucreamed = 0;
         if (!ap_Blinded()) {
             await A.display.pline("You've got the glop off.");
             if (!await ap_gulp_blnd_check()) {
-                ap_set_itimeout('Blinded', 1);
-                ap_make_blinded(0, true);
+                game.u.blinded = 1;
+                await ap_make_blinded(0, true);
             }
         } else {
             await A.display.pline(`Your ${AP_FACE} feels clean now.`);
@@ -2552,7 +2640,7 @@ export async function use_towel(obj) {
     }
 
     await A.display.pline(`Your ${AP_FACE} and ${
-        A.invent.makeplural(AP_HAND)} are already clean.`);
+        makeplural(AP_HAND)} are already clean.`);
 
     return ECMD_OK;
 }
@@ -2775,7 +2863,7 @@ export function unleash_all() {
 
 // C ref: apply.c:760 leashable(mtmp).
 export function leashable(mtmp) {
-    return mtmp.mnum !== PM_LONG_WORM
+    return mtmp.data?.pmidx !== PM_LONG_WORM
         && !ap_unsolid(mtmp.data)
         && (!ap_nolimbs(mtmp.data) || ap_has_head(mtmp.data));
 }
@@ -2918,6 +3006,23 @@ export async function mleashed_next2u(mtmp) {
     return false;
 }
 
+// C ref: apply.c:919 next_to_u() — FALSE when a leashed pet cannot follow the
+// hero off the level (mleashed_next2u() may drag it adjacent, or snap the
+// leash, as a side effect), or when the steed carries the Amulet.
+export async function next_to_u() {
+    const u = game.u;
+    for (const mtmp of [...(game.level?.monsters || [])]) {
+        if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
+        if (await mleashed_next2u(mtmp)) return false;
+    }
+    /* no pack mules for the Amulet */
+    if (u.usteed) {
+        const { mon_has_amulet } = await import('./wizard.js');
+        if (mon_has_amulet(u.usteed)) return false;
+    }
+    return true;
+}
+
 // C ref: apply.c:930 check_leash(x, y) — the hero is moving from <x,y>; choke,
 // snap or tug every leash whose pet is now further away.  RNG, in order:
 // rnd(2) for the cursed-leash damage (only when um_dist(...,5) is FALSE, so the
@@ -3040,7 +3145,7 @@ export async function use_mirror(obj) {
                 else
                     await A.display.pline("Yikes!  You've frozen yourself!");
                 if (!ap_Hallucination() || !rn2(4)) {
-                    nomul_ap(-rnd(MAXULEV_A + 6 - (u.ulevel | 0)));
+                    A.hackmod.nomul(-rnd(MAXULEV_A + 6 - (u.ulevel | 0)));
                     game.multi_reason = 'gazing into a mirror';
                 }
                 game.nomovemsg = 0; /* default, "you can move again" */
@@ -3050,7 +3155,7 @@ export async function use_mirror(obj) {
             await A.display.pline("You don't have a reflection.");
         } else if (u.umonnum === PM_UMBER_HULK && ap_Upolyd()) {
             await A.display.pline("Huh?  That doesn't look like you!");
-            ap_make_confused(ap_prop('Confusion') + d(3, 4), false);
+            await ap_make_confused(ap_prop('Confusion') + d(3, 4), false);
         } else if (ap_Hallucination()) {
             await A.display.pline(`You ${look_str_fmt.replace('%s', A.do_name.hcolor(null))}`);
         } else if (ap_prop('Sick') > 0) {
@@ -3186,12 +3291,6 @@ export async function use_mirror(obj) {
     return ECMD_TIME;
 }
 
-// C ref: hack.c nomul(nval) — js/hack.js exports the real one; this sync
-// wrapper keeps use_mirror()'s call site sync (a dynamic import cannot be).
-function nomul_ap(nval) {
-    game.multi = nval;
-    if (game.u) game.u.umultimove = nval;
-}
 // C ref: mhitm_ad.c paralyze_monst(mon, amt) — js/mhitm_ad.js's copy is private.
 function ap_paralyze_monst(mon, amt) {
     mon.mcanmove = 0;
@@ -3204,12 +3303,18 @@ function setnotworn_ap(obj) { if (obj) obj.owornmask = 0; }
 // TT_BURIEDBALL (verified against js/const.js's own values).
 const TIMER_OBJECT_A = 3, FIG_TRANSFORM_A = 6, TT_BURIEDBALL_A = 6;
 // C ref: include/mkroom.h SHOPBASE.
-const SHOPBASE_A = 2;
-// C ref: timers.c start_timer/stop_timer — js/mkobj.js's start_timer() and
-// js/invent.js's stop_timer() are private and this port has no timer queue, so
-// nothing fires; both are RNG-free (the CALLER rolls the delay).
-function ap_start_timer(_when, _kind, _action, _obj) { return 1; }
-function ap_stop_timer(_kind, _obj) { return 0; }
+const SHOPBASE_A = 14;
+// C ref: timeout.c start_timer/stop_timer — the live object-timer queue is
+// js/mkobj.js's (run by run_object_timers()); both are RNG-free (the CALLER
+// rolls the delay).
+async function ap_start_timer(when, _kind, action, obj) {
+    const { start_object_timer } = await import('./mkobj.js');
+    return start_object_timer(when, action, obj);
+}
+async function ap_stop_timer(action, obj) {
+    const { stop_object_timer } = await import('./mkobj.js');
+    return stop_object_timer(obj, action);
+}
 
 // C ref: apply.c:1201 use_bell(&obj) — `optr` is C's `struct obj **`, modelled
 // as a one-field box { obj } so the callee can clear the caller's reference the
@@ -3262,7 +3367,7 @@ export async function use_bell(optr) {
                 case 2: /* no explanation; it just happens... */
                     game.nomovemsg = '';
                     game.multi_reason = null;
-                    nomul_ap(-rnd(2));
+                    A.hackmod.nomul(-rnd(2));
                     break;
                 }
             }
@@ -3340,9 +3445,8 @@ function ap_invocation_pos(x, y) {
     return !!inv && inv.x === x && inv.y === y;
 }
 function ap_On_stairs(x, y) {
-    for (const s of (game.level?.stairs || []))
-        if (s.sx === x && s.sy === y) return true;
-    return false;
+    /* C: On_stairs(x, y) == stairway_at(x, y) != NULL (js/display.js) */
+    return !!_ap.display.stairway_at(x, y);
 }
 // C ref: dig.c buried_ball_to_freedom().
 async function ap_buried_ball_to_freedom() {
@@ -3579,13 +3683,13 @@ export async function use_lamp(obj) {
         }
     } else {
         if (lamp) { /* lamp or lantern */
-            A.invent.check_unpaid ? A.invent.check_unpaid(obj) : void 0;
+            await (await import('./shk.js')).check_unpaid(obj);
             await A.display.pline(`${await ap_Shk_Your(obj)}${lamp} is now on.`);
         } else { /* candle(s) */
             await A.display.pline(`${s_suffix(await ap_Yname2(obj))} flame${
                 plur(obj.quan)} ${A.invent.otense(obj, 'burn')}${
                 A.vision.Blind() ? '.' : ' brightly!'}`);
-            if (obj.unpaid && A.shkroom.costly_spot(u.ux, u.uy)
+            if (obj.unpaid && A.shk.costly_spot(u.ux, u.uy)
                 && obj.age === 20 * (objects[obj.otyp]?.oc_cost | 0)) {
                 const ithem = (Number(obj.quan) > 1) ? 'them' : 'it';
                 await A.display.pline(`"You burn ${ithem}, you bought ${ithem}!"`);
@@ -3634,7 +3738,7 @@ export async function light_cocktail(optr) {
     await A.display.pline(`You light ${await ap_shk_your(obj)}potion.${
         A.vision.Blind() ? '' : '  It gives off a dim light.'}`);
 
-    if (obj.unpaid && A.shkroom.costly_spot(u.ux, u.uy)) {
+    if (obj.unpaid && A.shk.costly_spot(u.ux, u.uy)) {
         /* Normally we shouldn't both partially and fully charge for an item,
            but (Yendorian Fuel) Taxes are inevitable... */
         await A.display.pline(`"That's in addition to the cost of the potion, of course."`);
@@ -3749,7 +3853,7 @@ export async function use_tinning_kit(obj) {
                 await A.display.pline(`"${you_buy_it}"`);
             A.invent.useup(corpse);
         } else {
-            if (A.shkroom.costly_spot(corpse.ox, corpse.oy) && !corpse.no_charge)
+            if (A.shk.costly_spot(corpse.ox, corpse.oy) && !corpse.no_charge)
                 await A.display.pline(`"${you_buy_it}"`);
             A.invent.useupf(corpse, 1);
         }
@@ -3790,35 +3894,35 @@ export async function use_unicorn_horn(optr) {
 
         switch (Math.trunc(rn2(13) / 2)) { /* case 6 is half as likely */
         case 0:
-            ap_make_sick(ap_prop('Sick') ? Math.trunc(ap_prop('Sick') / 3) + 1
+            await ap_make_sick(ap_prop('Sick') ? Math.trunc(ap_prop('Sick') / 3) + 1
                                          : rn1(A.attrib.acurr_eff(A_CON_A), 20),
                          A.invent.xname(obj), true, SICK_NONVOMITABLE_A);
             break;
         case 1:
-            ap_make_blinded(ap_prop('Blinded') + lcount, true);
+            await ap_make_blinded((game.u?.blinded | 0) + lcount, true);
             break;
         case 2:
             if (!ap_Confusion())
                 await A.display.pline(`You suddenly feel ${
                     ap_Hallucination() ? 'trippy' : 'confused'}.`);
-            ap_make_confused(ap_prop('Confusion') + lcount, true);
+            await ap_make_confused(ap_prop('Confusion') + lcount, true);
             break;
         case 3:
-            ap_make_stunned(ap_prop('Stun') + lcount, true);
+            await ap_make_stunned(ap_prop('Stun') + lcount, true);
             break;
         case 4:
             if (ap_prop('Vomiting'))
-                ap_vomit();
+                await ap_vomit();
             else
-                ap_make_vomiting(14, false);
+                await ap_make_vomiting(14, false);
             break;
         case 5:
-            ap_make_hallucinated(ap_prop('Hallucination') + lcount, true, 0);
+            await ap_make_hallucinated(ap_prop('Hallucination') + lcount, true, 0);
             break;
         case 6:
             if (Deaf()) /* make_deaf() won't give feedback when already deaf */
                 await A.display.pline(nothing_seems_to_happen);
-            ap_make_deaf(ap_prop('Deaf') + lcount, true);
+            await ap_make_deaf(ap_prop('Deaf') + lcount, true);
             break;
         default:
             break;
@@ -3835,7 +3939,7 @@ export async function use_unicorn_horn(optr) {
 
     /* collect property troubles */
     if (ap_prop('Sick')) prop_trouble(P_SICK);
-    if (ap_prop('Blinded') > ap_ucreamed()
+    if ((game.u?.blinded | 0) > ap_ucreamed()
         && !(game.u.uswallow && false /* AT_ENGL/AD_BLND engulfer */))
         prop_trouble(P_BLINDED);
     if (ap_prop('Hallucination')) prop_trouble(P_HALLUC);
@@ -3864,13 +3968,13 @@ export async function use_unicorn_horn(optr) {
     /* fix [some of] the troubles */
     for (let val = 0; val < val_limit; val++) {
         switch (trouble_list[val]) {
-        case P_SICK: ap_make_sick(0, null, true, SICK_ALL_A); did_prop++; break;
-        case P_BLINDED: ap_make_blinded(ap_ucreamed(), true); did_prop++; break;
-        case P_HALLUC: ap_make_hallucinated(0, true, 0); did_prop++; break;
-        case P_VOMITING: ap_make_vomiting(0, true); did_prop++; break;
-        case P_CONFUSION: ap_make_confused(0, true); did_prop++; break;
-        case P_STUNNED: ap_make_stunned(0, true); did_prop++; break;
-        case P_DEAF: ap_make_deaf(0, true); did_prop++; break;
+        case P_SICK: await ap_make_sick(0, null, true, SICK_ALL_A); did_prop++; break;
+        case P_BLINDED: await ap_make_blinded(ap_ucreamed(), true); did_prop++; break;
+        case P_HALLUC: await ap_make_hallucinated(0, true, 0); did_prop++; break;
+        case P_VOMITING: await ap_make_vomiting(0, true); did_prop++; break;
+        case P_CONFUSION: await ap_make_confused(0, true); did_prop++; break;
+        case P_STUNNED: await ap_make_stunned(0, true); did_prop++; break;
+        case P_DEAF: await ap_make_deaf(0, true); did_prop++; break;
         default: break;
         }
     }
@@ -3905,7 +4009,7 @@ export async function fig_transform(arg, timeout) {
                                     A.makemon.monster_by_pmidx(figurine.corpsenm));
     if (!okay_spot || !figurine_location_checks(figurine, cc, true)) {
         /* reset the timer to try again later */
-        ap_start_timer(rnd(5000), TIMER_OBJECT_A, FIG_TRANSFORM_A, figurine);
+        await ap_start_timer(rnd(5000), TIMER_OBJECT_A, FIG_TRANSFORM_A, figurine);
         return;
     }
 
@@ -4017,9 +4121,8 @@ export function figurine_location_checks(obj, cc, quietly) {
     return true;
 }
 
-// C ref: teleport.c may_passwall(x, y) — DEFERRED (no port); C's answer is
-// FALSE outside a wall you may phase through, which is the common case here.
-function ap_may_passwall(_x, _y) { return false; }
+// C ref: hack.c may_passwall(x, y) — js/monmove.js owns the port.
+function ap_may_passwall(x, y) { return _ap.monmove.may_passwall(x, y); }
 // C ref: invent.c sobj_at(BOULDER, x, y) — js/invent.js exports sobj_at(), but
 // this sync call site cannot await; scan the level's object list directly.
 function ap_sobj_at_boulder(x, y) {
@@ -4060,7 +4163,7 @@ export async function use_figurine(optr) {
                           : 'set the figurine on the ground')} and it ${
         A.vision.Blind() ? 'supposedly ' : ''}transforms.`);
     await ap_make_familiar(obj, cc.x, cc.y, false);
-    ap_stop_timer(FIG_TRANSFORM_A, obj);
+    await ap_stop_timer(FIG_TRANSFORM_A, obj);
     A.invent.useup(obj);
     if (A.vision.Blind())
         A.display.map_invisible(cc.x, cc.y);
@@ -4250,7 +4353,7 @@ export async function use_trap(otmp) {
     }
     await A.display.pline(`You begin setting ${await ap_shk_your(otmp)}${
         A.trap.trapname ? A.trap.trapname(ttyp, false) : 'trap'}.`);
-    ap_use_unpaid_trapobj(otmp, u.ux, u.uy);
+    await ap_use_unpaid_trapobj(otmp, u.ux, u.uy);
     ap_set_occupation(set_trap, occutext, 0);
 }
 
@@ -4280,7 +4383,7 @@ export async function set_trap() {
         ttmp.madeby_u = 1;
         await ap_feeltrap(ttmp);
         if (A.shkroom.in_rooms(u.ux, u.uy, SHOPBASE_A)?.length)
-            ap_add_damage(u.ux, u.uy, 0); /* schedule removal */
+            await ap_add_damage(u.ux, u.uy, 0); /* schedule removal */
         if (!game.trapinfo.force_bungle)
             await A.display.pline(`You finish arming ${
                 ap_the(A.trap.trapname ? A.trap.trapname(ttyp, false) : 'trap')}.`);
@@ -4402,13 +4505,13 @@ export async function use_royal_jelly(optr) {
                     A.invent.otense(eobj, 'quiver')} feebly.`);
             else
                 await A.display.pline(nothing_seems_to_happen);
-            ap_kill_egg(eobj);
+            await ap_kill_egg(eobj);
             useup_jelly = true;
         } else {
             const was_timed = eobj.timed;
             if (eobj.corpsenm !== /*NON_PM*/ -1) {
                 if (!eobj.timed)
-                    ap_attach_egg_hatch_timeout(eobj, 0);
+                    await ap_attach_egg_hatch_timeout(eobj, 0);
                 /* blessed royal jelly will make the hatched creature think
                    you're the parent - but has no effect if you laid the egg */
                 if (obj.blessed && !eobj.spe)
@@ -4431,12 +4534,16 @@ export async function use_royal_jelly(optr) {
     return ECMD_TIME;
 }
 
-// C ref: mkobj.c kill_egg(egg) / attach_egg_hatch_timeout(egg, when) —
-// js/mkobj.js's attach_egg_hatch_timeout() is private (and this port has no
-// timer queue), kill_egg() is unported.  attach_egg_hatch_timeout DRAWS in C
-// (rnd(150) for the hatch delay when `when` is 0); it draws nothing here.
-function ap_kill_egg(egg) { egg.corpsenm = -1; egg.timed = 0; }
-function ap_attach_egg_hatch_timeout(egg, _when) { egg.timed = 1; }
+// C ref: mkobj.c kill_egg(egg) / attach_egg_hatch_timeout(egg, when) — the
+// real ports live in js/timeout.js and js/mkobj.js.
+async function ap_kill_egg(egg) {
+    const { kill_egg } = await import('./timeout.js');
+    await kill_egg(egg);
+}
+async function ap_attach_egg_hatch_timeout(egg, when) {
+    const { attach_egg_hatch_timeout } = await import('./mkobj.js');
+    await attach_egg_hatch_timeout(egg, when);
+}
 
 // C ref: apply.c:3685 grapple_range() — the hook's reach, from the wielded
 // weapon's skill.  RNG-free.
@@ -4498,12 +4605,8 @@ export async function use_grapple(obj) {
     if (obj !== game.uwep) {
         /* "cast": grappling hook evolved from slash'em's fishing pole */
         if (await A.invent.wield_tool(obj, 'cast')) {
-            // C: cmdq_add_ec(CQ_CANNED, doapply) then cmdq_add_key(invlet), so
-            // the queued doapply re-enters with the hook wielded.  This file's
-            // reapply_after_wield() above models that pair; it is not called
-            // here because doing so would make this block reachable.
-            A.invent.cmdq_add_key(CQ_CANNED, obj.invlet);
-            return ECMD_TIME;
+            // C: cmdq_add_ec(CQ_CANNED, doapply) + cmdq_add_key(invlet)
+            return await reapply_after_wield(obj);
         }
         return ECMD_OK;
     }
@@ -4576,7 +4679,7 @@ export async function use_grapple(obj) {
         if (ap_verysmall(mtmp.data) && !rn2(4)
             && await ap_enexto(cc, u.ux, u.uy, null)) {
             if (game.flags) game.flags.confirm = false;
-            await A.uhitm.attack_checks(mtmp);
+            await A.uhitm.attack_checks(mtmp, game.uwep);
             if (game.flags) game.flags.confirm = save_confirm;
             await A.uhitm.check_caitiff(mtmp); /* despite no damage */
             await A.display.pline(`You pull in ${A.do_name.mon_nam(mtmp)}!`);
@@ -4586,7 +4689,7 @@ export async function use_grapple(obj) {
         } else if ((!ap_bigmonst(mtmp.data) && !ap_strongmonst(mtmp.data))
                    || rn2(4)) {
             if (game.flags) game.flags.confirm = false;
-            await A.uhitm.attack_checks(mtmp);
+            await A.uhitm.attack_checks(mtmp, game.uwep);
             if (game.flags) game.flags.confirm = save_confirm;
             await A.uhitm.check_caitiff(mtmp);
             await A.invent.thitmonst(mtmp, game.uwep);
@@ -4652,7 +4755,7 @@ export async function discard_broken_wand() {
     game.current_wand = 0;
     if (obj)
         A.invent.delobj(obj);
-    nomul_ap(0);
+    A.hackmod.nomul(0);
 }
 
 // C ref: apply.c:3887 broken_wand_explode(obj, dmg, expltype) — explode() draws.

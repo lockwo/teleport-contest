@@ -104,7 +104,7 @@ export async function makemaz_earth() {
     bigrm_load_map(EARTH_MAP, false);
     earth_scatter_rock();
     plane_teleport_region([69, 16, 69, 16]);
-    plane_levregion_add('portal', [0, 0, 75, 19], [65, 13, 75, 19]);
+    plane_levregion_add('air', [0, 0, 75, 19], [65, 13, 75, 19]);
     game._full_mon_gen = true;
     try {
         for (const [name, x, y, peaceful] of EARTH_MONSTERS)

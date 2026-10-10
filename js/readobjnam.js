@@ -21,10 +21,11 @@
 // Name/type resolution itself consumes no RNG; it only fixes the candidate
 // set (n / maxprob) and ordering that the single rn2(maxprob) resolves to.
 
-import { rn2, rn1 } from './rng.js';
+import { rn2, rn1, rnd } from './rng.js';
 import {
     objects,
     mksobj,
+    rnd_class,
     mkobj,
     set_corpsenm,
     weight,
@@ -68,10 +69,11 @@ import {
     strstri,
     is_poisonable,
     rnd_otyp_by_wpnskill,
-    makeplural,
-    makesingular_full,
-} from './objnam.js';
-import { monster_by_pmidx, name_to_pmidx, name_gender_hint,
+    } from './objnam.js';
+import { makesingular } from './plural.js';
+import { makeplural } from './plural.js';
+import { name_to_monplus } from './polyself.js';
+import { monster_by_pmidx, name_to_pmidx,
     pmname_of_pmidx, can_be_hatched, dead_species, mon_nocorpse,
     mon_has_cnutrit } from './makemon.js';
 import { counter_were, zombie_form } from './mon.js';
@@ -153,7 +155,7 @@ function gemBase() {
 // C ref: hack.h Luck — u.uluck + u.moreluck.
 function Luck() { return (game.u?.uluck | 0) + (game.u?.moreluck | 0); }
 // C ref: obj.h Is_box(o) / NON_PM.
-const NON_PM = -1;
+const NON_PM = -1, LOW_PM = 0;
 function Is_box(o) { return o.otyp === OT('LARGE_BOX') || o.otyp === OT('CHEST'); }
 
 // C ref: objclass.h FIRST_GLASS_GEM..LAST_GLASS_GEM — the worthless glass run.
@@ -258,9 +260,16 @@ function newData(bp) {
         zombify: false,
         oclass: 0,
         actualn: null, dn: null, un: null, name: null,
-        bp, origbp: bp,
+        bp, pfx: '', origFrozen: null,
         fruitbuf: '',
     };
+}
+
+// C advances `bp` through the input buffer; origbp (the buffer start, edited in
+// place) therefore keeps the stripped text: d.pfx + d.bp.
+function strip(d, n) {
+    d.pfx += d.bp.slice(0, n);
+    d.bp = d.bp.slice(n);
 }
 
 // readobjnam_preparse: strip leading qualifier words; returns 1 if nothing
@@ -269,9 +278,9 @@ function newData(bp) {
 function preparse(d) {
     let res = 1;
     // C ref: objnam.c:3968 `char *save_bp = 0` — the corpse/statue/figurine
-    // "of [a] " skip records where to backtrack to; modelled as the prefix text
-    // that was stepped over, re-prepended at the end.
-    let save_bp = null;
+    // "of [a] " skip records where to backtrack to; modelled as the whole
+    // remaining string at that point (later strsubst() edits apply to both).
+    let save_bp = null, save_pfx = '';
     for (;;) {
         if (!d.bp || !d.bp.length) break;
         res = 0;
@@ -285,7 +294,7 @@ function preparse(d) {
             let i = 0;
             while (i < bp.length && digit(bp[i])) i++;
             while (i < bp.length && bp[i] === ' ') i++;
-            d.bp = bp.slice(i);
+            strip(d, i);
             continue;
         } else if (bp[0] === '+' || bp[0] === '-') {
             d.spesgn = bp[0] === '+' ? 1 : -1;
@@ -294,7 +303,7 @@ function preparse(d) {
             let i = 0;
             while (i < rest.length && digit(rest[i])) i++;
             while (i < rest.length && rest[i] === ' ') i++;
-            d.bp = rest.slice(i);
+            strip(d, 1 + i);
             continue;
         } else if (strncmpi(bp, 'blessed ', 8) || strncmpi(bp, 'holy ', 5)) {
             d.blessed = 1; d.uncursed = d.iscursed = 0;
@@ -393,15 +402,15 @@ function preparse(d) {
             // C: strsubst() deletes the word from the buffer save_bp points
             // into, rather than advancing past it, so the backtracked string
             // no longer carries it.
-            if (save_bp !== null) { d.bp = strsubst(d.bp, 'female ', ''); l = 0; }
+            if (save_bp !== null) { d.bp = strsubst(d.bp, 'female ', ''); save_bp = strsubst(save_bp, 'female ', ''); l = 0; }
             else l = 7;
         } else if (strncmpi(bp, 'male ', 5)) {
             d.mgend = MALE;
-            if (save_bp !== null) { d.bp = strsubst(d.bp, 'male ', ''); l = 0; }
+            if (save_bp !== null) { d.bp = strsubst(d.bp, 'male ', ''); save_bp = strsubst(save_bp, 'male ', ''); l = 0; }
             else l = 5;
         } else if (strncmpi(bp, 'neuter ', 7)) {
             d.mgend = NEUTRAL;
-            if (save_bp !== null) { d.bp = strsubst(d.bp, 'neuter ', ''); l = 0; }
+            if (save_bp !== null) { d.bp = strsubst(d.bp, 'neuter ', ''); save_bp = strsubst(save_bp, 'neuter ', ''); l = 0; }
             else l = 7;
         } else if ((strncmpi(bp, 'corpse ', 7) || strncmpi(bp, 'statue ', 7)
                     || strncmpi(bp, 'figurine ', 9))
@@ -409,7 +418,6 @@ function preparse(d) {
             // C ref: objnam.c:4149 — the corpse/statue/figurine gender hack:
             // skip "statue of [a ]" so "statue of a female gnome ruler" can be
             // read as a female gnome ruler, then backtrack at the end.
-            save_bp = ''; /* placeholder; filled in below */
             l = strncmpi(bp, 'figurine ', 9) ? 9 : 7;
             l += 3;
             let more_l = 0;
@@ -417,13 +425,13 @@ function preparse(d) {
                 || strncmpi(bp.slice(l), 'an ', (more_l = 3))
                 || strncmpi(bp.slice(l), 'the ', (more_l = 4)))
                 l += more_l;
-            save_bp = bp.slice(0, l);
+            save_bp = bp; save_pfx = d.pfx;
         } else {
             break;
         }
-        d.bp = d.bp.slice(l);
+        strip(d, l);
     }
-    if (save_bp !== null) d.bp = save_bp + d.bp;
+    if (save_bp !== null) { d.bp = save_bp; d.pfx = save_pfx; } /* backtrack (C: bp = save_bp) */
     return res;
 }
 
@@ -527,10 +535,10 @@ function postparse1(d) {
         }
     }
     // "pair of"/"set of" prefixes
-    if (strncmpi(d.bp, 'pair of ', 8)) { d.bp = d.bp.slice(8); d.cnt *= 2; }
-    else if (strncmpi(d.bp, 'pairs of ', 9)) { d.bp = d.bp.slice(9); if (d.cnt > 1) d.cnt *= 2; }
-    else if (strncmpi(d.bp, 'set of ', 7)) d.bp = d.bp.slice(7);
-    else if (strncmpi(d.bp, 'sets of ', 8)) d.bp = d.bp.slice(8);
+    if (strncmpi(d.bp, 'pair of ', 8)) { strip(d, 8); d.cnt *= 2; }
+    else if (strncmpi(d.bp, 'pairs of ', 9)) { strip(d, 9); if (d.cnt > 1) d.cnt *= 2; }
+    else if (strncmpi(d.bp, 'set of ', 7)) strip(d, 7);
+    else if (strncmpi(d.bp, 'sets of ', 8)) strip(d, 8);
 
     // C ref: objnam.c:4337-4368 — intercept pudding globs; they're a valid
     // wish target but must not be treated like a corpse.  A count magnifies
@@ -544,7 +552,7 @@ function postparse1(d) {
             || (gp = strstri(bp, 'glob of ')) >= 0
             || (gp = strstri(bp, 'globs of ')) >= 0) {
             const monstr = gp < 0 ? bp : bp.slice(gp).slice(strstri(bp.slice(gp), ' of ') + 4);
-            let mntmp = matchMonsterPrefix(monstr).pm;
+            let mntmp = name_to_monplus(monstr).mntmp;
             /* if we didn't recognize monster type, pick a valid one at random */
             if (mntmp === NON_PM) {
                 const gray = name_to_pmidx('gray ooze');
@@ -554,6 +562,7 @@ function postparse1(d) {
                won't bump the count */
             if (d.cnt < 2 && strstri(bp, 'globs') >= 0) d.cnt = 2;
             /* canonical spelling; an invalid glob type fails object lookup */
+            d.origFrozen = d.pfx + d.bp; /* C: bp now points at globbuf, not the input buffer */
             d.bp = `glob of ${monster_by_pmidx(mntmp).name}`;
             d.mntmp = NON_PM;
             d.oclass = FOOD_CLASS;
@@ -573,78 +582,61 @@ function postparse1(d) {
                 const meat = d.bp.slice(p + 7);
                 const skip = tin_variety_txt(meat, tvariety);
                 d.tvariety = tvariety.value;
-                const match = matchMonsterPrefix(meat.slice(skip));
-                d.mntmp = match.pm;
-                d.mgend = genderForMatch(d.mgend, match.gender);
+                const match = name_to_monplus(meat.slice(skip));
+                d.mntmp = match.mntmp;
+                d.mgend = genderForMatch(d.mgend, match);
             }
             d.typ = OT('TIN');
             return 2;
         }
         if ((p = strstri(d.bp, ' of ')) >= 0) {
-            const match = matchMonsterPrefix(d.bp.slice(p + 4));
-            if (match.pm !== NON_PM) {
-                d.mntmp = match.pm;
-                d.mgend = genderForMatch(d.mgend, match.gender);
+            const match = name_to_monplus(d.bp.slice(p + 4));
+            d.mntmp = match.mntmp;
+            d.mgend = genderForMatch(d.mgend, match);
+            if (d.mntmp >= LOW_PM)
                 d.bp = d.bp.slice(0, p);
-            }
         }
     }
 
-    if (d.mntmp === NON_PM
-        && !['samurai sword', 'wizard lock', 'death wand', 'master key',
-            'ninja-to', 'magenta'].some((word) => strncmpi(d.bp, word, word.length))
-        && d.bp.length > 2) {
-        const match = matchMonsterPrefix(d.bp);
-        if (match.pm !== NON_PM) {
-            const rest = d.bp.slice(match.length);
-            let skip = 0;
-            if (rest.startsWith(' ')) skip = 1;
-            else if (/^s |^s' /i.test(rest)) skip = 2;
-            else if (/^es |^'s /i.test(rest)) skip = 3;
-            if (skip || rest.length || d.actualn || d.dn || d.un || d.oclass) {
-                d.mntmp = match.pm;
-                d.mgend = genderForMatch(d.mgend, match.gender);
-                d.bp = rest.slice(skip);
+    if (!['samurai sword', 'wizard lock', 'death wand', 'master key',
+        'ninja-to', 'magenta'].some((word) => strncmpi(d.bp, word, word.length))) {
+        if (d.mntmp < LOW_PM && d.bp.length > 2) {
+            const match = name_to_monplus(d.bp);
+            d.mntmp = match.mntmp;
+            d.mgend = genderForMatch(d.mgend, match);
+            if (d.mntmp >= LOW_PM) {
+                const obp = d.bp;
+                /* 'rest' is past the matching portion; if that was an
+                   alternate name or a rank title rather than the canonical
+                   monster name we wouldn't otherwise know how much to skip */
+                const pfx0 = d.pfx;
+                strip(d, d.bp.length - (match.rest ?? '').length);
+                const prev = obp.charAt(obp.length - d.bp.length - 1);
+                if (d.bp[0] === ' ') {
+                    strip(d, 1);
+                } else if (strncmpi(d.bp, 's ', 2)
+                           || (obp.length > d.bp.length && strncmpi(prev + d.bp, "s' ", 3))) {
+                    strip(d, 2);
+                } else if (strncmpi(d.bp, 'es ', 3) || strncmpi(d.bp, "'s ", 3)) {
+                    strip(d, 3);
+                } else if (!d.bp.length && !d.actualn && !d.dn && !d.un && !d.oclass) {
+                    /* no referent; they don't really mean a monster type */
+                    d.bp = obp; d.pfx = pfx0;
+                    d.mntmp = NON_PM;
+                }
             }
         }
     }
     return 0;
 }
 
-// C mondata.c name_to_monplus() scans mons[] for the longest full-word prefix;
-// gendered pmnames[] share their monster index but specify the corpse's sex.
-// Match the canonical names through makemon's species/name helpers, retaining
-// the already-supported alternate spelling "grey dragon" for dragon armor.
-function matchMonsterPrefix(input) {
-    let start = 0;
-    if (/^a /i.test(input)) start = 2;
-    else if (/^an /i.test(input)) start = 3;
-    else if (/^the /i.test(input)) start = 4;
-    const text = input.slice(start).replace(/^((?:baby )?)grey(?= (?:dragon|unicorn|ooze)\b)/i,
-        '$1gray').toLowerCase();
-    let best = { pm: NON_PM, gender: -1, length: 0 };
-    for (let pm = 0; monster_by_pmidx(pm); pm++) {
-        const mon = monster_by_pmidx(pm);
-        for (let sex = MALE; sex <= NEUTRAL; sex++) {
-            const name = pmname_of_pmidx(pm, sex);
-            if (!name || name.length <= best.length - start || !text.startsWith(name.toLowerCase()))
-                continue;
-            const next = text[name.length];
-            if (next !== undefined && next !== ' ' && next !== "'"
-                && !/^s(?: |$)|^es(?: |$)/i.test(text.slice(name.length)))
-                continue;
-            best = { pm, gender: name === mon.name ? NEUTRAL : name_gender_hint(name),
-                length: start + name.length };
-            if (name.length === text.length) return best;
-        }
-    }
-    return best;
-}
-
-function genderForMatch(requested, matched) {
-    // A neutral species name preserves an explicit "male"/"female" prefix;
-    // a name like "gnome queen" overrides it (mondata.c:1078-1082).
-    return requested === -1 || matched !== NEUTRAL ? matched : requested;
+// C ref: mondata.c name_to_monplus()'s gender out-parameter handling: an
+// alt_spl[] hit overwrites it, a pmnames[] hit never lets a NEUTRAL name
+// override an explicit "male"/"female" the caller already parsed.
+function genderForMatch(mgend, match) {
+    if (match.gvariant === -1) return mgend;
+    return (match.forced || mgend === -1 || match.gvariant !== NEUTRAL)
+        ? match.gvariant : mgend;
 }
 
 function dragonIndex(pm) {
@@ -667,7 +659,7 @@ const GUARDIAN_CORPSE = {
 function postparse1b(d) {
     // makesingular (C makesingular(bp)); approximate for the exercised wishes.
     if (d.bp && !strcmpi(d.bp, 'tricks') && !strcmpi(d.bp, 'clothes')) {
-        const sng = makesingular_full(d.bp);
+        const sng = makesingular(d.bp);
         if (sng !== d.bp) { if (d.cnt === 1) d.cnt = 2; d.bp = sng; }
     }
     // alternate spellings
@@ -764,7 +756,7 @@ function postparse1b(d) {
             if (strncmpi(d.bp, w, j)) {
                 d.oclass = sym;
                 if (d.oclass !== AMULET_CLASS) {
-                    d.bp = d.bp.slice(j);
+                    strip(d, j);
                     if (strncmpi(d.bp, ' of ', 4)) d.actualn = d.bp.slice(4);
                 } else {
                     d.actualn = d.bp;
@@ -820,7 +812,7 @@ function postparse2(d) {
     // C ref: objnam.c readobjnam_postparse2():4671 — "grey stone" and friends
     // must be tested before the generic " stone" suffix below.
     for (const r of o_ranges)
-        if (strcmpi(d.bp, r[0])) { d.typ = rnd_class_local(r[2], r[3]); return 2; }
+        if (strcmpi(d.bp, r[0])) { d.typ = rnd_class(r[2], r[3]); return 2; }
 
     // C ref: objnam.c:4676 — a trailing " stone"/" gem" fixes the class and
     // leaves the colour/name for the search.
@@ -872,24 +864,6 @@ function noClassSearch(bp) {
     return false;
 }
 
-// rnd_class (C objnam.c) — local copy using oc_prob; matches mkobj.js rnd_class
-// behaviour (rnd over summed probabilities).  Only reached for o_ranges exact
-// matches (not exercised by the wishlist) but provided for completeness.
-import { rnd } from './rng.js';
-function rnd_class_local(first, last) {
-    if (last > first) {
-        let sum = 0;
-        for (let i = first; i <= last; i++) sum += objects[i].oc_prob || 0;
-        if (!sum) return first + rn2(last - first + 1);
-        let x = rnd(sum);
-        for (let i = first; i <= last; i++) {
-            x -= objects[i].oc_prob || 0;
-            if (x <= 0) return i;
-        }
-    }
-    return first === last ? first : STRANGE_OBJECT;
-}
-
 // readobjnam_postparse3 (srch): rnd_otyp_by_namedesc on actualn/dn/un/origbp,
 // then artifact-by-name.  Returns code 0/1/2/6.
 function postparse3(d) {
@@ -915,7 +889,12 @@ function postparse3(d) {
     if ((t = rnd_otyp_by_namedesc(d.un, d.oclass, 1)) !== STRANGE_OBJECT) {
         d.typ = t; return 2;
     }
-    if (d.origbp !== d.actualn && (t = rnd_otyp_by_namedesc(d.origbp, d.oclass, 1)) !== STRANGE_OBJECT) {
+    /* C compares pointers: origbp is the start of the (edited in place) input
+       buffer, so it equals actualn only when nothing was stripped off the front
+       and actualn was taken from bp itself. */
+    const origbp = d.origFrozen ?? (d.pfx + d.bp);
+    if (!(d.origFrozen === null && d.pfx === '' && d.actualn === d.bp)
+        && (t = rnd_otyp_by_namedesc(origbp, d.oclass, 1)) !== STRANGE_OBJECT) {
         d.typ = t; return 2;
     }
     d.typ = 0;
@@ -968,7 +947,7 @@ function postparse3(d) {
         for (let f = game.ffruit; f; f = f.nextf) {
             /* match type: 0=none, 1=exact, 2=singular, 3=plural */
             const ftyp = fp === f.fname ? 1
-                : fp === makesingular_full(f.fname) ? 2
+                : fp === makesingular(f.fname) ? 2
                     : fp === makeplural(f.fname) ? 3 : 0;
             if (ftyp) {
                 d.typ = OT('SLIME_MOLD');
@@ -1026,7 +1005,6 @@ export function readobjnam(bp, forWish = true) {
     if (bp == null) return any(d);
 
     d.bp = mungspaces(d.bp);
-    d.origbp = d.bp;
     if (strcmpi(d.bp, 'nothing') || strcmpi(d.bp, 'nil') || strcmpi(d.bp, 'none'))
         return { kind: 'nothing' };
     d.fruitbuf = d.bp;
@@ -1104,7 +1082,7 @@ function finalize(d) {
         switch (d.typ) {
         case OT('AMULET_OF_YENDOR'): d.typ = OT('FAKE_AMULET_OF_YENDOR'); break;
         case OT('CANDELABRUM_OF_INVOCATION'):
-            d.typ = rnd_class_local(TALLOW_CANDLE, WAX_CANDLE); break;
+            d.typ = rnd_class(TALLOW_CANDLE, WAX_CANDLE); break;
         case OT('BELL_OF_OPENING'): d.typ = OT('BELL'); break;
         case OT('SPE_BOOK_OF_THE_DEAD'): d.typ = OT('SPE_BLANK_PAPER'); break;
         case OT('MAGIC_LAMP'): d.typ = OT('OIL_LAMP'); break;

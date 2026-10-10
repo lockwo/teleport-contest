@@ -21,15 +21,15 @@ import {
 } from './monattk_data.js';
 import { healmon } from './mon.js';
 import { monster_by_pmidx, pmname_of_pmidx } from './makemon.js';
-import { Mgender } from './do_name.js';
-import { mflags2_of, M2_PNAME } from './monflags_data.js';
+import { Mgender, mhe as mhe_ } from './do_name.js';
+import { mflags2_of, M2_PNAME, is_undead_flag, is_demon_flag } from './monflags_data.js';
 import { an, the_unique_pm } from './objnam.js';
 import { Fire_resistance, Cold_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
 import { monstseesu, monstunseesu } from './mondata.js';
 import { shieldeff, Hallucination_u as Hallucination } from './display.js';
 import { Blind } from './vision.js';
-import { youmonst_data_pub } from './invent.js';
-import { enexto_gpflags } from './teleport.js';
+import { youmonst_data_pub, Free_action } from './invent.js';
+import { enexto_gpflags, In_W_tower as In_W_tower_tp } from './teleport.js';
 import { minion_monster_census } from './minion.js';
 import { Invis, Displaced } from './monmove.js';
 
@@ -450,8 +450,7 @@ function cvt_adtyp_to_mseenres(adtyp) {
 
 // C ref: wizard.c:474 has_aggravatables(mon) — any live monster on the same
 // side of the Wizard's tower barrier that is still waiting for the hero or is
-// helpless.  In_W_tower is FALSE everywhere outside the tower, so the two
-// barrier tests collapse; keep them written out for when the tower lands.
+// helpless.
 function has_aggravatables(mon) {
     const in_w_tower = In_W_tower(mon.mx, mon.my);
     if (in_w_tower !== In_W_tower(game.u?.ux, game.u?.uy)) return false;
@@ -463,7 +462,7 @@ function has_aggravatables(mon) {
     }
     return false;
 }
-function In_W_tower(_x, _y) { return false; }
+function In_W_tower(x, y) { return In_W_tower_tp(x, y, game.u?.uz); }
 // C ref: mon.c helpless(mon).
 function helpless(mon) {
     return !!(mon.msleeping || !mon.mcanmove || (mon.mfrozen | 0) > 0);
@@ -536,7 +535,7 @@ export async function touch_of_death(mtmp) {
         const uhpmin = minuhpmax(3), newuhpmax = (u.uhpmax | 0) - drain;
 
         setuhpmax(Math.max(newuhpmax, uhpmin), false);
-        dmg = adjuhploss(dmg, olduhp);
+        dmg = (await import('./attrib.js')).adjuhploss(dmg, olduhp);
         await losehp_(dmg, kbuf, KILLED_BY);
     }
     if (game.killer) game.killer.name = '';  /* not killed if we get here... */
@@ -671,7 +670,7 @@ export async function mcast_disappear(mtmp) {
             await update_topl(`${Monnam(mtmp)} suddenly `
                 + `${!See_invisible() ? 'disappears' : 'becomes transparent'}!`);
         }
-        mon_set_minvis(mtmp, false);
+        await mon_set_minvis(mtmp, false);
         const { canspotmon } = await import('./uhitm.js');
         const { cansee } = await import('./vision.js');
         if (cansee(mtmp.mx, mtmp.my) && !canspotmon(mtmp)) {
@@ -853,7 +852,7 @@ export async function mcast_insects(mtmp) {
     let hallu = false;
     if (Hallucination()) {
         const { bogusmon } = await import('./do_name.js');
-        const { makeplural } = await import('./invent.js');
+        const { makeplural } = await import('./plural.js');
         what = makeplural(bogusmon().name);
         hallu = true;
     }
@@ -866,7 +865,7 @@ export async function mcast_insects(mtmp) {
             await update_topl(`You hear someone summoning ${what}.`);
         } else {
             /* unseen caster summoned seen critter(s) */
-            const { makesingular } = await import('./objnam.js');
+            const { makesingular } = await import('./plural.js');
             const arg = (newseen === oldseen + 1) ? an_(makesingular(what)) : what;
             if (!Deaf()) {
                 await update_topl(`You hear someone summoning something, and `
@@ -903,7 +902,7 @@ export async function mcast_blind_you() {
     if (!Blinded()) {
         const { eyecount, body_part } = await import('./polyself.js');
         const num_eyes = eyecount(youmonst_data());
-        const { makeplural } = await import('./invent.js');
+        const { makeplural } = await import('./plural.js');
 
         await update_topl(`Scales cover your `
             + `${(num_eyes === 1) ? body_part(EYE) : makeplural(body_part(EYE))}!`);
@@ -980,7 +979,7 @@ export async function buzzmu(mtmp, mattk) {
         if (canseemon_shared(mtmp)) {
             const { Monnam } = await import('./uhitm.js');
             await update_topl(`${Monnam(mtmp)} zaps you with a `
-                + `${flash_str_(BZ_OFS_AD(mattk.adtyp))}!`);
+                + `${(await import('./zap.js')).flash_str(BZ_OFS_AD(mattk.adtyp), false)}!`);
         }
         game.buzzer = mtmp;
         const { dobuzz } = await import('./zap.js');
@@ -1020,9 +1019,11 @@ function sgn_(n) { return (n | 0) > 0 ? 1 : (n | 0) < 0 ? -1 : 0; }
 async function cursetxt_(mtmp, undirected) { return cursetxt(mtmp, undirected); }
 
 
-// C ref: mon.c mon_set_minvis(mon, adjust).  UNPORTED; js/zap.js:910 open-codes
-// `mtmp.minvis = 1` with a comment naming it.  No RNG.
-function mon_set_minvis(mon, _adjust) { if (mon) mon.minvis = 1; }
+// C ref: worn.c:474 mon_set_minvis(mon, cursed_potion) — js/worn.js owns it.
+async function mon_set_minvis(mon, cursed_potion) {
+    const { mon_set_minvis: real } = await import('./worn.js');
+    await real(mon, cursed_potion);
+}
 
 
 // C ref: do_wear.c destroy_arm() — rn2(4)+1 hits, each on armors[rn2(idx)].
@@ -1059,18 +1060,6 @@ function monster_census_(spotted) {
 // the fix.  Returns {x,y} or null (C returns a boolean and fills *cc).
 function enexto_(xx, yy, mdat) { return enexto_gpflags(xx, yy, mdat, 0 /* GP_NO_FLAGS */); }
 
-// C ref: attrib.c:1182 adjuhploss(loss, olduhp) — UNPORTED (js/attrib.js:219
-// open-codes a comment naming it).  No RNG.
-function adjuhploss(loss, olduhp) {
-    const u = game.u;
-    if (!Upolyd()) {
-        if ((u.uhp | 0) < olduhp) loss -= (olduhp - (u.uhp | 0));
-    } else {
-        if ((u.mh | 0) < olduhp) loss -= (olduhp - (u.mh | 0));
-    }
-    return Math.max(loss, 1);
-}
-
 // C ref: uhitm.c losehp(n, knam, k_format) / end.c done(how).  Ports are
 // js/zap.js:2490 and js/end.js:374, both module-private.
 async function losehp_(n, knam, kformat) {
@@ -1097,8 +1086,6 @@ async function make_confused_(xtime, talk) {
     await make_confused(xtime, talk);
 }
 
-// C ref: zap.c flash_str(type, force_Tulip) — port is js/zap.js:1881, private.
-function flash_str_(_type) { return 'spell'; }
 
 // ---- hero property / naming shims (all RNG-free) ------------------------
 function Upolyd() { return !!game.u?.Upolyd; }
@@ -1107,7 +1094,7 @@ function Stunned_() { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.
 function Confusion_() { return HProp_('Confusion') > 0; }
 function HConfusion_() { return HProp_('Confusion'); }
 function HStun_() { return HProp_('Stun'); }
-function Free_action() { return HProp_('FreeAction') > 0 || HProp_('HFree_action') > 0 || HProp_('EFree_action') > 0; }
+// (Free_action is the shared accessor imported from invent.js.)
 function Half_spell_damage() { return HProp_('HHalf_spell_damage') > 0; }
 function Half_physical_damage() { return HProp_('HHalf_physical_damage') > 0; }
 function Shock_resistance_() { return !!game.u?.formprops?.Shock_resistance || HProp_('HShock_resistance') > 0; }
@@ -1122,20 +1109,19 @@ function invent_() { return Array.isArray(game.invent) ? game.invent : []; }
 // indices (const.js:378 / :371); js/polyself.js:451 exports the real
 // body_part(), which this defers to when a caller can await.
 
-// C ref: mondata.h nonliving(ptr) / is_demon(ptr).  Ports are js/wizcmds.js:85
-// and js/monmove.js:4322, both private.
-function nonliving_(ptr) { return !!ptr?.nonliving; }
-function is_demon_(ptr) { return !!ptr?.demon; }
-// C ref: do_name.c mhe(mtmp).  Port is js/muse.js:292, private.
-function mhe_(mtmp) { return mtmp?.female ? 'she' : 'he'; }
+// C ref: mondata.h nonliving(ptr) == is_undead || PM_MANES || is_golem ||
+// mlet == S_VORTEX; is_demon(ptr) == M2_DEMON.
+function nonliving_(ptr) {
+    return is_undead_flag(ptr) || ptr?.name === 'manes'
+        || ptr?.mcls === 55 /* S_GOLEM */ || ptr?.mcls === 22 /* S_VORTEX */;
+}
+function is_demon_(ptr) { return is_demon_flag(ptr); }
 function plur_(n) { return (n === 1) ? '' : 's'; }
 // C ref: objnam.c an(str) — port is js/objnam.js/hack.js:2633, private there.
 import { an as an_ } from './hacklib.js';
-// C ref: hacklib.c vtense(subj, verb) / upstart(str).
-function vtense_(subj, verb) {
-    const s = String(subj || '');
-    return /s$/.test(s) ? verb : `${verb}s`;
-}
+// C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js.
+import { vtense } from './plural.js';
+const vtense_ = vtense;
 function upstart_(s) {
     const str = String(s || '');
     return str ? str[0].toUpperCase() + str.slice(1) : str;

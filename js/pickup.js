@@ -16,15 +16,17 @@ import {
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     UNENCUMBERED, OVERLOADED,
     IS_ALTAR, IS_GRAVE, IS_THRONE, STONE, POOL, MOAT, WATER, LAVAPOOL,
-    MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, MENU_PARTIAL, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT } from './const.js';
+    MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, MENU_PARTIAL, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT,
+    ROT_CORPSE, REVIVE_MON, SHRINK_GLOB, OMONST } from './const.js';
 import {
     COIN_CLASS, MAXOCLASSES, CORPSE, STATUE, BOULDER, LOADSTONE, GOLD_PIECE,
     SCR_SCARE_MONSTER, WAN_CANCELLATION, AMULET_OF_YENDOR, BELL_OF_OPENING,
     LARGE_BOX, CHEST, ICE_BOX, BAG_OF_HOLDING, BAG_OF_TRICKS, HORN_OF_PLENTY,
     objects, weight, add_to_container, place_object, start_corpse_timeout,
+    stop_object_timer, has_omonst, get_mtraits, start_glob_timeout,
 } from './mkobj.js';
 import {
-    invlet_basic, inventoryArray, near_capacity, inv_weight, xname,
+    invlet_basic, inventoryArray, near_capacity, inv_weight, xname, corpse_xname, killer_xname,
     obj_doname as doname, otense, currency, merge_choice, addinv, freeinv, flush_artitouch,
     obj_here, prinv, is_worn, count_unpaid, count_buc, look_here, tally_BUCX,
     ansimpleoname, display_inventory_interactive,
@@ -33,15 +35,16 @@ import {
     GETOBJ_EXCLUDE, GETOBJ_EXCLUDE_SELECTABLE, GETOBJ_DOWNPLAY, GETOBJ_SUGGEST,
     ECMD_OK, ECMD_TIME, objects_at, pickup_menu_select, splitobj,
     obj_extract_self, obfree, makeknown, ynq, newsym_force, encumber_msg,
-    stackobj, touch_artifact, trycall, useup, useupf, hold_another_object,
+    stackobj, trycall, useup, useupf, hold_another_object,
     remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool,
     W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN, dropy,
 } from './invent.js';
+import { touch_artifact } from './artifact.js';
 import { monster_by_pmidx } from './makemon.js';
 import { mflags1_of, mflags2_of, M1_NOTAKE, M1_NOHANDS, M1_NOLIMBS,
          M2_ROCKTHROW } from './monflags_data.js';
-import { makesingular } from './objnam.js';
-import { costly_spot } from './shkroom.js';
+import { makesingular } from './plural.js';
+import { costly_spot } from './shk.js';
 import { hliquid } from './dungeon.js';
 import { can_reach_floor } from './engrave.js';
 
@@ -494,24 +497,10 @@ export function u_safe_from_fatal_corpse(obj, tests) {
    which no hero in this port takes. */
 export async function fatal_corpse_mistake(obj, remotely) {
     if (u_safe_from_fatal_corpse(obj, st_all) || remotely) return false;
-    await pline(`Touching ${corpse_article_name(obj)} is a fatal mistake.`);
-    await instapetrify(killer_name(obj));
-    return true;
-}
-function corpse_article_name(obj) {
     /* corpse_xname(obj, NULL, CXN_SINGULAR | CXN_ARTICLE) */
-    const nm = xname(obj);
-    return /^[aeiouAEIOU]/.test(nm) ? `an ${nm}` : `a ${nm}`;
-}
-function killer_name(obj) { return xname(obj); }
-/* polyself.c instapetrify() */
-async function instapetrify(str) {
-    if (game.Stone_resistance) return;
-    await pline('You turn to stone...');
-    game.killer = { format: 1 /* KILLED_BY */, name: str || '' };
-    const end = await import('./end.js');
-    const STONING = 8;
-    if (typeof end.done === 'function') await end.done(STONING);
+    await pline(`Touching ${corpse_xname(obj, null, 1 | 8)} is a fatal mistake.`);
+    await (await import('./polyself.js')).instapetrify(killer_xname(obj));
+    return true;
 }
 
 /* pickup.c:303 rider_corpse_revival() */
@@ -535,8 +524,8 @@ export async function force_decor(via_probing) {
     game._decor_fumble_override = game._decor_levitate_override = false;
     const u = ustate();
     const loc = game.level?.at?.(u.ux, u.uy);
-    if (loc && Array.isArray(game.level?.lastseentyp))
-        game.level.lastseentyp[u.ux + u.uy * 80] = loc.typ;
+    if (loc && game.lastseentyp?.[u.ux])
+        game.lastseentyp[u.ux][u.uy] = loc.typ;
 }
 
 /* pickup.c:337 deferred_decor() */
@@ -1332,7 +1321,7 @@ export async function pickup_object(obj, count, telekinesis) {
     } else if (obj.where === OBJ_MINVENT && obj.owornmask) {
         await pline(`You can't pick ${xname(obj)} up.`);
         return 0;
-    } else if (obj.oartifact && !touch_artifact(obj, game.u)) {
+    } else if (obj.oartifact && !(await touch_artifact(obj, game.u))) {
         return 0;
     } else if (obj.otyp === CORPSE) {
         if ((await fatal_corpse_mistake(obj, telekinesis))
@@ -1389,7 +1378,7 @@ export async function pick_obj(otmp) {
     obj_extract_self(otmp);
     if (fromfloor) newsym(ox, oy);
     if (robshop) {
-        const { addtobill } = await import('./shkroom.js');
+        const { addtobill } = await import('./shk.js');
         await addtobill(otmp, true, false, false);
     }
     const res = addinv(otmp);
@@ -1530,7 +1519,7 @@ export async function doloot_core() {
         if (Blind() && !game.uarmg) {
             for (const nobj of objects_at(cc.x, cc.y))
                 if (nobj.otyp === CORPSE && will_feel_cockatrice(nobj, false)) {
-                    feel_cockatrice(nobj, false);
+                    await feel_cockatrice(nobj, false);
                     return ECMD_TIME;
                 }
         }
@@ -1674,6 +1663,24 @@ export function mbag_explodes(obj, depthin) {
 /* pickup.c:2510 is_boh_item_gone() */
 export function is_boh_item_gone() { return !rn2(13); }
 
+// C ref: pickup.c:2518 do_boh_explosion() — scatter surviving contents after
+// a bag of holding explosion.  `scatter()` owns the per-object RNG sequence.
+export async function do_boh_explosion(boh, on_floor) {
+    boh.in_use = 1; /* scatter() can create bones */
+    const { scatter } = await import('./explode.js');
+    const { MAY_HIT, MAY_DESTROY } = await import('./const.js');
+    for (const otmp of [...(boh.cobj || [])]) {
+        if (is_boh_item_gone()) {
+            obj_extract_self(otmp);
+            await mbag_item_gone(!on_floor, otmp, true);
+        } else {
+            otmp.ox = game.u.ux;
+            otmp.oy = game.u.uy;
+            await scatter(game.u.ux, game.u.uy, 4, MAY_HIT | MAY_DESTROY, otmp);
+        }
+    }
+}
+
 /* pickup.c:2537 boh_loss() — a cursed magic bag tosses some of its contents. */
 export async function boh_loss(container, held) {
     if (Is_mbag(container) && container.cursed && Has_contents(container)) {
@@ -1690,17 +1697,24 @@ export async function boh_loss(container, held) {
 }
 
 /* pickup.c:2803 mbag_item_gone() — an object inside a cursed bag of holding
-   is destroyed.  stolen_value() (shk.c) is not ported, so a shop loss is 0. */
+   is destroyed, including its shop loss. */
 export async function mbag_item_gone(held, item, silent) {
-    void held;
+    let loss = 0;
     if (!silent) {
         if (item.dknown)
             await pline(`${upstart(doname(item))} ${otense(item, 'have')} vanished!`);
         else
             await pline(`You ${Blind() ? 'notice' : 'see'} ${doname(item)} disappear!`);
     }
+    if (game.u?.ushops) {
+        /* shk.c stolen_value() performs the shopkeeper/peaceful lookup itself. */
+        if ((held && item.unpaid) || (!held && costly_spot(game.u.ux, game.u.uy))) {
+            const { stolen_value } = await import('./shk.js');
+            loss = await stolen_value(item, game.u.ux, game.u.uy, true, true);
+        }
+    }
     obfree(item, null);
-    return 0;
+    return loss;
 }
 
 /* pickup.c:2781 removed_from_icebox() — a corpse taken out of an ice box
@@ -1709,9 +1723,14 @@ export function removed_from_icebox(obj) {
     if (!age_is_relative(obj)) {
         obj.age = (game.moves || 0) - (obj.age || 0);
         if (obj.otyp === CORPSE) {
-            const iceT = monster_by_pmidx(obj.corpsenm)?.name === 'ice troll';
+            const m = get_mtraits(obj, false);
+            const iceT = m ? (m.data?.name === 'ice troll')
+                           : (monster_by_pmidx(obj.corpsenm)?.name === 'ice troll');
             obj.norevive = iceT ? 0 : 1;
             start_corpse_timeout(obj);
+        } else if (obj.globby) {
+            /* non-frozen globs gradually shrink away to nothing */
+            start_glob_timeout(obj, 0);
         }
     }
 }
@@ -1778,9 +1797,24 @@ export const CONTAINER_HELP_TEXT = [
     ' q -- Quit: finished',
     ' ? -- Help: display this text.', '',
 ];
-export function explain_container_prompt(more_containers) {
+export async function explain_container_prompt(more_containers) {
     renderWindowScreen(CONTAINER_HELP_TEXT.filter(
-        (t) => more_containers || t.slice(0, 3) !== ' n '));
+        (t) => more_containers || t.slice(0, 3) !== ' n '),
+        { footer: '--More--', footerRow: 23, footerCol: 0, modal: 'textwin' });
+    const { flush_screen: flush, docrt } = await import('./display.js');
+    const { nhgetch } = await import('./input.js');
+    await flush(1);
+    game._modal_screen = 'topl';
+    /* C ref: display_nhwindow(win, FALSE) -> xwaitforspace() */
+    for (;;) {
+        const c = await nhgetch();
+        if (c === 27) game._dismissMore = 1;
+        if (c === 32 || c === 13 || c === 10 || c === 27
+            || (game._dismissMore && c === game._dismissMore)) break;
+    }
+    delete game._modal_screen;
+    game._pending_message = '';
+    await docrt();
 }
 
 /* pickup.c:2943 u_handsy() */
@@ -1854,13 +1888,26 @@ export async function in_container(obj) {
 
     if (Icebox && !age_is_relative(obj)) {
         obj.age = (game.moves || 0) - (obj.age || 0);
-        if (obj.otyp === CORPSE) obj.timed = false;   /* stop_timer(ROT_CORPSE) */
+        /* stop any corpse timeouts when frozen (pickup.c:2646) */
+        if (obj.otyp === CORPSE) {
+            if (obj.timed) {
+                stop_object_timer(obj, ROT_CORPSE);
+                stop_object_timer(obj, REVIVE_MON);
+            }
+            /* if this is the corpse of a cancelled ice troll, uncancel it */
+            if (monster_by_pmidx(obj.corpsenm)?.name === 'ice troll'
+                && has_omonst(obj))
+                OMONST(obj).mcan = 0;
+        } else if (obj.globby && obj.timed) {
+            stop_object_timer(obj, SHRINK_GLOB);
+        }
     } else if (Is_mbag(cc) && mbag_explodes(obj, 0)) {
         await pline(`As you put ${doname(obj)} inside, you are blasted by`
                     + ' a magical explosion!');
-        /* do_boh_explosion() needs scatter() (dothrow.c), which is not ported;
-           the trigger item and the bag are still consumed. */
-        obfree(obj, null);
+        if (obj.otyp === BAG_OF_HOLDING)
+            await do_boh_explosion(obj, !floor_container);
+        obfree(obj, null); /* triggering item is always destroyed */
+        await do_boh_explosion(cc, floor_container);
         if (!floor_container) useup(cc);
         else if (obj_here(cc, u.ux, u.uy)) useupf(cc, cc.quan);
         await losehp(d(6, 6), 'magical explosion');
@@ -1885,7 +1932,7 @@ export async function out_container(obj) {
     const is_gold = obj.oclass === COIN_CLASS;
     if (is_gold) obj.owt = weight(obj);
 
-    if (obj.oartifact && !touch_artifact(obj, game.u)) return 0;
+    if (obj.oartifact && !(await touch_artifact(obj, game.u))) return 0;
     if (await fatal_corpse_mistake(obj, false)) return -1;
 
     const cnt_p = { value: obj.quan };
@@ -1902,7 +1949,7 @@ export async function out_container(obj) {
 
     if (!obj.unpaid && !carried(cc) && costly_spot(cc.ox, cc.oy)) {
         obj.ox = cc.ox; obj.oy = cc.oy;
-        const { addtobill } = await import('./shkroom.js');
+        const { addtobill } = await import('./shk.js');
         await addtobill(obj, false, false, false);
     }
 
@@ -1933,7 +1980,9 @@ export async function use_container(objp, held, more_containers) {
         if (held) await pline('You must put it down to unlock.');
         return ECMD_OK;
     } else if (obj.otrapped) {
-        /* chest_trap() (trap.c) is not ported. */
+        const { chest_trap } = await import('./trap.js');
+        const { HAND } = await import('./const.js');
+        await chest_trap(obj, HAND, false);
         p.abort_looting = true;
         return ECMD_TIME;
     }
@@ -1956,12 +2005,6 @@ export async function use_container(objp, held, more_containers) {
     void more_containers;
     objp.obj = p.current_container;
     return used;
-}
-
-/* pickup.c:3230 traditional_loot() — needs query_classes()'s getlin() and
-   askchain(); query_classes() answers 'm', which is C's route to menu_loot. */
-export async function traditional_loot(put_in) {
-    return (await menu_loot(-2, put_in)) > ECMD_OK ? ECMD_TIME : ECMD_OK;
 }
 
 /* pickup.c:3265 menu_loot() */
@@ -2020,7 +2063,8 @@ export function count_target_containers(olist, excludo) {
 /* pickup.c:3954 tipcontainer_checks() */
 export async function tipcontainer_checks(box, targetbox, allowempty) {
     if (targetbox && targetbox.otyp === BAG_OF_TRICKS) {
-        /* bagotricks() (apply.c) is not ported. */
+        const { bagotricks } = await import('./makemon.js');
+        await bagotricks(targetbox, false, { count: 0 });
         return TIPCHECK_CANNOT;
     }
     if (!box.lknown) box.lknown = 1;
@@ -2029,10 +2073,69 @@ export async function tipcontainer_checks(box, targetbox, allowempty) {
         await pline(`${upstart(thesimpleoname(box))} is locked.`);
         return TIPCHECK_LOCKED;
     } else if (box.otrapped) {
-        /* chest_trap() (trap.c) is not ported. */
+        /* We're not reaching inside but are still handling the trap. */
+        const { chest_trap } = await import('./trap.js');
+        const { HAND } = await import('./const.js');
+        await chest_trap(box, HAND, false);
+        if ((game.multi || 0) >= 0) {
+            const { nomul } = await import('./hack.js');
+            nomul(-1);
+            game.multi_reason = 'tipping a container';
+            game.nomovemsg = '';
+        }
         return TIPCHECK_TRAPPED;
     } else if (box.otyp === BAG_OF_TRICKS || box.otyp === HORN_OF_PLENTY) {
-        /* bagotricks()/hornoplenty() (apply.c) are not ported. */
+        const bag = box.otyp === BAG_OF_TRICKS;
+        const old_spe = box.spe | 0;
+        let totseen = 0;
+        const { costly_spot, subfrombill, check_unpaid_usage } = await import('./shk.js');
+        const { in_rooms, shop_keeper } = await import('./shkroom.js');
+        const { get_obj_location } = await import('./light.js');
+        const maybeshopgoods = !carried(box) && costly_spot(box.ox, box.oy);
+        let ox = game.u.ux, oy = game.u.uy;
+        let res;
+
+        if (targetbox
+            && (res = await tipcontainer_checks(targetbox, null, true)) !== TIPCHECK_OK)
+            return res;
+
+        const loc = get_obj_location(box, 0);
+        if (loc) {
+            ox = loc.x; oy = loc.y;
+            box.ox = ox; box.oy = oy;
+        }
+
+        if (maybeshopgoods && !box.no_charge) {
+            const { addtobill } = await import('./shk.js');
+            await addtobill(box, false, false, true);
+        }
+        /* apply this bag/horn until empty or monster/object creation fails
+           (if the latter occurs, force the former...) */
+        const seen = { count: 0 };
+        do {
+            let made;
+            if (bag) {
+                const { bagotricks } = await import('./makemon.js');
+                seen.count = 0;
+                made = await bagotricks(box, true, seen);
+            } else {
+                const { hornoplenty } = await import('./mkobj.js');
+                made = await hornoplenty(box, true, targetbox);
+            }
+            if (!made) break;
+            totseen += seen.count | 0;
+        } while ((box.spe | 0) > 0);
+
+        if ((box.spe | 0) < old_spe) {
+            if (bag && !totseen) await pline('Nothing seems to happen.');
+            /* check_unpaid wants to see a non-zero charge count */
+            box.spe = old_spe;
+            await check_unpaid_usage(box, true);
+            box.spe = 0; /* empty */
+            box.cknown = 1;
+        }
+        if (maybeshopgoods && !box.no_charge)
+            subfrombill(box, shop_keeper(in_rooms(ox, oy, (await import("./const.js")).SHOPBASE)[0]));
         return TIPCHECK_CANNOT;
     } else if (SchroedingersBox(box)) {
         await observe_quantum_cat(box, true, true);

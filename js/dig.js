@@ -11,7 +11,7 @@ import { game, hooks } from './gstate.js';
 import { rnd, rn2, rn1 } from './rng.js';
 import { newsym, feel_location, feel_newsym, You_hear, You_feel, tmp_at, fn_cmap_to_glyph } from './display.js';
 import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, FOOT, Unaware, DISP_BEAM, DISP_END } from './const.js';
-import { unblock_point, recalc_block_point, cansee } from './vision.js';
+import { unblock_point, recalc_block_point, cansee, Blind } from './vision.js';
 import {
     IS_WALL, IS_TREE, IS_OBSTRUCTED, IS_STWALL, IS_DOOR,
     STONE, CORR, DOOR, ROOM, SCORR, SDOOR,
@@ -347,16 +347,23 @@ export async function mdig_tunnel(mtmp) {
 
     // C ref: dig.c:1424 — eats away a closed/locked door.
     if (closed_door(mtmp.mx, mtmp.my)) {
-        // sawit / shop-damage / MKoT handling not reached at these depths.
+        if ((await in_rooms_(mtmp.mx, mtmp.my, SHOPBASE)).length > 0) {
+            const { add_damage } = await import('./shk.js');
+            await add_damage(mtmp.mx, mtmp.my, 0);
+        }
+        /* sawit: closed door location is more visible than an open one */
+        const sawit = canseemon_(mtmp); /* before door state change and unblock_pt */
         const trapped = (here.doormask & D_TRAPPED) ? true : false;
         here.doormask = trapped ? D_NODOOR : D_BROKEN;
         recalc_block_point(mtmp.mx, mtmp.my); // vision
         newsym(mtmp.mx, mtmp.my);
         if (trapped) {
-            // C ref: mb_trapped() — the door-trap explosion may kill the digger.
-            // Not reached in the mines cave; kept for completeness (no RNG here
-            // that the contest exercises, so treat as "survived").
-            return false;
+            const seeit = canseemon_(mtmp);
+            const { mb_trapped } = await import('./monmove.js');
+            if (await mb_trapped(mtmp, sawit || seeit)) { /* mtmp is killed */
+                newsym(mtmp.mx, mtmp.my);
+                return true;
+            }
         } else {
             // C ref: dig.c:1442 — draft feedback.  flags.verbose is on; the
             // rn2(3) is drawn whenever the hero is not Unaware.
@@ -390,6 +397,10 @@ export async function mdig_tunnel(mtmp) {
         // draw whenever flags.verbose; You_hear() owns the Deaf gate.
         const verbose = game.flags?.verbose !== false;
         if (verbose && !rn2(5)) await You_hear('crashing rock.');
+        if ((await in_rooms_(mtmp.mx, mtmp.my, SHOPBASE)).length > 0) {
+            const { add_damage } = await import('./shk.js');
+            await add_damage(mtmp.mx, mtmp.my, 0);
+        }
         const flags = game.level?.flags || {};
         if (flags.is_maze_lev) {
             here.typ = ROOM; here.flags = 0;
@@ -727,10 +738,8 @@ export const USE_PICK_AXE_DIG = -2;
  *
  *  Helpers whose owning module keeps them file-private (set_utrap, trapname,
  *  is_flyer, ...) are duplicated below with a `C ref:` line, the way the rest
- *  of this port does it.  Where a whole subsystem is absent (impact_drop,
- *  pooleffects, activate_statue_trap) the call site keeps C's shape and
- *  carries a NOT PORTED note, so the surrounding order of draws is still
- *  right even though that one step is missing.
+ *  of this port does it.  Stateful cross-subsystem helpers delegate through
+ *  dynamic imports so their effects and RNG calls remain in one implementation.
  * ========================================================================= */
 
 import { rnl, d } from './rng.js';
@@ -814,7 +823,6 @@ function next2u(x, y) {
 function Luck() { const u = game.u || {}; return (u.uluck | 0) + (u.moreluck | 0); }
 
 const uprop = (nm) => (game.u?.uprops?.[nm] || 0);
-function Blind() { return (game.u?.blinded | 0) > 0 || !!game.ublindf || uprop('BlindedFromForm') > 0; }
 function Deaf_() { return uprop('HDeaf') > 0 || !!game.u?.Deaf; }
 function Levitation() { return !!uprop('Levitation'); }
 function Flying() { return !!uprop('Flying'); }
@@ -1009,19 +1017,18 @@ function is_organic_(otmp) {
 }
 
 
-/* ---- subsystems this port does not have -------------------------------- */
-// Each of these keeps C's call site shape so the next porter only has to fill
-// in the body; they are RNG-free stubs today, and every caller says so.
-
-// C ref: hack.c switch_terrain() — re-evaluates BLevitation/BFlying FROMOUTSIDE
-// when the hero's terrain changes.  NOT PORTED (the port has no B<prop> masks).
-function switch_terrain() { /* NOT PORTED */ }
-// C ref: dothrow.c impact_drop(missile, x, y, dlev) — objects fall through a
-// new hole to the level below.  NOT PORTED (needs add_to_migration()).
-function impact_drop(_missile, _x, _y, _dlev) { /* NOT PORTED */ }
-// C ref: hack.c spot_checks(x, y, old_typ) — only the ICE / DRAWBRIDGE_UP arm
-// does anything, and obj_ice_effects() is the whole of it here.
-async function spot_checks(x, y, old_typ) {
+/* ---- delegated subsystems ------------------------------------------------ */
+// C refs: hack.c:3178 switch_terrain(), dothrow.c:1511 impact_drop(),
+// fountain.c:709 dogushforth(), trap.c:696 water_damage_chain(), trap.c:3233
+// pooleffects(), mon.c:708 minliquid(), burn.c fire_damage_chain(), apply.c:919
+// next_to_u().  Dynamic imports avoid cycles with trap.js and fountain.js.
+async function switch_terrain() {
+    await (await import('./trap.js')).switch_terrain();
+}
+async function impact_drop(missile, x, y, dlev) {
+    await (await import('./dokick.js')).impact_drop(missile, x, y, dlev);
+}
+export async function spot_checks(x, y, old_typ) {
     const new_typ = game.level?.at(x, y)?.typ;
     let db_ice_now = false;
     if (old_typ === DRAWBRIDGE_UP)
@@ -1034,25 +1041,30 @@ async function spot_checks(x, y, old_typ) {
         }
     }
 }
-// C ref: fountain.c dogushforth(drinking) — js/fountain.js has it, unexported.
-async function dogushforth(_drinking) { /* NOT PORTED (js/fountain.js:709) */ }
+async function dogushforth(drinking) {
+    await (await import('./fountain.js')).dogushforth(drinking);
+}
 // C ref: fountain.h SET_FOUNTAIN_WARNED(x,y) — levl[x][y].blessedftn = 1 is the
 // looted flag; the port stores the fountain flags on the rm cell.
 function SET_FOUNTAIN_WARNED(x, y) {
     const lev = game.level?.at(x, y);
     if (lev) lev.warnedftn = 1;
 }
-// C ref: trap.c pooleffects(newspot) / mon.c minliquid(mon) — drowning.
-// js/mon.js has minliquid() unexported; pooleffects() is unported.
-async function pooleffects(_newspot) { return false; /* NOT PORTED */ }
-async function minliquid(_mon) { return false; /* NOT PORTED (js/mon.js:591) */ }
-// C ref: trap.c water_damage_chain / burn.c fire_damage_chain — object damage
-// when a hole floods.  js/trap.js:696 has water_damage_chain(), unexported.
-async function water_damage_chain(_list, _here) { /* NOT PORTED */ }
-async function fire_damage_chain(_list, _here, _destroy, _x, _y) { /* NOT PORTED */ }
-// C ref: dog.c next_to_u() — js/do.js:2156 has it, unexported.  A hero with no
-// leashed pet always answers TRUE, which is the only case this port reaches.
-function next_to_u() { return true; }
+async function pooleffects(newspot) {
+    return await (await import('./trap.js')).pooleffects(newspot);
+}
+async function minliquid(mon) {
+    return await (await import('./mon.js')).minliquid(mon);
+}
+async function water_damage_chain(list, here) {
+    await (await import('./trap.js')).water_damage_chain(list, here);
+}
+async function fire_damage_chain(chain, force, here, x, y) {
+    await (await import('./trap.js')).fire_damage_chain(chain, force, here, x, y);
+}
+async function next_to_u() {
+    return await (await import('./apply.js')).next_to_u();
+}
 // C ref: teleport.c teleport_pet(mtmp, force_it):786 — FALSE only for the
 // hero's steed or a pet on a CURSED leash.
 function teleport_pet(mtmp, force_it) {
@@ -1083,18 +1095,22 @@ async function migrate_to_level(mtmp, tolev, xyloc, cc) {
     const { migrate_to_level: real } = await import('./dog.js');
     await real(mtmp, tolev, xyloc, cc);
 }
-// C ref: pray.c angry_priest() / desecrate_altar(highaltar, alignment).
-// js/pray.js has both, unexported.
-async function angry_priest() { /* NOT PORTED (js/pray.js:1300) */ }
-async function desecrate_altar(_highaltar, _alignment) { /* NOT PORTED (js/pray.js:1196) */ }
+// C ref: pray.c:1501 desecrate_altar() and priest.c:877 angry_priest().
+async function angry_priest() {
+    await (await import('./pray.js')).angry_priest();
+}
+async function desecrate_altar(highaltar, alignment) {
+    await (await import('./pray.js')).desecrate_altar(highaltar, alignment);
+}
 // C ref: engrave.c u_wipe_engr(cnt).
-async function u_wipe_engr(cnt) { (await import('./engrave.js')).u_wipe_engr(cnt); }
-// C ref: shk.c angry_guards(silent) + pline.c verbalize(...) — js/shkroom.js
-// and js/pray.js keep both file-private.
-async function angry_guards(_silent) { return false; /* NOT PORTED */ }
+async function u_wipe_engr(cnt) { await (await import('./engrave.js')).u_wipe_engr(cnt); }
+// C ref: shk.c angry_guards(silent), delegated to the shared faithful port.
+async function angry_guards(silent) {
+    return await (await import('./questpgr.js')).angry_guards(silent);
+}
+// C ref: pline.c verbalize(line).
 async function verbalize(line) {
-    const { pline } = await import('./display.js');
-    await pline(`"${line}"`);
+    await (await import('./display.js')).pline(`"${line}"`);
 }
 // C ref: mon.c get_iter_mons(fn) — first monster on the level for which fn()
 // answers TRUE.  js/dokick.js:278 has it, unexported.
@@ -1125,7 +1141,7 @@ function sokoban_guilt_dig() {
 // has private copies with an extra `weight` argument; these are the C shape.
 // The rn1(60, 7) is the only draw and it happens whether or not the object is
 // on the floor.
-async function fracture_rock(obj) {
+export async function fracture_rock(obj) {
     if (!obj) return;
     /* NOT PORTED: the shop-billing head (billable/breakobj) */
     if (obj.otyp === BOULDER) sokoban_guilt_dig();
@@ -1153,9 +1169,9 @@ async function fracture_rock(obj) {
 async function break_statue(obj) {
     const trap = t_at(obj.ox, obj.oy);
     if (trap && trap.ttyp === STATUE_TRAP) {
-        /* NOT PORTED: trap.c activate_statue_trap() — it can return TRUE and
-           make break_statue() answer FALSE (the statue came to life). */
-        return false;
+        if (await (await import('./trap.js')).activate_statue_trap(
+            trap, obj.ox, obj.oy, true))
+            return false;
     }
     const { obj_extract_self } = await import('./invent.js');
     const { place_object } = await import('./mkobj.js');
@@ -1502,8 +1518,9 @@ export async function dig() {
                 else if (game.uarmf) dmg = Math.trunc((dmg + 1) / 2);
                 await pline('You hit yourself in the foot.');
                 // C: Sprintf(kbuf, "chopping off %s own %s", uhis(), body_part(FOOT))
+                const { body_part } = await import('./invent.js');
                 await losehp(dmg, `chopping off ${game.flags?.female ? 'her' : 'his'} own ${
-                    _invent.body_part(FOOT)}`, 1 /* KILLED_BY */);
+                    body_part(FOOT)}`, 1 /* KILLED_BY */);
             } else {
                 const { xname } = await import('./invent.js');
                 await pline(`You destroy the bear trap with your ${xname(uwep)}.`);
@@ -1857,8 +1874,11 @@ export async function digactualhole(x, y, madeby, ttyp) {
         }
         /* in case we're digging down while encased in solid rock which is
            blocking levitation or flight */
-        switch_terrain();
-        if (Levitation() || Flying()) wont_fall = true;
+        await switch_terrain();
+        {
+            const { Levitation_fu, Flying_fu } = await import('./trap.js');
+            if (Levitation_fu() || Flying_fu()) wont_fall = true;
+        }
 
         if (at_u) {
             if (!wont_fall) {
@@ -1886,11 +1906,14 @@ export async function digactualhole(x, y, madeby, ttyp) {
         if (at_u) {
             /* in case we're digging down while encased in solid rock which is
                blocking levitation or flight */
-            switch_terrain();
-            if (Levitation() || Flying()) wont_fall = true;
+            await switch_terrain();
+            {
+                const { Levitation_fu, Flying_fu } = await import('./trap.js');
+                if (Levitation_fu() || Flying_fu()) wont_fall = true;
+            }
 
             /* check for leashed pet that can't fall right now */
-            if (!u.ustuck && !wont_fall && !next_to_u()) {
+            if (!u.ustuck && !wont_fall && !(await next_to_u())) {
                 await pline('You are jerked back by your pet!');
                 wont_fall = true;
             }
@@ -1899,7 +1922,7 @@ export async function digactualhole(x, y, madeby, ttyp) {
                hero does NOT fall down is treated here; the case where she does
                is treated in goto_level(). */
             if (u.ustuck || wont_fall) {
-                if (newobjs.length) impact_drop(null, x, y, 0);
+                if (newobjs.length) await impact_drop(null, x, y, 0);
                 if (!same_pile(oldobjs, newobjs)) {
                     const { pickup } = await import('./pickup.js');
                     await pickup(1);
@@ -2133,7 +2156,7 @@ export async function dighole(pit_only, by_magic, cc) {
                 const otyp = (ttmp.ttyp === LANDMINE) ? LAND_MINE() : BEARTRAP();
                 /* convert trap into buried object (deletes trap) */
                 const { cnv_trap_obj } = await import('./trap.js');
-                cnv_trap_obj(otyp, 1, ttmp, true);
+                await cnv_trap_obj(otyp, 1, ttmp, true);
             }
 
             /* finally we get to make a hole */
@@ -2663,9 +2686,10 @@ export async function buried_ball_to_freedom() {
         newsym(cc.x, cc.y);
     }
 }
-// C ref: ball.c punish(sobj) — js/read.js:757 and js/pray.js:448 both keep a
-// private copy; neither is importable and neither takes an unearthed ball.
-async function punish_(_ball) { /* NOT PORTED */ }
+// C ref: ball.c punish(sobj), implemented in read.c's shared port.
+async function punish_(ball) {
+    await (await import('./read.js')).punish(ball);
+}
 
 // C ref: dig.c:1983 bury_an_obj(otmp, dealloced) — move one object from the
 // floor pile to the buried list, keeping its coordinates.  Returns the object
@@ -2740,15 +2764,14 @@ export async function bury_an_obj(otmp, dealloced) {
 // C ref: dig.c:2049 bury_objs(x, y) — bury the whole pile at <x,y>.
 export async function bury_objs(x, y) {
     const { shop_keeper, in_rooms, shkname } = await import('./shkroom.js');
-    const { costly_spot } = await import('./shk.js');
+    const { costly_spot, stolen_value } = await import('./shk.js');
     const shkp = shop_keeper((in_rooms(x, y, SHOPBASE) || [])[0]);
     const costly = !!shkp && costly_spot(x, y);
     let loss = 0;
 
     for (let otmp = floor_pile(x, y)[0], otmp2; otmp; otmp = otmp2) {
         if (costly && !game.context?.mon_moving) {
-            /* C: stolen_value(otmp, x, y, shkp->mpeaceful, TRUE) — js/invent.js
-               has a `return 0` stub for it, so nothing is billed here yet. */
+            loss += await stolen_value(otmp, x, y, !!shkp.mpeaceful, true);
             if (otmp.oclass !== COIN_CLASS) otmp.no_charge = 1;
         }
         otmp2 = await bury_an_obj(otmp, null);

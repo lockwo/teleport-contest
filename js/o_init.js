@@ -911,7 +911,7 @@ export function objdescr_is(obj, descr) {
 // port keeps the same information in the `discoveryOrder` Map above, so the two
 // helpers below materialise the C-shaped array on demand rather than keeping a
 // second copy in sync.  Neither is a C function.
-function disco_view() {
+export function disco_view() {
     const bases = getBases();
     const disco = new Array(objects.length).fill(0);
     for (const [oclass, order] of discoveryOrder) {
@@ -921,7 +921,7 @@ function disco_view() {
     }
     return disco;
 }
-function disco_commit(disco) {
+export function disco_commit(disco) {
     const bases = getBases();
     for (const oclass of [...discoveryOrder.keys()]) {
         const order = [];
@@ -1491,10 +1491,7 @@ export async function rename_disco() {
     const flags = (game.flags = game.flags || {});
     const bases = getBases();
     const disco = disco_view();
-    /* C ref: do_name.c objtyp_is_callable().  js/invent.js:709 holds the
-       faithful port but does not export it; prefer that copy the moment it is
-       exported rather than letting the fallback below drift. */
-    const objtyp_is_callable = inv.objtyp_is_callable || disco_objtyp_is_callable;
+    const { objtyp_is_callable } = inv;
 
     any = { a_int: 0 };
     tmpwin = create_nhwindow(NHW_MENU);
@@ -1740,18 +1737,6 @@ function def_char_to_objclass(sym) {
     for (let i = 1; i < MAXOCLASSES; i++)
         if (DISCO_OC_SYMS[i] === sym) return i;
     return MAXOCLASSES;
-}
-// C ref: do_name.c objtyp_is_callable() — fallback for the module-private copy
-// in js/invent.js:709 (see rename_disco()).
-function disco_objtyp_is_callable(otyp) {
-    const ocl = objects[otyp];
-    if (!ocl) return false;
-    if (ocl.oc_uname) return true;
-    if (otyp === AMULET_OF_YENDOR || otyp === AMULET_OF_YENDOR - 1)
-        return false;
-    return [AMULET_CLASS, SCROLL_CLASS, POTION_CLASS, WAND_CLASS, RING_CLASS,
-            GEM_CLASS, SPBOOK_CLASS, ARMOR_CLASS, TOOL_CLASS, VENOM_CLASS]
-        .includes(ocl.oclass) && DESCR_BY_OTYP[otyp] != null;
 }
 /* referenced by name in the comments above; keep the constants live */
 void DISCO_BYCLASS; void DISCO_SORTLOOT; void DISCO_ALPHABYCLASS;

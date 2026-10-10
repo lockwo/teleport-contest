@@ -52,21 +52,20 @@ import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
 import { YOUMONST } from './mhitm_ad.js';
 import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u } from './potion.js';
-import { youmonst_data_pub as youmonst_data } from './invent.js';
+import { youmonst_data_pub as youmonst_data, worn_extrinsic } from './invent.js';
+import { has_innate } from './exper.js';
 import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu } from './mondata.js';
 import { Monnam, mon_nam, mhis } from './do_name.js';
+import { Invis } from './monmove.js';
+import { Acid_resistance } from './explode.js';
+import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES } from './const.js';
 
 const is_hero = (m) => m === YOUMONST;
 
 // ── hero-state accessors ────────────────────────────────────────────────────
-// The port has three different spellings of the invisibility timer in use
-// (u.uinvis, uprops.HInvis, uprops.EInvis); read all of them rather than pick
-// one and silently answer FALSE for the other two.
-function Invis() {
-    const u = game.u || {};
-    return !!(u.uinvis || u.uprops?.HInvis || u.uprops?.EInvis
-              || u.uprops?.Invis);
-}
+// youprop.h Invis lives in js/monmove.js (reads every spelling plus worn
+// extrinsics/blocked words); both it and explode.js Acid_resistance are
+// hoisted function exports, so these static edges are cycle-safe.
 function See_invisible() {
     if (game.u?.formprops?.See_invisible) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
@@ -171,7 +170,9 @@ const SICK_NONVOMITABLE = 0x02;   // C ref: youprop.h
 function Sick_resistance() {
     if (game.u?.formprops?.Sick_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
-    return !!(u.uprops?.Sick_resistance || u.uprops?.Sick_res);
+    return !!(u.uprops?.Sick_resistance || u.uprops?.HSick_resistance
+              || u.uprops?.ESick_resistance || u.uprops?.Sick_res
+              || ((u.uprops_extrinsic || {})[SICK_RES] | 0) !== 0);
 }
 // potion.c make_sick() is not exported by js/potion.js; the only RNG it owns is
 // the trailing exercise(A_CON, FALSE), which fires whenever Sick ends up set.
@@ -450,17 +451,14 @@ function Cold_resistance() {
     if (game.u?.formprops?.Cold_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
     return !!(u.uprops?.Cold_resistance || u.uprops?.HCold_resistance
-              || u.uprops?.ECold_resistance);
-}
-function Acid_resistance() {
-    const u = game.u || {};
-    return !!(u.uprops?.Acid_resistance || u.uprops?.HAcid_resistance
-              || u.uprops?.EAcid_resistance || u.Acid_resistance);
+              || u.uprops?.ECold_resistance || u.Cold_resistance
+              || worn_extrinsic(COLD_RES) || has_innate('HCold_resistance'));
 }
 function Shock_resistance() {
     const u = game.u || {};
     return !!(u.uprops?.Shock_resistance || u.uprops?.HShock_resistance
               || u.uprops?.EShock_resistance || u.Shock_resistance
+              || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
               || (u.Upolyd && ((youmonst_data()?.mresists | 0) & 0x10)));
 }
 
@@ -652,8 +650,8 @@ export async function expels(mtmp, mdat, message) {
     if (um_dist(mtmp.mx, mtmp.my, 1))
         await emitU('Brrooaa...  You land hard at some distance.');
     // spoteffects(TRUE): trap/object effects on the hero's square.
-    const { spoteffects } = await import('./hack.js');
-    if (spoteffects) await spoteffects(true);
+    const { spoteffects } = await import('./trap.js');
+    await spoteffects(true);
 }
 const digests = (mdat) => (mattk_list({ data: mdat }) || []).some(
     (a) => a[0] === AT_ENGL && a[1] === AD_DGST);
@@ -698,8 +696,21 @@ export async function gulpmu(mtmp, mattk) {
     const { Monnam } = await import('./uhitm.js');
 
     if (!u.uswallow) {
-        // engulf_target() / the boulder-in-a-pit guard / failed_grab() all
-        // return before any roll; failed_grab needs an unsolid hero.
+        // C ref mhitu.c:1297-1304 — engulf_target(), the boulder-in-a-pit guard
+        // and failed_grab() all return M_ATTK_MISS before any further roll
+        // (d() above already drew).  A fog cloud flowing under a closed door
+        // sits on a closed_door() square and cannot engulf from there.
+        {
+            const { engulf_target, failed_grab } = await import('./mhitm.js');
+            if (!engulf_target(mtmp, YOUMONST)) return M_ATTK_MISS;
+            const trap = t_at(u.ux, u.uy);
+            if (trap && is_pit(trap.ttyp)) {
+                const { sobj_at } = await import('./invent.js');
+                const { BOULDER } = await import('./mkobj.js');
+                if (sobj_at(BOULDER, u.ux, u.uy)) return M_ATTK_MISS;
+            }
+            if (await failed_grab(mtmp, YOUMONST, mattk)) return M_ATTK_MISS;
+        }
         // C ref mhitu.c:1310 — the engulfer MOVES ONTO the hero's square
         // (remove_monster(omx,omy); place_monster(mtmp, u.ux, u.uy)); leaving
         // it on its old tile leaves a phantom glyph there for the whole
@@ -776,6 +787,14 @@ export async function gulpmu(mtmp, mattk) {
         // (cls() first, so the dungeon is gone); snuff_lit() over the whole
         // inventory for a non-flaming engulfer draws nothing.
         await disp.swallowed(1);
+        // C ref mhitu.c:1397-1402 -- a non-flaming engulfer snuffs every lit
+        // lamp/candle in the hero's pack ("Your oil lamp goes out!").
+        if (!['fire vortex', 'flaming sphere', 'fire elemental', 'salamander']
+                .includes(mtmp.data?.name)) {
+            const { snuff_lit } = await import('./apply.js');
+            for (const otmp2 of [...(game.invent || [])])
+                await snuff_lit(otmp2);
+        }
     }
 
     if (mtmp !== u.ustuck) return M_ATTK_MISS;
@@ -845,7 +864,6 @@ export async function gulpmu(mtmp, mattk) {
     case AD_ELEC:
         if (!mtmp.mcan && rn2(2)) {
             await emitU('The air around you crackles with electricity.');
-            const { has_innate } = await import('./exper.js');
             if (Shock_resistance() || has_innate('HShock_resistance')) {
                 const { shieldeff } = await import('./display.js');
                 await shieldeff(u.ux, u.uy);
@@ -863,7 +881,6 @@ export async function gulpmu(mtmp, mattk) {
         break;
     case AD_COLD:
         if (!mtmp.mcan && rn2(2)) {
-            const { has_innate } = await import('./exper.js');
             if (Cold_resistance() || has_innate('HCold_resistance')) {
                 const { shieldeff } = await import('./display.js');
                 await shieldeff(u.ux, u.uy);
@@ -882,7 +899,6 @@ export async function gulpmu(mtmp, mattk) {
         break;
     case AD_FIRE:
         if (!mtmp.mcan && rn2(2)) {
-            const { has_innate } = await import('./exper.js');
             if (Fire_resistance() || has_innate('HFire_resistance')) {
                 const { shieldeff } = await import('./display.js');
                 await shieldeff(u.ux, u.uy);
@@ -1227,7 +1243,8 @@ function Fire_resistance() {
     if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
     return !!(u.uprops?.Fire_resistance || u.uprops?.HFire_resistance
-              || u.uprops?.EFire_resistance);
+              || u.uprops?.EFire_resistance || u.Fire_resistance
+              || worn_extrinsic(FIRE_RES) || has_innate('HFire_resistance'));
 }
 // C ref: potion.c:107 make_stunned(xtime, talk) — messages only when `talk`.
 export async function make_stunned_u(xtime, talk) {
@@ -1918,6 +1935,27 @@ export function mhitu_ops() {
         destroy_items_hero: async (dmgtyp, dmgIn) => {
             const { destroy_items } = await import('./zap.js');
             await destroy_items(game.u, dmgtyp, dmgIn);
+        },
+        // C ref: youprop.h Fire_resistance / Cold_resistance / Shock_resistance /
+        // Acid_resistance, consulted by the hero-defender arms of
+        // mhitm_ad_fire/cold/elec/acid (uhitm.c:2574, 2656, 2716, 2757).
+        Fire_resistance: () => Fire_resistance(),
+        Cold_resistance: () => Cold_resistance(),
+        Shock_resistance: () => Shock_resistance(),
+        Acid_resistance: () => Acid_resistance(),
+        // C ref: zap.c ignite_items(gi.invent) after AD_FIRE's destroy_items.
+        ignite_items_hero: async () => {
+            const { ignite_items } = await import('./zap.js');
+            await ignite_items(game.invent || []);
+        },
+        // C ref: timeout.c burn_away_slime() at the end of AD_FIRE's hero arm.
+        burn_away_slime: async () => {
+            await (await import('./timeout.js')).burn_away_slime();
+        },
+        // C ref: polyself.c rehumanize() for a paper/straw golem hero burnt up.
+        rehumanize: async () => {
+            const { rehumanize } = await import('./polyself.js');
+            await rehumanize();
         },
         // C ref: were.c set_ulycn(which) — a monster's AD_WERE bite infecting
         // the hero.  Dynamic import: mhitu.js has no other edge to

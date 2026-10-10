@@ -385,8 +385,8 @@ export async function dump_version_info() {
         + `${hexN(nomakedefs.version_number)} `
         + `${hex8(nomakedefs.version_features & ~nomakedefs.ignored_features)} `
         + `${hexN(nomakedefs.version_sanity1)}`;
-    const { raw_print } = await import('./end.js');
-    raw_print(buf);
+    const { tty_raw_print } = await import('./wintty.js');
+    tty_raw_print(buf);
     release_runtime_info();
     return;
 }

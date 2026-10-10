@@ -267,26 +267,72 @@ const MFAST = 2;
 // hero-only in effect; the m_dowear caller passes a blanket ~0 mask).
 function blocks_invis(obj) { return obj?.otyp === MUMMY_WRAPPING; }
 
-// C ref: worn.c update_mon_extrinsics(mon, obj, on, silently).  This port does
-// not model mon->mextrinsics (mondata.js reads species mresists only), so the
-// `default:` arm that ORs res_to_mr(which) in is a no-op here; what DOES have an
-// effect is the FAST arm (worn speed boots override permspeed) and the
-// w_blocks() invisibility arm.
-export function update_mon_extrinsics(mon, obj, on) {
-    // FAST: C calls mon_adjust_speed(mon, 0, obj), which only re-derives mspeed
-    // from "is a FAST item worn"; with silently/in_mklev set it prints nothing.
-    // SPEED_BOOTS is the only ARMOR_CLASS otyp with oc_oprop == FAST.
-    let fastWorn = false;
-    for (const o of (mon.minvent || [])) {
-        if ((o.owornmask | 0) && o.otyp === SPEED_BOOTS) { fastWorn = true; break; }
-    }
-    if (fastWorn) mon.mspeed = MFAST;
-    else mon.mspeed = mon.permspeed | 0;
+// C ref: worn.c:572 altprop(o) — a worn alchemy smock confers BOTH poison and
+// acid resistance; oc_oprop supplies one, this returns the other.
+const POISON_RES_P = 6, ACID_RES_P = 7, STONE_RES_P = 8, INVIS_P = 40, FAST_P = 64;
+function altprop(o) {
+    return (objects[o.otyp]?.name === 'alchemy smock')
+        ? (POISON_RES_P + ACID_RES_P - (objects[o.otyp].oc_oprop | 0)) : 0;
+}
+// C ref: prop.h:25 res_to_mr(r) — FIRE_RES..STONE_RES map onto MR_FIRE..MR_STONE.
+function res_to_mr(r) { return (r >= 1 && r <= STONE_RES_P) ? (1 << (r - 1)) : 0; }
 
+// C ref: worn.c update_mon_extrinsics(mon, obj, on, silently) — armor being
+// worn or taken off.  mon.mextrinsics collects the MR_* bits worn gear grants;
+// mondata.js resists_* read it.  Properties with no monster effect (stealth,
+// telepathy, protection, displacement, ...) fall in the C `default:`-less arms
+// below; ANTIMAGIC/REFLECTING are tested from the worn item directly.
+const MONSTER_NO_EFFECT_PROPS = new Set([
+    12 /*ANTIMAGIC*/, 65 /*REFLECTING*/, 59 /*PROTECTION*/, 35 /*CLAIRVOYANT*/,
+    42 /*STEALTH*/, 30 /*TELEPAT*/, 48 /*LEVITATION*/, 49 /*FLYING*/,
+    50 /*WWALKING*/, 41 /*DISPLACED*/, 36 /*FUMBLING*/, 58 /*JUMPING*/]);
+export function update_mon_extrinsics(mon, obj, on) {
+    let which = objects[obj.otyp]?.oc_oprop | 0;
+    let altwhich = altprop(obj);
+    if (which || altwhich) {
+        for (;;) {
+            if (on) {
+                if (which === INVIS_P) {
+                    mon.minvis = mon.invis_blkd ? 0 : 1;
+                } else if (which === FAST_P) {
+                    mon_fast_recalc(mon);
+                } else if (!MONSTER_NO_EFFECT_PROPS.has(which)) {
+                    mon.mextrinsics = (mon.mextrinsics | 0) | res_to_mr(which);
+                }
+            } else if (which === INVIS_P) {
+                mon.minvis = mon.perminvis ? 1 : 0;
+            } else if (which === FAST_P) {
+                mon_fast_recalc(mon);
+            } else if (which >= 1 && which <= STONE_RES_P) {
+                /* keep the bit if some other worn item still confers it */
+                const other = (mon.minvent || []).some((o) =>
+                    o !== obj && (o.owornmask | 0)
+                    && ((objects[o.otyp]?.oc_oprop | 0) === which || altprop(o) === which));
+                if (!other)
+                    mon.mextrinsics = (mon.mextrinsics | 0) & ~res_to_mr(which);
+            }
+            /* worn alchemy smock confers both poison and acid resistance */
+            if (altwhich && which !== altwhich) {
+                which = altwhich;
+                altwhich = 0;
+                continue;
+            }
+            break;
+        }
+    }
     if (blocks_invis(obj)) {
         mon.invis_blkd = on ? 1 : 0;
         mon.minvis = on ? 0 : (mon.perminvis ? 1 : 0);
     }
+}
+// C ref: worn.c FAST arm -> mon_adjust_speed(mon, 0, obj): re-derive mspeed
+// from whether speed boots are worn (the only FAST armor).
+function mon_fast_recalc(mon) {
+    let fastWorn = false;
+    for (const o of (mon.minvent || [])) {
+        if ((o.owornmask | 0) && o.otyp === SPEED_BOOTS) { fastWorn = true; break; }
+    }
+    mon.mspeed = fastWorn ? MFAST : (mon.permspeed | 0);
 }
 
 // C ref: worn.c racial_exception(mon, obj) — hobbits may wear elven armor.
@@ -757,6 +803,76 @@ export function clear_bypass(objchn) {
 }
 // C ref: obj.h Has_contents(o).
 function Has_contents_worn(o) { return !!(o?.cobj && o.cobj.length); }
+const W_ARM_MASK = 0x00000001, W_WEP_MASK = 0x00000100; /* const.js W_ARM / W_WEP */
+// ─── worn.c:1377 extract_from_minvent(mon, obj, do_extrinsics, silently) ────
+// Remove an object from a monster's inventory, leaving it free (like
+// obj_extract_self) and undoing whatever worn/wielded state it carried.
+// RNG: obj_no_longer_held() draws rn2(10) for a fixed crysknife only.
+export async function extract_from_minvent(mon, obj, do_extrinsics, silently) {
+    const unwornmask = obj.owornmask | 0;
+    const { DEADMONSTER } = await import('./mon.js');
+    const { impossible } = await import('./display.js');
+
+    if (!(mon.minvent || []).includes(obj)) {
+        await impossible('extract_from_minvent called on object not in minvent');
+        return;
+    }
+    /* gold dragon scales/scale-mail are lit when worn (C: artifact_light()
+       reads owornmask & W_ARM, which light.js's hero-only copy cannot) */
+    if ((unwornmask & W_ARM_MASK) !== 0 && obj.lamplit
+        && /^gold dragon scale/.test(objects[obj.otyp]?.name || '')) {
+        const { end_burn } = await import('./timeout.js');
+        await end_burn(obj, false);
+    }
+    const { obj_extract_self } = await import('./invent.js');
+    obj_extract_self(obj);
+    obj.owornmask = 0;
+    if (unwornmask) {
+        if (!DEADMONSTER(mon) && do_extrinsics)
+            update_mon_extrinsics(mon, obj, false, silently);
+        mon.misc_worn_check = (mon.misc_worn_check | 0) & ~unwornmask;
+        /* give monster a chance to wear other equipment on its next move */
+        const { check_gear_next_turn } = await import('./mon.js');
+        check_gear_next_turn(mon);
+    }
+    const { obj_no_longer_held } = await import('./do.js');
+    await obj_no_longer_held(obj);
+    if ((unwornmask & W_WEP_MASK) || obj === mon.mw) {
+        const { mwepgone } = await import('./weapon.js');
+        await mwepgone(mon); /* unwields and sets weapon_check to NEED_WEAPON */
+    }
+}
+
+
+// ─── worn.c:1070 clear_bypasses() ──────────────────────────────────────────
+// All objects with their bypass bit set are reset to normal; only called if
+// context.bypasses is set.  Also reverts the polymorph-control marker on long
+// worms (mcorpsenm == PM_LONG_WORM).
+export function clear_bypasses() {
+    const lev = game.level;
+    clear_bypass(lev?.objects);
+    clear_bypass(Array.isArray(game.invent) ? game.invent
+        : Object.values(game.gi?.invent || {}));
+    clear_bypass(game.migrating_objs);
+    clear_bypass(lev?.buriedobjlist);
+    clear_bypass(game.billobjs);
+    clear_bypass(game.objs_deleted);
+    for (const mtmp of (lev?.monsters || [])) {
+        if (!(mtmp.mhp > 0)) continue;
+        clear_bypass(mtmp.minvent);
+        if (mtmp.data?.name === 'long worm'
+            && mtmp.mcorpsenm === mtmp.data.pmidx)
+            mtmp.mcorpsenm = -1; /* NON_PM */
+    }
+    for (const mtmp of (game.migrating_mons || []))
+        clear_bypass(mtmp.minvent);
+    for (const mtmp of (game.mydogs || []))
+        clear_bypass(mtmp.minvent);
+    const ub = game.u?.uball ?? game.uball, uc = game.u?.uchain ?? game.uchain;
+    if (ub) ub.bypass = 0;
+    if (uc) uc.bypass = 0;
+    if (game.context) game.context.bypasses = false;
+}
 
 // ─── worn.c:1119 bypass_obj(obj) ───────────────────────────────────────────
 // Mark one object as "already handled this pass" and raise the global flag

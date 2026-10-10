@@ -14,7 +14,7 @@ import { NORMAL_SPEED, A_NEUTRAL, ROOM, is_pit, MAX_CARR_CAP, WT_HUMAN,
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU, I_SPECIAL,
     IS_DOOR, IS_POOL, IS_LAVA, WATER, Is_waterlevel,
     D_CLOSED, D_LOCKED, MM_APPARXY_BYYOU, Is_rogue_level } from './const.js';
-import { Conflict, resist_conflict, m_canseeu } from './monmove.js';
+import { Conflict, resist_conflict, m_canseeu, m_in_air } from './monmove.js';
 import { mattackm } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, MON_MIGRATING } from './const.js';
 import { dochugw, initMonMoveState, m_next2u, hideunder, hides_under_pm, mon_regen,
@@ -27,7 +27,7 @@ import { is_were_flag, is_human_flag, mflags1_of, mflags2_of, mflags3_of,
     M1_NOTAKE, M1_NOHANDS, M1_AMORPHOUS, M1_HIDE, M1_CLING, M1_FLY, M1_TPORT,
     M1_BREATHLESS, M1_SWIM, M1_AMPHIBIOUS, M1_SLITHY, M2_DEMON, M3_COVETOUS, mindless,
     humanoid, is_animal, nohands,
-    strongmonst_flag, throws_rocks_flag } from './monflags_data.js';
+    strongmonst_flag, throws_rocks_flag, hates_silver, is_vampire } from './monflags_data.js';
 import { attacktype, dmgtype, AD_STCK, AT_ENGL, AT_HUGS } from './monattk_data.js';
 import { objects as OBJECTS, CORPSE, BOULDER, BELL_OF_OPENING,
     COIN_CLASS, GEM_CLASS, ROCK_CLASS, place_object, discard_minvent } from './mkobj.js';
@@ -258,69 +258,16 @@ function mcalc_round(mmove) {
     return mmove;
 }
 
-// Per-turn movement-reallocation batch (C ref: allmain.c moveloop_core —
-// `for (mtmp = fmon; mtmp; mtmp = mtmp->nmon) mtmp->movement += mcalcmove(...)`).
-// The C engine iterates the fmon chain (newest monster first), so the N
-// rn2(NORMAL_SPEED) rounding rolls are assigned to monsters in that order.
-// The JS moveloop caller (allmain.js) instead iterates game.level.monsters in
-// creation order — the exact reverse — which would hand each roll to the wrong
-// monster whenever monsters have different base speeds.  To stay faithful
-// without touching the (frozen-for-this-wave) caller, the very first
-// mcalcmove(mon, TRUE) of a reallocation batch rolls for ALL live level
-// monsters up front in fmon order and caches each result; subsequent calls in
-// the same batch just return the cached value (no extra RNG).  A batch is
-// recognised by the requesting monster already being live in level.monsters
-// and not yet served this batch.
-let _reallocServed = null; // Set of monsters served in the active batch
-let _reallocAmt = null;    // Map monster -> precomputed allotment
-let _reallocMoves = -1;    // game.moves when the active batch was rolled
-
-function _startReallocBatch() {
-    _reallocServed = new Set();
-    _reallocAmt = new Map();
-    _reallocMoves = game.moves;
-    // Roll in fmon order (newest-first) exactly as the C engine does.
-    for (const m of fmonOrder()) {
-        if (DEADMONSTER(m)) continue;
-        _reallocAmt.set(m, mcalc_round(mcalcmove_base(m)));
-    }
-}
-
 // C ref: mon.c mcalcmove(mon, m_moving)
 // Computes the monster's movement-point allotment for this turn.  When
 // `m_moving` is true it randomly rounds the per-turn speed to a multiple of
-// NORMAL_SPEED (the rn2(NORMAL_SPEED) call seen in seed8000's trace).
-export function mcalcmove(mon, m_moving, inline = false) {
+// NORMAL_SPEED (the rn2(NORMAL_SPEED) call seen in seed8000's trace).  The
+// per-turn reallocation loop in allmain.js walks the fmon chain itself, so the
+// rounding rolls are assigned to monsters in C's newest-first order; the hero's
+// riding roll (u_calc_moveamt) is a separate call.
+export function mcalcmove(mon, m_moving) {
     if (!m_moving)
         return mcalcmove_base(mon);
-
-    // C ref: allmain.c u_calc_moveamt() — a RIDING hero who moved gets
-    // moveamt = mcalcmove(u.usteed, TRUE).  This is a SEPARATE roll from the
-    // steed's per-turn reallocation-loop roll (the steed is in fmon and is
-    // rolled there too), so it must NOT be served from / re-trigger the batch
-    // cache.  `inline` forces a single fresh rn2(NORMAL_SPEED) roll.
-    if (inline)
-        return mcalc_round(mcalcmove_base(mon));
-
-    // Is this part of the per-turn reallocation over level monsters?  If the
-    // monster is a live member of the level list, serve from the fmon-ordered
-    // batch so the rounding rolls line up with the C engine's fmon traversal.
-    const list = monsterList();
-    if (mon && list.includes(mon) && !DEADMONSTER(mon)) {
-        if (!_reallocServed || _reallocServed.has(mon)
-            || _reallocMoves !== game.moves || !_reallocAmt.has(mon)) {
-            // New batch: first request ever, this monster already served once
-            // (caller wrapped to a fresh reallocation), the turn counter
-            // advanced since the last batch was rolled, or this monster wasn't
-            // part of the last batch (new monster / new session).
-            _startReallocBatch();
-        }
-        _reallocServed.add(mon);
-        return _reallocAmt.has(mon) ? _reallocAmt.get(mon)
-                                    : mcalc_round(mcalcmove_base(mon));
-    }
-
-    // Steed / off-list monster: roll inline (current behaviour preserved).
     return mcalc_round(mcalcmove_base(mon));
 }
 
@@ -418,7 +365,7 @@ async function new_were(mon) {
     newsym(mon.mx, mon.my);
     await mon_break_armor(mon, false);
     const { possibly_unwield } = await import('./weapon.js');
-    const dropped = possibly_unwield(mon, false);
+    const dropped = await possibly_unwield(mon, false);
     if (dropped) {
         const { flooreffects } = await import('./do.js');
         const { stackobj, distant_doname } = await import('./invent.js');
@@ -445,11 +392,11 @@ async function new_were(mon) {
 // PM_HUMAN_WERERAT the way C's switch covers both enum values).  Returns the
 // total summoned and how many the hero could see, plus the generic species
 // noun mhitu.c's message needs.
-export async function were_summon(ptr) {
+export async function were_summon(ptr, yours = false) {
     let total = 0, numseen = 0, genbuf = 'creature';
     // C: `if (Protection_from_shape_changers && !yours) return 0;` — yours is
     // always FALSE from summonmu(), so the ring alone blocks the whole horde.
-    if (Protection_from_shape_changers()) return { total, numseen, genbuf };
+    if (Protection_from_shape_changers() && !yours) return { total, numseen, genbuf };
     for (let i = rnd(5); i > 0; i--) {
         let typ;
         if (ptr?.name === 'wererat') {
@@ -486,7 +433,10 @@ export async function were_summon(ptr) {
             // makemon() call needs it too.
             await makemon_appears_msg(mtmp, spot.x, spot.y, 0);
         }
-        // C: `if (yours && mtmp) tamedog(...)` — yours is always FALSE here.
+        if (yours && mtmp) {
+            const { tamedog } = await import('./dothrow.js');
+            await tamedog(mtmp, null, false);
+        }
     }
     return { total, numseen, genbuf };
 }
@@ -687,12 +637,8 @@ function breathless(ptr) { return (mflags1_of(ptr) & M1_BREATHLESS) !== 0; }
 // two draws every turn an eel spends out of water, plus a flee timer that
 // steers its m_move for the next two turns.
 //
-// DEFERRED, and drawing NOTHING rather than half of C's stream (a partial guard
-// would trade one wrong stream for another):
-//   * iron golem in a pool (mon.c:994): rn2(5), then d(2,6) rust damage and
-//     possibly mondied().
-//   * the inpool arm (mon.c:1064): mondied() leaves a cadaver, so it needs
-//     make_corpse's corpse_chance rolls in the right order.
+// The iron-golem and drowning arms are ported below as well (mondied via
+// mhitm.js mondied_mm).
 // The INLAVA arm (mon.c:1010) IS ported below: a non-clinging, non-lava-liking
 // monster standing in lava is destroyed the next time movemon hands it a move,
 // and for the ordinary case (no M1_TPORT, no MR_FIRE) that costs ZERO RNG —
@@ -719,7 +665,11 @@ export async function minliquid(mtmp) {
     const waterwall = (typ === WATER);
     const inpool = IS_POOL(typ) && (!airborne || Is_waterlevel(game.u?.uz));
     const inlava = IS_LAVA(typ) && !airborne;
-
+    /* C ref: mon.c:980 flying/levitation keeps the steed out of the liquid */
+    if (mtmp === game.u?.usteed && !waterwall) {
+        const { Flying_fu, Levitation_fu } = await import('./trap.js');
+        if (Flying_fu() || Levitation_fu()) return 0;
+    }
     // C ref: mon.c:987 — gremlins split before the drowning/fleeing checks.
     if (ptr?.name === 'gremlin' && (inpool || typ === FOUNTAIN) && rn2(3)) {
         const { split_mon } = await import('./potion.js');
@@ -786,7 +736,7 @@ export async function minliquid(mtmp) {
                 }
             }
             if (!DEADMONSTER(mtmp)) {
-                if (!(is_flyer_m(ptr) || mtmp.mlevitating)) {
+                if (!m_in_air(mtmp)) {
                     const { fire_damage_chain } = await import('./trap.js');
                     await fire_damage_chain(mtmp.minvent, false, false, mtmp.mx, mtmp.my);
                     const { rloc, RLOC_MSG } = await import('./teleport.js');
@@ -825,7 +775,7 @@ export async function minliquid(mtmp) {
                 await killed(mtmp, { nomsg: true });
             }
             if (!DEADMONSTER(mtmp)) {
-                if (!(is_flyer_m(ptr) || mtmp.mlevitating)) {
+                if (!m_in_air(mtmp)) {
                     const { water_damage_chain } = await import('./trap.js');
                     await water_damage_chain(mtmp.minvent, false);
                     const { rloc, RLOC_NOMSG } = await import('./teleport.js');
@@ -1028,10 +978,9 @@ export async function hide_monst(mon) {
 
 // ---------------------------------------------------------------------------
 // C ref: worn.c:756 m_dowear() / worn.c:799 m_dowear_type() — monster armour.
-// Was entirely unported, which is not cosmetic: worn.c:956 charges a monster
-// `mfrozen = m_delay` turns for putting a piece on, and movemon_singlemon()
-// returns before dochug() while that runs, so C spends whole monster turns
-// with ZERO RNG draws that this port used to spend moving and attacking.
+// worn.c:956 charges a monster `mfrozen = m_delay` turns for putting a piece
+// on, and movemon_singlemon() returns before dochug() while that runs, so C
+// spends whole monster turns with ZERO RNG draws.
 //
 // Creation-time equipment is initialized synchronously by worn.js from
 // makemon.js, after m_initinv().  This movement-loop implementation retains
@@ -1508,10 +1457,14 @@ async function movemon_singlemon(mtmp) {
     // those rolls already happened in the makemon RNG stream at create time.
     initMonMoveState(mtmp);
 
-    // C ref: mon.c:1254 — `if (minliquid(mtmp)) return FALSE;`, run for every
-    // monster on every move (see minliquid() above for what is and isn't
-    // ported).  The clear_bypasses()/clear_splitobjs() that sit between the
-    // movement deduction and this call are obj-flag bookkeeping and draw nothing.
+    // C ref: mon.c:1263-1265 — reset polymorph bypass/split-object markers
+    // before the monster's liquid check.
+    if (game.context?.bypasses) {
+        const { clear_bypasses } = await import('./worn.js');
+        clear_bypasses();
+    }
+    const { clear_splitobjs } = await import('./invent.js');
+    clear_splitobjs();
     if (await minliquid(mtmp)) return false;
 
     // C ref: mon.c:1269-1284 — after gaining or losing equipment a monster
@@ -1530,9 +1483,7 @@ async function movemon_singlemon(mtmp) {
     }
 
     //
-    // C ref: mon.c:1300-1313 — the Conflict branch (fightm()).  Nothing in this
-    // port grants Conflict, so m_canseeu/fightm is unreachable; fightm() would
-    // draw (it picks a victim and runs a full mattackm).
+    // C ref: mon.c:1305-1319 — the Conflict branch is below (fightm()).
 
     // C ref: mon.c movemon_singlemon() — hiding monsters (mimics, piercers,
     // lurker above / trapper; M1_HIDE) get a chance to re-hide BEFORE dochug.
@@ -1577,18 +1528,40 @@ async function movemon_singlemon(mtmp) {
 
 // C ref: mhitm.c:106 fightm(mtmp) — conflicted monsters fight each other.
 async function fightm(mtmp) {
+    const u = game.u;
     if (resist_conflict(mtmp)) return 0;
-    // (u.ustuck / engulfing_u cases not modelled)
+    if (u.ustuck === mtmp) {
+        /* perhaps we're holding it... */
+        const { itsstuck } = await import('./monmove.js');
+        if (await itsstuck(mtmp)) return 0;
+    }
+    const has_u_swallowed = !!engulfing_u(mtmp);
     for (const mon of fmonOrder()) {
         if (mon !== mtmp && !DEADMONSTER(mon)) {
             if (monnear(mtmp, mon.mx, mon.my)) {
+                if (!u.uswallow && mtmp === u.ustuck) {
+                    if (!rn2(4)) {
+                        set_ustuck(null);
+                        await pline(`${Monnam(mtmp)} releases you!`);
+                    } else
+                        break;
+                }
+                /* mtmp can be killed */
+                game.bhitpos = { x: mon.mx, y: mon.my };
+                game.notonhead = false;
                 const result = await mattackm(mtmp, mon);
-                if (result & M_ATTK_AGR_DIED) return 1;
+                if (result & M_ATTK_AGR_DIED) return 1; /* mtmp died */
+                /* if mtmp has the hero swallowed, lie and say there was no
+                   attack (this allows mtmp to digest the hero) */
+                if (has_u_swallowed) return 0;
+                /* allow attacked monsters a chance to hit back */
                 if ((result & (M_ATTK_HIT | M_ATTK_DEF_DIED)) === M_ATTK_HIT
                     && rn2(4) && (mon.movement | 0) > rn2(NORMAL_SPEED)) {
                     if ((mon.movement | 0) > NORMAL_SPEED) mon.movement -= NORMAL_SPEED;
                     else mon.movement = 0;
-                    await mattackm(mon, mtmp);
+                    game.bhitpos = { x: mtmp.mx, y: mtmp.my };
+                    game.notonhead = false;
+                    await mattackm(mon, mtmp); /* return attack */
                 }
                 return (result & M_ATTK_HIT) ? 1 : 0;
             }
@@ -1629,16 +1602,26 @@ async function movemon_pass() {
 // `do { monscanmove = await movemon(); } while (monscanmove)`, exactly as in
 // allmain.c:211-215.  An older comment here claimed they were unimplemented.)
 //
-// Not modelled from C's movemon(): clear_bypasses()/clear_splitobjs() (obj
-// bypass flags aren't tracked), dmonsfree() (dead monsters stay in
-// game.level.monsters and are skipped by DEADMONSTER instead of being
-// unlinked), and the `u.utotype -> deferred_goto()` level-change handoff.
-// None of them draws; dmonsfree's absence is visible only to code that counts
-// list entries.
+// dmonsfree() is not modelled: dead monsters stay in game.level.monsters and
+// are skipped by DEADMONSTER instead of being unlinked.
 export async function movemon() {
-    const somebody_can_move = await movemon_pass();
+    let somebody_can_move = await movemon_pass();
+    // C ref: mon.c:1334-1337 — clear any final bypass/split markers.
+    if (game.context?.bypasses) {
+        const { clear_bypasses } = await import('./worn.js');
+        clear_bypasses();
+    }
+    const { clear_splitobjs } = await import('./invent.js');
+    clear_splitobjs();
     // C ref: mon.c:1332-1333 — in case a monster moved with a light source.
     if (any_light_source()) game.vision_full_recalc = 1;
+    /* a monster may have levteleported player -dlc */
+    if (game.u?.utotype) {
+        const { deferred_goto } = await import('./do.js');
+        await deferred_goto();
+        /* changed levels, so these monsters are dormant */
+        somebody_can_move = false;
+    }
     return somebody_can_move;
 }
 
@@ -1684,30 +1667,14 @@ export function is_vampshifter(mon) {
     return mon.cham === PM_VAMPIRE || mon.cham === PM_VAMPIRE_LEADER
         || mon.cham === PM_VLAD_THE_IMPALER;
 }
-// C ref: mondata.c:524 hates_silver(ptr).
-const S_VAMPIRE = 48, S_IMP = 9;
-function hates_silver(ptr) {
-    if (!ptr) return false;
-    if (is_were_flag(ptr)) return true;
-    if (ptr.mcls === S_VAMPIRE) return true;
-    if ((mflags2_of(ptr) & M2_DEMON) !== 0) return true;
-    if (ptr.name === 'shade') return true;
-    if (ptr.mcls === S_IMP && ptr.name !== 'tengu') return true;
-    return false;
-}
 // C ref: mondata.c:517 mon_hates_silver(mon).
 export function mon_hates_silver(mon) {
     return is_vampshifter(mon) || hates_silver(mon.data);
 }
-// C ref: monst.h resists_ston(mon) == Resists_Elem(mon, STONE_RES), i.e.
-// (mresists | mextrinsics | mintrinsics) & MR_STONE.  Monster extrinsics from
-// worn gear are not tracked on our monster record, so this reads the species
-// bit only — the two acquired sources (an amulet of ... / eating a lizard) are
-// not reachable for a floor-scanning monster in the recorded sessions.
-const MR_STONE = 0x80;
-export function resists_ston(mon) {
-    return ((mon?.data?.mresists ?? 0) & MR_STONE) !== 0;
-}
+// C ref: monst.h resists_ston(mon) — mondata.js owns the Resists_Elem family.
+import { resists_ston } from './mondata.js';
+export { resists_ston };
+
 // C ref: mon.c:1960 can_touch_safely(mtmp, otmp).
 export function can_touch_safely(mtmp, otmp) {
     const otyp = otmp.otyp;
@@ -1910,8 +1877,7 @@ function nonliving_m(ptr) {
     return is_undead_m(ptr) || monsndx(ptr) === PM('manes')
         || is_golem_m(ptr) || ptr?.mcls === S_VORTEX_C;
 }
-// C ref: mondata.h is_vampire(ptr) == (mlet == S_VAMPIRE).
-function is_vampire_m(ptr) { return ptr?.mcls === S_VAMPIRE; }
+const S_VAMPIRE = 48; /* defsym.h */
 // C ref: mondata.h unique_corpstat(ptr) == ((ptr)->geno & G_UNIQ) != 0.
 function unique_corpstat_m(ptr) { return ((ptr?.geno | 0) & G_UNIQ_M) !== 0; }
 // C ref: mondata.h is_watch(ptr) — the Minetown watch (js/fountain.js and
@@ -1919,13 +1885,6 @@ function unique_corpstat_m(ptr) { return ((ptr?.geno | 0) & G_UNIQ_M) !== 0; }
 function is_watch_m(ptr) {
     const nm = ptr?.name;
     return nm === 'watchman' || nm === 'watch captain';
-}
-// C ref: mondata.h flesh_petrifies(pm) — cockatrice, chickatrice OR Medusa.
-// (mon.js's touch_petrifies_pm above is the different macro touch_petrifies(),
-// which excludes Medusa.)
-function flesh_petrifies_pm(corpsenm) {
-    const nm = monster_by_pmidx(corpsenm)?.name;
-    return nm === 'cockatrice' || nm === 'chickatrice' || nm === 'Medusa';
 }
 // C ref: hacklib.c online2(x0,y0,x1,y1) — same row, column or diagonal.
 // js/monmove.js:652 has a private copy.
@@ -2108,9 +2067,11 @@ export async function sanity_check_single_mon(mtmp, chk_geno, msg) {
             await impossible(`non-mimic (${mptr.name}) posing as ${what} (${msg})`);
     }
     if (mtmp.mleashed) {
-        /* C ref: apply.c get_mleash(mtmp) — unported; the leash OBJECT is the
-           thing being looked for, so there is nothing to stand in for it. */
-        if (!mtmp.mtame)
+        const { get_mleash } = await import('./apply.js');
+        if (!get_mleash(mtmp))
+            await impossible(`monst ${mtmp.m_id}: leashed but no leash for`
+                + ` ${mptr.name}`);
+        else if (!mtmp.mtame)
             await impossible(`monst ${mtmp.m_id}: leashed but not tame`
                 + ` ${mptr.name}`);
     }
@@ -2272,74 +2233,6 @@ export async function meatbox(mon, otmp) {
     }
 }
 
-// ── mon.c:1656 meatcorpse() ─────────────────────────────────────────────────
-// 0 = nothing eaten, 1 = ate a corpse, 2 = died.
-export async function meatcorpse(mtmp) {
-    const original_ptr = mtmp.data;
-    const x = mtmp.mx, y = mtmp.my;
-
-    /* if a pet, eating is handled separately, in dog.c */
-    if (mtmp.mtame)
-        return 0;
-
-    const { sobj_at, nxtobj, splitobj, distant_doname } = await import('./invent.js');
-    const { vegan } = await import('./eat.js');
-
-    /* skips past any globs */
-    for (let otmp = sobj_at(CORPSE, x, y); otmp;
-         /* won't get back here if otmp is split or gets used up */
-         otmp = nxtobj(otmp, CORPSE, true)) {
-
-        const corpsepm = monster_by_pmidx(otmp.corpsenm);
-        /* skip veggy corpses even when omnivorous, and harmful ones */
-        if (vegan(corpsepm)
-            || (flesh_petrifies_pm(otmp.corpsenm) && !resists_ston(mtmp)))
-            continue;
-        if (is_rider_pm(otmp.corpsenm)) {
-            /* C ref: mon.c:1679 revive_corpse(otmp) — unported; it makemon's
-               the Rider back onto the map, so it DRAWS.  C `break`s on a
-               successful revival and `continue`s on failure, and both arms
-               newsym() first. */
-            newsym(x, y);
-            continue;
-        }
-
-        if ((otmp.quan | 0) > 1)
-            otmp = splitobj(otmp, 1);
-
-        if (cansee(x, y) && canseemon_shared(mtmp)) {
-            /* C calls distant_name() for its side effects even when the result
-               won't be printed */
-            const otmpname = distant_doname(otmp, false);
-            if (game.flags?.verbose)
-                await pline(`${Monnam(mtmp)} eats ${otmpname}!`);
-        } else if (game.flags?.verbose) {
-            await update_topl('You hear a masticating sound.');
-        }
-
-        /* C ref: mon.c:1709 m_consume_obj(mtmp, otmp).  The port's copy is
-           js/monmove.js:4749 and is module-private, so THIS is the one call
-           site that has to be filled in before meatcorpse() may be wired up.
-           It draws (delobj -> obj_resists rn2(100), plus grow_up/newcham when
-           the meal polymorphs the eater), so faking it here would hand a
-           future hookup a different stream than C's. */
-        await m_consume_obj_unported(mtmp, otmp);
-
-        /* in case it polymorphed or died */
-        const ptr = mtmp.data;
-        if (ptr !== original_ptr)
-            return !ptr ? 2 : 1;
-
-        /* engulf & devour is instant, so meating is not set */
-        if (mtmp.minvis)
-            newsym(x, y);
-
-        return 1;
-    }
-    return 0;
-}
-/* See the comment at its call site: deliberately does nothing. */
-async function m_consume_obj_unported(_mtmp, _otmp) { /* js/monmove.js:4749 */ }
 
 // ── mon.c:1726 mon_give_prop() ──────────────────────────────────────────────
 // Grant a monster an intrinsic resistance.  No RNG: should_givit()'s die roll
@@ -2519,8 +2412,10 @@ export async function replmon(mtmp, mtmp2) {
         set_ustuck(mtmp2);
     if (game.u?.usteed === mtmp)
         game.u.usteed = mtmp2;
-    /* C ref: shk.c replshk(mtmp, mtmp2) — unported; it repoints ESHK's bill
-       and customer back-pointers at the new struct. */
+    if (mtmp2.isshk) {
+        const { replshk } = await import('./shk.js');
+        replshk(mtmp, mtmp2);
+    }
 
     /* discard the old monster */
     dealloc_monst(mtmp);
@@ -2637,9 +2532,10 @@ export async function m_detach(mtmp, mptr, due_to_death) {
     const fmon = game.level?.monsters;
     const fmonIndex = fmon?.indexOf(mtmp) ?? -1;
 
-    /* C ref: apply.c m_unleash(mtmp, FALSE) — unported; it also drops the
-       leash object and prints "Your leash falls slack." */
-    if (mtmp.mleashed) mtmp.mleashed = 0;
+    if (mtmp.mleashed) {
+        const { m_unleash } = await import('./apply.js');
+        await m_unleash(mtmp, false);
+    }
 
     const { emits_light, del_light_source, LS_MONSTER } = await import('./light.js');
     if (mx > 0 && emits_light(mptr))
@@ -2662,9 +2558,22 @@ export async function m_detach(mtmp, mptr, due_to_death) {
     /* foodead() feedback is skipped for mongone(): saving bones or a wizard
        mode genocide of "*" removes special monsters without killing them */
     if (due_to_death) {
-        /* C ref: quest.c nemdead()/leaddead() plus mon.c stinky_nemesis() and
-           nemesis_stinks() — none ported; they set quest_status bits and, for
-           three roles, fill the nemesis's square with noxious gas. */
+        /* C ref: mon.c:2765-2776 — the hero's quest nemesis / any quest leader
+           dying updates quest_status (and the nemesis of three roles leaves a
+           cloud of noxious gas). */
+        const { msound_of, MS_NEMESIS, MS_LEADER } = await import('./monflags_data.js');
+        if (msound_of(mptr) === MS_NEMESIS) {
+            const Q = await import('./questpgr.js');
+            await Q.nemdead();
+            /* The Archeologist, Caveman, and Priest quest texts describe
+               the nemesis's body creating noxious fumes/gas when killed. */
+            if (Q.stinky_nemesis(mtmp))
+                await Q.nemesis_stinks(mx, my);
+        }
+        if (msound_of(mptr) === MS_LEADER) {
+            const Q = await import('./questpgr.js');
+            Q.leaddead();
+        }
         const { relobj } = await import('./uhitm.js');
         /* drop mtmp->minvent onto the map and issue newsym(mx,my) */
         await relobj(mtmp, mx, my);
@@ -2789,8 +2698,8 @@ export async function lifesaved_monster(mtmp) {
         mtmp.mcanmove = 1;
         mtmp.mfrozen = 0;
         if (mtmp.mtame && !mtmp.isminion) {
-            /* C ref: dog.c wary_dog(mtmp, !surviver) — unported; it rebuilds
-               the pet's edog fields and DRAWS while doing so. */
+            const { wary_dog } = await import('./dog.js');
+            await wary_dog(mtmp, !surviver);
         }
         set_mon_min_mhpmax(mtmp, 10); /* mhpmax = max(m_lev+1, 10) */
         mtmp.mhp = mtmp.mhpmax;
@@ -3093,7 +3002,7 @@ export async function vamp_stone(mtmp) {
             return false; /* didn't petrify */
         }
     } else if (ismnum(mtmp.cham)
-               && ((monster_by_pmidx(mtmp.cham)?.mresists | 0) & MR_STONE)) {
+               && ((monster_by_pmidx(mtmp.cham)?.mresists | 0) & 0x80 /* MR_STONE */)) {
         /* sandestins are stoning-immune, so stoning damage reverts them to
            their innate shape rather than making a statue */
         mtmp.mcanmove = 1;
@@ -3200,8 +3109,8 @@ async function migrate_mon_local(mtmp, dest, xyloc) {
      */
     if (mtmp.mx) {
         await unstuck(mtmp);
-        /* C ref: mon.c:3858 mdrop_special_objs(mtmp) — unported; it drops the
-           Amulet and the invocation items so they can't leave the level. */
+        const { mdrop_special_objs } = await import('./steal.js');
+        await mdrop_special_objs(mtmp);
     }
     // C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
     // js/dog.js:530, js/dig.js:1097 and js/save.js:287 keep the same private
@@ -3243,7 +3152,15 @@ export async function mnexto(mtmp, rlocflags) {
         await deal_with_overcrowding(mtmp);
         return;
     }
-    /* [wizard-mode 'montelecontrol' option not modelled] */
+    /* wizard-mode player can choose destination by setting 'montelecontrol'
+       option; enexto()'s value for 'mm' will be the default */
+    if (game.iflags?.mon_telecontrol) {
+        const { control_mon_tele } = await import('./teleport.js');
+        const savemm = { x: mm.x, y: mm.y };
+        if (!(await control_mon_tele(mtmp, mm, rlocflags, false))) {
+            mm.x = savemm.x; mm.y = savemm.y;
+        }
+    }
     await rloc_to_core(mtmp, mm.x, mm.y, rlocflags);
 }
 
@@ -3258,20 +3175,24 @@ export async function mnearto(mtmp, x, y, move_other, rlocflags) {
     if (mtmp.mx === x && mtmp.my === y && m_at(x, y) === mtmp)
         return res;
 
+    let othermon_idx = -1;
     if (move_other && (othermon = m_at(x, y)) != null) {
         /* take othermon off the map; it might come straight back, but for the
-           moment it is leaving */
+           moment it is leaving.  This port's level.monsters array is both the
+           fmon chain and the map, so remember othermon's chain slot: C's
+           remove_monster()/place_monster() never reorder fmon. */
+        othermon_idx = (game.level?.monsters || []).indexOf(othermon);
         await mon_leaving_level(othermon);
         othermon.mx = 0; othermon.my = 0; /* 'othermon' is not on the map */
         othermon.mstate = (othermon.mstate | 0) | MON_OFFMAP;
     }
 
     let newx = x, newy = y;
-    const { goodpos, rloc_to_core } = await import('./teleport.js');
+    const { goodpos, rloc_to_core, enexto_gpflags } = await import('./teleport.js');
     if (!goodpos(newx, newy, mtmp, 0)) {
         /* real trouble if enexto ever fails: migrating_mons that need placing
            cause no end of problems */
-        const mm = enexto_spawn(newx, newy, mtmp.data);
+        const mm = enexto_gpflags(newx, newy, mtmp.data, 0); /* C enexto() */
         if (!mm || !isok(mm.x, mm.y)) {
             if (othermon) {
                 /* othermon's mx,my were zeroed above, so a bare `return 0`
@@ -3294,6 +3215,15 @@ export async function mnearto(mtmp, x, y, move_other, rlocflags) {
         /* 'move_other'==FALSE this time: fail rather than recurse */
         if (!await mnearto(othermon, x, y, false, rlocflags))
             await deal_with_overcrowding(othermon);
+        else if (othermon_idx >= 0 && game.level?.monsters) {
+            /* C place_monster(): back on the map, same fmon position */
+            const list = game.level.monsters;
+            const at = list.indexOf(othermon);
+            if (at >= 0 && at !== othermon_idx) {
+                list.splice(at, 1);
+                list.splice(Math.min(othermon_idx, list.length), 0, othermon);
+            }
+        }
     }
 
     return res;
@@ -3330,7 +3260,7 @@ export async function qst_guardians_respond() {
         }
     }
     if (got_mad && !Hallucination_mon()) {
-        const { makeplural } = await import('./invent.js');
+        const { makeplural } = await import('./plural.js');
         let who = monster_by_pmidx(q_guardian_idx)?.name || 'guardian';
         if (got_mad > 1) who = makeplural(who);
         await pline(`The ${who} ${got_mad > 1 ? 'appear' : 'appears'}`
@@ -3619,7 +3549,7 @@ export function isspecmon(mon) {
 // ── mon.c:5015 valid_vampshiftform() ────────────────────────────────────────
 // Used for hero polyself handling.
 export function valid_vampshiftform(base, form) {
-    if (base >= LOW_PM && is_vampire_m(monster_by_pmidx(base))) {
+    if (base >= LOW_PM && is_vampire(monster_by_pmidx(base))) {
         if (form === PM('vampire bat') || form === PM('fog cloud')
             || (form === PM('wolf') && base !== PM_VAMPIRE))
             return true;
@@ -3788,11 +3718,11 @@ export async function kill_eggs(obj_list) {
     for (const otmp of (obj_list || [])) {
         if (otmp.otyp === EGG) {
             if (dead_species(otmp.corpsenm, true)) {
-                /* C ref: timeout.c kill_egg(otmp) — unported; it stops the
-                   hatch timer and marks the egg dead.  No RNG.  (C's own note:
-                   this could be caught at hatch time instead of searching every
-                   objlist.) */
-                otmp.corpsenm = NON_PM;
+                /* C ref: mon.c:5622 kill_egg(otmp) — stop the hatch timer.
+                   (C's own note: this could be caught at hatch time instead
+                   of searching every objlist.) */
+                const { kill_egg } = await import('./timeout.js');
+                await kill_egg(otmp);
             }
         } else if (Has_contents(otmp)) {
             await kill_eggs(otmp.cobj);

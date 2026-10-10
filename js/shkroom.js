@@ -6,6 +6,7 @@
 // state, not just display: without it a shopkeeper picks a different square.
 
 import { game } from './gstate.js';
+import { roomAt } from './roomat.js';
 import { s_suffix } from './hacklib.js';
 import { pline, update_topl, Hallucination_u } from './display.js';
 import { SHKNAME_POOL } from './shknam.js';
@@ -14,7 +15,9 @@ import { Hello } from './role.js';
 import { rn2, rnd } from './rng.js';
 import { newomid } from './mkobj.js';
 import { get_cost, get_pricing_units, contained_cost, contained_gold,
-         bill_box_content, costly_gold, picked_container, is_unpaid } from './shk.js';
+         bill_box_content, costly_gold, picked_container, is_unpaid, inhishop,
+         inside_shop, rile_shk, rouse_shk, hot_pursuit, rob_shop, call_kops,
+         pacify_shk, muteshk, Deaf, verbalize } from './shk.js';
 import { makemon, monster_by_pmidx, enexto_spawn, name_to_pmidx } from './makemon.js';
 import { builds_up, room_discovered } from './dungeon.js';
 import { record_price_quote } from './o_init.js';
@@ -45,20 +48,6 @@ export function Stealth() {
 
 const IS_SHOP = (rt) => rt >= SHOPBASE;
 
-// C ref: decl.c `struct mkroom svr.rooms[(MAXNROFROOMS + 1) * 2]` with
-// `gs.subrooms = &svr.rooms[MAXNROFROOMS + 1]` — rooms and SUBrooms share one
-// array, so C's `svr.rooms[rno - ROOMOFFSET]` resolves a subroom's roomno too.
-// This port keeps them in two arrays; without the second lookup every roomno
-// belonging to a subroom (Mine Town's temple, its shops) resolved to nothing,
-// so in_rooms(x, y, TEMPLE) answered "no temple here" and the priest never
-// took pri_move()'s mill-around-the-altar branch (seed0014 step 669).
-function roomAt(rno) {
-    const idx = rno - ROOMOFFSET;
-    if (idx < 0) return null;
-    if (idx > MAXNROFROOMS)
-        return (game.level?.subrooms || [])[idx - (MAXNROFROOMS + 1)] || null;
-    return game.level?.rooms?.[idx] || null;
-}
 function rtypeOf(rno) { return roomAt(rno)?.rtype ?? 0; }
 
 // C ref: hack.c check_special_room():3737-3764 — the one-time special-room
@@ -142,21 +131,7 @@ export function shop_keeper(rno) {
     return shkp;
 }
 
-// C ref: shk.c inhishop(shkp).
-function inhishop(shkp) {
-    const loc = game.level?.at(shkp.mx, shkp.my);
-    const rmno = loc?.roomno ?? 0;
-    return rmno !== 0 && rmno === shkp.eshk?.shoproom;
-}
 
-// C ref: shk.c inside_shop(x, y) — strictly inside, i.e. not on the boundary.
-function inside_shop(x, y) {
-    const loc = game.level?.at(x, y);
-    if (!loc) return false;
-    const rno = loc.roomno ?? NO_ROOM;
-    if (rno < ROOMOFFSET || loc.edge) return false;
-    return IS_SHOP(rtypeOf(rno));
-}
 
 // C ref: shknam.c shkname() — the personal name with its prefix character
 // stripped ('+'/'-'/'|'/'_' encode gender in the shknms[] tables).
@@ -203,7 +178,7 @@ function move_update(newlev) {
 }
 
 // C ref: shk.c u_left_shop(leavestring, newlev).
-async function u_left_shop(leavestring, _newlev) {
+export async function u_left_shop(leavestring, _newlev) {
     const u = game.u;
     const loc = game.level?.at(u.ux, u.uy);
     const loc0 = game.level?.at(u.ux0 ?? u.ux, u.uy0 ?? u.uy);
@@ -224,129 +199,6 @@ async function u_left_shop(leavestring, _newlev) {
         await call_kops(shkp, !_newlev && !!loc0b?.edge);
 }
 
-// C ref: shk.c addupbill(shkp) — sum of price * bquan over the bill.
-function addupbill(shkp) {
-    let total = 0;
-    const eshk = shkp.eshk;
-    for (let ct = 0; ct < (eshk.billct || 0); ct++)
-        total += (eshk.bill[ct].price || 0) * (eshk.bill[ct].bquan || 0);
-    return total;
-}
-
-// C ref: shk.c setpaid(shkp) — clear every unpaid flag this shk owns and reset
-// the bill.  The billobjs chain (used-up items) is not modelled.
-function setpaid(shkp) {
-    // C ref: shk.c clear_unpaid_obj()/clear_no_charge_obj() recurse into
-    // container contents, so a stolen sack's gems stop being "unpaid" too.
-    const clear = (list, noCharge) => {
-        for (const obj of (list || [])) {
-            if (!obj) continue;
-            if (obj.cobj?.length) clear(obj.cobj, noCharge);
-            obj.unpaid = 0;
-            if (noCharge) obj.no_charge = 0;
-        }
-    };
-    clear(game.invent, false);
-    clear(game.level?.objects, true);
-    for (const mon of (game.level?.monsters || [])) clear(mon?.minvent, false);
-    if (shkp) {
-        shkp.eshk.billct = 0;
-        shkp.eshk.bill = [];
-        shkp.eshk.credit = 0;
-        shkp.eshk.debit = 0;
-        shkp.eshk.loan = 0;
-    }
-}
-
-// C ref: shk.c rouse_shk(shkp, verbosely) — greed-induced recovery.  No RNG.
-function rouse_shk(shkp, _verbosely) {
-    if (shkp.msleeping || shkp.mfrozen || !shkp.mcanmove) {
-        shkp.msleeping = 0;
-        shkp.mfrozen = 0;
-        shkp.mcanmove = 1;
-    }
-}
-
-// C ref: shk.c rile_shk(shkp) — anger the shk and apply the 4/3 surcharge to
-// every entry already on the bill (matching get_cost()'s separate surcharge).
-function rile_shk(shkp) {
-    shkp.mpeaceful = 0;
-    const eshk = shkp.eshk;
-    if (!eshk.surcharge) {
-        eshk.surcharge = 1;
-        for (let ct = 0; ct < (eshk.billct || 0); ct++)
-            eshk.bill[ct].price += Math.trunc((eshk.bill[ct].price + 2) / 3);
-    }
-}
-
-// C ref: shk.c hot_pursuit(shkp) — the shk now follows the hero between levels
-// and nothing on this level is "no charge" any more.
-function hot_pursuit(shkp) {
-    if (!shkp.isshk) return;
-    rile_shk(shkp);
-    shkp.eshk.customer = game.plname;
-    shkp.eshk.following = 1;
-    for (const obj of (game.level?.objects || [])) if (obj) obj.no_charge = 0;
-}
-
-// C ref: shk.c rob_shop(shkp) — settle-or-steal when the hero leaves.  Returns
-// TRUE when an actual robbery happened (which is what summons the Kops).  No RNG.
-async function rob_shop(shkp) {
-    const eshk = shkp.eshk;
-    rouse_shk(shkp, true);
-    let total = addupbill(shkp) + (eshk.debit || 0);
-    const { currency } = await import('./invent.js');
-    if ((eshk.credit || 0) >= total) {
-        await update_topl(`Your credit of ${eshk.credit} ${
-            currency(eshk.credit)} is used to cover your shopping bill.`);
-        total = 0;
-    } else {
-        await update_topl('You escaped the shop without paying!');
-        total -= (eshk.credit || 0);
-    }
-    setpaid(shkp);
-    if (!total) return false;
-
-    eshk.robbed = (eshk.robbed || 0) + total;
-    await update_topl(`You stole ${total} ${currency(total)} worth of merchandise.`);
-    const { livelog_printf, LL_ACHIEVE } = await import('./livelog.js');
-    livelog_printf(LL_ACHIEVE, `stole ${total} ${currency(total)} worth of merchandise from ${
-        s_suffix(shkname(shkp))} ${shtypes[eshk.shoptype - SHOPBASE]?.name || 'store'}`);
-
-    // C: stealing is unlawful for everyone but a Rogue.
-    if (game.urole?.mnum !== PM_ROGUE) {
-        const { adjalign } = await import('./attrib.js');
-        adjalign(-Math.sign(game.u?.ualign?.type || 0));
-    }
-    hot_pursuit(shkp);
-    return true;
-}
-
-// C ref: mon.c angry_guards(silent) — wake and anger every peaceful watchman.
-// No RNG.  is_watch(ptr) is M2_WATCH; no covered level has a watch, so the ct
-// branch (and its messages) never fires, but the peaceful-flag clearing must
-// still happen because it feeds later monster moves.
-function angry_guards(silent) {
-    let ct = 0, nct = 0, sct = 0, slct = 0;
-    for (const mtmp of (game.level?.monsters || [])) {
-        if (!mtmp || mtmp.mhp <= 0) continue;
-        if (!is_watch_mon(mtmp) || !mtmp.mpeaceful) continue;
-        ct++;
-        if (mtmp.msleeping || mtmp.mfrozen) {
-            slct++;
-            mtmp.msleeping = 0; mtmp.mfrozen = 0;
-        }
-        mtmp.mpeaceful = 0;
-    }
-    void nct; void sct; void silent;
-    return ct > 0;
-}
-
-// C ref: mondata.h is_watch(ptr) — M2_WATCH.
-function is_watch_mon(mtmp) {
-    const nm = mtmp?.data?.name || '';
-    return nm === 'watchman' || nm === 'watch captain';
-}
 
 // C wizard.c choose_stairs: covetous retreat and guardian deployment prefer
 // the requested direction, then a ladder, branch stairs, or the opposite direction.
@@ -371,73 +223,6 @@ export function choose_stairs(dir) {
     return stway ? { x: stway.sx, y: stway.sy } : null;
 }
 
-// C ref: shk.c makekops(mm) — the Kop swarm.  k_cnt[0] = depth + rnd(5) (the
-// ONLY RNG this function draws directly); the other three ranks are derived.
-// enexto() WRITES BACK into mm, so each placement walks the swarm's origin
-// forward — dropping that makes every Kop spawn from the same square and the
-// enexto stream diverge immediately.
-function makekops(mm) {
-    const k_mndx = [KEYSTONE_KOP, KOP_SERGEANT, KOP_LIEUTENANT, KOP_KAPTAIN];
-    let cnt = Math.abs(depth_of_level(game.u?.uz)) + rnd(5);
-    const k_cnt = [cnt, Math.trunc(cnt / 3) + 1, Math.trunc(cnt / 6),
-                   Math.trunc(cnt / 9)];
-
-    for (let k = 0; k < 4; k++) {
-        cnt = k_cnt[k];
-        if (cnt === 0) break;
-        const ptr = monster_by_pmidx(k_mndx[k]);
-        if (!ptr) continue;
-        if (mvitals_gone(k_mndx[k])) continue;
-        while (cnt--) {
-            const spot = enexto_spawn(mm.x, mm.y, ptr);
-            if (spot) {
-                mm.x = spot.x; mm.y = spot.y;
-                makemon(ptr, mm.x, mm.y, MM_NOMSG);
-            }
-        }
-    }
-}
-
-// C ref: monflag.h:211 G_GONE == G_GENOD | G_EXTINCT == 0x02 | 0x01.  Nothing in
-// the covered sessions genocides a Kop, but the check gates the whole rank in C.
-// The old mask was 0x30, and mvflags only ever holds 0x01/0x02/0x08
-// (MV_KNOWS_EGG), so this predicate was unconditionally false.
-function mvitals_gone(mndx) {
-    const mv = game.mvitals?.[mndx];
-    return !!(mv && (mv.mvflags & G_GONE));
-}
-
-// C ref: shk.c call_kops(shkp, nearshop) — the alarm and the two swarms.  The
-// only RNG is inside makekops().
-async function call_kops(shkp, nearshop) {
-    if (!shkp) return;
-    const u = game.u;
-    if (!u?.Deaf) await update_topl('An alarm sounds!');
-
-    const nokops = mvitals_gone(KEYSTONE_KOP) && mvitals_gone(KOP_SERGEANT)
-        && mvitals_gone(KOP_LIEUTENANT) && mvitals_gone(KOP_KAPTAIN);
-    if (!angry_guards(!!u?.Deaf) && nokops) {
-        if (game.flags?.verbose !== false && !u?.Deaf)
-            await update_topl('But no one seems to respond to it.');
-        return;
-    }
-    if (nokops) return;
-
-    const st = choose_stairs(true);
-    if (nearshop) {
-        // "Stepped out" of the doorway: one swarm around the hero.
-        if (game.flags?.verbose !== false)
-            await update_topl('The Keystone Kops appear!');
-        makekops({ x: u.ux, y: u.uy });
-        return;
-    }
-    if (game.flags?.verbose !== false)
-        await update_topl('The Keystone Kops are after you!');
-    // Swarm near the down staircase (hinders return to level), then near the
-    // shopkeeper (hinders return to the shop).
-    if (st) makekops({ x: st.x, y: st.y });
-    makekops({ x: shkp.mx, y: shkp.my });
-}
 
 // C ref: shk.c u_entered_shop(enterstring).
 async function u_entered_shop(enterstring) {
@@ -463,24 +248,37 @@ async function u_entered_shop(enterstring) {
         eshk.visitct = 0;
         eshk.following = 0;
         eshk.customer = game.plname;
-        // pacify_shk(): clears anger/surcharge; no RNG.
-        shkp.mpeaceful = 1;
-        eshk.surcharge = 0;
+        // C ref: shk.c:794 pacify_shk(shkp, TRUE), including bill surcharge.
+        pacify_shk(shkp, true);
     }
     if (eshk.following) return; /* no dialog */
 
     const rt = rtypeOf(enterstring[0]);
     const shopname = shtypes[rt - SHOPBASE]?.name || 'store';
     if (!shkp.mpeaceful) {
-        await update_topl(`"So, ${game.plname}, you dare return to ${
-            s_suffix(shkname(shkp))} ${shopname}?!"`);
+        if (!Deaf() && !muteshk(shkp)) {
+            await verbalize(`So, ${game.plname}, you dare return to ${
+                s_suffix(shkname(shkp))} ${shopname}?!`);
+        } else {
+            const angrytexts = ['quite upset', 'ticked off', 'furious'];
+            const state = angrytexts[rn2(angrytexts.length)];
+            await update_topl(`${shkname(shkp)} seems ${state} over your return to ${
+                s_suffix(shkname(shkp))} ${shopname}!`);
+        }
     } else if (eshk.surcharge) {
-        await update_topl(`"Back again, ${game.plname}?  I've got my eye on you."`);
+        if (!Deaf() && !muteshk(shkp))
+            await verbalize(`Back again, ${game.plname}?  I've got my eye on you.`);
+        else
+            await update_topl(`The atmosphere at ${s_suffix(shkname(shkp))} ${
+                shopname} seems unwelcoming.`);
     } else if (eshk.robbed) {
         await update_topl(`${shkname(shkp)} mutters imprecations against shoplifters.`);
+    } else if (!Deaf() && !muteshk(shkp)) {
+        await verbalize(`${Hello(game.urole?.mnum, shkp)}, ${game.plname}!  Welcome${
+            eshk.visitct++ ? ' again' : ''} to ${s_suffix(shkname(shkp))} ${shopname}!`);
     } else {
-        await update_topl(`"${Hello(game.urole?.mnum, shkp)}, ${game.plname}!  Welcome${
-            eshk.visitct++ ? ' again' : ''} to ${s_suffix(shkname(shkp))} ${shopname}!"`);
+        await update_topl(`You enter ${s_suffix(shkname(shkp))} ${shopname}${
+            eshk.visitct++ ? ' again' : ''}!`);
     }
 
     // C ref: shk.c — a hero who stopped in the doorway carrying a digging tool
@@ -661,213 +459,3 @@ export async function check_special_room(newlev) {
 }
 
 
-// ── shop pricing + billing (C ref: shk.c) ────────────────────────────────────
-//
-// Picking an item up inside a shop puts it on the shk's bill: that is where the
-// "For you, <honorific>; only N zorkmids for this <item>." quote — and its
-// rn2(4) honorific draw, the only RNG in the whole path — comes from, and it is
-// what makes doname() append "(unpaid, N zorkmids)".  addtobill() was a `{}`
-// stub in invent.js, so a whole shop visit drew no RNG and printed none of it.
-
-// objects.h object classes billable()/addtobill() still need directly; the
-// rest of shk.c's pricing constants now live with getprice()/get_cost() in
-// js/shk.js (this file imports those functions instead of re-pricing).
-const FOOD_CLASS = 7, COIN_CLASS = 12;
-const BILLSZ = 200;               // shk.h
-const PM_ELF_RACE = 1, PM_ROGUE = 8;
-// makemon.js pmidx for the four Kop ranks (C's k_mndx[]).
-const KEYSTONE_KOP = 179, KOP_SERGEANT = 180, KOP_LIEUTENANT = 181,
-      KOP_KAPTAIN = 182;
-const MM_NOMSG = 0x00020000; // hack.h — no 'suddenly appears' message
-
-// C ref: shk.c inside_shop(x, y) — the shop's room number, 0 if not inside one.
-// (The boolean inside_shop() above is this !== 0.)
-function inside_shop_rno(x, y) {
-    const loc = game.level?.at(x, y);
-    if (!loc) return 0;
-    const rno = loc.roomno ?? NO_ROOM;
-    if (rno < ROOMOFFSET || loc.edge) return 0;
-    return IS_SHOP(rtypeOf(rno)) ? rno : 0;
-}
-
-// C ref: shk.c costly_spot(x, y) — is (x,y) shop floor whose keeper is home?
-// The shk's own square (eshk->shk) is free: goods there aren't charged for.
-export function costly_spot(x, y) {
-    if (!game.level?.flags?.has_shop) return false;
-    const shkp = shop_keeper(in_rooms(x, y, SHOPBASE)[0]);
-    if (!shkp || !inhishop(shkp)) return false;
-    const eshk = shkp.eshk;
-    return !!inside_shop_rno(x, y)
-        && !(x === eshk.shk?.x && y === eshk.shk?.y);
-}
-
-// C ref: shk.c onbill(obj, shkp, silent) — obj's entry on shkp's bill, if any.
-function onbill(obj, shkp) {
-    const eshk = shkp?.eshk;
-    if (!eshk?.bill) return null;
-    for (let ct = 0; ct < (eshk.billct || 0); ct++)
-        if (eshk.bill[ct]?.bo_id === obj.o_id) return eshk.bill[ct];
-    return null;
-}
-
-// C ref: shk.c billable(&shkp, obj, roomno, reset_nocharge) — the shk who owns
-// obj, or null when nobody can charge for it.
-function billable(shkp, obj, roomno, reset_nocharge) {
-    if (!shkp) {
-        if (!roomno) return null;
-        shkp = shop_keeper(roomno);
-        if (!shkp || !inhishop(shkp)) return null;
-    }
-    // C: something already eaten (or thrown away earlier) isn't billable.
-    if (onbill(obj, shkp) || (obj.oclass === FOOD_CLASS && obj.oeaten)) return null;
-    if (obj.no_charge) {
-        // C keeps a no_charge CONTAINER billable when its contents are not;
-        // bill_box_content() is not ported, so a bare no_charge item is free.
-        if (reset_nocharge && obj.oclass !== COIN_CLASS) obj.no_charge = 0;
-        return null;
-    }
-    return shkp;
-}
-
-// C ref: shk.c add_one_tobill(obj, dummy, shkp) — append the bill entry and
-// flag the object unpaid.  No RNG.
-function add_one_tobill(obj, dummy, shkp) {
-    const eshk = shkp.eshk;
-    if (!eshk.bill) { eshk.bill = []; eshk.billct = 0; }
-    if (!billable(shkp, obj, game.u.ushops?.[0], true)) return;
-    if ((eshk.billct || 0) >= BILLSZ) return;
-    const bp = {
-        bo_id: obj.o_id,
-        bquan: obj.quan || 1,
-        useup: !!dummy,
-        price: get_cost(obj, shkp),
-    };
-    if (obj.globby) {
-        // C ref: shk.c:3352 — for globs, the amount charged for quan 1
-        // depends on owt; remember that weight for future re-pricing.
-        bp.price *= get_pricing_units(obj);
-        newomid(obj);
-        if (obj.oextra) obj.oextra.omid = obj.owt;
-    }
-    eshk.bill[eshk.billct] = bp;
-    eshk.billct++;
-    obj.unpaid = 1;
-    // C ref: shk.c:3362 — the bill price is remembered per object TYPE for the
-    // discoveries list's " {buy N}" suffix.
-    record_price_quote(obj.otyp, bp.price, true);
-}
-
-// C ref: shk.c append_honorific(buf) — rn2(SIZE(honored) - 1) picks among the
-// FIRST FOUR entries; u.uevent.udemigod shifts the window to entries 1..4.
-function append_honorific() {
-    const honored = ['good', 'honored', 'most gracious', 'esteemed',
-                     'most renowned and sacred'];
-    let buf = honored[rn2(honored.length - 1) + (game.u?.uevent?.udemigod ? 1 : 0)];
-    // The vampire polyform arm needs youmonst.data; no covered hero is polymorphed.
-    if ((game.urace?.mnum ?? 0) === PM_ELF_RACE)
-        buf += game.flags?.female ? ' hiril' : ' hir';
-    else buf += game.flags?.female ? ' lady' : ' sir';
-    return buf;
-}
-
-// C ref: shk.c addtobill() — bill the top object and every charged content
-// before quoting their combined price; contained gold creates a separate debt.
-export async function addtobill(obj, ininv, dummy, silent) {
-    const shkp = billable(null, obj, game.u.ushops?.[0], true);
-    if (!shkp) return;
-    if (obj.oclass === COIN_CLASS) {
-        await costly_gold(obj.ox, obj.oy, obj.quan, silent);
-        return;
-    }
-    if ((shkp.eshk.billct || 0) >= BILLSZ) {
-        if (!silent) await update_topl('You got that for free!');
-        return;
-    }
-
-    const container = !!obj.cobj?.length;
-    let ltmp = obj.no_charge ? 0 : get_cost(obj, shkp);
-    if (obj.globby) ltmp *= get_pricing_units(obj);
-    if (obj.no_charge && !container) {
-        obj.no_charge = 0;
-        return;
-    }
-    let contentscount = false;
-    if (container) {
-        const cltmp = contained_cost(obj, shkp, 0, false, false);
-        const gltmp = contained_gold(obj, true);
-        if (ltmp) add_one_tobill(obj, dummy, shkp);
-        if (cltmp) bill_box_content(obj, ininv, dummy, shkp);
-        picked_container(obj);
-        ltmp += cltmp;
-        if (gltmp) {
-            await costly_gold(obj.ox, obj.oy, gltmp, silent);
-            if (!ltmp) return;
-        }
-        obj.no_charge = 0;
-        contentscount = obj.cobj.some(is_unpaid);
-    } else {
-        add_one_tobill(obj, dummy, shkp);
-    }
-    if (silent) return;
-
-    const { xname, currency } = await import('./invent.js');
-    const save_quan = obj.quan;
-    if (!ltmp) {
-        await update_topl(`${Shknam(shkp)} has no interest in the ${xname(obj)}.`);
-        return;
-    }
-    if (!ininv) {
-        await update_topl(`The ${xname(obj)} will cost you ${ltmp} ${
-            currency(ltmp)}${save_quan > 1 ? ' each' : ''}.`);
-        return;
-    }
-    let buf = '"For you,';
-    if (!shkp.mpeaceful) buf += ' scum;';
-    else if (!shkp.eshk.surcharge) buf += ' ' + append_honorific() + '; only';
-    obj.quan = 1; /* C fools xname() into the singular */
-    const nm = xname(obj);
-    obj.quan = save_quan;
-    const qualifier = save_quan > 1 ? 'per'
-        : contentscount && !obj.unpaid ? 'for the contents of this' : 'for this';
-    await update_topl(`${buf} ${ltmp} ${currency(ltmp)} ${qualifier} ${nm}${
-        contentscount && obj.unpaid ? ' and its contents' : ''}."`);
-}
-
-// C ref: shk.c Shknam(shkp) — shkname() with the first letter capitalised.
-function Shknam(shkp) {
-    const s = shkname(shkp);
-    return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// C ref: shk.c unpaid_cost(obj, cost_type) — what doname() quotes for an unpaid
-// inventory item: the bill price, times quan unless COST_SINGLEOBJ.
-export function unpaid_cost(obj, singleobj) {
-    for (const rno of (game.u?.ushops || [])) {
-        const shkp = shop_keeper(rno);
-        if (!shkp) continue;
-        const bp = onbill(obj, shkp);
-        if (bp) return singleobj ? bp.price : bp.price * (obj.quan || 1);
-    }
-    return 0;
-}
-
-// C ref: shk.c get_cost_of_shop_item(obj, &nochrg) — the "(for sale, N
-// zorkmids)" price for an object the hero is looking at on shop floor.
-// nochrg: 1 = no charge, 0 = shop owned, -1 = not applicable.
-export function get_cost_of_shop_item(obj) {
-    const u = game.u;
-    const res = { cost: 0, nochrg: -1 };
-    if (!u?.ushops?.length || obj.oclass === COIN_CLASS) return res;
-    const x = obj.ox, y = obj.oy;
-    if (!(x >= 0) || !(y >= 0)) return res;
-    if (in_rooms(x, y, SHOPBASE)[0] !== u.ushops[0]) return res;
-    const shkp = shop_keeper(inside_shop_rno(x, y));
-    if (!shkp || !inhishop(shkp)) return res;
-    const eshk = shkp.eshk;
-    const onfloor = obj.where === OBJ_FLOOR;
-    const freespot = onfloor && x === eshk.shk?.x && y === eshk.shk?.y;
-    res.nochrg = (onfloor && (obj.no_charge || freespot)) ? 1 : 0;
-    if (onfloor ? !res.nochrg : !!obj.unpaid)
-        res.cost = get_pricing_units(obj) * get_cost(obj, shkp);
-    return res;
-}

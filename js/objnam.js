@@ -12,6 +12,8 @@
 // RNG; it only determines the candidate set (n / maxprob) and ordering,
 // which in turn fixes the object that the single rn2() resolves to.
 
+import { lowc, strncmp, strncmpi, strcmpi, strchr, vowels, genders, nextobuf, releaseobuf,
+         setobuf, cur_obuf, makeplural, makesingular } from './plural.js';
 import { rn2 } from './rng.js';
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
@@ -23,6 +25,7 @@ import {
     GLOB_OF_GRAY_OOZE,
     GLOB_OF_BLACK_PUDDING,
     WEAPON_CLASS,
+    object_probability,
 } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { shop_price_suffix } from './shk.js';
@@ -32,7 +35,8 @@ import { tin_variety, tintxts, vegetarian, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN
 import { artifact_name as arti_artifact_name, find_artifact as arti_find_artifact,
          bare_artifactname as arti_bare_artifactname,
          glow_color as arti_glow_color, glow_verb as arti_glow_verb,
-         permapoisoned as arti_permapoisoned } from './artifact.js';
+         permapoisoned as arti_permapoisoned,
+         undiscovered_artifact as arti_undiscovered_artifact } from './artifact.js';
 import { artifact_light as light_artifact_light, arti_light_description as light_arti_light_description,
          find_mid as light_find_mid } from './light.js';
 import { peek_timer as timeout_peek_timer } from './timeout.js';
@@ -97,11 +101,6 @@ function OBJ_UNAME(obj) {
 // dependency on un-exported helpers elsewhere.
 // ─────────────────────────────────────────────────────────────────────────
 
-// lowc(): lower-case a single char (ASCII).  C ref: hacklib.c lowc().
-function lowc(c) {
-    return c >= 'A' && c <= 'Z' ? c.toLowerCase() : c;
-}
-
 // fuzzymatch(): compare two strings for equality, skipping any characters in
 // ignore_chars (typically " -") and optionally case-blind.  Matches the C
 // control flow exactly: each pass consumes one non-ignored char from each
@@ -137,33 +136,12 @@ function strstri(haystack, needle) {
     return haystack.toLowerCase().indexOf(needle.toLowerCase());
 }
 
-// strncmp / strncmpi over the first n chars.
-function strncmp(a, b, n) {
-    return a.slice(0, n) === b.slice(0, n);
-}
-function strncmpi(a, b, n) {
-    return a.slice(0, n).toLowerCase() === b.slice(0, n).toLowerCase();
-}
-function strcmpi(a, b) {
-    return a.toLowerCase() === b.toLowerCase();
-}
-
 // strsubst(): replace first occurrence of orig with replacement.  C ref:
 // hacklib.c strsubst().
 function strsubst(s, orig, replacement) {
     const idx = strstri(s, orig);
     if (idx < 0) return s;
     return s.slice(0, idx) + replacement + s.slice(idx + orig.length);
-}
-
-// makesingular(): minimal English de-pluralization sufficient for the
-// wishymatch "detect <foo>" / "abilities" special cases.  Full makesingular
-// lives in objnam.c; this covers the trailing-'s' cases those branches need.
-export function makesingular(s) {
-    if (s == null) return s;
-    if (s.endsWith('ies')) return s.slice(0, -3) + 'y';
-    if (s.endsWith('s')) return s.slice(0, -1);
-    return s;
 }
 
 // C ref: objnam.c fruitname() — name the player's current fruit, optionally
@@ -440,7 +418,7 @@ export function rnd_otyp_by_namedesc(name, oclass, xtra_prob) {
                 && wishymatch(name, zn, false)) /* user-called name */
         ) {
             validobjs[n++] = i;
-            maxprob += (objects[i].oc_prob + xtra_prob);
+            maxprob += (object_probability(objects[i]) + xtra_prob);
         }
     }
 
@@ -448,7 +426,7 @@ export function rnd_otyp_by_namedesc(name, oclass, xtra_prob) {
         let prob = rn2(maxprob); // @ rnd_otyp_by_namedesc(objnam.c:3522)
         let i;
         for (i = 0; i < n - 1; i++)
-            if ((prob -= (objects[validobjs[i]].oc_prob + xtra_prob)) < 0)
+            if ((prob -= (object_probability(objects[validobjs[i]]) + xtra_prob)) < 0)
                 break;
         return validobjs[i];
     }
@@ -489,12 +467,10 @@ export function price_suffix(obj, with_price) {
 export function doname_with_price_suffix(obj) { return shop_price_suffix(obj, true); }
 
 // ═════════════════════════════════════════════════════════════════════════
-// objnam.c naming core — INERT ADDITION.
+// objnam.c naming core.
 //
-// Faithful ports of the objnam.c functions that had no JS counterpart.  None
-// of the code ABOVE this line calls into it: js/invent.js holds the LIVE
-// (reduced) xname/doname/simple_typename implementations that every scored
-// screen goes through, so this block is dead code until a measured swap lands.
+// The LIVE objnam.c ports: js/invent.js's xname()/doname()/distant_name()
+// wrappers and every other caller go through xname_flags()/doname_base() below.
 //
 // C buffers: obuf[] slots are modelled as { s } boxes so nextobuf()'s rotation
 // (the only externally visible part of the pool) matches C call-for-call, while
@@ -580,59 +556,6 @@ const KNIFE = 40, CRYSKNIFE = 43, SHORT_SWORD = 46, BROADSWORD = 52,
    the roles[] index 0..12, NOT C's mons[] PM_ARCHEOLOGIST(331). */
 const PM_ARCHEOLOGIST = 0, PM_CLERIC = 6, PM_SAMURAI = 9;
 
-const vowels = 'aeiouAEIOU';
-
-// ── C string primitives (hacklib.c) ───────────────────────────────────────
-function highc(c) { return c >= 'a' && c <= 'z' ? c.toUpperCase() : c; }
-function letter(c) { return !!c && /[A-Za-z]/.test(c); }
-
-/* objnam.c:66 BSTRCMPI(base, ptr, str): TRUE (non-zero) when ptr is in front of
-   base or the tail differs.  `idx` is the C pointer as an index into base. */
-function bstrcmpi(base, idx, str) {
-    if (idx < 0) return 1;
-    return base.slice(idx).toLowerCase() === str.toLowerCase() ? 0 : 1;
-}
-/* objnam.c:67 BSTRNCMPI */
-function bstrncmpi(base, idx, str, num) {
-    if (idx < 0) return 1;
-    return base.slice(idx, idx + num).toLowerCase()
-        === str.slice(0, num).toLowerCase() ? 0 : 1;
-}
-/* plain strcmpi(ptr, str) where callers guard the pointer with a length test.
-   C reads in front of the buffer if a caller's guard is wrong; JS slice() would
-   silently count from the END instead, so an out-of-range index answers "no
-   match" here. */
-function strcmpi_at(s, idx, str) {
-    if (idx < 0) return 1;
-    return s.slice(idx).toLowerCase() === str.toLowerCase() ? 0 : 1;
-}
-
-/* hacklib.c:300 chrcasecpy(oc, nc) — force nc into oc's case. */
-function chrcasecpy(oc, nc) {
-    if (oc >= 'a' && oc <= 'z') {
-        if (nc >= 'A' && nc <= 'Z') return nc.toLowerCase();
-    } else if (oc >= 'A' && oc <= 'Z') {
-        if (nc >= 'a' && nc <= 'z') return nc.toUpperCase();
-    }
-    return nc;
-}
-
-/* hacklib.c:323 strcasecpy(dst, src) — overwrite dst from `at` onward with src,
-   preserving the case of the characters being replaced, then terminate (which
-   discards anything after).  Returns the whole new string. */
-function strcasecpy(dst, at, src) {
-    const arr = dst.split('');
-    let d = at, exh = 0;
-    for (const ic of src) {
-        if (!exh && d >= arr.length) exh = 1; /* C: !*dst */
-        const oc = arr[d - exh];
-        arr[d] = chrcasecpy(oc === undefined ? '' : oc, ic);
-        d++;
-    }
-    arr.length = d; /* C: *dst = '\0' */
-    return arr.join('');
-}
-
 function impossible(msg) {
     if (game.debugImpossible) console.warn('impossible:', msg);
 }
@@ -647,15 +570,6 @@ function ordin(n) {
 }
 /* polyself.c body_part(HAND) for an unpolymorphed hero */
 function body_part_HAND() { return body_part(6 /*HAND*/); }
-
-/* role.c:688 genders[] — the four rows makeplural()/makesingular()/doname_base()
-   read (adj is used by doname_base's wizmgender suffix). */
-const genders = [
-    { adj: 'male', he: 'he', him: 'him', his: 'his' },
-    { adj: 'female', he: 'she', him: 'her', his: 'her' },
-    { adj: 'neuter', he: 'it', him: 'it', his: 'its' },
-    { adj: 'group', he: 'they', him: 'them', his: 'their' },
-];
 
 // ── flag / hero-state accessors ───────────────────────────────────────────
 function iflags() { return game.iflags || (game.iflags = {}); }
@@ -798,40 +712,35 @@ function count_contents(container, nested, quantity, everything) {
     }
     return count;
 }
-/* objnam.c:1787 not_fully_identified() — js/invent.js:1205 holds the live port. */
-function not_fully_identified(otmp) {
-    if (!objects[otmp.otyp]?.oc_name_known || !otmp.known || !otmp.dknown
-        || (!otmp.bknown && !Role_if(PM_CLERIC)))
+// not_fully_identified(): is there anything left to learn about obj?
+// C ref: objnam.c:1787.  JS objects[] rows only carry the explicit BITS()
+// oc_name_known flag, while C's init_objects() also sets it for every type with
+// no randomized appearance, hence the DESCR_BY_OTYP test.
+export function not_fully_identified(otmp) {
+    /* gold doesn't have any interesting attributes [yet?] */
+    if (otmp.oclass === COIN_CLASS)
+        return false; /* always fully ID'd */
+    const typeKnown = !!objects[otmp.otyp]?.oc_name_known
+        || DESCR_BY_OTYP[otmp.otyp] == null;
+    /* check fundamental ID hallmarks first */
+    if (!otmp.known || !otmp.dknown
+        || (!otmp.bknown && otmp.otyp !== 364 /*SCR_MAIL*/)
+        || !typeKnown)
         return true;
-    return false;
+    if ((!otmp.cknown && (Is_container(otmp) || otmp.otyp === STATUE_))
+        || (!otmp.lknown && Is_box(otmp)))
+        return true;
+    if (otmp.oartifact && arti_undiscovered_artifact(otmp.oartifact))
+        return true;
+    /* otmp->rknown is the only item of interest if we reach here */
+    if (otmp.rknown
+        || (otmp.oclass !== ARMOR_CLASS && otmp.oclass !== WEAPON_CLASS
+            && !is_weptool(otmp)            /* (redundant) */
+            && otmp.oclass !== BALL_CLASS)) /* (useless) */
+        return false;
+    /* lack of `rknown' only matters for vulnerable objects */
+    return is_damageable(otmp);
 }
-
-// ── obuf pool (objnam.c:137-198) ──────────────────────────────────────────
-const obufs = Array.from({ length: NUMOBUF }, () => ({ s: '' }));
-let obufidx = 0;
-
-// nextobuf(): rotate to the next of the NUMOBUF work buffers.
-// C ref: objnam.c:141.
-export function nextobuf() {
-    obufidx = (obufidx + 1) % NUMOBUF;
-    return obufs[obufidx];
-}
-
-// releaseobuf(): give the most recently allocated buffer back.  C tests whether
-// bufp points anywhere INSIDE obufs[obufidx] (callers may hold a pointer into
-// the middle of it, e.g. &obuf[PREFIX] from xname()); slot identity is the same
-// test.  C ref: objnam.c:149.
-export function releaseobuf(bufp) {
-    if (bufp === obufs[obufidx])
-        obufidx = (obufidx - 1 + NUMOBUF) % NUMOBUF;
-}
-/* every C releaseobuf() call site releases the buffer it just allocated, which
-   is the only case the guard above accepts */
-function cur_obuf() { return obufs[obufidx]; }
-function setobuf(ob, s) { ob.s = s; return s; }
-
-// maybereleaseobuf(): display_pickinv()'s hook.  C ref: objnam.c:166.
-export function maybereleaseobuf(obuffer) { releaseobuf(obuffer); }
 
 // strprepend(): insert pref in front of s, using the PREFIX bytes xname()
 // reserved at the front of the obuf.  C ref: objnam.c:122.
@@ -960,10 +869,8 @@ export function obj_typename(otyp) {
 }
 
 // simple_typename(): actual name OR description, never both, user-name ignored.
-// C ref: objnam.c:298.  js/invent.js:589 holds the LIVE (reduced) copy that the
-// scored screens use; this one is the objnam.c-faithful sibling and exists so
-// safe_typename()/mimic_obj_name() below can be exact.
-function simple_typename(otyp) {
+// C ref: objnam.c:298.
+export function simple_typename(otyp) {
     const save_uname = objects[otyp].oc_uname;
     objects[otyp].oc_uname = 0; /* suppress any name given by user */
     let bufp = obj_typename(otyp);
@@ -1056,7 +963,7 @@ export function fruit_from_name(fname, exact, highest_fid) {
     }
     /* if we still don't have a match, try singularizing the target */
     if (!f) {
-        altfname = makesingular_full(fname);
+        altfname = makesingular(fname);
         for (const g of ffruit_chain()) {
             if (g.fname === altfname) { f = g; break; }
         }
@@ -1075,7 +982,7 @@ export function fruit_from_name(fname, exact, highest_fid) {
             const sp = fnamebuf.indexOf(' ', k);
             if (fname_k >= k && sp >= 0) {
                 fnamebuf = fnamebuf.slice(0, sp);
-                altfname = makesingular_full(fnamebuf);
+                altfname = makesingular(fnamebuf);
                 k = altfname.length; /* actually revised 'fname_k' */
                 if (g.fname === altfname
                     && (!tentativef || k > tentativef.fname.length))
@@ -1115,518 +1022,6 @@ export function reorder_fruit(forward) {
             game.ffruit = allfr[j];
         }
     }
-}
-
-// ── singularize / pluralize (objnam.c:2550-3239) ──────────────────────────
-/* strchr(set, c) with an empty/absent c treated as "not found" ('' would match
-   every set under String.includes) */
-function strchr(set, c) { return c != null && c !== '' && set.indexOf(c) >= 0; }
-
-/* objnam.c:2662 one_off[] — word pairs that no formula reverses */
-const one_off = [
-    ['child', 'children'], /* (for wise guys who give their food funny names) */
-    ['cubus', 'cubi'],     /* in-/suc-cubus */
-    ['culus', 'culi'],     /* homunculus */
-    ['Cyclops', 'Cyclopes'],
-    ['djinni', 'djinn'],
-    ['erinys', 'erinyes'],
-    ['foot', 'feet'],
-    ['fungus', 'fungi'],
-    ['goose', 'geese'],
-    ['knife', 'knives'],
-    ['labrum', 'labra'],   /* candelabrum */
-    ['louse', 'lice'],
-    ['mouse', 'mice'],
-    ['mumak', 'mumakil'],
-    ['nemesis', 'nemeses'],
-    ['ovum', 'ova'],
-    ['ox', 'oxen'],
-    ['passerby', 'passersby'],
-    ['rtex', 'rtices'],    /* vortex */
-    ['serum', 'sera'],
-    ['staff', 'staves'],
-    ['tooth', 'teeth'],
-];
-
-/* objnam.c:2689 as_is[] */
-const as_is = [
-    /* makesingular() leaves these plural due to how they're used */
-    'boots', 'shoes', 'gloves', 'lenses', 'scales',
-    'eyes', 'gauntlets', 'iron bars',
-    /* both singular and plural are spelled the same */
-    'bison', 'deer', 'elk', 'fish', 'fowl',
-    'tuna', 'yaki', '-hai', 'krill', 'manes',
-    'moose', 'ninja', 'sheep', 'ronin', 'roshi',
-    'shito', 'tengu', 'ki-rin', 'Nazgul', 'gunyoki',
-    'piranha', 'samurai', 'shuriken', 'haggis', 'Bordeaux',
-];
-
-/* objnam.c:2550 special_subjs[] */
-const special_subjs = [
-    'erinys', 'manes', /* this one is ambiguous */
-    'Cyclops', 'Hippocrates', 'Pelias', 'aklys',
-    'amnesia', 'detect monsters', 'paralysis', 'shape changers',
-    'nemesis',
-];
-
-// badman(): does this *man/*men word take a plain 's' plural / have no *man
-// singular?  C ref: objnam.c:3194.
-function badman(basestr, to_plural) {
-    /* prefixes for *man that don't have a *men plural */
-    const no_men = [
-        'albu', 'antihu', 'anti', 'ata', 'auto', 'bildungsro', 'cai', 'cay',
-        'ceru', 'corner', 'decu', 'des', 'dura', 'fir', 'hanu', 'het',
-        'infrahu', 'inhu', 'nonhu', 'otto', 'out', 'prehu', 'protohu',
-        'subhu', 'superhu', 'talis', 'unhu', 'sha',
-        'hu', 'un', 'le', 're', 'so', 'to', 'at', 'a',
-    ];
-    /* prefixes for *men that don't have a *man singular */
-    const no_man = [
-        'abdo', 'acu', 'agno', 'ceru', 'cogno', 'cycla', 'fleh', 'grava',
-        'hegu', 'preno', 'sonar', 'speci', 'dai', 'exa', 'fla', 'sta', 'teg',
-        'tegu', 'vela', 'da', 'hy', 'lu', 'no', 'nu', 'ra', 'ru', 'se', 'vi',
-        'ya', 'o', 'a',
-    ];
-
-    if (!basestr || basestr.length < 4)
-        return false;
-
-    const endstr = basestr.length;
-    const list = to_plural ? no_men : no_man;
-    for (const w of list) {
-        const al = w.length;
-        const spot = endstr - (al + 3);
-        if (bstrncmpi(basestr, spot, w, al) === 0
-            && (spot === 0 || basestr[spot - 1] === ' '))
-            return true;
-    }
-    return false;
-}
-
-// ch_ksound(): *ch words whose 'ch' is a k-sound, so they pluralize with 's'
-// rather than 'es'.  C ref: objnam.c:3167.
-export function ch_ksound(basestr) {
-    const ch_k = [
-        'monarch', 'poch', 'tech', 'mech', 'stomach', 'psych',
-        'amphibrach', 'anarch', 'atriarch', 'azedarach', 'broch',
-        'gastrotrich', 'isopach', 'loch', 'oligarch', 'peritrich',
-        'sandarach', 'sumach', 'symposiarch',
-    ];
-
-    if (!basestr || basestr.length < 4)
-        return false;
-
-    const endstr = basestr.length;
-    for (const w of ch_k)
-        if (bstrcmpi(basestr, endstr - w.length, w) === 0)
-            return true;
-    return false;
-}
-
-// singplur_lookup(): the singularize/pluralize decisions common to makeplural()
-// and makesingular().  C mutates basestr in place via Strcasecpy(), so the
-// string is passed BOXED: `sb` is { s } and any transformation is written back
-// to sb.s.  C ref: objnam.c:2707.
-export function singplur_lookup(sb, endstring, to_plural, alt_as_is) {
-    const basestr = sb.s;
-    const baselen = basestr.length;
-    let al;
-
-    for (const as of as_is) {
-        al = as.length;
-        if (bstrcmpi(basestr, endstring - al, as) === 0)
-            return true;
-    }
-    if (alt_as_is) {
-        for (const as of alt_as_is) {
-            al = as.length;
-            if (bstrcmpi(basestr, endstring - al, as) === 0)
-                return true;
-        }
-    }
-
-    /* Leave "craft" as a suffix as-is (aircraft, hovercraft) */
-    if (baselen > 5 && bstrcmpi(basestr, endstring - 5, 'craft') === 0)
-        return true;
-    /* avoid false hit on one_off[].plur == "lice" or .sing == "goose" */
-    if (strcmpi(basestr, 'slice') || strcmpi(basestr, 'mongoose')) {
-        if (to_plural)
-            sb.s = strcasecpy(basestr, endstring, 's');
-        return true;
-    }
-    /* skip "ox" -> "oxen" when pluralizing "<something>ox" unless muskox */
-    if (to_plural && baselen > 2 && strcmpi_at(basestr, endstring - 2, 'ox') === 0
-        && !(baselen > 5 && strcmpi_at(basestr, endstring - 6, 'muskox') === 0)) {
-        sb.s = strcasecpy(basestr, endstring, 'es'); /* "fox" -> "foxes" */
-        return true;
-    }
-    if (to_plural) {
-        if (baselen > 2 && strcmpi_at(basestr, endstring - 3, 'man') === 0
-            && badman(basestr, to_plural)) {
-            sb.s = strcasecpy(basestr, endstring, 's');
-            return true;
-        }
-    } else {
-        if (baselen > 2 && strcmpi_at(basestr, endstring - 3, 'men') === 0
-            && badman(basestr, to_plural))
-            return true;
-    }
-    for (const [sing, plural] of one_off) {
-        /* check whether endstring already matches */
-        const same = to_plural ? plural : sing;
-        al = same.length;
-        if (bstrcmpi(basestr, endstring - al, same) === 0)
-            return true; /* use as-is */
-        /* check whether it matches the inverse; if so, transform it */
-        const other = to_plural ? sing : plural;
-        al = other.length;
-        if (bstrcmpi(basestr, endstring - al, other) === 0) {
-            sb.s = strcasecpy(basestr, endstring - al, same);
-            return true; /* one_off[] transformation */
-        }
-    }
-    return false;
-}
-
-// singplur_compound(): index of a compound-phrase separator (" of ", " called ",
-// ...) or -1.  C ref: objnam.c:2782.  js/readobjnam.js:200 has the live copy.
-function singplur_compound(str) {
-    const compounds = [
-        ' of ', ' labeled ', ' called ',
-        ' named ', ' above', /* lurkers above */
-        ' versus ', ' from ', ' in ',
-        ' on ', ' a la ', ' with', /* " with "? */
-        ' de ', " d'", ' du ',
-        ' au ', '-in-', '-at-',
-    ];
-    const compound_start = ' -';
-
-    for (let p = 0; p < str.length; ++p) {
-        if (compound_start.indexOf(str[p]) < 0)
-            continue;
-        for (const cmpd of compounds)
-            if (str.slice(p, p + cmpd.length).toLowerCase() === cmpd.toLowerCase())
-                return p;
-    }
-    return -1;
-}
-
-// makeplural(): the objnam.c plural routine.  C ref: objnam.c:2835.
-// js/invent.js exports a reduced makeplural() that the live screens use; this is
-// the faithful sibling (it is what makes singplur_lookup/ch_ksound reachable).
-export function makeplural(oldstr) {
-    const ob = nextobuf();
-    let str, excess = null, spot, len, lo_c, i;
-
-    if (oldstr != null)
-        oldstr = String(oldstr).replace(/^ +/, '');
-    if (oldstr == null || oldstr === '') {
-        impossible('plural of null?');
-        return setobuf(ob, 's');
-    }
-    /* pronouns: "he"/"she"/"it" -> "they", &c */
-    str = '';
-    for (i = 0; i <= 2; ++i) {
-        if (strcmpi(genders[i].he, oldstr))
-            str = genders[3].he; /* "they" */
-        else if (strcmpi(genders[i].him, oldstr))
-            str = genders[3].him; /* "them" */
-        else if (strcmpi(genders[i].his, oldstr))
-            str = genders[3].his; /* "their" */
-        if (str) {
-            if (oldstr[0] === highc(oldstr[0]))
-                str = highc(str[0]) + str.slice(1);
-            return setobuf(ob, str);
-        }
-    }
-
-    str = oldstr;
-    bottom: {
-        /* Skip changing "pair of" to "pairs of" (objnam.c:2873) */
-        if (strncmpi(str, 'pair of ', 8))
-            break bottom;
-
-        /* look for "foo of bar" so that we can focus on "foo" */
-        const ci = singplur_compound(str);
-        if (ci >= 0) {
-            excess = oldstr.slice(ci);
-            str = str.slice(0, ci);
-            spot = ci;
-        } else {
-            spot = str.length;
-        }
-
-        spot--;
-        while (spot > 0 && str[spot] === ' ')
-            spot--; /* Strip blanks from end */
-        str = str.slice(0, spot + 1);
-        /* Now spot is the last character of the string */
-        len = str.length;
-
-        /* Single letters */
-        if (len === 1 || !letter(str[spot])) {
-            str = str.slice(0, spot + 1) + "'s";
-            break bottom;
-        }
-
-        /* dispense with some words which don't need pluralization */
-        {
-            const already_plural = [
-                'ae',    /* algae, larvae, &c */
-                'eaux',  /* chateaux, gateaux */
-                'matzot',
-            ];
-            /* spot+1: synch up with makesingular's usage */
-            const sb = { s: str };
-            const hit = singplur_lookup(sb, spot + 1, true, already_plural);
-            str = sb.s;
-            if (hit)
-                break bottom;
-
-            /* more of same, but not suitable for blanket loop checking */
-            if ((len === 2 && strcmpi(str, 'ya'))
-                || (len >= 3 && strcmpi_at(str, spot - 2, ' ya') === 0))
-                break bottom;
-        }
-
-        /* man/men ("Wiped out all cavemen.") */
-        if (len >= 3 && strcmpi_at(str, spot - 2, 'man') === 0
-            /* exclude shamans and humans etc */
-            && !badman(str, true)) {
-            str = strcasecpy(str, spot - 1, 'en');
-            break bottom;
-        }
-        if (lowc(str[spot]) === 'f') { /* (staff handled via one_off[]) */
-            lo_c = lowc(str[spot - 1]);
-            if (len >= 3 && strcmpi_at(str, spot - 2, 'erf') === 0) {
-                /* avoid "nerf" -> "nerves", "serf" -> "serves"; fall through */
-            } else if (strchr('lr', lo_c) || strchr(vowels, lo_c)) {
-                str = strcasecpy(str, spot, 'ves'); /* [aeioulr]f -> ves */
-                break bottom;
-            }
-        }
-        /* ium/ia (mycelia, baluchitheria) */
-        if (len >= 3 && strcmpi_at(str, spot - 2, 'ium') === 0) {
-            str = strcasecpy(str, spot - 2, 'ia');
-            break bottom;
-        }
-        /* algae, larvae, hyphae (another fungus part) */
-        if ((len >= 4 && strcmpi_at(str, spot - 3, 'alga') === 0)
-            || (len >= 5
-                && (strcmpi_at(str, spot - 4, 'hypha') === 0
-                    || strcmpi_at(str, spot - 4, 'larva') === 0))
-            || (len >= 6 && strcmpi_at(str, spot - 5, 'amoeba') === 0)
-            || (len >= 8 && strcmpi_at(str, spot - 7, 'vertebra') === 0)) {
-            str = strcasecpy(str, spot + 1, 'e'); /* a to ae */
-            break bottom;
-        }
-        /* fungus/fungi, homunculus/homunculi, but buses, lotuses, wumpuses */
-        if (len > 3 && strcmpi_at(str, spot - 1, 'us') === 0
-            && !((len >= 5 && strcmpi_at(str, spot - 4, 'lotus') === 0)
-                 || (len >= 6 && strcmpi_at(str, spot - 5, 'wumpus') === 0))) {
-            str = strcasecpy(str, spot - 1, 'i');
-            break bottom;
-        }
-        /* sis/ses (nemesis) */
-        if (len >= 3 && strcmpi_at(str, spot - 2, 'sis') === 0) {
-            str = strcasecpy(str, spot - 1, 'es');
-            break bottom;
-        }
-        /* -eau/-eaux (gateau, chapeau...) */
-        if (len >= 3 && strcmpi_at(str, spot - 2, 'eau') === 0
-            /* 'bureaus' is the more common plural of 'bureau' */
-            && bstrcmpi(str, spot - 5, 'bureau') !== 0) {
-            str = strcasecpy(str, spot + 1, 'x');
-            break bottom;
-        }
-        /* matzoh/matzot, possible food name */
-        if (len >= 6
-            && (strcmpi_at(str, spot - 5, 'matzoh') === 0
-                || strcmpi_at(str, spot - 5, 'matzah') === 0)) {
-            str = strcasecpy(str, spot - 1, 'ot'); /* oh/ah -> ot */
-            break bottom;
-        }
-        if (len >= 5
-            && (strcmpi_at(str, spot - 4, 'matzo') === 0
-                || strcmpi_at(str, spot - 4, 'matza') === 0)) {
-            str = strcasecpy(str, spot, 'ot'); /* o/a -> ot */
-            break bottom;
-        }
-
-        /* note: ox/oxen, VAX/VAXen, goose/geese */
-
-        lo_c = lowc(str[spot]);
-
-        /* codex/spadix/neocortex and the like */
-        if (len >= 5
-            && (strcmpi_at(str, spot - 2, 'dex') === 0
-                || strcmpi_at(str, spot - 2, 'dix') === 0
-                || strcmpi_at(str, spot - 2, 'tex') === 0)
-            /* indices would have been ok too, but stick with indexes */
-            && strcmpi_at(str, spot - 4, 'index') !== 0) {
-            str = strcasecpy(str, spot - 1, 'ices'); /* ex|ix -> ices */
-            break bottom;
-        }
-        /* Ends in z, x, s, ch, sh; add an "es" */
-        if (strchr('zxs', lo_c)
-            || (len >= 2 && lo_c === 'h' && strchr('cs', lowc(str[spot - 1]))
-                /* 21st century k-sound */
-                && !(len >= 4 && lowc(str[spot - 1]) === 'c' && ch_ksound(str)))
-            /* Kludge to get "tomatoes" and "potatoes" right */
-            || (len >= 4 && strcmpi_at(str, spot - 2, 'ato') === 0)
-            || (len >= 5 && strcmpi_at(str, spot - 4, 'dingo') === 0)) {
-            str = strcasecpy(str, spot + 1, 'es');
-            break bottom;
-        }
-        /* Ends in y preceded by consonant (note: also "qu") change to "ies" */
-        if (lo_c === 'y' && !strchr(vowels, lowc(str[spot - 1]))) {
-            str = strcasecpy(str, spot, 'ies');
-            break bottom;
-        }
-        /* Default: append an 's' */
-        str = strcasecpy(str, spot + 1, 's');
-    }
-
-    if (excess != null)
-        str += excess;
-    return setobuf(ob, str);
-}
-
-// makesingular_full(): the faithful objnam.c:3036 makesingular().
-// NAME: this module already exports a REDUCED makesingular() (near the top of
-// the file) that live callers in js/nhlua.js, js/options.js, js/pickup.js and
-// js/polyself.js import; swapping them is a separate measured change, so the
-// faithful port carries a distinct name rather than shadowing it.
-export function makesingular_full(oldstr) {
-    const ob = nextobuf();
-    let bp, excess = null, p;
-
-    if (oldstr != null)
-        oldstr = String(oldstr).replace(/^ +/, '');
-    if (oldstr == null || oldstr === '') {
-        impossible('singular of null?');
-        return setobuf(ob, '');
-    }
-    /* makeplural() of pronouns isn't reversible but we can force a singular */
-    let str = '';
-    if (strcmpi(genders[3].he, oldstr))        /* "they" */
-        str = genders[2].he;                   /* "it" */
-    else if (strcmpi(genders[3].him, oldstr))  /* "them" */
-        str = genders[2].him;                  /* also "it" */
-    else if (strcmpi(genders[3].his, oldstr))  /* "their" */
-        str = genders[2].his;                  /* "its" */
-    if (str) {
-        if (oldstr[0] === highc(oldstr[0]))
-            str = highc(str[0]) + str.slice(1);
-        return setobuf(ob, str);
-    }
-
-    bp = oldstr;
-    bottom: {
-        /* check for "foo of bar" so that we can focus on "foo" */
-        const ci = singplur_compound(bp);
-        if (ci >= 0) {
-            excess = oldstr.slice(ci);
-            bp = bp.slice(0, ci);
-            p = ci;
-        } else {
-            p = bp.length;
-        }
-
-        /* dispense with some words which don't need singularization */
-        {
-            const sb = { s: bp };
-            const hit = singplur_lookup(sb, p, false, special_subjs);
-            bp = sb.s;
-            if (hit)
-                break bottom;
-        }
-
-        /* remove -s or -es (boxes) or -ies (rubies) */
-        if (p >= 1 && lowc(bp[p - 1]) === 's') {
-            mins: {
-                if (p >= 2 && lowc(bp[p - 2]) === 'e') {
-                    if (p >= 3 && lowc(bp[p - 3]) === 'i') { /* "ies" */
-                        if (bstrcmpi(bp, p - 7, 'cookies') === 0
-                            || (bstrcmpi(bp, p - 4, 'pies') === 0
-                                /* avoid false match for "harpies" */
-                                && (p - 4 === 0 || bp[p - 5] === ' '))
-                            /* alternate djinni/djinn spelling */
-                            || (bstrcmpi(bp, p - 6, 'genies') === 0
-                                /* avoid false match for "progenies" */
-                                && (p - 6 === 0 || bp[p - 7] === ' '))
-                            || bstrcmpi(bp, p - 5, 'mbies') === 0  /* zombie */
-                            || bstrcmpi(bp, p - 5, 'yries') === 0) /* valkyrie */
-                            break mins;
-                        bp = strcasecpy(bp, p - 3, 'y'); /* ies -> y */
-                        break bottom;
-                    }
-                    /* wolves, but f to ves isn't fully reversible */
-                    if (p - 4 >= 0
-                        && (strchr('lr', lowc(bp[p - 4]))
-                            || strchr(vowels, lowc(bp[p - 4])))
-                        && bstrcmpi(bp, p - 3, 'ves') === 0) {
-                        if (bstrcmpi(bp, p - 6, 'cloves') === 0
-                            || bstrcmpi(bp, p - 6, 'nerves') === 0)
-                            break mins;
-                        bp = strcasecpy(bp, p - 3, 'f'); /* ves -> f */
-                        break bottom;
-                    }
-                    /* note: nurses, axes but boxes, wumpuses */
-                    if (bstrcmpi(bp, p - 4, 'eses') === 0
-                        || bstrcmpi(bp, p - 4, 'oxes') === 0  /* boxes, foxes */
-                        || bstrcmpi(bp, p - 4, 'nxes') === 0  /* lynxes */
-                        || bstrcmpi(bp, p - 4, 'ches') === 0
-                        || bstrcmpi(bp, p - 4, 'uses') === 0  /* lotuses */
-                        || bstrcmpi(bp, p - 4, 'shes') === 0  /* splashes */
-                        || bstrcmpi(bp, p - 4, 'sses') === 0  /* priestesses */
-                        || bstrcmpi(bp, p - 5, 'atoes') === 0 /* tomatoes */
-                        || bstrcmpi(bp, p - 7, 'dingoes') === 0
-                        || bstrcmpi(bp, p - 7, 'Aleaxes') === 0) {
-                        bp = bp.slice(0, p - 2); /* drop es */
-                        break bottom;
-                    } /* else fall through to mins */
-
-                    /* ends in 's' but not 'es' */
-                } else if (bstrcmpi(bp, p - 2, 'us') === 0) { /* lotus, fungus */
-                    if (bstrcmpi(bp, p - 6, 'tengus') !== 0 /* but not these... */
-                        && bstrcmpi(bp, p - 7, 'hezrous') !== 0)
-                        break bottom;
-                } else if (bstrcmpi(bp, p - 2, 'ss') === 0
-                           || bstrcmpi(bp, p - 5, ' lens') === 0
-                           || (p - 4 === 0 && strcmpi_at(bp, p - 4, 'lens') === 0)) {
-                    break bottom;
-                }
-            }
-            bp = bp.slice(0, p - 1); /* mins: drop s */
-
-        } else { /* input doesn't end in 's' */
-
-            if (bstrcmpi(bp, p - 3, 'men') === 0 && !badman(bp, false)) {
-                bp = strcasecpy(bp, p - 2, 'an');
-                break bottom;
-            }
-            /* matzot -> matzo, algae -> alga */
-            if (bstrcmpi(bp, p - 6, 'matzot') === 0
-                || bstrcmpi(bp, p - 2, 'ae') === 0
-                || bstrcmpi(bp, p - 4, 'eaux') === 0) {
-                bp = bp.slice(0, p - 1); /* drop t/e/x */
-                break bottom;
-            }
-            /* balactheria -> balactherium */
-            if (p - 4 >= 0 && strcmpi_at(bp, p - 2, 'ia') === 0
-                && strchr('lr', lowc(bp[p - 3])) && lowc(bp[p - 4]) === 'e') {
-                bp = strcasecpy(bp, p - 1, 'um'); /* a -> um */
-            }
-
-            /* here we cannot find the plural suffix */
-        }
-    }
-
-    /* if we stripped off a suffix (" of bar" from "foo of bar"), put it back */
-    if (excess != null)
-        bp += excess;
-    return setobuf(ob, bp);
 }
 
 // ── article / possessive / whitespace helpers ─────────────────────────────
@@ -2034,7 +1429,7 @@ export function xname_flags(obj, cxn_flags) {
                 if (pluralize) {
                     /* already-pluralized fruit names are allowed, so singularize
                        first to avoid a redundant plural suffix */
-                    buf = makesingular_full(buf);
+                    buf = makesingular(buf);
                     releaseobuf(cur_obuf());
                     buf = makeplural(buf);
                     releaseobuf(cur_obuf());
@@ -2288,7 +1683,7 @@ export function minimal_xname(obj) {
 
     /* C: distant_name(&bareobj, xname).  bareobj is a stack copy that is not on
        the map, so get_obj_location() fails and distant_name() takes its
-       ++gd.distantname branch; js/invent.js:521 holds the live distant_name(). */
+       ++gd.distantname branch. */
     let bufp;
     ++gd_distantname;
     try {

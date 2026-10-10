@@ -8,10 +8,10 @@
 
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { find_mac as worn_find_mac } from './worn.js';
+import { find_mac as worn_find_mac, clear_bypasses } from './worn.js';
 import { rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
-import { docrt, flush_screen, newsym, map_object, pline, putStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl, show_glyph_cell, tmp_at_flash } from './display.js';
+import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, object_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl, show_glyph_cell, tmp_at_flash } from './display.js';
 import { hooks } from './gstate.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
 import { distmin, depth as depth_of_level } from './hacklib.js';
@@ -94,7 +94,7 @@ import {
 import { getpos, getpos_render, travel_adjacent_step, ia_checkfile_name, checkfile, nomul } from './hack.js';
 import { observe_object as disco_observe_object, build_discoveries_rows, discover_object } from './o_init.js';
 import { monster_by_pmidx, pmname_of_pmidx, name_to_pmidx } from './makemon.js';
-import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag,
+import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag, hates_silver,
          is_neuter_flag, humanoid as humanoid_flag, nolimbs as nolimbs_flag,
          mflags1_of, mflags2_of, likes_gems_flag,
          M1_NOHEAD, M1_NOTAKE, M1_NOHANDS,
@@ -102,17 +102,21 @@ import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag,
 import { tin_variety, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN, tintxts, vegetarian } from './eat.js';
 import { enlightenment_lines, record_achievement } from './insight.js';
 import { ACH_BELL, ACH_CNDL, ACH_BOOK, ACH_AMUL, ACH_MINE_PRIZE, ACH_SOKO_PRIZE } from './const.js';
+import { FREE_ACTION as FREE_ACTION_PROP } from './const.js';
+import { MELT_ICE_AWAY } from './const.js';
+import { spot_time_left } from './timeout.js';
+import { waterbody_name as waterbody_name_for_ice } from './cmd.js';
+import { BRK_FROM_INV } from './const.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { base_armcat } from './objarmor_data.js';
 import { find_ac } from './u_init.js';
 import { moveloop_turn, moveloop_input_redraw, youHaveFast, youHaveVeryFast } from './allmain.js';
 import { acurr_eff, acurr_str_encoded, exercise, set_moreluck } from './attrib.js';
-import { onbill, shk_scan, add_to_billobjs, shopper_financial_report, money_cnt_invent, hidden_gold } from './shk.js';
+import { onbill, shk_scan, add_to_billobjs, shopper_financial_report, money_cnt_invent, hidden_gold,
+         costly_spot, addtobill } from './shk.js';
 import { shop_keeper } from './shkroom.js';
-import { hitval, dbon, weapon_type, weapon_hit_bonus_core,
-         weapon_dam_bonus_core, weapon_descr } from './weapon.js';
-import { P_TWO_WEAPON_COMBAT as P_TWO_WEAPON_COMBAT_INV,
-         P_RIDING as P_RIDING_INV, W_ART as W_ART_PROP, W_WEP as W_WEP_PROP,
+import { hitval, dbon, weapon_type, weapon_descr } from './weapon.js';
+import { W_ART as W_ART_PROP, W_WEP as W_WEP_PROP,
          HAND, STOMACH, ONAME_VIA_NAMING, ONAME_KNOW_ARTI, HMON_APPLIED,
          ALL_FINISHED } from './const.js';
 import {
@@ -142,17 +146,18 @@ import {
     INVIS, CLAIRVOYANT, BLINDED, LEVITATION,
     W_AMUL as CW_AMUL, W_TOOL as CW_TOOL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED } from './const.js';
 import { engr_at, wipe_engr_at, read_engr_at, u_wipe_engr } from './engrave.js';
-import { costly_spot, addtobill, shkname } from './shkroom.js';
+import { shkname } from './shkroom.js';
 // C ref: objnam.c doname_base():1648 — the shop-price suffix is formatted in
 // objnam.c, on top of shk.c's get_cost_of_shop_item()/unpaid_cost().
-import { price_suffix, singplur_lookup, add_erosion_words, cxname,
+import { price_suffix, add_erosion_words, cxname,
          obj_is_pname, type_is_pname, the_unique_pm } from './objnam.js';
-import { shk_owns } from './shk.js';
+import { makeplural, vtense } from './plural.js';
+import { shk_owns, next_shkp } from './shk.js';
 import { xname as on_xname, cxname_singular as on_cxname_singular, doname_base as on_doname_base,
          corpse_xname as on_corpse_xname, simpleonames as on_simpleonames,
          ansimpleoname as on_ansimpleoname, minimal_xname as on_minimal_xname,
          distantname_adjust, distantname_active, The as on_The, the as on_the,
-         killer_xname } from './objnam.js';
+         killer_xname, an, not_fully_identified } from './objnam.js';
 import { y_monnam } from './do_name.js';
 // role.js imports only gstate/rng/const, so this is cycle-safe.
 import { roles, align_gname } from './role.js';
@@ -268,6 +273,9 @@ export const ECMD_NOTHANDLED = -99;
 const TRUE = true;
 const FALSE = false;
 const WIN_ERR = -1;
+// C ref: prop.h W_WEP/W_QUIVER/W_SWAPWEP owornmask bits (setworn_slot's values).
+const QW_WEP = 0x100, QW_QUIVER = 0x200, QW_SWAPWEP = 0x400,
+      QW_ARMOR_ALL = 0x7f;
 
 // C ref: prop.h:101-113.  These four used to be 0x01/0x02/0x04/0x08, which is
 // NOT what the runtime stamps into owornmask: setworn_slot() writes QW_WEP
@@ -358,17 +366,6 @@ function has_oname(obj) { return !!obj?.oname; }
 function ONAME(obj) { return obj?.oname || ''; }
 function setONAME(obj, name) { if (obj) obj.oname = name || ''; }
 function safe_oname(obj) { return obj?.oname || ''; }
-// C ref: objnam.c xname() (objnam.c:998) — when an object carries a personal
-// name and its appearance is known (dknown), append " named <oname>".  For a
-// quest artifact the leading "The " is downcased to "the ".  Returns the
-// suffix string (empty when no name applies).  This is what makes a wished or
-// otherwise-named artifact read e.g. "a silver saber named Grayswandir".
-function oname_suffix(obj) {
-    if (!obj || !has_oname(obj) || !obj.dknown) return '';
-    let nm = ONAME(obj);
-    if (obj.oartifact && /^The /.test(nm)) nm = 't' + nm.slice(1);
-    return ' named ' + nm;
-}
 function has_omonst(obj) { return !!(obj?.oextra && obj.oextra.omonst); }
 function has_omid(obj) { return !!(obj?.oextra && obj.oextra.omid); }
 function has_omailcmd(_obj) { return false; }
@@ -429,14 +426,14 @@ function Is_container(obj) {
 }
 function Is_pudding(obj) { return !!obj?.globby; }
 function Is_candle(obj) { return obj?.otyp === 224 || obj?.otyp === 225; }
-// C ref: obj.h is_pole() — polearms and lances (Snickersnee too, but no covered
-// hero carries an artifact).  Was hardcoded false, which silently disabled the
-// dofire()/dothrow() polearm branches for every role that starts with one.
+// C ref: obj.h is_pole() — polearms, lances, and Snickersnee ("not a polearm,
+// but can hit from distance"), which makes it show in apply's prompt.
+const ART_SNICKERSNEE = 19; /* artifact.js artilist index */
 const P_POLEARMS = 16, P_LANCE = 19, P_AXE = 3, P_PICK_AXE = 4;
 export function is_pole(obj) {
     if (!obj || (obj.oclass !== WEAPON_CLASS && obj.oclass !== TOOL_CLASS)) return false;
     const sk = objects[obj.otyp]?.oc_skill ?? 0;
-    return sk === P_POLEARMS || sk === P_LANCE;
+    return sk === P_POLEARMS || sk === P_LANCE || obj.oartifact === ART_SNICKERSNEE;
 }
 // C ref: obj.h is_pick/is_axe — same class test, the digging/chopping skills.
 export function is_pick(obj) {
@@ -500,7 +497,7 @@ export function uwep_unweapon(obj) {
     if (!obj) return true; /* for "bare hands" message */
     return (obj.oclass === WEAPON_CLASS)
         ? (is_launcher(obj) || is_ammo(obj) || is_missile(obj)
-           || (is_pole(obj) && !game.u?.usteed))
+           || (is_pole(obj) && !game.u?.usteed && obj.oartifact !== ART_SNICKERSNEE))
         : !(is_weptool(obj) || is_wet_towel(obj));
 }
 // C ref: include/obj.h is_ammo/is_launcher/matching_launcher/ammo_and_launcher.
@@ -535,7 +532,6 @@ function ammo_and_launcher(ammo, launcher) {
 }
 function carry_obj_effects_message(_obj) {}
 function obj_merge_light_sources(_from, _to) {}
-function obj_stop_timers(obj) { if (obj) obj.timed = false; }
 function obj_absorb(potmp, pobj) { if (pobj) pobj.obj = null; return potmp?.obj || null; }
 function maybereleaseobuf(_str) {}
 function dupstr(s) { return String(s ?? ''); }
@@ -575,6 +571,17 @@ export function yname(obj) {
         return name;
     const owner = shk_your(obj);
     return owner ? `${owner} ${name}` : name;
+}
+// C ref: objnam.c Yname2(obj) — yname() with the first letter capitalized.
+export function Yname2(obj) {
+    const s = yname(obj);
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+// C ref: objnam.c Tobjnam(obj, verb) — "The <xname> <verb>s": The() of xname()
+// (so an artifact keeps its bare name) followed by otense().
+export function Tobjnam(obj, verb) {
+    const bp = on_The(xname(obj));
+    return verb ? `${bp} ${otense(obj, verb)}` : bp;
 }
 // C ref: objnam.c minimal_xname() — xname() of a BARE copy (cg.zeroobj with
 // only otyp/oclass/quan/dknown/known copied), so weight-derived prefixes such
@@ -652,21 +659,7 @@ export function short_oname(obj, lenlimit) {
     return `the ${simpleonames(obj)}`;
 }
 
-// C ref: objnam.c simple_typename(otyp) — the plain type name of an object
-// type, with any user-given call name suppressed and any trailing " (...)"
-// description stripped (e.g. "potion of healing" not "the potion of healing",
-// "chest" for a chest).  Used by apply.c use_stethoscope() to name the object a
-// disguised mimic was pretending to be.  We treat the type as identified
-// (oc_name_known) so a known container/weapon/tool shows its true name.
-export function simple_typename(otyp) {
-    const ocl = objects[otyp];
-    if (!ocl) return 'thing';
-    const dummy = { otyp, oclass: ocl.oclass, quan: 1, dknown: 1, known: 1, corpsenm: -1 };
-    let s = simpleonames(dummy);
-    const i = s.indexOf(' (');
-    if (i >= 0) s = s.slice(0, i);
-    return s;
-}
+export { simple_typename } from './objnam.js';
 
 // C ref: wield.c wield_tool(obj, verb) — wield a tool for #rub/#force/&c.
 // Returns TRUE when the tool got wielded.  All four refusals (worn item, welded
@@ -723,16 +716,23 @@ export async function wield_tool(obj, verb) {
     if (obj.oclass !== WEAPON_CLASS) game.unweapon = true;
     return true;
 }
-function corpse_xname(obj, adj, flagsArg = 0) { return on_corpse_xname(obj, adj, flagsArg); }
+export function corpse_xname(obj, adj, flagsArg = 0) { return on_corpse_xname(obj, adj, flagsArg); }
 export { killer_xname };
 
 // C ref: do_name.c docall_xname(obj) — the bare "a/an <appearance>" name used
 // in the "Call <x>:" prompt: a fresh copy with diluted/poison/BUC fixups so it
 // reads as the plain unidentified type ("a ruby potion", not "a diluted ...").
 function docall_xname(obj) {
-    const otemp = { ...obj, quan: 1, blessed: 0, cursed: 0 };
-    if (otemp.oclass === POTION_CLASS) otemp.odiluted = 0;
-    return with_article(simple_obj_name(otemp, { quantity: false, buc: false }));
+    const otemp = { ...obj, oextra: null, oname: null, quan: 1, blessed: 0, cursed: 0 };
+    /* in case water is already known, convert "[un]holy water" to "water" */
+    if (otemp.oclass === WEAPON_CLASS) otemp.opoisoned = 0;
+    else if (otemp.oclass === POTION_CLASS) otemp.odiluted = 0;
+    else if (otemp.otyp === TOWEL || otemp.otyp === STATUE) otemp.spe = 0;
+    else if (otemp.otyp === TIN) otemp.known = 0;
+    else if (otemp.otyp === FIGURINE) otemp.corpsenm = -1;
+    else if (otemp.otyp === 477 /*HEAVY_IRON_BALL*/) otemp.owt = base_oc_weight(otemp);
+    else if (otemp.oclass === FOOD_CLASS && otemp.globby) otemp.owt = 120;
+    return an(on_xname(otemp));
 }
 
 // C ref: do_name.c docall(obj) — prompt "Call <a appearance>:" and attach the
@@ -775,7 +775,7 @@ export async function docall(obj) {
 }
 
 // C ref: do_name.c objtyp_is_callable()/name_ok()/call_ok().
-function objtyp_is_callable(otyp) {
+export function objtyp_is_callable(otyp) {
     const ocl = objects[otyp];
     if (!ocl) return false;
     if (ocl.oc_uname) return true;
@@ -805,7 +805,8 @@ export function call_ok(obj) {
 async function do_oname(obj) {
     /* Do this now because there's no point in even asking for a name */
     if (obj.otyp === SPE_NOVEL) {
-        await pline(`${simple_obj_name(obj)} already has a published name.`);
+        const nm = ysimple_name(obj);
+        await pline(`${nm.charAt(0).toUpperCase()}${nm.slice(1)} already has a published name.`);
         return;
     }
     const which = (obj.quan || 1) > 1 ? 'these' : 'this';
@@ -896,7 +897,25 @@ export async function trycall(obj) {
 }
 function greatest_erosion(obj) { return Math.max(obj?.oeroded || 0, obj?.oeroded2 || 0); }
 function erosion_matters(obj) { return obj?.oclass === WEAPON_CLASS || obj?.oclass === ARMOR_CLASS; }
-function same_price(_obj, _otmp) { return true; }
+// C ref: shk.c:955 same_price(obj1, obj2) — both objects on the same shk's bill
+// at the same price (a surcharged item must not merge with a base-cost one).
+function same_price(obj1, obj2) {
+    let shkp1, shkp2, bp1 = null, bp2 = null;
+    for (shkp1 = next_shkp(fmon_list()[0] ? fmon_list()[0] : null, true); shkp1;
+         shkp1 = next_shkp(nmon_after(shkp1), true))
+        if ((bp1 = onbill(obj1, shkp1)) != null) break;
+    if (shkp1 && (bp2 = onbill(obj2, shkp1)) != null) {
+        shkp2 = shkp1;
+    } else {
+        for (shkp2 = next_shkp(fmon_list()[0] ? fmon_list()[0] : null, true); shkp2;
+             shkp2 = next_shkp(nmon_after(shkp2), true))
+            if ((bp2 = onbill(obj2, shkp2)) != null) break;
+    }
+    if (!bp1 || !bp2) return false; /* C: impossible("same_price: object wasn't on any bill!") */
+    return shkp1 === shkp2 && bp1.price === bp2.price;
+}
+function fmon_list() { return game.level?.monsters || game.fmon || []; }
+function nmon_after(m) { const l = fmon_list(); const i = l.indexOf(m); return i >= 0 && i + 1 < l.length ? l[i + 1] : null; }
 function check_unpaid(_obj) {}
 function curse(obj) { if (obj) { obj.cursed = true; obj.blessed = false; } }
 function stop_timer(_kind, _id) { return 0; }
@@ -971,7 +990,7 @@ export function unsplitobj(obj) {
     const child = list.find(o => o.o_id === splitContext.child_oid);
     return parent && child && merged(parent, child) ? parent : null;
 }
-function clear_splitobjs() {
+export function clear_splitobjs() {
     const splitContext = game.context.objsplit;
     if (splitContext) splitContext.parent_oid = splitContext.child_oid = 0;
 }
@@ -1066,6 +1085,17 @@ function uprops_set_bits(store, prop, bits) {
 // deliberately NOT part of this change.
 export function worn_extrinsic(prop) { return uprops_bits('uprops_extrinsic', prop); }
 export function worn_blocked(prop) { return uprops_bits('uprops_blocked', prop); }
+// C ref: youprop.h `#define Free_action (HFree_action || EFree_action)`.  The
+// worn half (ring of free action, orange dragon scales, ...) lives only in the
+// extrinsic word above; the u.uprops spellings are the intrinsic/timed half
+// (and the several names this port has used for it).  Single reader for every
+// Free_action check so a worn ring is not invisible to them.
+export function Free_action() {
+    const p = game.u?.uprops;
+    return !!((p?.FreeAction | 0) || (p?.HFree_action | 0) || (p?.EFree_action | 0)
+              || (p?.Free_action | 0) || (game.u?.EFree_action | 0)
+              || worn_extrinsic(FREE_ACTION_PROP));
+}
 
 // C ref: worn.c:120-131 — the install half.  C's two guards, verbatim:
 // `if (wp->w_mask & ~(W_SWAPWEP | W_QUIVER))` keeps quivered/alternate items
@@ -1197,19 +1227,10 @@ function Antimagic() {
     return !!(u?.uprops?.Antimagic || u?.Antimagic || u?.HAntimagic || u?.EAntimagic);
 }
 // C ref: youprop.h Hate_silver == (u.ulycn >= LOW_PM || hates_silver(youmonst)).
-// mondata.c hates_silver(): were-creatures, S_VAMPIRE, M2_DEMON, shades, and
-// imps other than the tengu.  LOW_PM is 0 (u.ulycn is NON_PM == -1 normally).
-const S_VAMPIRE_MLET = 48, S_IMP_MLET = 9;
-function Hate_silver() {
+// LOW_PM is 0 (u.ulycn is NON_PM == -1 normally).  The one hero-side copy.
+export function Hate_silver() {
     if ((game.u?.ulycn ?? -1) >= 0) return true;
-    const ptr = youmonst_data();
-    if (!ptr) return false;
-    if (is_were_flag(ptr)) return true;
-    if (ptr.mcls === S_VAMPIRE_MLET) return true;
-    if ((mflags2_of(ptr) & M2_DEMON) !== 0) return true;
-    if (ptr.name === 'shade') return true;
-    if (ptr.mcls === S_IMP_MLET && ptr.name !== 'tengu') return true;
-    return false;
+    return hates_silver(youmonst_data());
 }
 // C ref: hack.h Maybe_Half_Phys(dmg) — halve (rounding up) under HALF_PHDAM.
 function Maybe_Half_Phys(dmg) {
@@ -1222,67 +1243,6 @@ async function losehp_invent(n, knam, k_format = 0 /* KILLED_BY_AN */) {
     const { losehp_do } = await import('./do.js');
     await losehp_do(n, knam, k_format);
 }
-// Synchronous variant for this file's sync touch_artifact() (its sync callers
-// cannot await showdamage()'s pline); artifact.js's async touch_artifact()
-// goes through do.js losehp_do(), which does show the damage.
-function losehp_invent_sync(n) {
-    const u = game.u;
-    if (!u) return;
-    hooks.end_running?.(true); // hack.c:4266
-    u.uhp -= n;
-    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
-    if (u.uhp < 1) u.uhp = 0;
-    game.botl = true;
-}
-
-// C ref: artifact.c touch_artifact().  Hero (or monster) tries to touch an
-// artifact; returns false if it refuses to be held.  Faithfully consumes the
-// rn2(4) at artifact.c:945 under the same short-circuit conditions as C, and —
-// when that lands — the blast's d(Antimagic ? 2 : 4, self_willed ? 10 : 4)
-// damage roll plus the silver rnd(10) bonus, which are RNG draws C makes and
-// no earlier port made. Monster checks use the shared synchronous predicate.
-export function touch_artifact(obj, mon) {
-    if (mon && mon !== game.u && mon !== game.youmonst)
-        return !!touch_artifact_monster(obj, mon);
-    const f = touch_artifact_hero_flags(obj);
-    game._touch_blasted = false;
-    if (!f) return true; // ART_NONARTIFACT
-    const yours = true;
-    const { self_willed, badclass, badalign } = f;
-    // C: if (((badclass || badalign) && self_willed)
-    //        || (badalign && (!yours || !rn2(4)))) { ... blast ... }
-    // The rn2(4) is evaluated under the same short-circuit ordering as C.
-    if (((badclass || badalign) && self_willed)
-        || (badalign && (!yours || !rn2(4)))) {
-        // C ref: artifact.c:947-957.  A non-hero toucher returns 0 before any
-        // RNG; the hero takes the blast.
-        if (!yours) return false;
-        // C: You("are blasted by %s power!", s_suffix(the(xname(obj)))). Sets
-        // toplin=NEED_MORE (not a bare _pending_message write) so the
-        // caller's same-turn follow-on (the wield success line, reached
-        // whenever this branch doesn't also evade the grasp below) sees an
-        // unacknowledged line and pages it via update_topl()'s
-        // merge-or-more() check, instead of overwriting it and racing into
-        // end-of-turn RNG a keystroke early.
-        game._pending_message =
-            `You are blasted by ${s_suffix(the_artifact_name(xname(obj)))} power!`;
-        game._toplin = 1;
-        game._touch_blasted = true;
-        let dmg = d(Antimagic() ? 2 : 4, self_willed ? 10 : 4);
-        // C: half (Maybe_Half_Phys quarter) of the usual silver damage bonus.
-        // objclass.h obj_material_types: SILVER is 14; 10 is DRAGON_HIDE, so
-        // the silver damage bonus never fired for a real silver artifact.
-        if (objects[obj.otyp]?.material === 14 /* SILVER */ && Hate_silver())
-            dmg += Maybe_Half_Phys(rnd(10));
-        losehp_invent_sync(dmg);
-        exercise(A_WIS, false);
-    }
-
-    // C: if (badclass && badalign && self_willed) -> object evades grasp.
-    if (badclass && badalign && self_willed) return false;
-    return true;
-}
-
 // C ref: monst.h gy.youmonst.data == &mons[u.umonnum] (set_uasmon keeps
 // umonnum == umonster for the hero's own form, so this is correct polymorphed
 // or not).  u.data is the polyself-maintained mirror; fall back to it when the
@@ -1468,43 +1428,6 @@ function obj_resists(obj, ochance, achance) {
 function get_obj_location(obj, xp, yp) { if (!obj) return false; xp.x = obj.ox; yp.y = obj.oy; return true; }
 /* allow_category / add_valid_menu_class / menu_class_present /
    collect_obj_classes are pickup.c's; imported from js/pickup.js above. */
-// C ref: objnam.c not_fully_identified(otmp).  Gold is always fully ID'd; an
-// object is "not fully identified" when a fundamental hallmark is missing
-// (known / dknown / bknown / oc_name_known), a container's contents/lock aren't
-// known, or an undiscovered artifact.  rknown (erosion-proofing) only matters
-// for damageable objects (armor/weapon/weptool/ball); for everything else it is
-// irrelevant, so the prior unconditional `rknown` test wrongly flagged ordinary
-// items (and gold) as unidentified, making the identify-scroll path mis-fire.
-function not_fully_identified(obj) {
-    if (!obj) return false;
-    if (obj.oclass === COIN_CLASS) return false; // gold: always fully ID'd
-    // C effective oc_name_known: an object with NO randomized appearance
-    // (OBJ_DESCR == NoDes => absent from DESCR_BY_OTYP) is type-known from the
-    // start (init_objects forces oc_name_known = 1 for it).  The JS objects[]
-    // table only stores the explicit BITS() flag, so treat a missing-appearance
-    // object as name-known here to match C's identification semantics.
-    const typeKnown = !!objects[obj.otyp]?.oc_name_known
-        || DESCR_BY_OTYP[obj.otyp] == null;
-    if (!obj.known || !obj.dknown || !obj.bknown || !typeKnown)
-        return true;
-    if ((!obj.cknown && (Is_container(obj) || obj.otyp === STATUE))
-        || (!obj.lknown && Is_box(obj)))
-        return true;
-    // (undiscovered artifacts: the owned sessions carry none; skipped.)
-    if (obj.rknown
-        || (obj.oclass !== ARMOR_CLASS && obj.oclass !== WEAPON_CLASS
-            && !is_weptool(obj) && obj.oclass !== BALL_CLASS))
-        return false;
-    // lack of rknown only matters for vulnerable (damageable) objects.
-    return is_damageable(obj);
-}
-// C ref: objclass.h Is_box() — large box / chest / ice box (lockable boxes).
-function Is_box(obj) { return obj?.otyp === 214 || obj?.otyp === 215 || obj?.otyp === 216; }
-// C ref: objnam.c is_damageable() — armor/weapon-class objects can erode.
-function is_damageable(obj) {
-    return obj?.oclass === ARMOR_CLASS || obj?.oclass === WEAPON_CLASS
-        || is_weptool(obj);
-}
 /* query_objlist / query_category are pickup.c's; see js/pickup.js. */
 function create_nhwindow(_type) { return 1; }
 function destroy_nhwindow(_win) {}
@@ -1542,7 +1465,6 @@ export function cmdq_add_key(which, k) {
     _cmdq(which).push({ typ: CMDQ_KEY, key: typeof k === 'number' ? k : String(k).charCodeAt(0) });
 }
 function silly_thing_to() { return 'That is a silly thing to do.'; }
-function clear_bypasses() { for (const obj of inventoryArray()) obj.bypass = 0; }
 function bypass_objlist(list, value) { for (const obj of iterateObjects(list)) obj.bypass = value ? 1 : 0; }
 function nxt_unbypassed_loot(loot, list) {
     for (const item of loot || sortloot({ obj: list }, 0, false, null)) {
@@ -1558,121 +1480,6 @@ function def_char_to_objclass(sym) {
 function letter(c) { return /^[A-Za-z]$/.test(String(c)); }
 function digit(c) { return /^[0-9]$/.test(String(c)); }
 function plur(n) { return Number(n) === 1 ? '' : 's'; }
-// C ref: objnam.c singplur_compound — find a compound-phrase connector
-// (" of ", " labeled ", " called ", " named ", ...) so makeplural can
-// pluralize only the head noun (e.g. "potion of healing" -> "potions of
-// healing").  Returns the index of the connector, or -1.
-const SINGPLUR_COMPOUNDS = [
-    ' of ', ' labeled ', ' called ', ' named ', ' above',
-    ' versus ', ' from ', ' in ', ' on ', ' a la ', ' with',
-    ' de ', " d'", ' du ', ' au ', '-in-', '-at-',
-];
-function singplur_compound(str) {
-    const lower = str.toLowerCase();
-    for (let i = 0; i < str.length; i++) {
-        const c = str[i];
-        if (c !== ' ' && c !== '-') continue;
-        for (const cmpd of SINGPLUR_COMPOUNDS)
-            if (lower.startsWith(cmpd, i)) return i;
-    }
-    return -1;
-}
-// C ref: objnam.c makeplural — pluralize an object/word.  Handles the
-// "pair of ..." skip, "X of Y" compound (pluralize the head), and the common
-// English suffix rules (es / ies / ves / man->men / us->i / ium->ia /
-// sis->ses, default +s).  Pronoun and exotic biology cases C also covers are
-// omitted; they don't occur for the object names this port exercises.
-export function makeplural(oldstr) {
-    if (oldstr == null) return 's';
-    let s = String(oldstr).replace(/^ +/, '');
-    if (!s) return 's';
-
-    // "pair of boots/gloves" stays singular ("3 pair of boots").
-    if (/^pair of /i.test(s)) return s;
-
-    // C ref: objnam.c makeplural():2903 — "words which don't need
-    // pluralization": the already_plural[] suffixes, plus the ya special case
-    // ("32 ya", not "32 yas").
-    if (/(ae|eaux|matzot)$/i.test(s)) return s;
-    if (/^ya$/i.test(s) || / ya$/i.test(s)) return s;
-
-    // Split off a compound tail ("X of Y") so only the head pluralizes.
-    let head = s, excess = '';
-    const cidx = singplur_compound(s);
-    if (cidx >= 0) { head = s.slice(0, cidx); excess = s.slice(cidx); }
-
-    // Strip trailing blanks from the head; operate on its last letter.
-    head = head.replace(/ +$/, '');
-    const len = head.length;
-    const last = head.charAt(len - 1);
-    const lc = last.toLowerCase();
-    const prev = len >= 2 ? head.charAt(len - 2).toLowerCase() : '';
-    const vowels = 'aeiou';
-
-    // C ref: objnam.c:2707 singplur_lookup(str, spot+1, TRUE, already_plural) —
-    // pre-pass for irregular plurals (as_is[]/one_off[] tables: deer/fish/sheep,
-    // foot/feet, ox/oxen, badman()-gated man/men, etc.), gated the same as C's
-    // len===1/!letter guard below. Previously unimplemented, so callers got
-    // formula output ("9 shurikens", "foots", "3 deers"); js/potion.js and
-    // js/wield.js had grown their own local copies of the same table as a workaround.
-    if (len > 1 && /[a-z]/i.test(last)) {
-        const sb = { s: head };
-        if (singplur_lookup(sb, len, true, ['ae', 'eaux', 'matzot']))
-            return sb.s + excess;
-    }
-
-    let plural;
-    if (len === 1 || !/[a-z]/i.test(last)) {
-        plural = `${head}'s`;
-    } else if (len >= 3 && head.slice(-3).toLowerCase() === 'man'
-               && !/[aeiou]man$/i.test(head) /* avoid shaman/human-ish */) {
-        plural = `${head.slice(0, -2)}en`;
-    } else if (lc === 'f' && (len < 3 || head.slice(-3).toLowerCase() !== 'erf')
-               && ('lr'.includes(prev) || vowels.includes(prev))) {
-        plural = `${head.slice(0, -1)}ves`;
-    } else if (len >= 3 && head.slice(-3).toLowerCase() === 'ium') {
-        plural = `${head.slice(0, -3)}ia`;
-    } else if (len > 3 && head.slice(-2).toLowerCase() === 'us'
-               && !(len >= 5 && head.slice(-5).toLowerCase() === 'lotus')
-               && !(len >= 6 && head.slice(-6).toLowerCase() === 'wumpus')) {
-        plural = `${head.slice(0, -2)}i`;
-    } else if (len >= 3 && head.slice(-3).toLowerCase() === 'sis') {
-        plural = `${head.slice(0, -2)}es`;
-    } else if ('zxs'.includes(lc)
-               || (len >= 2 && lc === 'h' && 'cs'.includes(prev))
-               || (len >= 4 && head.slice(-3).toLowerCase() === 'ato')
-               || (len >= 5 && head.slice(-5).toLowerCase() === 'dingo')) {
-        plural = `${head}es`;
-    } else if (lc === 'y' && !vowels.includes(prev)) {
-        plural = `${head.slice(0, -1)}ies`;
-    } else {
-        plural = `${head}s`;
-    }
-    return plural + excess;
-}
-// C ref: objnam.c:2108 just_an() / objnam.c:2144 an() — the naive vowel-only
-// test this replaced said "an unicorn horn"/"an uranium wand"/"an useful
-// gizmo" (seed5002 step 32); C's exception list treats these 'y'-sound
-// initial-U words (plus "eu-", "one" as in "one-eyed", and non-vowel-sounding
-// 'x') as consonants for article purposes.
-function an(s) {
-    if (!s) return s;
-    const c0 = s[0].toLowerCase();
-    if (!s[1] || s[1] === ' ')
-        return (('aefhilmnosx'.includes(c0)) ? 'an ' : 'a ') + s;
-    const low = s.toLowerCase();
-    if (low.startsWith('the ') || low === 'molten lava' || low === 'iron bars' || low === 'ice')
-        return s;
-    const oneShort = low.startsWith('one') && (s.length <= 3 || '-_ '.includes(s[3]));
-    const consonantSoundU = oneShort || low.startsWith('eu') || low.startsWith('uke')
-        || low.startsWith('ukulele') || low.startsWith('unicorn') || low.startsWith('uranium')
-        || low.startsWith('useful');
-    if (('aeiou'.includes(c0) && !consonantSoundU)
-        || (c0 === 'x' && !'aeiou'.includes((s[1] || '').toLowerCase())))
-        return `an ${s}`;
-    return `a ${s}`;
-}
-
 function highc(s) { return String(s).charAt(0).toUpperCase(); }
 function mungspaces(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 // C ref: hacklib.c ing_suffix() — gerund construction: split off a trailing
@@ -1744,9 +1551,6 @@ export function is_weptool(obj) {
 }
 // C ref: obj.h is_wet_towel(o) — a towel with charges (wetness) left.
 function is_wet_towel(obj) { return obj?.otyp === 234 /*TOWEL*/ && (obj.spe | 0) > 0; }
-function poly_when_stoned(_data) { return false; }
-function instapetrify(_why) {}
-function will_feel_cockatrice_external(_obj, _force) { return false; }
 function map_glyphinfo(_x, _y, _glyph, _flags, _info) {}
 function let_to_name_fallback(letChar) { return names[letChar] || names[ILLOBJ_CLASS]; }
 
@@ -1808,495 +1612,12 @@ function removeObjectFromAllInventories(obj) {
     syncInventory(inv);
 }
 
-// C ref: objnam.c OBJ_DESCR — the unidentified appearance string for obj's
-// current (possibly shuffled) appearance index.  Falls back to the actual name
-// when the class is not appearance-shuffled (C: `if (!dn) dn = actualn`).
-function obj_appearance_descr(obj) {
-    const ocl = objects[obj.otyp];
-    const di = (ocl && ocl.oc_descr_idx != null) ? ocl.oc_descr_idx : obj.otyp;
-    const dn = DESCR_BY_OTYP[di];
-    return (dn != null) ? dn : (ocl?.name || obj.name || 'object');
-}
-
-// C do_name.c obj_pmname(): CORPSTAT_MALE=2, FEMALE=1, RANDOM/NEUTER=0/3.
-function object_pmname(obj) {
-    const sex = (obj.spe | 0) & 3;
-    const pm = obj.corpsenm === name_to_pmidx('aligned cleric') && sex === 0
-        ? name_to_pmidx('cleric') : obj.corpsenm;
-    return pmname_of_pmidx(pm, sex === 2 ? 0 : sex === 1 ? 1 : 2);
-}
-
-// C ref: objnam.c xname_flags — build the type-name portion of an object's
-// description.  Identified types (oc_name_known) show the real name; otherwise
-// the class uses its unidentified appearance ("silver wand", "scroll labeled
-// FOO", ...).  Prefixes (BUC, enchantment, quantity) are added by the caller
-// in simple_obj_name; this returns only the base/type phrase.
-export function objectBaseName(obj) {
-    if (!obj) return 'object';
-    // C ref: objnam.c xname_flags — a Cleric (priest/priestess) always senses an
-    // object's beatitude, so naming any object forces its bknown on ("avoid
-    // set_bknown() to bypass update_inventory()").  This is unconditional (no
-    // Blind/distant guard) and persistent, so a blessed/cursed wished-for or
-    // picked-up item shows its BUC word the first time it is described.
-    if (Role_if(PM_CLERIC) && obj.bknown !== 1) obj.bknown = 1;
-    if (obj.otyp === GOLD_PIECE || obj.oclass === COIN_CLASS)
-        return 'gold piece';
-
-    // C ref: objnam.c xname_flags() case BALL_CLASS:
-    //     Sprintf(buf, "%sheavy iron ball", (obj->owt > ocl->oc_weight) ? "very " : "");
-    // A ball made heavier by a second scroll of punishment (owt 480 -> 640)
-    // becomes a "very heavy iron ball" — seed4500 reads two such scrolls.
-    if (obj.oclass === BALL_CLASS_INV) {
-        // objects[].oc_weight comes from mkobj.js's base_oc_weight() table (the
-        // JS OBJECT_DATA rows carry no weight column).
-        const base_wt = base_oc_weight(obj);
-        return `${(obj.owt ?? 0) > base_wt ? 'very ' : ''}heavy iron ball`;
-    }
-
-    // C objnam.c corpse_xname() uses do_name.c obj_pmname() so gendered
-    // species retain "gnome queen" rather than the neutral "gnome ruler".
-    if (obj.otyp === CORPSE && obj.corpsenm != null && obj.corpsenm >= 0)
-        return `${object_pmname(obj)} corpse`;
-
-    // C ref: objnam.c xname_flags ROCK_CLASS/STATUE — a statue of a known
-    // monster names the petrified species: Snprintf "%s%s of %s%s" with the
-    // (archeologist-only "historic ") prefix, actualn "statue", the monster's
-    // article ("the " for a unique, "" for a proper-name monster, else "a "/"an"
-    // from just_an), and the monster pmname.  The leading object article ("a")
-    // is prepended later by with_article().
-    if (obj.otyp === STATUE && obj.corpsenm != null && obj.corpsenm >= 0) {
-        const sp = monster_by_pmidx(obj.corpsenm);
-        const pmname = sp && object_pmname(obj);
-        if (pmname) {
-            // monflag.h M2_PNAME is 0x00080000; 0x00200000 is M2_PEACEFUL, so
-            // "a statue of Croesus" read "a statue of a Croesus" while every
-            // always-peaceful species lost its article.
-            const G_UNIQ = 0x1000, M2_PNAME = 0x00080000;
-            const mflags2 = sp.mflags2 ?? 0;
-            const isPname = (mflags2 & M2_PNAME) !== 0;
-            const isUnique = !isPname && ((sp.geno ?? 0) & G_UNIQ) !== 0;
-            // C just_an(): "a "/"an " for the pmname (no leading article -> "").
-            const monArticle = isPname ? ''
-                : isUnique ? 'the '
-                : (/^[aeiou]/i.test(pmname) ? 'an ' : 'a ');
-            return `statue of ${monArticle}${pmname}`;
-        }
-    }
-
-    const ocl = objects[obj.otyp];
-    let actualn = ocl?.name || obj.name || 'object';
-    let dn = obj_appearance_descr(obj);
-    // C ref: objnam.c xname_flags():605 — `if (Role_if(PM_SAMURAI)) { actualn =
-    // Japanese_item_name(typ, actualn); if (typ == WOODEN_HARP || typ ==
-    // MAGIC_HARP) dn = "koto"; }`, ahead of every class formatter below.  Doing
-    // it in doname_invent() alone left every other namer (the drop/wield menus,
-    // "You see here", getobj prompts) saying "short sword" for a Samurai.
-    if (is_samurai()) {
-        actualn = Japanese_item_name(obj.otyp) || actualn;
-        if (obj.otyp === WOODEN_HARP_OTYP || obj.otyp === MAGIC_HARP_OTYP) dn = 'koto';
-    }
-    // C ref: objnam.c xname_flags() — `if (iflags.override_ID) { known =
-    // dknown = bknown = TRUE; nn = 1; }`.  Used by reroll_menu()'s doname()
-    // calls (wrapped in ++iflags.override_ID) to show every starting item's
-    // real type name even though its actual discovery (discover_object(),
-    // u_init.c ini_inv_use_obj()) hasn't run yet at that point.
-    const overrideID = !!game.iflags?.override_ID;
-    const nn = overrideID || (ocl ? !!ocl.oc_name_known : false);
-    const un = ocl?.oc_uname || null;
-    // C: observe_object() runs inside xname_flags when not blind/distant, so
-    // a freshly looked-at object has dknown set; mirror that for the common
-    // (non-blind) replay case where dknown may not yet be assigned.
-    const dknown = overrideID || ((obj.dknown != null) ? !!obj.dknown : true);
-    const oc_magic = ocl ? !!ocl.oc_magic : false;
-
-    switch (obj.oclass) {
-    case WAND_CLASS:
-        if (!dknown) return 'wand';
-        if (nn) return `wand of ${actualn}`;
-        if (un) return `wand called ${un}`;
-        return `${dn} wand`;
-    case RING_CLASS:
-        if (!dknown) return 'ring';
-        if (nn) return `ring of ${actualn}`;
-        if (un) return `ring called ${un}`;
-        return `${dn} ring`;
-    case AMULET_CLASS:
-        if (!dknown) return 'amulet';
-        if (obj.otyp === AMULET_OF_YENDOR) return obj.known ? actualn : dn;
-        if (nn) return actualn;
-        if (un) return `amulet called ${un}`;
-        return `${dn} amulet`;
-    case SCROLL_CLASS:
-        if (!dknown) return 'scroll';
-        if (nn) return `scroll of ${actualn}`;
-        if (un) return `scroll called ${un}`;
-        if (oc_magic) return `scroll labeled ${dn}`;
-        return `${dn} scroll`;
-    case POTION_CLASS: {
-        let pfx = (dknown && obj.odiluted) ? 'diluted ' : '';
-        if (nn || un || !dknown) {
-            if (!dknown) return `${pfx}potion`;
-            if (nn) {
-                let holy = '';
-                if (obj.otyp === POT_WATER && obj.bknown && (obj.blessed || obj.cursed))
-                    holy = obj.blessed ? 'holy ' : 'unholy ';
-                return `${pfx}potion of ${holy}${actualn}`;
-            }
-            return `${pfx}potion called ${un}`;
-        }
-        return `${pfx}${dn} potion`;
-    }
-    case SPBOOK_CLASS:
-        if (obj.otyp === SPE_NOVEL) {
-            if (!dknown) return 'book';
-            if (nn) return actualn;
-            if (un) return `novel called ${un}`;
-            return `${dn} book`;
-        }
-        if (!dknown) return 'spellbook';
-        if (nn) return obj.otyp === SPE_BOOK_OF_THE_DEAD ? actualn : `spellbook of ${actualn}`;
-        if (un) return `spellbook called ${un}`;
-        return `${dn} spellbook`;
-    case GEM_CLASS: {
-        // objects[] rows carry `material`, not `oc_material` (mkobj.js OBJECT_DATA).
-        const rock = (ocl?.material === 21 /* MINERAL */) ? 'stone' : 'gem';
-        if (!dknown) return rock;
-        if (!nn) {
-            if (un) return `${rock} called ${un}`;
-            return `${dn} ${rock}`;
-        }
-        /* C ref: objnam.c:913-928 — xname_flags appends " stone" for GemStone(). */
-        return GemStone(obj.otyp) ? `${actualn} stone` : actualn;
-    }
-    case WEAPON_CLASS:
-    case TOOL_CLASS:
-    case VENOM_CLASS:
-        // C ref: objnam.c xname_flags TOOL_CLASS — when the type is not
-        // name-known the unidentified *appearance* is shown, not the real name:
-        //   if (!dknown) dn; else if (nn) actualn; else if (un) "dn called un";
-        //   else dn;
-        // For instruments this matters: an unidentified "leather drum" (or
-        // "drum of earthquake") both display as their shared appearance "drum".
-        // For un-shuffled tools dn === actualn, so this is a no-op there.
-        if (!dknown) return dn;
-        if (nn) return actualn;
-        if (un) return `${dn} called ${un}`;
-        return dn;
-    case ARMOR_CLASS:
-        // C ref: objnam.c xname_flags ARMOR_CLASS — boots and gloves are plural
-        // ("pair of leather gloves").  Other starting armor (robe, shields,
-        // suits) takes the actualn path unchanged.
-        if (pair_of(obj))
-            return `pair of ${nn ? actualn : (dn ?? actualn)}`;
-        return nn ? actualn : dn;
-    default:
-        // WEAPON / FOOD / ROCK / CHAIN / BALL etc.: these are not
-        // appearance-shuffled in a way the recorded sessions exercise, so
-        // the real name (== dn when no description) is correct.
-        return actualn;
-    }
-}
-
-function with_article(name) {
-    if (/^(a|an|the)\s/i.test(name)) return name;
-    return an(name);
-}
-
 // C ref: objclass.h F_CHARGED (flags bit 1) — wands and the magic marker are
 // "charged"; their displayed charge count implies BUC, which suppresses the
 // "uncursed" word.
 const F_CHARGED = 1;
 function is_oc_charged(obj) {
     return !!(objects[obj?.otyp]?.flags & F_CHARGED);
-}
-
-function bucPrefix(obj) {
-    if (!obj || obj.oclass === COIN_CLASS) return '';
-    if (!obj.bknown && obj.bknown !== 1) return '';
-    // C ref: objnam.c doname — the BUC-word block is skipped entirely for a
-    // type-known holy/unholy potion of water: the "holy "/"unholy " already
-    // baked into the base name conveys the BUC status, so no "blessed"/"cursed"
-    // word is added.  (Guard: otyp==POT_WATER && oc_name_known && (bl||cu).)
-    {
-        const waterKnown = !!objects[POT_WATER]?.oc_name_known
-            || DESCR_BY_OTYP[POT_WATER] == null;
-        if (obj.otyp === POT_WATER && waterKnown && (obj.cursed || obj.blessed))
-            return '';
-    }
-    if (obj.blessed) return 'blessed ';
-    if (obj.cursed) return 'cursed ';
-    // C ref: objnam.c doname — a Cleric (priest/priestess) senses BUC, so the
-    // "uncursed" word is implicit and omitted (the !Role_if(PM_CLERIC) disjunct
-    // in the "uncursed" guard is false for a cleric).  This is the seed0106
-    // priest path (also gains seed0367/seed0107).
-    if (Role_if(PM_CLERIC)) return '';
-    // C ref: objnam.c doname_base — with flags.implicit_uncursed (default On), a
-    // fully-identified charged non-armor/non-ring item omits "uncursed":
-    // knowing exact charges/+N with no blessed/cursed flag implies uncursed
-    // (e.g. "a magic marker (0:19)", "a +0 short sword"). Amulet of
-    // Yendor/fake keep the word; rings/armor keep it too since +N alone
-    // doesn't fully identify them. Role-independent, so no Role_if() gate here
-    // (Cleric already handled above).
-    if (obj.known && is_oc_charged(obj)
-        && obj.oclass !== ARMOR_CLASS && obj.oclass !== RING_CLASS
-        && obj.otyp !== FAKE_AMULET_OF_YENDOR_OTYP
-        && obj.otyp !== AMULET_OF_YENDOR)
-        return '';
-    return 'uncursed ';
-}
-
-// C ref: objnam.c doname_base WAND_CLASS / charged TOOL_CLASS — append the
-// " (recharged:charges)" suffix when the charge count is known.
-function charge_suffix(obj) {
-    if (!obj || !obj.known) return '';
-    // C ref: objnam.c doname_base():1379 `switch (is_weptool(obj) ?
-    // WEAPON_CLASS : obj->oclass)` — a weapon-tool is described as a WEAPON, so
-    // it never reaches the charged-TOOL arm even though every WEPTOOL() carries
-    // oc_charged.  Without this an Archeologist's identified pick-axe read
-    // "a +0 pick-axe (0:0)", which also shifted the whole inventory menu six
-    // columns (the tty centres on the widest line).
-    if (is_weptool(obj)) return '';
-    const oc = obj.oclass;
-    if (oc === WAND_CLASS || (oc === TOOL_CLASS && is_oc_charged(obj)))
-        return ` (${obj.recharged | 0}:${obj.spe | 0})`;
-    return '';
-}
-
-// C ref: objnam.c doname_base — the "empty " prefix, added (after the article,
-// before the BUC word) only in the doname family, never in xname/cxname.  A
-// bag of tricks / horn of plenty reads empty while its charge count is unknown
-// (spe==0 && !known); any other container or a statue reads empty when its
-// contents are known (cknown) and it has none.
-function empty_prefix(obj) {
-    if (!obj || !obj.cknown) return '';
-    const baglike = obj.otyp === BAG_OF_TRICKS || obj.otyp === HORN_OF_PLENTY;
-    const isEmpty = baglike
-        ? (obj.spe === 0 && !obj.known)
-        : ((Is_container(obj) || obj.otyp === STATUE) && !Has_contents(obj));
-    return isEmpty ? 'empty ' : '';
-}
-
-// C ref: eat.c tin_details() — species-specific "tin of X" wording for a
-// known tin.  The freshness word (rotten/homemade/pickled/...) only shows
-// once the tin's contents are known (cknown); corpsenm NON_PM (-1) means an
-// emptied tin.
-function tin_details(obj, base) {
-    const r = tin_variety(obj, true);
-    if (r === SPINACH_TIN) return `${base} of spinach`;
-    const mnum = obj.corpsenm;
-    if (mnum == null || mnum < 0) return `empty ${base}`;
-    const mname = monster_by_pmidx(mnum)?.name ?? '';
-    const meatWord = vegetarian(monster_by_pmidx(mnum)) ? mname : `${mname} meat`;
-    if (obj.cknown && obj.spe < 0) {
-        const fresh = tintxts[r]?.txt ?? '';
-        if (r === ROTTEN_TIN || r === HOMEMADE_TIN) return `${fresh} ${base} of ${meatWord}`;
-        return `${base} of ${fresh} ${meatWord}`;
-    }
-    return `${base} of ${meatWord}`;
-}
-
-function simple_obj_name(obj, opts = {}) {
-    const { article = true, quantity = true, count = true, buc = true,
-            empty = false, vague_quan = false } = opts;
-    if (!obj) return 'nothing';
-    // C ref: objnam.c doname_base():1283 — `if (obj->quan != 1L) { if (dknown
-    // || !vague_quan) Sprintf(prefix, "%ld ", quan); else Strcpy(prefix,
-    // "some "); }`.  Only farlook passes DONAME_VAGUE_QUAN.
-    const vagueQuan = vague_quan && !obj.dknown && (obj.quan || 1) !== 1;
-    if (obj.oclass === COIN_CLASS || obj.otyp === GOLD_PIECE) {
-        const q = obj.quan || 0;
-        if (!quantity) return 'gold piece';
-        if (q === 1) return article ? 'a gold piece' : 'gold piece';
-        if (!count) return 'gold pieces';
-        return vagueQuan ? 'some gold pieces' : `${q} gold pieces`;
-    }
-    let base = objectBaseName(obj);
-    // C ref: objnam.c xname_flags "if (typ == TIN && known) tin_details(...)" —
-    // the species-derived "tin of X" wording only appears once the tin's
-    // specific contents are identified; an unopened, unidentified tin is
-    // just "a tin".
-    if (obj.otyp === TIN && obj.known) base = tin_details(obj, base);
-    let prefix = (empty ? empty_prefix(obj) : '') + (buc ? bucPrefix(obj) : '');
-    // C ref: objnam.c:1356-1368 doname_base — a lockable box whose lock state is
-    // known (lknown) shows "broken "/"locked "/"unlocked ", preceded by
-    // "trapped " for a known trap, so a freshly-seen box is still "a chest".
-    // Inside doname_base(), hence gated on `buc` like "partly eaten" below.
-    if (buc && Is_box(obj)) {
-        if (obj.otrapped && obj.tknown && obj.dknown) prefix += 'trapped ';
-        if (obj.lknown)
-            prefix += obj.obroken ? 'broken ' : obj.olocked ? 'locked ' : 'unlocked ';
-    }
-    // C ref: objnam.c:1504 doname_base FOOD_CLASS — "partly eaten " is
-    // doname-only (xname_flags adds it only under iflags.partly_eaten_hack), so
-    // it is gated on `buc`, this function's "this is doname" flag.
-    if (buc && obj.oclass === FOOD_CLASS && obj.oeaten) prefix += 'partly eaten ';
-    // C ref: objnam.c:1500 doname_base RING_CLASS — a known charged ring appends
-    // its enchantment as a signed prefix ("%+d "), so "+1 ", "+0 ", "-2 " all
-    // show (there is no spe != 0 guard).  Non-charged rings (e.g. see
-    // invisible) and unidentified ones get no prefix.
-    if (buc && obj.oclass === RING_CLASS && obj.known && is_oc_charged(obj))
-        prefix += `${obj.spe >= 0 ? '+' : ''}${obj.spe | 0} `;
-    // C ref: objnam.c xname_flags WEAPON_CLASS — "poisoned " is part of the
-    // bare xname (both xname() and doname() show it), unlike erosion words
-    // and the enchantment number, which objnam.c only adds in doname_base
-    // on top of xname's result — i.e. only for the full doname() rendering,
-    // not the bare xname()/cxname() one (gated the same as the BUC prefix).
-    if (obj.oclass === WEAPON_CLASS || obj.oclass === ARMOR_CLASS || is_weptool(obj)) {
-        if (obj.opoisoned) prefix += 'poisoned ';
-    }
-    if (buc && (obj.oclass === WEAPON_CLASS || obj.oclass === ARMOR_CLASS || is_weptool(obj))) {
-        prefix = add_erosion_words(obj, prefix);
-        if (obj.known) prefix += `${obj.spe >= 0 ? '+' : ''}${obj.spe | 0} `;
-    }
-    // C ref: objnam.c:1486 — the " (recharged:charges)" suffix is emitted by
-    // doname_base(), never by xname_flags(), so cxname()/xname()/yname() leave
-    // it off.  Measured beyond the wording: uhitm.c's yname(uwep) "You begin
-    // bashing monsters with your tinning kit." plus the hit message that
-    // follows fits on one top line, but with a stray " (0:48)" it does not, so
-    // the port inserted an extra --More-- boundary and lost the rest of the run.
-    const chg = buc ? charge_suffix(obj) : '';
-    // C ref: objnam.c:1373 doname_base — a container whose contents are known
-    // (cknown) and non-empty names its stack count: "a bag containing 1 item".
-    // Appended to the NAME (before the class suffixes), not to the prefix, so
-    // the article still comes from the bare base word.
-    let containing = '';
-    if (buc && obj.cknown && Has_contents(obj)) {
-        const n = count_contents(obj, false, false, true, false);
-        containing = ` containing ${n} item${n === 1 ? '' : 's'}`;
-    }
-    // C ref: objnam.c xname_flags TOOL_CLASS OIL_LAMP/MAGIC_LAMP/BRASS_LANTERN/
-    // candle arm — `if (obj->lamplit) bp += " (lit)"`.  This function is a
-    // parallel reimplementation of that switch (doname_base) for the
-    // inventory/floor-name callers and never carried this arm across, so a
-    // lit lamp/lantern/candle read with no indication it was burning.
-    const lit = lit_suffix(obj);
-    if (quantity && (obj.quan || 1) > 1 && !pair_of(obj)) {
-        const numPrefix = count ? `${vagueQuan ? 'some' : obj.quan} ` : '';
-        return `${numPrefix}${prefix}${makeplural(base)}${containing}${lit}${chg}${oname_suffix(obj)}`;
-    }
-    const phrase = `${prefix}${base}`;
-    return (article ? with_article_obj(obj, phrase) : phrase) + containing + lit + chg + oname_suffix(obj);
-}
-// C ref: objnam.c xname_flags — " (lit)" for a burning oil lamp/magic lamp/
-// brass lantern/candle.  (The candle-only "partly used " prefix that sits
-// beside it in C is left off: it depends on objnam.js's own peek_timer(),
-// which is itself a stub always returning 0, so porting the comparison here
-// would only ever compare against `-moves()`, not a real value.)
-function lit_suffix(obj) {
-    if (!obj) return '';
-    if (obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP
-        || obj.otyp === BRASS_LANTERN || Is_candle(obj))
-        return obj.lamplit ? ' (lit)' : '';
-    return '';
-}
-
-// C ref: objnam.c doname_base():1174 — `else if (obj_is_pname(obj)
-// || the_unique_obj(obj)) Strcpy(prefix, "the ")`.  Without it the Amulet of
-// Yendor read "an Amulet of Yendor" (seed0373 step 99).
-function with_article_obj(obj, phrase) {
-    if (/^(a|an|the)\s/i.test(phrase)) return phrase;
-    if (the_unique_obj(obj)) return `the ${phrase}`;
-    return an(phrase);
-}
-
-// C ref: objnam.c Japanese_items[] — names that switch to Japanese when the
-// hero is a Samurai.  Keyed by otyp (mkobj.js MONS/object convention).
-const SHORT_SWORD_OTYP = 46, BROADSWORD_OTYP = 52, FLAIL_OTYP = 81,
-      GLAIVE_OTYP = 62, LOCK_PICK_OTYP = 222, WOODEN_HARP_OTYP = 253,
-      MAGIC_HARP_OTYP = 254, KNIFE_OTYP = 40, PLATE_MAIL_OTYP = 121,
-      HELMET_OTYP = 97, LEATHER_GLOVES_OTYP = 159, FOOD_RATION_OTYP = 293,
-      POT_BOOZE_OTYP = 317;
-const JAPANESE_ITEM_NAME = new Map([
-    [SHORT_SWORD_OTYP, 'wakizashi'], [BROADSWORD_OTYP, 'ninja-to'],
-    [FLAIL_OTYP, 'nunchaku'], [GLAIVE_OTYP, 'naginata'],
-    [LOCK_PICK_OTYP, 'osaku'], [WOODEN_HARP_OTYP, 'koto'],
-    [MAGIC_HARP_OTYP, 'magic koto'], [KNIFE_OTYP, 'shito'],
-    [PLATE_MAIL_OTYP, 'tanko'], [HELMET_OTYP, 'kabuto'],
-    [LEATHER_GLOVES_OTYP, 'yugake'], [FOOD_RATION_OTYP, 'gunyoki'],
-    [POT_BOOZE_OTYP, 'sake'],
-]);
-function is_samurai() { return game.u?.umonnum === 9 || game.urole?.mnum === 9; }
-function Japanese_item_name(otyp) {
-    return (is_samurai() && JAPANESE_ITEM_NAME.has(otyp))
-        ? JAPANESE_ITEM_NAME.get(otyp) : null;
-}
-
-// C ref: objnam.c doname_base() worn-status suffix for the inventory window.
-// Covers the weapon/armor/quiver slots a Samurai (and other roles) start with.
-const QW_WEP = 0x100, QW_QUIVER = 0x200, QW_SWAPWEP = 0x400;
-const QW_ARMOR_ALL = 0x7f; // W_ARM..W_ARMU (prop.h)
-function worn_status_suffix(obj) {
-    if (!obj) return '';
-    const m = obj.owornmask || 0;
-    if (m & QW_WEP) {
-        // C ref: objnam.c doname_base — the primary weapon slot.  When it is the
-        // actively dual-wielded primary (obj == uwep && u.twoweap) it reads
-        // "wielded in right hand" to contrast with the secondary's "left hand".
-        const twoweap_primary = (obj === game.uwep && !!game.u?.twoweap);
-        // Alternate "(wielded)" phrasing for non-weapons and for wielded
-        // ammo/missiles: a WEAPON_CLASS object uses the ammo/missile test,
-        // anything else (tools that aren't weptools, and non-weapon objects like
-        // a wielded spellbook) uses !is_weptool.  Suppressed while dual-wielding.
-        const altPhrasing = (obj.oclass === WEAPON_CLASS)
-            ? (is_ammo(obj) || is_missile(obj))
-            : !is_weptool(obj);
-        if ((obj.quan !== 1 || altPhrasing) && !twoweap_primary)
-            return ' (wielded)';
-        // C ref: objnam.c doname_base — a bimanual weapon reads "in hands"
-        // (makeplural of body_part(HAND)); otherwise "in right hand"/"in left
-        // hand" per URIGHTY (u.uhandedness, rn2(10) at chargen).
-        const hand = bimanual(obj) ? makeplural(body_part(6))
-            : `${game.u?.uleft_handed ? 'left' : 'right'} ${body_part(6)}`;
-        return ` (${twoweap_primary ? 'wielded in' : 'weapon in'} ${hand})`;
-    }
-    if (m & QW_SWAPWEP) {
-        // C ref: objnam.c doname_base — the secondary weapon slot.  While
-        // dual-wielding it is in the hand opposite the primary (URIGHTY ->
-        // left, ULEFTY -> right); otherwise it is the idle "alternate
-        // weapon; not wielded".
-        if (game.u?.twoweap)
-            return ` (wielded in ${game.u?.uleft_handed ? 'right' : 'left'} ${body_part(6)})`;
-        return ` (alternate weapon${plur(obj.quan)}; not wielded)`;
-    }
-    if (m & QW_QUIVER) {
-        // C ref: objnam.c doname_base():1622 — the quiver phrasing switches on
-        // oclass; its `default:` arm ("at the ready") covered only
-        // RING/AMULET/WAND/COIN/GEM_CLASS reading "in quiver pouch", so a
-        // slinger's quivered flint stones (GEM_CLASS) read "(at the ready)" —
-        // 3 columns narrower than C's line, shifting the whole inventory menu
-        // one column right. The bow-ammo test is `oc_skill == -P_BOW`, not an
-        // otyp range (the old ARROW..YA window missed non-arrow -P_BOW ammo).
-        let Qtyp;
-        switch (obj.oclass) {
-        case WEAPON_CLASS:
-            Qtyp = !is_ammo(obj) ? 3
-                : ((objects[obj.otyp]?.oc_skill ?? 0) !== -P_BOW) ? 2 : 1;
-            break;
-        case RING_CLASS: case AMULET_CLASS: case WAND_CLASS:
-        case COIN_CLASS: case GEM_CLASS:
-            Qtyp = 2;
-            break;
-        default:
-            Qtyp = 3;
-            break;
-        }
-        return Qtyp === 1 ? ' (in quiver)'
-            : Qtyp === 2 ? ' (in quiver pouch)' : ' (at the ready)';
-    }
-    if (m & QW_ARMOR_ALL) return ' (being worn)';
-    // C ref: objnam.c doname_base() — accessory worn suffixes.  Rings report the
-    // hand they occupy ("(on right hand)"/"(on left hand)" for a humanoid);
-    // amulets and worn tools (blindfold/lenses/towel) read "(being worn)".
-    if (m & W_RINGR) return ` (on right ${body_part(6)})`;
-    if (m & W_RINGL) return ` (on left ${body_part(6)})`;
-    if (m & W_AMUL) return ' (being worn)';
-    if (m & W_BLINDF) return ' (being worn)';
-    // C ref: objnam.c doname_base():1543 — the punishment ball and chain read
-    // "(chained to you)" / "(attached to you)", not the generic worn suffix.
-    // W_BALL takes precedence: `(owornmask & W_BALL) ? "chained" : "attached"`.
-    if (m & (W_BALL | W_CHAIN))
-        return (m & W_BALL) ? ' (chained to you)' : ' (attached to you)';
-    return '';
 }
 
 // C ref: objnam.c doname_base()/xname() — faithful inventory name for the
@@ -2347,56 +1668,6 @@ export function distant_far(obj, ox, oy) {
     return (dx * dx + dy * dy) > neardist;
 }
 
-// C ref: objnam.c doname_base():1657 — an unpaid inventory item shows what the
-// shopkeeper quoted: " (unpaid, <N> <currency>)".  Always appended (it is not
-// gated on with_price, unlike the "(for sale, ...)" floor form below).
-function unpaid_price_suffix(obj) { return price_suffix(obj, false); }
-
-function doname_invent_core(obj) {
-    const oc = obj.oclass;
-    if (oc !== WEAPON_CLASS && oc !== ARMOR_CLASS)
-        return simple_obj_name(obj, { empty: true }) + worn_status_suffix(obj)
-            + unpaid_price_suffix(obj);
-
-    const jname = Japanese_item_name(obj.otyp);
-    let base = jname || objectBaseName(obj);
-    const known = !!obj.known;
-    const oc_charged = true; // weapons & armor are oc_charged in objects.h
-
-    // BUC prefix (objnam.c doname_base): implicit_uncursed defaults TRUE, so the
-    // "uncursed" word only appears via the charge/enchant-unknown disjunct, which
-    // excludes the Amulet of Yendor and (because a Priest senses BUC) a Cleric.
-    let prefix = '';
-    if (obj.bknown && oc !== COIN_CLASS) {
-        if (obj.cursed) prefix += 'cursed ';
-        else if (obj.blessed) prefix += 'blessed ';
-        else if ((!known || !oc_charged || oc === ARMOR_CLASS || oc === RING_CLASS)
-                 && obj.otyp !== FAKE_AMULET_OF_YENDOR_OTYP
-                 && obj.otyp !== AMULET_OF_YENDOR
-                 && !Role_if(PM_CLERIC))
-            prefix += 'uncursed ';
-    }
-    // poisoned (none of the starting kit), erosion words, then enchant.
-    if (obj.opoisoned) prefix += 'poisoned ';
-    prefix = add_erosion_words(obj, prefix);
-    if (known) prefix += `${obj.spe >= 0 ? '+' : ''}${obj.spe | 0} `;
-
-    let phrase;
-    if ((obj.quan || 1) > 1 && !pair_of(obj))
-        phrase = `${obj.quan} ${prefix}${makeplural_obj(base)}`;
-    else
-        phrase = with_article_obj(obj, `${prefix}${base}`);
-    return phrase + oname_suffix(obj) + worn_status_suffix(obj)
-        + unpaid_price_suffix(obj);
-}
-
-// C ref: objnam.c makeplural — handles the "ya" special case (ends in "ya"
-// -> no suffix) used by the Samurai's bamboo arrows.
-function makeplural_obj(s) {
-    if (s === 'ya' || / ya$/.test(s)) return s;
-    if (s === 'shuriken') return s;
-    return makeplural(s);
-}
 
 function classOrder() {
     // C ref: options.c def_inv_order[] — the default inventory display order.
@@ -2422,8 +1693,13 @@ function compareInvlet(a, b) {
 // the status text there must be truncated at the menu's left edge instead of
 // redrawn full-width, or it clobbers the "(end)" indicator the menu just drew.
 function putStatusLines(display, bandStart = null, menuLastRow = -1) {
-    putStatusRow(display, 1, 22, (bandStart != null && menuLastRow >= 22) ? bandStart : null);
-    putStatusRow(display, 2, 23, (bandStart != null && menuLastRow >= 23) ? bandStart : null);
+    // A full-width menu (bandStart 0) ran term_clear_screen() and wiped the
+    // status window; it is not redrawn here, but the dismissal cutoff below is
+    // still recorded for the next corner window.
+    if (bandStart !== 0) {
+        putStatusRow(display, 1, 22, (bandStart != null && menuLastRow >= 22) ? bandStart : null);
+        putStatusRow(display, 2, 23, (bandStart != null && menuLastRow >= 23) ? bandStart : null);
+    }
     // C ref: win/tty/wintty.c erase_menu_or_text() -> docorner() — dismissing
     // THIS window later sweeps cl_end() from (offx-1) across every row down to
     // and including the status window whenever the menu's own content reaches
@@ -2440,7 +1716,15 @@ function putStatusLines(display, bandStart = null, menuLastRow = -1) {
     else if (bandStart != null && menuLastRow >= 21) game._statusTrunc22 = Math.max(0, bandStart - 1);
 }
 
+// C ref: invent.c display_pickinv():3146 `if (!flags.invlet_constant)
+// reassign();` — with 'nofixinv' every inventory listing re-letters the pack
+// in list order before it is shown.
+function reassign_if_nofixinv() {
+    if (flags().invlet_constant === false && inventoryArray().length) reassign();
+}
+
 function inventoryRows(lets = null, ofilter = null) {
+    reassign_if_nofixinv();
     // There used to be a touristFallbackRows() short-circuit here returning a
     // VERBATIM memorised inventory listing (exact letters, "27 +2 darts", "an
     // expensive camera (0:34)") whenever rank === 'Rambler' && gold === 757 —
@@ -2461,6 +1745,20 @@ function inventoryRows(lets = null, ofilter = null) {
     // which already leads with COIN_CLASS) exactly once per class.  classOrder()
     // already begins with COIN_CLASS, so it must NOT be prepended again or gold
     // renders twice ("Coins / $ - N gold pieces" duplicated).
+    // C ref: invent.c:3273/3290 — without flags.sortpack there is no class
+    // heading and the items stay in plain invlet order.
+    if (flags().sortpack === false) {
+        const group = [null];
+        group.syms = [null];
+        for (const obj of inv) {
+            obj_to_glyph(obj);
+            group.push(`${obj.invlet || obj_to_let(obj)} - ${doname_invent(obj)}`);
+            const og = object_glyph(obj);
+            group.syms.push(og ? { ch: og.ch, color: og.color } : null);
+        }
+        rows.push(group);
+        return rows;
+    }
     const order = classOrder();
     for (const oclass of order) {
         const items = inv.filter((obj) => obj.oclass === oclass);
@@ -2491,6 +1789,7 @@ const INUSE_HEADERS = ['', 'Miscellaneous', 'Worn Armor',
 // during the qsort, so a single in-use item keeps orderclass 0 and gets NO
 // class heading — that C quirk is reproduced by reading sli.orderclass as-is.
 function inuseRows(lets = null, altLabel = null) {
+    reassign_if_nofixinv();
     const headers = INUSE_HEADERS.slice();
     if (altLabel) headers[4] = altLabel;
     // C invent.c:3195 — nothing wielded: a fake STRANGE_OBJECT carrying W_WEP
@@ -2526,16 +1825,32 @@ function inuseRows(lets = null, altLabel = null) {
     return rows;
 }
 
+// C ref: wintty.c:1383 process_menu_window() — show_obj_syms = use_menu_glyphs
+// (menuobjsyms defaults to 4, "conditional": only when the menu has no
+// non-selectable line, i.e. no headings); the glyph's tty char replaces the
+// '-' (index 2) of "x - name" (wintty.c:1470).
+function objSymsShown(rows) {
+    const osyms = game.iflags?.menuobjsyms ?? 4;
+    const use = game.iflags?.use_menu_glyphs ?? true;
+    if (!use) return false;
+    return !(osyms & 4) || rows.every((g) => g[0] == null);
+}
+
 function renderMenuScreen(lines, cursor = [36, 8]) {
     // C ref: windows.c:1816 add_menu_heading() — `if (program_state.gameover)
     // attr = ATR_NONE`, so the end-of-game disclosure lists draw class headers
     // PLAIN.
     const headAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
     const flat = [];
+    const syms = objSymsShown(lines);
     for (const group of lines) {
         const [heading, ...items] = group;
-        flat.push({ text: heading, attr: headAttr });
-        for (const item of items) flat.push({ text: item, attr: 0 });
+        if (heading != null) flat.push({ text: heading, attr: headAttr });
+        items.forEach((item, i) => {
+            const sym = syms && group.syms?.[i + 1];
+            flat.push({ text: sym ? item.slice(0, 2) + sym.ch + item.slice(3) : item, attr: 0,
+                        symColor: sym ? sym.color : undefined });
+        });
     }
     renderMenuLines(flat, cursor);
 }
@@ -2556,7 +1871,16 @@ function menuColorStyle(line) {
     return { color: rule.color === CLR_GRAY ? NO_COLOR : rule.color, attr, whole: !m };
 }
 
+// C ref: wintty.c:1478 — the object glyph char replacing the '-' is drawn in
+// the glyph's own color (CLR_GRAY is suppressed to the default by has_color()).
 function paintMenuLine(display, x, y, line, isMenu = false) {
+    paintMenuLineBody(display, x, y, line, isMenu);
+    if (line.symColor !== undefined)
+        display.setCell(x + 2, y, line.text[2],
+                        (line.symColor === CLR_GRAY || line.symColor === 0) ? NO_COLOR : line.symColor, 0);
+}
+
+function paintMenuLineBody(display, x, y, line, isMenu = false) {
     const mc = isMenu && !line.bodyStyle ? menuColorStyle(line) : null;
     if (mc) {
         if (mc.whole) {
@@ -2599,10 +1923,14 @@ export function renderMenuLines(flat, cursor = [36, 8]) {
         display.clearScreen();
         render_map_to_grid();
     }
-    let widest = 0;
-    for (const ln of flat) if (ln.text.length > widest) widest = ln.text.length;
     const cols = display.cols ?? 80;
     const rows = display.rows ?? 24;
+    // C ref: wintty.c:2729-2733 tty_end_menu() — "cut off any lines that are too
+    // long": len = strlen(str) + 2; if (len > cols) str[cols - 2] = 0.
+    flat = flat.map((ln) => (ln.text.length > cols - 2
+        ? { ...ln, text: ln.text.slice(0, cols - 2) } : ln));
+    let widest = 0;
+    for (const ln of flat) if (ln.text.length > widest) widest = ln.text.length;
     // C ref: win/tty/wintty.c tty_end_menu() cw->cols (wintty.c:2762):
     // maxcol = max(widest+2, strlen("(end) ")==6). tty_display_nhwindow()'s
     // H2344_BROKEN branch (wintty.c:13, defined in the recorder's build):
@@ -2628,6 +1956,10 @@ export function renderMenuLines(flat, cursor = [36, 8]) {
     // draws a leading space there and the text at offx+1 (== col), so col-1 must
     // be blanked too or a map glyph beneath it shows through the leading space.
     const bandStart = Math.max(0, col - 1);
+    // C ref: wintty.c:1409 process_menu_window(): `if (!cw->offx) term_clear_screen()`
+    // -- a full-width menu wipes the whole screen even over the end-of-game
+    // overlay, which the skipped clearScreen() above would otherwise leave.
+    if (bandStart === 0) display.clearScreen();
     // C ref: win/tty/wintty.c erase_menu_or_text(): tearing this window down
     // runs docorner() (a pure row_refresh replay of the glyph buffer) when
     // offx != 0 and the far heavier docrt() only when offx == 0.  Remember
@@ -3724,6 +3056,9 @@ export async function report_merge_discovery() {
     await update_topl('You learn more about your items by comparing them.');
 }
 
+// impossible() is async here, so addinv_core1()'s "already have ...?" reports
+// are queued for flush_artitouch() like the artitouch() text.
+function queue_impossible(msg) { (game._pending_impossibles ||= []).push(msg); }
 export function addinv_core1(obj) {
     if (!obj) return;
     // C ref: invent.c addinv():962-965 — picking up (or otherwise gaining)
@@ -3735,15 +3070,19 @@ export function addinv_core1(obj) {
         game._goldCount = (game._goldCount || 0) + (obj.quan || 0);
         game.botl = true;
     } else if (obj.otyp === AMULET_OF_YENDOR) {
+        if (ustate().uhave?.amulet) queue_impossible('already have amulet?');
         ustate().uhave = { ...(ustate().uhave || {}), amulet: 1 };
         record_achievement(ACH_AMUL);
     } else if (obj.otyp === CANDELABRUM_OF_INVOCATION) {
+        if (ustate().uhave?.menorah) queue_impossible('already have candelabrum?');
         ustate().uhave = { ...(ustate().uhave || {}), menorah: 1 };
         record_achievement(ACH_CNDL);
     } else if (obj.otyp === BELL_OF_OPENING) {
+        if (ustate().uhave?.bell) queue_impossible('already have silver bell?');
         ustate().uhave = { ...(ustate().uhave || {}), bell: 1 };
         record_achievement(ACH_BELL);
     } else if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
+        if (ustate().uhave?.book) queue_impossible('already have the book?');
         ustate().uhave = { ...(ustate().uhave || {}), book: 1 };
         record_achievement(ACH_BOOK);
     } else if (obj.oartifact) {
@@ -3751,6 +3090,7 @@ export function addinv_core1(obj) {
         // here, so it is queued for flush_artitouch(), which the async
         // addinv callers run before their own inventory message.
         if (is_quest_artifact(obj)) {
+            if (ustate().uhave?.questart) queue_impossible('already have quest artifact?');
             ustate().uhave = { ...(ustate().uhave || {}), questart: 1 };
             game._pending_artitouch = obj;
         }
@@ -3771,6 +3111,12 @@ export function addinv_core1(obj) {
 
 // C ref: quest.c artitouch() as reached from addinv_core1(); see above.
 export async function flush_artitouch() {
+    if (game._pending_impossibles?.length) {
+        const { impossible: show_impossible } = await import('./display.js');
+        const msgs = game._pending_impossibles;
+        game._pending_impossibles = null;
+        for (const m of msgs) await show_impossible(m);
+    }
     const obj = game._pending_artitouch;
     if (obj) {
         game._pending_artitouch = null;
@@ -3825,11 +3171,24 @@ export function addinv_core0(obj, other_obj = null, update_perm_invent = true) {
         if (ix >= 0) inv.splice(ix, 0, obj);
         else inv.push(obj);
     } else {
-        for (const existing of inv) {
+        // C ref: invent.c addinv_core0:1099-1106 -- merge with the quiver in
+        // preference to any other inventory slot (quiver and wielded weapon
+        // may both be eligible; extra goes to the quivered stack).
+        let didMerge = false;
+        if (game.uquiver) {
             const ref = { obj };
-            if (merged(existing, ref)) {
-                obj = existing;
-                break;
+            if (merged(game.uquiver, ref)) {
+                obj = game.uquiver;
+                didMerge = true;
+            }
+        }
+        if (!didMerge) {
+            for (const existing of inv) {
+                const ref = { obj };
+                if (merged(existing, ref)) {
+                    obj = existing;
+                    break;
+                }
             }
         }
         if (!inv.includes(obj)) {
@@ -3840,11 +3199,17 @@ export function addinv_core0(obj, other_obj = null, update_perm_invent = true) {
             // gold sorts to the front; without this the JS tail-append left gold
             // at the end and shifted every pet dogfood() invent-scan position.
             assigninvlet(obj);
-            inv.unshift(obj);
+            // C ref: invent.c:1117-1125 — `if (flags.invlet_constant || !prev)`
+            // insert at the head (and reorder when fixinv is on), else with
+            // 'nofixinv' the new object goes at the END of the chain.
+            const fixinv = flags().invlet_constant !== false;
+            const at_head = fixinv || !inv.length;
+            if (at_head) inv.unshift(obj);
+            else inv.push(obj);
             obj.where = OBJ_INVENT;
             obj.pickup_prev = 1;
             syncInventory(inv);
-            reorder_invent();
+            if (fixinv) reorder_invent();
             // C ref: invent.c:1128-1140 "fill empty quiver if obj was thrown".
             // Only on this no-merge insert path (C jumps past it to `added:`
             // for every merge).  Mjollnir and the aklys are excluded because
@@ -3897,18 +3262,26 @@ export async function hold_another_object(obj, drop_fmt, drop_arg, hold_msg) {
     // cures the blindness, which re-observes the pack so dopotion()'s
     // `if (otmp->dknown) makeknown()` still fires.
     if (!Blind_for_wear()) observe_object(obj);
-    // C ref: invent.c hold_another_object — when the object is an artifact it
-    // is briefly placed on the floor and touch_artifact() is consulted, which
-    // draws rn2(4) for SPFX_RESTR artifacts (artifact.c:945).  The recorded
-    // wishes always pass the touch (e.g. a Neutral hero wishing Grayswandir),
-    // so we then proceed to addinv; the refuse-to-hold branch (return the
-    // dropped object) is kept faithful but isn't exercised.
+    // C ref: invent.c:1218-1244 — an artifact is briefly placed on the floor
+    // (in case touching it turns out to be fatal) and touch_artifact() is
+    // consulted (rn2(4) for SPFX_RESTR artifacts, artifact.c:945).  A refused
+    // touch, or a hero who lost a polymorphed form to the blast ("lose your
+    // grip if you revert your form"), leaves it on the floor.
     if (obj && obj.oartifact) {
         const { touch_artifact: touchArtifact } = await import('./artifact.js');
+        const wasUpolyd = !!game.u?.Upolyd;
+        mkobj_place_object(obj, game.u?.ux ?? obj.ox, game.u?.uy ?? obj.oy);
         if (!await touchArtifact(obj, game.u)) {
-            mkobj_place_object(obj, game.u?.ux ?? obj.ox, game.u?.uy ?? obj.oy);
+            obj_extract_self(obj); /* remove it from the floor */
+            await dropy(obj);      /* now put it back again :-) */
+            return obj;
+        } else if (wasUpolyd && !game.u?.Upolyd) {
+            if (drop_fmt) await pline(String(drop_fmt).replace('%s', drop_arg ?? ''));
+            obj_extract_self(obj);
+            await dropy(obj);
             return obj;
         }
+        obj_extract_self(obj);
     }
     // C invent.c:1251-1256: a corpse explicitly wished into the hero's hands
     // is put down unopened when touching it would petrify the hero.  Its brief
@@ -4175,9 +3548,11 @@ async function topline_query(prompt) {
     remember_topl();
     game._pending_message = prompt;
     game._toplPromptMsg = prompt;   // show_topl() hard-wrap, see display.js
+    game._prevmsg = prompt.endsWith(' ') ? prompt : prompt + ' '; // pline.c:282 via topl.c:425 custompline
     await flush_screen(1);
     game._modal_screen = 'topl';
     const disp = game.nhDisplay;
+    let promptRows = 0;
     if (disp?.setCursor) {
         // topl_putsym(): never print at column CO-1, wrap first (hard-wrap).
         let curx = 0, cury = 0;
@@ -4186,10 +3561,18 @@ async function topline_query(prompt) {
             curx++;
         }
         disp.setCursor(curx, cury);
+        promptRows = cury;
     }
     const c = await nhgetch();
     delete game._modal_screen;
     yn_prompt_history(`${prompt} `, key2txt(c));
+    // C ref: topl.c tty_yn_function() clean_up: `if (wins[WIN_MESSAGE]->cury)
+    // tty_clear_nhwindow(WIN_MESSAGE)` -- a prompt that wrapped onto a second
+    // row is erased once answered (a one-row prompt stays on screen).
+    if (promptRows > 0) {
+        game._pending_message = '';
+        game._toplPromptMsg = null;
+    }
     return c;
 }
 
@@ -4201,12 +3584,19 @@ async function topline_query(prompt) {
 // (space/return), or '\x1b' for cancel.  '?'/'*' re-issue the menu with the
 // other candidate set.  Any other key just rings the bell (no re-render: the
 // menu screen is unchanged).
-async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) {
+async function getobj_menu(lets, altlets, bufFirst, allowed, allowxtra = false, word = '', out_cnt = null) {
     for (;;) {
-        // allowed=true (the '?' set): show only `lets`; allowed=false ('*'):
-        // show the whole pack.  display_pickinv() sets game._modal_screen and
+        // allowed=true (the '?' set): show only `lets` (or `altlets` when
+        // nothing was suggested); allowed=false ('*'): show the whole pack.
+        // C ref: invent.c getobj():1963-1978 — redo_menu recomputes
+        // allowed_choices AND the "- - your hands" handsbuf each time the menu
+        // is reissued after the player picks '*'/'?' inside it, so the
+        // Miscellaneous row appears as soon as the choice set is the whole pack.
+        // display_pickinv() sets game._modal_screen and
         // positions the cursor exactly like C's NHW_MENU.
-        const choices = allowed ? lets : null;
+        const choices = allowed ? ((!lets && altlets.length) ? altlets.join('') : lets) : null;
+        const xtraChoice = (choices === null || choices[0] === HANDS_SYM || bufFirst === HANDS_SYM)
+            ? getobj_hands_txt(word) : null;
 
         // C ref: invent.c display_pickinv() — when exactly one item qualifies
         // (and force_invmenu/menu_requested aren't set), skip the boxed
@@ -4216,8 +3606,14 @@ async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) 
         // ESC cancels; any other quitchar (space/return) dismisses with no
         // pick, so the caller re-prompts "What do you want to <word>?".
         const invArr = inventoryArray();
-        const n = choices != null ? choices.length
+        // C ref: invent.c:3085 — `if (lets && !*lets) lets = 0`.
+        const lt = (choices != null && choices.length) ? choices : null;
+        let n = lt ? lt.length
             : (invArr.length === 0 ? 0 : invArr.length === 1 ? 1 : 2);
+        // C ref: invent.c:3123 — `if (usextra || (n == 1 && (!lets || wizid))) ++n`:
+        // the extra "- - your hands" choice is a second item of interest, and a
+        // full-pack listing ('*', lets == NULL) of a one-item pack is still a menu.
+        if ((xtraChoice && allowxtra) || (n === 1 && !lt)) ++n;
         if (n === 1 && !game.flags?.force_invmenu && !game.iflags?.menu_requested) {
             const invlet = choices ? choices[0] : invArr[0]?.invlet;
             const otmp = invArr.find(o => o.invlet === invlet);
@@ -4239,7 +3635,17 @@ async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) 
         }
 
         const usextra = !!(xtraChoice && allowxtra);
-        display_pickinv(choices, xtraChoice, null, allowxtra, true, null);
+        // C ref: invent.c getobj():1972 — force_invmenu passes the menu a
+        // "What do you want to <word>?" title (tty_end_menu() prompt).
+        const menuquery = game.flags?.force_invmenu ? `What do you want to ${word}?` : null;
+        // C ref: invent.c display_pickinv() — an empty pack says "Not carrying
+        // anything." and returns '\0' at once; getobj() then `continue`s and the
+        // re-issued prompt pages that message with --More--.
+        if (display_pickinv(choices, xtraChoice, menuquery, allowxtra, true, null) === '\0'
+            && !inventoryArray().length) {
+            game._yn_need_more = true;   // the re-prompt pages the message
+            return '\0';
+        }
         // The menu lines drive which letters are selectable; outside-of-menu
         // letters ring the bell.  Build the selectable set from the rows shown.
         const shownLets = new Set();
@@ -4257,19 +3663,41 @@ async function getobj_menu(lets, allowed, xtraChoice = null, allowxtra = false) 
         // selectable exactly when display_pickinv() would have drawn it, and
         // picking it REISSUES the menu with `allowed` flipped rather than
         // returning to the caller.
-        const special = force_invmenu_special(choices);
+        const special = force_invmenu_special(choices, allowxtra, usextra);
         if (special) shownLets.add(special.ch);
+        // C ref: wintty.c process_menu_window() — digits typed in a PICK_ONE
+        // menu accumulate a count that applies to the NEXT selection only
+        // (reset_count clears it after any other key); display_pickinv() hands
+        // it back through out_cnt (-1L when no count was given).
+        let counting = false, count = 0, reset_count = true;
         for (;;) {
             const key = await nhgetch();
             const ch = String.fromCharCode(key);
-            if (ch === '\x1b') { delete game._modal_screen; return '\x1b'; }
+            if (reset_count) { counting = false; count = 0; } else reset_count = true;
+            if (ch >= '0' && ch <= '9') {
+                count = count * 10 + (key - 48);
+                if (count > Number.MAX_SAFE_INTEGER) continue; /* overflow */
+                if (count !== 0) { counting = true; reset_count = false; }
+                continue;
+            }
+            if (ch === '\x1b') {
+                if (counting) continue; /* only stops the count */
+                delete game._modal_screen; return '\x1b';
+            }
             if (ch === '\0' || ch === '\n' || ch === '\r' || ch === ' ') {
                 delete game._modal_screen; return '\0';
             }
             if (special && ch === special.ch) { delete game._modal_screen; allowed = !allowed; break; }
-            // C: the tty menu ignores non-accelerator keys (tty_nhbell)
-            if (shownLets.has(ch)) { delete game._modal_screen; return ch; }
-            // unacceptable input: tty_nhbell() (no visible change), keep reading
+            // C ref: tty_select_menu() -> destroy_nhwindow() erases the menu
+            // (docorner over the map) before getobj() returns the pick, so a
+            // following getlin()/prompt frame already shows the restored map.
+            if (shownLets.has(ch)) {
+                if (out_cnt) out_cnt.value = (counting && count > 0) ? count : -1;
+                await dismiss_invent_screen();
+                return ch;
+            }
+            // C: the tty menu ignores non-accelerator keys (tty_nhbell):
+            // unacceptable input rings the bell (no visible change), keep reading
         }
     }
 }
@@ -4363,7 +3791,14 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
         // itemactions, the "Do what with X?" submenu) is consumed as the object
         // selection WITHOUT rendering the prompt (no extra frame), exactly as
         // tty's cmdq_pop fast path does.
-        const canned = cmdq_pop(CQ_CANNED);
+        // C ref: cmdq_pop() reads CQ_REPEAT while gi.in_doagain, so a #repeat
+        // replays this prompt's recorded count and key.
+        let canned = game.in_doagain ? cmdq_pop(CQ_REPEAT) : cmdq_pop(CQ_CANNED);
+        let cqcnt = 0;
+        if (canned && canned.typ === CMDQ_INT && allowcnt) {
+            cqcnt = canned.intval;
+            canned = game.in_doagain ? cmdq_pop(CQ_REPEAT) : cmdq_pop(CQ_CANNED);
+        }
         let ilet, key;
         if (!canned && game.in_doagain) {
             // C ref: invent.c getobj() `if (gi.in_doagain) { ilet = readchar();
@@ -4389,13 +3824,13 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
             game._toplines = qbufPlain;
             ilet = (lets || altlets.length) ? '?' : '*';
             key = ilet.charCodeAt(0);
+            oneloop = true;  // C ref: invent.c getobj():1929
         } else {
             key = canned && canned.typ === CMDQ_KEY
                 ? canned.key : await topline_query(qbuf);
             ilet = String.fromCharCode(key);
         }
-        oneloop = true;
-        let cnt = 0, cntgiven = false;
+        let cnt = cqcnt, cntgiven = cqcnt > 0;
 
         // C ref: invent.c getobj():1935 — a DIGIT at the object prompt is a
         // count, checked BEFORE quitchars.  Without a count allowance C says so
@@ -4433,27 +3868,30 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
             const allowed = (pick === '?');
             // C ref: invent.c getobj():1964 `allowed_choices = (ilet == '?')
             // ? lets : (char *) 0;` — '*' unconditionally passes NULL, so its
-            // menu (and the hands test below) is NEVER narrowed by `lets`.
-            const choiceLets = allowed
-                ? ((!lets && altlets.length) ? altlets.join('') : lets)
-                : null;
-            // C ref: invent.c getobj():1976-1978 — the boxed menu gets a
-            // "Miscellaneous / - - <hands>" row whenever the choice set about
-            // to be shown has no letters, starts with HANDS_SYM (the altlets
-            // case), or the original prompt buf itself started with HANDS_SYM
-            // (the bufHands/SUGGEST case) — independent of whether '?' or '*'
-            // was pressed.
-            const wantHands = !choiceLets || choiceLets[0] === HANDS_SYM || buf[0] === HANDS_SYM;
-            const xtraChoice = wantHands ? getobj_hands_txt(word) : null;
-            const sel = await getobj_menu(choiceLets, allowed, xtraChoice, allownone);
+            // menu (and the hands test) is NEVER narrowed by `lets`.  The
+            // "Miscellaneous / - - <hands>" row decision (getobj():1976-1978)
+            // lives in getobj_menu() so it is redone whenever the menu is
+            // reissued after '*'/'?' is picked inside it.
+            const ctmp = { value: -1 };
+            const sel = await getobj_menu(lets, altlets, buf[0], allowed, allownone, word, allowcnt ? ctmp : null);
             if (sel === '\x1b') {
                 if (game.flags?.verbose !== false) await pline('Never mind.');
                 else { game._pending_message = ''; game._toplin = 0; }  // menu teardown wiped the prompt
                 return null;
             }
-            if (sel === '\0') continue;                   // committed with no pick: re-prompt
+            // C ref: invent.c getobj():1982 `if (!ilet) { if (oneloop) return
+            // NULL; continue; }` -- only force_invmenu sets oneloop.
+            if (sel === '\0') {
+                if (oneloop) {
+                    game._pending_message = ''; game._toplin = 0;  // menu teardown wiped the prompt
+                    return null;
+                }
+                continue;
+            }
             if (sel === HANDS_SYM) return hands_obj;
             pick = sel;
+            // C ref: invent.c getobj():1996 — a count typed inside the menu.
+            if (allowcnt && ctmp.value >= 0) { cnt = ctmp.value; cntgiven = true; }
         }
 
         // Resolve the chosen invlet to its inventory object.  An unknown letter
@@ -4492,13 +3930,19 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
         // the amount of money */` — every typed letter dirties the status line,
         // which the next flush_screen() publishes (T: included).
         game.botl = true;
+        if (otmp && !game.in_doagain) {
+            if (cntgiven && cnt > 0) cmdq_add_int(CQ_REPEAT, cnt);
+            cmdq_add_key(CQ_REPEAT, pick.charCodeAt(0));
+        }
         if (!otmp) {
             await pline('You don\'t have that object.');
             game._yn_need_more = true;
+            if (game.in_doagain) return null;
             continue;
         } else if (cnt < 0 || (otmp.quan || 1) < cnt) {
             await pline(`You don't have that many!  You have only ${otmp.quan || 1}.`);
             game._yn_need_more = true;
+            if (game.in_doagain) return null;
             continue;
         }
         // C ref: invent.c getobj() `split_otmp:` — hand back exactly `cnt` of
@@ -4544,6 +3988,7 @@ async function getobj_get_count(inkey) {
         if (cnt > 9) {
             remember_topl();
             game._pending_message = `Count: ${cnt}`;
+            game._prevmsg = game._pending_message; // pline.c:282 via custompline
             await flush_screen(1);
             const disp = game?.nhDisplay;
             if (disp?.setCursor)
@@ -4723,6 +4168,22 @@ export function setworn_accessory(obj, mask) {
     else if (mask === W_AMUL) game.uamul = obj;
     else if (mask === W_BLINDF) game.ublindf = obj;
 }
+
+// C ref: worn.c setworn(obj, mask) for a MULTI-bit owornmask as stored on an
+// object (nhlua.c nhl_gamestate() restores sequestered inventory this way:
+// `if (wornmask) setworn(otmp, wornmask)`).  The port keeps one setter per slot
+// family, so dispatch each set bit to its family's setter.
+export function setworn_mask(obj, mask) {
+    if (!obj || !mask) return;
+    obj.owornmask = 0;
+    for (const bit of [WA_ARM, WA_ARMC, WA_ARMH, WA_ARMS, WA_ARMG, WA_ARMF, WA_ARMU])
+        if (mask & bit) worn_slot_set(obj, bit);
+    for (const bit of [W_RINGL, W_RINGR, W_AMUL, W_BLINDF])
+        if (mask & bit) setworn_accessory(obj, bit);
+    if (mask & QW_WEP) setuwep_slot(obj);
+    if (mask & QW_SWAPWEP) setuswapwep(obj);
+    if (mask & QW_QUIVER) setuqwep(obj);
+}
 function clearworn_accessory(obj) {
     const m = obj.owornmask || 0;
     if (m & W_RINGL) game.uleft = null;
@@ -4753,9 +4214,12 @@ export async function Ring_on(obj) {
         await toggle_stealth(obj, oldprop, true);
         break;
     case RIN_WARNING:
-        /* see_monsters(): display refresh, no JS equivalent (do_wear.js) */
+        see_monsters(); /* C ref: do_wear.c:1286 */
         break;
     case RIN_SEE_INVISIBLE:
+        /* can now see invisible monsters (C ref: do_wear.c:1289-1291) */
+        set_mimic_blocking(); /* do special mimic handling */
+        see_monsters();
         if (game.u?.uprops?.Invis && !oldprop && !game.u?.uprops?.HSee_invisible
             && !Blind_for_wear()) {
             newsym(game.u.ux, game.u.uy);
@@ -5017,9 +4481,7 @@ export async function Blindf_on(obj) {
         // flags.verbose defaults TRUE in these sessions.  update_topl (C pline)
         // accumulates after the "You are now wearing ..." line.
         if (game.flags?.verbose !== false) await update_topl("You can't see any more.");
-        // toggle_blindness(): status update + immediate vision recalc.
-        game.vision_full_recalc = 1;
-        vision_recalc(0);
+        await (await import('./potion.js')).toggle_blindness();
     }
 }
 
@@ -5054,13 +4516,23 @@ export async function Blindf_off(obj) {
     // C ref: do_wear.c:68 off_msg() — the whole message is `if (flags.verbose)`.
     if (!nooffmsg && game.flags?.verbose !== false)
         await update_topl(`You were wearing ${doname_invent(obj)}.`);
-    if (!Blind() && was_blind) {
+    // C ref: do_wear.c:1514-1534 — three outcomes after the slot is cleared.
+    let changed = false;
+    if (Blind()) {
+        if (was_blind) {
+            /* "still cannot see" makes no sense when removing lenses since
+               they can't have been the cause of the blindness */
+            if (obj.otyp !== LENSES) await update_topl('You still cannot see.');
+        } else {
+            changed = true;   /* !was_blind */
+            await update_topl("You can't see anything now!");
+        }
+    } else if (was_blind) {
         // gulp_blnd_check() (covered by mouth) is false here.
+        changed = true;       /* !Blind */
         await update_topl('You can see again.');
-        game.vision_full_recalc = 1;
-        vision_recalc(0);
-        learn_unseen_invent();   // toggle_blindness() tail (potion.c:362)
     }
+    if (changed) await (await import('./potion.js')).toggle_blindness();
 }
 
 // C ref: do_wear.c Ring_off_or_gone(obj, gone) — the shared tail of Ring_off()
@@ -5086,8 +4558,14 @@ async function Ring_off_or_gone(obj, _gone) {
         await toggle_stealth(obj, still_from_other, false);
         break;
     case RIN_WARNING:
+        see_monsters(); /* C ref: do_wear.c:1383 */
         break;
     case RIN_SEE_INVISIBLE:
+        /* Make invisible monsters go away (C ref: do_wear.c:1386-1390) */
+        if (!worn_extrinsic(29 /* SEE_INVIS */) && !game.u?.uprops?.HSee_invisible) {
+            set_mimic_blocking(); /* do special mimic handling */
+            see_monsters();
+        }
         if (game.u?.uprops?.Invis && !Blind_for_wear()) {
             newsym(game.u.ux, game.u.uy);
             await pline('Suddenly you cannot see yourself.');
@@ -5315,7 +4793,7 @@ async function on_msg_accessory(obj) {
     // monster's "It bites!") accumulates on the topline instead of replacing it.
     // C: `how` is " around your <head>" for a towel and empty otherwise.
     const how = (obj.otyp === TOWEL) ? ` around your ${body_part(8 /*HEAD*/)}` : '';
-    await update_topl(`You are now wearing ${simple_obj_name(obj, { buc: false })}${how}.`);
+    await update_topl(`You are now wearing ${an(on_xname(obj))}${how}.`);
 }
 
 // C ref: do_wear.c equip_ok(obj, removing, accessory).  getobj() callback shared
@@ -5535,7 +5013,7 @@ async function accessory_or_armor_on(obj) {
     // C do_wear.c on_msg() prints instant armor feedback only when verbose;
     // the shield still takes a turn and changes AC when that option is off.
     if (game.flags?.verbose !== false)
-        await update_topl(`You are now wearing ${simple_obj_name(obj, { buc: false })}.`);
+        await update_topl(`You are now wearing ${an(on_xname(obj))}.`);
     if (game._allow_inventory_update !== undefined) update_inventory();
     return ECMD_TIME;
 }
@@ -5851,6 +5329,9 @@ async function armor_or_accessory_off(obj) {
     reset_remarm();
     // C ref: select_off() — refuse removal of cursed/blocked items (no turn).
     if (!(await select_off(obj))) return ECMD_OK;
+    // C ref: do_wear.c:1804 -- none of armoroff()/Ring_/Amulet/Blindf_off()
+    // use context.takeoff.mask, so clear what select_off() just recorded.
+    reset_remarm();
     if ((obj.owornmask || 0) & WA_ARMOR_ALL) {
         await armoroff(obj);
     } else if (obj === game.uright || obj === game.uleft) {
@@ -5999,12 +5480,10 @@ export async function ynq(query) { return await y_n(query, 'ynq\x1b', 'q'); }
 // form (vtense's "sing:" label: are->is and have->has are irregular special
 // cases, then the usual y->ies / s/x/z/ch/sh->es spelling tweaks, else +s).
 export function otense(obj, verb) {
+    // C ref: objnam.c:2531 otense() -- vtense(NULL, verb) for a singular object
+    // (handles "go" -> "goes", "do" -> "does" etc.).
     if (is_plural(obj)) return verb;
-    if (/^are$/i.test(verb)) return 'is';
-    if (/^have$/i.test(verb)) return 'has';
-    if (/[^aeiou]y$/.test(verb)) return verb.slice(0, -1) + 'ies';
-    if (/(s|x|z|ch|sh)$/.test(verb)) return verb + 'es';
-    return verb + 's';
+    return vtense(null, verb);
 }
 
 // C ref: wield.c ready_ok() — getobj callback for the quiver target.  Lets worn
@@ -6261,48 +5740,6 @@ function is_spear(obj) {
 // false; modelled via the welded() stub semantics.
 function will_weld(obj) { return will_weld_dw(obj); }
 
-// C ref: artifact.c retouch_object() restricted to the wield path.  Consults
-// touch_artifact() (drawing rn2(4) for SPFX_RESTR artifacts) and, for silver-
-// haters / bane targets, would inflict damage.  Returns true when the hero can
-// keep handling the object.  The recorded hero (Neutral archeologist) does not
-// hate silver and is not a bane target, so after touch_artifact the function
-// returns true with no further RNG.
-async function retouch_object(obj) {
-    // C: a silver-hating hero may still perform the invocation ritual.
-    if (obj?.otyp === BELL_OF_OPENING && game._invocation_pos) return true;
-    if (touch_artifact(obj, game.youmonst)) {
-        const ag = (objects[obj.otyp]?.material === 14 /* SILVER */) && Hate_silver();
-        // bane_applies(): needs a polymorphed bane-target hero, not modelled.
-        const bane = false;
-        if (!ag && !bane) return true;
-        // C: You("can't handle %s%s!", ...) is a real pline() (artifact.c
-        // retouch_object()), reached right after touch_artifact() may have
-        // already left its OWN blast pline pending (toplin=1) a few lines
-        // above in the caller — a bare _pending_message write here would
-        // silently clobber that still-unacknowledged line instead of paging
-        // it first.
-        await update_topl(
-            `You can't handle ${yname(obj)}${obj.owornmask ? ' anymore' : ''}!`);
-        // C ref: artifact.c:2535 — the damage is skipped when touch_artifact()
-        // already blasted the hero this call.
-        if (!game._touch_blasted) {
-            let dmg = 0;
-            if (ag) dmg += Maybe_Half_Phys(rnd(10));
-            if (bane) dmg += rnd(10);
-            let what = killer_xname(obj);
-            if (ag && !obj.oartifact && !bane) {
-                if (obj.oclass === RING_CLASS) what = 'a silver ring';
-                else if (obj.oclass === WAND_CLASS) what = 'a silver wand';
-            }
-            await losehp_invent(dmg, `handling ${what}`, 1 /* KILLED_BY */);
-            exercise(A_CON, false);
-        }
-    }
-    // C: the worn item comes off either way (and the caller's `loseit` drop is
-    // not reached from the wield path).
-    return false;
-}
-
 // C ref: objnam.c aobjnam()/yobjnam() — "<count> <cxname> <verb>" (count only
 // when quan != 1), with yobjnam()'s ownership prefix ("your"/shopkeeper/...).
 function aobjnam_c(obj, verb) {
@@ -6363,7 +5800,7 @@ async function ready_weapon(wep) {
             `You cannot wield a two-handed ${is_sword(wep) ? 'sword'
               : wep.otyp === 45 /*BATTLE_AXE*/ ? 'axe' : 'weapon'} while wearing a shield.`);
         res = ECMD_FAIL;
-    } else if (!(await retouch_object(wep))) {
+    } else if (!(await (await import('./artifact.js')).retouch_object({ obj: wep }, false))) {
         res = ECMD_TIME; // takes a turn even though it doesn't get wielded
     } else {
         res = ECMD_TIME;
@@ -6383,6 +5820,8 @@ async function ready_weapon(wep) {
             // real.
             const dummy = wep.owornmask || 0;
             wep.owornmask = dummy | QW_WEP;
+            if (wep.otyp === AKLYS_OTYP && ((wep.owornmask | 0) & QW_WEP) !== 0)
+                await update_topl('You secure the tether.');
             await update_topl(prinv_fmt(null, wep, 0));
             wep.owornmask = dummy;
             // C ref: prinv() -> pline() leaves toplin == NEED_MORE, so a
@@ -6440,7 +5879,30 @@ export async function dowield() {
         return ECMD_FAIL;
     } else if (welded(game.uwep)) {
         await weldmsg(game.uwep);
+        /* previously interrupted armor removal mustn't be resumed */
+        reset_remarm();
+        /* if player chose a partial stack but can't wield it, undo split */
+        if (wep.o_id && wep.o_id === game.context.objsplit?.child_oid)
+            unsplitobj(wep);
         return ECMD_FAIL;
+    } else if (wep.o_id && wep.o_id === game.context.objsplit?.child_oid) {
+        /* wep is the result of supplying a count to getobj(): don't split
+           something already wielded; otherwise it needs its own inventory slot */
+        if (game.uwep && game.uwep.o_id === game.context.objsplit.parent_oid) {
+            unsplitobj(wep);
+            /* wep was merged back to uwep, already_wielded uses wep */
+            game._pending_message = note_topl('You are already wielding that!');
+            if (is_weptool(game.uwep)) game.unweapon = false;
+            return ECMD_FAIL;
+        }
+        finish_splitting_inv(wep);
+        const oldw = game.uwep;
+        const res = await ready_weapon(wep);
+        if (game.flags?.pushweapon && oldw && game.uwep !== oldw)
+            setuswapwep(oldw);
+        await untwoweapon();
+        update_inventory();
+        return res;
     }
 
     let newwep = wep;
@@ -6461,6 +5923,7 @@ export async function dowield() {
             if (c === 'q') return ECMD_OK;
             if (c === 'y') {
                 newwep = splitobj(game.uquiver, 1); // leave N-1 quivered
+                finish_splitting_inv(newwep);
                 split = true;
             } else {
                 qbuf = 'Wield all of them instead?';
@@ -6890,17 +6353,6 @@ function omon_adj(mon, obj, mon_notices) {
     return tmp;
 }
 
-// C ref: zap.c exclam(force) / hit(str, mtmp, force) / miss(str, mtmp).
-function exclam_thrown(force) { return force < 0 ? '?' : (force <= 4 ? '.' : '!'); }
-// C ref: objnam.c The(str) — mshot_xname()'s "the Nth ya" already carries its
-// own "the ", which The() capitalises rather than doubling.
-async function hit_thrown(str, mon, force) {
-    const { canspotmon, mon_nam } = await import('./uhitm.js');
-    const verbose = game.flags?.verbose !== false;
-    const named = verbose && (cansee(mon?.mx, mon?.my) || canspotmon(mon));
-    await update_topl(`${on_The(str)} ${await vtense_thrown(str, 'hit')} ${
-        named ? mon_nam(mon) : 'it'}${force}`);
-}
 // C ref: hacklib.c ordin(n) — "1st", "2nd", "3rd", "4th", ... (11/12/13 take
 // "th").
 function ordin(n) {
@@ -6953,143 +6405,21 @@ async function tmiss(obj, mon, maybe_wakeup) {
     if (maybe_wakeup && !rn2(3)) await wakeupAttack(mon, true);
 }
 
-// C ref: uhitm.c hmon()/hmon_hitmon(mon, obj, HMON_THROWN, dieroll) — the
-// thrown-object slice.  Returns TRUE when `mon` survives.
-async function hmon_thrown(mon, obj, dieroll, skillsnap) {
-    const U = await import('./uhitm.js');
-    const { weapon_type, use_skill } = await import('./enhance.js');
-    let dmg = 0, use_weapon_skill = false, train_weapon_skill = false;
-
-    // C ref: uhitm.c hmon_hitmon_weapon() — a launcher, or ammo without its
-    // matching launcher wielded, only does hmon_hitmon_weapon_ranged()'s rnd(2);
-    // everything else thrown takes the melee arm and rolls dmgval().
-    const ranged = is_launcher(obj)
-        || (is_ammo(obj) && !ammo_and_launcher(obj, game.uwep));
-    if (obj.oclass === WEAPON_CLASS || is_weptool(obj) || obj.oclass === GEM_CLASS) {
-        if (ranged) {
-            dmg = rnd(2);
-        } else {
-            use_weapon_skill = true;
-            dmg = U.dmgval(obj, mon);
-            train_weapon_skill = dmg > 1;
-        }
-        // C ref: uhitm.c:1048 — an elf/samurai firing their own arrow from
-        // their own bow does one extra point.
-        if ((is_ammo(obj) || is_missile(obj)) && ammo_and_launcher(obj, game.uwep)) {
-            if (Role_if_SAMURAI_thrown() && obj.otyp === YA
-                && game.uwep.otyp === YUMI)
-                dmg++;
-            else if (Race_if_ELF_thrown() && obj.otyp === ELVEN_ARROW
-                     && game.uwep.otyp === ELVEN_BOW)
-                dmg++;
-            train_weapon_skill = dmg > 0;
-        }
-    } else {
-        // C ref: uhitm.c hmon_hitmon_misc_obj() default arm — weight-based.
-        dmg = hmon_misc_obj_dmg_thrown(obj);
-    }
-
-    // C ref: uhitm.c hmon_hitmon_dmg_recalc() — u.udaminc (0 here) plus the
-    // strength bonus, which a launcher-fired missile does NOT get, plus the
-    // weapon-skill damage bonus.
-    if (dmg > 0) {
-        if (!(obj && game.uwep && ammo_and_launcher(obj, game.uwep)))
-            dmg += dbon_thrown();
-        if (use_weapon_skill) {
-            const fired = is_ammo(obj) && ammo_and_launcher(obj, game.uwep);
-            const skillwep = fired ? game.uwep : obj;
-            dmg += weapon_dam_bonus_thrown(fired ? skillsnap.wep : skillsnap.obj,
-                                          skillsnap,
-                                          fired ? skillsnap.wep_type : skillsnap.obj_type);
-            if (train_weapon_skill) await use_skill(weapon_type(skillwep), 1);
-        }
-    }
-    if (dmg < 1) dmg = 1;      /* get_dmg_bonus is TRUE; target is no shade */
-
-    mon.mhp = (mon.mhp || 0) - dmg;
-    if (mon.mhpmax != null && mon.mhp > mon.mhpmax) mon.mhp = mon.mhpmax;
-    const destroyed = mon.mhp <= 0;
-
-    // C ref: uhitm.c hmon_hitmon_pet() — runs BEFORE killed().
-    await U.hmon_hitmon_pet(mon, dmg, destroyed);
-
-    // C ref: uhitm.c hmon_hitmon_msg_hit() — a killing blow still reports the
-    // hit when it is part of a multishot volley of the same missile.
-    if (!destroyed || (game.m_shot && game.m_shot.n > 1 && game.m_shot.o === obj.otyp))
-        await hit_thrown(mshot_xname(obj), mon, exclam_thrown(dmg));
-
-    if (destroyed) {
-        await U.killed(mon);
-        return false;
-    }
-    // C ref: uhitm.c:1918 `wakeup(mon, TRUE)` — the knockback arm below it is
-    // gated on `!thrown`, so a thrown hit never rolls it.
-    await U.wakeupAttack(mon, true);
-    return true;
-}
-
-// C ref: attrib.c dbon() — strength damage bonus (same table as js/uhitm.js).
-// C ref: skills.h martial_bonus() = Role_if(SAMURAI) || Role_if(MONK).
-const PM_MONK_INV = 5, PM_SAMURAI_INV = 9;
-function martial_bonus_inv() {
-    const m = game.urole?.mnum;
-    return m === PM_MONK_INV || m === PM_SAMURAI_INV;
-}
-const dbon_thrown = dbon;   // js/weapon.js owns the complete weapon.c:993
-// C ref: weapon.c:1644 weapon_dam_bonus(weapon).  The old copy took a bare
-// skill LEVEL, so it had no P_NONE arm (a thrown non-weapon read -2 instead of
-// 0), no two-weapon arm and no riding term.
-function weapon_dam_bonus_thrown(skill, snap, type) {
-    return weapon_dam_bonus_core(type, skill, snap.wep, {
-        martial: snap.martial, usteed: snap.usteed,
-        twoweap: snap.twoweap, skill_riding: snap.riding,
-    });
-}
-// C ref: uhitm.c hmon_hitmon_misc_obj() default arm — `dmg = (obj->owt + 99)
-// / 100` capped, i.e. an ordinary object hurts by its weight.
-function hmon_misc_obj_dmg_thrown(obj) {
-    const wt = obj?.owt || 0;
-    let dmg = Math.trunc((wt + 99) / 100);
-    if (dmg > 6) dmg = 6;
-    return dmg;
-}
-
-// C ref: weapon.c P_SKILL(skill) reads u.weapon_skills[], persistent state
-// that u_init.c skill_init() fills once.  js/enhance.js instead REBUILDS it from
-// the weapons the hero is currently CARRYING, so it has to be sampled before
-// freeinv() takes a missile out of inventory - otherwise a thrown dagger reads
-// P_UNSKILLED and thitmonst()'s to-hit lands 4 too low.
-async function make_skillsnap(otmp) {
-    const _enh = await import('./enhance.js');
-    return {
-        obj: _enh.p_skill_of(_enh.weapon_type(otmp)),
-        wep: game.uwep ? _enh.p_skill_of(_enh.weapon_type(game.uwep)) : 0,
-        // weapon.c's other three P_SKILL() readings: the discipline TYPE
-        // (P_NONE has to answer 0, not the P_ISRESTRICTED -2/-4), the
-        // two-weapon skill, and riding.  Sampled here for the same reason
-        // as the two above.
-        obj_type: _enh.weapon_type(otmp),
-        wep_type: game.uwep ? _enh.weapon_type(game.uwep) : 0,
-        twoweap_skill: _enh.p_skill_of(P_TWO_WEAPON_COMBAT_INV),
-        riding: _enh.p_skill_of(P_RIDING_INV),
-        usteed: !!game.u?.usteed,
-        twoweap: !!game.u?.twoweap,
-        martial: martial_bonus_inv(),
-    };
-}
-
-// C ref: dothrow.c thitmonst(mon, obj) — a thrown object arrives at a monster.
-// Returns TRUE when the object has been disposed of (the caller must not place
-// it on the floor).  Ports the WEAPON/weptool/GEM arm plus the shared miss tail;
-// the gem-to-unicorn, quest-leader, iron-ball/boulder, egg/cream-pie/venom,
-// potion and pet-food arms are left for the caller-visible cases they need.
-async function thitmonst(mon, obj, skillsnap) {
+// C ref: dothrow.c:2010 thitmonst(mon, obj) — a thrown (or kicked, or applied
+// polearm) object arrives at a monster.  Returns TRUE when the object has been
+// disposed of (the caller must not place it on the floor).  Every damage arm
+// goes through uhitm.js's hmon(), exactly as C does.
+async function thitmonst(mon, obj) {
     const u = game.u;
     const otyp = obj.otyp;
-    // C ref: dothrow.c:2021 `hmode = (obj == uwep) ? HMON_APPLIED : ...` — a
-    // polearm applied at range arrives here still wielded (use_pole()).
-    const applied = obj === game.uwep;
-    if (applied && !skillsnap) skillsnap = await make_skillsnap(obj);
+    const { HMON_THROWN, HMON_KICKED } = await import('./const.js');
+    const WPN = await import('./weapon.js');
+    const U = await import('./uhitm.js');
+    let guaranteed_hit = !!(u.uswallow && mon === u.ustuck);
+    // C ref: dothrow.c:2021 — a polearm applied at range arrives here still
+    // wielded (use_pole()); a kicked object is gk.kickedobj.
+    const hmode = (obj === game.uwep) ? HMON_APPLIED
+        : (obj === game.gk_kickedobj) ? HMON_KICKED : HMON_THROWN;
 
     let tmp = -1 + Luck_thrown() + find_mac_thrown(mon) + (u.uhitinc || 0)
         + (u.ulevel || 1);
@@ -7103,7 +6433,7 @@ async function thitmonst(mon, obj, skillsnap) {
     if (disttmp < -4) disttmp = -4;
     tmp += disttmp;
 
-    // C ref: dothrow.c:2054 — gloves hinder a bow.  GAUNTLETS_OF_POWER -2,
+    // C ref: dothrow.c:2057 — gloves hinder a bow.  GAUNTLETS_OF_POWER -2,
     // GAUNTLETS_OF_FUMBLING -3, leather/dexterity 0.
     if (game.uarmg && game.uwep
         && (objects[game.uwep.otyp]?.oc_skill ?? 0) === P_BOW) {
@@ -7114,42 +6444,94 @@ async function thitmonst(mon, obj, skillsnap) {
     tmp += omon_adj(mon, obj, true);
     // C: `is_orc(mon->data) && Race_if(PM_ELF)` — an elf aims better at orcs.
     if ((mflags2_of(mon.data) & M2_ORC) && Race_if_ELF_thrown()) tmp++;
-    // C ref: dothrow.c:2078 — an engulfed hero cannot miss the engulfer.
-    const guaranteed_hit = !!(u.uswallow && mon === u.ustuck);
-    if (guaranteed_hit) tmp += 1000;
+    if (guaranteed_hit) tmp += 1000; /* Guaranteed hit */
 
     // C ref: dothrow.c:2087 — a real gem thrown to a unicorn is a gift, not an
     // attack (rocks/gray stones and sling-fired gems are attacks).  This arm
-    // sits BEFORE the rnd(20) to-hit roll, so falling through to it drew a
-    // dieroll C never draws, on top of missing gem_accept()'s Luck change.
+    // sits BEFORE the rnd(20) to-hit roll.
     if (obj.oclass === GEM_CLASS && is_unicorn_mon(mon.data)
         && objects[obj.otyp]?.material !== 10 /* MINERAL */ && !uslinging()) {
-        if (mon.msleeping || !mon.mcanmove) {
+        if (mon.msleeping || !mon.mcanmove) {          /* helpless(mon) */
             await tmiss(obj, mon, false);
             return false;
         } else if (mon.mtame) {
-            const { Monnam } = await import('./uhitm.js');
-            await update_topl(`${Monnam(mon)} catches and drops ${the_name_of(obj)}.`);
+            await update_topl(`${U.Monnam(mon)} catches and drops ${the_name_of(obj)}.`);
             return false;
         } else {
-            const { Monnam } = await import('./uhitm.js');
-            await update_topl(`${Monnam(mon)} catches ${the_name_of(obj)}.`);
+            await update_topl(`${U.Monnam(mon)} catches ${the_name_of(obj)}.`);
             return !!(await DT.gem_accept(mon, obj));
         }
+    }
+
+    // C ref: dothrow.c:2104 — don't make the game unwinnable if a naive player
+    // throws the quest artifact (or any unique item) at the quest leader.
+    if (hmode !== HMON_APPLIED
+        && (is_quest_artifact(obj) || objects[obj.otyp]?.oc_unique
+            || (obj.otyp === FAKE_AMULET_OF_YENDOR_OTYP && !obj.known))
+        && game.quest_status?.leader_m_id != null
+        && mon.m_id === game.quest_status.leader_m_id) {
+        mon.msleeping = 0;
+        mon.mstrategy = (mon.mstrategy | 0) & ~STRAT_WAITMASK;
+
+        if (mon.mcanmove) {
+            const { Some_Monnam, } = await import('./do_name.js');
+            await update_topl(`${Some_Monnam(mon)} catches ${the_name_of(obj)}.`);
+            /* leader will keep tossed invocation item after you've done the
+               invocation and it's become unnecessary for completion.. */
+            if ((u.uevent?.invoked && objects[obj.otyp]?.oc_unique
+                 && obj.otyp !== AMULET_OF_YENDOR)
+                /* ...or any special item, if you've made him angry */
+                || !mon.mpeaceful) {
+                /* give an explanation for keeping the item only if leader is
+                   not doing it out of anger */
+                if (mon.mpeaceful && !(await import('./display.js')).Deaf_hero()) {
+                    fully_identify_obj(obj);
+                    const nm = on_The(xname(obj));
+                    await update_topl(`"${s_suffix(nm)} part in this is finished."`);
+                    await update_topl(`"We will guard it in case it is ever needed again, ${
+                        align_gname(roles.findIndex((r) => r.mnum === game.urole?.mnum),
+                                    u.ualignbase?.[1] ?? u.ualign?.type)} forbid."`);
+                }
+                if (u.ushops?.[0] || obj.unpaid) /* not very likely... */
+                    await DT.check_shop_obj(obj, mon.mx, mon.my, false);
+                const { mpickobj } = await import('./steal.js');
+                mpickobj(mon, obj);
+            } else {
+                /* under normal circumstances, leader will say something and
+                   then return the item to the hero */
+                const { monnear } = await import('./dogmove.js');
+                const next2u = monnear(mon, u.ux, u.uy);
+                const { finish_quest } = await import('./questpgr.js');
+                await finish_quest(obj); /* acknowledge quest completion */
+                await update_topl(`${Some_Monnam(mon)} ${next2u ? 'hands' : 'tosses'} ${
+                    the_name_of(obj)} back to you.`);
+                if (!next2u) await DT.sho_obj_return_to_u(obj);
+                addinv(obj); /* back into your inventory */
+                await encumber_msg();
+            }
+            return true; /* caller doesn't need to place it */
+        }
+        return false;
     }
 
     const dieroll = rnd(20);
 
     if (obj.oclass === WEAPON_CLASS || is_weptool(obj)
         || obj.oclass === GEM_CLASS) {
-        if (is_ammo(obj)) {
+        if (hmode === HMON_KICKED) {
+            /* throwing adjustments and weapon skill bonus don't apply */
+            tmp -= (is_ammo(obj) ? 5 : 3);
+        } else if (is_ammo(obj)) {
             if (!ammo_and_launcher(obj, game.uwep)) {
                 tmp -= 4;
             } else {
                 // C ref: dothrow.c:2163 `tmp += uwep->spe - greatest_erosion(uwep)`
-                // — a rusty bow aims worse; the erosion term was missing.
                 tmp += (game.uwep.spe || 0) - greatest_erosion(game.uwep);
-                tmp += weapon_hit_bonus_thrown(skillsnap.wep, skillsnap, skillsnap.wep_type);
+                tmp += await WPN.weapon_hit_bonus(game.uwep);
+                if (game.uwep.oartifact) {
+                    const { spec_abon } = await import('./artifact.js');
+                    tmp += spec_abon(game.uwep, mon);
+                }
                 // Elves and Samurai are highly trained with their own bows.
                 const elf = Race_if_ELF_thrown();
                 const samurai = Role_if_SAMURAI_thrown();
@@ -7160,113 +6542,123 @@ async function thitmonst(mon, obj, skillsnap) {
                         || (samurai && game.uwep.otyp === YUMI)) ++tmp;
                 }
             }
-        } else {
+        } else { /* thrown non-ammo or applied polearm/grapnel */
             if (otyp === BOOMERANG) tmp += 4;
             else if (throwing_weapon(obj)) tmp += 2;
-            else if (!applied) tmp -= 2;      /* not meant to be thrown (obj == thrownobj) */
-            tmp += weapon_hit_bonus_thrown(skillsnap.obj, skillsnap, skillsnap.obj_type);
+            else if (obj === game.thrownobj) tmp -= 2; /* not meant to be thrown */
+            tmp += await WPN.weapon_hit_bonus(obj);
         }
 
         if (tmp >= dieroll) {
-            if (applied) {
-                // C ref: dothrow.c:2199 — ranged hit with a wielded polearm; the
-                // caller-side conduct bump, then the full melee hmon() pipeline.
-                const U = await import('./uhitm.js');
-                if (!game.u.uconduct) game.u.uconduct = {};
-                game.u.uconduct.weaphit = (game.u.uconduct.weaphit || 0) + 1;
-                const chopper = is_axe(obj);
-                if (await U.hmon(mon, obj, HMON_APPLIED, dieroll) && mon.wormno) {
+            const wasthrown = !!game.thrownobj;
+            /* remember weapon attribute; hmon() might destroy obj */
+            const chopper = is_axe(obj);
+
+            /* attack hits mon */
+            if (hmode === HMON_APPLIED) {
+                if (!u.uconduct) u.uconduct = {};
+                u.uconduct.weaphit = (u.uconduct.weaphit || 0) + 1;
+            }
+            if (await U.hmon(mon, obj, hmode, dieroll)) { /* mon still alive */
+                if (mon.wormno) {
                     const { cutworm } = await import('./worm.js');
                     await cutworm(mon, game.bhitpos.x, game.bhitpos.y, chopper);
                 }
-            } else {
-                await hmon_thrown(mon, obj, dieroll, skillsnap);
             }
             exercise(A_DEX, true);
-            // C ref: dothrow.c should_mulch_missile(obj) — only ammo/missiles
-            // (excluding boomerangs and magical ones) can shatter on impact.
-            if (should_mulch_missile(obj)) { delobj_thrown(obj); return true; }
-            // C ref: dothrow.c:2226 `passive_obj(mon, obj, (struct attack *) 0)`
-            // — an acid/rusting/corroding/draining defender erodes the missile
-            // that just hit it.  The NULL attack argument makes passive_obj()
-            // pick the monster's first passive (AT_NONE) attack itself; it also
-            // draws rn2(6) for AD_FIRE/AD_ACID whether or not anything erodes,
-            // so skipping the call desynced the stream on every such hit.
+            /* if hero was swallowed and projectile killed the engulfer, 'obj'
+               got added to engulfer's inventory and then dropped */
+            if (wasthrown && !game.thrownobj) return true;
+
+            /* projectiles other than magic stones sometimes disappear when
+               thrown */
+            if (should_mulch_missile(obj)) {
+                if (u.ushops?.[0] || obj.unpaid)
+                    await DT.check_shop_obj(obj, game.bhitpos.x, game.bhitpos.y, true);
+                delobj_thrown(obj);
+                return true;
+            }
             const { passive_obj } = await import('./uhitm.js');
             await passive_obj(mon, obj, null);
         } else {
             await tmiss(obj, mon, true);
-            if (applied) {
-                const { wakeupAttack } = await import('./uhitm.js');
-                await wakeupAttack(mon, true);
-            }
+            if (hmode === HMON_APPLIED) await U.wakeupAttack(mon, true);
         }
-        return false;
-    }
 
-    // C ref: dothrow.c:2233 — a thrown iron ball or boulder is its own arm:
-    // exercise(A_STR, TRUE) fires WHETHER OR NOT it connects, and the hit adds
-    // exercise(A_DEX, TRUE).  Both exercises draw (attrib.c rn2(19)/rn2(2)),
-    // so routing these through the shared miss tail lost draws.
-    if (otyp === HEAVY_IRON_BALL_OTYP || otyp === BOULDER) {
+    } else if (otyp === HEAVY_IRON_BALL_OTYP) {
         exercise(A_STR, true);
         if (tmp >= dieroll) {
+            const was_swallowed = guaranteed_hit;
+
             exercise(A_DEX, true);
-            await hmon_thrown(mon, obj, dieroll, skillsnap);
+            if (!(await U.hmon(mon, obj, hmode, dieroll))) { /* mon killed */
+                if (was_swallowed && !u.uswallow && obj === u.uball)
+                    return true; /* already did placebc() */
+            }
         } else {
             await tmiss(obj, mon, true);
         }
-        return false;
-    }
 
-    // C ref: dothrow.c:2256 — `(otyp == EGG || CREAM_PIE || BLINDING_VENOM ||
-    // ACID_VENOM) && (guaranteed_hit || ACURR(A_DEX) > rnd(25))` -> hmon().
-    // Falling through to tmiss() instead drew rn2(3) + rn2(100) and left
-    // mcansee SET, changing that monster's every later distfleeck/m_move.
-    if ((otyp === EGG || otyp === 287 /*CREAM_PIE*/
-         || otyp === 479 /*BLINDING_VENOM*/ || otyp === 480 /*ACID_VENOM*/)
-        && (guaranteed_hit || acurr_eff(A_DEX) > rnd(25))) {
-        await hmon_misc_thrown(mon, obj);
-        return true;                            /* hmon used it up */
-    }
+    } else if (otyp === BOULDER) {
+        exercise(A_STR, true);
+        if (tmp >= dieroll) {
+            exercise(A_DEX, true);
+            await U.hmon(mon, obj, hmode, dieroll);
+        } else {
+            await tmiss(obj, mon, true);
+        }
 
-    // C ref: dothrow.c:2262 — a thrown potion shatters on the target when
-    // guaranteed_hit || ACURR(A_DEX) > rnd(25); potionhit() uses it up.
-    if (obj.oclass === POTION_CLASS
-        && (guaranteed_hit || acurr_eff(A_DEX) > rnd(25))) {
+    } else if ((otyp === EGG || otyp === CREAM_PIE || otyp === BLINDING_VENOM
+                || otyp === 480 /* ACID_VENOM */)
+               && (guaranteed_hit || acurr_eff(A_DEX) > rnd(25))) {
+        await U.hmon(mon, obj, hmode, dieroll);
+        return true; /* hmon used it up */
+
+    } else if (obj.oclass === POTION_CLASS
+               && (guaranteed_hit || acurr_eff(A_DEX) > rnd(25))) {
         const { potionhit } = await import('./potion.js');
         await potionhit(mon, obj, 1 /* POTHIT_HERO_THROW */);
         return true;
+
+    } else {
+        // C ref: dothrow.c:2267 — thrown food a monster will accept, or any
+        // food a tame pet rates ACCFOOD or better.
+        const { dogfood } = await import('./dogmove.js');
+        if (DT.befriend_with_obj(mon.data, obj)
+            || (mon.mtame && dogfood(mon, obj) <= ACCFOOD)) {
+            if (await DT.tamedog(mon, obj, true))
+                return true; /* obj is gone */
+            await tmiss(obj, mon, false);
+            mon.msleeping = 0;
+            mon.mstrategy = (mon.mstrategy | 0) & ~STRAT_WAITMASK;
+        } else if (guaranteed_hit) {
+            // C ref: dothrow.c:2276 — this assumes guaranteed_hit is swallowing.
+            const md = u.ustuck.data;
+            const { dmgtype } = await import('./monattk_data.js');
+            const { is_animal } = await import('./monflags_data.js');
+            const { S_VORTEX } = await import('./symbols.js');
+
+            await U.wakeupAttack(mon, true);
+            if (obj.otyp === CORPSE && corpse_petrifies(obj)) {
+                if (is_animal(md)) {
+                    const { minstapetrify } = await import('./trap.js');
+                    await minstapetrify(u.ustuck, true);
+                    /* Don't leave a cockatrice corpse available in a statue */
+                    if (!u.uswallow) {
+                        delobj(obj);
+                        return true;
+                    }
+                }
+            }
+            const trail = dmgtype(md, AD_DGST) ? ' entrails'
+                : (md.mcls === S_VORTEX || md.name === 'air elemental') ? ' currents' : '';
+            const monname = trail ? s_suffix(U.mon_nam(mon)) : U.mon_nam(mon);
+            await update_topl(`${Tobjnam_throw(obj, 'vanish')} into ${monname}${trail}.`);
+        } else {
+            await tmiss(obj, mon, true);
+        }
     }
 
-    // C ref: dothrow.c:2267 — thrown food a monster will accept, or any food a
-    // tame pet rates ACCFOOD or better.  tamedog() runs dogfood() (an
-    // obj_resists rn2(100)) and the miss it falls back to passes maybe_wakeup
-    // FALSE, so C never rolls tmiss's rn2(3) here.  C's POTION_CLASS arm sits
-    // just above this one and is still missing (potionhit() for a monster
-    // target is not ported), so a thrown potion still reaches this test.
-    const { dogfood } = await import('./dogmove.js');
-    if (DT.befriend_with_obj(mon.data, obj)
-        || (mon.mtame && dogfood(mon, obj) <= ACCFOOD)) {
-        if (await DT.tamedog(mon, obj, true))
-            return true;                        /* obj is gone */
-        await tmiss(obj, mon, false);
-        mon.msleeping = 0;
-        mon.mstrategy = (mon.mstrategy | 0) & ~STRAT_WAITMASK;
-        return false;
-    }
-
-    // C ref: dothrow.c:2276 — an engulfed hero's throw simply vanishes into the
-    // engulfer; there is no miss roll and no wakeup rn2(3).
-    if (guaranteed_hit) {
-        const U = await import('./uhitm.js');
-        await U.wakeupAttack(mon, true);
-        await update_topl(`${Tobjnam_throw(obj, 'vanish')} into ${U.mon_nam(mon)}.`);
-        return false;
-    }
-
-    // Non-weapon thrown objects: C's remaining arms end in the same tmiss().
-    await tmiss(obj, mon, true);
     return false;
 }
 
@@ -7281,73 +6673,6 @@ function corpse_petrifies(obj) {
 // C ref: mondata.h is_unicorn(ptr) == (mlet == S_UNICORN && likes_gems(ptr)).
 function is_unicorn_mon(ptr) {
     return ptr?.mcls === 21 /* S_UNICORN */ && likes_gems_flag(ptr);
-}
-
-// C ref: uhitm.c hmon_hitmon_misc_obj()'s EGG / CREAM_PIE / BLINDING_VENOM /
-// ACID_VENOM arms, reached from thitmonst()'s HMON_THROWN call.  These four
-// share the "obj is used up" contract but nothing else: an ordinary egg does 1
-// physical damage and exercises Wisdom DOWN, a cream pie or blinding venom
-// blinds for rn1(25,21) and does none, and acid venom does dmgval().
-async function hmon_misc_thrown(mon, obj) {
-    const U = await import('./uhitm.js');
-    const { mbodypart } = await import('./monmove.js');
-    const otyp = obj.otyp;
-    const cnt = obj.quan || 1;
-    let dmg = 0;
-
-    if (otyp === EGG) {
-        dmg = 1;
-        // C: breaking your own (fertile) eggs is bad luck.
-        if (obj.spe && (obj.corpsenm | 0) >= 0)
-            change_luck(-Math.min(cnt, 5));
-        const eggp = ((obj.corpsenm | 0) >= 0 && obj.known)
-            ? the_str(monster_by_pmidx(obj.corpsenm)?.name || 'egg')
-            : (cnt > 1 ? 'some' : 'an');
-        await update_topl(`You hit ${U.mon_nam(mon)} with ${eggp} egg${cnt > 1 ? 's' : ''}.`);
-        await update_topl('Splat!');
-        exercise(A_WIS, false);
-    } else if (otyp === 480 /* ACID_VENOM */) {
-        await update_topl(`Your venom burns ${U.mon_nam(mon)}!`);
-        dmg = U.dmgval(obj, mon);
-    } else { /* CREAM_PIE or BLINDING_VENOM */
-        mon.msleeping = 0;
-        if (Blinded_hero()) {
-            await update_topl(otyp === 287 ? 'Splat!' : 'Splash!');
-        } else if (otyp === 479 /* BLINDING_VENOM */) {
-            await update_topl(`The venom blinds ${U.mon_nam(mon)}${mon.mcansee ? '' : ' further'}!`);
-        } else {
-            const what = `The ${xname(obj)}`;
-            const whom = `${s_suffix(U.mon_nam(mon))} ${mbodypart(mon, 2 /*FACE*/)}`;
-            await update_topl(`${what} splashes over ${whom}!`);
-        }
-        mon.mpeaceful = 0;
-        mon.mcansee = 0;
-        const blind = rn2(25) + 21;             // rn1(25, 21)
-        mon.mblinded = Math.min(127, (mon.mblinded || 0) + blind);
-        dmg = 0;                                 /* get_dmg_bonus is FALSE */
-    }
-
-    if (dmg > 0) {
-        mon.mhp = (mon.mhp || 0) - dmg;
-        if (mon.mhpmax != null && mon.mhp > mon.mhpmax) mon.mhp = mon.mhpmax;
-    }
-    // C ref: uhitm.c hmon_hitmon_pet() — runs BEFORE killed(); a struck pet
-    // loses tameness (abuse_dog's rn2(mtame) yelp roll) and flees.
-    await U.hmon_hitmon_pet(mon, dmg, mon.mhp <= 0);
-    // C ref: uhitm.c useup_eggs()/obfree() for a THROWN object — gone with no
-    // obj_resists roll (unlike delobj()).
-    delobj_thrown(obj);
-    if (dmg > 0 && mon.mhp <= 0) await U.killed(mon);
-}
-
-// C ref: weapon.c:1545 weapon_hit_bonus(weapon) — skill-based to-hit modifier
-// (riding/two-weapon arms don't apply to a throw); same completeness gap as
-// the damage copy (no P_NONE arm, no two-weapon arm, no riding penalty).
-function weapon_hit_bonus_thrown(skill, snap, type) {
-    return weapon_hit_bonus_core(type, skill, snap.wep, {
-        martial: snap.martial, usteed: snap.usteed,
-        twoweap: snap.twoweap, skill_riding: snap.riding,
-    });
 }
 
 // C ref: dothrow.c should_mulch_missile(obj).
@@ -7395,7 +6720,7 @@ async function throw_obj(obj, dir, shotlimit = 0) {
     }
     if ((obj.oartifact === ART_MJOLLNIR && acurr_eff(A_STR) < STR19_25)
         || (obj.otyp === BOULDER && !throws_rocks_flag(youmonst_data()))) {
-        game._pending_message = note_topl("It's too heavy.");
+        await update_topl("It's too heavy.");
         return ECMD_TIME;
     }
     if (!u.dx && !u.dy && !u.dz) {
@@ -7412,15 +6737,15 @@ async function throw_obj(obj, dir, shotlimit = 0) {
         // C: pline() before instapetrify()'s own death cascade; a bare write
         // here would leave nothing pending for that cascade's first message
         // to page against, silently dropping this line instead.
-        await update_topl(`You throw ${the_name_of(obj)} with your bare ${
+        await update_topl(`You throw ${corpse_xname(obj, null, 4 /* CXN_PFX_THE */)} with your bare ${
             makeplural(body_part(6 /*HAND*/))}.`);
-        instapetrify(`throwing ${xname(obj)} bare-handed`);
+        await (await import('./polyself.js')).instapetrify(`throwing ${killer_xname(obj)} bare-handed`);
     }
     if (welded(obj)) { await weldmsg(obj); return ECMD_TIME; }
     // C ref: dothrow.c:155 `if (is_wet_towel(obj)) dry_a_towel(obj, -1, FALSE)`
     // — throwing a wet towel dries it one step.  No RNG, but the towel's spe is
     // what a later apply reads.
-    if (is_wet_towel(obj)) obj.spe = Math.max(0, (obj.spe | 0) - 1);
+    if (is_wet_towel(obj)) await (await import('./weapon.js')).dry_a_towel(obj, -1, false);
 
     // C ref: dothrow.c throw_obj() "Multishot calculations".  The skill, role,
     // race and quest-launcher bonuses all RAISE the argument to the final
@@ -7482,19 +6807,13 @@ async function throw_obj(obj, dir, shotlimit = 0) {
             }
             obj = null;
         }
-        // C ref: weapon.c P_SKILL(skill) reads u.weapon_skills[], persistent
-        // state that u_init.c skill_init() fills once.  js/enhance.js instead
-        // REBUILDS it from the weapons the hero is currently CARRYING, so it has
-        // to be sampled before freeinv() takes the missile out of inventory -
-        // otherwise a thrown dagger reads P_UNSKILLED and thitmonst()'s to-hit
-        // lands 4 too low.
-        const skillsnap = await make_skillsnap(otmp);
         freeinv(otmp);
         try {
-            res = await throwit(otmp, skillsnap, wep_mask);
+            res = await throwit(otmp, wep_mask);
         } finally {
             game.thrownobj = null;
         }
+        await encumber_msg();
     }
     game.m_shot = { o: 0, n: 0, i: 0, s: false };
     return res;
@@ -7535,9 +6854,10 @@ async function return_throw_to_inv(obj, wep_mask) {
 
 // C ref: dothrow.c throwit(obj, wep_mask, twoweap, oldslot) - one missile's
 // flight.  Split out of throw_obj() so the multishot volley can run it per shot.
-async function throwit(otmp, skillsnap, wep_mask) {
+async function throwit(otmp, wep_mask) {
     const u = game.u;
     const Underwater = !!u.uinwater;
+    game.notonhead = false; /* reset potentially stale value */
     let impaired = !!(u?.uprops?.Confusion || u?.Confusion || u?.uprops?.Stun
                       || u?.Stunned || Blinded_hero() || u?.uhallu
                       || u?.HFumbling || u?.EFumbling);
@@ -7568,7 +6888,8 @@ async function throwit(otmp, skillsnap, wep_mask) {
     if ((u.dx || u.dy || u.dz < 1)
         && calc_capacity(otmp.owt | 0) > SLT_ENCUMBER
         && (u.uhp < 10 && u.uhp !== u.uhpmax)
-        && (otmp.owt | 0) > (u.uhp | 0) * 2) {
+        && (otmp.owt | 0) > (u.uhp | 0) * 2
+        && !Is_airlevel()) {
         await update_topl(`You have so little stamina, ${the_name_of(otmp)} drops from your grasp.`);
         exercise(A_CON, false);
         u.dx = u.dy = 0;
@@ -7585,7 +6906,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
 
     // C ref: dothrow.c throwit():1580 `} else if (u.dz) {` — a throw straight
     // up or down never enters the trajectory block at all.
-    if (u.dz) {
+    if (!u.uswallow && u.dz) {
         if (u.dz < 0 && returning_missile && !impaired) {
             // C ref: dothrow.c:1585 — a straight-up throw of a returning weapon
             // simply comes back to the hand.
@@ -7594,9 +6915,12 @@ async function throwit(otmp, skillsnap, wep_mask) {
             await return_throw_to_inv(otmp, wep_mask);
         } else if (u.dz < 0) {
             // C ref: dothrow.c:1589 `(void) toss_up(obj, rn2(5) && !Underwater)`.
-            // The whole up-throw was missing: the rn2(5) roof roll, toss_up()'s
-            // two breaktest() rn2(100)s and dmgval()'s die all went unrolled.
             await toss_up(otmp, rn2(5) !== 0 && !Underwater);
+        } else if (u.dz > 0 && u.usteed && otmp.oclass === POTION_CLASS && rn2(6)) {
+            /* alternative to prayer or wand of opening/spell of knock for
+               dealing with cursed saddle:  throw holy water > */
+            const { potionhit } = await import('./potion.js');
+            await potionhit(u.usteed, otmp, 1 /* POTHIT_HERO_THROW */);
         } else {
             await hitfloor(otmp, true);
         }
@@ -7607,11 +6931,16 @@ async function throwit(otmp, skillsnap, wep_mask) {
         || !!((u.uprops?.Levitation || worn_extrinsic(LEVITATION))
               && !(u.uprops?.BLevitation || worn_blocked(LEVITATION)));
     let land;
-    if (otmp.otyp === BOOMERANG_OTYP && !Underwater) {
+    if (u.uswallow) {
+        // C ref: dothrow.c:1569 — the engulfer is the target; no flight.
+        const em = u.ustuck;
+        game.bhitpos = { x: em.mx, y: em.my };
+        land = { x: em.mx, y: em.my, mon: em };
+    } else if (otmp.otyp === BOOMERANG_OTYP && !Underwater) {
         if (recoil) await DT.hurtle(-u.dx, -u.dy, 1, true);
         // C ref: dothrow.c:1601 — a boomerang does NOT fly in a straight line,
         // so it never reaches bhit(); zap.c boomhit() walks its curve instead.
-        const res = await DT.boomhit(otmp, u.dx, u.dy, skillsnap);
+        const res = await DT.boomhit(otmp, u.dx, u.dy);
         // C ref: dothrow.c:1605 `iflags.returning_missile = 0; /* has
         // returned or isn't going to */`.
         returning_missile = false;
@@ -7639,6 +6968,10 @@ async function throwit(otmp, skillsnap, wep_mask) {
         // one cell out.
         let range = urange - Math.floor((otmp.owt || 1)
                                         / (otmp.otyp === HEAVY_IRON_BALL_OTYP ? 100 : 40));
+        if (otmp === game.u.uball) {
+            if (u.ustuck) range = 1;
+            else if (range >= 5) range = 5;
+        }
         if (range < 1) range = 1;
         if (is_ammo(otmp)) {
             if (ammo_and_launcher(otmp, game.uwep)) {
@@ -7666,6 +6999,7 @@ async function throwit(otmp, skillsnap, wep_mask) {
         if (otmp.otyp === BOULDER) range = 20;
         else if (otmp.oartifact === ART_MJOLLNIR) range = Math.floor((range + 1) / 2);
         else if (tethered_weapon) range = Math.min(range, 4); /* isqrt(AKLYS_LIM^2) */
+        else if (otmp === game.u.uball && u.utrap && u.utraptype === TT_INFLOOR) range = 1;
         if (Underwater) range = 1;
 
         // Trajectory + landing.
@@ -7686,33 +7020,23 @@ async function throwit(otmp, skillsnap, wep_mask) {
     // C ref: dothrow.c throwit():1691 `if (throwit_mon_hit(obj, mon)) return;`
     // — a monster in the path takes the hit (thitmonst); only if the object
     // survives does it go on to break/land.
-    if (land.mon) {
-        // C ref: dothrow.c throwit_mon_hit() — `if (mon->isshk && obj->where ==
-        // OBJ_MINVENT && obj->ocarry == mon) return TRUE; /* alert shk caught it */`
-        if (land.mon.isshk && otmp.where === OBJ_MINVENT && otmp.ocarry === land.mon)
-            return ECMD_TIME;
-        const obj_gone = await thitmonst(land.mon, otmp, skillsnap);
-        // C ref: dothrow.c throwit_mon_hit() — `mon = m_at(bhitpos)`, then "[perhaps
-        // this should be moved into thitmonst or hmon]": a shopkeeper the hero hit
-        // or missed from outside the shop (or while the shk is elsewhere) gives chase.
-        const shk = m_at(land.x, land.y);
-        if (shk && shk.isshk) {
-            const SK = await import('./shk.js');
-            const { in_rooms } = await import('./shkroom.js');
-            if (!SK.inside_shop(game.u.ux, game.u.uy)
-                || !in_rooms(shk.mx, shk.my, 14 /* SHOPBASE */).includes((game.u.ushops || [])[0]))
-                SK.hot_pursuit(shk);
-        }
-        if (obj_gone) {
-            if (tethered_weapon) await land.flash.end();
-            return ECMD_TIME;
-        }
+    // C ref: dothrow.c:1695 throwit_mon_hit() — sets notonhead, snuffs a lit
+    // candle, runs thitmonst() and the shopkeeper hot-pursuit check; TRUE means
+    // a shopkeeper caught the object.
+    if (await DT.throwit_mon_hit(otmp, land.mon)) return ECMD_TIME;
+    if (!game.thrownobj) {
+        /* missile has already been handled */
+        if (tethered_weapon) await land.flash.end();
+        return ECMD_TIME;
+    }
+    if (u.uswallow && !returning_missile) {
+        await DT.swallowit(otmp);
+        return ECMD_TIME;
     }
 
     // C ref: dothrow.c throwit():1710 — a Mjollnir or aklys that reached the end
     // of its flight tries to come back: rn2(100) for the tether holding, then
     // rn2(100) again for a clean catch, else rn2(2)+rnd(3) damage to your arm.
-    // None of these draws happened before, so throwing an aklys desynced.
     if (returning_missile) {
         if (rn2(100)) {
             if (tethered_weapon) await land.flash.end(true); /* BACKTRACK */
@@ -7733,9 +7057,19 @@ async function throwit(otmp, skillsnap, wep_mask) {
                     dmg += rnd(3);
                     await update_topl(`${Tobjnam_throw(otmp, 'fly')} back toward you, hitting your ${
                         body_part(0 /*ARM*/)}!`);
+                    if (otmp.oartifact) {
+                        const { artifact_hit } = await import('./artifact.js');
+                        const mdmg = { d: dmg };
+                        await artifact_hit(null, game.youmonst || game.u, otmp, mdmg, 0);
+                        dmg = mdmg.d;
+                    }
                     await losehp_invent(Maybe_Half_Phys(dmg), killer_xname(otmp), 1 /* KILLED_BY */);
                 }
                 otmp.owornmask = 0;
+                if (u.uswallow) {
+                    await DT.swallowit(otmp);
+                    return ECMD_TIME;
+                }
                 // C ref: dothrow.c:1754 `if (!ship_object(obj, u.ux, u.uy,
                 // FALSE)) dropy(obj);` — a boomeranging weapon that lands at
                 // the hero's feet over a hole goes down with it.
@@ -7753,6 +7087,10 @@ async function throwit(otmp, skillsnap, wep_mask) {
         // it landed and is picked up again by walking over it (how_lost).
         if (tethered_weapon) await land.flash.end();
         await update_topl(`${Tobjnam_throw(otmp, 'fail')} to return!`);
+        if (u.uswallow) {
+            await DT.swallowit(otmp);
+            return ECMD_TIME;
+        }
     }
 
     // C ref: dothrow.c throwit():1780 — `(!IS_SOFT(typ) && breaktest(obj)) ||
@@ -7872,7 +7210,7 @@ export async function hitfloor(otmp, verbosely) {
     // C ref: dothrow.c:642 `if (hero_breaks(obj, u.ux, u.uy, BRK_FROM_INV))
     // return;` — this is where a dropped mirror costs 2 Luck and a smashed
     // camera rolls its demon; the port used to inline a bare delobj().
-    if (await DT.hero_breaks(otmp, u.ux, u.uy, DT.BRK_FROM_INV)) {
+    if (await DT.hero_breaks(otmp, u.ux, u.uy, BRK_FROM_INV)) {
         newsym(u.ux, u.uy);
         return;
     }
@@ -7933,7 +7271,7 @@ export function harmless_missile(obj) {
 }
 
 // C ref: youprop.h Blind — the hero cannot see.
-function Blinded_hero() { return (game.u?.blinded | 0) > 0 || !!game.ublindf; }
+function Blinded_hero() { return Blind_for_wear(); }
 // C ref: hack.h Hallucination — used by mergable()'s bknown/rknown arms.
 function Hallucination_hero() { return !!(game.u?.uhallu || game.u?.HHallucination || game.u?.uprops?.Hallucination); }
 // C ref: mondata.c can_blnd(&youmonst, &youmonst, AT_WEAP, obj) — a blindfold
@@ -8036,7 +7374,7 @@ function skill_name_for(skill) {
 }
 // C ref: attrib.c ACURRSTR — current strength on the 3..25 throwing scale.
 function acurr_str_throw() {
-    const str = game.u?.acurr?.a?.[0] ?? 0; // A_STR == 0
+    const str = acurr_str_encoded();
     if (str <= 18) return Math.max(str, 3);
     if (str <= 121) return 19 + Math.trunc(str / 50);
     return Math.min(str, 125) - 100;
@@ -8059,9 +7397,9 @@ function IS_SOFT(typ) { return typ === 35 /* AIR */ || typ === 36 /* CLOUD */
 export { obj_resists, uslinging, is_ammo, is_missile, is_launcher,
          ammo_and_launcher, matching_launcher, throwing_weapon,
          acurrstr, bhit_thrown_landing,
-         an, singular_name, weapon_type,
+         an, singular_name, weapon_type, mshot_xname,
          thitmonst, youmonst_data as youmonst_data_pub, ceiling_of,
-         losehp_invent as losehp_throw, dbon_thrown as dbon,
+         losehp_invent as losehp_throw, dbon,
          acurr_eff as acurr_attr, Role_if, simpleonames };
 
 // C ref: mondata.h notake(ptr) / nohands(ptr) applied to gy.youmonst.data.
@@ -9736,7 +9074,7 @@ function floor_extract_self(obj) {
 // pickup_object(), which is this function's only faithful caller.
 export async function pick_one_obj(obj, count = 0) {
     const quan = count || obj.quan || 1;
-    observe_object(obj);
+    if (!Blind_for_wear()) observe_object(obj); // C pickup.c:1817 guards with !Blind
     // C ref: pickup.c pick_obj():1907 — a shop-floor item is billed BEFORE
     // addinv(), so the merge that addinv() may do can see obj->unpaid.  This is
     // where the "For you, ...; only N zorkmids for this <item>." quote (and its
@@ -10461,7 +9799,11 @@ export async function reroll_menu() {
     const savedOverrideID = game.iflags.override_ID;
     game.iflags.override_ID = true;
     try {
-        for (const obj of inv) plan.push({ str: simple_obj_name(obj, { empty: true }) });
+        for (const obj of inv) {
+            const worn = obj.owornmask;
+            obj.owornmask = 0;
+            try { plan.push({ str: on_doname_base(obj, 0) }); } finally { obj.owornmask = worn; }
+        }
     } finally {
         game.iflags.override_ID = savedOverrideID;
     }
@@ -10530,7 +9872,7 @@ async function menu_identify(id_limit) {
         } else if (picks.cancelled) {
             break;
         } else if (!--tryct) {
-            await pline("That's enough tries.");
+            await pline("That's enough tries!");   // invent.c:2689 thats_enough_tries
             break;
         } else {
             await pline('Choose an item; use ESC to decline.');
@@ -11072,7 +10414,7 @@ function itemactions_list(otmp) {
 // C ref: iactions.c item_reading_classification(obj, outbuf) — the label for
 // the 'r' item-action, or null when the object can't be read.
 const FORTUNE_COOKIE = 289, T_SHIRT = 137, ALCHEMY_SMOCK = 144,
-    SPE_BLANK_PAPER = 407;
+    SPE_BLANK_PAPER = 407, SCR_MAIL_OTYP = 364;
 function item_reading_classification(obj) {
     const otyp = obj.otyp;
     if (otyp === FORTUNE_COOKIE) return 'Read the message inside this cookie';
@@ -11080,7 +10422,9 @@ function item_reading_classification(obj) {
     if (otyp === ALCHEMY_SMOCK) return 'Read the slogan on the apron';
     if (otyp === HAWAIIAN_SHIRT) return 'Look at the pattern on the shirt';
     if (obj.oclass === SCROLL_CLASS) {
+        // C ref: iactions.c:100-106 (MAIL_STRUCTURES: SCR_MAIL never says it)
         const magic = (obj.dknown
+                       && otyp !== SCR_MAIL_OTYP
                        && (otyp !== SCR_BLANK_PAPER
                            || !objects[otyp]?.oc_name_known))
             ? ' to activate its magic' : '';
@@ -11109,14 +10453,15 @@ function renderItemActionsMenu(otmp, entries) {
     const lines = [title, '', ...itemLines, '(end)'];
     // C ref: win/tty/wintty.c tty_end_menu — cw->maxcol = widest entry's
     // strlen()+2 ("extra space at beg & end"); tty_display_nhwindow NHW_MENU then
-    // sets the window offset offx = max(10, cols - maxcol - 1), collapsing to a
-    // full-screen menu (offx 0) when it would be 10.
+    // sets the window offset.  The recorder build defines H2344_BROKEN
+    // (wintty.c tty_display_nhwindow): offx = min(min(82, cols/2),
+    // cols - maxcol - 1), so a narrow menu sits at column 40, not flush right.
     let maxcol = 0;
     for (const ln of lines) maxcol = Math.max(maxcol, ln.length + 2);
     if (maxcol > 80) maxcol = 80;
     const cols = display.cols ?? 80;
-    let offx = Math.max(10, cols - maxcol - 1);
-    if (offx === 10) offx = 0;
+    let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
+    if (offx < 0) offx = 0;
     // C ref: process_menu_window draws each row as tty_curs(win,1,r) + a leading
     // putchar(' ') then the entry text, so the text starts at screen column
     // offx+1 (the leading space occupies offx).
@@ -11252,7 +10597,7 @@ async function itemactions(otmp, getDir) {
 async function itemactions_dispatch(otmp, act, getDir) {
     // C ref: itemactions_pushkeys — push the object's invlet onto the canned
     // command queue so the dispatched command's getobj() consumes it silently.
-    const seedInvlet = () => cmdq_add_key(CQ_CANNED, otmp.invlet);
+    const seedInvlet = () => cmdq_add_key(CQ_CANNED, obj_to_let(otmp));
     switch (act) {
     case IA_NAME_OBJ:
         seedInvlet();
@@ -11526,7 +10871,7 @@ export async function dispinv_with_action(lets = null, use_inuse_ordering = fals
     const rows = use_inuse_ordering ? inuseRows(lets, alt_label)
                                     : inventoryRows(lets);
     if (!rows.length) {
-        await renderMessageOnMap('Not carrying anything.');
+        await renderMessageOnMap(note_topl('Not carrying anything.'));  // pline(): lands in the ^P history
         return ECMD_OK;
     }
     // Map every displayed invlet to its object so a selection resolves to an item.
@@ -11547,7 +10892,7 @@ export async function dispinv_with_action(lets = null, use_inuse_ordering = fals
 export async function display_inventory_interactive(lets = null) {
     const rows = inventoryRows(lets);
     if (!rows.length) {
-        await renderMessageOnMap('Not carrying anything.');
+        await renderMessageOnMap(note_topl('Not carrying anything.'));  // pline(): lands in the ^P history
         return;
     }
     const byLet = new Map();
@@ -11555,7 +10900,13 @@ export async function display_inventory_interactive(lets = null) {
         if (!lets || String(lets).includes(obj.invlet)) byLet.set(obj.invlet, obj);
     game._invmenu_esc = false;
     const picked = await select_inventory_menu(rows, byLet);
-    if (picked) await dismiss_invent_screen();
+    if (picked) {
+        /* C ref: wintty.c tty_select_menu -> tty_destroy_nhwindow ->
+           erase_menu_or_text(): picking an entry tears the menu down (docrt()
+           for a full-width one) exactly as ESC does. */
+        game._modal_screen = 'invent';
+        await dismiss_invent_screen();
+    }
     /* C: display_inventory(lets, TRUE) yields '\033' when the menu was ESC'd */
     return game._invmenu_esc ? '\x1b' : '';
 }
@@ -11571,10 +10922,15 @@ function renderInventoryMenu(rows, page = 0) {
     // (attr = ATR_NONE) during end-of-game disclosure (program_state.gameover).
     const headerAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
     const lines = [];
+    const syms = objSymsShown(rows);
     for (const group of rows) {
         const [heading, ...items] = group;
-        lines.push({ text: heading, attr: headerAttr, header: true });
-        for (const it of items) lines.push({ text: it, attr: 0 });
+        if (heading != null) lines.push({ text: heading, attr: headerAttr, header: true });
+        items.forEach((it, i) => {
+            const sym = syms && group.syms?.[i + 1];
+            lines.push({ text: sym ? it.slice(0, 2) + sym.ch + it.slice(3) : it, attr: 0,
+                         symColor: sym ? sym.color : undefined });
+        });
     }
     const display = game.nhDisplay;
     if (!display?.clearScreen) return { multipage: false, pages: 1, lines };
@@ -11592,7 +10948,10 @@ function renderInventoryMenu(rows, page = 0) {
         // Full-screen paged menu: footer "(N of M)".
         const pages = Math.ceil(lines.length / perPage);
         const curPage = Math.max(0, Math.min(page, pages - 1));
-        const pageLines = lines.slice(curPage * perPage, curPage * perPage + perPage);
+        // C ref: wintty.c:2729-2733 — menu strings are cut to cols - 2.
+        const pageLines = lines.slice(curPage * perPage, curPage * perPage + perPage)
+            .map((ln) => (ln.text.length > (display.cols ?? 80) - 2
+                ? { ...ln, text: ln.text.slice(0, (display.cols ?? 80) - 2) } : ln));
         display.clearScreen();
         let row = 0;
         // C ref: win/tty/wintty.c process_menu_window() — each row's leading
@@ -11602,6 +10961,9 @@ function renderInventoryMenu(rows, page = 0) {
         for (const ln of pageLines) {
             display.putstr(0, row, ' ', NO_COLOR, 0);
             display.putstr(1, row, ln.text, NO_COLOR, ln.attr || 0);
+            if (ln.symColor !== undefined)
+                display.setCell(3, row, ln.text[2],
+                                (ln.symColor === CLR_GRAY || ln.symColor === 0) ? NO_COLOR : ln.symColor, 0);
             row++;
         }
         const footer = `(${curPage + 1} of ${pages})`;
@@ -11635,7 +10997,7 @@ export async function ddoinv(getDir = null) {
 export async function whatis_pick_inventory() {
     const rows = inventoryRows(null);
     if (!rows.length) {
-        await renderMessageOnMap('Not carrying anything.');
+        await renderMessageOnMap(note_topl('Not carrying anything.'));  // pline(): lands in the ^P history
         return null;
     }
     const byLet = new Map();
@@ -11670,9 +11032,10 @@ export function free_pickinv_cache() { game.cached_pickinv_win = WIN_ERR; }
 // player has picked '*', add '?' for 'list likely candidates' to reverse
 // that." Factored out so getobj_menu() can add the same synthetic letter to
 // its own accept-set.
-function force_invmenu_special(lets) {
+function force_invmenu_special(lets, allowxtra = false, usextra = false) {
     if (!game.flags?.force_invmenu) return null;
-    if (lets && lets.length < inventoryArray().length)
+    if (lets !== null && lets !== undefined && !String(lets).length) lets = null; // display_pickinv(): `if (lets && !*lets) lets = 0`
+    if ((allowxtra && !usextra) || (lets && lets.length < inventoryArray().length))
         return { ch: '*', text: '(list everything)' };
     if (!lets)
         return { ch: '?', text: '(list likely candidates)' };
@@ -11680,13 +11043,16 @@ function force_invmenu_special(lets) {
 }
 
 export function display_pickinv(lets = null, xtra_choice = null, query = null, allowxtra = false, want_reply = false, out_cnt = null) {
-    void query;
     // C ref: invent.c display_pickinv():3084 `usextra = (xtra_choice &&
     // allowxtra);` — the "Miscellaneous / - - <hands>" row getobj()'s '?'/'*'
     // menu draws when hands is a reachable answer (getobj_menu()'s own
     // caller computes xtra_choice/allowxtra; this port's only OTHER caller,
     // display_inventory(), always passes null/false, so this is a no-op there).
     const usextra = !!(xtra_choice && allowxtra);
+    // C ref: invent.c display_pickinv():3146 — "oxymoron? temporarily assign
+    // permanent inventory letters": with 'nofixinv' every inventory listing
+    // re-letters the pack in list order first.
+    reassign_if_nofixinv();
     // C ref: invent.c display_pickinv():3130-3170 — `n` only distinguishes 0, 1
     // and "more"; with exactly one item of interest and no reply wanted the
     // listing is a plain pline() (tty_message_menu PICK_NONE), not a menu.
@@ -11705,8 +11071,11 @@ export function display_pickinv(lets = null, xtra_choice = null, query = null, a
     }
     const rows = inventoryRows(lets);
     if (usextra) rows.unshift(['Miscellaneous', `${HANDS_SYM} - ${xtra_choice}`]);
-    const special = want_reply ? force_invmenu_special(lets) : null;
+    const special = want_reply ? force_invmenu_special(lets, allowxtra, usextra) : null;
     if (special) rows.push(['Special', `${special.ch} - ${special.text}`]);
+    // C ref: invent.c display_pickinv() end_menu(win, query) -> wintty.c
+    // tty_end_menu(): the prompt becomes the first line, followed by a blank.
+    if (rows.length && query) rows.unshift([query, '']);
     if (!rows.length) {
         // Narrow fix (not update_topl): display_pickinv() is sync and called
         // from several other files (end.js, pager.js) that would all need an
@@ -11732,9 +11101,39 @@ export function display_inventory(lets = null, want_reply = false) {
 }
 
 export function repopulate_perminvent() { display_pickinv(null, null, null, false, false, null); }
-export function display_used_invlets(avoidlet) {
-    for (const obj of inventoryArray()) if (obj.invlet !== avoidlet) return obj.invlet;
-    return '\0';
+// C ref: invent.c display_used_invlets() — PICK_ONE menu "Inventory letters
+// used:" listing every carried item (except `avoidlet`) in inventory-list
+// order, grouped by class when flags.sortpack is on.  Returns the picked
+// letter, '\033' when cancelled, '\0' when nothing was picked.
+export async function display_used_invlets(avoidlet) {
+    const inv = inventoryArray();
+    if (!inv.length) return '\0';
+    const rows = [['Inventory letters used:', '']];
+    const byLet = new Map();
+    const entry = (obj) => {
+        obj_to_glyph(obj);
+        byLet.set(obj.invlet, obj);
+        return `${obj.invlet} - ${doname_invent(obj)}`;
+    };
+    if (flags().sortpack === false) {
+        const group = [null];
+        for (const obj of inv) if (obj.invlet !== avoidlet) group.push(entry(obj));
+        if (group.length > 1) rows.push(group);
+    } else {
+        for (const oclass of classOrder()) {
+            const items = inv.filter((obj) => obj.invlet !== avoidlet && obj.oclass === oclass);
+            if (items.length)
+                rows.push([let_to_name(oclass, false, false), ...items.map(entry)]);
+        }
+    }
+    game._invmenu_esc = false;
+    const picked = await select_inventory_menu(rows, byLet);
+    if (picked) {
+        game._modal_screen = 'invent';
+        await dismiss_invent_screen();
+        return picked.invlet;
+    }
+    return game._invmenu_esc ? '\x1b' : '\0';
 }
 
 export function count_unpaid(list) { let n = 0; for (const obj of iterateObjects(list)) { if (obj.unpaid) ++n; if (Has_contents(obj)) n += count_unpaid(obj.cobj); } return n; }
@@ -11967,6 +11366,39 @@ function altar_description(loc) {
     return `${(amask & AM_SANCTUM) ? 'high ' : ''}altar to ${gname} (${align_str(align)})`;
 }
 
+// C ref: pager.c:614 ice_descr(x, y, outbuf) — "ice" (or "frozen <liquid>") when
+// the spot is far away or unseen, otherwise a thickness word from the
+// MELT_ICE_AWAY timer ("solid" when no timer is running) plus the water name.
+export function ice_descr(x, y) {
+    const u = game.u;
+    const r = (u?.xray_range > 2) ? u.xray_range : 2;
+    const neardist = (r * r) * 2 - r;
+    const dx = (u?.ux ?? 0) - x, dy = (u?.uy ?? 0) - y;
+    const at_hero = dx === 0 && dy === 0;
+    const lev = game.level?.at?.(x, y);
+    if (lev?.typ !== ICE) return `[ice:${lev?.typ}?]`;
+    if (dx * dx + dy * dy > neardist
+        || (!cansee(x, y) && (!at_hero || u?.uprops?.Levitation))) {
+        return waterbody_name_for_ice(x, y);
+    }
+    const time_left = spot_time_left(x, y, MELT_ICE_AWAY);
+    const rating = !time_left ? 0 : time_left > 1000 ? 1 : time_left > 100 ? 2
+        : time_left > 50 ? 3 : time_left > 14 ? 4 : 5;
+    return `${['solid', 'sturdy', 'steady', 'unsteady', 'thin', 'slushy'][rating]} ${waterbody_name_for_ice(x, y)}`;
+}
+
+// C ref: invent.c:4224 look_here() — "molten lava", "iron bars", plain and
+// thawing ice ("ice", "solid ice", "thin ice", "frozen <liquid>") take no
+// article; everything else gets an().
+export function dfeature_article(dfeature) {
+    const sp = dfeature.indexOf(' ');
+    if (dfeature === 'molten lava' || dfeature === 'iron bars' || dfeature === 'ice'
+        || dfeature.startsWith('frozen ')
+        || (sp >= 0 && dfeature.slice(sp).toLowerCase() === ' ice'))
+        return dfeature;
+    return an(dfeature);
+}
+
 // C ref: invent.c dfeature_at() — the dungeon feature at (x,y).  Ports the
 // staircase/ladder branch (via game.stairs) used by look_here on the dungeon
 // entrance, then falls back to the cell's typName for other features.
@@ -11994,7 +11426,7 @@ export function dfeature_at(x, y, buf = '') {
         else if (IS_FOUNTAIN(ltyp)) feature = 'fountain';
         else if (IS_THRONE(ltyp)) feature = 'opulent throne';
         else if (ltyp === LAVAPOOL || ltyp === LAVAWALL) feature = 'molten lava';
-        else if (ltyp === ICE) feature = 'ice';
+        else if (ltyp === ICE) feature = ice_descr(x, y);
         else if (ltyp === POOL || ltyp === MOAT || ltyp === WATER) feature = 'pool of water';
         else if (IS_SINK(ltyp)) feature = 'sink';
         // C ref: invent.c:4075 — ALTAR sits between SINK and the stairway arm.
@@ -12074,7 +11506,9 @@ export async function describe_decor() {
         // (seed0014), so C's "doesn't fit, so page it" rule (topl.c
         // update_topl():257) is applied only at this one call site.
         const pend = game._pending_message || '';
-        if (!game._winStop && pend && game._toplinSoft === pend
+        // A HARD-pending line (game._toplin) is paged by update_topl() itself;
+        // paging it here as well put up a second --More-- (b3 fz23 step 40).
+        if (!game._winStop && pend && game._toplinSoft === pend && game._toplin !== 1
             && decorMsg.length + pend.length + 3 >= 80 - 8)
             await topl_more();
         await update_topl(decorMsg);
@@ -12132,7 +11566,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
         const minv = mtmp?.minvent || [];
         if (minv.length) {
             for (const o of minv)
-                if (o.otyp === CORPSE) feel_cockatrice(o, false);
+                if (o.otyp === CORPSE) await feel_cockatrice(o, false);
             display_minventory(mtmp, 0, `${blind ? 'You feel' : ''}:`);
         } else {
             await update_topl(`You ${verb} no objects here.`);
@@ -12193,7 +11627,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
         // (only when blind or there was no feature to report).
         // C ref: invent.c look_here() !otmp branch — pline1(fbuf); read_engr_at();
         // if (!skip_objects && (Blind || !dfeature)) You("%s no objects here.", verb).
-        if (dfeature) await update_topl(`There is ${an(dfeature)} here.`);
+        if (dfeature) await update_topl(`There is ${dfeature_article(dfeature)} here.`);
         await read_engr_at(x, y);
         if (!skip_objects && (Blind_for_wear() || !dfeature))
             await update_topl(`You ${verb} no objects here.`);
@@ -12201,7 +11635,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
     }
     if (skip_objects) {
         // C ref: invent.c look_here():4249 — too many objects to list.
-        if (dfeature) await update_topl(`There is ${an(dfeature)} here.`);
+        if (dfeature) await update_topl(`There is ${dfeature_article(dfeature)} here.`);
         await read_engr_at(x, y);
         if (obj_cnt === 1 && (otmp.quan || 1) === 1)
             await update_topl(`There is ${picked_some ? 'another' : 'an'} object here.`);
@@ -12212,14 +11646,14 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
                         : 'many'}${picked_some ? ' more' : ''} objects here.`);
         for (const o of here)
             if (o.otyp === CORPSE && will_feel_cockatrice(o, false)) {
-                feel_cockatrice(o, false);
+                await feel_cockatrice(o, false);
                 break;
             }
         return Blind_for_wear() ? ECMD_TIME : ECMD_OK;
     }
     if (here.length === 1) {
         // C reads the engraving between the feature and the object.
-        if (dfeature) await update_topl(`There is ${an(dfeature)} here.`);
+        if (dfeature) await update_topl(`There is ${dfeature_article(dfeature)} here.`);
         await read_engr_at(x, y);
         await update_topl(`You ${verb} here ${doname_with_price(otmp)}.`);
         game.last_msg = PLNMSG_ONE_ITEM_HERE;
@@ -12236,7 +11670,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
     const itemLines = here.map((o) => doname_with_price(o));
     // C ref: invent.c look_here() else-branch — the dfeature line goes INSIDE
     // the menu window (putstr(fbuf); putstr("")), not on the topline.
-    const pre = dfeature ? [`There is ${an(dfeature)} here.`, ''] : [];
+    const pre = dfeature ? [`There is ${dfeature_article(dfeature)} here.`, ''] : [];
     await renderThingsHereMenu(header, itemLines, pre);
     await read_engr_at(x, y);
     return Blind_for_wear() ? ECMD_TIME : ECMD_OK;
@@ -12347,9 +11781,9 @@ export function will_feel_cockatrice(otmp, force_touch) {
         && otmp?.otyp === CORPSE && touch_petrifies(otmp.corpsenm));
 }
 
-export function feel_cockatrice(otmp, force_touch) {
+export async function feel_cockatrice(otmp, force_touch) {
     if (will_feel_cockatrice(otmp, force_touch))
-        instapetrify(`touching ${killer_xname(otmp)} bare-handed`);
+        await (await import('./polyself.js')).instapetrify(`touching ${killer_xname(otmp)} bare-handed`);
 }
 
 // C ref: invent.c stackobj() — merge the just-placed floor object with an
@@ -12410,6 +11844,8 @@ export function mergable(otmp, obj) {
         return false;
     if (obj.otyp === CORPSE || obj.otyp === EGG || obj.otyp === TIN)
         if (obj.corpsenm !== otmp.corpsenm) return false;
+    /* don't merge surcharged item with base-cost item */
+    if (obj.unpaid && !same_price(obj, otmp)) return false;
     /* some additional information is always incompatible */
     if (has_omonst(obj) || has_omid(obj) || has_omonst(otmp) || has_omid(otmp)) return false;
     if (safe_oname(obj) && safe_oname(otmp) && safe_oname(obj) !== safe_oname(otmp)) return false;
@@ -12454,7 +11890,10 @@ export async function doprwep() {
     } else {
         const lets = [game.uwep, game.u?.twoweap ? game.uswapwep : null, game.uquiver]
             .filter(Boolean).map((o) => o.invlet).join('');
-        await dispinv_with_action(lets, true, null);
+        // C: doprwep() itself returns ECMD_OK, but itemactions() queues the chosen
+        // command on CQ_CANNED where it runs as its own timed command; this port
+        // runs it inline, so its result is passed up for the caller's turn flag.
+        return await dispinv_with_action(lets, true, null);
     }
     return ECMD_OK;
 }
@@ -12476,7 +11915,7 @@ export async function doprarm() {
     } else if (worn.length === 1 && !game.iflags?.menu_requested) {
         prinv(null, worn[0], 0);
     } else {
-        await dispinv_with_action(worn.map((o) => o.invlet).join(''), true, null);
+        return await dispinv_with_action(worn.map((o) => o.invlet).join(''), true, null);
     }
     return ECMD_OK;
 }
@@ -12489,8 +11928,8 @@ export async function doprring() {
     } else if (worn.length === 1 && !game.iflags?.menu_requested) {
         prinv(null, worn[0], 0);
     } else {
-        await dispinv_with_action(worn.map((o) => o.invlet).join(''), true,
-                                  worn.length === 1 ? 'Ring' : 'Rings');
+        return await dispinv_with_action(worn.map((o) => o.invlet).join(''), true,
+                                         worn.length === 1 ? 'Ring' : 'Rings');
     }
     return ECMD_OK;
 }
@@ -12502,13 +11941,13 @@ export async function dopramulet() {
     } else if (!game.iflags?.menu_requested) {
         prinv(null, game.uamul, 0);
     } else {
-        await dispinv_with_action(String(obj_to_let(game.uamul)), true, 'Amulet');
+        return await dispinv_with_action(String(obj_to_let(game.uamul)), true, 'Amulet');
     }
     return ECMD_OK;
 }
 
 export function tool_being_used(obj) {
-    if (obj?.owornmask & (W_TOOL | W_SADDLE)) return true;
+    if (obj?.owornmask & (W_TOOL | W_BLINDF | W_SADDLE)) return true;
     if (obj?.oclass !== TOOL_CLASS) return false;
     return obj === game.uwep || obj.lamplit || (obj.otyp === LEASH && obj.leashmon);
 }
@@ -12519,7 +11958,7 @@ export function tool_being_used(obj) {
 export async function doprtool() {
     const lets = inventoryArray().filter(tool_being_used).map((obj) => obj_to_let(obj)).join('');
     if (!lets) await pline('You are not using any tools.');
-    else await dispinv_with_action(lets, true, null);
+    else return await dispinv_with_action(lets, true, null);
     return ECMD_OK;
 }
 
@@ -12594,82 +12033,214 @@ function merge_equipped_references(from, to) {
     const primary = game.uwep === from || game.uwep === to;
     const alternate = game.uswapwep === from || game.uswapwep === to;
     const quivered = game.uquiver === from || game.uquiver === to;
-    if (primary) setuwep_slot(null);
+    // C ref: invent.c merged() `setnotworn(otmp); setworn(otmp, wmask);
+    // setnotworn(obj)` — worn.c setworn()/setnotworn(), NOT wield.c
+    // setuwep(), so gu.unweapon (the one-shot "You begin bashing monsters"
+    // reminder) is left alone.
+    const setwep = (o) => setworn_slot(o, QW_WEP, () => game.uwep, (x) => { game.uwep = x; });
+    if (primary) setwep(null);
     if (alternate) setuswapwep(null);
     if (quivered) setuqwep(null);
-    if (primary) setuwep_slot(to);
+    if (primary) setwep(to);
     else if (alternate) setuswapwep(to);
     else if (quivered) setuqwep(to);
     if (game.u?.twoweap && !game.uswapwep) game.u.twoweap = 0;
 }
 
+// C ref: invent.c merged() applied to an #adjust pair: merge `obj` into `otmp`
+// (the survivor) when mergable, carrying uwep/uswapwep/uquiver across.
+function adjust_merged(otmp, obj) {
+    if (!mergable(otmp, obj)) return false;
+    merge_equipped_references(obj, otmp);
+    return merged(otmp, obj) === 1;
+}
+
+// C ref: invent.c doorganize_core() — the 'to' slot half of #adjust.
 export async function doorganize_core(obj) {
+    const GOLD_INDX = 0, GOLD_OFFSET = 1, OVRFLW_INDX = GOLD_OFFSET + invlet_basic;
     if (!obj) return ECMD_CANCEL;
 
-    const inv = inventoryArray();
-    const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const available = [...alphabet].filter((letter) => {
-        const occupant = inv.find((other) => other !== obj && other.invlet === letter);
-        return !occupant || mergable(occupant, obj);
-    });
-    const choices = compactify(available.join(''));
-    const prompt = `Adjust letter to what [${choices}] (? see used letters)?`;
-    const isgold = obj.oclass === COIN_CLASS;
+    /* can only be gold if check_invent_gold() found a problem ... */
+    const isgold = (obj.oclass === COIN_CLASS);
+    let splitting = null, bumped = null, ever_mind = false;
+    let inv = inventoryArray();
 
-    for (let trycnt = 1; ; ++trycnt) {
-        const key = isgold ? GOLD_SYM
-            : String.fromCharCode(await topline_query(prompt));
-        if (QUITCHARS.includes(key)) {
-            await pline('Never mind.');
-            return ECMD_OK;
-        }
-        if (key === GOLD_SYM && !isgold) {
-            await pline(`Only gold coins may be moved into the '${GOLD_SYM}' slot.`);
-            return ECMD_OK;
-        }
-        if (!/^[A-Za-z#]$/.test(key) && key !== GOLD_SYM) {
-            await pline('Select an inventory slot letter.');
-            if (trycnt >= 5) {
-                await pline('Never mind.');
-                return ECMD_OK;
-            }
-            continue;
+    /* figure out whether user gave a split count to getobj() */
+    for (let i = 0; i < inv.length; i++)
+        if (inv[i + 1] === obj) { /* knowledge of splitobj() operation */
+            if (inv[i].invlet === obj.invlet) splitting = inv[i];
+            break;
         }
 
-        const oldlet = obj.invlet;
-        const destination = inv.find((other) => other !== obj && other.invlet === key);
-        let result = obj;
-        let action = key === oldlet ? 'Collecting:' : 'Moving:';
-
-        if (key === oldlet) {
-            for (const other of [...inv]) {
-                if (other === result || other.invlet === oldlet) continue;
-                if (!has_oname(other) || (has_oname(result) && ONAME(other) === ONAME(result))) {
-                    if (mergable(result, other)) {
-                        merge_equipped_references(other, result);
-                        merged(result, other);
-                    }
-                }
-            }
-        } else if (destination && mergable(destination, obj)) {
-            merge_equipped_references(obj, destination);
-            merged(destination, obj);
-            result = destination;
-            action = 'Merging:';
-        } else {
-            if (destination) {
-                destination.invlet = oldlet;
-                action = 'Swapping:';
-            }
-            obj.invlet = key;
-        }
-
-        reorder_invent();
-        if (game._merge_discovery_pending) await report_merge_discovery();
-        await update_topl(prinv_fmt(action, result, 0));
-        update_inventory();
-        return ECMD_OK;
+    /* initialize the list with all lower and upper case letters */
+    const lets = new Array(OVRFLW_INDX + 1).fill(' ');
+    lets[GOLD_INDX] = isgold ? GOLD_SYM : ' ';
+    for (let k = 0; k < 26; k++) {
+        lets[GOLD_OFFSET + k] = String.fromCharCode(97 + k);
+        lets[GOLD_OFFSET + 26 + k] = String.fromCharCode(65 + k);
     }
+    lets[OVRFLW_INDX] = ' ';
+    /* for floating inv letters, truncate list after the first open slot */
+    let limit = lets.length;
+    if (flags().invlet_constant === false) {
+        const cnt = inv_cnt(false);
+        if (cnt < invlet_basic) limit = cnt + (splitting ? 1 : 2);
+    }
+
+    /* blank out all the letters currently in use in the inventory
+       except those that will be merged with the selected object */
+    for (const otmp of inv) {
+        if (otmp !== obj && !mergable(otmp, obj)) {
+            const ch = otmp.invlet;
+            if (ch >= 'a' && ch <= 'z') lets[GOLD_OFFSET + ch.charCodeAt(0) - 97] = ' ';
+            else if (ch >= 'A' && ch <= 'Z') lets[GOLD_OFFSET + ch.charCodeAt(0) - 65 + 26] = ' ';
+            /* overflow defaults to off, but it we find a stack using that
+               slot, switch to on -- the opposite of normal invlet handling */
+            else if (ch === NOINVSYM) lets[OVRFLW_INDX] = NOINVSYM;
+        }
+    }
+
+    /* compact the list by removing all the blanks */
+    let letstr = '';
+    for (let ix = 0; ix < limit; ix++) if (lets[ix] !== ' ') letstr += lets[ix];
+    /* and by dashing runs of letters */
+    if (letstr.length > 5) letstr = compactify(letstr);
+
+    /* get 'to' slot to use as destination */
+    let qbuf = !splitting ? 'Adjust letter' : `Split ${obj.quan}`;
+    qbuf += ` to what [${letstr}]${inv.length ? ' (? see used letters)' : ''}?`;
+
+    const noadjust = async () => {
+        if (splitting) {
+            adjust_merged(splitting, obj); /* undo split */
+            if (game._merge_discovery_pending) await report_merge_discovery();
+        }
+        if (!ever_mind) await pline('Never mind.');
+        return ECMD_OK;
+    };
+
+    let letc;
+    for (let trycnt = 1; ; ++trycnt) {
+        letc = !isgold ? String.fromCharCode(await topline_query(qbuf)) : GOLD_SYM;
+        if (letc === '?' || letc === '*') {
+            letc = await display_used_invlets(splitting ? obj.invlet : '\0');
+            if (!letc || letc === '\0') continue;
+            if (letc === '\x1b') return await noadjust();
+        }
+        if (QUITCHARS.includes(letc)
+            /* adjusting to same slot is meaningful since all
+               compatible stacks get collected along the way,
+               but splitting to same slot is not */
+            || (splitting && letc === obj.invlet)) {
+            return await noadjust();
+        } else if (letc === GOLD_SYM && obj.oclass !== COIN_CLASS) {
+            await pline(`Only gold coins may be moved into the '${GOLD_SYM}' slot.`);
+            ever_mind = true;
+            return await noadjust();
+        }
+        /* letter() classifies '@' as one; compactify() can put '-' in lets;
+           the only thing of interest that strchr() might find is '$' or '#'
+           since letter() catches everything else that we put into lets[] */
+        if ((letter(letc) && letc !== '@') || (letstr.includes(letc) && letc !== '-'))
+            break; /* got one */
+        if (trycnt === 5) return await noadjust();
+        await pline('Select an inventory slot letter.'); /* else try again */
+    }
+
+    const collect = (letc === obj.invlet);
+    /* change the inventory and print the resulting item */
+    let adj_type = collect ? 'Collecting:' : !splitting ? 'Moving:' : 'Splitting:';
+
+    /*
+     * don't use freeinv/addinv to avoid double-touching artifacts,
+     * dousing lamps, losing luck, cursing loadstone, etc.
+     */
+    inv = inventoryArray();
+    extract_nobj(obj, inv);
+
+    for (let ix = 0; ix < inv.length; ) {
+        const otmp = inv[ix];
+        const otmpname = has_oname(otmp) ? ONAME(otmp) : null;
+        let objname = has_oname(obj) ? ONAME(obj) : null;
+
+        if (collect) {
+            /* Collecting: #adjust an inventory stack into its same slot;
+               keep it there and merge other compatible stacks into it. */
+            if ((!otmpname || (objname && objname === otmpname))
+                && adjust_merged(otmp, obj)) {
+                obj = otmp;
+                extract_nobj(obj, inv);
+                continue; /* ix now indexes the next element */
+            }
+        } else if (otmp.invlet === letc) {
+            /* Merging: when from and to are compatible */
+            if ((!otmpname || (objname && objname === otmpname))
+                && adjust_merged(otmp, obj)) {
+                adj_type = 'Merging:';
+                obj = otmp;
+                extract_nobj(obj, inv);
+                break; /* done merging */
+            }
+            /* Moving or splitting: don't merge extra compatible stacks.
+               Found 'otmp' in destination slot; merge if compatible,
+               otherwise bump whatever is there to an open slot. */
+            if (!splitting) {
+                adj_type = 'Swapping:';
+                otmp.invlet = obj.invlet;
+            } else {
+                /* strip 'from' name if it has one */
+                if (objname && !obj.oartifact) setONAME(obj, '');
+                if (!mergable(otmp, obj)) {
+                    /* won't merge; put 'from' name back */
+                    if (objname) setONAME(obj, objname);
+                } else {
+                    /* will merge; discard 'from' name */
+                    objname = null;
+                }
+
+                if (adjust_merged(otmp, obj)) {
+                    adj_type = 'Splitting and merging:';
+                    obj = otmp;
+                    extract_nobj(obj, inv);
+                } else if (inv_cnt(false) >= invlet_basic) {
+                    adjust_merged(splitting, obj); /* undo split */
+                    /* "knapsack cannot accommodate any more items" */
+                    await pline('Your pack is too full.');
+                    return ECMD_OK;
+                } else {
+                    bumped = otmp;
+                    extract_nobj(bumped, inv);
+                }
+            } /* moving vs splitting */
+            break; /* not collecting and found 'to' slot */
+        } /* collect */
+        ix++;
+    }
+
+    /* inline addinv; insert loose object at beginning of inventory */
+    obj.invlet = letc;
+    inv.unshift(obj);
+    obj.where = OBJ_INVENT;
+    syncInventory(inv);
+    reorder_invent();
+    if (bumped) {
+        /* splitting the 'from' stack is causing an incompatible
+           stack in the 'to' slot to be moved into an open one;
+           we need to do another inline insertion to inventory */
+        assigninvlet(bumped);
+        inv.unshift(bumped);
+        bumped.where = OBJ_INVENT;
+        syncInventory(inv);
+        reorder_invent();
+    }
+
+    /* messages deferred until inventory has been fully reestablished */
+    if (game._merge_discovery_pending) await report_merge_discovery();
+    await update_topl(prinv_fmt(adj_type, obj, 0));
+    if (bumped) await update_topl(prinv_fmt('Moving:', bumped, 0));
+    if (splitting) clear_splitobjs(); /* reset splitobj context */
+    update_inventory();
+    return ECMD_OK;
 }
 
 export function invdisp_nothing(hdr, txt) {

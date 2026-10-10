@@ -1,6 +1,6 @@
 // levels/hea_goal.js - special level builder makemaz_hea_goal() (dat/Hea-goal.lua).
 
-import { COLNO, FIRE_TRAP, POOL, ROOM, ROWNO } from '../const.js';
+import { COLNO, POOL, ROOM, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
 import { WAN_LIGHTNING } from '../mkobj.js';
 import { rn2 } from '../rng.js';
@@ -23,7 +23,7 @@ import { mkmap_mines, pri_create_trap } from './pri_loca.js';
 // ════════════════════════════════════════════════════════════════════════
 
 // C ref: monsym.h S_* class indices (def_char_to_monclass()).
-const S_RODENT = 18, S_EEL = 57, S_DRAGON = 30, S_SPIDER = 19;
+const S_RODENT = 18, S_EEL = 57, S_DRAGON = 30, S_SNAKE = 45;
 const QUARTERSTAFF = 79;
 
 const HEA_GOAL_MAP = [
@@ -85,14 +85,13 @@ export async function makemaz_hea_goal() {
         // des.object("wand of lightning", 20, 06) — plain id, explicit coord.
         quest_create_object(WAN_LIGHTNING, 20, 6, null, null);
 
-        // 13 x des.object() — fully random class at a random DRY square.
-        for (let i = 0; i < 13; i++) vly_object({});
+        // 14 x des.object() — fully random class at a random DRY square.
+        for (let i = 0; i < 14; i++) vly_object({});
 
-        // 6 x des.trap("fire")/des.trap() — hardfloor is NOT set on this
-        // level, so pri_create_trap's Can_fall_thru() check leaves any
-        // hole/trapdoor roll alone (same as Pri-goal).
-        for (let i = 0; i < 4; i++) await pri_create_trap(FIRE_TRAP, null, null);
-        for (let i = 0; i < 2; i++) await pri_create_trap(0, null, null);
+        // 6 x des.trap() — fully random type and location.  hardfloor is NOT
+        // set on this level, so pri_create_trap's Can_fall_thru() check leaves
+        // any hole/trapdoor roll alone (same as Pri-goal).
+        for (let i = 0; i < 6; i++) await pri_create_trap(0, null, null);
 
         // des.monster({id="Cyclops", x=20,y=06, peaceful=0}) — explicit coord.
         quest_monster({ name: 'Cyclops', mx: 20, my: 6, peaceful: 0 });
@@ -103,7 +102,7 @@ export async function makemaz_hea_goal() {
         for (let i = 0; i < 2; i++) quest_monster({ name: 'shark' });
         quest_monster({ cls: S_EEL, peaceful: 0 });
         for (let i = 0; i < 5; i++) quest_monster({ cls: S_DRAGON, peaceful: 0 });
-        for (let i = 0; i < 10; i++) quest_monster({ cls: S_SPIDER, peaceful: 0 });
+        for (let i = 0; i < 10; i++) quest_monster({ cls: S_SNAKE, peaceful: 0 });
     } finally {
         g._quest_gen = false;
         g._full_mon_gen = false;

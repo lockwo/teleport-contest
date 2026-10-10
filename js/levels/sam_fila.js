@@ -3,7 +3,7 @@
 // (Sam-loca).  A "mines"-style cave whose background typ is POOL rather than
 // STONE (fg=".", bg="P"): the cave floor is carved out of a lake instead of
 // solid rock.  `lit` is NOT given explicitly in the .lua, so it draws
-// litstate_rnd()'s RNG — unlike the already-landed Bar-fila/Bar-filb
+// splev_initlev()'s single rn2(2) — unlike the already-landed Bar-fila/Bar-filb
 // (mklev.js), which both pass an explicit lit=0.
 //
 // C ref: mklev.c makelevel() -> In_quest(&u.uz) branch -> makemaz("Sam-fila")
@@ -35,7 +35,7 @@ export async function makemaz_sam_fila() {
     }
     // des.level_init({ style="mines", fg=".", bg="P", smoothed=true,
     //                  joined=true, walled=true }) — no explicit lit=, so
-    // litstate_rnd() draws; walled&&join makes the level cavernous afterward.
+    // splev_initlev() resolves it with one rn2(2); walled&&join makes the level cavernous afterward.
     sam_mkmap({ bg_typ: POOL, fg_typ: ROOM, smooth: true, join: true, walled: true });
 
     g._quest_gen = true;

@@ -26,8 +26,8 @@ import { Is_special } from '../dungeon.js';
 import { game } from '../gstate.js';
 import { depth as depth_of_level } from '../hacklib.js';
 import {
-    MGEND_NEUTRAL, enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
-    name_gender_hint, name_to_pmidx, propagate, rndmonst,
+    enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
+    name_to_pmidx, propagate, rndmonst,
 } from '../makemon.js';
 import { mongone, resists_ston } from '../mon.js';
 import {
@@ -38,7 +38,7 @@ import { stackobj } from '../invent.js';
 import { somex, somey } from '../mkroom.js';
 import { rn1, rn2, rnd } from '../rng.js';
 import {
-    LOC_DRY, bigrm_get_level_extends, bigrm_load_map, bigrm_wallification, flip_level, percent,
+    LOC_DRY, splev_find_montype, bigrm_get_level_extends, bigrm_load_map, bigrm_wallification, flip_level, percent,
     pm_to_humidity, quest_level_init_solidfill, quest_place_stair, quest_rndcoord, quest_set_door,
     remove_boundary_syms, map_cleanup, shuffle, splev_door_at, splev_feature, splev_get_location_rnd,
     splev_link_doors_rooms, splev_mkstairs_at, splev_region_lit, splev_traptype_rnd, vly_abs, vly_non_diggable,
@@ -187,14 +187,13 @@ function med_rndmonnum() { return rndmonst()?.pmidx ?? 0; }
 function med_monster({ name = null, cls = 0, mx = null, my = null,
                        peaceful = null, asleep = null }) {
     let ptr = null;
+    let female = 0;                               // sp_lev.c:2125 id-less default
     if (name != null) {
-        const pmidx = name_to_pmidx(name);
-        ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
         // A species whose only pmname is gendered ("wood nymph", "Medusa")
         // makes find_montype report that gender, and then nothing is rolled.
-        if (ptr && ptr.gcode !== 1 && ptr.gcode !== 2
-            && name_gender_hint(name) === MGEND_NEUTRAL)
-            rn2(2);
+        const found = splev_find_montype(name);
+        ptr = found.pmidx >= 0 ? monster_by_pmidx(found.pmidx) : null;
+        if (ptr) female = found.female;
     }
     med_induced_align(80);
     if (name == null && cls) ptr = mkclass(cls, 0x0200 /* G_NOGEN */);
@@ -214,6 +213,7 @@ function med_monster({ name = null, cls = 0, mx = null, my = null,
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
+    if (mtmp) mtmp.female = female;               // sp_lev.c:2125
     if (mtmp && peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
     if (mtmp && asleep != null) mtmp.msleeping = asleep ? 1 : 0;
     return mtmp;
