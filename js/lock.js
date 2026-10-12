@@ -241,3 +241,17 @@ export async function doorlock(otmp, x, y) {
     }
     return res;
 }
+
+// C ref: lock.c:36 lock_action() — the "-ing" phrase naming the current lock
+// activity, chosen from the target's state and the tool (objects.h otyps:
+// CHEST 215, LOCK_PICK 222, CREDIT_CARD 223).
+export function lock_action(xl) {
+    const box = xl.box;
+    if (xl.door && !(xl.door.doormask & 0x08 /* D_LOCKED */)) return 'locking the door';
+    if (box && !box.olocked)
+        return box.otyp === 215 ? 'locking the chest' : 'locking the box';
+    if (xl.picktyp === 222 || xl.picktyp === 223) return 'picking the lock';
+    if (xl.door) return 'unlocking the door';
+    if (box) return box.otyp === 215 ? 'unlocking the chest' : 'unlocking the box';
+    return 'picking the lock';
+}

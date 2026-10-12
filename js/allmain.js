@@ -176,6 +176,7 @@ export async function newgame() {
     }
     g.u = g.u || {};
     g.u.uz = { dnum: 0, dlevel: 1 };
+    g.u.uz0 = { dnum: 0, dlevel: 0 }; /* u_init.c:979-984 */
     g.flags = g.flags || {};
 
     // C ref: allmain.c newgame() — role_init() sets gu.urole, gu.urace and
@@ -449,6 +450,9 @@ async function newgame_real() {
     // displayed; showing that menu flushes the pending top-line message,
     // which forces its "--More--" first (if not already acknowledged).
     await maybe_do_tutorial(preambleShownMore);
+    /* C ref: allmain.c:97 — so u_on_newpos() stops treating every move as a
+       level change (which would reset u.ux0/u.uy0) */
+    game.u.uz0.dlevel = game.u.uz.dlevel;
 }
 
 // C ref: allmain.c moveloop_preamble() — the new-game moon-phase /
@@ -548,6 +552,15 @@ async function maybe_do_tutorial(preambleShownMore) {
 // the "Move around with ..." engraving, so the engraving "feel" message pages).
 async function enter_tutorial_level() {
     const g = game;
+    // C ref: do.c goto_level() savelev() of the level being left: the hero's
+    // starting level is kept so leaving the tutorial re-enters it (not remade).
+    (g._level_store ||= {})[`${g.u.uz.dnum}:${g.u.uz.dlevel}`] = {
+        level: g.level, stairs: g.stairs, omoves: g.moves ?? 0,
+        utrack: g._utrack, utcnt: g._utcnt, utpnt: g._utpnt,
+        regions: g.regions, regionMoves: g.moves ?? 0,
+        updest: g.updest, dndest: g.dndest,
+        exclusion_zones: g.exclusion_zones, lastseentyp: g.lastseentyp,
+    };
     g.level = g._tutorial_level;
     g.fmon = g.level.monsters;
     g._in_tutorial = true;
@@ -570,6 +583,10 @@ async function enter_tutorial_level() {
             await newexplevel();
         }
     }
+    // C ref: do.c:1967 goto_level() `assign_level(&u.uz0, &u.uz)` — without it
+    // domagicportal()'s `!on_level(&u.uz, &u.uz0)` guard made the tutorial's
+    // exit portal inert (uz0 still named the starting level).
+    g.u.uz0 = { dnum: g.u.uz.dnum, dlevel: g.u.uz.dlevel };
 
     // Hero placement: teleport_region {9,3} (Lua) -> abs cell {12,6}.
     g.u.ux = 12; g.u.uy = 6;
@@ -603,6 +620,11 @@ async function enter_tutorial_level() {
         if (!g._winStop) await topl_more();
         await pline(`You read: "${ep.actualText}".`);
         if (!g._winStop) await topl_more();
+        // C ref: engrave.c read_engr_at() — Strcpy(remembered, actual);
+        // eread = erevealed = 1.  This arrival path bypasses read_engr_at().
+        ep.rememberedText = ep.actualText;
+        ep.eread = 1;
+        ep.erevealed = 1;
     }
     g._pending_message = '';
 
@@ -1066,6 +1088,7 @@ export async function moveloop_turn() {
         let monscanmove;
         do {
             monscanmove = await movemon();
+            if (process.env.NHDBG) console.error('DBG movemon ret', monscanmove, 'umov', g.u.umovement, 'moves', g.moves, 'rng', (await import('./rng.js')).getRngLog().length);
             if (g.u.umovement >= NORMAL_SPEED) break; // hero's turn again
             if (g.program_state?.gameover) break;      // hero died mid-movemon
         } while (monscanmove);
@@ -1126,6 +1149,8 @@ export async function moveloop_turn() {
             settrack();
 
             g.moves = (g.moves || 1) + 1;
+            /* C ref: allmain.c:260 — distinct every time the hero moves */
+            g.hero_seq = (g.moves | 0) << 3;
             // C ref: allmain.c:262-263 — `if (flags.time && !svc.context.run)
             // disp.time_botl = TRUE; /* 'moves' just changed */`.
             if (g.flags?.time && !svc_context_run())
@@ -1136,12 +1161,17 @@ export async function moveloop_turn() {
             if (g.u.uprops?.Glib)
                 await (await import('./do_wear.js')).glibr();
             await nh_timeout();
+            // C ref: done() never returns (really_done -> nh_terminate), so a
+            // fatal timeout (sickness, stoning, strangulation, sliming) ends the
+            // turn block here; no further once-per-turn draws are made.
+            if (g.program_state?.gameover) break;
 
             // C ref: allmain.c moveloop_core():274 — run_regions() ages every
             // active gas-cloud region and fires its per-turn inside-effect for
             // the hero/monsters it currently contains, right after nh_timeout()
             // and before the ublesscnt countdown.
             await run_regions();
+            if (g.program_state?.gameover) break;
 
             // C ref: allmain.c moveloop_core() — once-per-turn "if (u.ublesscnt)
             // u.ublesscnt--;" (the prayer timeout countdown), between run_regions
@@ -1262,6 +1292,7 @@ export async function moveloop_turn() {
             await do_storms();
             game._hunger_msgs = [];
             await gethungry();
+            if (g.program_state?.gameover) break;   // starvation done() never returns
             const hungerMsgs = game._hunger_msgs;
             game._hunger_msgs = null;
             if (hungerMsgs.faintDuration !== undefined) {
@@ -1355,38 +1386,19 @@ export async function moveloop_turn() {
                 // repaint a sleeping/paralysed hero's terminal gets.
                 await (await import('./hack.js')).runmode_delay_output();
                 if (++g.multi === 0) {
-                    // unmul: hero regains control next command.  C ref:
-                    // hack.c unmul() opens with `disp.botl = TRUE`.
-                    g.botl = true;
-                    g.context.travel = g.context.travel1 = g.context.mv = 0;
-                    // C ref: hack.c unmul() — u.usleep = 0.  Without this, a hero
-                    // who fell asleep (zap.js fall_asleep) stays Unaware forever
-                    // after waking, so gethungry() keeps rolling the extra
-                    // asleep-only rn2(10) every turn instead of stopping once
-                    // the sleep countdown (this block) completes.
-                    if (g.u) g.u.usleep = 0;
-                    // C ref: hack.c unmul(NULL) — announce the pending nomovemsg,
-                    // then clear it.  Route through update_topl so a still-pending
-                    // top line (toplin == NEED_MORE — savelife's "OK, so you don't
-                    // die." plus following monster-move messages, or the prayer's
-                    // "cobra slither"/"finish your prayer") first fires its blocking
-                    // --More-- (captured as its own frame) before nomovemsg lands.
-                    if (g.nomovemsg) {
-                        await update_topl(g.nomovemsg);
-                        g.nomovemsg = '';
-                    }
-                    // C ref: hack.c unmul() — after announcing nomovemsg, run the
-                    // pending after-no-move callback (ga.afternmv), e.g. pray.c's
-                    // prayer_done() which resolves the prayer outcome.
-                    if (g.afternmv) {
-                        const fn = g.afternmv;
-                        g.afternmv = null;
-                        await fn();
-                    }
+                    // unmul(NULL): hero regains control.  C ref: hack.c unmul()
+                    // — botl, the pending (or default "You can move again.")
+                    // nomovemsg through update_topl (so a still-pending NEED_MORE
+                    // top line fires its --More-- first), u.usleep = 0, then the
+                    // after-no-move callback ga.afternmv (e.g. prayer_done()).
+                    await (await import('./vault.js')).unmul(null);
                 }
             }
         }
     } while (g.u.umovement < NORMAL_SPEED);
+
+    /* C ref: allmain.c:396 — moves*8 + n for n == 1..7 */
+    g.hero_seq = ((g.hero_seq ?? ((g.moves | 0) << 3)) | 0) + 1;
 
     // C ref: allmain.c:403 — monster actions and timeouts can change the load.
     if (!g.program_state?.gameover) await encumber_msg();
@@ -1445,7 +1457,10 @@ function Slow_digestion() {
 function eats_from_regeneration() { return wornRing(179 /*RIN_REGENERATION*/); }
 // C ref: hack.h Hunger / Conflict extrinsics from worn rings.
 function ringHunger() { return wornRing(RIN_HUNGER); }
-function ringConflict() { return wornRing(RIN_CONFLICT); }
+// C ref: eat.c:3203 `HConflict || (EConflict & ~W_ARTI)` (W_ARTI == 0x2000).
+function ringConflict() {
+    return !!(game.u?.uprops?.HConflict) || (worn_extrinsic(44 /*CONFLICT*/) & ~0x2000) !== 0;
+}
 // C ref: mondata.h carnivorous/herbivorous/metallivorous — a polyform that eats
 // none of those burns no ordinary nutrition (it only pays the accessory cost).
 function youmonst_eats() {
@@ -1665,7 +1680,9 @@ function u_can_regen() {
     const g = game;
     return (g.uleft && g.uleft.otyp === RIN_REGENERATION_OTYP)
         || (g.uright && g.uright.otyp === RIN_REGENERATION_OTYP)
-        || HRegeneration();
+        || HRegeneration()
+        || (((g.u?.uprops_extrinsic || {})[57 /* REGENERATION */] | 0) !== 0)
+        || (youHaveSleepy() && !!g.u?.usleep);
 }
 
 const PM_MONK = 5;
@@ -1678,7 +1695,7 @@ const PM_MONK = 5;
 // the only roll is exercise(A_CON, TRUE) on moves % 10 == 0 — but we mirror the
 // full C control flow (hunger/encumbrance/status) so it stays correct if state
 // changes.  near_capacity() is UNENCUMBERED (0) for the starter pack.
-function exerper() {
+async function exerper() {
     const g = game;
     const u = g.u || {};
     const moves = g.moves || 1;
@@ -1688,17 +1705,17 @@ function exerper() {
         // NOT_HUNGRY) when not explicitly tracked.
         const uhunger = u.uhunger ?? 900;
         if (uhunger > 1000) {            // SATIATED
-            exercise(A_DEX, false);
-            if (isMonk) exercise(A_WIS, false);
+            await exercise(A_DEX, false);
+            if (isMonk) await exercise(A_WIS, false);
         } else if (uhunger > 150) {      // NOT_HUNGRY
-            exercise(A_CON, true);
+            await exercise(A_CON, true);
         } else if (uhunger > 50) {       // HUNGRY -> no exercise
             /* (no case in C) */
         } else if (uhunger > 0) {        // WEAK
-            exercise(A_STR, false);
-            if (isMonk) exercise(A_WIS, true);
+            await exercise(A_STR, false);
+            if (isMonk) await exercise(A_WIS, true);
         } else {                         // FAINTING / FAINTED
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
         }
 
         // Encumbrance Checks — C ref: attrib.c:552-566.  Omitting these because
@@ -1707,15 +1724,15 @@ function exerper() {
         // never drew, desyncing from step 643 on.
         switch (near_capacity()) {
         case 2:                                    // MOD_ENCUMBER
-            exercise(A_STR, true);
+            await exercise(A_STR, true);
             break;
         case 3:                                    // HVY_ENCUMBER
-            exercise(A_STR, true);
-            exercise(A_DEX, false);
+            await exercise(A_STR, true);
+            await exercise(A_DEX, false);
             break;
         case 4:                                    // EXT_ENCUMBER
-            exercise(A_DEX, false);
-            exercise(A_CON, false);
+            await exercise(A_DEX, false);
+            await exercise(A_CON, false);
             break;
         }
     }
@@ -1728,12 +1745,12 @@ function exerper() {
         // (or other leg wound) sets Wounded_legs, so a dismounted wounded hero
         // rolls exercise(A_DEX, FALSE) every 5th turn — the seed0004 wounded-leg
         // struggle rn2(2)@exercise that gates the rest of the trapped sequence.
-        if (HClairvoyant() && !BClairvoyant()) exercise(A_WIS, true);
-        if (HRegeneration()) exercise(A_STR, true);
-        if (Sick() || Vomiting()) exercise(A_CON, false);
-        if (Confusion() || Hallucination()) exercise(A_WIS, false);
+        if (HClairvoyant() && !BClairvoyant()) await exercise(A_WIS, true);
+        if (HRegeneration()) await exercise(A_STR, true);
+        if (Sick() || Vomiting()) await exercise(A_CON, false);
+        if (Confusion() || Hallucination()) await exercise(A_WIS, false);
         if ((Wounded_legs() && !u.usteed) || Fumbling() || HStun())
-            exercise(A_DEX, false);
+            await exercise(A_DEX, false);
     }
 }
 
@@ -1766,10 +1783,7 @@ function Hallucination() { return ((game.u?.uprops?.Hallucination || 0) > 0) || 
 function Fumbling() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
 function HStun() { return ((game.u?.uprops?.Stun || 0) > 0) || !!game.u?.Stunned || !!(game.u?.HStun || game.u?.ustun) || !!game.u?.formprops?.Stunned; }
 
-// C ref: attrib.c plusattr[]/minusattr[] (the adjattrib "You feel <x>!" word)
-// and exertext[A_MAX][2] (exerchk's own explanation, in attribute order).
-const PLUS_ATTR = ['strong', 'smart', 'wise', 'agile', 'tough', 'charismatic'];
-const MINUS_ATTR = ['weak', 'stupid', 'foolish', 'clumsy', 'fragile', 'repulsive'];
+// C ref: attrib.c exertext[A_MAX][2] (exerchk's own explanation, in attribute order).
 const EXERTEXT = [
     ['exercising diligently', 'exercising properly'],           // Str
     [null, null],                                               // Int
@@ -1779,29 +1793,12 @@ const EXERTEXT = [
     [null, null],                                               // Cha
 ];
 
-// C ref: attrib.c adjattrib(ndx, incr, msgflg) restricted to exerchk's call —
-// incr is +-1 and the caller has already proved ABASE is strictly inside
-// [ATTRMIN, ATTRMAX], so neither the rn2() underflow arm nor the DUNCE_CAP /
-// Fixed_abil early returns apply.  Returns whether the value actually moved.
+// C ref: attrib.c exerchk() -> adjattrib(i, mod_val, -1): the real adjattrib()
+// sets disp.botl BEFORE its "You feel <x>!" pline, so the status line at that
+// message's --More-- already shows the new stats and encumbrance.
 async function exerchk_adjattrib(ndx, incr) {
-    const u = game.u;
-    const abase = u.acurr.a, amaxarr = u.amax.a;
-    const old = abase[ndx] ?? 0;
-    const attrmax = (race_attrmax()[ndx] ?? 18);
-    abase[ndx] = old + incr;
-    if (incr > 0 && abase[ndx] > (amaxarr[ndx] ?? 0)) {
-        amaxarr[ndx] = abase[ndx];
-        if (amaxarr[ndx] > attrmax) abase[ndx] = amaxarr[ndx] = attrmax;
-    }
-    if (abase[ndx] === old) return false;
-    if (u.aexe?.a) u.aexe.a[ndx] = 0; // "any successful change resets exercise"
-    // C: msgflg is -1 here (conditional), so You_feel() fires on a real change.
-    await pline(`You feel ${incr > 0 ? PLUS_ATTR[ndx] : MINUS_ATTR[ndx]}!`);
-    if (ndx === A_STR || ndx === A_CON) {
-        const { encumber_msg } = await import('./invent.js');
-        await encumber_msg();
-    }
-    return true;
+    const { adjattrib } = await import('./attrib.js');
+    return adjattrib(ndx, incr, -1);
 }
 
 // C ref: attrib.c exerchk() — periodic accumulation (exerper) then, once
@@ -1810,7 +1807,7 @@ async function exerchk_adjattrib(ndx, incr) {
 // applies the resulting attribute change, and rolls rn1(200,800) to reschedule.
 async function exerchk() {
     const g = game;
-    exerper();
+    await exerper();
 
     if (g.context?.next_attrib_check == null)
         g.context = Object.assign(g.context || {}, { next_attrib_check: 600 });
@@ -1941,6 +1938,12 @@ export async function moveloop_core() {
     // done() never reaches.  Matches moveloop()'s own post-death stop.
     if (g.program_state?.gameover) return;
     flush_group_newsyms();      // backstop: leaders whose arrival line never ran
+    // C ref: allmain.c:194 — `if (svc.context.bypasses) clear_bypasses();`
+    // at the top of each moveloop_core() pass (before monsters move).
+    if (g.context?.bypasses) {
+        const { clear_bypasses } = await import('./worn.js');
+        clear_bypasses();
+    }
 
     // C ref: allmain.c moveloop_core() — `if (iflags.sanity_check ||
     // iflags.debug_fuzzer) sanity_check();`, once per player-input boundary,
@@ -2067,6 +2070,8 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._picklock_box = null;
+        else if (monster_nearby())
+            await (await import('./hack.js')).stop_occupation(true);
         return;
     }
 
@@ -2269,9 +2274,11 @@ export async function moveloop_core() {
         // stop_occupation() only prints when go.occupation was still set, i.e.
         // the repeat hadn't already ended this same turn.
         if (monster_nearby()) {
-            if (stillOccupied) await pline('You stop searching.');
-            g._search_occupation = null;
-            g.multi = 0;
+            // C: stop_occupation() — prints only while go.occupation is still
+            // set, and ALWAYS ends in nomul(0) -> end_running(), which clears
+            // the run == 8 a finished travel leaves behind (a later F-prefix
+            // attack otherwise stops for the visible monster).
+            await (await import('./hack.js')).stop_occupation();
         }
         return;
     }
@@ -2291,9 +2298,7 @@ export async function moveloop_core() {
         const stillOccupied = (g.multi ?? 0) > 0;
         if (!stillOccupied) g._wait_occupation = null;
         if (monster_nearby()) {
-            if (stillOccupied) await pline('You stop waiting.');
-            g._wait_occupation = null;
-            g.multi = 0;
+            await (await import('./hack.js')).stop_occupation();
         }
         return;
     }
@@ -2331,6 +2336,13 @@ export async function moveloop_core() {
     if (g.u.utotype) {
         const { deferred_goto } = await import('./do.js');
         await deferred_goto();
+    }
+
+    // C ref: allmain.c:541 — `if (gv.vision_full_recalc) vision_recalc(0);`
+    // right after rhack()/deferred_goto(), before the next iteration's redraw.
+    if (g.vision_full_recalc) {
+        vision_recalc(0);
+        g.vision_full_recalc = 0;
     }
 
     // C ref: allmain.c:558 — `if (gl.luacore && nhcb_counts[NHCB_END_TURN])`
@@ -2509,7 +2521,7 @@ export async function moveloop_preamble(resuming) {
         await see_monsters();
     }
 
-    u.uz0 = u.uz0 || {};
+    u.uz0 = u.uz0 || { dnum: 0 }; /* u_init.c:979 u.uz0.dnum = 0 */
     u.uz0.dlevel = u.uz?.dlevel;
     g.context.move = 0;
 

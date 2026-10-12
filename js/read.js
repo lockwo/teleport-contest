@@ -12,7 +12,7 @@ import { ceiling as ceiling_dg } from './dungeon.js';
 import { game, hooks } from './gstate.js';
 import { LL_CONDUCT, livelog_printf } from './livelog.js';
 import { rnd, rn2, rn1, d } from './rng.js';
-import { pline, topl_more, update_topl, urgent_topl, newsym, y_n } from './display.js';
+import { pline, topl_more, update_topl, urgent_topl, newsym, y_n, status_hold } from './display.js';
 import { getobj, makeknown, useup, useupall, xname, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY,
          GETOBJ_EXCLUDE, GETOBJ_PROMPT, GETOBJ_ALLOWCNT, GETOBJ_EXCLUDE_SELECTABLE,
          identify_pack, trycall, near_capacity, obj_doname, stackobj, obfree,
@@ -37,7 +37,7 @@ import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          EXPENSIVE_CAMERA, BELL_OF_OPENING, HORN_OF_PLENTY, BAG_OF_TRICKS,
          MAGIC_FLUTE, MAGIC_HARP, FROST_HORN, FIRE_HORN,
          DRUM_OF_EARTHQUAKE } from './mkobj.js';
-import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
+import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel, COST_DECHNT,
          ERODE_NONE, EF_PAY, EF_DESTROY, ER_NOTHING, ER_DESTROYED,
          COLNO, ROWNO, SPE_LIM,
          W_BALL, W_CHAIN, W_ARMH, SDOOR, DOOR, D_CLOSED, D_LOCKED, isok,
@@ -163,7 +163,8 @@ function set_confused(xtime) {
 // makemon.js stores the class as both a numeric mcls and its display symbol;
 // S_HUMAN's symbol is '@'.
 function hero_is_human() {
-    const data = game.youmonst?.data;
+    if (!game.u?.Upolyd) return true;
+    const data = youmonst_data_pub();
     if (!data) return true;
     return data.mlet === '@';
 }
@@ -425,13 +426,9 @@ async function seffect_gold_detection(sobj) {
         return !!(await trap_detect(sobj));
     }
     const { gold_detect } = await import('./detect.js');
-    const nothing = await gold_detect(sobj);
-    if (nothing) {
-        await strange_feeling(sobj, 'You feel materially poor.');
-        return true;
-    }
-    game.known = true;
-    return false;
+    // C: `if (gold_detect(sobj)) *sobjp = 0` — failure already ran
+    // strange_feeling() -> useup(); gold_detect() sets gk.known itself.
+    return !!(await gold_detect(sobj));
 }
 
 // C ref: read.c seffect_magic_mapping().
@@ -471,10 +468,13 @@ async function seffect_magic_mapping(sobj) {
     // C tty concatenates same-turn toplines: "...disappears.  A map ...".
     await pline_append('A map coalesces in your mind!');
     const cval = (scursed && !confused);
-    if (cval) set_confused(1); // to screw up map
+    // C: `HConfusion = 1` is a raw store that never sets disp.botl, so the
+    // status line keeps its published (unconfused) state until the next bot().
+    if (cval) { status_hold('conf', false); set_confused(1); } // to screw up map
     await do_mapping();
     if (cval) {
         set_confused(0); // restore
+        if (game._statusHold) delete game._statusHold.conf;
         await pline_append("Unfortunately, you can't grasp the details.");
     }
 }
@@ -713,8 +713,8 @@ async function seffect_enchant_armor(sobj) {
         await strange_feeling(sobj, !Blind()
             ? 'Your skin glows then fades.'
             : 'Your skin feels warm for a moment.');
-        exercise(A_CON, !scursed);
-        exercise(A_STR, !scursed);
+        await exercise(A_CON, !scursed);
+        await exercise(A_STR, !scursed);
         return true; // *sobjp = 0 (useup in strange_feeling)
     }
     if (confused) {
@@ -1318,7 +1318,7 @@ async function seffect_remove_curse(sobj) {
                     if (!game.u?.twoweap) wornmask = 0;
                 } else if (obj === game.uquiver) {
                     if (obj.oclass === WEAPON_CLASS) {
-                        if (!objects[obj.otyp]?.oc_merge) wornmask = 0;
+                        if (!(objects[obj.otyp]?.flags & 32 /* oc_merge */)) wornmask = 0;
                     } else {
                         // GEM_CLASS needs uslinging(); weptools never qualify.
                         wornmask = 0;
@@ -1450,7 +1450,7 @@ async function seffect_fire(sobj) {
         if (cc.x === u.ux && cc.y === u.uy) {
             await pline('The scroll erupts in a tower of flame!');
             game.last_msg = PLNMSG_TOWER_OF_FLAME; /* for explode() */
-            // burn_away_slime(): only matters to a sliming hero, and draws no RNG.
+            await (await import('./timeout.js')).burn_away_slime();
         }
     }
     const { explode } = await import('./explode.js');
@@ -1594,8 +1594,8 @@ async function seffect_destroy_armor(sobj) {
     if (confused) {
         if (!otmp) {
             await strange_feeling(sobj, 'Your bones itch.');
-            exercise(A_STR, false);
-            exercise(A_CON, false);
+            await exercise(A_STR, false);
+            await exercise(A_CON, false);
             return true;
         }
         const new_erodeproof = scursed;
@@ -1640,8 +1640,8 @@ async function seffect_destroy_armor(sobj) {
     }
     if (!(await destroy_arm())) {
         await strange_feeling(sobj, 'Your skin itches.');
-        exercise(A_STR, false);
-        exercise(A_CON, false);
+        await exercise(A_STR, false);
+        await exercise(A_CON, false);
         return true;
     }
     game.known = true;
@@ -1694,7 +1694,7 @@ async function seffect_identify(sobj) {
         if (sblessed || (!scursed && rn2(5) === 0)) {
             cval = rn2(5);
             // C: if (cval == 1 && sblessed && Luck > 0) ++cval;
-            if (cval === 1 && sblessed && (game.u?.uluck || 0) > 0) ++cval;
+            if (cval === 1 && sblessed && ((game.u?.uluck | 0) + (game.u?.moreluck | 0)) > 0) ++cval;
         }
         await identify_pack(cval, !already_known);
     } else {
@@ -2138,11 +2138,8 @@ function engulfing_u_read(mon) {
     return !!game.u?.uswallow && game.u?.ustuck === mon;
 }
 
-// C ref: youprop.h Deaf.  apply.js:280 keeps the same private copy.
-function Deaf_read() {
-    const u = game.u;
-    return !!(u?.uprops?.Deafness || u?.udeaf);
-}
+// C ref: youprop.h Deaf (HDeaf || EDeaf): display.js's Deaf_hero() is the canonical reading.
+import { Deaf_hero as Deaf_read } from './display.js';
 
 // C ref: mon.c mvitals[mndx].mvflags |= bits — the only writer these ports
 // need; game.mvitals is the port's svm.mvitals (see mvitals_mvflags above).
@@ -2807,6 +2804,38 @@ export async function recharge(obj, curse_bless) {
             if (lim === 1) await p_glow3(obj, 'blue');
             else if (obj.spe >= lim) await p_glow2(obj, 'blue');
             else await p_glow1(obj);
+        }
+    } else if (obj.oclass === RING_CLASS && oc_charged(obj.otyp)) {
+        /* C ref: read.c:801-833 — charging does not affect the ring's
+           curse/bless status. */
+        const I = await import('./invent.js');
+        let s = blessed ? rnd(3) : cursed ? -rnd(2) : 1;
+        const is_on = (obj === game.uleft || obj === game.uright);
+        const spe = obj.spe | 0;
+
+        /* destruction depends on current state, not adjustment */
+        if (spe > rn2(7) || spe <= -5) {
+            await pline(`${I.Yname2(obj)} ${I.otense(obj, 'pulsate')} momentarily, then ${
+                I.otense(obj, 'explode')}!`);
+            if (is_on) await I.Ring_gone(obj);
+            s = rnd(3 * Math.abs(spe)); /* amount of damage */
+            useup(obj);
+            const Z = await import('./zap.js');
+            await Z.losehp(Z.Maybe_Half_Phys(s), 'exploding ring', KILLED_BY_AN);
+        } else {
+            const mask = is_on ? (obj === game.uleft ? I.W_RINGL : I.W_RINGR) : 0;
+            await pline(`${I.Yname2(obj)} spins ${s < 0 ? 'counter' : ''}clockwise for a moment.`);
+            const shk = await import('./shk.js');
+            if (s < 0) await shk.costly_alteration(obj, COST_DECHNT);
+            /* cause attributes and/or properties to be updated */
+            if (is_on) await I.Ring_off(obj);
+            obj.spe = spe + s; /* update the ring while it's off */
+            if (is_on) {
+                I.setworn_accessory(obj, mask);
+                await I.Ring_on(obj);
+            }
+            /* update shop bill to reflect new higher price */
+            if (s > 0 && obj.unpaid) shk.alter_cost(obj, 0);
         }
     } else if (obj.oclass === TOOL_CLASS) {
         const oldrecharged = obj.recharged | 0;

@@ -64,10 +64,11 @@ import { docrt, flush_screen, pline, You_hear, update_topl, urgent_topl, topl_mo
          display_nhwindow_message,
          see_nearby_objects, reglyph_remembered_darkroom, map_location, m_at,
          capture_screen_for_level_change, freeze_screen_for_level_change,
-         thaw_screen_for_level_change } from './display.js';
-import { seetrap, dotrap } from './trap.js';
+         thaw_screen_for_level_change, Deaf_hero } from './display.js';
+import { seetrap, dotrap, trapname } from './trap.js';
 import { check_special_room } from './shkroom.js';
 import { forget_temple_entry } from './priest.js';
+import { enexto_gpflags } from './teleport.js';
 import { near_capacity, addinv, prinv, worn_extrinsic, worn_blocked, youmonst_data } from './invent.js';
 import { BOULDER, run_object_timers, requeue_level_timers, mksobj, AMULET_OF_YENDOR,
          is_rider_pm } from './mkobj.js';
@@ -241,6 +242,7 @@ export function u_on_newpos(x, y) {
         u.ux0 = u.ux; u.uy0 = u.uy;
         /* sets lastseentyp; the object-glyph pick draws display rng while Hallucinating */
         map_location(u.ux, u.uy);
+        (game.iflags = game.iflags || {}).terrain_typ = 37; /* MAX_TYPE: "none of the above" */
     } else {
         see_nearby_objects();
     }
@@ -255,21 +257,22 @@ export function u_on_newpos(x, y) {
 export async function u_on_rndspot(upflag) {
     const up = (upflag & 1);
     const was_in_W_tower = (upflag & 2);
-    {
-        const tp = await import('./teleport.js');
-        if (was_in_W_tower && tp.On_W_tower_level(game.u.uz)) {
-            /* stay inside the Wizard's tower when feasible: use its
-               exclusion region as the destination */
-            const d = game.dndest;
-            await place_hero_lregion(d?.nlx || 0, d?.nly || 0, d?.nhx || 0, d?.nhy || 0,
-                                     0, 0, 0, 0, LR_DOWNTELE);
-            return;
-        }
+    const tp = await import('./teleport.js');
+    if (was_in_W_tower && tp.On_W_tower_level(game.u.uz)) {
+        /* stay inside the Wizard's tower when feasible: use its
+           exclusion region as the destination */
+        const d = game.dndest;
+        await place_hero_lregion(d?.nlx || 0, d?.nly || 0, d?.nhx || 0, d?.nhy || 0,
+                                 0, 0, 0, 0, LR_DOWNTELE);
+    } else {
+        const dest = up ? game.updest : game.dndest;
+        await place_hero_lregion(dest?.lx || 0, dest?.ly || 0, dest?.hx || 0, dest?.hy || 0,
+                           dest?.nlx || 0, dest?.nly || 0, dest?.nhx || 0, dest?.nhy || 0,
+                           up ? LR_UPTELE : LR_DOWNTELE);
     }
-    const dest = up ? game.updest : game.dndest;
-    await place_hero_lregion(dest?.lx || 0, dest?.ly || 0, dest?.hx || 0, dest?.hy || 0,
-                       dest?.nlx || 0, dest?.nly || 0, dest?.nhx || 0, dest?.nhy || 0,
-                       up ? LR_UPTELE : LR_DOWNTELE);
+    /* might have just left solid rock and unblocked levitation */
+    const { switch_terrain } = await import('./trap.js');
+    await switch_terrain();
 }
 
 // ── pet follow (C ref: dog.c keepdogs()/losedogs()/mon_arrive(With_you)) ──
@@ -352,53 +355,12 @@ function likes_lava_do(mdat) {
 }
 const S_EEL_DO = 57;   // defsym.h MONSYM(57, ';', EEL, S_EEL, ...)
 
-// C ref: teleport.c collect_coords — candidate spots in expanding rings,
-// each ring shuffled with rn2 in the same order as the C engine.
-function collect_coords(cx, cy, maxradius) {
-    const out = [];
-    const rowrange = (cy < ROWNO / 2) ? (ROWNO - 1 - cy) : cy;
-    const colrange = (cx < COLNO / 2) ? (COLNO - 1 - cx) : cx;
-    const kmax = Math.max(rowrange, colrange);
-    maxradius = maxradius ? Math.min(maxradius, kmax) : kmax;
-
-    for (let radius = 1; radius <= maxradius; radius++) {
-        const ringStart = out.length;
-        const lox = cx - radius, hix = cx + radius;
-        const loy = cy - radius, hiy = cy + radius;
-        for (let y = Math.max(loy, 0); y <= hiy; y++) {
-            if (y > ROWNO - 1) break;
-            for (let x = Math.max(lox, 1); x <= hix; x++) {
-                if (x > COLNO - 1) break;
-                if (x !== lox && x !== hix && y !== loy && y !== hiy) continue;
-                out.push({ x, y });
-            }
-        }
-        let n = out.length - ringStart;
-        let base = ringStart;
-        while (n > 1) {
-            const kk = rn2(n);
-            if (kk) {
-                const tmp = out[base];
-                out[base] = out[base + kk];
-                out[base + kk] = tmp;
-            }
-            base++;
-            n--;
-        }
-    }
-    return out;
-}
-
-// C ref: teleport.c enexto_core — first goodpos spot, nearest rings first
-// (radius 1-3), then the whole map.
+// C ref: teleport.c enexto(cc, xx, yy, mdat) == enexto_gpflags(.., NO_MM_FLAGS);
+// js/teleport.js owns the faithful collect_coords()/goodpos() (incl. the
+// scare-monster / Elbereth goodpos_onscary() filter and the second
+// whole-map shuffle that runs when no near spot qualifies).
 function enexto(xx, yy, mtmp) {
-    const near = collect_coords(xx, yy, 3);
-    for (const c of near)
-        if (goodpos_mon(c.x, c.y, mtmp)) return c;
-    const all = collect_coords(xx, yy, 0);
-    for (let i = near.length; i < all.length; i++)
-        if (goodpos_mon(all[i].x, all[i].y, mtmp)) return all[i];
-    return null;
+    return enexto_gpflags(xx, yy, mtmp?.data ?? null, 0);
 }
 
 // C ref: mon.c:3955 mnexto(mtmp, rlocflags) — put the monster next to the
@@ -490,6 +452,8 @@ async function keepdogs_capture() {
     const remain = [];
     const chain = lev.monsters.slice();
     for (const m of chain) {
+        if (DEADMONSTER(m))
+            continue;
         const follows = (monnear(m, u.ux, u.uy) && levl_follower(m))
             || (u.uhave?.amulet && m.iswiz);
         const eligible = follows
@@ -536,6 +500,7 @@ async function keepdogs_capture() {
                 continue;
             }
             m.mx = m.my = 0; /* C ref: dog.c:864, mx==0 implies migrating */
+            m.mlstmv = game.moves; /* C ref: dog.c:866 */
             kept.push(m);
         } else {
             const { keep_mon_accessible, migrate_to_level } = await import('./dog.js');
@@ -598,7 +563,7 @@ export function u_collide_m(mtmp) {
     // The && short-circuits: rn2(2) is always drawn; enexto only when !rn2(2).
     let cc;
     if (!rn2(2) && (cc = enexto(u.ux, u.uy)) && next2u(cc.x, cc.y)) {
-        u.ux = cc.x; u.uy = cc.y; // u_on_newpos
+        u_on_newpos(cc.x, cc.y);
     } else {
         mnexto(mtmp);
     }
@@ -800,6 +765,8 @@ export async function fill_pit(x, y) {
 async function climb_pit() {
     const u = game.u;
     if (!u.utrap || u.utraptype !== TT_PIT) return;
+    // C: pitname = trapname(PIT, FALSE) — a hallucinating hero burns a display draw.
+    const pitname = trapname(PIT, false);
     if (!rn2(2) && sobj_at(BOULDER, u.ux, u.uy)) {
         await pline('Your leg gets stuck in a crevice.');
         // C: display_nhwindow(WIN_MESSAGE, FALSE) + clear_nhwindow() — force the
@@ -811,14 +778,14 @@ async function climb_pit() {
     } else if (Flying_do() && !In_sokoban(u.uz)) {
         // C also admits is_clinger(youmonst.data) here (polymorph only).
         u.utrap = 0; u.utraptype = 0;
-        await pline(`You ${u_locomotion('climb')} from the pit.`);
+        await pline(`You ${u_locomotion('climb')} from the ${pitname}.`);
         game.vision_full_recalc = 1;
     } else if (!(--u.utrap) || m_easy_escape_pit()) {
         u.utrap = 0; u.utraptype = 0;
         await pline(`You ${
             (In_sokoban(u.uz) && Levitation_do())
                 ? 'struggle against the air currents and float'
-                : u.usteed ? 'ride' : 'crawl'} to the edge of the pit.`);
+                : u.usteed ? 'ride' : 'crawl'} to the edge of the ${pitname}.`);
         game.vision_full_recalc = 1;
     } else if (u.dz || game.flags?.verbose !== false) {
         if (u.usteed)
@@ -992,6 +959,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     await fill_pit(u.ux, u.uy);
     u.ustuck = null;
     u.uswallow = 0;
+    u.uswldtim = 0;
     await set_uinwater(0);
     u.uundetected = 0;
 
@@ -1016,7 +984,9 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // draws belong to the step that dismissed the previous input, before the
     // --More-- is shown.  (See the _toplin check ahead of docrt() below.)
 
-    const fell_downstairs = at_stairs && !up
+    // C ref: do.c:1774 `if (!u.dz) ; /* stayed on same level? (no transit effects) */`
+    // precedes the Flying/fall/ordinary-descent arms (e.g. leaving the tutorial).
+    const fell_downstairs = at_stairs && !up && !!u.dz
         && !Flying_do() && (near_capacity() > UNENCUMBERED || Punished_do() || Fumbling_do());
     if (at_stairs && !In_endgame(newlevel)) {
         // C ref: do.c:1758-1795.  Up: "%s %s up%s the %s." with "With great
@@ -1033,6 +1003,8 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
                     + ` ${u_locomotion('climb')} up`
                     + `${(Flying_do() && at_ladder) ? ' along' : ''}`
                     + ` the ${at_ladder ? 'ladder' : 'stairs'}.`;
+        } else if (!u.dz) {
+            msg = null; /* stayed on same level? (no transit effects) */
         } else if (Flying_do()) {
             if (verbose)
                 msg = `You fly down ${at_ladder ? 'along the ladder'
@@ -1045,9 +1017,13 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         }
         if (msg) {
             await update_topl(msg);
-            await topl_more();      // capture the old-level transit frame
-            game._pending_message = '';
-            game._toplin = 0;
+            // C: the fall's own losehp() line joins this one; the --More-- comes
+            // from docrt()'s cls() paging the pending topline (below).
+            if (!fell_downstairs) {
+                await topl_more();      // capture the old-level transit frame
+                game._pending_message = '';
+                game._toplin = 0;
+            }
         }
     }
 
@@ -1133,6 +1109,10 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     for (const mtmp of (g.level?.monsters || [])) {
         if (mtmp.ispriest) forget_temple_entry(mtmp);
     }
+    // C ref: do.c:1642 — `update_mlstmv(); /* current monsters are becoming
+    // inactive */` stamps every monster with the departure turn, so mon_arrive()/
+    // getlev's catch-up and dog_move's `mtmp2->mlstmv != svm.moves` test see it.
+    await (await import('./dog.js')).update_mlstmv();
     g._level_store[oldLedger] = {
         level: g.level, stairs: g.stairs, omoves: g.moves ?? 0,
         // C ref: track.c save_track() (from savelev()) — utrack is written to
@@ -1260,6 +1240,11 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // lamps carried by the hero / her pets) on the one global chain, so they
     // shine on the new level too.  The per-level lists here need them moved.
     carry_global_light_sources(g._level_store[oldLedger]?.level);
+
+    // C ref: do.c:1715 reglyph_darkroom() — right after the level is (re)loaded
+    // and BEFORE the hero is placed: u_on_newpos()'s map_location() memory of
+    // the arrival square must survive it.
+    reglyph_remembered_darkroom();
 
     // C ref: do.c:1720 flush_screen(-1) — from here on map/status flushes are
     // postponed until docrt(), so the tty keeps showing the departing level.
@@ -1402,8 +1387,6 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // vision_recalc(2) find squares still in sight and spend an extra
     // display-rng draw on each (seed0383 step 195).
     game.vision_full_recalc = 0;
-    // C ref: do.c:1715 reglyph_darkroom() — right after the level is (re)loaded.
-    reglyph_remembered_darkroom();
     vision_reset();
     // C ref: display.c docrt_flags() -> cls() -> display_nhwindow(WIN_MESSAGE,
     // FALSE): an unacknowledged topline (drag_down's "The iron ball smacks into
@@ -1460,7 +1443,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
             await update_topl('The odor of burnt flesh and decay pervades the air.');
             // C ref: pline.c You_hear() — gated on Deaf/acoustics (unlike the two
             // plines above, which always print).
-            if (!game.u?.Deaf && game.flags?.acoustics !== false)
+            if (!Deaf_do() && game.flags?.acoustics !== false)
                 await update_topl('You hear groans and moans everywhere.');
         }
         await record_ach(2 /* you.h ACH_HELL */); /* reached Gehennom */
@@ -1674,7 +1657,7 @@ async function resurrect() {
     mtmp.mpeaceful = 0;
     M.set_malign(mtmp);
     // C: `if (!Deaf) { pline("A voice booms out..."); verbalize(...); }`
-    if (!game.u?.Deaf) {
+    if (!Deaf_hero()) {
         await update_topl('A voice booms out...');
         await update_topl('"So thou thought thou couldst kill me, fool."');
     }
@@ -1761,6 +1744,24 @@ async function getlev_restore(ledger) {
     // away from this level).
     const elapsed = (g.moves ?? 0) - (store.omoves ?? 0);
 
+    // C ref: save.c savemonchn() -> moves_to_relative_time(&EDOG->droptime /
+    // hungrytime) and save.c:573 stasis_until, undone by restore.c:355-356 /
+    // rest_adjust_levelflags() -> relative_time_to_moves().  The level is
+    // written at moves == omoves and read back at moves == now, so each stored
+    // timestamp slides forward by the turns spent away: a pet left behind on
+    // this level does not get hungry while the hero is elsewhere.  This port's
+    // reference-swap stash has no save/restore pass, so apply the net shift.
+    if (elapsed !== 0) {
+        for (const mtmp of g.level.monsters) {
+            const edog = mtmp.edog;
+            if (!edog || mtmp === g.u?.usteed) continue;
+            edog.droptime = (edog.droptime | 0) + elapsed;
+            edog.hungrytime = (edog.hungrytime | 0) + elapsed;
+        }
+        if (g.level.flags && typeof g.level.flags.stasis_until === 'number')
+            g.level.flags.stasis_until += elapsed;
+    }
+
     // C ref: restore.c:1181-1220 monster loop.  No monster is skipped (this is
     // an ordinary in-game change, not REST_LEVELS; not a bones file, so
     // ghostly is FALSE).  C walks restmonchn() in fmon order — newest monster
@@ -1796,6 +1797,9 @@ async function getlev_restore(ledger) {
     {
         const away = (g.moves ?? 0) - (store.regionMoves ?? 0);
         g.regions = store.regions || [];
+        /* C restore.c rest_regions(): capacities are reset to the live counts */
+        g.max_regions = g.regions.length;
+        for (const r of g.regions) r.max_monst = r.monsters?.length | 0;
         for (const r of g.regions)
             if (r.ttl >= 0) r.ttl = (r.ttl > away) ? r.ttl - away : 0;
         // C walks BACKWARD because remove_region() compacts the array.
@@ -1803,6 +1807,15 @@ async function getlev_restore(ledger) {
             const r = g.regions[i];
             if (r.ttl === 0) await remove_region(r);
         }
+    }
+
+    // C ref: restore.c:1226 rest_bubbles() -> mkmaze.c:1750 restore_waterlevel(),
+    // after rest_regions() and before rest_track(): every restored cloud on the
+    // Plane of Air goes through mv_bubble(b, 0, 0, TRUE), whose "clouds move
+    // slowly" test (mkmaze.c:1959) rolls rn2(6) once per cloud.
+    if (Is_airlevel(g.u.uz) || Is_waterlevel(g.u.uz)) {
+        const { mv_bubble_restore } = await import('./mkmaze.js');
+        for (const b of (g.level.bubbles || [])) mv_bubble_restore(b);
     }
 }
 
@@ -2177,6 +2190,7 @@ async function schedule_level_tele(newlevel, post_msg, immediate) {
         await goto_level(newlevel, false, false, false);
         game._goto_post_msg = null;
         game._wiz_goto_done = true;
+        game._wiz_goto_multi = game.multi; /* nomul() issued by the arrival itself */
     } else {
         game._lvltport_dest = { newlevel, post_msg };
     }
@@ -2453,14 +2467,25 @@ async function next_to_u() {
 // (dotrap TOOKPLUNGE), the Gehennom gate confirmation, levitation, the rooted /
 // stuck-steed / held refusals and their ECMD_TIME-vs-ECMD_OK turn cost.  Still
 // missing: flags.autodig (default off) and the Upolyd ceiling-hider drop-out.
-// C ref: do.c:1110 u_stuck_cannot_go(updn) — a held hero can't take the stairs,
-// and the failed attempt COSTS THE TURN (both callers return ECMD_TIME), so the
-// monsters get a move.  The sticks()/uswallow arms need a polymorphed or
-// engulfed hero, neither of which occurs here.
+// C ref: do.c:1110 u_stuck_cannot_go(updn) — a held hero can't take the stairs
+// unless polymorphed into a sticker (which releases its victim instead), and
+// the failed attempt COSTS THE TURN (both callers return ECMD_TIME).
 async function u_stuck_cannot_go(updn) {
-    if (!game.u.ustuck) return false;
-    await pline(`You are being held, and cannot go ${updn}.`);
-    return true;
+    const u = game.u;
+    if (!u.ustuck) return false;
+    const { sticks } = await import('./uhitm.js');
+    if (u.uswallow || !sticks(youmonst_data())) {
+        await pline(`You are ${!u.uswallow ? 'being held'
+            : await digests_do(u.ustuck.data) ? 'swallowed'
+                : 'engulfed'}, and cannot go ${updn}.`);
+        return true;
+    }
+    const mtmp = u.ustuck;
+    const { set_ustuck } = await import('./mon.js');
+    set_ustuck(null);
+    const { mon_nam } = await import('./do_name.js');
+    await pline(`You release ${mon_nam(mtmp)}.`);
+    return false;
 }
 
 export async function dodown() {
@@ -2673,18 +2698,6 @@ function assign_level(dst, src) {
     return dst;
 }
 
-// C ref: pager.c waterbody_name(x,y).  js/cmd.js:593 has the full version (the
-// three MOAT special-level overrides plus hliquid()); this is the reduced form
-// js/trap.js:3264 also keeps.  pager.c is where the single export belongs.
-function waterbody_name_do(x, y) {
-    const typ = game.level?.at(x, y)?.typ;
-    if (typ === LAVAPOOL) return 'molten lava';
-    if (typ === MOAT) return 'moat';
-    if (typ === WATER) return 'wall of water';
-    if (typ === LAVAWALL) return 'wall of lava';
-    return 'pool of water';
-}
-
 // C ref: objclass.h object classes.  js/allmain.js:48, js/display.js:49/115 and
 // js/artifact.js:136 each keep the same private set.
 const RING_CLASS = 4, POTION_CLASS = 8, COIN_CLASS = 12;
@@ -2790,7 +2803,7 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
     } else if (DB.is_pool_or_lava(rx, ry)) {
         const loc = game.level?.at(rx, ry);
         const lava = DB.is_lava(rx, ry);
-        const what = waterbody_name_do(rx, ry);
+        const what = (await import('./cmd.js')).waterbody_name(rx, ry);
         const ltyp = loc?.typ;
         const chance = rn2(10); /* water: 90%; lava: 10% */
         let mtmp;
@@ -3485,7 +3498,7 @@ export async function obj_no_longer_held(obj) {
            cannot be handled here. */
         if (!obj.oerodeproof || !rn2(10)) {
             /* if monsters aren't moving, assume the player is responsible */
-            if (!game.context?.mon_moving && !game.program_state_gameover) {
+            if (!game.context?.mon_moving && !game.program_state?.gameover) {
                 // C ref: do.c:914 costly_alteration(obj, COST_DEGRD) — shk.c
                 // costly_alteration() is a private no-op stub at js/trap.js:829;
                 // the shop bill is therefore not adjusted.
@@ -3738,7 +3751,7 @@ export async function revive_corpse(corpse) {
     const mons_row = MK.monster_by_pmidx(montype);
     const is_zomb = (mons_row?.mcls === S_ZOMBIE)
                  || (where === OBJ_BURIED && await is_reviver_do(mons_row));
-    const is_uwep = (corpse === game.u.uwep);
+    const is_uwep = (corpse === game.uwep);
     const chewed = (corpse.oeaten | 0) !== 0;
     // C ref: do.c:2131 corpse_xname(corpse, chewed ? "bite-covered" : NULL,
     // CXN_SINGULAR) — objnam.c corpse_xname() is module-private in js/invent.js

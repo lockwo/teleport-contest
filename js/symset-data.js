@@ -284,3 +284,31 @@ export const SYMBOL_BYTES = {
         S_explode9: 233,
     },
 };
+
+// symbols.c read_sym_file() view of each symset block in upstream dat/symbols:
+// `name` is the `start:` spelling, `handling` the index into symbols.c
+// known_handling[] (0 UNKNOWN/none, 1 IBM, 2 DEC, 4 MAC, 5 UTF8), and
+// `glyphcolors` marks the blocks that carry the 44 `G_<wall>_<level>: /<color>`
+// customizations (sokoban blue, gehennom red, knox yellow, mines brown).
+// `walls` are those blocks' S_vwall..S_trwall bytes (the symbol the G_ wall
+// glyphs show, which glyphs.c glyph_to_cmap() maps back to S_vwall..S_trwall).
+const DEC_WALLS = [248, 241, 236, 235, 237, 234, 238, 246, 247, 245, 244];
+const IBM_WALLS = [179, 196, 218, 191, 192, 217, 197, 193, 194, 180, 195];
+export const SYMSET_META = {
+    plain: { name: 'plain', handling: 0 },
+    blank: { name: 'Blank', handling: 0 },
+    ibmgraphics: { name: 'IBMgraphics', handling: 1, glyphcolors: true, walls: IBM_WALLS },
+    ibmgraphics_1: { name: 'IBMGraphics_1', handling: 1, glyphcolors: true, walls: IBM_WALLS },
+    ibmgraphics_2: { name: 'IBMGraphics_2', handling: 1, glyphcolors: true, walls: IBM_WALLS },
+    rogueibm: { name: 'RogueIBM', handling: 1 },
+    rogueepyx: { name: 'RogueEpyx', handling: 1 },
+    roguewindows: { name: 'RogueWindows', handling: 1 },
+    curses: { name: 'curses', handling: 2, glyphcolors: true, walls: DEC_WALLS },
+    decgraphics: { name: 'DECgraphics', handling: 2, glyphcolors: true, walls: DEC_WALLS },
+    macgraphics: { name: 'MACgraphics', handling: 4 },
+    enhanced1: { name: 'Enhanced1', handling: 5 },
+    enhanced2: { name: 'Enhanced2', handling: 5 },
+    amigafont: { name: 'AmigaFont', handling: 0 },
+};
+// The `/<color>` of each G_ wall customization, by level suffix (CLR_* values).
+export const GLYPH_WALL_COLORS = { sokoban: 4, gehennom: 1, knox: 11, mines: 3 };

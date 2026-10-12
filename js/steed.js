@@ -30,18 +30,20 @@ import { DEADMONSTER, mvitals_died, m_detach } from './mon.js';
 import { killed, corpse_chance, make_corpse } from './uhitm.js';
 import { is_pool, is_lava } from './dbridge.js';
 import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
-import { sokoban_guilt, set_wounded_legs, heal_legs } from './trap.js';
+import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu } from './trap.js';
 import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { surface } from './dungeon.js';
 import { hliquid } from './do_name.js';
-import { sobj_at, is_pole } from './invent.js';
+import { sobj_at, is_pole, near_capacity, youmonst_data } from './invent.js';
 import { t_at } from './mkroom.js';
 import { mon_mintrap } from './monmove.js';
-import { vision_recalc } from './vision.js';
+import { vision_recalc, Blind } from './vision.js';
 import { x_monnam } from './uhitm.js';
 import { isok, MAXULEV, W_SADDLE, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED,
          D_NODOOR, D_BROKEN, Is_rogue_level, SUPPRESS_IT, SUPPRESS_INVISIBLE,
-         SUPPRESS_HALLUCINATION, NO_KILLER_PREFIX, KILLED_BY_AN } from './const.js';
+         SUPPRESS_HALLUCINATION, NO_KILLER_PREFIX, KILLED_BY_AN,
+         M_AP_FURNITURE, M_AP_OBJECT, LEG, I_SPECIAL } from './const.js';
+import { greatest_erosion } from './weapon.js';
 
 import { Maybe_Half_Phys } from './zap.js';
 import { losehp_do } from './do.js';
@@ -79,6 +81,12 @@ export async function mount_steed(mtmp, force) {
         return false;
     }
 
+    // C ref: steed.c:214 — Is the player in the right form?
+    if (u.uhallu && !force) {
+        await pline('Maybe you should find a designated driver.');
+        return false;
+    }
+
     // C ref: steed.c:229-239 — a wounded hero cannot mount, and this guard
     // runs before checking whether a monster is at the requested location.
     if ((u.HWounded_legs || 0) || (u.EWounded_legs || 0)
@@ -94,16 +102,102 @@ export async function mount_steed(mtmp, force) {
         }
     }
 
-    // "Can the player reach and see the monster?" — no monster there.
-    if (!mtmp) {
+    // C ref: steed.c:242 — polymorphed into something that can't sit a saddle.
+    if (u.Upolyd) {
+        const { youmonst_data } = await import('./invent.js');
+        const ym = youmonst_data();
+        if (!humanoid_std(ym) || verysmall_std(ym) || bigmonst_std(ym) || slithy_std(ym)) {
+            await pline("You won't fit on a saddle.");
+            return false;
+        }
+    }
+    // C ref: steed.c:248 — `near_capacity() > SLT_ENCUMBER`.
+    if (!force && near_capacity() > 1 /* SLT_ENCUMBER */) {
+        await pline("You can't do that while carrying so much stuff.");
+        return false;
+    }
+
+    // "Can the player reach and see the monster?"
+    const ap = mtmp?.m_ap_type;
+    const mimicking = ap === 'furniture' || ap === 'obj' || ap === M_AP_FURNITURE || ap === M_AP_OBJECT;
+    const blind_telepat = !!((u.uprops?.Telepat | 0) || (u.uprops?.HTelepat | 0)
+                             || (u.uprops?.ETelepat | 0));
+    if (!mtmp || (!force && ((Blind() && !blind_telepat) || mtmp.mundetected || mimicking))) {
         await pline('I see nobody there.');
+        return false;
+    }
+    if (mtmp.data?.name === 'long worm'
+        && (u.ux + u.dx !== mtmp.mx || u.uy + u.dy !== mtmp.my)) {
+        const { a_monnam } = await import('./do_name.js');
+        await pline(`You couldn't ride ${a_monnam(mtmp)}, let alone its tail.`);
+        return false;
+    }
+    if (u.uswallow || u.ustuck || u.utrap || game.uball
+        || !steed_test_move(u.ux, u.uy, mtmp.mx - u.ux, mtmp.my - u.uy)) {
+        const { body_part } = await import('./polyself.js');
+        if (game.uball || !(u.uswallow || u.ustuck || u.utrap))
+            await pline(`You are unable to swing your ${body_part(LEG)} over.`);
+        else
+            await pline('You are stuck here for now.');
         return false;
     }
 
     // Is the monster saddled?  The recorded pony always is.
-    const saddled = ((mtmp.misc_worn_check || 0) & W_SADDLE) !== 0;
+    const saddle = which_armor(mtmp, W_SADDLE);
+    const saddled = saddle || ((mtmp.misc_worn_check || 0) & W_SADDLE) !== 0;
     if (!saddled) {
         await pline(`${Monnam_steed(mtmp)} is not saddled.`);
+        return false;
+    }
+
+    const ptr = mtmp.data;
+    if (touch_petrifies_std(ptr) && !Stone_resistance_std()) {
+        await pline(`You touch ${mon_nam(mtmp)}.`);
+        const { an } = await import('./objnam.js');
+        const { instapetrify } = await import('./polyself.js');
+        await instapetrify(`attempting to ride ${an(ptr.name)}`);
+    }
+    if (!mtmp.mtame || mtmp.isminion) {
+        await pline(`I think ${mon_nam(mtmp)} would mind.`);
+        return false;
+    }
+    if (mtmp.mtrapped) {
+        const t = t_at(mtmp.mx, mtmp.my);
+        const { an } = await import('./objnam.js');
+        await pline(`You can't mount ${mon_nam(mtmp)} while ${mhe_std(mtmp)}'s trapped in ${
+            an(trapname(t?.ttyp, false))}.`);
+        return false;
+    }
+
+    if (!force && !Role_if_knight_std() && !(--mtmp.mtame)) {
+        /* no longer tame */
+        newsym(mtmp.mx, mtmp.my);
+        await pline(`${Monnam_steed(mtmp)} resists${mtmp.mleashed ? ' and its leash comes off' : ''}!`);
+        if (mtmp.mleashed) {
+            const { m_unleash } = await import('./apply.js');
+            await m_unleash(mtmp, false);
+        }
+        return false;
+    }
+    if (!force && Underwater_std() && !is_swimmer_std(ptr)) {
+        await pline(`You can't ride that creature while under ${hliquid('water')}.`);
+        return false;
+    }
+    if (!can_saddle(mtmp) || !can_ride(mtmp)) {
+        await pline("You can't ride such a creature.");
+        return false;
+    }
+
+    // Is the player impaired?
+    const lev = !!u.uprops?.Levitation;
+    const lev_at_will = ((u.uprops?.HLevitation | 0) & I_SPECIAL) !== 0 && !(u.uprops?.ELevitation | 0);
+    if (!force && !is_floater_std(ptr) && !is_flyer_std(ptr) && lev && !lev_at_will) {
+        await pline(`You cannot reach ${mon_nam(mtmp)}.`);
+        return false;
+    }
+    const uarm = game.uarm;
+    if (!force && uarm && is_metallic_steed(uarm) && greatest_erosion(uarm)) {
+        await pline(`Your ${uarm.oeroded ? 'rusty' : 'corroded'} armor is too stiff to be able to mount ${mon_nam(mtmp)}.`);
         return false;
     }
 
@@ -111,14 +205,13 @@ export async function mount_steed(mtmp, force) {
     // Glib, Wounded_legs, a cursed or greased saddle, or a failed
     // level/tameness roll all make the hero slip.  Short-circuit order matters:
     // rnd() is only drawn when every earlier term is false.
-    const saddle = which_armor(mtmp, W_SADDLE);
     if (!force
         && (Confusion_std() || Fumbling_std() || Glib_std()
             || (u.HWounded_legs || 0) || (u.EWounded_legs || 0)
             || (u.uprops?.Wounded_legs || 0)
             || saddle?.cursed || saddle?.greased
             || (u.ulevel + (mtmp.mtame || 0) < rnd(MAXULEV / 2 + 5)))) {
-        if (u.uprops?.Levitation) {
+        if (lev) {
             await pline(`${Monnam_steed(mtmp)} slips away from you.`);
             return false;
         }
@@ -133,9 +226,18 @@ export async function mount_steed(mtmp, force) {
         return false;
     }
 
-    // Success.  (maybewakesteed / Levitation / Flying messages don't apply.)
-    await pline(`You mount ${mon_nam(mtmp)}.`);
+    // Success.
+    await maybewakesteed(mtmp);
+    if (!force) {
+        if (lev && !is_floater_std(ptr) && !is_flyer_std(ptr))
+            /* Must have Lev_at_will at this point */
+            await pline(`${Monnam_steed(mtmp)} magically floats up!`);
+        await pline(`You mount ${mon_nam(mtmp)}.`);
+        if (Flying_fu())
+            await pline(`You and ${mon_nam(mtmp)} take flight together.`);
+    }
     u.usteed = mtmp;
+    game.botl = true;
 
     // C ref: steed.c:379-381 — remove_monster(steed) then
     // teleds(steed->mx, steed->my, TELEDS_ALLOW_DRAG).  teleds -> u_on_newpos
@@ -871,9 +973,11 @@ export async function use_saddle(otmp) {
 
 // C ref: steed.c:169 can_ride(mtmp) — the hero's own form has to fit.
 export function can_ride(mtmp) {
-    const you = game.youmonst;
-    return !!mtmp?.mtame && humanoid_std(you?.data)
-        && !verysmall_std(you?.data) && !bigmonst_std(you?.data)
+    // youmonst_data() is the hero's CURRENT permonst (role player-monster
+    // when unpolymorphed, which is humanoid and medium-sized).
+    const you = { data: youmonst_data() };
+    return !!mtmp?.mtame && humanoid_std(you.data)
+        && !verysmall_std(you.data) && !bigmonst_std(you.data)
         && (!Underwater_std() || is_swimmer_std(mtmp.data));
 }
 
@@ -1033,3 +1137,8 @@ function strsubst_std(bp, orig, replacement) {
 // C ref: steed.c steed_vs_stealth() — recomputes the riding stealth block; no
 // port (this port does not model Stealth).
 function steed_vs_stealth_std() { }
+// C ref: objclass.h is_metallic(otmp) — material IRON..MITHRIL.
+function is_metallic_steed(obj) {
+    const m = objects[obj?.otyp]?.material;
+    return m >= 11 /* IRON */ && m <= 17 /* MITHRIL */;
+}

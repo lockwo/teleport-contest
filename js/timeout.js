@@ -39,7 +39,7 @@ import { float_vs_flight } from './polyself.js';
 // error that would take the whole game down at startup.
 import * as C from './const.js';
 import { objects } from './mkobj.js';
-import { pline, impossible } from './display.js';
+import { pline, impossible, You_hear, You_feel } from './display.js';
 import { rn1 } from './rng.js';
 
 const {
@@ -47,22 +47,13 @@ const {
     TIMER_NONE, TIMER_LEVEL, TIMER_GLOBAL, TIMER_OBJECT, TIMER_MONSTER,
     NUM_TIMER_KINDS, RANGE_GLOBAL,
     ROT_ORGANIC, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON, BURN_OBJECT, HATCH_EGG,
-    FIG_TRANSFORM, SHRINK_GLOB,
+    FIG_TRANSFORM, SHRINK_GLOB, MELT_ICE_AWAY, NUM_TIME_FUNCS,
     NON_PM, G_GENOD, G_EXTINCT, MV_KNOWS_EGG, M_AP_MONSTER,
     NECK, A_DEX, A_STR, NO_KILLER_PREFIX, KILLED_BY, KILLED_BY_AN,
     GENOCIDED, TURNED_SLIME, SICK_NONVOMITABLE, NHW_MENU, WIN_ERR, ECMD_OK,
     DRAWBRIDGE_DOWN, DB_UNDER, DB_ICE, STONED, SLIMED,
     WT_NOISY_INV, W_SADDLE, DISMOUNT_FELL, FOOT,
 } = C;
-
-// C ref: timeout.h enum timeout_types — MELT_ICE_AWAY follows SHRINK_GLOB and
-// NUM_TIME_FUNCS is one past it.  NOT taken from js/const.js: that file exports
-// MELT_ICE_AWAY as the STRING 'MELT_ICE_AWAY' (const.js:1998, aliasing
-// TIMER_FUNC.MELT_ICE_AWAY), which also makes its NUM_TIME_FUNCS the string
-// "MELT_ICE_AWAY1".  Real bug in const.js; fixing it belongs to that file's
-// owner (js/nhlua.js:118 already defines the right values locally too).
-const MELT_ICE_AWAY = SHRINK_GLOB + 1;
-const NUM_TIME_FUNCS = MELT_ICE_AWAY + 1;
 
 // C ref: monflag.h:194 G_UNIQ — js/const.js has no G_UNIQ (js/sp_lev.js:4769
 // spells the literal inline too).
@@ -84,7 +75,8 @@ async function expire_confusion() {
     // C ref: timeout.c:726 `HConfusion = 1; make_confused(0L, TRUE)` — the timer
     // is cleared only after the message, so a --More-- it forces still shows Conf.
     u.uprops.Confusion = 1;
-    await update_topl(`You feel less ${Hallucination() ? 'trippy' : 'confused'} now.`);
+    if (!Unaware()) // make_confused: `if (Unaware) talk = FALSE`
+        await update_topl(`You feel less ${Hallucination() ? 'trippy' : 'confused'} now.`);
     u.uprops.Confusion = 0;
     u.uconf = false;
     // C ref: timeout.c:734 `if (!Confusion) stop_occupation();` — clearing the
@@ -99,7 +91,8 @@ async function expire_stun() {
     const u = game.u;
     // C ref: timeout.c:737 `HStun = 1; make_stunned(0L, TRUE)` — see expire_confusion.
     u.uprops.Stun = 1;
-    await update_topl(`You feel ${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
+    if (!Unaware()) // make_stunned: `if (Unaware) talk = FALSE`
+        await update_topl(`You feel ${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
     u.uprops.Stun = 0;
     u.Stunned = false;
     // C ref: timeout.c:741 `if (!Stunned) stop_occupation();`.
@@ -309,21 +302,27 @@ async function vomiting_dialogue() {
             else if (Hallucination()) txt = 'are about to hurl!';
         }
         break;
-    case 0:
+    case 0: {
         await stop_occupation();
-        u.uhunger = (u.uhunger || 0) - 20;
-        if ((u.uhs | 0) < C.FAINTING)
-            await update_topl(`You ${Hallucination() ? 'hurl chunks' : 'vomit'}!`);
+        const { cantvomit } = await import('./mondata.js');
+        const { youmonst_data } = await import('./invent.js');
+        const { morehungry, vomit } = await import('./eat.js');
+        if (!cantvomit(youmonst_data())) {
+            // C: morehungry(20) -> newuhs(TRUE), so a hunger-state change
+            // ("You feel hungry.") is announced BEFORE the vomit line.
+            await morehungry(20);
+            if ((u.uhs | 0) < C.FAINTING)
+                await update_topl(`You ${Hallucination() ? 'hurl chunks' : 'vomit'}!`);
+        }
         u.uprops.Vomiting = 0;
-        nomul(-2);
-        game.multi_reason = 'vomiting';
-        game.nomovemsg = 'You can move again.';
+        await vomit();
         break;
+    }
     default:
         break;
     }
     if (txt) await update_topl('You ' + txt);
-    exercise(A_CON, false);
+    await exercise(A_CON, false);
 }
 
 // The TIMED_PROPS table below follows prop.h numeric order and maps every
@@ -359,10 +358,15 @@ async function expire_sickness() {
         u.usick_cause = null;
         game.botl = true;
         dealloc_killer(kptr);
-        exercise(A_CON, false);
+        await exercise(A_CON, false);
         await (await import('./attrib.js')).adjattrib(A_CON, -1, 1);
         return;
     }
+    // C ref: nh_timeout() decremented the Sick intrinsic to 0 before this point,
+    // and done_timeout() has not yet set I_SPECIAL, so the status flush
+    // triggered by this pline no longer shows the condition.
+    status_hold('sick', true);
+    u.sick = false;
     await _urgent_pline('You die from your illness.');
     game.killer = game.killer || {};
     if (kptr?.name) {
@@ -398,6 +402,7 @@ async function expire_stoned() {
 
 async function expire_slimed() {
     const { find_delayed_killer } = await import('./end.js');
+    status_hold('slimed', true);
     await slimed_to_death(find_delayed_killer(C.SLIMED));
 }
 
@@ -408,15 +413,26 @@ async function expire_strangled() {
     game.killer.format = C.KILLED_BY;
     game.killer.name = u?.uburied ? 'suffocation' : 'strangulation';
     await done_timeout(C.DIED, C.STRANGLED);
+    /* must be declining to die in explore|wizard mode;
+       treat like being cured of strangulation by prayer */
+    if (game.uamul && game.uamul.otyp === 203 /* AMULET_OF_STRANGULATION */) {
+        await pline('Your amulet vanishes!');
+        const { useup } = await import('./invent.js');
+        useup(game.uamul);
+    }
 }
 
 // C ref: timeout.c case SLEEPY — only a continuing source re-arms sleepiness.
 async function expire_sleepy() {
     const u = game.u;
-    if (Unaware() || u.uprops?.HSleep_resistance
-        || u.uprops?.Sleep_resistance) {
+    const { worn_extrinsic } = await import('./invent.js');
+    const { Sleep_resistance } = await import('./zap.js');
+    /* C: `if (unconscious() || Sleep_resistance)` — Sleep_resistance includes
+       the FROMFORM bit (e.g. a green slime hero) */
+    if (C.unconscious() || Sleep_resistance()) {
         _incr_itimeout('Sleepy', rnd(100));
-    } else if (u.uprops?.ESleepy) {
+    } else if (u.uprops?.ESleepy || worn_extrinsic(C.SLEEPY)
+               || ((u.uprops?.Sleepy | 0) & ~TIMEOUT)) {
         await pline('You fall asleep.');
         const sleeptime = rnd(20);
         const { fall_asleep } = await import('./zap.js');
@@ -435,12 +451,12 @@ async function expire_glib() {
 // no remaining source makes the hero invisible.
 async function expire_invisibility() {
     const u = game.u;
-    const { newsym } = await import('./display.js');
+    const { newsym, see_invisible } = await import('./display.js');
     const { Blind } = await import('./vision.js');
     newsym(u.ux, u.uy);
     if (!u.uprops?.HInvis && !u.uprops?.EInvis
         && !u.uprops?.BInvis && !Blind()) {
-        await pline(!u.uprops?.HSee_invisible
+        await pline(!see_invisible()
             ? 'You are no longer invisible.'
             : 'You can no longer see through yourself.');
         await stop_occupation();
@@ -582,8 +598,7 @@ const TIMED_PROPS = [
     timed_uprop('TELEPORT', 'HTeleportation'),
     timed_uprop('TELEPORT_CONTROL', 'HTeleport_control'),
     { name: 'LEVITATION',
-      get: (u) => u.Upolyd && u.uprops?.Levitation === 1
-          ? 0 : (u.uprops?.Levitation | 0) & TIMEOUT,
+      get: (u) => (u.uprops?.Levitation | 0) & TIMEOUT,
       set: (u, v) => {
           const flags = (u.uprops?.Levitation | 0) & ~TIMEOUT;
           u.uprops.Levitation = flags | (v & TIMEOUT);
@@ -597,8 +612,7 @@ const TIMED_PROPS = [
           await float_down(C.I_SPECIAL | TIMEOUT, 0);
       } },
     { name: 'FLYING',
-      get: (u) => u.Upolyd && u.uprops?.Flying === 1
-          ? 0 : (u.uprops?.Flying | 0) & TIMEOUT,
+      get: (u) => (u.uprops?.Flying | 0) & TIMEOUT,
       set: (u, v) => {
           const flags = (u.uprops?.Flying | 0) & ~TIMEOUT;
           u.uprops.Flying = flags | (v & TIMEOUT);
@@ -620,6 +634,11 @@ const TIMED_PROPS = [
         async () => {
             if (game.u?.uprops?.EPasses_walls
                 || (game.u?.uprops?.HPasses_walls & ~TIMEOUT)) return;
+            const { stuck_in_wall } = await import('./pray.js');
+            if (stuck_in_wall()) {
+                await You_feel('hemmed in again.');
+                return;
+            }
             await pline(`You're back to your ${
                 game.u?.Upolyd ? 'unusual' : 'normal'} self again.`);
         }),
@@ -642,7 +661,7 @@ const TIMED_PROPS = [
     timed_uprop('UNCHANGING', 'HUnchanging'),
     timed_uprop('FAST', 'HFast', async () => {
         if (youHaveVeryFast()) return;
-        await update_topl(`You feel yourself slow down${youHaveFast() ? ' a bit' : ''}.`);
+        await You_feel(`yourself slow down${youHaveFast() ? ' a bit' : ''}.`);
     }),
     timed_uprop('REFLECTING', 'HReflecting'),
     timed_uprop('FREE_ACTION', 'HFree_action'),
@@ -701,7 +720,7 @@ export async function nh_timeout() {
     // C ref: timeout.c:623-640 — staged status dialogues run before mtimedone,
     // cream, spell protection, gallop, and all numeric-property countdowns.
     if (u.uprops.Stoned) await stoned_dialogue();
-    if (u.uprops.Slimed) await slime_dialogue();
+    if (u.uprops.Slimed) { await slime_dialogue(); }
     if (u.uprops.Vomiting) await vomiting_dialogue();
     if (u.uprops.Strangled) await choke_dialogue();
     if (u.uprops.Sick) await sickness_dialogue();
@@ -774,7 +793,7 @@ export async function nh_timeout() {
         p.set(u, next);
         if (!(next & TIMEOUT)) await p.expire(u, wasFlying);
     }
-    game._helpless_at_timeout = ((game.multi ?? 0) < 0
+    game._helpless_at_timeout = ((game.multi ?? 0) < -1 /* allmain.c:382 ++multi precedes hero's action */
                                 && u.umovement >= C.NORMAL_SPEED);
 
     // C ref: timeout.c nh_timeout() ends with run_timers().
@@ -805,6 +824,15 @@ function _set_itimeout(key, val) {
     if (!u) return;
     if (!u.uprops) u.uprops = {};
     u.uprops[key] = (val | 0) & TIMEOUT;
+}
+// C ref: `HFast = 0L` — drops every source bit, including the role-granted
+// intrinsic that allmain.js youHaveFast() reads through u.lost_innate.
+function _clear_HFast() {
+    _set_itimeout('HFast', 0);
+    const u = game.u;
+    if (!u) return;
+    u.HFast = 0;
+    (u.lost_innate ||= new Set()).add('HFast');
 }
 function _incr_itimeout(key, incr) { _set_itimeout(key, _prop(key) + (incr | 0)); }
 
@@ -1058,7 +1086,7 @@ export async function stoned_dialogue() {
     }
     switch (i) {
     case 5: /* slowing down */
-        _set_itimeout('HFast', 0);
+        _clear_HFast();
         if ((game.multi || 0) > 0) nomul(0);
         break;
     case 4: /* limbs stiffening */
@@ -1116,7 +1144,10 @@ export async function choke_dialogue() {
     const i = _prop('Strangled');
 
     if (i > 0 && i <= choke_texts.length) {
-        if (_Breathless() || !rn2(50)) {
+        const { mflags1_of, M1_BREATHLESS } = await import('./monflags_data.js');
+        const formBreathless = !!game.u?.Upolyd && !!game.u?.data
+            && (mflags1_of(game.u.data) & M1_BREATHLESS) !== 0;
+        if (_Breathless() || formBreathless || !rn2(50)) {
             const { body_part } = await import('./polyself.js');
             await _urgent_pline(choke_texts2[choke_texts2.length - i]
                                 .replace('%s', body_part(NECK)));
@@ -1131,7 +1162,7 @@ export async function choke_dialogue() {
             await stop_occupation();
         }
     }
-    exercise(A_STR, false);
+    await exercise(A_STR, false);
 }
 
 // C ref: timeout.c:316 sickness_texts[].
@@ -1160,7 +1191,7 @@ export async function sickness_dialogue() {
         }
         await _urgent_pline(buf);
     }
-    exercise(A_CON, false);
+    await exercise(A_CON, false);
 }
 
 // C ref: timeout.c:347 levi_texts[].
@@ -1245,7 +1276,7 @@ export async function slime_dialogue() {
 
     switch (i) {
     case 3:  /* limbs becoming oozy */
-        _set_itimeout('HFast', 0);      /* lose intrinsic speed */
+        _clear_HFast();                 /* lose intrinsic speed */
         if (!_Popeye(SLIMED)) await stop_occupation();
         if ((game.multi || 0) > 0) nomul(0);
         break;
@@ -1402,7 +1433,7 @@ export async function slimed_to_death(kptr) {
         killer.name = 'slimicide';
         const slimebuf = 'green slime has been genocided...';
         /* vary the message: life-save by amulet, vs declining to die */
-        if (game.iflags?.last_msg === 'PLNMSG_OK_DONT_DIE')
+        if (game.last_msg === C.PLNMSG_OK_DONT_DIE)
             await _urgent_pline(`Yes, you do.  ${_upstart(slimebuf)}`);
         else
             await _urgent_pline(`Unfortunately, ${slimebuf}`);
@@ -2162,7 +2193,7 @@ export async function do_storms() {
             game.nomovemsg = null;
         }
     } else {
-        await pline('You hear a rumbling noise.');
+        await You_hear('a rumbling noise.');
     }
 }
 
@@ -2202,11 +2233,13 @@ function _display_nhwindow(win, _blocking) {
         }
         if (wideIndex >= 0) lines[wideIndex].text += ' '.repeat(10);
     }
-    renderMenuLines(lines);
+    // C: putstr text windows track maxcol = strlen+1 (wintty.c:2406), not the
+    // menu form's +2.
+    renderMenuLines(lines, undefined, 1);
     const display = game.nhDisplay;
     const cols = display.cols ?? 80, rows = display.rows ?? 24;
     const widest = lines.reduce((n, line) => Math.max(n, line.text.length), 0);
-    const maxcol = Math.max(6, widest + 2);
+    const maxcol = Math.max(6, widest + 1);
     let col = Math.max(0, Math.min(Math.min(82, Math.floor(cols / 2)),
                                    cols - maxcol - 1)) + 1;
     const footerRow = lines.length;
@@ -2215,9 +2248,6 @@ function _display_nhwindow(win, _blocking) {
     display.setCursor(col + '--More--'.length, footerRow);
 }
 function _destroy_nhwindow(_win) {}
-
-// C ref: region.c visible_region_summary(win) — region.c's symbol, unported.
-function _visible_region_summary(_win) { }
 
 // C ref: decl.c fmt_ptr(ptr) — prints the argument's ADDRESS, which nothing can
 // reproduce; the object/monster id is the stable stand-in.
@@ -2417,7 +2447,7 @@ export async function wiz_timeout_queue() {
         _putstr(win, 0, `Vault counter is ${u.uinvault}.`);
     }
     const { any_visible_region } = await import('./region.js');
-    if (any_visible_region()) _visible_region_summary(win);
+    if (any_visible_region()) (await import('./region.js')).visible_region_summary(win);
 
     const stasis = game.level?.flags?.stasis_until;
     if (stasis != null && stasis >= (game.moves | 0)) {
@@ -2740,6 +2770,10 @@ export function spot_time_expires(x, y, func_index) {
         if (curr.kind === TIMER_LEVEL && curr.func_index === func_index
             && curr.arg.a_long === where)
             return curr.timeout;
+    /* live level timers (mkobj.js start_level_timer) are MELT_ICE_AWAY only */
+    if (func_index === MELT_ICE_AWAY)
+        for (const lt of (game.level?.level_timers || []))
+            if (lt.where === where) return lt.when;
     return 0;
 }
 

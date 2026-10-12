@@ -13,7 +13,7 @@ import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle } from './role.js';
 import { A_LAWFUL, A_NEUTRAL, A_CHAOTIC, In_quest } from './const.js';
 import { rn2 } from './rng.js';
-import { flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, note_topl, Deaf_hero } from './display.js';
+import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, note_topl, Deaf_hero } from './display.js';
 import { QUEST_SYNOPSIS } from './quest_synopsis_data.js';
 import { renderWindowScreen } from './invent.js';
 import { Blind } from './vision.js';
@@ -2841,6 +2841,11 @@ async function deliver_by_window(lines) {
     // NEXT message as an append onto an empty line, so it came out prefixed
     // with the two-space separator ("  You are currently 10 and require 20.").
     g._toplin = 0;
+    g._toplinSoft = null;
+    // C ref: wintty.c tty_dismiss_nhwindow() -> erase_menu_or_text(): a
+    // full-screen text window is erased with docrt() + flush_screen(1).
+    await docrt();
+    await flush_screen(1);
 }
 
 // C ref: questpgr.c com_pager_core(section, msgid).  Returns false when the

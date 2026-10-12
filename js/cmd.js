@@ -8,8 +8,8 @@
 import { game, svc_context_run } from './gstate.js';
 import { nhgetch } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
-import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, glyph_at, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt } from './display.js';
-import { vision_recalc, cansee, recalc_block_point, Blind, vision_reset } from './vision.js';
+import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, glyph_at, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig } from './display.js';
+import { vision_recalc, cansee, recalc_block_point, block_point, Blind, vision_reset } from './vision.js';
 import { hliquid, Some_Monnam, m_monnam, YMonnam, y_monnam } from './do_name.js';
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
          glyph_is_invisible, stumble_onto_mimic } from './uhitm.js';
@@ -25,7 +25,7 @@ import { ddoinv, dismiss_invent_screen, dolook,
          ECMD_TIME as I_ECMD_TIME } from './invent.js';
 import { makeplural } from './plural.js';
 import { WEAPON_CLASS, objects as OBJECTS, KICKING_BOOTS, BOULDER, place_object, STATUE,
-         disturb_buried_zombies, add_to_migration } from './mkobj.js';
+         disturb_buried_zombies, add_to_migration, stamp_fobj } from './mkobj.js';
 import { doeat } from './eat.js';
 import { doapply, ECMD } from './apply.js';
 import { dodrink } from './potion.js';
@@ -42,7 +42,7 @@ import { do_gamelog } from './insight.js';
 import { skill_window_advance, uwep_skill_type, p_skill_of, use_skill } from './enhance.js';
 import { wiz_level_tele, dodown, doup, revive_nasty, random_teleport_level,
          flooreffects, boulder_hits_pool, set_uinwater, danger_uprops, u_on_rndspot, u_collide_m } from './do.js';
-import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation,
+import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation, trapname,
          TRAP_CLEARLY_IMMUNE, deltrap, fill_pit, blow_up_landmine, seetrap,
          launch_obj, ROLL, LAUNCH_KNOWN, Levitation_fu, Flying_fu } from './trap.js';
 import { doset, dosetSimple } from './doset.js';
@@ -66,7 +66,7 @@ import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          SLT_ENCUMBER, MOD_ENCUMBER, OVERLOADED, Is_medusa_level, Is_juiblex_level,
          Is_waterlevel, Is_airlevel } from './const.js';
 import { exercise, acurr_eff } from './attrib.js';
-import { hides_under_flag, is_hider_flag, throws_rocks_flag, mflags1_of, M1_CLING } from './monflags_data.js';
+import { hides_under_flag, is_hider_flag, throws_rocks_flag, mflags1_of, M1_CLING, M1_TUNNEL } from './monflags_data.js';
 import { noattacks, attacktype, AT_ENGL, AD_FIRE, AT_EXPL, MATTK } from './monattk_data.js';
 // onscary() is an `export function` declaration in monmove.js, so this cycle
 // (cmd -> monmove -> uhitm -> allmain -> cmd) resolves through hoisting the
@@ -77,7 +77,7 @@ import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
 import { depth as depth_of_level } from './hacklib.js';
 import { builds_up, level_difficulty, surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { HEADSTONE, WT_ELF, PARANOID_TRAP, MIGR_RANDOM } from './const.js';
+import { HEADSTONE, WT_ELF, PARANOID_TRAP, MIGR_RANDOM, PLNMSG_ONE_ITEM_HERE } from './const.js';
 // C ref: dokick.c — the whole ^D command (kick_dumb/kick_ouch/kick_door/
 // kick_nondoor/dokick).  cmd.js <-> dokick.js is a cycle, but every name
 // crossing it is a hoisted `function` declaration, the same way onscary() above
@@ -114,7 +114,7 @@ import { selection_new, selection_getbounds,
 import { carrying, objects_at, inventoryArray,
          cmdq_add_key, cmdq_pop, doperminv, useupf } from './invent.js';
 import { num_spells } from './spell.js';
-import { vobj_at, msghist, topl_more_ext, useDECgraphics, terrain_glyph } from './display.js';
+import { Deaf_hero, vobj_at, msghist, topl_more_ext, useDECgraphics, terrain_glyph } from './display.js';
 import { dist2 } from './hacklib.js';
 import { M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID } from './monflags_data.js';
 import { NO_COLOR, ATR_INVERSE, DEC_TO_UNICODE } from './terminal.js';
@@ -677,7 +677,7 @@ export function waterbody_name(x, y, sober = false) {
     // MOAT special-level names with a plain "deep <liquid>" and turns "ice"
     // into "frozen <liquid>".  `sober` stands for the callers (pager.c
     // add_cmap_descr) that set EHalluc_resistance around the call.
-    const hallucinate = !sober && Hallucination() && !game.program_state_gameover;
+    const hallucinate = !sober && Hallucination() && !game.program_state?.gameover;
     const liq = (s) => (sober ? s : hliquid(s));
     if (typ === LAVAPOOL) return `molten ${liq('lava')}`;
     if (typ === ICE) return hallucinate ? `frozen ${liq('water')}` : 'ice';
@@ -869,7 +869,7 @@ async function avoid_running_into_trap(x, y) {
     if (would_stop && game.flags?.mention_walls) {
         if (ontrap) {
             const t = t_at(x, y);
-            if (t) await pline(`You stop in front of ${an(trap_explanation(t.ttyp))}.`);
+            if (t) await pline(`You stop in front of ${an(trapname(t.ttyp, false))}.`);
         } else {
             await pline(`You stop at the edge of the ${
                 hliquid(isPoolTerrain(x, y) ? 'water' : 'lava')}.`);
@@ -956,7 +956,8 @@ async function avoid_trap_andor_region(x, y) {
     if (!hallu && immune_to_trap(u, trap.ttyp) === TRAP_CLEARLY_IMMUNE)
         return false;
     const traptype = hallu ? rnd(TRAPNUM - 1) : trap.ttyp;
-    const qbuf = `Really step ${into_vs_onto(traptype) ? 'into' : 'onto'}`
+    const verb = u.uprops?.Levitation ? 'float' : u.uprops?.Flying ? 'fly' : 'step';  // hack.c u_locomotion
+    const qbuf = `Really ${verb} ${into_vs_onto(traptype) ? 'into' : 'onto'}`
                + ` that ${trap_explanation(traptype)}?`;
     if (await y_n(qbuf) === 'y') return false;
     nomul(0);
@@ -1045,6 +1046,9 @@ export async function rhack(key) {
     // so a fresh call is the only place either flag may be dropped.
     if (game.context && !game.context._prefix_seen) {
         game.context.nopick = 0;
+        /* C ref: cmd.c:5103 parse() — `svc.context.move = TRUE; assume next
+           command will take game time`; dokick's recoil tests it mid-command. */
+        game.context.move = 1;
         // C ref: same two lines — `iflags.menu_requested = FALSE`. In C the
         // 'm' prefix and its command are ONE rhack() call, so the flag dies
         // with that command even for an unbound follow-up key (`m` <space>
@@ -1555,6 +1559,7 @@ export async function rhack(key) {
         // C ref: cmd.c doopen -> lock.c doopen_indir(0,0): open an adjacent
         // door (reads a direction).  Sets the turn flag from doopen's result.
         game.context.move = (await doopen_indir(0, 0)) ? 1 : 0;
+        await run_canned_kick();
     } else if (ch === 'c') {
         // C ref: cmd.c doclose -> lock.c doclose(): close an adjacent door
         // (reads a direction).  ECMD_CANCEL (cancelled direction) and ECMD_OK
@@ -1667,7 +1672,7 @@ export async function rhack(key) {
             // multi = -1 that savelife() sets when "Go to Nowhere" is survived.
             if (res === 1) game.context.move = 1;
             else {
-                const arrival_multi = game._wiz_goto_done ? game.multi : 0;
+                const arrival_multi = game._wiz_goto_done ? (game._wiz_goto_multi | 0) : 0;
                 game._wiz_goto_done = false;
                 reset_cmd_vars(game.multi < 0);
                 if (arrival_multi < 0) game.multi = arrival_multi;
@@ -1948,6 +1953,13 @@ export async function rhack(key) {
             // C ref: cmd.c:3769-3773 — prefix_seen belongs to this rhack call,
             // unlike forcefight, which can survive a rush or an unbound key.
             const savedSeen = game.context._prefix_seen;
+            // C ref: cmd.c rhack():3733-3736 — the prefix itself is recorded on
+            // CQ_REPEAT (clearing it unless it follows another prefix), so
+            // #repeat replays "F" + direction.
+            if (!game.in_doagain) {
+                if (!savedSeen) cmdq_of(CQ_REPEAT).length = 0;
+                cmdq_add_key(CQ_REPEAT, key);
+            }
             game.context._prefix_seen = true;
             await rhack(0);
             game.context._prefix_seen = savedSeen;
@@ -2149,6 +2161,11 @@ export async function rhack(key) {
             const mid = cmdq_of(CQ_REPEAT).splice(0);
             if (game._ext_tlist)
                 cmdq_of(CQ_REPEAT).push({ typ: CMDQ_EXTCMD, ec_entry: { ef_txt: game._ext_tlist } }, ...mid);
+        } else if (game._itemaction_repeat) {
+            // C: the item action pushed on CQ_CANNED ran as its own rhack() and
+            // recorded itself on CQ_REPEAT; the menu command ('*', 'i') is not.
+            game._itemaction_repeat = false;
+            cmdq_of(CQ_REPEAT).push(...midRepeat);
         } else if (repeatName !== 'do_repeat' && !isPrefixCmd) {
             if (!game.context._prefix_seen) cmdq_of(CQ_REPEAT).length = 0;
             cmdq_add_key(CQ_REPEAT, key);
@@ -2285,10 +2302,10 @@ async function find_trap(trap) {
         const u = game.u;
         if (u?.ux > 0) {
             const hg = hero_glyph();
-            show_glyph_cell(u.ux, u.uy, hg.ch, hg.color, false, hg.attr);
+            show_glyph_cell(u.ux, u.uy, hg.ch, hg.color, false, hg.attr, hg.keepColor);
         }
     }
-    await update_topl(`You find ${an(trap_explanation(trap.ttyp))}.`);
+    await update_topl(`You find ${an(trapname(trap.ttyp, false))}.`);
     if (cleared) {
         // C: display_nhwindow(WIN_MAP, TRUE) blocks on the cleared frame
         // above before docrt() restores the real map.  docrt() itself pages
@@ -2507,7 +2524,7 @@ export async function b_trapped(item, hasBodypart) {
     const u = game.u;
     const { losehp, Maybe_Half_Phys } = await import('./zap.js');
     await losehp(Maybe_Half_Phys(dmg), 'explosion');
-    exercise(A_STR, false); // -> rn2(2)
+    await exercise(A_STR, false); // -> rn2(2)
     if (hasBodypart !== -1 && hasBodypart) exercise(A_CON, false); // NO_PART (false or -1) skips this rn2(2)
     const { make_stunned_u } = await import('./mhitu.js');
     await make_stunned_u((u?.uprops?.Stun || 0) + dmg, true);
@@ -2610,6 +2627,10 @@ export async function getdir(s) {
     game._winStop = false;
     remember_topl();
     game._pending_message = prompt;
+    // C ref: topl.c:425 tty_yn_function() issues the prompt through
+    // custompline() -> vpline(), which copies it to gp.prevmsg (pline.c:282) —
+    // so a Norep() of the same text before the prompt is no longer a repeat.
+    game._prevmsg = `${prompt} `;
     await flush_screen(1);
     game._modal_screen = 'topl';
     const disp = game.nhDisplay;
@@ -2695,6 +2716,7 @@ async function getdir_answer(key, s) {
         if (help_requested) return getdir(s); // C ref: cmd.c:4106 — retry.
     } else
         await pline('What a strange direction!');
+    game.context._getobj_cancelled = true;      // C: getdir()==0 -> ECMD_CANCEL -> reset_cmd_vars(TRUE)
     return null;
 }
 
@@ -2705,8 +2727,9 @@ async function getdir_answer(key, s) {
 // draw short at seed5006 step 183 (zapping a wand while confused).
 export function getdir_confdir(res) {
     const u = game.u;
-    if (!u || res.dz) return res;
-    u.dx = res.dx; u.dy = res.dy;
+    if (!u) return res;
+    u.dx = res.dx; u.dy = res.dy; u.dz = res.dz | 0;   // movecmd() sets all three
+    if (res.dz) return res;
     confdir(false);
     res.dx = u.dx; res.dy = u.dy;
     return res;
@@ -2826,6 +2849,8 @@ export async function doopen_indir(x, y) {
         const dir = await getdir();
         if (!dir) { await pline('Never mind.'); return 0; }
         cx = u.ux + dir.dx; cy = u.uy + dir.dy;
+        /* get_adjacent_loc(NULL, NULL, ...) returns 0 silently for !isok */
+        if (!isok(cx, cy)) return 0;
         // C ref: lock.c:808-811 — open at yourself/up/down switches to #loot
         // unless there is a closed door here (Passes_walls) and the direction
         // isn't 'down'.
@@ -2861,11 +2886,11 @@ export async function doopen_indir(x, y) {
     // C ref: lock.c:830-838 — observing new terrain (including the locked
     // door's orientation) costs a turn even when opening cannot proceed.
     if (door) {
-        const oldglyph = JSON.stringify(door.remembered_glyph ?? null);
+        const oldglyph = remembered_glyph_sig(door);
         const { update_mapseen_for } = await import('./dungeon.js');
         const oldlastseentyp = await update_mapseen_for(cx, cy);
         newsym(cx, cy);
-        if (JSON.stringify(door.remembered_glyph ?? null) !== oldglyph
+        if (remembered_glyph_sig(door) !== oldglyph
             || (game.lastseentyp?.[cx]?.[cy] ?? 0) !== oldlastseentyp)
             res = 1;
     }
@@ -2898,12 +2923,23 @@ export async function doopen_indir(x, y) {
         // triggers pick_lock(): "This door is locked." is followed by an
         // "Unlock it with <tool>? [ynq]" prompt; on 'y' the occupation rolls
         // rn2(100) against the pick chance and (on success) opens the lock.
-        if (locked && (game.flags?.autounlock ?? true)) {
-            const tool = autokey();
+        // flags.autounlock is the AUTOUNLOCK_* bit set (lock.h); unset means the
+        // default AUTOUNLOCK_APPLY_KEY (2).
+        const autounlock = game.flags?.autounlock ?? 2;
+        if (locked && autounlock) {
+            const tool = (autounlock & 2) ? autokey() : null; // AUTOUNLOCK_APPLY_KEY
             if (tool) {
                 // pick_lock_door returns 2 when the lock-picking occupation
                 // elapsed a turn (so the caller advances monsters), 0 otherwise.
                 return await pick_lock_door(tool, cx, cy, door);
+            }
+            // C ref: lock.c:884 AUTOUNLOCK_KICK — offer to kick the door open;
+            // the kick is queued as a canned command, so no time passes here.
+            if ((autounlock & 4) && !game.u?.usteed
+                && await y_n('Kick it?', 'ynq\x1b', 'q') === 'y') {
+                cmdq_add_ec(CQ_CANNED, 'dokick');
+                cmdq_add_dir(CQ_CANNED, Math.sign(cx - game.u.ux), Math.sign(cy - game.u.uy), 0);
+                return 0; // ECMD_OK
             }
         }
         return res;
@@ -2930,10 +2966,27 @@ export async function doopen_indir(x, y) {
         feel_newsym(cx, cy); /* the hero knows she opened it */
         recalc_block_point(cx, cy);
     } else {
-        exercise(A_STR, true); // -> rn2(19)
+        await exercise(A_STR, true); // -> rn2(19)
         await pline('The door resists!');
     }
     return 1; // ECMD_TIME
+}
+
+// C ref: hack.c:1102-1108 — doopen_indir()'s autounlock "Kick it?" leaves a
+// canned dokick (plus its direction) on the command queue.
+function canned_kick_queued() {
+    const kq = cmdq_peek(CQ_CANNED);
+    return !!kq && kq.typ === CMDQ_EXTCMD
+        && kq.ec_entry === ext_func_tab_from_func('dokick');
+}
+// The queued kick is the very next command: run it now (dokick's getdir()
+// consumes the queued direction) and set the turn flag from its result.
+async function run_canned_kick() {
+    if (!canned_kick_queued()) return false;
+    cmdq_pop(CQ_CANNED);
+    const res = await dokick();
+    game.context.move = res === 1 ? 1 : 0;
+    return true;
 }
 
 // C ref: lock.c:926 obstructed(x, y, quietly) — TRUE when a monster or a floor
@@ -3012,11 +3065,11 @@ export async function doclose() {
     // C ref: lock.c:997 — a Blind hero feels the square, and learning something
     // (its remembered glyph or lastseentyp changed) upgrades res to ECMD_TIME.
     if (Blind()) {
-        const oldglyph = JSON.stringify(door?.remembered_glyph ?? null);
+        const oldglyph = remembered_glyph_sig(door);
         const { update_mapseen_for } = await import('./dungeon.js');
         const oldlastseentyp = await update_mapseen_for(x, y);
         feel_location(x, y);
-        if (JSON.stringify(door?.remembered_glyph ?? null) !== oldglyph
+        if (remembered_glyph_sig(door) !== oldglyph
             || game.lastseentyp?.[x]?.[y] !== oldlastseentyp)
             res = 2; // ECMD_TIME: learned something
     }
@@ -3055,9 +3108,9 @@ export async function doclose() {
             await pline('The door closes.');
             door.doormask = D_CLOSED;
             feel_newsym(x, y); /* the hero knows she closed it */
-            vision_recalc(0);
+            block_point(x, y); /* vision:  no longer see there */
         } else {
-            exercise(A_STR, true); // -> rn2(19)
+            await exercise(A_STR, true); // -> rn2(19)
             await pline('The door resists!');
         }
     }
@@ -3222,11 +3275,11 @@ export async function pick_lock(pick) {
         const door = game.level?.at(cx, cy);
         if (!door || !IS_DOOR(door.typ)) {
             // C ref: lock.c:578-592 — only newly learned terrain costs a turn.
-            const oldglyph = JSON.stringify(door?.remembered_glyph ?? null);
+            const oldglyph = remembered_glyph_sig(door);
             const { update_mapseen_for } = await import('./dungeon.js');
             const oldlastseentyp = await update_mapseen_for(cx, cy);
             feel_location(cx, cy);
-            const learned = JSON.stringify(door?.remembered_glyph ?? null) !== oldglyph
+            const learned = remembered_glyph_sig(door) !== oldglyph
                 || (game.lastseentyp?.[cx]?.[cy] ?? 0) !== oldlastseentyp;
             await pline(`You ${Blind() ? 'feel' : 'see'} no door there.`);
             return learned ? PICKLOCK_LEARNED_SOMETHING : PICKLOCK_DID_NOTHING;
@@ -3285,7 +3338,7 @@ async function carrying_too_much() {
         && !Is_airlevel(u.uz)) {
         if (wtcap < OVERLOADED) {
             await pline("You don't have enough stamina to move.");
-            exercise(A_CON, false); // -> rn2(2)
+            await exercise(A_CON, false); // -> rn2(2)
         } else {
             await pline('You collapse under your load.');
         }
@@ -3587,6 +3640,26 @@ async function domove_core(dx, dy, attemptTracked) {
         }
     }
 
+    // C ref: hack.c:2754 move_out_of_bounds(x, y) — a step off the map edge
+    // (reached e.g. by a confused or bumped hero standing on row 20) is
+    // refused silently: no turn elapses (context.move = 0) and, unless
+    // mention_walls is set, nothing is printed.  An 'F'-prefixed step goes on
+    // to domove_fight_empty() below instead.
+    const offedge = !isok(newx, newy);
+    if (offedge && !game.context?.forcefight) {
+        if (game.flags?.mention_walls) {
+            let ddx = u.dx, ddy = u.dy;
+            if (ddx && ddy) { /* diagonal: report whichever axis has hit its limit */
+                if (isok(newx, u.uy)) ddx = 0;
+                else if (isok(u.ux, newy)) ddy = 0;
+            }
+            await pline(`You have already gone as far ${directionname(xytodir_cmd(ddx, ddy))} as possible.`);
+        }
+        game.multi = 0;
+        game.context.move = 0;
+        return;
+    }
+
     // C ref: hack.c:2757 — a run/rush/travel step onto a known trap stops the
     // hero here, before the monster-bump block, so C never reaches the
     // paranoid_confirm:trap prompt below while rushing.
@@ -3596,7 +3669,7 @@ async function domove_core(dx, dy, attemptTracked) {
     // BEFORE bumping into a monster.  Returns TRUE => the turn is spent:
     // cmd.c parse() sets svc.context.move = TRUE up front, and domove_core's
     // early return leaves it set, so a failed escape costs a move.
-    if (await escape_from_sticky_mon(newx, newy)) { game.context.move = 1; return; }
+    if (!offedge && await escape_from_sticky_mon(newx, newy)) { game.context.move = 1; return; }
 
     const mtmp = m_at(newx, newy);
 
@@ -3679,6 +3752,20 @@ async function domove_core(dx, dy, attemptTracked) {
             game.context.move = 0;
             return;
         }
+        // C ref: hack.c:2843 test_move(DO_MOVE) also runs when a safe pet
+        // stands on the destination: the tight-diagonal squeeze test applies.
+        if (!displaceu && u.dx && u.dy && !blocksMove(newx, newy)
+            && bad_rock_hero(u.ux, newy) && bad_rock_hero(newx, u.uy)) {
+            const why = cant_squeeze_thru_hero();
+            if (why) {
+                await pline(why === 3 ? 'You cannot pass that way.'
+                    : why === 2 ? 'You are carrying too much to get through.'
+                    : 'Your body is too large to fit through.');
+                game.context.move = 0;
+                nomul(0);
+                return;
+            }
+        }
         const { in_out_region } = await import('./region.js');
         if (!in_out_region(newx, newy)) return;
         game.context.move = 1;
@@ -3700,6 +3787,7 @@ async function domove_core(dx, dy, attemptTracked) {
         // swap/displace branch too, so a generic potion/gem/book now within
         // neardist of the hero becomes specific (before vision_recalc(1)).
         see_nearby_objects();
+        await reset_occupations(); // hack.c:2936
         // C ref: hack.c:2945 — the same tread-disturbs-zombies call closes the
         // swap/displace path too (even when the swap was refused).
         hero_tread_disturbs_zombies();
@@ -3777,14 +3865,18 @@ async function domove_core(dx, dy, attemptTracked) {
         // `!(boulder || solid)`), so without this a force-fight at a boulder
         // read "You attack thin air."
         let boulder = off_edge ? null : boulder_at(newx, newy);
-        // C ref: hack.c:2263 — a statue DISPLAYED at the target is what the hero
-        // is attacking: `if (glyph_is_statue(glyph)) boulder = sobj_at(STATUE)`.
-        // This port's display is a cell model with no glyph numbers, so the
-        // displayed statue is the top floor object when it is a statue.
+        // C ref: hack.c:2263 — `if (glyph_is_statue(glyph_at(x, y)) ||
+        // (svc.context.forcefight && sobj_at(STATUE, x, y))) boulder =
+        // sobj_at(STATUE, x, y)`: a statue anywhere in the pile is what an 'F'
+        // attack hits (and overrides a boulder).  This port's display is a cell
+        // model with no glyph numbers, so a DISPLAYED statue is the top floor
+        // object when it is a statue.
         let statueTarget = false;
-        if (!off_edge && !game.u?.uinwater && !boulder && !loc?.invisMon) {
-            const top = vobj_at(newx, newy);
-            statueTarget = !!top && top.otyp === STATUE;
+        if (!off_edge && !game.u?.uinwater) {
+            const top = !loc?.invisMon ? vobj_at(newx, newy) : null;
+            const statue = (game.context?.forcefight ? statue_at(newx, newy) : null)
+                || (top && top.otyp === STATUE ? top : null);
+            if (statue) { statueTarget = true; boulder = statue; }
         }
         // C ref: hack.c:2266 — force-fight at a boulder/statue/wall/door while
         // wielding a pick/axe starts digging instead of printing a wasted-swing
@@ -3808,7 +3900,13 @@ async function domove_core(dx, dy, attemptTracked) {
         // C ref: hack.c:2280 — "about to become known empty; remove 'I' if
         // present", BEFORE the message.  Without this the 'I' persists and the
         // hero force-fights thin air on that square forever.
-        if (!off_edge) { unmap_object(newx, newy); newsym(newx, newy); }
+        if (!off_edge) {
+            unmap_object(newx, newy);
+            // C ref: hack.c:2282 `if (boulder) map_object(boulder, TRUE);` — the
+            // target statue/boulder is remembered even when the hero can't see it.
+            if (boulder) map_object(boulder, true);
+            newsym(newx, newy);
+        }
         let buf;
         if (off_edge) {
             buf = 'an unknown obstacle';
@@ -3921,10 +4019,14 @@ async function domove_core(dx, dy, attemptTracked) {
                 // C ref: hack.c:1110,2843-2847 — door_opened follows the door
                 // state, not doopen_indir()'s ECMD_TIME result.  Resistance
                 // leaves the door closed and cancels a counted movement.
-                if (tgt.doormask & (D_CLOSED | D_LOCKED)) {
+                // C ref: hack.c:1104-1108 — a canned kick queued by autounlock's
+                // "Kick it?" fakes door_opened so it runs as the next command.
+                const kickQueued = canned_kick_queued();
+                if ((tgt.doormask & (D_CLOSED | D_LOCKED)) && !kickQueued) {
                     game.context.move = 0;
                     nomul(0);
                 }
+                await run_canned_kick();
                 return;
             }
             // Running (autoopen disabled) into an orthogonal closed door:
@@ -4058,6 +4160,13 @@ async function domove_core(dx, dy, attemptTracked) {
         // drawbridge and Sokoban messages, which print without mention_walls.
         if (u.uinwater) {
             await pline('There is an obstacle there.');
+        } else if (game.level?.at(newx, newy)?.typ === IRONBARS) {
+            // C ref: hack.c:1024-1036 — iron bars: (the metallivorous
+            // still_chewing arm and passes_bars() escape need a polyform this
+            // port does not model, see js/dig.js:56-68), then the DO_MOVE-only
+            // "You cannot pass through the bars." under mention_walls.
+            if (game.flags?.mention_walls)
+                await update_topl('You cannot pass through the bars.');
         } else if (is_db_wall(newx, newy)) {
             await pline('That drawbridge is up!');
         } else if (hero_passes_walls() && In_sokoban(u.uz)) {
@@ -4123,7 +4232,9 @@ async function domove_core(dx, dy, attemptTracked) {
     u.uy0 = oldy;
     u.ux = newx;
     u.uy = newy;
-    u.umoved = true; // C ref: hack.c:2968 — position changed
+    // C ref: hack.c:2966-2968 — `if (u.ux0 != u.ux || u.uy0 != u.uy) u.umoved =
+    // TRUE`: a no-op domove (travel's dx=dy=0 final step) leaves umoved FALSE.
+    if (newx !== oldx || newy !== oldy) u.umoved = true;
 
     // C ref: hack.c:2877 — `m_postmove_effect(&gy.youmonst)` fires immediately
     // after the tentative position update and before the steed follows; it reads
@@ -4148,6 +4259,7 @@ async function domove_core(dx, dy, attemptTracked) {
     // Runs before vision_recalc(1) (matching u_on_newpos's position in
     // domove_core), so it uses the still-old viz_array like C does.
     see_nearby_objects();
+    await reset_occupations(); // hack.c:2936
 
     // C ref: hack.c:2945 — your tread on the ground may disturb the slumber of
     // nearby (buried) zombies.
@@ -4177,21 +4289,23 @@ async function domove_core(dx, dy, attemptTracked) {
         await move_bc(0, bc.bc_control, bc.ballx, bc.bally, bc.chainx, bc.chainy);
     }
 
-    await spoteffects(pickup_after_move);
+    // C ref: hack.c:2964-2966 — domove_succeeded is decided from u.ux0 != u.ux
+    // BEFORE spoteffects(), so a crawl back out of water to the start square
+    // still counts as a successful walk.
+    const movedBeforeSpot = (oldx !== u.ux || oldy !== u.uy);
+    // C ref: hack.c domove_core():2979 `if (u.umoved) spoteffects(TRUE);` — a
+    // no-op domove (travel's dx=dy=0 when no path/guess progress exists) must
+    // not re-run pickup()/read_engr_at() on the hero's own square.
+    if (movedBeforeSpot) await spoteffects(pickup_after_move);
     // C ref: end.c really_done() longjmps out; if spoteffects() (e.g.
     // lava_effects()) just ended the game, none of domove()'s post-move work
     // (engraving smudge) runs.
     if (game.program_state?.gameover) return;
-    // C ref: cmd.c rhack() — `if (res & ECMD_TIME) svc.context.move = TRUE;`
-    // unconditionally, AFTER the handler returns, regardless of what the
-    // handler did to context.move in between (C's own comment: "reset_cmd_
-    // vars() sets context.move to False so we might need to change it [back]
-    // to True"). A trap sprung by this step can walk HP to 0 and back (end.js
-    // savelife(), on a declined wizard/discover "Die?"), zeroing context.move
-    // as a side effect of ending the death sequence, not because this move
-    // failed to consume a turn. Without restoring it, the moveloop skips the
-    // monster-movement phase for a turn C always ran one for.
-    game.context.move = 1;
+    // C ref: cmd.c rhack() DOMOVE_WALK arm — `domove(); return;`: a walk never
+    // restores svc.context.move after domove(), so a lifesaved death during
+    // spoteffects() (end.c savelife() sets context.move = 0) leaves the hero's
+    // turn spent-free: the next monster phase is skipped and find_ac() runs
+    // before any monster attacks (heldout-fuzza-b1 fz24 step 1141).
 
     // C ref: hack.c domove_core():2984 — "delay next move because of ball
     // dragging; must come after we finished picking up, in spoteffects()".
@@ -4226,7 +4340,7 @@ async function domove_core(dx, dy, attemptTracked) {
     // (heldout-mirror44): a 3-step 'H' run whose 2nd/3rd steps landed on an
     // already-engraved tile — C's oracle RNG trace has NO rnd(5) there, only
     // on an earlier single-step 'y' move that engraved a DIFFERENT tile.
-    if (attemptTracked) {
+    if (attemptTracked && movedBeforeSpot) {   // gd.domove_succeeded needs u.ux0 != u.ux (hack.c:2964)
         maybe_smudge_engr(oldx, oldy, u.ux, u.uy);
         // C ref: hack.c domove():2704 — the same DOMOVE_RUSH|DOMOVE_WALK guard
         // also gives the bubble the hero is riding on the Plane of Water a
@@ -4524,6 +4638,8 @@ function uescaped_shaft(trap) {
 async function climb_pit() {
     const u = game.u;
     if (!u.utrap || u.utraptype !== TT_PIT) return;
+    // C: pitname = trapname(PIT, FALSE) — a hallucinating hero burns a display draw.
+    const pitname = (await import('./trap.js')).trapname(PIT, false);
     // Passes_walls (phasing / xorn form) is FALSE for every hero this port runs.
     if (!rn2(2) && boulder_at(u.ux, u.uy)) {
         await pline('Your leg gets stuck in a crevice.');
@@ -4538,7 +4654,7 @@ async function climb_pit() {
     }
     if (Flying_fu() && !In_sokoban(u.uz)) {
         // is_clinger() needs a poly form no hero here takes.
-        await pline('You climb from the pit.');
+        await pline(`You climb from the ${pitname}.`);
         reset_utrap_cmd();
         fill_pit_cmd(u.ux, u.uy);
         game.vision_full_recalc = 1;
@@ -4549,7 +4665,7 @@ async function climb_pit() {
         reset_utrap_cmd();
         await pline(`${(In_sokoban(u.uz) && Levitation_fu())
             ? 'You struggle against the air currents and float'
-            : u.usteed ? 'You ride' : 'You crawl'} to the edge of the pit.`);
+            : u.usteed ? 'You ride' : 'You crawl'} to the edge of the ${pitname}.`);
         fill_pit_cmd(u.ux, u.uy);
         game.vision_full_recalc = 1;
         return;
@@ -4627,6 +4743,15 @@ function boulder_at(x, y) {
     let found = null;
     for (const o of (game.level?.objects || []))
         if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === 475)
+            found = o;
+    return found;
+}
+
+// C ref: mkobj.c sobj_at(STATUE, x, y) — the topmost statue in the floor pile.
+function statue_at(x, y) {
+    let found = null;
+    for (const o of (game.level?.objects || []))
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === STATUE)
             found = o;
     return found;
 }
@@ -4731,7 +4856,7 @@ function harmless_missile_boulder(obj) {
 async function acid_msg_boulder(barsx, barsy, nodissolve) {
     if (cansee(barsx, barsy) && !nodissolve) {
         await pline('The iron bars are dissolved!');
-    } else if (!game.u?.Deaf) {
+    } else if (!Deaf_hero()) {
         await pline(Hallucination() ? 'You hear angry snakes!' : 'You hear a hissing noise.');
     }
 }
@@ -4804,6 +4929,7 @@ async function dopush(sx, sy, rx, ry, otmp, costly) {
     otmp.ox = rx;
     otmp.oy = ry;
     if (_objs) _objs.push(otmp);
+    stamp_fobj(otmp);
     recalc_block_point(rx, ry);
     recalc_block_point(sx, sy);
     newsym(rx, ry);
@@ -4940,7 +5066,7 @@ async function moverock(otmp, sx, sy, dx, dy) {
                 await update_topl(`There's ${x_monnam(mtmp, 2, null, 0, false)} on the other side.`);
                 deliverPart1 = true;
             } else {
-                if (!game.u?.Deaf && game.flags?.acoustics !== false) {
+                if (!Deaf_hero() && game.flags?.acoustics !== false) {
                     await update_topl(`You hear a monster behind ${the_pushable_name(otmp)}.`);
                     deliverPart1 = true;
                 }
@@ -4973,7 +5099,7 @@ async function moverock(otmp, sx, sy, dx, dy) {
                     obj_extract_self(otmp);
                     place_object(otmp, rx, ry);
                     newsym(sx, sy);
-                    const bang = (!game.u?.Deaf || !Blind()) ? 'KAABLAMM!!' : 'Gadzooks';
+                    const bang = (!Deaf_hero() || !Blind()) ? 'KAABLAMM!!' : 'Gadzooks';
                     await pline(`${bang}!  ${Tobjnam_boulder(otmp, 'trigger')} `
                               + `${destTrap.madeby_u ? 'your' : 'a'} land mine.`);
                     await blow_up_landmine(destTrap);
@@ -5189,7 +5315,12 @@ export async function pickup_after_move(x, y) {
     // announced.  Without this a travel over a corpse pile opened the "Things
     // that are here:" menu mid-walk and burned an input boundary on its
     // --More-- (seed0014 step 653).
-    if (ctx.nopick) {
+    // The same disjunct covers a pool/lava square (reachable here only by
+    // Levitation/Flying/Wwalking): `(is_pool(u.ux,u.uy) && !Underwater) ||
+    // is_lava(u.ux,u.uy)`.
+    const hereLoc = game.level?.at?.(x, y);
+    if (ctx.nopick || (isPoolTerrain(x, y) && !game.Underwater)
+        || (hereLoc && IS_LAVA(hereLoc.typ))) {
         await read_engr_at(x, y);
         return;
     }
@@ -5202,6 +5333,13 @@ export async function pickup_after_move(x, y) {
     // is on the floor beneath them.
     const reachTrap = trap_at(x, y);
     if (!can_reach_floor(!!(reachTrap && is_pit_ttyp(reachTrap.ttyp)))) {
+        // C ref: pickup.c:713 `(void) describe_decor(); /* even when
+        // !flags.mention_decor */` — reached only when OBJ_AT (an empty square
+        // returned at :702 first) and, with mention_decor, after the call above.
+        if (!game.flags?.mention_decor
+            && (game.level?.objects || []).some(
+                (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y))
+            await describe_decor();
         if (((game.multi ?? 0) && !ctx.run)
             || !game.flags?.pickup
             || (reachTrap && (uteetering_at_seen_pit(reachTrap)
@@ -5372,14 +5510,14 @@ async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = fa
             let trap = trap_at(x, y);
             if (trap && !trap.tseen) trap = null;
             if (reg || trap) {
-                const { trap_explanation } = await import('./trap.js');
                 await update_topl(`There is ${reg ? `a ${reg_damg(reg) ? 'poison gas' : 'vapor'} cloud` : ''}${
-                    (reg && trap) ? ' and ' : ''}${trap ? an(trap_explanation(trap.ttyp)) : ''} here.`);
+                    (reg && trap) ? ' and ' : ''}${trap ? an(trapname(trap.ttyp, false)) : ''} here.`);
             }
         }
         if (dfeature) await update_topl(`There is ${(await import('./invent.js')).dfeature_article(dfeature)} here.`);
         await read_engr_at(x, y);
         await update_topl(`You see here ${name}.`);
+        game.last_msg = PLNMSG_ONE_ITEM_HERE; /* for slip_or_trip() */
         return;
     }
     // Multiple objects: delegate to invent.js look_here(), which renders the
@@ -5392,20 +5530,9 @@ async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = fa
     await inv.look_here(objCount, (_pickedSome ? 1 : 0) | (skipDfeature ? 2 : 0));
 }
 
-// COIN_CLASS (gold) — objclass.h; defined inline here to gate the gold look-here
-// announcement without dragging in an invent.js import cycle at module scope.
-const COIN_CLASS_CMD = 12;
-
 // Object name with article for the "You see here" line (C: doname()).  The
 // shared floor namer includes corpse species and "partly eaten" status.
 async function objDoname(obj) {
-    // COIN_CLASS gold: doname() uses an article for a single coin and a
-    // quantity for a stack.
-    if (obj && (obj.oclass === COIN_CLASS_CMD)) {
-        const q = obj.quan || 0;
-        if (q === 1) return 'a gold piece';
-        return `${q} gold piece${q === 1 ? '' : 's'}`;
-    }
     // C doname() gives "N <plural>" for a stack, "a <name>" for a single item.
     try {
         if (floor_object_name) return floor_object_name(obj);
@@ -5440,11 +5567,18 @@ async function domove_swap_with_pet(mtmp, x, y) {
     const trap = mtmp.mtrapped ? trap_at(mtmp.mx, mtmp.my) : null;
     if (!trap) mtmp.mtrapped = 0;
 
-    // C ref: hack.c domove_swap_with_pet() — five `didnt_move = TRUE` guards.
-    // All five used to be waved through ("none apply for a starting pet"), so
-    // the hero swapped where C stops, ending the turn on the wrong square.
-    // NOT PORTED here: the two boulder/opening-fit guards (they need
-    // verysmall()/bigmonst()/curr_mon_load() on the pet) and goodpos().
+    // C ref: hack.c:2120-2161 domove_swap_with_pet() — every refusal must
+    // preserve the hero on the old square.  The ordinary starter pony is
+    // large and cannot squeeze diagonally through two obstructed corners.
+    const pet_bad_rock = (px, py) => {
+        const loc = game.level?.at(px, py);
+        return !(mflags1_of(mtmp.data) & M1_TUNNEL)
+            && IS_OBSTRUCTED(loc ? loc.typ : STONE);
+    };
+    // C mon.c curr_mon_load(): this includes the pony's carried chest and
+    // saddle. Object weights are kept as owt by mkobj/add_to_minv.
+    const pet_load = () => (mtmp.minvent || [])
+        .reduce((sum, obj) => sum + (obj.owt ?? 0), 0);
     if (mtmp.mtrapped && trap && is_pit_ttyp(trap.ttyp) && boulder_at(trap.tx, trap.ty)) {
         // pet pinned in a pit by a boulder
         return false;
@@ -5455,12 +5589,23 @@ async function domove_swap_with_pet(mtmp, x, y) {
         await pline(`You stop.  ${Monnam(mtmp)} can't move diagonally.`);
         return false;
     }
+    if (boulder_at(u.ux0, u.uy0)
+        && (!mtmp.data?.verysmall || pet_load() > 600)) {
+        await pline(`You stop.  ${YMonnam(mtmp)} won't fit into the same spot that you're at.`);
+        return false;
+    }
+    if (u.ux0 !== x && u.uy0 !== y
+        && pet_bad_rock(x, u.uy0) && pet_bad_rock(u.ux0, y)
+        && ((mtmp.data?.msize ?? 2) >= 3 /* MZ_LARGE */ || pet_load() > 600)) {
+        await pline(`You stop.  ${YMonnam(mtmp)} won't fit through.`);
+        return false;
+    }
     if (mtmp.mpeaceful && mtmp.mtrapped && trap) {
         // C: feeltrap() reveals the trap on the map first when it wasn't seen.
-        if (!trap.tseen) { trap.tseen = 1; newsym(trap.tx, trap.ty); }
-        await pline(`You stop.  ${Monnam(mtmp)} can't move out of `
-                  + `${trap.tseen ? 'that' : an(trap_explanation(trap.ttyp))} `
-                  + `${trap_explanation(trap.ttyp)}.`);
+        const what = trapname(trap.ttyp, false);
+        let which = 'that ';
+        if (!trap.tseen) { trap.tseen = 1; newsym(trap.tx, trap.ty); which = `${an(what).slice(0, -what.length)}`; }
+        await pline(`You stop.  ${Monnam(mtmp)} can't move out of ${which}${what}.`);
         return false;
     }
     const { goodpos } = await import('./teleport.js');
@@ -5496,18 +5641,41 @@ async function domove_swap_with_pet(mtmp, x, y) {
     // peaceful non-pet is described with the "peaceful" adjective
     // ("the peaceful gnome"), and a named one suppresses "saddled ".
     const _given = mtmp.mgivenname || mtmp.mextra?.mgivenname;
+    const { type_is_pname } = await import('./objnam.js');
     const who = x_monnam(mtmp,
-        mtmp.mtame ? /*ARTICLE_YOUR*/ 3 : !_given ? /*ARTICLE_THE*/ 1 : /*ARTICLE_NONE*/ 0,
+        mtmp.mtame ? /*ARTICLE_YOUR*/ 3
+            : (!_given && !type_is_pname(mtmp.data)) ? /*ARTICLE_THE*/ 1 : /*ARTICLE_NONE*/ 0,
         (mtmp.mpeaceful && !mtmp.mtame) ? 'peaceful' : null,
         _given ? /*SUPPRESS_SADDLE*/ 0x08 : 0, false);
     await update_topl(`You ${verb} ${who}.`);
 
-    // NOT PORTED: C follows the swap with `minliquid(mtmp) ? Trap_Killed_Mon :
-    // mintrap(mtmp, NO_TRAP_FLAGS)` on the pet's new square — the pet can be
-    // caught, sent to another level, or drowned, and the drowned arm draws
-    // rn2(4) for the "guilty about losing your pet" penalty.  The refusal
-    // guards above already stop the common case (a trap on the hero's old
-    // square), so what remains is liquid terrain the hero just walked off.
+    // C ref: hack.c:2178 — check for displacing it into pools and traps.
+    const { minliquid } = await import('./mon.js');
+    const { mon_mintrap, Trap_Effect_Finished, Trap_Caught_Mon, Trap_Moved_Mon,
+            Trap_Killed_Mon } = await import('./monmove.js');
+    const tres = (await minliquid(mtmp)) ? Trap_Killed_Mon : await mon_mintrap(mtmp, 0);
+    if (tres === Trap_Caught_Mon || tres === Trap_Moved_Mon) {
+        /* there's already been a trap message, reinforce it */
+        const { abuse_dog } = await import('./uhitm.js');
+        await abuse_dog(mtmp);
+        (await import('./attrib.js')).adjalign(-3);
+    } else if (tres === Trap_Killed_Mon) {
+        /* minliquid() and mintrap() call mondead() rather than killed() so
+           the experience award is duplicated here */
+        const { experience } = await import('./uhitm.js');
+        const { more_experienced, newexplevel } = await import('./exper.js');
+        if (!u.uconduct) u.uconduct = {};
+        u.uconduct.killer = (u.uconduct.killer || 0) + 1;
+        more_experienced(experience(mtmp, game.mvitals?.[mtmp.data?.pmidx]?.died ?? 0), 0);
+        await newexplevel();
+        /* That's no way to treat a pet!  Your god gets angry. */
+        if (rn2(4)) {
+            await update_topl('You feel guilty about losing your pet like this.');
+            u.ugangr = (u.ugangr | 0) + 1;
+            (await import('./attrib.js')).adjalign(-15);
+        }
+    }
+    void Trap_Effect_Finished;
     return true;
 }
 
@@ -7020,6 +7188,7 @@ export async function dolookaround() {
             // '#', so the literal char cannot be tested).
             const cell = cmd_levl(x, y);
             const iscorr = corr_next2u && !!cell && !cell.disp_monster
+                && !is_cmap_engraving_at(x, y)
                 && [false, true].some((waslit) => {
                     const g = terrain_glyph({ typ: CORR, waslit }, x, y);
                     return cell.disp_ch === g.ch && !!cell.disp_decgfx === !!g.dec;
@@ -8953,6 +9122,15 @@ export async function doclicklook() {
 // C ref: getpos.c auto_describe(cx, cy) — the autodescribe line getpos() shows;
 // js/hack.js drives that inside its own getpos() loop.
 async function cmd_auto_describe(_cx, _cy) {}
+
+// C ref: cmd.c:195 reset_occupations() — an interrupted multi-turn activity
+// (taking off all armor, picking a lock, setting a trap) is forgotten once the
+// hero acts again (domove, a deliberate drop, being engulfed).
+export async function reset_occupations() {
+    (await import('./do_wear.js')).reset_remarm();
+    (await import('./lock.js')).reset_pick();
+    (await import('./apply.js')).reset_trapset();
+}
 
 // C ref: cmd.c:5394 yn_menuable_resp(resp) — can we use menu entries to respond
 // to this query?  C compares the resp POINTER against the shared ynchars &c

@@ -2,7 +2,7 @@
 // C ref: attrib.c.  Only the RNG-bearing routine exercised by the quaff /
 // zap / cast gameplay sessions is ported here.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { rn2, rn1, rnd, d } from './rng.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING } from './const.js';
 import { adj_erinys, monster_by_pmidx, name_to_pmidx } from './makemon.js';
@@ -66,7 +66,10 @@ function ensureAexe() {
 // (early return, no RNG).  Polymorph blocks all but A_WIS (no Upolyd at game
 // start).  When |AEXE(i)| < AVAL the accumulator is nudged: a gain rolls
 // rn2(19) > ACURR(i) (harder at higher attributes), a loss is -rn2(2).
-// encumber_msg() (A_STR/A_CON when moves>0) consumes no RNG.
+// encumber_msg() (A_STR/A_CON when moves>0) consumes no RNG but its message is
+// visible: exercise() stays synchronous (it has hundreds of callers), so when the
+// encumbrance level actually changed it returns encumber_msg()'s promise, which
+// `await exercise(...)` callers (exerper) sequence correctly.
 export function exercise(i, inc_or_dec) {
     if (i === A_INT || i === A_CHA)
         return;
@@ -77,7 +80,9 @@ export function exercise(i, inc_or_dec) {
         aexe[i] = (aexe[i] ?? 0)
             + (inc_or_dec ? (rn2(19) > ACURR(i) ? 1 : 0) : -rn2(2));
     }
-    // encumber_msg() for A_STR/A_CON is display-only; no RNG, omitted.
+    // C ref: attrib.c:516 `if (svm.moves > 0 && (i == A_STR || i == A_CON)) encumber_msg();`
+    if ((game.moves | 0) > 0 && (i === A_STR || i === A_CON) && hooks.encumberCheck)
+        return hooks.encumberCheck();
 }
 
 // C ref: attrib.c:221 losestr(num, knam, k_format) — Strength loss (poison,
@@ -197,8 +202,10 @@ export async function adjattrib(ndx, incr, msgflg) {
     ensureAexe()[ndx] = 0;
     game.disp_botl = true;
     game.botl = true;
-    if (msgflg <= 0)
-        await update_topl(`You feel ${(incr > 1 || incr < -1) ? 'very ' : ''}${attrstr}!`);
+    if (msgflg <= 0) {
+        const { You_feel } = await import('./display.js');
+        await You_feel(`${(incr > 1 || incr < -1) ? 'very ' : ''}${attrstr}!`);
+    }
     if ((ndx === A_STR || ndx === A_CON)) {
         const { encumber_msg } = await import('./invent.js');
         await encumber_msg();
@@ -245,43 +252,48 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
         await update_topl("The poison doesn't seem to affect you.");
         return;
     }
+    // C ref: attrib.c:345-355 — unique names and existing articles must not
+    // acquire another indefinite article; computed before any HP loss.
+    const { name_to_mon } = await import('./polyself.js');
+    const { type_is_pname, the } = await import('./objnam.js');
+    const { KILLED_BY_AN, KILLED_BY } = await import('./const.js');
+    let kprefix = KILLED_BY_AN;
+    {
+        const { mntmp } = await name_to_mon(pkiller);
+        const killerMon = monster_by_pmidx(mntmp);
+        if (killerMon && (killerMon.geno & 0x1000 /* G_UNIQ */)) {
+            kprefix = KILLED_BY;
+            if (!type_is_pname(killerMon)) pkiller = the(pkiller);
+        } else if (/^(?:the |an |a )/i.test(pkiller)) {
+            kprefix = KILLED_BY;
+        }
+    }
     let loss;
     const i = !fatal ? 1 : rn2(fatal + (thrown_weapon ? 20 : 0));   // attrib.c:362
     if (i === 0 && typ !== A_CHA) {
-        loss = 6 + d(4, 6);                                          // attrib.c:366
+        loss = 6 + d(4, 6);                                          // attrib.c:365
         if ((u.uhp | 0) <= loss) {
             u.uhp = -1;
             game.disp_botl = true; game.botl = true;
             await update_topl('The poison was deadly...');
         } else {
+            // survived, but with severe reaction
             const olduhp = u.uhp | 0;
-            u.uhpmax = Math.max((u.uhpmax | 0) - ((loss / 2) | 0), 3);
-            if (loss >= olduhp) loss = olduhp - 1;   // adjuhploss: never fatal here
-            u.uhp = olduhp - loss;
-            game.disp_botl = true; game.botl = true;
+            const newuhpmax = (u.uhpmax | 0) - ((loss / 2) | 0);
+            setuhpmax(Math.max(newuhpmax, minuhpmax(3)), true);
+            loss = adjuhploss(loss, olduhp);
+            const { losehp } = await import('./zap.js');
+            await losehp(loss, pkiller, kprefix);                    // poison damage
             if (await adjattrib(A_CON, (typ !== A_CON) ? -1 : -3, 1))
                 await poisontell(A_CON, true);
             if (typ !== A_CON && await adjattrib(typ, -3, 1))
                 await poisontell(typ, true);
         }
     } else if (i > 5) {
+        // HP damage; more likely--but less severe--with missiles
         loss = thrown_weapon ? rnd(6) : rn1(10, 6);                  // attrib.c:388
-        u.uhp = (u.uhp | 0) - loss;
-        game.disp_botl = true; game.botl = true;
-        // C ref: this branch calls the REAL hack.c losehp(), which prints
-        // "You die..." itself (urgent_pline) before done(DIED) whenever the
-        // damage is lethal — unlike the i==0 branch above (its own "The
-        // poison was deadly..." stands in for it) and the stat-loss branch
-        // below (never lethal via HP directly).  Without this, the death
-        // check just below silently opened the "Die?" wizard-mode prompt
-        // with no "You die..." line ever shown.
-        if ((u.uhp | 0) < 1) {
-            const { urgent_topl } = await import('./display.js');
-            await urgent_topl('You die...');
-        } else if (u.uhp * 10 < u.uhpmax) {
-            const { maybe_wail } = await import('./do.js');
-            await maybe_wail();
-        }
+        const { losehp } = await import('./zap.js');
+        await losehp(loss, pkiller, kprefix);                        // poison damage
     } else {
         loss = (thrown_weapon || !fatal) ? 1 : d(2, 2);              // attrib.c:395
         if (await adjattrib(typ, -loss, 1))
@@ -290,24 +302,8 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
     if ((u.uhp | 0) < 1) {
         // C ref: attrib.c:405 — done(strstri(pkiller,"poison") ? DIED : POISONING).
         const { done, DIED } = await import('./end.js');
-        const { name_to_mon } = await import('./polyself.js');
-        const { type_is_pname, the } = await import('./objnam.js');
         const { formatkiller } = await import('./topten.js');
-        const { KILLED_BY_AN, KILLED_BY } = await import('./const.js');
-        let kprefix = KILLED_BY_AN;
-        const { mntmp } = await name_to_mon(pkiller);
-        const killerMon = monster_by_pmidx(mntmp);
-        // C ref: attrib.c:345-355 — unique names and existing articles
-        // must not acquire another indefinite article.
-        if (killerMon && (killerMon.geno & 0x1000 /* G_UNIQ */)) {
-            kprefix = KILLED_BY;
-            if (!type_is_pname(killerMon)) pkiller = the(pkiller);
-        } else if (/^(?:the |an |a )/i.test(pkiller)) {
-            kprefix = KILLED_BY;
-        }
-        // The HP-damage arm reaches losehp()->done(DIED) before this
-        // final poison-specific check (attrib.c:391,401-405).
-        const how = i > 5 || /poison/i.test(pkiller || '') ? DIED : POISONING;
+        const how = /poison/i.test(pkiller || '') ? DIED : POISONING;
         game.killer = { ...(game.killer || {}), name: pkiller, format: kprefix };
         game._killer_name = formatkiller(256, how, false);
         await done(how);

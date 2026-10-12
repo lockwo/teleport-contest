@@ -17,7 +17,7 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
          MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
 import { mflags2_of, M2_PNAME } from './monflags_data.js';
 import { objects } from './mkobj.js';
-import { PRONOUN_HALLU, PL_PSIZ } from './const.js';
+import { PRONOUN_HALLU, PRONOUN_NO_IT, PL_PSIZ } from './const.js';
 import { PRONOUN_GENDERS } from './role.js';
 
 // Keep higher-level naming dependencies behind registration: a static import
@@ -38,8 +38,8 @@ export function mon_pmname(mtmp) {
 export const ARTICLE_NONE = 0, ARTICLE_THE = 1, ARTICLE_A = 2, ARTICLE_YOUR = 3;
 export const SUPPRESS_IT = 0x01, SUPPRESS_INVISIBLE = 0x02,
              SUPPRESS_HALLUCINATION = 0x04, SUPPRESS_SADDLE = 0x08,
-             EXACT_NAME = 0x0f, SUPPRESS_NAME = 0x10,
-             SUPPRESS_MAPPEARANCE = 0x20, AUGMENT_IT = 0x40;
+             EXACT_NAME = 0x1f, SUPPRESS_NAME = 0x20,
+             SUPPRESS_MAPPEARANCE = 0x10, AUGMENT_IT = 0x40;
 
 const BOGUSMON_DATA = decode_dlb(BOGUSMON_B64);
 
@@ -241,6 +241,17 @@ export function mhim(mon) {
 export function mhis(mon) {
     return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_HALLU)].his;
 }
+// C ref: you.h noit_mhe/noit_mhim/noit_mhis — "it" only for a neuter species,
+// and hallucination still rolls rn2(4) for the gender.
+export function noit_mhe(mon) {
+    return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_NO_IT | PRONOUN_HALLU)].he;
+}
+export function noit_mhim(mon) {
+    return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_NO_IT | PRONOUN_HALLU)].him;
+}
+export function noit_mhis(mon) {
+    return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_NO_IT | PRONOUN_HALLU)].his;
+}
 function Hallucination() { return !!(game.u?.uhallu || game.u?.Hallucination); }
 
 // C ref: do_name.c:1254 minimal_monnam(mon, ckloc) — debug-only naming that
@@ -435,7 +446,9 @@ export async function do_mgivenname() {
 
     /* Allow you to name the monster that has swallowed you */
     if (!mtmp && u.uswallow) {
-        if (D.glyph_is_swallow(D.glyph_at(cx, cy))) {
+        /* cell-model display: swallowed() draws the 8 neighbours of the hero
+           as swallow glyphs; the hero's own square was handled above */
+        if (Math.abs(cx - u.ux) <= 1 && Math.abs(cy - u.uy) <= 1) {
             mtmp = u.ustuck;
             do_swallow = true;
         }
@@ -547,7 +560,7 @@ const HLIQUIDS = [
 // C ref: do_name.c:1492 hliquid(liquidpref) — when a real default exists it is
 // added as one extra slot in the modulus, so the draw can select "keep it".
 export function hliquid(liquidpref) {
-    const hallucinate = Hallucination() && !game.program_state_gameover;
+    const hallucinate = Hallucination() && !game.program_state?.gameover;
     if (hallucinate || !liquidpref) {
         let count = HLIQUIDS.length;
         if (liquidpref) ++count;

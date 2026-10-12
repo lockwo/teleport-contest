@@ -12,6 +12,7 @@ import { pline, update_topl, Hallucination_u } from './display.js';
 import { SHKNAME_POOL } from './shknam.js';
 import { shtypes } from './shtypes.js';
 import { Hello } from './role.js';
+import { noit_mon_nam } from './do_name.js';
 import { rn2, rnd } from './rng.js';
 import { newomid } from './mkobj.js';
 import { get_cost, get_pricing_units, contained_cost, contained_gold,
@@ -139,6 +140,14 @@ export function shkname(shkp) {
     let nm = shkp.eshk?.shknam;
     if (!nm) return shkp.data?.name || 'shopkeeper';
     if (Hallucination_u() && !game.program_state?.gameover) {
+        /* C: `nam = noit_mon_nam(mtmp)` with isshk cleared (so mon_nam()
+           can't recurse back here).  The result is only the fallback buffer,
+           but a hallucinating hero's x_monnam() picks a random monster name
+           off the DISPLAY rng (rndmonnam) -- those draws are the point. */
+        const save_isshk = shkp.isshk;
+        shkp.isshk = 0;
+        noit_mon_nam(shkp);
+        shkp.isshk = save_isshk;
         /* count the number of non-unique shop types; pick one randomly,
            ignoring shop generation probabilities; pick a name at random
            from that shop type's list */

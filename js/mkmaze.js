@@ -565,8 +565,8 @@ function pickup_bubble_contents(b) {
                 // C: remove_worm()/remove_monster(x, y).  This port keys
                 // monsters off their own mx/my rather than a grid, so taking
                 // one off the map IS the coordinate write C does next.
-                newsym(x, y);            /* clean up old position */
                 mon.mx = mon.my = 0;
+                newsym(x, y);            /* clean up old position */
             }
             if (!g.u?.uswallow && x === g.u?.ux && y === g.u?.uy) {
                 b.cons.unshift({ x, y, what: 'hero', list: null });
@@ -1636,15 +1636,27 @@ export function restore_waterlevel(nhfp) {
 }
 
 // C ref: mkmaze.c:1949 mv_bubble(b, 0, 0, TRUE) as called from
-// restore_waterlevel().  With ini=TRUE and both deltas zero, every arm of
-// mv_bubble() except the "draw the bubbles" loop is a no-op: the collision
-// clamps cannot fire on a bubble that is already inside the box, the
-// replace-contents pass sees an empty b->cons, and the colli==0 default arm's
-// rn2(20)/rn2(5) is gated off by `!ini`.  So this is that loop, and nothing
-// here draws RNG.  (The private mv_bubble() above is left untouched.)
-function mv_bubble_restore(b) {
+// restore_waterlevel().  With ini=TRUE and both deltas zero the move itself is
+// a no-op, but the border-collision test still runs inside the
+// `!Is_airlevel(&u.uz) || !rn2(6)` arm (one rn2(6) per restored cloud on the
+// Plane of Air) and the "boing?" switch flips b->dx/b->dy of a bubble that
+// touches the border.  The replace-contents pass sees an empty b->cons, and the
+// colli==0 default arm's rn2(20)/rn2(5) is gated off by `!ini`.
+// (The private mv_bubble() above is left untouched.)
+export function mv_bubble_restore(b) {
     const water = !!Is_waterlevel(game.u?.uz);
     const air = !!Is_airlevel(game.u?.uz);
+    let colli = 0;
+    if (!air || !rn2(6)) {
+        if (b.x <= gbxmin()) colli |= 2;
+        if (b.y <= gbymin()) colli |= 1;
+        if ((b.x + b.bm[0] - 1) >= gbxmax()) colli |= 2;
+        if ((b.y + b.bm[1] - 1) >= gbymax()) colli |= 1;
+        if (b.x < gbxmin()) b.x = gbxmin();
+        if (b.y < gbymin()) b.y = gbymin();
+        if ((b.x + b.bm[0] - 1) > gbxmax()) b.x = gbxmax() - b.bm[0] + 1;
+        if ((b.y + b.bm[1] - 1) > gbymax()) b.y = gbymax() - b.bm[1] + 1;
+    }
     for (let i = 0, x = b.x; i < b.bm[0]; i++, x++)
         for (let j = 0, y = b.y; j < b.bm[1]; j++, y++)
             if (b.bm[j + 2] & (1 << i)) {
@@ -1653,6 +1665,20 @@ function mv_bubble_restore(b) {
                 if (water) { loc.typ = AIR; loc.lit = true; unblock_point(x, y); }
                 else if (air) { loc.typ = CLOUD; loc.lit = true; block_point(x, y); }
             }
+    /* boing? (ini: no colli==0 direction shake) */
+    switch (colli) {
+    case 1:
+        b.dy = -b.dy;
+        break;
+    case 3:
+        b.dy = -b.dy;
+        /* FALLTHRU */
+    case 2:
+        b.dx = -b.dx;
+        break;
+    default:
+        break;
+    }
 }
 
 // C ref: hack.h:971/972 update_file(nhfp) / release_data(nhfp).  js/save.js

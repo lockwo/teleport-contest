@@ -21,7 +21,7 @@ import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_obje
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
 import { option_help_lines } from './options.js';
-import { NO_COLOR, ATR_INVERSE } from './terminal.js';
+import { NO_COLOR, ATR_INVERSE, CLR_WHITE } from './terminal.js';
 import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE, KEYHELP, DEBUGHELP }
     from './pager_data.js';
 import { EXTCMD_TABLE } from './cmd_data.js';
@@ -117,7 +117,7 @@ export async function display_text_window(lines) {
         // any other key: ignored (bell) — re-render the same page and re-read
     }
     // Tear the window down and restore the map (docrt + flush_screen).
-    await dismiss_invent_screen();
+    await dismiss_invent_screen(true);
 }
 
 // C ref: pager.c display_file(fname, complain) -> win/tty/wintty.c
@@ -961,7 +961,7 @@ import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
     from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { engr_at } from './engrave.js';
-import { t_at, trap_explanation } from './trap.js';
+import { t_at, trapname } from './trap.js';
 import { trapped_chest_at, trapped_door_at } from './detect.js';
 import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
          VENOM_CLASS, COIN_CLASS, STATUE, CORPSE, SLIME_MOLD, LEASH,
@@ -1014,8 +1014,10 @@ function pg_upstart(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
 function pg_strstri(hay, needle) { return String(hay).includes(String(needle)); }
 function pg_Has_contents(o) { return !!(o && Array.isArray(o.cobj) && o.cobj.length); }
 function pg_objs_at(x, y) {
+    /* C's nexthere chain starts at the top of the pile; level.objects is in
+       placement order, so the newest (topmost) object is last. */
     return (game.level?.objects || []).filter(
-        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y).reverse();
 }
 function pg_sobj_at(otyp, x, y) {
     for (const o of pg_objs_at(x, y)) if (o.otyp === otyp) return o;
@@ -1070,7 +1072,7 @@ const CURSES_REMAPPED = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 // C ref: display.h glyph_at(x,y).  See the banner: a tagged descriptor, not an
 // int.  `kind` is 'monster' | 'object' | 'trap' | 'invisible' | 'warning' |
 // 'cmap' | 'nothing' | 'unexplored'.
-function pg_glyph_at(x, y) {
+export function pg_glyph_at(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return { kind: 'unexplored', x, y };
     const sym = (loc.disp_ch != null) ? loc.disp_ch : ' ';
@@ -1100,8 +1102,10 @@ function pg_glyph_at(x, y) {
                      corpsenm: otmp.corpsenm, sym, x, y };
     }
     const remembered = loc.remembered_glyph;
-    if (remembered?.objotyp && remembered.ch === sym)
-        return { kind: 'object', obj: null, otyp: remembered.objotyp,
+    // A glyph remembered while hallucinating is a random object glyph (hallucotyp);
+    // lookat()'s object_from_map() names that otyp once the hallucination ends.
+    if ((remembered?.objotyp || remembered?.hallucotyp) && remembered.ch === sym)
+        return { kind: 'object', obj: null, otyp: remembered.objotyp || remembered.hallucotyp,
                  corpsenm: remembered.corpsenm, sym, x, y };
     const tr = t_at(x, y);
     if (tr && tr.tseen && !covers_objects(loc)) {
@@ -1142,13 +1146,14 @@ function pg_glyph_is_body(g) {
 function cmap_index_for(loc, x, y) {
     const t = loc.typ;
     if (t === STONE || t === SCORR) return S_stone;
+    if (t === DBWALL) return loc.horizontal ? S_hcdbridge : S_vcdbridge;
     if (IS_WALL(t) || t === SDOOR) return 1;        /* S_vwall; "wall" */
     if (t === DOOR) {
         if ((loc.doormask | 0) & (D_CLOSED | D_LOCKED)) return 15;  /* S_vcdoor */
         if ((loc.doormask | 0) & D_ISOPEN) return 13;               /* S_vodoor */
         return S_ndoor;
     }
-    if (t === CORR) return cansee(x, y) && loc.waslit ? S_litcorr : S_corr;
+    if (t === CORR) return loc.disp_color === CLR_WHITE ? S_litcorr : S_corr;
     if (t === ROOM) return cansee(x, y) ? S_room : S_darkroom;
     // C ref: display.c back_to_glyph() STAIRS/LADDER cases — a *known branch*
     // staircase/ladder uses the S_br* pair; js/display.js's back_to_glyph()
@@ -1310,7 +1315,7 @@ export function trap_description(tnum, x, y) {
         return 'trapped chest';                     /* might be a large box */
     if (trapped_door_at(tnum, x, y))
         return 'trapped door';                      /* not "trap door"... */
-    return trap_explanation(tnum);
+    return trapname(tnum, false);
 }
 
 // C ref: pager.c:186 mhidden_description(mon, mhid_flags, outbuf) — the
@@ -1584,7 +1589,7 @@ export function look_at_monster(mtmp, x, y, wantMonbuf = true) {
         const tt = t ? t.ttyp : NO_TRAP;
         /* newsym lets you know of the trap, so mention it here */
         if (tt === BEAR_TRAP || pg_is_pit(tt) || tt === WEB) {
-            buf += `, trapped in ${pg_an(trap_explanation(tt))}`;
+            buf += `, trapped in ${pg_an(trapname(tt, false))}`;
             t.tseen = 1;
         }
     }
@@ -1634,7 +1639,7 @@ function rndmonnam() {
 
 /* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
 function pg_digests(ptr) {
-    return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */);
+    return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */ && a.adtyp === 26 /* AD_DGST */);
 }
 /* trap.h is_pit(ttyp) */
 function pg_is_pit(tt) { return tt === PIT || tt === (PIT + 1) /* SPIKED_PIT */; }
@@ -2371,7 +2376,7 @@ export async function look_traps(nearby) {
                 if (t && t.tseen
                     && ((!Is_waterlevel(game.u?.uz) && !Is_airlevel(game.u?.uz))
                         || couldsee(x, y))) {
-                    lookbuf = `${trap_explanation(t.ttyp)}`
+                    lookbuf = `${trapname(t.ttyp, false)}`
                             + `, obscured by ${encglyph(glyph)}`;
                     glyph = { kind: 'trap', trap: t, ttyp: t.ttyp,
                               sym: trap_glyph(t).ch };
@@ -2555,7 +2560,7 @@ export async function doidtrap() {
             if (u.dz) {
                 if (u.dz < 0 ? pg_is_hole(tt) : tt === ROCKTRAP) break;
             }
-            await update_topl(`That is ${pg_an(trap_explanation(tt))}`
+            await update_topl(`That is ${pg_an(trapname(tt, false))}`
                 + `${!trap.madeby_u ? ''
                     : (tt === WEB) ? ' woven'
                     /* trap doors and spiked pits can't be player-made, and are

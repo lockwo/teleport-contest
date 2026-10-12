@@ -81,6 +81,14 @@ function rowFirstMeaningfulCol(term, r, lastCol) {
     return 0;
 }
 
+// The rendition a blank cell's run is keyed on: only an attribute that paints
+// a blank (inverse/underline) makes its colour observable.
+const ANSI_RLE_MIN_RUN = 5;
+function blankStyle(cell) {
+    const attr = cell.attr | 0;
+    return attr ? `${attr}/${cell.color}` : '0';
+}
+
 /**
  * Serialize a Terminal's grid to the same wire format frozen serialize()
  * uses (rows separated by '\n', SGR transitions before runs, ESC[NC to
@@ -112,6 +120,21 @@ export function serializeGrid(term) {
         if (firstCol > 0) out += `\x1b[${firstCol}C`;
         for (let c = firstCol; c <= lastCol; c++) {
             const cell = term.grid[r][c];
+            // The recorder's ANSI run-length pass rewrites any run of
+            // ANSI_RLE_MIN_RUN+ blanks sharing one rendition as ESC[nC, which
+            // paints nothing: an inverse/underlined blank run that long is
+            // gone from the recording, so it must be gone from ours too.
+            if (cell.ch === ' ') {
+                const key = blankStyle(cell);
+                let e = c + 1;
+                while (e <= lastCol && term.grid[r][e].ch === ' '
+                       && blankStyle(term.grid[r][e]) === key) e++;
+                if (e - c >= ANSI_RLE_MIN_RUN) {
+                    out += `\x1b[${e - c}C`;
+                    c = e - 1;
+                    continue;
+                }
+            }
             const wantFg = colorToFg(cell.color);
             const wantAttr = cell.attr | 0;
             out += sgrTransition(curFg, curAttr, wantFg, wantAttr);

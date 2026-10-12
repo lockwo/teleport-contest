@@ -25,7 +25,7 @@ import {
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
     AD_PEST,
 } from './monattk_data.js';
-import { m_at, newsym, update_topl, map_invisible, Hallucination_u } from './display.js';
+import { m_at, newsym, update_topl, map_invisible, unmap_object, Hallucination_u } from './display.js';
 import { cansee, couldsee } from './vision.js';
 import { is_undead_flag, is_demon_flag, nonliving, is_demon_flag as is_demon } from './monflags_data.js';
 import { has_innate } from './exper.js';
@@ -74,9 +74,9 @@ function uprop(...names) {
 // imported here without an import cycle.
 function wornprop(prop) { return ((game.u?.uprops_extrinsic || {})[prop] | 0) !== 0; }
 function Antimagic() { return !!game.u?.formprops?.Antimagic || uprop('Antimagic', 'HAntimagic', 'EAntimagic') || !!game.u?.Antimagic || wornprop(ANTIMAGIC); }
-function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance') || wornprop(FIRE_RES); }
-function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance') || wornprop(COLD_RES); }
-export function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance') || wornprop(SHOCK_RES); }
+function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance') || has_innate('HFire_resistance') || wornprop(FIRE_RES); }
+function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance') || has_innate('HCold_resistance') || wornprop(COLD_RES); }
+export function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance') || has_innate('HShock_resistance') || wornprop(SHOCK_RES); }
 // A race-innate grant (e.g. every orc, from level 1) is never persisted as a
 // stored flag anywhere in js/ — OR in the pure has_innate() derivation.
 function Poison_resistance() {
@@ -85,7 +85,7 @@ function Poison_resistance() {
         || has_innate('HPoison_resistance') || wornprop(POISON_RES);
 }
 export function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance') || wornprop(ACID_RES); }
-function Disint_resistance() { return !!game.u?.formprops?.Disint_resistance || uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance') || wornprop(DISINT_RES); }
+function Disint_resistance() { return !!game.u?.formprops?.Disint_resistance || uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance') || has_innate('HDisint_resistance') || wornprop(DISINT_RES); }
 function Invulnerable() { return uprop('Invulnerable') || !!game.u?.uinvulnerable; }
 function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf') || !!game.u?.Deaf; }
 // C ref: you.h Upolyd == (u.mtimedone != 0).
@@ -370,6 +370,20 @@ export async function explode(x, y, type, dam, olet, expltype) {
                 const xx = x + i - 1, yy = y + j - 1;
                 if (explmask[i][j] !== EXPL_SKIP && cansee(xx, yy)) newsym(xx, yy);
             }
+        // C: with sparkle on, a cell holding a shielded monster/hero gets the
+        // blast glyph shown directly (explode.c:422-431, bypassing tmp_at).
+        // tmp_at only saves (and DISP_END only erases) cells the hero can see,
+        // so an unseen shielded cell keeps the blast symbol until redrawn.
+        if (game.flags?.sparkle !== false) {
+            const { show_expl_leftover } = await import('./display.js');
+            for (let i = 0; i < 3; i++)
+                for (let j = 0; j < 3; j++) {
+                    const xx = x + i - 1, yy = y + j - 1;
+                    if (explmask[i][j] !== EXPL_SKIP && (explmask[i][j] & (EXPL_MON | EXPL_HERO))
+                        && isok(xx, yy) && !cansee(xx, yy))
+                        show_expl_leftover(xx, yy, expltype, i + 3 * j);
+                }
+            }
     }
     if (!Deaf() && !didmsg) await update_topl('Boom!');
 
@@ -458,6 +472,8 @@ export async function explode(x, y, type, dam, olet, expltype) {
             // decide between "It is fatal." and "The <str> is fatal.".
             game.last_msg = PLNMSG_CAUGHT_IN_EXPLOSION;
         }
+        /* do property damage first, in case we end up leaving bones */
+        if (adtyp === AD_FIRE) await (await import('./timeout.js')).burn_away_slime();
         if (Invulnerable()) {
             damu = 0;
             await update_topl('You are unharmed!');
@@ -525,10 +541,12 @@ export async function explode(x, y, type, dam, olet, expltype) {
                 // snapshot until done() redraws them.
                 const { done } = await import('./end.js');
                 await done(adtyp === AD_FIRE ? BURNING : DIED);
+                // done() never returns once the hero actually dies.
+                if (game.program_state?.gameover) return;
             }
         }
         const { exercise } = await import('./attrib.js');
-        exercise(A_STR, false);
+        await exercise(A_STR, false);
     }
     if (shopdamage.value) {
         const { pay_for_damage } = await import('./shk.js');
@@ -558,8 +576,8 @@ function uhis() { return (game.u?.mfemale || game.u?.ufemale) ? 'her' : 'his'; }
 // square is known to hold no monster.
 function unmap_invisible_at(x, y) {
     const loc = game.level?.at?.(x, y);
-    if (loc && loc.glyph_is_invisible) {
-        loc.glyph_is_invisible = false;
+    if (loc && loc.invisMon) {
+        unmap_object(x, y);
         newsym(x, y);
     }
 }
@@ -670,8 +688,13 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
         const x = stmp.ox, y = stmp.oy;
         if (stmp.obj) {
             if (x !== sx || y !== sy) total += (stmp.obj.quan | 0);
-            place_object(stmp.obj, x, y);
-            stackobj(stmp.obj);
+            // C ref: explode.c:897 — an object that lands in water/lava or on a
+            // boulder-filling square is consumed by flooreffects() and not placed.
+            const { flooreffects } = await import('./do.js');
+            if (!await flooreffects(stmp.obj, x, y, 'land')) {
+                place_object(stmp.obj, x, y);
+                stackobj(stmp.obj);
+            }
         }
         newsym(x, y);
     }

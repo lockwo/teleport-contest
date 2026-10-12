@@ -6,6 +6,7 @@
 // per-slot <Armor>_on()/<Armor>_off() side effects, the wearability checks, and
 // the equipment-accessibility predicates, and invent.js calls into it.
 
+import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { game } from './gstate.js';
 import { hcolor } from './do_name.js';
 import { rnd } from './rng.js';
@@ -27,11 +28,12 @@ import {
 import { makeplural } from './plural.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { weapon_descr } from './weapon.js';
-import { youmonst_data_pub, nohands_youmonst, empty_handed } from './invent.js';
+import { youmonst_data_pub, nohands_youmonst, empty_handed, cmdq_clear, encumber_msg } from './invent.js';
 import { mflags1_of, M1_HUMANOID, M1_SLITHY } from './monflags_data.js';
 import { acurr_eff } from './attrib.js';
+import { has_innate } from './exper.js';
 import { uchangealign } from './pray.js';
-import { A_CG_HELM_ON, A_CG_HELM_OFF, A_CURRENT, A_NEUTRAL, A_CHAOTIC, A_LAWFUL } from './const.js';
+import { A_CG_HELM_ON, A_CG_HELM_OFF, A_CURRENT, A_NEUTRAL, A_CHAOTIC, A_LAWFUL, CQ_CANNED } from './const.js';
 import { condtests, bl_bareh } from './botl.js';
 
 /* onames.h otyps (this port's objects[] numbering, verified against
@@ -126,12 +128,28 @@ export function fingers_or_gloves(check_gloves) {
 // The generic noun for a slot, used by every "take off your %s" message.  These
 // live here because do_wear.c is their only caller.
 export function gloves_simple_name(obj) {
-    const nm = objects[obj?.otyp]?.name || '';
-    return /gauntlets/.test(nm) ? 'gauntlets' : 'gloves';
+    if (obj && obj.dknown) {
+        const ocl = objects[obj.otyp];
+        const actualn = ocl?.name || '', descrpn = obj_descr_text(ocl);
+        if ((ocl?.oc_name_known ? actualn : descrpn).includes('gauntlets'))
+            return 'gauntlets';
+    }
+    return 'gloves';
 }
+// C ref: objnam.c boots_simple_name() -- boots vs shoes; depends on discovery.
 export function boots_simple_name(obj) {
-    const nm = objects[obj?.otyp]?.name || '';
-    return /shoes/.test(nm) ? 'shoes' : 'boots';
+    if (obj && obj.dknown) {
+        const ocl = objects[obj.otyp];
+        if (obj_descr_text(ocl).includes('shoes')
+            || (ocl?.oc_name_known && (ocl.name || '').includes('shoes')))
+            return 'shoes';
+    }
+    return 'boots';
+}
+// OBJ_DESCR(): the appearance text, keyed by the (shuffled) oc_descr_idx.
+function obj_descr_text(ocl) {
+    if (!ocl) return '';
+    return DESCR_BY_OTYP[ocl.oc_descr_idx != null ? ocl.oc_descr_idx : ocl.otyp] || '';
 }
 export function cloak_simple_name(obj) {
     if (obj) {
@@ -223,7 +241,7 @@ function extrinsic_levitation_except(obj) {
     }
     return false;
 }
-function HStealth() { const u = game.u || {}; return !!(u.HStealth || u.uStealth || u.uprops?.HStealth); }
+function HStealth() { const u = game.u || {}; return !!(u.HStealth || u.uStealth || u.uprops?.HStealth || has_innate('HStealth')); }
 function BStealth() {
     /* C: stealth is blocked while riding unless hero+steed fly */
     const u = game.u || {};
@@ -699,8 +717,7 @@ export async function Gloves_off() {
     worn_slot_clear(WA_ARMG);
     gloves.owornmask = (gloves.owornmask | 0) & ~WA_ARMG;
     if (game.context?.takeoff) game.context.takeoff.cancelled_don = false;
-    /* encumber_msg(): immediate feedback for gauntlets of power; the caller's
-       once-per-input encumbrance check covers it. */
+    await encumber_msg(); /* immediate feedback for GoP */
     if (Glib()) {
         await (await import('./potion.js')).make_glib(0);
     }
@@ -1192,7 +1209,7 @@ export function stuck_ring(ring, otyp) {
     }
     return null;
 }
-function nolimbs_hero() { return false; /* only reachable while polymorphed */ }
+function nolimbs_hero() { return (mflags1_of(youmonst_data_pub()) & 0x6000 /* M1_NOLIMBS */) === 0x6000; }
 
 // C ref: do_wear.c:2687 unchanger()
 export function unchanger() {
@@ -1218,11 +1235,13 @@ export async function glibr() {
             const otmp = game.uleft;
             await Ring_off(otmp);
             await dropx(otmp);
+            cmdq_clear(CQ_CANNED);
         }
         if (rightfall) {
             const otmp = game.uright;
             await Ring_off(otmp);
             await dropx(otmp);
+            cmdq_clear(CQ_CANNED);
         }
     }
 
@@ -1236,6 +1255,7 @@ export async function glibr() {
         xfl++;
         wastwoweap = true;
         setuswapwep(null);
+        cmdq_clear(CQ_CANNED);
         if (await canletgo(otmp, '')) await dropx(otmp);
     }
     otmp = game.uwep;
@@ -1253,6 +1273,7 @@ export async function glibr() {
         await pline(`${thiswep.startsWith('corpse') ? 'The' : 'Your'} ${otherwep ? 'other ' : ''}${thiswep} ${xfl ? 'also ' : ''}${otense(otmp, 'slip')} from your ${which}${hand}.`);
         otmp.quan = savequan;
         setuwep_slot(null);
+        cmdq_clear(CQ_CANNED);
         if (await canletgo(otmp, '')) await dropx(otmp);
     }
 }
@@ -1457,35 +1478,38 @@ async function maybe_destroy_armor(armor, atmp, res) {
 // outermost one that fails its save).  Returns true if something was destroyed.
 export async function disintegrate_arm(atmp) {
     let otmp = null;
+    let losing_gloves = false;
     const rc = { resisted: false }, rs = { resisted: false }, r = { resisted: false };
+    // C ref: do_wear.c:3215-3243 — every destruction message is an
+    // urgent_pline(), so it shows even after ESC dismissed an earlier --More--.
+    const { urgent_topl } = await import('./display.js');
     if ((otmp = await maybe_destroy_armor(game.uarmc, atmp, rc)) != null) {
-        await pline(`Your ${cloak_simple_name(otmp)} crumbles and turns to dust!`);
+        await urgent_topl(`Your ${cloak_simple_name(otmp)} crumbles and turns to dust!`);
     } else if (!rc.resisted
                && (otmp = await maybe_destroy_armor(game.uarm, atmp, rs)) != null) {
         const suit = suit_simple_name(otmp);
         if (otmp.lamplit) otmp.lamplit = 0; // light.c end_burn(otmp, FALSE)
-        await pline(`Your ${suit} ${vtense_dw(suit, 'turn')} to dust and `
+        await urgent_topl(`Your ${suit} ${vtense_dw(suit, 'turn')} to dust and `
             + `${vtense_dw(suit, 'fall')} to the ${await surface_dw()}!`);
     } else if (!rc.resisted && !rs.resisted
                && (otmp = await maybe_destroy_armor(game.uarmu, atmp, r)) != null) {
-        await pline(`Your ${shirt_simple_name(otmp)} crumbles into tiny threads`
+        await urgent_topl(`Your ${shirt_simple_name(otmp)} crumbles into tiny threads`
             + ' and falls apart!');
     } else if ((otmp = await maybe_destroy_armor(game.uarmh, atmp, r)) != null) {
-        await pline(`Your ${helm_simple_name(otmp)} turns to dust and is blown away!`);
+        await urgent_topl(`Your ${helm_simple_name(otmp)} turns to dust and is blown away!`);
     } else if ((otmp = await maybe_destroy_armor(game.uarmg, atmp, r)) != null) {
-        await pline(`Your ${gloves_simple_name(otmp)} vanish!`);
-
+        await urgent_topl(`Your ${gloves_simple_name(otmp)} vanish!`);
+        losing_gloves = true;
     } else if ((otmp = await maybe_destroy_armor(game.uarmf, atmp, r)) != null) {
-        await pline(`Your ${boots_simple_name(otmp)} disintegrate!`);
+        await urgent_topl(`Your ${boots_simple_name(otmp)} disintegrate!`);
     } else if ((otmp = await maybe_destroy_armor(game.uarms, atmp, r)) != null) {
-        await pline(`Your ${shield_simple_name(otmp)} crumbles away!`);
+        await urgent_topl(`Your ${shield_simple_name(otmp)} crumbles away!`);
     } else {
         return false;
     }
     await wornarm_destroyed(otmp);
-    // C: `if (losing_gloves) selftouch("You");` — js/trap.js's selftouch() is a
-    // no-op in this port (no wielded cockatrice corpse is reachable here), so
-    // the glove branch needs no extra call.
+    /* glove loss means wielded weapon will be touched */
+    if (losing_gloves) await (await import('./polyself.js')).selftouch('You');
     const { stop_occupation } = await import('./hack.js');
     await stop_occupation();   // C: disintegrate_arm() ends with stop_occupation()
     return true;

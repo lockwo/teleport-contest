@@ -11,6 +11,8 @@ import { ATR_INVERSE, ATR_NONE, NO_COLOR } from './terminal.js';
 // C ref: do_name.c hliquid() — surface() names pools/lava through it, so the
 // Hallucination substitution (and its display-RNG draw) applies there too.
 import { hliquid } from './do_name.js';
+import { is_animal } from './monflags_data.js';
+import { mattk_of, AT_ENGL, AD_DGST, AD_WRAP } from './monattk_data.js';
 import {
     MAXDUNGEON, MAXLEVEL,
     TBR_STAIR, TBR_NO_UP, TBR_NO_DOWN, TBR_PORTAL,
@@ -350,7 +352,12 @@ function branch_val(bp) {
         + (bp.end2.dnum * (MAXLEVEL + 1) + bp.end2.dlevel)));
 }
 
-export function insert_branch(new_branch) {
+export function insert_branch(new_branch, extract_first = false) {
+    if (extract_first) {
+        const i = game.branches.indexOf(new_branch);
+        if (i < 0) throw new Error('insert_branch: not found');
+        game.branches.splice(i, 1);
+    }
     game.branches.push(new_branch);
     game.branches.sort((a, b) => branch_val(a) - branch_val(b));
 }
@@ -1310,16 +1317,12 @@ function overview_plur(n) { return n === 1 ? '' : 's'; }
 
 // C ref: dungeon.c count_feat_lastseentyp() — counts seen cells of a given
 // terrain, capped at 3 (matches print_mapseen's "no/a/some/many" scale).
-// lastseentyp isn't tracked separately here; a cell with a remembered_glyph
-// has necessarily been seen, which is the same "has the hero observed this"
-// gate hack.js's #terrain (reveal_terrain) uses.
-function overview_count_feat(level, pred) {
+// Reads the level's lastseentyp[][] (see display.js update_lastseentyp_d).
+function overview_count_feat(lst, pred) {
     let n = 0;
     for (let x = 1; x < COLNO; x++) {
         for (let y = 0; y < ROWNO; y++) {
-            const loc = level?.at(x, y);
-            if (!loc || loc.remembered_glyph == null) continue;
-            if (pred(loc.typ)) {
+            if (pred(lst?.[x]?.[y] ?? 0)) {
                 n++;
                 if (n >= 3) return 3;
             }
@@ -1333,12 +1336,12 @@ function overview_count_feat(level, pred) {
 // their shared alignment, collapsing to MSA_NONE the moment two mapped altars
 // disagree.  Kept separate from overview_count_feat() because the alignment
 // has to be folded in per cell, before the count saturates.
-function overview_altars(level) {
+function overview_altars(level, lst) {
     let naltar = 0, msalign = MSA_NONE;
     for (let x = 1; x < COLNO; x++) {
         for (let y = 0; y < ROWNO; y++) {
             const loc = level?.at(x, y);
-            if (!loc || loc.remembered_glyph == null || !IS_ALTAR(loc.typ)) continue;
+            if (!loc || !IS_ALTAR(lst?.[x]?.[y] ?? 0)) continue;
             // rm.h unions altarmask with flags, and this port writes whichever
             // of the two the creating call site used (display.c's own ALTAR arm
             // reads them the same way).
@@ -1354,6 +1357,11 @@ function overview_altars(level) {
 // The live level if `ledger` is the hero's current one, else the stashed
 // per-level object graph do.js's goto_level() keeps for previously-visited
 // levels (the JS analog of a level's on-disk save file).
+function overview_lastseentyp_for(ledger) {
+    const u = game.u;
+    if (u && u.uz && `${u.uz.dnum}:${u.uz.dlevel}` === ledger) return game.lastseentyp;
+    return game._level_store?.[ledger]?.lastseentyp || null;
+}
 function overview_level_for(ledger) {
     const u = game.u;
     if (u && u.uz && `${u.uz.dnum}:${u.uz.dlevel}` === ledger) return game.level;
@@ -1477,6 +1485,19 @@ export async function build_overview_lines(final = 0, how = 0) {
     // C ref: init_mapseen() inserts each level in ascending (dnum, dlevel)
     // order, so mapseenchn traversal is already sorted that way.
     parsed.sort((a, b) => (a.dnum - b.dnum) || (a.dlevel - b.dlevel));
+    // C ref: dungeon.c:3322-3325 show_overview() — in the endgame the Planes are
+    // listed first (traverse_mapseenchn(1, ...)) and the rest of the dungeon
+    // only for the end-of-game disclosure (why > 0).
+    const inEndgame = !!In_endgame(u?.uz);
+    if (inEndgame) {
+        const eg = parsed.filter((p) => In_endgame({ dnum: p.dnum, dlevel: p.dlevel }));
+        const rest = final ? parsed.filter((p) => !In_endgame({ dnum: p.dnum, dlevel: p.dlevel })) : [];
+        parsed.length = 0;
+        parsed.push(...eg, ...rest);
+    } else {
+        for (let i = parsed.length - 1; i >= 0; i--)
+            if (In_endgame({ dnum: parsed[i].dnum, dlevel: parsed[i].dlevel })) parsed.splice(i, 1);
+    }
 
     // A dungeon's dunlev_ureached is, by definition, at least as deep as any
     // level of it the hero has actually visited.  A lua-scripted level entry
@@ -1498,13 +1519,14 @@ export async function build_overview_lines(final = 0, how = 0) {
         // C's mapseen survives without the level being in memory, so a level
         // whose stashed map is gone still prints its heading line — dropping it
         // here lost the annotated Dlvl 1 of any game that had moved on.
+        const lst = overview_lastseentyp_for(p.ledger);
         const feat = level ? {
-            nthrone: overview_count_feat(level, IS_THRONE),
-            nfount: overview_count_feat(level, IS_FOUNTAIN),
-            nsink: overview_count_feat(level, IS_SINK),
-            ngrave: overview_count_feat(level, IS_GRAVE),
-            ntree: overview_count_feat(level, (t) => t === TREE),
-            ...overview_altars(level),
+            nthrone: overview_count_feat(lst, IS_THRONE),
+            nfount: overview_count_feat(lst, IS_FOUNTAIN),
+            nsink: overview_count_feat(lst, IS_SINK),
+            ngrave: overview_count_feat(lst, IS_GRAVE),
+            ntree: overview_count_feat(lst, (t) => t === TREE),
+            ...overview_altars(level, lst),
         } : { nthrone: 0, nfount: 0, nsink: 0, ngrave: 0, ntree: 0,
               naltar: 0, msalign: MSA_NONE };
         const ms = game._mapseen?.[p.ledger] || null;
@@ -1567,7 +1589,16 @@ export async function build_overview_lines(final = 0, how = 0) {
         // level which remains unsolved".
         const soko_interest = In_sokoban({ dnum: p.dnum, dlevel: p.dlevel })
             && (In_sokoban(game.u?.uz) || !cms?.flags?.sokosolved);
-        if (!final && !onHere && !ofInterest && !annotated && !custom && !ms?.br && !isDeepest
+        // C ref: dungeon.c:2909-2913 interest_mapseen() — "when in the endgame,
+        // list all endgame levels visited, whether they have annotations or not".
+        const egInterest = inEndgame && In_endgame({ dnum: p.dnum, dlevel: p.dlevel });
+        // C ref: dungeon.c:2886-2892 interest_mapseen() — in the tutorial list only
+        // tutorial levels; outside it never list tutorial levels.
+        if (!final && !onHere) {
+            if (In_tutorial(game.u?.uz) ? !In_tutorial({ dnum: p.dnum, dlevel: p.dlevel })
+                : In_tutorial({ dnum: p.dnum, dlevel: p.dlevel })) continue;
+        }
+        if (!final && !egInterest && !onHere && !ofInterest && !annotated && !custom && !ms?.br && !isDeepest
             && !soko_interest) continue;
         const showheader = p.dnum !== lastdun;
         // C: the quest and Fort Ludios levels are numbered as if level 1.
@@ -1593,7 +1624,10 @@ export async function build_overview_lines(final = 0, how = 0) {
             lastdun = p.dnum;
         }
 
-        let lbuf = `${OVERVIEW_TAB}Level ${depthstart + p.dlevel - 1}:`;
+        // C ref: dungeon.c:3555-3560 — an endgame level is listed by plane name.
+        let lbuf = In_endgame({ dnum: p.dnum, dlevel: p.dlevel })
+            ? `${OVERVIEW_TAB}${endgamelevelname(depthstart + p.dlevel - 1)}:`
+            : `${OVERVIEW_TAB}Level ${depthstart + p.dlevel - 1}:`;
         // C ref: print_mapseen():3567 — "wizmode prints out proto dungeon names
         // for clarity".  Sits BEFORE the custom annotation.
         if (wizard()) {
@@ -1677,8 +1711,18 @@ export async function build_overview_lines(final = 0, how = 0) {
             /* C ref: dungeon.c:3709 formatkiller(.., how, TRUE): this port's
                parallel killer string already carries the "killed by" prefix;
                the ", while <multi_reason>" tail is topten.c formatkiller's. */
-            let kbuf = game._killer_name || 'died';
-            if ((game.multi ?? 0) < 0) {
+            let kbuf = game._killer_name || '';
+            let helpless_done = false;
+            if (!kbuf && game.killer?.name) {
+                /* killers set only on game.killer (explode.c's gas spore
+                   blast, ...): the real topten.c formatkiller() text */
+                const { formatkiller } = await import('./topten.js');
+                kbuf = formatkiller(BUFSZ, how, true);
+                helpless_done = true;
+            } else if (!kbuf) {
+                kbuf = 'died';
+            }
+            if (!helpless_done && (game.multi ?? 0) < 0) {
                 const room = BUFSZ - kbuf.length;
                 const why = game.multi_reason;
                 if (why && String(why).length + 9 <= room) kbuf += `, while ${why}`;
@@ -1730,13 +1774,20 @@ export { hliquid } from './do_name.js';
 // "sit on the %s", "Having fun sitting on the %s?", etc.  SURFACE_AT resolves
 // a raised drawbridge to the terrain beneath it; the contest sessions never
 // sit on a raised drawbridge, so the plain typ is used.
+function engl_adtyp(ptr, dtyp) {
+    return mattk_of(ptr).some((a) => a.adtyp === dtyp && a.aatyp === AT_ENGL);
+}
 export function surface(x, y) {
     const u = game.u || {};
     const lev = game.level?.at(x, y) || {};
     const levtyp = lev.typ; // SURFACE_AT(x,y): DRAWBRIDGE_UP resolves under-typ
     const uz = u.uz;
-    if (x === u.ux && y === u.uy && u.uswallow && u.ustuck)
-        return 'maw'; /* swallowed: 'husk'/'maw' — not reached by contest hero */
+    if (x === u.ux && y === u.uy && u.uswallow && u.ustuck
+        && is_animal(u.ustuck.data))
+        /* 'husk' is iffy but maw is wrong for 't' class */
+        return engl_adtyp(u.ustuck.data, AD_DGST) ? 'maw'
+               : engl_adtyp(u.ustuck.data, AD_WRAP) ? 'husk'
+                 : 'nonesuch';
     else if (IS_AIR(levtyp))
         return Is_waterlevel(uz) ? 'air bubble'
                                  : (levtyp === CLOUD) ? 'cloud' : 'air';
@@ -1906,7 +1957,7 @@ function Is_sanctum(lev) {
 // C ref: dungeon.c:1690 has_ceiling(lev).  NOTE: monmove.js:948's private copy
 // answers `!Is_airlevel && !Is_waterlevel` and ignores its argument, so it says
 // TRUE on the Astral Plane and the Planes of Fire/Earth where C says FALSE.
-function has_ceiling(lev) {
+export function has_ceiling(lev) {
     if (In_endgame(lev) && !Is_earthlevel(lev))
         return false;
     return true;
@@ -2863,9 +2914,14 @@ export function overview_stats(win, statsfmt, totals) {
             ++bcount;
             bsize += SIZEOF_CEMETERY;
         }
-        if (mptr.custom_lth) {
+        // The #annotate prompt (extcmd-handlers.js donamelevel) records text in
+        // game._level_annotations, keyed by "dnum:dlevel"; C keeps it in
+        // mapseen.custom/custom_lth.
+        const custom_lth = mptr.custom_lth
+            || (game._level_annotations?.[`${mptr.lev.dnum}:${mptr.lev.dlevel}`] || '').length;
+        if (custom_lth) {
             ++acount;
-            asize += (mptr.custom_lth + 1);
+            asize += (custom_lth + 1);
         }
     }
 

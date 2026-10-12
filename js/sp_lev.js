@@ -67,7 +67,7 @@ import { mkgold, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
          OIL_LAMP, ARROW,
          bless, unbless, curse, uncurse, blessorcurse, discard_minvent,
          GEM_CLASS, COIN_CLASS, stop_object_timer,
-         start_object_timer, start_level_timer } from './mkobj.js';
+         start_object_timer, start_level_timer, stamp_fobj } from './mkobj.js';
 import { monster_by_pmidx, name_to_pmidx, makemon,
          mkclass, mkclass_aligned, mm_mon_at, enexto_spawn, mongets_pub,
          name_gender_hint, MGEND_NEUTRAL, MM_ASLEEP, MM_NOGRP,
@@ -138,6 +138,7 @@ export { makemaz_tower1 } from './levels/tower1.js';
 export { makemaz_tower2 } from './levels/tower2.js';
 export { makemaz_tower3 } from './levels/tower3.js';
 export { makemaz_valley } from './levels/valley.js';
+export { makemaz_knox } from './levels/knox.js';
 // Gehennom demon-lair levels (gehennom.diff)
 export { makemaz_asmodeus } from './levels/asmodeus.js';
 export { makemaz_baalz, baalz_fixup } from './levels/baalz.js';
@@ -1224,6 +1225,7 @@ function place_floor_obj(otmp, x, y) {
     otmp.nobj = game.level.fobj || null;
     game.level.fobj = otmp;
     game.level.objects.push(otmp);
+    stamp_fobj(otmp);
 }
 
 // C ref: themerms.lua "Buried zombies".  For each of (rm.width*rm.height)/2
@@ -2322,9 +2324,14 @@ export function quest_create_monster(name, mx, my, peacefulOverride) {
     // :2125 overwrites makemon's own roll with it.
     const gender = { v: NEUTRAL };
     const pmidx = find_montype(name, gender);
-    const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
+    let ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
     rn2(3);                                            // induced_align (dungeon.c:2012)
+    // C ref: sp_lev.c:1946-1952 -- an extinct unique is not created; any
+    // other genocided/extinct species is replaced by a random monster.
+    const g_mvflags = (game.mvitals?.[ptr.pmidx]?.mvflags) || 0;
+    if ((ptr.geno & G_UNIQ) && (g_mvflags & G_EXTINCT)) return null;
+    if (g_mvflags & G_GONE) ptr = null;
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
         const cc = enexto_spawn(x, y, ptr);
@@ -2335,7 +2342,7 @@ export function quest_create_monster(name, mx, my, peacefulOverride) {
     if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
     // C ref: makemon.c S_EEL case -> hideunder(mtmp) during mklev: an eel on a
     // pool becomes mundetected (submerged), so it renders as water.  No RNG.
-    if (mtmp && ptr.mcls === 57 /* S_EEL */) {
+    if (mtmp && ptr && ptr.mcls === 57 /* S_EEL */) {
         const t = game.level?.at(x, y)?.typ;
         if (t === POOL || t === MOAT || t === WATER) mtmp.mundetected = true;
     }
@@ -3814,7 +3821,17 @@ export function vly_non_diggable(mx1, my1, mx2, my2) {
 export function vly_object({ otyp = null, oclass = null, montype = null }) {
     const { x, y } = splev_get_location_rnd(LOC_DRY);
     let otmp;
-    if (otyp != null) otmp = mksobj_at(otyp, x, y, true, true);
+    if (otyp != null) {
+        otmp = mksobj_at(otyp, x, y, true, true);
+        // C ref: lspo_object() sets tmpobj.spe for these ids (gender/historic flags
+        // for corpse/statue, laid_by_you for egg, else 0) and create_object()
+        // applies it (`o->spe != -127`) right after mksobj_at() -- before
+        // montype's set_corpsenm().  A plain des.object corpse therefore carries
+        // no gender bits and reads "cave dweller corpse", not "cavewoman corpse".
+        if (otmp && (otyp === CORPSE || otyp === STATUE || otyp === otyp_by_name('egg')
+                     || otyp === otyp_by_name('tin') || otyp === otyp_by_name('figurine')))
+            otmp.spe = 0;
+    }
     else if (oclass != null) otmp = mkobj_at(oclass, x, y, true);
     else otmp = mkobj_at(0 /* RANDOM_CLASS */, x, y, true);
     if (otmp && montype != null) {
@@ -4089,6 +4106,14 @@ export function splev_create_monster({ name = null, cls = 0, mx = null, my = nul
         if (ptr) female = gender.v;
     }
     rn2(3);                                           // induced_align dungeon.c:2012
+    if (ptr) {
+        // C ref: sp_lev.c:1946-1952 create_monster() -- an extinct unique is
+        // not created at all; any other genocided/extinct species is replaced
+        // by a random monster.
+        const g_mvflags = (game.mvitals?.[ptr.pmidx]?.mvflags) || 0;
+        if ((ptr.geno & G_UNIQ) && (g_mvflags & G_EXTINCT)) return null;
+        if (g_mvflags & G_GONE) ptr = null;
+    }
     if (name == null && cls) ptr = mkclass(cls, 0x0200 /* G_NOGEN */);
     if (splev_In_mines() && ptr && splev_your_race(ptr)
         && (splev_race_is('dwarf') || splev_race_is('gnome')) && rn2(3))

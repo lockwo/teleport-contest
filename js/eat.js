@@ -10,7 +10,7 @@ import { s_suffix } from './hacklib.js';
 import { pline, update_topl, y_n, note_topl, status_hold } from './display.js';
 import { poison_strdmg, exercise, acurr_eff, adjattrib } from './attrib.js';
 import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, STOMACH, ALTAR, NOSE, W_ARMOR, W_TOOL, W_AMUL, W_SADDLE, W_RING, G_GENOD, Has_contents,
-         INTRINSIC, INVIS, DISPLACED, UNCHANGING, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
+         INTRINSIC, INVIS, DISPLACED, UNCHANGING, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, COST_BITE } from './const.js';
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_CLING, M1_POIS, M1_METALLIVORE, M1_NOHANDS, M1_CARNIVORE, M1_HERBIVORE, M1_HUMANOID, M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, noncorporeal }
     from './monflags_data.js';
@@ -86,6 +86,14 @@ let _mkobj = null;
 let _engrave = null;
 let _vision = null;
 let _objnam = null;
+// C ref: youprop.h Poison_resistance (HPoison_resistance || EPoison_resistance
+// || race/role innate || polyform): the worn half lives in invent.js's
+// extrinsic word (POISON_RES == 6), which u.uprops never carries.
+function Poison_res_eat() {
+    const u = game.u;
+    return !!(u?.uprops?.Poison_resistance || has_innate('HPoison_resistance')
+              || (_invent?.worn_extrinsic(6 /* POISON_RES */) | 0));
+}
 async function loadEatDeps() {
     if (!_objnam) _objnam = await import('./objnam.js');
     if (!_invent) _invent = await import('./invent.js');
@@ -370,6 +378,8 @@ function rounddiv(num, den) {
 }
 
 function objName(otmp) {
+    // C: singular(otmp, xname) -- includes any "named" suffix, erosion words etc.
+    if (_objnam?.singular) return _objnam.singular(otmp, _objnam.xname);
     return _mkobj?.objects?.[otmp.otyp]?.name || 'food';
 }
 
@@ -390,6 +400,11 @@ function food_xname(otmp, the_pfx) {
         result = _objnam ? _objnam.singular(otmp, _objnam.xname) : objName(otmp);
     }
     return the_pfx ? _objnam.the(result) : result;
+}
+
+export async function food_xname_async(otmp, the_pfx) {
+    await loadEatDeps();
+    return food_xname(otmp, the_pfx);
 }
 
 // C ref: eat.c is_edible() — "FOOD_CLASS and not a unique object" for an
@@ -456,7 +471,7 @@ function carried(otmp) { return otmp?.where === OBJ_INVENT; }
 // Returns the single-item object that will be eaten.  The inv_cnt >= 52
 // overflow branch (dropy instead of addinv, which can also delete the object
 // and abort the meal) is not modelled: the port has no inv_cnt().
-function touchfood(otmp) {
+async function touchfood(otmp) {
     const was_carried = carried(otmp);
     if ((otmp.quan || 1) > 1 && !was_carried && otmp.where === OBJ_FLOOR
         && Array.isArray(game.level?.objects)) {
@@ -475,11 +490,15 @@ function touchfood(otmp) {
         rest.owt = _mkobj.weight(rest);
         const objs = game.level.objects;
         objs.splice(objs.indexOf(otmp), 0, rest);
+    } else if ((otmp.quan || 1) > 1 && was_carried) {
+        // C: otmp = splitobj(otmp, 1L) — the real splitobj() (nextoid's rnd(2),
+        // and splitbill() when the stack is unpaid).
+        otmp = _invent.splitobj(otmp, 1);
     } else if ((otmp.quan || 1) > 1) {
         // C: splitobj(otmp, 1L) -> nextoid() -> next_ident() == one rnd(2).
         // This path builds the bitten item directly, so it advances
         // context.ident here rather than calling invent.js's splitobj().
-        _mkobj.next_ident();    // the single rnd(2) the C records at this point
+        _mkobj.nextoid(otmp, otmp);    // nextoid(): o_id price-parity loop then the single rnd(2)
         const stack = otmp;
         otmp = {
             ...stack,
@@ -494,7 +513,14 @@ function touchfood(otmp) {
         stack.quan -= 1;
         stack.owt = _mkobj.weight(stack);
     }
-    if (!otmp.oeaten) otmp.oeaten = obj_nutrition(otmp);
+    if (!otmp.oeaten) {
+        // C ref: eat.c touchfood() — `costly_alteration(otmp, COST_BITE)` bills
+        // an unpaid (or shop-floor) item the hero bites into, before the
+        // initial oeaten is set.  bill_dummy_object() draws next_ident()'s rnd(2).
+        const { costly_alteration } = await import('./shk.js');
+        await costly_alteration(otmp, COST_BITE);
+        otmp.oeaten = obj_nutrition(otmp);
+    }
     // freeinv + addinv_nomerge (eat.c:373-385) for every carried piece.  With
     // fixinv this is letter- and position-neutral for a whole item, but with
     // 'nofixinv' addinv appends the object to the END of the chain, which
@@ -525,7 +551,7 @@ async function do_reset_eat() {
     const v = (game.context = game.context || {}).victual;
     if (v && v.piece) {
         v.o_id = 0;
-        const otmp = touchfood(v.piece);
+        const otmp = await touchfood(v.piece);
         v.piece = otmp;
         if (otmp) { v.o_id = otmp.o_id; recalc_wt(); }
     }
@@ -639,11 +665,10 @@ export async function newuhs(incr) {
                     game._hunger_msgs.faintDuration = duration;
                 } else {
                     game._eat_occupation = null;
-                    game._pending_message = note_topl('You faint from lack of food.');
-                    game._toplin = 1;
+                    await update_topl('You faint from lack of food.');
                     u.uprops = u.uprops || {};
                     u.uprops.HDeaf = (u.uprops.HDeaf || 0) + duration;
-                    if ((game.multi ?? 0) >= -duration) game.multi = -duration;
+                    (await import('./hack.js')).nomul(-duration);
                     game.multi_reason = 'fainted from lack of food';
                     game.nomovemsg = 'You regain consciousness.';
                     game.afternmv = unfaint;
@@ -656,7 +681,7 @@ export async function newuhs(incr) {
             const { bot } = await import('./display.js');
             await bot();
             await update_topl('You die from starvation.');
-            game._killer_name = 'starvation';
+            game._killer_name = 'died of starvation';
             const { done } = await import('./end.js');
             const { STARVING } = await import('./const.js');
             await done(STARVING);
@@ -714,7 +739,7 @@ export async function newuhs(incr) {
             game._pending_message = savedPending;
             game._toplin = savedToplin;
         }
-        else if (savedPending && (newhs === HUNGRY || newhs === WEAK)) {
+        else if (newhs === HUNGRY || newhs === WEAK) {
             // C: You("only feel hungry now") is a pline(): it concatenates onto
             // (or --More--s after) the message already on the topline instead
             // of replacing it.
@@ -790,7 +815,7 @@ function mungspaces(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 // When not paranoid this is plain yn_function(prompt, "yn", 'n'); when paranoid
 // the answer is typed on the top line and only a full "yes" confirms (and, with
 // paranoid_confirm also set, only a full "no" rejects, up to 6 tries).
-async function paranoid_ynq(be_paranoid, prompt, accept_q) {
+export async function paranoid_ynq(be_paranoid, prompt, accept_q) {
     let c = 'n';
     if (be_paranoid) {
         const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
@@ -916,10 +941,8 @@ export async function vomit() {
         else spewed = true;
     }
     if ((game.multi ?? 0) >= -2) {
-        game.multi = -2;
+        (await import('./hack.js')).nomul(-2);
         game.multi_reason = 'vomiting';
-        game.context = game.context || {};
-        game.context.travel = game.context.travel1 = game.context.mv = 0;
         game.nomovemsg = 'You can move again.';
     }
     if (spewed) {
@@ -960,7 +983,7 @@ async function choke(food) {
         if (typeof u.ualign?.record === 'number') u.ualign.record -= 1;
         await update_topl('You feel like a glutton!');
     }
-    exercise(A_CON, false);
+    await exercise(A_CON, false);
     if (u_Breathless() || u_Hunger() || (!u_Strangled() && !rn2(20))) {
         if (food && food.otyp === AMULET_OF_STRANGULATION_OTYP) {
             await update_topl('You choke, but recover your composure.');
@@ -1141,7 +1164,7 @@ async function floorfood_eat() {
             if (ttmp && ttmp.tseen && ttmp.ttyp === BEAR_TRAP) {
                 const u_in_beartrap = !!(u.utrap && u.utraptype === TT_BEARTRAP);
                 const c = await y_n(`There is a bear trap here (${
-                    u_in_beartrap ? 'holding you' : 'armed'}); eat it?`, 'ynq', 'n');
+                    u_in_beartrap ? 'holding you' : 'armed'}); eat it?`, 'ynq', 'n', true);
                 if (c === 'y') {
                     const { deltrap } = await import('./trap.js');
                     deltrap(ttmp);
@@ -1173,7 +1196,7 @@ async function floorfood_eat() {
                              || !game.u?.uz || dg.level?.dnum !== u.uz.dnum
                              || dg.level?.dlevel !== u.uz.dlevel)
                         ? '; eat them?' : '; resume eating them?';
-                    c = await y_n(qbuf, 'ynq', 'n');
+                    c = await y_n(qbuf, 'ynq', 'n', true);
                 }
                 if (c === 'y') return { kind: 'floor', obj: _invent.hands_obj };
                 if (c === 'q') return { kind: 'cancel' };
@@ -1185,7 +1208,7 @@ async function floorfood_eat() {
             if (!hero_is_pm('rust monster') && gold) {
                 const c = await y_n((gold.quan | 0) === 1
                     ? 'There is 1 gold piece here; eat it?'
-                    : `There are ${gold.quan} gold pieces here; eat them?`, 'ynq', 'n');
+                    : `There are ${gold.quan} gold pieces here; eat them?`, 'ynq', 'n', true);
                 if (c === 'y') return { kind: 'floor', obj: gold };
                 if (c === 'q') return { kind: 'cancel' };
                 ++_getobj_else;
@@ -1205,7 +1228,7 @@ async function floorfood_eat() {
             const nm = _invent.obj_doname(otmp);
             const verbBe = one ? 'is' : 'are';
             const qbuf = `There ${verbBe} ${nm} here; eat ${one ? 'it' : 'one'}?`;
-            const c = await y_n(qbuf, 'ynq', 'n');
+            const c = await y_n(qbuf, 'ynq', 'n', true);
             if (c === 'y') return { kind: 'floor', obj: otmp };
             if (c === 'q') return { kind: 'cancel' };
             ++_getobj_else;   // 'n': declined this one
@@ -1246,7 +1269,12 @@ export async function doeat() {
     if (!otmp) {
         // floorfood declined / nothing edible on the floor -> getobj("eat").
         otmp = await _invent.getobj('eat', eat_ok);
-        if (!otmp) return false;                   // ECMD_OK (cancelled)
+        if (!otmp) {
+            // C: doeat() returns ECMD_OK (not ECMD_CANCEL) when floorfood()
+            // yields nothing, so the 'e' stays in CQ_REPEAT for ^A.
+            game.context._getobj_cancelled = false;
+            return false;                              // ECMD_OK (cancelled)
+        }
     }
     if (await check_capacity()) return false;      // ECMD_OK
 
@@ -1331,7 +1359,7 @@ export async function doeat() {
         const one_bite_left = (v0.usedtime + 1 >= v0.reqtime);
         if ((u.uhs ?? NOT_HUNGRY) !== SATIATED) v0.canchoke = 0;
         v0.o_id = 0;
-        otmp = touchfood(otmp);
+        otmp = await touchfood(otmp);
         if (otmp) { v0.piece = otmp; v0.o_id = otmp.o_id; }
         else await do_reset_eat();
         await update_topl(`You ${!one_bite_left ? 'resume'
@@ -1361,7 +1389,7 @@ export async function doeat() {
 
     const already_partly_eaten = !!otmp.oeaten;
     // C: otmp = touchfood(otmp) -> the single rnd(2) for a quan>1 split.
-    otmp = touchfood(otmp);
+    otmp = await touchfood(otmp);
     game.context = game.context || {};
     const v = game.context.victual = {
         piece: otmp, o_id: otmp.o_id, usedtime: 0, reqtime: 0, nmod: 0,
@@ -1477,8 +1505,8 @@ async function fprefx(otmp) {
             // make_vomiting(Vomiting + d(10,4), TRUE)
             const t = d(10, 4);
             if (u) {
-                u.uprops = u.uprops || {};
-                u.uprops.Vomiting = (u.uprops.Vomiting || 0) + t;
+                const { make_vomiting } = await import('./potion.js');
+                await make_vomiting((u.uprops?.Vomiting || 0) + t, true);
             }
         } else give_feedback = true;
         break;
@@ -1510,8 +1538,8 @@ async function fprefx(otmp) {
             if (rn2(2) && !CANNIBAL_ALLOWED()) {
                 const t = rn1(v?.reqtime ?? 2, 14);
                 if (u) {
-                    u.uprops = u.uprops || {};
-                    u.uprops.Vomiting = t;  /* make_vomiting(rn1(reqtime, 14), FALSE) */
+                    const { make_vomiting } = await import('./potion.js');
+                    await make_vomiting(t, false);  /* make_vomiting(rn1(reqtime, 14), FALSE) */
                 }
             }
         }
@@ -1535,8 +1563,8 @@ async function fprefx(otmp) {
     case CLOVE_OF_GARLIC:
         if (u?.uundead) {
             const t = rn1(v?.reqtime ?? 1, 5);
-            u.uprops = u.uprops || {};
-            u.uprops.Vomiting = t;      /* make_vomiting(rn1(reqtime, 5), FALSE) */
+            const { make_vomiting } = await import('./potion.js');
+            await make_vomiting(t, false);      /* make_vomiting(rn1(reqtime, 5), FALSE) */
             break;
         }
         await garlic_breath();
@@ -1677,8 +1705,9 @@ async function fpostfx(otmp) {
     case EUCALYPTUS_LEAF:
         // C: cures sickness and vomiting when not cursed.
         if (u && !otmp.cursed) {
-            if (u.uprops?.Sick) u.uprops.Sick = 0;
-            if (u.uprops?.Vomiting) u.uprops.Vomiting = 0;
+            const { make_sick, make_vomiting } = await import('./potion.js');
+            if (u.uprops?.Sick) await make_sick(0, null, true, 0x03 /* SICK_ALL */);
+            if (u.uprops?.Vomiting) await make_vomiting(0, true);
         }
         break;
     case APPLE:
@@ -2028,7 +2057,7 @@ async function cpostfx(pm) {
                 const { DISMOUNT_FELL } = await import('./const.js');
                 await dismount_steed(DISMOUNT_FELL);
             }
-            if ((game.multi ?? 0) >= -tmp) game.multi = -tmp;
+            if ((game.multi ?? 0) >= -tmp) (await import('./hack.js')).nomul(-tmp);
             game.multi_reason = 'pretending to be a pile of gold';
             const { an } = await import('./objnam.js');
             const selfname = u.Upolyd ? (u.data?.name || 'creature')
@@ -2234,7 +2263,7 @@ async function rottenfood_eat(obj) {
             if (!u.uprops) u.uprops = {};
             u.uprops.HDeaf = (u.uprops.HDeaf || 0) + dur;
         }
-        if ((game.multi ?? 0) >= -dur) game.multi = -dur;        // nomul(-dur)
+        if ((game.multi ?? 0) >= -dur) (await import('./hack.js')).nomul(-dur);
         game.multi_reason = 'unconscious from rotten food';
         game.nomovemsg = 'You are conscious again.';
         game.afternmv = Hear_again;
@@ -2337,7 +2366,7 @@ async function eatcorpse(otmp) {
         // C ref: youprop.h Poison_resistance.  Innate (orc/healer/barbarian
         // from level 1, monk from level 3, tourist from level 20) is never
         // persisted as a stored uprops flag, so OR in has_innate().
-        if (!(u?.uprops?.Poison_resistance || has_innate('HPoison_resistance')))
+        if (!Poison_res_eat())
             await poison_strdmg(rnd(4), rnd(15), !otmp.globby ? 'poisonous corpse' : 'poisonous glob',
                                 0 /* KILLED_BY_AN */);       // eat.c:1932 poison dmg
         else
@@ -2358,7 +2387,7 @@ async function eatcorpse(otmp) {
         // C ref: eat.c:1950 if (rottenfood(otmp)) { orotten=TRUE; retcode=1; }
         if (await rottenfood_eat(otmp)) {
             otmp.orotten = true;
-            otmp = touchfood(otmp);
+            otmp = await touchfood(otmp);
             if (!otmp) return 1;
             v.piece = otmp;
             retcode = 1;
@@ -2881,7 +2910,7 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
             await done(DIED);
             if (game.program_state?.gameover) return M_ATTK_DEF_DIED_;
             abase[A_INT_EAT] = ATTRMIN_INT + 2;
-            await pline('You feel like a scarecrow.');
+            await (await import('./display.js')).You_feel('like a scarecrow.');
         }
         give_nutrit = true;      /* in case a conflicted pet is doing this */
         exercise(A_WIS_EAT, false);
@@ -3191,10 +3220,8 @@ export async function costly_tin(alter_type) {
             tin = ctx.tin = _invent.splitobj(tin, 1);
             ctx.o_id = tin.o_id;
         }
-        // C: costly_alteration(tin, alter_type).  js/trap.js:829 keeps this
-        // port's only copy and it is an empty stub, so the shopkeeper never
-        // charges for the alteration; the split above is the observable part.
-        void alter_type;
+        // C: costly_alteration(tin, alter_type) bills the opened tin.
+        await T.shk.costly_alteration(tin, alter_type);
     }
     return tin;
 }
@@ -3331,8 +3358,8 @@ export async function consume_tin(mesg) {
         if (tintxts[r].nut < 0) {               /* rotten */
             // C: make_vomiting((long) rn1(15, 10), FALSE) — SETS the timer.
             if (u) {
-                u.uprops = u.uprops || {};
-                u.uprops.Vomiting = rn1(15, 10);
+                const { make_vomiting } = await import('./potion.js');
+                await make_vomiting(rn1(15, 10), false);
             }
         } else {
             nutamt = tintxts[r].nut;
@@ -3779,7 +3806,7 @@ export async function eatspecial() {
     if (otmp.otyp === FLINT && !otmp.cursed) {
         /* chewable vitamin for kids, from "The Flintstones" */
         await pline('Yabba-dabba delicious!');
-        exercise(A_CON, true);
+        await exercise(A_CON, true);
     }
 
     // C: uwepgone()/uqwepgone()/uswapwepgone() — none is exported by this port;
@@ -3870,7 +3897,7 @@ export async function edibility_prompts(otmp) {
     } else if (otmp.orotten || (cadaver && rotted > 3)) {
         buf = `${foodsmell} like ${it_or_they} could be rotten!`;
     } else if (cadaver && sp && mon_poisonous(sp)
-               && !(u?.uprops?.Poison_resistance || has_innate('HPoison_resistance'))) {
+               && !Poison_res_eat()) {
         buf = `${foodsmell} like ${it_or_they} might be poisonous!`;
     } else if (otmp.otyp === APPLE && otmp.cursed
                && !(u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance'))) {
@@ -3975,7 +4002,7 @@ export async function doeat_nonfood(otmp) {
 
     if (otmp.oclass === WEAPON_CLASS && otmp.opoisoned) {
         await pline('Ecch - that must have been poisonous!');
-        if (!(game.u?.uprops?.Poison_resistance || has_innate('HPoison_resistance')))
+        if (!Poison_res_eat())
             await poison_strdmg(rnd(4), rnd(15), _objnam.xname(otmp), 0 /* KILLED_BY_AN */);
         else
             await pline('You seem unaffected by the poison.');

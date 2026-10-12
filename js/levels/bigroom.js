@@ -13,7 +13,7 @@ import {
 import { game } from '../gstate.js';
 import { enexto_spawn, makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { create_maze, walkfrom } from '../mkmaze.js';
-import { BOULDER, mkobj_at, mksobj_at } from '../mkobj.js';
+import { BOULDER, des_object_defaults, mkobj_at, mksobj_at } from '../mkobj.js';
 import { stackobj } from '../invent.js';
 import { rn2, rnd } from '../rng.js';
 import {
@@ -322,7 +322,7 @@ function bigrm_object(idstr = null) {
         // des.object("boulder", x, y) — handled by caller with explicit coords
         return;
     }
-    stackobj(mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true));
+    stackobj(des_object_defaults(mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true)));
 }
 
 // C ref: sp_lev.c create_monster() (random monster, random location).

@@ -12,7 +12,7 @@ import { finish_map } from './mkmap.js';
 import { christen_monst } from './do_name.js';
 import { init_rect, rnd_rect, get_rect, split_rects, within_bounded_area } from './rect.js';
 import { depth as depth_of_level, distmin } from './hacklib.js';
-import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_region, fill_special_room, themeroom_fill, themeroom_map_contents, makemaz_bigroom, makemaz_bar_strt, makemaz_bar_loca, makemaz_bar_goal, makemaz_arc_strt, makemaz_arc_loca, makemaz_arc_goal, makemaz_pri_strt, makemaz_pri_loca, makemaz_pri_goal, makemaz_tower1, makemaz_tower2, makemaz_tower3, makemaz_soko1, makemaz_soko_upper, makemaz_valley, makemaz_sanctum, makemaz_minetown2, makemaz_minetown3, makemaz_minetown5, makemaz_minetown7, makemaz_minend1, makemaz_minend2, makemaz_minend3, makemaz_medusa1, makemaz_medusa2, makemaz_medusa3, makemaz_medusa4, makemaz_asmodeus, makemaz_baalz, makemaz_juiblex, makemaz_orcus, makemaz_wizard1, makemaz_wizard2, makemaz_wizard3, makemaz_fakewiz1, makemaz_fakewiz2, makemaz_air, makemaz_earth, makemaz_fire, makemaz_water, makemaz_astral, makemaz_cav_strt, makemaz_cav_loca, makemaz_cav_goal, makemaz_cav_fila, makemaz_cav_filb, makemaz_hea_strt, makemaz_hea_loca, makemaz_hea_goal, makemaz_hea_fila, makemaz_hea_filb, makemaz_kni_strt, makemaz_kni_goal, makemaz_kni_loca, makemaz_kni_fila, makemaz_kni_filb, makemaz_mon_strt, makemaz_mon_loca, makemaz_mon_goal, makemaz_ran_strt, makemaz_ran_loca, makemaz_ran_goal, makemaz_ran_fila, makemaz_ran_filb, makemaz_rog_strt, makemaz_rog_loca, makemaz_rog_goal, makemaz_sam_strt, makemaz_sam_loca, makemaz_sam_goal, makemaz_sam_fila, makemaz_sam_filb, makemaz_tou_strt, makemaz_tou_loca, makemaz_tou_goal, makemaz_tou_fila, makemaz_tou_filb, makemaz_val_strt, makemaz_val_loca, makemaz_val_goal, makemaz_val_fila, makemaz_val_filb, makemaz_wiz_loca, makemaz_wiz_goal, makemaz_wiz_strt, shuffle,
+import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_region, fill_special_room, themeroom_fill, themeroom_map_contents, makemaz_bigroom, makemaz_bar_strt, makemaz_bar_loca, makemaz_bar_goal, makemaz_arc_strt, makemaz_arc_loca, makemaz_arc_goal, makemaz_pri_strt, makemaz_pri_loca, makemaz_pri_goal, makemaz_tower1, makemaz_tower2, makemaz_tower3, makemaz_soko1, makemaz_soko_upper, makemaz_valley, makemaz_knox, makemaz_sanctum, makemaz_minetown2, makemaz_minetown3, makemaz_minetown5, makemaz_minetown7, makemaz_minend1, makemaz_minend2, makemaz_minend3, makemaz_medusa1, makemaz_medusa2, makemaz_medusa3, makemaz_medusa4, makemaz_asmodeus, makemaz_baalz, makemaz_juiblex, makemaz_orcus, makemaz_wizard1, makemaz_wizard2, makemaz_wizard3, makemaz_fakewiz1, makemaz_fakewiz2, makemaz_air, makemaz_earth, makemaz_fire, makemaz_water, makemaz_astral, makemaz_cav_strt, makemaz_cav_loca, makemaz_cav_goal, makemaz_cav_fila, makemaz_cav_filb, makemaz_hea_strt, makemaz_hea_loca, makemaz_hea_goal, makemaz_hea_fila, makemaz_hea_filb, makemaz_kni_strt, makemaz_kni_goal, makemaz_kni_loca, makemaz_kni_fila, makemaz_kni_filb, makemaz_mon_strt, makemaz_mon_loca, makemaz_mon_goal, makemaz_ran_strt, makemaz_ran_loca, makemaz_ran_goal, makemaz_ran_fila, makemaz_ran_filb, makemaz_rog_strt, makemaz_rog_loca, makemaz_rog_goal, makemaz_sam_strt, makemaz_sam_loca, makemaz_sam_goal, makemaz_sam_fila, makemaz_sam_filb, makemaz_tou_strt, makemaz_tou_loca, makemaz_tou_goal, makemaz_tou_fila, makemaz_tou_filb, makemaz_val_strt, makemaz_val_loca, makemaz_val_goal, makemaz_val_fila, makemaz_val_filb, makemaz_wiz_loca, makemaz_wiz_goal, makemaz_wiz_strt, shuffle,
          mapfrag_fromstr, mapfrag_match, selection_match, set_levltyp_lit,
          splev_map_origin, reset_xystart_size, flip_level, bigrm_get_level_extends, set_door_orientation,
          vly_flip_updest, vly_flip_dndest,
@@ -37,7 +37,7 @@ import {
     l_selection_or, l_selection_grow, l_selection_fillrect, l_selection_rect,
     l_selection_randline, W_ANY, W_RANDOM, W_NORTH, W_SOUTH, W_EAST, W_WEST,
 } from './selvar.js';
-import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty, init_mapseen } from './dungeon.js';
+import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty, init_mapseen, insert_branch } from './dungeon.js';
 import { In_quest, BR_PORTAL, BR_NO_END1, BR_NO_END2,
          Is_knox_level, Is_earthlevel, Is_botlevel } from './const.js';
 import { roles, races } from './role.js';
@@ -338,7 +338,7 @@ function in_rooms(x, y, rtype) { return []; }
 
 // C ref: allmain.c l_nhcore_init()
 export function l_nhcore_init() {
-    const align = [0, 0, 0]; // A_LAWFUL, A_NEUTRAL, A_CHAOTIC
+    const align = [1, 0, -1]; // A_LAWFUL, A_NEUTRAL, A_CHAOTIC (nhlib.lua: law, neutral, chaos)
     for (let i = align.length; i > 1; i--) {
         const j = rn2(i);
         [align[i - 1], align[j]] = [align[j], align[i - 1]];
@@ -353,6 +353,14 @@ export async function mklev() {
     if (await getbones()) return;   // bones loaded → level already grafted
     g.in_mklev = true;
     await makelevel();
+    // C ref: mkmaze.c:686-688 fixup_special() -- a Priest in the quest dungeon
+    // gets level.flags.graveyard ("less chance for undead corpses (lured from
+    // lower morgues)").  The hand-ported quest builders never reach
+    // lspo_finalize_level()'s fixup_special() call, so apply it here.
+    if (built_by_load_special && In_quest(g.u?.uz)
+        && (g.urole?.mnum ?? g.initrole) === 6 /* roles[] mnum of Priest */
+        && g.level?.flags)
+        g.level.flags.graveyard = 1;
     // C ref: sp_lev.c load_special() tail — every makemaz()/special-level path
     // recounts, the ordinary makerooms() path does not.
     if (built_by_load_special) count_level_features();
@@ -672,6 +680,16 @@ async function makelevel() {
         // engine's generic post-mklev pass (fastforward_fill_mineralize), which
         // runs right after mklev() returns — i.e. already in C's order, after
         // the branch lregion and after level_finalize_topology's mineralize().
+        set_wall_state();
+        return;
+    }
+
+    // C ref: mklev.c:1269 makemaz(slev->proto) — Fort Ludios.  Same finalize as
+    // the Valley: flip inside the builder, then the registered "branch"
+    // levregion, then the generic fill_special_room() pass.
+    if (slev && slev.proto === 'knox') {
+        await makemaz_knox();
+        await quest_place_branch();
         set_wall_state();
         return;
     }
@@ -3097,6 +3115,8 @@ function oracle_place_statue(x, y, monclass) {
     const otmp = mksobj_at(STATUE, x, y, true, true);
     // create_object: o->corpsenm != NON_PM -> set_corpsenm(otmp, montype species)
     if (pm && otmp) set_corpsenm(otmp, pm.pmidx);
+    // des.object({ historic = true }) -> CORPSTAT_HISTORIC in the statue's spe
+    if (otmp) otmp.spe = 4;
     return otmp;
 }
 
@@ -4667,6 +4687,9 @@ function mk_monster_random(peacefulOverride) {
     // the whole enexto()/collect_coords() ring shuffle C draws in that case.
     mk_enexto_if_occupied(c, null);
     const mtmp = make_monster(null, c.x, c.y, 0);
+    // C ref: sp_lev.c lspo_monster() safety net -- a bare des.monster() leaves
+    // tmpmons.female BOOL_RANDOM, which becomes 0 (makemon's own roll is overwritten).
+    if (mtmp) mtmp.female = 0;
     if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
     return mtmp;
 }
@@ -6800,8 +6823,9 @@ async function mk_knox_portal(x, y) {
 
     source.dnum = uz.dnum;
     source.dlevel = uz.dlevel;
-    // insert_branch(br, TRUE) only re-sorts svb.branches; no RNG, no state the
-    // rest of this port reads by list position.
+    // C ref: mklev.c:2655 insert_branch(br, TRUE) re-sorts svb.branches (the
+    // #levelport menu lists branches in list order).
+    insert_branch(br, true);
     await place_branch(br, x, y);
 }
 

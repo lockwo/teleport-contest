@@ -2263,7 +2263,9 @@ function optfn_pickup_types(o, negated, opts, op, result) {
             return OPTN_ERR;
         }
     }
-    keep(o, rest, result);
+    /* C: flags.pickup_types[0] = '\0' (all) is the default and stays when the
+       value begins with 'a'/'A' */
+    keep(o, (rest[0] === 'a' || rest[0] === 'A') ? '' : rest, result);
     return OPTN_OK;
 }
 

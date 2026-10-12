@@ -9,7 +9,7 @@ import { game } from './gstate.js';
 import { Goodbye } from './role.js';
 import { midnight, night } from './calendar.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
-import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU, In_quest, In_endgame, Is_knox_level } from './const.js';
+import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU, In_quest, In_endgame, Is_knox_level, PLNMSG_OK_DONT_DIE } from './const.js';
 
 // C ref: end.c:1536 -- " on dungeon level N" is omitted in the endgame and in
 // single-level branches (Fort Ludios); the quest reports its own dunlev(), not
@@ -248,7 +248,7 @@ async function savelife(_how) {
     if ((u.ulevel ?? 1) < 1) u.ulevel = 1;
     // minuhpmax(10): ensure uhpmax is at least 10 (it already exceeds that here).
     if ((u.uhpmax ?? 0) < 10) u.uhpmax = 10;
-    const con = u.acurr?.a?.[4] ?? 10; // ACURR(A_CON)
+    const con = (await import('./attrib.js')).acurr_eff(4); // ACURR(A_CON)
     const givehp = 50 + 10 * Math.trunc(con / 2);
     u.uhp = Math.min(u.uhpmax, givehp);
     if (u.mh != null && u.mhmax != null) u.mh = Math.min(u.mhmax, givehp);
@@ -282,9 +282,18 @@ async function savelife(_how) {
     game.context = game.context || {};
     game.context.move = 0;
     game.multi = -1;
+    // C ref: end.c:736 multi_reason for a death that follows immediately.
+    game.multi_reason = game.urole?.mnum === 10 /* PM_TOURIST role index */
+        ? 'being toyed with by Fate' : 'attempting to cheat Death';
     // C ref: end.c:741 — the arise-as-undead choice done_in_by() made for the
     // death that was just averted must not leak into a later death.
     u.ugrave_arise = NON_PM;
+    // C ref: end.c:743 curs_on_u() == flush_screen(1): publishes the restored
+    // status line (bot()) at once, before any later same-turn damage.
+    {
+        const dd = await deps();
+        await dd.flush_screen(1);
+    }
     if (u.uswallow) {
         const { expels } = await import('./mhitu.js');
         await expels(u.ustuck, u.ustuck.data, true);
@@ -476,6 +485,7 @@ async function done(how) {
     // and only then does end.c:1071 zero u.uhp, with no second bot().  Doing it
     // in the other order let the zeroed HP reach the endgame screens.
     if (!(how === QUIT && stopprint)) {
+        game.botlx = true; // end.c:1045 `disp.botlx = TRUE; bot();`
         d.freeze_botl();
         await d.bot();
         await d.flush_screen(1);
@@ -492,8 +502,10 @@ async function done(how) {
     // the LIFESAVED extrinsic, conferred only by a worn amulet of life saving.
     let survive = false;
     const uamul = game.uamul || game.u?.uamul;
-    if (uamul && uamul.otyp === 202 /*AMULET_OF_LIFE_SAVING*/ && how <= GENOCIDED) {
-        const I = await import('./invent.js');
+    const I_ls = await import('./invent.js');
+    if (uamul && uamul.otyp === 202 /*AMULET_OF_LIFE_SAVING*/ && how <= GENOCIDED
+        && I_ls.worn_extrinsic(68 /* LIFESAVED */)) {
+        const I = I_ls;
         // C ref: end.c:1077 sets disp.botl = TRUE after zeroing uhp, so the
         // plines below reach bot() with a LIVE status line again.
         game._botlFrozen = null;
@@ -507,14 +519,20 @@ async function done(how) {
         await d.You_feel('much better!');
         await d.update_topl('The medallion crumbles to dust!');
         I.useup(uamul);
-        // C ref: end.c:1092 adjattrib(A_CON, -1, TRUE) — no RNG.
-        if (game.u?.acurr?.a) game.u.acurr.a[4] = (game.u.acurr.a[4] | 0) - 1;
-        if (game.u?.abase?.a) game.u.abase.a[4] = (game.u.abase.a[4] | 0) - 1;
+        // C ref: end.c:1093 adjattrib(A_CON, -1, TRUE): also resets AEXE(A_CON).
+        await (await import('./attrib.js')).adjattrib(4 /* A_CON */, -1, 1);
         await savelife(how);
-        if (how === GENOCIDED)
+        if (how === GENOCIDED) {
             await d.update_topl('Unfortunately you are still genocided...');
-        else
+        } else {
+            // C ref: end.c:1098-1101 — formatkiller(killbuf, BUFSZ, how, FALSE)
+            // (',' '=' and tab are rewritten as in topten.c formatkiller()).
+            const { livelog_printf, LL_LIFESAVE } = await import('./livelog.js');
+            const killbuf = (game._killer_name || DEATHS[how] || 'died')
+                .replace(/,/g, ';').replace(/=/g, '_').replace(/\t/g, ' ');
+            livelog_printf(LL_LIFESAVE, `averted death (${killbuf})`);
             survive = true;
+        }
     }
 
     // explore/wizard mode: offer the "Die?" paranoid query — but only for
@@ -529,7 +547,15 @@ async function done(how) {
         // preceding update_topl().  A long ESC-suppressed combat line leaves
         // STOP set for "You die...", which the prompt then replaces directly.
         game._yn_need_more = !game._winStop;
-        const ans = await d.y_n('Die?', 'yn\x1b', 'n');
+        // C ref: end.c:1112 paranoid_query(ParanoidDie, "Die?") — with
+        // paranoid_confirmation:die the answer is typed ("yes"), else a y/n.
+        let ans;
+        if (((game.flags?.paranoia_bits | 0) & 0x0004) !== 0) {
+            const { paranoid_ynq } = await import('./eat.js');
+            ans = (await paranoid_ynq(true, 'Die?', false));
+        } else {
+            ans = await d.y_n('Die?', 'yn\x1b', 'n');
+        }
         if (ans !== 'y') {
             // "OK, so you don't die." (update_topl so it concatenates with the
             // monster-move messages that follow this turn), then savelife().
@@ -537,6 +563,7 @@ async function done(how) {
             // the status keeps showing the bonus-adjusted value, so leave the
             // displayed Con untouched.
             await d.update_topl(`OK, so you don't ${how === CHOKING ? 'choke' : 'die'}.`);
+            game.last_msg = PLNMSG_OK_DONT_DIE;
             await savelife(how);
             survive = true;
         }
@@ -567,10 +594,25 @@ async function done(how) {
         // segment's o_init shuffle, so emitting it keeps the RNG stream aligned
         // across the death boundary (seed0030 step-73).  savebones()/the actual
         // bones-file write is never reached here (bones_ok is FALSE).
+        // This port keeps a parallel pre-formatted killer string in
+        // game._killer_name; death paths that only filled game.killer (explode.c's
+        // gas spore blast) leave it empty, so derive it from the real killer.
+        if (!game._killer_name && game.killer?.name) {
+            const { formatkiller } = await import('./topten.js');
+            game._killer_name = formatkiller(256, how, false);
+        }
         let bones_ok = false;
         if (how < GENOCIDED) {
             const { can_make_bones } = await import('./bones.js');
             bones_ok = can_make_bones();
+        }
+        // C ref: end.c:1206-1218 — maintain u.ugrave_arise for the special hows.
+        {
+            const { LEAVESTATUE: LEAVESTATUE_ } = await import('./const.js');
+            const BURNING_ = 5, DISSOLVED_ = 6, STONING_ = 8;
+            if (how === PANICKED) game.u.ugrave_arise = NON_PM - 3;
+            else if (how === BURNING_ || how === DISSOLVED_) game.u.ugrave_arise = NON_PM - 2;
+            else if (how === STONING_) game.u.ugrave_arise = LEAVESTATUE_;
         }
         // C ref: end.c:1203-1204 — a boulder/statue still mid-flight from a
         // rolling-boulder trap when the hero dies gets dropped at its
@@ -589,11 +631,21 @@ async function done(how) {
             const { paybill } = await import('./shk.js');
             const before = game._pending_message;
             taken = !!await paybill(how === ESCAPED ? -1 : (how !== QUIT ? 1 : 0), !!stopprint);
+            // C ref: end.c:1239 — paygd(silently): the vault guard collects the
+            // hero's gold ("Your N zorkmids goes into the Magic Memory Vault.").
+            const { paygd } = await import('./vault.js');
             // C ref: pline.c vpline() `if (u.ux) flush_screen(1)` ->
             // display.c:2236 `if (disp.botl || disp.botlx) bot()`.  done() has
             // just forced u.uhp to 0 and set disp.botl, so the shopkeeper's
             // "takes all your possessions" pline redraws the status with HP:0.
-            if (game._pending_message !== before) { delete game._botlFrozen; d.freeze_botl(); }
+            let redrawn = false;
+            const redraw = () => {
+                redrawn = true;
+                if (game._pending_message !== before) { delete game._botlFrozen; d.freeze_botl(); }
+            };
+            // paygd() redraws between its message and freeinv() zeroing the $ field.
+            await paygd(!!stopprint, redraw);
+            if (!redrawn) redraw();
         }
 
         game.program_state = game.program_state || {};
@@ -903,6 +955,13 @@ async function disclose(how, taken = false) {
             } finally {
                 delete game._disclose_inventory_auto;
             }
+            // C ref: wintty.c erase_menu_or_text(): a full-screen (offx == 0)
+            // inventory menu is torn down by docrt(), whose cls() blanks the
+            // status window; no bot() runs before the container windows open.
+            if (!(game._menuOffx > 0)) {
+                game._statusClsBlank = true;
+                game.botlx = true;
+            }
             // C ref: end.c:641 `container_contents(gi.invent, TRUE, TRUE,
             // FALSE)` — one "Contents of the <box>:" window per carried
             // container, recursing into nested ones.
@@ -943,29 +1002,12 @@ async function disclose(how, taken = false) {
         }
     }
     if (!stopprint) {
-        // C ref: insight.c:3007 list_genocided(defquery, ask) — at end of game
-        // `both` is TRUE (program_state.gameover), so extinct species count too.
-        // With nothing gone there is no prompt at all.  Counts come from the
-        // already-C-faithful insight.js num_extinct()/num_gone() (insight.js:
-        // 4155/4170), which apply the UniqCritterIndx filter so a merely-CREATED
-        // unique (e.g. the Oracle) is never counted as "extinct" — the
-        // hand-rolled genocided_counts() this replaced scanned mvitals with no
-        // such filter and fired a spurious prompt here.
-        const ngenocided = insight.num_gone(G_GENOD, []);
-        const nextinct = insight.num_extinct();
-        const ngone = insight.num_gone(G_GENOD | G_EXTINCT, []);
-        if (ngone > 0) {
-            const q = should_query_disclose_option(end_disclose, 'g');
-            let defquery = q.defquery;
-            const qbuf = `Do you want a list of ${(nextinct && !ngenocided) ? 'extinct ' : ''}species`
-                + `${ngenocided ? ' genocided' : ''}${(nextinct && ngenocided) ? ' and extinct' : ''}?`;
-            const resp = (ngone > 1) ? 'ynaq\x1b' : 'ynq\x1b a';
-            const c = q.ask ? await d.y_n(qbuf, resp, defquery) : defquery;
-            if (c === 'q') stopprint = true;
-            // The "Genocided species:" window itself is unported (insight.js
-            // dogenocided() is the other caller and is a stub); reachable only
-            // after an actual genocide or a species hitting its birth limit.
-        }
+        // C ref: end.c:665 list_genocided(defquery, ask): asks (ngone > 0) and
+        // shows the "Genocided/Extinct species:" window itself.
+        const q = should_query_disclose_option(end_disclose, 'g');
+        const before = game.program_state_stopprint | 0;
+        await insight.list_genocided(q.defquery, q.ask);
+        if ((game.program_state_stopprint | 0) > before) stopprint = true;
     }
 
     if (!stopprint) {
@@ -1051,7 +1093,22 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
             }
         }
     }
-    let urexp = (u?.urexp || 0) + tmp;
+    // C ref: end.c:1427-1449 — an escape or ascent scores the gems and amulets
+    // in the pack (a glass gem counts as one worthless-glass slot) and the
+    // artifacts, before the pets' hit points are added.
+    let valuables_pts = 0;
+    if (how === ESCAPED || how === ASCENDED) {
+        const { base_oc_cost } = await import('./mkobj.js');
+        for (const val of gv.valuables)
+            for (let i = 0; val.list && i < val.size; i++) val.list[i].count = 0;
+        get_valuables(inv);
+        for (const val of gv.valuables)
+            for (let i = 0; val.list && i < val.size; i++)
+                if (val.list[i].count !== 0)
+                    valuables_pts += val.list[i].count * base_oc_cost(val.list[i].typ);
+        await artifact_score(inv, true, null);
+    }
+    let urexp = (u?.urexp || 0) + tmp + valuables_pts;
     for (const pet of pets) urexp += pet.mhp;
     u.urexp = urexp; // really_done() persists this before topten() reads it
 
@@ -1088,6 +1145,37 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
             }
             lines.push(`${pets.length ? '' : 'You '}${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
                 + ` with ${urexp} point${plur(urexp)},`);
+            // C ref: end.c:1481-1519 — list artifacts, then the valuables
+            // (gems first, then amulets), greatest count first.
+            const endwin = { lines };
+            await artifact_score(inv, false, endwin);
+            const { base_oc_cost, mksobj } = await import('./mkobj.js');
+            const { xname, obfree, currency } = await import('./invent.js');
+            const { discover_object } = await import('./o_init.js');
+            for (const val of gv.valuables) {
+                if (!val.list) continue;
+                sort_valuables(val.list, val.size);
+                for (let i = 0; i < val.size; i++) {
+                    const typ = val.list[i].typ, count = val.list[i].count;
+                    if (count === 0) continue;
+                    let pbuf;
+                    if (objects_[typ].oc_class !== GEM_CLASS_ || typ <= LAST_REAL_GEM_) {
+                        const otmp = mksobj(typ, false, false);
+                        discover_object(otmp.otyp, true, true, false);
+                        otmp.dknown = 1; /* seen it (blindness fix) */
+                        otmp.known = 1;  /* for fake amulets */
+                        otmp.oname = null;
+                        otmp.quan = count;
+                        pbuf = `${String(count).padStart(8)} ${xname(otmp)}`
+                            + ` (worth ${count * base_oc_cost(typ)} ${currency(2)}),`;
+                        obfree(otmp, null);
+                    } else {
+                        pbuf = `${String(count).padStart(8)} worthless piece${plur(count)}`
+                            + ' of colored glass,';
+                    }
+                    lines.push(pbuf);
+                }
+            }
         } else {
             // C ref: end.c outrip_and_score():1523 — a fatal sky teleport
             // leaves the hero outside the dungeon, not on dungeon level 0.
@@ -1838,7 +1926,7 @@ export async function dump_everything(how, when) {
     putstr(0, 0, '');
     await insight.list_vanquished('d', false);
     putstr(0, 0, '');
-    // unported: list_genocided('d', FALSE) — the "Genocided species:" window.
+    await insight.list_genocided('d', false);
     putstr(0, 0, '');
     dump_redirect(false);
 }

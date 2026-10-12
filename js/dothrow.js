@@ -415,8 +415,38 @@ export async function breakobj(obj, x, y, hero_caused, from_invent) {
         break;
     }
 
-    if (hero_caused && (from_invent || obj.unpaid))
-        await check_shop_obj(obj, x, y, true);
+    if (hero_caused) {
+        if (from_invent || obj.unpaid) {
+            if ((game.u?.ushops || [])[0] || obj.unpaid)
+                await check_shop_obj(obj, x, y, true);
+        } else if (!obj.no_charge) {
+            const SK = await import('./shk.js');
+            if (SK.costly_spot(x, y)) {
+                /* it is assumed that the obj is a floor-object */
+                const SR = await import('./shkroom.js');
+                const o_shop = SR.in_rooms(x, y, SHOPBASE)[0];
+                const shkp = SR.shop_keeper(o_shop);
+
+                if (shkp) { /* (implies *o_shop != '\0') */
+                    const eshkp = shkp.eshk;
+
+                    /* base shk actions on her peacefulness at start of
+                       this turn, so that "simultaneous" multiple breakage
+                       isn't drastically worse than single breakage */
+                    if (game.hero_seq !== eshkp.break_seq)
+                        eshkp.seq_peaceful = shkp.mpeaceful;
+                    if ((await SK.stolen_value(obj, x, y, !!eshkp.seq_peaceful, false)) > 0
+                        && (o_shop !== (game.u?.ushops || [])[0]
+                            || !SK.inside_shop(game.u.ux, game.u.uy))
+                        && game.hero_seq !== eshkp.break_seq)
+                        await SK.make_angry_shk(shkp, x, y);
+                    /* make_angry_shk() is only called on the first instance
+                       of breakage during any particular hero move */
+                    eshkp.break_seq = game.hero_seq;
+                }
+            }
+        }
+    }
 
     if (!fracture) I.delobj(obj);
     return 1;
@@ -805,8 +835,11 @@ export async function throw_gold(obj) {
         }
     }
 
+    const { flooreffects } = await import('./do.js');
+    if (await flooreffects(obj, bx, by, 'fall')) return ECMD_TIME;
     if (u.dz > 0) await update_topl(`The gold hits the ${surface(bx, by)}.`);
     place_object(obj, bx, by);
+    if ((u.ushops || [])[0]) await (await import('./shk.js')).sellobj(obj, bx, by);
     I.stackobj(obj);
     newsym(bx, by);
     return ECMD_TIME;
@@ -1121,7 +1154,7 @@ export async function thitu(tlev, dam, obj, name) {
         await update_topl(`You are hit by ${onm}${excl}`);
     await I.losehp_throw(dam);
     const { exercise } = await import('./attrib.js');
-    exercise(0 /* A_STR */, false);
+    await exercise(0 /* A_STR */, false);
     return 1;
 }
 
@@ -1173,16 +1206,16 @@ const PIT_TRAP = PIT, SPIKED_PIT_TRAP = SPIKED_PIT, HOLE_TRAP = HOLE,
 // C ref: trap.h enum trap_results (trap.h:98-102) — mintrap()'s return codes.
 const Trap_Effect_Finished = 0, Trap_Caught_Mon = 1, Trap_Killed_Mon = 2,
       Trap_Moved_Mon = 3;
-// C ref: trap.h mintrap flags: NO_TRAP_FLAGS 0, FORCEBUNGLE 1, HURTLING 4.
-const NO_TRAP_FLAGS_ = 0, FORCEBUNGLE_FLAG = 1, HURTLING_FLAG = 4;
+// C ref: hack.h mintrap flags: NO_TRAP_FLAGS 0, FORCEBUNGLE 0x04, HURTLING 0x80.
+const NO_TRAP_FLAGS_ = 0, FORCEBUNGLE_FLAG = 0x04, HURTLING_FLAG = 0x80;
 // C ref: prop.h W_ARM / W_ARMC / W_ARMU, as js/invent.js remaps them
 // ([[worn-mask-remap-collision]] — do NOT "correct" these to prop.h's values).
 const W_ARM_MASK = 0x00000001, W_ARMC_MASK = 0x00000002,
       W_ARMU_MASK = 0x00000020;
 // C ref: do_name.h ARTICLE_A / ARTICLE_YOUR and the x_monnam() suppress bits.
-const ARTICLE_A_ = 2, ARTICLE_YOUR_ = 4;
-const SUPPRESS_SADDLE_ = 0x02, AUGMENT_IT_ = 0x20,
-      EXACT_NAME_ = 0x0F, SUPPRESS_NAME_ = 0x08;
+const ARTICLE_A_ = 2, ARTICLE_YOUR_ = 3;
+const SUPPRESS_SADDLE_ = 0x08, AUGMENT_IT_ = 0x40,
+      EXACT_NAME_ = 0x1F, SUPPRESS_NAME_ = 0x20;
 // C ref: hack.h KILLED_BY.
 const KILLED_BY_ = 1;
 // C ref: mkobj.h MM_IGNOREWATER / MM_IGNORELAVA (goodpos gpflags).
@@ -1390,7 +1423,7 @@ export async function hurtle_step(arg, x, y) {
             | AUGMENT_IT_, false);
         if (!known_monster && !U.glyph_is_invisible(x, y))
             await update_topl(`You find ${mnam} by bumping into ${
-                noit_mhim_hurtle(mon)}.`);
+                (await import('./do_name.js')).noit_mhim(mon)}.`);
         else
             await update_topl(`You bump into ${mnam}.`);
         await wakeup_hurtle(mon, false);
@@ -1562,9 +1595,8 @@ export async function mhurtle_step(arg, x, y) {
     const mtmp = m_at(x, y);
     const mon_moving = !!game.context?.mon_moving;
     if (mtmp && mtmp !== mon) {
-        const U = await import('./uhitm.js');
         const N = await import('./do_name.js');
-        if (U.canspotmon(mon) || U.canspotmon(mtmp))
+        if (canseemon_shared(mon) || canseemon_shared(mtmp))
             await update_topl(`${N.Monnam(mon)} bumps into ${N.a_monnam(mtmp)}.`);
         await wakeup_hurtle(mtmp, !mon_moving);
         /* check whether 'mon' is turned to stone by touching 'mtmp' */
@@ -1670,8 +1702,7 @@ export async function mhurtle(mon, dx, dy, range) {
     /* Is the monster stuck or too heavy to push?  (very large monsters have
      * too much inertia, even floaters and flyers) */
     if ((mon.data?.msize ?? 0) >= MZ_HUGE || mon === u.ustuck || mon.mtrapped) {
-        const U = await import('./uhitm.js');
-        if (U.canspotmon(mon)) {
+        if (canseemon_shared(mon)) {
             const { Monnam } = await import('./do_name.js');
             await update_topl(`${Monnam(mon)} doesn't budge!`);
         }
@@ -1860,9 +1891,6 @@ async function flush_screen_hurtle(mode) {
     const { flush_screen } = await import('./display.js');
     return flush_screen(mode);
 }
-// C ref: do_name.c noit_mhim(mon) — "him"/"her"/"it", with "it" suppressed for
-// a named or seen monster.
-function noit_mhim_hurtle(mon) { return mon?.female ? 'her' : 'him'; }
 // C ref: hack.c nomul(nval).
 async function nomul_hurtle(nval) {
     const { nomul } = await import('./hack.js');

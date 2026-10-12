@@ -238,10 +238,22 @@ async function do_pit(x, y, tu_pit) {
                 (u && u.ux === x && u.uy === y) ? ' below you' : ''}!`);
         if (mtmp) mtmp.mtrapped = 0;
         obj_extract_self(boulder);
+        // C: (void) flooreffects(otmp, x, y, "") — the boulder plugs the new
+        // pit (silently, empty verb) and bury_objs() rolls obj_resists().
+        await (await import('./do.js')).flooreffects(boulder, x, y, '');
         return;
     }
-    // fillholetyp()/liquid_flow(): only a chasm dug next to a pool or moat
-    // fills, and neither subsystem is ported; a dry chasm is the common case.
+
+    /* Let liquid flow into the newly created chasm. */
+    const { fillholetyp, liquid_flow } = await import('./dig.js');
+    const filltype = fillholetyp(x, y, false);
+    if (filltype !== ROOM) {
+        const here = game.level?.at?.(x, y);
+        if (here) here.typ = filltype;
+        await liquid_flow(x, y, filltype, chasm, null);
+        /* liquid_flow() deletes trap, might kill mtmp */
+        if (!(await import('./trap.js')).t_at(x, y)) return;
+    }
 
     if (mtmp) {
         const p = mdata(mtmp);
@@ -279,6 +291,7 @@ async function do_pit(x, y, tu_pit) {
             await update_topl('You fall into a chasm!');
             set_utrap(rn1(6, 2), TT_PIT);
             await losehp(Maybe_Half_Phys(rnd(6)), 'fell into a chasm', 2 /* NO_KILLER_PREFIX */);
+            await (await import('./polyself.js')).selftouch('Falling, you');
         } else if (u.utrap && u.utraptype === TT_PIT) {
             const keepfooting = (!(Fumbling() && rn2(5))
                 && (!(rnl(game.urole?.mnum === PM_ARCHEOLOGIST ? 3 : 9))
@@ -289,6 +302,14 @@ async function do_pit(x, y, tu_pit) {
             if (keepfooting) {
                 const { exercise } = await import('./attrib.js');
                 exercise(A_DEX, true);
+            } else {
+                const { youmonst_data_pub } = await import('./invent.js');
+                const { nolimbs } = await import('./monflags_data.js');
+                const ym = u.Upolyd ? youmonst_data_pub() : null;
+                const M1_SLITHY = 0x80000;
+                await (await import('./polyself.js')).selftouch(
+                    (ym && ((mflags1_of(ym) & M1_SLITHY) !== 0 || nolimbs(ym)))
+                        ? 'Shaken, you' : 'Falling down, you');
             }
         }
     } else {
@@ -489,7 +510,7 @@ async function do_improvisation(instr) {
         exercise(A_DEX, true);
         break;
     case WOODEN_FLUTE:                               /* may charm snakes */
-        do_spec = do_spec && (rn2(ACURR(A_DEX)) + (u.ulevel | 0) > 25);
+        do_spec = (rn2(ACURR(A_DEX)) + (u.ulevel | 0) > 25) && do_spec; /* C: do_spec &= ... (no short circuit) */
         if (!Deaf())
             await update_topl(`${Tobjnam(instr, do_spec ? 'trill' : 'toot')}${
                 same_old_song ? ' a familiar tune' : ''}.`);
@@ -517,7 +538,7 @@ async function do_improvisation(instr) {
             // C ref: zap.h BZ_OFS_AD(ad) == ad - 1; BZ_U_WAND(t) == t (0-9).
             const type = (instr.otyp === FROST_HORN) ? 2 /*AD_COLD-1*/ : 1 /*AD_FIRE-1*/;
             if (!Blind())
-                await update_topl(`A ${type === 2 ? 'blast of frost' : 'blast of fire'} blasts out of the horn!`);
+                await update_topl(`A ${(await import('./zap.js')).flash_str(type, false)} blasts out of the horn!`);
             game.current_wand = instr;
             await ubuzz(type, rn1(6, 6));
             game.current_wand = null;
@@ -554,7 +575,7 @@ async function do_improvisation(instr) {
         exercise(A_DEX, true);
         break;
     case WOODEN_HARP:                                /* may calm nymphs */
-        do_spec = do_spec && (rn2(ACURR(A_DEX)) + (u.ulevel | 0) > 25);
+        do_spec = (rn2(ACURR(A_DEX)) + (u.ulevel | 0) > 25) && do_spec; /* C: do_spec &= ... (no short circuit) */
         if (!Deaf())
             await update_topl(`${Yname2(instr)} ${
                 (do_spec && same_old_song) ? 'produces a familiar, lilting melody'

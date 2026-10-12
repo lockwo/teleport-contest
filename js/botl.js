@@ -37,6 +37,7 @@ import {
     xFLOOR, xGROUND, xOPENDOOR, xSHUTDOOR, xSWAMP, xSUBMERGED, xSEA, xWATERWALL,
     Is_earthlevel, Is_medusa_level, Is_juiblex_level, Is_waterlevel,
 } from './const.js';
+import { unconscious } from './const.js';
 import { db_under_typ } from './dbridge.js';
 import { NO_COLOR } from './terminal.js';
 import { GOLD_PIECE, COIN_CLASS, WEAPON_CLASS } from './mkobj.js';
@@ -411,11 +412,19 @@ const upv = (nm) => (game.u?.uprops?.[nm] || 0);
 // this port tracks that bit in game._i_special_props (js/timeout.js).
 function Stoned() { return upv('Stoned') > 0 || !!game._i_special_props?.has(18 /* STONED */); }
 function Slimed() { return upv('Slimed') > 0 || !!game._i_special_props?.has(22 /* SLIMED */); }
-function Strangled() { return upv('Strangled') > 0; }
-function Sick() { return upv('Sick') > 0 || !!game.u?.sick; }
+function Strangled() { return upv('Strangled') > 0 || !!game._i_special_props?.has(19 /* STRANGLED */); }
+function Sick() {
+    const held = game._statusHold;
+    if (held && 'sick' in held) return !!held.sick;
+    return upv('Sick') > 0 || !!game.u?.sick || !!game._i_special_props?.has(17 /* SICK */);
+}
 function Deaf() { return upv('HDeaf') > 0 || !!game.u?.Deaf; }
 function Stunned() { return !!game.u?.formprops?.Stunned || upv('Stun') > 0 || !!game.u?.Stunned; }
-function Confusion() { return upv('Confusion') > 0; }
+function Confusion() {
+    const held = game._statusHold;
+    if (held && 'conf' in held) return !!held.conf;
+    return upv('Confusion') > 0;
+}
 function Hallucination() {
     const t = upv('Hallucination') || upv('HHallucination') || (game.u?.uhallu ? 1 : 0);
     return t > 0 && !(upv('HHalluc_resistance') || upv('EHalluc_resistance'));
@@ -428,8 +437,6 @@ function Flying() { return !!(upv('Flying') || worn_extrinsic(49)) && !upv('BFly
 function Glib() { return upv('Glib') > 0; }
 function Wounded_legs() { return upv('Wounded_legs') > 0; }
 function Underwater() { return !!game.u?.uinwater; }
-/* C ref: allmain.c unconscious() = (gm.multi < 0 && (!gn.nomovemsg || ...)) */
-function unconscious() { return (game.multi | 0) < 0; }
 /* C ref: mondata.h sticks(ptr) — hero-in-that-form does the holding. */
 function sticks(ptr) { return !!ptr?.sticky; }
 

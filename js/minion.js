@@ -26,6 +26,7 @@
 // each is re-derived here under a `minion_`-prefixed name that CANNOT shadow the
 // real port, and the header comment says which original to export instead.
 
+import { acurr_eff } from './attrib.js';
 import { game } from './gstate.js';
 import { Blind } from './vision.js';
 import { s_suffix } from './hacklib.js';
@@ -38,7 +39,7 @@ import { In_hell } from './dungeon.js';
 import { mflags2_of, M2_LORD, M2_PRINCE, M2_DEMON, M2_MINION } from './monflags_data.js';
 import {
     makemon, mkclass, mkclass_aligned, monster_by_pmidx, name_to_pmidx,
-    set_malign, mpickobj, enexto_spawn, mongets_pub,
+    set_malign, mpickobj, enexto_spawn, mongets_pub, makemon_appears_msg,
 } from './makemon.js';
 import { is_art, ART_DEMONBANE, ART_EXCALIBUR } from './artifact.js';
 import { DEADMONSTER, mongone } from './mon.js';
@@ -47,7 +48,7 @@ import { canspotmon, x_monnam } from './uhitm.js';
 import { Monnam, Amonnam, mon_nam, ARTICLE_A } from './do_name.js';
 import { show_transient_light, transient_light_cleanup } from './light.js';
 import { align_gname, roles } from './role.js';
-import { currency } from './invent.js';
+import { currency, worn_extrinsic } from './invent.js';
 import { money2mon } from './shk.js';
 import { bless, mksobj } from './mkobj.js';
 import { which_armor, m_dowear } from './worn.js';
@@ -94,15 +95,14 @@ function u_wield_art(art) { return is_art(game.uwep, art); }
 const G_UNIQ = 0x1000;
 // C ref: monsym.h S_ANGEL / S_DEMON.
 const S_ANGEL = 27, S_DEMON = 56;
-// C ref: youprop.h Blind / Deaf / Conflict.  Same readings as js/engrave.js
-// isBlind() and js/eat.js's Deaf: potion.js writes blindness to u.blinded.
-function Deaf() { const u = game.u; return !!(u?.uprops?.Deaf || u?.Deaf); }
+// C ref: youprop.h Deaf (HDeaf || EDeaf): display.js's Deaf_hero() is the canonical reading.
+import { Deaf_hero as Deaf } from './display.js';
 function Conflict() {
     const u = game.u;
-    // C ref: youprop.h Conflict -- (HConflict || EConflict); a worn ring of
-    // conflict (otyp 186) supplies EConflict.
+    // C ref: youprop.h Conflict -- (HConflict || EConflict); the worn-ring
+    // half lives in the extrinsic word (prop.h CONFLICT == 44).
     return !!(u?.uprops?.Conflict || u?.HConflict || u?.EConflict
-        || game.uleft?.otyp === 186 || game.uright?.otyp === 186);
+        || worn_extrinsic(44));
 }
 // C ref: eat.h is_fainted() — uhs == FAINTED.
 const FAINTED = 5;
@@ -114,7 +114,7 @@ function money_cnt(list) {
     return 0;
 }
 // C ref: attrib.h ACURR(x) = acurr(x).
-function ACURR(i) { return game.u?.acurr?.a?.[i] ?? 0; }
+function ACURR(i) { return acurr_eff(i); }
 // C ref: sounds.c SetVoice(mon, tag, volume, flags) — tty has no synthesised
 // voice, so this only records who speaks; a no-op here as in js/timeout.js:1101.
 function SetVoice(_mon, _tag, _vol, _flags) { /* tty: nothing to do */ }
@@ -367,6 +367,8 @@ export async function msummon(mon) {
         mtmp = makemon(monster_by_pmidx(dtype), game.u.ux, game.u.uy,
                        MM_EMIN | MM_NOMSG);
         if (mtmp) {
+            if (!EMIN(mtmp)) newemin(mtmp); /* makemon.c:1243 MM_EMIN */
+            await makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, MM_EMIN | MM_NOMSG); /* makemon.c:1503 dochugw(mtmp, FALSE) */
             result++;
             /* an angel's alignment should match the summoner */
             if (dtype === p.ANGEL) {
@@ -453,6 +455,7 @@ export async function summon_minion(alignment, talk) {
         mon = makemon(monster_by_pmidx(mnum), game.u.ux, game.u.uy,
                       MM_EMIN | MM_NOMSG);
         if (mon) {
+            await makemon_appears_msg(mon, mon.mx, mon.my, MM_EMIN | MM_NOMSG);
             mon.isminion = 1;
             if (!EMIN(mon)) newemin(mon);
             EMIN(mon).min_align = alignment;
@@ -465,6 +468,7 @@ export async function summon_minion(alignment, talk) {
         mon = makemon(monster_by_pmidx(mnum), game.u.ux, game.u.uy,
                       MM_EMIN | MM_NOMSG);
         if (mon) {
+            await makemon_appears_msg(mon, mon.mx, mon.my, MM_EMIN | MM_NOMSG);
             mon.isminion = 1;
             if (!EMIN(mon)) newemin(mon);
             EMIN(mon).min_align = alignment;
@@ -472,6 +476,7 @@ export async function summon_minion(alignment, talk) {
         }
     } else {
         mon = makemon(monster_by_pmidx(mnum), game.u.ux, game.u.uy, MM_NOMSG);
+        if (mon) await makemon_appears_msg(mon, mon.mx, mon.my, MM_NOMSG);
     }
     if (mon) {
         if (talk) {

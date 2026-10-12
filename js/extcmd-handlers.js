@@ -10,10 +10,10 @@
 
 import { game } from './gstate.js';
 import { nhgetch, unshiftKeys } from './input.js';
-import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, putStatusRow, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
+import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, putStatusRow, cutTopStatusRow, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import {
-    obj_doname, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
+    obj_doname, floor_object_name, classOrder, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
     name_inventory_object, call_inventory_object, doorganize, docall, call_ok, GETOBJ_EXCLUDE,
     addinv, prinv, prinv_fmt, let_to_name, report_merge_discovery,
     wiz_identify, renderWindowScreen, renderMenuLines, select_command_menu, useup, xname,
@@ -39,11 +39,11 @@ import { delobj, stackobj, doddrop, yname, ysimple_name,
          flush_addinv_plines } from './invent.js';
 import { count_unpaid, is_worn, wearing_armor, inventoryArray, select_off,
          dismiss_invent_screen } from './invent.js';
-import { exercise } from './attrib.js';
+import { exercise, acurr_eff } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { rn2 } from './rng.js';
 import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED, UNENCUMBERED } from './const.js';
-import { getpos, get_valid_jump_position, set_jumping_is_magic, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full, do_farlook } from './hack.js';
+import { nomul, getpos, get_valid_jump_position, set_jumping_is_magic, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full, do_farlook } from './hack.js';
 import { dotwoweapon } from './wield.js';
 import { doride } from './steed.js';
 import { doenhance } from './enhance.js';
@@ -77,8 +77,9 @@ import { dopray as pray_dopray, dosacrifice } from './pray.js';
 import { dosit } from './sit.js';
 import { do_mgivenname, bogusmon, roguename, rndmonnam } from './do_name.js';
 import { rn2_on_display_rng } from './disprng.js';
-import { glyph_at, Hallucination_u, canspotself } from './display.js';
-import { object_from_map } from './pager.js';
+import { glyph_at, Hallucination_u, canspotself, obj_to_glyph } from './display.js';
+import { lock_action } from './lock.js';
+import { object_from_map, pg_glyph_at } from './pager.js';
 import { dodip, dodrink } from './potion.js';
 import { dogenocided, do_gamelog, doconduct, dovanquished, doborn } from './insight.js';
 import { isok } from './hacklib.js';
@@ -107,7 +108,7 @@ import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
 import { invoke_ok as artifact_invoke_ok } from './artifact.js';
 import { doextlist } from './cmd.js';
-import { mon_beside, loot_mon, reverse_loot, removed_from_icebox, observe_quantum_cat, boh_loss } from './pickup.js';
+import { mon_beside, loot_mon, reverse_loot, removed_from_icebox, observe_quantum_cat, boh_loss, set_loot_reset_justpicked } from './pickup.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -416,6 +417,9 @@ export async function hooked_tty_getlin(query, hook) {
     let doprev = false;
     const base = (query + ' ').length; // column of first input char
 
+    // C ref: getline.c:63 custompline() replaces the top line with the prompt,
+    // so a message left there by a previous yn_function() is gone for good.
+    game._pending_message = '';
     for (;;) {
         // Cursor sits one past the typed characters.
         if (!doprev) draw_getlin(query, shown, base + typed.length);
@@ -782,13 +786,13 @@ async function tty_get_ext_cmd() {
 // C ref: win/tty/topl.c tty_yn_function() — prompt "query [resp] (def) " on
 // the top line and read a single allowed key.  `def` is returned for
 // space/return; ESC maps to 'q' (if allowed) else 'n' (if allowed) else def.
-export async function yn_function(query, resp, def) {
+export async function yn_function(query, resp, def, addcmdq = false) {
     // C ref: win/tty/topl.c tty_yn_function() clean_up:418 — the answered prompt
     // is LEFT on the top line (the addtopl(rtmp) echo is commented out upstream);
     // only gt.toplines' history copy is rewritten.  Routing through display.js
     // y_n() keeps it in game._pending_message so the next frame still shows it.
     // resp == null (free-form prompt): any single key is accepted and returned.
-    return await y_n(query, resp, def);
+    return await y_n(query, resp, def, addcmdq);
 }
 
 // ── individual extended commands ──
@@ -927,7 +931,7 @@ async function doturn() {
 
     // C ref: nomul(-(5 - ((u.ulevel - 1) / 6))) — -5 at level 1 up to -1 at 25+.
     const dur = -(5 - Math.trunc(((u?.ulevel ?? 1) - 1) / 6));
-    if ((g.multi ?? 0) >= dur) g.multi = dur;
+    nomul(dur);
     g.multi_reason = 'trying to turn the monsters';
     g.nomovemsg = 'You can move again.';
     return 1;
@@ -1009,6 +1013,13 @@ export async function jump(magic) {
     }
     if (!magic && near_capacity() > UNENCUMBERED) {
         await pline('You are carrying too much to jump!');
+        return 0;
+    }
+    // C ref: apply.c:2047-2049.  This is after the encumbrance gate and
+    // before getpos(), so an exhausted knight must not consume target keys.
+    if (!magic && ((game.u?.uhunger ?? 900) <= 100
+                   || (await import('./attrib.js')).acurr_eff(A_STR) < 6)) {
+        await pline('You lack the strength to jump!');
         return 0;
     }
     // C ref: apply.c jump():  pline("Where do you want to jump?"); cc = <u>;
@@ -1113,13 +1124,7 @@ async function wiz_level_change() {
 // full prayer resolution (can_pray + nomul(-3) occupation + prayer_done) lives
 // in pray.js, which drives the input-free occupation turns itself.
 async function dopray() {
-    return await pray_dopray(paranoid_query);
-}
-
-// C ref: cmd.c paranoid_query()/paranoid_ynq() with be_paranoid=FALSE
-// (ParanoidConfirm unset): yn_function(prompt, "yn", 'n').
-async function paranoid_query(prompt) {
-    return (await yn_function(prompt, 'yn', 'n')) === 'y';
+    return await pray_dopray();
 }
 
 // C ref: sounds.c dochat() — the #chat command.  Starter heroes can speak and
@@ -1129,9 +1134,19 @@ async function paranoid_query(prompt) {
 // (ECMD_TIME) only when it talks to a real monster.
 async function dochat() {
     const u = game.u;
+    // C ref: sounds.c:1263 dochat(): is_silent(youmonst.data) (MS_SILENT == 0).
+    {
+        const { youmonst_data } = await import('./invent.js');
+        const { msound_of } = await import('./monflags_data.js');
+        const ydat = youmonst_data();
+        if ((msound_of(ydat) | 0) === 0) {
+            const { mon_pmname } = await import('./uhitm.js');
+            const { an } = await import('./hacklib.js');
+            await pline(`As ${an(mon_pmname({ data: ydat, female: !!game.flags?.female }))}, you cannot speak.`);
+            return 0;
+        }
+    }
     // C ref: sounds.c dochat():1889 — u.uswallow / Underwater short-circuits.
-    // (is_silent(youmonst) and the shop-object price_quote path are not modelled;
-    //  see the GAP note below.)
     if (u.uswallow) {
         await pline("They won't hear you out there.");
         return 0;
@@ -1621,7 +1636,7 @@ async function namefloorobj() {
     if (cc.x === u.ux && cc.y === u.uy) {
         obj = vobj_at(u.ux, u.uy);
     } else {
-        const glyph = glyph_at(cc.x, cc.y);
+        const glyph = pg_glyph_at(cc.x, cc.y);
         if (glyph?.kind === 'object') ({ fakeobj, obj } = object_from_map(glyph, cc.x, cc.y));
     }
     if (!obj) {
@@ -1669,7 +1684,7 @@ function is_container_otyp(otyp) { return otyp >= LARGE_BOX_OTYP && otyp <= BAG_
 // containers.  Narrower than is_container_otyp; #force only recognizes these.
 function is_lockbox_otyp(otyp) { return otyp === LARGE_BOX_OTYP || otyp === CHEST_OTYP; }
 // C ref: attrib.h ACURR(x) — current attribute value.
-function ACURR(i) { return game.u?.acurr?.a?.[i] ?? 0; }
+function ACURR(i) { return acurr_eff(i); }
 // C ref: objnam.c minimal_xname()/OBJ_DESCR — bare (article-less, BUC-less)
 // type name: the real name once identified (oc_name_known), else the shared
 // unidentified appearance ("bag" for sack/oilskin sack/bag of holding/tricks
@@ -1735,11 +1750,27 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     const disp = game?.nhDisplay;
     if (!disp?.clearScreen) return;
     const cols = disp.cols || 80;
+    const rows = disp.rows || 24;
+    // A menu window ("(end)" footer) is a tty NHW_MENU; "--More--" is NHW_TEXT.
+    const isMenu = morestr === '(end)';
+    if (isMenu) {
+        // C ref: wintty.c tty_end_menu() — "cut off any lines that are too
+        // long": len = strlen(str) + 2; if (len > cols) str[cols - 2] = 0, and
+        // the window width (cw->cols) is capped at cols.
+        lines = lines.map((ln) => (ln && ln.text && ln.text.length > cols - 2
+            ? { ...ln, text: ln.text.slice(0, cols - 2) } : ln));
+        maxcol = Math.min(maxcol, cols);
+    }
     // H2344_BROKEN: offx = min(min(82, cols/2), cols - maxcol - 1); text at offx+1.
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
     const textCol = offx + 1;
     const moreRow = lines.length;
+    // C ref: wintty.c tty_display_nhwindow(): maxrow >= rows forces offx = 0, and
+    // process_menu_window() `if (!cw->offx) term_clear_screen()` -- a full-width
+    // menu wipes the whole screen (map and status window included).
+    if (isMenu && moreRow + 1 >= rows) offx = 0;
+    const fullScreen = isMenu && offx === 0;
     // C ref: wintty.c erase_menu_or_text(): dismissal is docorner() (no docrt,
     // no vision_recalc) unless offx == 0; invent.js dismiss_invent_screen() reads this.
     game._menuOffx = offx;
@@ -1751,34 +1782,51 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     // inherit it, not draw a freshly recomputed FULL status the real terminal
     // never redrew.
     const carried = game._statusTruncCol;
+    // invent.js putStatusLines(): a menu one row short of the status window
+    // still wrecked row 22 (only) on its docorner() dismissal.
+    const carried22 = game._statusTrunc22;
     disp.clearScreen();
-    render_map_to_grid();
-    for (let r = 0; r <= moreRow && r < 22; r++)
-        for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
+    if (!fullScreen) {
+        render_map_to_grid();
+        for (let r = 0; r <= moreRow && r < 22; r++)
+            for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
+    }
     for (let r = 0; r < lines.length; r++) {
         const ln = lines[r];
         if (ln && ln.text) disp.putstr(textCol, r, ln.text, NO_COLOR, ln.attr || 0);
     }
     disp.putstr(textCol, moreRow, morestr, NO_COLOR, 0);
-    // the status rows are redrawn through putStatusRow() below
-    // render_map_to_grid() already laid down a FULL fresh status (its own
-    // renderStatusLines() call); putstr() never clears past what it writes,
-    // so a truncated re-write below must blank the tail itself or the full
-    // text it's replacing keeps showing through past the cutoff.
-    let cut = null;
-    if (moreRow >= 22) {
-        // This window's own content reaches into the status rows: truncate at
-        // its own left edge (same as invent.js's putStatusLines for the tall
-        // single-page menu), combined with any cutoff already inherited.
-        cut = (carried != null) ? Math.min(offx, carried) : offx;
-        game._statusTruncCol = cut;
-    } else if (carried != null) {
-        cut = carried;
-    }
-    putStatusRow(disp, 1, 22, cut);
-    putStatusRow(disp, 2, 23, cut);
-    if (cut != null) {
-        for (let c = cut; c < cols; c++) { disp.setCell(c, 22, ' ', NO_COLOR, 0); disp.setCell(c, 23, ' ', NO_COLOR, 0); }
+    if (!fullScreen) {
+        // the status rows are redrawn through putStatusRow() below
+        // render_map_to_grid() already laid down a FULL fresh status (its own
+        // renderStatusLines() call); putstr() never clears past what it writes,
+        // so a truncated re-write below must blank the tail itself or the full
+        // text it's replacing keeps showing through past the cutoff.
+        let cut = null;
+        if (moreRow >= 22) {
+            // This window's own content reaches into the status rows: truncate at
+            // its own left edge (same as invent.js's putStatusLines for the tall
+            // single-page menu), combined with any cutoff already inherited.
+            cut = (carried != null) ? Math.min(offx, carried) : offx;
+            game._statusTruncCol = cut;
+        } else if (carried != null) {
+            cut = carried;
+        }
+        // docrt()'s cls() blanked the status window and nothing has run bot()
+        // since (see botl_flush): it stays blank under this window.
+        let cut22 = cut;
+        if (carried22 != null) cut22 = (cut != null) ? Math.min(cut, carried22) : carried22;
+        if (cut22 != null && cut22 !== cut) game._statusTrunc22 = cut22;
+        if (game._statusClsBlank) cut = cut22 = 0;
+        else {
+            putStatusRow(disp, 1, 22, cut22);
+            putStatusRow(disp, 2, 23, cut);
+        }
+        cutTopStatusRow(disp, cut22);
+        if (cut22 != null)
+            for (let c = cut22; c < cols; c++) disp.setCell(c, 22, ' ', NO_COLOR, 0);
+        if (cut != null)
+            for (let c = cut; c < cols; c++) disp.setCell(c, 23, ' ', NO_COLOR, 0);
     }
     disp.setCursor(textCol + morestr.length + (curPad || 0), moreRow);
     game._modal_screen = 'container';
@@ -1923,6 +1971,24 @@ async function traditional_loot(box, put_in) {
 async function use_container(box, more_containers) {
     let used = 0;
     box.lknown = 1;
+    // C ref: pickup.c:3001-3012 — a trapped container goes off instead of
+    // opening; the turn is used up even if the trap fails.
+    if (box.otrapped) {
+        const { chest_trap } = await import('./trap.js');
+        const { nomul } = await import('./hack.js');
+        if (box.where === OBJ_INVENT) {
+            const { xname } = await import('./objnam.js');
+            await pline(`You open the ${await xname(box)}...`);
+        }
+        await chest_trap(box, 6 /* HAND */, false);
+        if ((game.multi || 0) >= 0) {
+            nomul(-1);
+            game.multi_reason = 'opening a container';
+            game.nomovemsg = '';
+        }
+        game._pickup.abort_looting = true;
+        return 1;
+    }
     // C ref: pickup.c:3014-3036 — check for Schroedinger's Cat, then a cursed
     // bag of holding (or tricks) with contents loses items (is_boh_item_gone's
     // rn2(13) per item) before the what-to-do prompt is built.
@@ -2154,6 +2220,9 @@ async function run_pickany_menu(items, buildLines) {
     const invert_ok = (it) => !it.skipinvert || it.selected;
     let searchBlankTop = false;
     let count = 0, counting = false;
+    /* C ref: wintty.c tty_display_nhwindow() NHW_MENU — a pending topline
+       (TOPLINE_NEED_MORE) is paged with --More-- before the menu is drawn. */
+    await (await import('./display.js')).display_nhwindow_message();
     const toggle = (it, counted, n) => {
         it.selected = counted ? n > 0 : !it.selected;
         it.count = it.selected && counted ? n : -1;
@@ -2303,6 +2372,9 @@ async function query_objlist_take_out(box, allow) {
     // SORTLOOT_PACK) — group by class in packorder, alphabetized within class
     // (not raw cobj/creation order).
     const sorted = sortloot(cobj, SORTLOOT_LOOT | SORTLOOT_PACK, false, allow);
+    // C ref: pickup.c query_objlist() `if (n == 0) return 0;` — no object passes
+    // the class / BUC filter, so no (empty) menu is displayed at all.
+    if (!sorted.some((sli) => sli.obj && allow(sli.obj))) return [];
     let curClass = null;
     for (const sli of sorted) {
         if (!sli.obj) break;
@@ -2315,8 +2387,11 @@ async function query_objlist_take_out(box, allow) {
         if (first && o.oclass === COIN_CLASS) letter = '$';        // C: first && COIN -> '$'
         else { letter = menu_ch; menu_ch = nextMenuCh(menu_ch); }
         first = false;
+        // C ref: pickup.c:1131 — obj_to_glyph(curr, rn2_on_display_rng) per item
+        // (display-RNG draw while hallucinating).
+        obj_to_glyph(o);
         const it = { letter, obj: o, selected: false, skipinvert: false,
-                     groupacc: DEF_OC_SYMS[o.oclass], desc: obj_doname(o) };
+                     groupacc: DEF_OC_SYMS[o.oclass], desc: floor_object_name(o) };
         items.push(it);
         linePlan.push({ type: 'item', item: it });
     }
@@ -2394,23 +2469,32 @@ async function query_category_takeoff() {
 
 // C ref: pickup.c query_objlist("What do you want to take off?", invent,
 // SIGNAL_NOMENU|USE_INVLET|INVORDER_SORT, PICK_ANY, filter).  USE_INVLET means
-// the accelerators are the objects' own inventory letters.
+// the accelerators are the objects' own inventory letters.  Returns -1 when no
+// item passes the filter (SIGNAL_NOMENU), null when the menu is cancelled.
 async function query_objlist_takeoff(allow) {
     const items = [], linePlan = [];
-    const sorted = sortloot(inventoryArray(), SORTLOOT_INVLET | SORTLOOT_PACK, false, allow);
-    let curClass = null;
-    for (const sli of sorted) {
-        if (!sli.obj) break;
-        const o = sli.obj;
-        if (o.oclass !== curClass) {
-            curClass = o.oclass;
-            linePlan.push({ type: 'header', text: let_to_name(curClass, false, false) });
+    const sorted = sortloot(inventoryArray(),
+        SORTLOOT_INVLET | (game.flags?.sortpack !== false ? SORTLOOT_PACK : 0), false, allow);
+    // INVORDER_SORT: C runs the sorted list once per class in flags.inv_order
+    // (pickup.c:1105-1160), so classes group in pack order even with !sortpack.
+    for (const cls of classOrder()) {
+        let printedHeader = false;
+        for (const sli of sorted) {
+            if (!sli.obj) break;
+            const o = sli.obj;
+            if (o.oclass !== cls) continue;
+            if (!printedHeader) {
+                printedHeader = true;
+                linePlan.push({ type: 'header', text: let_to_name(cls, false, false) });
+            }
+            /* C ref: pickup.c:1131 — obj_to_glyph(curr, rn2_on_display_rng) per listed item */
+            obj_to_glyph(o);
+            const it = { letter: o.invlet, obj: o, selected: false, skipinvert: false, desc: floor_object_name(o) };
+            items.push(it);
+            linePlan.push({ type: 'item', item: it });
         }
-        const it = { letter: o.invlet, obj: o, selected: false, skipinvert: false, desc: obj_doname(o) };
-        items.push(it);
-        linePlan.push({ type: 'item', item: it });
     }
-    if (!items.length) return [];
+    if (!items.length) return -1;
     const buildLines = () => {
         const lines = [{ text: 'What do you want to take off?', attr: ATR_INVERSE }, { text: '' }];
         for (const p of linePlan) {
@@ -2483,8 +2567,12 @@ async function menu_remarm(retry) {
         all_worn_categories = false;
 
     const chosen = await query_objlist_takeoff(all_worn_categories ? is_worn : is_worn_by_type);
-    if (chosen === null || !chosen.length) { await dismiss_invent_screen(); return 0; }
     await dismiss_invent_screen();
+    if (chosen === -1) {
+        if (ms !== MENU_COMBINATION) await pline('There is nothing else you can remove or unwield.');
+        return 0;
+    }
+    if (chosen === null) return 0;
     for (const obj of chosen) await select_off(obj);
     return 0;
 }
@@ -2533,28 +2621,25 @@ async function menu_loot_out(box, retry = 0) {
 
     // Take-out messages page with --More-- over the MAP (not the menu), so drop
     // the corner-menu overlay and start the topline fresh.  C ref: out_container
-    // -> pickup_prinv -> prinv -> pline (update_topl accumulation + more()).
+    // -> lift_object() + pickup_prinv -> prinv -> pline (update_topl accumulation
+    // + more()).  menu_loot() zeroes gp.pickup_encumbrance for out_container().
     delete game._modal_screen;
     game._pending_message = '';
     game._toplin = 0;
-    let n = 0;
+    game._pickup_encumbrance = 0;
+    game._pickup = game._pickup || {};
+    const saved = game._pickup.current_container;
+    game._pickup.current_container = box;
+    // C: autopick sums out_container()'s results; the menu path counts picks.
+    let n = autopick ? 0 : chosen.length;
     for (const obj of chosen) {
-        const i = (box.cobj || []).indexOf(obj);
-        if (i < 0) continue;
-        const count = obj.quan;
-        box.cobj.splice(i, 1);
-        obj.where = OBJ_FREE;
-        box.owt = weight(box);
-        if (box.otyp === ICE_BOX_OTYP) removed_from_icebox(obj);
-        const otmp = addinv(obj);
-        await flush_addinv_plines();
-        await report_merge_discovery();
-        // No encumbrance change here, so pickup_prinv's load prefix is absent.
-        // prinv_fmt() renders "<letter> - <name>." without touching the topline
-        // state; update_topl does the emit so successive lines accumulate/page.
-        await update_topl(prinv_fmt(null, otmp, count));
-        n++;
+        if (!game._pickup.current_container) break;
+        if ((box.cobj || []).indexOf(obj) < 0) continue;
+        const res = await out_container(obj);
+        if (autopick && res > 0) n += res;
+        if (res < 0) break;
     }
+    game._pickup.current_container = saved;
     return n;
 }
 
@@ -2624,15 +2709,17 @@ async function query_category_put_in() {
 }
 
 // C ref: pickup.c query_objlist() (via menu_loot put_in) — the "Put in what?"
-// item menu over inventory.  menu_loot passes USE_INVLET with the default
-// invlet_constant option, so the accelerator IS the object's inventory letter
-// (gold's '$'), not a fresh a,b,c... run.
+// item menu over inventory.  menu_loot passes USE_INVLET when flags.invlet_constant
+// (the default 'fixinv'), so the accelerator IS the object's inventory letter and
+// query_objlist() sorts with SORTLOOT_INVLET (not SORTLOOT_LOOT) | SORTLOOT_PACK;
+// with 'nofixinv' it sorts as sortloot=l and auto-letters a,b,c... ('$' first).
 async function query_objlist_put_in(allow) {
     const inv = inventoryArray();
     const items = [];
     const linePlan = [];
-    const sorted = sortloot(inv, SORTLOOT_LOOT | SORTLOOT_PACK, false, allow);
-    let curClass = null;
+    const useInvlet = game.flags?.invlet_constant !== false;
+    const sorted = sortloot(inv, (useInvlet ? SORTLOOT_INVLET : SORTLOOT_LOOT) | SORTLOOT_PACK, false, allow);
+    let curClass = null, menu_ch = 'a', first = true;
     for (const sli of sorted) {
         if (!sli.obj) break;
         const o = sli.obj;
@@ -2640,8 +2727,16 @@ async function query_objlist_put_in(allow) {
             curClass = o.oclass;
             linePlan.push({ type: 'header', text: let_to_name(curClass, false, false) });
         }
-        const it = { letter: o.invlet, obj: o, selected: false, skipinvert: false,
-                     groupacc: DEF_OC_SYMS[o.oclass], desc: obj_doname(o) };
+        let letter;
+        if (useInvlet) letter = o.invlet;
+        else if (first && o.oclass === COIN_CLASS) letter = '$';
+        else { letter = menu_ch; menu_ch = nextMenuCh(menu_ch); }
+        first = false;
+        // C ref: pickup.c:1131 — obj_to_glyph(curr, rn2_on_display_rng) per item
+        // (display-RNG draw while hallucinating).
+        obj_to_glyph(o);
+        const it = { letter, obj: o, selected: false, skipinvert: false,
+                     groupacc: DEF_OC_SYMS[o.oclass], desc: floor_object_name(o) };
         items.push(it);
         linePlan.push({ type: 'item', item: it });
     }
@@ -2707,12 +2802,17 @@ async function menu_loot_in(box, retry = 0) {
     game._pickup = game._pickup || {};
     const saved = game._pickup.current_container;
     game._pickup.current_container = box;
-    let n = 0;
+    // C ref: pickup.c:3265 menu_loot() — the autopick arm sums in_container()'s
+    // results (`n_looted += res`), but the item-menu and lone just-picked arms
+    // set `n_looted = n` (the number SELECTED) before inserting anything, so a
+    // selection in_container() refuses (e.g. the container itself: "That would
+    // be an interesting topological exercise.") still returns ECMD_TIME.
+    let n = autopick ? 0 : chosen.length;
     for (const obj of chosen) {
         if (!game._pickup.current_container) break;
         const res = await in_container(obj);
         if (res < 0) break;
-        n += res;
+        if (autopick) n += res;
     }
     game._pickup.current_container = saved;
     return n;
@@ -2738,20 +2838,6 @@ function autokey_unlock() {
     return key || pick || card || null;
 }
 
-// C ref: lock.c lock_action() — the "-ing" phrase naming the current lock
-// activity, chosen from the target's state and the tool.  A locked box picked
-// with a lock pick / credit card yields "picking the lock".
-function lock_action(xl) {
-    const box = xl.box;
-    if (box && !box.olocked)
-        return box.otyp === CHEST_OTYP ? 'locking the chest' : 'locking the box';
-    if (xl.picktyp === LOCK_PICK || xl.picktyp === CREDIT_CARD)
-        return 'picking the lock';
-    if (box)
-        return box.otyp === CHEST_OTYP ? 'unlocking the chest' : 'unlocking the box';
-    return 'picking the lock';
-}
-
 // C ref: lock.c pick_lock() — autounlock box branch (rx/container supplied, so
 // no direction prompt).  Default AUTOUNLOCK_APPLY_KEY prompts "Unlock it with
 // <yname(tool)>?"; on 'y' it starts the lock-picking occupation.  Success
@@ -2760,11 +2846,9 @@ function lock_action(xl) {
 // SOMETHING) on 'y', else 0 (PICKLOCK_DID_NOTHING, no time passes).
 async function pick_lock_box(pick, box) {
     const picktyp = pick.otyp;
-    // yname(uncursed lock pick) -> "your lock pick"; skeleton key -> "your key".
-    const toolname = picktyp === LOCK_PICK ? 'your lock pick'
-                   : picktyp === SKELETON_KEY ? 'your key'
-                   : picktyp === CREDIT_CARD ? 'your credit card'
-                   : 'your tool';
+    // C ref: lock.c:560 yname(pick) -- "your lock pick", "your credit card named Fido".
+    const { yname } = await import('./invent.js');
+    const toolname = yname(pick);
     // ynq(): the "Hmmm... turns out to be locked." topline is still pending, so
     // it is paged with --More-- before the prompt is drawn.
     game._yn_need_more = true;
@@ -2847,7 +2931,15 @@ async function loot_containers_menu(boxes) {
 // before any container prompt; a grave here (with no container on it) can't
 // be looted without digging it up; failing all of that, an adjacent monster
 // may still be looted directionally (loot_mon(), e.g. saddle removal).
+// C ref: pickup.c doloot():2166 — arms loot_reset_justpicked around the core.
 async function doloot() {
+    set_loot_reset_justpicked(true);
+    const res = await doloot_core();
+    set_loot_reset_justpicked(false);
+    return res;
+}
+
+async function doloot_core() {
     // C ref: pickup.c doloot_core():2194 — check_capacity((char *) 0) runs
     // FIRST: an Overtaxed hero "can't do that while carrying so much stuff"
     // and no turn passes (so the container prompts never appear).
@@ -3315,10 +3407,20 @@ function render_overview_menu(lines) {
     const disp = game?.nhDisplay;
     if (!disp?.setCell) return;
     const cols = disp.cols || 80;
+    // C ref: wintty.c tty_end_menu() — an item wider than the screen is cut to
+    // cols - 2 characters, so no overlay text ever lands on the last column.
+    for (const l of lines) if (l.text.length + 2 > cols) l.text = l.text.slice(0, cols - 2);
     let maxcol = '(end) '.length;
     for (const l of lines) maxcol = Math.max(maxcol, l.text.length + 2);
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
+    // C ref: wintty.c:1407 process_menu_window() — `if (!cw->offx)` the menu
+    // is not a corner window and term_clear_screen() blanks the whole screen.
+    if (offx === 0) {
+        const rows = disp.rows || 24;
+        for (let r = 0; r < rows; r++)
+            for (let c = 0; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
+    }
     const textCol = offx + 1;
     // The message window (row 0) is cleared in full when the menu is raised.
     for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
@@ -3536,7 +3638,7 @@ const HANDLERS = {
     kick: dokick,
     known: dodiscovered,
     knownclass: doclassdisco,
-    look: dolook,
+    look: itemaction_time(dolook), // blind #look spends a move (invent ECMD_TIME 3)
     options: dosetSimple,
     optionsfull: doset,
     perminv: doperminv,
@@ -4041,7 +4143,15 @@ async function wizsmell_extcmd() {
 // wiring this still closes the keystroke-leak bug regardless.
 async function wiztelekinesis_extcmd() {
     const { wiz_telekinesis } = await import('./wizcmds.js');
-    return await wiz_telekinesis();
+    const res = await wiz_telekinesis();
+    /* C ref: cmd.c rhack():3810 — ECMD_CANCEL runs reset_cmd_vars(TRUE), which
+       also zeroes multi (left negative by hurtle()'s nomul(-range)). */
+    if (res & 0x02 /* ECMD_CANCEL */) {
+        const { reset_cmd_vars } = await import('./cmd.js');
+        reset_cmd_vars(true);
+        return 0;
+    }
+    return res === 0x01 ? 1 : 0;
 }
 
 // C ref: wizcmds.c:671 wiz_show_wmodes() — #wmode.
@@ -4182,9 +4292,22 @@ async function doherecmdmenu() {
     /* C ref: cmd.c:4658 act_on_act() queues the chosen command (plus canned
        answers) and rhack() runs it next; a dismissed menu costs no time. */
     if (!picked) return 0;
-    if (picked.keys) unshiftKeys(picked.keys);
+    // C ref: cmd.c act_on_act() MCMD_EAT: `cmdq_add_ec(CQ_CANNED, doeat);
+    // cmdq_add_key(CQ_CANNED, 'y')` — doeat()'s floor prompt takes the canned
+    // key through yn_function(addcmdq=TRUE) without drawing itself.
+    if ((picked.cmd === 'eat' || picked.cmd === 'tip') && picked.keys) {
+        const { cmdq_add_key } = await import('./invent.js');
+        const { CQ_CANNED } = await import('./const.js');
+        for (const k of picked.keys) cmdq_add_key(CQ_CANNED, k);
+    } else if (picked.keys) unshiftKeys(picked.keys);
     const fn = HANDLERS[picked.cmd];
-    return fn ? await fn() : 0;
+    if (!fn) return 0;
+    /* doherecmdmenu() returns ECMD_OK with the command on CQ_CANNED, so it runs
+       in a NEW moveloop_core() iteration whose once-per-input hallucination /
+       warning redraw (display-RNG draws) comes first. */
+    const { moveloop_input_redraw } = await import('./allmain.js');
+    await moveloop_input_redraw();
+    return await fn();
 }
 
 // C ref: stairs.c stairway_at(x, y) (js/do.js keeps the other copy private).
@@ -4803,7 +4926,7 @@ export async function dotip() {
                     const c = await yn_function(
                         loot_safe_qbuf('There is ', ' here, tip it?', cobj,
                                        obj_doname, ansimpleoname, 'container'),
-                        'ynq', 'q');
+                        'ynq', 'q', true);
                     if (c === 'q') return 0;                 // ECMD_OK
                     if (c === 'n') continue;
                     await tipcontainer_c(cobj);

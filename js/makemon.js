@@ -6,7 +6,7 @@ import { vtense } from './plural.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, d, rn1 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { christen_monst, mhim, mhis } from './do_name.js';
+import { christen_monst, mhim, mhis, mon_nam } from './do_name.js';
 import { builds_up, In_hell, Is_special, level_difficulty } from './dungeon.js';
 import { roles } from './role.js';
 import { has_innate } from './exper.js';
@@ -51,7 +51,7 @@ import {
 // declarations from here — a cycle that resolves cleanly because both sides are
 // hoisted `function` declarations used only at call time, never at module init.
 import { inside_room, t_at as t_at_local } from './mkroom.js';
-import { does_block, block_point } from './vision.js';
+import { does_block, block_point, is_lightblocker_mappear } from './vision.js';
 import { ARM_BONUS, m_dowear } from './worn.js';
 import {
     mflags2_of, mflags3_of, msound_of,
@@ -1345,11 +1345,16 @@ function is_dprince_pm(ptr) {
 // the throne room's monarch a mace.
 export function mongets_pub(mtmp, otyp) { return mongets(mtmp, otyp); }
 
-// C ref: mondata.h is_lminion(mon) = mon->isminion && EMIN(mon)->min_align
-// == A_LAWFUL.
+// C ref: monst.h is_lminion(mon) = is_minion(mon->data) && mon_aligntyp(mon)
+// == A_LAWFUL.  mon_aligntyp() (priest.c:280) falls back to the species
+// alignment, so a plain Angel (M2_MINION, lawful) counts even when it is not
+// an isminion follower.
 function is_lminion_mon(mtmp) {
-    return !!(mtmp && mtmp.isminion && mtmp.emin
-              && mtmp.emin.min_align === A_LAWFUL);
+    if (!mtmp?.data || !(mflags2_of(mtmp.data) & M2_MINION)) return false;
+    const algn = mtmp.ispriest ? mtmp.epri?.shralign
+               : mtmp.isminion ? mtmp.emin?.min_align
+                               : mtmp.data.maligntyp;
+    return algn !== A_NONE && algn > 0;
 }
 // C ref: mondata.h is_mplayer(ptr) = ptr >= &mons[PM_ARCHEOLOGIST]
 // && ptr <= &mons[PM_WIZARD] — the player-monster block of mons[].
@@ -1447,6 +1452,9 @@ function m_initthrow(_mtmp, otyp, oquan) {
 // glyph on object-detection, wrong item on top of the death-drop pile).
 export function mpickobj(mtmp, otmp) {
     if (!mtmp || !otmp) return 0;
+    /* C ref: steal.c:655 — a hero-owned object on a shop floor that a monster
+       takes possession of is no longer no_charge. */
+    otmp.no_charge = 0;
     return add_to_minv(mtmp, otmp);
 }
 
@@ -2527,11 +2535,20 @@ const SMS_SYMS = [
 // species scan) where we drew one rn2(SIZE(syms)). First RNG divergence on
 // seed4500 (step 326, call 4127/14047, the Dlvl 40 level-teleport); 1488
 // screens across seed4500+seed0360 were downstream of the shifted stream.
+// C ref: youprop.h Protection_from_shape_changers — makemon.js's own copy of
+// mon.js Protection_from_shape_changers() (mon.js imports this module): the
+// H<prop> word or the worn-ring extrinsic word (prop.h index 60).
+function prot_shape_changers_mm() {
+    const u = game.u;
+    return !!((u?.uprops?.HProtection_from_shape_changers | 0)
+        || (u?.uprops?.EProtection_from_shape_changers | 0)
+        || (u?.uprops?.Protection_from_shape_changers | 0)
+        || (u?.uprops_extrinsic?.[60] | 0));
+}
 export function set_mimic_sym(mtmp) {
-    // C ref: `if (!mtmp || Protection_from_shape_changers) return;` — extrinsic
-    // ring property, read inline rather than importing mon.js (which imports
-    // this module).  No RNG either way.
-    if (!mtmp || game.u?.uprops?.Protection_from_shape_changers) return;
+    // C ref: `if (!mtmp || Protection_from_shape_changers) return;`.  No RNG
+    // either way.
+    if (!mtmp || prot_shape_changers_mm()) return;
     const mx = mtmp.mx, my = mtmp.my;
     const loc = game.level?.at(mx, my);
     if (!loc) return;
@@ -2707,8 +2724,12 @@ export function set_mimic_sym(mtmp) {
 
     // C ref: `if (does_block(mx, my, &levl[mx][my])) block_point(mx, my);` — a
     // mimic disguised as a boulder or statue blocks line of sight, which changes
-    // what the map shows behind it.  No RNG.
-    if (does_block(mx, my)) block_point(mx, my);
+    // what the map shows behind it.  No RNG.  C has already place_monster()ed
+    // mtmp, so does_block()'s m_at() sees it; this port links it into
+    // level.monsters only after the mlet switch, so test mtmp itself too.
+    if (does_block(mx, my)
+        || ((!mtmp.minvis || game.u?.uprops?.See_invisible) && is_lightblocker_mappear(mtmp)))
+        block_point(mx, my);
 }
 
 // C ref: makemon.c rndmonnum() — rndmonst() species index, RNG-faithful.
@@ -2834,26 +2855,44 @@ export function set_malign(mtmp) {
 function pickvampshape(mtmp) {
     let mndx = mtmp.cham;
     let wolfchance = 10;
+    // avoid lowercase display symbols ('d' wolf, 'v' fog cloud) on the rogue level
+    const uppercase_only = Is_rogue_level(game.u?.uz);
     switch (mndx) {
     case PM_VLAD_THE_IMPALER:
-        // mon_has_special: Vlad carries the Candelabrum, so Vlad never reaches
-        // here via newcham (handled separately) — keep faithful anyway.
+        /* ensure Vlad can keep carrying the Candelabrum */
+        if (mon_has_special_mm(mtmp))
+            break; /* leave mndx as is */
         wolfchance = 3;
         /* FALLTHROUGH */
     case PM_VAMPIRE_LEADER:
-        if (!rn2(wolfchance)) { mndx = PM_WOLF; break; }
+        /* don't pick a walking form if that would lead to immediate drowning
+           or immolation and reversion to vampire form */
+        if (!rn2(wolfchance) && !uppercase_only
+            && !hooks.is_pool_or_lava(mtmp.mx, mtmp.my)) {
+            mndx = PM_WOLF;
+            break;
+        }
         /* FALLTHROUGH */
     case PM_VAMPIRE:
-        mndx = (!rn2(4)) ? PM_FOG_CLOUD : PM_VAMPIRE_BAT;
+        mndx = (!rn2(4) && !uppercase_only) ? PM_FOG_CLOUD : PM_VAMPIRE_BAT;
         break;
     }
-    // C: revert to base if chosen target genocided, or randomly (rn2(4)) if
-    // already in an alternate form.  For a fresh vampire mtmp.data === base so
-    // the (data != cham) clause is false and no rn2(4) is drawn.
+    // C: return to the base form if the chosen target has been genocided, or
+    // randomly (rn2(4)) if already in an alternate form.
     const base = mtmp.cham;
-    if ((mtmp.data && mtmp.data.pmidx !== base) && !rn2(4))
+    if ((mvflags(mndx) & G_GENOD) !== 0
+        || ((mtmp.data && mtmp.data.pmidx !== base) && !rn2(4)))
         return base;
     return mndx;
+}
+
+// C ref: mon.c mon_has_special(mon) — the Amulet, the Bell, the Candelabrum,
+// the Book of the Dead or a quest artifact (carried quest artifacts excluded:
+// they are never monster-held in this port's corpus).
+function mon_has_special_mm(mon) {
+    return (mon.minvent || []).some((o) => o.otyp === CANDELABRUM_OF_INVOCATION
+        || o.otyp === SPE_BOOK_OF_THE_DEAD_OTYP
+        || o.otyp === BELL_OF_OPENING_OTYP || o.otyp === 213 /* AMULET_OF_YENDOR */);
 }
 
 // C ref: mon.c mgender_from_permonst().  Draws rn2(10) only when the new form
@@ -3170,6 +3209,9 @@ function newcham_worm(mtmp, mdat) {
 // return a form accept_newcham_form() rejects, and each retry re-draws.
 export function newcham(mtmp, mdat) {
     const olddata = mtmp.data;
+    /* C ref: mon.c:5316 "we need this one whether msg is true or not" —
+       l_oldname = x_monnam(): a hallucinating hero's rndmonnam() display draws */
+    mon_nam(mtmp);
     if (mdat == null) {
         let tryct = 20, mndx;
         do {
@@ -3205,6 +3247,12 @@ export function newcham(mtmp, mdat) {
         // is what the map shows.
         mtmp.meverseen = 0;
         if (mtmp.mx) hooks.newsym?.(mtmp.mx, mtmp.my);
+        // C ref: mon.c:5522-5526 — while a monster is moving (e.g. a spellcaster
+        // summoning a vampshifter via nasty()), the new form gets a fresh
+        // chance to pinpoint the hero.
+        if (game.context?.mon_moving
+            && !(game.u.ux === mtmp.mux && game.u.uy === mtmp.muy))
+            hooks.set_apparxy?.(mtmp);
     }
     return changed;
 }
@@ -3249,6 +3297,17 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
             await A.m_unleash(mtmp, true);
         else
             (await import('./invent.js')).update_inventory();
+    }
+    if (changed) {
+        /* C ref: mon.c:5397 — light emission changed with the new form */
+        const { emits_light, new_light_source, del_light_source, LS_MONSTER }
+            = await import('./light.js');
+        if (emits_light(olddata) !== emits_light(mtmp.data)) {
+            if (emits_light(olddata)) del_light_source(LS_MONSTER, mtmp);
+            if (emits_light(mtmp.data))
+                new_light_source(mtmp.mx, mtmp.my, emits_light(mtmp.data),
+                                 LS_MONSTER, mtmp);
+        }
     }
     if (changed && game.u?.ustuck === mtmp && game.u.uswallow) {
         if (!attacktype(mdat, AT_ENGL)) {
@@ -3322,6 +3381,16 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         const { mon_break_armor, check_gear_next_turn } = await import('./mon.js');
         await mon_break_armor(mtmp, (ncflags & NC_VIA_WAND_OR_SPELL) !== 0);
         check_gear_next_turn(mtmp);
+        // C ref: mon.c:5522-5535 — a monster in motion gives its new form a
+        // fresh chance to pinpoint the hero, then re-checks scariness.
+        if (game.context?.mon_moving) {
+            const mm = await import('./monmove.js');
+            if (!(game.u.ux === mtmp.mux && game.u.uy === mtmp.muy))
+                mm.set_apparxy(mtmp);
+            if (!mtmp.mpeaceful && mm.onscary(mtmp.mux, mtmp.muy, mtmp)
+                && (await import('./dogmove.js')).monnear(mtmp, mtmp.mux, mtmp.muy))
+                await mm.monflee(mtmp, rn1(9, 2), true, true);
+        }
     }
     return changed;
 }
@@ -3633,7 +3702,12 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // well as minvis (a fresh monster has invis_blkd clear): newcham()'s
     // `minvis = perminvis` reset (mon.c:5406-5408) must keep the monster
     // invisible when a doppelganger takes its first shape.
-    if (mmflags & MM_MINVIS) { mtmp.perminvis = 1; mtmp.minvis = 1; }
+    if (mmflags & MM_MINVIS) {
+        mtmp.perminvis = 1; mtmp.minvis = 1;
+        /* worn.c:481 mon_set_minvis(): newsym() "make it disappear" — place_monster()
+           (makemon.c:1295) has already run in C, so it finds the monster on the map */
+        if (x > 0) { placeOnLevel(mtmp, x, y); hooks.newsym?.(x, y); }
+    }
 
     // C ref: makemon.c:1307-1312 — the per-mlet switch.  S_SPIDER and S_SNAKE
     // monsters generated during level creation (gi.in_mklev) at a real position
@@ -3707,10 +3781,13 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
         // which then immediately picks a shape via newcham().  Restricting it
         // to mcls === S_VAMPIRE skipped that call for the other three, which is
         // where seed4500 lost the stream on Dlvl 40.
-        const mcham = game.u?.uprops?.Protection_from_shape_changers
+        const mcham = prot_shape_changers_mm()
             ? NON_PM : pm_to_cham(ptr.pmidx);
         if (mcham !== NON_PM) {
             mtmp.cham = mcham;
+            /* C ref: makemon.c:1295 place_monster() precedes this newcham(),
+               so its newsym() already finds the monster on the map */
+            if (x > 0 && ptr.pmidx !== PM_VLAD_THE_IMPALER) placeOnLevel(mtmp, x, y);
             // Vlad stays in his normal shape so he can carry the Candelabrum.
             if (ptr.pmidx !== PM_VLAD_THE_IMPALER && newcham(mtmp, null))
                 allow_minvent = false;
@@ -3780,12 +3857,14 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     if (is_dprince_pm(ptr) && msound_of(ptr) === MS_BRIBE) {
         mtmp.mpeaceful = mtmp.minvis = mtmp.perminvis = 1;
         mtmp.mavenge = 0;
-        // C also drops the truce for a hero wielding Excalibur or Demonbane.
-        const uwep = game.u?.uwep;
-        if (uwep?.oname === 'Excalibur' || uwep?.oname === 'Demonbane')
+        // C also drops the truce for a hero wielding Excalibur or Demonbane
+        // (u_wield_art(ART_EXCALIBUR) || u_wield_art(ART_DEMONBANE); artifact
+        // numbers 1 and 12 in artilist.h).  The hero's weapon is game.uwep.
+        const uwep = game.uwep;
+        if (uwep && (uwep.oartifact === 1 || uwep.oartifact === 12))
             mtmp.mpeaceful = mtmp.mtame = false;
     }
-    if (ptr.name === 'raven' && game.u?.uwep?.otyp === W_BEC_DE_CORBIN)
+    if (ptr.name === 'raven' && game.uwep?.otyp === W_BEC_DE_CORBIN)
         mtmp.mpeaceful = true;
 
     // C ref: makemon.c:1405-1409 — a long worm gets a tail.  initworm() draws
@@ -4640,7 +4719,7 @@ export function dump_mongen() {
 // Cross-file helpers arrive by `await import()`, the convention this port uses
 // for edges that would close an import cycle (js/dungeon.js:1639-1643).
 export async function clone_mon(mon, x, y) {
-    const mm = { x: 0, y: 0 };
+    const mpos = { x: 0, y: 0 };
 
     /* may be too weak or have been extinguished for population control */
     if (mon.mhp <= 1
@@ -4648,20 +4727,20 @@ export async function clone_mon(mon, x, y) {
         return null;
 
     if (x === 0) {
-        mm.x = mon.mx;
-        mm.y = mon.my;
+        mpos.x = mon.mx;
+        mpos.y = mon.my;
     } else {
-        mm.x = x;
-        mm.y = y;
+        mpos.x = x;
+        mpos.y = y;
     }
-    if (!(mm.x >= 1 && mm.x < COLNO && mm.y >= 0 && mm.y < ROWNO)) { /* !isok, paranoia */
+    if (!(mpos.x >= 1 && mpos.x < COLNO && mpos.y >= 0 && mpos.y < ROWNO)) { /* !isok, paranoia */
         return null;
     }
-    if (mm_mon_at(mm.x, mm.y)) { /* (always True for the x==0 case) */
-        const cc = enexto_spawn(mm.x, mm.y, mon.data);
+    if (mm_mon_at(mpos.x, mpos.y)) { /* (always True for the x==0 case) */
+        const cc = enexto_spawn(mpos.x, mpos.y, mon.data);
         if (!cc) return null;
-        mm.x = cc.x; mm.y = cc.y;
-        if (mm_mon_at(mm.x, mm.y)) return null;
+        mpos.x = cc.x; mpos.y = cc.y;
+        if (mm_mon_at(mpos.x, mpos.y)) return null;
     }
 
     /* newmonst(); *m2 = *mon — a shallow copy of every field */
@@ -4670,8 +4749,8 @@ export async function clone_mon(mon, x, y) {
     /* C: m2->nmon = fmon; fmon = m2 — the link happens here, before
        place_monster(); placeOnLevel() (makemon.js) does both for this port. */
     m2.m_id = next_ident();
-    m2.mx = mm.x;
-    m2.my = mm.y;
+    m2.mx = mpos.x;
+    m2.my = mpos.y;
 
     m2.mundetected = 0;
     m2.mtrapped = 0;

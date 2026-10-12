@@ -38,7 +38,7 @@ import { observe_object, discover_object, record_price_quote } from './o_init.js
 // drop an rn2() draw from every "(unpaid, N ...)" render.
 import { currency, objects_at, count_contents, obj_extract_self, obfree,
          xname, doname_invent, ansimpleoname, is_pick, carrying,
-         update_inventory, xprname, body_part } from './invent.js';
+         update_inventory, xprname, body_part, tty_text_window } from './invent.js';
 import { A_CHA, A_WIS, HUNGRY, SHOPBASE, ROOMOFFSET, NO_ROOM,
          isok, IS_DOOR, IS_ROOM, IS_WALL, ZAP_POS, REPAIR_DELAY, BOLT_LIM,
          SVALL, D_CLOSED, D_BROKEN, PL_NSIZ, ANY_TYPE, ANY_SHOP, OROOM,
@@ -806,9 +806,8 @@ const helpless = (mon) => !!(mon.msleeping || !mon.mcanmove);
 // C ref: shk.c:60 muteshk(shkp).  sounds.h MS_ANIMAL == 17.
 const MS_ANIMAL = 17;
 const muteshk = (shkp) => helpless(shkp) || (msound_of(shkp.data) ?? 99) <= MS_ANIMAL;
-// C ref: youprop.h Deaf.
-const Deaf = () => ((game.u?.uprops?.Deaf || 0) > 0)
-                   || ((game.u?.uprops?.HDeaf || 0) > 0);
+// C ref: youprop.h Deaf (HDeaf || EDeaf): display.js's Deaf_hero() is the canonical reading.
+import { Deaf_hero as Deaf } from './display.js';
 // C ref: shk.c Shknam(shkp) — shkname() with the first letter capitalised.
 export function Shknam(shkp) {
     const s = shkname(shkp);
@@ -820,10 +819,8 @@ const plur = (n) => (n === 1 ? '' : 's');
 const verbalize = (line) => update_topl(`"${line}"`);
 // C ref: monst.h DEADMONSTER(mon).
 const DEADMONSTER = (mon) => !mon || (mon.mhp != null && mon.mhp < 1);
-// C ref: pronoun.c noit_mhe/noit_mhim/noit_mhis — never "it" for a shopkeeper.
-const noit_mhe = (m) => (m?.female ? 'she' : 'he');
-const noit_mhim = (m) => (m?.female ? 'her' : 'him');
-const noit_mhis = (m) => (m?.female ? 'her' : 'his');
+// C ref: you.h noit_mhe/noit_mhim/noit_mhis (js/do_name.js).
+import { noit_mhe, noit_mhim, noit_mhis } from './do_name.js';
 
 // C ref: hack.c money_cnt(otmp) — the quan of the FIRST coin stack on the
 // chain.  It stops there and does NOT descend into containers (that is
@@ -957,7 +954,7 @@ function nextoid(oldobj, newobj) {
 // whole payment path spends (mkobj.c:521 next_ident's rnd(2), recorded at
 // seed0002 step 359).
 export async function money2mon(mon, amount) {
-    const { freeinv } = await import('./invent.js');
+    const { freeinv, remove_worn_item } = await import('./invent.js');
     const { findgold } = await import('./steal.js');
     const ygold = findgold(game.invent);
     if (amount <= 0) return 0;
@@ -976,7 +973,7 @@ export async function money2mon(mon, amount) {
         give.owt = weight(give);
         game._goldCount = Math.max(0, (game._goldCount || 0) - amount);
     } else {
-        if (ygold.owornmask) ygold.owornmask = 0; /* remove_worn_item: quiver */
+        if (ygold.owornmask) await remove_worn_item(ygold, false); /* quiver */
         freeinv(ygold);
     }
     add_to_minv(mon, give);          /* gold merges with the shk's purse */
@@ -2118,7 +2115,16 @@ export async function finish_paybill() {
         if (umoney) await money2mon(shkp, umoney);
     }
     const { drop_upon_death } = await import('./bones.js');
-    await drop_upon_death(null, null, ox, oy);
+    const { place_object: place_obj } = await import('./mkobj.js');
+    // C ref: drop_upon_death() obj_extract_self()s every item, so by the time
+    // really_done() makes the grave corpse/ghost the hero's pack is empty and
+    // savebones() has nothing left to scatter (no second rn2(5)/rn2(8) pass).
+    await drop_upon_death(null, null, ox, oy, {
+        extract: (o) => { if (o) obj_extract_self(o); },
+        curse: (o) => { if (o) { o.cursed = 1; o.blessed = 0; } },
+        toFloor: (o, x, y) => { if (o) { o.owornmask = 0; place_obj(o, x, y); } },
+        toMon: (m, o) => { if (o) (m.minvent = m.minvent || []).push(o); },
+    });
 }
 
 // ── shk.c:3063 .. :4270 ─────────────────────────────────────────────────────
@@ -2926,7 +2932,7 @@ export async function sellobj(obj, x, y) {
 // C ref: shk.c doinvbill(mode):4197 — the `I x` listing of unpaid articles
 // already used up.  mode 0 just returns the count (that is what decides
 // whether `I`'s prompt offers 'x' at all).
-export function doinvbill(mode) {
+export async function doinvbill(mode) {
     const shkp = shop_keeper((game.u?.ushops || [])[0]);
     if (!shkp || !inhishop(shkp)) return 0; /* C: impossible() when mode != 0 */
     const eshkp = shkp.eshk;
@@ -2974,7 +2980,7 @@ export function doinvbill(mode) {
     }
     putstr(datawin, 0, '');
     putstr(datawin, 0, xprname(null, 'Total:', '*', false, totused, 0));
-    display_nhwindow(datawin, false);
+    await tty_text_window(datawin.lines); /* display_nhwindow(datawin, FALSE) */
     destroy_nhwindow(datawin);
     return 0;
 }

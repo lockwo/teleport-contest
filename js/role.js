@@ -801,9 +801,9 @@ const HALLU_GODS = [
 // priest/minion names: select a random god iff the hero is hallucinating, every
 // pick off the DISPLAY rng.  The hero's own pantheon is addressed by the
 // roles[] ARRAY index (not the PM_ mnum, which differs for Rogue/Ranger).
-export function halu_gname(alignment) {
+export function halu_gname(alignment, force_sane = false) {
     const u = game.u;
-    const hallu = !!u && !((u.HHalluc_resistance || 0) > 0)
+    const hallu = !force_sane && !!u && !((u.HHalluc_resistance || 0) > 0)
         && !!(u.uhallu || u.HHallucination || u.uprops?.Hallucination);
     if (!hallu) {
         const mnum = game.urole?.mnum ?? u?.umonnum ?? 0;

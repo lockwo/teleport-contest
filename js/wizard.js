@@ -12,7 +12,8 @@ import { update_topl, pline, newsym } from './display.js';
 import { Blind } from './vision.js';
 import { AT_MAGC, attacktype } from './monattk_data.js';
 import { In_W_tower } from './teleport.js';
-import { M_AP_MONSTER, MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR } from './const.js';
+import { M_AP_MONSTER, MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR, In_endgame, Is_astralevel } from './const.js';
+import { In_hell as dungeon_In_hell } from './dungeon.js';
 
 const FAKE_AMULET_OF_YENDOR = 212;
 const AMULET_OF_YENDOR = 213;           // js/mkobj.js OBJECT_DATA index
@@ -346,10 +347,7 @@ function uprop(...names) {
     return false;
 }
 function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf'); }
-function In_hell() { return !!game.level?.flags?.hellish || !!game.u?.uz?.inhell; }
-function Is_astralevel() { return !!game.level?.flags?.is_astral; }
-// C ref: dungeon.c In_endgame(&u.uz) — the Planes (dnum == the endgame dnum).
-function In_endgame() { return !!game.level?.flags?.is_astral || !!game.u?.uz?.in_endgame; }
+function In_hell() { return dungeon_In_hell(game.u?.uz); }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // wizard.c completion — the covetous-monster strategy/tactics machinery, the

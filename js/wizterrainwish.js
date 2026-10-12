@@ -256,9 +256,17 @@ export function wizterrainwish(d, out) {
             lev.drawbridgemask = ((lev.drawbridgemask | 0) & ~DB_UNDER) | DB_ICE;
         }
         del_engr_at(x, y);
-        // GAP: "melting ice" starts a MELT_ICE_AWAY timeout (no timer subsystem).
-        if (!is_dbridge) out.push(`${upstart(ice_descr(lev))}.`);
-        else dbterrainmesg(out, 'Ice', lev);
+        /* "melting ice" starts a MELT_ICE_AWAY timeout; both effects are
+           deferred (async) entries so they run, in order, before the message
+           whose thickness word (ice_descr) reads that timer */
+        if (pfx(bp, 'melting '))
+            out.push(async () => (await import('./zap.js')).start_melt_ice_timeout(x, y, 0));
+        if (!is_dbridge) {
+            out.push(async () => {
+                const { ice_descr } = await import('./invent.js');
+                await (await import('./display.js')).pline(`${upstart(ice_descr(x, y))}.`);
+            });
+        } else dbterrainmesg(out, 'Ice', lev);
         madeterrain = true;
     } else if (sfx(bp, 'altar')) {
         let al;
@@ -403,12 +411,4 @@ export function wizterrainwish(d, out) {
         // replaced the solid stone they were phasing through.
     }
     return madeterrain || badterrain;
-}
-
-// C ref: pager.c:614 ice_descr(x, y, outbuf) — the far/blind arm returns
-// waterbody_name(); close up it prefixes a thickness word derived from the
-// MELT_ICE_AWAY timeout.  Freshly-wished ice has no timer, so C's `!time_left`
-// arm ("solid ice") is what this reaches.
-function ice_descr(lev) {
-    return lev.typ === ICE ? 'solid ice' : waterbody_name_sober(lev);
 }

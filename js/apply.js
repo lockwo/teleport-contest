@@ -25,13 +25,13 @@ import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { Blind as Blind_vision } from './vision.js';
 import { s_suffix } from './hacklib.js';
-import { CQ_CANNED } from './const.js';
+import { CQ_CANNED, NO_KILLER_PREFIX } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { begin_burn, end_burn } from './timeout.js';
 
 import {
     TOOL_CLASS, WAND_CLASS, SPBOOK_CLASS, POTION_CLASS, WEAPON_CLASS,
-    COIN_CLASS, SCROLL_CLASS, MAGIC_MARKER, SCR_BLANK_PAPER, SPE_BLANK_PAPER,
+    COIN_CLASS, MAGIC_MARKER, SPE_BLANK_PAPER,
     SPE_BOOK_OF_THE_DEAD, POT_OIL, objects, mksobj, weight,
 } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -552,106 +552,6 @@ function stethoscope_appearance(mtmp) {
     }
 }
 
-// C ref: write.c write_ok(obj) — getobj() callback for the paper a magic
-// marker writes on.  Only scrolls and spellbooks qualify; a blank one is
-// SUGGESTed, a written one DOWNPLAYed, everything else EXCLUDEd ("That is a
-// silly thing to write on.").
-function write_ok(obj) {
-    const I = _invent;
-    const EXCLUDE = I ? I.GETOBJ_EXCLUDE : -3;
-    const DOWNPLAY = I ? I.GETOBJ_DOWNPLAY : 1;
-    const SUGGEST = I ? I.GETOBJ_SUGGEST : 2;
-    if (!obj || (obj.oclass !== SCROLL_CLASS && obj.oclass !== SPBOOK_CLASS))
-        return EXCLUDE;
-    if (obj.otyp === SCR_BLANK_PAPER || obj.otyp === SPE_BLANK_PAPER)
-        return SUGGEST;
-    return DOWNPLAY;
-}
-
-// C ref: write.c dowrite(pen) — applying a magic marker.  Prompts for the paper
-// to write on; a non-blank scroll/spellbook draws "That <typeword> is not
-// blank!" (a wasted turn), a blank one would proceed to the "What type of
-// scroll..." prompt + cost computation.  The owned session only ever targets a
-// non-writeable object (rejected by write_ok -> getobj's silly_thing) or an
-// already-written one, so the blank-paper creation branch isn't reached; if it
-// ever is, fall back to ECMD_TIME rather than mis-spend RNG.
-async function dowrite(_pen) {
-    // C ref: write.c:31 — a handless form can't write at all (the Glib arm
-    // needs slippery fingers, which no covered session produces).
-    if (_invent.nohands_youmonst()) {
-        await _display.pline('You need hands to be able to write!');
-        return ECMD_OK;
-    }
-    const paper = await _invent.getobj('write on', write_ok, _invent.GETOBJ_NOFLAGS);
-    if (!paper) return ECMD_CANCEL; // cancelled / silly_thing -> no turn
-
-    const typeword = (paper.otyp === SPE_NOVEL) ? 'book'
-        : (paper.oclass === SPBOOK_CLASS) ? 'spellbook' : 'scroll';
-    // observe_object(paper): no RNG.  Blind branch not reachable here.
-    if (paper.otyp !== SCR_BLANK_PAPER && paper.otyp !== SPE_BLANK_PAPER) {
-        await _display.pline(`That ${typeword} is not blank!`);
-        const { exercise } = await import('./attrib.js');
-        const A_WIS = 2; // attrib.h A_WIS
-        exercise(A_WIS, false); // -> rn2(2)
-        return ECMD_TIME;
-    }
-    _invent.makeknown(SCR_BLANK_PAPER);
-
-    // C ref: write.c:69 — getlin("What type of <typeword> do you want to
-    // write?").  This is a BLOCKING line prompt: it eats every keystroke up to
-    // the newline.  Skipping it (as this used to) handed all of them to the
-    // command parser, which then ran that many phantom commands.
-    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
-    let namebuf = await hooked_tty_getlin(
-        `What type of ${typeword} do you want to write?`, null);
-    game._pending_message = '';
-    if (namebuf == null || namebuf === '\x1b' || namebuf === '') return ECMD_TIME;
-    let nm = namebuf.replace(/\s+/g, ' ').replace(/^ | $/g, '');
-    if (!nm) return ECMD_TIME;
-    if (/^scroll /i.test(nm)) nm = nm.slice(7);
-    else if (/^spellbook /i.test(nm)) nm = nm.slice(10);
-    if (/^of /i.test(nm)) nm = nm.slice(3);
-    nm = nm.replace(/ armour/i, ' armor ').replace(/\s+/g, ' ').replace(/ $/, '');
-
-    // C ref: write.c:98 — scan this object class's contiguous otyp range for a
-    // name or appearance match, then a second pass over user-assigned names
-    // (whose rn2(++deferralchance) tie-break is a real draw, but only once the
-    // hero has #named a type).
-    const eq = (a, b) => a != null && b != null && a.toLowerCase() === b.toLowerCase();
-    let found = -1, real = 0, deferred = 0, deferralchance = 0;
-    const inClass = [];
-    for (let i = 0; i < objects.length; i++)
-        if (objects[i] && objects[i].oclass === paper.oclass) inClass.push(i);
-    for (const i of inClass) {
-        const ocl = objects[i];
-        if (!ocl.name) continue;
-        if (eq(ocl.name, nm)) {
-            if (ocl.oc_name_known || paper.oclass === SPBOOK_CLASS) { found = i; break; }
-            real = deferred = i;
-            break;
-        }
-        if (eq(apply_obj_descr(i), nm)) { found = i; break; }
-    }
-    if (found < 0) {
-        for (const i of inClass) {
-            const ocl = objects[i];
-            if (ocl.oc_uname && eq(ocl.oc_uname, nm)
-                && !(real && ocl.oc_name_known)
-                && !rn2(++deferralchance))
-                deferred = i;
-        }
-        if (deferred) found = deferred;
-    }
-    if (found < 0) {
-        await _display.pline(`There is no such ${typeword}!`);
-        return ECMD_TIME;
-    }
-    // A real match runs mksobj + cost() + rn1(basecost/2, basecost/2) + an rnl()
-    // success roll; none of that is ported, so stop here rather than invent a
-    // stream C does not draw.
-    return ECMD_TIME;
-}
-
 // C ref: objclass.h OBJ_DESCR(objects[i]) — the (shuffled) appearance word.
 // objnam.js keeps the same accessor but does not export it.
 function apply_obj_descr(otyp) {
@@ -720,7 +620,12 @@ async function doapply_obj(obj) {
 
     // C ref apply.c:4361 — applying a magic marker writes a scroll/spellbook.
     if (obj.otyp === MAGIC_MARKER) {
-        return await dowrite(obj);
+        // write.js (cmd.h numbering: ECMD_TIME 1, ECMD_CANCEL 2) -> this file's.
+        const { dowrite } = await import('./write.js');
+        const r = await dowrite(obj);
+        if (r & 0x01) return ECMD_TIME;
+        if (r & 0x02) return ECMD_CANCEL;
+        return ECMD_OK;
     }
 
     // C ref: apply.c `case TINNING_KIT: use_tinning_kit(obj); break;` — res is
@@ -1102,23 +1007,37 @@ async function do_break_wand(obj) {
     // SHUFFLED appearance, so it must go through oc_descr_idx.
     const descr = apply_obj_descr(obj.otyp) || '';
     const is_fragile = /balsa|glass/.test(descr);
-    if (acurr_eff(A_STR) < (is_fragile ? 5 : 10)) {
-        await _display.pline(`You don't have the strength to break your ${
-            _invent.cxname_singular(obj)}!`);
+    // C ref: apply.c do_break_wand() -- the nohands/freehand guards precede the
+    // strength test and the confirmation prompt.
+    if (_invent.nohands_youmonst()) {
+        await _display.pline(`You can't break ${_invent.yname(obj)} without hands!`);
+        return ECMD_OK;
+    } else if (!freehand()) {
+        await _display.pline(`Your ${makeplural(_invent.body_part(HAND))} are occupied!`);
         return ECMD_OK;
     }
+    if (acurr_eff(A_STR) < (is_fragile ? 5 : 10)) {
+        await _display.pline(`You don't have the strength to break ${
+            _invent.yname(obj)}!`);
+        return ECMD_OK;
+    }
+    const { safe_qbuf } = await import('./pickup.js');
     const ans = await _display.y_n(
-        `Are you really sure you want to break your ${_invent.cxname_singular(obj)}?`);
+        safe_qbuf('Are you really sure you want to break ', '?', obj,
+                  _invent.yname, _invent.ysimple_name, 'the wand'));
     if (ans !== 'y') return ECMD_OK;
     await _display.pline(
-        `Raising your ${_invent.cxname_singular(obj)} high above your head,`
+        `Raising ${_invent.yname(obj)} high above your head,`
                          + ` you ${is_fragile ? 'snap' : 'break'} it in two!`);
 
-    // C: obj->unpaid -> check_unpaid(obj) + costly_alteration(obj, COST_DSTROY).
-    // Shop billing is a no-op elsewhere in this port too (js/invent.js
-    // check_unpaid() and js/trap.js costly_alteration() are both stubs);
-    // skipped here for the same reason, and likewise for pay_for_damage()
-    // below when a dug wall/door happens to be a shop's.
+    // C ref: apply.c do_break_wand() — `if (obj->unpaid) { check_unpaid(obj);
+    // costly_alteration(obj, COST_DSTROY); }`, done before freeinv() so the wand
+    // leaves the bill.
+    if (obj.unpaid) {
+        const shkm = await import('./shk.js');
+        await shkm.check_unpaid(obj);
+        await shkm.costly_alteration(obj, 11 /* COST_DSTROY */);
+    }
     const u = game.u;
     game.current_wand = obj;
     A.invent.freeinv(obj);
@@ -1195,11 +1114,13 @@ async function do_break_wand(obj) {
     // effects below (C's comment, verbatim).
     await A.explodemod.explode(obj.ox, obj.oy, -(obj.otyp), rnd(dmg),
                                WAND_CLASS, EXPL_MAGICAL);
+    if (game.program_state?.gameover) return ECMD_TIME; /* done() never returns */
     A.zap.zapsetup(); /* prepare for potential feedback from polymorph */
 
     // This makes it hit the hero last, so the hero sees the action first.
     for (let i = 0; i <= N_DIRS; i++) {
         const x = obj.ox + xdir[i], y = obj.oy + ydir[i];
+        game.bhitpos = { x, y }; /* C: gb.bhitpos.x = x; gb.bhitpos.y = y (before isok) */
         if (!ap_isok(x, y)) continue;
 
         if (obj.otyp === WAN_DIGGING_OTYP) {
@@ -1257,8 +1178,9 @@ async function do_break_wand(obj) {
             if (damage) {
                 const him = game.flags?.female ? 'her' : 'him';
                 await A.zap.losehp(A.zap.Maybe_Half_Phys(damage),
-                    `killed ${him}self by breaking a wand`);
+                    `killed ${him}self by breaking a wand`, NO_KILLER_PREFIX);
             }
+            if (game.program_state?.gameover) return ECMD_TIME; /* losehp()->done() never returns */
             game.disp_botl = true; /* blindness */
         }
     }
@@ -1771,7 +1693,7 @@ export async function use_pole(obj, autohit) {
     const cc = { x: u.ux, y: u.uy };
     const hitm = game.context?.polearm_hitmon;
     if (!find_poleable_mon(cc, min_range, max_range) && hitm && !hitm.mdead
-        && _uhitm.canspotmon(hitm)
+        && (await import('./mon.js')).sensemon(hitm)
         && distu_sq(hitm.mx, hitm.my) <= max_range
         && distu_sq(hitm.mx, hitm.my) >= min_range) {
         cc.x = hitm.mx; cc.y = hitm.my;
@@ -2481,12 +2403,9 @@ async function ap_gulp_blnd_check() {
     return A.mhitu.gulp_blnd_check();
 }
 // C ref: objnam.c simpleonames(obj) — the unadorned object name ("mirror",
-// "looking glass").  js/invent.js's simpleonames() is private; its exported
-// cxname_singular() is the closest observation-free equivalent.
+// "looking glass"); no user-assigned name or artifact name attached.
 async function ap_simpleonames(obj) {
-    const A = await ap_load();
-    return A.invent.cxname_singular ? A.invent.cxname_singular(obj)
-                                    : A.invent.xname(obj);
+    return (await import('./objnam.js')).simpleonames(obj);
 }
 // C ref: vision.h MONSEEN_* and display.c howmonseen(mon).  The bit breakdown
 // (normal / see-invisible / infravision) has no port; return MONSEEN_NORMAL for
@@ -4614,9 +4533,11 @@ export async function use_grapple(obj) {
 
     /* Prompt for a location */
     await A.display.pline(where_to_hit);
+    await A.display.flush_screen(1);
     const cc = { x: u.ux, y: u.uy };
     const picked = await A.hackmod.getpos('the spot to hit', cc.x, cc.y,
-                                          can_grapple_location, true);
+                                          can_grapple_location, true,
+                                          game.flags?.verbose !== false);
     if (!picked)
         /* ESC; uses turn iff grapnel became wielded */
         return (res | ECMD_CANCEL);
@@ -4763,6 +4684,7 @@ export async function broken_wand_explode(obj, dmg, expltype) {
     const A = await ap_load();
     await A.explodemod.explode(game.u.ux, game.u.uy, -(obj.otyp), dmg,
                                WAND_CLASS, expltype);
+    if (game.program_state?.gameover) return; /* done() never returns */
     A.invent.makeknown(obj.otyp); /* explode describes the effect */
     await discard_broken_wand();
 }

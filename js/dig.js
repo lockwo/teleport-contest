@@ -522,11 +522,16 @@ export async function zap_dig() {
         } else if (maze_dig) {
             // C ref: dig.c:1684 — on a maze level walls/trees->room, rock->corr,
             // then break.  Not reached on the covered (non-maze) levels.
+            // C: `else if (!Blind) pline_The("wall glows then fades.")` (and the
+            // tree / rock equivalents) when the target is W_NONDIGGABLE.
+            const { pline: pline_zd } = await import('./display.js');
             if (IS_WALL(room.typ)) {
                 if (!((room.wall_info || 0) & W_NONDIGGABLE)) {
                     room.typ = ROOM; room.flags = 0;
                     unblock_point(zx, zy);
                     newsym(zx, zy);
+                } else if (!Blind()) {
+                    await pline_zd('The wall glows then fades.');
                 }
                 break;
             } else if (IS_TREE(room.typ)) {
@@ -534,6 +539,8 @@ export async function zap_dig() {
                     room.typ = ROOM; room.flags = 0;
                     unblock_point(zx, zy);
                     newsym(zx, zy);
+                } else if (!Blind()) {
+                    await pline_zd('The tree shudders but is unharmed.');
                 }
                 break;
             } else if (room.typ === STONE || room.typ === SCORR) {
@@ -541,6 +548,8 @@ export async function zap_dig() {
                     room.typ = CORR; room.flags = 0;
                     unblock_point(zx, zy);
                     newsym(zx, zy);
+                } else if (!Blind()) {
+                    await pline_zd('The rock glows then fades.');
                 }
                 break;
             }
@@ -1035,7 +1044,12 @@ export async function spot_checks(x, y, old_typ) {
         db_ice_now = ((game.level?.at(x, y)?.drawbridgemask | 0) & DB_UNDER) === DB_ICE;
     if (old_typ === DRAWBRIDGE_UP || old_typ === ICE) {
         if (new_typ !== old_typ || (old_typ === DRAWBRIDGE_UP && !db_ice_now)) {
-            /* C also kills a MELT_ICE_AWAY spot timer; the port has no spot timers */
+            /* make sure there's no MELT_ICE_AWAY timer */
+            const { spot_time_left, spot_stop_timers } = await import('./timeout.js');
+            const { MELT_ICE_AWAY } = await import('./const.js');
+            if (spot_time_left(x, y, MELT_ICE_AWAY))
+                await spot_stop_timers(x, y, MELT_ICE_AWAY);
+            /* adjust things affected by the ice */
             const { obj_ice_effects } = await import('./mkobj.js');
             obj_ice_effects(x, y, false);
         }

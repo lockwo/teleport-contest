@@ -14,14 +14,16 @@
 //   - the m_in_out_region / m_digweapon_check arms of newdogpos.
 
 import { game } from './gstate.js';
-import { rn2, rnd } from './rng.js';
+import { M_AP_FURNITURE, M_AP_MONSTER, M_AP_OBJECT } from './const.js';
+import { an } from './hacklib.js';
+import { rn2, rnd, getRngLog } from './rng.js';
 import { touch_artifact_monster } from './artifact.js';
 import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
     IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED,
     POOL, MOAT, WATER, LAVAPOOL, LAVAWALL } from './const.js';
 import { obj_resists } from './zap.js';
 import { is_quest_artifact } from './questpgr.js';
-import { newsym, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at } from './display.js';
+import { newsym, display_nhwindow_message, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at } from './display.js';
 import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision.js';
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
 import { noit_Monnam, y_monnam } from './do_name.js';
@@ -49,7 +51,7 @@ import { mflags1_of, msound_of, perceives_flag, M1_NOEYES,
     regenerates_flag as regenerates, is_flyer_flag, touch_petrifies } from './monflags_data.js';
 import { healmon, mon_hates_silver, max_mon_load } from './mon.js';
 import { max_passive_dmg, resists_ston, resists_poison, resists_acid } from './mondata.js';
-import { attacktype, dmgtype, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
+import { attacktype, dmgtype, mattk_of, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
 import { gettrack } from './track.js';
 import { monster_by_pmidx, mon_msize, mon_cwt, mon_cnutrit, pm_to_cham, mpickobj } from './makemon.js';
 
@@ -244,9 +246,12 @@ function terrainTyp(x, y) { return game.level?.at(x, y)?.typ; }
 function fobj() {
     const arr = game.level?.objects;
     if (!arr) return [];
-    const out = [];
-    for (let i = arr.length - 1; i >= 0; i--) out.push(arr[i]);
-    return out;
+    // C ref: mkobj.c:2362 place_object() — head insertion into fobj.  The array
+    // is pile-ordered, so order by placement stamp (mkobj.js stamp_fobj); an
+    // unstamped object (level restore) counts as older than any stamped one.
+    const n = arr.length;
+    return arr.map((o, i) => [o.fobj_seq != null ? o.fobj_seq : i - n, o])
+        .sort((a, b) => b[0] - a[0]).map((e) => e[1]);
 }
 
 // Objects at a specific square, in level.objects append order (deepest first).
@@ -777,14 +782,9 @@ async function dog_invent(mtmp, edog, udist) {
     // No minvent: maybe eat or pick up an underfoot object.
     const here = objectsAt(omx, omy);
     if (here.length) {
-        // C ref: dogmove.c dog_invent — obj = svl.level.objects[omx][omy], the
-        // HEAD of the tile's nexthere chain, i.e. the most-recently-placed (top)
-        // object.  place_object() appends to this port's flat level.objects array
-        // (vobj_at returns the LAST match as the drawn top glyph), so the head is
-        // the LAST element here, not here[0].  Picking the true top makes the pet
-        // apport the same object C does — e.g. a freshly-fired trap dart lying on
-        // top of a trap-victim's corpse — so the tile reverts to the corpse glyph
-        // once the dart is taken, matching C.
+        // C's level.objects[x][y] head is the newest placement. The flat
+        // array retains placement order, so dog_invent examines the last
+        // matching entry.
         const obj = here[here.length - 1];
         // C ref: dogmove.c dog_invent — nofetch[] = {BALL_CLASS, CHAIN_CLASS,
         // ROCK_CLASS} gates the whole underfoot branch BEFORE dogfood() is
@@ -1412,10 +1412,12 @@ function score_targ(mtmp, mtarg) {
 }
 // C ref: dogmove.c:795 — `mtarg->data->mattk[0].aatyp == AT_NONE`, i.e. the
 // target is purely passive (a mold/jelly whose only "attack" is retaliation).
-// AT_NONE only ever occupies slot 0 in mons[], so an any-slot AT_NONE search is
-// equivalent; a monster with no attack table at all also has mattk[0] zeroed.
+// AT_NONE (0) also marks passive attacks in LATER slots (fire elemental's
+// AT_CLAW then AT_NONE), so only slot 0 counts; a monster with no attack table
+// has mattk[0] zeroed, i.e. AT_NONE.
 function mattk0_is_none(ptr) {
-    return attacktype(ptr, AT_NONE) || !attacktype(ptr, AT_ANY);
+    const first = mattk_of(ptr)[0];
+    return !first || first.aatyp === AT_NONE;
 }
 
 // C ref: dogmove.c best_target(mtmp, forced) — scan the 8 directions (dy outer,
@@ -1462,6 +1464,8 @@ async function pet_ranged_attk(mtmp, forced) {
             // C ref: dogmove.c:922 — mattackm() even for a melee-only pet at
             // range: it makes no attack and returns M_ATTK_MISS, but wakes a
             // sleeping target (mhitm.c:322) and sets magr->mlstmv.
+            game.bhitpos = { x: mtmp.mx, y: mtmp.my }; // dogmove.c:921
+            game.notonhead = false;
             mstatus = await mattackm(mtmp, mtarg);
             if (mstatus & M_ATTK_AGR_DIED) return MMOVE_DIED;
             // C ref: dogmove.c:932 — the targeted beast may strike back with
@@ -1469,6 +1473,8 @@ async function pet_ranged_attk(mtmp, forced) {
             if ((mstatus & M_ATTK_HIT) && !(mstatus & M_ATTK_DEF_DIED)
                 && rn2(4) && mtarg !== HERO_TARG) {
                 if (mtarg.mcansee && haseyes(mtarg.data)) {
+                    game.bhitpos = { x: mtmp.mx, y: mtmp.my }; // dogmove.c:944
+                    game.notonhead = false;
                     const mresp = await mattackm(mtarg, mtmp);
                     if (mresp & M_ATTK_DEF_DIED) return MMOVE_DIED;
                 }
@@ -1633,7 +1639,7 @@ export async function dog_move(mtmp, after) {
         // reaches the cursed-object / backtrack / distance logic below.
         const mtmp2 = MON_AT(nx, ny);
         if (mtmp2) {
-            const r = await dog_attack_mon(mtmp, mtmp2, omx, omy, after);
+            const r = await dog_attack_mon(mtmp, mtmp2, omx, omy, after, nx, ny);
             if (r !== null) return r; // attacked -> done with this move
             continue;                 // balked -> next candidate square
         }
@@ -1763,7 +1769,7 @@ export async function dog_move(mtmp, after) {
         const { m_in_out_region } = await import('./region.js');
         if (!m_in_out_region(mtmp, nix, niy))
             return MMOVE_MOVED;
-        if (m_digweapon_check(mtmp, nix, niy))
+        if (await m_digweapon_check(mtmp, nix, niy))
             return MMOVE_NOTHING;
 
         // C ref: dogmove.c:1295 — wasseen captured before the move (old square),
@@ -2028,9 +2034,9 @@ function dog_nutrition(mtmp, obj) {
 // `at` = {x, y} is C's pline_mon(mtmp, ...)/pline_xy(x, y, ...): the square the
 // message is about, which accessiblemsg turns into a "(north): " prefix.
 async function emit_pet_msg(msg, at) {
-    const { update_topl } = await import('./display.js');
+    const { pline } = await import('./display.js');
     if (at) (await import('./hack.js')).set_msg_xy(at.x, at.y);
-    await update_topl(msg);
+    await pline(msg);
 }
 
 // C ref: display.c canseemon(mon) — the hero can see the monster (its square is
@@ -2122,7 +2128,7 @@ function GDIST(x, y, g) { return dist2(x, y, g.gx, g.gy); }
 // Decides whether the pet (mtmp) attacks an adjacent monster (mtmp2); returns
 // an MMOVE_* code when it does (or when `after` short-circuits), or null when
 // the pet balks at this foe (caller skips the square).
-async function dog_attack_mon(mtmp, mtmp2, omx, omy, after) {
+async function dog_attack_mon(mtmp, mtmp2, omx, omy, after, nx, ny) {
     // balk: highest defender level the pet is willing to engage, scaled by the
     // pet's current HP fraction.  C: m_lev + (5*mhp/mhpmax) - 2.  The starting
     // pets don't track mhp/mhpmax here, so a missing fraction is treated as full
@@ -2163,6 +2169,9 @@ async function dog_attack_mon(mtmp, mtmp2, omx, omy, after) {
 
     if (after) return MMOVE_NOTHING; // hit only once each move
 
+    // C ref: dogmove.c:1149-1150
+    game.bhitpos = { x: nx, y: ny };
+    game.notonhead = mtmp2.mx !== nx || mtmp2.my !== ny;
     let mstatus = await mattackm(mtmp, mtmp2); // dogmove.c:1151
 
     if (mstatus & M_ATTK_AGR_DIED) return MMOVE_DIED;
@@ -2178,6 +2187,8 @@ async function dog_attack_mon(mtmp, mtmp2, omx, omy, after) {
         // because rn2(4) has already been consumed by then.
         && !onscary(mtmp.mx, mtmp.my, mtmp2)
         && monnear(mtmp2, mtmp.mx, mtmp.my)) {
+        game.bhitpos = { x: mtmp.mx, y: mtmp.my }; // dogmove.c:1163
+        game.notonhead = false;
         mstatus = await mattackm(mtmp2, mtmp);    // return attack (dogmove.c:1165)
         if (mstatus & M_ATTK_DEF_DIED) return MMOVE_DIED;
     }
@@ -2283,8 +2294,7 @@ export function mon_catchup_elapsed_time(mtmp, nmv) {
 //
 // C ref: dogmove.c:1429-1445 qm[] — the table is ordered and its SIZE (9) is
 // the rn2 modulus, so it must be transcribed whole, not filtered.
-const M_AP_FURNITURE = 1, M_AP_MONSTER = 2, M_AP_OBJECT = 3;
-const S_DOG_CLS = 4, S_SINK_SYM = 30; // defsym.h S_DOG / S_sink
+const S_DOG_CLS = 4, S_SINK_SYM = 36; // defsym.h S_DOG / S_sink (defsym.h:133 PCHAR(36))
 // The qm[] rows are matched by SPECIES NAME rather than by index: dog.js builds
 // its pets with a non-makemon pmidx (34 reads as jaguar, 102 as gray unicorn),
 // so a pmidx comparison would answer wrongly for exactly the pets this table is
@@ -2300,11 +2310,25 @@ const QM_TABLE = [
     { name: null, mlet: S_DOG_CLS, app: S_SINK_SYM, type: M_AP_FURNITURE },
     { name: null, mlet: 0, app: TRIPE_RATION, type: M_AP_OBJECT }, // keep last
 ];
-export function quickmimic(mtmp) {
-    // C ref: dogmove.c:1478 — Protection_from_shape_changers is a hero property
-    // this port does not track for monsters; !meating is the reachable guard.
-    if (!mtmp.meating) return;
+export async function quickmimic(mtmp) {
+    const u = game.u;
     let idx = 0, trycnt = 5;
+    const was_leashed = !!mtmp.mleashed;
+
+    if (game.u?.uprops?.Protection_from_shape_changers
+        || game.u?.uprops?.HProtection_from_shape_changers
+        || game.u?.uprops?.EProtection_from_shape_changers
+        || !mtmp.meating)
+        return;
+
+    /* mimicking doesn't touch the steed's equipment; DISMOUNT_POLY's message
+       works for it and avoids a damaging forced dismount */
+    if (mtmp === u?.usteed) {
+        const { dismount_steed } = await import('./steed.js');
+        const { DISMOUNT_POLY } = await import('./const.js');
+        await dismount_steed(DISMOUNT_POLY);
+    }
+
     do {
         idx = rn2(QM_TABLE.length);
         if (QM_TABLE[idx].name && mtmp.data?.name === QM_TABLE[idx].name) break;
@@ -2313,9 +2337,51 @@ export function quickmimic(mtmp) {
         if (!QM_TABLE[idx].name && QM_TABLE[idx].mlet === 0) break;
     } while (--trycnt > 0);
     if (trycnt === 0) idx = QM_TABLE.length - 1;
+
+    const buf = y_monnam(mtmp); /* "your <pet>" or "the <mon>" or "Fang" */
+    const spotted = canspotmon(mtmp);
+    const seeloc = cansee(mtmp.mx, mtmp.my);
+
     mtmp.m_ap_type = QM_TABLE[idx].type;
     mtmp.mappearance = QM_TABLE[idx].app;
-    newsym(mtmp.mx, mtmp.my);
+
+    if (spotted || seeloc || canspotmon(mtmp)) {
+        const { pline } = await import('./display.js');
+        // This port keeps no numeric glyph_at(); a cell's displayed glyph is
+        // its character/colour/graphics triple.
+        const glyph_key = () => {
+            const l = game.level?.at(mtmp.mx, mtmp.my);
+            return `${l?.disp_ch}|${l?.disp_color}|${l?.disp_decgfx}|${l?.disp_attr}`;
+        };
+        const prev_glyph = glyph_key();
+        const something = 'something';
+        const apt = QM_TABLE[idx].type;
+        const objd = apt === M_AP_OBJECT ? OBJECTS[mtmp.mappearance] : null;
+        const what = apt === M_AP_FURNITURE
+            ? (await import('./symbols.js')).defsyms[mtmp.mappearance].explanation
+            : (objd && (objd.oc_descr || objd.descr || objd.name))
+              ? (objd.oc_descr || objd.descr || objd.name)
+              : apt === M_AP_MONSTER
+                ? (await import('./makemon.js')).pmname_of_pmidx(
+                      mtmp.mappearance, (await import('./do_name.js')).Mgender(mtmp))
+                : something;
+
+        newsym(mtmp.mx, mtmp.my);
+        if (was_leashed) {
+            const { leashable, m_unleash } = await import('./apply.js');
+            const mapp = apt === M_AP_MONSTER ? monster_by_pmidx(mtmp.mappearance) : null;
+            if (!mapp || !leashable({ data: mapp })) {
+                await pline('Your leash goes slack.');
+                await m_unleash(mtmp, false);
+            }
+        }
+        if (glyph_key() !== prev_glyph)
+            await pline(`You ${seeloc ? 'see' : 'sense that'} ${what !== something ? an(what) : what} ${seeloc ? 'appear' : 'has appeared'} where ${buf} was!`);
+        else
+            await pline(`You sense that ${buf} feels rather ${what}-ish.`);
+
+        await display_nhwindow_message();
+    }
 }
 
 // C ref: dogmove.c finish_meating(mtmp).

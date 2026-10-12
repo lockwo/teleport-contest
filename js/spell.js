@@ -3,11 +3,13 @@
 // num_spells, the cast command entry (docast / getspell + dospellmenu) and
 // spelleffects for the healing-on-self case exercised by the gameplay sessions.
 
+import { nomul } from './hack.js';
+import { MENU_TRADITIONAL } from './const.js';
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, m_at, map_invisible, canseemon_shared,
          tmp_at, zapdir_to_glyph } from './display.js';
-import { exercise } from './attrib.js';
+import { exercise, acurr_eff } from './attrib.js';
 import { objects, mksobj, weight, set_bknown, SPE_BLANK_PAPER, SPE_NOVEL } from './mkobj.js';
 import { SPELL_META } from './u_init.js';
 import { A_WIS, A_INT, A_STR, P_UNSKILLED, P_EXPERT, P_SKILLED, P_BASIC,
@@ -44,7 +46,8 @@ const SMALL_SHIELD_OC_WEIGHT = 30;
 // C ref: spell.c — metal armor casting penalties.
 const UARMHBON = 4, UARMGBON = 6, UARMFBON = 2;
 
-function ACURR(i) { return game.u?.acurr?.a?.[i] ?? 0; }
+// C ref: attrib.c acurr() — includes abon/atemp and the dunce-cap/gauntlet cases.
+function ACURR(i) { return acurr_eff(i); }
 function is_metallic_obj(o) {
     const m = objects[o?.otyp]?.material;
     return m != null && m >= MAT_IRON && m <= MAT_MITHRIL;
@@ -182,10 +185,19 @@ async function rejectcasting() {
         await pline('You are unable to chant the incantation.');
         return true;
     }
-    // C's third arm is `!freehand() && !(uwep && uwep->otyp == QUARTERSTAFF)`
-    // -> "Your arms are not free to cast!".  freehand() is
-    // (!uwep || !welded(uwep) || ...) and invent.js welded() is a constant
-    // FALSE in this port, so the arm cannot fire; restore it with welded().
+    // C ref: spell.c:700 `!freehand() && !(uwep && uwep->otyp == QUARTERSTAFF)`;
+    // engrave.c freehand() == (!uwep || !welded(uwep) || (!bimanual(uwep)
+    // && (!uarms || !uarms->cursed))).
+    {
+        const { welded, bimanual } = await import('./invent.js');
+        const wep = game.uwep;
+        const freehand = !wep || !welded(wep)
+            || (!bimanual(wep) && (!game.uarms || !game.uarms.cursed));
+        if (!freehand && !(wep && wep.otyp === OTYP_QUARTERSTAFF)) {
+            await pline('Your arms are not free to cast!');
+            return true;
+        }
+    }
     return false;
 }
 
@@ -198,6 +210,36 @@ async function getspell() {
     }
     if (await rejectcasting()) return -1;
     const chosen = { value: -1 };
+    const { menu_style } = await import('./pickup.js');
+    if (menu_style() === MENU_TRADITIONAL) {
+        // C ref: spell.c:743-775 — tty_yn_function() over "[a-X *?]"; '*'/'?'
+        // fall through to the menu, quitchars cancel, a bad letter re-asks.
+        let lets;
+        if (nspells === 1) lets = 'a';
+        else if (nspells < 27) lets = `a-${String.fromCharCode(97 + nspells - 1)}`;
+        else if (nspells === 27) lets = 'a-zA';
+        else lets = `a-zA-${String.fromCharCode(65 + nspells - 27)}`;
+        const qbuf = `Cast which spell? [${lets} *?]`;
+        const { y_n } = await import('./display.js');
+        for (let retry = 0; ; ++retry) {
+            if (retry === 10) {
+                await pline("That's enough tries.");
+                return -1;
+            }
+            const ilet = await y_n(qbuf, null, '\0');
+            if (ilet === '*' || ilet === '?') break; /* use menu mode */
+            if (' \r\n\x1b'.includes(ilet)) {
+                await pline('Never mind.');
+                return -1;
+            }
+            const idx = spell_let_to_idx(ilet);
+            if (idx < 0 || idx >= nspells) {
+                await pline("You don't know that spell.");
+                continue; /* ask again */
+            }
+            return idx;
+        }
+    }
     return await dospellmenu('Choose which spell to cast', SPELLMENU_CAST, chosen)
         ? chosen.value : -1;
 }
@@ -803,17 +845,6 @@ const LENSES = 232; // C ref: include/objects.h otyp; +2 read_ability when worn.
 const SPE_BOOK_OF_THE_DEAD = 409; // C ref: include/objects.h otyp.
 const MAX_SPELL_STUDY = 3;  // C ref: include/spell.h:12
 
-// C ref: hack.c nomul(nval) — make the hero helpless/busy for |nval| turns.
-// `if (multi < nval) return; multi = nval;` plus clearing travel state.  Set
-// directly (like potion.c peffect_paralysis in potion.js): the move loop's
-// multi<0 countdown runs the busy turns and announces nomovemsg when it hits 0.
-function nomul(nval) {
-    if ((game.multi ?? 0) < nval) return;
-    game.multi = nval;
-    game.context = game.context || {};
-    game.context.travel = game.context.travel1 = game.context.mv = 0;
-}
-
 
 // C ref: spell.c cursed_book() — malign effects when reading a book that's too
 // hard (or cursed).  Selector is rn2(oc_level); with oc_level <= 7 the switch
@@ -1000,6 +1031,14 @@ export async function study_book(spellbook) {
     case 7:         delay = -8 * oc_delay; break;
     default:        return 0;
     }
+    // C ref: spell.c study_book():537-559 assigns svc.context.spbook.delay in the
+    // switch itself, BEFORE the "Refresh your memory anyway?" / Wizard "Continue?"
+    // early returns.  Declining leaves the new book's delay stored while
+    // spbook.book still names the previously interrupted book, so resuming that
+    // old book later counts down the wrong delay.
+    game.context = game.context || {};
+    game.context.spbook = game.context.spbook || {};
+    game.context.spbook.delay = delay;
 
     // Already know it well?  spellknow > KEEN/10 for a freshly-learned spell.
     let i = 0;
@@ -1042,6 +1081,7 @@ export async function study_book(spellbook) {
     if (too_hard) {
         const gone = await cursed_book(spellbook);
         nomul(delay); // study time; hero is busy for |delay| turns
+        game.context.spbook.delay = 0;       // C: svc.context.spbook.delay = 0
         game.multi_reason = 'reading a book';
         // C sets gn.nomovemsg = 0 and unmul() defaults it to "You can move again."
         game.nomovemsg = 'You can move again.';
@@ -1238,6 +1278,14 @@ function add_menu_str(win, str) {
 }
 function end_menu(win, prompt) { win.prompt = prompt ?? ''; }
 async function select_menu(win, how) {
+    // C ref: windows.c select_menu() — bot() is disabled for the whole menu,
+    // including the docrt()+flush_screen(1) of its dismissal.
+    const old_bot_disabled = game.bot_disabled;
+    game.bot_disabled = true;
+    try { return await select_menu_inner(win, how); }
+    finally { game.bot_disabled = old_bot_disabled; }
+}
+async function select_menu_inner(win, how) {
     const { select_command_menu, dismiss_invent_screen } = await import('./invent.js');
     const { ATR_INVERSE: inverse } = await import('./terminal.js');
     const entries = [

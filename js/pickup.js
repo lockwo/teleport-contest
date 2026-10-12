@@ -28,7 +28,7 @@ import {
 import {
     invlet_basic, inventoryArray, near_capacity, inv_weight, xname, corpse_xname, killer_xname,
     obj_doname as doname, otense, currency, merge_choice, addinv, freeinv, flush_artitouch,
-    obj_here, prinv, is_worn, count_unpaid, count_buc, look_here, tally_BUCX,
+    obj_here, prinv, prinv_fmt, is_worn, count_unpaid, count_buc, look_here, tally_BUCX,
     ansimpleoname, display_inventory_interactive,
     describe_decor, sortloot, unsortloot, will_feel_cockatrice, feel_cockatrice,
     SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, SORTLOOT_PETRIFY,
@@ -37,6 +37,7 @@ import {
     obj_extract_self, obfree, makeknown, ynq, newsym_force, encumber_msg,
     stackobj, trycall, useup, useupf, hold_another_object,
     remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool,
+    weldmsg, setuwep_slot, setuswapwep, setuqwep,
     W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN, dropy,
 } from './invent.js';
 import { touch_artifact } from './artifact.js';
@@ -46,6 +47,7 @@ import { mflags1_of, mflags2_of, M1_NOTAKE, M1_NOHANDS, M1_NOLIMBS,
 import { makesingular } from './plural.js';
 import { costly_spot } from './shk.js';
 import { hliquid } from './dungeon.js';
+import { In_sokoban } from './const.js';
 import { can_reach_floor } from './engrave.js';
 
 /* pickup.c:12 */
@@ -660,6 +662,9 @@ export function is_worn_by_type(otmp) {
     return is_worn(otmp) && allow_category(otmp);
 }
 
+/* gl.loot_reset_justpicked setter (read by invent.js addinv_core0) */
+export function set_loot_reset_justpicked(v) { P().loot_reset_justpicked = v; }
+
 /* pickup.c:616 reset_justpicked() */
 export function reset_justpicked(olist) {
     for (const otmp of objchain(olist)) otmp.pickup_prev = 0;
@@ -1035,7 +1040,8 @@ export async function query_objlist(qstr, olist_p, qflags, pick_list, how,
     }
     unsortloot(sortedolist);
 
-    const chosen = await pickup_menu_select(olist.filter(allow), qstr);
+    const chosen = await pickup_menu_select(olist.filter(allow), qstr,
+                                          (qflags & INVORDER_SORT) !== 0);
     if (!chosen || !chosen.length) return 0;
 
     const picked = [];
@@ -1225,8 +1231,10 @@ export async function carry_count(obj, container, count, telekinesis, wts) {
 /* pickup.c:1705 lift_object() — able AND willing?  1 lift, 0 decline,
    -1 stop the whole pickup loop. */
 export async function lift_object(obj, container, cnt_p, telekinesis) {
-    if (obj.otyp === BOULDER && game.Sokoban) {
-        await pline('You cannot get your hands around this boulder.');
+    if (obj.otyp === BOULDER && In_sokoban()) {
+        const { HAND } = await import('./const.js');
+        const { body_part } = await import('./invent.js');
+        await pline(`You cannot get your ${body_part(HAND)} around this ${xname(obj)}.`);
         return -1;
     }
     if (obj.otyp === LOADSTONE
@@ -1314,7 +1322,7 @@ export async function pickup_object(obj, count, telekinesis) {
     // `game.Blind`, which no module ever sets, so a BLIND hero still learned
     // every picked-up object's appearance ("o - a brilliant blue potion."
     // where C prints "o - a potion.").
-    if (!Blind()) obj.dknown = 1;   /* observe_object() */
+    if (!Blind()) (await import('./o_init.js')).observe_object(obj);
 
     if (obj === game.u?.uchain) {
         return 0;   /* do not pick up attached chain */
@@ -1399,8 +1407,10 @@ export function pickup_prinv_prefix(verb) {
     set_pickup_encumbrance(nearload);
     return prefix ? `${prefix} ${verb}` : null;
 }
-export function pickup_prinv(obj, count, verb) {
-    prinv(pickup_prinv_prefix(verb), obj, count);
+/* prinv() is a pline() (topl.c update_topl): successive item lines accumulate
+   onto one topline or page with --More--, and a wrapped line pages at once. */
+export async function pickup_prinv(obj, count, verb) {
+    await update_topl(prinv_fmt(pickup_prinv_prefix(verb), obj, count));
 }
 
 /* pickup.c:1978 encumber_msg() lives in js/invent.js (it is the one piece of
@@ -1561,7 +1571,7 @@ export async function reverse_loot() {
         let n = inv_cnt(true);
         for (const otmp of [...invent]) {
             if (!rn2(n + 1)) {
-                prinv('You find old loot:', otmp, 0);
+                await update_topl(prinv_fmt('You find old loot:', otmp, 0));
                 return true;
             }
             --n;
@@ -1852,8 +1862,9 @@ export async function in_container(obj) {
         await pline('That would be an interesting topological exercise.');
         return 0;
     } else if ((obj.owornmask || 0) & (W_ARMOR_WORN | W_ACCESSORY_WORN)) {
-        await pline(`You cannot ${Icebox ? 'refrigerate' : 'stash'}`
-                    + ' something you are wearing.');
+        // C ref: pickup.c:2574 Norep() — suppressed when it repeats the last message.
+        const msg = `You cannot ${Icebox ? 'refrigerate' : 'stash'} something you are wearing.`;
+        if (game._prevmsg !== msg) await pline(msg);
         return 0;
     } else if (obj.otyp === LOADSTONE && obj.cursed) {
         obj.bknown = 1;
@@ -1870,9 +1881,17 @@ export async function in_container(obj) {
                     + ' to your pet.');
         return 0;
     } else if (obj === game.uwep) {
-        if (welded(obj)) return 0;
-        game.uwep = null;
-        obj.owornmask = 0;
+        if (welded(obj)) {
+            await weldmsg(obj);
+            return 0;
+        }
+        setuwep_slot(null);
+        /* pickup.c:2604 obsolete "unwielded, died, rewielded" check */
+        if (game.uwep) return 0;
+    } else if (obj === game.uswapwep) {
+        setuswapwep(null);
+    } else if (obj === game.uquiver) {
+        setuqwep(null);
     }
 
     if (await fatal_corpse_mistake(obj, false)) return -1;
@@ -1886,6 +1905,25 @@ export async function in_container(obj) {
 
     freeinv(obj);
 
+    if ((await import('./light.js')).obj_is_burning(obj)) /* this used to be part of freeinv() */
+        await (await import('./apply.js')).snuff_lit(obj);
+
+    let was_unpaid = false;
+    if (floor_container && costly_spot(u.ux, u.uy)) {
+        /* defer gold until after put-in message */
+        if (obj.oclass !== COIN_CLASS) {
+            /* sellobj() will take an unpaid item off the shop bill */
+            was_unpaid = !!obj.unpaid;
+            const { sellobj, sellobj_state } = await import('./shk.js');
+            if (p.sellobj_first) {
+                /* don't sell when putting the item into your own container,
+                   but handle billing correctly */
+                sellobj_state(cc.no_charge ? 2 /* SELL_DONTSELL */ : 1 /* SELL_DELIBERATE */);
+                p.sellobj_first = false;
+            }
+            await sellobj(obj, u.ux, u.uy);
+        }
+    }
     if (Icebox && !age_is_relative(obj)) {
         obj.age = (game.moves || 0) - (obj.age || 0);
         /* stop any corpse timeouts when frozen (pickup.c:2646) */
@@ -1904,6 +1942,11 @@ export async function in_container(obj) {
     } else if (Is_mbag(cc) && mbag_explodes(obj, 0)) {
         await pline(`As you put ${doname(obj)} inside, you are blasted by`
                     + ' a magical explosion!');
+        /* did not actually insert obj yet */
+        if (was_unpaid) {
+            const { addtobill } = await import('./shk.js');
+            await addtobill(obj, false, false, true);
+        }
         if (obj.otyp === BAG_OF_HOLDING)
             await do_boh_explosion(obj, !floor_container);
         obfree(obj, null); /* triggering item is always destroyed */
@@ -1917,9 +1960,17 @@ export async function in_container(obj) {
     if (p.current_container) {
         await pline(`You put ${doname(obj)} into `
                     + `${the(xname(p.current_container))}.`);
+        /* gold in container always needs to be added to credit */
+        if (floor_container && obj.oclass === COIN_CLASS) {
+            const { sellobj } = await import('./shk.js');
+            await sellobj(obj, p.current_container.ox, p.current_container.oy);
+        }
         add_to_container(p.current_container, obj);
         p.current_container.owt = weight(p.current_container);
     }
+    /* C bot() recomputes status unconditionally (a pline's flush_screen above
+       may already have consumed disp.botl, before the container weight moved) */
+    game.botl = true;
     await bot();
     return p.current_container ? 1 : -1;
 }
@@ -1955,7 +2006,7 @@ export async function out_container(obj) {
 
     const otmp = addinv(obj);
     await flush_artitouch();
-    pickup_prinv(otmp, count, 'removing');
+    await pickup_prinv(otmp, count, 'removing');
 
     if (is_gold) await bot();
     return 1;

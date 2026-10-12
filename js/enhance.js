@@ -536,17 +536,30 @@ export async function doenhance() {
     // svc.context.tips |= (1 << TIP_ENHANCE) — player now knows about #enhance.
     game.context = game.context || {};
     game.context.tips = (game.context.tips || 0) | (1 << TIP_ENHANCE);
-    if (is_wizard()) {
+    // Any annotated or advanceable skill makes the menu selectable, which
+    // needs the inline select_menu() loop below; the all-quiet PICK_NONE
+    // listing keeps the paged skill_window_advance() form.
+    const S0 = build_skill_state();
+    let skillsAnnotated = false;
+    for (let i = 0; i < P_NUM_SKILLS; i++) {
+        if (S0.P_SKILL[i] === P_ISRESTRICTED) continue;
+        if (can_advance(i, false, S0) || could_advance(i, S0) || peaked_skill(i, S0)) {
+            skillsAnnotated = true;
+            break;
+        }
+    }
+    if (is_wizard() || skillsAnnotated) {
         let speedy = false;
-        if (await y_n('Advance skills without practice?') === 'y')
+        if (is_wizard() && await y_n('Advance skills without practice?') === 'y')
             speedy = true;
-        let more_to_do = 0;
+        let more_to_do = 0, dismissMenu = false;
         do {
             const S = build_skill_state();
             const { items, to_advance } = build_skill_menu_items(S, speedy);
             const pages = paginate_skill_menu(items);
             const pick = await select_skill_menu(pages, to_advance > 0);
             more_to_do = 0;
+            dismissMenu = pick == null;
             if (pick != null) {
                 // destroy_nhwindow() on a full-screen menu redraws the map
                 // before skill_advance()'s message lands on a fresh top line.
@@ -567,7 +580,7 @@ export async function doenhance() {
                 // paints the next menu over the map.  C's more() ends with
                 // home()+cl_end(), so the next round's message starts a fresh
                 // line instead of being appended after two spaces.
-                if (game._toplin === 1) {
+                if (speedy && more_to_do > 0 && game._toplin === 1) {
                     await topl_more();
                     game._toplin = 0;
                     game._pending_message = '';
@@ -576,8 +589,10 @@ export async function doenhance() {
         } while (speedy && more_to_do > 0);
         delete game._skill_pages;
         delete game._skill_page;
-        game._modal_screen = 'skillwin';
-        await dismiss_invent_screen();
+        if (dismissMenu) {
+            game._modal_screen = 'skillwin';
+            await dismiss_invent_screen();
+        }
         return ECMD_OK;
     }
     game._skill_counting = false;

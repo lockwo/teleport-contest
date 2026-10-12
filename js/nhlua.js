@@ -1694,6 +1694,9 @@ export async function nhl_gamestate(...args) {
         gg.gmst_moves = 0;
 
         (game.gl ||= {}).lastinvnr = 51;
+        /* worn.c setworn() never touches gu.unweapon, but this port's slot
+           setter recomputes it as setuwep() does */
+        const unweapon_kept = game.unweapon;
         while (game.invent.length)
             useupall(game.invent[0]);
         while ((otmp = gg.gmst_invent?.[0]) !== undefined) {
@@ -1704,6 +1707,7 @@ export async function nhl_gamestate(...args) {
             if (wornmask)
                 _setworn(otmp, wornmask);
         }
+        game.unweapon = unweapon_kept;
         /* memcpy(&u, gmst_ubak, sizeof u): in place, every holder of the hero
            record keeps pointing at it */
         for (const k of Object.keys(u))

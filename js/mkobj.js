@@ -1434,11 +1434,12 @@ function zombie_form_pm(corpsenm) {
     case 'k':
     case 'o':
     case 'G':
+    case 'H':
     case '@':
     case 'K':
         return 0;
     case 'h':
-        return ptr.name === 'dwarf' ? 0 : NON_PM;
+        return /^dwarf( lord| king)?$/.test(ptr.name) ? 0 : NON_PM; /* is_dwarf */
     default:
         return NON_PM;
     }
@@ -2066,6 +2067,12 @@ export function weight(otmp) {
 // the map shows the boulder without the display having to walk the chain.
 // Without it a rock dropped on a boulder square became the drawn glyph and the
 // pet apported it instead of what C picks.
+// C ref: mkobj.c:2362 `otmp->nobj = fobj; fobj = otmp` — the floor chain always
+// grows at its head, however the pile order places the object (a non-boulder
+// lands UNDER boulders in its pile).  Our one array can only carry one of the
+// two orders, so each placement is stamped and dogmove's fobj() walk sorts by it.
+let _fobj_seq = 0;
+export function stamp_fobj(otmp) { otmp.fobj_seq = ++_fobj_seq; }
 export function place_object(otmp, x, y) {
     if (!otmp) return otmp;
     if (game.level) {
@@ -2100,6 +2107,7 @@ export function place_object(otmp, x, y) {
     // the pile as it stood BEFORE this object arrived)
     otmp.ox = x; otmp.oy = y; otmp.where = OBJ_FLOOR;
     otmp.ocarry = null; otmp.ocontainer = null; /* obj_no_longer_held */
+    stamp_fobj(otmp);
     // C: `if (otmp->no_charge && !costly_spot(x,y) && !costly_adjacent(...))
     // otmp->no_charge = 0;`  shk.js owns costly_spot; leaving no_charge set
     // outside a shop is the conservative half of this (it only suppresses a

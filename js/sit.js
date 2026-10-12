@@ -131,7 +131,7 @@ export async function dosit() {
                     await update_topl('You sit down on a spike.  Ouch!');
                     await losehp(Half_physical_damage() ? rn2(2) : 1,
                                  'sitting on an iron spike', 1 /* KILLED_BY */);
-                    exercise(A_STR, false);
+                    await exercise(A_STR, false);
                 } else {
                     await update_topl('You sit down in the pit.');
                 }
@@ -362,7 +362,7 @@ async function special_throne_effect(effect) {
         await update_topl('The throne is covered in acid!');
         const { Acid_resistance } = await import('./explode.js');
         await losehp(Acid_resistance() ? rnd(16) : rnd(80), 'acidic chair', KILLED_BY_AN);
-        exercise(A_CON, false);
+        await exercise(A_CON, false);
         break;
     }
     case 13: {
@@ -415,7 +415,7 @@ async function throne_sit_effect() {
             const sr = Shock_resistance();
             await update_topl(`A${sr ? 'n' : ' massive'} electric shock shoots through your body!`);
             await losehp(sr ? rnd(6) : rnd(30), 'electric chair', KILLED_BY_AN);
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
             break;
         }
         case 4: {

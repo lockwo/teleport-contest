@@ -314,7 +314,7 @@ export const SUPPRESS_MAPPEARANCE = 0x10;
 export const SUPPRESS_NAME = 0x20;
 export const AUGMENT_IT = 0x40;
 export const EXACT_NAME = (SUPPRESS_IT | SUPPRESS_INVISIBLE
-    | SUPPRESS_HALLUCINATION | SUPPRESS_NAME);
+    | SUPPRESS_HALLUCINATION | SUPPRESS_SADDLE | SUPPRESS_MAPPEARANCE);
 
 // Game end type constants (include/hack.h enum game_end_types; src/end.c)
 // Runtime fields:
@@ -2021,9 +2021,9 @@ export const TIMER_FUNC = Object.freeze({
     REVIVE_MON: 'REVIVE_MON',
     ZOMBIFY_MON: 'ZOMBIFY_MON',
     ROT_CORPSE: 'ROT_CORPSE',
-    MELT_ICE_AWAY: 'MELT_ICE_AWAY',
 });
-export const MELT_ICE_AWAY = TIMER_FUNC.MELT_ICE_AWAY;
+// timeout.h enum timeout_types: MELT_ICE_AWAY follows SHRINK_GLOB.
+export const MELT_ICE_AWAY = (SHRINK_GLOB + 1);
 
 // Corpse taint/revival age window (src/mkobj.c)
 // Runtime fields: rot/revive scheduling bound for corpse timers.
@@ -2958,6 +2958,15 @@ export function Is_airlevel(uz) { const lev = uz ?? game?.u?.uz; const al = game
 // separate flag is needed.  Lives here (a leaf) because allmain.js (gethungry's
 // slowed metabolism), timeout.js (make_deaf's message suppression) and
 // display.js (the You_hear()/You_feel() dream prefixes) need it.
+// C ref: trap.c:6776 unconscious().
+export function unconscious() {
+    const g = game;
+    if ((g?.multi ?? 0) >= 0) return false;
+    if (g?.u?.usleep) return true;
+    const m = g?.nomovemsg || '';
+    return m.startsWith('You awake') || m.startsWith('You regain con')
+        || m.startsWith('You are consci');
+}
 export function Unaware() {
     const g = game;
     if ((g?.multi ?? 0) >= 0) return false;

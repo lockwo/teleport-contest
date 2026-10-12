@@ -251,7 +251,13 @@ function makedog_mon(pettype, x, y) {
             // first out-of-sight call therefore takes the reuse-ogoal arm and
             // heads for (-1,-1) instead of scanning do_clear_area.
             ogoal: { x: -1, y: -1 },
-            hungrytime: (game.moves ?? 0) + 1000,
+            // C ref: dog.c initedog() `minhungry = svm.moves + 1000L`.  makedog()
+            // runs from newgame() BEFORE u_init_inventory_attrs() -> u_init_role()
+            // sets svm.moves = 1 (allmain.c:814 vs :816, u_init.c:645), so the
+            // starting pet gets hungrytime 1000, not 1001: the recorded C pet goes
+            // confused-from-hunger one turn earlier than a floor-at-1 value does
+            // (seed n2 nz26 step 798, moves 1621).
+            hungrytime: (game.moves | 0) + 1000,
             mhpmax_penalty: 0,
         },
     };
@@ -472,8 +478,10 @@ function fmon_list() {
 function gm_chains() {
     if (!game.gm) game.gm = {};
     const g = game.gm;
-    if (!g.migrating_mons) g.migrating_mons = [];
-    if (!g.mydogs) g.mydogs = [];
+    /* one array shared with game.migrating_mons / game.mydogs, which
+       restore.js, save.js, #stats and the sanity checks read directly */
+    g.migrating_mons = (game.migrating_mons ||= []);
+    g.mydogs = (game.mydogs ||= []);
     return g;
 }
 

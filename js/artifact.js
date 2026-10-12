@@ -16,9 +16,9 @@
 //     below do the conversion; do not "simplify" the table to 0..12.
 import { game, hooks } from './gstate.js';
 import { livelog_printf, LL_ARTIFACT } from './livelog.js';
-import { update_topl } from './display.js';
+import { update_topl, see_monsters } from './display.js';
 import { rn2, rnd, d, rnz } from './rng.js';
-import { objects, mksobj, weight, base_oc_cost } from './mkobj.js';
+import { objects, mksobj, weight, base_oc_cost, stamp_fobj } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { fuzzymatch, simple_typename } from './objnam.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -128,8 +128,8 @@ const S_IMP = 9, S_VORTEX = 22, S_GHOST = 26, S_DRAGON = 30, S_OGRE = 41,
     S_TROLL = 46, S_VAMPIRE = 48, S_GOLEM = 55;
 // color.h
 const NO_COLOR = 8, CLR_RED = 1, CLR_BRIGHT_BLUE = 12;
-// mondata.h M3_COVETOUS
-const M3_COVETOUS = 0x04;
+// monflag.h M3_COVETOUS (any of the M3_WANTSxxx bits)
+const M3_COVETOUS = 0x1f;
 // objclass.h oc_material SILVER (verified at js/invent.js:875)
 const SILVER = 14;
 // objclass.h object classes
@@ -1237,7 +1237,11 @@ export function set_artifact_intrinsic_core(otmp, on, wp_mask) {
     }
 
     for (const [bit, p] of SPFX_TO_PROP)
-        if (spfx & bit) toggle_extrinsic(p, on, wp_mask);
+        if (spfx & bit) {
+            toggle_extrinsic(p, on, wp_mask);
+            /* artifact.c:798 SPFX_ESP: recalc_telepat_range(); see_monsters() */
+            if (bit === SPFX_ESP) see_monsters();
+        }
     if (spfx & SPFX_HALRES) {
         /* make_hallucinated() must (re)set the mask itself to get the display
            right, so C calls it rather than touching EHalluc_resistance */
@@ -1248,6 +1252,7 @@ export function set_artifact_intrinsic_core(otmp, on, wp_mask) {
             toggle_extrinsic(WARN_OF_MON, on, wp_mask);
             game.warntype_obj = on ? ((game.warntype_obj || 0) | spec_m2(otmp))
                                    : ((game.warntype_obj || 0) & ~spec_m2(otmp));
+            see_monsters();
         } else {
             toggle_extrinsic(WARNING, on, wp_mask);
         }
@@ -2035,8 +2040,11 @@ export async function invoke_healing(obj) {
     if (healamt > 0) {
         if (Upolyd()) u.mh += healamt; else u.uhp += healamt;
     }
-    if (uprop('Sick')) u.uprops.Sick = 0;
-    if (uprop('Slimed')) u.uprops.Slimed = 0;
+    if (uprop('Sick') || uprop('Slimed')) {
+        const { make_sick, make_slimed } = await import('./potion.js');
+        if (uprop('Sick')) await make_sick(0, null, false, 0x03 /* SICK_ALL */);
+        if (uprop('Slimed')) await make_slimed(0, null);
+    }
     if (uprop('Blinded') > creamed) u.uprops.Blinded = creamed;
     game.botl = true;
     return ECMD_TIME;
@@ -2718,7 +2726,7 @@ export async function retouch_object(ref, loseit) {
                 else if (obj.oclass === WAND_CLASS) what = 'a silver wand';
             }
             await losehp(dmg, `handling ${what}`);
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
         }
     }
 
@@ -2772,9 +2780,18 @@ export async function untouchable(obj, drop_untouchable) {
 
 // C ref: artifact.c retouch_equipment() — touch-test everything in use.
 // 0 == don't drop, 1 == drop all, 2 == drop weapon.
+let retouch_nesting = 0;                 /* C: static int nesting */
+let retouch_done = null;                 /* C: obj->bypass bits, cleared on outermost entry/exit */
 export async function retouch_equipment(dropflag) {
+    if (!retouch_nesting++) retouch_done = new Set();
+    try {
+        await retouch_equipment_body(dropflag, retouch_done);
+    } finally {
+        if (!--retouch_nesting) retouch_done = null;
+    }
+}
+async function retouch_equipment_body(dropflag, done) {
     let dropit = (dropflag > 0);
-    const done = new Set();   /* C uses the bypass bits for this */
 
     /* check the secondary weapon first, before possibly unwielding the primary */
     if (game.u?.twoweap && game.uswapwep) {
@@ -2842,7 +2859,7 @@ function dropx(obj) {
     obj.ox = game.u?.ux;
     obj.oy = game.u?.uy;
     obj.where = OBJ_FLOOR;
-    if (Array.isArray(game.level?.objects)) game.level.objects.push(obj);
+    if (Array.isArray(game.level?.objects)) { game.level.objects.push(obj); stamp_fobj(obj); }
 }
 // C ref: artifact.c:2680 retouch_equipment() -> dismount_steed(DISMOUNT_THROWN)
 // — delegates to js/steed.js's real port (dynamic import avoids a cycle).

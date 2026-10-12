@@ -35,7 +35,7 @@ export function rn2_on_display_rng(x) {
     const v = Number(isaac64_next_uint64(dispCtx()) % BigInt(x));
     if (globalThis.__DISPLOG) {
         const site = globalThis.__DISPLOG_SITES
-            ? ' @ ' + (new Error()).stack.split('\n').slice(2, 8)
+            ? ' @ ' + (new Error()).stack.split("\n").slice(2, globalThis.__DISPDEPTH || 8)
                 .map(l => l.trim().replace(/^at /, '').replace(/\(.*\/js\//, '(')).join(' <- ')
             : '';
         globalThis.__DISPLOG.push(`~drn2(${x})=${v}${site}`);

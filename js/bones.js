@@ -432,6 +432,7 @@ export function drop_upon_death(mtmp, cont, x, y, hooks = {}) {
     const inv = game.u?.invent || game.invent || [];
     // iterate a snapshot since the C loop extracts each item from gi.invent
     for (const otmp of [...inv]) {
+        hooks.extract?.(otmp);                                 // C: obj_extract_self(otmp)
         if (rn2(5)) hooks.curse?.(otmp);                       // C: if (rn2(5)) curse(otmp);
         if (mtmp) {
             hooks.addToMon?.(mtmp, otmp);
@@ -537,11 +538,17 @@ export async function savebones(how = 0, corpse = null) {
             const { name_to_pmidx } = await import('./makemon.js');
             const PM_MEDUSA = name_to_pmidx('Medusa') ?? -1;
             const PM_VLAD = name_to_pmidx('Vlad the Impaler') ?? -1;
+            const { mongone } = await import('./mon.js');
             const mons_list = g.level?.monsters;
             if (Array.isArray(mons_list)) {
-                for (let i = mons_list.length - 1; i >= 0; i--)
-                    if (remove_mon_from_bones(mons_list[i], PM_MEDUSA, PM_VLAD))
-                        mons_list.splice(i, 1);
+                // C: mongone() -> mdrop_special_objs() draws obj_resists()'s
+                // rn2(100) per carried item before the monster is detached.
+                for (const m of [...mons_list])
+                    if (remove_mon_from_bones(m, PM_MEDUSA, PM_VLAD)) {
+                        await mongone(m);
+                        const i = mons_list.indexOf(m);
+                        if (i >= 0) mons_list.splice(i, 1);
+                    }
             }
         }
 
@@ -572,6 +579,21 @@ export async function savebones(how = 0, corpse = null) {
         const arise = g.u?.ugrave_arise ?? NON_PM;
         const arisen = arise >= LOW_PM && !!monster_by_pmidx(arise);
         let mtmp;
+        const { LEAVESTATUE } = await import('./const.js');
+        if (arise === LEAVESTATUE) {
+            // C ref: bones.c savebones() LEAVESTATUE arm -- embed the hero's
+            // possessions in a statue of the hero.
+            const { mk_named_object, STATUE, add_to_container, weight } = await import('./mkobj.js');
+            const otmp = mk_named_object(STATUE, monster_by_pmidx(g.u?.umonnum), x, y,
+                                         svp_plname());
+            drop_upon_death(null, otmp, x, y, {
+                ...hooks,
+                addToContainer: (cont, o) => { add_to_container(cont, o); },
+            });
+            if (!otmp) return;
+            otmp.owt = weight(otmp);
+            mtmp = null;
+        } else {
         if (!arisen) drop_upon_death(null, null, x, y, hooks);
         const saved_in_mklev = g.in_mklev;
         g.in_mklev = true;
@@ -602,10 +624,13 @@ export async function savebones(how = 0, corpse = null) {
         } else if (corpse) {
             corpse.corpsenm_mid = mtmp.m_id;
         }
+        } /* !LEAVESTATUE */
+        if (mtmp) {
         mtmp.m_lev = g.u?.ulevel || 1;
         mtmp.mhp = mtmp.mhpmax = g.u?.uhpmax ?? 1;
         mtmp.female = !!g.flags?.female;
         mtmp.msleeping = 1;
+        }
 
         // C ref: bones.c:538-546 — per-monster: mark its pack ghostly, resetobjs
         // it, forget the dead hero (mlstmv, tameness, and seen_resistance — "

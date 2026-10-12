@@ -454,7 +454,7 @@ export function priestname(mon, article, reveal_high_priest, _pname,
     if (do_hallu || !high_priest || reveal_high_priest
         || !Is_astralevel_() || m_next2u_(mon) || !!game.program_state?.gameover) {
         pname += ' of ';
-        pname += halu_gname_(mon_aligntyp_(mon));
+        pname += halu_gname_(mon_aligntyp_(mon), do_hallu);
     }
     return pname;
 }
@@ -793,7 +793,7 @@ export async function ghod_hitsu(priest) {
     const { dobuzz } = await import('./zap.js');
     /* C: buzz(BZ_M_SPELL(BZ_OFS_AD(AD_ELEC)), 6, x, y, sgn(gt.tbx), sgn(gt.tby))
        — buzz() is dobuzz() with say=TRUE.  hack.h: BZ_M_SPELL(t) == -10 - t,
-       zap.h: BZ_OFS_AD(x) == x - 1, monattk.h: AD_ELEC == 5. */
+       zap.h: BZ_OFS_AD(x) == x - 1, monattk.h: AD_ELEC == 6. */
     await dobuzz(-10 - (AD_ELEC_ - 1), 6, x, y,
                  sgn_(game.tbx | 0), sgn_(game.tby | 0), true);
     game.buzzer = oldbuzzer;
@@ -837,7 +837,7 @@ const MM_ADJACENTOK_ = 0x00000010, MM_NOMSG_ = 0x00020000, RLOC_NOMSG_ = 0x01;
 // C ref: attrib.h A_WIS.
 const A_WIS_ = 2;
 // C ref: monattk.h AD_ELEC.
-const AD_ELEC_ = 5;
+const AD_ELEC_ = 6;
 // C ref: prop.h INTRINSIC / FROMOUTSIDE (js/const.js:2381-2382).
 const INTRINSIC = 0x07000000, FROMOUTSIDE = 0x04000000;
 // C ref: livelog.h LL_CONDUCT.
@@ -870,8 +870,9 @@ function mon_aligntyp_(mon) {
 }
 // C ref: pray.c:2577 halu_gname(alignment) — js/role.js (random pantheon on the
 // DISPLAY rng while hallucinating).
-function halu_gname_(alignment) {
-    return halu_gname(alignment);
+function halu_gname_(alignment, do_hallu = true) {
+    // x_monnam() sets EHalluc_resistance around priestname() when !do_hallu.
+    return halu_gname(alignment, !do_hallu);
 }
 // C ref: pray.c:2514 a_gname_at(x, y) — the name of an altar's deity, or NULL
 // when <x,y> is not an altar.
@@ -904,7 +905,7 @@ function rndmonnam_(whatcode) {
     return r;
 }
 // C ref: do_name.c bogon_is_pname(code).
-function bogon_is_pname_(code) { return code === '+'; }
+function bogon_is_pname_(code) { return !!code && code !== '\0' && '-+='.includes(code); }
 // C ref: do_name.c Monnam(mon) / mon_nam(mon) — reached dynamically so priest.js
 // keeps its current static import graph.
 let _do_name_mod = null;
