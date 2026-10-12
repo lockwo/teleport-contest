@@ -62,7 +62,7 @@ import { special_dmgval } from './weapon.js';
 import { goodpos, rloc_to } from './teleport.js';
 import { m_in_out_region } from './region.js';
 import { set_apparxy, noteleport_level, impact_disturbs_zombies } from './monmove.js';
-import { AT_KICK } from './monattk_data.js';
+import { AT_KICK, attacktype_fordmg, AD_DGST } from './monattk_data.js';
 import { a_monnam, free_oname, christen_orc, mhis } from './do_name.js';
 import { wipe_engr_at, u_wipe_engr } from './engrave.js';
 import { getdir, wake_nearby, wake_nearto, b_trapped } from './cmd.js';
@@ -105,8 +105,8 @@ function ACURRSTR() {
 }
 
 function Levitation() { return Levitation_fu(); }
-function Deaf() { return !!game.u?.Deaf; }
-function Luck() { return game.u?.uluck ?? 0; }
+import { Deaf_hero as Deaf } from './display.js';
+function Luck() { return (game.u?.uluck | 0) + (game.u?.moreluck | 0); }
 // C ref: allmain.c Wounded_legs (HWounded_legs || EWounded_legs).
 function Wounded_legs() {
     const u = game.u;
@@ -356,7 +356,7 @@ export async function kick_dumb(x, y) {
         if (Blind()) feel_location(x, y);
     } else {
         await pline('Dumb move!  You strain a muscle.');
-        exercise(A_STR, false);
+        await exercise(A_STR, false);
         await set_wounded_legs(RIGHT_SIDE, 5 + rnd(5));
     }
     // C ref: dokick.c:876 — `(Is_airlevel || Levitation) && rn2(2)` recoils.
@@ -372,7 +372,7 @@ export async function kick_dumb(x, y) {
 export async function kick_ouch(x, y, kickobjnam, maploc) {
     await pline('Ouch!  That hurts!');
     exercise(A_DEX, false);
-    exercise(A_STR, false);
+    await exercise(A_STR, false);
     if (isok(x, y)) {
         if (Blind()) feel_location(x, y); /* we know we hit it */
         // C ref: dokick.c:898 — the noise wakes anything within 5*5; no RNG
@@ -435,16 +435,16 @@ export async function kick_door(x, y, avrg_attrib) {
         const shopdoor = in_rooms(x, y, SHOPBASE)[0] ? true : false;
         if (dm & D_TRAPPED) {
             if (game.flags?.verbose !== false) await pline('You kick the door.');
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             maploc.doormask = D_NODOOR;
             await b_trapped('door', true); // FOOT != NO_PART
         } else if (ACURR(A_STR) > 18 && rn2(5) === 0 && !shopdoor) {
             await pline('As you kick the door, it shatters to pieces!');
-            exercise(A_STR, true);
+            await exercise(A_STR, true);
             maploc.doormask = D_NODOOR;
         } else {
             await pline('As you kick the door, it crashes open!');
-            exercise(A_STR, true); // -> rn2(19)
+            await exercise(A_STR, true); // -> rn2(19)
             maploc.doormask = D_BROKEN;
         }
         // C ref: dokick.c:951-952 feel_newsym(x,y); recalc_block_point(x,y) —
@@ -461,7 +461,7 @@ export async function kick_door(x, y, avrg_attrib) {
         if (in_town(x, y)) await get_iter_mons(watchman_thief_arrest);
     } else {
         if (Blind()) feel_location(x, y); /* we know we hit it */
-        exercise(A_STR, true);
+        await exercise(A_STR, true);
         // C ref: dokick.c:966 pline("%s!!", (Deaf || !rn2(3)) ? "Thwack" :
         // "Whammm") — Thwack when rn2(3)==0 (or Deaf), else Whammm.
         await pline(`${(Deaf() || rn2(3) === 0) ? 'Thwack' : 'Whammm'}!!`);
@@ -1649,7 +1649,7 @@ export async function dokick() {
     if (u.uswallow) {
         const r = rn2(3);
         if (r === 0) await pline(`You can't move your ${body_part(LEG)}!`);
-        else if (r === 1 && u.ustuck && attacktype(u.ustuck.data, AT_ENGL))
+        else if (r === 1 && u.ustuck && attacktype_fordmg(u.ustuck.data, AT_ENGL, AD_DGST))
             await pline(`${Monnam(u.ustuck)} burps loudly.`);
         else await pline('Your feeble kick has no effect.');
         return ECMD_TIME;
@@ -2032,7 +2032,7 @@ export async function ship_object(otmp, x, y, shop_floor_obj) {
 
     /* some things break rather than ship */
     if (breaktest(otmp)) {
-        const result = (objects[otmp.otyp].oc_material === GLASS
+        const result = (objects[otmp.otyp].material === GLASS
                         || otmp.otyp === EXPENSIVE_CAMERA) ? 'crash' : 'splat';
         if (result === 'crash') {
             if (otmp.otyp === MIRROR) change_luck(-2);

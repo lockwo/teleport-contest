@@ -6,6 +6,7 @@
 // (game.level.monsters / game.fmon) so that gameplay RNG + display are
 // generated naturally for any session whose level state is materialized.
 
+import { random_monster } from './disprng.js';
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rn1, rnd, d } from './rng.js';
@@ -310,14 +311,19 @@ export function were_beastie(pm) {
     return NON_PM;
 }
 function is_human_were(ptr) { return is_were_flag(ptr) && is_human_flag(ptr); }
-// C ref: youprop.h Protection_from_shape_changers — extrinsic only (the ring).
-// Read from the same uprops bag the rest of the port uses.  Nothing sets it
-// yet, so it is False throughout; note that when it DOES get set, C also runs
-// mon.c:4622 rescham() (every chameleon/mimic snaps back to its natural shape
-// and every were reverts to human) on put-on and mon.c:4646 restartcham() on
-// take-off.  Neither is ported, and both change monster forms wholesale.
+// C ref: youprop.h `Protection_from_shape_changers` ==
+// (HProtection_from_shape_changers || EProtection_from_shape_changers): the
+// intrinsic/timed word in u.uprops, or the worn-ring (any slot) extrinsic word
+// that invent.js worn_extrinsics_on() keeps in u.uprops_extrinsic[prop.h 60].
+// Putting the ring on runs rescham() (mon.c:4622) and taking it off
+// restartcham() (mon.c:4646); see invent.js Ring_on()/Ring_off_or_gone().
+const PROT_FROM_SHAPE_CHANGERS_PROP = 60;
 export function Protection_from_shape_changers() {
-    return !!game.u?.uprops?.Protection_from_shape_changers;
+    const u = game.u;
+    return !!((u?.uprops?.HProtection_from_shape_changers | 0)
+        || (u?.uprops?.EProtection_from_shape_changers | 0)
+        || (u?.uprops?.Protection_from_shape_changers | 0)
+        || (u?.uprops_extrinsic?.[PROT_FROM_SHAPE_CHANGERS_PROP] | 0));
 }
 
 // C ref: mon.c:2476 monnear(mon, x, y) — within one (king) step; a grid bug
@@ -483,7 +489,8 @@ async function were_change(mon) {
                     // update_topl, which APPENDS to an unacknowledged top line.
                     // mon_break_armor's "You hear a thud." fires first (were.c
                     // :129 runs before this), and C renders both on one line.
-                    await update_topl(`You hear a ${howler} howling at the moon.`);
+                    const { You_hear } = await import('./display.js');
+                    await You_hear(`a ${howler} howling at the moon.`);
                     const { wake_nearto } = await import('./cmd.js');
                     await wake_nearto(mon.mx, mon.my, 4 * 4);
                 }
@@ -1294,13 +1301,11 @@ export async function m_dowear(mon, creation) {
 
 // C ref: worn.c:1163 m_lose_armor(mon, obj, polyspot) —
 // extract_from_minvent + place_object + newsym.  No RNG.
-function m_lose_armor(mon, obj) {
-    const inv = mon.minvent || [];
-    const ix = inv.indexOf(obj);
-    if (ix >= 0) inv.splice(ix, 1);
-    mon.misc_worn_check = (mon.misc_worn_check | 0) & ~(obj[WORNF] | 0);
-    obj[WORNF] = 0;
-    obj.owornmask = 0;
+async function m_lose_armor(mon, obj, polyspot) {
+    // C ref: worn.c:1045 — extract_from_minvent(mon, obj, TRUE, FALSE) so the
+    // armor's extrinsics (e.g. speed boots' MFAST) are undone too.
+    const { extract_from_minvent } = await import('./worn.js');
+    await extract_from_minvent(mon, obj, true, false);
     place_object(obj, mon.mx, mon.my);
     newsym(mon.mx, mon.my);
 }
@@ -1358,7 +1363,7 @@ export async function mon_break_armor(mon, polyspot) {
         if ((otmp = which_armor_mon(mon, W_ARM)) != null) {
             if (vis) await update_topl(`${s_suffix(Monnam(mon))} armor falls around ${pronoun}!`);
             else await hear('a thud.');
-            m_lose_armor(mon, otmp, polyspot);
+            await m_lose_armor(mon, otmp, polyspot);
         }
         if ((otmp = which_armor_mon(mon, W_ARMC)) != null
             && (otmp.otyp !== MUMMY_WRAPPING_OTYP || !WrappingAllowed(mdat))) {
@@ -1366,25 +1371,25 @@ export async function mon_break_armor(mon, polyspot) {
                 await update_topl(is_whirly_mon(mdat)
                     ? `${s_suffix(Monnam(mon))} ${cloak_simple_name_mon(otmp)} falls, unsupported!`
                     : `${Monnam(mon)} shrinks out of ${ppronoun} ${cloak_simple_name_mon(otmp)}!`);
-            m_lose_armor(mon, otmp, polyspot);
+            await m_lose_armor(mon, otmp, polyspot);
         }
         if ((otmp = which_armor_mon(mon, W_ARMU)) != null) {
             if (vis)
                 await update_topl(passes_thru_clothes
                     ? `${Monnam(mon)} seeps right through ${ppronoun} shirt!`
                     : `${Monnam(mon)} becomes much too small for ${ppronoun} shirt!`);
-            m_lose_armor(mon, otmp, polyspot);
+            await m_lose_armor(mon, otmp, polyspot);
         }
     }
     if (handless_or_tiny) {
         if ((otmp = which_armor_mon(mon, W_ARMG)) != null) {
             if (vis) await update_topl(`${Monnam(mon)} drops ${ppronoun} gloves${mon.mw ? ' and weapon' : ''}!`);
-            m_lose_armor(mon, otmp, polyspot);
+            await m_lose_armor(mon, otmp, polyspot);
         }
         if ((otmp = which_armor_mon(mon, W_ARMS)) != null) {
             if (vis) await update_topl(`${Monnam(mon)} can no longer hold ${ppronoun} shield!`);
             else await hear('a clank.');
-            m_lose_armor(mon, otmp, polyspot);
+            await m_lose_armor(mon, otmp, polyspot);
         }
     }
     if (handless_or_tiny || has_horns(mdat)) {
@@ -1392,7 +1397,7 @@ export async function mon_break_armor(mon, polyspot) {
             && (handless_or_tiny || !is_flimsy(otmp))) {
             if (vis) await update_topl(`${s_suffix(Monnam(mon))} helmet falls to the ${surface_mon(mon)}!`);
             else await hear('a clank.');
-            m_lose_armor(mon, otmp, polyspot);
+            await m_lose_armor(mon, otmp, polyspot);
         }
     }
     if (handless_or_tiny || slithy_mon(mdat) || mdat.mcls === S_CENTAUR_M) {
@@ -1402,7 +1407,7 @@ export async function mon_break_armor(mon, polyspot) {
                     ? `${s_suffix(Monnam(mon))} boots fall away!`
                     : `${s_suffix(Monnam(mon))} boots ${(mdat.msize ?? 0) < MZ_SMALL_M
                         ? 'slide' : 'are pushed'} off ${ppronoun} feet!`);
-            m_lose_armor(mon, otmp, polyspot);
+            await m_lose_armor(mon, otmp, polyspot);
         }
     }
 }
@@ -1932,7 +1937,8 @@ function remove_monster_at(x, y) {
     if (!list) return;
     for (let i = 0; i < list.length; i++) {
         const m = list[i];
-        if (m.mx === x && m.my === y && !m.mridden) { list.splice(i, 1); return; }
+        if (m.mx === x && m.my === y && !m.mridden && !m.mgridoff
+            && !((m.mstate | 0) & MON_DETACH)) { list.splice(i, 1); return; }
     }
 }
 
@@ -2524,6 +2530,19 @@ export async function mon_leaving_level(mon) {
         game.context.polearm.hitmon = null;
 }
 
+// C ref: mon.c:2782-2785 (m_detach) — reset theft-in-progress data and revert a
+// dead shopkeeper's shop.  Exported for the kill paths that inline m_detach().
+export async function thiefdead_shkgone(mtmp) {
+    if (game.stealmid && mtmp.m_id === game.stealmid) {
+        const { thiefdead } = await import('./steal.js');
+        thiefdead();
+    }
+    if (mtmp.isshk) {
+        const { shkgone } = await import('./shk.js');
+        shkgone(mtmp);
+    }
+}
+
 // ── mon.c:2734 m_detach() ───────────────────────────────────────────────────
 // 'mtmp' is going away; remove its effects from the other data structures.
 // mptr reflects mtmp->data BEFORE the death (newcham may have changed it).
@@ -2579,8 +2598,9 @@ export async function m_detach(mtmp, mptr, due_to_death) {
         await relobj(mtmp, mx, my);
     }
 
-    /* C ref: steal.c thiefdead() (gs.stealmid) and shk.c shkgone() — neither
-       ported; the first resets theft-in-progress state, the second the shop. */
+    /* C ref: mon.c:2782-2785 — reset theft-in-progress data, and revert a dead
+       shopkeeper's shop (clears the hero's unpaid flags via setpaid()). */
+    await thiefdead_shkgone(mtmp);
     if (mtmp.wormno) {
         const { wormgone } = await import('./worm.js');
         wormgone(mtmp);
@@ -4006,7 +4026,9 @@ export function flash_mon(mtmp) {
     if (row) row[mx] |= (VIZ_IN_SIGHT | VIZ_COULD_SEE);
     /* C ref: display.c flash_glyph_at(x, y, mon_to_glyph(mtmp, newsym_rn2),
        count) — neither flash_glyph_at() nor the newsym_rn2 glyph pick (which
-       DRAWS off the DISPLAY rng for a hallucinated monster) has a port yet. */
+       DRAWS off the DISPLAY rng for a hallucinated monster) has a port yet.
+       The glyph pick is what_mon(): one display-rng draw while hallucinating. */
+    if (Hallucination_u()) random_monster();
     void count;
     if (row) row[mx] = saveviz;
     newsym(mx, my);

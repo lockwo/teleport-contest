@@ -1367,7 +1367,11 @@ export async function doclassdisco() {
         }
         /* get the class (via its symbol character) */
         c = await disco_yn_function(prompt, discosyms, '\0', true);
-        if (!c || c === '\0') { /* clear_nhwindow(WIN_MESSAGE) */ }
+        if (!c || c === '\0') { /* clear_nhwindow(WIN_MESSAGE) */
+            game._pending_message = '';
+            game._toplPromptMsg = null;
+            game._toplin = 0;
+        }
     } else {
         /* menustyle:full or menustyle:partial */
         if (!discosyms[1] && ms === MENU_PARTIAL) {
@@ -1615,6 +1619,7 @@ function disco_menu_flat(win) {
     let menu_ch = 'a';
     for (const it of win.items) {
         const n = flat.length;
+        it.row = n;
         if ((n % lmax) === 0) menu_ch = 'a';
         if (it.selectable && !it.accel) {
             it.accel = menu_ch;
@@ -1672,8 +1677,12 @@ async function select_menu(win, how, picks) {
             for (const it of already) picks.push(it.any);
             return await dismiss(already.length);
         }
+        // C ref: process_menu_window() — an accelerator is matched against the
+        // CURRENT page only (accelerators restart at 'a' on every page); a group
+        // accelerator matches on any page.
         const hit = win.items.find((it) => it.selectable
-            && (it.accel === ch || it.gacc === ch));
+            && ((it.accel === ch && (!fullscreen || Math.floor(it.row / perPage) === idx))
+                || it.gacc === ch));
         if (hit) { picks.push(hit.any); return await dismiss(1); }
         /* unacceptable key (C: tty_nhbell()); menu stays up */
     }

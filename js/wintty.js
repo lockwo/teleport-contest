@@ -179,7 +179,9 @@ let clipping = false;
 let clipx = 0, clipxmax = 0, clipy = 0, clipymax = 0;
 let vt_tile_current_window = -2;
 let calling_from_update_inventory = false;
-let tty_menu_promptstyle = { color: NO_COLOR, attr: ATR_NONE };
+/* allmain.c:728 adjust_menu_promptstyle(WIN_INVEN, &iflags.menu_headings)
+   pushes the default menu_headings (ATR_INVERSE) down at startup. */
+let tty_menu_promptstyle = { color: NO_COLOR, attr: ATR_INVERSE };
 let tty_colormasks = null;
 let tty_condition_bits = 0;
 let hpbar_percent = 0, hpbar_crit_hp = 0;
@@ -536,6 +538,9 @@ export async function erase_menu_or_text(window, cw, clear) {
         } else if (clear) term_clear_screen();
         else {
             await docrt();
+            // the bot() BL_RESET that follows repaints every status field over
+            // the map glyphs sharing its row
+            game._statusDocrt = false;
             flush_screen(1);
         }
     } else {

@@ -581,20 +581,12 @@ function stylus_ok(obj) {
 // stack but (unlike doname) carries no count and no BUC word, so a stack of
 // nine apples is "your apples", not "your 9 uncursed apples".
 async function Yname2(obj) {
-    const { cxname_singular } = await import('./invent.js');
-    const { makeplural } = await import('./plural.js');
-    const base = cxname_singular(obj);
-    const s = ((obj?.quan ?? 1) > 1) ? makeplural(base) : base;
-    return `Your ${s}`;
+    return (await import('./invent.js')).Yname2(obj);
 }
 // C ref: objnam.c yname(obj) — shk_your() + cxname(); the lowercase sibling of
 // Yname2() above.
 async function yname_of(obj) {
-    const { cxname_singular } = await import('./invent.js');
-    const { makeplural } = await import('./plural.js');
-    const base = cxname_singular(obj);
-    const nm = ((obj?.quan ?? 1) > 1) ? makeplural(base) : base;
-    return `your ${nm}`;
+    return (await import('./invent.js')).yname(obj);
 }
 // C ref: objnam.c Yobjnam2(obj, verb) — Yname2 plus the verb agreeing with the
 // object's quantity ("Your dagger is" / "Your daggers are").
@@ -802,12 +794,18 @@ async function doengrave_sfx_item(de) {
                 return false;
             }
             de.zapwand = true;
+            if (!can_reach_floor(true))
+                de.ptext = false;
             await doengrave_sfx_item_WAN(de);
         } else {
             // Failing to wrest one last charge takes time.
             de.ptext = false;
-            if (de.otmp.spe < 0) de.zapwand = true;
-            else await engravePline('The wand is too worn out to engrave.');
+            /* give feedback here if we won't be getting the "can't reach
+               floor" message below */
+            if (can_reach_floor(true)) {
+                if (de.otmp.spe < 0) de.zapwand = true;
+                else await engravePline('The wand is too worn out to engrave.');
+            }
         }
         break;
     }

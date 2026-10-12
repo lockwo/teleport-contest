@@ -406,6 +406,7 @@ export async function pluslvl(incr, emitMsg) {
         }
         if (u.ulevel > (u.ulevelpeak || 0)) u.ulevelpeak = u.ulevel;
     }
+    game.botl = true; /* C ref: exper.c:371 — AFTER the "Welcome" pline's flush */
 }
 
 // C ref: exper.c losexp(const char *drainer) — lose an experience level.  A
@@ -432,6 +433,7 @@ export async function losexp(drainer, emitMsg) {
         u.ulevel -= 1;
         update_rank();
         await adjabil(oldlevel, u.ulevel, emitMsg);
+        livelog_printf(LL_MINORAC, `lost experience level ${oldlevel}`);
     } else { /* u.ulevel==1 */
         if (drainer) {
             const { done, DIED } = await import('./end.js');
@@ -441,13 +443,16 @@ export async function losexp(drainer, emitMsg) {
         /* no drainer or lifesaved */
         if ((u.ulevel || 0) > 1) return;
         u.uexp = 0;
+        livelog_printf(LL_MINORAC, 'lost all experience');
     }
     const uhpmin = minuhpmax(10);
     let num = (u.uhpinc && u.uhpinc[u.ulevel]) || 0;
     const olduhpmax = u.uhpmax || 0;
     u.uhpmax = (u.uhpmax || 0) - num;
-    if (u.uhpmax < uhpmin) u.uhpmax = uhpmin;
-    if (u.uhpmax > olduhpmax) u.uhpmax = olduhpmax;
+    // C ref: exper.c:253-261 — both floors go through setuhpmax(), which also
+    // clamps u.uhp to the new maximum BEFORE the `u.uhp -= num` below.
+    if (u.uhpmax < uhpmin) setuhpmax(uhpmin, true);
+    if (u.uhpmax > olduhpmax) setuhpmax(olduhpmax, true);
     u.uhp = (u.uhp || 0) - num;
     if (u.uhp < 1) u.uhp = 1;
     else if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
@@ -591,13 +596,26 @@ export async function adjabil(oldlevel, newlevel, emitMsg) {
         other.some(([ulvl, , , p]) => p === prop && lvl >= ulvl);
     for (const [tbl, other] of [[role, race], [race, role]]) {
         for (const [ulvl, gainstr, losestr, prop] of tbl) {
+            let changed = false;
             if (oldlevel < ulvl && newlevel >= ulvl) {
-                if (alsoFrom(other, prop, newlevel)) continue;
-                if (gainstr && emitMsg) await emitMsg(`You feel ${gainstr}!`);
+                // C: `*ability |= mask` re-grants the bit attrcurse()/u_slow_down() cleared.
+                if (ulvl > 1) game.u?.lost_innate?.delete(prop);
+                changed = true;
+                if (!alsoFrom(other, prop, newlevel)
+                    && gainstr && emitMsg) await emitMsg(`You feel ${gainstr}!`);
             } else if (oldlevel >= ulvl && newlevel < ulvl) {
-                if (alsoFrom(other, prop, newlevel)) continue;
-                if (losestr && emitMsg) await emitMsg(`You feel ${losestr}!`);
-                else if (gainstr && emitMsg) await emitMsg(`You feel less ${gainstr}!`);
+                changed = true;
+                if (!alsoFrom(other, prop, newlevel)) {
+                    if (losestr && emitMsg) await emitMsg(`You feel ${losestr}!`);
+                    else if (gainstr && emitMsg) await emitMsg(`You feel less ${gainstr}!`);
+                }
+            }
+            // C ref: attrib.c:1063 `if (prevabil != *ability) postadjabil()` —
+            // a Warning / See_invisible change refreshes the map via see_monsters().
+            if (changed && (game.u?.ulevel | 0)
+                && (prop === 'HWarning' || prop === 'HSee_invisible')) {
+                const { see_monsters } = await import('./display.js');
+                see_monsters();
             }
         }
     }

@@ -356,20 +356,18 @@ function runTutProgram() {
     engrave(2, 4, ENGRAVE, 'Some actions may require multiple tries before succeeding');
     engrave(2, 5, ENGRAVE, 'Open the door by moving into it');
     setDoor(2, 6, D_CLOSED);
-    engrave(2, 7, ENGRAVE, "Close the door with 'c'");
+    engrave(2, 7, ENGRAVE, `Close the door with '${tutKey('close')}'`);
 
     engrave(4, 5, ENGRAVE, 'You can leave the tutorial via the magic portal.');
     createTrap(4, 4, MAGIC_PORTAL, { seen: true });   // mktrap rnd(4)
 
-    // tut_key("kick") resolves to Ctrl-D: it returns the string "Ctrl-D" (used
-    // in the engraving text) AND sets tut_ctrl_key := "D" (used by tutKeyHelp).
-    tut_ctrl_key = 'D';
-    engrave(5, 9, ENGRAVE, "This door is locked. Kick it with 'Ctrl-D'");
+    // tut_key("kick") returns "Ctrl-D" and sets tut_ctrl_key for tutKeyHelp.
+    engrave(5, 9, ENGRAVE, `This door is locked. Kick it with '${tutKey('kick')}'`);
     setDoor(5, 10, D_LOCKED);
     tutKeyHelp(6, 8); // tut-1.lua:107 — engraves the ^D note at des {6,8}
 
-    engrave(5, 12, ENGRAVE, "Look around the map with ';', press ESC when you're done");
-    engrave(10, 13, ENGRAVE, "Use 's' to search for secret doors");
+    engrave(5, 12, ENGRAVE, `Look around the map with '${tutKey('glance')}', press ESC when you're done`);
+    engrave(10, 13, ENGRAVE, `Use '${tutKey('search')}' to search for secret doors`);
     engrave(10, 15, ENGRAVE, 'Wrong secret');
 
     engrave(10, 10, ENGRAVE, 'Behind this door is a dark corridor');
@@ -395,18 +393,18 @@ function runTutProgram() {
         createTrap(tx, ty, board ? SQKY_BOARD : SLP_GAS_TRAP, { novictim: true });
     }
 
-    engrave(15, 15, ENGRAVE, "Some traps can be disabled with '#untrap'");
+    engrave(15, 15, ENGRAVE, `Some traps can be disabled with '${tutKey('untrap')}'`);
     createTrap(15, 16, WEB, { /* spider_on_web=false, victim default true */ }); // rnd(4)
 
     setDoor(18, 13, D_CLOSED);
-    engrave(19, 13, ENGRAVE, "Pick up items with ','");
+    engrave(19, 13, ENGRAVE, `Pick up items with '${tutKey('pickup')}'`);
     // tut-1.lua:145 — `(u.role == "Monk") and "leather gloves" or "leather armor"`
     createObject(19, 14, game.urole?.name?.m === 'Monk' ? 'leather gloves' : 'leather armor',
                  { spe: 0, buc: 'cursed' });
 
-    engrave(19, 15, ENGRAVE, "Wear armor with 'W'");
+    engrave(19, 15, ENGRAVE, `Wear armor with '${tutKey('wear')}'`);
     createObject(21, 15, 'dagger', { spe: 0, buc: 'not-cursed' });
-    engrave(21, 14, ENGRAVE, "Wield weapons with 'w'");
+    engrave(21, 14, ENGRAVE, `Wield weapons with '${tutKey('wield')}'`);
 
     engrave(22, 13, ENGRAVE, 'Hit monsters by walking into them.');
     createMonster(23, 15, 'lichen');
@@ -418,11 +416,11 @@ function runTutProgram() {
     engrave(25, 13, ENGRAVE, 'Push boulders by moving into them');
     createObject(25, 12, 'boulder', {});                // next_ident only
 
-    engrave(27, 9, ENGRAVE, "Take off armor with 'T'");
+    engrave(27, 9, ENGRAVE, `Take off armor with '${tutKey('takeoff')}'`);
 
     createObject(23, 11, 'remove curse', { oclass: 9, buc: 'blessed' }); // SCROLL_CLASS
     engrave(22, 11, ENGRAVE, 'Some items have shuffled descriptions, different each game');
-    engrave(23, 11, ENGRAVE, "Pick up this scroll, read it with 'r', and try to remove the armor again");
+    engrave(23, 11, ENGRAVE, `Pick up this scroll, read it with '${tutKey('read')}', and try to remove the armor again`);
 
     engrave(19, 10, ENGRAVE, 'Another magic portal, a way to leave this tutorial');
     createTrap(19, 11, MAGIC_PORTAL, { seen: true });   // rnd(4)
@@ -438,11 +436,11 @@ function runTutProgram() {
     setDoor(20, 3, percent(50) ? D_ISOPEN : D_CLOSED);  // percent rn2(100)
 
     engrave(21, 3, ENGRAVE, 'Avoid being burdened, it slows you down');
-    engrave(22, 3, ENGRAVE, "Drop items with 'd'");
+    engrave(22, 3, ENGRAVE, `Drop items with '${tutKey('drop')}'`);
     engrave(22, 4, ENGRAVE, 'You can drop partial stacks by prefixing the item slot letter with a number');
 
     createMonster(26, 2, 'yellow mold');
-    engrave(25, 5, ENGRAVE, "Throw items with 't'");
+    engrave(25, 5, ENGRAVE, `Throw items with '${tutKey('throw')}'`);
     createTrap(21, 1, MAGIC_PORTAL, { seen: true });    // rnd(4)
 
     createMonster(29, 2, 'wolf', { peaceful: 0 });
@@ -450,45 +448,45 @@ function runTutProgram() {
 
     createObject(37, 3, 'sling', { buc: 'not-cursed', spe: 9 });
     engrave(37, 3, ENGRAVE, 'Wield the sling');
-    engrave(36, 1, ENGRAVE, "Use 'f' to fire missiles with the wielded launcher");
-    engrave(35, 4, ENGRAVE, "Firing launches items from your quiver; Use 'Q' to put items in it");
-    engrave(33, 4, ENGRAVE, "You can wait a turn with 's'");
+    engrave(36, 1, ENGRAVE, `Use '${tutKey('fire')}' to fire missiles with the wielded launcher`);
+    engrave(35, 4, ENGRAVE, `Firing launches items from your quiver; Use '${tutKey('quiver')}' to put items in it`);
+    engrave(33, 4, ENGRAVE, `You can wait a turn with '${tutKey('wait')}'`);
 
     setDoor(38, 6, D_CLOSED);
-    engrave(39, 6, ENGRAVE, "You loot containers with '#loot'");
+    engrave(39, 6, ENGRAVE, `You loot containers with '${tutKey('loot')}'`);
 
     // large box with a scroll inside (and random contents from mkbox_cnts).
     createBoxWithScroll(41, 6);
 
-    engrave(42, 6, ENGRAVE, "Containers can also be emptied with '#tip'");
-    engrave(45, 6, ENGRAVE, "Magic wands are used with 'z'");
+    engrave(42, 6, ENGRAVE, `Containers can also be emptied with '${tutKey('tip')}'`);
+    engrave(45, 6, ENGRAVE, `Magic wands are used with '${tutKey('zap')}'`);
 
     setDoor(35, 9, D_NODOOR);
-    engrave(34, 9, ENGRAVE, "You can run by prefixing a movement key with 'G'");
+    engrave(34, 9, ENGRAVE, `You can run by prefixing a movement key with '${tutKey('run')}'`);
 
     setDoor(33, 16, D_NODOOR);
-    engrave(35, 15, ENGRAVE, "Travel across the level with '_'");
+    engrave(35, 15, ENGRAVE, `Travel across the level with '${tutKey('travel')}'`);
 
     createTrap(27, 14, MAGIC_PORTAL, { seen: true });   // rnd(4)
 
-    engrave(48, 1, BURN, "Use 'e' to eat edible things");
+    engrave(48, 1, BURN, `Use '${tutKey('eat')}' to eat edible things`);
     createObject(50, 3, 'apple', { buc: 'not-cursed' });
     createObject(50, 3, 'candy bar', { buc: 'not-cursed' });
     createObject(50, 3, 'corpse', { montype: 'lichen', buc: 'not-cursed' });
 
     setDoor(46, 11, D_CLOSED);
-    engrave(43, 11, BURN, "Use '#twoweapon' to use two weapons at once");
+    engrave(43, 11, BURN, `Use '${tutKey('twoweapon')}' to use two weapons at once`);
     createObject(43, 13, 'knife', { buc: 'uncursed' });
     createObject(43, 14, 'dagger', { buc: 'blessed' });
-    engrave(43, 16, BURN, "Swap weapons quickly with 'x'");
+    engrave(43, 16, BURN, `Swap weapons quickly with '${tutKey('swap')}'`);
     setDoor(40, 15, rndDoorState());                     // "random" -> rnddoor rn2(5)
 
     createObject(48, 7, 'levitation', { oclass: 4, buc: 'not-cursed' }); // RING_CLASS
-    engrave(48, 10, BURN, "Put on accessories with 'P'");
-    engrave(48, 16, BURN, "Remove accessories with 'R'");
+    engrave(48, 10, BURN, `Put on accessories with '${tutKey('puton')}'`);
+    engrave(48, 16, BURN, `Remove accessories with '${tutKey('remove')}'`);
     setDoor(50, 16, D_CLOSED);
 
-    engrave(58, 9, BURN, "Use '>' to go down the stairs");
+    engrave(58, 9, BURN, `Use '${tutKey('down')}' to go down the stairs`);
     makeStair(58, 10);
 
     // tut-1.lua:294 — "one more ctrl-key help, if needed".  No Ctrl-bound
@@ -509,13 +507,13 @@ function runTutProgram() {
     // tut-1.lua:316 — `if (u.uenmax < 5)` only a hero too weak to cast gets the note.
     if ((game.u?.uenmax | 0) < 5)
         engrave(59, 2, ENGRAVE, "Unfortunately you don't have enough energy to cast spells.");
-    engrave(57, 2, ENGRAVE, "Pick up the spellbook with ','");
+    engrave(57, 2, ENGRAVE, `Pick up the spellbook with '${tutKey('pickup')}'`);
     createObject(57, 2, 'light', { oclass: 10, buc: 'blessed' });  // SPBOOK_CLASS; blessorcurse rn2(17)
-    engrave(55, 2, ENGRAVE, "Read the spellbook with 'r'");
-    engrave(53, 2, ENGRAVE, "Use '+' to cast a spell");
+    engrave(55, 2, ENGRAVE, `Read the spellbook with '${tutKey('read')}'`);
+    engrave(53, 2, ENGRAVE, `Use '${tutKey('cast')}' to cast a spell`);
     regionLit(53, 1, 59, 3, false);                      // unlit
 
-    engrave(72, 2, ENGRAVE, 'You "quaff" potions with \'q\'');
+    engrave(72, 2, ENGRAVE, `You "quaff" potions with '${tutKey('quaff')}'`);
     createObject(72, 2, 'object detection', { oclass: 8, buc: 'blessed' }); // POTION_CLASS; blessorcurse rn2(4)
 }
 

@@ -13,7 +13,7 @@ import { objects, WEAPON_CLASS, ARMOR_CLASS, TOOL_CLASS, ROCK_CLASS,
 import { OBJ_ARMCAT } from './objarmor_data.js';
 import { monster_by_pmidx } from './makemon.js';
 import { acurr_eff } from './attrib.js';
-import { Hallucination_u } from './display.js';
+import { Hallucination_u, Deaf_hero } from './display.js';
 
 // C ref: mthrowu.c:24 breathwep[] — indexed by BZ_OFS_AD(typ), i.e. adtyp - 1.
 const BREATHWEP = [
@@ -726,7 +726,7 @@ export async function hit_bars(objp, objx, objy, barsx, barsy, breakflags,
                 deps.dissolve_bars?.(barsx, barsy);
         }
     } else {
-        if (!game.u?.Deaf) {
+        if (!Deaf_hero()) {
             /* C ref: mthrowu.c:1449 barsounds[] — index 0 is unused ("") and
                SIZE(barsounds) - 1 == 5 is the default. */
             const barsounds = ['', 'Whang', 'Whap', 'Flapp', 'Clink', 'Clonk'];

@@ -9,9 +9,9 @@ import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
-         feel_location, feel_newsym, docrt, under_water } from './display.js';
+         feel_location, feel_newsym, docrt, under_water, You_feel } from './display.js';
 import { rn2_on_display_rng } from './disprng.js';
-import { rank_of } from './exper.js';
+import { rank_of, has_innate } from './exper.js';
 import { Blind, recalc_block_point, cansee, couldsee, vision_recalc } from './vision.js';
 import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
          Ring_off, off_msg, obj_doname, carried, otense, obj_extract_self,
@@ -71,6 +71,7 @@ import {
     POT_WATER, POT_OIL, COIN_CLASS, GEM_CLASS, LOADSTONE, LEASH, uncurse, blessorcurse,
     WAN_FIRE, FIRE_HORN, SPE_BOOK_OF_THE_DEAD, SCR_BLANK_PAPER, SPE_BLANK_PAPER,
     SPE_NOVEL, has_omonst, remove_object, HEAVY_IRON_BALL, KICKING_BOOTS,
+    erosion_matters,
 } from './mkobj.js';
 // C ref: objects.h IRON_SHOES (js/do_wear.js:66).
 const IRON_SHOES_OTYP = 164;
@@ -80,7 +81,7 @@ import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID, throws_rocks_flag,
          M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
          is_swimmer_flag, can_teleport_flag } from './monflags_data.js';
-import { AD_FIRE, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
+import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
 import { HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT } from './const.js';
 import { at_dgn_entrance, ceiling as ceiling_dg, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
@@ -728,7 +729,11 @@ export function maketrap(x, y, typ) {
                 set_levltyp(x, y, lf.is_maze_lev ? ROOM
                                   : lf.is_cavernous_lev ? CORR : DOOR);
             }
-            if (clear_flags) lev.flags = 0;
+            // C ref: rm.h — `doormask` and `wall_info` are #defines for `flags`, so
+            // C's `lev->flags = 0` also resets the door state (a hole dug into an
+            // open door leaves a D_NODOOR doorway).  This port keeps them as
+            // separate fields, so clear all three.
+            if (clear_flags) { lev.flags = 0; lev.doormask = 0; lev.wall_info = 0; }
             recalc_block_point(x, y);
         }
         // C ref: trap.c maketrap():561 — `unearth_objs(x, y)`: whatever was
@@ -776,10 +781,6 @@ function set_levltyp(x, y, newtyp) {
 // C ref: objclass.h material predicates.  Object material id 11 == IRON.
 const MAT_IRON = 11;
 function is_rustprone(obj) { return objects[obj?.otyp]?.material === MAT_IRON; }
-// C ref: objclass.h erosion_matters() — only weapons and armor erode.
-function erosion_matters(obj) {
-    return obj?.oclass === WEAPON_CLASS || obj?.oclass === ARMOR_CLASS;
-}
 
 // C ref: apply.c splash_lit(obj) — a splash of water puts out a lit light
 // source.  Correction to the old note here: C's version draws NO RNG at all
@@ -842,10 +843,11 @@ export async function water_damage(obj, ostr, force) {
     // rn2(20).
     if (obj.otyp === CAN_OF_GREASE_OTYP && (obj.spe | 0) > 0) return ER_NOTHING;
     if (obj.otyp === TOWEL_OTYP && (obj.spe | 0) < 7) {
-        // wet_a_towel(obj, -rnd(7 - obj->spe), TRUE): a negative amt is an
-        // increment by -amt (weapon.c:1043), capped at 7 by finish_towel_change.
-        const amt = -rnd(7 - (obj.spe | 0));
-        obj.spe = Math.min((obj.spe | 0) - amt, 7);
+        /* a negative change induces a reverse increment, adding abs(change);
+           spe starts 0..6, arg passed to rnd() is 1..7, change is -7..-1,
+           final spe is 1..7 and always greater than its starting value */
+        const { wet_a_towel } = await import('./weapon.js');
+        await wet_a_towel(obj, -rnd(7 - (obj.spe | 0)), true);
         return ER_NOTHING;
     }
 
@@ -896,7 +898,7 @@ export async function water_damage(obj, ostr, force) {
 
     // Luck-based protection (skipped when force is TRUE, as the rust trap does).
     if (!force) {
-        const luck = game.u?.uluck || 0;
+        const luck = (game.u?.uluck | 0) + (game.u?.moreluck | 0); /* Luck */
         if ((luck + 5) > rn2(20)) return ER_NOTHING;
     }
 
@@ -987,11 +989,15 @@ export function obj_erode_type(obj) {
     return ERODE_NONE;
 }
 
-// C ref: zap.c inventory_resistance_check(dmgtyp) — chance a carried
-// protective item (e.g. a fire-resistant cloak) shields another item.  Not
-// modeled: no covered hero carries such gear, so this always takes C's own
-// "prob == 0" fast path and (like C) consumes no RNG.
-function inventory_resistance_check(_dmgtyp) { return false; }
+// C ref: zap.c:5710 inventory_resistance_check(dmgtyp) — chance a worn or
+// wielded protective item (fire-resistant cloak, dwarvish cloak) shields
+// carried items.  Rolls rn2(100) only when protection is nonzero.
+async function inventory_resistance_check(dmgtyp) {
+    const { u_adtyp_resistance_obj } = await import('./zap.js');
+    const prob = u_adtyp_resistance_obj(dmgtyp);
+    if (!prob) return false;
+    return rn2(100) < prob;
+}
 
 // C ref: mkobj.c costly_alteration(obj, alter_type).
 async function costly_alteration(obj, alter_type) {
@@ -1074,7 +1080,7 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
     let check_grease = (ef_flags & EF_GREASE) !== 0;
     switch (type) {
     case ERODE_BURN:
-        if (inventory_resistance_check('FIRE')) return ER_NOTHING;
+        if (isYou && await inventory_resistance_check(AD_FIRE)) return ER_NOTHING;
         vulnerable = is_flammable(otmp);
         check_grease = false;
         break;
@@ -1086,7 +1092,7 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
         check_grease = false;
         break;
     case ERODE_CORRODE:
-        if (inventory_resistance_check('ACID')) return ER_NOTHING;
+        if (isYou && await inventory_resistance_check(AD_ACID)) return ER_NOTHING;
         vulnerable = is_corrodeable(otmp);
         break;
     case ERODE_CRACK:
@@ -1148,7 +1154,16 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
             await update_topl(`${owner} ${ostr} ${actbuf}!`);
         }
         if (ef_flags & EF_PAY) await costly_alteration(otmp, type);
-        if (otmp.owornmask) unwear_armor(otmp);
+        if (otmp.owornmask) {
+            // C ref: trap.c:316 -- a hero-carried worn item goes through
+            // remove_worn_item() (cancel_don() for a pending doffing, the
+            // <Armor>_off() routines); the monster-worn case is
+            // extract_from_minvent() there.
+            if (carried(otmp)) {
+                const { remove_worn_item } = await import('./invent.js');
+                await remove_worn_item(otmp, true);
+            } else unwear_armor(otmp);
+        }
         delobj(otmp);
         return ER_DESTROYED;
     }
@@ -1238,7 +1253,7 @@ export async function acid_damage(obj) {
     const victim = isYou ? game.u : (mcarried_dmg(obj) ? obj.ocarry : null);
     const vismon = !!victim && !isYou && canseemon_shared(victim);
 
-    if (isYou && inventory_resistance_check('ACID')) return;
+    if (isYou && await inventory_resistance_check(AD_ACID)) return;
 
     if (obj.greased) {
         await grease_protect(obj, null, victim);
@@ -1286,7 +1301,7 @@ export async function fire_damage(obj, force, x, y) {
             chance = 20;
             break;
         }
-        const luck = game.u?.uluck || 0;
+        const luck = (game.u?.uluck | 0) + (game.u?.moreluck | 0); /* Luck */
         if (!force && (luck + 5) > rn2(chance)) return false;
         if (in_sight) await update_topl(`${Yname2_dmg(obj)} catches fire and burns.`);
         const contents = obj.cobj ? [...obj.cobj] : [];
@@ -1302,7 +1317,7 @@ export async function fire_damage(obj, force, x, y) {
         }
         delobj(obj);
         return true;
-    } else if (!force && ((game.u?.uluck || 0) + 5) > rn2(20)) {
+    } else if (!force && ((game.u?.uluck | 0) + (game.u?.moreluck | 0) + 5) > rn2(20)) {
         return false;
     } else if (obj.oclass === SCROLL_CLASS || obj.oclass === SPBOOK_CLASS) {
         if (obj.otyp === SCR_FIRE_OTYP || obj.otyp === SPE_FIREBALL_OTYP) return false;
@@ -1541,7 +1556,7 @@ async function thitu_named(tlev, dam, name) {
     await update_topl(terse ? `You are hit${exclam(dam)}`
                            : `You are hit by ${onm}${exclam(dam)}`);
     await losehp(dam, name);                     // no RNG
-    exercise(0 /*A_STR*/, false);                // rn2(2)
+    await exercise(0 /*A_STR*/, false);                // rn2(2)
     return 1;
 }
 
@@ -2155,7 +2170,7 @@ async function trapeffect_rocktrap(trap, _trflags) {
     newsym(u.ux, u.uy);
     if (!harmless) {
         await losehp(Maybe_Half_Phys(dmg), 'falling rock');
-        exercise(A_STR, false);
+        await exercise(A_STR, false);
     }
 }
 
@@ -2315,7 +2330,7 @@ async function trapeffect_pit(trap, trflags) {
         // Punished is never set in this port -> no unplacebc/ballfall/placebc.
         if (!conj_pit) await selftouch('Falling, you');
         game.vision_full_recalc = 1;
-        exercise(A_STR, false);
+        await exercise(A_STR, false);
         exercise(A_DEX, false);
     }
 }
@@ -2707,11 +2722,17 @@ export async function animate_statue(statue, x, y, _cause, fail_reason) {
     const comes_to_life = !spot ? 'disappears'
         : (nonliv || is_vampshifter(mon)) ? 'moves' : 'comes to life';
     if (x === game.u.ux && y === game.u.uy) {
-        await pline(`The statue ${comes_to_life}!`);
+        /* C: "the|your|Manlobbi's statue [of a wombat]" -- the species is only
+           spelled out for the animate-statue spell (cause == ANIMATE_SPELL) */
+        const { yname, xname } = await import('./invent.js');
+        const nm = _cause === 2 /* ANIMATE_SPELL */ ? yname(statue)
+            : `${yname(statue).slice(0, -xname(statue).length)}statue`;
+        await pline(`${nm.charAt(0).toUpperCase()}${nm.slice(1)} ${comes_to_life}!`);
     } else if (Hallucination_u()) { /* They don't know it's a statue */
         await pline(`The ${rndmonnam().name} suddenly seems more animated.`);
     } else if (_cause === 1 /* ANIMATE_SHATTER */) {
-        await pline(`Instead of shattering, ${cansee(x, y) ? 'the statue' : 'a statue'} suddenly ${comes_to_life}!`);
+        const { yname } = await import('./invent.js');
+        await pline(`Instead of shattering, ${cansee(x, y) ? yname(statue) : 'a statue'} suddenly ${comes_to_life}!`);
     } else { /* ANIMATE_NORMAL */
         await pline(`You find ${spot ? a_monnam(mon) : 'something'} posing as a statue.`);
         if (!spot && Blind()) {
@@ -3245,7 +3266,7 @@ async function help_monster_out(mtmp, ttmp) {
 // ported" comment at their own call sites; this is the function they want.
 export async function chest_trap(obj, bodypart, disarm) {
     const u = game.u;
-    const Luck = u?.uluck | 0;
+    const Luck = (u?.uluck | 0) + (u?.moreluck | 0);
 
     obj.tknown = 0;   /* for xname(); set to 1 below */
     obj.otrapped = 0; /* one-shot; clear first in case the chest kills you */
@@ -3296,7 +3317,7 @@ export async function chest_trap(obj, bodypart, disarm) {
             const { wake_nearby } = await import('./cmd.js');
             await wake_nearby(false);
             await losehp(Maybe_Half_Phys(d(6, 6)), explodeKnam);
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             if (costly && loss) {
                 if (insider) {
                     await pline(`You owe ${loss} ${loss === 1 ? 'zorkmid' : 'zorkmids'} for objects destroyed.`);
@@ -3314,11 +3335,11 @@ export async function chest_trap(obj, bodypart, disarm) {
                 const { create_gas_cloud } = await import('./region.js');
                 await create_gas_cloud(obj.ox, obj.oy, 1, 8);
             }
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
         } else if (sel >= 13) {
             await pline(`You feel a needle prick your ${body_part(bodypart)}.`);
             await poisoned('needle', A_CON, 'poisoned needle', 10, false);
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
         } else if (sel >= 9) {
             await dofiretrap(obj);
         } else if (sel >= 6) {
@@ -3852,7 +3873,7 @@ export async function drain_en(n, max_already_drained) {
             u.uen = u.uenmax;
         }
     }
-    await pline(`You feel ${mesg}${punct}`);
+    await You_feel(`${mesg}${punct}`);
 }
 
 // C ref: trap.c floor_trigger(ttyp) — a trap set off by weight on the floor, so
@@ -4021,8 +4042,9 @@ function Teleportation_fu() {
     return !!(uprop_word('HTeleportation') || worn_extrinsic(TELEPORT)
               || game.u?.formprops?.Teleportation);
 }
-function Teleport_control_fu() {
-    return !!(uprop_word('HTeleport_control') || worn_extrinsic(TELEPORT_CONTROL)
+export function Teleport_control_fu() {
+    return !!(uprop_word('HTeleport_control') || has_innate('HTeleport_control')
+              || worn_extrinsic(TELEPORT_CONTROL)
               || game.u?.formprops?.Teleport_control);
 }
 function Passes_walls_fu() {
@@ -4316,9 +4338,10 @@ export async function back_on_ground(rescued) {
     let preposit = (Levitation_fu() || Flying_fu()) ? 'over' : 'on';
     let surf = surface(u.ux, u.uy);
     if (game.level?.at(u.ux, u.uy)?.typ === ICE) {
-        // C: ice_descr(x,y,buf) — "ice"/"melting ice"/"thin ice", &c.  This
-        // port's surface() already returns 'ice' for the ICE terrain type.
-        surf = 'ice';
+        // C: ice_descr(x,y,icebuf) — "solid ice", "steady ice", "frozen
+        // <liquid>" &c. from the MELT_ICE_AWAY timer and the hero's range.
+        const { ice_descr } = await import('./invent.js');
+        surf = ice_descr(u.ux, u.uy);
     } else if (surf === 'floor' || surf === 'ground') {
         surf = 'solid ground';
     } else if (surf === 'bridge' || surf === 'altar' || surf === 'headstone') {
@@ -5018,13 +5041,6 @@ export async function lava_effects() {
     return false;
 }
 
-// C ref: dbridge.c is_ice(x,y).  Module-private copy (matches the convention
-// duplicated in dungeon.js/muse.js/dothrow.js) since importing dungeon.js's
-// unexported private is_ice would require a re-export edit there.
-function is_ice_trap(x, y) {
-    if (!isok(x, y)) return false;
-    return game.level?.at(x, y)?.typ === ICE;
-}
 // C ref: youprop.h Levitation/Flying.  Module-private copies, same convention
 // as dungeon.js/ball.js/dig.js/dokick.js/do_wear.js.
 function Levitation_trap() { return !!game.u?.uprops?.Levitation; }
@@ -5033,14 +5049,6 @@ function Flying_trap() { return !!game.u?.uprops?.Flying; }
 // same way in a dozen other files already).
 function an_trap(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
 function the_trap(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
-// C ref: pager.c ice_descr(x,y,outbuf) — the close-up branch picks a
-// thickness word from the MELT_ICE_AWAY countdown timer; that timer isn't
-// modelled anywhere in this port (js/wizterrainwish.js:405 documents the same
-// GAP for its own ice_descr), so this always reads "solid ice", matching a
-// freshly-formed or non-thawing ice tile.
-function ice_descr_trap(x, y) {
-    return is_ice_trap(x, y) ? 'solid ice' : surface(x, y);
-}
 
 
 // C ref: trap.c:5014 rescued_from_terrain(how) — life-saving or divine rescue
@@ -5217,7 +5225,7 @@ async function dosinkfall() {
             if (obj.oclass === WEAPON_CLASS || is_weptool(obj)) {
                 await pline(`You fell on ${obj_doname(obj)}.`);
                 await losehp(Maybe_Half_Phys(rnd(3)), fell_on_sink, NO_KILLER_PREFIX);
-                exercise(A_CON, false);
+                await exercise(A_CON, false);
             }
         }
     }
@@ -5286,6 +5294,12 @@ export async function spoteffects(pick) {
     spotterrain = terrain_here;
     spotloc = { x: u.ux, y: u.uy };
     try {
+        /* moving onto different terrain might cause Lev or Fly to toggle; level
+           change sets <ux0,uy0> to <ux,uy>, so this check then fails, but C also
+           re-runs it while iflags.terrain_typ is unclassified (hack.c:3345) */
+        if (terrain_here !== game.level?.at(u.ux0, u.uy0)?.typ
+            || game.iflags?.terrain_typ == null || game.iflags.terrain_typ === 37 /* MAX_TYPE */)
+            await switch_terrain();
         if (await pooleffects(true)) return;
 
         await check_special_room(false);

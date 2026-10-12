@@ -668,11 +668,17 @@ async function finish_towel_change(obj, newspe) {
 export async function wet_a_towel(obj, amt, verbose) {
     if (!obj) return;
     const newspe = (amt <= 0) ? (obj.spe | 0) - amt : amt;
+    /* new state is only reported if it's an increase */
     if (newspe > (obj.spe | 0) && verbose) {
         const wetness = (newspe < 3) ? (!(obj.spe | 0) ? 'damp' : 'damper')
             : (!(obj.spe | 0) ? 'wet' : 'wetter');
         const { pline } = await import('./display.js');
-        await pline(`Your ${objects[obj.otyp]?.name || 'towel'} gets ${wetness}.`);
+        if (obj.where === OBJ_INVENT || obj.carried) {
+            /* Yobjnam2(obj, NULL): "Your <count> <cxname>" */
+            const { cxname } = await import('./objnam.js');
+            const nm = (obj.quan ?? 1) !== 1 ? `${obj.quan} ${cxname(obj)}` : cxname(obj);
+            await pline(`Your ${nm} gets ${wetness}.`);
+        }
     }
     if (newspe !== (obj.spe | 0)) await finish_towel_change(obj, newspe);
 }

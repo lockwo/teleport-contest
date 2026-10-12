@@ -12,6 +12,7 @@ import {
     AIR, COLNO, CORR, HOLE, IRONBARS, IS_DOOR, In_endgame, LAVAPOOL, LEVEL_TELEP,
     MAGIC_PORTAL, NO_TRAP, ROCKTRAP, ROLLING_BOULDER_TRAP, ROOM, ROWNO,
     STONE, TELEP_TRAP, TRAPDOOR, TRAPNUM, VIBRATING_SQUARE, isok,
+    G_UNIQ, G_EXTINCT, G_GONE,
 } from '../const.js';
 import { game } from '../gstate.js';
 import { depth as depth_of_level } from '../hacklib.js';
@@ -482,6 +483,13 @@ export function geh_monster_at(spec, mx, my, peaceful = null) {
         if (ptr) female = found.female;
     }
     rn2(3);                                         // induced_align dungeon.c:2012
+    if (!isClass && ptr) {
+        // sp_lev.c:1946-1952: an extinct unique is not created; any other
+        // genocided/extinct species becomes a random monster.
+        const g_mvflags = game.mvitals?.[ptr.pmidx]?.mvflags || 0;
+        if ((ptr.geno & G_UNIQ) && (g_mvflags & G_EXTINCT)) return null;
+        if (g_mvflags & G_GONE) ptr = null;
+    }
     if (isClass) ptr = mkclass(GEH_MONSYM[spec] ?? 0, 0x0200 /* G_NOGEN */);
     const c = geh_loc(mx, my);
     const mtmp = makemon(ptr, c.x, c.y, 0);

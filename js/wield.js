@@ -9,6 +9,7 @@
 // whether the toggle also consumes a turn; that RNG call must fire for stream
 // parity (wield.c:861).
 
+import { acurr_eff } from './attrib.js';
 import { game } from './gstate.js';
 import { pline } from './display.js';
 import { rnd } from './rng.js';
@@ -24,7 +25,7 @@ import { A_DEX } from './const.js';
 // C ref: attrib.h ACURR(x) — current attribute value (acurr.a in
 // [STR,INT,WIS,DEX,CON,CHA] order).
 function ACURR(i) {
-    return game.u?.acurr?.a?.[i] ?? 0;
+    return acurr_eff(i);
 }
 
 // C ref: hack.h HAND — polyself.c body_part()'s bodypart_types index

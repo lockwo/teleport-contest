@@ -15,8 +15,8 @@ import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd, d } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
 import { align_gname, roles, aligns } from './role.js';
-import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF } from './const.js';
-import { make_confused } from './potion.js';
+import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL } from './const.js';
+import { make_confused, make_sick, make_stoned, make_slimed } from './potion.js';
 import { summon_furies } from './makemon.js';
 import { retouch_equipment } from './artifact.js';
 import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
@@ -32,6 +32,7 @@ import { losexp, xlev_to_rank, pluslvl, innate_intrinsics } from './exper.js';
 import { heal_legs } from './trap.js';
 import { hcolor, a_monnam } from './do_name.js';
 import { Blind } from './vision.js';
+import { region_danger, region_safety } from './region.js';
 import { In_hell } from './dungeon.js';
 import { curse, uncurse, unbless, bless, mkobj, place_object, BALL_CLASS, CHAIN_CLASS,
     COIN_CLASS, POTION_CLASS, POT_WATER, HELM_OF_OPPOSITE_ALIGNMENT,
@@ -50,7 +51,7 @@ const STRIDENT = 4;
 // as an ordering; in_trouble()'s check order is what actually ranks them.
 const TROUBLE_STONED = 14, TROUBLE_SLIMED = 13, TROUBLE_STRANGLED = 12,
     TROUBLE_LAVA = 11, TROUBLE_SICK = 10, TROUBLE_STARVING = 9,
-    TROUBLE_HIT = 7, TROUBLE_LYCANTHROPE = 6,
+    TROUBLE_REGION = 8, TROUBLE_HIT = 7, TROUBLE_LYCANTHROPE = 6,
     TROUBLE_STUCK_IN_WALL = 4, TROUBLE_CURSED_LEVITATION = 3,
     TROUBLE_CURSED_BLINDFOLD = 1;
 const TROUBLE_PUNISHED = -1, TROUBLE_FUMBLING = -2, TROUBLE_CURSED_ITEMS = -3,
@@ -151,7 +152,7 @@ function critically_low_hp(only_if_injured) {
 // rock.  C also counts a square whose only obstruction is a boulder the hero
 // can't push (blocked_boulder); that arm is omitted, which can only ever make
 // this answer FALSE where C says TRUE.
-function stuck_in_wall() {
+export function stuck_in_wall() {
     const u = game.u;
     if (uprop('Passes_walls')) return false;
     let count = 0;
@@ -218,7 +219,7 @@ function in_trouble() {
     if (u.utrap && u.utraptype === TT_LAVA) return TROUBLE_LAVA;
     if (uprop('Sick')) return TROUBLE_SICK;
     if ((u.uhs | 0) >= WEAK) return TROUBLE_STARVING;
-    /* region_danger(): stinking cloud regions are not modelled. */
+    if (region_danger()) return TROUBLE_REGION;
     if ((!u.Upolyd || uprop('Unchanging')) && critically_low_hp(false))
         return TROUBLE_HIT;
     if ((u.ulycn ?? -1) >= 0) return TROUBLE_LYCANTHROPE;
@@ -391,10 +392,7 @@ async function adjattrib_wis_loss() {
 // HP/Pw/uexp arithmetic but omits C's two livelog_printf() calls, and #chronicle
 // renders the livelog verbatim, so the entry has to be added around it here.
 async function losexp_with_livelog() {
-    const lev = game.u?.ulevel | 0;
     await losexp(null, update_topl);
-    if (lev > 1) livelog_printf(LL_MINORAC, `lost experience level ${lev}`);
-    else livelog_printf(LL_MINORAC, 'lost all experience');
 }
 
 // C ref: sit.c rndcurse() — curse a few random inventory items.
@@ -598,6 +596,7 @@ async function angrygods(resp_god) {
     default:
         await gods_angry(resp_god);
         await god_zaps_you(resp_god);
+        if (game.program_state?.gameover) return; /* done() never returns */
         break;
     }
     // even though this might not be in response to prayer, set pray timer
@@ -674,12 +673,10 @@ async function fix_worst_trouble(trouble) {
     const u = game.u;
     switch (trouble) {
     case TROUBLE_STONED:
-        clear_uprop('Stoned');
-        await update_topl('You feel more limber.');
+        await make_stoned(0, 'You feel more limber.', 0, null);
         break;
     case TROUBLE_SLIMED:
-        clear_uprop('Slimed');
-        await update_topl('The slime disappears.');
+        await make_slimed(0, 'The slime disappears.');
         break;
     case TROUBLE_STRANGLED:
         if (game.uamul && OBJECTS[game.uamul.otyp]?.sym === 'AMULET_OF_STRANGULATION') {
@@ -708,7 +705,11 @@ async function fix_worst_trouble(trouble) {
         break;
     case TROUBLE_SICK:
         await update_topl('You feel better.');
-        clear_uprop('Sick');
+        await make_sick(0, null, false, SICK_ALL);
+        break;
+    case TROUBLE_REGION:
+        /* stinking cloud, with hero vulnerable to HP loss */
+        await region_safety();
         break;
     case TROUBLE_HIT: {
         /* "fix all troubles" keeps trying while the hero has 5 or fewer hit
@@ -1171,7 +1172,7 @@ async function prayer_done() {
         /* no Half_physical_damage adjustment here */
         const { losehp_do } = await import('./do.js');
         await losehp_do(rnd(20), 'residual undead turning effect');
-        exercise(A_CON, false);
+        await exercise(A_CON, false);
         return 1;
     }
     if (In_hell(u.uz)) {
@@ -1217,10 +1218,16 @@ async function prayer_done() {
 // when the count reaches 0, unmul() announces nomovemsg and fires afternmv, so
 // the begin / --More-- / force-prompt / shimmering-light / finish / result
 // messages each land on their own captured screen exactly as C records them.
-export async function dopray(paranoid_query) {
+export async function dopray() {
     const gp = praystate();
-    const ok = await paranoid_query('Are you sure you want to pray?');
-    if (!ok) return 0; // ECMD_OK
+    // C ref: flag.h ParanoidPray (0x0400) / ParanoidConfirm (0x0001).
+    const bits = (game.flags?.paranoia_bits ?? 0x2c00) | 0;
+    if (bits & 0x0400) {
+        const { paranoid_ynq } = await import('./eat.js');
+        const ok = (await paranoid_ynq((bits & 0x0001) !== 0,
+                                       'Are you sure you want to pray?', false)) === 'y';
+        if (!ok) return 0; // ECMD_OK
+    }
 
     const u = game.u;
     if (!u.uconduct) u.uconduct = {};
@@ -1297,6 +1304,7 @@ async function god_zaps_you(resp_god) {
             await update_topl('It seems not to affect you.');
         } else {
             await fry_by_god(resp_god, false);
+            if (game.program_state?.gameover) return; /* done() never returns */
         }
     }
 
@@ -1323,6 +1331,7 @@ async function god_zaps_you(resp_god) {
           || HProp_pr('HDisint_resistance') || HProp_pr('EDisint_resistance')
           || has_innate_pr('HDisint_resistance'))) {
         await fry_by_god(resp_god, true);
+        if (game.program_state?.gameover) return; /* done() never returns */
     } else {
         await update_topl('You bask in its black glow for a minute...');
         await godvoice(resp_god, 'I believe it not!');
@@ -1746,7 +1755,7 @@ async function sacrifice_your_race(otmp, highaltar, altaralign) {
             await update_topl(`You have summoned ${dbuf}!`);
             if (sgn(utype) === sgn(dmon.data?.maligntyp | 0)) dmon.mpeaceful = 1;
             await update_topl('You are terrified, and unable to move.');
-            game.multi = -3;
+            (await import('./hack.js')).nomul(-3);
             game.multi_reason = 'being terrified of a demon';
             game.nomovemsg = 0;
         } else {

@@ -32,7 +32,7 @@ import {
 import { mongone, resists_ston } from '../mon.js';
 import {
     BOULDER, CRYSTAL_BALL, EGG, LEVITATION_BOOTS, SACK, SCR_BLANK_PAPER, STATUE, WAND_CLASS,
-    add_to_container, mk_tt_object, mkobj_at, mksobj_at, set_corpsenm, weight,
+    add_to_container, des_object_defaults, mk_tt_object, mkobj_at, mksobj_at, set_corpsenm, weight,
 } from '../mkobj.js';
 import { stackobj } from '../invent.js';
 import { somex, somey } from '../mkroom.js';
@@ -196,6 +196,15 @@ function med_monster({ name = null, cls = 0, mx = null, my = null,
         if (ptr) female = found.female;
     }
     med_induced_align(80);
+    if (ptr) {
+        // C ref: sp_lev.c:1946-1952 create_monster() -- an extinct unique
+        // (Medusa already born elsewhere) is not created at all, and any
+        // other genocided/extinct species is replaced by a random monster.
+        const g_mvflags = (game.mvitals?.[ptr.pmidx]?.mvflags) || 0;
+        if ((ptr.geno & 0x1000 /* G_UNIQ */) && (g_mvflags & 0x01 /* G_EXTINCT */))
+            return null;
+        if (g_mvflags & 0x03 /* G_GONE */) ptr = null;
+    }
     if (name == null && cls) ptr = mkclass(cls, 0x0200 /* G_NOGEN */);
     let x, y;
     if (mx != null) { const c = vly_abs(mx, my); x = c.x; y = c.y; }
@@ -287,6 +296,7 @@ async function med_object(o, contained = false) {
     else if (o.oclass != null) otmp = mkobj_at(o.oclass, x, y, !named);
     else otmp = mkobj_at(0 /* RANDOM_CLASS */, x, y, !named);
     if (!otmp) return null;
+    des_object_defaults(otmp);   // sp_lev.c:2280 no `eroded` key: wipe mksobj's erosion
     if (o.spe != null) otmp.spe = o.spe;
     switch (o.buc) {
     case 'blessed': otmp.blessed = true; otmp.cursed = false; break;

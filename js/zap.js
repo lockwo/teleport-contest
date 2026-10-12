@@ -37,7 +37,7 @@ import { cansee, vision_recalc, Blind, recalc_block_point, does_block } from './
 import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS, ARMOR_CLASS,
          FOOD_CLASS, RING_CLASS, POT_OIL, POT_WATER, GLOB_OF_GREEN_SLIME,
          SPBOOK_CLASS, mkobj as _mkobj, place_object, objects,
-         mkcorpstat, CORPSE, AMULET_OF_YENDOR, BELL_OF_OPENING, next_ident,
+         mkcorpstat, CORPSE, AMULET_OF_YENDOR, BELL_OF_OPENING, nextoid,
          CANDELABRUM_OF_INVOCATION, SPE_BOOK_OF_THE_DEAD,
          is_rider_pm, ROCK_CLASS, unbless, uncurse, container_weight,
          has_omonst, get_mtraits, has_omid, OMID, free_omid, free_omonst,
@@ -52,9 +52,9 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          MM_ADJACENTOK, MM_MALE, MM_FEMALE, CORPSTAT_GENDER, CORPSTAT_MALE,
          CORPSTAT_FEMALE, NON_PM, ANIMATE_SPELL, NC_VIA_WAND_OR_SPELL,
          NO_NC_FLAGS, SHOPBASE, TIMER_OBJECT, TIMER_LEVEL, REVIVE_MON,
-         ROT_CORPSE, SHRINK_GLOB, W_ARMOR, W_ACCESSORY, W_WEP, W_ART,
+         ROT_CORPSE, MELT_ICE_AWAY, W_ARMOR, W_ACCESSORY, W_WEP, W_ART,
          W_AMUL, W_TOOL, W_RING, W_RINGL, FIRE_RES, COLD_RES,
-         SHOCK_RES, ACID_RES, DISINT_RES, ANTIMAGIC, is_magical_trap, has_oname, ONAME,
+         SHOCK_RES, ACID_RES, DISINT_RES, DRAIN_RES, SLEEP_RES, ANTIMAGIC, is_magical_trap, has_oname, ONAME,
          ESHK, engulfing_u, u_at, M_AP_TYPE, NHW_MENU, M_AP_NOTHING, M_AP_OBJECT,
          M_AP_FURNITURE, MCORPSENM, PIT, WEB, ICED_MOAT, IRONBARS, W_NONDIGGABLE, SHOP_BARS_COST,
          IS_WATERWALL, ERODE_CORRODE, M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD,
@@ -91,7 +91,7 @@ import { killed, canspotmon, mon_nam, Monnam, x_monnam,
 import { find_mac as worn_find_mac, which_armor } from './worn.js';
 import { rnd_hallublast } from './mthrowu.js';
 // C ref: makemon.c monhp_per_lvl(mon) — golem / level>49 / dragon / level-0 arms.
-import { monhp_per_lvl } from './artifact.js';
+import { monhp_per_lvl, defends as arti_defends, defends_when_carried as arti_defends_carried } from './artifact.js';
 
 // Object-type numbers for the directional wands/spells that zapyourself() gives
 // a special self-inflicted effect.  C ref: include/objects.h (WAN_DEATH),
@@ -255,7 +255,7 @@ export async function wand_explode(obj, chg) {
     await pline(`Your ${xname(obj)} ${expl} explodes!`);
     await losehp(Maybe_Half_Phys(dmg), 'exploding wand');
     useup(obj);
-    exercise(A_STR, false);
+    await exercise(A_STR, false);
 }
 
 // C ref: youprop.h Maybe_Half_Phys(dmg) — halve physical damage when the hero
@@ -504,7 +504,7 @@ async function do_osshock(obj) {
 // whose trailing next_ident() is this port's only RNG in the function.
 function splitobj_z(obj, num) {
     const otmp = { ...obj };
-    otmp.o_id = next_ident();
+    otmp.o_id = nextoid(obj, otmp);
     otmp.timed = 0;
     otmp.lamplit = 0;
     otmp.owornmask = 0;
@@ -1900,6 +1900,12 @@ export async function bhitm(mtmp, otmp) {
 // use the synchronous saving throw; damaging callers must finish death first.
 export async function resist_damage(mtmp, oclass, damage, tell, monster_using = false) {
     const resisted = resist(mtmp, oclass, damage, tell);
+    /* C ref: zap.c:6143 `if (tell) shieldeff_mon(mtmp)` — "<Mon> resists!" and
+       the shield flash, before the (halved) damage lands. */
+    if (resisted && tell) {
+        const { shieldeff_mon } = await import('./mon.js');
+        await shieldeff_mon(mtmp);
+    }
     if (damage && DEADMONSTER(mtmp)) {
         if (monster_using)
             await (await import('./mhitm.js')).monkilled_mm(mtmp, AD_RBRE, '');
@@ -2566,11 +2572,13 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
     // C ref: tmp_at(DISP_BEAM,...)/tmp_at(DISP_END,0).  The beam glyph is a
     // temporary overlay.  Once the zap finishes every cell it touched is
     // restored to its real glyph, so track visited cells and newsym() them.
-    const visited = new Map();
+    // C's tmp_at(DISP_BEAM) keeps one saved entry per call (revisited cells
+    // after a bounce are newsym'd again, TMP_AT_MAX_GLYPHS cap).
+    const visited = [];
     const drawBeam = (x, y) => {
         // C: zapdir_to_glyph(), updated by DISP_CHANGE after each bounce.
         show_beam_cell(x, y, dx, dy, hdmgtype);
-        visited.set(`${x},${y}`, [x, y]);
+        if (visited.length < COLNO * 2) visited.push([x, y]);
     };
 
     // C's `buzzmonst:` label, shared by a monster in the beam's path and by a
@@ -2774,7 +2782,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
 
     // C: tmp_at(DISP_END, 0) erases the temporary beam overlay before the
     // fireball explodes.
-    for (const [vx, vy] of visited.values()) newsym(vx, vy);
+    for (const [vx, vy] of visited) newsym(vx, vy);
     if (fireball) {
         const { explode } = await import('./explode.js');
         await explode(sx, sy, type, d(12, 6), 0, EXPL_FIERY);
@@ -2990,9 +2998,9 @@ export async function zap_over_floor(x, y, type, shopdamage = null,
             /* Already ice here, so just firm it up. */
             /* Now ensure that only ice that is already timed is affected */
             const tmo = await import('./timeout.js');
-            const melt_time = tmo.spot_time_left(x, y, MELT_ICE_AWAY_Z);
+            const melt_time = tmo.spot_time_left(x, y, MELT_ICE_AWAY);
             if (melt_time) {
-                await tmo.spot_stop_timers(x, y, MELT_ICE_AWAY_Z);
+                await tmo.spot_stop_timers(x, y, MELT_ICE_AWAY);
                 await start_melt_ice_timeout(x, y, melt_time);
             }
         }
@@ -3320,10 +3328,16 @@ export function resists_magm(mon) {
     // of magic resistance), so read it instead of keeping a second copy of the
     // same list as an otyp set.
     const mwflags = mon.misc_worn_check | 0;
-    for (const o of (Array.isArray(mon.minvent) ? mon.minvent : []))
+    for (const o of (Array.isArray(mon.minvent) ? mon.minvent : [])) {
         if (((o.owornmask | 0) & mwflags)
             && objects[o.otyp]?.oc_oprop === ANTIMAGIC_PROP)
             return true;
+        /* wielded artifact (W_WEP == 0x100) / artifact carried anywhere */
+        if (o.oartifact
+            && ((((o.owornmask | 0) & 0x100) && arti_defends(AD_MAGM, o))
+                || arti_defends_carried(AD_MAGM, o)))
+            return true;
+    }
     return false;
 }
 // C ref: mondata.c resists_blnd(mon) — the monster half.  The old version
@@ -3435,9 +3449,7 @@ function disguised_as_non_mon(_mon) { return false; }
 // C ref: mon.c wakeup(mon, via_attack) — wake_msg(), clear msleeping, then
 // (via_attack) setmangry(), which flips a peaceful monster hostile — steering
 // every later m_move()/mattacku() decision and drawing rnd(5) on Elbereth — so
-// the old msleeping-only version silently missed all of that.  (growl()
-// intentionally omitted: RNG-free in C, and uhitm.js already places its
-// topline differently.)
+// the old msleeping-only version silently missed all of that.
 export async function wakeup(mon, viaAttack) {
     if (!mon) return;
     const wasSleeping = !!mon.msleeping;
@@ -3447,6 +3459,11 @@ export async function wakeup(mon, viaAttack) {
     }
     mon.msleeping = 0;
     if (viaAttack) {
+        // C ref: mon.c:4353 `if (was_sleeping) growl(mtmp);`
+        if (wasSleeping) {
+            const { growl } = await import('./sounds.js');
+            await growl(mon);
+        }
         const { setmangry } = await import('./uhitm.js');
         await setmangry(mon, true);
     }
@@ -3462,9 +3479,15 @@ export async function slept_monst(mon) {
 }
 
 // C ref: mhitm.c sleep_monst(mon, amt, how) — how=WAND_CLASS for a wand of
-// sleep zap.  seemimic() mimic-reveal is not modelled (no covered zap target
-// is a hiding mimic).
+// sleep zap.
 export async function sleep_monst(mon, amt, how) {
+    /* reveal mimic unless already asleep or paralyzed (won't be 'busy') */
+    if (how >= 0 && !mon.msleeping && !mon.mfrozen
+        && mon.data?.mcls === S_MIMIC_Z
+        && (M_AP_TYPE(mon) === M_AP_FURNITURE || M_AP_TYPE(mon) === M_AP_OBJECT)) {
+        const { seemimicLocal } = await import('./uhitm.js');
+        seemimicLocal(mon);
+    }
     if (resists_sleep(mon) || defended(mon, 4 /*AD_SLEE*/) || (how >= 0 && resist(mon, how, 0, false))) {
         await shieldeff(mon.mx, mon.my);
         return false;
@@ -3562,7 +3585,7 @@ async function zhitu(type, nd, fltxt, sx, sy) {
             monstseesu(M_SEEN_MAGR);
         } else {
             dam = d(nd, 6);
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             monstunseesu(M_SEEN_MAGR);
         }
         break;
@@ -3577,7 +3600,7 @@ async function zhitu(type, nd, fltxt, sx, sy) {
             dam = orig_dam;
             monstunseesu(M_SEEN_FIRE);
         }
-        // burn_away_slime(): hero not sliming (no RNG).
+        await (await import('./timeout.js')).burn_away_slime();
         if (await burnarmor(u)) {      // "body hit"
             if (!rn2(3))
                 await destroy_items(u, AD_FIRE, orig_dam);
@@ -3677,7 +3700,7 @@ async function zhitu(type, nd, fltxt, sx, sy) {
             // C: exercise(A_CON, FALSE).  Both attributes draw rn2(2), but they
             // credit DIFFERENT aexe[] slots, and exerchk() later rolls off those
             // slots — so charging A_STR here silently steers a later modulus.
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
         }
         if (!rn2(3))
             await destroy_items(u, AD_ELEC, orig_dam);
@@ -3696,7 +3719,7 @@ async function zhitu(type, nd, fltxt, sx, sy) {
         } else {
             await update_topl(`The ${await hliquid_z('acid')} burns!`);
             dam = d(nd, 6);
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             monstunseesu(M_SEEN_ACID);
         }
         /* two weapons at once makes both more vulnerable */
@@ -3709,8 +3732,8 @@ async function zhitu(type, nd, fltxt, sx, sy) {
             await acid_damage(game.uswapwep);
         }
         if (!rn2(6)) {
-            const { erode_armor } = await import('./mhitm_ad.js');
-            await erode_armor(u, ERODE_CORRODE);
+            const { erode_armor, YOUMONST } = await import('./mhitm_ad.js');
+            await erode_armor(YOUMONST, ERODE_CORRODE);
         }
         break;
     default:
@@ -3877,7 +3900,10 @@ export async function zhitm(mon, type, nd) {
             const { acid_damage } = await import('./trap.js');
             await acid_damage(MON_WEP(mon));
         }
-        if (!rn2(6)) await erode_armor_mon(mon);
+        if (!rn2(6)) {
+            const { erode_armor } = await import('./mhitm_ad.js');
+            await erode_armor(mon, ERODE_CORRODE);
+        }
         break;
     }
     if (sho_shieldeff)
@@ -3893,20 +3919,7 @@ export async function zhitm(mon, type, nd) {
     return { tmp, otmp };
 }
 
-// C ref: uhitm.c erode_armor(mdef, hurt) — the ACID case's armor-corrosion
-// pass.  Same reroll-until-torso-slot RNG shape as burnarmor(); no monster in
-// the covered sessions wears armor, so this only pays the reroll cost.
-async function erode_armor_mon(mon) {
-    for (;;) {
-        switch (rn2(5)) {
-        case 0: if (worn_slot(mon, 'uarmh')) return; continue;
-        case 1: return; // torso: always terminates (worn or bare)
-        case 2: if (worn_slot(mon, 'uarms')) return; continue;
-        case 3: if (worn_slot(mon, 'uarmg')) return; continue;
-        case 4: if (worn_slot(mon, 'uarmf')) return; continue;
-        }
-    }
-}
+
 
 // C ref: trap.c burnarmor(victim) — burn worn armor; returns TRUE on a torso
 // (body) hit.  The wet-towel pre-loop is skipped (no towel on the covered
@@ -3977,7 +3990,12 @@ function worn_slot(victim, slot) {
     return null;
 }
 function cloak_simple_name(obj) {
-    // C ref: do_name.c cloak_simple_name — MR cloak / robe / etc. -> "cloak".
+    // C ref: objnam.c:5492 cloak_simple_name — robe / wrapping / smock-apron / cloak.
+    const nm = obj ? objects[obj.otyp]?.name : null;
+    if (nm === 'robe') return 'robe';
+    if (nm === 'mummy wrapping') return 'wrapping';
+    if (nm === 'alchemy smock')
+        return (objects[obj.otyp].oc_name_known && obj.dknown) ? 'smock' : 'apron';
     return 'cloak';
 }
 // C ref: trap.c erode_obj(otmp, ostr, ERODE_BURN, EF_GREASE) — the burn_dmg()
@@ -4005,8 +4023,11 @@ const vtense_burn = vtense;
 async function erode_burn(victim, slot, ostr) {
     const obj = worn_slot(victim, slot);
     if (!obj) return ER_NOTHING;
-    // inventory_resistance_check(AD_FIRE): rn2(100) only when the hero carries
-    // an item conferring partial fire resistance — none in the covered sessions.
+    // C ref: trap.c:205 erode_obj ERODE_BURN: uvictim && inventory_resistance_check(AD_FIRE)
+    if (victim === game.u) {
+        const prob = u_adtyp_resistance_obj(AD_FIRE);
+        if (prob && rn2(100) < prob) return ER_NOTHING;
+    }
     const erosion = obj.oeroded | 0;
     if (!erosion_matters_obj(obj)) return ER_NOTHING;
     if (!is_flammable_obj(obj) || (obj.oerodeproof && obj.rknown)) return ER_NOTHING;
@@ -4087,7 +4108,12 @@ export async function destroy_items(mon, dmgtyp, dmg_in) {
     const items = new Array(limit);
     const u_carry = mon === game.u || mon === game.youmonst;
     let elig = 0;
+    // C ref: zap.c:6038 bypass_objlist(*objchn, FALSE), then nxt_unbypassed_obj()
+    // marks each visited object via bypass_obj(), which raises
+    // svc.context.bypasses; later corpses and bhito() honor it.
+    for (const obj of objchn) obj.bypass = 0;
     for (const obj of objchn) {
+        bypass_obj_z(obj);
         if (!destroyable(obj, dmgtyp)) continue;
         const i = (elig < limit) ? elig : rn2(elig);
         elig++;
@@ -4111,6 +4137,9 @@ export async function destroy_items(mon, dmgtyp, dmg_in) {
             }
         }
     }
+    // C ref: zap.c:6095 — almost certainly not everything was destroyed; clear
+    // the bypass bits set above (context.bypasses itself stays raised).
+    for (const obj of obj_chain(mon)) obj.bypass = 0;
     return dmg_out;
 }
 
@@ -4231,7 +4260,7 @@ async function maybe_destroy_item(carrier, obj, dmgtyp) {
             const { losehp_do } = await import('./do.js');
             await losehp_do(dmg, cnt === 1 ? how : makeplural(how),
                 cnt === 1 ? KILLED_BY_AN : KILLED_BY);
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
         }
     }
     return dmg;
@@ -4368,7 +4397,7 @@ export async function zapyourself(obj, ordinary) {
             } else {
                 damage = d(1 + (obj.spe | 0), 6);
             }
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             monstunseesu(M_SEEN_MAGR);
         }
         break;
@@ -4379,7 +4408,7 @@ export async function zapyourself(obj, ordinary) {
         if (!Shock_resistance()) {
             await update_topl('You shock yourself!');
             damage = orig_dmg;
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
             monstunseesu(M_SEEN_ELEC);
         } else {
             await shieldeff(u.ux, u.uy);
@@ -4404,7 +4433,7 @@ export async function zapyourself(obj, ordinary) {
             damage = orig_dmg;
             monstunseesu(M_SEEN_FIRE);
         }
-        // burn_away_slime(): hero not sliming (no RNG).
+        await (await import('./timeout.js')).burn_away_slime();
         await burnarmor(u);
         await destroy_items(u, AD_FIRE, orig_dmg);
         await ignite_items(invent_list());
@@ -4782,9 +4811,9 @@ export function Shock_resistance() {
         || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
         || (u?.Upolyd && resists_elec(u)));
 }
-function Acid_resistance()  { return !!game.u?.formprops?.Acid_resistance || (game.u?.uprops?.AcidResistance    || 0) > 0; }
-function Disint_resistance(){ return !!game.u?.formprops?.Disint_resistance || (game.u?.uprops?.HDisint_resistance|| 0) > 0; }
-export function Drain_resistance() { return !!game.u?.formprops?.Drain_resistance || (game.u?.uprops?.HDrain_resistance || 0) > 0; }
+function Acid_resistance()  { return !!game.u?.formprops?.Acid_resistance || (game.u?.uprops?.AcidResistance    || 0) > 0 || (game.u?.uprops?.HAcid_resistance || 0) > 0 || !!worn_extrinsic(ACID_RES); }
+function Disint_resistance(){ return !!game.u?.formprops?.Disint_resistance || (game.u?.uprops?.HDisint_resistance|| 0) > 0 || !!worn_extrinsic(DISINT_RES); }
+export function Drain_resistance() { return !!game.u?.formprops?.Drain_resistance || (game.u?.uprops?.HDrain_resistance || 0) > 0 || !!game.u?.EDrain_resistance || !!worn_extrinsic(DRAIN_RES); }
 export function Antimagic() { return !!(game.u?.formprops?.Antimagic || game.u?.HAntimagic || game.u?.Antimagic
                                         || game.u?.uprops?.HAntimagic
                                         || worn_extrinsic(ANTIMAGIC)); }
@@ -4804,7 +4833,13 @@ function dist2(x0, y0, x1, y1) { return (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 
 // for their own H<Prop> reads.
 export function Sleep_resistance() {
     if (game.u?.formprops?.Sleep_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    return (game.u?.uprops?.SleepResistance || 0) > 0
+    const p = game.u?.uprops;
+    // C ref: youprop.h `(HSleep_resistance || ESleep_resistance)`: the worn half
+    // (orange dragon scale mail, ring/amulet gear) lives in the extrinsic word,
+    // the stored intrinsic under any of this port's spellings.
+    return (p?.SleepResistance || 0) > 0 || (p?.Sleep_resistance || 0) > 0
+        || (p?.HSleep_resistance || 0) > 0 || (p?.ESleep_resistance || 0) > 0
+        || worn_extrinsic(SLEEP_RES) !== 0
         || has_innate('HSleep_resistance');
 }
 
@@ -4872,7 +4907,7 @@ export async function dozap() {
         await pline('Nothing happens.');
     } else if (obj.cursed && !rn2(WAND_BACKFIRE_CHANCE)) {
         await backfire(obj); /* the wand blows up in your face! */
-        exercise(A_STR, false);
+        await exercise(A_STR, false);
         // 'obj' is gone (useupall); skip the trailing spe<0 check.
         return ECMD_TIME;
     } else if (need_dir && !(dir = await zap_getdir())) {
@@ -5041,11 +5076,9 @@ function Shk_Your_z(obj) { return upstart(shk_your_z(obj)); }
 // C ref: objnam.c corpse_xname(obj, adjective, cxn_flags).  js/invent.js:654
 // keeps a private reduction of the same routine; this covers the
 // CXN_NO_PFX / CXN_PFX_THE distinctions the revive()/unturn_dead() messages make.
-function corpse_xname_z(obj, adjective, cxn_flags) {
-    let nm = xname(obj) || 'corpse';
-    if (adjective) nm = `${adjective} ${nm}`;
-    if (cxn_flags & CXN_PFX_THE) nm = `the ${nm}`;
-    return nm;
+async function corpse_xname_z(obj, adjective, cxn_flags) {
+    const { corpse_xname } = await import('./objnam.js');
+    return corpse_xname(obj, adjective, cxn_flags);
 }
 // C ref: objnam.c simpleonames(obj) — no quantity, no bless/curse, no
 // enchantment.  js/invent.js:513 owns the full version privately.
@@ -5235,11 +5268,6 @@ function extrinsic_of_z(prop) {
 // unturn_dead() reads back.  js/ has no plnmsg_types enum, so the tag is a
 // string (its value is never compared against another module's).
 const PLNMSG_OBJ_GLOWS_Z = 'PLNMSG_OBJ_GLOWS';
-// C ref: timeout.h enum timeout_types — MELT_ICE_AWAY is one past SHRINK_GLOB.
-// js/const.js exports the name as the STRING 'MELT_ICE_AWAY' (const.js:1998),
-// which is the wrong vocabulary for timeout.js's numeric func_index; that file
-// re-derives the number the same way at timeout.js:62.
-const MELT_ICE_AWAY_Z = SHRINK_GLOB + 1;
 
 // ---------------------------------------------------------------------------
 
@@ -5769,7 +5797,7 @@ export async function revive(corpse, by_hero) {
 
     if (corpse.norevive || (mptr?.mcls === S_EEL_Z && !is_pool(x, y))) {
         if (cansee(x, y))
-            await pline(`${upstart(corpse_xname_z(corpse, null, CXN_PFX_THE))
+            await pline(`${upstart(await corpse_xname_z(corpse, null, CXN_PFX_THE))
                           } twitches feebly.`);
         return null;
     }
@@ -5850,7 +5878,7 @@ export async function revive(corpse, by_hero) {
             buf += shk_your_z(corpse);
             if (one_of)
                 corpse.quan++; /* force plural */
-            buf += corpse_xname_z(corpse, null, CXN_NO_PFX);
+            buf += await corpse_xname_z(corpse, null, CXN_NO_PFX);
             if (one_of) /* could be simplified to ''corpse->quan = 1L;'' */
                 corpse.quan--;
             await pline(`${upstart(buf)} glows iridescently.`);
@@ -5988,7 +6016,7 @@ export async function unturn_dead(mon) {
             continue;
         /* save the name; the object is liable to go away */
         if (youseeit) {
-            corpse = corpse_xname_z(otmp, null, CXN_NORMAL);
+            corpse = await corpse_xname_z(otmp, null, CXN_NORMAL);
             /* shk_your/Shk_Your produces a value with a trailing space */
             if (otmp.quan > 1)
                 owner = `One of ${shk_your_z(otmp)}`;
@@ -6586,7 +6614,7 @@ export async function melt_ice(x, y, msg) {
     }
     const tmo = await import('./timeout.js');
     /* no more ice to melt away */
-    await tmo.spot_stop_timers(x, y, MELT_ICE_AWAY_Z);
+    await tmo.spot_stop_timers(x, y, MELT_ICE_AWAY);
     const { t_at, spoteffects, trap_ice_effects } = await import('./trap.js');
     if (t_at(x, y))
         await trap_ice_effects(x, y, true); /* TRUE because ice_is_melting */
@@ -6641,9 +6669,15 @@ export async function start_melt_ice_timeout(x, y, min_time) {
        to leave this ice permanent */
     if (when <= MAX_ICE_TIME_Z) {
         const where = ((x << 16) | y);
-        const { start_timer } = await import('./timeout.js');
-        const { long_to_any } = await import('./hack.js');
-        await start_timer(when, TIMER_LEVEL, MELT_ICE_AWAY_Z, long_to_any(where));
+        const { spot_time_expires } = await import('./timeout.js');
+        if (spot_time_expires(x, y, MELT_ICE_AWAY)) {
+            /* start_timer(): fail if <arg> already has a <func_index> timer */
+            await impossible('Attempted to start duplicate melt_ice_away timer, aborted.');
+            return;
+        }
+        /* level timers live on the level (mkobj.js), fired by run_object_timers */
+        const { start_level_timer } = await import('./mkobj.js');
+        start_level_timer(when, where);
     }
 }
 

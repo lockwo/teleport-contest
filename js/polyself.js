@@ -23,7 +23,7 @@ import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold } from
 const pline = update_topl;
 import { exercise, acurr_eff } from './attrib.js';
 import { find_ac, race_attrmax, race_attrmin, race_attrmax_of } from './u_init.js';
-import { encumber_msg, freeinv, xname, near_capacity,
+import { encumber_msg, freeinv, dropx, xname, near_capacity,
     youmonst_data_pub, makeknown, simple_typename } from './invent.js';
 import { makeplural } from './plural.js';
 import { title_to_mon } from './botl.js';
@@ -44,7 +44,7 @@ import { A_STR, A_INT, A_WIS, A_CON, A_DEX, A_MAX, TT_PIT, TT_BURIEDBALL,
     POLY_CONTROLLED, POLY_MONSTER, POLY_REVERT, POLY_LOW_CTRL } from './const.js';
 // C ref: hack.h bodypart NECK; prop.h I_SPECIAL / FROMOUTSIDE / FROMRACE — the
 // float_vs_flight() / steed_vs_stealth() / polysense() ports below need them.
-import { NECK, I_SPECIAL, FROMOUTSIDE, FROMRACE } from './const.js';
+import { NECK, I_SPECIAL, FROMOUTSIDE, FROMRACE, FROMFORM } from './const.js';
 import { TT_BEARTRAP, TT_WEB, TT_LAVA, TT_INFLOOR, SICK_ALL,
     DISMOUNT_POLY } from './const.js';
 import { Unaware } from './const.js';
@@ -56,7 +56,7 @@ import { attacktype, mattk_of, AT_BREA, AT_SPIT, AT_GAZE, AT_CLAW, AT_EXPL,
     AT_ENGL, AT_HUGS, AD_MAGM, AD_CONF, AD_FIRE, AD_ELEC, AD_HALU, AD_RBRE,
     AD_BLND, AD_STCK, AD_WRAP, dmgtype } from './monattk_data.js';
 import { dmgtype_fromattack, poly_when_stoned } from './mondata.js';
-import { monsterList, DEADMONSTER, set_ustuck, were_beastie, counter_were } from './mon.js';
+import { monsterList, DEADMONSTER, set_ustuck, were_beastie, counter_were, Protection_from_shape_changers } from './mon.js';
 import { monster_nearby, waterbody_name } from './cmd.js';
 import { races, roles, genders } from './role.js';
 import { Blind } from './vision.js';
@@ -190,11 +190,7 @@ function is_sword(obj) {
 // counted, and the encumbrance message's own --More-- freezes it there.
 async function dropp(obj) {
     if (!obj) return;
-    const u = game.u;
-    freeinv(obj);
-    place_object(obj, u.ux, u.uy);
-    newsym(u.ux, u.uy);
-    await encumber_msg();
+    await dropx(obj);
 }
 
 // C ref: polyself.c break_armor() — shed worn armor that no longer fits the
@@ -529,7 +525,7 @@ async function break_armor() {
                 await end_burn(otmp, false);
             }
             await pline('You break out of your armor!');
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             await W.Armor_gone();
             useup_worn(otmp);
         }
@@ -663,6 +659,11 @@ async function drop_weapon(alone) {
     if (!game.uwep) return;
     if (!alone || cantwield(u.data)) {
         let which = is_sword(game.uwep) ? 'sword' : weapon_descr(game.uwep);
+        const otmp = game.uwep;
+        /* C: candropwep = canletgo(uwep, "") — a welded weapon is released
+           (unwielded) but stays in inventory */
+        const { canletgo } = await import('./invent.js');
+        const candropwep = await canletgo(otmp, '');
         if (alone) {
             // C ref: polyself.c:1327 — a stacked wielded weapon pluralizes:
             // "You find you must drop your daggers!".
@@ -670,12 +671,12 @@ async function drop_weapon(alone) {
             // C ref: the_your[!!strncmp(which, "corpse", 6)]: "the" for a
             // corpse, else "your".
             const theYour = which.startsWith('corpse') ? 'the' : 'your';
-            await pline(`You find you must drop ${theYour} ${which}!`);
+            const what = candropwep ? 'drop' : 'release';
+            await pline(`You find you must ${what} ${theYour} ${which}!`);
         }
-        const otmp = game.uwep;
         const { uwepgone } = await import('./wield.js');
         await uwepgone();
-        if (!otmp.in_use) await dropp(otmp);
+        if (!otmp.in_use && candropwep) await dropp(otmp);
     }
 }
 
@@ -703,7 +704,7 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     u.data = mdat;
 
     /* vampire base form for #monster shapeshifting (C: youmonst.cham) */
-    if (u.uprops?.Protection_from_shape_changers)
+    if (Protection_from_shape_changers())
         u.mcham = NON_PM;
     else if (u.Upolyd && is_vampire_pm(mdat))
         u.mcham = mdat.pmidx;
@@ -751,8 +752,10 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     // C ref: polyself.c:99-100 PROPSET(FLYING, (is_flyer(mdat) && !is_floater(mdat))).
     // u.uprops.Flying gates trap.c immune_to_trap()/pooleffects(), timeout.c's
     // u.umoved branch and invent.c's wounded-legs term.
-    u.uprops.Flying = u.formprops.Flying ? 1 : 0;
-    u.uprops.Levitation = u.formprops.Levitation ? 1 : 0;
+    // PROPSET() toggles ONLY the FROMFORM bit; a timed or worn source of the
+    // same property (e.g. a levitation timeout) must survive the form change.
+    u.uprops.Flying = ((u.uprops.Flying | 0) & ~FROMFORM) | (u.formprops.Flying ? FROMFORM : 0);
+    u.uprops.Levitation = ((u.uprops.Levitation | 0) & ~FROMFORM) | (u.formprops.Levitation ? FROMFORM : 0);
     // C ref: polyself.c:96 PROPSET(BLINDED, !haseyes(mdat)) — an eyeless form
     // (vortex, black pudding, ...) is blind for as long as it lasts.  Kept in
     // its OWN field rather than u.blinded: u.blinded is a TIMEOUT that
@@ -764,6 +767,9 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     // encumber_msg() runs, and the FIRST pline after the form change publishes
     // the new HD/HP *and* the new (much smaller) weight_cap's "Burdened".
     game.botl = true;
+    // C ref: polyself.c:123 status_initialize(REASSESS_ONLY) ends with
+    // disp.botlx = TRUE, so the next bot() repaints every status field.
+    game.botlx = true;
     game.were_changes = 0;
 }
 // C ref: set_uasmon()'s PROPSET(prop, FROMFORM) bit for the current form.
@@ -888,7 +894,7 @@ export async function polymon(mntmp) {
             `changed form for the first time, becoming ${an(await pmname_of(mdatNew, game.flags.female))}`);
     }
 
-    exercise(A_CON, false);
+    await exercise(A_CON, false);
     exercise(A_WIS, true);
 
     if (!u.Upolyd) {
@@ -896,6 +902,9 @@ export async function polymon(mntmp) {
         u.mamax = { a: (u.amax.a || []).slice() };
         u.mfemale = !!game.flags.female;
     } else {
+        // C: `u.acurr = u.macurr` sets no disp.botl, so a pline before the new
+        // form's stats are set still shows the old St on the status line.
+        status_hold('str', acurr_eff(A_STR));
         u.acurr = { a: (u.macurr.a || []).slice() };
         u.amax = { a: (u.mamax.a || []).slice() };
         game.flags.female = !!u.mfemale;
@@ -909,9 +918,10 @@ export async function polymon(mntmp) {
         await unmul('');
     }
     /* if becoming a non-mimic, stop mimicking anything */
-    if (mdatNew.mlet !== 'm' && ym) {
-        ym.m_ap_type = 0; /* M_AP_NOTHING */
-        ym.mappearance = 0;
+    if (mdatNew.mlet !== 'm') {
+        if (ym) { ym.m_ap_type = 0; /* M_AP_NOTHING */ ym.mappearance = 0; }
+        u.m_ap_type = 0;
+        u.mappearance = 0;
     }
     if (is_male_flag(mdatNew)) {
         if (game.flags.female) dochange = true;
@@ -1307,6 +1317,7 @@ async function newman_dead() {
 async function polyman(fmt, arg) {
     const u = game.u;
     const was_blind = Blind();
+    const sticking = sticks(u.data) && !!u.ustuck && !u.uswallow;
     if (u.Upolyd) {
         u.acurr = { a: (u.macurr.a || []).slice() };
         u.amax = { a: (u.mamax.a || []).slice() };
@@ -1317,7 +1328,24 @@ async function polyman(fmt, arg) {
 
     u.mh = u.mhmax = 0;
     u.mtimedone = 0;
+    await skinback(false);
+    u.uundetected = 0;
+
+    if (sticking)
+        await uunstick();
     find_ac();
+    // C ref: polyself.c:223-228 — leaving a form that mimics something (also the
+    // slime countdown's green-slime hack) stops the mimicry.  The hero's
+    // appearance lives on both game.u and game.youmonst in this port.
+    if (u.m_ap_type || game.youmonst?.m_ap_type) {
+        if ((game.multi | 0) < 0) {
+            const { unmul } = await import('./vault.js');
+            await unmul('');
+        }
+        u.m_ap_type = 0;
+        u.mappearance = 0;
+        if (game.youmonst) { game.youmonst.m_ap_type = 0; game.youmonst.mappearance = 0; }
+    }
 
     // C ref: polyself.c:254-256 — DRAWS rn1(6,2).  Reverting to human while in
     // a pit resets the escape countdown, exactly as polymon() does.
@@ -1681,7 +1709,15 @@ function your_race_pm(mdat) {
     return !!mdat && (mflags2_of(mdat) & mask) !== 0;
 }
 function ismnum(x) { return Number.isInteger(x) && x >= LOW_PM_IDX && x < NUMMONS(); }
-function the_unique_pm(mdat) { return !!mdat && ((mdat.geno | 0) & G_UNIQ_F) !== 0; }
+// C ref: objnam.c:1121 the_unique_pm() — pname monsters, the high cleric and the
+// long worm tail are not "the"-prefixed; the Wizard of Yendor always is.
+function the_unique_pm(mdat) {
+    if (!mdat || type_is_pname(mdat)) return false;
+    let uniq = ((mdat.geno | 0) & G_UNIQ_F) !== 0;
+    if (mdat.name === 'high cleric' || mdat.name === 'long worm tail') uniq = false;
+    if (mdat.name === 'Wizard of Yendor') uniq = true;
+    return uniq;
+}
 function type_is_pname(mdat) { return !!mdat && (mflags2_of(mdat) & M2_PNAME) !== 0; }
 // C ref: hacklib.c mungspaces().
 function mungspaces_poly(s) {
@@ -1727,8 +1763,7 @@ export async function rehumanize() {
         const { done, DIED } = await import('./end.js');
         await done(DIED);
     }
-    /* nomul(0) */
-    game.multi = 0;
+    (await import('./hack.js')).nomul(0);
 
     game.botl = true;
     game.vision_full_recalc = 1;
@@ -1903,7 +1938,7 @@ export async function polyself(psflags) {
             const { losehp_do } = await import('./do.js');
             await losehp_do(rnd(30), 'system shock');
             if (game.program_state?.gameover) return;
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
             return;
         }
     }
@@ -2794,6 +2829,6 @@ export async function ugolemeffects(damtype, dam) {
         u.mh = Math.min(u.mh + heal, u.mhmax);
         game.botl = true;
         await pline('Strangely, you feel better than before.');
-        exercise(A_STR, true);
+        await exercise(A_STR, true);
     }
 }

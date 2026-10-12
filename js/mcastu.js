@@ -7,6 +7,7 @@
 // rn2(m_lev) EVERY such turn, so leaving it out desyncs the stream for any level
 // carrying a spellcaster (seed0360 step 205: a gnomish wizard 7 squares away).
 
+import { acurr_eff } from './attrib.js';
 import { game } from './gstate.js';
 import { rn2, d } from './rng.js';
 import { couldsee } from './vision.js';
@@ -24,11 +25,11 @@ import { monster_by_pmidx, pmname_of_pmidx } from './makemon.js';
 import { Mgender, mhe as mhe_ } from './do_name.js';
 import { mflags2_of, M2_PNAME, is_undead_flag, is_demon_flag } from './monflags_data.js';
 import { an, the_unique_pm } from './objnam.js';
-import { Fire_resistance, Cold_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
+import { Fire_resistance, Cold_resistance, Shock_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
 import { monstseesu, monstunseesu } from './mondata.js';
 import { shieldeff, Hallucination_u as Hallucination } from './display.js';
 import { Blind } from './vision.js';
-import { youmonst_data_pub, Free_action } from './invent.js';
+import { youmonst_data_pub, Free_action, worn_extrinsic } from './invent.js';
 import { enexto_gpflags, In_W_tower as In_W_tower_tp } from './teleport.js';
 import { minion_monster_census } from './minion.js';
 import { Invis, Displaced } from './monmove.js';
@@ -427,7 +428,7 @@ function Blinded() { return (game.u?.blinded | 0) > 0 || (game.u?.uprops?.Blinde
 // is the hero's canonical See_invisible accessor (jsmain.js), and
 // monmove.js owns Invis()/Displaced() (worn-item extrinsics included).
 function See_invisible() { return !!game.u?.see_invis; }
-function Deaf() { return !!game.u?.Deaf; }
+import { Deaf_hero as Deaf } from './display.js';
 function perceives(mdat) { return !!(mdat && mdat.perceives); }
 
 // C ref: monst.h m_seenres(mon, bit).
@@ -991,7 +992,7 @@ export async function buzzmu(mtmp, mattk) {
         const tbx = (mtmp.mux ?? game.u?.ux) - mtmp.mx,
               tby = (mtmp.muy ?? game.u?.uy) - mtmp.my;
         await dobuzz(BZ_M_SPELL(BZ_OFS_AD(mattk.adtyp)), mattk.damn | 0,
-                     mtmp.mx, mtmp.my, sgn_(tbx), sgn_(tby));
+                     mtmp.mx, mtmp.my, sgn_(tbx), sgn_(tby), true, false, false); /* buzz(): sayhit */
         game.buzzer = 0;
         return M_ATTK_HIT;
     }
@@ -1095,13 +1096,13 @@ function Confusion_() { return HProp_('Confusion') > 0; }
 function HConfusion_() { return HProp_('Confusion'); }
 function HStun_() { return HProp_('Stun'); }
 // (Free_action is the shared accessor imported from invent.js.)
-function Half_spell_damage() { return HProp_('HHalf_spell_damage') > 0; }
-function Half_physical_damage() { return HProp_('HHalf_physical_damage') > 0; }
-function Shock_resistance_() { return !!game.u?.formprops?.Shock_resistance || HProp_('HShock_resistance') > 0; }
+function Half_spell_damage() { return HProp_('HHalf_spell_damage') > 0 || !!worn_extrinsic(55 /* HALF_SPDAM */); }
+function Half_physical_damage() { return HProp_('HHalf_physical_damage') > 0 || !!worn_extrinsic(56 /* HALF_PHDAM */); }
+function Shock_resistance_() { return Shock_resistance(); }
 function Detect_monsters_() { return HProp_('HDetect_monsters') > 0; }
 function Unaware_() { return !!(game.u?.usleep || game.u?.Unaware); }
 function HProp_(name) { return (game.u?.uprops?.[name] | 0); }
-function ACURR_(i) { return game.u?.acurr?.a?.[i] ?? 0; }
+function ACURR_(i) { return acurr_eff(i); }
 function youmonst_data() { return youmonst_data_pub(); }
 function invent_() { return Array.isArray(game.invent) ? game.invent : []; }
 

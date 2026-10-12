@@ -27,7 +27,7 @@ import { makemon, name_to_pmidx, monster_by_pmidx, enexto_spawn, placeOnLevel } 
 import { x_monnam, canspotmon, monflee } from './uhitm.js';
 import { somegold } from './steal.js';
 import { create_gas_cloud } from './region.js';
-import { monster_detect } from './hack.js';
+import { monster_detect, nomul } from './hack.js';
 import { observe_object } from './o_init.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import {
@@ -396,7 +396,7 @@ export async function drinkfountain() {
                 break;
             }
             await poison_strdmg(rn1(4, 3), rnd(10), 'contaminated water', 1 /* KILLED_BY */);
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
             break;
         case 22: /* Fountain of snakes! */
             await dowatersnakes();
@@ -407,7 +407,7 @@ export async function drinkfountain() {
         case 24: { /* Maybe curse some items */
             await update_topl("This water's no good!");
             await morehungry(rn1(20, 11));
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
             let buc_changed = 0;
             for (const obj of game.invent || []) {
                 if (obj.oclass !== COIN_CLASS && !obj.cursed && !rn2(5)) {
@@ -846,10 +846,8 @@ async function spawnAtHeroSquare(pmidx) {
 // their monster moves belong to the same input boundary.
 function vomit() {
     if ((game.multi ?? 0) >= -2) {              // eat.c:3759
-        game.multi = -2;
+        nomul(-2);
         game.multi_reason = 'vomiting';
-        game.context = game.context || {};
-        game.context.travel = game.context.travel1 = game.context.mv = 0;
         game.nomovemsg = 'You can move again.';
     }
 }

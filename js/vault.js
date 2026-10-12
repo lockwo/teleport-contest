@@ -30,10 +30,10 @@ import {
     IS_WALL, IS_STWALL, IS_ROOM, IS_OBSTRUCTED, ACCESSIBLE,
     ROOMOFFSET, VAULT, VAULT_GUARD_TIME, FCSIZ, GD_EATGOLD, GD_DESTROYGOLD,
     SV0, SV1, SV7, SVALL, COULD_SEE, IN_SIGHT, A_LAWFUL, NEED_HTH_WEAPON,
-    EGD, u_at, Upolyd, OBJ_FLOOR, OBJ_INVENT } from './const.js';
+    EGD, u_at, Upolyd, OBJ_FLOOR, OBJ_INVENT, MELT_ICE_AWAY } from './const.js';
 import { ATR_INVERSE } from './terminal.js';
 import {
-    newsym, update_topl, m_at, background_glyph, show_glyph_cell, map_invisible,
+    newsym, update_topl, pline, m_at, background_glyph, show_glyph_cell, map_invisible,
 } from './display.js';
 import { cansee, couldsee, block_point, unblock_point, recalc_block_point, Blind } from './vision.js';
 import { Monnam, mon_nam, canspotmon, setmangry, relobj } from './uhitm.js';
@@ -42,7 +42,7 @@ import { m_carrying, m_canseeu, mon_wield_item } from './monmove.js';
 import { rloc, rloc_to, RLOC_MSG, RLOC_ERR } from './teleport.js';
 import { makemon, set_malign, monster_by_pmidx, enexto_spawn, add_to_minv } from './makemon.js';
 import { place_object, objects, weight, COIN_CLASS, BOULDER, ROCK } from './mkobj.js';
-import { stackobj, xname, currency } from './invent.js';
+import { stackobj, xname, currency, freeinv } from './invent.js';
 import { makeplural } from './plural.js';
 import { money_cnt_invent, hidden_gold as shk_hidden_gold } from './shk.js';
 import { in_rooms } from './shkroom.js';
@@ -96,7 +96,7 @@ const mungspaces = (s) => String(s ?? '').replace(/\s+/g, ' ').replace(/^ | $/g,
 // named even when the hero cannot spot it.  The shim used to be mon_nam(),
 // which was indistinguishable only while x_monnam() ignored canspotmon().
 const mhe = (m) => (m?.female ? 'she' : 'he');
-const noit_mhis = (m) => (m?.female ? 'her' : 'his');
+import { noit_mhis } from './do_name.js';
 // C ref: hack.h um_dist(x,y,n) — further than n from the hero on EITHER axis.
 const um_dist = (x, y, n) => Math.abs(x - (game.u?.ux ?? 0)) > n
     || Math.abs(y - (game.u?.uy ?? 0)) > n;
@@ -178,14 +178,6 @@ function del_engr_at(x, y) {
     if (!game.level?.engravings) return;
     game.level.engravings = game.level.engravings.filter(
         (ep) => ep.engr_x !== x || ep.engr_y !== y);
-}
-// C ref: invent.c freeinv(obj).
-function freeinv(obj) {
-    const inv = game.invent;
-    if (Array.isArray(inv)) {
-        const i = inv.indexOf(obj);
-        if (i >= 0) inv.splice(i, 1);
-    }
 }
 
 // C ref: mon.c place_monster(mon, x, y) / remove_monster(x, y).  This port
@@ -406,6 +398,18 @@ export async function reset_faint() {
     if (game.afternmv === unfaint) await unmul('You revive.');
 }
 
+// C ref: hack.c unmul():4187-4194 — follow "You survived that attempt on your
+// life." with a message about the current form when polymorphed (life-saved
+// while poly'd and Unchanging).  Shared with allmain.js's inline countdown.
+export async function unmul_form_note(nmsg) {
+    const u = game.u;
+    if (u && Upolyd(u) && /^you survived that /i.test(nmsg)) {
+        const { an } = await import('./hacklib.js');
+        const { pmname_of_pmidx } = await import('./makemon.js');
+        await update_topl(`You are ${an(pmname_of_pmidx(u.umonnum, !!u.mfemale))}.`);
+    }
+}
+
 // C ref: hack.c unmul(msg) — release the hero from a multi-turn occupation and
 // run the pending afternmv.  Exported for the same js/minion.js demon_talk()
 // caller (minion.c:284).
@@ -413,9 +417,19 @@ export async function unmul(msg) {
     game.botl = true; // C ref: hack.c unmul() `disp.botl = TRUE`
     game.multi = 0;
     if (game.context) game.context.travel = game.context.travel1 = game.context.mv = 0;
-    const nmsg = msg || game.nomovemsg;
+    // C ref: hack.c unmul(): `if (msg_override) nomovemsg = msg_override; else if
+    // (!nomovemsg) nomovemsg = You_can_move_again; if (*nomovemsg) pline(...)`.
+    // A NULL nomovemsg (null/undefined/0) takes the default; "" means silence.
+    let nmsg = msg;
+    if (!nmsg) nmsg = (game.nomovemsg == null || game.nomovemsg === 0
+                       || game.nomovemsg === false) ? 'You can move again.' : game.nomovemsg;
     game.nomovemsg = null;
-    if (nmsg) await update_topl(nmsg);
+    if (nmsg) {
+        await pline(nmsg);   // C pline(): flush_screen() runs bot() before the line is drawn
+        await unmul_form_note(nmsg);
+    }
+    if (game.u) game.u.usleep = 0;
+    game.multi_reason = null;
     const fn = game.afternmv;
     if (fn) { game.afternmv = null; await fn(); }
 }
@@ -436,13 +450,6 @@ async function mnexto(mtmp) {
     if (!cc) { m_into_limbo(mtmp); return; }
     await rloc_to(mtmp, cc.x, cc.y);
 }
-
-// C ref: timeout.c spot_stop_timers(x, y, MELT_ICE_AWAY) — cancel the pending
-// timer on the guard's entry square.  js/ models only per-object ROT_CORPSE
-// timers (js/mkobj.js run_object_timers); the level timer queue that carries
-// MELT_ICE_AWAY does not exist, so there is nothing to walk until timeout.c's
-// timer_element list is ported (see this port's deferred list).
-function spot_stop_timers(_x, _y) { /* needs timeout.c's timer_element list */ }
 
 /* ------------------------------------------------------------------ *
  * vault.c
@@ -942,7 +949,7 @@ export async function invault() {
     egrd.fakecorr[0].ftyp = typ;
     egrd.fakecorr[0].flags = levl_at(x, y).flags;
     /* the guard's entry point, where the confrontation takes place */
-    spot_stop_timers(x, y);
+    await (await import('./timeout.js')).spot_stop_timers(x, y, MELT_ICE_AWAY);
     levl_at(x, y).typ = DOOR;
     levl_at(x, y).doormask = D_NODOOR;
     unblock_point(x, y);            /* empty doorway doesn't block light */
@@ -1459,7 +1466,7 @@ export async function gd_move(grd) {
 // C ref: vault.c paygd(silently) — dying or quitting with a vault guard
 // around.  RNG: rn2(2), rn2(2) for the grave spot on the hostile path, plus
 // currency()'s hallucination roll.
-export async function paygd(silently) {
+export async function paygd(silently, before_deposit) {
     const u = game.u;
     const grd = findgd();
     const umoney = money_cnt_invent();
@@ -1488,6 +1495,9 @@ export async function paygd(silently) {
             `To Croesus: here's the gold recovered from ${game.plname} the ${
                 hero_pmname()}.`);
     }
+    /* the caller's status redraw lands here: C's freeinv() below only flags
+       disp.botl, so the message above is still drawn with the old $ field */
+    if (before_deposit) await before_deposit();
     if (deposit) {
         for (const coins of [...(game.invent || [])]) {
             if ((objects?.[coins.otyp]?.oc_class ?? coins.oclass) === COIN_CLASS) {

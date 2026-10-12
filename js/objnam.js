@@ -1849,9 +1849,13 @@ export function doname_base(obj, doname_flags) {
                     : donning(obj) ? ' (being donned)'
                         : ' (being worn)';
             if (bp[bp.length - 1] === ')') {
-                /* gloves read as slippery when the hero has slippery fingers */
+                /* gloves read as slippery when the hero has slippery fingers.
+                   C: Concat(bp, 1, "; slippery)") is Strncat(bp_eos - 1, ...),
+                   and strncat() appends at the NUL terminator, not at the
+                   pointer, so the ')' is NOT replaced:
+                   "(being worn); slippery)". */
                 if (obj === game.uarmg && Glib())
-                    bp = bp.slice(0, -1) + '; slippery)';
+                    bp += '; slippery)';
             }
             if (bp[bp.length - 1] === ')') {
                 if (!Blind() && obj.lamplit && artifact_light(obj))
@@ -2100,8 +2104,19 @@ export function doname_base(obj, doname_flags) {
 /* doname_base() helpers that read hero state this port keeps elsewhere. */
 /* do_wear.c doffing()/donning(): this port tracks the in-progress Wear/Takeoff
    in game._dressing_obj/_dressing_off (js/do_wear.js:883, which reaches this
-   file through artifact.js, so it can't be imported here). */
-function doffing(obj) { return !!obj && game._dressing_obj === obj && !!game._dressing_off; }
+   file through artifact.js, so it can't be imported here).  The 'A' command
+   sets context.takeoff.what instead of afternmv, and C's doffing() tests it
+   too: an 'A' interrupted mid-sequence leaves the slot reading "(being doffed)". */
+function doffing(obj) {
+    if (!obj) return false;
+    if (game._dressing_obj === obj && game._dressing_off) return true;
+    const what = game.context?.takeoff?.what | 0;
+    const slot = (obj === game.uarm) ? W_ARM : (obj === game.uarmu) ? W_ARMU
+        : (obj === game.uarmc) ? W_ARMC : (obj === game.uarmf) ? W_ARMF
+        : (obj === game.uarmh) ? W_ARMH : (obj === game.uarmg) ? W_ARMG
+        : (obj === game.uarms) ? W_ARMS : 0;
+    return !!slot && what === slot;
+}
 function donning(obj) {
     return doffing(obj) || (!!obj && game._dressing_obj === obj && !game._dressing_off);
 }

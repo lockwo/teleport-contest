@@ -917,7 +917,7 @@ export async function drag_down() {
             await losehp_do(Maybe_Half_Phys(rnd(20)), 'iron ball collision',
                             KILLED_BY_AN);
             const { exercise } = await import('./attrib.js');
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             dragchance -= 2;
         }
         if (dragchance >= rnd(6)) {
@@ -926,7 +926,7 @@ export async function drag_down() {
                             'dragged downstairs by an iron ball',
                             NO_KILLER_PREFIX);
             const { exercise } = await import('./attrib.js');
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             await litter();
         }
     }

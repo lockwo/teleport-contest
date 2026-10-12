@@ -670,7 +670,7 @@ export function wearslot(obj) {
         break;
     case WEAPON_CLASS:
         res = W_WEP | W_SWAPWEP;
-        if (objects[otyp]?.oc_merge) res |= W_QUIVER;
+        if ((objects[otyp]?.flags & 32 /* oc_merge */)) res |= W_QUIVER;
         break;
     case TOOL_CLASS:
         if (otyp === BLINDFOLD || otyp === TOWEL || otyp === LENSES)

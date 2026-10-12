@@ -9,6 +9,7 @@
 //
 // Hero placement is shared by jumping, teleport commands, scrolls, and traps.
 
+import { acurr_eff } from './attrib.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
@@ -16,6 +17,7 @@ import { newsym, m_at, update_topl, y_n } from './display.js';
 import { Blind, couldsee, vision_recalc } from './vision.js';
 import { update_monster_region } from './region.js';
 import { onscary, set_apparxy, noteleport_level, m_in_air, may_passwall } from './monmove.js';
+import { youmonst_data } from './invent.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
 import { sensemon } from './mon.js';
 import { canseemon_shared as canseemon_tele } from './display.js';
@@ -146,7 +148,11 @@ export function goodpos(x, y, mtmp, gpflags) {
         }
         if (passes_walls_flag(mdat) && may_passwall(x, y)) return true;
         if (amorphous_flag(mdat) && closed_door(x, y)) return true;
-        if (checkscary && onscary(x, y, mtmp)) return false;
+        /* C: `mtmp->m_id ? onscary(x, y, mtmp) : goodpos_onscary(x, y, mdat)` —
+           enexto_core()'s zeroed fake monst has no m_id. */
+        if (checkscary && (mtmp.m_id ? onscary(x, y, mtmp)
+                                     : goodpos_onscary(x, y, mdat || youmonster_data_())))
+            return false;
     }
     if (!accessible(x, y) && !(is_pool(x, y) && ignorewater)
         && !(is_lava(x, y) && ignorelava)) return false;
@@ -214,7 +220,7 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
     }
 
     mtmp.mtrack = [];                       // mon_track_clear(mtmp)
-    mtmp.mx = x; mtmp.my = y;               // place_monster(mtmp, x, y)
+    mtmp.mx = x; mtmp.my = y; mtmp.mstate = 0; // place_monster(mtmp, x, y): mstate = MON_FLOOR (steed.c:931)
     // This port's level.monsters array doubles as the map: a monster taken off
     // it by mon_leaving_level() (mnearto's displaced occupant) must be back on
     // it before newsym() so the square shows it.
@@ -222,8 +228,26 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
         game.level.monsters.push(mtmp);
     update_monster_region(mtmp);
 
-    // The u.ustuck unstuck/swallow bookkeeping and maybe_unhide_at() are inert
-    // here: nothing is holding the hero and no hider sits at the destination.
+    // C ref: teleport.c:1688 — a relocated engulfer carries the hero along
+    // (redrawing the swallowed view); a mere holder is released if no longer
+    // adjacent.  maybe_unhide_at() is inert here: no hider sits at the
+    // destination.
+    if (game.u?.ustuck === mtmp) {
+        if (game.u.uswallow) {
+            const { u_on_newpos } = await import('./do.js');
+            u_on_newpos(mtmp.mx, mtmp.my);
+            const { check_special_room } = await import('./shkroom.js');
+            await check_special_room(false);
+            const { docrt } = await import('./display.js');
+            await docrt();
+        } else {
+            const { m_next2u } = await import('./monmove.js');
+            if (!m_next2u(mtmp)) {
+                const { unstuck } = await import('./mon.js');
+                await unstuck(mtmp);
+            }
+        }
+    }
 
     newsym(x, y);
     set_apparxy(mtmp);
@@ -1474,8 +1498,9 @@ function in_out_region_(x, y) { return in_out_region(x, y); }
 // C ref: hack.h youmonst / mons[u.umonster].
 function youmonst_() { return game.youmonst || game.u; }
 function youmonster_data() { return game.youmonst?.data || game.u?.data; }
-// C ref: mons[u.umonster] — enexto_core()'s null-mdat default.
-function youmonster_data_() { return youmonster_data(); }
+// C ref: mons[u.umonster] — enexto_core()'s null-mdat default.  The hero's
+// own permonst (game.u.data is only set while polymorphed).
+function youmonster_data_() { return youmonst_data() || youmonster_data(); }
 // C ref: mons[idx] — js/makemon.js:642 monster_by_pmidx() is the accessor but
 // is only reachable from an async context; rloco()'s rider-corpse arm is the
 // one caller and no covered session drops a Rider corpse.
@@ -1606,7 +1631,7 @@ function known_spell_(_otyp) { return spe_Unknown_TP; }
 function spellev_(_otyp) { return 6; }
 function Role_if_wizard_() { return (game.urole?.name?.m || '') === 'Wizard'; }
 function can_teleport_(_ptr) { return false; }
-function ACURR_tp(i) { return game.u?.acurr?.a?.[i] ?? 0; }
+function ACURR_tp(i) { return acurr_eff(i); }
 function exercise_(i, inc) {
     if (i === A_INT || i === A_CHA || (game.u?.Upolyd && i !== A_WIS)) return;
     const aexe = game.u.aexe || (game.u.aexe = []);

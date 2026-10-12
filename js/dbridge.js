@@ -16,7 +16,7 @@
 // single draw attributed to dbridge.c, so none of the three is confirmed by a
 // trace; they are transcribed straight from the C.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { hliquid } from './do_name.js';
 import {
     STONE, DBWALL, POOL, MOAT, WATER, DRAWBRIDGE_UP, LAVAPOOL,
@@ -98,6 +98,7 @@ export function is_lava(x, y) {
 export function is_pool_or_lava(x, y) {
     return is_pool(x, y) || is_lava(x, y);
 }
+hooks.is_pool_or_lava = is_pool_or_lava; /* makemon.js pickvampshape() */
 
 // C ref: dbridge.c:85 is_ice(x, y).
 export function is_ice(x, y) {
@@ -965,9 +966,9 @@ function HProp(...keys) {
 function Levitation() { return HProp('Levitation', 'HLevitation', 'ELevitation') > 0; }
 function Flying() { return HProp('Flying', 'HFlying', 'EFlying') > 0; }
 function Wwalking() { return HProp('Wwalking', 'HWwalking', 'EWwalking') > 0; }
-function Swimming() { return !!game.u?.formprops?.Swimming || HProp('Swimming', 'HSwimming', 'ESwimming') > 0; }
-function Breathless() { return HProp('Breathless', 'HBreathless', 'EBreathless') > 0; }
-function Amphibious() { return HProp('Amphibious', 'HAmphibious', 'EAmphibious') > 0; }
+export function Swimming() { return !!game.u?.formprops?.Swimming || HProp('Swimming', 'HSwimming', 'ESwimming') > 0; }
+export function Breathless() { return HProp('Breathless', 'HBreathless', 'EBreathless') > 0; }
+export function Amphibious() { return HProp('Amphibious', 'HAmphibious', 'EAmphibious') > 0; }
 function Passes_walls() { return !!game.u?.formprops?.Passes_walls || HProp('Passes_walls', 'HPasses_walls', 'EPasses_walls') > 0; }
 function Confusion() { return HProp('Confusion', 'HConfusion', 'EConfusion') > 0; }
 function Stunned() { return !!game.u?.formprops?.Stunned || HProp('Stunned', 'HStun', 'EStun') > 0; }

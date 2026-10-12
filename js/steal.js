@@ -22,6 +22,7 @@ import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
 import { PLNMSG_MON_TAKES_OFF_ITEM, Unaware } from './const.js';
 // C's urgent_pline() (steal.c:532/540/603) is display.js urgent_topl(): still
 // shown after ESC dismissed the preceding "<Mon> disarms ..." --More--.
+import { nomul } from './hack.js';
 import { update_topl, urgent_topl } from './display.js';
 import { Blind } from './vision.js';
 import { canspotmon, Monnam } from './uhitm.js';
@@ -90,12 +91,6 @@ function stop_donning(_obj) { return 0; }
 // own flag in allmain.js); nothing is occupying the hero on the turns a thief
 // reaches steal() in the covered sessions, so there is nothing to interrupt.
 function stop_occupation() { /* no occupation to stop */ }
-
-// C ref: hack.c nomul(nval) — make the hero busy for |nval| turns.
-function nomul(nval) {
-    if ((game.multi ?? 0) < nval) return;
-    game.multi = nval;
-}
 
 // C ref: steal.c mpickobj(mtmp, otmp) — put a just-taken object into the
 // monster's inventory.  Returns 1 if otmp was freed by a merge.  No RNG.

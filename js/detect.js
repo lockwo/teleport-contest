@@ -8,14 +8,14 @@ import { body_part } from './polyself.js';
 import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { pline, newsym, terrain_background_glyph, show_glyph_cell,
-         object_glyph, vobj_at, trap_glyph, engraving_glyph, bg_attr } from './display.js';
+         object_glyph, vobj_at, trap_glyph, engraving_glyph, bg_attr, Deaf_hero, map_object as display_map_object } from './display.js';
 import { engr_at } from './engrave.js';
 import { couldsee } from './vision.js';
 import { exercise } from './attrib.js';
 import { COLNO, ROWNO, BOLT_LIM, SDOOR, SCORR, DOOR, CORR, A_WIS, IS_FURNITURE,
          STONE, W_NONDIGGABLE, W_NONPASSWALL, ROOMOFFSET,
          Is_rogue_level } from './const.js';
-import { room_discovered } from './dungeon.js';
+import { room_discovered, update_lastseentyp } from './dungeon.js';
 import { BOULDER, COIN_CLASS, GOLD_PIECE, objects } from './mkobj.js';
 import { NO_COLOR, CLR_WHITE, ATR_INVERSE } from './terminal.js';
 import { rnd } from './rng.js';
@@ -67,13 +67,15 @@ async function findone(zx, zy, found) {
 
     if (lev.typ === SDOOR) {
         cvt_sdoor_to_door(lev); /* set lev->typ = DOOR */
-        unblock_point(zx, zy);  /* recalc_block_point */
-        newsym(zx, zy);
+        recalc_block_point(zx, zy);
+        magic_map_background(zx, zy, 0);
+        foundone(zx, zy, { kind: 'cmap' });
         found.num_sdoors++;
     } else if (lev.typ === SCORR) {
         lev.typ = CORR;
         unblock_point(zx, zy);
-        newsym(zx, zy);
+        magic_map_background(zx, zy, 0);
+        foundone(zx, zy, { kind: 'cmap' });
         found.num_scorrs++;
     }
 
@@ -262,32 +264,100 @@ export async function show_map_spot(x, y, cnf) {
 export async function do_mapping() {
     // C ref: detect.c do_mapping() — `show_map_spot(zx, zy, Confusion)`, x outer.
     const cnf = d_Confusion();
+    const unconstrained = unconstrain_map();
     for (let x = 1; x < COLNO; x++)
         for (let y = 0; y < ROWNO; y++)
             await show_map_spot(x, y, cnf);
+    if (!game.level?.flags?.hero_memory || unconstrained) {
+        await flush_screen(1);                      /* flush temp screen */
+        /* browse_map() instead of display_nhwindow(WIN_MAP, TRUE) */
+        await browse_map(TER_DETECT | TER_MAP | TER_TRP | TER_OBJ,
+                         'anything of interest');
+        await map_redisplay();                      /* reconstrain_map() + docrt() */
+    } else {
+        reconstrain_map();
+    }
     exercise(A_WIS, true);
 }
 
 // C ref: detect.c gold_detect(sobj) — the scroll/spell of gold detection.
-// Returns TRUE when nothing was detected (C's caller then does the
-// strange_feeling()/useup); FALSE when the gold map was shown.
+// Returns TRUE when nothing was detected (strange_feeling() has already used
+// the detector up, C `return 1`); FALSE when the gold map (or the "gold
+// between your feet" note) was shown.  Sets game.known (gk.known) like C.
 export async function gold_detect(sobj) {
     const u = game.u;
-    const objs = (game.level?.objects || []).filter((o) => o.where === OBJ_FLOOR);
-    const gold = objs.filter((o) => o.oclass === COIN_CLASS
-                                 || (sobj?.blessed && objects[o.otyp]?.material === GOLD_MATERIAL));
-    // C: monsters carrying gold map a synthetic pile at their square, whose
-    // quan is rnd(10) — an RNG draw, so it must only happen when one does.
-    const goldmons = (game.level?.monsters || []).filter(
-        (m) => !(m.mhp != null && m.mhp <= 0)
-            && (m.minvent || []).some((o) => o.oclass === COIN_CLASS));
+    const blessed = !!sobj?.blessed;
+    const PM_GOLD_GOLEM_D = 252;                    /* monst.h */
+    // gk.known = stale = clear_stale_map(COIN_CLASS, blessed ? GOLD : 0)
+    const stale = clear_stale_map(COIN_CLASS, blessed ? GOLD_MATERIAL : 0);
+    game.known = stale;
+    let steedgold = false;
+    let outgoldmap = false;
 
-    // gk.known: any gold anywhere (carried by a monster, or on the floor).
-    // "only under me" (every pile is on the hero's square) is not the
-    // outgoldmap path — C prints "You notice some gold between your feet."
-    const offSelf = gold.some((o) => o.ox !== u.ux || o.oy !== u.uy);
-    if (!gold.length && !goldmons.length) return true;
-    if (!offSelf && !goldmons.length) {
+    // look for gold carried by monsters (might be in a container)
+    for (const mtmp of d_fmon()) {
+        if (d_DEADMONSTER(mtmp) || (mtmp.isgd && !mtmp.mx)) continue;
+        if (findgold(mtmp.minvent) || mtmp.data?.pmidx === PM_GOLD_GOLEM_D) {
+            if (mtmp === u.usteed) {
+                steedgold = true;
+            } else {
+                game.known = true;
+                outgoldmap = true;                  /* skip further searching */
+                break;
+            }
+        } else {
+            for (const obj of (mtmp.minvent || []))
+                if ((blessed && o_material(obj, GOLD_MATERIAL)) || o_in(obj, COIN_CLASS)) {
+                    if (mtmp === u.usteed) {
+                        steedgold = true;
+                    } else {
+                        game.known = true;
+                        outgoldmap = true;
+                        break;
+                    }
+                }
+            if (outgoldmap) break;
+        }
+    }
+
+    // look for gold objects
+    if (!outgoldmap) {
+        for (const obj of d_fobj()) {
+            if (blessed && o_material(obj, GOLD_MATERIAL)) {
+                game.known = true;
+                if (obj.ox !== u.ux || obj.oy !== u.uy) { outgoldmap = true; break; }
+            } else if (o_in(obj, COIN_CLASS)) {
+                game.known = true;
+                if (obj.ox !== u.ux || obj.oy !== u.uy) { outgoldmap = true; break; }
+            }
+        }
+    }
+
+    if (!outgoldmap) {
+        if (!game.known) {
+            // no gold found on floor or monster's inventory; adjust message if
+            // you have gold in your inventory
+            let buf;
+            const shk = await import('./shk.js');
+            if (u.Upolyd && u.umonnum === PM_GOLD_GOLEM_D) {
+                const { currency } = await import('./invent.js');
+                buf = `You feel like a million ${currency(2)}!`;
+            } else if (shk.money_cnt_invent() || shk.hidden_gold(true)) {
+                buf = 'You feel worried about your future financial situation.';
+            } else if (steedgold) {
+                const { x_monnam } = await import('./uhitm.js');
+                const { s_suffix } = await import('./hacklib.js');
+                const { ARTICLE_YOUR, ARTICLE_THE, SUPPRESS_SADDLE } = await import('./const.js');
+                buf = `You feel interested in ${s_suffix(x_monnam(u.usteed,
+                    u.usteed.mtame ? ARTICLE_YOUR : ARTICLE_THE, null, SUPPRESS_SADDLE, false))} financial situation.`;
+            } else {
+                buf = 'You feel materially poor.';
+            }
+            await strange_feeling(sobj, buf);
+            return true;
+        }
+        // only under me - no separate display required
+        if (stale) await docrt();
         await update_topl(`You notice some gold between your ${makeplural(body_part(FOOT))}.`);
         return false;
     }
@@ -298,28 +368,54 @@ export async function gold_detect(sobj) {
     for (let x = 1; x < COLNO; x++)
         for (let y = 0; y < ROWNO; y++)
             show_glyph_cell(x, y, ' ', NO_COLOR, false);
+    // Discover gold locations.
     let ugold = false;
-    let ter_typ = TER_DETECT | TER_OBJ;
-    const mark = (x, y, obj) => {
-        const g = object_glyph(obj);
-        const loc = game.level?.at(x, y);
-        if (loc) loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
-        show_glyph_cell(x, y, g.ch, g.color, g.dec);
-        if (x === u.ux && y === u.uy) ugold = true;
-    };
-    for (const o of gold) mark(o.ox, o.oy, o);
-    for (const m of goldmons) {
-        const fake = { otyp: GOLD_PIECE, oclass: COIN_CLASS, quan: rnd(10) };
-        mark(m.mx, m.my, fake);
+    const ter_typ0 = TER_DETECT | TER_OBJ;
+    let ter_typ = ter_typ0;
+    for (const obj of d_fobj()) {
+        let temp = null;
+        if (blessed && (temp = o_material(obj, GOLD_MATERIAL))) {
+            if (temp !== obj) { temp.ox = obj.ox; temp.oy = obj.oy; }
+            map_object(temp, true);
+        } else if ((temp = o_in(obj, COIN_CLASS))) {
+            if (temp !== obj) { temp.ox = obj.ox; temp.oy = obj.oy; }
+            map_object(temp, true);
+        }
+        if (temp && d_u_at(temp.ox, temp.oy)) ugold = true;
+    }
+    for (const mtmp of d_fmon()) {
+        if (d_DEADMONSTER(mtmp) || (mtmp.isgd && !mtmp.mx)) continue;
+        let temp = null;
+        if (findgold(mtmp.minvent) || mtmp.data?.pmidx === PM_GOLD_GOLEM_D) {
+            const gold = { otyp: GOLD_PIECE, oclass: COIN_CLASS, quan: rnd(10),
+                           ox: mtmp.mx, oy: mtmp.my };   /* usually more than 1 */
+            map_object(gold, true);
+            temp = gold;
+        } else {
+            for (const obj of (mtmp.minvent || [])) {
+                if (blessed && (temp = o_material(obj, GOLD_MATERIAL))) {
+                    temp.ox = mtmp.mx; temp.oy = mtmp.my;
+                    map_object(temp, true);
+                    break;
+                } else if ((temp = o_in(obj, COIN_CLASS))) {
+                    temp.ox = mtmp.mx; temp.oy = mtmp.my;
+                    map_object(temp, true);
+                    break;
+                }
+            }
+        }
+        if (temp && d_u_at(temp.ox, temp.oy)) ugold = true;
     }
     if (!ugold) {
         newsym(u.ux, u.uy);
-        ter_typ |= TER_MON;
+        ter_typ |= TER_MON;                         /* so autodescribe will recognize hero */
     }
     await flush_screen(1);
     await update_topl('You feel very greedy, and sense gold!');
     exercise(A_WIS, true);
+
     await browse_map(ter_typ, 'gold');
+
     await map_redisplay();
     return false;
 }
@@ -350,10 +446,9 @@ export function premap_detect() {
             const bg = terrain_background_glyph(loc, x, y);
             loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec };
             const obj = vobj_at(x, y);
-            if (obj && obj.otyp === BOULDER) {
-                const og = object_glyph(obj);
-                if (og) loc.remembered_glyph = { ch: og.ch, color: og.color, decgfx: og.dec, objotyp: BOULDER };
-            }
+            /* C: map_object(obj, 1) -- a hallucinating hero memorises a random
+               object glyph (display RNG), not the boulder. */
+            if (obj && obj.otyp === BOULDER) display_map_object(obj, true);
         }
     }
     for (const trap of game.level?.traps || []) {
@@ -438,7 +533,7 @@ function d_distu(x, y) {
 }
 /* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
 function d_digests(ptr) {
-    return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */);
+    return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */ && a.adtyp === 26 /* AD_DGST */);
 }
 /* hack.h Confusion — mirrors js/allmain.js:1414. */
 function d_Confusion() { return !!(game.u?.uconf || game.u?.HConfusion); }
@@ -617,6 +712,7 @@ function magic_map_background(x, y, show) {
         }
     }
     if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec);
+    update_lastseentyp(x, y); /* display.c:257 */
 }
 
 // C ref: display.c map_trap(trap, show).  The extra loc.mapped_trap_ttyp stamp
@@ -640,22 +736,11 @@ function map_object(obj, show) {
     if (!loc) return;
     let g;
     const halluc = Hallucination_u();
-    const STATUE_OTYP_D = 476;                 /* objects.h STATUE */
     if (halluc) {
         // obj_to_glyph -> random_obj_to_glyph / statue_to_glyph on the display
-        // rng; the exact glyph does not matter to the callers here, only that
-        // the draws happen (and in this order).
-        const otyp = random_object_disp(objects.length);
-        const mon = (otyp === 259 /* CORPSE */) ? monster_by_pmidx(random_monster_disp())
-                                               : null;
-        if (obj.otyp === STATUE_OTYP_D) {
-            const m2 = monster_by_pmidx(random_monster_disp());
-            random_monster_disp();                 /* statue_to_glyph gender pick */
-            g = { ch: m2?.mlet || 'x', color: m2?.mcolor ?? NO_COLOR, dec: false };
-        } else {
-            g = mon ? { ch: '%', color: mon.mcolor ?? NO_COLOR, dec: false }
-                    : (object_glyph({ ...obj, otyp }) || object_glyph(obj));
-        }
+        // rng (display.js owns that machinery, including the hallucinated
+        // statue's second remembered draw).
+        return display_map_object(obj, show);
     } else {
         g = object_glyph(obj);
         // C: a generic object glyph seen from close up is observed and re-glyphed.
@@ -669,11 +754,8 @@ function map_object(obj, show) {
     }
     if (!g) return;
     if (game.level?.flags?.hero_memory) {
-        if (halluc && obj.otyp === STATUE_OTYP_D) {
-            random_object_disp(objects.length);   /* remembered as a random OBJECT */
-        }
         loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
-                                 objotyp: halluc ? 0 : obj.otyp };
+                                 objotyp: obj.otyp };
         loc.mapped_trap_ttyp = 0;
     }
     if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec);
@@ -735,7 +817,12 @@ export async function browse_map(ter_typ, ter_explain) {
     iflags.autodescribe = true;
     iflags.terrainmode = ter_typ;
     const { browse_map_getpos } = await import('./hack.js');
-    await browse_map_getpos(ter_explain, (ter_typ & TER_DETECT) !== 0);
+    // C ref: getpos.c:853-854 curs(WIN_MAP, cx, cy); flush_screen(0) — the
+    // detection's topline ("You feel very greedy, and sense gold!") is drawn
+    // before getpos() blocks for its first key.
+    await flush_screen(1);
+    // C ref: pager.c:1301 — a TER_MAP browse shows real map terrain, not a blank detect map.
+    await browse_map_getpos(ter_explain, (ter_typ & (TER_DETECT | TER_MAP)) === TER_DETECT);
     iflags.terrainmode = 0;
     iflags.autodescribe = save_autodescribe;
 }
@@ -759,6 +846,9 @@ export function map_monst(mtmp, showtail) {
         ? ((mon.mlet === ' ' && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0)
         : (game.flags?.hilite_pet && !Hallucination_u() ? ATR_INVERSE : 0);
     show_glyph_cell(mtmp.mx, mtmp.my, g.ch, g.color, false, attr);
+    /* show_glyph() of a monster glyph: the displayed glyph IS a monster, which
+       getpos autodescribe (pager.c do_screen_description) reads back */
+    { const dl = game.level?.at(mtmp.mx, mtmp.my); if (dl) dl.disp_monster = true; }
 
     if (showtail && data.mlet === 'w' && data.name === 'long worm') {
         // detect_wsegs(mtmp, 0) — dynamic import: worm.js is a leaf here.
@@ -1171,7 +1261,7 @@ export function sense_trap(trap, x, y, src_cursed) {
         else { obj.ox = x; obj.oy = y; }
         obj.otyp = !Hallucination_u() ? GOLD_PIECE : d_random_object_core();
         obj.quan = (obj.otyp === GOLD_PIECE) ? rnd(10)
-                   : objects[obj.otyp]?.oc_merge ? rnd(2) : 1;
+                   : (objects[obj.otyp]?.flags & 32 /* oc_merge: mkobj.js flags bit 5 */) ? rnd(2) : 1;
         obj.oclass = objects[obj.otyp]?.oc_class;
         obj.corpsenm = d_random_monster_core();     /* if otyp == CORPSE */
         map_object(obj, 1);
@@ -1249,8 +1339,14 @@ export async function display_trap_map(cursed_src) {
     }
     detect_obj_traps(game.invent, true, cursed_src, null);
 
-    for (const ttmp of (game.level?.traps || []))
-        sense_trap(ttmp, 0, 0, cursed_src);
+    /* gf.ftrap is prepend-ordered (newest first) in C; level.traps is
+       append-ordered, so walk it backwards to draw hallucinated glyphs in
+       C's order */
+    {
+        const traps = game.level?.traps || [];
+        for (let i = traps.length - 1; i >= 0; i--)
+            sense_trap(traps[i], 0, 0, cursed_src);
+    }
 
     dummytrap.ttyp = TRAPPED_DOOR;
     const doorindex = game.level?.doorindex | 0;
@@ -1537,7 +1633,7 @@ export async function openone(zx, zy, num) {
                 await C.b_trapped('door', false);   /* NO_PART */
             } else {
                 await d_Norep(`You ${cansee(zx, zy) ? 'see'
-                    : (!game.u?.Deaf ? 'hear' : 'feel the shock of')} an explosion!`);
+                    : (!Deaf_hero() ? 'hear' : 'feel the shock of')} an explosion!`);
             }
             await C.wake_nearto(zx, zy, 11 * 11);
             lev.doormask = D_NODOOR;

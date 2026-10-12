@@ -483,7 +483,9 @@ function discard_flashes() {
 }
 
 // C ref: light.c:373 — (mon->mx == 0) implies migrating.
-function mon_is_local(mon) { return mon === HERO ? true : mon.mx > 0; }
+// youmonst.mx is 0, so the hero's own light (polymorphed into a flaming sphere
+// etc.) is global and travels with her between levels.
+function mon_is_local(mon) { return mon === HERO ? false : mon.mx > 0; }
 
 // C ref: light.c:375 find_mid(nid, fmflags).
 export function find_mid(nid, fmflags) {
@@ -738,7 +740,8 @@ export function carry_global_light_sources(prevLevel) {
     const dest = light_base();
     const kept = [];
     for (const ls of from) {
-        if (ls.type === LS_OBJECT && ls.id && !obj_is_local(ls.id)) dest.push(ls);
+        if ((ls.type === LS_OBJECT && ls.id && !obj_is_local(ls.id))
+            || (ls.type === LS_MONSTER && ls.id && !mon_is_local(ls.id))) dest.push(ls);
         else kept.push(ls);
     }
     prevLevel.light_base = kept;

@@ -44,7 +44,7 @@ import {
 } from './monflags_data.js';
 import { objects as OBJECTS } from './mkobj.js';
 import { acurr_eff, exercise, adjattrib } from './attrib.js';
-import { newsym, map_invisible, unmap_object, impossible, update_topl, urgent_topl, canseemon_shared, Hallucination_u as Hallucination, hold_botl_hp } from './display.js';
+import { newsym, map_invisible, unmap_object, impossible, update_topl, urgent_topl, You_feel, canseemon_shared, Hallucination_u as Hallucination, hold_botl_hp, status_hold } from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { is_home_elemental, monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { DEADMONSTER, mvitals_died, m_detach, wake_nearto_core } from './mon.js';
@@ -55,10 +55,10 @@ import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u }
 import { youmonst_data_pub as youmonst_data, worn_extrinsic } from './invent.js';
 import { has_innate } from './exper.js';
 import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu } from './mondata.js';
-import { Monnam, mon_nam, mhis } from './do_name.js';
+import { Monnam, mon_nam, mhis, mhe } from './do_name.js';
 import { Invis } from './monmove.js';
 import { Acid_resistance } from './explode.js';
-import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES } from './const.js';
+import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES, PROTECTION } from './const.js';
 
 const is_hero = (m) => m === YOUMONST;
 
@@ -69,7 +69,8 @@ const is_hero = (m) => m === YOUMONST;
 function See_invisible() {
     if (game.u?.formprops?.See_invisible) return true; /* FROMFORM: polyself.js set_uasmon() */
     const u = game.u || {};
-    return !!(u.uprops?.See_invisible || u.uprops?.HSee_invisible
+    // u.see_invis (jsmain.js accessor) also covers role/race innate sources.
+    return !!(u.see_invis || u.uprops?.See_invisible || u.uprops?.HSee_invisible
               || u.uprops?.ESee_invisible);
 }
 function Upolyd() { return !!game.u?.Upolyd; }
@@ -157,7 +158,7 @@ export async function u_slow_down() {
 // js/mhitm_ad.js AD_DISE hero arm used to draw nothing at all here.
 export async function diseasemu(mdat) {
     if (Sick_resistance()) {
-        await emitU('You feel a slight illness.');
+        await You_feel('a slight illness.');
         return false;
     }
     const u = game.u || {};
@@ -182,9 +183,9 @@ async function make_sick_u(xtime, cause, talk, type) {
     const old = u.uprops.Sick | 0;
     if (xtime > 0) {
         if (Sick_resistance()) return;
-        if (!old) await emitU('You feel deathly sick.');
+        if (!old) await You_feel('deathly sick.');
         else if (talk)
-            await emitU(`You feel ${xtime <= old / 2 ? 'much' : 'even'} worse.`);
+            await You_feel(`${xtime <= old / 2 ? 'much' : 'even'} worse.`);
         u.uprops.Sick = xtime;
         u.usick_type = (u.usick_type | 0) | type;
         u.sick = true;
@@ -275,8 +276,8 @@ export function magic_negation(mon) {
 }
 function EProtection() {
     const u = game.u || {};
-    return (u.uprops?.EProtection | 0) || (u.EProtection | 0)
-        || (game.EProtection | 0);
+    return worn_extrinsic(PROTECTION) | (u.uprops?.EProtection | 0)
+        | (u.EProtection | 0) | (game.EProtection | 0);
 }
 
 // ═══ mhitu.c:467 mtrapped_in_pit ════════════════════════════════════════════
@@ -602,9 +603,8 @@ export async function wildmiss(mtmp, mattk) {
 // not a field this port ever writes, so reading it made wildmiss() answer "not
 // displaced" for a hero every monmove.js set_apparxy() had already treated as
 // displaced, and the "strikes at your displaced image" line went missing.
-const CLOAK_OF_DISPLACEMENT_OTYP = 149;
 function Displaced() {
-    return (game.uarmc?.otyp === CLOAK_OF_DISPLACEMENT_OTYP
+    return (worn_extrinsic(41 /* DISPLACED */)
             || !!game.u?.uprops?.HDisplaced) ? 1 : 0;
 }
 function Underwater() { return game.u?.uinwater ? 1 : 0; }
@@ -814,7 +814,7 @@ export async function gulpmu(mtmp, mattk) {
         } else {
             await emitU(`${Monnam(mtmp)}${(u.uswldtim === 2) ? ' thoroughly'
                 : (u.uswldtim === 1) ? ' utterly' : ''} digests you!`);
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
         }
         break;
     case AD_PHYS:
@@ -832,7 +832,7 @@ export async function gulpmu(mtmp, mattk) {
         } else {
             await emitU(`You are ${enfolds(mtmp.data) ? 'being squashed'
                 : 'pummeled with debris'}!`);
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
         }
         break;
     case AD_ACID: {
@@ -843,7 +843,7 @@ export async function gulpmu(mtmp, mattk) {
         } else {
             await emitU(Hallucination() ? "Ouch!  You've been slimed!"
                                         : "You are covered in slime!  It burns!");
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             monstunseesu(M_SEEN_ACID);
         }
         break;
@@ -1130,8 +1130,16 @@ export async function gazemu(mtmp, mattk) {
                 const { polymon } = await import('./polyself.js');
                 if (await polymon(name_to_pmidx('stone golem'))) break;
             }
-            const { done_in_by } = await import('./end.js');
-            await done_in_by(mtmp, 8 /* STONING */);
+            /* C ref mhitu.c:1753 urgent_pline(): NOSTOP, so the message shows even
+               after an ESC dismissed an earlier --More-- this turn */
+            await urgent_topl('You turn to stone...');
+            const { pmname_of_pmidx } = await import('./makemon.js');
+            const { Mgender } = await import('./do_name.js');
+            game.killer = game.killer || {};
+            game.killer.format = KILLED_BY;
+            game.killer.name = pmname_of_pmidx(mtmp.data.pmidx, Mgender(mtmp));
+            const { done } = await import('./end.js');
+            await done(8 /* STONING */);
         }
         break;
     case AD_CONF:
@@ -1494,15 +1502,18 @@ export async function doseduce(mon) {
         switch (rn2(5)) {
         case 0:
             await emitU('You feel drained of energy.');
+            /* C sets no disp.botl here: the status keeps the old Pw */
+            status_hold('uen', u.uen);
+            status_hold('uenmax', u.uenmax);
             u.uen = 0;
             u.uenmax = (u.uenmax | 0) - rnd(Half_physical_damage_u() ? 5 : 10);
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
             if (u.uenmax < 0) u.uenmax = 0;
             break;
         case 1:
             await emitU('You are down in the dumps.');
             await adjattrib(A_CON, -1, true);
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
             game.botl = true;
             break;
         case 2:
@@ -1519,14 +1530,14 @@ export async function doseduce(mon) {
             } else {
                 await emitU('You have a curious feeling...');
             }
-            exercise(A_CON, false);
+            await exercise(A_CON, false);
             exercise(A_DEX, false);
             exercise(A_WIS_L, false);
             break;
         }
         case 4: {
             await emitU('You feel exhausted.');
-            exercise(A_STR, false);
+            await exercise(A_STR, false);
             const tmp = rn1(10, 6);
             const { losehp } = await import('./zap.js');
             await losehp(Half_physical_damage_u() ? Math.trunc((tmp + 1) / 2) : tmp,
@@ -1540,7 +1551,11 @@ export async function doseduce(mon) {
         switch (rn2(5)) {
         case 0:
             await emitU('You feel raised to your full potential.');
-            exercise(A_CON, true);
+            await exercise(A_CON, true);
+            /* C sets no disp.botl here: the status keeps the old Pw until a
+               later bot() (the next "takes N zorkmids" or turn-end flush). */
+            status_hold('uen', u.uen);
+            status_hold('uenmax', u.uenmax);
             u.uenmax = (u.uenmax | 0) + rnd(5);
             u.uen = u.uenmax;
             if (u.uenmax > (u.uenpeak | 0)) u.uenpeak = u.uenmax;
@@ -1548,7 +1563,7 @@ export async function doseduce(mon) {
         case 1:
             await emitU('You feel good enough to do it again.');
             await adjattrib(A_CON, 1, true);
-            exercise(A_CON, true);
+            await exercise(A_CON, true);
             game.botl = true;
             break;
         case 2:
@@ -1560,7 +1575,7 @@ export async function doseduce(mon) {
         case 3: {
             await emitU('That was a very educational experience.');
             const { pluslvl } = await import('./exper.js');
-            await pluslvl(false);
+            await pluslvl(false, emitU);
             exercise(A_WIS_L, true);
             break;
         }
@@ -1568,7 +1583,7 @@ export async function doseduce(mon) {
             await emitU('You feel restored to health!');
             u.uhp = u.uhpmax;
             if (Upolyd()) u.mh = u.mhmax;
-            exercise(A_STR, true);
+            await exercise(A_STR, true);
             game.disp_botl = true;
             break;
         }
@@ -1622,7 +1637,7 @@ function Half_physical_damage_u() {
 }
 const RIN_ADORNMENT = 173;   // js/mkobj.js objects[] index (verified by name)
 const A_CHAOTIC_L = -1, A_INT_L = 1, A_WIS_L = 2;   // C ref: attrib.h
-const mhe = (mon) => (gender(mon) === 1 ? 'she' : gender(mon) === 2 ? 'it' : 'he');
+/* mhe() is do_name.js's pronoun_gender()-based one: unseen monsters are "it". */
 
 // ═══ mhitu.c:2355 assess_dmg ════════════════════════════════════════════════
 export async function assess_dmg(mtmp, tmp) {
@@ -1731,7 +1746,10 @@ export async function passiveum(olduasmon, mtmp, mattk) {
         } else {
             tmp = 0;
         }
-        if (!rn2(30)) { /* erode_armor(mtmp, ERODE_CORRODE) */ }
+        if (!rn2(30)) {
+            const { erode_armor } = await import('./mhitm_ad.js');
+            await erode_armor(mtmp, 3 /* ERODE_CORRODE */);
+        }
         if (!rn2(6)) {
             const { acid_damage } = await import('./trap.js');
             await acid_damage(mtmp?.mw || null);
@@ -1943,6 +1961,7 @@ export function mhitu_ops() {
         Cold_resistance: () => Cold_resistance(),
         Shock_resistance: () => Shock_resistance(),
         Acid_resistance: () => Acid_resistance(),
+        Drain_resistance: async () => (await import('./zap.js')).Drain_resistance(),
         // C ref: zap.c ignite_items(gi.invent) after AD_FIRE's destroy_items.
         ignite_items_hero: async () => {
             const { ignite_items } = await import('./zap.js');

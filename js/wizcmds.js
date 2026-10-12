@@ -40,11 +40,21 @@ import { timer_stats } from './timeout.js';
 import { region_stats } from './region.js';
 import { Invocation_lev } from './trap.js';
 import { display_text_window } from './pager.js';
+import { S_vwall } from './symbols.js';
+import { rogue_symset } from './display.js';
+import { NHW_MENU, MENU_BEHAVE_STANDARD, MENU_ITEMFLAGS_NONE, NH_BASIC_COLOR } from './const.js';
+import { ATR_INVERSE, ATR_NONE, NO_COLOR } from './terminal.js';
+import { nhgetch } from './input.js';
+import {
+    fill_glyphid_cache, free_glyphid_cache, glyphid_cache_status,
+    wizcustom_glyphids,
+} from './glyphs.js';
+import { SYMSET_META, GLYPH_WALL_COLORS } from './symset-data.js';
 import { within_bounded_area } from './rect.js';
 import { depth } from './hacklib.js';
 import { size_wseg } from './worm.js';
 import { light_stats, light_sources_sanity_check } from './light.js';
-import { check_invent_gold, inventoryArray, ynq } from './invent.js';
+import { check_invent_gold, inventoryArray, ynq, youmonst_data } from './invent.js';
 import {
     monsterList, DEADMONSTER, dmonsfree, mon_sanity_check, usmellmon, mongone,
 } from './mon.js';
@@ -826,7 +836,7 @@ export async function wiz_smell() {
     const u = game.u;
     const cc = { x: u.ux, y: u.uy };
 
-    if (!olfaction(game.youmonst?.data)) {
+    if (!olfaction(youmonst_data())) {
         await pline('You are incapable of detecting odors in your present form.');
         return ECMD_OK;
     }
@@ -842,7 +852,7 @@ export async function wiz_smell() {
             if (u.usteed) {
                 mptr = u.usteed.data;
             } else {
-                mptr = game.youmonst?.data;
+                mptr = youmonst_data();
                 is_you = true;
             }
         } else if ((mtmp = m_at(cc.x, cc.y)) != null) {
@@ -856,7 +866,7 @@ export async function wiz_smell() {
            the two glyph tests read the same remembered-monster state that
            js/display.js map_invisible()/unmap_object() write. */
         const loc = game.level?.at(cc.x, cc.y);
-        const glyph_is_monster_here = !!m_at(cc.x, cc.y) && canspotmon(m_at(cc.x, cc.y));
+        const glyph_is_monster_here = !!loc?.disp_monster;
         const glyph_is_invisible_here = !!loc?.invisMon;
         /* Is it a monster? */
         if (mptr) {
@@ -895,15 +905,20 @@ export async function wiz_rumor_check() {
 // C ref: wizcmds.c:1117 size_obj(otmp).
 export function size_obj(otmp) {
     let sz = SIZEOF_OBJ;
+    /* this port keeps oname/omonst/omailcmd either inside obj.oextra or
+       directly on the object; both count as "has oextra" */
+    const oname = otmp.oname || ONAME(otmp);
+    const omonst = otmp.omonst || OMONST(otmp);
+    const omailcmd = otmp.omailcmd || OMAILCMD(otmp);
 
-    if (otmp.oextra) {
+    if (otmp.oextra || oname || omonst || omailcmd) {
         sz += SIZEOF_OEXTRA;
-        if (ONAME(otmp))
-            sz += ONAME(otmp).length + 1;
-        if (OMONST(otmp))
-            sz += size_monst(OMONST(otmp), false);
-        if (OMAILCMD(otmp))
-            sz += OMAILCMD(otmp).length + 1;
+        if (oname)
+            sz += oname.length + 1;
+        if (omonst)
+            sz += size_monst(omonst, false);
+        if (omailcmd)
+            sz += omailcmd.length + 1;
         /* sz += sizeof(unsigned) -- now part of oextra itself */
     }
     return sz;
@@ -980,20 +995,27 @@ export function contained_stats(win, src, totals) {
 // C ref: wizcmds.c:1228 size_monst(mtmp, incl_wsegs).
 export function size_monst(mtmp, incl_wsegs) {
     let sz = SIZEOF_MONST;
+    /* this port keeps the extra structs either inside mon.mextra or directly
+       on the monster; either way C would have a mextra for it */
+    const given = MGIVENNAME(mtmp);
+    const egd = mtmp.egd || EGD(mtmp), epri = mtmp.epri || EPRI(mtmp);
+    const eshk = mtmp.eshk || ESHK(mtmp), emin = mtmp.emin || EMIN(mtmp);
+    const edog = mtmp.edog || EDOG(mtmp), ebones = mtmp.ebones || EBONES(mtmp);
 
     if (mtmp.wormno && incl_wsegs)
         sz += size_wseg(mtmp);
 
-    if (mtmp.mextra) {
+    if (mtmp.mextra || mtmp.mcorpsenm != null || given || egd || epri
+        || eshk || emin || edog || ebones) {
         sz += SIZEOF_MEXTRA;
-        if (MGIVENNAME(mtmp))
-            sz += MGIVENNAME(mtmp).length + 1;
-        if (EGD(mtmp)) sz += SIZEOF_EGD;
-        if (EPRI(mtmp)) sz += SIZEOF_EPRI;
-        if (ESHK(mtmp)) sz += SIZEOF_ESHK;
-        if (EMIN(mtmp)) sz += SIZEOF_EMIN;
-        if (EDOG(mtmp)) sz += SIZEOF_EDOG;
-        if (EBONES(mtmp)) sz += SIZEOF_EBONES;
+        if (given)
+            sz += given.length + 1;
+        if (egd) sz += SIZEOF_EGD;
+        if (epri) sz += SIZEOF_EPRI;
+        if (eshk) sz += SIZEOF_ESHK;
+        if (emin) sz += SIZEOF_EMIN;
+        if (edog) sz += SIZEOF_EDOG;
+        if (ebones) sz += SIZEOF_EBONES;
         /* mextra->mcorpsenm doesn't point to more memory */
     }
     return sz;
@@ -1236,7 +1258,7 @@ export function migrsort_cmp(m1, m2) {
 // displays a count of migrating monsters and optionally lists them.
 export async function list_migrating_mons(nextlevl) {
     const u = game.u;
-    const migr = game.gm?.migrating_mons || []; /* dog.js gm_chains() */
+    const migr = game.migrating_mons || []; /* dog.js gm_chains() */
     let here = 0, nxtlv = 0, other = 0;
 
     for (const mtmp of migr) {
@@ -1543,61 +1565,237 @@ const FIRST_OBJECT = 18;
 /*  #wizcustom                                                        */
 /* ------------------------------------------------------------------ */
 
-// C ref: wizcmds.c:1934 wiz_custom() — see glyphmap customizations.
+// C ref: wizcmds.c:1934 wiz_custom() — #wizcustom, the glyphmap customization
+// listing.  A real NHW_MENU: the heading, then (end_menu's prompt + blank
+// first) one selectable line per customized glyph, shown with
+// select_menu(PICK_NONE) so tty's process_menu_window pages it.
 //
-// symbols.c's glyphid cache and wizcustom_glyphids() have no js/ port, and
-// without a loaded symset (or an ENHANCED_SYMBOLS utf8 override) every
-// glyphmap[] entry has customcolor == 0 and u == NULL, so wizcustom_callback()
-// adds no items: the menu is heading + prompt only.
+// The tree has no live glyphmap[]; glyphs.c's customcolor entries come from
+// the symset's `G_<wall>_<level>: /<color>` lines (see symset-data.js), so
+// wizcustom_glyphmap() reproduces the glyphmap[] fields wizcustom_callback()
+// reads for the primary symset.  utf8 (cgm->u) entries exist only for the
+// Enhanced1/2 symsets, which are not modeled: they list no items.
+const wiz_nul_glyphinfo = { glyph: -1 };
+let wizcustom_wt = null;    // wintty.js, loaded by wiz_custom()
+let wizcustom_sym = null;   // symset view for the glyphmap lookups
+
+// symbols.c gs.symset[PRIMARYSET] as the tree stores it: game.symset is the
+// selected name only, so look the rest up in dat/symbols' per-set data.
+function wizcustom_symset() {
+    const nm = String(game.symset || '');
+    const meta = nm ? SYMSET_META[nm.toLowerCase()] : null;
+    return {
+        name: meta ? meta.name : null,
+        handling: meta ? meta.handling : 0,
+        meta,
+        /* gc.currentgraphics is ROGUESET on the Rogue level, whose symset
+           carries no customizations */
+        active: !rogue_symset(),
+    };
+}
+
+const WIZCUSTOM_WALLS = ['vwall', 'hwall', 'tlcorn', 'trcorn', 'blcorn',
+                         'brcorn', 'crwall', 'tuwall', 'tdwall', 'tlwall',
+                         'trwall'];
+
+// The glyphmap[glyphnum] fields wizcustom_callback() reads: customcolor, the
+// cmap symbol index, its colour and the symbol shown (gs.showsyms[symidx]).
+function wizcustom_glyphmap(id) {
+    const sv = wizcustom_sym;
+    const m = /^G_([a-z]+)_(mines|gehennom|knox|sokoban)$/.exec(id);
+
+    if (!sv?.active || !sv.meta?.glyphcolors || !m
+        || game.iflags?.customcolors === false)
+        return null;
+    const w = WIZCUSTOM_WALLS.indexOf(m[1]);
+    if (w < 0)
+        return null;
+    return {
+        u: null,
+        customcolor: NH_BASIC_COLOR | GLYPH_WALL_COLORS[m[2]],
+        symidx: S_vwall + w,
+        color: defsyms[S_vwall + w].color,
+        showsym: sv.meta.walls[w],
+    };
+}
+
 export async function wiz_custom() {
     if (wizard()) {
         const wizcustom = '#wizcustom';
-        const win = [];
+        const wt = await import('./wintty.js');
+        const sv = wizcustom_symset();
+        let bufa;
+        let win;
 
-        win.push('    glyph  glyph identifier                        '
-                 + '     sym   clr customcolor unicode utf8');
-        let bufa = `${wizcustom}: colorcount=${game.iflags?.colorcount | 0} ${
-            game.symset?.[PRIMARYSET]?.name || 'default'}`;
-        if (game.currentgraphics === PRIMARYSET && game.symset?.[PRIMARYSET]?.name)
+        wizcustom_wt = wt;
+        wizcustom_sym = sv;
+        if (!glyphid_cache_status())
+            fill_glyphid_cache();
+
+        win = wt.tty_create_nhwindow(NHW_MENU);
+        wt.tty_start_menu(win, MENU_BEHAVE_STANDARD);
+        wt.tty_add_menu(win, wiz_nul_glyphinfo, {}, 0, 0, ATR_INVERSE, NO_COLOR,
+                        '    glyph  glyph identifier                        '
+                        + '     sym   clr customcolor unicode utf8',
+                        MENU_ITEMFLAGS_NONE);
+        bufa = `${wizcustom}: colorcount=${game.iflags?.colorcount ?? 256} ${
+            sv.name ? sv.name : 'default'}`;
+        if (sv.active && sv.name)
             bufa += ', active';
-        if (game.symset?.[PRIMARYSET]?.handling)
-            bufa += `, handler=${known_handling[game.symset[PRIMARYSET].handling]}`;
-        nyi_wizcustom_glyphids(win);
-        /* end_menu(win, bufa) + select_menu(win, PICK_NONE, &pick_list) */
-        win.push(bufa);
-        await display_text_window(win);
+        if (sv.handling)
+            bufa += `, handler=${known_handling[sv.handling]}`;
+        wizcustom_glyphids(win, wizcustom_callback);
+        wt.tty_end_menu(win, bufa);
+        await wizcustom_select_menu(wt, win);
+        wt.tty_destroy_nhwindow(win);
+        if (glyphid_cache_status())
+            free_glyphid_cache();
+        wizcustom_wt = wizcustom_sym = null;
         await docrt();
     } else {
         await unavail('wizcustom');
     }
     return ECMD_OK;
 }
-const PRIMARYSET = 0;   // include/sym.h
 // symbols.c known_handling[]
-const known_handling = ['UNKNOWN', 'default', 'IBMgraphics', 'DECgraphics',
-                        'MACgraphics', 'CURSESgraphics', 'UTF8graphics'];
+const known_handling = ['UNKNOWN', 'IBM', 'DEC', 'CURS', 'MAC', 'UTF8'];
+
+// C ref: wintty.c tty_select_menu(win, PICK_NONE) -> tty_display_nhwindow() ->
+// process_menu_window() for a menu that tty_end_menu() has laid out, then
+// tty_dismiss_nhwindow().  PICK_NONE: selectors only ring the bell, the paging
+// keys move between pages, return/ESC (or space on the last page) finish.
+async function wizcustom_select_menu(wt, win) {
+    const cw = wt.wins[win];
+    const disp = game.nhDisplay;
+    const cols = (disp && disp.cols) || 80;
+    const rows = (disp && disp.rows) || 24;
+    const lines = [];
+    for (let p = cw.mlist; p; p = p.next)
+        lines.push(p);
+    Object.assign(cw, wt.tty_menu_layout(lines.map((p) => p.str)));
+    cw.active = true;
+    const lmax = cw.lmax;
+    const npages = cw.npages;
+    const clearRow = (r) => {
+        for (let c = cw.offx; c < cols; c++)
+            disp.setCell(c, r, ' ', NO_COLOR, 0);
+    };
+    const renderPage = (curr_page) => {
+        const start = curr_page * lmax;
+        const end = Math.min(start + lmax, lines.length);
+        let row = 0;
+        let letter = 'a'.charCodeAt(0);
+
+        if (!cw.offx)
+            for (let r = 0; r < rows; r++)
+                clearRow(r);
+        for (let i = start; i < end; i++, row++) {
+            const p = lines[i];
+            clearRow(row);
+            if (!p.str)
+                continue;
+            if (p.identifier?.a_void) {
+                /* tty_end_menu() hands out 'a'..'z','A'..'Z' per page */
+                p.selector = String.fromCharCode(letter);
+                p.str = p.selector + p.str.slice(1);
+                letter = letter === 122 ? 65 : letter + 1;
+            }
+            disp.putstr(cw.offx + 1, row, p.str, p.color, p.attr);
+        }
+        const morestr = npages > 1 ? `(${curr_page + 1} of ${npages})`
+                                   : cw.morestr;
+        clearRow(row);
+        disp.putstr(cw.offx + 1, row, morestr, NO_COLOR, 0);
+        /* dmore() parks the cursor just past the morestr */
+        disp.setCursor(cw.offx + 1 + morestr.length, row);
+    };
+    const MENU_CMDS = '^|><.-@,\\~:';
+    let curr_page = 0;
+    let counting = false, reset_count = true, finished = false, count = 0;
+
+    while (!finished) {
+        if (reset_count) {
+            counting = false;
+            count = 0;
+        } else
+            reset_count = true;
+        renderPage(curr_page);
+        /* xwaitforspace(resp): anything outside resp[] is swallowed */
+        let ch;
+        for (;;) {
+            const k = await nhgetch();
+            ch = String.fromCharCode(k);
+            if (k === 27 || k === 10 || k === 13 || ' 0123456789'.includes(ch)
+                || MENU_CMDS.includes(ch))
+                break;
+            if (lines.some((p) => p.selector === ch && p.identifier?.a_void))
+                break;
+        }
+        switch (ch) {
+        case '0': case '1': case '2': case '3': case '4':
+        case '5': case '6': case '7': case '8': case '9':
+            count = count * 10 + (ch.charCodeAt(0) - 48);
+            if (count !== 0) {
+                counting = true;
+                reset_count = false;
+            }
+            break;
+        case '\x1b':
+            if (!counting)
+                finished = true;
+            break;
+        case '\n':
+        case '\r':
+            finished = true;
+            break;
+        case ' ':
+        case '>':
+            if (curr_page !== npages - 1)
+                curr_page++;
+            else if (ch === ' ')
+                finished = true;
+            break;
+        case '<':
+            if (curr_page !== 0)
+                --curr_page;
+            break;
+        case '^':
+            curr_page = 0;
+            break;
+        case '|':
+            curr_page = npages - 1;
+            break;
+        default:
+            /* PICK_NONE: every other accepted key only rings the bell */
+            break;
+        }
+    }
+    /* tty_dismiss_nhwindow() -> erase_menu_or_text() */
+    if (cw.offx === 0)
+        await wt.erase_menu_or_text(win, cw, false);
+    else
+        await docrt();
+    cw.active = false;
+}
 
 // C ref: wizcmds.c:1987 wizcustom_callback(win, glyphnum, id) — the per-glyph
-// callback symbols.c wizcustom_glyphids() drives; it only emits a menu line for
+// callback glyphs.c wizcustom_glyphids() drives; it only emits a menu line for
 // a glyph that actually carries a customization.
 export function wizcustom_callback(win, glyphnum, id) {
-    const glyphmap = game.glyphmap;
+    let clr = NO_COLOR;
 
-    if (win && id) {
-        const cgm = glyphmap?.[glyphnum];
-        if (!cgm) return;
-        /* ENHANCED_SYMBOLS is defined in the recorder build, so cgm->u counts */
-        if (cgm.u || (cgm.customcolor | 0) !== 0) {
-            const bufa = `[${padLeft(glyphnum, 4).replace(/ /g, '0')}] ${padRight(id, 44)}`;
-            const bufb = `'\\${padLeft(game.showsyms?.[cgm.sym?.symidx] | 0, 3)
-                .replace(/ /g, '0')}' ${padLeft(cgm.sym?.color | 0, 2).replace(/ /g, '0')}`;
-            const bufc = (cgm.customcolor | 0).toString(16).padStart(11, '0');
-            let bufu = '';
-            if (cgm.u && cgm.u.utf8str) {
-                bufu = `U+${(cgm.u.utf32ch | 0).toString(16).padStart(4, '0')}`;
-                for (const b of cgm.u.utf8str) bufu += ` <${b}>`;
-            }
-            win.push(`${bufa} ${bufb} ${bufc} ${bufu}`);
+    if (win != null && id) {
+        const cgm = wizcustom_glyphmap(id);
+        if (cgm && (cgm.u || cgm.customcolor !== 0)) {
+            const bufa = `[${String(glyphnum).padStart(4, '0')}] ${padRight(id, 44)}`;
+            const bufb = `'\\${String(cgm.showsym).padStart(3, '0')}' ${
+                String(cgm.color).padStart(2, '0')}`;
+            const bufc = cgm.customcolor.toString(16).padStart(11, '0');
+            const bufu = '';
+            const any = { a_int: glyphnum + 1, a_void: glyphnum + 1 }; /* avoid 0 */
+            wizcustom_wt.tty_add_menu(win, wiz_nul_glyphinfo, any, 0, 0, ATR_NONE,
+                                      clr, `${bufa} ${bufb} ${bufc} ${bufu}`,
+                                      MENU_ITEMFLAGS_NONE);
         }
     }
 }
@@ -1621,8 +1819,6 @@ async function nyi_hurtle(dx, dy, range, verbose) {
 }
 // panic.c panic(fmt, ...) -> js has no fatal-abort path
 function nyi_panic(_msg) {}
-// symbols.c wizcustom_glyphids(win) -> js/symbols.js
-function nyi_wizcustom_glyphids(_win) {}
 // do_wear.c check_wornmask_slots() -> js/do_wear.js
 function nyi_check_wornmask_slots() {}
 // wintty.c display_nhwindow(WIN_MESSAGE, TRUE) -> js/wintty.js (needs the

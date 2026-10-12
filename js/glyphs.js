@@ -91,8 +91,6 @@ nyi.unicodeval_to_utf8str = (uval, buf, n) =>
 nyi.add_custom_urep_entry = (nm, gi, u32, u8, ws) =>
     unported('utf8map.c add_custom_urep_entry()');
 nyi.set_map_u = (gm, u32, u8) => unported('utf8map.c set_map_u()');
-nyi.wizcustom_callback = (win, glyphnum, id) =>
-    unported('wizcustom.c wizcustom_callback()');
 
 /* hacklib.c dupstr(); alloc()+strcpy in C, a value copy here. */
 function dupstr(s) { return String(s ?? ''); }
@@ -1042,8 +1040,9 @@ export function dump_all_glyphids(fp) {
     parse_id(null, dump_glyphid_find);
 }
 
-/* C ref: glyphs.c:808 */
-export function wizcustom_glyphids(win) {
+/* C ref: glyphs.c:808.  `wizcustom_callback` is wizcmds.c's callback of that
+   name, passed in because glyphs.js cannot import wizcmds.js. */
+export function wizcustom_glyphids(win, wizcustom_callback) {
     let glyphnum, id;
 
     if (!glyphid_cache)
@@ -1051,7 +1050,7 @@ export function wizcustom_glyphids(win) {
     for (glyphnum = 0; glyphnum < MAX_GLYPH; ++glyphnum) {
         id = find_glyphid_in_cache_by_glyphnum(glyphnum);
         if (id) {
-            nyi.wizcustom_callback(win, glyphnum, id);
+            wizcustom_callback(win, glyphnum, id);
         }
     }
 }

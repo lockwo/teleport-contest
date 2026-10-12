@@ -149,16 +149,42 @@ function what_gives_artifact(propidx) {
 // C ref: attrib.c what_gives(&u.uprops[propidx].extrinsic) — the worn item
 // whose oc_oprop is `propidx`, or the artifact granting it, or null.
 function what_gives(propidx) {
-    for (const o of worn_property_sources())
-        if (OBJECTS[o.otyp]?.oc_oprop === propidx)
+    // C ref: artifact.c what_gives(): wornbits is E<prop>'s worn-slot bits, and
+    // an item matches only when its own slot bits equal them exactly, so two
+    // rings of one kind (both W_RINGL and W_RINGR set) match neither.
+    const srcs = worn_property_sources().filter((o) => OBJECTS[o.otyp]?.oc_oprop === propidx);
+    let wornbits = 0;
+    for (const o of srcs) wornbits |= (o.owornmask || 0) & W_GIVES_PROP;
+    for (const o of srcs)
+        if (wornbits && wornbits === ((o.owornmask || 0) & W_GIVES_PROP))
             return o;
+    // C ref: artifact.c:2419 — C matches ANY worn non-artifact object whose slot
+    // bits equal the property's extrinsic word, not just one whose oc_oprop is
+    // the property.  Dragon armor grants its property through
+    // dragon_armor_handling() (yellow: EStone_resistance |= W_ARM), which this
+    // port keeps on u.E<Prop>.
+    const hk = PROPKEY[propidx];
+    const eb = hk ? ((game.u?.[`E${hk.startsWith('H') ? hk.slice(1) : hk}`] | 0) & W_GIVES_PROP) : 0;
+    if (eb)
+        for (const o of worn_property_sources())
+            if (!o.oartifact && eb === ((o.owornmask || 0) & W_GIVES_PROP))
+                return o;
     return what_gives_artifact(propidx);
+}
+// C ref: E<Prop> != 0: any worn source counts, even when what_gives() cannot
+// name a single one (e.g. two rings of conflict).
+function has_extrinsic(propidx) {
+    /* the E<Prop> word, not a scan of the worn items: nhl_gamestate() leaves a
+       hero wearing gear whose extrinsics were wiped on tutorial exit */
+    return !!worn_extrinsic(propidx) || !!what_gives_artifact(propidx);
 }
 // C ref: prop.h <Prop> == E<Prop> || H<Prop>.  hkey names the u.uprops mirror
 // this port stores the intrinsic under (several modules write game.u[hkey]
 // directly, so both spellings are read).
 function haveProp(propidx, hkey) {
-    if (what_gives(propidx)) return true;
+    // C Prop == E<Prop> || H<Prop>: any worn source counts, even when
+    // what_gives() cannot name a single one (e.g. two rings of conflict).
+    if (has_extrinsic(propidx)) return true;
     if (hkey) {
         const base = hkey.startsWith('H') ? hkey.slice(1) : hkey;
         const keys = [hkey, base, `H${base}`, `E${base}`];
@@ -229,8 +255,16 @@ function from_what(propidx, hkey) {
                        /* FROMRACE alone (polysense()'s HWarn_of_mon) is not FROMOUTSIDE */
                        && !((H_prop(propidx) & FROMRACE) && !(H_prop(propidx) & FROMOUTSIDE))
                        && !temp_resist(propidx) /* timed only: no FROMOUTSIDE bit */
+                       /* timed-only See_invisible has no FROMOUTSIDE bit */
+                       && !(propidx === SEE_INVIS && !((H_prop(propidx) | 0) & FROMOUTSIDE))
                        /* HInvis keeps its timeout and FROMOUTSIDE bit in one word */
-                       && !(propidx === INVIS_PROP && !((game.u?.uprops?.HInvis | 0) & FROMOUTSIDE))) {
+                       && !(propidx === INVIS_PROP && !((game.u?.uprops?.HInvis | 0) & FROMOUTSIDE))
+                       /* Sleepy's countdown lives in the same word; only FROMOUTSIDE is intrinsic */
+                       && !(propidx === 27 /* SLEEPY */ && !((H_prop(propidx) | 0) & FROMOUTSIDE))
+                       /* Fumbling's countdown (HFumbling timeout) shares the word too */
+                       && !(propidx === FUMBLING && !((H_prop(propidx) | 0) & FROMOUTSIDE))
+                       /* a timeout-only Polymorph word is not FROMOUTSIDE either */
+                       && !(propidx === POLYMORPH && !((H_prop(propidx) | 0) & FROMOUTSIDE))) {
                 // C ref: attrib.c:872 `(*ability & FROMOUTSIDE) != 0`.  Read
                 // the intrinsic through H_prop() so the bare-name spelling
                 // several modules write (js/eat.js stores corpse intrinsics as
@@ -296,7 +330,7 @@ import { LL_WISH, LL_ACHIEVE, LL_UMONST, LL_DIVINEGIFT, LL_LIFESAVE,
          livelog_printf } from './livelog.js';
 import { nhgetch } from './input.js';
 import { can_pray_quiet } from './pray.js';
-import { currency, inv_weight, ysimple_name, is_weptool } from './invent.js';
+import { currency, inv_weight, ysimple_name, is_weptool, worn_extrinsic } from './invent.js';
 const _wizard = () => !!(game.flags && game.flags.debug);
 const _discover = () => { const f = game.flags || {}; return !!(f.explore || f.discover || f.playmode === 'explore'); };
 
@@ -579,22 +613,30 @@ export function enlightenment_lines(final = 0, basic = true) {
     enlLine('Your armor class ', final ? 'was ' : 'is ', acbuf, '');
 
     // wallet (bypasses you_have; leading space already supplied)
-    const umoney = game._goldCount ?? u.umoney ?? 0;
-    out(umoney ? ` Your wallet contain${final ? 'ed' : 's'} ${umoney} ${currency(umoney)}.`
-               : ` Your wallet ${final ? 'was' : 'is'} empty.`);
+    const umoney = money_cnt_invent(), hmoney = hidden_gold(final);
+    out((umoney ? ` Your wallet contain${final ? 'ed' : 's'} ${umoney} ${currency(umoney)}`
+                : ` Your wallet ${final ? 'was' : 'is'} empty`)
+        + (!hmoney ? '.' : !umoney ? ', but' : ', and'));
+    if (hmoney)
+        enlLine('you ', final ? 'had ' : 'have ',
+                `${hmoney} ${umoney ? 'more' : currency(hmoney)} stashed away in your pack`, '');
 
     // autopickup.  C ref: insight.c basics_enlightenment() — when on, names
     // the pickup_types restriction (oc_to_str(flags.pickup_types, ocl), or
     // "all types" when unset) and appends "plus thrown" when pickup_thrown
-    // applies to a non-empty restriction.  costly_spot (shop suppression) and
-    // the apelist exceptions clause are both omitted -> always the "else"/
-    // unset case (shops aren't modeled here; exceptions are always empty,
-    // see doset.js "autopickup exceptions   [(0 currently set)]").
+    // applies to a non-empty restriction; being in a shop inhibits autopickup
+    // and a non-empty autopickup-exceptions list adds ", with exceptions".
     let apbuf;
     if (game.flags?.pickup) {
-        const ocl = game.flags.pickup_types || '';
-        apbuf = `on for ${ocl ? `'${ocl}'` : 'all types'}`;
-        if ((game.flags.pickup_thrown ?? true) && ocl) apbuf += ' plus thrown';
+        apbuf = 'on';
+        if (costly_spot(u.ux, u.uy)) {
+            apbuf += ', but temporarily disabled while inside the shop';
+        } else {
+            const ocl = game.flags.pickup_types || '';
+            apbuf += ` for ${ocl ? `'${ocl}'` : 'all types'}`;
+            if ((game.flags.pickup_thrown ?? true) && ocl) apbuf += ' plus thrown';
+            if (game.apelist && game.apelist.length) apbuf += ', with exceptions';
+        }
     } else {
         apbuf = 'off';
     }
@@ -709,7 +751,7 @@ export function enlightenment_lines(final = 0, basic = true) {
         if (ispec(STRANGLED)) out(' You died from strangulation.');
         else youAre(`being strangled${_wizard() ? ` (${up.Strangled & TIMEOUT_MASK})` : ''}`);
     }
-    if ((up.Sick | 0) > 0 || u.sick) {
+    if ((up.Sick | 0) > 0 || u.sick || ispec(SICK)) {
         if (ispec(SICK)) {
             out(` You died from ${(u.usick_type & SICK_NONVOMITABLE)
                 ? 'terminal illness' : 'food poisoning'}.`);
@@ -799,13 +841,16 @@ export function enlightenment_lines(final = 0, basic = true) {
         if (_wizard()) slippery += ` (${up.Glib & TIMEOUT_MASK})`;
         youHave(slippery);
     }
+    // C ref: insight.c:1177 — Fumbling (fumble boots / intrinsic), before Sleepy.
+    if (Prop(FUMBLING) && (final || _wizard() || _discover() || cause_known(FUMBLING)))
+        enlLine('You ', final ? 'fumbled' : 'fumble', '', from_what_p(FUMBLING));
     // C ref: insight.c:1181 — Sleepy (worn/eaten amulet of restful sleep),
     // emitted immediately before the hunger line.  cause_known() is bypassed
     // whenever MAGICENLIGHTENMENT is on, which end-of-game disclosure always is.
     if (haveProp(27 /*SLEEPY*/, 'HSleepy')
         && (final || _wizard() || _discover() || cause_known(27))) {
         let sb = from_what(27, 'HSleepy');
-        if (_wizard()) sb += ` (${(u.HSleepy || 0) & TIMEOUT_MASK})`;
+        if (_wizard()) sb += ` (${((u.uprops?.Sleepy | 0) || (u.HSleepy || 0)) & TIMEOUT_MASK})`;
         enlLine('You ', final ? 'fell' : 'fall', ' asleep uncontrollably', sb);
     }
     // C ref: insight.c:1190 — Hunger (worn ring of hunger / amulet / hunger
@@ -1250,7 +1295,7 @@ export function record_achievement(achidx) {
     const absidx = Math.abs(achidx);
     if (u.uachieved.some((a) => Math.abs(a) === absidx)) return;
     u.uachieved.push(achidx);
-    if (game.program_state_gameover) return;
+    if (game.program_state?.gameover) return;
     if (absidx >= 23 && absidx <= 30 /* ACH_RNK1..ACH_RNK8, you.h */) {
         // C ref: insight.c:2449 record_achievement() — rank text/flag isn't
         // in achieve_msg[]'s static msg (role/gender-specific), built here.
@@ -1496,22 +1541,36 @@ function rank_to_xlev(rank) {
 // right-of-center corner offset and pages with "--More--" (parked right after
 // the last content line, not row 23) rather than the "(end)" a real
 // select_menu()-driven menu (e.g. #overview) uses.
-async function render_menu_window(lines, footer) {
-    return await render_conduct_menu(lines, footer);
+// (render_menu_window() was a one-line alias of render_conduct_menu(); the
+// putstr-window callers now go through display_putstr_window() below.)
+
+// C ref: nethack-c/recorder/win/tty/wintty.c (the build the sessions were
+// recorded with has `#define H2344_BROKEN`) tty_display_nhwindow() NHW_MENU arm
+// (offx, full-screen forcing).  A window filled by putstr() is a text window:
+// maxcol is max(strlen(line) + 1), maxrow the line count, and the morestr never
+// widens it.
+//   offx = min(min(82, cols / 2), cols - maxcol - 1);
+//   if (maxrow >= rows || !menu_overlay) offx = 0  (full screen)
+function text_window_offx(lines) {
+    const cols = game.nhDisplay?.cols || 80;
+    const rows = game.nhDisplay?.rows || 24;
+    let maxcol = 0;
+    for (const l of lines) maxcol = Math.max(maxcol, l.length + 1);
+    let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
+    if (offx < 0) offx = 0;
+    const ov = game.flags?.menu_overlay ?? game.iflags?.menu_overlay;
+    if (lines.length >= rows || ov === false) offx = 0;
+    return offx;
 }
 
+// The corner (offx > 0) form: drawn over the map from column offx, one page,
+// "--More--" parked right after the last content line.
 async function render_conduct_menu(lines, footer = '--More--') {
     const { NO_COLOR } = await import('./terminal.js');
     const disp = game.nhDisplay;
     if (!disp?.setCell) return;
     const cols = disp.cols || 80;
-    // C ref: wintty.c putstr() — cw->maxcol tracks max(strlen(line) + 1) over
-    // every line added (the morestr is appended later, after offx is fixed, so
-    // it never contributes).
-    let maxcol = 0;
-    for (const l of lines) maxcol = Math.max(maxcol, l.length + 1);
-    let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
-    if (offx < 0) offx = 0;
+    const offx = text_window_offx(lines);
     const textCol = offx + 1;
     for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
     const moreRow = lines.length;
@@ -1524,12 +1583,43 @@ async function render_conduct_menu(lines, footer = '--More--') {
     disp.setCursor(textCol + footer.length, moreRow);
 }
 
-// C ref: insight.c show_conduct(final) -> display_nhwindow()+destroy_nhwindow()
-// — shared by doconduct() (final=ENL_GAMEINPROGRESS/0) and end.c disclose()'s
-// 'c' query (final=ENL_GAMEOVERALIVE/1 or ENL_GAMEOVERDEAD/2, both of which
-// conduct_lines()'s truthy `final` check treats identically: past tense).
-export async function show_conduct_disclosure(final) {
-    const lines = conduct_lines(final);
+// C ref: wintty.c process_text_window() with offx == 0 — a full-screen text
+// window: (rows - 1) lines per page, "--More--" at the foot of every page but
+// parked right after the last line on the final one (an NHW_MENU window's
+// morestr, not pinned to row 23 like NHW_TEXT's).  ESC cancels the rest.
+async function page_text_window(lines) {
+    const { renderWindowScreen } = await import('./invent.js');
+    const perPage = (game.nhDisplay?.rows ?? 24) - 1;
+    let i = 0;
+    while (i < lines.length) {
+        const take = Math.min(perPage, lines.length - i);
+        const chunk = lines.slice(i, i + take);
+        i += take;
+        renderWindowScreen(chunk, {
+            menu: false, footer: '--More--', footerRow: take, footerCol: 1,
+            modal: 'enlightenment',
+        });
+        let cancelled = false;
+        for (;;) {
+            const key = await nhgetch();
+            if (key === 27) { cancelled = true; break; }
+            if (key === 32 || key === 13 || key === 10) break;
+        }
+        if (cancelled) break;
+    }
+}
+
+// C ref: display_nhwindow(win, TRUE) + destroy_nhwindow() on an NHW_MENU filled
+// only by putstr(): the corner box for a short list, otherwise the paged
+// full-screen text window; the map is restored afterwards (docorner() for the
+// corner form, docrt() for the full-screen one).
+async function display_putstr_window(lines) {
+    if (text_window_offx(lines) === 0) {
+        const { dismiss_invent_screen } = await import('./invent.js');
+        await page_text_window(lines);
+        await dismiss_invent_screen();
+        return;
+    }
     await render_conduct_menu(lines);
     for (;;) {
         const key = await nhgetch();
@@ -1537,6 +1627,14 @@ export async function show_conduct_disclosure(final) {
     }
     const { flush_screen } = await import('./display.js');
     await flush_screen(1);
+}
+
+// C ref: insight.c show_conduct(final) -> display_nhwindow()+destroy_nhwindow()
+// — shared by doconduct() (final=ENL_GAMEINPROGRESS/0) and end.c disclose()'s
+// 'c' query (final=ENL_GAMEOVERALIVE/1 or ENL_GAMEOVERDEAD/2, both of which
+// conduct_lines()'s truthy `final` check treats identically: past tense).
+export async function show_conduct_disclosure(final) {
+    await display_putstr_window(conduct_lines(final));
 }
 
 // C ref: insight.c doconduct() — the #conduct command.
@@ -1574,6 +1672,11 @@ export async function show_attributes_disclosure(final, basic = true) {
     // (final!=0, basic=true+MAGICENLIGHTENMENT) always exceeds one page, so it
     // keeps going through the full-screen branch below unchanged.
     const npages = Math.max(1, Math.ceil(lines.length / perPage));
+    if (!final && (npages > 1 || lines.length + 1 >= rows)) {
+        // C ref: enlightenment() en_via_menu: multi-page menu, "(n of m)".
+        const { attributes_menu_lines } = await import('./invent.js');
+        return attributes_menu_lines(lines);
+    }
     let i = 0;
     while (i < lines.length) {
         const take = Math.min(perPage, lines.length - i);
@@ -1656,7 +1759,7 @@ import { is_pool, is_lava, is_pool_or_lava } from './dbridge.js';
 import { AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_ACID, AD_DGST, AD_MAGM,
          AD_DRST, AD_DRLI, dmgtype } from './monattk_data.js';
 import { surface, Is_bigroom } from './dungeon.js';
-import { trap_explanation } from './trap.js';
+import { trapname } from './trap.js';
 import { t_at } from './mkroom.js';
 import { fingers_or_gloves, stuck_ring } from './do_wear.js';
 import { which_armor } from './worn.js';
@@ -1708,13 +1811,7 @@ async function show_putstr_window(lines, dumping) {
         for (const s of lines) insight_dumplog.push({ text: s, attr: 0 });
         return;
     }
-    await render_menu_window(lines);
-    for (;;) {
-        const key = await nhgetch();
-        if (key === 27 || key === 13 || key === 10 || key === 32) break;
-    }
-    const { flush_screen } = await import('./display.js');
-    await flush_screen(1);
+    await display_putstr_window(lines);
 }
 function start_menu(win, behave) { const w = _wins.get(win); if (w) w.behave = behave; }
 function add_menu_str(win, s) { putstr(win, ATR_NONE, s); }
@@ -1788,7 +1885,7 @@ function strcmpi(a, b) {
 // C ref: hacklib.c ordin() — "st"/"nd"/"rd"/"th".
 function ordin(n) {
     const dd = n % 10;
-    return (dd === 0 || dd > 3 || (n % 100) / 10 === 1) ? 'th'
+    return (dd === 0 || dd > 3 || Math.trunc((n % 100) / 10) === 1) ? 'th'
         : (dd === 1) ? 'st' : (dd === 2) ? 'nd' : 'rd';
 }
 // C ref: hacklib.c the() / objnam.c the() — "the <foo>" unless already proper.
@@ -1974,11 +2071,11 @@ function H_prop(propidx) {
     if (!key) return 0;
     const p = game.u?.uprops || {};
     // polyself.js set_uasmon() mirrors a flying/floating FORM into the bare
-    // u.uprops.Flying/Levitation (value 1) for trap.c; that is the FROMFORM bit,
+    // u.uprops.Flying/Levitation (FROMFORM bit) for trap.c; that is the FROMFORM bit,
     // not an intrinsic, so it must not read as FROMOUTSIDE here.
     if (propidx === FLYING || propidx === LEVITATION) {
         const bare = key.replace(/^H/, '');
-        if (game.u?.formprops?.[bare] && (p[bare] | 0) === 1
+        if (game.u?.formprops?.[bare] && (p[bare] | 0) === FROMFORM
             && !(p[`H${bare}`] | 0) && !(game.u?.[`H${bare}`] | 0)) return FROMFORM;
     }
     return (p[key] | 0) || (game.u?.[key] | 0)
@@ -1988,7 +2085,13 @@ function H_prop(propidx) {
         || (game.u?.formprops?.[key.replace(/^H/, '')] ? FROMFORM : 0);
 }
 // C ref: youprop.h E<Prop> — worn/wielded gear whose oc_oprop is `propidx`.
-function E_prop(propidx) { return what_gives(propidx) ? 1 : 0; }
+function E_prop(propidx) {
+    if (has_extrinsic(propidx)) return 1;
+    // do_wear.js dragon_armor_handling() keeps the E<Prop> bits (WA_ARM etc.)
+    // directly on u under the C macro name.
+    const key = PROPKEY[propidx];
+    return key && (game.u?.[`E${key.startsWith('H') ? key.slice(1) : key}`] | 0) ? 1 : 0;
+}
 // C ref: youprop.h B<Prop> — the `blocked` column, which this port does not
 // model (see the block comment above): always 0.
 function B_prop(_propidx) { return 0; }
@@ -2102,7 +2205,7 @@ export function trap_predicament(_outbuf, final, wizxtra) {
     default: /* TT_BEARTRAP, TT_PIT, or TT_WEB */
         outbuf = 'trapped';
         if ((t = t_at(u.ux, u.uy)) !== 0 && t)  /* should never be null */
-            outbuf += ` in ${an(trap_explanation(t.ttyp))}`;
+            outbuf += ` in ${an(trapname(t.ttyp, false))}`;
         break;
     }
     if (wizxtra) { /* give extra information for wizard mode enlightenment */
@@ -4346,7 +4449,7 @@ export async function list_vanquished(defquery, ask) {
      * For end-of-game disclosure, we're only called when some monsters were
      * vanquished and won't reach these 'else-if's.
      */
-    } else if (!game.program_state_gameover) {
+    } else if (!game.program_state?.gameover) {
         /* #vanquished rather than final disclosure, so pline() is ok */
         await pline('No creatures have been vanquished.');
     } else if (dumping) {
@@ -4423,7 +4526,7 @@ export async function list_genocided(defquery, ask) {
     let klwin;
     let buf;
     let genoing, dumping;
-    let both = !!(game.program_state_gameover || _wizard() || _discover());
+    let both = !!(game.program_state?.gameover || _wizard() || _discover());
 
     dumping = (defquery === 'd');
     genoing = (defquery === 'g');
@@ -4516,7 +4619,7 @@ export async function list_genocided(defquery, ask) {
         }
 
     /* See the comment for similar code near the end of list_vanquished(). */
-    } else if (!game.program_state_gameover) {
+    } else if (!game.program_state?.gameover) {
         /* #genocided rather than final disclosure, so pline() is ok and
            extinction has been ignored */
         await pline(`No creatures have been genocided${genoing ? ' yet' : ''}.`);

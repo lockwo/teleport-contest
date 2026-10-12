@@ -16,7 +16,7 @@
 import { game } from './gstate.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
-         M_SEEN_POISON, TELEDS_TELEPORT, Is_waterlevel } from './const.js';
+         M_SEEN_POISON, TELEDS_TELEPORT, Is_waterlevel, POISON_RES } from './const.js';
 import { cansee, block_point, unblock_point, does_block, Blind } from './vision.js';
 // js/monflags_data.js is a generated LEAF module (no imports of its own), so
 // naming it here cannot create an import cycle or a TDZ edge.
@@ -92,10 +92,21 @@ export function inside_region(reg, x, y) {
     return reg.rects.some((r) => inside_rect(r, x, y));
 }
 
+// C ref: region.c MONST_INC / add_mon_to_reg() capacity growth: the monster-id
+// array grows 5 slots at a time and never shrinks, which #stats reports.
+const MONST_INC = 5;
+function reg_push_mon(reg, mon) {
+    if ((reg.max_monst | 0) <= reg.monsters.length)
+        reg.max_monst = (reg.max_monst | 0) + MONST_INC;
+    reg.monsters.push(mon);
+}
+
 // C ref: region.c add_region(reg) — activate a region: register it, sweep its
 // bounding box for monsters/hero already inside it, and (if visible) block
 // line of sight through every covered cell and redraw it.
 export async function add_region(reg) {
+    if ((game.max_regions | 0) <= regions().length)
+        game.max_regions = (game.max_regions | 0) + 10; /* C: grows the array by 10 */
     regions().push(reg);
     const b = reg.boundingBox;
     const { newsym } = await import('./display.js');
@@ -105,7 +116,7 @@ export async function add_region(reg) {
             const isInside = inside_region(reg, x, y);
             if (isInside) {
                 const mtmp = (game.level?.monsters || []).find((m) => !m.mridden && m.mx === x && m.my === y);
-                if (mtmp && !reg.monsters.includes(mtmp)) reg.monsters.push(mtmp);
+                if (mtmp && !reg.monsters.includes(mtmp)) reg_push_mon(reg, mtmp);
             }
             if (reg.visible) {
                 if (isInside) block_point(x, y);
@@ -151,6 +162,7 @@ export async function remove_region(reg) {
 // clear_level_structures, and save_regions()'s release_data arm).
 export function clear_regions() {
     game.regions = [];
+    game.max_regions = 0;
 }
 
 // ── per-turn processing ──────────────────────────────────────────────────
@@ -181,7 +193,11 @@ export async function run_regions() {
     for (const reg of list) {
         if (reg.ttl > 0) reg.ttl--;
         if (reg.insideF !== INSIDE_GAS_CLOUD) continue;
-        if (reg.heroInside) await inside_gas_cloud(reg, null);
+        if (reg.heroInside) {
+            await inside_gas_cloud(reg, null);
+            /* C: done() never returns when the hero dies in the cloud. */
+            if (game.program_state?.gameover) return;
+        }
         for (let j = 0; j < reg.monsters.length; j++) {
             const mtmp = reg.monsters[j];
             const dead = !mtmp || (mtmp.mhp != null && mtmp.mhp <= 0);
@@ -194,13 +210,13 @@ export async function run_regions() {
         }
     }
 
-    const { update_topl } = await import('./display.js');
+    const { update_topl, You_see } = await import('./display.js');
     if (dissWithin) {
         await update_topl('The gas cloud around you dissipates.');
         if ((game.u?.xray_range ?? 0) <= 1) dissSeen = 0;
     }
     if (dissSeen) {
-        await update_topl(`You see ${dissSeen === 1 ? 'a' : 'some'} gas cloud${dissSeen === 1 ? '' : 's'} dissipate.`);
+        await You_see(`${dissSeen === 1 ? 'a' : 'some'} gas cloud${dissSeen === 1 ? '' : 's'} dissipate.`);
     }
 }
 
@@ -276,7 +292,7 @@ export function m_in_out_region(mon, x, y) {
     }
     for (const reg of regions()) {
         if (reg.attach2m === mon) continue;
-        if (!reg.monsters.includes(mon) && inside_region(reg, x, y)) reg.monsters.push(mon);
+        if (!reg.monsters.includes(mon) && inside_region(reg, x, y)) reg_push_mon(reg, mon);
     }
     // C ref: region.c:533 m_in_out_region() returns TRUE unless a region's
     // can_enter_f/can_leave_f callback vetoes the move — the same callbacks
@@ -300,7 +316,7 @@ export function update_monster_region(mon) {
     for (const reg of regions()) {
         const inside = inside_region(reg, mon.mx, mon.my);
         const has = reg.monsters.includes(mon);
-        if (inside && !has) reg.monsters.push(mon);
+        if (inside && !has) reg_push_mon(reg, mon);
         else if (!inside && has) remove_mon_from_reg(reg, mon);
     }
 }
@@ -377,6 +393,8 @@ async function make_gas_cloud(cloud, damage, insideCloud) {
 // newsym() cell by cell and reordering them would change what the gameplay
 // path redraws.
 function add_region_nodisplay(reg) {
+    if ((game.max_regions | 0) <= regions().length)
+        game.max_regions = (game.max_regions | 0) + 10; /* C: grows the array by 10 */
     regions().push(reg);
     const b = reg.boundingBox;
     for (let x = b.lx; x <= b.hx; x++) {
@@ -384,7 +402,7 @@ function add_region_nodisplay(reg) {
             if (!isok(x, y)) continue;
             if (!inside_region(reg, x, y)) continue;
             const mtmp = (game.level?.monsters || []).find((m) => !m.mridden && m.mx === x && m.my === y);
-            if (mtmp && !reg.monsters.includes(mtmp)) reg.monsters.push(mtmp);
+            if (mtmp && !reg.monsters.includes(mtmp)) reg_push_mon(reg, mtmp);
             if (reg.visible) block_point(x, y);
         }
     }
@@ -644,8 +662,7 @@ export function add_mon_to_reg(reg, mon) {
        only include it once no matter how many segments the region contains */
     if (mon_in_region(reg, mon))
         return;
-    /* C grows reg->monsters by MONST_INC here; a JS array grows itself */
-    reg.monsters.push(mon);
+    reg_push_mon(reg, mon);
 }
 
 // C ref: region.c:192 remove_mon_from_reg(reg, mon) — it left or died.  The
@@ -704,6 +721,7 @@ export function clone_region(reg) {
     ret_reg.heroInside = reg.heroInside;
     ret_reg.herosFault = reg.herosFault;
     ret_reg.monsters = reg.monsters.slice();
+    ret_reg.max_monst = reg.max_monst | 0;
     /* fields C's clone_region does NOT copy, so neither do we: enter_msg,
        leave_msg, inside_f, visible, glyph, arg */
     return ret_reg;
@@ -778,9 +796,7 @@ export function region_stats(hdrfmt) {
         size += (rg.rects?.length | 0) * SIZEOF_NHRECT;
         if (rg.enterMsg) size += rg.enterMsg.length + 1;
         if (rg.leaveMsg) size += rg.leaveMsg.length + 1;
-        /* C uses max_monst * sizeof *rg->monsters (unsigned m_id); a JS array
-           has no separate capacity, so n_monst stands in for max_monst */
-        size += (rg.monsters?.length | 0) * 4;
+        size += (rg.max_monst | 0) * 4; /* sizeof *rg->monsters (unsigned m_id) */
     }
     return { hdrbuf, count, size };
 }
@@ -863,6 +879,7 @@ export function rest_regions(nhfp) {
     game.regions = saved.slice();
     game.max_regions = game.regions.length;
     for (const r of game.regions) {
+        r.max_monst = r.monsters?.length | 0;
         /* check for expired region */
         if (r.ttl >= 0)
             r.ttl = (r.ttl > tmstamp) ? r.ttl - tmstamp : 0;
@@ -968,8 +985,17 @@ function Breathless() {
 function Poison_resistance() {
     if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const p = game.u?.uprops || {};
+    // C ref: youprop.h Poison_resistance == HPoison_resistance |
+    // EPoison_resistance (a worn ring/armor) | FROMEXPER/FROMRACE.  Role and
+    // race grants (Healers start poison resistant, every orc has it) are never
+    // stored as an H*/E* flag in this port, so derive them with has_innate()
+    // exactly as potion.js/explode.js do.  Without it a Healer standing in a
+    // harmless vapor cloud prayed into TROUBLE_REGION instead of TROUBLE_HIT
+    // (seed n602 nz16 step 367).
     return !!(p.HPoison_resistance || p.EPoison_resistance
-              || p.PoisonResistance || p.Poison_resistance);
+              || p.PoisonResistance || p.Poison_resistance)
+        || has_innate('HPoison_resistance')
+        || ((game.u?.uprops_extrinsic || {})[POISON_RES] | 0) !== 0;
 }
 function Hallucination() {
     const u = game.u;

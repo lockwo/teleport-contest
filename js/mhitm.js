@@ -25,6 +25,7 @@
 // gas-spore explosion (mon_explodes, via js/explode.js) are now wired below.
 
 import { game } from './gstate.js';
+import { PLNMSG_HIDE_UNDER } from './const.js';
 import { s_suffix, an } from './hacklib.js';
 import { hitval, possibly_unwield } from './weapon.js';
 import { rn2, rnd, d } from './rng.js';
@@ -39,8 +40,8 @@ import { DEADMONSTER, mvitals_died, resurrect_kop, healmon, unstuck, vamp_stone,
     level_specific_nocorpse, vamprises } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
-import { update_topl, Deaf_hero, Hallucination_u } from './display.js';
-import { make_corpse, dmgval, mhitm_knockback, seemimicLocal } from './uhitm.js';
+import { update_topl, Deaf_hero, Hallucination_u, You_hear } from './display.js';
+import { make_corpse, dmgval, mhitm_knockback, seemimicLocal, shade_miss as shade_miss_mm, canspotmon as mm_can_spot_mon } from './uhitm.js';
 import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './const.js';
 // used only by the appended mhitm.c translations at the bottom of this file
 import { IS_OBSTRUCTED, IS_TREE, IRONBARS, D_CLOSED, D_LOCKED } from './const.js';
@@ -92,8 +93,8 @@ async function emitMMmsg(msg) {
 // hero has infravision: a warm monster on an unlit square is canspotmon but
 // NOT cansee, and its fight is silent.
 function mm_visible(magr, mdef) {
-    return (cansee(magr.mx, magr.my) && mm_can_see_mon(magr))
-        || (cansee(mdef.mx, mdef.my) && mm_can_see_mon(mdef));
+    return (cansee(magr.mx, magr.my) && mm_can_spot_mon(magr))
+        || (cansee(mdef.mx, mdef.my) && mm_can_spot_mon(mdef));
 }
 
 // C ref: mhitm.c:41 pre_mm_attack() — called at the top of hitmm()/missmm(),
@@ -108,7 +109,7 @@ function mm_visible(magr, mdef) {
 // display and monmove decisions.
 function pre_mm_attack(magr, mdef) {
     let showit = false;
-    const vis = mm_visible(magr, mdef);
+    const vis = gv_vis;                /* C: pre_mm_attack() reads gv.vis, set by mattackm() */
     for (const m of [mdef, magr]) {
         if (m.m_ap_type) {                 // mon.c seemimic(m)
             seemimicLocal(m);
@@ -119,9 +120,9 @@ function pre_mm_attack(magr, mdef) {
         }
     }
     if (!vis) return;
-    if (!mm_can_see_mon(magr)) map_invisible(magr.mx, magr.my);
+    if (!mm_can_spot_mon(magr)) map_invisible(magr.mx, magr.my);
     else if (showit) newsym(magr.mx, magr.my);
-    if (!mm_can_see_mon(mdef)) map_invisible(mdef.mx, mdef.my);
+    if (!mm_can_spot_mon(mdef)) map_invisible(mdef.mx, mdef.my);
     else if (showit) newsym(mdef.mx, mdef.my);
 }
 
@@ -142,7 +143,7 @@ async function noises(magr, mattk) {
         game.far_noise = farq;
         game.noisetime = game.moves;
         const what = (mattk && mattk.aatyp === AT_EXPL) ? 'an explosion' : 'some noises';
-        await emitMMmsg(`You hear ${what}${farq ? ' in the distance' : ''}.`);
+        await You_hear(`${what}${farq ? ' in the distance' : ''}.`);
     }
 }
 
@@ -310,6 +311,7 @@ function mm_ops() {
         grow_up,
         monkilled: monkilled_mm,
         mondied: killMonster,
+        corpse_chance,
         monstone: monstone_mm,
         set_skipdrin: () => { gs_skipdrin = true; },
         // hero-defender only; mhitm.js never dispatches with mdef == youmonst.
@@ -418,7 +420,14 @@ export async function thrwmmDeps() {
         make_blinded: make_blinded_hero, BlindedTimeout,
         vision_clears: async () => { await emitMMmsg('Your vision clears.'); },
         pline_slip: async (mon, obj) => {
-            await emitMMmsg(`${MM.mshot_xname(obj)} slips as ${
+            /* C ref: mthrowu.c:625-628 — ammo "misfires", anything else
+               `Tobjnam(obj, "slip")` ("The <obj> slips as <mon> throws it!") */
+            const { otense, is_ammo } = await import('./invent.js');
+            if (is_ammo(obj)) {
+                await emitMMmsg(`${Monnam(mon)} misfires!`);
+                return;
+            }
+            await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} ${otense(obj, 'slip')} as ${
                 mon_nam(mon)} throws it!`);
         },
         delobj,
@@ -707,7 +716,12 @@ async function corpse_chance(mdef) {
     const mdat = permonst(mdef);
 
     // Vlad and the liches crumble to dust: no corpse, NO rn2.
-    if (mdat?.name === 'Vlad the Impaler' || mdat?.mcls === S_LICH) return false;
+    if (mdat?.name === 'Vlad the Impaler' || mdat?.mcls === S_LICH) {
+        const swallowed = !!(game.mswallower && attacktype_at(game.mswallower, AT_ENGL));
+        if (cansee(mdef.mx, mdef.my) && !swallowed)
+            await emitMMmsg(`${s_suffix(Monnam(mdef))} body crumbles into dust.`);
+        return false;
+    }
 
     // Gas spores always explode on death.
     for (const a of mattk_list(mdef)) {
@@ -729,7 +743,7 @@ async function corpse_chance(mdef) {
             // contains its own blast instead of detonating: it damages the
             // swallower directly and draws no further RNG (mon_explodes()
             // rolls its own independent d(); this branch never calls it).
-            await emitMMmsg('You hear an explosion.');
+            await You_hear('an explosion.');
             swallower.mhp = (swallower.mhp | 0) - tmp;
             if (DEADMONSTER(swallower)) await killMonster(swallower);
             if (DEADMONSTER(swallower)) {
@@ -803,6 +817,10 @@ async function killMonster(mdef, withCorpse = true, be_sad = false) {
     // right after the lifesaving check, BEFORE m_detach() and mondied()'s
     // corpse_chance() rolls (so any --More-- it forces lands ahead of them).
     if (be_sad) await emitMMmsg('You have a sad feeling for a moment, then it passes.');
+    if (mdef.data?.pmidx === 110 /* PM_STEAM_VORTEX */) {
+        const { create_gas_cloud } = await import('./region.js');
+        await create_gas_cloud(mdef.mx, mdef.my, rn2(10) + 5, 0); /* harmless */
+    }
     await resurrect_kop(mdef);
     // C ref: mon.c mondead() — "if (glyph_is_invisible(...)) unmap_object(...)"
     // runs before m_detach.  A defender killed this same attack may have just
@@ -815,26 +833,40 @@ async function killMonster(mdef, withCorpse = true, be_sad = false) {
     // C ref: mon.c mondead() -> m_detach() -> mon_leaving_level() -> unstuck()
     // (mon.c:2703), whose re-grab rnd(2) precedes mondied()'s corpse_chance().
     await unstuck(mdef);
-    const dropCorpse = withCorpse && await corpse_chance(mdef); // mon.c:3181
     const mx = mdef.mx, my = mdef.my;
     // Detach from the level so the renderer (m_at / MON_AT) stops drawing it.
     // The dead monster's coordinates are intentionally left intact: mattackm
     // still consults them for the post-attack passivemm adjacency guard (which
     // returns early for a dead defender anyway, so no extra RNG is drawn), and
     // make_corpse() places the cadaver at those same coordinates.
+    // C ref: mon.c mon_leaving_level() — a long worm's tail squares leave the
+    // map grid together with its head (remove_worm), and m_detach() later
+    // wormgone()s the rest.
+    if (mdef.wormno) (await import('./worm.js')).remove_worm(mdef);
     const list = game.level?.monsters;
     if (list) {
         const idx = list.indexOf(mdef);
         if (idx >= 0) list.splice(idx, 1);
     }
+    // C ref: mon.c mon_leaving_level() ends with newsym(mx, my), before relobj().
+    if (mx > 0) newsym(mx, my);
     // C ref: mon.c m_detach(due_to_death) -> relobj(mtmp, 1, FALSE) — the dead
     // monster's inventory hits the floor BEFORE the corpse, so it sits under it.
     { const { relobj } = await import('./uhitm.js'); await relobj(mdef, mx, my); }
+    await (await import('./mon.js')).thiefdead_shkgone(mdef);
+    if (mdef.wormno) (await import('./worm.js')).wormgone(mdef);
+    // C ref: mon.c:3181 mondied() — corpse_chance() runs AFTER mondead()'s
+    // m_detach() has already dropped the inventory (relobj above).
+    const dropCorpse = withCorpse && await corpse_chance(mdef); // mon.c:3181
     // C ref: mon.c mondied — make_corpse only when corpse_chance passed AND the
     // square can hold a corpse (accessible terrain or a pool).
+    // C ref: mon.c:935 make_corpse() ends with newsym(x, y) itself, so the
+    // redraw below only covers the no-corpse case (a second newsym on a
+    // hallucinated corpse square would burn an extra display-RNG draw).
+    let corpse = null;
     if (dropCorpse && mx > 0 && my >= 0 && (accessible(mx, my) || is_pool(mx, my)))
-        await make_corpse(mdef, mx, my);
-    if (mx > 0 && my > 0) newsym(mx, my);
+        corpse = await make_corpse(mdef, mx, my);
+    if (!corpse && mx > 0 && my > 0) newsym(mx, my);
 }
 
 // C ref: makemon.c:2051 grow_up(mtmp, victim) — the killer may gain HP/levels.
@@ -1174,7 +1206,7 @@ export async function failed_grab(magr, mdef, mattk) {
         && (mattk.aatyp === AT_HUGS || mattk.adtyp === AD_WRAP
             || mattk.adtyp === AD_STCK || mattk.adtyp === AD_DGST)) {
         const udef = is_youmonst_mm(mdef), uatk = is_youmonst_mm(magr);
-        if (uatk || udef || (mm_visible(magr, mdef) && mm_can_see_mon(mdef))) {
+        if (uatk || udef || (gv_vis && mm_can_spot_mon(mdef))) {
             const verb = (mattk.adtyp === AD_DGST) ? 'gulp'
                 : (mattk.adtyp === AD_STCK) ? 'adhere' : 'grab';
             await emitMMmsg(`${uatk ? 'Your' : s_suffix(Monnam(magr))} ${verb} attempt`
@@ -1232,7 +1264,11 @@ function helpless_mm(mtmp) {
 async function hitmm(magr, mdef, mattk, mwep, dieroll) {
     pre_mm_attack(magr, mdef);
     const compat = !magr.mcan ? could_seduce(magr, mdef, mattk) : 0;
-    if (mm_visible(magr, mdef)) {
+    // C ref: mhitm.c:660 — a non-silver, non-blessed blow passes harmlessly
+    // through a shade; the attack bypasses mdamagem() (no damage roll).
+    if (!compat && await shade_miss_mm(magr, mdef, mwep, false, gv_vis))
+        return M_ATTK_MISS;
+    if (gv_vis) {
         if (compat) {
             await emitMMmsg(`${Monnam(magr)}`
                 + ` ${mdef.mcansee ? 'smiles at' : 'talks to'}`
@@ -1242,12 +1278,19 @@ async function hitmm(magr, mdef, mattk, mwep, dieroll) {
             await emitMMmsg(`${s_suffix(Monnam(magr))} tentacles suck`
                 + ` ${mon_nam(mdef)}.`);
         } else {
-            // C ref: mhitm.c:691 — a hug by a monster that is not (yet) holding
-            // the hero "squeezes"; otherwise it falls through to "hits".
+            // C ref: mhitm.c:691-701 -- a hug by a monster that is not (yet)
+            // holding the hero "squeezes"; an artifact weapon's "hits" is
+            // suppressed here (mhitm_ad_phys emits it after artifact_hit()
+            // knows whether a special message was given).
+            const weaponhit = mattk.aatyp === AT_WEAP || (mattk.aatyp === AT_CLAW && mwep);
             const verb = (mattk.aatyp === AT_HUGS && magr !== game.u?.ustuck)
                 ? 'squeezes' : hit_verb(mattk.aatyp);
-            await emitMMmsg(`${Monnam(magr)} ${verb}`
-                + ` ${mon_nam(mdef)}.`);
+            const isHitsDefault = verb === 'hits';
+            if (!isHitsDefault || !weaponhit || !mwep || !mwep.oartifact) {
+                const { mon_nam_too } = await import('./do_name.js');
+                await emitMMmsg(`${Monnam(magr)} ${verb}`
+                    + ` ${mon_nam_too(mdef, magr)}.`);
+            }
         }
     } else {
         await noises(magr, mattk);
@@ -1258,7 +1301,7 @@ async function hitmm(magr, mdef, mattk, mwep, dieroll) {
 // ── mhitm.c:76 missmm ────────────────────────────────────────────────────────
 async function missmm(magr, mdef, mattk) {
     pre_mm_attack(magr, mdef);
-    if (mm_visible(magr, mdef)) {
+    if (gv_vis) {
         const seduces = !magr.mcan && could_seduce(magr, mdef, mattk);
         await emitMMmsg(`${Monnam(magr)}`
             + ` ${seduces ? 'pretends to be friendly to' : 'misses'}`
@@ -1297,7 +1340,15 @@ export async function mattackm(magr, mdef) {
         mdef.mundetected = 0;
         newsym(mdef.mx, mdef.my);
         if (mm_can_see_mon(mdef))
-            await emitMMmsg(`Suddenly, you notice ${a_monnam(mdef)}.`);
+        {
+            /* C ref: mhitm.c:342-348 */
+            if (game.last_msg === PLNMSG_HIDE_UNDER && mdef.m_id === game.last_hider)
+                await emitMMmsg(`${Monnam(mdef)} emerges from hiding.`);
+            else if (mdef.m_id === game.last_hider)
+                await emitMMmsg(`You notice ${mon_nam(mdef)}.`);
+            else
+                await emitMMmsg(`Suddenly, you notice ${a_monnam(mdef)}.`);
+        }
     }
 
     if (is_elf_flag(pa) && is_orc_flag(pd)) tmpBase++;  // mhitm.c:353
@@ -1317,7 +1368,7 @@ export async function mattackm(magr, mdef) {
         res[i] = M_ATTK_MISS;
 
         // target might no longer be there (after the first attack)
-        if (i > 0 && (m_at(mdef.mx, mdef.my) !== mdef
+        if (i > 0 && (m_at(game.bhitpos?.x, game.bhitpos?.y) !== mdef
                       || DEADMONSTER(magr) || DEADMONSTER(mdef)))
             continue;
 
@@ -1365,7 +1416,7 @@ export async function mattackm(magr, mdef) {
                 await possibly_unwield(magr, false);   // mhitm.c:409
                 mwep = MON_WEP_MM(magr);
                 if (mwep) {
-                    if (mm_visible(magr, mdef)) await mswingsm(magr, mdef, mwep);
+                    if (gv_vis) await mswingsm(magr, mdef, mwep);
                     tmp += hitval_mm(mwep, mdef);      // mhitm.c:412
                 }
             }
@@ -1397,7 +1448,7 @@ export async function mattackm(magr, mdef) {
                     const { clone_mon } = await import('./makemon.js');
                     const mclone = await clone_mon(mdef, 0, 0);
                     if (mclone) {
-                        if (mm_visible(magr, mdef) && mm_can_see_mon(mdef))
+                        if (gv_vis && mm_can_spot_mon(mdef))
                             await emitMMmsg(`${Monnam(mdef)} divides as ${mon_nam(magr)} hits it!`);
                         const { mon_mintrap } = await import('./monmove.js');
                         await mon_mintrap(mclone, 0 /*NO_TRAP_FLAGS*/);
@@ -1558,12 +1609,17 @@ function resists_magm_mm(mon) {
         || attacktype_ad(mon, AD_RBRE);
 }
 
-// C ref: rm.h remove_monster(x,y) — clears svl.level.monsters[x][y].  See the
-// header note: this port has no such grid, so there is nothing to clear.
-function mm_remove_monster(x, y) { void x; void y; }
+// C ref: rm.h remove_monster(x,y) — clears svl.level.monsters[x][y].  This port
+// has no such grid, so the monster is flagged instead.
+function mm_remove_monster(x, y) {
+    // The monster stays in the chain at its coordinates but leaves the grid
+    // (m_at() skips it) until mm_place_monster() puts it back.
+    const m = m_at(x, y);
+    if (m) m.mgridoff = true;
+}
 // C ref: steed.c:898 place_monster(mon, x, y) — the grid write plus the
 // coordinate write.  Only the coordinates exist here.
-function mm_place_monster(mon, x, y) { mon.mx = x; mon.my = y; mon.mstate = 0; }
+function mm_place_monster(mon, x, y) { mon.mx = x; mon.my = y; mon.mstate = 0; mon.mgridoff = false; }
 
 const Trap_Killed_Mon = 2;
 
