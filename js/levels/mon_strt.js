@@ -16,6 +16,7 @@ import {
 import {
     DART_TRAP, quest_align_shuffle, quest_finalize, quest_level_init_fill,
     quest_terrain_at, quest_trap,
+    quest_non_diggable,
 } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -104,7 +105,8 @@ export async function makemaz_mon_strt() {
         const abbots = [[32, 7], [32, 8], [32, 11], [32, 12],
                         [33, 7], [33, 8], [33, 11], [33, 12]];
         for (const [ax, ay] of abbots) quest_create_monster('abbot', ax, ay, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(18,03,55,16)) — no RNG.
+        quest_non_diggable(18, 3, 55, 16);
         for (let i = 0; i < 2; i++) {
             const c = quest_rndcoord(spacelocs);
             if (c) { await maketrap(c.x, c.y, DART_TRAP); rnd(4); }

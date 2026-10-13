@@ -623,6 +623,7 @@ async function do_improvisation(instr) {
 export async function do_play_instrument(instr) {
     const u = game.u;
     const { xname } = await import('./invent.js');
+    const { can_blow } = await import('./mondata.js');
     if (Underwater()) {
         await update_topl("You can't play music underwater!");
         return ECMD_OK;
@@ -630,7 +631,7 @@ export async function do_play_instrument(instr) {
     if ((instr.otyp === WOODEN_FLUTE || instr.otyp === MAGIC_FLUTE
          || instr.otyp === TOOLED_HORN || instr.otyp === FROST_HORN
          || instr.otyp === FIRE_HORN || instr.otyp === BUGLE)
-        && !can_blow_u()) {
+        && !can_blow()) {
         await update_topl(`You are incapable of playing the ${xname(instr)}.`);
         return ECMD_OK;
     }
@@ -728,13 +729,6 @@ export async function do_play_instrument(instr) {
         }
     }
     return ECMD_TIME;
-}
-
-// C ref: mondata.h can_blow(mon) — a hero who is not strangled/underwater and
-// has a mouth (not breathless, not a nolimbs blob) can blow an instrument.
-function can_blow_u() {
-    if (uprop('Strangled')) return false;
-    return true;
 }
 
 // C ref: dungeon.c Is_stronghold(&u.uz) — const.js already resolves it against

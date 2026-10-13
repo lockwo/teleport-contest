@@ -13,6 +13,7 @@ import {
 import {
     PIT, quest_align_shuffle, quest_finalize, quest_level_init_fill,
     quest_monster, quest_trap, quest_wallify_map,
+    quest_non_diggable,
 } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -100,7 +101,8 @@ export async function makemaz_cav_strt() {
                               [21, 2], [21, 1], [22, 1], [26, 9]];
         for (const [nx, ny] of neanderthals)
             quest_create_monster('neanderthal', nx, ny, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(00,00,75,19)) — no RNG.
+        quest_non_diggable(0, 0, 75, 19);
         await quest_trap(PIT, 47, 11);
         await quest_trap(PIT, 57, 10);
         for (let i = 0; i < 4; i++) await quest_trap();

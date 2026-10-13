@@ -29,7 +29,7 @@ import {
     invlet_basic, inventoryArray, near_capacity, inv_weight, xname, corpse_xname, killer_xname,
     obj_doname as doname, otense, currency, merge_choice, addinv, freeinv, flush_artitouch,
     obj_here, prinv, prinv_fmt, is_worn, count_unpaid, count_buc, look_here, tally_BUCX,
-    ansimpleoname, display_inventory_interactive,
+    ansimpleoname, display_inventory_interactive, Stone_resistance_hero,
     describe_decor, sortloot, unsortloot, will_feel_cockatrice, feel_cockatrice,
     SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, SORTLOOT_PETRIFY,
     GETOBJ_EXCLUDE, GETOBJ_EXCLUDE_SELECTABLE, GETOBJ_DOWNPLAY, GETOBJ_SUGGEST,
@@ -489,7 +489,7 @@ export function u_safe_from_fatal_corpse(obj, tests) {
     if (((tests & st_gloves) && game.uarmg)
         || ((tests & st_corpse) && obj?.otyp !== CORPSE)
         || ((tests & st_petrifies) && !touch_petrifies_pm(obj?.corpsenm))
-        || ((tests & st_resists) && game.Stone_resistance))
+        || ((tests & st_resists) && Stone_resistance_hero()))
         return true;
     return false;
 }

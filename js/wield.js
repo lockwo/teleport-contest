@@ -389,29 +389,6 @@ function u_wield_art(art) { return is_art(game.uwep, art); }
 // C ref: objnam.c Tobjnam(obj, verb) — capitalised "The <obj> <verbs>".
 function Tobjnam(obj, verb) { return highc(aobjnam(obj, verb)); }
 
-// ── cant_wield_corpse (C ref: wield.c:137) ─────────────────────────────────
-//
-// "Prevent wielding a cockatrice when not wearing gloves --KAA".  Returns TRUE
-// after killing the hero, so every caller must treat TRUE as "abort".
-// js/wield.js:230 notes the uswapwep arm of this test as dead in the covered
-// sessions; this is the function that arm calls.
-export async function cant_wield_corpse(obj, deps = {}) {
-    if (game.uarmg || obj.otyp !== CORPSE_OTYP
-        || !deps.touch_petrifies?.(obj.corpsenm)
-        || deps.Stone_resistance?.())
-        return false;
-
-    await pline(`You wield ${deps.corpse_xname?.(obj, null, /* CXN_PFX_THE */ 4)
-                             ?? `the ${xname_c(obj)}`} in your bare `
-                + `${makeplural(body_part(HAND))}.`);
-    const kbuf = `wielding ${deps.killer_xname?.(obj) ?? xname_c(obj)} bare-handed`;
-    await deps.instapetrify?.(kbuf);
-    return true;
-}
-// C ref: objects.h CORPSE.  (makeplural()/body_part()/HAND are already in
-// this file, at lines 187, 32 and the invent.js import.)
-const CORPSE_OTYP = 265;
-
 // ── finish_splitting (C ref: wield.c:345) ─────────────────────────────────
 //
 // "obj was split off from something; give it its own invlet."  freeinv() then

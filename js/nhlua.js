@@ -1713,6 +1713,10 @@ export async function nhl_gamestate(...args) {
         for (const k of Object.keys(u))
             if (!(k in gg.gmst_ubak)) delete u[k];
         Object.assign(u, _clone_data(gg.gmst_ubak));
+        /* C's rank() is computed from u.ulevel on every status redraw; this
+           port caches the title in urole.rank.m, so refresh it after the
+           in-place struct u restore changed u.ulevel */
+        (await import('./exper.js')).update_rank();
         disco_commit(gg.gmst_disco);
         game.mvitals = _clone_data(gg.gmst_mvitals);
         /* clear user-given object type names */

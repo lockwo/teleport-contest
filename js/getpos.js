@@ -530,19 +530,17 @@ let gloc_filter_floodfill_match_glyph = -1;
 // do_screen_description_() below is the one that matters.
 // ---------------------------------------------------------------------------
 
-// C ref: pager.c:779 do_screen_description(cc, ter_typ, glyph, out_str,
-// firstmatch, for_supplement).  UNPORTED as a named function: the live
-// equivalent is the `describe()` closure inside js/hack.js:1925 plus
-// terrain_description() at js/hack.js:1410, both module-private.
-//
-// Keep in mind when wiring: C dispatches on the DISPLAYED glyph, not
-// levl[][].typ.  A square drawn blank is S_stone, and defsym.h's PCHAR2 row
-// makes defsyms[S_stone].explanation == "stone" — the "dark part of a room"
-// string in that row is the TILE NAME, not the explanation.  Returning
-// {firstmatch} mirrors C's `*firstmatch` out-parameter; C's return value is
-// "did anything match", which is what gates the whole of auto_describe().
-async function do_screen_description_(_cc, _ter_typ, _glyph, _out_str) {
-    return null;   /* UNPORTED: nothing matched, so auto_describe() prints nothing */
+// C ref: pager.c:1247 do_screen_description().  The pager owns the canonical
+// displayed-glyph dispatch, including mimics, remembered terrain, and traps.
+// Use its out-parameter boxes rather than trying to derive a description from
+// levl[][].typ here: getpos's cursor can be over a glyph whose terrain differs
+// from the underlying map square.
+async function do_screen_description_(cc, ter_typ, glyph, out_str) {
+    const { do_screen_description } = await import('./pager.js');
+    const out = { s: String(out_str ?? '') };
+    const firstmatch = { s: '' };
+    const found = do_screen_description(cc, ter_typ, glyph, out, firstmatch, null);
+    return found ? { firstmatch: firstmatch.s, out: out.s } : null;
 }
 
 // C ref: pline.c custompline(pflags, fmt, ...) / display.c curs(window, x, y) /
@@ -567,8 +565,10 @@ async function docrt_flags_(_flags) {
     await docrt();
 }
 
-// C ref: hack.c:1531 is_valid_travelpt(x, y) — port is js/hack.js:1526, private.
-function is_valid_travelpt_(_x, _y) { return true; }
+async function is_valid_travelpt_(x, y) {
+    const { is_valid_travelpt } = await import('./hack.js');
+    return is_valid_travelpt(x, y);
+}
 
 // C ref: selvar.c selection_force_newsyms(sel) / set_selection_floodfillchk(f)
 // / selection_floodfill(ov, x, y, diagonals) / selection_free(sel, freesel).

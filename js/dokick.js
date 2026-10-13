@@ -1238,7 +1238,7 @@ async function really_kick_object(x, y) {
     // stoned golem hero, else instapetrify with a "kicking X barefoot" killer).
     if (!game.uarmf && gk_kickedobj.otyp === CORPSE
         && touch_petrifies_k(gk_kickedobj.corpsenm)
-        && !game.u?.uprops?.Stone_resistance) {
+        && !(await import('./invent.js')).Stone_resistance_hero()) {
         await update_topl(`You kick ${corpse_xname(gk_kickedobj, null, 4 /* CXN_PFX_THE */)} with your bare ${
             makeplural(body_part(FOOT))}.`);
         const { instapetrify } = await import('./polyself.js');

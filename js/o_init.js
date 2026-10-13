@@ -24,7 +24,7 @@ import {
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { game } from './gstate.js';
 import { exercise } from './attrib.js';
-import { ATR_INVERSE } from './terminal.js';
+import { menuHeadAttr } from './menuattr.js';
 import { A_WIS } from './const.js';
 import { Hallucination_u } from './display.js';
 
@@ -1738,7 +1738,7 @@ async function disco_menu_style() {
     return menu_style();
 }
 // C ref: flag.h iflags.menu_headings.attr — ATR_INVERSE by default.
-function disco_menu_heading_attr() { return game.iflags?.menu_headings?.attr ?? ATR_INVERSE; }
+function disco_menu_heading_attr() { return menuHeadAttr(); }
 // C ref: objclass.h def_char_to_objclass(sym) — scan def_oc_syms for the symbol,
 // returning MAXOCLASSES when it names no class.  js/invent.js:1281,
 // js/options.js:1570 and js/readobjnam.js:87 each keep a private copy.

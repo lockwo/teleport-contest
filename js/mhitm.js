@@ -83,8 +83,11 @@ let gs_skipdrin = false;
 // underneath) before replacing it.  This inline timing is what makes the
 // map-under-each-frame match C (the dead defender is still drawn until its
 // death message's predecessor has been paged).
-async function emitMMmsg(msg) {
+// `mon` = C's pline_mon(mon, ...): the message is about that monster's square,
+// which accessiblemsg turns into a "(north): " prefix.
+async function emitMMmsg(msg, mon = null) {
     if (!msg) return;
+    if (mon) (await import('./hack.js')).set_msg_xy(mon.mx, mon.my);
     await update_topl(msg);
 }
 
@@ -487,7 +490,7 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
                 return M_ATTK_HIT;              /* no damage during the polymorph */
             }
             if (gv_vis && mm_can_see_mon(magr))
-                await emitMMmsg(`${Monnam(magr)} turns to stone!`);
+                await emitMMmsg(`${Monnam(magr)} turns to stone!`, magr);
             await monstone_mm(magr);
             return M_ATTK_AGR_DIED;
         }
@@ -567,7 +570,7 @@ export async function monkilled_mm(mdef, adtyp, cause = '') {
     // C: `fltxt != NULL && cansee` prints the death line; a NULL fltxt (the
     // disintegration path) is silent and defers the pet sad feeling.
     if (cause !== null && cansee(mdef.mx, mdef.my))
-        await emitMMmsg(`${Monnam(mdef)} is ${nonliving(mdef) ? 'destroyed' : 'killed'}${cause ? ` by the ${cause}` : ''}!`);
+        await emitMMmsg(`${Monnam(mdef)} is ${nonliving(mdef) ? 'destroyed' : 'killed'}${cause ? ` by the ${cause}` : ''}!`, mdef);
     else
         be_sad = !!mdef.mtame;
     // C: gd.disintegested = (how == AD_DGST || how == -AD_RBRE
@@ -587,7 +590,7 @@ async function explmm(magr, mdef, mattk) {
     if (magr.mcan) return M_ATTK_MISS;
 
     if (cansee(magr.mx, magr.my))
-        await emitMMmsg(`${Monnam(magr)} explodes!`);
+        await emitMMmsg(`${Monnam(magr)} explodes!`, magr);
     else
         await noises(magr, mattk);
 
@@ -719,7 +722,7 @@ async function corpse_chance(mdef) {
     if (mdat?.name === 'Vlad the Impaler' || mdat?.mcls === S_LICH) {
         const swallowed = !!(game.mswallower && attacktype_at(game.mswallower, AT_ENGL));
         if (cansee(mdef.mx, mdef.my) && !swallowed)
-            await emitMMmsg(`${s_suffix(Monnam(mdef))} body crumbles into dust.`);
+            await emitMMmsg(`${s_suffix(Monnam(mdef))} body crumbles into dust.`, mdef);
         return false;
     }
 
@@ -748,9 +751,9 @@ async function corpse_chance(mdef) {
             if (DEADMONSTER(swallower)) await killMonster(swallower);
             if (DEADMONSTER(swallower)) {
                 if (mm_can_see_mon(swallower))
-                    await emitMMmsg(`${Monnam(swallower)} rips open!`);
+                    await emitMMmsg(`${Monnam(swallower)} rips open!`, swallower);
             } else if (mm_can_see_mon(swallower)) {
-                await emitMMmsg(`${Monnam(swallower)} seems to have indigestion.`);
+                await emitMMmsg(`${Monnam(swallower)} seems to have indigestion.`, swallower);
             }
             return false;
         }
@@ -772,6 +775,7 @@ async function corpse_chance(mdef) {
         + (verysmall(mdat) ? 1 : 0);
     return !rn2(tmp);                         // mon.c:3248
 }
+export { corpse_chance as corpse_chance_mm };
 
 // C ref: monmove.c accessible(x,y) — ACCESSIBLE(typ)==typ>=DOOR && !closed_door.
 // Kill sites in the contest sessions are open floor/corridor/doorway; no closed
@@ -1014,7 +1018,11 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
         assess = true;
         break;
     case AD_ENCH:
-        /* drain_item(mwep) — no message, no RNG */
+        /* KMH -- remove enchantment (disenchanter); no message */
+        if (mhitb && !mdef.mcan && mwep) {
+            const { drain_item } = await import('./zap.js');
+            await drain_item(mwep, false);
+        }
         break;
     default:
         break;
@@ -1107,7 +1115,7 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
         // monkilled(magr, "", adtyp) — the death line, then the detach/corpse.
         let be_sad = false;
         if (cansee(magr.mx, magr.my))
-            await emitMMmsg(`${Monnam(magr)} is ${nonliving(magr) ? 'destroyed' : 'killed'}!`);
+            await emitMMmsg(`${Monnam(magr)} is ${nonliving(magr) ? 'destroyed' : 'killed'}!`, magr);
         else
             be_sad = !!magr.mtame;
         await killMonster(magr);

@@ -180,8 +180,9 @@ async function cursetxt(mtmp, undirected) {
         const { update_topl } = await import('./display.js');
         await update_topl(`${Monnam(mtmp)} points ${point_msg}.`);
     } else if (!((game.moves | 0) % 4) || !rn2(4)) {
-        // Norep("You hear a mumbled curse.") — Deaf hero hears nothing.
-        if (!Deaf()) {
+        // Norep("You hear a mumbled curse.") — Deaf hero hears nothing, and
+        // pline.c vpline() drops a message identical to gp.prevmsg.
+        if (!Deaf() && game._prevmsg !== 'You hear a mumbled curse.') {
             const { update_topl } = await import('./display.js');
             await update_topl('You hear a mumbled curse.');
         }

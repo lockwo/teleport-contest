@@ -8,11 +8,11 @@ import { NetHackPanic } from './panic.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { nhgetch } from './input.js';
-import { ATR_INVERSE, NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
+import { NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
 import { makedog } from './dog.js';
 import { rhack, dosearch, dosearch0, donull, monster_nearby } from './cmd.js';
-import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning, m_at } from './display.js';
+import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning, m_at, status_hold, bot_snapshot } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals, Blind } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
@@ -36,6 +36,7 @@ import { Unaware,
     A_ORIGINAL, A_CURRENT, Upolyd,
     Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC, WRITING } from './const.js';
 import { near_capacity, reroll_menu, setnotworn, freeinv, worn_extrinsic } from './invent.js';
+import { menuHeadAttr } from './menuattr.js';
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { settrack } from './track.js';
@@ -359,6 +360,12 @@ async function newgame_real() {
     await docrt();
     await flush_screen(1);
     await bot();
+    /* C ref: tty status fields are republished only when changed; the legend
+       pager still shows the weapon/armor fields of the first bot(), which
+       ran before u_init_inventory() (no weapon, nothing worn). */
+    status_hold('weapon', 'Bare-hnds');
+    status_hold('armor', 'Naked');
+    bot_snapshot(true);
 
     // C ref: allmain.c:817-823 — the OPTIONS=reroll confirm-or-reroll menu,
     // right after the first post-mklev bot() and before u_init_skills_
@@ -413,7 +420,14 @@ async function newgame_real() {
     // every session that doesn't set spot_monsters.)
     const { notice_all_mons, notice_mon_on } = await import('./hack.js');
     notice_mon_on();
-    await notice_all_mons(true);
+    /* C: `if (a11y.glyph_updates) dolookaround(); else notice_all_mons(TRUE);`
+       (glyph_updates is the `mention_map` boolean) */
+    if (g.flags?.mention_map) {
+        const { dolookaround } = await import('./cmd.js');
+        await dolookaround();
+    } else {
+        await notice_all_mons(true);
+    }
     // C ref: allmain.c welcome(TRUE) — "guarantee that 'major' event category
     // is never empty": the very first gamelog line.
     livelog_printf(LL_ACHIEVE, `${welcomePlname()} the${welcomeBuf()} entered the dungeon`);
@@ -562,6 +576,7 @@ async function enter_tutorial_level() {
         exclusion_zones: g.exclusion_zones, lastseentyp: g.lastseentyp,
     };
     g.level = g._tutorial_level;
+    g.stairs = g._tutorial_stairs || null;
     g.fmon = g.level.monsters;
     g._in_tutorial = true;
 
@@ -654,7 +669,7 @@ async function ask_do_tutorial() {
 
     const renderMenu = (pass) => {
         const lines = [
-            { text: 'Do you want a tutorial?', attr: ATR_INVERSE },
+            { text: 'Do you want a tutorial?', attr: menuHeadAttr() },
             { text: '' },
             { text: 'y - Yes, do a tutorial' },
             { text: 'n - No, just start play' },
@@ -894,9 +909,11 @@ const SEARCHING_AT_LEVEL = Object.freeze({
 });
 
 // C ref: hack.h Searching — does the hero have intrinsic Searching (HSearching)?
-// Only the role-granted intrinsic is modelled (no ring of searching / lenses in
-// the gameplay sessions).  When set, the moveloop runs dosearch0(1) each turn.
+// Role-granted, timed/granted HSearching and worn/wielded ESearching.  When set, the moveloop runs dosearch0(1) each turn.
 function youHaveSearching() {
+    const p = game.u?.uprops;
+    // HSearching (granted/timed) and ESearching (ring, Excalibur) halves.
+    if (((p?.HSearching | 0) !== 0) || worn_extrinsic(34 /*SEARCHING*/) !== 0) return true;
     const mnum = gameRoleMnum();
     const lvl = SEARCHING_AT_LEVEL[mnum];
     if (lvl == null) return false;
@@ -1088,7 +1105,7 @@ export async function moveloop_turn() {
         let monscanmove;
         do {
             monscanmove = await movemon();
-            if (process.env.NHDBG) console.error('DBG movemon ret', monscanmove, 'umov', g.u.umovement, 'moves', g.moves, 'rng', (await import('./rng.js')).getRngLog().length);
+            if (process.env.NHDBG) console.error('DBG movemon ret', monscanmove, 'umov', g.u.umovement, 'moves', g.moves, 'pos', g.u.ux, g.u.uy, 'rng', (await import('./rng.js')).getRngLog().length);
             if (g.u.umovement >= NORMAL_SPEED) break; // hero's turn again
             if (g.program_state?.gameover) break;      // hero died mid-movemon
         } while (monscanmove);
@@ -1396,6 +1413,11 @@ export async function moveloop_turn() {
             }
         }
     } while (g.u.umovement < NORMAL_SPEED);
+
+    // C ref: allmain.c moveloop_core() — done() never returns, so a death in
+    // the monster-movement loop skips the hero-took-time tail below (the
+    // clairvoyance rn1(31,15) reload, sink_into_lava/pooleffects, under_water).
+    if (g.program_state?.gameover) return;
 
     /* C ref: allmain.c:396 — moves*8 + n for n == 1..7 */
     g.hero_seq = ((g.hero_seq ?? ((g.moves | 0) << 3)) | 0) + 1;

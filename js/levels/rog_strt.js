@@ -13,6 +13,7 @@ import {
 import {
     quest_align_shuffle, quest_finalize, quest_level_init_fill,
     quest_lua_random, quest_monster, quest_trap,
+    quest_non_diggable,
 } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -112,7 +113,8 @@ export async function makemaz_rog_strt() {
         const thugs = [[28, 10], [29, 11], [30, 9], [31, 7],
                        [31, 13], [33, 14], [30, 15], [35, 9], [36, 13]];
         for (const [tx, ty] of thugs) quest_create_monster('thug', tx, ty, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(00,00,75,20)) — no RNG.
+        quest_non_diggable(0, 0, 75, 20);
         for (let i = 0; i < 16; i++) await quest_trap();
         // Monsters to get in the way, one pair per exit.
         const guards = [['leprechaun', 1, 12], ['water nymph', 2, 12],

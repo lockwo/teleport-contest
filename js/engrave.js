@@ -1514,7 +1514,7 @@ async function otense_of(obj, verb) {
 }
 
 function isConfused() { const u = game.u; return !!(u?.uprops?.Confusion || u?.uconf); }
-function isStunned() { const u = game.u; return !!(u?.uprops?.Stun || u?.ustun); }
+function isStunned() { const u = game.u; return !!(u?.uprops?.Stun || u?.ustun || u?.formprops?.Stunned); }
 function isHallu() { const u = game.u; return !!(u?.uprops?.Hallucination || u?.uhallu); }
 // C ref: youprop.h Deaf (HDeaf || EDeaf).
 function isDeaf() { const u = game.u; return !!(u?.uprops?.Deaf || u?.Deaf); }

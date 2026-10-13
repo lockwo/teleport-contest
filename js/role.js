@@ -1564,7 +1564,7 @@ const AM_LAWFUL = ROLE_LAWFUL, AM_NEUTRAL = ROLE_NEUTRAL,
 //     which runs for the Priest (the only role with no gods of its own).
 export async function role_init() {
     const g = game;
-    const { name_to_pmidx } = await import('./makemon.js');
+    const { name_to_pmidx, monster_by_pmidx } = await import('./makemon.js');
     let alignmnt;
 
     /* Strip the role letter out of the player name. */
@@ -1622,7 +1622,7 @@ export async function role_init() {
 
     /* Fix up the quest leader */
     if (ldrnum >= 0) {
-        rs_set_maligntyp(ldrnum, alignmnt * 3);
+        rs_set_maligntyp(monster_by_pmidx, ldrnum, alignmnt * 3);
         /* if gender is random, we choose it now instead of waiting until the
            leader monster is created */
         g.quest_status.ldrgend =
@@ -1633,7 +1633,7 @@ export async function role_init() {
     /* Fix up the quest guardians */
     if (guardnum >= 0) {
         MFLAGS2[guardnum] |= M2_PEACEFUL;
-        rs_set_maligntyp(guardnum, alignmnt * 3);
+        rs_set_maligntyp(monster_by_pmidx, guardnum, alignmnt * 3);
     }
 
     /* Fix up the quest nemesis */
@@ -1722,27 +1722,41 @@ export function quest_monster_flag_fixups(ldrnum, neminum) {
 // Live-game entry: resolve the hero's quest leader/nemesis by name and apply
 // the flag fixups (fastforward_role_init runs this where C runs role_init()).
 let _questMonPristine = null;
-export function quest_monster_fixups_for_role(roleIdx, name_to_pmidx) {
+export function quest_monster_fixups_for_role(roleIdx, name_to_pmidx, monster_by_pmidx) {
     const q = ROLE_QUEST[roleIdx];
     if (!q) return;
     // C starts every process from the pristine const mons[]; this port keeps
-    // the tables in one process across games, so put every quest leader and
-    // nemesis back before applying this hero's role (the Master of Thieves
-    // flips between Rogue leader and Tourist nemesis).
+    // the tables in one process across games, so put every quest leader,
+    // guardian and nemesis back before applying this hero's role (the Master of
+    // Thieves flips between Rogue leader and Tourist nemesis).
     if (!_questMonPristine) {
         _questMonPristine = new Map();
         for (const r of ROLE_QUEST)
-            for (const nm of [r.ldr, r.nemesis]) {
+            for (const nm of [r.ldr, r.guard, r.nemesis]) {
                 const i = name_to_pmidx(nm);
                 if (i >= 0 && !_questMonPristine.has(i))
-                    _questMonPristine.set(i, [MSOUND[i], MFLAGS2[i], MFLAGS3[i]]);
+                    _questMonPristine.set(i, [MSOUND[i], MFLAGS2[i], MFLAGS3[i],
+                                              monster_by_pmidx(i)?.maligntyp]);
             }
     }
-    for (const [i, [snd, f2, f3]] of _questMonPristine) {
+    for (const [i, [snd, f2, f3, al]] of _questMonPristine) {
         MSOUND[i] = snd; MFLAGS2[i] = f2; MFLAGS3[i] = f3;
+        const m = monster_by_pmidx(i);
+        if (m) m.maligntyp = al;
     }
-    quest_monster_flag_fixups(q.ldr ? name_to_pmidx(q.ldr) : -1,
-                              q.nemesis ? name_to_pmidx(q.nemesis) : -1);
+    const ldrnum = q.ldr ? name_to_pmidx(q.ldr) : -1;
+    const guardnum = q.guard ? name_to_pmidx(q.guard) : -1;
+    quest_monster_flag_fixups(ldrnum, q.nemesis ? name_to_pmidx(q.nemesis) : -1);
+    // C ref: role.c:2033/2046 — leader and guardians take the hero's alignment
+    // (alignmnt * 3); nasty()'s castalign and msummon/peace checks read it.
+    const alignmnt = aligns[game.initalign]?.value;
+    if (alignmnt != null) {
+        if (ldrnum >= 0) rs_set_maligntyp(monster_by_pmidx, ldrnum, alignmnt * 3);
+        if (guardnum >= 0) {
+            MFLAGS2[guardnum] |= M2_PEACEFUL;
+            rs_set_maligntyp(monster_by_pmidx, guardnum, alignmnt * 3);
+        }
+    }
 }
 
 // C ref: mondata.h is_neuter/is_female/is_male (ptr->mflags2 & M2_NEUTER etc.)
@@ -1754,8 +1768,8 @@ function rs_mflag2(pmidx, bit) {
     const t = game._MFLAGS2_cache;
     return !!(t ? (t[pmidx] | 0) & bit : 0);
 }
-function rs_set_maligntyp(pmidx, val) {
-    const m = game.mons?.[pmidx];
+function rs_set_maligntyp(monster_by_pmidx, pmidx, val) {
+    const m = monster_by_pmidx(pmidx);
     if (m) m.maligntyp = val;
 }
 

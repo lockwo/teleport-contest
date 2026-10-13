@@ -2240,11 +2240,13 @@ function optfn_pickup_types(o, negated, opts, op, result) {
     const compat = (opts.length <= 6);
     op = string_for_opt(opts, compat);
     if (op === '') {
-        if (compat || negated) {
-            result.flags.pickup = !negated;
-            return OPTN_OK;
-        }
-        return OPTN_OK; /* interactive prompt; unreachable from a config file */
+        /* C: `compat || negated || go.opt_initial` -- this function only
+           runs while reading the config file (opt_initial), so an empty
+           value is "autopickup of all types" and flags.pickup_types is
+           cleared ("all") first. */
+        keep(o, '', result);
+        result.flags.pickup = !negated;
+        return OPTN_OK;
     }
     if (negated) { bad_negation(o.name, true); return OPTN_ERR; }
     let i = 0;

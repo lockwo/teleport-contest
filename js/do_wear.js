@@ -23,7 +23,7 @@ import {
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuwep_slot, setuswapwep, setuqwep,
     Ring_off, Ring_on, Amulet_off, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
-    otense, makeknown_credit, cmdq_pop, worn_extrinsic,
+    otense, makeknown_credit, cmdq_pop, worn_extrinsic, corpse_xname,
 } from './invent.js';
 import { makeplural } from './plural.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
@@ -684,9 +684,21 @@ export async function Gloves_on() {
 export async function wielding_corpse(obj, how, voluntary) {
     if (!obj || obj.otyp !== CORPSE || game.uarmg) return;
     if (obj !== game.uwep && (obj !== game.uswapwep || !game.u?.twoweap)) return;
-    /* touch_petrifies(&mons[obj->corpsenm]) && !Stone_resistance: instapetrify()
-       (polyself.c) has no JS equivalent, so the fatal branch is deferred. */
-    void how; void voluntary;
+    const { touch_petrifies } = await import('./monflags_data.js');
+    const { monster_by_pmidx } = await import('./makemon.js');
+    if (!touch_petrifies(monster_by_pmidx(obj.corpsenm))) return;
+    const { Stone_resistance_u, instapetrify } = await import('./polyself.js');
+    if (Stone_resistance_u()) return;
+    const { killer_xname, simpleonames } = await import('./objnam.js');
+    await pline(`You ${(how && is_gloves(how)) ? 'now wield' : 'are wielding'} ${
+        corpse_xname(obj, null, 8)} in your bare ${makeplural(body_part(6 /* HAND */))}.`);
+    const hbuf = how
+        ? `${voluntary ? 'removing' : 'losing'} ${
+            is_gloves(how) ? gloves_simple_name(how) : simpleonames(how).replace('set of ', '')}`
+        : 'resistance timing out';
+    await instapetrify(`${hbuf} while wielding ${killer_xname(obj)}`);
+    if (!Stone_resistance_u())
+        await (await import('./invent.js')).remove_worn_item(obj, false);
 }
 
 // C ref: do_wear.c:646 Gloves_off()
@@ -1185,9 +1197,17 @@ export async function inaccessible_equipment(obj, verb, only_if_known_cursed) {
 // C ref: do_wear.c:2990 better_not_take_that_off(otmp) — confirm before taking
 // gloves off while carrying a cockatrice corpse.
 export async function better_not_take_that_off(otmp) {
-    /* carrying_stoning_corpse() (invent.c) has no JS equivalent yet, so no
-       corpse is ever found and the prompt is skipped (deferred). */
-    void otmp;
+    const { carrying_stoning_corpse } = await import('./invent.js');
+    const corpse = carrying_stoning_corpse();
+    const { u_safe_from_fatal_corpse, st_corpse, st_petrifies } = await import('./pickup.js');
+    if (corpse && !u_safe_from_fatal_corpse(corpse, st_corpse | st_petrifies)) {
+        const { monster_by_pmidx } = await import('./makemon.js');
+        const { paranoid_ynq } = await import('./eat.js');
+        const buf = `Take off your ${gloves_simple_name(otmp)} despite carrying a dead ${
+            monster_by_pmidx(corpse.corpsenm)?.name}?`;
+        /* paranoid_ynq(TRUE, ...) is always the spelled-out "yes" form here */
+        return (await paranoid_ynq(true, buf, false)) !== 'y';
+    }
     return false;
 }
 

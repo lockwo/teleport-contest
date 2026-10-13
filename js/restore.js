@@ -28,7 +28,7 @@ import { docrt, bot, cls, flush_screen, pline, topl_more, y_n, see_monsters,
 import { init_vision_globals, vision_reset, vision_recalc } from './vision.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON, NEW_MOON } from './calendar.js';
 import { Hello } from './role.js';
-import { saveFileKey, savelev } from './save.js';
+import { saveFileKey, savelev, store_plname_in_file, SAVE_KEY_PREFIX } from './save.js';
 import { l_nhcore_init } from './mklev.js';
 import { rn2 } from './rng.js';
 import { quest_nemgend_or_null } from './questpgr.js';
@@ -44,7 +44,7 @@ import {
     RANGE_GLOBAL, RANGE_LEVEL, REST_GSTATE, REST_LEVELS, REST_CURRENT_LEVEL,
     NHF_SAVEFILE, NHF_BONESFILE, DEFUNCT_MONSTER, NON_PM, TRICKED,
     MAGIC_PORTAL, BR_STAIR, BR_NO_END1, BR_NO_END2, BR_PORTAL, PL_NSIZ_PLUS,
-    ROGUESET, Is_rogue_level, Upolyd, Has_contents, OMONST,
+    ROGUESET, Is_rogue_level, Is_airlevel, Is_waterlevel, Upolyd, Has_contents, OMONST,
     EGD, EPRI, ESHK, EMIN, EDOG, EBONES,
 } from './const.js';
 
@@ -106,6 +106,54 @@ export function have_saved_game() {
     const storage = game.storage;
     return !!(key && storage && typeof storage.getItem === 'function'
               && storage.getItem(key) != null);
+}
+
+// C ref: files.c get_saved_games() — the characters with a save file, sorted by
+// strcmp() on "name-role-race-gend-algn" (plname_from_file(): the NUL that hides
+// the first dash is put back, name_only FALSE).  `mode` is the playmode slot
+// ('-', 'X' or 'D').  The blob stores the full game object rather than C's
+// byte stream, so the header is rebuilt with save.js store_plname_in_file().
+// Returns null when there is no save, like C.
+export function get_saved_games() {
+    const storage = game.storage;
+    const prefix = SAVE_KEY_PREFIX;
+    if (!storage || typeof storage.key !== 'function') return null;
+    const result = [];
+    for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        if (!key || !key.startsWith(prefix)) continue;
+        const blob = storage.getItem(key);
+        if (blob == null) continue;
+        let hdr;
+        try {
+            hdr = store_plname_in_file(deserializeGameState(blob)).plname;
+        } catch {
+            continue;                   /* unreadable file: not listed */
+        }
+        const eos = hdr.indexOf('\0');
+        if (eos >= 0) hdr = hdr.slice(0, eos) + '-' + hdr.slice(eos + 1);
+        const mode = hdr[PL_NSIZ_PLUS - 1];
+        const nul = hdr.indexOf('\0');
+        result.push({ text: hdr.slice(0, nul >= 0 ? nul : PL_NSIZ_PLUS - 1), mode });
+    }
+    if (!result.length) return null;
+    result.sort((a, b) => (a.text < b.text ? -1 : a.text > b.text ? 1 : 0));
+    return result;
+}
+
+// C ref: engrave.c rest_engravings() after the Sfi reads — `while (actual_text[0]
+// == ' ') actual_text++` (and the same for remembered_text), then
+// `ep->engr_time = svm.moves`.  js/engrave.js keeps the advanced pointer as
+// engr_off, which wipe_engr_at() and read_engr_at() index pristine_text by.
+function rest_engravings_fixup(engravings) {
+    for (const ep of engravings || []) {
+        const actual = ep.actualText || '';
+        const trimmed = actual.replace(/^ +/, '');
+        ep.engr_off = (ep.engr_off | 0) + (actual.length - trimmed.length);
+        ep.actualText = trimmed;
+        ep.rememberedText = (ep.rememberedText || '').replace(/^ +/, '');
+        ep.engr_time = game.moves | 0;
+    }
 }
 
 // C ref: allmain.c welcome(FALSE) — "... the<race> <role>, welcome back to
@@ -258,6 +306,7 @@ export async function dorestore() {
     const keepMock = game.mockStorage;
     const keepCoreCtx = game.coreCtx;
     const keepIflags = game.iflags;
+    const keepSeed = game.currentSeed;
     Object.assign(game, saved);
     game.nhDisplay = keepDisplay;
     game._preNhgetchHook = keepHook;
@@ -266,17 +315,41 @@ export async function dorestore() {
     game.mockStorage = keepMock;
     game.coreCtx = keepCoreCtx;
     game.iflags = keepIflags;
+    // C ref: rnd.c init_random() — both RNG streams are seeded afresh by the
+    // RESTORING process (sys_random_seed()), and the DISP stream (hallucination
+    // glyph picks) starts at offset 0 again.  The blob would otherwise bring
+    // back the saving process's seed and its advanced DISP context.
+    game.currentSeed = keepSeed;
+    delete game._dispCtx;
+    delete game._dispCtxSeed;
     // C ref: decl.h `int lastinvnr; /* 0 ... 51 (never saved&restored) */` —
-    // a restored process starts with gl.lastinvnr == 0 (zero-initialized
-    // globals; only u_init() sets it to 51), NOT the saving process's cursor,
-    // so the first newly-lettered item after a restore searches from 'b'.
+    // a restored process starts with the compiled-in decl.c:458 value 51
+    // (g_init_l), NOT the saving process's cursor, so the first newly-lettered
+    // item after a restore searches from 'a'.
     game.gl = game.gl || {};
-    game.gl.lastinvnr = 0;
+    game.gl.lastinvnr = 51;
+    // C ref: decl.c go.oldcap is likewise never saved (zero-initialized in the
+    // restoring process), so encumber_msg() after a restore reports the hero's
+    // current burden as a change from "unencumbered".
+    game._oldcap = 0;
+    // C ref: decl.c gm.multi / gc.command_count / gc.cmd_key are process
+    // globals that savegamestate() never writes, so a restored process starts
+    // with no pending count: "3S" saved with gm.multi == 2 must not make the
+    // restoring process repeat #save twice more.
+    game.multi = 0;
+    game.command_count = 0;
+    game._cmd_key = 0;
     // C ref: decl.c gl.luathemes[] is a runtime-only lua_State pointer table (never
     // saved), so a restored process has no themerms.lua state loaded: the first
     // makelevel() per dungeon re-runs nhl_init(), whose nhlib.lua shuffle(align)
     // draws rn2(3),rn2(2).  Drop the saving process's marker blob copy.
     game._luathemes_loaded = {};
+    // C ref: restore.c getlev() -> engrave.c rest_engravings() for the current
+    // level (and every stored one): the buffers come back with leading blanks
+    // and the actual/remembered pointers are advanced past them again.
+    rest_engravings_fixup(game.level?.engravings);
+    for (const ent of Object.values(game._level_store || {}))
+        rest_engravings_fixup(ent?.level?.engravings);
 
     // C ref: restore.c restgamestate() — role_init() runs partway through the
     // state reload, BEFORE restore_luadata()'s Lua-state creation below, so its
@@ -308,6 +381,16 @@ export async function dorestore() {
     // carries the SAVING segment's splev_align and this re-rolls it.
     l_nhcore_init();
 
+    // C ref: restore.c:1226 getlev() -> rest_bubbles() -> mkmaze.c:1750
+    // restore_waterlevel(): on the Planes of Air/Water every restored bubble or
+    // cloud goes through mv_bubble(b, 0, 0, TRUE), which on Air rolls the
+    // "clouds move slowly" rn2(6) once per cloud.  It comes after the lua shuffle
+    // above (dorecover() restores the game state before the current level).
+    if (Is_airlevel(game.u?.uz) || Is_waterlevel(game.u?.uz)) {
+        const { mv_bubble_restore } = await import('./mkmaze.js');
+        for (const b of (game.level?.bubbles || [])) mv_bubble_restore(b);
+    }
+
     // C ref: restore.c dorecover() — `if (!wizard && !discover) delete_savefile()`.
     if (!is_wizard() && !is_discover()) delete_savefile();
 
@@ -336,6 +419,9 @@ export async function dorestore() {
     // C ref: dorecover() tail -> welcome(FALSE), check_special_room(FALSE); then
     // unixmain's wizard/discover save-file question; then moveloop_preamble(TRUE).
     await pline(welcome_back_message());
+    /* C ref: allmain.c welcome(FALSE) tail */
+    await (await import('./do.js')).hellish_smoke_mesg();
+    await (await import('./dungeon.js')).print_level_annotation();
     await check_special_room(false);
     await ask_about_keeping_savefile();
     await restore_preamble_messages();

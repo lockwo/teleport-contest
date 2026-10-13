@@ -51,6 +51,7 @@ import { align_gname, roles } from './role.js';
 import { currency, worn_extrinsic } from './invent.js';
 import { money2mon } from './shk.js';
 import { bless, mksobj } from './mkobj.js';
+import { mon_has_amulet } from './monspecial.js';
 import { which_armor, m_dowear } from './worn.js';
 import { rloc, tele_restrict, RLOC_MSG } from './teleport.js';
 import { livelog_printf, LL_UMONST } from './livelog.js';
@@ -615,17 +616,6 @@ export async function demon_talk(mtmp) {
 // C ref: do_name.h EXACT_NAME (SUPPRESS_HALLUCINATION|SUPPRESS_INVISIBLE|
 // SUPPRESS_IT|SUPPRESS_SADDLE|SUPPRESS_NAME).
 const EXACT_NAME = 0x0f | 0x10;
-// C ref: wizard.c mon_has_amulet(mtmp) — js/wizard.js:31 exports it, but
-// importing wizard.js here would pull the whole Wizard-harassment module into a
-// leaf file; the two-line walk is reproduced with its C ref instead.
-function mon_has_amulet(mtmp) {
-    for (const otmp of (mtmp.minvent || []))
-        if (otmp.otyp === 218 /* AMULET_OF_YENDOR */) return true;
-    return false;
-}
-// C ref: wizard.c mon_has_amulet(mtmp) is the only leaf helper still local to
-// this file — js/mon.js, js/vault.js and js/priest.js now supply the real
-// mongone()/reset_faint()/unmul()/mk_roamer() this module needs.
 
 // C ref: minion.c:361 bribe(mtmp, prompt) — read a number from the player and
 // hand that much gold over.  No RNG.

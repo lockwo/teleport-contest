@@ -12,6 +12,7 @@ import {
     quest_create_trap_random, quest_drop_default_invent, quest_flip_branch,
     quest_level_init_solidfill, quest_place_stair, quest_region_light, quest_register_branch,
     quest_set_door, shuffle,
+    vly_non_diggable,
 } from '../sp_lev.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -118,7 +119,8 @@ export async function makemaz_arc_strt() {
         quest_create_monster('giant eel', 20, 10, null);
         quest_create_monster('giant eel', 45, 4, null);
         quest_create_monster('giant eel', 33, 16, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(00,00,75,19)) — no RNG.
+        vly_non_diggable(0, 0, 75, 19);
         // Six random traps.
         for (let i = 0; i < 6; i++) await quest_create_trap_random();
         // Monsters on siege duty (random snakes "S" / mummies "M").

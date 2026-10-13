@@ -12,6 +12,7 @@ import {
 import {
     quest_align_shuffle, quest_finalize, quest_level_init_fill, quest_monster,
     quest_register_branch_region, quest_trap,
+    quest_non_diggable,
 } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -88,7 +89,8 @@ export async function makemaz_sam_strt() {
         const roshi = [[18, 4], [18, 5], [18, 6], [18, 7],
                        [26, 4], [26, 5], [26, 6], [26, 7]];
         for (const [rx, ry] of roshi) quest_create_monster('roshi', rx, ry, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(00,00,75,19)) — no RNG.
+        quest_non_diggable(0, 0, 75, 19);
         for (let i = 0; i < 6; i++) await quest_trap();
         // Monsters on siege duty.
         quest_monster({ name: 'ninja', mx: 64, my: 0, peaceful: 0 });

@@ -761,7 +761,7 @@ export function enlightenment_lines(final = 0, basic = true) {
         }
     }
     if ((up.Vomiting | 0) > 0) youAre('nauseated');
-    if ((up.Stun | 0) > 0 || u.Stunned) youAre('stunned');
+    if ((up.Stun | 0) > 0 || u.Stunned || u.formprops?.Stunned) youAre('stunned');
     if ((up.Confusion | 0) > 0) youAre('confused');
     // Timed Hallucination is represented under both H- and bare property
     // names across the port, so use the same effective-property test as the

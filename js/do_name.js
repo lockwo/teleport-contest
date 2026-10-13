@@ -19,6 +19,7 @@ import { mflags2_of, M2_PNAME } from './monflags_data.js';
 import { objects } from './mkobj.js';
 import { PRONOUN_HALLU, PRONOUN_NO_IT, PL_PSIZ } from './const.js';
 import { PRONOUN_GENDERS } from './role.js';
+import { makeplural } from './plural.js';
 
 // Keep higher-level naming dependencies behind registration: a static import
 // of uhitm.js or mondata.js here creates a cycle during module initialization.
@@ -268,11 +269,21 @@ export function minimal_monnam(mon, _ckloc) {
 // "<mon> <verb> [<other>] {him,her,it}self".
 export function monverbself(mon, monnamtext, verb, othertext) {
     const selfbuf = mon_nam_too(mon, mon);
-    const plural = (selfbuf === 'themselves');
     let subj = monnamtext;
+    /* verb starts plural; this will yield singular except for "themselves" */
     let verbs = verb;
-    if (!plural) verbs = vtense_s(verb);
-    else if (/^it$/i.test(subj)) subj = 'they';
+    if (selfbuf !== 'themselves') {
+        verbs = vtense_s(verb);
+    } else {
+        /* a match indicates that it stayed plural */
+        subj = makeplural(subj);
+        /* C: makeplural("it") is "they"; that is then mapped to "them" */
+        if (subj.toLowerCase() === PRONOUN_GENDERS[3].he) {
+            const capitaliz = subj[0] === subj[0].toUpperCase();
+            subj = PRONOUN_GENDERS[3].him;
+            if (capitaliz) subj = subj[0].toUpperCase() + subj.slice(1);
+        }
+    }
     return `${subj} ${verbs}${othertext ? ' ' + othertext : ''} ${selfbuf}`;
 }
 // C ref: objnam.c vtense() — the singular form of a plural verb.

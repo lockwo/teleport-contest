@@ -702,7 +702,7 @@ async function steed_mondead(mtmp) {
 async function steed_mondied(mtmp) {
     const x = mtmp.mx, y = mtmp.my;
     await steed_mondead(mtmp);
-    if (corpse_chance(mtmp) && (steed_accessible(x, y) || is_pool(x, y)))
+    if (await corpse_chance(mtmp) && (steed_accessible(x, y) || is_pool(x, y)))
         await make_corpse(mtmp, x, y);
 }
 // C ref: mon.c monkilled(mdef, "", -AD_PHYS) — steed died from an impersonal

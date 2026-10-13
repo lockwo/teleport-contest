@@ -574,6 +574,20 @@ export function innate_intrinsics(ulevel = game.u?.ulevel || 0) {
 }
 export function has_innate(prop, ulevel) { return innate_intrinsics(ulevel).has(prop); }
 
+// C ref: attrib.c:1046 adjabil() — an ability gained at level 1 is stored with
+// FROMOUTSIDE as well as FROMEXPER/FROMRACE ("a 'gain' of such an ability from
+// an outside source is devoid of meaning"), so e.g. a Healer's poison
+// resistance already has the FROMOUTSIDE bit and eating a shrieker corpse
+// prints no "You feel healthy.".  This port derives innates instead of storing
+// bits, so the level-1 rows answer the (HFoo & FROMOUTSIDE) test here.
+export function has_innate_fromoutside(prop) {
+    if (game.u?.lost_innate?.has(prop)) return false;  // attrcurse() cleared it
+    for (const tbl of [ROLE_ABIL.get(game.urole?.mnum), RACE_ABIL.get(urace_mnum())])
+        for (const [ulvl, , , p] of tbl || [])
+            if (ulvl === 1 && p === prop) return true;
+    return false;
+}
+
 // C ref: attrib.c:864 innately(ability) — WHICH table conferred an intrinsic,
 // which is what from_what() turns into English.  A FROMEXPER (role) row reports
 // FROM_ROLE when its ulevel is 1 and FROM_EXP otherwise; a FROMRACE row is

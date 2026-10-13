@@ -14,6 +14,7 @@ import {
     quest_floodfill_match, quest_level_init_solidfill, quest_place_stair, quest_region_light,
     quest_register_branch, quest_replace_terrain, quest_rndcoord, quest_set_door, shuffle,
     vly_region,
+    vly_non_diggable,
 } from '../sp_lev.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -132,7 +133,8 @@ export async function makemaz_pri_strt() {
         const acolytes = [[32, 7], [32, 8], [32, 11], [32, 12],
                           [33, 7], [33, 8], [33, 11], [33, 12]];
         for (const [ax, ay] of acolytes) quest_create_monster('acolyte', ax, ay, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(18,03,55,16)) — no RNG.
+        vly_non_diggable(18, 3, 55, 16);
         // Two dart traps at a random spot in the open siege field (already an
         // absolute coord from spacelocs:rndcoord(1), so no further RNG in
         // get_location — see quest_create_trap's header comment).

@@ -198,10 +198,16 @@ export async function show_map_spot(x, y, cnf) {
     const lev = game.level?.at(x, y);
     if (!lev) return;
     const oldglyph = glyph_at(x, y);
+    // C: `lev->glyph = oldglyph` restores the glyph NUMBER, so a generic
+    // (gray, dknown==0) potion/book stays generic and see_nearby_objects()
+    // still recognises it.  disp_color is the has_color()-suppressed colour
+    // (CLR_GRAY -> NO_COLOR), so carry the remembered glyph's raw colour.
+    const oldrg = lev.remembered_glyph;
     const oldcell = {
         ch: lev.disp_ch, color: lev.disp_color, dec: lev.disp_decgfx,
-        pile: lev.remembered_glyph?.pile, bwEngr: lev.remembered_glyph?.bwEngr,
-        female: lev.remembered_glyph?.female,
+        memColor: (oldrg && oldrg.ch === lev.disp_ch) ? oldrg.color : undefined,
+        pile: oldrg?.pile, bwEngr: oldrg?.bwEngr,
+        female: oldrg?.female,
     };
     lev.seenv = 0xff;
     if (lev.typ === SCORR) {
@@ -244,7 +250,7 @@ export async function show_map_spot(x, y, cnf) {
             if (game.level?.flags?.hero_memory) {
                 lev.invisMon = false;
                 lev.remembered_glyph = {
-                    ch: oldcell.ch, color: oldcell.color, decgfx: oldcell.dec,
+                    ch: oldcell.ch, color: oldcell.memColor ?? oldcell.color, decgfx: oldcell.dec,
                     pile: !!oldcell.pile, bwEngr: !!oldcell.bwEngr, female: !!oldcell.female,
                     objotyp: glyph_is_object(oldglyph) ? oldglyph.otyp : undefined,
                 };
@@ -724,6 +730,7 @@ function map_trap(trap, show) {
     if (game.level?.flags?.hero_memory) {
         loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
         loc.mapped_trap_ttyp = trap.ttyp;
+        loc.invisMon = false; /* levl[x][y].glyph replaced: the remembered 'I' is gone */
     }
     if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec);
 }

@@ -7,7 +7,8 @@ import { roles, align_gname } from './role.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { nhgetch } from './input.js';
 import { Blind } from './vision.js';
-import { ATR_INVERSE, ATR_NONE, NO_COLOR } from './terminal.js';
+import { ATR_NONE, NO_COLOR } from './terminal.js';
+import { menuHeadAttr } from './menuattr.js';
 // C ref: do_name.c hliquid() — surface() names pools/lava through it, so the
 // Hallucination substitution (and its display-RNG draw) applies there too.
 import { hliquid } from './do_name.js';
@@ -1196,11 +1197,11 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
             const e = lines[i];
             clearRow(row);
             if (e.blank) continue;
-            if (e.title) { disp.putstr(offx + 1, row, e.text, NO_COLOR, ATR_INVERSE); continue; }
+            if (e.title) { disp.putstr(offx + 1, row, e.text, NO_COLOR, menuHeadAttr()); continue; }
             // C ref: tport_menu — an unreachable level is added with a_int==0
             // (zeroany), so the tty windowport shows no accelerator; its entry
             // text already carries the 4-space padding in place of "X - ".
-            disp.putstr(offx + 1, row, lineText(e), NO_COLOR, e.heading ? ATR_INVERSE : 0);
+            disp.putstr(offx + 1, row, lineText(e), NO_COLOR, e.heading ? menuHeadAttr() : 0);
         }
         const morestr = npages > 1 ? `(${pageNo} of ${npages})` : '(end) ';
         clearRow(row);
@@ -1620,7 +1621,7 @@ export async function build_overview_lines(final = 0, how = 0) {
             // during end-of-game disclosure": program_state.gameover forces
             // ATR_NONE there, so only the live '#overview' command (final==0)
             // gets the highlighted iflags.menu_headings.attr (ATR_INVERSE).
-            lines.push({ text: buf, attr: final ? 0 : ATR_INVERSE });
+            lines.push({ text: buf, attr: final ? 0 : menuHeadAttr() });
             lastdun = p.dnum;
         }
 
@@ -2164,7 +2165,7 @@ async function inhistemple(priest) {
 // the tty windowport directly (the whole port is tty-only).
 function add_menu_heading(wt, tmpwin, buf) {
     const any = {};
-    let attr = game.iflags?.menu_headings?.attr ?? ATR_INVERSE;
+    let attr = menuHeadAttr();
     let color = game.iflags?.menu_headings?.color ?? NO_COLOR;
 
     /* suppress highlighting during end-of-game disclosure */
@@ -2601,7 +2602,11 @@ export function get_annotation(lev) {
 
 // C ref: dungeon.c:2489 print_level_annotation() — do.c's goto_level() tail.
 export async function print_level_annotation() {
-    const annotation = get_annotation(game.u?.uz);
+    // The live #annotate handler (extcmd-handlers.js donamelevel) keeps the text
+    // in game._level_annotations["dnum:dlevel"], as goto_level() reads it too.
+    const uz = game.u?.uz;
+    const annotation = get_annotation(uz)
+        || (uz ? game._level_annotations?.[`${uz.dnum}:${uz.dlevel}`] : null);
     if (annotation) {
         const { pline } = await import('./display.js');
         await pline(`You remember this level as ${annotation}.`);
@@ -3472,7 +3477,7 @@ export async function print_mapseen(win, mptr, final, how, printdun) {
     let any;
 
     const heading = (s) => {
-        if (Array.isArray(win)) win.push({ text: s, attr: final ? ATR_NONE : ATR_INVERSE });
+        if (Array.isArray(win)) win.push({ text: s, attr: final ? ATR_NONE : menuHeadAttr() });
         else add_menu_heading(win.wt, win.win, s);
     };
     const menu_str = (s) => {

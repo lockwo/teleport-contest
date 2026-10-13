@@ -66,8 +66,9 @@ import { obj_doname, xname, makeknown, trycall, hands_obj,
 import { observe_object } from './o_init.js';
 import { removed_from_icebox } from './pickup.js';
 import { t_at, maketrap, seetrap, Can_fall_thru } from './trap.js';
+import { mon_has_special } from './monspecial.js';
 import { rloc, RLOC_MSG, tele_restrict, noteleport_level, enexto_gpflags, In_W_tower } from './teleport.js';
-import { In_sokoban } from './const.js';
+import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel } from './const.js';
 import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     STAIRS, LADDER, SCORR, CORR, PIT, HOLE, TRAPDOOR, TELEP_TRAP, WEB,
     BEAR_TRAP, FIRE_TRAP, POLY_TRAP, W_NONDIGGABLE, D_LOCKED, D_CLOSED, D_BROKEN,
@@ -300,13 +301,12 @@ function vtense_s(verb) {
     if (/[^aeiou]y$/.test(verb)) return `${verb.slice(0, -1)}ies`;
     return `${verb}s`;
 }
-// C ref: trap.c trapname(ttyp, generic).
-const TRAPNAMES = {
-    [PIT]: 'pit', [HOLE]: 'hole', [TRAPDOOR]: 'trap door',
-    [TELEP_TRAP]: 'teleportation trap', [POLY_TRAP]: 'polymorph trap',
-    [FIRE_TRAP]: 'fire trap', [WEB]: 'web', [BEAR_TRAP]: 'bear trap',
-};
-function trapname(ttyp) { return TRAPNAMES[ttyp] ?? 'trap'; }
+// C ref: trap.c trapname(ttyp, override) — draws off the display rng while the
+// hero hallucinates, so it must be the real one (dynamic: trap.js is a hub).
+async function trapname(ttyp, override) {
+    const { trapname: real } = await import('./trap.js');
+    return real(ttyp, override);
+}
 
 // C ref: mondata.h is_floater(ptr) — eyes/spheres and lights hover, so a wand
 // of digging is useless to them.
@@ -414,9 +414,8 @@ function Sokoban() {
 }
 // C ref: dungeon.h Can_dig_down(lev) — !level.flags.hardfloor.
 function Can_dig_down(_uz) { return !game.level?.flags?.hardfloor; }
-// C ref: monst.h is_Vlad(mon) / dungeon.h In_V_tower(lev).
+// C ref: monst.h is_Vlad(mon).
 function is_Vlad(mon) { return mon?.data?.name === 'Vlad the Impaler'; }
-function In_V_tower(_uz) { return false; }
 // C ref: dungeon.c:1914 On_W_tower_level(lev) — any of the three Wizard's tower levels.
 function On_W_tower_level(uz) {
     return [game.wiz1_level, game.wiz2_level, game.wiz3_level].some(
@@ -427,9 +426,7 @@ function mon_has_amulet(mon) {
     const AMULET_OF_YENDOR = OBJECTS.findIndex((o) => o && o.sym === 'AMULET_OF_YENDOR');
     return (mon?.minvent || []).some((o) => o.otyp === AMULET_OF_YENDOR);
 }
-// C ref: mon.c mon_has_special(mon) — Amulet, invocation tool or a quest
-// artifact.  mon_has_amulet() covers the only one this port creates.
-function mon_has_special(mon) { return mon_has_amulet(mon); }
+// C ref: wizard.c mon_has_special(mon) — js/wizard.js owns the full test.
 // C ref: mon.c helpless(mon).
 function helpless(mon) {
     return !!(mon.msleeping || !mon.mcanmove || (mon.mfrozen | 0) > 0);
@@ -459,10 +456,7 @@ export function Can_rise_up(x, y, lev) {
     return game.dungeons?.[lev.dnum]?.entry_lev === 1 && ledger_no(lev) !== 1
            && !!stway;
 }
-// C ref: hack.h Is_rogue_level / Is_earthlevel — neither is reachable in the
-// scored dungeon slice and the port has no level flag for either.
-function Is_rogue_level(_uz) { return false; }
-function Is_earthlevel(_uz) { return false; }
+// C ref: dungeon.h Is_rogue_level / Is_earthlevel — imported from const.js.
 
 /* ------------------------------------------------------------------------ *
  * muse.c:2938 / obj bookkeeping
@@ -1292,7 +1286,7 @@ export async function use_defensive(mtmp) {
         if (vis && t) {
             await update_topl(`${Monnam(mtmp)} ${
                 vtense_s(locomotion(mtmp.data, 'jump'))} into a ${
-                trapname(t.ttyp)}!`);
+                await trapname(t.ttyp, false)}!`);
         }
         if (t) reveal_trap(t, vis);
         {   /* remove_monster(old) first: newsym must see the square empty */
@@ -1370,7 +1364,7 @@ export async function use_defensive(mtmp) {
         if (vis && t) {
             await update_topl(`${Monnam(mtmp)} ${
                 vtense_s(locomotion(mtmp.data, 'jump'))} onto a ${
-                trapname(t.ttyp)}!`);
+                await trapname(t.ttyp, false)}!`);
         }
         if (t) reveal_trap(t, vis);
         newsym(mtmp.mx, mtmp.my);

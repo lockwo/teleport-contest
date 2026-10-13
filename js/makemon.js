@@ -6,6 +6,7 @@ import { vtense } from './plural.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, d, rn1 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
+import { mon_has_special } from './monspecial.js';
 import { christen_monst, mhim, mhis, mon_nam } from './do_name.js';
 import { builds_up, In_hell, Is_special, level_difficulty } from './dungeon.js';
 import { roles } from './role.js';
@@ -45,7 +46,7 @@ import {
     M_AP_FURNITURE, M_AP_OBJECT, M_AP_TYPMASK,
     MHID_ARTICLE, MHID_ALTMON, BOLT_LIM, DF_NONE, NO_NC_FLAGS, NC_SHOW_MSG,
     NC_VIA_WAND_OR_SPELL, OBJ_FREE, OBJ_FLOOR, OBJ_MINVENT,
-    IS_WATERWALL } from './const.js';
+    IS_WATERWALL, LOST_NONE, LOST_THROWN, LOST_DROPPED, LOST_STOLEN } from './const.js';
 // set_mimic_sym() needs the room/trap/vision helpers.  These modules sit below
 // makemon.js in the import graph except vision.js, which imports two function
 // declarations from here — a cycle that resolves cleanly because both sides are
@@ -1455,6 +1456,14 @@ export function mpickobj(mtmp, otmp) {
     /* C ref: steal.c:655 — a hero-owned object on a shop floor that a monster
        takes possession of is no longer no_charge. */
     otmp.no_charge = 0;
+    /* C ref: steal.c:664-674 — only for a non-pet taker, how the object left
+       the hero's inventory is rewritten: thrown becomes stolen (autopickup
+       then follows 'pickup_stolen', and addinv() no longer fills the quiver),
+       dropped is forgotten. */
+    if (!mtmp.mtame) {
+        if (otmp.how_lost === LOST_THROWN) otmp.how_lost = LOST_STOLEN;
+        else if (otmp.how_lost === LOST_DROPPED) otmp.how_lost = LOST_NONE;
+    }
     return add_to_minv(mtmp, otmp);
 }
 
@@ -2058,6 +2067,9 @@ function mm_noteleport_level(ptr) {
         }
     }
     if (game.level?.flags?.noteleport && !is_covetous(ptr)) return true;
+    // C: svm.moves is still 0 during the very first mklev() (u_init_role sets
+    // it to 1 afterwards), so stasis_until(0) >= moves(0) holds there.
+    if ((game.level?.flags?.stasis_until | 0) >= (game.moves | 0)) return true;
     return false;
 }
 
@@ -2860,7 +2872,7 @@ function pickvampshape(mtmp) {
     switch (mndx) {
     case PM_VLAD_THE_IMPALER:
         /* ensure Vlad can keep carrying the Candelabrum */
-        if (mon_has_special_mm(mtmp))
+        if (mon_has_special(mtmp))
             break; /* leave mndx as is */
         wolfchance = 3;
         /* FALLTHROUGH */
@@ -2884,15 +2896,6 @@ function pickvampshape(mtmp) {
         || ((mtmp.data && mtmp.data.pmidx !== base) && !rn2(4)))
         return base;
     return mndx;
-}
-
-// C ref: mon.c mon_has_special(mon) — the Amulet, the Bell, the Candelabrum,
-// the Book of the Dead or a quest artifact (carried quest artifacts excluded:
-// they are never monster-held in this port's corpus).
-function mon_has_special_mm(mon) {
-    return (mon.minvent || []).some((o) => o.otyp === CANDELABRUM_OF_INVOCATION
-        || o.otyp === SPE_BOOK_OF_THE_DEAD_OTYP
-        || o.otyp === BELL_OF_OPENING_OTYP || o.otyp === 213 /* AMULET_OF_YENDOR */);
 }
 
 // C ref: mon.c mgender_from_permonst().  Draws rn2(10) only when the new form

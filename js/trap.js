@@ -12,6 +12,7 @@ import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, c
          feel_location, feel_newsym, docrt, under_water, You_feel } from './display.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of, has_innate } from './exper.js';
+import { del_engr_at } from './engrave.js';
 import { Blind, recalc_block_point, cansee, couldsee, vision_recalc } from './vision.js';
 import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
          Ring_off, off_msg, obj_doname, carried, otense, obj_extract_self,
@@ -204,7 +205,7 @@ export function immune_to_trap(mon, ttype) {
             return TRAP_NOT_IMMUNE;
         if (In_sokoban(game.u?.uz) && ttype === ROLLING_BOULDER_TRAP)
             return TRAP_CLEARLY_IMMUNE;
-        if (is_you && (game.u?.uprops?.Levitation || game.u?.uprops?.Flying))
+        if (is_you && (Levitation_fu() || Flying_fu()))
             return TRAP_CLEARLY_IMMUNE;
         return TRAP_NOT_IMMUNE;
     case SLP_GAS_TRAP:
@@ -750,6 +751,10 @@ export function maketrap(x, y, typ) {
                 stackobj(otmp);
             }
         }
+        // C ref: dig.c:2110 unearth_objs() tail — `del_engr_at(x, y); newsym(x, y);`
+        // (the newsym draws display-rng picks under a hallucinating hero).
+        del_engr_at(x, y);
+        newsym(x, y);
         break;
     }
     default:
@@ -1425,7 +1430,7 @@ export async function sink_into_lava() {
             const { done } = await import('./end.js');
             await done(DISSOLVED);
             u.utrap = 0; u.utraptype = 0; /* reset_utrap(TRUE) */
-            if (!u.uprops?.Levitation && !u.uprops?.Flying) {
+            if (!Levitation_fu() && !Flying_fu()) {
                 const { safe_teleds } = await import('./teleport.js');
                 await safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT);
             }
@@ -1556,6 +1561,7 @@ async function thitu_named(tlev, dam, name) {
     await update_topl(terse ? `You are hit${exclam(dam)}`
                            : `You are hit by ${onm}${exclam(dam)}`);
     await losehp(dam, name);                     // no RNG
+    if (game.program_state?.gameover) return 1; // losehp()->done() never returns
     await exercise(0 /*A_STR*/, false);                // rn2(2)
     return 1;
 }
@@ -1617,8 +1623,8 @@ async function trapeffect_arrow_trap(trap, _trflags) {
 async function trapeffect_sqky_board(trap, trflags) {
     const u = game.u;
     const forcetrap = (trflags & FORCETRAP) !== 0 || (trflags & FAILEDUNTRAP) !== 0
-        || (!!u?.uprops?.Flying && (trflags & VIASITTING) !== 0);
-    if ((u?.uprops?.Levitation || u?.uprops?.Flying) && !forcetrap) {
+        || (!!Flying_fu() && (trflags & VIASITTING) !== 0);
+    if ((Levitation_fu() || Flying_fu()) && !forcetrap) {
         if (!Blind()) {
             seetrap(trap);
             await pline(Hallucination_u() ? 'You notice a crease in the linoleum.'
@@ -2265,8 +2271,8 @@ async function trapeffect_pit(trap, trflags) {
     const already_known = !!trap.tseen;
     let deliberate = false;
     const Sokoban = !!game.level?.flags?.sokoban_rules;
-    const Levitation = !!u?.uprops?.Levitation;
-    const Flying = !!u?.uprops?.Flying;
+    const Levitation = !!Levitation_fu();
+    const Flying = !!Flying_fu();
 
     if (!Sokoban && (Levitation || (Flying && !plunged && !viasitting)))
         return;
@@ -2618,7 +2624,7 @@ async function trapeffect_landmine(trap, trflags) {
     let steed_mid = 0;
     let saddle = null;
 
-    if ((u?.uprops?.Levitation || u?.uprops?.Flying) && !forcetrap) {
+    if ((Levitation_fu() || Flying_fu()) && !forcetrap) {
         if (!already_seen && rn2(3)) return;
         feeltrap(trap);
         await pline(`${already_seen ? 'There is' : 'You discover'} ${
@@ -2920,7 +2926,7 @@ function untrap_prob(ttmp) {
     }
     if (u?.uprops?.Confusion || Hallucination_u()) chance++;
     if (Blind()) chance++;
-    if (u?.uprops?.Stunned) chance += 2;
+    if (u?.uprops?.Stun || u?.Stunned || u?.formprops?.Stunned) chance += 2;
     if (u?.HFumbling || u?.EFumbling) chance *= 2;
     /* Your own traps are better known than others. */
     if (ttmp.madeby_u) chance--;
@@ -3897,8 +3903,8 @@ function check_in_air_u(trflags) {
     const u = game.u;
     const plunged = (trflags & (TOOKPLUNGE | VIASITTING)) !== 0;
     return (trflags & HURTLING) !== 0
-        || !!u?.uprops?.Levitation
-        || (!!u?.uprops?.Flying && !plunged);
+        || !!Levitation_fu()
+        || (!!Flying_fu() && !plunged);
 }
 
 // C ref: hack.c u_locomotion(def) — locomotion(gy.youmonst.data, def) returns
@@ -3907,8 +3913,8 @@ function check_in_air_u(trflags) {
 function u_locomotion(def) {
     const u = game.u;
     const cap = def[0] === def[0].toUpperCase();
-    if (u?.uprops?.Levitation) return cap ? 'Float' : 'float';
-    if (u?.uprops?.Flying) return cap ? 'Fly' : 'fly';
+    if (Levitation_fu()) return cap ? 'Float' : 'float';
+    if (Flying_fu()) return cap ? 'Fly' : 'fly';
     return def;
 }
 

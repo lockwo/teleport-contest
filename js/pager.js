@@ -1259,6 +1259,28 @@ function create_nhwindow_text() { return { lines: [] }; }
 function putstr(win, _attr, str) { if (win) win.lines.push(str); }
 const putmixed = putstr;    /* the encglyph escape decodes to the bare char */
 function encglyph(glyph) { return glyph?.sym ?? ' '; }
+
+// C ref: windows.c decode_mixed() — the text half of putmixed().  A backslash
+// escapes the character after it, so a lone `\` is DROPPED and the next
+// character is kept (`\\` becomes `\`, `\ ` becomes ` `).  Only a trailing
+// backslash, or `\G` that is not a real glyph escape, stays as it is.
+// encglyph() hands back the bare symbol in this port, so no text can carry a
+// valid `\GXXXXNNNN` (C's rndencode check rejects a forgery): `\G` is never
+// decoded.  Callers pass the TEXT part of a line only, never the glyph prefix.
+export function decode_mixed(str) {
+    if (!str) return '';
+    let out = '';
+    let i = 0;
+    while (i < str.length) {
+        if (str[i] === '\\') {
+            const save = i++;
+            if (i >= str.length || str[i] === 'G')
+                i = save;
+        }
+        out += str[i++];
+    }
+    return out;
+}
 async function display_nhwindow_text(win, _blocking) {
     if (win && win.lines.length) await display_text_window(win.lines);
 }

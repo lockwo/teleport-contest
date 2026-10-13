@@ -766,7 +766,7 @@ export async function mhitm_ad_tlpt(magr, mattk, mdef, mhm, ops) {
             const { Teleport_control_fu } = await import('./trap.js');
             const u = game.u;
             await ops.emit(`Your position suddenly seems ${
-                (Teleport_control_fu() && !((u?.uprops?.Stun | 0) > 0 || u?.Stunned)
+                (Teleport_control_fu() && !((u?.uprops?.Stun | 0) > 0 || u?.Stunned || u?.formprops?.Stunned)
                  && !unconscious()) ? '' : 'very '}uncertain!`);
         }
         if (ops.tele) await ops.tele();

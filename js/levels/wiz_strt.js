@@ -14,6 +14,7 @@ import {
 import {
     S_BAT, S_IMP, S_WRAITH, quest_align_shuffle, quest_finalize,
     quest_level_init_fill, quest_monster, quest_terrain_at, quest_trap,
+    quest_non_diggable,
 } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -106,7 +107,8 @@ export async function makemaz_wiz_strt() {
         quest_create_monster('giant eel', 62, 14, null);
         quest_create_monster('giant eel', 69, 15, null);
         quest_create_monster('giant eel', 67, 17, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(00,00,75,19)) — no RNG.
+        quest_non_diggable(0, 0, 75, 19);
         for (let i = 0; i < 6; i++) await quest_trap();
         // Monsters on siege duty: bats, wraiths and imps, all hostile.
         const siege = [

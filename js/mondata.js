@@ -353,6 +353,33 @@ export function can_chant(mtmp = null) {
              || (mflags1_of(ptr) & M1_NOHEAD) !== 0);
 }
 
+// C ref: mondata.c:567 can_blow(mtmp) — a silent/buzzing monster that is
+// breathless, tiny, headless or an eel cannot blow a whistle or horn; a
+// Strangled hero cannot either.  mtmp === null means &youmonst.
+const M1_BREATHLESS_BIT = 0x400, MZ_SMALL_SIZE = 1, S_EEL_CLASS = 57;
+export function can_blow(mtmp = null) {
+    const u = game.u;
+    let ptr;
+    if (!mtmp) {
+        const p = u?.uprops;
+        if (((p?.Strangled | 0) | (p?.HStrangled | 0)) !== 0) return false;
+        if (!u?.Upolyd) return true;
+        ptr = monster_by_pmidx(u.umonnum);
+    } else {
+        ptr = mtmp.data;
+    }
+    if (ptr) {
+        const snd = msound_of(ptr);
+        if ((snd === MS_SILENT || snd === MS_BUZZ)
+            && ((mflags1_of(ptr) & M1_BREATHLESS_BIT) !== 0
+                || (ptr.msize | 0) < MZ_SMALL_SIZE
+                || (mflags1_of(ptr) & M1_NOHEAD) !== 0
+                || ptr.mcls === S_EEL_CLASS))
+            return false;
+    }
+    return true;
+}
+
 // C ref: mondata.c:663 cantvomit(ptr) — rats, mice and horses can't vomit.
 // C compares mons[] ROW POINTERS (ptr != &mons[PM_ROCK_MOLE]); the names below
 // are unique in mons[] so the comparison is exact (unlike a species-name REGEX,

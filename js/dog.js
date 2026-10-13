@@ -7,6 +7,7 @@ import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
 import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL, OBJ_FREE, OBJ_MINVENT } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
+import { mon_has_amulet } from './monspecial.js';
 import { set_malign, monster_by_pmidx, propagate } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
 import { finish_meating } from './dogmove.js';
@@ -1238,7 +1239,7 @@ export async function keepdogs(pets_only) {
                     await pline(`${await Monnam_shared(mtmp)} is still `
                                 + `${mtmp.meating ? 'eating' : 'trapped'}.`);
                 stay_behind = true;
-            } else if (mon_has_amulet_shared(mtmp)) {
+            } else if (mon_has_amulet(mtmp)) {
                 if (await canseemon_shared(mtmp))
                     await pline(`${await Monnam_shared(mtmp)} seems very`
                                 + ' disoriented for a moment.');
@@ -1289,12 +1290,6 @@ function helpless_mon(mon) {
 // js/do.js:382; export that one when wiring rather than duplicating it.
 function levl_follower_shared(mtmp) {
     return !!(mtmp === game.u?.usteed || mtmp.mtame || mtmp.iswiz);
-}
-// C ref: wizard.c mon_has_amulet(mtmp) — js/wizard.js exports the real one; a
-// dynamic import cannot be awaited from this sync helper, so the caller above
-// uses this narrow form (AMULET_OF_YENDOR is otyp 211).
-function mon_has_amulet_shared(mtmp) {
-    return (mtmp.minvent || []).some((o) => o.otyp === 211);
 }
 async function canseemon_shared(mtmp) {
     const D = await import('./display.js');
