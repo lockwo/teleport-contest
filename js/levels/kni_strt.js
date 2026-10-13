@@ -19,6 +19,7 @@ import { rn2 } from '../rng.js';
 import {
     SLP_GAS_TRAP, quest_align_shuffle, quest_finalize, quest_level_init_fill,
     quest_level_init_mines_flat, quest_monster, quest_trap,
+    quest_non_diggable,
 } from './quest_home_common.js';
 
 // C ref: sp_lev.c create_object() passes `artif = !named` to mksobj_at, so a
@@ -156,7 +157,8 @@ export async function makemaz_kni_strt() {
             quest_knight_guard(kx, ky, 1);
         for (const [px, py] of [[16, 6], [18, 6], [20, 6], [16, 9], [18, 9], [20, 9]])
             quest_monster({ name: 'page', mx: px, my: py });
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(00,00,49,15)) — no RNG.
+        quest_non_diggable(0, 0, 49, 15);
         await quest_trap(SLP_GAS_TRAP, 24, 4);
         await quest_trap(SLP_GAS_TRAP, 25, 4);
         for (let i = 0; i < 4; i++) await quest_trap();

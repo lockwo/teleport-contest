@@ -97,9 +97,10 @@ export async function makemaz_knox() {
             vly_terrain_at(47, 10, VWALL);
         }
         vly_region(21, 8, 35, 11, 1, OROOM, 0, false);
-        // selection.area(21,08,35,11):iterate() walks x outer, y inner.
-        for (let x = 21; x <= 35; x++)
-            for (let y = 8; y <= 11; y++) await treasure_spot(x, y);
+        // selection.area(21,08,35,11):iterate() is nhlsel.c l_selection_iterate():
+        // y outer, x inner (unlike selvar.c's internal column-major iterate).
+        for (let y = 8; y <= 11; y++)
+            for (let x = 21; x <= 35; x++) await treasure_spot(x, y);
         if (percent(50)) {
             vly_terrain_at(36, 9, VWALL);
             vly_terrain_at(36, 10, SDOOR);

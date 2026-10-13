@@ -53,7 +53,7 @@ const TROUBLE_STONED = 14, TROUBLE_SLIMED = 13, TROUBLE_STRANGLED = 12,
     TROUBLE_LAVA = 11, TROUBLE_SICK = 10, TROUBLE_STARVING = 9,
     TROUBLE_REGION = 8, TROUBLE_HIT = 7, TROUBLE_LYCANTHROPE = 6,
     TROUBLE_STUCK_IN_WALL = 4, TROUBLE_CURSED_LEVITATION = 3,
-    TROUBLE_CURSED_BLINDFOLD = 1;
+    TROUBLE_UNUSEABLE_HANDS = 2, TROUBLE_CURSED_BLINDFOLD = 1;
 const TROUBLE_PUNISHED = -1, TROUBLE_FUMBLING = -2, TROUBLE_CURSED_ITEMS = -3,
     TROUBLE_SADDLE = -4, TROUBLE_BLIND = -5, TROUBLE_POISONED = -6,
     TROUBLE_WOUNDED_LEGS = -7, TROUBLE_HUNGRY = -8, TROUBLE_STUNNED = -9,
@@ -205,8 +205,9 @@ function Wounded_legs() {
  * Three arms cannot be evaluated in this port and are noted where C has them:
  * region_danger() (no stinking-cloud regions), TROUBLE_COLLAPSING and the
  * loadstone half of worst_cursed_item() (both need near_capacity()), and
- * TROUBLE_UNUSEABLE_HANDS (js/invent.js welded() is a stub that returns false).
- * Each omission can only under-report, never invent, a trouble.
+ * TROUBLE_UNUSEABLE_HANDS uses js/invent.js welded() (wield.c:1053) and the
+ * nohands/freehand checks from apply.c/pickup.c. Each omission can only
+ * under-report, never invent, a trouble.
  */
 function in_trouble() {
     const u = game.u;
@@ -229,7 +230,13 @@ function in_trouble() {
         || Cursed_obj(game.uleft, 'RIN_LEVITATION')
         || Cursed_obj(game.uright, 'RIN_LEVITATION'))
         return TROUBLE_CURSED_LEVITATION;
-    /* TROUBLE_UNUSEABLE_HANDS: welded(uwep). */
+    /* nohands(gy.youmonst.data) || !freehand() */
+    if (nohands_hero() || !freehand_hero()) {
+        if (_inv?.welded(game.uwep)) return TROUBLE_UNUSEABLE_HANDS;
+        if (u.Upolyd && nohands_hero()
+            && (!uprop('Unchanging') || ((() => { const oc = unchanger_hero(); return oc && oc.cursed; })())))
+            return TROUBLE_UNUSEABLE_HANDS;
+    }
     if (game.ublindf && game.ublindf.cursed) return TROUBLE_CURSED_BLINDFOLD;
 
     /* minor troubles */
@@ -248,7 +255,7 @@ function in_trouble() {
         if (ABASE(i) < AMAX(i)) return TROUBLE_POISONED;
     if (Wounded_legs() && !u.usteed) return TROUBLE_WOUNDED_LEGS;
     if ((u.uhs | 0) >= HUNGRY) return TROUBLE_HUNGRY;
-    if (u.uprops?.Stun || u.HStun || u.ustun) return TROUBLE_STUNNED;
+    if (u.uprops?.Stun || u.HStun || u.ustun || u.formprops?.Stunned) return TROUBLE_STUNNED;
     if (u.uprops?.Confusion || u.uconf) return TROUBLE_CONFUSED;
     if (Hallucination()) return TROUBLE_HALLUCINATION;
     return 0;
@@ -661,6 +668,22 @@ function init_uhunger() {
 }
 const NOT_HUNGRY = 1;
 
+// C ref: mondata.h nohands(ptr) — current form has no hands.
+function nohands_hero() {
+    const ptr = _inv?.youmonst_data_pub?.();
+    return !!(ptr && ptr.mflags1 != null && (ptr.mflags1 & 0x00000020 /* M1_NOHANDS */));
+}
+// C ref: wield.c freehand() — not welded, or one-handed with no cursed shield.
+function freehand_hero() {
+    if (!_inv?.welded(game.uwep)) return true;
+    return !_inv.bimanual(game.uwep) && !(game.uarms && game.uarms.cursed);
+}
+// C ref: do_wear.c unchanger() — the worn cursed amulet of unchanging.
+function unchanger_hero() {
+    return game.uamul && OBJECTS[game.uamul.otyp]?.sym === 'AMULET_OF_UNCHANGING'
+        ? game.uamul : null;
+}
+
 // Clear a property under every name this port stores it as (js/pray.js uprop()
 // reads both u.uprops[name] and u[name]).
 function clear_uprop(name) {
@@ -745,6 +768,21 @@ async function fix_worst_trouble(trouble) {
         else if (Cursed_obj(game.uleft, 'RIN_LEVITATION')) otmp = game.uleft;
         else if (Cursed_obj(game.uright, 'RIN_LEVITATION')) otmp = game.uright;
         await fix_curse_trouble(otmp, ringglow(otmp));
+        break;
+    }
+    case TROUBLE_UNUSEABLE_HANDS: {
+        if (_inv?.welded(game.uwep)) {
+            await fix_curse_trouble(game.uwep, null);
+        } else if (u.Upolyd && nohands_hero()) {
+            if (!uprop('Unchanging')) {
+                await update_topl('Your shape becomes uncertain.');
+                const { rehumanize } = await import('./polyself.js');
+                await rehumanize(); /* "You return to <normal> form." */
+            } else {
+                const oc = unchanger_hero();
+                if (oc && oc.cursed) await fix_curse_trouble(oc, null);
+            }
+        }
         break;
     }
     case TROUBLE_CURSED_BLINDFOLD:
@@ -1991,7 +2029,7 @@ export async function dosacrifice() {
         return 0; // ECMD_OK
     }
     if ((u.uprops?.Confusion || u.uconf || 0)
-        || (u.uprops?.Stun || u.uprops?.Stunned || u.ustun || 0)) {
+        || (u.uprops?.Stun || u.uprops?.Stunned || u.ustun || u.formprops?.Stunned || 0)) {
         await update_topl('You are too impaired to perform the rite.');
         return 0; // ECMD_OK
     }

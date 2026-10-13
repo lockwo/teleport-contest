@@ -13,6 +13,7 @@ import {
 import {
     S_DRAGON, S_EEL, S_SNAKE, quest_align_shuffle, quest_finalize,
     quest_level_init_fill, quest_monster, quest_trap,
+    quest_non_diggable,
 } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -83,7 +84,8 @@ export async function makemaz_hea_strt() {
         const attendants = [[29, 8], [29, 9], [29, 10], [29, 11],
                             [40, 9], [40, 10], [40, 11], [40, 13]];
         for (const [ax, ay] of attendants) quest_create_monster('attendant', ax, ay, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(00,00,75,19)) — no RNG.
+        quest_non_diggable(0, 0, 75, 19);
         for (let i = 0; i < 6; i++) await quest_trap();
         // Monsters on siege duty — all at random locations, so each one's
         // get_location_coord runs the rn2(xsize)/rn2(ysize) loop for the

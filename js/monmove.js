@@ -54,6 +54,7 @@ import {
     SPIKED_PIT, HOLE, TRAPDOOR, MAGIC_TRAP, NO_TRAP_FLAGS, ALL_TRAPS, NO_TRAP,
     TRAPPED_DOOR, CORR,
     A_STR, SQSRCHRADIUS, ALLOW_TRAPS, STATUE_TRAP, VIBRATING_SQUARE, TRAPNUM,
+    W_ARM, W_ARMC, W_ARMH, W_ARMU, ER_NOTHING,
     W_ARMOR, W_ARMS, W_ARMG, W_ARMF, W_AMUL, NOTONL, ALLOW_ROCK, ALLOW_M, ALLOW_U, ALLOW_SANCT,
     ALLOW_SSM, OPENDOOR, UNLOCKDOOR, BUSTDOOR, ALLOW_WALL, ALLOW_BARS,
     NOGARLIC, IS_ALTAR, In_endgame, HEADSTONE, u_at,
@@ -144,17 +145,17 @@ import { obj_resists, sleep_monst, resist, resists_magm } from './zap.js';
 // m_harmless_trap's FIRE_TRAP arm; mondata.js reads permonst.mresists (MR_FIRE).
 import { resists_fire, resists_acid, resists_sleep, monstseesu, monstunseesu, slimeproof, resists_poison, resists_ston } from './mondata.js';
 import { clear_path, couldsee, cansee, vision_recalc, recalc_block_point, Blind } from './vision.js';
-import { mattackm, mdisplacem } from './mhitm.js';
+import { mattackm, mdisplacem, corpse_chance_mm } from './mhitm.js';
 import { hitval, ARWEP, autoreturn_weapon, setmnotwielded, is_wet_towel } from './weapon.js';
 import * as objnam_mod from './objnam.js';
 import { makeplural, vtense } from './plural.js';
-import { Monnam, mon_nam, canspotmon, make_corpse, corpse_chance, dmgval,
+import { Monnam, mon_nam, canspotmon, make_corpse, dmgval,
     setmangry, relobj, is_flimsy, is_blunt_weapon_uh } from './uhitm.js';
 import { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE, SLT_ENCUMBER, FORCETRAP, Unaware,
     M_POISONGAS_OK, M_POISONGAS_MINOR, M_POISONGAS_BAD } from './const.js';
 import { visible_region_at as visible_region_at_mf, region_is_poisoncloud } from './region.js';
 import { wipe_engr_at, engr_at, sengr_at } from './engrave.js';
-import { observe_object } from './o_init.js';
+import { observe_object, objdescr_is } from './o_init.js';
 import { WEP_HITBON, WEP_SDAM, WEP_LDAM } from './weapondmg_data.js';
 
 // ── permonst resolution ─────────────────────────────────────────────────────
@@ -2358,7 +2359,9 @@ export async function mon_kill_leaving(mon, nocorpse) {
     // terrain) make_corpse() builds the cadaver.  nocorpse (disintegration)
     // suppresses the cadaver entirely with no corpse_chance roll.
     if (nocorpse) return;
-    const dropCorpse = corpse_chance(mon);                 // mon.c:3248 rn2(tmp)
+    // C ref: mon.c:3181 corpse_chance() — also the Vlad/lich crumble and the
+    // gas-spore AT_BOOM detonation (d(), then mon_explodes()), before the rn2.
+    const dropCorpse = await corpse_chance_mm(mon);         // mon.c:3248 rn2(tmp)
     if (dropCorpse && mx > 0 && my >= 0 && mon_accessible(mx, my))
         await make_corpse(mon, mx, my);
 }
@@ -2749,31 +2752,55 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         return Trap_Effect_Finished;
     }
     case RUST_TRAP: {
-        // C ref: trapeffect_rust_trap() else-branch (trap.c:1656).  One rn2(5)
-        // picks which body part the gush hits.  water_damage() on a monster's
-        // worn armour reaches erode_obj(), which draws nothing, and the force
-        // arg skips its Luck roll — so the four arms differ only in wording
-        // (the greased / container arms DO roll, but no monster in reach of a
-        // rust trap carries either).
+        // C ref: trapeffect_rust_trap() else-branch (trap.c:1656-1700).  One
+        // rn2(5) picks which body part the gush hits, then water_damage()s the
+        // gear there with force=TRUE (no Luck roll).  erode_obj() still draws
+        // rnl(4) for a BLESSED rustprone weapon/armor piece it reaches.
         const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
-        const { seetrap } = await import('./trap.js');
+        const { seetrap, water_damage } = await import('./trap.js');
+        const { helm_simple_name, gloves_simple_name, cloak_simple_name, suit_simple_name }
+            = await import('./do_wear.js');
         if (in_sight) seetrap(trap);
         const GUSH = 'A gush of water hits';
+        let target;
+        // C `mglovecheck:` label, the tail of both arm cases.
+        const mglovecheck = async () => {
+            target = which_armor(mtmp, W_ARMG);
+            await water_damage(target, target ? gloves_simple_name(target) : null, true);
+        };
         switch (rn2(5)) {                                    // trap.c:1663
         case 0:
             if (in_sight)
                 await pline_mon(mtmp, `${GUSH} ${mon_nam(mtmp)} on the ${mbodypart(mtmp, HEAD)}!`);
+            target = which_armor(mtmp, W_ARMH);
+            await water_damage(target, target ? helm_simple_name(target) : null, true);
             break;
         case 1:
             if (in_sight)
                 await pline_mon(mtmp, `${GUSH} ${mon_nam(mtmp)}'s left ${mbodypart(mtmp, ARM)}!`);
+            target = which_armor(mtmp, W_ARMS);
+            if (await water_damage(target, 'shield', true) !== ER_NOTHING)
+                break;
+            target = MON_WEP(mtmp);
+            if (target && bimanual_iv(target))
+                await water_damage(target, null, true);
+            await mglovecheck();
             break;
         case 2:
             if (in_sight)
                 await pline_mon(mtmp, `${GUSH} ${mon_nam(mtmp)}'s right ${mbodypart(mtmp, ARM)}!`);
+            await water_damage(MON_WEP(mtmp), null, true);
+            await mglovecheck();
             break;
         default:
             if (in_sight) await pline(`${GUSH} ${mon_nam(mtmp)}!`);
+            // (splash_lit() of a lit non-wielded light source: not modelled)
+            if ((target = which_armor(mtmp, W_ARMC)))
+                await water_damage(target, cloak_simple_name(target), true);
+            else if ((target = which_armor(mtmp, W_ARM)))
+                await water_damage(target, suit_simple_name(target), true);
+            else if ((target = which_armor(mtmp, W_ARMU)))
+                await water_damage(target, 'shirt', true);
             break;
         }
         // completelyrusts(ptr) == (ptr == &mons[PM_IRON_GOLEM]) (mondata.h:227).
@@ -2786,8 +2813,8 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             await mon_kill_leaving(mtmp, true);
             if (DEADMONSTER(mtmp)) { newsym(xx, yy); return Trap_Killed_Mon; }
         } else if (mtmp.data?.name === 'gremlin' && rn2(3)) {
-            // split_mon(mtmp, 0) — a second gremlin via clone_mon(); not
-            // modeled, so leave the divergence honest rather than guess.
+            const { split_mon } = await import('./potion.js');
+            await split_mon(mtmp, null);                     // trap.c:1719
         }
         return mtmp.mtrapped ? Trap_Caught_Mon : Trap_Effect_Finished;
     }
@@ -5464,8 +5491,15 @@ async function meatobj(mtmp) {
             // devour
             count++;
             if (cansee(mtmp.mx, mtmp.my)) {
+                // C ref: mon.c:1614 -- distant_name(otmp, doname) runs even when
+                // !verbose (its dknown side effect), and a far scroll reads
+                // "a scroll", not "a scroll labeled ...".
+                const otmpname = distant_name_pub(otmp, obj_doname);
                 if (verbose)
-                    await pline(`${Monnam(mtmp)} eats ${floor_object_name(otmp)}!`);
+                    await pline(`${Monnam(mtmp)} eats ${otmpname}!`);
+                /* give this one even if !verbose */
+                if (otmp.oclass === SCROLL_CLASS && objdescr_is(otmp, 'YUM YUM'))
+                    await pline(`Yum${otmp.blessed ? '!' : '.'}`);
             } else if (verbose) {
                 await You_hear('a slurping sound.');
             }
@@ -6167,17 +6201,11 @@ export async function mattacku(mtmp, mdat) {
                 // whole RNG cost is m_throw's per-square forcehit rolls plus the
                 // hero-hit resolution (u_catch_thrown_obj / dmgval / thitu).
                 if (!Is_rogue_level()) await thrwmu(mtmp, mdat);
+            } else if (await mattacku_wield_first(mtmp)) {
+                // C ref mhitu.c:894-899 — this attack was spent wielding; the
+                // switch `break`s out.  (Done whether or not the monster found
+                // the hero: a sergeant swinging at a displaced image wields too.)
             } else if (foundyou) {
-                // C ref mhitu.c:894 — wield a melee weapon first if the monster
-                // needs one (weapon_check NEED_WEAPON, or no MON_WEP yet).  The
-                // wield consumes no RNG; for the goblin it's usually a no-op (it
-                // already wielded its crude dagger when fighting the pet).  When
-                // mon_wield_item actually wields (returns 1) the attack breaks
-                // (this turn was spent wielding) — matching C's `break`.
-                if (mtmp.weapon_check === NEED_WEAPON_MM || !MON_WEP(mtmp)) {
-                    mtmp.weapon_check = NEED_HTH_WEAPON_MM;
-                    if (await mon_wield_item(mtmp)) break;
-                }
                 // C ref mhitu.c:907 — hittmp = hitval(mon_currwep, &youmonst);
                 // tmp += hittmp; mswings(...).  hitval is the weapon's to-hit
                 // bonus (spe + oc_hitbon + material/target terms), no RNG.
@@ -6794,6 +6822,20 @@ const W_WEP_MM = 0x00000100; // prop.h W_WEP
 // weapon_check enum values (C ref: monst.h wpn_chk_flags).
 const NO_WEAPON_WANTED_MM = 0, NEED_WEAPON_MM = 1, NEED_RANGED_WEAPON_MM = 2, NEED_HTH_WEAPON_MM = 3;
 const HANDS_OBJ = null; // C's &hands_obj sentinel — never selected here.
+// C ref: mhitu.c:894 mattacku() AT_WEAP melee arm — "Rare but not impossible.
+// Normally the monster wields when 2 spaces away, but it can be teleported or
+// whatever...."  If the monster still needs a melee weapon (weapon_check
+// NEED_WEAPON, or no MON_WEP yet) it wields one first, consuming no RNG.  This
+// runs BEFORE the `foundyou` test, so it also happens for a swing at the
+// hero's displaced/invisible image.  Returns TRUE when mon_wield_item() wielded
+// something, i.e. the monster's attack for this turn was spent wielding.
+async function mattacku_wield_first(mtmp) {
+    if (mtmp.weapon_check === NEED_WEAPON_MM || !MON_WEP(mtmp)) {
+        mtmp.weapon_check = NEED_HTH_WEAPON_MM;
+        if (await mon_wield_item(mtmp)) return true;
+    }
+    return false;
+}
 
 // C ref: objects.h WEAPON()/PROJECTILE()/BOW() oc_dir strike-type bits
 // (P=PIERCE=1, S=SLASH=2, B=WHACK=4; "weapon strike mode overloads the oc_dir
@@ -7171,7 +7213,8 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
     if (!harmless && !DEADMONSTER(mtmp)) {
         mtmp.mhp -= damage;
         if (mtmp.mhp <= 0) {
-            const xx = mtmp.mx, yy = mtmp.my;
+            // (m_detach() -> mon_leaving_level() already newsym()'d the square;
+            // C's ohitmon() calls no newsym of its own.)
             if (vis || verbose)
                 await pline_mon(mtmp, `${Monnam_spot(mtmp)} is `
                     + `${(nonliving_mm(mtmp) || is_vampshifter(mtmp)
@@ -7179,7 +7222,6 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
             // svc.context.mon_moving is set for a monster's throw, so C takes the
             // mondied() arm (no hero kill credit / no experience).
             await mon_kill_leaving(mtmp, false);
-            if (DEADMONSTER(mtmp)) newsym(xx, yy);
         }
     }
     // C ref: mthrowu.c:485-508 — a cream pie or blinding venom that connects
@@ -8269,7 +8311,30 @@ async function hitmu(mtmp, mdat, mattk) {
 
     if (mhm.damage > 0) {
         // Half_physical_damage / Mitre-of-Holiness not modelled (off here).
-        // permdmg (Death) not reachable.
+        if (mhm.permdmg) { /* Death's life force drain */
+            // C ref: mhitu.c:1222-1252 — apply some of the damage to permanent
+            // hit points; never reduces hpmax below 1 hit point per level.
+            const { minuhpmax } = await import('./exper.js');
+            let permdmg = rn2(Math.trunc(mhm.damage / 2) + 1);
+            if (u.Upolyd || u.uhpmax > 25 * u.ulevel)
+                permdmg = mhm.damage;
+            else if (u.uhpmax > 10 * u.ulevel)
+                permdmg += Math.trunc(mhm.damage / 2);
+            else if (u.uhpmax > 5 * u.ulevel)
+                permdmg += Math.trunc(mhm.damage / 4);
+            mhm.permdmg = permdmg;
+            let lowerlimit;
+            if (u.Upolyd) {
+                lowerlimit = Math.min(youmonst_data_mm()?.mlevel ?? 0, u.ulevel);
+                if (u.mhmax - permdmg > lowerlimit) u.mhmax -= permdmg;
+                else if (u.mhmax > lowerlimit) u.mhmax = lowerlimit;
+            } else {
+                lowerlimit = minuhpmax(1);
+                if (u.uhpmax - permdmg > lowerlimit) u.uhpmax -= permdmg;
+                else if (u.uhpmax > lowerlimit) u.uhpmax = lowerlimit;
+            }
+            game.botl = true;
+        }
         await mdamageu(mtmp, mhm.damage);
     }
 
@@ -8959,7 +9024,7 @@ async function mhitm_knockback(mtmp, mattk, weaponUsed, mhm) {
         mhm.hitflags |= M_ATTK_HIT;
     }
     set_apparxy(mtmp);
-    const stunned = (u.uprops?.Stun || u.ustun || 0) > 0;
+    const stunned = (u.uprops?.Stun || u.ustun || 0) > 0 || !!u.formprops?.Stunned;
     if (!stunned && !rn2(4)) {
         const { make_stunned_u } = await import('./mhitu.js');
         await make_stunned_u(knockdistance + 1, true);

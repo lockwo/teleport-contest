@@ -2434,10 +2434,11 @@ export function quest_rndcoord(sel) {
 
 // A specific-coord ogre (create_monster with an explicit coord from rndcoord).
 export function quest_create_monster_at(name, x, y, peaceful) {
-    const pmidx = name_to_pmidx(name);
+    const { pmidx, female: gend } = splev_find_montype(name);   // sp_lev.c:3156
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    if (ptr.gcode !== 1 && ptr.gcode !== 2) rn2(2);   // find_montype gender
+    // create_monster() (sp_lev.c:2125) assigns find_montype's gender over
+    // whatever makemon() rolled.
     rn2(3);                                            // induced_align
     let mx = x, my = y;
     if (mm_mon_at(mx, my)) {
@@ -2445,6 +2446,7 @@ export function quest_create_monster_at(name, x, y, peaceful) {
         if (cc) { mx = cc.x; my = cc.y; }
     }
     const mtmp = makemon(ptr, mx, my, 0);
+    if (mtmp) mtmp.female = gend;
     if (mtmp && peaceful != null) mtmp.mpeaceful = !!peaceful;
     return mtmp;
 }

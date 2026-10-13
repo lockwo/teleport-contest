@@ -176,8 +176,9 @@ export async function docast() {
 // player spent picking a spell fell through to rhack() as a phantom command.
 async function rejectcasting() {
     const u = game.u;
-    // C ref: youprop.h Stunned = HStun || EStun.
-    if ((u?.uprops?.Stun || 0) > 0 || !!u?.Stunned) {
+    // C ref: youprop.h Stunned = HStun || EStun; HStun carries FROMFORM for a
+    // stalker or bat polyform (u.formprops.Stunned, polyself.js set_uasmon()).
+    if ((u?.uprops?.Stun || 0) > 0 || !!u?.Stunned || !!u?.formprops?.Stunned) {
         await pline('You are too impaired to cast a spell.');
         return true;
     }

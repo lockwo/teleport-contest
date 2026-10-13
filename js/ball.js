@@ -775,10 +775,11 @@ export async function drop_ball(x, y) {
                 await pline('The web is destroyed!');
                 deltrap(t_at(u.ux, u.uy));
                 break;
-            case TT_LAVA:
-                /* C: hliquid("lava") — Hallucination renames it */
-                await pline(`${pullmsg}lava!`);
+            case TT_LAVA: {
+                const { hliquid } = await import('./do_name.js');
+                await pline(`${pullmsg}${hliquid('lava')}!`);
                 break;
+            }
             case TT_BEARTRAP: {
                 const { LEFT_SIDE, RIGHT_SIDE } = await import('./const.js');
                 side = rn2(3) ? LEFT_SIDE : RIGHT_SIDE;

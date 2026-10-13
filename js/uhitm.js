@@ -2025,7 +2025,7 @@ export async function killed(mon, opts) {
                 await mon_explodes(mon, boom);
                 leaves_corpse = false;
             } else {
-                leaves_corpse = !wasinside && corpse_chance(mon);
+                leaves_corpse = !wasinside && await corpse_chance(mon);
             }
         }
         if (leaves_corpse) {
@@ -2257,16 +2257,25 @@ export function experience(mtmp, nk = 0) {
 // rider, shk all GUARANTEE a corpse with NO rn2 roll (mon.c:3246); only the
 // ordinary case rolls rn2(2 + (G_FREQ<2) + verysmall). Missing that
 // short-circuit rolled an extra rn2 when killing a big monster (seed4500
-// step-269: the MZ_HUGE earth elemental). Lich/Vlad and gas-spore handling
-// is performed by the kill path before this ordinary corpse decision.
+// step-269: the MZ_HUGE earth elemental). Gas-spore handling is performed by
+// the kill path before this ordinary corpse decision.
 //
 // Resolve abbreviated pet data by species index; lycanthrope forms share names.
 function corpse_permonst(mon) {
     const dat = mon?.data;
     return monster_by_pmidx(dat?.pmidx) || dat || {};
 }
-export function corpse_chance(mon) {
+export async function corpse_chance(mon, was_swallowed = false) {
     const mdat = corpse_permonst(mon);
+    // C ref: mon.c:3189-3197 -- Vlad and the liches crumble to dust: no corpse
+    // and NO rn2 (LEVEL_SPECIFIC_NOCORPSE below is never reached either).
+    if (mdat.name === 'Vlad the Impaler' || mdat.mcls === S_LICH) {
+        if (cansee(mon.mx, mon.my) && !was_swallowed) {
+            (await import('./hack.js')).set_msg_xy(mon.mx, mon.my);
+            await update_topl(`${s_suffix(Monnam(mon))} body crumbles into dust.`);
+        }
+        return false;
+    }
     if (level_specific_nocorpse(mdat)) return false;
     const bigOrLizard = (largemonst(mdat) || mdat.name === 'lizard') && !mon.mcloned;
     const golem = /\bgolem$/.test(mdat.name || '');
@@ -4441,7 +4450,7 @@ export async function gulpum(mdef, mattk) {
                         + ` in your ${body_part(STOMACH)}.`);
                 } else {
                     tmp = 1 + ((pd?.cwt | 0) >> 8);
-                    if (corpse_chance(mdef) && !mon_nocorpse(pd)) {
+                    if (await corpse_chance(mdef, true) && !mon_nocorpse(pd)) {
                         /* nutrition only if there can be a corpse */
                         u.uhunger = (u.uhunger | 0)
                             + Math.trunc(((pd?.cnutrit | 0) + 1) / 2);

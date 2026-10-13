@@ -14,7 +14,7 @@ import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, STOMACH, ALTAR, NOSE, W_ARMOR
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_CLING, M1_POIS, M1_METALLIVORE, M1_NOHANDS, M1_CARNIVORE, M1_HERBIVORE, M1_HUMANOID, M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, noncorporeal }
     from './monflags_data.js';
-import { more_experienced, newexplevel, pluslvl, has_innate } from './exper.js';
+import { more_experienced, newexplevel, pluslvl, has_innate, has_innate_fromoutside } from './exper.js';
 
 // NOTE on imports: mkobj.js imports set_tin_variety() from this module, so a
 // static `import ... from './mkobj.js'` (or invent.js, which imports mkobj.js)
@@ -759,7 +759,7 @@ export async function newuhs(incr) {
             // right after the hunger message, then nomul(0) drops the count.
             for (const [slot, txt] of [['_search_occupation', 'searching'],
                                        ['_wait_occupation', 'waiting'],
-                                       ['_wipe_occupation', 'wiping off your face'],
+                                       ['_wipe_occupation', game.occupation_txt || 'wiping off your face'],
                                        ['_study_occupation', 'studying']]) {
                 if (!game[slot]) continue;
                 game[slot] = null;
@@ -2628,6 +2628,12 @@ function uprop_set(prop, val) {
     game.u.uprops = game.u.uprops || {};
     game.u.uprops[key] = val;
 }
+// C: (HFoo & FROMOUTSIDE) — the stored bit, or a level-1 innate that adjabil()
+// stored with FROMOUTSIDE (see exper.js has_innate_fromoutside).
+function uprop_has_outside(prop) {
+    return (uprop_get(prop) & P_FROMOUTSIDE) !== 0
+        || has_innate_fromoutside(PROP_KEY[prop]);
+}
 function set_itimeout(prop, val) {
     uprop_set(prop, (uprop_get(prop) & ~P_TIMEOUT) | (val & P_TIMEOUT));
 }
@@ -3085,7 +3091,7 @@ export async function givit(type, ptr) {
     if (!u) return;
     u.uprops = u.uprops || {};
     const Halluc = !!u.uhallu;
-    const has_outside = (prop) => (uprop_get(prop) & P_FROMOUTSIDE) !== 0;
+    const has_outside = (prop) => uprop_has_outside(prop);
     const grant = (prop) => uprop_set(prop, uprop_get(prop) | P_FROMOUTSIDE);
 
     switch (type) {
@@ -3315,7 +3321,7 @@ export async function consume_tin(mesg) {
             what = 'chicken';
             which = 1;          /* suppress pluralization */
         } else if (Halluc) {
-            what = T.do_name.rndmonnam();
+            what = T.do_name.rndmonnam().name;
         } else {
             what = nm;
             if (the_unique_pm(mnum)) which = 2;
@@ -3641,7 +3647,7 @@ export async function eataccessory(otmp) {
             break;
         case RIN_FREE_ACTION:
             /* gives sleep resistance instead */
-            if (!(uprop_get(P_SLEEP_RES) & P_FROMOUTSIDE))
+            if (!uprop_has_outside(P_SLEEP_RES))
                 await accessory_has_effect(otmp);
             if (!uprop_get(P_SLEEP_RES)) await pline('You feel wide awake.');
             uprop_set(P_SLEEP_RES, uprop_get(P_SLEEP_RES) | P_FROMOUTSIDE);

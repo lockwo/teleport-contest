@@ -727,7 +727,7 @@ async function swim_move_danger(x, y) {
     const liquidWall = (newtyp === WATER) || (newtyp === LAVAWALL);
     if (u.uprops?.Underwater && (isPoolTerrain(x, y) || newtyp === WATER))
         return false;
-    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned;
+    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
     const confused = (u.uprops?.Confusion || 0) > 0;
     const seenv = loc ? (loc.seenv || 0) : 0;
     const pool = isPoolTerrain(x, y);
@@ -783,10 +783,9 @@ function doorless_door(x, y) {
 // the shopkeeper is on post and owed money (or hero carries a digging tool),
 // printing "<Shk> blocks your way!" — needs ESHK (post/door coords, debit/
 // billct/robbed) this port doesn't keep, so only the has-a-door case blocks
-// here. Passes_walls heroes bypass this test in C; blocksMove() likewise
-// ignores phasing.
+// here. Passes_walls heroes bypass both arms (C's `dx && dy && !Passes_walls`).
 function blocksDiagonalDoor(ux, uy, x, y, dx, dy) {
-    if (!(dx && dy)) return false;
+    if (!(dx && dy) || hero_passes_walls()) return false;
     // Diagonal move INTO a door with a door present.  Closed/locked doors are
     // *not* rejected here: C's test_move() handles them via the closed_door
     // branch (autoopen) before ever reaching testdiag (hack.c:1075 vs 1140), so
@@ -919,7 +918,7 @@ async function avoid_trap_andor_region(x, y) {
     if (!((game.flags.paranoia_bits ?? PARANOID_TRAP) & PARANOID_TRAP)) return false;
     const u = game.u;
     const c = game.context;
-    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned;
+    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
     const confused = (u.uprops?.Confusion || 0) > 0;
     // C: `!svc.context.nopick || svc.context.run` — the 'm' prefix opts out.
     const nopick_opt_out = (c?.nopick && !c?.run);
@@ -956,7 +955,7 @@ async function avoid_trap_andor_region(x, y) {
     if (!hallu && immune_to_trap(u, trap.ttyp) === TRAP_CLEARLY_IMMUNE)
         return false;
     const traptype = hallu ? rnd(TRAPNUM - 1) : trap.ttyp;
-    const verb = u.uprops?.Levitation ? 'float' : u.uprops?.Flying ? 'fly' : 'step';  // hack.c u_locomotion
+    const verb = Levitation_fu() ? 'float' : Flying_fu() ? 'fly' : 'step';  // hack.c u_locomotion
     const qbuf = `Really ${verb} ${into_vs_onto(traptype) ? 'into' : 'onto'}`
                + ` that ${trap_explanation(traptype)}?`;
     if (await y_n(qbuf) === 'y') return false;
@@ -1036,6 +1035,7 @@ async function get_count(inkey) {
 
 // C ref: cmd.c rhack — main command dispatcher
 export async function rhack(key) {
+    if (process.env.NHDBG_TRAV) console.error('RHACK', game.moves, JSON.stringify(key), 'dx', game.u?.dx, game.u?.dy, 'pos', game.u?.ux, game.u?.uy);
     // A nonzero key is moveloop_core's count repeat of the previous command.
     const countRepeat = key !== 0;
     const hadForcefight = !!game.context?.forcefight;
@@ -1550,7 +1550,11 @@ export async function rhack(key) {
         // ECMD_TIME only when the use costs a turn (e.g. a *repeat* stethoscope
         // probe in the same turn).  The first stethoscope-to-self probe is free
         // (ECMD_OK) and consumes no RNG.
-        game.context.move = (await doapply()) === ECMD.ECMD_TIME ? 1 : 0;
+        const applyRes = await doapply();
+        game.context.move = applyRes === ECMD.ECMD_TIME ? 1 : 0;
+        // C ref: cmd.c rhack():3810-3813 — ECMD_CANCEL (declined direction/
+        // target prompt) runs reset_cmd_vars(TRUE), clearing CQ_REPEAT.
+        if (applyRes === ECMD.ECMD_CANCEL) game.context._getobj_cancelled = true;
     } else if (ch === 'e') {
         // C ref: cmd.c 'e' (#eat) -> eat.c doeat().  Eats carried/floor food
         // (ECMD_TIME when a bite is taken).
@@ -2329,11 +2333,12 @@ export async function dosearch0(aflag) {
         if (!aflag) await Norep_topl('What are you looking for?  The exit?');
         return 1;
     }
-    // C: fund = artifact SPFX_SEARCH spe (no such weapon in this port), +2 for
-    // worn lenses while not blind, capped at 5.  fund picks the rnl() MODULUS,
-    // so the lenses bonus is a live RNG-steering input for any hero wearing a
-    // pair, not cosmetic.
-    let fund = 0;
+    // C: fund = a wielded SPFX_SEARCH artifact's (Excalibur) spe, +2 for worn
+    // lenses while not blind, capped at 5.  fund picks the rnl() MODULUS, so
+    // both bonuses are live RNG-steering inputs, not cosmetic.
+    const { spec_ability, SPFX_SEARCH } = await import('./artifact.js');
+    let fund = (game.uwep && game.uwep.oartifact && spec_ability(game.uwep, SPFX_SEARCH))
+        ? (game.uwep.spe | 0) : 0;
     if (game.ublindf && game.ublindf.otyp === LENSES_CMD && !Blind()) fund += 2;
     if (fund > 5) fund = 5;
     const { visible_region_at } = await import('./region.js');
@@ -2875,7 +2880,7 @@ export async function doopen_indir(x, y) {
     // use a turn regardless of whether a door is successfully targeted".
     let res = 0; // ECMD_OK
     {
-        const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned;
+        const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
         const confused = (u.uprops?.Confusion || 0) > 0;
         if (confused || stunned) res = 1; // ECMD_TIME
     }
@@ -3056,7 +3061,7 @@ export async function doclose() {
     // turn regardless of whether a door is successfully targeted".  Without
     // this a confused/stunned #close at empty air cost no turn, so the whole
     // monster-move phase after it went missing.
-    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned;
+    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
     const confused = (u.uprops?.Confusion || 0) > 0;
     if (confused || stunned) res = 2; // ECMD_TIME
 
@@ -3410,7 +3415,9 @@ function OBJ_DESCR_CMD(obj) {
 // `Stunned || (Confusion && !rn2(5))`).
 function u_maybe_impaired() {
     const u = game.u;
-    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned;
+    // Stunned == HStun | EStun, where HStun carries the FROMFORM bit for a
+    // stalker or bat polyform (polyself.c set_uasmon() PROPSET(STUNNED, ...)).
+    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
     if (stunned) return true;
     const confused = (u.uprops?.Confusion || 0) > 0;
     return confused && !rn2(5);
@@ -3996,7 +4003,11 @@ async function domove_core(dx, dy, attemptTracked) {
         const tgt = game.level?.at(newx, newy);
         const closedDoor = tgt && IS_DOOR(tgt.typ)
             && (tgt.doormask & (D_CLOSED | D_LOCKED));
-        if (closedDoor) {
+        // C ref: hack.c:1076-1079 — `if (Blind && mode == DO_MOVE)
+        // feel_location(x, y); if (Passes_walls) { ; /* do nothing */ }`: a
+        // phasing hero walks into the closed door's square like any floor.
+        if (closedDoor && hero_passes_walls() && Blind()) feel_location(newx, newy);
+        if (closedDoor && !hero_passes_walls()) {
             // C ref: hack.c:1076 — `if (Blind && mode == DO_MOVE)
             // feel_location(x, y)` before any open/bump handling.
             if (Blind()) feel_location(newx, newy);
@@ -4005,7 +4016,7 @@ async function domove_core(dx, dy, attemptTracked) {
             // INTO the door ("Ouch!  That was a door.") instead of opening it,
             // which is a different message and a different RNG path.
             const u = game.u;
-            const _stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.Stunned;
+            const _stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.Stunned || !!u?.formprops?.Stunned;
             const _confused = !!(u?.uconf || u?.HConfusion);
             const _fumbling = !!(u?.HFumbling || u?.EFumbling);
             if (game.flags?.autoopen !== false && !game.context?.run
@@ -4038,7 +4049,7 @@ async function domove_core(dx, dy, attemptTracked) {
             // Diagonal running into a closed door (x!=ux && y!=uy) prints
             // nothing and just stops, matching neither sub-branch.
             if (newx === u.ux || newy === u.uy) {
-                const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned;
+                const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
                 const fumbling = !!(u.HFumbling || u.EFumbling);
                 if (Blind() || stunned || ACURR(A_DEX) < 10 || fumbling) {
                     if (u.usteed) {
@@ -4127,7 +4138,7 @@ async function domove_core(dx, dy, attemptTracked) {
         // costs the turn anyway (hack.js travel_walk()).
         if (bobj && (game.context.run || 0) >= 2
             && !Blind() && !Hallucination() && !could_move_onto_boulder(newx, newy)) {
-            if (game.flags?.mention_walls) await pline('A boulder blocks your path.');
+            if (game.flags?.mention_walls) { set_msg_xy(newx, newy); await pline('A boulder blocks your path.'); }
             game.context.move = 0;
             nomul(0);
             return;
@@ -4189,7 +4200,7 @@ async function domove_core(dx, dy, attemptTracked) {
             // pet-swap line followed by the wall hit at the end of a run).
             // update_topl() is the live equivalent; pline() would replace the
             // swap message and lose the first divergence's text.
-            if (buf) await update_topl(`It's ${buf}.`);
+            if (buf) { set_msg_xy(newx, newy); await update_topl(`It's ${buf}.`); }
         }
         game.context.move = 0;
         nomul(0); // C ref: hack.c:2846
@@ -4709,16 +4720,24 @@ function fill_pit_cmd(x, y) {
     newsym(x, y);
 }
 
-// C ref: hack.c:939 bad_rock(mdat, x, y) for the hero.  `!tunnels(mdat) ||
-// needspick(mdat) || !may_dig(x,y)` is always TRUE for a non-tunnelling hero,
-// and `!(passes_walls && may_passwall)` is TRUE whenever Passes_walls is off, so
-// for the corpus heroes the wall arm reduces to IS_OBSTRUCTED.  The Sokoban arm
-// is the one that matters: there a boulder counts as rock.
+// C ref: hack.c:939 bad_rock(youmonst.data, x, y).  passes_walls(mdat) and
+// tunnels(mdat) are tests of the hero's FORM (permonst M1_WALLWALK / M1_TUNNEL),
+// not the Passes_walls property: a hero with the intrinsic (wizard-mode
+// #wizintrinsic, a ring of phasing-like source) is still blocked here, so
+// impaired_movement() keeps rerolling confdir() until it lands off the wall.
 function bad_rock_hero(x, y) {
     if (In_sokoban(game.u?.uz) && boulder_at(x, y)) return true;
-    if (hero_passes_walls()) return false;
     const loc = game.level?.at(x, y);
-    return IS_OBSTRUCTED(loc ? loc.typ : 0);
+    const typ = loc ? loc.typ : 0;
+    if (!IS_OBSTRUCTED(typ)) return false;
+    const mdat = youmonst_data_pub();
+    const f1 = mflags1_of(mdat);
+    const may_dig_here = !((IS_STWALL(typ) || IS_TREE(typ))
+                           && ((loc?.wall_info || 0) & W_NONDIGGABLE));
+    if ((f1 & M1_TUNNEL) !== 0 && (f1 & 0x40 /* M1_NEEDPICK */) === 0 && may_dig_here)
+        return false;
+    const may_passwall = !(IS_STWALL(typ) && ((loc?.wall_info || 0) & 0x10 /* W_NONPASSWALL */));
+    return !((f1 & 0x8 /* M1_WALLWALK */) !== 0 && may_passwall);
 }
 
 // C ref: hack.c:952 cant_squeeze_thru(&youmonst) — 0 fits, 1 too big,
@@ -5455,10 +5474,13 @@ async function autopickup_after_move(x, y) {
     // "You have much trouble lifting X.  Continue?" prompt entirely.
     for (const obj of takes) {
         const res = await pickup_object(obj, obj.quan, false);
-        newsym(x, y);
         if (res < 0) break;
         nPicked += res;
     }
+    // C ref: pickup.c:899 — `if (n_picked) newsym_force(u.ux, u.uy)` once, after
+    // the whole loop (pick_obj() already newsym()'d each lifted object's
+    // square); a per-object repaint drew an extra hallucinated glyph.
+    if (nPicked) newsym(x, y);
     return nPicked;
 }
 
@@ -5589,8 +5611,12 @@ async function domove_swap_with_pet(mtmp, x, y) {
         await pline(`You stop.  ${Monnam(mtmp)} can't move diagonally.`);
         return false;
     }
-    if (boulder_at(u.ux0, u.uy0)
-        && (!mtmp.data?.verysmall || pet_load() > 600)) {
+    // C ref: hack.c:2105,2128 — u_with_boulder is sobj_at(BOULDER, u.ux, u.uy)
+    // (the hero has already stepped onto the pet's square), and the pet fits
+    // only if verysmall(msize < MZ_SMALL) and unladen (no minvent or <= 600).
+    if (boulder_at(u.ux, u.uy)
+        && !((mtmp.data?.msize ?? 2) < 1 /* MZ_SMALL */
+             && (!(mtmp.minvent || []).length || pet_load() <= 600))) {
         await pline(`You stop.  ${YMonnam(mtmp)} won't fit into the same spot that you're at.`);
         return false;
     }
@@ -6997,7 +7023,7 @@ export async function makemap_prepost(pre, wiztower) {
         /* u_on_rndspot() might pick a spot that has a monster, or losedogs()
            might pick the hero's spot, so we might have to move one of them */
         if ((mtmp = m_at(u.ux, u.uy)) != null)
-            u_collide_m(mtmp);
+            await u_collide_m(mtmp);
         initrack();
         if (u.uball) {
             unplacebc();
@@ -9119,9 +9145,12 @@ export async function doclicklook() {
 
     return ECMD_OK;
 }
-// C ref: getpos.c auto_describe(cx, cy) — the autodescribe line getpos() shows;
-// js/hack.js drives that inside its own getpos() loop.
-async function cmd_auto_describe(_cx, _cy) {}
+// C ref: getpos.c:639 auto_describe().  Click-look uses the same rendered-
+// glyph description as cursor getpos, rather than deriving text from terrain.
+async function cmd_auto_describe(cx, cy) {
+    const { auto_describe } = await import('./getpos.js');
+    await auto_describe(cx, cy);
+}
 
 // C ref: cmd.c:195 reset_occupations() — an interrupted multi-turn activity
 // (taking off all armor, picking a lock, setting a trap) is forgotten once the

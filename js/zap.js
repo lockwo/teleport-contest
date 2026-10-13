@@ -911,7 +911,7 @@ export async function bhito(obj, otmp) {
                     const { the } = await import('./objnam.js');
                     const { rndmonnam } = await import('./do_name.js');
                     await pline(`You aren't sure whether ${the(xname(obj))} has ${
-                        an_z(Hallucination() ? rndmonnam() : 'cat')} or its corpse inside.`);
+                        an_z(Hallucination() ? rndmonnam().name : 'cat')} or its corpse inside.`);
                     obj.cknown = 0;
                 } else {
                     /* view contents (not recursively) */
@@ -951,7 +951,7 @@ export async function bhito(obj, otmp) {
                     if (cansee(obj.ox, obj.oy)) {
                         if (Hallucination()) {
                             const { rndmonnam } = await import('./do_name.js');
-                            await pline(`The ${rndmonnam()} shatters.`);
+                            await pline(`The ${rndmonnam().name} shatters.`);
                         } else
                             await pline('The statue shatters.');
                     } else

@@ -3036,7 +3036,7 @@ async function doloot_core() {
             mon_timepassed = await loot_mon(mtmp, passed_info, prev_loot);
             if (mon_timepassed) looted_mon = true;
         }
-        const stunned = (u?.uprops?.Stun || 0) > 0;
+        const stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.formprops?.Stunned;
         const confused = (u?.uprops?.Confusion || 0) > 0;
         if (confused || stunned) mon_timepassed = 1;
 

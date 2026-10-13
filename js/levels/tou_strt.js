@@ -12,6 +12,7 @@ import {
 import {
     S_CENTAUR, S_SPIDER, quest_align_shuffle, quest_finalize,
     quest_level_init_fill, quest_monster, quest_trap,
+    quest_non_diggable,
 } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -73,7 +74,8 @@ export async function makemaz_tou_strt() {
     quest_region_light(62, 2, 67, 4, true);
     quest_place_stair(66, 3, false);
     quest_register_branch(68, 14);
-    // des.non_diggable — no RNG.
+    // des.non_diggable(selection.area(00,00,75,19)) — no RNG.
+    quest_non_diggable(0, 0, 75, 19);
     quest_set_door(31, 5, 'locked'); quest_set_door(36, 5, 'locked');
     quest_set_door(41, 5, 'locked'); quest_set_door(52, 5, 'locked');
     quest_set_door(58, 5, 'locked'); quest_set_door(28, 7, 'locked');

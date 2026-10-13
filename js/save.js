@@ -21,7 +21,7 @@ import { GameMap } from './game.js';
 import { monster_by_pmidx } from './makemon.js';
 import { forget_temple_entry } from './priest.js';
 import { NO_COLOR } from './terminal.js';
-import { y_n, pline } from './display.js';
+import { y_n, pline, docrt } from './display.js';
 import { nhgetch } from './input.js';
 
 // Keys on the game object that must NOT travel in the save file.  These are
@@ -104,18 +104,84 @@ export function serializeGameState(root) {
 // The storage key under which this character's save lives.  C keys the save
 // file on the player name (SAVEF); we do the same so restore in a later segment
 // finds it.
+export const SAVE_KEY_PREFIX = 'nethack.save.';
 export function saveFileKey() {
     const nm = game.plname || '';
-    return nm ? `nethack.save.${nm}` : '';
+    return nm ? `${SAVE_KEY_PREFIX}${nm}` : '';
+}
+
+// C ref: save.c:174-214 dosave0() — "While copying level files around, zero out
+// u.uz to keep parts of the restore code from completely initializing all
+// in-core data structures".  Every OTHER level file is read back with getlev()
+// and rewritten with savelev().  With u.uz.dlevel == 0 the getlev() monster
+// loop (restore.c:1190 `if (!u.uz.dlevel || ...) continue;`) skips
+// mon_catchup_elapsed_time(), restore_cham() and hide_monst(), so the monsters
+// get NO catch-up for the turns spent away; but the time-relative state IS read
+// back against the saving clock (edog droptime/hungrytime and stasis_until via
+// relative_time_to_moves(), region ttl via rest_regions()'s tmstamp) and savelev()
+// stamps "lev-timestmp" with svm.moves.  So after a save, the level's catch-up
+// clock restarts at the save turn: a monster blinded 30 turns when the hero left
+// at turn 507 and saved at 531 is still blinded 30 when the restored hero
+// returns at 544, and then catches up only 544-531 turns, not 544-507.  The
+// per-level store keeps absolute timestamps against `omoves`, so shifting them by
+// the away time and re-stamping omoves reproduces the read+rewrite exactly.
+function copy_other_levels_for_save() {
+    const store = game._level_store;
+    if (!store) return;
+    const uz = game.u?.uz;
+    const cur = uz ? `${uz.dnum}:${uz.dlevel}` : '';
+    const now = game.moves | 0;
+    for (const key of Object.keys(store)) {
+        const ent = store[key];
+        if (key === cur || !ent?.level) continue;
+        const away = now - (ent.omoves | 0);
+        if (away !== 0) {
+            for (const mtmp of (ent.level.monsters || [])) {
+                const edog = mtmp.edog;
+                if (!edog) continue;
+                edog.droptime = (edog.droptime | 0) + away;
+                edog.hungrytime = (edog.hungrytime | 0) + away;
+            }
+            const fl = ent.level.flags;
+            if (fl && typeof fl.stasis_until === 'number') fl.stasis_until += away;
+        }
+        ent.omoves = now;
+        // C ref: region.c rest_regions() — ttl ages by (moves - tmstamp), and a
+        // region that ran out is removed (swap-with-last, walking backward)
+        // without firing expire_f; save_regions() then stamps the new clock.
+        const regs = ent.regions;
+        if (regs && regs.length) {
+            const regionAway = now - (ent.regionMoves ?? (now - away));
+            for (const r of regs)
+                if (r.ttl >= 0) r.ttl = (r.ttl > regionAway) ? r.ttl - regionAway : 0;
+            for (let i = regs.length - 1; i >= 0; i--) {
+                if (regs[i].ttl !== 0) continue;
+                regs[i] = regs[regs.length - 1];
+                regs.pop();
+            }
+        }
+        ent.regionMoves = now;
+    }
 }
 
 // C ref: save.c dosave0() — returns 1 on a successful save.  Writes the
 // serialized game state to the shared storage handle under the player's key.
-export function dosave0() {
+// Before writing, an existing save file (a wizard/explore-mode restore that
+// answered 'y' to "Do you want to keep the save file?" leaves it in place)
+// triggers save.c:114-125's "There seems to be an old save file." and the
+// "Overwrite the old file?" question; 'n' abandons the save.
+export async function dosave0() {
     const key = saveFileKey();
     const storage = game.storage;
     if (!key || !storage || typeof storage.setItem !== 'function') return 0;
+    if (typeof storage.getItem === 'function' && storage.getItem(key) != null) {
+        game._pending_message = ''; // clear_nhwindow(WIN_MESSAGE)
+        await pline('There seems to be an old save file.');
+        if (await y_n('Overwrite the old file?', 'yn', 'n') === 'n') return 0;
+    }
+    undo_startup_luck();
     try {
+        copy_other_levels_for_save();
         storage.setItem(key, serializeGameState(game));
     } catch {
         return 0;
@@ -152,12 +218,13 @@ export async function dosave() {
     // "Saving..." message is only flushed by display_nhwindow just before
     // exit_nhwindows clears the screen).
     await pline('Saving...');
-    undo_startup_luck();
-    const ok = dosave0();
+    const ok = await dosave0();
     game.context = game.context || {};
     game.context.move = 0;
     if (ok) {
         await exit_be_seeing_you();
+    } else {
+        await docrt(); // C ref: save.c dosave() — `else docrt();`
     }
 }
 
@@ -261,7 +328,7 @@ import {
     EGD, EPRI, ESHK, EMIN, EDOG, EBONES, MCORPSENM,
 } from './const.js';
 import { OMID, OMAILCMD } from './mkobj.js';
-import { genders, aligns } from './role.js';
+import { genders, aligns, roles } from './role.js';
 
 // C ref: hack.h:971/972 — `update_file(nhfp)` / `release_data(nhfp)`.
 export function update_file(mode) { return (mode & (COUNTING | WRITING)) !== 0; }
@@ -702,34 +769,25 @@ export function savelevchn(mode) {
 // byte of the [PL_NSIZ_PLUS] buffer holds the playmode ('D' debug, 'X'
 // discover, '-' normal), the same letters paniclog uses.  The gender and
 // alignment are the ones in effect NOW, not at game start.
-export function store_plname_in_file() {
+export function store_plname_in_file(g = game) {
     const plsiztmp = PL_NSIZ_PLUS;
     const hero = new Array(plsiztmp).fill('\0');
 
-    const plname = game.plname || '';
+    const plname = g.plname || '';
     const p3 = (s) => String(s || '').slice(0, 3);
-    const female = game.flags?.female ? 1 : 0;
-    const algn = aligns[1 - (game.u?.ualign?.type ?? 0)];
-    const str = `${plname}-${p3(game.urole?.filecode)}-${p3(game.urace?.filecode)}`
+    const female = g.flags?.female ? 1 : 0;
+    const algn = aligns[1 - (g.u?.ualign?.type ?? 0)];
+    const str = `${plname}-${p3(g.urole?.filecode ?? roles[g.initrole]?.filecode)}-${p3(g.urace?.filecode)}`
               + `-${p3(genders[female]?.filecode)}-${p3(algn?.filecode)}`;
     for (let i = 0; i < str.length && i < plsiztmp - 1; i++) hero[i] = str[i];
     /* replace "-role-race..." with "\0role-race..." */
     if (plname.length < plsiztmp) hero[plname.length] = '\0';
     /* insert playmode into the final slot */
-    hero[plsiztmp - 1] = is_wizard_sv() ? 'D' : is_discover_sv() ? 'X' : '-';
+    const f = g.flags || {};
+    hero[plsiztmp - 1] = f.debug ? 'D'
+        : (f.explore || f.discover || f.playmode === 'explore') ? 'X' : '-';
 
     return { plname_size: plsiztmp, plname: hero.join('') };
-}
-
-// C ref: restore.c:583 "wizard and discover are actually flags.debug and
-// flags.explore".  Same predicates as end.js is_wizard()/is_discover() and
-// bones.js; this port records `playmode:explore` from the rc as
-// flags.playmode, so reading flags.discover alone answers FALSE for every
-// explore game.
-function is_wizard_sv() { return !!game.flags?.debug; }
-function is_discover_sv() {
-    const f = game.flags || {};
-    return !!(f.explore || f.discover || f.playmode === 'explore');
 }
 
 // C ref: save.c:1030 save_msghistory() — asks the window port for each message

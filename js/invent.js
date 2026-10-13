@@ -11,7 +11,7 @@ import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac, clear_bypasses } from './worn.js';
 import { rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
-import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, cutTopStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, object_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl, show_glyph_cell, tmp_at_flash } from './display.js';
+import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, cutTopStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, object_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear, recalc_block_point } from './vision.js';
@@ -24,22 +24,7 @@ import { is_quest_artifact, artitouch } from './questpgr.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE, CLR_GRAY, NO_COLOR } from './terminal.js';
 
-// options.js stores menu_headings.attr verbatim in its own enum (NONE=0,
-// BOLD=1, DIM=2, ITALIC=3, ULINE=4, BLINK=5, INVERSE=6 — C ref: options.c
-// ATR_* / coloratt.c attrnames[]), NOT terminal.js's render BITS (NONE=0,
-// INVERSE=1, BOLD=2, UNDERLINE=4); only NONE/ULINE(4) coincide by accident.
-// Per [[options-storage-contract]] this is the consumer-side translation;
-// DIM/ITALIC/BLINK have no render bit here and fall back to no attr.
-function menuHeadAttr() {
-    const a = game.iflags?.menu_headings?.attr;
-    if (a == null) return ATR_INVERSE;
-    switch (a) {
-    case 1: return ATR_BOLD;       // options.js ATR_BOLD
-    case 4: return ATR_UNDERLINE;  // options.js ATR_ULINE
-    case 6: return ATR_INVERSE;    // options.js ATR_INVERSE
-    default: return ATR_NONE;      // NONE/DIM/ITALIC/BLINK: no render bit
-    }
-}
+import { menuHeadAttr } from './menuattr.js';
 import {
     AMULET_CLASS,
     AMULET_OF_YENDOR,
@@ -3574,7 +3559,7 @@ export function carrying(type) {
 
 export function carrying_stoning_corpse() {
     for (const obj of inventoryArray())
-        if (obj.otyp === CORPSE && touch_petrifies(null)) return obj;
+        if (obj.otyp === CORPSE && touch_petrifies(obj.corpsenm)) return obj;
     return null;
 }
 
@@ -5966,6 +5951,18 @@ function weld_wield_msg(wep) {
             : `${lefty ? 'dominant left ' : 'dominant right '}${body_part(6)}`}!`;
 }
 
+// C ref: wield.c:137 cant_wield_corpse(obj) — "Prevent wielding cockatrice when
+// not wearing gloves --KAA".  TRUE after the hero was life-saved from it.
+async function cant_wield_corpse(obj) {
+    if (game.uarmg || obj.otyp !== CORPSE || !touch_petrifies(obj.corpsenm)
+        || Stone_resistance_hero())
+        return false;
+    await update_topl(`You wield ${corpse_xname(obj, null, 4 /* CXN_PFX_THE */)} in your bare ${
+        makeplural(body_part(6 /* HAND */))}.`);
+    await (await import('./polyself.js')).instapetrify(`wielding ${killer_xname(obj)} bare-handed`);
+    return true;
+}
+
 // C ref: wield.c ready_weapon() — install `wep` as the primary weapon (or
 // unwield when wep is null).  Returns an ECMD_* result.  Ports the paths the
 // recorded sessions reach: unwield, plain wield with the "weapon in hand"
@@ -5995,6 +5992,9 @@ async function ready_weapon(wep) {
         } else {
             await update_topl(`You are already ${empty_handed()}.`);
         }
+    } else if (wep.otyp === CORPSE && await cant_wield_corpse(wep)) {
+        /* hero must have been life-saved to get here; use a turn */
+        res = ECMD_TIME; /* corpse won't be wielded */
     } else if (game.uarms && bimanual(wep)) {
         await update_topl(
             `You cannot wield a two-handed ${is_sword(wep) ? 'sword'
@@ -6082,6 +6082,7 @@ export async function dowield() {
     } else if (wep === game.uwep) {
         game._pending_message = note_topl('You are already wielding that!');
         if (is_weptool(wep)) game.unweapon = false;
+        game.context._getobj_cancelled = true; // C: ECMD_FAIL -> reset_cmd_vars(TRUE) clears CQ_REPEAT
         return ECMD_FAIL;
     } else if (welded(game.uwep)) {
         await weldmsg(game.uwep);
@@ -6090,6 +6091,7 @@ export async function dowield() {
         /* if player chose a partial stack but can't wield it, undo split */
         if (wep.o_id && wep.o_id === game.context.objsplit?.child_oid)
             unsplitobj(wep);
+        game.context._getobj_cancelled = true; // C: ECMD_FAIL -> reset_cmd_vars(TRUE)
         return ECMD_FAIL;
     } else if (wep.o_id && wep.o_id === game.context.objsplit?.child_oid) {
         /* wep is the result of supplying a count to getobj(): don't split
@@ -6099,6 +6101,7 @@ export async function dowield() {
             /* wep was merged back to uwep, already_wielded uses wep */
             game._pending_message = note_topl('You are already wielding that!');
             if (is_weptool(game.uwep)) game.unweapon = false;
+            game.context._getobj_cancelled = true; // C: ECMD_FAIL -> reset_cmd_vars(TRUE) clears CQ_REPEAT
             return ECMD_FAIL;
         }
         finish_splitting_inv(wep);
@@ -6387,6 +6390,7 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
     const flash = tmp_at_flash(obj, tethered);
     let end_flash = !tethered;
     let stuck = false;
+    let mon_in_path = false; /* bhit() hit a monster at x,y (not a shkcatch) */
     for (let r = range; r > 0; r--) {
         const nx = bx + dx, ny = by + dy;
         if (!throw_isok(nx, ny)) break;
@@ -6465,7 +6469,7 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
                 mtmp = null;
             }
         }
-        if (mtmp) { hitmon = mtmp; break; }
+        if (mtmp) { hitmon = mtmp; mon_in_path = true; break; }
         if (!throw_zap_pos(typ) || throw_closed_door(loc)) { bx -= dx; by -= dy; break; }
         // C ref: zap.c:4081-4085 — the missile reveals an empty square
         // before animation, forgetting a stale invisible-monster marker.
@@ -6486,6 +6490,10 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
     }
     if (stuck) end_flash = true;
     if (end_flash) await flash.end();
+    // C ref: zap.c:4026-4027 bhit() — after tmp_at(DISP_END), an unseen monster
+    // the missile runs into is remembered as an 'I' (before result = mtmp).
+    if (mon_in_path && cansee(bx, by) && !(await import('./uhitm.js')).canspotmon(hitmon))
+        map_invisible(bx, by);
     return { x: bx, y: by, mon: hitmon, gone: !objp.obj, flash, stuck };
 }
 
@@ -6939,7 +6947,7 @@ async function throw_obj(obj, dir, shotlimit = 0) {
     // C ref: dothrow.c:139 — a bare-handed throw of a cockatrice corpse is
     // fatal.  The message is printed before instapetrify() takes over.
     if (!game.uarmg && obj.otyp === CORPSE && corpse_petrifies(obj)
-        && !(game.u?.uprops?.StoneResistance)) {
+        && !Stone_resistance_hero()) {
         // C: pline() before instapetrify()'s own death cascade; a bare write
         // here would leave nothing pending for that cascade's first message
         // to page against, silently dropping this line instead.
@@ -6962,7 +6970,7 @@ async function throw_obj(obj, dir, shotlimit = 0) {
     const volley = (obj.quan > 1)
         && (is_ammo(obj) ? matching_launcher(obj, game.uwep) : obj.oclass === WEAPON_CLASS)
         && !(u?.uprops?.Confusion || u?.Confusion
-             || u?.uprops?.Stun || u?.Stunned);
+             || u?.uprops?.Stun || u?.Stunned || u?.formprops?.Stunned);
     if (volley) {
         multishot += await multishot_bonus(obj, skill);
         // C: crossbows need high strength for a quick reload; a weak shooter
@@ -7065,7 +7073,7 @@ async function throwit(otmp, wep_mask) {
     const Underwater = !!u.uinwater;
     game.notonhead = false; /* reset potentially stale value */
     let impaired = !!(u?.uprops?.Confusion || u?.Confusion || u?.uprops?.Stun
-                      || u?.Stunned || Blinded_hero() || u?.uhallu
+                      || u?.Stunned || u?.formprops?.Stunned || Blinded_hero() || u?.uhallu
                       || u?.HFumbling || u?.EFumbling);
 
     // C ref: dothrow.c throwit():1526 — a cursed or greased missile misfires
@@ -8730,11 +8738,17 @@ async function menu_drop(retry) {
             }
         }
     } else if (menu_style() === MENU_COMBINATION) {
-        /* C gathers the classes with ggetobj("drop", drop, 0, TRUE, &res) and
-           returns early when it finished the job itself; ggetobj()/askchain()
-           are still stubs here, so only the class filter is skipped. */
+        const ggoresults = { value: 0 };
         all_categories = false;
-        ggetobj('drop', drop, 0, true, null);
+        /* Gather valid classes via traditional NetHack method */
+        const i = await ggetobj('drop', drop, 0, true, ggoresults);
+        if (i === -2)
+            all_categories = true;
+        if ((ggoresults.value & ALL_FINISHED) !== 0) {
+            n_dropped = i;
+            await dismiss_invent_screen();
+            return n_dropped ? ECMD_TIME : ECMD_OK;
+        }
     }
 
     /* C destroys the category window before dropping anything or opening the
@@ -12214,8 +12228,17 @@ export async function dolook() {
 // C ref: invent.c will_feel_cockatrice() — the petrifying-corpse test is on the
 // corpse's OWN species (touch_petrifies(&mons[otmp->corpsenm])); passing null
 // meant the predicate could never be true.
+// youprop.h Stone_resistance: intrinsic, extrinsic (yellow dragon armor) or the
+// current polymorph form's FROMFORM bit.
+export function Stone_resistance_hero() {
+    const u = game.u || {};
+    const p = u.uprops || {};
+    return !!(u.formprops?.Stone_resistance || (p.Stone_resistance | 0) > 0
+        || (p.HStone_resistance | 0) > 0 || (p.EStone_resistance | 0) > 0
+        || (p.StoneResistance | 0) > 0 || u.Stone_resistance);
+}
 export function will_feel_cockatrice(otmp, force_touch) {
-    return !!((Blind_for_wear() || force_touch) && !game.uarmg && !game.Stone_resistance
+    return !!((Blind_for_wear() || force_touch) && !game.uarmg && !Stone_resistance_hero()
         && otmp?.otyp === CORPSE && touch_petrifies(otmp.corpsenm));
 }
 

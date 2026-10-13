@@ -40,7 +40,8 @@ import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
 import { find_mac, species } from './worn.js';
 import {
     SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED, STONE, STATUE_TRAP,
-    ACCESSIBLE, IS_FURNITURE, IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND,
+    ACCESSIBLE, IS_FURNITURE, IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND, FACE, NOSE,
+    STOMACH,
     ZAP_POS, isok, M_AP_OBJECT,
 } from './const.js';
 // C ref: apply.c do_break_wand() — the shared explode() call, its direction
@@ -414,7 +415,7 @@ const YDIR_A = [0, -1, -1, -1, 0, 1, 1, 1];
 const PM_GRID_BUG_A = 116;
 function confdir_apply(dir) {
     const u = game.u;
-    const stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.Stunned;
+    const stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.Stunned || !!u?.formprops?.Stunned;
     const confused = (u?.uprops?.Confusion || 0) > 0;
     const impaired = stunned || (confused && !rn2(5));
     if (!impaired) return dir;
@@ -1278,18 +1279,20 @@ function consume_applied_pie(obj) {
 // command turn's monsters move) desynced the pet's distfleeck/dog_move stream
 // for the rest of seed0108 (the step-62 divergence).
 //
-// When already clean (ucreamed == 0), C prints "Your face is already clean." and
-// returns ECMD_TIME with no occupation.
+// When already clean (ucreamed == 0), C prints "Your <body_part(FACE)> is already
+// clean." and returns ECMD_TIME with no occupation.
 export async function dowipe() {
     await loadDeps();
     const { update_topl } = await import('./display.js');
     const u = game.u;
     if ((u?.ucreamed || 0) > 0) {
-        // set_occupation(wipeoff, ...): the move loop runs wipeoff() next turn.
+        // set_occupation(wipeoff, "wiping off your <face>", 0): the move loop
+        // runs wipeoff() next turn.
         game._wipe_occupation = true;
+        game.occupation_txt = `wiping off your ${_invent.body_part(FACE)}`;
         return ECMD_TIME;
     }
-    await update_topl(`Your face is already clean.`);
+    await update_topl(`Your ${_invent.body_part(FACE)} is already clean.`);
     return ECMD_TIME;
 }
 
@@ -1321,7 +1324,7 @@ export async function wipeoff() {
         }
         return 0; // occupation finished
     } else if ((u?.ucreamed || 0) === 0) {
-        await update_topl(`Your face feels clean now.`);
+        await update_topl(`Your ${_invent.body_part(FACE)} feels clean now.`);
         return 0;
     }
     return 1; // still busy
@@ -2366,9 +2369,14 @@ function ap_inaccessible_equipment_quiet(obj) {
 }
 // C ref: invent.c carried(obj).
 function ap_carried(obj) { return ap_invent().includes(obj); }
-// C ref: objnam.c body_part(BP) for the parts apply.c names.  js/invent.js's
-// body_part() is the real port; these string constants only feed messages.
-const AP_HAND = 'hand', AP_FACE = 'face', AP_NOSE = 'nose', AP_STOMACH = 'stomach';
+// C ref: polyself.c body_part(part) — the hero's current form's part name
+// (vortex "front", animal "head", ...).  Needs _invent, which every caller
+// has loaded through ap_load()/loadDeps().
+const ap_body = (part) => _invent.body_part(part);
+// C ref: polyself.c mbodypart(mon, part) for another monster's part.
+async function ap_mbodypart(mon, part) {
+    return (await import('./polyself.js')).mbodypart(mon, part);
+}
 
 // C ref: potion.c make_sick/make_blinded/make_confused/make_stunned/
 // make_vomiting/make_deaf/make_hallucinated and eat.c vomit(): the real ports
@@ -2463,7 +2471,7 @@ export async function use_camera(obj) {
         await A.zap.zapyourself(obj, true);
     } else if (u.uswallow) {
         await A.display.pline(`You take a picture of ${
-            s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
+            s_suffix(A.do_name.mon_nam(u.ustuck))} ${await ap_mbodypart(u.ustuck, STOMACH)}.`);
     } else if (u.dz) {
         await A.display.pline(`You take a picture of the ${
             (u.dz > 0) ? surface_word(u.ux, u.uy) : ceiling_word(u.ux, u.uy)}.`);
@@ -2485,7 +2493,7 @@ export async function use_towel(obj) {
     const drying_feedback = (obj === game.uwep);
 
     if (!freehand()) {
-        await A.display.pline(`You have no free ${AP_HAND}!`);
+        await A.display.pline(`You have no free ${ap_body(HAND)}!`);
         return ECMD_OK;
     } else if (obj === game.ublindf) {
         await A.display.pline("You cannot use it while you're wearing it!");
@@ -2497,7 +2505,7 @@ export async function use_towel(obj) {
         case 2:
             old = ap_prop('Glib');
             await A.potion.make_glib(old + rn1(10, 3)); /* + 3..12 */
-            await A.display.pline(`Your ${makeplural(AP_HAND)} ${
+            await A.display.pline(`Your ${makeplural(ap_body(HAND))} ${
                 old ? 'are filthier than ever' : 'get slimy'}!`);
             if (A.weapon.is_wet_towel(obj))
                 A.weapon.dry_a_towel(obj, -1, drying_feedback);
@@ -2506,7 +2514,7 @@ export async function use_towel(obj) {
             if (!game.ublindf) {
                 old = ap_ucreamed();
                 u.ucreamed = old + rn1(10, 3);
-                await A.display.pline(`Yecch!  Your ${AP_FACE} ${
+                await A.display.pline(`Yecch!  Your ${ap_body(FACE)} ${
                     old ? 'has more' : 'now has'} gunk on it!`);
                 await ap_make_blinded((game.u?.blinded | 0) + u.ucreamed - old, true);
             } else {
@@ -2536,7 +2544,7 @@ export async function use_towel(obj) {
     if (ap_Glib()) {
         await A.potion.make_glib(0);
         await A.display.pline(`You wipe off your ${
-            !game.uarmg ? makeplural(AP_HAND)
+            !game.uarmg ? makeplural(ap_body(HAND))
                         : A.do_wear.gloves_simple_name(game.uarmg)}.`);
         if (A.weapon.is_wet_towel(obj))
             A.weapon.dry_a_towel(obj, -1, drying_feedback);
@@ -2551,15 +2559,15 @@ export async function use_towel(obj) {
                 await ap_make_blinded(0, true);
             }
         } else {
-            await A.display.pline(`Your ${AP_FACE} feels clean now.`);
+            await A.display.pline(`Your ${ap_body(FACE)} feels clean now.`);
         }
         if (A.weapon.is_wet_towel(obj))
             A.weapon.dry_a_towel(obj, -1, drying_feedback);
         return ECMD_TIME;
     }
 
-    await A.display.pline(`Your ${AP_FACE} and ${
-        makeplural(AP_HAND)} are already clean.`);
+    await A.display.pline(`Your ${ap_body(FACE)} and ${
+        makeplural(ap_body(HAND))} are already clean.`);
 
     return ECMD_OK;
 }
@@ -2569,13 +2577,13 @@ export async function use_towel(obj) {
 export async function use_whistle(obj) {
     const A = await ap_load();
 
-    if (!ap_can_blow_youmonst()) {
+    if (!(await import('./mondata.js')).can_blow()) {
         await A.display.pline('You are incapable of using the whistle.');
     } else if (ap_Underwater()) {
         await A.display.pline(`You blow bubbles through ${A.invent.yname(obj)}.`);
     } else {
         if (Deaf())
-            await A.display.pline(`You feel rushing air tickle your ${AP_NOSE}.`);
+            await A.display.pline(`You feel rushing air tickle your ${ap_body(NOSE)}.`);
         else
             await A.display.pline(`You ${
                 whistle_str.replace('%s', obj.cursed ? 'shrill' : 'high')}`);
@@ -2586,26 +2594,13 @@ export async function use_whistle(obj) {
     }
 }
 
-// C ref: mondata.c can_blow(mtmp) for &gy.youmonst — a breathless or
-// no-mouth/underwater form cannot use a whistle.  js/muse.js's can_blow() is
-// private and monster-shaped; this is the hero instance of the same test.
-function ap_can_blow_youmonst() {
-    const ydata = game.youmonst?.data;
-    if (!ydata) return true;
-    if ((ap_prop('Strangled') > 0)
-        || (ap_breathless(ydata) && !ap_prop('Amphibious') && ap_Underwater()))
-        return false;
-    if (ap_nohands(ydata) || ap_verysmall(ydata)) return false;
-    return true;
-}
-
 // C ref: apply.c:495 use_magic_whistle(obj).  RNG: the cursed rn2(2) malfunction
 // roll, then a SECOND rn2(2) gating tele_to_rnd_pet() (short-circuited by
 // noteleport_level only AFTER that draw).
 export async function use_magic_whistle(obj) {
     const A = await ap_load();
 
-    if (!ap_can_blow_youmonst()) {
+    if (!(await import('./mondata.js')).can_blow()) {
         await A.display.pline('You are incapable of using the whistle.');
     } else if (obj.cursed && !rn2(2)) {
         await A.display.pline(`You produce a ${ap_Underwater() ? 'very ' : ''}high-${
@@ -3051,7 +3046,7 @@ export async function use_mirror(obj) {
     }
     if (!u.dx && !u.dy && !u.dz) {
         if (!useeit) {
-            await A.display.pline(`You can't see your ${uvisage} ${AP_FACE}.`);
+            await A.display.pline(`You can't see your ${uvisage} ${ap_body(FACE)}.`);
         // C tests `u.umonnum == PM_FLOATING_EYE` bare, but in this port
         // u.umonnum is a ROLE index while unpolymorphed
         // ([[umonnum-is-a-role-index]]), so each u.umonnum test needs Upolyd.
@@ -3092,7 +3087,7 @@ export async function use_mirror(obj) {
     if (u.uswallow) {
         if (useeit)
             await A.display.pline(`You reflect ${
-                s_suffix(A.do_name.mon_nam(u.ustuck))} ${AP_STOMACH}.`);
+                s_suffix(A.do_name.mon_nam(u.ustuck))} ${await ap_mbodypart(u.ustuck, STOMACH)}.`);
         return ECMD_TIME;
     }
     if (ap_Underwater()) {
@@ -3738,11 +3733,14 @@ export async function use_tinning_kit(obj) {
     if (A.invent.touch_petrifies(corpse.corpsenm)
         && !ap_prop('Stone_resistance') && !game.uarmg) {
         const corpse_name = ap_an(A.invent.xname(corpse));
-        if (ap_poly_when_stoned(game.youmonst?.data))
+        let kbuf = '';
+        if (ap_poly_when_stoned(game.youmonst?.data)) {
             await A.display.pline(`You tin ${corpse_name} without wearing gloves.`);
-        else
+        } else {
             await A.display.pline(`Tinning ${corpse_name} without wearing gloves is a fatal mistake...`);
-        ap_instapetrify();
+            kbuf = `trying to tin ${corpse_name} without gloves`;
+        }
+        await (await import('./polyself.js')).instapetrify(kbuf);
     }
     if (ap_is_rider(mptr)) {
         if (await ap_revive_corpse(corpse))
@@ -3793,7 +3791,6 @@ function ap_poly_when_stoned(ptr) {
 }
 const AP_RIDER_NAMES = new Set(['Death', 'Pestilence', 'Famine']);
 function ap_is_rider(ptr) { return AP_RIDER_NAMES.has(ptr?.name); }
-function ap_instapetrify() {}
 
 // C ref: apply.c:2258 use_unicorn_horn(&obj).  RNG, in C's order:
 //   cursed horn:  rn1(90, 10) for lcount FIRST, then rn2(13) picks the

@@ -22,7 +22,7 @@ import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
 import { PLNMSG_MON_TAKES_OFF_ITEM, Unaware } from './const.js';
 // C's urgent_pline() (steal.c:532/540/603) is display.js urgent_topl(): still
 // shown after ESC dismissed the preceding "<Mon> disarms ..." --More--.
-import { nomul } from './hack.js';
+import { nomul, stop_occupation } from './hack.js';
 import { update_topl, urgent_topl } from './display.js';
 import { Blind } from './vision.js';
 import { canspotmon, Monnam } from './uhitm.js';
@@ -31,10 +31,11 @@ import { add_to_minv } from './makemon.js';
 import { is_animal, humanoid, throws_rocks_flag } from './monflags_data.js';
 import {
     inv_cnt, freeinv, encumber_msg, doname_invent, remove_worn_item,
-    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname,
+    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname, bimanual,
 } from './invent.js';
 
 import { armor_simple_name } from './do_wear.js';
+import { any_quest_artifact } from './monspecial.js';
 // C ref: defsym.h MONSYM(14, 'n', NYMPH, S_NYMPH, "nymph") — the class whose
 // "<Mon> takes off ..." preface makes the follow-up theft message use "She"
 // instead of repeating the name.  (This was 12, which is S_LEPRECHAUN's
@@ -85,12 +86,6 @@ function unresponsive() {
 // session is mid-maneuver when a thief strikes, so both report "not donning".
 function doffing(_obj) { return false; }
 function stop_donning(_obj) { return 0; }
-
-// C ref: cmd.c stop_occupation() — "you're going to notice the theft".  This
-// port has no single go.occupation slot (each multi-turn activity carries its
-// own flag in allmain.js); nothing is occupying the hero on the turns a thief
-// reaches steal() in the covered sessions, so there is nothing to interrupt.
-function stop_occupation() { /* no occupation to stop */ }
 
 // C ref: steal.c mpickobj(mtmp, otmp) — put a just-taken object into the
 // monster's inventory.  Returns 1 if otmp was freed by a merge.  No RNG.
@@ -227,7 +222,7 @@ export async function steal(mtmp, objnambuf) {
     /* stop donning/doffing now so that afternmv won't be clobbered below */
     const olddelay = stop_donning(otmp);
     /* you're going to notice the theft... */
-    stop_occupation();
+    await stop_occupation();
 
     if ((otmp.owornmask || 0) & (W_ARMOR_WORN | W_ACCESSORY_WORN)) {
         switch (otmp.oclass) {
@@ -333,12 +328,9 @@ function Adjmonnam(mtmp, adj) {
     return s.replace(/^The /, `The ${adj} `);
 }
 
-// C ref: wield.c welded(obj) / objects[].oc_bimanual — a cursed wielded weapon
-// welds to the hand.  Only consulted on the animal-thief path.
+// C ref: wield.c welded(obj) — a cursed wielded weapon welds to the hand.
+// `bimanual` is imported from invent.js, which owns the complete oc_bimanual set.
 function welded(obj) { return !!obj && obj === game.uwep && !!obj.cursed; }
-// C ref: objclass.h bimanual(otmp) — objects[].oc_bimanual.  Only reached on
-// the animal-thief path, which no covered session exercises.
-function bimanual(_obj) { return false; }
 
 
 // ===========================================================================
@@ -387,11 +379,6 @@ function money_cnt_st(list) {
 // C ref: worn.c setnotworn(obj) — js/invent.js:829 (private).  Clears the worn
 // mask; the slot-pointer half needs invent.js's uarm/uwep bookkeeping.
 function setnotworn_st(obj) { if (obj) obj.owornmask = 0; }
-// C ref: artifact.c is_quest_artifact(obj) — js/invent.js:370 answers FALSE
-// unconditionally (no quest artifact reaches this port's play), and
-// any_quest_artifact() has no port at all.
-function is_quest_artifact_st(_obj) { return false; }
-function any_quest_artifact_st(_obj) { return false; }
 // C ref: hack.h distu(x, y) == dist2(x, y, u.ux, u.uy).
 function distu_st(x, y) { return dist2(x, y, game.u.ux, game.u.uy); }
 // C ref: you.h Levitation / Flying.
@@ -598,11 +585,11 @@ export async function stealamulet(mtmp) {
        than one, choose randomly so that player can't use inventory ordering
        to influence the theft */
     for (obj of inv)
-        if (any_quest_artifact_st(obj)) { ++n; otmp = obj; }
+        if (any_quest_artifact(obj)) { ++n; otmp = obj; }
     if (n > 1) {
         n = rnd(n);
         for (const o of inv)
-            if (any_quest_artifact_st(o) && !--n) { otmp = o; break; }
+            if (any_quest_artifact(o) && !--n) { otmp = o; break; }
     }
 
     if (!otmp) {
@@ -696,7 +683,7 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
             const { body_part, otense } = await import('./invent.js');
             const { makeplural } = await import('./plural.js');
             let hand_s = body_part(HAND_ST);
-            if (bimanual_st(obj)) hand_s = makeplural(hand_s);
+            if (bimanual(obj)) hand_s = makeplural(hand_s);
             await update_topl(`${upstart_st(yname_st(obj))} ${
                 otense(obj, 'are')} pulled from your ${hand_s}!`);
         }
@@ -715,10 +702,7 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
 function carried_st(obj) {
     return obj?.where === OBJ_INVENT || inventoryArray_st().includes(obj);
 }
-// C ref: objclass.h bimanual(otmp) — objects[].oc_bimanual.  The file already
-// carries a FALSE stub for the animal-thief path; this reads the real flag when
-// the port's objects[] row exposes it.
-function bimanual_st(obj) { return !!objects[obj?.otyp]?.bimanual; }
+// C ref: objclass.h bimanual(otmp).  `bimanual` is imported from invent.js.
 // C ref: do_name.c yname(obj) — "your <obj>".  The file's private yname() is
 // the same reduced form; reuse rather than adding a third.
 function yname_st(obj) { return `your ${objects[obj?.otyp]?.name || 'thing'}`; }
@@ -729,6 +713,8 @@ function yname_st(obj) { return `your ${objects[obj?.otyp]?.name || 'thing'}`; }
 export async function mdrop_special_objs(mon) {
     const { obj_resists } = await import('./zap.js');
     const { rloco } = await import('./teleport.js');
+    const { quest_artifact_num } = await import('./questpgr.js');
+    const is_quest_artifact_st = (o) => !!o && o.oartifact === quest_artifact_num();
 
     for (const obj of (mon.minvent || []).slice()) {  /* C: otmp = obj->nobj */
         /* the Amulet, invocation tools, and Rider corpses resist even when

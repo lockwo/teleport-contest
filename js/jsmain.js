@@ -33,7 +33,7 @@ import {
     count_ok_gend, count_ok_align, genders, gotrolefilter, ok_align, ok_gend,
     ok_race, ok_role, pick_align, pick_gend, pick_race, pick_role, races,
     randalign, randgend, randrace, randrole, rigid_role_checks, roleName,
-    roles, str2align, str2gend, str2race, str2role, validalign, validgend,
+    plnamesuffix, roles, str2align, str2gend, str2race, str2role, validalign, validgend,
     validrace,
 } from './role.js';
 
@@ -438,7 +438,21 @@ export class NethackGame {
         // selection unconditionally BEFORE this check consumed the restoring
         // segment's replayed keystrokes as bogus role/race/gender/align answers
         // instead of leaving them for the restored game to read.
-        const { have_saved_game, dorestore } = await import('./restore.js');
+        const { have_saved_game, dorestore, get_saved_games } = await import('./restore.js');
+
+        // C ref: unixmain.c main() — plnamesuffix() calls askname() when
+        // OPTIONS supplied no name, BEFORE the restore attempt.  tty_askname()
+        // opens with restore_menu() when the user has saved games, and the
+        // name typed afterwards is what the restore below looks for.
+        if (!game.plname) {
+            const saved = (opts.flags?.selectsaved !== false) ? get_saved_games() : null;
+            if (saved && !(await this._restoreMenu(saved, optsel))) {
+                bail('Until next time then...');
+                return;
+            }
+            if (!game.plname) await this._promptForName();
+        }
+
         if (have_saved_game()) {
             await dorestore();
             return;
@@ -471,10 +485,19 @@ export class NethackGame {
         this._renameTextRow = null;
         disp.clearScreen();
         if (topLine) disp.putstr(0, 0, topLine, NO_COLOR);
-        disp.putstr(0, 4, 'NetHack, Copyright 1985-2026', NO_COLOR);
-        disp.putstr(9, 5, 'By Stichting Mathematisch Centrum and M. Stephenson.', NO_COLOR);
-        disp.putstr(9, 6, 'Version 5.0.0 MacOS, built May  2 2026 12:00:00.', NO_COLOR);
-        disp.putstr(9, 7, 'See license for details.', NO_COLOR);
+        // C ref: restore.c restore_menu() — after "Start a new character" the
+        // BASE window is cleared and only COPYRIGHT_BANNER_A is put back, so
+        // the prompt below lands at row 2 instead of row 12.
+        const menuLayout = !!this._restoreMenuBanner;
+        if (menuLayout) {
+            if (!topLine) disp.putstr(0, 0, 'NetHack, Copyright 1985-2026', NO_COLOR);
+        } else {
+            disp.putstr(0, 4, 'NetHack, Copyright 1985-2026', NO_COLOR);
+            disp.putstr(9, 5, 'By Stichting Mathematisch Centrum and M. Stephenson.', NO_COLOR);
+            disp.putstr(9, 6, 'Version 5.0.0 MacOS, built May  2 2026 12:00:00.', NO_COLOR);
+            disp.putstr(9, 7, 'See license for details.', NO_COLOR);
+        }
+        const promptRow = menuLayout ? 2 : 12;
         // C ref: wintty.c tty_askname() tryct > 1 — the retry hint is written to
         // the BASE window one row above the prompt, so it stays on screen under
         // every later chargen menu (the confirmation overlay starts at col 31).
@@ -487,10 +510,10 @@ export class NethackGame {
         // ran this game, not on whether a name happens to be set.
         if (this._asknamePrompted) {
             if (this._asknameRetry)
-                disp.putstr(0, 11, 'Enter a name for your character...', NO_COLOR);
+                disp.putstr(0, promptRow - 1, 'Enter a name for your character...', NO_COLOR);
             const prompt = `Who are you? ${name || ''}`;
-            disp.putstr(0, 12, prompt, NO_COLOR);
-            if (!topLine) disp.setCursor(Math.min(prompt.length, 79), 12);
+            disp.putstr(0, promptRow, prompt, NO_COLOR);
+            if (!topLine) disp.setCursor(Math.min(prompt.length, 79), promptRow);
         }
         // The topLine is a tty yn_function prompt ("...? [ynaq]"). C's
         // yn_function prints the prompt followed by a space and leaves
@@ -890,6 +913,80 @@ export class NethackGame {
         // in the "Is this ok?" menu.
         game.iflags = game.iflags || {};
         game.iflags.renameallowed = true;
+    }
+
+    // C ref: restore.c restore_menu(BASE_WINDOW), called first thing by
+    // wintty.c tty_askname() (and so by unixmain.c main() -> plnamesuffix())
+    // when the user has saved games.  A PICK_ONE tty menu: the copyright banner
+    // redone as plain menu text, "Select one of your saved games", one entry
+    // per save ("name-role-race-gend-algn", prefixed by its playmode when any
+    // save is not a normal game), "Start a new character" and the preselected
+    // "Never mind (quit)".  Returns false for quit; otherwise true with
+    // game.plname set (a game was chosen, the suffix already stripped by
+    // plnamesuffix()) or left empty (new character: askname goes on to ask).
+    async _restoreMenu(saved) {
+        const disp = game.nhDisplay;
+        const lines = [
+            { text: 'NetHack, Copyright 1985-2026' },
+            { text: '         By Stichting Mathematisch Centrum and M. Stephenson.' },
+            { text: '         Version 5.0.0 MacOS, built May  2 2026 12:00:00.' },
+            { text: '         See license for details.' },
+            { text: '' },
+            { text: 'Select one of your saved games' },
+        ];
+        let menuCh = 'a'; /* tty_end_menu() hands out selectors in item order */
+        const autoSel = () => {
+            const c = menuCh;
+            menuCh = (menuCh === 'z') ? 'A' : String.fromCharCode(menuCh.charCodeAt(0) + 1);
+            return c;
+        };
+        const allNormal = saved.every((s) => s.mode === '-');
+        saved.forEach((s, i) => {
+            lines.push({ sel: autoSel(), act: { k: 'game', idx: i },
+                         text: allNormal ? s.text : `${s.mode} ${s.text}` });
+        });
+        const k = saved.length;
+        let clet = (k <= 'n'.charCodeAt(0) - 97) ? 'n'
+            : (k <= 26 + 'N'.charCodeAt(0) - 65) ? 'N' : '';
+        lines.push({ sel: clet || autoSel(), act: { k: 'new' },
+                     text: 'Start a new character' });
+        clet = (k + 1 <= 'q'.charCodeAt(0) - 97 && clet === 'n') ? 'q'
+            : (k + 1 <= 26 + 'Q'.charCodeAt(0) - 65 && clet === 'N') ? 'Q' : '';
+        lines.push({ sel: clet || autoSel(), act: { k: 'quit' }, preselect: true,
+                     text: 'Never mind (quit)' });
+        lines.push({ text: '(end)', morestr: true });
+
+        // clear_nhwindow(bannerwin): the copyright notice is redone in the menu
+        disp.clearScreen();
+        this._bannerOnScreen = false;
+        this._renderCornerMenu(disp, lines);
+        this._prevChargenMenu = null;
+
+        // C ref: wintty.c process_menu_window — only the drawn selectors act;
+        // <space>/<return> accept the preselected "Never mind", <escape>
+        // cancels (also a quit), any other key rings the bell.
+        let act;
+        for (;;) {
+            const ch = await this._readPromptKey();
+            act = this._curMenuSel.get(ch);
+            if (act) break;
+            if (ch === ' ' || ch === '\r' || ch === '\n' || ch === '\x1b') {
+                act = { k: 'quit' };
+                break;
+            }
+        }
+        // destroy_nhwindow(tmpwin); clear_nhwindow(bannerwin)
+        disp.clearScreen();
+        if (act.k === 'quit') return false;
+        if (act.k === 'game') {
+            game.plname = saved[act.idx].text;
+            plnamesuffix(); /* strips "-role-race-gend-algn" */
+            return true;
+        }
+        /* "Start a new character": COPYRIGHT_BANNER_A precedes "Who are you?" */
+        this._restoreMenuBanner = true;
+        disp.putstr(0, 0, 'NetHack, Copyright 1985-2026', NO_COLOR);
+        return true;
     }
 
     _nextManualPrompt(sel) {

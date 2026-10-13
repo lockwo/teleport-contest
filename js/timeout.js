@@ -331,6 +331,7 @@ async function vomiting_dialogue() {
 const NO_TIMEOUT_EFFECT = async () => {};
 
 // C stores each timer beside persistent-source bits; replace only TIMEOUT.
+const P_ACID_RES_T = 7, P_STONE_RES_T = 8; /* prop.h ACID_RES, STONE_RES */
 function timed_uprop(name, key, expire = NO_TIMEOUT_EFFECT) {
     return {
         name,
@@ -499,15 +500,30 @@ const TIMED_PROPS = [
     timed_uprop('POISON_RES', 'HPoison_resistance'),
     timed_uprop('ACID_RES', 'HAcid_resistance', async () => {
         const p = game.u?.uprops || {};
-        if (!p.EAcid_resistance && !(p.HAcid_resistance & ~TIMEOUT)
-            && !Unaware())
-            await pline('You no longer feel safe from acid.');
+        if (!p.EAcid_resistance && !(p.HAcid_resistance & ~TIMEOUT)) {
+            /* timeout.c:812 — extend while eating an acidic corpse */
+            if ((await import('./eat.js')).eating_dangerous_corpse(P_ACID_RES_T)) {
+                p.HAcid_resistance = (p.HAcid_resistance & ~TIMEOUT) | 1;
+                return;
+            }
+            if (!Unaware())
+                await pline('You no longer feel safe from acid.');
+        }
     }),
     timed_uprop('STONE_RES', 'HStone_resistance', async () => {
         const p = game.u?.uprops || {};
-        if (!p.EStone_resistance && !(p.HStone_resistance & ~TIMEOUT)
-            && !Unaware())
-            await pline('You no longer feel secure from petrification.');
+        if (!p.EStone_resistance && !(p.HStone_resistance & ~TIMEOUT)) {
+            /* timeout.c:827 — extend while eating a stoning corpse */
+            if ((await import('./eat.js')).eating_dangerous_corpse(P_STONE_RES_T)) {
+                p.HStone_resistance = (p.HStone_resistance & ~TIMEOUT) | 1;
+                return;
+            }
+            if (!Unaware())
+                await pline('You no longer feel secure from petrification.');
+            const { wielding_corpse } = await import('./do_wear.js');
+            await wielding_corpse(game.uwep, null, false);
+            await wielding_corpse(game.uswapwep, null, false);
+        }
     }),
     timed_uprop('DRAIN_RES', 'HDrain_resistance'),
     timed_uprop('SICK_RES', 'HSick_resistance'),
@@ -2219,7 +2235,7 @@ let timer_id = 1;           /* C: svt.timer_id */
 function _create_nhwindow(type) { return { type, lines: [] }; }
 function _putstr(win, _attr, str) { if (win) win.lines.push(String(str ?? '')); }
 function _display_nhwindow(win, _blocking) {
-    if (!win || !game.nhDisplay) return;
+    if (!win || !game.nhDisplay) return false;
     const lines = win.lines.map((text) => ({ text }));
     // C prints a 14-character address here; its stable JS `#id` stand-in is
     // shorter, so retain the same corner-window width without faking an address.
@@ -2246,6 +2262,7 @@ function _display_nhwindow(win, _blocking) {
     if (footerRow + 1 >= rows) col = 1;
     display.putstr(col, footerRow, '--More--', NO_COLOR, 0);
     display.setCursor(col + '--More--'.length, footerRow);
+    return true;
 }
 function _destroy_nhwindow(_win) {}
 
@@ -2455,7 +2472,20 @@ export async function wiz_timeout_queue() {
         _putstr(win, 0, `Level is no-teleport for ${stasis - (game.moves | 0) + 1} `
                         + `${(stasis - (game.moves | 0) > 0) ? 'turns' : 'more turn'}.`);
     }
-    _display_nhwindow(win, false);
+    if (_display_nhwindow(win, false)) {
+        /* tty display_nhwindow() of a text window runs process_text_window()'s
+           dmore(): xwaitforspace() inside this command, and destroy_nhwindow()
+           then erases the corner (docorner(), no RNG).  Leaving the key for the
+           next rhack() gave the hallucination redraw an extra moveloop pass. */
+        const { nhgetch, xwaitforspace_quit } = await import('./input.js');
+        const { dismiss_invent_screen } = await import('./invent.js');
+        game._modal_screen = 'textwin';
+        for (;;) {
+            const c = await nhgetch();
+            if (xwaitforspace_quit(c)) break;
+        }
+        await dismiss_invent_screen(true);
+    }
     _destroy_nhwindow(win);
 
     return ECMD_OK;

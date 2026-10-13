@@ -376,7 +376,7 @@ function uprop_any(...keys) {
 function Stoned_u() { return (game.u?.uprops?.Stoned | 0) > 0; }
 function Slimed_u() { return (game.u?.uprops?.Slimed | 0) > 0; }
 function Sick_u() { return (game.u?.uprops?.Sick | 0) > 0 || !!game.u?.sick; }
-function Stone_resistance_u() {
+export function Stone_resistance_u() {
     return fromform('Stone_resistance')
         || uprop_any('Stone_resistance', 'HStone_resistance', 'EStone_resistance', 'StoneResistance');
 }

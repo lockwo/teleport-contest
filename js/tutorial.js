@@ -524,11 +524,11 @@ function rndDoorState() {
     return states[rn2(5)];
 }
 
-// des.stair — place a downstair (no PRNG for a fixed coord).
+// des.stair — sp_lev.c lspo_stair() -> mkstairs(): sets the terrain AND
+// registers the stairway node (stairway_add) so dodown()/dfeature_at() see it.
 function makeStair(cx, cy) {
     const { x, y } = A(cx, cy);
-    const loc = game.level.at(x, y);
-    if (loc) { loc.typ = STAIRS; loc.ladder = LA_DOWN; }
+    mkstairs(x, y, 0, null);
 }
 
 // C ref: sp_lev.c get_location() — the contents callback's object has no
@@ -768,6 +768,10 @@ export function genTutorialLevel() {
     const prevLevel = game.level;
     const prevFmon = game.fmon;
     const prevInMklev = game.in_mklev;
+    // C: clear_level_structures() -> stairway_free_all(): the new level's stair
+    // list starts empty and must not inherit the level being left.
+    const prevStairs = game.stairs;
+    game.stairs = null;
     const lvl = new GameMap();
     setTutorialLevelFlags(lvl);
     game.level = lvl;
@@ -783,6 +787,8 @@ export function genTutorialLevel() {
     game.level = prevLevel;
     game.fmon = prevFmon;
     game.in_mklev = prevInMklev;
+    game._tutorial_stairs = game.stairs;
+    game.stairs = prevStairs;
     game._tutorial_level = lvl;
     return lvl;
 }

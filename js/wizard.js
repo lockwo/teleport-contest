@@ -12,12 +12,15 @@ import { update_topl, pline, newsym } from './display.js';
 import { Blind } from './vision.js';
 import { AT_MAGC, attacktype } from './monattk_data.js';
 import { In_W_tower } from './teleport.js';
+import { mon_has_amulet, mon_has_special, any_quest_artifact } from './monspecial.js';
 import { M_AP_MONSTER, MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR, In_endgame, Is_astralevel } from './const.js';
 import { In_hell as dungeon_In_hell } from './dungeon.js';
 
 const FAKE_AMULET_OF_YENDOR = 212;
 const AMULET_OF_YENDOR = 213;           // js/mkobj.js OBJECT_DATA index
 const STRAT_WAITMASK = 0x30000000;
+const CANDELABRUM_OF_INVOCATION = 262, BELL_OF_OPENING = 263,
+      SPE_BOOK_OF_THE_DEAD = 409;
 const MAXNASTIES = 10;
 const S_ANGEL = 27, S_DEMON = 56;       // defsym.h MONSYM indices
 
@@ -30,28 +33,8 @@ function distu(x, y) {
     return (x - u.ux) * (x - u.ux) + (y - u.uy) * (y - u.uy);
 }
 
-// C ref: wizard.c:106 mon_has_amulet(mtmp).
-export function mon_has_amulet(mtmp) {
-    for (const otmp of (mtmp?.minvent || []))
-        if (otmp.otyp === AMULET_OF_YENDOR) return true;
-    return false;
-}
-
-// C ref: wizard.c:117 mon_has_special(mtmp) — the Amulet, the Book, a quest
-// artifact or a piece of the invocation kit.
-const CANDELABRUM_OF_INVOCATION = 262, BELL_OF_OPENING = 263,
-      SPE_BOOK_OF_THE_DEAD = 409;
-export function mon_has_special(mtmp) {
-    for (const otmp of (mtmp?.minvent || [])) {
-        if (otmp.otyp === AMULET_OF_YENDOR
-            || otmp.otyp === CANDELABRUM_OF_INVOCATION
-            || otmp.otyp === BELL_OF_OPENING
-            || otmp.otyp === SPE_BOOK_OF_THE_DEAD
-            || any_quest_artifact(otmp))
-            return true;
-    }
-    return false;
-}
+// C ref: wizard.c:106 mon_has_amulet / :117 mon_has_special -- js/monspecial.js.
+export { mon_has_amulet, mon_has_special };
 
 // C ref: wizard.c:61 amulet() — runs EVERY turn once the hero carries the
 // Amulet.  Two live draws: rn2(15) for the portal-warmth hint (only when the
@@ -371,8 +354,6 @@ const STRAT_APPEARMSG = 0x80000000, STRAT_HEAL = 0x08000000,
 // C ref: obj.h:271 any_quest_artifact(o) == (o->oartifact >=
 // ART_ORB_OF_DETECTION).  js/invent.js:370 keeps a stub that always answers
 // FALSE; this is the real test.  (js/artifact.js:233 fixes the ordinal at 21.)
-const ART_ORB_OF_DETECTION = 21;
-function any_quest_artifact(o) { return (o?.oartifact | 0) >= ART_ORB_OF_DETECTION; }
 // C ref: hack.h BOLT_LIM.
 const BOLT_LIM_WIZ = 8;
 // C ref: teleport.h RLOC_MSG.

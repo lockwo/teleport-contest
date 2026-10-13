@@ -1107,7 +1107,7 @@ export async function scrolltele(scroll) {
         if ((await y_n('Override?')) !== 'y') return;
     }
 
-    const stunned = (u?.uprops?.Stun || 0) > 0;
+    const stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.formprops?.Stunned;
     if ((((u?.uprops?.Teleport_control || 0) > 0 || (scroll && scroll.blessed))
          && !stunned) || wizard) {
         if (u?.usleep) {
@@ -1122,14 +1122,23 @@ export async function scrolltele(scroll) {
             // accumulated text to keep its curs/flush_screen half a no-op on
             // the message.
             await pline_append('Where do you want to be teleported?');
-            await getpos_render(game._pending_message, u.ux, u.uy);
             if (scroll) learnscroll(scroll);
+            // C ref: teleport.c scrolltele() — `cc.x = u.ux; cc.y = u.uy;
+            // if (isok(iflags.travelcc.x, iflags.travelcc.y)) cc = iflags.travelcc;`
+            // "The player showed some interest in traveling here; pre-suggest
+            // this coordinate."
+            const tcc = game.iflags?.travelcc;
+            const cc0 = (tcc && isok(tcc.x, tcc.y)) ? { x: tcc.x, y: tcc.y }
+                                                    : { x: u.ux, y: u.uy };
+            await getpos_render(game._pending_message, cc0.x, cc0.y);
             const verbose = game.flags?.verbose !== false;
-            const cc = await getpos('the desired position', u.ux, u.uy, null,
+            const cc = await getpos('the desired position', cc0.x, cc0.y, null,
                                     /*force=*/true, verbose);
             if (!cc) return; // getpos() < 0: abort
             if (teleok(cc.x, cc.y, false)) {
                 await teleds(cc.x, cc.y, TELEDS_TELEPORT);
+                if (tcc && u.ux === tcc.x && u.uy === tcc.y)
+                    tcc.x = tcc.y = 0;
                 return;
             }
             await pline_append('Sorry...');

@@ -37,7 +37,7 @@ import { t_at } from './trap.js';
 import { mattackm } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, M_ATTK_MISS } from './const.js';
 import {
-    FOOD_CLASS, BALL_CLASS, CHAIN_CLASS, ROCK_CLASS, CORPSE, TIN, next_ident,
+    FOOD_CLASS, BALL_CLASS, CHAIN_CLASS, ROCK_CLASS, CORPSE, TIN, nextoid,
     GOLD_PIECE, COIN_CLASS, BOULDER, objects as OBJECTS, is_rider_pm, weight,
     place_object, eaten_stat,
 } from './mkobj.js';
@@ -731,12 +731,14 @@ function mon_is_helpless(mtmp) {
 }
 // C ref: objects.h SCR_MAIL — excluded from a pet's underfoot pickup.
 const SCR_MAIL = 364;
-// C ref: obj.h is_mines_prize/is_soko_prize — the luckstone/bag reserved as the
-// branch-end prize.  invent.js and monmove.js both carry the same stub; the
-// real test needs the per-branch prize o_id bookkeeping (u.uachieve fields),
-// which this port does not track yet.
-function is_mines_prize(_obj) { return false; }
-function is_soko_prize(_obj) { return false; }
+// C ref: obj.h is_mines_prize/is_soko_prize — o_id recorded by sp_lev.c in
+// svc.context.achieveo for the Mines' End luckstone / Sokoban prize.
+function is_mines_prize(obj) {
+    return !!obj && obj.o_id != null && obj.o_id === game.context?.achieveo?.mines_prize_oid;
+}
+function is_soko_prize(obj) {
+    return !!obj && obj.o_id != null && obj.o_id === game.context?.achieveo?.soko_prize_oid;
+}
 
 // C ref: objnam.c distant_name(obj, doname).  Pet pickup and eating messages
 // name a floor object before it is extracted, so distant_name can suppress the
@@ -946,12 +948,15 @@ export async function mdrop_obj(mtmp, obj, verbosely) {
 const NEED_WEAPON_PET = 1, NEED_HTH_WEAPON_PET = 3;
 
 // C ref: mkobj.c splitobj(obj,num) — split `num` off a stack into a new obj
-// whose o_id comes from next_ident() (rnd(2)).  Both halves are re-weighed:
+// whose o_id comes from nextoid(obj, otmp): the o_id price-parity loop, which
+// can skip context.ident ahead without drawing RNG, then next_ident()'s rnd(2).
+// Both halves are re-weighed:
 // leaving the remainder at the FULL stack weight made curr_mon_load() and
 // can_carry() (and the hero's own burden maths, once the pet drops it) read a
 // weight C no longer assigns.
 function pet_splitobj(obj, num) {
-    const split = { ...obj, quan: num, o_id: next_ident() };
+    const split = { ...obj, quan: num };
+    split.o_id = nextoid(obj, split);
     obj.quan = (obj.quan || 1) - num;
     obj.owt = weight(obj);
     split.owt = weight(split);

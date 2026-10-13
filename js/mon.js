@@ -39,6 +39,7 @@ import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
 import { dist2 } from './hacklib.js';
 import { Monnam, mon_nam } from './uhitm.js';
 import { touch_artifact_monster } from './artifact.js';
+import { mon_has_special } from './monspecial.js';
 import { mhim, mhis, hcolor as hcolor_mon } from './do_name.js';
 
 // Additional bindings used ONLY by the "mon.c completion" block at the end of
@@ -1596,6 +1597,11 @@ async function movemon_pass() {
         // the next monster's move rolls (seed0030 step-62 death blow: C's next
         // RNG call is can_make_bones(), not another distfleeck()).
         if (game.program_state?.gameover) break;
+        // C ref: mon.c:1217 movemon_singlemon() — "end monster movement early
+        // if hero is flagged to leave the level" (a quest leader's expulsion,
+        // a monster-caused level change): somebody_can_move = FALSE and
+        // iter_mons_safe() stops.  movemon() then runs deferred_goto().
+        if (game.u?.utotype) { game._somebody_can_move = false; break; }
         await movemon_singlemon(mtmp);
     }
     return !!game._somebody_can_move;
@@ -3586,7 +3592,7 @@ export function validvamp(mon, mndx, monclass) {
     if (!is_vampshifter(mon))
         return { ok: !!validspecmon_local(mon, mndx), mndx };
 
-    if (mon.cham === PM_VLAD_THE_IMPALER && mon_has_special_local(mon)) {
+    if (mon.cham === PM_VLAD_THE_IMPALER && mon_has_special(mon)) {
         /* Vlad with the Candelabrum: override the choice, then accept it */
         return { ok: true, mndx: PM_VLAD_THE_IMPALER };
     }
@@ -3641,13 +3647,6 @@ function validspecmon_local(mon, mndx) {
             return false;
     }
     return true; /* the potential new form is ok */
-}
-// C ref: muse.c mon_has_special(mon) — the Amulet, the Bell, the Candelabrum or
-// the Book.  js/muse.js:451 reduces it to mon_has_amulet(); the full test is
-// what validvamp()'s Vlad arm needs, so it is spelled out.
-function mon_has_special_local(mon) {
-    return (mon.minvent || []).some((o) => o.otyp === CANDELABRUM_OTYP
-        || o.otyp === BELL_OF_OPENING || o.otyp === BOOK_OF_THE_DEAD_OTYP);
 }
 
 // ── mon.c:5078 wiz_force_cham_form() ────────────────────────────────────────
@@ -3899,7 +3898,7 @@ export async function usmellmon(mdat) {
         case S_ORC_C:
             /* C: maybe_polyd(is_orc(youmonst.data), Race_if(PM_ORC)) */
             if (game.u?.Upolyd ? is_orc_m(game.youmonst?.data)
-                               : (game.urace?.mnum === PM('orc')))
+                               : (game.urace?.mnum === 4 /* races[] index of PM_ORC, as Race_if(PM_ORC) */))
                 await update_topl('You notice an attractive smell.');
             else
                 await update_topl('A foul stench makes you feel a little nauseated.');

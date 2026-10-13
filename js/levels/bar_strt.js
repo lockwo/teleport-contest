@@ -12,6 +12,7 @@ import {
     quest_flip_branch, quest_floodfill_match, quest_level_init_solidfill, quest_place_stair,
     quest_region_light, quest_register_branch, quest_replace_terrain, quest_rndcoord,
     quest_set_door, shuffle, splev_create_monster,
+    vly_non_diggable,
 } from '../sp_lev.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -163,7 +164,8 @@ export async function makemaz_bar_strt() {
         const chieftains = [[10, 5], [10, 9], [11, 5], [11, 9],
                             [14, 5], [14, 9], [16, 5], [16, 9]];
         for (const [cx, cy] of chieftains) quest_create_monster('chieftain', cx, cy, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(00,00,75,19)) — no RNG.
+        vly_non_diggable(0, 0, 75, 19);
         // One trap to keep the ogres at bay.
         await quest_create_trap(12 /*SPIKED_PIT*/, 37, 7);
         // Eels in the river.

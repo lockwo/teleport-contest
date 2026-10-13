@@ -13,6 +13,7 @@ import {
     ARROW_TRAP, BEAR_TRAP, PIT, SPIKED_PIT, quest_align_shuffle, quest_finalize,
     quest_level_init_fill, quest_level_init_mines_flat, quest_monster,
     quest_register_branch_region, quest_trap,
+    quest_non_diggable,
 } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
@@ -91,7 +92,8 @@ export async function makemaz_ran_strt() {
         const hunters = [[19, 9], [20, 9], [21, 9], [19, 10],
                          [21, 10], [19, 11], [20, 11], [21, 11]];
         for (const [hx, hy] of hunters) quest_create_monster('hunter', hx, hy, null);
-        // des.non_diggable — no RNG.
+        // des.non_diggable(selection.area(00,00,40,20)) — no RNG.
+        quest_non_diggable(0, 0, 40, 20);
         await quest_trap(ARROW_TRAP, 30, 9);
         await quest_trap(ARROW_TRAP, 30, 10);
         await quest_trap(PIT, 40, 9);

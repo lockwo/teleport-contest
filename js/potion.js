@@ -37,7 +37,7 @@ import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
          COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN, Unaware as Unaware_const, OBJ_INVENT,
          FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING } from './const.js';
-import { fruitname } from './objnam.js';
+import { fruitname, simpleonames, thesimpleoname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
 // js/monattk_data.js is a generated LEAF module (no imports of its own), so
@@ -522,24 +522,25 @@ export async function potionbreathe_hero(obj) {
                 if (abase_of(i) < amax_of(i)) {
                     set_abase(i, abase_of(i) + 1);
                     isdone = !obj.blessed ? 1 : 0;
+                    game.botl = true;                    // potion.c:1990
                 }
                 if (++i >= A_MAX) i = 0;
             }
         }
         break;
     case POT_FULL_HEALING:
-        if (Upolyd() && (u.mh | 0) < (u.mhmax | 0)) u.mh++;
-        if ((u.uhp | 0) < (u.uhpmax | 0)) u.uhp++;
+        if (Upolyd() && (u.mh | 0) < (u.mhmax | 0)) { u.mh++; game.botl = true; }
+        if ((u.uhp | 0) < (u.uhpmax | 0)) { u.uhp++; game.botl = true; }
         cureblind = true;
         /* FALLTHROUGH */
     case POT_EXTRA_HEALING:
-        if (Upolyd() && (u.mh | 0) < (u.mhmax | 0)) u.mh++;
-        if ((u.uhp | 0) < (u.uhpmax | 0)) u.uhp++;
+        if (Upolyd() && (u.mh | 0) < (u.mhmax | 0)) { u.mh++; game.botl = true; }
+        if ((u.uhp | 0) < (u.uhpmax | 0)) { u.uhp++; game.botl = true; }
         if (!obj.cursed) cureblind = true;
         /* FALLTHROUGH */
     case POT_HEALING:
-        if (Upolyd() && (u.mh | 0) < (u.mhmax | 0)) u.mh++;
-        if ((u.uhp | 0) < (u.uhpmax | 0)) u.uhp++;
+        if (Upolyd() && (u.mh | 0) < (u.mhmax | 0)) { u.mh++; game.botl = true; }
+        if ((u.uhp | 0) < (u.uhpmax | 0)) { u.uhp++; game.botl = true; }
         if (obj.blessed) cureblind = true;
         if (cureblind) {
             await make_blinded(0, !u.ucreamed);
@@ -551,6 +552,7 @@ export async function potionbreathe_hero(obj) {
         if (!Role_if_healer()) {
             if (Upolyd()) u.mh = (u.mh | 0) <= 5 ? 1 : (u.mh | 0) - 5;
             else u.uhp = (u.uhp | 0) <= 5 ? 1 : (u.uhp | 0) - 5;
+            game.botl = true;                                  // potion.c:2018
             await exercise(A_CON, false);                      // rn2(2)
         }
         break;
@@ -2815,9 +2817,9 @@ export async function potion_dip(obj, potion) {
             }
         }
         /* [N of] the {obj(s)} mix(es) with [one of] {the potion}... */
-        await update_topl(`${qbuf} ${p_simpleonames(obj)} ${
+        await update_topl(`${qbuf} ${simpleonames(obj)} ${
             p_otense(obj, 'mix')} with ${
-            (potion.quan > 1) ? 'one of ' : ''}${p_thesimpleoname(potion)}...`);
+            (potion.quan > 1) ? 'one of ' : ''}${thesimpleoname(potion)}...`);
         /* get rid of the 'dippee' before any perm_invent update */
         await useup(potion);  /* now gone */
         /* Mixing potions is dangerous; acid is particularly unstable */
@@ -3098,12 +3100,10 @@ async function p_obj_unpolyable(obj) {
 
 // C ref: youprop.h Blindfolded_only — blind ONLY because of the blindfold.
 function Blindfolded_only() { return !!game.ublindf && !BlindedTimeout(); }
-// C ref: objnam.c simpleonames/thesimpleoname/cxname/Yname2/yname/The/the.
+// C ref: objnam.c cxname/Yname2/yname/The/the.
 // js/invent.js exports xname/yname/doname; the rest have only module-private
 // copies (js/pickup.js thesimpleoname, js/wield.js cxname/Yname2), so these are
 // the local shapes over xname().
-function p_simpleonames(obj) { return xname(obj); }
-function p_thesimpleoname(obj) { return `the ${xname(obj)}`; }
 function p_cxname(obj) { return xname(obj); }
 function p_Yname2(obj) { return `Your ${xname(obj)}`; }
 async function p_yname(obj) {
@@ -3134,7 +3134,7 @@ export async function dip_into() {
 
     /* "What do you want to dip into <the potion>? [abc or ?*] " */
     const qbuf = `dip into ${is_plural(potion) ? 'one of ' : ''}${
-        p_thesimpleoname(potion)}`;
+        thesimpleoname(potion)}`;
     const obj = await getobj(qbuf, dip_ok, GETOBJ_PROMPT);
     if (!obj)
         return ECMD_CANCEL;

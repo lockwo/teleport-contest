@@ -538,25 +538,11 @@ function next2u(x, y) {
     return (dx * dx + dy * dy) <= 2;
 }
 
-// C ref: mon.c mnexto(mtmp, rlocflags) — relocate mtmp to a free spot next to
-// the hero via enexto(); on failure the monster goes to limbo (off-map).  The
-// enexto() near-ring scan consumes the same collect_coords rn2() draws as C.
-function mnexto(mtmp) {
-    const cc = enexto(game.u.ux, game.u.uy, mtmp); // enexto(&mm, u.ux, u.uy, mtmp->data)
-    if (!cc) {
-        // deal_with_overcrowding -> m_into_limbo: remove from the live level.
-        const mons = game.level?.monsters;
-        if (mons) { const i = mons.indexOf(mtmp); if (i >= 0) mons.splice(i, 1); }
-        return;
-    }
-    mtmp.mx = cc.x; mtmp.my = cc.y; // rloc_to(mtmp, mm.x, mm.y)
-}
-
 // C ref: do.c u_collide_m() — on level arrival a monster shares the hero's
 // square (typically the pet that accompanied the hero and landed on the hero's
 // exact spot in mon_arrive()).  Randomly move the hero to an adjacent spot or,
 // far more often, move the monster to any nearby location.
-export function u_collide_m(mtmp) {
+export async function u_collide_m(mtmp) {
     const u = game.u;
     // C: if (!rn2(2) && enexto(&cc, u.ux, u.uy, youmonst.data) && next2u(cc.x, cc.y))
     //        u_on_newpos(cc.x, cc.y);  else  mnexto(mtmp, RLOC_NOMSG);
@@ -565,7 +551,9 @@ export function u_collide_m(mtmp) {
     if (!rn2(2) && (cc = enexto(u.ux, u.uy)) && next2u(cc.x, cc.y)) {
         u_on_newpos(cc.x, cc.y);
     } else {
-        mnexto(mtmp);
+        // mnexto() -> rloc_to_core() newsym()s the monster's new square, which
+        // draws display-rng picks while the hero hallucinates.
+        await mnexto_rloc(mtmp, RLOC_NOMSG);
     }
     // C: if still a monster in the hero's way, rloc it; if that fails, limbo it.
     const still = m_at(u.ux, u.uy);
@@ -1249,6 +1237,12 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // C ref: do.c:1720 flush_screen(-1) — from here on map/status flushes are
     // postponed until docrt(), so the tty keeps showing the departing level.
     freeze_screen_for_level_change();
+    // C ref: do.c:1718-1719 — "do this prior to level-change pline messages":
+    // clear the old level's line-of-sight and drop any pending full recalc, so a
+    // pline() before the arrival docrt() (the Plane of Fire's "You hear a
+    // whoosh!") cannot run vision_recalc() against the departed level's blockers.
+    vision_reset();
+    game.vision_full_recalc = 0;
 
     // Hero placement.  C ref: do.c goto_level() arrival block, whose three arms
     // are tested in this order: portal, then at_stairs, then everything else.
@@ -1369,7 +1363,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // on the hero's exact square in mon_arrive()); if so move one or the other.
     {
         const mtmp = m_at(game.u.ux, game.u.uy);
-        if (mtmp && mtmp !== game.u.usteed) u_collide_m(mtmp);
+        if (mtmp && mtmp !== game.u.usteed) await u_collide_m(mtmp);
     }
 
     // C ref: do.c:1831-1834 — `if (Is_waterlevel || Is_airlevel) movebubbles();
@@ -1484,7 +1478,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
             await final_level();
             await record_ach(8 /* ACH_ASTR */);
         } else if (newdungeon && u.uhave?.amulet) {
-            await resurrect();
+            await (await import('./wizard.js')).resurrect();
         }
     } else if (In_quest(u.uz)) {
         await onquest(); /* might be reaching locate|goal level */
@@ -1623,43 +1617,6 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     {
         const { pickup_after_move } = await import('./cmd.js');
         await pickup_after_move(u.ux, u.uy);
-    }
-}
-
-// ── resurrect (C ref: wizard.c resurrect()) ──
-// Only the `no_of_wizards == 0` arm is reachable here: goto_level() calls this
-// the first time the hero enters the endgame carrying the Amulet, before any
-// Wizard has been created.  makemon(ptr, u.ux, u.uy, MM_NOWAIT) takes makemon's
-// `byyou && !in_mklev` branch, so the placement spends enexto_core()'s three
-// ring shuffles (45 rn2 calls) BEFORE next_ident/newmonhp — skipping the whole
-// call left the stream 54 draws short at the arrival boundary.
-const MM_NOWAIT_DO = 0x00000002;   // C ref: makemon.h MM_NOWAIT
-async function resurrect() {
-    const M = await import('./makemon.js');
-    const U = await import('./uhitm.js');
-    const mtmp = M.makemon(M.monster_by_pmidx(M.name_to_pmidx('Wizard of Yendor')),
-        game.u.ux, game.u.uy, MM_NOWAIT_DO);
-    if (!mtmp) return;
-    mtmp.mrevived = 1;
-    // C ref: makemon.c:1472-1500 — makemon's own tail prints the arrival line
-    // (no MM_NOEXCLAM here, so " suddenly" and a trailing '!').
-    newsym(mtmp.mx, mtmp.my);
-    if (U.canspotmon(mtmp)) {
-        const what = U.x_monnam(mtmp, /*ARTICLE_A*/ 2, null, 0, false);
-        const dx = mtmp.mx - game.u.ux, dy = mtmp.my - game.u.uy;
-        const place = Math.max(Math.abs(dx), Math.abs(dy)) <= 1 ? ' next to you'
-            : (dx * dx + dy * dy <= 8 * 8) ? ' close by' : '';
-        await update_topl(
-            `${what.charAt(0).toUpperCase()}${what.slice(1)} suddenly appears${place}!`);
-    }
-    mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
-    mtmp.mtame = 0;
-    mtmp.mpeaceful = 0;
-    M.set_malign(mtmp);
-    // C: `if (!Deaf) { pline("A voice booms out..."); verbalize(...); }`
-    if (!Deaf_hero()) {
-        await update_topl('A voice booms out...');
-        await update_topl('"So thou thought thou couldst kill me, fool."');
     }
 }
 
@@ -1971,7 +1928,7 @@ export async function level_tele(readLevel, immediate = false) {
     const confused = (u.uprops?.Confusion || 0) > 0;
     const teleport_control = (u.uprops?.Teleport_control || 0) > 0
         || !!u.Teleport_control;
-    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned;
+    const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
 
     let newlev = 0;
     let gotoRandom = false;     // C: goto random_levtport
@@ -3278,7 +3235,7 @@ export async function dosinkring(obj) {
     case RIN_AGGRAVATE_MONSTER: {
         const DN = await import('./do_name.js');
         await pline(`Several ${Hallucination_do()
-            ? makeplural(DN.rndmonnam()) : 'flies'} buzz angrily around the sink.`);
+            ? makeplural(DN.rndmonnam().name) : 'flies'} buzz angrily around the sink.`);
         break;
     }
     case RIN_SHOCK_RESISTANCE:

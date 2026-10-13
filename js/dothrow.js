@@ -27,8 +27,8 @@ import { PIT, SPIKED_PIT, HOLE, TRAPDOOR, MAGIC_PORTAL, FIRE_TRAP,
 import { mflags1_of, mflags2_of, mflags3_of, msound_of, M1_BREATHLESS,
          M1_NOEYES, M1_WALLWALK, M2_DOMESTIC, M3_WANTSARTI, MS_LEADER,
          is_human_flag, is_demon_flag } from './monflags_data.js';
-import { attacktype, dmgtype, AT_WEAP, AT_ENGL, AT_HUGS,
-         AD_STCK, AD_WRAP } from './monattk_data.js';
+import { attacktype, dmgtype, attacktype_fordmg, AT_WEAP, AT_ENGL, AT_HUGS,
+         AD_STCK, AD_WRAP, AD_DGST } from './monattk_data.js';
 import { objects, BOULDER, CORPSE, POTION_CLASS, GEM_CLASS, WEAPON_CLASS,
          ARMOR_CLASS, EGG, STATUE, FOOD_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
          place_object } from './mkobj.js';
@@ -36,7 +36,7 @@ import { surface } from './dungeon.js';
 import { acurr_eff } from './attrib.js';
 import { night, phase_of_the_moon, FULL_MOON } from './calendar.js';
 import { name_to_pmidx, monster_by_pmidx, makemon, set_malign,
-         is_covetous } from './makemon.js';
+         is_covetous, add_to_minv } from './makemon.js';
 import * as I from './invent.js';
 import { ghitm } from './dokick.js';
 import { goodpos } from './teleport.js';
@@ -804,6 +804,18 @@ export async function throw_gold(obj) {
         return ECMD_CANCEL;
     }
     I.freeinv(obj);
+    // C ref: dothrow.c:2671 — thrown from inside an engulfer, the coins go into
+    // its inventory.
+    if (u.uswallow) {
+        const { mon_nam } = await import('./uhitm.js');
+        let swallower = mon_nam(u.ustuck);
+        // C: digests(ptr) == dmgtype_fromattack(ptr, AD_DGST, AT_ENGL).
+        if (attacktype_fordmg(u.ustuck.data, AT_ENGL, AD_DGST))
+            swallower = `${s_suffix(swallower)} entrails`;
+        await update_topl(`The gold disappears into ${swallower}.`);
+        add_to_minv(u.ustuck, obj);
+        return ECMD_TIME;
+    }
 
     let bx = u.ux, by = u.uy;
     if (u.dz) {

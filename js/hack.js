@@ -22,9 +22,9 @@ import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as t
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw } from './allmain.js';
 import { exercise } from './attrib.js';
-import { A_CON } from './const.js';
+import { A_CON, BEAR_TRAP, WEB, NO_TRAP, is_pit } from './const.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, terrain_glyph } from './display.js';
-import { do_screen_description, look_at_object, look_at_monster } from './pager.js';
+import { do_screen_description, look_at_object, look_at_monster, decode_mixed } from './pager.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, S_WORM_TAIL } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
@@ -244,7 +244,7 @@ const OCC_SLOTS = [
     ['_search_occupation', 'searching'],           // cmd.c:1847
     ['_wait_occupation', 'waiting'],               // cmd.c:1931
     ['_study_occupation', 'studying'],             // spell.c:639
-    ['_wipe_occupation', 'wiping off your face'],  // do.c:2394
+    ['_wipe_occupation', () => game.occupation_txt || 'wiping off your face'],  // do.c:2394
     ['_tin_occupation', 'opening the tin'],        // eat.c:1723 start_tin()
     ['_engrave_occupation', 'engraving'],          // engrave.c:1244 doengrave()
     ['_dig_occupation', () => game.occupation_txt || 'digging'], // dig.c:1311/1356 use_pick_axe2()
@@ -729,11 +729,16 @@ function bad_rock(x, y) {
     const loc = game.level?.at(x, y);
     const typ = loc ? loc.typ : STONE;
     if (In_sokoban(game.u?.uz) && boulder_at(x, y)) return true;
-    // C ref: hack.c:937 `(IS_ROCK(levl[x][y].typ) && !tunnels-and-may_dig)`
-    // — may_dig() is false for undiggable (W_NONDIGGABLE) walls.
-    if (IS_OBSTRUCTED(typ) && hero_tunnels_unpicked()
-        && !(loc && (loc.wall_info & 0x08 /* W_NONDIGGABLE */))) return false;
-    return IS_OBSTRUCTED(typ) && !Passes_walls();
+    if (!IS_OBSTRUCTED(typ)) return false;
+    // C ref: hack.c:937 `(IS_OBSTRUCTED && (!tunnels(mdat) || needspick(mdat)
+    // || !may_dig(x, y)) && !(passes_walls(mdat) && may_passwall(x, y)))` —
+    // passes_walls(mdat) is the hero's FORM (M1_WALLWALK), not the Passes_walls
+    // property, so a phasing hero in his own shape is still blocked here.
+    // may_dig() is false for undiggable (W_NONDIGGABLE) walls.
+    if (hero_tunnels_unpicked() && !(loc && (loc.wall_info & 0x08 /* W_NONDIGGABLE */))) return false;
+    const f1 = mflags1_of(youmonst_data());
+    const may_passwall = !(IS_STWALL(typ) && ((loc?.wall_info | 0) & 0x10 /* W_NONPASSWALL */));
+    return !((f1 & 0x8 /* M1_WALLWALK */) !== 0 && may_passwall);
 }
 
 // C ref: hack.c:952 cant_squeeze_thru(&youmonst) — 0 can squeeze, 1 too big,
@@ -941,6 +946,7 @@ function findtravelpath(mode) {
                                 continue;
                             }
                         }
+                        if (process.env.NHDBG_TRAV && nx === ux && ny === uy && mode === 0) console.error('TRAVH mv', game.moves, 'from', x, y, 'to', nx, ny, 'tm', test_move_trav(x, y, nx - x, ny - y, TEST_TRAV), 'seenv', game.level?.at(nx, ny)?.seenv, 'cs', couldsee(nx, ny), 'radius', radius, 'tr', travel[y * COLNO + x]);
                         if (test_move_trav(x, y, nx - x, ny - y, TEST_TRAV)
                             && ((game.level?.at(nx, ny)?.seenv || 0)
                                 || (!Blind() && couldsee(nx, ny)))) {
@@ -949,6 +955,7 @@ function findtravelpath(mode) {
                                     const visited = travelmap_get(x, y);
                                     u.dx = x - ux;
                                     u.dy = y - uy;
+                                    if (process.env.NHDBG_TRAV) console.error('TRAV', 'mv', game.moves, mode, 'hero', u.ux, u.uy, 'tgt', u.tx, u.ty, 'step', u.dx, u.dy, 'radius', radius, 'bfsfrom', x, y);
                                     if (mode === TRAVP_TRAVEL
                                         && ((x === u.tx && y === u.ty) || visited)) {
                                         nomul(0);
@@ -976,6 +983,7 @@ function findtravelpath(mode) {
                 radius++;
             }
 
+            if (process.env.NHDBG_TRAV) { let dump=[]; for (let yy=4;yy<=11;yy++){ let r=''; for(let xx=38;xx<=47;xx++) r+=String(travel[yy*COLNO+xx]).padStart(3); dump.push(yy+':'+r);} console.error('TRAVFAIL mv', game.moves, mode, 'hero', u.ux,u.uy,'tgt',u.tx,u.ty,'\n'+dump.join('\n')); }
             if (mode !== TRAVP_GUESS)
                 return false;
 
@@ -1616,7 +1624,8 @@ function terrain_description(x, y, full = false) {
     if (full) {
         const typ = loc.typ;
         /* pager.c:779 S_stone arm still tests the REAL levl[x][y].seenv */
-        if (typ === STONE || typ === SCORR) return loc.seenv ? 'stone' : 'unexplored';
+        if (typ === STONE || typ === SCORR)
+            return game.level?.flags?.arboreal ? 'tree' : loc.seenv ? 'stone' : 'unexplored';
         const saved = loc.seenv;
         loc.seenv = 0xff;
         try { return terrain_description(x, y); } finally { loc.seenv = saved; }
@@ -1648,7 +1657,7 @@ function terrain_description(x, y, full = false) {
     //         the defsym row's TILE name, not its explanation).  So real rock
     //         never reads "dark part of a room" or "solid stone" (the latter
     //         is hack.c's movement message).
-    if (typ === STONE) return loc.seenv ? 'stone' : 'unexplored';
+    if (typ === STONE) return game.level?.flags?.arboreal ? 'tree' : loc.seenv ? 'stone' : 'unexplored';
     { const _t = t_at_hk(x, y); if (_t && _t.tseen) return trap_explanation_hk(_t.ttyp); }
     // C ref: defsym.h rows 21/24 — a revealed engraving is DISPLAYED as
     // S_engroom/S_engrcorr, whose explanation is "engraving", so
@@ -1737,7 +1746,7 @@ function terrain_description(x, y, full = false) {
     // dispatches on the displayed glyph.
     if (typ === SDOOR) return 'wall';
     // pager.c:788 groups SCORR with STONE in the same "stone" arm.
-    if (typ === SCORR) return loc.seenv ? 'stone' : 'unexplored';
+    if (typ === SCORR) return game.level?.flags?.arboreal ? 'tree' : loc.seenv ? 'stone' : 'unexplored';
     if (typ === DRAWBRIDGE_UP) return 'raised drawbridge';
     if (typ === DRAWBRIDGE_DOWN) return 'lowered drawbridge';
     return 'floor of a room';
@@ -1749,7 +1758,7 @@ function terrain_description(x, y, full = false) {
 // hero out to <x,y> over test_move(TEST_TRAV); it consumes no RNG but does
 // answer FALSE for an explored-yet-unreachable square (a walled-off room),
 // which the old "explored means reachable" shortcut got wrong.
-function is_valid_travelpt(x, y) {
+export function is_valid_travelpt(x, y) {
     const u = game.u;
     if (u && x === u.ux && y === u.uy) return true;
     const loc = game.level?.at(x, y);
@@ -1765,7 +1774,7 @@ function is_valid_travelpt(x, y) {
     // one (no seenv, no remembered glyph == GLYPH_UNEXPLORED, see
     // terrain_description()) is NOT a cmap glyph and goes to the BFS.
     if (loc && (loc.typ === STONE || loc.typ === SCORR) && !loc.seenv
-        && loc.remembered_glyph != null) return false;
+        && !game.level?.flags?.arboreal && loc.remembered_glyph != null) return false;
     const tx = u.tx, ty = u.ty;
     u.tx = x; u.ty = y;
     const ret = findtravelpath(TRAVP_VALID);
@@ -1833,7 +1842,7 @@ function look_at_object_here(x, y, describing = false) {
     // a rock later replaced by a flint stone out of sight), object_from_map()
     // finds no matching sobj_at() and mksobj()s a stand-in of the glyph's type.
     if (describing && !game.u?.uhallu && hrem?.objotyp && hrem.ch === loc.disp_ch
-        && hrem.objotyp !== obj.otyp && !hrem.pile)
+        && hrem.objotyp !== obj.otyp)
         return look_at_object(x, y, { kind: 'object', obj: null, otyp: hrem.objotyp,
                                       corpsenm: hrem.corpsenm, x, y });
     // C ref: display.h generic_obj_to_glyph() — an undescribed potion/gem/
@@ -2312,10 +2321,19 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
     // C ref: getpos_sethilite(f, validf) / the teardown getpos_sethilite(0, 0):
     // callers with a validity callback highlight its valid spots (framecolor).
     game._getposFrameValid = (validfn && game.iflags?.bgcolors !== false && !detectMode) ? validfn : null;
+    // C ref: getpos.c:809/1165 -- `schar udx = u.dx, udy = u.dy, udz = u.dz;`
+    // restored at exitgetpos.  The travel-target validity check run for the
+    // autodescribe text (findtravelpath(TRAVP_VALID)) and the movecmd() cursor
+    // keys scribble on u.dx/u.dy; without the restore the next travel's failed
+    // BFS takes its first step in that leaked direction instead of the stale
+    // direction from before the prompt.
+    const u0 = game.u;
+    const udx = u0?.dx, udy = u0?.dy, udz = u0?.dz;
     try {
         return await getpos_inner(goalText, startx, starty, validfn, force, verbose, detectMode, terrainMode);
     } finally {
         game._getposFrameValid = null;
+        if (u0) { u0.dx = udx; u0.dy = udy; u0.dz = udz; }
     }
 }
 async function getpos_inner(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false) {
@@ -3933,6 +3951,10 @@ async function do_look_engrs(nearby) {
                 full = full.replace('(engraving with ', '');
                 full = full.replace('(engraving ', 'engraving ');
             }
+            // C: putmixed() -> decode_mixed() drops a lone backslash of the
+            // engraved text (the obscuring glyph appended below is decoded
+            // separately, by encglyph's own escape).
+            full = decode_mixed(full);
             // Determine whether the engraving glyph is what is actually shown,
             // or something covers it.  The hero (drawn as an overlay, not in the
             // map memory) covers when standing on the cell; otherwise the map
@@ -4036,6 +4058,15 @@ function look_at_monster_desc(mtmp) {
     else if (mtmp.msleeping) buf += ', asleep';
     else if ((mtmp.mstrategy & STRAT_WAITMASK) !== 0) buf += ', meditating';
     if (mtmp.mleashed) buf += ', leashed to you';
+    // C ref: pager.c:465-473 — "newsym lets you know of the trap, so mention it here".
+    if (mtmp.mtrapped && cansee(mtmp.mx, mtmp.my)) {
+        const t = t_at_hk(mtmp.mx, mtmp.my);
+        const tt = t ? t.ttyp : NO_TRAP;
+        if (tt === BEAR_TRAP || is_pit(tt) || tt === WEB) {
+            buf += `, trapped in ${an(trapname_hk(tt, false))}`;
+            t.tseen = 1;
+        }
+    }
     return `${buf}${mon_hidden_suffix(mtmp)}`;
 }
 
@@ -4137,7 +4168,7 @@ async function do_look_all(nearby, do_mons) {
                         : `All ${which} currently shown on the map:`);
                     lines.push('    '); // Qt fixed-width separator (renders blank)
                 }
-                lines.push(`${look_coord_prefix(x, y, look_cmode(), true)}${sym}  ${lookbuf}`);
+                lines.push(`${look_coord_prefix(x, y, look_cmode(), true)}${sym}  ${decode_mixed(lookbuf)}`);
             }
         }
     }
