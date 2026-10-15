@@ -127,6 +127,11 @@ function place_worm_seg(worm, x, y) {
     const lev = game.level;
     if (!lev) return;
     if (!lev.wormsegs) lev.wormsegs = [];
+    /* C: one grid slot per square, so re-placing a segment where this worm
+       already has one (cutworm()'s "place the head segment back") rewrites
+       that slot instead of adding a second occupant. */
+    const had = lev.wormsegs.find((sg) => sg.x === x && sg.y === y);
+    if (had) { had.worm = worm; return; }
     lev.wormsegs.push({ worm, x, y });
 }
 

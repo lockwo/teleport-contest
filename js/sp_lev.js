@@ -85,7 +85,7 @@ import { is_pool_or_lava, create_drawbridge } from './dbridge.js';
 import { new_light_source, LS_OBJECT, del_light_source, LS_MONSTER,
          emits_light } from './light.js';
 import { stock_room } from './shknam.js';
-import { In_hell } from './dungeon.js';
+import { In_hell, Is_mineend_level, Is_sokoend_level } from './dungeon.js';
 // Unused here (soko builders moved to js/levels/, which import this themselves)
 // but kept: removing it would shift detect.js's spot in module eval order.
 // Delete only in a separately-gated change.
@@ -2559,7 +2559,7 @@ export function quest_set_door(mx, my, state) {
 export function quest_flip_branch(flp) {
     const br = game._quest_lregion;
     if (!br) return;
-    const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+    const { minx, maxx, miny, maxy } = level_flip_extents();
     const inArea = (x, y) => (x >= minx && x <= maxx && y >= miny && y <= maxy);
     const fx = (x) => (minx + maxx - x), fy = (y) => (miny + maxy - y);
     for (const [kx, ky] of [['x1', 'y1'], ['x2', 'y2']]) {
@@ -3220,6 +3220,18 @@ export function bigrm_get_level_extends() {
     return { minx: xmin, maxx: xmax, miny: ymin, maxy: ymax };
 }
 
+// C ref: sp_lev.c flip_level() calls get_level_extends() ONCE, at its top, and
+// uses that box for the map, the entities AND the lregion/dndest/updest loop.
+// This port runs the lregion flips as separate calls AFTER flip_level() has
+// already mirrored the terrain, when a fresh bigrm_get_level_extends() can
+// return a different box (the "-2/+2 padding" and the 0/1 clamps are not
+// symmetric), so the post-flip callers read the box flip_level() used.
+let flip_extents_cache = null;
+export function level_flip_extents() {
+    return (flip_extents_cache && flip_extents_cache.level === game.level)
+        ? flip_extents_cache.ext : bigrm_get_level_extends();
+}
+
 // C ref: sp_lev.c flip_level(flp, FALSE) — level-creation flip.  Transposes the
 // map cells, monsters, objects, traps, stairs, rooms and doors within the level
 // extents.  Restricted to the entity kinds the Big Room generates (extras=FALSE,
@@ -3229,6 +3241,7 @@ export function flip_level(flp) {
     const g = game;
     const map = g.level;
     const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+    flip_extents_cache = { level: map, ext: { minx, maxx, miny, maxy } };
     const FlipX = (x) => (minx + maxx - x);
     const FlipY = (y) => (miny + maxy - y);
     const inArea = (x, y) => (x >= minx && x <= maxx && y >= miny && y <= maxy);
@@ -3941,7 +3954,7 @@ export function vly_flip_updest(flp) { flip_lregion_dest(flp, game.updest); }
 
 export function flip_lregion_dest(flp, d) {
     if (!d) return;
-    const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+    const { minx, maxx, miny, maxy } = level_flip_extents();
     // C ref: sp_lev.c flip_level():698-731 — the lregion loop applies FlipX /
     // FlipY to inarea and delarea UNCONDITIONALLY; unlike the map/monster/object
     // loops it has no inFlipArea() test, so a corner outside the level extents
@@ -4156,11 +4169,37 @@ export function splev_create_monster({ name = null, cls = 0, mx = null, my = nul
     return mtmp;
 }
 
+// C ref: sp_lev.c create_object() `if (o->achievement)` — remember the Mines' End
+// luckstone / Sokoban prize's o_id in svc.context.achieveo so that
+// is_mines_prize()/is_soko_prize() (monmove m_search_items/mpickstuff, dogmove,
+// bones, addinv_core1's record_achievement) recognise it, and keep it from
+// stacking until the hero picks it up.
+export function record_level_prize(otmp) {
+    const uz = game.u?.uz;
+    const ctx = game.context || (game.context = {});
+    const ach = ctx.achieveo || (ctx.achieveo = {});
+    if (Is_mineend_level(uz)) {
+        if (!ach.mines_prize_oid) {
+            ach.mines_prize_oid = otmp.o_id;
+            ach.mines_prize_otyp = otmp.otyp;
+            /* prevent stacking; cleared when achievement is recorded;
+               will be reset in addinv_core1() */
+            otmp.nomerge = 1;
+        } /* else C: impossible("multiple prizes on mines end level") */
+    } else if (Is_sokoend_level(uz)) {
+        if (!ach.soko_prize_oid) {
+            ach.soko_prize_oid = otmp.o_id;
+            ach.soko_prize_otyp = otmp.otyp;
+            otmp.nomerge = 1; /* redundant; Sokoban prizes don't stack */
+        } /* else C: impossible("multiple prizes on sokoban level") */
+    } /* else C: impossible("create_object: unknown achievement") */
+}
+
 // C ref: sp_lev.c create_object() at an EXPLICIT coordinate — get_location_coord
 // draws nothing, then the object is built exactly as the random-location form.
 // `historic` is obj.h's CORPSTAT_HISTORIC (4) in a statue's spe bitfield.
 export function splev_object_at({ otyp = null, oclass = null, montype = null,
-                           historic = 0 }, mx, my) {
+                           historic = 0, achievement = 0 }, mx, my) {
     const c = vly_abs(mx, my);
     let otmp;
     if (otyp != null) otmp = mksobj_at(otyp, c.x, c.y, true, true);
@@ -4171,7 +4210,11 @@ export function splev_object_at({ otyp = null, oclass = null, montype = null,
         const pmidx = name_to_pmidx(montype);
         if (pmidx >= 0) set_corpsenm(otmp, pmidx);
     }
-    if (otmp) { des_object_defaults(otmp); stackobj(otmp); }
+    if (otmp) {
+        des_object_defaults(otmp);
+        if (achievement) record_level_prize(otmp);
+        stackobj(otmp);
+    }
     return otmp;
 }
 
@@ -4271,7 +4314,7 @@ const EXT_NAMES = [
     'selection_floodfill', 'set_selection_floodfillchk',
     'back_to_glyph', 'glyph_is_cmap', 'count_level_features', 'fixup_special',
     'makemap_prepost', 'oinit', 'clear_level_structures', 'load_lua',
-    'Is_mineend_level', 'Is_sokoend_level', 'In_W_tower',
+    'In_W_tower',
     'defsyms_explanation',
 ];
 const EXT = {};
@@ -5382,25 +5425,7 @@ export function create_object(o, croom) {
         }
     }
 
-    if (o.achievement) {
-        const ach = game.context?.achieveo;
-        if (EXT.Is_mineend_level(game.u?.uz)) {
-            if (ach && !ach.mines_prize_oid) {
-                ach.mines_prize_oid = otmp.o_id;
-                ach.mines_prize_otyp = otmp.otyp;
-                /* prevent stacking; cleared when the achievement is recorded */
-                otmp.nomerge = 1;
-            }
-            /* else C: impossible("multiple prizes on mines end level") */
-        } else if (EXT.Is_sokoend_level(game.u?.uz)) {
-            if (ach && !ach.soko_prize_oid) {
-                ach.soko_prize_oid = otmp.o_id;
-                ach.soko_prize_otyp = otmp.otyp;
-                otmp.nomerge = 1;   /* redundant; Sokoban prizes don't stack */
-            }
-        }
-        /* else C: impossible("unknown achievement") unless iflags.lua_testing */
-    }
+    if (o.achievement) record_level_prize(otmp);
 
     if (!(o.containment & SP_OBJ_CONTENT)) {
         stackobj(otmp);

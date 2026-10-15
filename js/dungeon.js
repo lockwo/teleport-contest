@@ -264,6 +264,17 @@ export function Is_bigroom(lev) {
     return !!bl && !!lev && lev.dnum === bl.dnum && lev.dlevel === bl.dlevel;
 }
 
+// C ref: dungeon.h Is_mineend_level(x) / Is_sokoend_level(x) — Lcheck against
+// the dungeon.lua-registered Mines' End / Sokoban top-level locations.
+export function Is_mineend_level(lev) {
+    const l = game.mineend_level;
+    return !!l && !!lev && lev.dnum === l.dnum && lev.dlevel === l.dlevel;
+}
+export function Is_sokoend_level(lev) {
+    const l = game.sokoend_level;
+    return !!l && !!lev && lev.dnum === l.dnum && lev.dlevel === l.dlevel;
+}
+
 // C ref: dungeon.c find_hell(lev) — the entrance to Gehennom, i.e. the first
 // level of the Valley's dungeon.  Returns a fresh d_level rather than filling
 // one in place (the C signature's only purpose).

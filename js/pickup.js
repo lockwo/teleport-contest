@@ -37,9 +37,10 @@ import {
     obj_extract_self, obfree, makeknown, ynq, newsym_force, encumber_msg,
     stackobj, trycall, useup, useupf, hold_another_object,
     remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool,
-    weldmsg, setuwep_slot, setuswapwep, setuqwep,
+    weldmsg, setuswapwep, setuqwep,
     W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN, dropy,
 } from './invent.js';
+import { setuwep as setuwep_c } from './wield.js';
 import { touch_artifact } from './artifact.js';
 import { monster_by_pmidx } from './makemon.js';
 import { mflags1_of, mflags2_of, M1_NOTAKE, M1_NOHANDS, M1_NOLIMBS,
@@ -1885,7 +1886,7 @@ export async function in_container(obj) {
             await weldmsg(obj);
             return 0;
         }
-        setuwep_slot(null);
+        await setuwep_c(null);
         /* pickup.c:2604 obsolete "unwielded, died, rewielded" check */
         if (game.uwep) return 0;
     } else if (obj === game.uswapwep) {

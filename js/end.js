@@ -488,7 +488,6 @@ async function done(how) {
         game.botlx = true; // end.c:1045 `disp.botlx = TRUE; bot();`
         d.freeze_botl();
         await d.bot();
-        await d.flush_screen(1);
     }
     if (how < PANICKED
         && (u.uhp !== 0 || (u.Upolyd && u.mh !== 0))) {
@@ -570,6 +569,11 @@ async function done(how) {
     }
 
     if (!survive) {
+        // C ref: end.c:1144 really_done() — "The game is now over...": set before
+        // anything else, so shkname() no longer hallucinates a random name for
+        // paybill()'s "takes all your possessions" line.
+        game.program_state = game.program_state || {};
+        game.program_state.gameover = true;
         // C ref: end.c:1152 really_done() — "render vision subsystem
         // inoperative" (vision_recalc() early-returns from here on).
         (game.iflags = game.iflags || {}).vision_inited = false;
@@ -647,9 +651,6 @@ async function done(how) {
             await paygd(!!stopprint, redraw);
             if (!redrawn) redraw();
         }
-
-        game.program_state = game.program_state || {};
-        game.program_state.gameover = true;
 
         if (stopprint) {
             // C ref: end.c disclose() — every one of its six category blocks
@@ -1585,12 +1586,18 @@ async function killer_text_for_monster(mtmp) {
     // the on-screen topten table only (js/end.js:856), so the stored form must
     // carry the semicolon or the tombstone's word wrap comes out wrong.
     if (mtmp?.isshk) {
-        const shknm = shk_name_for_killer(mtmp);
-        // shkname_is_pname(): ESHK(mtmp)->shknam[0] == '_' (a proper name, no
-        // honorific) — shknms[] marks those with a leading underscore.
+        // C ref: end.c:265 — shkname(mtmp) (a hallucinating hero draws a random
+        // shopkeeper name off the core RNG here), shkname_is_pname() being a
+        // '-'/'+'/'=' prefix on ESHK(mtmp)->shknam (no honorific then).
+        const { shkname } = await import('./shkroom.js');
+        const shknm = shkname(mtmp);
         const raw = mtmp.eshk?.shknam || '';
-        const honorific = raw[0] === '_' ? '' : (mtmp.female ? 'Ms. ' : 'Mr. ');
-        return `killed by ${honorific}${shknm}; the shopkeeper`;
+        const honorific = '-+='.includes(raw[0] || '\0') ? '' : (mtmp.female ? 'Ms. ' : 'Mr. ');
+        const { Hallucination_u: hallu_shk } = await import('./display.js');
+        const { canspotmon: spot_shk } = await import('./uhitm.js');
+        const adj = `${mtmp.minvis ? 'invisible ' : ''}${
+            hallu_shk() && spot_shk(mtmp) ? 'hallucinogen-distorted ' : ''}`;
+        return `killed by ${adj}${honorific}${shknm}; the shopkeeper`;
     }
     // C ref: end.c:198-216, 217-222, 260-278 — the plain (non-imitator,
     // non-shopkeeper) killer: a unique monster is "the <name>" (KILLED_BY, no
@@ -1622,14 +1629,6 @@ async function killer_text_for_monster(mtmp) {
     }
     return `killed by ${by_an ? article(buf) : buf}`;
 }
-// shkroom.js imports end.js, so resolve shkname() lazily through the game state
-// the caller already has rather than adding a static cycle.
-function shk_name_for_killer(mtmp) {
-    const nm = mtmp.eshk?.shknam;
-    if (!nm) return mtmp.data?.name || 'shopkeeper';
-    return /[A-Za-z]/.test(nm[0]) ? nm : nm.slice(1);
-}
-
 // C ref: end.c done_in_by(mtmp, how) — a monster killed the hero.  Announces
 // "You die..." then runs done(how).
 export async function done_in_by(mtmp, how = DIED) {

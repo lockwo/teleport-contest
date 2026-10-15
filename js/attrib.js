@@ -215,7 +215,7 @@ export async function adjattrib(ndx, incr, msgflg) {
 const ATTRNAME = ['strength', 'intelligence', 'wisdom', 'dexterity',
     'constitution', 'charisma'];
 // C ref: prop.h Fixed_abil.
-function Fixed_abil() {
+export function Fixed_abil() {
     const props = game.u?.uprops;
     return !!(props?.Fixed_abil || props?.HFixed_abil || props?.EFixed_abil);
 }

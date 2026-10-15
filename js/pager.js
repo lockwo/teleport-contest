@@ -16,7 +16,7 @@ import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch } from './input.js';
-import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history } from './display.js';
+import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
@@ -1149,8 +1149,9 @@ function cmap_index_for(loc, x, y) {
     if (t === DBWALL) return loc.horizontal ? S_hcdbridge : S_vcdbridge;
     if (IS_WALL(t) || t === SDOOR) return 1;        /* S_vwall; "wall" */
     if (t === DOOR) {
-        if ((loc.doormask | 0) & (D_CLOSED | D_LOCKED)) return 15;  /* S_vcdoor */
-        if ((loc.doormask | 0) & D_ISOPEN) return 13;               /* S_vodoor */
+        const dm = displayed_doormask(loc);
+        if (dm & (D_CLOSED | D_LOCKED)) return 15;  /* S_vcdoor */
+        if (dm & D_ISOPEN) return 13;               /* S_vodoor */
         return S_ndoor;
     }
     if (t === CORR) return loc.disp_color === CLR_WHITE ? S_litcorr : S_corr;

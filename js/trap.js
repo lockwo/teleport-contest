@@ -20,7 +20,7 @@ import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
          stackobj, freeinv, inventoryArray, welded, worn_extrinsic, worn_blocked,
          splitobj, dropx, carried_weight, youmonst_data_pub, bimanual, useup, Free_action } from './invent.js';
 import { makeplural } from './plural.js';
-import { shk_blocking_door, block_door_feedback } from './shk.js';
+import { shk_blocking_door, block_door_feedback, add_damage } from './shk.js';
 import { observe_object } from './o_init.js';
 import { find_ac } from './u_init.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -83,10 +83,10 @@ import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
          is_swimmer_flag, can_teleport_flag } from './monflags_data.js';
 import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
-import { HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT } from './const.js';
+import { SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT } from './const.js';
 import { at_dgn_entrance, ceiling as ceiling_dg, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
-import { check_special_room } from './shkroom.js';
+import { check_special_room, in_rooms } from './shkroom.js';
 import { livelog_printf, LL_MINORAC, LL_DUMP } from './livelog.js';
 import { DEADMONSTER, genocided_pm, mmove_of, set_ustuck } from './mon.js';
 
@@ -710,6 +710,16 @@ export function maketrap(x, y, typ) {
     case TRAPDOOR: {
         if (is_hole(typ))
             hole_destination(trap.dst);
+        // C ref: trap.c maketrap():523-527 — a hole (or a pit/hole breaking a
+        // door or wall) inside a shop schedules shk repair.  Called BEFORE the
+        // terrain rewrite below, so the damage record keeps the old typ.
+        {
+            const lt = game.level?.at?.(x, y)?.typ;
+            if (in_rooms(x, y, SHOPBASE).length > 0
+                && (is_hole(typ) || IS_DOOR(lt) || IS_WALL(lt)))
+                add_damage(x, y, ((IS_DOOR(lt) || IS_WALL(lt))
+                                  && !game.context?.mon_moving) ? SHOP_HOLE_COST : 0);
+        }
         // C ref: trap.c maketrap():529-561 — a hole/pit REWRITES the terrain it
         // is dug into.  Omitting this left makeniche's TRAPDOOR niche as SCORR
         // where C turns it into CORR, and SCORR blocks line of sight while CORR
@@ -787,17 +797,9 @@ function set_levltyp(x, y, newtyp) {
 const MAT_IRON = 11;
 function is_rustprone(obj) { return objects[obj?.otyp]?.material === MAT_IRON; }
 
-// C ref: apply.c splash_lit(obj) — a splash of water puts out a lit light
-// source.  Correction to the old note here: C's version draws NO RNG at all
-// (it is snuff_lit() plus a lantern-battery drain and a "flickers" message);
-// what is unported is the SIDE EFFECT, not a roll.  Consequences of the stub:
-// water_damage() on a lit candle/lamp should return ER_DAMAGED immediately
-// instead of falling through to the erosion switch, and the rust trap's case-3
-// sweep should snuff the hero's light source (which then changes what is lit,
-// hence what is seen, on every later turn).  Needs the light-source machinery
-// (snuff_lit/end_burn), which this port does not have.
-function splash_lit(_obj) {
-    return false;
+// C ref: apply.c splash_lit(obj) lives in js/apply.js (with snuff_lit()).
+async function splash_lit(obj) {
+    return (await import('./apply.js')).splash_lit(obj);
 }
 
 // C ref: obj.h:337-344 — Is_container / Is_box / Waterproof_container.  otyps
@@ -837,7 +839,7 @@ export async function water_damage_chain(list, here) {
 // ER_NOTHING saving throw.  Returns an ER_* code.
 export async function water_damage(obj, ostr, force) {
     if (!obj) return ER_NOTHING;
-    if (splash_lit(obj)) return ER_DAMAGED;
+    if (await splash_lit(obj)) return ER_DAMAGED;
     // C ref: trap.c water_damage() uses the species-aware stack name.
     if (!ostr) ostr = (await import('./objnam.js')).cxname(obj);
 
@@ -1494,12 +1496,11 @@ async function trapeffect_rust_trap(trap, _trflags) {
         break;
     default:
         await pline('A gush of water hits you!');
-        // splash any lit light sources (excludes wielded weapons; none of the
-        // owned sessions carry a lit source so this consumes no PRNG)
+        // splash any lit light sources (excludes wielded weapons)
         for (const otmp of (u?.invent || game.invent || [])) {
             if (otmp.lamplit && otmp !== game.uwep
                 && (otmp !== game.uswapwep || !u?.twoweap))
-                splash_lit(otmp);
+                await splash_lit(otmp);
         }
         if (game.uarmc)
             await water_damage(game.uarmc, cloak_simple_name(game.uarmc), true);
@@ -4026,7 +4027,7 @@ async function dismount_steed_fu(reason) {
 // TIMED_PROPS keys), E<Prop> is invent.js's worn_extrinsic() store, and the
 // FROMFORM bit is polyself.js set_uasmon()'s u.formprops.
 function uprop_word(key) { return game.u?.uprops?.[key] | 0; }
-function Wwalking_fu() {
+export function Wwalking_fu() {
     return !!(uprop_word('HWwalking') || uprop_word('EWwalking') || worn_extrinsic(WWALKING))
         && !Is_waterlevel(game.u?.uz);
 }
@@ -4539,22 +4540,31 @@ function accessible_trap(x, y) {
 
 // C ref: teleport.c goodpos(x, y, &youmonst, 0).  The S_EEL rn2(13) is
 // drawn whenever an eel-shaped hero is offered a dry square.
-export function goodpos_for_hero(x, y) {
-    if (!isok(x, y)) return false;
-    if (m_at(x, y)) return false;
+// C ref: teleport.c goodpos() water / eel / lava arms for mtmp == &youmonst.
+// Returns true/false when one of those arms decides, undefined to fall through.
+export function hero_liquid_goodpos(x, y, ignorewater = false, ignorelava = false) {
     const mdat = youmonst_data_pub();
-    if (is_pool(x, y)) {
+    if (is_pool(x, y) && !ignorewater) {
         return Swimming_fu() || Amphibious_fu()
             || (!Is_waterlevel(game.u?.uz) && !is_waterwall(x, y)
                 && (Levitation_fu() || Flying_fu() || Wwalking_fu()));
-    } else if (mdat?.mcls === S_EEL_MCLS && rn2(13)) {
+    } else if (mdat?.mcls === S_EEL_MCLS && rn2(13) && !ignorewater) {
         return false;
-    } else if (is_lava(x, y)) {
+    } else if (is_lava(x, y) && !ignorelava) {
         if (mdat?.pmidx === PM_FLOATING_EYE_TRAP) return false;
         return Levitation_fu() || Flying_fu()
             || (Fire_resistance_fu() && Wwalking_fu() && !!game.uarmf?.oerodeproof)
             || (!!game.u?.Upolyd && likes_lava_trap(mdat));
     }
+    return undefined;
+}
+
+export function goodpos_for_hero(x, y) {
+    if (!isok(x, y)) return false;
+    if (m_at(x, y)) return false;
+    const mdat = youmonst_data_pub();
+    const liquid = hero_liquid_goodpos(x, y);
+    if (liquid !== undefined) return liquid;
     if (passes_walls_flag(mdat) && may_passwall_trap(x, y)) return true;
     if (amorphous_flag(mdat) && closed_door(x, y)) return true;
     if (!accessible_trap(x, y)) return false;

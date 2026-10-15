@@ -301,7 +301,7 @@ export async function dotwoweapon() {
 // ([[duplicate-reimplementation-shadows-faithful-port]]).
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { setuqwep, addinv_nomerge, is_pole, is_weptool as inv_is_weptool,
+import { setuqwep, addinv_nomerge, is_pole, Tobjnam, is_weptool as inv_is_weptool,
          setuwep_slot } from './invent.js';
 import { is_art, artifact_light, ART_OGRESMASHER, ART_SNICKERSNEE } from './artifact.js';
 import { GEM_CLASS } from './mkobj.js';
@@ -363,7 +363,7 @@ export async function setuwep(obj, deps = {}) {
     /* This message isn't printed in the caller because it happens *whenever*
      * Sunsword is unwielded, from whatever cause. */
     if (game.uwep === obj && artifact_light(olduwep) && olduwep.lamplit) {
-        await deps.end_burn?.(olduwep, false);
+        await (deps.end_burn || (await import('./timeout.js')).end_burn)(olduwep, false);
         if (!(await import('./vision.js')).Blind())   /* C: `if (!Blind)` */
             await pline(`${Tobjnam(olduwep, 'stop')} shining.`);
     }
@@ -386,8 +386,6 @@ export async function setuwep(obj, deps = {}) {
 }
 // C ref: artifact.h u_wield_art(art) — the hero is wielding that artifact.
 function u_wield_art(art) { return is_art(game.uwep, art); }
-// C ref: objnam.c Tobjnam(obj, verb) — capitalised "The <obj> <verbs>".
-function Tobjnam(obj, verb) { return highc(aobjnam(obj, verb)); }
 
 // ── finish_splitting (C ref: wield.c:345) ─────────────────────────────────
 //
@@ -413,7 +411,7 @@ export function finish_splitting(obj) {
 export async function uwepgone(deps = {}) {
     if (game.uwep) {
         if (artifact_light(game.uwep) && game.uwep.lamplit) {
-            await deps.end_burn?.(game.uwep, false);
+            await (deps.end_burn || (await import('./timeout.js')).end_burn)(game.uwep, false);
             if (!(await import('./vision.js')).Blind())   /* C: `if (!Blind)` */
                 await pline(`${Tobjnam(game.uwep, 'stop')} shining.`);
         }

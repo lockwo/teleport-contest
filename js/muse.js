@@ -77,7 +77,7 @@ import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP, M_SEEN_ELEC,
     M_SEEN_ACID, M_SEEN_REFL, G_GENOD, MON_MIGRATING,
     MIGR_RANDOM, MIGR_STAIRS_UP, MIGR_STAIRS_DOWN, MIGR_LADDER_UP, MIGR_LADDER_DOWN,
-    MIGR_SSTAIRS, STRAT_WAITFORU, FORCETRAP, Unaware, FAST,
+    MIGR_SSTAIRS, STRAT_WAITFORU, FORCETRAP, FORCEBUNGLE, Unaware, FAST,
     NC_SHOW_MSG, NC_VIA_WAND_OR_SPELL, OBJ_FLOOR, OBJ_MINVENT } from './const.js';
 import { surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -1214,7 +1214,7 @@ export async function use_defensive(mtmp) {
                 await update_topl(`${Monnam(mtmp)} has made a pit in the ${
                     surface(mtmp.mx, mtmp.my)}.`);
             }
-            return (await mon_mintrap(mtmp)) === Trap_Killed_Mon ? 1 : 2;
+            return (await mon_mintrap(mtmp, FORCEBUNGLE)) === Trap_Killed_Mon ? 1 : 2;
         }
         t = await maketrap(mtmp.mx, mtmp.my, HOLE);
         if (!t) return 2;

@@ -18,7 +18,7 @@
 
 import { game } from './gstate.js';
 import {
-    pline, impossible, docrt, m_at, map_invisible, unmap_object, newsym, y_n,
+    pline, impossible, docrt, m_at, map_invisible, unmap_object, newsym, y_n, flush_screen,
 } from './display.js';
 import {
     COLNO, ROWNO, MAX_TYPE, STONE, SDOOR, CORR, IS_WALL, IS_ROOM, IS_DOOR,
@@ -56,7 +56,7 @@ import { size_wseg } from './worm.js';
 import { light_stats, light_sources_sanity_check } from './light.js';
 import { check_invent_gold, inventoryArray, ynq, youmonst_data } from './invent.js';
 import {
-    monsterList, DEADMONSTER, dmonsfree, mon_sanity_check, usmellmon, mongone,
+    monsterList, fmonOrder, DEADMONSTER, dmonsfree, mon_sanity_check, usmellmon, mongone,
 } from './mon.js';
 import { minimal_monnam } from './do_name.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -252,7 +252,7 @@ export async function makemap_remove_mons() {
        stopping eating, &c as if the hero were ascending */
     await keepdogs(true); /* (pets-only; normally we'd be using 'FALSE') */
     /* get rid of all the monsters that didn't make it to 'mydogs' */
-    for (const mtmp of monsterList().slice()) {
+    for (const mtmp of fmonOrder()) {
         /* if already dead, dmonsfree() (below) will get rid of it */
         if (DEADMONSTER(mtmp)) continue;
         await makemap_unmakemon(mtmp, false);
@@ -526,6 +526,7 @@ export async function wiz_telekinesis() {
     let mtmp = null;
 
     await pline('Pick a monster to hurtle.');
+    await flush_screen(1); // tty pline() draws at once; getpos() reads before any redraw
     do {
         const ans = await getpos_cc(cc, true, 'a monster');
         if (ans < 0 || cc.x < 1) return ECMD_CANCEL;
@@ -844,6 +845,7 @@ export async function wiz_smell() {
     await pline('You can move the cursor to a monster that you want to smell.');
     for (;;) {
         await pline('Pick a monster to smell.');
+        await flush_screen(1); // tty pline() draws at once; getpos() reads before any redraw
         const ans = await getpos_cc(cc, true, 'a monster');
         if (ans < 0 || cc.x < 0) return ECMD_CANCEL; /* done */
 
@@ -1604,7 +1606,7 @@ function wizcustom_glyphmap(id) {
     const sv = wizcustom_sym;
     const m = /^G_([a-z]+)_(mines|gehennom|knox|sokoban)$/.exec(id);
 
-    if (!sv?.active || !sv.meta?.glyphcolors || !m
+    if (!sv.meta?.glyphcolors || !m
         || game.iflags?.customcolors === false)
         return null;
     const w = WIZCUSTOM_WALLS.indexOf(m[1]);
@@ -1614,8 +1616,12 @@ function wizcustom_glyphmap(id) {
         u: null,
         customcolor: NH_BASIC_COLOR | GLYPH_WALL_COLORS[m[2]],
         symidx: S_vwall + w,
-        color: defsyms[S_vwall + w].color,
-        showsym: sv.meta.walls[w],
+        /* On the Rogue level gs.showsyms is the rogue symset (defsyms' own
+           wall characters) and reset_glyphmap() blanks the colour: without
+           rogue IBM graphics, GMAP_ROGUELEVEL forces NO_COLOR. */
+        color: sv.active ? defsyms[S_vwall + w].color : NO_COLOR,
+        showsym: sv.active ? sv.meta.walls[w]
+                           : String(defsyms[S_vwall + w].sym).charCodeAt(0),
     };
 }
 

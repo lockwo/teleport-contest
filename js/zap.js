@@ -3446,27 +3446,13 @@ export async function miss(str, mon) {
 // C ref: mondata.c disguised_as_non_mon — a hiding mimic/mimicking object.  No
 // covered zap target is a mimic.
 function disguised_as_non_mon(_mon) { return false; }
-// C ref: mon.c wakeup(mon, via_attack) — wake_msg(), clear msleeping, then
-// (via_attack) setmangry(), which flips a peaceful monster hostile — steering
-// every later m_move()/mattacku() decision and drawing rnd(5) on Elbereth — so
-// the old msleeping-only version silently missed all of that.
+// C ref: mon.c wakeup(mon, via_attack).  uhitm.js's wakeupAttack() is the full
+// port (seemimic, finish_meating() ending a pet's meal, setmangry(), the
+// temple-priest / shopkeeper tails); this is the zap.c-facing entry to it.
 export async function wakeup(mon, viaAttack) {
     if (!mon) return;
-    const wasSleeping = !!mon.msleeping;
-    if (wasSleeping && canseemon_shared(mon)) {
-        const alive = mon.data?.name === 'flesh golem' ? " It's alive!" : '';
-        await pline(`${Monnam(mon)} wakes up${viaAttack ? '!' : '.'}${alive}`);
-    }
-    mon.msleeping = 0;
-    if (viaAttack) {
-        // C ref: mon.c:4353 `if (was_sleeping) growl(mtmp);`
-        if (wasSleeping) {
-            const { growl } = await import('./sounds.js');
-            await growl(mon);
-        }
-        const { setmangry } = await import('./uhitm.js');
-        await setmangry(mon, true);
-    }
+    const { wakeupAttack } = await import('./uhitm.js');
+    await wakeupAttack(mon, viaAttack);
 }
 // C ref: mhitm.c:1250 slept_monst(): sleeping holders release, engulfers do not.
 export async function slept_monst(mon) {

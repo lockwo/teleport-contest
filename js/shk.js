@@ -31,6 +31,7 @@ import { update_topl, newsym, m_at, map_invisible } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
          M2_NEUTER, msound_of, passes_walls_flag } from './monflags_data.js';
 import { in_rooms, shop_keeper, shkname } from './shkroom.js';
+import { cansee } from './vision.js';
 import { shtypes, VEGETARIAN_CLASS } from './shtypes.js';
 import { observe_object, discover_object, record_price_quote } from './o_init.js';
 // currency() is NOT re-implemented here: C's currency() rolls
@@ -2148,7 +2149,6 @@ const passes_walls = (ptr) => passes_walls_flag(ptr);
 const NHW_MENU = 3;
 function create_nhwindow(_type) { return { lines: [] }; }
 function putstr(win, _attr, str) { if (win) win.lines.push(str); }
-function display_nhwindow(_win, _blocking) {}
 function destroy_nhwindow(_win) {}
 // C ref: getlin.c ynaq()/nyaq() — 'a' means "all", 'q' means "quit"; nyaq's
 // default is 'n', ynaq's is 'y'.  js/pickup.js's ynaq() is module-private.
@@ -3031,7 +3031,7 @@ export async function shkcatch(obj, x, y) {
 // C ref: shk.c add_damage(x, y, cost):4399 — schedule a wall/door for repair.
 // The damage list is a linked list threaded through `.next`, the shape
 // js/save.js already expects at game.level.damagelist.
-export async function add_damage(x, y, cost) {
+export function add_damage(x, y, cost) {
     const loc = game.level?.at(x, y);
 
     if (loc && IS_DOOR(loc.typ)) {
@@ -3060,7 +3060,6 @@ export async function add_damage(x, y, cost) {
     };
     if (game.level) game.level.damagelist = tmp_dam;
     /* if the player saw the damage, show the repaired wall as a wall */
-    const { cansee } = await import('./vision.js');
     if (loc && cansee(x, y)) loc.seenv = SVALL;
 }
 
@@ -3728,7 +3727,7 @@ export async function price_quote(first_obj) {
         cnt++;
     }
     if (cnt > 1) {
-        display_nhwindow(tmpwin, true);
+        await tty_text_window(tmpwin.lines); /* display_nhwindow(tmpwin, TRUE) */
     } else if (cnt === 1) {
         if (!cost) {
             await verbalize(`${upstart(buf)}!`);

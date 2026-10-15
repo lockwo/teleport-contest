@@ -14,6 +14,7 @@
 // capture sees the final post-run state with the exact cumulative RNG.
 
 import { game, hooks, svc_context_run } from './gstate.js';
+import { nh_delay_output_tick } from './nomux_capture.js';
 import { lock_action } from './lock.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
 import { ok_to_quest } from './questok.js';
@@ -23,7 +24,7 @@ import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, ge
 import { moveloop_turn, moveloop_input_redraw } from './allmain.js';
 import { exercise } from './attrib.js';
 import { A_CON, BEAR_TRAP, WEB, NO_TRAP, is_pit } from './const.js';
-import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, terrain_glyph } from './display.js';
+import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, terrain_glyph, displayed_doormask } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed } from './pager.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, S_WORM_TAIL } from './symbols.js';
@@ -593,7 +594,18 @@ async function run_movement(run) {
         runOntoStopTerrain();          // may set game.multi = 0 (door etc.)
         await takeTurn();
 
-        if (game.multi <= 0) break;    // nomul triggered -> stop after this turn
+        if (game.multi <= 0) {
+            // nomul triggered -> stop after this turn.  A helpless hero
+            // (multi < 0, e.g. seduced into taking off armor) still finishes
+            // THIS moveloop_core() iteration in C: find_ac() and bot() run
+            // before the next iteration's monster movement, so an AC change
+            // from the turn's events is on the status line first.
+            if (game.multi < 0) {
+                await moveloop_input_redraw();
+                await bot();
+            }
+            break;
+        }
 
         // The next step is a new moveloop_core() iteration in C: its
         // once-per-input head runs before lookaround()+domove().
@@ -1075,7 +1087,8 @@ export async function travel_adjacent_step(tx, ty) {
         // C: reset_cmd_vars() at the top of the next rhack().
         c.run = 0; c.travel = c.travel1 = c.mv = 0; c.nopick = 0;
         c.move = 0;
-        game.multi = 0;
+        // A nomul(-n) from the elapsed turn (fainting, paralysis) must survive.
+        if (game.multi > 0) game.multi = 0;
         game.travelmap = null;
         return true;
     }
@@ -1670,9 +1683,10 @@ function terrain_description(x, y, full = false) {
     if (typ === 12 /*DBWALL*/) return 'raised drawbridge';
     if (IS_WALL(typ)) return 'wall';
     if (typ === DOOR) {
-        if (loc.doormask & (D_CLOSED | D_LOCKED)) return 'closed door';
-        if (loc.doormask & D_ISOPEN) return 'open door';
-        return loc.doormask & D_BROKEN ? 'broken door' : 'doorway';
+        const dm = displayed_doormask(loc);
+        if (dm & (D_CLOSED | D_LOCKED)) return 'closed door';
+        if (dm & D_ISOPEN) return 'open door';
+        return dm & D_BROKEN ? 'broken door' : 'doorway';
     }
     // C ref: do_screen_description() dispatches on the DISPLAYED glyph: back_to_glyph()
     // picks S_litcorr for `waslit || flags.lit_corridor` (drawn CLR_WHITE), and a
@@ -2690,8 +2704,9 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
                 const arr = gather_locs(gloc, validfn, detectMode);
                 const filt = ['', ' in view', ' in this area'][gp_iflags().getloc_filter | 0];
                 if (arr.length < 2) { /* gcount always includes the hero */
+                    // C ref: getpos_menu() — You("cannot detect any items.") does NOT set
+                    // msg_given, so autodescribe re-describes the spot on the next pass.
                     await update_topl(`You cannot ${gp_iflags().getloc_filter === GFILTER_VIEW ? 'see' : 'detect'} ${gdescr[0]}.`);
-                    msgGiven = true;
                     continue;
                 }
                 const { extcmd_end_menu, extcmd_select_menu } = await import('./extcmd-handlers.js');
@@ -3071,6 +3086,21 @@ export async function reveal_terrain(which_subset) {
                 show_glyph_cell(x, y, ' ', rg.color, false);
                 continue;
             }
+            // C ref: detect.c reveal_terrain_getglyph() — glyph_at() is the
+            // remembered glyph, and only monster/object/trap/invisible glyphs
+            // are replaced by back_to_glyph().  A remembered terrain glyph
+            // (e.g. a door the hero saw closed that has since been opened out
+            // of sight) is kept exactly as remembered, not re-derived from the
+            // current level state.
+            if (rg && rg.objotyp == null && !rg.pile && !rg.darkroom && !rg.bwEngr
+                && !(keep_traps === false && t_at_hk(x, y)?.tseen
+                     && rg.ch === trap_glyph(t_at_hk(x, y)).ch
+                     && rg.color === trap_glyph(t_at_hk(x, y)).color)) {
+                let rcolor = rg.color;
+                if (rg.ch === '#' && rcolor === CLR_WHITE) rcolor = NO_COLOR;
+                show_glyph_cell(x, y, rg.ch, rcolor, rg.decgfx, bg_attr(rg));
+                continue;
+            }
             const bg = terrain_background_glyph(loc, x, y);
             let color = bg.color;
             // S_litcorr -> S_corr: a lit corridor ('#', CLR_WHITE) drops to the
@@ -3079,6 +3109,25 @@ export async function reveal_terrain(which_subset) {
             show_glyph_cell(x, y, bg.ch, color, bg.dec);
         }
     }
+    // The map's last row overlaps the title row of an unclipped three-line
+    // tty status window.  show_glyph() emits only changed known-map cells,
+    // but TER_FULL replaces even visually blank unexplored glyph-buffer
+    // entries, so its complete shared row overwrites the title.  _term is the
+    // glyph buffer as of the preceding terminal build, saved by
+    // show_glyph_cell() before its first update.
+    const sharedRow = [];
+    for (let x = 1; x < COLNO; x++) {
+        const loc = game.level?.at(x, ROWNO - 1);
+        const old = loc?._term;
+        if (!loc || (!full && old && old.ch === loc.disp_ch
+            && old.color === loc.disp_color && old.decgfx === loc.disp_decgfx
+            && old.attr === loc.disp_attr && old.dark === loc.disp_dark)) continue;
+        sharedRow[x - 1] = {
+            ch: loc.disp_ch, color: loc.disp_color, decgfx: loc.disp_decgfx,
+            attr: loc.disp_attr, dark: loc.disp_dark,
+        };
+    }
+    game._terrainStatusWipe = sharedRow;
     await flush_screen(1);
 
     // C: Strcpy(buf, "known terrain"); append the requested keep_* suffixes.
@@ -3429,7 +3478,12 @@ function look_pick_description(x, y) {
         // doorway / floor / dark room / ice all share the '.'/'~' symbol.
         const look = terrain_description(x, y);
         return {
-            text: `${prefix}a doorway or the floor of a room or the dark part of a room or ice (${look})`,
+            // C ref: display.c:1850 — S_darkroom shares S_room's symbol only
+            // with `flags.dark_room && iflags.use_color`; otherwise it takes
+            // the (blank) "nothing" symbol and drops out of this list.
+            text: `${prefix}a doorway or the floor of a room${
+                game.flags?.dark_room && game.iflags?.use_color
+                    ? ' or the dark part of a room' : ''} or ice (${look})`,
             firstmatch: look,
             found: 1,
         };
@@ -4781,7 +4835,7 @@ function runmode_value() {
 
 // C ref: windows nh_delay_output() — a pure output pause.  js/light.js:1005 has
 // the identical no-op (private there).
-async function nh_delay_output() { await Promise.resolve(); }
+async function nh_delay_output() { nh_delay_output_tick(); await Promise.resolve(); }
 // C ref: windows curs_on_u() — park the cursor on the hero.  The recorded cursor
 // is placed by js/display.js flush_screen() instead.
 function curs_on_u() { /* no-op */ }

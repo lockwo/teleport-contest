@@ -15,7 +15,7 @@ import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd, d } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
 import { align_gname, roles, aligns } from './role.js';
-import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL } from './const.js';
+import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL, EXT_ENCUMBER } from './const.js';
 import { make_confused, make_sick, make_stoned, make_slimed } from './potion.js';
 import { summon_furies } from './makemon.js';
 import { retouch_equipment } from './artifact.js';
@@ -27,7 +27,7 @@ import { isok } from './hacklib.js';
 import { OMONST, W_BALL, W_CHAIN, FROMOUTSIDE } from './const.js';
 import { FIRE_RES, TELEPORT, POISON_RES, TELEPAT, COLD_RES, INVIS, SEE_INVIS,
     FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER, OBJ_FLOOR, OBJ_INVENT } from './const.js';
-import { adjalign, exercise, adjattrib } from './attrib.js';
+import { adjalign, exercise, adjattrib, Fixed_abil } from './attrib.js';
 import { losexp, xlev_to_rank, pluslvl, innate_intrinsics } from './exper.js';
 import { heal_legs } from './trap.js';
 import { hcolor, a_monnam } from './do_name.js';
@@ -52,6 +52,7 @@ const STRIDENT = 4;
 const TROUBLE_STONED = 14, TROUBLE_SLIMED = 13, TROUBLE_STRANGLED = 12,
     TROUBLE_LAVA = 11, TROUBLE_SICK = 10, TROUBLE_STARVING = 9,
     TROUBLE_REGION = 8, TROUBLE_HIT = 7, TROUBLE_LYCANTHROPE = 6,
+    TROUBLE_COLLAPSING = 5,
     TROUBLE_STUCK_IN_WALL = 4, TROUBLE_CURSED_LEVITATION = 3,
     TROUBLE_UNUSEABLE_HANDS = 2, TROUBLE_CURSED_BLINDFOLD = 1;
 const TROUBLE_PUNISHED = -1, TROUBLE_FUMBLING = -2, TROUBLE_CURSED_ITEMS = -3,
@@ -224,7 +225,8 @@ function in_trouble() {
     if ((!u.Upolyd || uprop('Unchanging')) && critically_low_hp(false))
         return TROUBLE_HIT;
     if ((u.ulycn ?? -1) >= 0) return TROUBLE_LYCANTHROPE;
-    /* TROUBLE_COLLAPSING: near_capacity() >= EXT_ENCUMBER. */
+    if ((_inv?.near_capacity() | 0) >= EXT_ENCUMBER && AMAX(A_STR) - ABASE(A_STR) > 3)
+        return TROUBLE_COLLAPSING;
     if (stuck_in_wall()) return TROUBLE_STUCK_IN_WALL;
     if (Cursed_obj(game.uarmf, 'LEVITATION_BOOTS')
         || Cursed_obj(game.uleft, 'RIN_LEVITATION')
@@ -670,8 +672,7 @@ const NOT_HUNGRY = 1;
 
 // C ref: mondata.h nohands(ptr) — current form has no hands.
 function nohands_hero() {
-    const ptr = _inv?.youmonst_data_pub?.();
-    return !!(ptr && ptr.mflags1 != null && (ptr.mflags1 & 0x00000020 /* M1_NOHANDS */));
+    return !!_inv?.nohands_youmonst();
 }
 // C ref: wield.c freehand() — not welded, or one-handed with no cursed shield.
 function freehand_hero() {
@@ -748,6 +749,20 @@ async function fix_worst_trouble(trouble) {
         u.uhpmax = Math.max(maxhp, 6);
         u.uhp = u.uhpmax;
         game.botl = true;
+        break;
+    }
+    case TROUBLE_COLLAPSING: {
+        // C ref: pray.c:440 — override Fixed_abil; uncurse that if feasible.
+        await update_topl(`You feel ${AMAX(A_STR) - ABASE(A_STR) > 6 ? 'much ' : ''}stronger.`);
+        u.acurr.a[A_STR] = AMAX(A_STR);
+        game.botl = true;
+        if (Fixed_abil()) {
+            const { stuck_ring } = await import('./do_wear.js');
+            const RIN_SUSTAIN_ABILITY = 182;
+            const otmp = stuck_ring(game.uleft, RIN_SUSTAIN_ABILITY)
+                || stuck_ring(game.uright, RIN_SUSTAIN_ABILITY);
+            if (otmp) await fix_curse_trouble(otmp, ringglow(otmp));
+        }
         break;
     }
     case TROUBLE_STUCK_IN_WALL: {
@@ -827,18 +842,24 @@ async function fix_worst_trouble(trouble) {
         break;
     case TROUBLE_BLIND: {
         /* handles deafness as well as blindness */
-        const cure_deaf = (((u.uprops?.HDeaf | 0) || (u.HDeaf | 0)) & 0xffffff) > 1;
+        const { youmonst_data, body_part } = await import('./invent.js');
+        const { makeplural } = await import('./plural.js');
+        const { eyecount } = await import('./polyself.js');
+        const { make_blinded_hero, make_deaf } = await import('./potion.js');
+        const { Deaf_hero } = await import('./display.js');
+        const cure_deaf = (((u.uprops?.HDeaf | 0) || (u.HDeaf | 0)) & 0xffffff) > 0;
         let msgbuf = '';
-        if ((u.blinded | 0) > 1) {
-            msgbuf = 'Your eyes feel better';
+        if ((u.blinded | 0) > 0) {
+            let eyes = body_part(1 /* EYE */);
+            if (eyecount(youmonst_data()) !== 1) eyes = makeplural(eyes);
+            msgbuf = `Your ${eyes} ${vtense_pr(eyes, 'feel')} better`;
             u.ucreamed = 0;
-            u.blinded = 0;
-            clear_uprop('Blinded');
+            await make_blinded_hero(0, false);
         }
         if (cure_deaf) {
-            clear_uprop('HDeaf');
-            u.HDeaf = 0;
-            msgbuf += msgbuf ? ' and you can hear again' : 'You can hear again';
+            await make_deaf(0, false);
+            if (!Deaf_hero())
+                msgbuf += `${!msgbuf ? 'You' : ' and you'} can hear again`;
         }
         if (msgbuf) await update_topl(`${msgbuf}.`);
         break;
@@ -847,20 +868,15 @@ async function fix_worst_trouble(trouble) {
         await heal_legs(0);
         break;
     case TROUBLE_STUNNED:
-        clear_uprop('Stun');
-        u.ustun = 0;
-        await update_topl(`You feel ${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
+        await (await import('./mhitu.js')).make_stunned_u(0, true);
+        u.ustun = 0; /* legacy mirror in_trouble() and read.js consult */
         break;
     case TROUBLE_CONFUSED:
-        clear_uprop('Confusion');
-        u.uconf = 0;
-        await update_topl(`You feel less ${Hallucination() ? 'trippy' : 'confused'} now.`);
+        await make_confused(0, true);
         break;
     case TROUBLE_HALLUCINATION:
         await update_topl('Looks like you are back in Kansas.');
-        clear_uprop('Hallucination');
-        u.uhallu = 0;
-        u.HHallucination = 0;
+        await (await import('./potion.js')).make_hallucinated(0, false, 0);
         break;
     case TROUBLE_SADDLE: {
         const otmp = u.usteed?.saddle;

@@ -977,4 +977,4 @@ function Hallucination() { return HProp('Hallucination', 'HHallucination') > 0 |
 // C ref: youprop.h Unaware — asleep, unconscious or otherwise not perceiving.
 function Unaware() { return !!(game.u?.usleep || game.u?.Unaware); }
 function Deaf() { return HProp('Deaf', 'HDeaf', 'EDeaf') > 0; }
-function Underwater() { return !!(game.u?.uinwater || game.u?.uunderwater); }
+function Underwater() { return !!(game.u?.uinwater); }

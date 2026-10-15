@@ -1216,10 +1216,11 @@ async function dochat() {
         }
         const tgt = game.level?.at(tx, ty);
         if (!Deaf_hero_chat() && tgt && (IS_WALL(tgt.typ) || tgt.typ === SDOOR)) {
-            // GAP: C additionally suppresses the message when Blind and the cell
-            // was never mapped as a wall (lastseentyp), which this port doesn't
-            // track; a blind hero adjacent to a wall has normally mapped it.
-            if (!game.u?.uhallu) {
+            // when blind, you can only talk to a wall if it has already been
+            // mapped as a wall
+            if (Blind() && !IS_WALL(game.lastseentyp?.[tx]?.[ty] ?? 0)) {
+                /* no message */
+            } else if (!game.u?.uhallu) {
                 await update_topl("It's like talking to a wall.");
             } else {
                 // C ref: sounds.c dochat() — rn2(10) over an 8-entry table, so
@@ -2297,6 +2298,19 @@ async function run_pickany_menu(items, buildLines) {
     return items.filter((it) => it.selected);
 }
 
+// C ref: pickup.c query_category() — without paranoid_confirm:A, choosing 'A'
+// by itself is rejected ("the menu entry description is 'Auto-select every
+// relevant item'"), the pick list is dropped and the caller sees n == 0.
+async function reject_bare_autoselect(tokens) {
+    if (tokens.length === 1 && tokens[0] === 'A'
+        && !/autoall/i.test(String(game.flags?.paranoid_confirmation || ''))) {
+        await dismiss_invent_screen();
+        await pline('No relevant items selected.');
+        return [];
+    }
+    return tokens;
+}
+
 // C ref: pickup.c query_category() for menustyle:Full — the "Take out what type
 // of objects?" class-filter menu.  Returns the picked tokens ('A' auto, 'ALL'
 // all-types, or oclass numbers / 'B'/'C'/'U'/'X' BUC classes), or null on ESC.
@@ -2355,7 +2369,7 @@ async function query_category_take_out(box) {
 
     const picked = await run_pickany_menu(items, buildLines);
     if (picked === null) return null;
-    return picked.map((it) => it.token);
+    return await reject_bare_autoselect(picked.map((it) => it.token));
 }
 
 // C ref: pickup.c query_objlist() (via menu_loot) — the "Take out what?" item
@@ -2705,7 +2719,7 @@ async function query_category_put_in() {
 
     const picked = await run_pickany_menu(items, buildLines);
     if (picked === null) return null;
-    return picked.map((it) => it.token);
+    return await reject_bare_autoselect(picked.map((it) => it.token));
 }
 
 // C ref: pickup.c query_objlist() (via menu_loot put_in) — the "Put in what?"

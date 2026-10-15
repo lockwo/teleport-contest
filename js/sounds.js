@@ -83,7 +83,7 @@ export async function dosounds() {
     // rotten food (eat.c rottenfood -> incr_itimeout(&HDeaf, duration)) kept
     // rolling the ambient-sound draws C skips: seed4500's unconscious turns draw
     // no rn2(200) at all.
-    if (Deaf_hero() || g.flags?.acoustics === false || g.u?.uswallow || g.u?.uunderwater)
+    if (Deaf_hero() || g.flags?.acoustics === false || g.u?.uswallow || g.u?.uinwater)
         return;
 
     const lf = g.level?.flags || {};

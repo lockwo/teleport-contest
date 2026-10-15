@@ -17,7 +17,7 @@ import { vision_recalc, vision_reset, init_vision_globals, Blind } from './visio
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
 import { movemon, mcalcdistress, mcalcmove, base_mmove, fmonOrder } from './mon.js';
-import { run_regions } from './region.js';
+import { run_regions, clear_regions } from './region.js';
 import { makemon_rnd_spawn, makemon_appears_msg, flush_group_newsyms } from './makemon.js';
 import { SPEED_BOOTS, objects } from './mkobj.js';
 import { mflags1_of, M1_CARNIVORE, M1_HERBIVORE, M1_METALLIVORE }
@@ -35,7 +35,7 @@ import { Unaware,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
     Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC, WRITING } from './const.js';
-import { near_capacity, reroll_menu, setnotworn, freeinv, worn_extrinsic } from './invent.js';
+import { near_capacity, reroll_menu, setnotworn, freeinv, worn_extrinsic, Slow_digestion } from './invent.js';
 import { menuHeadAttr } from './menuattr.js';
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -566,6 +566,11 @@ async function maybe_do_tutorial(preambleShownMore) {
 // the "Move around with ..." engraving, so the engraving "feel" message pages).
 async function enter_tutorial_level() {
     const g = game;
+    // C ref: do.c:1509-1510 goto_level() runs tutorial(TRUE) -> nhlib.lua
+    // tutorial_enter() -> nh.gamestate() BEFORE the level is made and before the
+    // Tourist's new-level more_experienced(): the saved copy of `u` (restored
+    // verbatim on tutorial exit) must not include the tutorial's XP.
+    await sequester_inventory_for_tutorial();
     // C ref: do.c goto_level() savelev() of the level being left: the hero's
     // starting level is kept so leaving the tutorial re-enters it (not remade).
     (g._level_store ||= {})[`${g.u.uz.dnum}:${g.u.uz.dlevel}`] = {
@@ -573,8 +578,14 @@ async function enter_tutorial_level() {
         utrack: g._utrack, utcnt: g._utcnt, utpnt: g._utpnt,
         regions: g.regions, regionMoves: g.moves ?? 0,
         updest: g.updest, dndest: g.dndest,
-        exclusion_zones: g.exclusion_zones, lastseentyp: g.lastseentyp,
+        exclusion_zones: g.exclusion_zones, lastseentyp: g._tutorial_prev_lastseentyp,
     };
+    g._tutorial_prev_lastseentyp = null;
+    // C ref: save.c savelev() -> save_regions(), whose release_data() arm runs
+    // clear_regions(): the region list belongs to the level being left (e.g. a
+    // themed cloud room on the starting level), so it must not stay live and
+    // paint gas-cloud glyphs over the tutorial map.
+    clear_regions();
     g.level = g._tutorial_level;
     g.stairs = g._tutorial_stairs || null;
     g.fmon = g.level.monsters;
@@ -607,9 +618,6 @@ async function enter_tutorial_level() {
     g.u.ux = 12; g.u.uy = 6;
     g.u.dx = 0; g.u.dy = 0;
     if (g.u.umovement == null) g.u.umovement = NORMAL_SPEED;
-
-    // C ref: nhlib.lua tutorial_enter() sequesters inventory before arrival.
-    await sequester_inventory_for_tutorial();
 
     // Reset vision for the new level and redraw.  C ref: goto_level() ->
     // vision_reset(); docrt(); flush_screen(-1).
@@ -706,7 +714,7 @@ async function ask_do_tutorial() {
                 const loc = game.level.at(x, 0);
                 if (!loc?.disp_ch || loc.disp_ch === ' ') continue;
                 const ch = loc.disp_decgfx ? (DEC_TO_UNICODE[loc.disp_ch] || loc.disp_ch) : loc.disp_ch;
-                disp.setCell(x - 1, 1, ch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0);
+                disp.setCell(x - 1, 1, ch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0, loc.disp_decgfx, loc.disp_dark);
             }
         }
         // Overlay the menu: each row, cl_end() clears from offx (the leading
@@ -833,6 +841,10 @@ async function do_tutorial_goto() {
     // + align shuffle + solidfill lit + all des.* feature rolls + fixup).  This
     // does NOT swap game.level — the previous level stays on screen under the
     // deferred "Entering the tutorial." top-line message.
+    // C ref: save.c savelev_core() writes svl.lastseentyp into the departing
+    // level's file before mklev()'s init_mapseen() wipes the live array; keep
+    // the departing level's array for enter_tutorial_level()'s stash.
+    g._tutorial_prev_lastseentyp = g.lastseentyp;
     genTutorialLevel();
 
     // Restore u.uz to the PREVIOUS level so the step-13 screen (rendered while
@@ -1459,19 +1471,11 @@ export async function moveloop_turn() {
 
 // C ref: objects.h ring/amulet otyps read by gethungry()'s accessory cases.
 const RIN_PROTECTION = 178, RIN_HUNGER = 184, RIN_CONFLICT = 186,
-      RIN_SLOW_DIGESTION = 193, FAKE_AMULET_OF_YENDOR = 212, MEAT_RING = 270,
-      WHITE_DRAGON_SCALE_MAIL = 105, WHITE_DRAGON_SCALES = 115;
+      RIN_SLOW_DIGESTION = 193, FAKE_AMULET_OF_YENDOR = 212, MEAT_RING = 270;
 const OC_CHARGED = 1; // objects[].oc_charged, packed into the JS `flags` field
 
 function wornRing(otyp) {
     return game.uleft?.otyp === otyp || game.uright?.otyp === otyp;
-}
-// C ref: youprop.h Slow_digestion — a worn ring of slow digestion, or white
-// dragon scales/mail worn as the suit.
-function Slow_digestion() {
-    return wornRing(RIN_SLOW_DIGESTION)
-        || game.uarm?.otyp === WHITE_DRAGON_SCALE_MAIL
-        || game.uarm?.otyp === WHITE_DRAGON_SCALES;
 }
 // C ref: eat.c gethungry() — `(HRegeneration & ~FROMFORM) || (ERegeneration &
 // ~(W_ARTI | W_WEP))`, i.e. regeneration that isn't from the current polyform

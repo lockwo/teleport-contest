@@ -234,6 +234,16 @@ export function hhmmss(date) {
     return lt.tm_hour * 10000 + lt.tm_min * 100 + lt.tm_sec;
 }
 
+// C ref: calendar.c:95 yyyymmddhhmmss(date) — the 14-digit local-time stamp
+// savegamestate() writes for ubirthday.  `date == 0` means "now".
+export function yyyymmddhhmmss(date) {
+    const lt = !date ? getlt_c() : localtime_c(date);
+    const datenum = lt.tm_year < 70 ? lt.tm_year + 2000 : lt.tm_year + 1900;
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${String(datenum).padStart(4, '0')}${p2(lt.tm_mon + 1)}${p2(lt.tm_mday)}`
+        + `${p2(lt.tm_hour)}${p2(lt.tm_min)}${p2(lt.tm_sec)}`;
+}
+
 // C ref: calendar.c:222 midnight() — returns an int, like night() in C does.
 export function midnight() {
     return getlt_c().tm_hour === 0 ? 1 : 0;

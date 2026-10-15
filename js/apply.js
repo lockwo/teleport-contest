@@ -910,14 +910,18 @@ async function doapply_obj(obj) {
 // (it changes later inventory/discoveries text), not just a message.
 async function flip_through_book(obj) {
     await loadDeps();
+    if (game.u?.uinwater) {
+        await _display.pline("You don't want to get the pages even more soggy, do you?");
+        return ECMD_OK;
+    }
     const hallu = !!game.u?.uhallu;
     const blind = Blind_vision();
-    // C ref: objnam.c thesimpleoname(obj) — "the " + minimal_xname(), which
-    // respects identification (an unknown book stays "the spellbook").
-    // invent.js's xname() calls observe_object() as a side effect, which C's
-    // does not, so use the observation-free accessor.
+    // C ref: objnam.c thesimpleoname(obj) — "the " + minimal_xname(): the
+    // user-supplied name and a novel's title are suppressed, and an unknown
+    // book stays "the spellbook".
+    const { thesimpleoname } = await import('./objnam.js');
     await _display.pline(
-        `You flip through the pages of the ${_invent.cxname_singular(obj)}.`);
+        `You flip through the pages of ${thesimpleoname(obj)}.`);
     if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
         // Deaf is never set for these heroes.
         await _display.pline(`You hear the pages make an unpleasant ${
@@ -2307,9 +2311,8 @@ async function ap_Yname2(obj) {
 }
 // C ref: objnam.c thesimpleoname(obj) — "the " + minimal_xname().
 async function ap_thesimpleoname(obj) {
-    const A = await ap_load();
-    return ap_the(A.invent.cxname_singular ? A.invent.cxname_singular(obj)
-                                           : A.invent.xname(obj));
+    const { thesimpleoname } = await import('./objnam.js');
+    return thesimpleoname(obj);
 }
 // C ref: mondata.h — the flag predicates apply.c uses, as monflags_data.js
 // M1_/M2_ bit tests (js/ has no shared mondata.js for these).
@@ -3544,6 +3547,57 @@ export async function snuff_lit(obj) {
             return true;
     }
     return false;
+}
+
+// C ref: apply.c splash_lit(obj) — a lit light source hit by water.  A lit
+// brass lantern is only snuffed when submerged (or carried off by a monster):
+// otherwise it just crackles/flickers.  RNG-free.
+export async function splash_lit(obj) {
+    const A = await ap_load();
+    const u = game.u;
+    let dunk = false;
+
+    if (obj.lamplit && obj.otyp === BRASS_LANTERN) {
+        let useeit = false, uhearit = false, snuff = true;
+
+        if (obj.where === OBJ_INVENT) {
+            useeit = !A.vision.Blind();
+            uhearit = !Deaf();
+            /* underwater light sources aren't allowed but if hero is just
+               entering water, Underwater won't be set yet */
+            dunk = !!A.dbridge.is_pool(u.ux, u.uy)
+                && ((!A.trap.Levitation_fu() && !A.trap.Flying_fu() && !A.trap.Wwalking_fu())
+                    || ap_Is_waterlevel());
+            snuff = false;
+        } else if (obj.where === OBJ_MINVENT && obj.ocarry
+                   && (await import('./monflags_data.js')).humanoid(obj.ocarry.data)) {
+            const mtmp = obj.ocarry;
+            const x = mtmp.mx, y = mtmp.my;
+            useeit = A.vision.cansee(x, y);
+            uhearit = A.vision.couldsee(x, y) && ap_distu(x, y) < 5 * 5;
+            const mf = await import('./monflags_data.js');
+            dunk = !!A.dbridge.is_pool(x, y)
+                && ((!mf.is_flyer_flag(mtmp.data) && mtmp.data?.mcls !== 5 /* S_EYE */
+                     && mtmp.data?.mcls !== 17 /* S_LIGHT */)
+                    || ap_Is_waterlevel());
+            snuff = false;
+        }
+
+        if (useeit || uhearit)
+            await A.display.pline(`${await ap_Yname2(obj)} ${uhearit ? 'crackles' : ''}${
+                (uhearit && useeit) ? ' and ' : ''}${useeit ? 'flickers' : ''}.`);
+        if (!dunk && !snuff)
+            return false;
+    }
+
+    const result = await snuff_lit(obj);
+
+    /* this is simpler when we wait until after lantern has been snuffed */
+    if (dunk) {
+        /* drain some of the battery but don't short it out entirely */
+        obj.age -= (obj.age > 200) ? 100 : Math.trunc(obj.age / 2);
+    }
+    return result;
 }
 
 // C ref: apply.c:1627 use_lamp(obj) — light a lamp or candle.  RNG: the cursed

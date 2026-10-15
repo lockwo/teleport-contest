@@ -328,10 +328,31 @@ export async function dorestore() {
     // item after a restore searches from 'a'.
     game.gl = game.gl || {};
     game.gl.lastinvnr = 51;
+    // C ref: restore.c restgamestate() -> o_init.c restnames(): the objects[]
+    // table (discoveries, call-names, price quotes) comes back from the file,
+    // replacing whatever the restoring process had.
+    {
+        const { restnames } = await import('./o_init.js');
+        restnames({ names: saved.objnames });
+        delete game.objnames;
+        /* C ref: restore.c restgamestate() `ubirthday = time_from_yyyymmddhhmmss(
+           timebuf)`: the stamp is re-parsed by the restoring process, which can
+           land an hour off the saved time_t when the recorder's tm_isdst
+           differs from the stamp date's (see calendar.js mktime_recorder). */
+        const { time_from_yyyymmddhhmmss } = await import('./calendar.js');
+        game.ubirthday = time_from_yyyymmddhhmmss(saved.ubirthday_stamp);
+        delete game.ubirthday_stamp;
+    }
     // C ref: decl.c go.oldcap is likewise never saved (zero-initialized in the
     // restoring process), so encumber_msg() after a restore reports the hero's
     // current burden as a change from "unencumbered".
     game._oldcap = 0;
+    // C ref: decl.c gf.far_noise / gn.noisetime (mhitm.c noises()) are process
+    // globals that savegamestate() never writes: the restoring process starts
+    // with FALSE / 0, so the first unseen monster fight after a restore is
+    // always announced.
+    delete game.far_noise;
+    delete game.noisetime;
     // C ref: decl.c gm.multi / gc.command_count / gc.cmd_key are process
     // globals that savegamestate() never writes, so a restored process starts
     // with no pending count: "3S" saved with gm.multi == 2 must not make the

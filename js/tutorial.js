@@ -28,6 +28,7 @@ import { name_to_pmidx, monster_by_pmidx, newmonhp } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { hole_destination, choose_trapnote } from './trap.js';
 import { cmd_from_ecname } from './cmd.js';
+import { init_mapseen } from './dungeon.js';
 
 // ── tut-1.lua map (verbatim, dat/tut-1.lua des.map). Lua coord (cx,cy) maps to
 //    absolute map cell (xstart + cx, ystart + cy) with the empirically-pinned
@@ -755,6 +756,10 @@ function setTutorialLevelFlags(lvl) {
 // ── Build the tut-1 level into a fresh GameMap, consuming the full PRNG
 //    sequence C generates at the tutorial-yes step. Returns the new level. ──
 export function genTutorialLevel() {
+    // C ref: mklev.c:1582 mklev() — init_mapseen(&u.uz) for the new level, which
+    // also wipes the shared svl.lastseentyp[][] (the caller must already have
+    // kept the departing level's array, see do_tutorial_goto()).
+    init_mapseen(game.u.uz);
     // getbones() inside mklev() (rn2(3)).
     getbones();
     // nhlib.lua align shuffle (rn2(3),rn2(2)) on lua prelude load.

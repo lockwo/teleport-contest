@@ -62,7 +62,7 @@ import {
     W_ARM, W_ARMC, W_ARMU, EF_GREASE, EF_VERBOSE, ER_NOTHING,
 } from './const.js';
 import { has_innate } from './exper.js';
-import { dmgval, sticks, m_slips_free } from './uhitm.js';
+import { dmgval, sticks, m_slips_free, stagger_verb } from './uhitm.js';
 import { monster_by_pmidx } from './makemon.js';
 import { on_fire, dmgtype_fromattack, resists_blnd_by_arti, slimeproof } from './mondata.js';
 import { defends, artifact_hit, permapoisoned } from './artifact.js';
@@ -354,11 +354,11 @@ function is_visored_helmet(o) {
 // "contact") and an AT_GAZE one ("gaze") both came out as "sting", so the top
 // line read wrong for every touch/gaze poisoner.
 
-// C ref: mondata.c stagger(ptr, verb) — "stagger"/"stumble"/"slither"/"falter".
-export function stagger(ptr, verb) {
-    if ((mflags1_of(ptr) & 0x6000) === 0x6000) return 'falter';   // M1_NOLIMBS
-    if (slithy(ptr)) return 'slither';
-    return verb;
+// C ref: mondata.c stagger(ptr, def) — the locomotion-appropriate "stagger" verb;
+// uhitm.js owns the full is_floater/is_flyer/slithy/amorphous/immobile/nolimbs
+// ladder.
+export function stagger(ptr, def) {
+    return stagger_verb(ptr, def);
 }
 
 
@@ -770,11 +770,23 @@ export async function mhitm_ad_tlpt(magr, mattk, mdef, mhm, ops) {
                  && !unconscious()) ? '' : 'very '}uncertain!`);
         }
         if (ops.tele) await ops.tele();
-        // Cap the damage so the teleport can't be posthumously fatal.
-        const uhp = game.u?.uhp ?? 0;
-        if (mhm.damage >= uhp) {
-            mhm.damage = uhp - 1;
-            if (mhm.damage < 1) { mhm.damage = 1; if (uhp === 1) game.u.uhp += 1; }
+        // C ref: uhitm.c mhitm_ad_tlpt() — make sure the damage isn't fatal;
+        // the clamp reads the polyform's HP (u.mh) when Upolyd, and halves the
+        // damage first under Half_physical_damage.  Damage never drops to zero
+        // (that would inhibit a polyd hero's passive counterattack).
+        const u = game.u;
+        const half = !!(u?.uprops?.Half_physical_damage || u?.uprops?.HHalf_physical_damage
+                        || u?.uprops?.EHalf_physical_damage || u?.HHalf_physical_damage
+                        || u?.EHalf_physical_damage);
+        const tmphp = u?.Upolyd ? (u.mh | 0) : (u?.uhp | 0);
+        if ((half ? Math.trunc((mhm.damage - 1) / 2) : mhm.damage) >= tmphp) {
+            mhm.damage = tmphp - 1;
+            if (half) mhm.damage *= 2;
+            if (mhm.damage < 1) {
+                mhm.damage = 1;
+                if (u.Upolyd && u.mh === 1) ++u.mh;
+                else if (!u.Upolyd && u.uhp === 1) ++u.uhp;
+            }
         }
         return;
     }

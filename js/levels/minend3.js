@@ -202,7 +202,7 @@ export async function makemaz_minend3() {
             else vly_object({ otyp });
         }
         // buc="not-cursed" is create_object's curse_state 4 -> uncurse().
-        const luck = splev_object_at({ otyp: O_LUCKSTONE }, P(2)[0], P(2)[1]);
+        const luck = splev_object_at({ otyp: O_LUCKSTONE, achievement: 1 }, P(2)[0], P(2)[1]);
         if (luck) uncurse(luck);
         splev_object_at({ otyp: O_FLINT }, P(1)[0], P(1)[1]);
         for (let i = 0; i < 5; i++) vly_object({ oclass: SCROLL_CLASS });

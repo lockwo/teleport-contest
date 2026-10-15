@@ -7,11 +7,12 @@
 // conservative no-op behavior so downstream porters have a stable 1:1 map.
 
 import { game } from './gstate.js';
+import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac, clear_bypasses } from './worn.js';
-import { rn2, rnd, rnl, d } from './rng.js';
+import { rn1, rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
-import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, cutTopStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, m_at, display_nhwindow_message, obj_to_glyph, object_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible } from './display.js';
+import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, cutTopStatusRow, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, object_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear, recalc_block_point } from './vision.js';
@@ -91,7 +92,7 @@ import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag, hates
 import { tin_variety, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN, tintxts, vegetarian } from './eat.js';
 import { enlightenment_lines, record_achievement } from './insight.js';
 import { ACH_BELL, ACH_CNDL, ACH_BOOK, ACH_AMUL, ACH_MINE_PRIZE, ACH_SOKO_PRIZE } from './const.js';
-import { FREE_ACTION as FREE_ACTION_PROP } from './const.js';
+import { FREE_ACTION as FREE_ACTION_PROP, SLOW_DIGESTION as SLOW_DIGESTION_PROP } from './const.js';
 import { MELT_ICE_AWAY, COST_NOCONTENTS } from './const.js';
 import { MINV_ALL, engulfing_u } from './const.js';
 import { spot_time_left } from './timeout.js';
@@ -105,7 +106,8 @@ import { acurr_eff, acurr_str_encoded, exercise, set_moreluck } from './attrib.j
 import { onbill, shk_scan, add_to_billobjs, shopper_financial_report, money_cnt_invent, hidden_gold,
          costly_spot, addtobill, unpaid_cost, doinvbill, oid_price_adjustment } from './shk.js';
 import { shop_keeper } from './shkroom.js';
-import { hitval, dbon, weapon_type, weapon_descr } from './weapon.js';
+import { hitval, dbon, weapon_type, weapon_descr, mon_hates_blessings } from './weapon.js';
+import { poly_when_stoned } from './mondata.js';
 import { W_ART as W_ART_PROP, W_WEP as W_WEP_PROP,
          HAND, STOMACH, ONAME_VIA_NAMING, ONAME_KNOW_ARTI, HMON_APPLIED,
          ALL_FINISHED } from './const.js';
@@ -186,7 +188,7 @@ import {
 // polyself.js owns mbodypart()/body_part(); the cycle back to this file is
 // fine (both sides only call each other's hoisted declarations at run time).
 import { body_part as poly_body_part } from './polyself.js';
-import { twoweapon_action_ok } from './wield.js';
+import { twoweapon_action_ok, setuwep as setuwep_c } from './wield.js';
 import * as DT from './dothrow.js';
 // monattk_data.js is a pure data/predicate leaf (no top-level side effects), so
 // this edge cannot reorder anything observable.
@@ -1103,6 +1105,18 @@ export function Free_action() {
               || worn_extrinsic(FREE_ACTION_PROP));
 }
 
+// C ref: youprop.h `#define Slow_digestion (HSlow_digestion || ESlow_digestion)`.
+// The extrinsic half is a worn ring of slow digestion (otyp 193; this port's
+// objects[] has no oc_oprop column, so the ring is read directly) or white
+// dragon scales/mail, whose dragon_armor_handling() sets u.ESlow_digestion only
+// when Armor_on() runs, i.e. AFTER the donning delay, not when uarm is assigned.
+export function Slow_digestion() {
+    const u = game.u;
+    return !!((u?.uprops?.HSlow_digestion | 0) || (u?.ESlow_digestion | 0)
+              || worn_extrinsic(SLOW_DIGESTION_PROP)
+              || game.uleft?.otyp === 193 || game.uright?.otyp === 193);
+}
+
 // C ref: worn.c:120-131 — the install half.  C's two guards, verbatim:
 // `if (wp->w_mask & ~(W_SWAPWEP | W_QUIVER))` keeps quivered/alternate items
 // from conferring anything, and `obj->oclass == WEAPON_CLASS || is_weptool(obj)
@@ -1946,6 +1960,7 @@ export function renderMenuLines(flat, cursor = [36, 8], maxcolPad = 2) {
     // end-of-game inventory menu is drawn over the existing tty display.
     // Repainting its map would replace surviving DEC glyphs and erase the
     // prior quit/death message in columns left of the menu window.
+    const inheritedTrunc = game._menuTruncCarry;
     if (!game._disclose_inventory_auto) {
         display.clearScreen();
         render_map_to_grid();
@@ -2004,6 +2019,22 @@ export function renderMenuLines(flat, cursor = [36, 8], maxcolPad = 2) {
     const endRow = row;
     display.putstr(col, row++, '(end)', NO_COLOR);
     putStatusLines(display, bandStart, menuLastRow);
+    // C ref: wintty.c tty_dismiss_nhwindow() -> erase_menu_or_text() -> docorner():
+    // a corner menu torn down just before this one (select_menu() destroys its
+    // window before returning, e.g. D's category menu ahead of its item menu)
+    // swept the status window's tail with cl_end() and nothing has redrawn it
+    // since; this window opens on top of that wrecked status.
+    if (inheritedTrunc) {
+        const cut22 = inheritedTrunc.all ?? inheritedTrunc.row22;
+        cutTopStatusRow(display, cut22);
+        for (let c = cut22; c < cols; c++) display.setCell(c, 22, ' ', NO_COLOR, 0);
+        if (inheritedTrunc.all != null) {
+            for (let c = inheritedTrunc.all; c < cols; c++) display.setCell(c, 23, ' ', NO_COLOR, 0);
+            game._statusTruncCol = Math.min(inheritedTrunc.all, game._statusTruncCol ?? inheritedTrunc.all);
+        } else {
+            game._statusTrunc22 = Math.min(cut22, game._statusTrunc22 ?? cut22);
+        }
+    }
     // C ref: wintty.c erase_menu_or_text() -> docorner(offx, maxrow + 1): the
     // dismissal cl_end() reaches one row past "(end)".  A window opened before
     // the next full redraw sees the status row cut from this menu's left edge.
@@ -2714,9 +2745,7 @@ async function spellSortMenu(spell) {
 
 function renderMessageOnMap(msg) {
     game._pending_message = msg;
-    return flush_screen(1).then(() => {
-        game._freeze_screen_once = true;
-    });
+    return flush_screen(1);
 }
 
 export async function dismiss_invent_screen(textWindow = false) {
@@ -3682,6 +3711,7 @@ async function topline_query(prompt, addcmdq = false) {
     const c = await nhgetch();
     delete game._modal_screen;
     yn_prompt_history(`${prompt} `, key2txt(c));
+    game._toplin = 0;   // clean_up: ttyDisplay->toplin = TOPLINE_NON_EMPTY (answered prompt needs no --More--)
     // C ref: topl.c tty_yn_function() clean_up: `if (wins[WIN_MESSAGE]->cury)
     // tty_clear_nhwindow(WIN_MESSAGE)` -- a prompt that wrapped onto a second
     // row is erased once answered (a one-row prompt stays on screen).
@@ -3944,6 +3974,10 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
     // flushes that message with --More-- (handled by topline_query honouring
     // _yn_need_more).  A quitchar (space/return/ESC) cancels with "Never mind.".
     let oneloop = false;
+    // C: `ilet` lives outside the for(;;) loop, so a force_invmenu re-iteration
+    // (oneloop already set, no prompt, no key read) re-processes the previous
+    // selection instead of reading a new one.
+    let ilet = '';
     for (;;) {
         // C ref: invent.c getobj() — a canned command-queue key (pushed by
         // itemactions, the "Do what with X?" submenu) is consumed as the object
@@ -3957,7 +3991,7 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
             cqcnt = canned.intval;
             canned = game.in_doagain ? cmdq_pop(CQ_REPEAT) : cmdq_pop(CQ_CANNED);
         }
-        let ilet, key;
+        let key;
         if (!canned && game.in_doagain) {
             // C ref: invent.c getobj() `if (gi.in_doagain) { ilet = readchar();
             // } else if (...) {...} else {...}` — a #repeat (^A) replay skips
@@ -3983,6 +4017,10 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
             ilet = (lets || altlets.length) ? '?' : '*';
             key = ilet.charCodeAt(0);
             oneloop = true;  // C ref: invent.c getobj():1929
+        } else if (!canned && oneloop && game.flags?.force_invmenu) {
+            // C ref: invent.c getobj() `if (!oneloop) ilet = ...` — on a later
+            // pass `ilet` keeps whatever the previous pass left in it.
+            key = ilet.charCodeAt(0);
         } else {
             key = canned && canned.typ === CMDQ_KEY
                 ? canned.key : await topline_query(qbuf);
@@ -4059,7 +4097,7 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
                 continue;
             }
             if (sel === HANDS_SYM) return hands_obj;
-            pick = sel;
+            pick = ilet = sel;
             // C ref: invent.c getobj():1996 — a count typed inside the menu.
             if (allowcnt && ctmp.value >= 0) { cnt = ctmp.value; cntgiven = true; }
         }
@@ -4651,6 +4689,9 @@ export async function Blindf_on(obj) {
     const { Blind, vision_recalc } = await import('./vision.js');
     const already_blind = Blind();
     setworn_accessory(obj, W_BLINDF);
+    // setworn() sets no disp.botl: the pline()s before toggle_blindness() still
+    // show the Blind status bot() last published.
+    if (Blind() !== already_blind) status_hold('blind', already_blind);
     await on_msg_accessory(obj);
     if (Blind() && !already_blind) {
         // flags.verbose defaults TRUE in these sessions.  update_topl (C pline)
@@ -4687,6 +4728,9 @@ export async function Blindf_off(obj) {
     }
     takeoff_ctx().mask &= ~W_BLINDF; // C do_wear.c:1506
     clearworn_accessory(obj);
+    // setworn() sets no disp.botl: off_msg()'s pline (and a --More-- it forces)
+    // still shows the Blind status bot() last published.
+    if (Blind() !== was_blind) status_hold('blind', was_blind);
     // off_msg(): no redundant "(being worn)" suffix after removal.
     // C ref: do_wear.c:68 off_msg() — the whole message is `if (flags.verbose)`.
     if (!nooffmsg && game.flags?.verbose !== false)
@@ -5808,7 +5852,7 @@ async function doquiver_core(verb) {
                 game._pending_message = note_topl(`Your ${simpleonames(wep)} ${otense(wep, 'remain')} wielded.`);
                 return ECMD_OK;
             }
-            setuwep_slot(null);
+            await setuwep_c(null);
             await untwoweapon();
             was_uwep = true;
         }
@@ -5987,7 +6031,7 @@ async function ready_weapon(wep) {
     if (!wep) {
         if (game.uwep) {
             await update_topl(`You are ${empty_handed()}.`);
-            setuwep_slot(null);
+            await setuwep_c(null);
             res = ECMD_TIME;
         } else {
             await update_topl(`You are already ${empty_handed()}.`);
@@ -6028,7 +6072,7 @@ async function ready_weapon(wep) {
             // following same-turn message (e.g. a pet's attack on the freed
             // turn) accumulates onto the wield line instead of replacing it.
         }
-        setuwep_slot(wep);
+        await setuwep_c(wep);
         if (was_twoweap && !game.u?.twoweap && game.flags?.verbose !== false) {
             // C ref: wield.c:231-238 — skip this message if we already got the
             // "empty handed" one above (uwep is Null then).  TWOWEAPOK(uwep) is
@@ -6484,6 +6528,7 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
         // boomhit(), js/dokick.js's kicked-object walker and js/mthrowu.js's
         // monster-throw walker already do this; this hero-throw walker didn't.
         await flash.step(bx, by);
+        nh_delay_output_tick(); /* zap.c:4089 */
         if (IS_SINK(typ)) break;
         /* thrown missile has moved away from its starting spot */
         point_blank = false; /* affects passing through iron bars */
@@ -7059,7 +7104,7 @@ async function return_throw_to_inv(obj, wep_mask) {
     if (((o.owornmask | 0) & QW_QUIVER) !== 0
         && (((o.owornmask | 0) | (wep_mask | 0)) & (QW_WEP | QW_SWAPWEP)) !== 0)
         setuqwep(null);
-    if ((wep_mask & QW_WEP) && !game.uwep) setuwep_slot(o);
+    if ((wep_mask & QW_WEP) && !game.uwep) await setuwep_c(o);
     else if ((wep_mask & QW_SWAPWEP) && !game.uswapwep) setuswapwep(o);
     else if ((wep_mask & QW_QUIVER) && !game.uquiver) setuqwep(o);
     await encumber_msg();
@@ -7200,7 +7245,7 @@ async function throwit(otmp, wep_mask) {
                 // game._pending_message directly bypassed toplin bookkeeping so
                 // the very next message (thitmonst's hit/miss line) silently
                 // overwrote this one instead of pausing for acknowledgement.
-                await update_topl(`You aren't wielding ${launcherName}, so you throw your ${descr} by hand.`);
+                await update_topl(`You aren't wielding ${launcherName}, so you throw your ${descr} by ${body_part(HAND)}.`);
             }
         }
         if (recoil) {
@@ -7259,7 +7304,7 @@ async function throwit(otmp, wep_mask) {
                 await update_topl(`${Tobjnam_throw(otmp, 'return')} to your hand!`);
                 if (((otmp.owornmask | 0) & QW_QUIVER) !== 0) setuqwep(null);
                 const back = await return_throw_to_inv(otmp, wep_mask);
-                setuwep_slot(back);
+                await setuwep_c(back);
                 if (cansee(land.x, land.y)) newsym(land.x, land.y);
             } else {
                 let dmg = rn2(2);
@@ -7320,6 +7365,7 @@ async function throwit(otmp, wep_mask) {
         // rn2_on_display_rng)); tmp_at(bhitpos); nh_delay_output(); DISP_END.
         const bflash = tmp_at_flash(otmp);
         await bflash.step(land.x, land.y);
+        nh_delay_output_tick();
         await bflash.end();
         await DT.breakmsg(otmp, cansee(land.x, land.y));
         otmp.owornmask = 0;
@@ -7525,21 +7571,45 @@ async function toss_up(otmp, hitsroof) {
     await update_topl(`${Doname2(otmp)} ${action} the ${roof}, then falls back on top of your ${
         body_part(8 /*HEAD*/)}.`);
 
-    // The object now hits the hero.  (C's potion arm comes first; the
-    // egg/cream-pie blinding and petrification arms follow breakobj().)
+    // The object now hits the hero.
+    const otyp = otmp.otyp;
+    const petrifier = (otyp === 266 /*EGG*/ || otyp === CORPSE)
+        && otmp.corpsenm != null && otmp.corpsenm >= 0 && touch_petrifies(otmp.corpsenm);
+    // C ref: dothrow.c toss_up() `petrify:` — what goes up...
+    const petrify = async (objgone) => {
+        game.killer = { format: 1 /* KILLED_BY */, name: 'elementary physics' };
+        game._killer_name = 'elementary physics';
+        await update_topl('You turn to stone.');
+        if (!objgone) await dropy(otmp); /* bypass most of hitfloor() */
+        const { done } = await import('./end.js');
+        await done(8 /* STONING */);
+    };
+    const yourmon = game.youmonst || game.u;
+    if (otmp.oclass === POTION_CLASS) {
+        await (await import('./potion.js')).potionhit(yourmon, otmp, 1 /* POTHIT_HERO_THROW */);
+        return;
+    }
     if (DT.breaktest(otmp)) {
         // C ref: dothrow.c:1295 — the blindness increment has to be rolled
         // BEFORE the object is destroyed.
-        const otyp_up = otmp.otyp;
-        const blindinc = ((otyp_up === 287 /*CREAM_PIE*/ || otyp_up === 479 /*BLINDING_VENOM*/)
+        const blindinc = ((otyp === 287 /*CREAM_PIE*/ || otyp === 479 /*BLINDING_VENOM*/)
                           && can_blnd_hero()) ? rnd(25) : 0;
         await DT.breakmsg(otmp, !Blinded_hero());
         const gone = await DT.breakobj(otmp, u.ux, u.uy, true, true);
-        if (otyp_up === 266 /*EGG*/ || otyp_up === 287 /*CREAM_PIE*/
-            || otyp_up === 479 /*BLINDING_VENOM*/) {
+        if (otyp === 266 /*EGG*/ && petrifier && !Stone_resistance_hero()
+            && !(poly_when_stoned(youmonst_data())
+                 && await (await import('./polyself.js')).polymon(name_to_pmidx('stone golem')))) {
+            /* egg ends up "all over your face" */
+            if (game.uarmh)
+                await update_topl(`Your ${helm_simple_name(game.uarmh)} fails to protect you.`);
+            await petrify(gone);
+            return;
+        }
+        if (otyp === 266 /*EGG*/ || otyp === 287 /*CREAM_PIE*/
+            || otyp === 479 /*BLINDING_VENOM*/) {
             await update_topl(`You've got it all over your ${body_part(2 /*FACE*/)}!`);
             if (blindinc) {
-                if (otyp_up === 479 && !Blinded_hero())
+                if (otyp === 479 && !Blinded_hero())
                     await update_topl('It blinds you!');
                 u.ucreamed = (u.ucreamed | 0) + blindinc;
                 u.blinded = (u.blinded | 0) + blindinc;
@@ -7555,30 +7625,77 @@ async function toss_up(otmp, hitsroof) {
         await hitfloor(otmp, false);
         return;
     }
-    // C ref: dothrow.c:1358 `int dmg = dmgval(obj, &gy.youmonst);` then the
-    // weight-based fallback for non-weapons, the hard-helmet reduction and
-    // losehp().  The hero's own form is never bigmonst, so dmgval() rolls the
-    // small-damage die.
+    // C ref: dothrow.c:1358 — neither potion nor other breaking object.  The
+    // hero's own form is never bigmonst, so dmgval() rolls the small-damage die.
+    const ymdata = youmonst_data();
+    const is_silver = (objects[otyp]?.material | 0) === 14 /* SILVER */;
+    const less_damage = hard_helmet(game.uarmh) && (!is_silver || !Hate_silver());
+    const harmless = stone_missile_hero(otmp) && passes_rocks_data(ymdata);
     const U = await import('./uhitm.js');
-    let dmg = U.dmgval(otmp, { data: youmonst_data() });
-    if (!dmg) {
+    let dmg = U.dmgval(otmp, { data: ymdata });
+    let artimsg = false;
+    if (otmp.oartifact && !harmless) {
+        /* need a fake die roll here; rn1(18,2) avoids 1 and 20 */
+        const { artifact_hit } = await import('./artifact.js');
+        const mdmg = { d: dmg };
+        artimsg = await artifact_hit(null, yourmon, otmp, mdmg, rn1(18, 2));
+        dmg = mdmg.d;
+    }
+    if (!dmg) { /* probably wasn't a weapon; base damage on weight */
         dmg = Math.trunc(((otmp.owt | 0) + 99) / 100);
         dmg = (dmg <= 1) ? 1 : rnd(dmg);
         if (dmg > 6) dmg = 6;
+        if (ymdata?.name === 'shade' && !is_silver) dmg = 0;
+        if (otmp.blessed && mon_hates_blessings({ data: ymdata })) dmg += rnd(4);
+        if (is_silver && Hate_silver()) dmg += rnd(20);
     }
-    const less_damage = hard_helmet(game.uarmh);
     if (dmg > 1 && less_damage) dmg = 1;
     if (dmg > 0) dmg += (game.u.udaminc | 0);
     if (dmg < 0) dmg = 0;
     dmg = Maybe_Half_Phys(dmg);
+    let harmless_now = harmless;
     if (game.uarmh) {
-        if (less_damage && dmg < (game.u.uhp | 0))
-            await update_topl('Fortunately, you are wearing a hard helmet.');
-        else if (game.flags?.verbose !== false)
-            await update_topl(`Your ${armor_simple_name(game.uarmh)} does not protect you.`);
+        if ((less_damage && dmg < (u.Upolyd ? u.mh : u.uhp)) || harmless) {
+            if (!artimsg) {
+                if (!harmless)
+                    await update_topl('Fortunately, you are wearing a hard helmet.');
+                else
+                    await update_topl(`Unfortunately, you are wearing ${
+                        an(helm_simple_name(game.uarmh))}.`);
+            }
+        } else if (!petrifier) {
+            if (game.flags?.verbose !== false)
+                await update_topl(`Your ${helm_simple_name(game.uarmh)} does not protect you.`);
+        }
+        harmless_now = false;
+    } else if (petrifier && !Stone_resistance_hero()
+               && !(poly_when_stoned(ymdata)
+                    && await (await import('./polyself.js')).polymon(name_to_pmidx('stone golem')))) {
+        await petrify(false);
+        return;
+    }
+    if (is_silver && Hate_silver())
+        await update_topl('The silver sears you!');
+    if (harmless_now) {
+        const { hit } = await import('./zap.js');
+        const { thesimpleoname } = await import('./objnam.js');
+        await hit(thesimpleoname(otmp), yourmon, " but doesn't hurt.");
     }
     await hitfloor(otmp, true);
-    await losehp_invent(dmg, 'falling object', 0 /* KILLED_BY_AN */);
+    if (!harmless_now)
+        await losehp_invent(dmg, 'falling object', 0 /* KILLED_BY_AN */);
+}
+
+// C ref: obj.h stone_missile(o) — a GEMSTONE/MINERAL missile that isn't a ring.
+function stone_missile_hero(obj) {
+    const mat = objects[obj.otyp]?.material | 0;
+    return (mat === 20 /* GEMSTONE */ || mat === 21 /* MINERAL */)
+        && obj.oclass !== RING_CLASS;
+}
+// C ref: mondata.h passes_rocks(ptr) = passes_walls(ptr) && !unsolid(ptr).
+function passes_rocks_data(ptr) {
+    const f1 = mflags1_of(ptr);
+    return (f1 & 0x8 /* M1_WALLWALK */) !== 0 && (f1 & 0x100000 /* M1_UNSOLID */) === 0;
 }
 
 // C ref: weapon.c skill_name() — launcher name for the throw "by hand" message.
@@ -8011,7 +8128,7 @@ async function doswapweapon_inline() {
         oldswap.owornmask = dummy;
         game._toplin = 1;            // TOPLIN_NEED_MORE: a message follows
     }
-    setuwep_slot(oldswap);
+    await setuwep_c(oldswap);
     // set the new secondary weapon (the old primary) and announce it; the
     // announcement forces the --More-- after the launcher line.
     if (game.uwep === oldwep) {
@@ -8153,7 +8270,7 @@ async function drop(obj) {
     // unwield/unquiver/unswap a dropped wielded item (RNG-free).
     if (obj === game.uwep) {
         if (welded(game.uwep)) { await weldmsg(obj); return 0; }
-        setuwep_slot(null);
+        await setuwep_c(null);
     }
     if (obj === game.uquiver) setuqwep(null);
     if (obj === game.uswapwep) setuswapwep(null);
@@ -8459,6 +8576,10 @@ async function tty_select_menu(items, plan, how) {
     // select_menu() dismisses its tty window before returning to the caller;
     // otherwise later message/map flushes remain blocked by the stale overlay.
     delete game._modal_screen;
+    // The window is gone and its docorner() sweep of the status tail stands
+    // until something repaints it; a menu opened next inherits it.
+    game._menuTruncCarry = (game._statusTruncCol != null || game._statusTrunc22 != null)
+        ? { all: game._statusTruncCol, row22: game._statusTrunc22 } : null;
     if (cancelled) {
         const none = [];
         none.cancelled = true;
@@ -9225,7 +9346,7 @@ export async function dopay() {
 // hero's current position (every caller passes u.ux/u.uy), mirroring C's
 // implicit use of the globals.
 async function dropz(obj, x, y, with_impact = false) {
-    if (obj === game.uwep) setuwep_slot(null);
+    if (obj === game.uwep) await setuwep_c(null);
     if (obj === game.uquiver) setuqwep(null);
     if (obj === game.uswapwep) setuswapwep(null);
 
@@ -10079,7 +10200,7 @@ export async function reroll_menu() {
     return false;
 }
 export function set_cknown_lknown(obj) { if (Is_container(obj) || obj?.otyp === STATUE) obj.cknown = obj.lknown = 1; else if (obj?.otyp === TIN) obj.cknown = 1; }
-export function fully_identify_obj(otmp) { makeknown(otmp?.otyp); observe_object(otmp); if (otmp) otmp.known = otmp.bknown = otmp.rknown = 1; set_cknown_lknown(otmp); if (otmp?.otyp === EGG) learn_egg_type(otmp.corpsenm); }
+export function fully_identify_obj(otmp) { makeknown(otmp?.otyp); if (otmp?.oartifact) discover_artifact(otmp.oartifact); observe_object(otmp); if (otmp) otmp.known = otmp.bknown = otmp.rknown = 1; set_cknown_lknown(otmp); if (otmp?.otyp === EGG) learn_egg_type(otmp.corpsenm); }
 // C ref: invent.c identify(otmp) — fully_identify_obj() then prinv(), whose
 // pline() routes through update_topl().  That routing is load-bearing: an
 // identify scroll announces every item it names, each line is ~45 columns, so two
@@ -11172,7 +11293,12 @@ export async function dispinv_with_action(lets = null, use_inuse_ordering = fals
     if (!menumode) {
         // len==1 (e.g. dopramulet on a single letter): a one-line message_menu
         // display, no item selection.  Keep the existing non-interactive render.
+        // C ref: dispinv_with_action() `iflags.force_invmenu = FALSE;` around
+        // display_inventory(), so force_invmenu cannot turn this into a menu.
+        const save_force_invmenu = game.flags?.force_invmenu;
+        if (game.flags) game.flags.force_invmenu = false;
         display_inventory(lets, false);
+        if (game.flags) game.flags.force_invmenu = save_force_invmenu;
         return ECMD_OK;
     }
     // Build the selectable inventory; empty -> "Not carrying anything."

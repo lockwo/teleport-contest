@@ -28,12 +28,18 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_ROOT = path.resolve(SCRIPT_DIR, '..');
-const DEFAULT_BINARY = path.join(
+// Optional local helper (swarm/ is git-ignored, so absent in a clean checkout): the faithful recorder
+// environment (official-length HOME rewritten in screens, clean env, no stale lock between segments,
+// patch-007-free binary so rng source lines match the official recordings).  See swarm/bin/recenv.mjs.
+const RECENV = await import('../swarm/bin/recenv.mjs').catch(() => null);
+const RECENV_DEFAULTS = RECENV && RECENV.defaults().faithful ? RECENV.defaults() : null;
+const DEFAULT_BINARY = RECENV_DEFAULTS ? RECENV_DEFAULTS.binary : path.join(
     TEMPLATE_ROOT, 'nethack-c', 'recorder', 'install',
     'games', 'lib', 'nethackdir', 'nethack');
-const DEFAULT_INSTALL = path.join(
+const DEFAULT_INSTALL = RECENV_DEFAULTS ? RECENV_DEFAULTS.installDir : path.join(
     TEMPLATE_ROOT, 'nethack-c', 'recorder', 'install',
     'games', 'lib', 'nethackdir');
+const KEY_TIMEOUT_MS = parseInt(process.env.RECORD_TIMEOUT_MS || '60000', 10);
 
 // ---------------------------------------------------------------------------
 // Screen encoding — ports run_session.py compress_ansi_line +
@@ -448,11 +454,17 @@ async function recordSegment({
     // <install>/save/.  Clearing between segments would destroy that
     // save file and turn the restore into a fresh game.
     if (isFirstSegment) await clearStaleState(installDir);
+    // A segment that ended without the game exiting (killed at its last key) leaves its level-0 lock
+    // file; the next segment would open with "There is already a game in progress... Destroy old
+    // game?", which never appears in the official recordings.  Keep save/ and bones, drop locks.
+    else if (RECENV) await RECENV.clearLocks(installDir);
 
     const playerName = parseNethackrcName(seg.nethackrc) ?? '';
     const args = ['-u', playerName];
 
-    const env = {
+    const env = RECENV ? RECENV.buildEnv({
+        installDir, home: homeDir, seed: seg.seed, datetime: seg.datetime, rngLogPath, tz,
+    }) : {
         ...process.env,
         NETHACKDIR: installDir,
         HACKDIR: installDir,
@@ -466,6 +478,9 @@ async function recordSegment({
         NOMUX_MARKERS: '1',
         NETHACK_RAW_KEYS: '1',
     };
+    // The recorded screens may show HOME (options help): rewrite our same-length stand-in back to the
+    // official path.
+    const fixScreen = (s) => (RECENV ? RECENV.fixScreen(s, homeDir) : s);
 
     // Some legacy sessions have steps[].key populated but moves
     // empty. Fall back to reconstructing moves from step keys
@@ -503,7 +518,7 @@ async function recordSegment({
     });
     child.stdin.on('error', () => {});
 
-    armTimeout(20000, 'first marker');
+    armTimeout(KEY_TIMEOUT_MS, 'first marker');
 
     const readRngDelta = async () => {
         let rngText = '';
@@ -541,7 +556,7 @@ async function recordSegment({
     const onMarker = async (m) => {
         if (m.kind === 'anim') {
             pendingAnimFrames.push({
-                screen: encodeScreenAnsiRle(payloadToLines(m.payload)),
+                screen: fixScreen(encodeScreenAnsiRle(payloadToLines(m.payload))),
                 cursor: [m.cx, m.cy, 1],
             });
             return;
@@ -553,7 +568,7 @@ async function recordSegment({
             return;
         }
         try {
-            const screen = encodeScreenAnsiRle(payloadToLines(m.payload));
+            const screen = fixScreen(encodeScreenAnsiRle(payloadToLines(m.payload)));
             const rng = await readRngDelta();
             const stepIdx = m.seq - 1;
             const key = stepIdx === 0 ? null : moves[stepIdx - 1] ?? null;
@@ -578,7 +593,7 @@ async function recordSegment({
                 // patched gettty seeds erase_char with '\177'.)
                 if (k === '\r') k = '\n';
                 child.stdin.write(Buffer.from(k, 'utf8'));
-                armTimeout(20000, `after key ${nextKeyIdx}/${moves.length}`);
+                armTimeout(KEY_TIMEOUT_MS, `after key ${nextKeyIdx}/${moves.length}`);
             } else if (!child.stdin.writableEnded) {
                 try { child.stdin.end(); } catch {}
                 armTimeout(10000, 'awaiting process exit');
@@ -651,11 +666,17 @@ async function main() {
     if (!await exists(templateDir)) {
         throw new Error(`install dir not found: ${templateDir}`);
     }
+    // build-recorder.sh writes sysconf AFTER `make install`; without it the binary dies with
+    // "Unable to open SYSCF_FILE." and every recorded step is an empty screen.
+    if (!await exists(path.join(templateDir, 'sysconf'))) {
+        throw new Error(`install dir has no sysconf: ${templateDir}\n  run swarm/bin/recenv.mjs --setup, or re-run nethack-c/build-recorder.sh`);
+    }
 
     const session = await loadSession(inputPath);
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nh-rec-'));
     const rngLogPath = path.join(tmpDir, 'rng.log');
-    const homeDir = path.join(tmpDir, 'home');
+    // RECENV: a HOME of the official path's exact byte length (screens are rewritten, see fixScreen).
+    const homeDir = RECENV ? RECENV.makeFakeHome() : path.join(tmpDir, 'home');
     // Private playground: see makeRunHackdir().  Concurrent recorders MUST NOT
     // share one, or they delete each other's live lock files.
     const installDir = await makeRunHackdir(templateDir, path.join(tmpDir, 'hackdir'));
@@ -731,6 +752,7 @@ async function main() {
         console.error(`[ok] wrote ${outputPath}`);
     } finally {
         await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+        if (RECENV) await fs.rm(path.dirname(homeDir), { recursive: true, force: true }).catch(() => {});
     }
 }
 
