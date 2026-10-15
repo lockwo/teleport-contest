@@ -54,13 +54,18 @@ import { delayed_killer, find_delayed_killer, dealloc_killer } from './end.js';
 // C ref: potion.c make_confused(xtime, talk) — set the HConfusion timeout.  The
 // hero's confusion timer lives on game.u.uprops.Confusion (read by isConfused()
 // in engrave.js) and is mirrored to game.u.uconf for the uhitm safe-pet check.
-export function make_confused(xtime, _talk) {
+export async function make_confused(xtime, talk) {
     const u = game.u;
     if (!u) return;
     if (!u.uprops) u.uprops = {};
+    const old = u.uprops.Confusion || 0;
+    if (Unaware()) talk = false;
+    // C ref: potion.c:93-96 — the "less confused" message comes BEFORE the timer
+    // is cleared and disp.botl set, so a --More-- it forces still shows Conf.
+    if (!xtime && old && talk)
+        await You_feel(`less ${Hallucination() ? 'trippy' : 'confused'} now.`);
     // C ref: potion.c:100-101 — the status line is republished when the
     // property flips on or off.
-    const old = u.uprops.Confusion || 0;
     if ((xtime && !old) || (!xtime && old)) game.botl = true;
     u.uprops.Confusion = xtime;
     u.uconf = xtime > 0;
@@ -1442,6 +1447,10 @@ export async function dopotion(otmp) {
     const retval = await peffects(otmp);
     if (retval >= 0)
         return retval ? ECMD_TIME : ECMD_OK;
+    /* C ref: a potion that kills the hero (losehp()->done()) never returns to
+       dopotion(), so no discovery/exercise/useup follows the death. */
+    if (game.program_state?.gameover)
+        return ECMD_TIME;
 
     if (game.potion_nothing) {
         game.potion_unkn = (game.potion_unkn || 0) + 1;

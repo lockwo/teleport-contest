@@ -400,7 +400,26 @@ export async function thrwmmDeps() {
         can_blnd: (m1, m2, aatyp, obj) => can_blnd(m1, m2, aatyp, obj, mm_ops()),
         YOUMONST,
         AT_SPIT, AT_WEAP,
-        blind_msg: async () => { await emitMMmsg('The venom blinds you.'); },
+        // C ref: mthrowu.c:765-777 — cream pie / venom feedback differs when the
+        // hero is already Blind ("Your eyes sting.").
+        blind_msg: async (obj) => {
+            const { Blind } = await import('./vision.js');
+            const { body_part, eyecount } = await import('./polyself.js');
+            const { makeplural } = await import('./plural.js');
+            const { EYE, FACE } = await import('./const.js');
+            const { objects } = await import('./mkobj.js');
+            const CREAM_PIE_MM = objects.findIndex((o) => o.sym === 'CREAM_PIE');
+            const BLINDING_VENOM_MM = objects.findIndex((o) => o.sym === 'BLINDING_VENOM');
+            if (obj?.otyp === CREAM_PIE_MM) {
+                if (!Blind()) await emitMMmsg("Yecch!  You've been creamed.");
+                else await emitMMmsg(`There's something sticky all over your ${body_part(FACE)}.`);
+            } else if (obj?.otyp === BLINDING_VENOM_MM) {
+                let eyes = body_part(EYE);
+                if (eyecount(youmonst_data_pub()) !== 1) eyes = makeplural(eyes);
+                if (!Blind()) await emitMMmsg('The venom blinds you.');
+                else await emitMMmsg(`Your ${eyes} ${eyes === body_part(EYE) ? 'stings' : 'sting'}.`);
+            }
+        },
         Stone_resistance: () => !!(game.u?.uprops?.StoneResistance),
         make_stoned,
         stop_occupation,
@@ -931,12 +950,12 @@ export async function grow_up(magr, mdef) {
         const fem = is_male_flag(newptr) ? false
             : is_female_flag(newptr) ? true : !!magr.female;
         if (((game.mvitals?.[newtype]?.mvflags | 0) & G_GENOD) !== 0) {
-            if (mm_can_see_mon(magr))
+            if (mm_can_spot_mon(magr))
                 await emitMMmsg(`As ${mon_nam(magr)} grows up into ${an(pmname_of_pmidx(newtype, fem))}, ${mhe(magr)} ${nonliving(newptr) ? 'expires' : 'dies'}!`);
             set_mon_data(magr, newptr);
             await killMonster(magr);
             return false;
-        } else if (mm_can_see_mon(magr)) {
+        } else if (mm_can_spot_mon(magr)) {
             const prefix = (magr.female && !fem) ? 'male '
                 : (fem && !magr.female) ? 'female ' : '';
             const verb = (fem !== !!magr.female) ? 'changes into'

@@ -2016,7 +2016,7 @@ export async function polyself(psflags) {
                     return await poly_shift_were(mntmp, old_light);
                 } else if (!polyok_flag(mdat)
                            && !(mntmp === PM_HUMAN
-                                || (your_race_pm(mdat) && !the_unique_pm(mdat))
+                                || (your_race_pm(mdat) && !((mdat.geno | 0) & G_UNIQ_F))
                                 || mntmp === umonster_pm())) {
                     /* mkclass_poly() can pick a !polyok() candidate; if so,
                        usually try again */

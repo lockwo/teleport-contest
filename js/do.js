@@ -1131,15 +1131,20 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         // save file (init_mapseen() wipes the live array for each NEW level).
         lastseentyp: g.lastseentyp,
     };
-    // C ref: do.c:1640-1661 — leaving the tutorial (cant_go_back): the level
-    // being left is freed rather than saved and every tutorial level file is
-    // deleted, so a later visit builds the level afresh.
+    // C ref: do.c:1640 `cant_go_back = (newdungeon && In_endgame(newlevel))
+    // || leaving_tutorial`; do.c:1663 then discard_migrations() drops every
+    // monster/object still scheduled to migrate to a discarded level.
+    const cant_go_back = (newdungeon && In_endgame(newlevel)) || leaving_tutorial;
+    // C ref: do.c:1640-1661 — leaving the tutorial: the level being left is
+    // freed rather than saved and every tutorial level file is deleted, so a
+    // later visit builds the level afresh.
     if (leaving_tutorial) {
         for (const k of Object.keys(g._level_store))
             if (k.startsWith(`${g.tutorial_dnum}:`)) delete g._level_store[k];
         for (const k of Object.keys(g._visited_levels))
             if (k.startsWith(`${g.tutorial_dnum}:`)) delete g._visited_levels[k];
     }
+    if (cant_go_back) await (await import('./dog.js')).discard_migrations();
     clear_regions();
     // C ref: save_track() release_data() -> initrack().  Clear the live ring so
     // a freshly-made destination (mklev, no saved track) starts with none, and a
@@ -1293,6 +1298,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         // the stream (after mklev()/placement, before losedogs()).
         if (fell_downstairs && Punished_do()) {
             await drag_down();
+            if (game.program_state?.gameover) return; /* C: done() never returns */
             if (!(await import('./invent.js')).welded(game.uball)) {
                 const { ballrelease } = await import('./ball.js');
                 await ballrelease(false);
@@ -2616,7 +2622,7 @@ function Deaf_do() { return uprop_do('Deaf', 'HDeaf', 'EDeaf') > 0; }
 function Hallucination_do() {
     return uprop_do('Hallucination', 'HHallucination') > 0 || !!game.u?.uhallu;
 }
-function Underwater_do() { return !!(game.u?.uinwater || game.u?.uunderwater); }
+function Underwater_do() { return !!(game.u?.uinwater); }
 function Fire_resistance_do() {
     if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return uprop_do('Fire_resistance', 'HFire_resistance', 'EFire_resistance') > 0;

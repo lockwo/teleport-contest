@@ -874,7 +874,7 @@ export function sensemon(mtmp) {
     if (!mtmp) return false;
     const u = game.u, p = u?.uprops || {};
     if (u?.uswallow && mtmp !== u.ustuck) return false;
-    if (u?.uunderwater
+    if (u?.uinwater
         && !(mdistu(mtmp) <= 2 && IS_POOL(game.level?.at(mtmp.mx, mtmp.my)?.typ)))
         return false;
     // C ref: youprop.h Detect_monsters == (HDetect_monsters || EDetect_monsters);
@@ -2660,6 +2660,8 @@ export async function mongone(mdef) {
         const { grddead } = await import('./vault.js');
         if (!(await grddead(mdef))) return;
     }
+    /* stuck to you? release */
+    await unstuck(mdef);
     /* drop special items like the Amulet so that a dismissed Kop or nurse
        can't remove them from the game */
     const { mdrop_special_objs } = await import('./steal.js');

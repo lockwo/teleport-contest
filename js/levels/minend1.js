@@ -143,9 +143,8 @@ export async function makemaz_minend1() {
         splev_object_at({ otyp: RUBY_OTYP }, x, y);
         splev_object_at({ otyp: WORTHLESS_RED_OTYP }, x, y);
         // buc="not-cursed" is create_object's curse_state 4 -> uncurse(); no RNG.
-        // achievement=1 only records achieveo.mines_prize_oid, which this port
-        // stubs out (monmove.js is_mines_prize).
-        const luck = splev_object_at({ otyp: LUCKSTONE_OTYP }, x, y);
+        // achievement=1 records achieveo.mines_prize_oid (sp_lev.js record_level_prize).
+        const luck = splev_object_at({ otyp: LUCKSTONE_OTYP, achievement: 1 }, x, y);
         if (luck) uncurse(luck);
 
         // Random objects: des.object("*") x7, des.object("(") x2, des.object() x3.

@@ -6,6 +6,7 @@
 import { nomul } from './hack.js';
 import { MENU_TRADITIONAL } from './const.js';
 import { game } from './gstate.js';
+import { nh_delay_output_tick } from './nomux_capture.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, m_at, map_invisible, canseemon_shared,
          tmp_at, zapdir_to_glyph } from './display.js';
@@ -16,7 +17,7 @@ import { A_WIS, A_INT, A_STR, P_UNSKILLED, P_EXPERT, P_SKILLED, P_BASIC,
          STRAT_WAITFORU, STRAT_APPEARMSG, EXT_ENCUMBER,
          isok, u_at, IS_STWALL, IS_DOOR, IS_TREE, ZAP_POS, SPACE_POS,
          D_ISOPEN, D_CLOSED, D_LOCKED, POOL, MOAT, DRAWBRIDGE_UP, LAVAPOOL,
-         CLOUD, N_DIRS, xdir, ydir, SPINE, NO_MINVENT, ACH_INVK,
+         CLOUD, N_DIRS, xdir, ydir, SPINE, NO_MINVENT, ACH_INVK, ACH_NOVL,
          Is_waterlevel, NO_KILLER_PREFIX, EXPL_FIERY, EXPL_FROSTY, HEAD,
          SICK_ALL } from './const.js';
 import { p_skill_of, use_skill } from './enhance.js';
@@ -1017,7 +1018,36 @@ export async function study_book(spellbook) {
         return 1;
     }
     if (booktype === SPE_NOVEL) {
-        // Novel reading not exercised.
+        // C ref: spell.c study_book() — 3.6 tribute: obtain the current Terry
+        // Pratchett book title (rn2(41) on every read, even once novelidx is set).
+        const { noveltitle } = await import('./do_name.js');
+        const novidx = { idx: spellbook.novelidx ?? -1 };
+        const tribtitle = noveltitle(novidx);
+        spellbook.novelidx = novidx.idx;
+        const { read_tribute } = await import('./files.js');
+        if (await read_tribute('books', tribtitle, 0, null, 0, spellbook.o_id)) {
+            // literate conduct is handled here rather than in doread()
+            const un = u.uconduct = u.uconduct || {};
+            if (!(un.literate || 0)) {
+                const { LL_CONDUCT, livelog_printf } = await import('./livelog.js');
+                livelog_printf(LL_CONDUCT, `became literate by reading ${tribtitle}`);
+            }
+            un.literate = (un.literate || 0) + 1;
+
+            const { check_unpaid } = await import('./shk.js');
+            await check_unpaid(spellbook);
+            makeknown(booktype);
+            u.uevent = u.uevent || {};
+            if (!u.uevent.read_tribute) {
+                const { record_achievement } = await import('./insight.js');
+                const { more_experienced, newexplevel } = await import('./exper.js');
+                record_achievement(ACH_NOVL);
+                /* give bonus of 20 xp and 4*20+0 pts */
+                more_experienced(20, 0);
+                await newexplevel();
+                u.uevent.read_tribute = 1; /* only once */
+            }
+        }
         return 1;
     }
 
@@ -1320,7 +1350,7 @@ const S_goodpos = 0;                                   // include/defsym.h cmap
 function sp_tmp_at(_x, _y) {}
 function sp_cmap_to_glyph(_cmap) { return 0; }
 function sp_zapdir_to_glyph(_dx, _dy, _beam_type) { return 0; }
-function sp_nh_delay_output() {}
+function sp_nh_delay_output() { nh_delay_output_tick(); }
 
 // ── small C macros/library calls with no shared port in js/.
 // C ref: hacklib.c sgn(x).

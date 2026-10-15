@@ -188,7 +188,7 @@ export async function makemaz_minend2() {
         splev_object_at({ oclass: GEM_CLASS }, 70, 5);
         splev_object_at({ otyp: AMETHYST_OTYP }, 70, 5);
         // buc="not-cursed" is create_object's curse_state 4 -> uncurse(); no RNG.
-        const luck = splev_object_at({ otyp: LUCKSTONE_OTYP }, 70, 5);
+        const luck = splev_object_at({ otyp: LUCKSTONE_OTYP, achievement: 1 }, 70, 5);
         if (luck) uncurse(luck);
 
         // Scattered gems, tools, and three fully random objects.

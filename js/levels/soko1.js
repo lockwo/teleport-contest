@@ -16,9 +16,9 @@ import {
 } from '../mkobj.js';
 import { rn1, rn2, rnd } from '../rng.js';
 import {
-    add_sp_room, bigrm_get_level_extends, bigrm_level_init_solidfill, bigrm_load_map,
+    add_sp_room, bigrm_get_level_extends, level_flip_extents, bigrm_level_init_solidfill, bigrm_load_map,
     bigrm_wallification, flip_level, flood_fill_room, gx, gy, percent, q_absx, q_absy,
-    quest_create_monster_randpos, quest_place_stair, quest_set_door, shuffle,
+    quest_create_monster_randpos, quest_place_stair, quest_set_door, record_level_prize, shuffle,
     soko_create_object_class_random, soko_mktrap, soko_region_lit_grow,
     soko_solidify_and_nondig,
 } from '../sp_lev.js';
@@ -114,7 +114,7 @@ export function soko_exclusion_mongen(x1, y1, x2, y2) {
 export function soko_flip_exclusions(flp) {
     const zones = game.exclusion_zones;
     if (!zones || !zones.length) return;
-    const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+    const { minx, maxx, miny, maxy } = level_flip_extents();
     for (const ez of zones) {
         if (flp & 1) {
             ez.ly = miny + maxy - ez.ly;
@@ -131,11 +131,12 @@ export function soko_flip_exclusions(flp) {
 
 // C ref: sp_lev.c create_object — explicit id + coord (no location RNG) +
 // buc override ("not-cursed" -> uncurse(); "cursed" -> curse()).
-function soko_create_object_coord(otyp, mx, my, buc) {
+function soko_create_object_coord(otyp, mx, my, buc, achievement = 0) {
     const x = q_absx(mx), y = q_absy(my);
     const otmp = mksobj_at(otyp, x, y, true, true);
     if (buc === 'not-cursed') uncurse(otmp);
     else if (buc === 'cursed') curse(otmp);
+    if (achievement) record_level_prize(otmp);
     return otmp;
 }
 
@@ -333,8 +334,8 @@ export async function makemaz_soko1() {
 
         // Achievement prize: rn2(3) picks the spot, percent(N) picks the item.
         const pt = PLACE_PTS[rn2(PLACE_PTS.length)];
-        if (percent(V.prize_pct)) soko_create_object_coord(BAG_OF_HOLDING, pt.x, pt.y, 'not-cursed');
-        else soko_create_object_coord(208 /* AMULET_OF_REFLECTION */, pt.x, pt.y, 'not-cursed');
+        if (percent(V.prize_pct)) soko_create_object_coord(BAG_OF_HOLDING, pt.x, pt.y, 'not-cursed', 1);
+        else soko_create_object_coord(208 /* AMULET_OF_REFLECTION */, pt.x, pt.y, 'not-cursed', 1);
         make_engr_at(q_absx(pt.x), q_absy(pt.y), 'Elbereth', null, 0, BURN);
         soko_create_object_coord(SCR_SCARE_MONSTER, pt.x, pt.y, 'cursed');
 
@@ -349,7 +350,7 @@ export async function makemaz_soko1() {
             // flip_level flips svd.doors[] too; sroom->fdoor is an INDEX, so
             // the already-chosen door travels with the map.
             if (zoo?.fdoor) {
-                const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+                const { minx, maxx, miny, maxy } = level_flip_extents();
                 if (flp & 1) zoo.fdoor.y = miny + maxy - zoo.fdoor.y;
                 if (flp & 2) zoo.fdoor.x = minx + maxx - zoo.fdoor.x;
             }

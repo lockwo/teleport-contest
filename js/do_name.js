@@ -17,7 +17,8 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
          MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
 import { mflags2_of, M2_PNAME } from './monflags_data.js';
 import { objects } from './mkobj.js';
-import { PRONOUN_HALLU, PRONOUN_NO_IT, PL_PSIZ } from './const.js';
+import { m_at } from './display.js';
+import { PRONOUN_HALLU, PRONOUN_NO_IT, PL_PSIZ, NON_PM } from './const.js';
 import { PRONOUN_GENDERS } from './role.js';
 import { makeplural } from './plural.js';
 
@@ -257,12 +258,19 @@ function Hallucination() { return !!(game.u?.uhallu || game.u?.Hallucination); }
 
 // C ref: do_name.c:1254 minimal_monnam(mon, ckloc) — debug-only naming that
 // ignores what the hero can see.
-export function minimal_monnam(mon, _ckloc) {
+export function minimal_monnam(mon, ckloc) {
     if (!mon) return '[Null monster]';
     const ptr = mon.data;
     if (!ptr) return '[Null mon->data]';
-    return `${mon.mtame ? 'tame ' : mon.mpeaceful ? 'peaceful ' : ''}${
+    if (ckloc && ptr.name === 'long worm' && mon.mx
+        && m_at(mon.mx, mon.my) !== mon)
+        return `${pmname_of_pmidx(name_to_pmidx('long worm tail'), mon.female ? 1 : 0)
+        } <${mon.mx},${mon.my}>`;
+    let out = `${mon.mtame ? 'tame ' : mon.mpeaceful ? 'peaceful ' : ''}${
         mon_pmname(mon)} <${mon.mx},${mon.my}>`;
+    if (mon.cham != null && mon.cham !== NON_PM)
+        out += `{${pmname_of_pmidx(mon.cham, mon.female ? 1 : 0)}}`;
+    return out;
 }
 
 // C ref: do_name.c:1221 monverbself(mon, monnamtext, verb, othertext) —

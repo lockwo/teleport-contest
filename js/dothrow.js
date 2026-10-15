@@ -12,6 +12,7 @@
 // beside its caller.
 import { makeplural, vtense } from './plural.js';
 import { game } from './gstate.js';
+import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
 import { m_at, newsym, update_topl, map_invisible, tmp_at_flash, tmp_at_flash_cell,
@@ -1909,7 +1910,7 @@ async function nomul_hurtle(nval) {
     nomul(nval);
 }
 // C ref: tty nh_delay_output() — js/hack.js:3734 (unexported).
-async function nh_delay_output_hurtle() { await Promise.resolve(); }
+async function nh_delay_output_hurtle() { nh_delay_output_tick(); await Promise.resolve(); }
 // C ref: mon.c remove_monster(x, y) — js/worm.js:206 (unexported).
 function remove_monster_hurtle(x, y) {
     for (const m of game.level?.monsters || [])

@@ -6,6 +6,7 @@
 // Uses the real game PRNG (not a separate layout PRNG) for bit-exact parity.
 
 import { game, hooks } from './gstate.js';
+import { nh_delay_output_tick } from './nomux_capture.js';
 import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { finish_map } from './mkmap.js';
@@ -14,7 +15,7 @@ import { init_rect, rnd_rect, get_rect, split_rects, within_bounded_area } from 
 import { depth as depth_of_level, distmin } from './hacklib.js';
 import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_region, fill_special_room, themeroom_fill, themeroom_map_contents, makemaz_bigroom, makemaz_bar_strt, makemaz_bar_loca, makemaz_bar_goal, makemaz_arc_strt, makemaz_arc_loca, makemaz_arc_goal, makemaz_pri_strt, makemaz_pri_loca, makemaz_pri_goal, makemaz_tower1, makemaz_tower2, makemaz_tower3, makemaz_soko1, makemaz_soko_upper, makemaz_valley, makemaz_knox, makemaz_sanctum, makemaz_minetown2, makemaz_minetown3, makemaz_minetown5, makemaz_minetown7, makemaz_minend1, makemaz_minend2, makemaz_minend3, makemaz_medusa1, makemaz_medusa2, makemaz_medusa3, makemaz_medusa4, makemaz_asmodeus, makemaz_baalz, makemaz_juiblex, makemaz_orcus, makemaz_wizard1, makemaz_wizard2, makemaz_wizard3, makemaz_fakewiz1, makemaz_fakewiz2, makemaz_air, makemaz_earth, makemaz_fire, makemaz_water, makemaz_astral, makemaz_cav_strt, makemaz_cav_loca, makemaz_cav_goal, makemaz_cav_fila, makemaz_cav_filb, makemaz_hea_strt, makemaz_hea_loca, makemaz_hea_goal, makemaz_hea_fila, makemaz_hea_filb, makemaz_kni_strt, makemaz_kni_goal, makemaz_kni_loca, makemaz_kni_fila, makemaz_kni_filb, makemaz_mon_strt, makemaz_mon_loca, makemaz_mon_goal, makemaz_ran_strt, makemaz_ran_loca, makemaz_ran_goal, makemaz_ran_fila, makemaz_ran_filb, makemaz_rog_strt, makemaz_rog_loca, makemaz_rog_goal, makemaz_sam_strt, makemaz_sam_loca, makemaz_sam_goal, makemaz_sam_fila, makemaz_sam_filb, makemaz_tou_strt, makemaz_tou_loca, makemaz_tou_goal, makemaz_tou_fila, makemaz_tou_filb, makemaz_val_strt, makemaz_val_loca, makemaz_val_goal, makemaz_val_fila, makemaz_val_filb, makemaz_wiz_loca, makemaz_wiz_goal, makemaz_wiz_strt, shuffle,
          mapfrag_fromstr, mapfrag_match, selection_match, set_levltyp_lit,
-         splev_map_origin, reset_xystart_size, flip_level, bigrm_get_level_extends, set_door_orientation,
+         splev_map_origin, reset_xystart_size, flip_level, bigrm_get_level_extends, level_flip_extents, set_door_orientation,
          vly_flip_updest, vly_flip_dndest,
          okdoor, bydoor, create_door, lspo_door_relative,
          is_ok_location, pm_to_humidity, LOC_DRY, splev_get_location_room,
@@ -3987,7 +3988,7 @@ async function makemaz_minetown4() {
 // that file (the two loops are equivalent: every subroom belongs to some
 // room inside the extents).
 function mt4_flip_subrooms(flp) {
-    const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+    const { minx, maxx, miny, maxy } = level_flip_extents();
     for (const r of game.level?.subrooms || []) {
         if (!r) continue;
         if (flp & 1) {
@@ -5198,7 +5199,11 @@ async function makemaz_hellfill() {
         g.in_mklev = was_mklev;
     }
 
-    // load_special finalize: !corrmaze -> wallification(1,0,COLNO-1,ROWNO-1).
+    // load_special finalize (sp_lev.c:6465): link_doors_rooms(),
+    // remove_boundary_syms() (the prefab's 'B' CROSSWALLs become ROOM),
+    // then !corrmaze -> wallification(1,0,COLNO-1,ROWNO-1).
+    splev_link_doors_rooms();
+    remove_boundary_syms();
     wallification(1, 0, COLNO - 1, ROWNO - 1);
 
     // fixup_special: place the dungeon branch staircase if this level is one.
@@ -6307,6 +6312,14 @@ async function makemaz_bar_filb() {
 async function mk_fixup_branch() {
     const branchp = is_branchlev();
     if (!branchp) return;
+    // C ref: mkmaze.c:368-373 place_lregion() with no area and rtype == LR_BRANCH:
+    // "if there are rooms and this a branch, let place_branch choose the branch
+    // location (to avoid putting branches in corridors)" -- a hellfill prefab's
+    // temple region is such a room.
+    if (game.level.nroom) {
+        await place_branch(branchp, 0, 0);
+        return;
+    }
     let x = 0, y = 0;
     for (let trycnt = 0; trycnt < 200; trycnt++) {
         x = rn1(COLNO - 1 - 1 + 1, 1);  // rn1((hx-lx)+1, lx) = rn1(79, 1)
@@ -8242,7 +8255,7 @@ export async function mkinvokearea() {
         }
 
         await flush_screen(1); /* make sure the new glyphs show up */
-        /* nh_delay_output() */
+        nh_delay_output_tick(); /* nh_delay_output() */
     }
 
     await pline('You are standing at the top of a stairwell leading down!');

@@ -12,6 +12,7 @@
 //   // display.topMessage, display.putstr_message are NetHack-specific
 
 import { Terminal, CLR_GRAY } from './terminal.js';
+import { noteCellFlags } from './nomux_capture.js';
 
 const TOPLINE_EMPTY = 0;
 const TOPLINE_NEED_MORE = 1;
@@ -53,7 +54,15 @@ export class GameDisplay {
     set flags(v) { this.terminal.flags = v; }
 
     // Display methods
-    setCell(col, row, ch, color, attr) { return this.terminal.setCell(col, row, ch, color, attr); }
+    // `dec` / `dark`: the glyph came out of the tty driver inside SO/SI (decgfx)
+    // or as CLR_BLACK -> bright-black; the recorder's shadow buffer keeps both
+    // (nomux_putch), the terminal grid cannot.  See nomux_capture.js.
+    setCell(col, row, ch, color, attr, dec = false, dark = false) {
+        const r = this.terminal.setCell(col, row, ch, color, attr);
+        if (row >= 0 && row < this.terminal.rows && col >= 0 && col < this.terminal.cols)
+            noteCellFlags(this.terminal.grid[row][col], dec, dark);
+        return r;
+    }
     putstr(col, row, str, color, attr) { return this.terminal.putstr(col, row, str, color, attr); }
     setCursor(col, row) { return this.terminal.setCursor(col, row); }
     getCursor() { return this.terminal.getCursor(); }

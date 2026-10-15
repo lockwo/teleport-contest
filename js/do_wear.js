@@ -21,10 +21,11 @@ import {
     W_ARMOR_WORN, W_RINGL, W_RINGR, W_AMUL,
     worn_slot_clear, body_part, xname, yname, makeknown,
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
-    silly_thing, dropx, canletgo, setuwep_slot, setuswapwep, setuqwep,
+    silly_thing, dropx, canletgo, setuswapwep, setuqwep,
     Ring_off, Ring_on, Amulet_off, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
     otense, makeknown_credit, cmdq_pop, worn_extrinsic, corpse_xname,
 } from './invent.js';
+import { setuwep as setuwep_c } from './wield.js';
 import { makeplural } from './plural.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { weapon_descr } from './weapon.js';
@@ -1020,6 +1021,8 @@ function cwo_WrappingAllowed(ptr) {
         && ptr.mcls !== 54 && ptr.mcls !== 29 /* S_CENTAUR */
         && ptr.pmidx !== 42 && ptr.pmidx !== 294;
 }
+// C ref: obj.h is_elven_armor(otmp): elven helm, mithril-coat, cloak, shield, boots.
+const CWO_ELVEN_ARMOR = new Set([89, 127, 139, 153, 169]);
 // C ref: mondata.c num_horns(ptr).
 function cwo_num_horns(ptr) {
     switch (ptr.pmidx) {
@@ -1049,13 +1052,15 @@ export function canwearobj_impl(otmp) {
         }
         const which = is_cloak(otmp) ? 'cloak' : is_shirt(otmp) ? 'shirt'
             : is_suit(otmp) ? 'suit' : null;
-        /* racial_exception() is 0 for a polyform except for hobbits */
+        /* worn.c racial_exception(): a polyd hobbit may wear elven armor only */
+        const racial_exception = (ptr?.pmidx === 43 /* PM_HOBBIT */
+                                  && CWO_ELVEN_ARMOR.has(otmp.otyp)) ? 1 : 0;
         if (which && ptr && cwo_cantweararm(ptr)
             && (which !== 'cloak'
                 || (objects[otmp.otyp]?.name !== 'mummy wrapping'
                     ? ptr.msize !== 1 /* MZ_SMALL */
                     : !cwo_WrappingAllowed(ptr)))
-            && ptr.pmidx !== 43 /* PM_HOBBIT */) {
+            && racial_exception < 1) {
             msgs.push(`The ${which} will not fit on your body.`);
             return { mask: 0, msgs };
         }
@@ -1292,7 +1297,7 @@ export async function glibr() {
         else if (wastwoweap) which = lefty ? 'left ' : 'right ';
         await pline(`${thiswep.startsWith('corpse') ? 'The' : 'Your'} ${otherwep ? 'other ' : ''}${thiswep} ${xfl ? 'also ' : ''}${otense(otmp, 'slip')} from your ${which}${hand}.`);
         otmp.quan = savequan;
-        setuwep_slot(null);
+        await setuwep_c(null);
         cmdq_clear(CQ_CANNED);
         if (await canletgo(otmp, '')) await dropx(otmp);
     }
@@ -1323,7 +1328,7 @@ export async function do_takeoff() {
     doff.mask |= I_SPECIAL;
     if (doff.what === 0x100 /*W_WEP*/) {
         if (!(await cursed_blocks(game.uwep))) {
-            setuwep_slot(null);
+            await setuwep_c(null);
             await pline(was_twoweap ? 'You are no longer wielding either weapon.'
                                     : `You are ${empty_handed()}.`);
         }

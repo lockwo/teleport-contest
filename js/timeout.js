@@ -25,7 +25,7 @@ import { update_topl, urgent_topl, see_monsters, status_hold } from './display.j
 import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
 import { Unaware, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
-import { t_at } from './trap.js';
+import { t_at, Flying_fu } from './trap.js';
 import { is_pool, is_ice } from './dbridge.js';
 import { surface } from './dungeon.js';
 import { encumber_msg, inv_weight, body_part, renderMenuLines } from './invent.js';
@@ -378,6 +378,22 @@ async function expire_sickness() {
         game.killer.name = '';
     }
     dealloc_killer(kptr);
+    {   // C ref: timeout.c nh_timeout() case SICK — a unique (or named) monster's
+        // name carries no indefinite article ("poisoned by Juiblex").
+        const { name_to_mon } = await import('./polyself.js');
+        const { type_is_pname, the } = await import('./objnam.js');
+        const { monster_by_pmidx } = await import('./makemon.js');
+        const m_idx = name_to_mon(game.killer.name).mntmp;
+        const ptr = m_idx >= 0 ? monster_by_pmidx(m_idx) : null;
+        if (ptr) {
+            if (type_is_pname(ptr)) {
+                game.killer.format = C.KILLED_BY;
+            } else if (ptr.geno & 0x1000 /* G_UNIQ */) {
+                game.killer.name = the(game.killer.name);
+                game.killer.format = C.KILLED_BY;
+            }
+        }
+    }
     await done_timeout(C.POISONING, C.SICK);
     u.usick_type = 0;
     u.sick = false;   /* C's Sick is just the intrinsic timeout, now expired */
@@ -475,8 +491,7 @@ async function expire_see_invisible() {
 
 // C ref: timeout.c case FLYING — landing runs spoteffects(TRUE).
 async function expire_flying(u, wasFlying) {
-    if (wasFlying && !u.uprops?.Flying && !u.uprops?.HFlying
-        && !u.uprops?.EFlying && !u.HFlying && !u.EFlying) {
+    if (wasFlying && !Flying_fu()) {
         game.botl = true;
         await pline('You land.');
         const { spoteffects } = await import('./trap.js');
@@ -801,7 +816,7 @@ export async function nh_timeout() {
     }
 
 
-    const wasFlying = !!(u.uprops?.Flying || u.uprops?.HFlying || u.uprops?.EFlying);
+    const wasFlying = Flying_fu();
     for (const p of TIMED_PROPS) {
         const cur = p.get(u);
         if (!(cur & TIMEOUT)) continue; // C: !(intrinsic & TIMEOUT) -> not running

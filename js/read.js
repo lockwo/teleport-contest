@@ -136,16 +136,9 @@ function Invisible() {
 // call sites pass `HConfusion + rnd(N)`.
 function HConfusion() { return game.u?.uprops?.Confusion || 0; }
 
-// C ref: potion.c make_confused(xtime, talk) — no RNG; mirrors potion.js's
-// private copy (uprops.Confusion is the timer, u.uconf the boolean the melee
-// code reads).
-function make_confused(xtime, _talk) {
-    const u = game.u;
-    if (!u) return;
-    if (!u.uprops) u.uprops = {};
-    u.uprops.Confusion = xtime;
-    u.uconf = xtime > 0;
-    if (game.disp) game.disp.botl = true;
+// C ref: potion.c make_confused(xtime, talk) — potion.js owns it.
+async function make_confused(xtime, talk) {
+    await (await import('./potion.js')).make_confused(xtime, talk);
 }
 // C ref: read.c seffect_magic_mapping — `HConfusion = 1` / `HConfusion = 0`
 // assigned directly (not via make_confused) to garble a cursed scroll's map.
@@ -445,7 +438,7 @@ async function seffect_magic_mapping(sobj) {
                 await pline_append('Wow!  Modern art.');
             else
                 await pline_append('Your head spins in bewilderment.');
-            make_confused(HConfusion() + rnd(30), false);
+            await make_confused(HConfusion() + rnd(30), false);
             return;
         }
         if (sblessed) {
@@ -462,7 +455,7 @@ async function seffect_magic_mapping(sobj) {
 
     if (nommap) {
         await pline_append('Your head spins as something blocks the spell!');
-        make_confused(HConfusion() + rnd(30), false);
+        await make_confused(HConfusion() + rnd(30), false);
         return;
     }
     // C tty concatenates same-turn toplines: "...disappears.  A map ...".
@@ -571,14 +564,14 @@ async function seffect_confuse_monster(sobj) {
     if (!hero_is_human() || scursed) {
         if (!HConfusion())
             await pline_append('You feel confused.');
-        make_confused(HConfusion() + rnd(100), false);
+        await make_confused(HConfusion() + rnd(100), false);
     } else if (confused) {
         if (!sblessed) {
             await pline_append(`Your ${hands} begin to ${altfeedback ? 'tingle' : 'glow '}${altfeedback ? '' : hcolor_wep('purple')}.`);
-            make_confused(HConfusion() + rnd(100), false);
+            await make_confused(HConfusion() + rnd(100), false);
         } else {
             await pline_append(`A ${altfeedback ? '' : hcolor_wep('red')}${altfeedback ? 'faint buzz' : ' glow'} surrounds your head.`);
-            make_confused(0, true);
+            await make_confused(0, true);
         }
     } else {
         // scroll vs spell

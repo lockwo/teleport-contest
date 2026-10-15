@@ -826,11 +826,14 @@ function feel_refused_step(x, y, dx, dy) {
 // (hack.c:1011), a closed door (hack.c:1075-1136), a diagonal into/out of an
 // intact doorway (hack.c:1140-1150, 1208-1214) — prints nothing, pushes
 // nothing. The diagonal bad_rock squeeze (hack.c:1153) is refused silently too.
-export function test_move_quiet(x, y) {
+//
+// dx/dy are the C parameters of the same name (the step direction); callers that
+// are not mid-command (mhitm_knockback()) pass their own instead of u.dx/u.dy.
+export function test_move_quiet(x, y, dx = game.u.dx, dy = game.u.dy) {
     const u = game.u;
     if (!isok(x, y)) return false;
     if (blocksMove(x, y)) return false;
-    if (blocksDiagonalDoor(u.ux, u.uy, x, y, u.dx, u.dy)) return false;
+    if (blocksDiagonalDoor(u.ux, u.uy, x, y, dx, dy)) return false;
     // C ref: hack.c:1153-1172 — a tight diagonal between two rock/boulder-in-
     // Sokoban squares that cant_squeeze_thru() refuses (mode != DO_MOVE: no
     // message, return FALSE).
@@ -2361,19 +2364,20 @@ export async function dosearch0(aflag) {
                 // exercise(A_WIS, TRUE) fires on every successful find, before
                 // nomul(0).
                 exercise(A_WIS, true);
-                feel_location(x, y);
                 // C ref: detect.c dosearch0() — nomul(0) on a successful find:
                 // a counted search ("9s") stops immediately instead of running
-                // out its full repeat count.
-                if ((game.multi ?? 0) > 0) game.multi = 0;
+                // out its full repeat count, and (`disp.botl |= (multi >= 0)`)
+                // flags the status line so this find's message publishes it.
+                nomul(0);
+                feel_location(x, y);
                 await update_topl('You find a hidden door.');
             } else if (loc.typ === SCORR) {
                 if (rnl(7 - fund)) continue;
                 loc.typ = CORR;
                 recalc_block_point(x, y); // C: unblock_point(x, y)
                 exercise(A_WIS, true);
+                nomul(0);
                 newsym(x, y);
-                if ((game.multi ?? 0) > 0) game.multi = 0;
                 await update_topl('You find a hidden passage.');
             } else {
                 const mtmp = m_at(x, y);
@@ -3698,6 +3702,7 @@ async function domove_core(dx, dy, attemptTracked) {
     u.uy0 = u.uy;
 
     // ── bump into a monster ──  C ref: hack.c domove_core mtmp handling.
+    let displaceu = false, evadedForcefight = false;
     if (mtmp) {
         if (!is_safemon(mtmp) || game.context.forcefight) {
             const { nomul } = await import('./hack.js');
@@ -3712,7 +3717,7 @@ async function domove_core(dx, dy, attemptTracked) {
         }
         // C ref: hack.c domove_attackmon_at() — the hero is displaced (the
         // monster swaps places with them, hack.c:2887) instead of attacking.
-        const displaceu = await domove_displaceu(mtmp, newx, newy);
+        displaceu = await domove_displaceu(mtmp, newx, newy);
         // TRUE means the attack was resolved, including a declined peaceful
         // attack.  C preserves attack_checks()'s context.move = 0 (uhitm.c:320).
         // FALSE lets domove fall through to the swap-places handling below.
@@ -3724,6 +3729,14 @@ async function domove_core(dx, dy, attemptTracked) {
             // The hero stays put; preserve whether the attack consumed time.
             return;
         }
+        // C ref: hack.c:2796-2810 — domove_attackmon_at() returned FALSE (the
+        // target evaded, e.g. a leprechaun's "You miss wildly and stumble
+        // forwards.").  With the 'F' prefix `!displaceu` then runs
+        // domove_fight_empty() regardless of `mtmp`, which ends the move with
+        // "You attack thin air." instead of stepping onto the square.
+        evadedForcefight = !displaceu && !!game.context.forcefight;
+    }
+    if (mtmp && !evadedForcefight) {
         // Monster evaded; if we can't actually move there, stop. C ref:
         // hack.c domove_core() — do_attack() returning FALSE falls through to
         // test_move(DO_MOVE), including the testdiag/out-of-doorway rules

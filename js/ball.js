@@ -514,7 +514,7 @@ function Maybe_Half_Phys(dmg) {
 // inventory without placing it on the floor.  No RNG.
 export async function ballrelease(showmsg) {
     const u = game.u;
-    const { welded, freeinv, encumber_msg, setuwep_slot, setuswapwep, setuqwep }
+    const { welded, freeinv, encumber_msg, setuswapwep, setuqwep }
         = await import('./invent.js');
     const { pline } = await import('./display.js');
 
@@ -522,7 +522,7 @@ export async function ballrelease(showmsg) {
         if (showmsg)
             await pline('Startled, you drop the iron ball.');
         if (game.uwep === u.uball)
-            setuwep_slot(null);            /* setuwep((struct obj *) 0) */
+            await (await import('./wield.js')).setuwep(null);            /* setuwep((struct obj *) 0) */
         if (game.uswapwep === u.uball)
             setuswapwep(null);
         if (game.uquiver === u.uball)
@@ -909,6 +909,7 @@ export async function drag_down() {
             await losehp_do(Maybe_Half_Phys(rnd(6)),
                             'dragged downstairs by an iron ball',
                             NO_KILLER_PREFIX);
+            if (game.program_state?.gameover) return; /* C: done() never returns */
             await litter();
         }
     } else {
@@ -917,6 +918,7 @@ export async function drag_down() {
             await update_topl('The iron ball smacks into you!');
             await losehp_do(Maybe_Half_Phys(rnd(20)), 'iron ball collision',
                             KILLED_BY_AN);
+            if (game.program_state?.gameover) return; /* C: done() never returns */
             const { exercise } = await import('./attrib.js');
             await exercise(A_STR, false);
             dragchance -= 2;
@@ -926,6 +928,7 @@ export async function drag_down() {
             await losehp_do(Maybe_Half_Phys(rnd(3)),
                             'dragged downstairs by an iron ball',
                             NO_KILLER_PREFIX);
+            if (game.program_state?.gameover) return; /* C: done() never returns */
             const { exercise } = await import('./attrib.js');
             await exercise(A_STR, false);
             await litter();

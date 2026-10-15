@@ -38,7 +38,7 @@ import { stackobj } from '../invent.js';
 import { somex, somey } from '../mkroom.js';
 import { rn1, rn2, rnd } from '../rng.js';
 import {
-    LOC_DRY, splev_find_montype, bigrm_get_level_extends, bigrm_load_map, bigrm_wallification, flip_level, percent,
+    LOC_DRY, splev_find_montype, bigrm_get_level_extends, level_flip_extents, bigrm_load_map, bigrm_wallification, flip_level, percent,
     pm_to_humidity, quest_level_init_solidfill, quest_place_stair, quest_rndcoord, quest_set_door,
     remove_boundary_syms, map_cleanup, shuffle, splev_door_at, splev_feature, splev_get_location_rnd,
     splev_link_doors_rooms, splev_mkstairs_at, splev_region_lit, splev_traptype_rnd, vly_abs, vly_non_diggable,
@@ -481,7 +481,7 @@ function med_lregion(rtype, x1, y1, x2, y2, ex = null) {
 // holds; the lregions/updest/dndest loop there has no such guard at all).
 function med_flip_rect(r, kx1, ky1, kx2, ky2, flp) {
     if (!r) return;
-    const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+    const { minx, maxx, miny, maxy } = level_flip_extents();
     for (const [kx, ky] of [[kx1, ky1], [kx2, ky2]]) {
         if (flp & 1) r[ky] = miny + maxy - r[ky];
         if (flp & 2) r[kx] = minx + maxx - r[kx];

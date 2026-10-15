@@ -35,7 +35,7 @@ import {
     l_selection_randline, selection_iterate,
 } from '../selvar.js';
 import {
-    SET_LIT_NOCHANGE, bigrm_get_level_extends, selection_match,
+    SET_LIT_NOCHANGE, bigrm_get_level_extends, level_flip_extents, selection_match,
     set_levltyp_lit, splev_map_at, splev_map_mark, splev_map_origin,
     splev_map_reset,
 } from '../sp_lev.js';
@@ -404,7 +404,7 @@ export function wiz_levregion_add(rtype, inarea, exclude, opts = {}) {
 // BOTH inarea and delarea are flipped, unconditionally (there is no in-area
 // guard here, unlike the object/monster passes).  No RNG.
 export function wiz_flip_lregions(flp) {
-    const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+    const { minx, maxx, miny, maxy } = level_flip_extents();
     const fx = (x) => (minx + maxx - x), fy = (y) => (miny + maxy - y);
     for (const r of game.lregions || []) {
         for (const [kx, ky, kx2, ky2] of [['lx', 'ly', 'hx', 'hy'],

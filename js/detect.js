@@ -207,7 +207,7 @@ export async function show_map_spot(x, y, cnf) {
         ch: lev.disp_ch, color: lev.disp_color, dec: lev.disp_decgfx,
         memColor: (oldrg && oldrg.ch === lev.disp_ch) ? oldrg.color : undefined,
         pile: oldrg?.pile, bwEngr: oldrg?.bwEngr,
-        female: oldrg?.female,
+        female: oldrg?.female, corpsenm: oldrg?.corpsenm, hallucotyp: oldrg?.hallucotyp,
     };
     lev.seenv = 0xff;
     if (lev.typ === SCORR) {
@@ -253,6 +253,7 @@ export async function show_map_spot(x, y, cnf) {
                     ch: oldcell.ch, color: oldcell.memColor ?? oldcell.color, decgfx: oldcell.dec,
                     pile: !!oldcell.pile, bwEngr: !!oldcell.bwEngr, female: !!oldcell.female,
                     objotyp: glyph_is_object(oldglyph) ? oldglyph.otyp : undefined,
+                    corpsenm: oldcell.corpsenm, hallucotyp: oldcell.hallucotyp,
                 };
             }
             show_glyph_cell(x, y, oldcell.ch, oldcell.color, oldcell.dec);
@@ -508,8 +509,11 @@ function d_DEADMONSTER(m) { return (m?.mhp ?? 1) < 1; }
 // js/do.js:628 for why js/invent.js's grid-indexing sobj_at() answers null),
 // and buried objects in `buriedobjlist`.
 function d_fmon() { return game.level?.monsters || []; }
+// C ref: place_object() prepends to fobj (`otmp->nobj = fobj; fobj = otmp`), so
+// C walks the floor chain newest-first.  The flat store appends; reverse it so
+// walks that let the LAST mapped object win (food_detect) match C.
 function d_fobj() {
-    return (game.level?.objects || []).filter((o) => o.where === OBJ_FLOOR);
+    return (game.level?.objects || []).filter((o) => o.where === OBJ_FLOOR).reverse();
 }
 function d_objs_at(x, y) {
     // place_object() appends to the flat store, while C prepends each object
@@ -613,7 +617,10 @@ function glyph_at(x, y, remembered = false) {
     const memObj = loc.remembered_glyph?.objotyp;
     if (memObj != null && sym !== ' ' && sym === loc.remembered_glyph.ch)
         return { kind: 'object', obj: null, otyp: memObj, x, y };
-    if (mon && sym !== ' ' && sym === (mon.data?.mlet ?? '\0'))
+    // A hallucinated monster glyph is drawn with a random species' letter, so
+    // the drawn-letter comparison fails; disp_monster records that the cell
+    // currently shows a monster glyph (display.js show_glyph_cell/newsym).
+    if (mon && sym !== ' ' && (loc.disp_monster || sym === (mon.data?.mlet ?? '\0')))
         return { kind: 'monster', mon, x, y };
     // C's trap-glyph test comes AFTER objects in _map_location's precedence but
     // BEFORE it here, because a mapped trapped chest/door glyph (stamped by
@@ -1445,6 +1452,7 @@ export async function trap_detect(sobj) {
 // C ref: detect.c:1090 furniture_detect() — the crystal-ball / #wizmap style
 // "points of interest" scan.  Always returns 0.
 export async function furniture_detect() {
+    const { canspotmon } = await import('./uhitm.js');
     let found = 0, revealed = 0;
 
     unconstrain_map();
@@ -1466,7 +1474,7 @@ export async function furniture_detect() {
                     mon.mappearance = 0;
                     newsym(x, y);
                 }
-                if (!mon || !canspotmon_lite(mon)) map_invisible(x, y);
+                if (!mon || !canspotmon(mon)) map_invisible(x, y);
             }
             const after = glyph_at(x, y);
             if (after.kind !== before.kind || after.sym !== before.sym
@@ -1516,6 +1524,7 @@ export function level_distance(where) {
 // C ref: detect.c:1448 do_vicinity_map(sobj) — clairvoyance.  `sobj` is a fake
 // spellbook when the hero cast the spell and Null for the timed/random episode.
 export async function do_vicinity_map(sobj) {
+    const { canspotmon } = await import('./uhitm.js');
     const u = game.u;
     const props = (u.uprops = u.uprops || {});
     let refresh = false, mdetected = false, odetected = false;
@@ -1590,7 +1599,7 @@ export async function do_vicinity_map(sobj) {
             const newglyph = glyph_at(zx, zy);
             if (glyph_is_monster(newglyph)) {
                 const mtmp = m_at(zx, zy);
-                if (!mtmp || !canspotmon_lite(mtmp)) map_invisible(zx, zy);
+                if (!mtmp || !canspotmon(mtmp)) map_invisible(zx, zy);
             }
         }
     see_monsters();
@@ -1964,13 +1973,6 @@ function boulder_sym() { return def_oc_syms[ROCK_CLASS]?.sym || '`'; }
 // C ref: sym.h:104 is_cmap_furniture(i) — the contiguous S_upstair..S_fountain
 // block (stairs, ladders, altar, grave, throne, sink, fountain).
 function is_cmap_furniture(i) { return i >= S_upstair && i <= S_fountain; }
-
-// C ref: display.h canspotmon(mon) — js/uhitm.js owns the real port; a static
-// import of it from here would close a cycle through cmd.js, so this is the
-// visibility half only.
-function canspotmon_lite(mon) {
-    return !!mon && !mon.mundetected && !mon.minvis && cansee(mon.mx, mon.my);
-}
 
 // C ref: svl.lastseentyp[x][y] — the terrain the hero last SAW at a spot,
 // kept as game.lastseentyp[x][y] (dungeon.js update_lastseentyp()).

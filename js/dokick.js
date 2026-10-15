@@ -9,6 +9,8 @@
 // ECMD_FAIL *before* getdir(), so the direction key becomes the next command.
 
 import { game, hooks } from './gstate.js';
+import { nh_delay_output_tick } from './nomux_capture.js';
+import { P_NONE, P_MARTIAL_ARTS } from './const.js';
 import { ok_to_quest } from './questok.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
 import { pline, newsym, feel_location, feel_newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl, tmp_at_flash } from './display.js';
@@ -815,6 +817,7 @@ async function maybe_mnexto(mtmp) {
 async function kickdmg(mon, clumsy) {
     let dmg = Math.trunc((ACURRSTR() + ACURR(A_DEX) + ACURR(A_CON)) / 15);
     let trapkilled = false;
+    let kick_skill = P_NONE;
 
     if (game.uarmf && game.uarmf.otyp === KICKING_BOOTS) dmg += 5;
     /* excessive wt affects dex, so it affects dmg */
@@ -848,7 +851,10 @@ async function kickdmg(mon, clumsy) {
     if (dmg > 0) {
         /* convert potential damage to actual damage */
         dmg = rnd(dmg);
-        if (martial()) dmg += rn2(Math.trunc(ACURR(A_DEX) / 2) + 1);
+        if (martial()) {
+            if (dmg > 1) kick_skill = P_MARTIAL_ARTS;
+            dmg += rn2(Math.trunc(ACURR(A_DEX) / 2) + 1);
+        }
         /* a good kick exercises your dex */
         exercise(A_DEX, true);
     }
@@ -879,7 +885,11 @@ async function kickdmg(mon, clumsy) {
 
     await passive(mon, game.uarmf, true, !DEADMONSTER(mon), AT_KICK);
     if (DEADMONSTER(mon) && !trapkilled) await killed(mon);
-    /* use_skill(kick_skill, 1): skill training draws no RNG */
+    /* may bring up a dialog, so put this after all messages */
+    if (kick_skill !== P_NONE) { /* exercise proficiency */
+        const { use_skill } = await import('./enhance.js');
+        await use_skill(kick_skill, 1);
+    }
 }
 
 // C ref: dokick.c:127 maybe_kick_monster(mon, x, y) — the kick can be halted by
@@ -1166,6 +1176,7 @@ async function bhit_kicked(ddx, ddy, range, obj) {
             newsym(bx, by);
         }
         await flash.step(bx, by);
+        nh_delay_output_tick(); /* zap.c:4089 */
         /* kicked objects fall in pools; physical objects fall onto sinks */
         if (is_pool_or_lava(bx, by)) break;
         if (IS_SINK(typ)) break;

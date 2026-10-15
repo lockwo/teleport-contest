@@ -923,22 +923,23 @@ export function disco_view() {
 }
 export function disco_commit(disco) {
     const bases = getBases();
-    for (const oclass of [...discoveryOrder.keys()]) {
+    discoveryOrder.clear();
+    for (let oclass = 0; oclass < MAXOCLASSES; oclass++) {
         const order = [];
         for (let d = bases[oclass];
              d < objects.length && disco[d] !== 0
                  && objects[d]?.oclass === oclass;
              d++)
             order.push(disco[d]);
-        discoveryOrder.set(oclass, order);
+        if (order.length) discoveryOrder.set(oclass, order);
     }
 }
 
 // C ref: o_init.c:375 savenames(nhfp) — bases[], disco[], every objclass
 // record, then the player-applied call-names.  js/storage.js is frozen and owns
 // the save format, so (as in js/timeout.js save_timers) the record list is
-// RETURNED rather than streamed; js/save.js:848 currently writes
-// `{ unported: 'savenames' }` there.
+// RETURNED rather than streamed (js/save.js savegamestate() stores it as
+// `names`, js/restore.js restgamestate() hands it to restnames()).
 export function savenames(nhfp) {
     let i;
     let len;
@@ -992,7 +993,7 @@ export function restnames(nhfp) {
         rest_objclass(objects[i], inp.objclass?.[i]);        /* Sfi_objclass */
     }
     for (i = 0; i < objects.length; i++) {
-        if (objects[i]?.oc_uname) {
+        if (inp.objclass?.[i]?.oc_uname) {   /* C: pointer just read from the objclass blob */
             objects[i].oc_uname = inp.uname?.[i]?.str ?? null;
         }
     }
@@ -1005,11 +1006,16 @@ export function restnames(nhfp) {
 // and are never written; C saves the whole struct only because it is one blob.
 function save_objclass(o) {
     if (!o) return null;
+    /* the price-quote memory starts at {minseen: Infinity, maxseen: 0}; JSON has
+       no Infinity, so "never quoted" is stored as null */
+    const fin = (v) => (Number.isFinite(v) ? v : null);
     return { oc_name_known: o.oc_name_known | 0, oc_encountered: o.oc_encountered | 0,
              oc_descr_idx: o.oc_descr_idx | 0, oc_name_idx: o.oc_name_idx | 0,
              oc_color: o.oc_color | 0, oc_tough: o.oc_tough | 0,
              oc_material: o.material | 0, oc_prob: o.oc_prob | 0,
-             oc_dir: o.dir | 0, oc_uname: o.oc_uname ? 1 : 0 };
+             oc_dir: o.dir | 0, oc_uname: o.oc_uname ? 1 : 0,
+             oc_buy_minseen: fin(o.oc_buy_minseen), oc_buy_maxseen: o.oc_buy_maxseen | 0,
+             oc_sell_minseen: fin(o.oc_sell_minseen), oc_sell_maxseen: o.oc_sell_maxseen | 0 };
 }
 function rest_objclass(o, rec) {
     if (!o || !rec) return;
@@ -1023,6 +1029,10 @@ function rest_objclass(o, rec) {
     o.oc_prob = rec.oc_prob;
     o.dir = rec.oc_dir;
     o.oc_uname = rec.oc_uname ? (o.oc_uname || '') : null;
+    o.oc_buy_minseen = rec.oc_buy_minseen ?? Infinity;
+    o.oc_buy_maxseen = rec.oc_buy_maxseen;
+    o.oc_sell_minseen = rec.oc_sell_minseen ?? Infinity;
+    o.oc_sell_maxseen = rec.oc_sell_maxseen;
 }
 
 // C ref: o_init.c:498 undiscover_object(oindx) — un-calling a type can leave it

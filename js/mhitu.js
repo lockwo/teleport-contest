@@ -50,9 +50,9 @@ import { is_home_elemental, monster_by_pmidx, name_to_pmidx } from './makemon.js
 import { DEADMONSTER, mvitals_died, m_detach, wake_nearto_core } from './mon.js';
 import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
-import { YOUMONST } from './mhitm_ad.js';
-import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u } from './potion.js';
-import { youmonst_data_pub as youmonst_data, worn_extrinsic } from './invent.js';
+import { YOUMONST, paralyze_monst } from './mhitm_ad.js';
+import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u, make_sick } from './potion.js';
+import { youmonst_data_pub as youmonst_data, worn_extrinsic, Slow_digestion } from './invent.js';
 import { has_innate } from './exper.js';
 import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu } from './mondata.js';
 import { Monnam, mon_nam, mhis, mhe } from './do_name.js';
@@ -164,7 +164,7 @@ export async function diseasemu(mdat) {
     const u = game.u || {};
     const sick = (u.uprops?.Sick | 0) || (u.Sick | 0);
     const xtime = sick ? Math.trunc(sick / 3) + 1 : rn1(acurr_eff(A_CON), 20);
-    await make_sick_u(xtime, mdat?.name, true, SICK_NONVOMITABLE);
+    await make_sick(xtime, mdat?.name, true, SICK_NONVOMITABLE);
     return true;
 }
 const SICK_NONVOMITABLE = 0x02;   // C ref: youprop.h
@@ -175,25 +175,6 @@ function Sick_resistance() {
               || u.uprops?.ESick_resistance || u.uprops?.Sick_res
               || ((u.uprops_extrinsic || {})[SICK_RES] | 0) !== 0);
 }
-// potion.c make_sick() is not exported by js/potion.js; the only RNG it owns is
-// the trailing exercise(A_CON, FALSE), which fires whenever Sick ends up set.
-async function make_sick_u(xtime, cause, talk, type) {
-    const u = game.u || {};
-    u.uprops = u.uprops || {};
-    const old = u.uprops.Sick | 0;
-    if (xtime > 0) {
-        if (Sick_resistance()) return;
-        if (!old) await You_feel('deathly sick.');
-        else if (talk)
-            await You_feel(`${xtime <= old / 2 ? 'much' : 'even'} worse.`);
-        u.uprops.Sick = xtime;
-        u.usick_type = (u.usick_type | 0) | type;
-        u.sick = true;
-        u.usick_cause = cause;
-    }
-    if (u.uprops.Sick) exercise(A_CON, false);
-}
-
 // ═══ mhitu.c:1047 u_slip_free ═══════════════════════════════════════════════
 // Greased / oilskin body armour makes a hug or wrap attack slide off.  DRAWS
 // rn2(3) when that piece is cursed and rn2(2) for the grease wearing off, so
@@ -803,7 +784,7 @@ export async function gulpmu(mtmp, mattk) {
     switch (mattk.adtyp) {
     case AD_DGST:
         physical_damage = true;
-        if (Slow_digestion_u()) {
+        if (Slow_digestion()) {
             /* Messages are handled below */
             u.uswldtim = 0;
             tmp = 0;
@@ -958,7 +939,7 @@ export async function gulpmu(mtmp, mattk) {
     } else if (!u.uswldtim || (ydat?.msize | 0) >= MZ_HUGE) {
         await emitU(`You get ${digests(mtmp.data) ? 'regurgitated'
             : enfolds(mtmp.data) ? 'released' : 'expelled'}!`);
-        if (Verbose() && digests(mtmp.data) && Slow_digestion_u())
+        if (Verbose() && digests(mtmp.data) && Slow_digestion())
             await emitU(`Obviously ${mon_nam(mtmp)} doesn't like your taste.`);
         await expels(mtmp, mtmp.data, false);
     }
@@ -1264,9 +1245,8 @@ export async function make_stunned_u(xtime, talk) {
         await emitU(`You feel ${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
     if (xtime && !old && talk) {
         const ptr = youmonst_data();
-        const verb = nolimbs(ptr) ? 'falter'
-            : (mflags1_of(ptr) & M1_SLITHY) ? 'slither' : 'stagger';
-        await emitU(u.usteed ? 'You wobble in the saddle.' : `You ${verb}...`);
+        const { stagger_verb } = await import('./uhitm.js');
+        await emitU(u.usteed ? 'You wobble in the saddle.' : `You ${stagger_verb(ptr)}...`);
     }
     u.uprops.Stun = xtime;
     u.Stunned = xtime > 0;
@@ -1616,18 +1596,11 @@ export async function doseduce(mon) {
     if (!await tele_restrict(mon)) await rloc(mon, RLOC_MSG);
     return 1;
 }
-// C ref: youprop.h Slow_digestion — a worn ring of slow digestion, or white
-// dragon scales/mail worn as the suit (otyp numbers as in allmain.js).
 function Stone_resistance_u() {
     const u = game.u || {};
     return !!(u.formprops?.Stone_resistance || u.uprops?.Stone_resistance
               || u.uprops?.HStone_resistance || u.uprops?.EStone_resistance
               || u.Stone_resistance);
-}
-function Slow_digestion_u() {
-    return game.uleft?.otyp === 193 || game.uright?.otyp === 193
-        || game.uarm?.otyp === 105 || game.uarm?.otyp === 115
-        || !!game.u?.uprops?.HSlow_digestion || !!game.u?.uprops?.ESlow_digestion;
 }
 // C ref: youprop.h Half_physical_damage.
 function Half_physical_damage_u() {
@@ -1801,13 +1774,13 @@ export async function passiveum(olduasmon, mtmp, mattk) {
                         await emitU('As a blind floating eye, you cannot defend yourself.');
                     } else {
                         await emitU(`${Monnam(mtmp)} is frozen by your gaze!`);
-                        paralyze_monst_u(mtmp, tmp);
+                        paralyze_monst(mtmp, tmp);
                         return M_ATTK_AGR_DONE;
                     }
                 }
             } else {
                 await emitU(`${Monnam(mtmp)} is frozen by you.`);
-                paralyze_monst_u(mtmp, tmp);
+                paralyze_monst(mtmp, tmp);
                 return M_ATTK_AGR_DONE;
             }
             return M_ATTK_HIT;
@@ -1866,10 +1839,6 @@ export async function passiveum(olduasmon, mtmp, mattk) {
 // attk_protection() is mhitm.c:1475 — imported from js/mhitm.js rather than
 // duplicated (a second copy here dropped AT_BREA from the "no contact at all"
 // arm, which would have stoned every breath-weapon attacker).
-function paralyze_monst_u(mon, amt) {
-    mon.mcanmove = 0;
-    mon.mfrozen = amt;
-}
 
 // ═══ mhitu.c:2616 cloneu ════════════════════════════════════════════════════
 // A poly'd hero split in two (AD_SITM/AD_DRIN callers in uhitm.c).  No RNG of

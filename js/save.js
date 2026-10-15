@@ -182,9 +182,22 @@ export async function dosave0() {
     undo_startup_luck();
     try {
         copy_other_levels_for_save();
+        /* C ref: savegamestate() -> o_init.c savenames().  The objects[] table
+           (discoveries, called names, price quotes, shuffled appearances) is
+           module state rather than part of `game`, so it travels as one record
+           on the blob and dorestore() hands it to restnames(). */
+        const { savenames } = await import('./o_init.js');
+        game.objnames = savenames({ mode: WRITING });
+        /* C ref: save.c savegamestate() Sfo_char(yyyymmddhhmmss(ubirthday)):
+           the birth time is stored as a local-time stamp, not a time_t. */
+        const { yyyymmddhhmmss } = await import('./calendar.js');
+        game.ubirthday_stamp = yyyymmddhhmmss(game.ubirthday);
         storage.setItem(key, serializeGameState(game));
     } catch {
         return 0;
+    } finally {
+        delete game.objnames;
+        delete game.ubirthday_stamp;
     }
     return 1;
 }

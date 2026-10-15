@@ -19,6 +19,7 @@
 
 import { makeplural } from './plural.js';
 import { game, hooks } from './gstate.js';
+import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
 import { shkname, in_rooms, shop_keeper } from './shkroom.js';
 
@@ -50,7 +51,7 @@ import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
          P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_BARE_HANDED_COMBAT, P_TWO_WEAPON_COMBAT,
          P_RIDING, ERODE_BURN, ERODE_RUST, ERODE_CORRODE, ER_NOTHING,
-         EF_NONE, EF_GREASE, In_endgame, TEMPLE, NON_PM } from './const.js';
+         EF_NONE, EF_GREASE, EF_VERBOSE, In_endgame, TEMPLE, NON_PM } from './const.js';
 import { Blind, does_block, unblock_point, is_lightblocker_mappear } from './vision.js';
 import { exercise, adjalign, acurr_eff } from './attrib.js';
 import { DEADMONSTER, Protection_from_shape_changers, mmove_of, base_mmove,
@@ -94,7 +95,7 @@ import { S_NYMPH } from './symbols.js';
 import { bare_artifactname, is_art, ART_STORMBRINGER } from './artifact.js';
 import { is_weptool, simple_typename, is_plural, otense,
          near_capacity, update_inventory, distant_far, distant_doname,
-         mergable, stackobj, Free_action } from './invent.js';
+         mergable, stackobj, Free_action, Slow_digestion } from './invent.js';
 import { livelog_printf, LL_CONDUCT, LL_KILLEDPET } from './livelog.js';
 import { engr_at, wipe_engr_at, u_wipe_engr, sengr_at, del_engr_at } from './engrave.js';
 import { find_mac as worn_find_mac, bypass_obj } from './worn.js';
@@ -1518,12 +1519,19 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
     else tmp = 0;
 
     // ── these affect you even if the monster just died (uhitm.c:5900) ──
+    const { erode_obj } = await import('./trap.js');
     const obj_attack = (aatyp === AT_WEAP || aatyp === AT_CLAW
                         || aatyp === AT_MAGC || aatyp === AT_TUCH);
     switch (slot.adtyp) {
     case AD_FIRE:
-        if (mhit && !mon.mcan && weapon && obj_attack)
-            await passive_obj(mon, weapon, slot);
+        if (mhit && !mon.mcan && weapon) {
+            if (aatyp === AT_KICK) {
+                if (game.uarmf && !rn2(6))
+                    await erode_obj(game.uarmf, null, ERODE_BURN, EF_GREASE | EF_VERBOSE);
+            } else if (obj_attack) {
+                await passive_obj(mon, weapon, slot);
+            }
+        }
         break;
     case AD_ACID:
         if (mhit && rn2(2)) {
@@ -1535,13 +1543,28 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
             if (!Acid_resistance()) await mdamageu(mon, tmp);
             if (!rn2(30)) await erode_armor(ERODE_CORRODE);
         }
-        if (mhit && weapon && obj_attack) await passive_obj(mon, weapon, slot);
+        if (mhit && weapon) {
+            if (aatyp === AT_KICK) {
+                if (game.uarmf && !rn2(6))
+                    await erode_obj(game.uarmf, null, ERODE_CORRODE, EF_GREASE | EF_VERBOSE);
+            } else if (obj_attack) {
+                await passive_obj(mon, weapon, slot);
+            }
+        }
         await exercise(A_STR, false);                // rolls rn2(2)
         break;
     case AD_RUST:
     case AD_CORR:
-        if (mhit && !mon.mcan && weapon && obj_attack)
-            await passive_obj(mon, weapon, slot);
+        if (mhit && !mon.mcan && weapon) {
+            if (aatyp === AT_KICK) {
+                if (game.uarmf)
+                    await erode_obj(game.uarmf, null,
+                                    slot.adtyp === AD_RUST ? ERODE_RUST : ERODE_CORRODE,
+                                    EF_GREASE | EF_VERBOSE);
+            } else if (obj_attack) {
+                await passive_obj(mon, weapon, slot);
+            }
+        }
         break;
     case AD_STON: {
         // C ref: uhitm.c:5934 — a successful bare(-enough)-handed hit on a
@@ -2000,7 +2023,15 @@ export async function killed(mon, opts) {
                 const { delobj } = await import('./invent.js');
                 delobj(otmp);
             } else {
-                place_object(otmp, x, y);
+                // C ref: mon.c:3612 — `!flooreffects(otmp, x, y, nomsg ? "" : "fall")`
+                // (a drop onto water/lava/a pit is handled there, drawing
+                // water_damage()'s Luck roll) before place_object+stackobj.
+                const { flooreffects } = await import('./do.js');
+                if (!(await flooreffects(otmp, x, y, nomsg ? '' : 'fall'))) {
+                    place_object(otmp, x, y);
+                    const { stackobj } = await import('./invent.js');
+                    stackobj(otmp);
+                }
             }
         }
         // C ref: mon.c:3199-3236 corpse_chance() — the AT_BOOM arm comes BEFORE
@@ -2996,7 +3027,6 @@ function Blind_telepat() { return (u_of().uprops?.Telepat || 0) > 0; }
 function See_invisible() { return !!game.u?.formprops?.See_invisible || !!u_of().see_invis; }
 function Invisible_uh() { return !!u_of().uinvis && !See_invisible(); }
 function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || (u_of().uprops?.StoneResistance || 0) > 0; }
-function Slow_digestion() { return (u_of().uprops?.SlowDigestion || 0) > 0; }
 import { Deaf_hero as Deaf_uh } from './display.js';
 function Upolyd() { return !!u_of().Upolyd; }
 import { Hate_silver } from './invent.js';
@@ -3338,7 +3368,7 @@ export async function hmon_hitmon_potion(hmd, mon, obj) {
     if ((obj.quan ?? 1) > 1) {
         obj = I.splitobj(obj, 1);
     } else {
-        I.setuwep_slot(null);           /* wield.c setuwep((struct obj *) 0) */
+        await (await import('./wield.js')).setuwep(null);           /* wield.c setuwep((struct obj *) 0) */
     }
     I.freeinv(obj);
     await potionhit(mon, obj,
@@ -3774,14 +3804,14 @@ export async function hmon_hitmon_jousting(hmd, mon, obj) {
 // the "%s %s from your powerful strike!" stagger message.  is_floater/is_flyer
 // (by size)/slithy/amorphous/immobile(mmove==0)/nolimbs each override the
 // literal "stagger" default; makeplural() below then agrees it with Monnam().
-export function stagger_verb(ptr) {
+export function stagger_verb(ptr, def = 'stagger') {
     if (is_floater(ptr)) return 'wobble';
     if (is_flyer(ptr)) return (ptr?.msize ?? 2) <= MZ_SMALL ? 'flutter' : 'stagger';
     if (slithy(ptr)) return 'falter';
     if (amorphous(ptr)) return 'tremble';
     if (species_mmove(ptr) === 0) return 'pulsate';
     if (nolimbs_uh(ptr)) return 'falter';
-    return 'stagger';
+    return def;
 }
 
 // C ref: uhitm.c:1570 hmon_hitmon_stagger(hmd, mon, obj) — a martial-arts punch
@@ -4338,7 +4368,8 @@ export async function start_engulf(mdef) {
     await update_topl(`You `
         + `${u_digest ? 'swallow' : u_enfold ? 'enclose' : 'engulf'} `
         + `${mon_nam(mdef)}${u_digest ? ' whole' : ''}!`);
-    /* nh_delay_output() twice */
+    nh_delay_output_tick();
+    nh_delay_output_tick(); /* nh_delay_output() twice */
 }
 
 // C ref: uhitm.c:4949 end_engulf() — tear down the swallow animation.  No RNG.

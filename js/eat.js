@@ -7,7 +7,7 @@ import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { monster_by_pmidx, mon_cwt, mon_cnutrit, name_to_pmidx } from './makemon.js';
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { pline, update_topl, y_n, note_topl, status_hold } from './display.js';
+import { pline, update_topl, y_n, note_topl, status_hold, Deaf_hero } from './display.js';
 import { poison_strdmg, exercise, acurr_eff, adjattrib } from './attrib.js';
 import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, STOMACH, ALTAR, NOSE, W_ARMOR, W_TOOL, W_AMUL, W_SADDLE, W_RING, G_GENOD, Has_contents,
          INTRINSIC, INVIS, DISPLACED, UNCHANGING, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, COST_BITE } from './const.js';
@@ -1719,7 +1719,7 @@ async function fpostfx(otmp) {
             && !(u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance'))) {
             if (game.urace?.adj === 'dwarven' && game.u?.uhallu)
                 await update_topl('"Heigh-ho, ho-hum, I think I\'ll skip work today."');
-            else if (game.u?.uprops?.HDeaf || !game.flags?.acoustics)
+            else if (Deaf_hero() || game.flags?.acoustics === false)
                 await update_topl('You fall asleep.');
             else
                 await update_topl('You hear sinister laughter as you fall asleep...');

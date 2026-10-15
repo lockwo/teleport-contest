@@ -22,7 +22,7 @@ import { BOULDER, GEM_CLASS, RANDOM_CLASS, mkgold, mkobj_at, mksobj_at } from '.
 import { occupied } from '../mkroom.js';
 import { rn1, rn2, rnd } from '../rng.js';
 import {
-    SET_LIT_NOCHANGE, bigrm_get_level_extends, is_ok_location, percent,
+    SET_LIT_NOCHANGE, bigrm_get_level_extends, level_flip_extents, is_ok_location, percent,
     selection_match, set_levltyp_lit, splev_map_at, splev_map_mark,
     splev_map_origin, splev_mkstairs_at, splev_find_montype, LOC_DRY,
 } from '../sp_lev.js';
@@ -405,7 +405,7 @@ async function geh_put_lregion_here(x, y, reg, oneshot) {
 // 21 -> 19 exactly this way.
 export function geh_flip_lregions(flp, regions) {
     if ((flp & 3) === 0) return;
-    const { minx, maxx, miny, maxy } = bigrm_get_level_extends();
+    const { minx, maxx, miny, maxy } = level_flip_extents();
     const FlipX = (x) => (minx + maxx - x);
     const FlipY = (y) => (miny + maxy - y);
     for (const r of regions) {

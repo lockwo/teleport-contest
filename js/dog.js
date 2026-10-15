@@ -483,6 +483,7 @@ function gm_chains() {
        restore.js, save.js, #stats and the sanity checks read directly */
     g.migrating_mons = (game.migrating_mons ||= []);
     g.mydogs = (game.mydogs ||= []);
+    g.migrating_objs = (game.migrating_objs ||= []);
     return g;
 }
 
@@ -1174,10 +1175,15 @@ export function keep_mon_accessible(mon) {
         return true;
     /* monsters with special attachment to a particular level only need to be
        kept accessible when on some other level */
-    if (mon.mextra
-        && ((mon.isshk && !on_level(uz, mon.eshk?.shoplevel))
-            || (mon.ispriest && !on_level(uz, mon.epri?.shrlevel))
-            || (mon.isgd && !on_level(uz, mon.egd?.gdlevel))))
+    /* This port keeps the ESHK/EPRI structs on mon.eshk/mon.epri (a record
+       with no recorded home level can't be placed off-level) and EGD on
+       mon.mextra.egd (vault.js newegd()). */
+    const eshk = mon.eshk ?? mon.mextra?.eshk;
+    const epri = mon.epri ?? mon.mextra?.epri;
+    const egd = mon.mextra?.egd;
+    if ((mon.isshk && eshk?.shoplevel && !on_level(uz, eshk.shoplevel))
+        || (mon.ispriest && epri?.shrlevel && !on_level(uz, epri.shrlevel))
+        || (mon.isgd && egd && !on_level(uz, egd.gdlevel)))
         return true;
     /* normal monsters go into the level save file */
     return false;
@@ -1399,7 +1405,6 @@ export async function discard_migrations() {
     }
 
     /* objects get similar treatment */
-    if (!g.migrating_objs) g.migrating_objs = [];
     for (let i = 0; i < g.migrating_objs.length; ) {
         const otmp = g.migrating_objs[i];
         dest.dnum = otmp.ox;

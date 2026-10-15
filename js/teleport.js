@@ -18,6 +18,7 @@ import { Blind, couldsee, vision_recalc } from './vision.js';
 import { update_monster_region } from './region.js';
 import { onscary, set_apparxy, noteleport_level, m_in_air, may_passwall } from './monmove.js';
 import { youmonst_data } from './invent.js';
+import { hero_liquid_goodpos } from './trap.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
 import { sensemon } from './mon.js';
 import { canseemon_shared as canseemon_tele } from './display.js';
@@ -130,7 +131,12 @@ export function goodpos(x, y, mtmp, gpflags) {
         if (mtmp2 && (mtmp2 !== mtmp || mtmp.wormno)) return false;
 
         mdat = mtmp.data;
-        if (is_pool(x, y) && !ignorewater) {
+        if (mtmp === youmonst_()) {
+            // C ref: teleport.c goodpos() — the hero's own water/eel/lava rules
+            // (Swimming/Amphibious, Levitation/Flying/Wwalking, ...).
+            const liquid = hero_liquid_goodpos(x, y, ignorewater, ignorelava);
+            if (liquid !== undefined) return liquid;
+        } else if (is_pool(x, y) && !ignorewater) {
             // Water: a swimmer may land here; anyone else needs to be airborne
             // and the square must not be a WATER wall (rm.h IS_WATERWALL).
             return is_swimmer_flag(mdat)
