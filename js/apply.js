@@ -1709,11 +1709,18 @@ export async function use_pole(obj, autohit) {
         // C ref: apply.c:3463 — getpos_sethilite(display_polearm_positions,
         // get_valid_polearm_position) then getpos(&cc, TRUE, "the spot to
         // hit").  Without this the targeting keystrokes fell through to the
-        // command parser and ran phantom turns.  The getpos_sethilite() part
-        // (which moves the FIRST frame's cursor onto the last hilited cell,
-        // the way hack.js jump_hilite_first_cursor() does for #jump) is still
-        // missing, so frame 1's cursor sits on the hero.
-        const { getpos } = await import('./hack.js');
+        // command parser and ran phantom turns.  getpos_sethilite() forces a
+        // redraw of every valid position (display_polearm_positions' box is
+        // -3..3), which leaves the FIRST frame's cursor one past the last
+        // redrawn cell, exactly as hack.js jump_hilite_first_cursor() models
+        // for #jump.
+        const { getpos, jump_hilite_first_cursor } = await import('./hack.js');
+        const TIP_GETPOS = 1 << 4;
+        if ((game.context?.tips || 0) & TIP_GETPOS) {
+            const hc = jump_hilite_first_cursor(
+                (x, y) => valid_polearm_position(x, y, min_range, max_range), 3, false);
+            if (hc && game.nhDisplay?.setCursor) game.nhDisplay.setCursor(hc[0], hc[1]);
+        }
         const picked = await getpos('the spot to hit', cc.x, cc.y,
                                     (x, y) => valid_polearm_position(
                                         x, y, min_range, max_range),

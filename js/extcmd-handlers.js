@@ -3648,7 +3648,7 @@ const HANDLERS = {
     glance: do_farlook,
     help: dohelp,
     history: hmenu_dohistory,
-    inventtype: dotypeinv,
+    inventtype: itemaction_time(dotypeinv),
     kick: dokick,
     known: dodiscovered,
     knownclass: doclassdisco,

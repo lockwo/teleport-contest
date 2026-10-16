@@ -35,8 +35,19 @@ function pm_good_location(x, y, pm) {
 // C ref: mon.c p_coaligned() — the priest's shrine alignment matches the
 // hero's.  No RNG.
 export function p_coaligned(priest) {
-    const ualign = game.u?.ualign?.type ?? A_NONE;
-    return (priest?.epri?.shralign ?? A_NONE) === ualign;
+    return (game.u?.ualign?.type ?? A_NONE) === mon_aligntyp(priest);
+}
+
+// C ref: priest.c mon_aligntyp(mon) — the shrine alignment of a priest, the
+// EMIN alignment of a minion (priest check first), else the species alignment
+// collapsed to lawful/neutral/chaotic (A_NONE stays distinct).
+export function mon_aligntyp(mon) {
+    const algn = mon.ispriest ? (mon.epri ?? mon.mextra?.epri)?.shralign
+               : mon.isminion ? (mon.emin ?? mon.mextra?.emin)?.min_align
+                              : mon.data?.maligntyp;
+    if (algn === A_NONE)
+        return A_NONE; /* negative but differs from chaotic */
+    return (algn > 0) ? 1 : (algn < 0) ? -1 : 0;
 }
 
 // C ref: worn.c which_armor(mon, W_ARMC) — the cloak slot.  m_initinv gives an

@@ -2021,6 +2021,7 @@ function get_valid_jump_position(x, y) {
 
 // C ref: getpos.c getpos() — the first targeting frame's terminal cursor.
 // jump() calls getpos_sethilite(display_jump_positions, get_valid_jump_position)
+// (use_pole() likewise with display_polearm_positions/get_valid_polearm_position)
 // before getpos().  getpos_sethilite -> selection_force_newsyms(sel) calls
 // newsym_force(x,y) on every valid jump position, marking those gbuf cells
 // gnew.  getpos()'s opening "curs(WIN_MAP, u.ux,u.uy); flush_screen(0)" then
@@ -2034,17 +2035,18 @@ function get_valid_jump_position(x, y) {
 // tracks the logical targeting position normally.
 // Returns the recorded terminal cursor [col,row] for that first frame, or null
 // when there are no valid jump positions (then the cursor stays on the hero).
-function jump_hilite_first_cursor() {
+function jump_hilite_first_cursor(validfn = get_valid_jump_position, radius = 4, skipHero = true) {
     const u = game.u;
     let gx = -1, gy = -1;
-    // display_jump_positions scans dx,dy in -4..4; the valid set is identical
-    // to the cells selection_force_newsyms marks gnew.  We want flush_screen's
-    // draw order (row-major: greatest y wins, then greatest x).
-    for (let y = u.uy - 4; y <= u.uy + 4; y++) {
-        for (let x = u.ux - 4; x <= u.ux + 4; x++) {
+    // display_jump_positions scans dx,dy in -4..4 (display_polearm_positions
+    // -3..3); the valid set is identical to the cells selection_force_newsyms
+    // marks gnew.  We want flush_screen's draw order (row-major: greatest y
+    // wins, then greatest x).
+    for (let y = u.uy - radius; y <= u.uy + radius; y++) {
+        for (let x = u.ux - radius; x <= u.ux + radius; x++) {
             if (!isok(x, y)) continue;
-            if (x === u.ux && y === u.uy) continue;
-            if (!get_valid_jump_position(x, y)) continue;
+            if (skipHero && x === u.ux && y === u.uy) continue;
+            if (!validfn(x, y)) continue;
             // row-major last: y is the dominant key (>=), x the tiebreak (>=)
             if (y > gy || (y === gy && x > gx)) { gx = x; gy = y; }
         }
@@ -2149,8 +2151,11 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         if (gloc === GLOC_OBJS)
             return objShown && (!!drem.pile || (drem.objotyp !== 475 /*BOULDER*/
                                                 && drem.objotyp !== 474 /*ROCK*/));
+        // glyph_is_monster(glyph_at()): only a monster actually DRAWN counts; a
+        // mimic or gold-carrier shown as the sensed object is not (disp_monster).
+        const dmon = !!dloc?.disp_monster && !!m_at(x, y);
         return (gloc === GLOC_MONS || gloc === GLOC_INTERESTING || gloc === GLOC_VALID)
-               && (!!m_at(x, y) || (gloc !== GLOC_MONS && objShown));
+               && (dmon || (gloc !== GLOC_MONS && objShown));
     }
     // C ref: getpos.c:444 — the '"'/travel filters restrict the scan before any
     // gloc-specific test runs.  #lookaround sets GFILTER_VIEW for its per-cell

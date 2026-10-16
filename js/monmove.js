@@ -127,7 +127,7 @@ import { level_difficulty } from './dungeon.js';
 // polyself.c mbodypart needs the mlet of a pet, whose .data lacks .mcls.
 const mon_mlet = (pmidx) => monster_by_pmidx(pmidx)?.mcls;
 import { flush_screen, newsym, map_invisible, unmap_object, show_glyph_cell, object_glyph, flash_obj_glyph, tmp_at_flash, tmp_at_flash_cell, pline, update_topl, see_with_infrared, bot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at, You_hear, Deaf_hero, swallowed, m_at } from './display.js';
-import { worm_cross, wormhitu, worm_move, worm_nomove } from './worm.js';
+import { worm_cross, wormhitu, worm_move, worm_nomove, count_wsegs } from './worm.js';
 import { mdig_tunnel, may_dig, in_town } from './dig.js';
 import { picking_lock } from './lock.js';
 import { hits_bars, breathwep_name } from './mthrowu.js';
@@ -1648,7 +1648,7 @@ function mm_displacement(magr, mdef) {
     // C: NODIAG(monsndx(pd)) — no displacing a grid bug diagonally.
     if (magr.mx !== mdef.mx && magr.my !== mdef.my && pd?.pmidx === PM_GRID_BUG)
         return 0;
-    if (mdef.mtrapped) return 0;
+    if (mdef.mtrapped || (mdef.wormno && count_wsegs(mdef))) return 0; /* no displacing trapped monsters or multi-location longworms */
     if (!is_rider(pa) && (pa?.msize ?? 0) < (pd?.msize ?? 0)) return 0;
     return ALLOW_MDISP;
 }
@@ -2486,7 +2486,6 @@ const FLAMING_NAMES = new Set(['fire vortex', 'flaming sphere', 'fire elemental'
 function flaming_mm(ptr) { return FLAMING_NAMES.has(permonst_of(ptr)?.name); }
 function acidic_mm(ptr) { return (_mf1_web(ptr) & M1_ACID_WEB) !== 0; }      // mondata.h:88
 function extra_nasty_mm(ptr) { return (_mf2_web(ptr) & M2_NASTY_WEB) !== 0; } // mondata.h:120
-function count_wsegs_mm() { return 0; }   // long worms carry no segment chain here
 
 // C ref: trap.c wearing_iron_shoes(mtmp).
 function mon_wearing_iron_shoes(mtmp) {
@@ -2905,7 +2904,7 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         // grounded(ptr) = !is_flyer && !is_floater && (!is_clinger || !has_ceiling)
         const grounded = !is_flyer(mptr) && !is_floater(mptr)
             && (!is_clinger(mptr) || !has_ceiling());
-        if (!grounded || (mtmp.wormno && count_wsegs_mm(mtmp) > 5)) {
+        if (!grounded || (mtmp.wormno && count_wsegs(mtmp) > 5)) {
             if (forcetrap && !Sokoban()) {
                 /* openfallingtrap; not inescapable here */
                 if (in_sight) {
@@ -3172,7 +3171,7 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             tear_web = true;
         } else if (mcls === S_GIANT
                    || (mcls === S_DRAGON && extra_nasty_mm(mptr))
-                   || (mtmp.wormno && count_wsegs_mm(mtmp) > 5)) {
+                   || (mtmp.wormno && count_wsegs(mtmp) > 5)) {
             tear_web = true;
         } else if (in_sight) {
             await pline_mon(mtmp, `${Monnam(mtmp)} is caught in ${a_your} spider web.`);
@@ -3736,30 +3735,8 @@ export async function m_move(mtmp) {
             await rloc(mtmp, RLOC_MSG);
         else
             await (await import('./do.js')).mnexto_rloc(mtmp, RLOC_MSG);
-        // C: `return postmov(..., MMOVE_MOVED, ...)` — the tail that fires the
-        // destination square's trap and picks its objects up.
-        newsym(omx, omy);
-        const trapret = await mon_mintrap(mtmp);
-        if (trapret === Trap_Killed_Mon || trapret === Trap_Moved_Mon) {
-            if (mtmp.mx) newsym(mtmp.mx, mtmp.my);
-            return MMOVE_DIED;
-        }
-        ptr = mtmp.data; /* C monmove.c:1514: in case mintrap() caused polymorph */
-        if (OBJ_AT(mtmp.mx, mtmp.my) && mtmp.mcanmove) {
-            if (metallivorous(ptr)) {
-                if (await meatmetal(mtmp) === 2) return MMOVE_DIED;
-            }
-            if (is_gelatinous_cube(ptr)) await meatobj(mtmp);
-            // C ref: monmove.c postmov():1675 — the THIRD eater arm: a purple
-            // worm / ghoul / piranha devours a corpse underfoot.
-            if (corpse_eater(ptr)) {
-                const etmp = await meatcorpse(mtmp);
-                if (etmp >= 2) return etmp;
-            }
-        }
-        await mpickstuff(mtmp);
-        await maybe_spin_web(mtmp);
-        return MMOVE_MOVED;
+        return await postmov(mtmp, ptr, omx, omy, MMOVE_MOVED,
+                             seenflgs0, can_tunnel, can_unlock, can_open);
     }
 
     // C ref: monmove.c:1851 (label not_special) — while the hero is swallowed
@@ -8348,7 +8325,9 @@ async function hitmu(mtmp, mdat, mattk) {
     }
 
     if (mhm.damage > 0) {
-        // Half_physical_damage / Mitre-of-Holiness not modelled (off here).
+        /* [Half_physical_damage isn't applied to mhm.permdmg] */
+        if (mv_Half_physical_damage())
+            mhm.damage = Math.trunc((mhm.damage + 1) / 2);
         if (mhm.permdmg) { /* Death's life force drain */
             // C ref: mhitu.c:1222-1252 — apply some of the damage to permanent
             // hit points; never reduces hpmax below 1 hit point per level.
@@ -9365,7 +9344,7 @@ export async function gelcube_digests(mtmp) {
     if (!otmp) return -1;
 
     const { eaten_stat } = await import('./mkobj.js');
-    mtmp.meating = eaten_stat(mtmp.meating, otmp);
+    mtmp.meating = eaten_stat(mtmp.meating | 0, otmp);
     /* worn.c extract_from_minvent(mtmp, otmp, TRUE, TRUE) */
     const unwornmask = otmp.owornmask | 0;
     chain.splice(chain.indexOf(otmp), 1);
@@ -9478,10 +9457,20 @@ function mv_telepathic(ptr) {
 // C ref: youprop.h Blind_telepat (u.uprops[TELEPAT]) and Half_spell_damage
 // (u.uprops[HALF_SPDAM]), and U_AP_TYPE == gy.youmonst.m_ap_type.
 function mv_Blind_telepat() {
-    return !!(game.u?.uprops?.Telepat || game.u?.uprops?.TELEPAT);
+    return !!(game.u?.uprops?.Telepat || game.u?.uprops?.TELEPAT
+              || worn_extrinsic_mm(30 /* TELEPAT */));
 }
 function mv_Half_spell_damage() {
-    return !!(game.u?.uprops?.Half_spell_damage || game.u?.uprops?.HALF_SPDAM);
+    return !!(game.u?.uprops?.Half_spell_damage || game.u?.uprops?.HALF_SPDAM
+              || (game.u?.uprops?.HHalf_spell_damage | 0) > 0
+              || worn_extrinsic_mm(55 /* HALF_SPDAM */));
+}
+// C ref: youprop.h Half_physical_damage (HHalf_physical_damage ||
+// EHalf_physical_damage).
+function mv_Half_physical_damage() {
+    return !!(game.u?.uprops?.Half_physical_damage || game.u?.uprops?.HALF_PHDAM
+              || (game.u?.uprops?.HHalf_physical_damage | 0) > 0
+              || worn_extrinsic_mm(56 /* HALF_PHDAM */));
 }
 function mv_U_AP_TYPE() { return game.youmonst?.m_ap_type | 0; }
 

@@ -1202,8 +1202,10 @@ export async function keepdogs(pets_only) {
     const { pline } = await import('./display.js');
     const g = gm_chains();
 
-    /* fmon walk; mtmp2 is captured first because mtmp leaves the chain */
-    const chain = fmon_list().slice();
+    /* fmon walk (newest first: the level array is oldest-first, its tail is
+       C's fmon head); relmon() prepends to mydogs, so the walk order decides
+       which pet losedogs() places first */
+    const chain = fmon_list().slice().reverse();
     for (const mtmp of chain) {
         if (DEADMONSTER(mtmp))
             continue;

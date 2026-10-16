@@ -613,6 +613,7 @@ export async function doenhance() {
         const { renderMenuLines } = await import('./invent.js');
         renderMenuLines(allLines, null); // cursor: parked past "(end) "
         game._modal_screen = 'skillwin';
+        game.bot_disabled = true;
         return ECMD_OK;
     }
 
@@ -624,6 +625,11 @@ export async function doenhance() {
     game._skill_pages = pages;
     game._skill_page = 0;
     renderSkillPage();
+    // C ref: windows.c select_menu() runs the blocking PICK_NONE menu under
+    // gb.bot_disabled, so a pending disp.botl/botlx (the extended-command menu's
+    // docrt()) is not flushed over the open window; skill_window_advance()
+    // lifts it at dismissal.
+    game.bot_disabled = true;
     return ECMD_OK;
 }
 
@@ -671,5 +677,6 @@ export async function skill_window_advance(key) {
     delete game._skill_page;
     delete game._skill_counting;
     await dismiss_invent_screen();
+    game.bot_disabled = false;
     return true;
 }

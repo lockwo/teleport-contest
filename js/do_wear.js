@@ -23,7 +23,7 @@ import {
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuswapwep, setuqwep,
     Ring_off, Ring_on, Amulet_off, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
-    otense, makeknown_credit, cmdq_pop, worn_extrinsic, corpse_xname,
+    otense, Yname2, makeknown_credit, cmdq_pop, worn_extrinsic, corpse_xname,
 } from './invent.js';
 import { setuwep as setuwep_c } from './wield.js';
 import { makeplural } from './plural.js';
@@ -863,18 +863,41 @@ export async function Armor_on() {
         update_inventory();
     }
     await dragon_armor_handling(uarm, true, true);
-    /* artifact_light()/begin_burn(): gold DSM's light source is not modelled. */
+    /* gold DSM requires extra handling since it emits light when worn;
+       do that after the special armor handling */
+    const { artifact_light, arti_light_description } = await import('./light.js');
+    if (artifact_light(uarm) && !uarm.lamplit) {
+        const { begin_burn } = await import('./timeout.js');
+        await begin_burn(uarm, false);
+        if (!Blind())
+            await pline(`${Yname2(uarm)} ${otense(uarm, 'begin')} to shine ${arti_light_description(uarm)}!`);
+    }
     return 0;
+}
+
+// C ref: do_wear.c Armor_off()/Armor_gone() — gold dragon scales/mail stop being
+// a light source once no longer worn, before any (possibly fatal) dragon armor
+// change.
+async function gold_armor_light_off(otmp, was_arti_light) {
+    const { artifact_light } = await import('./light.js');
+    if (was_arti_light && !artifact_light(otmp)) {
+        const { end_burn } = await import('./timeout.js');
+        await end_burn(otmp, false);
+        if (!Blind()) await pline(`${Tobjnam(otmp, 'stop')} shining.`);
+    }
 }
 
 // C ref: do_wear.c:909 Armor_off()
 export async function Armor_off() {
     const otmp = game.uarm;
     if (!otmp) return 0;
+    const { artifact_light } = await import('./light.js');
+    const was_arti_light = !!otmp.lamplit && artifact_light(otmp);
     takeoff_mask_clear(WA_ARM);
     worn_slot_clear(WA_ARM);
     otmp.owornmask = (otmp.owornmask | 0) & ~WA_ARM;
     if (game.context?.takeoff) game.context.takeoff.cancelled_don = false;
+    await gold_armor_light_off(otmp, was_arti_light);
     await dragon_armor_handling(otmp, false, true);
     update_inventory();
     return 0;
@@ -885,10 +908,13 @@ export async function Armor_off() {
 export async function Armor_gone() {
     const otmp = game.uarm;
     if (!otmp) return 0;
+    const { artifact_light } = await import('./light.js');
+    const was_arti_light = !!otmp.lamplit && artifact_light(otmp);
     takeoff_mask_clear(WA_ARM);
     worn_slot_clear(WA_ARM);
     otmp.owornmask = (otmp.owornmask | 0) & ~WA_ARM;
     if (game.context?.takeoff) game.context.takeoff.cancelled_don = false;
+    await gold_armor_light_off(otmp, was_arti_light);
     await dragon_armor_handling(otmp, false, false);
     update_inventory();
     return 0;
@@ -1448,9 +1474,10 @@ export async function stop_donning(stolenobj) {
     cancel_don();
     game.afternmv = null;
     let buf = '';
-    if (putting_on || otmp !== stolenobj)
-        buf = `You stop ${putting_on ? 'putting on' : 'taking off'} ${the_simple(otmp)}.`;
-    else
+    if (putting_on || otmp !== stolenobj) {
+        const { thesimpleoname } = await import('./objnam.js');
+        buf = `You stop ${putting_on ? 'putting on' : 'taking off'} ${thesimpleoname(otmp)}.`;
+    } else
         result = -(game.multi | 0);   /* read before unmul() clears it */
     game.multi = 0;
     game.nomovemsg = null;
@@ -1463,7 +1490,6 @@ export async function stop_donning(stolenobj) {
     }
     return result;
 }
-function the_simple(obj) { return `your ${armor_simple_name(obj)}`; }
 
 // C ref: do_wear.c:3144 wornarm_destroyed(wornarm) — take the piece off (so its
 // side effects unwind) and then use it up.
@@ -1513,7 +1539,9 @@ export async function disintegrate_arm(atmp) {
     } else if (!rc.resisted
                && (otmp = await maybe_destroy_armor(game.uarm, atmp, rs)) != null) {
         const suit = suit_simple_name(otmp);
-        if (otmp.lamplit) otmp.lamplit = 0; // light.c end_burn(otmp, FALSE)
+        /* gold DSM: don't let Armor_gone() report it stops shining after
+           we've been told it is destroyed */
+        if (otmp.lamplit) await (await import('./timeout.js')).end_burn(otmp, false);
         await urgent_topl(`Your ${suit} ${vtense_dw(suit, 'turn')} to dust and `
             + `${vtense_dw(suit, 'fall')} to the ${await surface_dw()}!`);
     } else if (!rc.resisted && !rs.resisted

@@ -4886,13 +4886,18 @@ export async function Amulet_off(amul = game.uamul) {
             game.u.uprops.Sleepy = (game.u.uprops.Sleepy | 0) & ~TIMEOUT;
         break;
     case AMULET_OF_FLYING: {
-        const was_flying = !!game.u?.uprops?.Flying;
+        const { Flying_fu, spoteffects } = await import('./trap.js');
+        const { is_pool_or_lava } = await import('./dbridge.js');
+        const u = game.u;
+        const was_flying = Flying_fu();
         clearworn_accessory(amul); await off_msg(amul); early_off_msg = true;
-        if (was_flying && game.u?.uprops) {
-            game.u.uprops.Flying = false;
+        // C float_vs_flight() "probably not needed here".
+        if (was_flying && !Flying_fu()) {
             game.botl = true;
-            await pline('You land.');
+            await pline(`You ${(is_pool_or_lava(u.ux, u.uy) || Is_waterlevel(u.uz)
+                                 || Is_airlevel(u.uz)) ? 'stop flying' : 'land'}.`);
             mkn = true;
+            await spoteffects(true);
         }
         break;
     }
@@ -11327,15 +11332,23 @@ export async function dispinv_with_action(lets = null, use_inuse_ordering = fals
 // dispinv_with_action, minus the itemactions() follow-up: any dismiss key
 // (space on the last page / return / ESC) or a valid invlet selection just
 // closes the menu with no further effect.
-export async function display_inventory_interactive(lets = null) {
+export async function display_inventory_interactive(lets = null, force_invmenu = true) {
     const rows = inventoryRows(lets);
     if (!rows.length) {
         await renderMessageOnMap(note_topl('Not carrying anything.'));  // pline(): lands in the ^P history
         return;
     }
+    /* C ref: invent.c display_pickinv():3345-3363 — with force_invmenu and a
+       reply wanted (every caller of this function passes want_reply TRUE) the
+       menu ends with a "Special" heading and a '*' (list everything) or '?'
+       (list likely candidates) selector.  end.c disclose() clears
+       iflags.force_invmenu around its own call, hence the parameter. */
+    const special = force_invmenu ? force_invmenu_special(lets) : null;
+    if (special) rows.push(['Special', `${special.ch} - ${special.text}`]);
     const byLet = new Map();
     for (const obj of inventoryArray())
         if (!lets || String(lets).includes(obj.invlet)) byLet.set(obj.invlet, obj);
+    if (special) byLet.set(special.ch, { invlet: special.ch, special: true });
     game._invmenu_esc = false;
     const picked = await select_inventory_menu(rows, byLet);
     if (picked) {
@@ -11441,10 +11454,13 @@ export async function whatis_pick_inventory() {
         await renderMessageOnMap(note_topl('Not carrying anything.'));  // pline(): lands in the ^P history
         return null;
     }
+    const special = force_invmenu_special(null);
+    if (special) rows.push(['Special', `${special.ch} - ${special.text}`]);
     const byLet = new Map();
     for (const obj of inventoryArray()) byLet.set(obj.invlet, obj);
+    if (special) byLet.set(special.ch, { invlet: special.ch, special: true });
     const picked = await select_inventory_menu(rows, byLet);
-    return picked ? cxname_singular(picked) : null;
+    return picked && !picked.special ? cxname_singular(picked) : null;
 }
 
 export function find_unpaid(list, last_found) {
@@ -11887,13 +11903,18 @@ export async function dotypeinv() {
     const picks = await query_objlist_menu(null, invent,
         ((flags().invlet_constant !== false ? USE_INVLET : 0)
          | INVORDER_SORT | INCLUDE_VENOM), PICK_ONE, this_type_only);
+    let res = ECMD_OK;
     if (picks.length) {
         await dismiss_invent_screen();
-        await itemactions(picks[0].obj);
+        /* C: itemactions() itself returns ECMD_OK and queues the chosen command
+           on CQ_CANNED, which then runs as its own timed command.  The port runs
+           that command inline, so its ECMD_TIME result is the turn flag. */
+        res = await itemactions(picks[0].obj);
     } else {
         await dismiss_invent_screen();
     }
-    return doI_done();
+    doI_done();
+    return res;
 }
 
 // C ref: stairs.c stairs_description() — describe a staircase/ladder.  Only the
@@ -12492,9 +12513,15 @@ export async function doprwep() {
 }
 
 export function noarmor(report_uskin) {
-    game._pending_message = note_topl(report_uskin && game.uskin
-        ? `You are not wearing armor but have ${simpleonames(game.uskin)} embedded in your skin.`
-        : 'You are not wearing any armor.');
+    let msg = 'You are not wearing any armor.';
+    if (report_uskin && game.uskin) {
+        /* shorten "set of <color> dragon scales" to "<color> scales"
+           and "<color> dragon scale mail" to "<color> scale mail" */
+        const uskinname = simpleonames(game.uskin)
+            .replace(/^set of /i, '').replace(' dragon ', ' ');
+        msg = `You are not wearing armor but have ${uskinname} embedded in your skin.`;
+    }
+    game._pending_message = note_topl(msg);
 }
 
 // C ref: invent.c doprarm() — the '[' command (#seearmor).  No armor ->
