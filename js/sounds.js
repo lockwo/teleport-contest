@@ -6,6 +6,7 @@
 // matching the C order exactly; the first probe that "fires" returns.
 
 import { game } from './gstate.js';
+import { p_coaligned } from './priest.js';
 import { roomAt } from './roomat.js';
 import { rn2 } from './rng.js';
 import { phase_of_the_moon, night, FULL_MOON } from './calendar.js';
@@ -1160,11 +1161,11 @@ export function maybe_gasp(mon) {
 
     /* other roles' guardians and cross-aligned priests don't gasp */
     if ((msound === MS_GUARDIAN && mptr?.pmidx !== game.urole?.guardnum)
-        || (msound === MS_PRIEST && !p_coaligned_snd(mon)))
+        || (msound === MS_PRIEST && !p_coaligned(mon)))
         msound = MS_SILENT;
     /* co-aligned angels do gasp */
     else if (msound === MS_CUSS && !!mon?.emin
-             && (p_coaligned_snd(mon) ? !mon.emin.renegade : !!mon.emin.renegade))
+             && (p_coaligned(mon) ? !mon.emin.renegade : !!mon.emin.renegade))
         msound = MS_HUMANOID;
 
     /* Only called for humanoids so animal noise handling is ignored. */
@@ -1221,13 +1222,6 @@ function youmonst_data_snd() {
     const u = game.u;
     if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
     return monster_by_pmidx(331 + (u?.umonnum ?? 0)) || u?.data || null;
-}
-
-// C ref: priest.c p_coaligned(priest) — EPRI(priest)->shralign matches
-// u.ualign.type.  Duplicated here (not imported) so maybe_gasp() can stay
-// synchronous the way C's is.
-function p_coaligned_snd(priest) {
-    return (priest?.epri?.shralign ?? A_NONE) === (game.u?.ualign?.type ?? 0);
 }
 
 // C ref: sounds.c:616 cry_sound(mtmp) — for egg hatching (timeout.c:1121);

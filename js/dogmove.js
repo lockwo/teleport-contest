@@ -1975,7 +1975,7 @@ export async function dog_eat(mtmp, edog, obj, x, y, devour = false) {
 // ("the precise value isn't observable"), which is off by 16x on a food ration
 // and 40x on an 8 hp newt corpse — the two thresholds above are absolute, not
 // relative, so the approximation moved them by hundreds of turns.
-function dog_nutrition(mtmp, obj) {
+export function dog_nutrition(mtmp, obj) {
     // C ref: dog_nutrition sets mtmp->meating (the digesting-occupation counter)
     // AND returns nutrit (the hungrytime bump).  meating gates the pet's movement
     // for the next few m_move() calls (monmove.c:1745), so it MUST be exact:

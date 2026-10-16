@@ -23,7 +23,7 @@ import { P_NONE, P_BARE_HANDED_COMBAT, P_AXE, P_SPEAR, P_PICK_AXE,
          P_LAST_WEAPON, P_LAST_SPELL, P_NUM_SKILLS,
          P_TWO_WEAPON_COMBAT, P_RIDING, A_STR, A_DEX,
          W_ARM, W_ARMC, W_ARMU, W_ARMG, W_RINGL, W_RINGR,
-         POOL, MOAT, WATER, OBJ_INVENT, TIP_ENHANCE } from './const.js';
+         POOL, MOAT, WATER, OBJ_INVENT, OBJ_MINVENT, TIP_ENHANCE } from './const.js';
 import { name_to_pmidx, monster_by_pmidx, adj_lev } from './makemon.js';
 import { mon_hates_silver, is_vampshifter } from './mon.js';
 import { which_armor } from './worn.js';
@@ -689,8 +689,21 @@ export async function dry_a_towel(obj, amt, verbose) {
     const newspe = (amt < 0) ? (obj.spe | 0) + amt : amt;
     if (newspe < (obj.spe | 0) && verbose) {
         const { pline } = await import('./display.js');
-        await pline(`Your ${objects[obj.otyp]?.name || 'towel'} dries${
-            !newspe ? ' out' : ''}.`);
+        const mon = obj.ocarry;
+        if (obj.where === OBJ_MINVENT && mon) {
+            // C: mcarried(obj) && canseemon(obj->ocarry)
+            const { canseemon_shared: canseemon } = await import('./display.js');
+            if (canseemon(mon)) {
+                const { Monnam } = await import('./uhitm.js');
+                const { s_suffix } = await import('./hacklib.js');
+                const { xname } = await import('./objnam.js');
+                await pline(`${s_suffix(Monnam(mon))} ${xname(obj)} dries${
+                    !newspe ? ' out' : ''}.`);
+            }
+        } else {
+            await pline(`Your ${objects[obj.otyp]?.name || 'towel'} dries${
+                !newspe ? ' out' : ''}.`);
+        }
     }
     if (newspe !== (obj.spe | 0)) await finish_towel_change(obj, newspe);
 }

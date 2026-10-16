@@ -3913,6 +3913,26 @@ export async function zhitm(mon, type, nd) {
 // reports empty for a monster victim.
 export async function burnarmor(victim) {
     if (!victim) return false;
+    // C ref: trap.c:96-108 — burning damage may dry a wet towel.  The scan
+    // starts at the first towel but walks the rest of the inventory chain;
+    // dry_a_towel(item, rn2(spe + 1)) draws even when the roll leaves the
+    // towel's wetness unchanged, and the scan then continues.
+    {
+        const { is_wet_towel, dry_a_towel } = await import('./weapon.js');
+        const hitting_u = (victim === game.u);
+        const chain = hitting_u ? (await import('./invent.js')).inventoryArray()
+                                : (Array.isArray(victim.minvent) ? victim.minvent : []);
+        const first = chain.findIndex((o) => o.otyp === 234 /* TOWEL */);
+        if (first >= 0) {
+            for (const item of chain.slice(first)) {
+                if (is_wet_towel(item)) {
+                    const oldspe = item.spe;
+                    await dry_a_towel(item, rn2(oldspe + 1), true);
+                    if (item.spe !== oldspe) break; /* stop once one towel has been affected */
+                }
+            }
+        }
+    }
     // C: `if (!burn_dmg(item, descr)) continue;` — the loop re-rolls whenever
     // erode_obj returns ER_NOTHING, which is NOT the same as "the slot is
     // empty": a NON-FLAMMABLE worn item (an iron helmet, iron boots) also

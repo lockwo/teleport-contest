@@ -9,6 +9,7 @@
 // adtyp_to_expltype().
 
 import { resists_fire, resists_cold, resists_elec, resists_acid, resists_disint, resists_poison } from './mondata.js';
+import { resists_magm } from './zap.js';
 import { game } from './gstate.js';
 import { d, rn2, rnd, rn1 } from './rng.js';
 import {
@@ -93,15 +94,6 @@ function Upolyd() { return !!(game.u?.mtimedone) || !!game.u?.Upolyd; }
 // C ref: youprop.h Maybe_Half_Phys(dmg).
 function Maybe_Half_Phys(dmg) {
     return uprop('Half_physical_damage', 'HHalf_physical_damage') ? Math.trunc((dmg + 1) / 2) : dmg;
-}
-
-// C ref: mondata.h resists_magm(mon) — MR_MAGIC via mon_mr() percentage 100,
-// or a MAGIC-resistant species flag.  mons[].mr is the percentage column.
-function resists_magm(mon) {
-    const p = mdata(mon);
-    if (!p) return false;
-    if ((p.mr | 0) >= 100) return true;
-    return false;
 }
 
 // ── flag helpers ───────────────────────────────────────────────────────────

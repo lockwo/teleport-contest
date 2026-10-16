@@ -444,7 +444,8 @@ async function that_is_a_mimic_message(mtmp) {
 
     let fmtbuf;
     if (mtmp.m_ap_type === 'furniture') {
-        const furn = FURNITURE_EXPLANATION[mtmp.mappearance] || 'thing';
+        const { defsyms } = await import('./symbols.js');
+        const furn = defsyms[mtmp.mappearance]?.explanation || FURNITURE_EXPLANATION[mtmp.mappearance] || 'thing';
         fmtbuf = `That ${furn} actually is %s!`;
     } else if (mtmp.m_ap_type === 'obj') {
         const otyp = mtmp.mappearance;

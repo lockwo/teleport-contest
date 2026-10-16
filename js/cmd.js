@@ -839,6 +839,24 @@ export function test_move_quiet(x, y, dx = game.u.dx, dy = game.u.dy) {
     // message, return FALSE).
     if (x !== u.ux && y !== u.uy && bad_rock_hero(u.ux, y) && bad_rock_hero(x, u.uy)
         && cant_squeeze_thru_hero()) return false;
+    // C ref: hack.c:1180-1199 — "Pick travel path that does not require
+    // crossing a trap.  Avoid water and lava using the usual running rules."
+    // This sits in test_move() for every mode but DO_MOVE, so TEST_MOVE refuses
+    // a known trap (or known liquid) while travel's run == 8 is in force.
+    // findtravelpath()'s TRAVP_GUESS "no guesses, just go in the general
+    // direction" probe relies on it: a refused step takes `goto found`
+    // (u.dx = u.dy = 0), so domove() spends a turn standing still instead of
+    // bumping into avoid_running_into_trap_or_liquid()'s free no-op.
+    if ((game.context?.run || 0) === 8 && !(x === u.ux && y === u.uy)) {
+        const t = t_at(x, y);
+        if (t && t.tseen && t.ttyp !== VIBRATING_SQUARE_CMD) return false;
+        const loc = game.level?.at(x, y);
+        const typ = loc ? loc.typ : STONE;
+        if ((loc?.seenv || 0) && (isPoolTerrain(x, y) || IS_LAVA(typ))
+            && (IS_WATERWALL(typ) || typ === LAVAWALL
+                || !(Levitation_fu() || Flying_fu())))
+            return false;
+    }
     // C ref: hack.c:1216 boulder arm.  run >= 2 (rush 'g', run 'G', travel's
     // run == 8) refuses to push: the runner stops in front of the boulder.
     // findtravelpath()'s TRAVP_GUESS "just go in the general direction" probe
@@ -1792,9 +1810,11 @@ export async function rhack(key) {
     } else if (ch === 'I') {
         // C ref: cmd.c { 'I', "inventtype", dotypeinv, IFBURIED | GENERALCMD |
         // CMD_M_PREFIX } (invent.c) — the "What type of object do you want an
-        // inventory of?" class menu, then itemactions() on the pick.  ECMD_OK.
-        await dotypeinv();
-        game.context.move = 0;
+        // inventory of?" class menu, then itemactions() on the pick.  ECMD_OK, but
+        // the item action chosen is queued by itemactions() and runs as its own
+        // timed command; here it runs inline and its result (ECMD_TIME) sets the
+        // turn flag (same as the 'i' / '*' commands above).
+        game.context.move = (await dotypeinv()) === I_ECMD_TIME ? 1 : 0;
     } else if (key === 15) {   /* ^O */
         // C ref: cmd.c { C('o'), "overview", dooverview, IFBURIED |
         // GENERALCMD } (dungeon.c) — the dungeon-overview menu.  Another

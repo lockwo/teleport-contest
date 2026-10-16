@@ -952,7 +952,7 @@ async function disclose(how, taken = false) {
             // The menu overlays the existing map and quit/death topline.
             game._disclose_inventory_auto = !should_query_disclose_option(end_disclose, 'i').ask;
             try {
-                await invmod.display_inventory_interactive(null);
+                await invmod.display_inventory_interactive(null, false);
             } finally {
                 delete game._disclose_inventory_auto;
             }

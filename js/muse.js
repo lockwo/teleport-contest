@@ -31,7 +31,7 @@ import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
     M1_UNSOLID, M1_NOEYES, M1_NOLIMBS,
     M2_JEWELS, M2_UNDEAD, M2_MERC, M2_WERE, throws_rocks_flag } from './monflags_data.js';
 import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
-    AD_FIRE, AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
+    AD_FIRE, AD_COLD, AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
 import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
     objects as OBJECTS, place_object, weight, add_to_container } from './mkobj.js';
 import { monster_by_pmidx, makemon, makemon_appears_msg, little_to_big, name_to_pmidx, pmname_of_pmidx, rndmonst, mpickobj } from './makemon.js';
@@ -57,10 +57,10 @@ import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_ca
 import { update_topl, urgent_topl, shieldeff, newsym, map_invisible, cls, docrt, show_monster_and_self, see_with_infrared, stairway_at, You_hear, Hallucination_u, Hallucination_u as Hallucination, m_at } from './display.js';
 import { Monnam, mon_nam, monflee, x_monnam, seemimicLocal } from './uhitm.js';
 import { ARTICLE_A, SUPPRESS_INVISIBLE, SUPPRESS_SADDLE, SUPPRESS_IT, AUGMENT_IT } from './do_name.js';
-import { same_race } from './dogmove.js';
+import { same_race, dog_nutrition } from './dogmove.js';
 import { YMonnam, noit_mon_nam, mhe, mhim, monverbself } from './do_name.js';
 import { cansee, couldsee, Blind } from './vision.js';
-import { obj_doname, xname, makeknown, trycall, hands_obj,
+import { obj_doname, xname, makeknown, trycall, hands_obj, bimanual,
     W_ARMOR_WORN, W_ACCESSORY_WORN, welded, youmonst_data, ansimpleoname, obj_extract_self }
     from './invent.js';
 import { observe_object } from './o_init.js';
@@ -503,8 +503,8 @@ function canletgo(obj) {
 function welded_hero(obj) {
     return welded(obj);
 }
-// C ref: obj.h bimanual(obj).
-function bimanual(obj) { return !!OBJECTS[obj?.otyp]?.bimanual; }
+// C ref: obj.h bimanual(obj) — invent.js's enumerated predicate (the objects
+// table carries no oc_bimanual field).
 // C ref: objnam.c is_plural(obj).
 function obj_is_plural(obj) { return (obj?.quan || 1) > 1; }
 // C ref: objclass.h bcsign(obj).
@@ -1367,8 +1367,21 @@ export async function use_defensive(mtmp) {
                 await trapname(t.ttyp, false)}!`);
         }
         if (t) reveal_trap(t, vis);
-        newsym(mtmp.mx, mtmp.my);
+        /*  don't use rloc_to() because worm tails must "move" */
+        {   /* remove_monster(old) first: newsym must see the square empty */
+            const oldx = mtmp.mx, oldy = mtmp.my;
+            mtmp.mx = 0;
+            newsym(oldx, oldy);
+        }
         mtmp.mx = gt.trapx; mtmp.my = gt.trapy;
+        if (mtmp.wormno) {
+            const { worm_move } = await import('./worm.js');
+            await worm_move(mtmp);
+        }
+        {
+            const { maybe_unhide_at } = await import('./monmove.js');
+            await maybe_unhide_at(mtmp.mx, mtmp.my);
+        }
         newsym(gt.trapx, gt.trapy);
         /* 0: 'no object' rather than STRANGE_OBJECT; false: obj not seen */
         await m_tele(mtmp, vismon, false, 0);
@@ -1952,9 +1965,26 @@ export async function use_offensive(mtmp, throw_potion) {
         return DEADMONSTER(mtmp) ? 1 : 2;
     }
     case MUSE_FIRE_HORN:
-    case MUSE_FROST_HORN:
-        /* GAP: mplayhorn()'s ray still needs the horn message machinery. */
-        return 0;
+    case MUSE_FROST_HORN: {
+        /* C ref: muse.c:1862-1873 — the horn's ray is a wand-class monster
+           ray of AD_FIRE/AD_COLD, force-missing on a monster's first shot
+           (buzzfn = mtmp->mwandexp ? buzz : buzz_force_miss). */
+        await mplayhorn(mtmp, otmp, false);
+        m_using = true;
+        game.buzzer = mtmp;
+        game.current_wand = otmp; /* needed by zhitu() */
+        const mux = mtmp.mux ?? game.u.ux, muy = mtmp.muy ?? game.u.uy;
+        const { dobuzz } = await import('./zap.js');
+        const adtyp = (otmp.otyp === OT().FROST_HORN) ? AD_COLD : AD_FIRE;
+        await dobuzz(BZ_M_WAND(Math.abs(adtyp - AD_MAGM) % 10), rn1(6, 6),
+                     mtmp.mx, mtmp.my, sgn(mux - mtmp.mx), sgn(muy - mtmp.my),
+                     true, false, !mtmp.mwandexp);
+        game.buzzer = null;
+        game.current_wand = null;
+        m_using = false;
+        mtmp.mwandexp = true;
+        return DEADMONSTER(mtmp) ? 1 : 2;
+    }
     case MUSE_WAN_TELEPORTATION:
     case MUSE_WAN_UNDEAD_TURNING:
     case MUSE_WAN_STRIKING:
@@ -2734,9 +2764,9 @@ async function mon_consume_unstone(mon, obj, by_you, stoning) {
     const food = obj.otyp === OT().CORPSE || tinned;
     const acid = obj.otyp === OT().POT_ACID || (food && acidic_pm(obj.corpsenm));
     const lizard = food && is_lizard_pm(obj.corpsenm);
-    /* C: dog_nutrition() also sets mon->meating; it draws no RNG for a corpse
-       or tin, and only the tame branch below reads the value. */
-    const nutrit = food ? corpse_nutrition(obj) : 0;
+    /* dog_nutrition() also sets mon->meating (the eating time that makes
+       m_move() return MMOVE_DONE for the next few turns); no RNG. */
+    const nutrit = food ? dog_nutrition(mon, obj) : 0;
 
     /* give a "<mon> is slowing down" message and also remove intrinsic speed */
     if (stoning) await mon_adjust_speed(mon, -3, null);
@@ -2788,11 +2818,6 @@ async function mon_consume_unstone(mon, obj, by_you, stoning) {
     /* use up monster's next move */
     mon.movement = (mon.movement | 0) - NORMAL_SPEED;
     mon.mlstmv = game.moves;
-}
-// C ref: dogmove.c dog_nutrition() for a corpse/tin — cnutrit scaled by the
-// species' cnutrit; no RNG.
-function corpse_nutrition(obj) {
-    return (monster_by_pmidx(obj.corpsenm)?.cnutrit) | 0;
 }
 // C ref: mondata.h resists_acid(mon).  monflag.h MR_ACID is 0x40; 0x20 (the old
 // value) is MR_POISON, so this answered with the wrong resistance bit.

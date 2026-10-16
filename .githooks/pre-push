@@ -1,0 +1,17 @@
+#!/bin/bash
+# Reject any push that would publish more than ONE new commit to main.
+# Squash first: git reset --soft <origin/main> && git commit
+# Only the repo owner may bypass, by setting ALLOW_MULTI_COMMIT_PUSH=1 themselves.
+zero=0000000000000000000000000000000000000000
+while read -r lref lsha rref rsha; do
+  [ "$lsha" = "$zero" ] && continue
+  case "$rref" in refs/heads/main) ;; *) continue;; esac
+  if [ "$rsha" = "$zero" ]; then range="$lsha"; else range="$rsha..$lsha"; fi
+  n=$(git rev-list --count "$range" 2>/dev/null || echo 0)
+  if [ "$n" -gt 1 ] && [ "${ALLOW_MULTI_COMMIT_PUSH:-}" != "1" ]; then
+    echo "pre-push: REFUSED. This push publishes $n commits to main; it must be exactly 1." >&2
+    echo "Squash first: git reset --soft $(git rev-parse --short "${rsha:-origin/main}") && git commit -m '...'" >&2
+    exit 1
+  fi
+done
+exit 0

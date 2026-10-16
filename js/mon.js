@@ -1290,8 +1290,14 @@ export async function m_dowear(mon, creation) {
     if (can_wear_armor || WrappingAllowed(ptr))
         await m_dowear_type(mon, W_ARMC, creation, false);
     await m_dowear_type(mon, W_ARMH, creation, false);
+    // C ref: worn.c:787 `if (!MON_WEP(mon) || !bimanual(MON_WEP(mon)))` — the
+    // objects table has no oc_bimanual field, so use invent.js's enumerated
+    // predicate; testing OBJECTS[otyp].bimanual was always undefined, letting a
+    // monster wielding a polearm/two-hander strap on a shield too (and then
+    // select_rwep()'s shield gate skipped the polearm, so it threw a knife).
+    const { bimanual } = await import('./invent.js');
     const wep = mon.mw || null;
-    if (!wep || !OBJECTS[wep.otyp]?.bimanual)
+    if (!wep || !bimanual(wep))
         await m_dowear_type(mon, W_ARMS, creation, false);
     await m_dowear_type(mon, W_ARMG, creation, false);
     if (!slithy_mon(ptr) && ptr.mcls !== S_CENTAUR_M)

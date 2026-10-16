@@ -37,7 +37,7 @@ import {
     MGIVENNAME, has_mgivenname,
 } from './const.js';
 import { DEADMONSTER, mvitals_died, resurrect_kop, healmon, unstuck, vamp_stone, lifesaved_monster,
-    level_specific_nocorpse, vamprises } from './mon.js';
+    level_specific_nocorpse, vamprises, mon_hates_silver } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
 import { cansee } from './vision.js';
 import { update_topl, Deaf_hero, Hallucination_u, You_hear } from './display.js';
@@ -46,7 +46,7 @@ import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './con
 // used only by the appended mhitm.c translations at the bottom of this file
 import { IS_OBSTRUCTED, IS_TREE, IRONBARS, D_CLOSED, D_LOCKED } from './const.js';
 import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
-         is_undead_flag, is_demon_flag, unsolid_flag, mflags1_of, M1_NOEYES,
+         is_undead_flag, is_demon_flag, unsolid_flag, mflags1_of, M1_NOEYES, M1_AMORPHOUS,
          M1_THICK_HIDE, M1_WALLWALK, M1_TPORT, is_neuter_flag,
 } from './monflags_data.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag } from './monflags_data.js';
@@ -873,6 +873,10 @@ async function killMonster(mdef, withCorpse = true, be_sad = false) {
     }
     // C ref: mon.c mon_leaving_level() ends with newsym(mx, my), before relobj().
     if (mx > 0) newsym(mx, my);
+    // C ref: mon.c m_detach() — "death handling for the Wizard needs to take
+    // place even if he is leaving the dungeon alive": wizdeadorgone() rolls
+    // u.udg_cnt = rn1(250, 50) the first time.
+    if (mdef.iswiz) (await import('./wizard.js')).wizdeadorgone();
     // C ref: mon.c m_detach(due_to_death) -> relobj(mtmp, 1, FALSE) — the dead
     // monster's inventory hits the floor BEFORE the corpse, so it sits under it.
     { const { relobj } = await import('./uhitm.js'); await relobj(mdef, mx, my); }
@@ -1317,6 +1321,28 @@ async function hitmm(magr, mdef, mattk, mwep, dieroll) {
                 const { mon_nam_too } = await import('./do_name.js');
                 await emitMMmsg(`${Monnam(magr)} ${verb}`
                     + ` ${mon_nam_too(mdef, magr)}.`);
+            }
+            // C ref: mhitm.c:712-731 — a silver weapon sears a silver-hater.
+            const { objects } = await import('./mkobj.js');
+            const silverhit = weaponhit && mwep
+                && objects[mwep.otyp]?.material === 14 /* SILVER */;
+            if (mon_hates_silver(mdef) && silverhit) {
+                const { mon_nam_too } = await import('./do_name.js');
+                const { simpleonames } = await import('./objnam.js');
+                let mdef_name = mon_nam_too(mdef, magr);
+                const magr_name = s_suffix(Monnam(magr));
+                const pd = permonst(mdef);
+                if (pd?.mcls !== 54 /* S_GHOST: noncorporeal */
+                    && !(mflags1_of(pd) & M1_AMORPHOUS)) {
+                    if (mdef !== magr) {
+                        mdef_name = s_suffix(mdef_name);
+                    } else {
+                        mdef_name = mdef_name.replace('himself', 'his own')
+                            .replace('herself', 'her own').replace('itself', 'its own');
+                    }
+                    mdef_name += ' flesh';
+                }
+                await emitMMmsg(`${magr_name} ${simpleonames(mwep)} sears ${mdef_name}!`);
             }
         }
     } else {
