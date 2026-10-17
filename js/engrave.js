@@ -6,7 +6,7 @@
 import { ceiling as ceiling_dg } from './dungeon.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
-import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK,
+import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK, N_ENGRAVE,
          FINGERTIP, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY, GETOBJ_PROMPT,
          GRAVE, ROOM, TT_PIT, is_pit, is_hole, COLNO, ROWNO, IS_GRAVE,
          IS_ALTAR, IS_WALL, IS_DOOR, SDOOR, STONE, IS_FOUNTAIN, IS_AIR,
@@ -23,7 +23,7 @@ import { mflags1_of, M1_ANIMAL, is_whirly } from './monflags_data.js';
 import { attacktype, AT_HUGS } from './monattk_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
-import { A_WIS, LEVITATION, FLYING } from './const.js';
+import { A_WIS, LEVITATION, FLYING, P_RIDING, P_BASIC } from './const.js';
 import { Blind as isBlind } from './vision.js';
 
 // Heavy UI/inventory modules (display.js, invent.js, extcmd-handlers.js) are
@@ -421,6 +421,8 @@ export function can_reach_floor(check_pit) {
             && attacktype(u.ustuck.data, AT_HUGS))) return false;
     if ((u.uprops?.Levitation || u.uprops_extrinsic?.[LEVITATION])
         && !(u.uprops?.BLevitation || u.uprops_blocked?.[LEVITATION])) return false;
+    /* Restricted/unskilled riders can't reach the floor */
+    if (u.usteed && hooks.p_skill_of(P_RIDING) < P_BASIC) return false;
     if ((u.uprops?.Flying || u.uprops_extrinsic?.[FLYING])
         && !(u.uprops?.BFlying || u.uprops_blocked?.[FLYING])) return true;
     if (check_pit) {
@@ -540,7 +542,7 @@ export function make_engr_at(x, y, text, pristine, epoch, engr_type) {
     const ep = {
         engr_x: x,
         engr_y: y,
-        engr_type,
+        engr_type: 0,
         engr_time: epoch,
         nowipeout: false,
         actualText: text,
@@ -554,6 +556,9 @@ export function make_engr_at(x, y, text, pristine, epoch, engr_type) {
     if (text === 'Elbereth' && !game.in_mklev) {
         exercise(A_WIS, true);
     }
+    // C ref: engrave.c:452 `ep->engr_type = (e_type > 0) ? e_type : rnd(N_ENGRAVE - 1)` (the
+    // wand-of-polymorph engrave passes type 0 and gets a random engraving type).
+    ep.engr_type = (engr_type > 0) ? engr_type : rnd(N_ENGRAVE - 1);
     game.level.engravings.unshift(ep);
     return ep;
 }

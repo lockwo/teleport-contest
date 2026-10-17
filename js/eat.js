@@ -449,6 +449,8 @@ function hero_is_pm(name) {
 // floor food; eat_ok(NULL) then answers GETOBJ_EXCLUDE_NONINVENT so getobj
 // says "you don't have anything ELSE to eat".
 let _getobj_else = 0;
+// floorfood()'s getobj_else for the #tin caller in apply.js ap_floorfood().
+export function set_getobj_else(n) { _getobj_else = n; }
 export function eat_ok(obj) {
     const I = _invent;
     if (!obj)
@@ -648,8 +650,14 @@ export async function newuhs(incr) {
         u.uhs = newhs;
         return;
     }
-    if (game._statusHold) delete game._statusHold.uhs;
-    if (_saved_hs !== null) { u.uhs = _saved_hs; _saved_hs = null; }
+    if (_saved_hs !== null) {
+        // C: restoring u.uhs sets no disp.botl, so the status line keeps the
+        // hunger word the last bot() published (the mid-meal value if a bot()
+        // ran since the last bite, e.g. an interrupted meal).
+        if (u.uhs !== _saved_hs) status_hold('uhs', u.uhs ?? NOT_HUNGRY);
+        u.uhs = _saved_hs;
+        _saved_hs = null;
+    }
 
     if (newhs === FAINTING) {
         // C ref: eat.c:3418 — u.uhunger is negative here.
@@ -704,19 +712,20 @@ export async function newuhs(incr) {
             u.atemp.a[A_STR_EAT] = 0;
         }
         const hallu = !!u.uhallu;
-        const savedPending = game._pending_message, savedToplin = game._toplin;
+        // C: You()/pline() -> update_topl() is the only thing that touches
+        // gt.toplines and the ^P ring; the message is built here and routed
+        // through update_topl() (now, or from moveloop's gethungry() flush).
+        let hungermsg = null;
         if (newhs === HUNGRY) {
-            game._pending_message = hallu
+            hungermsg = hallu
                 ? (!incr ? 'You now have a lesser case of the munchies.'
                          : 'You are getting the munchies.')
                 : `You ${!incr ? 'only feel hungry now'
                      : (h < 145) ? 'feel hungry'
                        : 'are beginning to feel hungry'}.`;
-            note_topl(game._pending_message);
-            game._toplin = 1;
         } else if (newhs === WEAK) {
             const role = game.urole?.name?.m || '';
-            game._pending_message = hallu
+            hungermsg = hallu
                 ? (!incr ? 'You still have the munchies.'
                   : 'The munchies are interfering with your motor capabilities.')
                 : (incr && (role === 'Wizard' || role === 'Valkyrie'))
@@ -726,27 +735,17 @@ export async function newuhs(incr) {
                   : `You ${!incr ? 'are still'
                        : (h < 45) ? 'feel'
                          : 'are beginning to feel'} weak.`;
-            note_topl(game._pending_message);
-            game._toplin = 1;
         }
         // moveloop's gethungry() wants the message routed through update_topl
         // (merge or --More-- after earlier messages this turn), not assigned
         // over whatever the monsters' phase left on the topline.
-        const deferred = Array.isArray(game._hunger_msgs)
-            && (newhs === HUNGRY || newhs === WEAK);
-        if (deferred) {
-            game._hunger_msgs.push(game._pending_message);
-            game._pending_message = savedPending;
-            game._toplin = savedToplin;
-        }
-        else if (newhs === HUNGRY || newhs === WEAK) {
+        const deferred = Array.isArray(game._hunger_msgs) && hungermsg !== null;
+        if (deferred) game._hunger_msgs.push(hungermsg);
+        else if (hungermsg !== null) {
             // C: You("only feel hungry now") is a pline(): it concatenates onto
             // (or --More--s after) the message already on the topline instead
             // of replacing it.
-            const m = game._pending_message;
-            game._pending_message = savedPending;
-            game._toplin = savedToplin;
-            await update_topl(m);
+            await update_topl(hungermsg);
         }
         // C: incr && occupation && occupation != eatfood/opentin ->
         // stop_occupation(); the eating occupation deliberately survives.
@@ -1097,7 +1096,7 @@ async function done_eating(message) {
     else await fpostfx(piece);
 
     if (carried(piece)) _invent.useup(piece);
-    else _invent.useupf(piece, 1);
+    else await _invent.useupf(piece, 1);
     game.context.victual = { piece: null, o_id: 0 };
 }
 
@@ -1492,7 +1491,7 @@ async function fprefx(otmp) {
         // meal is aborted; d(3,6) is rolled for the damage.
         if (corpse_mon_name(otmp.corpsenm) === 'pyrolisk') {
             if (carried(otmp)) _invent.useup(otmp);
-            else _invent.useupf(otmp, 1);
+            else await _invent.useupf(otmp, 1);
             // C ref: eat.c:2108 — explode(u.ux, u.uy, -11, d(3,6), 0,
             // EXPL_FIERY).  -11 % 10 == 1 -> AD_FIRE "fireball"; the damage
             // roll is the argument, so it precedes explode()'s own draws.
@@ -2117,7 +2116,7 @@ async function cpostfx(pm) {
         } else {
             const ctx = (game.context = game.context || {});
             if (ctx.tin) {
-                use_up_tin(ctx.tin);
+                await use_up_tin(ctx.tin);
                 await lesshungry_eat(200 + (metallivorous_hero() ? 5 : 0));
             }
             await update_topl(`You ${nm === 'genetic engineer'
@@ -2353,7 +2352,7 @@ async function eatcorpse(otmp) {
             await update_topl('(It must have died too long ago to be safe to eat.)');
         }
         if (carried(otmp)) _invent.useup(otmp);
-        else _invent.useupf(otmp, 1);
+        else await _invent.useupf(otmp, 1);
         return 2;
     } else if (sp && mon_acidic(sp) && !u?.uprops?.Acid_resistance) {
         tp++;
@@ -2397,7 +2396,7 @@ async function eatcorpse(otmp) {
         if (!mon_cnutrit(otmp.corpsenm)) {
             if (!retcode) await update_topl('The corpse rots away completely.');
             if (carried(otmp)) _invent.useup(otmp);
-            else _invent.useupf(otmp, 1);
+            else await _invent.useupf(otmp, 1);
             retcode = 2;
         }
         // C ref: eat.c:1970 consume_oeaten(otmp, 2) — a rotted corpse loses
@@ -3253,10 +3252,10 @@ export function tin_variety_txt(s, tinvariety) {
 
 // C ref: eat.c:1516 use_up_tin(tin) — finish consume_tin(); also used by
 // cprefx()/cpostfx() to keep the tin out of bones.
-export function use_up_tin(tin) {
+export async function use_up_tin(tin) {
     if (!tin) return;
     if (carried(tin)) _invent.useup(tin);
-    else _invent.useupf(tin, 1);
+    else await _invent.useupf(tin, 1);
     const ctx = tin_context();
     ctx.tin = null;
     ctx.o_id = 0;
@@ -3291,7 +3290,7 @@ export async function consume_tin(mesg) {
     if (tin.otrapped || (tin.cursed && r !== HOMEMADE_TIN && !rn2(8))) {
         await T.cmd.b_trapped('tin', NO_PART_);
         tin = await costly_tin(COST_DSTROY_);
-        use_up_tin(tin);
+        await use_up_tin(tin);
         return;
     }
 
@@ -3308,7 +3307,7 @@ export async function consume_tin(mesg) {
             T.o_init.observe_object(tin);
             tin.known = 1;
             tin = await costly_tin(COST_OPEN_);
-            use_up_tin(tin);
+            await use_up_tin(tin);
             if (always_eat) await lesshungry_eat(5);
             return;
         }
@@ -3339,7 +3338,7 @@ export async function consume_tin(mesg) {
                     tin.known = 1;
                 }
                 tin = await costly_tin(COST_OPEN_);
-                use_up_tin(tin);
+                await use_up_tin(tin);
                 return;
             }
         }
@@ -3375,7 +3374,7 @@ export async function consume_tin(mesg) {
                 nutamt = mon_cnutrit(mnum) ?? 0;
             if (always_eat) nutamt += 5;
             /* use up the tin now; lesshungry() could be fatal and make bones */
-            use_up_tin(tin);
+            await use_up_tin(tin);
             tin = null;
             await lesshungry_eat(nutamt);
         }
@@ -3403,7 +3402,7 @@ export async function consume_tin(mesg) {
         if (!always_eat && await y_n('Eat it?', 'yn\x1b', 'n') === 'n') {
             if (game.flags?.verbose) await pline('You discard the open tin.');
             tin = await costly_tin(COST_OPEN_);
-            use_up_tin(tin);
+            await use_up_tin(tin);
             return;
         }
 
@@ -3430,11 +3429,11 @@ export async function consume_tin(mesg) {
                     : (200 + rnd(400)));               /* cursed */
         if (always_eat) nutamt += 5;
         /* use up the tin first; lesshungry() could be fatal and make bones */
-        use_up_tin(tin);
+        await use_up_tin(tin);
         tin = null;
         await lesshungry_eat(nutamt);
     }
-    if (tin) use_up_tin(tin);
+    if (tin) await use_up_tin(tin);
 }
 
 // C ref: eat.c:1703 opentin() — the tin-opening occupation, one call per turn.
@@ -3778,7 +3777,7 @@ export async function eatspecial() {
 
     if (otmp.oclass === COIN_CLASS) {
         if (carried(otmp)) _invent.useupall(otmp);
-        else _invent.useupf(otmp, otmp.quan);
+        else await _invent.useupf(otmp, otmp.quan);
         T.vault.vault_gd_watching(0x01 /* const.js GD_EATGOLD */);
         return;
     }
@@ -3823,7 +3822,7 @@ export async function eatspecial() {
 
     // C: uball/uchain -> unpunish(); the port has no ball & chain.
     if (carried(otmp)) _invent.useup(otmp);
-    else _invent.useupf(otmp, 1);
+    else await _invent.useupf(otmp, 1);
 }
 
 // C ref: objnam.c objdescr_is(obj, descr) — compares the SHUFFLED appearance.

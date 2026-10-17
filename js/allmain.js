@@ -49,8 +49,6 @@ import { runtime_info_init } from './mdlib.js';
 
 const PM_KNIGHT = 4;
 const PM_WIZARD = 12;
-// C ref: objclass.h COIN_CLASS — gold is an inventory object of this class.
-const COIN_CLASS = 12;
 
 // Resolve the role's PM number from game.initrole (index or name).
 function gameRoleMnum() {
@@ -260,7 +258,6 @@ export async function newgame() {
     }
 
     // Hardcoded player state for seed8000 Tourist (fastforward path).
-    g._goldCount = 757;
     g.u.ulevel = 1;
     g.u.uhp = 10; g.u.uhpmax = 10;
     g.u.uen = 2; g.u.uenmax = 2;
@@ -337,15 +334,6 @@ async function newgame_real() {
     g.u.ulevel = 1; g.u.ulevelmax = 1; g.u.uexp = 0;
     g.u.uz = g.u.uz || { dnum: 0, dlevel: 1 };
     g.u.umonnum = mnum;
-    // C ref: status line shows money_cnt(gi.invent).  Roles with rolled
-    // starting gold (Healer rn1(1000,1001), Tourist rnd(1000)) have a
-    // COIN_CLASS object placed by ini_inv(Money); read it instead of
-    // hardcoding 0 so the $ field matches.  This is the GENERAL fix that
-    // subsumes BREADTH30's "preserve _goldCount" (L2↔L4 reconciliation).
-    g._goldCount = 0;
-    for (const obj of (g.invent || [])) {
-        if (obj && obj.oclass === COIN_CLASS) g._goldCount += obj.quan || 0;
-    }
     g.moves = 1;
     g.flags = g.flags || {};
     if (g.flags.female === undefined)
@@ -1952,6 +1940,24 @@ export async function moveloop_input_redraw() {
     if (g.vision_full_recalc) vision_recalc(0);
 }
 
+// C ref: allmain.c:558 — `if (gl.luacore && nhcb_counts[NHCB_END_TURN])
+// nh_callback_run("end_turn")`, the last thing every moveloop_core() iteration
+// does.  hack.js's inline run/travel loops take one iteration per step, so they
+// call this after each domove(); `_end_turn_cb_ran` tells the enclosing
+// moveloop_core() (whose rhack() ran those steps) not to run it a second time.
+export async function end_turn_callbacks() {
+    const g = game;
+    g._end_turn_cb_ran = true;
+    if (!g._tutorial_active) return;
+    // allmain.c:541 — the vision recalc precedes the callback in C, so the
+    // callback's --More-- pages over an up-to-date map.
+    if (g.vision_full_recalc) {
+        vision_recalc(0);
+        g.vision_full_recalc = 0;
+    }
+    await (await import('./nhlua.js')).tutorial_turn();
+}
+
 // C ref: allmain.c moveloop_core()
 export async function moveloop_core() {
     const g = game;
@@ -2348,6 +2354,7 @@ export async function moveloop_core() {
     // top-line message only after the capture for that command has fired
     // (i.e. after its own nhgetch returns), so a free-action message such as
     // dolook's "You see no objects here." survives onto the captured screen.
+    g._end_turn_cb_ran = false;
     await rhack(cmd_key);
 
     // C ref: allmain.c moveloop_core():538 — `if (u.utotype) deferred_goto();`
@@ -2374,7 +2381,8 @@ export async function moveloop_core() {
     // C ref: allmain.c:558 — `if (gl.luacore && nhcb_counts[NHCB_END_TURN])`
     // run nh_callback_run("end_turn") at the tail of moveloop_core(); only the
     // tutorial registers one (nhlib.lua tutorial_turn()).
-    if (g._tutorial_active) await (await import('./nhlua.js')).tutorial_turn();
+    if (!g._end_turn_cb_ran) await end_turn_callbacks();
+    g._end_turn_cb_ran = false;
 
     // A command that took game time schedules the per-turn work for the
     // next iteration (so the status line / map reflect the elapsed turn

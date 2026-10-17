@@ -1159,7 +1159,7 @@ async function do_break_wand(obj) {
                     await digactualhole(x, y, BY_OBJECT, ttyp);
                 }
             }
-            A.trap.fill_pit(x, y);
+            await A.trap.fill_pit(x, y);
             await maybe_dunk_boulders(x, y);
             A.vision.recalc_block_point(x, y);
             continue;
@@ -1402,7 +1402,7 @@ async function use_stone(tstone) {
     const O = await import('./o_init.js');
     const Z = await import('./zap.js');
     const blind = _vision.Blind();
-    const hallu = !!game.Hallucination;
+    const hallu = ap_Hallucination();
     const scritch = '"scritch, scritch"';
 
     if (!blind) O.observe_object(tstone);
@@ -1609,7 +1609,7 @@ function valid_polearm_position(x, y, min_range, max_range) {
 // unless the hero is impaired.  No RNG.
 function find_poleable_mon(pos, min_range, max_range) {
     const u = game.u;
-    const impaired = !!(game.u?.uconf || game.u?.ustun || game.Hallucination);
+    const impaired = !!(game.u?.uconf || game.u?.ustun || ap_Hallucination());
     const rt = Math.floor(Math.sqrt(max_range));
     const lo_x = Math.max(u.ux - rt, 1), hi_x = Math.min(u.ux + rt, 79);
     const lo_y = Math.max(u.uy - rt, 0), hi_y = Math.min(u.uy + rt, 20);
@@ -2136,6 +2136,8 @@ const CORPSE_A = 265; // objects.c CORPSE (food-class corpse)
 async function ap_floorfood(verb, corpsecheck) {
     const A = await ap_load();
     const u = game.u;
+    const { set_getobj_else } = await import('./eat.js');
+    set_getobj_else(0);
     // C: 'm' prefix / can't-reach-floor / mounted all skip to skipfloor; this
     // call site can only observe menu_requested among those.
     if (!game.iflags?.menu_requested && corpsecheck === 2) {
@@ -2151,10 +2153,12 @@ async function ap_floorfood(verb, corpsecheck) {
             if (c === 'y') return otmp;
             if (c === 'q') return null;
             // 'n': fall through to the next floor object, then inventory.
+            set_getobj_else(1);
         }
     }
     const { tin_ok } = await import('./eat.js');
     const otmp = await A.invent.getobj(verb, tin_ok);
+    set_getobj_else(0);
     if (otmp && corpsecheck
         && (otmp.otyp !== CORPSE_A || (corpsecheck === 2 && !tinnable(otmp)))) {
         await A.display.pline(`You can't ${verb} that!`);
@@ -2657,7 +2661,7 @@ export async function magic_whistled(obj) {
         if (mtmp.mtrapped) {
             /* no longer in previous trap (affects mintrap) */
             mtmp.mtrapped = 0;
-            A.trap.fill_pit(mtmp.mx, mtmp.my);
+            await A.trap.fill_pit(mtmp.mx, mtmp.my);
         }
 
         const oseen = A.uhitm.canspotmon(mtmp); /* old 'seen' status */
@@ -3833,7 +3837,7 @@ export async function use_tinning_kit(obj) {
         } else {
             if (A.shk.costly_spot(corpse.ox, corpse.oy) && !corpse.no_charge)
                 await A.display.pline(`"${you_buy_it}"`);
-            A.invent.useupf(corpse, 1);
+            await A.invent.useupf(corpse, 1);
         }
         await A.invent.hold_another_object(
             can, 'You make, but cannot pick up, %s.', A.invent.xname(can), null);

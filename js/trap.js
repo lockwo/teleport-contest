@@ -18,7 +18,8 @@ import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
          Ring_off, off_msg, obj_doname, carried, otense, obj_extract_self,
          obj_resists, useupall, remove_worn_item, is_plural, simpleonames,
          stackobj, freeinv, inventoryArray, welded, worn_extrinsic, worn_blocked,
-         splitobj, dropx, carried_weight, youmonst_data_pub, bimanual, useup, Free_action } from './invent.js';
+         splitobj, dropx, carried_weight, youmonst_data_pub, bimanual, useup, Free_action, Yname2, setnotworn } from './invent.js';
+import { the } from './objnam.js';
 import { makeplural } from './plural.js';
 import { shk_blocking_door, block_door_feedback, add_damage } from './shk.js';
 import { observe_object } from './o_init.js';
@@ -1204,12 +1205,6 @@ const FIRE_DESTROY_STRINGS = [
     ['catches fire and burns', ''],                     // spellbook (never plural)
 ];
 
-// C ref: objnam.c Yname2(obj) — scoped to the hero-carried case, matching the
-// same simplification js/potion.js's p_Yname2 and js/engrave.js's Yname2 make:
-// every real fire_damage() call site this port wires (a wielded digging tool,
-// a wielded bullwhip, a dipped inventory item) reaches it with a hero-owned
-// object.
-function Yname2_dmg(obj) { return `Your ${xname(obj)}`; }
 // C ref: obj.h mcarried(obj) — the object is in some monster's minvent.
 function mcarried_dmg(obj) { return !!obj && obj.where === OBJ_MINVENT; }
 // C ref: pline.c Norep() dedup, matching every other file's local copy.
@@ -1310,7 +1305,7 @@ export async function fire_damage(obj, force, x, y) {
         }
         const luck = (game.u?.uluck | 0) + (game.u?.moreluck | 0); /* Luck */
         if (!force && (luck + 5) > rn2(chance)) return false;
-        if (in_sight) await update_topl(`${Yname2_dmg(obj)} catches fire and burns.`);
+        if (in_sight) await update_topl(`${Yname2(obj)} catches fire and burns.`);
         const contents = obj.cobj ? [...obj.cobj] : [];
         if (contents.length) {
             if (in_sight) await update_topl('Its contents fall out.');
@@ -1322,6 +1317,7 @@ export async function fire_damage(obj, force, x, y) {
                 if (!(await flooreffects(otmp, x, y, ''))) place_object(otmp, x, y);
             }
         }
+        setnotworn(obj);
         delobj(obj);
         return true;
     } else if (!force && ((game.u?.uluck | 0) + (game.u?.moreluck | 0) + 5) > rn2(20)) {
@@ -1329,22 +1325,24 @@ export async function fire_damage(obj, force, x, y) {
     } else if (obj.oclass === SCROLL_CLASS || obj.oclass === SPBOOK_CLASS) {
         if (obj.otyp === SCR_FIRE_OTYP || obj.otyp === SPE_FIREBALL_OTYP) return false;
         if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
-            if (in_sight) await update_topl(`Smoke rises from ${xname(obj)}.`);
+            if (in_sight) await update_topl(`Smoke rises from ${the(xname(obj))}.`);
             return false;
         }
         const dindx = (obj.oclass === SCROLL_CLASS) ? 3 : 4;
         if (in_sight) {
             const row = FIRE_DESTROY_STRINGS[dindx];
-            await update_topl(`${Yname2_dmg(obj)} ${row[(obj.quan || 1) > 1 ? 1 : 0]}.`);
+            await update_topl(`${Yname2(obj)} ${row[(obj.quan || 1) > 1 ? 1 : 0]}.`);
         }
+        setnotworn(obj);
         delobj(obj);
         return true;
     } else if (obj.oclass === POTION_CLASS) {
         const dindx = (obj.otyp !== POT_OIL) ? 1 : 2;
         if (in_sight) {
             const row = FIRE_DESTROY_STRINGS[dindx];
-            await update_topl(`${Yname2_dmg(obj)} ${row[(obj.quan || 1) > 1 ? 1 : 0]}.`);
+            await update_topl(`${Yname2(obj)} ${row[(obj.quan || 1) > 1 ? 1 : 0]}.`);
         }
+        setnotworn(obj);
         delobj(obj);
         return true;
     } else if (await erode_obj(obj, null, ERODE_BURN, EF_DESTROY) === ER_DESTROYED) {
@@ -1947,18 +1945,11 @@ async function domagictrap() {
         // so an ALREADY-blind hero skips the message AND the rn1(5,10).
         if (!Blind()) {
             await pline('You are momentarily blinded by a flash of light!');
-            // make_blinded((long) rn1(5, 10), FALSE): SETS (not adds to) the
-            // HBlinded timer, which timeout.js then counts down.  Leaving it
-            // unset left every later `!Blind` test — display, observe_object,
-            // monster sighting — answering for a sighted hero for 10..14 turns.
-            u.blinded = rn1(5, 10);
-            // potion.c toggle_blindness(): vision_full_recalc + an immediate
-            // vision_recalc(0), same shape as apply.js use_cream_pie.  disp.botl
-            // is DELIBERATELY not mirrored — every other blinding site in this
-            // port (apply.js, eat.js) leaves the status release to the caller.
-            game.vision_full_recalc = 1;
-            const { vision_recalc } = await import('./vision.js');
-            try { vision_recalc(0); } catch { /* pre-vision-init */ }
+            // make_blinded((long) rn1(5, 10), FALSE): SETS the HBlinded timer and
+            // runs toggle_blindness() (botl, vision_recalc(0), and see_monsters()
+            // for an infravisible/telepathic hero so sensed monsters vanish).
+            const { make_blinded_hero } = await import('./potion.js');
+            await make_blinded_hero(rn1(5, 10), false);
             // C then does `if (!Blind) Your1(vision_clears);` — Blind is now
             // TRUE, so no second line.
         }
@@ -2165,7 +2156,7 @@ async function trapeffect_rocktrap(trap, _trflags) {
             await pline('Fortunately, you are wearing a hard helmet.');
             dmg = 2;
         } else if (game.flags?.verbose !== false) {
-            await pline(`${Yname2_dmg(game.uarmh)} does not protect you.`);
+            await pline(`${Yname2(game.uarmh)} does not protect you.`);
         }
     } else if (passesRocks) {
         await pline('It passes harmlessly through you.');
@@ -2241,20 +2232,18 @@ export function clear_conjoined_pits(trap) {
     }
 }
 
-// C ref: trap.c:4010 fill_pit(x, y) — a boulder lying in a pit settles into it,
-// removing both.  C goes through do.c flooreffects(otmp, x, y, "settle"), which
-// this port does not have; that arm draws no RNG, so the removal is done here
-// directly (the same shape as cmd.js's copy at climb_pit's call site).
-export function fill_pit(x, y) {
+// C ref: trap.c:4010 fill_pit(x, y) — a boulder lying in a pit or hole falls in
+// via do.c flooreffects(otmp, x, y, "settle"): the "You hear a boulder settle."
+// / "The boulder fills a pit." message, the trap going away, useupf() and
+// bury_objs() (whose obj_resists() draws RNG for every object left in the pit).
+export async function fill_pit(x, y) {
     const t = t_at(x, y);
     if (!t || !(is_pit(t.ttyp) || is_hole(t.ttyp))) return;
     const otmp = sobj_at_floor(BOULDER, x, y);
     if (!otmp) return;
-    const objs = game.level?.objects;
-    if (objs) { const i = objs.indexOf(otmp); if (i >= 0) objs.splice(i, 1); }
-    otmp.where = OBJ_FREE;
-    deltrap(t);
-    newsym(x, y);
+    obj_extract_self(otmp);
+    const { flooreffects } = await import('./do.js');
+    await flooreffects(otmp, x, y, 'settle');
 }
 
 // C ref: trap.c:1825 trapeffect_pit(&gy.youmonst, trap, trflags) — the hero
@@ -2601,7 +2590,7 @@ export async function blow_up_landmine(trap) {
             }
         }
     }
-    fill_pit(x, y);
+    await fill_pit(x, y);
     await (await import('./apply.js')).maybe_dunk_boulders(x, y);
     recalc_block_point(x, y);
     await (await import('./dig.js')).spot_checks(x, y, old_typ);
@@ -2666,7 +2655,7 @@ async function trapeffect_landmine(trap, trflags) {
     /* fall recursively into the pit... */
     const t2 = t_at(u.ux, u.uy);
     if (t2) await dotrap(t2, RECURSIVETRAP);
-    fill_pit(u.ux, u.uy);
+    await fill_pit(u.ux, u.uy);
 }
 
 // C ref: trap.c:939 keep_saddle_with_steedcorpse(steed_mid, objchn, saddle) —
@@ -3261,7 +3250,7 @@ async function help_monster_out(mtmp, ttmp) {
     await pline(`You pull ${mon_nam_trap(mtmp)} out of the pit.`);
     mtmp.mtrapped = 0;
     await reward_untrap(ttmp, mtmp);
-    fill_pit(mtmp.mx, mtmp.my);
+    await fill_pit(mtmp.mx, mtmp.my);
     return 1;
 }
 
@@ -4127,7 +4116,7 @@ export async function float_up() {
             await reset_utrap_fu(false);
             await pline(`You float up, out of the ${trapname(PIT, false)}!`);
             game.vision_full_recalc = 1;
-            fill_pit(u.ux, u.uy);
+            await fill_pit(u.ux, u.uy);
         } else if (u.utraptype === TT_LAVA || u.utraptype === TT_INFLOOR) {
             await pline(`Your body pulls upward, but your ${makeplural(body_part(LEG))} are still stuck.`);
         } else if (u.utraptype === TT_BURIEDBALL) {
@@ -4923,7 +4912,7 @@ export async function lava_effects() {
     // for a fire resistant hero), before any "You fall into" message.
     const armf = game.uarmf;
     if (armf && (armf.in_use || (lava_organic(armf) && !armf.oerodeproof))) {
-        await update_topl(`${Yname2_dmg(armf)} ${otense(armf, 'burst')} into flame!`);
+        await update_topl(`${Yname2(armf)} ${otense(armf, 'burst')} into flame!`);
         ++burnmesgcount;
         const oldInLava = game._in_lava_effects;
         game._in_lava_effects = true; // (see below)
@@ -4980,7 +4969,7 @@ export async function lava_effects() {
                 if (!obj.in_use) continue;
                 if (obj.owornmask) {
                     if (usurvive) {
-                        await update_topl(`${Yname2_dmg(obj)} ${otense(obj, 'burst')} into flame!`);
+                        await update_topl(`${Yname2(obj)} ${otense(obj, 'burst')} into flame!`);
                         ++burnmesgcount;
                     }
                     await remove_worn_item(obj, true);

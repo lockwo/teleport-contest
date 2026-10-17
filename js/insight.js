@@ -4296,11 +4296,11 @@ export async function set_vanq_order(for_vanq) {
 
     const selected = await select_pick_one_menu(items, plan);
     const n = selected.cancelled ? -1 : selected.length;
-    /* destroy_nhwindow() puts the map back under the menu */
-    delete game._modal_screen;
-    const { docrt, flush_screen } = await import('./display.js');
-    await docrt();
-    await flush_screen(1);
+    /* destroy_nhwindow() -> erase_menu_or_text(): docorner() for the corner
+       menu (docrt() only when it is full-screen) puts the map back under it */
+    const { dismiss_invent_screen } = await import('./invent.js');
+    game._modal_screen = 'invent';
+    await dismiss_invent_screen();
     if (n > 0) {
         let choice = selected[0].a_int - 1;
         /* skip preselected entry if we have more than one item chosen */

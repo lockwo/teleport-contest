@@ -33,7 +33,7 @@ import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
 import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu } from './trap.js';
 import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { surface } from './dungeon.js';
-import { hliquid } from './do_name.js';
+import { hliquid, mon_nam } from './do_name.js';
 import { sobj_at, is_pole, near_capacity, youmonst_data } from './invent.js';
 import { t_at } from './mkroom.js';
 import { mon_mintrap } from './monmove.js';
@@ -53,12 +53,6 @@ import { pickup_after_move, getdir } from './cmd.js';
 // file used to carry a cut-down copy that ignored the command queue, the
 // number_pad keymap, '\r'/'\n' quitchars and the cmdassist "Invalid direction
 // key!" window.  Use the real one.
-
-// C ref: do_name.c mon_nam() == x_monnam(ARTICLE_THE).  x_monnam now models the
-// "saddled " adjective for a saddle-wearing steed, so this is a thin wrapper.
-function mon_nam(mtmp) {
-    return x_monnam(mtmp, /*ARTICLE_THE*/ 1, null, 0, false);
-}
 
 // C ref: steed.c Monnam-style helper for "%s is not saddled." etc.  Not needed
 // by the exercised paths but kept symmetric with mon_nam for completeness.
@@ -553,6 +547,7 @@ export async function dismount_steed(reason) {
         if (!have_spot) { cc = landing_spot(reason, 1); have_spot = !!cc; }
         if (!ulev && !ufly) {
             await losehp_do(Maybe_Half_Phys(rn1(10, 10)), 'riding accident', KILLED_BY_AN);
+            if (game.program_state?.gameover) return; /* C: losehp()->done() never returns */
             await set_wounded_legs(BOTH_SIDES, (u.HWounded_legs || 0) + rn1(5, 5));
             repair_leg_damage = false;
         }
@@ -683,6 +678,7 @@ function throws_rocks_std(ptr) { return !!ptr?.throws_rocks; }
 function steed_place_monster(mon, x, y) {
     mon.mridden = false;
     mon.mx = x; mon.my = y;
+    mon.mstate = 0; /* MON_FLOOR (steed.c:931) */
     const list = game.level?.monsters;
     if (list && !list.includes(mon)) list.push(mon);
 }

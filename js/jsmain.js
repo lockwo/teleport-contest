@@ -314,8 +314,8 @@ export class NethackGame {
         // Parse nethackrc
         const opts = await parseNethackrc(this._nethackrc);
         g.plname = opts.name || '';
-        // C ref: optlist.h NHOPTB(sparkle, ..., On, ...) — default On.
-        g.flags = { verbose: true, invlet_constant: true, dark_room: true, tips: true, sparkle: true, ...opts.flags };
+        // C ref: optlist.h NHOPTB(sparkle, ..., On, ...) — default On; options.c initoptions_init() flags.sortloot = 'l'.
+        g.flags = { verbose: true, invlet_constant: true, dark_room: true, tips: true, sparkle: true, sortloot: 'l', ...opts.flags };
         // C ref: options.c set_playmode() — when wizard (debug) mode is requested
         // (OPTIONS=playmode:debug) and authorize_wizard_mode() succeeds (the
         // contest sysconf carries WIZARDS=*, so it always does), the player name

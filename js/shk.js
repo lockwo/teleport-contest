@@ -872,7 +872,11 @@ export function bp_to_obj(bp) {
 // riled (which rewrites every bill price) merely by being enumerated.
 export function shk_scan(withbill) {
     const out = [];
-    for (const mon of (game.level?.monsters || [])) {
+    /* C walks the fmon chain, which makemon() prepends to: newest first.  The
+       port's level.monsters is in creation order, so walk it backwards. */
+    const list = game.level?.monsters || [];
+    for (let i = list.length - 1; i >= 0; i--) {
+        const mon = list[i];
         if (DEADMONSTER(mon)) continue;
         if (!mon.isshk || !mon.eshk) continue;
         if (withbill && !mon.eshk.billct) continue;
@@ -972,7 +976,6 @@ export async function money2mon(mon, amount) {
         ygold.quan -= amount;
         ygold.owt = weight(ygold);
         give.owt = weight(give);
-        game._goldCount = Math.max(0, (game._goldCount || 0) - amount);
     } else {
         if (ygold.owornmask) await remove_worn_item(ygold, false); /* quiver */
         freeinv(ygold);

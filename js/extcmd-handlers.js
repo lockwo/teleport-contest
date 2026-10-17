@@ -51,7 +51,7 @@ import { dorub, dowipe, doapply, ECMD as APPLY_ECMD } from './apply.js';
 import { readobjnam } from './readobjnam.js';
 import { hold_another_object, encumber_msg, objects_at, otense, will_feel_cockatrice,
          feel_cockatrice, obj_extract_self } from './invent.js';
-import { cxname, The, thesimpleoname, simpleonames } from './objnam.js';
+import { cxname, The, thesimpleoname, simpleonames, an } from './objnam.js';
 import { artifact_origin } from './artifact.js';
 import { ONAME_WISH, ONAME_KNOW_ARTI, IRONBARS, ICE, Is_airlevel,
          Is_waterlevel, PICK_ONE } from './const.js';
@@ -83,7 +83,7 @@ import { object_from_map, pg_glyph_at } from './pager.js';
 import { dodip, dodrink } from './potion.js';
 import { dogenocided, do_gamelog, doconduct, dovanquished, doborn } from './insight.js';
 import { isok } from './hacklib.js';
-import { Monnam, canspotmon, mon_nam, oc_wldam, killed } from './uhitm.js';
+import { Monnam, canspotmon, mon_nam, oc_wldam, killed, x_monnam } from './uhitm.js';
 import { domonnoise } from './sounds.js';
 import { build_overview_lines, surface, ceiling, print_dungeon_lines } from './dungeon.js';
 import { doextversion, doversion } from './version.js';
@@ -422,7 +422,9 @@ export async function hooked_tty_getlin(query, hook) {
     game._pending_message = '';
     for (;;) {
         // Cursor sits one past the typed characters.
-        if (!doprev) draw_getlin(query, shown, base + typed.length);
+        // C ref: getline.c NEWAUTOCOMP — typed chars are echoed as typed; the
+        // hook rewrites the buffer but only the tail past them is drawn.
+        if (!doprev) draw_getlin(query, typed + shown.slice(typed.length), base + typed.length);
         // C ref: getline.c:81 — recall includes the current query and answer.
         game._toplines = query + ' ' + shown;
         const code = await nhgetch();
@@ -477,9 +479,10 @@ export async function hooked_tty_getlin(query, hook) {
         }
         if (code === 8 || code === 127) { // backspace / delete-prev
             if (typed.length > 0) {
+                // C ref: getline.c NEWAUTOCOMP backspace: truncates the buffer
+                // at bufp (*bufp = 0); the hook is not re-run.
                 typed = typed.slice(0, -1);
-                const expanded = hook ? hook(typed) : null;
-                shown = expanded != null ? expanded : typed;
+                shown = shown.slice(0, typed.length);
             }
             continue;
         }
@@ -495,9 +498,12 @@ export async function hooked_tty_getlin(query, hook) {
         // — the cap is COLNO (80) typed characters, not 79; the 80th character
         // is what pushes the echo onto a second screen row.
         if (code >= 32 && code !== 0x7f && typed.length < TOPL_CO) {
+            // C: *bufp = c; bufp[1] = 0 writes into the buffer at the cursor,
+            // so a prior hook rewrite of earlier chars (e.g. 'E' -> 'e') persists.
+            shown = shown.slice(0, typed.length) + String.fromCharCode(code);
             typed += String.fromCharCode(code);
-            const expanded = hook ? hook(typed) : null;
-            shown = expanded != null ? expanded : typed;
+            const expanded = hook ? hook(shown) : null;
+            if (expanded != null) shown = expanded;
         }
         // any other key: ignore (tty bell), reloop and redraw.
     }
@@ -801,7 +807,7 @@ export async function yn_function(query, resp, def, addcmdq = false) {
 // check: `oclass` sets the attack level, monster m_lev is the defense level,
 // draw is rn2(100 + alev - dlev) < mtmp->data->mr (mr 0 still costs a draw).
 // Ported here for #turn; damage is always 0 there so the kill tail is a no-op.
-function resist(mtmp, oclass, damage, tell) {
+async function resist(mtmp, oclass, damage, tell) {
     let alev;
     switch (oclass) {
     case 'wand':   alev = 12; break;
@@ -819,7 +825,8 @@ function resist(mtmp, oclass, damage, tell) {
     // makemon.js's MONS[].mresists, which is the MR_* bitmask (a wraith's
     // mresists is 166 while its mr is 15).
     const resisted = rn2(100 + alev - dlev) < mon_mr(mtmp.data);
-    void damage; void tell;             /* #turn passes 0 / TELL only */
+    void damage;                        /* #turn passes 0 / TELL only */
+    if (resisted && tell) await (await import('./mon.js')).shieldeff_mon(mtmp);   /* zap.c: if (tell) shieldeff_mon() */
     return resisted;
 }
 
@@ -906,12 +913,12 @@ async function doturn() {
         if (confused) {
             if (!msg_cnt++) await update_topl('Unfortunately, your voice falters.');
             mtmp.mflee = 0; mtmp.mfrozen = 0; mtmp.mcanmove = 1;
-        } else if (!resist(mtmp, '\0', 0, 1)) {
+        } else if (!(await resist(mtmp, '\0', 0, 1))) {
             // Class-keyed threshold: zombie 6, mummy 8, wraith 10, vampire 12,
             // ghost 14, lich 16 (C's cascading FALLTHROUGHs).
             const xlev = turn_xlev(mtmp.data?.mcls);
             if (xlev != null && (u.ulevel ?? 1) >= xlev
-                && !resist(mtmp, '\0', 0, 0)) {
+                && !(await resist(mtmp, '\0', 0, 0))) {
                 if ((u.ualign?.type ?? 0) === -1 /* A_CHAOTIC */) {
                     mtmp.mpeaceful = 1;
                 } else {
@@ -3313,17 +3320,24 @@ function chest_shatter_disposition(material) {
 }
 async function chest_shatter_msg(otmp) {
     const ocl = objects[otmp.otyp];
+    if (otmp.oclass === 8 /*POTION_CLASS*/) {
+        // C ref: lock.c chest_shatter_msg(): You("%s %s shatter!", Blind ? "hear" : "see", an(bottlename()));
+        // then potionbreathe(otmp) (breathless()/haseyes() are true for every modelled form).
+        const P = await import('./potion.js');
+        await update_topl(`You ${Blind() ? 'hear' : 'see'} ${an(P.bottlename())} shatter!`);
+        await P.potionbreathe_hero(otmp);
+        return;
+    }
     // Blind/unidentified singular name (HBlinded=1 in C): a spellbook of an
     // undiscovered type reads simply "spellbook".
     let thing;
     if (otmp.oclass === 10 /*SPBOOK_CLASS*/) thing = 'spellbook';
-    else if (otmp.oclass === 8 /*POTION_CLASS*/) thing = 'potion';
     else if (otmp.oclass === 9 /*SCROLL_CLASS (objclass.h); 7 is FOOD_CLASS*/) thing = 'scroll';
     else thing = ocl?.name || 'object';
     const disposition = chest_shatter_disposition(ocl?.material);
     // An()/An(thing): capitalised indefinite article.
-    const an = /^[aeiou]/i.test(thing) ? 'An' : 'A';
-    await update_topl(`${an} ${thing} ${disposition}!`);
+    const art = /^[aeiou]/i.test(thing) ? 'An' : 'A';
+    await update_topl(`${art} ${thing} ${disposition}!`);
 }
 
 // C ref: lock.c breakchestlock(box, destroyit):172-211 — destroy-it path only
@@ -4261,6 +4275,10 @@ async function doherecmdmenu() {
         push(nextCh(), `Go up the ${stway.isladder ? 'ladder' : 'stairs'}`, 'up');
     if (stway && !stway.up)
         push(nextCh(), `Go down the ${stway.isladder ? 'ladder' : 'stairs'}`, 'down');
+    // C ref: cmd.c:4468 there_cmd_menu_self() — "another movement choice".
+    if (u.usteed)
+        push(nextCh(), `Dismount ${x_monnam(u.usteed, /*ARTICLE_THE*/ 1, null,
+                                            /*SUPPRESS_SADDLE*/ 0x08, false)}`, 'ride');
 
     // C ref: cmd.c:4482 OBJ_AT(x,y) — svl.level.objects[x][y] is the raw top of
     // the pile (not vobj_at), and `otmp->nexthere` means "more than one here".

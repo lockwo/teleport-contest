@@ -29,7 +29,7 @@ import { isok, depth, s_suffix } from './hacklib.js';
 import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
     M1_NEEDPICK, M1_BREATHLESS, M1_NOHEAD, M1_ACID, M1_WALLWALK, M1_AMORPHOUS,
     M1_UNSOLID, M1_NOEYES, M1_NOLIMBS,
-    M2_JEWELS, M2_UNDEAD, M2_MERC, M2_WERE, throws_rocks_flag } from './monflags_data.js';
+    M2_JEWELS, M2_UNDEAD, M2_MERC, M2_WERE, throws_rocks_flag, is_undead_flag } from './monflags_data.js';
 import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
     AD_FIRE, AD_COLD, AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
 import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
@@ -1756,8 +1756,7 @@ function monstseesu_muse(seenres, clear) {
 function find_mac_muse(mon) { return worn_find_mac(mon); }
 
 // C ref: muse.c mbhitm(mtmp, otmp) — what the monster's beam does to whatever
-// it strikes.  WAN_UNDEAD_TURNING's unturn_dead() still needs zap.c machinery
-// this port does not have, so it draws nothing rather than half-resolving.
+// it strikes.
 async function mbhitm(mtmp, otmp, hits_you) {
     if (!hits_you && otmp.otyp !== OT().WAN_UNDEAD_TURNING) {
         mtmp.msleeping = 0;
@@ -1827,6 +1826,30 @@ async function mbhitm(mtmp, otmp, hits_you) {
         }
         if (!await tele_restrict(mtmp)) await rloc(mtmp, RLOC_MSG);
         break;
+    case OT().WAN_UNDEAD_TURNING: {
+        const Z = await import('./zap.js');
+        if (hits_you) {
+            await Z.unturn_you();
+            learnit = !!zap_oseen;
+        } else {
+            let wake = false;
+            if (await Z.unturn_dead(mtmp)) /* affects mtmp's invent, not mtmp */
+                wake = true;
+            if (is_undead_flag(mtmp.data) || is_vampshifter(mtmp)) {
+                wake = true;
+                /* context.bypasses=True: if resist() happens to be fatal,
+                   make_corpse() will set obj->bypass on the new corpse */
+                if (game.context) game.context.bypasses = true;
+                await Z.resist_damage(mtmp, otmp.oclass, rnd(8), false);
+            }
+            if (wake) {
+                if (!DEADMONSTER(mtmp)) await Z.wakeup(mtmp, false);
+                learnit = !!zap_oseen;
+            }
+        }
+        if (learnit) makeknown(OT().WAN_UNDEAD_TURNING);
+        break;
+    }
     default:
         break;
     }

@@ -23,6 +23,7 @@ import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXC
          inaccessible_equipment_quiet, GETOBJ_EXCLUDE_INACCESS } from './invent.js';
 import { makeplural } from './plural.js';
 import { surface, hliquid } from './dungeon.js';
+import { can_reach_floor } from './engrave.js';
 import { heal_legs, water_damage, float_up, spoteffects } from './trap.js';
 import { monster_detect, nomul } from './hack.js';
 import { DEADMONSTER } from './mon.js';
@@ -388,7 +389,7 @@ const HBOTTLENAMES = [
     'teapot', 'keg', 'bucket', 'thermos', 'amphora', 'wineskin', 'parcel',
     'bowl', 'ampoule',
 ];
-function bottlename() {
+export function bottlename() {
     const tbl = Hallucination() ? HBOTTLENAMES : BOTTLENAMES;
     return tbl[rn2(tbl.length)];
 }
@@ -1292,7 +1293,9 @@ async function peffect_polymorph(otmp) {
         } else {
             await polyself(POLY_CONTROLLED | POLY_LOW_CTRL);
             if (u.mtimedone && u.umonnum !== u.umonster) {
-                u.mtimedone = Math.min(u.mtimedone, rn2(15) + 10);
+                // C: min(x, y) is a macro `((x) < (y) ? (x) : (y))`, so rn2(15) is drawn
+                // once for the comparison and AGAIN for the result when y is the smaller.
+                u.mtimedone = (u.mtimedone < rn2(15) + 10) ? u.mtimedone : rn2(15) + 10;
             }
         }
     }
@@ -1615,18 +1618,9 @@ function dip_hands_ok(obj) {
 // C ref: youprop.h Glib — "slippery fingers" timer.
 function Glib() { return HProp('Glib') > 0; }
 
-// C ref: engrave.c can_reach_floor(check_pit=FALSE).  Beyond swallowed /
-// levitating: a hero held by a hugger, an unskilled rider, and a hiding
-// ceiling-clinger also cannot reach; Flying and a huge form always can.
+// C ref: engrave.c can_reach_floor(check_pit=FALSE).
 function dip_can_reach_floor() {
-    const u = game.u || {};
-    if (u.uswallow) return false;
-    if (Levitation()) return false;
-    // P_SKILL(P_RIDING) < P_BASIC — the port grants no riding skill, so any
-    // steed blocks floor access, matching C for an unskilled rider.
-    if (u.usteed) return false;
-    if (HProp('Flying') > 0) return true;
-    return true;
+    return can_reach_floor(false);
 }
 
 // C ref: potion.c dodip() — the QBUFSZ(128)-based length budget passed to

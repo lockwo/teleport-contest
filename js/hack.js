@@ -21,7 +21,7 @@ import { ok_to_quest } from './questok.js';
 import { trap_predicament } from './insight.js';
 import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as trapname_hk, crawl_destination, Levitation_fu, Flying_fu } from './trap.js';
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name } from './cmd.js';
-import { moveloop_turn, moveloop_input_redraw } from './allmain.js';
+import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
 import { A_CON, BEAR_TRAP, WEB, NO_TRAP, is_pit } from './const.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, terrain_glyph, displayed_doormask } from './display.js';
@@ -71,7 +71,7 @@ import { makeplural } from './plural.js';
 import { body_part } from './polyself.js';
 import { y_monnam, ARTICLE_A, ARTICLE_YOUR, SUPPRESS_SADDLE, hliquid } from './do_name.js';
 import { x_monnam } from './uhitm.js';
-import { canseemon_shared, bot, stairs_go_down, hero_glyph } from './display.js';
+import { canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar } from './display.js';
 import { mflags1_of, mflags2_of, M1_TUNNEL, M1_NEEDPICK, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
@@ -585,6 +585,7 @@ async function run_movement(run) {
     // run" test lives inside domove(), after impaired_movement() — see
     // run_stop_for_monster_at().
     await domove(u.dx, u.dy);
+    await end_turn_callbacks();    // allmain.c:558, end of this iteration
 
     // Continuation loop (C: allmain.c moveloop_core while gm.multi > 0).
     for (;;) {
@@ -635,6 +636,7 @@ async function run_movement(run) {
         // runs (see domove()'s comment in cmd.js).  `false` reproduces that:
         // only the run's FIRST domove() (above) may smudge/nudge.
         await domove(u.dx, u.dy, false);
+        await end_turn_callbacks();    // allmain.c:558, end of this iteration
     }
 
     // C ref: allmain.c:380 — a NEGATIVE gm.multi (nh_timeout()'s FUMBLING
@@ -832,7 +834,7 @@ function test_move_trav(ux, uy, dx, dy, mode) {
     // C ref: hack.c:1180 — "Pick travel path that does not require crossing a
     // trap.  Avoid water and lava using the usual running rules (but not
     // u.ux/u.uy because findtravelpath walks toward u.ux/u.uy)."
-    if ((game.context?.run || 0) === 8 && mode !== DO_MOVE && !u_at(x, y)) {
+    if (svc_context_run() === 8 && mode !== DO_MOVE && !u_at(x, y)) {
         const t = t_at(x, y);
         if (t && t.tseen && t.ttyp !== VIBRATING_SQUARE)
             return (mode === TEST_TRAP);
@@ -1077,12 +1079,16 @@ export async function travel_adjacent_step(tx, ty) {
         if (!test_move_quiet(tx, ty)) return await travel_walk(true);
         c.travel = 1; c.nopick = 1; c.mv = true;
         c.travel1 = 0;                  // domove_core() clears it past findtravelpath
-        c.run = 0;                      // end_running(FALSE)
+        // dotravel_target() armed run = 8; end_running(FALSE) drops it, which
+        // republishes T: (disp.time_botl) and forgets any leftover run == 8.
+        c.run = 8;
+        end_running(false);
         u.last_str_turn = 0;
         game.multi = 0;                 // end_running(FALSE) + nomul(0)
         // hack.c:1279 — the fast path zeroes travelcc before taking the step.
         (game.iflags = game.iflags || {}).travelcc = { x: 0, y: 0 };
         await domove(dx, dy);
+        await end_turn_callbacks();    // allmain.c:558, end of this iteration
         if (c.move) await takeTurn();  // the elapsed turn, taken inline
         // C: reset_cmd_vars() at the top of the next rhack().
         c.run = 0; c.travel = c.travel1 = c.mv = 0; c.nopick = 0;
@@ -1105,8 +1111,14 @@ async function travel_walk(fastPathFailed = false) {
     c.travel1 = 1;
     c.run = 8;
     c.nopick = 1;
-    if (fastPathFailed) game.multi = 0;
-    else if (!game.multi) game.multi = Math.max(COLNO, ROWNO);
+    if (fastPathFailed) {
+        // C ref: hack.c findtravelpath():1274-1283 — the adjacent fast path ran
+        // end_running(FALSE) (run 8 -> 0, disp.time_botl, multi -> 0) and then,
+        // test_move() having refused, restored `context.run = 8` for the BFS.
+        end_running(false);
+        c.run = 8;
+        game.multi = 0;
+    } else if (!game.multi) game.multi = Math.max(COLNO, ROWNO);
     u.last_str_turn = 0;
     u.dz = 0;
     c.mv = true;
@@ -1148,6 +1160,7 @@ async function travel_walk(fastPathFailed = false) {
             // own square succeeds and the turn is spent.
             if (!first) c.move = 1;
             await domove(0, 0, first);
+            await end_turn_callbacks();
             if (first) { first = false; c.move = 1; }
             if (c.move) await takeTurn();
             break;
@@ -1160,6 +1173,7 @@ async function travel_walk(fastPathFailed = false) {
         // `first` is still this iteration's pre-update value, true on exactly
         // the one domove() dotravel_target() dispatches fresh.
         await domove(u.dx, u.dy, first);
+        await end_turn_callbacks();     // allmain.c:558, end of this iteration
         if (first) { first = false; c.move = 1; }
         if (!c.move) { game._travel_leftover = false; break; } // blocked move: no turn, travel stops
         await takeTurn();            // the elapsed turn, taken inline
@@ -1180,6 +1194,7 @@ async function travel_walk(fastPathFailed = false) {
             if (game.multi === 0) {
                 end_running(true);
                 await domove(u.dx, u.dy, false);
+                await end_turn_callbacks();
                 if (c.move) await takeTurn();
                 break;
             }
@@ -1195,7 +1210,9 @@ async function travel_walk(fastPathFailed = false) {
     // svc.context.run stays 8 for the NEXT command(s): interrupt_multi() then
     // refuses to stop a counted search/rest (allmain.c:976), until some
     // nomul()/end_running()/reset_cmd_vars() clears it.
-    const leftoverRun = !!game._travel_leftover && c.run === 8;
+    // The adjacent fast path that failed test_move() likewise restored run = 8
+    // and the single BFS step ends the command with multi already 0.
+    const leftoverRun = (!!game._travel_leftover || fastPathFailed) && c.run === 8;
     game._travel_leftover = false;
     // C does not end the run here: findtravelpath() left run == 8 behind.
     if (leftoverRun) c.run = 0; // (not end_running()'s time_botl write)
@@ -1532,9 +1549,18 @@ function truncate_to_map(cx, cy, dx, dy) {
 // C ref: display.h glyph_at(x, y) — used by getpos()'s moveskip fast-move only
 // to compare two cells for equality.  This port has no numeric glyph ids, so
 // the DISPLAYED cell identity (char + colour + DEC-graphics flag) stands in.
-function gp_glyph_at(x, y) {
+function gp_glyph_at(x, y, detectMode = false) {
     const loc = game.level?.at(x, y);
     if (!loc) return ' ';
+    // A detection browse paints only the sensed monsters/objects (and the hero)
+    // on a freshly cls()'d map: every other displayed glyph is unexplored.
+    if (detectMode) {
+        const u = game.u;
+        const shown = (u && x === u.ux && y === u.uy)
+            || (loc.disp_monster && m_at(x, y))
+            || (loc.remembered_glyph?.objotyp && loc.remembered_glyph.ch === loc.disp_ch);
+        if (!shown) return 'unexplored';
+    }
     // GLYPH_UNEXPLORED and a seen S_stone both draw blank but are distinct glyphs.
     if ((loc.disp_ch ?? ' ') === ' ' && gloc_unexplored(x, y)) return 'unexplored';
     return `${loc.disp_ch ?? ' '}|${loc.disp_color ?? -1}|${loc.disp_decgfx ? 1 : 0}`;
@@ -2589,12 +2615,12 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             if (gp_iflags().getloc_moveskip) {
                 // C getpos.c:922 — "skip same glyphs": walk while the NEXT
                 // TWO cells both show the cursor cell's glyph.
-                const g0 = gp_glyph_at(cx, cy);
+                const g0 = gp_glyph_at(cx, cy, detectMode);
                 while (isok(cx + dx, cy + dy)
-                       && g0 === gp_glyph_at(cx + dx, cy + dy)
+                       && g0 === gp_glyph_at(cx + dx, cy + dy, detectMode)
                        && isok(cx + dx + dir.dx, cy + dy + dir.dy)
                        && g0 === gp_glyph_at(cx + dx + dir.dx,
-                                             cy + dy + dir.dy)) {
+                                             cy + dy + dir.dy, detectMode)) {
                     dx += dir.dx;
                     dy += dir.dy;
                 }
@@ -3036,6 +3062,17 @@ export async function reveal_terrain(which_subset) {
             // C ref: detect.c:2219-2231 — retain the requested remembered
             // objects, or a seen trap underneath an object being stripped.
             const rg = loc.remembered_glyph;
+            // C ref: detect.c:2232 — a stripped object/trap glyph on a spot whose
+            // seenv is 0 (mapped by object/trap detection, never actually seen)
+            // becomes the blank default glyph rather than bare terrain.
+            if (!full && rg && !loc.seenv && !isHero && !loc.invisMon
+                && ((rg.objotyp != null && !keep_objs)
+                    || (!keep_traps && t_at_hk(x, y)?.tseen
+                        && rg.ch === trap_glyph(t_at_hk(x, y)).ch
+                        && rg.color === trap_glyph(t_at_hk(x, y)).color))) {
+                show_glyph_cell(x, y, ' ', NO_COLOR, false);
+                continue;
+            }
             if (!full && rg) {
                 if (keep_objs && rg.objotyp != null) {
                     show_glyph_cell(x, y, rg.ch, rg.color, rg.decgfx, bg_attr(rg));
@@ -3334,8 +3371,9 @@ function render_whatis_menu(items) {
 // recorder/decoder compares against), for the do_screen_description prefix.
 function look_prefix_char(loc) {
     if (!loc || !loc.disp_ch) return '.';
-    return loc.disp_decgfx ? (DEC_TO_UNICODE[loc.disp_ch] || loc.disp_ch)
-                           : loc.disp_ch;
+    // The recorded terminal decodes only the frozen DEC codes (display.js
+    // decgfxMapChar); a DEC '{' (S_altar) reaches the top line as a raw '{'.
+    return decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
 }
 
 function look_pick_description(x, y) {
@@ -3551,7 +3589,7 @@ function look_pick_description(x, y) {
     // class and cmap entry sharing the displayed symbol ("a spellbook or a
     // closed door (closed door)").  Cells drawn with DEC line-drawing keep the
     // single-description fallback.
-    if (!loc.disp_decgfx && loc.disp_ch && loc.disp_ch !== ' ') {
+    if ((!loc.disp_decgfx || typ === ALTAR) && loc.disp_ch && loc.disp_ch !== ' ') {
         const text = { s: '' }, firstmatch = { s: '' };
         const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
         if (found) return { text: text.s, firstmatch: firstmatch.s, found };
@@ -3770,7 +3808,9 @@ async function display_dbase_window(lines, forceFull = false) {
             if (offx !== 0) for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
             if (page[r]) disp.putstr(textCol, r, page[r], NO_COLOR, 0);
         }
-        const moreRow = offx === 0 ? rows - 1 : page.length;
+        // C ref: process_text_window() ends with tty_curs(BASE_WINDOW, offx+1, NHW_TEXT ? rows-1 : n): an NHW_MENU
+        // data window (checkfile) puts its last --More-- on the row after the page content, not on row 23.
+        const moreRow = offx === 0 && forceFull ? rows - 1 : page.length;
         if (offx !== 0) for (let c = offx; c < cols; c++) disp.setCell(c, moreRow, ' ', NO_COLOR, 0);
         // C ref: wintty.c process_menu_window -> dmore(): the full-screen NHW_MENU
         // page's "--More--" sits one column right of its col-0 text (the same

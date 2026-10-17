@@ -1120,7 +1120,7 @@ export function pg_glyph_at(x, y) {
     // cmap glyph (S_engroom/S_engrcorr) above the bare terrain.
     if (is_cmap_engraving_at(x, y) && sym === engraving_glyph(loc).ch)
         return { kind: 'cmap', sym, cmap: loc.typ === CORR ? S_engrcorr : S_engroom, x, y };
-    return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), x, y };
+    return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), dec: !!loc.disp_decgfx, x, y };
 }
 function pg_glyph_is_monster(g) { return g?.kind === 'monster'; }
 function pg_glyph_is_object(g) { return g?.kind === 'object'; }
@@ -2032,8 +2032,13 @@ export function do_screen_description(cc, looked, sym, out_str, firstmatch,
            explosions; skip all of those */
         if (!x_str) continue;
 
-        if (sym === (looked ? showsym(alt_i + SYM_OFF_P, defsyms[alt_i].sym)
-                            : defsyms[alt_i].sym)) {
+        /* A DECgraphics-drawn cmap cell carries the symset's own code for that
+           entry (altar \xfb), which this port stores as the bare char ('{'):
+           only the entry that was drawn matches it, never fountain/sink. */
+        if (looked && glyph?.dec
+            ? (showsym(alt_i + SYM_OFF_P, '') === '\u0001' && alt_i === glyph.cmap)
+            : sym === (looked ? showsym(alt_i + SYM_OFF_P, defsyms[alt_i].sym)
+                              : defsyms[alt_i].sym)) {
             /* check if dark part of a room was already included above */
             if (alt_i === S_darkroom && glyph && pg_glyph_is_nothing(glyph)) continue;
 

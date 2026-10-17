@@ -1664,7 +1664,7 @@ async function select_menu(win, how, picks) {
         if (fullscreen) {
             inv.renderWindowScreen(pages[idx], {
                 menu: true,
-                footer: pages.length > 1 ? `(${idx + 1} of ${pages.length})` : '(end)',
+                footer: pages.length > 1 ? `(${idx + 1} of ${pages.length})` : '(end) ', // morestr carries a trailing space (cursor parks one past)
                 footerRow: pages[idx].length, footerCol: 1, modal: 'discowin',
             });
         } else {

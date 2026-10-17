@@ -46,7 +46,7 @@ import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation, trap
          TRAP_CLEARLY_IMMUNE, deltrap, fill_pit, blow_up_landmine, seetrap,
          launch_obj, ROLL, LAUNCH_KNOWN, Levitation_fu, Flying_fu } from './trap.js';
 import { doset, dosetSimple } from './doset.js';
-import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, dotele_wizard, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg, runmode_delay_output, nomul } from './hack.js';
+import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, dotele_wizard, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg, runmode_delay_output, nomul, handle_tip } from './hack.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          D_ISOPEN, D_BROKEN, D_NODOOR, D_TRAPPED,
          SDOOR, SCORR, CORR, IS_WALL, IS_OBSTRUCTED, IS_ROCK, isok, IS_DOOR,
@@ -57,7 +57,7 @@ import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          FOUNTAIN, SINK, THRONE, GRAVE, ALTAR, AIR, CLOUD,
          A_STR, A_DEX, A_CON, A_WIS, Is_rogue_level,
          TT_BEARTRAP, TT_PIT, TT_WEB, TT_LAVA, TT_INFLOOR, WEB,
-         PIT, SPIKED_PIT, STATUE_TRAP, TIP_SWIM, TRAPNUM, In_sokoban, ICE,
+         PIT, SPIKED_PIT, STATUE_TRAP, TIP_SWIM, TIP_UNTRAP_MON, TRAPNUM, In_sokoban, ICE,
          is_hole, LANDMINE, HOLE, TRAPDOOR, LEVEL_TELEP, TELEP_TRAP,
          ROLLING_BOULDER_TRAP,
          W_NONDIGGABLE, SHOPBASE, BRK_BY_HERO, BRK_FROM_INV, BRK_MELEE,
@@ -1056,6 +1056,7 @@ async function get_count(inkey) {
 
 // C ref: cmd.c rhack — main command dispatcher
 export async function rhack(key) {
+    canned_kick_ran = false;
     if (process.env.NHDBG_TRAV) console.error('RHACK', game.moves, JSON.stringify(key), 'dx', game.u?.dx, game.u?.dy, 'pos', game.u?.ux, game.u?.uy);
     // A nonzero key is moveloop_core's count repeat of the previous command.
     const countRepeat = key !== 0;
@@ -2261,7 +2262,7 @@ export async function rhack(key) {
     // hack.c domove() clears it unconditionally on its own, even for a
     // blocked step that elapses no time.  isok({0,0}) is false, so this
     // disables the avoidance.
-    if (game.context?.move && key !== 4)
+    if (game.context?.move && key !== 4 && !canned_kick_ran)
         game.kickedloc = { x: 0, y: 0 };
 }
 
@@ -2397,7 +2398,7 @@ export async function dosearch0(aflag) {
                 recalc_block_point(x, y); // C: unblock_point(x, y)
                 exercise(A_WIS, true);
                 nomul(0);
-                newsym(x, y);
+                feel_newsym(x, y); /* C: make sure it shows up (feel_location when Blind) */
                 await update_topl('You find a hidden passage.');
             } else {
                 const mtmp = m_at(x, y);
@@ -3010,10 +3011,15 @@ function canned_kick_queued() {
 }
 // The queued kick is the very next command: run it now (dokick's getdir()
 // consumes the queued direction) and set the turn flag from its result.
+// C's rhack() epilogue only resets gk.kickedloc when `func != dokick`; the
+// canned kick runs inside THIS port rhack() call, so rhack()'s own epilogue
+// must know it was the kick that ran (canned_kick_ran).
+let canned_kick_ran = false;
 async function run_canned_kick() {
     if (!canned_kick_queued()) return false;
     cmdq_pop(CQ_CANNED);
     const res = await dokick();
+    canned_kick_ran = true;
     game.context.move = res === 1 ? 1 : 0;
     return true;
 }
@@ -3577,6 +3583,11 @@ export async function domove(dx, dy, attemptTracked = true) {
     // (blocked step, failed rush, attack, displacement), the kicked location
     // is reset so pets stop avoiding it.
     game.kickedloc = { x: 0, y: 0 };
+    // C ref: hack.c:1104-1108 — a canned dokick queued by autounlock's "Kick
+    // it?" is NOT run inside domove(): it is the next rhack() command, so
+    // domove()'s clear above lands BEFORE the kick and dokick()'s
+    // gk.kickedloc survives into this turn's monster-move phase.
+    await run_canned_kick();
 }
 
 async function domove_core(dx, dy, attemptTracked) {
@@ -4070,7 +4081,8 @@ async function domove_core(dx, dy, attemptTracked) {
                     game.context.move = 0;
                     nomul(0);
                 }
-                await run_canned_kick();
+                // the queued kick itself runs from domove() once its own
+                // kickedloc clear is done (C: next rhack() after domove()).
                 return;
             }
             // Running (autoopen disabled) into an orthogonal closed door:
@@ -4086,7 +4098,7 @@ async function domove_core(dx, dy, attemptTracked) {
                 const fumbling = !!(u.HFumbling || u.EFumbling);
                 if (Blind() || stunned || ACURR(A_DEX) < 10 || fumbling) {
                     if (u.usteed) {
-                        await pline(`You can't lead ${mon_nam(u.usteed)} through that closed door.`);
+                        await pline(`You can't lead ${y_monnam(u.usteed)} through that closed door.`);
                     } else {
                         await pline('Ouch!  You bump into a door.');
                         exercise(A_DEX, false);
@@ -4123,7 +4135,17 @@ async function domove_core(dx, dy, attemptTracked) {
     // because the door square itself is otherwise walkable floor.  A rock/wall
     // DESTINATION is tested first in C (hack.c:1030, "It's a wall."), so it
     // falls through to the blocksMove() branch below instead.
+    // C ref: hack.c:1151-1172 — the tight-diagonal squeeze test runs BEFORE the
+    // out-of-a-doorway refusal (1208), so a hero leaving an intact doorway
+    // between two rock squares hears "carrying too much" instead of silence.
+    const _tgtDoor = game.level?.at(newx, newy);
+    const _squeezeFirst = u.dx && u.dy
+        && !(IS_DOOR(_tgtDoor?.typ ?? STONE) && !doorless_door(newx, newy))
+        && !blocksMove(newx, newy)
+        && bad_rock_hero(u.ux, newy) && bad_rock_hero(newx, u.uy)
+        && cant_squeeze_thru_hero() !== 0;
     if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy)
+        && !_squeezeFirst
         && !IS_OBSTRUCTED(game.level?.at(newx, newy)?.typ ?? STONE)) {
         // A refused diagonal out of a doorway still first tests the
         // destination, so a blind hero may feel a wall there.
@@ -4700,7 +4722,7 @@ async function climb_pit() {
         // is_clinger() needs a poly form no hero here takes.
         await pline(`You climb from the ${pitname}.`);
         reset_utrap_cmd();
-        fill_pit_cmd(u.ux, u.uy);
+        await fill_pit(u.ux, u.uy);
         game.vision_full_recalc = 1;
         return;
     }
@@ -4710,7 +4732,7 @@ async function climb_pit() {
         await pline(`${(In_sokoban(u.uz) && Levitation_fu())
             ? 'You struggle against the air currents and float'
             : u.usteed ? 'You ride' : 'You crawl'} to the edge of the ${pitname}.`);
-        fill_pit_cmd(u.ux, u.uy);
+        await fill_pit(u.ux, u.uy);
         game.vision_full_recalc = 1;
         return;
     }
@@ -4733,24 +4755,6 @@ function reset_utrap_cmd() {
     u.utrap = 0;
     u.utraptype = 0;
     game.botl = true;
-}
-
-// C ref: trap.c fill_pit(x, y) — a boulder sitting in a pit falls in and fills
-// it, removing the boulder from the floor.
-function fill_pit_cmd(x, y) {
-    const t = trap_at(x, y);
-    if (!t || !is_pit_ttyp(t.ttyp)) return;
-    const otmp = boulder_at(x, y);
-    if (!otmp) return;
-    const objs = game.level?.objects;
-    if (objs) {
-        const i = objs.indexOf(otmp);
-        if (i >= 0) objs.splice(i, 1);
-    }
-    otmp.where = OBJ_FREE;
-    // flooreffects(otmp, x, y, "settle") fills the pit: the trap is removed.
-    game.level.traps = (game.level.traps || []).filter((tr) => tr !== t);
-    newsym(x, y);
 }
 
 // C ref: hack.c:939 bad_rock(youmonst.data, x, y).  passes_walls(mdat) and
@@ -4779,10 +4783,16 @@ function cant_squeeze_thru_hero() {
     const u = game.u;
     if (hero_passes_walls()) return 0;
     const MZ_LARGE = 3, WT_TOOMUCH_DIAGONAL = 600;  // weight.h:22
-    // Upolyd only: an unpolymorphed hero is MZ_HUMAN.  amorphous/whirly/
-    // noncorporeal/slithy/can_fog all need a polyform none of these heroes take.
-    const ptr = u?.mcham_data || null;
-    if (ptr && (ptr.msize ?? 0) >= MZ_LARGE) return 1;
+    // C ref: the bigmonst exemption's can_fog() term cannot hold for the hero
+    // (is_vampshifter(&youmonst) needs a vampire form, none is MZ_LARGE).
+    const ptr = youmonst_data_pub();
+    if ((ptr?.msize ?? 0) >= MZ_LARGE
+        && !((mflags1_of(ptr) & M1_AMORPHOUS) !== 0
+             || ptr.mcls === 22 /* S_VORTEX (is_whirly) */
+             || ptr.name === 'air elemental'
+             || ptr.mcls === 54 /* S_GHOST (noncorporeal) */
+             || (mflags1_of(ptr) & 0x80000 /* M1_SLITHY */) !== 0))
+        return 1;
     if (carried_weight() > WT_TOOMUCH_DIAGONAL) return 2;
     if (In_sokoban(u?.uz)) return 3;
     return 0;
@@ -5125,9 +5135,10 @@ async function moverock(otmp, sx, sy, dx, dy) {
                 map_invisible(rx, ry);
             }
             if (game.flags?.verbose !== false) {
+                const you_or_steed = u.usteed ? y_monnam(u.usteed) : 'you';
                 await update_topl(deliverPart1
-                    ? `Perhaps that's why you cannot move it.`
-                    : `You cannot move ${the_pushable_name(otmp)}.`);
+                    ? `Perhaps that's why ${you_or_steed} cannot move it.`
+                    : `${you_or_steed.charAt(0).toUpperCase() + you_or_steed.slice(1)} cannot move ${the_pushable_name(otmp)}.`);
             }
             return await cannot_push(otmp, sx, sy);
         }
@@ -5155,13 +5166,17 @@ async function moverock(otmp, sx, sy, dx, dy) {
                     await pline(`${bang}!  ${Tobjnam_boulder(otmp, 'trigger')} `
                               + `${destTrap.madeby_u ? 'your' : 'a'} land mine.`);
                     await blow_up_landmine(destTrap);
-                    fill_pit(u.ux, u.uy);
+                    await fill_pit(u.ux, u.uy);
                     if (cansee(rx, ry)) newsym(rx, ry);
                     return boulder_at(sx, sy) ? -1 : 0;
                 }
                 /* 1-in-10: trap didn't fire; boulder unaffected, fall through */
             } else if (ttyp === PIT || ttyp === SPIKED_PIT) {
                 obj_extract_self(otmp);
+                /* vision kludge to get messages right; the pit will
+                   temporarily be seen even if this is one among multiple
+                   boulders */
+                if (!Blind() && game.viz_array?.[ry]) game.viz_array[ry][rx] |= 0x2; /* IN_SIGHT */
                 if (!(await flooreffects(otmp, rx, ry, 'fall'))) place_object(otmp, rx, ry);
                 if (m_at(rx, ry) && !Blind()) newsym(rx, ry);
                 return boulder_at(sx, sy) ? -1 : 0;
@@ -5170,11 +5185,11 @@ async function moverock(otmp, sx, sy, dx, dy) {
                     await pline(`Kerplunk!  You no longer feel ${the_pushable_name(otmp)}.`);
                 } else {
                     await pline(`${Tobjnam_boulder(otmp, ttyp === TRAPDOOR ? 'trigger' : 'fall')}`
-                              + `${ttyp === TRAPDOOR ? '' : ' into'} ${otense(otmp, 'plug')} `
+                              + `${ttyp === TRAPDOOR ? '' : ' into'} and ${otense(otmp, 'plug')} `
                               + `a ${ttyp === TRAPDOOR ? 'trap door' : 'hole'} in the ${surface(rx, ry)}!`);
                 }
                 deltrap(destTrap);
-                useupf(otmp, 1);
+                await useupf(otmp, 1);
                 await bury_objs(rx, ry);
                 const rloc = game.level?.at(rx, ry);
                 if (rloc) { rloc.wall_info = (rloc.wall_info | 0) & ~W_NONDIGGABLE; rloc.candig = 1; }
@@ -5353,12 +5368,18 @@ export async function pickup_after_move(x, y) {
     // LOOKHERE_SKIP_DFEATURE, telling look_here() not to re-announce the same
     // feature. Outside the tutorial, describe_decor() never runs, so
     // look_here() is the one that announces it.
+    // pickup() calls describe_decor() only on its early-return arms and via
+    // check_here() AFTER autopick() has lifted things, so the feature line
+    // follows any "You have a little trouble lifting ..." message.
     let decorAnnounced = false;
-    if (game.flags?.mention_decor) {
+    const mentionDecor = !!game.flags?.mention_decor;
+    const decor = async () => {
         const loc = game.level?.at?.(x, y);
         const inLiquid = !!loc && (IS_POOL(loc.typ) || IS_LAVA(loc.typ));
         if (!inLiquid) decorAnnounced = await describe_decor();
-    }
+    };
+    const objAt = (game.level?.objects || []).some(
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
     // C ref: pickup.c pickup():701 — `if (autopickup && (svc.context.nopick
     // || !OBJ_AT(...) ...)) { read_engr_at(...); return 0; }`.  This function
     // models pickup(1), so autopickup is always TRUE: with nopick set (travel,
@@ -5371,8 +5392,9 @@ export async function pickup_after_move(x, y) {
     // Levitation/Flying/Wwalking): `(is_pool(u.ux,u.uy) && !Underwater) ||
     // is_lava(u.ux,u.uy)`.
     const hereLoc = game.level?.at?.(x, y);
-    if (ctx.nopick || (isPoolTerrain(x, y) && !game.Underwater)
+    if (ctx.nopick || !objAt || (isPoolTerrain(x, y) && !game.Underwater)
         || (hereLoc && IS_LAVA(hereLoc.typ))) {
+        if (mentionDecor) await decor();
         await read_engr_at(x, y);
         return;
     }
@@ -5388,11 +5410,8 @@ export async function pickup_after_move(x, y) {
         // C ref: pickup.c:713 `(void) describe_decor(); /* even when
         // !flags.mention_decor */` — reached only when OBJ_AT (an empty square
         // returned at :702 first) and, with mention_decor, after the call above.
-        if (!game.flags?.mention_decor
-            && (game.level?.objects || []).some(
-                (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y))
-            await describe_decor();
-        if (((game.multi ?? 0) && !ctx.run)
+        await describe_decor();
+        if (((game.multi ?? 0) && !svc_context_run())
             || !game.flags?.pickup
             || (reachTrap && (uteetering_at_seen_pit(reachTrap)
                               || uescaped_shaft(reachTrap))))
@@ -5416,13 +5435,15 @@ export async function pickup_after_move(x, y) {
     const stop_run = () => nomul(0);
     const obj_at = (game.level?.objects || []).some(
         (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
-    if (obj_at && ctx.run && ctx.run !== 8 && !ctx.nopick
+    const run_now = svc_context_run();
+    if (obj_at && run_now && run_now !== 8 && !ctx.nopick
         && game.flags?.pickup && !notake_youmonst()) stop_run();
     // C ref: pickup.c:724 — a notake polyform still gets check_here() (so the
     // pile IS announced) and is then told it cannot lift anything.  This arm
     // sits ahead of both the autopickup and the plain look-here paths.
     if (notake_youmonst()) {
-        if (hasObj && ctx.run) stop_run(); // check_here(): `if (run) nomul(0)`
+        if (mentionDecor) await decor();
+        // check_here() (look_here_after_move) does its own `if (run) nomul(0)`.
         if (hasObj) await look_here_after_move(x, y, false, decorAnnounced);
         else await read_engr_at(x, y);
         if (hasObj) await pline('You are physically incapable of picking anything up.');
@@ -5432,13 +5453,14 @@ export async function pickup_after_move(x, y) {
     // hero straight to check_here(FALSE) with no autopick(): a counted walk
     // ("5y") or a hero who is helpless / mid-action never autopicks up what
     // the step lands on, it only looks at it.
-    if (game.flags?.pickup && !((game.multi ?? 0) && !ctx.run)) {
+    if (game.flags?.pickup && !((game.multi ?? 0) && !svc_context_run())) {
         const nPicked = await autopickup_after_move(x, y);
         // C ref: pickup.c pickup() -> check_here(n_picked > 0): after autopickup,
         // any objects still on the square are announced ("You see here ...").
         // pickup_types may exclude them (e.g. a chest when '(' isn't selected),
         // so an item can remain even with autopickup on.  When nothing is left,
         // C reads any engraving instead.
+        if (mentionDecor) await decor();
         const remain = (game.level?.objects || []).filter(
             (o) => not_uchain(o) && o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
         if (remain.length > 0) {
@@ -5446,13 +5468,14 @@ export async function pickup_after_move(x, y) {
         } else {
             await read_engr_at(x, y);
         }
-    } else if (ctx.run !== 8) {
+    } else {
         // C ref: pickup.c check_here() — `if (ct) look_here(ct, lhflags); else
         // read_engr_at(...)`, with ct counting everything but uchain.  The
         // look_here() call was unconditional here, so a square holding only the
         // punishment chain still got a "You see here an iron chain." line that C
         // never prints.
-        if (hasObj && ctx.run) stop_run(); // check_here(): `if (run) nomul(0)`
+        // check_here() (look_here_after_move) does its own `if (run) nomul(0)`.
+        if (mentionDecor) await decor();
         if (hasObj) await look_here_after_move(x, y, false, decorAnnounced);
         else await read_engr_at(x, y);
     }
@@ -5482,8 +5505,11 @@ async function autopickup_after_move(x, y) {
     // C ref: pickup.c:735-737 — `if (OBJ_AT(u.ux, u.uy) && svc.context.run
     // && svc.context.run != 8 && !svc.context.nopick) nomul(0);` (also sets
     // disp.botl, so the next pline's bot() shows the new encumbrance).
-    if (game.context?.run && game.context.run !== 8 && !game.context.nopick)
-        (await import('./hack.js')).nomul(0);
+    {
+        const run_now = svc_context_run();
+        if (run_now && run_now !== 8 && !game.context.nopick)
+            (await import('./hack.js')).nomul(0);
+    }
     const { autopick_testobj, reset_justpicked, pickup_object } = await import('./pickup.js');
     // calc_costly is TRUE for the first object only, as in autopick().
     let check_costly = true;
@@ -5530,7 +5556,10 @@ async function look_here_after_move(x, y, _pickedSome = false, skipDfeature = fa
     const objCount = objs.length - Number(objs.includes(game.u?.uchain));
     // C ref: pickup.c check_here() `if (ct) { if (run) nomul(0);
     // flush_screen(1); look_here(...); }` — the flush runs bot()/timebot().
-    if (objCount) await flush_screen(1);
+    if (objCount) {
+        if (svc_context_run()) nomul(0);
+        await flush_screen(1);
+    }
     // C ref: look_here() — "if (dfeature && !skip_dfeature) pline1(fbuf);"
     // fbuf = "There is <a feature> here." (dfeature_at names stairs, altars,
     // fountains, doors, ...).  skip_dfeature (LOOKHERE_SKIP_DFEATURE) is set
@@ -5664,7 +5693,8 @@ async function domove_swap_with_pet(mtmp, x, y) {
         const what = trapname(trap.ttyp, false);
         let which = 'that ';
         if (!trap.tseen) { trap.tseen = 1; newsym(trap.tx, trap.ty); which = `${an(what).slice(0, -what.length)}`; }
-        await pline(`You stop.  ${Monnam(mtmp)} can't move out of ${which}${what}.`);
+        await pline(`You stop.  ${YMonnam(mtmp)} can't move out of ${which}${what}.`);
+        await handle_tip(TIP_UNTRAP_MON);
         return false;
     }
     const { goodpos } = await import('./teleport.js');

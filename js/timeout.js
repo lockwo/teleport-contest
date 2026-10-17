@@ -515,7 +515,8 @@ const TIMED_PROPS = [
     timed_uprop('POISON_RES', 'HPoison_resistance'),
     timed_uprop('ACID_RES', 'HAcid_resistance', async () => {
         const p = game.u?.uprops || {};
-        if (!p.EAcid_resistance && !(p.HAcid_resistance & ~TIMEOUT)) {
+        if (!p.EAcid_resistance && !((game.u?.uprops_extrinsic || {})[7 /* ACID_RES */] | 0)
+            && !(p.HAcid_resistance & ~TIMEOUT)) {
             /* timeout.c:812 — extend while eating an acidic corpse */
             if ((await import('./eat.js')).eating_dangerous_corpse(P_ACID_RES_T)) {
                 p.HAcid_resistance = (p.HAcid_resistance & ~TIMEOUT) | 1;
@@ -799,12 +800,14 @@ export async function nh_timeout() {
             const { find_ac } = await import('./u_init.js');
             find_ac();
             const { Blind } = await import('./vision.js');
-            if (!Blind())
-                {
-                    const { hcolor } = await import('./do_name.js');
-                    await update_topl(`The ${hcolor('golden')} haze around you ${
-                        u.uspellprot ? 'becomes less dense' : 'disappears'}.`);
-                }
+            if (!Blind()) {
+                const { hcolor } = await import('./do_name.js');
+                const msg = `The ${hcolor('golden')} haze around you ${
+                    u.uspellprot ? 'becomes less dense' : 'disappears'}.`;
+                /* Norep(): pline.c PLINE_NOREPEAT drops an exact repeat of
+                   gp.prevmsg (game._prevmsg), the last individual message. */
+                if (game._prevmsg !== msg) await update_topl(msg);
+            }
         }
     }
 

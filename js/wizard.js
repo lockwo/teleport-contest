@@ -11,6 +11,7 @@ import { rn2, rnd, rn1 } from './rng.js';
 import { update_topl, pline, newsym } from './display.js';
 import { Blind } from './vision.js';
 import { AT_MAGC, attacktype } from './monattk_data.js';
+import { mflags3_of } from './monflags_data.js';
 import { In_W_tower } from './teleport.js';
 import { mon_has_amulet, mon_has_special, any_quest_artifact } from './monspecial.js';
 import { M_AP_MONSTER, MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR, In_endgame, Is_astralevel } from './const.js';
@@ -359,7 +360,7 @@ const BOLT_LIM_WIZ = 8;
 // C ref: teleport.h RLOC_MSG.
 const RLOC_MSG = 0x02;
 // C ref: wizard.c:139 M_Wants(mask) == (mtmp->data->mflags3 & (mask)).
-function M_Wants(mtmp, mask) { return ((mdata(mtmp)?.mflags3 | 0) & mask) !== 0; }
+function M_Wants(mtmp, mask) { return (mflags3_of(mdata(mtmp)) & mask) !== 0; }
 // C ref: mkobj.c fobj — every object lying on the level's floor, in chain
 // order.  This port keeps one array per level and tags each entry's location.
 function floorObjects() {
