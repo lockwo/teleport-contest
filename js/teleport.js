@@ -775,7 +775,7 @@ export async function teleds(nux, nuy, teleds_flags) {
     /* must set u.ux,u.uy AFTER drag_ball(), which may need the old position */
     u_on_newpos_(nux, nuy);   /* set u.<x,y>, usteed-><mx,my>; cliparound() */
     const { fill_pit } = await import('./trap.js');
-    fill_pit(u.ux0, u.uy0);
+    await fill_pit(u.ux0, u.uy0);
     if (ball_active && uchain_() && uchain_().where === OBJ_FREE)
         B.placebc();          /* put back the ball&chain if taken off map */
     const { update_player_regions } = await import('./region.js');
@@ -1553,6 +1553,9 @@ function u_on_newpos_(x, y) {
     const u = game.u;
     if (!u) return;
     u.ux = x; u.uy = y;
+    u.uundetected = 0;
+    /* ridden steed always shares hero's location */
+    if (u.usteed) { u.usteed.mx = u.ux; u.usteed.my = u.uy; }
     /* C dungeon.c u_on_newpos(): a same-level relocation lets nearby generic
        objects be observed up close (feeds the '\' discoveries list). */
     see_nearby_objects();

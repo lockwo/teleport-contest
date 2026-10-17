@@ -797,11 +797,9 @@ async function corpse_chance(mdef) {
 export { corpse_chance as corpse_chance_mm };
 
 // C ref: monmove.c accessible(x,y) — ACCESSIBLE(typ)==typ>=DOOR && !closed_door.
-// Kill sites in the contest sessions are open floor/corridor/doorway; no closed
-// door sits under a dying monster, so the closed_door() refinement is omitted.
 function accessible(x, y) {
     const typ = game.level?.at(x, y)?.typ;
-    return typ != null && typ >= DOOR;
+    return typ != null && typ >= DOOR && !closed_door_mm(x, y);
 }
 
 // C ref: rm.h IS_POOL(typ) — pools/moat/water also let a corpse drop.
@@ -1092,8 +1090,12 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
                 if (mm_can_see_mon(magr))
                     await emitMMmsg(`${Monnam(magr)} is suddenly very cold!`);
                 healmon(mdef, Math.floor(tmp / 2), Math.floor(tmp / 2));
-                // split_mon() (blue jelly) isn't modelled — it makemon()s a
-                // clone, which is RNG the port would have to reproduce exactly.
+                // mhitm.c:1407 — a jelly healed past its level's worth of hit
+                // points splits (clone_mon: enexto's ring scan + a fresh m_id).
+                if ((mdef.mhpmax | 0) > (monLev(mdef) + 1) * 8) {
+                    const { split_mon } = await import('./potion.js');
+                    await split_mon(mdef, magr);
+                }
                 break;
             case AD_STUN:
                 if (!magr.mstun) {

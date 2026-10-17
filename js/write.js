@@ -4,7 +4,7 @@
 
 import { game } from './gstate.js';
 import { rn2, rn1, rnl } from './rng.js';
-import { objects, mksobj, bcsign, SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER,
+import { objects, MAXOCLASSES, mksobj, bcsign, SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER,
          SPE_BLANK_PAPER, SPE_NOVEL, SPE_BOOK_OF_THE_DEAD } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { A_WIS, MAXULEV, ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
@@ -165,8 +165,8 @@ export async function dowrite(pen) {
 
     let deferred = 0, real = 0;   /* not any scroll or book */
     let deferralchance = 0;       /* incremented for each oc_uname match */
-    let first = -1, last = -1;    /* objects[] is grouped by class */
-    for (let i = 0; i < objects.length; i++) {
+    let first = -1, last = -1;    /* objects[] is grouped by class (skip generic objects) */
+    for (let i = MAXOCLASSES; i < objects.length; i++) {
         if (objects[i] && objects[i].oclass === paper.oclass) {
             if (first < 0) first = i;
             last = i;

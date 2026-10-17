@@ -561,8 +561,8 @@ export async function explode(x, y, type, dam, olet, expltype) {
 }
 
 // C ref: hack.c uhim()/uhis().
-function uhim() { return (game.u?.mfemale || game.u?.ufemale) ? 'her' : 'him'; }
-function uhis() { return (game.u?.mfemale || game.u?.ufemale) ? 'her' : 'his'; }
+function uhim() { return game.flags?.female ? 'her' : 'him'; }
+function uhis() { return game.flags?.female ? 'her' : 'his'; }
 
 // C ref: display.c unmap_invisible(x, y) — clear a remembered 'I' when the
 // square is known to hold no monster.

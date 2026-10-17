@@ -8,7 +8,7 @@
 // the recorded sessions.  Kept faithful to the C control flow so it extends
 // to richer monster behavior without per-seed special cases.
 
-import { PLNMSG_HIDE_UNDER } from "./const.js";
+import { PLNMSG_HIDE_UNDER, FACE } from "./const.js";
 import { game, hooks } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
@@ -78,7 +78,7 @@ import { On_W_tower_level, In_W_tower } from './teleport.js';
 import { COIN_CLASS, ROCK, ROCK_CLASS, GOLD_PIECE, GEM_CLASS, CORPSE, ARROW, DART,
     GLOB_OF_GREEN_SLIME, SCR_SCARE_MONSTER, AMULET_OF_STRANGULATION, mksobj_at,
     clear_dknown, remove_object, disturb_buried_zombies } from './mkobj.js';
-import { t_at, t_missile, Can_fall_thru, maketrap, clamp_hole_destination, trapname, seetrap } from './trap.js';
+import { t_at, t_missile, Can_fall_thru, maketrap, clamp_hole_destination, trapname, seetrap, fill_pit } from './trap.js';
 import { gettrack } from './track.js';
 import { find_mac as worn_find_mac, which_armor } from './worn.js';
 import { mvitals_died, DEADMONSTER, healmon, base_mmove, curr_mon_load,
@@ -2104,7 +2104,7 @@ export async function mon_mintrap(mtmp, mintrapflags = 0) {
                     mtmp.mtrapped = 0;
                     if (canseemon_mm(mtmp))
                         await pline_mon(mtmp, `${Monnam(mtmp)} pulls free...`);
-                    await fill_pit_local(mtmp.mx, mtmp.my);
+                    await fill_pit(mtmp.mx, mtmp.my);
                 }
             } else {
                 if (canseemon_mm(mtmp)) {
@@ -2708,10 +2708,9 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
                 trapkilled = true;
         }
         // C ref: trap.c:2646 fill_pit(tx, ty) — a boulder sitting on the new
-        // pit may crush the monster (mon_thitm above may already have
-        // destroyed the trap; fill_pit_local() is a no-op when there's no
-        // pit at trap.tx/trap.ty).  No RNG.
-        await fill_pit_local(trap.tx, trap.ty);
+        // pit falls in (mon_thitm above may already have destroyed the trap;
+        // fill_pit() does nothing when there's no pit at trap.tx/trap.ty).
+        await fill_pit(trap.tx, trap.ty);
         if (DEADMONSTER(mtmp)) trapkilled = true;
         // C ref: trap.c:2649-2652 unconscious() — a nearby blast wakes a
         // sleeping/fainted hero regardless of who set the mine off.  No RNG.
@@ -3316,31 +3315,6 @@ const PM_PIT_FIEND = 300, MZ_HUGE = 4;
 function m_easy_escape_pit(mtmp) {
     const ptr = mtmp?.data;
     return monsndx_of(ptr) === PM_PIT_FIEND || mon_size(ptr) >= MZ_HUGE;
-}
-// C ref: trap.c fill_pit(x, y) -> do.c flooreffects(boulder, x, y, "settle").
-// mintrap's caller has ALREADY cleared mtrapped, so flooreffects' "boulder
-// crushes the trapped victim" arm (its only RNG) cannot fire; what remains is
-// the message, delfloortrap() and using up the boulder.  No RNG.
-async function fill_pit_local(x, y) {
-    const t = t_at(x, y);
-    if (!t || !(is_pit(t.ttyp) || t.ttyp === HOLE || t.ttyp === TRAPDOOR)) return;
-    const otmp = objectsAt(x, y).find((o) => o.otyp === ROCK_BOULDER);
-    if (!otmp) return;
-    if (!Blind() && cansee(x, y)) {
-        const tseen = !!t.tseen;
-        await pline_mon(null, 'The boulder '
-            + ((t.ttyp === TRAPDOOR && !tseen) ? 'triggers and ' : '')
-            + (t.ttyp === TRAPDOOR ? 'plugs a trap door'
-               : t.ttyp === HOLE ? 'plugs a hole' : 'fills a pit') + '.');
-    }
-    deltrap_local(t);
-    otmp.where = OBJ_FREE;           // useupf(obj, 1L)
-    const objs = game.level?.objects;
-    if (objs) {
-        const ix = objs.indexOf(otmp);
-        if (ix >= 0) objs.splice(ix, 1);
-    }
-    newsym(x, y);
 }
 // C ref: trap.c deltrap(trap) — remove a trap from the level trap list.  Local
 // helper (trap.js's deltrap is not exported); mirrors its splice + no RNG.
@@ -5318,9 +5292,11 @@ export async function m_consume_obj(mtmp, otmp) {
     const ispet = !!mtmp.mtame;
     const { mon_givit, mon_to_stone, meatbox } = await import('./mon.js');
 
-    /* non-pet: Heal up to the object's weight in hp */
+    /* non-pet: Heal up to the object's weight in hp.  objects[].oc_weight, not
+       the object's own owt: a corpse's oc_weight is 0 (its real weight lives in
+       obj->owt), so eating one only heals through mhealup() below. */
     if (!ispet && (mtmp.mhp ?? 0) < (mtmp.mhpmax ?? 0))
-        healmon(mtmp, base_oc_weight(otmp), 0);
+        healmon(mtmp, otmp.otyp === CORPSE ? 0 : base_oc_weight(otmp), 0);
     if ((otmp.cobj?.length | 0) > 0)
         await meatbox(mtmp, otmp);
     if (otmp === game.uball) {
@@ -5966,7 +5942,10 @@ export async function mattacku(mtmp, mdat) {
             if (i & M_ATTK_AGR_DIED) return 1;
             if ((i & M_ATTK_DEF_DIED) || !u.usteed || !m_next2u(mtmp))
                 return 0;
-            // Let your steed retaliate.
+            // Let your steed retaliate (mhitu.c:545: bhitpos is re-aimed at the attacker; mattackm's
+            // `i > 0 && m_at(bhitpos) != mdef` test would otherwise cut the steed's attacks short).
+            game.bhitpos = { x: mtmp.mx, y: mtmp.my };
+            game.notonhead = false;
             return ((await mattackm(u.usteed, mtmp)) & M_ATTK_DEF_DIED) ? 1 : 0;
         }
     }
@@ -6986,8 +6965,9 @@ export async function thitu(tlev, dam, otmp) {
     // C ref: mthrowu.c:122-124 — an acid-resistant hero shrugs off acid venom
     // (no losehp(), no exercise()).
     const is_acid = otmp?.otyp === ACID_VENOM;
-    if (is_acid && ['Acid_resistance', 'HAcid_resistance', 'EAcid_resistance']
-        .some((k) => (game.u?.uprops?.[k] | 0) || (game.u?.[k] | 0))) {
+    if (is_acid && (['Acid_resistance', 'HAcid_resistance', 'EAcid_resistance']
+        .some((k) => (game.u?.uprops?.[k] | 0) || (game.u?.[k] | 0))
+        || ((game.u?.uprops_extrinsic || {})[7 /* ACID_RES */] | 0))) {
         await update_topl("It doesn't seem to hurt you.");
         return 1;
     }
@@ -7403,6 +7383,18 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
     };
     // C tmp_at(DISP_END, 0): restore the last flashed cell after the throw.
     const flash_end = () => { if (tf) return return_flightpath ? undefined : tf.end(false); if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } };
+    // C ref: mthrowu.c:833-838 — after the flight (and drop_throw/tmp_at(DISP_END)):
+    // u.ucreamed += blindinc; make_blinded(BlindedTimeout + blindinc, FALSE);
+    // if (!Blind) Your1(vision_clears).
+    let blindinc = 0;
+    const apply_blindinc = async () => {
+        if (!blindinc) return;
+        const { make_blinded_hero, BlindedTimeout } = await import('./potion.js');
+        u.ucreamed = (u.ucreamed | 0) + blindinc;
+        await make_blinded_hero(BlindedTimeout() + blindinc, false);
+        if (!Blind()) await pline('Your vision clears.');
+        blindinc = 0;
+    };
     let bx = sx, by = sy;
     // C ref: mthrowu.c:639 — MT_FLIGHTCHECK(TRUE, 0) BEFORE the flight loop: a
     // missile launched straight into a wall/closed door never moves.
@@ -7444,25 +7436,37 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
                 await flash_end(); game.thrownobj = null; return;  // mthrowu.c:842
             }
             const oldumort = game.u?.umortality | 0;   // C ref: mthrowu.c:703
-            let dam = dmgval_thrown(singleobj, u);
-            let hitv = Math.max(3 - distmin(u.ux, u.uy, mon.mx, mon.my), -4);
-            // C ref: mthrowu.c:727-741 — elven archery and target-size bonuses.
-            if (is_elf_flag(mon.data)
-                && OBJECTS[singleobj.otyp]?.oc_skill === -P_BOW_SKILL) {
-                hitv++;
-                if (MON_WEP(mon)?.otyp === ELVEN_BOW_OTYP) hitv++;
-                if (singleobj.otyp === ELVEN_ARROW_OTYP) dam++;
+            // C ref: mthrowu.c:704-744 — an egg, cream pie or blinding venom is
+            // resolved by thitu(8, 0, ..): no dmgval()/Maybe_Half_Phys, the hit
+            // does 0 damage.  Anything else uses dmgval() and the hitv bonuses.
+            let hitu;
+            if (singleobj.otyp === EGG_OTYP && !corpse_touch_petrifies(singleobj.corpsenm)) {
+                await impossible(`monster throwing egg type ${singleobj.corpsenm}`);
+                hitu = 0;
+            } else if (singleobj.otyp === EGG_OTYP || singleobj.otyp === CREAM_PIE_OTYP
+                       || singleobj.otyp === BLINDING_VENOM) {
+                hitu = await thitu(8, 0, singleobj);
+            } else {
+                let dam = dmgval_thrown(singleobj, u);
+                let hitv = Math.max(3 - distmin(u.ux, u.uy, mon.mx, mon.my), -4);
+                // C ref: mthrowu.c:727-741 — elven archery and target-size bonuses.
+                if (is_elf_flag(mon.data)
+                    && OBJECTS[singleobj.otyp]?.oc_skill === -P_BOW_SKILL) {
+                    hitv++;
+                    if (MON_WEP(mon)?.otyp === ELVEN_BOW_OTYP) hitv++;
+                    if (singleobj.otyp === ELVEN_ARROW_OTYP) dam++;
+                }
+                if (bigmonst(youmonst_data_mm())) hitv++;
+                hitv += 8 + (singleobj.spe | 0);
+                dam = Math.max(dam, 1);
+                if (singleobj.otyp !== ACID_VENOM) {
+                    const { Maybe_Half_Phys_do } = await import('./do.js');
+                    dam = Maybe_Half_Phys_do(dam);
+                }
+                // thitu() pages the hit/miss message (--More--); the prior flash on
+                // the square just before the hero stays drawn through that pause.
+                hitu = await thitu(hitv, dam, singleobj);
             }
-            if (bigmonst(youmonst_data_mm())) hitv++;
-            hitv += 8 + (singleobj.spe | 0);
-            dam = Math.max(dam, 1);
-            if (singleobj.otyp !== ACID_VENOM) {
-                const { Maybe_Half_Phys_do } = await import('./do.js');
-                dam = Maybe_Half_Phys_do(dam);
-            }
-            // thitu() pages the hit/miss message (--More--); the prior flash on
-            // the square just before the hero stays drawn through that pause.
-            const hitu = await thitu(hitv, dam, singleobj);
             // C ref: mthrowu.c:743-755 — a connecting POISONED missile poisons
             // the hero, BEFORE drop_throw() settles/mulches it.  This arm was
             // missing entirely, so a poisoned dart did no poison damage and,
@@ -7475,6 +7479,40 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
                 const knmbuf = mv_killer_xname(singleobj);
                 await mv_poisoned(onmbuf, A_STR, knmbuf,
                                   ((game.u?.umortality | 0) > oldumort) ? 0 : 10, true);
+            }
+            // C ref: mthrowu.c:755-778 — a connecting cream pie / blinding venom
+            // blinds the hero (can_blnd draws no RNG); rnd(25) is applied after
+            // the flight loop (mthrowu.c:833-838).
+            if (hitu) {
+                const { can_blnd } = await import('./mhitm_ad.js');
+                const { mhitu_ops } = await import('./mhitu.js');
+                if (can_blnd(null, YOUMONST,
+                             singleobj.otyp === BLINDING_VENOM ? AT_SPIT : AT_WEAP,
+                             singleobj, mhitu_ops())) {
+                    blindinc = rnd(25);
+                    const { body_part, eyecount } = await import('./polyself.js');
+                    if (singleobj.otyp === CREAM_PIE_OTYP) {
+                        if (!Blind()) await pline("Yecch!  You've been creamed.");
+                        else await pline(`There's something sticky all over your ${body_part(FACE)}.`);
+                    } else if (singleobj.otyp === BLINDING_VENOM) {
+                        let eyes = body_part(EYE);
+                        if (eyecount(youmonst_data_mm()) !== 1) eyes = makeplural(eyes);
+                        if (!Blind()) await pline('The venom blinds you.');
+                        else await pline(`Your ${eyes} ${vtense_mm(eyes, 'sting')}.`);
+                    }
+                }
+            }
+            // C ref: mthrowu.c:779-785 — a connecting cockatrice egg starts
+            // petrification unless stoned/resistant/golem-polymorph.
+            if (hitu && singleobj.otyp === EGG_OTYP) {
+                const { Stone_resistance_u } = await import('./polyself.js');
+                if (!((u.uprops?.Stoned | 0) > 0) && !Stone_resistance_u()
+                    && !(poly_when_stoned_u(youmonst_data_mm())
+                         && await (await import('./polyself.js')).polymon(
+                             _name_to_pmidx_cf('stone golem')))) {
+                    const { make_stoned } = await import('./potion.js');
+                    await make_stoned(5, null, 1 /* KILLED_BY */, '');
+                }
             }
             // C ref: thitu()/poisoned() -> done() never returns once the hero has
             // died (really_done() exits), so no drop_throw()/forcehit draws follow.
@@ -7491,6 +7529,7 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
                 await drop_thrown_missile(mon, singleobj, u.ux, u.uy, 1);
                 await flash_at(u.ux, u.uy);
                 await flash_end();
+                await apply_blindinc();
                 return;
             }
             // MISS: the dart flies past the hero — fall through to the forcehit
@@ -7541,6 +7580,7 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
     // C ref: mthrowu.c:829-831 `if (arw && return_flightpath) return_from_mtoss()`.
     if (arw_mt && return_flightpath)
         await return_from_mtoss_mon(mon, singleobj, tethered_weapon, bx, by, tf);
+    await apply_blindinc();
 }
 
 // C ref: mthrowu.c:850 return_from_mtoss(magr, otmp, tethered_weapon) — a thrown
@@ -7588,7 +7628,7 @@ async function return_from_mtoss_mon(magr, otmp, tethered_weapon, bx, by, tf) {
                 if (canseemon_mm(magr)) {
                     await pline(`${Tobjnam_mm(otmp, 'return')} back to ${mon_nam(magr)}, landing at ${mhis(magr)} ${makeplural(mbodypart(magr, FOOT))}.`);
                 } else if (!game.u?.Deaf) {
-                    await You_hear(`something land near ${mon_nam(magr)}.`);
+                    await You_hear(`Something land near ${mon_nam(magr)}.`);
                 }
             } else {
                 dmg += rnd(3);
@@ -7720,6 +7760,17 @@ async function drop_thrown_missile(mon, otmp, x, y, ohit) {
         return true;   // shattered missile: no object settles on the floor
     }
     otmp.owornmask = 0;
+    // C ref: mthrowu.c:180-181 — `if (down_gate(x, y) != -1) broken =
+    // ship_object(obj, x, y, FALSE);` a missile that lands on down stairs, a
+    // ladder or a known hole/trap door rolls rn2(3) to ride it to the level
+    // below, ahead of flooreffects() and place_object().
+    {
+        const { down_gate, ship_object } = await import('./dokick.js');
+        if (down_gate(x, y) !== -1 && await ship_object(otmp, x, y, false)) {
+            game.thrownobj = null;  // C ref: mthrowu.c:192 `gt.thrownobj = 0`
+            return true;
+        }
+    }
     // C ref: mthrowu.c:184-190 — flooreffects(obj, x, y, "fall") runs BEFORE
     // place_object(): landing on an altar/sink/fountain/pool/drawbridge can
     // print a message (the altar case is what forces --More-- to fire mid-

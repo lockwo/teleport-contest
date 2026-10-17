@@ -99,7 +99,7 @@ import { is_weptool, simple_typename, is_plural, otense,
 import { livelog_printf, LL_CONDUCT, LL_KILLEDPET } from './livelog.js';
 import { engr_at, wipe_engr_at, u_wipe_engr, sengr_at, del_engr_at } from './engrave.js';
 import { find_mac as worn_find_mac, bypass_obj } from './worn.js';
-import { YOUMONST } from './mhitm_ad.js';
+import { YOUMONST, erode_armor } from './mhitm_ad.js';
 
 // ── small monster-state predicates (C: include/monst.h, mondata.h) ──
 
@@ -1542,7 +1542,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
             else
                 await pline(`You are splashed by ${s_suffix(mon_nam(mon))} acid!`);
             if (!Acid_resistance()) await mdamageu(mon, tmp);
-            if (!rn2(30)) await erode_armor(ERODE_CORRODE);
+            if (!rn2(30)) await erode_armor(YOUMONST, ERODE_CORRODE);
         }
         if (mhit && weapon) {
             if (aatyp === AT_KICK) {
@@ -1652,7 +1652,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
                     // topline as the "You miss the yellow mold." that the same
                     // command already printed ("... mold.  You stagger...").
                     const { update_topl } = await import('./display.js');
-                    await update_topl('You stagger...');
+                    await update_topl(u.usteed ? 'You wobble in the saddle.' : 'You stagger...'); /* make_stunned(): potion.c:122 */
                     /* C make_stunned(): message first, then set_itimeout(), so a
                        --More-- raised by the message shows the old status line. */
                     u.uprops.Stun = tmp;
@@ -1791,34 +1791,6 @@ export async function passive_obj(mon, obj, mattk) {
 async function erode_obj_local(obj, type) {
     const { erode_obj } = await import('./trap.js');
     return await erode_obj(obj, null, type, EF_NONE);
-}
-
-// C ref: uhitm.c erode_armor(&youmonst, hurt) — pick a random armour slot to
-// erode, RETRYING (another rn2(5)) whenever the chosen slot is empty or
-// un-erodable.  Only case 1 (cloak/suit/shirt) always terminates the loop, so
-// an unarmoured hero burns a variable number of rn2(5) draws here.
-async function erode_armor(hurt) {
-    for (let guard = 0; guard < 1000; guard++) {
-        const roll = rn2(5);
-        if (roll === 1) {
-            const target = game.uarmc || game.uarm || game.uarmu;
-            if (target) await erode_obj_local2(target, hurt);
-            return;
-        }
-        const target = roll === 0 ? game.uarmh
-            : roll === 2 ? game.uarms
-            : roll === 3 ? game.uarmg
-            : game.uarmf;
-        if (!target) continue;
-        const { erode_obj } = await import('./trap.js');
-        const res = await erode_obj(target, null, hurt, EF_GREASE);
-        if (res === 0 /* ER_NOTHING */) continue;
-        return;
-    }
-}
-async function erode_obj_local2(obj, hurt) {
-    const { erode_obj } = await import('./trap.js');
-    return await erode_obj(obj, null, hurt, EF_GREASE);
 }
 
 // C ref: potion.c Acid_resistance / Cold_resistance intrinsic tests.
@@ -1976,8 +1948,11 @@ export async function killed(mon, opts) {
         // floats), so is_pool counts too.
         const { is_pool } = await import('./dbridge.js');
         const accessible = (() => {
-            const t = game.level?.at(x, y)?.typ;
-            return (t != null && ACCESSIBLE(t)) || is_pool(x, y);
+            const lv = game.level?.at(x, y);
+            const t = lv?.typ;
+            // C accessible(): ACCESSIBLE(typ) && !closed_door(x, y) (an amorphous blob can die in a closed door)
+            const closed = t === 23 /*DOOR*/ && ((lv.doormask | 0) & (4 /*D_CLOSED*/ | 8 /*D_LOCKED*/)) !== 0;
+            return (t != null && ACCESSIBLE(t) && !closed) || is_pool(x, y);
         })();
         // illogical-but-traditional treasure drop gate (mon.c:3587).  C also
         // gates on !(mvitals[mndx].mvflags & G_NOCORPSE): a G_NOCORPSE species

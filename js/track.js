@@ -8,6 +8,7 @@
 import { game } from './gstate.js';
 
 const UTSZ = 100;
+const RIN_STEALTH = 181;
 
 // State lives on `game` so it resets per segment (game object is recreated).
 function trk() {
@@ -29,11 +30,13 @@ export function initrack() {
 }
 
 // C ref: track.c settrack() — append the hero's current position to the ring
-// buffer.  A stealthy hero (ring of stealth) leaves no track; the starter
-// roles never wear one, but the guard is preserved for faithfulness.
+// buffer.  A hero wearing a ring of stealth (either hand) leaves no track, so
+// the ring buffer freezes and gettrack() keeps returning the old footprints.
 export function settrack() {
     const u = game.u;
-    // uleft/uright ring-of-stealth: not modelled for the starter pack.
+    if ((game.uleft && game.uleft.otyp === RIN_STEALTH)
+        || (game.uright && game.uright.otyp === RIN_STEALTH))
+        return;
     const tk = trk();
     if (game._utcnt < UTSZ) game._utcnt++;
     if (game._utpnt === UTSZ) game._utpnt = 0;

@@ -802,7 +802,7 @@ export async function drop_ball(x, y) {
                js/dothrow.js:166 and js/read.js:1074; clear the fields here. */
             u.utrap = 0;
             u.utraptype = 0;
-            fill_pit(u.ux, u.uy);
+            await fill_pit(u.ux, u.uy);
         }
 
         u.ux0 = u.ux;

@@ -808,20 +808,18 @@ export function themeroom_fill(croom) {
         }
     }
     // C ref: dat/themerms.lua:213 "Temple of the gods" contents = three
-    // des.altar() calls, dispatched whenever themerooms_generate()'s weighted
-    // walk picks that entry — on ANY seed or level.  This was gated on
-    // `game.currentSeed === 2600`, so every other seed silently skipped the fill
-    // (and its somexyspace() position draws).
+    // des.altar({ align = align[n] }) calls, where `align` is the global that
+    // nhlib.lua shuffled when THIS dungeon's themes Lua state was created
+    // (mklev.c makerooms() -> nhl_init), not the luacore state's own copy.
+    // Each altar is sp_lev.c create_altar() in the themed room: get_free_room_loc,
+    // set_levltyp, altarmask = sp_amask_to_amask(); an ordinary room is no
+    // temple so there is no priest.
     if (pick?.name === 'Temple of the gods') {
-        for (const al of (game.splev_align || [0, 0, 0])) {
-            const pos = { x: 0, y: 0 };
-            if (!somexyspace(croom, pos)) continue;
-            const loc = game.level?.at(pos.x, pos.y);
-            if (loc) {
-                loc.typ = ALTAR;
-                loc.flags = Align2amask(al);
-            }
-        }
+        const themeAlign = game._luathemes_loaded?.[game.u?.uz?.dnum ?? 0];
+        const amasks = { law: AM_LAWFUL, neutral: AM_NEUTRAL, chaos: AM_CHAOTIC };
+        for (let i = 0; i < 3; i++)
+            create_altar({ coord: SP_COORD_PACK_RANDOM(0),
+                           sp_amask: amasks[themeAlign[i]], shrine: 0 }, croom);
     } else if (pick?.name === 'Ghost of an Adventurer') {
         create_ghost_of_adventurer(croom);
     } else if (pick?.name === 'Buried zombies') {

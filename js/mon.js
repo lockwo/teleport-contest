@@ -52,7 +52,7 @@ import { NON_PM, LOW_PM, G_GENOD, MON_FLOOR, MON_OFFMAP, MON_DETACH, MON_LIMBO,
     MON_ENDGAME_FREE, MON_ENDGAME_MIGR, MON_OBLITERATE, STRAT_WAITMASK,
     W_SADDLE, MIGR_APPROX_XY, MIGR_RANDOM, POOL, MOAT, LAVAPOOL, LAVAWALL, FOUNTAIN,
     ACCESSIBLE, thats_enough_tries, ismnum, engulfing_u, Has_contents,
-    M_AP_TYPE, OBJ_AT, EDOG, MGIVENNAME, has_eshk, has_epri, has_emin,
+    M_AP_TYPE, M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, OBJ_AT, EDOG, MGIVENNAME, has_eshk, has_epri, has_emin,
     has_egd, has_edog, In_endgame, Is_astralevel, NC_SHOW_MSG, OBJ_FREE, OBJ_FLOOR } from './const.js';
 import { M1_NOHEAD, M2_UNDEAD, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC,
     M2_SHAPESHIFTER } from './monflags_data.js';
@@ -1402,7 +1402,10 @@ export async function mon_break_armor(mon, polyspot) {
     if (handless_or_tiny || has_horns(mdat)) {
         if ((otmp = which_armor_mon(mon, W_ARMH)) != null
             && (handless_or_tiny || !is_flimsy(otmp))) {
-            if (vis) await update_topl(`${s_suffix(Monnam(mon))} helmet falls to the ${surface_mon(mon)}!`);
+            if (vis) {
+                const { surface } = await import('./dungeon.js');
+                await update_topl(`${s_suffix(Monnam(mon))} helmet falls to the ${surface(mon.mx, mon.my)}!`);
+            }
             else await hear('a clank.');
             await m_lose_armor(mon, otmp, polyspot);
         }
@@ -1417,14 +1420,6 @@ export async function mon_break_armor(mon, polyspot) {
             await m_lose_armor(mon, otmp, polyspot);
         }
     }
-}
-// C ref: hack.c surface(x, y) — only the message-bearing cases a monster can
-// stand on while shedding a helmet are reachable here.
-function surface_mon(mon) {
-    const typ = game.level?.at?.(mon.mx, mon.my)?.typ;
-    if (typ === WATER || IS_POOL(typ)) return 'water';
-    if (IS_LAVA(typ)) return 'lava';
-    return 'floor';
 }
 
 // C ref: mon.c movemon_singlemon(mtmp) — drive one monster's move, returning
@@ -1443,6 +1438,11 @@ async function movemon_singlemon(mtmp) {
     }
     if (DEADMONSTER(mtmp)) return false;
     if (mtmp.mx == null || mtmp.mx <= 0) return false; // off-map
+    // C ref: mon.c:1245 `if (mon_offmap(mtmp)) return FALSE;` — a steed that
+    // arrived with the hero on a new level keeps MON_STILL_ARRIVING (dog.c
+    // mon_arrive() returns early for it), so it does not move until dismounted
+    // (place_monster() resets mstate to MON_FLOOR).
+    if (mon_offmap(mtmp)) return false;
 
     // C ref: mon.c:1248 — m_everyturn_effect() runs BEFORE the movement-point
     // gate, so a fog cloud trails vapor every turn even on turns it is too slow
@@ -1826,11 +1826,11 @@ const S_DOG_C = 4, S_HUMANOID_C = 8, S_KOBOLD_C = 11, S_ORC_C = 15,
     S_FUNGUS_C = 32, S_GNOME_C = 33, S_GIANT_C = 34, S_KOP_C = 37,
     S_ZOMBIE_C = 52, S_HUMAN_C = 53, S_GOLEM_C = 55;
 
-// C ref: monst.h:52 enum M_AP_TYPE.  This port stores the appearance KIND as a
-// STRING on the monster (js/makemon.js set_mimic_sym), 0 meaning "none", so
-// the enum is spelled as those strings.
-const MAP_NOTHING = 0, MAP_FURNITURE = 'furniture', MAP_OBJECT = 'obj',
-    MAP_MONSTER = 'mon';
+// C ref: monst.h:52 enum M_AP_TYPE.  The monster stores the appearance kind as a
+// string (js/makemon.js set_mimic_sym), but M_AP_TYPE() (js/const.js) returns the
+// numeric enum, so these must be the numeric values it compares against.
+const MAP_NOTHING = M_AP_NOTHING, MAP_FURNITURE = M_AP_FURNITURE, MAP_OBJECT = M_AP_OBJECT,
+    MAP_MONSTER = M_AP_MONSTER;
 
 // C ref: monflag.h G_UNIQ (mons[].geno bit).
 const G_UNIQ_M = 0x1000;

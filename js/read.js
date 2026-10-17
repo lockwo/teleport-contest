@@ -545,7 +545,7 @@ async function lightdamage(obj, ordinary, amt) {
                                                    : an_read(xname(obj));
         const zapped = ordinary && obj?.oclass !== SCROLL_CLASS
                                 && obj?.oclass !== SPBOOK_CLASS;
-        await losehp_read(dmg, `${zapped ? 'zapped' : 'blasted'} himself with ${how}`,
+        await losehp_read(dmg, `${zapped ? 'zapped' : 'blasted'} ${game.flags?.female ? 'her' : 'him'}self with ${how}`,
                           NO_KILLER_PREFIX);
     }
     return dmg;

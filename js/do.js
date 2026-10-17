@@ -65,7 +65,7 @@ import { docrt, flush_screen, pline, You_hear, update_topl, urgent_topl, topl_mo
          see_nearby_objects, reglyph_remembered_darkroom, map_location, m_at,
          capture_screen_for_level_change, freeze_screen_for_level_change,
          thaw_screen_for_level_change, Deaf_hero } from './display.js';
-import { seetrap, dotrap, trapname } from './trap.js';
+import { seetrap, dotrap, trapname, fill_pit } from './trap.js';
 import { check_special_room } from './shkroom.js';
 import { forget_temple_entry } from './priest.js';
 import { enexto_gpflags } from './teleport.js';
@@ -732,20 +732,6 @@ function sobj_at(otyp, x, y) {
     return null;
 }
 
-// C ref: do.c fill_pit(x, y) — a boulder sitting in a pit/hole settles into it
-// (flooreffects() "fills a pit"/"plugs a hole") when the hero leaves the spot.
-export async function fill_pit(x, y) {
-    const t = t_at(x, y);
-    if (t && (is_pit(t.ttyp) || is_hole(t.ttyp))) {
-        const otmp = sobj_at(BOULDER, x, y);
-        if (otmp) {
-            const { obj_extract_self } = await import('./invent.js');
-            obj_extract_self(otmp);
-            await flooreffects(otmp, x, y, 'settle');
-        }
-    }
-}
-
 // C ref: trap.c climb_pit() — what '<' does when the hero is caught in a pit.
 // The rn2(2) is ALWAYS drawn (C evaluates `!rn2(2) && sobj_at(...)` left to
 // right), so this is not an RNG-free branch even when there is no boulder.
@@ -954,66 +940,22 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // Capture accompanying pet(s) before the old level is freed by mklev().
     const kept = await keepdogs_capture();
 
-    // C ref: do.c goto_level() ~1799 — the on-foot transit message ("You
-    // descend/climb the stairs.") is emitted for ANY at_stairs move (including
-    // a Mines branch crossing) AFTER mklev() but BEFORE do.c:1840's deferred
-    // docrt(), so C's tty still shows the OLD level under the --More--
-    // (seed0030 global-28/231/368).  Our renderer rebuilds from live state on
-    // every capture, so we emit the message + force its --More-- HERE, before
-    // switching u.uz/game.level below — no RNG crosses this point.
+    // C ref: do.c goto_level() ~1747-1801 — the on-foot transit message ("You
+    // descend/climb the stairs.") is a pline() AFTER mklev()/getlev() and the
+    // hero's placement, so every draw of the new level's creation precedes it
+    // and it stays an unacknowledged topline until docrt()'s cls() pages it
+    // (see the _topl_pending check ahead of docrt() below).  It is emitted
+    // there, in the at_stairs arm; the departing-level frame it pages over is
+    // held by freeze_screen_for_level_change().
     // C ref: do.c:1780 — an over-loaded/Punished/Fumbling (Flying takes
     // precedence, do.c:1777) hero instead FALLS, with an unconditional message
     // + rnd(3) hp (rolled later, at its real position in the arrival arm).
     // Punished falls run ball.c drag_down() after arrival placement below.
-    // An unacknowledged topline left by the calling command (a robbed shop's
-    // "The Keystone Kops are after you!", wizard '?' teleport's prinv(), ...)
-    // is NOT paged here: C's tty pages it from docrt()'s cls() ->
-    // display_nhwindow(WIN_MESSAGE) AFTER mklev(), so the new level's PRNG
-    // draws belong to the step that dismissed the previous input, before the
-    // --More-- is shown.  (See the _toplin check ahead of docrt() below.)
 
     // C ref: do.c:1774 `if (!u.dz) ; /* stayed on same level? (no transit effects) */`
     // precedes the Flying/fall/ordinary-descent arms (e.g. leaving the tutorial).
     const fell_downstairs = at_stairs && !up && !!u.dz
         && !Flying_do() && (near_capacity() > UNENCUMBERED || Punished_do() || Fumbling_do());
-    if (at_stairs && !In_endgame(newlevel)) {
-        // C ref: do.c:1758-1795.  Up: "%s %s up%s the %s." with "With great
-        // effort, you" when Punished && !Levitation (which also overrides
-        // flags.verbose), u_locomotion("climb"), " along" for Flying+ladder.
-        // Down: Flying first ("You fly down the stairs" / "...along the ladder"),
-        // then the fall, then the ordinary descent.
-        const great_effort = up && Punished_do() && !Levitation_do();
-        const verbose = game.flags?.verbose !== false;
-        let msg = null;
-        if (up) {
-            if (verbose || great_effort)
-                msg = `${great_effort ? 'With great effort, you' : 'You'}`
-                    + ` ${u_locomotion('climb')} up`
-                    + `${(Flying_do() && at_ladder) ? ' along' : ''}`
-                    + ` the ${at_ladder ? 'ladder' : 'stairs'}.`;
-        } else if (!u.dz) {
-            msg = null; /* stayed on same level? (no transit effects) */
-        } else if (Flying_do()) {
-            if (verbose)
-                msg = `You fly down ${at_ladder ? 'along the ladder'
-                                                : 'the stairs'}.`;
-        } else if (fell_downstairs) {
-            msg = `You fall down the ${at_ladder ? 'ladder' : 'stairs'}.`;
-        } else if (verbose) {
-            msg = at_ladder ? 'You climb down the ladder.'
-                            : 'You descend the stairs.';
-        }
-        if (msg) {
-            await update_topl(msg);
-            // C: the fall's own losehp() line joins this one; the --More-- comes
-            // from docrt()'s cls() paging the pending topline (below).
-            if (!fell_downstairs) {
-                await topl_more();      // capture the old-level transit frame
-                game._pending_message = '';
-                game._toplin = 0;
-            }
-        }
-    }
 
     // C ref: keepdogs()/mon leaving the level — the pet is gone from the
     // departing level, so its old cell must show bare terrain.  Redraw it
@@ -1293,6 +1235,35 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         } else {
             if (newdungeon) await u_on_sstairs(0);
             else await u_on_upstairs(); /* descent lands on the new level's UP stair */
+        }
+        // C ref: do.c:1756-1801.  Up: "%s %s up%s the %s." with "With great
+        // effort, you" when Punished && !Levitation (which also overrides
+        // flags.verbose), u_locomotion("climb"), " along" for Flying+ladder.
+        // Down: Flying first ("You fly down the stairs" / "...along the ladder"),
+        // then the fall, then the ordinary descent.
+        {
+            const great_effort = up && Punished_do() && !Levitation_do();
+            const verbose = game.flags?.verbose !== false;
+            let msg = null;
+            if (up) {
+                if (verbose || great_effort)
+                    msg = `${great_effort ? 'With great effort, you' : 'You'}`
+                        + ` ${u_locomotion('climb')} up`
+                        + `${(Flying_do() && at_ladder) ? ' along' : ''}`
+                        + ` the ${at_ladder ? 'ladder' : 'stairs'}.`;
+            } else if (!u.dz) {
+                msg = null; /* stayed on same level? (no transit effects) */
+            } else if (Flying_do()) {
+                if (verbose)
+                    msg = `You fly down ${at_ladder ? 'along the ladder'
+                                                    : 'the stairs'}.`;
+            } else if (fell_downstairs) {
+                msg = `You fall down the ${at_ladder ? 'ladder' : 'stairs'}.`;
+            } else if (verbose) {
+                msg = at_ladder ? 'You climb down the ladder.'
+                                : 'You descend the stairs.';
+            }
+            if (msg) await update_topl(msg);
         }
         // C ref: do.c:1783-1796 — the fall's damage roll, at its real position in
         // the stream (after mklev()/placement, before losedogs()).
@@ -2856,7 +2827,7 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
 
         /* boulder is now gone */
         const I = await import('./invent.js');
-        if (pushing) I.useupf(otmp, otmp.quan);
+        if (pushing) await I.useupf(otmp, otmp.quan);
         else I.obfree(otmp, null);
         return true;
     }
@@ -2982,7 +2953,7 @@ export async function flooreffects(obj, x, y, verb) {
             T.delfloortrap(t);
             if (game.u.utrap && u_at(x, y)) reset_utrap_do(false);
         }
-        I.useupf(obj, 1);
+        await I.useupf(obj, 1);
         await DIG.bury_objs(x, y);
         newsym(x, y);
         res = true;
@@ -3813,7 +3784,7 @@ export async function revive_corpse(corpse) {
                 } else if (distu(mtmp.mx, mtmp.my) < 5 * 5) {
                     await You_hear_do('scratching noises.');
                 }
-                T.fill_pit(mtmp.mx, mtmp.my);
+                await T.fill_pit(mtmp.mx, mtmp.my);
                 break;
             }
             /* FALLTHRU */

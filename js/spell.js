@@ -1091,7 +1091,7 @@ export async function study_book(spellbook) {
             too_hard = true;
         } else {
             // uncursed - chance to fail
-            const lenses = (u?.ublindf && u.ublindf.otyp === LENSES) ? 2 : 0;
+            const lenses = (game.ublindf && game.ublindf.otyp === LENSES) ? 2 : 0;
             const read_ability = ACURR(A_INT) + 4 + Math.floor((u?.ulevel || 0) / 2)
                                  - 2 * oc_level + lenses;
             // only wizards know if a spell is too difficult
@@ -1178,7 +1178,7 @@ export async function learn_step() {
 
     // "JDS: lenses give 50% faster reading; 33% smaller read time" — the rn2(2)
     // is drawn only while delay is still nonzero AND lenses are worn.
-    if (sb.delay && u?.ublindf && u.ublindf.otyp === LENSES && rn2(2))
+    if (sb.delay && game.ublindf && game.ublindf.otyp === LENSES && rn2(2))
         sb.delay++;
     if (u?.uconf || u?.HConfusion) {          /* became confused while learning */
         await confused_book(book);

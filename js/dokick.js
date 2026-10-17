@@ -245,7 +245,8 @@ export async function altar_wrath(x, y) {
         const { align_gname } = await import('./role.js');
         const gname = align_gname(game.urole?.mnum ?? -1, altaralign);
         await pline(`${!Deaf() ? 'A voice (could it be' : 'Despite your deafness, you seem to hear'} `
-            + `${gname}${!Deaf() ? '?) whispers' : ' say'}:  "Thou shalt pay, infidel!"`);
+            + `${gname}${!Deaf() ? '?) whispers' : ' say'}:`);
+        await pline('"Thou shalt pay, infidel!"');   /* verbalize(): its own pline */
         // higher luck is more likely to be reduced
         if (Luck() > -5 && rn2(Luck() + 6)) change_luck(rn2(20) ? -1 : -2);
     }

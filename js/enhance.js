@@ -12,7 +12,7 @@
 // (u.weapon_slots == 0 at experience level 1), so the menu is always the
 // non-selectable PICK_NONE "Current skills:" form dismissed with ESC.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { nhgetch } from './input.js';
 import { objects, WEAPON_CLASS, GEM_CLASS, TOOL_CLASS } from './mkobj.js';
 import { renderWindowScreen, renderMenuLines, dismiss_invent_screen } from './invent.js';
@@ -299,6 +299,7 @@ export function p_skill_of(skill) {
     const { P_SKILL } = build_skill_state();
     return P_SKILL[skill];
 }
+hooks.p_skill_of = p_skill_of; /* engrave.js can_reach_floor() */
 // C ref: weapon.c:1156 can_advance(skill, FALSE) — exported so weapon.c's
 // add_weapon_skill()/give_may_advance_msg() can count advanceable skills
 // without rebuilding the skill state themselves.

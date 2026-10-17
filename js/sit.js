@@ -18,6 +18,7 @@ import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_AL
 import { mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM, M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS } from './monflags_data.js';
 import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags } from './objnam.js';
+import { mon_nam } from './do_name.js';
 import { name_to_pmidx } from './makemon.js';
 import {
     FOUNTAIN, STAIRS, LADDER, DRAWBRIDGE_DOWN, ICE, POOL, MOAT, WATER,
@@ -76,7 +77,7 @@ export async function dosit() {
 
     if (u.usteed) {
         // You("are already sitting on %s.", mon_nam(u.usteed));
-        await update_topl('You are already sitting on your steed.');
+        await update_topl(`You are already sitting on ${mon_nam(u.usteed)}.`);
         return ECMD_OK;
     }
     // u.uundetected / is_hider: the contest hero is never a ceiling hider.
@@ -115,7 +116,7 @@ export async function dosit() {
                 await update_topl("It's squishy...");
             } else if (isCreamPie(obj)) {
                 await update_topl('Squelch!');
-                useupf(obj, obj.quan);
+                await useupf(obj, obj.quan);
             } else if (!(isBox(obj) || obj_is_cloth(obj))) {
                 await update_topl("It's not very comfortable...");
             }

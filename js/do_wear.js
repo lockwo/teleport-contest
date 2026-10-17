@@ -15,7 +15,7 @@ import { Blind } from './vision.js';
 import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { A_INT, A_WIS, A_DEX, A_CHA, TT_BEARTRAP, TT_INFLOOR, TT_LAVA, TT_BURIEDBALL,
-         TIMEOUT, ICE } from './const.js';
+         TIMEOUT, ICE, ACID_RES } from './const.js';
 import {
     WA_ARM, WA_ARMC, WA_ARMH, WA_ARMS, WA_ARMG, WA_ARMF, WA_ARMU,
     W_ARMOR_WORN, W_RINGL, W_RINGR, W_AMUL,
@@ -23,7 +23,7 @@ import {
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuswapwep, setuqwep,
     Ring_off, Ring_on, Amulet_off, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
-    otense, Yname2, makeknown_credit, cmdq_pop, worn_extrinsic, corpse_xname,
+    otense, Yname2, makeknown_credit, cmdq_pop, worn_extrinsic, set_worn_extrinsic, corpse_xname,
 } from './invent.js';
 import { setuwep as setuwep_c } from './wield.js';
 import { makeplural } from './plural.js';
@@ -471,11 +471,9 @@ export async function Cloak_on() {
     case OILSKIN_CLOAK:
         await pline(`${Tobjnam(uarmc, 'fit')} very tightly.`);
         break;
-    case ALCHEMY_SMOCK: {
-        const u = u_();
-        u.EAcid_resistance = (u.EAcid_resistance | 0) | WA_ARMC;
+    case ALCHEMY_SMOCK:
+        set_worn_extrinsic(ACID_RES, worn_extrinsic(ACID_RES) | WA_ARMC);
         break;
-    }
     default:
         break;
     }
@@ -518,11 +516,9 @@ export async function Cloak_off() {
             await pline(`Suddenly you can ${game.u?.uprops?.See_invisible ? 'no longer see through yourself' : 'see yourself'}.`);
         }
         break;
-    case ALCHEMY_SMOCK: {
-        const u = u_();
-        u.EAcid_resistance = (u.EAcid_resistance | 0) & ~WA_ARMC;
+    case ALCHEMY_SMOCK:
+        set_worn_extrinsic(ACID_RES, worn_extrinsic(ACID_RES) & ~WA_ARMC);
         break;
-    }
     default:
         break;
     }

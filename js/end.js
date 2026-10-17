@@ -797,7 +797,13 @@ async function quit_final_message() {
 // screens) aren't exercised by any recorded session.
 export async function doquit() {
     const d = await deps();
-    const ans = await d.y_n('Really quit without saving?', 'yn', 'n');
+    // C ref: end.c done2() — in the tutorial the first question offers to
+    // abandon it; 'y' skips the paranoid_query and schedules the trip back to
+    // u.ucamefrom.
+    const u = game.u;
+    const abandon_tutorial = !!u?.uz && u.uz.dnum === game.tutorial_dnum
+        && (await d.y_n('Switch from the tutorial back to regular play?', 'yn', 'n')) === 'y';
+    const ans = abandon_tutorial ? 'n' : await d.y_n('Really quit without saving?', 'yn', 'n');
     if (ans !== 'y') {
         // C ref: end.c:105 — the declined arm opens with
         // clear_nhwindow(WIN_MESSAGE), so the prompt line is wiped rather than
@@ -805,6 +811,11 @@ export async function doquit() {
         game._pending_message = '';
         game._toplin = 0;
         if (d.flush_screen) await d.flush_screen(1);
+        if (abandon_tutorial) {
+            const { schedule_goto } = await import('./do.js');
+            const { UTOTYPE_ATSTAIRS } = await import('./const.js');
+            schedule_goto(u.ucamefrom, UTOTYPE_ATSTAIRS, 'Resuming regular play.', null);
+        }
         return 0; // ECMD_OK: declined, keep playing
     }
 

@@ -698,14 +698,14 @@ export function monster_by_pmidx(pmidx) {
 // TRUE when the creature is warm/visible to heat vision.  `ptr` is a MONS
 // record (mon.data).
 export function infravisible(ptr) {
-    return !!(ptr && (ptr.mflags3 & M3_INFRAVISIBLE));
+    return !!(ptr && (mflags3_of(ptr) & M3_INFRAVISIBLE));
 }
 
 // C ref: include/mondata.h infravision(ptr) = (mflags3 & M3_INFRAVISION) —
 // TRUE when the creature itself possesses infravision.  Used for the hero via
 // mons[urace.mnum] (polyself.c set_uasmon), and for monsters generally.
 export function infravision(ptr) {
-    return !!(ptr && (ptr.mflags3 & M3_INFRAVISION));
+    return !!(ptr && (mflags3_of(ptr) & M3_INFRAVISION));
 }
 
 // C ref: include/monflag.h M3_COVETOUS (0x1f) = WANTSAMUL|WANTSBELL|WANTSBOOK
@@ -714,7 +714,9 @@ export function infravision(ptr) {
 // the Wizard wants the Amulet, &c) bypasses a level's noteleport restriction.
 const M3_COVETOUS = 0x001f;
 export function is_covetous(ptr) {
-    return !!(ptr && (ptr.mflags3 & M3_COVETOUS));
+    /* the live flag table: role_init() rewrites the quest nemesis' M3_WANTSARTI|
+       M3_WAITFORU into mons[] (js/role.js), which the frozen ptr.mflags3 copy misses */
+    return !!(ptr && (mflags3_of(ptr) & M3_COVETOUS));
 }
 
 // C ref: monsters.h NAMS(male, female, neutral) — the 15 species that carry a

@@ -1,6 +1,7 @@
 // display.js — Map rendering and terminal output.
 // C ref: display.c — newsym, show_glyph, docrt, cls, flush_screen.
 
+import { has_innate } from './exper.js';
 import { game, hooks } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { SYMBOL_BYTES } from './symset-data.js';
@@ -669,7 +670,9 @@ export function see_invisible() {
     // invent.js imports display.js (a static import back would be a cycle).
     return !!(u.see_invis || p.HSee_invisible || u.HSee_invisible
         || p.ESee_invisible || u.ESee_invisible || p.See_invisible || u.See_invisible
-        || ((u.uprops_extrinsic || {})[29 /*SEE_INVIS*/] | 0));
+        || ((u.uprops_extrinsic || {})[29 /*SEE_INVIS*/] | 0)
+        /* attrib.c adjabil(): Monk's level-1 see invisible (FROMEXPER) */
+        || has_innate('HSee_invisible'));
 }
 
 // ── ANSI color codes ──
@@ -1648,7 +1651,11 @@ export function getpos_find_feature(ch, cx, cy) {
              && (matchCh === ch || stairCh === ch)) || engraving)
             return true;
         const trap = game.level?.traps?.find((t) => t.tx === tx && t.ty === ty);
-        if (trap?.tseen && trap_glyph(trap).ch === ch) return true;
+        // C getpos.c:1085 only matches a trap through the glyph shown or
+        // remembered here (glyph_is_cmap), so an object lying on the trap
+        // (remembered object glyph) hides it from the search.
+        if (trap?.tseen && !remembered?.objotyp && !remembered?.pile
+            && trap_glyph(trap).ch === ch) return true;
         return false;
     };
     for (let ty = cy; ty <= ROWNO - 1; ty++) {
@@ -2001,6 +2008,22 @@ export function feel_newsym(x, y) {
 // and the blind pick-lock probe.  Consumes NO RNG; what it does is write the
 // square's MAP MEMORY, which is why leaving it out froze a blind hero's map at
 // whatever was there when the lights went out.
+// C ref: display.c feel_location() — "Corridors are never felt as lit (unless
+// remembered that way)": a felt CORR whose map memory is S_litcorr but whose
+// square is not remembered lit (lit_corridor option only) is shown and
+// remembered as the dark S_corr.  S_litcorr is the CLR_WHITE twin of S_corr.
+function darken_felt_litcorr(loc, x, y) {
+    const rg = loc.remembered_glyph;
+    if (loc.typ !== CORR || loc.waslit || !rg || rg.color !== CLR_WHITE
+        || rg.pile || rg.bwEngr || rg.objotyp) return;
+    const ov = symOverrideChar('S_corr');
+    const dec = !ov && useDECgraphics('S_corr') && !useDECgraphics('S_pool');
+    const dark = { ch: ov || (dec ? 'a' : '#'), color: NO_COLOR, dec };
+    if (rg.ch !== (symOverrideChar('S_litcorr') || dark.ch) || !!rg.decgfx !== dec) return;
+    remember_bg(loc, dark);
+    show_glyph_cell(x, y, dark.ch, dark.color, dark.dec);
+}
+
 function feel_location_terrain(x, y) {
     if (!isok(x, y)) return false;
     const loc = game.level?.at(x, y);
@@ -2062,6 +2085,7 @@ function feel_location_terrain(x, y) {
         const bg = terrain_glyph(loc, x, y);
         if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
         show_glyph_cell(x, y, bg.ch, bg.color, bg.dec);
+        darken_felt_litcorr(loc, x, y);
         return true;
     }
 
@@ -2108,6 +2132,7 @@ function feel_location_terrain(x, y) {
     }
 
     update_lastseentyp_d(x, y); // _map_location() -> update_lastseentyp()
+    if (!darkroom_shown) darken_felt_litcorr(loc, x, y);
 
     // C ref: display.c:912 — which of the ball/chain the hero is touching.
     if (u?.uball && u?.uchain) {
@@ -3018,7 +3043,11 @@ function _botFields(order, transient = null) {
     // GOLD_PIECE glyph, i.e. the live showsyms[COIN_CLASS], so the Rogue level's
     // ROGUESET (drawing.c def_r_oc_syms: coin shares GEM_SYM) prints "*:0".
     const goldSym = symOverrideChar('S_coin') ?? (rogue_symset() ? '*' : '$'); /* NUL cell: stays blank */
-    raw[BL_GOLD] = `${goldSym}:${Math.min(Math.max(game._goldCount || 0, 0), 999999)}`;
+    // C ref: botl.c bot_via_windowport() `money_cnt(gi.invent)`: read live.
+    let money = 0;
+    for (const o of (game.invent || []))
+        if (o.oclass === COIN_CLASS) { money = o.quan || 0; break; }
+    raw[BL_GOLD] = `${goldSym}:${Math.min(Math.max(status_held('gold', money), 0), 999999)}`;
     raw[BL_ENE] = String(Math.min(status_held('uen', u.uen) || 0, 9999));
     raw[BL_ENEMAX] = String(Math.min(status_held('uenmax', u.uenmax) || 0, 9999));
     raw[BL_AC] = String(transient ? transient.uac : u.uac ?? 0);
@@ -3534,7 +3563,7 @@ export function serialize_terminal_grid(display) {
 // DECgraphics symset uses for the swallow/explosion top and bottom edges, and
 // '{') survives in C's decoded grid as the raw letter, so ours must too.
 const FROZEN_DEC_CODES = 'lqkxmjtuwvna~';
-function decgfxMapChar(ch, decgfx) {
+export function decgfxMapChar(ch, decgfx) {
     if (!decgfx || !FROZEN_DEC_CODES.includes(ch)) return ch;
     return DEC_TO_UNICODE[ch] || ch;
 }
@@ -3915,10 +3944,14 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
         // Signature of the map glyph on a status cell, recorded when the status
         // text was painted over it: while it is unchanged the status text still
         // owns the cell (tty only rewrites a map cell whose glyph changed).
+        // The 'g' flag marks a cell whose glyph buffer entry is no longer
+        // GLYPH_UNEXPLORED: back_to_glyph() turns a freshly seen STONE into
+        // S_stone, a changed glyph that flush_screen() prints (a blank) over
+        // the status text although both symbols are ' '.
         const mapSig = (c) => {
             if (my < 0 || my >= ROWNO) return '';
             const l = _displayed_loc(c + 1 + clipx, my);
-            return l?.disp_ch ? `${l.disp_ch}|${l.disp_color}|${l.disp_attr | 0}|${l.remembered_glyph?.darkroom ? 'd' : ''}` : '';
+            return l?.disp_ch ? `${l.disp_ch}|${l.disp_color}|${l.disp_attr | 0}|${l.remembered_glyph?.darkroom ? 'd' : ''}|${l.remembered_glyph ? 'g' : ''}` : '';
         };
         if (game._statusSnapLevel !== game.level) game._statusSnap = null;
         const snap = sharedRow && game._statusSnap ? game._statusSnap : null;
@@ -4028,6 +4061,19 @@ export function hold_botl_hp() {
     if (!u || game.botl || game.botlx) return;
     status_hold('hp', u.Upolyd ? u.mh : u.uhp);
     status_hold('hpmax', (u.Upolyd ? u.mhmax : u.uhpmax) || 0);
+}
+
+// C ref: fountain.c dipfountain() case 28 shrinks the carried coin stack's
+// `quan` in place (no freeinv(), so no disp.botl) and prints "You lost some of
+// your gold in the fountain!" before any bot(): that --More-- still shows the
+// gold the last bot() published.  Call just before such a silent change;
+// nothing is held when a pending bot() would publish it anyway.
+export function hold_botl_gold() {
+    if (game.botl || game.botlx) return;
+    let money = 0;
+    for (const o of (game.invent || []))
+        if (o.oclass === COIN_CLASS) { money = o.quan || 0; break; }
+    status_hold('gold', money);
 }
 
 // C ref: exper.c losexp() lowers u.ulevel (and, via adjabil(), may pline an
@@ -4158,6 +4204,7 @@ export function key2txt(c) {
 export function note_topl(msg) {
     remember_topl();
     game._toplines = wrap_topl(msg).join('\n');
+    game._prevmsg = msg; // pline.c vpline():282 gp.prevmsg, which Norep() compares against
     return msg;
 }
 

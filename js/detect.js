@@ -508,7 +508,9 @@ function d_DEADMONSTER(m) { return (m?.mhp ?? 1) < 1; }
 // port keeps floor objects in ONE flat array with .ox/.oy/.where (see
 // js/do.js:628 for why js/invent.js's grid-indexing sobj_at() answers null),
 // and buried objects in `buriedobjlist`.
-function d_fmon() { return game.level?.monsters || []; }
+// C walks the fmon chain newest-first (makemon prepends); level.monsters is creation-ordered.
+// Order is observable: object_detect()'s monster loop `break`s at the first gold carrier.
+function d_fmon() { return (game.level?.monsters || []).slice().reverse(); }
 // C ref: place_object() prepends to fobj (`otmp->nobj = fobj; fobj = otmp`), so
 // C walks the floor chain newest-first.  The flat store appends; reverse it so
 // walks that let the LAST mapped object win (food_detect) match C.
@@ -700,7 +702,7 @@ function magic_map_background(x, y, show) {
             g = (game.flags?.dark_room !== false && game.flags?.color !== false
                  && !Is_rogue_level(game.u?.uz))
                 ? { ch: defsyms[S_darkroom].sym, color: defsyms[S_darkroom].color,
-                    dec: false }
+                    dec: false, darkroom: true }
                 : { ch: ' ', color: NO_COLOR, dec: false };
         } else if (loc.typ === CORR && g.ch === defsyms[S_litcorr].sym
                    && g.color === defsyms[S_litcorr].color) {
@@ -721,6 +723,7 @@ function magic_map_background(x, y, show) {
         const old = glyph_at(x, y, true);
         if (glyph_is_unexplored(old) || glyph_is_cmap(old)) {
             loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
+            if (g.darkroom) loc.remembered_glyph.darkroom = true;
             loc.mapped_trap_ttyp = 0;
         }
     }

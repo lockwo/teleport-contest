@@ -514,11 +514,11 @@ export async function touch_of_death(mtmp) {
     let dmg = 50 + d(8, 6);
     const drain = Math.trunc(dmg / 2);
     const u = game.u;
-    const { update_topl } = await import('./display.js');
+    const { You_feel } = await import('./display.js');
 
     /* if we get here, we know that hero isn't magic resistant and isn't
        poly'd into an undead or demon */
-    await update_topl('You feel drained...');
+    await You_feel('drained...');
     const kbuf = death_inflicted_by('', 'the touch of death', mtmp);
 
     if (Upolyd()) {

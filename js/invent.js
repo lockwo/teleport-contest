@@ -88,7 +88,7 @@ import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag, hates
          is_neuter_flag, humanoid as humanoid_flag, nolimbs as nolimbs_flag,
          mflags1_of, mflags2_of, likes_gems_flag,
          M1_NOHEAD, M1_NOTAKE, M1_NOHANDS,
-         M2_DEMON, M2_UNDEAD, M2_ORC } from './monflags_data.js';
+         M2_DEMON, M2_UNDEAD, M2_ORC, hides_under_flag } from './monflags_data.js';
 import { tin_variety, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN, tintxts, vegetarian } from './eat.js';
 import { enlightenment_lines, record_achievement } from './insight.js';
 import { ACH_BELL, ACH_CNDL, ACH_BOOK, ACH_AMUL, ACH_MINE_PRIZE, ACH_SOKO_PRIZE } from './const.js';
@@ -104,8 +104,8 @@ import { find_ac } from './u_init.js';
 import { moveloop_turn, moveloop_input_redraw, youHaveFast, youHaveVeryFast } from './allmain.js';
 import { acurr_eff, acurr_str_encoded, exercise, set_moreluck } from './attrib.js';
 import { onbill, shk_scan, add_to_billobjs, shopper_financial_report, money_cnt_invent, hidden_gold,
-         costly_spot, addtobill, unpaid_cost, doinvbill, oid_price_adjustment } from './shk.js';
-import { shop_keeper } from './shkroom.js';
+         costly_spot, addtobill, stolen_value, unpaid_cost, doinvbill, oid_price_adjustment } from './shk.js';
+import { shop_keeper, in_rooms as in_rooms_shk } from './shkroom.js';
 import { hitval, dbon, weapon_type, weapon_descr, mon_hates_blessings } from './weapon.js';
 import { poly_when_stoned } from './mondata.js';
 import { W_ART as W_ART_PROP, W_WEP as W_WEP_PROP,
@@ -1093,6 +1093,8 @@ function uprops_set_bits(store, prop, bits) {
 // deliberately NOT part of this change.
 export function worn_extrinsic(prop) { return uprops_bits('uprops_extrinsic', prop); }
 export function worn_blocked(prop) { return uprops_bits('uprops_blocked', prop); }
+// C ref: youprop.h E<Prop> as an lvalue (do_wear.c Cloak_on: `EAcid_resistance |= WORN_CLOAK`).
+export function set_worn_extrinsic(prop, bits) { uprops_set_bits('uprops_extrinsic', prop, bits); }
 // C ref: youprop.h `#define Free_action (HFree_action || EFree_action)`.  The
 // worn half (ring of free action, orange dragon scales, ...) lives only in the
 // extrinsic word above; the u.uprops spellings are the intrinsic/timed half
@@ -3169,7 +3171,6 @@ export function addinv_core1(obj) {
     // within the same turn, letting an unrelated later message's bot() show
     // the gold-heavier near_capacity() early (see display.js botl_flush()).
     if (obj.oclass === COIN_CLASS) {
-        game._goldCount = (game._goldCount || 0) + (obj.quan || 0);
         game.botl = true;
     } else if (obj.otyp === AMULET_OF_YENDOR) {
         if (ustate().uhave?.amulet) queue_impossible('already have amulet?');
@@ -3502,7 +3503,6 @@ export function freeinv_core(obj) {
     // C ref: invent.c freeinv():1358-1360 — losing gold flags disp.botl, the
     // same early-dirty source addinv_core1() mirrors for gaining it.
     if (obj.oclass === COIN_CLASS) {
-        game._goldCount = Math.max(0, (game._goldCount || 0) - (obj.quan || 0));
         game.botl = true;
         return;
     }
@@ -6658,13 +6658,13 @@ async function vtense_thrown(subj, verb) {
 async function tmiss(obj, mon, maybe_wakeup) {
     const { canspotmon, mon_nam, wakeupAttack } = await import('./uhitm.js');
     const missile = mshot_xname(obj);
-    const verbose = game.flags?.verbose !== false;
-    if (!canspotmon(mon)) {
+    const { canseemon_shared } = await import('./display.js');
+    const { M_AP_TYPE, M_AP_MONSTER } = await import('./const.js');
+    if (!canseemon_shared(mon) || (M_AP_TYPE(mon) && M_AP_TYPE(mon) !== M_AP_MONSTER)) {
         await update_topl(`${on_The(missile)} ${otense(obj, 'miss')}.`);
     } else {
-        const named = verbose && (cansee(mon?.mx, mon?.my) || canspotmon(mon));
-        await update_topl(`${on_The(missile)} ${await vtense_thrown(missile, 'miss')} ${
-            named ? mon_nam(mon) : 'it'}.`);
+        const { miss } = await import('./zap.js');
+        await miss(missile, mon);
     }
     if (maybe_wakeup && !rn2(3)) await wakeupAttack(mon, true);
 }
@@ -7815,6 +7815,27 @@ function find_launcher(ammo) {
     return oX;
 }
 
+// C ref: dothrow.c dofire() `cmdq_add_ec(...); return res;` — when filling the
+// quiver already cost time (res == ECMD_TIME, e.g. readying the wielded
+// ammo), dofire() returns it to rhack() BEFORE any queued canned command
+// (doswapweapon / dowield / dofire) runs, so that command's turn (monsters
+// move, once-per-turn work) passes first.  The queued commands below are taken
+// inline here, so take that first turn inline too.  Returns true when
+// stop_occupation() cleared the canned queue during it (the retry is dropped).
+async function dofire_first_turn() {
+    game.context.move = 0;
+    game.kickedloc = { x: 0, y: 0 }; // rhack() epilogue
+    game._cmdqAbandonRetry = false;
+    const moves_before = game.moves;
+    const hp_before = game.u.uhp, pw_before = game.u.uen;
+    await moveloop_turn();
+    if (game.botl || game.botlx
+        || game.u.uhp !== hp_before || game.u.uen !== pw_before
+        || (game.flags?.time && !game.context?.run && game.moves !== moves_before))
+        await flush_screen(1);
+    return !!game._cmdqAbandonRetry;
+}
+
 // C ref: dothrow.c dofire() — the #fire ('f') command.  Throws/shoots from the
 // quiver, with fireassist auto-wielding the launcher.  Ports the ranger path the
 // recorded sessions take: quiver holds bow ammo (arrows), the matching bow is the
@@ -7939,6 +7960,10 @@ export async function dofire(getDir) {
             // launcher already wielded: fire it directly.
             obj = game.uquiver;
         } else if (ammo_and_launcher(game.uquiver, game.uswapwep)) {
+            if (res === ECMD_TIME) {
+                if (await dofire_first_turn()) return ECMD_OK;
+                res = ECMD_OK;
+            }
             // C ref: dothrow.c:566 — `cmdq_add_ec(doswapweapon); cmdq_add_ec(dofire)`.
             // doswapweapon is run as its own command: it wields the launcher
             // (printing the wield + secondary-weapon lines) and returns ECMD_TIME,
@@ -8017,6 +8042,10 @@ export async function dofire(getDir) {
             // reallocates movement.
             const olauncher = find_launcher(game.uquiver);
             if (olauncher) {
+                if (res === ECMD_TIME) {
+                    if (await dofire_first_turn()) return ECMD_OK;
+                    res = ECMD_OK;
+                }
                 let redrewForDowield = false;
                 if (game.uwep && !game.flags?.pushweapon) {
                     if (welded(game.uwep)) {
@@ -8038,30 +8067,16 @@ export async function dofire(getDir) {
                         if (game._cmdqAbandonRetry) return ECMD_OK;
                         await moveloop_input_redraw(); /* next moveloop_core() head, before dowield's message pages the swap line */
                         redrewForDowield = true;
-                        // C ref: win/tty/topl.c update_topl():257 `skip =
-                        // (flags & (WIN_STOP|WIN_NOSTOP)) == WIN_STOP` —
-                        // doswapweapon()'s pending secondary-weapon line needs
-                        // paging before dowield() replaces it with the
-                        // launcher's line, UNLESS the player already dismissed
-                        // an earlier --More-- with ESC this same command
-                        // (game._winStop), in which case C silently overwrites
-                        // the hidden line instead of blocking again. This used
-                        // to compare game._pending_message against its
-                        // pre-turn value as a "did winStop fire" proxy — the
-                        // wrong question (whether an autonomous message fired
-                        // during the swap's turn) — forcing a bogus extra
-                        // --More-- whenever the only dismissal was the real
-                        // ESC that set winStop (bl010 step 495: JS blocked on
-                        // "d - ... (alternate weapon)" while C's getdir() had
-                        // already absorbed it and gone straight to "In what
-                        // direction?").
-                        // dowield()'s prinv() -> vpline() flush_screen(1)s the map
-                        // (including the redraw just above) before update_topl()
-                        // pages the pending line.
+                        // C ref: dowield()'s pline() -> update_topl() decides
+                        // by itself whether the launcher's line is appended to
+                        // the pending topline (fits in CO-8) or pages it first
+                        // with --More-- (or silently overwrites it under
+                        // WIN_STOP); no explicit more() belongs here (the turn's
+                        // own "Hachi misses the newt." must share a line with
+                        // "c - a +0 yumi (weapon in right hand).").
+                        // vpline() flush_screen(1)s the map (including the
+                        // redraw just above) before update_topl().
                         await flush_screen(1);
-                        if (!game._winStop) {
-                            await display_nhwindow_message();
-                        }
                     }
                 }
                 // The queued invlet is popped by getobj()'s cmdq fast path, so
@@ -8742,7 +8757,7 @@ async function query_category_menu(qstr, olist, qflags, how) {
    { obj, count }; js/pickup.js's copy delegates its menu to invent.js's
    floor-pickup renderer, which has neither invlet accelerators nor the
    computed window offset this one needs. */
-async function query_objlist_menu(qstr, olist, qflags, how, allow) {
+export async function query_objlist_menu(qstr, olist, qflags, how, allow) {
     const by_nexthere = (qflags & BY_NEXTHERE) !== 0;
     const chain = [...iterateObjects(olist, by_nexthere)];
     if (!chain.length) return [];
@@ -8754,9 +8769,12 @@ async function query_objlist_menu(qstr, olist, qflags, how, allow) {
         return [{ obj: last, count: last.quan }];
 
     const sorted = (qflags & INVORDER_SORT) !== 0;
+    /* options.c initoptions_init(): flags.sortloot defaults to 'l'; the
+       port's flags start empty and each reader supplies the default. */
+    const sortloot_opt = flags().sortloot ?? 'l';
     const sortflags =
-        (((flags().sortloot === 'f'
-           || (flags().sortloot === 'l' && !(qflags & USE_INVLET)))
+        (((sortloot_opt === 'f'
+           || (sortloot_opt === 'l' && !(qflags & USE_INVLET)))
             ? SORTLOOT_LOOT
             : ((qflags & USE_INVLET) ? SORTLOOT_INVLET : 0))
          | (flags().sortpack !== false ? SORTLOOT_PACK : 0));
@@ -9469,162 +9487,6 @@ export async function pick_one_obj(obj, count = 0) {
         game.gm.mrg_to_wielded = false;
     }
     return held;
-}
-
-// C ref: pickup.c pickup() menu path + win/tty query_objlist() — the ','
-// command over a multi-object pile opens a selectable "Pick up what?" menu.
-// Objects are grouped by class in the default inventory order (classOrder),
-// each class preceded by an inverse header ("Weapons", "Comestibles", ...);
-// items are lettered a, b, c... in display order with a " - " (unselected) /
-// " + " (selected) separator.  A letter key toggles its item; space pages (one
-// page here); return/enter confirms.  On confirm the selected objects are
-// returned in display order; js/pickup.js's pickup() then runs pickup_object()
-// over them, and the prinv lines chain on one topline via update_topl (CO-8
-// rule), matching the recorded "r - 11 darts.  s - 2 white gems." frame.
-//
-// Layout matches the recorder (ttyDisplay->cols == 82, H2344_BROKEN): offx 41,
-// the morestr/(end) cursor parked at offx + 6 (col 47) on the (end) row.
-export async function pickup_menu_select(here, qstr = 'Pick up what?', by_class = true) {
-    const display = game.nhDisplay;
-    // Build the menu in class order, lettering items as they are displayed.
-    // C ref: pickup.c:1105-1160 query_objlist() — without INVORDER_SORT
-    // (flags.sortpack off) the list is walked once, in sortloot order, with
-    // no class headings.
-    const order = by_class ? classOrder() : [null];
-    const groups = []; // { header, items:[{obj, letter}] }
-    let li = 0;
-    const nextLetter = () => (li < 26 ? String.fromCharCode(97 + li++)
-        : String.fromCharCode(65 + (li++ - 26)));
-    // C ref: options.c def_inv_order[] already leads with COIN_CLASS, so
-    // classOrder() alone covers it (no separate COIN_CLASS prepend needed).
-    for (const oclass of order) {
-        const items = by_class ? here.filter((o) => o.oclass === oclass) : here;
-        if (!items.length) continue;
-        // C ref: pickup.c query_objlist() -> invent.c sortloot() — the default
-        // 'sortloot' option ('l') alphabetizes same-class piles (via
-        // loot_xname) rather than showing raw floor-chain order, so a freshly
-        // landed "poisoned dart" sorts after a plain "dart" pile.
-        const sorted = sortloot(items, SORTLOOT_LOOT).map((sli) => sli.obj).filter(Boolean);
-        const g = { header: by_class ? let_to_name(oclass, false, false) : null, items: [] };
-        // C ref: pickup.c query_objlist() — the first coin stack's selector
-        // is always '$' (GOLD_SYM), never a lettered accelerator.
-        let first = true;
-        for (const o of sorted) {
-            // C ref: pickup.c:1131 — `tmpglyph = obj_to_glyph(curr,
-            // rn2_on_display_rng)` per listed item; display RNG while hallucinating.
-            obj_to_glyph(o);
-            g.items.push({ obj: o, letter: (by_class ? oclass : o.oclass) === COIN_CLASS
-                                           && (by_class || first) ? GOLD_SYM : nextLetter() });
-            first = false;
-        }
-        groups.push(g);
-    }
-    // selected[invlet] = true
-    const selected = new Map();
-    let searchBlankTop = false;
-
-    // C ref: wintty.c tty_end_menu() cw->cols = widest line + 2 ("(end)" floors it at
-    // 6), and tty_display_nhwindow()'s H2344_BROKEN offx = min(min(82, cols/2),
-    // cols - maxcol - 1); text is drawn at offx + 1 (see renderMenuLines).
-    let widest = Math.max(qstr.length, '(end)'.length);
-    for (const g of groups) {
-        if (g.header != null) widest = Math.max(widest, g.header.length);
-        for (const it of g.items)
-            widest = Math.max(widest, `${it.letter} - ${doname_with_price(it.obj)}`.length);
-    }
-    const MENU_COLS = display?.cols ?? 80;
-    const MENU_OFFX = Math.max(0, Math.min(Math.min(82, Math.floor(MENU_COLS / 2)),
-                                           MENU_COLS - Math.max(6, widest + 2) - 1)) + 1;
-    const draw = () => {
-        if (!display?.clearScreen) return;
-        display.clearScreen();
-        render_map_to_grid();
-        const cols = display.cols ?? 80;
-        // Count rows: prompt + blank + per group (header + items) + (end).
-        let totalRows = 2; // prompt + blank
-        for (const g of groups) totalRows += (g.header != null ? 1 : 0) + g.items.length;
-        totalRows += 1; // (end)
-        // C ref: win/tty/wintty.c process_menu_window() writes a leading
-        // blank column at cw->offx (cl_end() then putchar(' ')) before each
-        // line's text, one column left of where the text itself starts —
-        // clear that padding column too, or the map bleeds through there.
-        for (let r = 0; r < totalRows && r < 24; r++)
-            for (let c = MENU_OFFX - 1; c < cols; c++)
-                display.setCell(c, r, ' ', NO_COLOR, 0);
-        let row = 0;
-        display.putstr(MENU_OFFX, row++, searchBlankTop ? '' : qstr, NO_COLOR, menuHeadAttr());
-        display.putstr(MENU_OFFX, row++, '', NO_COLOR, ATR_NONE);
-        for (const g of groups) {
-            if (g.header != null) display.putstr(MENU_OFFX, row++, g.header, NO_COLOR, menuHeadAttr());
-            for (const it of g.items) {
-                const sep = selected.get(it.letter) ? ' + ' : ' - ';
-                const line = `${it.letter}${sep}${doname_with_price(it.obj)}`;
-                display.putstr(MENU_OFFX, row++, line, NO_COLOR, ATR_NONE);
-            }
-        }
-        const endRow = row;
-        display.putstr(MENU_OFFX, row, '(end)', NO_COLOR, ATR_NONE);
-        putStatusLines(display, MENU_OFFX - 1, totalRows - 1);
-        // Cursor parks at offx + 6 (col 47) on the (end) row (matches recorder).
-        display.setCursor(MENU_OFFX + 6, endRow);
-    };
-
-    const letterMap = new Map();
-    for (const g of groups) for (const it of g.items) letterMap.set(it.letter, it);
-
-    let confirmed = false;
-    for (;;) {
-        draw();
-        game._modal_screen = 'pickupmenu';
-        const c = await nhgetch();
-        const ch = String.fromCharCode(c);
-        if (c === 27) { selected.clear(); confirmed = false; break; } // ESC: cancel
-        if (c === 13 || c === 10) { confirmed = true; break; }        // confirm
-        if (letterMap.has(ch)) {
-            if (selected.get(ch)) selected.delete(ch); else selected.set(ch, true);
-            continue;
-        }
-        // C ref: wintty.c:1700-1732 MENU_SEARCH toggles all matching entries.
-        if (ch === ':') {
-            const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
-            const reply = await hooked_tty_getlin('Search for:', null);
-            searchBlankTop = true;
-            if (reply && reply[0] !== '\x1b') {
-                for (const [letter, it] of letterMap) {
-                    if (!pmatchi(`*${reply}*`, `${letter} - ${doname_with_price(it.obj)}`)) continue;
-                    if (selected.get(letter)) selected.delete(letter);
-                    else selected.set(letter, true);
-                }
-            }
-            continue;
-        }
-        // C ref: win/tty/wintty.c MENU_SELECT_ALL ('.') / MENU_UNSELECT_ALL
-        // ('-') / MENU_INVERT_ALL ('@') -> set_all_on_page()/
-        // unset_all_on_page()/invert_all(): mark every item on the (only)
-        // page selected / deselected / toggled.
-        // MENU_SELECT_PAGE ',' / MENU_UNSELECT_PAGE '\\' / MENU_INVERT_PAGE '~'
-        // act on the current page, and this menu is always a single page.
-        if (ch === '.' || ch === ',') { for (const let_ of letterMap.keys()) selected.set(let_, true); continue; }
-        if (ch === '-' || ch === '\\') { selected.clear(); continue; }
-        if (ch === '@' || ch === '~') {
-            for (const let_ of letterMap.keys())
-                if (selected.get(let_)) selected.delete(let_); else selected.set(let_, true);
-            continue;
-        }
-        // space/other paging keys: single page -> treated as confirm-of-page.
-        if (c === 32) { confirmed = true; break; }
-    }
-    delete game._modal_screen;
-
-    if (!confirmed || selected.size === 0) return [];
-
-    // C ref: select_menu() returns the picked entries in display order with
-    // count == -1 (no count given => pick all of the stack).
-    const chosen = [];
-    for (const g of groups)
-        for (const it of g.items)
-            if (selected.get(it.letter)) chosen.push({ obj: it.obj, count: -1 });
-    return chosen;
 }
 
 // C ref: hack.c pickup_checks():3788 — the ',' command's preconditions.
@@ -12593,10 +12455,20 @@ export async function doprinuse(getDir = null) {
     return await dispinv_with_action(null, true, null, getDir);
 }
 
-export function useupf(obj, numused) {
-    const used = (obj?.quan || 1) > numused ? splitobj(obj, numused) : obj;
-    delobj(used);
-    if (u_at(obj?.ox, obj?.oy) && game.u?.uundetected && hides_under(null)) hideunder(null);
+// C ref: invent.c useupf(): a floor object in a shop is billed (addtobill) or, when the hero is
+// outside that shop, charged as stolen_value, before it is deleted.
+export async function useupf(obj, numused) {
+    const at_u = u_at(obj?.ox, obj?.oy);
+    const otmp = (obj?.quan || 1) > numused ? splitobj(obj, numused) : obj;
+    if (!game.context?.mon_moving && costly_spot(otmp.ox, otmp.oy)) {
+        if ((game.u?.urooms || []).includes(in_rooms_shk(otmp.ox, otmp.oy, 0)[0]))
+            await addtobill(otmp, false, false, false);
+        else
+            await stolen_value(otmp, otmp.ox, otmp.oy, false, false);
+    }
+    delobj(otmp);
+    if (at_u && game.u?.uundetected && hides_under_flag(youmonst_data()))
+        await (await import('./monmove.js')).hideunder(game.u);
 }
 
 export function let_to_name(letChar, unpaid = false, showsym = false) {

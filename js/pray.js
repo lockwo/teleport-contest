@@ -1575,7 +1575,7 @@ async function consume_offering(otmp) {
             : utype === A_NEUTRAL ? 'plume of smoke' : 'burst of flame'}!`);
     }
     if (carried(otmp)) _inv.useup(otmp);
-    else _inv.useupf(otmp, 1);
+    else await _inv.useupf(otmp, 1);
     exercise(A_WIS, true);
 }
 
@@ -1827,7 +1827,7 @@ async function sacrifice_your_race(otmp, highaltar, altaralign) {
         adjalign(5);
     }
     if (carried(otmp)) _inv.useup(otmp);
-    else _inv.useupf(otmp, 1);
+    else await _inv.useupf(otmp, 1);
 }
 
 // C ref: pray.c:1781 bestow_artifact(max_giftvalue).
@@ -2476,7 +2476,7 @@ export async function offer_real_amulet(otmp, altaralign) {
     /* The final Test.  Did you win? */
     if (game.uamul === otmp) await D.inv.Amulet_off(otmp);
     if (carried(otmp)) D.inv.useup(otmp);   /* well, it's gone now */
-    else D.inv.useupf(otmp, 1);
+    else await D.inv.useupf(otmp, 1);
 
     await D.dsp.pline(`You offer the Amulet of Yendor to ${a_gname()}...`);
 

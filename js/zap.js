@@ -14,7 +14,7 @@ import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCL
          GETOBJ_NOFLAGS, xname, near_capacity, splitobj, delobj_core, obfree,
          obj_extract_self, sobj_at, encumber_msg, is_weptool, update_inventory,
          display_minventory, worn_extrinsic, yname, Ring_gone, setnotworn, body_part, distant_name_pub, display_cinventory,
-         set_cknown_lknown, newsym_force, display_binventory, stackobj } from './invent.js';
+         set_cknown_lknown, newsym_force, display_binventory, stackobj, useupf } from './invent.js';
 import { makeplural } from './plural.js';
 import { mon_mr } from './monmr_data.js';
 import { monstseesu, monstunseesu, resists_fire, resists_cold, resists_sleep, resists_disint,
@@ -1241,7 +1241,7 @@ export async function bhitpile(obj, tx, ty, zz = 0) {
     if (hidingunder) /* pile might have been destroyed or dispersed */
         await (await import('./monmove.js')).maybe_unhide_at(tx, ty);
 
-    (await import('./trap.js')).fill_pit(tx, ty);
+    await (await import('./trap.js')).fill_pit(tx, ty);
 
     return hitanything;
 }
@@ -2375,8 +2375,19 @@ async function zap_map(x, y, obj) {
         /* map terrain; might reveal a special room which is already within
            view that hasn't been entered yet */
         const oldtyp = game.lastseentyp?.[x]?.[y];
-        const cellsig = () => JSON.stringify([lev?.disp_ch, lev?.disp_color,
-                                              lev?.remembered_glyph ?? null, !!lev?.invisMon]);
+        /* C compares glyph_at(x, y) before and after; this port has no glyph
+           numbers, so build a signature of the displayed cell plus the
+           remembered glyph.  Every field is normalised (magic_map_background
+           rebuilds remembered_glyph without the optional flags), so only a real
+           glyph change differs. */
+        const cellsig = () => {
+            const rg = lev?.remembered_glyph;
+            return [lev?.disp_ch, lev?.disp_color, !!lev?.disp_decgfx,
+                    rg?.ch ?? null, rg?.color ?? null, !!rg?.decgfx, !!rg?.pile,
+                    !!rg?.bwEngr, !!rg?.female, rg?.objotyp ?? null,
+                    rg?.corpsenm ?? null, rg?.hallucotyp ?? null,
+                    !!lev?.invisMon].join('|');
+        };
         const oldglyph = cellsig();
         const { show_map_spot } = await import('./detect.js');
         await show_map_spot(x, y, false);
@@ -3171,24 +3182,6 @@ async function stop_occupation_zap() {
     await stop_occupation();
 }
 
-// C ref: invent.c useupf(obj, numused) — use up part of a floor stack, charging
-// the hero for it when it lay on shop ground.  (invent.js's useupf omits the
-// billing arm.)
-async function useupf_z(obj, numused) {
-    const at_u = u_at(obj.ox, obj.oy);
-    const otmp = ((obj.quan || 1) > numused) ? splitobj(obj, numused) : obj;
-    const shk = await import('./shk.js');
-    if (!game.context?.mon_moving && shk.costly_spot(otmp.ox, otmp.oy)) {
-        if ((game.u?.urooms || []).includes(in_rooms(otmp.ox, otmp.oy, 0)[0]))
-            await shk.addtobill(otmp, false, false, false);
-        else
-            await shk.stolen_value(otmp, otmp.ox, otmp.oy, false, false);
-    }
-    delobj(otmp);
-    if (at_u && game.u?.uundetected && hides_under_flag(await youmonst_data_z()))
-        await (await import('./monmove.js')).hideunder(game.u);
-}
-
 // C ref: zap.c burn_floor_objects(x, y, give_feedback, u_caused) — burn objects
 // (such as scrolls and spellbooks) on the floor at x,y; returns the number of
 // objects burned.
@@ -3216,7 +3209,7 @@ export async function burn_floor_objects(x, y, give_feedback, u_caused) {
         }
         /* useupf(), which charges, only if hero caused damage */
         if (u_caused) {
-            await useupf_z(obj, delquan);
+            await useupf(obj, delquan);
         } else if (delquan < scrquan) {
             obj.quan = scrquan - delquan;
             obj.owt = weight_of(obj);
@@ -4762,7 +4755,7 @@ export async function tele() {
 
 // C ref: zap.c:1225 unturn_you — unturn_dead() over carried corpses/eggs, then
 // the undead-hero stun.
-async function unturn_you() {
+export async function unturn_you() {
     const u = game.u;
     await unturn_dead(u); /* hit carried corpses and eggs */
 

@@ -33,7 +33,7 @@ import {
     describe_decor, sortloot, unsortloot, will_feel_cockatrice, feel_cockatrice,
     SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, SORTLOOT_PETRIFY,
     GETOBJ_EXCLUDE, GETOBJ_EXCLUDE_SELECTABLE, GETOBJ_DOWNPLAY, GETOBJ_SUGGEST,
-    ECMD_OK, ECMD_TIME, objects_at, pickup_menu_select, splitobj,
+    ECMD_OK, ECMD_TIME, objects_at, query_objlist_menu, splitobj,
     obj_extract_self, obfree, makeknown, ynq, newsym_force, encumber_msg,
     stackobj, trycall, useup, useupf, hold_another_object,
     remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool,
@@ -991,7 +991,7 @@ export function autopick(olist, follow, pick_list) {
 
 /* ═══════════════════════════════════════════════════════════════════════
    pickup.c:1025 query_objlist()
-   The menu build/selection is js/invent.js's pickup_menu_select(); the
+   The menu build/selection is js/invent.js's query_objlist_menu(); the
    counting, AUTOSELECT_SINGLE shortcut, cockatrice bail-out and count
    fix-ups are C's.
    ═══════════════════════════════════════════════════════════════════════ */
@@ -1018,9 +1018,10 @@ export async function query_objlist(qstr, olist_p, qflags, pick_list, how,
         return 1;
     }
 
+    const sortloot_opt = flags().sortloot ?? 'l'; /* initoptions_init() default */
     const sortflags =
-        (((flags().sortloot === 'f'
-           || (flags().sortloot === 'l' && !(qflags & USE_INVLET)))
+        (((sortloot_opt === 'f'
+           || (sortloot_opt === 'l' && !(qflags & USE_INVLET)))
             ? SORTLOOT_LOOT
             : ((qflags & USE_INVLET) ? SORTLOOT_INVLET : 0))
          | (flags().sortpack !== false ? SORTLOOT_PACK : 0)
@@ -1041,17 +1042,14 @@ export async function query_objlist(qstr, olist_p, qflags, pick_list, how,
     }
     unsortloot(sortedolist);
 
-    const chosen = await pickup_menu_select(olist.filter(allow), qstr,
-                                          (qflags & INVORDER_SORT) !== 0);
+    const chosen = await query_objlist_menu(qstr, olist_p, qflags, how, allow);
     if (!chosen || !chosen.length) return 0;
 
     const picked = [];
     for (const mi of chosen) {
         const curr = mi.obj;
         if (engulfer_minvent && curr.owornmask) continue;
-        let cnt = mi.count;
-        if (cnt === -1 || cnt > curr.quan) cnt = curr.quan;
-        picked.push({ obj: curr, count: cnt });
+        picked.push({ obj: curr, count: mi.count });
     }
     if (!picked.length) return 0;
     pick_list.list = picked;
@@ -1353,7 +1351,7 @@ export async function pickup_object(obj, count, telekinesis) {
                         + ` dust as you ${telekinesis ? 'raise' : 'pick'}`
                         + ` ${obj.quan === 1 ? 'it' : 'them'} up.`);
             await trycall(obj);
-            useupf(obj, obj.quan);
+            await useupf(obj, obj.quan);
             return 1;   /* tried and failed, but don't end the pickup loop */
         }
     }
@@ -1953,7 +1951,7 @@ export async function in_container(obj) {
         obfree(obj, null); /* triggering item is always destroyed */
         await do_boh_explosion(cc, floor_container);
         if (!floor_container) useup(cc);
-        else if (obj_here(cc, u.ux, u.uy)) useupf(cc, cc.quan);
+        else if (obj_here(cc, u.ux, u.uy)) await useupf(cc, cc.quan);
         await losehp(d(6, 6), 'magical explosion');
         p.current_container = null;
     }

@@ -7,7 +7,7 @@
 
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
-import { update_topl, newsym, m_at, y_n, display_nhwindow_message } from './display.js';
+import { update_topl, newsym, m_at, y_n, display_nhwindow_message, hold_botl_gold } from './display.js';
 import { hliquid, builds_up, dunlevs_in_dungeon, Is_special, level_difficulty } from './dungeon.js';
 import { water_damage, t_at, delfloortrap } from './trap.js';
 import { find_ac } from './u_init.js';
@@ -32,7 +32,7 @@ import { observe_object } from './o_init.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import {
     ER_NOTHING, ER_GREASED, ER_DESTROYED, F_LOOTED, F_WARNED, FROMOUTSIDE,
-    FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE, MM_NOMSG,
+    FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE, MM_NOMSG, MM_APPARXY_BYYOU,
     POLY_NOFLAGS, OBJ_FLOOR } from './const.js';
 
 // C ref: include/onames.h — long sword otyp (mkobj.js OBJECT_DATA order).
@@ -278,6 +278,7 @@ export async function dipfountain(obj) {
         let money = money_cnt(game.invent);
         if (money > 10) {
             money = Math.trunc(somegold(money) / 10);
+            hold_botl_gold(); // C: quan shrinks in place, no disp.botl before the pline
             for (const otmp of [...(game.invent || [])]) {
                 if (money <= 0) break;
                 if (otmp.oclass !== COIN_CLASS) continue;
@@ -369,11 +370,15 @@ export async function drinkfountain() {
     } else {
         switch (fate) {
         case 19: /* Self-knowledge */
+            // C ref: fountain.c drinkfountain() case 19 — You_feel,
+            // display_nhwindow(WIN_MESSAGE), enlightenment(MAGICENLIGHTENMENT),
+            // exercise, "The feeling subsides."
             await update_topl('You feel self-knowledgeable...');
-            // enlightenment(MAGICENLIGHTENMENT, ENL_GAMEINPROGRESS) opens an
-            // NHW_MENU window here; insight.js only exposes the disclosure
-            // (final) form, so the window is still missing.  Its trailing
-            // "The feeling subsides." was missing too and is free.
+            await display_nhwindow_message();
+            {
+                const { show_attributes_disclosure } = await import('./insight.js');
+                await show_attributes_disclosure(0 /* ENL_GAMEINPROGRESS */, false);
+            }
             exercise(A_WIS, true);
             await update_topl('The feeling subsides.');
             break;
@@ -516,7 +521,7 @@ async function dowaterdemon() {
     game._full_mon_gen = true;
     let mtmp;
     try {
-        mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
+        mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
     } finally {
         game._full_mon_gen = was_full;
     }
@@ -560,7 +565,7 @@ async function dowaternymph() {
         const was_full = game._full_mon_gen;
         game._full_mon_gen = true;
         try {
-            mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
+            mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
         } finally {
             game._full_mon_gen = was_full;
         }
@@ -615,7 +620,7 @@ async function dowatersnakes() {
     while (num-- > 0) {
         const spot = enexto_spawn(u.ux, u.uy, ptr);
         if (!spot) continue;
-        const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
+        const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
         if (!mtmp) continue;
         placeOnLevel(mtmp, spot.x, spot.y);
         newsym(spot.x, spot.y);
@@ -830,7 +835,7 @@ async function spawnAtHeroSquare(pmidx) {
     if (!ptr) return null;
     const spot = enexto_spawn(u.ux, u.uy, ptr);
     if (!spot) return null;
-    const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG);
+    const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
     if (mtmp) {
         placeOnLevel(mtmp, spot.x, spot.y);
         newsym(spot.x, spot.y);
