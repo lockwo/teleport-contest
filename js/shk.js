@@ -3361,8 +3361,11 @@ export async function repair_damage(shkp, tmp_dam, catchup) {
     } else if (IS_WALL(tmp_dam.typ)) {
         if (inside_shop(game.u.ux, game.u.uy) === shkp.eshk.shoproom)
             await update_topl('You feel more claustrophobic than before.');
-        else if (!Deaf() && !rn2(10))
-            await update_topl('The dungeon acoustics noticeably change.');
+        else if (!Deaf() && !rn2(10)) {
+            /* C: Norep() -- not repeated if it is still the last message */
+            if (game._prevmsg !== 'The dungeon acoustics noticeably change.')
+                await update_topl('The dungeon acoustics noticeably change.');
+        }
     }
 
     if (stop_picking) {

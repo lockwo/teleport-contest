@@ -16,7 +16,7 @@ import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch } from './input.js';
-import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask } from './display.js';
+import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask, symOverrideChar } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
@@ -278,7 +278,8 @@ export function dowhatdoes_core(q) {
 // key), then the key's description is plined.  Returns ECMD_OK (no game time).
 export async function dowhatdoes() {
     if (!game._dowhatdoes_once) {
-        await pline("Ask about '&' or '?' to get more info.");
+        await pline(`Ask about '&' or '?' to get more info.${
+            game.iflags?.altmeta ? '  (For ESC, type it twice.)' : ''}`);
         game._dowhatdoes_once = true;
     }
     // C ref: pager.c dowhatdoes() calls yn_function("What command?", ...)
@@ -301,9 +302,24 @@ export async function dowhatdoes() {
     const d = disp();
     game._modal_screen = 'topl';
     if (d?.setCursor) d.setCursor(Math.min(full.length, COLS - 1), 0);
-    const q = await nhgetch();
+    let q = await nhgetch();
     delete game._modal_screen;
     yn_prompt_history(full, key2txt(q));
+    // C ref: pager.c dowhatdoes() ALTMETA arm — a typed ESC is read again
+    // through yn_function("]"); anything but a second ESC becomes M-<key>.
+    if (q === 27 && game.iflags?.altmeta) {
+        const full2 = ']';
+        remember_topl();
+        game._pending_message = full2;
+        game._toplines = full2;
+        await flush_screen(1);
+        if (d?.setCursor) d.setCursor(Math.min(full2.length, COLS - 1), 0);
+        game._modal_screen = 'topl';
+        q = await nhgetch();
+        delete game._modal_screen;
+        yn_prompt_history(full2, key2txt(q));
+        if (q !== 27) q |= 0x80;
+    }
 
     const reslt = dowhatdoes_core(q);
     if (reslt !== null) {
@@ -940,7 +956,7 @@ import { COLNO, ROWNO, BOLT_LIM, BUFSZ, isok, STONE, SCORR, SDOOR, ROOM, CORR,
          M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, M_AP_TYPMASK,
          GPCOORDS_NONE, GPCOORDS_MAP, GPCOORDS_SCREEN, GPCOORDS_COMPASS,
          GPCOORDS_COMFULL, WARNCOUNT, TRAPNUM, def_warnsyms, Is_waterlevel,
-         Is_airlevel, SYM_OFF_P, SYM_NOTHING, SYM_UNEXPLORED, SYM_BOULDER,
+         Is_airlevel, Is_astralevel, SYM_OFF_P, SYM_NOTHING, SYM_UNEXPLORED, SYM_BOULDER,
          AM_MASK, AM_SANCTUM, Amask2align, A_CHAOTIC,
          A_NEUTRAL, A_LAWFUL, A_NONE, OBJ_FLOOR, OBJ_BURIED } from './const.js';
 import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
@@ -1120,6 +1136,9 @@ export function pg_glyph_at(x, y) {
     // cmap glyph (S_engroom/S_engrcorr) above the bare terrain.
     if (is_cmap_engraving_at(x, y) && sym === engraving_glyph(loc).ch)
         return { kind: 'cmap', sym, cmap: loc.typ === CORR ? S_engrcorr : S_engroom, x, y };
+    // The remembered glyph is a wall even if the terrain was since dug out.
+    if (remembered?.wall && remembered.ch === sym)
+        return { kind: 'cmap', sym, cmap: 1 /* S_vwall; "wall" */, dec: !!loc.disp_decgfx, x, y };
     return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), dec: !!loc.disp_decgfx, x, y };
 }
 function pg_glyph_is_monster(g) { return g?.kind === 'monster'; }
@@ -1755,7 +1774,11 @@ export function lookat(x, y) {
         case S_altar: {
             const amsk = (loc?.altarmask ?? loc?.flags ?? 0);
             const algn = Amask2align(amsk & AM_MASK);
-            const an_ = algn === A_CHAOTIC ? 'chaotic' : algn === A_NEUTRAL ? 'neutral'
+            /* like endgame high priests, endgame high altars are only
+               recognizable when immediately adjacent */
+            const an_ = (Is_astralevel(game.u?.uz) && !pg_next2u(x, y) && (amsk & AM_SANCTUM))
+                      ? 'aligned'
+                      : algn === A_CHAOTIC ? 'chaotic' : algn === A_NEUTRAL ? 'neutral'
                       : algn === A_LAWFUL ? 'lawful' : algn === A_NONE ? 'unaligned'
                       : 'aligned';
             buf = `${an_} ${(amsk & AM_SANCTUM) ? 'high ' : ''}altar`;
@@ -1955,8 +1978,9 @@ export function do_screen_description(cc, looked, sym, out_str, firstmatch,
 
     /* Now check for objects */
     if (!iflags.terrainmode || (iflags.terrainmode & 0x04) !== 0) {
-        const bouldersym = showsym(SYM_BOULDER + SYM_OFF_X,
-                                   def_oc_syms[ROCK_CLASS]?.sym);
+        /* C: go.ov_primary_syms[SYM_BOULDER + SYM_OFF_X] — the `boulder:` rc
+           option / symset override only, never the plain showsyms[] table. */
+        const bouldersym = symOverrideChar('S_boulder') || def_oc_syms[ROCK_CLASS]?.sym;
         for (let i = 1; i < MAXOCLASSES; i++) {
             const match = (i !== ROCK_CLASS)
                 ? (sym === (looked ? showsym(i + SYM_OFF_O, def_oc_syms[i]?.sym)

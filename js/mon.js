@@ -6,6 +6,7 @@
 // (game.level.monsters / game.fmon) so that gameplay RNG + display are
 // generated naturally for any session whose level state is materialized.
 
+import { has_ceiling as has_ceiling_dg } from './dungeon.js';
 import { random_monster } from './disprng.js';
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
@@ -927,16 +928,11 @@ function restrap(mtmp) {
     return false;
 }
 
-// C ref: dungeon.c:1690 has_ceiling(lev) —
-//   `if (In_endgame(lev) && !Is_earthlevel(lev)) return FALSE; return TRUE;`
-// i.e. false on the Plane of Air/Fire/Water/Astral, true on the Plane of Earth
-// and everywhere in the dungeon.  dungeon.js does not model the endgame branch
-// (dungeon.js:815) so dnum can't identify those levels yet; the C test is
-// spelled out here so the day it can, this is a one-line change instead of a
-// rediscovery.  (Reached only through ceiling_hider(), i.e. a piercer or lurker
-// above on an endgame plane.)
+// C ref: mon.c's has_ceiling(&u.uz) uses (dungeon.js has_ceiling(): false on the
+// endgame planes other than Earth).  A lurker above / piercer cannot re-hide
+// there (restrap()), nor can a clinger count as in the air (m_in_air()).
 function has_ceiling() {
-    return true;
+    return has_ceiling_dg(game.u?.uz);
 }
 
 // C ref: monsym.h S_EEL=57.
@@ -1148,7 +1144,8 @@ async function m_dowear_type(mon, flag, creation, racialexception) {
     // checking this slot.  The string is later needed only if armor changes,
     // but x_monnam() still randomizes hallucinated monster names for every
     // eligible slot.  Both wrappers consume the same display RNG sequence.
-    Monnam(mon);
+    /* name captured BEFORE the monster's visibility can change ("Suddenly you cannot see %s") */
+    const nambuf = See_invisible_mon() ? Monnam(mon) : mon_nam(mon);
     const sawmon = canseemon_shared(mon);
     let old = which_armor_mon(mon, flag);
     if (old && old.cursed) return;
@@ -1238,8 +1235,15 @@ async function m_dowear_type(mon, flag, creation, racialexception) {
     // worn.js's shared update_mon_extrinsics for both the outgoing and
     // incoming item, exactly like C's two call sites.
     await mon_adjust_speed_worn(mon, creation);
-    if (old) update_mon_extrinsics(mon, old, false);
-    update_mon_extrinsics(mon, best, true);
+    if (old) update_mon_extrinsics(mon, old, false, creation);
+    update_mon_extrinsics(mon, best, true, creation);
+    /* if couldn't see it but now can, or vice versa */
+    if (!creation && (sawmon !== canseemon_shared(mon))) {
+        if (mon.minvis && !See_invisible_mon()) {
+            await update_topl(`Suddenly you cannot see ${nambuf}.`);
+            (await import('./invent.js')).makeknown(best.otyp);
+        }
+    }
 }
 
 // C ref: worn.c:488 mon_adjust_speed(mon, 0, obj) — adjust==0 does nothing but

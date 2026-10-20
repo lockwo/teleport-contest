@@ -25,7 +25,7 @@ import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { Blind as Blind_vision } from './vision.js';
 import { s_suffix } from './hacklib.js';
-import { CQ_CANNED, NO_KILLER_PREFIX } from './const.js';
+import { CQ_CANNED, NO_KILLER_PREFIX, PARANOID_BREAKWAND } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { begin_burn, end_burn } from './timeout.js';
 
@@ -1027,9 +1027,12 @@ async function do_break_wand(obj) {
         return ECMD_OK;
     }
     const { safe_qbuf } = await import('./pickup.js');
-    const ans = await _display.y_n(
+    const { paranoid_ynq } = await import('./eat.js');
+    const ans = await paranoid_ynq(
+        ((game.flags?.paranoia_bits | 0) & PARANOID_BREAKWAND) !== 0,
         safe_qbuf('Are you really sure you want to break ', '?', obj,
-                  _invent.yname, _invent.ysimple_name, 'the wand'));
+                  _invent.yname, _invent.ysimple_name, 'the wand'),
+        false);
     if (ans !== 'y') return ECMD_OK;
     await _display.pline(
         `Raising ${_invent.yname(obj)} high above your head,`
@@ -2141,9 +2144,10 @@ async function ap_floorfood(verb, corpsecheck) {
     // C: 'm' prefix / can't-reach-floor / mounted all skip to skipfloor; this
     // call site can only observe menu_requested among those.
     if (!game.iflags?.menu_requested && corpsecheck === 2) {
+        /* C walks the pile via nexthere, head first; the flat array's LAST match is C's head */
         const objs = (game.level?.objects || []).filter(
             (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy
-                && o.otyp === CORPSE_A && tinnable(o));
+                && o.otyp === CORPSE_A && tinnable(o)).reverse();
         for (const otmp of objs) {
             const one = (otmp.quan || 1) === 1;
             const nm = A.invent.obj_doname(otmp);
@@ -2171,44 +2175,59 @@ async function ap_tele_to_rnd_pet() {
     const { tele_to_rnd_pet } = await import('./teleport.js');
     await tele_to_rnd_pet();
 }
-// C ref: zap.c:3861-4093 bhit()'s FLASHED_LIGHT branch.  The S_flashbeam beam
-// (tmp_at(DISP_BEAM, ...)) records each square the hero can see, and
-// tmp_at(DISP_END) newsym()s every one of them back — which while hallucinating
-// draws the display RNG for each monster/object re-seen there.
-async function ap_bhit_flash(dx, dy, range, obj) {
+// C ref: zap.c:3861-4093 bhit() for weapon == FLASHED_LIGHT (camera / lit-object
+// flash) or INVIS_BEAM (an applied mirror).  Only FLASHED_LIGHT draws the
+// S_flashbeam beam (tmp_at(DISP_BEAM, ...) records each square the hero can
+// see, and tmp_at(DISP_END) newsym()s every one of them back, which while
+// hallucinating draws the display RNG), lights each square with
+// show_transient_light(), and passes through invisible monsters calling
+// flash_hits_mon() on them.  INVIS_BEAM shows nothing and has no light source
+// (zap.c:3867, 3916, 4081, 4125); it continues through a monster only when
+// that monster is invisible and cannot perceive invisible things (zap.c:4011).
+async function ap_bhit_beam(dx, dy, range, obj, flashed) {
     const A = await ap_load();
     const D = A.display;
     let x = game.u.ux, y = game.u.uy;
-    await D.tmp_at(DISP_BEAM_A, D.fn_cmap_to_glyph(79 /* S_flashbeam */));
+    if (flashed)
+        await D.tmp_at(DISP_BEAM_A, D.fn_cmap_to_glyph(79 /* S_flashbeam */));
     while (range-- > 0) {
         x += dx; y += dy;
         if (!isok(x, y)) break;
         const loc = game.level.at(x, y);
-        if (!ap_Blinded() && !game.ublindf)
+        if (flashed && !ap_Blinded() && !game.ublindf)
             await A.lightsrc.show_transient_light(null, x, y);
-        const mon = A.display.m_at(x, y);
-        if (mon && mon.m_ap_type !== 'obj' && mon.m_ap_type !== M_AP_OBJECT) {
+        let mon = A.display.m_at(x, y);
+        if (flashed && mon && (mon.m_ap_type === 'obj' || mon.m_ap_type === M_AP_OBJECT))
+            mon = null;
+        if (mon) {
             game.notonhead = (x !== mon.mx || y !== mon.my);
-            if (!mon.minvis) {
-                await D.tmp_at(DISP_END_A, 0);
+            if (flashed) {
+                if (!mon.minvis) {
+                    await D.tmp_at(DISP_END_A, 0);
+                    return mon;
+                }
+                obj.ox = game.u.ux; obj.oy = game.u.uy;
+                await A.uhitm.flash_hits_mon(mon, obj);
+            } else if (!mon.minvis || ap_perceives(mon.data)) {
                 return mon;
             }
-            obj.ox = game.u.ux; obj.oy = game.u.uy;
-            await A.uhitm.flash_hits_mon(mon, obj);
         }
         if (!ZAP_POS(loc.typ)
             || (IS_DOOR(loc.typ) && (loc.doormask & (D_CLOSED | D_LOCKED))))
             break;
-        /* 'I' present but no monster: erase; do this before tmp_at() */
-        if (loc.invisMon && A.vision.cansee(x, y)) {
-            D.unmap_object(x, y);
-            D.newsym(x, y);
+        if (flashed) {
+            /* 'I' present but no monster: erase; do this before tmp_at() */
+            if (loc.invisMon && A.vision.cansee(x, y)) {
+                D.unmap_object(x, y);
+                D.newsym(x, y);
+            }
+            await D.tmp_at(x, y);
+            if (A.vision.cansee(x, y))
+                D.show_glyph_cell(x, y, '!', 15 /* CLR_WHITE */, false);
         }
-        await D.tmp_at(x, y);
-        if (A.vision.cansee(x, y))
-            D.show_glyph_cell(x, y, '!', 15 /* CLR_WHITE */, false);
     }
-    await D.tmp_at(DISP_END_A, 0);
+    if (flashed)
+        await D.tmp_at(DISP_END_A, 0);
     return null;
 }
 // C ref: teleport.c enexto(cc, xx, yy, mdat) == enexto_gpflags(.., NO_MM_FLAGS);
@@ -2308,11 +2327,12 @@ function ap_mhe(mtmp) {
     if (mtmp?.female) return 'she';
     return mtmp?.data && (mflags2_of(mtmp.data) & 0x40000) ? 'it' : 'he';
 }
-// C ref: shk.c Shk_Your(buf, obj)/shk_your(buf, obj) — "your " unless the shop
-// still owns it.  js/wield.js keeps the same simplification.
+// C ref: shk.c Shk_Your(buf, obj)/shk_your(buf, obj) — the shopkeeper's/monster's
+// name for unpaid shop goods or a monster's pack, else "your "/"the ".
 async function ap_shk_your(obj) {
     const A = await ap_load();
-    return A.invent.inventoryArray().includes(obj) ? 'your ' : 'the ';
+    const owner = A.invent.shk_your(obj);
+    return owner ? `${owner} ` : '';
 }
 async function ap_Shk_Your(obj) { return ap_upstart(await ap_shk_your(obj)); }
 // C ref: objnam.c Yname2(obj) — "Your <xname>" / "The <xname>".
@@ -2446,7 +2466,7 @@ async function ap_howmonseen(mtmp) {
 export async function do_blinding_ray(obj) {
     const A = await ap_load();
     const u = game.u;
-    const mtmp = await ap_bhit_flash(u.dx, u.dy, COLNO_A, obj);
+    const mtmp = await ap_bhit_beam(u.dx, u.dy, COLNO_A, obj, true);
 
     obj.ox = u.ux; obj.oy = u.uy; /* flash_hits_mon() wants this */
     if (mtmp) {
@@ -3119,7 +3139,7 @@ export async function use_mirror(obj) {
     }
 
     // C ref: zap.c bhit(u.dx, u.dy, COLNO, INVIS_BEAM, 0, 0, &obj).
-    const mtmp = await ap_bhit_flash(u.dx, u.dy, COLNO_A, obj);
+    const mtmp = await ap_bhit_beam(u.dx, u.dy, COLNO_A, obj, false);
     if (!mtmp || !ap_haseyes(mtmp.data) || game.notonhead)
         return ECMD_TIME;
 
@@ -3467,7 +3487,7 @@ export async function use_candle(optr) {
     // C ref: apply.c:1408 — C builds the query with two safe_qbuf() passes and
     // an ESC-delimited placeholder so a long candle name is elided; the prompt
     // text here is the un-elided equivalent.
-    const qbuf = `Attach ${A.invent.yname(obj)} to ${await ap_thesimpleoname(otmp)}?`;
+    const qbuf = `Attach ${A.invent.yname(obj)} to ${A.invent.yname(otmp)}?`;
     if (await A.display.y_n(qbuf) === 'n') {
         await use_lamp(obj);
         return;

@@ -909,7 +909,9 @@ function delallobj(x, y) {
 
 // C ref: pline.c You_hear(...) — suppressed when Deaf.
 async function You_hear(msg) {
-    if (!Deaf()) await pline(`You hear ${msg}`);
+    const unaware = Unaware();
+    if (!Deaf() || unaware)
+        await pline(`${unaware ? 'You dream that you hear ' : 'You hear '}${msg}`);
 }
 
 // C ref: objnam.c vtense(subj, verb) — 2nd->3rd person for a singular subject.

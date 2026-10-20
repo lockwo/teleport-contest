@@ -23,6 +23,7 @@ import {
     is_orc_flag, is_human_flag, is_giant_flag,
 } from './monflags_data.js';
 import { monster_by_pmidx } from './makemon.js';
+import { same_race } from './dogmove.js';
 import { mhis } from './do_name.js';
 import { races } from './roles.js';
 // ── extra imports for the rest of sounds.c (ported at the end of this file) ──
@@ -285,22 +286,6 @@ function poly_gender() {
 // C ref: include/mondata.h likes_magic(ptr) = (mflags2 & M2_MAGIC).
 const likes_magic = (ptr) => (mflags2_of(ptr) & M2_MAGIC) !== 0;
 
-// C ref: mondata.c same_race(pm1, pm2) — the player-race predicates first, then
-// the looser genus tests.  Only the arms that can pair with a chattable monster
-// and a hero form are needed (golem / mind flayer / were / vampire genus tests
-// would need their own flag lookups and cannot both be a #chat target and the
-// hero's un-poly'd form here).
-function same_race(pm1, pm2) {
-    if (!pm1 || !pm2) return false;
-    if (pm1 === pm2 || pm1.pmidx === pm2.pmidx) return true;
-    if (is_human_flag(pm1)) return is_human_flag(pm2);
-    if (is_elf_flag(pm1)) return is_elf_flag(pm2);
-    if (is_dwarf_flag(pm1)) return is_dwarf_flag(pm2);
-    if (is_gnome_flag(pm1)) return is_gnome_flag(pm2);
-    if (is_orc_flag(pm1)) return is_orc_flag(pm2);
-    if (is_giant_flag(pm1)) return is_giant_flag(pm2);
-    return pm1.mlet === pm2.mlet;
-}
 
 // C ref: gy.youmonst.data == &mons[u.umonnum], and &mons[Race_switch] (the
 // un-poly'd race's base monster) which domonnoise tests alongside it.
@@ -368,20 +353,7 @@ export async function growl(mtmp) {
     if (game.u?.uhallu) {
         verb = H_SOUNDS[rn2(H_SOUNDS.length)];
     } else {
-        switch (ms) {
-        case MS_MEW: case MS_HISS: verb = 'hiss'; break;
-        case MS_BARK: case MS_GROWL: verb = 'growl'; break;
-        case MS_ROAR: verb = 'roar'; break;
-        case MS_BUZZ: verb = 'buzz'; break;
-        case MS_SQEEK: verb = 'squeal'; break;
-        case MS_SQAWK: verb = 'screech'; break;
-        case MS_NEIGH: verb = 'neigh'; break;
-        case MS_WAIL: verb = 'wail'; break;
-        case MS_GROAN: verb = 'groan'; break;
-        case MS_MOO: verb = 'low'; break;
-        case MS_SILENT: break;
-        default: verb = 'scream'; break;
-        }
+        verb = growl_sound(mtmp);
     }
     if (!verb) return;
     // C ref: growl() — `if (canseemon(mtmp) || !Deaf) pline(...)`; the wake_nearto
@@ -426,7 +398,7 @@ export async function yelp(mtmp) {
 
 // SCOPE: MS_PRIEST (priest_talk) and MS_SELL (shk_chat) are wired below;
 // MS_LEADER/MS_NEMESIS/MS_GUARDIAN (quest_chat) are also ported.  The arms
-// that still hand off to an unported subsystem — MS_VAMPIRE and MS_RIDER
+// that still hand off to an unported subsystem — MS_RIDER
 // (both need the 3.6-tribute / urace-noun machinery) — fall through to the
 // silent ECMD_TIME tail, as does the In_endgame mplayer_talk() arm of
 // MS_HUMANOID.  Their RNG is therefore not emitted; nothing in the covered
@@ -608,6 +580,57 @@ export async function domonnoise(mtmp) {
             verbl_msg = 'This will teach you not to disturb me!';
         }
         break;
+    case MS_VAMPIRE: {
+        // C ref: sounds.c:744 — varied by tameness, peacefulness and time of night.
+        const isnight = !!night();
+        const upn = game.u?.Upolyd ? monster_by_pmidx(game.u.umonnum)?.name : null;
+        const kindred = upn === 'vampire' || upn === 'vampire lord';
+        const nightchild = upn === 'wolf' || upn === 'winter wolf'
+            || upn === 'winter wolf cub';
+        // gu.urace.individual: only humans have man/woman, others use the noun.
+        const rc = game.urace || races[game.initrace] || races[0];
+        const racenoun = rc.noun === 'human'
+            ? (game.flags?.female ? 'woman' : 'man') : rc.noun;
+        if (mtmp.mtame) {
+            if (kindred) {
+                verbl_msg = `Good ${isnight ? 'evening' : 'day'} to you Master${
+                    isnight ? '!' : '.  Why do we not rest?'}`;
+            } else {
+                const { midnight } = await import('./calendar.js');
+                verbl_msg = `${nightchild ? 'Child of the night, ' : ''}${
+                    midnight() ? 'I can stand this craving no longer!'
+                    : isnight ? 'I beg you, help me satisfy this growing craving!'
+                    : 'I find myself growing a little weary.'}`;
+            }
+        } else if (mtmp.mpeaceful) {
+            if (kindred && isnight)
+                verbl_msg = `Good feeding ${game.flags?.female ? 'sister' : 'brother'}!`;
+            else if (nightchild && isnight)
+                verbl_msg = 'How nice to hear you, child of the night!';
+            else
+                verbl_msg = 'I only drink... potions.';
+        } else {
+            if (kindred) {
+                verbl_msg = 'This is my hunting ground that you dare to prowl!';
+            } else if (youmonst_data_snd()?.name === 'silver dragon'
+                       || youmonst_data_snd()?.name === 'baby silver dragon') {
+                verbl_msg = `${youmonst_data_snd().name === 'silver dragon' ? 'Fool' : 'Young Fool'}!  Your silver sheen does not frighten me!`;
+            } else {
+                const vampindex = rn2(2);
+                if (vampindex === 0) {
+                    const { body_part } = await import('./polyself.js');
+                    const { BLOOD } = await import('./const.js');
+                    verbl_msg = `I vant to suck your ${body_part(BLOOD)}!`;
+                } else {
+                    const { an } = await import('./objnam.js');
+                    const un = game.u?.Upolyd
+                        ? an(monster_by_pmidx(game.u.umonnum)?.name ?? '') : an(racenoun);
+                    verbl_msg = `I vill come after ${un} without regret!`;
+                }
+            }
+        }
+        break;
+    }
     case MS_BOAST:
         if (!mtmp.mpeaceful) {
             switch (rn2(4)) {
@@ -1038,9 +1061,7 @@ export async function oracle_sound(mtmp) {
     return true;
 }
 
-// C ref: sounds.c:350 growl_sound(mtmp) — RNG-free.  NOTE the two arms the
-// inlined switch in growl() above is missing: MS_BELLOW -> "bellow" (a
-// crocodile "screams" there instead) and MS_SILENT -> "commotion".
+// C ref: sounds.c:350 growl_sound(mtmp) — RNG-free.
 export function growl_sound(mtmp) {
     let ret;
     switch (msound_of(mtmp?.data) ?? MS_SILENT) {

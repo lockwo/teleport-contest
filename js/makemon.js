@@ -3314,6 +3314,17 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
                                  LS_MONSTER, mtmp);
         }
     }
+    if (changed && game.u?.ustuck === mtmp && !game.u.uswallow) {
+        /* C ref: mon.c:5441 — a sticky hero can't keep holding a monster that
+           turned non-solid, and a monster that is no longer a holder (with a
+           non-holder hero) lets go; unstuck() issues no message. */
+        const { sticks } = await import('./uhitm.js');
+        const { youmonst_data_pub } = await import('./invent.js');
+        if ((!sticks(mdat) && !sticks(youmonst_data_pub())) || unsolid_flag(mdat)) {
+            const { unstuck } = await import('./mon.js');
+            await unstuck(mtmp);
+        }
+    }
     if (changed && game.u?.ustuck === mtmp && game.u.uswallow) {
         if (!attacktype(mdat, AT_ENGL)) {
             const whirly = ptr => ptr.mcls === S_VORTEX_CLS
@@ -4926,13 +4937,14 @@ async function bagotricks_sensemon(mtmp) {
 // mvitals[PM_ERINYS] picks up G_EXTINCT (propagate() sets it at mbirth_limit),
 // so the unbounded form terminates.  MM_ADJACENTOK lets each one displace to a
 // neighbouring square instead of failing on the hero's own.
-export function summon_furies(limit) {
+export async function summon_furies(limit) {
     const PM_ERINYS_IDX = name_to_pmidx('erinys');
     if (PM_ERINYS_IDX < 0) return;
     let i = 0;
     while (mk_gen_ok(PM_ERINYS_IDX, G_GONE, 0) && (i < limit || !limit)) {
-        makemon(MONS[PM_ERINYS_IDX], game.u.ux, game.u.uy,
-                MM_ADJACENTOK | MM_NOWAIT);
+        const mtmp = makemon(MONS[PM_ERINYS_IDX], game.u.ux, game.u.uy,
+                             MM_ADJACENTOK | MM_NOWAIT);
+        if (mtmp) await makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, 0);
         i++;
     }
 }

@@ -2116,6 +2116,16 @@ export function place_object(otmp, x, y) {
     return otmp;
 }
 
+// C ref: restore.c find_lev_obj() -> mkobj.c place_object():2356 while a level
+// is being read back by getlev().  rest_rooms() has just nulled every room's
+// `resident`, so costly_spot() and costly_adjacent() are false for every floor
+// object and place_object() clears its no_charge.  The port's reference-swap
+// level reload and its JSON save restore never run find_lev_obj(), so they call
+// this instead.
+export function clear_no_charge_on_getlev(level) {
+    for (const otmp of (level?.objects || [])) otmp.no_charge = 0;
+}
+
 // C ref: mkobj.c add_to_container(container, obj) — obj must be free; merge
 // into an existing stack if possible, else prepend to the container's cobj
 // chain.  Does NOT update the container's weight (callers do).

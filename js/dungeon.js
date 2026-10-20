@@ -405,12 +405,19 @@ export function builds_up(lev) {
 export function level_difficulty() {
     const uz = game.u?.uz;
     if (!uz) return 1;
-    if (In_endgame_dg(uz))
-        return depth_dg(game.sanctum_level) + Math.trunc((game.u?.ulevel || 0) / 2);
-    if (game.u?.uhave?.amulet) return deepest_lev_reached_dg(false);
-    let res = depth_dg(uz);
-    if (builds_up(uz))
-        res += 2 * (game.dungeons[uz.dnum].entry_lev - uz.dlevel + 1);
+    let res;
+    if (In_endgame_dg(uz)) {
+        res = depth_dg(game.sanctum_level) + Math.trunc((game.u?.ulevel || 0) / 2);
+    } else if (game.u?.uhave?.amulet) {
+        res = deepest_lev_reached_dg(false);
+    } else {
+        res = depth_dg(uz);
+        if (builds_up(uz))
+            res += 2 * (game.dungeons[uz.dnum].entry_lev - uz.dlevel + 1);
+    }
+    /* ring of aggravate monster */
+    if (eaggravate_dg())
+        res = res > 25 ? 50 : res * 2;
     return res;
 }
 
@@ -426,6 +433,14 @@ function deepest_lev_reached_dg(noquest) {
         if (d > ret) ret = d;
     }
     return ret;
+}
+
+// C ref: youprop.h EAggravate_monster — the extrinsic word only (a worn ring of
+// aggravate monster); the intrinsic HAggravate_monster does not count in
+// level_difficulty().  Reads game.u.uprops_extrinsic directly: invent.js's
+// worn_extrinsic() cannot be imported here (import cycle at load time).
+function eaggravate_dg() {
+    return ((game.u?.uprops_extrinsic?.[43 /* AGGRAVATE_MONSTER */]) | 0) !== 0;
 }
 
 // C ref: dungeon.c depth() / In_endgame().  Local copies: dungeon.js sits below

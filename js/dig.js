@@ -25,7 +25,7 @@ import {
     DIGTYP_DOOR, DIGTYP_TREE, N_DIRS, N_DIRS_Z, TT_WEB,
 } from './const.js';
 import { is_pick, is_axe } from './weapon.js';
-import { Is_special, ceiling as ceiling_dg } from './dungeon.js';
+import { Is_special, ceiling as ceiling_dg, has_ceiling as has_ceiling_dg } from './dungeon.js';
 import { inside_room } from './mkroom.js';
 
 // C ref: hack.c may_dig(x, y) — "intended to be called only on ROCKs or TREEs".
@@ -776,7 +776,7 @@ import {
     FORCETRAP, FORCEBUNGLE, SHOPBASE, SHOP_DOOR_COST, SHOP_PIT_COST,
     TIMER_OBJECT, ROT_ORGANIC, TAINT_AGE, CXN_NO_PFX,
     ECMD_OK, ECMD_TIME, RIGHT_SIDE,
-    Is_airlevel, Is_waterlevel, Is_stronghold, Is_botlevel,
+    Is_airlevel, Is_waterlevel, Is_stronghold, Is_botlevel, Is_juiblex_level,
     is_pit, is_hole, DIGCHECK_PASSED, DIGCHECK_FAILED,
     DIGCHECK_PASSED_PITONLY, DIGCHECK_PASSED_DESTROY_TRAP,
     DIGCHECK_FAIL_AIRLEVEL, DIGCHECK_FAIL_ALTAR, DIGCHECK_FAIL_BOULDER,
@@ -898,12 +898,15 @@ function OBJ_AT(x, y) { return floor_pile(x, y).length > 0; }
 // C ref: dbridge.c is_pool/is_lava/is_moat/is_pool_or_lava/is_ice.  Kept local
 // (not imported from js/dbridge.js) because dbridge.js pulls in mkobj.js and
 // dokick.js; a static import here would put dig.js on that cycle.
+// C ref: dbridge.c:45 is_pool(): `ltyp == MOAT` is not redundant with is_moat()
+// because Juiblex's swamp MOATs are not moats.  The raised-drawbridge case
+// depends on the terrain the bridge covers.
 function is_pool_(x, y) {
     if (!isok(x, y)) return false;
     const lev = game.level?.at(x, y);
     if (!lev) return false;
-    return IS_POOL(lev.typ)
-        || (lev.typ === DRAWBRIDGE_UP && ((lev.drawbridgemask | 0) & DB_UNDER) === DB_MOAT);
+    return lev.typ === POOL || lev.typ === MOAT || lev.typ === WATER
+        || is_moat_(x, y);
 }
 function is_lava_(x, y) {
     if (!isok(x, y)) return false;
@@ -912,12 +915,15 @@ function is_lava_(x, y) {
     return lev.typ === LAVAPOOL || lev.typ === LAVAWALL
         || (lev.typ === DRAWBRIDGE_UP && ((lev.drawbridgemask | 0) & DB_UNDER) === DB_LAVA);
 }
+// C ref: dbridge.c:99 is_moat() — never true on Juiblex's level.
 function is_moat_(x, y) {
     if (!isok(x, y)) return false;
     const lev = game.level?.at(x, y);
     if (!lev) return false;
-    return lev.typ === MOAT || lev.typ === WATER
-        || (lev.typ === DRAWBRIDGE_UP && ((lev.drawbridgemask | 0) & DB_UNDER) === DB_MOAT);
+    return !Is_juiblex_level(game.u?.uz)
+        && (lev.typ === MOAT
+            || (lev.typ === DRAWBRIDGE_UP
+                && ((lev.drawbridgemask | 0) & DB_UNDER) === DB_MOAT));
 }
 function is_pool_or_lava_(x, y) { return is_pool_(x, y) || is_lava_(x, y); }
 function is_ice_(x, y) {
@@ -977,12 +983,10 @@ function is_floater_(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIGHT;
 function noncorporeal_(ptr) { return ptr?.mcls === S_GHOST; }
 function passes_walls_(ptr) { return (mflags1_of(ptr) & M1_WALLWALK) !== 0; }
 function is_clinger_(ptr) { return (mflags1_of(ptr) & M1_CLING) !== 0; }
-// C ref: dungeon.h has_ceiling(lev) — everywhere except air and water levels.
-function has_ceiling_(uz) { return !Is_airlevel(uz) && !Is_waterlevel(uz); }
 // C ref: mondata.h:23 grounded(ptr).
 function grounded_(ptr) {
     return !is_flyer_(ptr) && !is_floater_(ptr)
-        && (!is_clinger_(ptr) || !has_ceiling_(game.u?.uz));
+        && (!is_clinger_(ptr) || !has_ceiling_dg(game.u?.uz));
 }
 // C ref: mondata.h is_watch(ptr) — (ptr->mflags2 & M2_WANDER) is NOT it; C
 // tests the two Watch pmidxes by name in this port's tables.

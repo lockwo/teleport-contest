@@ -880,6 +880,12 @@ async function killMonster(mdef, withCorpse = true, be_sad = false) {
     { const { relobj } = await import('./uhitm.js'); await relobj(mdef, mx, my); }
     await (await import('./mon.js')).thiefdead_shkgone(mdef);
     if (mdef.wormno) (await import('./worm.js')).wormgone(mdef);
+    /* C ref: mon.c m_detach() tail — the hero is thrown from a steed that dies */
+    if (mdef === game.u?.usteed) {
+        const { dismount_steed } = await import('./steed.js');
+        const { DISMOUNT_GENERIC } = await import('./const.js');
+        await dismount_steed(DISMOUNT_GENERIC);
+    }
     // C ref: mon.c:3181 mondied() — corpse_chance() runs AFTER mondead()'s
     // m_detach() has already dropped the inventory (relobj above).
     const dropCorpse = withCorpse && await corpse_chance(mdef); // mon.c:3181

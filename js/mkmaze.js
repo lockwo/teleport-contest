@@ -611,7 +611,7 @@ async function replace_bubble_contents(b, dx, dy) {
             const { u_on_newpos, mnexto_rloc } = await import('./do.js');
             const mtmp = m_at(cons.x, cons.y);
             const ux0 = g.u.ux, uy0 = g.u.uy;
-            u_on_newpos(cons.x, cons.y);
+            await u_on_newpos(cons.x, cons.y);
             newsym(ux0, uy0);            /* clean up old position */
             if (mtmp) await mnexto_rloc(mtmp, RLOC_NOMSG);
             break;

@@ -255,7 +255,7 @@ const PM_HUMAN = 260, PM_HUMAN_MUMMY = 192;
 
 // topten.c:92 killed_by_prefix[], indexed by the `how` death code
 // (hack.h DIED..ASCENDED).
-const killed_by_prefix = [
+export const killed_by_prefix = [
     /* DIED, CHOKING, POISONING, STARVING, */
     'killed by ', 'choked on ', 'poisoned by ', 'died of ',
     /* DROWNING, BURNING, DISSOLVED, CRUSHING, */

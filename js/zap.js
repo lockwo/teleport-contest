@@ -41,7 +41,7 @@ import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_C
          CANDELABRUM_OF_INVOCATION, SPE_BOOK_OF_THE_DEAD,
          is_rider_pm, ROCK_CLASS, unbless, uncurse, container_weight,
          has_omonst, get_mtraits, has_omid, OMID, free_omid, free_omonst,
-         obj_ice_effects, dealloc_obj, eaten_stat } from './mkobj.js';
+         obj_ice_effects, dealloc_obj, eaten_stat, weight } from './mkobj.js';
 import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOOR, IS_ROOM, IS_WALL, isok, ROOM, STONE,
          D_CLOSED, D_LOCKED, CORPSTAT_INIT, EXT_ENCUMBER, HEADSTONE, ENGRAVE, TELEDS_TELEPORT,
          DUST, MM_NOMSG, In_mines, W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG,
@@ -90,6 +90,7 @@ import { killed, canspotmon, mon_nam, Monnam, x_monnam,
          mon_pmname, disguised_as_mon } from './uhitm.js';
 import { find_mac as worn_find_mac, which_armor } from './worn.js';
 import { rnd_hallublast } from './mthrowu.js';
+import { Teleport_control_fu } from './trap.js';
 // C ref: makemon.c monhp_per_lvl(mon) — golem / level>49 / dragon / level-0 arms.
 import { monhp_per_lvl, defends as arti_defends, defends_when_carried as arti_defends_carried } from './artifact.js';
 
@@ -509,22 +510,15 @@ function splitobj_z(obj, num) {
     otmp.lamplit = 0;
     otmp.owornmask = 0;
     obj.quan = (obj.quan || 1) - num;
-    obj.owt = weight_of(obj);
+    obj.owt = weight(obj);
     otmp.quan = num;
-    otmp.owt = weight_of(otmp);
+    otmp.owt = weight(otmp);
     const arr = game.level?.objects;
     if (arr && obj.where === OBJ_FLOOR) {
         const i = arr.indexOf(obj);
         if (i >= 0) arr.splice(i + 1, 0, otmp); else arr.push(otmp);
     }
     return otmp;
-}
-
-// C ref: mkobj.c weight(obj) — quantity * per-item weight.  Only the stack
-// arithmetic splitobj() needs is modelled here.
-function weight_of(obj) {
-    const w = objects[obj.otyp]?.oc_weight ?? 0;
-    return w * (obj.quan || 1);
 }
 
 // C ref: zap.c poly_obj(obj, id) — replace `obj` with a new object.  If `id` is
@@ -1119,7 +1113,7 @@ export async function fracture_rock(obj) {
     obj.otyp = ROCK;
     obj.oclass = GEM_CLASS;
     obj.quan = rn1(60, 7);
-    obj.owt = weight_of(obj);
+    obj.owt = weight(obj);
     obj.dknown = obj.bknown = obj.rknown = 0;
     obj.known = objects[ROCK]?.oc_uses_known ? 0 : 1;
     const { dealloc_oextra } = await import('./mkobj.js');
@@ -1197,9 +1191,10 @@ export async function bhitpile(obj, tx, ty, zz = 0) {
     }
 
     game.poly_zapped = -1;
-    // C captures next_obj before each hit; the snapshot of the (possibly
-    // statue-trap-altered) pile gives the same traversal.
-    for (const otmp of pile_at(tx, ty)) {
+    // C captures next_obj before each hit, from the live chain.
+    let next_obj;
+    for (let otmp = pile_at(tx, ty)[0]; otmp; otmp = next_obj) {
+        next_obj = nexthere(otmp, tx, ty);
         if (hidingunder) {
             if (first) {
                 first = false; /* reset for next item */
@@ -1247,7 +1242,7 @@ export async function bhitpile(obj, tx, ty, zz = 0) {
 }
 
 // C's nexthere chain, newest-first; our flat array is oldest-first.
-function pile_at(tx, ty) {
+export function pile_at(tx, ty) {
     const arr = game.level?.objects || [];
     const out = [];
     for (let i = arr.length - 1; i >= 0; i--) {
@@ -1255,6 +1250,16 @@ function pile_at(tx, ty) {
         if (o.where === OBJ_FLOOR && o.ox === tx && o.oy === ty) out.push(o);
     }
     return out;
+}
+
+// C's `next_obj = otmp->nexthere`, read from the LIVE chain just before the
+// callback runs.  The callback may re-place objects (fracture_rock slips the
+// new rock in under the boulders), so the pile must not be snapshotted up
+// front: the object C visits next can be one the snapshot never contained.
+export function nexthere(otmp, tx, ty) {
+    const chain = pile_at(tx, ty);
+    const i = chain.indexOf(otmp);
+    return i < 0 ? undefined : chain[i + 1];
 }
 
 // C ref: zap.c create_polymon(obj, okind) — the golem that arises from a
@@ -3212,7 +3217,7 @@ export async function burn_floor_objects(x, y, give_feedback, u_caused) {
             await useupf(obj, delquan);
         } else if (delquan < scrquan) {
             obj.quan = scrquan - delquan;
-            obj.owt = weight_of(obj);
+            obj.owt = weight(obj);
         } else {
             delobj(obj);
         }
@@ -4737,7 +4742,9 @@ export async function zapyourself(obj, ordinary) {
         break;
     }
     // C ref: zap.c zapyourself() tail — discover the wand type if its effect
-    // was observable and the wand itself has been seen.
+    // was observable and the wand itself has been seen.  C's done() never
+    // returns (polyself() death, lethal damage), so nothing runs after it.
+    if (game.program_state?.gameover) return damage;
     if (learn_it) learnwand(obj);
     return damage;
 }
@@ -4819,7 +4826,7 @@ export function Antimagic() { return !!(game.u?.formprops?.Antimagic || game.u?.
 function Half_spell_damage(){ return (game.u?.uprops?.HHalf_spell_damage|| 0) > 0; }
 function Unchanging()       { return (game.u?.uprops?.HUnchanging       || 0) > 0; }
 function Invis()            { return !!(game.u?.uprops?.HInvis); }
-function Teleport_control() { return !!game.u?.formprops?.Teleport_control || (game.u?.uprops?.HTeleport_control || 0) > 0; }
+function Teleport_control() { return !!game.u?.formprops?.Teleport_control || (game.u?.uprops?.HTeleport_control || 0) > 0 || Teleport_control_fu(); }
 function Stunned()          { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.Stun || game.u?.Stunned); }
 // C ref: hack.h dist2(x0,y0,x1,y1).
 function dist2(x0, y0, x1, y1) { return (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0); }
@@ -5549,12 +5556,14 @@ export async function montraits(obj, cc, adjacentok) {
         mtmp2.data = await mons_(mtmp2.mnum);
 
         if (mtmp2.mhpmax > 0 || is_rider_pm(mtmp2.data?.pmidx)) {
-            mtmp = makemon(mtmp2.data, cc.x, cc.y,
-                           (NO_MINVENT | MM_NOWAIT | MM_NOCOUNTBIRTH
-                            /* in case mtmp2 is a long worm; saved traits don't
-                               include tail segments so don't give mtmp any */
-                            | MM_NOTAIL | MM_NOMSG
-                            | (adjacentok ? MM_ADJACENTOK : 0)));
+            const mmf = (NO_MINVENT | MM_NOWAIT | MM_NOCOUNTBIRTH
+                         /* in case mtmp2 is a long worm; saved traits don't
+                            include tail segments so don't give mtmp any */
+                         | MM_NOTAIL | MM_NOMSG
+                         | (adjacentok ? MM_ADJACENTOK : 0));
+            mtmp = makemon(mtmp2.data, cc.x, cc.y, mmf);
+            // makemon()'s tail: dochugw() on an arrival while an occupation runs
+            if (mtmp) await (await import('./makemon.js')).makemon_appears_msg(mtmp, cc.x, cc.y, mmf);
         }
         if (!mtmp) {
             /* mtmp2 is a copy of obj's oextra->omonst extension and is not on

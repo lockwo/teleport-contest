@@ -195,7 +195,7 @@ export class NethackGame {
         // scored screen for an unlit square, but it sets mfndpos()'s cnt, which
         // IS the modulus of m_move's rn2(4*(cnt-j)).
         let map;
-        if (process.env.NHJSDUMP === 'map') {
+        if (typeof process !== 'undefined' && process.env && process.env.NHJSDUMP === 'map') {
             map = [];
             for (let y = 0; y < 21; y++) {
                 let s = '';

@@ -2300,16 +2300,14 @@ function isbig(sroom) {
 // shop-type roll (rnd(100)).  Stocking happens later in fill_special_room().
 function mkshop() {
     const g = game;
-    if (process.env.SHOPDBG) console.error(`[mkshop] dlvl=${JSON.stringify(g.u?.uz)} nroom=${g.level.nroom} rooms=` + JSON.stringify((g.level.rooms||[]).slice(0,12).map(r=>r&&({lx:r.lx,hx:r.hx,ly:r.ly,hy:r.hy,rtype:r.rtype,doorct:r.doorct,irr:r.irregular,sub:r.nsubrooms}))));
     let i = -1; // shoptype not yet determined
     // Find an eligible room: OROOM, no stairs, exactly one door.
     let sroom = null;
     for (let r = 0; ; r++) {
         const cur = g.level.rooms[r];
-        if (!cur || cur.hx < 0) { if (process.env.SHOPDBG) console.error(`[mkshop] no room (r=${r})`); return; }
-        if (r >= g.level.nroom) { if (process.env.SHOPDBG) console.error('[mkshop] nroom end'); return; }
+        if (!cur || cur.hx < 0) { return; }
+        if (r >= g.level.nroom) { return; }
         if (cur.rtype !== OROOM) continue;
-        if (process.env.SHOPDBG) console.error(`[mkshop] r=${r} dn=${has_dnstairs(cur)} up=${has_upstairs(cur)} doorct=${cur.doorct}`);
         if (has_dnstairs(cur) || has_upstairs(cur)) continue;
         if (cur.doorct === 1) {
             if (invalid_shop_shape(cur)) continue;
@@ -2325,7 +2323,6 @@ function mkshop() {
             }
         sroom.rlit = 1;
     }
-    if (process.env.SHOPDBG) console.error(`[mkshop] chose lx=${sroom.lx} ly=${sroom.ly} rlit=${sroom.rlit}`);
     if (i < 0) {
         // C ref: mkroom.c mkshop() — weighted random shop-type pick over
         // shtypes[].prob, then force wand/book shops in big rooms to a
@@ -6812,7 +6809,6 @@ function mktrap_random_kind() {
 // makevtele() gate that follows aligned.
 async function mk_knox_portal(x, y) {
     const g = game;
-    if (process.env.DBG_KNOX) console.error('DBG mk_knox_portal uz=', JSON.stringify(g.u?.uz));
     const knox = g.knox_level;
     if (!knox) return;
     const br = (g.branches || []).find(

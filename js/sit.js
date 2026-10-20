@@ -163,7 +163,7 @@ export async function dosit() {
         await update_topl('You sit on the altar.');
         await (await import('./dokick.js')).altar_wrath(u.ux, u.uy);
     } else if (IS_GRAVE(typ)) {
-        await update_topl('You sit on the headstone.');
+        await update_topl('You sit on the grave.');
     } else if (typ === STAIRS) {
         await update_topl('You sit on the stairs.');
     } else if (typ === LADDER) {

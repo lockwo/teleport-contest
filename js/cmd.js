@@ -15,7 +15,7 @@ import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
          glyph_is_invisible, stumble_onto_mimic } from './uhitm.js';
 import { ddoinv, dismiss_invent_screen, dolook,
          dodiscovered, doattributes, dovspell,
-         attr_window_advance, disco_window_advance, dowieldquiver, dowield, doswapweapon, dothrow, dofire, dotravel, dodrop, doddrop,
+         attr_window_advance, disco_window_advance, dowieldquiver, dowield, doswapweapon, dothrow, dofire, dotravel, dotravel_target, dodrop, doddrop,
          dopickup, dowear, dotakeoff, doputon, doremring, dopay, floor_object_name,
          doprgold, doprwep, doprarm, doprring, dopramulet, doprinuse,
          renderWindowScreen, renderMenuLines, ECMD_NOTHANDLED, describe_decor, dfeature_at,
@@ -32,7 +32,7 @@ import { dodrink } from './potion.js';
 import { dozap } from './zap.js';
 import { docast } from './spell.js';
 import { doread } from './read.js';
-import { dohelp, dowhatdoes, dowhatdoes_core, do_screen_description, doidtrap, tty_putstr_text } from './pager.js';
+import { dohelp, dowhatdoes, dowhatdoes_core, do_screen_description, doidtrap, tty_putstr_text, pg_glyph_at } from './pager.js';
 import { rnl, rn2, rnd } from './rng.js';
 import { doextcmd, doddoremarm, hooked_tty_getlin, wiz_wish, wiz_genesis,
          wiz_map_extcmd, run_extcmd_by_name, docallcmd, dooverview } from './extcmd-handlers.js';
@@ -75,7 +75,7 @@ import { onscary, dissolve_bars } from './monmove.js';
 import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
          read_engr_at } from './engrave.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { builds_up, level_difficulty, surface } from './dungeon.js';
+import { builds_up, level_difficulty, surface, earth_sense } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { HEADSTONE, WT_ELF, PARANOID_TRAP, MIGR_RANDOM, PLNMSG_ONE_ITEM_HERE } from './const.js';
 // C ref: dokick.c — the whole ^D command (kick_dumb/kick_ouch/kick_door/
@@ -84,7 +84,8 @@ import { HEADSTONE, WT_ELF, PARANOID_TRAP, MIGR_RANDOM, PLNMSG_ONE_ITEM_HERE } f
 // resolves cmd -> monmove -> uhitm -> allmain -> cmd.
 import { dokick } from './dokick.js';
 import { setuwep } from './wield.js';
-import { is_art, attacks, bare_artifactname, ART_STING } from './artifact.js';
+import { is_art, attacks, bare_artifactname, ART_STING, is_magic_key } from './artifact.js';
+import { lock_action, reset_pick } from './lock.js';
 import { weapon_descr } from './weapon.js';
 import { rloco } from './teleport.js';
 import { costly_spot, subfrombill, onshopbill, addtobill, find_objowner, stolen_value } from './shk.js';
@@ -112,7 +113,7 @@ import { selection_new, selection_getbounds,
          set_selection_floodfillchk,
          selection_size_description } from './selvar.js';
 import { carrying, objects_at, inventoryArray,
-         cmdq_add_key, cmdq_pop, doperminv, useupf } from './invent.js';
+         cmdq_add_key, cmdq_pop, cmdq_clear, doperminv, useupf } from './invent.js';
 import { num_spells } from './spell.js';
 import { Deaf_hero, vobj_at, msghist, topl_more_ext, useDECgraphics, terrain_glyph } from './display.js';
 import { dist2 } from './hacklib.js';
@@ -957,7 +958,7 @@ async function avoid_trap_andor_region(x, y) {
             && test_move_quiet(x, y)) {
             // C: Snprintf("%s into that %s cloud?", ...) then upstart().
             const q = `Step into that ${reg_damg(newreg) > 0 ? 'poison gas' : 'vapor'} cloud?`;
-            if (await y_n(q) !== 'y') {
+            if (!(await trap_paranoid_query(q))) {
                 nomul(0);
                 c.move = 0;
                 return true;
@@ -979,10 +980,17 @@ async function avoid_trap_andor_region(x, y) {
     const verb = Levitation_fu() ? 'float' : Flying_fu() ? 'fly' : 'step';  // hack.c u_locomotion
     const qbuf = `Really ${verb} ${into_vs_onto(traptype) ? 'into' : 'onto'}`
                + ` that ${trap_explanation(traptype)}?`;
-    if (await y_n(qbuf) === 'y') return false;
+    if (await trap_paranoid_query(qbuf)) return false;
     nomul(0);
     c.move = 0;
     return true;
+}
+
+// C ref: hack.c avoid_trap_andor_region() paranoid_query(ParanoidConfirm, qbuf): a y/n
+// question unless paranoid_confirmation:confirm is also set, then a yes/no getlin.
+async function trap_paranoid_query(qbuf) {
+    const { paranoid_ynq } = await import('./eat.js');
+    return (await paranoid_ynq(((game.flags?.paranoia_bits | 0) & 0x0001) !== 0, qbuf, false)) === 'y';
 }
 
 // C ref: cmd.c get_count() — gather typed digits into a repeat count, echoing
@@ -1057,7 +1065,6 @@ async function get_count(inkey) {
 // C ref: cmd.c rhack — main command dispatcher
 export async function rhack(key) {
     canned_kick_ran = false;
-    if (process.env.NHDBG_TRAV) console.error('RHACK', game.moves, JSON.stringify(key), 'dx', game.u?.dx, game.u?.dy, 'pos', game.u?.ux, game.u?.uy);
     // A nonzero key is moveloop_core's count repeat of the previous command.
     const countRepeat = key !== 0;
     const hadForcefight = !!game.context?.forcefight;
@@ -1276,6 +1283,17 @@ export async function rhack(key) {
         && ch !== '\x1b' && (key !== 32 || !!game.flags?.rest_on_space)
         && key !== 13
         && ch !== 'F' && ch !== 'g' && ch !== 'G' && ch !== 'm') {
+        // C ref: cmd.c:3680 rhack() — can_do_extcmd(tlist) runs BEFORE the pending-
+        // prefix complaint, so ^V after #fight reads "Unavailable command ...".
+        const ecm = extcmdlist.find(ec => ec.key === (key & 0xff));
+        if (ecm && !(ecm.flags & PREFIXCMD) && !(await can_do_extcmd(ecm))) {
+            reset_cmd_vars(true);
+            game.context.stale_run = 0;
+            game.context.stale_rush = false;
+            game.context.run_prefix = 0;
+            game.context.move = 0;
+            return;
+        }
         // C ref: cmd.c:3696 which = visctrl(cmd_from_func(prefix_seen->ef_funct)):
         // number_pad rebinds run to '5', so the name is the live binding.
         const which = cmd_visctrl(cmd_from_func(game.context.forcefight ? 'do_fight'
@@ -1919,6 +1937,9 @@ export async function rhack(key) {
         // elapses.
         await dotravel();
         game.context.move = 0;
+    } else if (key === 31) { // ^_ -- #retravel (cmd.c:1831 C('_'), dotravel_target)
+        // invent.js's dotravel_target() answers ECMD_TIME as 3.
+        game.context.move = (await dotravel_target()) === 3 ? 1 : 0;
     } else if (ch === ';') {
         // C ref: cmd.c ';' "glance" -> pager.c do_look(1): quick farlook.
         // Cursor-positioning loop + look-at description; no game time passes.
@@ -2622,6 +2643,13 @@ export async function getdir(s) {
                                         dz: canned.dirz });
             if (canned.typ === CMDQ_KEY)
                 return getdir_answer(canned.key, s);
+            /* C: `cmdq_clear(CQ_CANNED); dirsym = '\0'; impossible("getdir:
+               command queue had no dir?");` and '\0' is in quitchars[], so
+               the answer is a silent cancel. */
+            cmdq_clear(CQ_CANNED);
+            const { impossible } = await import('./display.js');
+            await impossible('getdir: command queue had no dir?');
+            return null;
         }
     } else {
         // C ref: cmd.c getdir() `cmdq_pop()` reads CQ_REPEAT while in_doagain:
@@ -3200,10 +3228,36 @@ function autokey() {
     return key || pick || card || null;
 }
 
+// C ref: lock.c pick_lock():379-403 — resuming an interrupted previous attempt
+// (xlock.usedtime survives stop_occupation()).  Returns a PICKLOCK_* code when
+// the attempt was resumed or refused, null when this is a fresh attempt.
+export async function pick_lock_resume(pick) {
+    const xl = game.xlock;
+    if (!(xl && xl.usedtime && pick.otyp === xl.picktyp)) return null;
+    const no_longer = (verb, what) => `Unfortunately, you can no longer ${verb} ${what}.`;
+    if (nohands_youmonst()) {
+        const what = (pick.otyp === LOCK_PICK) ? 'pick'
+                   : (pick.otyp === CREDIT_CARD) ? 'card' : 'key';
+        await pline(no_longer('hold the', what));
+        reset_pick();
+        return PICKLOCK_LEARNED_SOMETHING;
+    } else if (game.u?.uswallow || (xl.box && !can_reach_floor(true))) {
+        await pline(no_longer('reach the', 'lock'));
+        reset_pick();
+        return PICKLOCK_LEARNED_SOMETHING;
+    }
+    await pline(`You resume your attempt at ${lock_action(xl)}.`);
+    xl.magic_key = is_magic_key(game.u, pick);
+    game._picklock_box = xl.box || xl.door; // set_occupation(picklock, action, 0)
+    return PICKLOCK_DID_SOMETHING;
+}
+
 // C ref: lock.c pick_lock() autounlock door arm.  On acceptance it installs
 // lock.c's `picklock` occupation; allmain.js invokes the shared occupation on
 // this and later turns rather than resolving just the first rn2(100) inline.
 async function pick_lock_door(pick, cx, cy, door) {
+    const resumed = await pick_lock_resume(pick);
+    if (resumed !== null) return resumed;
     const toolname = pick.otyp === LOCK_PICK ? 'your lock pick'
                    : pick.otyp === SKELETON_KEY ? 'your key'
                    : 'your credit card';
@@ -3234,13 +3288,17 @@ async function pick_lock_door(pick, cx, cy, door) {
 // skeleton key / credit card.  get_adjacent_loc() -> getdir() prompts "In what
 // direction?"; the target is a container under the hero (dx==dy==0) or an
 // adjacent door.  Returns a PICKLOCK_* code (doapply maps non-zero -> ECMD_TIME).
-// Unreached-at-these-depths sub-branches (resuming an interrupted attempt,
-// nohands/engulfed, drawbridge locks, credit-card shopkeepers, door-mimics, and
-// the Master-Key trap-disarm) are documented rather than modelled.
+// Unreached-at-these-depths sub-branches (nohands/engulfed, drawbridge locks,
+// credit-card shopkeepers, door-mimics, and the Master-Key trap-disarm) are
+// documented rather than modelled.
 export async function pick_lock(pick) {
     const u = game.u;
     const picktyp = pick.otyp;
     const isRogue = (game.urole?.mnum === PM_ROGUE);
+
+    // lock.c:380 — an interrupted previous attempt is resumed, no prompts.
+    const resumed = await pick_lock_resume(pick);
+    if (resumed !== null) return resumed;
 
     // get_adjacent_loc(NULL, "Invalid location!", u.ux, u.uy, &cc):
     const dir = await getdir();
@@ -3767,7 +3825,16 @@ async function domove_core(dx, dy, attemptTracked) {
         // "You attack thin air." instead of stepping onto the square.
         evadedForcefight = !displaceu && !!game.context.forcefight;
     }
-    if (mtmp && !evadedForcefight) {
+    // C ref: hack.c:2843 test_move(DO_MOVE) runs BEFORE domove_swap_with_pet(), and
+    // its closed_door() branch (autoopen / bump / "That door is closed.") applies
+    // to a pet that flowed under the door just as to an empty door square.  Let
+    // that case fall through to the walk-into-a-closed-door block below instead
+    // of swapping onto the still-shut door.
+    const petOnClosedDoor = !!mtmp && !displaceu && !hero_passes_walls() && (() => {
+        const t = game.level?.at(newx, newy);
+        return !!t && IS_DOOR(t.typ) && !!(t.doormask & (D_CLOSED | D_LOCKED));
+    })();
+    if (mtmp && !evadedForcefight && !petOnClosedDoor) {
         // Monster evaded; if we can't actually move there, stop. C ref:
         // hack.c domove_core() — do_attack() returning FALSE falls through to
         // test_move(DO_MOVE), including the testdiag/out-of-doorway rules
@@ -3838,10 +3905,12 @@ async function domove_core(dx, dy, attemptTracked) {
         // swap/displace branch too, so a generic potion/gem/book now within
         // neardist of the hero becomes specific (before vision_recalc(1)).
         see_nearby_objects();
+        await earth_sense();
         await reset_occupations(); // hack.c:2936
         // C ref: hack.c:2945 — the same tread-disturbs-zombies call closes the
         // swap/displace path too (even when the swap was refused).
         hero_tread_disturbs_zombies();
+        await hero_rehides();
         u.umoved = (u.ux !== _umoved_ux0 || u.uy !== _umoved_uy0);
         newsym(u.ux0, u.uy0);
         vision_recalc(1);
@@ -3916,18 +3985,17 @@ async function domove_core(dx, dy, attemptTracked) {
         // `!(boulder || solid)`), so without this a force-fight at a boulder
         // read "You attack thin air."
         let boulder = off_edge ? null : boulder_at(newx, newy);
-        // C ref: hack.c:2263 — `if (glyph_is_statue(glyph_at(x, y)) ||
-        // (svc.context.forcefight && sobj_at(STATUE, x, y))) boulder =
-        // sobj_at(STATUE, x, y)`: a statue anywhere in the pile is what an 'F'
-        // attack hits (and overrides a boulder).  This port's display is a cell
-        // model with no glyph numbers, so a DISPLAYED statue is the top floor
-        // object when it is a statue.
+        // C ref: hack.c:2263 — a statue is a force-fight target only if the
+        // DISPLAYED glyph is a statue (a remembered one counts even when the
+        // hero is blind), or while hallucinating, if it shows any monster.
         let statueTarget = false;
         if (!off_edge && !game.u?.uinwater) {
-            const top = !loc?.invisMon ? vobj_at(newx, newy) : null;
-            const statue = (game.context?.forcefight ? statue_at(newx, newy) : null)
-                || (top && top.otyp === STATUE ? top : null);
-            if (statue) { statueTarget = true; boulder = statue; }
+            const g = pg_glyph_at(newx, newy);
+            if ((g.kind === 'object' && g.otyp === STATUE)
+                || (Hallucination() && g.kind === 'monster')) {
+                boulder = statue_at(newx, newy);
+                statueTarget = !!boulder;
+            }
         }
         // C ref: hack.c:2266 — force-fight at a boulder/statue/wall/door while
         // wielding a pick/axe starts digging instead of printing a wasted-swing
@@ -4325,11 +4393,13 @@ async function domove_core(dx, dy, attemptTracked) {
     // Runs before vision_recalc(1) (matching u_on_newpos's position in
     // domove_core), so it uses the still-old viz_array like C does.
     see_nearby_objects();
+    await earth_sense(); // u_on_newpos() tail, dungeon.c:1600
     await reset_occupations(); // hack.c:2936
 
     // C ref: hack.c:2945 — your tread on the ground may disturb the slumber of
     // nearby (buried) zombies.
     hero_tread_disturbs_zombies();
+    await hero_rehides();
 
     // Update display.  C ref: hack.c:2969-2972 — "Clean old position --
     // vision_recalc() will print our new one": vision_recalc() ends with its
@@ -5631,6 +5701,15 @@ function hero_tread_disturbs_zombies() {
     if (!Levitation_fu() && !Flying_fu() && !Stealth()
         && (youmonst_data_pub()?.cwt ?? 0) >= WT_ELF / 2)
         disturb_buried_zombies(u.ux, u.uy);
+}
+
+// C ref: hack.c:2950 — after moving, a hero who hides (under objects, in water) or who
+// moved at all re-evaluates u.uundetected via hideunder(&youmonst).
+async function hero_rehides() {
+    const u = game.u;
+    const data = youmonst_data_pub();
+    if (hides_under_flag(data) || data?.mcls === 57 /* S_EEL */ || u.dx || u.dy)
+        await (await import('./monmove.js')).hideunder(game.u);
 }
 
 // C ref: hack.c domove_swap_with_pet(mtmp, x, y) — swap the hero and a tame

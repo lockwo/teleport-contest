@@ -23,7 +23,7 @@ import { exercise } from './attrib.js';
 import { discover_object } from './o_init.js';
 import { do_mapping } from './detect.js';
 import { study_book } from './spell.js';
-import { erode_obj, obj_erode_type } from './trap.js';
+import { erode_obj, obj_erode_type, Teleport_control_fu } from './trap.js';
 import { find_ac } from './u_init.js';
 import { teleds, teleok, safe_teleds, On_W_tower_level } from './teleport.js';
 import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
@@ -53,6 +53,7 @@ import { mflags1_of, mflags2_of, msound_of, M1_NOHEAD, M1_AMORPHOUS,
          M1_UNSOLID, M1_WALLWALK, M1_HIDE,
          M2_PNAME, M2_HUMAN, M2_DEMON, M2_MALE, M2_FEMALE } from './monflags_data.js';
 import { mon_mr } from './monmr_data.js';
+import { Invis } from './monmove.js';
 import { can_chant } from './mondata.js';
 import { hcolor } from './do_name.js';
 import { NUMMONS } from './disprng.js';
@@ -128,7 +129,7 @@ function Hallucination() { return !!game.u?.uhallu; }
 // C ref: youprop.h Invisible — the hero being unable to see their own hands
 // changes seffect_confuse_monster's feedback (and nothing else).
 function Invisible() {
-    return !!(game.u?.uinvis || game.u?.uprops?.HInvis || game.u?.uprops?.EInvis);
+    return Invis() && !game.u?.see_invis;
 }
 
 // C ref: youprop.h HConfusion (u.uprops[CONFUSION].intrinsic timeout) — the
@@ -206,41 +207,11 @@ function resist(mtmp, oclass, damage, _tell) {
     return resisted;
 }
 
-// C ref: hack.c losehp(n, knam, k_format) — HP subtraction plus the death
-// path, following js/do.js losehp_do()'s shape (the established pattern for
-// this port's file-local losehp copies): set the formatted killer text,
-// urgent_pline "You die...", then done(DIED).  The old copy stopped at the
-// arithmetic and clamped uhp at 0, so a scroll of earth that drops a boulder
-// on the hero's head for lethal damage left them standing at 0 HP and the
-// game ran on (bl032 step 180: C goes straight into can_make_bones/savebones
-// while we kept moving monsters).
+// C ref: hack.c losehp(n, knam, k_format).  Delegates to js/do.js losehp_do(),
+// which carries showdamage(), the Upolyd/rehumanize arm and the death path.
 async function losehp_read(n, knam, k_format = KILLED_BY_AN) {
-    const u = game.u;
-    if (!u || n <= 0) return;
-    hooks.end_running?.(true); // hack.c:4266
-    if (u.Upolyd) {
-        u.mh = (u.mh ?? 0) - n;
-        if (u.mh > u.mhmax) u.mhmax = u.mh;
-        if (u.mh < 1) {
-            const { rehumanize } = await import('./polyself.js');
-            if (rehumanize) await rehumanize();
-        }
-        return;
-    }
-    u.uhp = (u.uhp ?? 0) - n;
-    if (u.uhp > u.uhpmax) u.uhpmax = u.uhp;
-    else game.botl = true;
-    if (u.uhp < 1) {
-        await urgent_topl('You die...');
-        // C ref: topten.c formatkiller() prefix handling (do.js:535 has the
-        // same three-way switch).
-        game._killer_name = !knam ? null
-            : k_format === NO_KILLER_PREFIX ? knam
-            : k_format === KILLED_BY_AN ? `killed by ${an_read(knam)}`
-            : `killed by ${knam}`;
-        const { done } = await import('./end.js');
-        await done(DIED);
-    }
+    if (!game.u || n <= 0) return;
+    await (await import('./do.js')).losehp_do(n, knam, k_format);
 }
 
 // C ref: obj.h is_shield(otmp) — oc_armcat == ARM_SHIELD.  The JS object table
@@ -1101,7 +1072,7 @@ export async function scrolltele(scroll) {
     }
 
     const stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.formprops?.Stunned;
-    if ((((u?.uprops?.Teleport_control || 0) > 0 || (scroll && scroll.blessed))
+    if ((((u?.uprops?.Teleport_control || 0) > 0 || Teleport_control_fu() || (scroll && scroll.blessed))
          && !stunned) || wizard) {
         if (u?.usleep) {
             await pline_append('Being unconscious, you cannot control your teleport.');

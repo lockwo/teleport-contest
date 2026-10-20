@@ -23,7 +23,6 @@ import { the } from './objnam.js';
 import { makeplural } from './plural.js';
 import { shk_blocking_door, block_door_feedback, add_damage } from './shk.js';
 import { observe_object } from './o_init.js';
-import { find_ac } from './u_init.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { Boots_off, stop_donning, hard_helmet, helm_simple_name, gloves_simple_name, cloak_simple_name, suit_simple_name } from './do_wear.js';
 import { float_vs_flight, selftouch } from './polyself.js';
@@ -84,7 +83,7 @@ import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
          is_swimmer_flag, can_teleport_flag } from './monflags_data.js';
 import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
-import { SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT } from './const.js';
+import { SUPPRESS_SADDLE, SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT } from './const.js';
 import { at_dgn_entrance, ceiling as ceiling_dg, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { check_special_room, in_rooms } from './shkroom.js';
@@ -110,6 +109,7 @@ const PM_LEATHER_GOLEM = name_to_pmidx('leather golem');
 
 // C ref: hacklib.c an(str).
 import { an } from './hacklib.js';
+import { Monnam as Monnam_dn } from './do_name.js';
 // C ref: hacklib.c the(str) — used by back_on_ground() for "the stairs"/"the
 // air" (every noun it's applied to here already lacks its own article).
 function the_fu(s) { return `the ${s}`; }
@@ -765,7 +765,16 @@ export function maketrap(x, y, typ) {
         // C ref: dig.c:2110 unearth_objs() tail — `del_engr_at(x, y); newsym(x, y);`
         // (the newsym draws display-rng picks under a hallucinating hero).
         del_engr_at(x, y);
-        newsym(x, y);
+        // C links the new trap onto ftrap only AFTER this switch, so the
+        // newsym() inside unearth_objs() cannot see it: the square is drawn as
+        // plain floor (a freshly made hole shows no '^' yet).
+        {
+            const tl = game.level.traps;
+            const ti = (!old && tl) ? tl.indexOf(trap) : -1;
+            if (ti >= 0) tl.splice(ti, 1);
+            newsym(x, y);
+            if (ti >= 0) tl.splice(ti, 0, trap);
+        }
         break;
     }
     default:
@@ -1508,11 +1517,9 @@ async function trapeffect_rust_trap(trap, _trflags) {
             await water_damage(game.uarmu, 'shirt', true);
         break;
     }
-    // C ref: allmain.c moveloop_core() — find_ac() runs once per player input
-    // (see read.js destroy_arm()'s matching comment), so a rusted/corroded
-    // piece's AC penalty shows up starting with the NEXT screen, not eagerly
-    // from inside water_damage/erode_obj.
-    find_ac();
+    /* C: no find_ac() here.  moveloop_core() runs it once per player input, so
+       a rusted piece's AC penalty shows up only after the monsters have moved
+       (and any --More-- they cause is still drawn with the old AC). */
 }
 
 // C ref: hack.c:4256 losehp().  Delegate to the shared implementation so the
@@ -1601,9 +1608,9 @@ async function trapeffect_arrow_trap(trap, _trflags) {
     const otmp = t_missile(ARROW, trap);
     // dmgval(otmp, &gy.youmonst): a role monster is not large -> rnd(oc_wsdam).
     const dam = dmgval(otmp, { data: { msize: 0 } });
-    // u.usteed is null for the contest hero -> the rn2(2)/steedintrap arm is
-    // short-circuited before its roll.
-    if (await thitu_named(8, dam, 'arrow')) {
+    if (u.usteed && !rn2(2) && await steedintrap(trap, otmp)) {
+        /* nothing */
+    } else if (await thitu_named(8, dam, 'arrow')) {
         // Hit: the arrow is consumed (obfree).  No floor object.
     } else {
         const { stackobj } = await import('./invent.js');
@@ -1673,9 +1680,10 @@ async function trapeffect_dart_trap(trap, _trflags) {
     // is rnd(oc_wsdam) (+spe).  A youmonst stand-in with a small msize selects
     // the small-monster die in uhitm.dmgval.
     const dam = dmgval(otmp, { data: { msize: 0 } });
-    // u.usteed is null for the recorded (on-foot) hero -> skip the steed branch.
     const oldumort = u?.umortality | 0;
-    if (await thitu_named(7, dam, 'little dart')) {
+    if (u.usteed && !rn2(2) && await steedintrap(trap, otmp)) {
+        /* nothing */
+    } else if (await thitu_named(7, dam, 'little dart')) {
         // C ref: trap.c:1281 — a poisoned dart that HITS runs poisoned() before
         // obfree().  `fatal` is 0 when the damage already triggered life-saving
         // (u.umortality rose), else 10.
@@ -1786,7 +1794,7 @@ async function trapeffect_slp_gas_trap(trap, _trflags) {
         await pline('A cloud of gas puts you to sleep!');
         await fall_asleep(-rnd(25), true);
     }
-    // steedintrap(trap, NULL): no steed -> returns before any RNG.
+    await steedintrap(trap, null);
 }
 
 // C ref: trap.c set_utrap(tim, typ) — mark the hero trapped for `tim` turns.
@@ -2110,7 +2118,7 @@ async function trapeffect_magic_trap(trap, _trflags) {
         return;
     }
     await domagictrap();
-    // steedintrap(trap, NULL): no steed -> Trap_Effect_Finished, no RNG.
+    await steedintrap(trap, null);
 }
 
 // C ref: dungeon.c ceiling(x,y).  Message text only, no RNG — but the terrain
@@ -2183,11 +2191,12 @@ function wearing_iron_shoes_u() {
 }
 
 // C ref: trap.c:3102 steedintrap(trap, otmp) — share the hero's trap with the
-// steed.  Its first line is `if (!u.usteed) return Trap_Effect_Finished;` and
-// u.usteed is null for every hero this port runs, so it draws nothing; named
-// so the arms below read like the C and a steed port has one hook to fill.
-function steedintrap(_trap, _otmp) {
-    return false; /* Trap_Effect_Finished */
+// steed (monmove.js owns the port: it reuses the monster-trap helpers there).
+// Returns 0 when there is no steed or it took nothing, truthy otherwise.
+async function steedintrap(trap, otmp) {
+    if (!game.u?.usteed) return 0;
+    const { steedintrap: steedintrap_mm } = await import('./monmove.js');
+    return await steedintrap_mm(trap, otmp);
 }
 
 // C ref: hack.h Role_if(PM_RANGER)/Role_if(PM_ROGUE) — js/roles.js's mnum, the
@@ -2271,8 +2280,16 @@ async function trapeffect_pit(trap, trflags) {
     // "<A> pit opens up under you! / You don't fall in!" arm cannot fire.
     if (!Sokoban) {
         let verbbuf = '';
-        // u.usteed is null, so C's two steed verbs are unreachable.
-        if (game.iflags?.menu_requested && already_known) {
+        if (u.usteed) {
+            const { x_monnam } = await import('./uhitm.js');
+            /* suppress article in steed messages when using its name */
+            const steed_article = (u.usteed.mgivenname || u.usteed.mextra?.mgivenname)
+                && !Hallucination_u() ? 0 : 1;
+            if ((trflags & RECURSIVETRAP) !== 0)
+                verbbuf = `and ${x_monnam(u.usteed, steed_article, null, SUPPRESS_SADDLE, false)} fall`;
+            else
+                verbbuf = `lead ${x_monnam(u.usteed, steed_article, 'poor', SUPPRESS_SADDLE, false)}`;
+        } else if (game.iflags?.menu_requested && already_known) {
             await pline(`You carefully ${u_locomotion('lower yourself')} into the pit.`);
             deliberate = true;
         } else if (conj_pit) {
@@ -2298,10 +2315,18 @@ async function trapeffect_pit(trap, trflags) {
         await update_topl(`Your ${xname(game.uarmf)} protects you from the sharp iron spikes.`);
         relevant_spikes = false;
     } else if (relevant_spikes) {
-        await update_topl(`You ${conj_pit ? 'step' : 'land'} on a set of sharp iron spikes!`);
+        const predicament = 'on a set of sharp iron spikes';
+        if (u.usteed) {
+            const { x_monnam } = await import('./uhitm.js');
+            const steed_article = (u.usteed.mgivenname || u.usteed.mextra?.mgivenname)
+                && !Hallucination_u() ? 0 : 1;
+            const nm = x_monnam(u.usteed, steed_article, 'poor', SUPPRESS_SADDLE, false);
+            await update_topl(`${nm.charAt(0).toUpperCase()}${nm.slice(1)} ${conj_pit ? 'steps' : 'lands'} ${predicament}!`);
+        } else
+            await update_topl(`You ${conj_pit ? 'step' : 'land'} ${predicament}!`);
     }
     set_utrap(rn1(6, 2), TT_PIT);
-    if (!steedintrap(trap, null)) {
+    if (!await steedintrap(trap, null)) {
         // Maybe_Half_Phys is the identity for a hero without HALF_PHDAM.
         if (relevant_spikes) {
             const oldumort = u?.umortality | 0;
@@ -2491,7 +2516,7 @@ async function trapeffect_poly_trap(trap, trflags) {
         await update_topl('You feel momentarily different.');
         /* Trap did nothing; don't remove it --KAA */
     } else {
-        steedintrap(trap, null);
+        await steedintrap(trap, null);
         deltrap(trap);      /* delete trap before polymorph */
         newsym(u.ux, u.uy); /* get rid of trap symbol */
         await update_topl('You feel a change coming over you.');
@@ -2631,7 +2656,7 @@ async function trapeffect_landmine(trap, trflags) {
         await pline(`KAABLAMM!!!  You triggered ${a_your(trap.madeby_u)} land mine!`);
         if (u?.usteed) steed_mid = u.usteed.m_id;
         landmine_recursive = true;
-        steedintrap(trap, null);
+        await steedintrap(trap, null);
         landmine_recursive = false;
         // C ref: trap.c:2580 saddle = sobj_at(SADDLE, u.ux, u.uy) — u.usteed is
         // always null in this port (js/trap.js steedintrap comment), so
@@ -3076,8 +3101,7 @@ async function try_disarm(ttmp, force_failure) {
 // C ref: do_name.c Monnam(mtmp) — capitalised "the <mon>"; the trap arms only
 // ever name a plain, seen monster.
 function Monnam_trap(mtmp) {
-    const nm = pmname_of_pmidx(mtmp?.pmidx ?? mtmp?.mnum ?? 0);
-    return `The ${nm}`;
+    return Monnam_dn(mtmp); /* C Monnam(): pet names, "invisible", hallucination ... */
 }
 
 // C ref: trap.c:5530 reward_untrap(ttmp, mtmp) — freeing a monster from
@@ -3786,7 +3810,7 @@ async function level_tele_trap(trap, trflags) {
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     await level_tele((q) => hooked_tty_getlin(q, null));
 
-    const teleport_control = (u?.uprops?.Teleport_control || 0) > 0 || !!u?.Teleport_control;
+    const teleport_control = (u?.uprops?.Teleport_control || 0) > 0 || !!u?.Teleport_control || Teleport_control_fu();
     const hallu = Hallucination_u();
     if (hallu || teleport_control)
         await update_topl(`You briefly feel ${hallu ? 'oriented' : 'centered'}.`);
@@ -3964,7 +3988,7 @@ function trap_article(trap) {
 
 // C ref: trap.c:1045 reset_utrap(msg) via set_utrap(0, 0) — clearing the trap
 // re-runs float_vs_flight(), which may unblock Levitation/Flying.
-async function reset_utrap_fu(msg) {
+export async function reset_utrap_fu(msg) {
     const u = game.u;
     if (!u) return;
     const was_Lev = Levitation_fu(), was_Fly = Flying_fu();
@@ -4476,16 +4500,10 @@ function sobj_at_floor(otyp, x, y) {
     return found;
 }
 
-// C ref: pager.c waterbody_name(x,y) — non-hallucinating water-body name; the
-// special-level and hallucination variants aren't reached by the corpus.
-function waterbody_name(x, y) {
-    const loc = game.level?.at(x, y);
-    const typ = loc ? loc.typ : STONE;
-    if (typ === LAVAPOOL) return 'molten lava';
-    if (typ === MOAT) return 'moat';
-    if (typ === WATER) return 'wall of water';
-    if (typ === LAVAWALL) return 'wall of lava';
-    return 'pool of water';
+// C ref: pager.c waterbody_name(x,y) — cmd.js owns the full version (hliquid
+// hallucination words, Medusa/Juiblex moat names).
+async function waterbody_name(x, y) {
+    return (await import('./cmd.js')).waterbody_name(x, y);
 }
 
 // C ref: hack.c doorless_door() — a doorway that lacks its door (NODOOR or
@@ -4928,14 +4946,14 @@ export async function lava_effects() {
 
     if (!fire_resistance) {
         if (water_walking) {
-            await update_topl(`The ${waterbody_name(u.ux, u.uy)} here burns you!`);
+            await update_topl(`The ${await waterbody_name(u.ux, u.uy)} here burns you!`);
             if (usurvive_initial) {
                 await losehp(dmg, 'molten lava', KILLED_BY);
                 await lava_burn_stuff(dmg);
                 return false;
             }
         } else {
-            await update_topl(`You fall into the ${waterbody_name(u.ux, u.uy)}!`);
+            await update_topl(`You fall into the ${await waterbody_name(u.ux, u.uy)}!`);
         }
         game._killer_name = 'burned by molten lava';
 
@@ -5035,7 +5053,7 @@ export async function lava_effects() {
     } else if (!water_walking && (!u.utrap || u.utraptype !== TT_LAVA)) {
         u.utrap = rn1(4, 4) + (rn1(4, 12) << 8);
         u.utraptype = TT_LAVA;
-        await update_topl(`You sink into the ${waterbody_name(u.ux, u.uy)}, `
+        await update_topl(`You sink into the ${await waterbody_name(u.ux, u.uy)}, `
                           + 'but it only burns slightly!');
         { const { monstseesu } = await import('./mondata.js'); monstseesu(M_SEEN_FIRE); }
         if ((u.uhp || 0) > 1)

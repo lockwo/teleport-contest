@@ -967,7 +967,6 @@ function objdescr_is_spell(obj, descr) {
 // success-path memorization occupation (learn) are not yet ported.  Returns 1
 // if a game turn was used, 0 otherwise.
 export async function study_book(spellbook) {
-    if (process?.env?.NHDBG_SB) console.error('[study_book] otyp=%s delay_ctx=%s book=%s moves=%s', spellbook.otyp, game.context?.spbook?.delay, game.context?.spbook?.book?.otyp, game.moves);
     const { makeknown, useup, trycall } = await import('./invent.js');
     const { y_n } = await import('./display.js');
     const u = game.u;

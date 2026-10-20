@@ -153,11 +153,9 @@ async function angry_guards(silent) {
     return await (await import('./questpgr.js')).angry_guards(silent);
 }
 
-// C ref: sounds.c mon_yells(mon, msg) — heard verbatim when the yeller is
-// visible, otherwise attributed to "someone".  No RNG.
+// C ref: monmove.c mon_yells(mon, shout) — monmove.js owns the faithful port.
 async function mon_yells(mtmp, msg) {
-    if (canspotmon(mtmp)) await pline(`${Monnam(mtmp)} yells:  ${msg}`);
-    else await pline(`You hear someone yell:  ${msg}`);
+    await (await import('./monmove.js')).mon_yells(mtmp, msg);
 }
 
 // C ref: dungeon.c in_town(x, y).  Same shape as dig.js/makemon.js/fountain.js
