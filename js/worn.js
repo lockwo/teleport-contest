@@ -8,6 +8,7 @@
 // find_mac() is a term of every to-hit roll, and which_armor() gates muse.c's
 // item choices.
 import { game } from './gstate.js';
+import { newsym, canseemon_shared as canseemon_wn } from './display.js';
 import { objects } from './mkobj.js';
 import {
     mflags1_of, humanoid,
@@ -286,7 +287,8 @@ const MONSTER_NO_EFFECT_PROPS = new Set([
     12 /*ANTIMAGIC*/, 65 /*REFLECTING*/, 59 /*PROTECTION*/, 35 /*CLAIRVOYANT*/,
     42 /*STEALTH*/, 30 /*TELEPAT*/, 48 /*LEVITATION*/, 49 /*FLYING*/,
     50 /*WWALKING*/, 41 /*DISPLACED*/, 36 /*FUMBLING*/, 58 /*JUMPING*/]);
-export function update_mon_extrinsics(mon, obj, on) {
+export function update_mon_extrinsics(mon, obj, on, silently) {
+    const unseen = !canseemon_wn(mon);
     let which = objects[obj.otyp]?.oc_oprop | 0;
     let altwhich = altprop(obj);
     if (which || altwhich) {
@@ -324,6 +326,9 @@ export function update_mon_extrinsics(mon, obj, on) {
         mon.invis_blkd = on ? 1 : 0;
         mon.minvis = on ? 0 : (mon.perminvis ? 1 : 0);
     }
+    /* if couldn't see it but now can, or vice versa, update display */
+    if (!silently && (unseen !== !canseemon_wn(mon)))
+        newsym(mon.mx, mon.my);
 }
 // C ref: worn.c FAST arm -> mon_adjust_speed(mon, 0, obj): re-derive mspeed
 // from whether speed boots are worn (the only FAST armor).

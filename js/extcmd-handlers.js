@@ -379,6 +379,25 @@ function draw_getlin(query, shown, cursorCol) {
 // with an optional completion hook; each keystroke is its own captured screen
 // frame.  Returns the typed string, or "\x1b" if escaped from an empty buffer.
 export async function hooked_tty_getlin(query, hook) {
+    // C ref: windows.c getlin() -- the plain (unhooked) prompt first drains
+    // CQ_CANNED: queued KEYs become the answer (a '\n' ends it) and show as
+    // "query answer" without a prompt; the first non-KEY entry it pops is
+    // discarded and ends the drain.
+    if (!hook && !game.in_doagain) {
+        const { cmdq_pop } = await import('./invent.js');
+        const { CQ_CANNED, CMDQ_KEY } = await import('./const.js');
+        let answer = '', got = false, cq;
+        while ((cq = cmdq_pop(CQ_CANNED))) {
+            if (cq.typ !== CMDQ_KEY) break;
+            got = true;
+            if (cq.key === 10) break;
+            answer += String.fromCharCode(cq.key);
+        }
+        if (got) {
+            await pline(`${query} ${answer}`);
+            return answer;
+        }
+    }
     // C ref: win/tty/getline.c hooked_tty_getlin():53-54 — a pending top-line
     // message (toplin==NEED_MORE) is paged with --More-- before the getlin
     // prompt draws; ordinary command-initiated getlins already start with a
@@ -895,19 +914,21 @@ async function doturn() {
     const confused = (u?.uprops?.Confusion || 0) > 0;
     const MAXULEV_HALF = Math.trunc(MAXULEV / 2);
 
-    // C ref: iter_mons(maybe_turn_mon_iter) — walks fmon in list order, so the
+    // C ref: iter_mons(maybe_turn_mon_iter) — walks fmon (newest monster first), so the
     // per-monster resist() draws happen in that order.
-    for (const mtmp of [...(g.level?.monsters || [])]) {
-        if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
+    const { iter_mons } = await import('./mon.js');
+    await iter_mons(async (mtmp) => {
+        if (mtmp.mhp != null && mtmp.mhp <= 0) return;
         // "used to use cansee() here but the purpose is to prevent #turn
         // operating through walls, not to require that the hero be able to see"
-        if (!couldsee(mtmp.mx, mtmp.my)) continue;
+        if (!couldsee(mtmp.mx, mtmp.my)) return;
         const dx = mtmp.mx - u.ux, dy = mtmp.my - u.uy;
-        if (dx * dx + dy * dy > range) continue;
+        if (dx * dx + dy * dy > range) return;
         const isUndead = is_undead_flag(mtmp.data);
         const isDemon = is_demon_flag(mtmp.data);
-        if (mtmp.mpeaceful) continue;
-        if (!(isUndead || (isDemon && (u.ulevel ?? 1) > MAXULEV_HALF))) continue;
+        if (mtmp.mpeaceful) return;
+        if (!(isUndead || is_vampshifter(mtmp)
+              || (isDemon && (u.ulevel ?? 1) > MAXULEV_HALF))) return;
 
         mtmp.msleeping = 0;
         if (confused) {
@@ -934,7 +955,7 @@ async function doturn() {
                 await monflee(mtmp, 0, false, true);
             }
         }
-    }
+    });
 
     // C ref: nomul(-(5 - ((u.ulevel - 1) / 6))) — -5 at level 1 up to -1 at 25+.
     const dur = -(5 - Math.trunc(((u?.ulevel ?? 1) - 1) / 6));
@@ -2867,6 +2888,9 @@ function autokey_unlock() {
 // SOMETHING) on 'y', else 0 (PICKLOCK_DID_NOTHING, no time passes).
 async function pick_lock_box(pick, box) {
     const picktyp = pick.otyp;
+    // C ref: lock.c pick_lock():380 — resume an interrupted attempt first.
+    const resumed = await (await import('./cmd.js')).pick_lock_resume(pick);
+    if (resumed !== null) return resumed;
     // C ref: lock.c:560 yname(pick) -- "your lock pick", "your credit card named Fido".
     const { yname } = await import('./invent.js');
     const toolname = yname(pick);
@@ -4686,6 +4710,15 @@ async function dowipe_extcmd() {
 // the keystrokes the recording sends to that second "#" prompt (and any
 // prompt after it, for as long as the answer keeps being "?") leak into
 // rhack() as fresh top-level commands and desync the rest of the session.
+// C ref: cmd.c rhack():3810-3816 — a command that returns ECMD_OK without
+// ECMD_TIME (or ECMD_CANCEL/ECMD_FAIL) runs reset_cmd_vars(), whose
+// `gm.multi = 0` also clears the multi = -1 that savelife() set when the
+// command's own damage killed the hero and a wizard-mode "Die?" was declined
+// (a failed #ride's slip damage), so no turn passes before the next command.
+function reset_multi_no_time() {
+    if ((game.multi | 0) < 0) game.multi = 0;
+}
+
 // C ref: cmd.c rhack() do_cmdq_extcmd -- a CMDQ_EXTCMD entry (queued by an
 // earlier doextcmd() for #repeat) runs its command directly, no '#' prompt.
 export async function run_extcmd_txt(txt) {
@@ -4693,6 +4726,7 @@ export async function run_extcmd_txt(txt) {
     let res = 0;
     if (fn) res = await fn();
     game.context.move = res === 1 ? 1 : 0;
+    if (res !== 1) reset_multi_no_time();
     return res;
 }
 
@@ -4763,6 +4797,7 @@ export async function doextcmd() {
     // C ref: doextcmd returns the command's ECMD_* result; ECMD_TIME (1)
     // makes the move loop advance a turn.  Commands we don't model return 0.
     game.context.move = res === 1 ? 1 : 0;
+    if (res !== 1) reset_multi_no_time();
     return res;
 }
 

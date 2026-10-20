@@ -28,7 +28,7 @@ import { rn2 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { Is_special } from './dungeon.js';
 import { roles } from './role.js';
-import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET,
+import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET, SHOPBASE,
          Is_oracle_level, In_quest, OBJ_FLOOR, OBJ_CONTAINED } from './const.js';
 import { msound_of, MS_LEADER, MS_NEMESIS, mflags2_of,
          M2_GREEDY, M2_JEWELS, M2_COLLECT, M2_MAGIC } from './monflags_data.js';
@@ -315,6 +315,37 @@ async function bones_getlev(blob) {
     // C ref: restore.c getlev() -> restore_buried_uchain()/buriedobjlist chain.
     for (const o of level.buriedobjlist || []) stamp_obj(o);
 
+    // C ref: bones.c:724-730 — getbones() normalizes the object chains after
+    // restoring them. Partly eaten food stays free in a tended shop. Other
+    // shop-floor objects are ordinary sale stock.
+    {
+        const { objects, FOOD_CLASS, dealloc_obj, set_corpsenm, free_omonst }
+            = await import('./mkobj.js');
+        const { obj_extract_self } = await import('./invent.js');
+        const { free_oname } = await import('./do_name.js');
+        const { exist_artifact, artifact_exists } = await import('./artifact.js');
+        const { cant_revive } = await import('./read.js');
+        const room_at = (x, y) => {
+            const rno = level.at?.(x, y)?.roomno;
+            return rno >= ROOMOFFSET ? level.rooms?.[rno - ROOMOFFSET] : null;
+        };
+        const deps = {
+            O: { objects, FOOD_CLASS },
+            obj_extract_self, dealloc_obj, free_oname, free_omonst, set_corpsenm,
+            exist_artifact, artifact_exists, cant_revive,
+            get_obj_location: (obj, loc) => {
+                loc.x = obj.ox;
+                loc.y = obj.oy;
+                return true;
+            },
+            inside_shop: (x, y) => (room_at(x, y)?.rtype ?? 0) >= SHOPBASE,
+            tended_shop: (x, y) => !!room_at(x, y)?.resident?.isshk,
+        };
+        for (const m of level.monsters || []) await resetobjs(m.minvent, true, deps);
+        await resetobjs(level.objects, true, deps);
+        await resetobjs(level.buriedobjlist, true, deps);
+    }
+
     // C ref: restore.c:1203 getlev()'s `if (ghostly)` arm — "reset peaceful/malign
     // relative to new character".  The bones level was saved with the DEAD hero's
     // relations baked in: Elara the lawful Priest's dwarves were peaceful, and
@@ -531,6 +562,23 @@ export async function savebones(how = 0, corpse = null) {
             if (!ep) continue;
             ep.erevealed = 0;
             ep.eread = 0;
+        }
+
+        // C ref: bones.c:437-444 — unleash_all(), unpunish() for a Punished hero,
+        // and dismount_steed(DISMOUNT_BONES) (landing_spot/enexto RNG, the steed
+        // is moved off the hero's square for the ghost) BEFORE the monster sweep.
+        {
+            const { unleash_all } = await import('./apply.js');
+            unleash_all();
+            if (g.u?.uball) {
+                const { unpunish } = await import('./read.js');
+                await unpunish();
+            }
+            if (g.u?.usteed) {
+                const { dismount_steed } = await import('./steed.js');
+                const { DISMOUNT_BONES } = await import('./const.js');
+                await dismount_steed(DISMOUNT_BONES);
+            }
         }
 
         // C ref: bones.c:443 iter_mons(remove_mon_from_bones) + dmonsfree().

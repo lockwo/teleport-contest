@@ -302,10 +302,32 @@ async function u_entered_shop(enterstring) {
         let cnt = 1, tool;
         if (pick && mattock) { tool = 'digging tool'; cnt = 2; }
         else if (pick) { tool = 'pick-axe'; cnt = inv.filter((o) => o.otyp === PICK_AXE).length; }
-        else { tool = 'mattock'; cnt = inv.filter((o) => o.otyp === DWARVISH_MATTOCK).length; }
+        else {
+            tool = 'mattock'; cnt = inv.filter((o) => o.otyp === DWARVISH_MATTOCK).length;
+            /* [ALI] Shopkeeper identifies mattock(s) */
+            if (!Blind()) (await import('./invent.js')).makeknown(DWARVISH_MATTOCK);
+        }
         const plur = cnt === 1 ? '' : 's';
-        await pline(not_upset ? `"Will you please leave your ${tool}${plur} outside?"`
-            : `"Leave the ${tool}${plur} outside."`);
+        if (!Deaf() && !muteshk(shkp)) {
+            await verbalize(not_upset ? `Will you please leave your ${tool}${plur} outside?`
+                : `Leave the ${tool}${plur} outside.`);
+        } else {
+            const nm = shkname(shkp);
+            await pline(`${nm.charAt(0).toUpperCase()}${nm.slice(1)} ${
+                not_upset ? 'is hesitant' : 'refuses'} to let you in with your ${tool}${plur}.`);
+        }
+        should_block = true;
+    } else if (u.usteed) {
+        const { y_monnam } = await import('./do_name.js');
+        if (!Deaf() && !muteshk(shkp)) {
+            await verbalize(not_upset ? `Will you please leave ${y_monnam(u.usteed)} outside?`
+                : `Leave ${y_monnam(u.usteed)} outside.`);
+        } else {
+            const nm = shkname(shkp);
+            await pline(`${nm.charAt(0).toUpperCase()}${nm.slice(1)} ${
+                not_upset ? "doesn't want" : 'refuses'} to let you in while you're riding ${
+                y_monnam(u.usteed)}.`);
+        }
         should_block = true;
     } else {
         const here = (game.level?.objects || []).filter(

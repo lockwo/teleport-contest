@@ -2558,8 +2558,11 @@ function is_rider_pm(ptr) {
 // C ref: attrib.h ACURRSTR — the 19..121 encoded strength collapses to 19 and
 // 122..125 decodes to 22..25.  acurr_eff(A_STR) returns the ENCODED value.
 function ACURRSTR() {
+    // C ref: attrib.c acurrstr() — 18/01..18/31 -> 19, 18/32..18/81 -> 20, 18/82..21 -> 21, 22..25 as-is
     const v = acurr_eff(A_STR);
-    return (v > 18) ? ((v > 121) ? v - 100 : 19) : v;
+    if (v <= 18) return Math.max(v, 3);
+    if (v <= 121) return 19 + Math.trunc(v / 50);
+    return Math.min(v, 125) - 100;
 }
 // C ref: mondata.h metallivorous(gy.youmonst.data) / cantwield(...) — read off
 // the hero's current form (u.umonnum is a ROLE index unless polymorphed).
@@ -2897,8 +2900,10 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
         const abase = u?.acurr?.a;
         if (abase && abase[A_INT_EAT] <= ATTRMIN_INT) {
             const { done, DIED } = await import('./end.js');
+            // C: `if (Lifesaved)` is the LIFESAVED extrinsic (worn amulet).
             const amulet = game.uamul || u.uamul;
-            if (amulet?.otyp === AMULET_OF_LIFE_SAVING) {
+            if (amulet?.otyp === AMULET_OF_LIFE_SAVING
+                && (await import('./invent.js')).worn_extrinsic(68 /* LIFESAVED */)) {
                 game._killer_name = 'killed by brainlessness';
                 await done(DIED);
                 if (game.program_state?.gameover) return M_ATTK_DEF_DIED_;

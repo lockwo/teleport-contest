@@ -4003,11 +4003,9 @@ export function fill_level_special_rooms() {
 // (selection_do_grow(sel, W_ANY)), and sel_set_lit writes levl[][].lit on each
 // point — lava counts as lit whatever was asked for.  No RNG.
 export function splev_region_lit(mx1, my1, mx2, my2, lit) {
-    if (process.env.SPLEV_DEBUG) console.error('splev_region_lit call', {mx1,my1,mx2,my2,lit});
     const a = vly_abs(mx1, my1), b = vly_abs(mx2, my2);
     let lox = a.x, loy = a.y, hix = b.x, hiy = b.y;
     if (lit) { lox--; loy--; hix++; hiy++; }
-    if (process.env.SPLEV_DEBUG) console.error('splev_region_lit abs', {lox,loy,hix,hiy});
     // selection_iterate skips !isok cells, and isok() starts at x == 1.
     for (let x = Math.max(1, lox); x <= Math.min(COLNO - 1, hix); x++)
         for (let y = Math.max(0, loy); y <= Math.min(ROWNO - 1, hiy); y++) {

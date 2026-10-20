@@ -24,7 +24,7 @@ import { GameMap } from './game.js';
 import { monster_by_pmidx, propagate, set_malign, adj_erinys,
          peace_minded_bigrm } from './makemon.js';
 import { docrt, bot, cls, flush_screen, pline, topl_more, y_n, see_monsters,
-         impossible, stairway_at, display_nhwindow_message } from './display.js';
+         impossible, stairway_at, display_nhwindow_message, Hallucination_u } from './display.js';
 import { init_vision_globals, vision_reset, vision_recalc } from './vision.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON, NEW_MOON } from './calendar.js';
 import { Hello } from './role.js';
@@ -38,7 +38,8 @@ import { read_engr_at } from './engrave.js';
 import { run_object_timers, place_object, next_ident, newoextra, newomonst,
          newomid, new_omailcmd, OMID, has_omid, has_omonst, free_omid,
          SLIME_MOLD, ICE_BOX, POT_OIL, TALLOW_CANDLE, WAX_CANDLE,
-         BRASS_LANTERN, OIL_LAMP, CANDELABRUM_OF_INVOCATION } from './mkobj.js';
+         BRASS_LANTERN, OIL_LAMP, CANDELABRUM_OF_INVOCATION,
+         clear_no_charge_on_getlev } from './mkobj.js';
 import {
     COLNO, ROWNO, OBJ_FREE, W_BALL, W_CHAIN, W_WEP, FREEING, WRITING, READING,
     RANGE_GLOBAL, RANGE_LEVEL, REST_GSTATE, REST_LEVELS, REST_CURRENT_LEVEL,
@@ -219,7 +220,6 @@ async function ask_about_keeping_savefile() {
     // C ref: unixmain.c main() — `wd_message()` runs just before the question;
     // its discover arm announces the mode (a plain wizard restore prints nothing).
     if (is_discover()) await pline('You are in non-scoring explore/discovery mode.');
-    await topl_more();
     const ans = await y_n('Do you want to keep the save file?', 'yn', 'n');
     if (ans === 'n') delete_savefile();
 }
@@ -371,6 +371,11 @@ export async function dorestore() {
     rest_engravings_fixup(game.level?.engravings);
     for (const ent of Object.values(game._level_store || {}))
         rest_engravings_fixup(ent?.level?.engravings);
+    /* getlev() -> find_lev_obj() -> place_object(): no_charge is dropped while
+       no room has a resident shopkeeper yet (this level and every stored one) */
+    clear_no_charge_on_getlev(game.level);
+    for (const ent of Object.values(game._level_store || {}))
+        clear_no_charge_on_getlev(ent?.level);
 
     // C ref: restore.c restgamestate() — role_init() runs partway through the
     // state reload, BEFORE restore_luadata()'s Lua-state creation below, so its
@@ -439,6 +444,8 @@ export async function dorestore() {
 
     // C ref: dorecover() tail -> welcome(FALSE), check_special_room(FALSE); then
     // unixmain's wizard/discover save-file question; then moveloop_preamble(TRUE).
+    if (Hallucination_u())
+        await pline('NetHack is filmed in front of an undead studio audience.');
     await pline(welcome_back_message());
     /* C ref: allmain.c welcome(FALSE) tail */
     await (await import('./do.js')).hellish_smoke_mesg();
@@ -1561,6 +1568,8 @@ export async function dorecover(nhfp) {
     /* Success! */
     /* welcome(FALSE) — allmain.c; welcome_back_message() above is this port's
        copy of its restore branch. */
+    if (Hallucination_u())
+        await pline('NetHack is filmed in front of an undead studio audience.');
     await pline(welcome_back_message());
     await check_special_room(false);
     return 1;

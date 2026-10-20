@@ -7,6 +7,7 @@ import { rn2, rn1, rnd, d } from './rng.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING } from './const.js';
 import { adj_erinys, monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { has_innate, minuhpmax, setuhpmax } from './exper.js';
+const FIXED_ABIL_PROP = 67; // prop.h FIXED_ABIL (ring of sustain ability, etc.)
 
 const AVAL = 50; // C ref: attrib.c — tune value for exercise gains.
 
@@ -217,7 +218,8 @@ const ATTRNAME = ['strength', 'intelligence', 'wisdom', 'dexterity',
 // C ref: prop.h Fixed_abil.
 export function Fixed_abil() {
     const props = game.u?.uprops;
-    return !!(props?.Fixed_abil || props?.HFixed_abil || props?.EFixed_abil);
+    return !!(props?.Fixed_abil || props?.HFixed_abil || props?.EFixed_abil
+              || ((game.u?.uprops_extrinsic || {})[FIXED_ABIL_PROP] | 0) !== 0);
 }
 
 // C ref: attrib.c:433 poisontell(typ, exclaim).

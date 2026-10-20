@@ -1476,7 +1476,7 @@ export async function hurtle_step(arg, x, y) {
 
     const ox = u.ux, oy = u.uy;
     const { u_on_newpos } = await import('./do.js');
-    u_on_newpos(x, y); /* set u.<ux,uy>, u.usteed-><mx,my>; cliparound() */
+    await u_on_newpos(x, y); /* set u.<ux,uy>, u.usteed-><mx,my>; cliparound() */
     newsym(ox, oy);    /* update old position */
     const { vision_recalc } = await import('./vision.js');
     vision_recalc(1);  /* update for new position */
@@ -1587,7 +1587,7 @@ export async function mhurtle_step(arg, x, y) {
             /* steed is hurtling, move hero which will also move steed */
             u.ux0 = u.ux; u.uy0 = u.uy;
             const { u_on_newpos } = await import('./do.js');
-            u_on_newpos(x, y);
+            await u_on_newpos(x, y);
             newsym(u.ux0, u.uy0); /* update old position */
             const { vision_recalc } = await import('./vision.js');
             vision_recalc(0); /* new location => different lines of sight */

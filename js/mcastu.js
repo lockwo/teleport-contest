@@ -27,7 +27,7 @@ import { mflags2_of, M2_PNAME, is_undead_flag, is_demon_flag } from './monflags_
 import { an, the_unique_pm } from './objnam.js';
 import { Fire_resistance, Cold_resistance, Shock_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
 import { monstseesu, monstunseesu } from './mondata.js';
-import { shieldeff, Hallucination_u as Hallucination } from './display.js';
+import { shieldeff, Hallucination_u as Hallucination, You_feel } from './display.js';
 import { Blind } from './vision.js';
 import { youmonst_data_pub, Free_action, worn_extrinsic } from './invent.js';
 import { enexto_gpflags, In_W_tower as In_W_tower_tp } from './teleport.js';
@@ -340,7 +340,7 @@ async function mcast_spell(mtmp, dmg, spellnum) {
     case MCAST_AGGRAVATION: {
         const { update_topl } = await import('./display.js');
         const { aggravate } = await import('./monmove.js');
-        await update_topl('You feel that monsters are aware of your presence.');
+        await You_feel('that monsters are aware of your presence.');
         aggravate();
         dmg = 0;
         break;
@@ -349,7 +349,7 @@ async function mcast_spell(mtmp, dmg, spellnum) {
         // C ref: mcastu.c:831 — `You_feel("as if you need some help."); rndcurse();`.
         const { update_topl } = await import('./display.js');
         const { rndcurse } = await import('./pray.js');
-        await update_topl('You feel as if you need some help.');
+        await You_feel('as if you need some help.');
         await rndcurse();
         dmg = 0;
         break;
@@ -648,7 +648,7 @@ export async function mcast_weaken_you(mtmp, dmg) {
     if (Antimagic()) {
         await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
-        await update_topl('You feel momentarily weakened.');
+        await You_feel('momentarily weakened.');
     } else {
         await update_topl('You suddenly feel weaker!');
         dmg = (mtmp.m_lev | 0) - 6;
@@ -691,7 +691,7 @@ export async function mcast_stun_you(dmg) {
     if (Antimagic() || Free_action()) {
         await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
-        if (!Stunned_()) await update_topl('You feel momentarily disoriented.');
+        if (!Stunned_()) await You_feel('momentarily disoriented.');
         await make_stunned_(1, false);
     } else {
         await update_topl(Stunned_() ? 'You struggle to keep your balance.'
@@ -945,7 +945,7 @@ export async function mcast_confuse_you(mtmp) {
     if (Antimagic()) {
         await shieldeff(game.u?.ux, game.u?.uy);
         monstseesu(M_SEEN_MAGR);
-        await update_topl('You feel momentarily dizzy.');
+        await You_feel('momentarily dizzy.');
     } else {
         const oldprop = !!Confusion_();
         let dmg = mtmp.m_lev | 0;
@@ -953,9 +953,9 @@ export async function mcast_confuse_you(mtmp) {
         if (Half_spell_damage()) dmg = Math.trunc((dmg + 1) / 2);
         await make_confused_(HConfusion_() + dmg, true);
         if (Hallucination())
-            await update_topl(`You feel ${oldprop ? 'trippier' : 'trippy'}!`);
+            await You_feel(`${oldprop ? 'trippier' : 'trippy'}!`);
         else
-            await update_topl(`You feel ${oldprop ? 'more ' : ''}confused!`);
+            await You_feel(`${oldprop ? 'more ' : ''}confused!`);
         monstunseesu(M_SEEN_MAGR);
     }
 }

@@ -313,15 +313,7 @@ export async function overexertion() {
 // C ref: display.c canseemon(mon) — visible on an in-sight, non-invisible
 // square.  Same shape as the copies in dogmove.js/mon.js/muse.js.
 function canseemon(mtmp) {
-    if (!mtmp) return false;
-    // C ref: display.h canseemon() has NO u.uswallow arm — from inside a
-    // stomach vision_recalc() blanks viz_array, so cansee() is false even for
-    // the engulfer.  The blanket `return true` here made the hit message print
-    // exclam(dmg) where C prints the flat "." (uhitm.c:1659).
-    if (mtmp.minvis && !game.u?.see_invis) return false;
-    // C ref: display.h _mon_visible() — `(!minvis || See_invisible) && !mundetected`.
-    if (mtmp.mundetected) return false;
-    return !!cansee(mtmp.mx, mtmp.my);
+    return canseemon_shared(mtmp);
 }
 
 // C ref: mondata.h hides_under(ptr) = (mflags1 & M1_CONCEAL); same pmidx set
@@ -1937,6 +1929,13 @@ export async function killed(mon, opts) {
     // C: m_detach() releases inventory before creating the corpse.
     await relobj(mon, x, y);
     await (await import('./mon.js')).thiefdead_shkgone(mon);
+    // C ref: mon.c:2796 m_detach() tail — the hero is thrown from a steed
+    // that dies (landing_spot()'s tie-break rn2 and the saddle drop-site look).
+    if (mon === game.u?.usteed) {
+        const { dismount_steed } = await import('./steed.js');
+        const { DISMOUNT_GENERIC } = await import('./const.js');
+        await dismount_steed(DISMOUNT_GENERIC);
+    }
     }
     }
 
@@ -2030,6 +2029,7 @@ export async function killed(mon, opts) {
                 else if (boom[3]) d((mon.data?.mlevel | 0) + 1, boom[3]);
                 const { mon_explodes } = await import('./explode.js');
                 await mon_explodes(mon, boom);
+                if (game.program_state?.gameover) return; /* done() never returns */
                 leaves_corpse = false;
             } else {
                 leaves_corpse = !wasinside && await corpse_chance(mon);
@@ -2071,7 +2071,10 @@ export async function killed(mon, opts) {
         // mondata.h is_human(ptr) == (mflags2 & M2_HUMAN);
         // always_hostile(ptr) == (mflags2 & M2_HOSTILE).
         const f2_0 = mflags2_of(mdat0);
+        // mon.c:3648-3657: role monsters (is_mplayer) and plain "human"
+        // (PM_HUMAN, mons[260]) are excluded.
         if ((f2_0 & M2_HUMAN) && !(f2_0 & M2_HOSTILE) && (mon.malign | 0) <= 0
+            && !is_mplayer(mdat0) && mdat0.pmidx !== 260
             && alignType !== A_CHAOTIC) {
             change_luck(-2);
             await update_topl('You murderer!');
@@ -5107,7 +5110,7 @@ export async function hmonas(mon) {
                 break;
             /* hug attack against an ordinary foe */
             if (mon === u.ustuck) {
-                await update_topl(`${Monnam(mon)} is `
+                await update_topl(`${Monnam(mon)} is being `
                     + `${byhand ? 'throttled' : 'crushed'}`
                     + `${unconcerned ? " but doesn't seem concerned" : ''}.`);
                 if (silverhit && game.flags?.verbose !== false)

@@ -285,6 +285,12 @@ async function savelife(_how) {
     // C ref: end.c:736 multi_reason for a death that follows immediately.
     game.multi_reason = game.urole?.mnum === 10 /* PM_TOURIST role index */
         ? 'being toyed with by Fate' : 'attempting to cheat Death';
+    // C ref: end.c:739 savelife() — `if (u.utrap && u.utraptype == TT_LAVA)
+    // reset_utrap(FALSE)`: a hero revived out of lava is no longer stuck in it.
+    if (u.utrap && u.utraptype === 4 /* TT_LAVA */) {
+        const { reset_utrap_fu } = await import('./trap.js');
+        await reset_utrap_fu(false);
+    }
     // C ref: end.c:741 — the arise-as-undead choice done_in_by() made for the
     // death that was just averted must not leak into a later death.
     u.ugrave_arise = NON_PM;
@@ -1647,7 +1653,14 @@ export async function done_in_by(mtmp, how = DIED) {
     // C ref end.c:195 — You((how == STONING) ? "turn to stone..." : "die...").
     await d.update_topl(how === STONING ? 'You turn to stone...' : 'You die...');
     game._killer_mon = mtmp || null;
-    if (mtmp) game._killer_name = await killer_text_for_monster(mtmp);
+    if (mtmp) {
+        /* killer_text_for_monster() builds "killed by <name>"; the real prefix depends on `how`
+           (topten.c killed_by_prefix[]: "petrified by a cockatrice", "turned to slime by ...") */
+        const { killed_by_prefix } = await import('./topten.js');
+        const txt = await killer_text_for_monster(mtmp);
+        game._killer_name = (how !== DIED && txt.startsWith('killed by ') && killed_by_prefix[how])
+            ? killed_by_prefix[how] + txt.slice('killed by '.length) : txt;
+    }
     // C ref: end.c:326-340 — maintain u.ugrave_arise from the killer's type
     // before done(how)'s really_done() decides the corpse+grave/message fate.
     game.u = game.u || {};

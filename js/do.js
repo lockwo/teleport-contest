@@ -24,11 +24,11 @@
 import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { exercise } from './attrib.js';
-import { A_STR } from './const.js';
+import { A_STR, Unaware } from './const.js';
 import { rn2, rn1, rnd, rnl, d, rnz } from './rng.js';
 import { print_dungeon, builds_up, In_hell, Is_valley, surface,
          find_hell, dunlevs_in_dungeon, single_level_branch, level_difficulty,
-         at_dgn_entrance, Is_bigroom, lev_by_name } from './dungeon.js';
+         at_dgn_entrance, Is_bigroom, lev_by_name, earth_sense } from './dungeon.js';
 
 // insight.c record_achievement(), reached lazily: insight.js -> u_init.js ->
 // mkobj.js is a static cycle this file must not join.
@@ -65,13 +65,13 @@ import { docrt, flush_screen, pline, You_hear, update_topl, urgent_topl, topl_mo
          see_nearby_objects, reglyph_remembered_darkroom, map_location, m_at,
          capture_screen_for_level_change, freeze_screen_for_level_change,
          thaw_screen_for_level_change, Deaf_hero } from './display.js';
-import { seetrap, dotrap, trapname, fill_pit } from './trap.js';
+import { seetrap, dotrap, trapname, fill_pit, Teleport_control_fu } from './trap.js';
 import { check_special_room } from './shkroom.js';
 import { forget_temple_entry } from './priest.js';
 import { enexto_gpflags } from './teleport.js';
 import { near_capacity, addinv, prinv, worn_extrinsic, worn_blocked, youmonst_data } from './invent.js';
 import { BOULDER, run_object_timers, requeue_level_timers, mksobj, AMULET_OF_YENDOR,
-         is_rider_pm } from './mkobj.js';
+         is_rider_pm, clear_no_charge_on_getlev } from './mkobj.js';
 import { vision_reset, vision_recalc, Blind, cansee,
          recalc_block_point } from './vision.js';
 import { hide_monst, DEADMONSTER } from './mon.js';
@@ -178,7 +178,7 @@ async function place_hero_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy, rtype) {
                 await m_into_limbo(mtmp);
             }
         }
-        u_on_newpos(x, y);
+        await u_on_newpos(x, y);
     };
 
     const oneshot = (lx === hx && ly === hy);
@@ -230,7 +230,7 @@ async function oneshot_free_trap(x, y) {
 // destination while u.uz0 still names the level left.  That arm's
 // map_location() consumes no core RNG but does make display-rng draws while
 // Hallucinating (a statue/object under the hero).
-export function u_on_newpos(x, y) {
+export async function u_on_newpos(x, y) {
     const u = game.u;
     u.ux = x;
     u.uy = y;
@@ -246,6 +246,7 @@ export function u_on_newpos(x, y) {
     } else {
         see_nearby_objects();
     }
+    await earth_sense(); // dungeon.c:1600
 }
 
 // C ref: dungeon.c u_on_rndspot() — level-teleport/fall arrival uses the
@@ -449,6 +450,7 @@ async function keepdogs_capture() {
     if (!lev?.monsters) return [];
     const u = game.u;
     const kept = [];
+    kept.leftAt = []; /* [x, y] each follower occupied before relmon() */
     const remain = [];
     const chain = lev.monsters.slice();
     for (const m of chain) {
@@ -499,6 +501,7 @@ async function keepdogs_capture() {
                 remain.push(m);
                 continue;
             }
+            kept.leftAt.push([m.mx, m.my]);
             m.mx = m.my = 0; /* C ref: dog.c:864, mx==0 implies migrating */
             m.mlstmv = game.moves; /* C ref: dog.c:866 */
             kept.push(m);
@@ -549,7 +552,7 @@ export async function u_collide_m(mtmp) {
     // The && short-circuits: rn2(2) is always drawn; enexto only when !rn2(2).
     let cc;
     if (!rn2(2) && (cc = enexto(u.ux, u.uy)) && next2u(cc.x, cc.y)) {
-        u_on_newpos(cc.x, cc.y);
+        await u_on_newpos(cc.x, cc.y);
     } else {
         // mnexto() -> rloc_to_core() newsym()s the monster's new square, which
         // draws display-rng picks while the hero hallucinates.
@@ -977,7 +980,12 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // the first move on the new level takes drag_ball()'s teleport arm instead
     // of "nothing moved".
     if (Punished_do()) unplacebc();
-    for (const m of kept) newsym(m.mx, m.my);
+    // C ref: mon.c mon_leaving_level() (relmon() from keepdogs()) ends with
+    // newsym(mx, my) at the follower's STALE coordinates, now that it is off
+    // the map; a hallucinating hero draws map_object()'s random-object pick
+    // for any object lying under it.  keepdogs_capture() zeroes mx,my (C
+    // keeps them), so use the squares it recorded.
+    for (const [kx, ky] of kept.leftAt) newsym(kx, ky);
 
     // C ref: do.c goto_level():1637 `vision_recalc(2)` — shuts down vision for
     // the level being left, between keepdogs() and the save below.  newsym()s
@@ -1212,7 +1220,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
             await u_on_rndspot(0);
         } else {
             seetrap(ttrap);
-            u_on_newpos(ttrap.tx, ttrap.ty);
+            await u_on_newpos(ttrap.tx, ttrap.ty);
         }
     } else if (at_stairs && !In_endgame(u.uz)) {
         // Prefer the stairway on the new level that leads back to the level we
@@ -1222,7 +1230,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         // staircase and a ladder lands the hero on the kind actually used.
         const back = stairway_find_from(u.uz0, at_ladder);
         if (back) {
-            u_on_newpos(back.sx, back.sy);
+            await u_on_newpos(back.sx, back.sy);
             back.u_traversed = true;
         } else if (up) {
             // C ref: do.c:1753 — climbing up with no matching stairway lands on
@@ -1642,6 +1650,7 @@ async function getlev_restore(ledger) {
     g.level = store.level;
     g.stairs = store.stairs;
     g.fmon = g.level.monsters;
+    clear_no_charge_on_getlev(g.level); /* find_lev_obj() -> place_object() */
     requeue_level_timers(); // restore_timers(): insert_timer() reverses equal-timeout ties
 
     // C ref: restore.c:1114 getlev() — `Sfi_dest_area(nhfp, &svu.updest)` /
@@ -1904,7 +1913,7 @@ export async function level_tele(readLevel, immediate = false) {
 
     const confused = (u.uprops?.Confusion || 0) > 0;
     const teleport_control = (u.uprops?.Teleport_control || 0) > 0
-        || !!u.Teleport_control;
+        || !!u.Teleport_control || Teleport_control_fu();
     const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
 
     let newlev = 0;
@@ -2183,7 +2192,9 @@ export async function run_deferred_lvltport() {
     // top line ("You feel disoriented.") over the DEPARTING level's map.  Our
     // cls() just drops the pending message; page it here (scoped to this
     // function — a global cls() change is the pline-vs-update_topl -341 trap).
-    if (game._toplin === 1) {
+    // tty_display_nhwindow() returns early while WIN_STOP/WIN_CANCELLED is set
+    // (an ESC at an earlier --More--), so nothing is paged then.
+    if (game._toplin === 1 && !game._winStop) {
         await topl_more();
         game._pending_message = '';
         game._toplin = 0;
@@ -2375,18 +2386,18 @@ function stairway_find_special_dir(up) {
 // to the level just left.  (mklev.js exports only u_on_upstairs.)
 async function u_on_sstairs(upflag) {
     const stway = stairway_find_special_dir(upflag);
-    if (stway) u_on_newpos(stway.sx, stway.sy);
+    if (stway) await u_on_newpos(stway.sx, stway.sy);
     else await u_on_rndspot(upflag);
 }
 // C ref: stairs.c u_on_upstairs().
 async function u_on_upstairs() {
     const stway = stairway_find_dir(true);
-    if (stway) u_on_newpos(stway.sx, stway.sy);
+    if (stway) await u_on_newpos(stway.sx, stway.sy);
     else await u_on_sstairs(0); /* destination upstairs implies moving down */
 }
 async function u_on_dnstairs() {
     const stway = stairway_find_dir(false);
-    if (stway) u_on_newpos(stway.sx, stway.sy);
+    if (stway) await u_on_newpos(stway.sx, stway.sy);
     else await u_on_sstairs(1); /* destination dnstairs implies moving up */
 }
 
@@ -2677,7 +2688,10 @@ async function impossible_do(msg) {
 }
 // C ref: pline.c You_hear() — suppressed when Deaf.
 async function You_hear_do(msg) {
-    if (!Deaf_do()) await pline(`You hear ${msg}`);
+    // C ref: pline.c You_hear() — "You dream that you hear " while Unaware.
+    const unaware = Unaware();
+    if (!Deaf_do() || unaware)
+        await pline(`${unaware ? 'You dream that you hear ' : 'You hear '}${msg}`);
 }
 // C ref: mondata.h is_whirly(ptr) = mlet == S_VORTEX || ptr == &mons[PM_AIR_ELEMENTAL].
 async function is_whirly_do(ptr) {
@@ -3687,11 +3701,9 @@ export async function revive_corpse(corpse) {
                  || (where === OBJ_BURIED && await is_reviver_do(mons_row));
     const is_uwep = (corpse === game.uwep);
     const chewed = (corpse.oeaten | 0) !== 0;
-    // C ref: do.c:2131 corpse_xname(corpse, chewed ? "bite-covered" : NULL,
-    // CXN_SINGULAR) — objnam.c corpse_xname() is module-private in js/invent.js
-    // and drops the adjective; reduced here the same way zap.js's private
-    // corpse_xname_z() does (adjective prefix, no CXN_SINGULAR nuance).
-    const cname = chewed ? `bite-covered ${I.xname(corpse)}` : I.xname(corpse);
+    // C ref: do.c:2131 corpse_xname(corpse, chewed ? "bite-covered" : NULL, CXN_SINGULAR)
+    const { corpse_xname: corpse_xname_do } = await import('./objnam.js');
+    const cname = corpse_xname_do(corpse, chewed ? 'bite-covered' : null, CXN_SINGULAR);
     mcarry = (where === OBJ_MINVENT) ? corpse.ocarry : null;
     /* mcarry is NULL for 'buried' and 'contained' now */
 

@@ -27,7 +27,7 @@ import { ceiling } from './dungeon.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { isok, depth, s_suffix } from './hacklib.js';
 import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
-    M1_NEEDPICK, M1_BREATHLESS, M1_NOHEAD, M1_ACID, M1_WALLWALK, M1_AMORPHOUS,
+    M1_NEEDPICK, M1_FLY, M1_BREATHLESS, M1_NOHEAD, M1_ACID, M1_WALLWALK, M1_AMORPHOUS,
     M1_UNSOLID, M1_NOEYES, M1_NOLIMBS,
     M2_JEWELS, M2_UNDEAD, M2_MERC, M2_WERE, throws_rocks_flag, is_undead_flag } from './monflags_data.js';
 import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
@@ -46,7 +46,7 @@ import { hard_helmet } from './do_wear.js';
 // (unlike a `const` arrow, which would be in its temporal dead zone here).
 import { onscary, m_next2u, m_lined_up, m_carrying, mon_would_take_item,
     objectsAt, mon_knows_traps, mon_learns_traps, mon_mintrap,
-    Trap_Killed_Mon, in_your_sanctuary, monflee as monflee_full } from './monmove.js';
+    Trap_Killed_Mon, in_your_sanctuary, monflee as monflee_full, locomotion } from './monmove.js';
 // base_mmove() is likewise a hoisted `export function`, so the cycle is safe.
 import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_carry,
     mongone, sensemon, flash_mon } from './mon.js';
@@ -286,14 +286,6 @@ import { an } from './hacklib.js';
 function the_(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
 // C ref: hacklib.c upstart().
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-// C ref: mondata.h locomotion(ptr, def) — the "jump"/"move" verb for a species
-// that cannot walk.  Ported in monmove.js for its own messages; the shapes that
-// reach the muse messages below all walk, so the default verb is correct.
-function locomotion(ptr, def) {
-    if (!ptr) return def;
-    if ((mflags1_of(ptr) & M1_NOLIMBS) !== 0) return 'slither';
-    return def;
-}
 // C ref: hacklib.c vtense(subj, verb) with fakename[0] ("player") as the
 // subject: always the third-person singular form.
 function vtense_s(verb) {
@@ -311,8 +303,8 @@ async function trapname(ttyp, override) {
 // C ref: mondata.h is_floater(ptr) — eyes/spheres and lights hover, so a wand
 // of digging is useless to them.
 function is_floater(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIGHT; }
-// C ref: mondata.h is_flyer(ptr) — only used to pick "dives"/"falls" below.
-function is_flyer(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIGHT; }
+// C ref: mondata.h is_flyer(ptr) == (mflags1 & M1_FLY).
+function is_flyer(ptr) { return (mflags1_of(ptr) & M1_FLY) !== 0; }
 // C ref: mondata.h needspick(ptr) == (mflags1 & M1_NEEDPICK).
 function needspick(ptr) { return (mflags1_of(ptr) & M1_NEEDPICK) !== 0; }
 // C ref: mondata.h passes_walls / amorphous / unsolid / noncorporeal / haseyes
@@ -1860,15 +1852,11 @@ async function mbhitm(mtmp, otmp, hits_you) {
 // at <tx,ty>.  C walks the nexthere chain newest-first; this port's flat
 // level.objects is oldest-first, so walk it in reverse (as zap.js bhitpile).
 async function fhito_loc(obj, tx, ty) {
-    const { bhito } = await import('./zap.js');
-    const arr = game.level?.objects || [];
-    const here = [];
-    for (let i = arr.length - 1; i >= 0; i--) {
-        const o = arr[i];
-        if (o.where === OBJ_FLOOR && o.ox === tx && o.oy === ty) here.push(o);
-    }
+    const { bhito, pile_at, nexthere } = await import('./zap.js');
     let hitanything = 0;
-    for (const otmp of here) {
+    let next_obj;
+    for (let otmp = pile_at(tx, ty)[0]; otmp; otmp = next_obj) {
+        next_obj = nexthere(otmp, tx, ty);
         if (otmp.where !== OBJ_FLOOR || otmp.ox !== tx || otmp.oy !== ty) continue;
         hitanything += await bhito(otmp, obj);
     }

@@ -26,7 +26,7 @@ export function getRngLog() { return _rngLog; }
 export function pushRngLogEntry(entry) { if (_rngLogEnabled) _rngLog.push(entry); }
 
 let _dbgN = 0;
-const _DBG = process?.env?.RNG_STACK_AT ? process.env.RNG_STACK_AT.split('-').map(Number) : null;
+const _DBG = (typeof process !== 'undefined' && process.env && process.env.RNG_STACK_AT) ? process.env.RNG_STACK_AT.split('-').map(Number) : null;
 function RND(x) {
     if (_DBG) {
         _dbgN = _rngLogEnabled ? _rngLog.length : _dbgN + 1;

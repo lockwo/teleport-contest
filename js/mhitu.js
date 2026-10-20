@@ -925,6 +925,10 @@ export async function gulpmu(mtmp, mattk) {
     game.mswallower = mtmp;                     // match gulpmm()
     await mdamageu(mtmp, tmp);
     game.mswallower = null;
+    /* C: mdamageu() -> done(DIED) never returns when the hero dies; here done()
+       returns, so nothing after it (stop_occupation(), the expel messages) may
+       run once the game is over. */
+    if (game.program_state?.gameover) return M_ATTK_HIT;
     if (tmp) await (await import('./hack.js')).stop_occupation();
 
     const ydat = youmonst_data();

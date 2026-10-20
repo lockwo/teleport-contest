@@ -27,7 +27,7 @@ import { can_reach_floor } from './engrave.js';
 import { heal_legs, water_damage, float_up, spoteffects } from './trap.js';
 import { monster_detect, nomul } from './hack.js';
 import { DEADMONSTER } from './mon.js';
-import { exercise, acurr_eff, adjattrib } from './attrib.js';
+import { exercise, acurr_eff, adjattrib, Fixed_abil } from './attrib.js';
 import { more_experienced, pluslvl, rndexp, has_innate } from './exper.js';
 import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
          POT_HEALING, POT_EXTRA_HEALING, POT_FRUIT_JUICE, POT_BOOZE,
@@ -114,8 +114,7 @@ function Hallucination() { return HHallucination() > 0 && !Halluc_resistance(); 
 function Halluc_resistance() { return !!game.u?.formprops?.Halluc_resistance || HProp('HHalluc_resistance', 'EHalluc_resistance') > 0; }
 function Upolyd() { return !!game.u?.Upolyd; }
 function Unaware() { return !!(game.u?.usleep || game.u?.Unaware) || Unaware_const(); }
-// C ref: attrib.h Fixed_abil — blocks every adjattrib().
-function Fixed_abil() { return HProp('HFixed_abil', 'EFixed_abil') > 0; }
+// C ref: attrib.h Fixed_abil — blocks every adjattrib().  Single reader in attrib.js.
 // C ref: attrib.c orc_abil[]/RACE_ABIL race-innate poison resistance (e.g.
 // every orc, from level 1) is never PERSISTED as a uprops/H*/E* flag anywhere
 // in js/ — adjabil() only emits the message, never the state write, and is
@@ -1214,6 +1213,7 @@ async function peffect_gain_energy(otmp) {
     u.uen = (u.uen | 0) + 3 * num;
     if (u.uen > u.uenmax) u.uen = u.uenmax;
     else if (u.uen <= 0) u.uen = 0;
+    game.botl = true;  // potion.c:1262 disp.botl = TRUE
     exercise(A_WIS, true);
 }
 
@@ -1855,8 +1855,6 @@ const P_COST_ALTER = -2, P_COST_NONE = -1, P_COST_UNBLSS = 3, P_COST_UNCURS = 4;
 const P_ERODE_CORRODE = 3, P_EF_GREASE = 0x01;
 // C ref: include/explode.h EXPL_FIERY.
 const P_EXPL_FIERY = 5;
-// C ref: include/hack.h DISP_ALWAYS / DISP_END (js/const.js:360/362).
-const P_DISP_ALWAYS = -5, P_DISP_END = -7;
 
 // The mons[] rows js/makemon.js builds carry mflags3 but NO mflags1/mflags2/
 // msound, so reading those fields off `ptr` yielded 0 for EVERY species: every
@@ -3160,21 +3158,29 @@ export async function mongrantswish(monp) {
     const mon = monp?.v ?? monp;
     const mx = mon.mx, my = mon.my;
     const D = await import('./display.js');
-    const glyph = D.glyph_at(mx, my);
+    /* C: glyph_at(mx, my).  This port's live map is the cell model (gbuf only
+       tracks glyph numbers), so the displayed cell is captured instead. */
+    const loc = game.level?.at(mx, my);
+    const cell = loc && loc.disp_ch != null
+        ? { ch: loc.disp_ch, color: loc.disp_color, dec: loc.disp_decgfx,
+            attr: loc.disp_attr, dark: loc.disp_dark }
+        : null;
 
     /* remove the monster first in case the wish proves to be fatal (blasted by
        an artifact), to keep it out of the resulting bones file */
     await p_mongone(mon);
     if (monp && 'v' in monp) monp.v = null; /* inform caller it is gone */
     /* hide that removal from the player -- the map is visible during the wish
-       prompt */
-    await D.tmp_at(P_DISP_ALWAYS, glyph);
-    await D.tmp_at(mx, my);
+       prompt: tmp_at(DISP_ALWAYS, glyph); tmp_at(mx, my) */
+    if (cell) {
+        D.show_glyph_cell(mx, my, cell.ch, cell.color, cell.dec, cell.attr, false, cell.dark);
+        await D.flush_screen(0);
+    }
     /* grant the wish */
     const { makewish } = await import('./extcmd-handlers.js');
     await makewish();
-    /* clean up */
-    await D.tmp_at(P_DISP_END, 0);
+    /* clean up: tmp_at(DISP_END, 0) newsym()s the square */
+    if (cell) D.newsym(mx, my);
 }
 // C ref: mon.c mongone(mtmp) — the monster leaves the game (no corpse, no
 // experience); js/mon.js holds the faithful port (unstuck, special items,

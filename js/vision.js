@@ -726,22 +726,6 @@ export function vision_recalc(control = 0) {
         view_from(u.uy, u.ux, next, next_rmin, next_rmax);
     }
 
-    if (process.env.VISION_DEBUG && u.ux >= 40 && u.ux <= 48 && u.uy >= 16 && u.uy <= 22 && (game.__visionDebugCount|0) < 3) {
-        game.__visionDebugCount = (game.__visionDebugCount|0) + 1;
-        game.__visionDebugged = true;
-        const lvl = game.level;
-        let dump = `VISION_DEBUG ux=${u.ux},uy=${u.uy}\n`;
-        for (let row = 8; row <= 20; row++) {
-            let line = `row${row}: `;
-            for (let col = 35; col <= 47; col++) {
-                const cs = !!(next[row][col] & COULD_SEE);
-                const loc = lvl?.at(col, row);
-                line += cs ? `[${loc?.typ}:${loc?.lit ? 'L' : '.'}] ` : '[    ] ';
-            }
-            dump += line + '\n';
-        }
-        console.error(dump);
-    }
 
     // C ref: vision.c:703 do_light_sources(next_array) — mobile light sources
     // (a gold dragon, a fire vortex, a lit lamp) mark TEMP_LIT on the cells

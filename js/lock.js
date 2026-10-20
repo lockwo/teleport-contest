@@ -24,7 +24,7 @@ export function picking_lock() {
 export function picking_at(x, y) {
     const xl = game.xlock;
     if (!xl || !game._picklock_box || !xl.door) return false;
-    return xl.cx === x && xl.cy === y;
+    return game.level?.at(x, y) === xl.door;
 }
 
 // C ref: lock.c:259 reset_pick() — clear the whole xlock context.

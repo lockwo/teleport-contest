@@ -201,16 +201,10 @@ function relmon(mon) {
     if (game.u?.ustuck === mon) game.u.ustuck = null;
     mon.mtrapped = 0;
 }
-// C ref: mon.c mongone(mdef) — the monster leaves the game without dying.
-// The guard arm is why this is not just relmon(): a guard whose temporary
-// corridor is still on the map gets parked instead of removed.
+// C ref: mon.c mongone(mdef) — the monster leaves the game without dying.  The faithful copy
+// (grddead guard parking, unstuck, mdrop_special_objs' obj_resists rolls, m_detach) lives in mon.js.
 async function mongone(mdef) {
-    mdef.mhp = 0;
-    if (mdef.isgd && !(await grddead(mdef))) return;
-    const mx = mdef.mx, my = mdef.my;
-    mdef.minvent = [];              /* discard_minvent(mdef, FALSE) */
-    relmon(mdef);
-    newsym(mx, my);
+    await (await import('./mon.js')).mongone(mdef);
 }
 // C ref: mon.c m_into_limbo(mtmp) -> migrate_mon(..., MIGR_APPROX_XY).  There
 // is no migrating-monster queue in js/ yet, so the monster is unlinked from

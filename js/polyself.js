@@ -51,10 +51,10 @@ import { Unaware } from './const.js';
 // C ref: hack.h enum bodypart_types — mbodypart()/body_part() selectors.
 import { ARM, EYE, FINGER, FINGERTIP, FOOT, HAND, HANDED, HEAD, LEG, TOE,
     HAIR, NOSE, STOMACH, OBJ_FLOOR } from './const.js';
-import { is_hider_flag, hides_under_flag, is_were_flag, likes_gems_flag, strongmonst_flag, is_male_flag, is_flyer_flag, mflags1_of, M1_CLING, M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS, M1_AMORPHOUS, M1_UNSOLID, lays_eggs_flag, mindless, msound_of, is_swimmer_flag, is_female_flag, is_neuter_flag, is_orc_flag, is_elf_flag, is_dwarf_flag, is_gnome_flag, is_giant_flag, is_undead_flag, nohands, humanoid, polyok_flag, mflags2_of, M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, is_demon_flag, M1_SEE_INVIS, M1_TPORT, M1_TPORT_CNTRL, M1_SWIM, M1_WALLWALK, M1_REGEN, is_whirly, noncorporeal, is_golem, flaming, touch_petrifies } from './monflags_data.js';
+import { is_hider_flag, hides_under_flag, is_were_flag, likes_gems_flag, strongmonst_flag, is_male_flag, is_flyer_flag, mflags1_of, M1_CLING, M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS, M1_AMORPHOUS, M1_UNSOLID, lays_eggs_flag, mindless, msound_of, is_swimmer_flag, is_female_flag, is_neuter_flag, is_orc_flag, is_elf_flag, is_dwarf_flag, is_gnome_flag, is_giant_flag, is_undead_flag, nohands, humanoid, polyok_flag, mflags2_of, M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, is_demon_flag, M1_SEE_INVIS, M1_TPORT, M1_TPORT_CNTRL, M1_SWIM, M1_WALLWALK, M1_REGEN, is_whirly, is_animal, noncorporeal, is_golem, flaming, touch_petrifies } from './monflags_data.js';
 import { attacktype, mattk_of, AT_BREA, AT_SPIT, AT_GAZE, AT_CLAW, AT_EXPL,
     AT_ENGL, AT_HUGS, AD_MAGM, AD_CONF, AD_FIRE, AD_ELEC, AD_HALU, AD_RBRE,
-    AD_BLND, AD_STCK, AD_WRAP, dmgtype } from './monattk_data.js';
+    AD_BLND, AD_STCK, AD_WRAP, AD_COLD, dmgtype } from './monattk_data.js';
 import { dmgtype_fromattack, poly_when_stoned } from './mondata.js';
 import { monsterList, DEADMONSTER, set_ustuck, were_beastie, counter_were, Protection_from_shape_changers } from './mon.js';
 import { monster_nearby, waterbody_name } from './cmd.js';
@@ -859,7 +859,7 @@ function redist_attr() {
 // lord".  Lazily imported: uhitm.js owns the gendered-name map and pulling it
 // in statically would put polyself.js on uhitm's import chain.
 let _mon_pmname = null;
-async function pmname_of(mdat, female) {
+export async function pmname_of(mdat, female) {
     if (!_mon_pmname) ({ mon_pmname: _mon_pmname } = await import('./uhitm.js'));
     return _mon_pmname({ data: mdat, female: !!female });
 }
@@ -1699,7 +1699,8 @@ function Polymorph_control() {
 }
 function Stunned() {
     const u = game.u;
-    return ((u?.uprops?.Stun | 0) > 0) || ((u?.uprops?.HStun | 0) > 0) || !!u?.Stunned;
+    /* HStun is timed or FROMFORM (bat, stalker): the form bit lives in u.formprops */
+    return ((u?.uprops?.Stun | 0) > 0) || ((u?.uprops?.HStun | 0) > 0) || !!u?.Stunned || !!u?.formprops?.Stunned;
 }
 // C ref: mondata.h your_race(ptr) == (mflags2 & gu.urace.selfmask).
 const RACE_SELFMASK = { human: M2_HUMAN, elven: M2_ELF, dwarven: M2_DWARF,
@@ -2382,22 +2383,44 @@ function mdistu(mtmp) {
     return dx * dx + dy * dy;
 }
 
-// C ref: polyself.c dospinweb() — #monster for a spider.  The three refusal
-// gates (which return ECMD_OK, i.e. NO turn elapses) are ported exactly; the
-// existing-trap switch and the maketrap(WEB) tail are deferred — they need
-// bury_objs()/add_damage()/feeltrap() for the hero's own square.
+// C ref: polyself.c dospinweb() — #monster for a spider.
 async function dospinweb() {
     const u = game.u;
     const x = u.ux, y = u.uy;
+    const TR = await import('./trap.js');
+    const C = await import('./const.js');
+    let ttmp = TR.t_at(x, y);
     const typ = game.level?.at?.(x, y)?.typ;
+    /* disallow webs on water, lava, air & cloud */
     const reject_terrain = is_pool_or_lava(x, y) || IS_AIR(typ);
     if (u.uprops?.Levitation || reject_terrain) {
         await pline(`You must be on ${reject_terrain ? 'solid' : 'the'} ground to spin a web.`);
         return ECMD_OK;
     }
     if (u.uswallow) {
-        // "You release web fluid inside <mon>." + the engulfer dispatch:
-        // deferred (needs expels()).  C returns ECMD_OK on every arm.
+        const { mon_nam } = await import('./do_name.js');
+        const ust = u.ustuck;
+        await pline(`You release web fluid inside ${mon_nam(ust)}.`);
+        if (is_animal(ust.data)) {
+            const { expels } = await import('./mhitu.js');
+            await expels(ust, ust.data, true);
+            return ECMD_OK;
+        }
+        if (is_whirly(ust.data)) {
+            const att = mattk_of(ust.data).find((a) => a.aatyp === AT_ENGL);
+            if (att) {
+                let sweep = '';
+                switch (att.adtyp) {
+                case AD_FIRE: sweep = 'ignites and '; break;
+                case AD_ELEC: sweep = 'fries and '; break;
+                case AD_COLD: sweep = 'freezes, shatters and '; break;
+                default: break;
+                }
+                await pline(`The web ${sweep}is swept away!`);
+            }
+            return ECMD_OK;
+        } /* default: a nasty jelly-like creature */
+        await pline(`The web dissolves into ${mon_nam(ust)}.`);
         return ECMD_OK;
     }
     if (u.utrap) {
@@ -2405,7 +2428,70 @@ async function dospinweb() {
         return ECMD_OK;
     }
     exercise(A_DEX, true);
-    // existing-trap switch / On_stairs / maketrap(x, y, WEB): deferred.
+    if (ttmp) {
+        switch (ttmp.ttyp) {
+        case C.PIT:
+        case C.SPIKED_PIT:
+            await pline('You spin a web, covering up the pit.');
+            TR.deltrap(ttmp);
+            await (await import('./dig.js')).bury_objs(x, y);
+            newsym(x, y);
+            return ECMD_TIME;
+        case C.SQKY_BOARD:
+            await pline('The squeaky board is muffled.');
+            TR.deltrap(ttmp);
+            newsym(x, y);
+            return ECMD_TIME;
+        case C.TELEP_TRAP:
+        case C.LEVEL_TELEP:
+        case C.MAGIC_PORTAL:
+        case C.VIBRATING_SQUARE:
+            await pline('Your webbing vanishes!');
+            return ECMD_OK;
+        case C.WEB:
+            await pline('You make the web thicker.');
+            return ECMD_TIME;
+        case C.HOLE:
+        case C.TRAPDOOR:
+            await pline(`You web over the ${ttmp.ttyp === C.TRAPDOOR ? 'trap door' : 'hole'}.`);
+            TR.deltrap(ttmp);
+            newsym(x, y);
+            return ECMD_TIME;
+        case C.ROLLING_BOULDER_TRAP:
+            await pline('You spin a web, jamming the trigger.');
+            TR.deltrap(ttmp);
+            newsym(x, y);
+            return ECMD_TIME;
+        case C.ARROW_TRAP:
+        case C.DART_TRAP:
+        case C.BEAR_TRAP:
+        case C.ROCKTRAP:
+        case C.FIRE_TRAP:
+        case C.LANDMINE:
+        case C.SLP_GAS_TRAP:
+        case C.RUST_TRAP:
+        case C.MAGIC_TRAP:
+        case C.ANTI_MAGIC:
+        case C.POLY_TRAP:
+            await pline('You have triggered a trap!');
+            await TR.dotrap(ttmp, 0);
+            return ECMD_TIME;
+        default:
+            return ECMD_OK;
+        }
+    } else if ((await import('./display.js')).stairway_at(x, y)) {
+        /* cop out: don't let them hide the stairs */
+        await pline(`Your web fails to impede access to the ${typ === C.STAIRS ? 'stairs' : 'ladder'}.`);
+        return ECMD_TIME;
+    }
+    ttmp = TR.maketrap(x, y, C.WEB);
+    if (ttmp) {
+        await pline('You spin a web.');
+        ttmp.madeby_u = 1;
+        TR.seetrap(ttmp); /* feeltrap() */
+        if ((await import('./shkroom.js')).in_rooms(x, y, C.SHOPBASE).length)
+            await (await import('./shk.js')).add_damage(x, y, C.SHOP_WEB_COST);
+    }
     return ECMD_TIME;
 }
 

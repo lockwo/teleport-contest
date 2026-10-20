@@ -1728,7 +1728,7 @@ export async function uchangealign(newalign, reason) {
             await update_topl(`Your mind oscillates ${Hallucination() ? 'wildly' : 'briefly'}.`);
             make_confused(rn1(2, 3), false);
             if (Is_astralevel() || rn2(50) < (u.ualign.abuse | 0))
-                summon_furies(Is_astralevel() ? 0 : 1);
+                await summon_furies(Is_astralevel() ? 0 : 1);
             livelog_printf(LL_ALIGNMENT, `used a helm to turn ${aligns[1 - newalign].adj}`);
         } else if (reason === A_CG_HELM_OFF) {
             await update_topl(`Your mind is ${Hallucination()

@@ -205,8 +205,8 @@ export async function dipfountain(obj) {
         }
         const loc0 = game.level?.at(u.ux, u.uy);
         if (loc0) { loc0.typ = ROOM; loc0.flags = 0; }
-        if (game.level?.flags && typeof game.level.flags.nfountains === 'number')
-            game.level.flags.nfountains = Math.max(0, game.level.flags.nfountains - 1);
+        /* C: set_levltyp(u.ux, u.uy, ROOM) recounts every fountain on the level */
+        (await import('./mklev.js')).count_level_features();
         newsym(u.ux, u.uy);
         if (in_town(u.ux, u.uy)) await angry_guards(false);
         return;
@@ -697,9 +697,11 @@ async function gush(x, y, poolcnt) {
         (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y).reverse();
     for (const obj of here) await water_damage(obj, null, false);
 
-    // minliquid(mtmp) (monster drowning in the new pool) isn't modeled: no
-    // covered session has a monster occupying a gush-flooded square.
-    if (!m_at(x, y)) newsym(x, y);
+    const mtmp = m_at(x, y);
+    if (mtmp) {
+        const { minliquid } = await import('./mon.js');
+        await minliquid(mtmp);
+    } else newsym(x, y);
 }
 
 export async function dogushforth(drinking) {
@@ -764,8 +766,8 @@ export async function dryup(x, y, isyou) {
     loc.typ = ROOM;
     loc.flags = 0;
     loc.blessedftn = 0;
-    if (game.level?.flags && typeof game.level.flags.nfountains === 'number')
-        game.level.flags.nfountains = Math.max(0, game.level.flags.nfountains - 1);
+    /* C: set_levltyp(x, y, ROOM) recounts every fountain on the level */
+    (await import('./mklev.js')).count_level_features();
     newsym(x, y);
     if (isyou && in_town(x, y)) await angry_guards(false);
 }
@@ -815,11 +817,8 @@ export async function breaksink(x, y) {
         loc.typ = FOUNTAIN;
         loc.looted = F_LOOTED; // SET_FOUNTAIN_LOOTED
         loc.blessedftn = 0;
-        const lf = game.level?.flags;
-        if (lf) {
-            lf.nsinks = Math.max(0, (lf.nsinks || 0) - 1);
-            lf.nfountains = (lf.nfountains || 0) + 1;
-        }
+        /* C: set_levltyp(, FOUNTAIN) recounts sinks and fountains */
+        (await import('./mklev.js')).count_level_features();
     }
     newsym(x, y);
 }

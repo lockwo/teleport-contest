@@ -63,8 +63,8 @@ import {
 } from './const.js';
 import { has_innate } from './exper.js';
 import { dmgval, sticks, m_slips_free, stagger_verb } from './uhitm.js';
-import { monster_by_pmidx } from './makemon.js';
-import { on_fire, dmgtype_fromattack, resists_blnd_by_arti, slimeproof } from './mondata.js';
+import { monster_by_pmidx, add_to_minv } from './makemon.js';
+import { on_fire, dmgtype_fromattack, resists_blnd_by_arti, slimeproof, poly_when_stoned as poly_when_stoned_md } from './mondata.js';
 import { defends, artifact_hit, permapoisoned } from './artifact.js';
 import {
     objects as OBJECTS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
@@ -170,8 +170,7 @@ const completelyrots = (ptr) => ptr?.name === 'wood golem'
     || ptr?.name === 'leather golem';
 // C ref: mondata.h poly_when_stoned(ptr) — a flesh golem//clay golem becomes a
 // stone golem instead of dying.
-const poly_when_stoned = (ptr) => ptr?.mcls === S_GOLEM
-    && ptr?.name !== 'stone golem';
+const poly_when_stoned = poly_when_stoned_md;
 // C ref: mondata.h:200 touch_petrifies(ptr) — PM_COCKATRICE || PM_CHICKATRICE
 // ONLY.  Medusa is flesh_petrifies(), a strictly wider macro; including her
 // here would stone anything that bit her, which C does not do.
@@ -721,7 +720,7 @@ export async function mhitm_ad_sgld(magr, mattk, mdef, mhm, ops) {
     if (gi < 0) return;
     const gold = inv[gi];
     inv.splice(gi, 1);
-    (magr.minvent = magr.minvent || []).push(gold);
+    add_to_minv(magr, gold);
     clear_waitforu(mdef);
     const buf = ops.Monnam(magr);
     if (ops.vis && ops.canseemon(mdef))
@@ -1531,23 +1530,29 @@ export async function mhitm_ad_halu(magr, mattk, mdef, mhm, ops) {
 export async function do_stone_mon(magr, mattk, mdef, mhm, ops) {
     const pd = ops.permonst(mdef);
     const { munstone } = await import('./muse.js');
-    if (await munstone(mdef, false)) {           // ate a stone-curing corpse
-        mhm.hitflags = M_ATTK_DEF_DIED
-            | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
-        mhm.done = true;
-        return;
-    }
-    if (poly_when_stoned(pd)) {
-        // mon_to_stone(): flesh/clay golem becomes a stone golem.
+    let post_stone = false;
+    /* may die from the acid if it eats a stone-curing corpse */
+    if (await munstone(mdef, false)) {
+        post_stone = true;
+    } else if (poly_when_stoned(pd)) {
+        const { mon_to_stone } = await import('./mon.js');
+        await mon_to_stone(mdef);
         mhm.damage = 0;
         return;
-    }
-    if (!resists_ston(ops, mdef)) {
+    } else if (!resists_ston(ops, mdef)) {
         if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`${ops.Monnam(mdef)} turns to stone!`);
         // monstone() leaves a STATUE, so it must NOT run mondied()'s
         // corpse_chance() rn2 — that would be an invented draw.
         await (ops.monstone ? ops.monstone(mdef) : ops.mondied(mdef));
+        post_stone = true;
+    }
+    if (post_stone) {
+        if (!DEADMONSTER(mdef)) {
+            mhm.hitflags = M_ATTK_MISS;
+            mhm.done = true;
+            return;
+        }
         mhm.hitflags = M_ATTK_DEF_DIED
             | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
         mhm.done = true;
@@ -1924,7 +1929,7 @@ export async function mhitm_ad_sedu(magr, mattk, mdef, mhm, ops) {
         }
         const onam = doname_invent(obj);
         mdef.minvent.splice(mdef.minvent.indexOf(obj), 1);
-        (magr.minvent = magr.minvent || []).push(obj);
+        add_to_minv(magr, obj);
         if (vis && ops.canseemon(mdef))
             await ops.emit(`${buf} steals ${onam} from ${mdefnam}!`);
         { const { possibly_unwield } = await import('./weapon.js'); await possibly_unwield(mdef, false); }

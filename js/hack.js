@@ -16,7 +16,7 @@
 import { game, hooks, svc_context_run } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { lock_action } from './lock.js';
-import { visible_region_at, region_is_poisoncloud } from './region.js';
+import { visible_region_at, region_is_poisoncloud, show_region } from './region.js';
 import { ok_to_quest } from './questok.js';
 import { trap_predicament } from './insight.js';
 import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as trapname_hk, crawl_destination, Levitation_fu, Flying_fu } from './trap.js';
@@ -33,6 +33,8 @@ import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
 import { rnd } from './rng.js';
 import { vision_recalc, Blind, couldsee, cansee, Infravision } from './vision.js';
+import { Invis } from './monmove.js';
+import { Unblind_telepat } from './worn.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
 import { is_safemon, canspotmon } from './uhitm.js';
 import { distant_monnam, ARTICLE_NONE, a_monnam, coyotename } from './do_name.js';
@@ -51,7 +53,7 @@ import { COLNO, ROWNO, STONE, ROOM, CORR, DOOR, ICE, STAIRS, FOUNTAIN,
          DRAWBRIDGE_UP, DRAWBRIDGE_DOWN,
          AM_MASK, AM_SANCTUM, Amask2align, A_LAWFUL, A_NEUTRAL, A_CHAOTIC, A_NONE,
          IS_WALL, IS_DOOR, IS_STWALL, IS_OBSTRUCTED, IS_FURNITURE, IS_AIR, IS_POOL, IS_LAVA,
-         IS_WATERWALL, In_sokoban, Is_rogue_level, CLOUD, AIR, Is_airlevel,
+         IS_WATERWALL, In_sokoban, Is_rogue_level, CLOUD, AIR, Is_airlevel, Is_astralevel,
          Is_waterlevel, isok, VIBRATING_SQUARE, STRAT_WAITMASK, I_SPECIAL,
          TELEDS_NO_FLAGS, def_warnsyms } from './const.js';
 
@@ -252,6 +254,7 @@ const OCC_SLOTS = [
     ['_takeoff_occupation', () => game.context.takeoff.disrobing], // do_wear.c:2985
     ['_trap_occupation', () => game.occupation_txt || 'setting the trap'], // apply.c:2864/2910 use_trap()
     ['_picklock_box', () => lock_action(game.xlock)],   // lock.c:400/654 pick_lock()
+    ['_force_box', 'forcing the lock'],                 // lock.c:735 doforce()
 ];
 
 // C ref: eat.c food_xname(food, the_pfx) — reimplemented here (eat.js keeps its
@@ -960,7 +963,6 @@ function findtravelpath(mode) {
                                 continue;
                             }
                         }
-                        if (process.env.NHDBG_TRAV && nx === ux && ny === uy && mode === 0) console.error('TRAVH mv', game.moves, 'from', x, y, 'to', nx, ny, 'tm', test_move_trav(x, y, nx - x, ny - y, TEST_TRAV), 'seenv', game.level?.at(nx, ny)?.seenv, 'cs', couldsee(nx, ny), 'radius', radius, 'tr', travel[y * COLNO + x]);
                         if (test_move_trav(x, y, nx - x, ny - y, TEST_TRAV)
                             && ((game.level?.at(nx, ny)?.seenv || 0)
                                 || (!Blind() && couldsee(nx, ny)))) {
@@ -969,7 +971,6 @@ function findtravelpath(mode) {
                                     const visited = travelmap_get(x, y);
                                     u.dx = x - ux;
                                     u.dy = y - uy;
-                                    if (process.env.NHDBG_TRAV) console.error('TRAV', 'mv', game.moves, mode, 'hero', u.ux, u.uy, 'tgt', u.tx, u.ty, 'step', u.dx, u.dy, 'radius', radius, 'bfsfrom', x, y);
                                     if (mode === TRAVP_TRAVEL
                                         && ((x === u.tx && y === u.ty) || visited)) {
                                         nomul(0);
@@ -997,7 +998,6 @@ function findtravelpath(mode) {
                 radius++;
             }
 
-            if (process.env.NHDBG_TRAV) { let dump=[]; for (let yy=4;yy<=11;yy++){ let r=''; for(let xx=38;xx<=47;xx++) r+=String(travel[yy*COLNO+xx]).padStart(3); dump.push(yy+':'+r);} console.error('TRAVFAIL mv', game.moves, mode, 'hero', u.ux,u.uy,'tgt',u.tx,u.ty,'\n'+dump.join('\n')); }
             if (mode !== TRAVP_GUESS)
                 return false;
 
@@ -1583,13 +1583,20 @@ function self_region_suffix(u) {
 // role player-monster name is the role title lowercased (knight, wizard, ...).
 export function self_lookat() {
     const u = game.u || {};
+    // C ref: pager.c:117 `(Invis && (senseself() || !Blind)) ? "invisible " : ""`
+    // (senseself() = Unblind_telepat || Detect_monsters; being blinded may hide
+    // invisibility from self).
+    const p = u.uprops || {};
+    const senseself = Unblind_telepat() || !!(p.Detect_monsters || p.HDetect_monsters
+        || p.EDetect_monsters || u.HDetect_monsters || u.EDetect_monsters);
+    const inv = (Invis() && (senseself || !Blind())) ? 'invisible ' : '';
     // C ref: pager.c:112 — "include race with role unless polymorphed".  While
     // Upolyd, u.umonnum is a real mons[] index and pmname() names the FORM,
     // so a poly'd hero farlooks as e.g. "brown mold called wizard".
     if (u.Upolyd) {
         const plnameP = game.flags?.debug ? 'wizard' : (game.plname || 'Player');
         // C: pmname(&mons[u.umonnum], Ugender), Ugender == u.mfemale while Upolyd.
-        let bufP = `${pmname_of_pmidx(u.umonnum, !!u.mfemale)} called ${plnameP}`;
+        let bufP = `${inv}${pmname_of_pmidx(u.umonnum, !!u.mfemale)} called ${plnameP}`;
         if (u.usteed) bufP += `, mounted on ${y_monnam(u.usteed)}`;
         bufP += self_region_suffix(u);
         if (u.uball) bufP += `, chained to ${ansimpleoname(u.uball)}`;
@@ -1614,7 +1621,7 @@ export function self_lookat() {
     const raceAdj = raceDef.adj || raceDef.noun || 'human';
 
     const plname = game.flags?.debug ? 'wizard' : (game.plname || 'Player');
-    let buf = `${raceAdj} ${pm} called ${plname}`;
+    let buf = `${inv}${raceAdj} ${pm} called ${plname}`;
     // C ref: pager.c:127 — `if (Punished) ", chained to <ansimpleoname(uball)>"`.
     // ansimpleoname() names a BARE ball, so a ball made heavier by a second
     // scroll of punishment still reads "a heavy iron ball", not "a very heavy".
@@ -1686,6 +1693,23 @@ function terrain_description(x, y, full = false) {
             return 'dark part of a room';
         return loc.seenv ? 'stone' : 'unexplored';
     }
+    // C ref: display.c _map_location() tail / newsym() show_region(): a visible
+    // gas cloud is DRAWN over the map square, so glyph_at() is S_cloud or
+    // S_poisoncloud and pager.c lookat() describes the cloud, not the terrain.
+    if (loc.disp_ch === '#' && !Blind()) {
+        const reg = visible_region_at(x, y);
+        if (reg) {
+            const rg = show_region(reg);
+            if (rg.ch === loc.disp_ch)
+                return region_is_poisoncloud(reg) ? 'poison cloud'
+                    : Is_airlevel(game.u?.uz) ? 'cloudy area' : 'fog/vapor cloud';
+        }
+    }
+    // C ref: pager.c do_screen_description() dispatches on glyph_at(x,y), the
+    // REMEMBERED wall cmap glyph, not on levl[x][y].typ: a wall the hero dug
+    // through while out of sight (typ now CORR/DOOR) still reads "wall".
+    if (loc.remembered_glyph?.wall && loc.remembered_glyph.ch === loc.disp_ch
+        && !is_cmap_engraving_at(x, y)) return 'wall';
     const typ = loc.typ;
     // C ref: pager.c:779 do_screen_description() case S_stone —
     //     if (!levl[x][y].seenv)                       "unexplored"
@@ -1778,7 +1802,13 @@ function terrain_description(x, y, full = false) {
         // becomes lookat()'s "%s %saltar" rather than the bare defsyms text.
         const amsk = (loc.altarmask ?? loc.flags ?? 0);
         const algn = Amask2align(amsk & AM_MASK);
-        const an_ = algn === A_CHAOTIC ? 'chaotic' : algn === A_NEUTRAL ? 'neutral'
+        // like endgame high priests, endgame high altars are only recognizable
+        // when immediately adjacent
+        const ux = game.u?.ux ?? 0, uy = game.u?.uy ?? 0;
+        const far_high = Is_astralevel(game.u?.uz) && (amsk & AM_SANCTUM)
+            && ((x - ux) * (x - ux) + (y - uy) * (y - uy)) > 2;
+        const an_ = far_high ? 'aligned'
+                  : algn === A_CHAOTIC ? 'chaotic' : algn === A_NEUTRAL ? 'neutral'
                   : algn === A_LAWFUL ? 'lawful' : algn === A_NONE ? 'unaligned' : 'unknown';
         return `${an_} ${(amsk & AM_SANCTUM) ? 'high ' : ''}altar`;
     }
@@ -1863,7 +1893,7 @@ function look_at_object_here(x, y, describing = false) {
     // A random object glyph remembered while hallucinating names its own otyp,
     // never the real object's (object_from_map -> sobj_at() miss -> mksobj).
     const hrem = loc.remembered_glyph;
-    if (describing && !game.u?.uhallu && hrem?.hallucotyp && !hrem.objotyp
+    if (describing && hrem?.hallucotyp && !hrem.objotyp
         && hrem.ch === loc.disp_ch && hrem.hallucotyp !== obj.otyp)
         return look_at_object(x, y, { kind: 'object', obj: null, otyp: hrem.hallucotyp,
                                       corpsenm: hrem.corpsenm, x, y });
@@ -2193,6 +2223,20 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         return false;
     const loc = game.level?.at(x, y);
     if (!loc) return false;
+    // C ref: getpos.c:444 glyph_at(x,y) while swallowed: swallowed() cls()es the
+    // map and shows only the hero (a monster glyph) and the eight swallow-wall
+    // glyphs around it.  A swallow glyph is not glyph_is_cmap, so it is never a
+    // door/explore target and is never excluded as plain terrain: it is
+    // "interesting".  Every other square is blank (unexplored).
+    if (game.u?.uswallow && !game.iflags?.terrainmode) {
+        const gdx = Math.abs(x - game.u.ux), gdy = Math.abs(y - game.u.uy);
+        const hero = gdx === 0 && gdy === 0;
+        const ring = gdx <= 1 && gdy <= 1 && !hero;
+        if (gloc === GLOC_VALID && validfn) return !!validfn(x, y);
+        if (gloc === GLOC_MONS) return hero;
+        if (gloc === GLOC_INTERESTING || gloc === GLOC_VALID) return hero || ring;
+        return false;
+    }
     // C ref: detect.c reveal_terrain_getglyph() TER_FULL -- the browsed glyph is
     // back_to_glyph() with seenv forced to SVALL, so every cell is "explored" and
     // no monster/object/trap glyph covers the terrain.
@@ -3394,6 +3438,17 @@ function look_pick_description(x, y) {
             if (pcls)
                 return {
                     text: `${u.data.mlet}        ${an(pcls.explain)} (${self})`,
+                    firstmatch: self,
+                    found: 1,
+                };
+        }
+        // C ref: display.c display_self() draws a visible steed's (ridden) glyph at the
+        // hero's location (maybe_display_usteed), so the class symbol is the steed's.
+        if (!u.Upolyd && u.usteed && mon_visible(u.usteed) && u.usteed.data?.mlet) {
+            const scls = def_monsyms.find((d) => d.sym === u.usteed.data.mlet && d.explain);
+            if (scls)
+                return {
+                    text: `${u.usteed.data.mlet}        ${an(scls.explain)} (${self})`,
                     firstmatch: self,
                     found: 1,
                 };

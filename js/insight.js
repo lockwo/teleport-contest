@@ -30,7 +30,7 @@ import { phase_of_the_moon, friday_13th, night, midnight as midnight_cal, NEW_MO
 import { race_attrmax } from './u_init.js';
 import { acurr_eff, stone_luck } from './attrib.js';
 import { depth } from './hacklib.js';
-import { endgamelevelname } from './dungeon.js';
+import { endgamelevelname, has_ceiling } from './dungeon.js';
 import { newuexp, has_innate, innate_source, rank_of } from './exper.js';
 import { youHaveSearching, youHaveFast, youHaveVeryFast } from './allmain.js';
 import { Infravision, Blind } from './vision.js';
@@ -710,7 +710,9 @@ export function enlightenment_lines(final = 0, basic = true) {
     // situations the hero always knows (levitating/flying, underwater,
     // swimming, walking on water), before the internal troubles.
     let youtoo = 'You ';
-    if (u.usteed) {
+    /* C: if hero dies while dismounting, u.usteed will still be set; ignore the steed then */
+    if (u.usteed && !(final === 2 /* ENL_GAMEOVERDEAD */
+                      && /riding accident$/.test(game.killer?.name || game._killer_name || ''))) {
         const steedname = y_monnam(u.usteed);
         youAre(`riding ${steedname}`);
         youtoo += `and ${steedname} `;
@@ -885,6 +887,11 @@ export function enlightenment_lines(final = 0, basic = true) {
     }
     // current weapon + skill
     weaponInsight(youAre, youHave, enlLine, final);
+    // C ref: insight.c:1252 — the monk's suit penalty is too blatant to be
+    // restricted to magic.
+    if (tux_penalty() && !u.Upolyd) {
+        youHave(`${enlght_combatinc('to hit', -MONK_SPELARMR, final, null)} due to your ${suit_simple_name(game.uarm)}`);
+    }
     // C ref: status_enlightenment() tail — "report 'nudity'": no armor worn at
     // all (the covered heroes never have uroleplay.nudist set).
     if (!game.uarm && !game.uarmu && !game.uarmc && !game.uarms
@@ -3002,8 +3009,8 @@ export function status_enlightenment(mode, final) {
     /* current weapon(s) and corresponding skill level(s) */
     weapon_insight(final);
     /* the monk's suit penalty is too blatant to be restricted to magic */
-    if (game.iflags?.tux_penalty && !u.Upolyd) {
-        buf = enlght_combatinc('to hit', -(game.urole?.spelarmr | 0), final, null);
+    if (tux_penalty() && !u.Upolyd) {
+        buf = enlght_combatinc('to hit', -MONK_SPELARMR, final, null);
         buf += ` due to your ${suit_simple_name(game.uarm)}`;
         you_have(buf, '', final);
     }
@@ -3058,6 +3065,15 @@ function EWounded_legs() {
 // C ref: insight.c youhiding(TRUE, final) — the enlightenment line; the phrase
 // itself is shared with the '#monster' message (polyself.js youhiding_buf).
 function youhiding(_via_enlghtmt, final) { you_are(youhiding_buf(), '', final); }
+
+// C ref: worn.c:138 setworn() `iflags.tux_penalty = (uarm && Role_if(PM_MONK)
+// && urole.spelarmr)`, cleared by setnotworn() once uarm is gone: the Monk is
+// wearing body armour (PM_MONK == 5, as in eat.js).
+// roles[PM_MONK].spelarmr (role.c); js/role.js carries no spell fields.
+const MONK_SPELARMR = 20;
+function tux_penalty() {
+    return !!(game.uarm && game.urole?.mnum === 5);
+}
 
 // ── insight.c:1269 weapon_insight() ────────────────────────────────────────
 const SHIELD_OF_REFLECTION = 158; // js/do_wear.js:56
@@ -3571,8 +3587,8 @@ export function attributes_enlightenment(_unused_mode, final) {
         you_have('slower digestion', from_what_p(SLOW_DIGESTION), final);
     if (u.uhitinc) {
         buf = enlght_combatinc('to hit', u.uhitinc, final, null);
-        if (game.iflags?.tux_penalty && !u.Upolyd) {
-            const sa = game.urole?.spelarmr | 0;
+        if (tux_penalty() && !u.Upolyd) {
+            const sa = MONK_SPELARMR;
             buf += ` ${
                 (u.uhitinc < 0) ? 'increasing'
                 : (u.uhitinc < 4 * sa / 5) ? 'partly offsetting'
@@ -3802,7 +3818,6 @@ function Luck() { return (game.u?.uluck | 0) + (game.u?.moreluck | 0); }
 // the Orb of Fate / Tsurugi of Muramasa).  js/attrib.js owns the port.
 // C ref: mondata.h is_clinger / dungeon.c has_ceiling.
 function is_clinger(ptr) { return (mflags1_of(ptr) & M1_CLING) !== 0; }
-function has_ceiling(_lev) { return true; } /* only air/water levels lack one */
 // C ref: mondata.h lays_eggs(ptr) == (mflags1 & M1_OVIPAROUS).
 function lays_eggs(ptr) { return (mflags1_of(ptr) & M1_OVIPAROUS) !== 0; }
 // C ref: monsters.h PM_GREEN_SLIME.

@@ -39,18 +39,18 @@ import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, M_ATTK_MISS } from './con
 import {
     FOOD_CLASS, BALL_CLASS, CHAIN_CLASS, ROCK_CLASS, CORPSE, TIN, nextoid,
     GOLD_PIECE, COIN_CLASS, BOULDER, objects as OBJECTS, is_rider_pm, weight,
-    place_object, eaten_stat,
+    place_object, eaten_stat, peek_at_iced_corpse_age,
 } from './mkobj.js';
 import { may_dig } from './dig.js';
 import { mflags1_of, msound_of, perceives_flag, M1_NOEYES,
     M1_ACID, M1_POIS, M1_CARNIVORE, M1_HERBIVORE, M1_METALLIVORE,
     humanoid, is_human_flag, is_elf_flag, is_dwarf_flag, is_gnome_flag,
-    is_orc_flag, is_giant_flag, is_undead_flag,
+    is_orc_flag, is_giant_flag, is_undead_flag, is_demon_flag, likes_gems_flag, mflags2_of, M2_MINION,
     is_animal, mindless, nohands, M1_TUNNEL, M1_NEEDPICK,
     passes_walls_flag, throws_rocks_flag, is_swimmer_flag,
     regenerates_flag as regenerates, is_flyer_flag, touch_petrifies } from './monflags_data.js';
 import { healmon, mon_hates_silver, max_mon_load } from './mon.js';
-import { max_passive_dmg, resists_ston, resists_poison, resists_acid } from './mondata.js';
+import { max_passive_dmg, resists_ston, resists_poison, resists_acid, big_little_match } from './mondata.js';
 import { attacktype, dmgtype, mattk_of, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
 import { gettrack } from './track.js';
 import { monster_by_pmidx, mon_msize, mon_cwt, mon_cnutrit, pm_to_cham, mpickobj } from './makemon.js';
@@ -185,12 +185,25 @@ function corpse_is_vegan(fdat) {
     return c === S_GHOST;
 }
 
-// C ref: mondata.c same_race(pm1, pm2) — dogfood()'s cannibalism test.  Player
-// races first (each has its own M2 predicate), then the coarser body classes.
+// C ref: mondata.c:771 same_race(pm1, pm2) — dogfood()'s cannibalism test.
+// Player races first (each has its own M2 predicate), then the coarser body
+// classes, then growth progressions (big_little_match-style walk), then the
+// few explicit pairs.  Species the C table does not link (troll vs ice troll)
+// are NOT the same race.
 function is_golem_data(ptr) { return ptr?.mcls === S_GOLEM; }
+const S_IMP_ = 9, S_UNICORN_ = 21, S_CENTAUR_ = 29, S_NAGA_ = 40, S_LICH_ = 38,
+      S_MUMMY_ = 39, S_WRAITH_ = 49, S_ZOMBIE_ = 52;
+function is_unicorn_data(ptr) { return ptr?.mcls === S_UNICORN_ && likes_gems_flag(ptr); }
+function is_rider_data(ptr) {
+    return ptr?.name === 'Death' || ptr?.name === 'Famine' || ptr?.name === 'Pestilence';
+}
+function is_longworm_data(ptr) {
+    return ptr?.name === 'long worm' || ptr?.name === 'long worm tail';
+}
 export function same_race(pm1, pm2) {
     if (!pm1 || !pm2) return false;
     if (pm1 === pm2 || pm1.pmidx === pm2.pmidx) return true;
+    const let1 = pm1.mcls, let2 = pm2.mcls;
     if (is_human_flag(pm1)) return is_human_flag(pm2);
     if (is_elf_flag(pm1)) return is_elf_flag(pm2);
     if (is_dwarf_flag(pm1)) return is_dwarf_flag(pm2);
@@ -198,7 +211,41 @@ export function same_race(pm1, pm2) {
     if (is_orc_flag(pm1)) return is_orc_flag(pm2);
     if (is_giant_flag(pm1)) return is_giant_flag(pm2);
     if (is_golem_data(pm1)) return is_golem_data(pm2);
-    return pm1.mcls === pm2.mcls;
+    if (pm1.name === 'mind flayer' || pm1.name === 'master mind flayer')
+        return pm2.name === 'mind flayer' || pm2.name === 'master mind flayer';
+    const kobz = (p) => p.mcls === S_KOBOLD || p.name === 'kobold zombie'
+        || p.name === 'kobold mummy';
+    if (let1 === S_KOBOLD || pm1.name === 'kobold zombie' || pm1.name === 'kobold mummy')
+        return kobz(pm2);
+    if (let1 === S_OGRE) return let2 === S_OGRE;
+    if (let1 === S_NYMPH) return let2 === S_NYMPH;
+    if (let1 === S_CENTAUR_) return let2 === S_CENTAUR_;
+    if (is_unicorn_data(pm1)) return is_unicorn_data(pm2);
+    if (let1 === S_DRAGON) return let2 === S_DRAGON;
+    if (let1 === S_NAGA_) return let2 === S_NAGA_;
+    if (is_rider_data(pm1)) return is_rider_data(pm2);
+    if ((mflags2_of(pm1) & M2_MINION) !== 0) return (mflags2_of(pm2) & M2_MINION) !== 0;
+    if (pm1.name === 'tengu' || pm2.name === 'tengu') return false;
+    if (let1 === S_IMP_) return let2 === S_IMP_;
+    else if (let2 === S_IMP_) return false;
+    if (is_demon_flag(pm1)) return is_demon_flag(pm2);
+    if (is_undead_flag(pm1)) {
+        if (let1 === S_ZOMBIE_) return let2 === S_ZOMBIE_;
+        if (let1 === S_MUMMY_) return let2 === S_MUMMY_;
+        if (let1 === S_VAMPIRE) return let2 === S_VAMPIRE;
+        if (let1 === S_LICH_) return let2 === S_LICH_;
+        if (let1 === S_WRAITH_) return let2 === S_WRAITH_;
+        if (let1 === S_GHOST) return let2 === S_GHOST;
+    } else if (is_undead_flag(pm2)) return false;
+    /* check for monsters which grow into more mature forms */
+    if (let1 === let2 && big_little_match(pm1.pmidx, pm2.pmidx)) return true;
+    /* not caught by little/big handling */
+    if (pm1.name === 'gargoyle' || pm1.name === 'winged gargoyle')
+        return pm2.name === 'gargoyle' || pm2.name === 'winged gargoyle';
+    if (pm1.name === 'killer bee' || pm1.name === 'queen bee')
+        return pm2.name === 'killer bee' || pm2.name === 'queen bee';
+    if (is_longworm_data(pm1)) return is_longworm_data(pm2);
+    return false;
 }
 
 // C ref: obj.h polyfood(obj) — an ofood() (corpse/egg/tin) whose corpsenm is a
@@ -352,9 +399,10 @@ export function dogfood(mon, obj) {
         // even carnivores eat carrots while temporarily blind (mblind)
         const mblind = !mon.mcansee && haseyes(mdat);
         const moves = game.moves || 1;
-        // C ref: mkobj.c peek_at_iced_corpse_age() — the corpse's age, unshifted
-        // for an off-ice corpse (we have no ice-box aging).
-        const corpse_age = obj.age ?? moves;
+        // C ref: mkobj.c peek_at_iced_corpse_age() — account for time while
+        // the corpse is on floor ice or in an ice box before deciding whether
+        // it has rotted.
+        const corpse_age = peek_at_iced_corpse_age(obj);
         const isLizardLichen = (fx === 158 /*lichen*/ || fx === 325 /*lizard*/);
 
         // C ref: dog.c:1041-1055 — the ghoul diet, which inverts the freshness

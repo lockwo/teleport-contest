@@ -241,7 +241,7 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
     if (game.u?.ustuck === mtmp) {
         if (game.u.uswallow) {
             const { u_on_newpos } = await import('./do.js');
-            u_on_newpos(mtmp.mx, mtmp.my);
+            await u_on_newpos(mtmp.mx, mtmp.my);
             const { check_special_room } = await import('./shkroom.js');
             await check_special_room(false);
             const { docrt } = await import('./display.js');
@@ -773,7 +773,7 @@ export async function teleds(nux, nuy, teleds_flags) {
     }
 
     /* must set u.ux,u.uy AFTER drag_ball(), which may need the old position */
-    u_on_newpos_(nux, nuy);   /* set u.<x,y>, usteed-><mx,my>; cliparound() */
+    await u_on_newpos_(nux, nuy);   /* set u.<x,y>, usteed-><mx,my>; cliparound() */
     const { fill_pit } = await import('./trap.js');
     await fill_pit(u.ux0, u.uy0);
     if (ball_active && uchain_() && uchain_().where === OBJ_FREE)
@@ -1549,7 +1549,7 @@ function findgd_() { return null; }
 // C ref: trap.c reset_utrap(msg) — the FALSE arm used by teleportation.
 function reset_utrap_(_msg) { const u = game.u; if (u) { u.utrap = 0; u.utraptype = 0; } }
 // C ref: hack.c u_on_newpos(x, y) — js/mklev.js:170, private.
-function u_on_newpos_(x, y) {
+async function u_on_newpos_(x, y) {
     const u = game.u;
     if (!u) return;
     u.ux = x; u.uy = y;
@@ -1559,6 +1559,7 @@ function u_on_newpos_(x, y) {
     /* C dungeon.c u_on_newpos(): a same-level relocation lets nearby generic
        objects be observed up close (feeds the '\' discoveries list). */
     see_nearby_objects();
+    await (await import('./dungeon.js')).earth_sense();
 }
 // C ref: display.c see_monsters() / notice_mon_off()/on() (mon.c) /
 // vision.c vision_recalc(control) / detect.c switch_terrain().

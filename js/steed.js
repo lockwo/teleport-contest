@@ -30,7 +30,7 @@ import { DEADMONSTER, mvitals_died, m_detach } from './mon.js';
 import { killed, corpse_chance, make_corpse } from './uhitm.js';
 import { is_pool, is_lava } from './dbridge.js';
 import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
-import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu } from './trap.js';
+import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, float_down } from './trap.js';
 import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { surface } from './dungeon.js';
 import { hliquid, mon_nam } from './do_name.js';
@@ -47,7 +47,7 @@ import { greatest_erosion } from './weapon.js';
 
 import { Maybe_Half_Phys } from './zap.js';
 import { losehp_do } from './do.js';
-import { pickup_after_move, getdir } from './cmd.js';
+import { pickup_after_move, getdir, test_move_quiet } from './cmd.js';
 
 // C ref: steed.c doride()/kick_steed() call the SHARED cmd.c getdir(); this
 // file used to carry a cut-down copy that ignored the command queue, the
@@ -230,6 +230,8 @@ export async function mount_steed(mtmp, force) {
         if (Flying_fu())
             await pline(`You and ${mon_nam(mtmp)} take flight together.`);
     }
+    // C ref: steed.c:369-370 — a polearm is a proper mounted weapon.
+    if (game.uwep && is_pole(game.uwep)) game.unweapon = false;
     u.usteed = mtmp;
     game.botl = true;
 
@@ -239,7 +241,6 @@ export async function mount_steed(mtmp, force) {
     // the steed is taken off the level map (it now rides with the hero and is
     // drawn at the hero's position by the renderer's mounted-hero handling).
     const nux = mtmp.mx, nuy = mtmp.my;
-    const ux0 = u.ux, uy0 = u.uy;
 
     // remove_monster(x,y) (rm.h) only NULLs the map grid pointer
     // (svl.level.monsters[x][y]); it does NOT unlink the steed from the `fmon`
@@ -254,24 +255,11 @@ export async function mount_steed(mtmp, force) {
     // colocated with, and drawn as, the hero.
     mtmp.mridden = true;
 
-    // u_on_newpos: hero (and steed) move onto the steed's square.
-    u.ux = nux;
-    u.uy = nuy;
-    mtmp.mx = nux;
-    mtmp.my = nuy;
-
-    // Redraw the hero's old tile (now vacated) and the new tile (steed glyph
-    // drawn via display.js's mounted-hero handling, which keys off u.usteed).
-    // C ref: steed.c mount_steed -> teleds(steed->mx,my,ALLOW_DRAG), whose tail
-    // (teleport.c) does newsym(old) + see_monsters() + vision_full_recalc=1 +
-    // vision_recalc(0): moving the hero to the steed's square must recompute
-    // line-of-sight from the new position (e.g. a doorway in the room wall that
-    // only comes into view once the hero shifts over onto the steed).  Mirrors
-    // the identical teleds tail already used by hack.js jump().
-    newsym(ux0, uy0);
-    newsym(nux, nuy);
-    game.vision_full_recalc = 1;
-    vision_recalc(0);
+    // C ref: steed.c:379-381 teleds(steed->mx, steed->my, TELEDS_ALLOW_DRAG): u_on_newpos
+    // (moves the steed with the hero), newsym + see_monsters + vision, then
+    // spoteffects(TRUE) -- the "You see here ..." look_here/pickup of whatever
+    // lies on the steed's square.
+    await teleds(nux, nuy, TELEDS_ALLOW_DRAG);
     return true;
 }
 
@@ -289,37 +277,13 @@ function steed_accessible(x, y) {
     return true;
 }
 
-// C ref: hack.c bad_rock(mdat,x,y) — for a humanoid hero, a square is "bad
-// rock" when it is not accessible (a wall / closed door / stone).  Used only
-// for the diagonal-squeeze test below.
-function bad_rock(x, y) { return !steed_accessible(x, y); }
-
-// C ref: hack.c doorless_door(x,y) — a doorway whose door leaf is gone
-// (NODOOR/BROKEN); the rogue level's doorless doorways still disallow
-// diagonal access, so they are treated as if a door were present.
-function steed_doorless_door(x, y) {
-    const loc = game.level?.at(x, y);
-    if (!loc || !IS_DOOR(loc.typ)) return false;
-    if (Is_rogue_level(game.u?.uz)) return false;
-    return !((loc.doormask ?? 0) & ~(D_NODOOR | D_BROKEN));
-}
-
-// C ref: hack.c test_move(ux,uy,dx,dy,TEST_MOVE) — the subset that matters for
-// dismount landing-spot selection: a diagonal step is rejected when squeezing
-// between two walls, or when leaving a doorway diagonally (steed.c dismount
-// lands the hero on an adjacent square, so the origin can be an open door —
-// seed0104's #ride dismount stands in one), and the destination itself must
-// be accessible (checked by the caller).
+// C ref: hack.c test_move(ux,uy,dx,dy,TEST_MOVE), as used by mount_steed() (the
+// target is the steed's square) and landing_spot() (the candidate square): the
+// full silent TEST_MOVE query, so an obstructed/iron-barred/closed-door target,
+// a diagonal into or out of an intact doorway and a tight diagonal squeeze all
+// refuse ("You are unable to swing your leg over.").
 function steed_test_move(ux, uy, dx, dy) {
-    if (dx && dy) {
-        if (bad_rock(ux, uy + dy) && bad_rock(ux + dx, uy))
-            return false; // can't squeeze diagonally between two walls
-        const originLoc = game.level?.at(ux, uy);
-        if (!game.u?.uprops?.Passes_walls && originLoc && IS_DOOR(originLoc.typ)
-            && !steed_doorless_door(ux, uy))
-            return false; // can't move diagonally out of a doorway with a door
-    }
-    return true;
+    return test_move_quiet(ux + dx, uy + dy, dx, dy);
 }
 
 // MON_AT excluding the ridden steed itself (which is colocated with the hero
@@ -328,7 +292,7 @@ function steed_mon_at(x, y) {
     const mons = game.level?.monsters;
     if (!mons) return null;
     for (const m of mons) {
-        if (m.mridden) continue;
+        if (m.mridden || DEADMONSTER(m)) continue;   /* dead monsters are off the grid */
         if (m.mx === x && m.my === y) return m;
     }
     return null;
@@ -607,8 +571,10 @@ export async function dismount_steed(reason) {
                 }
             }
             if (!DEADMONSTER(mtmp)) {
+                game.in_steed_dismounting = true;
                 await teleds(cc.x, cc.y, TELEDS_ALLOW_DRAG);
                 if (sobj_at(BOULDER, cc.x, cc.y)) sokoban_guilt();
+                game.in_steed_dismounting = false;
                 if (save_utrap) await mon_mintrap(mtmp, NO_TRAP_FLAGS);
             }
         } else {
@@ -619,6 +585,9 @@ export async function dismount_steed(reason) {
     }
 
     if (reason !== DISMOUNT_ENGULFED && reason !== DISMOUNT_BONES) {
+        game.in_steed_dismounting = true;
+        await float_down(0, W_SADDLE);
+        game.in_steed_dismounting = false;
         game.botl = true;
         const { encumber_msg } = await import('./invent.js');
         await encumber_msg();

@@ -365,7 +365,6 @@ export function see_nearby_objects() {
             const rg = game.level?.at(ix, iy)?.remembered_glyph;
             const wasGeneric = obj_is_generic(obj)
                 && !!rg && rg.objotyp === obj.otyp && rg.color === GENERIC_OBJ_COLOR;
-            if (process.env.DISCOLOG) console.error('[snob] u=(' + x + ',' + y + ') tile=(' + ix + ',' + iy + ') otyp=' + obj.otyp + ' ' + (obj.oname || '') + ' bnd=' + (globalThis.__BND || 0));
             obj.dknown = 1;
             observe_object(obj);
             if (wasGeneric) newsym(ix, iy);
@@ -954,13 +953,13 @@ const _WALL_NAME = {
 function wall_cmap_glyph(idx) {
     if (idx === S_stone || idx == null) return { ch: ' ', color: NO_COLOR, dec: false };
     const ov = symOverrideChar(_WALL_NAME[idx]);
-    if (ov) return { ch: ov, color: wall_cmap_color(), dec: false };
+    if (ov) return { ch: ov, color: wall_cmap_color(), dec: false, wall: true };
     // C ref: dat/symbols plain changes only the nine corner/junction walls.
     if (/^plain$/i.test(game.symset || '') && idx >= S_tlcorn && idx <= S_trwall)
-        return { ch: '+', color: wall_cmap_color(), dec: false };
+        return { ch: '+', color: wall_cmap_color(), dec: false, wall: true };
     const dec = useDECgraphics();
     const ch = dec ? _WALL_DEC[idx] : _WALL_ASCII[idx];
-    return { ch: ch ?? (dec ? 'q' : '-'), color: wall_cmap_color(), dec };
+    return { ch: ch ?? (dec ? 'q' : '-'), color: wall_cmap_color(), dec, wall: true };
 }
 
 // C ref: display.h cmap_walls_to_glyph() + display.c reset_glyphmap's
@@ -1045,7 +1044,7 @@ export function known_branch_stairs(sway) {
 // just the display character for one cmap symbol; the symbol's base color is
 // untouched.  Overrides parsed from the rc are always plain literal
 // characters (no high bit), so they never need DEC-font translation.
-function symOverrideChar(name, keepCtl = false) {
+export function symOverrideChar(name, keepCtl = false) {
     const ov = rogue_symset() ? game.roguesymoverride : game.symoverride;
     if (ov && ov[name]) return ov[name];
     const set = String((rogue_symset() ? game.roguesymset : game.symset) || '').toLowerCase();
@@ -1655,7 +1654,9 @@ export function getpos_find_feature(ch, cx, cy) {
         // remembered here (glyph_is_cmap), so an object lying on the trap
         // (remembered object glyph) hides it from the search.
         if (trap?.tseen && !remembered?.objotyp && !remembered?.pile
-            && trap_glyph(trap).ch === ch) return true;
+            && (trap_glyph(trap).ch === ch
+                /* C: `c == '^' && is_cmap_trap(sidx)` also matches webs etc. */
+                || ch === '^')) return true;
         return false;
     };
     for (let ty = cy; ty <= ROWNO - 1; ty++) {
@@ -1784,6 +1785,7 @@ export function see_monsters() {
     for (let i = mons.length - 1; i >= 0; i--) {
         const mon = mons[i];
         if (!mon || (mon.mhp != null && mon.mhp <= 0)) continue;
+        if (mon.mridden && game.program_state?.gameover) continue;
         newsym(mon.mx, mon.my);
         // C ref: worm.c see_wsegs(mon) — every tail segment short of the
         // hidden one under the head.  Inlined: worm.js imports this module.
@@ -1954,7 +1956,9 @@ function remember_bg(loc, bg) {
     // levl[x][y].glyph is overwritten, so a detect/trap-reveal stamp is stale.
     loc.mapped_trap_ttyp = 0;
     loc.remembered_glyph = { ch: m.ch, color: m.color, decgfx: m.dec, pile: !!bg.pile, bwEngr: !!bg.bwEngr, female: !!m.female,
-                             objotyp: bg.mem ? 0 : bg.objotyp, hallucotyp: m.hallucotyp, corpsenm: m.corpsenm };
+                             objotyp: bg.mem ? 0 : bg.objotyp, hallucotyp: m.hallucotyp, corpsenm: m.corpsenm,
+                             /* the remembered glyph is a wall cmap glyph (S_vwall..S_trwall) */
+                             wall: !!m.wall };
 }
 
 // Value identity of loc.remembered_glyph, standing in for C's `lev->glyph`
@@ -2116,6 +2120,9 @@ function feel_location_terrain(x, y) {
             if (game.flags?.dark_room) rg.darkroom = true;
             else loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
             darkroom_shown = true;
+            // C: show_glyph(x, y, lev->glyph = S_darkroom / S_stone) draws the new glyph
+            const m = loc.remembered_glyph;
+            show_glyph_cell(x, y, m.ch, m.color, m.decgfx, bg_attr(m), false, !!m.darkroom);
         }
     }
     // C ref: display.c _map_location() tail (via feel_location's can-reach-floor
@@ -2186,7 +2193,6 @@ function display_sensed_monster(x, y, mon, see_it) {
 }
 
 export function newsym(x, y) {
-    if (globalThis.__DISPLOG) globalThis.__DISPLOG.push(`@nsym ${x},${y}`); // TMPDBG
     // C ref: display.c:925 — don't try to produce map output when the level is
     // in a state of flux (mklev, save, restore).
     if (_suppress_map_output()) return;
@@ -3028,7 +3034,9 @@ function _botFields(order, transient = null) {
     // C ref: botl.c bot1() — hp = Upolyd ? u.mh : u.uhp; hpmax likewise u.mhmax.
     const curHp = status_held('hp', u.Upolyd ? u.mh : u.uhp);
     const curHpMax = (status_held('hpmax', u.Upolyd ? u.mhmax : u.uhpmax)) || 0;
-    const hpShown = curHp === -1
+    // botl.c:259 guards on u.uhp alone: a polymorphed hero whose u.mh is -1
+    // is still redrawn (and shown clamped to 0).
+    const hpShown = (u.uhp === -1 && curHp === -1)
         ? (game._botlHpShown ?? 0)
         : (game._botlHpShown = Math.max(0, curHp || 0));
     raw[BL_HP] = String(Math.min(hpShown, 9999));
@@ -3644,7 +3652,12 @@ export function capture_screen_for_level_change() {
     for (let y = 0; y < ROWNO; y++)
         for (let x = 1; x < COLNO; x++) {
             const loc = game.level?.at(x, y);
-            if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) continue;
+            if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) {
+                // a blank but remembered square still owns its screen cell
+                // (renderStatusLines' mapWins test), though it draws nothing
+                if (loc?.remembered_glyph) cells[y * COLNO + x] = { remembered_glyph: loc.remembered_glyph };
+                continue;
+            }
             cells[y * COLNO + x] = { disp_ch: loc.disp_ch, disp_decgfx: loc.disp_decgfx,
                 disp_color: loc.disp_color, disp_attr: loc.disp_attr, disp_dark: loc.disp_dark };
         }
@@ -3953,7 +3966,9 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
             const l = _displayed_loc(c + 1 + clipx, my);
             return l?.disp_ch ? `${l.disp_ch}|${l.disp_color}|${l.disp_attr | 0}|${l.remembered_glyph?.darkroom ? 'd' : ''}|${l.remembered_glyph ? 'g' : ''}` : '';
         };
-        if (game._statusSnapLevel !== game.level) game._statusSnap = null;
+        // A held departing frame (goto_level's postponed flushes) still shows the
+        // OLD level, so its snapshot of what owns each status cell stays valid.
+        if (game._statusSnapLevel !== game.level && !game._staleFrame) game._statusSnap = null;
         const snap = sharedRow && game._statusSnap ? game._statusSnap : null;
         const owned = (c) => !!snap && (top + r) in snap && snap[top + r][c] !== undefined
             && snap[top + r][c] === mapSig(c);
@@ -3974,7 +3989,9 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
                 const have = display.grid?.[top + r]?.[c];
                 const mapWins = (have && have.ch && have.ch !== ' ')
                     || (my >= 0 && my < ROWNO
-                        && game.level?.at?.(c + 1 + clipx, my)?.remembered_glyph);
+                        && (game._staleFrame
+                            ? game._staleFrame.cells[my * COLNO + c + 1 + clipx]
+                            : game.level?.at?.(c + 1 + clipx, my)?.remembered_glyph));
                 if (mapWins) {
                     // the map owns this cell until the status row is repainted
                     if (game._statusSnap?.[top + r]) game._statusSnap[top + r][c] = undefined;
@@ -4558,10 +4575,11 @@ async function botl_flush(direct = false) {
     // status field, covering any map glyph drawn on the status rows.
     if (game.botlx) {
         game._statusPrevCells = null;
-        // C ref: bot_via_windowport() with disp.botlx resends every field, so
-        // tty_status_update() restores BL_CAP/BL_LEVELDESC text that
-        // make_things_fit() had shrunk or padded.
-        if (game._ttyStatus) { game._ttyStatus.prevCap = null; game._ttyStatus.prevLev = null; }
+        // C ref: botl.c evaluate_and_notify_windowport() — disp.botlx alone only
+        // triggers status_update(BL_RESET) (make_things_fit(FORCE_RESET)); a field
+        // is resent only when its value changed (or gu.update_all, set just by
+        // status_initialize()/reset_status_hilites()).  So the " " that
+        // shrink_enc(0) leaves in status_vals[BL_CAP] survives a docrt().
     }
     game.botl = game.botlx = false;
     if (game._statusClsBlank) game._statusDocrt = false; // status repaints AFTER the map

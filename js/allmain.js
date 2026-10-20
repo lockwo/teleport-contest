@@ -82,7 +82,7 @@ function realUinitRan() {
 
 // C ref: allmain.c welcome() — svp.plname (the name in play; "wizard" when a
 // debug-mode game never got an explicit -u name).
-function welcomePlname() {
+export function welcomePlname() {
     return game.flags?.debug ? 'wizard' : (game.plname || 'Hero');
 }
 
@@ -1105,7 +1105,6 @@ export async function moveloop_turn() {
         let monscanmove;
         do {
             monscanmove = await movemon();
-            if (process.env.NHDBG) console.error('DBG movemon ret', monscanmove, 'umov', g.u.umovement, 'moves', g.moves, 'pos', g.u.ux, g.u.uy, 'rng', (await import('./rng.js')).getRngLog().length);
             if (g.u.umovement >= NORMAL_SPEED) break; // hero's turn again
             if (g.program_state?.gameover) break;      // hero died mid-movemon
         } while (monscanmove);
@@ -1282,6 +1281,7 @@ export async function moveloop_turn() {
                             await you_were();
                         }
                         g.context.mvl_change = 0;
+                        if (g.program_state?.gameover) break;   // system shock done() never returns
                     }
                 }
             }
@@ -2085,6 +2085,8 @@ export async function moveloop_core() {
         g.context.move = 1;
         g._pendingTurn = true;
         if (!busy) g._force_box = null;
+        else if (monster_nearby())
+            await (await import('./hack.js')).stop_occupation(true);
         return;
     }
 

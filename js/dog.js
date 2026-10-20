@@ -241,12 +241,11 @@ function makedog_mon(pettype, x, y) {
         mx, my, mtame: 10, mpeaceful: 1,
         mcanmove: 1, mcansee: 1, msleeping: 0,
         // C ref: dog.c initedog() — edog structure for a freshly-tamed pet.
-        // apport = ACURR(A_CHA); the hero's attributes aren't rolled until
-        // u_init runs (just after makedog), so leave apport null and resolve it
-        // lazily on first use (dogmove.js), once acurr is populated.
+        // C ref: dog.c initedog() runs before u_init populates attributes,
+        // so ACURR(A_CHA) is its minimum value, 3, for the starting pet.
         edog: {
             droptime: 0, dropdist: 10000,
-            apport: null, // resolved lazily from ACURR(A_CHA)
+            apport: 3,
             whistletime: 0,
             // C ref: dog.c:63 — "force error if used before set".  dog_goal's
             // first out-of-sight call therefore takes the reuse-ogoal arm and
@@ -918,7 +917,7 @@ export async function mon_arrive(mtmp, when) {
 
     mtmp.mstate = (mtmp.mstate || 0) | MON_STILL_ARRIVING;
     // The level array is oldest-first; its tail is C's fmon head.
-    fmon_list().push(mtmp);
+    { const fm = fmon_list(); if (!fm.includes(mtmp)) fm.push(mtmp); }
     if (mtmp.isshk) {
         const { set_residency } = await import('./shk.js');
         set_residency(mtmp, false);

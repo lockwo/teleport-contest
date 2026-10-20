@@ -191,7 +191,6 @@ function soko_link_doors_to_room(croom) {
 // (dist2 to the first door)^2, capped by a per-room gold budget.
 function soko_fill_zoo(croom) {
     if (!croom.fdoor && croom.doorct == null) soko_link_doors_to_room(croom);
-    if (process.env.NH_DEBUG_ZOO) console.error('DEBUG zoo', JSON.stringify({ lx: croom.lx, ly: croom.ly, hx: croom.hx, hy: croom.hy, doorct: croom.doorct, fdoor: croom.fdoor }));
     const rmno = croom.roomnoidx + ROOMOFFSET;
     const lvl = level_difficulty();
     let goldlim = 500 * lvl;
