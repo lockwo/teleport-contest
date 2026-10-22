@@ -17,7 +17,7 @@
 // trace; they are transcribed straight from the C.
 
 import { game, hooks } from './gstate.js';
-import { hliquid } from './do_name.js';
+import { hliquid, mhe } from './do_name.js';
 import {
     STONE, DBWALL, POOL, MOAT, WATER, DRAWBRIDGE_UP, LAVAPOOL,
     LAVAWALL, DOOR, ROOM, ICE, DRAWBRIDGE_DOWN, D_NODOOR, W_NONDIGGABLE,
@@ -28,7 +28,7 @@ import {
     XKILL_GIVEMSG, XKILL_NOMSG, XKILL_NOCORPSE, XKILL_NOCONDUCT, OBJ_FREE, OBJ_FLOOR,
     MAY_HIT } from './const.js';
 import { rn2, rnd } from './rng.js';
-import { m_at, newsym, pline, canseemon_shared } from './display.js';
+import { m_at, newsym, pline, canseemon_shared, You_see, You_hear } from './display.js';
 import { block_point, unblock_point, does_block, vision_recalc, cansee } from './vision.js';
 import { t_at, deltrap, spoteffects } from './trap.js';
 import { mksobj_at, objects } from './mkobj.js';
@@ -39,6 +39,7 @@ import { wake_nearto } from './cmd.js';
 import { mflags1_of, M1_FLY, M1_SWIM, M1_WALLWALK, noncorporeal } from './monflags_data.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { revive_nasty } from './do.js';
+import { delallobj, sobj_at } from './invent.js';
 
 const OTYP = new Map(objects.map((o) => [o.sym, o.otyp]));
 const IRON_CHAIN = OTYP.get('IRON_CHAIN');
@@ -632,7 +633,7 @@ export async function close_drawbridge(x, y) {
     if (!lev1 || lev1.typ !== DRAWBRIDGE_DOWN) return;
     const { x: x2, y: y2 } = get_wall_for_db(x, y);
     if (cansee(x, y) || cansee(x2, y2)) {
-        await pline('You see a drawbridge '
+        await You_see('a drawbridge '
                     + (((game.u.ux === x || game.u.uy === y) && !Underwater())
                        || distu(x2, y2) < distu(x, y) ? 'coming' : 'going')
                     + ' up!');
@@ -688,7 +689,7 @@ export async function open_drawbridge(x, y) {
     if (!lev1 || lev1.typ !== DRAWBRIDGE_UP) return;
     const { x: x2, y: y2 } = get_wall_for_db(x, y);
     if (cansee(x, y) || cansee(x2, y2)) {
-        await pline('You see a drawbridge '
+        await You_see('a drawbridge '
                     + ((distu(x2, y2) < distu(x, y)) ? 'going' : 'coming')
                     + ' down!');
     } else { /* "5 gears turn" for castle drawbridge tune */
@@ -874,10 +875,8 @@ function OBJ_AT(x, y) {
 // objects carrying .ox/.oy (js/mkobj.js place_object pushes onto it,
 // js/display.js vobj_at scans it that way); C's svl.level.objects[x][y] chain is
 // newest-first, which for a push-ordered array is the reverse of insertion.
-// NOTE: js/invent.js's delallobj()/sobj_at()/(:2890,:2896) index that flat array
-// as `objects[x][y]`, so they match nothing and silently do nothing — a real bug
-// in a file outside this lease (see `deferred`), which is why the two helpers
-// below are local rather than imported.
+// (delallobj()/sobj_at() are js/invent.js's: delallobj() goes through delobj_core(),
+// whose obj_resists(obj, 0, 0) draws one rn2(100) per deleted object.)
 function floor_pile(x, y) {
     const out = [];
     for (const o of (game.level?.objects || []))
@@ -885,34 +884,9 @@ function floor_pile(x, y) {
     return out;
 }
 
-// C ref: invent.c sobj_at(otyp, x, y).
-function sobj_at(otyp, x, y) {
-    for (const o of floor_pile(x, y)) if (o.otyp === otyp) return o;
-    return null;
-}
-
-// C ref: invent.c delallobj(x, y) — delete every object on the square.
-function delallobj(x, y) {
-    const arr = game.level?.objects;
-    if (!arr) return;
-    for (const o of floor_pile(x, y)) {
-        const ix = arr.indexOf(o);
-        if (ix >= 0) arr.splice(ix, 1);
-        o.where = OBJ_FREE;
-    }
-    newsym(x, y);
-}
-
 // C ref: do_name.c hliquid(liquidpref) — the preferred word unless the hero is
 // hallucinating (which draws off the DISPLAY rng, not the game rng).
 // js/do_name.js owns hliquid().
-
-// C ref: pline.c You_hear(...) — suppressed when Deaf.
-async function You_hear(msg) {
-    const unaware = Unaware();
-    if (!Deaf() || unaware)
-        await pline(`${unaware ? 'You dream that you hear ' : 'You hear '}${msg}`);
-}
 
 // C ref: objnam.c vtense(subj, verb) — 2nd->3rd person for a singular subject.
 // (js/trap.js:700 and js/dogmove.js:2028 each have a private copy.)
@@ -945,10 +919,6 @@ function helpless(mon) {
     const canmove = (mon.mcanmove == null) ? 1 : mon.mcanmove;
     return !!(mon.msleeping || !canmove);
 }
-// C ref: do_name.c mhe(mon) — the monster's pronoun.  Gender tracking for a
-// crushed monster is objnam.c's; "it" is C's answer for a genderless or
-// unseen monster and the only one this port can produce.
-function mhe(_mon) { return 'it'; }
 
 // C ref: display.h canspotmon(mon) = canseemon(mon) || sensemon(mon).  Nothing
 // in this port grants telepathy/detection yet (js/mon.js:655 documents the same

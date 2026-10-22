@@ -27,11 +27,12 @@ import {
     COLNO, ROWNO, MAX_RADIUS, COULD_SEE, TEMP_LIT, RANGE_LEVEL,
     FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { clear_path, vision_recalc, Blind } from './vision.js';
-import { flush_screen, map_invisible, canseemon_shared } from './display.js';
-import { objects, place_object, start_object_timer } from './mkobj.js';
+import { flush_screen, map_invisible, canseemon_shared, match_warn_of_mon } from './display.js';
+import { objects, place_object, start_object_timer, stop_object_timer } from './mkobj.js';
 import { DEADMONSTER, monsterList } from './mon.js';
 import { name_to_pmidx } from './makemon.js';
 import { mindless } from './monflags_data.js';
+import { Blind_telepat } from './youprop.js';
 import { is_pool } from './dbridge.js';
 
 // C ref: include/vision.h enum ls_sources.
@@ -805,11 +806,15 @@ export function obj_split_light_source(src, dest) {
 
 // C ref: light.c:807 obj_merge_light_sources(src, dest) — src has been folded
 // into dest (merging lit candles, or adding candles to a lit candelabrum).
-export async function obj_merge_light_sources(src, dest) {
+export function obj_merge_light_sources(src, dest) {
     /* src == dest implies adding to candelabrum */
     if (src !== dest) {
-        const { end_burn } = await import('./timeout.js');
-        await end_burn(src, true); /* extinguish candles */
+        /* C: end_burn(src, TRUE) stops its burn timer and cleanup_burn()
+           restores the unused fuel before the source is absorbed. */
+        const remaining = stop_object_timer(src, BURN_OBJECT);
+        src.age = (src.age | 0) + remaining;
+        del_light_source(LS_OBJECT, src);
+        src.lamplit = 0;
     }
 
     for (const ls of light_base())
@@ -991,15 +996,13 @@ function tp_sensemon(mon) {
     if (mindless(mon.data)) return false;
     /* Blind_telepat is the INTRINSIC half; it only works while blind */
     const blind = Blind();
-    if (blind && ((p.Telepat ?? 0) || (p.HTelepat ?? 0))) return true;
+    if (blind && Blind_telepat()) return true;
     /* Unblind_telepat is the EXTRINSIC (worn/wielded) half only */
     return !!p.ETelepat
         && dist2(mon.mx, mon.my, u?.ux ?? 0, u?.uy ?? 0) <= (u?.unblind_telepat_range ?? -1);
 }
 
-// C ref: display.h:55 _sensemon(mon).  MATCH_WARN_OF_MON needs svc.warntype
-// (worn warn-of-monster gear), which this port does not track at all; it is the
-// one term left out (same omission js/mon.js:645 documents).
+// C ref: display.h:55 _sensemon(mon).
 function sensemon(mon) {
     if (!mon) return false;
     const u = game.u, p = u?.uprops || {};
@@ -1008,7 +1011,7 @@ function sensemon(mon) {
         && !(dist2(mon.mx, mon.my, u.ux, u.uy) <= 2 && is_pool(mon.mx, mon.my)))
         return false;
     return !!((p.Detect_monsters ?? 0) || (p.HDetect_monsters ?? 0))
-        || tp_sensemon(mon);
+        || tp_sensemon(mon) || match_warn_of_mon(mon);
 }
 
 // C ref: windows nh_delay_output() — the 50ms pause a transient light uses so
@@ -1021,6 +1024,7 @@ async function nh_delay_output() { nh_delay_output_tick(); await Promise.resolve
 // evaluation and TDZ-traps mkobj.js via u_init.js), so the entry point is
 // registered here and vision.js reads it through gstate.  jsmain.js imports
 // this module for the side effect.
+hooks.emits_light = emits_light;
 hooks.lightsources = (cs_rows) => {
     sync_monster_light_sources();
     do_light_sources(cs_rows);

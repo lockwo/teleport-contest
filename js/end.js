@@ -636,6 +636,9 @@ async function done(how) {
         // computation and before display_nhwindow(WIN_MESSAGE) pages the
         // "You die..." line.  An angry shopkeeper the hero died next to takes
         // everything, and that message shares the death topline.
+        // C ref: end.c:1232 done() — `fixup_death(how)`: drop/replace a
+        // while-helpless reason that is the cause of death itself.
+        fixup_death(how);
         let taken = false;
         if (how !== PANICKED && !stopprint) {
             const { paybill } = await import('./shk.js');
@@ -794,7 +797,7 @@ async function quit_final_message() {
 }
 
 // C ref: end.c done2() — the '#quit' command.  Confirms via paranoid_query
-// (ParanoidQuit is off by default, so a plain "[yn] (n)" prompt), then in
+// (ParanoidQuit off: a plain "[yn] (n)" prompt, on: a typed "yes"), then in
 // wizard mode offers ynq("Dump core?").  Declining the core dump either way
 // falls through to done(QUIT); answering 'q' there sets done_stopprint,
 // which done()/disclose() key off of to skip straight to the score-skipped
@@ -809,8 +812,10 @@ export async function doquit() {
     const u = game.u;
     const abandon_tutorial = !!u?.uz && u.uz.dnum === game.tutorial_dnum
         && (await d.y_n('Switch from the tutorial back to regular play?', 'yn', 'n')) === 'y';
-    const ans = abandon_tutorial ? 'n' : await d.y_n('Really quit without saving?', 'yn', 'n');
-    if (ans !== 'y') {
+    const { paranoid_ynq } = await import('./eat.js');
+    const ParanoidQuit = (((game.flags?.paranoia_bits) | 0) & 0x0002) !== 0;
+    if (abandon_tutorial
+        || (await paranoid_ynq(ParanoidQuit, 'Really quit without saving?', false)) !== 'y') {
         // C ref: end.c:105 — the declined arm opens with
         // clear_nhwindow(WIN_MESSAGE), so the prompt line is wiped rather than
         // left standing under the next command.
@@ -1660,6 +1665,18 @@ export async function done_in_by(mtmp, how = DIED) {
         const txt = await killer_text_for_monster(mtmp);
         game._killer_name = (how !== DIED && txt.startsWith('killed by ') && killed_by_prefix[how])
             ? killed_by_prefix[how] + txt.slice('killed by '.length) : txt;
+        /* C ref: end.c:286-316 — multi_reason points into multireasonbuf as
+           "<m_id>:<reason>"; when that monster is also the killer, cut the
+           reason at its first space ("paralyzed by a ghoul" -> "paralyzed") so
+           the death reads "killed by a ghoul, while paralyzed." */
+        const mrb = game.multireasonbuf;
+        const mrm = typeof mrb === 'string' ? /^(\d+):(.)/.exec(mrb) : null;
+        if (mrm && game.multi_reason === mrb.slice(mrb.indexOf(':') + 1)
+            && (mtmp.m_id >>> 0) === +mrm[1]) {
+            const sp = mrb.indexOf(' ');
+            if (sp >= 0) game.multireasonbuf = mrb.slice(0, sp);
+            game.multi_reason = game.multireasonbuf.slice(game.multireasonbuf.indexOf(':') + 1);
+        }
     }
     // C ref: end.c:326-340 — maintain u.ugrave_arise from the killer's type
     // before done(how)'s really_done() decides the corpse+grave/message fate.

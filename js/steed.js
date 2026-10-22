@@ -30,7 +30,7 @@ import { DEADMONSTER, mvitals_died, m_detach } from './mon.js';
 import { killed, corpse_chance, make_corpse } from './uhitm.js';
 import { is_pool, is_lava } from './dbridge.js';
 import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
-import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, float_down } from './trap.js';
+import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, Levitation_fu, float_down } from './trap.js';
 import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { surface } from './dungeon.js';
 import { hliquid, mon_nam } from './do_name.js';
@@ -38,6 +38,8 @@ import { sobj_at, is_pole, near_capacity, youmonst_data } from './invent.js';
 import { t_at } from './mkroom.js';
 import { mon_mintrap } from './monmove.js';
 import { vision_recalc, Blind } from './vision.js';
+import { Stealth } from './shkroom.js';
+import { steed_vs_stealth } from './polyself.js';
 import { x_monnam } from './uhitm.js';
 import { isok, MAXULEV, W_SADDLE, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED,
          D_NODOOR, D_BROKEN, Is_rogue_level, SUPPRESS_IT, SUPPRESS_INVISIBLE,
@@ -87,7 +89,8 @@ export async function mount_steed(mtmp, force) {
         || (u.uprops?.Wounded_legs || 0)) {
         const { legs_in_no_shape } = await import('./do.js');
         await legs_in_no_shape('riding', false);
-        const sides = ((u.EWounded_legs || u.uprops?.EWounded_legs || 0) & BOTH_SIDES);
+        // C ref: steed.c:233 reads (HWounded_legs & BOTH_SIDES) -- the intrinsic/timeout word's low bits, not EWounded_legs' side mask.
+        const sides = ((u.HWounded_legs || 0) & BOTH_SIDES);
         if (force && is_wizard_steed()
             && await y_n(`Heal your leg${sides === BOTH_SIDES ? 's' : ''}?`) === 'y') {
             await heal_legs(0);
@@ -114,8 +117,7 @@ export async function mount_steed(mtmp, force) {
     // "Can the player reach and see the monster?"
     const ap = mtmp?.m_ap_type;
     const mimicking = ap === 'furniture' || ap === 'obj' || ap === M_AP_FURNITURE || ap === M_AP_OBJECT;
-    const blind_telepat = !!((u.uprops?.Telepat | 0) || (u.uprops?.HTelepat | 0)
-                             || (u.uprops?.ETelepat | 0));
+    const blind_telepat = Blind_telepat();
     if (!mtmp || (!force && ((Blind() && !blind_telepat) || mtmp.mundetected || mimicking))) {
         await pline('I see nobody there.');
         return false;
@@ -232,7 +234,14 @@ export async function mount_steed(mtmp, force) {
     }
     // C ref: steed.c:369-370 — a polearm is a proper mounted weapon.
     if (game.uwep && is_pole(game.uwep)) game.unweapon = false;
-    u.usteed = mtmp;
+    {
+        /* C ref: steed.c:372-377 — riding blocks stealth unless hero+steed fly */
+        const was_stealthy = !!Stealth();
+        u.usteed = mtmp;
+        steed_vs_stealth();
+        if (was_stealthy && !Stealth())
+            await pline("You aren't stealthy anymore.");
+    }
     game.botl = true;
 
     // C ref: steed.c:379-381 — remove_monster(steed) then
@@ -485,19 +494,24 @@ export async function dismount_steed(reason) {
     if (reason === DISMOUNT_BYCHOICE) return await dismount_steed_bychoice();
 
     const u = game.u;
-    const mtmp = u.usteed;
-    if (!mtmp) return; // C: sanity check; caller lost the steed already
-
     const save_utrap = u.utrap;
     let repair_leg_damage = !!((u.HWounded_legs || 0) || (u.EWounded_legs || 0));
+    // C evaluates `have_spot = landing_spot(&cc, reason, 0)` in the declarations,
+    // BEFORE the `if (!mtmp) return` sanity check: a second dismount after the
+    // steed already left (steedintrap's trapkilled dismount_steed(DISMOUNT_POLY)
+    // after monkilled()->m_detach()'s generic one) still draws landing_spot's rn2().
     let cc = landing_spot(reason, 0);
     let have_spot = !!cc;
+
+    const mtmp = u.usteed;
+    if (!mtmp) return; // C: sanity check; caller lost the steed already
 
     // ufly/ulev/verb: C brackets u_locomotion() with u.usteed transiently
     // cleared (it affects the Fly test) then restored.
     u.usteed = null;
-    const ufly = !!u.uprops?.Flying;
-    const ulev = !!u.uprops?.Levitation;
+    // youprop.h Flying/Levitation: intrinsic | extrinsic (worn boots/ring) && !blocked, not just the intrinsic word.
+    const ufly = Flying_fu();
+    const ulev = Levitation_fu();
     let verb = u_locomotion_std('fall');
     u.usteed = mtmp;
 
@@ -533,9 +547,15 @@ export async function dismount_steed(reason) {
     if (repair_leg_damage) await heal_legs(1);
 
     /* Release the steed */
-    u.usteed = null;
-    u.ugallop = 0;
-    steed_vs_stealth_std(); // Stealth not modelled; matches C's no-op here
+    {
+        /* C ref: steed.c:659-665 — dismounting lifts the riding stealth block */
+        const was_stealthy = !!Stealth();
+        u.usteed = null;
+        u.ugallop = 0;
+        steed_vs_stealth();
+        if (Stealth() && !was_stealthy)
+            await pline('You seem less noisy now.');
+    }
 
     if (u.utraptype === TT_BEARTRAP || u.utraptype === TT_PIT || u.utraptype === TT_WEB)
         mtmp.mtrapped = 1;
@@ -658,7 +678,7 @@ function steed_place_monster(mon, x, y) {
 // removes any light source, purges mtmp from the level).
 async function steed_mondead(mtmp) {
     mtmp.mhp = 0;
-    mvitals_died(mtmp);
+    await mvitals_died(mtmp);
     if (game.level?.at(mtmp.mx, mtmp.my)?.invisMon) unmap_object(mtmp.mx, mtmp.my);
     await m_detach(mtmp, mtmp.data, true);
 }
@@ -731,10 +751,11 @@ function is_wizard_steed() { return !!game.flags?.debug; }
 import { canspotmon, Monnam as Monnam_uhitm } from './uhitm.js';
 import { roles } from './role.js';
 import { which_armor } from './worn.js';
-import { y_monnam, monverbself } from './do_name.js';
+import { y_monnam, YMonnam, monverbself } from './do_name.js';
 import { exercise, acurr_eff, adjalign } from './attrib.js';
 import { p_skill_of, use_skill } from './enhance.js';
 import { objects, BOULDER } from './mkobj.js';
+import { Blind_telepat } from './youprop.js';
 import { mflags1_of, M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID, M1_SLITHY,
          M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS, mflags2_of,
          M2_UNDEAD } from './monflags_data.js';
@@ -760,6 +781,11 @@ const ARTICLE_YOUR = 3, SUPPRESS_SADDLE = 0x08;
 export async function rider_cant_reach() {
     await pline(`You aren't skilled enough to reach from ${
         y_monnam(game.u.usteed)}.`);
+}
+
+// C ref: the `u.usteed && P_SKILL(P_RIDING) < P_BASIC` test that precedes rider_cant_reach() at hack.c pickup_checks, pickup.c able_to_loot, potion.c dodip, trap.c untrap.
+export function steed_unskilled() {
+    return !!game.u.usteed && p_skill_of(P_RIDING) < P_BASIC;
 }
 
 // C ref: mondata.h is_whirly / amorphous / noncorporeal / unsolid / humanoid,
@@ -946,6 +972,23 @@ export function can_ride(mtmp) {
         && (!Underwater_std() || is_swimmer_std(mtmp.data));
 }
 
+// C ref: steed.c:878 stucksteed(checkfeeding) — a helpless steed (or, with
+// checkfeeding, one still eating) refuses to move.  TRUE: the caller aborts.
+export async function stucksteed(checkfeeding) {
+    const steed = game.u?.usteed;
+    if (steed) {
+        if (steed.msleeping || !steed.mcanmove) {
+            await pline(`${YMonnam(steed)} won't move!`);
+            return true;
+        }
+        if (checkfeeding && steed.meating) {
+            await pline(`${YMonnam(steed)} is still eating.`);
+            return true;
+        }
+    }
+    return false;
+}
+
 // C ref: steed.c:387 exercise_steed() — 100 turns of riding advances P_RIDING.
 export async function exercise_steed() {
     const u = game.u;
@@ -1053,7 +1096,7 @@ export async function poly_steed(steed, oldshape) {
         await pline(`You adjust yourself in the saddle on ${buf}.`);
 
         /* riding blocks stealth unless hero+steed fly */
-        steed_vs_stealth_std();
+        steed_vs_stealth();
     }
 }
 
@@ -1099,9 +1142,6 @@ function strsubst_std(bp, orig, replacement) {
     const i = bp.indexOf(orig);
     return i < 0 ? bp : bp.slice(0, i) + replacement + bp.slice(i + orig.length);
 }
-// C ref: steed.c steed_vs_stealth() — recomputes the riding stealth block; no
-// port (this port does not model Stealth).
-function steed_vs_stealth_std() { }
 // C ref: objclass.h is_metallic(otmp) — material IRON..MITHRIL.
 function is_metallic_steed(obj) {
     const m = objects[obj?.otyp]?.material;

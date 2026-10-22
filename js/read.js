@@ -12,13 +12,16 @@ import { ceiling as ceiling_dg } from './dungeon.js';
 import { game, hooks } from './gstate.js';
 import { LL_CONDUCT, livelog_printf } from './livelog.js';
 import { rnd, rn2, rn1, d } from './rng.js';
-import { pline, topl_more, update_topl, urgent_topl, newsym, y_n, status_hold } from './display.js';
+import { pline, topl_more, update_topl, urgent_topl, newsym, y_n, status_hold, You_hear, You_feel } from './display.js';
+import { goodpos_tmp_at_begin, goodpos_tmp_at, goodpos_tmp_at_end } from './getpos.js';
 import { getobj, makeknown, useup, useupall, xname, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY,
          GETOBJ_EXCLUDE, GETOBJ_PROMPT, GETOBJ_ALLOWCNT, GETOBJ_EXCLUDE_SELECTABLE,
          identify_pack, trycall, near_capacity, obj_doname, stackobj, obfree,
-         update_inventory, remove_worn_item, delobj,
-         worn_extrinsics_off, youmonst_data_pub } from './invent.js';
+         update_inventory, remove_worn_item, delobj, shk_your, Yname2 as Yname2_wep,
+         worn_extrinsics_off, youmonst_data_pub, uslinging } from './invent.js';
 import { makeplural } from './plural.js';
+import { cxname, obj_is_pname } from './objnam.js';
+import { costly_alteration, alter_cost } from './shk.js';
 import { exercise } from './attrib.js';
 import { discover_object } from './o_init.js';
 import { do_mapping } from './detect.js';
@@ -30,7 +33,7 @@ import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          SCR_DESTROY_ARMOR, SCR_REMOVE_CURSE, SCR_ENCHANT_WEAPON,
          SCR_ENCHANT_ARMOR, SCR_CONFUSE_MONSTER, SCR_SCARE_MONSTER,
          BALL_CLASS, CHAIN_CLASS, HEAVY_IRON_BALL, mkobj, place_object,
-         WEAPON_CLASS, ARMOR_CLASS, TOOL_CLASS, COIN_CLASS, WAND_CLASS,
+         WEAPON_CLASS, ARMOR_CLASS, TOOL_CLASS, COIN_CLASS, WAND_CLASS, GEM_CLASS,
          POTION_CLASS, RING_CLASS, objects, mksobj,
          bless, curse, uncurse, blessorcurse, weight,
          WAN_WISHING, CRYSTAL_BALL, TINNING_KIT,
@@ -38,9 +41,10 @@ import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          MAGIC_FLUTE, MAGIC_HARP, FROST_HORN, FIRE_HORN,
          DRUM_OF_EARTHQUAKE } from './mkobj.js';
 import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel, COST_DECHNT,
+         COST_DEGRD, COST_UNCHRG, COST_UNCURS, OBJ_INVENT,
          ERODE_NONE, EF_PAY, EF_DESTROY, ER_NOTHING, ER_DESTROYED,
          COLNO, ROWNO, SPE_LIM,
-         W_BALL, W_CHAIN, W_ARMH, SDOOR, DOOR, D_CLOSED, D_LOCKED, isok,
+         W_BALL, W_ART, W_ARTI, W_CHAIN, W_ARMH, SDOOR, DOOR, D_CLOSED, D_LOCKED, isok,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
          In_endgame, In_quest, POLY_REVERT, Is_earthlevel, GENOCIDED, KILLED_BY,
          KILLED_BY_AN, NO_KILLER_PREFIX, DIED, ROOM, STONE, IS_WALL, IS_DOOR,
@@ -165,7 +169,7 @@ function hero_is_human() {
 
 // C ref: role.h Role_if(PM_WIZARD).
 function Role_if_wizard() {
-    return (game.u?.urole?.name?.m || game.u?.urole?.name || '') === 'Wizard';
+    return (game.urole?.name?.m || '') === 'Wizard';
 }
 
 // C ref: mon.c svm.mvitals[pmidx].mvflags.
@@ -359,7 +363,7 @@ export async function seffects(sobj) {
         // either way.
         game.known = true;
         if (Confused() || sobj.blessed) {
-            await pline('You feel guilty.');
+            await You_feel('guilty.');
             break;
         }
         await punish(sobj);
@@ -463,7 +467,7 @@ async function seffect_light(sobj) {
         if (!Blind()) game.known = true;
         await litroom(!scursed, sobj);
         if (!scursed) {
-            if (await lightdamage(sobj, true, 5)) game.known = true;
+            if (await (await import('./zap.js')).lightdamage(sobj, true, 5)) game.known = true;
         }
         return;
     }
@@ -474,6 +478,7 @@ async function seffect_light(sobj) {
     }
     const { makemon, monster_by_pmidx } = await import('./makemon.js');
     const { canspotmon } = await import('./uhitm.js');
+    const { initedog } = await import('./dothrow.js');
     const u = game.u;
     let sawlights = false;
     const numlights = rn1(2, 3) + (sblessed ? 2 : 0);
@@ -481,10 +486,10 @@ async function seffect_light(sobj) {
         const mon = makemon(monster_by_pmidx(pm), u.ux, u.uy,
                             MM_EDOG | NO_MINVENT | MM_NOMSG);
         if (!mon) continue;
-        // C ref: dog.c initedog(mon, TRUE) — no RNG; the tame/peaceful flags
-        // and the "cancelled" mcan are what keeps these lights from exploding.
-        mon.mtame = 10;
-        mon.mpeaceful = 1;
+        // C ref: dog.c initedog(mon, TRUE) — no RNG; mtame is max(minimumtame, mtame)
+        // (5 for a non-domestic light), and the "cancelled" mcan is what keeps
+        // these lights from exploding.
+        initedog(mon, true);
         mon.msleeping = 0;
         mon.mcan = true;
         if (canspotmon(mon)) sawlights = true;
@@ -494,32 +499,6 @@ async function seffect_light(sobj) {
         await pline_append('Lights appear all around you!');
         game.known = true;
     }
-}
-
-// C ref: zap.c lightdamage(obj, ordinary, amt) — only a gremlin hero takes
-// damage, but the caller uses the return value to decide discovery.
-async function lightdamage(obj, ordinary, amt) {
-    let dmg = amt;
-    const PM_GREMLIN = 40; // makemon.js MONS index (zap.js's copy agrees)
-    if (dmg && game.u?.umonnum === PM_GREMLIN) {
-        dmg = rnd(dmg);
-        if (dmg > 10) dmg = 10 + rnd(dmg - 10);
-        if (dmg > 20) dmg = 20;
-        await pline_append(`Ow, that light hurts${(dmg > 2 || (game.u?.mh ?? 0) <= 5) ? '!' : '.'}`);
-        // C: losehp(Maybe_Half_Phys(dmg), "<zapped|blasted> himself with
-        // <obj>", NO_KILLER_PREFIX).  The hero is Upolyd here (gremlin), so
-        // this takes losehp's mh/rehumanize arm, but the killer text still
-        // matters if Unchanging makes it fatal.
-        // C: how = spell-of-light | ansimpleoname(obj) == an(xname-without-
-        // quantity-or-BUC); "blasted" rather than "zapped" for a scroll/book.
-        const how = (obj?.oclass === SPBOOK_CLASS) ? 'spell of light'
-                                                   : an_read(xname(obj));
-        const zapped = ordinary && obj?.oclass !== SCROLL_CLASS
-                                && obj?.oclass !== SPBOOK_CLASS;
-        await losehp_read(dmg, `${zapped ? 'zapped' : 'blasted'} ${game.flags?.female ? 'her' : 'him'}self with ${how}`,
-                          NO_KILLER_PREFIX);
-    }
-    return dmg;
 }
 
 // C ref: read.c seffect_confuse_monster() (also the confuse-monster spell).
@@ -534,7 +513,7 @@ async function seffect_confuse_monster(sobj) {
 
     if (!hero_is_human() || scursed) {
         if (!HConfusion())
-            await pline_append('You feel confused.');
+            await You_feel('confused.');
         await make_confused(HConfusion() + rnd(100), false);
     } else if (confused) {
         if (!sblessed) {
@@ -593,7 +572,7 @@ async function seffect_scare_monster(sobj) {
         }
     }
     if (otyp === SCR_SCARE_MONSTER || !ct) {
-        await pline_append(`You hear ${(confused || scursed) ? 'sad wailing' : 'maniacal laughter'} ${!ct ? 'in the distance' : 'close by'}.`);
+        await You_hear(`${(confused || scursed) ? 'sad wailing' : 'maniacal laughter'} ${!ct ? 'in the distance' : 'close by'}.`);
     }
 }
 
@@ -682,6 +661,7 @@ async function seffect_enchant_armor(sobj) {
         return true; // *sobjp = 0 (useup in strange_feeling)
     }
     if (confused) {
+        const old_erodeproof = !!otmp.oerodeproof;
         const new_erodeproof = !scursed;
         otmp.oerodeproof = 0; // for messages
         if (Blind()) {
@@ -694,6 +674,10 @@ async function seffect_enchant_armor(sobj) {
         if (new_erodeproof && (otmp.oeroded || otmp.oeroded2)) {
             otmp.oeroded = 0; otmp.oeroded2 = 0;
             await pline_append(`${Yobjnam2_wep(otmp, Blind() ? 'feel' : 'look')} as good as new!`);
+        }
+        if (old_erodeproof && !new_erodeproof) {
+            otmp.oerodeproof = 1; // bill the original proofed armor
+            await costly_alteration(otmp, COST_DEGRD);
         }
         otmp.oerodeproof = new_erodeproof ? 1 : 0;
         return false;
@@ -735,6 +719,7 @@ async function seffect_enchant_armor(sobj) {
     // turning into scale mail — is not ported: no otyp mapping for it here.)
 
     await pline_append(`${Yname2_wep(otmp)} ${(s === 0) ? 'violently ' : ''}${otense_wep(otmp, Blind() ? 'vibrate' : 'glow')}${(!Blind() && !same_color) ? ' ' : ''}${(Blind() || same_color) ? '' : hcolor_wep(scursed ? 'black' : 'silver')} for a ${(s * s > 1) ? 'while' : 'moment'}.`);
+    if (s < 0) await costly_alteration(otmp, COST_DECHNT);
     if (scursed && !otmp.cursed) curse(otmp);
     else if (sblessed && !otmp.blessed) bless(otmp);
     else if (!scursed && otmp.cursed) uncurse(otmp);
@@ -745,6 +730,7 @@ async function seffect_enchant_armor(sobj) {
         s = otmp.spe - oldspe;
         if (s) adj_abon(otmp, s);
         game.known = !!otmp.known;
+        if (s > 0 && otmp.unpaid) alter_cost(otmp, 0);
     }
     if ((otmp.spe || 0) > (special_armor ? 5 : 3)
         && (special_armor || !rn2(7)))
@@ -825,7 +811,8 @@ export async function punish(sobj) {
     // there.
     place_object(uball, u.ux, u.uy);
     place_object(uchain, u.ux, u.uy);
-    newsym(u.ux, u.uy);
+    newsym(u.ux, u.uy);                 // placebc_core()'s newsym
+    newsym(u.ux, u.uy);                 // punish()'s own "see ball&chain if can't see self"
 }
 
 // C ref: objnam.c erosion_matters(obj) — the COMPLETE switch: weptools,
@@ -876,16 +863,18 @@ function vtense_sing_wep(verb) {
 function otense_wep(obj, verb) {
     return ((obj?.quan ?? 1) !== 1) ? verb : vtense_sing_wep(verb);
 }
-// C ref: objnam.c Yobjnam2(obj, verb) — "Your <name> <verb>", scoped to a
-// carried, ordinary (non-artifact) object: the "leave off 'your'" artifact
-// carve-out isn't exercised by the covered starts' weapons.
+// C ref: objnam.c Yobjnam2(): ownership plus aobjnam's quantity and verb.
 function Yobjnam2_wep(obj, verb) {
-    return `Your ${xname(obj)} ${otense_wep(obj, verb)}`;
+    let name = cxname(obj);
+    if ((obj.quan ?? 1) !== 1) name = `${obj.quan} ${name}`;
+    if (verb) name += ` ${otense_wep(obj, verb)}`;
+    if (obj.where !== OBJ_INVENT || !obj_is_pname(obj)
+        || obj.oartifact >= 21 /* ART_ORB_OF_DETECTION */) {
+        const owner = shk_your(obj);
+        if (owner) name = `${owner} ${name}`;
+    }
+    return name.charAt(0).toUpperCase() + name.slice(1);
 }
-// C ref: objnam.c Yname2(obj) — capitalised yname(): "Your <name>" for a
-// carried object (the shk_your() "the <shopkeeper>'s" form for unpaid shop
-// goods is not modelled).
-function Yname2_wep(obj) { return `Your ${xname(obj)}`; }
 
 // C ref: obj.h is_elven_weapon(otmp) — the complete five-otyp list.
 const ELVEN_WEAPON_OTYPS = new Set([19 /*ELVEN_ARROW*/, 28 /*ELVEN_SPEAR*/,
@@ -898,8 +887,6 @@ const WORM_TOOTH = 42, CRYSKNIFE = 43; // C ref: objects.h otyp
 // (amount<0) the wielded weapon; otmp is the scroll causing it.  Returns
 // false only for the "no weapon wielded" fallback (matching C's `return 0`,
 // which signals the caller to treat the scroll as already consumed).
-// Shop-bill adjustments (costly_alteration/alter_cost) are RNG-free and
-// not modelled here.
 async function chwepon(otmp, amount) {
     const uwep = game.uwep;
     // C ref: wield.c:920 — hcolor() is drawn at entry, before any branch.
@@ -937,11 +924,13 @@ async function chwepon(otmp, amount) {
         uwep.oerodeproof = 0;
         if (multiple) { uwep.quan = 1; uwep.owt = weight(uwep); }
         if (uwep.cursed) uncurse(uwep);
+        if (uwep.unpaid) alter_cost(uwep, 0);
         if (is_scroll) makeknown(otmp.otyp);
         return true;
     } else if (uwep.otyp === CRYSKNIFE && amount < 0) {
         const multiple = (uwep.quan ?? 1) > 1;
         await pline_append(`Your ${xname(uwep)} ${multiple ? 'fuse, and become' : 'is'} much duller now.`);
+        await costly_alteration(uwep, COST_DEGRD);
         uwep.otyp = WORM_TOOTH;
         uwep.oerodeproof = 0;
         if (multiple) { uwep.quan = 1; uwep.owt = weight(uwep); }
@@ -977,8 +966,10 @@ async function chwepon(otmp, amount) {
             makeknown(otmp.otyp);
     }
 
+    if (amount < 0) await costly_alteration(uwep, COST_DECHNT);
     uwep.spe = (uwep.spe || 0) + amount;
     if (amount > 0 && uwep.cursed) uncurse(uwep);
+    if (amount > 0 && uwep.unpaid) alter_cost(uwep, 0);
 
     // C ref: wield.c:1035 — Magicbane's obscure enchantment clue.
     {
@@ -1009,6 +1000,7 @@ async function seffect_enchant_weapon(sobj) {
     const confused = Confused();
 
     if (confused && uwep && erosion_matters_wep(uwep) && uwep.oclass !== ARMOR_CLASS) {
+        const old_erodeproof = !!uwep.oerodeproof;
         const new_erodeproof = !scursed;
         uwep.oerodeproof = 0;
         if (Blind()) {
@@ -1021,6 +1013,10 @@ async function seffect_enchant_weapon(sobj) {
         if (new_erodeproof && (uwep.oeroded || uwep.oeroded2)) {
             uwep.oeroded = 0; uwep.oeroded2 = 0;
             await pline_append(`${Yobjnam2_wep(uwep, Blind() ? 'feel' : 'look')} as good as new!`);
+        }
+        if (old_erodeproof && !new_erodeproof) {
+            uwep.oerodeproof = 1; // bill the original proofed weapon
+            await costly_alteration(uwep, COST_DEGRD);
         }
         uwep.oerodeproof = new_erodeproof ? 1 : 0;
         return false;
@@ -1065,7 +1061,7 @@ export async function scrolltele(scroll) {
 
     // C ref: teleport.c:865 — the whole tower level interferes, not just its interior.
     if ((u?.uhave?.amulet || On_W_tower_level(u.uz)) && !rn2(3)) {
-        await pline_append('You feel disoriented for a moment.');
+        await You_feel('disoriented for a moment.');
         if (!wizard) return;
         game._yn_need_more = game._toplin === 1;
         if ((await y_n('Override?')) !== 'y') return;
@@ -1085,7 +1081,9 @@ export async function scrolltele(scroll) {
             // own). getpos_render conflates both steps, so re-pass the now-
             // accumulated text to keep its curs/flush_screen half a no-op on
             // the message.
-            await pline_append('Where do you want to be teleported?');
+            // C ref: teleport.c scrolltele(): whobuf = "you" [+ " and <steed>" when u.usteed].
+            const { mon_nam: steed_nam } = await import('./do_name.js');
+            await pline_append(`Where do you${u.usteed ? ` and ${steed_nam(u.usteed)}` : ''} want to be teleported?`);
             if (scroll) learnscroll(scroll);
             // C ref: teleport.c scrolltele() — `cc.x = u.ux; cc.y = u.uy;
             // if (isok(iflags.travelcc.x, iflags.travelcc.y)) cc = iflags.travelcc;`
@@ -1264,8 +1262,7 @@ export async function litroom(on, obj) {
 // point of the scroll and had been skipped: without it nothing is ever
 // uncursed, so a cursed weapon stays welded, a cursed ring stays stuck, and
 // every later predicate that reads obj->cursed answers the wrong way.
-// (The riding-steed saddle case needs u.usteed + which_armor(); the
-// buried-ball TT_BURIEDBALL follow-up needs buried_ball_to_freedom().)
+// (The buried-ball TT_BURIEDBALL follow-up needs buried_ball_to_freedom().)
 async function seffect_remove_curse(sobj) {
     const otyp = sobj.otyp;
     const sblessed = !!sobj.blessed, scursed = !!sobj.cursed;
@@ -1274,7 +1271,7 @@ async function seffect_remove_curse(sobj) {
     const feel = !hallu
         ? (!confused ? 'like someone is helping you.' : 'like you need some help.')
         : (!confused ? 'in touch with the Universal Oneness.' : 'the power of the Force against you!');
-    await update_topl(`You feel ${feel}`);
+    await You_feel(feel);
 
     if (scursed) {
         await update_topl('The scroll disintegrates.');
@@ -1285,27 +1282,32 @@ async function seffect_remove_curse(sobj) {
             if (obj.oclass === COIN_CLASS) continue;
             // hide the current scroll from itself
             if (obj === sobj && (obj.quan ?? 1) === 1) continue;
-            let wornmask = (obj.owornmask || 0) & ~W_BALL;
+            let wornmask = (obj.owornmask || 0) & ~(W_BALL | W_ART | W_ARTI);
             if (wornmask && !sblessed) {
                 if (obj === game.uswapwep) {
                     if (!game.u?.twoweap) wornmask = 0;
                 } else if (obj === game.uquiver) {
                     if (obj.oclass === WEAPON_CLASS) {
                         if (!(objects[obj.otyp]?.flags & 32 /* oc_merge */)) wornmask = 0;
+                    } else if (obj.oclass === GEM_CLASS) {
+                        if (!uslinging()) wornmask = 0;
                     } else {
-                        // GEM_CLASS needs uslinging(); weptools never qualify.
+                        // weptools don't merge and aren't reasonable quivered weapons
                         wornmask = 0;
                     }
                 }
             }
             if (sblessed || wornmask || obj.otyp === LOADSTONE
                 || (obj.otyp === LEASH && obj.leashmon)) {
+                const shop_h2o = obj.unpaid && obj.otyp === POT_WATER;
                 if (confused) {
                     // C ref: mkobj.c blessorcurse(obj, 2) — rn2(2)-gated, so
                     // this loop is RNG-visible for a confused hero.
                     blessorcurse(obj, 2);
                     obj.bknown = 0;
+                    if (shop_h2o && (obj.cursed || obj.blessed)) alter_cost(obj, 0);
                 } else if (obj.cursed) {
+                    if (shop_h2o) await costly_alteration(obj, COST_UNCURS);
                     uncurse(obj);
                     if (obj.bknown && otyp === SCR_REMOVE_CURSE)
                         learnscrolltyp(SCR_REMOVE_CURSE);
@@ -1339,6 +1341,7 @@ async function seffect_remove_curse(sobj) {
     // on the scroll's curse status in C.
     if (game.u?.uball && !confused)
         await unpunish();
+    update_inventory();
 }
 
 // C ref: read.c unpunish() — destroy the chain, leaving the detached ball.
@@ -1390,7 +1393,7 @@ async function seffect_fire(sobj) {
             if (!Blind())
                 await pline(`Oh, look, what a pretty fire in your ${body_part_hands()}.`);
             else
-                await pline(`You feel a pleasant warmth in your ${body_part_hands()}.`);
+                await You_feel(`a pleasant warmth in your ${body_part_hands()}.`);
         } else {
             monstunseesu(M_SEEN_FIRE);
             await pline(`The scroll catches fire and you burn your ${
@@ -1409,10 +1412,9 @@ async function seffect_fire(sobj) {
             await pline('Where do you want to center the explosion?');
             const { getpos } = await import('./hack.js');
             // getpos_sethilite(display_stinking_cloud_positions, can_center_cloud)
-            // installs can_center_cloud as the validity callback, which getpos()
-            // uses for its "(invalid target)" autodescribe suffix.
             const pos = await getpos('the desired position', u.ux, u.uy,
-                                     can_center_cloud, true, true);
+                                     can_center_cloud, true, true, false, false,
+                                     display_stinking_cloud_positions);
             if (pos && pos.x != null) { cc.x = pos.x; cc.y = pos.y; }
             if (!can_center_cloud(cc.x, cc.y)) {
                 /* try to reach too far, get burned */
@@ -1571,9 +1573,14 @@ async function seffect_destroy_armor(sobj) {
             await exercise(A_CON, false);
             return true;
         }
+        const old_erodeproof = !!otmp.oerodeproof;
         const new_erodeproof = scursed;
         otmp.oerodeproof = 0; // for messages
         await p_glow2(otmp, 'purple');
+        if (old_erodeproof && !new_erodeproof) {
+            otmp.oerodeproof = 1; // bill the original proofed armor
+            await costly_alteration(otmp, COST_DEGRD);
+        }
         otmp.oerodeproof = new_erodeproof ? 1 : 0;
         return false;
     }
@@ -1741,7 +1748,7 @@ function bump_literate(event) {
 
 // C ref: role.h Role_if(PM_TOURIST).
 function Role_if_tourist() {
-    return (game.u?.urole?.name?.m || game.u?.urole?.name || '') === 'Tourist';
+    return (game.urole?.name?.m || '') === 'Tourist';
 }
 
 // C ref: objnam.c simpleonames(obj) — the bare object name (no quantity,
@@ -2317,14 +2324,13 @@ export function candy_wrapper_text(obj) {
 // ── read.c:652 stripspe / p_glow1 / p_glow3 ──────────────────────────────
 
 // C ref: read.c:652 stripspe(obj) — a cursed recharge drains the charges.
-// C's own comment on the body: "order matters: message, shop handling, actual
-// transformation".  (costly_alteration(obj, COST_UNCHRG) is shop billing;
-// trap.js:829's copy of it is already a no-op stub in this port.)
+// C order: message, shop handling, actual transformation.
 export async function stripspe(obj) {
     if (obj.blessed || (obj.spe || 0) <= 0) {
         await pline_append(NOTHING_HAPPENS);
     } else {
         await pline_append(`${Yobjnam2_wep(obj, 'vibrate')} briefly.`);
+        await costly_alteration(obj, COST_UNCHRG);
         obj.spe = 0;
         if (obj.otyp === OIL_LAMP || obj.otyp === BRASS_LANTERN)
             obj.age = 0;
@@ -2428,52 +2434,36 @@ export function can_center_cloud(x, y) {
     return cansee(x, y) && distu_read(x, y) < 32;
 }
 
-// The cells display_stinking_cloud_positions() painted, so the "off" call can
-// restore exactly those (C's tmp_at(DISP_END, 0)).
-const _stinking_cloud_hilite = [];
-
-// C ref: read.c:1088 display_stinking_cloud_positions(on_off) — paint every
-// in-range centerable square with the S_goodpos cmap glyph ('$', HI_ZAP) while
-// the getpos() cursor loop runs, then erase.
-//
-// SCOPE: display.c's tmp_at() is not ported; zap.js:1288 documents the same gap
-// and uses show_glyph_cell() + newsym() as the overlay, which is what is done
-// here.  The dx/dy scan order is C's, so the paint (and erase) order matches.
-export async function display_stinking_cloud_positions(on_off) {
+// C ref: read.c:1088 display_stinking_cloud_positions(on_off) — the
+// getpos_hilitefunc: tmp_at(DISP_BEAM, S_goodpos) over every
+// in-range centerable square, or tmp_at(DISP_END).
+export function display_stinking_cloud_positions(on_off) {
     const u = game.u;
     const dist = 6;
 
     if (on_off) {
         /* on */
-        const { show_glyph_cell } = await import('./display.js');
-        _stinking_cloud_hilite.length = 0;
+        goodpos_tmp_at_begin();
         for (let dx = -dist; dx <= dist; dx++)
             for (let dy = -dist; dy <= dist; dy++) {
                 const x = u.ux + dx, y = u.uy + dy;
-                // C: the hero's own spot is allowed but highlighting it makes
-                // the map harder to read.
-                if (x === u.ux && y === u.uy) continue;
-                if (can_center_cloud(x, y)) {
-                    show_glyph_cell(x, y, '$', HI_ZAP);
-                    _stinking_cloud_hilite.push([x, y]);
-                }
+                /* hero's location is allowed but highlighting the hero's
+                   spot makes map harder to read (if using '$' rather than
+                   by changing background color) */
+                if (x === u.ux && y === u.uy)
+                    continue;
+                if (can_center_cloud(x, y))
+                    goodpos_tmp_at(x, y);
             }
     } else {
         /* off */
-        for (const [x, y] of _stinking_cloud_hilite) newsym(x, y);
-        _stinking_cloud_hilite.length = 0;
+        goodpos_tmp_at_end();
     }
 }
 
 // C ref: read.c:3082 do_stinking_cloud(sobj, mention_stinking) — prompt for a
 // location and create the cloud there.
 //
-// SCOPE: C's getpos_sethilite(display_stinking_cloud_positions,
-// can_center_cloud) REGISTERS two callbacks with the getpos() loop; the hilite
-// painter only runs when the player presses the show-valid key, and getpos()
-// calls it with FALSE on the way out.  The port's getpos() takes the validity
-// predicate (`validfn`) but has no hilite hook, so the painter is left
-// unwired — deliberately, since calling it here would draw cells C does not.
 export async function do_stinking_cloud(sobj, mention_stinking) {
     const u = game.u;
     const cc = { x: u.ux, y: u.uy };
@@ -2483,7 +2473,8 @@ export async function do_stinking_cloud(sobj, mention_stinking) {
     const { getpos } = await import('./hack.js');
     const pos = await getpos('the desired position', u.ux, u.uy,
                              can_center_cloud, /*force=*/true,
-                             game.flags?.verbose !== false);
+                             game.flags?.verbose !== false, false, false,
+                             display_stinking_cloud_positions);
     if (!pos) {                        /* getpos() < 0 */
         await pline_append(NEVER_MIND);
         return;
@@ -2603,7 +2594,7 @@ export async function drop_boulder_on_monster(x, y, confused, byu) {
             if (mtmp.minvis && !canspotmon(mtmp))
                 map_invisible(mtmp.mx, mtmp.my);
         } else if (engulfing_u_read(mtmp)) {
-            await pline_append(`You hear something hit ${
+            await You_hear(`something hit ${
                 mon_nam(mtmp)}'s stomach over your head!`);
         }
 
@@ -2616,7 +2607,7 @@ export async function drop_boulder_on_monster(x, y, confused, byu) {
                     await pline_append(`Fortunately, ${
                         mon_nam(mtmp)} is wearing a hard helmet.`);
                 else if (!Deaf_read())
-                    await pline_append('You hear a clanging sound.');
+                    await You_hear('a clanging sound.');
                 if (mdmg > 2) mdmg = 2;
             } else if (canspotmon(mtmp)) {
                 // C: pline("%s's %s does not protect %s.", Monnam, xname, mhim)
@@ -2671,7 +2662,7 @@ export async function seffect_earth(sobj) {
 
         /* Identify the scroll */
         if (u.uswallow) {
-            await pline_append('You hear rumbling.');
+            await You_hear('rumbling.');
         } else if (!avoid_ceiling_read(u.uz)) {
             await pline_append(`The ${ceiling_read(u.ux, u.uy)} rumbles ${
                 sblessed ? 'around' : 'above'} you!`);
@@ -2847,6 +2838,7 @@ export async function recharge(obj, curse_bless) {
             if (cursed) {
                 if (!obj.cursed) { await p_glow2(obj, 'black'); curse(obj); }
                 else await pline_append(`${Yobjnam2_wep(obj, 'vibrate')} briefly.`);
+                if (obj.spe > 0) await costly_alteration(obj, COST_UNCHRG);
                 obj.spe = 0;
             } else if (blessed) {
                 obj.spe = 7; await p_glow2(obj, obj.blessed ? 'blue' : 'light blue');
@@ -2887,10 +2879,10 @@ export async function seffect_charging(sobj) {
 
     if (confused) {
         if (scursed) {
-            await pline_append('You feel discharged.');
+            await You_feel('discharged.');
             u.uen = 0;
         } else {
-            await pline_append('You feel charged up!');
+            await You_feel('charged up!');
             u.uen = (u.uen || 0) + d(sblessed ? 6 : 4, 4);
             if (u.uen > (u.uenmax || 0)) /* if current energy is already at   */
                 u.uenmax = u.uen;        /* or near maximum, increase maximum */
@@ -3149,7 +3141,7 @@ export async function do_class_genocide() {
                     u.uhp = -1;
                     if (u.Upolyd) {
                         if (!feel_dead++)
-                            await pline_append(`You feel ${PS.udeadinside()} inside.`);
+                            await You_feel(`${PS.udeadinside()} inside.`);
                     } else {
                         if (!feel_dead++) await urgent_topl('You die.');
                         gameover = true;
@@ -3163,7 +3155,7 @@ export async function do_class_genocide() {
                    applicable to our own role */
                 const { quest_info } = await import('./questpgr.js');
                 const snd = msound_of(ptr);
-                const samurai = (game.u?.urole?.name?.m || game.u?.urole?.name || '') === 'Samurai';
+                const samurai = (game.urole?.name?.m || '') === 'Samurai';
                 if ((snd !== MS_LEADER || quest_info(MS_LEADER) === i)
                     && (snd !== MS_NEMESIS || quest_info(MS_NEMESIS) === i)
                     && (snd !== MS_GUARDIAN || quest_info(MS_GUARDIAN) === i)
@@ -3304,9 +3296,13 @@ export async function do_genocide(how) {
     let buf2;
     if (Hallucination()) {
         /* hallucinate hero's type */
-        const rn = game.u?.urole?.name;
-        const nm = (game.flags?.female && rn?.f) ? rn.f : (rn?.m || rn || '');
-        buf2 = String(nm).charAt(0).toLowerCase() + String(nm).slice(1);
+        if (game.u?.Upolyd) {
+            buf2 = (await import('./makemon.js')).pmname_of_pmidx(youmonst_data_pub()?.pmidx, game.flags?.female ? 1 : 0);
+        } else {
+            const rn = game.urole?.name;   /* gu.urole lives on game, not game.u */
+            const nm = (game.flags?.female && rn?.f) ? rn.f : (rn?.m || '');
+            buf2 = String(nm).charAt(0).toLowerCase() + String(nm).slice(1);
+        }
     } else {
         /* use actual type */
         buf2 = realbuf;
@@ -3341,7 +3337,7 @@ export async function do_genocide(how) {
                 const { udeadinside } = await import('./polyself.js');
                 const { POLYMORPH } = await import('./const.js');
                 delayed_killer(POLYMORPH, game.killer.format, game.killer.name);
-                await pline_append(`You feel ${udeadinside()} inside.`);
+                await You_feel(`${udeadinside()} inside.`);
             } else {
                 const { done } = await import('./end.js');
                 await done(GENOCIDED);

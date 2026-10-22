@@ -43,18 +43,19 @@
 // screen divergence beats a silent PRNG desync.
 
 import { makeplural } from './plural.js';
+import { hliquid } from './do_name.js';
 import { game } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { exercise } from './attrib.js';
 import {
     mflags1_of, mflags2_of, is_animal, is_undead_flag, is_were_flag,
-    is_demon_flag,
+    is_demon_flag, nonliving,
     M1_NOEYES, M1_NOHEAD, M1_THICK_HIDE, M1_SLITHY, M1_CARNIVORE,
     M1_SWIM, M1_AMPHIBIOUS, M1_BREATHLESS,
     M1_HERBIVORE, M1_METALLIVORE, M1_ACID, M1_POIS, M2_UNDEAD, M2_MINION,
 } from './monflags_data.js';
 import { DEADMONSTER, healmon, Protection_from_shape_changers,
-    mlifesaver, set_ustuck } from './mon.js';
+    mlifesaver, set_ustuck, is_vampshifter } from './mon.js';
 import {
     STRAT_WAITFORU, W_ARMOR, W_AMUL, W_ARMH, W_ARMS, W_ARMG, W_ARMF,
     A_STR, A_INT, A_DEX, A_CON, LEFT_SIDE, RIGHT_SIDE, MSLOW, LEG,
@@ -65,7 +66,7 @@ import { has_innate } from './exper.js';
 import { dmgval, sticks, m_slips_free, stagger_verb } from './uhitm.js';
 import { monster_by_pmidx, add_to_minv } from './makemon.js';
 import { on_fire, dmgtype_fromattack, resists_blnd_by_arti, slimeproof, poly_when_stoned as poly_when_stoned_md } from './mondata.js';
-import { defends, artifact_hit, permapoisoned } from './artifact.js';
+import { defends, artifact_hit, permapoisoned, defended } from './artifact.js';
 import {
     objects as OBJECTS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
     RING_CLASS, WAND_CLASS, COIN_CLASS, FOOD_CLASS,
@@ -80,6 +81,7 @@ import { Blind } from './vision.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { Unaware, unconscious } from './const.js';
 import { night } from './calendar.js';
+import { You_hear, You_feel } from './display.js';
 
 // ── include/monattk.h ────────────────────────────────────────────────────────
 export const AD_PHYS = 0, AD_MAGM = 1, AD_FIRE = 2, AD_COLD = 3, AD_SLEE = 4,
@@ -120,7 +122,7 @@ const S_NYMPH = 14, S_FUNGUS = 32, S_SNAKE = 45, S_NAGA = 40, S_HUMAN = 53,
 
 // C compares pointers against &gy.youmonst; callers use this sentinel for
 // the hero on either side of an attack.
-export const YOUMONST = Symbol('youmonst');
+export const YOUMONST = Symbol.for('youmonst');
 const is_hero = (m) => m === YOUMONST;
 
 // ── small species predicates ────────────────────────────────────────────────
@@ -152,14 +154,8 @@ const resists_sleep = (ops, m) => mres(ops, m, MR_SLEEP);
 function resists_drli(ops, mon) {
     const ptr = ops.permonst(mon);
     return is_undead(ptr) || is_demon_flag(ptr) || is_were_flag(ptr)
-        || ptr?.name === 'Death';
+        || ptr?.name === 'Death' || is_vampshifter(mon);
 }
-
-// C ref: mondata.c defended(mon, adtyp) — dragon scales / scale mail that
-// guard against a damage type.  js/zap.js:1555 already answers FALSE for every
-// monster in this port (none wears dragon scales); keep the call sites so the
-// predicate has one place to grow.
-const defended = (_mon, _adtyp) => false;
 
 // C ref: mondata.h completelyburns/completelyrusts/completelyrots — the golems
 // that a matching damage type destroys outright.
@@ -428,6 +424,11 @@ export async function mhitm_ad_rust(magr, mattk, mdef, mhm, ops) {
 }
 
 export async function mhitm_ad_corr(magr, mattk, mdef, mhm, ops) {
+    if (is_hero(magr)) {
+        await erode_armor(mdef, ERODE_CORRODE, ops);
+        mhm.damage = 0;
+        return;
+    }
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (magr.mcan) return;
@@ -491,6 +492,31 @@ export async function mhitm_ad_dren(magr, mattk, mdef, mhm, ops) {
 }
 
 export async function mhitm_ad_drli(magr, mattk, mdef, mhm, ops) {
+    if (is_hero(magr)) {
+        /* uhitm: a polymorphed hero's life-draining bite (vampire forms) */
+        if (!rn2(3) && !(resists_drli(ops, mdef) || defended(mdef, AD_DRLI))
+            && !await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
+            mhm.damage = d(2, 6); /* Stormbringer uses monhp_per_lvl */
+            await ops.emit(`${ops.Monnam(mdef)} becomes weaker!`);
+            const mlev = ops.monLev(mdef);
+            if ((mdef.mhpmax | 0) - mhm.damage > mlev) {
+                mdef.mhpmax -= mhm.damage;
+            } else if ((mdef.mhpmax | 0) > mlev) {
+                /* floor of the mhpmax reduction is current m_lev + 1 */
+                mdef.mhpmax = mlev + 1;
+            }
+            mdef.mhp -= mhm.damage;
+            /* !m_lev: a level 0 monster is killed regardless of hit points */
+            if (DEADMONSTER(mdef) || !mlev) {
+                await ops.emit(`${ops.Monnam(mdef)} ${nonliving(ops.permonst(mdef)) ? 'expires' : 'dies'}!`);
+                await ops.killed(mdef, { nomsg: true });
+            } else {
+                mdef.m_lev = mlev - 1;
+            }
+            mhm.damage = 0; /* damage has already been inflicted */
+        }
+        return;
+    }
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (!rn2(3) && !(ops.Drain_resistance && await ops.Drain_resistance())
@@ -581,6 +607,18 @@ export async function mhitm_ad_fire(magr, mattk, mdef, mhm, ops) {
 
 export async function mhitm_ad_cold(magr, mattk, mdef, mhm, ops) {
     const orig_dmg = mhm.damage;
+    if (is_hero(magr)) {
+        /* uhitm: messages are gated on the hero's own sight, not gv.vis */
+        if (await mhitm_mgc_atk_negated(magr, mdef, true, ops)) { mhm.damage = 0; return; }
+        if (!Blind()) await ops.emit(`${ops.Monnam(mdef)} is covered in frost!`);
+        if (resists_cold(ops, mdef) || defended(mdef, AD_COLD)) {
+            if (!Blind()) await ops.emit(`The frost doesn't chill ${ops.mon_nam(mdef)}!`);
+            await golemeffects(mdef, AD_COLD, mhm.damage, ops);
+            mhm.damage = 0;
+        }
+        mhm.damage += await destroy_items_mon(mdef, AD_COLD, orig_dmg, ops);
+        return;
+    }
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (!await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
@@ -615,6 +653,17 @@ export async function mhitm_ad_cold(magr, mattk, mdef, mhm, ops) {
 
 export async function mhitm_ad_elec(magr, mattk, mdef, mhm, ops) {
     const orig_dmg = mhm.damage;
+    if (is_hero(magr)) {
+        if (await mhitm_mgc_atk_negated(magr, mdef, true, ops)) { mhm.damage = 0; return; }
+        if (!Blind()) await ops.emit(`${ops.Monnam(mdef)} is zapped!`);
+        if (resists_elec(ops, mdef) || defended(mdef, AD_ELEC)) {
+            if (!Blind()) await ops.emit(`The zap doesn't shock ${ops.mon_nam(mdef)}!`);
+            await golemeffects(mdef, AD_ELEC, mhm.damage, ops);
+            mhm.damage = 0;
+        }
+        mhm.damage += await destroy_items_mon(mdef, AD_ELEC, orig_dmg, ops);
+        return;
+    }
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);           // "The grid bug bites!"
         if (!await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
@@ -648,15 +697,21 @@ export async function mhitm_ad_elec(magr, mattk, mdef, mhm, ops) {
 }
 
 export async function mhitm_ad_acid(magr, mattk, mdef, mhm, ops) {
+    if (is_hero(magr)) {
+        /* uhitm: a resistant defender takes nothing; no messages, no erosion rolls */
+        if (resists_acid(ops, mdef) || defended(mdef, AD_ACID))
+            mhm.damage = 0;
+        return;
+    }
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (!magr.mcan && !rn2(3)) {
             if (ops.Acid_resistance()) {
-                await ops.emit("You're covered in acid, but it seems harmless.");
+                await ops.emit(`You're covered in ${hliquid('acid')}, but it seems harmless.`);
                 if (ops.monstseesu) await ops.monstseesu(M_SEEN_ACID);
                 mhm.damage = 0;
             } else {
-                await ops.emit("You're covered in acid!  It burns!");
+                await ops.emit(`You're covered in ${hliquid('acid')}!  It burns!`);
                 ops.exercise(A_STR, false);
                 if (ops.monstunseesu) await ops.monstunseesu(M_SEEN_ACID);
             }
@@ -668,10 +723,10 @@ export async function mhitm_ad_acid(magr, mattk, mdef, mhm, ops) {
     if (magr.mcan) { mhm.damage = 0; return; }
     if (resists_acid(ops, mdef) || defended(mdef, AD_ACID)) {
         if (ops.vis && ops.canseemon(mdef))
-            await ops.emit(`${ops.Monnam(mdef)} is covered in acid, but it seems harmless.`);
+            await ops.emit(`${ops.Monnam(mdef)} is covered in ${hliquid('acid')}, but it seems harmless.`);
         mhm.damage = 0;
     } else if (ops.vis && ops.canseemon(mdef)) {
-        await ops.emit(`${ops.Monnam(mdef)} is covered in acid!`);
+        await ops.emit(`${ops.Monnam(mdef)} is covered in ${hliquid('acid')}!`);
         await ops.emit(`It burns ${ops.mon_nam(mdef)}!`);
     }
     // Both rolls fire regardless of the resistance branch above (uhitm.c:2781).
@@ -864,8 +919,8 @@ export async function mhitm_ad_curs(magr, mattk, mdef, mhm, ops) {
         if (!night() && pa?.name === 'gremlin') return;
         if (!magr.mcan && !rn2(10)) {
             if (!(await import('./display.js')).Deaf_hero())
-                await ops.emit(Blind() ? 'You hear laughter.'
-                    : `${ops.Monnam(magr)} chuckles.`);
+                await (Blind() ? You_hear('laughter.')
+                    : ops.emit(`${ops.Monnam(magr)} chuckles.`));
             if (pd?.name === 'clay golem') {
                 await ops.emit('Some writing vanishes from your head!');
                 const { rehumanize } = await import('./polyself.js');
@@ -895,7 +950,7 @@ export async function mhitm_ad_curs(magr, mattk, mdef, mhm, ops) {
             return;
         }
         if (!(await import('./display.js')).Deaf_hero()) {
-            if (!ops.vis) await ops.emit('You hear laughter.');
+            if (!ops.vis) await You_hear('laughter.');
             else if (ops.canseemon(magr)) await ops.emit(`${ops.Monnam(magr)} chuckles.`);
         }
     }
@@ -1495,7 +1550,7 @@ export async function mhitm_ad_deth(magr, mattk, mdef, mhm, ops) {
             }
             /* FALLTHRU */
         default: /* case 16: ... case 5: */
-            await ops.emit('You feel your life force draining away...');
+            await You_feel('your life force draining away...');
             mhm.permdmg = 1; /* actual damage done by caller */
             return;
         case 4: case 3: case 2: case 1: case 0:
@@ -1685,9 +1740,9 @@ export async function mhitm_ad_ston(magr, mattk, mdef, mhm, ops) {
         await ops.hitmsg(magr, mattk);
         if (!rn2(3)) {
             if (magr.mcan) {
-                await ops.emit(`You hear a cough from ${ops.mon_nam(magr)}!`);
+                await You_hear(`a cough from ${ops.mon_nam(magr)}!`);
             } else {
-                await ops.emit(`You hear ${ops.mon_nam(magr)}'s hissing!`);
+                await You_hear(`${ops.mon_nam(magr)}'s hissing!`);
                 if (!rn2(10) || game.flags?.moonphase === NEW_MOON) {
                     if (ops.do_stone_u && await ops.do_stone_u(magr)) {
                         mhm.hitflags = M_ATTK_HIT;

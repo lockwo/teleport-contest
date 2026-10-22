@@ -14,9 +14,10 @@
 
 import { game, hooks } from './gstate.js';
 import { nhgetch } from './input.js';
+import { menuHeadAttr } from './menuattr.js';
 import { objects, WEAPON_CLASS, GEM_CLASS, TOOL_CLASS } from './mkobj.js';
 import { renderWindowScreen, renderMenuLines, dismiss_invent_screen } from './invent.js';
-import { y_n, update_topl, topl_more, docrt } from './display.js';
+import { y_n, update_topl, topl_more, docrt, You_feel } from './display.js';
 import {
     P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
     P_MASTER, P_GRAND_MASTER, P_NUM_SKILLS,
@@ -242,8 +243,25 @@ function build_skill_state() {
     // baseline on every call, so the advances are replayed on top of it.
     const advanced = game.u?.skill_record || [];
     for (const sk of advanced) if (P_SKILL[sk] !== P_ISRESTRICTED) P_SKILL[sk]++;
+    // C ref: artifact.c invoke_storm_spell() assigns `P_SKILL(skill) = P_EXPERT`
+    // around a forced spelleffects() and then restores the old value.  The
+    // derived state above has no slot to assign, so the assignment is an
+    // overlay that set_p_skill_override() installs and clears.
+    const forced = game.u?.skill_override;
+    if (forced) for (const sk in forced) P_SKILL[sk] = forced[sk];
 
     return { P_SKILL, P_MAX, P_ADV, rolemnum };
+}
+
+// C ref: weapon.c P_SKILL(skill) = level — the temporary assignment form used
+// by artifact.c invoke_storm_spell().  Pass level = null to restore.
+export function set_p_skill_override(skill, level) {
+    const u = game.u = game.u || {};
+    if (level == null) {
+        if (u.skill_override) delete u.skill_override[skill];
+        return;
+    }
+    (u.skill_override ||= {})[skill] = level;
 }
 
 // C ref: include/skills.h practice_needed_to_advance(level).
@@ -300,6 +318,11 @@ export function p_skill_of(skill) {
     return P_SKILL[skill];
 }
 hooks.p_skill_of = p_skill_of; /* engrave.js can_reach_floor() */
+// C ref: skills.h P_MAX_SKILL(skill) — the role's cap for a skill (u.weapon_skills[].max_skill).
+export function p_max_skill_of(skill) {
+    return build_skill_state().P_MAX[skill];
+}
+hooks.p_max_skill_of = p_max_skill_of; /* artifact.js mk_artifact() */
 // C ref: weapon.c:1156 can_advance(skill, FALSE) — exported so weapon.c's
 // add_weapon_skill()/give_may_advance_msg() can count advanceable skills
 // without rebuilding the skill state themselves.
@@ -339,7 +362,7 @@ function build_skill_menu_lines(state) {
     const lines = [];
     for (const [first, last, name] of SKILL_RANGES) {
         // Heading (ATR_INVERSE) emitted at the start of each range.
-        lines.push({ text: name, attr: 1 /* ATR_INVERSE */ });
+        lines.push({ text: name, attr: menuHeadAttr() /* iflags.menu_headings.attr */ });
         for (let i = first; i <= last; i++) {
             if (restricted(i)) continue;
             const lvl = SKILL_LEVEL_NAME[P_SKILL[i]] || 'Unknown';
@@ -411,7 +434,7 @@ function build_skill_menu_items(S, speedy) {
     }
 
     for (const [first, last, name] of SKILL_RANGES) {
-        items.push({ text: name, attr: 1 /* ATR_INVERSE (iflags.menu_headings) */ });
+        items.push({ text: name, attr: menuHeadAttr() /* iflags.menu_headings.attr */ });
         for (let i = first; i <= last; i++) {
             if (restricted(i)) continue;
             const lvl = SKILL_LEVEL_NAME[P_SKILL[i]] || 'Unknown';
@@ -437,7 +460,7 @@ function build_skill_menu_items(S, speedy) {
         title += `  (${slots} slot${slots === 1 ? '' : 's'} available)`;
     }
     // end_menu() prepends the prompt + a blank separator line.
-    items.unshift({ text: title, attr: 1 }, { text: '' });
+    items.unshift({ text: title, attr: menuHeadAttr() }, { text: '' });
     return { items, to_advance };
 }
 
@@ -572,7 +595,7 @@ export async function doenhance() {
                 const S2 = build_skill_state();
                 for (let i = 0; i < P_NUM_SKILLS; i++) {
                     if (can_advance(i, speedy, S2)) {
-                        if (!speedy) await update_topl('You feel you could be more dangerous!');
+                        if (!speedy) await You_feel('you could be more dangerous!');
                         more_to_do = 1;
                         break;
                     }
@@ -601,7 +624,7 @@ export async function doenhance() {
     const { lines, title } = build_skill_menu_lines(state);
 
     // end_menu() prepends the title (ATR_INVERSE) + a blank separator line.
-    const allLines = [{ text: title, attr: 1 }, { text: '' }, ...lines];
+    const allLines = [{ text: title, attr: menuHeadAttr() }, { text: '' }, ...lines];
 
     // C ref: win/tty/wintty.c tty_display_nhwindow NHW_MENU — cw->maxrow ==
     // nitems + 1 (the morestr row).  A menu SHORTER than the screen floats as a

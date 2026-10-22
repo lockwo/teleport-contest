@@ -24,6 +24,8 @@ import { nonliving, immune_poisongas, mflags1_of, M1_BREATHLESS, M1_NOEYES,
          msound_of } from './monflags_data.js';
 import { attacktype_fordmg, AT_BREA, AD_DRST, AD_RBRE } from './monattk_data.js';
 import { has_innate } from './exper.js';
+import { Poison_resistance } from './youprop.js';
+import { You_feel } from './display.js';
 
 const MAX_CLOUD_SIZE = 150;
 
@@ -576,8 +578,7 @@ async function inside_gas_cloud(reg, mtmp) {
         const { monstseesu, monstunseesu } = await import('./mondata.js');
         const { wake_nearto } = await import('./cmd.js');
         const u = game.u;
-        if (!((u?.uprops?.Poison_resistance || 0) > 0
-              || has_innate('HPoison_resistance'))) {
+        if (!Poison_resistance()) {
             await update_topl('Something is burning your lungs!');
             await update_topl('You cough and spit blood!');
             await wake_nearto(u?.ux, u?.uy, 2);
@@ -982,21 +983,6 @@ function Breathless() {
         return true;
     return !!u?.Upolyd && (mflags1_of(u.data) & M1_BREATHLESS) !== 0;
 }
-function Poison_resistance() {
-    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const p = game.u?.uprops || {};
-    // C ref: youprop.h Poison_resistance == HPoison_resistance |
-    // EPoison_resistance (a worn ring/armor) | FROMEXPER/FROMRACE.  Role and
-    // race grants (Healers start poison resistant, every orc has it) are never
-    // stored as an H*/E* flag in this port, so derive them with has_innate()
-    // exactly as potion.js/explode.js do.  Without it a Healer standing in a
-    // harmless vapor cloud prayed into TROUBLE_REGION instead of TROUBLE_HIT
-    // (seed n602 nz16 step 367).
-    return !!(p.HPoison_resistance || p.EPoison_resistance
-              || p.PoisonResistance || p.Poison_resistance)
-        || has_innate('HPoison_resistance')
-        || ((game.u?.uprops_extrinsic || {})[POISON_RES] | 0) !== 0;
-}
 function Hallucination() {
     const u = game.u;
     return !!(u?.uhallu || u?.HHallucination || u?.uprops?.Hallucination);
@@ -1061,7 +1047,7 @@ export async function region_safety() {
             /* set_itimeout(&HMagical_breathing, d(4,4) + 4) */
             p.HMagical_breathing = (rnd(4) + rnd(4) + rnd(4) + rnd(4)) + 4;
             /* not already Breathless or wouldn't be in region danger */
-            await update_topl('You feel able to breathe.');
+            await You_feel('able to breathe.');
         }
     } else if (r) {
         await remove_region(r);

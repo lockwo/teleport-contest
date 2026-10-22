@@ -25,14 +25,14 @@ import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { Blind as Blind_vision } from './vision.js';
 import { s_suffix } from './hacklib.js';
-import { CQ_CANNED, NO_KILLER_PREFIX, PARANOID_BREAKWAND } from './const.js';
+import { CQ_CANNED, NO_KILLER_PREFIX, KILLED_BY, PARANOID_BREAKWAND, COST_SPLAT } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { begin_burn, end_burn } from './timeout.js';
 
 import {
     TOOL_CLASS, WAND_CLASS, SPBOOK_CLASS, POTION_CLASS, WEAPON_CLASS,
     COIN_CLASS, MAGIC_MARKER, SPE_BLANK_PAPER,
-    SPE_BOOK_OF_THE_DEAD, POT_OIL, objects, mksobj, weight,
+    SPE_BOOK_OF_THE_DEAD, POT_OIL, objects, mksobj, weight, base_oc_cost,
 } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 // Leaf data module (no imports of its own), so a static import is cycle-free.
@@ -363,14 +363,14 @@ async function use_stethoscope(obj) {
     // map C had already revealed.
     const lev = game.level?.at(rx, ry);
     if (lev && lev.typ === SDOOR) {
-        await update_topl('You hear a hollow sound.  This must be a secret door!');
+        await _display.You_hear('a hollow sound.  This must be a secret door!');
         cvt_sdoor_to_door(lev);
         _vision.recalc_block_point(rx, ry);
         newsym(rx, ry);
         return res.v;
     }
     if (lev && lev.typ === SCORR) {
-        await update_topl('You hear a hollow sound.  This must be a secret passage!');
+        await _display.You_hear('a hollow sound.  This must be a secret passage!');
         lev.typ = CORR; lev.flags = 0;
         _vision.unblock_point(rx, ry);
         newsym(rx, ry);
@@ -924,7 +924,7 @@ async function flip_through_book(obj) {
         `You flip through the pages of ${thesimpleoname(obj)}.`);
     if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
         // Deaf is never set for these heroes.
-        await _display.pline(`You hear the pages make an unpleasant ${
+        await _display.You_hear(`the pages make an unpleasant ${
             hallu ? 'chuckling' : 'rustling'} sound.`);
     } else if (blind) {
         await _display.pline(`The pages feel ${
@@ -1049,8 +1049,9 @@ async function do_break_wand(obj) {
     const u = game.u;
     game.current_wand = obj;
     A.invent.freeinv(obj);
-    // C: setnotworn(obj) clears the worn-item slots (uamul/uleft/.../uarmu);
-    // a wand is never any of those, so this is a no-op and is omitted.
+    // C: setnotworn(obj) -- the wand may be the wielded weapon (uwep), the
+    // alternate weapon or the quiver; freeinv() leaves those slots set.
+    A.invent.setnotworn(obj);
 
     if (!(await A.zap.zappable(obj))) {
         await _display.pline('But nothing else happens...');
@@ -1168,7 +1169,8 @@ async function do_break_wand(obj) {
             continue;
         } else if (obj.otyp === WAN_CREATE_MONSTER_OTYP) {
             /* u.ux,u.uy creates it near the hero — x,y might create it in rock */
-            A.makemon.makemon(null, u.ux, u.uy, NO_MM_FLAGS);
+            const newmon = A.makemon.makemon(null, u.ux, u.uy, NO_MM_FLAGS);
+            if (newmon) await A.makemon.makemon_appears_msg(newmon, newmon.mx, newmon.my, NO_MM_FLAGS);
             continue;
         } else if (x !== u.ux || y !== u.uy) {
             const mon = A.display.m_at(x, y);
@@ -1194,7 +1196,13 @@ async function do_break_wand(obj) {
     }
 
     await A.zap.zapwrapup(); /* potentially give post zap/break feedback */
-    void shop_damage; /* pay_for_damage() — shop billing unported, see above */
+
+    /* Note: if player fell thru, this call is a no-op.
+       Damage is handled in digactualhole in that case */
+    if (shop_damage) {
+        const { pay_for_damage } = await import('./shk.js');
+        await pay_for_damage('dig into', false);
+    }
 
     if (obj.otyp === WAN_LIGHT_OTYP) {
         const { litroom } = await import('./read.js');
@@ -1249,7 +1257,10 @@ async function use_cream_pie(obj) {
         else
             await update_topl(`You can't see through all the sticky goop on your face.`);
     }
-    // setnotworn + costly_alteration (no RNG, no cost) + use up the pie.
+    // C ref: apply.c:3597-3599 setnotworn(obj); costly_alteration(obj, COST_SPLAT)
+    // bills an unpaid pie ("You splatter that cream pie, you pay for it!"),
+    // then obj_extract_self + delobj.
+    await (await import('./shk.js')).costly_alteration(obj, COST_SPLAT);
     consume_applied_pie(obj);
     return ECMD_OK;
 }
@@ -1424,7 +1435,7 @@ async function use_stone(tstone) {
     if (tstone.otyp === TOUCHSTONE && tstone.cursed
         && obj.oclass === GEM_CLASS && !is_graystone_otyp(obj.otyp)
         && !Z.obj_resists(obj, 80, 100)) {
-        if (blind) await _display.pline('You feel something shatter.');
+        if (blind) await _display.You_feel('something shatter.');
         else if (hallu) await _display.pline('Oh, wow, look at the pretty shards.');
         else await _display.pline(`A sharp crack shatters ${
             Number(obj.quan) > 1 ? 'one of ' : ''}${the_of(obj)}.`);
@@ -1495,7 +1506,7 @@ async function use_stone(tstone) {
         await _display.pline(`You make ${streak_color ? `${streak_color} ` : ''
             }scratch marks on the ${stones}.`);
     else if (streak_color)
-        await _display.pline(`You see ${streak_color} streaks on the ${stones}.`);
+        await _display.You_see(`${streak_color} streaks on the ${stones}.`);
     else
         await _display.pline(scritch);
     return ECMD_TIME;
@@ -1544,19 +1555,28 @@ export async function dorub() {
         return ECMD_OK;
     }
 
-    // obj == uwep: the rub-the-wielded-lamp branch.  spe<=0 wished lamps never
-    // reach the djinni roll (rn2(3) is short-circuited); the puff/nothing rolls
-    // (rn2(2)) are present for faithfulness but unexercised in the owned stream.
+    // obj == uwep: the rub-the-wielded-lamp branch (apply.c:1819-1840).
     if (game.uwep.otyp === MAGIC_LAMP) {
         if ((game.uwep.spe || 0) > 0 && !rn2(3)) {
-            // djinni release: not exercised (no spe>0 wished lamp in sessions).
+            const lamp = game.uwep;
+            await (await import('./shk.js')).check_unpaid_usage(lamp, true); /* unusual item use */
+            /* bones preparation:  perform the lamp transformation before
+               releasing the djinni in case the latter turns out to be fatal */
+            lamp.otyp = OIL_LAMP;
+            lamp.spe = 0; /* for safety */
+            lamp.age = rn1(500, 1000);
+            if (lamp.lamplit) await begin_burn(lamp, true);
+            await (await import('./potion.js')).djinni_from_bottle(lamp);
+            _invent.makeknown(MAGIC_LAMP);
+            _invent.update_inventory();
         } else if (rn2(2)) {
-            await _display.pline(`You see a puff of smoke.`);
+            await _display.pline(`You ${!_vision.Blind() ? 'see a puff of' : 'smell'} smoke.`);
         } else {
             await _display.pline('Nothing happens.');
         }
     } else if (game.uwep.otyp === BRASS_LANTERN) {
         await _display.pline('Rubbing the electric lamp is not particularly rewarding.');
+        await _display.pline('Anyway, nothing exciting happens.');
     } else {
         await _display.pline('Nothing happens.');
     }
@@ -1701,7 +1721,7 @@ export async function use_pole(obj, autohit) {
         await _display.flush_screen(1);
     }
     const cc = { x: u.ux, y: u.uy };
-    const hitm = game.context?.polearm_hitmon;
+    const hitm = game.context?.polearm?.hitmon;
     if (!find_poleable_mon(cc, min_range, max_range) && hitm && !hitm.mdead
         && (await import('./mon.js')).sensemon(hitm)
         && distu_sq(hitm.mx, hitm.my) <= max_range
@@ -1719,7 +1739,7 @@ export async function use_pole(obj, autohit) {
         // for #jump.
         const { getpos, jump_hilite_first_cursor } = await import('./hack.js');
         const TIP_GETPOS = 1 << 4;
-        if ((game.context?.tips || 0) & TIP_GETPOS) {
+        if (!game.flags?.tips || ((game.context?.tips || 0) & TIP_GETPOS)) {
             const hc = jump_hilite_first_cursor(
                 (x, y) => valid_polearm_position(x, y, min_range, max_range), 3, false);
             if (hc && game.nhDisplay?.setCursor) game.nhDisplay.setCursor(hc[0], hc[1]);
@@ -1728,7 +1748,8 @@ export async function use_pole(obj, autohit) {
                                     (x, y) => valid_polearm_position(
                                         x, y, min_range, max_range),
                                     /*force=*/true,
-                                    /*verbose=*/game.flags?.verbose !== false);
+                                    /*verbose=*/game.flags?.verbose !== false,
+                                    false, false, display_polearm_positions);
         if (!picked) return ECMD_CANCEL; // ESC
         cc.x = picked.x; cc.y = picked.y;
     }
@@ -1753,7 +1774,7 @@ export async function use_pole(obj, autohit) {
 
     // C ref: apply.c:3489-3562 — attack the monster there (thitmonst with the
     // wielded polearm, HMON_APPLIED), or the statue/boulder/terrain arms.
-    if (game.context) game.context.polearm_hitmon = null;
+    if (game.context) (game.context.polearm ||= {}).hitmon = null;
     game.bhitpos = { x: cc.x, y: cc.y };
     const mtmp = _display.m_at(cc.x, cc.y);
     let freehit = false;
@@ -1765,7 +1786,7 @@ export async function use_pole(obj, autohit) {
             return game.context?.move ? ECMD_TIME : ECMD_OK;
         if (await _uhitm.overexertion())
             return ECMD_TIME; /* burn nutrition; maybe pass out */
-        game.context.polearm_hitmon = mtmp;
+        (game.context.polearm ||= {}).hitmon = mtmp;
 
         if (snickersnee_used_dist_attk(obj)) {
             await _display.pline("The blade doesn't reach there!");
@@ -1859,7 +1880,6 @@ export const ECMD = { ECMD_OK, ECMD_CANCEL, ECMD_TIME };
 //
 // The ap_ shims below now delegate to the real ports (mintrap, make_familiar,
 // hurtle, boulder_hits_pool, revive_corpse, tele_to_rnd_pet, enexto, timers).
-// Still display-only stand-ins: ap_tmp_at()/ap_cmap_to_glyph() (see below).
 // ═════════════════════════════════════════════════════════════════════════════
 
 // Lazily-imported modules for the block above's C callees.  Loaded on first use
@@ -2068,18 +2088,10 @@ function ap_Is_waterlevel() {
     return !!uz && !!wl && uz.dnum === wl.dnum && uz.dlevel === wl.dlevel;
 }
 
-// ── C ref: display.c tmp_at() and display.h cmap_to_glyph().  The
-// temporary-glyph animation layer has no port: frozen/terminal.js owns the grid
-// and this port's getpos() hilites through a validator callback instead of a
-// pre-painted beam.  Both are RNG-free; the ap_ prefix keeps them from claiming
-// display.c coverage they do not deliver.
-const DISP_BEAM_A = -1, DISP_END_A = -7;   // include/display.h
-const S_goodpos_A = 0;                     // include/defsym.h cmap
-function ap_tmp_at(_x, _y) {}
-function ap_cmap_to_glyph(_cmap) { return 0; }
 // C ref: display.c glyph_at(x, y) / display.h glyph_is_poleable().  This port
 // keeps no glyph array; poleable_at() above reads the same three cases off the
 // level state, so the display_*_positions() loops below use it directly.
+const DISP_BEAM_A = -1, DISP_END_A = -7;   // include/display.h
 
 
 // C ref: trap.c mintrap(mtmp, mintrapflags) — js/monmove.js mon_mintrap().
@@ -2126,49 +2138,6 @@ async function ap_boulder_hits_pool(otmp, rx, ry, pushing) {
 async function ap_revive_corpse(corpse) {
     const { revive_corpse } = await import('./do.js');
     return await revive_corpse(corpse);
-}
-// C ref: eat.c floorfood(verb, corpsecheck) — the "There is X here; VERB it?"
-// floor picker, then (declined/no floor corpse) getobj(verb, tin_ok) over
-// inventory.  Only the corpsecheck===2 (tinning) caller reaches this
-// function, so that is the only path ported; RNG-free (per use_tinning_kit's
-// own comment above its call site).  getobj() itself is what prints "You
-// don't have anything to tin." when nothing eligible is carried either —
-// this used to always return null before even reaching getobj(), so that
-// message (and the floor offer) never appeared.
-const CORPSE_A = 265; // objects.c CORPSE (food-class corpse)
-async function ap_floorfood(verb, corpsecheck) {
-    const A = await ap_load();
-    const u = game.u;
-    const { set_getobj_else } = await import('./eat.js');
-    set_getobj_else(0);
-    // C: 'm' prefix / can't-reach-floor / mounted all skip to skipfloor; this
-    // call site can only observe menu_requested among those.
-    if (!game.iflags?.menu_requested && corpsecheck === 2) {
-        /* C walks the pile via nexthere, head first; the flat array's LAST match is C's head */
-        const objs = (game.level?.objects || []).filter(
-            (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy
-                && o.otyp === CORPSE_A && tinnable(o)).reverse();
-        for (const otmp of objs) {
-            const one = (otmp.quan || 1) === 1;
-            const nm = A.invent.obj_doname(otmp);
-            const qbuf = `There ${one ? 'is' : 'are'} ${nm} here; ${verb} ${
-                one ? 'it' : 'one'}?`;
-            const c = await A.display.y_n(qbuf, 'ynq', 'n');
-            if (c === 'y') return otmp;
-            if (c === 'q') return null;
-            // 'n': fall through to the next floor object, then inventory.
-            set_getobj_else(1);
-        }
-    }
-    const { tin_ok } = await import('./eat.js');
-    const otmp = await A.invent.getobj(verb, tin_ok);
-    set_getobj_else(0);
-    if (otmp && corpsecheck
-        && (otmp.otyp !== CORPSE_A || (corpsecheck === 2 && !tinnable(otmp)))) {
-        await A.display.pline(`You can't ${verb} that!`);
-        return null;
-    }
-    return otmp;
 }
 // C ref: teleport.c tele_to_rnd_pet().
 async function ap_tele_to_rnd_pet() {
@@ -2305,9 +2274,6 @@ async function ap_xkilled(mtmp, flags) {
     const A = await ap_load();
     return await A.uhitm.killed(mtmp, { nomsg: !!(flags & XKILL_NOMSG_A) });
 }
-// C ref: sounds.c whimper(mtmp) — js/sounds.js ports growl()/yelp() but not
-// whimper(); C's whimper() draws NOTHING (it is a pline plus wake_nearto()).
-async function ap_whimper(_mtmp) {}
 // C ref: hacklib.c upstart()/an()/the() and Tobjnam-adjacent helpers; this
 // block keeps private copies of these one-liners.
 function ap_upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -2317,16 +2283,9 @@ function ap_The(s) { return ap_upstart(ap_the(s)); }
 // C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js
 // (an absent subject is treated as plural by this file's callers).
 import { vtense } from './plural.js';
+import { invocation_pos } from './trap.js';
 const ap_vtense = (subj, verb) => (!subj ? verb : vtense(subj, verb));
 // C ref: do_name.c mhis(mtmp) / mhe(mtmp).
-function ap_mhis(mtmp) {
-    if (mtmp?.female) return 'her';
-    return mtmp?.data && (mflags2_of(mtmp.data) & 0x40000) ? 'its' : 'his';
-}
-function ap_mhe(mtmp) {
-    if (mtmp?.female) return 'she';
-    return mtmp?.data && (mflags2_of(mtmp.data) & 0x40000) ? 'it' : 'he';
-}
 // C ref: shk.c Shk_Your(buf, obj)/shk_your(buf, obj) — the shopkeeper's/monster's
 // name for unpaid shop goods or a monster's pack, else "your "/"the ".
 async function ap_shk_your(obj) {
@@ -2499,7 +2458,7 @@ export async function use_camera(obj) {
         await A.display.pline(nothing_happens);
         return ECMD_TIME;
     }
-    A.invent.consume_obj_charge(obj, true);
+    await A.invent.consume_obj_charge(obj, true);
 
     if (obj.cursed && !rn2(2)) {
         await A.zap.zapyourself(obj, true);
@@ -2617,7 +2576,7 @@ export async function use_whistle(obj) {
         await A.display.pline(`You blow bubbles through ${A.invent.yname(obj)}.`);
     } else {
         if (Deaf())
-            await A.display.pline(`You feel rushing air tickle your ${ap_body(NOSE)}.`);
+            await A.display.You_feel(`rushing air tickle your ${ap_body(NOSE)}.`);
         else
             await A.display.pline(`You ${
                 whistle_str.replace('%s', obj.cursed ? 'shrill' : 'high')}`);
@@ -2782,7 +2741,7 @@ export async function m_unleash(mtmp, feedback) {
     if (feedback) {
         if (A.uhitm.canspotmon(mtmp) && cansee_mon_ap(mtmp))
             await A.display.pline(`${A.do_name.Monnam(mtmp)} pulls free of ${
-                ap_mhis(mtmp)} leash!`);
+                A.do_name.mhis(mtmp)} leash!`);
         else
             await A.display.pline('Your leash falls slack.');
     }
@@ -2947,7 +2906,7 @@ export async function mleashed_next2u(mtmp) {
             mtmp.mleashed = 0;
             otmp.leashmon = 0;
             A.invent.update_inventory();
-            await A.display.pline(`You feel ${
+            await A.display.You_feel(`${
                 (number_leashed() > 1) ? 'a' : 'the'} leash go slack.`);
         }
     }
@@ -2956,11 +2915,14 @@ export async function mleashed_next2u(mtmp) {
 
 // C ref: apply.c:919 next_to_u() — FALSE when a leashed pet cannot follow the
 // hero off the level (mleashed_next2u() may drag it adjacent, or snap the
-// leash, as a side effect), or when the steed carries the Amulet.
+// leash, as a side effect), or when the steed carries the Amulet.  C's
+// get_iter_mons() walks fmon newest-first and stops at the first monster whose
+// callback answers TRUE, so with two leashed pets the order decides which one
+// is mnexto()'d first and which messages/RNG draws happen.
 export async function next_to_u() {
     const u = game.u;
-    for (const mtmp of [...(game.level?.monsters || [])]) {
-        if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
+    for (const mtmp of ap_fmon()) {
+        if (ap_DEADMONSTER(mtmp)) continue;
         if (await mleashed_next2u(mtmp)) return false;
     }
     /* no pack mules for the Amulet */
@@ -3021,7 +2983,7 @@ export async function check_leash(x, y) {
                         switch (rn2(3)) {
                         case 0: await A.sounds.growl(mtmp); break;
                         case 1: await A.sounds.yelp(mtmp); break;
-                        default: await ap_whimper(mtmp); break;
+                        default: await A.sounds.whimper(mtmp); break;
                         }
                 }
             }
@@ -3185,7 +3147,7 @@ export async function use_mirror(obj) {
         if (vis)
             await A.display.pline(`${A.do_name.Monnam(mtmp)} is frozen by its reflection.`);
         else
-            await A.display.pline(`You hear ${c_something} stop moving.`);
+            await A.display.You_hear(`${c_something} stop moving.`);
         ap_paralyze_monst(mtmp, (mtmp.mfrozen | 0) + tmp);
     } else if (monable && mtmp.data === A.makemon.monster_by_pmidx(PM_UMBER_HULK)) {
         if (vis)
@@ -3196,7 +3158,7 @@ export async function use_mirror(obj) {
         if (vis) {
             await A.display.pline(`${A.do_name.monverbself(mtmp,
                 A.do_name.Monnam(mtmp), 'admire', null)} in your ${mirror}.`);
-            await A.display.pline(`${ap_upstart(ap_mhe(mtmp))} takes it!`);
+            await A.display.pline(`${ap_upstart(A.do_name.mhe(mtmp))} takes it!`);
         } else {
             await A.display.pline(`It steals your ${mirror}!`);
         }
@@ -3215,7 +3177,7 @@ export async function use_mirror(obj) {
                 await A.display.pline(`You discern no obvious reaction from ${
                     A.do_name.mon_nam(mtmp)}.`);
             else
-                await A.display.pline('You feel a bit silly gesturing the mirror in that direction.');
+                await A.display.You_feel('a bit silly gesturing the mirror in that direction.');
             do_react = false;
         }
         if (do_react) {
@@ -3230,10 +3192,10 @@ export async function use_mirror(obj) {
                    /* redundant: can't get here if these are true */
                    || !ap_haseyes(mtmp.data) || game.notonhead || !mtmp.mcansee) {
             await A.display.pline(`${A.do_name.Monnam(mtmp)} doesn't seem to notice ${
-                ap_mhis(mtmp)} reflection.`);
+                A.do_name.mhis(mtmp)} reflection.`);
         } else {
             await A.display.pline(`${A.do_name.Monnam(mtmp)} ignores ${
-                ap_mhis(mtmp)} reflection.`);
+                A.do_name.mhis(mtmp)} reflection.`);
         }
     }
     return ECMD_TIME;
@@ -3276,7 +3238,7 @@ export async function use_bell(optr) {
     let wakem = false, learno = false;
     const ordinary = (obj.otyp !== BELL_OF_OPENING || !obj.spe);
     const invoking = (obj.otyp === BELL_OF_OPENING
-                      && ap_invocation_pos(u.ux, u.uy)
+                      && invocation_pos(u.ux, u.uy)
                       && !ap_On_stairs(u.ux, u.uy));
 
     ap_Hero_playnotes(ap_obj_to_instr(obj), 'C', 100);
@@ -3324,7 +3286,7 @@ export async function use_bell(optr) {
 
     } else {
         /* charged Bell of Opening */
-        A.invent.consume_obj_charge(obj, true);
+        await A.invent.consume_obj_charge(obj, true);
 
         if (u.uswallow) {
             if (!obj.cursed)
@@ -3386,12 +3348,7 @@ export async function use_bell(optr) {
         await A.cmd.wake_nearby(true);
 }
 
-// C ref: dungeon.c invocation_pos(x, y) / On_stairs(x, y) — js/artifact.js keeps
-// private copies of both; these are this block's.
-function ap_invocation_pos(x, y) {
-    const inv = game.level?.invocation_pos;
-    return !!inv && inv.x === x && inv.y === y;
-}
+// C ref: stairs.c On_stairs(x, y); invocation_pos() is shared from trap.js.
 function ap_On_stairs(x, y) {
     /* C: On_stairs(x, y) == stairway_at(x, y) != NULL (js/display.js) */
     return !!_ap.display.stairway_at(x, y);
@@ -3442,9 +3399,9 @@ export async function use_candelabrum(obj) {
                 Tobjnam(obj, 'shine')} dimly.`);
     } else {
         await A.display.pline(`${ap_The(A.invent.xname(obj))}'s ${s} burn${
-            A.vision.Blind() ? '.' : 's brightly!'}`);
+            A.vision.Blind() ? '.' : ' brightly!'}`);
     }
-    if (!ap_invocation_pos(u.ux, u.uy) || ap_On_stairs(u.ux, u.uy)) {
+    if (!invocation_pos(u.ux, u.uy) || ap_On_stairs(u.ux, u.uy)) {
         await A.display.pline(`The ${s} ${ap_vtense(s, 'are')} being rapidly consumed!`);
         /* this used to be obj->age /= 2, rounding down; an age of
            1 would yield 0, confusing begin_burn() ... round up instead */
@@ -3689,19 +3646,16 @@ export async function use_lamp(obj) {
                 plur(obj.quan)} ${A.invent.otense(obj, 'burn')}${
                 A.vision.Blind() ? '.' : ' brightly!'}`);
             if (obj.unpaid && A.shk.costly_spot(u.ux, u.uy)
-                && obj.age === 20 * (objects[obj.otyp]?.oc_cost | 0)) {
+                && obj.age === 20 * base_oc_cost(obj.otyp)) {
                 const ithem = (Number(obj.quan) > 1) ? 'them' : 'it';
                 await A.display.pline(`"You burn ${ithem}, you bought ${ithem}!"`);
-                mkobj_bill_dummy_ap(obj);
+                await A.shk.bill_dummy_object(obj);
             }
         }
         await begin_burn(obj, false);
     }
 }
 
-// C ref: mkobj.c bill_dummy_object(otmp) — js/mkobj.js exports the real one;
-// this wrapper keeps the sync call site above sync.
-function mkobj_bill_dummy_ap(_obj) {}
 
 // C ref: apply.c:1702 light_cocktail(&obj) — apply a potion of oil.  RNG-free.
 // `optr` is C's `struct obj **` (see use_bell above).
@@ -3740,8 +3694,9 @@ export async function light_cocktail(optr) {
     if (obj.unpaid && A.shk.costly_spot(u.ux, u.uy)) {
         /* Normally we shouldn't both partially and fully charge for an item,
            but (Yendorian Fuel) Taxes are inevitable... */
+        await A.shk.check_unpaid(obj);
         await A.display.pline(`"That's in addition to the cost of the potion, of course."`);
-        mkobj_bill_dummy_ap(obj);
+        await A.shk.bill_dummy_object(obj);
     }
     A.invent.makeknown(obj.otyp);
 
@@ -3758,20 +3713,22 @@ export async function light_cocktail(optr) {
 }
 
 // C ref: apply.c:1966 display_jump_positions(on_off) — hilite every square the
-// hero could jump to.  Display-only (see ap_tmp_at's note); RNG-free.
-export function display_jump_positions(on_off) {
+// hero could jump to.  The getpos_hilitefunc; RNG-free.
+export async function display_jump_positions(on_off) {
+    await ap_load(); /* ap_get_valid_jump_position() reads hack.js through it */
+    const { goodpos_tmp_at_begin, goodpos_tmp_at, goodpos_tmp_at_end } = await import('./getpos.js');
     if (on_off) {
         /* on */
-        ap_tmp_at(DISP_BEAM_A, ap_cmap_to_glyph(S_goodpos_A));
+        goodpos_tmp_at_begin();
         for (let dx = -4; dx <= 4; dx++)
             for (let dy = -4; dy <= 4; dy++) {
                 const x = dx + game.u.ux, y = dy + game.u.uy;
                 if (ap_get_valid_jump_position(x, y) && !ap_u_at(x, y))
-                    ap_tmp_at(x, y);
+                    goodpos_tmp_at(x, y);
             }
     } else {
         /* off */
-        ap_tmp_at(DISP_END_A, 0);
+        goodpos_tmp_at_end();
     }
 }
 
@@ -3807,7 +3764,8 @@ export async function use_tinning_kit(obj) {
         await A.display.pline('You seem to be out of tins.');
         return;
     }
-    const corpse = await ap_floorfood('tin', 2);
+    const { floorfood } = await import('./eat.js');
+    const corpse = await floorfood('tin', 2);
     if (!corpse)
         return;
     if (corpse.oeaten) {
@@ -3838,7 +3796,7 @@ export async function use_tinning_kit(obj) {
         await A.display.pline("That's too insubstantial to tin.");
         return;
     }
-    A.invent.consume_obj_charge(obj, true);
+    await A.invent.consume_obj_charge(obj, true);
 
     const can = mksobj(TIN_OTYP, false, false);
     if (can) {
@@ -4042,9 +4000,9 @@ export async function fig_transform(arg, timeout) {
         switch (figurine.where) {
         case OBJ_INVENT:
             if (A.vision.Blind() || suppress_see)
-                await A.display.pline(`You feel ${c_something} drop from your pack!`);
+                await A.display.You_feel(`${c_something} drop from your pack!`);
             else
-                await A.display.pline(`You see ${monnambuf} drop out of your pack${
+                await A.display.You_see(`${monnambuf} drop out of your pack${
                     and_vanish}!`);
             break;
 
@@ -4053,7 +4011,7 @@ export async function fig_transform(arg, timeout) {
                 if (suppress_see)
                     await A.display.pline(`${ap_an(A.invent.xname(figurine))} suddenly vanishes!`);
                 else
-                    await A.display.pline(`You see a figurine transform into ${
+                    await A.display.You_see(`a figurine transform into ${
                         monnambuf}${and_vanish}!`);
                 redraw = true; /* update figurine's map location */
             }
@@ -4068,7 +4026,7 @@ export async function fig_transform(arg, timeout) {
                     ? `${s_suffix(A.do_name.a_monnam(mcarry))} pack`
                     : (mcarry && A.dbridge.is_pool(mcarry.mx, mcarry.my))
                       ? 'empty water' : 'thin air';
-                await A.display.pline(`You see ${monnambuf} drop out of ${
+                await A.display.You_see(`${monnambuf} drop out of ${
                     carriedby}${and_vanish}!`);
             }
             break;
@@ -4210,7 +4168,7 @@ export async function use_grease(obj) {
 
     if ((obj.spe | 0) > 0) {
         if ((obj.cursed || ap_Fumbling()) && !rn2(2)) {
-            A.invent.consume_obj_charge(obj, true);
+            await A.invent.consume_obj_charge(obj, true);
 
             await A.display.pline(`${Tobjnam(obj, 'slip')} from your ${
                 A.do_wear.fingers_or_gloves(false)}.`);
@@ -4223,7 +4181,7 @@ export async function use_grease(obj) {
             return ECMD_CANCEL;
         if (await A.do_wear.inaccessible_equipment(otmp, 'grease', false))
             return ECMD_OK;
-        A.invent.consume_obj_charge(obj, true);
+        await A.invent.consume_obj_charge(obj, true);
 
         const oldglib = ap_prop('Glib');
         if (otmp !== A.invent.hands_obj) {
@@ -4401,22 +4359,23 @@ export async function set_trap() {
     return 0;
 }
 
-// C ref: apply.c:3333 display_polearm_positions(on_off) — display-only (see
-// ap_tmp_at's note).  RNG-free.
-export function display_polearm_positions(on_off) {
+// C ref: apply.c:3333 display_polearm_positions(on_off) — the
+// getpos_hilitefunc.  RNG-free.
+export async function display_polearm_positions(on_off) {
+    const { goodpos_tmp_at_begin, goodpos_tmp_at, goodpos_tmp_at_end } = await import('./getpos.js');
     if (on_off) {
         /* on */
-        ap_tmp_at(DISP_BEAM_A, ap_cmap_to_glyph(S_goodpos_A));
+        goodpos_tmp_at_begin();
         const { min_range, max_range } = calc_pole_range();
         for (let dx = -3; dx <= 3; dx++)
             for (let dy = -3; dy <= 3; dy++) {
                 const x = dx + game.u.ux, y = dy + game.u.uy;
                 if (valid_polearm_position(x, y, min_range, max_range))
-                    ap_tmp_at(x, y);
+                    goodpos_tmp_at(x, y);
             }
     } else {
         /* off */
-        ap_tmp_at(DISP_END_A, 0);
+        goodpos_tmp_at_end();
     }
 }
 
@@ -4424,7 +4383,7 @@ export function display_polearm_positions(on_off) {
 // there is at least one monster they could hit with it.  RNG-free.
 export function could_pole_mon() {
     const u = game.u;
-    const hitm = game.context?.polearm_hitmon;
+    const hitm = game.context?.polearm?.hitmon;
 
     if (!game.uwep || !(_ap?.invent?.is_pole?.(game.uwep)))
         return false;
@@ -4567,20 +4526,21 @@ export function can_grapple_location(x, y) {
         && ap_distu(x, y) <= grapple_range();
 }
 
-// C ref: apply.c:3706 display_grapple_positions(on_off) — display-only.
-export function display_grapple_positions(on_off) {
+// C ref: apply.c:3706 display_grapple_positions(on_off) — the getpos_hilitefunc.
+export async function display_grapple_positions(on_off) {
+    const { goodpos_tmp_at_begin, goodpos_tmp_at, goodpos_tmp_at_end } = await import('./getpos.js');
     if (on_off) {
         /* on */
-        ap_tmp_at(DISP_BEAM_A, ap_cmap_to_glyph(S_goodpos_A));
+        goodpos_tmp_at_begin();
         for (let dx = -3; dx <= 3; dx++)
             for (let dy = -3; dy <= 3; dy++) {
                 const x = dx + game.u.ux, y = dy + game.u.uy;
                 if (can_grapple_location(x, y) && !ap_u_at(x, y))
-                    ap_tmp_at(x, y);
+                    goodpos_tmp_at(x, y);
             }
     } else {
         /* off */
-        ap_tmp_at(DISP_END_A, 0);
+        goodpos_tmp_at_end();
     }
 }
 
@@ -4619,7 +4579,8 @@ export async function use_grapple(obj) {
     const cc = { x: u.ux, y: u.uy };
     const picked = await A.hackmod.getpos('the spot to hit', cc.x, cc.y,
                                           can_grapple_location, true,
-                                          game.flags?.verbose !== false);
+                                          game.flags?.verbose !== false,
+                                          false, false, display_grapple_positions);
     if (!picked)
         /* ESC; uses turn iff grapnel became wielded */
         return (res | ECMD_CANCEL);
@@ -4716,7 +4677,7 @@ export async function use_grapple(obj) {
     default: /* Yourself (oops!) */
         if (A.enhance.p_skill_of(typ) <= P_BASIC_A) {
             await A.display.pline('You hook yourself!');
-            ap_losehp(rn1(10, 10), 'a grappling hook');
+            await A.zap.losehp(A.zap.Maybe_Half_Phys(rn1(10, 10)), 'a grappling hook', KILLED_BY);
             return ECMD_TIME;
         }
         break;
@@ -4743,14 +4704,6 @@ function ap_top_object_at(x, y) {
 // C ref: attrib.c losehp(n, knam, k_format) — js/attrib.js's losehp() is private
 // (and takes only the damage; the killer strings feed the death screen, not the
 // RNG), so this applies the damage here.  RNG-free either way.
-function ap_losehp(dmg, _knam) {
-    const u = game.u;
-    if (!u) return;
-    u.uhp = (u.uhp | 0) - dmg;
-    game.disp_botl = true;
-    game.botl = true;
-}
-
 // C ref: apply.c:3875 discard_broken_wand() — RNG-free.
 export async function discard_broken_wand() {
     const A = await ap_load();

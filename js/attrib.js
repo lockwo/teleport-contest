@@ -7,6 +7,7 @@ import { rn2, rn1, rnd, d } from './rng.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING } from './const.js';
 import { adj_erinys, monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { has_innate, minuhpmax, setuhpmax } from './exper.js';
+import { Poison_resistance } from './youprop.js';
 const FIXED_ABIL_PROP = 67; // prop.h FIXED_ABIL (ring of sustain ability, etc.)
 
 const AVAL = 50; // C ref: attrib.c — tune value for exercise gains.
@@ -157,7 +158,7 @@ export async function adjattrib(ndx, incr, msgflg) {
     if (!u?.acurr) return false;
     if (Fixed_abil() || !incr) return false;
     if ((ndx === A_INT || ndx === A_WIS) && game.uarmh?.otyp === 94 /* DUNCE_CAP */) {
-        if (msgflg === 0) {
+        if (Number(msgflg) === 0) {
             const { update_topl } = await import('./display.js');
             await update_topl('Your cap constricts briefly, then relaxes again.');
         }
@@ -192,7 +193,7 @@ export async function adjattrib(ndx, incr, msgflg) {
     const { update_topl } = await import('./display.js');
     if (acurr_eff(ndx) === old_acurr) {
         // C ref: attrib.c:176 `if (msgflg == 0 && flags.verbose)`
-        if (msgflg === 0 && game.flags?.verbose !== false) {
+        if (Number(msgflg) === 0 && game.flags?.verbose !== false) {
             if (abase[ndx] === old_abase && amax[ndx] === old_amax)
                 await update_topl(`You're ${abonflg ? 'currently' : 'already'} as ${attrstr} as you can get.`);
             else
@@ -312,15 +313,6 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
     }
     const { encumber_msg } = await import('./invent.js');
     await encumber_msg();
-}
-function Poison_resistance() {
-    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const u = game.u || {};
-    // A race-innate grant (e.g. every orc, from level 1) is never persisted as
-    // a stored flag anywhere in js/ — OR in the pure has_innate() derivation.
-    return !!(u.uprops?.Poison_resistance || u.HPoison_resistance
-        || u.EPoison_resistance || u.Poison_resistance)
-        || has_innate('HPoison_resistance');
 }
 
 // C ref: align.h ALIGNLIM = (10L + (svm.moves / 200L)) — the cap on how good

@@ -8,7 +8,7 @@ import { body_part } from './polyself.js';
 import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { pline, newsym, terrain_background_glyph, show_glyph_cell,
-         object_glyph, vobj_at, trap_glyph, engraving_glyph, bg_attr, Deaf_hero, map_object as display_map_object } from './display.js';
+         object_glyph, vobj_at, trap_glyph, engraving_glyph, bg_attr, Deaf_hero, map_object as display_map_object, You_see, You_feel } from './display.js';
 import { engr_at } from './engrave.js';
 import { couldsee } from './vision.js';
 import { exercise } from './attrib.js';
@@ -180,7 +180,7 @@ export async function findit() {
     if (found.num_cleared_invis) {
         /* at least 1 "remembered, unseen monster" marker has been removed */
         if (!num)
-            await pline(`You feel ${found.num_kept_invis ? 'somewhat ' : ''}less paranoid.`);
+            await You_feel(`${found.num_kept_invis ? 'somewhat ' : ''}less paranoid.`);
         num += found.num_cleared_invis;
     }
     /* note: num_kept_invis is not included in the final result */
@@ -418,7 +418,7 @@ export async function gold_detect(sobj) {
         ter_typ |= TER_MON;                         /* so autodescribe will recognize hero */
     }
     await flush_screen(1);
-    await update_topl('You feel very greedy, and sense gold!');
+    await You_feel('very greedy, and sense gold!');
     exercise(A_WIS, true);
 
     await browse_map(ter_typ, 'gold');
@@ -593,7 +593,12 @@ function glyph_at(x, y, remembered = false) {
         // C's glyph_at() then reports that object glyph, detect.c:772).
         const here = vobj_at(x, y);
         const og = here && !covers_objects(loc) ? object_glyph(here) : null;
-        if (!(og && sym !== '@' && og.ch === sym))
+        // A ridden steed is not on the map: its carried objects (the saddle) are mapped at the hero's square
+        // by object_detect()'s monster-inventory pass, so they count as drawn-over too.
+        const steed = game.u?.usteed;
+        const steed_obj_drawn = !!steed && sym !== (steed.data?.mlet ?? '@')
+            && (steed.minvent || []).some((o) => object_glyph(o)?.ch === sym);
+        if (!(og && sym !== '@' && og.ch === sym) && !steed_obj_drawn)
             return { kind: 'monster', mon: null, isyou: true, x, y };
     }
     const mon = remembered ? null : m_at(x, y);
@@ -1384,7 +1389,7 @@ export async function display_trap_map(cursed_src) {
         newsym(u.ux, u.uy);
         ter_typ |= TER_MON;
     }
-    await update_topl(`You feel ${cursed_src ? 'very greedy' : 'entrapped'}.`);
+    await You_feel(`${cursed_src ? 'very greedy' : 'entrapped'}.`);
 
     await browse_map(ter_typ, cursed_src ? 'gold' : 'trap of interest');
     await map_redisplay();
@@ -2004,6 +2009,7 @@ export async function mfind0(mtmp, via_warning) {
     const { canspotmon, seemimicLocal, x_monnam } = await import('./uhitm.js');
     const { sensemon } = await import('./mon.js');
     const { is_hider_flag, hides_under_flag } = await import('./monflags_data.js');
+    const { set_msg_xy } = await import('./hack.js');
     const x = mtmp.mx, y = mtmp.my;
     let found_something;
 
@@ -2016,6 +2022,7 @@ export async function mfind0(mtmp, via_warning) {
             && (is_hider_flag(mtmp.data) || hides_under_flag(mtmp.data)
                 || mtmp.data?.mcls === 57 /* S_EEL */)) {
             if (via_warning && found_something) {
+                set_msg_xy(x, y);
                 await update_topl(`Your danger sense causes you to take a second ${
                     Blind() ? 'to check nearby' : 'look close by'}.`);
                 await display_nhwindow_message();
@@ -2031,9 +2038,11 @@ export async function mfind0(mtmp, via_warning) {
     exercise(A_WIS, true);
     if (!canspotmon(mtmp)) {
         map_invisible(x, y);
-        await pline('You feel an unseen monster!');
+        set_msg_xy(x, y);
+        await You_feel('an unseen monster!');
     } else if (!sensemon(mtmp)) {
         const article = mtmp.mtame ? 3 /* ARTICLE_YOUR */ : 2 /* ARTICLE_A */;
+        set_msg_xy(x, y);
         await pline(`You find ${x_monnam(mtmp, article, null, 0, false)}.`);
     }
     return 1;
@@ -2144,7 +2153,7 @@ export async function use_crystal_ball(box) {
             break;
         }
         }
-        if (obj) consume_obj_charge(obj, true);
+        if (obj) await consume_obj_charge(obj, true);
         return;
     }
 
@@ -2172,16 +2181,16 @@ export async function use_crystal_ball(box) {
                 await pline(`The crystal pulses with sinister ${hcolor(null)} light!`);
                 break;
             case 4:
-                await pline('You see goldfish swimming above fluorescent rocks.');
+                await You_see('goldfish swimming above fluorescent rocks.');
                 break;
             case 5:
-                await pline('You see tiny snowflakes spinning around a miniature farmhouse.');
+                await You_see('tiny snowflakes spinning around a miniature farmhouse.');
                 break;
             default:
                 await pline('Oh wow... like a kaleidoscope!');
                 break;
             }
-            consume_obj_charge(obj, true);
+            await consume_obj_charge(obj, true);
         }
         if (!implode) return;
     }
@@ -2209,7 +2218,7 @@ export async function use_crystal_ball(box) {
         } else {
             let ch2 = ch;
             makeknown(obj.otyp);
-            consume_obj_charge(obj, true);
+            await consume_obj_charge(obj, true);
 
             /* special case: accept ']' as synonym for mimic
              * we have to do this before the def_char_to_objclass check */
@@ -2232,14 +2241,14 @@ export async function use_crystal_ball(box) {
                 ret = await trap_detect(null);
             } else {
                 const i = rn2(crystal_level_detects.length);
-                await pline(`You see ${crystal_level_detects[i][0]}, `
+                await You_see(`${crystal_level_detects[i][0]}, `
                             + `${level_distance(game[crystal_level_detects[i][1]])}.`);
                 ret = 0;
             }
 
             if (ret) {
                 if (!rn2(100)) /* make them nervous */
-                    await pline('You see the Wizard of Yendor gazing out at you.');
+                    await You_see('the Wizard of Yendor gazing out at you.');
                 else
                     await pline('The vision is unclear.');
             }

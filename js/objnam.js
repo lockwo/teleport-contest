@@ -45,7 +45,7 @@ import { record_price_quote as oi_record_price_quote, append_price_quote as oi_a
 import { CapitalMon } from './rumors.js';
 import { tshirt_text as rd_tshirt_text, apron_text as rd_apron_text,
          candy_wrapper_text as rd_candy_wrapper_text, hawaiian_motif as rd_hawaiian_motif } from './read.js';
-import { P_BOW, P_CROSSBOW, P_DART, P_SHURIKEN, P_BOOMERANG, BURN_OBJECT } from './const.js';
+import { P_BOW, P_CROSSBOW, P_DART, P_SHURIKEN, P_BOOMERANG, BURN_OBJECT, MV_KNOWS_EGG } from './const.js';
 
 // Additional imports used only by the objnam.c naming core appended at the end
 // of this file.  Each of these six modules is outside the pre-existing
@@ -1936,7 +1936,7 @@ export function doname_base(obj, doname_flags) {
             gx.xnamep = save_xnamep;
         } else if (obj.otyp === EGG_) {
             if (ismnum(omndx)
-                && (known || (mvitals_mvflags(omndx) & 0x04 /*MV_KNOWS_EGG*/))) {
+                && (known || (mvitals_mvflags(omndx) & MV_KNOWS_EGG))) {
                 prefix += `${mons_at(omndx)?.name ?? ''} `;
                 if (obj.spe === 1)
                     bp += ' (laid by you)';
@@ -2125,8 +2125,8 @@ function Glib() { return (game.u?.uprops?.Glib | 0) > 0; }
 /* you.h:564 URIGHTY == (u.uhandedness == RIGHT_HANDED(0)); u_init.c sets
    uhandedness with rn2(10) at chargen (see js/bones.js:1066) */
 function URIGHTY() { return !game.u?.uleft_handed; }
-/* mvitals[].mvflags — js/mon.js owns the live table */
-function mvitals_mvflags(mndx) { return game.svm?.mvitals?.[mndx]?.mvflags | 0; }
+/* mvitals[].mvflags — the live table is game.mvitals (see mon.js mvitals_at) */
+function mvitals_mvflags(mndx) { return game.mvitals?.[mndx]?.mvflags | 0; }
 
 // doname(): objnam.c:1753.  js/invent.js exports the live doname(); these three
 // wrappers exist so the doname_base() flags are named where C names them.
@@ -2266,3 +2266,69 @@ export function ansimpleoname(obj) {
 
 // C ref: objnam.c thesimpleoname()
 export function thesimpleoname(obj) { return the(simpleonames(obj)); }
+
+// C ref: objnam.c short_oname() — xname,doname,&c with a result longer than
+// `lenlimit` reformatted in stages: the called string, the named string, both
+// (each cut to 8 characters + "..."), then the BUC-known/rust-known/greased/
+// erosion words dropped, and finally `altfunc`.  The object is restored, so
+// the C's single save_obj copy is the five fields the stripping step clears.
+export function short_oname(obj, func, altfunc, lenlimit) {
+    const SHORTLEN = 12 - 4; /* sizeof unamebuf/onamebuf - 4 */
+    const ocl = objects[obj.otyp];
+    let outbuf = func(obj);
+    if (outbuf.length <= lenlimit)
+        return outbuf;
+
+    /* shorten called string to fairly small amount */
+    const save_uname = ocl.oc_uname;
+    const long_uname = !!save_uname && save_uname.length >= 12;
+    const unamebuf = long_uname ? save_uname.slice(0, SHORTLEN) + '...' : null;
+    if (long_uname) {
+        ocl.oc_uname = unamebuf;
+        outbuf = func(obj);
+        ocl.oc_uname = save_uname; /* restore called string */
+        if (outbuf.length <= lenlimit)
+            return outbuf;
+    }
+
+    /* shorten named string to fairly small amount */
+    const save_oname = has_oname(obj) ? ONAME(obj) : null;
+    const long_oname = !!save_oname && save_oname.length >= 12;
+    const onamebuf = long_oname ? save_oname.slice(0, SHORTLEN) + '...' : null;
+    if (long_oname) {
+        obj.oname = onamebuf;
+        outbuf = func(obj);
+        obj.oname = save_oname; /* restore named string */
+        if (outbuf.length <= lenlimit)
+            return outbuf;
+    }
+
+    /* shorten both called and named strings */
+    if (long_uname && long_oname) {
+        ocl.oc_uname = unamebuf;
+        obj.oname = onamebuf;
+        outbuf = func(obj);
+        if (outbuf.length <= lenlimit) {
+            ocl.oc_uname = save_uname;
+            obj.oname = save_oname;
+            return outbuf;
+        }
+    }
+
+    /* still long; strip several name-lengthening attributes */
+    const { bknown, rknown, greased, oeroded, oeroded2 } = obj;
+    obj.bknown = obj.rknown = obj.greased = 0;
+    obj.oeroded = obj.oeroded2 = 0;
+    outbuf = func(obj);
+    if (altfunc && outbuf.length > lenlimit)
+        outbuf = altfunc(obj);
+    /* restore the object */
+    Object.assign(obj, { bknown, rknown, greased, oeroded, oeroded2 });
+    if (save_oname)
+        obj.oname = save_oname;
+    if (save_uname)
+        ocl.oc_uname = save_uname;
+
+    /* use whatever we've got, whether it's too long or not */
+    return outbuf;
+}

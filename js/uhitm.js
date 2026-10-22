@@ -18,7 +18,7 @@
 // adopting the staged pieces is a separate, measured change.
 
 import { makeplural } from './plural.js';
-import { game, hooks } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
 import { shkname, in_rooms, shop_keeper } from './shkroom.js';
@@ -40,10 +40,10 @@ import { register_monnam_hooks, rndmonnam, bogon_is_pname } from './do_name.js';
 import { priestname } from './priest.js';
 import { rn2, rnd, d } from './rng.js';
 import { Cold_resistance } from './zap.js';
-import { finish_meating } from './dogmove.js';
+import { finish_meating, monnear } from './dogmove.js';
 import { cansee, couldsee } from './vision.js';
 import { m_at, newsym, map_invisible, unmap_object, canseemon_shared,
-         update_topl } from './display.js';
+         update_topl, shieldeff, You_feel } from './display.js';
 import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
          TAINT_AGE, CORPSTAT_INIT, CORPSTAT_NONE, CORPSTAT_FEMALE, CORPSTAT_MALE,
          MGIVENNAME, has_mgivenname, W_SADDLE, SUPPRESS_SADDLE,
@@ -51,7 +51,7 @@ import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
          P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_BARE_HANDED_COMBAT, P_TWO_WEAPON_COMBAT,
          P_RIDING, ERODE_BURN, ERODE_RUST, ERODE_CORRODE, ER_NOTHING,
-         EF_NONE, EF_GREASE, EF_VERBOSE, In_endgame, TEMPLE, NON_PM } from './const.js';
+         EF_NONE, EF_GREASE, EF_VERBOSE, In_endgame, TEMPLE, NON_PM, CXN_ARTICLE, NO_KILLER_PREFIX } from './const.js';
 import { Blind, does_block, unblock_point, is_lightblocker_mappear } from './vision.js';
 import { exercise, adjalign, acurr_eff } from './attrib.js';
 import { DEADMONSTER, Protection_from_shape_changers, mmove_of, base_mmove,
@@ -74,7 +74,7 @@ import { mkcorpstat, mkobj, mksobj, mksobj_at, SCR_BLANK_PAPER, CORPSE, FIGURINE
          TOOL_CLASS, GEM_CLASS, SPBOOK_CLASS, FOOD_CLASS, objects, COIN_CLASS,
          STRANGE_OBJECT, ARMOR_CLASS, GLOB_OF_GRAY_OOZE, obj_nexto, obj_meld,
          pudding_merge_message } from './mkobj.js';
-import { LEASH, UNICORN_HORN, WORM_TOOTH, STATUE, mkgold } from './mkobj.js';
+import { LEASH, UNICORN_HORN, WORM_TOOTH, STATUE, mkgold, is_flimsy } from './mkobj.js';
 // C object ids from mkobj.js OBJECT_DATA, for golem material remains.
 const LEATHER_ARMOR = 134, LEATHER_CLOAK = 145, SADDLE = 235, BULLWHIP = 82,
       GRAPPLING_HOOK = 260, QUARTERSTAFF = 79, SMALL_SHIELD = 150, CLUB = 77,
@@ -84,6 +84,7 @@ const LEATHER_ARMOR = 134, LEATHER_CLOAK = 145, SADDLE = 235, BULLWHIP = 82,
 const GRAY_DRAGON_SCALES_OT = 111, FIRST_GLASS_GEM_OT = 461, NUM_GLASS_GEMS_OT = 9;
 import { base_armcat } from './objarmor_data.js';
 import { mon_nocorpse, undead_to_corpse, name_to_pmidx, mon_msize } from './makemon.js';
+import { is_vampshifter } from './mon.js';
 // C ref: mplayer.js:216-222 — exper.js's rank_of() is keyed by the true mons[]
 // offset (PM_ROGUE=8/PM_RANGER=7 match roles[].mnum); role.js's own rank_of()
 // indexes its roles[] array directly instead, which has Rogue/Ranger swapped,
@@ -511,7 +512,7 @@ export async function setmangry(mtmp, via_attack) {
     if (via_attack && sengr_at('Elbereth', u.ux, u.uy, true)) {
         const { onscary } = await import('./monmove.js');
         if (onscary(u.ux, u.uy, mtmp) || mtmp.mpeaceful) {
-            await pline('You feel like a hypocrite.');
+            await You_feel('like a hypocrite.');
             adjalign((u.ualign?.record ?? 0) > 5 ? -5 : -rnd(5));
             if (!Blind()) await pline('The engraving beneath you fades.');
             del_engr_at(u.ux, u.uy);
@@ -592,8 +593,8 @@ export async function stumble_onto_mimic(mtmp) {
 // swing this turn); FALSE = fall through to hitum().
 export async function attack_checks(mtmp, wep = null) {
     // uhitm.c:216 — clear the monster's "waiting for you" AI flag now that
-    // you're adjacent enough to attack it (STRAT_WAITMASK = 0x00ff0000).
-    if (mtmp.mstrategy != null) mtmp.mstrategy &= ~0x00ff0000;
+    // you're adjacent enough to attack it.
+    if (mtmp.mstrategy != null) mtmp.mstrategy &= ~STRAT_WAITMASK;
 
     if (engulfing_u(mtmp)) return false;
     if (game.context?.forcefight) return false;
@@ -1429,7 +1430,8 @@ export async function abuse_dog(mtmp) {
     // C ref: dog.c:1367-1371.  Conflict and monster aggravation make an
     // injured pet lose half its tameness before the yelp/growl rn2(mtame).
     const { Conflict } = await import('./monmove.js');
-    if (Conflict() || game.u?.uprops?.Aggravate_monster || game.u?.uAggravate_monster)
+    const { Aggravate_monster } = await import('./invent.js');
+    if (Aggravate_monster() || Conflict())
         mtmp.mtame = Math.trunc(mtmp.mtame / 2);
     else
         mtmp.mtame--;
@@ -1532,7 +1534,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
             if (Blind() || game.flags?.verbose === false)
                 await pline('You are splashed!');
             else
-                await pline(`You are splashed by ${s_suffix(mon_nam(mon))} acid!`);
+                await pline(`You are splashed by ${s_suffix(mon_nam(mon))} ${(await import('./do_name.js')).hliquid('acid')}!`);
             if (!Acid_resistance()) await mdamageu(mon, tmp);
             if (!rn2(30)) await erode_armor(YOUMONST, ERODE_CORRODE);
         }
@@ -1587,11 +1589,21 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
         break;
     }
     case AD_MAGM:
-        // "wrath of gods for attacking Oracle"; no Antimagic hero here.
+        /* wrath of gods for attacking Oracle */
         {
-            const { pline } = await import('./display.js');
-            await pline('You are hit by magic missiles appearing from thin air!');
-            await mdamageu(mon, tmp);
+            const { pline, shieldeff } = await import('./display.js');
+            const { Antimagic } = await import('./zap.js');
+            const { monstseesu, monstunseesu } = await import('./mondata.js');
+            const { M_SEEN_MAGR } = await import('./const.js');
+            if (Antimagic()) {
+                await shieldeff(game.u.ux, game.u.uy);
+                monstseesu(M_SEEN_MAGR);
+                await pline('A hail of magic missiles narrowly misses you!');
+            } else {
+                await pline('You are hit by magic missiles appearing from thin air!');
+                await mdamageu(mon, tmp);
+                monstunseesu(M_SEEN_MAGR);
+            }
         }
         break;
     case AD_ENCH:
@@ -1615,7 +1627,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
             if (monnear(mon, game.u.ux, game.u.uy)) {
                 const { pline } = await import('./display.js');
                 if (Cold_resistance()) {
-                    await pline('You feel a mild chill.');
+                    await You_feel('a mild chill.');
                     break;
                 }
                 await pline('You are suddenly very cold!');
@@ -1656,7 +1668,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
             if (monnear(mon, game.u.ux, game.u.uy)) {
                 const { pline } = await import('./display.js');
                 if ((await import('./zap.js')).Fire_resistance()) {
-                    await pline('You feel mildly warm.');
+                    await You_feel('mildly warm.');
                     break;
                 }
                 await pline('You are suddenly very hot!');
@@ -1667,7 +1679,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
             {
                 const { pline } = await import('./display.js');
                 if ((await import('./zap.js')).Shock_resistance?.()) {
-                    await pline('You feel a mild tingle.');
+                    await You_feel('a mild tingle.');
                     break;
                 }
                 await pline('You are jolted with electricity!');
@@ -1721,7 +1733,8 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
 // C ref: uhitm.c passive_obj(mon, obj, mattk) — the passive attack's effect on
 // the striking object.
 export async function passive_obj(mon, obj, mattk) {
-    const ptr = mon?.data;
+    /* gy.youmonst.data is the hero's current form (game.youmonst is a bare {}) */
+    const ptr = (mon === game.youmonst || mon === game.u) ? youmonst_data_uh() : mon?.data;
     /* C ref: uhitm.c:6136 — if the caller hasn't named an object, use uwep,
        uswapwep or (for AD_ENCH) uarmg. */
     if (!obj) {
@@ -1803,12 +1816,6 @@ function change_luck(n) {
     u.uluck = (u.uluck || 0) + n;
     if (u.uluck < -10) u.uluck = -10;
     if (u.uluck > 10) u.uluck = 10;
-}
-
-// C ref: mon.c monnear(mon, x, y) — dist2 < 3 (orthogonally/diagonally next to).
-function monnear(mon, x, y) {
-    const dx = mon.mx - x, dy = mon.my - y;
-    return (dx * dx + dy * dy) < 3;
 }
 
 // ── kill aftermath: killed -> xkilled -> mondead + make_corpse ──
@@ -1914,7 +1921,7 @@ export async function killed(mon, opts) {
     // mondead(): detach the monster from the level BEFORE the once-per-turn
     // mcalcmove realloc (allmain.js) so that loop iterates the post-kill set,
     // matching C (fmon has the dead monster purged by the next round).
-    mvitals_died(mon);                 // mon.c:3135
+    await mvitals_died(mon);                 // mon.c:3135
     await resurrect_kop(mon);
     // C ref: mon.c:2758 m_detach() -> mon_leaving_level(): unstuck() (a holder
     // gets mspec_used = rnd(2)), take the monster off the map, and newsym()
@@ -2086,7 +2093,7 @@ export async function killed(mon, opts) {
         if (mdat0?.mcls === S_UNICORN && likes_gems_flag(mdat0)
             && sgn(alignType) === sgn(mdat0?.maligntyp | 0)) {
             change_luck(-5);
-            await update_topl('You feel guilty...');
+            await You_feel('guilty...');
         }
     }
 
@@ -2819,9 +2826,9 @@ import { EGG, BOULDER, HEAVY_IRON_BALL, IRON_CHAIN, EXPENSIVE_CAMERA,
          weight } from './mkobj.js';
 import { rnl, rn1 } from './rng.js';
 import { monster_by_pmidx } from './makemon.js';
-import { Mgender, y_monnam, some_mon_nam } from './do_name.js';
+import { Mgender, y_monnam, some_mon_nam, mhe, mhis } from './do_name.js';
 import { mdamageu } from './mhitu.js';
-import { troll_baned, resists_poison } from './mondata.js';
+import { troll_baned, resists_poison, resists_blnd_by_arti } from './mondata.js';
 
 // C ref: include/objects.h oc_material enum (MAT_VEGGY/MAT_PAPER are declared
 // with hmon_misc_obj_dmg above).
@@ -2910,14 +2917,6 @@ function enfolds(ptr) { return attacktype_fordmg(ptr, AT_ENGL, AD_WRAP); }
 const FLAMING_NAMES = new Set(['fire vortex', 'flaming sphere',
                                'fire elemental', 'salamander']);
 function flaming(ptr) { return FLAMING_NAMES.has(ptr?.name); }
-// C ref: monst.h is_vampshifter(mon) — cham is one of the three vampire forms.
-const VAMPSHIFTER_CHAM_NAMES = new Set(['vampire', 'vampire leader',
-                                        'Vlad the Impaler']);
-function is_vampshifter(mon) {
-    const ch = mon?.cham;
-    if (ch == null || ch < 0) return false;
-    return VAMPSHIFTER_CHAM_NAMES.has(monster_by_pmidx(ch)?.name);
-}
 // C ref: mondata.c:654 sticks(ptr) — a holder; grabbing one would be ambiguous.
 // Note the AT_ENGL exclusion on the AD_WRAP arm (an engulfer isn't a holder).
 export function sticks(ptr) {
@@ -2942,14 +2941,15 @@ function can_be_strangled(mon) {
 // C ref: monst.h resists_poison(mon) — Resists_Elem(mon, POISON_RES); this
 // port tracks the species bit only (see js/mondata.js resists_bit).
 // C ref: mondata.c:248 resists_blnd(mon) — monster half only (the hero can't be
-// the defender of a hero attack).  resists_blnd_by_arti() needs artifact
-// defends(); js/artifact.js has no such export, so the Sunsword arm is absent.
+// the defender of a hero attack).  The Sunsword arm is resists_blnd_by_arti().
 function resists_blnd(mon) {
     const ptr = mon?.data;
     if (mon?.mblinded || !mon?.mcansee || !haseyes(ptr) || mon?.msleeping)
         return true;
-    return attacktype_fordmg(ptr, AT_EXPL, AD_BLND)
-        || attacktype_fordmg(ptr, AT_GAZE, AD_BLND);
+    if (attacktype_fordmg(ptr, AT_EXPL, AD_BLND)
+        || attacktype_fordmg(ptr, AT_GAZE, AD_BLND))
+        return true;
+    return resists_blnd_by_arti(mon);
 }
 // C ref: mondata.h touch_petrifies(ptr) — cockatrice and chickatrice only
 // (Medusa petrifies when eaten, via flesh_petrifies(), not when touched).
@@ -2961,11 +2961,6 @@ function touch_petrifies(ptr) {
 function passes_rocks(ptr) { return passes_walls(ptr) && !unsolid(ptr); }
 // C ref: mondata.h hates_light(ptr) — the gremlin.
 function mon_hates_light(mon) { return mon?.data?.name === 'gremlin'; }
-// C ref: obj.h:418 is_flimsy(otmp) — oc_material <= LEATHER, or a rubber hose.
-export function is_flimsy(otmp) {
-    return (objects[otmp?.otyp]?.material ?? NO_MATERIAL) <= MAT_LEATHER
-        || otmp?.otyp === RUBBER_HOSE;
-}
 // C ref: obj.h:316 stale_egg(egg) — (moves - age) > 2 * MAX_EGG_HATCH_TIME.
 // Same constant as js/dogmove.js's copy.
 function stale_egg(egg) { return ((game.moves || 1) - (egg?.age ?? 0)) > 400; }
@@ -2988,8 +2983,6 @@ function the_uh(s) { return `the ${s}`; }
 function The_uh(s) { return `The ${s}`; }
 // C ref: do_name.c mhe(mtmp)/mhis(mtmp) — pronouns from Mgender().
 const MALE_G = 0, FEMALE_G = 1;
-function mhe(mtmp) { return Mgender(mtmp) === FEMALE_G ? 'she' : 'he'; }
-function mhis(mtmp) { return Mgender(mtmp) === FEMALE_G ? 'her' : 'his'; }
 // C ref: do_name.c a_monnam(mtmp) — "a <mon>".
 function a_monnam_uh(mtmp) { return x_monnam(mtmp, ARTICLE_A, null, 0, false); }
 
@@ -3002,13 +2995,13 @@ function Stunned_uh() {
     return (u_of().uprops?.Stun || 0) > 0 || !!u_of().Stunned
         || (u_of().ustun | 0) > 0;
 }
-function Blind_telepat() { return (u_of().uprops?.Telepat || 0) > 0; }
 function See_invisible() { return !!game.u?.formprops?.See_invisible || !!u_of().see_invis; }
 function Invisible_uh() { return !!u_of().uinvis && !See_invisible(); }
 function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || (u_of().uprops?.StoneResistance || 0) > 0; }
 import { Deaf_hero as Deaf_uh } from './display.js';
 function Upolyd() { return !!u_of().Upolyd; }
 import { Hate_silver } from './invent.js';
+import { Blind_telepat } from './youprop.js';
 // C ref: display.h m_next2u(mon) — adjacent to the hero.
 function m_next2u(mon) {
     const u = u_of();
@@ -3047,7 +3040,8 @@ export function dynamic_multi_reason(mon, verb, by_gaze) {
 // Per iteration the RNG order is: find_roll_to_hit (hitval/weapon_hit_bonus,
 // RNG-free) -> rnd(20) -> known_hitum -> passive.  A square with no monster
 // consumes nothing.
-let _cleave_clockwise = false;
+let _cleave_clockwise = false;   /* C: uhitm.c hitum_cleave() `static boolean clockwise` */
+register_process_static(() => { _cleave_clockwise = false; });
 export async function hitum_cleave(target, uattk) {
     const u = game.u;
     const x = u.ux, y = u.uy;
@@ -3247,7 +3241,7 @@ export async function hmon_hitmon_weapon_melee(hmd, mon, obj) {
             + `${plur(monwep.quan ?? 1)} ${I.otense(monwep, 'shatter')}`;
         await update_topl(`${buf} from the force of your blow!`);
         const { m_useupall } = await import('./mthrowu.js');
-        m_useupall(mon, monwep);
+        await m_useupall(mon, monwep);
         /* if someone just shattered MY weapon, I'd flee! */
         if (rn2(4)) {
             const { monflee: monflee_full } = await import('./monmove.js');
@@ -3737,7 +3731,7 @@ export async function hmon_hitmon_poison(hmd, mon, obj) {
         adjalign(-Math.sign(u.ualign?.type ?? 0));
     } else if ((u.ualign?.type ?? 0) === A_LAWFUL
                && (u.ualign?.record ?? 0) > -10) {
-        await update_topl('You feel like an evil coward for using a poisoned'
+        await You_feel('like an evil coward for using a poisoned'
             + ' weapon.');
         adjalign(-1);
     }
@@ -4092,13 +4086,13 @@ export async function demonpet() {
     const u = game.u;
     const { update_topl } = await import('./display.js');
     await update_topl('Some hell-p has arrived!');
-    /* makemon.c ndemon(alignment) — unported; it does its own rn2() scan over
-       the demon class, so the !rn2(6) below is only the gate. */
-    const i = !rn2(6) ? -1 /* ndemon(u.ualign.type) */ : -1 /* NON_PM */;
-    const pm = (i !== -1) ? monster_by_pmidx(i) : (game.youmonst?.data ?? null);
-    const { makemon } = await import('./makemon.js');
+    const { ndemon } = await import('./minion.js');
+    const i = !rn2(6) ? ndemon(u.ualign.type) : NON_PM;
+    const pm = (i !== NON_PM) ? monster_by_pmidx(i) : (game.youmonst?.data ?? null);
+    const { makemon, makemon_appears_msg } = await import('./makemon.js');
     const dtmp = makemon(pm, u.ux, u.uy, 0 /* NO_MM_FLAGS */);
     if (dtmp) {
+        await makemon_appears_msg(dtmp, dtmp.mx, dtmp.my, 0); // makemon.c:1474
         const { tamedog } = await import('./dothrow.js');
         await tamedog(dtmp, null, false);
     }
@@ -4107,14 +4101,19 @@ export async function demonpet() {
 
 // C ref: uhitm.c:2148 theft_petrifies(otmp) — stealing a cockatrice corpse
 // bare-handed is fatal.  No RNG (instapetrify -> done()).
-export function theft_petrifies(otmp) {
+export async function theft_petrifies(otmp) {
     if (game.uarmg || otmp.otyp !== CORPSE
         || !touch_petrifies(monster_by_pmidx(otmp.corpsenm))
         || Stone_resistance())
         return false;
 
-    /* stealing this corpse is fatal...  polyself.c instapetrify(kbuf) has no
-       port; the poly_when_stoned()/PM_STONE_GOLEM arm is #if 0 in C too. */
+    /* the poly_when_stoned()/PM_STONE_GOLEM arm is #if 0 in C too */
+
+    /* stealing this corpse is fatal... */
+    const I = await import('./invent.js');
+    const { instapetrify } = await import('./polyself.js');
+    await instapetrify(I.corpse_xname(otmp, 'stolen', CXN_ARTICLE));
+    /* apparently wasn't fatal after all... */
     return true;
 }
 
@@ -4188,7 +4187,7 @@ export async function steal_it(mdef, mattk) {
                                           I.xname(otmp), 'You steal: ');
         /* might have dropped otmp, and it might have broken or left the level */
         if (!otmp || !I.carried(otmp)) continue;
-        if (theft_petrifies(otmp))
+        if (await theft_petrifies(otmp))
             break;   /* stop thieving even though the hero survived */
         /* more take-away handling, after the theft message */
         if (unwornmask & W_WEP) {
@@ -4270,7 +4269,7 @@ export async function damageum(mdef, mattk, specialdmg) {
         /* (DEADMONSTER(mdef) and !mhm.damage => already killed) */
         if (mdef.mtame && !cansee(mdef.mx, mdef.my)) {
             const { update_topl } = await import('./display.js');
-            await update_topl('You feel embarrassed for a moment.');
+            await You_feel('embarrassed for a moment.');
             if (mhm.damage) await killed(mdef, { nomsg: true });
         } else if (game.flags?.verbose === false) {
             const { update_topl } = await import('./display.js');
@@ -4423,7 +4422,13 @@ export async function gulpum(mdef, mattk) {
         if (fatal_gulp && !is_rider(pd)) {   /* petrification */
             await update_topl(`You ${u_digest ? 'englut' : 'engulf'}`
                 + ` ${mon_nam(mdef)}.`);
-            /* polyself.c instapetrify(kbuf) — unported (ends the game) */
+            const { type_is_pname } = await import('./objnam.js');
+            const { instapetrify } = await import('./polyself.js');
+            let mnam = mon_pmname(mdef);
+            if (!type_is_pname(pd)) mnam = an(mnam);
+            await instapetrify(`${u_digest ? 'swallowing'
+                                  : u_enfold ? 'enclosing' : 'engulfing'}`
+                               + ` ${mnam}${u_digest ? ' whole' : ''}`);
         } else {
             await start_engulf(mdef);
             switch (mattk.adtyp) {
@@ -4433,8 +4438,14 @@ export async function gulpum(mdef, mattk) {
                     await update_topl('Unfortunately, digesting any of it is'
                         + ' fatal.');
                     end_engulf();
-                    /* done(DIED) — no port; returns M_ATTK_MISS if lifesaved */
-                    return M_ATTK_MISS;
+                    const { done, DIED } = await import('./end.js');
+                    const { formatkiller } = await import('./topten.js');
+                    game.killer = { ...(game.killer || {}),
+                                    name: `unwisely tried to eat ${mon_pmname(mdef)}`,
+                                    format: NO_KILLER_PREFIX };
+                    game._killer_name = formatkiller(256, DIED, false);
+                    await done(DIED);
+                    return M_ATTK_MISS; /* lifesaved */
                 }
 
                 if (Slow_digestion()) { dam = 0; break; }
@@ -4444,7 +4455,7 @@ export async function gulpum(mdef, mattk) {
                 const saver = mlifesaver(mdef);
                 if (saver) {
                     const { m_useup } = await import('./muse.js');
-                    m_useup(mdef, saver);
+                    await m_useup(mdef, saver);
                 }
 
                 const { newuhs } = await import('./eat.js');
@@ -4744,7 +4755,7 @@ export async function mhitm_knockback(mdef, mattk, hitflags, weapon_used, magr =
                      + `with a ${adj} ${noun}!`);
     } else if (!magr) {
         /* hero knocks unseen foe back; noticed by touch */
-        await plineU(`You feel ${some_mon_nam(mdef)} be knocked ${knockedhow}!`);
+        await You_feel(`${some_mon_nam(mdef)} be knocked ${knockedhow}!`);
     }
 
     if (!magr && u.ustuck) await unstuck(u.ustuck);
@@ -5279,6 +5290,14 @@ export async function that_is_a_mimic(mtmp, mimic_flags) {
     if (reveal_it) seemimicLocal(mtmp);
 }
 
+// C ref: uhitm.c:6300 disguised_as_non_mon(mtmp) — mimicking an object or
+// furniture, and not sensed some other way.
+export function disguised_as_non_mon(mtmp) {
+    return !sensemon(mtmp)
+        && M_AP_TYPE(mtmp) !== 0
+        && M_AP_TYPE(mtmp) !== M_AP_MONSTER;
+}
+
 // C ref: uhitm.c:6308 disguised_as_mon(mtmp) — mimicking another monster.
 export function disguised_as_mon(mtmp) {
     return M_AP_TYPE(mtmp) !== 0 && M_AP_TYPE(mtmp) === M_AP_MONSTER;
@@ -5370,8 +5389,8 @@ export async function flash_hits_mon(mtmp, otmp) {
                 mtmp.mblinded = (tmp < 3) ? 0 : rnd(1 + Math.trunc(50 / tmp));
             }
         } else if (useeit) {
-            /* resists_blnd_by_arti() -> shieldeff(): no artifact defends()
-               port, so the sparkle is absent */
+            if (resists_blnd_by_arti(mtmp))
+                await shieldeff(mx, my);
             if (game.flags?.verbose !== false) {
                 if (lev?.lit)
                     await update_topl(`The flash of light shines on`
@@ -5413,8 +5432,9 @@ export async function light_hits_gremlin(mon, dmg) {
     await wake_nearto(mon.mx, mon.my, 30);
     if (DEADMONSTER(mon)) {
         if (game.context?.mon_moving) {
-            /* mon.c monkilled(mon, 0, AD_BLND) — unported for this path */
-            await killed(mon);
+            /* mon.c monkilled(mon, NULL, AD_BLND): silent, no hero credit */
+            const { monkilled_mm } = await import('./mhitm.js');
+            await monkilled_mm(mon, AD_BLND, null);
         } else {
             await killed(mon);
         }

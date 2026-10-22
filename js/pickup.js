@@ -11,12 +11,13 @@ import { read_engr_at } from './engrave.js';
 import { rn2, rnd, d } from './rng.js';
 import { pline, bot, m_at, newsym, flush_screen, y_n, update_topl, Hallucination_u } from './display.js';
 import { rndmonnam } from './do_name.js';
+import { short_oname } from './objnam.js';
 import {
     isok, is_pit, is_hole, TT_PIT,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     UNENCUMBERED, OVERLOADED,
-    IS_ALTAR, IS_GRAVE, IS_THRONE, STONE, POOL, MOAT, WATER, LAVAPOOL,
-    MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, MENU_PARTIAL, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT,
+    IS_ALTAR, IS_THRONE, STONE, POOL, MOAT, WATER, LAVAPOOL,
+    T_LOOTED, MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, MENU_PARTIAL, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT,
     ROT_CORPSE, REVIVE_MON, SHRINK_GLOB, OMONST } from './const.js';
 import {
     COIN_CLASS, MAXOCLASSES, CORPSE, STATUE, BOULDER, LOADSTONE, GOLD_PIECE,
@@ -30,21 +31,21 @@ import {
     obj_doname as doname, otense, currency, merge_choice, addinv, freeinv, flush_artitouch,
     obj_here, prinv, prinv_fmt, is_worn, count_unpaid, count_buc, look_here, tally_BUCX,
     ansimpleoname, display_inventory_interactive, Stone_resistance_hero,
-    describe_decor, sortloot, unsortloot, will_feel_cockatrice, feel_cockatrice,
+    describe_decor, sortloot, unsortloot, will_feel_cockatrice,
     SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, SORTLOOT_PETRIFY,
     GETOBJ_EXCLUDE, GETOBJ_EXCLUDE_SELECTABLE, GETOBJ_DOWNPLAY, GETOBJ_SUGGEST,
-    ECMD_OK, ECMD_TIME, objects_at, query_objlist_menu, splitobj,
-    obj_extract_self, obfree, makeknown, ynq, newsym_force, encumber_msg,
+    objects_at, query_objlist_menu, splitobj,
+    obj_extract_self, obfree, ynq, newsym_force, encumber_msg,
     stackobj, trycall, useup, useupf, hold_another_object,
     remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool,
     weldmsg, setuswapwep, setuqwep,
-    W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN, dropy,
+    W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN, dropx, dropy,
 } from './invent.js';
 import { setuwep as setuwep_c } from './wield.js';
 import { touch_artifact } from './artifact.js';
-import { monster_by_pmidx } from './makemon.js';
+import { monster_by_pmidx, add_to_minv } from './makemon.js';
 import { mflags1_of, mflags2_of, M1_NOTAKE, M1_NOHANDS, M1_NOLIMBS,
-         M2_ROCKTHROW } from './monflags_data.js';
+         M2_ROCKTHROW, hides_under_flag } from './monflags_data.js';
 import { makesingular } from './plural.js';
 import { costly_spot } from './shk.js';
 import { hliquid } from './dungeon.js';
@@ -452,19 +453,35 @@ export async function query_classes(oclasses, one_at_a_time, everything, action,
     return true;
 }
 
-/* objnam.c safe_qbuf() — "<prefix><object name><suffix>", falling back to a
-   shorter name (then to `lastR`) when the whole thing would not fit in
-   QBUFSZ-1.  short_oname()'s intermediate forms are not needed here: every
-   caller's doname() is far shorter than the 127-character budget. */
+/* objnam.c safe_qbuf() — "<prefix><object name><suffix>", guaranteed to fit
+   in QBUFSZ-1.  The name goes through short_oname() (cut called/named strings,
+   dropped erosion words, `altfunc`) and falls back to `lastR` when still too
+   long; a prefix leaving no room for even `lastR` truncates the filler. */
 const QBUFSZ = 128;
 const something = 'something';
 export function safe_qbuf(qprefix, qsuffix, obj, func, altfunc, lastR) {
     const lenlimit = QBUFSZ - 1;
-    const budget = lenlimit - qprefix.length - qsuffix.length;
-    let name = String(func(obj));
-    if (name.length > budget) name = String(altfunc(obj));
-    if (name.length > budget) name = lastR;
-    return qprefix + name + qsuffix;
+    qprefix = qprefix || '';
+    qsuffix = qsuffix || '';
+    let qbuf = qprefix.slice(0, lenlimit);
+    let len = qbuf.length;
+
+    if (len + lastR.length + qsuffix.length > lenlimit) {
+        /* too long; skip formatting, last resort output is truncated */
+        if (len < lenlimit) {
+            qbuf += lastR.slice(0, lenlimit - len);
+            len = qbuf.length;
+            if (len < lenlimit)
+                qbuf += qsuffix.slice(0, lenlimit - len);
+        }
+    } else {
+        /* suffix and last resort are guaranteed to fit */
+        len += qsuffix.length; /* include the pending suffix */
+        const bufp = short_oname(obj, func, altfunc, lenlimit - len);
+        qbuf += (len + bufp.length <= lenlimit) ? bufp : lastR;
+        qbuf += qsuffix;
+    }
+    return qbuf;
 }
 
 /* hack.h ynaq()/ynNaq() — yn_function(query, "ynaq"/"yn#aq", 'y').  The '#'
@@ -855,6 +872,9 @@ export async function pickup(what) {
     }
 
     if (!pickupdone && !u.uswallow) {
+        /* C ref: pickup.c:895 — a hider re-hides under whatever is left here */
+        if (hides_under_flag(youmonst_data()))
+            await (await import('./monmove.js')).hideunder(u);
         if (n_picked) newsym_force(u.ux, u.uy);
         if (autopickup) await check_here(n_picked > 0);
     }
@@ -1054,46 +1074,6 @@ export async function query_objlist(qstr, olist_p, qflags, pick_list, how,
     if (!picked.length) return 0;
     pick_list.list = picked;
     return picked.length;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   pickup.c:1226 query_category() — the menustyle:Full class menu.  The
-   single-category shortcut (which is what the recorded take-out/take-off
-   flows hit) is C's; the multi-category menu is rendered by the callers in
-   js/extcmd-handlers.js.
-   ═══════════════════════════════════════════════════════════════════════ */
-export function query_category(qstr, olist, qflags, pick_list, how) {
-    void qstr; void how;
-    pick_list.list = null;
-    const chain = chain_to_array(olist, (qflags & BY_NEXTHERE) !== 0);
-    if (!chain.length) return 0;
-
-    let do_unpaid = false, do_usedup = false, num_buc_types = 0;
-    let ofilter = null;
-
-    if ((qflags & UNPAID_TYPES) && count_unpaid(chain)) do_unpaid = true;
-    if (qflags & BILLED_TYPES) do_usedup = true;
-    if (qflags & WORN_TYPES) ofilter = is_worn;
-    if ((qflags & BUC_BLESSED_F) && count_buc(chain, BUC_BLESSED, ofilter))
-        num_buc_types++;
-    if ((qflags & BUC_CURSED_F) && count_buc(chain, BUC_CURSED, ofilter))
-        num_buc_types++;
-    if ((qflags & BUC_UNCURSED_F) && count_buc(chain, BUC_UNCURSED, ofilter))
-        num_buc_types++;
-    if ((qflags & BUC_UNKNOWN_F) && count_buc(chain, BUC_UNKNOWN, ofilter))
-        num_buc_types++;
-
-    const ccount = count_categories(chain, qflags);
-    if (ccount === 1 && !do_unpaid && !do_usedup && num_buc_types <= 1) {
-        let curr = null;
-        for (const o of chain) {
-            if (ofilter && !ofilter(o)) continue;
-            curr = o; break;
-        }
-        if (curr) { pick_list.list = [{ a_int: curr.oclass }]; return 1; }
-        return 0;
-    }
-    return 0;
 }
 
 /* pickup.c:1511 count_categories() */
@@ -1433,7 +1413,10 @@ export async function able_to_loot(x, y, looting) {
     const verb = looting ? 'loot' : 'tip';
     const t = t_at(x, y);
     if (!can_reach_floor(!!(t && is_pit(t.ttyp)))) {
-        await pline('You cannot reach the floor.');
+        // C ref: pickup.c able_to_loot(): unskilled rider -> rider_cant_reach(), else cant_reach_floor(x, y, FALSE, TRUE, FALSE).
+        const { steed_unskilled, rider_cant_reach } = await import('./steed.js');
+        if (steed_unskilled()) await rider_cant_reach();
+        else await (await import('./engrave.js')).cant_reach_floor(x, y, false, true, false);
         return false;
     } else if ((is_pool(x, y) && (looting || !game.Underwater)) || is_lava(x, y)) {
         await pline(`You cannot ${verb} things that are deep in the `
@@ -1459,105 +1442,7 @@ export function mon_beside(x, y) {
     return false;
 }
 
-/* pickup.c:2088 do_loot_cont() — one container of a #loot.  cobjp.obj is
-   cleared when the container is destroyed mid-attempt. */
-export async function do_loot_cont(cobjp, cindex, ccount) {
-    const cobj = cobjp.obj;
-    if (!cobj) return ECMD_OK;
-    if (cobj.olocked) {
-        if (cobj.lknown) await pline(`${The(xname(cobj))} is locked.`);
-        else await pline(`Hmmm, ${the(xname(cobj))} turns out to be locked.`);
-        cobj.lknown = 1;
-        /* flags.autounlock's pick_lock()/doforce() path is driven by the #loot
-           handler in js/extcmd-handlers.js, which owns the lock tooling. */
-        return ECMD_OK;
-    }
-    cobj.lknown = 1;
-
-    if (cobj.otyp === BAG_OF_TRICKS) {
-        await pline(`You carefully open ${the(xname(cobj))}...`);
-        await pline('It develops a huge set of teeth and bites you!');
-        const tmp = rnd(10);
-        await losehp(Maybe_Half_Phys(tmp), 'carnivorous bag');
-        makeknown(BAG_OF_TRICKS);
-        P().abort_looting = true;
-        return ECMD_TIME;
-    }
-    return await use_container(cobjp, false, cindex < ccount);
-}
-
-/* pickup.c:2166 doloot() — the #loot extended command. */
-export async function doloot() {
-    P().loot_reset_justpicked = true;
-    const res = await doloot_core();
-    P().loot_reset_justpicked = false;
-    return res;
-}
-
-/* pickup.c:2178 doloot_core() */
-export async function doloot_core() {
-    const u = ustate();
-    let c = -1;
-    let timepassed = 0;
-    const dont_find_anything = "don't find anything";
-
-    P().abort_looting = false;
-
-    if (near_capacity() >= EXT_ENCUMBER) {
-        await pline("You can't do that while carrying so much stuff.");
-        return ECMD_OK;
-    }
-    if (nohands_hero()) {
-        await pline('You have no hands!');
-        return ECMD_OK;
-    }
-    if (game.Confusion) {
-        if (rn2(6) && await reverse_loot()) return ECMD_TIME;
-        if (rn2(2)) {
-            await pline('Being confused, you find nothing to loot.');
-            return ECMD_TIME;   /* costs a turn */
-        }
-    }
-    const cc = { x: u.ux, y: u.uy };
-
-    const num_conts = container_at(cc.x, cc.y, true);
-    if (num_conts > 0) {
-        let anyfound = false;
-        if (!(await able_to_loot(cc.x, cc.y, true))) return ECMD_OK;
-
-        if (Blind() && !game.uarmg) {
-            for (const nobj of objects_at(cc.x, cc.y))
-                if (nobj.otyp === CORPSE && will_feel_cockatrice(nobj, false)) {
-                    await feel_cockatrice(nobj, false);
-                    return ECMD_TIME;
-                }
-        }
-        /* the >1 container "Loot which containers?" menu is rendered by
-           js/extcmd-handlers.js's #loot handler */
-        for (const cobj of objects_at(cc.x, cc.y)) {
-            if (Is_container(cobj)) {
-                anyfound = true;
-                const boxp = { obj: cobj };
-                timepassed |= await do_loot_cont(boxp, 1, num_conts);
-                if (P().abort_looting)
-                    return timepassed ? ECMD_TIME : ECMD_OK;
-            }
-        }
-        if (anyfound) c = 'y';
-    } else if (IS_GRAVE(game.level?.at?.(cc.x, cc.y)?.typ)) {
-        await pline('You need to dig up the grave to effectively loot it...');
-    }
-
-    if (c !== 'y' && mon_beside(u.ux, u.uy)) {
-        /* directional looting needs get_adjacent_loc() (cmd.c); the
-           saddle-removal target is loot_mon() below */
-        await pline(`You ${dont_find_anything} here to loot.`);
-        return timepassed ? ECMD_TIME : ECMD_OK;
-    } else if (c !== 'y' && c !== 'n') {
-        await pline(`You ${dont_find_anything} here to loot.`);
-    }
-    return timepassed ? ECMD_TIME : ECMD_OK;
-}
+const SPE_WIZARD_LOCK = 381; /* objects.h */
 
 /* pickup.c:2350 reverse_loot() — called when #looting while confused. */
 export async function reverse_loot() {
@@ -1590,23 +1475,55 @@ export async function reverse_loot() {
 
     await remove_worn_item(goldob, false);
 
-    /* the throne-room coffers branch needs boxlock()/courtmon() (lock.c,
-       mkroom.c); an ordinary square just drops the gold. */
-    freeinv(goldob);
-    dropx(goldob);
-    if (!IS_THRONE(game.level?.at?.(x, y)?.typ)) {
+    const lev = game.level?.at?.(x, y);
+    if (!IS_THRONE(lev?.typ)) {
+        await dropx(goldob);
+        /* the dropped gold might have fallen to lower level */
         if (g_at(x, y)) await pline('Ok, now there is loot here.');
     } else {
-        await pline(`You drop ${doname(goldob)}.`);
+        /* find original coffers chest if present, otherwise use nearest */
+        const { fobj } = await import('./dogmove.js');
+        let coffers = null, otmp = null;
+        for (const o of fobj()) {
+            if (o.where !== OBJ_FLOOR || o.otyp !== CHEST) continue;
+            if (o.spe === 2) { coffers = o; break; } /* a throne room chest */
+            const dist = (c) => (c.ox - x) ** 2 + (c.oy - y) ** 2;
+            if (!otmp || dist(o) < dist(otmp)) otmp = o; /* closest ordinary chest */
+        }
+        if (!coffers) coffers = otmp;
+
+        if (coffers) {
+            await update_topl('"Thank you for your contribution to reduce the debt."');
+            freeinv(goldob);
+            add_to_container(coffers, goldob);
+            coffers.owt = weight(coffers);
+            coffers.cknown = 0;
+            if (!coffers.olocked) {
+                const { boxlock } = await import('./lock.js');
+                const r = boxlock(coffers, { otyp: SPE_WIZARD_LOCK });
+                if (r.msg) await pline(r.msg);
+            }
+        } else {
+            let mon = null;
+            if (lev.looted !== T_LOOTED) {
+                const { makemon, makemon_appears_msg } = await import('./makemon.js');
+                const { courtmon } = await import('./sp_lev.js');
+                mon = makemon(courtmon(), x, y, 0);
+                /* makemon()'s own arrival line (sync makemon, async caller) */
+                if (mon) await makemon_appears_msg(mon, mon.mx, mon.my, 0);
+            }
+            if (mon) {
+                freeinv(goldob);
+                add_to_minv(mon, goldob);
+                await pline('The exchequer accepts your contribution.');
+                if (!rn2(10)) lev.looted = T_LOOTED;
+            } else {
+                await pline(`You drop ${doname(goldob)}.`);
+                await dropx(goldob);
+            }
+        }
     }
     return true;
-}
-/* do.c dropx()/dropy() reduced to the floor placement + pile merge. */
-function dropx(obj) {
-    const u = ustate();
-    place_object(obj, u.ux, u.uy);
-    stackobj(obj);
-    newsym(u.ux, u.uy);
 }
 
 /* pickup.c:2431 loot_mon() — returns the amount of time that passed. */
@@ -2010,82 +1927,6 @@ export async function out_container(obj) {
     if (is_gold) await bot();
     return 1;
 }
-
-/* pickup.c:2972 use_container() — the "Do what with <container>?" driver.
-   The :oibrsnq prompt/menu is rendered by js/extcmd-handlers.js's #loot
-   handler; the preamble (lock/trap/quantum-cat/cursed-bag) is C's. */
-export async function use_container(objp, held, more_containers) {
-    const p = P();
-    const obj = objp.obj;
-    let used = ECMD_OK;
-
-    p.abort_looting = false;
-    p.sellobj_first = true;
-
-    if (!(await u_handsy())) return ECMD_OK;
-
-    if (!obj.lknown) obj.lknown = 1;
-    if (obj.olocked) {
-        await pline(`${upstart(xname(obj))} ${otense(obj, 'are')} locked.`);
-        if (held) await pline('You must put it down to unlock.');
-        return ECMD_OK;
-    } else if (obj.otrapped) {
-        const { chest_trap } = await import('./trap.js');
-        const { HAND } = await import('./const.js');
-        await chest_trap(obj, HAND, false);
-        p.abort_looting = true;
-        return ECMD_TIME;
-    }
-
-    p.current_container = obj;
-
-    if (SchroedingersBox(p.current_container)) {
-        await observe_quantum_cat(p.current_container, true, true);
-        used = ECMD_TIME;
-    }
-    if (Is_mbag(p.current_container) && p.current_container.cursed
-        && Has_contents(p.current_container)) {
-        const loss = await boh_loss(p.current_container, held);
-        if (loss) {
-            used = ECMD_TIME;
-            await pline(`You owe ${loss} ${currency(loss)} for lost merchandise.`);
-            p.current_container.owt = weight(p.current_container);
-        }
-    }
-    void more_containers;
-    objp.obj = p.current_container;
-    return used;
-}
-
-/* pickup.c:3265 menu_loot() */
-export async function menu_loot(retry, put_in) {
-    const p = P();
-    let n_looted = 0;
-    let all_categories = true;
-    set_pickup_encumbrance(0);
-
-    if (retry) all_categories = (retry === -2);
-
-    const firstobj = put_in ? inventoryArray()
-        : (p.current_container?.cobj || []);
-    if (!put_in && p.current_container) p.current_container.cknown = 1;
-
-    for (const otmp of [...firstobj]) {
-        if (!p.current_container) break;
-        if (all_categories || allow_category(otmp)) {
-            const res = put_in ? await in_container(otmp)
-                : await out_container(otmp);
-            if (res < 0) break;
-            n_looted += res;
-        }
-    }
-    return n_looted ? ECMD_TIME : ECMD_OK;
-}
-
-/* pickup.c:3397 in_or_out_menu() — the accelerator tables; the menu itself is
-   rendered by js/extcmd-handlers.js. */
-export const LOOTCHARS = '_:oibrsnq';
-export const LOOT_ABC_CHARS = '_:abcdenq';
 
 /* pickup.c:3481 tip_ok() — getobj callback. */
 export function tip_ok(obj) {

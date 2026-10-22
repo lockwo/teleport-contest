@@ -11,15 +11,15 @@ import { mflags2_of, M2_PRINCE } from './monflags_data.js';
 import { SPBOOK_CLASS, EGG, mksobj, weight, set_corpsenm } from './mkobj.js';
 import { dropy, stackobj } from './invent.js';
 import { surface, hliquid } from './dungeon.js';
-import { t_at, dotrap, water_damage } from './trap.js';
+import { t_at, dotrap, water_damage, uteetering_at_seen_pit, uescaped_shaft } from './trap.js';
 import { exercise } from './attrib.js';
 import { useupf, youmonst_data_pub } from './invent.js';
 import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_ALL, NO_MM_FLAGS, UTOTYPE_NONE, KILLED_BY_AN, EYE, HEAD } from './const.js';
-import { mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM, M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS } from './monflags_data.js';
+import { amorphous_flag, mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM, M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS } from './monflags_data.js';
 import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags } from './objnam.js';
 import { mon_nam } from './do_name.js';
-import { name_to_pmidx } from './makemon.js';
+import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import {
     FOUNTAIN, STAIRS, LADDER, DRAWBRIDGE_DOWN, ICE, POOL, MOAT, WATER,
     IS_SINK, IS_ALTAR, IS_GRAVE, IS_THRONE, CXN_NORMAL,
@@ -217,7 +217,8 @@ async function sit_in_water() {
 function sticks() { return false; }                 // sticks(youmonst.data)
 function is_dragon_form() { return youmonst_data_pub()?.mlet === 'D'; }   // S_DRAGON
 function is_slithy_form() { return (mflags1_of(youmonst_data_pub()) & M1_SLITHY) !== 0; }
-function amorphous_corpse(_obj) { return false; }    // amorphous(&mons[corpsenm])
+// C ref: sit.c dosit() amorphous(&mons[obj->corpsenm])
+function amorphous_corpse(obj) { return amorphous_flag(monster_by_pmidx(obj.corpsenm)); }
 function lays_eggs() { return (mflags1_of(youmonst_data_pub()) & M1_OVIPAROUS) !== 0; }
 function is_vampire_form() { return youmonst_data_pub()?.mlet === 'V'; }   // is_vampire(youmonst.data)
 // C ref: mondata.h eggs_in_water(ptr).
@@ -226,8 +227,6 @@ function eggs_in_water(ptr) {
     return (f & M1_OVIPAROUS) !== 0 && (f & M1_SWIM) !== 0 && (f & M1_FLY) === 0
         && ptr?.mlet !== 'e' && (f & M1_AMPHIBIOUS) === 0 && (f & M1_BREATHLESS) === 0;
 }
-function uteetering_at_seen_pit(_t) { return false; }
-function uescaped_shaft(_t) { return false; }
 
 // ---- object-class predicates ----------------------------------------------
 
@@ -458,9 +457,11 @@ async function throne_sit_effect() {
             await update_topl('A voice echoes:');
             await update_topl(`"Thine audience hath been summoned, ${game.flags?.female ? 'Dame' : 'Sire'}!"`);
             const { courtmon } = await import('./sp_lev.js');
-            const { makemon } = await import('./makemon.js');
-            while (cnt--)
-                await makemon(courtmon(), tx, ty, NO_MM_FLAGS);
+            const { makemon, makemon_appears_msg } = await import('./makemon.js');
+            while (cnt--) {
+                const mon = await makemon(courtmon(), tx, ty, NO_MM_FLAGS);
+                if (mon) await makemon_appears_msg(mon, mon.mx, mon.my, NO_MM_FLAGS); // makemon.c:1474
+            }
             break;
         }
         case 8:

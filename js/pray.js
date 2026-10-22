@@ -13,18 +13,19 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd, d } from './rng.js';
-import { update_topl, y_n, newsym, see_monsters, impossible } from './display.js';
+import { update_topl, y_n, newsym, see_monsters, impossible, You_feel, You_hear } from './display.js';
 import { align_gname, roles, aligns } from './role.js';
-import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL, EXT_ENCUMBER } from './const.js';
+import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL, EXT_ENCUMBER, HVY_ENCUMBER } from './const.js';
 import { make_confused, make_sick, make_stoned, make_slimed } from './potion.js';
 import { summon_furies } from './makemon.js';
-import { retouch_equipment } from './artifact.js';
+import { retouch_equipment, confers_luck } from './artifact.js';
 import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     A_ORIGINAL, AM_SHRINE, AM_SANCTUM, AM_CHAOTIC, AM_MASK, Amask2align,
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMIN, LUCKMAX, MM_NOMSG,
     IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE, HALF_SPDAM } from './const.js';
 import { isok } from './hacklib.js';
-import { OMONST, W_BALL, W_CHAIN, FROMOUTSIDE } from './const.js';
+import { OMONST, W_BALL, W_CHAIN, W_SADDLE, FROMOUTSIDE } from './const.js';
+import { which_armor } from './worn.js';
 import { FIRE_RES, TELEPORT, POISON_RES, TELEPAT, COLD_RES, INVIS, SEE_INVIS,
     FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { adjalign, exercise, adjattrib, Fixed_abil } from './attrib.js';
@@ -38,6 +39,8 @@ import { curse, uncurse, unbless, bless, mkobj, place_object, BALL_CLASS, CHAIN_
     COIN_CLASS, POTION_CLASS, POT_WATER, HELM_OF_OPPOSITE_ALIGNMENT,
     objects as OBJECTS } from './mkobj.js';
 import { livelog_printf, LL_ALIGNMENT, LL_CONDUCT, LL_MINORAC, LL_DIVINEGIFT, LL_ARTIFACT } from './livelog.js';
+import { throws_rocks_flag } from './monflags_data.js';
+import { is_pool_or_lava } from './dbridge.js';
 import { mflags2_of, is_undead_flag, likes_gems_flag,
     M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC } from './monflags_data.js';
 import { attacktype_fordmg, AT_ENGL, AD_BLND } from './monattk_data.js';
@@ -150,9 +153,7 @@ function critically_low_hp(only_if_injured) {
 }
 
 // C ref: pray.c stuck_in_wall() — surrounded on all eight sides by impassable
-// rock.  C also counts a square whose only obstruction is a boulder the hero
-// can't push (blocked_boulder); that arm is omitted, which can only ever make
-// this answer FALSE where C says TRUE.
+// rock, or boulders the hero can't push (blocked_boulder, unless polymorphed into a giant).
 export function stuck_in_wall() {
     const u = game.u;
     if (uprop('Passes_walls')) return false;
@@ -164,7 +165,8 @@ export function stuck_in_wall() {
             const typ = game.level?.at(x, y)?.typ;
             if (!isok(x, y)
                 || (typ != null && IS_OBSTRUCTED(typ)
-                    && typ !== SDOOR && typ !== SCORR))
+                    && typ !== SDOOR && typ !== SCORR)
+                || (blocked_boulder(i, j) && !throws_rocks_flag({ pmidx: u.umonnum })))
                 ++count;
         }
     return count === 8;
@@ -175,19 +177,52 @@ function Cursed_obj(otmp, symname) {
     return !!otmp && !!otmp.cursed && OBJECTS[otmp.otyp]?.sym === symname;
 }
 
-// C ref: pray.c worst_cursed_item() reduced to its "is there one at all?" use;
-// the full priority walk only matters for fix_worst_trouble().  Two of C's arms
-// are deliberately left out because their gate can't be evaluated here and
-// including them would OVER-report a trouble: the leading loadstone scan (gated
-// on near_capacity() >= HVY_ENCUMBER) and both uwep arms (gated on welded(),
-// which js/invent.js stubs to false).
+// C ref: pray.c worst_cursed_item() — select an item for TROUBLE_CURSED_ITEMS, in C's priority
+// order: a cursed loadstone when strained, an interfering welded weapon, worn gear, the other
+// welded/active weapons, then any cursed loadstone or Luck-conferring item in the pack.
 function worst_cursed_item() {
-    for (const o of [game.uarmg, game.uarms, game.uarmc, game.uarm, game.uarmh,
-        game.uarmf, game.uarmu, game.uamul, game.uleft, game.uright,
-        game.ublindf])
-        if (o && o.cursed) return o;
-    return null;
+    let otmp = null;
+    const u = game.u;
+    const inv = game.invent || [];
+
+    /* if strained or worse, check for loadstone first */
+    if ((_inv?.near_capacity() | 0) >= HVY_ENCUMBER) {
+        for (const o of inv) if (Cursed_obj(o, 'LOADSTONE')) return o;
+    }
+    const welded = (o) => !!_inv?.welded(o);
+    /* weapon takes precedence if it is interfering with taking off a ring or putting on a shield */
+    if (welded(game.uwep) && (game.uright || _inv?.bimanual(game.uwep))) otmp = game.uwep;
+    /* gloves come next, due to rings */
+    else if (game.uarmg && game.uarmg.cursed) otmp = game.uarmg;
+    /* then shield due to two handed weapons and spells */
+    else if (game.uarms && game.uarms.cursed) otmp = game.uarms;
+    /* then cloak due to body armor */
+    else if (game.uarmc && game.uarmc.cursed) otmp = game.uarmc;
+    else if (game.uarm && game.uarm.cursed) otmp = game.uarm;
+    /* a worn helm of opposite alignment is not uncursed by the god */
+    else if (game.uarmh && game.uarmh.cursed && !Cursed_obj_any(game.uarmh, 'HELM_OF_OPPOSITE_ALIGNMENT'))
+        otmp = game.uarmh;
+    else if (game.uarmf && game.uarmf.cursed) otmp = game.uarmf;
+    else if (game.uarmu && game.uarmu.cursed) otmp = game.uarmu;
+    else if (game.uamul && game.uamul.cursed) otmp = game.uamul;
+    else if (game.uleft && game.uleft.cursed) otmp = game.uleft;
+    else if (game.uright && game.uright.cursed) otmp = game.uright;
+    else if (game.ublindf && game.ublindf.cursed) otmp = game.ublindf; /* non-blinding lenses */
+    /* if weapon wasn't handled above, do it now */
+    else if (welded(game.uwep)) otmp = game.uwep;
+    /* active secondary weapon even though it isn't welded */
+    else if (game.uswapwep && game.uswapwep.cursed && u?.twoweap) otmp = game.uswapwep;
+    /* all worn items ought to be handled by now */
+    else {
+        for (const o of inv) {
+            if (!o.cursed) continue;
+            if (Cursed_obj(o, 'LOADSTONE') || confers_luck(o)) { otmp = o; break; }
+        }
+    }
+    return otmp;
 }
+// hack.h otyp-name test without the cursed flag (uarmh->otyp != HELM_OF_OPPOSITE_ALIGNMENT)
+function Cursed_obj_any(otmp, symname) { return !!otmp && OBJECTS[otmp.otyp]?.sym === symname; }
 
 // C ref: allmain.c Wounded_legs (HWounded_legs || EWounded_legs).
 function Wounded_legs() {
@@ -247,7 +282,8 @@ function in_trouble() {
         || Cursed_obj(game.uarmf, 'FUMBLE_BOOTS'))
         return TROUBLE_FUMBLING;
     if (worst_cursed_item()) return TROUBLE_CURSED_ITEMS;
-    if (u.usteed && u.usteed.saddle && u.usteed.saddle.cursed)
+    /* can't voluntarily dismount from a cursed saddle */
+    if (u.usteed && Cursed_obj(which_armor(u.usteed, W_SADDLE), 'SADDLE'))
         return TROUBLE_SADDLE;
     if ((u.blinded | 0) > 1 && !u.uprops?.BlindedFromForm
         && (!u.uswallow || !attacktype_fordmg(u.ustuck?.data, AT_ENGL, AD_BLND)))
@@ -393,7 +429,7 @@ async function adjattrib_wis_loss() {
     }
     if (u.aexe?.a) u.aexe.a[A_WIS] = 0; // C: AEXE(ndx) = 0 on any real change
     game.botl = true;
-    await update_topl('You feel foolish!');
+    await You_feel('foolish!');
     return true;
 }
 
@@ -453,13 +489,14 @@ export async function rndcurse() {
             }
         }
     }
-    if (u.usteed && !rn2(4)) {
-        const saddle = u.usteed.saddle;
-        if (saddle && !saddle.cursed) {
+    /* treat steed's saddle as extended part of hero's inventory */
+    let saddle;
+    if (u.usteed && !rn2(4) && (saddle = which_armor(u.usteed, W_SADDLE))) {
+        if (!saddle.cursed) { /* skip if already cursed */
             if (saddle.blessed) unbless(saddle);
             else curse(saddle);
             if (!Blind()) {
-                await update_topl(`Your saddle glows ${hcolor(saddle.cursed ? 'black' : 'brown')}.`);
+                await update_topl(`${D.inv.Yobjnam2(saddle, 'glow')} ${hcolor(saddle.cursed ? 'black' : 'brown')}.`);
                 saddle.bknown = Hallucination() ? 0 : 1;
             } else {
                 saddle.bknown = 0;
@@ -471,18 +508,20 @@ export async function rndcurse() {
 // C ref: sit.c attrcurse() — strip one random INTRINSIC.  The rnd(11) is the
 // load-bearing part; the fall-through chain then hunts for the first intrinsic
 // the hero actually has at or after the rolled slot.
+// Rows whose message is C's You_feel("<msg>") (the others are You()/Your() text).
+const FEEL_PROPS = new Set([FIRE_RES, TELEPORT, POISON_RES, COLD_RES, INVIS, FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER]);
 const ATTRCURSE_CHAIN = [
-    ['HFire_resistance', 'You feel warmer.', FIRE_RES],
-    ['HTeleportation', 'You feel less jumpy.', TELEPORT],
-    ['HPoison_resistance', 'You feel a little sick!', POISON_RES],
+    ['HFire_resistance', 'warmer.', FIRE_RES],
+    ['HTeleportation', 'less jumpy.', TELEPORT],
+    ['HPoison_resistance', 'a little sick!', POISON_RES],
     ['HTelepat', 'Your senses fail!', TELEPAT],
-    ['HCold_resistance', 'You feel cooler.', COLD_RES],
-    ['HInvis', 'You feel paranoid.', INVIS],
+    ['HCold_resistance', 'cooler.', COLD_RES],
+    ['HInvis', 'paranoid.', INVIS],
     ['HSee_invisible', 'You thought you saw something!', SEE_INVIS],
-    ['HFast', 'You feel slower.', FAST],
-    ['HStealth', 'You feel clumsy.', STEALTH],
-    ['HProtection', 'You feel vulnerable.', PROTECTION],
-    ['HAggravate_monster', 'You feel less attractive.', AGGRAVATE_MONSTER],
+    ['HFast', 'slower.', FAST],
+    ['HStealth', 'clumsy.', STEALTH],
+    ['HProtection', 'vulnerable.', PROTECTION],
+    ['HAggravate_monster', 'less attractive.', AGGRAVATE_MONSTER],
 ];
 export async function attrcurse() {
     const u = game.u;
@@ -501,7 +540,8 @@ export async function attrcurse() {
         u[field] = (u[field] | 0) & ~INTRINSIC;
         if (u.uprops) u.uprops[field] = (u.uprops[field] | 0) & ~INTRINSIC;
         (u.lost_innate ||= new Set()).add(field);
-        await update_topl(prop === SEE_INVIS && Hallucination()
+        if (FEEL_PROPS.has(prop)) await You_feel(msg);
+        else await update_topl(prop === SEE_INVIS && Hallucination()
             ? 'You tawt you taw a puttie tat!' : msg);
         return prop;
     }
@@ -555,7 +595,7 @@ async function angrygods(resp_god) {
     switch (rn2(maxanger)) {
     case 0:
     case 1:
-        await update_topl(`You feel that ${align_gname(roleMnum(), resp_god)}`
+        await You_feel(`that ${align_gname(roleMnum(), resp_god)}`
             + ` is ${Hallucination() ? 'bummed' : 'displeased'}.`);
         break;
     case 2:
@@ -643,18 +683,25 @@ const DEVOUT = 14, PIOUS = 20;
 // "softly glow amber" feedback a sighted hero gets.
 async function fix_curse_trouble(otmp, what) {
     if (!otmp) return;
-    if (!Blind()) {
-        await update_topl(`${what || Yobjnam2_local(otmp, 'softly glow')} ${hcolor_amber()}.`);
+    if (otmp === game.uarmg && ((game.u.uprops?.Glib | 0) > 0)) {
+        const { make_glib } = await import('./potion.js');
+        await make_glib(0);
+        const { gloves_simple_name } = await import('./do_wear.js');
+        await update_topl(`Your ${gloves_simple_name(game.uarmg)} are no longer slippery.`);
+        if (!otmp.cursed) return;
+    }
+    const { Blindfolded_only } = await import('./insight.js');
+    if (!Blind() || (otmp === game.ublindf && Blindfolded_only())) {
+        await update_topl(`${what || await Yobjnam2_local(otmp, 'softly glow')} ${hcolor_amber()}.`);
         otmp.bknown = Hallucination() ? 0 : 1;
     }
     uncurse(otmp);
+    (await import('./invent.js')).update_inventory();
 }
-// C ref: objnam.c Yname2/Yobjnam2(obj, verb) — js/engrave.js:430 keeps the same
-// pair; only the singular "Your <obj> softly glows" form is reachable here.
-function Yobjnam2_local(obj, verb) {
-    const plural = (obj?.quan ?? 1) > 1;
-    const nm = OBJECTS[obj?.otyp]?.name || 'item';
-    return `Your ${nm} ${plural ? verb : `${verb}s`}`;
+// C ref: objnam.c Yobjnam2(obj, verb): the carried object's xname with the verb
+// agreeing with its quantity ("Your pole sickle softly glows").
+async function Yobjnam2_local(obj, verb) {
+    return (await import('./invent.js')).Yobjnam2(obj, verb);
 }
 // C ref: do_name.c hcolor(NH_AMBER).  Hallucination swaps in a random colour
 // off the DISPLAY rng, which js/do_name.js hcolor() already models.
@@ -728,7 +775,7 @@ async function fix_worst_trouble(trouble) {
         init_uhunger();
         break;
     case TROUBLE_SICK:
-        await update_topl('You feel better.');
+        await You_feel('better.');
         await make_sick(0, null, false, SICK_ALL);
         break;
     case TROUBLE_REGION:
@@ -738,7 +785,7 @@ async function fix_worst_trouble(trouble) {
     case TROUBLE_HIT: {
         /* "fix all troubles" keeps trying while the hero has 5 or fewer hit
            points, so the boost must always land above that */
-        await update_topl('You feel much better.');
+        await You_feel('much better.');
         if (u.Upolyd) {
             const mmax = (u.mhmax | 0) + rnd(5);
             u.mhmax = Math.max(mmax, 6);
@@ -753,7 +800,7 @@ async function fix_worst_trouble(trouble) {
     }
     case TROUBLE_COLLAPSING: {
         // C ref: pray.c:440 — override Fixed_abil; uncurse that if feasible.
-        await update_topl(`You feel ${AMAX(A_STR) - ABASE(A_STR) > 6 ? 'much ' : ''}stronger.`);
+        await You_feel(`${AMAX(A_STR) - ABASE(A_STR) > 6 ? 'much ' : ''}stronger.`);
         u.acurr.a[A_STR] = AMAX(A_STR);
         game.botl = true;
         if (Fixed_abil()) {
@@ -832,7 +879,7 @@ async function fix_worst_trouble(trouble) {
     case TROUBLE_POISONED:
         /* overrides Fixed_abil; ignores items that confer it */
         if (Hallucination()) await update_topl("There's a tiger in your tank.");
-        else await update_topl('You feel in good health again.');
+        else await You_feel('in good health again.');
         for (let i = 0; i < A_MAX; i++) {
             if (ABASE(i) < AMAX(i)) {
                 u.acurr.a[i] = AMAX(i);
@@ -879,10 +926,10 @@ async function fix_worst_trouble(trouble) {
         await (await import('./potion.js')).make_hallucinated(0, false, 0);
         break;
     case TROUBLE_SADDLE: {
-        const otmp = u.usteed?.saddle;
+        const otmp = which_armor(u.usteed, W_SADDLE);
         if (otmp) {
             if (!Blind()) {
-                await update_topl(`Your saddle softly glows ${hcolor_amber()}.`);
+                await update_topl(`${(await import('./invent.js')).Yobjnam2(otmp, 'softly glow')} ${hcolor_amber()}.`);
                 otmp.bknown = 1;
             }
             uncurse(otmp);
@@ -958,7 +1005,7 @@ async function pleased(g_align) {
     const mood = (record0 >= DEVOUT) ? (Hallucination() ? 'pleased as punch' : 'well-pleased')
         : (record0 >= STRIDENT) ? (Hallucination() ? 'ticklish' : 'pleased')
             : (Hallucination() ? 'full' : 'satisfied');
-    await update_topl(`You feel that ${align_gname(roleMnum(), g_align)} is ${mood}.`);
+    await You_feel(`that ${align_gname(roleMnum(), g_align)} is ${mood}.`);
 
     /* not your deity */
     if (on_altar() && gp_aligntyp() !== (u.ualign?.type ?? 0)) {
@@ -1020,20 +1067,20 @@ async function pleased(g_align) {
                     ? ` and ${_inv.otense(uwep, 'are')} now as good as new` : '';
                 if (uwep.cursed) {
                     if (!Blind())
-                        await update_topl(`${Yobjnam2_local(uwep, 'softly glow')} `
+                        await update_topl(`${await Yobjnam2_local(uwep, 'softly glow')} `
                             + `${hcolor('amber')}${repair_buf}.`);
                     else
-                        await update_topl(`You feel the power of ${u_gname()} `
+                        await You_feel(`the power of ${u_gname()} `
                             + `over ${_inv.yname(uwep)}.`);
                     uncurse(uwep);
                     uwep.bknown = 1;
                     repair_buf = '';
                 } else if (!uwep.blessed) {
                     if (!Blind())
-                        await update_topl(`${Yobjnam2_local(uwep, 'softly glow')} `
+                        await update_topl(`${await Yobjnam2_local(uwep, 'softly glow')} `
                             + `with ${an_pr(hcolor('light blue'))} aura${repair_buf}.`);
                     else
-                        await update_topl(`You feel the blessing of ${u_gname()} `
+                        await You_feel(`the blessing of ${u_gname()} `
                             + `over ${_inv.yname(uwep)}.`);
                     bless(uwep);
                     uwep.bknown = 1;
@@ -1042,7 +1089,7 @@ async function pleased(g_align) {
                 if (uwep.oeroded || uwep.oeroded2) {
                     uwep.oeroded = uwep.oeroded2 = 0;
                     if (repair_buf)
-                        await update_topl(`${Yobjnam2_local(uwep, Blind() ? 'feel' : 'look')} `
+                        await update_topl(`${await Yobjnam2_local(uwep, Blind() ? 'feel' : 'look')} `
                             + 'as good as new!');
                 }
                 _inv.update_inventory();
@@ -1059,7 +1106,7 @@ async function pleased(g_align) {
                     u.uevent.uheard_tune = (u.uevent.uheard_tune | 0) + 1;
                     break;
                 } else if (u.uevent.uheard_tune < 2) {
-                    if (!Deaf_pr()) await update_topl('You hear a divine music...');
+                    if (!Deaf_pr()) await You_hear('a divine music...');
                     await update_topl('It sounds like:  '
                         + `"${(game.tune || []).join('').replace(/\0/g, '')}".`);
                     u.uevent.uheard_tune = (u.uevent.uheard_tune | 0) + 1;
@@ -1097,13 +1144,13 @@ async function pleased(g_align) {
         }
         case 4: {
             let any = 0;
-            if (Blind()) await update_topl(`You feel the power of ${u_gname()}.`);
+            if (Blind()) await You_feel(`the power of ${u_gname()}.`);
             else await update_topl(`You are surrounded by ${an_pr(hcolor('light blue'))} aura.`);
             for (const otmp of (game.invent || [])) {
                 if (otmp && otmp.cursed
                     && (otmp !== game.uarmh || game.uarmh.otyp !== HELM_OF_OPPOSITE_ALIGNMENT)) {
                     if (!Blind()) {
-                        await update_topl(`${Yobjnam2_local(otmp, 'softly glow')} ${hcolor('amber')}.`);
+                        await update_topl(`${await Yobjnam2_local(otmp, 'softly glow')} ${hcolor('amber')}.`);
                         otmp.bknown = 1;
                         any++;
                     }
@@ -1219,7 +1266,7 @@ async function prayer_done() {
         await godvoice(alignment, (alignment === A_LAWFUL)
             ? 'Vile creature, thou durst call upon me?'
             : 'Walk no more, perversion of nature!');
-        await update_topl('You feel like you are falling apart.');
+        await You_feel('like you are falling apart.');
         /* KMH -- Gods have mastery over unchanging */
         const { rehumanize } = await import('./polyself.js');
         await rehumanize();
@@ -1274,9 +1321,9 @@ async function prayer_done() {
 // messages each land on their own captured screen exactly as C records them.
 export async function dopray() {
     const gp = praystate();
-    // C ref: flag.h ParanoidPray (0x0400) / ParanoidConfirm (0x0001).
-    const bits = (game.flags?.paranoia_bits ?? 0x2c00) | 0;
-    if (bits & 0x0400) {
+    // C ref: flag.h ParanoidPray (0x0020) / ParanoidConfirm (0x0001).
+    const bits = (game.flags?.paranoia_bits ?? 0x0c20) | 0;
+    if (bits & 0x0020) {
         const { paranoid_ynq } = await import('./eat.js');
         const ok = (await paranoid_ynq((bits & 0x0001) !== 0,
                                        'Are you sure you want to pray?', false)) === 'y';
@@ -1456,25 +1503,6 @@ function sgn(n) { return n > 0 ? 1 : n < 0 ? -1 : 0; }
 // C ref: align.h ALIGNLIM — the alignment-record ceiling grows with the clock.
 function ALIGNLIM() { return 10 + Math.floor((game.moves | 0) / 200); }
 
-// C ref: eat.c:3539 offer_ok(obj) — getobj()'s filter for #offer.  Only
-// corpses and the two amulets are selectable; on the Astral Plane the
-// preference flips so the Amulet is what gets suggested.
-let _sac_getobj_else = 0;
-function offer_ok(obj) {
-    const I = _inv;
-    if (!obj)
-        return _sac_getobj_else ? I.GETOBJ_EXCLUDE_NONINVENT : I.GETOBJ_EXCLUDE;
-    if (obj.oclass !== FOOD_CLASS && obj.oclass !== AMULET_CLASS)
-        return I.GETOBJ_EXCLUDE;
-    if (obj.otyp !== CORPSE && obj.otyp !== AMULET_OF_YENDOR
-        && obj.otyp !== FAKE_AMULET_OF_YENDOR)
-        return I.GETOBJ_EXCLUDE_SELECTABLE;
-    // (!astral && amulet) || (astral && !amulet)
-    if (Is_astralevel() !== (obj.oclass === AMULET_CLASS))
-        return I.GETOBJ_DOWNPLAY;
-    return I.GETOBJ_SUGGEST;
-}
-
 // C ref: dungeon.h In_endgame(&u.uz) / Is_astralevel(&u.uz).  js/dungeon.js
 // keys both off game.astral_level, which is the branch record the level
 // generator fills in.
@@ -1485,40 +1513,6 @@ function In_endgame() {
 function Is_astralevel() {
     const uz = game.u?.uz, al = game.astral_level;
     return In_endgame() && uz.dlevel === al.dlevel;
-}
-
-// C ref: eat.c floorfood("sacrifice", 1) — corpsecheck 1, so only CORPSE
-// objects on the hero's square are offered, one prompt each, before falling
-// through to getobj("sacrifice", offer_ok).  js/eat.js:841 is the corpsecheck-0
-// twin; the shapes are deliberately identical.
-async function floorfood_sacrifice() {
-    const u = game.u;
-    _sac_getobj_else = 0;
-    // C's skipfloor gate: 'm' prefix, can_reach_floor(TRUE), or standing on
-    // water/lava while water-walking or flying.  (feeding && u.usteed) is the
-    // #eat-only half and does not apply to an offering.
-    const skipfloor = !!game.iflags?.menu_requested;
-    if (!skipfloor) {
-        const objs = (game.level?.objects || []).filter(
-            (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy);
-        for (const otmp of objs) {
-            if (otmp.otyp !== CORPSE) continue;
-            const { will_feel_cockatrice, killer_xname } = await import('./invent.js');
-            if (will_feel_cockatrice(otmp, false)) {
-                const { instapetrify } = await import('./polyself.js');
-                await instapetrify(`touching ${killer_xname(otmp)} bare-handed`);
-            }
-            const one = (otmp.quan || 1) === 1;
-            const nm = _inv.obj_doname(otmp);
-            const qbuf = `There ${one ? 'is' : 'are'} ${nm} here;`
-                + ` sacrifice ${one ? 'it' : 'one'}?`;
-            const c = await y_n(qbuf, 'ynq', 'n');
-            if (c === 'y') return otmp;
-            if (c === 'q') return null;
-            ++_sac_getobj_else;
-        }
-    }
-    return await _inv.getobj('sacrifice', offer_ok);
 }
 
 // C ref: pray.c:1839 sacrifice_value(otmp) — a corpse is worth its monster's
@@ -1586,7 +1580,7 @@ async function offer_too_soon(altaralign) {
         await gods_upset(A_NONE); /* Moloch becomes angry */
         return;
     }
-    await update_topl(`You feel ${Hallucination() ? 'homesick'
+    await You_feel(`${Hallucination() ? 'homesick'
         : (altaralign === (u.ualign?.type ?? 0)) ? 'an urge to return to the surface'
             : 'ashamed'}.`);
 }
@@ -1598,7 +1592,7 @@ export async function desecrate_altar(highaltar, altaralign) {
         adjalign(-20);
         u.ugangr = (u.ugangr || 0) + 5;
     }
-    await update_topl('You feel the air around you grow charged...');
+    await You_feel('the air around you grow charged...');
     await update_topl(`Suddenly, you realize that ${align_gname(roleMnum(), altaralign)} has noticed you...`);
     await godvoice(altaralign,
         `So, mortal!  You dare desecrate my ${highaltar ? 'High Temple' : 'altar'}!`);
@@ -1620,7 +1614,7 @@ async function offer_fake_amulet(otmp, highaltar, altaralign) {
         await offer_too_soon(altaralign);
         return;
     }
-    await update_topl('You hear a nearby thunderclap.');
+    await You_hear('a nearby thunderclap.');
     if (!otmp.known) {
         await update_topl(`You realize you have made a ${Hallucination() ? 'boo-boo' : 'mistake'}.`);
         otmp.known = true;
@@ -1663,7 +1657,7 @@ async function offer_different_alignment_altar(otmp, altaralign) {
     await consume_offering(otmp);
     await update_topl(`You sense a conflict between ${u_gname()} and ${a_gname()}.`);
     if (rn2(8 + (u.ulevel | 0)) > 5) {
-        await update_topl(`You feel the power of ${u_gname()} increase.`);
+        await You_feel(`the power of ${u_gname()} increase.`);
         exercise(A_WIS, true);
         change_luck(1);
         const shrine = on_shrine();
@@ -1890,9 +1884,9 @@ async function eval_offering(otmp, altaralign) {
             return -1;
         } else if (utype === altaralign) {
             if ((u.ualign?.record ?? 0) < ALIGNLIM())
-                await update_topl(`You feel appropriately ${align_str(utype)}.`);
+                await You_feel(`appropriately ${align_str(utype)}.`);
             else
-                await update_topl('You feel you are thoroughly on the right path.');
+                await You_feel('you are thoroughly on the right path.');
             adjalign(5);
             value += 3;
         } else if (unicalign === utype) {
@@ -1990,7 +1984,7 @@ async function offer_corpse(otmp, highaltar, altaralign) {
         if (v > MAXVALUE) v = MAXVALUE;
         if (v > -(u.ualign?.record ?? 0)) v = -(u.ualign?.record ?? 0);
         adjalign(v);
-        await update_topl('You feel partially absolved.');
+        await You_feel('partially absolved.');
     } else if ((u.ublesscnt | 0) > 0) {
         const saved_cnt = u.ublesscnt;
         u.ublesscnt -= Math.floor((value * (utype === A_CHAOTIC ? 500 : 300)) / MAXVALUE);
@@ -2052,7 +2046,8 @@ export async function dosacrifice() {
     await loadSacDeps();
     const highaltar = ((game.level?.at(u.ux, u.uy)?.altarmask ?? 0) & AM_SANCTUM) !== 0;
 
-    const otmp = await floorfood_sacrifice();
+    const { floorfood } = await import('./eat.js');
+    const otmp = await floorfood('sacrifice', 1);
     if (!otmp) return 0; // ECMD_OK
 
     if (otmp.otyp === AMULET_OF_YENDOR) {
@@ -2151,15 +2146,6 @@ function An_pr(s) {
 function Levitation_pr() {
     const u = game.u;
     return !!(u?.uprops?.Levitation || u?.HLevitation || u?.ELevitation);
-}
-// C ref: do_name.c oname(obj, name, flags) reduced to the artifact-naming path
-// gcrownu() uses: record the name and let artifact.c artifact_exists() set
-// obj->oartifact plus the ONAME_GIFT/ONAME_KNOW_ARTI origin bookkeeping.
-function oname_pr(art, obj, name, flags) {
-    if (!obj) return obj;
-    obj.oname = name;
-    art.artifact_exists(obj, name, true, flags);
-    return obj;
 }
 // C ref: objects.c svb.bases[SPBOOK_CLASS] — the first real spellbook otyp.
 // Derived the same way js/mkobj.js:858 classBases does (the low "generic"
@@ -2311,8 +2297,8 @@ export async function gcrownu() {
             const lbuf = D.inv.ansimpleoname(obj);  /* simpleonames(), pre-transform */
             if (!Blind())
                 await D.dsp.pline('Your sword shines brightly for a moment.');
-            obj = oname_pr(D.art, obj, D.art.artiname(P_ART_EXCALIBUR),
-                           P_ONAME_GIFT | P_ONAME_KNOW_ARTI);
+            obj = await D.inv.oname(obj, D.art.artiname(P_ART_EXCALIBUR),
+                                    P_ONAME_GIFT | P_ONAME_KNOW_ARTI);
             if (D.art.is_art(obj, P_ART_EXCALIBUR)) {
                 u.ugifts = (u.ugifts | 0) + 1;
                 livelog_printf(D.llg.LL_DIVINEGIFT | D.llg.LL_ARTIFACT,
@@ -2329,12 +2315,12 @@ export async function gcrownu() {
         if (class_gift !== P_STRANGE_OBJECT) {
             /* already got bonus above */
         } else if (obj && in_hand) {
-            await D.dsp.pline(`Your ${OBJECTS[obj.otyp]?.name} goes snicker-snack!`);
+            await D.dsp.pline(`Your ${D.inv.xname(obj)} goes snicker-snack!`);
             D.oin.observe_object(obj);
         } else if (!already_exists) {
             obj = D.mkb.mksobj(P_LONG_SWORD, false, false);
-            obj = oname_pr(D.art, obj, D.art.artiname(P_ART_VORPAL_BLADE),
-                           P_ONAME_GIFT | P_ONAME_KNOW_ARTI);
+            obj = await D.inv.oname(obj, D.art.artiname(P_ART_VORPAL_BLADE),
+                                    P_ONAME_GIFT | P_ONAME_KNOW_ARTI);
             obj.spe = 1;
             await at_your_feet('A sword');
             dropy_pr(D.inv, obj);
@@ -2357,8 +2343,8 @@ export async function gcrownu() {
             D.oin.observe_object(obj);
         } else if (!already_exists) {
             obj = D.mkb.mksobj(P_RUNESWORD, false, false);
-            obj = oname_pr(D.art, obj, D.art.artiname(P_ART_STORMBRINGER),
-                           P_ONAME_GIFT | P_ONAME_KNOW_ARTI);
+            obj = await D.inv.oname(obj, D.art.artiname(P_ART_STORMBRINGER),
+                                    P_ONAME_GIFT | P_ONAME_KNOW_ARTI);
             obj.spe = 1;
             await at_your_feet(An_pr(swordbuf));
             dropy_pr(D.inv, obj);
@@ -2388,7 +2374,7 @@ export async function gcrownu() {
         await D.wep.unrestrict_weapon_skill(D.wep.weapon_type(obj));
     } else if (class_gift === P_STRANGE_OBJECT) {
         /* opportunity knocked, but there was nobody home... */
-        await D.dsp.pline('You feel unworthy.');
+        await D.dsp.You_feel('unworthy.');
     }
     D.inv.update_inventory();
 
@@ -2632,8 +2618,7 @@ export function a_gname_at(x, y) {
 // C ref: pray.c:2677 blocked_boulder(dx, dy) — can the hero not step that way
 // because of boulders?  "assumes isok() at one space away, but not necessarily
 // at two".  RNG-free.
-export async function blocked_boulder(dx, dy) {
-    const D = await loadPrayExtras();
+export function blocked_boulder(dx, dy) {
     const u = game.u;
     let count = 0;
     for (const otmp of (game.level?.objects || [])) {
@@ -2652,7 +2637,7 @@ export async function blocked_boulder(dx, dy) {
         break;
     case 2:
         /* this is only approximate since multiple boulders might sink */
-        if (D.dbr.is_pool_or_lava(nx, ny))   /* does its own isok() check */
+        if (is_pool_or_lava(nx, ny))   /* does its own isok() check */
             break;                           /* still need Sokoban check */
         return true;                         /* C: FALLTHRU into default */
     default:
@@ -2665,7 +2650,8 @@ export async function blocked_boulder(dx, dy) {
         return true;
     if (!isok(nx, ny)) return true;
     if (IS_OBSTRUCTED(game.level?.at(nx, ny)?.typ)) return true;
-    if (D.inv.sobj_at(P_BOULDER, nx, ny)) return true;
+    for (const o of (game.level?.objects || []))
+        if (o.where === OBJ_FLOOR && o.ox === nx && o.oy === ny && o.otyp === P_BOULDER) return true;
     return false;
 }
 // C ref: dungeon.c In_sokoban(&u.uz).

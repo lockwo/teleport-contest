@@ -783,6 +783,33 @@ export function vision_recalc(control = 0) {
             }
         }
     }
+    // C ref: vision.c vision_recalc() xray pass.  X-ray cells are visible
+    // through walls, retain SVALL in level memory, and expand the newsym range.
+    if (!blind && !rogue && control !== 2 && !u.uswallow
+        && u.xray_range >= 0) {
+        const range = u.xray_range | 0;
+        if (range === 0) {
+            next[uy][ux] |= IN_SIGHT;
+            level.at(ux, uy).seenv = SVALL;
+            next_rmin[uy] = Math.min(next_rmin[uy], ux);
+            next_rmax[uy] = Math.max(next_rmax[uy], ux);
+        } else {
+            for (let row = Math.max(0, uy - range);
+                 row <= Math.min(ROWNO - 1, uy + range); row++) {
+                const dy = Math.abs(uy - row);
+                const radius = circle_data[circle_start[range] + dy];
+                const start = Math.max(1, ux - radius);
+                const stop = Math.min(COLNO - 1, ux + radius);
+                for (let col = start; col <= stop; col++) {
+                    next[row][col] |= IN_SIGHT;
+                    level.at(col, row).seenv = SVALL;
+                }
+                next_rmin[row] = Math.min(next_rmin[row], start);
+                next_rmax[row] = Math.max(next_rmax[row], stop);
+            }
+        }
+    }
+
 
     // Swap viz_array and run newsym updates
     const old_array = game.viz_array;

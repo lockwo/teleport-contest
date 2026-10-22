@@ -10,7 +10,7 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { game } from './gstate.js';
 import { hcolor } from './do_name.js';
 import { rnd } from './rng.js';
-import { pline, update_topl, newsym, see_monsters } from './display.js';
+import { pline, update_topl, newsym, see_monsters, You_feel } from './display.js';
 import { Blind } from './vision.js';
 import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
@@ -324,7 +324,7 @@ export async function toggle_displacement(obj, oldprop, on) {
         // C ref: do_wear.c You_feel() is pline(), i.e. update_topl(): the
         // following on_msg() ("You are now wearing ...") must page THIS line
         // with a --More-- instead of overwriting it (seed0360 step 497).
-        await update_topl(`You feel that monsters${on ? '' : ' no longer'} have difficulty pinpointing your location.`);
+        await You_feel(`that monsters${on ? '' : ' no longer'} have difficulty pinpointing your location.`);
     }
 }
 
@@ -354,7 +354,7 @@ export async function Boots_on() {
         const u = game.u || {};
         if (!oldprop && !((u.HFast | 0) & TIMEOUT)) {
             makeknown_credit(otyp);
-            await update_topl(`You feel yourself speed up${(oldprop || u.HFast || youHaveFast()) ? ' a bit more' : ''}.`);
+            await You_feel(`yourself speed up${(oldprop || u.HFast || youHaveFast()) ? ' a bit more' : ''}.`);
         }
         break;
     }
@@ -408,7 +408,7 @@ export async function Boots_off() {
     case SPEED_BOOTS:
         if (!youHaveVeryFast() && !game.context?.takeoff?.cancelled_don) {
             makeknown_credit(otyp);
-            await update_topl(`You feel yourself slow down${youHaveFast() ? ' a bit' : ''}.`);
+            await You_feel(`yourself slow down${youHaveFast() ? ' a bit' : ''}.`);
         }
         break;
     case WATER_WALKING_BOOTS:
@@ -465,6 +465,7 @@ export async function Cloak_on() {
     case CLOAK_OF_INVISIBILITY:
         if (!extrinsic_invis_except(uarmc) && !game.u?.uprops?.HInvis && !Blind()) {
             makeknown(uarmc.otyp);
+            newsym_here();                    /* C do_wear.c:360 */
             await pline(`Suddenly you can${game.u?.uprops?.See_invisible ? ' see through' : 'not see'} yourself.`);
         }
         break;
@@ -507,12 +508,15 @@ export async function Cloak_off() {
         await toggle_displacement(otmp, olddisp, false);
         break;
     case MUMMY_WRAPPING:
-        if (game.u?.uprops?.Invis && !Blind())
+        if (game.u?.uprops?.Invis && !Blind()) {
+            newsym_here();                    /* C do_wear.c:409 */
             await pline(`You can ${game.u?.uprops?.See_invisible ? 'see through yourself' : 'no longer see yourself'}.`);
+        }
         break;
     case CLOAK_OF_INVISIBILITY:
         if (!oldinvis && !game.u?.uprops?.HInvis && !Blind()) {
             makeknown(CLOAK_OF_INVISIBILITY);
+            newsym_here();                    /* C do_wear.c:417 */
             await pline(`Suddenly you can ${game.u?.uprops?.See_invisible ? 'no longer see through yourself' : 'see yourself'}.`);
         }
         break;
@@ -577,7 +581,7 @@ export async function Helmet_on() {
             const u = game.u || {};
             const raw = (u.acurr?.a?.[A_INT] || 0) + (u.abon?.a?.[A_INT] || 0)
                 + (u.atemp?.a?.[A_INT] || 0);
-            await pline(`You feel ${acurr_eff(A_INT) <= raw
+            await You_feel(`${acurr_eff(A_INT) <= raw
                 ? 'like sitting in a corner' : 'giddy'}.`);
         } else if (fallthru_dunce) {
             makeknown(HELM_OF_OPPOSITE_ALIGNMENT);

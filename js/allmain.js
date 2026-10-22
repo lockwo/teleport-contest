@@ -1794,7 +1794,7 @@ function Sick() { return ((game.u?.uprops?.Sick || 0) > 0) || !!(game.u?.sick); 
 function Vomiting() { return (game.u?.uprops?.Vomiting || 0) > 0; }
 function Confusion() { return ((game.u?.uprops?.Confusion || 0) > 0) || !!(game.u?.uconf || game.u?.HConfusion); }
 function Hallucination() { return ((game.u?.uprops?.Hallucination || 0) > 0) || !!(game.u?.HHallucination) || !!game.u?.uhallu; }
-function Fumbling() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
+function Fumbling() { return !!(game.u?.HFumbling || game.u?.EFumbling || worn_extrinsic(25 /* FUMBLING */)); } /* youprop.h (HFumbling || EFumbling): EFumbling is the worn-item extrinsic */
 function HStun() { return ((game.u?.uprops?.Stun || 0) > 0) || !!game.u?.Stunned || !!(game.u?.HStun || game.u?.ustun) || !!game.u?.formprops?.Stunned; }
 
 // C ref: attrib.c exertext[A_MAX][2] (exerchk's own explanation, in attribute order).
@@ -1910,6 +1910,15 @@ export async function moveloop_input_redraw() {
     // once-per-input redraw (a hallucinating hero's display-rng draws), runs
     // between them.  Our do_reqmenu returns early; _m_fresh marks that gap.
     if (g.context?._m_fresh) return;
+    // C ref: wintty.c process_menu_window()/tty_display_nhwindow() — a window
+    // that stays open across several keystrokes (the #enhance skill list, the
+    // attributes window, a paged text window) blocks INSIDE its rhack() call,
+    // so no moveloop_core() iteration runs between its keys.  This port reads
+    // those keys one per runSegment step, and the redraw below made a
+    // hallucinating hero pay see_monsters()/see_objects() display-rng draws on
+    // every page key (heldout-fuzza-long8053 nz17 step 1178: 6 draws C never
+    // makes), desynchronising every later random glyph.
+    if (g._modal_screen) return;
     const dsp = await import('./display.js');
     if (Hallucination()) {
         // `see_monsters(); see_objects(); see_traps(); if (u.uswallow)
@@ -1926,15 +1935,17 @@ export async function moveloop_input_redraw() {
         if (g.u?.uswallow) await dsp.swallowed(0);
     } else {
         // The `else if (Unblind_telepat || Warning || Warn_of_mon ||
-        // any_visible_region()) see_monsters();` arm.  Warn_of_mon is not
-        // modelled; the other three are.  Telepathy, warning glyphs and
-        // region-obscured monsters are all keyed on the HERO's position, so
-        // they have to be redrawn once per input or they linger where the
-        // monster no longer sets them (seed0360 wizard1: two '2's stayed put
-        // after a 'k').
+        // any_visible_region()) see_monsters();` arm.  Telepathy, warning
+        // glyphs, warned-of monsters and region-obscured monsters are all
+        // keyed on the HERO's position, so they have to be redrawn once per
+        // input or they linger where the monster no longer sets them
+        // (seed0360 wizard1: two '2's stayed put after a 'k').
         const { any_visible_region } = await import('./region.js');
         const { Unblind_telepat } = await import('./worn.js');
-        if (dsp.have_warning() || Unblind_telepat() || any_visible_region())
+        const _up = g.u?.uprops || {};
+        const warn_of_mon = !!((_up.HWarn_of_mon | 0) || (_up.EWarn_of_mon | 0)
+            || ((g.u?.uprops_extrinsic || {})[32 /* WARN_OF_MON */] | 0));
+        if (dsp.have_warning() || Unblind_telepat() || warn_of_mon || any_visible_region())
             dsp.see_monsters();
     }
     if (g.vision_full_recalc) vision_recalc(0);

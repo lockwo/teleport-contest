@@ -354,7 +354,12 @@ function shkinit(shp, sroom) {
     shk.isshk = 1;
     shk.mpeaceful = 1;
     shk.msleeping = 0;
+    shk.mtrapseen = ~0;                  // mon_learns_traps(shk, ALL_TRAPS): we know all the traps already
     shk.eshk = shk.eshk || {};
+    // C ref: makemon.c newmextra()/neweshk() zero-fills the eshk block; u_entered_shop's `visitct++ ? " again"`
+    // and the bill/credit/debit arithmetic read these before any code has written them.
+    for (const f of ['visitct', 'following', 'robbed', 'credit', 'debit', 'loan', 'billct', 'surcharge'])
+        shk.eshk[f] ??= 0;
     shk.eshk.shoproom = (sroom.roomnoidx ?? 0) + ROOMOFFSET;
     sroom.resident = shk;
     shk.eshk.shoptype = sroom.rtype;

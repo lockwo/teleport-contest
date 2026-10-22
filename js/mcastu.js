@@ -27,7 +27,7 @@ import { mflags2_of, M2_PNAME, is_undead_flag, is_demon_flag } from './monflags_
 import { an, the_unique_pm } from './objnam.js';
 import { Fire_resistance, Cold_resistance, Shock_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
 import { monstseesu, monstunseesu } from './mondata.js';
-import { shieldeff, Hallucination_u as Hallucination, You_feel } from './display.js';
+import { shieldeff, Hallucination_u as Hallucination, You_feel, You_hear } from './display.js';
 import { Blind } from './vision.js';
 import { youmonst_data_pub, Free_action, worn_extrinsic } from './invent.js';
 import { enexto_gpflags, In_W_tower as In_W_tower_tp } from './teleport.js';
@@ -864,13 +864,13 @@ export async function mcast_insects(mtmp) {
         if (newseen <= oldseen || Unaware_()) {
             /* unseen caster fails or summons unseen critters, or unconscious
                hero ("You dream that you hear...") */
-            await update_topl(`You hear someone summoning ${what}.`);
+            await You_hear(`someone summoning ${what}.`);
         } else {
             /* unseen caster summoned seen critter(s) */
             const { makesingular } = await import('./plural.js');
             const arg = (newseen === oldseen + 1) ? an_(makesingular(what)) : what;
             if (!Deaf()) {
-                await update_topl(`You hear someone summoning something, and `
+                await You_hear(`someone summoning something, and `
                     + `${arg} ${vtense_(arg, 'appear')}.`);
             } else {
                 await update_topl(`${upstart_(arg)} ${vtense_(arg, 'appear')}.`);

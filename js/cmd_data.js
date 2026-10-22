@@ -94,7 +94,7 @@ export const EXTCMD_TABLE = [
     { key: 94, txt: "showtrap", desc: "describe an adjacent, discovered trap", flags: "IFBURIED | GENERALCMD" },
     { key: 243, txt: "sit", desc: "sit down", flags: "AUTOCOMPLETE" },
     { key: 0, txt: "stats", desc: "show memory statistics", flags: "IFBURIED | AUTOCOMPLETE | WIZMODECMD" },
-    { key: 26, txt: "suspend", desc: "push game to background ('fg' to come back)", flags: "(IFBURIED | GENERALCMD | NOFUZZERCMD\n                               | CMD_NOT_AVAILABLE\n                               )" },
+    { key: 26, txt: "suspend", desc: "push game to background ('fg' to come back)", flags: "IFBURIED | GENERALCMD | NOFUZZERCMD" },
     { key: 120, txt: "swap", desc: "swap wielded and secondary weapons", flags: "0" },
     { key: 84, txt: "takeoff", desc: "take off one piece of armor", flags: "0" },
     { key: 65, txt: "takeoffall", desc: "remove all armor", flags: "0" },

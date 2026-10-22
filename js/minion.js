@@ -12,19 +12,15 @@
 // "Demonic Blackmail" dochug() block (a peaceful demon not adjacent to the
 // hero) — neither is in this pass's scope.
 //
-// THREE minion.c functions are NOT redefined here because a faithful copy
-// already exists elsewhere in js/ (see the note above each stub site):
+// TWO minion.c functions are NOT redefined here because a faithful copy
+// already exists elsewhere in js/:
 //   dlord()          -> js/pray.js:1324 (private, faithful)
-//   ndemon()         -> js/sp_lev.js:1397 (private; returns a permonst POINTER
-//                       where C returns a pmidx, and its is_ndemon() test is
-//                       `mcls == S_DEMON && !(geno & G_UNIQ)` instead of C's
-//                       `is_demon(ptr) && !(mflags2 & (M2_LORD|M2_PRINCE))`, so
-//                       it accepts the djinni and the mail daemon)
 //   monster_census() -> js/wizard.js:111, js/mcastu.js:953, js/read.js:2103
 //                       (all private, all missing C's isgd/spotted clauses)
-// None of the three is exported, so the summoning code below cannot reach them;
-// each is re-derived here under a `minion_`-prefixed name that CANNOT shadow the
-// real port, and the header comment says which original to export instead.
+// Neither is exported, so the summoning code below cannot reach them; each is
+// re-derived here under a `minion_`-prefixed name that CANNOT shadow the real
+// port.  ndemon() below is the exported pmidx-returning port (js/sp_lev.js has
+// its own private, differently shaped special-level helper; do not use it).
 
 import { acurr_eff } from './attrib.js';
 import { game } from './gstate.js';
@@ -43,7 +39,7 @@ import {
 } from './makemon.js';
 import { is_art, ART_DEMONBANE, ART_EXCALIBUR } from './artifact.js';
 import { DEADMONSTER, mongone } from './mon.js';
-import { pline, canseemon_shared, newsym, impossible } from './display.js';
+import { pline, canseemon_shared, newsym, impossible, You_feel } from './display.js';
 import { canspotmon, x_monnam } from './uhitm.js';
 import { Monnam, Amonnam, mon_nam, ARTICLE_A } from './do_name.js';
 import { show_transient_light, transient_light_cleanup } from './light.js';
@@ -229,7 +225,7 @@ function minion_dlord(atyp) {
             && (atyp === A_NONE || sgn(ptr?.maligntyp | 0) === sgn(atyp)))
             return pm;
     }
-    return minion_ndemon(atyp); /* approximate */
+    return ndemon(atyp); /* approximate */
 }
 
 // C ref: minion.c:420 llord() — "create lawful (good) lord".  No RNG unless the
@@ -258,7 +254,7 @@ export function lminion() {
 // 3.6.2 made this a single mkclass_aligned() call (it used to retry 20 times),
 // so exactly one draw sequence happens here.  See the header note about
 // js/sp_lev.js:1397.
-function minion_ndemon(atyp) {
+export function ndemon(atyp) {
     const ptr = mkclass_aligned(S_DEMON, 0, atyp);
     return (ptr && is_ndemon(ptr)) ? monsndx(ptr) : NON_PM;
 }
@@ -303,19 +299,19 @@ export async function msummon(mon) {
 
     if (is_dprince(ptr) || (monsndx(ptr) === p.WIZARD_OF_YENDOR)) {
         dtype = (!rn2(20)) ? dprince(atyp) : (!rn2(4)) ? minion_dlord(atyp)
-                                                      : minion_ndemon(atyp);
+                                                      : ndemon(atyp);
         cnt = ((dtype !== NON_PM)
                && !rn2(4) && is_ndemon(monster_by_pmidx(dtype))) ? 2 : 1;
     } else if (is_dlord(ptr)) {
         dtype = (!rn2(50)) ? dprince(atyp) : (!rn2(20)) ? minion_dlord(atyp)
-                                                        : minion_ndemon(atyp);
+                                                        : ndemon(atyp);
         cnt = ((dtype !== NON_PM)
                && !rn2(4) && is_ndemon(monster_by_pmidx(dtype))) ? 2 : 1;
     } else if (monsndx(ptr) === p.BONE_DEVIL) {
         dtype = p.SKELETON;
         cnt = 1;
     } else if (is_ndemon(ptr)) {
-        dtype = (!rn2(20)) ? minion_dlord(atyp) : (!rn2(6)) ? minion_ndemon(atyp)
+        dtype = (!rn2(20)) ? minion_dlord(atyp) : (!rn2(6)) ? ndemon(atyp)
                                                            : monsndx(ptr);
         cnt = 1;
     } else if (mon && is_lminion(mon)) {
@@ -333,7 +329,7 @@ export async function msummon(mon) {
                 break;
             case A_CHAOTIC:
             case A_NONE:
-                dtype = minion_ndemon(atyp);
+                dtype = ndemon(atyp);
                 break;
             }
         } else {
@@ -354,7 +350,7 @@ export async function msummon(mon) {
      * could get this far with an extinct dtype), try another.
      */
     if (((game.mvitals?.[dtype]?.mvflags | 0) & G_GONE) !== 0) {
-        dtype = minion_ndemon(atyp);
+        dtype = ndemon(atyp);
         if (dtype === NON_PM)
             return 0;
     }
@@ -443,11 +439,11 @@ export async function summon_minion(alignment, talk) {
         break;
     case A_CHAOTIC:
     case A_NONE:
-        mnum = minion_ndemon(alignment);
+        mnum = ndemon(alignment);
         break;
     default:
         await impossible('unaligned player?');
-        mnum = minion_ndemon(A_NONE);
+        mnum = ndemon(A_NONE);
         break;
     }
     if (mnum === NON_PM) {
@@ -484,7 +480,7 @@ export async function summon_minion(alignment, talk) {
             if (!Deaf())
                 await pline(`The voice of ${align_gname_of(alignment)} booms:`);
             else
-                await pline(`You feel ${s_suffix(align_gname_of(alignment))} booming voice:`);
+                await You_feel(`${s_suffix(align_gname_of(alignment))} booming voice:`);
             SetVoice(mon, 0, 80, 0);
             await verbalize('Thou shalt pay for thine indiscretion!');
             if (canspotmon(mon))
@@ -523,7 +519,7 @@ export async function demon_talk(mtmp) {
         if (canspotmon(mtmp))
             await pline(`${Amonnam(mtmp)} looks very angry.`);
         else
-            await pline('You feel tension building.');
+            await You_feel('tension building.');
         mtmp.mpeaceful = mtmp.mtame = 0;
         set_malign(mtmp);
         newsym(mtmp.mx, mtmp.my);
@@ -699,7 +695,7 @@ export async function gain_guardian_angel() {
         if (!Deaf())
             await pline('A voice booms:');
         else
-            await pline('You feel a booming voice:');
+            await You_feel('a booming voice:');
         SetVoice(null, 0, 80, 0 /* voice_deity */);
         await verbalize('Thy desire for conflict shall be fulfilled!');
         /* send in some hostile angels instead */
@@ -708,7 +704,7 @@ export async function gain_guardian_angel() {
         if (!Deaf())
             await pline('A voice whispers:');
         else
-            await pline('You feel a soft voice:');
+            await You_feel('a soft voice:');
         SetVoice(null, 0, 80, 0 /* voice_deity */);
         await verbalize('Thou hast been worthy of me!');
         mm.x = game.u.ux;
@@ -738,7 +734,7 @@ export async function gain_guardian_angel() {
             if (!Blind())
                 await pline('An angel appears near you.');
             else
-                await pline('You feel the presence of a friendly angel near you.');
+                await You_feel('the presence of a friendly angel near you.');
             /* make him strong enough vs. endgame foes */
             mtmp.m_lev = rn1(8, 15);
             mtmp.mhp = mtmp.mhpmax = d(mtmp.m_lev, 10) + 30 + rnd(30);

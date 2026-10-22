@@ -25,6 +25,7 @@ import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { A_WIS, LEVITATION, FLYING, P_RIDING, P_BASIC } from './const.js';
 import { Blind as isBlind } from './vision.js';
+import { You_see } from './display.js';
 
 // Heavy UI/inventory modules (display.js, invent.js, extcmd-handlers.js) are
 // loaded lazily inside doengrave() to avoid a module-init cycle: display.js
@@ -497,7 +498,7 @@ export async function read_engr_at(x, y) {
         if (!Blind) {
             sensed = 1;
             // C: You_see() -> "You see " + line (pline.c:466).
-            await update_topl('You see a message scrawled in blood here.');
+            await You_see('a message scrawled in blood here.');
         }
         break;
     default:
@@ -793,6 +794,7 @@ async function doengrave_sfx_item(de) {
     case WAND_CLASS: {
         const zap = await import('./zap.js');
         if (await zap.zappable(de.otmp)) {
+            await (await import('./shk.js')).check_unpaid(de.otmp);
             if (de.otmp.cursed && !rn2(WAND_BACKFIRE_CHANCE)) {
                 await zap.wand_explode(de.otmp, 0);
                 de.ret = 1; // ECMD_TIME
@@ -1394,9 +1396,13 @@ export async function engrave_step() {
             // routed through update_topl() because C's prinv() emits via pline()
             // and so MERGES onto the "gets dull." topline (our prinv() would
             // overwrite it).
+            // C: only the LOCAL `stylus` takes hold_another_object()'s result;
+            // context.engraving.stylus keeps the split-off blade, which addinv()
+            // may have merged into another stack and freed, so the next action
+            // finds it gone from invent ("You are unable to continue engraving.").
             obj_extract_self(stylus);
             const oquan = stylus.quan;
-            stylus = ctx.stylus = addinv(stylus);
+            stylus = addinv(stylus);
             await update_topl(prinv_fmt(null, stylus, oquan));
         } else if (dulled && stylus.known) {
             // prinv() -> pline(): the refreshed "b - a -1 dagger" line pages the

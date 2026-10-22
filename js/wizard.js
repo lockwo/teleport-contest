@@ -8,7 +8,7 @@
 
 import { game } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
-import { update_topl, pline, newsym } from './display.js';
+import { update_topl, pline, newsym, You_feel } from './display.js';
 import { Blind } from './vision.js';
 import { AT_MAGC, attacktype } from './monattk_data.js';
 import { mflags3_of } from './monflags_data.js';
@@ -233,7 +233,7 @@ export async function intervene() {
     switch (which) {
     case 0:
     case 1:
-        await pline('You feel vaguely nervous.');
+        await You_feel('vaguely nervous.');
         break;
     case 2: {
         if (!Blind()) {

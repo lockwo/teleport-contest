@@ -53,6 +53,19 @@ but it doesn't earn points on its own. Passing whole sessions
 (every screen and every PRNG call matched) is the strict-perfect
 tiebreaker.
 
+### Object-state parity
+
+Shop alterations must preserve the C ordering of the message, billing, and
+mutation. Disenchanting or uncharging unpaid goods bills their original state
+through `costly_alteration`. Improving an unpaid weapon updates its bill with
+`alter_cost`. Breaking a chest lock bills the box without its contents.
+
+`splitobj` clears worn state on the new stack, then duplicates object timers
+and light sources through `obj_split_timers` and `obj_split_light_source`.
+Both halves of a split burning candle stack must remain lit with independent
+timers and light radii appropriate to their new quantities.
+
+
 ## `input` — what the harness gives you
 
 ```js

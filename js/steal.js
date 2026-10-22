@@ -16,6 +16,7 @@
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { dist2, s_suffix } from './hacklib.js';
+import { monnear } from './dogmove.js';
 import { can_carry, DEADMONSTER } from './mon.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
     AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
@@ -26,7 +27,7 @@ import { nomul, stop_occupation } from './hack.js';
 import { update_topl, urgent_topl } from './display.js';
 import { Blind } from './vision.js';
 import { canspotmon, Monnam } from './uhitm.js';
-import { Some_Monnam } from './do_name.js';
+import { Some_Monnam, Adjmonnam } from './do_name.js';
 import { add_to_minv } from './makemon.js';
 import { is_animal, humanoid, throws_rocks_flag } from './monflags_data.js';
 import {
@@ -34,7 +35,7 @@ import {
     worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname, bimanual,
 } from './invent.js';
 
-import { armor_simple_name } from './do_wear.js';
+import { armor_simple_name, doffing, stop_donning } from './do_wear.js';
 import { any_quest_artifact } from './monspecial.js';
 // C ref: defsym.h MONSYM(14, 'n', NYMPH, S_NYMPH, "nymph") — the class whose
 // "<Mon> takes off ..." preface makes the follow-up theft message use "She"
@@ -43,10 +44,6 @@ import { any_quest_artifact } from './monspecial.js';
 const S_NYMPH_MCLS = 14;
 // C ref: obj.h how_lost values.
 const LOST_NONE = 0, LOST_STOLEN = 3;
-
-// C ref: mon.c monnear(mon, x, y) — is the monster close enough to attack?
-// (The NODIAG grid-bug refinement doesn't matter for a thief.)
-function monnear(mon, x, y) { return dist2(mon.mx, mon.my, x, y) < 3; }
 
 // C ref: steal.c somegold(lmoney) — the proportional slice of the hero's purse
 // a leprechaun grabs.
@@ -73,19 +70,11 @@ export function findgold(chain) {
 
 // C ref: steal.c unresponsive() — can the hero be charmed into disrobing?  A
 // helpless (unconscious / fainted / frozen / paralyzed) hero cannot.
-function unresponsive() {
+export function unresponsive() {
     if ((game.multi ?? 0) >= 0) return false;
     const why = game.multi_reason || '';
     return Unaware() || why.startsWith('frozen') || why.startsWith('paralyzed');
 }
-
-// C ref: do_wear.c doffing(obj) / stop_donning(obj) — is a multi-turn dressing
-// maneuver in progress on this very object, and if so cancel it and report the
-// delay that was still outstanding.  This port drives delayed donning through
-// invent.js start_occupation() rather than C's afternmv hook and no covered
-// session is mid-maneuver when a thief strikes, so both report "not donning".
-function doffing(_obj) { return false; }
-function stop_donning(_obj) { return 0; }
 
 // C ref: steal.c mpickobj(mtmp, otmp) — put a just-taken object into the
 // monster's inventory.  Returns 1 if otmp was freed by a merge.  No RNG.
@@ -220,7 +209,7 @@ export async function steal(mtmp, objnambuf) {
 
     const was_doffing = doffing(otmp);
     /* stop donning/doffing now so that afternmv won't be clobbered below */
-    const olddelay = stop_donning(otmp);
+    const olddelay = await stop_donning(otmp);
     /* you're going to notice the theft... */
     await stop_occupation();
 
@@ -263,8 +252,10 @@ export async function steal(mtmp, objnambuf) {
                 nomul(-armordelay);
                 game.multi_reason = 'taking off clothes';
                 /* C: gn.nomovemsg = 0 here, so unmul() falls back to its
-                   default "You can move again." */
-                game.nomovemsg = 'You can move again.';
+                   default "You can move again."; a zero-delay piece never
+                   reaches unmul(), so a string here would leak into the next
+                   done_eating()/unmul() */
+                game.nomovemsg = null;
                 await remove_worn_item(otmp, true);
                 otmp.cursed = curssv;
                 if ((game.multi ?? 0) < 0) {
@@ -320,13 +311,6 @@ export async function steal(mtmp, objnambuf) {
 // C ref: onames.h RIN_ADORNMENT — the ring a thief grabs before rolling.
 const RIN_ADORNMENT = 173;
 
-
-// C ref: do_name.c Adjmonnam(mtmp, adj) — "The beautiful nymph".  Only the
-// male-hero seduction message uses it; the covered hero is female.
-function Adjmonnam(mtmp, adj) {
-    const s = Monnam(mtmp);
-    return s.replace(/^The /, `The ${adj} `);
-}
 
 // C ref: wield.c welded(obj) — a cursed wielded weapon welds to the hand.
 // `bimanual` is imported from invent.js, which owns the complete oc_bimanual set.

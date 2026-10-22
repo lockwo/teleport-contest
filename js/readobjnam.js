@@ -80,7 +80,7 @@ import { counter_were, zombie_form } from './mon.js';
 import { is_were_flag, is_human_flag, msound_of, MS_GUARDIAN } from './monflags_data.js';
 import { tin_variety_txt, set_tin_variety, RANDOM_TIN, obj_nutrition,
     consume_oeaten } from './eat.js';
-import { artifact_name, exist_artifact, artifact_exists, permapoisoned,
+import { artifact_name, oname_assign, artifact_exists, permapoisoned,
     nartifact_exist } from './artifact.js';
 import { is_quest_artifact } from './questpgr.js';
 import { lookup_novel } from './do_name.js';
@@ -1417,12 +1417,10 @@ function finalize(d) {
              globweight: d.globweight || null };
 }
 
-// C ref: do_name.c oname(obj, name, ONAME_WISH) -- an existing artifact of
-// that name is not created twice, and an artifact keeps its name.
+// C ref: do_name.c oname(obj, name, ONAME_WISH): the object is fresh (not
+// worn, carried or on a bill), so oname_assign() is all of oname().
 function oname_wish(obj, name) {
-    if (obj.oartifact || (name && exist_artifact(obj.otyp, name))) return obj;
-    obj.oname = name || '';
-    if (name) artifact_exists(obj, name, true, ONAME_WISH);
+    oname_assign(obj, name, ONAME_WISH);
     return obj;
 }
 

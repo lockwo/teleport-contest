@@ -13,7 +13,7 @@ import { resists_magm } from './zap.js';
 import { game } from './gstate.js';
 import { d, rn2, rnd, rn1 } from './rng.js';
 import {
-    isok, A_STR, ZAP_POS,
+    isok, A_STR, ZAP_POS, IS_SINK,
     FIRE_RES, COLD_RES, DISINT_RES, SHOCK_RES, POISON_RES, ACID_RES, ANTIMAGIC,
     EXPL_NOXIOUS, EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY,
     MAY_HITMON, MAY_HITYOU, MAY_DESTROY, MAY_FRACTURE,
@@ -26,10 +26,11 @@ import {
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
     AD_PEST,
 } from './monattk_data.js';
-import { m_at, newsym, update_topl, map_invisible, unmap_object, Hallucination_u } from './display.js';
+import { m_at, newsym, update_topl, map_invisible, unmap_object, Hallucination_u, You_hear } from './display.js';
 import { cansee, couldsee } from './vision.js';
 import { is_undead_flag, is_demon_flag, nonliving, is_demon_flag as is_demon } from './monflags_data.js';
 import { has_innate } from './exper.js';
+import { Poison_resistance } from './youprop.js';
 import { rndmonnam } from './do_name.js';
 import { s_suffix } from './hacklib.js';
 
@@ -78,13 +79,6 @@ function Antimagic() { return !!game.u?.formprops?.Antimagic || uprop('Antimagic
 function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance') || has_innate('HFire_resistance') || wornprop(FIRE_RES); }
 function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance') || has_innate('HCold_resistance') || wornprop(COLD_RES); }
 export function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance') || has_innate('HShock_resistance') || wornprop(SHOCK_RES); }
-// A race-innate grant (e.g. every orc, from level 1) is never persisted as a
-// stored flag anywhere in js/ — OR in the pure has_innate() derivation.
-function Poison_resistance() {
-    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    return uprop('Poison_resistance', 'HPoison_resistance', 'EPoison_resistance')
-        || has_innate('HPoison_resistance') || wornprop(POISON_RES);
-}
 export function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance') || wornprop(ACID_RES); }
 function Disint_resistance() { return !!game.u?.formprops?.Disint_resistance || uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance') || has_innate('HDisint_resistance') || wornprop(DISINT_RES); }
 function Invulnerable() { return uprop('Invulnerable') || !!game.u?.uinvulnerable; }
@@ -350,7 +344,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
             generic = true;
         }
         if (!Deaf() && olet !== SCROLL_CLASS) {
-            await update_topl('You hear a blast.');
+            await You_hear('a blast.');
             didmsg = true;
         }
     } else {
@@ -609,12 +603,12 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
             && (otmp.otyp === BOULDER || otmp.otyp === STATUE) && rn2(10)) {
             if (otmp.otyp === BOULDER) {
                 if (cansee(sx, sy)) await update_topl('The boulder breaks apart.');
-                else await update_topl('You hear stone breaking.');
+                else await You_hear('stone breaking.');
                 fracture_rock(otmp, weight);
                 place_object(otmp, sx, sy);
             } else {
                 if (cansee(sx, sy)) await update_topl('The statue crumbles.');
-                else await update_topl('You hear stone crumbling.');
+                else await You_hear('stone crumbling.');
                 await break_statue(otmp, weight);
                 place_object(otmp, sx, sy);
             }
@@ -647,6 +641,10 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
         for (const stmp of schain) {
             if (!(stmp.range-- > 0) || stmp.stopped) continue;
             let bx = stmp.ox + stmp.dx, by = stmp.oy + stmp.dy;
+            /* C ref: explode.c:843 -- scatter() walks the object with the global
+               gb.bhitpos, so a bhit() beam that triggered it (zapping a drawbridge
+               to rubble) resumes from wherever the last debris stopped */
+            game.bhitpos = { x: bx, y: by };
             const loc = isok(bx, by) ? game.level?.at?.(bx, by) : null;
             const typ = loc ? loc.typ : 0 /* STONE */;
             if (!isok(bx, by)) {
@@ -673,7 +671,9 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
                     }
                 }
             }
+            game.bhitpos.x = bx; game.bhitpos.y = by;
             stmp.ox = bx; stmp.oy = by;
+            if (IS_SINK(game.level?.at?.(bx, by)?.typ)) stmp.stopped = true;
         }
     }
     for (const stmp of schain) {

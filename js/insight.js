@@ -26,15 +26,16 @@ import {
 import { weapon_type } from './weapon.js';
 import { p_skill_of } from './enhance.js';
 import { update_topl } from './display.js';
-import { phase_of_the_moon, friday_13th, night, midnight as midnight_cal, NEW_MOON, FULL_MOON } from './calendar.js';
+import { phase_of_the_moon, friday_13th, night, midnight as midnight_cal, NEW_MOON, FULL_MOON, getnow } from './calendar.js';
 import { race_attrmax } from './u_init.js';
 import { acurr_eff, stone_luck } from './attrib.js';
 import { depth } from './hacklib.js';
 import { endgamelevelname, has_ceiling } from './dungeon.js';
 import { newuexp, has_innate, innate_source, rank_of } from './exper.js';
-import { youHaveSearching, youHaveFast, youHaveVeryFast } from './allmain.js';
+import { youHaveSearching, youHaveFast, youHaveVeryFast, timet_delta } from './allmain.js';
 import { Infravision, Blind } from './vision.js';
 import { objects as OBJECTS } from './mkobj.js';
+import { simpleonames } from './objnam.js';
 import { MFLAGS2, M2_PNAME, humanoid } from './monflags_data.js';
 const G_UNIQ = 0x1000; // monflag.h
 import { magic_negation } from './mhitu.js';
@@ -496,9 +497,21 @@ export function enlightenment_lines(final = 0, basic = true) {
         pan += ` ${align_gname(roleIdx, A_CHAOTIC)} (${alignStr(A_CHAOTIC)})`;
     pan += '.';
     out(pan);
-    // C ref: insight.c — "You started out <gender>." after a sex change.
-    if (innategend !== initgend)
-        out(` You started out ${GENDER_ADJ[initgend]}.`);
+    // C ref: insight.c background_enlightenment() — show original alignment and
+    // gender if either changed.  A separate "actually <align>" line reports the
+    // permanent alignment under a temporary (helm) one, so the "started out"
+    // line only covers a permanent conversion and/or a sex change.
+    const difgend = innategend !== initgend;
+    let difalgn = ((u.ualign?.type !== u.ualignbase?.[A_CURRENT]) ? 1 : 0)
+        + ((u.ualignbase?.[A_CURRENT] !== u.ualignbase?.[A_ORIGINAL]) ? 2 : 0);
+    if (difalgn & 1) {
+        youAre(`actually ${alignStr(u.ualignbase?.[A_CURRENT])}`);
+        difalgn &= ~1;
+    }
+    if (difgend || difalgn)
+        out(` You started out ${difgend ? GENDER_ADJ[initgend] : ''}${
+            (difgend && difalgn) ? ' and ' : ''}${
+            difalgn ? alignStr(u.ualignbase?.[A_ORIGINAL]) : ''}.`);
 
     // handedness (URIGHTY defaults TRUE); "normally" when the current form
     // has no hands (body_part(HANDED) != "handed").
@@ -741,15 +754,15 @@ export function enlightenment_lines(final = 0, basic = true) {
     // (kept in game._i_special_props here); insight.c:1007-1048 reports it
     // as "You died from ..." in the final disclosure.
     const ispec = (w) => !!final && !!game._i_special_props?.has(w);
-    if ((up.Stoned | 0) > 0) {
+    if ((up.Stoned | 0) > 0 || ispec(STONED)) {
         if (ispec(STONED)) out(' You turned into stone.');
         else youAre('turning to stone');
     }
-    if ((up.Slimed | 0) > 0) {
+    if ((up.Slimed | 0) > 0 || ispec(SLIMED)) {
         if (ispec(SLIMED)) out(' You turned into slime.');
         else youAre('turning into slime');
     }
-    if ((up.Strangled | 0) > 0) {
+    if ((up.Strangled | 0) > 0 || ispec(STRANGLED)) {
         if (ispec(STRANGLED)) out(' You died from strangulation.');
         else youAre(`being strangled${_wizard() ? ` (${up.Strangled & TIMEOUT_MASK})` : ''}`);
     }
@@ -1808,7 +1821,24 @@ function putstr(win, attr, s) {
     if (Array.isArray(win)) { win.push(s); return; } /* live text window */
     if (!win) { insight_dumplog.push({ text: s, attr }); return; }
     const w = _wins.get(win);
-    if (w) w.lines.push({ text: s, attr });
+    if (!w) return;
+    /* C ref: wintty.c tty_putstr() NHW_MENU/NHW_TEXT arm — the line is stored,
+       then a line of CO or more characters (strlen + 1 > CO) is cut after the
+       last space at or before column CO - 1; the space itself is dropped and
+       the rest becomes a new line. */
+    const CO = game.nhDisplay?.cols || 80;
+    let text = s;
+    let rest = null;
+    if (typeof s === 'string' && s.length + 1 > CO) {
+        let i = CO - 1;
+        while (i && s[i] !== ' ' && s[i] !== '\n') i--;
+        /* The recorded C screens show the broken first part WITHOUT the line's
+           leading space (" Your items ..." appears as "Your items ..." at col 0)
+           while the continuation also starts at col 0. */
+        if (i) { text = s.slice(0, i).replace(/^ /, ''); rest = s.slice(i + 1); }
+    }
+    w.lines.push({ text, attr });
+    if (rest !== null) putstr(win, attr, rest);
 }
 // C ref: display_nhwindow(win, TRUE) on an NHW_MENU filled only by putstr():
 // tty routes it through process_text_window() ("--More--"); a dump window
@@ -1821,7 +1851,12 @@ async function show_putstr_window(lines, dumping) {
     await display_putstr_window(lines);
 }
 function start_menu(win, behave) { const w = _wins.get(win); if (w) w.behave = behave; }
-function add_menu_str(win, s) { putstr(win, ATR_NONE, s); }
+function add_menu_str(win, s) {
+    if (Array.isArray(win) || !win) { putstr(win, ATR_NONE, s); return; }
+    /* a menu item (unlike putstr text) is truncated, never broken, by tty */
+    const w = _wins.get(win);
+    if (w) w.lines.push({ text: s, attr: ATR_NONE });
+}
 function add_menu(win, _gi, any, ch, gch, attr, clr, str, itemflags) {
     const w = _wins.get(win);
     if (!w) return;
@@ -1898,12 +1933,6 @@ function ordin(n) {
 // C ref: hacklib.c the() / objnam.c the() — "the <foo>" unless already proper.
 function the_str(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
 
-// C ref: objnam.c simpleonames(obj) — the unadorned object-type name.
-// js/invent.js:516 owns the real one but keeps it module-private; the fix is to
-// export that, not to grow this.
-function simpleonames(obj) {
-    return OBJECTS[obj?.otyp]?.name || '';
-}
 // C ref: hacklib.c just_an(outbuf, str) — the bare article plus a space.
 function just_an(str) {
     const s = String(str || '');
@@ -2231,8 +2260,12 @@ export function fmt_elapsed_time(_outbuf, final) {
        its final value before calling us during end of game disclosure */
     let etim = game.urealtime?.realtime | 0;
 
-    if (!final)
-        etim += timet_delta(getnow(), game.urealtime?.start_timing);
+    /* C ref: insight.c fmt_elapsed_time(): etim += timet_delta(getnow(),
+       urealtime.start_timing).  allmain.c newgame() always sets start_timing;
+       this port's new-game path does not, so an unset stamp means no time has
+       accrued (delta 0), never now - 0. */
+    if (!final && game.urealtime?.start_timing != null)
+        etim += timet_delta(getnow(), game.urealtime.start_timing);
     eseconds = etim % 60; etim = Math.trunc(etim / 60);
     eminutes = etim % 60; etim = Math.trunc(etim / 60);
     ehours = etim % 24;
@@ -2262,11 +2295,6 @@ export function fmt_elapsed_time(_outbuf, final) {
         outbuf += ` ${eseconds} second${plur(eseconds)}`;
     return outbuf;
 }
-// C ref: hacklib.c getnow()/timet_delta() — wall-clock accounting, which this
-// port does not keep (js/save.js:803 notes urealtime is not modelled), so the
-// live-session delta is 0 and fmt_elapsed_time() reports " none".
-function getnow() { return 0; }
-function timet_delta(now, then) { return (then == null) ? 0 : (now - then); }
 
 // ── insight.c:382 enlightenment() ──────────────────────────────────────────
 // (js/artifact.js:484 has an `enlightenment: null` object key, which makes the
@@ -2790,23 +2818,26 @@ export function status_enlightenment(mode, final) {
         youhiding(true, final);
 
     /* internal troubles, mostly in the order that prayer ranks them */
-    if (H_prop(STONED)) {
-        if (final && (H_prop(STONED) & I_SPECIAL))
+    /* done_timeout() ORs I_SPECIAL into the fatal property; this port keeps that
+       bit in game._i_special_props (the timeout itself has already reached 0) */
+    const ispec2 = (w) => !!final && !!game._i_special_props?.has(w);
+    if (H_prop(STONED) || ispec2(STONED)) {
+        if (final && ((H_prop(STONED) & I_SPECIAL) || ispec2(STONED)))
             enlght_out(' You turned into stone.');
         else
             you_are('turning to stone', '', final);
     }
-    if (H_prop(SLIMED)) {
-        if (final && (H_prop(SLIMED) & I_SPECIAL))
+    if (H_prop(SLIMED) || ispec2(SLIMED)) {
+        if (final && ((H_prop(SLIMED) & I_SPECIAL) || ispec2(SLIMED)))
             enlght_out(' You turned into slime.');
         else
             you_are('turning into slime', '', final);
     }
-    if (H_prop(STRANGLED)) {
+    if (H_prop(STRANGLED) || ispec2(STRANGLED)) {
         if (u.uburied) {
             you_are('buried', '', final);
         } else {
-            if (final && (H_prop(STRANGLED) & I_SPECIAL)) {
+            if (final && ((H_prop(STRANGLED) & I_SPECIAL) || ispec2(STRANGLED))) {
                 enlght_out(' You died from strangulation.');
             } else {
                 buf = 'being strangled';
@@ -2816,9 +2847,9 @@ export function status_enlightenment(mode, final) {
             }
         }
     }
-    if (H_prop(SICK)) {
+    if (H_prop(SICK) || ispec2(SICK)) {
         /* the two types of sickness are lumped together */
-        if (final && (H_prop(SICK) & I_SPECIAL)) {
+        if (final && ((H_prop(SICK) & I_SPECIAL) || ispec2(SICK))) {
             buf = ` ${You_}died from ${
                 (u.usick_type & SICK_NONVOMITABLE)
                 ? 'terminal illness' : 'food poisoning'}.`;
@@ -3042,7 +3073,7 @@ function Blindfolded() {
     return !!(game.ublindf && game.ublindf.otyp !== LENSES);
 }
 // C ref: youprop.h Blindfolded_only == (!(HBlinded || EBlinded) && Blindfolded).
-function Blindfolded_only() {
+export function Blindfolded_only() {
     return !H_prop(BLINDED) && !E_prop(BLINDED) && Blindfolded();
 }
 // C ref: youprop.h BlindedTimeout == (HBlinded & TIMEOUT).

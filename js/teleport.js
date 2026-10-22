@@ -13,12 +13,14 @@ import { acurr_eff } from './attrib.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
-import { newsym, m_at, update_topl, y_n } from './display.js';
+import { newsym, m_at, update_topl, y_n, You_feel } from './display.js';
 import { Blind, couldsee, vision_recalc } from './vision.js';
 import { update_monster_region } from './region.js';
 import { onscary, set_apparxy, noteleport_level, m_in_air, may_passwall } from './monmove.js';
 import { youmonst_data } from './invent.js';
 import { hero_liquid_goodpos } from './trap.js';
+import { In_hell } from './dungeon.js';
+import { In_endgame } from './const.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
 import { sensemon } from './mon.js';
 import { canseemon_shared as canseemon_tele } from './display.js';
@@ -32,7 +34,7 @@ import {
     is_swimmer_flag, passes_walls_flag, amorphous_flag, throws_rocks_flag,
     control_teleport_flag,
 } from './monflags_data.js';
-import { inhishop } from './shk.js';
+import { inhishop, costly_spot, find_objowner, onshopbill, stolen_value, make_angry_shk } from './shk.js';
 import { inhistemple } from './priest.js';
 
 // C ref: include/hack.h — rloc() flags.  (js/const.js carries an older copy of
@@ -203,6 +205,7 @@ function rloc_pos_ok(x, y, mtmp) {
 // messages when the caller asked for them.  No RNG.
 export async function rloc_to_core(mtmp, x, y, rlocflags) {
     const oldx = mtmp.mx, oldy = mtmp.my;
+    const resident_shk = !!mtmp.isshk && inhishop(mtmp);
     const preventmsg = (rlocflags & RLOC_NOMSG) !== 0;
     const vanishmsg = (rlocflags & RLOC_MSG) !== 0;
     let appearmsg = ((mtmp.mstrategy | 0) & STRAT_APPEARMSG) !== 0;
@@ -284,8 +287,28 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
         // for an attack-driven relocation)
     }
 
-    // Resident-shopkeeper anger, shop-goods billing and the mtrapped
-    // mintrap() re-check are inert for the monsters these sessions relocate.
+    /* shopkeepers will only teleport if you zap them with a wand of
+       teleportation or if they've been transformed into a jumpy monster;
+       the latter only happens if you've attacked them with polymorph */
+    if (resident_shk && !inhishop(mtmp))
+        await make_angry_shk(mtmp, oldx, oldy);
+
+    /* if a monster carrying shop goods teleports out of the shop, blame it on
+       the hero; no_charge is easily possible and needs to be cleared if not in
+       shop; a for-sale item is ordinary here--shk won't notice it leaving */
+    if (mtmp.minvent?.length && !costly_spot(x, y)) {
+        const shkp = find_objowner(mtmp.minvent[0], oldx, oldy);
+        const peaceful = !shkp || !!shkp.mpeaceful;
+
+        for (const otmp of [...mtmp.minvent]) {
+            if (otmp.no_charge)
+                otmp.no_charge = 0;
+            else if (shkp && onshopbill(otmp, shkp, true))
+                await stolen_value(otmp, oldx, oldy, peaceful, false);
+        }
+    }
+
+    // The mtrapped mintrap() re-check is inert for the monsters these sessions relocate.
 
     // C ref: teleport.c:1762 — if the hero is busy, a relocated threat that
     // came into view stops the occupation.
@@ -1116,7 +1139,7 @@ export async function domagicportal(ttmp) {
     /* prevent the poor shnook, whose amulet was stolen while in the endgame,
        from accidentally triggering the portal to the next level */
     if (In_endgame_() && !game.u.uhave?.amulet) {
-        await update_topl('You feel dizzy for a moment, but nothing happens...');
+        await You_feel('dizzy for a moment, but nothing happens...');
         return;
     }
 
@@ -1206,6 +1229,35 @@ export async function mvault_tele(mtmp) {
     await rloc(mtmp, RLOC_NONE);
 }
 
+// C ref: teleport.c:785 teleport_pet(mtmp, force_it).  FALSE (the monster stays)
+// for the hero's steed, and for a leashed pet on a CURSED leash unless force_it
+// (that arm yelps).  An uncursed leash goes slack and the pet is let go.  The
+// callers (mtele_trap, mlevel_tele_trap, dig.c's hole-under-a-monster arm and
+// monmove.js's inline trap effects) all share this one copy.
+export async function teleport_pet(mtmp, force_it) {
+    if (mtmp === game.u?.usteed)
+        return false;
+
+    if (mtmp.mleashed) {
+        const { get_mleash, m_unleash } = await import('./apply.js');
+        const otmp = get_mleash(mtmp);
+
+        if (!otmp) {
+            const { impossible } = await import('./display.js');
+            await impossible(`${Monnam(mtmp)} is leashed, without a leash.`);
+        } else if (otmp.cursed && !force_it) {
+            const { yelp } = await import('./sounds.js');
+            await yelp(mtmp);
+            return false;
+        } else {
+            await update_topl('Your leash goes slack.');
+        }
+        await m_unleash(mtmp, false);
+        return true;
+    }
+    return true;
+}
+
 // C ref: teleport.c:1961 mtele_trap(mtmp, trap, in_sight).  The name is
 // captured BEFORE the move (pre-movement visibility), and the destination
 // branch order is: once-only vault trap, then a fixed teledest, then random.
@@ -1218,7 +1270,7 @@ export async function mtele_trap(mtmp, trap, in_sight) {
        teleporting from it isn't visible */
     if (noteleport_level(mtmp)) return;
 
-    if (teleport_pet_(mtmp, false)) {
+    if (await teleport_pet(mtmp, false)) {
         const { Monnam } = await import('./uhitm.js');
         /* save name with pre-movement visibility */
         monname = Monnam(mtmp);
@@ -1256,7 +1308,7 @@ export async function mlevel_tele_trap(mtmp, trap, force_it, in_sight) {
 
     if (mtmp === game.u?.ustuck)   /* probably a vortex */
         return Trap_Effect_Finished;   /* temporary? kludge */
-    if (teleport_pet_(mtmp, force_it)) {
+    if (await teleport_pet(mtmp, force_it)) {
         const tolevel = { dnum: 0, dlevel: 0 };
         let migrate_typ = MIGR_RANDOM;
         const { Monnam, mon_nam } = await import('./uhitm.js');
@@ -1464,8 +1516,8 @@ function sengr_at_(s, x, y, strict) {
 }
 // C ref: dungeon.c In_hell/In_endgame/In_tutorial/On_W_tower_level/
 // Is_stronghold/Is_botlevel/depth/on_level — mostly private in js/dungeon.js.
-function Inhell_() { return !!game.u?.uz?.in_hell; }
-function In_endgame_() { return (game.u?.uz?.dnum | 0) === (game.endgame_dnum | 0) && !!game.endgame_dnum; }
+function Inhell_() { return In_hell(game.u?.uz); }
+function In_endgame_() { return In_endgame(game.u?.uz); }
 function In_tutorial_(lev) { return !!lev && game.tutorial_dnum != null && lev.dnum === game.tutorial_dnum; }
 export function On_W_tower_level(uz = game.u?.uz) {
     return on_level_(uz, game.wiz1_level) || on_level_(uz, game.wiz2_level)
@@ -1585,9 +1637,6 @@ async function somexyspace_(_croom, _c) { return false; }
 // js/monmove.js:4303 (exported).
 function mon_offmap_(mon) { return (mon?.mstate | 0) !== 0; }
 async function m_next2u_(mtmp) { return distmin_(mtmp.mx, mtmp.my, game.u.ux, game.u.uy) <= 1; }
-// C ref: teleport.c:785 teleport_pet(mtmp, force_it) — js/dig.js:910, private.
-// No RNG for an unleashed pet.
-function teleport_pet_(mtmp, _force_it) { return !mtmp?.mleashed; }
 // C ref: mon.c migrate_to_level / muse.c's copy at js/muse.js:665 (private).
 async function migrate_to_level_(_mtmp, _ledger, _migrtyp, _cc) { }
 // C ref: eat.c control_teleport(ptr) — js/eat.js:1925, private.

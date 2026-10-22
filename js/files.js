@@ -5,7 +5,7 @@
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
-import { pline, note_topl } from './display.js';
+import { pline, putmsghistory } from './display.js';
 
 const SECTIONSCOPE = 1;
 const TITLESCOPE = 2;
@@ -237,7 +237,7 @@ export async function read_tribute(tribsection, tribtitle, tribpassage,
                 const p = lastline.lastIndexOf(']');
                 if (p >= 0)
                     lastline = `${lastline.slice(0, p)}; passage #${targetpassage}]`;
-                note_topl(lastline); /* putmsghistory(lastline, FALSE) */
+                putmsghistory(lastline, false);
                 grasped = true;
             }
         }

@@ -14,22 +14,24 @@
 // The prices themselves come from js/objcost_data.js (objects[].oc_cost,
 // dumped from the recorder's own objects.o) via mkobj.js base_oc_cost().
 
-import { game } from './gstate.js';
+import { Invis } from './monmove.js'; /* youprop.h Invis: (HInvis || EInvis) && !BInvis */
+import { game, register_process_static } from './gstate.js';
 import { s_suffix, depth as depth_of_level } from './hacklib.js';
 import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
-         mksobj, place_object, remove_object, dealloc_obj, bill_dummy_object,
+         mksobj, place_object, remove_object, dealloc_obj,
          newomid, MAGIC_LAMP, OIL_LAMP, BRASS_LANTERN, MAGIC_MARKER,
          BAG_OF_TRICKS, HORN_OF_PLENTY, CRYSTAL_BALL, MAGIC_FLUTE,
          DRUM_OF_EARTHQUAKE, CAN_OF_GREASE, TINNING_KIT, EXPENSIVE_CAMERA,
          POT_OIL, ROCK, BOULDER, LEASH,
-         CANDELABRUM_OF_INVOCATION, clear_object_timer } from './mkobj.js';
+         CANDELABRUM_OF_INVOCATION, clear_object_timer, copy_oextra, has_omid, free_omid } from './mkobj.js';
 import { arti_cost } from './artifact.js';
+import { get_obj_location as real_get_obj_location } from './light.js';
 import { acurr_eff, adjalign, exercise } from './attrib.js';
 import { monster_by_pmidx, mpickobj, add_to_minv, makemon, enexto_spawn } from './makemon.js';
 import { rn2, rnd } from './rng.js';
-import { update_topl, newsym, m_at, map_invisible } from './display.js';
+import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
-         M2_NEUTER, msound_of, passes_walls_flag } from './monflags_data.js';
+         M2_NEUTER, msound_of, passes_walls_flag, is_vampire, is_elf_flag, is_human_flag } from './monflags_data.js';
 import { in_rooms, shop_keeper, shkname } from './shkroom.js';
 import { cansee } from './vision.js';
 import { shtypes, VEGETARIAN_CLASS } from './shtypes.js';
@@ -39,15 +41,15 @@ import { observe_object, discover_object, record_price_quote } from './o_init.js
 // drop an rn2() draw from every "(unpaid, N ...)" render.
 import { currency, objects_at, count_contents, obj_extract_self, obfree,
          xname, doname_invent, ansimpleoname, is_pick, carrying,
-         update_inventory, xprname, body_part, tty_text_window } from './invent.js';
+         update_inventory, xprname, body_part, tty_text_window, youmonst_data } from './invent.js';
 import { A_CHA, A_WIS, HUNGRY, SHOPBASE, ROOMOFFSET, NO_ROOM,
          isok, IS_DOOR, IS_ROOM, IS_WALL, ZAP_POS, REPAIR_DELAY, BOLT_LIM,
          SVALL, D_CLOSED, D_BROKEN, PL_NSIZ, ANY_TYPE, ANY_SHOP, OROOM,
          CANDLESHOP, LANDMINE, BEAR_TRAP, HOLE, PIT, SPIKED_PIT,
          SELL_NORMAL, SELL_DONTSELL, M_AP_NOTHING, M_AP_MONSTER,
          ARM, HAND, HEAD, NECK, COLNO, ROWNO, D_LOCKED, TT_PIT,
-         W_SWAPWEP, W_QUIVER, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, OBJ_ONBILL,
-         COST_UNBLSS, COST_UNCURS, G_GONE } from './const.js';
+         W_SWAPWEP, W_QUIVER, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, OBJ_ONBILL, OBJ_DELETED,
+         CONTAINED_TOO, COST_UNBLSS, COST_UNCURS, G_GONE, MIGR_APPROX_XY } from './const.js';
 
 // ── constants ────────────────────────────────────────────────────────────────
 // objclass.h object classes.
@@ -448,9 +450,10 @@ export function onbill(obj, shkp) {
     return null;
 }
 
-// C ref: obj.c get_obj_location(obj, &x, &y, CONTAINED_TOO) — an OBJ_CONTAINED
-// object reports its outermost container's spot.  add_to_container() (mkobj.js)
-// does not set ocontainer, so the walk falls back to a contents search.
+// C ref: zap.c get_obj_location(obj, &x, &y, CONTAINED_TOO) —
+// an OBJ_CONTAINED object reports its outermost container's spot.
+// add_to_container() (mkobj.js) sets ocontainer; a contents search backs it up
+// for lists built without it.
 function outermost(obj) {
     let top = obj, guard = 0;
     while (top.where === OBJ_CONTAINED && guard++ < 32) {
@@ -475,21 +478,16 @@ function find_container_of(obj) {
     return scan(game.level?.objects, 0) || scan(game.invent, 0) || null;
 }
 
-// C ref: zap.c get_obj_location(obj, &x, &y, CONTAINED_TOO).  OBJ_FREE,
-// OBJ_ONBILL, OBJ_MIGRATING and (without BURIED_TOO) OBJ_BURIED all return
-// FALSE with x=y=0, which is what makes get_cost_of_shop_item() quote nothing
-// for an object that is between owners.
-function obj_location(obj) {
-    const top = outermost(obj);
-    switch (top.where) {
-    case OBJ_INVENT: return { x: game.u?.ux, y: game.u?.uy, ok: true };
-    case OBJ_FLOOR:  return { x: top.ox, y: top.oy, ok: true };
-    case OBJ_MINVENT:
-        if (top.ocarry?.mx) return { x: top.ocarry.mx, y: top.ocarry.my, ok: true };
-        break;
-    default: break;
-    }
-    return { x: 0, y: 0, ok: false };
+// C ref: zap.c get_obj_location(obj, &x, &y, locflags) via js/light.js's real
+// port.  OBJ_FREE, OBJ_ONBILL, OBJ_MIGRATING, OBJ_BURIED (without BURIED_TOO)
+// and OBJ_CONTAINED (without CONTAINED_TOO) all return FALSE with x=y=0, which
+// is what makes get_cost_of_shop_item() quote nothing for an object that is
+// between owners.
+function obj_location(obj, locflags = 0) {
+    let o = obj;
+    if (o.where === OBJ_CONTAINED && (locflags & CONTAINED_TOO)) o = outermost(o);
+    const loc = real_get_obj_location(o, locflags);
+    return loc ? { x: loc.x, y: loc.y, ok: true } : { x: 0, y: 0, ok: false };
 }
 
 // ── the price strings ────────────────────────────────────────────────────────
@@ -503,7 +501,7 @@ export function contained_cost(obj, shkp, price, usell, unpaid_only) {
     // inventory; treat OBJ_FREE as still-on-floor for that window.
     const on_floor = (top.where === OBJ_FLOOR || top.where === OBJ_FREE);
     let x, y;
-    const loc = obj_location(top);
+    const loc = obj_location(top, 0);
     if (top.where === OBJ_FREE || !loc.ok) { x = game.u?.ux; y = game.u?.uy; }
     else { x = loc.x; y = loc.y; }
     const eshk = shkp?.eshk;
@@ -550,7 +548,7 @@ export function get_cost_of_shop_item(obj) {
     if (!u?.ushops?.length || obj.oclass === COIN_CLASS
         || obj === u.uball || obj === u.uchain) return res;
 
-    const loc = obj_location(obj);
+    const loc = obj_location(obj, CONTAINED_TOO);
     if (!loc.ok) return res;
     const { x, y } = loc;
     if (in_rooms(x, y, SHOPBASE)[0] !== u.ushops[0]) return res;
@@ -822,6 +820,7 @@ const verbalize = (line) => update_topl(`"${line}"`);
 const DEADMONSTER = (mon) => !mon || (mon.mhp != null && mon.mhp < 1);
 // C ref: you.h noit_mhe/noit_mhim/noit_mhis (js/do_name.js).
 import { noit_mhe, noit_mhim, noit_mhis } from './do_name.js';
+import { Blind_telepat } from './youprop.js';
 
 // C ref: hack.c money_cnt(otmp) — the quan of the FIRST coin stack on the
 // chain.  It stops there and does NOT descend into containers (that is
@@ -918,13 +917,8 @@ export async function rouse_shk(shkp, verbosely) {
     shkp.mcanmove = 1;
 }
 
-// C ref: shk.c make_happy_shk(shkp, silentkops):1395.  The home_shk()/
-// migrate_to_level() arms (a shk that has chased the hero off its own level)
-// are NOT ported — relocating a drawn monster from here would move it on the
-// map with no newsym; no covered session settles a bill with an absent shk.
-// make_happy_shoppers()'s kops_gone()/pacify_guards() have no port either
-// (the Keystone Kops are never spawned).
-export async function make_happy_shk(shkp, _silentkops) {
+// C ref: shk.c make_happy_shk(shkp, silentkops):1395.
+export async function make_happy_shk(shkp, silentkops) {
     const wasmad = ANGRY(shkp);
     const eshkp = shkp.eshk;
 
@@ -932,8 +926,38 @@ export async function make_happy_shk(shkp, _silentkops) {
     if (eshkp) { eshkp.following = 0; eshkp.robbed = 0; }
     if ((game.urole?.mnum ?? -1) !== PM_ROGUE)
         adjalign(Math.sign(game.u?.ualign?.type || 0));
-    if (inhishop(shkp) && wasmad)
+    if (!inhishop(shkp)) {
+        const shk_nam = shkname(shkp);
+        let vanished = await canseemon(shkp);
+
+        if (on_shoplevel(eshkp)) {
+            await home_shk(shkp, false);
+            const { canspotmon } = await import('./uhitm.js');
+            if (canspotmon(shkp)) {
+                await update_topl(`${Shknam(shkp)} returns to ${noit_mhis(shkp)} shop.`);
+                vanished = false; /* don't give 'Shk disappears' message */
+            }
+        } else {
+            /* if sensed, does disappear regardless whether seen */
+            const { sensemon } = await import('./mon.js');
+            if (sensemon(shkp)) vanished = true;
+            /* can't act as porter for the Amulet */
+            const { mdrop_special_objs } = await import('./steal.js');
+            await mdrop_special_objs(shkp);
+            /* arrive near shop's door */
+            const { migrate_to_level } = await import('./dog.js');
+            const lv = eshkp.shoplevel;
+            const ledger = (lv.dlevel | 0) + (game.dungeons?.[lv.dnum]?.ledger_start | 0);
+            await migrate_to_level(shkp, ledger, MIGR_APPROX_XY, eshkp.shd);
+            /* dismiss kops on that level when shk arrives */
+            eshkp.dismiss_kops = true;
+        }
+        if (vanished)
+            await update_topl(`Satisfied, ${shk_nam} suddenly disappears!`);
+    } else if (wasmad)
         await update_topl(`${Shknam(shkp)} calms down.`);
+
+    await make_happy_shoppers(silentkops);
 }
 
 // C ref: mkobj.c nextoid(oldobj, newobj):536 — pick the split stack's o_id so
@@ -1663,13 +1687,15 @@ export function clear_unpaid(shkp, list) {
 
 // C ref: shk.c clear_no_charge_obj(shkp, otmp):329.  shkp == null clears every
 // item on the list regardless of shop (hot_pursuit's shopkeeper networking).
-// GAP: obj_location() cannot resolve an OBJ_BURIED item, so a buried no_charge
-// item takes the !get_obj_location arm and is cleared unconditionally.
+// The locflags C passes are `OBJ_CONTAINED | OBJ_BURIED` (2 | 6 == 6), which is
+// BURIED_TOO without CONTAINED_TOO: get_obj_location() fails for an OBJ_CONTAINED
+// item, so its no_charge is always cleared (the contents recursion above has
+// already run), while a buried item keeps its spot.
 export function clear_no_charge_obj(shkp, otmp) {
     if (Has_contents(otmp)) clear_no_charge(shkp, otmp.cobj);
     if (!otmp.no_charge) return;
 
-    const loc = obj_location(otmp);
+    const loc = obj_location(otmp, OBJ_CONTAINED | OBJ_BURIED);
     const rno = game.level?.at(loc.x, loc.y)?.roomno ?? NO_ROOM;
     let rm_shkp = null;
     if (!shkp
@@ -1768,7 +1794,7 @@ export async function deserted_shop(enterstring) {
         }
 
     if ((game.u?.uprops?.Blind || 0) > 0
-        && !((game.u?.uprops?.Blind_telepat || 0) > 0
+        && !(Blind_telepat()
              || (game.u?.uprops?.Detect_monsters || 0) > 0))
         ++n; /* force feedback to be less specific */
 
@@ -1779,6 +1805,7 @@ export async function deserted_shop(enterstring) {
 // C ref: shk.c pick_pick(obj):921 — taking a pick-axe out of a container while
 // inside a shop.  pickmovetime is a C `static`, hence module-level here.
 let pickmovetime = 0;
+register_process_static(() => { pickmovetime = 0; });
 export async function pick_pick(obj) {
     if (obj.unpaid || !is_pick(obj)) return;
     const shkp = shop_keeper((game.u?.ushops || [])[0]);
@@ -2103,7 +2130,7 @@ export function set_repo_loc(shkp) {
 }
 
 // C ref: shk.c finish_paybill():2723 — after disclosure, before bones.  Issues
-// no messages.  GAP: unleash_all() has no port in this tree.
+// no messages.
 export async function finish_paybill() {
     const shkp = repo.shopkeeper;
     let ox = repo.location.x, oy = repo.location.y;
@@ -2113,7 +2140,9 @@ export async function finish_paybill() {
         ox = u?.ux ? u.ux : u?.ux0;
         oy = u?.ux ? u.uy : u?.uy0;
     }
-    /* GAP: unleash_all() — normally done by savebones(), too late in this case */
+    /* normally done by savebones(), but that's too late in this case */
+    const { unleash_all } = await import('./apply.js');
+    unleash_all();
     if (shkp) {
         const umoney = money_cnt(game.invent);
         if (umoney) await money2mon(shkp, umoney);
@@ -2295,9 +2324,27 @@ function append_honorific() {
     const honored = ['good', 'honored', 'most gracious', 'esteemed',
                      'most renowned and sacred'];
     let result = honored[rn2(honored.length - 1) + (game.u?.uevent?.udemigod ? 1 : 0)];
-    if ((game.urace?.mnum ?? 0) === PM_ELF_RACE) result += game.flags?.female ? ' hiril' : ' hir';
-    else result += game.flags?.female ? ' lady' : ' sir';
+    // C ref: shk.c append_honorific() — vampire forms are "dark lord/lady", a
+    // polymorphed hero is an elf by form (maybe_polyd), a non-human form is a
+    // "creature".
+    const polyd = !!game.u?.Upolyd;
+    const form = polyd ? youmonst_data() : null;
+    if (polyd && is_vampire(form)) result += game.flags?.female ? ' dark lady' : ' dark lord';
+    else if (polyd ? is_elf_flag(form) : (game.urace?.mnum ?? 0) === PM_ELF_RACE)
+        result += game.flags?.female ? ' hiril' : ' hir';
+    else result += (polyd && !is_human_flag(form)) ? ' creature' : game.flags?.female ? ' lady' : ' sir';
     return result;
+}
+
+// C ref: shk.c count_unpaid(list) — unpaid objects in a container chain, nested
+// containers included.
+function count_unpaid(list) {
+    let count = 0;
+    for (const o of (list || [])) {
+        if (o.unpaid) count++;
+        if (Has_contents(o)) count += count_unpaid(o.cobj);
+    }
+    return count;
 }
 
 // C ref: shk.c addtobill(obj, ininv, dummy, silent):3451.
@@ -2335,7 +2382,7 @@ export async function addtobill(obj, ininv, dummy, silent) {
             if (!ltmp) return;
         }
         obj.no_charge = 0;
-        contentscount = (obj.cobj || []).filter(is_unpaid).length;
+        contentscount = count_unpaid(obj.cobj);
     } else {
         add_one_tobill(obj, dummy, shkp);
     }
@@ -2363,7 +2410,7 @@ export async function addtobill(obj, ininv, dummy, silent) {
         await update_topl(`${Shknam(shkp)} does not notice.`);
     } else {
         await update_topl(`The list price of ${
-            contentscount && !obj.unpaid ? 'the contents of ' : ''}${xname(obj)}${
+            contentscount && !obj.unpaid ? 'the contents of ' : ''}${the(xname(obj))}${
             contentscount && obj.unpaid ? ' and its contents' : ''} is ${ltmp} ${
             currency(ltmp)}${obj.quan > 1 ? ' each' : ''}.`);
     }
@@ -2612,9 +2659,9 @@ export async function stolen_value(obj, x, y, peaceful, silent) {
 
         if (!silent) {
             if (await canseemon(shkp)) {
-                await update_topl(`${Shknam(shkp)} booms: "${game.plname}, you are a thief!"`);
+                await Norep(`${Shknam(shkp)} booms: "${game.plname}, you are a thief!"`);
             } else if (!Deaf()) {
-                await update_topl('You hear a scream, "Thief!"');
+                await Norep('You hear a scream, "Thief!"');
             }
         }
         hot_pursuit(shkp);
@@ -2631,22 +2678,29 @@ const alteration_verbs = [
     'degrade', 'dilute', 'erase', 'burn', 'neutralize', 'destroy', 'splatter',
     'bite', 'open', 'break the lock on', 'rust', 'rot', 'tarnish', 'crack',
 ];
-async function bill_dummy_object_for_alteration(otmp) {
+// C ref: mkobj.c bill_dummy_object(otmp):712 — a shop object is about to be
+// altered or used up, so a copy of the original goes on the used-up bill (the
+// caller checked otmp->unpaid && costly_spot(u.ux, u.uy)); otmp becomes no-charge.
+export async function bill_dummy_object(otmp) {
     let cost = 0;
     if (otmp.unpaid) {
         cost = unpaid_cost(otmp, COST_SINGLEOBJ);
         const shkp = shop_keeper((game.u?.ushops || [])[0]);
         if (shkp) subfrombill(otmp, shkp);
     }
-    const dummy = { ...otmp, oextra: otmp.oextra ? { ...otmp.oextra } : null };
+    const dummy = { ...otmp };
+    dummy.oextra = null;
     dummy.where = OBJ_FREE;
     dummy.o_id = nextoid(otmp, dummy);
     dummy.timed = 0;
+    delete dummy.timer;
+    copy_oextra(dummy, otmp);
+    if (has_omid(dummy)) free_omid(dummy); /* only one association with m_id */
     dummy.owornmask = 0;
     if (Is_candle(dummy)) dummy.lamplit = 0;
-    const shkp = billable(null, dummy, (game.u?.ushops || [])[0], true);
-    if (shkp) add_one_tobill(dummy, true, shkp);
-    if (cost) alter_cost(dummy, -cost);
+    await addtobill(dummy, false, true, true);
+    if (cost && dummy.where !== OBJ_DELETED) alter_cost(dummy, -cost);
+    /* no_charge is only valid for some locations */
     otmp.no_charge = (otmp.where === OBJ_FLOOR || otmp.where === OBJ_CONTAINED) ? 1 : 0;
     otmp.unpaid = 0;
 }
@@ -2656,10 +2710,10 @@ export async function costly_alteration(obj, alter_type) {
     if (carried(obj) || obj.where === OBJ_FREE) {
         if (!obj.unpaid) return;
     } else {
-        const { get_obj_location } = await import('./light.js');
-        const loc = get_obj_location(obj, 1 /* CONTAINED_TOO */);
-        ox = loc?.x ?? game.u?.ux;
-        oy = loc?.y ?? game.u?.uy;
+        const loc = obj_location(obj, CONTAINED_TOO);
+        /* this get_obj_location shouldn't fail, but if it does, use hero's location */
+        ox = loc.ok ? loc.x : game.u?.ux;
+        oy = loc.ok ? loc.y : game.u?.uy;
         if (!costly_spot(ox, oy)) return;
         objroom = in_rooms(ox, oy, SHOPBASE)[0] || 0;
         shkp = billable(null, obj, objroom, false);
@@ -2676,13 +2730,13 @@ export async function costly_alteration(obj, alter_type) {
         const { simpleonames } = await import('./objnam.js');
         await verbalize(`You ${alteration_verbs[alter_type]} ${those} ${
             simpleonames(obj)}, you pay for ${them}!`);
-        await bill_dummy_object_for_alteration(obj);
+        await bill_dummy_object(obj);
     } else if (obj.where === OBJ_FLOOR) {
         if (learn_bknown) obj.bknown = 1;
         if (costly_spot(game.u?.ux, game.u?.uy)
             && objroom === (game.u?.ushops || [])[0]) {
             await verbalize(`You ${alteration_verbs[alter_type]} ${those}, you pay for ${them}!`);
-            await bill_dummy_object_for_alteration(obj);
+            await bill_dummy_object(obj);
         } else {
             await stolen_value(obj, ox, oy, false, false);
         }
@@ -2727,6 +2781,7 @@ export async function donate_gold(gltmp, shkp, selling) {
 let sell_response = 'a'; /* decl.c: gs.sell_response starts as 'a' (sell without asking) */
 let sell_how = SELL_NORMAL;
 let auto_credit = false;
+register_process_static(() => { sell_response = 'a'; sell_how = SELL_NORMAL; auto_credit = false; });
 export function sellobj_state(deliberate) {
     /* dropping something deliberately means no automatic answer to the
        "want to sell?" query; an accidental drop is bought without asking */
@@ -2996,7 +3051,6 @@ function closed_door(x, y) {
     const loc = game.level?.at(x, y);
     return !!loc && IS_DOOR(loc.typ) && !!((loc.doormask || 0) & (D_LOCKED | D_CLOSED));
 }
-const Invis = () => ((game.u?.uprops?.Invis || 0) > 0);
 
 // C ref: shk.c shkcatch(obj, x, y):4362 — the shk snatches a pick-axe thrown
 // into her shop.
@@ -3162,7 +3216,7 @@ export async function shk_fixes_damage(shkp) {
         await update_topl(`${Shknam(shkp)} whispers ${
             shk_closeby ? 'an incantation' : 'something'}.`);
     } else if (!Deaf() && shk_closeby) {
-        await update_topl('You hear someone muttering an incantation.');
+        await You_hear('someone muttering an incantation.');
     }
 
     await repair_damage(shkp, dam, false);
@@ -3241,11 +3295,16 @@ export async function litter_scatter(litter, x, y, shkp) {
                 iy = shkp.my;
             }
             if (otmp.unpaid) {
-                /* GAP: the `|| (oshk = find_objowner(...)) && onbill(...)`
-                   half of C's test — find_objowner() is private in
-                   js/dokick.js — so a shared wall's rival shk is not asked. */
-                const oshk = shkp;
-                if (costly_spot(ix, iy) && onbill(otmp, oshk))
+                let oshk = shkp;
+
+                /* !costly_spot() happens if otmp is moved from wall
+                   to shop's "free spot", still costly_adjacent() and
+                   still unpaid/on-bill; otherwise, it is being moved
+                   all the way into the shop so take it off the bill */
+                if (costly_spot(ix, iy)
+                    && (onbill(otmp, oshk)
+                        || ((oshk = find_objowner(otmp, ix, iy))
+                            && onbill(otmp, oshk))))
                     subfrombill(otmp, oshk);
             }
             if (otmp.no_charge) {
@@ -3360,11 +3419,9 @@ export async function repair_damage(shkp, tmp_dam, catchup) {
         newsym(x, y);
     } else if (IS_WALL(tmp_dam.typ)) {
         if (inside_shop(game.u.ux, game.u.uy) === shkp.eshk.shoproom)
-            await update_topl('You feel more claustrophobic than before.');
+            await You_feel('more claustrophobic than before.');
         else if (!Deaf() && !rn2(10)) {
-            /* C: Norep() -- not repeated if it is still the last message */
-            if (game._prevmsg !== 'The dungeon acoustics noticeably change.')
-                await update_topl('The dungeon acoustics noticeably change.');
+            await Norep('The dungeon acoustics noticeably change.');
         }
     }
 
@@ -3424,7 +3481,7 @@ export async function shopdig(fall) {
     if (!shkp) return;
     if (!inhishop(shkp)) {
         if ((game.urole?.mnum ?? -1) === PM_KNIGHT) {
-            await update_topl('You feel like a common thief.');
+            await You_feel('like a common thief.');
             adjalign(-sgn(game.u?.ualign?.type || 0));
         }
         return;
@@ -3448,7 +3505,7 @@ export async function shopdig(fall) {
             }
         }
         if ((game.urole?.mnum ?? -1) === PM_KNIGHT) {
-            await update_topl('You feel like a common thief.');
+            await You_feel('like a common thief.');
             adjalign(-sgn(game.u?.ualign?.type || 0));
         }
     } else if (!um_dist(shkp.mx, shkp.my, 5) && !helpless(shkp)
@@ -3610,7 +3667,7 @@ export async function pay_for_damage(dmgstr, cant_mollify) {
         if (m_at(x, y)) {
             if (!animal) {
                 if (!Deaf() && !muteshk(shkp)) {
-                    await update_topl('You hear an angry voice:');
+                    await You_hear('an angry voice:');
                     await verbalize('Out of my way, scum!');
                 }
             } else {
@@ -4055,7 +4112,7 @@ export async function block_entry(x, y) {
 // Returns null when it doesn't, which is what makes shk_your() fall through to
 // mon_owns() and then "your"/"the".
 export function shk_owns(obj) {
-    const loc = obj_location(obj);
+    const loc = obj_location(obj, 0);
     if (loc.ok
         && (obj.unpaid || (obj.where === OBJ_FLOOR && !obj.no_charge
                            && costly_spot(loc.x, loc.y)))) {
@@ -4191,9 +4248,7 @@ export async function globby_bill_fixup(obj_absorber, obj_absorbed) {
 export async function use_unpaid_trapobj(otmp, x, y) {
     if (otmp.unpaid) {
         if (!Deaf()) {
-            /* GAP: find_objowner(otmp, x, y) is private in js/dokick.js, so the
-               shared-wall case picks the room's first shk instead. */
-            const shkp = shop_keeper(in_rooms(x, y, SHOPBASE)[0]);
+            const shkp = find_objowner(otmp, x, y);
             if (shkp && !muteshk(shkp)) await verbalize('You set it, you buy it!');
         }
         await bill_dummy_object(otmp);

@@ -222,8 +222,12 @@ export function wizterrainwish(d, out) {
         del_engr_at(x, y);
         if (!is_dbridge) out.push(`${An(waterbody_name_sober(lev))}.`);
         else dbterrainmesg(out, 'Moat', lev);
-        // GAP: C water_damage_chain(level.objects[x][y], TRUE) rusts/soaks the
-        // floor pile here; js/trap.js has no chain-wide water_damage.
+        // C ref: objnam.c:3640 water_damage_chain(level.objects[x][y], TRUE) soaks
+        // the floor pile (topmost first, force FALSE: Luck's rn2(20) per object).
+        out.push(async () => {
+            const { objects_at } = await import('./invent.js');
+            await (await import('./trap.js')).water_damage_chain(objects_at(x, y), true);
+        });
         madeterrain = true;
 
     /* also matches "molten lava" */
@@ -246,7 +250,11 @@ export function wizterrainwish(d, out) {
         } else {
             dbterrainmesg(out, 'Lava', lev);
         }
-        // GAP: fire_damage_chain() on the floor pile.
+        // C ref: objnam.c:3665 fire_damage_chain(level.objects[x][y], TRUE, TRUE, x, y).
+        out.push(async () => {
+            const { objects_at } = await import('./invent.js');
+            await (await import('./trap.js')).fire_damage_chain(objects_at(x, y), true, true, x, y);
+        });
         madeterrain = true;
     } else if (sfx(bp, 'ice')) {
         if (!is_dbridge) {

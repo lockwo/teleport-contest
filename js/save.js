@@ -20,8 +20,9 @@ import { game } from './gstate.js';
 import { GameMap } from './game.js';
 import { monster_by_pmidx } from './makemon.js';
 import { forget_temple_entry } from './priest.js';
+import { reverse_trap_chain } from './mkroom.js';
 import { NO_COLOR } from './terminal.js';
-import { y_n, pline, docrt } from './display.js';
+import { y_n, pline, docrt, getmsghistory } from './display.js';
 import { nhgetch } from './input.js';
 
 // Keys on the game object that must NOT travel in the save file.  These are
@@ -50,6 +51,10 @@ export const SAVE_SKIP_KEYS = new Set([
     // display / status / top-line caches — rebuilt by docrt()/bot()
     '_screen_output', '_toplines', '_toplin', '_pending_message', '_prevmsg',
     'active_buf', '_wc', 'cs_func', 'cs_arg', 'cs_left', 'cs_right', 'cs_rows',
+    // the ^P ring: savegamestate() -> save_msghistory() writes its strings
+    // (getmsghistory(), game.msghistory on the blob) and a restoring process
+    // rebuilds them in its own ring with putmsghistory()
+    '_msghist',
 ]);
 
 // Reference-preserving serializer.  Produces { root, nodes } where `nodes` is a
@@ -134,6 +139,9 @@ function copy_other_levels_for_save() {
     for (const key of Object.keys(store)) {
         const ent = store[key];
         if (key === cur || !ent?.level) continue;
+        /* dosave0()'s getlev()+savelev() rewrite of this level's file reverses
+           ftrap once; the revisit after the restore reverses it again */
+        reverse_trap_chain(ent.level);
         const away = now - (ent.omoves | 0);
         if (away !== 0) {
             for (const mtmp of (ent.level.monsters || [])) {
@@ -164,6 +172,23 @@ function copy_other_levels_for_save() {
     }
 }
 
+// C ref: save.c:893-894 savemonchn() — `if (mtmp->ispriest)
+// forget_temple_entry(mtmp);` for every monster of a chain being written.
+// dosave0() writes two chains from live state: gm.migrating_mons
+// (savegamestate, save.c:307) and the current level's fmon (savelev_core,
+// save.c:542).  Other levels were already forgotten when the hero left them
+// (do.js goto_level), and dosave0's copy of those files re-runs savemonchn()
+// on the same zeroed fields.  The blob serializes the live object graph, so
+// without this a restored priest keeps its pre-save intone/enter/peaceful/
+// hostile timestamps and intemple() suppresses the entry messages (and their
+// d() rolls) that C repeats after a restore.
+function forget_saved_priests() {
+    for (const mtmp of (game.migrating_mons || []))
+        if (mtmp.ispriest) forget_temple_entry(mtmp);
+    for (const mtmp of (game.level?.monsters || []))
+        if (mtmp.ispriest) forget_temple_entry(mtmp);
+}
+
 // C ref: save.c dosave0() — returns 1 on a successful save.  Writes the
 // serialized game state to the shared storage handle under the player's key.
 // Before writing, an existing save file (a wizard/explore-mode restore that
@@ -182,6 +207,7 @@ export async function dosave0() {
     undo_startup_luck();
     try {
         copy_other_levels_for_save();
+        forget_saved_priests();
         /* C ref: savegamestate() -> o_init.c savenames().  The objects[] table
            (discoveries, called names, price quotes, shuffled appearances) is
            module state rather than part of `game`, so it travels as one record
@@ -192,12 +218,16 @@ export async function dosave0() {
            the birth time is stored as a local-time stamp, not a time_t. */
         const { yyyymmddhhmmss } = await import('./calendar.js');
         game.ubirthday_stamp = yyyymmddhhmmss(game.ubirthday);
+        /* C ref: save.c savegamestate() -> save_msghistory(): the ^P ring
+           (with the pending "Saving..." line flushed into it), oldest first. */
+        game.msghistory = save_msghistory(WRITING);
         storage.setItem(key, serializeGameState(game));
     } catch {
         return 0;
     } finally {
         delete game.objnames;
         delete game.ubirthday_stamp;
+        delete game.msghistory;
     }
     return 1;
 }
@@ -804,24 +834,27 @@ export function store_plname_in_file(g = game) {
 }
 
 // C ref: save.c:1030 save_msghistory() — asks the window port for each message
-// in turn (tty_getmsghistory walks its ring oldest-first), skips empty ones,
+// in turn (display.js getmsghistory() = tty_getmsghistory: the ^P ring,
+// oldest first, with gt.toplines flushed into it first), skips empty ones,
 // truncates at BUFSZ-1, and closes with a -1.  No release_data() half at all:
 // C explicitly does not try to free the window port's ring here.
-// wintty.js remember_topl() is a no-op in this port, so there is no ring to
-// walk and the list comes out empty.  Read through `game._msghistory` anyway
-// (C's gt.msgs, which wintty.c tty_getmsghistory() walks oldest-first): whoever
-// makes remember_topl() record into it gets this function working for free.
+// dosave0() stores the result on the blob (game.msghistory) and dorestore()
+// replays it through restore_msghistory(); the ring itself is in
+// SAVE_SKIP_KEYS, because C's restoring process has a fresh ring of its own.
 export function save_msghistory(mode) {
     if (!update_file(mode)) return null;
     const msgs = [];
     let msgcount = 0;
-    /* ask window port for each message in sequence (getmsghistory(init)) */
-    for (const raw of (game._msghistory || [])) {
-        let msglen = String(raw || '').length;
+    let init = true;
+    let msg;
+    /* ask window port for each message in sequence */
+    while ((msg = getmsghistory(init)) !== null) {
+        init = false;
+        let msglen = msg.length;
         if (msglen < 1) continue;
         /* sanity: truncate if necessary (shouldn't happen) */
         if (msglen > 255) msglen = 255;      /* BUFSZ - 1 */
-        msgs.push({ length: msglen, msg: String(raw).slice(0, msglen) });
+        msgs.push({ length: msglen, msg: msg.slice(0, msglen) });
         ++msgcount;
     }
     return { msghistory: msgs, length: -1, msgcount };
